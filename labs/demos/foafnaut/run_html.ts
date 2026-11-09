@@ -15,6 +15,7 @@ import {cleanupUI} from "./ui_cleanup.ts";
 import {createRouter} from "../../../docs/web/hub/foafnaut/link-route.mjs";
 import type {LinkRoute} from "./native_html_engine.ts";
 import {requestRenderPlan} from "./render_plan.ts";
+import {pngOf,texturePixels} from "./png_write.ts";
 import {startCompileWorker,type CompileClient} from "./native_html_compile.ts";
 import type {UIEvent} from "./ui_engine.ts";
 
@@ -24,6 +25,7 @@ async function main() {
     console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--shortcut-sweep] [--print-pdf FILE] [--scroll-sweep] [--single-frame] [--offscreen] [--check-pixels] [--perf-summary] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts] [--strict | --be-liberal-in-what-we-accept]\nCommand-Q quits; Command-R and R reload; Command-T, Command-W and Shift-Command-T open, close and reopen tabs; Command-1 to 9, Control-Tab and Shift-Command-[ ] change tab; Space, Page Up, Page Down, Home, End and arrows scroll; Escape stops loading; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints; Option-Command-J opens the console tab (foafnaut:console). By default the browser draws a page without what the built-in engine may skip (module scripts, media conditions it can not read, stylesheets not fetched, scripts when they are off, inline SVG it can not draw) and lists each skip in the console; --strict refuses such a page. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
   }
   let scrollSweep=false;
+  let shotFile:string|undefined;
   let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false;
   while(args.length){const arg=args.shift();
     if(arg==="--html"||arg==="--url"){
@@ -34,6 +36,9 @@ async function main() {
     else if(arg==="--trace-input")traceInput=true;
     else if(arg==="--check-pixels")checkAll=true;
     else if(arg==="--perf-summary")perfSummary=true;
+    // Off screen: a PNG of the window after the 120th present of page canvases, a picture of
+    // what the native engine drew (the page's layers, its canvases and the chrome).
+    else if(arg==="--shot"){shotFile=args.shift();if(!shotFile)throw new Error("--shot needs a file path");}
     // No visible window (issue 1268): frames are drawn into a GPU texture of the window size, and
     // events go through the window library's queue as before, from a window that is never shown.
     // Sweeps then run with the screen locked, the display asleep, or on a machine with no display.
@@ -207,11 +212,19 @@ async function main() {
   // Presents of page canvases with no Lean frame (a turn's replay, blit and composite), and
   // their times, for the exit summary.
   const pageGpuMs:number[]=[];
+  const takeShot=async()=>{
+    const texture=session?.offscreenTexture,file=shotFile;
+    if(!texture||!file||!device)return;
+    shotFile=undefined;
+    await Deno.writeFile(file,await pngOf(texture.width,texture.height,await texturePixels(device,texture)));
+    console.log(JSON.stringify({type:"native-html-shot",file,width:texture.width,height:texture.height}));
+  };
   const gpuFlush=()=>{
     if(!session)return;
     while(gpuTurns.length){const t=gpuTurns.shift()!,start=performance.now();
       session.pageGpu(t.page,t.commands).then(r=>{if(!r?.presented)return;const ms=Math.round((performance.now()-start)*10)/10;
-        pageGpuMs.push(ms);if(perfSummary)console.log(JSON.stringify({type:"native-html-page-canvas",t:Math.round(performance.now()),ms}));})
+        pageGpuMs.push(ms);if(perfSummary)console.log(JSON.stringify({type:"native-html-page-canvas",t:Math.round(performance.now()),ms}));
+        if(shotFile&&pageGpuMs.length===120)takeShot();})
         .catch(error=>console.error("Native HTML: page GPU failed:",String(error)));}
   };
   let scriptsOn=false,scriptOps:string[]=[];
