@@ -88,7 +88,7 @@ try{
   for(const run of runs){
     if(run.runtime&&!fs.existsSync(path.join(run.runtime,'web-render.wasm'))){console.log(`NOT RUN: ${run.name}: no web-render.wasm in ${run.runtime}`);continue;}
     runtimeDir=run.runtime;cache.clear();
-    const width=1000,height=3200;
+    const width=1000,height=4800; // the index is about 4,100 px tall on 2026-11-09; links below the window cannot be clicked
     const page=await open('page=index.html&stats=1&layers=0',width,height);
     const atIndex=st=>st.frame?.url===indexURL&&Array.isArray(st.frame.links);
     let st=await page.until(atIndex,90000);
