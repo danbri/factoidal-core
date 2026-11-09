@@ -183,4 +183,10 @@ if [ -x "$OUT/native-webgpu-html-darwin-arm64" ]; then
   rm -f "$OUT/start-check.log"
   echo 'Compiled foafnaut started off screen and passed the graph sweep'
 fi
+# What this build was made from, read by the foafnaut launcher (--bleeding-edge says the
+# commit and the age, so an old local build is not taken for main).
+BUILD_COMMIT=$(git -C "$LAB" rev-parse --short HEAD 2>/dev/null || echo unknown)
+BUILD_DIRTY=false
+[ -n "$(git -C "$LAB" status --porcelain --untracked-files=no 2>/dev/null)" ] && BUILD_DIRTY=true
+printf '{"commit":"%s","dirty":%s,"builtAt":"%s"}\n' "$BUILD_COMMIT" "$BUILD_DIRTY" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$OUT/BUILD-INFO.json"
 echo "Foafnaut native release directory: $OUT"

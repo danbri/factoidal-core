@@ -7,7 +7,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const HELP = `foafnaut [--latest|--bleeding-edge] [PAGE | --url URL | --html FILE] [APP_OPTIONS] [-- APP_ARGS]
@@ -162,6 +162,16 @@ export async function main(argv, channel = 'current') {
   if (!app && channel === 'bleeding-edge') app = bleedingEdgeApp();
   if (!app) app = currentApp() ?? bleedingEdgeApp();
   if (!existsSync(app)) fail(`no app at ${app}. Run foafnaut --install-latest.`);
+  // The bleeding-edge build says what it was built from (BUILD-INFO.json beside the app,
+  // written when the build is swapped in); an old build is named, so it is not taken for main.
+  if (app === bleedingEdgeApp()) {
+    try {
+      const info = JSON.parse(readFileSync(join(dirname(app), 'BUILD-INFO.json'), 'utf8'));
+      const hours = (Date.now() - Date.parse(info.builtAt)) / 3.6e6;
+      console.error(`foafnaut: bleeding edge built from ${info.commit}${info.dirty ? " with uncommitted changes" : ""} at ${info.builtAt} (${hours.toFixed(1)} h ago)` +
+        (hours > 6 ? '; it may lack newer work on main' : ''));
+    } catch { console.error('foafnaut: bleeding edge has no BUILD-INFO.json; its commit is not known'); }
+  }
   if (which) { console.log(app); return; }
   const args = ['-n', ...(detach ? [] : ['-W']), app, '--args', ...pageArgs(page), ...(verbose ? ['--trace-input'] : []), ...app_, ...extra];
   const log = join(homedir(), 'Library', 'Logs', 'foafnaut', 'trace.jsonl');
