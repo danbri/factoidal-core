@@ -207,26 +207,32 @@ def draw (o : Outlines) (upem : Nat) (p : Program) (px : Nat) (fg : RGBA) : Opti
     match st with
     | .fill glyph m f =>
       let cov := match glyph with | some g => coverOf g m | none => full
+      -- Taken off the stack first, so the layer has one owner and is changed in place.
       let top := stack.back!
-      stack := stack.pop.push (put top ⟨readyOf d f fg, cov, 1, .sourceOver, none⟩)
+      stack := stack.pop
+      stack := stack.push (put top ⟨readyOf d f fg, cov, 1, .sourceOver, none⟩)
     | .push => stack := stack.push blank
     | .clip g m =>
       let src := stack.back!
       stack := stack.pop
       let top := stack.back!
-      stack := stack.pop.push (sameSize top (clipLayer W (coverOf g m) src top))
+      stack := stack.pop
+      stack := stack.push (sameSize top (clipLayer W (coverOf g m) src top))
     | .composite mode =>
       let src := stack.back!
       stack := stack.pop
       let back := stack.back!
       match opOf mode with
-      | some op => stack := stack.pop.push (sameSize back (compositeLayer op src back))
+      | some op =>
+        stack := stack.pop
+        stack := stack.push (sameSize back (compositeLayer op src back))
       | none => pure ()
     | .merge =>
       let src := stack.back!
       stack := stack.pop
       let top := stack.back!
-      stack := stack.pop.push (sameSize top (overLayer src top))
+      stack := stack.pop
+      stack := stack.push (sameSize top (overLayer src top))
   return some ⟨W, H, straight W H stack[0]!, ox, oy, straight_size W H _⟩
 
 /-- A drawn colour glyph is a bitmap of its box and nothing else: four bytes for each
