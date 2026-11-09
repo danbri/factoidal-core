@@ -34,6 +34,8 @@ private structure Placed where
   cluster : Nat
   /-- GPOS attached the glyph to another (a mark to its base). -/
   attached : Bool := false
+  /-- The combining class of the glyph's own character (its cluster may start at the base). -/
+  mark : Nat := 0
   deriving Inhabited
 
 private def ofInt (v : Int) : Float :=
@@ -81,7 +83,8 @@ private def shaped (f : Font) (text : String) (rtl : Option Bool) :
   let mut out := #[]
   for (g,byte) in s.glyphs.zip s.clusterBytes do
     let some cluster := chars.get? byte | throw "font profile: cluster inside a character"
-    out := out.push ⟨g.id,g.advance.toNat,g.xOffset,g.yOffset,cluster,g.attachedTo.isSome⟩
+    out := out.push ⟨g.id,g.advance.toNat,g.xOffset,g.yOffset,cluster,g.attachedTo.isSome,
+      SfntFallback.recategorize g.codepoint (SfntFallback.modifiedCcc g.codepoint)⟩
   return (s.script,s.rtl,out)
 
 /-- One glyph for each character, in visual order for right-to-left text. -/
@@ -161,9 +164,6 @@ def Font.word (f : Font) (text : String) (pixelSize : Nat) (rtl : Option Bool :=
   -- place of drawing it after the base. A font with no GPOS was placed so by the shaper.
   -- (Issue https://github.com/danbri/factoidal-core/issues/368.)
   let hasGpos := f.dir.any (·.tag == "GPOS")
-  let sourceChars := chars.toArray
-  let markAt := fun (g : Placed) => let c := (sourceChars.getD g.cluster ' ').toNat
-    SfntFallback.recategorize c (SfntFallback.modifiedCcc c)
   let mut placed := placed
   if hasGpos && !backward then
     let gap : Int := (f.face.unitsPerEm / 16 : Nat)
@@ -172,11 +172,13 @@ def Font.word (f : Font) (text : String) (pixelSize : Nat) (rtl : Option Bool :=
     let mut lastCc := 255
     for k in [0:placed.size] do
       let g := placed[k]!
-      let cc := markAt g
+      let cc := g.mark
       if cc == 0 || g.advance != 0 then
-        baseIdx := some k
-        cluster := none
-        lastCc := 255
+        -- A joiner has no ink: the marks after it (Stream-Safe) stay on the base before it.
+        if ((boxes.get? g.id).join).isSome then
+          baseIdx := some k
+          cluster := none
+          lastCc := 255
         continue
       if g.attached then continue
       let some bi := baseIdx | continue

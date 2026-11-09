@@ -1103,7 +1103,7 @@ theorem pageArtifact_eq (page : Rendering.Scene) (extra : List Rendering.Node) (
 def layersJSON (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List Rendering.Node)
     (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face)
     (width height : Nat) (live : Bool) (form : NativeSVG.DataForm) (checks tree : Bool) (hoverRules : Bool := false)
-    (canvases : List Rendering.Layout.Box := []) (animating : Bool := false) :
+    (canvases : List Rendering.Layout.Box := []) (animating : Bool := false) (animations : Bool := false) :
     Except String (String × Array ByteArray) := do
   let top := WebShell.height shell width
   -- A chrome that may fold: the band covers the view under the strip, the most it shows,
@@ -1116,7 +1116,7 @@ def layersJSON (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List R
   let number := fun (n : Nat) => JSON.Json.number (toString n)
   let place := JSON.Json.object ([("top",number top),("view",number view),("bandTop",number b.top),
     ("bandHeight",number b.height),("keepFrom",number b.keepFrom),("keepTo",number (b.keepTo view)),
-    ("composite",.string compositeShader),("hoverRules",.bool hoverRules),("animating",.bool animating),
+    ("composite",.string compositeShader),("hoverRules",.bool hoverRules),("animating",.bool animating),("animations",.bool animations),
     ("scrollLimit",number (scrollLimit (WebPrint.contentHeight boxes) view))] ++
     (if canvases.isEmpty then [] else [("canvases",canvasRects canvases b width),("canvasBlit",.string canvasBlitShader)]))
   return ("{\"layers\":" ++ place.toString ++ ",\"page\":" ++ pageText ++ ",\"chrome\":" ++ chromeText ++ "}",
@@ -2220,7 +2220,8 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
     let ratio := if (request.field? "graphModel").isSome then 1 else Float.ofNat (zoomUnit request) / 100
     return ((WebHit.nodeAtAnswer laid.dom scene boxes (Float.ofNat (natField request "x"))
       (Float.ofNat (natField request "y")) (Float.ofNat top) (Float.ofNat ((shell.map (·.scroll)).getD 0)) ratio).toString,#[])
-  let items := WebSelection.cells scene.glyphRuns
+  -- The glyph cells only for a selection: a frame with none does not read them.
+  let items := if op == "selectedText" || chosen.isSome then WebSelection.cells scene.glyphRuns else #[]
   if op == "selectedText" then
     return ((JSON.Json.object [("text",.string (match chosen with
       | some value => WebSelection.text items value
@@ -2246,7 +2247,7 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
   if let some value := shell then
     if request.field? "layers" == some (.bool true) then
       return withDiagnostics request laid (← layersJSON value scene marks boxes face width height live form checks tree laid.hoverRules
-        (canvasBoxes laid.dom boxes) animating)
+        (canvasBoxes laid.dom boxes) animating (!laid.paint.animations.isEmpty))
   let scrolled := Float.ofNat ((shell.map (·.scroll)).getD 0)
   let near := nearNodes (scrolled-512) (scrolled+Float.ofNat height+512) scene.tree
   let page := {scene with tree := near ++ marks}
