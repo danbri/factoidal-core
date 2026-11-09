@@ -1,6 +1,8 @@
 import L4Factoidal.Rendering.Layout
 import L4Factoidal.Rendering.SfntShape
 import L4Factoidal.Rendering.SfntOutline
+import L4Factoidal.Rendering.ColrRaster
+import L4Factoidal.Unicode.EmojiData
 
 /-! A font profile from the bytes of a font file. Lean reads the file, shapes
 each word and takes the outlines, so no font library and no host runs.
@@ -20,6 +22,9 @@ structure Font where
   family : String
   sha256 : String
   faceIndex : Nat := 0
+  /-- The colour glyphs (COLR and CPAL), when the font has them and the policy lets
+  Lean draw them (issue 1276). -/
+  colour : Option ColrRaster.Colour := none
 
 /-- One glyph, with its position in font units and its first source character. -/
 private structure Placed where
@@ -60,12 +65,33 @@ def decodeBase64 (text : String) : Option ByteArray := Id.run do
       bits := bits%2^held
   return some out
 
-/-- The font policy decides first, as it does for the native adapter. -/
+/-- A number for a font from the first six hexadecimal digits of its SHA-256. -/
+private def shaKey (sha256 : String) : Nat :=
+  (sha256.toList.take 6).foldl (fun n c =>
+    n*16 + (if c.isDigit then c.toNat-48 else if 'a' ≤ c && c ≤ 'f' then c.toNat-87 else 0)) 0
+
+/-- The font policy decides first, as it does for the native adapter. A COLR table
+that the policy allows and that passes its checks (`SfntColr.read`) gives the font
+colour glyphs; one that fails them leaves the font without colour, and its outlines
+still draw. A font with no COLR table pays nothing for this. -/
 def Font.read (bytes : ByteArray) (family sha256 : String) (faceIndex : Nat := 0) : Except String Font := do
   let dir ← FontPolicy.readDirectory bytes faceIndex
-  unless (FontPolicy.decide FontPolicy.Policy.standard ⟨family,"",sha256⟩ dir).fontUsed do
+  let decision := FontPolicy.decide FontPolicy.Policy.standard ⟨family,"",sha256⟩ dir
+  unless decision.fontUsed do
     throw "font.file.refused"
-  return ⟨bytes,dir,← SfntMetrics.Face.read bytes dir,← SfntOutline.cffFont bytes dir,family,sha256,faceIndex⟩
+  let face ← SfntMetrics.Face.read bytes dir
+  let cff ← SfntOutline.cffFont bytes dir
+  let colour := if !decision.used.contains .colour then none else
+    match SfntColr.read bytes dir face.numGlyphs with
+    | .ok (some t) => some (ColrRaster.Colour.make t ⟨bytes,dir,cff⟩ face.unitsPerEm (shaKey sha256))
+    | _ => none
+  return {bytes,dir,face,cff,family,sha256,faceIndex,colour}
+
+/-- The colour paint of glyph `g`, when it is a colour glyph of the font. -/
+def Font.colourOf (f : Font) (g : Nat) : Option FontProvider.Colour := do
+  let c ← f.colour
+  let k ← c.table.baseIndex f.bytes g
+  return {em := Float.ofNat f.face.unitsPerEm, baseline := ofInt f.face.ascender, image := c.image k}
 
 private def shaped (f : Font) (text : String) (rtl : Option Bool) :
     Except String (String × Bool × Array Placed) := do
@@ -109,13 +135,15 @@ def Font.word (f : Font) (text : String) (pixelSize : Nat) (rtl : Option Bool :=
     ({id := g.id,clusterByte := 0,clusterChar := g.cluster,clusterEndChar := finish g.cluster,
       xAdvance := Float.ofNat g.advance,yAdvance := 0,xOffset := ofInt g.xOffset,yOffset := ofInt g.yOffset} : FontData.ShapedGlyph)
   let face := f.face
-  FontProvider.prepare {
+  let word ← FontProvider.prepare {
     text,fontSha256 := f.sha256,fontPath := "",faceIndex := f.faceIndex,family := f.family,style := "",
     metrics := ⟨Float.ofNat face.unitsPerEm,ofInt face.ascender,ofInt face.descender,ofInt face.lineGap⟩,
     direction := if backward then "rtl" else "ltr",script,language := "",
     harfbuzzVersion := "none (Lean shaper)",freeTypeVersion := "none (Lean outlines)",
     pixelSize,glyphs,outlines := outlines.toList.toArray.map Prod.snd,bitmaps := #[],
     advance := glyphs.foldl (fun total g => total+g.xAdvance) 0} (notdef := true)
+  if f.colour.isNone then return word
+  return {word with glyphs := word.glyphs.map fun g => {g with colour := f.colourOf g.index}}
 
 /-! ### Fallback fonts
 
@@ -143,6 +171,84 @@ def staysWithBase (c : Nat) : Bool :=
 emoji presentation selector U+FE0F and the combining enclosing keycap U+20E3. -/
 def asksForEmoji (c : Nat) : Bool := c == 0xFE0F || c == 0x20E3
 
+/-! #### Emoji (UTS #51)
+
+An emoji and the characters that make a sequence of it (U+FE0F, a skin tone, ZWJ and
+the next emoji, a second regional indicator, tags, U+20E3) are one grapheme cluster
+(UAX #29), and the font has the sequence as one glyph only when it draws all of it.
+So a cluster with an emoji goes to one font whole: the first font that has all its
+characters (default ignorables aside), of the kind its presentation asks for. Emoji
+presentation (U+FE0F, a sequence, or an emoji whose Emoji_Presentation is Yes) takes
+a colour font first, then an outline emoji font (one that maps U+FE0F), then any; text
+presentation (U+FE0E, or Emoji_Presentation No) takes a font without colour first.
+When several fonts of that kind have all the characters, as slices of one colour font
+do for a flag, the one that shapes the cluster to the fewest glyphs wins. -/
+
+/-- The emoji properties of UTS #51 (`EmojiData` bits). -/
+def emojiProps : Unicode.RangeTable := Unicode.RangeTable.ofText Unicode.EmojiData.emojiText
+
+private def bitsOf (c : Nat) : UInt8 := emojiProps.get c.toUInt32
+private def regional (c : Nat) : Bool := 0x1F1E6 ≤ c && c ≤ 0x1F1FF
+private def tag (c : Nat) : Bool := 0xE0020 ≤ c && c ≤ 0xE007F
+
+/-- A character that can start or join an emoji: Emoji or Extended_Pictographic. -/
+def emojiish (c : Nat) : Bool :=
+  c ≥ 0x23 && (bitsOf c != 0 || Unicode.Segmentation.extPictTable.get c.toUInt32 != 0)
+
+/-- UTS #51 §4: the presentation a cluster asks for: `some true` emoji, `some false`
+text, `none` when it has no emoji. -/
+def presentationOf (cluster : Array Nat) : Option Bool :=
+  if !cluster.any fun c => (bitsOf c &&& Unicode.EmojiData.emoji) != 0 ||
+      Unicode.Segmentation.extPictTable.get c.toUInt32 != 0 then none
+  else if cluster.contains 0xFE0E then some false
+  else if cluster.any (fun c => c == 0xFE0F || c == 0x20E3 || regional c || tag c ||
+      (bitsOf c &&& Unicode.EmojiData.modifier) != 0) || (cluster.size > 1 && cluster.contains 0x200D) then some true
+  else some ((bitsOf (cluster[0]?.getD 0) &&& Unicode.EmojiData.presentation) != 0)
+
+/-- How well font `f` suits a presentation: 0 best. -/
+private def rank (f : Font) (emoji : Bool) : Nat :=
+  if emoji then (if f.colour.isSome then 0 else if f.has (Char.ofNat 0xFE0F) then 1 else 2)
+  else if f.colour.isSome then 1 else 0
+
+/-- Glyphs with width when `f` shapes `text`; many when it can not. -/
+private def drawnGlyphs (f : Font) (text : String) : Nat :=
+  match SfntShape.shape f.bytes f.dir f.face text with
+  | .ok s => (s.glyphs.filter (·.advance > 0)).size
+  | .error _ => text.length + 1
+
+/-- The font for an emoji cluster, when one has all of it. -/
+def clusterFont (fonts : Array Font) (cluster : Array Char) (emoji : Bool) : Option Nat := Id.run do
+  let need := cluster.filter fun c => !SfntFallback.isDefaultIgnorable c.toNat
+  let cands := (List.range fonts.size).filterMap fun i =>
+    fonts[i]?.bind fun f => if need.all f.has then some (i,f) else none
+  let some best := (cands.map fun (_,f) => rank f emoji).min? | return none
+  let pool := cands.filter fun (_,f) => rank f emoji == best
+  match pool with
+  | [] => return none
+  | [(i,_)] => return some i
+  | (i,f) :: rest =>
+    if need.size < 2 then return some i
+    let text := String.ofList cluster.toList
+    let first := (drawnGlyphs f text, i)
+    return (rest.foldl (fun (acc : Nat × Nat) (j,g) =>
+      let n := drawnGlyphs g text
+      if n < acc.1 then (n,j) else acc) first).2
+
+/-- The font of character `k` alone (the rules before emoji clusters): see `runsOf`. -/
+private def charFont (fonts : Array Font) (chars : Array Char) (k : Nat) (last : Option Nat) : Nat :=
+  let c := chars[k]!
+  let keep := match last with
+    | some i => staysWithBase c.toNat && (fonts[i]?.map fun (f : Font) => f.has c).getD false
+    | none => false
+  let emoji := match chars[k + 1]? with
+    | some n => if asksForEmoji n.toNat && !staysWithBase c.toNat then
+        fonts.findIdx? fun (f : Font) => f.has c && f.has n else none
+    | none => none
+  if keep then last.getD 0 else
+  match emoji with
+  | some i => i
+  | none => (fonts.findIdx? fun (f : Font) => f.has c).getD (last.getD 0)
+
 /-- A word in runs: the index of a font in `fonts`, and the characters it draws.
 Each character goes to the first font that has it. A character in `staysWithBase`
 keeps the font of the run before it when that font has it. A character followed by
@@ -150,27 +256,30 @@ U+FE0F or U+20E3 (`asksForEmoji`) goes to the first font that has both, when one
 does: the digit of a keycap and a symbol with emoji presentation (U+2665 U+FE0F)
 come from the emoji font with their selector, not from the text font, so the
 font's sequences can form. A character that no font has stays in the run before
-it (the first font at the start), and shows as that font's .notdef glyph. -/
+it (the first font at the start), and shows as that font's .notdef glyph. A word
+with emoji goes by grapheme clusters, and each emoji cluster to one font whole
+(`clusterFont`, `presentationOf`). -/
 def runsOf (fonts : Array Font) (text : String) : Array (Nat × String) := Id.run do
   let mut runs : Array (Nat × String) := #[]
   let chars := text.toList.toArray
-  for k in [0:chars.size] do
-    let c := chars[k]!
-    let last := runs.back?.map (·.1)
-    let keep := match last with
-      | some i => staysWithBase c.toNat && (fonts[i]?.map fun (f : Font) => f.has c).getD false
-      | none => false
-    let emoji := match chars[k + 1]? with
-      | some n => if asksForEmoji n.toNat && !staysWithBase c.toNat then
-          fonts.findIdx? fun (f : Font) => f.has c && f.has n else none
-      | none => none
-    let pick := if keep then last.getD 0 else
-      match emoji with
-      | some i => i
-      | none => (fonts.findIdx? fun (f : Font) => f.has c).getD (last.getD 0)
-    runs := match runs.back? with
-      | some (i,s) => if i == pick then runs.pop.push (i,s.push c) else runs.push (pick,c.toString)
-      | none => runs.push (pick,c.toString)
+  let add := fun (runs : Array (Nat × String)) (pick : Nat) (c : Char) =>
+    match runs.back? with
+    | some (i,s) => if i == pick then runs.pop.push (i,s.push c) else runs.push (pick,c.toString)
+    | none => runs.push (pick,c.toString)
+  -- Below U+2000 an emoji (a digit, #, *, ©, ®) makes a sequence only with U+FE0F or
+  -- U+20E3 after it, so text with nothing from U+2000 that is an emoji pays one comparison
+  -- a character.
+  if !chars.any (fun c => c.toNat ≥ 0x2000 && emojiish c.toNat) then
+    for k in [0:chars.size] do
+      runs := add runs (charFont fonts chars k (runs.back?.map (·.1))) chars[k]!
+    return runs
+  let breaks := Unicode.Segmentation.graphemeBreaks chars
+  for b in [1:breaks.size] do
+    let (lo,hi) := (breaks[b-1]!,breaks[b]!)
+    let cluster := chars.extract lo hi
+    let whole := (presentationOf (cluster.map Char.toNat)).bind (clusterFont fonts cluster)
+    for k in [lo:hi] do
+      runs := add runs ((whole.getD (charFont fonts chars k (runs.back?.map (·.1))))) chars[k]!
   return runs
 
 private def scalePoint (k : Float) (p : Point) : Point := ⟨k*p.x,k*p.y⟩
@@ -227,7 +336,8 @@ def wordIn (fonts : Array Font) (text : String) (pixelSize : Nat) (rtl : Option 
     let down := ascent-k*w.ascent
     for g in w.glyphs do
       let placed : FontProvider.Glyph := ⟨g.index,pen+k*g.x,k*g.y+down,k*g.advance,
-        start+g.clusterStart,start+g.clusterEnd,g.geometry.map (scaleGeometry k)⟩
+        start+g.clusterStart,start+g.clusterEnd,g.geometry.map (scaleGeometry k),
+        g.colour.map fun c => {c with em := k*c.em, baseline := k*c.baseline}⟩
       glyphs := glyphs.push placed
     pen := pen+k*w.advance
   -- FontProvider.Word in field order: text, font, face, family, style, size, units,
