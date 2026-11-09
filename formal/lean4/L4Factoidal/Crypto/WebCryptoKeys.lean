@@ -494,9 +494,11 @@ def importEc (alg : Alg) (format : String) (data : ByteArray) (j : Args) (curve 
     let some crv := j.str? "crv" | throw .data
     if crv != curve then throw .data
     haveCurve crv
+    -- §23.7 jwk step 8.1: an `alg` that names another curve's ECDSA is a DataError; any
+    -- other value names no curve and is not checked.
     if alg == .ecdsa then
       if let some a := j.str? "alg" then
-        if a != "ES256" then throw .data
+        if a == "ES384" || a == "ES512" then throw .data
     let some x := (j.str? "x").bind unb64? | throw .data
     let some y := (j.str? "y").bind unb64? | throw .data
     if x.size != 32 || y.size != 32 then throw .data
