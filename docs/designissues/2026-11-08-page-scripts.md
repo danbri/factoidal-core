@@ -303,3 +303,19 @@ index is a bijection on its used pointers; the existing `utf8_decode_encodeList`
 `utf8DecodeWithoutBOMOrFail_toUTF8` (decode of encode is the identity on scalar values).
 The UTF-8 fast path of `decodeBytes` is checked against `decodeBytesRef` by `#guard`s
 on each of its conditions.
+
+Pages are decoded by Lean (`web_document_decode_call_bin`, `WebDocument.decodeBin` over
+`WHATWG.Encoding.Sniff`): the native loader, the Hub worker and the WPT runner pass a
+page's bytes and its `Content-Type`, and `document.characterSet` is the encoding Lean
+chose (passed to the session as `encoding`). A page that is UTF-8 with no other
+declaration takes the fast path (one validation and one copy: 7.2 ms for 1 MB, against
+4.9 ms for Deno's TextDecoder); a 1 MB Shift_JIS page decodes in 66 ms. Subresources
+(scripts, stylesheets, XSLT) are read as UTF-8.
+
+Measured (native engine, 2026-11-09; QuickJS-NG in WasmVM unless named): the guest's
+module load (the prelude) 1,261 → 1,504 ms, once for each engine; a page start 5.97 → 6.03
+ms; a Timers and clicks frame 0.67 → 0.65 ms mean. TextDecoder on 1 MiB: UTF-8 795 ms
+(almost all of it QuickJS making its string inside WasmVM; BubblePopJS takes the Lean
+string at no cost), Shift_JIS 1,218 ms (BubblePopJS 115 ms). SHA-256 in pure Lean is
+about 13 MB/s here (digest of 1 MiB: 76 ms), so PBKDF2 at 100,000 iterations takes
+about 9 s (1,000 iterations: 93 ms), as a task.
