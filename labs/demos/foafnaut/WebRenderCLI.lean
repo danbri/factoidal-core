@@ -2,6 +2,7 @@ import WebRenderRDF
 import WebRenderFont
 import WebDocument
 import SVGForgiving
+import L4Factoidal.PageCanvas.Png
 
 open L4Factoidal
 private def byte (v : Float) : String := toString ((max 0 (min 255 (v*255))).round.toUInt32.toNat)
@@ -84,6 +85,39 @@ def main (args : List String) : IO UInt32 := do
       | ["--svg","--svg-resources",root] => (none,some root,true)
       | ["--svg","--svg-font",font,"--svg-resources",root] => (some font,some root,true)
       | _ => (none,none,false)
+    -- `FONT PX COUNT --colour-glyph TEXT OUT`: the colour glyphs of TEXT in FONT drawn by
+    -- Lean (`ColrRaster`) at PX pixels to the em, each as a PNG file OUT-<n>.png, with
+    -- their boxes and draw times; then COUNT more words of TEXT drawn and timed (each
+    -- glyph drawn anew: the font is read again, so nothing is kept). For the pixel check
+    -- against an independent COLR renderer (emoji_pixels_test.ts) and the cost of emoji.
+    if let ["--colour-glyph",text,out] := flags then
+      let some px := width.toNat? | throw (IO.userError "invalid size")
+      let some count := height.toNat? | throw (IO.userError "invalid count")
+      let bytes ← IO.FS.readBinFile path
+      let read := fun (_ : Unit) => Rendering.SfntProfile.Font.read bytes "colour" "cli"
+      let .ok f := read () | throw (IO.userError "font refused")
+      let .ok word := f.word text px | throw (IO.userError "text refused")
+      let mut rows : Array String := #[]
+      for (g,i) in word.glyphs.zipIdx do
+        let some c := g.colour | continue
+        let start ← IO.monoNanosNow
+        let some image := c.image px ⟨0,0,0⟩ | continue
+        let us := ((← IO.monoNanosNow)-start)/1000
+        let b := image.bitmap
+        IO.FS.writeBinFile s!"{out}-{i}.png" (PageCanvas.Png.encode b.width b.height b.rgba)
+        rows := rows.push s!"\{\"glyph\":{g.index},\"width\":{b.width},\"height\":{b.height},\"left\":{image.left},\"top\":{image.top},\"us\":{us}}"
+      -- Draw every colour glyph of the text COUNT times with a fresh font (no kept rasters).
+      let start ← IO.monoNanosNow
+      let mut drawn := 0
+      for _ in [0:count] do
+        let .ok f := read () | throw (IO.userError "font refused")
+        let .ok word := f.word text px | throw (IO.userError "text refused")
+        for g in word.glyphs do
+          if let some c := g.colour then
+            if (c.image px ⟨0,0,0⟩).isSome then drawn := drawn+1
+      let total := ((← IO.monoNanosNow)-start)/1000
+      IO.println ("{\"glyphs\":[" ++ ",".intercalate rows.toList ++ "],\"drawn\":" ++ toString drawn ++ ",\"us\":" ++ toString total ++ "}")
+      return 0
     if svgRun then
       let some w := width.toNat? | throw (IO.userError "invalid width")
       let some h := height.toNat? | throw (IO.userError "invalid height")
