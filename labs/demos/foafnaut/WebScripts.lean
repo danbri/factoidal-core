@@ -647,7 +647,7 @@ def startLean (held : Held) (html : String) (request : JSON.Json) (measure : JSO
         let s := LeanJS.start base dom url scripts lim reads { instructionsPerMs := rate }
         let s := missing.foldl LeanJS.Session.fail s
         -- workers the page's scripts made: their scripts are asked for
-        LeanJSWorkers.pump { page := s, base := some base }
+        LeanJSWorkers.pump { page := s, base := some base, entropy := fun w => entropy (id * 65536 + w) }
       leanTurn { held with leanBase := some base, session := none, leanSession := none, nextSession := id + 1, leanWorkers := {} }
         id {} a {} true (ns0 + ns)
 
@@ -659,7 +659,9 @@ def actLean (held : Held) (action : String) (request : JSON.Json) (id : Nat) (s 
   -- workers' after each checkpoint
   let e := LeanJSWorkers.engine
   let before := Before.ofLean s
-  let a : LeanJSWorkers.Agents := { page := s, w := held.leanWorkers, base := held.leanBase }
+  -- each worker's entropy is fresh from the operating system, as each page's is
+  let a : LeanJSWorkers.Agents := { page := s, w := held.leanWorkers, base := held.leanBase,
+                                    entropy := fun w => entropy (id * 65536 + w) }
   let run := fun (f : LeanJSWorkers.Agents → LeanJSWorkers.Agents) =>
     let (a', ns) := WebWasm.timed fun _ => f a
     leanTurn held id before a' marks full ns

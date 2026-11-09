@@ -96,7 +96,12 @@ structure Agents where
   page : Session
   w : Workers := {}
   base : Option Session := none
-  deriving Inhabited
+  /-- Fresh entropy for worker `n` from the embedder's own generator (the operating
+  system's), as a page's: each worker's DRBG has its own seed, not one derived from the
+  page's. Empty (no generator): the worker has no `crypto.getRandomValues`. -/
+  entropy : Nat → ByteArray := fun _ => ByteArray.empty
+
+instance : Inhabited Agents := ⟨{ page := default }⟩
 
 /-- A worker session's engine: the page engine's steps, with the event task's callback
 kept (it is not a timer's). -/
@@ -168,12 +173,10 @@ def importHints (src base : String) : Array String := Id.run do
   return out
 
 /-- The host of a new worker: an empty arena, the page's clock and clock rate, and its own
-entropy (the page's, with the worker's number: a distinct DRBG seed input, so a worker's
-random values and keys are not the page's). -/
-def workerHost (page : Session) (id : Nat) : Page.Host :=
+fresh entropy (`Agents.entropy`), so a worker's random values and keys owe nothing to the
+page's seed. -/
+def workerHost (page : Session) (entropy : ByteArray) : Page.Host :=
   let ph := page.host
-  let ent := page.limits.entropy
-  let entropy := if ent.isEmpty then ent else ent ++ s!"/worker/{id}".toUTF8
   { dom := { dom := Page.emptyDocument, commandLimit := 0, logLimit := maxLogs },
     loop := { clock := ph.loop.clock },
     time := { instructionsPerMs := ph.time.instructionsPerMs },
@@ -182,11 +185,11 @@ def workerHost (page : Session) (id : Nat) : Page.Host :=
 /-- Start a worker whose script has come: a copy of the base realm, made a worker's global
 scope, its script run, its microtask checkpoint, then the messages that waited. When the
 start needs a script not yet fetched, nothing is kept and the worker still waits. -/
-def start (base page : Session) (w : Worker) (src : String) (scripts : Array (String × Option String)) :
-    Worker × Option String :=
+def start (base page : Session) (w : Worker) (src : String) (scripts : Array (String × Option String))
+    (entropy : ByteArray) : Worker × Option String :=
   let limits := { page.limits with entropy := ByteArray.empty, commands := 0, logs := maxLogs }
   let s : Session := { base with limits, steps := 0, jobs := 0, tasks := 0, errors := #[], lastFrame := none }
-  let s := (s.setHost (workerHost page w.id)).setBudget workerBudget
+  let s := (s.setHost (workerHost page entropy)).setBudget workerBudget
   let s := s.setWk { scripts }
   let s := (s.api? "worker" #[.str (JS.Str.ofHost w.url), .str (JS.Str.ofHost w.name)]).1
   let s := s.eval src
@@ -338,7 +341,7 @@ def runWorkers (a : Agents) : Agents := Id.run do
         if !hints.isEmpty then
           w := hints.foldl Workers.request w
         else
-          let (x', need) := start base page x src w.scripts
+          let (x', need) := start base page x src w.scripts (a.entropy x.id)
           x := x'
           if let some u := need then w := w.request u
       | some none =>

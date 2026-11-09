@@ -38,9 +38,9 @@ the page realm with the prelude (`WebScripts.Held.leanBase`, decoded once from t
 build-time snapshot; a copy of a Lean value is shared until written), whose global object
 the prelude's section workers turns into a `DedicatedWorkerGlobalScope`; a host with an
 empty arena (no DOM), its own `EventLoop.State`, script clock, Web API state with its own
-entropy (the page's 32 random bytes with `/worker/N` appended: a distinct seed input of
-HMAC_DRBG, so `crypto.getRandomValues` and generated keys are not the page's), and its own
-step budget. Starting a worker therefore costs no prelude run: the realm is already made.
+entropy (fresh from the operating system's generator for each worker, as each page's is:
+nothing of the page's seed reaches a worker, so `crypto.getRandomValues` and generated keys
+of one agent tell nothing of another's), and its own step budget. Starting a worker therefore costs no prelude run: the realm is already made.
 
 The prelude is shared, not duplicated: the worker realm runs the same prelude.js (the same
 snapshot), then `api.worker(url, name)` makes it a worker scope. All event code, timers,
