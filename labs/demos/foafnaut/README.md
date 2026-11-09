@@ -179,6 +179,9 @@ access restricted to `/usr/bin/open`, with no network/environment/FFI grant.
 
 ## Build engines on Linux or macOS
 
+The Wasm engine relies on Lean on a 32-bit target, which Lean does not support: see
+[upstream items and our workarounds](../../../docs/designissues/2026-11-09-lean-upstream-wasm32.md).
+
 Prerequisites: the repository's Lean 4.33.1 toolchain, Emscripten 6.0.8, Deno
 2.9.4, Bash, Git, and a C/C++ compiler. Cold runtime preparation also needs the
 libuv development headers used by the existing WASM build. Version pins are in

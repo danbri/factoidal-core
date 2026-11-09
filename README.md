@@ -230,6 +230,9 @@ Record substantial storage work in a dated `docs/YYYYMMDD-*.md` worknote.
 
 ## Lean 4 Check
 
+Our Wasm builds rely on Lean behaviour on 32-bit targets, which Lean does not support. Known issues, upstream fixes and
+our workarounds: [docs/designissues/2026-11-09-lean-upstream-wasm32.md](docs/designissues/2026-11-09-lean-upstream-wasm32.md).
+
 With the pinned Lean toolchain installed:
 
 ```bash

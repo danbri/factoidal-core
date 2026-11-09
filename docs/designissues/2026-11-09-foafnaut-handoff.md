@@ -84,6 +84,8 @@ fail, tokenizer 6 fail, numbers in the status note) after its usage limit resets
 
 ## Known gaps in the test path
 
+- Lean on 32-bit Wasm is unsupported upstream; known faults, fixes and our workarounds are in
+  [2026-11-09-lean-upstream-wasm32.md](2026-11-09-lean-upstream-wasm32.md).
 - CI does not run `sweeps.sh`, the input queue test, QuickJS script tests or the page GPU window
   check. `test.sh` runs before the window library exists and with no guest. Evidence:
   https://github.com/danbri/factoidal-builds/actions/runs/42620085179 (log of the foafnaut job).

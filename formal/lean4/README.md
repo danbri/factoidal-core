@@ -68,6 +68,9 @@ decisions, and the assumption report against the originals.
 
 ## Building
 
+Wasm builds compile Lean's C for 32-bit targets, which Lean does not support: see
+[upstream items and our workarounds](../../docs/designissues/2026-11-09-lean-upstream-wasm32.md).
+
 ```
 elan default stable          # or let lean-toolchain pin it
 cd formal/lean4
