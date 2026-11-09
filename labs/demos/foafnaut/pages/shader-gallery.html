@@ -18,7 +18,7 @@ p { margin:0; padding-top:6px }
 .bar a.size.on { color:#f4f6f9; text-decoration:none }
 .stage { margin-top:10px; background:#000000; border:1px solid #2a2d36 }
 canvas { display:block; margin:0 auto; touch-action:none }
-.readout { display:block; width:818px; height:42px; background:#0d0f13; border-top:1px solid #2a2d36 }
+.readout { display:block; height:42px; margin:0 auto; background:#0d0f13 }
 .blurb { color:#a9b0ba }
 pre { margin:8px 0 0 0; padding:8px 10px; background:#0d0f13; border-left:3px solid #7fd1ff; color:#c9d1db; font-family:ui-monospace, Menlo, monospace; font-size:12px; line-height:17px; white-space:pre-wrap }
 pre.head { color:#6f7785; border-left:3px solid #454a56 }
@@ -40,7 +40,7 @@ no recursion, a cost bound, every index clamped) and prints the WGSL the GPU get
 <div class="bar"><span class="k">API</span><button id="api-webgpu">WebGPU · WGSL</button><button id="api-webgl2">WebGL 2 · GLSL ES 3.00</button>
 <span class="k">size</span><span id="sizes"></span><button id="pause">Pause</button></div>
 <div class="stage" id="stage"><canvas id="c-webgpu" width="800" height="600"></canvas><canvas id="c-webgl2" width="800" height="600"></canvas>
-<canvas id="readout" class="readout" width="818" height="42" aria-label="Frame rate, script time and Lean's time a turn">This page needs scripts and WebGPU or WebGL 2.</canvas></div>
+<canvas id="readout" class="readout" width="800" height="42" aria-label="Frame rate, script time and Lean's time a turn">This page needs scripts and WebGPU or WebGL 2.</canvas></div>
 <h2 id="title">Shader</h2>
 <p class="blurb" id="blurb"></p>
 <pre class="head" id="head"></pre>
@@ -51,7 +51,9 @@ no recursion, a cost bound, every index clamped) and prints the WGSL the GPU get
 <p class="about">The five shaders are written for this page (MIT, like the rest of the repository); none is copied from Shadertoy.
 In Foafnaut every WebGPU and WebGL call is a command that Lean checks (<code>L4Factoidal.PageGpu</code>; record
 <code>docs/designissues/2026-11-08-page-gpu.md</code>); a frame is one uniform write and one render pass. The readout counts frames
-on the page's own clock; script time is the time the page's frame callback takes on that clock.</p>
+on the page's own clock; <i>script</i> is the time the page's frame callback takes on that clock (in Foafnaut a clock of
+script steps); <i>Lean</i> is Foafnaut's wall time for the page's last turn: the script, and Lean's check of the frame's
+commands (<code>navigator.foafnaut</code>, Foafnaut's own).</p>
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
@@ -679,13 +681,14 @@ function tick(now) {
 // would lay the whole page out again: about 40 ms in Foafnaut, two frames lost a second.)
 const shown = {};
 const put = (id, text) => { shown[id] = text; };
-const readout = $('readout'), dpr = Math.min(2, window.devicePixelRatio || 1);
-readout.setAttribute('width', String(818 * dpr)); readout.setAttribute('height', String(42 * dpr));
+const readout = $('readout'), dpr = Math.min(2, window.devicePixelRatio || 1), readoutW = Math.max(shownW, 480);
+readout.setAttribute('width', String(readoutW * dpr)); readout.setAttribute('height', String(42 * dpr));
+readout.style.width = readoutW + 'px';
 const rc = readout.getContext('2d');
 function drawReadout() {
   if (!rc) return;
   rc.setTransform(dpr, 0, 0, dpr, 0, 0);
-  rc.fillStyle = '#0d0f13'; rc.fillRect(0, 0, 818, 42);
+  rc.fillStyle = '#0d0f13'; rc.fillRect(0, 0, readoutW, 42);
   rc.font = '12px ui-monospace, Menlo, monospace';
   const line = (y, parts) => {
     let x = 10;
@@ -699,13 +702,13 @@ function drawReadout() {
 }
 const ua = navigator.userAgent, browser = foafnaut ? '' : (/Chrome\/\d+/.exec(ua) || /Firefox\/\d+/.exec(ua) || /Safari\/\d+/.exec(ua) || ['this browser'])[0];
 function report(now) {
-  put('r-engine', foafnaut ? 'Foafnaut' + (scriptEngine ? ', scripts in ' + scriptEngine : '') + ', Lean checks every GPU command' : browser);
-  put('r-api', (api === 'webgpu' ? 'WebGPU, WGSL' : 'WebGL 2, GLSL ES 3.00' + (foafnaut ? ' as WGSL' : '')) + ', ' + W + '×' + H);
+  put('r-engine', foafnaut ? 'Foafnaut' + (scriptEngine ? ', ' + scriptEngine : '') : browser);
+  put('r-api', (api === 'webgpu' ? 'WebGPU · WGSL' : 'WebGL 2 · GLSL ES 3.00' + (foafnaut ? ' as WGSL' : '')) + ' · ' + W + '×' + H);
   const mean = intervalCount ? intervalSum / intervalCount : 0;
-  put('r-fps', paused ? 'paused' : mean ? (1000 / mean).toFixed(1) + ' (frame ' + mean.toFixed(1) + ' ms)' : '-');
+  put('r-fps', paused ? 'paused' : mean ? (1000 / mean).toFixed(1) + ' (' + mean.toFixed(1) + ' ms)' : '-');
   intervalCount = 0; intervalSum = 0;
-  if (shownFrames) put('r-script', (scriptMs / shownFrames).toFixed(2) + ' ms a frame' + (foafnaut ? ' on the page clock' : ''));
-  put('r-lean', !foafnaut ? 'not in this browser' : leanSamples ? (leanMs / leanSamples).toFixed(2) + ' ms a turn (script and checks), ' + (api === 'webgpu' ? 'a write and a pass' : 'one draw') + ' checked' : '-');
+  if (shownFrames) put('r-script', (scriptMs / shownFrames).toFixed(2) + ' ms a frame');
+  put('r-lean', !foafnaut ? 'not here' : leanSamples ? (leanMs / leanSamples).toFixed(2) + ' ms a turn' : '-');
   leanMs = 0; leanSamples = 0;
   drawReadout();
   if (now !== undefined) lastReport = now;
@@ -716,7 +719,7 @@ for (const s of SHADERS) {
   const b = document.createElement('button');
   b.textContent = s.title; b.dataset.id = s.id;
   b.addEventListener('click', () => choose(s, api));
-  $('shaders').appendChild(b);
+  $('shaders').appendChild(b); $('shaders').appendChild(document.createTextNode(' '));
 }
 $('api-webgpu').addEventListener('click', () => choose(current, 'webgpu'));
 $('api-webgl2').addEventListener('click', () => choose(current, 'webgl2'));
@@ -724,7 +727,7 @@ $('api-webgl2').addEventListener('click', () => choose(current, 'webgl2'));
 const sizeLinks = SIZES.map(([w, h]) => {
   const a = document.createElement('a');
   a.textContent = w + '×' + h; a.className = w === W && h === H ? 'size on' : 'size';
-  $('sizes').appendChild(a);
+  $('sizes').appendChild(a); $('sizes').appendChild(document.createTextNode(' '));
   return [a, w, h];
 });
 const linkSizes = () => { for (const [a, w, h] of sizeLinks) a.setAttribute('href', '?shader=' + current.id + '&api=' + api + '&size=' + w + 'x' + h); };

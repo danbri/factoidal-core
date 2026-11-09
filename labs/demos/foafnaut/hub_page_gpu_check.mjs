@@ -15,6 +15,12 @@ const pagesDir=fileURLToPath(new URL('./pages/',import.meta.url));
 const runtimeDir=opt('--runtime',fileURLToPath(new URL('./.build/web-render/engines/',import.meta.url)));
 const pageName=opt('--page','webgpu-triangle.html');
 const guest=opt('--guest',`${process.env.HOME}/working/qjs-wasm/qjs-wasmvm.wasm`),shotFile=opt('--shot','');
+// The most page canvas frames a second the page draws: the triangle pages draw about 24, the
+// shader gallery one each animation frame (--max-rate 70).
+const maxRate=Number(opt('--max-rate','40'));
+// --query 'shader=spheres&size=1600x1000': the page's own query (the page is then opened by its
+// address); --frames N: page-gpu frames to collect before the report (24).
+const pageQuery=opt('--query',''),wantFrames=Number(opt('--frames','24'));
 const LIVE='https://danbri.github.io';
 const CHROME=process.env.CHROME??'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 if(!fs.existsSync(CHROME)){console.log('NOT RUN: hub_page_gpu_check.mjs needs Chrome (set CHROME)');process.exit(0);}
@@ -71,13 +77,13 @@ try{
   await s('Emulation.setDeviceMetricsOverride',{width:800,height:900,deviceScaleFactor:1,mobile:false});
   await s('Page.addScriptToEvaluateOnNewDocument',{source:`(()=>{let f;window.__frames=[];
     Object.defineProperty(window,'foafnautFrame',{configurable:true,get(){return f;},set(v){f=v;window.__frames.push({t:performance.now(),...v});}});})();`});
-  await s('Page.navigate',{url:base+`?page=${pageName}&stats=1&strict=1`});
+  await s('Page.navigate',{url:pageQuery?base+`?stats=1&strict=1#${base}pages/${pageName}?${pageQuery}`:base+`?page=${pageName}&stats=1&strict=1`});
   const evaluate=async expression=>{const r=await s('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw Error(r.exceptionDetails.text);return r.result.value;};
   const t0=Date.now();let gpuFrames=[];
   while(Date.now()-t0<60000){
     await sleep(500);
     gpuFrames=await evaluate(`window.__frames.filter(f=>f.path?.startsWith('page-gpu')).map(f=>({t:f.t,pageGpu:f.pageGpu,leanRenders:f.leanRenders,scripts:f.scripts,drawMs:f.drawMs}))`).catch(()=>[]);
-    if(gpuFrames.length>=24)break;
+    if(gpuFrames.length>=wantFrames)break;
   }
   if(gpuFrames.length<10){
     fail(`only ${gpuFrames.length} page-gpu frames`);
@@ -92,7 +98,7 @@ try{
     if(sc)console.log(`script turns: ${sc.turns}, ${(sc.ms/Math.max(1,sc.turns)).toFixed(1)} ms a turn on average (last ${sc.lastMs} ms, path ${sc.path}); page-gpu draw median ${draws[draws.length>>1]} ms`);
     // The rate is reported, not checked: headless Chrome draws with a software GPU, and the
     // page's callbacks run in WasmVM in the engine (record, section 9, for measurements).
-    if(rate>40)fail(`frame rate ${rate.toFixed(1)}: more page canvas frames than the page draws`);
+    if(rate>maxRate)fail(`frame rate ${rate.toFixed(1)}: more page canvas frames than the page draws`);
     if(gpuFrames.some(f=>f.leanRenders))fail('a page-gpu frame asked Lean for a render');
     const st=gpuFrames.at(-1).pageGpu;
     // A Canvas 2D page (canvas-chart.html) gives Lean's pixels in place of passes.
