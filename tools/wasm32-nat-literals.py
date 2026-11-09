@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
 """Make Lean's big Nat and Int literals persistent in C that is compiled for wasm32.
 
-Why (docs/designissues/2026-11-08-lean-js-engine.md, section 17): Lean 4.33's compiler
-treats a Nat literal that is a scalar on the 64-bit machine that compiles it (below 2^63)
-as needing no reference counting. It emits the literal as `lean_unsigned_to_nat(Nu)` or
-`lean_cstr_to_nat("N")` and then passes that one value to as many owners as the program
-has, with no `lean_inc`. On wasm32 a Nat of 2^31 or more is a heap object (an mpz), so
-the first owner that is done with it frees it and the others keep a dangling pointer.
-Measured in the Foafnaut Wasm build (2026-11-09): `JS.callMethod` gave one literal
-2^40 (the evaluator's fuel) to `getV` and to `callV`, and `WebScripts.startLean` put the
-literal 4,000,000,000 (`Page.Limits.fuel`) into a closure and into the `Limits` record;
-the frees that followed broke the allocator ("memory access out of bounds" in
-`mi_malloc_small`, dlmalloc aborts). The same holds for an `Int`
-made from such a literal (`lean_nat_to_int`): small on 64-bit up to 2^31 - 1, a heap
-object on wasm32 above 2^30 - 1.
+Why (docs/designissues/2026-11-09-wasm32-nat-literals.md): Lean 4.33 generates C on a 64-bit
+machine, and we compile that C for wasm32. In that C a Nat literal that is a scalar on the
+64-bit machine (the IR types it `tagged`) has no reference counting: it is emitted as
+`lean_unsigned_to_nat(Nu)` or `lean_cstr_to_nat("N")` and passed to as many owners as the
+program has, with no `lean_inc`. On wasm32 a Nat of 2^31 or more is a heap object (an mpz), so
+the first owner that is done with it frees it and the others keep a dangling pointer. Whether
+Lean supports this route (C made on 64-bit, compiled for 32-bit) is not known here.
+tests/wasm32-literals/ reproduces it in a few lines. In the Foafnaut Wasm build
+(2026-11-09) `JS.callMethod` gave one literal 2^40 (the evaluator's fuel) to `getV` and to
+`callV`, and `WebScripts.startLean` put the literal 4,000,000,000 (`Page.Limits.fuel`) into a
+closure and into the `Limits` record; the frees that followed broke the allocator ("memory
+access out of bounds" in `mi_malloc_small`, dlmalloc aborts). The same holds for an `Int`
+made from such a literal (`lean_nat_to_int`): small on 64-bit up to 2^31 - 1, a heap object
+on wasm32 above 2^30 - 1.
 
-The fix is the representation the compiler already assumes: each such literal becomes
+The fix is the representation the generated C already assumes: each such literal becomes
 one persistent object per call site (reference count 0, so every `lean_inc` and
 `lean_dec` leaves it alone and nothing frees it), made on first use. On a 64-bit target
 the literal is a scalar and the macro returns it unchanged.

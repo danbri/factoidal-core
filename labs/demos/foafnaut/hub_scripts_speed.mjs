@@ -107,20 +107,22 @@ try{
     // realm with the page objects is made in this turn).
     let page=await open('speed-start.html');
     let st0=await until(page,s=>s.turns>=1&&s.startMs!==undefined,240000);
-    results[m].start={path:st0?.path,startMs:st0?.startMs};
+    // The time from navigation to the first frame the Hub shows: boot, the first script turn, a draw.
+    const firstFrameMs=await page.evaluate('Math.round(window.__frames[0]?.t??0)');
+    results[m].start={engine:st0?.engine,path:st0?.path,startMs:st0?.startMs,firstFrameMs};
     console.error(m,'start',JSON.stringify(results[m].start));
     await page.close();
     // fib(24): the start turn.
     page=await open('speed-fib.html');
     let st=await until(page,s=>s.turns>=1&&s.startMs!==undefined,240000);
     const text=await page.evaluate('window.__frames.at(-1)?.title??""');
-    results[m].fib={path:st?.path,startMs:st?.startMs,instructions:st?.instructions,hostCalls:st?.hostCalls};
+    results[m].fib={engine:st?.engine,path:st?.path,startMs:st?.startMs,instructions:st?.instructions,hostCalls:st?.hostCalls};
     console.error(m,'fib',JSON.stringify(results[m].fib));
     await page.close();
     // A WPT testharness page: the start turn.
     page=await open('speed-wpt.html');
     st=await until(page,s=>s.turns>=1&&s.startMs!==undefined,240000);
-    results[m].wpt={file:wptPage,path:st?.path,startMs:st?.startMs,instructions:st?.instructions,hostCalls:st?.hostCalls};
+    results[m].wpt={file:wptPage,engine:st?.engine,path:st?.path,startMs:st?.startMs,instructions:st?.instructions,hostCalls:st?.hostCalls};
     console.error(m,'wpt',JSON.stringify(results[m].wpt));
     await page.close();
     // An animation: advance turns of timers-and-clicks.html.
@@ -131,7 +133,7 @@ try{
     const frames=await page.evaluate(`window.__frames.slice(${t0}).filter(f=>f.scripts).map(f=>({t:f.t,ms:f.scripts.lastMs,turns:f.scripts.turns,total:f.totalMs}))`);
     const turns=frames.length?frames.at(-1).turns-frames[0].turns:0;
     const ms=frames.map(f=>f.ms);
-    results[m].animation={path:st?.path,framesShown:frames.length,turns,
+    results[m].animation={engine:st?.engine,path:st?.path,framesShown:frames.length,turns,
       meanTurnMs:ms.length?Math.round(ms.reduce((a,b)=>a+b,0)/ms.length*100)/100:null,maxTurnMs:ms.length?Math.max(...ms):null,
       meanFrameTotalMs:frames.length?Math.round(frames.reduce((a,f)=>a+(f.total??0),0)/frames.length):null,seconds};
     console.error(m,'animation',JSON.stringify(results[m].animation));
@@ -139,6 +141,8 @@ try{
     void text;
   }
   console.log(JSON.stringify(results,null,1));
+  // `path` is how the QuickJS-NG guest would run; `engine` is the script engine that ran the page.
+  for(const m of modes)for(const [k,v] of Object.entries(results[m]))if(v.engine!==(m==='bubblepop'?'bubblepop':'quickjs')){console.error(`FAIL mode ${m}: ${k} ran on ${v.engine}`);process.exitCode=1;}
   const ratio=(a,b)=>a&&b?Math.round(b/a*10)/10:null;
   if(results.aot&&results.wasmvm)console.log(`speedup: fib(24) start ${ratio(results.aot.fib.startMs,results.wasmvm.fib.startMs)}x, WPT start ${ratio(results.aot.wpt.startMs,results.wasmvm.wpt.startMs)}x, animation turn ${ratio(results.aot.animation.meanTurnMs,results.wasmvm.animation.meanTurnMs)}x`);
   if(args.includes('--console'))for(const l of consoleLines.slice(-40))console.log('console:',l);

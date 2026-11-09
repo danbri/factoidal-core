@@ -100,7 +100,6 @@ async function runs(engine:HTMLEngine){
 Deno.test({name:"Lean page input: SVG targets, pointer events, layout reads, script clock (native library)",
   ignore:(!lean&&!guest)||!exists(library),fn:async()=>{
   const native=await runs(await loadHTML(library));
-  if(lean){console.log("native only: BubblePopJS does not run in the Wasm engine yet");return;}
   const wasm=await loadHTML();
   let ops:string[]=[];
   try{ops=wasm.scriptInfo().ops;}catch{/* no scriptSession */}

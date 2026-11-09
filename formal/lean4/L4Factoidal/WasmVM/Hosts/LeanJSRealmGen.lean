@@ -8,8 +8,8 @@ as data (`LeanJS.snapshotData`) into the Lean module `OUT.lean` (`LeanJSRealmDat
 `LeanJSRealm.prepare` decodes at the first page. The file is written only when its text
 changes, so an unchanged realm rebuilds nothing.
 
-With `--empty` it writes no data: the Wasm engine, where BubblePopJS is refused, does not
-carry the 341 KB, and `prepare` there would run the prelude.
+With `--empty` it writes no data: the Foafnaut Wasm build, whose default script engine is
+QuickJS-NG, does not carry the 341 KB, and `prepare` there would run the prelude.
 
 With `PRELUDE.js`, the prelude on disk must be the one compiled into `LeanJS.prelude`
 (`include_str` is not a dependency that Lake tracks); otherwise exit code 3, and
@@ -26,7 +26,7 @@ def realmModule (data : String) : String :=
 
 def main (args : List String) : IO UInt32 := do
   let some (out : String) := args[0]? | IO.eprintln "usage: bubblepop-realm OUT.lean [PRELUDE.js | --empty]"; return 2
-  -- `--empty`: no data (the Wasm engine, where BubblePopJS is refused, does not carry it)
+  -- `--empty`: no data (the Foafnaut Wasm build does not carry it)
   if args[1]? == some "--empty" then
     let text := realmModule ""
     let old ← try IO.FS.readFile out catch _ => pure ""

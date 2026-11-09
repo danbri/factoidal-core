@@ -99,16 +99,13 @@ setTimeout(() => console.log('timer after ' + (performance.now() - t1 >= 10)), 1
   return turns.map(({ns:_,instructions:__,...t})=>t);
 }
 
-// BubblePopJS does not run in the Wasm engine yet (docs/designissues/2026-11-08-lean-js-engine.md,
-// section 12): with SCRIPT_ENGINE=bubblepop the native library runs alone.
-Deno.test({name:"Lean runs a scripted page: clicks and timers change the DOM (Wasm)",ignore:lean||!guest,fn:async()=>{
+Deno.test({name:"Lean runs a scripted page: clicks and timers change the DOM (Wasm)",ignore:!lean&&!guest,fn:async()=>{
   const engine=await loadHTML();
   try{engine.scriptInfo();}catch{console.log("NOT RUN: this Wasm engine has no scriptSession");return;}
   await runs(engine);
 }});
 Deno.test({name:"Lean runs a scripted page (native library), with the turns of the Wasm engine",ignore:(!lean&&!guest)||!exists(library),fn:async()=>{
   const native=await runs(await loadHTML(library));
-  if(lean){console.log("native only: BubblePopJS does not run in the Wasm engine yet");return;}
   const wasm=await loadHTML();
   try{wasm.scriptInfo();}catch{console.log("native only: this Wasm engine has no scriptSession");return;}
   assert.equal(JSON.stringify(native),JSON.stringify(await runs(wasm)));

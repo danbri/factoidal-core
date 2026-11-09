@@ -215,16 +215,9 @@ structure Plan where
   notice : String
   deriving Repr, BEq
 
-/-- Why an engine can not run on a host, or "". Every engine runs on every host: BubblePopJS
-runs in the Foafnaut Wasm build since its big literals are persistent there
-(docs/designissues/2026-11-08-lean-js-engine.md, section 17); the Hub's default stays
-QuickJS-NG (`defaultEngine`). A host's own reason (no guest module) comes as `unavailable`. -/
-def hostRefusal (_setting _host : String) : String := ""
-
 def plan (setting : String) (scripts : Nat) (host : String := "native") (unavailable failure : String := "") : Plan :=
   let setting := (setting? setting).getD (defaultEngine host)
   let name := engineName setting
-  let unavailable := if unavailable.isEmpty then hostRefusal setting host else unavailable
   if scripts == 0 then ⟨setting,false,"",""⟩
   else if setting == "none" then ⟨setting,false,"JS OFF",""⟩
   else if !failure.isEmpty then
@@ -244,8 +237,7 @@ def choicesHTML (setting : String) (host : String := "native") : String :=
   let current := (setting? setting).getD (defaultEngine host)
   let row := fun (e : String × String) =>
     let box := if e.1 == current then "<span class=\"box\"><span class=\"tick\"></span></span>" else "<span class=\"box\"></span>"
-    let note := if e.1 == defaultEngine host then " (default here)"
-      else if !(hostRefusal e.1 host).isEmpty then " (not here yet)" else ""
+    let note := if e.1 == defaultEngine host then " (default here)" else ""
     s!"<p class=\"check\"><a href=\"foafnaut:scripts/{e.1}\">{box} {e.2}{note}</a></p>"
   String.join (engines.map row)
 

@@ -14,9 +14,10 @@ reproduced: with today's tree 64 MB gives the same out of bounds, so it is likel
 shown, to be this fault too. The cause is a use after free that only a 32-bit target sees.
 The sharing that frees a literal twice was found only on BubblePopJS paths (section 2):
 
-- the Lean 4.33 compiler emits a `Nat` literal with no reference counting when it is a
-  scalar on the 64-bit machine that compiles it (seen in the emitted C for 4,000,000,000 and
-  2^40; that the bound is 2^63 is inferred, not tested);
+- Lean 4.33.1 generates C on a 64-bit machine, and the Foafnaut Wasm build compiles that C for
+  wasm32. In that C a `Nat` literal that is a scalar on the 64-bit machine has no reference
+  counting (the IR types it `tagged`; seen for 4,000,000,000 and 2^40, and the bound of 2^63
+  is inferred, not tested);
 - on wasm32 a `Nat` of 2^31 or more is a heap object (an mpz), but the emitted C still
   passes one such value to several owners with no `lean_inc`;
 - the first owner that is done with it frees it, and the others keep a dangling pointer. The
@@ -76,8 +77,8 @@ needed:
   `lean_cstr_to_nat("N")` with N of 2^31 or more, and each `lean_nat_to_int` of a literal
   above 2^30 - 1, into `L4_PERSISTENT_LITERAL(...)`. That makes one object per call site
   on first use and marks it persistent (reference count 0), so every increment and
-  decrement leaves it alone. This is the representation the compiler already assumes: it
-  emits no reference counting for these literals. On a 64-bit target the macro returns
+  decrement leaves it alone. This is what the generated C already assumes: it has no
+  reference counting for these literals. On a 64-bit target the macro returns
   the scalar unchanged. `--self-test` checks the rewrite, `--count` lists the sites, and
   `--check` fails on any site left.
 - `build-web-render.sh --wasm` compiles our modules through the rewrite. It also compiles
@@ -106,7 +107,18 @@ owners of `Hosts/Page.lean`.
   measured.
 - The Hub's default stays QuickJS-NG until BubblePopJS has been measured there.
 
-## 6. Owner decisions
+## 6. A minimal reproduction, and what is not known
 
-- This is a defect of the compiler's output for 32-bit targets. Whether to tell anyone
-  outside this project is the owner's decision. Nothing has been filed.
+`tests/wasm32-literals/` (`Repro.lean`, `Control.lean`, `run.sh`): one literal 4,000,000,000
+given to two owners, then one owner dropped. Natively it prints `kept [0, 4000000000]`. On
+wasm32 it prints a wrong value (`kept [0, 8519952]` in one run, the literal's memory reused).
+The control makes the same value at run time and is right on both.
+
+Whether this counts as a defect in Lean is not settled. The IR types the literal `tagged`, the
+C is generated on 64-bit, and whether Lean supports compiling that C for a 32-bit target is
+not known here. Our one runtime patch (`string_to_list_core`, `build-wasm.sh` step 1b) is not
+on this path.
+
+## 7. Owner decisions
+
+- Whether to tell anyone outside this project is the owner's decision. Nothing has been filed.

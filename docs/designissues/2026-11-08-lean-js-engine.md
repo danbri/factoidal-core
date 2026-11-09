@@ -526,13 +526,16 @@ QuickJS's 4 G instructions take 40 s. The heap has no collector yet (section 8).
 (`WebRenderScript.defaultEngine "native"`): it passes the scripted-page tests, gives the
 demo pages the same commands as QuickJS, and is faster there. The Hub keeps QuickJS-NG:
 it runs there translated to the browser's WebAssembly (36 to 216 times faster than
-interpreted, `2026-11-08-wasmvm-aot.md`), and BubblePopJS does not run in the Wasm engine
-yet. The first diagnosis here was wrong: the prelude's run did not overflow the 4 MB stack,
-and the crash at 4 MB, 1 MB and 64 MB was a use after free of big literals in the emitted C
+interpreted, `2026-11-08-wasmvm-aot.md`). Until 2026-11-09 our own code also blocked
+BubblePopJS there (`WebRenderScript.hostRefusal`, marker `JS REFUSED`, the settings row "not
+here yet"), because it crashed in the Foafnaut Wasm build; that block is removed. The first
+diagnosis here was wrong: the prelude's run did not overflow the 4 MB stack,
+and the crash at 4 MB, 1 MB and 64 MB was a use after free of big literals in the generated C
 (section 17 and `2026-11-09-wasm32-nat-literals.md`). The "remainder by zero" of the earlier
 64 MB build was not seen again: today's tree at 64 MB stops with "memory access out of bounds",
-so that the two are one fault is likely but not shown. Since that fix BubblePopJS runs in the Foafnaut Wasm build
-when it is chosen, and the Hub's default stays QuickJS-NG.
+so that the two are one fault is likely but not shown. Since that fix BubblePopJS runs in
+the Foafnaut Wasm build when it is chosen, and the Hub's default stays QuickJS-NG until it has
+been measured there.
 
 **The setting.** Settings has three large choices under "Page scripts" (BubblePopJS,
 QuickJS-NG, None; `foafnaut:scripts/...`); Lean makes the rows with the current one ticked

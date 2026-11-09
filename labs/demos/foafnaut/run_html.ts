@@ -228,7 +228,7 @@ async function main() {
     return {engine:"quickjs",name:"QuickJS-NG",run:!unavailable,marker:"",notice:unavailable};
   };
   // The host Lean's plan is for: "native" when the native library runs the scripts (in the
-  // worker), else "wasm" (the engine's WebAssembly build, which BubblePopJS does not run in yet).
+  // worker), else "wasm" (the engine's WebAssembly build).
   const scriptHostKind=()=>worker&&nativeEngine?"native":"wasm";
   const keepPlans=async()=>{for(const setting of ["","bubblepop","quickjs","none"])plans.set(setting,await askPlan(setting));};
   const planFor=(setting:string)=>plans.get(setting)??plans.get("");

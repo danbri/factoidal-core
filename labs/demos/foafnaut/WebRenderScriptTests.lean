@@ -61,5 +61,4 @@ private def made := dom.size
 -- BubblePopJS runs on the Hub and in the Foafnaut Wasm build when chosen; QuickJS-NG stays their default.
 #guard (WebRenderScript.plan "bubblepop" 1 "hub").marker == "JS BUBBLEPOP" && (WebRenderScript.plan "bubblepop" 1 "hub").run
 #guard (WebRenderScript.plan "bubblepop" 1 "wasm").run && (WebRenderScript.plan "" 1 "wasm").engine == "quickjs"
-#guard ((WebRenderScript.choicesHTML "" "hub").splitOn "not here yet").length == 1
 #guard ((WebRenderScript.choicesHTML "" "hub").splitOn "(default here)").length == 2
