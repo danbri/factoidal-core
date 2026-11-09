@@ -220,7 +220,7 @@ def colourImages (s : Shaped) (x0 y0 sx : Float) : Array (Bitmap × Float × Flo
     let f := em / nf px
     let toF := fun (v : Int) => if v < 0 then -(nf v.natAbs) else nf v.natAbs
     let b := img.bitmap
-    out := out.push (Bitmap.ofStraight b.width b.height b.rgba,
+    out := out.push (Bitmap.ofStraight b.width b.height b.pixels,
       x0 + (g.x * k + f * toF img.left) * sx, y0 + (g.y + c.baseline) * k + f * toF img.top,
       f * nf b.width * sx, f * nf b.height)
   return out

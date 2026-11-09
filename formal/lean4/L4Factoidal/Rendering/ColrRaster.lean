@@ -183,18 +183,25 @@ def clipLayer (W : Nat) (cov : Coverage) (src dst : ByteArray) : ByteArray := Id
       out := putPx out k (compose .sourceOver ((pxAt src k).scale c) (pxAt out k))
   return out
 
-/-- Draw a program at `px` pixels to the em (`upem` font units), with `fg` for the text
-colour. `none` when the glyph is empty or its box is larger than `maxSide`. -/
-def draw (o : Outlines) (upem : Nat) (p : Program) (px : Nat) (fg : RGBA) : Option Raster := Id.run do
-  if upem == 0 || px == 0 then return none
-  let some (x0,y0,x1,y1) := boxOf o p | return none
+/-- The box of a program at `px` pixels to the em, in whole pixels: width, height, and
+its top-left corner from the glyph origin on the baseline (y down). `none` when it is
+empty or larger than `maxSide`. `draw` draws in this box; it is known without drawing. -/
+def placement (o : Outlines) (upem : Nat) (p : Program) (px : Nat) : Option (Nat × Nat × Int × Int) := do
+  if upem == 0 || px == 0 then none
+  let (x0,y0,x1,y1) ← boxOf o p
   let s := nf px / nf upem
   let ox := floorI (x0*s)
   let oy := floorI (-y1*s)
   let wi := ceilI (x1*s) - ox
   let hi := ceilI (-y0*s) - oy
-  if wi ≤ 0 || hi ≤ 0 || wi > maxSide || hi > maxSide then return none
-  let (W,H) := (wi.toNat, hi.toNat)
+  if wi ≤ 0 || hi ≤ 0 || wi > maxSide || hi > maxSide then none
+  return (wi.toNat, hi.toNat, ox, oy)
+
+/-- Draw a program at `px` pixels to the em (`upem` font units), with `fg` for the text
+colour. `none` when the glyph is empty or its box is larger than `maxSide`. -/
+def draw (o : Outlines) (upem : Nat) (p : Program) (px : Nat) (fg : RGBA) : Option Raster := Id.run do
+  let some (W,H,ox,oy) := placement o upem p px | return none
+  let s := nf px / nf upem
   -- Font units (y up) to the pixels of the box (y down).
   let d : Matrix := {a := s, d := -s, e := -fl ox, f := -fl oy}
   let blank := (Bitmap.blank W H).data
@@ -280,12 +287,19 @@ def Colour.image (c : Colour) (k px : Nat) (fg : Color) : Option FontProvider.Co
   if px == 0 || px > maxPixels then none
   let program ← (← c.programs[k]?).get
   let toByte := fun (v : Float) => (max 0 (min 255 (v*255).round)).toUInt8.toNat
-  let (r,tint) ← if program.foreground then
+  -- The box now, the pixels when first read (`Bitmap.lazy`): a glyph laid out but not in
+  -- a band that is drawn is never drawn.
+  let (W,H,left,top) ← placement c.outlines c.upem program px
+  let zeros := fun (_ : Unit) => ByteArray.mk (Array.replicate (W*H*4) 0)
+  let (pixels,tint) ← if program.foreground then
       let rgb := (toByte fg.r, toByte fg.g, toByte fg.b)
-      (draw c.outlines c.upem program px ⟨nf rgb.1, nf rgb.2.1, nf rgb.2.2, 1⟩).map
-        (·, 1 + rgb.1*65536 + rgb.2.1*256 + rgb.2.2)
-    else (((← c.rasters[k]?).get)[px]!.get).map (·, 0)
+      let ink : RGBA := ⟨nf rgb.1, nf rgb.2.1, nf rgb.2.2, 1⟩
+      pure (Thunk.mk fun _ => ((draw c.outlines c.upem program px ink).map (·.rgba)).getD (zeros ()),
+        1 + rgb.1*65536 + rgb.2.1*256 + rgb.2.2)
+    else
+      let kept := (← c.rasters[k]?).get
+      pure (Thunk.mk fun _ => ((kept[px]!.get).map (·.rgba)).getD (zeros ()), 0)
   let id := idBase + ((c.key % 2^24) * 2^24 + k * (maxPixels+1) + px) + tint * 2^64
-  return ⟨⟨r.width, r.height, r.rgba⟩, r.left, r.top, id⟩
+  return ⟨{width := W, height := H, rgba := ByteArray.empty, lazy := some pixels}, left, top, id⟩
 
 end L4Factoidal.Rendering.ColrRaster

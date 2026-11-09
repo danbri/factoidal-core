@@ -102,9 +102,11 @@ def main (args : List String) : IO UInt32 := do
         let some c := g.colour | continue
         let start ← IO.monoNanosNow
         let some image := c.image px ⟨0,0,0⟩ | continue
-        let us := ((← IO.monoNanosNow)-start)/1000
+        -- The pixels are made when first read (`Bitmap.lazy`): read them inside the timing.
         let b := image.bitmap
-        IO.FS.writeBinFile s!"{out}-{i}.png" (PageCanvas.Png.encode b.width b.height b.rgba)
+        let pixels ← IO.lazyPure fun _ => b.pixels
+        let us := ((← IO.monoNanosNow)-start)/1000
+        IO.FS.writeBinFile s!"{out}-{i}.png" (PageCanvas.Png.encode b.width b.height pixels)
         rows := rows.push s!"\{\"glyph\":{g.index},\"width\":{b.width},\"height\":{b.height},\"left\":{image.left},\"top\":{image.top},\"us\":{us}}"
       -- Draw every colour glyph of the text COUNT times with a fresh font (no kept rasters).
       let start ← IO.monoNanosNow
@@ -114,7 +116,8 @@ def main (args : List String) : IO UInt32 := do
         let .ok word := f.word text px | throw (IO.userError "text refused")
         for g in word.glyphs do
           if let some c := g.colour then
-            if (c.image px ⟨0,0,0⟩).isSome then drawn := drawn+1
+            if let some image := c.image px ⟨0,0,0⟩ then
+              if image.bitmap.pixels.size > 0 then drawn := drawn+1
       let total := ((← IO.monoNanosNow)-start)/1000
       IO.println ("{\"glyphs\":[" ++ ",".intercalate rows.toList ++ "],\"drawn\":" ++ toString drawn ++ ",\"us\":" ++ toString total ++ "}")
       return 0

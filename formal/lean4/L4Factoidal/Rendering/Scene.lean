@@ -67,6 +67,15 @@ structure Bitmap where
   width : Nat
   height : Nat
   rgba : ByteArray
+  /-- Pixels made when they are first read, then kept; `rgba` is then empty. A colour
+  glyph's image (`ColrRaster`) is one: it is drawn only when a scene that holds its
+  primitive is compiled, so a glyph outside every band drawn is never drawn. -/
+  lazy : Option (Thunk ByteArray) := none
+/-- The pixels: `rgba`, or the lazy pixels, made now if they were not. -/
+@[inline] def Bitmap.pixels (b : Bitmap) : ByteArray :=
+  match b.lazy with
+  | some t => t.get
+  | none => b.rgba
 instance : Repr Bitmap where
   reprPrec b _ := .text s!"Bitmap {b.width}x{b.height}"
 /-- A raster image as paint. `map` goes from the primitive's local frame to pixel
@@ -190,7 +199,8 @@ theorem ImageRecord.words_length (g : ImageRecord) (pixels : Nat) :
 
 /-- The pixel as four words, in one word for the table. -/
 def Bitmap.word (b : Bitmap) (index : Nat) : Nat :=
-  let at_ := fun (k : Nat) => (b.rgba.get! (index*4+k)).toNat
+  let px := b.pixels
+  let at_ := fun (k : Nat) => (px.get! (index*4+k)).toNat
   at_ 0+at_ 1*256+at_ 2*65536+at_ 3*16777216
 
 /-- Index of a sample on one axis: the nearest pixel beyond the edge. -/
@@ -199,9 +209,10 @@ private def edgeIndex (v : Float) (size : Nat) : Nat :=
 /-- Premultiplied colour of one pixel, in 0..1. -/
 private def Bitmap.texel (b : Bitmap) (x y : Nat) : Float × Float × Float × Float :=
   let i := (y*b.width+x)*4
-  let a := Float.ofNat (b.rgba.get! (i+3)).toNat/255
-  (Float.ofNat (b.rgba.get! i).toNat/255*a,Float.ofNat (b.rgba.get! (i+1)).toNat/255*a,
-   Float.ofNat (b.rgba.get! (i+2)).toNat/255*a,a)
+  let px := b.pixels
+  let a := Float.ofNat (px.get! (i+3)).toNat/255
+  (Float.ofNat (px.get! i).toNat/255*a,Float.ofNat (px.get! (i+1)).toNat/255*a,
+   Float.ofNat (px.get! (i+2)).toNat/255*a,a)
 private def mixTexel (p q : Float × Float × Float × Float) (f : Float) : Float × Float × Float × Float :=
   (p.1*(1-f)+q.1*f,p.2.1*(1-f)+q.2.1*f,p.2.2.1*(1-f)+q.2.2.1*f,p.2.2.2*(1-f)+q.2.2.2*f)
 /-- Colour and opacity at a point of the primitive's local frame, as `[r,g,b,a]`:
