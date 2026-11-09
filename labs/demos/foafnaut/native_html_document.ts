@@ -210,7 +210,7 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
       // The URL and owning node are selected and resolved by Lean.
       navigationURL(descriptor.url,inspection.baseURL,document.url);
       const resource=await readSource(descriptor.url,signal);
-      if(resourceBytes+resource.bytes>MAX_RESOURCE_BYTES)throw new Error("Native HTML stylesheets exceed 4 MiB");
+      if(resourceBytes+resource.bytes>MAX_RESOURCE_BYTES)throw new Error("Native HTML stylesheets exceed 32 MiB");
       resourceBytes+=resource.bytes;
       resources.push({nodeId:descriptor.nodeId,url:resource.url,source:resource.source});
     }catch(error){
