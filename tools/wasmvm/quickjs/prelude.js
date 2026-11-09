@@ -2495,16 +2495,7 @@
   Object.defineProperty(globalThis, 'document', { get: () => scriptDocument ?? document, configurable: true, enumerable: true });
   def('location', location);
   def('navigator', Object.freeze({ userAgent: 'Foafnaut', language: 'en', languages: ['en'], platform: '', onLine: true,
-    cookieEnabled: false, hardwareConcurrency: 1, gpu,
-    // Foafnaut's own (not a web API), for a page that shows what the engine does: the script
-    // engine and the host's wall time of this page's last script turn, read when asked
-    // (node_query op 20). Undefined in an engine without the op.
-    get foafnaut() {
-      const r = n.query(0, 20, '');
-      if (typeof r !== 'string') return undefined;
-      const k = r.lastIndexOf(' ');
-      return { engine: r.slice(0, k), lastTurnMs: Number(r.slice(k + 1)) / 1e6 };
-    } }));
+    cookieEnabled: false, hardwareConcurrency: 1, gpu }));
   def('GPUBufferUsage', GPUBufferUsage); def('GPUTextureUsage', GPUTextureUsage); def('GPUShaderStage', GPUShaderStage);
   def('GPUColorWrite', GPUColorWrite); def('GPUValidationError', GPUValidationError); def('GPUOutOfMemoryError', GPUOutOfMemoryError);
   def('GPUCanvasContext', GPUCanvasContext); def('GPUDevice', GPUDevice);
