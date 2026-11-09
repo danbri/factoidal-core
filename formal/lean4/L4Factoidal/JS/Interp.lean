@@ -48,6 +48,32 @@ def tick : M Unit := do
   if h.steps == 0 then throw (.halt "step budget exhausted")
   set { h with steps := h.steps - 1 }
 
+/-- Take `k` steps at once: the work of a built-in that loops inside Lean (over a string,
+an array or a buffer) is counted, so a script stops at its budget however it spends it. -/
+def charge (k : Nat) : M Unit := do
+  if k == 0 then return
+  let h ← get
+  if h.steps < k then
+    set { h with steps := 0 }
+    throw (.halt "step budget exhausted")
+  set { h with steps := h.steps - k }
+
+/-- The longest string `repeat` and `padStart` make: 256 MiB of UTF-8. -/
+def maxStringBytes : Nat := 268435456
+
+/-- The steps a value's size is worth to a built-in that walks it: a step for every 64
+bytes of a string, 64 elements of an array, or 4096 bytes of an ArrayBuffer or typed
+array (copied or compared at memory speed). -/
+def sizeCost (v : Value) : M Nat := do
+  match v with
+  | .str s => pure (s.utf8ByteSize / 64)
+  | .obj id => match (← getObj id).kind with
+    | .array es => pure (es.size / 64)
+    | .buffer b => pure (b.size / 4096)
+    | .typed _ _ _ len => pure (len / 4096)
+    | _ => pure 0
+  | _ => pure 0
+
 /-- Set or add an own data property with all attributes true (CreateDataProperty). -/
 def Obj.putOwn (o : Obj) (key : String) (p : PropV) : Obj :=
   match o.kind, arrayIndex? key, p with
@@ -2797,6 +2823,10 @@ termination_by structural n _ _ _ => n
 def callNative : Nat → Native → Value → Array Value → Option Value → M Value
   | 0, _, _, _, _ => throw (.halt "fuel")
   | n + 1, id, thisV, args, newTarget => do
+    -- A built-in's loops are over its receiver and arguments: one step per call is not
+    -- enough (`charCodeAt` on a 100 000-character string walks it), so the call takes
+    -- steps for their size (`sizeCost`).
+    charge ((← sizeCost thisV) + args.size / 64 + (← args.foldlM (fun acc a => do pure (acc + (← sizeCost a))) 0))
     let a0 := argD args 0
     let a1 := argD args 1
     let r ← realm
@@ -3001,6 +3031,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
         match a0 with
         | .num x =>
           if x < 0 || !isIntegral x || x ≥ 4294967296.0 then throwErr .range "Invalid array length"
+          charge (x.toUInt64.toNat / 64)
           newArray (Array.replicate x.toUInt64.toNat .undef)
         | v => newArray #[v]
       else newArray args
@@ -3672,6 +3703,8 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       let cur := s.length
       if len ≤ Float.ofNat cur || fill.isEmpty then pure (.str s) else
       let need := len.toUInt64.toNat - cur
+      if need > maxStringBytes then throwErr .range "Invalid string length"
+      charge (need / 64)
       let reps := String.join (List.replicate (need / fill.length + 1) fill)
       let pad := String.ofList (reps.toList.take need)
       pure (.str (if id_ == .stringPadStart then pad ++ s else s ++ pad))
@@ -3844,6 +3877,7 @@ def elemsOf : Nat → Value → M (Array Value)
       | _ =>
         let len ← toNum n (← getV n v "length")
         let k := (toIntegerOrInf len).toUInt64.toNat
+        charge (min k 10000000 / 64)
         (List.range (min k 10000000)).toArray.mapM fun i => getV n v (toString i)
     | .str s => pure ((charsOf s).map fun c => .str (String.singleton c))
     | .undef | .null => throwErr .type "Array.prototype method called on null or undefined"
@@ -4031,6 +4065,9 @@ def regexExec : Nat → Value → String → M (Option (Array (Option (Nat × Na
     if g && li > Float.ofNat cs.size then
       putV n rv "lastIndex" (.num 0) true
       return none
+    -- The matcher's own fuel bounds one match (Re.matchFuel); the steps count it, so a
+    -- loop of matches over a long string stops at the budget.
+    charge (cs.size / 64 + 1)
     match Re.exec re cs start with
     | none =>
       if g then putV n rv "lastIndex" (.num 0) true
@@ -4195,6 +4232,7 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
       let mut q := 0
       for _ in [0:cs.size + 1] do
         if q ≥ cs.size then break
+        charge (cs.size / 64 + 1)
         match Re.exec sticky cs q with
         | none => q := q + 1
         | some caps =>
@@ -4560,6 +4598,9 @@ def stringOrMath : Nat → Native → Value → Array Value → M Value
       | .stringRepeat =>
         let c := toIntegerOrInf (← toNum n a0)
         if c < 0 || c.isInf then throwErr .range "Invalid count value"
+        let bytes := c.toUInt64.toNat * s.utf8ByteSize
+        if bytes > maxStringBytes then throwErr .range "Invalid string length"
+        charge (bytes / 64)
         pure (.str (String.join (List.replicate c.toUInt64.toNat s)))
       | .stringConcat =>
         let parts ← args.toList.mapM (toStr n)

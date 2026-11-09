@@ -74,4 +74,20 @@ def out (src : String) : List String :=
   ["4 --abc a+b+c 6 5 31"]
 #guard out "1 +" == ["SyntaxError: unexpected end of input at end of input (offset 3)"]
 
+/-- A script with a budget of `steps`: built-ins take steps for the size they walk
+(`charge`, `sizeCost`), so a loop of `charCodeAt` over a long string stops at the budget
+instead of running for minutes (WPT wasm/jsapi/js-string/constants.any.js did). -/
+def outWith (steps : Nat) (src : String) : List String :=
+  match runScript { freshHeap with steps } src with
+  | (.ok, h) => h.out.toList
+  | (.threw _ m, h) => h.out.toList ++ ["Uncaught " ++ m]
+  | (.syntaxError m, _) => [m]
+  | (.halted w, _) => ["halted " ++ w]
+
+#guard outWith 200000 "var s = '0'.repeat(100000), t = 0; for (var i = 0; i < s.length; i++) t += s.charCodeAt(i); print(t)" ==
+  ["halted step budget exhausted"]
+#guard outWith 2000000 "var s = 'ab'.repeat(1000), t = 0; for (var i = 0; i < s.length; i++) t += s.charCodeAt(i); print(t)" == ["195000"]
+#guard outWith 2000000 "try { 'x'.repeat(2 ** 30) } catch (e) { print(e.name) }" == ["RangeError"]
+#guard outWith 1000000 "var a = new Array(4000000000)" == ["halted step budget exhausted"]
+
 end L4Factoidal.JS.Tests
