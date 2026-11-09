@@ -62,7 +62,7 @@ th{background:#e8eef6}
 <tr><td>Web platform tests <code>wasm/core</code>, the spec tests as JavaScript (Chrome passes 188,383 of 188,396)</td><td class="num">not run</td><td class="num">86,107 (no SIMD, GC or 64-bit memories in WasmVM)</td></tr>
 <tr><td>A call from JavaScript into WebAssembly and back, native</td><td class="num">0.05 ms</td><td class="num">0.19 ms</td></tr>
 </table>
-<p class="note">A page that does not touch <code>WebAssembly</code> pays nothing: the API's script is compiled on its first use. Demo: <a href="wasm-mandelbrot.html">WebAssembly in a page</a>. Record: docs/designissues/2026-11-08-page-wasm.md.</p>
+<p class="note">A page that does not touch <code>WebAssembly</code> pays nothing: the API's script is loaded on its first use. Demo: <a href="wasm-mandelbrot.html">WebAssembly in a page</a>. Record: docs/designissues/2026-11-08-page-wasm.md.</p>
 
 <h2>What pages can use</h2>
 <p>Timers, animation frames, microtasks and Promises; clicks and pointer events with coordinates; taps on SVG shapes; createElement and createElementNS; selectors matched by Lean; DOMParser; MutationObserver; forms, checkboxes and radio buttons; layout reads such as clientWidth and getBoundingClientRect; WebGPU and WebGL drawing, each command checked by Lean.</p>
