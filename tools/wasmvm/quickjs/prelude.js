@@ -2088,9 +2088,7 @@
     switch (t) {
       case 1: {
         if (info(id, 8) !== 1) return (str(id, 2) === 'http://www.w3.org/2000/svg' ? SVGElement : Element).prototype;
-        const C = htmlClasses[str(id, 0)] ?? HTMLUnknownElement;
-        if (!reflected.has(C)) reflectInstall(C);
-        return C.prototype;
+        return (htmlClasses[str(id, 0)] ?? HTMLUnknownElement).prototype;
       }
       case 3: return Text.prototype;
       case 4: return CDATASection.prototype;
@@ -3214,14 +3212,15 @@
     return wrap(k);
   });
   // ---- reflected IDL attributes (HTML §2.6.1): the table and the algorithms are Lean's ----
-  // (DOM.Reflect). The rows of an interface are installed on its prototype when the page
-  // wraps its first element of that interface; each get is one host call.
+  // (DOM.Reflect). The rows of each interface are installed on its prototype when the prelude
+  // runs, which the engine does once (Page.Module'.base, LeanJS.prepare) and copies for each
+  // page: no page pays for it. Each get is one host call.
   const reflected = new Set();
   const finite = v => { v = Number(v); if (!Number.isFinite(v)) throw new TypeError('The provided double value is non-finite.'); return String(v); };
   const reflectConv = { s: String, n: v => v === null ? '' : String(v), u: String, b: v => (v ? '1' : '0'), i: v => String(v | 0),
     I: v => String(v | 0), U: v => String(v >>> 0), P: v => String(v >>> 0), F: v => String(v >>> 0), C: v => String(v >>> 0),
     d: finite, D: finite, e: String, E: v => (v === null || v === undefined ? '\u0001' : String(v)) };
-  const reflectTokens = new WeakMap();
+  const reflectTokens = new WeakMap(), nonces = new WeakMap();
   const reflectInstall = C => {
     for (let P = C; P && P !== Element && !reflected.has(P); P = Object.getPrototypeOf(P)) {
       reflected.add(P);
@@ -3229,6 +3228,16 @@
       for (const line of (rows ?? '').split('\u0000')) {
         if (line === '') continue;
         const [row, idl, k, content] = line.split(' ');
+        if (k === 'N') {
+          // nonce hiding (HTML §2.6.5): the IDL attribute is the element's internal slot, which a
+          // change of the content attribute sets
+          Object.defineProperty(P.prototype, idl, { get() {
+            let n = nonces.get(this); const a = this.getAttribute(content);
+            if (!n || n.attr !== a) nonces.set(this, n = { attr: a, value: a ?? '' });
+            return n.value;
+          }, set(v) { nonces.set(this, { attr: this.getAttribute(content), value: String(v) }); }, configurable: true, enumerable: true });
+          continue;
+        }
         if (k === 't') {
           Object.defineProperty(P.prototype, idl, { get() {
             let m = reflectTokens.get(this); if (!m) reflectTokens.set(this, m = new Map());
@@ -3238,7 +3247,7 @@
         }
         Object.defineProperty(P.prototype, idl, {
           get() {
-            const id = nodeId(this), r = op(id, 160, row + '\u0000' + (info(id, 7) === 0 ? href : 'about:blank'));
+            const id = nodeId(this), r = op(id, 160, k === 'u' ? row + '\u0000' + (info(id, 7) === 0 ? href : 'about:blank') : row);
             switch (k) {
               case 'b': return r === '1';
               case 'i': case 'I': case 'U': case 'P': case 'F': case 'C': return Number(r);
@@ -3248,6 +3257,9 @@
             }
           },
           set(v) {
+            // one host call: Lean decides and sets the content attribute (with no observer to tell
+            // and no URL, whose iframe src navigates); else the decision, then setAttribute
+            if (!observed.size && k !== 'u') { op(nodeId(this), 167, row + '\u0000' + reflectConv[k](v)); return; }
             const a = op(nodeId(this), 161, row + '\u0000' + reflectConv[k](v));
             if (a === 'r') this.removeAttribute(content);
             else if (a !== '') this.setAttribute(content, a.slice(1));
@@ -3257,6 +3269,21 @@
       }
     }
   };
+  // ---- HTMLHyperlinkElementUtils (HTML §4.6.4) on a and area: the URL is Lean's -------------
+  const linkParts = ['protocol', 'username', 'password', 'host', 'hostname', 'port', 'pathname', 'search', 'hash', 'origin'];
+  const linkBase = el => (info(nodeId(el), 7) === 0 ? href : 'about:blank');
+  for (const C of [named.HTMLAnchorElement, named.HTMLAreaElement]) linkParts.forEach((part, i) => {
+    Object.defineProperty(C.prototype, part, {
+      get() { const r = op(nodeId(this), 163, linkBase(this)); return r === null ? (part === 'protocol' ? ':' : '') : r.split('\u0000')[i]; },
+      set: part === 'origin' ? undefined : function (v) {
+        const r = op(nodeId(this), 164, part + '\u0000' + String(v) + '\u0000' + linkBase(this));
+        if (r !== null) this.setAttribute('href', r);
+      },
+      configurable: true, enumerable: true,
+    });
+  });
+  define(named.HTMLAnchorElement.prototype, 'toString', function () { return this.href; });
+  define(named.HTMLAreaElement.prototype, 'toString', function () { return this.href; });
   // ---- Range and StaticRange (DOM §5) ------------------------------------------------------
   // One Range object per live range of Lean. When the engine collects a Range object, its
   // live range is released (op 118): Lean stops moving it, and a new range takes its slot.
@@ -3345,6 +3372,18 @@
   const selection = Object.create(Selection.prototype);
   const selState = () => { const r = op(0, 140); if (r === null) return null; const [k, dir] = r.split(' ').map(Number); return { k, dir, b: boundsOf(k) }; };
   const collapsedB = b => b[0] === b[2] && b[1] === b[3];
+  // Selection API §3: a change of the selection queues a task to fire selectionchange at the
+  // document (one per change seen; none when the selection is as it was).
+  const selKey = () => { const s = selState(); return s ? s.dir + ' ' + s.b.join(' ') : ''; };
+  let selQueued = false;
+  const selChanging = f => function (...args) {
+    const before = selKey(), r = f.apply(this, args);
+    if (!selQueued && selKey() !== before) {
+      selQueued = true;
+      setTimeout(() => { selQueued = false; const e = new Event('selectionchange'); state(e).trusted = true; dispatch(document, e); }, 0);
+    }
+    return r;
+  };
   for (const [k, f] of Object.entries({
     getRangeAt(index) { needArgs(arguments, 1, 'getRangeAt'); const s = selState(); if (!s || (index >>> 0) !== 0) failD(-14); return rangeOf(s.k); },
     addRange(range) { needArgs(arguments, 1, 'addRange'); op(rid(range), 141); },
@@ -3364,7 +3403,8 @@
     modify() {},
     getComposedRanges() { const s = selState(); return s ? [new StaticRange({ startContainer: wrap(s.b[0]), startOffset: s.b[1], endContainer: wrap(s.b[2]), endOffset: s.b[3] })] : []; },
     toString() { const s = selState(); return s ? op(s.k, 111) : ''; },
-  })) define(Selection.prototype, k, f);
+  })) define(Selection.prototype, k, ['addRange', 'removeRange', 'removeAllRanges', 'empty', 'collapse', 'setPosition', 'collapseToStart',
+    'collapseToEnd', 'extend', 'setBaseAndExtent', 'selectAllChildren', 'deleteFromDocument'].includes(k) ? selChanging(f) : f);
   for (const [k, f] of Object.entries({
     anchorNode() { const s = selState(); return s ? wrap(s.dir === 2 ? s.b[2] : s.b[0]) : null; },
     anchorOffset() { const s = selState(); return s ? (s.dir === 2 ? s.b[3] : s.b[1]) : 0; },
@@ -3406,10 +3446,14 @@
       const r = op(st.k, 131, `${next ? 1 : 0} ${node} ${before}`);
       if (r === null) return null;
       [node, before] = r.split(' ').map(Number);
-      if (filterNode(st, wrap(node)) === 1) break;
+      // the node being filtered moves as the reference does if the filter removes nodes
+      // (Lean's pre-removing steps); accepted, it becomes the reference as moved
+      op(st.k, 136, `${node} ${before}`);
+      let res;
+      try { res = filterNode(st, wrap(node)); } catch (e) { op(st.k, 136, ''); throw e; }
+      if (res === 1) { op(st.k, 137); return wrap(node); }
+      op(st.k, 136, '');
     }
-    op(st.k, 132, `${node} ${before}`);
-    return wrap(node);
   };
   for (const [k, f] of Object.entries({
     nextNode() { return iterate(this, true); },
@@ -3465,6 +3509,27 @@
   // engine keeps one cascade and one layout per DOM version, and a read of a style property
   // makes no layout.
   class CSSStyleDeclaration { constructor() { throw new TypeError('Illegal constructor'); } }
+  // The property names of Lean's computed style, in Lean's order (op 20's answer), once.
+  let computedNames = null;
+  const namesOf = r => { const xs = r.split('\u0000'), out = []; for (let i = 0; i + 1 < xs.length; i += 2) out.push(xs[i]); return out; };
+  const namesFor = el => {
+    if (computedNames === null) { const r = n.query(nodeId(el), 20, ''); if (typeof r !== 'string' || r === '') return []; computedNames = namesOf(r); }
+    return computedNames;
+  };
+  const camel = name => name.replace(/-([a-z])/g, (m, c) => c.toUpperCase());
+  const computedValue = (el, name) => {
+    const id = nodeId(el);
+    if (namesFor(el).length === 0) return '';
+    const k = computedNames.indexOf(name);
+    if (k < 0) return '';
+    if (name === 'width' || name === 'height') {
+      const d = n.query(id, 200 + computedNames.indexOf('display'), '');
+      const u = d !== 'none' ? n.query(id, 21, '') : '';
+      if (typeof u === 'string' && u !== '') return u.split(' ')[name === 'width' ? 0 : 1] + 'px';
+    }
+    const r = n.query(id, 200 + k, '');
+    return typeof r === 'string' ? r : '';
+  };
   const computedValues = el => {
     const r = n.query(nodeId(el), 20, ''), m = new Map();
     if (typeof r !== 'string') return m;
@@ -3481,34 +3546,87 @@
   const computedStyle = el => {
     const target = Object.create(CSSStyleDeclaration.prototype);
     const methods = {
-      getPropertyValue: name => computedValues(el).get(String(name).startsWith('--') ? String(name) : String(name).toLowerCase()) ?? '',
+      getPropertyValue: name => computedValue(el, String(name).startsWith('--') ? String(name) : String(name).toLowerCase()),
       getPropertyPriority: () => '',
       setProperty: () => { throw readOnlyDecl(); },
       removeProperty: () => { throw readOnlyDecl(); },
-      item: i => [...computedValues(el).keys()][i >>> 0] ?? '',
+      item: i => namesFor(el)[i >>> 0] ?? '',
     };
     return new Proxy(target, {
       get(t, p) {
         if (typeof p !== 'string') return Reflect.get(t, p);
         if (Object.prototype.hasOwnProperty.call(methods, p)) return methods[p];
-        if (p === 'length') return computedValues(el).size;
+        if (p === 'length') return namesFor(el).length;
         if (p === 'cssText') return '';
         if (p === 'parentRule') return null;
-        if (/^(0|[1-9][0-9]*)$/.test(p)) return [...computedValues(el).keys()][Number(p)];
-        if (p === 'cssFloat') return computedValues(el).get('float') ?? '';
-        const m = computedValues(el), k = cssName(p);
-        return m.has(k) ? m.get(k) : (m.has(p) ? m.get(p) : (p in t ? Reflect.get(t, p) : ''));
+        if (/^(0|[1-9][0-9]*)$/.test(p)) return namesFor(el)[Number(p)];
+        if (p === 'cssFloat') return computedValue(el, 'float');
+        if (p in t) return Reflect.get(t, p);
+        return computedValue(el, p.includes('-') ? p : cssName(p));
       },
       set() { throw readOnlyDecl(); },
+      // every property Lean computes is a property of the declaration, dashed and camel-cased
+      has(t, p) {
+        if (typeof p !== 'string') return Reflect.has(t, p);
+        if (p in t || p === 'length' || p === 'cssText' || p === 'cssFloat' || Object.prototype.hasOwnProperty.call(methods, p)) return true;
+        const xs = namesFor(el);
+        if (/^(0|[1-9][0-9]*)$/.test(p)) return Number(p) < xs.length;
+        return xs.includes(p) || xs.includes(cssName(p));
+      },
+      ownKeys(t) { const xs = namesFor(el); return [...xs.keys()].map(String).concat(Reflect.ownKeys(t)); },
+      getOwnPropertyDescriptor(t, p) {
+        if (typeof p === 'string' && /^(0|[1-9][0-9]*)$/.test(p) && Number(p) < namesFor(el).length)
+          return { value: namesFor(el)[Number(p)], enumerable: true, configurable: true, writable: false };
+        return Reflect.getOwnPropertyDescriptor(t, p);
+      },
     });
   };
+  define(CSSStyleDeclaration.prototype, Symbol.iterator, function* () { for (let i = 0; i < this.length; i++) yield this[i]; });
+  // ---- the CSS namespace (CSS Conditional 3 §8.1, CSSOM §2.1): Lean's answers -------------
+  const CSSns = {};
+  define(CSSns, 'supports', function (a, b) {
+    if (arguments.length < 1) throw new TypeError('CSS.supports: 1 argument required');
+    return op(0, 165, arguments.length >= 2 ? '1\u0000' + String(a) + '\u0000' + String(b) : '0\u0000' + String(a)) === '1';
+  });
+  define(CSSns, 'escape', function (ident) {
+    if (arguments.length < 1) throw new TypeError('CSS.escape: 1 argument required');
+    return op(0, 166, String(ident));
+  });
+  Object.defineProperty(CSSns, Symbol.toStringTag, { value: 'CSS', configurable: true });
+  def('CSS', CSSns);
+  // ---- document.fonts (CSS Font Loading 3 §2): the fonts a page uses are held before its
+  // scripts run, and a page can not add font faces here, so the set is empty and loaded ----
+  const fontKey = {};
+  class FontFaceSet extends EventTarget {
+    constructor(key) { if (key !== fontKey) throw new TypeError('Illegal constructor'); super(); }
+    get status() { return 'loaded'; }
+    get size() { return 0; }
+    get ready() { return fontsReady; }
+    check(font, text = ' ') { if (arguments.length < 1) throw new TypeError('check: 1 argument required'); return true; }
+    load(font, text = ' ') { if (arguments.length < 1) throw new TypeError('load: 1 argument required'); return Promise.resolve([]); }
+    has() { return false; }
+    add() { return this; }
+    delete() { return false; }
+    clear() {}
+    forEach() {}
+    *entries() {} *keys() {} *values() {}
+  }
+  define(FontFaceSet.prototype, Symbol.iterator, FontFaceSet.prototype.values);
+  Object.defineProperty(FontFaceSet.prototype, Symbol.toStringTag, { value: 'FontFaceSet', configurable: true });
+  addHandlers(FontFaceSet.prototype);
+  const fontSet = new FontFaceSet(fontKey), fontsReady = Promise.resolve(fontSet);
+  Object.defineProperty(Document.prototype, 'fonts', { get() { return fontSet; }, configurable: true, enumerable: true });
+  def('FontFaceSet', FontFaceSet);
   def('getComputedStyle', (el, pseudo) => {
     if (!(el instanceof Element)) throw new TypeError("Failed to execute 'getComputedStyle': parameter 1 is not of type 'Element'.");
     return computedStyle(el);
   });
-  def('CSSStyleDeclaration', CSSStyleDeclaration);
   def('getSelection', getSelection);
-  for (const [k, v] of Object.entries({ AbstractRange, Range, StaticRange, Selection, NodeFilter, NodeIterator, TreeWalker })) def(k, v);
+  for (const C of new Set([HTMLElement, HTMLUnknownElement, ...Object.values(named)])) reflectInstall(C);
+  for (const [k, v] of Object.entries({ AbstractRange, Range, StaticRange, Selection, NodeFilter, NodeIterator, TreeWalker, CSSStyleDeclaration })) {
+    if (k !== 'NodeFilter') Object.defineProperty(v.prototype, Symbol.toStringTag, { value: k, configurable: true });
+    def(k, v);
+  }
   // ==== end dombreadth ====
 
   // Content event handler attributes (HTML §8.1.8.1): onclick="..." and <body onload>.

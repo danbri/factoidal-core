@@ -16,7 +16,14 @@ Records it joins: `2026-11-08-page-scripts.md` (the page objects and the imports
   the methods but `modify`.
 - `NodeIterator` and `TreeWalker` (DOM §6), with filters, and `NodeFilter`.
 - The reflected IDL attributes of HTML elements (HTML §2.6.1), from one Lean table.
-- `getComputedStyle` with the resolved values of the properties Lean's cascade computes.
+- `getComputedStyle` with the resolved values of the properties Lean's cascade computes, as
+  a read-only CSSStyleDeclaration (`'color' in style`, dashed and camel-cased names,
+  `length`, `item`, iteration).
+- The `CSS` namespace: `CSS.supports` (both forms) and `CSS.escape`.
+- `document.fonts`: a FontFaceSet that is loaded (the fonts of a page are held before its
+  scripts run, and a page can not add font faces yet), `ready` resolved.
+- `HTMLHyperlinkElementUtils` on `a` and `area` (`protocol`, `host`, `pathname`, ... from
+  Lean's URL parser, getters and setters).
 
 ## 2. Where the algorithms are
 
@@ -46,6 +53,9 @@ callbacks.
   Each change of the tree is a typed command (two new ones: `replaceData`, `splitText`),
   recorded as all others, so a replay of the commands gives the same arena.
 - `L4Factoidal/Rendering/ComputedValues.lean`: the CSS text of each computed value.
+- `L4Factoidal/Rendering/CssSupports.lean`: the `<supports-condition>` grammar over
+  `CSS.supportsDeclaration` (appended to `Style.lean`: a declaration this profile reads and
+  applies) and `DOM.Selectors`, and "serialize an identifier" for `CSS.escape`.
 
 ## 3. No new native
 
@@ -63,9 +73,10 @@ holds it and the import runs once. Ops 20 and 21 are layout reads (`WebDocument.
   so the live ranges are those the page can reach. BubblePopJS has no GC yet, so there a
   page's ranges stay until it ends.
 - A removal builds the set of the removed subtree once; each range then costs one lookup.
-- Reflection: the rows of an interface are installed on its prototype when the page wraps
-  its first element of it (one host call); a get is one host call; a set is one host call
-  and `setAttribute`.
+- Reflection: the rows of every interface are installed when the prelude runs, which the
+  engine does once and copies for each page; a get is one host call; a set is one host call
+  (Lean sets the content attribute) unless a MutationObserver is registered or the row is
+  a URL (then the decision, then `setAttribute`).
 - `getComputedStyle`: a style property reads the cascade of the current DOM version (made
   once per version); only `width` and `height` read the layout.
 
