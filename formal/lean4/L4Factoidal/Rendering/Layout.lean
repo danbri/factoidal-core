@@ -453,12 +453,33 @@ private def itemWidth (font : FontProfile) (rtl : Option Bool := none) : Inline 
   | .replaced _ _ w _ _ | .atomic _ w _ _ => pure w
   | _ => pure 0
 
+/-- A colour glyph as one rectangle filled with its image (`ColrRaster`), drawn at the
+pixel size nearest to its em at `scale`; `none` when it has no colour or no image.
+The image's pixels map onto the rectangle one to one when the size is whole. -/
+def colourNode (source : Nat) (glyph : FontProvider.Glyph) (x y scale : Float) (color : Color) : Option Node := do
+  let c ← glyph.colour
+  let em := scale*c.em
+  if !(em > 0) || !em.isFinite then none
+  let px := max 1 (min 512 em.round.toUInt32.toNat)
+  let image ← c.image px color
+  let f := em/Float.ofNat px
+  let toF := fun (v : Int) => if v < 0 then -(Float.ofNat v.natAbs) else Float.ofNat v.natAbs
+  let left := x+f*toF image.left
+  let top := y+scale*c.baseline+f*toF image.top
+  let w := f*Float.ofNat image.bitmap.width
+  let h := f*Float.ofNat image.bitmap.height
+  let map : Transform := ⟨1/f,0,0,1/f,-left/f,-top/f⟩
+  return .paint ⟨some source,{geometry := .rect left top w h,style := {fill := .image ⟨map,image.id,image.bitmap⟩}}⟩
+
 private def shapedNodes (word : FontProvider.Word) (run : GlyphRun) (s : Computed)
     (left baseline width : Float) : Array Node := Id.run do
   if !s.visible then return #[]
   let scale := run.fontSize/word.unitsPerEm
   let mut out := #[]
   for (glyph,position) in word.glyphs.zip run.glyphs do
+    if let some node := colourNode run.source glyph position.x position.y scale s.color then
+      out := out.push node
+      continue
     for geometry in glyph.geometry do
       out := out.push (.paint ⟨some run.source,{geometry,style := {fill := .solid s.color}, transform := ⟨scale,0,0,scale,position.x,position.y⟩}⟩)
   if s.underline && width > 0 then
