@@ -305,6 +305,8 @@ QuickJS-NG in WasmVM, and the WPT copy the pinned ce5ca396.
 
 - No subtest that passed before fails now.
 - Chrome counts 70,798 subtests in WebCryptoAPI, across every variant and worker.
+- BubblePopJS, the same directories: 2,837 before on the 132 pages, 7,439 after;
+  11,350 of 32,061 with pbkdf2 and derived_bits; again none lost.
 
 Where the gains are:
 
