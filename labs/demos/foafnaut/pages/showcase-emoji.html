@@ -10,6 +10,12 @@ p{margin:0;padding-top:6px}
 .name{color:#5b6876;font-size:12px;line-height:16px;padding-top:0}
 .sample{font-size:30px;line-height:42px;padding-top:2px}
 svg{display:block}
+table.pair{margin-top:8px;border-collapse:collapse;background:#fbefec}
+table.pair th{padding:6px 12px;text-align:left;color:#5b6876;font-size:12px;font-weight:normal}
+table.pair td{padding:4px 12px;vertical-align:middle}
+table.pair td.name{width:150px}
+table.pair .text{font-size:30px;line-height:42px;font-family:"Noto Emoji",sans-serif}
+table.pair .emoji{font-size:30px;line-height:42px;font-family:"Noto Color Emoji",sans-serif}
 .about{margin-top:22px;padding:10px 14px;background:#eef2f7;color:#5b6876;font-size:13px;line-height:19px}.about p{padding-top:4px}
 </style></head><body><main>
 <p><a href="showcase.html">Showcase</a> · <a href="index.html">Demo index</a></p>
@@ -21,9 +27,24 @@ svg{display:block}
 <div class="row"><p class="name">Sizes: 16, 32 and 64 pixels</p>
 <p class="sample"><span style="font-size:16px">😀🐙🚀</span> <span style="font-size:32px">😀🐙🚀</span> <span style="font-size:64px;line-height:76px">😀🐙🚀</span></p></div>
 
-<h2>Text and emoji presentation</h2>
-<div class="row"><p class="name">Alone (the character's default), with U+FE0E (text), with U+FE0F (emoji)</p>
-<p class="sample">❤ ❤&#xFE0E; ❤&#xFE0F; · ☀ ☀&#xFE0E; ☀&#xFE0F; · ✔ ✔&#xFE0E; ✔&#xFE0F; · 😀 😀&#xFE0E;</p></div>
+<h2>Text and emoji presentation, side by side</h2>
+<p class="note">The same emoji twice. The text column asks for text presentation, U+FE0E after each emoji
+(and in place of U+FE0F in a keycap), with <code>font-family: "Noto Emoji"</code>, an outline font in one
+colour. The emoji column asks for emoji presentation, U+FE0F after a single character, with
+<code>font-family: "Noto Color Emoji"</code>. A browser that has neither font chooses by the
+selectors alone.</p>
+<table class="pair">
+<tr><th></th><th>Text (U+FE0E)</th><th>Emoji (U+FE0F)</th></tr>
+<tr><td class="name">Faces and objects (one code point each)</td><td class="text">😀&#xFE0E; 😂&#xFE0E; 🥰&#xFE0E; 🐙&#xFE0E; 🚀&#xFE0E; 💡&#xFE0E;</td><td class="emoji">😀&#xFE0F; 😂&#xFE0F; 🥰&#xFE0F; 🐙&#xFE0F; 🚀&#xFE0F; 💡&#xFE0F;</td></tr>
+<tr><td class="name">Symbols whose default is text</td><td class="text">❤&#xFE0E; ☀&#xFE0E; ✔&#xFE0E; ☎&#xFE0E;</td><td class="emoji">❤&#xFE0F; ☀&#xFE0F; ✔&#xFE0F; ☎&#xFE0F;</td></tr>
+<tr><td class="name">Skin tones</td><td class="text">👍&#xFE0E; 👍🏻&#xFE0E; 👍🏽&#xFE0E; 👍🏿&#xFE0E; 👋🏾&#xFE0E;</td><td class="emoji">👍 👍🏻 👍🏽 👍🏿 👋🏾</td></tr>
+<tr><td class="name">ZWJ families</td><td class="text">👨&#x200D;👩&#x200D;👧&#x200D;👦&#xFE0E; 👩&#x200D;👩&#x200D;👦&#xFE0E; 👨&#x200D;👨&#x200D;👧&#x200D;👧&#xFE0E;</td><td class="emoji">👨&#x200D;👩&#x200D;👧&#x200D;👦 👩&#x200D;👩&#x200D;👦 👨&#x200D;👨&#x200D;👧&#x200D;👧</td></tr>
+<tr><td class="name">ZWJ professions</td><td class="text">🧑&#x200D;💻&#xFE0E; 👩&#x200D;🚀&#xFE0E; 🧑&#x200D;🍳&#xFE0E; 👩&#x200D;🔬&#xFE0E;</td><td class="emoji">🧑&#x200D;💻 👩&#x200D;🚀 🧑&#x200D;🍳 👩&#x200D;🔬</td></tr>
+<tr><td class="name">Flags</td><td class="text">🇬🇧&#xFE0E; 🇫🇷&#xFE0E; 🇯🇵&#xFE0E; 🇧🇷&#xFE0E; 🏴&#xE0067;&#xE0062;&#xE0073;&#xE0063;&#xE0074;&#xE007F;&#xFE0E;</td><td class="emoji">🇬🇧 🇫🇷 🇯🇵 🇧🇷 🏴&#xE0067;&#xE0062;&#xE0073;&#xE0063;&#xE0074;&#xE007F;</td></tr>
+<tr><td class="name">Keycaps</td><td class="text">1&#xFE0E;⃣ 2&#xFE0E;⃣ #&#xFE0E;⃣ *&#xFE0E;⃣</td><td class="emoji">1&#xFE0F;⃣ 2&#xFE0F;⃣ #&#xFE0F;⃣ *&#xFE0F;⃣</td></tr>
+</table>
+<div class="row"><p class="name">With no selector each character takes its default: U+2764, U+2600 and U+2714 are text by default, U+1F600 is emoji</p>
+<p class="sample">❤ ☀ ✔ 😀</p></div>
 
 <h2>Sequences</h2>
 <div class="row"><p class="name">Skin tone modifiers (U+1F3FB to U+1F3FF)</p>
@@ -43,6 +64,6 @@ svg{display:block}
 
 <div class="about">
 <p>Emoji draw in colour from Noto Color Emoji (SIL Open Font License), its COLR version 1 glyphs drawn by the engine's own Lean code: layers, linear and radial gradients, transforms and composites, through the same rasteriser as Canvas 2D (<a href="https://github.com/danbri/factoidal/issues/1276">issue 1276</a>). The font is cut into slices by kind of emoji (faces, people, flags by letter, ...), and the browser fetches only the slices a page uses. Each emoji is one glyph, and so is each sequence: the font's ligatures join ZWJ sequences, skin tones, flags, tag sequences and keycaps, and the engine keeps a sequence's characters in one font.</p>
-<p>U+FE0E asks for text presentation: those emoji draw in one colour from Noto Emoji, an outline font, which is fetched only for a page that asks for it.</p>
+<p>U+FE0E asks for text presentation: those emoji draw in one colour from Noto Emoji, an outline font, fetched only for a page that asks for it, as the table above shows beside the colour forms.</p>
 </div>
 </main></body></html>
