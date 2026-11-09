@@ -49,6 +49,11 @@ structure Canvas where
   dirty : Bool := true
   /-- The pixels drawn since then (a box holding every draw's pixels). -/
   dirtyBox : Box := ⟨0, 0, 0, 0⟩
+  /-- Coverage of shapes drawn before, by the hash of their edges (with the edges, to
+  check): a shape drawn again at the same place (a grid, an axis, a label) is not
+  rasterised again. At most `maxCovCache` values kept. -/
+  covCache : Std.HashMap UInt64 (Array Edge × Coverage) := {}
+  covCached : Nat := 0
   /-- A `canvas` element of the page (its pixels are composited), not an OffscreenCanvas. -/
   element : Bool := true
   deriving Inhabited
@@ -265,11 +270,27 @@ def Canvas.paint (c : Canvas) (st : DrawState) (d : Draw) (shape : Unit → Arra
       else bm
     composite W H bm d
 
+/-- Most coverage values a canvas keeps in its cache. -/
+def maxCovCache : Nat := 1048576
+
+/-- The coverage of edges, from the canvas's cache when the same edges were drawn before. -/
+def Canvas.coverageOf (c : Canvas) (es : Array Edge) (rule : FillRule) : Canvas × Coverage :=
+  let h := edgesHash es rule
+  match c.covCache.get? h with
+  | some (es', cov) => if sameEdges es es' then (c, cov) else (c, coverage c.width c.height es rule)
+  | none =>
+    let cov := coverage c.width c.height es rule
+    let n := cov.cov.size
+    if n > maxCovCache / 4 then (c, cov) else
+    let (cache, count) := if c.covCached + n > maxCovCache then (({} : Std.HashMap UInt64 (Array Edge × Coverage)), 0)
+      else (c.covCache, c.covCached)
+    ({ c with covCache := cache.insert h (es, cov), covCached := count + n }, cov)
+
 /-- Draw the coverage of polygons (device space) with a style. -/
 def Run.drawPolys (r : Run) (c : Canvas) (polys : Array Poly) (rule : FillRule) (style : Style) : Canvas :=
   let st := c.stack.cur
   let es := edgesOf polys
-  let cov := coverage c.width c.height es rule
+  let (c, cov) := c.coverageOf es rule
   let ready := style.ready r.gradient r.pattern st.ctm st.smoothing
   c.paint st ⟨ready, cov, Color.clamp01 st.alpha, st.op, st.clip⟩ fun _ => (es, rule)
 

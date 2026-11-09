@@ -27,6 +27,20 @@ structure Edge where
   dir : Int
   deriving Inhabited
 
+/-- Edges equal bit for bit (a cached coverage is used only for the very same edges). -/
+def Edge.same (a b : Edge) : Bool :=
+  a.x0.toBits == b.x0.toBits && a.y0.toBits == b.y0.toBits && a.x1.toBits == b.x1.toBits &&
+    a.y1.toBits == b.y1.toBits && a.dir == b.dir
+
+def sameEdges (a b : Array Edge) : Bool :=
+  a.size == b.size && (List.range a.size).all fun i => a[i]!.same b[i]!
+
+/-- A hash of edges and a rule, for the coverage cache. -/
+def edgesHash (es : Array Edge) (rule : FillRule) : UInt64 :=
+  es.foldl (init := if rule == .nonzero then 1469598103934665603 else 7) fun h e =>
+    let mix := fun (h v : UInt64) => (h ^^^ v) * 1099511628211
+    mix (mix (mix (mix (mix h e.x0.toBits) e.y0.toBits) e.x1.toBits) e.y1.toBits) (if e.dir > 0 then 1 else 2)
+
 /-- The edges of polygons, each closed back to its first point; horizontal edges and
 non-finite points are left out. -/
 def edgesOf (polys : Array Poly) : Array Edge := Id.run do
