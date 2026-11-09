@@ -36,6 +36,20 @@ Records it joins: `2026-11-01-dom-arena.md` (the DOM arena), `2026-11-08-page-sc
   arena, its own heap (a WasmVM instance of QuickJS-NG, or a BubblePopJS realm), its own
   event loop and smaller budgets. The page and the frame talk only by `postMessage`;
   messages cross as strings. Without `allow-scripts` no session is made.
+- Frame documents in the native script session (`frames:true`): every connected `iframe`
+  gets a browsing context with `about:blank` at once; Lean loads `srcdoc`; a host that sets
+  `navigations:true` in `start` gets `navigations` in each turn and answers each with the
+  action `frame` (the WPT runner does, from the WPT copy, with Lean's document decoding). A
+  frame document is a command (`Command.frameDocument`), so a render's replay over the
+  parsed page keeps the node numbers. A same-origin frame's scripts run in the page's realm,
+  with `document` the frame's document while they run, and with a window target of their
+  own for `load` and `error`; so `contentDocument`, `contentWindow.document` and functions
+  a frame defines (`contentWindow.run`) work. The window's `load` event waits for frames that
+  are still loading (`Hosts.Dom.State.loadWaits`). A sandboxed frame's scripts never run in
+  the page's realm (`Hosts.Dom.frameScriptsInRealm`).
+- Named access on the window (HTML §7.2.2.3): an element's id is a property of the window
+  when nothing else has that name (a proxy in the window's prototype chain; Lean finds the
+  element).
 - `window.postMessage` with the target origin check (`HTML.Frames.postMessageDelivers`)
   delivers a `MessageEvent` as a task; `MessageChannel` and `MessagePort` work in one realm.
 
@@ -93,9 +107,12 @@ number per listener call: its retargeted target). Commands `attachShadow`, `assi
   node numbers in boxes and links, a clip to the content box, its own scroll, and input
   routed by the hit test. The band and layer caches would then keep an idle frame's
   layer.
-- Same-origin frames still share the page's script realm (as before): their documents
-  are in the page's arena, and their own scripts do not run. Giving them realms of their
-  own needs cross-realm WindowProxy objects for synchronous same-origin access.
+- Same-origin frames share the page's script realm: a frame's globals are the page's, and
+  its `location` is the page's. Realms of their own need cross-realm WindowProxy objects
+  for synchronous same-origin access (one WasmVM instance or BubblePopJS heap per frame, and
+  calls between them served by Lean).
+- A frame document arrives as text: the host decodes it (the WPT runner through Lean's
+  `decodeDocument`); `document.characterSet` of a frame is the page's.
 - `customElements`: a registry in Lean (names, the definition's callbacks by number) and
   the reactions queue run by the prelude; the "is" value and upgrades at insertion. The
   shadow-root parts (valid custom element names) are here already.
