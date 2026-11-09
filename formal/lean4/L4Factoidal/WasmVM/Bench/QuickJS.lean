@@ -157,6 +157,8 @@ def commandJson : Hosts.Dom.Command → Json
   | .replaceData n o k v => Json.mkObj [("op", Json.str "replaceData"), ("nodeId", jn n), ("offset", jn o), ("count", jn k), ("value", Json.str v)]
   | .splitText n o r => Json.mkObj [("op", Json.str "splitText"), ("source", jn n), ("offset", jn o), ("nodeId", jn r)]
   | .frameDocument el src xml r => Json.mkObj [("op", Json.str "frameDocument"), ("frame", jn el), ("source", Json.str src), ("xml", Json.bool xml), ("nodeId", jn r)]
+  | .attachShadow h f r => Json.mkObj [("op", Json.str "attachShadow"), ("host", jn h), ("flags", jn f), ("nodeId", jn r)]
+  | .assignSlot sl ns => Json.mkObj [("op", Json.str "assignSlot"), ("nodeId", jn sl), ("nodes", Json.arr (ns.map jn))]
 
 /-- One turn: its commands, logs and whether the default was prevented. -/
 structure Batch where

@@ -43,6 +43,7 @@ import L4Factoidal.DOM.OfHtml
 import L4Factoidal.DOM.OfXml
 import L4Factoidal.DOM.Forms
 import L4Factoidal.WHATWG.URL.Parser
+import L4Factoidal.DOM.Shadow
 import L4Factoidal.HTML.Frames
 import L4Factoidal.DOM.Live
 import L4Factoidal.DOM.Fragment
@@ -85,6 +86,11 @@ inductive Command where
   | setChecked (node : Nat) (value : Bool)
   /-- The reset algorithm of form `node` (`DOM.Forms.resetForm`). -/
   | resetForm (node : Nat)
+  /-- `attachShadow` of `host` (`DOM.Dom.attachShadow`, the state as `shadowFlags`) made or
+  reused shadow root `result`. -/
+  | attachShadow (host flags result : Nat)
+  /-- `slot.assign(...nodes)` (`DOM.Dom.assignSlot`). -/
+  | assignSlot (slot : Nat) (nodes : Array Nat)
   /-- "Replace data" (DOM §4.10) of CharacterData `node`: `count` UTF-16 code units at
   `offset` by `data` (`CharacterData.replaceData` and the methods built on it, and the
   Range algorithms). -/
@@ -169,6 +175,10 @@ structure State where
   /-- Each `iframe` element's frame (`HTML.Frames.frameOf`) as it was when its browsing
   context was made: its sandboxing flags and its document's origin. -/
   frameInfo : Array (Nat × L4Factoidal.HTML.Frames.Frame) := #[]
+  /-- In a frame's own script session (`HTML.FrameSessions`): its document's origin (an
+  opaque one), and its parent's origin. None in a page's session. -/
+  selfOrigin : Option L4Factoidal.HTML.Frames.Origin := none
+  parentOrigin : Option L4Factoidal.HTML.Frames.Origin := none
   /-- The embedder loads URLs for frames (it answers `navigations`). Without it, a frame
   whose `src` is a URL keeps its `about:blank` document and gets its `load` event. -/
   hostLoads : Bool := false
@@ -337,7 +347,7 @@ def Command.sameWrite : Command → Command → Bool
 `name` and the tree): a write before one of them stays before it. -/
 def Command.reads : Command → Bool
   | .cloneNode .. | .importNode .. | .normalize _ | .setAttributeNS .. | .removeAttributeNS ..
-  | .adoptNode .. | .setChecked .. | .resetForm _ | .replaceData .. | .splitText .. | .frameDocument .. => true
+  | .adoptNode .. | .setChecked .. | .resetForm _ | .attachShadow .. | .assignSlot .. | .replaceData .. | .splitText .. | .frameDocument .. => true
   | _ => false
 
 /-- `Command.live` with a NodeIterator: each step on the arena as the change leaves it. -/
@@ -562,7 +572,7 @@ def consoleLog (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : S
 
 open L4Factoidal.HTML.Frames in
 /-- The origin of the page's document: of its URL, or an opaque origin of its own. -/
-def pageOrigin (s : State) : L4Factoidal.HTML.Frames.Origin := originOfString s.url 999999999
+def pageOrigin (s : State) : L4Factoidal.HTML.Frames.Origin := s.selfOrigin.getD (originOfString s.url 999999999)
 
 open L4Factoidal.HTML.Frames in
 /-- The frame of `iframe` element `el` whose container document has `parent`: the one kept
@@ -601,7 +611,8 @@ def frameAccessible (s : State) (el : Nat) : Bool :=
 
 /-- The scripts of the document of `iframe` `el` run in the page's realm: its document is
 one the page may reach (the same origin) and its scripts may run. A sandboxed frame's
-scripts never run there (`HTML.Frames.scripts_need_allow`, `sandboxed_no_access`). -/
+scripts never run there (`HTML.Frames.scripts_need_allow`, `sandboxed_no_access`); an
+opaque frame that may run scripts gets a session of its own (`sessionFrames`). -/
 def frameScriptsInRealm (s : State) (el : Nat) : Bool :=
   frameAccessible s el && (elementFrame s el).scriptsMayRun
 
@@ -622,13 +633,32 @@ def frameBits (s : State) (el : Nat) : Nat :=
 
 /-! ## Node imports (page scripts in the engine) -/
 
+/-- A shadow root's state as bits: 1 closed, 2 delegates focus, 4 manual slot assignment,
+8 clonable, 16 serializable, 32 declarative. -/
+def shadowFlags (i : ShadowInit) : Nat :=
+  (if i.closed then 1 else 0) + (if i.delegatesFocus then 2 else 0) + (if i.manual then 4 else 0) +
+  (if i.clonable then 8 else 0) + (if i.serializable then 16 else 0) + (if i.declarative then 32 else 0)
+
+def shadowInitOfFlags (f : Nat) : ShadowInit :=
+  { closed := f % 2 == 1, delegatesFocus := f / 2 % 2 == 1, manual := f / 4 % 2 == 1,
+    clonable := f / 8 % 2 == 1, serializable := f / 16 % 2 == 1, declarative := f / 32 % 2 == 1 }
+
+theorem shadowInitOfFlags_flags (i : ShadowInit) : shadowInitOfFlags (shadowFlags i) = i := by
+  cases i with
+  | mk a b c e f g => cases a <;> cases b <;> cases c <;> cases e <;> cases f <;> cases g <;> rfl
+
 /-- `node_info(node, which)`: 0 `nodeType`; 1 parent; 2 first child; 3 last child;
 4 previous sibling; 5 next sibling; 6 number of children; 7 node document; 8 1 when an
 HTML element of an HTML document, else 0; 9 the template contents of a `template`
 element; 10 1 for an HTML document; 11 the content document of an `iframe` element; 12
 the `iframe` element whose content document this is (11 only for a frame whose document's
-origin is the page's: `frameAccessible`); 29 an `iframe`'s frame (`frameBits`). -1 none, -2
-no such node. -/
+origin is the page's: `frameAccessible`); 29 an `iframe`'s frame (`frameBits`); on a document,
+128 in a frame's own session (`selfOrigin`). Shadow trees (`DOM.Shadow`): 20 an element's
+shadow root when open (`shadowRoot`); 21 a shadow root's host; 22 a shadow root's state
+(`shadowFlags`); 23 a slottable's `assignedSlot`; 24 the shadow-including root
+(`getRootNode({composed: true})`); 25 1 when connected (`isConnected`), else 0; 26 an
+element's shadow root, open or closed; 27 1 when the arena has a shadow host; 28 the root
+(`getRootNode()`). -1 none, -2 no such node. -/
 def nodeInfo (args : Array Value) (s : State) : State × HostResult :=
   let d := s.dom
   let n := arg args 0
@@ -649,7 +679,22 @@ def nodeInfo (args : Array Value) (s : State) : State × HostResult :=
   | 10 => (s, ret (if x.htmlDoc then 1 else 0))
   | 11 => opt ((s.frames.find? (·.1 == n && frameAccessible s n)).map (·.2))
   | 12 => opt ((s.frames.find? (·.2 == n)).map (·.1))
-  | 29 => if Dom.isHtmlElement x "iframe" then (s, ret (frameBits s n)) else (s, ret (-1))
+  | 20 => opt (match x.shadow with
+      | some sr => if ((d.get sr).shadowInit.map (·.closed)).getD true then none else some sr
+      | none => none)
+  | 21 => opt (d.shadowHost? n)
+  | 22 => match d.shadowInitOf? n with
+    | some i => (s, ret (shadowFlags i))
+    | none => (s, ret (-1))
+  | 23 => opt (d.assignedSlot n)
+  | 24 => (s, ret (d.rootNode n true))
+  | 25 => (s, ret (if d.connected n then 1 else 0))
+  | 26 => opt x.shadow
+  | 27 => (s, ret (if d.hasShadow then 1 else 0))
+  | 28 => (s, ret (d.root n))
+  | 29 => if Dom.isHtmlElement x "iframe" then (s, ret (frameBits s n))
+    else if x.type == .document then (s, ret (if s.parentOrigin.isSome then 128 else 0))
+    else (s, ret (-1))
   | _ => (s, ret (-2))
 
 /-- `nodeName` (DOM §4.4). -/
@@ -783,7 +828,7 @@ def createKind (d : Dom) (kind : Nat) (data : String) : Res Nat :=
     let ct := if data == htmlNS then "application/xhtml+xml" else if data == svgNS then "image/svg+xml" else ""
     ok (d.setNode doc fun n => { n with contentType := ct }, doc)
   | 9, [name, pub, sys] => d.createDocumentType doc name pub sys
-  | 11, _ => ok (d.graft (parseHtmlDocument data))
+  | 11, _ => ok (d.graft (parseHtmlDocument data (shadow := false)))
   | 12, ct :: rest => ok (d.graft (xmlDocument ct ("\x00".intercalate rest)))
   | 13, ns :: name :: rest => ok (L4Factoidal.DOM.Fragment.parseInto d doc ns name ("\x00".intercalate rest))
   | _, _ => (d, .error .invalidCharacter)
@@ -816,6 +861,24 @@ def frameSrc (d : Dom) (el : Nat) : Option String :=
   match attrValue? d el "src" with
   | some v => if v.trimAscii.toString.isEmpty then none else some v
   | none => none
+
+/-- The `iframe` elements of the page's document whose frame gets a script session of its
+own (`HTML.FrameSessions`): with a `srcdoc`, a document the page may not reach (an opaque
+origin: `sandbox` without `allow-same-origin`), and scripts allowed. A frame whose
+`sandbox` lacks `allow-scripts` is never here (`sessionFrames_scripts`,
+`HTML.Frames.scripts_need_allow`), so no session is ever made for it. -/
+def sessionFrames (s : State) : Array (Nat × String × L4Factoidal.HTML.Frames.Frame) :=
+  ((s.dom.treeOrder 0).filter fun el => Dom.isHtmlElement (s.dom.get el) "iframe" &&
+      (attrValue? s.dom el "srcdoc").isSome && (elementFrame s el).scriptsMayRun && !frameAccessible s el).map
+    fun el => (el, (attrValue? s.dom el "srcdoc").getD "", elementFrame s el)
+
+theorem sessionFrames_scripts (s : State) (x : Nat × String × L4Factoidal.HTML.Frames.Frame)
+    (h : x ∈ sessionFrames s) : x.2.2.scriptsMayRun = true := by
+  unfold sessionFrames at h
+  simp only [Array.mem_map, Array.mem_filter] at h
+  obtain ⟨el, ⟨_, hf⟩, rfl⟩ := h
+  simp only [Bool.and_eq_true, Bool.not_eq_true'] at hf
+  exact hf.1.2
 
 /-- HTML §4.8.5 "iframe insertion steps", for the nodes `inserted` (each with its
 subtree): each `iframe` element that is now connected, in a document that has a browsing
@@ -931,6 +994,8 @@ def removeAttribute (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M
 def cloneNode (args : Array Value) (s : State) : State × HostResult :=
   let n := arg args 0
   if !isNode s.dom n then (s, ret (-2)) else
+  -- DOM §4.4 `cloneNode()` step 1: a shadow root is NotSupportedError.
+  if s.dom.isShadowRoot n then (s, ret (-10)) else
   let deep := arg args 1 != 0
   change s (.cloneNode n deep 0) fun d => let (d, c) := d.cloneNode n deep; changed (.cloneNode n deep c) d c
 
@@ -938,14 +1003,27 @@ def cloneNode (args : Array Value) (s : State) : State × HostResult :=
 `b.adoptNode(a)` (DOM §4.5: a document is NotSupportedError); 4 and 5
 `b.importNode(a, deep)` (shallow, deep; the new node); 6 set the checkedness of input `a`
 to `b` (1 or 0); 7 the checkedness of `a`; 8 the other checked radio button of `a`'s
-group, or -1; 9 reset form `a` (DOM.Forms). -/
+group, or -1; 9 reset form `a` (DOM.Forms). Shadow trees: 20 `a.attachShadow(init)` with the
+state bits `b` (`shadowFlags`): the shadow root, or NotSupportedError (-10); 22 empty the
+manually assigned nodes of slot `a`; 23 append node `b` to them (`slot.assign`). Ops 3, 4
+and 5 refuse a shadow root (DOM §4.5: HierarchyRequestError for `adoptNode`,
+NotSupportedError for `importNode`). -/
 def treeOp (args : Array Value) (s : State) : State × HostResult :=
   let a := arg args 0
   let b := arg args 1
   if !isNode s.dom a then (s, ret (-2)) else
   let isDoc := fun (k : Nat) => (s.dom.get k).type == .document
   match arg args 2 with
+  | 20 => match s.dom.attachShadow a (shadowInitOfFlags b) with
+    | (_, .error e) => (s, ret (domErr e))
+    | (d, .ok sr) => addCommandAnswer s (.attachShadow a b sr) d sr
+  | 22 => if !s.dom.isSlot a then (s, ret (-2)) else
+    addCommand s (.assignSlot a #[]) (s.dom.assignSlot a #[])
+  | 23 => if !s.dom.isSlot a || !isNode s.dom b then (s, ret (-2)) else
+    let nodes := (s.dom.get a).manual.push b
+    addCommand s (.assignSlot a nodes) (s.dom.assignSlot a nodes)
   | 3 => if !isNode s.dom b || !isDoc b then (s, ret (-2)) else if isDoc a then (s, ret (-10))
+    else if s.dom.isShadowRoot a then (s, ret (-4))
     -- the template contents of a template element stay where they are
     else if (s.dom.get a).type == .fragment && (s.dom.get a).host.isSome then (s, ret 0)
     else change s (.adoptNode a b) fun d => changed (.adoptNode a b) (d.adopt a b)
@@ -955,7 +1033,7 @@ def treeOp (args : Array Value) (s : State) : State × HostResult :=
   | 8 => match Forms.checkedInGroup s.dom a with | some k => (s, ret k) | none => (s, ret (-1))
   | 9 => if !Forms.isHtml s.dom a ["form"] then (s, ret (-2))
     else change s (.resetForm a) fun d => changed (.resetForm a) (Forms.resetForm d a)
-  | 4 | 5 => if !isNode s.dom b || !isDoc b then (s, ret (-2)) else if isDoc a then (s, ret (-10)) else
+  | 4 | 5 => if !isNode s.dom b || !isDoc b then (s, ret (-2)) else if isDoc a || s.dom.isShadowRoot a then (s, ret (-10)) else
     let deep := arg args 2 == 5
     change s (.importNode a b deep 0) fun d => let (d, c) := d.cloneNode a deep (some b); changed (.importNode a b deep c) d c
   | 1 => if !isNode s.dom b then (s, ret (-2)) else (s, ret (if s.dom.isEqualNode a b then 1 else 0))
@@ -1007,9 +1085,18 @@ it bubbles); 11 "1" for a disabled form control; 12 the URL `input` parsed again
 activates for the event target `s` (a decimal node number); 14 the type state of an
 `input` or `button` (DOM.Forms); 15 the HTML serialization of the node's children (`s`
 "0", `innerHTML`) or of the node (`s` "1", `outerHTML`) (`DOM.Fragment.serialize`). Op 12
-does not read the node. -/
+does not read the node. Shadow trees (`DOM.Shadow`): 30 a slot's assigned nodes
+(`assignedNodes()`), flattened when `s` is "1"; 31 `composedPath()` for the listener at the
+node (the window: the document): `s` is the event path (decimal node numbers, target
+first), and the answer is the part of it that no closed shadow root hides from the
+listener. 32 is `postMessageAnswer` (it reads the host's state). -/
 def nodeQueryOf (d : Dom) (n op : Nat) (q : String) : Except Int String :=
   if op == 3 then (if Dom.validAttributeLocalName q then .ok "" else .error (-3)) else
+  if op == 31 then
+    let c := if n < d.size then n else 0
+    let path := (q.splitOn " ").filterMap String.toNat?
+    .ok (" ".intercalate ((path.filter fun x => x ≥ d.size || !d.hiddenFrom x c).map toString))
+  else
   if op == 12 then
     match q.splitOn "\x00" with
     | [base, input] => match L4Factoidal.WHATWG.URL.parseUrl input (if base.isEmpty then none else some base) with
@@ -1051,6 +1138,8 @@ def nodeQueryOf (d : Dom) (n op : Nat) (q : String) : Except Int String :=
     | none => .error (-2)
   | 14 => .ok (if Forms.isHtml d n ["button"] then Forms.buttonType d n else Forms.inputType d n)
   | 15 => .ok (L4Factoidal.DOM.Fragment.serialize d n (q == "1"))
+  | 30 => if !d.isSlot n then .error (-2) else
+    .ok (" ".intercalate ((if q == "1" then d.findFlattenedSlottables n else d.findSlottables n).toList.map toString))
   | 5 => match d.getElementById n q with
     | some k => .ok (toString k)
     | none => .error (-1)
@@ -1058,10 +1147,22 @@ def nodeQueryOf (d : Dom) (n op : Nat) (q : String) : Except Int String :=
       acc ++ a.ns.getD "" ++ "\x00" ++ a.pfx.getD "" ++ "\x00" ++ a.lname ++ "\x00" ++ a.value ++ "\x00") "")
   | _ => .error (-2)
 
+/-- `node_query` op 32: `postMessage` from the page's realm to the window of document `doc`
+with target origin `q` (`HTML.Frames.postMessageDelivers`): "1 " or "0 " (delivered or not)
+and the serialized origin of the source; -12 (SyntaxError) for a target origin that is not
+a URL. -/
+def postMessageAnswer (s : State) (doc : Nat) (q : String) : Except Int String :=
+  let src := pageOrigin s
+  match L4Factoidal.HTML.Frames.postMessageDelivers src (docFrame s doc).origin q with
+  | some true => .ok ("1 " ++ src.serialize)
+  | some false => .ok ("0 " ++ src.serialize)
+  | none => .error (-12)
+
 def nodeQuery (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : StoreOf M × HostResult :=
   match readStr mem st (arg args 2) (arg args 3) maxString with
   | .error e => (st, codeOrTrap e)
-  | .ok q => answerStr mem st (arg args 4) (arg args 5) (nodeQueryOf s.dom (arg args 0) (arg args 1) q)
+  | .ok q => answerStr mem st (arg args 4) (arg args 5)
+      (if arg args 1 == 32 then postMessageAnswer s (arg args 0) q else nodeQueryOf s.dom (arg args 0) (arg args 1) q)
 
 /-- The most host commands a page may have waiting for the host. -/
 def maxGpuOut : Nat := 65536
@@ -1302,6 +1403,15 @@ def Command.apply (d : Dom) : Command → Except String Dom
     checkNode d n
     if !Forms.isHtml d n ["form"] then throw "script command: target must be a form"
     return Forms.resetForm d n
+  | .attachShadow h f r => do
+    checkNode d h
+    match d.attachShadow h (shadowInitOfFlags f) with
+    | (d, .ok sr) => made r (d, sr)
+    | (_, .error e) => .error s!"script command: {e.name}"
+  | .assignSlot sl nodes => do
+    checkNode d sl
+    for k in nodes do checkNode d k
+    return d.assignSlot sl nodes
   | .frameDocument el source xml r => do
     checkNode d el
     made r (d.graft (frameArena source xml))

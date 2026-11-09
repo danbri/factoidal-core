@@ -51,6 +51,8 @@ def commandJson : L4Factoidal.WasmVM.Hosts.Dom.Command → JSON.Json
   | .replaceData n o k v => .object [("op",.string "replaceData"),("nodeId",num n),("offset",num o),("count",num k),("value",.string v)]
   | .splitText n o r => .object [("op",.string "splitText"),("source",num n),("offset",num o),("nodeId",num r)]
   | .frameDocument el src xml r => .object [("op",.string "frameDocument"),("frame",num el),("source",.string src),("xml",.bool xml),("nodeId",num r)]
+  | .attachShadow h f r => .object [("op",.string "attachShadow"),("host",num h),("flags",num f),("nodeId",num r)]
+  | .assignSlot sl ns => .object [("op",.string "assignSlot"),("nodeId",num sl),("nodes",.array (ns.toList.map num))]
 where num (n : Nat) : JSON.Json := .number (toString n)
 
 private def commandOf (command : JSON.Json) : Except String L4Factoidal.WasmVM.Hosts.Dom.Command := do
@@ -117,6 +119,16 @@ private def commandOf (command : JSON.Json) : Except String L4Factoidal.WasmVM.H
       | _ => throw "script command: xml must be a boolean"
     return .frameDocument (← node "frame") src xml (← node "nodeId")
   | "splitText" => exactly ["source","offset","nodeId"]; return .splitText (← node "source") (← field command "offset" >>= nodeId) (← node "nodeId")
+  | "attachShadow" =>
+    exactly ["host","flags","nodeId"]
+    let flags ← node "flags"
+    if flags ≥ 64 then throw "script command: shadow flags exceed bound"
+    return .attachShadow (← node "host") flags (← node "nodeId")
+  | "assignSlot" =>
+    exactly ["nodeId","nodes"]
+    let .array items ← field command "nodes" | throw "script command: nodes must be an array"
+    if items.length > 65536 then throw "script command: nodes exceed bound"
+    return .assignSlot (← node "nodeId") (← items.toArray.mapM nodeId)
   | _ => throw "script command: unsupported operation"
 
 /-- One command: its JSON form read, then the arena operation the script ran

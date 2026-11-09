@@ -147,6 +147,12 @@ structure Held where
   leanBase : Option LeanJS.Session := none
   /-- The session on the Lean engine. -/
   leanSession : Option (Nat × LeanJS.Session × Marks) := none
+  /-- The sessions of the current page's sandboxed frames (`HTML.FrameSessions`), by
+  `iframe` element, on the interpreter and on the Lean engine; and the arena size up to
+  which the page was searched for frames. -/
+  frames : Array (Nat × Page.Session) := #[]
+  leanFrames : Array (Nat × LeanJS.Session) := #[]
+  frameScan : Nat := 0
 
 instance : Inhabited Held := ⟨{}⟩
 
@@ -592,13 +598,99 @@ def frameDocument (request : JSON.Json) : Except String (String × Bool × Array
   let (scripts, _) ← scriptSources dom request
   return (src, DOM.isXhtmlPath url, scripts)
 
+
+/-! ### Sandboxed frames: script sessions of their own (`HTML.FrameSessions`)
+
+A frame whose document has an opaque origin and may run scripts (`Hosts.Dom.sessionFrames`:
+`sandbox` with `allow-scripts` and without `allow-same-origin`, and a `srcdoc`) gets a
+session of its own: its own arena, heap and event loop, with smaller budgets
+(`frameLimits`). After each turn of the page, `pumpFrames` makes the sessions of new such
+frames, then hands messages between the sessions (`FrameSessions.exchange`, at most
+`frameRounds` rounds), each frame's session running its due tasks at the page's clock. A
+page with no `iframe` element pays one look at the nodes made in the turn. Not on the AOT
+path (the Hub). -/
+
+/-- The budgets of a frame's session: an eighth of the page's instructions for one task,
+at most 32 MiB of memory, at most 4096 commands and 256 console lines, so a frame cannot
+starve its page. -/
+def frameLimits (lim : Page.Limits) : Page.Limits :=
+  { lim with fuel := lim.fuel / 8, pages := min lim.pages 512, commands := min lim.commands 4096, logs := 256, frames := false }
+
+/-- Tasks a frame's session may run in one round; rounds of messages in one pump; frames
+with sessions in one page. -/
+def frameTasks : Nat := 1000
+def maxFrameSessions : Nat := 16
+
+/-- What the pump needs of a session type. -/
+structure FrameOps (σ : Type) where
+  host : σ → Page.Host
+  setHost : σ → Page.Host → σ
+  deliver : σ → HTML.FrameSessions.Message → σ
+  advanceTo : σ → Nat → σ
+  start : DOM.Dom → Array (Nat × String) → HTML.Frames.Origin × HTML.Frames.Origin → Option σ
+  /-- A frame's navigation ends with a document: `loadFrame` of the engine. -/
+  load : σ → Nat → String → Array (Nat × String) → σ
+
+/-- One session's part of an exchange: the messages for it delivered, its due tasks run at
+`clock`, and the messages it posted taken from its outbox. -/
+def frameRun {σ : Type} (ops : FrameOps σ) (clock : Nat) (s : σ) (ms : Array HTML.FrameSessions.Message) :
+    σ × Array HTML.FrameSessions.Message :=
+  let s := ms.foldl ops.deliver s
+  let s := ops.advanceTo s clock
+  let h := ops.host s
+  (ops.setHost s { h with outbox := #[] }, h.outbox)
+
+/-- After a turn of the page: sessions for its new sandboxed frames, then the messages. -/
+def pumpFrames {σ : Type} (ops : FrameOps σ) (parent : σ) (frames : Array (Nat × σ)) (scanned : Nat) :
+    σ × Array (Nat × σ) × Nat := Id.run do
+  let h := ops.host parent
+  let d := h.dom.dom
+  let mut frames := frames
+  if (List.range (d.size - scanned)).any (fun i => DOM.Dom.isHtmlElement (d.get (scanned + i)) "iframe") then
+    for (el, src, f) in Dom.sessionFrames h.dom do
+      if !frames.any (·.1 == el) && frames.size < maxFrameSessions then
+        let dom := DOM.parseHtmlDocument src
+        let scripts := ((scriptSources dom (.object [])).toOption.map (·.1)).getD #[]
+        if let some c := ops.start dom scripts (f.origin, Dom.pageOrigin h.dom) then
+          frames := frames.push (el, c)
+  if frames.isEmpty then return (parent, frames, d.size)
+  let clock := h.loop.clock
+  let mut m : HTML.FrameSessions.SessionMap σ := { parent, frames }
+  let mut pending : Array HTML.FrameSessions.Message := #[]
+  for _ in [0:frameRounds] do
+    let (m', out) := HTML.FrameSessions.exchange (frameRun ops clock) m pending
+    m := m'
+    pending := out
+    if pending.isEmpty then break
+  return (m.parent, m.frames, d.size)
+
+def pageFrameOps (m : Page.Module') (lim : Page.Limits) : FrameOps Page.Session :=
+  { host := (·.host), setHost := fun s h => { s with host := h },
+    deliver := fun s msg => (s.deliverP msg).runLocal,
+    advanceTo := fun s c => (s.advance c frameTasks).1,
+    start := fun dom scripts o =>
+      (Page.start m dom "about:srcdoc" scripts (frameLimits lim) #[] {} {} (some o)).toOption,
+    load := fun s el src scripts => s.loadFrame el src scripts }
+
+def leanFrameOps (base : LeanJS.Session) (lim : Page.Limits) : FrameOps LeanJS.Session :=
+  { host := (·.host), setHost := LeanJS.Session.setHost,
+    deliver := fun s msg =>
+      let e := LeanJS.engine
+      e.checkpoint (e.dispatchWith s Page.windowId "message" (Page.messageInit msg)).1,
+    advanceTo := fun s c => (LeanJS.engine.advance s c frameTasks).1,
+    start := fun dom scripts o => some (LeanJS.start base dom "about:srcdoc" scripts (frameLimits lim) {} {} (some o)),
+    load := fun s el src scripts => LeanJS.loadFrame s el src scripts }
+
 /-- The answer of a turn of the Lean engine; the session is kept. -/
 def leanTurn (held : Held) (id : Nat) (before : Before) (s : LeanJS.Session) (marks : Marks) (full : Bool) (ns : Nat) :
     Held × Except String String :=
   let (s, loads) := srcdocLoads (·.host) (fun s el src scripts => LeanJS.loadFrame s el src scripts) s
+  let (s, frames, scan) := match held.leanBase with
+    | some base => pumpFrames (leanFrameOps base s.limits) s held.leanFrames held.frameScan
+    | none => (s, held.leanFrames, held.frameScan)
   let (answer, marks) := turnAnswerOf id before (View.ofLean s) marks full ns
     ([("engine",.string "bubblepop")] ++ frameFields s.host loads)
-  ({ held with leanSession := some (id, drainedLean s, marks) }, .ok answer)
+  ({ held with leanSession := some (id, drainedLean s, marks), leanFrames := frames, frameScan := scan }, .ok answer)
 
 /-- `start` on the Lean engine: its realm is made at the first page (the prelude runs
 once), and each page starts from it with its own arena. -/
@@ -629,7 +721,7 @@ def startLean (held : Held) (html : String) (request : JSON.Json) (measure : JSO
       let (s, ns) := WebWasm.timed fun _ =>
         let s := LeanJS.start base dom url scripts lim reads { instructionsPerMs := rate }
         missing.foldl LeanJS.Session.fail s
-      leanTurn { held with leanBase := some base, session := none, leanSession := none, nextSession := id + 1 }
+      leanTurn { held with leanBase := some base, session := none, leanSession := none, nextSession := id + 1, frames := #[], leanFrames := #[], frameScan := 0 }
         id {} s {} true (ns0 + ns)
 
 /-- A later action on the Lean engine's session (the actions of `act`). -/
@@ -688,7 +780,8 @@ def act (held : Held) (action html : String) (request : JSON.Json)
     match held.turn, held.aot with
     | some t, some aot => hostCall held aot t request
     | _, _ => (held, .error "scriptSession: no turn waits for the host")
-  | "close" => ({ held with session := none, turn := none, leanSession := none }, .ok "{\"closed\":true}")
+  | "close" => ({ held with session := none, turn := none, leanSession := none, frames := #[], leanFrames := #[], frameScan := 0 },
+      .ok "{\"closed\":true}")
   | _ =>
   if held.turn.isSome then (held, .error "scriptSession: a turn waits for the host") else
   match action with
@@ -733,9 +826,10 @@ def act (held : Held) (action html : String) (request : JSON.Json)
       | (.ok s, ns) =>
         let id := held.nextSession
         let (s, loads) := srcdocLoads (·.host) (fun s el src scripts => s.loadFrame el src scripts) s
+        let (s, frames, scan) := pumpFrames (pageFrameOps m s.limits) s #[] 0
         let (answer, marks) := turnAnswer id {} s {} true ns (frameFields s.host loads)
         let s := drained s
-        ({ held with session := some (id, s, marks), leanSession := none, nextSession := id + 1 }, .ok answer)
+        ({ held with session := some (id, s, marks), leanSession := none, nextSession := id + 1, frames, leanFrames := #[], frameScan := scan }, .ok answer)
   | _ =>
     match held.leanSession with
     | some (id, s, marks) =>
@@ -756,8 +850,11 @@ def act (held : Held) (action html : String) (request : JSON.Json)
         else
           let (s', ns) := WebWasm.timed fun _ => (f s).runLocal
           let (s', loads) := srcdocLoads (·.host) (fun s el src scripts => s.loadFrame el src scripts) s'
+          let (s', frames, scan) := match held.module with
+            | some m => pumpFrames (pageFrameOps m s'.limits) s' held.frames held.frameScan
+            | none => (s', held.frames, held.frameScan)
           let (answer, marks) := turnAnswer id before s' marks full ns (frameFields s'.host loads)
-          ({ held with session := some (id, drained s', marks) }, Except.ok answer)
+          ({ held with session := some (id, drained s', marks), frames, frameScan := scan }, Except.ok answer)
       match action with
       | "click" =>
         match natField request "node" with

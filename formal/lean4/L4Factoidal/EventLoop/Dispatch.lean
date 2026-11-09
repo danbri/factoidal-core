@@ -17,7 +17,9 @@ steps 5.13 and 5.14:
 first and returns, so the listeners of the current invoke still run and no
 later invoke does. `stopImmediatePropagation` stops at once.
 
-Not modelled here: Document and Window on the path, shadow trees, `once` and
+Shadow trees: `planAt` (the structs at the target are given; the path and the
+retargeted targets are `DOM.Shadow.eventPath` and `DOM.Shadow.retarget`). Not modelled
+here: Document and Window on the path, `once` and
 `passive`, and listeners added during the dispatch to a node not yet reached
 (the plan is fixed when dispatch starts). The host checks the removed flag of
 a listener before it runs it.
@@ -57,6 +59,30 @@ def plan (path : List Nat) (listeners : List Listener) (bubbles : Bool) : List V
   (List.range path.length).flatMap (fun d => invoke listeners target (path.getD d 0) d true) ++
   (List.range path.length).reverse.flatMap (fun d =>
     if d == target || bubbles then invoke listeners target (path.getD d 0) d false else [])
+
+/-- `invoke` for a struct that is at the target or not (DOM §2.9: its shadow-adjusted target
+is non-null). -/
+def invokeAt (listeners : List Listener) (atT : Bool) (node depth : Nat) (capture : Bool) : List Visit :=
+  (listeners.filter fun l => l.node == node && l.capture == capture).map fun l =>
+    { node, depth, capture, callback := l.callback,
+      phase := if atT then .atTarget else if capture then .capturing else .bubbling }
+
+/-- The plan of DOM §2.9 steps 5.13 and 5.14 for a path through shadow trees: `atTarget d`
+says that the struct at depth `d` (root first) has a shadow-adjusted target, as the
+target has and a shadow host on the path of an event from its shadow tree has. Such a
+struct's phase is `AT_TARGET`, and its bubbling listeners run when the event does not
+bubble. With `atTarget` true only at the last struct it is `plan` (`planAt_plan`). -/
+def planAt (path : List Nat) (atTarget : Nat → Bool) (listeners : List Listener) (bubbles : Bool) : List Visit :=
+  (List.range path.length).flatMap (fun d => invokeAt listeners (atTarget d) (path.getD d 0) d true) ++
+  (List.range path.length).reverse.flatMap (fun d =>
+    if atTarget d || bubbles then invokeAt listeners (atTarget d) (path.getD d 0) d false else [])
+
+theorem invokeAt_invoke (ls : List Listener) (target node depth : Nat) (capture : Bool) :
+    invokeAt ls (depth == target) node depth capture = invoke ls target node depth capture := rfl
+
+/-- A path with no shadow tree: `planAt` is `plan`. -/
+theorem planAt_plan (path : List Nat) (ls : List Listener) (bubbles : Bool) :
+    planAt path (· == path.length - 1) ls bubbles = plan path ls bubbles := rfl
 
 /-- The rank of a visit in the walk: capture invokes count up from the root,
 then the bubbling invokes count up from the target to the root. -/

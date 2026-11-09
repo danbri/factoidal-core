@@ -416,11 +416,13 @@ def callDepth : Nat := if System.Platform.numBits == 32 then 100 else 400
 /-- Start a page on the prepared realm (as `Page.start` and `Page.Session.startP`): the
 content event handler attributes, the URL, the classic scripts in document order (each with
 the current script set and a microtask checkpoint after it), `DOMContentLoaded`, the
-window's `load` event as a task, and the tasks due at time 0. -/
+window's `load` event as a task, and the tasks due at time 0. `origins`: a sandboxed
+frame's own session (`HTML.FrameSessions`), with its own origin and its parent's. -/
 def start (base : Session) (dom : Arena) (url : String) (scripts : Array (Nat × String)) (lim : Page.Limits := {})
-    (reads : Reads := {}) (time : ScriptClock := {}) : Session := Id.run do
+    (reads : Reads := {}) (time : ScriptClock := {})
+    (origins : Option (L4Factoidal.HTML.Frames.Origin × L4Factoidal.HTML.Frames.Origin) := none) : Session := Id.run do
   let gpu := L4Factoidal.PageGpu.State.empty lim.gpuPage
-  let domHost : Page.DomHost := { dom := dom, commandLimit := lim.commands, logLimit := lim.logs, framing := lim.frames, gpu := gpu, url, hostLoads := lim.hostLoads }
+  let domHost : Page.DomHost := { dom := dom, commandLimit := lim.commands, logLimit := lim.logs, framing := lim.frames, gpu := gpu, url, selfOrigin := origins.map (·.1), parentOrigin := origins.map (·.2), hostLoads := lim.hostLoads }
   -- the page's own iframes get browsing contexts before its scripts run (as `Page.Session.startP`)
   let domHost := if domHost.framing && dom.nodes.any (L4Factoidal.DOM.Dom.isHtmlElement · "iframe") then
     let d1 := Hosts.Dom.connectFrames domHost #[0]

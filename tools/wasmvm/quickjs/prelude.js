@@ -132,7 +132,14 @@
     set cancelBubble(v) { if (v) state(this).stop = true; }
     get timeStamp() { return state(this).timeStamp; }
     get isTrusted() { return state(this).trusted; }
-    composedPath() { const s = state(this); return s.dispatching ? s.path.slice() : []; }
+    // With shadow trees, Lean filters the path for the current target (node_query 31).
+    composedPath() {
+      const s = state(this);
+      if (!s.dispatching) return [];
+      if (!s.pathIds) return s.path.slice();
+      const c = s.currentTarget === null ? 0 : idOf(s.currentTarget), r = n.query(c, 31, s.pathIds.join(' '));
+      return typeof r === 'string' ? (r === '' ? [] : r.split(' ').map(x => wrapTarget(Number(x)))) : s.path.slice();
+    }
     stopPropagation() { state(this).stop = true; }
     stopImmediatePropagation() { const s = state(this); s.stop = true; s.stopImmediate = true; }
     preventDefault() { const s = state(this); if (s.cancelable && !s.passive) s.canceled = true; }
@@ -419,12 +426,18 @@
     }
     // Lean answers [path length, path (target first)..., then per listener call:
     // callback, node, phase + 8 * capture, depth]: L4Factoidal.EventLoop.Dispatch.plan.
-    const plan = chk(n.plan(tid, s.type, s.bubbles ? 1 : 0));
-    const k = plan[0];
+    // With shadow trees (flag 4, an engine with DOM.Shadow): the path goes through slots
+    // and shadow roots, and each call has a fifth number, the target that listener sees
+    // (DOM §2.5 retargeting; Dispatch.planAt).
+    const sh = shadowEngine();
+    const plan = chk(n.plan(tid, s.type, (s.bubbles ? 1 : 0) | (s.composed ? 2 : 0) | (sh ? 4 : 0)));
+    const k = plan[0], step = sh ? 5 : 4;
     s.path = []; for (let i = 1; i <= k; i++) s.path.push(wrapTarget(plan[i]));
+    s.pathIds = sh ? plan.slice(1, k + 1) : null;
     let stopAt = null;
-    for (let i = k + 1; i + 3 < plan.length; i += 4) {
+    for (let i = k + 1; i + step - 1 < plan.length; i += step) {
       const cb = plan[i], node = plan[i + 1], phase = plan[i + 2] & 7, capture = (plan[i + 2] & 8) !== 0, depth = plan[i + 3];
+      if (sh) s.target = plan[i + 4] < 0 ? null : wrapTarget(plan[i + 4]);
       // After stopPropagation the rest of the same invoke still runs: the same node and
       // the same pass (EventLoop.Dispatch.afterStop); after stopImmediatePropagation, none.
       if (s.stopImmediate) break;
@@ -439,6 +452,9 @@
       if (s.stop && stopAt === null) stopAt = { depth, capture };
     }
     s.phase = 0; s.currentTarget = null; s.dispatching = false; s.stop = false; s.stopImmediate = false;
+    // DOM §2.9 steps 6 and 10: the target is the one at the target; it is cleared when it is
+    // in a shadow tree.
+    if (sh) s.target = tid < WINDOW && info(info(tid, 28), 22) >= 0 ? null : target;
     if (act !== null) { if (s.canceled) canceledActivation(act, actState); else activation(act, tid); }
     return !s.canceled;
   };
@@ -470,7 +486,7 @@
     'mouseover', 'mouseup', 'reset', 'resize', 'scroll', 'select', 'submit', 'toggle', 'wheel', 'animationend',
     'transitionend', 'pointerdown', 'pointerup', 'pointermove', 'message', 'unhandledrejection', 'rejectionhandled',
     'beforeunload', 'unload', 'hashchange', 'popstate', 'pageshow', 'pagehide', 'storage', 'online', 'offline',
-    'afterprint', 'beforeprint', 'languagechange', 'messageerror'];
+    'afterprint', 'beforeprint', 'languagechange', 'messageerror', 'slotchange'];
   const handlers = new WeakMap();
   const handlerOf = (t, name) => handlers.get(t)?.get(name)?.value ?? null;
   const setHandler = (t, name, f) => {
@@ -576,9 +592,9 @@
     get nodeType() { return info(nodeId(this), 0); }
     get nodeName() { return str(nodeId(this), 1); }
     get baseURI() { return document.URL; }
-    get isConnected() { let k = nodeId(this); for (let i = 0; i < 1 << 20; i++) { const p = info(k, 1); if (p < 0) return k === 0; k = p; } return false; }
+    get isConnected() { if (shadowEngine()) return info(nodeId(this), 25) === 1; let k = nodeId(this); for (let i = 0; i < 1 << 20; i++) { const p = info(k, 1); if (p < 0) return k === 0; k = p; } return false; }
     get ownerDocument() { const id = nodeId(this); return info(id, 0) === 9 ? null : wrap(info(id, 7)); }
-    getRootNode() { let k = nodeId(this); for (;;) { const p = info(k, 1); if (p < 0) return wrap(k); k = p; } }
+    getRootNode(options = {}) { if (shadowEngine()) return wrap(info(nodeId(this), options?.composed ? 24 : 28)); let k = nodeId(this); for (;;) { const p = info(k, 1); if (p < 0) return wrap(k); k = p; } }
     get parentNode() { return wrap(info(nodeId(this), 1)); }
     get parentElement() { const p = info(nodeId(this), 1); return p >= 0 && info(p, 0) === 1 ? wrap(p) : null; }
     hasChildNodes() { return info(nodeId(this), 6) > 0; }
@@ -1025,6 +1041,7 @@
   // submit event; a navigation would follow, but nothing loads here.
   const submitForm = (form, submitter) => {
     if (!form.isConnected) return; // a form that is not connected does not submit (§4.10.21.3 step 1)
+    if (formsSandboxed(form)) return; // nor one of a document with the sandboxed forms flag (step 3)
     const e = new SubmitEvent('submit', { bubbles: true, cancelable: true, submitter: submitter === form ? null : submitter });
     state(e).trusted = true;
     dispatch(form, e);
@@ -2097,7 +2114,7 @@
       case 8: return Comment.prototype;
       case 9: return info(id, 10) === 1 ? HTMLDocument.prototype : XMLDocument.prototype;
       case 10: return DocumentType.prototype;
-      case 11: return DocumentFragment.prototype;
+      case 11: return shadowEngine() && info(id, 22) >= 0 ? (seeShadow(), ShadowRoot.prototype) : DocumentFragment.prototype;
       default: return Node.prototype;
     }
   };
@@ -2311,6 +2328,88 @@
   // does not serve wasm_call leaves WebAssembly undefined.
   const wasmServed = typeof n.wasm === 'function' && typeof n.wasmGlue === 'function' && typeof n.wasm(0, 0) !== 'number';
   // ---- end of WebAssembly (pagewasm) ------------------------------------------------------
+  // ==== shadowframes: Shadow DOM ========================================================
+  // DOM §4.2.2 (slots), §4.8 (ShadowRoot), §4.9 (attachShadow). The algorithms are Lean's
+  // (L4Factoidal.DOM.Shadow): node_info 20-28, node_query 30, 31 and 33, tree_op 20, 22 and
+  // 23. An engine without them answers -2 to node_info 20: then this section defines
+  // nothing and events keep the old plan.
+  let shadowProbe;
+  function shadowEngine() { return shadowProbe ?? (shadowProbe = info(0, 20) !== -2); }
+  // "Signal a slot change" (DOM §4.2.2.5): once a shadow root has been seen, a change of the
+  // tree marks the slots for one Lean comparison (node_query 33) in a microtask, which
+  // fires slotchange at each slot whose assigned nodes changed.
+  let shadowSeen = false, slotDirty = false;
+  // The tree-changing natives get the slot check only once a shadow root is seen, so a page
+  // with no shadow tree pays nothing per change.
+  function seeShadow() {
+    if (shadowSeen) return;
+    shadowSeen = true; n.query(0, 33, '');
+    for (const k of ['setAttr', 'removeAttr', 'setText', 'insert', 'remove', 'replace', 'treeOp']) {
+      const f = n[k];
+      n[k] = (...a) => { const r = f.apply(n, a); if (!slotDirty) { slotDirty = true; Promise.resolve().then(fireSlotChanges); } return r; };
+    }
+  }
+  const fireSlotChanges = () => {
+    slotDirty = false;
+    const r = n.query(0, 33, '');
+    if (typeof r !== 'string' || r === '') return;
+    for (const id of r.split(' ')) { const e = new Event('slotchange', { bubbles: true }); state(e).trusted = true; dispatch(wrap(Number(id)), e); }
+  };
+  class ShadowRoot extends DocumentFragment {
+    constructor() { throw new TypeError('Illegal constructor'); }
+    get mode() { return info(nodeId(this), 22) & 1 ? 'closed' : 'open'; }
+    get host() { return wrap(info(nodeId(this), 21)); }
+    get delegatesFocus() { return (info(nodeId(this), 22) & 2) !== 0; }
+    get slotAssignment() { return info(nodeId(this), 22) & 4 ? 'manual' : 'named'; }
+    get clonable() { return (info(nodeId(this), 22) & 8) !== 0; }
+    get serializable() { return (info(nodeId(this), 22) & 16) !== 0; }
+    get activeElement() { return null; }
+    get onslotchange() { return handlerOf(this, 'slotchange'); }
+    set onslotchange(f) { setHandler(this, 'slotchange', f); }
+  }
+  if (shadowEngine()) {
+    const inner = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
+    if (inner) Object.defineProperty(ShadowRoot.prototype, 'innerHTML', inner);
+    define(Element.prototype, 'attachShadow', function attachShadow(init) {
+      if (arguments.length < 1) throw new TypeError("Failed to execute 'attachShadow' on 'Element': 1 argument required, but only 0 present.");
+      if (init === null || (typeof init !== 'object' && typeof init !== 'function')) throw new TypeError("Failed to execute 'attachShadow' on 'Element': parameter 1 is not of type 'ShadowRootInit'.");
+      // WebIDL dictionary members, read in lexicographical order.
+      const clonable = !!init.clonable, delegatesFocus = !!init.delegatesFocus, modeIn = init.mode;
+      const serializable = !!init.serializable, slotIn = init.slotAssignment;
+      if (modeIn === undefined) throw new TypeError("Failed to read the 'mode' property from 'ShadowRootInit': Required member is undefined.");
+      const mode = String(modeIn), slot = slotIn === undefined ? 'named' : String(slotIn);
+      if (mode !== 'open' && mode !== 'closed') throw new TypeError(`The provided value '${mode}' is not a valid enum value of type ShadowRootMode.`);
+      if (slot !== 'named' && slot !== 'manual') throw new TypeError(`The provided value '${slot}' is not a valid enum value of type SlotAssignmentMode.`);
+      seeShadow();
+      const flags = (mode === 'closed' ? 1 : 0) | (delegatesFocus ? 2 : 0) | (slot === 'manual' ? 4 : 0) | (clonable ? 8 : 0) | (serializable ? 16 : 0);
+      return wrap(chk(n.treeOp(nodeId(this), flags, 20)));
+    });
+    Object.defineProperty(Element.prototype, 'shadowRoot', { get() { return wrap(info(nodeId(this), 20)); }, configurable: true, enumerable: true });
+    for (const C of [Element, Text]) Object.defineProperty(C.prototype, 'assignedSlot', { get() { return wrap(info(nodeId(this), 23)); }, configurable: true, enumerable: true });
+    reflectString(Element, ['slot']);
+    const Slot = named.HTMLSlotElement;
+    reflectString(Slot, ['name']);
+    const assigned = (slot, options, elements) => {
+      const r = chk(n.query(nodeId(slot), 30, options !== null && typeof options === 'object' && options.flatten ? '1' : '0'));
+      const ids = typeof r === 'string' && r !== '' ? r.split(' ').map(Number) : [];
+      return (elements ? ids.filter(k => info(k, 0) === 1) : ids).map(wrap);
+    };
+    define(Slot.prototype, 'assignedNodes', function assignedNodes(options = {}) { return assigned(this, options, false); });
+    define(Slot.prototype, 'assignedElements', function assignedElements(options = {}) { return assigned(this, options, true); });
+    define(Slot.prototype, 'assign', function assign(...nodes) {
+      for (const x of nodes) if (!(x instanceof Element || x instanceof Text)) throw new TypeError("Failed to execute 'assign' on 'HTMLSlotElement': parameter is not of type 'Element' or 'Text'.");
+      const id = nodeId(this);
+      chk(n.treeOp(id, 0, 22));
+      for (const x of nodes) chk(n.treeOp(id, nodeId(x), 23));
+    });
+    // HTML §4.12.3: the declarative shadow root attributes of `template`.
+    const T = named.HTMLTemplateElement;
+    Object.defineProperty(T.prototype, 'shadowRootMode', { get() { const v = (this.getAttribute('shadowrootmode') ?? '').toLowerCase(); return v === 'open' || v === 'closed' ? v : ''; },
+      set(v) { this.setAttribute('shadowrootmode', String(v)); }, configurable: true, enumerable: true });
+    for (const [k, a] of [['shadowRootDelegatesFocus', 'shadowrootdelegatesfocus'], ['shadowRootClonable', 'shadowrootclonable'], ['shadowRootSerializable', 'shadowrootserializable']])
+      Object.defineProperty(T.prototype, k, { get() { return this.hasAttribute(a); }, set(v) { this.toggleAttribute(a, !!v); }, configurable: true, enumerable: true });
+  }
+  // ==== end shadowframes: Shadow DOM =====================================================
 
   // ---- Window -----------------------------------------------------------------------
   class Window extends EventTarget { constructor() { throw new TypeError('Illegal constructor'); } }
@@ -3149,12 +3248,147 @@
   for (const k of ['addEventListener', 'removeEventListener'])
     define(Window.prototype, k, function (...a) { return EventTarget.prototype[k].apply((this === window || this == null) && scriptDocument ? windowOfScript() : this, a); });
   // ==== end frames =====================================================================
+
+  // ==== shadowframes: frames, the sandbox and postMessage ===============================
+  // HTML §4.8.5, §7.1.5, §9.3. The decisions are Lean's (L4Factoidal.HTML.Frames through
+  // Hosts.Dom): node_info 11 answers a frame's document only to a document of the same
+  // origin, node_info 29 a frame's sandbox bits, node_query 32 the postMessage origin check.
+  // An engine without them answers -2 to node_info 29 on an iframe: then postMessage is
+  // the old stub.
+  const frameEngine = () => shadowEngine();
+  // HTML §4.8.5: `sandbox` is a DOMTokenList whose supported tokens are the keywords.
+  const sandboxLists = new WeakMap();
+  const sandboxTokens = ['allow-downloads', 'allow-forms', 'allow-modals', 'allow-orientation-lock', 'allow-pointer-lock',
+    'allow-popups', 'allow-popups-to-escape-sandbox', 'allow-presentation', 'allow-same-origin', 'allow-scripts',
+    'allow-top-navigation', 'allow-top-navigation-by-user-activation', 'allow-top-navigation-to-custom-protocols'];
+  Object.defineProperty(named.HTMLIFrameElement.prototype, 'sandbox', {
+    get() {
+      let l = sandboxLists.get(this);
+      if (!l) { sandboxLists.set(this, l = tokenList(this, 'sandbox')); Object.defineProperty(l, 'supports', { value: t => sandboxTokens.includes(String(t).toLowerCase()) }); }
+      return l;
+    },
+    set(v) { this.setAttribute('sandbox', String(v)); }, configurable: true, enumerable: true });
+  reflectString(named.HTMLIFrameElement, ['referrerPolicy', 'loading']);
+  // A frame whose document this realm may not reach: a cross-origin WindowProxy (HTML
+  // §7.2.3.x), with only postMessage, location assignment and the window names.
+  const opaqueWindows = new Map();
+  const opaqueWindow = el => {
+    let w = opaqueWindows.get(el);
+    if (w) return w;
+    w = Object.freeze({
+      postMessage(message, targetOrigin, transfer) { postAcross(el, message, targetOrigin); },
+      get window() { return w; }, get self() { return w; }, get frames() { return w; },
+      get parent() { return window; }, get top() { return window; }, get opener() { return null; },
+      get closed() { return false; }, get length() { return 0; },
+      get location() { return { set href(v) { wrap(el).setAttribute('src', String(v)); }, replace(v) { wrap(el).setAttribute('src', String(v)); } }; },
+      set location(v) { wrap(el).setAttribute('src', String(v)); },
+      close() {}, focus() {}, blur() {},
+    });
+    opaqueWindows.set(el, w);
+    return w;
+  };
+  if (frameEngine()) Object.defineProperty(named.HTMLIFrameElement.prototype, 'contentWindow', { get() {
+    const id = nodeId(this), d = info(id, 11);
+    if (d >= 0) return frameWindow(d);
+    return (info(id, 29) & 64) ? opaqueWindow(id) : null;
+  }, configurable: true });
+  // HTML §4.10.21.3 step 3: a form of a document with the sandboxed forms flag does not
+  // submit.
+  function formsSandboxed(form) {
+    if (!frameEngine()) return false;
+    const doc = info(nodeId(form), 7), el = doc === 0 ? -1 : info(doc, 12);
+    return el >= 0 && (info(el, 29) & 4) === 0;
+  }
+  // HTML §9.3.3 "window post message steps": the target origin check is Lean's (node_query
+  // 32: "1 origin" to deliver with the source's serialized origin, "0 origin" not to, -12
+  // a target origin that is not a URL); the message is cloned at once and delivered as a
+  // task (MessageEvent at the window).
+  const postTo = (doc, message, targetOrigin, transfer) => {
+    let options = targetOrigin;
+    if (options === undefined || options === null || typeof options !== 'object') options = { targetOrigin: targetOrigin === undefined ? '/' : String(targetOrigin), transfer: transfer ?? [] };
+    const to = options.targetOrigin === undefined ? '/' : String(options.targetOrigin);
+    const r = doc < 0 ? '0 null' : n.query(doc, 32, to);
+    if (r === -12) throw new DOMException(`Invalid target origin '${to}' in a call to 'postMessage'.`, 'SyntaxError');
+    const ports = [...(options.transfer ?? [])].filter(p => p instanceof MessagePort);
+    const data = globalThis.structuredClone(message);
+    if (typeof r !== 'string' || !r.startsWith('1')) return;
+    const origin = r.slice(2);
+    setTimeout(() => { const e = new MessageEvent('message', { data, origin, source: window, ports }); state(e).trusted = true; dispatch(window, e); }, 0);
+  };
+  // A message to a session of its own (a sandboxed frame, or from one to its parent):
+  // Lean checks the origin and queues it (node_query 34); the host hands it to the other
+  // session as a string, so the data must survive JSON (HTML.FrameSessions).
+  const postAcross = (to, message, targetOrigin) => {
+    let o = targetOrigin;
+    if (o === undefined || o === null || typeof o !== 'object') o = { targetOrigin: targetOrigin === undefined ? '/' : String(targetOrigin) };
+    const t = o.targetOrigin === undefined ? '/' : String(o.targetOrigin);
+    const data = JSON.stringify(globalThis.structuredClone(message)) ?? 'null';
+    const r = n.query(to, 34, t + '\u0000' + data);
+    if (r === -12) throw new DOMException(`Invalid target origin '${t}' in a call to 'postMessage'.`, 'SyntaxError');
+  };
+  // In a frame's own session (node_info 29 on the document: 128), the parent is a window
+  // of another origin.
+  let parentProxy;
+  const frameSession = () => frameEngine() && (info(0, 29) & 128) !== 0;
+  const parentWindow = () => parentProxy ?? (parentProxy = Object.freeze({
+    postMessage(message, targetOrigin) { postAcross(WINDOW, message, targetOrigin); },
+    get window() { return parentProxy; }, get self() { return parentProxy; }, get closed() { return false; },
+    get parent() { return parentProxy; }, get top() { return parentProxy; }, get length() { return 1; },
+    close() {}, focus() {}, blur() {} }));
+  if (frameEngine()) {
+    Object.defineProperty(globalThis, 'parent', { get: () => frameSession() ? parentWindow() : window, configurable: true });
+    Object.defineProperty(globalThis, 'top', { get: () => frameSession() ? parentWindow() : window, configurable: true });
+  }
+  if (frameEngine()) def('postMessage', function postMessage(message, targetOrigin, transfer) {
+    if (arguments.length < 1) throw new TypeError("Failed to execute 'postMessage' on 'Window': 1 argument required, but only 0 present.");
+    postTo(0, message, targetOrigin, transfer);
+  });
+  // HTML §9.4 MessageChannel and MessagePort: two entangled ports in this realm; a message
+  // waits in the port's queue until the port is started (start() or onmessage).
+  class MessagePort extends EventTarget {
+    constructor() { if (!portMaking) throw new TypeError('Illegal constructor'); super(); this._q = []; this._started = false; this._other = null; this._closed = false; }
+    postMessage(message, transfer) {
+      const data = globalThis.structuredClone(message), o = this._other;
+      if (!o || o._closed || this._closed) return;
+      o._q.push(data); if (o._started) o._flush();
+    }
+    start() { if (this._started) return; this._started = true; this._flush(); }
+    close() { this._closed = true; if (this._other) this._other._other = null; this._other = null; }
+    _flush() { setTimeout(() => { while (this._q.length && !this._closed) { const e = new MessageEvent('message', { data: this._q.shift() }); state(e).trusted = true; dispatch(this, e); } }, 0); }
+    get onmessage() { return handlerOf(this, 'message'); }
+    set onmessage(f) { setHandler(this, 'message', f); this.start(); }
+    get onmessageerror() { return handlerOf(this, 'messageerror'); }
+    set onmessageerror(f) { setHandler(this, 'messageerror', f); }
+  }
+  let portMaking = false;
+  class MessageChannel {
+    constructor() {
+      portMaking = true; const a = new MessagePort(), b = new MessagePort(); portMaking = false;
+      a._other = b; b._other = a;
+      Object.defineProperty(this, 'port1', { value: a, enumerable: true }); Object.defineProperty(this, 'port2', { value: b, enumerable: true });
+    }
+  }
+  if (frameEngine()) { def('MessageChannel', MessageChannel); def('MessagePort', MessagePort); }
+  // HTML §7.2.2.3 "Named access on the Window object": an element with an id (or an
+  // embed, form, iframe, img or object with a name) is a property of the window when no
+  // other property has that name. The window's named properties object is a proxy in its
+  // prototype chain (WebIDL §3.7.4); the lookup is Lean's (node_query 5, getElementById),
+  // asked only for a name that nothing else defines.
+  if (frameEngine()) {
+    const named = name => { const r = n.query(0, 5, name); return typeof r === 'string' ? wrap(Number(r)) : null; };
+    Object.setPrototypeOf(Window.prototype, new Proxy(EventTarget.prototype, {
+      get(t, p, r) { if (typeof p !== 'string' || p in t) return Reflect.get(t, p, r); return named(p) ?? undefined; },
+      has(t, p) { return Reflect.has(t, p) || (typeof p === 'string' && p !== '' && named(p) !== null); },
+    }));
+  }
+  // ==== end shadowframes: frames ========================================================
   for (const [k, v] of Object.entries({ EventTarget, Event, CustomEvent, UIEvent, MouseEvent, KeyboardEvent, FocusEvent, ErrorEvent,
     WheelEvent, PointerEvent, DOMRect, DOMRectReadOnly, CompositionEvent, InputEvent, DragEvent, HashChangeEvent, MessageEvent, StorageEvent, DeviceMotionEvent,
     DeviceOrientationEvent, BeforeUnloadEvent, TextEvent,
     PromiseRejectionEvent, Node, Element, HTMLElement, HTMLUnknownElement, SVGElement, CharacterData, Text, CDATASection, Comment,
     ProcessingInstruction, DocumentType, DocumentFragment, Document, HTMLDocument, XMLDocument, DOMImplementation, NodeList, HTMLCollection, NamedNodeMap, Attr, DOMParser, SubmitEvent,
     DOMTokenList, DOMException, AbortController, AbortSignal, Window, MutationObserver, MutationRecord, ...named })) def(k, v);
+  if (shadowEngine()) def('ShadowRoot', ShadowRoot);
 
   // ==== dombreadth: markup setters, Range, StaticRange, Selection, NodeIterator, TreeWalker ====
   // The algorithms are Lean's: the HTML fragment parsing and serialization algorithms
@@ -3667,11 +3901,14 @@
     },
     // Lean dispatches an event of the user agent at a node, the document (0) or the window.
     dispatch(target, type, flags) {
-      const C = type.startsWith('pointer') ? PointerEvent : type === 'click' || type.startsWith('mouse') ? MouseEvent : Event;
+      const C = type.startsWith('pointer') ? PointerEvent : type === 'click' || type.startsWith('mouse') ? MouseEvent : type === 'message' ? MessageEvent : Event;
       const init = { bubbles: (flags & 1) !== 0, cancelable: (flags & 2) !== 0, composed: (flags & 4) !== 0, view: window };
       // The pointer's coordinates, buttons and pointer fields, as Lean gives them.
       let data = {};
       if (C !== Event) { const s = n.query(0, 16, ''); if (typeof s === 'string' && s !== '') { try { data = JSON.parse(s); } catch {} } }
+      // shadowframes: a message from another session (HTML.FrameSessions): its data is
+      // serialized; its source is the frame it came through, or the parent.
+      if (C === MessageEvent) { try { data.data = JSON.parse(data.data); } catch { data.data = null; } data.source = data.frame >= 0 ? opaqueWindow(data.frame) : parentWindow(); delete data.frame; }
       const e = new C(type, Object.assign({}, data, init));
       for (const k of ['pageX', 'pageY', 'offsetX', 'offsetY', 'movementX', 'movementY']) if (typeof data[k] === 'number') state(e)[k] = data[k];
       state(e).trusted = true;
