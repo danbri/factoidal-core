@@ -185,6 +185,13 @@ def main (args : List String) : IO UInt32 := do
       | _ => (rest, none)
     test262 root dirs listOut
     pure 0
+  | ["compile-stats", file] =>
+    match parseScript (← IO.FS.readFile file) false with
+    | .error e => IO.eprintln e; pure 1
+    | .ok sc =>
+      let (f, c) := Resolve.stats sc
+      IO.println s!"functions {f}, compiled {c}"
+      pure 0
   | ["bench"] =>
     timeIt "fib(24)" fibSrc
     timeIt "loop" loopSrc

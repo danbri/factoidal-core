@@ -16,10 +16,12 @@ association-list reading of the map (`toList`) on a mix of insertions and erasur
 namespace L4Factoidal.JS
 
 structure PropMap (V : Type) where
-  /-- Keys and values, for a small map. Unused when `big` is set. -/
+  /-- Keys and values, in slots. A key that was erased from a big map stays here as a
+  tombstone (`big` no longer maps it); the keys' order is kept by the owner (`Obj.keys`). -/
   ks : Array String := #[]
   vs : Array V := #[]
-  big : Option (Std.HashMap String V) := none
+  /-- With more than `smallMax` keys: the slot of each key. -/
+  big : Option (Std.HashMap String Nat) := none
   deriving Inhabited
 
 namespace PropMap
@@ -27,7 +29,6 @@ variable {V : Type}
 
 /-- The most keys a small map holds. -/
 def smallMax : Nat := 8
-
 
 /-- The index of `k` in the small keys, scanning from `i`; `ks.size` when absent. Returns a
 plain number: no `some` is allocated for a hit. -/
@@ -38,9 +39,19 @@ def scan (ks : Array String) (k : String) (i : Nat) : Nat :=
 termination_by ks.size - i
 decreasing_by simp_wf; omega
 
-@[inline] def get? (m : PropMap V) (k : String) : Option V :=
+/-- The slot of `k`, or `none`. -/
+@[inline] def slot? (m : PropMap V) (k : String) : Option Nat :=
   match m.big with
   | some b => b.get? k
+  | none =>
+    let i := scan m.ks k 0
+    if i == m.ks.size then none else some i
+
+@[inline] def get? (m : PropMap V) (k : String) : Option V :=
+  match m.big with
+  | some b => match b.get? k with
+    | some i => m.vs[i]?
+    | none => none
   | none =>
     let i := scan m.ks k 0
     if i == m.ks.size then none else m.vs[i]?
@@ -57,7 +68,12 @@ def size (m : PropMap V) : Nat :=
 
 def insert (m : PropMap V) (k : String) (v : V) : PropMap V :=
   match m.big with
-  | some b => { m with big := some (b.insert k v) }
+  | some b =>
+    match b.get? k with
+    | some i => { m with vs := m.vs.set! i v }
+    | none =>
+      let i := m.ks.size
+      { ks := m.ks.push k, vs := m.vs.push v, big := some (b.insert k i) }
   | none =>
     let i := scan m.ks k 0
     if i != m.ks.size then { m with vs := m.vs.set! i v }
@@ -65,13 +81,14 @@ def insert (m : PropMap V) (k : String) (v : V) : PropMap V :=
       if m.ks.size < smallMax then
         { m with ks := m.ks.push k, vs := m.vs.push v }
       else
-        let b : Std.HashMap String V := Std.HashMap.emptyWithCapacity (2 * smallMax)
-        let b := (m.ks.zip m.vs).foldl (fun b (k, v) => b.insert k v) b
-        { ks := #[], vs := #[], big := some (b.insert k v) }
+        let ks := m.ks.push k
+        let b : Std.HashMap String Nat :=
+          (ks.zipIdx).foldl (fun b (k, i) => b.insert k i) (Std.HashMap.emptyWithCapacity (2 * smallMax))
+        { ks, vs := m.vs.push v, big := some b }
 
 def erase [Inhabited V] (m : PropMap V) (k : String) : PropMap V :=
   match m.big with
-  | some b => { m with big := some (b.erase k) }
+  | some b => { m with big := some (b.erase k) }   -- the slot stays as a tombstone
   | none =>
     let i := scan m.ks k 0
     if i != m.ks.size then
@@ -84,19 +101,15 @@ def erase [Inhabited V] (m : PropMap V) (k : String) : PropMap V :=
 /-- The pairs, in no particular order. -/
 def toList (m : PropMap V) : List (String × V) :=
   match m.big with
-  | some b => b.toList
+  | some b => b.toList.filterMap fun (k, i) => (m.vs[i]?).map (k, ·)
   | none => (m.ks.zip m.vs).toList
 
 def fold {β : Type} (f : β → String → V → β) (init : β) (m : PropMap V) : β :=
-  match m.big with
-  | some b => b.fold f init
-  | none => (m.ks.zip m.vs).foldl (fun acc (k, v) => f acc k v) init
+  m.toList.foldl (fun acc (k, v) => f acc k v) init
 
 /-- The map with every value changed by `f`. -/
 def mapValues (f : V → V) (m : PropMap V) : PropMap V :=
-  match m.big with
-  | some b => { m with big := some (b.fold (fun acc k v => acc.insert k (f v)) {}) }
-  | none => { m with vs := m.vs.map f }
+  { m with vs := m.vs.map f }
 
 end PropMap
 

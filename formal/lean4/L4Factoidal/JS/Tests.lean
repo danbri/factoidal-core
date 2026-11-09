@@ -184,4 +184,31 @@ def propMapAgrees (seq : List (Bool × String × Nat)) : Bool :=
 #guard out "function* g(){ const r = yield 1; if (r) { yield 2 } else { yield 3 } } var it = g(); it.next(); print(it.next(false).value)" == ["3"]
 #guard out "async function f(){ if (await Promise.resolve(true)) { return (await Promise.resolve(1)) + 1 } } f().then(print)" == ["2"]
 
+
+/-! ## The register machine (`JS/Compile.lean`, `vmLoop`) -/
+#guard out "function f(a, b) { return a + b * 2 } print(f(1, 2), f('x', 3))" == ["5 x6"]
+#guard out "function f(n) { if (n < 2) return n; return f(n - 1) + f(n - 2) } print(f(15))" == ["610"]
+#guard out "function f(n) { var s = 0; for (let i = 0; i < n; i++) { if (i == 2) continue; if (i > 4) break; s += i } return s } print(f(10))" == ["8"]
+#guard out "function f() { let x = 1; { let y = x + 1; x = y * 2 } return x } print(f())" == ["4"]
+#guard out "function f() { try { return g() } catch (e) { return e.name } function g() { return z; let z = 1 } } print(f())" == ["ReferenceError"]
+#guard out "function g() { return z; let z = 1 } try { g() } catch (e) { print(e.name) }" == ["ReferenceError"]
+#guard out "function g() { 'use strict'; return this } print(g() === undefined)" == ["true"]
+#guard out "function g() { return this } print(g() === globalThis, typeof g.call(5))" == ["true object"]
+#guard out "var o = { x: 1, inc(d) { this.x += d; return this.x } }; print(o.inc(2), o.inc(0.5))" == ["3 3.5"]
+#guard out "function deep(n) { return n == 0 ? 0 : 1 + deep(n - 1) } print(deep(5000))" == ["5000"]
+#guard out "function f(n) { return n == 0 ? 0 : 1 + g(n) } function g(n) { return [n].map(x => f(x - 1))[0] } print(f(100))" == ["100"]
+#guard out "function t() { throw 7 } function u() { t() } try { u() } catch (e) { print(e) } function v() { return 1 } print(v())" == ["7", "1"]
+#guard out "var o = { get v() { return k(2) } }; function k(x) { return x * 3 } function r() { return o.v + 1 } print(r())" == ["7"]
+#guard out "function f() { var a = [1, 2]; a[5] = 3; a.length = 7; return a.length + (a[5] | 0) } print(f())" == ["10"]
+#guard out "function f(x) { var y = x; y++; var z = y--; return [x, y, z].join() } print(f(1n)); print(f('2'))" == ["1,1,2", "2,2,3"]
+#guard out "function f(o) { return o.a?.b } try { print(f({})) } catch (e) { print('err') }" == ["undefined"]
+#guard out "function f() { return typeof undeclared + typeof f } print(f())" == ["undefinedfunction"]
+#guard out "let top = 2; function f() { top = top * 2; return top } f(); print(f())" == ["8"]
+#guard out "var v = 5; for (var i = 0; i < 3; i++) { v += i } print(v, i)" == ["8 3"]
+#guard out "var s = 0; for (let i = 0; i < 3; i++) { for (let j = 0; j < 2; j++) { s += i * j } } print(s)" == ["3"]
+#guard out "function g(x) { return x } var t = g; for (var i = 0; i < 2; i++) t = g(g); print(t === g)" == ["true"]
+#guard out "function C(x) { this.x = x } C.prototype.m = function () { return this.x * 2 }; print(new C(4).m(), new C(1) instanceof C)" == ["8 true"]
+#guard out "class B { constructor(x) { this.x = x } m() { return this.x + 1 } } print(new B(1).m())" == ["2"]
+#guard out "class D { v = 3; constructor() { this.w = this.v * 2 } } print(new D().w)" == ["6"]
+
 end L4Factoidal.JS.Tests

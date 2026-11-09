@@ -2247,3 +2247,5 @@ L4Factoidal_Rendering_CssSupports_condition_inParensValue  # (b) mutual with con
 L4Factoidal_JS_Resolve_*  # (c) the name resolver's walk of a parsed script: depth is the nesting of the source, capped by Resolve.fuel (1000, a deeper subtree stays unresolved); lists are mapped with a tail-recursive loop
 L4Factoidal_JS_lookupLocal  # (c) on a cycle only through the plain lookup fallback and the evaluator (getV, user code): bounded by Heap.maxDepth as the evaluator is
 L4Factoidal_JS_assignLocal  # (c) as lookupLocal
+L4Factoidal_JS_Compile_*  # (c) the compiler's walk of one function: depth is the nesting of its source, capped by Compile.fuel (500, a deeper function is not compiled); statement and argument lists are for loops
+L4Factoidal_JS_vm*  # (c) the register machine's cycle through the evaluator (a call to a function that is not compiled, a getter): bounded by Heap.maxDepth; calls between compiled functions are the loop, not recursion

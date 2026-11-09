@@ -57,20 +57,6 @@ two classes with the same private name share it. Record, section 5. -/
 def privKey (name : String) : String := String.singleton (Char.ofNat 0x10FFFE) ++ name
 def isPrivKey (k : String) : Bool := k.front == Char.ofNat 0x10FFFE
 
-/-- What the name resolver (`JS/Resolve.lean`) found about a function. -/
-structure FunInfo where
-  /-- The names of the function's environment, in the order they are declared. -/
-  layout : Array String := #[]
-  /-- The number of parameters (when `plain`, the first `nParams` slots). -/
-  nParams : Nat := 0
-  /-- The parameters are plain distinct names with no initialisers or rest, and the
-  function does not use `arguments`: the arguments array becomes the slots. -/
-  plain : Bool := false
-  /-- Nothing made during a call can hold its environment afterwards (no closure, class,
-  generator, direct `eval`): the environment's slot is reused when the call returns. -/
-  frameLocal : Bool := false
-  deriving Inhabited
-
 /-- JavaScript values (§6.1); see `Value.lean`. -/
 inductive Value where
   | undef
@@ -86,8 +72,118 @@ inductive Value where
   /-- Not a language value: the content of a binding that is not initialised yet (the
   temporal dead zone). It never leaves an environment. -/
   | hole
+  /-- Not a language value: a register of the register machine whose number is in the
+  parallel float registers (`Instr`, `vmLoop`), not boxed. It never leaves the registers. -/
+  | fl
   deriving Inhabited
 
+
+/-- The instructions of the register machine (`JS/Compile.lean`, `vmLoop` in `Interp.lean`).
+Registers are numbered within the frame; a jump's target is an index into the instructions. -/
+inductive Instr where
+  | move (dst src : Nat)
+  | loadF (dst : Nat) (x : Float)
+  | loadV (dst : Nat) (v : Value)
+  | setHole (r : Nat)
+  /-- ReferenceError unless register `r` is initialised (the temporal dead zone). -/
+  | checkInit (r : Nat) (name : String)
+  | add (dst a b : Nat)
+  | sub (dst a b : Nat)
+  | mul (dst a b : Nat)
+  | div (dst a b : Nat)
+  | lt (dst a b : Nat)
+  | gt (dst a b : Nat)
+  | le (dst a b : Nat)
+  | ge (dst a b : Nat)
+  | seq (dst a b : Nat)
+  | sne (dst a b : Nat)
+  /-- Any other binary operator, the general way. -/
+  | binop (op : BinOp) (dst a b : Nat)
+  /-- `x++` (`up`) or `x--` of the value in `src`: `old` gets the numeric value, `nw` the new
+  one. A BigInt stays a BigInt. -/
+  | inc (nw old src : Nat) (up : Bool)
+  /-- `-a`, `+a`, `~a`, `typeof a`, `void a` (not `delete`). -/
+  | unop (op : UnOp) (dst a : Nat)
+  | not (dst a : Nat)
+  | jmp (t : Nat)
+  /-- Jump when register `a` is false (`jf`) or true (`jt`) after ToBoolean, or nullish. -/
+  | jf (a t : Nat)
+  | jt (a t : Nat)
+  | jnull (a t : Nat)
+  | jnotnull (a t : Nat)
+  /-- Jump when NOT (a < b), and so on: the test of a conditional, with no boolean made. -/
+  | jnlt (a b t : Nat)
+  | jngt (a b t : Nat)
+  | jnle (a b t : Nat)
+  | jnge (a b t : Nat)
+  /-- A step of the script's budget: the head of a loop. -/
+  | tick
+  /-- A global name; `site` numbers a slot of the global name cache (`HeapOf.globalCache`). -/
+  | getGlobal (dst : Nat) (name : String) (site : Nat)
+  | setGlobal (src : Nat) (name : String) (site : Nat)
+  /-- `dst = a + k`, `a - k`, `a * k`: a number constant as an operand. -/
+  | addK (dst a : Nat) (k : Float)
+  | subK (dst a : Nat) (k : Float)
+  | mulK (dst a : Nat) (k : Float)
+  /-- Jump when NOT (a < k), and so on. -/
+  | jnltK (a : Nat) (k : Float) (t : Nat)
+  | jngtK (a : Nat) (k : Float) (t : Nat)
+  | jnleK (a : Nat) (k : Float) (t : Nat)
+  | jngeK (a : Nat) (k : Float) (t : Nat)
+  /-- The name `typeof` sees: no error when it is not defined. -/
+  | typeofGlobal (dst : Nat) (name : String)
+  /-- A variable `hops` environments above the function's closure environment. -/
+  | getUp (dst hops idx : Nat) (name : String)
+  | setUp (src hops idx : Nat) (name : String)
+  | getMember (dst o : Nat) (key : String)
+  | setMember (o : Nat) (key : String) (src : Nat)
+  | getIndex (dst o i : Nat)
+  | setIndex (o i src : Nat)
+  /-- Call register `f` with this `thisR` (`noReg`: undefined); the `n` arguments are in
+  `base`, `base + 1`, ... `what` names the callee in an error. -/
+  | call (dst f thisR base n : Nat) (what : String)
+  | new (dst f base n : Nat) (what : String)
+  /-- Return register `a` (`noReg`: undefined). -/
+  | ret (a : Nat)
+  | arr (dst base n : Nat)
+  | obj (dst : Nat)
+  | defProp (o : Nat) (key : String) (src : Nat)
+  | throw (a : Nat)
+  deriving Inhabited
+
+/-- No register (a call with no `this`, a return with no value). -/
+def noReg : Nat := 65535
+
+/-- A function's code for the register machine. -/
+structure Code where
+  instrs : Array Instr := #[]
+  /-- Registers of a frame: the parameters come first. -/
+  nregs : Nat := 0
+  nparams : Nat := 0
+  /-- The parameters and `var`s: the registers a call clears. -/
+  nvars : Nat := 0
+  /-- The register that holds `this`, when the function uses it. -/
+  thisReg : Option Nat := none
+  strict : Bool := false
+  isArrow : Bool := false
+  name : String := ""
+  deriving Inhabited
+
+/-- What the name resolver (`JS/Resolve.lean`) found about a function. -/
+structure FunInfo where
+  /-- The names of the function's environment, in the order they are declared. -/
+  layout : Array String := #[]
+  /-- The number of parameters (when `plain`, the first `nParams` slots). -/
+  nParams : Nat := 0
+  /-- The parameters are plain distinct names with no initialisers or rest, and the
+  function does not use `arguments`: the arguments array becomes the slots. -/
+  plain : Bool := false
+  /-- Nothing made during a call can hold its environment afterwards (no closure, class,
+  generator, direct `eval`): the environment's slot is reused when the call returns. -/
+  frameLocal : Bool := false
+  /-- The function's code for the register machine, when it can be compiled. -/
+  code : Option Code := none
+  deriving Inhabited
 
 mutual
 /-- Expressions. -/
@@ -224,6 +320,8 @@ inductive Stmt where
   | block (body : List Stmt)
   /-- A block whose environment no closure can hold: its slot is reused when it ends. -/
   | blockF (body : List Stmt)
+  /-- A top-level loop with its code for the register machine, and the loop itself. -/
+  | compiled (c : Code) (s : Stmt)
   | throwS (e : Expr)
   | tryS (body : List Stmt) (param : Option Pat) (handler : Option (List Stmt))
       (finalizer : Option (List Stmt))
@@ -361,6 +459,7 @@ def Stmt.hasYieldF : Nat → Stmt → Bool
       (match u with | some e => Expr.hasYieldF n e | none => false) || Stmt.hasYieldF n b
     | .forIn _ _ o b | .forOf _ _ o b => Expr.hasYieldF n o || Stmt.hasYieldF n b
     | .block ss | .blockF ss => Stmt.anyYield n ss
+    | .compiled _ s => Stmt.hasYieldF n s
     | .tryS b _ h f => Stmt.anyYield n b ||
         (match h with | some h => Stmt.anyYield n h | none => false) ||
         (match f with | some f => Stmt.anyYield n f | none => false)

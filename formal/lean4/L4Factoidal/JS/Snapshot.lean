@@ -1,4 +1,5 @@
 import L4Factoidal.JS.Interp
+import L4Factoidal.JS.Compile
 
 /-!
 # L4Factoidal.JS.Snapshot — a heap as data, and back
@@ -143,7 +144,7 @@ def putStrs (xs : List String) : EM Unit := do
 
 def eValue (v : Value) : EM Unit :=
   match v with
-  | .hole | .undef => putNat 0
+  | .hole | .fl | .undef => putNat 0
   | .null => putNat 1
   | .bool b => putNat (if b then 3 else 2)
   | .num x => do putNat 4; putFloat x
@@ -334,6 +335,7 @@ def eStmt : Nat → Stmt → EM Unit
       putNat 10; putOpt k (putCode declKinds); ePat n p; eExpr n o; eStmt n b
     | .block ss => do putNat 11; eStmts n ss
     | .blockF ss => do putNat 40; eStmts n ss
+    | .compiled _ b => eStmt n b
     | .throwS e => do putNat 12; eExpr n e
     | .tryS b p h f => do
       putNat 13; eStmts n b; eOptPat n p
@@ -768,8 +770,12 @@ def dFunCore : Nat → DM FunDef
     let usesArgs ← getBool; let strict ← getBool; let kind ← getCode funKinds
     let gen ← getBool; let async ← getBool
     let layout ← getStrs; let nParams ← getNat; let plain ← getBool; let frameLocal ← getBool
-    pure (.mk none params rest body vars usesArgs strict kind gen async
-      { layout := layout.toArray, nParams, plain, frameLocal })
+    let f : FunDef := .mk none params rest body vars usesArgs strict kind gen async
+      { layout := layout.toArray, nParams, plain, frameLocal }
+    -- the code is not in the data: it is compiled from the literal
+    pure (match f with
+      | .mk nm p r b v u st kd g a info =>
+        .mk nm p r b v u st kd g a { info with code := Compile.compile f })
 
 def dClass : Nat → DM ClassDef
   | 0 => deep
