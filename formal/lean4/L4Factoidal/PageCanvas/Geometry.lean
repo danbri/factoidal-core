@@ -115,7 +115,7 @@ def tau : Float := 6.283185307179586
 from angle `a0` sweeping `sweep` radians (sign gives the direction): at most a quarter
 turn each, control length `4/3 tan(θ/4)`. Gives the segments after the start point. -/
 def arcSegs (m : Matrix) (a0 sweep : Float) : Array Seg := Id.run do
-  let n := max 1 ((sweep.abs / (pi / 2) - 1e-9).ceil.toUInt64.toNat)
+  let n := max 1 ((sweep.abs / (pi / 2) - fEps9).ceil.toUInt64.toNat)
   let n := min n 64
   let step := sweep / nf n
   let k := 4 / 3 * Float.tan (step / 4)
@@ -157,13 +157,13 @@ private def stepsFor (dd tolerance : Float) : Nat :=
 
 /-- Polylines within `tolerance` of the path (in the path's own units). An empty or
 one-point subpath keeps its point (a zero-length subpath strokes as caps). -/
-def Path.flatten (p : Path) (tolerance : Float := 0.1) : Array Poly := Id.run do
+def Path.flatten (p : Path) (tolerance : Float := fFlat) : Array Poly := Id.run do
   let mut out : Array Poly := #[]
   let mut cur := FloatArray.empty
   let mut closed := false
   let mut started := false
-  let mut x := 0.0
-  let mut y := 0.0
+  let mut x : Float := 0
+  let mut y : Float := 0
   for s in p.segs do
     match s with
     | .move nx ny =>

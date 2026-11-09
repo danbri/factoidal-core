@@ -29,7 +29,7 @@ structure StrokeStyle where
 /-- Twice the signed area of a polygon. -/
 def area2 (p : FloatArray) : Float := Id.run do
   let n := p.size / 2
-  let mut s := 0.0
+  let mut s : Float := 0
   for i in [0:n] do
     let j := if i + 1 == n then 0 else i + 1
     s := s + p[2*i]! * p[2*j+1]! - p[2*j]! * p[2*i+1]!
@@ -95,7 +95,7 @@ def dashPieces (pts : Array (Float × Float)) (closed : Bool) (dash : Array Floa
     let (ax, ay) := pts[i]!
     let (bx, by_) := pts[i+1]!
     let len := Float.sqrt ((bx - ax) ^ 2 + (by_ - ay) ^ 2)
-    let mut at_ := 0.0
+    let mut at_ : Float := 0
     -- Bounded: each step ends a dash or a gap, or the segment.
     for _ in [0:100000] do
       if len - at_ <= left then
@@ -145,12 +145,12 @@ def strokePolyline (s : StrokeStyle) (pts : Array (Float × Float)) (closed : Bo
     let dot := d0x * d1x + d0y * d1y
     if cross.abs < 1e-12 && dot > 0 then continue
     -- The outer side of the turn.
-    let o := if cross > 0 then -1.0 else 1.0
+    let o := if cross > 0 then -1 else 1
     let (n0x, n0y) := (-d0y * o, d0x * o)
     let (n1x, n1y) := (-d1y * o, d1x * o)
     let a := (px + n0x * hw, py + n0y * hw)
     let b := (px + n1x * hw, py + n1y * hw)
-    let small := cross.abs < 0.02 && dot > 0
+    let small := cross.abs < fJoinSmall && dot > 0
     match s.join with
     | .round =>
       if small then out := out.push (polyOf [(px, py), a, b])
