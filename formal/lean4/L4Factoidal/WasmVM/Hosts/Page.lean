@@ -156,10 +156,6 @@ structure Reads where
   layouts : Nat := 0
   /-- The fonts, SVG path parser and images Canvas 2D draws with (the engine's). -/
   canvasEnv : L4Factoidal.PageCanvas.Env := {}
-  /-- The script engine's name, and the wall time (ns) of this session's last turn as the
-  host measured it (`node_query` op 20; WebScripts sets both). -/
-  engine : String := ""
-  turnNs : Nat := 0
   deriving Inhabited
 
 /-- Everything the imports change, except the store. -/
@@ -310,13 +306,11 @@ def Host.measured (h : Host) : Host × Option (Nat → Nat → Option String) :=
 
 /-- `node_query` ops served here: 16 the init of the event being dispatched; 17 a node's
 layout, "x y w h left top width height" (border box in the page, then the client box);
-18 an SVG element's bounding box in its user space, "x y w h"; 19 the viewport, "w h";
-20 the script engine and the last turn's time, "engine ns". -/
+18 an SVG element's bounding box in its user space, "x y w h"; 19 the viewport, "w h". -/
 def pageQuery (h : Host) (node op : Nat) : Host × Except Int String :=
   match op with
   | 16 => (h, if h.event.isEmpty then .error (-1) else .ok h.event)
   | 19 => (h, .ok s!"{h.reads.width} {h.reads.height}")
-  | 20 => (h, .ok s!"{h.reads.engine} {h.reads.turnNs}")
   | _ =>
     let (h, f) := h.measured
     match f with
