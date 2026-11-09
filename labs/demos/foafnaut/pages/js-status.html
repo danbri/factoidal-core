@@ -54,6 +54,16 @@ th{background:#e8eef6}
 <p class="note">Stages: core language; destructuring, classes, iterators; generators; BigInt; Promises and async functions; async generators and private members; Map, Set, Reflect; for pages: regular expressions, Proxy, optional chaining, typed arrays, JSON.parse.</p>
 <p class="note">On the Hub, BubblePopJS is compiled to WebAssembly with the engine. It does not run there yet (its evaluator needs more stack than WebAssembly gives it), so the Hub runs QuickJS-NG.</p>
 
+<h2>WebAssembly in pages</h2>
+<p>Page scripts have the WebAssembly JavaScript API on both engines: <code>WebAssembly.validate</code>, <code>compile</code>, <code>instantiate</code>, <code>Module</code>, <code>Instance</code>, <code>Memory</code> (with <code>buffer</code> and <code>grow</code>), <code>Table</code>, <code>Global</code>, <code>Tag</code>, <code>Exception</code> and the three error types. Lean decodes, validates and runs each module in WasmVM, in a store of the page's own. The browser's own WebAssembly engine runs none of them.</p>
+<table>
+<tr><th>Measure</th><th class="num">BubblePopJS</th><th class="num">QuickJS-NG</th></tr>
+<tr><td>Web platform tests <code>wasm/jsapi</code> (window; Chrome passes 1,169 of 1,322)</td><td class="num">937 of 998 reported</td><td class="num"><span class="big">940</span> of 1,185 reported</td></tr>
+<tr><td>Web platform tests <code>wasm/core</code>, the spec tests as JavaScript (Chrome passes 188,383 of 188,396)</td><td class="num">not run</td><td class="num">86,107 (no SIMD, GC or 64-bit memories in WasmVM)</td></tr>
+<tr><td>A call from JavaScript into WebAssembly and back, native</td><td class="num">0.05 ms</td><td class="num">0.19 ms</td></tr>
+</table>
+<p class="note">A page that does not touch <code>WebAssembly</code> pays nothing: the API's script is compiled on its first use. Demo: <a href="wasm-mandelbrot.html">WebAssembly in a page</a>. Record: docs/designissues/2026-11-08-page-wasm.md.</p>
+
 <h2>What pages can use</h2>
 <p>Timers, animation frames, microtasks and Promises; clicks and pointer events with coordinates; taps on SVG shapes; createElement and createElementNS; selectors matched by Lean; DOMParser; MutationObserver; forms, checkboxes and radio buttons; layout reads such as clientWidth and getBoundingClientRect; WebGPU and WebGL drawing, each command checked by Lean.</p>
 <p>Computed by Lean, one call for each operation: TextDecoder and TextEncoder (every encoding of the Encoding Standard, with fatal, ignoreBOM and streaming); URL and URLSearchParams (the WHATWG URL parser, every setter); atob and btoa; crypto.getRandomValues and crypto.randomUUID (a Lean generator seeded by the host); crypto.subtle digest (SHA-1, SHA-256, SHA-384, SHA-512), HMAC, HKDF and PBKDF2, each promise settled by a task. Also structuredClone, and performance.mark and performance.measure.</p>

@@ -1,0 +1,5911 @@
+{
+ "format": "factoidal-wpt-testharness-v1",
+ "measuredAt": "2026-11-09T03:12:06.169Z",
+ "scope": "WPT testharness.js tests, window variant, in the engine's script session (QuickJS-NG in WasmVM, Lean DOM arena, Lean event loop, virtual clock). Subtest counts are of the subtests a page reported; a page that reported none counts 0 of 0.",
+ "scriptEngine": "quickjs",
+ "wptCommit": "ce5ca39646886a9349fc42913f843ec6e1c8a36f",
+ "engine": "bench",
+ "info": {
+  "engine": "wasmvm-bench page"
+ },
+ "quickjsWasmSha256": "ff142f2ffeee0b16d85067f8774771afd896a1d71eb0dbfd4892c49212381997",
+ "runnerSha256": "53317bbf3b26ec96bb1966b32317396f5248f415d544578b7a78ebc9c0149654",
+ "reportSha256": "0f8a869b6a6d735acad7cab070da098a78583969454ddf1f09a8a2721291b35e",
+ "directories": {
+  "wasm/jsapi": {
+   "files": 84,
+   "run": 84,
+   "skipped": 0,
+   "harnessOK": 73,
+   "subtests": 1185,
+   "pass": 940
+  },
+  "wasm/jsapi/constructor": {
+   "files": 6,
+   "run": 6,
+   "skipped": 0,
+   "harnessOK": 6,
+   "subtests": 347,
+   "pass": 346
+  },
+  "wasm/jsapi/esm-integration": {
+   "files": 15,
+   "run": 15,
+   "skipped": 0,
+   "harnessOK": 12,
+   "subtests": 27,
+   "pass": 0
+  },
+  "wasm/jsapi/exception": {
+   "files": 6,
+   "run": 6,
+   "skipped": 0,
+   "harnessOK": 6,
+   "subtests": 22,
+   "pass": 22
+  },
+  "wasm/jsapi/function": {
+   "files": 4,
+   "run": 4,
+   "skipped": 0,
+   "harnessOK": 4,
+   "subtests": 16,
+   "pass": 0
+  },
+  "wasm/jsapi/functions": {
+   "files": 3,
+   "run": 3,
+   "skipped": 0,
+   "harnessOK": 0,
+   "subtests": 0,
+   "pass": 0
+  },
+  "wasm/jsapi/gc": {
+   "files": 3,
+   "run": 3,
+   "skipped": 0,
+   "harnessOK": 0,
+   "subtests": 0,
+   "pass": 0
+  },
+  "wasm/jsapi/global": {
+   "files": 5,
+   "run": 5,
+   "skipped": 0,
+   "harnessOK": 5,
+   "subtests": 145,
+   "pass": 145
+  },
+  "wasm/jsapi/instance": {
+   "files": 5,
+   "run": 5,
+   "skipped": 0,
+   "harnessOK": 5,
+   "subtests": 142,
+   "pass": 142
+  },
+  "wasm/jsapi/js-string": {
+   "files": 3,
+   "run": 3,
+   "skipped": 0,
+   "harnessOK": 2,
+   "subtests": 41,
+   "pass": 0
+  },
+  "wasm/jsapi/jspi": {
+   "files": 3,
+   "run": 3,
+   "skipped": 0,
+   "harnessOK": 3,
+   "subtests": 21,
+   "pass": 1
+  },
+  "wasm/jsapi/memory": {
+   "files": 11,
+   "run": 11,
+   "skipped": 0,
+   "harnessOK": 11,
+   "subtests": 72,
+   "pass": 57
+  },
+  "wasm/jsapi/module": {
+   "files": 6,
+   "run": 6,
+   "skipped": 0,
+   "harnessOK": 6,
+   "subtests": 49,
+   "pass": 45
+  },
+  "wasm/jsapi/table": {
+   "files": 7,
+   "run": 7,
+   "skipped": 0,
+   "harnessOK": 7,
+   "subtests": 95,
+   "pass": 95
+  },
+  "wasm/jsapi/tag": {
+   "files": 3,
+   "run": 3,
+   "skipped": 0,
+   "harnessOK": 3,
+   "subtests": 11,
+   "pass": 11
+  }
+ },
+ "totals": {
+  "files": 84,
+  "run": 84,
+  "subtests": 1185,
+  "pass": 940
+ },
+ "cases": [
+  {
+   "file": "wasm/jsapi/idlharness.any.js",
+   "harness": "ERROR",
+   "message": "Error: script not found: /resources/WebIDLParser.js",
+   "subtests": [],
+   "ms": 1926,
+   "instructions": 60104962,
+   "clock": 10000,
+   "errors": [
+    "Error: script not found: /resources/WebIDLParser.js\n    at <eval> (<page-script>:1:11)\n",
+    "Error: script not found: /resources/idlharness.js\n    at <eval> (<page-script>:1:11)\n",
+    "ReferenceError: idl_test is not defined\n    at <eval> (<page-script>:10:1)\n"
+   ]
+  },
+  {
+   "file": "wasm/jsapi/interface.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "WebAssembly: property descriptor",
+     "status": "FAIL",
+     "message": "assert_true: writable expected true got undefined"
+    },
+    {
+     "name": "WebAssembly: calling",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly: constructing",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Module: property descriptor",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Module: prototype",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Module: prototype.constructor",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Instance: property descriptor",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Instance: prototype",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Instance: prototype.constructor",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Memory: property descriptor",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Memory: prototype",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Memory: prototype.constructor",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Table: property descriptor",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Table: prototype",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Table: prototype.constructor",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Global: property descriptor",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Global: prototype",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Global: prototype.constructor",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.CompileError: property descriptor",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.CompileError: prototype",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.CompileError: prototype.constructor",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.LinkError: property descriptor",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.LinkError: prototype",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.LinkError: prototype.constructor",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.RuntimeError: property descriptor",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.RuntimeError: prototype",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.RuntimeError: prototype.constructor",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.validate",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.validate: name",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.validate: length",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.compile",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.compile: name",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.compile: length",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate: name",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate: length",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Module.exports",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Module.exports: name",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Module.exports: length",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Module.imports",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Module.imports: name",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Module.imports: length",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Module.customSections",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Module.customSections: name",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Module.customSections: length",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Instance.exports",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Instance.exports: getter",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Instance.exports: setter",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Memory.grow",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Memory.grow: name",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Memory.grow: length",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Memory.buffer",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Memory.buffer: getter",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Memory.buffer: setter",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Table.grow",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Table.grow: name",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Table.grow: length",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Table.get",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Table.get: name",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Table.get: length",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Table.set",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Table.set: name",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Table.set: length",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Table.length",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Table.length: getter",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Table.length: setter",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Global.valueOf",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Global.valueOf: name",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Global.valueOf: length",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Global.value",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Global.value: getter",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.Global.value: setter",
+     "status": "PASS"
+    }
+   ],
+   "ms": 2478,
+   "instructions": 132599689,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/proto-from-ctor-realm.html",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "WebAssembly.Module: cross-realm NewTarget with `undefined` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Module: cross-realm NewTarget with `null` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Module: cross-realm NewTarget with `false` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Module: cross-realm NewTarget with `true` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Module: cross-realm NewTarget with `0` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Module: cross-realm NewTarget with `-1` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Module: cross-realm NewTarget with `\"\"` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Module: cross-realm NewTarget with `\"str\"` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Module: cross-realm NewTarget with `symbol \"Symbol()\"` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Module: bound cross-realm NewTarget with `undefined` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Module: bound bound cross-realm NewTarget with `null` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Module: bound Proxy of cross-realm NewTarget with `false` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Module: Proxy of cross-realm NewTarget with `true` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Module: Proxy of Proxy of cross-realm NewTarget with `-0` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Module: Proxy of bound cross-realm NewTarget with `NaN` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Instance: cross-realm NewTarget with `undefined` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Instance: cross-realm NewTarget with `null` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Instance: cross-realm NewTarget with `false` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Instance: cross-realm NewTarget with `true` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Instance: cross-realm NewTarget with `0` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Instance: cross-realm NewTarget with `-1` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Instance: cross-realm NewTarget with `\"\"` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Instance: cross-realm NewTarget with `\"str\"` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Instance: cross-realm NewTarget with `symbol \"Symbol()\"` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Instance: bound cross-realm NewTarget with `undefined` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Instance: bound bound cross-realm NewTarget with `null` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Instance: bound Proxy of cross-realm NewTarget with `false` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Instance: Proxy of cross-realm NewTarget with `true` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Instance: Proxy of Proxy of cross-realm NewTarget with `-0` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Instance: Proxy of bound cross-realm NewTarget with `NaN` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Memory: cross-realm NewTarget with `undefined` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Memory: cross-realm NewTarget with `null` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Memory: cross-realm NewTarget with `false` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Memory: cross-realm NewTarget with `true` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Memory: cross-realm NewTarget with `0` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Memory: cross-realm NewTarget with `-1` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Memory: cross-realm NewTarget with `\"\"` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Memory: cross-realm NewTarget with `\"str\"` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Memory: cross-realm NewTarget with `symbol \"Symbol()\"` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Memory: bound cross-realm NewTarget with `undefined` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Memory: bound bound cross-realm NewTarget with `null` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Memory: bound Proxy of cross-realm NewTarget with `false` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Memory: Proxy of cross-realm NewTarget with `true` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Memory: Proxy of Proxy of cross-realm NewTarget with `-0` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Memory: Proxy of bound cross-realm NewTarget with `NaN` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Table: cross-realm NewTarget with `undefined` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Table: cross-realm NewTarget with `null` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Table: cross-realm NewTarget with `false` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Table: cross-realm NewTarget with `true` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Table: cross-realm NewTarget with `0` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Table: cross-realm NewTarget with `-1` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Table: cross-realm NewTarget with `\"\"` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Table: cross-realm NewTarget with `\"str\"` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Table: cross-realm NewTarget with `symbol \"Symbol()\"` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Table: bound cross-realm NewTarget with `undefined` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Table: bound bound cross-realm NewTarget with `null` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Table: bound Proxy of cross-realm NewTarget with `false` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Table: Proxy of cross-realm NewTarget with `true` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Table: Proxy of Proxy of cross-realm NewTarget with `-0` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Table: Proxy of bound cross-realm NewTarget with `NaN` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Global: cross-realm NewTarget with `undefined` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Global: cross-realm NewTarget with `null` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Global: cross-realm NewTarget with `false` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Global: cross-realm NewTarget with `true` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Global: cross-realm NewTarget with `0` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Global: cross-realm NewTarget with `-1` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Global: cross-realm NewTarget with `\"\"` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Global: cross-realm NewTarget with `\"str\"` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Global: cross-realm NewTarget with `symbol \"Symbol()\"` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Global: bound cross-realm NewTarget with `undefined` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Global: bound bound cross-realm NewTarget with `null` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Global: bound Proxy of cross-realm NewTarget with `false` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Global: Proxy of cross-realm NewTarget with `true` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Global: Proxy of Proxy of cross-realm NewTarget with `-0` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.Global: Proxy of bound cross-realm NewTarget with `NaN` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.CompileError: cross-realm NewTarget with `undefined` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.CompileError: cross-realm NewTarget with `null` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.CompileError: cross-realm NewTarget with `false` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.CompileError: cross-realm NewTarget with `true` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.CompileError: cross-realm NewTarget with `0` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.CompileError: cross-realm NewTarget with `-1` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.CompileError: cross-realm NewTarget with `\"\"` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.CompileError: cross-realm NewTarget with `\"str\"` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.CompileError: cross-realm NewTarget with `symbol \"Symbol()\"` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.CompileError: bound cross-realm NewTarget with `undefined` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.CompileError: bound bound cross-realm NewTarget with `null` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.CompileError: bound Proxy of cross-realm NewTarget with `false` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.CompileError: Proxy of cross-realm NewTarget with `true` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.CompileError: Proxy of Proxy of cross-realm NewTarget with `-0` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.CompileError: Proxy of bound cross-realm NewTarget with `NaN` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.LinkError: cross-realm NewTarget with `undefined` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.LinkError: cross-realm NewTarget with `null` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.LinkError: cross-realm NewTarget with `false` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.LinkError: cross-realm NewTarget with `true` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.LinkError: cross-realm NewTarget with `0` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.LinkError: cross-realm NewTarget with `-1` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.LinkError: cross-realm NewTarget with `\"\"` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.LinkError: cross-realm NewTarget with `\"str\"` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.LinkError: cross-realm NewTarget with `symbol \"Symbol()\"` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.LinkError: bound cross-realm NewTarget with `undefined` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.LinkError: bound bound cross-realm NewTarget with `null` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.LinkError: bound Proxy of cross-realm NewTarget with `false` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.LinkError: Proxy of cross-realm NewTarget with `true` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.LinkError: Proxy of Proxy of cross-realm NewTarget with `-0` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.LinkError: Proxy of bound cross-realm NewTarget with `NaN` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.RuntimeError: cross-realm NewTarget with `undefined` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.RuntimeError: cross-realm NewTarget with `null` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.RuntimeError: cross-realm NewTarget with `false` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.RuntimeError: cross-realm NewTarget with `true` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.RuntimeError: cross-realm NewTarget with `0` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.RuntimeError: cross-realm NewTarget with `-1` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.RuntimeError: cross-realm NewTarget with `\"\"` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.RuntimeError: cross-realm NewTarget with `\"str\"` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.RuntimeError: cross-realm NewTarget with `symbol \"Symbol()\"` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.RuntimeError: bound cross-realm NewTarget with `undefined` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.RuntimeError: bound bound cross-realm NewTarget with `null` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.RuntimeError: bound Proxy of cross-realm NewTarget with `false` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.RuntimeError: Proxy of cross-realm NewTarget with `true` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.RuntimeError: Proxy of Proxy of cross-realm NewTarget with `-0` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    },
+    {
+     "name": "WebAssembly.RuntimeError: Proxy of bound cross-realm NewTarget with `NaN` prototype",
+     "status": "FAIL",
+     "message": "assert_true: expected true got false"
+    }
+   ],
+   "ms": 5393,
+   "instructions": 452775656,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/prototypes.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "_Module",
+     "status": "PASS"
+    },
+    {
+     "name": "_Instance",
+     "status": "PASS"
+    },
+    {
+     "name": "_Memory",
+     "status": "PASS"
+    },
+    {
+     "name": "_Table",
+     "status": "PASS"
+    },
+    {
+     "name": "_Global",
+     "status": "PASS"
+    }
+   ],
+   "ms": 2281,
+   "instructions": 115002066,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/constructor/compile.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Promise type",
+     "status": "PASS"
+    },
+    {
+     "name": "Missing argument",
+     "status": "PASS"
+    },
+    {
+     "name": "Invalid arguments",
+     "status": "PASS"
+    },
+    {
+     "name": "Branding",
+     "status": "PASS"
+    },
+    {
+     "name": "Empty buffer",
+     "status": "PASS"
+    },
+    {
+     "name": "Invalid code",
+     "status": "PASS"
+    },
+    {
+     "name": "Result type",
+     "status": "PASS"
+    },
+    {
+     "name": "Stray argument",
+     "status": "PASS"
+    },
+    {
+     "name": "Changing the buffer",
+     "status": "PASS"
+    }
+   ],
+   "ms": 2469,
+   "instructions": 120541703,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/constructor/instantiate-bad-imports.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "WebAssembly.instantiate(module): Non-object imports argument: null",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Non-object imports argument: true",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Non-object imports argument: \"\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Non-object imports argument: symbol \"Symbol()\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Non-object imports argument: 1",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Non-object imports argument: 0.1",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Non-object imports argument: NaN",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Non-object module: undefined",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Non-object module: null",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Non-object module: true",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Non-object module: \"\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Non-object module: symbol \"Symbol()\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Non-object module: 1",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Non-object module: 0.1",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Non-object module: NaN",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Missing imports argument",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Imports argument with missing property: undefined",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Imports argument with missing property: empty object",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Imports argument with missing property: wrong property",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing a function with an incorrectly-typed value: undefined",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing a function with an incorrectly-typed value: null",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing a function with an incorrectly-typed value: true",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing a function with an incorrectly-typed value: \"\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing a function with an incorrectly-typed value: symbol \"Symbol()\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing a function with an incorrectly-typed value: 1",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing a function with an incorrectly-typed value: 0.1",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing a function with an incorrectly-typed value: NaN",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing a function with an incorrectly-typed value: object \"[object Object]\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an i32 global with an incorrectly-typed value: undefined",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an i32 global with an incorrectly-typed value: null",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an i32 global with an incorrectly-typed value: true",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an i32 global with an incorrectly-typed value: \"\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an i32 global with an incorrectly-typed value: symbol \"Symbol()\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an i32 global with an incorrectly-typed value: plain object",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an i32 global with an incorrectly-typed value: WebAssembly.Global",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an i32 global with an incorrectly-typed value: WebAssembly.Global.prototype",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an i32 global with an incorrectly-typed value: Object.create(WebAssembly.Global.prototype)",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an i32 global with an incorrectly-typed value: BigInt",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an i32 global with an incorrectly-typed value: WebAssembly.Global object (wrong value type)",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an i64 global with an incorrectly-typed value: undefined",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an i64 global with an incorrectly-typed value: null",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an i64 global with an incorrectly-typed value: true",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an i64 global with an incorrectly-typed value: \"\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an i64 global with an incorrectly-typed value: symbol \"Symbol()\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an i64 global with an incorrectly-typed value: plain object",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an i64 global with an incorrectly-typed value: WebAssembly.Global",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an i64 global with an incorrectly-typed value: WebAssembly.Global.prototype",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an i64 global with an incorrectly-typed value: Object.create(WebAssembly.Global.prototype)",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an i64 global with an incorrectly-typed value: Number",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an i64 global with an incorrectly-typed value: WebAssembly.Global object (wrong value type)",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an f32 global with an incorrectly-typed value: undefined",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an f32 global with an incorrectly-typed value: null",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an f32 global with an incorrectly-typed value: true",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an f32 global with an incorrectly-typed value: \"\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an f32 global with an incorrectly-typed value: symbol \"Symbol()\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an f32 global with an incorrectly-typed value: plain object",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an f32 global with an incorrectly-typed value: WebAssembly.Global",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an f32 global with an incorrectly-typed value: WebAssembly.Global.prototype",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an f32 global with an incorrectly-typed value: Object.create(WebAssembly.Global.prototype)",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an f32 global with an incorrectly-typed value: BigInt",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an f32 global with an incorrectly-typed value: WebAssembly.Global object (wrong value type)",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an f64 global with an incorrectly-typed value: undefined",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an f64 global with an incorrectly-typed value: null",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an f64 global with an incorrectly-typed value: true",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an f64 global with an incorrectly-typed value: \"\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an f64 global with an incorrectly-typed value: symbol \"Symbol()\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an f64 global with an incorrectly-typed value: plain object",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an f64 global with an incorrectly-typed value: WebAssembly.Global",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an f64 global with an incorrectly-typed value: WebAssembly.Global.prototype",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an f64 global with an incorrectly-typed value: Object.create(WebAssembly.Global.prototype)",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an f64 global with an incorrectly-typed value: BigInt",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an f64 global with an incorrectly-typed value: WebAssembly.Global object (wrong value type)",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an i32 mutable global with a primitive value",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an i32 mutable global with an immutable Global object",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an i64 mutable global with a primitive value",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an i64 mutable global with an immutable Global object",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an f32 mutable global with a primitive value",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an f32 mutable global with an immutable Global object",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an f64 mutable global with a primitive value",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing an f64 mutable global with an immutable Global object",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing memory with an incorrectly-typed value: undefined",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing memory with an incorrectly-typed value: null",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing memory with an incorrectly-typed value: true",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing memory with an incorrectly-typed value: \"\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing memory with an incorrectly-typed value: symbol \"Symbol()\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing memory with an incorrectly-typed value: 1",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing memory with an incorrectly-typed value: 0.1",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing memory with an incorrectly-typed value: NaN",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing memory with an incorrectly-typed value: plain object",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing memory with an incorrectly-typed value: WebAssembly.Memory",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing memory with an incorrectly-typed value: WebAssembly.Memory.prototype",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing memory with an incorrectly-typed value: Object.create(WebAssembly.Memory.prototype)",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing memory with an incorrectly-typed value: WebAssembly.Memory object (too large)",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing table with an incorrectly-typed value: undefined",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing table with an incorrectly-typed value: null",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing table with an incorrectly-typed value: true",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing table with an incorrectly-typed value: \"\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing table with an incorrectly-typed value: symbol \"Symbol()\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing table with an incorrectly-typed value: 1",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing table with an incorrectly-typed value: 0.1",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing table with an incorrectly-typed value: NaN",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing table with an incorrectly-typed value: plain object",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing table with an incorrectly-typed value: WebAssembly.Table",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing table with an incorrectly-typed value: WebAssembly.Table.prototype",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing table with an incorrectly-typed value: Object.create(WebAssembly.Table.prototype)",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(module): Importing table with an incorrectly-typed value: WebAssembly.Table object (too large)",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Non-object imports argument: null",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Non-object imports argument: true",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Non-object imports argument: \"\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Non-object imports argument: symbol \"Symbol()\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Non-object imports argument: 1",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Non-object imports argument: 0.1",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Non-object imports argument: NaN",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Non-object module: undefined",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Non-object module: null",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Non-object module: true",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Non-object module: \"\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Non-object module: symbol \"Symbol()\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Non-object module: 1",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Non-object module: 0.1",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Non-object module: NaN",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Missing imports argument",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Imports argument with missing property: undefined",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Imports argument with missing property: empty object",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Imports argument with missing property: wrong property",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing a function with an incorrectly-typed value: undefined",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing a function with an incorrectly-typed value: null",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing a function with an incorrectly-typed value: true",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing a function with an incorrectly-typed value: \"\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing a function with an incorrectly-typed value: symbol \"Symbol()\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing a function with an incorrectly-typed value: 1",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing a function with an incorrectly-typed value: 0.1",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing a function with an incorrectly-typed value: NaN",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing a function with an incorrectly-typed value: object \"[object Object]\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an i32 global with an incorrectly-typed value: undefined",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an i32 global with an incorrectly-typed value: null",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an i32 global with an incorrectly-typed value: true",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an i32 global with an incorrectly-typed value: \"\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an i32 global with an incorrectly-typed value: symbol \"Symbol()\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an i32 global with an incorrectly-typed value: plain object",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an i32 global with an incorrectly-typed value: WebAssembly.Global",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an i32 global with an incorrectly-typed value: WebAssembly.Global.prototype",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an i32 global with an incorrectly-typed value: Object.create(WebAssembly.Global.prototype)",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an i32 global with an incorrectly-typed value: BigInt",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an i32 global with an incorrectly-typed value: WebAssembly.Global object (wrong value type)",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an i64 global with an incorrectly-typed value: undefined",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an i64 global with an incorrectly-typed value: null",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an i64 global with an incorrectly-typed value: true",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an i64 global with an incorrectly-typed value: \"\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an i64 global with an incorrectly-typed value: symbol \"Symbol()\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an i64 global with an incorrectly-typed value: plain object",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an i64 global with an incorrectly-typed value: WebAssembly.Global",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an i64 global with an incorrectly-typed value: WebAssembly.Global.prototype",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an i64 global with an incorrectly-typed value: Object.create(WebAssembly.Global.prototype)",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an i64 global with an incorrectly-typed value: Number",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an i64 global with an incorrectly-typed value: WebAssembly.Global object (wrong value type)",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an f32 global with an incorrectly-typed value: undefined",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an f32 global with an incorrectly-typed value: null",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an f32 global with an incorrectly-typed value: true",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an f32 global with an incorrectly-typed value: \"\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an f32 global with an incorrectly-typed value: symbol \"Symbol()\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an f32 global with an incorrectly-typed value: plain object",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an f32 global with an incorrectly-typed value: WebAssembly.Global",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an f32 global with an incorrectly-typed value: WebAssembly.Global.prototype",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an f32 global with an incorrectly-typed value: Object.create(WebAssembly.Global.prototype)",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an f32 global with an incorrectly-typed value: BigInt",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an f32 global with an incorrectly-typed value: WebAssembly.Global object (wrong value type)",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an f64 global with an incorrectly-typed value: undefined",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an f64 global with an incorrectly-typed value: null",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an f64 global with an incorrectly-typed value: true",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an f64 global with an incorrectly-typed value: \"\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an f64 global with an incorrectly-typed value: symbol \"Symbol()\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an f64 global with an incorrectly-typed value: plain object",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an f64 global with an incorrectly-typed value: WebAssembly.Global",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an f64 global with an incorrectly-typed value: WebAssembly.Global.prototype",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an f64 global with an incorrectly-typed value: Object.create(WebAssembly.Global.prototype)",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an f64 global with an incorrectly-typed value: BigInt",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an f64 global with an incorrectly-typed value: WebAssembly.Global object (wrong value type)",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an i32 mutable global with a primitive value",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an i32 mutable global with an immutable Global object",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an i64 mutable global with a primitive value",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an i64 mutable global with an immutable Global object",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an f32 mutable global with a primitive value",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an f32 mutable global with an immutable Global object",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an f64 mutable global with a primitive value",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing an f64 mutable global with an immutable Global object",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing memory with an incorrectly-typed value: undefined",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing memory with an incorrectly-typed value: null",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing memory with an incorrectly-typed value: true",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing memory with an incorrectly-typed value: \"\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing memory with an incorrectly-typed value: symbol \"Symbol()\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing memory with an incorrectly-typed value: 1",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing memory with an incorrectly-typed value: 0.1",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing memory with an incorrectly-typed value: NaN",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing memory with an incorrectly-typed value: plain object",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing memory with an incorrectly-typed value: WebAssembly.Memory",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing memory with an incorrectly-typed value: WebAssembly.Memory.prototype",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing memory with an incorrectly-typed value: Object.create(WebAssembly.Memory.prototype)",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing memory with an incorrectly-typed value: WebAssembly.Memory object (too large)",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing table with an incorrectly-typed value: undefined",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing table with an incorrectly-typed value: null",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing table with an incorrectly-typed value: true",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing table with an incorrectly-typed value: \"\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing table with an incorrectly-typed value: symbol \"Symbol()\"",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing table with an incorrectly-typed value: 1",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing table with an incorrectly-typed value: 0.1",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing table with an incorrectly-typed value: NaN",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing table with an incorrectly-typed value: plain object",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing table with an incorrectly-typed value: WebAssembly.Table",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing table with an incorrectly-typed value: WebAssembly.Table.prototype",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing table with an incorrectly-typed value: Object.create(WebAssembly.Table.prototype)",
+     "status": "PASS"
+    },
+    {
+     "name": "WebAssembly.instantiate(buffer): Importing table with an incorrectly-typed value: WebAssembly.Table object (too large)",
+     "status": "PASS"
+    }
+   ],
+   "ms": 5242,
+   "instructions": 394187218,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/constructor/instantiate.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Promise type",
+     "status": "PASS"
+    },
+    {
+     "name": "Missing arguments",
+     "status": "PASS"
+    },
+    {
+     "name": "Branding",
+     "status": "PASS"
+    },
+    {
+     "name": "Invalid arguments",
+     "status": "PASS"
+    },
+    {
+     "name": "Empty module without imports argument: BufferSource argument",
+     "status": "PASS"
+    },
+    {
+     "name": "Empty module without imports argument: Module argument",
+     "status": "PASS"
+    },
+    {
+     "name": "Empty module with undefined imports argument: BufferSource argument",
+     "status": "PASS"
+    },
+    {
+     "name": "Empty module with undefined imports argument: Module argument",
+     "status": "PASS"
+    },
+    {
+     "name": "Empty module with empty imports argument: BufferSource argument",
+     "status": "PASS"
+    },
+    {
+     "name": "Empty module with empty imports argument: Module argument",
+     "status": "PASS"
+    },
+    {
+     "name": "getter order for imports object: BufferSource argument",
+     "status": "PASS"
+    },
+    {
+     "name": "getter order for imports object: Module argument",
+     "status": "PASS"
+    },
+    {
+     "name": "imports: BufferSource argument",
+     "status": "PASS"
+    },
+    {
+     "name": "imports: Module argument",
+     "status": "PASS"
+    },
+    {
+     "name": "imports with empty module names: BufferSource argument",
+     "status": "PASS"
+    },
+    {
+     "name": "imports with empty module names: Module argument",
+     "status": "PASS"
+    },
+    {
+     "name": "imports with empty names: BufferSource argument",
+     "status": "PASS"
+    },
+    {
+     "name": "imports with empty names: Module argument",
+     "status": "PASS"
+    },
+    {
+     "name": "exports with empty name: function: BufferSource argument",
+     "status": "PASS"
+    },
+    {
+     "name": "exports with empty name: function: Module argument",
+     "status": "PASS"
+    },
+    {
+     "name": "exports with empty name: table: BufferSource argument",
+     "status": "PASS"
+    },
+    {
+     "name": "exports with empty name: table: Module argument",
+     "status": "PASS"
+    },
+    {
+     "name": "exports with empty name: global: BufferSource argument",
+     "status": "PASS"
+    },
+    {
+     "name": "exports with empty name: global: Module argument",
+     "status": "PASS"
+    },
+    {
+     "name": "No imports: BufferSource argument",
+     "status": "PASS"
+    },
+    {
+     "name": "No imports: Module argument",
+     "status": "PASS"
+    },
+    {
+     "name": "exports and imports: BufferSource argument",
+     "status": "PASS"
+    },
+    {
+     "name": "exports and imports: Module argument",
+     "status": "PASS"
+    },
+    {
+     "name": "i64 exports and imports: BufferSource argument",
+     "status": "PASS"
+    },
+    {
+     "name": "i64 exports and imports: Module argument",
+     "status": "PASS"
+    },
+    {
+     "name": "import with i32-returning function: BufferSource argument",
+     "status": "PASS"
+    },
+    {
+     "name": "import with i32-returning function: Module argument",
+     "status": "PASS"
+    },
+    {
+     "name": "import with function that takes and returns i32: BufferSource argument",
+     "status": "PASS"
+    },
+    {
+     "name": "import with function that takes and returns i32: Module argument",
+     "status": "PASS"
+    },
+    {
+     "name": "import with i64-returning function: BufferSource argument",
+     "status": "PASS"
+    },
+    {
+     "name": "import with i64-returning function: Module argument",
+     "status": "PASS"
+    },
+    {
+     "name": "import with function that takes and returns i64: BufferSource argument",
+     "status": "PASS"
+    },
+    {
+     "name": "import with function that takes and returns i64: Module argument",
+     "status": "PASS"
+    },
+    {
+     "name": "import with i32-taking function: BufferSource argument",
+     "status": "PASS"
+    },
+    {
+     "name": "import with i32-taking function: Module argument",
+     "status": "PASS"
+    },
+    {
+     "name": "import with i64-taking function: BufferSource argument",
+     "status": "PASS"
+    },
+    {
+     "name": "import with i64-taking function: Module argument",
+     "status": "PASS"
+    },
+    {
+     "name": "export i64-returning function: BufferSource argument",
+     "status": "PASS"
+    },
+    {
+     "name": "export i64-returning function: Module argument",
+     "status": "PASS"
+    },
+    {
+     "name": "i32 mutable WebAssembly.Global import: BufferSource argument",
+     "status": "PASS"
+    },
+    {
+     "name": "i32 mutable WebAssembly.Global import: Module argument",
+     "status": "PASS"
+    },
+    {
+     "name": "i64 mutable WebAssembly.Global import: BufferSource argument",
+     "status": "PASS"
+    },
+    {
+     "name": "i64 mutable WebAssembly.Global import: Module argument",
+     "status": "PASS"
+    },
+    {
+     "name": "Multiple i64 arguments: BufferSource argument",
+     "status": "PASS"
+    },
+    {
+     "name": "Multiple i64 arguments: Module argument",
+     "status": "PASS"
+    },
+    {
+     "name": "stray argument: BufferSource argument",
+     "status": "PASS"
+    },
+    {
+     "name": "stray argument: Module argument",
+     "status": "PASS"
+    },
+    {
+     "name": "Synchronous options handling: Buffer argument",
+     "status": "PASS"
+    },
+    {
+     "name": "Synchronous options handling: Module argument",
+     "status": "PASS"
+    },
+    {
+     "name": "Empty buffer",
+     "status": "PASS"
+    },
+    {
+     "name": "Invalid code",
+     "status": "PASS"
+    },
+    {
+     "name": "Changing the buffer",
+     "status": "PASS"
+    }
+   ],
+   "ms": 3807,
+   "instructions": 240739780,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/constructor/multi-value.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "multiple return values from wasm to js",
+     "status": "PASS"
+    },
+    {
+     "name": "multiple return values inside wasm",
+     "status": "PASS"
+    },
+    {
+     "name": "multiple return values from js to wasm",
+     "status": "FAIL",
+     "message": "assert_array_equals: lengths differ, expected array [\"@@iterator getter\", \"@@iterator call\", \"next getter\", \"next call 1\", \"done call 1\", \"value call 1\", \"next call 2\", \"done call 2\", \"value call 2\", \"next call 3\", \"done call 3\", \"valueOf get 1\", \"valueOf call 1\", \"valueOf get 2\", \"valueOf call 2\"] "
+    }
+   ],
+   "ms": 2543,
+   "instructions": 123329694,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/constructor/toStringTag.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "@@toStringTag exists on the namespace object with the appropriate descriptor",
+     "status": "PASS"
+    },
+    {
+     "name": "Object.prototype.toString applied to the namespace object",
+     "status": "PASS"
+    },
+    {
+     "name": "Object.prototype.toString applied after modifying the namespace object's @@toStringTag",
+     "status": "PASS"
+    },
+    {
+     "name": "Object.prototype.toString applied after deleting @@toStringTag",
+     "status": "PASS"
+    }
+   ],
+   "ms": 2214,
+   "instructions": 86282929,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/constructor/validate.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Missing argument",
+     "status": "PASS"
+    },
+    {
+     "name": "Invalid arguments",
+     "status": "PASS"
+    },
+    {
+     "name": "Branding",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [] in Uint8Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [] in Int8Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [] in Uint16Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [] in Int16Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [] in Uint32Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [] in Int32Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0] in Uint8Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0] in Int8Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61] in Uint8Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61] in Int8Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61] in Uint16Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61] in Int16Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73] in Uint8Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73] in Int8Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d] in Uint8Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d] in Int8Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d] in Uint16Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d] in Int16Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d] in Uint32Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d] in Int32Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 1] in Uint8Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 1] in Int8Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 1 0] in Uint8Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 1 0] in Int8Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 1 0] in Uint16Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 1 0] in Int16Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 1 0 0] in Uint8Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 1 0 0] in Int8Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 1 0 0 0] in Uint8Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 1 0 0 0] in Int8Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 1 0 0 0] in Uint16Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 1 0 0 0] in Int16Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 1 0 0 0] in Uint32Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 1 0 0 0] in Int32Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 0 0 0 0] in Uint8Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 0 0 0 0] in Int8Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 0 0 0 0] in Uint16Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 0 0 0 0] in Int16Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 0 0 0 0] in Uint32Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 0 0 0 0] in Int32Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 2 0 0 0] in Uint8Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 2 0 0 0] in Int8Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 2 0 0 0] in Uint16Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 2 0 0 0] in Int16Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 2 0 0 0] in Uint32Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 2 0 0 0] in Int32Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 1 0 0 0 0 0] in Uint8Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 1 0 0 0 0 0] in Int8Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 1 0 0 0 0 0] in Uint16Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 1 0 0 0 0 0] in Int16Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 1 0 0 0 0 1 0] in Uint8Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 1 0 0 0 0 1 0] in Int8Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 1 0 0 0 0 2 1 61] in Uint8Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 1 0 0 0 0 2 1 61] in Int8Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 1 0 0 0 0 2 1 61] in Uint16Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 1 0 0 0 0 2 1 61] in Int16Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 1 0 0 0 0 2 1 61] in Uint32Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Validating module [0 61 73 6d 1 0 0 0 0 2 1 61] in Int32Array",
+     "status": "PASS"
+    },
+    {
+     "name": "Stray argument",
+     "status": "PASS"
+    }
+   ],
+   "ms": 2894,
+   "instructions": 147880456,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/esm-integration/exports.tentative.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Exported names from a WebAssembly module",
+     "status": "FAIL",
+     "message": "promise_test: Unhandled rejection with value: object \"ReferenceError: could not load module 'resources/exports.wasm'\""
+    }
+   ],
+   "ms": 2091,
+   "instructions": 62611007,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/esm-integration/global-exports-live-bindings.tentative.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Local mutable global exports should be live bindings",
+     "status": "FAIL",
+     "message": "promise_test: Unhandled rejection with value: object \"ReferenceError: could not load module 'resources/globals.wasm'\""
+    },
+    {
+     "name": "Dep module mutable global exports should be live bindings",
+     "status": "FAIL",
+     "message": "promise_test: Unhandled rejection with value: object \"ReferenceError: could not load module 'resources/globals.wasm'\""
+    }
+   ],
+   "ms": 2081,
+   "instructions": 66091287,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/esm-integration/global-exports.tentative.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "WebAssembly module global values should be unwrapped when importing in ESM integration",
+     "status": "FAIL",
+     "message": "promise_test: Unhandled rejection with value: object \"ReferenceError: could not load module 'resources/globals.wasm'\""
+    },
+    {
+     "name": "WebAssembly mutable global values should be unwrapped when importing in ESM integration",
+     "status": "FAIL",
+     "message": "promise_test: Unhandled rejection with value: object \"ReferenceError: could not load module 'resources/globals.wasm'\""
+    },
+    {
+     "name": "WebAssembly local global values should be unwrapped when exporting in ESM integration",
+     "status": "FAIL",
+     "message": "promise_test: Unhandled rejection with value: object \"ReferenceError: could not load module 'resources/globals.wasm'\""
+    },
+    {
+     "name": "WebAssembly module globals from imported WebAssembly modules should be unwrapped",
+     "status": "FAIL",
+     "message": "promise_test: Unhandled rejection with value: object \"ReferenceError: could not load module 'resources/globals.wasm'\""
+    },
+    {
+     "name": "WebAssembly should properly handle all global types",
+     "status": "FAIL",
+     "message": "promise_test: Unhandled rejection with value: object \"ReferenceError: could not load module 'resources/globals.wasm'\""
+    }
+   ],
+   "ms": 2277,
+   "instructions": 76811934,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/esm-integration/js-wasm-cycle.tentative.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Check bindings in JavaScript and WebAssembly cycle (JS higher)",
+     "status": "FAIL",
+     "message": "promise_test: Unhandled rejection with value: object \"ReferenceError: could not load module 'resources/js-wasm-cycle.js'\""
+    }
+   ],
+   "ms": 1970,
+   "instructions": 62405186,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/esm-integration/mutable-global-sharing.tentative.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "WebAssembly modules should export shared mutable globals with correct initial values",
+     "status": "FAIL",
+     "message": "promise_test: Unhandled rejection with value: object \"ReferenceError: could not load module 'resources/mutable-global-export.wasm'\""
+    },
+    {
+     "name": "Wasm-to-Wasm mutable global sharing is live",
+     "status": "FAIL",
+     "message": "promise_test: Unhandled rejection with value: object \"ReferenceError: could not load module 'resources/mutable-global-export.wasm'\""
+    },
+    {
+     "name": "Multiple JavaScript imports return the same WebAssembly module instance",
+     "status": "FAIL",
+     "message": "promise_test: Unhandled rejection with value: object \"ReferenceError: could not load module 'resources/mutable-global-export.wasm'\""
+    },
+    {
+     "name": "v128 globals should work correctly in WebAssembly-to-WebAssembly imports",
+     "status": "FAIL",
+     "message": "promise_test: Unhandled rejection with value: object \"ReferenceError: could not load module 'resources/mutable-global-export.wasm'\""
+    },
+    {
+     "name": "v128 global mutations should work correctly between WebAssembly modules",
+     "status": "FAIL",
+     "message": "promise_test: Unhandled rejection with value: object \"ReferenceError: could not load module 'resources/mutable-global-export.wasm'\""
+    }
+   ],
+   "ms": 2037,
+   "instructions": 76236872,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/esm-integration/namespace-instance.tentative.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "WebAssembly.namespaceInstance() should return the underlying instance with shared state",
+     "status": "FAIL",
+     "message": "promise_test: Unhandled rejection with value: object \"ReferenceError: could not load module 'resources/mutable-global-export.wasm'\""
+    },
+    {
+     "name": "WebAssembly.namespaceInstance() should throw TypeError for non-WebAssembly namespaces",
+     "status": "FAIL",
+     "message": "promise_test: Unhandled rejection with value: object \"ReferenceError: could not load module 'resources/globals.js'\""
+    },
+    {
+     "name": "WebAssembly.namespaceInstance() should work correctly with multiple modules",
+     "status": "FAIL",
+     "message": "promise_test: Unhandled rejection with value: object \"ReferenceError: could not load module 'resources/exports.wasm'\""
+    }
+   ],
+   "ms": 2210,
+   "instructions": 97004622,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/esm-integration/reserved-import-names.tentative.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "wasm: reserved import names should cause WebAssembly.LinkError",
+     "status": "FAIL",
+     "message": "promise_rejects_js: function \"function() { throw e; }\" threw object \"ReferenceError: could not load module 'resources/invalid-import-name.wasm'\" (\"ReferenceError\") expected instance of function \"function (message, options) { return Reflect.construct(Error, [message, options], new.target || E); }\" (\""
+    },
+    {
+     "name": "wasm-js: reserved import names should cause WebAssembly.LinkError",
+     "status": "FAIL",
+     "message": "promise_rejects_js: function \"function() { throw e; }\" threw object \"ReferenceError: could not load module 'resources/invalid-import-name-wasm-js.wasm'\" (\"ReferenceError\") expected instance of function \"function (message, options) { return Reflect.construct(Error, [message, options], new.target || E"
+    },
+    {
+     "name": "wasm: reserved export names should cause WebAssembly.LinkError",
+     "status": "FAIL",
+     "message": "promise_rejects_js: function \"function() { throw e; }\" threw object \"ReferenceError: could not load module 'resources/invalid-export-name.wasm'\" (\"ReferenceError\") expected instance of function \"function (message, options) { return Reflect.construct(Error, [message, options], new.target || E); }\" (\""
+    },
+    {
+     "name": "wasm-js: reserved export names should cause WebAssembly.LinkError",
+     "status": "FAIL",
+     "message": "promise_rejects_js: function \"function() { throw e; }\" threw object \"ReferenceError: could not load module 'resources/invalid-export-name-wasm-js.wasm'\" (\"ReferenceError\") expected instance of function \"function (message, options) { return Reflect.construct(Error, [message, options], new.target || E"
+    },
+    {
+     "name": "wasm-js: reserved module names should cause WebAssembly.LinkError",
+     "status": "FAIL",
+     "message": "promise_rejects_js: function \"function() { throw e; }\" threw object \"ReferenceError: could not load module 'resources/invalid-import-module.wasm'\" (\"ReferenceError\") expected instance of function \"function (message, options) { return Reflect.construct(Error, [message, options], new.target || E); }\" "
+    }
+   ],
+   "ms": 2309,
+   "instructions": 104488522,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/esm-integration/resolve-export.tentative.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "ResolveExport on invalid re-export from WebAssembly",
+     "status": "FAIL",
+     "message": "promise_rejects_js: function \"function() { throw e; }\" threw object \"ReferenceError: could not load module 'resources/resolve-export.js'\" (\"ReferenceError\") expected instance of function \"function SyntaxError() {\n    [native code]\n}\" (\"SyntaxError\")"
+    }
+   ],
+   "ms": 1933,
+   "instructions": 62731205,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/esm-integration/source-phase-string-builtins.tentative.any.js",
+   "harness": "ERROR",
+   "message": "SyntaxError: meta expected",
+   "subtests": [],
+   "ms": 1894,
+   "instructions": 59056109,
+   "clock": 10000,
+   "errors": [
+    "SyntaxError: meta expected\n    at <page-script>:4:41\n"
+   ]
+  },
+  {
+   "file": "wasm/jsapi/esm-integration/source-phase-string-constants.tentative.any.js",
+   "harness": "ERROR",
+   "message": "SyntaxError: meta expected",
+   "subtests": [],
+   "ms": 1949,
+   "instructions": 59056261,
+   "clock": 10000,
+   "errors": [
+    "SyntaxError: meta expected\n    at <page-script>:4:41\n"
+   ]
+  },
+  {
+   "file": "wasm/jsapi/esm-integration/source-phase.tentative.any.js",
+   "harness": "ERROR",
+   "message": "SyntaxError: meta expected",
+   "subtests": [],
+   "ms": 2014,
+   "instructions": 59074302,
+   "clock": 10000,
+   "errors": [
+    "SyntaxError: meta expected\n    at <page-script>:4:44\n"
+   ]
+  },
+  {
+   "file": "wasm/jsapi/esm-integration/string-builtins.tentative.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "String builtins should be supported in imports in ESM integration",
+     "status": "FAIL",
+     "message": "promise_test: Unhandled rejection with value: object \"ReferenceError: could not load module 'resources/js-string-builtins.wasm'\""
+    }
+   ],
+   "ms": 2147,
+   "instructions": 62444870,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/esm-integration/string-constants.tentative.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "String constants from wasm:js/string-constants should be supported in ESM integration",
+     "status": "FAIL",
+     "message": "promise_test: Unhandled rejection with value: object \"ReferenceError: could not load module 'resources/js-string-constants.wasm'\""
+    }
+   ],
+   "ms": 1995,
+   "instructions": 62370230,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/esm-integration/v128-tdz.tentative.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "v128 global exports should cause TDZ errors",
+     "status": "FAIL",
+     "message": "promise_test: Unhandled rejection with value: object \"ReferenceError: could not load module 'resources/mutable-global-export.wasm'\""
+    }
+   ],
+   "ms": 1986,
+   "instructions": 62456123,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/esm-integration/wasm-import-wasm-export.tentative.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Check import and export between WebAssembly modules",
+     "status": "FAIL",
+     "message": "promise_test: Unhandled rejection with value: object \"ReferenceError: could not load module 'resources/wasm-import-from-wasm.wasm'\""
+    }
+   ],
+   "ms": 1989,
+   "instructions": 62451536,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/exception/basic.tentative.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Wasm function throws argument",
+     "status": "PASS"
+    },
+    {
+     "name": "Wasm function throws null",
+     "status": "PASS"
+    },
+    {
+     "name": "Wasm function throws integer",
+     "status": "PASS"
+    },
+    {
+     "name": "Imported JS function throws",
+     "status": "PASS"
+    },
+    {
+     "name": "Imported JS function throws, Wasm catches and rethrows",
+     "status": "PASS"
+    }
+   ],
+   "ms": 2598,
+   "instructions": 122804480,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/exception/constructor.tentative.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "name",
+     "status": "PASS"
+    },
+    {
+     "name": "length",
+     "status": "PASS"
+    },
+    {
+     "name": "No arguments",
+     "status": "PASS"
+    },
+    {
+     "name": "Calling",
+     "status": "PASS"
+    },
+    {
+     "name": "Invalid descriptor argument",
+     "status": "PASS"
+    },
+    {
+     "name": "Invalid exception argument",
+     "status": "PASS"
+    }
+   ],
+   "ms": 2387,
+   "instructions": 93342269,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/exception/getArg.tentative.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Missing arguments",
+     "status": "PASS"
+    },
+    {
+     "name": "Invalid exception argument",
+     "status": "PASS"
+    },
+    {
+     "name": "Index out of bounds",
+     "status": "PASS"
+    },
+    {
+     "name": "Getting out-of-range argument",
+     "status": "PASS"
+    },
+    {
+     "name": "getArg",
+     "status": "PASS"
+    }
+   ],
+   "ms": 2356,
+   "instructions": 90070286,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/exception/identity.tentative.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Identity check",
+     "status": "PASS"
+    }
+   ],
+   "ms": 2512,
+   "instructions": 115284256,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/exception/is.tentative.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Missing arguments",
+     "status": "PASS"
+    },
+    {
+     "name": "Invalid exception argument",
+     "status": "PASS"
+    },
+    {
+     "name": "is",
+     "status": "PASS"
+    }
+   ],
+   "ms": 2246,
+   "instructions": 87208850,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/exception/toString.tentative.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Object.prototype.toString on an Exception",
+     "status": "PASS"
+    },
+    {
+     "name": "@@toStringTag exists on the prototype with the appropriate descriptor",
+     "status": "PASS"
+    }
+   ],
+   "ms": 2206,
+   "instructions": 84723521,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/function/call.tentative.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "test calling function",
+     "status": "FAIL",
+     "message": "not a function"
+    },
+    {
+     "name": "test constructing function",
+     "status": "FAIL",
+     "message": "not a function"
+    }
+   ],
+   "ms": 2242,
+   "instructions": 86370859,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/function/constructor.tentative.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "name",
+     "status": "FAIL",
+     "message": "assert_implements: WebAssembly.Function is not implemented undefined"
+    },
+    {
+     "name": "length",
+     "status": "FAIL",
+     "message": "assert_implements: WebAssembly.Function is not implemented undefined"
+    },
+    {
+     "name": "Too few arguments",
+     "status": "FAIL",
+     "message": "assert_implements: WebAssembly.Function is not implemented undefined"
+    },
+    {
+     "name": "Calling",
+     "status": "FAIL",
+     "message": "assert_implements: WebAssembly.Function is not implemented undefined"
+    },
+    {
+     "name": "construct with JS function",
+     "status": "FAIL",
+     "message": "assert_implements: WebAssembly.Function is not implemented undefined"
+    },
+    {
+     "name": "fail with missing results",
+     "status": "FAIL",
+     "message": "assert_implements: WebAssembly.Function is not implemented undefined"
+    },
+    {
+     "name": "fail with missing parameters",
+     "status": "FAIL",
+     "message": "assert_implements: WebAssembly.Function is not implemented undefined"
+    },
+    {
+     "name": "fail with non-string parameters & results",
+     "status": "FAIL",
+     "message": "assert_implements: WebAssembly.Function is not implemented undefined"
+    },
+    {
+     "name": "fail with non-existent parameter and result type",
+     "status": "FAIL",
+     "message": "assert_implements: WebAssembly.Function is not implemented undefined"
+    },
+    {
+     "name": "fail with non-function object",
+     "status": "FAIL",
+     "message": "assert_implements: WebAssembly.Function is not implemented undefined"
+    },
+    {
+     "name": "fail to construct with non-callable object",
+     "status": "FAIL",
+     "message": "assert_implements: WebAssembly.Function is not implemented undefined"
+    }
+   ],
+   "ms": 2643,
+   "instructions": 122761266,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/function/table.tentative.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Test insertion into table",
+     "status": "FAIL",
+     "message": "not a function"
+    }
+   ],
+   "ms": 2176,
+   "instructions": 86152334,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/function/type.tentative.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Check empty results and parameters",
+     "status": "FAIL",
+     "message": "not a function"
+    },
+    {
+     "name": "Check all types",
+     "status": "FAIL",
+     "message": "not a function"
+    }
+   ],
+   "ms": 2213,
+   "instructions": 86501224,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/functions/entry-different-function-realm.html",
+   "harness": "ERROR",
+   "message": "ReferenceError: URL is not defined",
+   "subtests": [],
+   "ms": 2042,
+   "instructions": 86354736,
+   "clock": 10000,
+   "errors": [
+    "ReferenceError: URL is not defined\n    at <eval> (<page-script>:5:26)\n"
+   ]
+  },
+  {
+   "file": "wasm/jsapi/functions/entry.html",
+   "harness": "ERROR",
+   "message": "ReferenceError: URL is not defined",
+   "subtests": [],
+   "ms": 2261,
+   "instructions": 86150370,
+   "clock": 10000,
+   "errors": [
+    "ReferenceError: URL is not defined\n    at <eval> (<page-script>:5:26)\n"
+   ]
+  },
+  {
+   "file": "wasm/jsapi/functions/incumbent.html",
+   "harness": "ERROR",
+   "message": "ReferenceError: URL is not defined",
+   "subtests": [],
+   "ms": 2001,
+   "instructions": 59657006,
+   "clock": 10000,
+   "errors": [
+    "ReferenceError: URL is not defined\n    at <eval> (<page-script>:6:26)\n"
+   ]
+  },
+  {
+   "file": "wasm/jsapi/gc/casts.tentative.any.js",
+   "harness": "ERROR",
+   "message": "CompileError: unsupported: GC type definition at byte 12",
+   "subtests": [],
+   "ms": 2468,
+   "instructions": 128235760,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/gc/exported-object.tentative.any.js",
+   "harness": "ERROR",
+   "message": "CompileError: unsupported: GC type definition at byte 11",
+   "subtests": [],
+   "ms": 2169,
+   "instructions": 114388167,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/gc/i31.tentative.any.js",
+   "harness": "ERROR",
+   "message": "CompileError: unsupported: GC instruction at byte 56",
+   "subtests": [],
+   "ms": 2102,
+   "instructions": 113281156,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/global/constructor.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "name",
+     "status": "PASS"
+    },
+    {
+     "name": "length",
+     "status": "PASS"
+    },
+    {
+     "name": "No arguments",
+     "status": "PASS"
+    },
+    {
+     "name": "Calling",
+     "status": "PASS"
+    },
+    {
+     "name": "Order of evaluation",
+     "status": "PASS"
+    },
+    {
+     "name": "Invalid descriptor argument",
+     "status": "PASS"
+    },
+    {
+     "name": "Invalid type argument",
+     "status": "PASS"
+    },
+    {
+     "name": "Construct v128 global",
+     "status": "PASS"
+    },
+    {
+     "name": "i64 with default",
+     "status": "PASS"
+    },
+    {
+     "name": "Default value for type i32",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value undefined for type i32",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value null for type i32",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value true for type i32",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value false for type i32",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value 2 for type i32",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value \"3\" for type i32",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value object with toString returning string for type i32",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value object with valueOf returning string for type i32",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value object with toString returning number for type i32",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value object with valueOf returning number for type i32",
+     "status": "PASS"
+    },
+    {
+     "name": "BigInt value for type i32",
+     "status": "PASS"
+    },
+    {
+     "name": "Default value for type f32",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value undefined for type f32",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value null for type f32",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value true for type f32",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value false for type f32",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value 2 for type f32",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value \"3\" for type f32",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value object with toString returning string for type f32",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value object with valueOf returning string for type f32",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value object with toString returning number for type f32",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value object with valueOf returning number for type f32",
+     "status": "PASS"
+    },
+    {
+     "name": "BigInt value for type f32",
+     "status": "PASS"
+    },
+    {
+     "name": "Default value for type f64",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value undefined for type f64",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value null for type f64",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value true for type f64",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value false for type f64",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value 2 for type f64",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value \"3\" for type f64",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value object with toString returning string for type f64",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value object with valueOf returning string for type f64",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value object with toString returning number for type f64",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value object with valueOf returning number for type f64",
+     "status": "PASS"
+    },
+    {
+     "name": "BigInt value for type f64",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value undefined for type i64",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value true for type i64",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value false for type i64",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value \"3\" for type i64",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value 123n for type i64",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value object with toString returning string for type i64",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value object with valueOf returning string for type i64",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value object with toString returning bigint for type i64",
+     "status": "PASS"
+    },
+    {
+     "name": "Explicit value object with valueOf returning bigint for type i64",
+     "status": "PASS"
+    },
+    {
+     "name": "Pass non-bigint as i64 Global value: null",
+     "status": "PASS"
+    },
+    {
+     "name": "Pass non-bigint as i64 Global value: 666",
+     "status": "PASS"
+    },
+    {
+     "name": "Pass non-bigint as i64 Global value: object \"5\"",
+     "status": "PASS"
+    },
+    {
+     "name": "Pass non-bigint as i64 Global value: object \"[object Object]\"",
+     "status": "PASS"
+    },
+    {
+     "name": "Pass non-bigint as i64 Global value: symbol \"Symbol()\"",
+     "status": "PASS"
+    },
+    {
+     "name": "Stray argument",
+     "status": "PASS"
+    }
+   ],
+   "ms": 2362,
+   "instructions": 132288612,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/global/toString.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Object.prototype.toString on an Global",
+     "status": "PASS"
+    },
+    {
+     "name": "@@toStringTag exists on the prototype with the appropriate descriptor",
+     "status": "PASS"
+    }
+   ],
+   "ms": 3189,
+   "instructions": 84682970,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/global/type.tentative.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "i32, mutable",
+     "status": "PASS"
+    },
+    {
+     "name": "i32, immutable",
+     "status": "PASS"
+    },
+    {
+     "name": "i64, mutable",
+     "status": "PASS"
+    },
+    {
+     "name": "i64, immutable",
+     "status": "PASS"
+    },
+    {
+     "name": "f32, mutable",
+     "status": "PASS"
+    },
+    {
+     "name": "f32, immutable",
+     "status": "PASS"
+    },
+    {
+     "name": "f64, mutable",
+     "status": "PASS"
+    },
+    {
+     "name": "f64, immutable",
+     "status": "PASS"
+    },
+    {
+     "name": "externref, mutable",
+     "status": "PASS"
+    },
+    {
+     "name": "externref, immutable",
+     "status": "PASS"
+    },
+    {
+     "name": "funcref, mutable",
+     "status": "PASS"
+    },
+    {
+     "name": "funcref, immutable",
+     "status": "PASS"
+    },
+    {
+     "name": "key ordering",
+     "status": "PASS"
+    }
+   ],
+   "ms": 2987,
+   "instructions": 95734301,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/global/value-get-set.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Branding",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable i32 (missing)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable i32 with ToNumber side-effects (missing)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable i32 (undefined)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable i32 with ToNumber side-effects (undefined)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable i32 (null)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable i32 with ToNumber side-effects (null)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable i32 (false)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable i32 with ToNumber side-effects (false)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable i32 (empty string)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable i32 with ToNumber side-effects (empty string)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable i32 (zero)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable i32 with ToNumber side-effects (zero)",
+     "status": "PASS"
+    },
+    {
+     "name": "Mutable i32 (true)",
+     "status": "PASS"
+    },
+    {
+     "name": "Mutable i32 (one)",
+     "status": "PASS"
+    },
+    {
+     "name": "Mutable i32 (string)",
+     "status": "PASS"
+    },
+    {
+     "name": "Mutable i32 (true on prototype)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable i64 (missing)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable i64 with ToNumber side-effects (missing)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable i64 (undefined)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable i64 with ToNumber side-effects (undefined)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable i64 (null)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable i64 with ToNumber side-effects (null)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable i64 (false)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable i64 with ToNumber side-effects (false)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable i64 (empty string)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable i64 with ToNumber side-effects (empty string)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable i64 (zero)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable i64 with ToNumber side-effects (zero)",
+     "status": "PASS"
+    },
+    {
+     "name": "Mutable i64 (true)",
+     "status": "PASS"
+    },
+    {
+     "name": "Mutable i64 (one)",
+     "status": "PASS"
+    },
+    {
+     "name": "Mutable i64 (string)",
+     "status": "PASS"
+    },
+    {
+     "name": "Mutable i64 (true on prototype)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable f32 (missing)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable f32 with ToNumber side-effects (missing)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable f32 (undefined)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable f32 with ToNumber side-effects (undefined)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable f32 (null)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable f32 with ToNumber side-effects (null)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable f32 (false)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable f32 with ToNumber side-effects (false)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable f32 (empty string)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable f32 with ToNumber side-effects (empty string)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable f32 (zero)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable f32 with ToNumber side-effects (zero)",
+     "status": "PASS"
+    },
+    {
+     "name": "Mutable f32 (true)",
+     "status": "PASS"
+    },
+    {
+     "name": "Mutable f32 (one)",
+     "status": "PASS"
+    },
+    {
+     "name": "Mutable f32 (string)",
+     "status": "PASS"
+    },
+    {
+     "name": "Mutable f32 (true on prototype)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable f64 (missing)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable f64 with ToNumber side-effects (missing)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable f64 (undefined)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable f64 with ToNumber side-effects (undefined)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable f64 (null)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable f64 with ToNumber side-effects (null)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable f64 (false)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable f64 with ToNumber side-effects (false)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable f64 (empty string)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable f64 with ToNumber side-effects (empty string)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable f64 (zero)",
+     "status": "PASS"
+    },
+    {
+     "name": "Immutable f64 with ToNumber side-effects (zero)",
+     "status": "PASS"
+    },
+    {
+     "name": "Mutable f64 (true)",
+     "status": "PASS"
+    },
+    {
+     "name": "Mutable f64 (one)",
+     "status": "PASS"
+    },
+    {
+     "name": "Mutable f64 (string)",
+     "status": "PASS"
+    },
+    {
+     "name": "Mutable f64 (true on prototype)",
+     "status": "PASS"
+    },
+    {
+     "name": "i64 mutability",
+     "status": "PASS"
+    },
+    {
+     "name": "Calling setter without argument",
+     "status": "PASS"
+    },
+    {
+     "name": "Stray argument",
+     "status": "PASS"
+    }
+   ],
+   "ms": 3050,
+   "instructions": 149649793,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/global/valueOf.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Branding",
+     "status": "PASS"
+    },
+    {
+     "name": "Stray argument",
+     "status": "PASS"
+    }
+   ],
+   "ms": 2480,
+   "instructions": 85869441,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/instance/constructor-bad-imports.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "new WebAssembly.Instance(module): Non-object imports argument: null",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Non-object imports argument: true",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Non-object imports argument: \"\"",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Non-object imports argument: symbol \"Symbol()\"",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Non-object imports argument: 1",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Non-object imports argument: 0.1",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Non-object imports argument: NaN",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Non-object module: undefined",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Non-object module: null",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Non-object module: true",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Non-object module: \"\"",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Non-object module: symbol \"Symbol()\"",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Non-object module: 1",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Non-object module: 0.1",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Non-object module: NaN",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Missing imports argument",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Imports argument with missing property: undefined",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Imports argument with missing property: empty object",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Imports argument with missing property: wrong property",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing a function with an incorrectly-typed value: undefined",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing a function with an incorrectly-typed value: null",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing a function with an incorrectly-typed value: true",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing a function with an incorrectly-typed value: \"\"",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing a function with an incorrectly-typed value: symbol \"Symbol()\"",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing a function with an incorrectly-typed value: 1",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing a function with an incorrectly-typed value: 0.1",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing a function with an incorrectly-typed value: NaN",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing a function with an incorrectly-typed value: object \"[object Object]\"",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an i32 global with an incorrectly-typed value: undefined",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an i32 global with an incorrectly-typed value: null",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an i32 global with an incorrectly-typed value: true",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an i32 global with an incorrectly-typed value: \"\"",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an i32 global with an incorrectly-typed value: symbol \"Symbol()\"",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an i32 global with an incorrectly-typed value: plain object",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an i32 global with an incorrectly-typed value: WebAssembly.Global",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an i32 global with an incorrectly-typed value: WebAssembly.Global.prototype",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an i32 global with an incorrectly-typed value: Object.create(WebAssembly.Global.prototype)",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an i32 global with an incorrectly-typed value: BigInt",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an i32 global with an incorrectly-typed value: WebAssembly.Global object (wrong value type)",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an i64 global with an incorrectly-typed value: undefined",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an i64 global with an incorrectly-typed value: null",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an i64 global with an incorrectly-typed value: true",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an i64 global with an incorrectly-typed value: \"\"",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an i64 global with an incorrectly-typed value: symbol \"Symbol()\"",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an i64 global with an incorrectly-typed value: plain object",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an i64 global with an incorrectly-typed value: WebAssembly.Global",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an i64 global with an incorrectly-typed value: WebAssembly.Global.prototype",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an i64 global with an incorrectly-typed value: Object.create(WebAssembly.Global.prototype)",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an i64 global with an incorrectly-typed value: Number",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an i64 global with an incorrectly-typed value: WebAssembly.Global object (wrong value type)",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an f32 global with an incorrectly-typed value: undefined",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an f32 global with an incorrectly-typed value: null",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an f32 global with an incorrectly-typed value: true",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an f32 global with an incorrectly-typed value: \"\"",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an f32 global with an incorrectly-typed value: symbol \"Symbol()\"",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an f32 global with an incorrectly-typed value: plain object",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an f32 global with an incorrectly-typed value: WebAssembly.Global",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an f32 global with an incorrectly-typed value: WebAssembly.Global.prototype",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an f32 global with an incorrectly-typed value: Object.create(WebAssembly.Global.prototype)",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an f32 global with an incorrectly-typed value: BigInt",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an f32 global with an incorrectly-typed value: WebAssembly.Global object (wrong value type)",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an f64 global with an incorrectly-typed value: undefined",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an f64 global with an incorrectly-typed value: null",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an f64 global with an incorrectly-typed value: true",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an f64 global with an incorrectly-typed value: \"\"",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an f64 global with an incorrectly-typed value: symbol \"Symbol()\"",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an f64 global with an incorrectly-typed value: plain object",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an f64 global with an incorrectly-typed value: WebAssembly.Global",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an f64 global with an incorrectly-typed value: WebAssembly.Global.prototype",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an f64 global with an incorrectly-typed value: Object.create(WebAssembly.Global.prototype)",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an f64 global with an incorrectly-typed value: BigInt",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an f64 global with an incorrectly-typed value: WebAssembly.Global object (wrong value type)",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an i32 mutable global with a primitive value",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an i32 mutable global with an immutable Global object",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an i64 mutable global with a primitive value",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an i64 mutable global with an immutable Global object",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an f32 mutable global with a primitive value",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an f32 mutable global with an immutable Global object",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an f64 mutable global with a primitive value",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing an f64 mutable global with an immutable Global object",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing memory with an incorrectly-typed value: undefined",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing memory with an incorrectly-typed value: null",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing memory with an incorrectly-typed value: true",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing memory with an incorrectly-typed value: \"\"",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing memory with an incorrectly-typed value: symbol \"Symbol()\"",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing memory with an incorrectly-typed value: 1",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing memory with an incorrectly-typed value: 0.1",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing memory with an incorrectly-typed value: NaN",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing memory with an incorrectly-typed value: plain object",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing memory with an incorrectly-typed value: WebAssembly.Memory",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing memory with an incorrectly-typed value: WebAssembly.Memory.prototype",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing memory with an incorrectly-typed value: Object.create(WebAssembly.Memory.prototype)",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing memory with an incorrectly-typed value: WebAssembly.Memory object (too large)",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing table with an incorrectly-typed value: undefined",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing table with an incorrectly-typed value: null",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing table with an incorrectly-typed value: true",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing table with an incorrectly-typed value: \"\"",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing table with an incorrectly-typed value: symbol \"Symbol()\"",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing table with an incorrectly-typed value: 1",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing table with an incorrectly-typed value: 0.1",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing table with an incorrectly-typed value: NaN",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing table with an incorrectly-typed value: plain object",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing table with an incorrectly-typed value: WebAssembly.Table",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing table with an incorrectly-typed value: WebAssembly.Table.prototype",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing table with an incorrectly-typed value: Object.create(WebAssembly.Table.prototype)",
+     "status": "PASS"
+    },
+    {
+     "name": "new WebAssembly.Instance(module): Importing table with an incorrectly-typed value: WebAssembly.Table object (too large)",
+     "status": "PASS"
+    }
+   ],
+   "ms": 4497,
+   "instructions": 224680449,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/instance/constructor-caching.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "constructor-caching",
+     "status": "PASS"
+    }
+   ],
+   "ms": 2577,
+   "instructions": 114392544,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/instance/constructor.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "name",
+     "status": "PASS"
+    },
+    {
+     "name": "length",
+     "status": "PASS"
+    },
+    {
+     "name": "No arguments",
+     "status": "PASS"
+    },
+    {
+     "name": "Non-Module arguments",
+     "status": "PASS"
+    },
+    {
+     "name": "Calling",
+     "status": "PASS"
+    },
+    {
+     "name": "Empty module without imports argument",
+     "status": "PASS"
+    },
+    {
+     "name": "Empty module with undefined imports argument",
+     "status": "PASS"
+    },
+    {
+     "name": "Empty module with empty imports argument",
+     "status": "PASS"
+    },
+    {
+     "name": "getter order for imports object",
+     "status": "PASS"
+    },
+    {
+     "name": "imports",
+     "status": "PASS"
+    },
+    {
+     "name": "imports with empty module names",
+     "status": "PASS"
+    },
+    {
+     "name": "imports with empty names",
+     "status": "PASS"
+    },
+    {
+     "name": "exports with empty name: function",
+     "status": "PASS"
+    },
+    {
+     "name": "exports with empty name: table",
+     "status": "PASS"
+    },
+    {
+     "name": "exports with empty name: global",
+     "status": "PASS"
+    },
+    {
+     "name": "No imports",
+     "status": "PASS"
+    },
+    {
+     "name": "exports and imports",
+     "status": "PASS"
+    },
+    {
+     "name": "i64 exports and imports",
+     "status": "PASS"
+    },
+    {
+     "name": "import with i32-returning function",
+     "status": "PASS"
+    },
+    {
+     "name": "import with function that takes and returns i32",
+     "status": "PASS"
+    },
+    {
+     "name": "import with i64-returning function",
+     "status": "PASS"
+    },
+    {
+     "name": "import with function that takes and returns i64",
+     "status": "PASS"
+    },
+    {
+     "name": "import with i32-taking function",
+     "status": "PASS"
+    },
+    {
+     "name": "import with i64-taking function",
+     "status": "PASS"
+    },
+    {
+     "name": "export i64-returning function",
+     "status": "PASS"
+    },
+    {
+     "name": "i32 mutable WebAssembly.Global import",
+     "status": "PASS"
+    },
+    {
+     "name": "i64 mutable WebAssembly.Global import",
+     "status": "PASS"
+    },
+    {
+     "name": "Multiple i64 arguments",
+     "status": "PASS"
+    },
+    {
+     "name": "stray argument",
+     "status": "PASS"
+    }
+   ],
+   "ms": 3215,
+   "instructions": 169772257,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/instance/exports.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Branding",
+     "status": "PASS"
+    },
+    {
+     "name": "Stray argument",
+     "status": "PASS"
+    },
+    {
+     "name": "Setting (sloppy mode)",
+     "status": "PASS"
+    },
+    {
+     "name": "Setting (strict mode)",
+     "status": "PASS"
+    }
+   ],
+   "ms": 2297,
+   "instructions": 114111912,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/instance/toString.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Object.prototype.toString on an Instance",
+     "status": "PASS"
+    },
+    {
+     "name": "@@toStringTag exists on the prototype with the appropriate descriptor",
+     "status": "PASS"
+    }
+   ],
+   "ms": 2280,
+   "instructions": 111016577,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/js-string/basic.any.js",
+   "harness": "ERROR",
+   "message": "CompileError: unsupported: GC type definition at byte 11",
+   "subtests": [],
+   "ms": 2393,
+   "instructions": 123022264,
+   "clock": 10000,
+   "errors": [
+    "CompileError: unsupported: GC type definition at byte 11\n    at construct (native)\n    at CompileError (<input>:30:111)\n    at compileBytes (<input>:316:55)\n    at Module (<input>:292:38)\n    at <eval> (<page-script>:65:39)\n"
+   ]
+  },
+  {
+   "file": "wasm/jsapi/js-string/constants.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "constants",
+     "status": "FAIL",
+     "message": "assert_throws_js: type mismatch function \"() => instantiateImportedGlobal(\"'\", \"constant\", type, mutable, \"'\")\" threw object \"TypeError: import module ' is not an object\" (\"TypeError\") expected instance of function \"function (message, options) { return Reflect.construct(Error, [message, options], ne"
+    },
+    {
+     "name": "constants 1",
+     "status": "FAIL",
+     "message": "assert_throws_js: type mismatch function \"() => instantiateImportedGlobal(\"'\", \"constant\", type, mutable, \"'\")\" threw object \"TypeError: import module ' is not an object\" (\"TypeError\") expected instance of function \"function (message, options) { return Reflect.construct(Error, [message, options], ne"
+    },
+    {
+     "name": "constants 2",
+     "status": "FAIL",
+     "message": "assert_throws_js: type mismatch function \"() => instantiateImportedGlobal(\"'\", \"constant\", type, mutable, \"'\")\" threw object \"TypeError: import module ' is not an object\" (\"TypeError\") expected instance of function \"function (message, options) { return Reflect.construct(Error, [message, options], ne"
+    },
+    {
+     "name": "constants 3",
+     "status": "FAIL",
+     "message": "assert_throws_js: type mismatch function \"() => instantiateImportedGlobal(\"'\", \"constant\", type, mutable, \"'\")\" threw object \"TypeError: import module ' is not an object\" (\"TypeError\") expected instance of function \"function (message, options) { return Reflect.construct(Error, [message, options], ne"
+    },
+    {
+     "name": "constants 4",
+     "status": "FAIL",
+     "message": "assert_throws_js: type mismatch function \"() => instantiateImportedGlobal(\"'\", \"constant\", type, mutable, \"'\")\" threw object \"TypeError: import module ' is not an object\" (\"TypeError\") expected instance of function \"function (message, options) { return Reflect.construct(Error, [message, options], ne"
+    },
+    {
+     "name": "constants 5",
+     "status": "FAIL",
+     "message": "assert_throws_js: type mismatch function \"() => instantiateImportedGlobal(\"'\", \"constant\", type, mutable, \"'\")\" threw object \"TypeError: import module ' is not an object\" (\"TypeError\") expected instance of function \"function (message, options) { return Reflect.construct(Error, [message, options], ne"
+    },
+    {
+     "name": "constants 6",
+     "status": "FAIL",
+     "message": "assert_throws_js: type mismatch function \"() => instantiateImportedGlobal(\"'\", \"constant\", type, mutable, \"'\")\" threw object \"TypeError: import module ' is not an object\" (\"TypeError\") expected instance of function \"function (message, options) { return Reflect.construct(Error, [message, options], ne"
+    },
+    {
+     "name": "constants 7",
+     "status": "FAIL",
+     "message": "assert_throws_js: type mismatch function \"() => instantiateImportedGlobal(\"'\", \"constant\", type, mutable, \"'\")\" threw object \"TypeError: import module ' is not an object\" (\"TypeError\") expected instance of function \"function (message, options) { return Reflect.construct(Error, [message, options], ne"
+    },
+    {
+     "name": "constants 8",
+     "status": "FAIL",
+     "message": "assert_throws_js: type mismatch function \"() => instantiateImportedGlobal(\"'\", \"constant\", type, mutable, \"'\")\" threw object \"TypeError: import module ' is not an object\" (\"TypeError\") expected instance of function \"function (message, options) { return Reflect.construct(Error, [message, options], ne"
+    },
+    {
+     "name": "constants 9",
+     "status": "FAIL",
+     "message": "assert_throws_js: type mismatch function \"() => instantiateImportedGlobal(\"'\", \"constant\", type, mutable, \"'\")\" threw object \"TypeError: import module ' is not an object\" (\"TypeError\") expected instance of function \"function (message, options) { return Reflect.construct(Error, [message, options], ne"
+    },
+    {
+     "name": "constants 10",
+     "status": "FAIL",
+     "message": "import module  is not an object"
+    },
+    {
+     "name": "constants 11",
+     "status": "FAIL",
+     "message": "import module  is not an object"
+    },
+    {
+     "name": "constants 12",
+     "status": "FAIL",
+     "message": "import module  is not an object"
+    },
+    {
+     "name": "constants 13",
+     "status": "FAIL",
+     "message": "import module  is not an object"
+    },
+    {
+     "name": "constants 14",
+     "status": "FAIL",
+     "message": "import module  is not an object"
+    },
+    {
+     "name": "constants 15",
+     "status": "FAIL",
+     "message": "import module  is not an object"
+    },
+    {
+     "name": "constants 16",
+     "status": "FAIL",
+     "message": "import module  is not an object"
+    },
+    {
+     "name": "constants 17",
+     "status": "FAIL",
+     "message": "import module  is not an object"
+    },
+    {
+     "name": "constants 18",
+     "status": "FAIL",
+     "message": "import module  is not an object"
+    },
+    {
+     "name": "constants 19",
+     "status": "FAIL",
+     "message": "import module  is not an object"
+    },
+    {
+     "name": "constants 20",
+     "status": "FAIL",
+     "message": "import module ' is not an object"
+    },
+    {
+     "name": "constants 21",
+     "status": "FAIL",
+     "message": "import module ' is not an object"
+    },
+    {
+     "name": "constants 22",
+     "status": "FAIL",
+     "message": "import module ' is not an object"
+    },
+    {
+     "name": "constants 23",
+     "status": "FAIL",
+     "message": "import module ' is not an object"
+    },
+    {
+     "name": "constants 24",
+     "status": "FAIL",
+     "message": "import module ' is not an object"
+    },
+    {
+     "name": "constants 25",
+     "status": "FAIL",
+     "message": "import module ' is not an object"
+    },
+    {
+     "name": "constants 26",
+     "status": "FAIL",
+     "message": "import module ' is not an object"
+    },
+    {
+     "name": "constants 27",
+     "status": "FAIL",
+     "message": "import module ' is not an object"
+    },
+    {
+     "name": "constants 28",
+     "status": "FAIL",
+     "message": "import module ' is not an object"
+    },
+    {
+     "name": "constants 29",
+     "status": "FAIL",
+     "message": "import module ' is not an object"
+    },
+    {
+     "name": "constants 30",
+     "status": "FAIL",
+     "message": "import module strings is not an object"
+    },
+    {
+     "name": "constants 31",
+     "status": "FAIL",
+     "message": "import module strings is not an object"
+    },
+    {
+     "name": "constants 32",
+     "status": "FAIL",
+     "message": "import module strings is not an object"
+    },
+    {
+     "name": "constants 33",
+     "status": "FAIL",
+     "message": "import module strings is not an object"
+    },
+    {
+     "name": "constants 34",
+     "status": "FAIL",
+     "message": "import module strings is not an object"
+    },
+    {
+     "name": "constants 35",
+     "status": "FAIL",
+     "message": "import module strings is not an object"
+    },
+    {
+     "name": "constants 36",
+     "status": "FAIL",
+     "message": "import module strings is not an object"
+    },
+    {
+     "name": "constants 37",
+     "status": "FAIL",
+     "message": "import module strings is not an object"
+    },
+    {
+     "name": "constants 38",
+     "status": "FAIL",
+     "message": "import module strings is not an object"
+    },
+    {
+     "name": "constants 39",
+     "status": "FAIL",
+     "message": "import module strings is not an object"
+    }
+   ],
+   "ms": 31332,
+   "instructions": 3523918523,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/js-string/imports.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "imports",
+     "status": "FAIL",
+     "message": "assert_equals: expected 0 but got 2"
+    }
+   ],
+   "ms": 2685,
+   "instructions": 114219297,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/jspi/js-promise-integration.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Valid use of API",
+     "status": "PASS"
+    },
+    {
+     "name": "Promising function always entered",
+     "status": "FAIL",
+     "message": "not a function"
+    },
+    {
+     "name": "Promising with no return",
+     "status": "FAIL",
+     "message": "not a function"
+    },
+    {
+     "name": "Always get a Promise",
+     "status": "FAIL",
+     "message": "promise_test: Unhandled rejection with value: object \"TypeError: not a function\""
+    },
+    {
+     "name": "Suspend once",
+     "status": "FAIL",
+     "message": "promise_test: Unhandled rejection with value: object \"TypeError: not a function\""
+    },
+    {
+     "name": "Suspend/resume in a loop",
+     "status": "FAIL",
+     "message": "promise_test: Unhandled rejection with value: object \"TypeError: not a function\""
+    },
+    {
+     "name": "Suspending with mismatched args and via Proxy",
+     "status": "FAIL",
+     "message": "promise_test: Unhandled rejection with value: object \"TypeError: not a function\""
+    },
+    {
+     "name": "Make sure we actually suspend",
+     "status": "FAIL",
+     "message": "promise_test: Unhandled rejection with value: object \"TypeError: not a function\""
+    },
+    {
+     "name": "Do suspend even if the import's return value is not a Promise by wrapping it with Promise.resolve",
+     "status": "FAIL",
+     "message": "promise_test: Unhandled rejection with value: object \"TypeError: not a function\""
+    },
+    {
+     "name": "Catch rejected promise",
+     "status": "FAIL",
+     "message": "promise_test: Unhandled rejection with value: object \"TypeError: not a function\""
+    },
+    {
+     "name": "Test sandwich with suspension",
+     "status": "FAIL",
+     "message": "promise_test: Unhandled rejection with value: object \"TypeError: not a function\""
+    },
+    {
+     "name": "Test sandwich with no suspension",
+     "status": "FAIL",
+     "message": "promise_test: Unhandled rejection with value: object \"TypeError: not a function\""
+    },
+    {
+     "name": "Suspend two modules",
+     "status": "FAIL",
+     "message": "promise_test: Unhandled rejection with value: object \"TypeError: not a function\""
+    }
+   ],
+   "ms": 3924,
+   "instructions": 153277433,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/jspi/notraps.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "catch SuspendError",
+     "status": "FAIL",
+     "message": "not a function"
+    },
+    {
+     "name": "unwrapped export",
+     "status": "FAIL",
+     "message": "not a function"
+    },
+    {
+     "name": "throw on reentrance",
+     "status": "FAIL",
+     "message": "promise_test: Unhandled rejection with value: object \"TypeError: not a function\""
+    }
+   ],
+   "ms": 2393,
+   "instructions": 115554003,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/jspi/rejects.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Throw after the first suspension",
+     "status": "FAIL",
+     "message": "not a function"
+    },
+    {
+     "name": "Throw before suspending",
+     "status": "FAIL",
+     "message": "promise_test: Unhandled rejection with value: object \"TypeError: not a function\""
+    },
+    {
+     "name": "Throw and propagate via Promise",
+     "status": "FAIL",
+     "message": "promise_test: Unhandled rejection with value: object \"TypeError: not a function\""
+    },
+    {
+     "name": "Stack overflow",
+     "status": "FAIL",
+     "message": "promise_test: Unhandled rejection with value: object \"TypeError: not a function\""
+    },
+    {
+     "name": "Try to suspend JS",
+     "status": "FAIL",
+     "message": "promise_test: Unhandled rejection with value: object \"TypeError: not a function\""
+    }
+   ],
+   "ms": 2505,
+   "instructions": 128303566,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/memory/buffer.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Branding",
+     "status": "PASS"
+    },
+    {
+     "name": "Stray argument",
+     "status": "PASS"
+    },
+    {
+     "name": "Setting (sloppy mode)",
+     "status": "PASS"
+    },
+    {
+     "name": "Setting (strict mode)",
+     "status": "PASS"
+    }
+   ],
+   "ms": 2208,
+   "instructions": 87796597,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/memory/constructor-shared.tentative.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Shared memory without maximum",
+     "status": "PASS"
+    },
+    {
+     "name": "Order of evaluation for descriptor (with shared)",
+     "status": "FAIL",
+     "message": "WebAssembly.Memory: shared memory is not supported"
+    },
+    {
+     "name": "Shared memory",
+     "status": "FAIL",
+     "message": "WebAssembly.Memory: shared memory is not supported"
+    }
+   ],
+   "ms": 2136,
+   "instructions": 88329579,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/memory/constructor-types.tentative.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Initializing with both initial and minimum",
+     "status": "PASS"
+    },
+    {
+     "name": "Zero minimum",
+     "status": "PASS"
+    },
+    {
+     "name": "Non-zero minimum",
+     "status": "PASS"
+    }
+   ],
+   "ms": 2153,
+   "instructions": 88383280,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/memory/constructor.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "name",
+     "status": "PASS"
+    },
+    {
+     "name": "length",
+     "status": "PASS"
+    },
+    {
+     "name": "No arguments",
+     "status": "PASS"
+    },
+    {
+     "name": "Calling",
+     "status": "PASS"
+    },
+    {
+     "name": "Invalid descriptor argument",
+     "status": "PASS"
+    },
+    {
+     "name": "Undefined initial value in descriptor",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range initial value in descriptor: NaN",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range maximum value in descriptor: NaN",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range initial value in descriptor: Infinity",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range maximum value in descriptor: Infinity",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range initial value in descriptor: -Infinity",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range maximum value in descriptor: -Infinity",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range initial value in descriptor: -1",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range maximum value in descriptor: -1",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range initial value in descriptor: 4294967296",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range maximum value in descriptor: 4294967296",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range initial value in descriptor: 68719476736",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range maximum value in descriptor: 68719476736",
+     "status": "PASS"
+    },
+    {
+     "name": "Initial value exceeds maximum",
+     "status": "PASS"
+    },
+    {
+     "name": "Proxy descriptor",
+     "status": "PASS"
+    },
+    {
+     "name": "Order of evaluation for descriptor",
+     "status": "PASS"
+    },
+    {
+     "name": "Zero initial",
+     "status": "PASS"
+    },
+    {
+     "name": "Non-zero initial",
+     "status": "PASS"
+    },
+    {
+     "name": "Stray argument",
+     "status": "PASS"
+    }
+   ],
+   "ms": 2267,
+   "instructions": 106342083,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/memory/grow.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Missing arguments",
+     "status": "PASS"
+    },
+    {
+     "name": "Branding",
+     "status": "PASS"
+    },
+    {
+     "name": "Zero initial",
+     "status": "PASS"
+    },
+    {
+     "name": "Zero initial with valueOf",
+     "status": "PASS"
+    },
+    {
+     "name": "Non-zero initial",
+     "status": "PASS"
+    },
+    {
+     "name": "Zero initial with respected maximum",
+     "status": "PASS"
+    },
+    {
+     "name": "Zero initial with respected maximum grown twice",
+     "status": "PASS"
+    },
+    {
+     "name": "Zero initial growing too much",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range argument: undefined",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range argument: NaN",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range argument: Infinity",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range argument: -Infinity",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range argument: -1",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range argument: 4294967296",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range argument: 68719476736",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range argument: \"0x100000000\"",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range argument: object \"[object Object]\"",
+     "status": "PASS"
+    },
+    {
+     "name": "Stray argument",
+     "status": "PASS"
+    },
+    {
+     "name": "Growing shared memory does not detach old buffer",
+     "status": "FAIL",
+     "message": "WebAssembly.Memory: shared memory is not supported"
+    }
+   ],
+   "ms": 2262,
+   "instructions": 106091074,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/memory/to-fixed-length-buffer-shared.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "toFixedLengthBuffer caching behavior",
+     "status": "FAIL",
+     "message": "WebAssembly.Memory: shared memory is not supported"
+    }
+   ],
+   "ms": 2326,
+   "instructions": 110347600,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/memory/to-fixed-length-buffer.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "API surface",
+     "status": "FAIL",
+     "message": "assert_equals: expected \"object\" but got \"undefined\""
+    },
+    {
+     "name": "toFixedLengthBuffer caching behavior",
+     "status": "FAIL",
+     "message": "not a function"
+    }
+   ],
+   "ms": 3024,
+   "instructions": 113869236,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/memory/to-resizable-buffer-shared.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "toResizableBuffer caching behavior",
+     "status": "FAIL",
+     "message": "WebAssembly.Memory: shared memory is not supported"
+    },
+    {
+     "name": "toResizableBuffer max size",
+     "status": "FAIL",
+     "message": "WebAssembly.Memory: shared memory is not supported"
+    },
+    {
+     "name": "Resizing a Memory's resizable buffer",
+     "status": "FAIL",
+     "message": "WebAssembly.Memory: shared memory is not supported"
+    }
+   ],
+   "ms": 3138,
+   "instructions": 112038979,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/memory/to-resizable-buffer.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "API surface",
+     "status": "FAIL",
+     "message": "assert_equals: expected \"object\" but got \"undefined\""
+    },
+    {
+     "name": "toResizableBuffer caching behavior",
+     "status": "FAIL",
+     "message": "not a function"
+    },
+    {
+     "name": "toResizableBuffer max size",
+     "status": "FAIL",
+     "message": "not a function"
+    },
+    {
+     "name": "Resizing a Memory's resizable buffer",
+     "status": "FAIL",
+     "message": "not a function"
+    },
+    {
+     "name": "Resizable buffers from Memory cannot be detached by JS",
+     "status": "FAIL",
+     "message": "not a function"
+    }
+   ],
+   "ms": 2583,
+   "instructions": 116100710,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/memory/toString.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Object.prototype.toString on an Memory",
+     "status": "PASS"
+    },
+    {
+     "name": "@@toStringTag exists on the prototype with the appropriate descriptor",
+     "status": "PASS"
+    }
+   ],
+   "ms": 2343,
+   "instructions": 84689138,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/memory/type.tentative.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Zero initial, no maximum",
+     "status": "PASS"
+    },
+    {
+     "name": "Non-zero initial, no maximum",
+     "status": "PASS"
+    },
+    {
+     "name": "Zero maximum",
+     "status": "PASS"
+    },
+    {
+     "name": "None-zero maximum",
+     "status": "PASS"
+    },
+    {
+     "name": "non-shared memory",
+     "status": "PASS"
+    },
+    {
+     "name": "shared memory",
+     "status": "FAIL",
+     "message": "WebAssembly.Memory: shared memory is not supported"
+    }
+   ],
+   "ms": 2425,
+   "instructions": 91257888,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/module/constructor.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "name",
+     "status": "PASS"
+    },
+    {
+     "name": "length",
+     "status": "PASS"
+    },
+    {
+     "name": "No arguments",
+     "status": "PASS"
+    },
+    {
+     "name": "Calling",
+     "status": "PASS"
+    },
+    {
+     "name": "Invalid arguments",
+     "status": "PASS"
+    },
+    {
+     "name": "Empty buffer",
+     "status": "PASS"
+    },
+    {
+     "name": "Invalid code",
+     "status": "PASS"
+    },
+    {
+     "name": "Prototype",
+     "status": "PASS"
+    },
+    {
+     "name": "Extensibility",
+     "status": "PASS"
+    },
+    {
+     "name": "Stray argument",
+     "status": "PASS"
+    }
+   ],
+   "ms": 3036,
+   "instructions": 119377163,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/module/customSections.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Missing arguments",
+     "status": "PASS"
+    },
+    {
+     "name": "Non-Module arguments",
+     "status": "PASS"
+    },
+    {
+     "name": "Branding",
+     "status": "PASS"
+    },
+    {
+     "name": "Empty module",
+     "status": "PASS"
+    },
+    {
+     "name": "Empty module: array caching",
+     "status": "PASS"
+    },
+    {
+     "name": "Custom sections",
+     "status": "PASS"
+    },
+    {
+     "name": "Custom sections with surrogate pairs",
+     "status": "PASS"
+    },
+    {
+     "name": "Custom sections with U+FFFD",
+     "status": "FAIL",
+     "message": "assert_equals: expected 0 but got 1"
+    },
+    {
+     "name": "Stray argument",
+     "status": "PASS"
+    },
+    {
+     "name": "Custom section buffers are independent copies",
+     "status": "PASS"
+    },
+    {
+     "name": "Mutating a custom section buffer does not change other copies",
+     "status": "PASS"
+    }
+   ],
+   "ms": 2641,
+   "instructions": 126961551,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/module/exports.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Missing arguments",
+     "status": "PASS"
+    },
+    {
+     "name": "Non-Module arguments",
+     "status": "PASS"
+    },
+    {
+     "name": "Branding",
+     "status": "PASS"
+    },
+    {
+     "name": "Return type",
+     "status": "PASS"
+    },
+    {
+     "name": "Empty module",
+     "status": "PASS"
+    },
+    {
+     "name": "Empty module: array caching",
+     "status": "PASS"
+    },
+    {
+     "name": "exports",
+     "status": "PASS"
+    },
+    {
+     "name": "exports with empty name: function",
+     "status": "PASS"
+    },
+    {
+     "name": "exports with empty name: table",
+     "status": "PASS"
+    },
+    {
+     "name": "exports with empty name: global",
+     "status": "PASS"
+    },
+    {
+     "name": "Stray argument",
+     "status": "PASS"
+    }
+   ],
+   "ms": 2618,
+   "instructions": 123059769,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/module/imports.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Missing arguments",
+     "status": "PASS"
+    },
+    {
+     "name": "Non-Module arguments",
+     "status": "PASS"
+    },
+    {
+     "name": "Branding",
+     "status": "PASS"
+    },
+    {
+     "name": "Return type",
+     "status": "PASS"
+    },
+    {
+     "name": "Empty module",
+     "status": "PASS"
+    },
+    {
+     "name": "Empty module: array caching",
+     "status": "PASS"
+    },
+    {
+     "name": "imports",
+     "status": "PASS"
+    },
+    {
+     "name": "imports with empty module name",
+     "status": "PASS"
+    },
+    {
+     "name": "imports with empty names",
+     "status": "PASS"
+    },
+    {
+     "name": "imports with empty module names and names",
+     "status": "PASS"
+    },
+    {
+     "name": "Stray argument",
+     "status": "PASS"
+    }
+   ],
+   "ms": 2444,
+   "instructions": 125064142,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/module/moduleSource.tentative.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "AbstractModuleSource is not a global",
+     "status": "PASS"
+    },
+    {
+     "name": "AbstractModuleSource intrinsic",
+     "status": "FAIL",
+     "message": "assert_equals: expected \"AbstractModuleSource\" but got \"\""
+    },
+    {
+     "name": "AbstractModuleSourceProto intrinsic",
+     "status": "FAIL",
+     "message": "assert_not_equals: got disallowed value object \"[object Object]\""
+    },
+    {
+     "name": "AbstractModuleSourceProto toStringTag brand check",
+     "status": "FAIL",
+     "message": "Cannot convert undefined or null to object"
+    }
+   ],
+   "ms": 2360,
+   "instructions": 119715332,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/module/toString.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Object.prototype.toString on an Module",
+     "status": "PASS"
+    },
+    {
+     "name": "@@toStringTag exists on the prototype with the appropriate descriptor",
+     "status": "PASS"
+    }
+   ],
+   "ms": 2309,
+   "instructions": 110926336,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/table/constructor-types.tentative.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Initializing with both initial and minimum",
+     "status": "PASS"
+    },
+    {
+     "name": "Zero minimum",
+     "status": "PASS"
+    },
+    {
+     "name": "Non-zero minimum",
+     "status": "PASS"
+    }
+   ],
+   "ms": 2133,
+   "instructions": 88286444,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/table/constructor.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "name",
+     "status": "PASS"
+    },
+    {
+     "name": "length",
+     "status": "PASS"
+    },
+    {
+     "name": "No arguments",
+     "status": "PASS"
+    },
+    {
+     "name": "Calling",
+     "status": "PASS"
+    },
+    {
+     "name": "Empty descriptor",
+     "status": "PASS"
+    },
+    {
+     "name": "Invalid descriptor argument",
+     "status": "PASS"
+    },
+    {
+     "name": "Undefined initial value in descriptor",
+     "status": "PASS"
+    },
+    {
+     "name": "Undefined element value in descriptor",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range initial value in descriptor: NaN",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range maximum value in descriptor: NaN",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range initial value in descriptor: Infinity",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range maximum value in descriptor: Infinity",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range initial value in descriptor: -Infinity",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range maximum value in descriptor: -Infinity",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range initial value in descriptor: -1",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range maximum value in descriptor: -1",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range initial value in descriptor: 4294967296",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range maximum value in descriptor: 4294967296",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range initial value in descriptor: 68719476736",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range maximum value in descriptor: 68719476736",
+     "status": "PASS"
+    },
+    {
+     "name": "Initial value exceeds maximum",
+     "status": "PASS"
+    },
+    {
+     "name": "Basic (zero)",
+     "status": "PASS"
+    },
+    {
+     "name": "Basic (non-zero)",
+     "status": "PASS"
+    },
+    {
+     "name": "Stray argument",
+     "status": "PASS"
+    },
+    {
+     "name": "Proxy descriptor",
+     "status": "PASS"
+    },
+    {
+     "name": "Type conversion for descriptor.element",
+     "status": "PASS"
+    },
+    {
+     "name": "Order of evaluation for descriptor",
+     "status": "PASS"
+    },
+    {
+     "name": "initialize externref table with default value",
+     "status": "PASS"
+    },
+    {
+     "name": "initialize table with a wrong element value",
+     "status": "PASS"
+    },
+    {
+     "name": "initialize anyfunc table with default value",
+     "status": "PASS"
+    },
+    {
+     "name": "initialize anyfunc table with a bad default value",
+     "status": "PASS"
+    },
+    {
+     "name": "initialize anyfunc table with a bad default value and a bad descriptor",
+     "status": "PASS"
+    }
+   ],
+   "ms": 2589,
+   "instructions": 138266578,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/table/get-set.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Missing arguments: get",
+     "status": "PASS"
+    },
+    {
+     "name": "Branding: get",
+     "status": "PASS"
+    },
+    {
+     "name": "Missing arguments: set",
+     "status": "PASS"
+    },
+    {
+     "name": "Branding: set",
+     "status": "PASS"
+    },
+    {
+     "name": "Basic",
+     "status": "PASS"
+    },
+    {
+     "name": "Growing",
+     "status": "PASS"
+    },
+    {
+     "name": "Setting out-of-bounds",
+     "status": "PASS"
+    },
+    {
+     "name": "Setting non-function",
+     "status": "PASS"
+    },
+    {
+     "name": "Setting non-wasm function",
+     "status": "PASS"
+    },
+    {
+     "name": "Setting non-wasm arrow function",
+     "status": "PASS"
+    },
+    {
+     "name": "Getting out-of-range argument: undefined",
+     "status": "PASS"
+    },
+    {
+     "name": "Setting out-of-range argument: undefined",
+     "status": "PASS"
+    },
+    {
+     "name": "Getting out-of-range argument: NaN",
+     "status": "PASS"
+    },
+    {
+     "name": "Setting out-of-range argument: NaN",
+     "status": "PASS"
+    },
+    {
+     "name": "Getting out-of-range argument: Infinity",
+     "status": "PASS"
+    },
+    {
+     "name": "Setting out-of-range argument: Infinity",
+     "status": "PASS"
+    },
+    {
+     "name": "Getting out-of-range argument: -Infinity",
+     "status": "PASS"
+    },
+    {
+     "name": "Setting out-of-range argument: -Infinity",
+     "status": "PASS"
+    },
+    {
+     "name": "Getting out-of-range argument: -1",
+     "status": "PASS"
+    },
+    {
+     "name": "Setting out-of-range argument: -1",
+     "status": "PASS"
+    },
+    {
+     "name": "Getting out-of-range argument: 4294967296",
+     "status": "PASS"
+    },
+    {
+     "name": "Setting out-of-range argument: 4294967296",
+     "status": "PASS"
+    },
+    {
+     "name": "Getting out-of-range argument: 68719476736",
+     "status": "PASS"
+    },
+    {
+     "name": "Setting out-of-range argument: 68719476736",
+     "status": "PASS"
+    },
+    {
+     "name": "Getting out-of-range argument: \"0x100000000\"",
+     "status": "PASS"
+    },
+    {
+     "name": "Setting out-of-range argument: \"0x100000000\"",
+     "status": "PASS"
+    },
+    {
+     "name": "Getting out-of-range argument: object \"[object Object]\"",
+     "status": "PASS"
+    },
+    {
+     "name": "Setting out-of-range argument: object \"[object Object]\"",
+     "status": "PASS"
+    },
+    {
+     "name": "Order of argument conversion",
+     "status": "PASS"
+    },
+    {
+     "name": "Stray argument",
+     "status": "PASS"
+    },
+    {
+     "name": "Arguments for anyfunc table set",
+     "status": "PASS"
+    },
+    {
+     "name": "Arguments for externref table set",
+     "status": "PASS"
+    }
+   ],
+   "ms": 2669,
+   "instructions": 153400273,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/table/grow.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Missing arguments",
+     "status": "PASS"
+    },
+    {
+     "name": "Branding",
+     "status": "PASS"
+    },
+    {
+     "name": "Basic",
+     "status": "PASS"
+    },
+    {
+     "name": "Reached maximum",
+     "status": "PASS"
+    },
+    {
+     "name": "Exceeded maximum",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range argument: undefined",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range argument: NaN",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range argument: Infinity",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range argument: -Infinity",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range argument: -1",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range argument: 4294967296",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range argument: 68719476736",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range argument: \"0x100000000\"",
+     "status": "PASS"
+    },
+    {
+     "name": "Out-of-range argument: object \"[object Object]\"",
+     "status": "PASS"
+    },
+    {
+     "name": "Stray argument",
+     "status": "PASS"
+    },
+    {
+     "name": "Grow with exported-function argument",
+     "status": "PASS"
+    },
+    {
+     "name": "Grow with non-function argument",
+     "status": "PASS"
+    },
+    {
+     "name": "Grow with JS-function argument",
+     "status": "PASS"
+    }
+   ],
+   "ms": 2526,
+   "instructions": 133135919,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/table/length.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Branding",
+     "status": "PASS"
+    },
+    {
+     "name": "Stray argument",
+     "status": "PASS"
+    },
+    {
+     "name": "Setting (sloppy mode)",
+     "status": "PASS"
+    },
+    {
+     "name": "Setting (strict mode)",
+     "status": "PASS"
+    }
+   ],
+   "ms": 2234,
+   "instructions": 87782716,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/table/toString.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Object.prototype.toString on an Table",
+     "status": "PASS"
+    },
+    {
+     "name": "@@toStringTag exists on the prototype with the appropriate descriptor",
+     "status": "PASS"
+    }
+   ],
+   "ms": 2253,
+   "instructions": 84763815,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/table/type.tentative.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Zero initial, no maximum",
+     "status": "PASS"
+    },
+    {
+     "name": "Non-zero initial, no maximum",
+     "status": "PASS"
+    },
+    {
+     "name": "Zero maximum",
+     "status": "PASS"
+    },
+    {
+     "name": "Non-zero maximum",
+     "status": "PASS"
+    }
+   ],
+   "ms": 2362,
+   "instructions": 88002092,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/tag/constructor.tentative.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "name",
+     "status": "PASS"
+    },
+    {
+     "name": "length",
+     "status": "PASS"
+    },
+    {
+     "name": "No arguments",
+     "status": "PASS"
+    },
+    {
+     "name": "Calling",
+     "status": "PASS"
+    },
+    {
+     "name": "Invalid descriptor argument",
+     "status": "PASS"
+    },
+    {
+     "name": "Invalid type parameter",
+     "status": "PASS"
+    }
+   ],
+   "ms": 2401,
+   "instructions": 91093923,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/tag/toString.tentative.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "Object.prototype.toString on a Tag",
+     "status": "PASS"
+    },
+    {
+     "name": "@@toStringTag exists on the prototype with the appropriate descriptor",
+     "status": "PASS"
+    }
+   ],
+   "ms": 2455,
+   "instructions": 86053910,
+   "clock": 10000
+  },
+  {
+   "file": "wasm/jsapi/tag/type.tentative.any.js",
+   "harness": "OK",
+   "subtests": [
+    {
+     "name": "[]",
+     "status": "PASS"
+    },
+    {
+     "name": "[i32 i64]",
+     "status": "PASS"
+    },
+    {
+     "name": "[i32 i64 f32 f64]",
+     "status": "PASS"
+    }
+   ],
+   "ms": 2517,
+   "instructions": 87110135,
+   "clock": 10000
+  }
+ ]
+}
