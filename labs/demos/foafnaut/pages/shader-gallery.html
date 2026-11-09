@@ -18,7 +18,7 @@ p { margin:0; padding-top:6px }
 .bar a.size.on { color:#f4f6f9; text-decoration:none }
 .stage { margin-top:10px; background:#000000; border:1px solid #2a2d36 }
 canvas { display:block; margin:0 auto; touch-action:none }
-.readout { display:block; height:42px; margin:0 auto; background:#0d0f13 }
+.readout { display:block; height:26px; margin:0 auto; background:#0d0f13 }
 .blurb { color:#a9b0ba }
 pre { margin:8px 0 0 0; padding:8px 10px; background:#0d0f13; border-left:3px solid #7fd1ff; color:#c9d1db; font-family:ui-monospace, Menlo, monospace; font-size:12px; line-height:17px; white-space:pre-wrap }
 pre.head { color:#6f7785; border-left:3px solid #454a56 }
@@ -36,28 +36,25 @@ textarea { display:block; box-sizing:border-box; width:100%; margin-top:0; paddi
 <div class="bar"><span class="k">API</span> <button id="api-webgpu">WebGPU · WGSL</button> <button id="api-webgl2">WebGL 2 · GLSL ES 3.00</button>
 <span class="k">size</span> <span id="sizes"></span> <button id="pause">Pause</button></div>
 <div class="stage" id="stage"><canvas id="c-webgpu" width="800" height="600"></canvas><canvas id="c-webgl2" width="800" height="600"></canvas>
-<canvas id="readout" class="readout" width="800" height="42" aria-label="Frame rate, script time and Lean's time a turn">This page needs scripts and WebGPU or WebGL 2.</canvas></div>
+<canvas id="readout" class="readout" width="800" height="26" aria-label="Frame rate and script time">This page needs scripts and WebGPU or WebGL 2.</canvas></div>
 <p class="lede">Two triangles cover the canvas; a fragment shader colours every pixel from <code>iTime</code>,
 <code>iResolution</code>, <code>iMouse</code> and <code>iFrame</code>. Each shader is here twice: in WGSL for WebGPU and in
-GLSL ES 3.00 for WebGL 2. In Foafnaut, Lean parses each one, checks it against a small subset (loops with literal bounds,
+GLSL ES 3.00 for WebGL 2. In Foafnaut, the built-in engine parses each one, checks it against a small subset (loops with literal bounds,
 no recursion, a cost bound, every index clamped) and prints the WGSL the GPU gets. Drag on the picture to move <code>iMouse</code>.</p>
 <h2 id="title">Shader</h2>
 <p class="blurb" id="blurb"></p>
 <pre class="head" id="head"></pre>
 <pre id="srcview"></pre>
-<textarea id="src" spellcheck="false" rows="22"></textarea>
-<div class="tools"><button class="run" id="run">Run</button> <button id="reset">Reset</button> <button id="try-while">Try a while loop</button> <button id="try-fn">Try a helper function</button> <button id="try-big">Try a 10,000-step loop</button></div>
+<textarea id="src" spellcheck="false" rows="22" style="display:none"></textarea>
+<div class="tools"><button class="run" id="run">Run</button> <button id="edit">Edit</button> <button id="reset">Reset</button> <button id="try-while">Try a while loop</button> <button id="try-fn">Try a helper function</button> <button id="try-big">Try a 10,000-step loop</button></div>
 <p class="status" id="status"></p>
 <p class="about">The five shaders are written for this page (MIT, like the rest of the repository); none is copied from Shadertoy.
-In Foafnaut every WebGPU and WebGL call is a command that Lean checks (<code>L4Factoidal.PageGpu</code>; record
+In Foafnaut every WebGPU and WebGL call is a command that the built-in engine checks (<code>L4Factoidal.PageGpu</code>; record
 <code>docs/designissues/2026-11-08-page-gpu.md</code>); a frame is one uniform write and one render pass. The readout counts frames
-on the page's own clock; <i>script</i> is the time the page's frame callback takes on that clock (in Foafnaut a clock of
-script steps); <i>Lean</i> is Foafnaut's wall time for the page's last turn: the script, and Lean's check of the frame's
-commands (<code>navigator.foafnaut</code>, Foafnaut's own).</p>
+on the page's own clock, and <i>script</i> is the time the frame callback takes by <code>performance.now()</code>.</p>
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
-const foafnaut = navigator.userAgent === 'Foafnaut';
 // ---- The shaders. Each has a WGSL fragment entry and a GLSL ES 3.00 main. Same picture in both. ----
 // WGSL: fragCoord is computed with the origin at the bottom left, as in GLSL and on Shadertoy.
 const WGSL_HEAD = `struct U { iResolution: vec2f, iTime: f32, iFrame: i32, iMouse: vec4f }
@@ -635,9 +632,9 @@ async function use(s, a, body) {
     p.ms = performance.now() - t;
     if (!p.error) c.programs.set(key, p);
   }
-  if (p.error) { say((foafnaut ? 'Lean refused this shader: ' : 'The shader compiler refused this shader: ') + p.error, true); return false; }
+  if (p.error) { say('Refused: ' + p.error, true); return false; }
   active = { draw: a === 'webgpu' ? () => gpuDraw(g, p, timeNow()) : () => glDraw(g, p, timeNow()) };
-  say((foafnaut ? 'Lean checked this shader and printed the WGSL the GPU runs' : 'Compiled') + (p.ms >= 1 ? ' (' + p.ms.toFixed(0) + ' ms).' : '.'));
+  say('Checked and compiled' + (p.ms >= 1 ? ' (' + p.ms.toFixed(0) + ' ms).' : '.'));
   return true;
 }
 function show() {
@@ -650,7 +647,7 @@ function show() {
   $('blurb').textContent = current.blurb;
   $('head').textContent = api === 'webgpu' ? WGSL_HEAD : GLSL_HEAD;
   const src = sourceOf(current, api);
-  if (foafnaut) $('srcview').textContent = src; else $('src').value = src;
+  $('srcview').textContent = src; $('src').value = src;
 }
 async function choose(s, a) {
   current = s; api = a; show(); linkSizes();
@@ -661,7 +658,7 @@ async function choose(s, a) {
 const readoutOn = params.get('readout') !== '0';
 // iTime is on the animation frames' clock (their timestamps), as on Shadertoy.
 const timeNow = () => ((paused ? pausedAt : lastNow) - (t0 ?? 0) - tPaused) / 1000;
-let shownFrames = 0, scriptMs = 0, lastReport = 0, lastStamp = null, leanMs = 0, leanSamples = 0, scriptEngine = '';
+let shownFrames = 0, scriptMs = 0, lastReport = 0, lastStamp = null;
 // Frame intervals since the last report: their count and sum (a sort of many numbers would
 // cost a frame's time in an interpreted script engine).
 let intervalCount = 0, intervalSum = 0;
@@ -676,11 +673,6 @@ function tick(now) {
   frame++; shownFrames++;
   if (lastStamp !== null) { intervalCount++; intervalSum += now - lastStamp; }
   lastStamp = now;
-  // Foafnaut's time for the last turn (navigator.foafnaut, not a web API): every 8th frame.
-  if (foafnaut && (frame & 7) === 0) {
-    const fx = navigator.foafnaut;
-    if (fx && fx.lastTurnMs > 0) { leanMs += fx.lastTurnMs; leanSamples++; scriptEngine = fx.engine; }
-  }
   if (readoutOn && now - lastReport >= 1000) report(now);
 }
 // The readout is a 2D canvas: redrawing it is paint only. (A change of text in the page
@@ -688,13 +680,13 @@ function tick(now) {
 const shown = {};
 const put = (id, text) => { shown[id] = text; };
 const readout = $('readout'), dpr = Math.min(2, window.devicePixelRatio || 1), readoutW = Math.max(shownW, 480);
-readout.setAttribute('width', String(readoutW * dpr)); readout.setAttribute('height', String(42 * dpr));
+readout.setAttribute('width', String(readoutW * dpr)); readout.setAttribute('height', String(26 * dpr));
 readout.style.width = readoutW + 'px';
 const rc = readout.getContext('2d');
 function drawReadout() {
   if (!rc) return;
   rc.setTransform(dpr, 0, 0, dpr, 0, 0);
-  rc.fillStyle = '#0d0f13'; rc.fillRect(0, 0, readoutW, 42);
+  rc.fillStyle = '#0d0f13'; rc.fillRect(0, 0, readoutW, 26);
   rc.font = '12px ui-monospace, Menlo, monospace';
   const line = (y, parts) => {
     let x = 10;
@@ -703,19 +695,14 @@ function drawReadout() {
       rc.fillStyle = '#a9b0ba'; rc.fillText(value, x, y); x += rc.measureText(value + '   ').width;
     }
   };
-  line(16, [['engine', shown['r-engine'] || '-'], ['api', shown['r-api'] || '-']]);
-  line(34, [['fps', shown['r-fps'] || '-'], ['script', shown['r-script'] || '-'], ['Lean', shown['r-lean'] || '-']]);
+  line(17, [['api', shown['r-api'] || '-'], ['fps', shown['r-fps'] || '-'], ['script', shown['r-script'] || '-']]);
 }
-const ua = navigator.userAgent, browser = foafnaut ? '' : (/Chrome\/\d+/.exec(ua) || /Firefox\/\d+/.exec(ua) || /Safari\/\d+/.exec(ua) || ['this browser'])[0];
 function report(now) {
-  put('r-engine', foafnaut ? 'Foafnaut' + (scriptEngine ? ', ' + scriptEngine : '') : browser);
-  put('r-api', (api === 'webgpu' ? 'WebGPU · WGSL' : 'WebGL 2 · GLSL ES 3.00' + (foafnaut ? ' as WGSL' : '')) + ' · ' + W + '×' + H);
+  put('r-api', (api === 'webgpu' ? 'WebGPU · WGSL' : 'WebGL 2 · GLSL ES 3.00') + ' · ' + W + '×' + H);
   const mean = intervalCount ? intervalSum / intervalCount : 0;
   put('r-fps', paused ? 'paused' : mean ? (1000 / mean).toFixed(1) + ' (' + mean.toFixed(1) + ' ms)' : '-');
   intervalCount = 0; intervalSum = 0;
   if (shownFrames) put('r-script', (scriptMs / shownFrames).toFixed(2) + ' ms a frame');
-  put('r-lean', !foafnaut ? 'not here' : leanSamples ? (leanMs / leanSamples).toFixed(2) + ' ms a turn' : '-');
-  leanMs = 0; leanSamples = 0;
   drawReadout();
   if (now !== undefined) lastReport = now;
   shownFrames = 0; scriptMs = 0;
@@ -743,7 +730,13 @@ $('pause').addEventListener('click', () => {
   $('pause').textContent = paused ? 'Play' : 'Pause'; report();
 });
 const run = text => { edits[current.id + ':' + api] = text; show(); use(current, api, text); };
-$('run').addEventListener('click', () => run(foafnaut ? sourceOf(current, api) : $('src').value));
+let editing = false;
+$('edit').addEventListener('click', () => {
+  editing = !editing;
+  $('srcview').style.display = editing ? 'none' : 'block'; $('src').style.display = editing ? 'block' : 'none';
+  $('edit').textContent = editing ? 'View' : 'Edit';
+});
+$('run').addEventListener('click', () => run(editing ? ($('src').value ?? sourceOf(current, api)) : sourceOf(current, api)));
 $('reset').addEventListener('click', () => { delete edits[current.id + ':' + api]; show(); use(current, api, sourceOf(current, api)); });
 // Each try starts from the shader as written, not from the last try.
 for (const id of Object.keys(TRIES)) $(id).addEventListener('click', () => run(TRIES[id][api === 'webgpu' ? 'wgsl' : 'glsl'](api === 'webgpu' ? current.wgsl : current.glsl)));
@@ -761,8 +754,6 @@ for (const id of ['c-webgpu', 'c-webgl2']) {
   c.setAttribute('width', String(W)); c.setAttribute('height', String(H));
   c.style.width = shownW + 'px'; c.style.height = shownH + 'px';
 }
-$(foafnaut ? 'src' : 'srcview').style.display = 'none';
-if (foafnaut) { $('run').textContent = 'Run again'; }
 choose(current, api).then(() => requestAnimationFrame(tick), e => { console.error(e); say('Error: ' + (e && e.message), true); });
 </script>
 </main></body></html>
