@@ -147,26 +147,53 @@ else
   cp "$witness" "$BUILD/runtime-object-witness.txt"
   OBJECTS=()
   FLAGS=(-O2 -DNDEBUG -DLEAN_EMSCRIPTEN -fwasm-exceptions -I "$RUNTIME/wasm-include" -I "$TOOLCHAIN/include")
+  # Lean emits a Nat literal below 2^63 with no reference counting (a scalar on the 64-bit
+  # machine that compiles it); on wasm32 one of 2^31 or more is a heap object that its
+  # owners free twice. tools/wasm32-nat-literals.py makes each such literal persistent (record
+  # 2026-11-08-lean-js-engine.md, section 17): our modules here, the toolchain's Init and Std
+  # modules below.
+  NAMES=()
   for source in "${SOURCES[@]}" "$LAB/web_render_shim.c"; do
     name=$(basename "$source" .c)
     case "$source" in *'/.lake/'*) name="Core_$(echo "$source" | sed 's|.*/ir/||;s|/|_|g;s|\.c$||')";; esac
+    NAMES+=("$name=$source")
+  done
+  COMPILE=()
+  while IFS= read -r file; do COMPILE+=("$file"); done < <(python3 "$ROOT/tools/wasm32-nat-literals.py" --batch "$BUILD/wasm32-src" "${NAMES[@]}")
+  for i in "${!NAMES[@]}"; do
+    name=${NAMES[$i]%%=*}
     object="$BUILD/obj-wasm/$name.o"
     printf 'WASM %s %s\n' "$name" "$(date -u)"
-    emcc "${FLAGS[@]}" -c "$source" -o "$object"
+    emcc "${FLAGS[@]}" -c "${COMPILE[$i]}" -o "$object"
     OBJECTS+=("$object")
   done
+  # The runtime cache's Init and Std objects with such literals, compiled again from its C
+  # with the flags of build-wasm.sh (step 4); CORE_OBJECTS is the cache's list with these in place.
+  CORE_NAMES=()
+  for source in "$RUNTIME/core-c/"*.c; do CORE_NAMES+=("$(basename "$source" .c)=$source"); done
+  mkdir -p "$BUILD/obj-wasm/core"
+  CORE_OBJECTS=()
+  i=0
+  while IFS= read -r file; do
+    name=${CORE_NAMES[$i]%%=*}; i=$((i+1))
+    if [ "$file" = "$RUNTIME/core-c/$name.c" ]; then CORE_OBJECTS+=("$RUNTIME/core-obj/$name.o"); continue; fi
+    printf 'WASM core %s %s\n' "$name" "$(date -u)"
+    emcc -O3 -DNDEBUG -DLEAN_EMSCRIPTEN -fwasm-exceptions -I "$RUNTIME/wasm-include" -I "$TOOLCHAIN/include" -c "$file" -o "$BUILD/obj-wasm/core/$name.o"
+    CORE_OBJECTS+=("$BUILD/obj-wasm/core/$name.o")
+  done < <(python3 "$ROOT/tools/wasm32-nat-literals.py" --batch "$BUILD/wasm32-src/core" "${CORE_NAMES[@]}")
+  [ "${#CORE_OBJECTS[@]}" = "$(ls "$RUNTIME/core-obj/"*.o | wc -l | tr -d ' ')" ] || { echo 'core objects and core C differ in the runtime cache' >&2; exit 1; }
   for source in "${HACL_SOURCES[@]}"; do
     object="$BUILD/obj-wasm/hacl_$(basename "$source" .c).o"
     printf 'WASM %s %s\n' "$(basename "$source" .c)" "$(date -u)"
     emcc "${FLAGS[@]}" -I "$HACL/include" -c "$source" -o "$object"
     OBJECTS+=("$object")
   done
-  em++ -O2 -DNDEBUG -fwasm-exceptions --no-entry "${OBJECTS[@]}" "$RUNTIME/core-obj/"*.o "$RUNTIME/rt-obj/"*.o \
+  em++ -O2 -DNDEBUG -fwasm-exceptions --no-entry "${OBJECTS[@]}" "${CORE_OBJECTS[@]}" "$RUNTIME/rt-obj/"*.o \
     -o "$BUILD/engines/web-render.mjs" -sMODULARIZE=1 -sEXPORT_ES6=1 -sINVOKE_RUN=0 \
     -sEXPORTED_FUNCTIONS=_web_render_call,_web_render_rdf_call,_web_render_font_call,_web_render_font_requests_call,_web_document_call,_web_document_call_bin,_web_document_font_call_bin,_web_document_image_call_bin,_web_document_decode_call_bin,_web_document_decode2_call_bin,_web_render_hit,_web_render_free,_malloc,_free -sEXPORTED_RUNTIME_METHODS=ccall,UTF8ToString,HEAPU8 \
     -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=4MB -sENVIRONMENT=node,web,worker -sASSERTIONS=1
   emcc "${FLAGS[@]}" -c "$LAB/render_plan_shim.c" -o "$BUILD/obj-wasm/render_plan_shim.o"
-  em++ -O2 -DNDEBUG -fwasm-exceptions --no-entry "$BUILD/obj-wasm/RenderPlan.o" "$BUILD/obj-wasm/render_plan_shim.o" "$RUNTIME/core-obj/"*.o "$RUNTIME/rt-obj/"*.o \
+  em++ -O2 -DNDEBUG -fwasm-exceptions --no-entry "$BUILD/obj-wasm/RenderPlan.o" "$BUILD/obj-wasm/render_plan_shim.o" "${CORE_OBJECTS[@]}" "$RUNTIME/rt-obj/"*.o \
     -o "$BUILD/engines/render-plan.mjs" -sMODULARIZE=1 -sEXPORT_ES6=1 -sINVOKE_RUN=0 \
     -sEXPORTED_FUNCTIONS=_render_plan,_render_plan_free -sEXPORTED_RUNTIME_METHODS=ccall,UTF8ToString \
     -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=4MB -sENVIRONMENT=node,web,worker -sASSERTIONS=1
