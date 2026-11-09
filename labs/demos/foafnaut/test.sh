@@ -127,6 +127,9 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
   # QuickJS-NG, with no guest module; the demo pages, compared with QuickJS-NG when the guest exists.
   SCRIPT_ENGINE=bubblepop deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
     --allow-read --allow-ffi --allow-env "$LAB/native_html_scripts_test.ts" "$LAB/native_html_pointer_test.ts"
+  # The cost ratchet: element-by-element work (push, a[i] = v, charCodeAt) is linear.
+  deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-ffi \
+    --allow-read --allow-ffi --allow-env "$LAB/bubblepop_cost_test.ts"
   if [ -f "$LAB/.build/web-render/engines/libweb-render.dylib" ]; then
     SCRIPT_ENGINE=bubblepop deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
       --allow-read --allow-ffi --allow-env "$LAB/page_gpu_test.ts"
