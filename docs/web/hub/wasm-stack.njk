@@ -1,0 +1,118 @@
+---
+layout: false
+title: Web Worker Wasm stack depth
+permalink: /web/hub/wasm-stack/
+eleventyExcludeFromCollections: true
+---
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Web Worker Wasm stack depth</title>
+<style>
+  body{font:16px/1.45 system-ui,sans-serif;max-width:40rem;margin:0 auto;padding:1rem;color:#111;background:#fafafa}
+  table{border-collapse:collapse;margin:.5rem 0;font-variant-numeric:tabular-nums}
+  th,td{padding:.25rem .6rem;text-align:right;border-bottom:1px solid #ddd}
+  th:first-child,td:first-child{text-align:left}
+  #result{font-size:1.4rem;font-weight:600;margin:1rem 0}
+  pre{white-space:pre-wrap;word-break:break-all;font-size:.75rem;color:#555}
+  button{font:inherit;padding:.4rem 1rem}
+</style>
+</head>
+<body>
+<h1>Web Worker Wasm stack depth</h1>
+<p>How deep can a WebAssembly function recurse in a Web Worker in this browser? The test runs a
+small Wasm module (made by this page) with frames of different sizes, and reports the deepest
+call and an estimate of the stack size. It takes a few seconds.</p>
+<p><button id="run">Run again</button></p>
+<p id="result">Measuring…</p>
+<table id="table"><thead><tr><th>Locals per frame</th><th>Worker: depth (first)</th><th>Worker: depth (warm)</th><th>Main thread: depth</th></tr></thead><tbody></tbody></table>
+<p id="estimate"></p>
+<pre id="detail"></pre>
+<script type="module">
+// The module: one exported function rec(n), recursing n times, with `locals` f64 locals that are
+// live across the call, so that every frame holds them. Built here byte by byte.
+function leb(n){const out=[];do{let b=n&127;n>>>=7;if(n)b|=128;out.push(b);}while(n);return out;}
+function sleb(n){const out=[];for(;;){let b=n&127;n>>=7;if((n===0&&!(b&64))||(n===-1&&(b&64))){out.push(b);return out;}out.push(b|128);}}
+function moduleBytes(locals){
+  const body=[];
+  body.push(0x20,0,0x45,0x04,0x7f,0x41,0,0x05);            // if (n==0) 0 else ...
+  // Each local is loaded from linear memory (which every callee changes), so the compiler can
+  // only keep it in the frame.
+  for(let i=0;i<locals;i++){
+    body.push(0x41,...sleb(8*i),0x41,...sleb(8*i),0x2b,3,0,0x44,0,0,0,0,0,0,0xf0,0x3f,0xa0,0x39,3,0); // mem[8i] += 1.0
+    body.push(0x41,...sleb(8*i),0x2b,3,0,0x21,...leb(1+i));}                                              // local[i] = mem[8i]
+  body.push(0x20,0,0x41,1,0x6b,0x10,0);                    // rec(n-1)
+  for(let i=0;i<locals;i++)body.push(0x20,...leb(1+i),0xaa,0x6a); // + (i32) local[i]
+  body.push(0x0b,0x0b);
+  const fn=[...(locals?[1,...leb(locals),0x7c]:[0]),...body];
+  const code=[1,...leb(fn.length),...fn];
+  const section=(id,bytes)=>[id,...leb(bytes.length),...bytes];
+  return new Uint8Array([0,0x61,0x73,0x6d,1,0,0,0,
+    ...section(1,[1,0x60,1,0x7f,1,0x7f]),
+    ...section(3,[1,0]),
+    ...section(5,[1,0,1]),
+    ...section(7,[1,3,0x72,0x65,0x63,0,0]),
+    ...section(10,code)]);
+}
+// The same search runs in a worker and on the main thread. n is doubled until the stack runs
+// out (RangeError), then bisected; each attempt calls rec once.
+const search=`
+  async function depth(bytes){
+    const {instance}=await WebAssembly.instantiate(bytes);
+    const rec=instance.exports.rec;
+    const ok=n=>{try{rec(n);return true;}catch(e){if(e instanceof RangeError)return false;throw e;}};
+    let lo=1,hi=2;
+    while(ok(hi)){lo=hi;hi*=2;if(hi>64e6)return lo;}
+    while(hi-lo>Math.max(1,lo>>8)){const m=(lo+hi)>>>1;if(ok(m))lo=m;else hi=m;}
+    return lo;
+  }`;
+const inWorker=(bytes,rounds)=>new Promise((resolve,reject)=>{
+  const src=search+`
+    onmessage=async e=>{try{const out=[];for(let i=0;i<e.data.rounds;i++)out.push(await depth(e.data.bytes));postMessage({out});}catch(err){postMessage({error:String(err)});}};`;
+  const w=new Worker(URL.createObjectURL(new Blob([src],{type:'text/javascript'})));
+  w.onmessage=e=>{w.terminate();e.data.error?reject(Error(e.data.error)):resolve(e.data.out);};
+  w.onerror=e=>{w.terminate();reject(Error(e.message||'worker error'));};
+  w.postMessage({bytes,rounds});
+});
+const onMain=new Function('bytes','return ('+'async()=>{'+search+';return depth(bytes);})()');
+// Depths for frames with k locals: depth is about S/(a+8k), so 1/depth is linear in k.
+function fit(rows){
+  const pts=rows.map(r=>[r.k,1/r.best]);
+  const n=pts.length,sx=pts.reduce((s,p)=>s+p[0],0),sy=pts.reduce((s,p)=>s+p[1],0),
+        sxx=pts.reduce((s,p)=>s+p[0]*p[0],0),sxy=pts.reduce((s,p)=>s+p[0]*p[1],0);
+  const slope=(n*sxy-sx*sy)/(n*sxx-sx*sx),intercept=(sy-slope*sx)/n;
+  const stack=8/slope,overhead=intercept*stack;
+  return {stack,overhead};
+}
+async function run(){
+  const button=document.querySelector('#run');button.disabled=true;
+  const tbody=document.querySelector('tbody');tbody.textContent='';
+  const result=document.querySelector('#result'),estimate=document.querySelector('#estimate');
+  result.textContent='Measuring…';estimate.textContent='';
+  const rows=[];
+  try{
+    for(const k of [0,4,16,64,256,1024]){
+      const bytes=moduleBytes(k);
+      const w=await inWorker(bytes,3);
+      let main;try{main=await onMain(bytes);}catch(e){main='no ('+e.message+')';}
+      const best=w[w.length-1];rows.push({k,first:w[0],best,main});
+      const tr=document.createElement('tr');
+      tr.innerHTML=`<td>${k}</td><td>${w[0].toLocaleString()}</td><td>${best.toLocaleString()}</td><td>${typeof main==='number'?main.toLocaleString():main}</td>`;
+      tbody.append(tr);
+    }
+    const {stack,overhead}=fit(rows);
+    const kb=stack/1024,top=rows.reduce((a,r)=>Math.max(a,r.best),0);
+    result.textContent=`Worker Wasm stack: about ${Math.round(kb).toLocaleString()} KB; deepest recursion ${top.toLocaleString()} calls`;
+    estimate.textContent=`Fit of depth against frame size: stack about ${Math.round(kb)} KB, frame overhead about ${Math.round(overhead)} bytes. `+
+      `This worker stack is what limits how deep scripts can recurse in the built-in engine on this device.`;
+    document.querySelector('#detail').textContent=navigator.userAgent+'\n'+JSON.stringify(rows);
+  }catch(e){result.textContent='The test failed: '+e.message;}
+  button.disabled=false;
+}
+document.querySelector('#run').onclick=run;
+run();
+</script>
+</body>
+</html>
