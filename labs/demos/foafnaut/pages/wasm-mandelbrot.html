@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>WebAssembly in a page</title>
+<style>
+body{margin:0;padding:16px;font-size:15px;line-height:22px;color:#22303c;background:#eef3f1}
+main{max-width:660px;margin:0 auto}
+h1{margin:0;font-size:26px;line-height:34px;color:#1f5f52;text-align:center}
+p{margin:0;padding-top:6px}
+.lede{text-align:center;color:#4d5f5a}
+.stage{margin-top:14px;padding:12px 0;background:white;border:1px solid #cfe0da}
+svg{display:block;margin:0 auto}
+.controls{text-align:center;padding-top:12px}
+button{font-size:15px}
+.out{text-align:center;color:#1f5f52;font-size:16px;line-height:24px;padding-top:8px}
+.note{color:#4d5f5a;font-size:14px}
+</style></head><body><main>
+<p><a href="index.html">Demo index</a></p>
+<h1>WebAssembly in a page</h1>
+<p class="lede">The page's script compiles a 310-byte WebAssembly module with the WebAssembly
+JavaScript API. Lean validates and runs it in WasmVM; the script reads the module's memory
+through <code>Memory.buffer</code> and draws it as SVG. Click the picture to zoom in.</p>
+<div class="stage">
+<svg id="pic" width="512" height="320" viewBox="0 0 64 40" shape-rendering="crispEdges">
+<rect width="64" height="40" fill="#0d2a26"/>
+<g id="bands"></g>
+</svg>
+<p class="controls"><button id="out">Zoom out</button> <button id="reset">Reset</button> <button id="deeper">More iterations</button></p>
+<p class="out" id="state">The script has not run: this engine has no page scripts or no WebAssembly.</p>
+<p class="out note" id="facts"></p>
+</div>
+<p class="note">The module (<a href="wasm-mandelbrot.wat">wasm-mandelbrot.wat</a>) exports
+<code>mandel</code>, its <code>memory</code> and a mutable global <code>iterations</code>, and
+imports <code>env.row</code>, a JavaScript function it calls after each row. The script only
+turns bytes into SVG paths: eight paths, one per colour band, so a picture is eight attribute
+writes.</p>
+<script>
+const W = 64, H = 40;
+const hex =
+  '0061736d01000000010e0260017f0060067f7f7c7c7c7f00020b0103656e7603726f7700000302010105030100010606' +
+  '017f0141000b072003066d656d6f727902000a697465726174696f6e730300066d616e64656c00010adb0101d8010204' +
+  '7f057c4100210702400340200720014f0d0120032007b82004a2a0210b4100210602400340200620004f0d0120022006' +
+  'b82004a2a0210a440000000000000000210c440000000000000000210d4100210802400340200820054f0d01200c200c' +
+  'a2200d200da2a0440000000000001040640d01200c200ca2200d200da2a1200aa0210e440000000000000040200ca220' +
+  '0da2200ba0210d200e210c200841016a21080c000b0b230020086a2400200920083a0000200941016a2109200641016a' +
+  '21060c000b0b20071000200741016a21070c000b0b0b';
+const bytes = new Uint8Array(hex.length / 2);
+for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.slice(2 * i, 2 * i + 2), 16);
+const colours = ['#0d2a26', '#1f5f52', '#2f8a6f', '#5cb88a', '#9bd6a0', '#e0e89a', '#f2b05e', '#d9534f'];
+const svgNS = 'http://www.w3.org/2000/svg', bands = document.getElementById('bands');
+const paths = colours.map(c => { const p = document.createElementNS(svgNS, 'path'); p.setAttribute('fill', c); bands.appendChild(p); return p; });
+const state = document.getElementById('state'), facts = document.getElementById('facts');
+let view = {x: -2.2, y: -1.25, step: 3.2 / W}, max = 48, rows = 0, ex;
+function draw() {
+  rows = 0;
+  const before = ex.iterations.value, t0 = performance.now();
+  ex.mandel(W, H, view.x, view.y, view.step, max);
+  const ms = performance.now() - t0;
+  // The module wrote one byte a cell at 0; the script reads them through Memory.buffer.
+  const cells = new Uint8Array(ex.memory.buffer, 0, W * H);
+  const d = colours.map(() => '');
+  for (let j = 0; j < H; j++) {
+    let i = 0;
+    while (i < W) {
+      const n = cells[j * W + i], band = n >= max ? 0 : 1 + Math.min(6, Math.floor(n * 7 / max));
+      let k = i + 1;
+      while (k < W) { const m = cells[j * W + k]; if ((m >= max ? 0 : 1 + Math.min(6, Math.floor(m * 7 / max))) !== band) break; k++; }
+      if (band !== 0) d[band] += 'M' + i + ' ' + j + 'h' + (k - i) + 'v1h-' + (k - i) + 'z';
+      i = k;
+    }
+  }
+  paths.forEach((p, b) => p.setAttribute('d', d[b]));
+  state.textContent = 'x ' + view.x.toFixed(4) + ', y ' + view.y.toFixed(4) + ', width ' + (view.step * W).toPrecision(3) + ', ' + max + ' iterations at most';
+  facts.textContent = (ex.iterations.value - before) + ' iterations in WebAssembly, ' + rows + ' calls of env.row, ' + ms.toFixed(1) + ' ms of script time';
+}
+function zoom(cx, cy, f) {
+  const s = view.step * f;
+  view = {x: cx - s * W / 2, y: cy - s * H / 2, step: s};
+  draw();
+}
+if (typeof WebAssembly === 'object' && WebAssembly.validate(bytes)) {
+  WebAssembly.instantiate(bytes, {env: {row: j => { rows++; }}}).then(({module, instance}) => {
+    ex = instance.exports;
+    const names = WebAssembly.Module.exports(module).map(e => e.name + ' (' + e.kind + ')').join(', ');
+    draw();
+    facts.textContent += '. Exports: ' + names + '.';
+    document.getElementById('pic').addEventListener('click', e => {
+      const r = e.currentTarget.getBoundingClientRect();
+      const px = (e.clientX - r.left) / r.width * W, py = (e.clientY - r.top) / r.height * H;
+      zoom(view.x + px * view.step, view.y + py * view.step, 0.5);
+    });
+    document.getElementById('out').addEventListener('click', () => zoom(view.x + view.step * W / 2, view.y + view.step * H / 2, 2));
+    document.getElementById('reset').addEventListener('click', () => { view = {x: -2.2, y: -1.25, step: 3.2 / W}; max = 48; draw(); });
+    document.getElementById('deeper').addEventListener('click', () => { max = Math.min(255, max * 2); draw(); });
+  }, e => { state.textContent = 'WebAssembly failed: ' + e; });
+}
+</script>
+</main></body></html>

@@ -323,6 +323,15 @@
    "doesNotShow": "textures, index buffers, depth, blending, readPixels"
   },
   {
+   "page": "wasm-mandelbrot.html",
+   "title": "WebAssembly in a page",
+   "handwritten": true,
+   "needs": "page scripts and the WebAssembly JavaScript API (wasm_call import, L4Factoidal.WasmVM.Hosts.PageWasm) in the engine and the guest",
+   "appRefused": "does not execute scripts",
+   "shows": "a 310-byte module (wasm-mandelbrot.wat) instantiated by the page's script; Lean runs it in WasmVM; the script reads its memory through Memory.buffer and draws eight SVG paths; clicks zoom; a JavaScript import is called once per row",
+   "doesNotShow": "Canvas drawing, streaming compilation; without the new engine the page says the script has not run"
+  },
+  {
    "page": "svg-text-labels.html",
    "title": "SVG text labels",
    "handwritten": true,
