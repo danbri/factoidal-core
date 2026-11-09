@@ -5,7 +5,7 @@
 // current -> versions/<commit>, config.json {"bleedingEdge":"/path/to/App.app"}.
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -160,7 +160,17 @@ export async function main(argv, channel = 'current') {
   let app = process.env.FOAFNAUT_APP;
   if (!app && channel === 'latest') app = await installLatest();
   if (!app && channel === 'bleeding-edge') app = bleedingEdgeApp();
-  if (!app) app = currentApp() ?? bleedingEdgeApp();
+  // With no channel named: the newer of the installed release and the bleeding-edge build
+  // (owner, 2026-11-09: plain foafnaut started a release of 6 November, older than the
+  // local build, with nothing to say so). Each is dated by its files on disk.
+  if (!app) {
+    const release = currentApp(), local = existsSync(bleedingEdgeApp()) ? bleedingEdgeApp() : undefined;
+    const age = (path) => statSync(path).mtimeMs;
+    app = release && local ? (age(local) >= age(release) ? local : release) : (release ?? local ?? bleedingEdgeApp());
+    if (release && app === release)
+      console.error(`foafnaut: the installed release ${basename(realpathSync(join(home(), 'current')))} (newer than the bleeding-edge build)`);
+    else if (release) console.error('foafnaut: the bleeding-edge build (newer than the installed release; --latest for the release)');
+  }
   if (!existsSync(app)) fail(`no app at ${app}. Run foafnaut --install-latest.`);
   // The bleeding-edge build says what it was built from (BUILD-INFO.json beside the app,
   // written when the build is swapped in); an old build is named, so it is not taken for main.
