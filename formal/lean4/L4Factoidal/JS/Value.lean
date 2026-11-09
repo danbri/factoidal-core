@@ -1,4 +1,5 @@
 import Std.Data.HashMap
+import Std.Data.HashSet
 import L4Factoidal.JS.Syntax
 import L4Factoidal.JS.Number
 import L4Factoidal.JS.Regex
@@ -615,13 +616,25 @@ def Obj.getOwn (o : Obj) (key : String) : Option PropV :=
       | none => o.props.get? key
   | _ => o.props.get? key
 
+/-- The keys of `props` in insertion order. A `delete` leaves its key in `keys` (and
+removing it there would cost a scan), so a key can be stale and, if added back, appear
+twice: the last occurrence is the one that counts. When the sizes agree there is nothing
+stale, and this is `keys` itself. -/
+def Obj.liveKeys (o : Obj) : Array String :=
+  if o.keys.size == o.props.size then o.keys else
+  let (out, _) : Array String × Std.HashSet String :=
+    o.keys.foldr (fun k (acc, seen) =>
+      if seen.contains k || !o.props.contains k then (acc, seen)
+      else (acc.push k, seen.insert k)) (#[], {})
+  out.reverse
+
 /-- The own keys in order (§10.1.11): array indices, then the rest by insertion. -/
 def Obj.ownKeys (o : Obj) : Array String :=
   let idx := match o.kind with
     | .array es => (List.range es.size).toArray.map toString
     | .prim (.str s) => (List.range (Str.jsLength s)).toArray.map toString
     | _ => #[]
-  let ks := o.keys.filter fun k => o.props.contains k && !isPrivKey k
+  let ks := o.liveKeys.filter fun k => !isPrivKey k
   let (ints, rest) := ks.partition fun k => (arrayIndex? k).isSome
   let ints := (ints.toList.mergeSort fun a b => (arrayIndex? a).getD 0 ≤ (arrayIndex? b).getD 0).toArray
   let extra := match o.kind with

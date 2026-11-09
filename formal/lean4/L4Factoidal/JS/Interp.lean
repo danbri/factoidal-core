@@ -229,7 +229,10 @@ def deleteOwn (id : Nat) (key : String) : M Unit :=
       if i + 1 == es.size then { o with kind := .array es.pop }
       else if i < es.size then { o with kind := .array (es.set! i .undef) }
       else o
-    | _, _ => { o with props := o.props.erase key, keys := o.keys.filter (· != key) }
+    | _, _ =>
+      -- the key stays in `keys` for now (`Obj.liveKeys`); `keys` is rebuilt when mostly stale
+      let o := { o with props := o.props.erase key }
+      if o.keys.size > 2 * o.props.size + 16 then { o with keys := o.liveKeys } else o
 
 def mkError (k : ErrKind) (msg : String) : M Value := do
   let r ← realm
@@ -342,16 +345,22 @@ changed in place). -/
 def collPut (key v : Value) (o : Obj) : Obj :=
   match o.kind with
   | .coll k es idx =>
+    -- the object lets go of the tables first, so `set!`, `push` and `insert` work in place
+    let o := { o with kind := .ordinary }
     match idx.get? (VKey.of key) with
     | some i => { o with kind := .coll k (es.set! i (some (key, v))) idx }
-    | none => { o with kind := .coll k (es.push (some (key, v))) (idx.insert (VKey.of key) es.size) }
+    | none =>
+      let at_ := es.size  -- `es` is used up by `push`
+      { o with kind := .coll k (es.push (some (key, v))) (idx.insert (VKey.of key) at_) }
   | _ => o
 
 def collDel (key : Value) (o : Obj) : Obj :=
   match o.kind with
   | .coll k es idx =>
     match idx.get? (VKey.of key) with
-    | some i => { o with kind := .coll k (es.set! i none) (idx.erase (VKey.of key)) }
+    | some i =>
+      let o := { o with kind := .ordinary }
+      { o with kind := .coll k (es.set! i none) (idx.erase (VKey.of key)) }
     | none => o
   | _ => o
 
@@ -463,14 +472,36 @@ def charsOf (s : String) : Array Char := Str.unitChars s
 /-- Code units `i` to `j` (exclusive) of a string. -/
 def substr (s : String) (i j : Nat) : String := Str.sliceUnits s i j
 
+/-- Whether the ASCII string `pat` occurs in the ASCII string `s` at byte `i` (`k` of its
+bytes are checked). -/
+def asciiMatchAt (s pat : String) (i : Nat) : Nat → Nat → Bool
+  | 0, _ => true
+  | fuel + 1, k =>
+    if k ≥ pat.utf8ByteSize then true
+    else if String.Pos.Raw.get s ⟨i + k⟩ != String.Pos.Raw.get pat ⟨k⟩ then false
+    else asciiMatchAt s pat i fuel (k + 1)
+
+/-- `indexOf` on ASCII strings: no decoding, and the search stops at the first match. -/
+def asciiIndexOf (s pat : String) : Nat → Nat → Option Nat
+  | 0, _ => none
+  | fuel + 1, i =>
+    if i + pat.utf8ByteSize > s.utf8ByteSize then none
+    else if asciiMatchAt s pat i pat.utf8ByteSize 0 then some i
+    else asciiIndexOf s pat fuel (i + 1)
+
 def indexOfFrom (s pat : String) (from_ : Nat) : Option Nat :=
+  if Str.isAscii s && Str.isAscii pat then
+    if pat.isEmpty then (if from_ ≤ s.utf8ByteSize then some from_ else some s.utf8ByteSize)
+    else asciiIndexOf s pat (s.utf8ByteSize + 1) from_
+  else
   let cs := charsOf s; let ps := charsOf pat
   if ps.size == 0 then (if from_ ≤ cs.size then some from_ else some cs.size) else
+  let first := ps[0]!
   let rec go : Nat → Nat → Option Nat
     | 0, _ => none
     | fuel + 1, i =>
       if i + ps.size > cs.size then none
-      else if (List.range ps.size).all (fun k => cs[i + k]! == ps[k]!) then some i
+      else if cs[i]! == first && (List.range ps.size).all (fun k => cs[i + k]! == ps[k]!) then some i
       else go fuel (i + 1)
   go (cs.size + 1) from_
 
@@ -480,7 +511,7 @@ def lastIndexOfStr (s pat : String) : Option Nat :=
   let rec go : Nat → Nat → Option Nat
     | 0, _ => none
     | fuel + 1, i =>
-      if (List.range ps.size).all (fun k => cs[i + k]! == ps[k]!) then some i
+      if (cs[i]! == ps[0]!) && (List.range ps.size).all (fun k => cs[i + k]! == ps[k]!) then some i
       else if i == 0 then none else go fuel (i - 1)
   go (cs.size + 1) (cs.size - ps.size)
 
@@ -584,11 +615,29 @@ evaluated after the suspension, not before: a known difference from §13.3.6 whe
 they have side effects. `yield` inside `&&`, `||`, `??`, `?:`, functions and classes
 stays, and the machine refuses that statement. -/
 
-abbrev Lift := StateM (Nat × Array (String × Bool × Option Expr))
+/-- Lifting: the next temporary, and the statements that must run first. -/
+abbrev Lift := StateM (Nat × Array Stmt)
 
 def liftName (k : Nat) : String := "%y" ++ toString k
 
+/-- A literal: its evaluation cannot be observed, and it is not worth a temporary. -/
+def isLiteral : Expr → Bool
+  | .num _ | .str _ | .bool _ | .null | .bigint _ | .lit _ => true
+  | _ => false
+
+def liftPush (st : Stmt) : Lift Unit := modify fun s => (s.1, s.2.push st)
+
+/-- A fresh temporary, declared by the statements that run first, holding `e`. -/
+def liftTemp (e : Expr) : Lift Expr := do
+  let (k, acc) ← get
+  let x := liftName k
+  set (k + 1, acc.push (Stmt.decl .letK [Decl.mk (.id x) (some e)]))
+  pure (.ident x)
+
 mutual
+/-- Move each `yield` out of `e`, in order, into statements before it. Operands evaluated
+before a `yield` move too (into temporaries), so they still come first; a `yield` on one
+branch of `?:`, `&&`, `||` or `??` runs only when its branch does (an `if` statement). -/
 def liftE : Nat → Expr → Lift Expr
   | 0, e => pure e
   | n + 1, e => do
@@ -598,18 +647,63 @@ def liftE : Nat → Expr → Lift Expr
         | some a => do pure (some (← liftE n a))
         | none => pure none
       let (k, acc) ← get
-      set (k + 1, acc.push (liftName k, d, arg))
-      pure (.ident (liftName k))
+      let x := liftName k
+      set (k + 1, acc.push (Stmt.decl .letK [Decl.mk (.id x) (some (.yieldE d arg))]))
+      pure (.ident x)
     | .unary op a => pure (.unary op (← liftE n a))
-    | .binary op a b => do let a ← liftE n a; let b ← liftE n b; pure (.binary op a b)
+    | .binary op a b => do
+      let a ← liftE n a
+      let a ← if b.hasYield && !isLiteral a then liftTemp a else pure a
+      let b ← liftE n b
+      pure (.binary op a b)
+    | .logical op a b =>
+      if !b.hasYield then
+        pure (.logical op (← liftE n a) b)
+      else
+        -- `a && b`: b's statements run only when a is true (for `||` false, for `??` nullish)
+        let (k, acc) ← get
+        let t := liftName k
+        set (k + 1, acc)
+        let a ← liftE n a
+        let (b', pre) ← liftBranch n b
+        let test : Expr := match op with
+          | .and => .ident t
+          | .or => .unary .not (.ident t)
+          | .coalesce => .binary .seq (.binary .eq (.ident t) .null) (.bool true)
+        let body := Stmt.block (pre ++ [.expr (.assign none (.ident t) b')])
+        liftPush (.decl .letK [Decl.mk (.id t) (some a)])
+        liftPush (.ifS test body none)
+        pure (.ident t)
+    | .cond c a b =>
+      if !a.hasYield && !b.hasYield then
+        pure (.cond (← liftE n c) a b)
+      else
+        let c ← liftE n c
+        let (k, acc) ← get
+        let t := liftName k
+        set (k + 1, acc)
+        let (a', preA) ← liftBranch n a
+        let (b', preB) ← liftBranch n b
+        liftPush (.decl .letK [Decl.mk (.id t) none])
+        liftPush (.ifS c (.block (preA ++ [.expr (.assign none (.ident t) a')]))
+          (some (.block (preB ++ [.expr (.assign none (.ident t) b')]))))
+        pure (.ident t)
     | .call f args => do let f ← liftE n f; pure (.call f (← liftL n args))
     | .new f args => do let f ← liftE n f; pure (.new f (← liftL n args))
     | .member o k => pure (.member (← liftE n o) k)
-    | .index o k => do let o ← liftE n o; pure (.index o (← liftE n k))
+    | .index o k => do
+      let o ← liftE n o
+      let o ← if k.hasYield && !isLiteral o then liftTemp o else pure o
+      pure (.index o (← liftE n k))
     | .array es => pure (.array (← liftL n es))
     | .template c subs => pure (.template c (← liftL n subs))
     | .spread a => pure (.spread (← liftE n a))
-    | .seq a b => do let a ← liftE n a; pure (.seq a (← liftE n b))
+    | .seq a b => do
+      let a ← liftE n a
+      if b.hasYield then
+        liftPush (.expr a)
+        liftE n b
+      else pure (.seq a (← liftE n b))
     | .assign op t v => do
       let t ← match t with
         | .member o k => do pure (Expr.member (← liftE n o) k)
@@ -619,10 +713,28 @@ def liftE : Nat → Expr → Lift Expr
     | _ => pure e
 termination_by structural n _ => n
 
+/-- Lift `e` into statements of its own (one branch of a conditional). -/
+def liftBranch : Nat → Expr → Lift (Expr × List Stmt)
+  | 0, e => pure (e, [])
+  | n + 1, e => do
+    let (k, acc) ← get
+    set (k, (#[] : Array Stmt))
+    let e' ← liftE n e
+    let (k', pre) ← get
+    set (k', acc)
+    pure (e', pre.toList)
+termination_by structural n _ => n
+
 def liftL : Nat → List Expr → Lift (List Expr)
   | 0, es => pure es
   | _ + 1, [] => pure []
-  | n + 1, e :: es => do let e ← liftE n e; pure (e :: (← liftL n es))
+  | n + 1, e :: es => do
+    let e ← liftE n e
+    -- an argument before a `yield` is evaluated first
+    let e ← match e with
+      | .spread _ => pure e
+      | _ => if es.any Expr.hasYield && !isLiteral e then liftTemp e else pure e
+    pure (e :: (← liftL n es))
 termination_by structural n _ => n
 
 def liftP : Nat → List PropDef → Lift (List PropDef)
@@ -639,23 +751,24 @@ end
 
 /-- A statement with its lifted `yield`s before it, or `none` when nothing moved. -/
 def liftStmt (seed : Nat) (s : Stmt) : Option (List Stmt) :=
-  let run (e : Expr) : Expr × Array (String × Bool × Option Expr) :=
+  let run (e : Expr) : Expr × Array Stmt :=
     let (e', (_, acc)) := (liftE 10000 e).run (seed, #[])
     (e', acc)
-  let pre (acc : Array (String × Bool × Option Expr)) : List Stmt :=
-    acc.toList.map fun (x, d, a) => Stmt.decl .letK [Decl.mk (.id x) (some (.yieldE d a))]
   let wrap (e : Expr) (mk : Expr → Stmt) : Option (List Stmt) :=
     match e with
     | .yieldE _ _ => none
     | _ =>
       let (e', acc) := run e
-      if acc.isEmpty then none else some (pre acc ++ [mk e'])
+      if acc.isEmpty then none else some (acc.toList ++ [mk e'])
   match s with
   | .expr e => wrap e .expr
   | .ret (some e) => wrap e (fun x => .ret (some x))
   | .throwS e => wrap e .throwS
   | .decl k [Decl.mk p (some e)] => wrap e (fun x => .decl k [Decl.mk p (some x)])
-  | .ifS c t f => wrap c (fun x => .ifS x t f)
+  | .ifS c t f =>
+    -- the test may itself be a `yield` (`if (await x)`), which `genEnter` does not take apart
+    let (c', acc) := run c
+    if acc.isEmpty then none else some (acc.toList ++ [.ifS c' t f])
   | _ => none
 
 /-! ## BigInt (§6.1.6.2) -/
@@ -1743,6 +1856,15 @@ def lookupLocal : Nat → Ctx → String → Nat → Nat → M Value
     | _, _ => lookup n ctx x
 termination_by structural n _ _ _ _ => n
 
+/-- Slot `idx` (`hops` up) lets go of the string `p`, if it holds that string: the only
+other reference is the caller's, so an append works in place (`s += x` is linear). -/
+def dropSlotStr (ctx : Ctx) (hops idx : Nat) (p : String) : M Unit := do
+  let h ← get
+  let e := h.envUp hops ctx.env
+  match (h.envs.getD e default).vals[idx]? with
+  | some (.str y) => if y == p then setSlot e idx .undef
+  | _ => pure ()
+
 /-- Assign a resolved name; the plain assignment when the hint does not hold. -/
 def assignLocal : Nat → Ctx → String → Nat → Nat → Value → M Unit
   | 0, _, _, _, _, _ => throw (.halt "fuel")
@@ -2076,6 +2198,17 @@ def evalExpr : Nat → Ctx → Expr → M Value
       let b ← (match leafV (← get) ctx o with | .hole => evalExpr n ctx o | v => pure v)
       let v ← (match leafV (← get) ctx rhs with | .hole => evalExpr n ctx rhs | v => pure v)
       putV n b k v ctx.strict
+      pure v
+    | .assign (some .add) (.local x h i) rhs =>
+      let old ← lookupLocal n ctx x h i
+      let r ← (match leafV (← get) ctx rhs with | .hole => evalExpr n ctx rhs | v => pure v)
+      -- a string held by this binding alone is appended to in place: the slot lets go first
+      let v ← match old, r with
+        | .num p, .num q => pure (.num (p + q))
+        | .str p, .str q => dropSlotStr ctx h i p; pure (.str (Str.jsAppend p q))
+        | .str p, .num q => dropSlotStr ctx h i p; pure (.str (Str.jsAppend p (numToString q)))
+        | _, _ => binop n .add old r
+      assignLocal n ctx x h i v
       pure v
     | .assign (some op) (.local x h i) rhs =>
       let old ← lookupLocal n ctx x h i
@@ -2985,15 +3118,48 @@ def genEnter : Nat → Ctx → List String → Stmt → List GFrame → M GOut
           | some e => genRun n (.block ctx [e] :: rest) (.send .undef)
           | none => genRun n rest (.send .undef)
     | .whileS c body =>
-      if c.hasYield then genUnsupported n rest
+      if c.hasYield then
+        -- `while (c) b` is `while (true) { if (!c) break; b }`: `c`'s yields are then lifted
+        genEnter n ctx labels (.whileS (.bool true)
+          (.block [.ifS (.unary .not c) (.brk none) none, body])) rest
       else genRun n (.loopW ctx labels c body :: rest) (.send .undef)
     | .doWhile body c =>
-      if c.hasYield then genUnsupported n rest
+      if c.hasYield then
+        -- a flag makes the test run after the body, also after `continue`
+        let f := s!"%dw{(← get).envs.size}"
+        let loop : Stmt := .whileS (.bool true) (.block [
+          .ifS (.ident f) (.ifS (.unary .not c) (.brk none) none) none,
+          .expr (.assign none (.ident f) (.bool true)), body])
+        genRun n (.block ctx [.decl .letK [Decl.mk (.id f) (some (.bool false))],
+          labels.foldr .labeled loop] :: rest) (.send .undef)
       else genRun n (.block ctx [body] :: .loopDo ctx labels body c :: rest) (.send .undef)
     | .forS init test update body =>
-      let ok := !(test.any Expr.hasYield) && !(update.any Expr.hasYield) &&
-        (match init with | some (.expr e) => !e.hasYield | some (.decl _ ds) | some (.letOnce ds) => !(ds.any Decl.hasYield) | none => true)
-      if !ok then genUnsupported n rest else
+      let initYields := match init with
+        | some (.expr e) => e.hasYield
+        | some (.decl _ ds) | some (.letOnce ds) => ds.any Decl.hasYield
+        | none => false
+      if initYields then
+        match init with
+        | some (.expr e) =>
+          genRun n (.block ctx [.expr e, labels.foldr .labeled (.forS none test update body)] :: rest) (.send .undef)
+        | some (.decl .var ds) =>
+          genRun n (.block ctx [.decl .var ds, labels.foldr .labeled (.forS none test update body)] :: rest) (.send .undef)
+        | _ => genUnsupported n rest
+      else if test.any Expr.hasYield || update.any Expr.hasYield then
+        -- the test and update move into the body, after a flag for the first pass, so
+        -- `continue` still runs the update
+        let f := s!"%fy{(← get).envs.size}"
+        let upd : List Stmt := match update with
+          | some u => [.ifS (.ident f) (.expr u) none]
+          | none => []
+        let tst : List Stmt := match test with
+          | some t => [.ifS (.unary .not t) (.brk none) none]
+          | none => []
+        let loop : Stmt := .forS init none none
+          (.block (upd ++ [.expr (.assign none (.ident f) (.bool true))] ++ tst ++ [body]))
+        genRun n (.block ctx [.decl .letK [Decl.mk (.id f) (some (.bool false))],
+          labels.foldr .labeled loop] :: rest) (.send .undef)
+      else
       let r ← tryCatch (do
           match init with
           | some (.decl .var ds) => evalDecls n ctx .var ds; pure (Except.ok (ctx, ([] : List String)))
@@ -3019,7 +3185,12 @@ def genEnter : Nat → Ctx → List String → Stmt → List GFrame → M GOut
       | .error a => throw a
       | .ok (ctx', perIter) => genRun n (.loopFor ctx' labels perIter test update body true :: rest) (.send .undef)
     | .forOf kind target obj body =>
-      if obj.hasYield then genUnsupported n rest else
+      if obj.hasYield then
+        -- the iterable's yields first, in a temporary
+        let t := s!"%it{(← get).envs.size}"
+        genRun n (.block ctx [.decl .letK [Decl.mk (.id t) (some obj)],
+          labels.foldr .labeled (.forOf kind target (.ident t) body)] :: rest) (.send .undef)
+      else
       let r ← tryCatch (do pure (Except.ok (← getIterator n (← evalExpr n ctx obj))))
         (fun a => pure (Except.error a))
       match r with
@@ -3531,12 +3702,14 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       | _ => pure .undef
     | .arrayShift =>
       match thisV with
-      | .obj id => match (← getObj id).kind with
-        | .array es =>
-          if es.isEmpty then pure .undef else
-          modifyObj id fun o => { o with kind := .array (es.extract 1 es.size) }
-          pure es[0]!
-        | _ => pure .undef
+      | .obj id =>
+        updateObj id fun o =>
+          match o.takeArray with
+          | (some es, o) =>
+            match es[0]? with
+            | some v => (v, { o with kind := .array (es.eraseIdxIfInBounds 0) })
+            | none => (.undef, { o with kind := .array es })
+          | (none, o) => (.undef, o)
       | _ => pure .undef
     | .arrayUnshift =>
       match thisV with

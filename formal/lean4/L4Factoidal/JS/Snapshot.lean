@@ -469,10 +469,10 @@ def eKind (k : Kind) : EM Unit :=
   | .args => putNat 17
 
 def eObj (o : Obj) : EM Unit := do
-  putNat o.keys.size
-  for k in o.keys do putStr k
+  putNat o.liveKeys.size
+  for k in o.liveKeys do putStr k
   -- the properties in the order of `keys`, then any that `keys` does not list
-  let listed := o.keys.filter o.props.contains
+  let listed := o.liveKeys
   let extra := (o.props.toList.filter fun (k, _) => !o.keys.contains k).mergeSort fun a b => a.1 < b.1
   putNat (listed.size + extra.length)
   for k in listed do
