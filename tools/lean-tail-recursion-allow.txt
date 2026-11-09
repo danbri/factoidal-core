@@ -2246,4 +2246,3 @@ L4Factoidal_Rendering_CssSupports_condition  # (b) the nesting of parentheses in
 L4Factoidal_Rendering_CssSupports_condition_inParensValue  # (b) mutual with condition: the nesting of parentheses of one condition text
 L4Factoidal_Rendering_InkBound_safeFrom  # (b) the reference of proofs only: at run time `streamSafe` is the accumulator loop `safeAux`, and nothing calls this one (`safeAux_eq`)
 L4Factoidal_Rendering_SfntColr_walk*  # (c) COLR paint graph of one colour glyph: depth <= fuel = FontPolicy.Limits.colrDepth, at most 64; nodes <= SfntColr.maxNodes (SfntColrTests: a self-naming glyph and a shared-node graph are refused)
-L4Factoidal_Rendering_SfntColr_fillOf*  # (c) the transforms over one COLR fill: depth <= fuel, at most 64 (colrDepth)
