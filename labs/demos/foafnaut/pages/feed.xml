@@ -4,7 +4,7 @@
      docs/web/hub/web-platform/foafnaut/notes/posts/*.md; do not edit it by hand. -->
 <feed xmlns="http://www.w3.org/2005/Atom">
  <title>Foafnaut notes</title>
- <subtitle>What changed in the Lean browser engine, one entry for each step</subtitle>
+ <subtitle>What changed in the Foafnaut browser engine, one entry for each step</subtitle>
  <id>https://danbri.github.io/factoidal/web/hub/foafnaut/pages/feed.xml</id>
  <link rel="self" href="https://danbri.github.io/factoidal/web/hub/foafnaut/pages/feed.xml"/>
  <link rel="alternate" type="text/html" href="https://danbri.github.io/factoidal/web/hub/web-platform/foafnaut/notes/"/>
@@ -53,7 +53,7 @@
   <id>https://danbri.github.io/factoidal/web/hub/web-platform/foafnaut/notes/canvas-2d/</id>
   <link rel="alternate" type="text/html" href="https://danbri.github.io/factoidal/web/hub/web-platform/foafnaut/notes/canvas-2d/"/>
   <link rel="via" href="https://github.com/danbri/factoidal-core/commit/b5e306863"/>
-  <link rel="related" href="canvas-chart.html" title="A Canvas 2D chart, drawn by Lean"/>
+  <link rel="related" href="canvas-chart.html" title="A Canvas 2D chart, drawn by the built-in engine"/>
   <updated>2026-11-09T00:28:21Z</updated>
   <category term="Canvas"/>
   <summary>Page scripts can draw with canvas.getContext('2d'). Lean parses the colours and fonts, builds and strokes the paths, shapes the text and rasterises every pixel.</summary>
