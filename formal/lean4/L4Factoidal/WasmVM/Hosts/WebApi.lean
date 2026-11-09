@@ -637,6 +637,21 @@ def hostPlan (st : KeyStore) (method : String) (a : Args) : Res (List (String ×
         else none
       if let some pt := point then
         if pt.size == 65 && pt.get! 0 == 4 && !p256OnCurve (pt.extract 1 65) then throw .data
+      -- And a private scalar, 0 < d < n.
+      let d : Option ByteArray :=
+        if format == "jwk" then (j.str? "d").bind unb64?
+        else if format == "pkcs8" then
+          match readPkcs8 data.toList with
+          | some (_, _, pk) =>
+            match expect 0x30 pk with
+            | some (ec, _) => match expect 0x02 ec with
+              | some (_, r) => (expect 0x04 r).map fun (x, _) => ByteArray.mk x.toArray
+              | none => none
+            | none => none
+          | none => none
+        else none
+      if let some dv := d then
+        if dv.size == 32 && !p256ScalarOk dv then throw .data
     let keyData := if format == "jwk" then jwkJsonOf j else bytesJ data
     return ([("op", .string "importKey"), ("format", .string format), ("keyData", keyData),
       ("algorithm", ← algJson st "importKey" p), ("extractable", .bool ext), ("usages", usagesJ us)], .key ext)
