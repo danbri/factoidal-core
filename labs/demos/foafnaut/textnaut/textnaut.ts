@@ -404,6 +404,12 @@ async function viewer(run: Engine, first: Rendered, firstURL: string, options: O
 const USAGE = "usage: textnaut.ts [--width COLS] [--dump] [--wasm | --engine FILE] [--font FILE] [--colour none|16|256|24bit] [--strict] [--no-scripts] [--timing] [--verbose] URL_OR_FILE";
 
 export async function main(args: string[]): Promise<number> {
+  const saver = args.indexOf("--screensaver");
+  if (saver >= 0) {
+    const { screensaver } = await import("./screensaver.ts");
+    const name = args[saver + 1], frames = args.indexOf("--frames");
+    return screensaver(name && !name.startsWith("-") ? name : undefined, frames >= 0 ? Number(args[frames + 1]) : undefined);
+  }
   const started = performance.now();
   let parsed: ReturnType<typeof parseArgs>;
   try { parsed = parseArgs(args); } catch (error) { console.error(`${reason(error)}\n${USAGE}`); return 2; }

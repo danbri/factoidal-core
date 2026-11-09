@@ -156,3 +156,15 @@ Deno.test({ name: "expected failure, issue 371: a loaded image gives no cells", 
   const out = dumpText((await renderPage(started!.engine, url, options, page)).grid);
   assert.equal(out.trim(), "", `${GAP}: images`);
 } });
+
+Deno.test("screensavers draw a frame of colour cells at any size", async () => {
+  const { effects } = await import("./screensaver.ts");
+  for (const [name, make] of Object.entries(effects)) {
+    const frame = make();
+    for (const [cols, rows] of [[80, 24], [1, 1], [200, 60]]) {
+      const out = frame(1.5, cols, rows, "24bit");
+      if (!out.includes("\x1b[")) throw new Error(`${name} drew nothing at ${cols}x${rows}`);
+      frame(1.6, cols, rows, "256");
+    }
+  }
+});

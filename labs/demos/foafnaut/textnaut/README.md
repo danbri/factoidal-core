@@ -92,3 +92,7 @@ Run from `labs/demos/foafnaut`. No network.
 
 `pty_check.py` drives the program on a pseudo-terminal at each colour level: frame size, a burst
 of resizes, signals, follow and back. Its exit code is the number of failed checks.
+
+## Screensavers
+
+`textnaut --screensaver [plasma|tunnel|fire|rain|stars]` (a random one with no name). `n` changes effect; any other key quits. No engine and no page. 24-bit colour when `COLORTERM` says so, else 256 colours.
