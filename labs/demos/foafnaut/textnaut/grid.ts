@@ -524,6 +524,9 @@ export function styledRow(cells: Cell[], options: StyleOptions): string {
       if (level === 1) fg = light ? [205, 0, 205] : [255, 0, 255];
       else if (level) fg = hsl((col * 7 + y * 11) % 360, 1, light ? 0.35 : 0.68);
     }
+    // A cell with a background never keeps the terminal's default text colour: on a dark
+    // terminal that is pale text on the page's light background.
+    if (!fg && level && bgOut) fg = lightness(bgOut) > 128 ? [0, 0, 0] : [255, 255, 255];
     if (fg) { const shown = readable(fg, bgOut, level); parts.push(sgrColour(shown, level, false)); }
     if (bgOut) parts.push(sgrColour(bgOut, level, true));
     const want = parts.filter(Boolean).join(";");

@@ -359,3 +359,10 @@ Deno.test("screensavers draw a frame of colour cells at any size", async () => {
     }
   }
 });
+
+Deno.test("text with no colour of its own on a background gets a colour with contrast", async () => {
+  const { styledRow } = await import("./grid.ts");
+  const cell = { c: "x", w: 1, bg: [240, 244, 249] as [number, number, number] };
+  const out = styledRow([cell as never], { level: 3, osc8: false, targets: [], width: 1 } as never);
+  if (!/38;2;0;0;0/.test(out)) throw new Error("no dark text on a light background: " + JSON.stringify(out));
+});
