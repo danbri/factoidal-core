@@ -426,6 +426,23 @@ def decodePoint? (b : ByteArray) : Option ByteArray :=
   else if b.size == 33 && (b.get! 0 == 2 || b.get! 0 == 3) then p256Decompress? b
   else none
 
+/-! ## P-256 point check in Lean (public values only) -/
+
+def p256P : Nat := 0xffffffff00000001000000000000000000000000ffffffffffffffffffffffff
+def p256B : Nat := 0x5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b
+
+def natOfBytes (b : ByteArray) : Nat := b.foldl (fun n x => n * 256 + x.toNat) 0
+
+/-- SEC 1 §3.2.2.1 for a raw P-256 public key `x ‖ y`: both coordinates below p and the
+point on y² = x³ − 3x + b (an affine point is never the point at infinity). The values are
+public, so Lean computes it itself; on the Hub this is Lean's own check before the host
+imports a key (natively HACL*'s `p256ValidPublic` makes it). -/
+def p256OnCurve (xy : ByteArray) : Bool :=
+  xy.size == 64 &&
+    let x := natOfBytes (xy.extract 0 32)
+    let y := natOfBytes (xy.extract 32 64)
+    x < p256P && y < p256P && (y * y) % p256P == (x * x * x + 3 * (p256P - x) + p256B) % p256P
+
 def b64 (b : ByteArray) : String := JOSE.Base64Url.encode b
 def unb64? (s : String) : Option ByteArray := JOSE.Base64Url.decode s
 
@@ -1230,6 +1247,12 @@ theorem importKey_usages {n : String} {p : Args} {f : String} {d : ByteArray} {j
 -- The WPT fixture's P-256 SPKI header (WebCryptoAPI/util/ec_key_fixtures.js).
 #guard (spkiOf oidEcPublicKey (tlv 0x06 oidP256) (4 :: List.replicate 64 0)).take 27 ==
   [48, 89, 48, 19, 6, 7, 42, 134, 72, 206, 61, 2, 1, 6, 8, 42, 134, 72, 206, 61, 3, 1, 7, 3, 66, 0, 4]
+-- The WPT fixture's P-256 key (WebCryptoAPI/util/ec_key_fixtures.js), and off-curve and
+-- out-of-range variants.
+#guard p256OnCurve ((unb64? "0hCwpvnZ8BKGgFi0P6T0cQGFQ7ugDJJQ35JXwqyuXdE").getD .empty ++ (unb64? "zgN1UtSBRQzjm00QlXAbF1v6s0uObAmeGPHBmDWDYeg").getD .empty)
+#guard !p256OnCurve ((unb64? "0hCwpvnZ8BKGgFi0P6T0cQGFQ7ugDJJQ35JXwqyuXdE").getD .empty ++ (unb64? "zgN1UtSBRQzjm00QlXAbF1v6s0uObAmeGPHBmDWDYeE").getD .empty)
+#guard !p256OnCurve (ByteArray.mk (Array.replicate 64 0))
+#guard !p256OnCurve (ByteArray.mk (Array.replicate 32 0xff) ++ (unb64? "zgN1UtSBRQzjm00QlXAbF1v6s0uObAmeGPHBmDWDYeg").getD .empty)
 #guard ed25519IsSmallOrder (ByteArray.mk ((List.replicate 32 (0 : UInt8)).set 31 0x80).toArray)
 #guard !ed25519IsSmallOrder (ByteArray.mk (List.replicate 32 (9 : UInt8)).toArray)
 #guard (normalizeSpec "deriveBits" "pbkdf2").toOption.map (·.1) == some "PBKDF2"
