@@ -1239,14 +1239,16 @@ def canvasBackground (dom : Dom) (styles : Array Computed) : Option (Nat × Colo
   return ((styles[body]?).bind (·.background)).map (body,·)
 
 /-- Existing DOM input, explicit viewport and font data, immutable scene output.
-`pictures` holds the decoded content of replaced elements. -/
+`pictures` holds the decoded content of replaced elements. A page with shadow trees is
+laid out on its flat tree (`DOM.Dom.flat`), with `treeScope` its node tree for selectors
+(`CSS.TreeScope`). -/
 def render (dom : Dom) (rules : List CSS.Rule) (font : FontProfile) (embedding : Embedding)
     (width height : Nat) (textScale : Float := 1) (state : CSS.ElementState := {})
-    (pictures : Pictures := noPictures) : Except String (Scene × Array Box) := do
+    (pictures : Pictures := noPictures) (treeScope : Option CSS.TreeScope := none) : Except String (Scene × Array Box) := do
   if width == 0 || height == 0 || width > 4096 || height > 4096 then throw "unsupported viewport: require dimensions 1 to 4096"
   let vw := Float.ofNat width
   let vh := Float.ofNat height
-  let styles := (← CSS.computeAll dom rules textScale state).map fun s =>
+  let styles := (← CSS.computeAll dom rules textScale state treeScope).map fun s =>
     {s with width := s.width.atViewport vw vh, height := s.height.atViewport vw vh,
             minWidth := s.minWidth.atViewport vw vh, maxWidth := s.maxWidth.atViewport vw vh,
             minHeight := s.minHeight.atViewport vw vh, maxHeight := s.maxHeight.atViewport vw vh}

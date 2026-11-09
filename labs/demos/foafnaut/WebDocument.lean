@@ -255,6 +255,20 @@ def rules (dom : DOM.Dom) (request : JSON.Json) : Except String (List Rendering.
     sheets := source::sheets
   Rendering.CSS.parseFor (medium request) (String.intercalate "\n" sheets.reverse)
 
+/-- The rules of the `style` elements of each connected shadow tree (CSS Scoping 1 §3.1),
+each rule with that shadow root as its scope. -/
+def shadowRules (dom : DOM.Dom) (request : JSON.Json) : List Rendering.CSS.Rule := Id.run do
+  let mut out : List Rendering.CSS.Rule := []
+  for sr in [0:dom.size] do
+    if dom.isShadowRoot sr && dom.connected sr then
+      let mut sheets : List String := []
+      for id in dom.treeOrder sr do
+        if DOM.Dom.isHtmlElement (dom.get id) "style" then sheets := ((dom.textContent id).getD "") :: sheets
+      if !sheets.isEmpty then
+        let rules := (Rendering.CSS.parseFor (medium request) (String.intercalate "\n" sheets.reverse)).toOption.getD []
+        out := out ++ rules.map fun r => {r with scope := some sr}
+  return out
+
 /-- Script MIME classification has one owner: the Lean scripting snapshot.
 All callers use its normalized kind, including whitespace/case and legacy
 classic JavaScript MIME types. Modules stay an explicit profile refusal. -/
@@ -1074,6 +1088,8 @@ structure Laid where
   textScale : Float := 1
   state : Rendering.CSS.ElementState := {}
   styles : Thunk (Except String (Array Rendering.CSS.Computed)) := Thunk.pure (.ok #[])
+  /-- The node tree of a page with shadow trees, whose `dom` is its flat tree. -/
+  treeScope : Option Rendering.CSS.TreeScope := none
 
 /-- The element state of a request (Selectors 4 §9): `hover` and `active` are node ids
 of the page (a link's `sourceNode`); `visited` lists URLs of the session history. A
@@ -1114,6 +1130,12 @@ def layOutDOM (request : JSON.Json) (graph : Option NativeFoafNaut.Model) (dom :
   let _ ← classicScripts (WebRenderScript.scriptRecords dom)
   let textScale := Float.ofNat (← scalePercent request) / 100
   let rules ← rules dom request
+  -- Shadow trees (CSS Scoping 1): the layout is of the flat tree, and the selectors match
+  -- on the node tree. A page with no shadow host takes none of this (`DOM.Dom.flat_eq_of_noShadow`).
+  let shadow := dom.hasShadow
+  let treeScope := if shadow then some (Rendering.CSS.TreeScope.of dom) else none
+  let rules := if shadow then rules ++ shadowRules dom request else rules
+  let dom := if shadow then dom.flat else dom
   if width == 0 || rows == 0 || width > 4096 || rows > 4096 then throw "unsupported document viewport"
   let fontData := str request "fontData"
   if !fontData.isEmpty then
@@ -1136,14 +1158,15 @@ def layOutDOM (request : JSON.Json) (graph : Option NativeFoafNaut.Model) (dom :
     | none => WebRender.makeReplaced dom (if url.isEmpty then none else some url) images svgFonts
   -- A window shorter than the chrome still lays out, on one row.
   let state := withPointer dom (← elementState dom url request) pointer
-  let (scene,boxes) ← Rendering.Layout.render dom rules font embedding width rows textScale state pictures
+  let (scene,boxes) ← Rendering.Layout.render dom rules font embedding width rows textScale state pictures treeScope
   let hoverRules := rules.any fun rule => rule.selectors.any fun sel => sel.parts.any (·.pseudo.contains .hover)
   let laid : Laid := {scene := scene,boxes := boxes,face := face,hoverRules := hoverRules}
   return {laid with dom := dom}
     |> fun l => {l with rules := rules}
     |> fun l => {l with textScale := textScale}
     |> fun l => {l with state := state}
-    |> fun l => {l with styles := Thunk.mk fun _ => Rendering.CSS.computeAll dom rules textScale state}
+    |> fun l => {l with treeScope := treeScope}
+    |> fun l => {l with styles := Thunk.mk fun _ => Rendering.CSS.computeAll dom rules textScale state treeScope}
 
 /-- Parse, script check, cascade and layout of a render. It reads only the key: the
 request it reads is `key.request`, which has only `layoutFields`. With `graphModel`
@@ -1347,7 +1370,7 @@ private def cachedLayOut (key : LayoutKey) : Except String Laid :=
 layout with the new colours, or none when a style of that state changes geometry. -/
 def restyle (base : Laid) (pointer : Option Nat × Option Nat) : Option Laid := do
   let .ok old := base.styles.get | none
-  let .ok new := Rendering.CSS.computeAll base.dom base.rules base.textScale (withPointer base.dom base.state pointer) | none
+  let .ok new := Rendering.CSS.computeAll base.dom base.rules base.textScale (withPointer base.dom base.state pointer) base.treeScope | none
   let scene ← WebRepaint.recolor base.dom old new base.scene
   return {base with scene,state := withPointer base.dom base.state pointer,styles := Thunk.pure (.ok new)}
 

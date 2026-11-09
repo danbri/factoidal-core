@@ -150,11 +150,17 @@ structure Compound where
   id : Option String := none
   classes : List String := []
   pseudo : List PseudoClass := []
+  /-- `:host` or `:host(compound)` (CSS Scoping 1 §3.2.1): it matches only the shadow host
+  of the rule's shadow tree, and the other fields test that host. -/
+  host : Bool := false
   deriving Repr
 structure Selector where
   /-- Rightmost compound first; ancestors follow. -/
   parts : List Compound
   specificity : Nat × Nat × Nat
+  /-- `::slotted(compound)` after the rightmost compound (CSS Scoping 1 §3.2.2): the
+  selector matches an element assigned to a slot that `parts` matches. -/
+  slotted : Option Compound := none
   deriving Repr
 /-- A selector that names `:visited` anywhere. Such a rule sets only colours. -/
 def Selector.visitedDependent (sel : Selector) : Bool :=
@@ -171,6 +177,9 @@ structure ElementState where
 structure Rule where
   selectors : List Selector
   declarations : List Declaration
+  /-- The shadow root whose style sheet the rule is from (CSS Scoping 1 §3.1); none for
+  the document's. -/
+  scope : Option Nat := none
   deriving Repr
 
 def attrValue (n : DOM.Node) (key : String) : String :=
@@ -184,7 +193,7 @@ private def ident (s : String) : Bool := !s.isEmpty && s.toList.all (fun c => c.
 private def pseudoClass : String → Option PseudoClass
   | "link" => some .link | "visited" => some .visited | "any-link" => some .anyLink
   | "hover" => some .hover | "active" => some .active | _ => none
-private def compound (s : String) : Except String Compound := do
+private def compoundBody (s : String) : Except String Compound := do
   let chunks := s.toList.foldl (fun (acc : List String) c =>
     if c == '#' || c == '.' || c == ':' then String.singleton c :: acc
     else match acc with | [] => [String.singleton c] | a::rest => (a.push c)::rest) []
@@ -205,13 +214,34 @@ private def compound (s : String) : Except String Compound := do
     else if ident chunk then out := {out with tag := some chunk.toLower}
     else throw s!"unsupported CSS selector: {s}"
   return out
+/-- A compound, or `:host` and `:host(compound)` (CSS Scoping 1 §3.2.1). -/
+private def compound (s : String) : Except String Compound := do
+  if s == ":host" then return {host := true}
+  if s.startsWith ":host(" && s.endsWith ")" then
+    let inner ← compoundBody ((s.drop 6).dropEnd 1).toString
+    return {inner with host := true}
+  compoundBody s
+private def compoundSpecificity (n : Nat × Nat × Nat) (p : Compound) : Nat × Nat × Nat :=
+  (n.1 + (if p.id.isSome then 1 else 0), n.2.1 + p.classes.length + p.pseudo.length + (if p.host then 1 else 0),
+    n.2.2 + (if p.tag.isSome then 1 else 0))
 private def selector (s : String) : Except String Selector := do
-  let parts ← (words (trim s)).mapM compound
+  let ws := words (trim s)
+  -- `::slotted(compound)` ends the last compound (CSS Scoping 1 §3.2.2).
+  let (ws, slotted) ← match ws.getLast? with
+    | some w =>
+      match w.splitOn "::slotted(" with
+      | [before, inner] => do
+        if !inner.endsWith ")" then throw "unsupported ::slotted() selector"
+        let c ← compoundBody (inner.dropEnd 1).toString
+        pure (ws.dropLast ++ [if before.isEmpty then "*" else before], some c)
+      | _ => pure (ws, none)
+    | none => pure (ws, none)
+  let parts ← ws.mapM compound
   if parts.isEmpty || parts.length > 16 then throw "CSS selector exceeds supported depth"
-  let specificity := parts.foldl (fun (n : Nat × Nat × Nat) p =>
-    (n.1 + (if p.id.isSome then 1 else 0), n.2.1 + p.classes.length + p.pseudo.length,
-      n.2.2 + (if p.tag.isSome then 1 else 0))) (0,0,0)
-  return ⟨parts.reverse,specificity⟩
+  let specificity := (parts ++ slotted.toList).foldl compoundSpecificity (0,0,0)
+  -- `::slotted` is a pseudo-element: one more in the last count.
+  let specificity := if slotted.isSome then (specificity.1, specificity.2.1, specificity.2.2 + 1) else specificity
+  return {parts := parts.reverse, specificity, slotted}
 
 private def expandEdges (key value : String) (important : Bool) : Except String (List Declaration) := do
   let values ← match words value with
@@ -314,7 +344,7 @@ def parseFor (medium source : String) : Except String (List Rule) := do
     for (inner,content) in blocks do
       if !(trim inner).startsWith "@" then
         if let .ok selectors := (inner.splitOn ",").mapM selector then
-          out := ⟨selectors,← declarations content⟩ :: out
+          out := {selectors, declarations := ← declarations content} :: out
   return out.reverse
 /-- `id` is `target` or one of its ancestors. The walk is bounded by the arena size. -/
 def inclusiveAncestor (dom : Dom) (id : Nat) : Nat → Option Nat → Bool
@@ -338,7 +368,7 @@ def parse (source : String) : Except String (List Rule) := parseFor "screen" sou
 
 private def selectorMatchesCompound (dom : Dom) (state : ElementState) (id : Nat) (s : Compound) : Bool :=
   let n := dom.get id
-  n.type == .element && (s.tag.map (· == n.lname)).getD true &&
+  !s.host && n.type == .element && (s.tag.map (· == n.lname)).getD true &&
     (s.id.map (· == attrValue n "id")).getD true &&
     s.classes.all ((words (attrValue n "class")).contains ·) &&
     s.pseudo.all (pseudoMatches dom state id n)
@@ -356,7 +386,71 @@ private def selectorMatchesParts (dom : Dom) (state : ElementState) : List Compo
 def selectorMatches (dom : Dom) (id : Nat) (sel : Selector) (state : ElementState := {}) : Bool :=
   match sel.parts with
   | [] => false
-  | head::rest => selectorMatchesCompound dom state id head && selectorMatchesParts dom state rest (dom.get id).parent
+  | head::rest => sel.slotted.isNone && selectorMatchesCompound dom state id head && selectorMatchesParts dom state rest (dom.get id).parent
+
+/-! ### Selectors of shadow trees (CSS Scoping 1 §3)
+
+A page with a shadow tree is laid out on its flat tree (`DOM.Dom.flat`); its selectors
+match on the node tree, each rule in its own tree: a rule of the document's style sheets
+matches elements of the document tree, a rule of a shadow tree's `style` elements matches
+elements of that shadow tree, its `:host` the shadow host, and its `::slotted()` the
+elements assigned to its slots. A page with no shadow tree never takes this path. -/
+
+/-- The node tree of a flat-tree layout and each node's shadow root (none in the document
+tree). -/
+structure TreeScope where
+  tree : Dom
+  scopes : Array (Option Nat)
+  deriving Inhabited
+
+def TreeScope.of (tree : Dom) : TreeScope := Id.run do
+  let mut scopes := Array.replicate tree.size (none : Option Nat)
+  for i in [0:tree.size] do
+    if tree.isShadowRoot i then
+      for k in tree.treeOrder i do scopes := scopes.set! k (some i)
+  return {tree, scopes}
+
+private def hostOfScope (ts : TreeScope) (scope : Option Nat) : Option Nat :=
+  scope.bind fun r => (ts.tree.get r).host
+
+/-- A compound of a rule of tree `scope`: a `:host` compound matches only the host of that
+tree, and no other compound matches it (the host is featureless there). -/
+private def compoundIn (ts : TreeScope) (state : ElementState) (scope : Option Nat) (id : Nat) (s : Compound) : Bool :=
+  s.host == (hostOfScope ts scope == some id) && selectorMatchesCompound ts.tree state id {s with host := false}
+
+/-- The next node up for a selector of tree `scope`: the parent, and from that tree's
+shadow root its host. -/
+private def upIn (ts : TreeScope) (scope : Option Nat) (n : Nat) : Option Nat :=
+  match (ts.tree.get n).parent with
+  | some p => some p
+  | none => if scope == some n then (ts.tree.get n).host else none
+
+private def matchAncestorsIn (ts : TreeScope) (state : ElementState) (scope : Option Nat) : Nat → Option Nat → Compound → Option Nat
+  | 0, _, _ => none
+  | _+1, none, _ => none
+  | f+1, some id, sel =>
+    if compoundIn ts state scope id sel then some id else matchAncestorsIn ts state scope f (upIn ts scope id) sel
+private def partsIn (ts : TreeScope) (state : ElementState) (scope : Option Nat) : List Compound → Option Nat → Bool
+  | [], _ => true
+  | sel::rest, ancestor => match matchAncestorsIn ts state scope (ts.tree.size+1) ancestor sel with
+    | none => false
+    | some id => partsIn ts state scope rest (upIn ts scope id)
+
+/-- `sel`, of a rule of tree `scope`, matches element `id`. -/
+def selectorMatchesIn (ts : TreeScope) (state : ElementState) (scope : Option Nat) (id : Nat) (sel : Selector) : Bool :=
+  match sel.parts with
+  | [] => false
+  | head::rest =>
+    match sel.slotted with
+    | none =>
+      (head.host || ts.scopes.getD id none == scope) &&
+        compoundIn ts state scope id head && partsIn ts state scope rest (upIn ts scope id)
+    | some c =>
+      scope.isSome && selectorMatchesCompound ts.tree state id c &&
+      match ts.tree.findSlot id with
+      | some sl => ts.scopes.getD sl none == scope && compoundIn ts state scope sl head &&
+          partsIn ts state scope rest (upIn ts scope sl)
+      | none => false
 
 /-- Strict finite decimal conversion for CSS lengths; exponent syntax is outside
 this first profile, and malformed declarations are refused. -/
@@ -747,7 +841,7 @@ def visitedProperties : List String := ["color","background-color","border-color
 and source order compared lexicographically (CSS Cascade 4 §6.1). The user agent
 origin (`userAgentRules`) is below the author origin. Inheritance is applied first. -/
 def computed (dom : Dom) (id : Nat) (rules : List Rule) (parent : Computed)
-    (state : ElementState := {}) : Except String Computed := do
+    (state : ElementState := {}) (treeScope : Option TreeScope := none) : Except String Computed := do
   let n := dom.get id
   let block := ["html","body","div","p","section","main","article","header","footer","nav","aside",
     "h1","h2","h3","h4","h5","h6","ul","ol","li","dir","menu","dl","dt","dd","pre","listing","xmp","plaintext",
@@ -796,18 +890,25 @@ def computed (dom : Dom) (id : Nat) (rules : List Rule) (parent : Computed)
   let mut winners : Std.TreeMap String (List Nat × Declaration) := {}
   let mut order : Nat := 0
   for (origin,rule) in userAgentRules.map (0,·) ++ rules.map (1,·) do
-    let matched := rule.selectors.filter (selectorMatches dom id · state)
+    -- With shadow trees, each rule matches in its own tree, and the user agent's rules in
+    -- the element's tree. A shadow tree's normal declarations lose to the document's, and
+    -- its important ones win (CSS Cascade 4 §6.1 "context").
+    let matched := match treeScope with
+      | none => rule.selectors.filter (selectorMatches dom id · state)
+      | some ts => rule.selectors.filter (selectorMatchesIn ts state (if origin == 0 then ts.scopes.getD id none else rule.scope) id ·)
+    let inner := origin == 1 && rule.scope.isSome
     let specificity := matched.foldl (fun m s => if lexLE [m.1,m.2.1,m.2.2] [s.specificity.1,s.specificity.2.1,s.specificity.2.2] then s.specificity else m) (0,0,0)
     if !matched.isEmpty then
       let onlyVisited := matched.all (·.visitedDependent)
       for d in rule.declarations do
         if !onlyVisited || visitedProperties.contains d.property then
-          let key := [if d.important then 1 else 0,origin,0,specificity.1,specificity.2.1,specificity.2.2,order]
+          let context := if inner == d.important then 1 else 0
+          let key := [if d.important then 1 else 0,origin,context,0,specificity.1,specificity.2.1,specificity.2.2,order]
           if (winners.get? d.property).all (fun old => lexLE old.1 key) then
             winners := winners.insert d.property (key,d)
         order := order+1
   for d in ← declarations (attrValue n "style") do
-    let key := [if d.important then 1 else 0,1,1,0,0,0,order]
+    let key := [if d.important then 1 else 0,1,if d.important then 0 else 1,1,0,0,0,order]
     if (winners.get? d.property).all (fun old => lexLE old.1 key) then winners := winners.insert d.property (key,d)
     order := order+1
   -- Font size precedes line-height and inheritance-sensitive dependent values.
@@ -835,7 +936,7 @@ def Computed.scaleText (s : Computed) (scale : Float) : Computed :=
 
 /-- Visit parents before children, using a work list and bounded arena size. -/
 def computeAll (dom : Dom) (rules : List Rule) (textScale : Float := 1)
-    (state : ElementState := {}) : Except String (Array Computed) := do
+    (state : ElementState := {}) (treeScope : Option TreeScope := none) : Except String (Array Computed) := do
   if !textScale.isFinite || textScale < 0.5 then throw "text scale must be finite and at least 50%"
   let mut pending := [0]
   let mut styles := Array.replicate dom.size ({} : Computed)
@@ -846,7 +947,7 @@ def computeAll (dom : Dom) (rules : List Rule) (textScale : Float := 1)
       let n := dom.get id
       let parent := (n.parent.bind (styles[·]?)).getD {}
       let svgDescendant := n.ns == some DOM.svgNS && (n.parent.map (fun p => (dom.get p).ns == some DOM.svgNS)).getD false
-      let style ← if n.type == .element && !svgDescendant then computed dom id rules parent state else pure {parent with
+      let style ← if n.type == .element && !svgDescendant then computed dom id rules parent state treeScope else pure {parent with
         display := .inline, width := .auto, height := .auto,
         margin := {}, padding := {}, background := none, clipOverflow := false,
         borderStyle := .none, borderWidth := ⟨3,3,3,3⟩, borderColor := none,
