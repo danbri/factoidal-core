@@ -269,20 +269,27 @@ def decodeDocument (bytes : ByteArray) (transportCharset : Option String := none
   let e := sniff bytes transportCharset fallback locale
   (e, decode bytes e)
 
-/-- `decodeDocument` with one fast path, for the common page: no BOM, no transport
-charset, a UTF-8 `meta` declaration (or none, with the "detect" setting), and bytes that
-are UTF-8. Then the text is the bytes as they are (one validation and one copy, no
+/-- `decodeDocument` with one fast path, for the common page: no BOM, and UTF-8 by the
+HTTP charset, or with no HTTP charset by a `meta` declaration or (with the "detect"
+setting) by none, and bytes that are UTF-8. Then the text is the bytes as they are (one validation and one copy, no
 decoder loop). `decodeDocumentFast_detect` and the `#guard`s below compare it with
 `decodeDocument`. -/
+/-- The conditions of the fast path of `decodeDocumentFast`. -/
+def utf8Fast (bytes : ByteArray) (transportCharset : Option String) (fallback : Fallback) : Bool :=
+  bomSniff bytes == none &&
+    (match transportCharset.bind getEncoding with
+     | some .utf_8 => true
+     | some _ => false
+     | none => match prescan bytes, fallback with
+       | some .utf_8, _ | none, .detect => true
+       | _, _ => false)
+
 def decodeDocumentFast (bytes : ByteArray) (transportCharset : Option String := none)
     (fallback : Fallback := .detect) (locale : String := "") : Encoding × String :=
-  if transportCharset.isNone && bomSniff bytes == none then
-    match prescan bytes, fallback with
-    | some .utf_8, _ | none, .detect =>
-      match String.fromUTF8? bytes with
-      | some s => (.utf_8, s)
-      | none => decodeDocument bytes transportCharset fallback locale
-    | _, _ => decodeDocument bytes transportCharset fallback locale
+  if utf8Fast bytes transportCharset fallback then
+    match String.fromUTF8? bytes with
+    | some s => (.utf_8, s)
+    | none => decodeDocument bytes transportCharset fallback locale
   else decodeDocument bytes transportCharset fallback locale
 
 /-- Under "detect", a page that declares nothing and whose bytes are UTF-8 is read as
@@ -296,7 +303,7 @@ theorem sniff_detect_utf8 (b : ByteArray) (loc : String) (hbom : bomSniff b = no
 theorem decodeDocumentFast_detect (b : ByteArray) (s loc : String) (hbom : bomSniff b = none)
     (hpre : prescan b = none) (hs : String.fromUTF8? b = some s) :
     decodeDocumentFast b none .detect loc = (.utf_8, s) := by
-  simp [decodeDocumentFast, hbom, hpre, hs]
+  simp [decodeDocumentFast, utf8Fast, hbom, hpre, hs]
 
 /-! ## Checks -/
 
@@ -337,6 +344,10 @@ private def agrees (b : ByteArray) (t : Option String := none) : Bool :=
 #guard agrees (ByteArray.mk #[0x63, 0x61, 0x66, 0xE9])
 #guard agrees "<p>x".toUTF8 (some "shift_jis")
 #guard agrees ByteArray.empty
+#guard agrees "<p>caf\u00e9".toUTF8 (some "utf-8")
+#guard agrees "<meta charset=sjis><p>caf\u00e9".toUTF8 (some "UTF-8")
+#guard agrees (ByteArray.mk #[0x63, 0x61, 0x66, 0xE9]) (some "utf-8")
+#guard agrees "<p>caf\u00e9".toUTF8 (some "nonsense")
 
 #guard prescan "<!doctype html><meta charset=\"euc-jp\">".toUTF8 == some .euc_jp
 #guard prescan "<meta charset='Shift_JIS'>".toUTF8 == some .shift_jis
