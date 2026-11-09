@@ -10,7 +10,7 @@ kill_timeout = "10s"
 
 [env]
   XMPP_DOMAIN = "foafos-xmpp.fly.dev"
-  XMPP_EXTRA_ARGS = "--proxy-protocol --muc-owners /data/xmpp/muc-owners"
+  XMPP_EXTRA_ARGS = "--proxy-protocol --muc-owners /data/xmpp/muc-owners --ping-interval 600 --ping-timeout 300"
 
 [mounts]
   source = "foafos_xmpp_data"
