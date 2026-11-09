@@ -133,6 +133,56 @@ def straight (w h : Nat) (data : ByteArray) : ByteArray :=
 theorem straight_size (w h : Nat) (data : ByteArray) : (straight w h data).size = w*h*4 := by
   simp [straight, ByteArray.size]
 
+/-! Whole layers onto layers. A layer is premultiplied RGBA, four bytes a pixel, as
+`PageCanvas.Bitmap`; these loops read both layers byte by byte, with no pattern sampling,
+and skip transparent source pixels where the operator leaves the destination as it is. -/
+
+@[inline] private def pxAt (b : ByteArray) (k : Nat) : Px :=
+  ⟨b[k]!.toFloat / 255, b[k+1]!.toFloat / 255, b[k+2]!.toFloat / 255, b[k+3]!.toFloat / 255⟩
+
+@[inline] private def putPx (b : ByteArray) (k : Nat) (p : Px) : ByteArray :=
+  (((b.set! k (toByte p.r)).set! (k+1) (toByte p.g)).set! (k+2) (toByte p.b)).set! (k+3) (toByte p.a)
+
+/-- `src` over `dst` where `src` is not transparent (source-over, premultiplied, in bytes). -/
+def overLayer (src dst : ByteArray) : ByteArray := Id.run do
+  let mut out := dst
+  for i in [0:src.size/4] do
+    let k := 4*i
+    let sa := src[k+3]!.toNat
+    if sa == 0 then continue
+    if sa == 255 then
+      out := (((out.set! k src[k]!).set! (k+1) src[k+1]!).set! (k+2) src[k+2]!).set! (k+3) 255
+    else
+      let keep := 255 - sa
+      let mix := fun (s d : UInt8) => (min 255 (s.toNat + (d.toNat * keep + 127) / 255)).toUInt8
+      out := (((out.set! k (mix src[k]! out[k]!)).set! (k+1) (mix src[k+1]! out[k+1]!)).set! (k+2) (mix src[k+2]! out[k+2]!)).set! (k+3) (mix src[k+3]! out[k+3]!)
+  return out
+
+/-- `src` composited onto `dst` with `op` at every pixel (Compositing and Blending §9-10).
+A bounded operator leaves the destination where the source is transparent. -/
+def compositeLayer (op : Op) (src dst : ByteArray) : ByteArray := Id.run do
+  if op == .sourceOver then return overLayer src dst
+  let mut out := dst
+  for i in [0:src.size/4] do
+    let k := 4*i
+    if !op.unbounded && src[k+3]! == 0 then continue
+    out := putPx out k (if op == .clear then Px.zero else compose op (pxAt src k) (pxAt out k))
+  return out
+
+/-- `src` through the coverage `cov` (a glyph outline) over `dst`. -/
+def clipLayer (W : Nat) (cov : Coverage) (src dst : ByteArray) : ByteArray := Id.run do
+  let mut out := dst
+  let box := cov.box
+  for j in [0:box.h] do
+    let (lo,hi) := cov.spans.getD j (0,box.w)
+    for i in [lo:hi] do
+      let c := cov.cov[j*box.w+i]!
+      if c <= 0 then continue
+      let k := 4*((box.y+j)*W + box.x+i)
+      if src[k+3]! == 0 then continue
+      out := putPx out k (compose .sourceOver ((pxAt src k).scale c) (pxAt out k))
+  return out
+
 /-- Draw a program at `px` pixels to the em (`upem` font units), with `fg` for the text
 colour. `none` when the glyph is empty or its box is larger than `maxSide`. -/
 def draw (o : Outlines) (upem : Nat) (p : Program) (px : Nat) (fg : RGBA) : Option Raster := Id.run do
@@ -149,7 +199,6 @@ def draw (o : Outlines) (upem : Nat) (p : Program) (px : Nat) (fg : RGBA) : Opti
   let d : Matrix := {a := s, d := -s, e := -fl ox, f := -fl oy}
   let blank := (Bitmap.blank W H).data
   let full := rectCoverage W H 0 0 (nf W) (nf H)
-  let layer := fun (data : ByteArray) => Ready.pattern {} ⟨⟨W,H,data⟩,⟨false,false⟩,{},false⟩ false
   let coverOf := fun (g : Nat) (m : Matrix) =>
     coverage W H (edgesOf (((pathOf (o.get g)).map (d.mul m)).flatten 0.1)) .nonzero
   let put := fun (dst : ByteArray) (dr : Draw) => sameSize dst (composite W H dst dr)
@@ -165,19 +214,19 @@ def draw (o : Outlines) (upem : Nat) (p : Program) (px : Nat) (fg : RGBA) : Opti
       let src := stack.back!
       stack := stack.pop
       let top := stack.back!
-      stack := stack.pop.push (put top ⟨layer src, coverOf g m, 1, .sourceOver, none⟩)
+      stack := stack.pop.push (sameSize top (clipLayer W (coverOf g m) src top))
     | .composite mode =>
       let src := stack.back!
       stack := stack.pop
       let back := stack.back!
       match opOf mode with
-      | some op => stack := stack.pop.push (put back ⟨layer src, full, 1, op, none⟩)
+      | some op => stack := stack.pop.push (sameSize back (compositeLayer op src back))
       | none => pure ()
     | .merge =>
       let src := stack.back!
       stack := stack.pop
       let top := stack.back!
-      stack := stack.pop.push (put top ⟨layer src, full, 1, .sourceOver, none⟩)
+      stack := stack.pop.push (sameSize top (overLayer src top))
   return some ⟨W, H, straight W H stack[0]!, ox, oy, straight_size W H _⟩
 
 /-- A drawn colour glyph is a bitmap of its box and nothing else: four bytes for each
