@@ -1473,6 +1473,8 @@
     make2dSource)(n, define, named, nodeId, canvasSize, gpuContexts, DOMException, EventTarget);
   const make2dSource = `'use strict';
     const K = Symbol('canvas2d');
+    // A context's canvas id, read by the calls a frame makes most (one property, no checks of a kind).
+    const KC = Symbol('canvas2d id');
     let q = [], strs = [], strIx = new Map(), tails = [], tailLen = 0, queued = false, selected = -1;
     let nextObj = 1, nextOffscreen = 0x20000000;
     const objs = new Map(); // Lean's object ids, for the fillStyle and strokeStyle getters
@@ -1622,9 +1624,8 @@
       Object.defineProperty(P, name, { configurable: true, enumerable: true,
         get() { const s = self(this); const r = ask([1, s.id, 0], [name]); return t === 'n' ? Number(r) : t === 'b' ? r === '1' : r; },
         set(v) {
-          const s = this?.[K];
-          if (s === undefined || s.kind !== 'ctx') throw new TypeError('Illegal invocation');
-          if (selected !== s.id) { q.push(1, s.id); selected = s.id; }
+          const id = this?.[KC]; if (id === undefined) illegal();
+          if (selected !== id) { q.push(1, id); selected = id; }
           if (!queued) { queued = true; Promise.resolve().then(flush); }
           q.push(op, t === 'n' ? +v : t === 'b' ? (v ? 1 : 0) : str(v));
         } });
@@ -1634,9 +1635,8 @@
         get() { const s = self(this); const r = ask([1, s.id, 0], [name]);
           return r.charCodeAt(0) === 1 ? objs.get(Number(r.slice(2))) ?? null : r; },
         set(v) {
-          const s = this?.[K];
-          if (s === undefined || s.kind !== 'ctx') throw new TypeError('Illegal invocation');
-          if (selected !== s.id) { q.push(1, s.id); selected = s.id; }
+          const id = this?.[KC]; if (id === undefined) illegal();
+          if (selected !== id) { q.push(1, id); selected = id; }
           if (!queued) { queued = true; Promise.resolve().then(flush); }
           if (typeof v === 'string') q.push(ops[0], str(v));
           else if (v instanceof CanvasGradient) q.push(ops[1], 1, v[K].id);
@@ -1653,17 +1653,42 @@
         if (k === 0) q.push(op); else if (k === 1) q.push(op, +a); else if (k === 2) q.push(op, +a, +b);
         else q.push(op, +a, +b, +c, +d, +e, +f);
       });
-    const rectOp = (op, name) => function (x, y, w, h) {
-      const s = this?.[K];
-      if (s === undefined || s.kind !== 'ctx') throw new TypeError('Illegal invocation');
-      if (arguments.length < 4) need(arguments.length, 4, name);
-      if (selected !== s.id) { q.push(1, s.id); selected = s.id; }
-      if (!queued) { queued = true; Promise.resolve().then(flush); }
-      q.push(op, +x, +y, +w, +h);
-    };
-    define(P, 'fillRect', rectOp(73, 'fillRect'));
-    define(P, 'strokeRect', rectOp(74, 'strokeRect'));
-    define(P, 'clearRect', rectOp(75, 'clearRect'));
+    // The calls a frame makes most, written for the fewest interpreter steps: the canvas id
+    // from one property, the argument count read only when an argument is missing.
+    const illegal = () => { throw new TypeError('Illegal invocation'); };
+    const hot = (name, op, k) => k === 0 ? function () {
+        const id = this?.[KC]; if (id === undefined) illegal();
+        if (selected !== id) { q.push(1, id); selected = id; }
+        if (!queued) { queued = true; Promise.resolve().then(flush); }
+        q.push(op);
+      } : k === 1 ? function (a) {
+        const id = this?.[KC]; if (id === undefined) illegal();
+        if (a === undefined && arguments.length < 1) need(arguments.length, 1, name);
+        if (selected !== id) { q.push(1, id); selected = id; }
+        if (!queued) { queued = true; Promise.resolve().then(flush); }
+        q.push(op, +a);
+      } : k === 2 ? function (a, b) {
+        const id = this?.[KC]; if (id === undefined) illegal();
+        if (b === undefined && arguments.length < 2) need(arguments.length, 2, name);
+        if (selected !== id) { q.push(1, id); selected = id; }
+        if (!queued) { queued = true; Promise.resolve().then(flush); }
+        q.push(op, +a, +b);
+      } : k === 4 ? function (a, b, c, d) {
+        const id = this?.[KC]; if (id === undefined) illegal();
+        if (d === undefined && arguments.length < 4) need(arguments.length, 4, name);
+        if (selected !== id) { q.push(1, id); selected = id; }
+        if (!queued) { queued = true; Promise.resolve().then(flush); }
+        q.push(op, +a, +b, +c, +d);
+      } : function (a, b, c, d, e, f) {
+        const id = this?.[KC]; if (id === undefined) illegal();
+        if (f === undefined && arguments.length < 6) need(arguments.length, 6, name);
+        if (selected !== id) { q.push(1, id); selected = id; }
+        if (!queued) { queued = true; Promise.resolve().then(flush); }
+        q.push(op, +a, +b, +c, +d, +e, +f);
+      };
+    for (const [name, op, k] of [['fillRect', 73, 4], ['strokeRect', 74, 4], ['clearRect', 75, 4], ['save', 3, 0], ['restore', 4, 0],
+      ['beginPath', 51, 0], ['translate', 12, 2], ['scale', 13, 2], ['rotate', 14, 1], ['transform', 11, 6]])
+      define(P, name, hot(name, op, k));
     // CanvasPath: the context's path (target 0) or a Path2D's (target its id).
     const pathOps = { moveTo: [52, 2], lineTo: [53, 2], quadraticCurveTo: [54, 4], bezierCurveTo: [55, 6], rect: [59, 4], closePath: [61, 0] };
     const pathMethods = (proto, start, end) => {
@@ -1700,16 +1725,18 @@
       });
     };
     pathMethods(P, c => on(self(c).id), () => {});
-    // moveTo and lineTo, written out for the same reason.
-    for (const [name, op] of [['moveTo', 52], ['lineTo', 53]])
-      define(P, name, function (x, y) {
-        const s = this?.[K];
-        if (s === undefined || s.kind !== 'ctx') throw new TypeError('Illegal invocation');
-        if (arguments.length < 2) need(arguments.length, 2, name);
-        if (selected !== s.id) { q.push(1, s.id); selected = s.id; }
-        if (!queued) { queued = true; Promise.resolve().then(flush); }
-        q.push(op, +x, +y);
-      });
+    for (const [name, op, k] of [['moveTo', 52, 2], ['lineTo', 53, 2], ['quadraticCurveTo', 54, 4], ['bezierCurveTo', 55, 6],
+      ['rect', 59, 4], ['closePath', 61, 0]])
+      define(P, name, hot(name, op, k));
+    define(P, 'arc', function (x, y, r, a0, a1, ccw) {
+      const id = this?.[KC]; if (id === undefined) illegal();
+      if (a1 === undefined && arguments.length < 5) need(arguments.length, 5, 'arc');
+      r = +r;
+      if (r < 0) throw new DOMException('The radius provided (' + r + ') is negative.', 'IndexSizeError');
+      if (selected !== id) { q.push(1, id); selected = id; }
+      if (!queued) { queued = true; Promise.resolve().then(flush); }
+      q.push(56, +x, +y, r, +a0, +a1, ccw ? 1 : 0);
+    });
     const pathId = (p, name) => { if (!(p instanceof Path2D)) throw new TypeError("Failed to execute '" + (name) + "': parameter 1 is not of type 'Path2D'."); return p[K].id; };
     const drawPath = (op, hasRule) => function (a, b) {
       const s = self(this); let path = 0, rule = a;
@@ -1843,6 +1870,7 @@
     const contextFor = (C, canvas, id, w, h, element) => {
       const ctx = Object.create(C.prototype);
       define(ctx, K, { kind: 'ctx', id, canvas });
+      define(ctx, KC, id);
       q.push(2, id, w, h, element ? 1 : 0); selected = id; later();
       return ctx;
     };
