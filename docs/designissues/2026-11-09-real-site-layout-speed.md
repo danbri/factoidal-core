@@ -66,12 +66,14 @@ Each is a separate commit on `wip/realperf`.
    (`RuleIndex.candidates`), so the cascade sees the matched rules in sheet order as
    before (`computedFrom`). The matcher reads each element's class words and id from a
    table made once per cascade (`ElemKeys.of`).
-2. **Shaped words kept across layouts** (`SfntProfile.lean`). A word that misses the memo,
-   and every word shaped in a direction other than its script's, goes through
-   `shapeKept`, which keeps it by fonts, text, size and direction (at most 16,384 words).
-3. **Sheets read once** (`Style.lean`). `parseRaw` reads a sheet with each rule's `@media`
-   query list; `parseIn` filters it by the environment. `parseRawKept` keeps the last 8
-   sheet texts. A relayout at another width evaluates the queries and reads nothing.
+2. **Shaped words kept across layouts.** `SfntProfile.profile` takes the function that
+   shapes a word that misses the memo, and every word shaped in a direction other than
+   its script's (`shapeFresh` by default). WebDocument passes `shapeKept`, which keeps
+   each word by fonts (`fontsKey`), text, size and direction (at most 16,384 words).
+3. **Sheets read once.** `CSS.parseRaw` reads a sheet with each rule's `@media` query
+   list; `CSS.parseInRaw` filters it by the environment (`parseIn` is the two together).
+   WebDocument's `sheetKept` keeps the last 8 sheet texts, so a relayout at another width
+   evaluates the queries and reads nothing.
 4. **The request check** (`WebDocument.lean`): `blankFrom` reads what follows the JSON as
    a slice.
 5. **The page tree parsed once per source** (`WebDocument.parseKept`, last two trees).
@@ -95,9 +97,11 @@ Each is a separate commit on `wip/realperf`.
   candidates in all (600 for M = 300 with N = 400 or N = 2,000), where the plain loop
   tries N·M. The cascade can not become quadratic in rules × elements again without this
   failing.
-* The kept tables (`shapeKept`, `parseRawKept`, `parseKept`, `imageStoreKept`) are
-  `implemented_by` the plain function: the logical definition is the plain function, and
-  the implementation only skips work it has done for the same arguments. `blankFrom` is
+* The kept tables (`shapeKept`, `sheetKept`, `parseKept` in WebDocument,
+  `imageStoreKept` in WebRender) are `implemented_by` the plain function: the logical
+  definition is the plain function, and the implementation only skips work it has done
+  for the same arguments. They live in the lab modules, as the font memo does; the
+  library (`formal/lean4`) has no `unsafe` (lean-hygiene audit). `blankFrom` is
   checked against the list form at every position of sample requests.
 
 ## Numbers
