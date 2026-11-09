@@ -649,6 +649,7 @@ process.stderr.write(`devproxy: DEVELOPMENT TOOL. NOT A USER FEATURE. It decrypt
 devproxy:   ${ca.cert}
 devproxy:   "${CA_NAME}"
 devproxy: Give this CA only to a process under test (DENO_CERT). Do not add it to a system or login keychain.
+devproxy: EXPERIMENTAL UNDER-REVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.
 devproxy: Mode: ${options.mode}${dir ? ` (${dir})` : ""}.
 `);
 if (options.allowPrivate) log("WARNING: --dangerously-allow-private-upstream is on: requests can reach private and loopback addresses.");

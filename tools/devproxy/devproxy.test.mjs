@@ -4,6 +4,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
+import http2 from "node:http2";
 import https from "node:https";
 import os from "node:os";
 import path from "node:path";
@@ -137,12 +138,13 @@ function collect(res) {
   });
 }
 /** A plain request through the proxy, in absolute form. */
-function viaPlain(proxyPort, url, { method = "GET", headers = {} } = {}) {
+function viaPlain(proxyPort, url, { method = "GET", headers = {}, body } = {}) {
   return new Promise((resolve, reject) => {
     const req = http.request({ host: "127.0.0.1", port: proxyPort, method, path: url, headers, agent: false });
     req.on("response", (res) => collect(res).then(resolve, reject));
+    req.on("upgrade", (res, socket) => { socket.destroy(); resolve({ status: res.statusCode, rawHeaders: res.rawHeaders, body: Buffer.alloc(0) }); });
     req.on("error", reject);
-    req.end();
+    req.end(body);
   });
 }
 /** An HTTPS request through CONNECT, that trusts only the devproxy CA. */
@@ -251,12 +253,15 @@ test("credentials are absent from the WARC and the manifest, and a redacted URL 
   const headers = { Authorization: "Bearer SECRETAUTH", Cookie: "a=SECRETCLIENTCOOKIE", "X-Api-Key": "SECRETAPIKEY" };
   const first = await viaPlain(rec.port, url, { headers });
   assert.equal(header(first, "set-cookie"), "sid=SECRETCOOKIEVALUE", "the client of a record run sees the origin's answer");
+  await viaPlain(rec.port, `http://127.0.0.1:${plainPort}/plain`, { method: "POST", body: "password=SECRETBODY" });
   await rec.stop();
   for (const file of ["recording.warc", "manifest.json"]) {
     const text = fs.readFileSync(path.join(dir, file), "latin1");
     assert.doesNotMatch(text, /SECRET/, `${file} holds a credential value`);
     assert.match(text, /access_token=REDACTED&keep=1/);
   }
+  assert.match(fs.readFileSync(path.join(dir, "recording.warc"), "latin1"), /Foafnaut-Request-Body-Omitted: length=19/);
+  assert.doesNotMatch(rec.log(), /SECRET/);
   const replay = await startProxy(["--replay", dir]);
   const again = await viaPlain(replay.port, url);
   assert.equal(again.status, 302);
@@ -311,6 +316,7 @@ test("the CA is private, named, and stays out of the recording; a private upstre
   const dir = newDir();
   const rec = await startProxy(["--record", dir]);
   assert.match(rec.log(), /DEVELOPMENT TOOL/);
+  assert.match(rec.log(), /EXPERIMENTAL UNDER-REVIEWED CODE - USE WITH CARE/);
   const refused = await viaPlain(rec.port, `http://127.0.0.1:${plainPort}/plain`);
   assert.equal(refused.status, 403);
   assert.equal(header(refused, "x-devproxy"), "refused-private");
@@ -455,4 +461,55 @@ test("the service header does not reach the origin or the recording", async () =
   origin.close();
   assert.equal(seen[0]["x-foafnaut-devproxy"], undefined);
   assert.doesNotMatch(fs.readFileSync(path.join(dir, "recording.warc"), "latin1"), /X-Foafnaut-Devproxy/i);
+});
+
+// Shortfalls: each case fails today; the run goes red when one starts to pass.
+const ISSUE = "https://github.com/danbri/factoidal-core/issues/375";
+function expectedFailure(name, body) {
+  test(`expected failure (${ISSUE}): ${name}`, async () => {
+    let passed = false;
+    try { await body(); passed = true; } catch { /* the shortfall is still there */ }
+    if (passed) assert.fail(`unexpected pass: remove the expected-failure mark and update ${ISSUE}`);
+  });
+}
+expectedFailure("WebSocket upgrades pass through the proxy", async () => {
+  const origin = http.createServer((_req, res) => res.end("x"));
+  origin.on("upgrade", (_req, socket) => socket.end("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"));
+  const port = await new Promise((r) => origin.listen(0, "127.0.0.1", () => r(origin.address().port)));
+  const proxy = await startProxy(["--passthrough", P]);
+  try {
+    const r = await viaPlain(proxy.port, `http://127.0.0.1:${port}/`, { headers: { Connection: "Upgrade", Upgrade: "websocket" } });
+    assert.equal(r.status, 101);
+  } finally {
+    await proxy.stop();
+    origin.close();
+  }
+});
+expectedFailure("an origin that speaks only HTTP/2 can be recorded", async () => {
+  const origin = http2.createSecureServer({ ...makeLeaf("testca", "h2", "DNS:localhost"), allowHTTP1: false }, (_req, res) => res.end("x"));
+  const port = await new Promise((r) => origin.listen(0, "127.0.0.1", () => r(origin.address().port)));
+  const proxy = await startProxy(["--record", newDir(), P]);
+  try {
+    assert.equal((await viaTls(proxy.port, `https://localhost:${port}/`)).status, 200);
+  } finally {
+    await proxy.stop();
+    origin.close();
+  }
+});
+expectedFailure("replay tells two POST requests to one URL apart by their bodies", async () => {
+  const origin = http.createServer((req, res) => { const c = []; req.on("data", (d) => c.push(d)); req.on("end", () => res.end(Buffer.concat(c))); });
+  const port = await new Promise((r) => origin.listen(0, "127.0.0.1", () => r(origin.address().port)));
+  const dir = newDir();
+  const url = `http://127.0.0.1:${port}/echo`;
+  const rec = await startProxy(["--record", dir, P]);
+  await viaPlain(rec.port, url, { method: "POST", body: "first" });
+  await viaPlain(rec.port, url, { method: "POST", body: "second" });
+  await rec.stop();
+  origin.close();
+  const replay = await startProxy(["--replay", dir]);
+  try {
+    assert.equal((await viaPlain(replay.port, url, { method: "POST", body: "second" })).body.toString(), "second");
+  } finally {
+    await replay.stop();
+  }
 });
