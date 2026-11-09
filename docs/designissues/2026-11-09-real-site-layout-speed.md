@@ -153,6 +153,16 @@ and the paint count, at two widths, is the same for both engines on index, statu
 showcase-tables, showcase-lettering, showcase-images, print-showcase, architecture, js-status,
 timers-and-clicks, Wikipedia, gov.uk and BBC News.
 
+**What was not run on this tree.** There is no Wasm build of this branch: the numbers and
+the digests are of the native engine, and in `test.sh` the Wasm half of each test was the
+engine of `0f89690b6` beside the native engine of this branch. `sweeps.sh`, the native
+window tests and input latency did not run (no window library in this worktree). The native
+build ended at `check-budget.mjs` on the status note's text, which grew on main; the budget
+has since moved with the text. `tools/lean-tail-recursion-audit.py --gate` passes its own
+check; its `csimp-reach` step reports two findings on `LWS.Base64.encode`, from files this
+branch does not touch. WPT `css/cssom` on BubblePopJS: 52 of 196 subtests before and after,
+with the same result in every case.
+
 ## Where a relayout goes now
 
 A sample of Wikipedia's relayouts on the new engine (share of `web_document_compile_bin`):
@@ -169,8 +179,9 @@ A sample of Wikipedia's relayouts on the new engine (share of `web_document_comp
 
 ## Next
 
-1. BBC News: one layout instead of three: read the sizes of inline `svg` before layout, so
-   that a refusal is known without laying the page out.
+1. BBC News misses the 200 ms relayout target (537 ms); liberal mode can lay the page out up
+   to three times. One layout instead of three: read the sizes of inline `svg` before
+   layout, so that a refusal is known without laying the page out.
 2. A frame serializes every box and glyph run of the whole page with `toString` on floats
    (`layoutJSON`). The native window reuses page layers (`pageArtifact`), so this is the cost
    of a new layer, not of a scroll frame; a binary form or a band of runs would remove it.
