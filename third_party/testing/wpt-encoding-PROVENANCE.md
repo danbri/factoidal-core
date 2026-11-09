@@ -6,6 +6,8 @@
   `third_party/testing/wpt-encoding/encoding/`; the two helper scripts that its
   tests load, `common/sab.js` and `common/subset-tests.js`, into
   `third_party/testing/wpt-encoding/common/`; the repository `LICENSE.md`.
+  Added 2026-11-09: `common/blank.html` (empty in WPT, as here), the document the
+  `*-encode-form*` pages' forms submit to (`action="/common/blank.html"`).
   Not copied: `resources/testharness.js` and the rest of the repository. The
   runner gives its own testharness.js-compatible functions.
 - Copied on 2026-10-29.
