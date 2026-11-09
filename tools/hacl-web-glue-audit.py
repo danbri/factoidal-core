@@ -18,6 +18,8 @@ the C side's shape, which Lean cannot see:
      output: a refused output is never answered.
   6. No byte comparison outside the constant-time mask: no `memcmp`, no `bcmp`, and no `==`
      or `!=` on indexed bytes.
+  7. The raw core (`hacl_webcrypto_core.c`): every function calls HACL*, and none compares
+     bytes.
   8. Every C entry point has the parameters and result its Lean extern compiles to: one per
      explicit argument that is not a proof (`@& ByteArray`, `ByteArray`, `Nat`, `Unit` are
      `lean_object *`; `UInt8` is `uint8_t`, `USize` is `size_t`, `UInt32` and `UInt64` their
@@ -35,6 +37,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 C = ROOT / "formal/lean4/ffi/hacl_webcrypto.c"
+CORE = ROOT / "formal/lean4/ffi/hacl_webcrypto_core.c"
 LEAN = ROOT / "formal/lean4/L4Factoidal/Crypto/WebHacl.lean"
 NO_PRE = {"l4_web_hacl_ct_eq", "l4_web_hacl_wipe", "l4_web_hacl_wiped"}
 
@@ -126,7 +129,7 @@ if "--ir" in sys.argv:
 # 3-6: each C entry point.
 bodies = re.findall(r"LEAN_EXPORT\s+[\w ]+?\s+(l4_web_hacl_\w+)\s*\(([^)]*)\)\s*\{(.*?)\n\}", c, re.S)
 for name, params, body in bodies:
-    calls = [m.start() for m in re.finditer(r"\bHacl_\w+\s*\(", body)]
+    calls = [m.start() for m in re.finditer(r"\b(Hacl_|l4wc_)\w+\s*\(", body)]
     first_call = min(calls) if calls else len(body)
     inputs = {v for v in re.findall(r"L4W_PTR\((\w+)\)", body) if v not in ("out", "fail")}
     for var in sorted(inputs):
@@ -135,7 +138,7 @@ for name, params, body in bodies:
             findings.append(f"{name}: {var} is passed to HACL* before its size is checked")
     if "lean_obj_res out" in body and "l4w_fresh(" not in body:
         findings.append(f"{name}: an output that is not a fresh array")
-    for m in re.finditer(r"if \(!?(Hacl_\w+)\(", body):
+    for m in re.finditer(r"if \(!?((?:Hacl_|l4wc_)\w+)\(", body):
         rest = body[m.end():]
         branch = rest[: rest.find(";", rest.find(")")) + 1] if ")" in rest else rest
         tail = rest[:200]
@@ -145,6 +148,15 @@ for name, params, body in bodies:
         findings.append(f"{name}: a byte comparison by memcmp")
     if re.search(r"\]\s*(==|!=)\s*\w+\s*\[", body):
         findings.append(f"{name}: a byte comparison by ==")
+
+# 7. The raw core (hacl_webcrypto_core.c, which is hacl-web.wasm on the Hub): no byte
+#    comparison, and every function calls HACL*.
+core = CORE.read_text()
+for name, body in re.findall(r"^(?:int|void) (l4wc_\w+)\([^)]*\)\s*\{(.*?)\n\}", core, re.S | re.M):
+    if not re.search(r"\bHacl_\w+\s*\(", body):
+        findings.append(f"{name}: a core function with no HACL* call")
+    if re.search(r"\b(memcmp|bcmp)\s*\(", body) or re.search(r"\]\s*(==|!=)\s*\w+\s*\[", body):
+        findings.append(f"{name}: a byte comparison in the core")
 
 print(f"hacl-web-glue-audit: {len(c_syms)} C entry points, {len(lean_syms)} Lean externs")
 for f in findings:
