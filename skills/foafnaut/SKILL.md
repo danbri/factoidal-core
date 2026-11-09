@@ -11,8 +11,9 @@ and on the Hub (https://danbri.github.io/factoidal/web/hub/foafnaut/). "foafnaut
 the name of the engine in the status note, the release records and older files.
 
 Names for new text and docs: **Foafnaut** is the browser and **Textnaut** the text-mode browser. **BubblePopKit** is
-the rendering engine as a whole, **BubblePopJS** its JavaScript engine, and **BubblePopWASM** its WebAssembly. Code
-identifiers keep their existing names.
+the rendering engine as a whole, **BubblePopJS** its JavaScript engine, and **BubblePopWASM** its WebAssembly engine
+(WasmVM), which runs Wasm modules. BubblePopWASM is not a build: BubblePopKit compiled to Wasm is the Wasm build of
+BubblePopKit. Code identifiers keep their existing names.
 
 State at the last handoff, what is in flight, and what to do next:
 [docs/designissues/2026-11-09-foafnaut-handoff.md](../../docs/designissues/2026-11-09-foafnaut-handoff.md).
