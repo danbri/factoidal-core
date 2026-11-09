@@ -219,6 +219,22 @@ def picturesOf (store : NativeImage.Store) (keys : List (Nat × String)) : Rende
     | _ => out) {}
   fun id => found.get? id
 
+/-! Each layout decoded the page's images again (`imageStoreOf`): 44 ms of a relayout of
+gov.uk, whose images are `data:` URIs (realperf). `imageStoreKept` is `imageStoreOf`;
+its implementation keeps the last two stores by their keys and supplied bytes. -/
+initialize imageStoresKept : IO.Ref (Array ((List String × List (String × ByteArray)) × NativeImage.Store)) ← IO.mkRef #[]
+
+private unsafe def imageStoreKeptImpl (keys : List String) (images : List (String × ByteArray)) : NativeImage.Store :=
+  unsafeBaseIO do
+    if let some (_,store) := (← imageStoresKept.get).find? (fun ((k,i),_) => k == keys && i == images) then return store
+    let store := NativeSVG.imageStoreOf keys images
+    imageStoresKept.modify fun kept => (if kept.size ≥ 2 then kept.extract 1 kept.size else kept).push ((keys,images),store)
+    return store
+
+@[implemented_by imageStoreKeptImpl, noinline]
+def imageStoreKept (keys : List String) (images : List (String × ByteArray)) : NativeImage.Store :=
+  NativeSVG.imageStoreOf keys images
+
 /-- The embedding of SVG roots and the pictures of `img` elements, from one image
 store: each image decodes once, and the ids of bitmaps do not collide. One
 source-bound index per render, shared by all embedded SVG roots. SVG text is lowered
@@ -229,14 +245,14 @@ def makeReplaced (dom : DOM.Dom) (documentURL : Option String := none)
     Except String (Rendering.Layout.Embedding × Rendering.Layout.Pictures) := do
   let imgs := htmlImageKeys dom documentURL
   if !(dom.nodes.any (fun node => node.type == .element && node.ns == some DOM.svgNS)) then
-    return (embedding dom,picturesOf (NativeSVG.imageStoreOf (imgs.map (·.2)) images) imgs)
+    return (embedding dom,picturesOf (imageStoreKept (imgs.map (·.2)) images) imgs)
   if documentURL.isNone && dom.nodes.any (fun node => DOM.Dom.isHtmlElement node "base" && Rendering.CSS.hasAttribute node "href") then
     throw "unsupported HTML base href without explicit document URL/base transport"
   let (root,tree) ← documentNamespaceTree dom
   let (tree,_) := NativeSVGText.lowerDocument fonts tree
   let context ← NativeSVG.ReferenceContext.create tree documentURL
   -- Each image decodes once for the document, not once for each SVG root.
-  let store := NativeSVG.imageStoreOf (NativeSVG.imageKeys tree documentURL ++ imgs.map (·.2)) images
+  let store := imageStoreKept (NativeSVG.imageKeys tree documentURL ++ imgs.map (·.2)) images
   -- A viewport of fractional CSS pixels (a percentage width with `height:auto`) keeps its
   -- exact size: the viewBox maps onto it, and the backing raster is the next whole pixel.
   return (fun id style width height => do
