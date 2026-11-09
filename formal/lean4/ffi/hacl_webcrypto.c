@@ -321,6 +321,21 @@ LEAN_EXPORT lean_obj_res l4_web_hacl_wipe(lean_obj_arg b) {
   lean_dec_ref(b);
   return lean_usize_to_nat(n);
 }
+/* `WebHacl.zeroNow`, for a session's key store as the session ends (WebApi.wipeAll): the
+ * bytes are zeroed in place whatever the reference count, because every holder is being
+ * dropped with the session (the store, a structuredClone copy in the same store, the
+ * session's waiting answers). A persistent object (a compiled-in constant) is left alone.
+ * Answers the size. Never used on a store that lives on: there the reference-counted
+ * `wipe` is used (a dropped key, WebApi.dropKey). */
+LEAN_EXPORT lean_obj_res l4_web_hacl_zero_now(b_lean_obj_arg b) {
+  size_t n = L4W_SIZE(b);
+  if (n && !lean_is_persistent(b)) {
+    Lib_Memzero0_memzero0(L4W_PTR(b), (uint64_t)n);
+    l4w_wiped_total += n;
+  }
+  return lean_usize_to_nat(n);
+}
+
 /* `wipedSoFar : BaseIO Nat`: Lean 4.33 passes an IO action's extern no world argument
  * (its emitted prototype is `l4_web_hacl_wiped()`), so this takes none; a parameter here
  * made wasm-ld's signatures disagree and every call trap (core Wasm build, 2026-11-09). */

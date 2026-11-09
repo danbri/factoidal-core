@@ -359,6 +359,12 @@ Lean knows nothing of the value (no theorem uses it); the caller adds it to a co
 the compiler keeps the call. -/
 @[extern "l4_web_hacl_wipe"] opaque wipe (b : ByteArray) : Nat
 
+/-- Zero a secret's bytes in place, whatever its reference count, and answer its size.
+Only for what is being dropped with every holder (a session's key store as the session
+ends, `WebApi.wipeAll`): it changes the bytes under any other reference. A compiled-in
+constant is left alone. -/
+@[extern "l4_web_hacl_zero_now"] opaque zeroNow (b : @& ByteArray) : Nat
+
 /-- Bytes zeroed in place so far (tests). -/
 @[extern "l4_web_hacl_wiped"] opaque wipedSoFar : BaseIO Nat
 
