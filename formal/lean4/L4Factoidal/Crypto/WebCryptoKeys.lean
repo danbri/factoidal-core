@@ -27,6 +27,7 @@ import L4Factoidal.JOSE.Base64Url
 import L4Factoidal.JOSE.Pkcs1
 import L4Factoidal.Crypto.RsaOaep
 import Std.Data.HashMap
+import Std.Data.HashSet
 
 namespace L4Factoidal.Crypto.WebCryptoKeys
 
@@ -279,14 +280,27 @@ def algOf? (name : String) : Option Alg :=
 structure KeyStore where
   keys : Std.HashMap Nat Key := {}
   next : Nat := 1
+  /-- The bytes the keys hold (`Key.footprint`), so a page cannot fill memory with keys. -/
+  bytes : Nat := 0
   deriving Inhabited
 
 /-- At most this many keys at once in a session. -/
 def maxKeys : Nat := 1 <<< 16
 
+/-- At most this many bytes of keys at once in a session (256 MiB): QuotaExceededError
+beyond (cryptosec finding F4: 65,536 keys of 64 MiB each were allowed). -/
+def maxStoreBytes : Nat := 1 <<< 28
+
+def RsaParts.footprint (r : RsaParts) : Nat :=
+  r.n.size + r.e.size + r.d.size + r.p.size + r.q.size + r.dp.size + r.dq.size + r.qi.size
+
+/-- The bytes a key holds in the store. -/
+def Key.footprint (k : Key) : Nat :=
+  k.material.size + k.pub.size + (k.rsa.map RsaParts.footprint).getD 0 + k.algo.publicExponent.size
+
 def KeyStore.add (s : KeyStore) (k : Key) : Res (KeyStore × Nat) :=
-  if s.keys.size ≥ maxKeys then .error .quota else
-  .ok ({ keys := s.keys.insert s.next k, next := s.next + 1 }, s.next)
+  if s.keys.size ≥ maxKeys || s.bytes + k.footprint > maxStoreBytes then .error .quota else
+  .ok ({ keys := s.keys.insert s.next k, next := s.next + 1, bytes := s.bytes + k.footprint }, s.next)
 
 def keyOf (s : KeyStore) (a : Args) (field : String) : Res Key :=
   match a.nat? field with
@@ -397,14 +411,21 @@ def readSpki (b : List UInt8) : Option (List UInt8 × Option (List UInt8) × Lis
   | _ => none
 
 /-- PrivateKeyInfo / OneAsymmetricKey (RFC 5208, RFC 5958): the algorithm and the
-privateKey OCTET STRING's contents. Attributes and a v2 public key after it are allowed. -/
+privateKey OCTET STRING's contents. After it only `[0]` attributes, and in a v2 key a
+`[1]` public key, are allowed, and nothing else (cryptosec finding F8: any bytes were
+accepted there, so one key had many encodings). -/
 def readPkcs8 (b : List UInt8) : Option (List UInt8 × Option (List UInt8) × List UInt8) := do
   let (seq, rest) ← expect 0x30 b
   if !rest.isEmpty then none
   let (ver, r) ← expect 0x02 seq
   if ver != [0] && ver != [1] then none
   let (aid, r) ← expect 0x30 r
-  let (pk, _) ← expect 0x04 r
+  let (pk, r) ← expect 0x04 r
+  let r := match readTlv r with | some (t, _, r') => if t == 0xa0 then r' else r | none => r
+  let r := if ver == [1] then
+      (match readTlv r with | some (t, _, r') => if t == 0x81 || t == 0xa1 then r' else r | none => r)
+    else r
+  if !r.isEmpty then none
   let (oid, params) ← readAlgId aid
   return (oid, params, pk)
 
@@ -480,6 +501,11 @@ def ed25519IsSmallOrder (p : ByteArray) : Bool :=
 inductive JwkVal where
   | str (s : String) | bool (b : Bool) | arr (xs : List String)
 
+/-- No string twice, in one pass over a hash set. -/
+def noDups (xs : List String) : Bool :=
+  (xs.foldl (fun (acc : Option (Std.HashSet String)) x => acc.bind fun seen =>
+    if seen.contains x then none else some (seen.insert x)) (some {})).isSome
+
 /-- The JsonWebKey members common to every import (§14.3.9 and each algorithm's import
 steps): `use` against `expectUse` when there are usages, `key_ops` (no duplicates, and
 every usage in it), and `ext` (DataError when false and the key is to be extractable). -/
@@ -489,7 +515,9 @@ def jwkCommon (j : Args) (us : List Usage) (extractable : Bool) (expectUse : Str
       if u != expectUse then throw .data
   if j.has "key_ops" then
     let ops := (j.all "key_ops[]").filterMap String.fromUTF8?
-    if (ops.eraseDups).length != ops.length then throw .data
+    -- Duplicates, in one pass (`List.eraseDups` is quadratic: 4,000 entries took 165 ms in
+    -- BubblePopJS, half a million would take most of an hour; cryptosec finding F3).
+    if !(noDups ops) then throw .data
     if !(us.all fun u => ops.contains u.name) then throw .data
   if j.str? "ext" == some "false" && extractable then throw .data
 
@@ -559,12 +587,14 @@ def importEc (alg : Alg) (format : String) (data : ByteArray) (j : Args) (curve 
         | some (o, []) => if o != poid then throw .data else pure r'
         | _ => throw .data
       | none => pure r
+    -- RFC 5915: then only the optional [1] public key; nothing after it.
     let given ← match expect 0xa1 r with
-      | some (pkb, _) =>
+      | some (pkb, rest) =>
+        if !rest.isEmpty then throw .data
         match expect 0x03 pkb with
         | some (0 :: pt, []) => pure (some (ByteArray.mk pt.toArray))
         | _ => throw .data
-      | none => pure none
+      | none => if r.isEmpty then pure none else throw .data
     if c != curve then throw .data
     let d := ByteArray.mk d.toArray
     if d.size != 32 || !p256ValidPrivate d then throw .data
@@ -801,12 +831,18 @@ def importRsa (alg : Alg) (format : String) (data : ByteArray) (j : Args) (p : A
     else made .publicKey { n, e }
   | _ => throw .notSupported
 
+/-- The largest SPKI or PKCS #8 key read (16 KiB: an RSA-4096 PKCS #8 key is about 2.4
+KiB). The DER reader works on a `List UInt8`; a 64 MiB argument made a list of 64 million
+cells (cryptosec finding F3). -/
+def maxDerKey : Nat := 16384
+
 /-- The algorithm's import steps. -/
 def importMade (algName : String) (p : Args) (format : String) (data : ByteArray) (j : Args)
     (extractable : Bool) (us : List Usage) : Res Made :=
   match algOf? algName with
   | none => .error .notSupported
   | some alg =>
+    if (format == "spki" || format == "pkcs8") && data.size > maxDerKey then .error .data else
     match alg with
     | .ecdsa | .ecdh => importEc alg format data j ((p.str? "namedCurve").getD "") us extractable
     | .ed25519 | .x25519 => importOkp alg format data j us extractable
@@ -1268,5 +1304,12 @@ theorem importKey_usages {n : String} {p : Args} {f : String} {d : ByteArray} {j
 #guard Usage.ofName? "decapsulateKey" == some .decapsulateKey
 #guard truncateBits (ByteArray.mk #[0xff, 0xff]) 12 == ByteArray.mk #[0xff, 0xf0]
 #guard Err.all.map Err.code == [-20, -23, -24, -25, -26, -22, -27]
+-- PKCS #8 is read strictly (cryptosec F8): attributes and a v2 public key only, nothing else.
+#guard (readPkcs8 (tlv 0x30 (tlv 0x02 [0] ++ tlv 0x30 (tlv 0x06 oidX25519) ++ tlv 0x04 (tlv 0x04 (List.replicate 32 1))))).isSome
+#guard (readPkcs8 (tlv 0x30 (tlv 0x02 [0] ++ tlv 0x30 (tlv 0x06 oidX25519) ++ tlv 0x04 (tlv 0x04 (List.replicate 32 1)) ++ [0x05, 0x00]))).isNone
+#guard (readPkcs8 (tlv 0x30 (tlv 0x02 [0] ++ tlv 0x30 (tlv 0x06 oidX25519) ++ tlv 0x04 (tlv 0x04 (List.replicate 32 1)) ++ tlv 0xa0 []))).isSome
+#guard (readPkcs8 (tlv 0x30 (tlv 0x02 [0] ++ tlv 0x30 (tlv 0x06 oidX25519) ++ tlv 0x04 (tlv 0x04 (List.replicate 32 1)) ++ tlv 0x81 [0]))).isNone
+#guard (readPkcs8 (tlv 0x30 (tlv 0x02 [1] ++ tlv 0x30 (tlv 0x06 oidX25519) ++ tlv 0x04 (tlv 0x04 (List.replicate 32 1)) ++ tlv 0x81 [0]))).isSome
+#guard noDups ["sign", "verify", "x"] && !noDups ["sign", "x", "sign"]
 
 end L4Factoidal.Crypto.WebCryptoKeys
