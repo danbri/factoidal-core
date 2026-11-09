@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>WebGPU triangle, checked by Lean</title>
+<html lang="en"><head><meta charset="utf-8"><title>WebGPU triangle, checked by the browser</title>
 <style>
 body{margin:0;padding:16px;font-size:15px;line-height:22px;color:#22303c;background:#f3f1f8}
 h1{margin:0;font-size:26px;line-height:34px;color:#4a2f8a}
@@ -11,8 +11,8 @@ canvas{display:block;width:360px;height:360px;margin-top:10px;border:1px solid #
 code{color:#7a3e12}
 </style></head><body><main>
 <p><a href="index.html">Demo index</a></p>
-<h1>WebGPU triangle, checked by Lean</h1>
-<p>This page's script draws a spinning triangle with <code>navigator.gpu</code>. The script runs inside the Lean engine: in BubblePopJS in the app and on the Hub.
+<h1>WebGPU triangle, checked by the browser</h1>
+<p>This page's script draws a spinning triangle with <code>navigator.gpu</code>. The script runs inside the built-in engine: in BubblePopJS in the app and on the Hub.
 Each WebGPU call is a typed command that Lean checks before the GPU sees it: the shader is parsed and checked against a small WGSL
 subset, every array index is clamped, every buffer write and every draw is bounds-checked, and the page has a GPU memory quota.
 Lean then draws the canvas into the page.</p>

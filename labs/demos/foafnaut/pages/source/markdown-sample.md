@@ -1,6 +1,6 @@
-# Markdown in the Lean engine
+# Markdown in the built-in engine
 
-This page starts as Markdown. A small converter makes plain HTML, and the Lean engine lays it out and draws it with WebGPU.
+This page starts as Markdown. A small converter makes plain HTML, and the built-in engine lays it out and draws it with WebGPU.
 
 ## Why this page exists
 
