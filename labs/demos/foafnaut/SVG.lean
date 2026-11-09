@@ -35,6 +35,25 @@ def maxInspectorNodes : Nat := 16384
 open NativeGraphics
 open L4Factoidal.XML
 private def svgURI := "http://www.w3.org/2000/svg"
+/-- Namespace of the attribute that names a glyph outline in a `GlyphTable`. Only
+    `NativeSVGText.lowerDocumentGlyphs` writes it; `WebRender.documentNamespaceTree`
+    removes it from page content, and the reader reads it only with a non-empty table. -/
+def glyphNS := "urn:x-factoidal:foafnaut:svg-glyph"
+/-- Glyph outlines in user units about the glyph origin, as numbers: SVG text lowered
+    by `NativeSVGText.lowerDocumentGlyphs` gives its path elements as indexes here,
+    and the reader takes the contours with no path data text. -/
+abbrev GlyphTable := Array (List L4Factoidal.Rendering.Contour)
+/-- The attribute that names entry `i` of the glyph table. -/
+def glyphAttribute (i : Nat) : NamespaceAttribute :=
+  {name:={namespace_:=some glyphNS,localPart:="glyph"},value:=toString i}
+/-- The contours that a path element names in `glyphs`; none with an empty table, with
+    no glyph attribute, or with an index outside the table. -/
+def glyphOf (glyphs : GlyphTable) (attrs : List NamespaceAttribute) :
+    Option (List L4Factoidal.Rendering.Contour) :=
+  if glyphs.isEmpty then none else
+  match attrs.find? (fun a => a.name.namespace_ == some glyphNS && a.name.localPart == "glyph") with
+  | none => none
+  | some a => a.value.toNat?.bind (glyphs[·]?)
 private def trim (s : String) : String := s.trimAscii.toString
 private def error (s : String) : Except String α := .error s
 private def need (value : Option α) (message : String) : Except String α :=
@@ -410,6 +429,8 @@ private structure PaintContext where
   rules : List NativeSVGCSS.Rule
   document : NamespaceNode
   images : NativeImage.Store := {}
+  /-- Glyph outlines that path elements name (`glyphOf`); empty for author SVG. -/
+  glyphs : GlyphTable := #[]
 
 /-- Attributes of an element that a paint server depends on, after the cascade.
     Values are checked where they are read, so that an unrelated property of an
@@ -1135,7 +1156,8 @@ private def arcOutline (x y rx ry : Float) : String :=
   let arc := fun (ex : Float) => s!"A{n rx} {n ry} 0 1 1 {n ex} {n y}"
   s!"M{n (x+rx)} {n y}" ++ arc (x-rx) ++ arc (x+rx) ++ "Z"
 
-private def readGeometry (lengths : LengthContext) (tag : String) (attrs : List NamespaceAttribute) (style : Style) : Except String (Option Geometry) := do
+private def readGeometry (lengths : LengthContext) (tag : String) (attrs : List NamespaceAttribute) (style : Style)
+    (glyphs : GlyphTable := #[]) : Except String (Option Geometry) := do
   if tag == "rect" then
     let x ← geometryNumber lengths attrs "x"; let y ← geometryNumber lengths attrs "y"
     let w ← geometryNumber lengths attrs "width"; let h ← geometryNumber lengths attrs "height"
@@ -1185,6 +1207,9 @@ private def readGeometry (lengths : LengthContext) (tag : String) (attrs : List 
     let pairs := (List.range (values.length/2)).map fun i => Point.mk values[i*2]! values[i*2+1]!
     return if tag=="polygon" then some (.polygon pairs) else some (.path [NativeSVGPath.ofLinear ⟨pairs,false⟩])
   else if tag == "path" then
+    -- A glyph of lowered SVG text: its contours as numbers, with no path data text.
+    if let some contours := glyphOf glyphs attrs then
+      return if contours.isEmpty then none else some (.path contours)
     let source := (attr attrs "d").getD ""
     if source.length > 65536 then throw "path data exceeds 65536 characters"
     if (trim source).toLower == "none" then return none
@@ -1543,7 +1568,7 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
             let value ← number source
             if value < 0 then throw "negative pathLength"
             pure (some value)
-        let geometry ← readGeometry lengths tag attrs inherited
+        let geometry ← readGeometry lengths tag attrs inherited paints.glyphs
         for child in children do
           match child with
           | .element n _ _ =>
@@ -1934,7 +1959,8 @@ theorem ReferenceContext.create_existing (context : ReferenceContext) :
     root validation, SVG style, geometry and viewport semantics remain here. -/
 private def parseRootWithContext (root : NamespaceNode) (outputWidth outputHeight : Float)
     (inheritedStyle : Style) (images : Option NativeImage.Store)
-    (referenceSource : Unit → Except String (ReferenceContext × List Nat × Option String)) : Except String Scene := do
+    (referenceSource : Unit → Except String (ReferenceContext × List Nat × Option String))
+    (glyphs : GlyphTable := #[]) : Except String Scene := do
   let .element name attrs children := root | throw "SVG root must be an element"
   if name.namespace_ != some svgURI || name.localPart != "svg" then throw "root must be svg in the SVG namespace"
   validateAttrs "svg" attrs ["width","height","viewBox","preserveAspectRatio","version","style"]
@@ -1971,7 +1997,7 @@ private def parseRootWithContext (root : NamespaceNode) (outputWidth outputHeigh
   let _ ← context.idsResult
   let rules ← context.rulesResult
   let store := images.getD (imageStore context.document (context.initialBaseURL.orElse fun _ => context.documentURL))
-  let paints : PaintContext := {references:=context.references,rules,document:=context.document,images:=store}
+  let paints : PaintContext := {references:=context.references,rules,document:=context.document,images:=store,glyphs}
   let attrs ← applyCSS lengths paints rules "svg" attrs
   validateAttrs "svg" attrs ["width","height","viewBox","preserveAspectRatio","version"]
   let inherited ← readStyle lengths paints attrs inheritedStyle
@@ -2001,14 +2027,14 @@ def parseRoot (root : NamespaceNode) (outputWidth outputHeight : Nat := 0)
 def parseRootInContextSized (context : ReferenceContext) (rootSourcePath : List Nat)
     (outputWidth outputHeight : Float := 0) (inheritedStyle : Style := {})
     (rootAttributeNormalizer : List NamespaceAttribute → Except String (List NamespaceAttribute) := fun attrs => .ok attrs)
-    (images : Option NativeImage.Store := none) : Except String Scene := do
+    (images : Option NativeImage.Store := none) (glyphs : GlyphTable := #[]) : Except String Scene := do
   let initialBase := context.initialBaseURL.orElse (fun _ => context.documentURL)
   let entry ← NativeSVGReferences.locate context.document rootSourcePath initialBase
   let .element name originalAttrs children := entry.node | throw "SVG root source path must select an element"
   let base := NativeSVGReferences.elementBase originalAttrs entry.parentBase
   let attrs ← rootAttributeNormalizer originalAttrs
   parseRootWithContext (.element name attrs children) outputWidth outputHeight inheritedStyle images
-    (fun _ => .ok (context,entry.path,base))
+    (fun _ => .ok (context,entry.path,base)) glyphs
 
 /-- `parseRootInContextSized` at a viewport of whole pixels. -/
 def parseRootInContext (context : ReferenceContext) (rootSourcePath : List Nat)

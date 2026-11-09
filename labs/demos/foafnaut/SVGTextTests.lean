@@ -116,3 +116,48 @@ private def html : L4Factoidal.XML.NamespaceNode :=
 #guard (List.range 2000).all fun i =>
   let v := Float.ofNat i * 4999.73 + 0.5
   fmt v == fmtReference v && fmt (-v) == fmtReference (-v)
+
+/-! Glyph outlines as numbers. `glyphContours` gives the contours that the reader parses
+    from the path data text of `glyphData` (here with values that `fmt` writes with no
+    rounding), and the reader draws a path that names them in the glyph table as it
+    draws the same path with the text. -/
+private def sampleCell : GlyphCell := {
+  geometry := [.path [
+    .path (pt 0 0) [.line (pt 100 0), .quadratic (pt 150 50) (pt 100 100), .cubic (pt 80 120) (pt 20 120) (pt 0 100)] true,
+    .path (pt 10 10) [.line (pt 20 30)] false]],
+  offsetX := 4, offsetY := -700, advance := 500, scale := 0.25, ascent := 800, descent := 200,
+  char := 0, run := 0, first := true }
+#guard match NativeSVGPath.parse NativeSVG.number (glyphData sampleCell) with
+  | .ok parsed => reprStr parsed == reprStr (glyphContours sampleCell)
+  | .error _ => false
+#guard (glyphContours sampleCell).length == 2
+#guard glyphAdmitted (glyphContours sampleCell)
+-- Outside the reader's coordinate bound, or with too many segments, a glyph goes as text.
+#guard !glyphAdmitted [.path (pt 2e6 0) [] false]
+#guard !glyphAdmitted [.path (pt 0 0) ((List.range 600).map fun i => .line (pt (Float.ofNat i) 0)) false]
+-- A cell with no outline gives no contours and no path data.
+#guard (glyphContours {sampleCell with geometry := []}).isEmpty && (glyphData {sampleCell with geometry := []}).isEmpty
+
+private def glyphSvg (path : L4Factoidal.XML.NamespaceNode) : L4Factoidal.XML.NamespaceNode :=
+  svgElement "svg" [mkAttr "width" "100", mkAttr "height" "100"] [svgElement "g" [mkAttr "fill" "black"] [path]]
+private def place := mkAttr "transform" "translate(10,20) rotate(15)"
+private def byText := svgElement "path" [mkAttr "d" (glyphData sampleCell), place] []
+private def byTable := svgElement "path" [NativeSVG.glyphAttribute 0, place] []
+private def inTable (root : L4Factoidal.XML.NamespaceNode) (table : NativeSVG.GlyphTable) :=
+  (NativeSVG.ReferenceContext.create root).bind fun c =>
+    NativeSVG.parseRootInContextSized c [] 0 0 {} (fun a => .ok a) none table
+#guard match NativeSVG.parseRoot (glyphSvg byText), inTable (glyphSvg byTable) #[glyphContours sampleCell] with
+  | .ok a, .ok b => reprStr a == reprStr b
+  | _, _ => false
+-- With no table (author SVG), or an index outside the table, the attribute is not read:
+-- the path has no path data and draws nothing.
+private def noData := svgElement "path" [place] []
+#guard match NativeSVG.parseRoot (glyphSvg byTable), NativeSVG.parseRoot (glyphSvg noData) with
+  | .ok a, .ok b => reprStr a == reprStr b
+  | _, _ => false
+#guard match inTable (glyphSvg (svgElement "path" [NativeSVG.glyphAttribute 1, place] [])) #[glyphContours sampleCell],
+    NativeSVG.parseRoot (glyphSvg noData) with
+  | .ok a, .ok b => reprStr a == reprStr b
+  | _, _ => false
+-- With no font held, the glyph table stays empty.
+#guard (lowerDocumentGlyphs #[] html).2.2.isEmpty

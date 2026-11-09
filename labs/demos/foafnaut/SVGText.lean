@@ -551,6 +551,47 @@ def glyphData (cell : GlyphCell) : String := Id.run do
           if closed then out := out ++ "Z"
   return out
 
+/-- The outline of `glyphData` as numbers: the same contours, in user units about the
+glyph origin, with no rounding to 1/100. -/
+def glyphContours (cell : GlyphCell) : List NativeSVGPath.Contour := Id.run do
+  let k := cell.scale
+  let pt := fun (q : Point) => (⟨k*(q.x+cell.offsetX),k*(q.y+cell.offsetY)⟩ : Point)
+  let mut out : Array NativeSVGPath.Contour := #[]
+  for g in cell.geometry do
+    if let .path contours := g then
+      for c in contours do
+        if let .path start segments closed := c then
+          out := out.push (.path (pt start) (segments.map fun
+            | .line p => .line (pt p)
+            | .quadratic c p => .quadratic (pt c) (pt p)
+            | .cubic a b p => .cubic (pt a) (pt b) (pt p)
+            | .arc rx ry r large sweep p => .arc (k*rx) (k*ry) r large sweep (pt p)) closed)
+  return out.toList
+
+/-- Most subpaths and segments of a glyph that goes to the reader as numbers. Below this
+count the text of `glyphData` is shorter than the reader's 65536 characters (at most 73
+characters for each segment with coordinates in its bound), and the reader's own limits
+(128 subpaths, `maxPathPoints`) hold; a larger glyph goes as path data text. -/
+def maxGlyphItems : Nat := 512
+
+private def inBound (v : Float) : Bool := v.isFinite && v.abs <= 999999
+private def pointInBound (p : Point) : Bool := inBound p.x && inBound p.y
+
+/-- The reader would accept the path data text of these contours: each coordinate is
+inside the reader's bound of 10^6 (with a margin for the rounding of `fmt`), and the
+counts are within `maxGlyphItems`. A glyph that fails goes as text, to the same checks. -/
+def glyphAdmitted (contours : List NativeSVGPath.Contour) : Bool :=
+  contours.length <= 128 &&
+  contours.foldl (fun n c => n+1+(match c with | .path _ segments _ => segments.length | .empty _ => 0)) 0
+    <= maxGlyphItems &&
+  contours.all fun
+    | .empty _ => true
+    | .path start segments _ => pointInBound start && segments.all fun
+      | .line p => pointInBound p
+      | .quadratic c p => pointInBound c && pointInBound p
+      | .cubic a b p => pointInBound a && pointInBound b && pointInBound p
+      | .arc rx ry r _ _ p => inBound rx && inBound ry && inBound r && pointInBound p
+
 /-- Words that SVG text has shaped, by the fonts' SHA-256 values, the text and the pixel
 size: a layout at another width, or the same labels again, does not shape them again.
 Emptied above `keptWordsLimit` entries. -/
@@ -618,9 +659,14 @@ def anchorChunk (spots : Array Spot) (chunk : Array Nat) (width : Float) (anchor
 def listAt (outer inner : List Float) (c idx : Nat) : Option Float :=
   (inner[idx]?).orElse fun _ => outer[c]?
 
-/-- Lower one `text` element to a group of glyph paths, drawn with `fonts`. -/
-def lowerSfnt (fonts : Array Font) (lookup : String → Option NamespaceNode) (state : TextState)
-    (attrs : List NamespaceAttribute) (children : List NamespaceNode) : NamespaceNode × List String := Id.run do
+/-- Lower one `text` element to a group of glyph paths, drawn with `fonts`. With
+    `numeric`, each glyph that `glyphAdmitted` accepts goes to the end of `table` and its
+    path names it (`NativeSVG.glyphAttribute`) in place of path data text. -/
+def lowerSfntWith (fonts : Array Font) (lookup : String → Option NamespaceNode) (numeric : Bool)
+    (table : NativeSVG.GlyphTable) (state : TextState)
+    (attrs : List NamespaceAttribute) (children : List NamespaceNode) :
+    NamespaceNode × List String × NativeSVG.GlyphTable := Id.run do
+  let mut table := table
   let attrs := expandStyle (renameId attrs)
   let children := children.map (expandStyleTree maxDepth)
   let state := state.read attrs
@@ -750,11 +796,16 @@ def lowerSfnt (fonts : Array Font) (lookup : String → Option NamespaceNode) (s
       cursor := i+1
       let spot := spots[i]!
       if !spot.shown then continue
-      let data := glyphData cell
-      if !data.isEmpty then
-        let turn := if spot.rotate == 0 then "" else " rotate(" ++ fmt spot.rotate ++ ")"
-        paths := paths.push (svgElement "path" ([mkAttr "d" data,
-          mkAttr "transform" ("translate(" ++ fmt spot.x ++ "," ++ fmt spot.y ++ ")" ++ turn)] ++ opacity) [])
+      let turn := if spot.rotate == 0 then "" else " rotate(" ++ fmt spot.rotate ++ ")"
+      let place := mkAttr "transform" ("translate(" ++ fmt spot.x ++ "," ++ fmt spot.y ++ ")" ++ turn)
+      let contours := if numeric then glyphContours cell else []
+      if !contours.isEmpty && glyphAdmitted contours then
+        paths := paths.push (svgElement "path" ([NativeSVG.glyphAttribute table.size,place] ++ opacity) [])
+        table := table.push contours
+      else
+        let data := glyphData cell
+        if !data.isEmpty then
+          paths := paths.push (svgElement "path" ([mkAttr "d" data,place] ++ opacity) [])
       let top := spot.y-cell.ascent*cell.scale
       let bottom := spot.y+cell.descent*cell.scale
       let right := spot.x+cell.advance*cell.scale
@@ -768,7 +819,13 @@ def lowerSfnt (fonts : Array Font) (lookup : String → Option NamespaceNode) (s
   let marked := match box with
     | none => groups.toList
     | some box => groups.toList.map (markGlyphs box)
-  return (svgElement "g" (ids ++ outer) marked,log)
+  return (svgElement "g" (ids ++ outer) marked,log,table)
+
+/-- `lowerSfntWith` with path data text for each glyph. -/
+def lowerSfnt (fonts : Array Font) (lookup : String → Option NamespaceNode) (state : TextState)
+    (attrs : List NamespaceAttribute) (children : List NamespaceNode) : NamespaceNode × List String :=
+  let (node,log,_) := lowerSfntWith fonts lookup false #[] state attrs children
+  (node,log)
 
 /-! ### Text in an HTML document -/
 
@@ -794,21 +851,29 @@ def idIndex (root : NamespaceNode) : Std.HashMap String NamespaceNode := Id.run 
     and lose their text properties, after these are read into the state. With no
     font held, a `text` draws nothing and is logged. The depth is that of the tree,
     at most `fuel`. -/
-def lowerTree (fonts : Array Font) (lookup : String → Option NamespaceNode) : Nat → TextState → NamespaceNode →
-    NamespaceNode × List String
-  | 0,_,node => (node,[])
-  | _,_,node@(.other _) => (node,[])
-  | fuel+1,state,.element name attrs children =>
+def lowerTreeWith (fonts : Array Font) (lookup : String → Option NamespaceNode) (numeric : Bool) :
+    Nat → TextState → NativeSVG.GlyphTable → NamespaceNode → NamespaceNode × List String × NativeSVG.GlyphTable
+  | 0,_,table,node => (node,[],table)
+  | _,_,table,node@(.other _) => (node,[],table)
+  | fuel+1,state,table,.element name attrs children =>
     if name.namespace_ == some svgURI && name.localPart == "text" then
       if fonts.isEmpty then
         (svgElement "g" (attrs.filter (fun a => a.name.namespace_.isNone && a.name.localPart == "id")) [],
-          ["text: no font is held"])
-      else lowerSfnt fonts lookup state attrs children
+          ["text: no font is held"],table)
+      else lowerSfntWith fonts lookup numeric table state attrs children
     else
       let svg := name.namespace_ == some svgURI
       let inner := if svg then state.read (expandStyle attrs) else state
-      let results := children.map (lowerTree fonts lookup fuel inner)
-      (.element name (if svg then stripTextProperties attrs else attrs) (results.map (·.1)),results.flatMap (·.2))
+      let (kids,log,table) := children.foldl (fun (acc : Array NamespaceNode × Array String × NativeSVG.GlyphTable) child =>
+        let (node,more,table) := lowerTreeWith fonts lookup numeric fuel inner acc.2.2 child
+        (acc.1.push node,acc.2.1 ++ more.toArray,table)) (#[],#[],table)
+      (.element name (if svg then stripTextProperties attrs else attrs) kids.toList,log.toList,table)
+
+/-- `lowerTreeWith` with path data text for each glyph. -/
+def lowerTree (fonts : Array Font) (lookup : String → Option NamespaceNode) (fuel : Nat) (state : TextState)
+    (node : NamespaceNode) : NamespaceNode × List String :=
+  let (node,log,_) := lowerTreeWith fonts lookup false fuel state #[] node
+  (node,log)
 
 /-- Depth limit of `lowerDocument`: deeper content stays as it is. -/
 def maxTreeDepth : Nat := 256
@@ -817,5 +882,12 @@ def maxTreeDepth : Nat := 256
 def lowerDocument (fonts : Array Font) (root : NamespaceNode) : NamespaceNode × List String :=
   let index := idIndex root
   lowerTree fonts index.get? maxTreeDepth {} root
+
+/-- `lowerDocument` with glyph outlines as numbers: the glyph paths name entries of the
+    table, which the reader takes (`NativeSVG.parseRootInContextSized`, argument `glyphs`). -/
+def lowerDocumentGlyphs (fonts : Array Font) (root : NamespaceNode) :
+    NamespaceNode × List String × NativeSVG.GlyphTable :=
+  let index := idIndex root
+  lowerTreeWith fonts index.get? true maxTreeDepth {} #[] root
 
 end NativeSVGText
