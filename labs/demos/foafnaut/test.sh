@@ -93,7 +93,7 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
   # Web fonts (@font-face), marks across fonts, paint-only SVG transforms and animation
   # (FrameCost.paint_never_layouts, counted by the engine), hostile text. Wasm and native.
   deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
-    --allow-read --allow-ffi "$LAB/showoff_test.ts"
+    --allow-read --allow-ffi --allow-run=hb-shape "$LAB/showoff_test.ts"
   # The Hub's fallback fonts: files, sizes, SHA-256, and which fonts each demo page fetches.
   deno test --no-check --no-config --allow-read "$LAB/fallback_fonts_test.ts"
   # SVG text, tspan and textPath drawn with the held font (issue 1270), Wasm and native.
