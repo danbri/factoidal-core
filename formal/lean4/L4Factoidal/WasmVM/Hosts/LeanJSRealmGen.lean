@@ -38,7 +38,7 @@ def main (args : List String) : IO UInt32 := do
       IO.eprintln s!"bubblepop-realm: {p} is not the prelude compiled into LeanJS (rebuild L4Factoidal.WasmVM.Hosts.LeanJS)"
       return 3
   let t0 ← IO.monoNanosNow
-  match LeanJS.snapshotData with
+  match LeanJS.snapshotData () with
   | .error e => IO.eprintln s!"bubblepop-realm: {e}"; return 1
   | .ok data =>
     let t1 ← IO.monoNanosNow
