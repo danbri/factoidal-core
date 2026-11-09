@@ -7,11 +7,11 @@ as needing no reference counting. It emits the literal as `lean_unsigned_to_nat(
 `lean_cstr_to_nat("N")` and then passes that one value to as many owners as the program
 has, with no `lean_inc`. On wasm32 a Nat of 2^31 or more is a heap object (an mpz), so
 the first owner that is done with it frees it and the others keep a dangling pointer.
-Measured in the Foafnaut Wasm engine (2026-11-09): `JS.callMethod` gave one literal
+Measured in the Foafnaut Wasm build (2026-11-09): `JS.callMethod` gave one literal
 2^40 (the evaluator's fuel) to `getV` and to `callV`, and `WebScripts.startLean` put the
 literal 4,000,000,000 (`Page.Limits.fuel`) into a closure and into the `Limits` record;
-the frees that followed broke mimalloc's free lists ("memory access out of bounds" in
-`mi_malloc_small`, "remainder by zero", dlmalloc aborts). The same holds for an `Int`
+the frees that followed broke the allocator ("memory access out of bounds" in
+`mi_malloc_small`, dlmalloc aborts). The same holds for an `Int`
 made from such a literal (`lean_nat_to_int`): small on 64-bit up to 2^31 - 1, a heap
 object on wasm32 above 2^30 - 1.
 

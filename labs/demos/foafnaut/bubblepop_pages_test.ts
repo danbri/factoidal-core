@@ -8,7 +8,7 @@
 // same imports on the same arena, the same event loop. The script clock is as good as off
 // (a trillion instructions a ms), so the two engines' instruction counts do not move time.
 // Needs the native library (build-web-render.sh --native). A second test runs the pages on
-// BubblePopJS in the Wasm engine (build-web-render.sh --wasm, as the Hub runs it) and asks for
+// BubblePopJS in the Foafnaut Wasm build (build-web-render.sh --wasm, as the Hub runs it) and asks for
 // the same turns as in the native library: the same Lean, compiled twice.
 // Run: deno test --allow-read --allow-ffi --allow-env bubblepop_pages_test.ts
 import {strict as assert} from "node:assert";
@@ -59,14 +59,31 @@ Deno.test({name:"The demo pages run on BubblePopJS (the JavaScript engine writte
 }});
 
 const wasmRuntime=new URL("./.build/native-html/runtime/web-render.wasm",import.meta.url).pathname;
-Deno.test({name:"The demo pages run on BubblePopJS in the Wasm engine as in the native library",ignore:!exists(library)||!exists(wasmRuntime),fn:async()=>{
+Deno.test({name:"The demo pages run on BubblePopJS in the Foafnaut Wasm build as in the native library",ignore:!exists(library)||!exists(wasmRuntime),fn:async()=>{
   const wasm=await loadHTML(undefined),native=await loadHTML(library);
-  if(!(wasm.scriptInfo().engines??[]).includes("bubblepop")){console.log("NOT RUN: this Wasm engine has no BubblePopJS");return;}
+  if(!(wasm.scriptInfo().engines??[]).includes("bubblepop")){console.log("NOT RUN: this Wasm build has no BubblePopJS");return;}
   for(const name of pages){
     const source=await Deno.readTextFile(new URL(`./pages/${name}.html`,import.meta.url));
     const inWasm=run(wasm,name,source,true);
-    for(const t of inWasm)assert.deepEqual(t.errors,[],`${name}: page errors on BubblePopJS in the Wasm engine`);
-    assert.deepEqual(essence(inWasm),essence(run(native,name,source,true)),`${name}: the Wasm engine differs from the native library`);
-    console.log(`${name}: ${inWasm.length} turns in the Wasm engine, the same as native`);
+    for(const t of inWasm)assert.deepEqual(t.errors,[],`${name}: page errors on BubblePopJS in the Foafnaut Wasm build`);
+    assert.deepEqual(essence(inWasm),essence(run(native,name,source,true)),`${name}: the Wasm build differs from the native library`);
+    console.log(`${name}: ${inWasm.length} turns in the Wasm build, the same as native`);
+  }
+}});
+
+// LeanJS.callDepth: past it a script gets a RangeError it can catch; the browser's WebAssembly
+// stack is not reached, also by the constructs that use the most of it per call.
+Deno.test({name:"Deep recursion on BubblePopJS in the Foafnaut Wasm build is a RangeError, not a trap",ignore:!exists(wasmRuntime),fn:async()=>{
+  const wasm=await loadHTML(undefined);
+  if(!(wasm.scriptInfo().engines??[]).includes("bubblepop")){console.log("NOT RUN: this Wasm build has no BubblePopJS");return;}
+  const bodies=["function f(n){return f(n+1)+1}",
+    "function f(n){for(var i=0;i<1;i++){try{return f(n+1)+1}finally{}}}",
+    "function f(n){return [n].map(function(x){return f(x+1)+1})[0]}",
+    "function f(n){var r=0;switch(n%2){case 0:{while(true){r=f(n+1)+1;break}break}default:{do{r=f(n+1)+1}while(false)}}return r}"];
+  for(const body of bodies){
+    const source=`<!doctype html><script>${body}try{f(0);console.log("no error")}catch(e){console.log(e.name)}</script>`;
+    const turn=wasm.scriptSession(source,{action:"start",url:"file:///deep.html",resources:[],instructionsPerMs:1e12,engine:"bubblepop"}) as unknown as ScriptTurn;
+    assert.deepEqual(turn.logs,["RangeError"],body);
+    wasm.scriptSession("",{action:"close"});
   }
 }});

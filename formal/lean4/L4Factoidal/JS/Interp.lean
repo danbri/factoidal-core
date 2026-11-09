@@ -6285,7 +6285,8 @@ def freshHeap : Heap := freshHeapOf none fun h _ _ _ => (h, .val .undef)
 default budget `Heap.steps` is 10^9; `fuel_covers_steps` in `JS/Tests.lean`). It is the
 largest Nat that is a scalar on a 32-bit target (2^31 - 1, `LEAN_MAX_SMALL_NAT` on wasm32):
 each call and loop iteration subtracts one, and above it every subtraction allocates a big
-number in the Wasm engine (fib(24) 575 ms there with 2^40, 150 ms with this). -/
+number in the Foafnaut Wasm build (the first fib(24) turn there: about 580 ms with 2^40, 265 ms with
+this). -/
 def defaultFuel : Nat := 2147483647
 
 /-- GlobalDeclarationInstantiation (§16.1.7), then the statements. -/

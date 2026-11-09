@@ -527,15 +527,12 @@ QuickJS's 4 G instructions take 40 s. The heap has no collector yet (section 8).
 demo pages the same commands as QuickJS, and is faster there. The Hub keeps QuickJS-NG:
 it runs there translated to the browser's WebAssembly (36 to 216 times faster than
 interpreted, `2026-11-08-wasmvm-aot.md`), and BubblePopJS does not run in the Wasm engine
-yet. In the Wasm build the prelude's run overflowed the 4 MB stack (`-sSTACK_SIZE=4MB`):
-natively clang turns the evaluator's mutual tail calls (statement lists, loops) into
-jumps, and WebAssembly without the tail-call proposal can not, so the stack grows with
-each statement. With a 64 MB stack (a local build, not committed) the run stopped with a
-WebAssembly trap ("remainder by zero") instead, not yet traced. Lean refuses BubblePopJS on
-the Hub and in a window whose engine is the Wasm build (`run_html.ts` without
-`--native-engine`; `WebRenderScript.hostRefusal`: marker `JS REFUSED`, the settings row says "not here
-yet"). To lift it: find the trap, then build with the tail-call proposal (`-mtail-call`) or
-make the evaluator's statement and loop paths self tail calls.
+yet. The first diagnosis here was wrong: the prelude's run did not overflow the 4 MB stack,
+and the crash at 4 MB, 1 MB and 64 MB was a use after free of big literals in the emitted C
+(section 17 and `2026-11-09-wasm32-nat-literals.md`). The "remainder by zero" of the earlier
+64 MB build was not seen again: today's tree at 64 MB stops with "memory access out of bounds",
+so that the two are one fault is likely but not shown. Since that fix BubblePopJS runs in the Foafnaut Wasm build
+when it is chosen, and the Hub's default stays QuickJS-NG.
 
 **The setting.** Settings has three large choices under "Page scripts" (BubblePopJS,
 QuickJS-NG, None; `foafnaut:scripts/...`); Lean makes the rows with the current one ticked

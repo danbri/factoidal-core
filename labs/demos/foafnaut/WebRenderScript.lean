@@ -216,7 +216,7 @@ structure Plan where
   deriving Repr, BEq
 
 /-- Why an engine can not run on a host, or "". Every engine runs on every host: BubblePopJS
-runs in the Wasm engine since its big literals are persistent there
+runs in the Foafnaut Wasm build since its big literals are persistent there
 (docs/designissues/2026-11-08-lean-js-engine.md, section 17); the Hub's default stays
 QuickJS-NG (`defaultEngine`). A host's own reason (no guest module) comes as `unavailable`. -/
 def hostRefusal (_setting _host : String) : String := ""
