@@ -460,8 +460,10 @@ def textContentSet (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M)
     -- On a document or doctype, setting `textContent` does nothing (DOM §4.4).
     let t := (s.dom.get n).type
     if t == .document || t == .doctype then (s, ret 0)
-    -- The same data again changes nothing: no command, no layout.
-    else if charData s.dom n && (s.dom.get n).data == v then (s, ret 0)
+    -- The same data again changes nothing: no command, no layout; live ranges in it still
+    -- move, as "replace data" says (DOM §4.10).
+    else if charData s.dom n && (s.dom.get n).data == v then
+      if s.live.idle then (s, ret 0) else ({ s with live := (Command.setTextContent n v).live s.dom s.live }, ret 0)
     else change s (.setTextContent n v) fun d => changed (.setTextContent n v) (d.setTextContent n v)
 
 def setAttribute (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : State × HostResult :=

@@ -1219,7 +1219,9 @@ def measure (request : JSON.Json) : WasmVM.Hosts.Page.Measure := fun dom width h
     Rendering.CSS.computeAll dom rules textScale state
   fun node op => if op == 20 || op ≥ 200 then
       match styled.get with
-      | .ok styles => if node < dom.size && (dom.get node).type == .element then
+      -- CSSOM §9 getComputedStyle: an element that is not connected to the page's
+      -- document has no computed style (the declaration is empty)
+      | .ok styles => if node < dom.size && (dom.get node).type == .element && dom.root node == 0 then
           let c := styles[node]?.getD {}
           some (if op == 20 then Rendering.ComputedValues.text c
             else (((Rendering.ComputedValues.values c)[op - 200]?).map (·.2)).getD "")

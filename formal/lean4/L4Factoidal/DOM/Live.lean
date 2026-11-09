@@ -224,13 +224,15 @@ def fastReplace (d : Dom) (lv : Live) (child node parent : NodeId) : Live :=
   let lv := match op with
     | some p => stepRemove d lv node p iN
     | none => lv
-  let lv := if (d.get child).parent.isSome then stepRemove d lv child parent (indexOf d child - before child) else lv
+  -- the child leaves unless it is the node, which has left already
+  let childLeaves := (d.get child).parent.isSome && child != node
+  let lv := if childLeaves then stepRemove d lv child parent (indexOf d child - before child) else lv
   let n := d.get node
   let count := if n.type == .fragment then n.kids.size else 1
   if count == 0 then lv else
   let lv := if n.type == .fragment then fastEmpty d lv node else lv
   match ref with
-  | some r => lv.mapBP (insertStep parent (indexOf d r - before r - 1) count)
+  | some r => lv.mapBP (insertStep parent (indexOf d r - before r - (if childLeaves then 1 else 0)) count)
   | none => lv
 
 /-- `textContent` of an element or fragment: its children leave, each at index 0. -/
@@ -288,6 +290,8 @@ private def lv3 (d : Dom) : Live :=
   (fastReplace d (lv3 d) t b a).ranges == (replace d (lv3 d) t b a).2.ranges)
 #guard (let d := doc1; let a := idOf d "a"; let c := idOf d "c"; let b := idOf d "b"
   (fastReplace d (lv3 d) b c a).ranges == (replace d (lv3 d) b c a).2.ranges)
+#guard (let d := doc1; let a := idOf d "a"; let b := idOf d "b"
+  (fastReplace d (lv3 d) b b a).ranges == (replace d (lv3 d) b b a).2.ranges)
 #guard (let d := doc1; let a := idOf d "a"
   (fastReplaceAll d (lv3 d) a).ranges == (replaceAll d (lv3 d) none a).2.ranges)
 -- a fragment of two nodes inserted before b
