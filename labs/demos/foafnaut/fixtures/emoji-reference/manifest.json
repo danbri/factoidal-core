@@ -1,0 +1,134 @@
+[
+ {
+  "name": "grinning-32",
+  "font": "noto-color-emoji/NotoColorEmoji-Smileys.ttf",
+  "text": "😀",
+  "px": 32,
+  "glyph": 28,
+  "width": 35,
+  "height": 34,
+  "left": 2,
+  "top": -28
+ },
+ {
+  "name": "grinning-64",
+  "font": "noto-color-emoji/NotoColorEmoji-Smileys.ttf",
+  "text": "😀",
+  "px": 64,
+  "glyph": 28,
+  "width": 70,
+  "height": 68,
+  "left": 4,
+  "top": -56
+ },
+ {
+  "name": "hearts-64",
+  "font": "noto-color-emoji/NotoColorEmoji-Smileys.ttf",
+  "text": "🥰",
+  "px": 64,
+  "glyph": 120,
+  "width": 78,
+  "height": 76,
+  "left": 0,
+  "top": -60
+ },
+ {
+  "name": "thumbs-tone3-48",
+  "font": "noto-color-emoji/NotoColorEmoji-People.ttf",
+  "text": "👍🏽",
+  "px": 48,
+  "glyph": 483,
+  "width": 47,
+  "height": 55,
+  "left": 7,
+  "top": -44
+ },
+ {
+  "name": "family-48",
+  "font": "noto-color-emoji/NotoColorEmoji-PeopleZWJ.ttf",
+  "text": "👨‍👩‍👧‍👦",
+  "px": 48,
+  "glyph": 27,
+  "width": 54,
+  "height": 55,
+  "left": 3,
+  "top": -44
+ },
+ {
+  "name": "lizard-64",
+  "font": "noto-color-emoji/NotoColorEmoji-Animals.ttf",
+  "text": "🦎",
+  "px": 64,
+  "glyph": 23,
+  "width": 60,
+  "height": 72,
+  "left": 12,
+  "top": -58
+ },
+ {
+  "name": "clock-64",
+  "font": "noto-color-emoji/NotoColorEmoji-Travel.ttf",
+  "text": "🕰",
+  "px": 64,
+  "glyph": 71,
+  "width": 74,
+  "height": 64,
+  "left": 2,
+  "top": -52
+ },
+ {
+  "name": "rainbow-32",
+  "font": "noto-color-emoji/NotoColorEmoji-Travel.ttf",
+  "text": "🌈",
+  "px": 32,
+  "glyph": 123,
+  "width": 35,
+  "height": 37,
+  "left": 1,
+  "top": -30
+ },
+ {
+  "name": "pizza-40",
+  "font": "noto-color-emoji/NotoColorEmoji-Food.ttf",
+  "text": "🍕",
+  "px": 40,
+  "glyph": 36,
+  "width": 38,
+  "height": 46,
+  "left": 6,
+  "top": -37
+ },
+ {
+  "name": "flag-gb-48",
+  "font": "noto-color-emoji/NotoColorEmoji-FlagsFK.ttf",
+  "text": "🇬🇧",
+  "px": 48,
+  "glyph": 55,
+  "width": 58,
+  "height": 49,
+  "left": 1,
+  "top": -41
+ },
+ {
+  "name": "keycap-1-32",
+  "font": "noto-color-emoji/NotoColorEmoji-Symbols.ttf",
+  "text": "1️⃣",
+  "px": 32,
+  "glyph": 110,
+  "width": 36,
+  "height": 36,
+  "left": 2,
+  "top": -29
+ },
+ {
+  "name": "grinning-128",
+  "font": "noto-color-emoji/NotoColorEmoji-Smileys.ttf",
+  "text": "😀",
+  "px": 128,
+  "glyph": 28,
+  "width": 140,
+  "height": 136,
+  "left": 8,
+  "top": -112
+ }
+]

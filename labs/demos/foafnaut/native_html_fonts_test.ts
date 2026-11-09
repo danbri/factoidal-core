@@ -110,20 +110,27 @@ Deno.test("the writing-systems page draws at text zoom 600 on a 390 px phone (Wa
 Deno.test("the writing-systems page draws at text zoom 1200 on a 390 px phone (Wasm)",()=>scriptsAtPhoneZoom(undefined,1200));
 Deno.test({name:"the writing-systems page draws at text zoom 600 on a 390 px phone (native library)",ignore:noLibrary,fn:()=>scriptsAtPhoneZoom(library)});
 
-// Emoji (issue 1276): Noto Emoji, the outline emoji font of the Hub, after Noto Sans. Each
-// sequence is one glyph of that font through its ligatures, with any U+FE0F hidden at no
-// width: a ZWJ family, a ZWJ sequence with U+FE0F inside it (GSUB passes over the
-// selector), a skin tone, a flag, a tag sequence, and keycaps whose digit Noto Sans also
-// has (SfntProfile.runsOf gives the digit to the font that has it and U+FE0F).
-const emojiFont=fonts+"noto-emoji/NotoEmoji-Regular.ttf";
+// Emoji (issue 1276): the colour slices of Noto Color Emoji and Noto Emoji (outlines), after
+// Noto Sans, as the Hub's table orders them and fetches them for these sequences. Each sequence
+// is one glyph through the font's ligatures, with any U+FE0F hidden at no width: a ZWJ family, a
+// ZWJ sequence with U+FE0F inside it (GSUB passes over the selector), a skin tone, a flag, a tag
+// sequence, and keycaps whose digit Noto Sans also has (SfntProfile.runsOf keeps an emoji
+// cluster in one font). An emoji with emoji presentation draws as an image of its colour glyph
+// (ColrRaster): one rectangle whose pixels go in the scene's paint table; with U+FE0E it draws
+// from Noto Emoji as an outline.
 const emojiSequences=["\u{1F600}","❤️","♥️","\u{1F44D}\u{1F3FD}","\u{1F468}‍\u{1F469}‍\u{1F467}‍\u{1F466}",
-  "\u{1F3F3}️‍\u{1F308}","\u{1F1EC}\u{1F1E7}","\u{1F3F4}\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}","1️⃣","#️⃣"];
+  "\u{1F3F3}️‍\u{1F308}","\u{1F1EC}\u{1F1E7}","\u{1F3F4}\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}","1️⃣","#️⃣",
+  "\u{1F9D1}\u{1F3FD}‍\u{1F4BB}","\u{1F1EF}\u{1F1F5}","❤︎"];
 async function emoji(nativeEngine?:string){
   const engine=await loadHTML(nativeEngine,"bytes");
   await loadFontFile(engine,sans,"Noto Sans");
   const digits="<!doctype html><p>Call 1, 2 or # and * \u00a9 \u2122</p>";
   const plain=frame(engine,digits);
-  assert.equal((await loadFontFile(engine,emojiFont,"Noto Emoji","bytes",true)).fonts,2);
+  // @ts-ignore plain JavaScript module of the Hub
+  const {fontsFor}=await import("../../../docs/web/hub/foafnaut/font-coverage.mjs");
+  const wanted=await fontsFor(`<p>${emojiSequences.join(" ")}</p>`,async(path:string)=>JSON.parse(await Deno.readTextFile(fonts+path.replace("./fonts/",""))));
+  assert(wanted.some((f:{family:string})=>f.family==="Noto Emoji")&&wanted.length>6,`fonts ${wanted.map((f:{family:string})=>f.family)}`);
+  for(const font of wanted)await loadFontFile(engine,fontFilePath(font.path),font.family,"bytes",true);
   for(const text of emojiSequences){
     const scene:HTMLArtifact=engine.compile(`<!doctype html><p>${text}</p>`,600,120,{checks:false,url:"file:///emoji.html"});
     const run=(scene.webRender.glyphRuns as {text:string;glyphs:number[][]}[]).find(r=>r.text===text);
@@ -133,11 +140,24 @@ async function emoji(nativeEngine?:string){
     assert.equal(drawn.length,1,`${JSON.stringify(text)}: ${drawn.length} glyphs with width`);
     assert.notEqual(drawn[0][0],0,`${JSON.stringify(text)} is .notdef`);
   }
+  // Colour: a 64 px emoji is one rectangle filled with an image of some 70 by 68 pixels, whose
+  // pixels go in the paint table at the end of the tile lists; the same character with U+FE0E
+  // is an outline of Noto Emoji, with no image.
+  const big=(text:string)=>{
+    const scene:HTMLArtifact=engine.compile(`<!doctype html><p style="font-size:64px;line-height:80px">${text}</p>`,600,120,{checks:false,url:"file:///emoji.html"});
+    return {primitives:scene.primitiveCount,table:scene.tiles.length};
+  };
+  const empty=big("").table;
+  for(const text of ["\u{1F600}","❤️","\u{1F1EC}\u{1F1E7}","\u{1F44D}\u{1F3FD}"]){
+    const b=big(text);
+    assert(b.primitives===1&&b.table-empty>3000,`${JSON.stringify(text)} is not one colour image: ${JSON.stringify(b)}`);
+  }
+  assert(big("❤︎").table-empty<3000,"❤ with U+FE0E is not an outline");
   // Digits, # and * with no selector stay in Noto Sans: the page is as it was.
-  assert(same(plain,frame(engine,digits)),"plain digits and symbols changed with the emoji font");
+  assert(same(plain,frame(engine,digits)),"plain digits and symbols changed with the emoji fonts");
 }
-Deno.test("emoji and emoji sequences draw from Noto Emoji (Wasm)",()=>emoji());
-Deno.test({name:"emoji and emoji sequences draw from Noto Emoji (native library)",ignore:noLibrary,fn:()=>emoji(library)});
+Deno.test("emoji and emoji sequences draw in colour from Noto Color Emoji (Wasm)",()=>emoji());
+Deno.test({name:"emoji and emoji sequences draw in colour from Noto Color Emoji (native library)",ignore:noLibrary,fn:()=>emoji(library)});
 
 // The native window's fallback fonts (native_html_fonts.ts): for each page, the fonts of the
 // Hub's table that its characters need go into the engine worker before the first layout,
