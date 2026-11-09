@@ -42,13 +42,14 @@ def svg(path, title):
 # names goes under "Other pages", so no page is lost. The FOAF graph stays the first link:
 # the sweeps press links[0] of this page.
 SVG_TINY_SCORES = 'https://danbri.github.io/factoidal/web/hub/render-scores/#svg-tiny-pixels'
-BUILT_IN = {'foafnaut:graph': 'Interactive FOAF graph', 'foafnaut:wasm': 'WebAssembly, run by the built-in engine (WasmVM)',
+GAMES_TEST = 'https://danbri.github.io/glitchcan-minigam/'
+BUILT_IN = {GAMES_TEST: 'Testing JavaScript games (on the web)', 'foafnaut:graph': 'Interactive FOAF graph', 'foafnaut:wasm': 'WebAssembly, run by the built-in engine (WasmVM)',
             SVG_TINY_SCORES: 'SVG Tiny 1.2 test suite results (on the web)'}
 START = ['foafnaut:graph', 'spinal-tap-sparql.html', 'shader-gallery.html', 'showcase.html',
          'showcase-dataviz.html', 'showcase-scripts.html']
 GROUPS = [
     ('Pages with scripts', ['search.html', 'foaf-explorer.html', 'foaf-explorer-verified.html', 'canvas-chart.html', 'timers-and-clicks.html', 'webgpu-triangle.html',
-                            'webgl-triangle.html', 'wasm-mandelbrot.html', 'showcase-dataviz-script.html']),
+                            'webgl-triangle.html', 'wasm-mandelbrot.html', 'showcase-dataviz-script.html', GAMES_TEST]),
     ('SVG and graphics', ['showcase-lettering.html', 'showcase-textpath.html', 'showcase-tables-svg.html', 'svg-gallery.html',
                           'svg-text-labels.html', 'solving-showcase.html', 'foaf-graph.html', 'svg-affine.html', 'svg-linear-paths.html']),
     ('Text, type and layout', ['showcase-emoji.html', 'typography-lab.xml', 'showcase-tables.html', 'showcase-images.html',
@@ -59,6 +60,7 @@ GROUPS = [
 ]
 # One line for each link. A page with none here uses the start of its manifest "shows".
 BLURBS = {
+    GAMES_TEST: 'A collection of JavaScript games, as a test. It does not work yet: the games need module scripts.',
     'foafnaut:graph': 'Drag and explore a network of people, laid out by the browser.',
     'spinal-tap-sparql.html': 'Ask Wikidata about the band through QLever, from the page.',
     'shader-gallery.html': 'WebGPU shaders to change and run, a ray marcher among them.',
