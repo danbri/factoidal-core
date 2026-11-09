@@ -61,6 +61,8 @@ const server=http.createServer(async(req,res)=>{
     res.writeHead(e.status,{'content-type':e.type,'content-encoding':'gzip','content-length':data.length,'cache-control':cache==='warm'?'public, max-age=3600':'no-store','access-control-allow-origin':'*'});res.end(data);}
   catch(error){res.writeHead(502);res.end(String(error));}
 });
+// Compress the runtime before the first run, so that time is not counted as download.
+for(const f of ['web-render.wasm','web-render.mjs','render-plan.wasm','render-plan.mjs'])gz('/factoidal/web/hub/html-webgpu/runtime/'+f,fs.readFileSync(engineDir+f));
 await new Promise(r=>server.listen(0,'127.0.0.1',r));
 const origin=`http://127.0.0.1:${server.address().port}`,base=`${origin}/factoidal/web/hub/foafnaut/`;
 const profile=fs.mkdtempSync(path.join(os.tmpdir(),'hub-boot-'));
@@ -83,14 +85,14 @@ try{
   const profOut=opt('--profile');
   const workerSessions=[];
   const prevHandler=socket.onmessage;
-  socket.onmessage=e=>{prevHandler(e);const m=JSON.parse(e.data);if(m.method==='Target.attachedToTarget'&&m.params.targetInfo.type==='worker'){const sid=m.params.sessionId;workerSessions.push(sid);(async()=>{await send('Profiler.enable',{},sid);await send('Profiler.setSamplingInterval',{interval:300},sid);await send('Profiler.start',{},sid);await send('Runtime.runIfWaitingForDebugger',{},sid);})().catch(x=>console.error('prof',x));}};
+  socket.onmessage=e=>{prevHandler(e);const m=JSON.parse(e.data);if(m.method==='Target.attachedToTarget'&&m.params.targetInfo.type==='worker'){const sid=m.params.sessionId;workerSessions.push(sid);(async()=>{if(args.includes('--console'))await send('Runtime.enable',{},sid);if(profOut){await send('Profiler.enable',{},sid);await send('Profiler.setSamplingInterval',{interval:300},sid);await send('Profiler.start',{},sid);}await send('Runtime.runIfWaitingForDebugger',{},sid);})().catch(x=>console.error('prof',x));}};
   await send('Target.setAutoAttach',{autoAttach:true,waitForDebuggerOnStart:false,flatten:true});
   const totalRuns=cache==='warm'?runs+1:runs;
   for(let r=0;r<totalRuns;r++){
     const {targetId}=await send('Target.createTarget',{url:'about:blank'});
     const {sessionId}=await send('Target.attachToTarget',{targetId,flatten:true});
     const s=(m,p)=>send(m,p,sessionId);
-    if(profOut)await s('Target.setAutoAttach',{autoAttach:true,waitForDebuggerOnStart:true,flatten:true});
+    if(profOut||args.includes('--console'))await s('Target.setAutoAttach',{autoAttach:true,waitForDebuggerOnStart:true,flatten:true});
     await s('Page.enable');await s('Runtime.enable');
     await s('Emulation.setDeviceMetricsOverride',{width:800,height:900,deviceScaleFactor:1,mobile:false});
     await s('Page.addScriptToEvaluateOnNewDocument',{source:`(()=>{let f;window.__frames=[];Object.defineProperty(window,'foafnautFrame',{configurable:true,get(){return f;},set(v){f=v;window.__frames.push({t:performance.now(),...v});}});})();`});
@@ -99,7 +101,7 @@ try{
     const evaluate=async expression=>{const x=await s('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(x.exceptionDetails)throw Error(x.exceptionDetails.text+' '+expression);return x.result.value;};
     const scripted=pageArg!=='home';
     const t0=Date.now();let phases,frames;
-    while(Date.now()-t0<120000){
+    while(Date.now()-t0<+opt("--wait-ms","120000")){
       await sleep(150);
       phases=await evaluate('window.foafnautPhases??null').catch(()=>null);
       frames=await evaluate(`(window.__frames??[]).map(f=>({t:f.t,path:f.path,layoutMs:f.layoutMs,drawMs:f.drawMs,turns:f.scripts?.turns,startMs:f.scripts?.startMs,engine:f.scripts?.engine,instructions:f.scripts?.instructions,hostCalls:f.scripts?.hostCalls}))`).catch(()=>null);
