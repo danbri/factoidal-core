@@ -505,15 +505,18 @@ def dropKey (s : State) (h : Nat) : State × Nat :=
     ({ s with keys := { s.keys with keys }, hostReqs := reqs }, n)
 
 /-- At the end of a session (`WebScripts` close, or a new start): every key's bytes are
-handed to `WebHacl.wipe`, which zeroes them where the store held the last reference. The
-state is consumed, so the store's references are the last ones unless an answer still
-shares the bytes. The answer is the number of bytes handed over. -/
+zeroed in place (`WebHacl.zeroNow`): the session and everything in it is being dropped, so
+no holder that lives on shares them. (Reference-counted `wipe` zeroed none here: the
+store, the session and the held state all still referenced each key while it ran.) The
+answer is the number of bytes zeroed. -/
 def wipeAll (s : State) : Nat :=
   s.keys.keys.toList.foldl (fun n (_, k) =>
     let m := k.material
     let p := k.pub
-    let r := k.rsa
-    n + Crypto.WebHacl.wipe m + Crypto.WebHacl.wipe p + wipeRsa r) 0
+    let z := Crypto.WebHacl.zeroNow
+    n + z m + z p + (match k.rsa with
+      | some r => z r.d + z r.p + z r.q + z r.dp + z r.dq + z r.qi
+      | none => 0)) 0
 
 end Subtle
 
