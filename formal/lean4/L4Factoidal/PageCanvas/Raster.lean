@@ -53,6 +53,13 @@ structure Box where
   h : Nat
   deriving Repr, Inhabited, BEq
 
+/-- The smallest box holding both (an empty box adds nothing). -/
+def Box.union (a b : Box) : Box :=
+  if a.w == 0 || a.h == 0 then b else if b.w == 0 || b.h == 0 then a else
+  let x := min a.x b.x
+  let y := min a.y b.y
+  ⟨x, y, max (a.x + a.w) (b.x + b.w) - x, max (a.y + a.h) (b.y + b.h) - y⟩
+
 /-- Clamp a coordinate to `0 .. n`. -/
 def clampNat (v : Float) (n : Nat) : Nat :=
   if v.isNaN || v <= 0 then 0 else if v >= nf n then n else v.toUInt64.toNat
@@ -147,6 +154,10 @@ def coverageIn (box : Box) (es : Array Edge) (rule : FillRule) : FloatArray × A
     if active.isEmpty then
       spans := spans.push (0, 0)
       continue
+    -- The active edges in order of x at the middle of the row, once a row: the crossings of
+    -- each sample row then come nearly sorted, and an insertion sort is linear on them.
+    let mid := row + 0.5
+    active := sortBy (fun e => e.x0 + (max e.y0 (min e.y1 mid) - e.y0) * (e.x1 - e.x0) / (e.y1 - e.y0)) active
     let mut lo := box.w + 1
     let mut hi := 0
     for s in [0:subRows] do
@@ -156,8 +167,7 @@ def coverageIn (box : Box) (es : Array Edge) (rule : FillRule) : FloatArray × A
         if e.y0 <= ys && ys < e.y1 then
           let x := e.x0 + (ys - e.y0) * (e.x1 - e.x0) / (e.y1 - e.y0)
           xs := xs.push (x, e.dir)
-      -- Few crossings: insertion; many (overlapping shapes): a sort.
-      xs := if xs.size ≤ 16 then xs.foldl (fun acc (x, d) => insertSorted acc x d) #[] else sortBy (·.1) xs
+      xs := xs.foldl (fun acc (x, d) => insertSorted acc x d) (Array.emptyWithCapacity xs.size)
       let mut wind : Int := 0
       let mut start := 0.0
       for (x, d) in xs do
