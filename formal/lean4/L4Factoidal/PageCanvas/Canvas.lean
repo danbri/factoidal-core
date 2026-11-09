@@ -839,7 +839,7 @@ def bits (x : Float) : String := JS.numToString x
 def latin1 (b : ByteArray) : String := b.foldl (fun s x => s.push (Char.ofNat x.toNat)) ""
 
 /-- Straight (not premultiplied) RGBA of `x .. x+w`, `y .. y+h`; transparent outside. -/
-def Canvas.straight (c : Canvas) (x y : Int) (w h : Nat) : ByteArray := Id.run do
+def Canvas.straightRef (c : Canvas) (x y : Int) (w h : Nat) : ByteArray := Id.run do
   let mut out := ByteArray.emptyWithCapacity (w * h * 4)
   for j in [0:h] do
     let yy := y + j
@@ -852,6 +852,29 @@ def Canvas.straight (c : Canvas) (x y : Int) (w h : Nat) : ByteArray := Id.run d
         let a := c.bitmap[k+3]!.toNat
         let un := fun (v : UInt8) => if a == 0 then 0 else (min 255 ((v.toNat * 255 + a / 2) / a)).toUInt8
         out := (((out.push (un c.bitmap[k]!)).push (un c.bitmap[k+1]!)).push (un c.bitmap[k+2]!)).push a.toUInt8
+  return out
+
+/-- `straightRef`, faster: a rectangle inside the canvas is copied a row at a time
+(memory copies), then only its pixels that are neither opaque nor transparent are
+un-premultiplied in place (a premultiplied transparent pixel is already 0, 0, 0, 0).
+Outside the canvas, `straightRef`. `Tests.lean` checks that the two agree. -/
+def Canvas.straight (c : Canvas) (x y : Int) (w h : Nat) : ByteArray := Id.run do
+  if x < 0 || y < 0 || x + w > c.width || y + h > c.height || c.bitmap.size != c.width * c.height * 4 then
+    return c.straightRef x y w h
+  let x := x.toNat
+  let y := y.toNat
+  let row := w * 4
+  let mut out := bzeros (h * row)
+  for j in [0:h] do
+    out := c.bitmap.copySlice (((y + j) * c.width + x) * 4) out (j * row) row
+  for p in [0:w * h] do
+    let k := 4 * p
+    let a := out[k+3]!.toNat
+    if a != 255 && a != 0 then
+      let un := fun (v : UInt8) => (min 255 ((v.toNat * 255 + a / 2) / a)).toUInt8
+      out := out.set! k (un out[k]!)
+      out := out.set! (k+1) (un out[k+1]!)
+      out := out.set! (k+2) (un out[k+2]!)
   return out
 
 def styleText : Style → String

@@ -157,7 +157,19 @@ def coverageIn (box : Box) (es : Array Edge) (rule : FillRule) : FloatArray × A
     -- The active edges in order of x at the middle of the row, once a row: the crossings of
     -- each sample row then come nearly sorted, and an insertion sort is linear on them.
     let mid := row + 0.5
-    active := sortBy (fun e => e.x0 + (max e.y0 (min e.y1 mid) - e.y0) * (e.x1 - e.x0) / (e.y1 - e.y0)) active
+    let key := fun (e : Edge) => e.x0 + (max e.y0 (min e.y1 mid) - e.y0) * (e.x1 - e.x0) / (e.y1 - e.y0)
+    -- Usually in order from the row before: an insertion pass, linear then; a merge sort
+    -- when the pass would move many edges.
+    let mut moves := 0
+    let mut sorted : Array Edge := Array.emptyWithCapacity active.size
+    for e in active do
+      let k := key e
+      let mut i := sorted.size
+      while i > 0 && key sorted[i-1]! > k && moves ≤ 4 * active.size do
+        i := i - 1
+        moves := moves + 1
+      sorted := sorted.insertIdx! i e
+    active := if moves > 4 * active.size then sortBy key active else sorted
     let mut lo := box.w + 1
     let mut hi := 0
     for s in [0:subRows] do
