@@ -4051,7 +4051,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
     | .stringIsWellFormed | .stringToWellFormed | .dateMethod _ | .dateUTC | .dateParse
     | .iteratorCtor | .iteratorFrom | .iterLazy _ | .iterEager _ | .helperNext | .helperReturn
     | .numberToExponential | .numberToPrecision | .setMethod _ | .proxyRevocable | .proxyRevoke
-    | .arrayMethod _ =>
+    | .arrayMethod _ | .objectHasOwn | .groupBy _ | .stringLocaleCompare =>
       moreNative n id thisV args newTarget
     | _ =>
       -- string methods and Math
@@ -5613,6 +5613,45 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
         if len > 4294967295 then throwErr .range "Invalid array length"
         let vs ← valuesUpTo len
         newArray (vs.set! i.toUInt64.toNat a1)
+    | .objectHasOwn =>
+      let id ← toObj n a0
+      let k ← toKey n a1
+      pure (.bool (← ownDesc n id k).isSome)
+    | .groupBy isMap =>
+      -- GroupBy (§7.3.35): the items of an iterable, by key (property key or SameValueZero)
+      if !(← isCallable a1) then throwErr .type "groupBy: the callback is not a function"
+      let items ← iterToArray n (← getIterator n a0) #[]
+      let mut keys : Array Value := #[]
+      let mut groups : Array (Array Value) := #[]
+      for i in [0:items.size] do
+        let kv ← callV n a1 .undef #[items[i]!, .num (Float.ofNat i)]
+        let key ← if isMap then pure (match kv with | .num x => if x == 0 then .num 0 else kv | _ => kv)
+          else do pure (keyValue (← toKey n kv))
+        match keys.findIdx? (sameValue · key) with
+        | some j => groups := groups.modify j (·.push items[i]!)
+        | none =>
+          keys := keys.push key
+          groups := groups.push #[items[i]!]
+      if isMap then
+        let mut o : Obj := { kind := .coll 0 #[] {} }
+        for j in [0:keys.size] do o := collPut keys[j]! (← newArray groups[j]!) o
+        let mc ← getV n (.obj r.globalObj) "Map"
+        let mp ← getV n mc "prototype"
+        pure (.obj (← alloc { o with proto := mp }))
+      else
+        let res ← alloc { proto := .null }
+        for j in [0:keys.size] do
+          defineOwn res (← toKey n keys[j]!) (.data (← newArray groups[j]!) true true true)
+        pure (.obj res)
+    | .stringLocaleCompare =>
+      match ← thisPrim thisV with
+      | .undef | .null => throwErr .type "String.prototype.localeCompare called on null or undefined"
+      | _ => pure ()
+      let s ← toStr n (← thisPrim thisV)
+      let t ← toStr n a0
+      let a := Str.units s
+      let b := Str.units t
+      pure (.num (if a == b then 0 else if decide (a < b) then -1 else 1))
     | .dateUTC =>
       let mut xs : Array Float := #[]
       for i in [0:min 7 args.size] do xs := xs.push (← toNum n args[i]!)
@@ -5901,6 +5940,8 @@ def initRealm : M Unit := do
     method oc "isSealed" .objectIsSealed 1
     method oc "getOwnPropertyDescriptors" .objectGetOwnPropertyDescriptors 1
     method oc "fromEntries" .objectFromEntries 1
+    method oc "hasOwn" .objectHasOwn 2
+    method oc "groupBy" (.groupBy false) 2
   for (nm, f, l) in [("flat", Native.arrayFlat, 0), ("flatMap", .arrayFlatMap, 1), ("at", .arrayAt, 1),
       ("findLast", .arrayFindLast, 1), ("findLastIndex", .arrayFindLastIndex, 1)] do
     method arrayProto nm f l
@@ -5912,6 +5953,14 @@ def initRealm : M Unit := do
       ("trimEnd", .stringTrimEnd, 0), ("replace", .stringReplace, 2), ("replaceAll", .stringReplaceAll, 2)] do
     method stringProto nm f l
   if let .obj sc := stringC then method sc "fromCodePoint" .stringFromCodePoint 1
+  method stringProto "localeCompare" .stringLocaleCompare 1
+  -- Annex B.2.2.15, B.2.2.16: trimLeft and trimRight are trimStart and trimEnd
+  for (alias, nm) in [("trimLeft", "trimStart"), ("trimRight", "trimEnd"), ("toLocaleUpperCase", "toUpperCase"),
+      ("toLocaleLowerCase", "toLowerCase")] do
+    if let some (.data f ..) := (← getObj stringProto).getOwn nm then setHidden stringProto alias f
+  match ← getV 100 (.obj g) "Map" with
+  | .obj mc => method mc "groupBy" (.groupBy true) 2
+  | _ => pure ()
   if let .obj nc := numberC then
     method nc "isFinite" .numberIsFinite 1
     method nc "isNaN" .numberIsNaN 1

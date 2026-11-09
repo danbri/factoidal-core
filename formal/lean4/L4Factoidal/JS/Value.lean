@@ -160,6 +160,10 @@ inductive Native where
   /-- Array.prototype methods (§23.1.3): 0 `copyWithin`, 1 `reduceRight`, 2 `toReversed`,
   3 `toSorted`, 4 `toSpliced`, 5 `with`. -/
   | arrayMethod (k : Nat)
+  /-- `Object.hasOwn` (§20.1.2.13), `Object.groupBy` and `Map.groupBy` (§20.1.2.12,
+  §24.1.2.1; `true` for Map), `String.prototype.localeCompare` (§22.1.3.12, code unit order:
+  there is no Intl here). -/
+  | objectHasOwn | groupBy (map : Bool) | stringLocaleCompare
   deriving BEq, Repr, Inhabited
 
 /-- What a running function sees. -/
