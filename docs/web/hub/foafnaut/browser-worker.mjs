@@ -551,13 +551,18 @@ async function loadGuestOnce(){
 }
 function startPendingScripts(page){
   if(!page?.pendingScripts)return;
-  // The start turn (and the QuickJS guest, when a page runs on it) come after the frame.
-  setTimeout(async()=>{
+  // The start turn (and the QuickJS guest, when a page runs on it) come after the page's frame:
+  // the draw loop calls this just after posting it (a turn would block the worker). The timer
+  // is for a frame that never comes (a page that is refused, an engine error).
+  const start=async()=>{
+    clearTimeout(timer);page.afterFrame=undefined;
     if(doc!==page||!page.pendingScripts)return;
     const scripts=page.pendingScripts;page.pendingScripts=undefined;
     try{if(await hasScripts()&&doc===page)await startScripts(page,scripts);}
     catch(error){scriptFailed(page,error,'start');}
-  },120);
+  };
+  const timer=setTimeout(start,400);
+  page.afterFrame=start;
 }
 // A request answered as bytes: the JSON head and its raw sections (WebDocument.packAnswer).
 function callSections(source,options){
@@ -1009,7 +1014,7 @@ function scrollLimit(){
 }
 // The request for a frame of this page at a scroll; its signature leaves the scroll out, so
 // a band made at one scroll is known to be for the same state at another.
-const renderOptions=at=>({op:'render',url:doc.url,...(doc.liberal?{liberal:true,...(doc.diagnosticsSeen?{}:{diagnostics:true})}:{}),...(doc.images?{images:doc.images}:{}),...(doc.heldImages?{heldImages:doc.heldImages}:{}),...(doc.commands?{commands:doc.commands}:{}),textScalePercent:percent,shell:{...shell(),scroll:at},live:doc===checked,binary:true});
+const renderOptions=at=>({op:'render',...(checkMode?{}:{checks:false}),url:doc.url,...(doc.liberal?{liberal:true,...(doc.diagnosticsSeen?{}:{diagnostics:true})}:{}),...(doc.images?{images:doc.images}:{}),...(doc.heldImages?{heldImages:doc.heldImages}:{}),...(doc.commands?{commands:doc.commands}:{}),textScalePercent:percent,shell:{...shell(),scroll:at},live:doc===checked,binary:true});
 const signature=options=>JSON.stringify({...options,images:undefined,shell:{...options.shell,scroll:0,collapse:undefined}});
 // The graph page keeps its document and changes its source: the band must be of this source.
 const canShift=()=>!!(layerSurface&&current&&current.doc===doc&&current.source===doc.source&&current.width===width&&current.height===height&&current.sig===signature(renderOptions(scroll)));
@@ -1265,6 +1270,7 @@ async function draw(){
           // For hub_links_check.mjs: the links of a one-frame view, and who routes them.
           ...(statsMode&&layered===false?{links:frame.webRender.links,routes:router.lean?'lean':'fallback'}:{})}},rgba?[rgba.buffer]:[]);
       if(!phasesPosted){phasesPosted=true;post({type:'phases',phases});firstFrameSeen();}
+      if(shown.afterFrame){const start=shown.afterFrame;shown.afterFrame=undefined;setTimeout(start,16);}
     }catch(error){
       incoming=undefined;
       session?.close();session=undefined;

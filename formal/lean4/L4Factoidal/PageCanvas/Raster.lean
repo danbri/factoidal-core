@@ -95,32 +95,39 @@ private def insertSorted (xs : Array (Float × Int)) (x : Float) (d : Int) : Arr
   while i > 0 && xs[i-1]!.1 > x do i := i - 1
   return xs.insertIdx! i (x, d)
 
-/-- Sorted by `key`, stable: a bottom-up merge sort (no recursion; n log n whatever the
-input, also when many keys are equal, as for shapes drawn over each other). -/
-def sortBy {α} [Inhabited α] (key : α → Float) (xs : Array α) : Array α := Id.run do
-  let n := xs.size
-  let mut a := xs
-  let mut width := 1
-  -- At most log2 n + 1 passes; `n` bounds the loop.
-  for _ in [0:n] do
-    if width ≥ n then break
-    let mut out : Array α := Array.emptyWithCapacity n
-    let mut lo := 0
-    for _ in [0:n] do
-      if lo ≥ n then break
-      let mid := min n (lo + width)
-      let hi := min n (lo + 2 * width)
-      let mut i := lo
-      let mut j := mid
-      for _ in [lo:hi] do
-        if i < mid && (j ≥ hi || key a[i]! <= key a[j]!) then
-          out := out.push a[i]!; i := i + 1
-        else
-          out := out.push a[j]!; j := j + 1
-      lo := hi
-    a := out
-    width := 2 * width
-  return a
+/-- One merge of the sorted runs `a[lo..mid)` and `a[mid..hi)`: `fuel` outputs, in `out`. -/
+private def sortMerge {α} [Inhabited α] (key : α → Float) (a : Array α) (mid hi : Nat) :
+    Nat → Nat → Nat → Array α → Array α
+  | 0, _, _, out => out
+  | fuel+1, i, j, out =>
+    if i < mid && (j ≥ hi || key a[i]! <= key a[j]!) then
+      sortMerge key a mid hi fuel (i + 1) j (out.push a[i]!)
+    else
+      sortMerge key a mid hi fuel i (j + 1) (out.push a[j]!)
+
+/-- A merge pass of run width `width`: `fuel` bounds the number of runs. -/
+private def sortPass {α} [Inhabited α] (key : α → Float) (a : Array α) (n width : Nat) :
+    Nat → Nat → Array α → Array α
+  | 0, _, out => out
+  | fuel+1, lo, out =>
+    if lo ≥ n then out else
+    let mid := min n (lo + width)
+    let hi := min n (lo + 2 * width)
+    sortPass key a n width fuel hi (sortMerge key a mid hi (hi - lo) lo mid out)
+
+/-- Sorted by `key`, stable: a bottom-up merge sort (n log n whatever the input, also when many
+keys are equal, as for shapes drawn over each other). Each step is a tail call: a `for` over a range in this
+polymorphic function was left unspecialized by the compiler and took about five Wasm frames per
+element (a chart of 700 edges overflowed the Hub worker's stack). -/
+def sortBy {α} [Inhabited α] (key : α → Float) (xs : Array α) : Array α :=
+  go xs.size xs 1
+where
+  /-- At most `n` passes (`width` doubles each time). -/
+  go : Nat → Array α → Nat → Array α
+    | 0, a, _ => a
+    | fuel+1, a, width =>
+      if width ≥ xs.size then a
+      else go fuel (sortPass key a xs.size width xs.size 0 (Array.emptyWithCapacity xs.size)) (2 * width)
 
 /-- The coverage values of polygons with edges `es` under `rule`, in `box`, and for each
 row of the box the columns `[lo, hi)` that may be covered (outside them the value is 0). -/
