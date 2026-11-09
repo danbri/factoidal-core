@@ -5,12 +5,12 @@ kill_signal = "SIGTERM"
 kill_timeout = "10s"
 
 [build.args]
-  FACTOIDAL_VERSION = "0.33.0"
+  FACTOIDAL_VERSION = "0.34.0"
   FOAFOS_POD_COMMIT = "6462105c92f8d7088118e293e3020da9a52daba7"
 
 [env]
   XMPP_DOMAIN = "foafos-xmpp.fly.dev"
-  XMPP_EXTRA_ARGS = "--no-address-limit"
+  XMPP_EXTRA_ARGS = "--proxy-protocol --muc-owners /data/xmpp/muc-owners"
 
 [mounts]
   source = "foafos_xmpp_data"
@@ -32,6 +32,8 @@ kill_timeout = "10s"
     soft_limit = 200
   [[services.ports]]
     port = 5223
+    handlers = ["proxy_proto"]
+    proxy_proto_options = { version = "v2" }
   [[services.tcp_checks]]
     interval = "30s"
     timeout = "5s"
@@ -48,6 +50,8 @@ kill_timeout = "10s"
     soft_limit = 200
   [[services.ports]]
     port = 5222
+    handlers = ["proxy_proto"]
+    proxy_proto_options = { version = "v2" }
 
 [[services]]
   internal_port = 5281
@@ -60,6 +64,8 @@ kill_timeout = "10s"
     soft_limit = 200
   [[services.ports]]
     port = 443
+    handlers = ["proxy_proto"]
+    proxy_proto_options = { version = "v2" }
 
 [[services]]
   internal_port = 8080
