@@ -2,7 +2,8 @@
 // keeps pumping, and they run in the order sent. A worker that fails to start or dies
 // rejects its calls; the caller decides what to do and says so in the trace.
 import type {HTMLArtifact,HTMLLayers} from "./native_html_engine.ts";
-import type {RemoteCall,WorkerReply,WorkerRequest} from "./native_html_worker.ts";
+import {REMOTE_CALLS,type RemoteCall} from "./native_html_calls.ts";
+import type {WorkerReply,WorkerRequest} from "./native_html_worker.ts";
 import type {PageFonts} from "./native_html_fonts.ts";
 
 export type CompileClient={
@@ -45,9 +46,7 @@ export async function startCompileWorker(font?:{path:string;family:string},nativ
     if(!reply.ok)throw new Error(reply.error);
     return {value:reply.value,workerMs:reply.ms};
   };
-  // The same names as REMOTE_CALLS in native_html_worker.ts (not imported: that module runs
-  // worker code at load). A merge dropped printLayout here once, and the window could not print.
-  const names:RemoteCall[]=["xmlStylesheet","xslt","inspect","fontRequests","graphStart","graphEvent","graphPage","sourcePage","wasmPage","sparqlPage","selectedText","compile","compileLayers","printLayout","imageInfo","imageLoad","imageDrop","frameWork","requestBytes","scriptInfo","scriptLoad","scriptSession","nodeAt","pointerAt","scriptPlan","scriptSetting","scriptChoices"];
+  const names=REMOTE_CALLS;
   const engine=Object.fromEntries(names.map(name=>[name,async(...args:unknown[])=>(await call(name,...args)).value])) as CompileClient["engine"];
   return {
     get alive(){return alive;},

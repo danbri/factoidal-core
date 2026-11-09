@@ -13,9 +13,9 @@ import {loadHTML,type HTMLArtifact,type HTMLEngine} from "./native_html_engine.t
 import {loadFontFile} from "./native_html_document.ts";
 import {fallbackFontHost,loadFallbackFonts} from "./native_html_fonts.ts";
 
-/** The engine methods a caller may run in the worker. */
-export const REMOTE_CALLS=["xmlStylesheet","xslt","inspect","fontRequests","graphStart","graphEvent","graphPage","sourcePage","wasmPage","sparqlPage","selectedText","decodeDocument","encodingSetting","encodingChoices","compile","compileLayers","printLayout","imageInfo","imageLoad","imageDrop","frameWork","requestBytes","scriptInfo","scriptLoad","scriptSession","nodeAt","pointerAt","scriptPlan","scriptSetting","scriptChoices"] as const;
-export type RemoteCall=typeof REMOTE_CALLS[number];
+import {REMOTE_CALLS,type RemoteCall} from "./native_html_calls.ts";
+export {REMOTE_CALLS};
+export type {RemoteCall};
 export type WorkerRequest={id:number;op:"init";font?:{path:string;family:string};nativeEngine?:string}
   |{id:number;op:"call";name:RemoteCall;args:unknown[];low?:boolean}
   |{id:number;op:"dropLow"}
