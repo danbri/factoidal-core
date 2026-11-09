@@ -427,7 +427,18 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
       if(result?.error)throw new Error(`Lean HTML: ${result.error}`);
       return result as {module:boolean;bytes:number};
     },
-    scriptSession:(source:string,request:Record<string,unknown>)=>documentCall(source,{...request,op:"scriptSession"}) as ScriptTurn,
+    // A turn's Canvas 2D pixels (docs/designissues/2026-11-08-canvas-2d.md): its `pixels`
+    // commands name sections of the bytes call scriptSession canvasPixels; each gets `bytes`.
+    scriptSession:(source:string,request:Record<string,unknown>)=>{
+      const turn=documentCall(source,{...request,op:"scriptSession"}) as ScriptTurn&{gpu?:{k:string;section?:number;bytes?:Uint8Array}[]};
+      const wanted=(turn.gpu??[]).filter(c=>c.k==="pixels"&&typeof c.section==="number");
+      if(wanted.length){
+        const buffer=backends.bytes("",JSON.stringify({op:"scriptSession",action:"canvasPixels",session:turn.session}),1,1);
+        const {sections}=unpackAnswer(buffer);
+        for(const c of wanted){const at=sections[c.section!];if(at)c.bytes=new Uint8Array(buffer,at[0],at[1]);}
+      }
+      return turn;
+    },
     /** The node under a window point, for a click that page scripts receive. */
     nodeAt:(source:string,width:number,height:number,options:Record<string,unknown>)=>
       (documentCall(source,{...options,op:"nodeAt"},width,height) as {node:number|null}).node,

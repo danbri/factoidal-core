@@ -47,13 +47,16 @@ structure Canvas where
   path : Path := {}
   /-- Drawn since the host last had its pixels. -/
   dirty : Bool := true
+  /-- The pixels drawn since then (a box holding every draw's pixels). -/
+  dirtyBox : Box := ⟨0, 0, 0, 0⟩
   /-- A `canvas` element of the page (its pixels are composited), not an OffscreenCanvas. -/
   element : Bool := true
   deriving Inhabited
 
 def Canvas.make (w h : Nat) (element : Bool) : Canvas :=
   let (w', h') := if w ≤ maxSide && h ≤ maxSide && w * h ≤ maxArea then (w, h) else (0, 0)
-  { width := w', height := h', bitmap := ByteArray.mk (Array.replicate (w' * h' * 4) 0), element }
+  { width := w', height := h', bitmap := ByteArray.mk (Array.replicate (w' * h' * 4) 0), element,
+    dirtyBox := ⟨0, 0, w', h'⟩ }
 
 theorem Canvas.make_size (w h : Nat) (e : Bool) :
     (Canvas.make w h e).bitmap.size = (Canvas.make w h e).width * (Canvas.make w h e).height * 4 := by
@@ -73,6 +76,8 @@ structure Store where
   textures : Std.HashMap Nat (Nat × Nat) := {}
   /-- Images of the page decoded for drawing, by URL key (decoded once). -/
   images : Std.HashMap String Bitmap := {}
+  /-- The rectangles the last turn told the host of (`Store.sent`), for `pullSections`. -/
+  pending : Array (Nat × Box) := #[]
   deriving Inhabited
 
 /-- One command of a batch: the display list of a canvas. -/
@@ -160,14 +165,17 @@ def clearBytes (b : ByteArray) : ByteArray := Id.run do
 
 /-- Run `f` on the bitmap with the canvas holding no reference to it (so `f` changes it in
 place), and keep the result only at the same size. -/
-@[inline] def Canvas.onBitmap (c : Canvas) (f : ByteArray → ByteArray) : Canvas :=
+@[inline] def Canvas.onBitmap (c : Canvas) (box : Box) (f : ByteArray → ByteArray) : Canvas :=
   let n := c.bitmap.size
   let bm := c.bitmap
   let c := { c with bitmap := ByteArray.empty }
-  { c with bitmap := fitTo n (f bm), dirty := true }
+  { c with bitmap := fitTo n (f bm), dirty := true, dirtyBox := if c.dirty then c.dirtyBox.union box else box }
 
-theorem Canvas.onBitmap_size (c : Canvas) (f : ByteArray → ByteArray) :
-    (c.onBitmap f).bitmap.size = c.bitmap.size := fitTo_size _ _
+theorem Canvas.onBitmap_size (c : Canvas) (box : Box) (f : ByteArray → ByteArray) :
+    (c.onBitmap box f).bitmap.size = c.bitmap.size := fitTo_size _ _
+
+/-- The whole canvas as a box. -/
+def Canvas.full (c : Canvas) : Box := ⟨0, 0, c.width, c.height⟩
 
 /-- A canvas whose bitmap does not have `width × height × 4` bytes gets a blank one (a
 final check; no command makes one). -/
@@ -237,7 +245,7 @@ edges and rule, asked for only when there is a shadow. -/
 def Canvas.paint (c : Canvas) (st : DrawState) (d : Draw) (shape : Unit → Array Edge × FillRule) : Canvas :=
   let W := c.width
   let H := c.height
-  c.onBitmap fun bm =>
+  c.onBitmap (if shadowOn st then c.full else d.visits W H) fun bm =>
     let bm := if shadowOn st then
         let (es, rule) := shape ()
         composite W H bm (shadowDraw W H st d es rule)
@@ -296,8 +304,8 @@ def Run.rectDraw (r : Run) (c : Canvas) (x y w h : Float) (style : Style) (clear
     -- HTML: clearRect clears to transparent black, ignoring alpha, operator and shadow.
     let full := cov.box == ⟨0, 0, c.width, c.height⟩ && st.clip.isNone && m.b == 0 && m.c == 0 &&
       cov.cov.data.all (· >= 1)
-    if full then c.onBitmap clearBytes
-    else c.onBitmap fun bm => composite c.width c.height bm ⟨.solid ⟨1, 1, 1, 1⟩, cov, 1, .destinationOut, st.clip⟩
+    if full then c.onBitmap c.full clearBytes
+    else c.onBitmap cov.box fun bm => composite c.width c.height bm ⟨.solid ⟨1, 1, 1, 1⟩, cov, 1, .destinationOut, st.clip⟩
   else
     c.paint st ⟨style.ready r.gradient r.pattern m st.smoothing, cov, Color.clamp01 st.alpha, st.op, st.clip⟩
       fun _ => (edgesOf ((rectPath x y w h).map m |>.flatten), .nonzero)
@@ -596,7 +604,7 @@ def Canvas.putImageData (c : Canvas) (data : ByteArray) (w h : Nat) (dx dy : Int
   let y1 := min (min (Int.ofNat h) (ry + rh)) (Int.ofNat c.height - dy)
   if x1 <= x0 || y1 <= y0 then c else
   let W := c.width
-  c.onBitmap fun bm => Id.run do
+  c.onBitmap ⟨(x0 + dx).toNat, (y0 + dy).toNat, (x1 - x0).toNat, (y1 - y0).toNat⟩ fun bm => Id.run do
     let mut bm := bm
     for j in [0:(y1 - y0).toNat] do
       let sy := (y0 + j).toNat
@@ -698,7 +706,7 @@ def Run.step (r : Run) (cmd : Cmd) : Run :=
     { r with store := { r.store with canvases := r.store.canvases.insert id c } } |>.take id
   | .save => r.withCur fun c r => ({ c with stack := c.stack.save }, r)
   | .restore => r.withCur fun c r => ({ c with stack := c.stack.restore }, r)
-  | .reset => r.withCur fun c r => ({ c with stack := {}, path := {} }.onBitmap clearBytes, r)
+  | .reset => r.withCur fun c r => ({ c with stack := {}, path := {} }.onBitmap c.full clearBytes, r)
   | .pathTarget id => { r with target := id }
   | .beginPath => if r.target == 0 then r.withCur (fun c r => ({ c with path := {} }, r))
       else { r with store := { r.store with paths := r.store.paths.insert r.target {} } }
@@ -1000,29 +1008,44 @@ def Store.answer (s : Store) (env : Env) (q : Query) : Store × String :=
 /-! ### What the host gets -/
 
 /-- A host command for the canvases of a page (beside `PageGpu.HostCmd`): a texture for
-an element canvas, and its pixels (the whole premultiplied bitmap; the host gets them as
-straight RGBA, run-length, `rle`). -/
+an element canvas, and a rectangle of its pixels. The pixels themselves are not in the
+turn's JSON: the host takes them as raw bytes (`Store.pullSections`, the scriptSession
+action `canvasPixels` of the bytes call), straight RGBA, one section a rectangle. -/
 inductive HostCmd where
   | texture (id node w h : Nat)
   | destroy (id : Nat)
-  | pixels (id w h : Nat) (data : ByteArray)
+  | pixels (id x y w h : Nat)
 
 /-- Texture ids of 2D canvases, apart from the page's own GPU objects. -/
 def textureBase : Nat := 1073741824
 
+/-- A box inside a `W × H` canvas: clamped to it. -/
+def clampBox (W H : Nat) (b : Box) : Box :=
+  let x := min b.x W
+  let y := min b.y H
+  ⟨x, y, min b.w (W - x), min b.h (H - y)⟩
+
+theorem clampBox_within (W H : Nat) (b : Box) :
+    (clampBox W H b).x + (clampBox W H b).w ≤ W ∧ (clampBox W H b).y + (clampBox W H b).h ≤ H := by
+  simp only [clampBox]; constructor <;> omega
+
+/-- What the host gets of a drawn canvas: the whole canvas for a new texture, else the
+box drawn since the last turn, inside the canvas. -/
+def regionOf (held : Option (Nat × Nat)) (c : Canvas) : Box :=
+  clampBox c.width c.height (if held == some (c.width, c.height) then c.dirtyBox else c.full)
+
 /-- The host commands of one drawn canvas: a texture when the host has none of its size,
-then its pixels, only with exactly `width × height × 4` bytes. -/
+then the rectangle of its pixels that changed. -/
 def emitOne (held : Option (Nat × Nat)) (id : Nat) (c : Canvas) : List HostCmd :=
   if c.width == 0 || c.height == 0 then [] else
   let tex := if held == some (c.width, c.height) then []
     else (if held.isSome then [HostCmd.destroy (textureBase + id)] else []) ++ [.texture (textureBase + id) id c.width c.height]
-  -- The premultiplied bitmap; its JSON form is straight RGBA (`rle`).
-  let data := c.bitmap
-  tex ++ (if data.size == c.width * c.height * 4 then [.pixels (textureBase + id) c.width c.height data] else [])
+  let r := regionOf held c
+  tex ++ [.pixels (textureBase + id) r.x r.y r.w r.h]
 
-/-- Every pixels command of `emitOne` is of the canvas's size, with that many bytes. -/
-theorem emitOne_pixels (held : Option (Nat × Nat)) (id : Nat) (c : Canvas) (t w h : Nat) (d : ByteArray)
-    (mem : HostCmd.pixels t w h d ∈ emitOne held id c) : w = c.width ∧ h = c.height ∧ d.size = w * h * 4 := by
+/-- Every pixels command of `emitOne` is a rectangle inside its canvas. -/
+theorem emitOne_pixels (held : Option (Nat × Nat)) (id : Nat) (c : Canvas) (t x y w h : Nat)
+    (mem : HostCmd.pixels t x y w h ∈ emitOne held id c) : x + w ≤ c.width ∧ y + h ≤ c.height := by
   unfold emitOne at mem
   split at mem
   · simp at mem
@@ -1031,9 +1054,9 @@ theorem emitOne_pixels (held : Option (Nat × Nat)) (id : Nat) (c : Canvas) (t w
     · split at m
       · simp at m
       · split at m <;> simp at m
-    · split at m
-      · simp at m; obtain ⟨_, rfl, rfl, rfl⟩ := m; simp_all
-      · simp at m
+    · simp at m
+      obtain ⟨_, rfl, rfl, rfl, rfl⟩ := m
+      exact clampBox_within _ _ _
 
 def Store.drawn (s : Store) : List (Nat × Canvas) :=
   s.canvases.toList.filter fun (_, c) => c.dirty && c.element
@@ -1042,70 +1065,49 @@ def Store.drawn (s : Store) : List (Nat × Canvas) :=
 def Store.hostCmds (s : Store) : List HostCmd :=
   s.drawn.flatMap fun (id, c) => emitOne (s.textures.get? id) id c
 
-/-- The store once the host has the commands of `hostCmds`: none drawn, the textures known. -/
+/-- The rectangles of `hostCmds`, in their order: what `pullSections` gives. -/
+def Store.regions (s : Store) : Array (Nat × Box) :=
+  (s.drawn.filterMap fun (id, c) =>
+    if c.width == 0 || c.height == 0 then none else some (id, regionOf (s.textures.get? id) c)).toArray
+
+/-- The store once the host has the commands of `hostCmds`: none drawn, the textures known,
+the rectangles kept for the host's `canvasPixels`. -/
 def Store.sent (s : Store) : Store :=
   let drawn := s.drawn
-  if drawn.isEmpty then s else
+  if drawn.isEmpty then { s with pending := #[] } else
+  let pending := s.regions
   let textures := drawn.foldl (fun t (id, c) => if c.width == 0 || c.height == 0 then t else t.insert id (c.width, c.height)) s.textures
-  let canvases := drawn.foldl (fun m (id, c) => m.insert id { c with dirty := false }) s.canvases
-  { s with textures, canvases }
+  let canvases := drawn.foldl (fun m (id, c) => m.insert id { c with dirty := false, dirtyBox := ⟨0, 0, 0, 0⟩ }) s.canvases
+  { s with textures, canvases, pending }
 
 def Store.emit (s : Store) : Store × List HostCmd := (s.sent, s.hostCmds)
 
-/-- The host gets pixels only of the size of a canvas of the page. -/
-theorem emit_pixels (s : Store) (t w h : Nat) (d : ByteArray) (mem : HostCmd.pixels t w h d ∈ (s.emit).2) :
-    ∃ id c, (id, c) ∈ s.drawn ∧ w = c.width ∧ h = c.height ∧ d.size = w * h * 4 := by
+/-- The host gets only rectangles inside a canvas of the page. -/
+theorem emit_pixels (s : Store) (t x y w h : Nat) (mem : HostCmd.pixels t x y w h ∈ (s.emit).2) :
+    ∃ id c, (id, c) ∈ s.drawn ∧ x + w ≤ c.width ∧ y + h ≤ c.height := by
   simp only [Store.emit, Store.hostCmds, List.mem_flatMap] at mem
   obtain ⟨⟨id, c⟩, hm, hp⟩ := mem
-  exact ⟨id, c, hm, emitOne_pixels _ _ _ _ _ _ _ hp⟩
+  exact ⟨id, c, hm, emitOne_pixels _ _ _ _ _ _ _ _ hp⟩
 
-/-- The pixel `i` of RGBA bytes as one word. -/
-@[inline] def wordAt (d : ByteArray) (i : Nat) : UInt32 :=
-  d[4*i]!.toUInt32 ||| (d[4*i+1]!.toUInt32 <<< 8) ||| (d[4*i+2]!.toUInt32 <<< 16) ||| (d[4*i+3]!.toUInt32 <<< 24)
+/-- The pixels of the rectangles sent in the last turn, straight RGBA, one section each,
+for the host's bytes call (no Base64). -/
+def Store.pullSections (s : Store) : Array ByteArray :=
+  s.pending.map fun (id, b) => match s.canvases.get? id with
+    | some c => c.straight b.x b.y b.w b.h
+    | none => bzeros (b.w * b.h * 4)
 
-def pushWord (b : ByteArray) (v : Nat) : ByteArray :=
-  (((b.push (v % 256).toUInt8).push (v / 256 % 256).toUInt8).push (v / 65536 % 256).toUInt8).push (v / 16777216 % 256).toUInt8
-
-/-- Pixel `i` of a premultiplied bitmap pushed as straight RGBA. -/
-@[inline] def pushStraight (b : ByteArray) (i : Nat) (out : ByteArray) : ByteArray :=
-  let k := 4 * i
-  let a := b[k+3]!.toNat
-  if a == 255 then (((out.push b[k]!).push b[k+1]!).push b[k+2]!).push 255
-  else if a == 0 then (((out.push 0).push 0).push 0).push 0
-  else
-    let un := fun (v : UInt8) => (min 255 ((v.toNat * 255 + a / 2) / a)).toUInt8
-    (((out.push (un b[k]!)).push (un b[k+1]!)).push (un b[k+2]!)).push a.toUInt8
-
-/-- Run-length form of a premultiplied bitmap's pixels for the host, as straight RGBA:
-runs, each a little-endian word, then the pixels: with the high bit set, that many pixels
-follow; without it, one pixel follows, repeated that many times. One pass; only the pixels
-written are converted. A canvas is mostly runs (backgrounds, bars). -/
-def rle (d : ByteArray) : ByteArray := Id.run do
-  let n := d.size / 4
-  let mut out := ByteArray.emptyWithCapacity (n / 4 + 16)
-  let mut i := 0
-  let mut lit := 0
-  while i < n do
-    let w := wordAt d i
-    let mut j := i + 1
-    while j < n && wordAt d j == w do j := j + 1
-    if j - i >= 3 then
-      if lit < i then
-        out := pushWord out (2147483648 + (i - lit))
-        for k in [lit:i] do out := pushStraight d k out
-      out := pushWord out (j - i)
-      out := pushStraight d i out
-      lit := j
-    i := j
-  if lit < n then
-    out := pushWord out (2147483648 + (n - lit))
-    for k in [lit:n] do out := pushStraight d k out
-  return out
-
-def HostCmd.json (page : Nat) : HostCmd → String
-  | .texture id node w h =>
-    s!"\{\"k\":\"canvas\",\"g\":[{page},{id}],\"node\":{node},\"w\":{w},\"h\":{h},\"usage\":22,\"twoD\":true}"
-  | .destroy id => s!"\{\"k\":\"destroy\",\"g\":[{page},{id}]}"
-  | .pixels id w h data => s!"\{\"k\":\"pixels\",\"g\":[{page},{id}],\"w\":{w},\"h\":{h},\"rle\":1,\"data\":\"{Png.base64 (rle data)}\"}"
+/-- The JSON of the host commands; a pixels command names its section of `pullSections`. -/
+def Store.hostJson (s : Store) (page : Nat) : List String := Id.run do
+  let mut out : List String := []
+  let mut k := 0
+  for c in s.hostCmds do
+    match c with
+    | .texture id node w h =>
+      out := s!"\{\"k\":\"canvas\",\"g\":[{page},{id}],\"node\":{node},\"w\":{w},\"h\":{h},\"usage\":22,\"twoD\":true}" :: out
+    | .destroy id => out := s!"\{\"k\":\"destroy\",\"g\":[{page},{id}]}" :: out
+    | .pixels id x y w h =>
+      out := s!"\{\"k\":\"pixels\",\"g\":[{page},{id}],\"x\":{x},\"y\":{y},\"w\":{w},\"h\":{h},\"section\":{k}}" :: out
+      k := k + 1
+  return out.reverse
 
 end L4Factoidal.PageCanvas

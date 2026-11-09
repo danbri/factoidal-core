@@ -39,7 +39,8 @@ function run(engine:HTMLEngine,name:string,source:string,lean:boolean){
 }
 // GPU object ids carry the session's page number (L4Factoidal.PageGpu.Gid.page): compared without it.
 const essence=(turns:Turn[])=>turns.map(t=>({commands:t.commands,logs:t.logs,errors:t.errors,
-  gpu:JSON.stringify(t.gpu??[]).replaceAll(`[${t.gpuPage},`,"[page,"),clock:t.clock,timers:t.timers,frames:t.frames}));
+  // Canvas 2D pixels (raw bytes) compared by a checksum.
+  gpu:JSON.stringify(t.gpu??[],(k,v)=>k==="bytes"?(v as Uint8Array).reduce((a:number,b:number)=>(a*31+b)>>>0,0):v).replaceAll(`[${t.gpuPage},`,"[page,"),clock:t.clock,timers:t.timers,frames:t.frames}));
 
 Deno.test({name:"The demo pages run on BubblePopJS (the JavaScript engine written in Lean), as on QuickJS-NG (native library)",ignore:!exists(library),fn:async()=>{
   const engine=await loadHTML(library);

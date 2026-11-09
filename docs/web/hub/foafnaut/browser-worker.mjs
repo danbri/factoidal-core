@@ -10,6 +10,7 @@ import {createBrowserState,indexedDbStore,memoryStore,stateAvailable} from './br
 // Where a link or an address goes: Lean's route (WebRoute.lean), done as it says; with an
 // engine from before the op, the same rules in JavaScript (link-route.mjs, issue 1274).
 import {createRouter} from './link-route.mjs';
+import {canvasImages} from './page-gpu.mjs';
 let browserState,stateReason='starting';
 const statePages=['foafnaut:bookmarks','foafnaut:history'];
 const inWorker=typeof WorkerGlobalScope!=='undefined'&&self instanceof WorkerGlobalScope;
@@ -618,20 +619,37 @@ function scriptTurn(page,turn){
   for(const line of turn.errors)console.warn('page error:',line);
   if(page.script)page.script.turn=turn;
   // The start turn comes before the page is shown: its commands make the objects.
-  if(turn.gpu?.length)gpuTake(turn.gpuPage,turn.gpu);
+  if(turn.gpu?.length){pullCanvasPixels(turn);gpuTake(turn.gpuPage,turn.gpu);}
   if(turn.changed&&turn.commands){page.commands=turn.commands;if(page===doc)request();}
+}
+// Canvas 2D (docs/designissues/2026-11-08-canvas-2d.md): a turn names rectangles of
+// pixels; their bytes come from the bytes call (scriptSession canvasPixels), raw, no Base64.
+function pullCanvasPixels(turn){
+  const wanted=turn.gpu.filter(c=>c.k==='pixels'&&typeof c.section==='number');
+  if(!wanted.length||typeof module._web_document_call_bin!=='function')return;
+  const pointer=module.ccall('web_document_call_bin','number',['string','string','number','number','number'],
+    ['',JSON.stringify({op:'scriptSession',action:'canvasPixels',session:turn.session}),1,1,0]);
+  if(!pointer)throw Error('Lean engine allocation failed');
+  let buffer;
+  try{const heap=module.HEAPU8;buffer=heap.slice(pointer,pointer+new DataView(heap.buffer,pointer,4).getUint32(0,true)).buffer;}
+  finally{module.ccall('web_render_free',null,['number'],[pointer]);}
+  const view=new DataView(buffer),headSize=view.getUint32(4,true),count=view.getUint32(8,true);
+  let offset=12+4*count+headSize;const sections=[];
+  for(let i=0;i<count;i++){const length=view.getUint32(12+4*i,true);sections.push([offset,length]);offset+=(length+3)&~3;}
+  for(const c of wanted){const s=sections[c.section];if(s)c.bytes=new Uint8Array(buffer,s[0],s[1]);}
 }
 // Page GPU commands (docs/designissues/2026-11-08-page-gpu.md): Lean validated each one
 // (L4Factoidal.PageGpu) and gives them in the turn; the layer surface replays them and draws
 // the page canvases into the page layer. The log is what a new device needs to make the
 // page's objects again: every command but passes, and only the last write of each range.
-let gpuPage=-1,gpuLog=[],gpuPending=[],gpuFed,gpuBusy=false,gpuAgain=false;
+let gpuPage=-1,gpuLog=[],gpuPending=[],gpuFed,gpuBusy=false,gpuAgain=false,canvasImageLog=canvasImages();
 function gpuTake(p,commands){
-  if(p!==gpuPage){gpuPage=p;gpuLog=[];gpuPending=[];}
+  if(p!==gpuPage){gpuPage=p;gpuLog=[];gpuPending=[];canvasImageLog=canvasImages();}
   for(const c of commands){
     if(c.k==='write'){const i=gpuLog.findIndex(x=>x.k==='write'&&x.g[1]===c.g[1]&&x.offset===c.offset&&x.data.length===c.data.length);if(i>=0)gpuLog.splice(i,1);}
-    // A 2D canvas's pixels are the whole canvas: only the last of each canvas is needed.
-    if(c.k==='pixels'){const i=gpuLog.findIndex(x=>x.k==='pixels'&&x.g[1]===c.g[1]);if(i>=0)gpuLog.splice(i,1);}
+    // A 2D canvas: the log keeps its whole image (a turn sends only the rectangle that changed).
+    if(c.k==='pixels'){const i=gpuLog.findIndex(x=>x.k==='pixels'&&x.g[1]===c.g[1]);if(i>=0)gpuLog.splice(i,1);gpuLog.push(canvasImageLog.take(c));continue;}
+    if(c.k==='canvas'&&c.twoD)canvasImageLog.take(c);
     if(c.k!=='pass')gpuLog.push(c);
   }
   gpuPending.push(...commands);

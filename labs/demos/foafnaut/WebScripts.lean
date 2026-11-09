@@ -169,7 +169,7 @@ private unsafe def entropyImpl (id : Nat) : ByteArray :=
 @[implemented_by entropyImpl, noinline] private opaque entropy (id : Nat) : ByteArray
 
 def actions : List String := ["info", "load", "start", "click", "pointer", "resize", "advance", "settle", "turn", "close",
-  "aotModule", "resume", "host"]
+  "aotModule", "resume", "host", "canvasPixels"]
 
 /-- An answer object with `nextSession` first: the value `keep` answered, so the
 compiled code keeps the call. -/
@@ -253,10 +253,10 @@ def turnAnswerOf (id : Nat) (before : Before) (s : View) (marks : Marks) (full :
   let gpu := dom.gpuOut
   -- Canvas 2D (PageCanvas): the pixels of each canvas drawn in the turn, as host commands
   -- of the same list (a texture, then its pixels), blitted like a WebGPU canvas.
-  let canvas := dom.canvas.hostCmds
+  let canvas := dom.canvas.hostJson dom.gpu.page
   let text := if gpu.isEmpty && canvas.isEmpty then text else
     (text.dropEnd 1).toString ++ ",\"gpuPage\":" ++ toString dom.gpu.page ++ ",\"gpu\":[" ++
-      ",".intercalate (gpu.toList.map PageGpu.Wire.HostCmd.json ++ canvas.map (PageCanvas.HostCmd.json dom.gpu.page)) ++ "]}"
+      ",".intercalate (gpu.toList.map PageGpu.Wire.HostCmd.json ++ canvas) ++ "]}"
   (text, { logs := logs.size, errors := s.errors.size })
 
 def turnAnswer (id : Nat) (before : Before) (s : Page.Session) (marks : Marks) (full : Bool) (ns : Nat)
@@ -724,6 +724,18 @@ def opSections (name html : String) (request : JSON.Json) (measure : JSON.Json �
       | none => .error "scriptSession: no guest module for AOT; load it with guest:quickjs-aot"
     let n := keep held request
     return some (← answer.map fun (h, b) => (withNext n h, b))
+  -- Canvas 2D: the pixels of the rectangles the last turn named (`pixels` commands, by
+  -- `section`), as raw sections, straight RGBA (PageCanvas.Store.pullSections).
+  if name == "scriptSession" && str request "action" == "canvasPixels" then
+    let held := take request
+    let store := match held.session, held.leanSession with
+      | some (id, s, _), _ => if natField request "session" == some id then some s.host.dom.canvas else none
+      | _, some (id, s, _) => if natField request "session" == some id then some s.host.dom.canvas else none
+      | none, none => none
+    let n := keep held request
+    return some (match store with
+      | some st => (withNext n (JSON.Json.object [("sections",num st.pending.size)]).toString, st.pullSections)
+      | none => (withNext n "{\"sections\":0}", #[]))
   return (← op name html request measure canvas).map (·, #[])
 
 end WebScripts
