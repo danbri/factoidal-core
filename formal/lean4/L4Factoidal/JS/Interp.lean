@@ -33,7 +33,33 @@ local notation "M" => JSM H
 def alloc (o : Obj) : M Nat := modifyGet fun h => (h.objs.size, { h with objs := h.objs.push o })
 def getObj (id : Nat) : M Obj := do pure ((← get).obj id)
 def modifyObj (id : Nat) (f : Obj → Obj) : M Unit :=
-  modify fun h => { h with objs := h.objs.modify id f }
+  -- the object array is taken out of the heap first, and `Array.modify` moves the object
+  -- out of the array for `f`: both are changed in place when nothing else holds them
+  modify fun h =>
+    let objs := h.objs
+    let h := { h with objs := #[] }
+    { h with objs := objs.modify id f }
+
+/-- Change object `id` with `f`, which also answers a value. The object is moved out of the
+heap while `f` runs, so `f` holds the only reference and a change to its elements does not
+copy them (an Array push is amortised constant time, not a copy of the array). -/
+def updateObj {α} [Inhabited α] (id : Nat) (f : Obj → α × Obj) : M α :=
+  modifyGet fun h =>
+    let objs := h.objs
+    let h := { h with objs := #[] }
+    if id < objs.size then
+      let o := objs[id]!
+      let objs := objs.set! id default
+      let (a, o) := f o
+      (a, { h with objs := objs.set! id o })
+    else (default, { h with objs })
+
+/-- The elements of an Array object, taken out of it: the object is left with no elements
+(`Kind.ordinary`) so the elements are the only reference. -/
+def Obj.takeArray (o : Obj) : Option (Array Value) × Obj :=
+  match o.kind with
+  | .array es => let o := { o with kind := .ordinary }; (some es, o)
+  | _ => (none, o)
 def realm : M Realm := do pure (← get).realm
 
 def newEnv (parent : Option Nat) : M Nat :=
@@ -76,8 +102,9 @@ def sizeCost (v : Value) : M Nat := do
     | _ => pure 0
   | _ => pure 0
 
-/-- The String methods that do not walk an ASCII receiver: they index it in constant time
-(`Str.unitAt?`) or copy only their result (and take steps for that). -/
+/-- The built-ins that do not walk their receiver: String methods on an ASCII string index it
+in constant time (`Str.unitAt?`) or copy only their result (and take steps for that); an
+Array's `push`, `pop` and `at`. -/
 def indexesReceiver (id : Native) (thisV : Value) : Bool :=
   match thisV with
   | .str s =>
@@ -85,18 +112,26 @@ def indexesReceiver (id : Native) (thisV : Value) : Bool :=
       | .stringCharAt | .stringCharCodeAt | .stringAt | .stringCodePointAt | .stringSlice
       | .stringSubstring | .stringSubstr => true
       | _ => false
+  -- an Array's push, pop and at change or read one end in place (`updateObj`)
+  | .obj _ => match id with
+    | .arrayPush | .arrayPop | .arrayAt => true
+    | _ => false
   | _ => false
 
 /-- Set or add an own data property with all attributes true (CreateDataProperty). -/
 def Obj.putOwn (o : Obj) (key : String) (p : PropV) : Obj :=
   match o.kind, arrayIndex? key, p with
-  | .array es, some i, .data v _ _ _ =>
+  | .array _, some i, .data v _ _ _ =>
+    -- the elements leave the object first, so `set!` and `push` change them in place
+    let (es, o) := o.takeArray
+    let es := es.getD #[]
     if i < es.size then { o with kind := .array (es.set! i v) }
     else if i == es.size then { o with kind := .array (es.push v) }
     else if i < es.size + 100000 then
       { o with kind := .array ((es ++ Array.replicate (i - es.size) Value.undef).push v) }
     else
-      { o with props := o.props.insert key p, keys := if o.props.contains key then o.keys else o.keys.push key }
+      { o with kind := .array es, props := o.props.insert key p,
+               keys := if o.props.contains key then o.keys else o.keys.push key }
   | _, _, _ =>
     { o with props := o.props.insert key p, keys := if o.props.contains key then o.keys else o.keys.push key }
 
@@ -3209,20 +3244,22 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       | _ => pure (.bool false)
     | .arrayPush =>
       match thisV with
-      | .obj id => match (← getObj id).kind with
-        | .array es =>
-          modifyObj id fun o => { o with kind := .array (es ++ args) }
-          pure (.num (Float.ofNat (es.size + args.size)))
-        | _ => genericPush n thisV args
+      | .obj id =>
+        let r ← updateObj id fun o =>
+          match o.takeArray with
+          | (some es, o) => let es := es ++ args; (some es.size, { o with kind := .array es })
+          | (none, o) => (none, o)
+        match r with
+        | some k => pure (.num (Float.ofNat k))
+        | none => genericPush n thisV args
       | _ => genericPush n thisV args
     | .arrayPop =>
       match thisV with
-      | .obj id => match (← getObj id).kind with
-        | .array es =>
-          if es.isEmpty then pure .undef else
-          modifyObj id fun o => { o with kind := .array es.pop }
-          pure es.back!
-        | _ => pure .undef
+      | .obj id =>
+        updateObj id fun o =>
+          match o.takeArray with
+          | (some es, o) => (es.back?.getD .undef, { o with kind := .array es.pop })
+          | (none, o) => (.undef, o)
       | _ => pure .undef
     | .arrayShift =>
       match thisV with
