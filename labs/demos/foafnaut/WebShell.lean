@@ -1,3 +1,4 @@
+import L4Factoidal.Rendering.ClipTheorems
 import WebRender
 import WebRoute
 import WebSelection
@@ -579,15 +580,34 @@ def nodes (s : Shell) (width : Nat) : List Rendering.Node :=
   [paint t.base 0 0 width (height s width),.group none slide (controlNodes {s with collapse := 0} (fade t (2*p)) width)] ++
     domainNodes s t width p ++ edgeNodes s t width ++ swipeNodes s t width
 
-/-- Put a page rendered below the chrome and the chrome into one scene. -/
+/-- The page's part of the window: rows from the chrome's bottom to the window's. -/
+def pageClip (s : Shell) (width height' : Nat) : Rendering.ClipRect :=
+  ⟨0,Float.ofNat (height s width),Float.ofNat width,Float.ofNat height'-Float.ofNat (height s width),Rendering.identity⟩
+
+/-- Put a page rendered below the chrome and the chrome into one scene. The page is clipped to its part of the window
+(`pageClip`), so no page ink reaches the chrome (`compose_page_clipped`). -/
 def compose (s : Shell) (page : Rendering.Scene) (width height' : Nat) : Rendering.Scene :=
   let top := Float.ofNat (height s width)-Float.ofNat s.scroll
   let shift : Rendering.Transform := ⟨1,0,0,1,0,top⟩
   {page with
     height := height'
     mapping := {page.mapping with viewportHeight := Float.ofNat height'}
-    tree := [.group none shift page.tree] ++ nodes s width
+    tree := [.clipped none Rendering.identity (pageClip s width height') [.group none shift page.tree]] ++ nodes s width
     links := Rendering.moveLinks (· + top) page.links}
+
+/-- Security: every primitive of the page in a composed frame carries the page's part
+of the window as a clip, so its ink can not paint the chrome. -/
+theorem compose_page_clipped (s : Shell) (page : Rendering.Scene) (width height' : Nat)
+    (parent : Rendering.Transform) (groups : List (Option String)) (item : Rendering.PaintItem)
+    (node : Rendering.Node) (head : (compose s page width height').tree.head? = some node)
+    (h : item ∈ node.lower parent groups) :
+    (pageClip s width height').lowerUnder parent ∈ item.primitive.clips := by
+  have e : node = .clipped none Rendering.identity (pageClip s width height')
+      [.group none ⟨1,0,0,1,0,Float.ofNat (height s width)-Float.ofNat s.scroll⟩ page.tree] := by
+    simp only [compose, List.cons_append, List.head?_cons, Option.some.injEq] at head
+    exact head.symm
+  subst e
+  exact Rendering.lower_clipped _ _ _ _ _ _ _ h
 
 /-- The page under the chrome keeps every link of the page, moved down by the chrome less
 the scroll and nothing else (`LinkTheorems.moveLinks_getElem`; issue 1268). -/

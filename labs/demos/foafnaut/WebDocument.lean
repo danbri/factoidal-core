@@ -23,6 +23,8 @@ import L4Factoidal.WHATWG.Encoding.Sniff
 import WebHit
 import WebAccept
 import WebConsole
+import WebPaint
+import L4Factoidal.Rendering.FontFaceRule
 
 /-! Browser document transaction. Lean discovers resources, applies DOM commands,
 orders supplied CSS, collects font requests and renders the resulting arena.
@@ -284,16 +286,27 @@ private def supplied (request : JSON.Json) (id : Nat) : Except String (Option St
     return some source
   | _ => throw s!"stylesheet resource missing or duplicated for node {id}"
 
-/-- The rules of the document's sheets in `env`, with the skip points of mode `m`: a `media`
-that can not be read, a stylesheet the host could not fetch, and sheets past 2 MiB. -/
-def rulesIn (m : WebAccept.Mode) (dom : DOM.Dom) (request : JSON.Json) (env : Rendering.MediaQuery.Env) :
-    Except String (List Rendering.CSS.Rule × List WebAccept.Diagnostic) := do
+/-- The URL a supplied stylesheet came from (its `url`), for the URLs in it. -/
+private def suppliedURL (request : JSON.Json) (id : Nat) : Option String := do
+  let .array resources := (request.field? "resources").getD (.array []) | none
+  let r ← resources.find? (fun r => r.field? "nodeId" == some (.number (toString id)))
+  match r.field? "url" with
+  | some (.string u) => some u
+  | _ => none
+
+/-- The document's sheets in `env`, in tree order, each with the URL its own URLs resolve
+against (the document's base for a `style` element, the sheet's URL for a supplied one,
+CSS Values 4 §4.5.1), with the skip points of mode `m`: a `media` that can not be read, a
+stylesheet the host could not fetch, and sheets past 2 MiB. -/
+def sheetsIn (m : WebAccept.Mode) (dom : DOM.Dom) (request : JSON.Json) (env : Rendering.MediaQuery.Env) :
+    Except String (List (String × String) × List WebAccept.Diagnostic) := do
   -- Preserve the existing SVG/HTML stylesheet boundary validation. This copy
   -- removes only the external-fetch refusal; it is never used for layout.
   let validation := {dom with nodes := dom.nodes.map (fun n =>
     if stylesheet n then {n with attrs := n.attrs.filter (fun a => a.lname != "href")} else n)}
   WebRender.validateStyleBoundaries validation
-  let mut sheets : List String := []
+  let base := baseURL dom (str request "url")
+  let mut sheets : List (String × String) := []
   let mut bytes := 0
   let mut ds : List WebAccept.Diagnostic := []
   for id in dom.treeOrder 0 do
@@ -321,14 +334,32 @@ def rulesIn (m : WebAccept.Mode) (dom : DOM.Dom) (request : JSON.Json) (env : Re
       ds := ds ++ d
       continue
     bytes := bytes+source.utf8ByteSize
-    sheets := source::sheets
-  return (← Rendering.CSS.parseIn env (String.intercalate "\n" sheets.reverse),ds)
+    let from_ := if inline then base else (suppliedURL request id).getD base
+    sheets := (from_,source)::sheets
+  return (sheets.reverse,ds)
+
+/-- The rules of the document's sheets in `env` (`sheetsIn`). -/
+def rulesIn (m : WebAccept.Mode) (dom : DOM.Dom) (request : JSON.Json) (env : Rendering.MediaQuery.Env) :
+    Except String (List Rendering.CSS.Rule × List WebAccept.Diagnostic) := do
+  let (sheets,ds) ← sheetsIn m dom request env
+  return (← Rendering.CSS.parseIn env (String.intercalate "\n" (sheets.map (·.2))),ds)
 
 /-- The rules of a request, in its mode (`WebAccept.accept`). `env` is the media environment;
 with none given, the media type of the request and no viewport. -/
 def rules (dom : DOM.Dom) (request : JSON.Json) (env : Rendering.MediaQuery.Env := {medium := medium request}) :
     Except String (List Rendering.CSS.Rule) :=
   (WebAccept.accept (WebAccept.mode request) fun m => rulesIn m dom request env).map (·.1)
+
+/-- The `@font-face` rules of sheets (CSS Fonts 4 §4), URLs resolved. Pages with no
+`@font-face` pay one substring search of their sheets. -/
+def facesOf (env : Rendering.MediaQuery.Env) (sheets : List (String × String)) : Array Rendering.FontFaceRule.Face :=
+  if !sheets.any (fun (_,src) => (src.splitOn "@font-face").length > 1 || (src.toLower.splitOn "@font-face").length > 1) then #[]
+  else Rendering.FontFaceRule.ofSheets env.medium Syntax.resolveIri sheets
+
+/-- The `@font-face` rules of the document's sheets, in the request's mode. -/
+def fontFaces (dom : DOM.Dom) (request : JSON.Json) (env : Rendering.MediaQuery.Env := {medium := medium request}) :
+    Except String (Array Rendering.FontFaceRule.Face) :=
+  (WebAccept.accept (WebAccept.mode request) fun m => sheetsIn m dom request env).map (facesOf env ·.1)
 
 private def scriptWhere (script : JSON.Json) : String :=
   let src := str script "src"
@@ -924,32 +955,34 @@ private unsafe def pageArtifactImpl (page : Rendering.Scene) (extra : List Rende
       pageWorkRef.modify fun (m,g) => (m,g+1)
       return .ok k.answer
     | none =>
-      let made := WebRender.artifactWith (pageLayer page extra b) boxes face live form checks tree
+      let made := WebRender.artifactWith (WebPaint.cull (pageLayer page extra b)) boxes face live form checks tree
       if let .ok answer := made then
         keptPageRef.set ((⟨page,extra,b,boxes,face,live,form,checks,tree,answer⟩ :: kept).take keptPageSlots)
         pageWorkRef.modify fun (m,g) => (m+1,g)
       return made
 
-/-- The page layer of a layers answer. Its value is `artifactWith` of the band of the page;
+/-- The page layer of a layers answer. Its value is `artifactWith` of the band of the page,
+with its curves off the band made lines (`WebPaint.cull`: the same pixels, fewer edges for a
+zoomed group);
 the engine gives a kept answer again when the inputs are the same objects (a frame whose
 only change is in the chrome: loading, the address, a pressed chrome control, the menu). -/
 @[implemented_by pageArtifactImpl]
 def pageArtifact (page : Rendering.Scene) (extra : List Rendering.Node) (b : Band)
     (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face) (live : Bool)
     (form : NativeSVG.DataForm) (checks tree : Bool) : Except String (String × Array ByteArray) :=
-  WebRender.artifactWith (pageLayer page extra b) boxes face live form checks tree
+  WebRender.artifactWith (WebPaint.cull (pageLayer page extra b)) boxes face live form checks tree
 
 theorem pageArtifact_eq (page : Rendering.Scene) (extra : List Rendering.Node) (b : Band)
     (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face) (live : Bool)
     (form : NativeSVG.DataForm) (checks tree : Bool) :
     pageArtifact page extra b boxes face live form checks tree =
-      WebRender.artifactWith (pageLayer page extra b) boxes face live form checks tree := rfl
+      WebRender.artifactWith (WebPaint.cull (pageLayer page extra b)) boxes face live form checks tree := rfl
 
 /-- The answer to a render with `layers:true`. -/
 def layersJSON (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List Rendering.Node)
     (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face)
     (width height : Nat) (live : Bool) (form : NativeSVG.DataForm) (checks tree : Bool) (hoverRules : Bool := false)
-    (canvases : List Rendering.Layout.Box := []) :
+    (canvases : List Rendering.Layout.Box := []) (animating : Bool := false) :
     Except String (String × Array ByteArray) := do
   let top := WebShell.height shell width
   -- A chrome that may fold: the band covers the view under the strip, the most it shows,
@@ -962,7 +995,7 @@ def layersJSON (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List R
   let number := fun (n : Nat) => JSON.Json.number (toString n)
   let place := JSON.Json.object ([("top",number top),("view",number view),("bandTop",number b.top),
     ("bandHeight",number b.height),("keepFrom",number b.keepFrom),("keepTo",number (b.keepTo view)),
-    ("composite",.string compositeShader),("hoverRules",.bool hoverRules),
+    ("composite",.string compositeShader),("hoverRules",.bool hoverRules),("animating",.bool animating),
     ("scrollLimit",number (scrollLimit (WebPrint.contentHeight boxes) view))] ++
     (if canvases.isEmpty then [] else [("canvases",canvasRects canvases b width),("canvasBlit",.string canvasBlitShader)]))
   return ("{\"layers\":" ++ place.toString ++ ",\"page\":" ++ pageText ++ ",\"chrome\":" ++ chromeText ++ "}",
@@ -997,6 +1030,69 @@ and each returns what it kept so that the caller uses the result and the call st
 /-- Most fonts that the engine holds at once. -/
 def maxHeldFonts : Nat := 64
 
+/-! ### Web fonts (CSS Fonts 4 §4, `@font-face`)
+
+The host fetches the faces that `fontFaces` says the page uses and gives each one with
+`fontLoad` mode 2 (`web_document_font_load_bin`, `fallback` 2, or `webFont:true` in
+JSON). Lean reads the file with the font safety policy (`SfntProfile.Font.read`), and
+holds it by SHA-256, apart from the fallback list: a web font draws only the text whose
+`font-family` names it. A render names the faces it may use in `webFonts`
+(`[{url,sha256}]`, a layout field); the rule that has that URL gives the family and the
+`unicode-range`. -/
+
+/-- Most web fonts held at once; the oldest goes first. -/
+def maxWebFonts : Nat := 16
+
+initialize webFontRef : IO.Ref (Array Rendering.SfntProfile.Font) ← IO.mkRef #[]
+set_option compiler.extract_closed false in
+private unsafe def webFontsImpl (_ : JSON.Json) : Array Rendering.SfntProfile.Font := unsafeBaseIO webFontRef.get
+private unsafe def keepWebFontImpl (font : Rendering.SfntProfile.Font) (_ : JSON.Json) : Nat :=
+  unsafeBaseIO do
+    let held ← webFontRef.get
+    let held := if held.any (·.sha256 == font.sha256) then held else
+      let more := held.push font
+      if more.size > maxWebFonts then more.extract 1 more.size else more
+    webFontRef.set held
+    return held.size
+@[implemented_by webFontsImpl, noinline] private opaque webFontsHeld (request : JSON.Json) : Array Rendering.SfntProfile.Font
+@[implemented_by keepWebFontImpl, noinline] private opaque keepWebFont (font : Rendering.SfntProfile.Font) (request : JSON.Json) : Nat
+
+/-- Read a web font; the policy refuses it or the store holds it. -/
+private def loadWebFont (bytes : ByteArray) (sha256 : String) (request : JSON.Json) : Except String String := do
+  let font ← Rendering.SfntProfile.Font.read bytes "" sha256
+  let held := keepWebFont font request
+  return (JSON.Json.object [("webFont",.string sha256),("glyphs",.number (toString font.face.numGlyphs)),
+    ("held",.number (toString held))]).toString
+
+/-- The faces of `faces` with their held fonts, by the `webFonts` of the request: the
+font of the first source URL of each face that the request names with a held SHA-256,
+with the rule's family and `unicode-range`. -/
+def webFaceFonts (faces : Array Rendering.FontFaceRule.Face) (request : JSON.Json) :
+    Array (Option Rendering.SfntProfile.Font) :=
+  let named : List (String × String) := match request.field? "webFonts" with
+    | some (.array items) => items.filterMap fun item => match item.field? "url",item.field? "sha256" with
+      | some (.string u),some (.string h) => some (u,h)
+      | _,_ => none
+    | _ => []
+  if named.isEmpty then faces.map (fun _ => none) else
+  let held := webFontsHeld request
+  faces.map fun face => do
+    let sha ← face.sources.findSome? fun u => (named.find? (·.1 == u)).map (·.2)
+    let font ← held.find? (·.sha256 == sha)
+    let ranges := if face.ranges == [(0,0x10FFFF)] then [] else face.ranges
+    some {font with family := face.family, ranges}
+
+/-- The web fonts for a `font-family` value (CSS Fonts 4 §5.2): for each family in
+order, its selected faces that are held, until a generic or held family. -/
+def familyFonts (faces : Array Rendering.FontFaceRule.Face) (fonts : Array (Option Rendering.SfntProfile.Font))
+    (held : List String) (value : String) : Array Rendering.SfntProfile.Font := Id.run do
+  let mut out : Array Rendering.SfntProfile.Font := #[]
+  for family in Rendering.CSS.familyList value do
+    for i in Rendering.FontFaceRule.selected faces family do
+      if let some (some f) := fonts[i]? then out := out.push f
+    if Rendering.FontFaceRule.endsSearch held family then break
+  return out
+
 /-- Read the bytes of a font file once. Later renders use it until another load
 changes the list. With `fallback`, the font goes at the end of the held list (a font
 with the same SHA-256 is not added twice); otherwise it replaces the list. Either
@@ -1017,12 +1113,13 @@ private def loadFontBytes (bytes : ByteArray) (family sha256 : String) (fallback
 reference path; `fontLoadBin` takes the same file as bytes. -/
 private def loadFont (request : JSON.Json) : Except String String := do
   let some bytes := Rendering.SfntProfile.decodeBase64 (str request "fontBase64") | throw "font file: invalid base64"
+  if request.field? "webFont" == some (.bool true) then return ← loadWebFont bytes (str request "fontSha256" "unnamed") request
   loadFontBytes bytes (str request "fontFamily" "font") (str request "fontSha256" "unnamed")
     (request.field? "fallback" == some (.bool true)) request
 
 /-- `fontLoad` with the font file as bytes, with no Base64 and no JSON around it.
 A host copies the file into engine memory, so a font is not limited by the call stack,
-which holds string arguments in Wasm. `fallback` is 1 to add the font to the held
+which holds string arguments in Wasm. `fallback` is 2 for a web font (`loadWebFont`), 1 to add the font to the held
 list, 0 to replace the list. The answer is the `fontLoad` answer. -/
 @[export web_document_font_load_bin]
 def fontLoadBin (bytes : ByteArray) (family sha256 : String) (fallback : UInt32) : String :=
@@ -1030,6 +1127,7 @@ def fontLoadBin (bytes : ByteArray) (family sha256 : String) (fallback : UInt32)
     ("fontSha256",.string sha256),("fontBytes",.number (toString bytes.size)),("fallback",.bool (fallback != 0))]
   -- The guest module of page scripts comes the same way, as bytes (WebScripts).
   let loaded := if family == "guest:quickjs" || family == "guest:quickjs-aot" then WebScripts.loadModuleBytes family bytes request
+    else if fallback == 2 then loadWebFont bytes sha256 request
     else loadFontBytes bytes family sha256 (fallback != 0) request
   match loaded with
   | .ok value => value | .error message => WebRender.errorJSON message
@@ -1141,7 +1239,7 @@ the height of the chrome, which the key holds as `top`; `selection`, `live`, `bi
 here: the pointer state is painted (`WebRepaint`), and is in the key, as `pointer`,
 only for a frame whose pointer styles change geometry. -/
 def layoutFields : List String := ["commands","resources","images","heldImages","url","fontData","textScalePercent","graphModel",
-  "visited","media","liberal","scripting","resourceFailures"]
+  "visited","media","liberal","scripting","resourceFailures","webFonts"]
 
 /-- The request with only `layoutFields`, in that order. -/
 def layoutRequest (request : JSON.Json) : JSON.Json :=
@@ -1185,6 +1283,9 @@ structure Laid where
   styles : Thunk (Except String (Array Rendering.CSS.Computed)) := Thunk.pure (.ok #[])
   /-- What liberal mode skipped (`WebAccept`); empty in strict mode. -/
   diagnostics : List WebAccept.Diagnostic := []
+  /-- What a frame paints on this layout with no layout: the `transform` of script
+  slots and SVG animations (`WebPaint`). -/
+  paint : WebPaint.Plan := {}
 
 /-- The element state of a request (Selectors 4 §9): `hover` and `active` are node ids
 of the page (a link's `sourceNode`); `visited` lists URLs of the session history. A
@@ -1272,11 +1373,18 @@ run refused (`WebAccept.accept`), so it puts `partialNote` on the page. -/
 def layOutDOMIn (m : WebAccept.Mode) (request : JSON.Json) (graph : Option NativeFoafNaut.Model) (dom : DOM.Dom)
     (width rows : Nat) (held : List (String × String)) (pointer : Option Nat × Option Nat) :
     Except String (Laid × List WebAccept.Diagnostic) := do
+  -- Paint-only changes (WebPaint): script `transform` slots are the identity here, and
+  -- animation elements are comments; the frame puts their values on the scene.
+  let (dom,slots) := WebPaint.unmark dom
+  let (dom,paint) := WebPaint.prepare dom slots
   validateResources dom request
   let (_,d1) ← classicScriptsIn m (scripting request) (WebRenderScript.scriptRecords dom)
   let percent ← scalePercent request
   let textScale := Float.ofNat percent / 100
-  let (rules,d2) ← rulesIn m dom request (mediaEnv (medium request) width rows percent)
+  -- One pass over the sheets gives the rules and the `@font-face` faces.
+  let env := mediaEnv (medium request) width rows percent
+  let (sheets,d2) ← sheetsIn m dom request env
+  let rules ← Rendering.CSS.parseIn env (String.intercalate "\n" (sheets.map (·.2)))
   let dom := if m == .liberal && graph.isNone then partialNote dom else dom
   if width == 0 || rows == 0 || width > 4096 || rows > 4096 then throw "unsupported document viewport"
   let fontData := str request "fontData"
@@ -1287,13 +1395,18 @@ def layOutDOMIn (m : WebAccept.Mode) (request : JSON.Json) (graph : Option Nativ
   -- A font loaded by the fontLoad op: Lean shapes the words and takes the outlines.
   let loaded := heldFont request
   let memo := loaded.map fun held => Rendering.SfntProfile.remember held.fonts held.memo (Rendering.SfntProfile.wordsOf dom)
+  -- Web fonts (`@font-face`): those the request names and the engine holds.
+  let faces := facesOf env sheets
+  let faceFonts := webFaceFonts faces request
+  let heldFamilies := ((loaded.map (·.fonts)).getD #[]).toList.map (·.family.toLower)
   let font ← match loaded,memo with
     | some held,some words =>
       Rendering.SfntProfile.profile held.fonts (keepWords words request)
+        (if faceFonts.all Option.isNone then fun _ => #[] else familyFonts faces faceFonts heldFamilies)
     | _,_ => pure (match face with | some f => Rendering.Layout.FontProfile.ofFace f | none => WebRender.asciiFont)
   let url := baseURL dom (str request "url")
   -- SVG text is drawn with the fonts of the HTML text.
-  let svgFonts := (loaded.map (·.fonts)).getD #[]
+  let svgFonts := (loaded.map (·.fonts)).getD #[] ++ faceFonts.filterMap id
   let images := (← suppliedImages request) ++ heldBytes request held
   -- The SVG of the page is read here. In liberal mode a refusal of it (the SVG reader reads all
   -- inline `svg` roots of the document together) lays the page out with no inline `svg`.
@@ -1357,7 +1470,8 @@ def layOutDOMIn (m : WebAccept.Mode) (request : JSON.Json) (graph : Option Nativ
     |> fun l => {l with rules := rules}
     |> fun l => {l with textScale := textScale}
     |> fun l => {l with state := state}
-    |> fun l => {l with styles := Thunk.mk fun _ => Rendering.CSS.computeAll dom rules textScale state},d1 ++ d2 ++ d0 ++ d3 ++ d4)
+    |> fun l => {l with styles := Thunk.mk fun _ => Rendering.CSS.computeAll dom rules textScale state}
+    |> fun l => {l with paint := paint},d1 ++ d2 ++ d0 ++ d3 ++ d4)
 
 /-- `layOut` after the parse: the layout of the arena `dom`, `width` by `rows` CSS pixels,
 in the mode of the request (`WebAccept.accept`). A script session's layout reads
@@ -1441,6 +1555,22 @@ def readAnswer (l : Laid) (node op : Nat) : Option String :=
     | _, _ => some ""
   | _ => none
 
+/-- `document.fonts` (CSS Font Loading 3 §5), `node_query` op 22: the faces of the
+page's `@font-face` rules as JSON, each with its family, descriptors and status:
+`loaded` when the engine holds its font for this page (`webFonts`), else `unloaded`.
+The host loads the faces the text uses before the scripts run, so no face is loading. -/
+def fontFacesAnswer (dom : DOM.Dom) (request : JSON.Json) : String :=
+  let faces := (fontFaces dom request).toOption.getD #[]
+  let fonts := webFaceFonts faces request
+  let hex := fun (n : Nat) => String.ofList (Nat.toDigits 16 n) |>.toUpper
+  let entries := (List.range faces.size).map fun i =>
+    let f := faces[i]!
+    JSON.Json.object [("family",.string f.family),("style",.string f.style),
+      ("weight",.string (if f.weight.1 == f.weight.2 then toString f.weight.1 else s!"{f.weight.1} {f.weight.2}")),
+      ("unicodeRange",.string (", ".intercalate (f.ranges.map fun (lo,hi) => if lo == hi then s!"U+{hex lo}" else s!"U+{hex lo}-{hex hi}"))),
+      ("status",.string (if (fonts[i]?.bind id).isSome then "loaded" else "unloaded"))]
+  (JSON.Json.array entries).toString
+
 /-- The layout reads of a script session (`Page.Measure`) with the render request
 `request` (its `layoutFields`): the arena laid out `width` by `height` (`layOutDOM`)
 when a read first asks, then the answers from that one layout. -/
@@ -1454,7 +1584,8 @@ def measure (request : JSON.Json) : WasmVM.Hosts.Page.Measure := fun dom width h
     let rules ← rules dom request
     let state := withPointer dom (← elementState dom (baseURL dom (str request "url")) request) (none,none)
     Rendering.CSS.computeAll dom rules textScale state
-  fun node op => if op == 20 || op ≥ 200 then
+  fun node op => if op == 22 then some (fontFacesAnswer dom request) else
+    if op == 20 || op ≥ 200 then
       match styled.get with
       -- CSSOM §9 getComputedStyle: an element that is not connected to the page's
       -- document has no computed style (the declaration is empty)
@@ -1554,6 +1685,36 @@ layouts, kept layouts used, and pointer states painted on a kept layout. -/
 initialize frameWorkRef : IO.Ref (Nat × Nat × Nat) ← IO.mkRef (0,0,0)
 
 initialize layoutRef : IO.Ref (Lru LayoutKey Laid) ← IO.mkRef []
+
+/-- Frames painted on a kept layout with transforms or animation values (`WebPaint`),
+and the last such scene with its values, so that a frame whose values did not change
+gives the same scene object (and `pageArtifact` its kept band). -/
+initialize paintWorkRef : IO.Ref Nat ← IO.mkRef 0
+initialize paintedSceneRef : IO.Ref (Option (Rendering.Scene × String × Rendering.Scene)) ← IO.mkRef none
+set_option compiler.extract_closed false in
+private unsafe def paintedImpl (plan : WebPaint.Plan) (values : Std.TreeMap Nat (Rendering.Transform × Option Float))
+    (base : Rendering.Scene) : Rendering.Scene :=
+  unsafeBaseIO do
+    let key := ";".intercalate (values.toList.map fun (n,(m,o)) =>
+      s!"{n}:{m.a},{m.b},{m.c},{m.d},{m.e},{m.f},{o.getD (-1)}")
+    if let some (b,k,made) := ← paintedSceneRef.get then
+      if ptrEq b base && k == key then return made
+    let made := WebPaint.patch plan values base
+    paintedSceneRef.set (some (base,key,made))
+    paintWorkRef.modify (·+1)
+    return made
+set_option compiler.extract_closed false in
+private unsafe def paintWorkImpl (reset : Bool) : Nat :=
+  unsafeBaseIO do
+    let n ← paintWorkRef.get
+    if reset then paintWorkRef.set 0
+    return n
+/-- `WebPaint.patch`; the engine gives the scene it made before for the same layout and
+values again. -/
+@[implemented_by paintedImpl, noinline] def painted (plan : WebPaint.Plan)
+    (values : Std.TreeMap Nat (Rendering.Transform × Option Float)) (base : Rendering.Scene) : Rendering.Scene :=
+  WebPaint.patch plan values base
+@[implemented_by paintWorkImpl, noinline] private opaque paintWork (reset : Bool) : Nat
 
 /-- Pointer states painted on a kept layout (`:hover`, `:active`), kept apart from the
 layouts so that they do not push a layout out: a press, a hover and a loading frame under
@@ -1740,8 +1901,10 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
     let reset := request.field? "reset" == some (.bool true)
     let (layouts,kept,repaints) := frameWork reset
     let (pagesMade,pagesKept) := pageWork reset
+    let paints := paintWork reset
     let number := fun (n : Nat) => JSON.Json.number (toString n)
     return ((JSON.Json.object [("layouts",number layouts),("kept",number kept),("repaints",number repaints),
+      ("paintOnly",number paints),
       ("layoutSlots",number layoutSlots),("pagesMade",number pagesMade),("pagesKept",number pagesKept)]).toString,#[])
   if str request "op" == "xmlStylesheet" then
     let url := match ← WebXslt.stylesheetHref html with
@@ -1765,6 +1928,17 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
     let rules ← rules dom request
     if op == "droppedCSS" then
       return ((JSON.Json.object [("dropped",.array ((Rendering.CSS.droppedDeclarations dom rules).toList.map .string))]).toString,#[])
+    -- The `@font-face` faces that the rendered text uses (CSS Fonts 4 §4.8), with the
+    -- URLs to fetch in order: the host fetches only these.
+    if op == "fontFaces" then
+      let faces ← fontFaces dom request
+      let styles ← Rendering.CSS.computeAll dom rules textScale
+      let held := ((heldFont request).map (fun h => h.fonts.toList.map (·.family))).getD []
+      let used := Rendering.FontFaceRule.usedFaces faces held dom styles
+      let list := (List.range faces.size).filterMap fun i =>
+        if used[i]! then some (JSON.Json.object [("family",.string faces[i]!.family),
+          ("sources",.array (faces[i]!.sources.map .string))]) else none
+      return ((JSON.Json.object [("faces",.array list),("rules",.number (toString faces.size))]).toString,#[])
     if op == "fontRequests" then
       return (WebRenderFontRequests.requestsJSON (← WebRenderFontRequests.collectDOMWithRules dom rules textScale),#[])
     throw "unknown document operation"
@@ -1773,10 +1947,31 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
   -- folding chrome lays nothing out again.
   let top := (shell.map (fun value => WebShell.height value width)).getD 0
   let fonts := ((heldFont request).map HeldFont.names).getD []
-  let key : LayoutKey := ⟨html,layoutRequest request,width,height,layoutTop shell width,fonts,
+  -- A script's `transform` values are not in the key (`WebPaint.slotKey`): the frame
+  -- paints them on the kept layout. When a slot's element can not be painted alone,
+  -- the layout takes the values (the key with them).
+  let (slotRequest,slotValues) := WebPaint.slotKey (layoutRequest request)
+  let key : LayoutKey := ⟨html,slotRequest,width,height,layoutTop shell width,fonts,
     heldNamed request (← namedImages request),requestPointer request⟩
   let laid ← laidOut key
-  let scene := laid.scene
+  let (laid,slotValues) ← if laid.paint.unpaintable.isEmpty || slotValues.isEmpty then pure (laid,slotValues)
+    else do pure (← laidOut {key with request := layoutRequest request},{})
+  -- Paint-only values: slots and animations at the page clock (`animationTime`, ms),
+  -- with the clicks of the page (`animationClicks`: [[ms, pageX, pageY], ...]).
+  let now := natField request "animationTime"
+  let clicks : List (Nat × Nat) := match request.field? "animationClicks" with
+    | some (.array items) => (items.take 16).filterMap fun item => match item with
+      | .array [.number t,.number x,.number y] => do
+        let t ← t.toNat?
+        let px ← (Rendering.CSS.number x).toOption
+        let py ← (Rendering.CSS.number y).toOption
+        let (node,_) ← WebHit.target laid.dom laid.scene laid.boxes px py
+        some (t,node)
+      | _ => none
+    | _ => []
+  let (scene,animating) := if laid.paint.empty then (laid.scene,false) else
+    let (values,running) := WebPaint.state laid.paint laid.dom slotValues now clicks
+    (painted laid.paint values laid.scene,running)
   let boxes := laid.boxes
   let face := laid.face
   -- Printing (issue 1268): the host lays the document out at the paper width, with
@@ -1828,7 +2023,7 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
   if let some value := shell then
     if request.field? "layers" == some (.bool true) then
       return withDiagnostics request laid (← layersJSON value scene marks boxes face width height live form checks tree laid.hoverRules
-        (canvasBoxes laid.dom boxes))
+        (canvasBoxes laid.dom boxes) animating)
   let scrolled := Float.ofNat ((shell.map (·.scroll)).getD 0)
   let near := nearNodes (scrolled-512) (scrolled+Float.ofNat height+512) scene.tree
   let page := {scene with tree := near ++ marks}
