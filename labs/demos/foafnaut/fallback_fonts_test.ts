@@ -83,6 +83,8 @@ Deno.test("only a page with emoji fetches an emoji font, and only the slices it 
   await one("&#x1F1FA;&#x1F1E6;",["Flags T-Z"]);
   await one("\u{1F3F4}\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}",["Flags"]);
   await one("\u2764\uFE0E",["Smileys","Noto Emoji"]);
+  // SVG text draws outlines: with an SVG text element the outline emoji font comes too.
+  assert(JSON.stringify(await emojiFamilies("<svg><text>\u{1F600}</text></svg>"))===JSON.stringify(["Noto Color Emoji Smileys","Noto Emoji"]),"SVG text emoji");
   // A page of one smiley fetches a small part of the colour font.
   const smileys=emojiFonts.find((f:{family:string})=>f.family==="Noto Color Emoji Smileys");
   assert(smileys.bytes<200000,`the smileys slice is ${smileys.bytes} bytes`);
