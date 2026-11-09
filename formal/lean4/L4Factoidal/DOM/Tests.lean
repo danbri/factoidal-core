@@ -156,4 +156,23 @@ def byId (d : Dom) (id : String) : NodeId := (d.getElementById 0 id).getD 0
 #guard Forms.labelActivates formDoc (byId formDoc "l") (byId formDoc "s") == some (byId formDoc "i")
 #guard Forms.labelActivates formDoc (byId formDoc "l") (byId formDoc "i") == none
 
+-- Declarative shadow roots (HTML §13.2.6.4.4): the template leaves the tree, its children
+-- go into the host's shadow root; DOMParser (shadow false) keeps the template.
+def dsd : Dom := parseHtmlDocument "<div id='h'><template shadowrootmode='open'><p>s</p><slot></slot></template><b>x</b></div>"
+#guard (match (dsd.get (byId dsd "h")).shadow with
+  | some sr => (dsd.get sr).kids.size == 2 && dsd.isShadowRoot sr && (dsd.get (byId dsd "h")).kids.size == 1
+  | none => false)
+#guard (dsd.flatChildren (byId dsd "h")).map (fun k => (dsd.get k).lname) == #["p", "b"]
+#guard ((dsd.get (byId dsd "h")).shadow.bind fun sr => (dsd.get sr).shadowInit.map (·.declarative)) == some true
+#guard ((parseHtmlDocument "<div id='h'><template shadowrootmode='open'><p>s</p></template></div>" (shadow := false)).get
+  (byId (parseHtmlDocument "<div id='h'><template shadowrootmode='open'><p>s</p></template></div>" (shadow := false)) "h")).shadow.isNone
+-- an element that can not host a shadow root keeps its template
+#guard (let d := parseHtmlDocument "<a id='h'><template shadowrootmode='closed'>s</template></a>"; (d.get (byId d "h")).shadow.isNone)
+#guard dsd.wellFormed
+-- a clonable shadow root is cloned with its host, deep or not
+#guard (let d := parseHtmlDocument "<div id='h'><template shadowrootmode='open' shadowrootclonable>s</template></div>"
+  let (d2, c) := d.cloneNode (byId d "h") false
+  match (d2.get c).shadow with | some sr => (d2.get sr).kids.size == 1 | none => false)
+#guard (let (d2, c) := dsd.cloneNode (byId dsd "h") true; (d2.get c).shadow.isNone)
+
 end L4Factoidal.DOM.Tests
