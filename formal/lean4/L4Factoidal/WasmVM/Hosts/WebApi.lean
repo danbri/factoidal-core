@@ -379,13 +379,17 @@ JWK", §14.3.12 step 14): DataError unless it is an object whose members have th
 JsonWebKey types. -/
 def jwkOfJson (b : ByteArray) : Res Args := do
   let some text := String.fromUTF8? b | throw .data
-  let some (.object ms) := JSON.parseJson? text | throw .data
+  let some (.object ms0) := JSON.parseJson? text | throw .data
+  -- A member named twice: the last one, as JSON.parse and the IDL conversion would make it
+  -- (cryptosec F15: Lean read the first, so one wrapped key had two meanings). One pass.
+  let ms := (ms0.reverse.foldl (fun ((seen, acc) : Std.HashSet String × List (String × JSON.Json)) (n, v) =>
+    if seen.contains n then (seen, acc) else (seen.insert n, (n, v) :: acc)) ({}, [])).2
   ms.foldlM (fun (acc : Args) (n, v) => match n, v with
     | "key_ops", .array xs => xs.foldlM (fun acc x => match x with
         | .string s => .ok (acc.push ("key_ops[]", s.toUTF8))
         | _ => .error .data) (acc.push ("key_ops", ByteArray.empty))
     | "ext", .bool b => .ok (acc.push ("ext", (if b then "true" else "false").toUTF8))
-    | "oth", _ => .ok acc
+    | "oth", _ => .ok (acc.push ("oth", ByteArray.empty))  -- Lean refuses a multi-prime key (F14)
     | n, .string s => if n == "key_ops" || n == "ext" then .error .data else .ok (acc.push (n, s.toUTF8))
     | _, _ => .error .data) #[]
 
@@ -1248,6 +1252,9 @@ private def chargedCode (s : State) (xs : List String) : Int × Nat :=
 #guard (let (s, _) := subtleRun {} (hmacImport "0"); (subtleRun s ["cloneKey", "key", "1"]).2) == "key|2|secret|0|sign|HMAC|2|hash|SHA-256|length|48"
 #guard (let (s, _) := subtleRun {} (hmacImport "0"); let (s, _) := subtleRun s ["cloneKey", "key", "1"]
   (subtleRun s ["exportKey", "format", "raw", "key", "2"]).2) == "error -25"
+-- An unwrapped JWK with a member twice is read as JSON.parse reads it: the last one (F15).
+#guard ((jwkOfJson "{\"k\":\"AAAA\",\"kty\":\"oct\",\"k\":\"BBBB\"}".toUTF8).toOption.map fun a => a.str? "k") == some (some "BBBB")
+#guard ((jwkOfJson "{\"kty\":\"RSA\",\"oth\":[]}".toUTF8).toOption.map fun a => a.has "oth") == some true
 #guard extractCharset "text/html; charset=EUC-JP" == some "EUC-JP"
 #guard extractCharset "text/html; CHARSET = 'big5' " == some "big5"
 #guard extractCharset "charset" == none
