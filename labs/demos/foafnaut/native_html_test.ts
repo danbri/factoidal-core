@@ -207,8 +207,10 @@ Deno.test("resource size, resource count, cancellation and URL schemes are bound
   const dir=await Deno.makeTempDir({prefix:"factoidal-native-html-limits-"});
   try{
     const path=dir+"/page.html",url=pathToFileURL(path).href;
-    await Deno.writeTextFile(path,"x".repeat(1048577));
-    await assert.rejects(()=>readSource(url),/exceeds 1 MiB/);
+    await Deno.writeTextFile(path,"x".repeat(2*1048576));
+    assert.equal((await readSource(url)).bytes,2*1048576,"a 2 MiB page is read");
+    await Deno.writeTextFile(path,"x".repeat(16*1048576+1));
+    await assert.rejects(()=>readSource(url),/exceeds 16 MiB/);
     await Deno.writeTextFile(path,html(Array.from({length:17},(_,n)=>`<link rel="stylesheet" href="${n}.css">`).join("")));
     await assert.rejects(()=>prepareHTML(engine,url),/16 external stylesheets/);
     const controller=new AbortController();controller.abort();

@@ -8,6 +8,10 @@ import L4Factoidal.Rendering.Links
 /-! HTML source → existing Lean DOM → computed CSS → layout → common scene.
 The bitmap font is an explicit temporary profile, not font-backed shaping. -/
 namespace WebRender
+
+/-- The largest HTML document or stylesheet the engine reads, in bytes. Real home pages pass
+1 MiB (owner, 2026-11-09: BBC refused as over 1 MB). The host's `MAX_SOURCE_BYTES` is the same. -/
+def maxSourceBytes : Nat := 16*1048576
 open L4Factoidal
 
 private def quote (s : String) : String := "\"" ++ JSON.escapeString s ++ "\""
@@ -255,7 +259,7 @@ def makeEmbedding (dom : DOM.Dom) (documentURL : Option String := none)
   Prod.fst <$> makeReplaced dom documentURL images fonts
 
 def render (html : String) (width height : Nat) : Except String (Rendering.Scene × Array Rendering.Layout.Box) := do
-  if html.length > 1048576 then throw "unsupported HTML input exceeding 1048576 characters"
+  if html.length > maxSourceBytes then throw s!"unsupported HTML input exceeding {maxSourceBytes} characters"
   let dom := DOM.parseHtmlDocument html
   let (embedding,pictures) ← makeReplaced dom
   renderDOM dom width height embedding pictures
