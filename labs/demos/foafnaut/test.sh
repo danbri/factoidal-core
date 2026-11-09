@@ -147,6 +147,12 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
     # Canvas 2D drawn by Lean: Chrome's pixels for small scenes, host commands, answers, frame cost (both engines).
     QUICKJS_WASM="$QJS_GUEST" deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-ffi \
       --allow-read --allow-ffi --allow-env "$LAB/canvas2d_test.ts"
+    # The shader gallery on both script engines: every shader draws each frame with no layout,
+    # Lean's reasons reach the page, and the QuickJS-NG instructions of a frame stay under the ratchet.
+    for engine in quickjs bubblepop; do
+      QUICKJS_WASM="$QJS_GUEST" SCRIPT_ENGINE=$engine deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-ffi \
+        --allow-read --allow-ffi --allow-env "$LAB/shader_gallery_test.ts"
+    done
     # The window replays the page GPU commands (2026-11-08: the start turn's commands, which make
     # the canvas and buffers, were dropped, so every later turn failed and the canvas stayed
     # blank). Each triangle page runs off screen for 8 s (25 s on Wasm); any page GPU or page error fails.
