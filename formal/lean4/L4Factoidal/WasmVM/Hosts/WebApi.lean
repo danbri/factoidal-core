@@ -7,8 +7,10 @@ docs/designissues/2026-11-08-page-scripts.md, "Web APIs over Lean"). The algorit
     `TextEncoder`, `TextDecoderStream`;
   * the URL Standard (`WHATWG.URL.Parser`): `URL`, `URLSearchParams`;
   * forgiving-base64 (`WHATWG.Base64`): `atob`, `btoa`;
-  * `Crypto.WebCrypto`: `crypto.getRandomValues`, `randomUUID`, and `crypto.subtle`
-    digest, HMAC, HKDF and PBKDF2.
+  * `Crypto.WebCrypto`, `Crypto.WebCryptoKeys` and `Crypto.WebHacl`:
+    `crypto.getRandomValues`, `randomUUID`, and `crypto.subtle` (digest, HMAC, HKDF,
+    PBKDF2, ECDSA and ECDH on P-256, Ed25519, X25519, ChaCha20-Poly1305), with the
+    primitives HACL*'s (record docs/designissues/2026-11-09-hacl-web-crypto.md).
 
 `web_api(op, flags, ptr, len, buf, cap)`. The `len` bytes at `ptr` are the arguments:
 a little-endian u32 count, then each argument as a u32 length and its bytes (strings in
@@ -17,10 +19,13 @@ and the length is answered; when they do not fit, nothing is written, the bytes 
 the answer is their length, and op 0 then writes them (so a stateful op runs once).
 Negative answers: -1 none (null, or a failed parse), -2 not an op of this engine (a page
 probes with op 1), -3 InvalidCharacterError, -5 over a budget, -6 no entropy,
--20 TypeError, -21 RangeError, -22 OperationError, -23 NotSupportedError.
+-20 TypeError, -21 RangeError, -22 OperationError, -23 NotSupportedError, -24
+SyntaxError, -25 InvalidAccessError, -26 DataError, -27 QuotaExceededError
+(`WebCryptoKeys.Err.code`).
 
 State: the decoders of `TextDecoder`s in the middle of a stream (by the number the page
-gave them), the answer that waits, and the random generator. One call is one operation
+gave them), the answer that waits, the random generator, and the session's CryptoKeys
+(`WebCryptoKeys.Store`: the page holds handles, never key bytes). One call is one operation
 on a whole buffer: the boundary is crossed once per `decode`, never per byte.
 -/
 import L4Factoidal.WasmVM.Hosts.Dom
@@ -28,6 +33,9 @@ import L4Factoidal.WHATWG.Encoding.Api
 import L4Factoidal.WHATWG.URL.Parser
 import L4Factoidal.WHATWG.Base64
 import L4Factoidal.Crypto.WebCrypto
+import L4Factoidal.Crypto.WebCryptoKeys
+import L4Factoidal.JSON.Parser
+import L4Factoidal.JSON.Serialize
 import Std.Data.HashMap
 
 namespace L4Factoidal.WasmVM.Hosts.WebApi
@@ -51,6 +59,10 @@ structure State where
   name `WHATWG.Encoding.Sniff.decodeDocument` gave); "" when the host did not say. -/
   docEncoding : String := ""
   rng : Option Crypto.WebCrypto.Drbg := none
+  /-- Generate calls of the generator so far (SP 800-90A's reseed counter). -/
+  draws : Nat := 0
+  /-- The CryptoKeys of the session. -/
+  keys : Crypto.WebCryptoKeys.KeyStore := {}
   deriving Inhabited
 
 /-! ## Arguments -/
@@ -195,6 +207,258 @@ def parseWith (input : String) (base : Option String) (enc : Encoding.Encoding) 
     | none => none
     | some bu => (URL.basicParse input (some bu) none none enc).toOption
 
+/-! ## The random generator -/
+
+/-- SP 800-90A Table 2: at most 2^48 generate calls between reseeds. This generator is
+never reseeded, so the session refuses after that many. -/
+def maxDraws : Nat := 1 <<< 48
+
+/-- The entropy a generator needs: 256 bits, HMAC_DRBG-SHA-256's security strength
+(SP 800-90A §10.1, Table 2). -/
+def minEntropy : Nat := 32
+
+/-- `n` bytes of the session's HMAC_DRBG, over HACL*'s HMAC-SHA-256. Every random byte of
+the API (getRandomValues, randomUUID, generated keys, ECDSA nonces) comes from here. The
+generator is instantiated from the embedder's entropy on first use; with less than 256
+bits of it there is no generator (-6). -/
+def randomBytes (s : State) (n : Nat) : Except Int (ByteArray × State) :=
+  if s.entropy.size < minEntropy then .error (-6) else
+  if s.draws ≥ maxDraws then .error (-6) else
+  let h := Crypto.WebHacl.haclHash .sha256
+  let d := match s.rng with
+    | some d => d
+    | none => Crypto.WebCrypto.Drbg.instantiate h s.entropy ByteArray.empty
+  let (out, d) := d.generate h n
+  .ok (out, { s with rng := some d, draws := s.draws + 1 })
+
+/-- No path draws from an unseeded generator: every successful draw had at least 256
+bits of the embedder's entropy. -/
+theorem randomBytes_seeded {s s' : State} {n : Nat} {out : ByteArray}
+    (h : randomBytes s n = .ok (out, s')) : s.entropy.size ≥ minEntropy ∧ s.draws < maxDraws := by
+  unfold randomBytes at h
+  by_cases h1 : s.entropy.size < minEntropy
+  · rw [if_pos h1] at h; cases h
+  · by_cases h2 : s.draws ≥ maxDraws
+    · rw [if_neg h1, if_pos h2] at h; cases h
+    · exact ⟨by omega, by omega⟩
+
+theorem randomBytes_entropy {s s' : State} {n : Nat} {out : ByteArray}
+    (h : randomBytes s n = .ok (out, s')) : s'.entropy = s.entropy ∧ s'.keys.next = s.keys.next := by
+  unfold randomBytes at h
+  by_cases h1 : s.entropy.size < minEntropy
+  · rw [if_pos h1] at h; cases h
+  · by_cases h2 : s.draws ≥ maxDraws
+    · rw [if_neg h1, if_pos h2] at h; cases h
+    · rw [if_neg h1, if_neg h2] at h
+      simp only [Except.ok.injEq, Prod.mk.injEq] at h
+      obtain ⟨_, rfl⟩ := h
+      exact ⟨rfl, rfl⟩
+
+/-! ## crypto.subtle (op 41): keys behind handles -/
+
+section Subtle
+open Crypto.WebCryptoKeys
+
+/-- Fields as one answer: a little-endian u32 count, then each as a u32 length and its
+bytes (the argument block's own shape; prelude.js `unpack`). -/
+def pack (xs : List ByteArray) : ByteArray :=
+  xs.foldl (fun acc x => acc ++ u32le x.size ++ x) (u32le xs.length)
+
+def keyFields (handle : Nat) (k : Key) : List ByteArray :=
+  let algo := k.algo
+  let pairs : List (String × String) :=
+    (match algo.hash with | some h => [("hash", h.name)] | none => []) ++
+    (if algo.alg == .hmac then [("length", toString algo.length)] else []) ++
+    (if algo.curve != "" then [("namedCurve", algo.curve)] else [])
+  ["key", toString handle, k.type.name, if k.extractable then "1" else "0",
+    ",".intercalate (k.usages.map (·.name)), algo.alg.name, toString pairs.length].map (·.toUTF8) ++
+    pairs.flatMap fun (a, b) => [a.toUTF8, b.toUTF8]
+
+def jwkFields (ms : List (String × JwkVal)) : List ByteArray :=
+  ["jwk".toUTF8, (toString ms.length).toUTF8] ++ ms.flatMap fun (n, v) =>
+    match v with
+    | .str x => [n.toUTF8, "s".toUTF8, x.toUTF8]
+    | .bool b => [n.toUTF8, "b".toUTF8, (if b then "true" else "false").toUTF8]
+    | .arr xs => [n.toUTF8, "a".toUTF8, ",".intercalate xs |>.toUTF8]
+
+def exportedFields : Exported → List ByteArray
+  | .bytes b => ["bytes".toUTF8, b]
+  | .jwk ms => jwkFields ms
+
+/-- A JWK as JSON text (wrapKey with format "jwk": §14.3.11 step 12). -/
+def jwkJson (ms : List (String × JwkVal)) : String :=
+  JSON.toStringCompact (.object (ms.map fun (n, v) => (n, match v with
+    | .str x => JSON.Json.string x
+    | .bool b => .bool b
+    | .arr xs => .array (xs.map .string))))
+
+/-- JSON text to the `j:` members of a JsonWebKey (unwrapKey with format "jwk": "parse a
+JWK", §14.3.12 step 14): DataError unless it is an object whose members have the
+JsonWebKey types. -/
+def jwkOfJson (b : ByteArray) : Res Args := do
+  let some text := String.fromUTF8? b | throw .data
+  let some (.object ms) := JSON.parseJson? text | throw .data
+  ms.foldlM (fun (acc : Args) (n, v) => match n, v with
+    | "key_ops", .array xs => xs.foldlM (fun acc x => match x with
+        | .string s => .ok (acc.push ("key_ops[]", s.toUTF8))
+        | _ => .error .data) (acc.push ("key_ops", ByteArray.empty))
+    | "ext", .bool b => .ok (acc.push ("ext", (if b then "true" else "false").toUTF8))
+    | "oth", _ => .ok acc
+    | n, .string s => if n == "key_ops" || n == "ext" then .error .data else .ok (acc.push (n, s.toUTF8))
+    | _, _ => .error .data) #[]
+
+/-- Add a key to the store and answer its fields. -/
+def addKey (st : KeyStore) (k : Key) : Res (KeyStore × List ByteArray) := do
+  let (st, h) ← st.add k
+  return (st, keyFields h k)
+
+/-- §14.3.10 exportKey: the only operation whose answer is a key's own bytes. -/
+def exportOp (st : KeyStore) (a : Args) : Res ByteArray :=
+  match keyOf st a "key" with
+  | .error e => .error e
+  | .ok k =>
+    match exportKey k ((a.str? "format").getD "") with
+    | .error e => .error e
+    | .ok e => .ok (pack (exportedFields e))
+
+theorem exportOp_extractable {st : KeyStore} {a : Args} {out : ByteArray} (h : exportOp st a = .ok out) :
+    ∃ k, keyOf st a "key" = .ok k ∧ k.extractable = true := by
+  unfold exportOp at h
+  split at h
+  · cases h
+  · rename_i k hk
+    split at h
+    · cases h
+    · rename_i e he
+      exact ⟨k, hk, exportKey_extractable he⟩
+
+/-- What exportKey answers does not depend on the bytes of any non-extractable key: a
+page learns such a key's bytes from no export, whatever handles it passes. -/
+theorem exportOp_blind (st : KeyStore) (a : Args) : exportOp st.blind a = exportOp st a := by
+  unfold exportOp
+  rw [keyOf_blind]
+  cases keyOf st a "key" with
+  | error e => rfl
+  | ok k =>
+    by_cases hx : k.extractable = true
+    · simp [Except.map, hx]
+    · have hf : k.extractable = false := by simpa using hx
+      simp only [Except.map, hf, Bool.false_eq_true, if_false]
+      rw [← exportKey_blind k _ hf]
+
+/-- Draw `n` random bytes in a key operation (`Res` errors for the generator's -6). -/
+def drawFor (s : State) (n : Nat) : Except Int (ByteArray × State) :=
+  if n == 0 then .ok (ByteArray.empty, s) else randomBytes s n
+
+def errInt {α : Type} (r : Res α) : Except Int α := r.mapError Err.code
+
+def lengthArg (a : Args) : Option Nat :=
+  match a.str? "length" with
+  | some "null" | none => none
+  | some x => x.toNat?
+
+/-- One `crypto.subtle` operation (`method, k₁, v₁, …`, see `WebCryptoKeys.Args`). -/
+def subtle (s : State) (fs : Array ByteArray) : State × Except Int ByteArray :=
+  let a := pairsOf fs
+  let p := sub a "a:"
+  let algName := (p.str? "name").getD ""
+  let method := (fs[0]?.bind String.fromUTF8?).getD ""
+  let ext := a.bool "extractable"
+  let fail := fun (e : Int) => (s, Except.error e)
+  match method with
+  | "generateKey" =>
+    match errInt (usagesOf a), drawFor s (randNeeded algName p) with
+    | .error e, _ | _, .error e => fail e
+    | .ok us, .ok (rand, s) =>
+      match errInt (generateKey algName p ext us rand) with
+      | .error e => (s, .error e)
+      | .ok (.one k) =>
+        match errInt (addKey s.keys k) with
+        | .ok (st, f) => ({ s with keys := st }, .ok (pack f))
+        | .error e => (s, .error e)
+      | .ok (.pair pk sk) =>
+        match errInt (do let (st, f1) ← addKey s.keys pk; let (st, f2) ← addKey st sk; pure (st, f1, f2)) with
+        | .ok (st, f1, f2) => ({ s with keys := st }, .ok (pack ("pair".toUTF8 :: f1 ++ f2)))
+        | .error e => (s, .error e)
+  | "importKey" =>
+    match errInt (do
+        let us ← usagesOf a
+        let k ← importKey algName p ((a.str? "format").getD "") ((a.get? "data").getD .empty) (sub a "j:") ext us
+        addKey s.keys k) with
+    | .ok (st, f) => ({ s with keys := st }, .ok (pack f))
+    | .error e => fail e
+  | "exportKey" => (s, errInt (exportOp s.keys a))
+  | "sign" =>
+    match errInt (keyOf s.keys a "key") with
+    | .error e => fail e
+    | .ok k =>
+      match drawFor s (if k.algo.alg == .ecdsa then 256 else 0) with
+      | .error e => fail e
+      | .ok (rand, s) => (s, errInt ((sign algName p k ((a.get? "data").getD .empty) rand).map fun b => pack ["bytes".toUTF8, b]))
+  | "verify" => (s, errInt (do
+      let k ← keyOf s.keys a "key"
+      let ok ← verify algName p k ((a.get? "signature").getD .empty) ((a.get? "data").getD .empty)
+      pure (pack ["bool".toUTF8, (if ok then "1" else "0").toUTF8])))
+  | "deriveBits" => (s, errInt (do
+      let k ← keyOf s.keys a "baseKey"
+      let b ← deriveBits algName p k (lengthArg a) s.keys
+      pure (pack ["bytes".toUTF8, b])))
+  | "deriveKey" =>
+    let t := sub a "t:"
+    let tName := (t.str? "name").getD ""
+    match errInt (do
+        let us ← usagesOf a
+        let k ← keyOf s.keys a "baseKey"
+        keyFor k algName .deriveKey
+        let len ← keyLength tName t
+        -- §14.3.7: deriveBits with the key's own algorithm (its usage check is deriveKey).
+        let k' := { k with usages := k.usages ++ [.deriveBits] }
+        let bits ← deriveBits algName p k' len s.keys
+        let nk ← importKey tName t "raw" bits #[] ext us
+        addKey s.keys nk) with
+    | .ok (st, f) => ({ s with keys := st }, .ok (pack f))
+    | .error e => fail e
+  | "encrypt" | "decrypt" => (s, errInt (do
+      let k ← keyOf s.keys a "key"
+      let b ← crypt (method == "encrypt") algName p k ((a.get? "data").getD .empty)
+      pure (pack ["bytes".toUTF8, b])))
+  | "wrapKey" => (s, errInt (do
+      let wk ← keyOf s.keys a "wrappingKey"
+      if wk.algo.alg.name != algName || !wk.usages.contains .wrapKey then throw .invalidAccess
+      let k ← keyOf s.keys a "key"
+      let e ← exportKey k ((a.str? "format").getD "")
+      let bytes := match e with | .bytes b => b | .jwk ms => (jwkJson ms).toUTF8
+      let wk' := { wk with usages := wk.usages ++ [.encrypt] }
+      let c ← crypt true algName p wk' bytes
+      pure (pack ["bytes".toUTF8, c])))
+  | "unwrapKey" =>
+    let t := sub a "t:"
+    match errInt (do
+        let us ← usagesOf a
+        let uk ← keyOf s.keys a "unwrappingKey"
+        if uk.algo.alg.name != algName || !uk.usages.contains .unwrapKey then throw .invalidAccess
+        let uk' := { uk with usages := uk.usages ++ [.decrypt] }
+        let bytes ← crypt false algName p uk' ((a.get? "data").getD .empty)
+        let format := (a.str? "format").getD ""
+        let (data, j) ← if format == "jwk" then do pure (ByteArray.empty, ← jwkOfJson bytes) else pure (bytes, #[])
+        let nk ← importKey ((t.str? "name").getD "") t format data j ext us
+        addKey s.keys nk) with
+    | .ok (st, f) => ({ s with keys := st }, .ok (pack f))
+    | .error e => fail e
+  | _ => fail (-2)
+
+/-- Forget a key (prelude.js calls this when the page's CryptoKey is collected): its bytes
+are zeroed in place when the store held the only reference (`WebHacl.wipe`). -/
+def dropKey (s : State) (h : Nat) : State × Nat :=
+  match s.keys.keys[h]? with
+  | none => (s, 0)
+  | some k =>
+    let keys := s.keys.keys.erase h
+    let n := Crypto.WebHacl.wipe k.material + Crypto.WebHacl.wipe k.pub
+    ({ s with keys := { s.keys with keys } }, n)
+
+end Subtle
+
 /-! ## The operations -/
 
 def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.DOM.Dom := default) :
@@ -250,32 +514,22 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
     | .error e => (s, .error e)
     | .ok n =>
       if n > 65536 then (s, .error (-5)) else
-      let rng? := match s.rng with
-        | some d => some d
-        | none => if s.entropy.isEmpty then none else some (Crypto.WebCrypto.Drbg.instantiate s.entropy ByteArray.empty)
-      match rng? with
-      | none => (s, .error (-6))
-      | some d =>
-        let (out, d) := d.generate n
-        ({ s with rng := some d }, if op == 30 then .ok out else ofStr (Crypto.WebCrypto.uuidOf out))
+      match randomBytes s n with
+      | .error e => (s, .error e)
+      | .ok (out, s) => (s, if op == 30 then .ok out else ofStr (Crypto.WebCrypto.uuidOf out))
   | 32 => pure' do
-    match Crypto.WebCrypto.digest? (← strArg fs 0) (bytesArg fs 1) with
-    | some d => .ok d
+    match Crypto.WebHacl.HashAlg.ofName? (← strArg fs 0) with
+    | some h => .ok (Crypto.WebHacl.hashFast h (bytesArg fs 1))
     | none => .error (-23)
-  | 33 | 34 | 35 | 36 => pure' do
-    match Crypto.WebCrypto.hashOf? (← strArg fs 0) with
-    | none => .error (-23)
-    | some h =>
-      match op with
-      | 33 => .ok (Crypto.WebCrypto.hmac h (bytesArg fs 1) (bytesArg fs 2))
-      | 34 => .ok (ByteArray.mk #[if Crypto.WebCrypto.hmacVerify h (bytesArg fs 1) (bytesArg fs 2) (bytesArg fs 3) then 1 else 0])
-      | 35 =>
-        match Crypto.WebCrypto.hkdf h (bytesArg fs 1) (bytesArg fs 2) (bytesArg fs 3) (← natArg fs 4) with
-        | some b => .ok b
-        | none => .error (-22)
-      | _ =>
-        let it ← natArg fs 3
-        if it == 0 then .error (-22) else .ok (Crypto.WebCrypto.pbkdf2 h (bytesArg fs 1) (bytesArg fs 2) it (← natArg fs 4))
+  -- The registry: the registered name and the dictionary members to convert.
+  | 40 => pure' do
+    match Crypto.WebCryptoKeys.normalizeSpec (← strArg fs 0) (← strArg fs 1) with
+    | .ok (reg, ms) => ofStr ("\n".intercalate (reg :: ms))
+    | .error e => .error e.code
+  | 41 => subtle s fs
+  | 42 => match natArg fs 0 with
+    | .ok h => let (s, n) := dropKey s h; (s, ofStr (toString n))
+    | .error e => (s, .error e)
   | _ => pure' (.error (-2))
 
 section
@@ -310,8 +564,6 @@ end
 
 /-! ## Checks -/
 
-private def pack (xs : List ByteArray) : ByteArray :=
-  xs.foldl (fun acc x => acc ++ u32le x.size ++ x) (u32le xs.length)
 
 private def runStr (op flags : Nat) (xs : List String) : String :=
   match (run {} op flags (((fields (pack (xs.map (·.toUTF8)))).getD #[]))).2 with
@@ -330,6 +582,27 @@ private def runStr (op flags : Nat) (xs : List String) : String :=
 #guard runStr 20 0 ["YQ=="] == "a"
 #guard runStr 21 0 ["Ā"] == "error -3"
 #guard runStr 30 0 ["4"] == "error -6"
+-- crypto.subtle without HACL* (the interpreter cannot call it): the registry, an HMAC key
+-- imported, exported only when extractable, and the errors in order.
+#guard runStr 40 0 ["sign", "ecdsa"] == "ECDSA\nhash:h!"
+#guard runStr 40 0 ["encrypt", "AES-GCM"] == "error -23"
+private def subtleRun (s : State) (xs : List String) : State × String :=
+  let (s, r) := run s 41 0 (((fields (pack (xs.map (·.toUTF8)))).getD #[]))
+  (s, match r with
+    | .ok b => String.intercalate "|" (((fields b).getD #[]).toList.map fun x => (String.fromUTF8? x).getD "?")
+    | .error e => s!"error {e}")
+private def hmacImport (ext : String) : List String :=
+  ["importKey", "format", "raw", "extractable", ext, "usage", "sign", "a:name", "HMAC", "a:hash", "SHA-256", "data", "secret"]
+#guard (subtleRun {} (hmacImport "1")).2 == "key|1|secret|1|sign|HMAC|2|hash|SHA-256|length|48"
+#guard (let (s, _) := subtleRun {} (hmacImport "1"); (subtleRun s ["exportKey", "format", "raw", "key", "1"]).2) == "bytes|secret"
+#guard (let (s, _) := subtleRun {} (hmacImport "0"); (subtleRun s ["exportKey", "format", "raw", "key", "1"]).2) == "error -25"
+#guard (let (s, _) := subtleRun {} (hmacImport "1"); (subtleRun s ["exportKey", "format", "jwk", "key", "1"]).2) ==
+  "jwk|5|kty|s|oct|k|s|c2VjcmV0|alg|s|HS256|key_ops|a|sign|ext|b|true"
+#guard (subtleRun {} ["importKey", "format", "raw", "extractable", "0", "usage", "verify", "usage", "encrypt",
+  "a:name", "HMAC", "a:hash", "SHA-256", "data", "k"]).2 == "error -24"
+#guard (subtleRun {} ["importKey", "format", "raw", "extractable", "0", "a:name", "HMAC", "a:hash", "SHA-256", "data", "k"]).2 == "error -24"
+#guard (subtleRun {} ["exportKey", "format", "raw", "key", "7"]).2 == "error -20"
+#guard (subtleRun {} ["generateKey", "extractable", "1", "usage", "sign", "a:name", "HMAC", "a:hash", "SHA-256"]).2 == "error -6"
 #guard extractCharset "text/html; charset=EUC-JP" == some "EUC-JP"
 #guard extractCharset "text/html; CHARSET = 'big5' " == some "big5"
 #guard extractCharset "charset" == none
