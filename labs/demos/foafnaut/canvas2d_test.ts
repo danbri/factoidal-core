@@ -28,6 +28,11 @@ function start(kind:string,html:string,url:string):Turn{
 }
 const advance=(t:Turn,ms:number)=>engine.scriptSession("",{action:"advance",session:t.session,ms}) as Turn;
 const hexBytes=(h:string)=>Uint8Array.from(h.match(/../g)!.map(x=>parseInt(x,16)));
+/** A reference scene: RGBA, raw DEFLATE, Base64. */
+async function inflate(b64:string):Promise<Uint8Array>{
+  const stream=new Blob([Uint8Array.from(atob(b64),c=>c.charCodeAt(0))]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
 
 const summary:string[]=[];
 for(const kind of engines){
@@ -41,8 +46,8 @@ for(const kind of engines){
   const got=new Map<string,Uint8Array>();
   for(const line of sceneLogs){const m=/^scene (\S+) ([0-9a-f]+)$/.exec(line);if(m)got.set(m[1],hexBytes(m[2]));}
   let pass=0;const rows:string[]=[];
-  for(const [name,hex] of Object.entries(reference.scenes)){
-    const want=hexBytes(hex),have=got.get(name);
+  for(const [name,packed] of Object.entries(reference.scenes)){
+    const want=await inflate(packed),have=got.get(name);
     if(!have){rows.push(`${name}: no pixels`);continue;}
     let off=0,worst=0;
     for(let i=0;i<want.length;i+=4){

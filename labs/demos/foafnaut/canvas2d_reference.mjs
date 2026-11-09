@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
+import zlib from 'node:zlib';
 import {fileURLToPath} from 'node:url';
 const here=path.dirname(fileURLToPath(import.meta.url));
 const CHROME=process.env.CHROME??'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
@@ -33,7 +34,10 @@ if(process.argv[1]===fileURLToPath(import.meta.url)){
   const json=/<pre id="out">([^<]*)<\/pre>/.exec(dom)?.[1];
   if(!json)throw Error('Chrome gave no pixels');
   const version=execFileSync(CHROME,['--version'],{encoding:'utf8'}).trim();
-  fs.writeFileSync(path.join(here,'canvas2d-reference.json'),JSON.stringify({browser:version,size:48,scenes:JSON.parse(json.replaceAll('&quot;','"'))},null,1)+'\n');
+  // Each scene's RGBA as raw DEFLATE in Base64 (about 20 KB for the 27 scenes, not 500 KB of hex).
+  const scenes=Object.fromEntries(Object.entries(JSON.parse(json.replaceAll('&quot;','"')))
+    .map(([k,h])=>[k,zlib.deflateRawSync(Buffer.from(h,'hex'),{level:9}).toString('base64')]));
+  fs.writeFileSync(path.join(here,'canvas2d-reference.json'),JSON.stringify({browser:version,size:48,encoding:'RGBA, raw DEFLATE (RFC 1951), Base64',scenes},null,1)+'\n');
   fs.rmSync(work,{recursive:true,force:true});
   console.log('canvas2d-reference.json from',version);
 }
