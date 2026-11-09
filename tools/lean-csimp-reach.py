@@ -135,7 +135,7 @@ LIMITS (state these with any result; anti-pattern 28)
     name of `f` is unresolved, and says so.
   * Only `formal/lean4` is read.  A `@[csimp]` theorem of the Lean core library
     (`List.map` and the like) is not audited.  A theorem of this tree whose LEFT side is
-    a core definition (`CORE_LEFT_SIDES`: `Float.ofNat`, `Float.ofInt`, `Nat.toFloat`) is listed as CORE
+    a core definition (`CORE_LEFT_SIDES`: the conversions to `Float` of `Prim/FloatOfNat.lean`) is listed as CORE
     and its reach is not audited either: the core function has no C symbol here, and every
     module that does not import the theorem still calls it.
     `tools/lean-literal-parse-audit.py --conversions` lists those callers.  A repair by an instance of higher
@@ -203,7 +203,8 @@ DEFAULT_PACKAGE = "l4factoidal"
 # CORE and is not audited here (LIMITS): `tools/lean-literal-parse-audit.py --conversions` lists the C
 # functions that still call the core function.  Add a name only for a theorem whose left side is a core
 # definition (first: `L4Factoidal/Prim/FloatOfNat.lean`, 2026-11-09).
-CORE_LEFT_SIDES = ("Float.ofNat", "Float.ofInt", "Nat.toFloat")
+CORE_LEFT_SIDES = ("Float.ofNat", "Float.ofInt", "Nat.toFloat", "Float.ofScientific", "instOfNatFloat",
+                   "instOfScientificFloat")
 
 # ------------------------------------------------------------------ mangling
 # Lean 4.33 `Lean.Name.mangle` (src/lean/Lean/Compiler/NameMangling.lean).  The

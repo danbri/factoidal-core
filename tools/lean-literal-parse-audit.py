@@ -24,19 +24,25 @@ made once when the module starts), or test a bound below 2^32 first.
       `l_Float_ofInt`). In Lean 4.33.1 each such call reads 2^53 from text inside Lean core
       (`Float.ofScientific`), 40 to 45 ns. In a module that imports
       `L4Factoidal.Prim.FloatOfNat`, a call that the source writes as `Float.ofNat`,
-      `Float.ofInt` or `n.toFloat` is the fast twin (its `csimp` theorems). What this mode
-      still lists for such a module is a core body that the compiler inlined as core compiled
-      it: a `Float` literal with no decimal point (`OfNat`), left in a function body. For a
+      `Float.ofInt` or `n.toFloat`, and a `Float` literal with no decimal point, are the fast
+      twins (its `csimp` theorems). So for a module with the import the count is 0, or the
+      line names a route that the theorems do not reach: read the C and add a theorem. For a
       module without the import, the list is what the import would change.
+
+  In `--float-literals` and `--conversions` the functions of the twins themselves are not
+  listed: each calls its core function in its slow branch, by design.
   lean-literal-parse-audit.py --float-literals [DIR ...]
-      the calls of `Float.ofScientific` instead (C symbol `l_Float_ofScientific`): a `Float`
-      literal that the compiler left in the body of a function. Each call reads 2^53 from text
-      (the first test of `Float.ofScientific`, about 40 ns). A literal with an exponent above
-      22, or 2^53 or more digits' worth of mantissa, takes the slow case of that function: big
-      number arithmetic at every call (`1e300` in `WebPaint.cullCurve` was 85% of a frame
-      until commit 57fe3531d, 2026-11-09). The line says `slow case` for those, `fast case`
-      for the others, and `?` for an argument that is not a literal in the same function.
-      `lean_cstr_to_nat` does not appear for `1e300`, so the default mode does not list it.
+      the `Float` literals with a decimal point that the compiler left in the body of a
+      function: the calls of `Float.ofScientific` (C symbol `l_Float_ofScientific`, printed as
+      `core`) and of its twin `Prim.ofScientificFast` (printed as `twin`; a module that imports
+      `L4Factoidal.Prim.FloatOfNat` calls the twin). A `core` call reads 2^53 from text (the
+      first test of `Float.ofScientific`, about 40 ns). A literal with an exponent above 22, or
+      with a mantissa of 2^53 or more, takes the slow case, in core and in the twin: big number
+      arithmetic at every call (`1e300` in `WebPaint.cullCurve` was 85% of a frame until commit
+      57fe3531d, 2026-11-09). The line says `slow case` for those, `fast case` for the others,
+      and `?` for an argument that is not a literal in the same function. A `twin` call in the
+      fast case costs a few machine operations and needs no repair. `lean_cstr_to_nat` does not
+      appear for `1e300`, so the default mode does not list it.
 
 Exit status: 0; 2 when a path does not exist or holds no C file (an empty walk is an error, not
 a clean result). The tool lists; it is not a gate.
@@ -55,7 +61,10 @@ DEFAULT = ROOT / 'formal' / 'lean4' / '.lake' / 'build' / 'ir'
 FUNC = re.compile(r'^(?:static |LEAN_EXPORT )?[\w\* ]+?\b(\w+)\(.*\)\s*\{\s*$')
 LIT = re.compile(r'lean_cstr_to_nat\("(\d+)"\)')
 CONV = re.compile(r'= (lean_float_of_nat|l_Float_ofInt)\(')
-SCI = re.compile(r'= l_Float_ofScientific\((\w+), (\w+), (\w+)\)')
+SCI = re.compile(r'= (l_Float_ofScientific|lp_l4factoidal_L4Factoidal_Prim_ofScientificFast)\((\w+), (\w+), (\w+)\)')
+# The twins of `L4Factoidal/Prim/FloatOfNat.lean`: each calls its core function in its slow branch.
+TWIN_FUNCTIONS = ('lp_l4factoidal_L4Factoidal_Prim_natToFloat', 'lp_l4factoidal_L4Factoidal_Prim_intToFloat',
+                  'lp_l4factoidal_L4Factoidal_Prim_ofScientificFast')
 SET_NAT = re.compile(r'^\s*(\w+) = lean_unsigned_to_nat\((\d+)u\);')
 SET_BIG = re.compile(r'^\s*(\w+) = lean_cstr_to_nat\("(\d+)"\);')
 SET_BOOL = re.compile(r'^\s*(\w+) = ([01]);')
@@ -88,14 +97,20 @@ def conversions(path):
             if m:
                 fn = m.group(1)
         m = CONV.search(line)
-        if m and fn and not fn.startswith('_init_'):
+        if m and fn and not fn.startswith('_init_') and not is_twin(fn):
             out.append((fn, 'Float.ofNat' if m.group(1) == 'lean_float_of_nat' else 'Float.ofInt', i + 1))
     return out
 
 
+def is_twin(fn):
+    """True for a twin of `Prim/FloatOfNat.lean` and its boxed or reduced copies."""
+    return any(fn == t or fn.startswith(t + '___') for t in TWIN_FUNCTIONS)
+
+
 def float_literals(path):
-    """(function, mantissa, sign, exponent, line number) for each `Float.ofScientific` call outside
-    `_init_` code. An argument is an int when the same function sets it from a literal, else None."""
+    """(function, mantissa, sign, exponent, line number, 'core' or 'twin') for each call of
+    `Float.ofScientific` or of its twin outside `_init_` code and outside the twins. An argument
+    is an int when the same function sets it from a literal, else None."""
     out = []
     fn = None
     known = {}
@@ -110,8 +125,9 @@ def float_literals(path):
             if m:
                 known[m.group(1)] = int(m.group(2))
         m = SCI.search(line)
-        if m and fn and not fn.startswith('_init_'):
-            out.append((fn, known.get(m.group(1)), known.get(m.group(2)), known.get(m.group(3)), i + 1))
+        if m and fn and not fn.startswith('_init_') and not is_twin(fn):
+            callee = 'core' if m.group(1) == 'l_Float_ofScientific' else 'twin'
+            out.append((fn, known.get(m.group(2)), known.get(m.group(3)), known.get(m.group(4)), i + 1, callee))
     return out
 
 
@@ -173,18 +189,19 @@ def main(argv=None):
         return 0
     if '--float-literals' in args:
         base = str(DEFAULT) + '/'
-        total = slow = 0
+        total = slow = core = 0
         with_calls = set()
         for f in files:
-            for fn, mantissa, sign, exponent, line in float_literals(f):
+            for fn, mantissa, sign, exponent, line, callee in float_literals(f):
                 text, case = literal_text(mantissa, sign, exponent)
                 total += 1
                 slow += case == 'slow case'
+                core += callee == 'core'
                 with_calls.add(str(f))
                 if not count:
-                    print('%s:%d  %s  %s  %s' % (str(f).replace(base, ''), line, short(fn), text, case))
-        print('%d calls of Float.ofScientific outside init code (%d slow case), in %d files (%d C files read)'
-              % (total, slow, len(with_calls), len(files)))
+                    print('%s:%d  %s  %s  %s  %s' % (str(f).replace(base, ''), line, short(fn), text, case, callee))
+        print('%d Float literals converted outside init code: %d core, %d twin; %d slow case; in %d files '
+              '(%d C files read)' % (total, core, total - core, slow, len(with_calls), len(files)))
         return 0
     rows = []
     for f in files:

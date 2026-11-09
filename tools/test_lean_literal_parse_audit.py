@@ -117,6 +117,33 @@ v___x_5_ = l_Float_ofScientific(v_m_1_, v_s_2_, v_e_3_);
 return v___x_5_;
 }
 }
+LEAN_EXPORT double lp_l4factoidal_A_twinLit(double v_x_1_){
+_start:
+{
+lean_object* v___x_2_; uint8_t v___x_3_; lean_object* v___x_4_; double v___x_5_;
+v___x_4_ = lean_unsigned_to_nat(1u);
+v___x_3_ = 1;
+v___x_2_ = lean_unsigned_to_nat(192u);
+v___x_5_ = lp_l4factoidal_L4Factoidal_Prim_ofScientificFast(v___x_2_, v___x_3_, v___x_4_);
+return v___x_5_;
+}
+}
+LEAN_EXPORT double lp_l4factoidal_L4Factoidal_Prim_ofScientificFast(lean_object* v_m_1_, uint8_t v_s_2_, lean_object* v_e_3_){
+_start:
+{
+double v___x_5_;
+v___x_5_ = l_Float_ofScientific(v_m_1_, v_s_2_, v_e_3_);
+return v___x_5_;
+}
+}
+LEAN_EXPORT double lp_l4factoidal_L4Factoidal_Prim_natToFloat(lean_object* v_n_1_){
+_start:
+{
+double v___x_5_;
+v___x_5_ = lean_float_of_nat(v_n_1_);
+return v___x_5_;
+}
+}
 static double _init_lp_l4factoidal_A_half(void){
 _start:
 {
@@ -188,25 +215,28 @@ def _():
         rc, out, err = run(["--conversions", t.dir])
         assert rc == 0, (rc, err)
         assert "2 calls of Float.ofNat or Float.ofInt outside init code, in 1 files (1 C files read)" in out, out
-        assert "A_conv" in out, out
+        assert "A_conv" in out and "natToFloat" not in out, out   # the twin's own slow branch is not listed
     finally:
         t.close()
 
 
-@case("--float-literals: fast case, slow case and unknown arguments; an _init_ function is not listed")
+@case("--float-literals: fast case, slow case, unknown arguments, core and twin; an _init_ function and the "
+      "twin's own slow branch are not listed")
 def _():
     t = Tree({"A.c": SYNTHETIC_C})
     try:
         rc, out, err = run(["--float-literals", t.dir])
         assert rc == 0, (rc, err)
         lines = out.strip().split("\n")
-        assert len(lines) == 4, out
-        assert "A_floatLit  42949672950e-1  fast case" in lines[0], lines[0]
-        assert "A_slowLit  1e300  slow case" in lines[1], lines[1]
-        assert "A_unknownLit  ?e??  ?" in lines[2], lines[2]
-        assert lines[3] == ("3 calls of Float.ofScientific outside init code (1 slow case), in 1 files "
-                            "(1 C files read)"), lines[3]
+        assert len(lines) == 5, out
+        assert "A_floatLit  42949672950e-1  fast case  core" in lines[0], lines[0]
+        assert "A_slowLit  1e300  slow case  core" in lines[1], lines[1]
+        assert "A_unknownLit  ?e??  ?  core" in lines[2], lines[2]
+        assert "A_twinLit  192e-1  fast case  twin" in lines[3], lines[3]
+        assert lines[4] == ("4 Float literals converted outside init code: 3 core, 1 twin; 1 slow case; in 1 files "
+                            "(1 C files read)"), lines[4]
         assert "A_half" not in out, out
+        assert "Prim_ofScientificFast  " not in out, out      # the twin's own slow branch is not listed
     finally:
         t.close()
 
