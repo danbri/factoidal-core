@@ -133,11 +133,35 @@ function zalgo(engine:HTMLEngine){
   return {marks100Ms:Math.round(small.ms),marks10000Ms:Math.round(big.ms)};
 }
 
+// The same font: "Spın̈al" in Noto Sans is shaped as HarfBuzz 15.0.0 shapes it (hb-shape:
+// S=0+549 p=1+615 dotlessi=2+258 n=3+618 uni0308=3@-308,0+0 a=5+561 l=6+258), U+0308 at x offset
+// -308 after n's advance of 618, so its ink [-141, 140] is centred on n's ink [85, 537].
+function sameFontMark(engine:HTMLEngine){
+  const a=engine.compile(`<!doctype html><p style="font-size:40px;margin:0">Sp\u0131n\u0308al</p>`,600,200,{url:pageURL});
+  const run=runs(a).find(r=>r.text.startsWith("Sp"))!;
+  assert.deepEqual(run.glyphs.map(g=>g[0]),[54,83,1768,81,2662,68,79]);
+  const scale=40/1000,[n,mark]=[run.glyphs[3],run.glyphs[4]];
+  assert(Math.abs(mark[1]-n[1]-(618-308)*scale)<1e-6,`n at ${n[1]}, mark at ${mark[1]}`);
+  return {n:n[1],mark:mark[1]};
+}
+
+// A group of text at scale 40 and 200: the page compiles, and the curves off the band are
+// lines (WebPaint.cull), so the scene's data does not grow with the scale.
+function bigScale(engine:HTMLEngine){
+  const shell={tabs:[{title:"t"}],active:0,address:pageURL,focused:false,canBack:false,canForward:false,loading:false,scale:1,theme:"light",pages:1,scroll:0,pressed:""};
+  const at=(k:number)=>{const t=performance.now();const f=engine.compileLayers(svgPage(`translate(200 100) scale(${k}) translate(-200 -100)`),400,260,{url:pageURL,shell,checks:false});return {floats:f.page.data.length,ms:Math.round(performance.now()-t)};};
+  const one=at(1),forty=at(40),twoHundred=at(200);
+  for(const big of [forty,twoHundred])assert(big.floats<=one.floats*4,`floats at scale 1: ${one.floats}, large: ${big.floats}`);
+  return {one,forty,twoHundred};
+}
+
 for(const [name,path] of [["Wasm engine",undefined],["native library",library]] as const){
   const ignore=path!==undefined&&noLibrary;
   Deno.test({name:`web fonts: used faces only, refused face falls back, HTML and SVG text, ${name}`,ignore,fn:async()=>{console.log(JSON.stringify(await webFonts(await engineWithFont(path))));}});
   Deno.test({name:`combining mark of one font on a base of another, ${name}`,ignore,fn:async()=>{console.log(JSON.stringify(await crossFontMark(await engineWithFont(path))));}});
   Deno.test({name:`paint-only: a script's transform lays out once, ${name}`,ignore,fn:async()=>{console.log(JSON.stringify(transformCounts(await engineWithFont(path))));}});
   Deno.test({name:`paint-only: animateTransform lays out once, ${name}`,ignore,fn:async()=>{console.log(JSON.stringify(animationCounts(await engineWithFont(path))));}});
+  Deno.test({name:`same-font mark: Noto Sans n + U+0308 as HarfBuzz places it, ${name}`,ignore,fn:async()=>{console.log(JSON.stringify(sameFontMark(await engineWithFont(path))));}});
+  Deno.test({name:`a group at scale 40 and 200 compiles, its data bounded, ${name}`,ignore,fn:async()=>{console.log(JSON.stringify(bigScale(await engineWithFont(path))));}});
   Deno.test({name:`hostile text: 10,000 marks, ${name}`,ignore,fn:async()=>{console.log(JSON.stringify(zalgo(await engineWithFont(path))));}});
 }
