@@ -566,11 +566,52 @@ def press (request : JSON.Json) : Except String String := do
       return (JSON.Json.object [("control",.null),("sourceNode",.number (toString target.sourceNode)),
         ("href",.string target.href),("rects",.array (rects.map rect))]).toString
 
-/-- `zoomUnit`: the screen's device pixels for each CSS pixel, in percent; 100 if absent. -/
-private def zoomUnit (request : JSON.Json) : Nat :=
+/-- `zoomUnit`: the screen's device pixels for each CSS pixel, in percent; 100 if absent.
+A render request with it lays the page out in CSS pixels and draws it at this ratio
+(`layOut`, section "Device pixels"). -/
+def zoomUnit (request : JSON.Json) : Nat :=
   match request.field? "zoomUnit" with
   | some (.number n) => match n.toNat? with | some u => if u = 0 then 100 else u | none => 100
   | _ => 100
+
+/-! ### Device pixels (dprfix, 2026-11-09)
+
+A window of `width` device pixels on a screen of `unit`/100 device pixels for each CSS
+pixel (`zoomUnit`; 200 on a Retina Mac, 300 on a phone) is `width*100/unit` CSS pixels
+wide. Layout happens in CSS pixels: lengths, percentages and media queries all see the
+CSS viewport, and the text zoom `textScalePercent` (device pixels of text for each CSS
+pixel) is `percent/unit` of CSS text. The scene is then drawn at the ratio: one uniform
+scale over the page (`Laid.toDevice`), applied once, after layout, so every length, text,
+border and image grows together and the rasterizer draws the vectors at device
+resolution. At `unit` 100 none of this runs: the layout and its answer are those of
+before. Before, the Hub laid out in device pixels and scaled only the text, so on a 2x
+screen a 16px margin drew as 8 CSS px and a 760px column as 380. -/
+
+/-- The text scale of a layout in CSS pixels: the zoom over the screen's ratio, and at
+least the 50% that `computeAll` takes. At `unit` 100 it is the zoom, as before. -/
+def cssTextScale (percent unit : Nat) : Float :=
+  if unit == 100 then Float.ofNat percent / 100
+  else max 0.5 (Float.ofNat percent / Float.ofNat (max 1 unit))
+
+/-- What layout reads of a window: its CSS width, its CSS rows and the zoom of the media
+environment (`mediaEnv`), from the window in device pixels, the zoom and the ratio. -/
+def layoutInputs (width rows percent unit : Nat) : Nat × Nat × Nat :=
+  (width*100/unit,rows*100/unit,percent*100/unit)
+
+/-- Layout does not depend on the device pixel ratio: a window `k` times as many device
+pixels on each side, at `k` times the zoom (the same text size to the reader) on a
+screen `k` times as dense, is laid out exactly as the 1x window is. -/
+theorem layoutInputs_ratio (width rows percent k : Nat) (hk : 0 < k) :
+    layoutInputs (width*k) (rows*k) (percent*k) (100*k) = (width,rows,percent) := by
+  have cancel : ∀ n : Nat, n*k*100/(100*k) = n := fun n => by
+    rw [show n*k*100 = n*(100*k) by rw [Nat.mul_assoc, Nat.mul_comm k 100]]
+    exact Nat.mul_div_cancel n (by omega)
+  simp only [layoutInputs, cancel]
+
+/-- At `unit` 100 the inputs are the device sizes and the zoom: the layout of before. -/
+theorem layoutInputs_unit (width rows percent : Nat) :
+    layoutInputs width rows percent 100 = (width,rows,percent) := by
+  simp [layoutInputs]
 
 /-- The text size of the settings page (`foafnaut:zoom/up`, `/down`, `/reset`, `/150`): from
 `zoom` (absent or empty: no change), `textScalePercent` and `zoomUnit`, the zoom to use and
@@ -783,8 +824,23 @@ cells, table rows, moved blocks and inline-blocks in one) each glyph goes by its
 in the group's rows. Before, every group stayed whole, so a page of tables kept the
 glyphs of the whole page in each frame and band, and a tall page at a large text zoom
 passed `NativeSVG.maxDataFloats`. Any other group stays whole. -/
-def nearNodes (top bottom : Float) (nodes : List Rendering.Node) : List Rendering.Node :=
+def nearNodesFlat (top bottom : Float) (nodes : List Rendering.Node) : List Rendering.Node :=
   (nodes.filter (inWindow top bottom)).map (nearInside top bottom)
+
+/-- A uniform scale by more than 0, not 1, with no other part: the one group of a page laid
+out in CSS pixels and drawn in device pixels (`Laid.toDevice`). -/
+private def isUniformScale (t : Rendering.Transform) : Bool :=
+  t.a == t.d && t.a > 0 && t.a != 1 && t.b == 0 && t.c == 0 && t.e == 0 && t.f == 0
+
+/-- `nearNodesFlat`; a page drawn at a device pixel ratio (one top-level group that scales
+by `k`) is the same group with its nodes near the window in its own rows, `top/k ..
+bottom/k`: the glyphs it keeps are those it keeps at ratio 1. -/
+def nearNodes (top bottom : Float) (nodes : List Rendering.Node) : List Rendering.Node :=
+  match nodes with
+  | [.group id t children] =>
+    if isUniformScale t then [.group id t (nearNodesFlat (top/t.a) (bottom/t.a) children)]
+    else nearNodesFlat top bottom nodes
+  | _ => nearNodesFlat top bottom nodes
 
 /-! ### Two layers: the chrome and a band of the page (issue 1268)
 
@@ -1210,7 +1266,7 @@ the height of the chrome, which the key holds as `top`; `selection`, `live`, `bi
 here: the pointer state is painted (`WebRepaint`), and is in the key, as `pointer`,
 only for a frame whose pointer styles change geometry. -/
 def layoutFields : List String := ["commands","resources","images","heldImages","url","fontData","textScalePercent","graphModel",
-  "visited","media","liberal","scripting","resourceFailures"]
+  "visited","media","liberal","scripting","resourceFailures","zoomUnit"]
 
 /-- The request with only `layoutFields`, in that order. -/
 def layoutRequest (request : JSON.Json) : JSON.Json :=
@@ -1356,8 +1412,10 @@ def layOutDOMIn (m : WebAccept.Mode) (request : JSON.Json) (graph : Option Nativ
   validateResources dom request
   let (_,d1) ← classicScriptsIn m (scripting request) (WebRenderScript.scriptRecords dom)
   let percent ← scalePercent request
-  let textScale := Float.ofNat percent / 100
-  let (rules,d2) ← rulesIn m dom request (mediaEnv (medium request) width rows percent)
+  -- `width` and `rows` are CSS pixels; the zoom is device pixels of text (Device pixels).
+  let unit := zoomUnit request
+  let textScale := cssTextScale percent unit
+  let (rules,d2) ← rulesIn m dom request (mediaEnv (medium request) width rows (percent*100/unit))
   let dom := if m == .liberal && graph.isNone then partialNote dom else dom
   if width == 0 || rows == 0 || width > 4096 || rows > 4096 then throw "unsupported document viewport"
   let fontData := str request "fontData"
@@ -1476,6 +1534,60 @@ theorem inspect_liberal_conservative (dom : DOM.Dom) (url : String) (scripting :
     WebAccept.accept .liberal (fun m => inspectIn m dom url scripting) = .ok (j,[]) ∧ ds = [] :=
   WebAccept.liberal_conservative _ j ds h
 
+/-! The scale of a CSS-pixel layout to device pixels (section "Device pixels"): the
+scene goes into one group that scales by `k`, so the rasterizer draws each path, glyph
+and image at device resolution; the boxes, glyph runs and link regions, which the host
+and the selection read as numbers, are multiplied by `k`. -/
+
+/-- The request with no field `key`. -/
+def withoutField (key : String) : JSON.Json → JSON.Json
+  | .object fields => .object (fields.filter (·.1 != key))
+  | j => j
+
+/-- The uniform scale by `k`. -/
+def deviceScale (k : Float) : Rendering.Transform := ⟨k,0,0,k,0,0⟩
+
+def boxToDevice (k : Float) (b : Rendering.Layout.Box) : Rendering.Layout.Box :=
+  {b with x := b.x*k, y := b.y*k, width := b.width*k, height := b.height*k}
+
+def runToDevice (k : Float) (r : Rendering.GlyphRun) : Rendering.GlyphRun :=
+  {r with fontSize := r.fontSize*k,
+          glyphs := r.glyphs.map fun g => {g with x := g.x*k, y := g.y*k, advance := g.advance*k}}
+
+def linkToDevice (k : Float) (r : Rendering.LinkRegion) : Rendering.LinkRegion :=
+  {r with x := r.x*k, y := r.y*k, width := r.width*k, height := r.height*k}
+
+/-- A scene laid out in CSS pixels, drawn `width` by `rows` device pixels at `k` device
+pixels for each CSS pixel. -/
+def sceneToDevice (k : Float) (width rows : Nat) (s : Rendering.Scene) : Rendering.Scene :=
+  {s with width := width, height := rows,
+          mapping := {s.mapping with viewportWidth := Float.ofNat width, viewportHeight := Float.ofNat rows},
+          tree := [.group none (deviceScale k) s.tree],
+          glyphRuns := s.glyphRuns.map (runToDevice k),
+          links := s.links.map (linkToDevice k)}
+
+/-- A layout in CSS pixels at the ratio `unit` (`zoomUnit`), in the device pixels of a
+window `width` by `rows`. The document, rules, text scale and styles stay those of the
+layout: a pointer state is painted on this scene by colour alone (`restyle`). -/
+def Laid.toDevice (l : Laid) (unit width rows : Nat) : Laid :=
+  let k := Float.ofNat unit / 100
+  {l with scene := sceneToDevice k width rows l.scene, boxes := l.boxes.map (boxToDevice k)}
+
+/-- The scale keeps every link region and box, in order: one for one, scaled. -/
+theorem toDevice_sizes (l : Laid) (unit width rows : Nat) :
+    (l.toDevice unit width rows).boxes.size = l.boxes.size ∧
+    (l.toDevice unit width rows).scene.links.size = l.scene.links.size ∧
+    (l.toDevice unit width rows).scene.glyphRuns.size = l.scene.glyphRuns.size := by
+  simp [Laid.toDevice, sceneToDevice]
+
+/-- The scale changes no source node, document or rule: what a box, link or run belongs
+to is that of the CSS-pixel layout. -/
+theorem toDevice_sources (l : Laid) (unit width rows : Nat) :
+    (l.toDevice unit width rows).boxes.map (·.source) = l.boxes.map (·.source) ∧
+    (l.toDevice unit width rows).scene.links.map (·.sourceNode) = l.scene.links.map (·.sourceNode) ∧
+    (l.toDevice unit width rows).dom = l.dom ∧ (l.toDevice unit width rows).rules = l.rules := by
+  simp [Laid.toDevice, sceneToDevice, boxToDevice, linkToDevice, Array.map_map, Function.comp_def]
+
 /-- Parse, script check, cascade and layout of a render. It reads only the key: the
 request it reads is `key.request`, which has only `layoutFields`. With `graphModel`
 (the FOAF graph page) the document is `WebGraph.skeleton` of the model, not `key.html`,
@@ -1490,7 +1602,16 @@ def layOut (key : LayoutKey) : Except String Laid := do
     | some _ => throw "graphModel must be a string"
   let dom ← prepareDOM (match graph with | some m => WebGraph.skeleton m | none => key.html) request
   if key.width == 0 || key.height == 0 || key.width > 4096 || key.height > 4096 then throw "unsupported document viewport"
-  layOutDOM request graph dom key.width (max 1 (key.height-key.top)) key.held key.pointer
+  let rows := max 1 (key.height-key.top)
+  -- Device pixels: a page is laid out in CSS pixels and drawn at the ratio. The graph page
+  -- keeps device pixels: its model is drawn at the size of the window (`graphInput`).
+  let unit := if graph.isSome then 100 else zoomUnit request
+  if unit == 100 then
+    layOutDOM (if graph.isSome then withoutField "zoomUnit" request else request) graph dom key.width rows key.held key.pointer
+  else
+    let (cssWidth,cssRows,_) := layoutInputs key.width rows 0 unit
+    let laid ← layOutDOM request graph dom (max 1 cssWidth) (max 1 cssRows) key.held key.pointer
+    return laid.toDevice unit key.width rows
 
 /-! ### Layout reads of page scripts
 
@@ -1543,11 +1664,13 @@ def measure (request : JSON.Json) : WasmVM.Hosts.Page.Measure := fun dom width h
   let laid : Thunk (Except String Laid) := Thunk.mk fun _ => layOutDOM request none dom width height held (none,none)
   -- `getComputedStyle` (op 20) reads the cascade alone: no layout for it
   let styled : Thunk (Except String (Array Rendering.CSS.Computed)) := Thunk.mk fun _ => do
-    let textScale := Float.ofNat (← scalePercent request) / 100
+    let textScale := cssTextScale (← scalePercent request) (zoomUnit request)
     let rules ← rules dom request
     let state := withPointer dom (← elementState dom (baseURL dom (str request "url")) request) (none,none)
     Rendering.CSS.computeAll dom rules textScale state
-  fun node op => if op == 20 || op ≥ 200 then
+  -- 22: the device pixel ratio of the layout request (`zoomUnit`/100), with no layout
+  fun node op => if op == 22 then some (Rendering.FloatFormat.format (Float.ofNat (zoomUnit request) / 100))
+    else if op == 20 || op ≥ 200 then
       match styled.get with
       -- CSSOM §9 getComputedStyle: an element that is not connected to the page's
       -- document has no computed style (the declaration is empty)
@@ -1854,7 +1977,7 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
     validateResources dom request
     if op == "inspect" then return ((← inspect dom (str request "url") request).toString,#[])
     let _ ← classicScripts request (WebRenderScript.scriptRecords dom)
-    let textScale := Float.ofNat (← scalePercent request) / 100
+    let textScale := cssTextScale (← scalePercent request) (zoomUnit request)
     let rules ← rules dom request
     if op == "droppedCSS" then
       return ((JSON.Json.object [("dropped",.array ((Rendering.CSS.droppedDeclarations dom rules).toList.map .string))]).toString,#[])
@@ -1893,8 +2016,10 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
   -- (WebHit). The answer has the event's coordinates. Lean's DOM, not the host, then
   -- dispatches the events (WebScripts).
   if op == "nodeAt" then
+    -- The event's coordinates are CSS pixels: the window's device pixels over the ratio.
+    let ratio := if (request.field? "graphModel").isSome then 1 else Float.ofNat (zoomUnit request) / 100
     return ((WebHit.nodeAtAnswer laid.dom scene boxes (Float.ofNat (natField request "x"))
-      (Float.ofNat (natField request "y")) (Float.ofNat top) (Float.ofNat ((shell.map (·.scroll)).getD 0))).toString,#[])
+      (Float.ofNat (natField request "y")) (Float.ofNat top) (Float.ofNat ((shell.map (·.scroll)).getD 0)) ratio).toString,#[])
   let items := WebSelection.cells scene.glyphRuns
   if op == "selectedText" then
     return ((JSON.Json.object [("text",.string (match chosen with

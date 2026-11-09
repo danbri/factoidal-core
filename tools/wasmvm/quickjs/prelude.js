@@ -2399,7 +2399,12 @@
   def('screen', Object.freeze({ width: 800, height: 600, availWidth: 800, availHeight: 600, colorDepth: 24, pixelDepth: 24 }));
   for (const [k, i] of [['innerWidth', 0], ['innerHeight', 1], ['outerWidth', 0], ['outerHeight', 1]])
     Object.defineProperty(globalThis, k, { get: () => viewport()[i], set(v) {}, configurable: true, enumerable: true });
-  def('devicePixelRatio', 1); def('scrollX', 0); def('scrollY', 0);
+  // ==== dprfix ==== devicePixelRatio (CSSOM View §4): the screen's device pixels for each
+  // CSS pixel, from Lean (node_query 22: the layout request's zoomUnit, no layout); 1 when
+  // the engine has no answer. Layout and every length a script reads are CSS pixels.
+  Object.defineProperty(globalThis, 'devicePixelRatio', { get: () => { const r = query(0, 22, 1)[0]; return r > 0 ? r : 1; },
+    set(v) {}, configurable: true, enumerable: true });
+  def('scrollX', 0); def('scrollY', 0);
   def('pageXOffset', 0); def('pageYOffset', 0);
   const text = xs => xs.map(x => typeof x === 'string' ? x : (() => { try { return typeof x === 'object' && x !== null && !(x instanceof Error) ? JSON.stringify(x) : String(x); } catch { return String(x); } })()).join(' ');
   const log = (...xs) => n.log(text(xs));

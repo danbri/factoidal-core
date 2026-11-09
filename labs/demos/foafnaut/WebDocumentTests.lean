@@ -627,3 +627,36 @@ private def svgBoxPage := "<!doctype html><title>B</title><div><svg width=\"10\"
 -- The console page lists the entries a host kept.
 #guard mentions (WebConsole.answer (json [("tab",.number "1"),("entries",.array [json [("source",.string "System"),
   ("severity",.string "warning"),("feature",.string "module script"),("message",.string "unsupported JavaScript module script")]])])) "module script" ≥ 1
+
+-- Device pixels (dprfix): a window on a 2x screen (twice the device pixels on each side, twice
+-- the zoom, zoomUnit 200) is laid out as the 1x window and drawn at twice the size: each box
+-- is the 1x box times two; a 16px margin is 32 device pixels and a 760px column 1520.
+private def dprPage := "<!doctype html><style>body{margin:16px}main{width:760px}div{height:20px;background:#c00}</style><main><div></div><p>Words of text in a column of the page, in a few lines.</p><a href=x>link</a></main>"
+private def laidAt (width height percent unit : Nat) : Option WebDocument.Laid :=
+  (WebDocument.layOut ⟨dprPage,WebDocument.layoutRequest (json [("textScalePercent",.number (toString percent)),
+    ("zoomUnit",.number (toString unit))]),width,height,0,[],[],(none,none)⟩).toOption
+private def scaledBy (k : Nat) : Bool :=
+  match laidAt 900 600 200 100, laidAt (900*k) (600*k) (200*k) (100*k) with
+  | some a,some b =>
+    let f := Float.ofNat k
+    a.boxes.size == b.boxes.size && a.boxes.size > 0 &&
+      (a.boxes.zip b.boxes).all (fun (p,q) => p.source == q.source && p.x*f == q.x && p.y*f == q.y && p.width*f == q.width && p.height*f == q.height) &&
+      a.scene.links.size == b.scene.links.size && a.scene.glyphRuns.size == b.scene.glyphRuns.size &&
+      (a.scene.glyphRuns.zip b.scene.glyphRuns).all (fun (p,q) => p.fontSize*f == q.fontSize)
+  | _,_ => false
+#guard scaledBy 2
+#guard scaledBy 3
+#guard (laidAt 1800 1200 400 200).map (fun l => l.boxes.any fun b => b.x == 32 && b.width == 1520) == some true
+-- Drawn: the red block's middle is red at 2x where the 1x layout puts it, scaled; at zoomUnit 100
+-- (no field) the page is the layout of before.
+#guard match laidAt 1800 1200 400 200 with
+  | some l => match WebRenderSVG.toScene l.scene with
+    | .ok s => (s.samplePixels [(2*(16+380),2*(16+10)),(2*(16+790),2*(16+10)),(2*(16+380),8)]).map (fun c => c.r > 0.7 && c.g < 0.1) == [true,false,false]
+    | .error _ => false
+  | none => false
+#guard (laidAt 900 600 200 100).map (·.boxes.size) ==
+  (WebDocument.layOut ⟨dprPage,WebDocument.layoutRequest (json [("textScalePercent",.number "200")]),900,600,0,[],[],(none,none)⟩).toOption.map (·.boxes.size)
+-- A page script sees CSS pixels: the viewport of a 2x window is half its device pixels.
+#guard WebScripts.viewport (json [("width",.number "2880"),("height",.number "1800"),("zoomUnit",.number "200")]) == some (1440,900)
+#guard WebScripts.viewport (json [("width",.number "1440"),("height",.number "900")]) == some (1440,900)
+#guard WebDocument.layoutInputs 2880 1800 400 200 == (1440,900,200)

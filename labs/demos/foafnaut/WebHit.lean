@@ -184,16 +184,18 @@ private def num (x : Float) : JSON.Json := .number (Rendering.FloatFormat.format
 mouse and pointer events (UI Events §5.3, CSSOM View §10): `client` in the page's
 viewport, `page` in the document (`client` plus the scroll), `offset` from the target's
 box (an SVG shape's box is its outer `svg`'s). `x` and `y` are in the window; the page
-starts `top` rows down and is scrolled `scroll` rows. -/
+starts `top` rows down and is scrolled `scroll` rows. The window is in device pixels; the
+answer's coordinates are CSS pixels, at `ratio` device pixels for each (1 by default). -/
 def nodeAtAnswer (dom : DOM.Dom) (scene : Rendering.Scene) (boxes : Array Rendering.Layout.Box)
-    (x y top scroll : Float) : JSON.Json :=
+    (x y top scroll : Float) (ratio : Float := 1) : JSON.Json :=
   let clientX := x
   let clientY := y - top
   let px := clientX
   let py := clientY + scroll
+  let css := fun (v : Float) => num (if ratio == 1 then v else v / ratio)
   match target dom scene boxes px py with
-  | some (node,box) => .object [("node",.number (toString node)),("clientX",num clientX),("clientY",num clientY),
-      ("pageX",num px),("pageY",num py),("offsetX",num (px-box.x)),("offsetY",num (py-box.y))]
-  | none => .object [("node",.null),("clientX",num clientX),("clientY",num clientY),("pageX",num px),("pageY",num py)]
+  | some (node,box) => .object [("node",.number (toString node)),("clientX",css clientX),("clientY",css clientY),
+      ("pageX",css px),("pageY",css py),("offsetX",css (px-box.x)),("offsetY",css (py-box.y))]
+  | none => .object [("node",.null),("clientX",css clientX),("clientY",css clientY),("pageX",css px),("pageY",css py)]
 
 end WebHit

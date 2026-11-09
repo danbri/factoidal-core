@@ -330,14 +330,17 @@ def pointerInit (request : JSON.Json) : String :=
 
 /-- The page's viewport in CSS pixels: the window's `width`, and its `height` less the
 full chrome of `shell` (the rows that a render lays the page out in,
-`WebDocument.layoutTop`). -/
+`WebDocument.layoutTop`), in device pixels, over the screen's device pixels for each CSS
+pixel, `zoomUnit` (percent; 100 if absent), as `WebDocument.layOut` lays the page out. -/
 def viewport (request : JSON.Json) : Option (Nat × Nat) := do
   let w ← natField request "width"
   let h ← natField request "height"
   let top := match request.field? "shell" with
     | some j => WebShell.fullHeight (WebShell.Shell.ofJson j) w
     | none => 0
-  return (w, max 1 (h - top))
+  let unit := match natField request "zoomUnit" with | some u => if u == 0 then 100 else u | none => 100
+  if unit == 100 then return (w, max 1 (h - top))
+  return (max 1 (w*100/unit), max 1 ((h - top)*100/unit))
 
 def pointerKind : String → Option Page.PointerKind
   | "down" => some .down | "move" => some .move | "up" => some .up | "cancel" => some .cancel | _ => none

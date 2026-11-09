@@ -306,11 +306,18 @@ def Host.measured (h : Host) : Host × Option (Nat → Nat → Option String) :=
 
 /-- `node_query` ops served here: 16 the init of the event being dispatched; 17 a node's
 layout, "x y w h left top width height" (border box in the page, then the client box);
-18 an SVG element's bounding box in its user space, "x y w h"; 19 the viewport, "w h". -/
+18 an SVG element's bounding box in its user space, "x y w h"; 19 the viewport, "w h";
+22 the device pixel ratio (`devicePixelRatio`), which the measure answers from its layout
+request with no layout, so it is not counted as one (dprfix). -/
 def pageQuery (h : Host) (node op : Nat) : Host × Except Int String :=
   match op with
   | 16 => (h, if h.event.isEmpty then .error (-1) else .ok h.event)
   | 19 => (h, .ok s!"{h.reads.width} {h.reads.height}")
+  | 22 => (h, match h.reads.measure with
+      | some m => match m h.dom.dom h.reads.width h.reads.height node 22 with
+        | some r => .ok r
+        | none => .error (-1)
+      | none => .error (-2))
   | _ =>
     let (h, f) := h.measured
     match f with
