@@ -182,6 +182,60 @@ def hasAttribute (n : DOM.Node) (key : String) : Bool :=
 private def words (s : String) : List String :=
   (s.replace "\n" " " |>.replace "\t" " " |>.replace "\r" " ").splitOn " " |>.filter (· != "")
 private def ident (s : String) : Bool := !s.isEmpty && s.toList.all (fun c => c.isAlphanum || c == '-' || c == '_')
+/-- Splits `source` at the commas outside quotes and parentheses (CSS Syntax 3 §5.3.11,
+for a comma-separated list of component values). One pass, no recursion. -/
+def splitTopCommas (source : String) : List String := Id.run do
+  let mut out : Array String := #[]
+  let mut item := ""
+  let mut depth := 0
+  let mut quote : Option Char := none
+  for c in source.toList do
+    if let some q := quote then
+      item := item.push c
+      if c == q then quote := none
+    else if c == '"' || c == '\'' then
+      quote := some c
+      item := item.push c
+    else if c == '(' then
+      depth := depth+1
+      item := item.push c
+    else if c == ')' then
+      depth := depth-1
+      item := item.push c
+    else if c == ',' && depth == 0 then
+      out := out.push item
+      item := ""
+    else item := item.push c
+  return (out.push item).toList
+
+/-- CSS Fonts 4 §2.1 `<family-name>#`: a quoted string, or identifiers separated by
+white space (joined by one space). Generic family keywords stay as they are. `none`
+for a list this profile can not read: an empty item, a backslash escape, an
+unclosed quote, or an unquoted item that is not identifiers. -/
+def familyNames (value : String) : Option (List String) := do
+  let items ← (splitTopCommas value).mapM fun item => do
+    let raw := trim item
+    if raw.isEmpty || raw.contains '\\' then none
+    if raw.startsWith "\"" || raw.startsWith "'" then
+      let q := raw.front
+      if raw.length < 2 || !raw.endsWith q.toString then none
+      let inner := ((raw.drop 1).dropEnd 1).toString
+      if inner.contains q || inner.isEmpty then none
+      pure inner
+    else
+      let parts := words raw
+      if parts.isEmpty || !parts.all ident then none
+      pure (" ".intercalate parts)
+  if items.isEmpty then none else some items
+
+/-- The list of `familyNames` as `Computed.fontFamily` holds it: the names joined by
+", ". One family stays the name itself, as before. -/
+def familyValue (names : List String) : String := ", ".intercalate names
+
+/-- The names of a `Computed.fontFamily` value. -/
+def familyList (value : String) : List String :=
+  ((value.splitOn ", ").map trim).filter (!·.isEmpty)
+
 private def pseudoClass : String → Option PseudoClass
   | "link" => some .link | "visited" => some .visited | "any-link" => some .anyLink
   | "hover" => some .hover | "active" => some .active | _ => none
@@ -323,6 +377,21 @@ def parseIn (env : MediaQuery.Env) (source : String) : Except String (List Rule)
 /-- Rules of a sheet for the media type `medium` ("screen" or "print") with no viewport:
 an `@media` query with a width or colour-scheme feature does not hold. -/
 def parseFor (medium source : String) : Except String (List Rule) := parseIn {medium} source
+
+/-- The descriptor blocks of the `@font-face` rules of a sheet (CSS Fonts 4 §4.1), in
+order, with those inside an `@media` block whose query list holds in `env` (by default
+the media type `medium` with no viewport). Only
+the first 131072 characters of a sheet are read, as for `parseFor`. -/
+def fontFaceBlocks (medium source : String) (env : MediaQuery.Env := {medium}) : List String := Id.run do
+  let mut out : List String := []
+  for (head,body) in topLevel (comments (source.take 131072).toString) do
+    let head := trim head
+    let blocks := if (head.take 6).toString.toLower == "@media" && MediaQuery.applies env (head.drop 6).toString
+        then topLevel body else [(head,body)]
+    for (inner,content) in blocks do
+      if (trim inner).toLower == "@font-face" then out := content :: out
+  return out.reverse
+
 /-- `id` is `target` or one of its ancestors. The walk is bounded by the arena size. -/
 def inclusiveAncestor (dom : Dom) (id : Nat) : Nat → Option Nat → Bool
   | 0, _ => false
@@ -578,12 +647,10 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     | "scale-down" => return {s with objectFit := .scaleDown}
     | _ => throw "unsupported CSS object-fit"
   | "font-family" =>
-    let raw := trim d.value
-    let quoted := (raw.startsWith "'" && raw.endsWith "'") || (raw.startsWith "\"" && raw.endsWith "\"")
-    let family := if quoted then ((raw.drop 1).dropEnd 1).toString else raw
-    if family.isEmpty || family.contains ',' || family.contains '\\' ||
-        (!quoted && !ident family) then throw s!"unsupported font family syntax: {d.value}"
-    return {s with fontFamily := family}
+    -- CSS Fonts 4 §2.1: a list of families, tried in order (`familyNames`).
+    let some names := familyNames d.value | throw s!"unsupported font family syntax: {d.value}"
+    if names.any (·.contains ',') then throw s!"unsupported font family syntax: {d.value}"
+    return {s with fontFamily := familyValue names}
   | _ => throw s!"unsupported CSS property: {d.property}"
 
 /-- A value or property this profile can not use leaves the style as it was. -/
