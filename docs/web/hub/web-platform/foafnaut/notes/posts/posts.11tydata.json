@@ -1,0 +1,5 @@
+{
+  "layout": "foafnaut-note.njk",
+  "tags": ["foafnautNotes"],
+  "permalink": "/web/hub/web-platform/foafnaut/notes/{{ page.fileSlug }}/"
+}

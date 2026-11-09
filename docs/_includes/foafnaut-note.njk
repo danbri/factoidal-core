@@ -1,0 +1,20 @@
+---
+layout: hub.njk
+---
+{#- One Foafnaut note (docs/web/hub/web-platform/foafnaut/notes/posts/*.md). The same
+    front matter makes its entry in the Atom feed that Foafnaut shows
+    (labs/demos/foafnaut/pages/feed.xml, written by tools/build-demo-pages.py). -#}
+<p class="hub-crumbs"><a href="{{ '/web/hub/' | url }}">Hub</a> › <a href="{{ '/web/hub/web-platform/' | url }}">Web platform</a> › <a href="{{ '/web/hub/web-platform/foafnaut/' | url }}">Foafnaut</a> › <a href="{{ '/web/hub/web-platform/foafnaut/notes/' | url }}">Notes</a></p>
+<h1>{{ titleHtml | safe }}</h1>
+<p class="hub-note-meta"><time datetime="{{ page.date.toISOString() }}">{{ page.date.toLocaleDateString("en-GB", { "day": "numeric", "month": "long", "year": "numeric", "timeZone": "UTC" }) }}</time> · {{ category }} · commit <a href="https://github.com/danbri/factoidal-core/commit/{{ commit }}"><code>{{ commit }}</code></a></p>
+<p><strong>{{ summaryHtml | safe }}</strong></p>
+{{ content | safe }}
+{%- if demos and demos.length %}
+<h2 id="open-in-foafnaut">Open in Foafnaut</h2>
+<ul>
+{%- for demo in demos %}
+<li><a href="{{ ('/web/hub/foafnaut/?page=' + demo) | url }}">{{ foafnautPages[demo].html | safe }}</a> (<code>{{ demo }}</code>)</li>
+{%- endfor %}
+</ul>
+{%- endif %}
+<p><a href="{{ '/web/hub/web-platform/foafnaut/notes/' | url }}">All Foafnaut notes</a> · <a href="{{ '/web/hub/foafnaut/?page=feed.xml' | url }}">The notes as a feed, in Foafnaut</a> · <a href="{{ '/web/hub/foafnaut/pages/feed.xml' | url }}">Atom feed</a></p>
