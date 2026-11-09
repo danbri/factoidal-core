@@ -19,7 +19,7 @@ button{font-size:15px}
 JavaScript API. Lean validates and runs it in WasmVM; the script reads the module's memory
 through <code>Memory.buffer</code> and draws it as SVG. Click the picture to zoom in.</p>
 <div class="stage">
-<svg id="pic" width="512" height="320" viewBox="0 0 64 40" shape-rendering="crispEdges">
+<svg id="pic" width="512" height="320" viewBox="0 0 64 40">
 <rect width="64" height="40" fill="#0d2a26"/>
 <g id="bands"></g>
 </svg>
@@ -68,7 +68,7 @@ function draw() {
     }
   }
   paths.forEach((p, b) => p.setAttribute('d', d[b]));
-  state.textContent = 'x ' + view.x.toFixed(4) + ', y ' + view.y.toFixed(4) + ', width ' + (view.step * W).toPrecision(3) + ', ' + max + ' iterations at most';
+  state.textContent = 'x ' + view.x.toFixed(4) + ', y ' + view.y.toFixed(4) + ', width ' + (view.step * W).toFixed(6) + ', ' + max + ' iterations at most';
   facts.textContent = (ex.iterations.value - before) + ' iterations in WebAssembly, ' + rows + ' calls of env.row, ' + ms.toFixed(1) + ' ms of script time';
 }
 function zoom(cx, cy, f) {
