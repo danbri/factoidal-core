@@ -55,7 +55,7 @@ GROUPS = [
                                'showcase-image-formats.html', 'print-showcase.html', 'print-poster.html', 'markdown-sample.html']),
     ('XML, XSLT and data', ['foaf-people.xml', 'sparql-results.xml', 'feed.xml', 'sitemap.xml', 'lab-files.xml',
                             'engine-pipeline.xml', 'books-svg.xml', 'books-xslt4.xml', 'books-xslt1.xml']),
-    ('About the engine', ['status.html', 'js-status.html', 'architecture.html', 'settings.html', 'foafnaut:wasm', SVG_TINY_SCORES]),
+    ('About the engine', ['start.html', 'status.html', 'js-status.html', 'architecture.html', 'settings.html', 'foafnaut:wasm', SVG_TINY_SCORES]),
 ]
 # One line for each link. A page with none here uses the start of its manifest "shows".
 BLURBS = {
@@ -92,6 +92,7 @@ BLURBS = {
     'lab-files.xml': 'A table whose totals XSLT computes.',
     'engine-pipeline.xml': 'The engine\'s stages, drawn from an XML description.',
     'books-xslt4.xml': 'XSLT 4: maps, records and xsl:switch.',
+    'start.html': 'The page the app opens with: Foafnaut wordmarks, these pages on the web, and sites to try.',
     'status.html': 'Where the project is, and its measured scores.',
     'js-status.html': 'The two JavaScript engines and their test scores.',
     'architecture.html': 'How the engine is put together.',
