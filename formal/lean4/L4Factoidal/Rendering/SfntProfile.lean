@@ -282,7 +282,8 @@ presentation (U+FE0F, a sequence, or an emoji whose Emoji_Presentation is Yes) t
 a colour font first, then an outline emoji font (one that maps U+FE0F), then any; text
 presentation (U+FE0E, or Emoji_Presentation No) takes a font without colour first.
 When several fonts of that kind have all the characters, as slices of one colour font
-do for a flag, the one that shapes the cluster to the fewest glyphs wins. -/
+do for a flag, the one that shapes the cluster into a ligature wins, with the fewest glyphs
+(`shapeScore`). -/
 
 /-- The emoji properties of UTS #51 (`EmojiData` bits). -/
 def emojiProps : Unicode.RangeTable := Unicode.RangeTable.ofText Unicode.EmojiData.emojiText
@@ -310,11 +311,17 @@ private def rank (f : Font) (emoji : Bool) : Nat :=
   if emoji then (if f.colour.isSome then 0 else if f.has (Char.ofNat 0xFE0F) then 1 else 2)
   else if f.colour.isSome then 1 else 0
 
-/-- Glyphs with width when `f` shapes `text`; many when it can not. -/
-private def drawnGlyphs (f : Font) (text : String) : Nat :=
+/-- How well `f` draws the cluster `text`, lower first: 0 when shaping makes a glyph that is
+no character's own glyph (the font has the sequence as a ligature), else 1; then the glyphs
+with width. A font that has a flag's two regional indicators but not the flag can still
+give one glyph (Noto Color Emoji drops the second letter), so the count alone does not say. -/
+private def shapeScore (f : Font) (cluster : Array Char) (text : String) : Nat × Nat :=
   match SfntShape.shape f.bytes f.dir f.face text with
-  | .ok s => (s.glyphs.filter (·.advance > 0)).size
-  | .error _ => text.length + 1
+  | .ok s =>
+    let drawn := s.glyphs.filter (·.advance > 0)
+    let own := cluster.filterMap fun c => (f.face.glyphCp f.bytes c.toNat).toOption
+    ((if drawn.any (fun g => !own.contains g.id) then 0 else 1), drawn.size)
+  | .error _ => (1, text.length + 1)
 
 /-- The font for an emoji cluster, when one has all of it. -/
 def clusterFont (fonts : Array Font) (cluster : Array Char) (emoji : Bool) : Option Nat := Id.run do
@@ -329,10 +336,11 @@ def clusterFont (fonts : Array Font) (cluster : Array Char) (emoji : Bool) : Opt
   | (i,f) :: rest =>
     if need.size < 2 then return some i
     let text := String.ofList cluster.toList
-    let first := (drawnGlyphs f text, i)
-    return (rest.foldl (fun (acc : Nat × Nat) (j,g) =>
-      let n := drawnGlyphs g text
-      if n < acc.1 then (n,j) else acc) first).2
+    let better := fun (a b : Nat × Nat) => a.1 < b.1 || (a.1 == b.1 && a.2 < b.2)
+    let first := (shapeScore f cluster text, i)
+    return (rest.foldl (fun (acc : (Nat × Nat) × Nat) (j,g) =>
+      let n := shapeScore g cluster text
+      if better n acc.1 then (n,j) else acc) first).2
 
 /-- The font of character `k` alone (the rules before emoji clusters): see `runsOf`. -/
 private def charFont (fonts : Array Font) (chars : Array Char) (k : Nat) (last : Option Nat) : Nat :=
