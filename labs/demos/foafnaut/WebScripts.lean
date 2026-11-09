@@ -1,6 +1,6 @@
 import L4Factoidal.WasmVM.Hosts.Page
 import L4Factoidal.WasmVM.Hosts.PageAot
-import L4Factoidal.WasmVM.Hosts.LeanJS
+import L4Factoidal.WasmVM.Hosts.LeanJSRealm
 import L4Factoidal.DOM.OfXml
 import WebRenderScript
 import WebWasm

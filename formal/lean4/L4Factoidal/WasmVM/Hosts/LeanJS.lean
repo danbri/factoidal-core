@@ -26,6 +26,7 @@ import L4Factoidal.WasmVM.Hosts.Page
 import L4Factoidal.WasmVM.Hosts.PageEvents
 import L4Factoidal.WasmVM.Aot.Window
 import L4Factoidal.JS.Interp
+import L4Factoidal.JS.Snapshot
 
 namespace L4Factoidal.WasmVM.Hosts.LeanJS
 open L4Factoidal.WasmVM
@@ -77,7 +78,7 @@ def intOf : JS.HostArg → Int
 
 /-- ToString of an argument for an import, in UTF-8. -/
 def bytesOf : JS.HostArg → ByteArray
-  | .val (.str s) => s.toUTF8
+  | .val (.str s) => (JS.Str.toHost s).toUTF8
   | .val (.num x) => (JS.numToString x).toUTF8
   | .val (.bool b) => (if b then "true" else "false").toUTF8
   | .val .undef => "undefined".toUTF8
@@ -129,7 +130,7 @@ def strAns (r : Except String Int) (out : ByteArray) (nullOnNone : Bool) : JS.Ho
   | .ok n =>
     if n == -1 && nullOnNone then .val .null
     else if n < 0 then .val (.num (Float.ofInt n))
-    else .val (.str (String.fromUTF8? (out.extract 0 n.toNat) |>.getD ""))
+    else .val (.str (JS.Str.ofHost (String.fromUTF8? (out.extract 0 n.toNat) |>.getD "")))
 
 def intAns (r : Except String Int) : JS.HostAns :=
   match r with
@@ -358,18 +359,45 @@ def engine : PageEvents.Engine Session :=
 embeds). -/
 def prelude : String := include_str "../../../../../tools/wasmvm/quickjs/prelude.js"
 
-/-- The realm with the page objects, on an empty document: each page starts from it with
-its own arena, so the prelude runs once (as `Page.Module'.base`). -/
-def prepare (lim : Page.Limits := {}) : Except String Session := do
+/-- A fresh realm with the page host on an empty document (no page objects yet). -/
+def freshRealm (lim : Page.Limits := {}) : JHeap :=
   let host : Host := { dom := { dom := Page.emptyDocument, commandLimit := lim.commands, logLimit := lim.logs } }
-  let heap : JHeap := JS.freshHeapOf (some { page := host }) hostCall
-  let heap := { heap with steps := runBudget }
+  JS.freshHeapOf (some { page := host }) hostCall
+
+/-- The realm with the page objects, on an empty document, made by running the prelude:
+each page starts from it with its own arena, so the prelude runs once (as
+`Page.Module'.base`). `LeanJSRealm.prepare` gives the same realm from the heap this left,
+kept as data at build time (`snapshotData`), without lexing, parsing or running the
+prelude. -/
+def prepareSource (lim : Page.Limits := {}) : Except String Session := do
+  let heap := { freshRealm lim with steps := runBudget }
   let (nobj, heap) := JS.hostObject heap natives
   let ((o, f), heap) := JS.evalValue heap prelude
   if let some m := failure o then throw s!"prelude: {m}"
   let ((o, api), heap) := JS.callFunction heap f .undef #[nobj]
   if let some m := failure o then throw s!"prelude: {m}"
   return { heap := { heap with jobs := #[], jobHead := 0 }, api, limits := lim }
+
+/-- The mark of the prelude a snapshot was made from (its text's hash). -/
+def preludeMark : String := toString (hash prelude)
+
+/-- The realm of `prepareSource` as data (`JS.Snapshot.encode`), with the prelude's object
+and `preludeMark`. `lake exe bubblepop-realm` writes it into `LeanJSRealmData.lean` at
+build time (build-web-render.sh). -/
+def snapshotData : Except String String := do
+  let s ← prepareSource
+  JS.Snapshot.encode (freshRealm {}) s.heap #[s.api, .str preludeMark]
+
+/-- The realm from snapshot data: the heap that `prepareSource` left, decoded on a fresh
+realm; refused when it was made from another prelude or on another realm (then the data
+is stale: build-web-render.sh makes it again). -/
+def prepareWith (data : String) (lim : Page.Limits := {}) : Except String Session := do
+  let (heap, extra) ← JS.Snapshot.decode (freshRealm lim) data
+  match extra with
+  | #[api, .str mark] =>
+    if mark != preludeMark then throw "snapshot: made from another prelude"
+    return { heap := { heap with steps := runBudget, jobs := #[], jobHead := 0 }, api, limits := lim }
+  | _ => throw "snapshot: no prelude object"
 
 /-- Start a page on the prepared realm (as `Page.start` and `Page.Session.startP`): the
 content event handler attributes, the URL, the classic scripts in document order (each with
@@ -382,7 +410,7 @@ def start (base : Session) (dom : Arena) (url : String) (scripts : Array (Nat ×
   let s := { base with limits := lim, steps := 0, jobs := 0, tasks := 0, errors := #[], lastFrame := none }
   let mut s := s.setHost { dom := domHost, reads, time, web := { entropy := lim.entropy, docEncoding := lim.encoding } }
   s := (s.api? "start" #[]).1
-  s := (s.api? "url" #[.str url]).1
+  s := (s.api? "url" #[.str (JS.Str.ofHost url)]).1
   for (node, src) in scripts do
     s := (s.api? "script" #[.num (Float.ofNat node)]).1
     s := s.eval src

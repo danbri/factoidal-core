@@ -21,7 +21,7 @@ def page : String := "<!doctype html><title>t</title><p id=out>before</p><button
   "</script>"
 
 def started : Except String LeanJS.Session := do
-  let base ← LeanJS.prepare
+  let base ← LeanJS.prepareSource
   let dom := DOM.parseHtmlDocument page
   let scripts := ((dom.treeOrder 0).toList.filter fun k => DOM.Dom.isHtmlElement (dom.get k) "script").toArray.map
     fun k => (k, (dom.textContent k).getD "")

@@ -4,6 +4,9 @@ import L4Factoidal.JS.Number
 import L4Factoidal.JS.Parser
 import L4Factoidal.JS.Value
 import L4Factoidal.JS.Interp
+import L4Factoidal.JS.Snapshot
+import L4Factoidal.JS.Str
+import L4Factoidal.JS.Date
 import L4Factoidal.JS.Theorems
 import L4Factoidal.JS.Tests
 
