@@ -114,7 +114,11 @@ async function main() {
     ?Deno.readFile(nativeEngine).then(async bytes=>({backend:"native",path:nativeEngine!,
       sha256:[...new Uint8Array(await crypto.subtle.digest("SHA-256",bytes))].map(b=>b.toString(16).padStart(2,"0")).join("")}))
     :Promise.resolve({backend:"wasm",path:null,sha256:null});
-  url??=new URL("./pages/index.html",import.meta.url).href;
+  // No page given: the start page (start.html; owner, 2026-11-09). A sweep, a check, a paste or a
+  // print with no page keeps the demo index: those runs press its links and check its URL.
+  const indexURL=new URL("./pages/index.html",import.meta.url).href;
+  const startDefault=url===undefined&&!(sweep||commands||pasted||printPDF||check);
+  url??=startDefault?new URL("./pages/start.html",import.meta.url).href:indexURL;
   // The main-thread engine answers only small calls that input needs at once (shellHit, hit,
   // pointerUp, command, history, shell text). Each is timed; one over 2 ms is traced.
   const slowCalls:Record<string,{count:number;maxMs:number}>={};
@@ -282,7 +286,13 @@ async function main() {
   // in the console tab. --strict, or the Settings choice, refuses such pages instead.
   if(cliLiberal&&cliStrict)throw new Error("Use one of --strict and --be-liberal-in-what-we-accept");
   let liberal=!cliStrict;
-  let document=await prepareHTML(lean,url,undefined,undefined,{liberal}),width=1280,height=800;
+  // The start page has a script. A host that can run no page script (the Wasm engine with no
+  // QuickJS guest module) refuses it; then the window opens the demo index, which has none.
+  let document=await prepareHTML(lean,url,undefined,undefined,{liberal}).catch(error=>{
+    if(!startDefault)throw error;
+    console.log(JSON.stringify({type:"native-html-start-fallback",url,to:indexURL,reason:String(error instanceof Error?error.message:error)}));
+    return prepareHTML(lean,indexURL,undefined,undefined,{liberal});
+  }),width=1280,height=800;
   // The first compile runs in the worker too: it warms the worker, and no frame is compiled on the main thread.
   let frame:HTMLArtifact=await document.compile(width,height);
   console.log(JSON.stringify({type:"native-html-loaded",url:document.url,primitives:frame.primitiveCount,links:frame.webRender.links.length,width,height}));
