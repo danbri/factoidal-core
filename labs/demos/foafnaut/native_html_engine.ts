@@ -15,7 +15,11 @@ export type HTMLArtifact = {
 /** A render with `layers:true` (WebDocument.layersJSON): the chrome layer in window
 rows, the page layer in band rows from page row `bandTop`, and the WGSL that puts them
 in the window. `keepFrom`..`keepTo` are the scrolls that this band shows with no new render. */
-export type HTMLLayerPlace = {top:number;view:number;bandTop:number;bandHeight:number;keepFrom:number;keepTo:number;composite:string;hoverRules?:boolean;scrollLimit?:number};
+/** The answer of fontFaces: the used faces and how many @font-face rules the page has. */
+export type WebFontFaces={faces:{family:string;sources:string[]}[];rules:number};
+export type HTMLLayerPlace = {top:number;view:number;bandTop:number;bandHeight:number;keepFrom:number;keepTo:number;composite:string;hoverRules?:boolean;scrollLimit?:number;
+  /** WebPaint: an SVG animation runs or will begin by the clock (draw the next frame); the page has animations (send its clicks). */
+  animating?:boolean;animations?:boolean};
 /** Lean's answer to a pointer press: the chrome control or the link pressed, and the rectangles the composite darkens. */
 export type PressAnswer = {control:string|null;sourceNode?:number|null;href?:string;rects:number[][]};
 /** A skip of liberal mode (WebAccept.Diagnostic.json): what Lean did not draw or run, and why. */
@@ -91,7 +95,7 @@ a JSON head and raw sections, with no Base64. The buffer is the host's own copy.
 export type BytesBackend=(html:string,requestJSON:string,width:number,height:number)=>ArrayBuffer;
 /** A font file as bytes (`web_document_font_call_bin`, WebDocument.fontLoadBin): no Base64
 and no JSON, so the file is not copied onto the call stack. The answer is the fontLoad JSON. */
-export type FontBackend=(bytes:Uint8Array,family:string,sha256:string,fallback:boolean)=>string;
+export type FontBackend=(bytes:Uint8Array,family:string,sha256:string,fallback:boolean|"web")=>string;
 /** An image as bytes (`web_document_image_call_bin`, WebDocument.imageLoadBin), held by key
 and SHA-256; undefined when the engine has no such export. The answer is the imageLoad JSON. */
 export type ImageBackend=(bytes:Uint8Array,key:string,sha256:string)=>string;
@@ -136,7 +140,7 @@ export function nativeBackends(path:string):Backends {
       finally{library.symbols.web_render_free(pointer);}
     },
     font:(bytes,family,sha256,fallback)=>{
-      const pointer=library.symbols.web_document_font_call_bin(bytes,bytes.length,cstring(family),cstring(sha256),fallback?1:0);
+      const pointer=library.symbols.web_document_font_call_bin(bytes,bytes.length,cstring(family),cstring(sha256),fallback==="web"?2:fallback?1:0);
       if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
       try{return new Deno.UnsafePointerView(pointer).getCString();}
       finally{library.symbols.web_render_free(pointer);}
@@ -182,7 +186,7 @@ function wasmBackends(module:Module):Backends {
       if(!input)throw new Error("Published Lean HTML engine allocation failed");
       try{
         module.HEAPU8.set(bytes,input);
-        const pointer=module.ccall("web_document_font_call_bin","number",["number","number","string","string","number"],[input,bytes.length,family,sha256,fallback?1:0]);
+        const pointer=module.ccall("web_document_font_call_bin","number",["number","number","string","string","number"],[input,bytes.length,family,sha256,fallback==="web"?2:fallback?1:0]);
         if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
         try{return module.UTF8ToString(pointer);}
         finally{module.ccall("web_render_free",null,["number"],[pointer]);}
@@ -333,6 +337,15 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
       return result as FontLoaded;
     },
     fontRequests:(source:string,options:Record<string,unknown>)=>documentCall(source,{...options,op:"fontRequests"}),
+    // Web fonts (CSS Fonts 4 §4, WebDocument.fontFaces): the @font-face faces the page's
+    // rendered text uses, each with its URLs to try in order; then each fetched face goes
+    // in with webFontLoad (Lean checks it with the font policy and holds it by SHA-256).
+    fontFaces:(source:string,options:Record<string,unknown>)=>documentCall(source,{...options,op:"fontFaces"}) as WebFontFaces,
+    webFontLoad:(bytes:Uint8Array,fontSha256:string)=>{
+      const result=JSON.parse(backends.font(bytes,"",fontSha256,"web"));
+      if(result?.error)throw new Error(`Lean HTML: ${result.error}`);
+      return result as {webFont:string;glyphs:number;held:number};
+    },
     // Held images (WebDocument, issue 1292): sent once, named by renders in `heldImages`.
     // `imageInfo` answers undefined for an engine from before them, which then gets
     // `images` with the bytes in each request, as before (issue 1274).

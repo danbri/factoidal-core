@@ -3604,21 +3604,54 @@
   Object.defineProperty(CSSns, Symbol.toStringTag, { value: 'CSS', configurable: true });
   def('CSS', CSSns);
   // ---- document.fonts (CSS Font Loading 3 §2): the fonts a page uses are held before its
-  // scripts run, and a page can not add font faces here, so the set is empty and loaded ----
+  // scripts run, and a page can not add font faces here ----
+  // showoff: the faces are those of the page's @font-face rules, from Lean (node_query op 22,
+  // asked on first use): family, descriptors and status, "loaded" when the engine holds the
+  // face for this page (the host fetched it because the page's text uses it), else
+  // "unloaded". So nothing is loading and `ready` is resolved. load() and check() match the
+  // families of a CSS font shorthand (§2.5, without weight and style, which this engine's
+  // text does not have). An engine without op 22 answers no faces.
   const fontKey = {};
+  let fontFaces;
+  const facesNow = () => {
+    if (fontFaces) return fontFaces;
+    let list = [];
+    try { const s = n.query(0, 22, ''); if (typeof s === 'string' && s !== '') list = JSON.parse(s); } catch { list = []; }
+    return fontFaces = list.map(f => {
+      const face = { family: f.family, style: f.style, weight: f.weight, stretch: 'normal', unicodeRange: f.unicodeRange,
+        variant: 'normal', featureSettings: 'normal', display: 'auto', status: f.status };
+      let loaded;
+      Object.defineProperty(face, 'loaded', { get: () => loaded ??= (f.status === 'loaded' ? Promise.resolve(face)
+        : Promise.reject(new DOMException('The font face was not loaded', 'NetworkError'))), enumerable: true });
+      face.load = () => face.loaded;
+      return Object.freeze(face);
+    });
+  };
+  const faceRanges = face => face.unicodeRange.split(',').map(r => r.trim().replace(/^U\+/i, '').split('-').map(h => parseInt(h, 16)))
+    .map(([lo, hi]) => [lo, hi ?? lo]);
+  const matchingFaces = (font, text) => {
+    const m = /(?:^|\s)[\d.]+(?:px|pt|pc|em|rem|ex|ch|%|vw|vh|vmin|vmax|in|cm|mm|q)(?:\/\S+)?\s+(.+)$/i.exec(String(font).trim());
+    if (!m) throw new DOMException(`'${font}' is not a valid font`, 'SyntaxError');
+    const names = m[1].split(',').map(x => x.trim().replace(/^(['"])(.*)\1$/, '$2').toLowerCase());
+    const chars = [...String(text)].map(c => c.codePointAt(0));
+    return facesNow().filter(face => names.includes(face.family.toLowerCase()) &&
+      chars.some(c => faceRanges(face).some(([lo, hi]) => lo <= c && c <= hi)));
+  };
   class FontFaceSet extends EventTarget {
     constructor(key) { if (key !== fontKey) throw new TypeError('Illegal constructor'); super(); }
     get status() { return 'loaded'; }
-    get size() { return 0; }
+    get size() { return facesNow().length; }
     get ready() { return fontsReady; }
-    check(font, text = ' ') { if (arguments.length < 1) throw new TypeError('check: 1 argument required'); return true; }
-    load(font, text = ' ') { if (arguments.length < 1) throw new TypeError('load: 1 argument required'); return Promise.resolve([]); }
-    has() { return false; }
+    check(font, text = ' ') { if (arguments.length < 1) throw new TypeError('check: 1 argument required');
+      return matchingFaces(font, text).every(f => f.status === 'loaded'); }
+    load(font, text = ' ') { if (arguments.length < 1) throw new TypeError('load: 1 argument required');
+      try { return Promise.resolve(matchingFaces(font, text).filter(f => f.status === 'loaded')); } catch (e) { return Promise.reject(e); } }
+    has(face) { return facesNow().includes(face); }
     add() { return this; }
     delete() { return false; }
     clear() {}
-    forEach() {}
-    *entries() {} *keys() {} *values() {}
+    forEach(f, self) { for (const face of facesNow()) f.call(self, face, face, this); }
+    *entries() { for (const f of facesNow()) yield [f, f]; } *keys() { yield* facesNow(); } *values() { yield* facesNow(); }
   }
   define(FontFaceSet.prototype, Symbol.iterator, FontFaceSet.prototype.values);
   Object.defineProperty(FontFaceSet.prototype, Symbol.toStringTag, { value: 'FontFaceSet', configurable: true });

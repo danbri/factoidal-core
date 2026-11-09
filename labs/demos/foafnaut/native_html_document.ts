@@ -91,6 +91,49 @@ async function readBytes(url:string,limit:number,signal?:AbortSignal):Promise<Ui
   for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
   return bytes;
 }
+/** Limits on web font bytes (CSS Fonts 4 @font-face): each face, and all faces of a page. */
+export const MAX_FONT_BYTES=8*1048576, MAX_PAGE_FONT_BYTES=16*1048576;
+type WebFontEngine={
+  fontFaces?:(source:string,options:Record<string,unknown>)=>{faces?:{family:string;sources:string[]}[]}|Promise<{faces?:{family:string;sources:string[]}[]}>;
+  webFontLoad?:(bytes:Uint8Array,sha256:string)=>unknown;
+};
+/** Web fonts (CSS Fonts 4 §4): Lean says which @font-face faces the page's rendered text
+uses (WebDocument.fontFaces), each with its URLs in order. The host fetches the first URL of
+each face that it can, from the page's own origin and within the size caps, and gives the bytes
+to Lean (webFontLoad), which checks the font with the font policy and holds it. A face that
+fails or is refused is left out: its text falls back to the next family, as CSS says. A page
+whose sheets have no @font-face makes no call. The answer is the request field `webFonts`. */
+export async function loadWebFonts(engine:WebFontEngine,url:string,source:string,resources:HTMLResource[],signal?:AbortSignal) {
+  const webFonts:{url:string;sha256:string}[]=[];
+  if(typeof engine.fontFaces!=="function"||typeof engine.webFontLoad!=="function")return webFonts;
+  const hasRule=(text:string)=>/@font-face/i.test(text);
+  if(!hasRule(source)&&!resources.some(r=>hasRule(r.source)))return webFonts;
+  // An engine from before @font-face answers "unknown document operation": no web fonts.
+  let answer;
+  try{answer=await engine.fontFaces(source,{url,resources});}catch{return webFonts;}
+  const loaded=new Map<string,string>();let total=0;
+  for(const face of answer?.faces??[]) {
+    for(const src of face.sources) {
+      signal?.throwIfAborted();
+      const known=loaded.get(src);
+      if(known!==undefined){if(known)break;continue;}
+      try {
+        if(!imageAllowed(src,url))throw new Error("not of the page's origin");
+        const bytes=await readBytes(src,MAX_FONT_BYTES,signal);
+        if(total+bytes.length>MAX_PAGE_FONT_BYTES)throw new Error("the page's fonts exceed 16 MiB");
+        const sha256=await sha256Hex(bytes);
+        await engine.webFontLoad(bytes,sha256);
+        total+=bytes.length;loaded.set(src,sha256);webFonts.push({url:src,sha256});
+        break;
+      } catch(error) {
+        if(signal?.aborted)throw error;
+        loaded.set(src,"");
+        console.error(`Native HTML web font refused: ${src}: ${String(error instanceof Error?error.message:error)}`);
+      }
+    }
+  }
+  return webFonts;
+}
 /** Fetch the images Lean listed, as `{key,bytes}`. `failed` hears of each image that was not read. */
 export async function fetchImageBytes(wanted:{key:string;url:string}[],documentURL:string,signal?:AbortSignal,
   failed?:(url:string,reason:string)=>void) {
@@ -154,6 +197,8 @@ one when its engine answers `scriptSession` info (with BubblePopJS, or the Quick
 guest module loaded); with none, a page with scripts is refused, as before. `start`
 answers no turn when the setting says the scripts do not run (`scriptPlan`), and throws
 when they are refused. */
+/** `mode`: request fields of the page's renders that its scripts' layout reads need too (the
+mode, the stylesheets, and the web fonts that document.fonts reads). */
 export type ScriptHost={start(source:string,url:string,resources:{nodeId:number;source:string}[],encoding?:string,mode?:Record<string,unknown>):Promise<ScriptTurn|undefined>|ScriptTurn|undefined};
 let scriptHost:ScriptHost|undefined;
 export function setScriptHost(host:ScriptHost|undefined){scriptHost=host;}
@@ -232,8 +277,9 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
     if(imageAllowed(inspection.icon,document.url))iconBase64=base64(await readBytes(inspection.icon,MAX_ICON_BYTES,signal));
   }catch(error){if(signal?.aborted)throw error;console.error(`Native HTML icon refused: ${inspection.icon}: ${String(error instanceof Error?error.message:error)}`);
     fetchFailed("tab icon",inspection.icon,`icon not read: ${String(error instanceof Error?error.message:error)}`,"tab shown with no icon");}
+  const webFonts=await loadWebFonts(engine as WebFontEngine,document.url,document.source,resources,signal);
   // `diagnostics:true` asks Lean for the skips in the answer: the first frame only (noteDiagnostics).
-  const options:Record<string,unknown>={url:document.url,resources,...images,...mode,...(resourceFailures.length?{resourceFailures}:{}),
+  const options:Record<string,unknown>={url:document.url,resources,...images,...mode,...(webFonts.length?{webFonts}:{}),...(resourceFailures.length?{resourceFailures}:{}),
     ...(accept.liberal?{diagnostics:true}:{})};
   // Page scripts: Lean runs them (WebScripts). The host only fetches the bytes of `src`
   // scripts, as for stylesheets. The script session's commands are part of each render
@@ -258,7 +304,8 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
     }
     // Liberal mode: when the script engine refuses to start (the setting names an engine this
     // host does not have), the page is drawn with its scripts not run, as Lean's scriptsOff skip.
-    const turn=await Promise.resolve(scriptHost.start(document.source,document.url,supplied,document.encoding,mode)).catch(error=>{
+    const turn=await Promise.resolve(scriptHost.start(document.source,document.url,supplied,document.encoding,
+      {...mode,...(resources.length?{resources}:{}),...(webFonts.length?{webFonts}:{})})).catch(error=>{
       if(!accept.liberal||signal?.aborted)throw error;
       addEntries(page,[{source:"System",severity:"warning",feature:"page scripts",where:document.url,
         message:String(error instanceof Error?error.message:error),action:"scripts not run"}]);

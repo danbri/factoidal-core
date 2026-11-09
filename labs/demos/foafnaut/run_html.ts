@@ -302,7 +302,7 @@ async function main() {
   let running=true,dirty=true,controller:AbortController|undefined;
   // Frame trace, one JSON line for each event: every number a tool needs to find
   // where the time goes. A pump stall means AppKit held the thread in its own loop.
-  let resizeAt:number|undefined,frameNumber=0,waiting=false,waitingSince=0;
+  let resizeAt:number|undefined,frameNumber=0,waiting=false,waitingSince=0,animationFrames=0;
   const trace=(type:string,fields:Record<string,unknown>)=>console.log(JSON.stringify({type,t:Math.round(performance.now()),...fields}));
   const ms=(start:number,end:number)=>Math.round((end-start)*10)/10;
   let refusing=0;
@@ -573,10 +573,20 @@ async function main() {
   // Frame cost ratchet (L4Factoidal/FrameCost, section Ratchet): Lean frames and rows
   // scrolled after the first frame. --scroll-sweep fails when the frames pass the bound.
   const frameCost={leanFrames:0,scrollEvents:0,scrollRows:0,reach:0};
+  // SVG animation of each page (WebPaint, SMIL timing in Lean): its clock starts at the page's
+  // first frame; `time` is the clock of the last frame asked for, so a page whose animations
+  // have ended keeps one state. `has`: Lean said the page has animations; `running`: one runs
+  // or begins by the clock, so the next frame is asked for at once.
+  const animation=new WeakMap<object,{epoch:number;time:number;running:boolean;has:boolean;clicks:number[][]}>();
+  const animationOf=(page:object)=>{let a=animation.get(page);if(!a){a={epoch:performance.now(),time:0,running:false,has:false,clicks:[]};animation.set(page,a);}return a;};
   // The request that a frame of `page` at this scroll sends to Lean, and its state with no scroll.
   const requestAt=(page:typeof document,at:number)=>{
     const view0=shown();view0.shell={...view0.shell,scroll:at};
-    return page.request(width,height,{...view0,live:page===checked,...(everyFrame?{}:{checks:false})});
+    // SVG animation (WebPaint): the page clock and clicks, only for a page with animations,
+    // so that other pages keep one state key whatever the time.
+    const clock=animation.get(page);
+    const animated=clock&&(clock.has||clock.clicks.length)?{animationTime:clock.time,animationClicks:clock.clicks}:{};
+    return page.request(width,height,{...view0,...animated,live:page===checked,...(everyFrame?{}:{checks:false})});
   };
   const stateNow=()=>stateKey(document,requestAt(document,scroll).options,width,height);
   // The prefetched band can be shown now in place of a Lean frame.
@@ -891,7 +901,7 @@ async function main() {
       pumpGapAfterFirstFrameMs:{count:pumpGapsLate.length,p50:percentile(pumpGapsLate,0.5),p95:percentile(pumpGapsLate,0.95),max:pumpGapsLate.length?Math.round(Math.max(...pumpGapsLate)*10)/10:null},
       slowCalls,
       pumpGapMs:{p50:percentile(pumpGaps,0.5),p95:percentile(pumpGaps,0.95),max:pumpGaps.length?Math.round(Math.max(...pumpGaps)*10)/10:null},
-      prefetch:prefetchStats,frameCost,queueMax,sessionStats:session?.stats,
+      prefetch:prefetchStats,frameCost,animationFrames,queueMax,sessionStats:session?.stats,
       // Pointer press to the present that shows it: the composite darkening, and the Lean frame of a held press.
       press:{overlay:{count:pressOverlayMs.length,p50Ms:percentile(pressOverlayMs,0.5),maxMs:pressOverlayMs.length?Math.round(Math.max(...pressOverlayMs)*10)/10:null},
         frame:{count:pressFrameMs.length,p50Ms:percentile(pressFrameMs,0.5),maxMs:pressFrameMs.length?Math.round(Math.max(...pressFrameMs)*10)/10:null}}};
@@ -965,6 +975,8 @@ async function main() {
       // An interactive frame asks Lean for no CPU probe (checks:false, about a fifth of a
       // frame); the idle check below asks for the same frame with its probe and checks it.
       // A new page starts at the top, so its band does too.
+      const clock=animationOf(nextDocument);
+      if(clock.running)clock.time=Math.round(performance.now()-clock.epoch);
       const request=requestAt(nextDocument,nextDocument!==document?0:scroll);
       const sentWidth=width,sentHeight=height;
       // The press this frame includes (`active`, `shell.pressed`), if any.
@@ -1028,6 +1040,8 @@ async function main() {
         // Scrolls taken while Lean worked: shown now if the band holds them, else after the next band.
         if(place!.exact){settle(awaitingShift,result.presentedAt);settle(awaitingBand,result.presentedAt);awaitingShift=[];awaitingBand=[];}
         if(nextDocument===document&&!keeps(nextLayers.layers,scroll)&&!bandComing())dirty=true;
+        clock.has=!!nextLayers.layers.animations;clock.running=!!nextLayers.layers.animating;
+        if(clock.running){dirty=true;animationFrames++;}
       } else {current=undefined;settle(awaitingBand,result.presentedAt);awaitingBand=[];}
       if(nextDocument!==document)prefetched=undefined;
       checked=nextDocument;
@@ -1133,6 +1147,9 @@ async function main() {
           const released=press;press=undefined;
           scriptPointer("up",released[2],released[3]);
           if(engine.pointerUp(released)!=="click")return;
+          // A click begins the SVG animations whose `begin` is a click on what it hits.
+          const clock=animation.get(document);
+          if(clock?.has&&current){clock.clicks=[...clock.clicks,[Math.round(performance.now()-clock.epoch),released[0],released[1]-current.layers.layers.top+scroll]].slice(-16);clock.running=true;dirty=true;}
           if(view.selection){view.selection=undefined;dirty=true;}
           // A page with scripts: Lean finds the node under the point, and the click is a task of
           // the page's event loop; Lean runs the listeners in QuickJS and changes its DOM.
