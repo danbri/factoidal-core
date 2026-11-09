@@ -150,9 +150,9 @@ def dropSessions (held : Held) : Held :=
   let ps := held.session
   let ls := held.leanSession
   let held := { held with session := none, leanSession := none }
-  let n := (match ps with | some (_, s, _) => Hosts.WebApi.wipeAll s.host.web | none => 0) +
+  let n := (match ps with | some (_, s, _) => WebApi.wipeAll s.host.web | none => 0) +
     (match ls with
-     | some (_, s, _) => match s.heap.host with | some h => Hosts.WebApi.wipeAll h.page.web | none => 0
+     | some (_, s, _) => match s.heap.host with | some h => WebApi.wipeAll h.page.web | none => 0
      | none => 0)
   { held with keyBytesWiped := held.keyBytesWiped + n }
 
@@ -604,7 +604,7 @@ def actLean (held : Held) (action : String) (request : JSON.Json) (id : Nat) (s 
   | "turn" => run fun s => let s := e.flushMove s; (e.advance s (e.loop s).clock).1
   | "crypto" => run fun s =>
     let h := s.host
-    let (web, wake) := Hosts.WebApi.hostDone h.web ((natField request "id").getD 0) ((request.field? "answer").getD .null)
+    let (web, wake) := WebApi.hostDone h.web ((natField request "id").getD 0) ((request.field? "answer").getD .null)
     let s := s.setHost { h with web }
     let s := match wake with
       | some w => e.setLoop s ((e.loop s).queueTask .networking w)
@@ -732,7 +732,7 @@ def act (held : Held) (action html : String) (request : JSON.Json)
       -- The host's answer to a crypto request (the Hub): Lean makes the page's answer and
       -- queues the page's callback as a task, then runs the turn.
       | "crypto" => run fun s => do
-          let (web, wake) := Hosts.WebApi.hostDone s.host.web ((natField request "id").getD 0)
+          let (web, wake) := WebApi.hostDone s.host.web ((natField request "id").getD 0)
             ((request.field? "answer").getD .null)
           let s := { s with host := { s.host with web } }
           let s := match wake with
