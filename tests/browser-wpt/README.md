@@ -218,7 +218,9 @@ The runner loads every test from a local wptserve, as a browser run does:
   variant)", kind `engine`, and scores 0. That is kept apart from runner gaps
   (kind `runner`, for example `.h2.` names, which need the HTTP/2 server). A
   worker variant runs as soon as the engine defines `Worker`. Then wptserve
-  serves its `fetch_tests_from_worker` page and the worker script.
+  serves its `fetch_tests_from_worker` page and the worker script, and the
+  runner answers each script the worker asks for (`fetches` in a turn, action
+  `fetched` in reply) over the same HTTP path.
 
 What stays out of scope or is still missing:
 
@@ -231,10 +233,37 @@ What stays out of scope or is still missing:
   `fetch("resources/x.json")`. Until page scripts have `fetch`, the runner's
   shim answers those files. With `--wptserve` it gets them from wptserve over
   HTTP. It goes away when the engine has fetch.
-- **Not run.** The HTTP/2 tests (`.h2.`) and WebTransport. Reftests and
+- **Not run.** The HTTP/2 tests (`.h2.`, kind `runner`), because the HTTPS
+  client speaks HTTP/1.1; WebTransport; and the `.py` names (kind `wdspec`), which
+  are pytest tests driving a browser over WebDriver or reading its accessibility
+  tree, not pages. Browser extension tests are kind `engine`. Reftests and
   crashtests weigh 0 in wpt.fyi's subtest counts.
 - **Provenance.** The WPT tree is BSD-3-Clause and stays in scratch. `tree`
   writes a PROVENANCE file with the commit. Nothing from it is committed.
+
+### wptserve against the file path
+
+The 5,898 window names of the scorer's sample, on BubblePopJS with the native
+engine at 0f89690b6, capped at Chrome's count for each name, three processes
+each. The file path took 2,173 s of wall time and wptserve took 2,211 s (+1.7%).
+
+| Directory | Names | File path | wptserve | Change |
+| --- | ---: | ---: | ---: | ---: |
+| html/infrastructure | 21 | 100 | 143 | +43 |
+| encoding-detection | 23 | 0 | 6 | +6 |
+| html/dom | 16 | 51,070 | 51,068 | -2 |
+| All other directories | 5,838 | 135,223 | 135,223 | 0 |
+| **Total** | **5,898** | **186,393** | **186,440** | **+47** |
+
+- The gains are the HTTP charset of the served pages (query-encoding, encoding
+  detection) and the UTF-16 pages, which the runner now recognises as tests.
+- The two losses are `html/dom/reflection-forms.html` and
+  `reflection-embedded.html`. Both stop at the engine's fixed step budget in both
+  paths ("halted: step budget exhausted"), and the longer URL (`:8000`) reaches it
+  one subtest sooner.
+- The small gain says where the limit is: the engine. Most tests that need the
+  server also need `fetch`/XHR, iframe documents or Workers. wptserve removes the
+  runner as a cause of failure. It does not add those APIs.
 
 ## History and dashboard
 
