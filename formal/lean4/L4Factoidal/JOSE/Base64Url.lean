@@ -218,6 +218,32 @@ def decodeDigitsFast (l : List Nat) : Option (List UInt8) := decodeDigitsGo #[] 
 @[csimp] theorem decodeDigits_eq_fast : @decodeDigits = @decodeDigitsFast := by
   funext l; simp [decodeDigitsFast, decodeDigitsGo_eq]
 
+/-- `encodeToDigits` with an accumulator: one call per group and no frame kept, so a large
+buffer does not need a stack proportional to its length (on the Foafnaut engine's Wasm build
+a request of 87 KB overflowed the browser's stack; record 2026-11-09-hacl-web-crypto). -/
+def encodeToDigitsGo (acc : Array Nat) : List UInt8 → List Nat
+  | [] => acc.toList
+  | [a] => acc.toList ++ encodeToDigits [a]
+  | [a, b] => acc.toList ++ encodeToDigits [a, b]
+  | a :: b :: c :: rest =>
+      encodeToDigitsGo (((((acc.push ((a.toNat * 65536 + b.toNat * 256 + c.toNat) / 262144)).push
+        ((a.toNat * 65536 + b.toNat * 256 + c.toNat) / 4096 % 64)).push
+        ((a.toNat * 65536 + b.toNat * 256 + c.toNat) / 64 % 64)).push
+        ((a.toNat * 65536 + b.toNat * 256 + c.toNat) % 64))) rest
+
+theorem encodeToDigitsGo_eq : ∀ (acc : Array Nat) (l : List UInt8),
+    encodeToDigitsGo acc l = acc.toList ++ encodeToDigits l
+  | acc, [] => by simp [encodeToDigitsGo, encodeToDigits]
+  | acc, [a] => by simp [encodeToDigitsGo]
+  | acc, [a, b] => by simp [encodeToDigitsGo]
+  | acc, a :: b :: c :: rest => by
+    simp [encodeToDigitsGo, encodeToDigits, encodeToDigitsGo_eq _ rest]
+
+def encodeToDigitsFast (l : List UInt8) : List Nat := encodeToDigitsGo #[] l
+
+@[csimp] theorem encodeToDigits_eq_fast : @encodeToDigits = @encodeToDigitsFast := by
+  funext l; simp [encodeToDigitsFast, encodeToDigitsGo_eq]
+
 /-! ## The codec -/
 
 /-- RFC 7515 §2 `BASE64URL(OCTETS)`. -/

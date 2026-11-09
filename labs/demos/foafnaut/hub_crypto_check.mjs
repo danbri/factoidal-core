@@ -5,7 +5,7 @@
 // tests/crypto/webcrypto_vectors.js with HOST true, on both of the Hub's paths for the
 // guest (AOT, and WasmVM). Exit 1 when a vector fails or the page gives no result.
 //
-//   node labs/demos/foafnaut/hub_crypto_check.mjs [--runtime DIR] [--guest FILE] [--wpt OUT.json]
+//   node labs/demos/foafnaut/hub_crypto_check.mjs [--runtime DIR] [--guest FILE] [--wpt OUT.json] [--wpt-only TEXT]
 //
 // --wpt OUT.json also runs the pinned WebCryptoAPI window tests through the Hub worker on the
 // AOT path, one page at a time, with testharness timeouts multiplied by 20 (the Hub's clock
@@ -55,12 +55,15 @@ function wptWrapper(file){
     `<script src="/resources/testharness.js"></script>\n<script src="/resources/testharnessreport.js"></script>\n`+
     scripts.map(x=>`<script src="${x}"></script>\n`).join('')+`<div id=log></div>\n<script src="/${file}"></script>\n`;
 }
+// The worker takes only flat page names (pageURL in browser-worker.mjs), so each is wpt-N.html.
+const wptList=wptPages();
 async function get(p){
   const hub='/factoidal/web/hub/foafnaut/',pages=hub+'pages/',rt='/factoidal/web/hub/html-webgpu/runtime/',guests='/factoidal/web/hub/wasm-guests/';
   const local=(dir,rest)=>{const f=path.join(dir,decodeURIComponent(rest));return f.startsWith(dir)&&fs.existsSync(f)&&fs.statSync(f).isFile()?f:undefined;};
   let f;
   if(p.startsWith(pages)&&made[p.slice(pages.length)])return {status:200,type:'text/html',body:Buffer.from(made[p.slice(pages.length)])};
-  if(p.startsWith(pages+'wpt/'))return {status:200,type:'text/html',body:Buffer.from(wptWrapper(decodeURIComponent(p.slice((pages+'wpt/').length))))};
+  const wptPage=p.startsWith(pages)&&/^wpt-(\d+)\.html$/.exec(p.slice(pages.length));
+  if(wptPage&&wptList[+wptPage[1]])return {status:200,type:'text/html',body:Buffer.from(wptWrapper(wptList[+wptPage[1]]))};
   if(p==='/resources/testharnessreport.js')return {status:200,type:'text/javascript',body:Buffer.from(fs.readFileSync(reportFile,'utf8').replace('setup({ output: false });','setup({ output: false, timeout_multiplier: 20 });'))};
   if(p.startsWith('/resources/')&&(f=local(wptResources,p.slice('/resources/'.length))))return {status:200,type:typeOf(f),body:fs.readFileSync(f)};
   if((p.startsWith('/WebCryptoAPI/')||p.startsWith('/common/'))&&(f=local(wptRoot,p.slice(1))))return {status:200,type:typeOf(f),body:fs.readFileSync(f)};
@@ -142,10 +145,11 @@ try{
     mode='aot';
     const statusNames=['PASS','FAIL','TIMEOUT','NOTRUN','PRECONDITION_FAILED'],harnessNames=['OK','ERROR','TIMEOUT','PRECONDITION_FAILED'];
     const cases=[];
-    for(const file of wptPages()){
+    for(const [index,file] of wptList.entries()){
+      if(opt('--wpt-only')&&!file.includes(opt('--wpt-only')))continue;
       bySession.clear();
       const t0=Date.now();
-      const page=await open(`wpt/${file}`);
+      const page=await open(`wpt-${index}.html`);
       // The worker's console reaches two sessions: the longest one is read.
       const logs=()=>{let best=[];for(const v of bySession.values())if(v.length>best.length)best=v;return best.flatMap(l=>l.replace(/^page: /,'').split('\n'));};
       while(Date.now()-t0<Number(opt('--page-limit','600'))*1000){await sleep(500);if(logs().some(l=>l.startsWith('__wpt_done ')))break;}
@@ -156,7 +160,9 @@ try{
       }
       const pass=subtests.filter(x=>x.status==='PASS').length;
       console.error(`${harness.padEnd(9)} ${String(pass).padStart(5)}/${String(subtests.length).padEnd(5)} ${file} ${Date.now()-t0}ms`);
-      cases.push({file,harness,...(message?{message}:{}),subtests,ms:Date.now()-t0});
+      // Anything else the worker said (a refused request, a script error) goes with the page.
+      const notes=[...new Set(logs().filter(l=>!l.startsWith('__wpt_')))].slice(0,20).map(l=>l.slice(0,300));
+      cases.push({file,harness,...(message?{message}:{}),subtests,...(notes.length?{notes}:{}),ms:Date.now()-t0});
       await page.close();
       fs.writeFileSync(wptOut,JSON.stringify({cases}));
     }

@@ -277,7 +277,7 @@ core CLI's HACL* externs when it is present.
 - **AES (CTR, CBC, GCM, KW).** The pinned HACL* has no portable AES. Its only AES-GCM is
   EverCrypt over Vale x86-64 assembly (AES-NI). hacl-star `main` has none either
   (checked 2026-11-09: `dist/gcc-compatible` has only `Hacl_AES128.h`). This arm64 Mac
-  and the Wasm engine therefore refuse with NotSupportedError, from the registry. The
+  and the Foafnaut engine's Wasm build therefore refuse with NotSupportedError, from the registry. The
   owner decides (section 12).
 - **P-384 and P-521.** HACL* has only P-256. A normalized `namedCurve` of P-384 or P-521
   refuses with NotSupportedError, after the usages check that the specification puts
@@ -382,7 +382,7 @@ On BubblePopJS, natively:
 - digest of 1 MiB: 605 ms, and ChaCha of 1 MiB: 1,518 ms. Both are BubblePopJS making
   and copying the 1 MiB typed array, not crypto (before: 818 ms for the digest).
 
-**Crypto costs, Wasm engine (Hub)**, QuickJS-NG:
+**Crypto costs, the Foafnaut engine's Wasm build (Hub)**, QuickJS-NG:
 
 | Operation | Before | After | HACL* alone (Wasm in Node) |
 |---|---|---|---|
@@ -400,7 +400,7 @@ path around it, not HACL*:
 - `n.api` itself.
 
 A 32-byte digest takes about 2.2 ms per operation natively, the same before and after
-(measured: 100 digests 243-291 ms before, 235-258 ms after). In the Wasm engine it takes
+(measured: 100 digests 243-291 ms before, 235-258 ms after). In the Wasm build it takes
 about 15 ms. Operations are tasks by design (never inside a frame). Cutting the per-task
 cost is event-loop work, not crypto work.
 
@@ -499,16 +499,18 @@ All 3,911 pass, natively. A test passes when its outcome matches `valid`, `inval
 ### 13.3 Secret lifetime at session end
 
 `WebScripts` ends a session on close or on a new start. Each key's bytes are then zeroed
-in place by `WebHacl.zeroNow`.
+in place by `WebHacl.zeroNow`, whatever the reference count, because every holder goes with
+the session. Compiled-in constants are left alone. `tests/crypto/run-kat.sh` checks that
+the bytes of a shared array are zero afterwards and that the counter moves.
 
-The reference-counted `wipe` zeroed none there. Measured: 1,600 key bytes handed over,
-0 zeroed. While it ran, the store, the session and the held state all still referenced
-each key. `zeroNow` zeroes whatever the count, because every holder goes with the
-session, but it leaves compiled-in constants alone.
+Why not the reference-counted `wipe` here: while it runs, the store, the session and the
+held state can all still reference a key, so it cannot be relied on to zero anything. An
+early measurement ("1,600 key bytes handed over, 0 zeroed") is void: the counter that
+reported it was a closed term, evaluated once at start. The counter now takes an argument.
 
 The close answer reports `keyBytesWiped` and `keyBytesZeroed`. A key dropped while its
 session lives on keeps the reference-counted `wipe`, because a structuredClone copy may
-share its bytes.
+share its bytes; how often that zeroes in practice has not been measured.
 
 ### 13.4 The Hub: the browser does the primitives, Lean decides
 
@@ -542,15 +544,16 @@ refuses every primitive (`hacl_webcrypto_nohacl.c`), and `l4wc_linked` answers 0
 Without a host (an insecure context), crypto.subtle is off. getRandomValues stays: its
 HMAC_DRBG falls back to Lean's own HMAC (`WebHacl.hmacFast`).
 
-Size of web-render.wasm, built from the follow-up tree:
+Size of the Foafnaut engine's Wasm build (web-render.wasm), both on main `059a5f7b5`:
 
 | | Bytes | Gzip -9 |
 |---|---|---|
-| Linking HACL* (main) | 28,225,861 | 5,798,632 |
-| Without HACL* | 27,968,048 | 5,707,201 |
-| Saved | 257,813 | 91,431 |
+| Merged build, linking HACL* | 28,225,861 | 5,798,632 |
+| Follow-up build, no HACL*, with the RSA and host-mode Lean code | 27,968,048 | 5,707,201 |
+| Difference | -257,813 | -91,431 |
 
-A page without crypto loads and runs nothing more.
+HACL*'s own share is larger than the difference, since the second build adds Lean code. A
+page without crypto loads and runs no HACL*.
 
 **Checks:**
 
