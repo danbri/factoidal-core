@@ -341,7 +341,8 @@ def write_table(args, fonts, colourOnly):
     for directory, path, family, fields in colour_slices(args.cache, held):
         row(directory, path, family, fields)
     # Noto Emoji draws text presentation: a page with U+FE0E fetches it.
-    row('noto-emoji', os.path.join(FONTS, 'noto-emoji', 'NotoEmoji-Regular.ttf'), 'Noto Emoji', {'adds': 'fe0e'})
+    # and the emoji of SVG text, which draws outlines (svgText: a page with emoji and a <text>).
+    row('noto-emoji', os.path.join(FONTS, 'noto-emoji', 'NotoEmoji-Regular.ttf'), 'Noto Emoji', {'adds': 'fe0e', 'svgText': 'true'})
     # Fonts of the CJK slices list blocks in the table; the characters they add are in
     # coverage.json, which the worker fetches only for a page with a character in a block.
     coverage = {}
@@ -361,7 +362,8 @@ def write_table(args, fonts, colourOnly):
                 coverage[family] = ranges(adds)
                 f.write(f"   blocks:'{ranges(blocks(adds))}',coverage:'./fonts/noto-sans-cjk/coverage.json'}},\n")
             else:
-                parts = [f"{k}:'{v if isinstance(v, str) else ranges(v)}'" for k, v in fields.items() if k != 'needs']
+                parts = [f"{k}:{v}" if k == 'svgText' else f"{k}:'{v if isinstance(v, str) else ranges(v)}'"
+                         for k, v in fields.items() if k != 'needs']
                 if 'needs' in fields:
                     parts.append('needs:[' + ','.join(f"'{n}'" for n in fields['needs']) + ']')
                 f.write('   ' + ','.join(parts) + '},\n')

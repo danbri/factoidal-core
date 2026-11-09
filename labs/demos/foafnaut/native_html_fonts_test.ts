@@ -156,6 +156,33 @@ async function emoji(nativeEngine?:string){
   // Digits, # and * with no selector stay in Noto Sans: the page is as it was.
   assert(same(plain,frame(engine,digits)),"plain digits and symbols changed with the emoji fonts");
 }
+// SVG text and canvas text (issue 1276): SVG text draws outlines, so an emoji there comes
+// from Noto Emoji (the Hub fetches it for a page with emoji and an SVG text element); canvas
+// fillText draws the colour glyph's image. Neither is blank.
+async function emojiInSvgAndCanvas(nativeEngine?:string){
+  const engine=await loadHTML(nativeEngine,"bytes");
+  await loadFontFile(engine,sans,"Noto Sans");
+  // @ts-ignore plain JavaScript module of the Hub
+  const {fontsFor}=await import("../../../docs/web/hub/foafnaut/font-coverage.mjs");
+  const svg=(text:string)=>`<!doctype html><svg width="200" height="60"><text x="10" y="45" font-size="32">${text}</text></svg>`;
+  const wanted=await fontsFor(svg("\u{1F600}"),async(path:string)=>JSON.parse(await Deno.readTextFile(fonts+path.replace("./fonts/",""))));
+  assert.deepEqual(wanted.map((f:{family:string})=>f.family),["Noto Color Emoji Smileys","Noto Emoji"]);
+  for(const font of wanted)await loadFontFile(engine,fontFilePath(font.path),font.family,"bytes",true);
+  const count=(html:string)=>engine.compile(html,300,80,{checks:false,url:"file:///svg.html"}).primitiveCount;
+  assert(count(svg("\u{1F600}"))>count(svg("")),"an emoji in SVG text draws nothing");
+  if(!nativeEngine)return;
+  const turn=engine.scriptSession(`<!doctype html><canvas id=c width=60 height=60></canvas><script>
+const c=document.getElementById('c').getContext('2d');c.font='40px sans-serif';c.fillText('\u{1F600}',5,45);
+const d=c.getImageData(27,25,1,1).data;console.log('emoji '+d[0]+' '+d[1]+' '+d[2]+' '+d[3]);</script>`,
+    {action:"start",url:"file:///c.html",resources:[],instructionsPerMs:1e12,full:true,engine:"bubblepop"}) as {logs:string[];errors:string[]};
+  engine.scriptSession("",{action:"close"});
+  const line=turn.logs.find(l=>l.startsWith("emoji "));
+  assert(line,`no pixel: ${JSON.stringify(turn)}`);
+  const [r,g,b,a]=line.split(" ").slice(1).map(Number);
+  assert(a===255&&r>200&&g>140&&b<120,`the canvas emoji is not the yellow face: ${line}`);
+}
+Deno.test("emoji in SVG text draw from Noto Emoji (Wasm)",()=>emojiInSvgAndCanvas());
+Deno.test({name:"emoji in SVG text draw from Noto Emoji, and canvas fillText draws colour emoji (native library)",ignore:noLibrary,fn:()=>emojiInSvgAndCanvas(library)});
 Deno.test("emoji and emoji sequences draw in colour from Noto Color Emoji (Wasm)",()=>emoji());
 Deno.test({name:"emoji and emoji sequences draw in colour from Noto Color Emoji (native library)",ignore:noLibrary,fn:()=>emoji(library)});
 

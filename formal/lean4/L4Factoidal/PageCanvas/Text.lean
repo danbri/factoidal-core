@@ -203,5 +203,27 @@ def outlinePath (s : Shaped) (x0 y0 sx : Float) : Path := Id.run do
       | _ => pure ()
   return p
 
+/-- The colour glyphs (COLR, issue 1276) of shaped text, as images to draw over its
+outlines (they have none): each glyph's bitmap (premultiplied) and its destination
+rectangle `(dx, dy, dw, dh)` in user space, placed as `outlinePath` places outlines.
+`ColrRaster` draws each at the pixel size nearest its em; the text colour (palette
+index 0xFFFF) is black here. -/
+def colourImages (s : Shaped) (x0 y0 sx : Float) : Array (Bitmap × Float × Float × Float × Float) := Id.run do
+  let k := s.scale
+  let mut out := #[]
+  for g in s.word.glyphs do
+    let some c := g.colour | continue
+    let em := k * c.em
+    if !(em > 0) || !em.isFinite then continue
+    let px := max 1 (min 512 em.round.toUInt64.toNat)
+    let some img := c.image px ⟨0, 0, 0⟩ | continue
+    let f := em / nf px
+    let toF := fun (v : Int) => if v < 0 then -(nf v.natAbs) else nf v.natAbs
+    let b := img.bitmap
+    out := out.push (Bitmap.ofStraight b.width b.height b.rgba,
+      x0 + (g.x * k + f * toF img.left) * sx, y0 + (g.y + c.baseline) * k + f * toF img.top,
+      f * nf b.width * sx, f * nf b.height)
+  return out
+
 end Text
 end L4Factoidal.PageCanvas

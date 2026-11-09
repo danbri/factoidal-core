@@ -62,6 +62,9 @@ export async function fontsFor(source,coverage,skip=new Set()){
       adds=font.adds=ranges((await coverage(font.coverage))[font.family]);
     }
     if(chars.some(c=>inRanges(adds,c))&&(font.needs??[]).every(need=>chars.some(c=>inRanges(need,c))))wanted.push(font);
+    // SVG text draws outlines, not colour glyphs: a page with emoji and an SVG text element
+    // also takes the outline emoji font.
+    else if(font.svgText&&/<text[\s>]/i.test(source)&&wanted.some(f=>f.family.startsWith("Noto Color Emoji")))wanted.push(font);
   }
   return wanted;
 }
