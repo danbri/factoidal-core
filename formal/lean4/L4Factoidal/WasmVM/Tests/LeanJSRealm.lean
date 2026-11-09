@@ -16,9 +16,10 @@ open L4Factoidal.WasmVM.Hosts
 
 def decoded : Except String LeanJS.Session := LeanJS.prepareWith LeanJS.realmData
 
-#guard decoded.isOk
+-- (a Wasm build carries no data: `bubblepop-realm --empty`)
+#guard LeanJS.realmData.isEmpty || decoded.isOk
 
-#guard match decoded with
+#guard LeanJS.realmData.isEmpty || match decoded with
   | .ok s => match L4Factoidal.JS.Snapshot.encode (LeanJS.freshRealm {}) s.heap #[s.api, .str LeanJS.preludeMark] with
     | .ok again => again == LeanJS.realmData
     | .error _ => false
@@ -33,7 +34,7 @@ def started : Except String LeanJS.Session := do
   let some go := s.host.dom.dom.getElementById 0 "go" | throw "no button"
   return (LeanJS.engine.advance (LeanJS.engine.click s go) 60).1
 
-#guard match started with
+#guard LeanJS.realmData.isEmpty || match started with
   | .ok s => s.logs.toList == ["loaded 2,4", "microtask", "timer at 50"] && s.errors.isEmpty
   | .error _ => false
 

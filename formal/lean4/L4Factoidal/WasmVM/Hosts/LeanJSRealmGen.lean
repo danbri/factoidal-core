@@ -8,6 +8,9 @@ as data (`LeanJS.snapshotData`) into the Lean module `OUT.lean` (`LeanJSRealmDat
 `LeanJSRealm.prepare` decodes at the first page. The file is written only when its text
 changes, so an unchanged realm rebuilds nothing.
 
+With `--empty` it writes no data: the Wasm engine, where BubblePopJS is refused, does not
+carry the 341 KB, and `prepare` there would run the prelude.
+
 With `PRELUDE.js`, the prelude on disk must be the one compiled into `LeanJS.prelude`
 (`include_str` is not a dependency that Lake tracks); otherwise exit code 3, and
 `build-web-render.sh` rebuilds `LeanJS` first.
@@ -22,7 +25,14 @@ def realmModule (data : String) : String :=
   "end L4Factoidal.WasmVM.Hosts.LeanJS\n"
 
 def main (args : List String) : IO UInt32 := do
-  let some (out : String) := args[0]? | IO.eprintln "usage: bubblepop-realm OUT.lean [PRELUDE.js]"; return 2
+  let some (out : String) := args[0]? | IO.eprintln "usage: bubblepop-realm OUT.lean [PRELUDE.js | --empty]"; return 2
+  -- `--empty`: no data (the Wasm engine, where BubblePopJS is refused, does not carry it)
+  if args[1]? == some "--empty" then
+    let text := realmModule ""
+    let old ← try IO.FS.readFile out catch _ => pure ""
+    if old != text then IO.FS.writeFile out text
+    IO.println "bubblepop-realm: empty (no realm data in this build)"
+    return 0
   if let some (p : String) := args[1]? then
     if (← IO.FS.readFile p) != LeanJS.prelude then
       IO.eprintln s!"bubblepop-realm: {p} is not the prelude compiled into LeanJS (rebuild L4Factoidal.WasmVM.Hosts.LeanJS)"
