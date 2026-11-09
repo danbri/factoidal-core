@@ -266,6 +266,12 @@ const ENDPOINT = 'https://qlever.dev/api/wikidata';
 const live = typeof fetch === 'function';
 const t0 = performance.now();
 const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+// The band's name in prose and on the cards: Spın̈al Tap (U+0131 dotless i, n + U+0308), its
+// stylized name in Wikidata (P9989). A display rule only: queries, IRIs, QIDs and the stored
+// results keep "Spinal Tap" as the data has it. Screen readers get the plain name.
+const STYLED = 'Sp\u0131n\u0308al Tap';
+const sty = text => esc(text).replace(/Spinal Tap/g, '<span aria-label="Spinal Tap">' + STYLED + '</span>');
+const styPlain = text => esc(text).replace(/Spinal Tap/g, STYLED);  // inside SVG text: no span
 const queries = [];
 // querySelectorAll is one static query (a live getElementsByTagName walks the page per item).
 for (const s of Array.from(document.querySelectorAll('script[type="application/sparql-query"]')))
@@ -321,8 +327,8 @@ function panel(w, kind, dial) {
   let s = '<svg width="' + w + '" height="34" viewBox="0 0 ' + w + ' 34"><rect width="' + w + '" height="34" fill="#1c1a16"/>' +
     '<rect y="0" width="' + w + '" height="3" fill="#e2b85a"/><rect y="31" width="' + w + '" height="3" fill="#3a3326"/>' +
     '<circle cx="16" cy="17" r="6" fill="#5a0e05"/><circle cx="16" cy="17" r="4" fill="#ff3b12"/><circle cx="14.6" cy="15.4" r="1.4" fill="#ffd6c8"/>' +
-    '<text x="30" y="22" font-size="11" fill="#e2b85a">' + esc(kind.toUpperCase()) + '</text>';
-  if (dial) s += knob(w - 30, 17, dial.value) + '<text x="' + (w - 52) + '" y="22" font-size="11" text-anchor="end" fill="#cfd4dc">' + esc(dial.label) + '</text>';
+    '<text x="30" y="22" font-size="11" fill="#e2b85a">' + styPlain(kind.toUpperCase()) + '</text>';
+  if (dial) s += knob(w - 30, 17, dial.value) + '<text x="' + (w - 52) + '" y="22" font-size="11" text-anchor="end" fill="#cfd4dc">' + styPlain(dial.label) + '</text>';
   return s + '</svg>';
 }
 // A knob with eleven ticks; the pointer at value (0 to 11).
@@ -339,10 +345,10 @@ function knob(cx, cy, v) {
 function card(o) {
   const w = o.wide ? 734 : 360;
   let s = panel(w, o.kind, o.dial) + '<div class="cbody">';
-  if (o.kicker) s += '<p class="kicker">' + esc(o.kicker) + '</p>';
-  s += '<p class="title">' + esc(o.title) + '</p>';
-  if (o.sub) s += '<p class="sub">' + esc(o.sub) + '</p>';
-  for (const [k, v, raw] of o.rows || []) if (v) s += '<p class="row"><span class="k">' + esc(k) + '</span> ' + (raw ? v : esc(v)) + '</p>';
+  if (o.kicker) s += '<p class="kicker">' + sty(o.kicker) + '</p>';
+  s += '<p class="title">' + sty(o.title) + '</p>';
+  if (o.sub) s += '<p class="sub">' + sty(o.sub) + '</p>';
+  for (const [k, v, raw] of o.rows || []) if (v) s += '<p class="row"><span class="k">' + esc(k) + '</span> ' + (raw ? v : sty(v)) + '</p>';
   if (o.extra) s += o.extra;
   if (o.links) s += '<p class="link">Wikidata ' + o.links + '</p>';
   return {wide: !!o.wide, html: s + '</div>'};
@@ -401,7 +407,7 @@ const render = {
     const max = Math.max(...rows.map(b => Number(val(b, 'sitelinks')) || 0));
     return order.map(p => {
       const top = by[p][0];
-      const list = by[p].map(b => '<p class="row">' + esc(val(b, 'workLabel')) + ' <span class="k">' + esc(val(b, 'year')) + ', ' + esc(val(b, 'credits')) +
+      const list = by[p].map(b => '<p class="row">' + sty(val(b, 'workLabel')) + ' <span class="k">' + esc(val(b, 'year')) + ', ' + esc(val(b, 'credits')) +
         ', ' + esc(val(b, 'sitelinks')) + ' Wikipedias</span></p>').join('');
       return card({kind: 'filmography', title: p, sub: by[p].length + ' films with 30 or more Wikipedia editions',
         dial: {value: scale11(Number(val(top, 'sitelinks')), max), label: val(top, 'workLabel')}, extra: list, links: wd(val(top, 'person'))});
@@ -410,7 +416,7 @@ const render = {
   albums(rows) {
     const max = Math.max(...rows.map(b => Number(val(b, 'sitelinks')) || 0));
     return rows.map(b => card({kind: 'record', title: val(b, 'releaseLabel'), sub: val(b, 'description'),
-      dial: {value: scale11(Number(val(b, 'sitelinks')), max), label: (val(b, 'sitelinks') || '0') + ' Wikipedias'},
+      dial: {value: scale11(Number(val(b, 'sitelinks')), max), label: (val(b, 'sitelinks') || '0') + (val(b, 'sitelinks') === '1' ? ' Wikipedia' : ' Wikipedias')},
       rows: [['year', val(b, 'year') || 'not recorded'], ['kind', val(b, 'kind')]], extra: disc(val(b, 'year')), links: wd(val(b, 'release'))}));
   },
   saga(rows) {
@@ -460,8 +466,8 @@ function choose(id) {
   const q = queries.find(x => x.id === id);
   current = q; edited = false;
   for (const b of Array.from($('picker').querySelectorAll('button'))) b.className = b.id === 'pick-' + id ? 'on' : '';
-  $('qtitle').textContent = q.title;
-  $('qblurb').textContent = q.blurb;
+  setHTML($('qtitle'), sty(q.title));
+  setHTML($('qblurb'), sty(q.blurb));
   setHTML($('qtext'), highlight(q.text));
   $('qtext').style.display = 'block'; $('qedit').style.display = 'none';
   if (live) run(q.text, 'live from QLever');
@@ -495,7 +501,7 @@ function tools() {
 }
 $('mode').textContent = live ? 'Live: queries go to ' + ENDPOINT + ' (SPARQL 1.1, JSON results).'
   : 'Snapshot of ' + (meta ? meta.retrieved.slice(0, 10) + ' from ' + meta.endpoint : 'no date') + ': this browser has no fetch yet, so the page shows the results QLever gave these queries then.';
-setHTML($('picker'), queries.map(q => '<button id="pick-' + q.id + '">' + esc(q.title) + '</button>').join(''));
+setHTML($('picker'), queries.map(q => '<button id="pick-' + q.id + '">' + sty(q.title) + '</button>').join(''));
 $('picker').addEventListener('click', e => { const id = e.target && e.target.id; if (id && id.indexOf('pick-') === 0) choose(id.slice(5)); });
 tools();
 
