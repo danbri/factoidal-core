@@ -311,6 +311,8 @@ chose (passed to the session as `encoding`). A page that is UTF-8 with no other
 declaration takes the fast path (one validation and one copy: 7.2 ms for 1 MB, against
 4.9 ms for Deno's TextDecoder); a 1 MB Shift_JIS page decodes in 66 ms. Subresources
 (scripts, stylesheets, XSLT) are read as UTF-8.
+An undeclared page whose bytes are UTF-8 is read as UTF-8 (like Firefox's detector);
+WPT `encoding/sniffing.html`, which expects windows-1252 there, is an expected difference.
 
 Measured (native engine, 2026-11-09; QuickJS-NG in WasmVM unless named): the guest's
 module load (the prelude) 1,261 → 1,504 ms, once for each engine; a page start 5.97 → 6.03
