@@ -347,9 +347,11 @@ def shapeFresh (fonts : Array Font) (text : String) (px : Nat) (rtl : Option Boo
   let word ← wordIn fonts text px rtl
   return {(if px < flatBelow then flatWord word else word) with pixelSize := px}
 
-/-- What names `fonts` in the kept table: each font's SHA-256 and face. -/
+/-- What names `fonts` in the kept table: each font's SHA-256, family, face and size in
+bytes (a host that names fonts with no real SHA-256, as the CLI does, still keeps two
+fonts apart). -/
 def fontsKey (fonts : Array Font) : String :=
-  fonts.foldl (fun k f => k ++ f.sha256 ++ ":" ++ toString f.faceIndex ++ ";") ""
+  fonts.foldl (fun k f => k ++ f.sha256 ++ ":" ++ f.family ++ ":" ++ toString f.faceIndex ++ ":" ++ toString f.bytes.size ++ ";") ""
 
 /-- Words kept at most; the table starts again when full. -/
 def keptWordLimit : Nat := 16384
