@@ -2136,7 +2136,6 @@ L4Factoidal_XProc31_ImportedFunctions_freeze  # (b) nesting of XDM maps and arra
 L4Factoidal_XProc31_inheritNS  # (b) element nesting of the XProc document, fuel-bounded; the children of one element go through List.map
 L4Factoidal_XProc31_nodeFromRef  # (b) element nesting of the result tree, fuel-bounded; the fuel-out case is a refusal
 L4Factoidal_XProc31_retainItems  # (b) nesting of XDM maps and arrays in one value, fuel-bounded; the items of one sequence go through List.map
-L4Factoidal_Net_ProxyProtocol_groups16  # (a) PENDING https://github.com/danbri/factoidal/issues/1291 PROXY v2 address/TLV groups: one frame per 16-bit group of one header (at most 65,551 bytes); convert to a fold
 L4Factoidal_Rendering_Layout_intrinsic  # (a) PENDING https://github.com/danbri/factoidal/issues/1291 intrinsic sizes through the box tree: depth follows the document nesting; state a cap (b) or convert
 L4Factoidal_Rendering_Layout_layoutTask  # (a) PENDING https://github.com/danbri/factoidal/issues/1291 layout through the box tree: depth follows the document nesting; state a cap (b) or convert
 L4Factoidal_Rendering_Table_columns  # (a) PENDING https://github.com/danbri/factoidal/issues/1291 column widths via core Array.qsort over the columns of one table; replace the sort or bound its depth (c)
