@@ -186,6 +186,8 @@ def strokePolys (s : StrokeStyle) (subpaths : Array Poly) (tol : Float) : Array 
   let mut out : Array Poly := #[]
   for sp in subpaths do
     let pts := dedupe sp.pts
+    -- A closed subpath back at its start: the last point is the first.
+    let pts := if sp.closed && pts.size > 1 && pts[0]! == pts[pts.size - 1]! then pts.pop else pts
     let closed := sp.closed && pts.size > 1
     let pieces := if s.dash.isEmpty then #[(pts, closed)]
       else (dashPieces pts closed s.dash s.dashOffset).map (·, false)

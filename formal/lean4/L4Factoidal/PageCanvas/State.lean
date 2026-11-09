@@ -54,6 +54,10 @@ structure DrawState where
   smoothingQuality : String := "low"
   filter : String := "none"
   fontKerning : String := "auto"
+  fontStretch : String := "normal"
+  fontVariantCaps : String := "normal"
+  textRendering : String := "auto"
+  lang : String := "inherit"
   deriving Inhabited
 
 /-- The current drawing state and the saved ones, the last saved first. -/

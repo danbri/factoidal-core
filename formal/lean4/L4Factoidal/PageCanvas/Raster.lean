@@ -196,7 +196,7 @@ theorem rectCoverage_within (W H : Nat) (a b c d : Float) :
 inductive Op where
   | sourceOver | sourceIn | sourceOut | sourceAtop
   | destinationOver | destinationIn | destinationOut | destinationAtop
-  | lighter | copy | xor
+  | lighter | copy | xor | clear
   | multiply | screen | overlay | darken | lighten | colorDodge | colorBurn
   | hardLight | softLight | difference | exclusion | hue | saturation | color | luminosity
   deriving Repr, Inhabited, BEq, DecidableEq
@@ -204,7 +204,7 @@ inductive Op where
 def Op.names : List (String × Op) := [
   ("source-over", .sourceOver), ("source-in", .sourceIn), ("source-out", .sourceOut), ("source-atop", .sourceAtop),
   ("destination-over", .destinationOver), ("destination-in", .destinationIn), ("destination-out", .destinationOut),
-  ("destination-atop", .destinationAtop), ("lighter", .lighter), ("copy", .copy), ("xor", .xor),
+  ("destination-atop", .destinationAtop), ("lighter", .lighter), ("copy", .copy), ("xor", .xor), ("clear", .clear),
   ("multiply", .multiply), ("screen", .screen), ("overlay", .overlay), ("darken", .darken), ("lighten", .lighten),
   ("color-dodge", .colorDodge), ("color-burn", .colorBurn), ("hard-light", .hardLight), ("soft-light", .softLight),
   ("difference", .difference), ("exclusion", .exclusion), ("hue", .hue), ("saturation", .saturation),
@@ -281,6 +281,7 @@ def compose (o : Op) (s d : Px) : Px :=
   | .lighter => let p := pd 1 1; ⟨min 1 p.r, min 1 p.g, min 1 p.b, min 1 p.a⟩
   | .copy => s
   | .xor => pd (1 - d.a) (1 - s.a)
+  | .clear => Px.zero
   | _ =>
     -- Blending: Cs' = (1 - ab) Cs + ab B(Cb, Cs), then source-over.
     let un := fun (c a : Float) => if a <= 0 then 0 else c / a
@@ -303,7 +304,8 @@ global alpha), the clip mask `m` in 0..1. The result replaces `d` where `m` is 1
 mixed with it where `m` is between. -/
 @[inline] def blendPixel (o : Op) (s : Px) (c m : Float) (d : Px) : Px :=
   if m <= 0 then d else
-  let r := compose o (s.scale c) d
+  -- `clear` clears what the shape covers, whatever the source colour.
+  let r := if o == .clear then d.scale (1 - c) else compose o (s.scale c) d
   if m >= 1 then r else
   ⟨d.r + (r.r - d.r) * m, d.g + (r.g - d.g) * m, d.b + (r.b - d.b) * m, d.a + (r.a - d.a) * m⟩
 

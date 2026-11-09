@@ -41,25 +41,28 @@ def encode (w h : Nat) (rgba : ByteArray) : ByteArray := Id.run do
   let sig := ByteArray.mk #[137, 80, 78, 71, 13, 10, 26, 10]
   return sig ++ chunk "IHDR" ihdr ++ chunk "IDAT" zlib ++ chunk "IEND" ByteArray.empty
 
-private def b64 (n : Nat) : Char :=
-  if n < 26 then Char.ofNat (65 + n) else if n < 52 then Char.ofNat (71 + n)
-  else if n < 62 then Char.ofNat (n - 4) else if n == 62 then '+' else '/'
+private def b64 (n : Nat) : UInt8 :=
+  if n < 26 then (65 + n).toUInt8 else if n < 52 then (71 + n).toUInt8
+  else if n < 62 then (n - 4).toUInt8 else if n == 62 then 43 else 47
 
-/-- RFC 4648 §4 Base64 with padding. -/
-def base64 (b : ByteArray) : String := Id.run do
-  let mut out := ""
+/-- RFC 4648 §4 Base64 with padding, as ASCII bytes. -/
+def base64Bytes (b : ByteArray) : ByteArray := Id.run do
   let n := b.size
+  let mut out := ByteArray.emptyWithCapacity ((n + 2) / 3 * 4)
   let mut i := 0
-  while i + 2 < n do
+  for _ in [0:n / 3] do
     let v := b[i]!.toNat * 65536 + b[i+1]!.toNat * 256 + b[i+2]!.toNat
-    out := ((out.push (b64 (v / 262144))).push (b64 (v / 4096 % 64))).push (b64 (v / 64 % 64)) |>.push (b64 (v % 64))
+    out := (((out.push (b64 (v / 262144))).push (b64 (v / 4096 % 64))).push (b64 (v / 64 % 64))).push (b64 (v % 64))
     i := i + 3
   if n - i == 1 then
     let v := b[i]!.toNat * 65536
-    out := out.push (b64 (v / 262144)) |>.push (b64 (v / 4096 % 64)) |>.push '=' |>.push '='
+    out := (((out.push (b64 (v / 262144))).push (b64 (v / 4096 % 64))).push 61).push 61
   else if n - i == 2 then
     let v := b[i]!.toNat * 65536 + b[i+1]!.toNat * 256
-    out := out.push (b64 (v / 262144)) |>.push (b64 (v / 4096 % 64)) |>.push (b64 (v / 64 % 64)) |>.push '='
+    out := (((out.push (b64 (v / 262144))).push (b64 (v / 4096 % 64))).push (b64 (v / 64 % 64))).push 61
   return out
+
+/-- RFC 4648 §4 Base64 with padding. -/
+def base64 (b : ByteArray) : String := String.fromUTF8! (base64Bytes b)
 
 end L4Factoidal.PageCanvas.Png

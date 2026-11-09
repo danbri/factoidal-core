@@ -91,6 +91,7 @@ inductive Cmd where
   | font (s : String) | textAlign (s : String) | textBaseline (s : String) | direction (s : String)
   | smoothing (b : Bool) | smoothingQuality (s : String) | filter (s : String)
   | letterSpacing (s : String) | wordSpacing (s : String) | fontKerning (s : String)
+  | fontStretch (s : String) | fontVariantCaps (s : String) | textRendering (s : String) | lang (s : String)
   /-- Path commands go to the context's path (0) or a `Path2D` (its id). -/
   | pathTarget (id : Nat)
   | beginPath | moveTo (x y : Float) | lineTo (x y : Float) | quadTo (cx cy x y : Float)
@@ -197,23 +198,26 @@ def boxBlur (w h r : Nat) (src : FloatArray) (horizontal : Bool) : FloatArray :=
       if i ≥ r then sum := sum - src[at_ (i - r)]!
   return out
 
-/-- The shadow of a draw as a draw: its alpha map, as coverage of the whole canvas. -/
-def shadowDraw (W H : Nat) (st : DrawState) (d : Draw) : Draw := Id.run do
-  let box := d.cov.box
+/-- Edges moved by `(dx, dy)`. -/
+def shiftEdges (es : Array Edge) (dx dy : Float) : Array Edge :=
+  es.map fun e => { e with x0 := e.x0 + dx, y0 := e.y0 + dy, x1 := e.x1 + dx, y1 := e.y1 + dy }
+
+/-- The shadow of a draw as a draw (HTML §4.12.5.1.16): the shape moved by the offset
+(device pixels, not transformed), its alpha times the paint's alpha at the shape's own
+place, blurred, in the shadow colour, over the whole canvas. The shape's edges are moved,
+so a shape outside the canvas casts a shadow inside it. -/
+def shadowDraw (W H : Nat) (st : DrawState) (d : Draw) (es : Array Edge) (rule : FillRule) : Draw := Id.run do
+  let ox := st.shadowX
+  let oy := st.shadowY
+  let cov := coverage W H (shiftEdges es ox oy) rule
+  let box := cov.box
   let mut a := FloatArray.mk (Array.replicate (W * H) 0)
-  let ox := st.shadowX.round
-  let oy := st.shadowY.round
   for j in [0:box.h] do
     for i in [0:box.w] do
-      let c := d.cov.cov[j * box.w + i]!
+      let c := cov.cov[j * box.w + i]!
       if c <= 0 then continue
-      let x := (box.x + i).toFloat + ox
-      let y := (box.y + j).toFloat + oy
-      if x < 0 || y < 0 || x >= W.toFloat || y >= H.toFloat then continue
-      let s := d.ready.at (box.x + i) (box.y + j)
-      let xi := x.toUInt64.toNat
-      let yi := y.toUInt64.toNat
-      a := a.set! (yi * W + xi) (c * s.a)
+      let s := d.ready.atF ((box.x + i).toFloat + 0.5 - ox) ((box.y + j).toFloat + 0.5 - oy)
+      a := a.set! ((box.y + j) * W + box.x + i) (c * s.a)
   let sigma := st.shadowBlur / 2
   let r := if sigma <= 0 then 0 else (sigma * 0.94).round.toUInt64.toNat   -- three boxes of 2r+1 ≈ σ√12/√3
   let r := min r 128
@@ -222,20 +226,25 @@ def shadowDraw (W H : Nat) (st : DrawState) (d : Draw) : Draw := Id.run do
     b := boxBlur W H r (boxBlur W H r b true) false
   return { d with ready := .solid st.shadowColor.px, cov := ⟨⟨0, 0, W, H⟩, b⟩ }
 
-/-- Composite a draw (with its shadow first) into the canvas. -/
-def Canvas.paint (c : Canvas) (st : DrawState) (d : Draw) : Canvas :=
+/-- Composite a draw (with its shadow first) into the canvas. `shape` gives the draw's
+edges and rule, asked for only when there is a shadow. -/
+def Canvas.paint (c : Canvas) (st : DrawState) (d : Draw) (shape : Unit → Array Edge × FillRule) : Canvas :=
   let W := c.width
   let H := c.height
   c.onBitmap fun bm =>
-    let bm := if shadowOn st then composite W H bm (shadowDraw W H st d) else bm
+    let bm := if shadowOn st then
+        let (es, rule) := shape ()
+        composite W H bm (shadowDraw W H st d es rule)
+      else bm
     composite W H bm d
 
 /-- Draw the coverage of polygons (device space) with a style. -/
 def Run.drawPolys (r : Run) (c : Canvas) (polys : Array Poly) (rule : FillRule) (style : Style) : Canvas :=
   let st := c.stack.cur
-  let cov := coverage c.width c.height (edgesOf polys) rule
+  let es := edgesOf polys
+  let cov := coverage c.width c.height es rule
   let ready := style.ready r.gradient r.pattern st.ctm st.smoothing
-  c.paint st ⟨ready, cov, Color.clamp01 st.alpha, st.op, st.clip⟩
+  c.paint st ⟨ready, cov, Color.clamp01 st.alpha, st.op, st.clip⟩ fun _ => (es, rule)
 
 /-- Fill a path in device space. -/
 def Run.fillDevice (r : Run) (c : Canvas) (p : Path) (rule : FillRule) : Canvas :=
@@ -247,7 +256,9 @@ def Run.strokeUser (r : Run) (c : Canvas) (p : Path) (style : Style) : Canvas :=
   let st := c.stack.cur
   let k := max 1e-9 st.ctm.stretch
   let tol := 0.1 / k
-  let polys := mapPolys st.ctm (strokePolys st.line (p.flatten tol) tol)
+  -- A segment's end is square to its chord: finer curves for wide lines keep caps true.
+  let hw := st.line.width * k / 2
+  let polys := mapPolys st.ctm (strokePolys st.line (p.flatten (tol / max 1 (hw * hw))) tol)
   r.drawPolys c polys .nonzero style
 
 /-- The path a fill, stroke or clip names, in device space: the context's path, or a
@@ -283,6 +294,7 @@ def Run.rectDraw (r : Run) (c : Canvas) (x y w h : Float) (style : Style) (clear
     else c.onBitmap fun bm => composite c.width c.height bm ⟨.solid ⟨1, 1, 1, 1⟩, cov, 1, .destinationOut, st.clip⟩
   else
     c.paint st ⟨style.ready r.gradient r.pattern m st.smoothing, cov, Color.clamp01 st.alpha, st.op, st.clip⟩
+      fun _ => (edgesOf ((rectPath x y w h).map m |>.flatten), .nonzero)
 
 /-! ### Paths -/
 
@@ -357,12 +369,11 @@ where
       let (cx, cy) := (x1 + bx / bl * d, y1 + by_ / bl * d)
       let a0 := Float.atan2 (t1y - cy) (t1x - cx)
       let a1 := Float.atan2 (t2y - cy) (t2x - cx)
-      let cross := v1x * v2y - v1y * v2x
-      let ccw := cross < 0
       let (tx, ty) := m.apply t1x t1y
       let p := p.lineTo tx ty
+      -- The arc between the two tangent points on the corner's side is less than half a turn.
       let sweep := let s := a1 - a0
-        if ccw then (if s > 0 then s - tau else s) else (if s < 0 then s + tau else s)
+        if s > pi then s - tau else if s < -pi then s + tau else s
       let frame := m.mul ((Matrix.translate cx cy).mul (Matrix.scale r r))
       (arcSegs frame a0 sweep).foldl (fun q s => match s with
         | .cubic ax ay bx by_ x y => q.cubicTo ax ay bx by_ x y
@@ -459,6 +470,13 @@ def setterOf (r : Run) : Cmd → Option (DrawState → DrawState)
   | .wordSpacing t => some fun s => match Text.sizePx? (Color.asciiLower (Color.trim t)) with
       | some v => { s with wordSpacing := v } | none => s
   | .fontKerning t => some fun s => if ["auto", "normal", "none"].contains t then { s with fontKerning := t } else s
+  | .fontStretch t => some fun s => if ["ultra-condensed", "extra-condensed", "condensed", "semi-condensed", "normal",
+      "semi-expanded", "expanded", "extra-expanded", "ultra-expanded"].contains t then { s with fontStretch := t } else s
+  | .fontVariantCaps t => some fun s => if ["normal", "small-caps", "all-small-caps", "petite-caps", "all-petite-caps",
+      "unicase", "titling-caps"].contains t then { s with fontVariantCaps := t } else s
+  | .textRendering t => some fun s => if ["auto", "optimizeSpeed", "optimizeLegibility", "geometricPrecision"].contains t
+      then { s with textRendering := t } else s
+  | .lang t => some fun s => { s with lang := t }
   | _ => none
 
 /-- The text of `s` shaped with the state's font, kept for later frames. -/
@@ -553,8 +571,9 @@ def Run.drawImage (r : Run) (c : Canvas) (img : Bitmap) (sx sy sw sh dx dy dw dh
   let pat : Pattern := ⟨crop, ⟨false, false⟩, toUser, true⟩
   let st := c.stack.cur
   let polys := ((rectPath dx dy dw dh).map st.ctm).flatten
-  let cov := coverage c.width c.height (edgesOf polys) .nonzero
-  c.paint st ⟨Ready.ofPattern pat st.ctm st.smoothing, cov, Color.clamp01 st.alpha, st.op, st.clip⟩
+  let es := edgesOf polys
+  let cov := coverage c.width c.height es .nonzero
+  c.paint st ⟨Ready.ofPattern pat st.ctm st.smoothing, cov, Color.clamp01 st.alpha, st.op, st.clip⟩ fun _ => (es, .nonzero)
 
 /-- HTML `putImageData`: the dirty rectangle of the image data, clipped to the data and
 the canvas, written as it is (no transform, alpha, operator or clip). -/
@@ -706,8 +725,8 @@ def Run.step (r : Run) (cmd : Cmd) : Run :=
   | .clearRect x y w h => r.withCur fun c r => (r.rectDraw c x y w h c.stack.cur.fill true, r)
   | .strokeRect x y w h => r.withCur fun c r =>
       if !finite [x, y, w, h] then (c, r) else
-      let p := if w == 0 && h == 0 then {} else if w == 0 || h == 0 then (({} : Path).moveTo x y).lineTo (x + w) (y + h)
-        else rectPath x y w h
+      -- HTML: with one side zero the path is the closed line (so joins, not caps, at its ends).
+      let p := if w == 0 && h == 0 then {} else rectPath x y w h
       if c.stack.cur.ctm.inverse?.isNone then (c, r) else (r.strokeUser c p c.stack.cur.stroke, r)
   | .fillText s x y maxW => r.withCur fun c r =>
       let (r, p) := r.textPath c.stack.cur s x y maxW
@@ -827,6 +846,10 @@ def attr (st : DrawState) : String → Option String
   | "letterSpacing" => Text.num st.letterSpacing ++ "px"
   | "wordSpacing" => Text.num st.wordSpacing ++ "px"
   | "fontKerning" => st.fontKerning
+  | "fontStretch" => st.fontStretch
+  | "fontVariantCaps" => st.fontVariantCaps
+  | "textRendering" => st.textRendering
+  | "lang" => st.lang
   | _ => none
 
 /-- Winding of a point by flattened polygons. -/
@@ -839,6 +862,22 @@ def winding (polys : Array Poly) (x y : Float) : Int := Id.run do
   return w
 
 def inside (rule : FillRule) (w : Int) : Bool := if rule == .nonzero then w != 0 else w % 2 != 0
+
+/-- The point is on an edge of the polygons (HTML: a point on the path is inside it). -/
+def onEdge (polys : Array Poly) (x y : Float) : Bool := Id.run do
+  for p in polys do
+    let n := p.count
+    for i in [0:n] do
+      let j := if i + 1 == n then 0 else i + 1
+      let ax := p.pts[2*i]!
+      let ay := p.pts[2*i+1]!
+      let bx := p.pts[2*j]!
+      let by_ := p.pts[2*j+1]!
+      let cross := (bx - ax) * (y - ay) - (by_ - ay) * (x - ax)
+      let len := Float.sqrt ((bx - ax) ^ 2 + (by_ - ay) ^ 2)
+      if cross.abs <= 1e-6 * max 1 len && min ax bx - 1e-9 <= x && x <= max ax bx + 1e-9 &&
+          min ay by_ - 1e-9 <= y && y <= max ay by_ + 1e-9 then return true
+  return false
 
 /-- A query of a page script: its answer and the store after it. -/
 inductive Query where
@@ -895,8 +934,8 @@ def Store.answer (s : Store) (env : Env) (q : Query) : Store × String :=
     | some c =>
       if !finite [x, y] then (s, "0") else
       let r : Run := { store := s, env }
-      let p := r.devicePath c path
-      (s, if inside rule (winding (p.flatten 0.05) x y) then "1" else "0")
+      let polys := (r.devicePath c path).flatten 0.05
+      (s, if inside rule (winding polys x y) || onEdge polys x y then "1" else "0")
   | .inStroke id path x y =>
     match canvas id with
     | none => (s, "0")
@@ -909,7 +948,7 @@ def Store.answer (s : Store) (env : Env) (q : Query) : Store × String :=
         let st := c.stack.cur
         let tol := 0.05 / max 1e-9 st.ctm.stretch
         let polys := mapPolys st.ctm (strokePolys st.line (p.flatten tol) tol)
-        (s, if winding polys x y != 0 then "1" else "0")
+        (s, if winding polys x y != 0 || onEdge polys x y then "1" else "0")
   | .transform id =>
     let m := ((canvas id).map (·.stack.cur.ctm)).getD {}
     (s, " ".intercalate ([m.a, m.b, m.c, m.d, m.e, m.f].map bits))
@@ -1005,10 +1044,42 @@ theorem emit_pixels (s : Store) (t w h : Nat) (d : ByteArray) (mem : HostCmd.pix
   obtain ⟨⟨id, c⟩, hm, hp⟩ := mem
   exact ⟨id, c, hm, emitOne_pixels _ _ _ _ _ _ _ hp⟩
 
+/-- The pixel `i` of RGBA bytes as one word. -/
+@[inline] def wordAt (d : ByteArray) (i : Nat) : UInt32 :=
+  d[4*i]!.toUInt32 ||| (d[4*i+1]!.toUInt32 <<< 8) ||| (d[4*i+2]!.toUInt32 <<< 16) ||| (d[4*i+3]!.toUInt32 <<< 24)
+
+def pushWord (b : ByteArray) (v : Nat) : ByteArray :=
+  (((b.push (v % 256).toUInt8).push (v / 256 % 256).toUInt8).push (v / 65536 % 256).toUInt8).push (v / 16777216 % 256).toUInt8
+
+/-- Run-length form of RGBA pixels for the host: runs, each a little-endian word, then
+the pixels: with the high bit set, that many pixels follow as they are; without it, one
+pixel follows, repeated that many times. A canvas is mostly runs (backgrounds, bars). -/
+def rle (d : ByteArray) : ByteArray := Id.run do
+  let n := d.size / 4
+  let mut out := ByteArray.emptyWithCapacity (n / 4 + 16)
+  let mut i := 0
+  let mut lit := 0
+  while i < n do
+    let w := wordAt d i
+    let mut j := i + 1
+    while j < n && wordAt d j == w do j := j + 1
+    if j - i >= 3 then
+      if lit < i then
+        out := pushWord out (2147483648 + (i - lit))
+        out := out ++ d.extract (4 * lit) (4 * i)
+      out := pushWord out (j - i)
+      out := out ++ d.extract (4 * i) (4 * i + 4)
+      lit := j
+    i := j
+  if lit < n then
+    out := pushWord out (2147483648 + (n - lit))
+    out := out ++ d.extract (4 * lit) (4 * n)
+  return out
+
 def HostCmd.json (page : Nat) : HostCmd → String
   | .texture id node w h =>
     s!"\{\"k\":\"canvas\",\"g\":[{page},{id}],\"node\":{node},\"w\":{w},\"h\":{h},\"usage\":22,\"twoD\":true}"
   | .destroy id => s!"\{\"k\":\"destroy\",\"g\":[{page},{id}]}"
-  | .pixels id w h data => s!"\{\"k\":\"pixels\",\"g\":[{page},{id}],\"w\":{w},\"h\":{h},\"data\":\"{Png.base64 data}\"}"
+  | .pixels id w h data => s!"\{\"k\":\"pixels\",\"g\":[{page},{id}],\"w\":{w},\"h\":{h},\"rle\":1,\"data\":\"{Png.base64 (rle data)}\"}"
 
 end L4Factoidal.PageCanvas

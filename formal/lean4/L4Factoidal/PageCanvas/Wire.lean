@@ -120,7 +120,7 @@ def arity : Nat → Option Nat
   | 10 | 11 => some 6 | 12 | 13 => some 2 | 14 => some 1 | 15 => some 0
   | 20 => some 1 | 21 | 22 | 23 => some 1 | 24 | 25 => some 2
   | 26 | 27 | 28 | 29 => some 1 | 31 => some 1
-  | 32 | 33 | 34 | 35 | 36 | 37 | 38 | 39 | 40 | 41 | 42 | 43 | 44 | 45 => some 1
+  | 32 | 33 | 34 | 35 | 36 | 37 | 38 | 39 | 40 | 41 | 42 | 43 | 44 | 45 | 46 | 47 | 48 | 49 => some 1
   | 50 => some 1 | 51 => some 0 | 52 | 53 => some 2 | 54 => some 4 | 55 => some 6 | 56 => some 6
   | 57 => some 5 | 58 => some 8 | 59 => some 4 | 61 => some 0
   | 62 => some 2 | 63 => some 2 | 64 => some 8
@@ -166,7 +166,8 @@ def decode (p : Parts) : Except String (Array Cmd) := do
       | 36 => .font (str (g 0)) | 37 => .textAlign (str (g 0)) | 38 => .textBaseline (str (g 0))
       | 39 => .direction (str (g 0)) | 40 => .smoothing (g 0 != 0) | 41 => .smoothingQuality (str (g 0))
       | 42 => .filter (str (g 0)) | 43 => .letterSpacing (str (g 0)) | 44 => .wordSpacing (str (g 0))
-      | 45 => .fontKerning (str (g 0))
+      | 45 => .fontKerning (str (g 0)) | 46 => .fontStretch (str (g 0)) | 47 => .fontVariantCaps (str (g 0))
+      | 48 => .textRendering (str (g 0)) | 49 => .lang (str (g 0))
       | 50 => .pathTarget (nat (g 0)) | 51 => .beginPath
       | 52 => .moveTo (g 0) (g 1) | 53 => .lineTo (g 0) (g 1)
       | 54 => .quadTo (g 0) (g 1) (g 2) (g 3) | 55 => .bezierTo (g 0) (g 1) (g 2) (g 3) (g 4) (g 5)
@@ -245,13 +246,30 @@ def call (s : Store) (env : Env) (op : Nat) (bytes : ByteArray) : Store × Strin
       | .ok cmds => (s.run env cmds, "")
       | .error e => (s, "\x02" ++ e)
     else
+      -- A query's answer starts with U+0001 (and an error with U+0002), so an answer of
+      -- bytes (getImageData) is never taken for an error.
       match query p with
       | .ok (.imageData _ _ _ w h) =>
         if w * h > maxImageData then (s, "\x02canvas: getImageData too large") else
         match query p with
-        | .ok q => s.answer env q
+        | .ok q => let (s, a) := s.answer env q; (s, "\x01" ++ a)
         | .error e => (s, "\x02" ++ e)
-      | .ok q => s.answer env q
+      | .ok q => let (s, a) := s.answer env q; (s, "\x01" ++ a)
       | .error e => (s, "\x02" ++ e)
+
+/-- Op 202: `getImageData` answered as words (one a pixel, red in the low byte), for the
+`gpuList` native, so the page copies them into its `ImageData` at once. -/
+def wordsOp : Nat := 202
+
+def callWords (s : Store) (op : Nat) (bytes : ByteArray) : Except String ByteArray := do
+  if op != wordsOp then throw "canvas: not a words query"
+  let p ← parts bytes
+  match ← query p with
+  | .imageData id x y w h =>
+    if w * h > maxImageData then throw "canvas: getImageData too large"
+    match s.canvases.get? id with
+    | some c => return c.straight x y w h
+    | none => return ByteArray.mk (Array.replicate (w * h * 4) 0)
+  | _ => throw "canvas: not a words query"
 
 end L4Factoidal.PageCanvas.Wire

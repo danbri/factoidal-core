@@ -234,25 +234,31 @@ def samplePattern (p : Pattern) (smooth : Bool) (u v : Float) : Px :=
   let bot := (⟨mix c.r d.r tx, mix c.g d.g tx, mix c.b d.b tx, mix c.a d.a tx⟩ : Px)
   ⟨mix top.r bot.r ty, mix top.g bot.g ty, mix top.b bot.b ty, mix top.a bot.a ty⟩
 
-/-- The paint at the centre of device pixel `(x, y)`. -/
-@[inline] def Ready.at (r : Ready) (x y : Nat) : Px :=
+/-- The paint at a point of device space. -/
+def Ready.atF (r : Ready) (px py : Float) : Px :=
   match r with
   | .solid p => p
   | .blank => Px.zero
   | .linear inv x0 y0 dx dy len2 table =>
-    let (u, v) := inv.apply (x.toFloat + 0.5) (y.toFloat + 0.5)
+    let (u, v) := inv.apply px py
     lookup table (((u - x0) * dx + (v - y0) * dy) / len2)
   | .radial inv x0 y0 r0 cdx cdy dr a table =>
-    let (u, v) := inv.apply (x.toFloat + 0.5) (y.toFloat + 0.5)
+    let (u, v) := inv.apply px py
     match radialT x0 y0 r0 cdx cdy dr a u v with
     | some t => lookup table t
     | Option.none => Px.zero
   | .conic inv angle cx cy table =>
-    let (u, v) := inv.apply (x.toFloat + 0.5) (y.toFloat + 0.5)
+    let (u, v) := inv.apply px py
     let t := (Float.atan2 (v - cy) (u - cx) - angle) / tau
     lookup table (t - t.floor)
   | .pattern inv p smooth =>
-    let (u, v) := inv.apply (x.toFloat + 0.5) (y.toFloat + 0.5)
+    let (u, v) := inv.apply px py
     samplePattern p smooth u v
+
+/-- The paint at the centre of device pixel `(x, y)`. -/
+@[inline] def Ready.at (r : Ready) (x y : Nat) : Px :=
+  match r with
+  | .solid p => p
+  | _ => r.atF (x.toFloat + 0.5) (y.toFloat + 0.5)
 
 end L4Factoidal.PageCanvas

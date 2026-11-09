@@ -177,8 +177,10 @@ def function? (name inner : String) : Option RGBA := do
     return ⟨v[0]!, v[1]!, v[2]!, alpha⟩
   | "hsl", [h, s, l] | "hsla", [h, s, l] =>
     let h ← angle? h
-    let s ← (percent? s).orElse fun _ => (· / 100) <$> number? s
-    let l ← (percent? l).orElse fun _ => (· / 100) <$> number? l
+    -- The legacy (comma) syntax takes percentages only (CSS Color 4 §7).
+    let legacy := inner.any (· == ',')
+    let s ← (percent? s).orElse fun _ => if legacy then none else (· / 100) <$> number? s
+    let l ← (percent? l).orElse fun _ => if legacy then none else (· / 100) <$> number? l
     let (r, g, b) := hslToRgb h (clamp01 s) (clamp01 l)
     return ⟨clamp255 r, clamp255 g, clamp255 b, alpha⟩
   | "hwb", [h, w, b] =>
