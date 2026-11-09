@@ -37,8 +37,8 @@ textarea { display:block; box-sizing:border-box; width:100%; margin-top:0; paddi
 GLSL ES 3.00 for WebGL 2. In Foafnaut, Lean parses each one, checks it against a small subset (loops with literal bounds,
 no recursion, a cost bound, every index clamped) and prints the WGSL the GPU gets. Drag on the picture to move <code>iMouse</code>.</p>
 <div class="bar" id="shaders"></div>
-<div class="bar"><span class="k">API</span><button id="api-webgpu">WebGPU · WGSL</button><button id="api-webgl2">WebGL 2 · GLSL ES 3.00</button>
-<span class="k">size</span><span id="sizes"></span><button id="pause">Pause</button></div>
+<div class="bar"><span class="k">API</span> <button id="api-webgpu">WebGPU · WGSL</button> <button id="api-webgl2">WebGL 2 · GLSL ES 3.00</button>
+<span class="k">size</span> <span id="sizes"></span> <button id="pause">Pause</button></div>
 <div class="stage" id="stage"><canvas id="c-webgpu" width="800" height="600"></canvas><canvas id="c-webgl2" width="800" height="600"></canvas>
 <canvas id="readout" class="readout" width="800" height="42" aria-label="Frame rate, script time and Lean's time a turn">This page needs scripts and WebGPU or WebGL 2.</canvas></div>
 <h2 id="title">Shader</h2>
@@ -46,7 +46,7 @@ no recursion, a cost bound, every index clamped) and prints the WGSL the GPU get
 <pre class="head" id="head"></pre>
 <pre id="srcview"></pre>
 <textarea id="src" spellcheck="false" rows="22"></textarea>
-<div class="tools"><button class="run" id="run">Run</button><button id="reset">Reset</button><button id="try-while">Try a while loop</button><button id="try-fn">Try a helper function</button><button id="try-big">Try a 10,000-step loop</button></div>
+<div class="tools"><button class="run" id="run">Run</button> <button id="reset">Reset</button> <button id="try-while">Try a while loop</button> <button id="try-fn">Try a helper function</button> <button id="try-big">Try a 10,000-step loop</button></div>
 <p class="status" id="status"></p>
 <p class="about">The five shaders are written for this page (MIT, like the rest of the repository); none is copied from Shadertoy.
 In Foafnaut every WebGPU and WebGL call is a command that Lean checks (<code>L4Factoidal.PageGpu</code>; record
@@ -511,8 +511,11 @@ const SHADERS = [
 }` }];
 // Edits that leave the subset, to show the check (each is applied to the shown shader).
 const TRIES = {
-  'try-while': { wgsl: s => s.replace(/for \(var (\w+) = 0; \1 < (\d+); \1\+\+\) \{/, 'var $1 = 0;\n  while ($1 < $2) {\n    $1++;'),
-                 glsl: s => s.replace(/for \(int (\w+) = 0; \1 < (\d+); \1\+\+\) \{/, 'int $1 = 0;\n  while ($1 < $2) {\n    $1++;') },
+  // The first for loop as a while loop; a shader with none gets a small one.
+  'try-while': { wgsl: s => /for \(var /.test(s) ? s.replace(/for \(var (\w+) = 0; \1 < (\d+); \1\+\+\) \{/, 'var $1 = 0;\n  while ($1 < $2) {\n    $1++;')
+                   : s.replace('return vec4f(', 'var w = 0;\n  while (w < 4) { w++; }\n  return vec4f('),
+                 glsl: s => /for \(int /.test(s) ? s.replace(/for \(int (\w+) = 0; \1 < (\d+); \1\+\+\) \{/, 'int $1 = 0;\n  while ($1 < $2) {\n    $1++;')
+                   : s.replace('fragColor = vec4(', 'int w = 0;\n  while (w < 4) { w++; }\n  fragColor = vec4(') },
   'try-fn': { wgsl: s => 'fn wave(x: f32) -> f32 { return 0.5 + 0.5 * sin(x); }\n' + s.replace('return vec4f(', 'return wave(1.0) * vec4f('),
               glsl: s => 'float wave(float x) { return 0.5 + 0.5 * sin(x); }\n' + s.replace('fragColor = vec4(', 'fragColor = wave(1.0) * vec4(') },
   'try-big': { wgsl: s => s.replace('return vec4f(', 'var spin = 0.0;\n  for (var b = 0; b < 10000; b++) { spin += 0.0001; }\n  return spin * vec4f('),
