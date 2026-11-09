@@ -105,8 +105,7 @@ def wEngine : PageEvents.Engine Session :=
 
 /-- An event for a realm: its data in the inbox, and its task. -/
 def deliver (s : Session) (ev : WorkerEvent) : Session :=
-  let wk := s.wk
-  let s := s.setWk { wk with inbox := wk.inbox.push ev }
+  let s := s.setWk (s.wk.push ev)
   wEngine.setLoop s ((wEngine.loop s).queueTask .postedMessage eventHandle)
 
 def Workers.request (w : Workers) (url : String) : Workers :=

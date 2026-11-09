@@ -79,6 +79,68 @@ structure WorkerHost where
   missing : Option String := none
   deriving Inhabited
 
+/-! The inbox is a queue: `push` at the end, `take` from `head` (and emptied when all of it
+is taken). `push_pending`, `take_pending`: the events not yet taken are a list that `push`
+appends to and `take` takes the first of, so a realm's events run in the order they came
+(the model `EventLoop.Agents`, `channel_prefix`). -/
+
+/-- The events not yet taken, in order. -/
+def WorkerHost.pending (wh : WorkerHost) : List WorkerEvent := wh.inbox.toList.drop wh.head
+
+def WorkerHost.push (wh : WorkerHost) (ev : WorkerEvent) : WorkerHost := { wh with inbox := wh.inbox.push ev }
+
+def WorkerHost.take (wh : WorkerHost) : WorkerHost × Option WorkerEvent :=
+  match wh.inbox[wh.head]? with
+  | none => (wh, none)
+  | some ev =>
+    (if wh.head + 1 ≥ wh.inbox.size then { wh with inbox := #[], head := 0, current := ev }
+     else { wh with head := wh.head + 1, current := ev }, some ev)
+
+theorem WorkerHost.push_pending (wh : WorkerHost) (ev : WorkerEvent) (h : wh.head ≤ wh.inbox.size) :
+    (wh.push ev).pending = wh.pending ++ [ev] := by
+  have h' : wh.head ≤ wh.inbox.toList.length := by simpa using h
+  simp [WorkerHost.pending, WorkerHost.push, List.drop_append_of_le_length h']
+
+theorem WorkerHost.take_pending (wh : WorkerHost) :
+    wh.take.2 = wh.pending.head? ∧ wh.take.1.pending = wh.pending.tail := by
+  unfold WorkerHost.take WorkerHost.pending
+  split
+  · rename_i hn
+    have : wh.inbox.size ≤ wh.head := by
+      rcases Nat.lt_or_ge wh.head wh.inbox.size with h | h
+      · simp [Array.getElem?_eq_getElem h] at hn
+      · exact h
+    have h' : wh.inbox.toList.length ≤ wh.head := by simpa using this
+    simp [List.drop_eq_nil_of_le h']
+  · rename_i ev hs
+    have hlt : wh.head < wh.inbox.size := by
+      rcases Nat.lt_or_ge wh.head wh.inbox.size with h | h
+      · exact h
+      · simp [Array.getElem?_eq_none h] at hs
+    have hev : wh.inbox[wh.head] = ev := by simpa [Array.getElem?_eq_getElem hlt] using hs
+    have hd : wh.inbox.toList.drop wh.head = ev :: wh.inbox.toList.drop (wh.head + 1) := by
+      rw [List.drop_eq_getElem_cons (by simpa using hlt)]; simp [hev]
+    split
+    · rename_i hge
+      refine ⟨by simp [hd], ?_⟩
+      have h' : wh.inbox.toList.length ≤ wh.head + 1 := by simpa using hge
+      simp [hd, List.drop_eq_nil_of_le h']
+    · exact ⟨by simp [hd], by simp [hd]⟩
+
+/-- `push` and `take` keep `head` within the inbox (the hypothesis of `push_pending`). -/
+theorem WorkerHost.push_head (wh : WorkerHost) (ev : WorkerEvent) (h : wh.head ≤ wh.inbox.size) :
+    (wh.push ev).head ≤ (wh.push ev).inbox.size := by
+  simp [WorkerHost.push]; omega
+
+theorem WorkerHost.take_head (wh : WorkerHost) (h : wh.head ≤ wh.inbox.size) :
+    wh.take.1.head ≤ wh.take.1.inbox.size := by
+  unfold WorkerHost.take
+  split
+  · exact h
+  · split
+    · simp
+    · simp; omega
+
 /-- Native `worker` (number 29): `worker(op, a, b, c)`.
 
 - page: 0 `create(url, name)` answers the worker's number; 1 `post(id, bytes)`;
@@ -103,14 +165,11 @@ def serveWorker (wh : WorkerHost) (args : Array JS.HostArg) : WorkerHost × JS.H
   | 1 => ({ wh with ops := wh.ops.push (.post (nat 1) (bytes 2)) }, .val .undef)
   | 2 => ({ wh with ops := wh.ops.push (.terminate (nat 1)) }, .val .undef)
   | 3 =>
-    match wh.inbox[wh.head]? with
-    | none => (wh, .val (.str (JS.Str.ofHost "")))
-    | some ev =>
-      let head := wh.head + 1
-      -- the inbox is emptied when all of it is taken, so it does not grow
-      let wh := if head ≥ wh.inbox.size then { wh with inbox := #[], head := 0 } else { wh with head }
+    match wh.take with
+    | (wh, none) => (wh, .val (.str (JS.Str.ofHost "")))
+    | (wh, some ev) =>
       let j := JSON.Json.object [("w", .number (toString ev.worker)), ("k", .string ev.kind), ("h", .string ev.header)]
-      ({ wh with current := ev }, .val (.str (JS.Str.ofHost j.toString)))
+      (wh, .val (.str (JS.Str.ofHost j.toString)))
   | 4 => (wh, .bytes wh.current.data)
   | 10 => ({ wh with ops := wh.ops.push .close }, .val .undef)
   | 11 => ({ wh with ops := wh.ops.push (.error (text 1) (text 2) (nat 3) (nat 4)) }, .val .undef)
