@@ -712,18 +712,25 @@ async function gpuShow(){
 // Timers and animation frames: the page's virtual clock follows real time since its scripts started.
 // Lean runs at most one animation frame a turn. Frame pacing: no turn while a frame is pending
 // (asked for or being drawn), so each presented frame has at most one turn before it.
-setInterval(()=>{
+// The next check is at the page's next wake (at most 16 ms away): a fixed 16 ms interval beat
+// against 16 ms animation frames and missed some of them.
+function scriptTimers(){
   const script=doc?.script;
-  if(!script||drawing||dirty||script.turn.nextWake===null||script.turn.nextWake===undefined)return;
+  if(!script||drawing||dirty||script.turn.nextWake===null||script.turn.nextWake===undefined)return 16;
   let elapsed=performance.now()-script.epoch;
-  if(elapsed<script.turn.nextWake)return;
+  if(elapsed<script.turn.nextWake)return script.turn.nextWake-elapsed;
   // A page whose callbacks take longer than real time would fall further behind at each
   // advance (each one running every frame it missed): the virtual clock moves at most
   // 100 ms past the page's own clock per advance, and the epoch slips by the rest.
   if(elapsed-script.turn.clock>100){script.epoch+=elapsed-script.turn.clock-100;elapsed=script.turn.clock+100;}
   try{scriptTurn(doc,scriptCall('',{op:'scriptSession',action:'advance',session:script.session,ms:Math.max(0,Math.ceil(elapsed-script.turn.clock))}));}
   catch(error){console.warn('foafnaut: page script timers:',String(error.message??error));script.turn.nextWake=null;}
-},16);
+  const next=script.turn.nextWake;
+  return next===null||next===undefined?16:next-(performance.now()-script.epoch);
+}
+let scriptWait=16;
+const scriptTick=()=>setTimeout(()=>{let wait=16;try{wait=scriptTimers();}finally{scriptWait=Math.max(1,Math.min(16,Math.ceil(wait)));scriptTick();}},scriptWait);
+scriptTick();
 function scriptClick(x,y){
   const script=doc?.script;if(!script)return;
   try{
