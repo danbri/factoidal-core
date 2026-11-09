@@ -285,9 +285,10 @@ prelude.js (section "basics") does WebIDL conversion, object shapes and promises
 Each API is a getter on the global object that probes `n.api` once on first use; an
 engine without the op leaves the API undefined. Nothing runs at page start.
 `crypto.subtle` promises are settled by a task of Lean's event loop. Since 2026-11-09
-the engine links HACL* (record `2026-11-09-hacl-web-crypto.md`). Off, because HACL* has no
-such primitive: AES, P-384, P-521, Ed448, X448; RSA is future work. Their operations reject
-with NotSupportedError.
+the engine links HACL* (record `2026-11-09-hacl-web-crypto.md`), with RSA for imported
+keys. Off natively, because HACL* has no such primitive: AES, P-384, P-521, Ed448, X448
+(NotSupportedError). On the Hub the browser's crypto.subtle does the primitives under Lean's
+rules (host mode), which adds AES, P-384 and P-521 there.
 
 `structuredClone` (HTML §2.7) is glue that walks JavaScript values, step for step:
 primitives, the wrapper objects, Date, RegExp, ArrayBuffer (and resizable ones), views,
