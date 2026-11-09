@@ -1,18 +1,22 @@
 # QuickJS-NG in the Lean WasmVM engine
 
-Page scripts run in QuickJS-NG, compiled to WebAssembly and run by the Lean WasmVM
-engine (`formal/lean4/L4Factoidal/WasmVM/`). No host JavaScript engine runs them. DOM
-effects go through typed host imports that Lean serves on its DOM arena.
+On the Hub, page scripts run in QuickJS-NG, compiled to WebAssembly and run by the Lean
+WasmVM engine (`formal/lean4/L4Factoidal/WasmVM/`). In the desktop app the default engine is
+BubblePopJS (`formal/lean4/L4Factoidal/JS/`), and QuickJS-NG in WasmVM is an option in
+settings; `WebRenderScript.defaultEngine` decides. No host JavaScript engine runs a page
+script. DOM effects go through typed host imports that Lean serves on its DOM arena.
 Issue: https://github.com/danbri/factoidal/issues/1244 (WasmVM engine). Record:
 `docs/designissues/2026-11-07-wasmvm-engine.md`, section "QuickJS in WasmVM".
 
 ## Files
 
 - `qjs_wasmvm_entry.c`: the entry point. It has the exports `qjs_new`, `qjs_eval`,
-  `qjs_call`, `qjs_release`, `qjs_alloc`, `qjs_free` and `qjs_test262`, the
-  `foafnaut_dom` imports, and the JavaScript prelude that makes `document`, elements,
-  `console`, timers and `queueMicrotask` from those imports. The comment at the top
-  gives the ABI.
+  `qjs_call`, `qjs_release`, `qjs_alloc`, `qjs_free` and `qjs_test262`, and the
+  `foafnaut_dom` imports. The comment at the top gives the ABI.
+- `prelude.js`: the JavaScript prelude that makes `document`, elements, `console`, timers
+  and `queueMicrotask` from those imports. BubblePopJS uses it too.
+  `prelude_bytecode.c` compiles it to QuickJS bytecode for the guest at build time.
+- `webassembly.js`: the WebAssembly JavaScript API for page scripts.
 - `../build-quickjs.sh`: the build (pinned version, SHA-256 of the tarball, flags).
 - `host-reference.mjs`: runs the same scripts with today's host-run QuickJS path
   (`labs/demos/foafnaut/web-render/script-engine/`), for comparison.

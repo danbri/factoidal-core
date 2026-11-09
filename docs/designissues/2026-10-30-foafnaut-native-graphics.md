@@ -1,5 +1,8 @@
 # Foafnaut: Lean graphics on a native WebGPU host
 
+> Note, 2026-11-09: This record covers the graphics demos (`run_ui.ts`, `run_lean.ts`, `run_svg.ts`). The browser window `run_html.ts` came later and is not described here. Current state: [Foafnaut handoff](2026-11-09-foafnaut-handoff.md) and
+> [skills/foafnaut/SKILL.md](../../skills/foafnaut/SKILL.md).
+
 The source experiment now lives in
 [`labs/demos/foafnaut`](../../labs/demos/foafnaut/README.md). The owner requested
 this location and separate executable artifacts in factoidal-builds on

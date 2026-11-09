@@ -447,7 +447,9 @@ animated GIFs or similar yet?"
 - The status page has 1,424 rows of scroll, so a sweep makes one prefetch; a chain of
   prefetches on a long page was not measured in a window.
 - The Hub page (`docs/web/hub/foafnaut/browser-worker.mjs`) loads its GPU transport from
-  a published package. It gets the layer path with the next release.
+  a published package. It gets the layer path with the next release. (Note, 2026-11-09:
+  done; the Hub has `docs/web/hub/foafnaut/layers.mjs`, checked by
+  `labs/demos/foafnaut/hub_layers_check.mjs`.)
 - https://github.com/danbri/factoidal/issues/1269 (16-sample rule depends on the row count).
 - A drag selection is in window coordinates, so a scroll with one makes a Lean frame.
 - A graph frame is built from the model with no SVG text (`graphModel`, 2026-11-07,

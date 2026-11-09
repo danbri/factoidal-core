@@ -1,5 +1,9 @@
 # foafnaut2525 side-conversation handoff
 
+> Note, 2026-11-09: This handoff is of 3 November and is superseded. Current state:
+> [Foafnaut handoff](designissues/2026-11-09-foafnaut-handoff.md) and
+> [skills/foafnaut/SKILL.md](../skills/foafnaut/SKILL.md).
+
 3 November 2026. This records the substantive requests, findings and proposals
 from the owner's `/btw` conversation. It is a summary, not a verbatim
 transcript. The main agent should read it before reporting current status.

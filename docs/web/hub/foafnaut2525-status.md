@@ -50,7 +50,7 @@ The match and close bands are ours, not a W3C verdict. The WPT image score still
 
 ## Read more
 
-- [Objectives and key results](https://github.com/danbri/factoidal/issues/1245)
+- [Objectives and key results, batch 2](https://github.com/danbri/factoidal/issues/1296) and [batch 1](https://github.com/danbri/factoidal/issues/1245)
 - [Source code](https://github.com/danbri/factoidal-core)
 - [HTML and CSS in Lean](https://danbri.github.io/factoidal/web/hub/html-webgpu/)
 

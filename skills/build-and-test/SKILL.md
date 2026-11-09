@@ -296,6 +296,9 @@ Both files are gitignored (`formal/fstar/.gitignore`).
 
 ## Cross-references
 
+- For Foafnaut (the browser) use the [`foafnaut` skill](../foafnaut/SKILL.md) first. The next
+  record is dated 3 November and is superseded for current state.
+
 - [foafnaut2525 runtime maturity and XSLT](../../docs/designissues/2026-11-03-foafnaut2525-runtime-maturity.md)
   separates existing JS/WASM behavior from DOM, event-loop, guest-WASM and
   native-app targets; records the requested XML stylesheet browser flow.

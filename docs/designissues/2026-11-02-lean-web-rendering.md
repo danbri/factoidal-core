@@ -1,5 +1,8 @@
 # HTML layout into the shared retained vector scene
 
+> Note, 2026-11-09: This record describes the first stage. The bitmap font is no longer the only font; real fonts, shaping, tables, bidirectional text and page scripts have landed since. Current state: [Foafnaut handoff](2026-11-09-foafnaut-handoff.md) and
+> [skills/foafnaut/SKILL.md](../../skills/foafnaut/SKILL.md).
+
 Tracking: https://github.com/danbri/factoidal/issues/1230 (Lean HTML/CSS layout
 and shared scene). This implements the direction in the
 [Solving design](2026-11-01-svg-scene-compositor.md).

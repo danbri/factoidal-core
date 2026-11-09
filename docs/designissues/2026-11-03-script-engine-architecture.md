@@ -1,5 +1,8 @@
 # JavaScript engine and Lean DOM boundary
 
+> Note, 2026-11-09: The decision below is superseded. Page scripts run in the engine: BubblePopJS on the desktop and QuickJS-NG in WasmVM on the Hub ([2026-11-08-page-scripts.md](2026-11-08-page-scripts.md), [2026-11-08-lean-js-engine.md](2026-11-08-lean-js-engine.md)). The separate QuickJS worker is only in the local lab server (`labs/demos/foafnaut/web-render/`). Current state: [Foafnaut handoff](2026-11-09-foafnaut-handoff.md) and
+> [skills/foafnaut/SKILL.md](../../skills/foafnaut/SKILL.md).
+
 Decision, 3 November 2026: use the unmodified QuickJS-NG 0.18.0 WASI
 reactor in a dedicated worker for the browser MVP. Keep the Lean arena and
 the QuickJS heap in separate WebAssembly memories. Exchange bounded node

@@ -609,6 +609,7 @@ Do not replace this with numeric-equality caching or change rounding as a speed
 fix. Exact output and actual timing are separate gates; the overnight record
 keeps both.
 
+(For the Foafnaut browser, use the [`foafnaut` skill](../foafnaut/SKILL.md).)
 The initial retained-scene source is the lab module
 `labs/demos/foafnaut/Solving.lean`, compiled by
 `labs/demos/foafnaut/build-engines.sh`. It reuses `NativeGraphics.Shape` and

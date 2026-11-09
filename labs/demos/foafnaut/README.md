@@ -1,10 +1,23 @@
-# Foafnaut native graphics lab
+# Foafnaut lab: the browser and the native graphics demos
 
-Lean owns scene generation, geometry, SVG parsing/paint, interaction state,
-spring physics and responsive card layout. Deno is the native CPU/WASM host and
-raw WebGPU transport. The macOS window shim only handles Cocoa windows, input,
-visibility and Core Animation readiness. There is no browser, webview, HTML,
-Canvas, Skia, or JavaScript geometry implementation.
+**Contributors: start at [skills/foafnaut/SKILL.md](../../../skills/foafnaut/SKILL.md)** (code
+map, build, test, shared-machine rules) and the
+[handoff record](../../../docs/designissues/2026-11-09-foafnaut-handoff.md) (current state).
+
+This directory holds two kinds of program:
+
+- The Foafnaut browser: the window program `run_html.ts` and the HTML, CSS, SVG and
+  script engine (`Web*.lean`, `formal/lean4/L4Factoidal/Rendering`). Its macOS app is
+  `foafnaut.app`, from `build-executables.sh`.
+- The older native graphics demos: `run_ui.ts` (springs, layout, vectors, the FOAF graph),
+  `run_lean.ts` and `run_svg.ts`. Lean owns scene generation, geometry, SVG parsing/paint,
+  interaction state, spring physics and responsive card layout. Deno is the native CPU/WASM
+  host and raw WebGPU transport. The macOS window shim only handles Cocoa windows, input,
+  visibility and Core Animation readiness. These demos use no webview and no host HTML
+  or Canvas.
+
+Most of this file was written for the demos (2026-10-30 to 2026-11-02). Each section says
+which program it covers when that is not clear.
 
 This lab is experimental. Full SVG and browser behavior remain goals, not
 claims about the current implementation. SVG scope and refusals are in
@@ -59,7 +72,9 @@ execution; see the scene worknote for the distinction.
 
 ## Run a native release directory
 
-Keep the three executables, Cocoa sidecar, launchers and fixtures together.
+Keep the executables, the Cocoa sidecar `libnative-window.dylib`, the native engine
+`libweb-render.dylib`, launchers and fixtures together. `foafnaut.app` runs
+`native-webgpu-html-darwin-arm64`, the browser.
 Double-click `Native Demos.command` for springs/layout/vectors, the dedicated
 mode launchers, `Lean Still.command`, or `SVG Demo.command`. From Terminal:
 
@@ -77,7 +92,8 @@ Springs: click/drag nodes, Space pauses/resumes, R resets. Layout: resize to
 reflow, click cards to select, R clears. Vectors: click/drag the circle or pink
 control handle, Space animates, R resets. Selection persists after release;
 capture does not. Escape/window-close exits. Controls also appear in Terminal
-and the native window title. Text shaping/fonts/CSS layout are not implemented.
+and the native window title. These demo windows do no text shaping, font loading or CSS
+layout; the browser window does.
 
 The native window uses a persistent device/pipeline/buffer/bind group. Lean emits
 WGSL once per mode, then data/commands. There is no per-frame shader compilation
@@ -203,7 +219,9 @@ explicit `formal/lean4` project directory. Cold cache preparation can download
 pinned Lean/mimalloc sources; warm lab builds do not rebuild the runtime.
 
 `test.sh` runs portable C coordinate checks, host type checking and actual-WASM
-local tests. It builds engines unless `--skip-build` is given. A build emits:
+local tests, and, when the engines exist, the browser tests. It builds engines unless
+`--skip-build` is given. It does not build the browser engine (`build-web-render.sh`
+does). Read its `NOT RUN` lines. A build emits:
 
 - `.build/engines/{graphics-generator,ui-engine,demos-engine,svg-engine,foafnaut-engine,render-plan}.{mjs,wasm}`
 - `.build/native-artifact.json` for native Lean/WASM comparison
@@ -224,8 +242,12 @@ labs/demos/foafnaut/build-executables.sh [OUTPUT_DIRECTORY]
 ```
 
 The default is `.build/dist`. The script runs local tests, compiles the native
-sidecar and three separate executables, and copies launchers/fixtures/docs plus
-relative-basename `SHA256SUMS` and source/tool provenance into that directory.
+sidecar and the executables (three demo programs, and the browser window
+`native-webgpu-html-darwin-arm64` when `.build/web-render/engines/web-render.wasm`
+exists), makes the app bundles, and copies launchers/fixtures/docs plus
+relative-basename `SHA256SUMS` and source/tool provenance into that directory. It
+starts the compiled browser for one off-screen graph sweep and writes `BUILD-INFO.json`.
+It does not build the web-render engine: run `build-web-render.sh` first.
 `DENORT_BIN` may point to an already-cached Deno runtime; otherwise Deno uses its
 normal pinned runtime download/cache. The source tree never receives release
 binaries. Release workflow orchestration belongs in `factoidal-builds`.
@@ -287,9 +309,11 @@ the system browser is traced and not opened.
 
 `sweeps.sh` runs every sweep this way, with the native and the Wasm engine, and
 prints one line for each: rc, seconds and the offscreen latency summary. It runs
-with the screen locked or the display asleep (about 65 s on an M1); `test.sh`
-runs it on macOS, and the Builds foafnaut job runs it after the window library
-is built. Exit code 4 from a sweep means the engine is older than the sweep (for
+with the screen locked or the display asleep (about 65 s on an M1). `test.sh` runs it
+on macOS when `.build/native/libnative-window.dylib` exists. The Builds foafnaut job does
+not run it: its `test.sh` step runs before the library is built and prints NOT RUN
+(checked 2026-11-09, https://github.com/danbri/factoidal-builds/actions/runs/42620085179,
+the foafnaut job). Exit code 4 from a sweep means the engine is older than the sweep (for
 example `--swipe-sweep` with no `gesture` op); sweeps.sh reports it as NOT RUN.
 
 ## Shared geometry and checked SVG (source prototype)
@@ -332,7 +356,7 @@ to the native SVG renderer (run from the package directory):
 ./native-webgpu-svg-darwin-arm64 checked.svg checked.ppm
 ```
 
-## Earlier validation baseline
+## Earlier validation baseline (before the browser window; kept as a record)
 
 The shared-geometry/policy update passed 58 fresh WASM/Deno tests, 12 C coordinate
 checks, and all four compiled CPU modes in a relocated Mac package. The packaged

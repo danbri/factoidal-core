@@ -1,5 +1,8 @@
 # foafnaut2525: JS, WASM, XSLT and native delivery
 
+> Note, 2026-11-09: This assessment is of 3 November. Most of its "not yet" items have landed since (page scripts in the engine, a macOS app, XSLT in the demo pages). Do not quote it as current. Current state: [Foafnaut handoff](2026-11-09-foafnaut-handoff.md) and
+> [skills/foafnaut/SKILL.md](../../skills/foafnaut/SKILL.md).
+
 Requested by the owner on 3 November 2026. This record was prepared in a
 side conversation. It updates documentation; it does not start the main
 thread's implementation or establish a release date.

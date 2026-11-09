@@ -1,5 +1,11 @@
 # Lean HTML/CSS renderer
 
+> Note, 2026-11-09: this file describes the local lab server (`server.mjs`) and its own
+> QuickJS worker path, as of 2026-11-02. The browser window (`run_html.ts`) and the Hub
+> have more: page scripts in the engine (BubblePopJS and QuickJS-NG in WasmVM) and font
+> fallback. Do not read the script and font limits below as limits of the
+> engine. See [skills/foafnaut/SKILL.md](../../../../skills/foafnaut/SKILL.md).
+
 This local renderer accepts original HTML/CSS source. The existing Lean HTML
 parser and DOM arena feed Lean computed styles, block/inline text flow and a
 common retained Float vector scene. An explicit adapter feeds the existing

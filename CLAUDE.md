@@ -1567,6 +1567,10 @@ session.
   from Lean: rebuild the pinned QLever instance and its query oracle, the
   byte-level format record, the Python format probe, and the loop rule for
   the decoders (https://github.com/danbri/factoidal/issues/778).
+- [`foafnaut`](skills/foafnaut/SKILL.md) — contribute to Foafnaut, the web
+  browser with its own engine: code map, build, test, run and measure, the
+  shared-machine rules, traps with their cost, how to land. Handoff:
+  `docs/designissues/2026-11-09-foafnaut-handoff.md`.
 - [`capability-planner`](skills/capability-planner/SKILL.md) — the
   capability-aware, cost-based planner across SPARQL, SQL, REST, MCP,
   WebMCP, files, LLMs and Shardborough: the six questions, capabilities with

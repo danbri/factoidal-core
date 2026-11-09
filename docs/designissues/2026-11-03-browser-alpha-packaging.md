@@ -1,5 +1,8 @@
 # Browser alpha packaging and release scope
 
+> Note, 2026-11-09: The macOS app is now built by the `foafnaut` job of `danbri/factoidal-builds`, and the launcher `npm/factoidal/bin/foafnaut.mjs` installs it. `@factoidal/core` carries the launcher, not the app. The paths and packaging steps below are of 3 November. Current state: [Foafnaut handoff](2026-11-09-foafnaut-handoff.md) and
+> [skills/foafnaut/SKILL.md](../../skills/foafnaut/SKILL.md).
+
 The next browser alpha should first qualify the existing Builds document CLI
 and WASM release, then add a portable browser host bundle. Do not bump the npm
 package only to attach the current demo: `@factoidal/core` currently exposes the

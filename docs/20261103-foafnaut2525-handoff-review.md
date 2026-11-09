@@ -1,5 +1,9 @@
 # foafnaut2525 handoff review, 3 November 2026
 
+> Note, 2026-11-09: This handoff is of 3 November and is superseded. Current state:
+> [Foafnaut handoff](designissues/2026-11-09-foafnaut-handoff.md) and
+> [skills/foafnaut/SKILL.md](../skills/foafnaut/SKILL.md).
+
 Main-thread review at approximately 12:20 UTC of the
 [side-thread handoff](20261103-foafnaut2525-side-thread-handoff.md) and
 [runtime maturity record](designissues/2026-11-03-foafnaut2525-runtime-maturity.md).

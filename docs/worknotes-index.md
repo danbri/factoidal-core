@@ -15,6 +15,7 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-11-09 | [Foafnaut handoff](designissues/2026-11-09-foafnaut-handoff.md) | | current — state, work in flight and next work at 2026-11-09; entry point is `skills/foafnaut/SKILL.md` |
 | 2026-11-08 | [Foafnaut browser state in Linked Web Storage](designissues/2026-11-08-browser-state-lws.md) | | current — local pod and IndexedDB; pod sync native only |
 | 2026-11-06 | [Deployable modules: the mechanism, by measurement](20261106-deployable-modules.md) | | |
 | 2026-11-05 | [Branch sweep](20261105-branch-sweep.md) | | current |
@@ -25,9 +26,9 @@ worknote, kept as the record of a decision or a measurement),
 | 2026-11-03 | [Browser foundations progress](20261103-browser-foundations-progress.md) | pending | current — four surrogate cases executed, complete diagnostic audit, synchronous Lean DOM bridge, text-size reflow and original SVG Tiny admission baseline |
 | 2026-11-03 | [HTML parser diagnostic audit](20261103-html-parser-error-count-audit.md) | pending | current — complete 446-case diagnostic census, fixture-history categories and parser/DOM assurance limits |
 | 2026-11-03 | [Browser WPT baseline and native provenance](20261103-browser-wpt-baseline.md) | pending | current — fresh Lean parser/DOM, QuickJS assertions, native embedded-SVG images, pinned upstream bytes and cache cleanup |
-| 2026-11-03 | [foafnaut2525 main-thread handoff review](20261103-foafnaut2525-handoff-review.md) | this commit | current — rechecked artifacts and CI, actual guest-DOM defect, native GPU blocker and next application acceptance target |
-| 2026-11-03 | [foafnaut2525 side-conversation handoff](20261103-foafnaut2525-side-thread-handoff.md) | pending | current — owner requests, dated demo/test/native evidence, LWS and recovery proposals, issue and main-thread review checklist |
-| 2026-11-03 | [foafnaut2525 runtime maturity and XSLT](designissues/2026-11-03-foafnaut2525-runtime-maturity.md) | pending | current — JS/DOM/event-loop and WASM evidence boundaries, requested XSLT integration and Apple distribution constraints; documentation only |
+| 2026-11-03 | [foafnaut2525 main-thread handoff review](20261103-foafnaut2525-handoff-review.md) | this commit | record (superseded for current state by the 2026-11-09 Foafnaut handoff) — rechecked artifacts and CI, actual guest-DOM defect, native GPU blocker and next application acceptance target |
+| 2026-11-03 | [foafnaut2525 side-conversation handoff](20261103-foafnaut2525-side-thread-handoff.md) | pending | record (superseded for current state by the 2026-11-09 Foafnaut handoff) — owner requests, dated demo/test/native evidence, LWS and recovery proposals, issue and main-thread review checklist |
+| 2026-11-03 | [foafnaut2525 runtime maturity and XSLT](designissues/2026-11-03-foafnaut2525-runtime-maturity.md) | pending | record (superseded for current state by the 2026-11-09 Foafnaut handoff) — JS/DOM/event-loop and WASM evidence boundaries, requested XSLT integration and Apple distribution constraints; documentation only |
 | 2026-11-03 | [Browser document transactions](20261103-browser-document-transactions.md) | this commit | current — navigation rollback, dynamic CSS identity, cancellable script links and actual Chrome controls; independent fast host CI |
 | 2026-11-03 | [Checked browser development bundle](20261103-browser-development-bundle.md) | this commit | current — deterministic package, relocated Chrome/GPU tests and explicit external dependencies |
 | 2026-11-03 | [Browser alpha packaging audit](20261103-browser-alpha-packaging-audit.md) | this commit | current — actual document ABI gates and package scope |

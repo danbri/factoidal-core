@@ -136,7 +136,8 @@ All use only the axioms `propext`, `Classical.choice` and `Quot.sound`
 - The guest's `addEventListener` takes any event type, but the hosts send only
   clicks.
 - `performance.now()` and `Date.now()` do not read the virtual clock.
-- The live browser host (`document-client.mjs`) does not yet call
+- (Note, 2026-11-09: `document-client.mjs` is the local lab host. The browser window and
+  the Hub worker are separate hosts.) The live browser host (`document-client.mjs`) does not yet call
   `session.advance` or `session.frame`. Its timers and frames wait until a host
   pump calls them. The pump may use host time to choose how far to move the
   clock; Lean still decides the order.
