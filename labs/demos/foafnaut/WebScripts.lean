@@ -287,8 +287,8 @@ def turnAnswer (id : Nat) (before : Before) (s : Page.Session) (marks : Marks) (
 
 /-- The session after a turn answer: the GPU commands it carried are the host's now. -/
 def drained (s : Page.Session) : Page.Session :=
-  { s with host := { s.host with dom := { s.host.dom with gpuOut := #[], canvas := s.host.dom.canvas.sent },
-                                web := { s.host.web with hostReqs := #[] } } }
+  let h := s.host
+  { s with host := { h with dom := { h.dom with gpuOut := #[], canvas := h.dom.canvas.sent }, web := { h.web with hostReqs := #[] } } }
 
 def drainedLean (s : LeanJS.Session) : LeanJS.Session :=
   if s.host.dom.gpuOut.isEmpty && s.host.dom.canvas.drawn.isEmpty && s.host.web.hostReqs.isEmpty then s else

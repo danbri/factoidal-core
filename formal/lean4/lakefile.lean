@@ -95,12 +95,12 @@ vendored. AES-GCM is the x86-64-only section below. -/
 target hacl_chachapoly_shim.o pkg : FilePath :=
   buildHaclO pkg "hacl_chachapoly_shim" (pkg.dir / "ffi" / "hacl_chachapoly.c")
 
-/-- The web engine's boundary to HACL* (`L4Factoidal/Crypto/WebHacl.lean`,
-crypto.subtle of page scripts): `ffi/hacl_webcrypto.c`, over the units below. -/
 /-- RSASSA-PSS (Hacl_RSAPSS.c, vendored 2026-11-09 for crypto.subtle RSA-PSS). -/
 target Hacl_RSAPSS.o pkg : FilePath :=
   buildHaclO pkg "Hacl_RSAPSS" (haclDir pkg / "src" / "Hacl_RSAPSS.c")
 
+/-- The web engine's boundary to HACL* (`L4Factoidal/Crypto/WebHacl.lean`,
+crypto.subtle of page scripts): `ffi/hacl_webcrypto.c`, over the units below. -/
 target hacl_webcrypto_shim.o pkg : FilePath :=
   buildHaclO pkg "hacl_webcrypto_shim" (pkg.dir / "ffi" / "hacl_webcrypto.c")
 
