@@ -240,8 +240,6 @@ def baseScheme (base : String) : Option String := schemeOf (clean base.toList)
 /-- What `href`, on the page at `base`, points at. -/
 def analyze (base href : String) : Except String Target :=
   let cs := clean href.toList
-  -- about:foafnaut is the page foafnaut:about (version and build).
-  if cs == "about:foafnaut".toList then .ok (.foafnaut "about".toList) else
   if foafnautPrefix.isPrefixOf cs then .ok (.foafnaut (cs.drop 9)) else
   match schemeOf cs with
   | some scheme =>
@@ -330,6 +328,11 @@ def route (site : Site) (base href : String) : Route :=
   | .ok target => decide site base target
   | .error reason => .refuse (String.ofList (clean href.toList)) reason
 
+/-- `route`, with `about:foafnaut` (version and build) as the page `foafnaut:about`. -/
+def routeAddress (site : Site) (base href : String) : Route :=
+  if clean href.toList == "about:foafnaut".toList then foafnautRoute site "about".toList
+  else route site base href
+
 /-- A browser command or page typed as `:NAME ARGUMENT` routes as `foafnaut:NAME/ARGUMENT`. -/
 def commandRoute (site : Site) (name argument : String) : Route :=
   foafnautRoute site (name.toList ++ (if argument.isEmpty then [] else '/' :: argument.toList))
@@ -340,7 +343,8 @@ private def hub : Site := {origin := "https://danbri.github.io",pages := "https:
 private def here : String := "https://danbri.github.io/factoidal-core/web/hub/foafnaut/pages/index.html"
 private def native : Site := {pages := "file:///lab/pages/",files := true}
 #guard route hub here "foafnaut:graph" == .graph
-#guard route native "file:///lab/pages/index.html" "about:foafnaut" == .page "about" "foafnaut:about"
+#guard routeAddress native "file:///lab/pages/index.html" "about:foafnaut" == .page "about" "foafnaut:about"
+#guard routeAddress native "file:///lab/pages/index.html" "foafnaut:graph" == route native "file:///lab/pages/index.html" "foafnaut:graph"
 #guard route hub here "FOAFNAUT:graph" == .graph && route hub here " foafnaut:graph\n" == .graph
 #guard route hub here "foafnaut:settings" == .page "settings" "https://danbri.github.io/factoidal-core/web/hub/foafnaut/pages/settings.html"
 #guard route hub here "foafnaut:sparql/q=ASK+%7B%7D" == .page "sparql" "foafnaut:sparql/q=ASK+%7B%7D"

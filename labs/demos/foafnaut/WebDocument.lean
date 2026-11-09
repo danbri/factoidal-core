@@ -724,7 +724,7 @@ private def inputOp (op : String) (request : JSON.Json) : Except String (Option 
     let site : WebRoute.Site := {origin := str request "origin",pages := str request "pages",files := request.field? "files" == some (.bool true)}
     let route := match request.field? "address" with
       | some (.string address) => WebShell.routeAddress site (str request "base") address
-      | _ => WebRoute.route site (str request "base") (str request "href")
+      | _ => WebRoute.routeAddress site (str request "base") (str request "href")
     return some (WebShell.routeJson route).toString
   -- Back and forward swipes (WebGesture): `action` info, touch or wheel.
   if let some answer ← WebGesture.op op request then return some answer

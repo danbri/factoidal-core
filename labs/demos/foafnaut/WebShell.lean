@@ -831,7 +831,7 @@ def submit (input : String) : Go :=
 `:command` as `foafnaut:command/argument`, and a search or `:open URL` to the system. -/
 def routeAddress (site : WebRoute.Site) (base input : String) : WebRoute.Route :=
   let value := input.trimAscii.toString
-  if (value.toList.take 9).map Char.toLower == WebRoute.foafnautPrefix then WebRoute.route site base value else
+  if (value.toList.take 9).map Char.toLower == WebRoute.foafnautPrefix || value.toList.map Char.toLower == "about:foafnaut".toList then WebRoute.routeAddress site base value else
   match submit value with
   | .page url => WebRoute.route site base url
   | .command name argument => WebRoute.commandRoute site name argument
