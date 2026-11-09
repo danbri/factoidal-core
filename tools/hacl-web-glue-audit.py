@@ -18,6 +18,14 @@ the C side's shape, which Lean cannot see:
      output: a refused output is never answered.
   6. No byte comparison outside the constant-time mask: no `memcmp`, no `bcmp`, and no `==`
      or `!=` on indexed bytes.
+  8. Every C entry point has the parameters and result its Lean extern compiles to: one per
+     explicit argument that is not a proof (`@& ByteArray`, `ByteArray`, `Nat`, `Unit` are
+     `lean_object *`; `UInt8` is `uint8_t`, `USize` is `size_t`, `UInt32` and `UInt64` their
+     C types), NO world argument for an IO action (Lean 4.33 passes none), and the result
+     (`UInt8` is `uint8_t`, everything else a `lean_object *`). A mismatch links and then
+     traps at every call in WebAssembly (wasm-ld "function signature mismatch"). With
+     `--ir FILE` (Lean's emitted C of WebHacl.lean, `lean -c`), the prototypes Lean emits
+     are compared too.
 
 Exit 1 on a finding.
 """
@@ -47,6 +55,73 @@ for name, sig in decls:
         continue
     if not re.search(r"\(h : \w+Pre\b", sig):
         findings.append(f"{name}: the Lean extern takes no precondition proof")
+
+
+# 8. Arity and types, from the Lean declarations.
+CTYPE = {"ByteArray": "obj", "Nat": "obj", "Unit": "obj", "String": "obj", "UInt8": "uint8_t",
+         "USize": "size_t", "UInt32": "uint32_t", "UInt64": "uint64_t", "Bool": "uint8_t"}
+
+def c_norm(t):
+    t = t.strip()
+    if re.search(r"lean_obj_arg|lean_obj_res|lean_object\s*\*", t):
+        return "obj"
+    t = re.sub(r"\s+\w+$", "", t).strip()  # drop the parameter name
+    return {"uint8_t": "uint8_t", "size_t": "size_t", "uint32_t": "uint32_t", "uint64_t": "uint64_t",
+            "lean_obj_res": "obj"}.get(t, t)
+
+def lean_params(sig):
+    """The C parameter types of an extern's Lean signature `(…) (…) : R`."""
+    params = []
+    depth, buf = 0, ""
+    head, result = sig, ""
+    # Split the binders from the result type at the top-level ' : '.
+    i, level = 0, 0
+    while i < len(sig):
+        ch = sig[i]
+        level += ch in "([{"
+        level -= ch in ")]}"
+        if level == 0 and sig.startswith(" : ", i):
+            head, result = sig[:i], sig[i + 3:]
+            break
+        i += 1
+    for group in re.findall(r"\(([^()]*)\)", head):
+        if ":" not in group:
+            continue
+        names, ty = group.split(":", 1)
+        ty = ty.strip().replace("@&", "").strip()
+        if re.search(r"Pre\b|Prop", ty) or "=" in ty:
+            continue  # a proof: erased
+        params += [CTYPE.get(ty.split()[0], "?" + ty)] * len(names.split())
+    result = result.strip()
+    io = result.startswith("BaseIO") or result.startswith("IO ")
+    if io:
+        result = result.split(None, 1)[1]
+    return params, ("uint8_t" if result == "UInt8" else "obj")
+
+lean_sigs = dict(re.findall(r'@\[extern "(l4_web_hacl_\w+)"\]\s*opaque\s+\w+\s*([^\n]*)', lean))
+c_sigs = {m[1]: (m[0], m[2]) for m in re.findall(r"LEAN_EXPORT\s+([\w ]+?)\s+(l4_web_hacl_\w+)\s*\(([^)]*)\)", c)}
+for name, sig in lean_sigs.items():
+    if name not in c_sigs:
+        continue
+    want, want_res = lean_params(sig)
+    cres, cparams = c_sigs[name]
+    got = [] if cparams.strip() in ("", "void") else [c_norm(x) for x in cparams.split(",")]
+    got_res = "uint8_t" if cres.strip() == "uint8_t" else "obj"
+    if got != want or got_res != want_res:
+        findings.append(f"{name}: C takes ({', '.join(got)}) -> {got_res}, Lean compiles to ({', '.join(want)}) -> {want_res}")
+
+# 8, with --ir: the prototypes Lean emitted.
+if "--ir" in sys.argv:
+    ir = Path(sys.argv[sys.argv.index("--ir") + 1]).read_text()
+    for res, name, ps in re.findall(r"^(lean_object\*|uint8_t) (l4_web_hacl_\w+)\(([^)]*)\);", ir, re.M):
+        want = [] if ps.strip() in ("", "void") else [c_norm(x) for x in ps.split(",")]
+        want_res = "uint8_t" if res == "uint8_t" else "obj"
+        if name in c_sigs:
+            cres, cparams = c_sigs[name]
+            got = [] if cparams.strip() in ("", "void") else [c_norm(x) for x in cparams.split(",")]
+            got_res = "uint8_t" if cres.strip() == "uint8_t" else "obj"
+            if got != want or got_res != want_res:
+                findings.append(f"{name}: C takes ({', '.join(got)}) -> {got_res}, Lean emitted ({', '.join(want)}) -> {want_res}")
 
 # 3-6: each C entry point.
 bodies = re.findall(r"LEAN_EXPORT\s+[\w ]+?\s+(l4_web_hacl_\w+)\s*\(([^)]*)\)\s*\{(.*?)\n\}", c, re.S)
