@@ -171,7 +171,7 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
     if [ "$(uname -s)" = Darwin ] && [ -f "$LAB/.build/native/libnative-window.dylib" ]; then
       GPU_ENGINE=() GPU_SECONDS=25
       if [ -f "$LAB/.build/web-render/engines/libweb-render.dylib" ]; then GPU_ENGINE=(--native-engine "$LAB/.build/web-render/engines/libweb-render.dylib"); GPU_SECONDS=8; fi
-      for gpu_page in webgpu-triangle webgl-triangle canvas-chart; do
+      for gpu_page in webgpu-triangle webgl-triangle canvas-chart shader-gallery; do
         GPU_LOG=$(mktemp -t foafnaut-page-gpu)
         GPU_RC=0
         QUICKJS_WASM="$QJS_GUEST" perl -e 'alarm shift; exec @ARGV' "$GPU_SECONDS" deno run --no-check --no-config --no-npm --node-modules-dir=none \
