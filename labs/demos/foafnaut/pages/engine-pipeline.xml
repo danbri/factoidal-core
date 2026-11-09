@@ -19,7 +19,7 @@
   <proof>L4F/DOM/Theorems.lean</proof>
  </stage>
  <stage id="script" by="both" label="Scripts" optional="yes">
-  <does>QuickJS runs page scripts in a separate heap. A script changes the DOM only through typed commands that Lean checks and applies.</does>
+  <does>A JavaScript engine runs page scripts in a separate heap: BubblePopJS, written in Lean, in the desktop app; QuickJS-NG in WasmVM on the Hub. A script changes the DOM only through typed commands that Lean checks and applies.</does>
   <file>foafnaut/WebRenderScript.lean</file><file>foafnaut/web-render/script-engine/guest.mjs</file>
  </stage>
  <stage id="style" by="lean" label="Style">

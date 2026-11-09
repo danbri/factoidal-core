@@ -35,7 +35,7 @@ button{font-size:15px;min-height:44px;padding:0 14px;margin:0 6px 6px 0}
 </div>
 <p class="chips" id="chips"></p>
 <p><button id="reset">Start again</button></p>
-<p class="note">The page's own script lays out the graph with springs and repulsion, a few steps per frame, and stops when it settles. It is ordinary HTML, SVG and JavaScript, and runs the same in any browser and in Foafnaut, where QuickJS runs it inside the Lean engine.</p>
+<p class="note">The page's own script lays out the graph with springs and repulsion, a few steps per frame, and stops when it settles. It is ordinary HTML, SVG and JavaScript, and runs the same in any browser and in Foafnaut, where a JavaScript engine inside the Lean engine runs it: BubblePopJS, written in Lean, in the desktop app, and QuickJS-NG in WasmVM on the Hub.</p>
 <script type="text/turtle" id="foaf-data">
 @prefix foaf: <http://xmlns.com/foaf/0.1/> .
 @prefix : <https://example.org/friends/> .

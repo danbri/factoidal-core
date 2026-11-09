@@ -186,7 +186,7 @@ td.stage{{color:#173a6b}}td.host{{color:#6b6458}}code{{color:#7a3e12}}
     <xsl:for-each select="stage">
      <tr><td class="stage">{position()}. {@label}</td>
       <td class="{if (@by = 'host') then 'host' else 'stage'}"><xsl:switch select="string(@by)">
-        <xsl:when test="'host'">Host</xsl:when><xsl:when test="'both'">QuickJS and Lean</xsl:when><xsl:otherwise>Lean</xsl:otherwise></xsl:switch></td>
+        <xsl:when test="'host'">Host</xsl:when><xsl:when test="'both'">Script engine and Lean</xsl:when><xsl:otherwise>Lean</xsl:otherwise></xsl:switch></td>
       <td>{does}</td>
       <td><xsl:for-each select="file, proof"><code>{.}</code><xsl:if test="self::proof"> (proofs)</xsl:if><br/></xsl:for-each></td></tr>
     </xsl:for-each>

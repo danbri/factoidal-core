@@ -14,12 +14,13 @@ foafnaut2525 is a web rendering engine written in Lean. It aims to become a brow
 
 - The engine parses HTML, computes CSS, lays out text and boxes, and draws with WebGPU.
 - It runs in a web page, in its own macOS window, and as a sandboxed guest.
-- Page scripts run in QuickJS-NG inside WasmVM, a WebAssembly engine written in Lean; Lean's event loop and DOM decide every callback and every change. BubblePopJS, a JavaScript engine written in Lean, is the second script engine.
+- Page scripts run in BubblePopJS, a JavaScript engine written in Lean, in the macOS app, and in QuickJS-NG inside WasmVM, a WebAssembly engine written in Lean, on the Hub. Settings choose between them. Lean's event loop and DOM decide every callback and every change.
 - Pages can draw with WebGPU and WebGL 1 and 2; Lean checks every command first. Without WebGPU, a CPU renderer draws the same pixels.
 - Real sites mostly do not load yet.
 
 ## Since 6 November
 
+- BubblePopJS is the default script engine in the macOS app, with a switch in settings. There it runs the same scripts 10 to 13 times faster than QuickJS-NG in WasmVM.
 - WasmVM runs QuickJS-NG, HarfBuzz and media decoders, and on the Hub it translates guest WebAssembly for the browser's own engine: 36 to 216 times faster.
 - Page scripts: timers, animation frames, Promises, clicks and pointer events, forms, DOMParser, MutationObserver and layout reads.
 - Arabic letters join, and mixed left-to-right and right-to-left text is ordered by the Unicode bidi algorithm. Emoji draw from Noto Emoji.
@@ -42,7 +43,7 @@ The match and close bands are ours, not a W3C verdict. The WPT image score still
 ## What comes next
 
 - A named release every day: one to three, never four.
-- BubblePopJS as the default script engine in the macOS app, with a switch in settings.
+- BubblePopJS on the Hub: its evaluator needs more stack than the WebAssembly build gives it.
 - Module scripts and fetch from scripts.
 - Indic shaping.
 - Pages from the real web.
