@@ -315,7 +315,11 @@ An undeclared page whose bytes are UTF-8 is read as UTF-8 (like Firefox's detect
 WPT `encoding/sniffing.html`, which expects windows-1252 there, is an expected difference.
 
 Measured (native engine, 2026-11-09; QuickJS-NG in WasmVM unless named): the guest's
-module load (the prelude) 1,261 → 1,504 ms, once for each engine; a page start 5.97 → 6.03
+module load (the prelude) 1,261 → 1,504 ms with the prelude as source, once for each
+engine; with the prelude compiled to QuickJS-NG bytecode at guest build time
+(`prelude_bytecode.c`, `JS_ReadObject`, no source text kept) 1,342 → 501 ms on the same
+machine and load (BubblePopJS makes its realm, the prelude parsed and run, once for each
+engine: about 165 ms of its first page start); a page start 5.97 → 6.03
 ms; a Timers and clicks frame 0.67 → 0.65 ms mean. TextDecoder on 1 MiB: UTF-8 795 ms
 (almost all of it QuickJS making its string inside WasmVM; BubblePopJS takes the Lean
 string at no cost), Shift_JIS 1,218 ms (BubblePopJS 115 ms). SHA-256 in pure Lean is

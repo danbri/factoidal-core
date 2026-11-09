@@ -1,6 +1,6 @@
 // prelude.js: the page objects that scripts see, for QuickJS-NG in the Lean WasmVM engine
-// (record: docs/designissues/2026-11-08-page-scripts.md). build-quickjs.sh puts this file
-// into the module as a C string; qjs_new evaluates it once and calls it with `n`, the
+// (record: docs/designissues/2026-11-08-page-scripts.md). build-quickjs.sh compiles this
+// file to QuickJS-NG bytecode (prelude_bytecode.c) that the module holds; qjs_new runs it once and calls it with `n`, the
 // native functions of qjs_wasmvm_entry.c. `n` is never a global.
 //
 // The DOM is not here. Each node is a number of the Lean DOM arena; each read and each

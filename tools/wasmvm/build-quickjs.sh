@@ -50,18 +50,14 @@ if [ "$got" != "$QJS_SHA256" ]; then
 fi
 [ -d "$SRC" ] || tar xzf "$TAR" -C "$WORK/src"
 
-# The JavaScript prelude (quickjs/prelude.js) goes into the module as a C string.
-mkdir -p "$WORK/gen"
-python3 - "$HERE/quickjs/prelude.js" "$WORK/gen/prelude.h" <<'PY'
-import sys
-# Three-digit octal escapes for everything but plain printable ASCII: an octal escape
-# ends after three digits, so a following digit can not join it. Lines of 64 bytes.
-data = open(sys.argv[1], 'rb').read()
-def esc(b):
-    return chr(b) if 32 <= b < 127 and b not in (34, 63, 92) else '\\%03o' % b
-lines = ['"' + ''.join(esc(b) for b in data[i:i + 64]) + '"' for i in range(0, len(data), 64)]
-open(sys.argv[2], 'w').write('static const char prelude[] =\n' + '\n'.join(lines) + ';\n')
-PY
+# The JavaScript prelude (quickjs/prelude.js) goes into the module as QuickJS-NG bytecode:
+# a native build of the same pinned sources compiles it (quickjs/prelude_bytecode.c), so
+# the guest reads bytecode when it loads instead of parsing the source.
+mkdir -p "$WORK/gen" "$WORK/prelude-tool"
+"${HOST_CC:-cc}" -O2 -D_GNU_SOURCE -funsigned-char -I"$SRC" \
+  "$SRC/quickjs.c" "$SRC/libregexp.c" "$SRC/libunicode.c" "$SRC/dtoa.c" "$HERE/quickjs/prelude_bytecode.c" \
+  -lm -o "$WORK/prelude-tool/prelude_bytecode"
+"$WORK/prelude-tool/prelude_bytecode" "$HERE/quickjs/prelude.js" "$WORK/gen/prelude.h"
 
 build() {
   local opt=$1 out=$2

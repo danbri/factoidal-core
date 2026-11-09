@@ -392,8 +392,8 @@ static JSValue n_log(JSContext *c, JSValueConst this_val, int argc, JSValueConst
   return JS_UNDEFINED;
 }
 
-/* ---- the prelude: tools/wasmvm/quickjs/prelude.js, as a C string (prelude.h is made
- * by build-quickjs.sh) ------------------------------------------------------------ */
+/* ---- the prelude: tools/wasmvm/quickjs/prelude.js as QuickJS-NG bytecode (prelude.h is
+ * made by build-quickjs.sh with prelude_bytecode.c), so loading the guest parses nothing -- */
 
 #include "prelude.h"
 
@@ -499,7 +499,9 @@ int32_t qjs_new(void) {
   if (!ctx) return -3;
   JSValue native = JS_NewObject(ctx);
   JS_SetPropertyFunctionList(ctx, native, native_fns, sizeof native_fns / sizeof native_fns[0]);
-  JSValue f = JS_Eval(ctx, prelude, sizeof prelude - 1, "<foafnaut-prelude>", JS_EVAL_TYPE_GLOBAL);
+  JSValue fn = JS_ReadObject(ctx, prelude_bc, prelude_bc_len, JS_READ_OBJ_BYTECODE);
+  if (JS_IsException(fn)) { JS_FreeValue(ctx, native); return -4; }
+  JSValue f = JS_EvalFunction(ctx, fn); /* the script's value: the prelude's function */
   if (JS_IsException(f)) { JS_FreeValue(ctx, native); return -4; }
   JSValue api = JS_Call(ctx, f, JS_UNDEFINED, 1, (JSValueConst *) &native);
   JS_FreeValue(ctx, f); JS_FreeValue(ctx, native);
