@@ -457,6 +457,91 @@ theorem Secret.p256Sign?_eq (sk e n : ByteArray) :
 theorem Secret.hkdf_eq (a : HashAlg) (ikm salt info : ByteArray) (len : Nat) :
     (Secret.ofBytes ikm).hkdf a salt info len = WebCrypto.hkdf (haclHash a) ikm salt info len := rfl
 
+/-! ### ECDSA nonces: RFC 6979, hedged
+
+The nonce of an ECDSA signature is RFC 6979's deterministic `k` (§3.2), computed with the
+HMAC of the signature's own hash from the private key `x` and the message hash `h1`, with
+32 bytes of the session's HMAC_DRBG as RFC 6979 §3.6's additional data `k'` ("hedged"
+signatures). So:
+  * a generator that fails (no entropy, or a state repeated by a copy of the session)
+    degrades to RFC 6979: one message, one signature; never one nonce for two messages,
+    which would give the private key away;
+  * a generator that works hides the nonce even from someone who knows `x` and `h1`.
+Lean only concatenates and cuts byte strings here: no arithmetic and no branch on the
+nonce. `x` is 32 bytes below q (checked when the key was made), so int2octets(x) is `x`.
+Whether a candidate is in [1, q-1] (and gives r ≠ 0, s ≠ 0) is HACL*'s constant-time
+check in `p256Sign?`; RFC 6979 §3.2 step h.3 then makes the next candidate, as here. The
+candidates (`rfc6979Nonces`) are checked against RFC 6979 A.2.5 below. Record
+2026-11-09-crypto-boundary-security.md, "ECDSA nonces". -/
+
+/-- P-256's group order. -/
+def p256Q : Nat := 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551
+
+/-- `n` as 32 big-endian octets (n < 2^256). -/
+def octets32 (n : Nat) : ByteArray := ByteArray.mk ((List.range 32).reverse.map fun i => (n >>> (8 * i)).toUInt8).toArray
+
+/-- RFC 6979 §2.3.4 bits2octets for P-256: the hash's leftmost 256 bits (or the whole of a
+shorter hash) as an integer, reduced mod q, as 32 octets. Public: `h1` is the message's. -/
+def bits2octets (h1 : ByteArray) : ByteArray :=
+  let b := if h1.size > 32 then h1.extract 0 32 else h1
+  octets32 ((b.foldl (fun n x => n * 256 + x.toNat) 0) % p256Q)
+
+/-- RFC 6979 §3.2 step h.1-h.2: `T` of at least 32 octets from `V` (two HMACs when the
+hash is shorter than 32 octets, as SHA-1), and the new `V`. -/
+def rfc6979T (mac : ByteArray → ByteArray → ByteArray) (k : ByteArray) : Nat → ByteArray → ByteArray → ByteArray × ByteArray
+  | 0, v, t => (t, v)
+  | n + 1, v, t => if t.size ≥ 32 then (t, v) else
+    let v' := mac k v
+    rfc6979T mac k n v' (t ++ v')
+
+/-- RFC 6979 §3.2 step h: candidate after candidate, each the leftmost 32 octets of `T`;
+after one, step h.3 (`K = HMAC_K(V ‖ 0x00)`, `V = HMAC_K(V)`). -/
+def rfc6979Go (mac : ByteArray → ByteArray → ByteArray) : Nat → ByteArray → ByteArray → List ByteArray
+  | 0, _, _ => []
+  | m + 1, k, v =>
+    let (t, v) := rfc6979T mac k 2 v ByteArray.empty
+    let k' := mac k (v ++ ByteArray.mk #[0])
+    t.extract 0 32 :: rfc6979Go mac m k' (mac k' v)
+
+/-- The nonce candidates of RFC 6979 §3.2 (steps b-h; at most `n`), with additional data
+`extra` (§3.6; empty: the deterministic nonces). `mac key msg` is HMAC with the
+signature's hash, `x` the private key's 32 octets, `h1` the message hash. -/
+def rfc6979Nonces (mac : ByteArray → ByteArray → ByteArray) (hlen : Nat) (x h1 extra : ByteArray) (n : Nat) :
+    List ByteArray :=
+  let v0 := ByteArray.mk (Array.replicate hlen 1)
+  let k0 := ByteArray.mk (Array.replicate hlen 0)
+  let seed := x ++ bits2octets h1 ++ extra
+  let k1 := mac k0 (v0 ++ ByteArray.mk #[0] ++ seed)
+  let v1 := mac k1 v0
+  let k2 := mac k1 (v1 ++ ByteArray.mk #[1] ++ seed)
+  rfc6979Go mac n k2 (mac k2 v1)
+
+/-- An ECDSA P-256 signature with the hedged RFC 6979 nonce: the first candidate HACL*
+accepts (at most 8; one fails with probability below 2^-32). `digest` is the message's
+hash by `a`; `extra` is 32 bytes of the session's DRBG. -/
+def Secret.ecdsaSign? (sk : Secret) (a : HashAlg) (digest extra : ByteArray) : Option ByteArray :=
+  (rfc6979Nonces (hmacFast a) a.size sk.get digest extra 8).findSome? fun k => WebHacl.p256Sign? sk.get (p256MsgRep digest) k
+
+/-- The signature is a function of the key, the hash and `extra` alone, through RFC 6979's
+candidates: the session's generator reaches it only as `extra`. -/
+theorem Secret.ecdsaSign?_eq (x : ByteArray) (a : HashAlg) (digest extra : ByteArray) :
+    (Secret.ofBytes x).ecdsaSign? a digest extra =
+      (rfc6979Nonces (hmacFast a) a.size x digest extra 8).findSome? fun k => WebHacl.p256Sign? x (p256MsgRep digest) k := rfl
+
+/-- Every candidate is at most 32 octets (`p256Sign?` takes exactly 32; with every hash
+here `T` has at least 32, so exactly 32). -/
+theorem rfc6979Go_size (mac : ByteArray → ByteArray → ByteArray) :
+    ∀ (n : Nat) (k v : ByteArray), ∀ c ∈ rfc6979Go mac n k v, c.size ≤ 32 := by
+  intro n
+  induction n with
+  | zero => intro k v c hc; simp [rfc6979Go] at hc
+  | succ m ih =>
+    intro k v c hc
+    simp only [rfc6979Go, List.mem_cons] at hc
+    rcases hc with h | h
+    · subst h; simp [ByteArray.size_extract]; omega
+    · exact ih _ _ c h
+
 attribute [irreducible] Secret
 
 /-! ## Theorems: sizes and refusals -/
@@ -614,5 +699,24 @@ theorem ctEq_eq (hc : CtEqAgrees) (a b : ByteArray) : ctEq a b = decide (a = b) 
 #guard (p256MsgRep (ByteArray.mk #[1, 2])).toList == List.replicate 30 0 ++ [1, 2]
 #guard HashAlg.ofName? "sha-384" == some .sha384
 #guard HashAlg.ofName? "MD5" == none
+-- RFC 6979 A.2.5 (P-256): the deterministic nonce k (no additional data) for the
+-- messages "sample" and "test" with each hash here, by the pure-Lean HMAC (`HashAlg.pure`;
+-- `hmacFast_eq_pure` makes HACL*'s the same function). x is the RFC's private key.
+private def rfcX : ByteArray := octets32 0xC9AFA9D845BA75166B5C215767B1D6934E50C3DB36E89B127B8A622B120F6721
+private def rfcK (a : HashAlg) (msg : String) : String :=
+  match rfc6979Nonces a.pure.mac a.size rfcX (a.pure.run msg.toUTF8) ByteArray.empty 1 with
+  | k :: _ => bytesToHex k
+  | [] => ""
+#guard rfcK .sha1 "sample" == "882905f1227fd620fbf2abf21244f0ba83d0dc3a9103dbbee43a1fb858109db4"
+#guard rfcK .sha256 "sample" == "a6e3c57dd01abe90086538398355dd4c3b17aa873382b0f24d6129493d8aad60"
+#guard rfcK .sha384 "sample" == "09f634b188cefd98e7ec88b1aa9852d734d0bc272f7d2a47decc6ebeb375aad4"
+#guard rfcK .sha512 "sample" == "5fa81c63109badb88c1f367b47da606da28cad69aa22c4fe6ad7df73a7173aa5"
+#guard rfcK .sha1 "test" == "8c9520267c55d6b980df741e56b4adee114d84fbfa2e62137954164028632a2e"
+#guard rfcK .sha256 "test" == "d16b6ae827f17175e040871a1c7ec3500192c4c92677336ec2537acaee0008e0"
+#guard rfcK .sha384 "test" == "16aeffa357260b04b1dd199693960740066c1a8f3e8edd79070aa914d361b3b8"
+#guard rfcK .sha512 "test" == "6915d11632aca3c40d5d51c08daf9c555933819548784480e93499000d9f0b7f"
+-- Hedged: 32 bytes of additional data give another nonce; the same data, the same one.
+#guard (rfc6979Nonces HashAlg.sha256.pure.mac 32 rfcX ("sample".toUTF8) (octets32 7) 1).map bytesToHex !=
+  [rfcK .sha256 "sample"]
 
 end L4Factoidal.Crypto.WebHacl

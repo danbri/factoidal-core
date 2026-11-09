@@ -89,6 +89,22 @@ structure State where
   work : Nat := 0
   deriving Inhabited
 
+/-- The state a session starts with (every engine: `Page.start`, `PageAot`, `LeanJS.start`):
+its own entropy and settings, and nothing of any earlier session. -/
+def State.fresh (entropy : ByteArray) (docEncoding : String) (hostMode : Bool) : State :=
+  { entropy, docEncoding, hostMode }
+
+/-- A session starts with no random generator (it is instantiated from this session's own
+entropy on first use: `randomBytes`), no draws, no keys, handles from 1, no pending answer
+and no work. So no generator state, key or answer comes from a snapshot, a realm or another
+session. -/
+theorem State.fresh_clean (e : ByteArray) (d : String) (m : Bool) :
+    (State.fresh e d m).rng = none ∧ (State.fresh e d m).draws = 0 ∧ (State.fresh e d m).keys.keys.isEmpty ∧
+    (State.fresh e d m).keys.next = 1 ∧ (State.fresh e d m).keys.bytes = 0 ∧ (State.fresh e d m).pending.size = 0 ∧
+    (State.fresh e d m).work = 0 ∧ (State.fresh e d m).entropy = e := by
+  refine ⟨rfl, rfl, ?_, rfl, rfl, rfl, rfl, rfl⟩
+  simp [State.fresh]
+
 /-! ## Arguments -/
 
 def u32At (b : ByteArray) (i : Nat) : Nat :=
@@ -303,6 +319,21 @@ theorem randomBytes_entropy {s s' : State} {n : Nat} {out : ByteArray}
       obtain ⟨_, rfl⟩ := h
       exact ⟨rfl, rfl⟩
 
+/-- The first draw of a fresh session instantiates the generator from that session's
+entropy, and from nothing else. -/
+theorem randomBytes_fresh (e : ByteArray) (d : String) (m : Bool) (n : Nat) (h : e.size ≥ 32) :
+    randomBytes (State.fresh e d m) n =
+      .ok ((Crypto.WebCrypto.Drbg.instantiate (Crypto.WebHacl.haclHash .sha256) e ByteArray.empty).generate
+        (Crypto.WebHacl.haclHash .sha256) n |>.1,
+        { State.fresh e d m with
+          rng := some ((Crypto.WebCrypto.Drbg.instantiate (Crypto.WebHacl.haclHash .sha256) e ByteArray.empty).generate
+            (Crypto.WebHacl.haclHash .sha256) n |>.2), draws := 1 }) := by
+  unfold randomBytes
+  have h1 : ¬ (State.fresh e d m).entropy.size < minEntropy := by simp [State.fresh, minEntropy]; omega
+  have h2 : ¬ (State.fresh e d m).draws ≥ maxDraws := by simp [State.fresh, maxDraws]
+  rw [if_neg h1, if_neg h2]
+  rfl
+
 /-! ## crypto.subtle (op 41): keys behind handles -/
 
 section Subtle
@@ -448,7 +479,7 @@ def subtle (s : State) (fs : Array ByteArray) : State × Except Int ByteArray :=
     match errInt (keyOf s.keys a "key") with
     | .error e => fail e
     | .ok k =>
-      match drawFor s (if k.algo.alg == .ecdsa then 256 else if k.algo.alg == .rsaPss then min ((p.nat? "saltLength").getD 0) 512 else 0) with
+      match drawFor s (if k.algo.alg == .ecdsa then 32 else if k.algo.alg == .rsaPss then min ((p.nat? "saltLength").getD 0) 512 else 0) with
       | .error e => fail e
       | .ok (rand, s) => (s, errInt ((sign algName p k ((a.get? "data").getD .empty) rand).map fun b => pack ["bytes".toUTF8, b]))
   | "verify" => (s, errInt (do

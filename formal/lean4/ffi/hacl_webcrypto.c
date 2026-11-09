@@ -141,7 +141,8 @@ LEAN_EXPORT lean_obj_res l4_web_hacl_x25519(b_lean_obj_arg sk, b_lean_obj_arg pk
  * Keys: private 32 bytes (HACL* checks 0 < d < n), public x || y 64 bytes (HACL* checks
  * the point: not infinity, coordinates below p, on the curve). Message representative
  * `e`: exactly 32 bytes (HACL*: msg_len >= 32, and it reads the first 32), made in Lean
- * from the hash (WebHacl.p256MsgRep). Nonce: 32 bytes from the page's HMAC_DRBG. */
+ * from the hash (WebHacl.p256MsgRep). Nonce: RFC 6979 hedged with 32 bytes of the session's
+ * HMAC_DRBG (WebHacl.Secret.ecdsaSign?); HACL* checks 0 < nonce < n. */
 LEAN_EXPORT lean_obj_res l4_web_hacl_p256_public(b_lean_obj_arg sk) {
   if (L4W_SIZE(sk) != 32) return l4w_empty();
   lean_obj_res out = l4w_fresh(64);

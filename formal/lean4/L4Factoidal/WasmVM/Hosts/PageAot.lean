@@ -128,7 +128,7 @@ def session (p : Prepared) (dom : Arena) (lim : Hosts.Page.Limits := {}) (framed
   let (fx, init, qnew, mode) := (Exports.of fun n => .ok (idx n)).toOption.getD (default, 0, 0, 0)
   let gpu := L4Factoidal.PageGpu.State.empty lim.gpuPage
   let domHost : DomHost := { dom := dom, commandLimit := lim.commands, logLimit := lim.logs, frames := framed, framing := lim.frames, gpu := gpu }
-  let host : Host := { dom := domHost, reads := reads, time := time, web := { entropy := lim.entropy, docEncoding := lim.encoding, hostMode := lim.cryptoHost } }
+  let host : Host := { dom := domHost, reads := reads, time := time, web := Hosts.WebApi.State.fresh lim.entropy lim.encoding lim.cryptoHost }
   ({ store := {}, inst := 0, mem := 0, bindings := p.bindings, host, fx, limits := lim }, init, qnew, mode)
 
 /-- The program of a page start on the host's engine, after the host made a fresh

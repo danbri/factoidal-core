@@ -989,7 +989,7 @@ def instantiatePage (m : Module') (dom : Arena) (lim : Limits := {}) : Except St
     | some (.func a) => Except.ok a
     | _ => Except.error s!"the module has no export {name}"
   let (fx, init, qnew, mode) ← Exports.of fa
-  let host : Host := { dom := { dom, commandLimit := lim.commands, logLimit := lim.logs }, web := { entropy := lim.entropy, docEncoding := lim.encoding, hostMode := lim.cryptoHost } }
+  let host : Host := { dom := { dom, commandLimit := lim.commands, logLimit := lim.logs }, web := Hosts.WebApi.State.fresh lim.entropy lim.encoding lim.cryptoHost }
   let s : Session := { store := st, inst := ia, mem := memOf st ia, bindings := bs, host, fx, limits := lim }
   (s.initP init qnew mode).runLocal
 
@@ -1077,11 +1077,11 @@ def start (m : Module') (dom : Arena) (url : String) (scripts : Array (Nat × St
   let s : Session ← match m.base with
     | some b =>
       let domHost : DomHost := { dom, commandLimit := lim.commands, logLimit := lim.logs, frames := framed, framing := lim.frames }
-      let host : Host := { dom := domHost, reads, time, web := { entropy := lim.entropy, docEncoding := lim.encoding, hostMode := lim.cryptoHost } }
+      let host : Host := { dom := domHost, reads, time, web := Hosts.WebApi.State.fresh lim.entropy lim.encoding lim.cryptoHost }
       pure { b with host, limits := lim, steps := 0 }
     | none => do
       let s ← instantiatePage m dom lim
-      let web : Hosts.WebApi.State := { entropy := lim.entropy, docEncoding := lim.encoding, hostMode := lim.cryptoHost }
+      let web : Hosts.WebApi.State := .fresh lim.entropy lim.encoding lim.cryptoHost
       pure { s with host := { s.host with dom := { s.host.dom with frames := framed, framing := lim.frames }, reads, time, web } }
   let s := { s with host := { s.host with dom := { s.host.dom with gpu := L4Factoidal.PageGpu.State.empty lim.gpuPage } } }
   return (s.startP url scripts framed).runLocal

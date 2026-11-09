@@ -283,6 +283,13 @@ def Session.setHost (s : Session) (h : Host) : Session :=
   let lh := heap.host.getD default
   ⟨{ heap with host := some { lh with page := h } }, api, limits, steps, jobs, tasks, errors, lastFrame⟩
 
+/-- The page host a session is given is the one it has: whatever the realm (its snapshot,
+or an earlier page's heap) held before is gone. With `WebApi.State.fresh` at `start`, a
+page's random generator, keys and work begin new (cryptosec, record
+2026-11-09-crypto-boundary-security.md, "Sessions start fresh"). -/
+theorem Session.host_setHost (s : Session) (h : Host) : (s.setHost h).host = h := by
+  cases s; rfl
+
 def Session.fail (s : Session) (what : String) : Session :=
   { s with errors := if s.errors.size < 256 then s.errors.push what else s.errors }
 
@@ -413,7 +420,7 @@ def start (base : Session) (dom : Arena) (url : String) (scripts : Array (Nat ×
   let s := match Hosts.WebApi.mathRandomSeed lim.entropy with
     | some x => { s with heap := { s.heap with rng := x } }
     | none => s
-  let mut s := s.setHost { dom := domHost, reads, time, web := { entropy := lim.entropy, docEncoding := lim.encoding, hostMode := lim.cryptoHost } }
+  let mut s := s.setHost { dom := domHost, reads, time, web := Hosts.WebApi.State.fresh lim.entropy lim.encoding lim.cryptoHost }
   s := (s.api? "start" #[]).1
   s := (s.api? "url" #[.str (JS.Str.ofHost url)]).1
   for (node, src) in scripts do

@@ -1046,9 +1046,8 @@ def sign (algName : String) (p : Args) (k : Key) (data : ByteArray) (rand : Rand
   | .ecdsa =>
     if k.type != .privateKey then throw .invalidAccess
     let some h := (p.str? "hash").bind HashAlg.ofName? | throw .notSupported
-    let e := p256MsgRep (hashFast h data)
-    let sig := (List.range 8).findSome? fun i => k.secret.p256Sign? e (Secret.ofBytes (rand.extract (32 * i) (32 * i + 32)))
-    let some s := sig | throw .operation
+    -- The hedged RFC 6979 nonce (`Secret.ecdsaSign?`): `rand` is its additional data.
+    let some s := k.secret.ecdsaSign? h (hashFast h data) (rand.extract 0 32) | throw .operation
     return s
   | .ed25519 =>
     if k.type != .privateKey then throw .invalidAccess
