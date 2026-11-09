@@ -60,7 +60,7 @@ def risk : Capability → String
   | .fontFiles => "Risk: a malformed file can attack the parser; the content is not under the page author's control."
   | .cff => "Risk: the programs run inside our interpreter; fuel and the CFF stack and subroutine limits bound them."
   | .layout => "Risk: chained lookups can do much work; fuel and an operation limit for each run bound them."
-  | .colour => "Risk: a paint graph can contain cycles; a cycle check is needed before painting."
+  | .colour => "Risk: a paint graph can contain cycles or grow without end; a depth limit and a node budget bound each glyph."
   | .svg => "Risk: SVG documents can reference other resources; only static SVG without script is drawn."
   | .hinting => "Risk: the instruction virtual machine runs general programs from the font."
   | .aat => "Risk: the state machines run general computation over the glyph sequence."
@@ -75,12 +75,15 @@ inductive Engine where
 
 /-- Measured against `labs/demos/foafnaut/tools/font-shape.c` on 2026-11-03:
 it loads every glyph with `FT_LOAD_NO_HINTING` and has no COLR code, so
-hinting and colour have no implementation; HarfBuzz applies AAT `morx` itself.
+hinting has no implementation; HarfBuzz applies AAT `morx` itself. Colour glyphs
+(COLR versions 0 and 1 with CPAL) are drawn by Lean (`SfntColr`, `ColrRaster`,
+issue 1276).
 Gap: the broker does not yet receive this policy, so an AAT refusal is not
 enforced on the native path (https://github.com/danbri/factoidal/issues/1233). -/
 def engine : Capability → Engine
   | .fontFiles | .cff | .layout | .aat => .native
-  | .colour | .svg | .hinting | .graphite | .wasm => .none
+  | .colour => .lean
+  | .svg | .hinting | .graphite | .wasm => .none
 
 def Engine.describe : Engine → String
   | .lean => "Lean"
@@ -106,7 +109,7 @@ def tags : Capability → List String
   | .fontFiles => []
   | .cff => ["CFF ", "CFF2"]
   | .layout => ["GSUB", "GPOS", "GDEF", "JSTF"]
-  | .colour => ["COLR"]
+  | .colour => ["COLR", "CPAL"]
   | .svg => ["SVG "]
   | .hinting => ["fpgm", "prep", "cvt ", "cvar"]
   | .aat => ["morx", "mort", "kerx"]

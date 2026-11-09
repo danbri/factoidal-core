@@ -1192,6 +1192,7 @@ import L4Factoidal.Unicode.RangeTable
 import L4Factoidal.Unicode.NormData
 import L4Factoidal.Unicode.Normalization
 import L4Factoidal.Unicode.SegmentData
+import L4Factoidal.Unicode.EmojiData
 import L4Factoidal.Unicode.Segmentation
 import L4Factoidal.Unicode.SegmentationTheorems
 import L4Factoidal.Unicode.BidiData
@@ -1220,6 +1221,9 @@ import L4Factoidal.Rendering.FontProviderTests
 import L4Factoidal.Rendering.FontPolicy
 import L4Factoidal.Rendering.FontPolicyTests
 import L4Factoidal.Rendering.SfntOutline
+import L4Factoidal.Rendering.SfntColr
+import L4Factoidal.Rendering.ColrRaster
+import L4Factoidal.Rendering.SfntColrTests
 import L4Factoidal.Rendering.SfntProfile
 import L4Factoidal.Rendering.SfntProfileTests
 import L4Factoidal.Rendering.SfntMarkTheorems
