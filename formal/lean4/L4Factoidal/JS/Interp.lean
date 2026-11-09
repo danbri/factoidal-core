@@ -1,4 +1,5 @@
 import L4Factoidal.JS.Value
+import L4Factoidal.JS.Clone
 import L4Factoidal.JS.Parser
 import L4Factoidal.JS.Resolve
 import L4Factoidal.JS.Date
@@ -6831,6 +6832,65 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       else
         if f < 1 || f > 100 then throwErr .range "toPrecision() argument must be between 1 and 100"
         pure (.str (NumFmt.precision neg num den f.toUInt64.toNat))
+    -- ==== workers: the structured clone of HTML §2.7 over the heap (JS.Clone) ====
+    | (.x .cloneSerialize) =>
+      -- `n.serialize(value, transfer)`: the bytes as a new ArrayBuffer; the transferred
+      -- ArrayBuffers detached (§2.7.5 step 5).
+      let items ← match a1 with
+        | .obj tid => do
+          match (← getObj tid).kind with
+          | .array es => pure es
+          | _ => pure #[]
+        | _ => pure #[]
+      let mut ids : Array Nat := #[]
+      for it in items do
+        match it with
+        | .obj i => ids := ids.push i
+        | _ => throwErr .type "DataCloneError: Value in the transfer list is not an ArrayBuffer"
+      match Clone.serialize (← get) a0 ids with
+      | .error e => throwErr .type ("DataCloneError: " ++ e)
+      | .ok (bytes, det) =>
+        charge (bytes.size / 64)
+        for d in det do
+          modifyObj d fun bo => { bo with kind := .buffer ByteArray.empty }
+          defineOwn d bufDetachedKey (.data (.bool true) true false false)
+        newBuffer bytes
+    | (.x .cloneDeserialize) =>
+      let bytes ← match a0 with
+        | .obj b => do pure (bufferBytes (← getObj b))
+        | _ => pure ByteArray.empty
+      charge (bytes.size / 64)
+      match Clone.deserialize (← get) bytes with
+      | some (v, h) => set h; pure v
+      | none => throwErr .type "DataCloneError: the message could not be deserialized"
+    | (.x .classicScript) =>
+      -- GlobalDeclarationInstantiation (§16.1.7) and the statements, as `runScriptM` (which
+      -- comes after this function), with no microtask checkpoint.
+      let src ← toStr n a0
+      match parseScript src false with
+      | .error e => throwErr .syntax e
+      | .ok sc =>
+        let g := r.globalObj
+        let ctx : Ctx := { env := 0, thisV := .obj g, strict := sc.strict }
+        for v in sc.vars do
+          if ((← getObj g).getOwn v).isNone then defineOwn g v (.data .undef true true false)
+        for st in sc.body do
+          if let .funDecl name f := st then
+            defineOwn g name (.data (← makeClosure ctx f) true true false)
+        for st in sc.body do
+          match st with
+          | .decl .letK ds | .decl .constK ds =>
+            for d in ds do
+              for x in d.names do
+                if ((← getBinding 0 x)).isSome then throwErr .syntax s!"Identifier '{x}' has already been declared"
+                declare 0 x { v := .undef, mutable := (match st with | .decl .letK _ => true | _ => false), init := false }
+          | .classDecl x _ =>
+            if ((← getBinding 0 x)).isSome then throwErr .syntax s!"Identifier '{x}' has already been declared"
+            declare 0 x { v := .undef, init := false }
+          | _ => pure ()
+        let _ ← evalStmts n ctx sc.body
+        pure .undef
+    -- ==== end workers ====
     | (.x (.setMethod k)) =>
       -- the receiver: a Set (§24.2.4, RequireInternalSlot [[SetData]])
       let (sid, es) ← match thisV with
@@ -7771,6 +7831,18 @@ def hostObject (h : HeapOf H) (names : Array (String × Nat)) : Value × HeapOf 
   match make.run h with
   | .ok v h' => (v, h')
   | .error _ h' => (.undef, h')
+
+/-- Add built-ins of the engine (not the host's) to an object, as `hostObject` makes the
+host's: not enumerable. -/
+def addNatives (h : HeapOf H) (o : Value) (names : Array (String × Native × Nat)) : HeapOf H :=
+  match o with
+  | .obj id =>
+    let make : M Unit := do
+      for (nm, nat, len) in names do defineOwn id nm (.data (← mkNative nat nm len) true false true)
+    match make.run h with
+    | .ok _ h' => h'
+    | .error _ h' => h'
+  | _ => h
 
 /-- The microtask checkpoint: the jobs run until none is left (§9.5; HTML "perform a
 microtask checkpoint"). A job that throws is dropped. The answer counts the jobs run. -/
