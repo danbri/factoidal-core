@@ -267,6 +267,9 @@ def turnAnswer (id : Nat) (before : Before) (s : Page.Session) (marks : Marks) (
 def drained (s : Page.Session) : Page.Session :=
   { s with host := { s.host with dom := { s.host.dom with gpuOut := #[], canvas := s.host.dom.canvas.sent } } }
 
+/-- The host's measure of the turn just run, for the page's next turn (`node_query` op 20). -/
+def withTurn (ns : Nat) (h : Page.Host) : Page.Host := { h with reads := { h.reads with turnNs := ns } }
+
 def drainedLean (s : LeanJS.Session) : LeanJS.Session :=
   if s.host.dom.gpuOut.isEmpty && s.host.dom.canvas.drawn.isEmpty then s else
   let h := s.host
@@ -520,7 +523,8 @@ def hostCall (held : Held) (aot : PageAot.Prepared) (t : Turn) (request : JSON.J
 def leanTurn (held : Held) (id : Nat) (before : Before) (s : LeanJS.Session) (marks : Marks) (full : Bool) (ns : Nat) :
     Held × Except String String :=
   let (answer, marks) := turnAnswerOf id before (View.ofLean s) marks full ns [("engine",.string "bubblepop")]
-  ({ held with leanSession := some (id, drainedLean s, marks) }, .ok answer)
+  let s := drainedLean s
+  ({ held with leanSession := some (id, s.setHost (withTurn ns s.host), marks) }, .ok answer)
 
 /-- `start` on the Lean engine: its realm is made at the first page (the prelude runs
 once), and each page starts from it with its own arena. -/
@@ -545,7 +549,7 @@ def startLean (held : Held) (html : String) (request : JSON.Json) (measure : JSO
     | .error e => (held, .error s!"scriptSession: BubblePopJS: {e}")
     | .ok base =>
       let (vw, vh) := (viewport request).getD (800, 600)
-      let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh, canvasEnv := canvas }
+      let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh, canvasEnv := canvas, engine := "BubblePopJS" }
       let rate := max 1 ((natField request "instructionsPerMs").getD 100000)
       let (s, ns) := WebWasm.timed fun _ =>
         let s := LeanJS.start base dom url scripts lim reads { instructionsPerMs := rate }
@@ -624,7 +628,7 @@ def act (held : Held) (action html : String) (request : JSON.Json)
       | .error e => (held, .error s!"scriptSession: {e}")
       | .ok (scripts, missing, dom) =>
         let (vw, vh) := (viewport request).getD (800, 600)
-        let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh, canvasEnv := canvas }
+        let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh, canvasEnv := canvas, engine := "QuickJS-NG" }
         let rate := max 1 ((natField request "instructionsPerMs").getD 100000)
         let prog := PageAot.startProg aot dom url scripts { commands, logs, gpuPage := held.nextSession, entropy := entropy held.nextSession, encoding := str request "encoding" } #[] missing
           reads { instructionsPerMs := rate }
@@ -639,7 +643,7 @@ def act (held : Held) (action html : String) (request : JSON.Json)
         let dom ← parse html url
         let (scripts, missing) ← scriptSources dom request
         let (vw, vh) := (viewport request).getD (800, 600)
-        let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh, canvasEnv := canvas }
+        let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh, canvasEnv := canvas, engine := "QuickJS-NG" }
         let rate := max 1 ((natField request "instructionsPerMs").getD 100000)
         let s ← Page.start m dom url scripts { commands, logs, gpuPage := held.nextSession, entropy := entropy held.nextSession, encoding := str request "encoding" } #[] reads { instructionsPerMs := rate }
         return missing.foldl Page.Session.fail s
@@ -670,7 +674,8 @@ def act (held : Held) (action html : String) (request : JSON.Json)
         else
           let (s', ns) := WebWasm.timed fun _ => (f s).runLocal
           let (answer, marks) := turnAnswer id before s' marks full ns
-          ({ held with session := some (id, drained s', marks) }, Except.ok answer)
+          let s' := drained s'
+          ({ held with session := some (id, { s' with host := withTurn ns s'.host }, marks) }, Except.ok answer)
       match action with
       | "click" =>
         match natField request "node" with
