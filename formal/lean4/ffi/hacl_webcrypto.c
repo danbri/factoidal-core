@@ -75,12 +75,13 @@ LEAN_EXPORT lean_obj_res l4_web_hacl_hash(uint8_t alg, b_lean_obj_arg msg) {
 }
 
 /* ---- HMAC: Hacl_HMAC_compute_{sha1,sha2_256,sha2_384,sha2_512} -----------------------
- * Precondition (F*, Hacl.HMAC.compute_st): key_len < 2^32 (keysized), and
+ * Precondition (F*, Hacl.HMAC.compute_st): `keysized a key_len`, which is
+ * key_len + block_length < 2^32 (Spec.Agile.HMAC.keysized), and
  * data_len + block_length < 2^32. Output: exactly the hash size. */
 LEAN_EXPORT lean_obj_res l4_web_hacl_hmac(uint8_t alg, b_lean_obj_arg key, b_lean_obj_arg msg) {
   size_t hn = l4w_hash_size(alg), bn = l4w_block_size(alg);
   size_t kn = L4W_SIZE(key), mn = L4W_SIZE(msg);
-  if (hn == 0 || kn > UINT32_MAX || mn > (size_t)UINT32_MAX - bn) return l4w_empty();
+  if (hn == 0 || kn > (size_t)UINT32_MAX - bn || mn > (size_t)UINT32_MAX - bn) return l4w_empty();
   lean_obj_res out = l4w_fresh(hn);
   if (!l4wc_hmac(alg, L4W_PTR(key), (uint32_t)kn, L4W_PTR(msg), (uint32_t)mn, L4W_PTR(out))) return l4w_refuse(out);
   return out;
@@ -183,8 +184,9 @@ LEAN_EXPORT lean_obj_res l4_web_hacl_p256_ecdh(b_lean_obj_arg xy, b_lean_obj_arg
 }
 
 /* ---- ChaCha20-Poly1305 (RFC 8439): Hacl_AEAD_Chacha20Poly1305_{encrypt,decrypt} ------
- * Key 32 bytes, nonce 12, tag 16; input_len and data_len below 2^32 (and the sealed
- * length input_len + 16 too). Seal answers ciphertext || tag. Open answers 1 || plaintext,
+ * Key 32 bytes, nonce 12, tag 16; data_len below 2^32 and input_len + 16 <= max_size_t
+ * (2^32 - 1) for both encrypt and decrypt (Hacl.AEAD.Chacha20Poly1305). Seal answers
+ * ciphertext || tag. Open answers 1 || plaintext,
  * or the single byte 0 when HACL*'s constant-time tag check fails (HACL* then leaves the
  * output unwritten; it is zeroed and freed all the same). */
 LEAN_EXPORT lean_obj_res l4_web_hacl_chachapoly_seal(b_lean_obj_arg key, b_lean_obj_arg nonce,
@@ -200,7 +202,7 @@ LEAN_EXPORT lean_obj_res l4_web_hacl_chachapoly_seal(b_lean_obj_arg key, b_lean_
 LEAN_EXPORT lean_obj_res l4_web_hacl_chachapoly_open(b_lean_obj_arg key, b_lean_obj_arg nonce,
                                                     b_lean_obj_arg aad, b_lean_obj_arg sealed) {
   size_t cn = L4W_SIZE(sealed), an = L4W_SIZE(aad);
-  if (L4W_SIZE(key) != 32 || L4W_SIZE(nonce) != 12 || cn < 16 || cn - 16 > UINT32_MAX || an > UINT32_MAX)
+  if (L4W_SIZE(key) != 32 || L4W_SIZE(nonce) != 12 || cn < 16 || cn - 16 > (size_t)UINT32_MAX - 16U || an > UINT32_MAX)
     return l4w_empty();
   size_t pn = cn - 16;
   lean_obj_res out = l4w_fresh(pn + 1);

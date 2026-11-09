@@ -92,9 +92,11 @@ def blockOfCode (c : UInt8) : Nat := if c ≤ 2 then 64 else 128
 
 theorem blockOfCode_code (a : HashAlg) : blockOfCode a.code = a.block := by cases a <;> rfl
 
-/-- Hacl.HMAC.compute_st: `keysized a key_len` and `data_len + block_length a < 2^32`. -/
+/-- Hacl.HMAC.compute_st: `keysized a key_len` and `data_len + block_length a < 2^32`.
+`keysized a l` (Spec.Agile.HMAC) is `l + block_length a < 2^32` (with the hash's input
+bound, which is larger), so the key has the same bound as the data. -/
 abbrev HmacPre (alg : UInt8) (key msg : ByteArray) : Prop :=
-  key.size < u32Bound ∧ msg.size + blockOfCode alg < u32Bound
+  key.size + blockOfCode alg < u32Bound ∧ msg.size + blockOfCode alg < u32Bound
 /-- Hacl.Ed25519.secret_to_public: a 32-byte private key. -/
 abbrev Ed25519SkPre (sk : ByteArray) : Prop := sk.size = 32
 /-- Hacl.Ed25519.sign: a 32-byte key and `msg_len + 64 ≤ max_size_t`. -/
@@ -122,9 +124,10 @@ abbrev P256EcdhPre (xy sk : ByteArray) : Prop := xy.size = 64 ∧ sk.size = 32
 (and the sealed length too). -/
 abbrev ChaChaSealPre (key nonce aad plain : ByteArray) : Prop :=
   key.size = 32 ∧ nonce.size = 12 ∧ aad.size < u32Bound ∧ plain.size + 16 < u32Bound
-/-- Hacl.AEAD.Chacha20Poly1305.decrypt: as encrypt, and a 16-byte tag at the end. -/
+/-- Hacl.AEAD.Chacha20Poly1305.decrypt: as encrypt (`input_len + 16 ≤ max_size_t`, for the
+plaintext's length `input_len`), and a 16-byte tag at the end. -/
 abbrev ChaChaOpenPre (key nonce aad sealed : ByteArray) : Prop :=
-  key.size = 32 ∧ nonce.size = 12 ∧ aad.size < u32Bound ∧ 16 ≤ sealed.size ∧ sealed.size < u32Bound + 16
+  key.size = 32 ∧ nonce.size = 12 ∧ aad.size < u32Bound ∧ 16 ≤ sealed.size ∧ sealed.size < u32Bound
 
 /-- An RSA modulus at this boundary: big-endian with no leading zero octet, 1024 to 4096
 bits in whole 64-bit limbs (Hacl_Bignum64's `len` limbs). -/
