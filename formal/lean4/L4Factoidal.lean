@@ -1222,6 +1222,14 @@ import L4Factoidal.Rendering.FontPolicyTests
 import L4Factoidal.Rendering.SfntOutline
 import L4Factoidal.Rendering.SfntProfile
 import L4Factoidal.Rendering.SfntProfileTests
+import L4Factoidal.Rendering.SfntMarkTheorems
+import L4Factoidal.Rendering.FontFaceRule
+import L4Factoidal.Rendering.FontFaceRuleTests
+import L4Factoidal.Rendering.Smil
+import L4Factoidal.Rendering.SmilTests
+import L4Factoidal.Rendering.InkBound
+import L4Factoidal.Rendering.InkBoundTests
+import L4Factoidal.Rendering.ClipTheorems
 import L4Factoidal.Rendering.SfntOutlineTests
 import L4Factoidal.Rendering.SfntShape
 import L4Factoidal.Rendering.SfntArabic
