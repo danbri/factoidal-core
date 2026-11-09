@@ -1130,14 +1130,14 @@
       gpuBinary = typeof probe === 'string' && probe.startsWith('gpu: destroy');
     }
     if (gpuBinary) return n.gpu(71, header.buffer, payload ?? '');
-    return n.gpu(7, Array.prototype.join.call(header, ' '), payload ?? '');
+    return n.gpu(7, Array.prototype.join.call(header.subarray(1), ' '), payload ?? '');
   };
-  // One pass's header: canvas, clear r g b a, the draws (each pipeline bind nVb vb* count
-  // instances first firstInstance), from the words the encoder kept.
+  // One pass's binary header: the count of numbers, then canvas, clear r g b a, the draws
+  // (each pipeline bind nVb vb* count instances first firstInstance), from the encoder's words.
   const passHeader = (canvas, clear, count, words) => {
-    const h = new Uint32Array(6 + words.length);
-    h[0] = canvas; h[1] = clear[0]; h[2] = clear[1]; h[3] = clear[2]; h[4] = clear[3]; h[5] = count;
-    h.set(words, 6);
+    const h = new Uint32Array(7 + words.length);
+    h[0] = 6 + words.length; h[1] = canvas; h[2] = clear[0]; h[3] = clear[1]; h[4] = clear[2]; h[5] = clear[3]; h[6] = count;
+    h.set(words, 7);
     return h;
   };
   // A colour channel 0..1 as 0..255 (NaN as 0); the comparisons convert x to a number.
