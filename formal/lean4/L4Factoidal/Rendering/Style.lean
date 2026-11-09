@@ -307,7 +307,7 @@ that `MediaQuery` can not read does not hold. Other at-rules are skipped whole, 
 `@media` block in an `@media` block. A rule with a selector this profile can not read
 is dropped whole, as CSS drops an invalid selector list. Only the first 131072
 characters of a sheet are read. -/
-def parseIn (env : MediaQuery.Env) (source : String) : Except String (List Rule) := do
+def parseInBlocks (env : MediaQuery.Env) (source : String) : Except String (List Rule) := do
   let mut out : List Rule := []
   for (head,body) in topLevel (comments (source.take 131072).toString) do
     let head := trim head
@@ -320,6 +320,46 @@ def parseIn (env : MediaQuery.Env) (source : String) : Except String (List Rule)
         if let .ok selectors := (inner.splitOn ",").mapM selector then
           out := ⟨selectors,← declarations content⟩ :: out
   return out.reverse
+
+/-- The rules of a sheet, each with the query list of its `@media` block (none outside
+one), before any media environment is read: what `parseIn` filters. -/
+def parseRaw (source : String) : Except String (List (Option String × Rule)) := do
+  let mut out : List (Option String × Rule) := []
+  for (head,body) in topLevel (comments (source.take 131072).toString) do
+    let head := trim head
+    let blocks : List (Option String × String × String) := if !head.startsWith "@" then [(none,head,body)]
+      else if (head.take 6).toString.toLower == "@media" then
+        let query := (head.drop 6).toString
+        (topLevel body).map fun (inner,content) => (some query,inner,content)
+      else []
+    for (query,inner,content) in blocks do
+      if !(trim inner).startsWith "@" then
+        if let .ok selectors := (inner.splitOn ",").mapM selector then
+          out := (query,⟨selectors,← declarations content⟩) :: out
+  return out.reverse
+
+/-! A relayout at another width reads the same sheets in another media environment.
+`parseRawKept` is `parseRaw`; its implementation keeps the last sheets it read (by
+their text), so that a relayout reads no sheet again and only evaluates the media
+queries (realperf: 30 ms of each relayout of Wikipedia's FOAF article). -/
+initialize sheetsKept : IO.Ref (Array (String × Except String (List (Option String × Rule)))) ← IO.mkRef #[]
+
+private unsafe def parseRawKeptImpl (source : String) : Except String (List (Option String × Rule)) :=
+  unsafeBaseIO do
+    if let some (_,r) := (← sheetsKept.get).find? (·.1 == source) then return r
+    let r := parseRaw source
+    sheetsKept.modify fun kept => (if kept.size ≥ 8 then kept.extract 1 kept.size else kept).push (source,r)
+    return r
+
+@[implemented_by parseRawKeptImpl, noinline]
+def parseRawKept (source : String) : Except String (List (Option String × Rule)) := parseRaw source
+
+/-- Rules of a sheet in the media environment `env`: those of `parseRaw` outside an
+`@media` block or in one whose query list holds. Agrees with `parseInBlocks`, which
+reads the blocks in place (`CascadeTests`). -/
+def parseIn (env : MediaQuery.Env) (source : String) : Except String (List Rule) := do
+  return (← parseRawKept source).filterMap fun (query,rule) =>
+    if query.all (MediaQuery.applies env) then some rule else none
 
 /-- Rules of a sheet for the media type `medium` ("screen" or "print") with no viewport:
 an `@media` query with a width or colour-scheme feature does not hold. -/

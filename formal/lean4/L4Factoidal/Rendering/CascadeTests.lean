@@ -82,4 +82,23 @@ private def manyElements (m : Nat) : String :=
 #guard candidateTotal (manyElements 300) (manyRules 2000) == 600
 #guard agrees (manyElements 60) (manyRules 200)
 
+/-! `parseIn` (the sheet read once, `parseRawKept`, then filtered by the media queries)
+gives the rules of `parseInBlocks` (the blocks read in place for one environment). -/
+private def mediaSheet :=
+  "p{color:red}@media (min-width: 600px){p{color:blue}.a{margin:1px}}@media print{p{color:green}}" ++
+  "@media screen and (max-width: 400px){div{padding:2px}}@media (prefers-color-scheme: dark){a{color:#fff}}" ++
+  "@media (hover: hover){b{color:red}}@font-face{font-family:x}@media all{@media screen{i{color:red}}em{color:red}}" ++
+  "@media only screen{q{color:red}}@media not print{s{color:red}}"
+private def sameRules (env : MediaQuery.Env) (source : String) : Bool :=
+  match parseIn env source, parseInBlocks env source with
+  | .ok a, .ok b => reprStr a == reprStr b
+  | .error a, .error b => a == b
+  | _, _ => false
+#guard sameRules {} mediaSheet
+#guard sameRules {width := some 800, height := some 600, dark := some false} mediaSheet
+#guard sameRules {width := some 300, height := some 600, dark := some true} mediaSheet
+#guard sameRules {medium := "print"} mediaSheet
+#guard sameRules {width := some 800} sheet
+#guard ((parseIn {width := some 800} mediaSheet).toOption.map List.length) == some 6
+
 end L4Factoidal.Rendering.CascadeTests
