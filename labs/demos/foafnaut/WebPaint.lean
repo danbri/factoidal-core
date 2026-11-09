@@ -468,7 +468,7 @@ def cullContour (t : Transform) (x0 y0 x1 y1 : Float) : Contour → Contour
       current := segmentEnd seg
     return .path start out.toList closed
 
-private def cullPrimitive (w h : Float) (t : Transform) (p : Primitive) : Primitive :=
+private def cullPrimitive (x0 y0 x1 y1 : Float) (t : Transform) (p : Primitive) : Primitive :=
   if p.dashParts.isSome || p.pathLength.isSome || !p.style.dashArray.isEmpty ||
       !solidPaint p.style.fill || !solidPaint p.style.stroke then p else
   match p.geometry with
@@ -479,22 +479,34 @@ private def cullPrimitive (w h : Float) (t : Transform) (p : Primitive) : Primit
       | _ => p.style.strokeWidth*norm*(max 1 p.style.miterLimit)/2
     let m := 2+stroke
     if !m.isFinite then p else
-    {p with geometry := .path (contours.map (cullContour t (-m) (-m) (w+m) (h+m)))}
+    {p with geometry := .path (contours.map (cullContour t (x0-m) (y0-m) (x1+m) (y1+m)))}
   | _ => p
 
-private def cullNodes (w h : Float) : Nat → Transform → List Node → List Node
-  | 0, _, nodes => nodes
-  | fuel+1, t, nodes => nodes.map fun
+/-- The box on the canvas of a clip under `t`, cut by the box `(x0,y0,x1,y1)`; the box as it
+was when the clip is turned or skewed there. Nothing is drawn outside a clip, so what lies
+outside it counts as off the canvas: an `svg` in a large window flattens only its own box. -/
+private def clipBox (t : Transform) (clip : ClipRect) (x0 y0 x1 y1 : Float) : Float × Float × Float × Float :=
+  let m := Math.Affine2.compose .float t clip.transform
+  if m.b != 0 || m.c != 0 then (x0,y0,x1,y1) else
+  let (ax,bx) := (m.a*clip.x+m.e,m.a*(clip.x+clip.width)+m.e)
+  let (ay,by_) := (m.d*clip.y+m.f,m.d*(clip.y+clip.height)+m.f)
+  (max x0 (min ax bx),max y0 (min ay by_),min x1 (max ax bx),min y1 (max ay by_))
+
+private def cullNodes : Nat → Float → Float → Float → Float → Transform → List Node → List Node
+  | 0, _, _, _, _, _, nodes => nodes
+  | fuel+1, x0, y0, x1, y1, t, nodes => nodes.map fun
     | .paint item =>
-      .paint {item with primitive := cullPrimitive w h (Math.Affine2.compose .float t item.primitive.transform) item.primitive}
-    | .group id g children => .group id g (cullNodes w h fuel (Math.Affine2.compose .float t g) children)
-    | .clipped id c clip children => .clipped id c clip (cullNodes w h fuel (Math.Affine2.compose .float t c) children)
+      .paint {item with primitive := cullPrimitive x0 y0 x1 y1 (Math.Affine2.compose .float t item.primitive.transform) item.primitive}
+    | .group id g children => .group id g (cullNodes fuel x0 y0 x1 y1 (Math.Affine2.compose .float t g) children)
+    | .clipped id c clip children =>
+      let (a,b,e,f) := clipBox t clip x0 y0 x1 y1
+      .clipped id c clip (cullNodes fuel a b e f (Math.Affine2.compose .float t c) children)
 
 /-- The scene with its off-canvas curves made lines (see above). The canvas is the
-scene's `width` by `height` after its mapping. -/
+scene's `width` by `height` after its mapping, cut by the clips around each primitive. -/
 def cull (scene : Scene) : Scene :=
   let m := scene.mapping
   let root : Transform := ⟨m.sx,0,0,m.sy,m.tx-m.minX*m.sx,m.ty-m.minY*m.sy⟩
-  {scene with tree := cullNodes (Float.ofNat scene.width) (Float.ofNat scene.height) 64 root scene.tree}
+  {scene with tree := cullNodes 64 0 0 (Float.ofNat scene.width) (Float.ofNat scene.height) root scene.tree}
 
 end WebPaint

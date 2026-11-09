@@ -2245,3 +2245,4 @@ L4Factoidal_WasmVM_Hosts_Dom_extractR  # (b) one call per level of the DOM tree 
 L4Factoidal_WasmVM_Hosts_Dom_cloneR  # (b) as extractR: one call per tree level of the range (DOM §5.5 clone the contents)
 L4Factoidal_Rendering_CssSupports_condition  # (b) the nesting of parentheses in one CSS.supports condition text; fuel is the text length
 L4Factoidal_Rendering_CssSupports_condition_inParensValue  # (b) mutual with condition: the nesting of parentheses of one condition text
+L4Factoidal_Rendering_InkBound_safeFrom  # (b) the reference of proofs only: at run time `streamSafe` is the accumulator loop `safeAux`, and nothing calls this one (`safeAux_eq`)

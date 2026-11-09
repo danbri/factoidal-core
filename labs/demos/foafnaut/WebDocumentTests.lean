@@ -663,9 +663,9 @@ private def scaledBy (k : Nat) : Bool :=
 
 /-! `WebPaint.cull`: curves off the canvas made lines and long curves cut draw the same
 pixels (the CPU raster of the backend, with and without it). -/
-private def cullPixels (svg : String) : Option Nat :=
+private def cullPixels (svg : String) (w : Nat := 80) (h : Nat := 60) : Option Nat :=
   let html := "<!doctype html><style>body{margin:0}</style>" ++ svg
-  match WebDocument.layOut ⟨html,WebDocument.layoutRequest (json []),80,60,0,[],[],(none,none)⟩ with
+  match WebDocument.layOut ⟨html,WebDocument.layoutRequest (json []),w,h,0,[],[],(none,none)⟩ with
   | .error _ => none
   | .ok laid =>
     match WebRenderSVG.toScene laid.scene, WebRenderSVG.toScene (WebPaint.cull laid.scene) with
@@ -681,5 +681,7 @@ private def bigCurves (k : String) : String :=
 #guard cullPixels (bigCurves "8") == some 0
 #guard cullPixels (bigCurves "40") == some 0
 #guard cullPixels (bigCurves "200") == some 0
+-- The svg in a window larger than it: what is outside its box is not drawn.
+#guard cullPixels (bigCurves "40") 160 120 == some 0
 
 
