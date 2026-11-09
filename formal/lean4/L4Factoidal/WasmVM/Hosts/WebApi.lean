@@ -801,23 +801,53 @@ def jwkMember : String × JSON.Json → String × JwkVal
   | (n, .string x) => (n, .str x)
   | (n, _) => (n, .str "")
 
-/-- A key the host made, as a Lean key (attributes only) with the host's number. -/
-def hostKey (j : JSON.Json) : Option Key := do
-  let h ← match j.field? "h" with | some (.number n) => n.toNat? | _ => none
-  let type ← match jstr j "type" with
-    | "secret" => some KeyType.secret | "public" => some .publicKey | "private" => some .privateKey | _ => none
+/-- The Lean key for the host's key `h`: attributes only, no bytes. -/
+def hostKeyOf? (h : Nat) (type : KeyType) (a : Alg) (j : JSON.Json) : Key :=
   let alg := (j.field? "algorithm").getD .null
-  let a ← algOf? (jstr alg "name")
   let hash := match alg.field? "hash" with | some hj => Crypto.WebHacl.HashAlg.ofName? (jstr hj "name") | none => none
   let us := match j.field? "usages" with
     | some (.array xs) => xs.filterMap fun x => match x with | .string u => Usage.ofName? u | _ => none
     | _ => []
   let pe := match alg.field? "publicExponent" with
     | some (.string b) => (unb64? b).getD .empty | _ => .empty
-  return { type, extractable := j.field? "extractable" == some (.bool true),
-           algo := { alg := a, hash, length := jnat alg "length", curve := jstr alg "namedCurve",
-                     modulusLength := jnat alg "modulusLength", publicExponent := pe },
-           usages := us, host := some h }
+  { type, extractable := j.field? "extractable" == some (.bool true),
+    algo := { alg := a, hash, length := jnat alg "length", curve := jstr alg "namedCurve",
+              modulusLength := jnat alg "modulusLength", publicExponent := pe },
+    usages := us, host := some h }
+
+def hostKeyType? (j : JSON.Json) : Option KeyType :=
+  match jstr j "type" with
+  | "secret" => some KeyType.secret | "public" => some .publicKey | "private" => some .privateKey | _ => none
+
+def hostNum? (j : JSON.Json) : Option Nat := match j.field? "h" with | some (.number n) => n.toNat? | _ => none
+
+/-- A key the host made, as a Lean key (attributes only) with the host's number. -/
+def hostKey (j : JSON.Json) : Option Key := do
+  let h ← hostNum? j
+  let type ← hostKeyType? j
+  let a ← algOf? (jstr ((j.field? "algorithm").getD .null) "name")
+  return hostKeyOf? h type a j
+
+/-- A key the host made holds no key bytes in Lean: its secret is empty, it has no RSA
+parts, and it names the host's key. So the store of a host-mode session (whose keys all
+come from here, or are `cloneKey` copies of these) has no Lean-held secret, and no request
+to the host can carry one: a request is built from the page's arguments, key attributes
+and host numbers (`hostPlan`). -/
+theorem hostKey_no_secret {j : JSON.Json} {k : Key} (h : hostKey j = some k) :
+    k.secret = Crypto.WebHacl.Secret.empty ∧ k.rsa = none ∧ k.host.isSome := by
+  unfold hostKey at h
+  cases h1 : hostNum? j with
+  | none => simp [h1] at h
+  | some n =>
+    cases h2 : hostKeyType? j with
+    | none => simp [h1, h2] at h
+    | some t =>
+      cases h3 : algOf? (jstr ((j.field? "algorithm").getD .null) "name") with
+      | none => simp [h1, h2, h3] at h
+      | some a =>
+        simp only [h1, h2, h3, Option.bind_eq_bind, Option.bind_some, Option.pure_def, Option.some.injEq] at h
+        subst h
+        exact ⟨rfl, rfl, rfl⟩
 
 /-- The host answered request `id`: Lean makes the page's answer and names the callback to
 run (queued as a task by the caller). -/
@@ -1184,6 +1214,13 @@ private def chargedCode (s : State) (xs : List String) : Int × Nat :=
     "a:iterations", "600000", "a:salt", "s"].map (·.toUTF8)))).getD #[]) |> fun w => 600000 * 4 ≤ w && w ≤ maxOpWork)
 #guard (chargedCode {} ["generateKey", "extractable", "0", "usage", "sign", "a:name", "HMAC", "a:hash", "SHA-256", "a:length", "4294967295"]).1 == -5
 #guard (chargedCode {} ["generateKey", "extractable", "0", "usage", "sign", "a:name", "HMAC", "a:hash", "SHA-256", "a:length", "512"]).1 == -6
+-- A dropped handle (op 42) is an InvalidAccessError, never another key; a clone keeps
+-- the original's extractable flag and usages.
+#guard (subtleRun { keys := { next := 5 } } ["exportKey", "format", "raw", "key", "3"]).2 == "error -25"
+#guard (subtleRun { keys := { next := 5 } } ["exportKey", "format", "raw", "key", "9"]).2 == "error -20"
+#guard (let (s, _) := subtleRun {} (hmacImport "0"); (subtleRun s ["cloneKey", "key", "1"]).2) == "key|2|secret|0|sign|HMAC|2|hash|SHA-256|length|48"
+#guard (let (s, _) := subtleRun {} (hmacImport "0"); let (s, _) := subtleRun s ["cloneKey", "key", "1"]
+  (subtleRun s ["exportKey", "format", "raw", "key", "2"]).2) == "error -25"
 #guard extractCharset "text/html; charset=EUC-JP" == some "EUC-JP"
 #guard extractCharset "text/html; CHARSET = 'big5' " == some "big5"
 #guard extractCharset "charset" == none

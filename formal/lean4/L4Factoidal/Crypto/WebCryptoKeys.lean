@@ -304,10 +304,89 @@ def KeyStore.add (s : KeyStore) (k : Key) : Res (KeyStore × Nat) :=
   if s.keys.size ≥ maxKeys || s.bytes + k.footprint > maxStoreBytes then .error .quota else
   .ok ({ keys := s.keys.insert s.next k, next := s.next + 1, bytes := s.bytes + k.footprint }, s.next)
 
+/-- The key a handle names. A handle the store gave out once but no longer holds (the page's
+CryptoKey was collected and the key dropped) is an InvalidAccessError; a number it never
+gave out a TypeError (no CryptoKey of the page can carry one). -/
 def keyOf (s : KeyStore) (a : Args) (field : String) : Res Key :=
   match a.nat? field with
-  | some h => match s.keys[h]? with | some k => .ok k | none => .error .typeError
+  | some h => match s.keys[h]? with
+    | some k => .ok k
+    | none => if h < s.next then .error .invalidAccess else .error .typeError
   | none => .error .typeError
+
+/-! ### Handles: given out once, never again -/
+
+/-- Every handle in the store was given out: it is below `next`. -/
+def KeyStore.Wf (s : KeyStore) : Prop := ∀ h, h ∈ s.keys → h < s.next
+
+theorem KeyStore.wf_empty : ({} : KeyStore).Wf := by
+  intro h hh; simp at hh
+
+/-- `add` gives the handle `next` and moves `next` on by one. -/
+theorem KeyStore.add_handle {s s' : KeyStore} {k : Key} {h : Nat} (e : s.add k = .ok (s', h)) :
+    h = s.next ∧ s'.next = s.next + 1 ∧ s'.keys = s.keys.insert s.next k := by
+  unfold KeyStore.add at e
+  split at e
+  · cases e
+  · simp only [Except.ok.injEq, Prod.mk.injEq] at e
+    obtain ⟨rfl, rfl⟩ := e
+    exact ⟨rfl, rfl, rfl⟩
+
+/-- A handle `add` gives was not in the store: a fresh handle never names an older key. -/
+theorem KeyStore.add_fresh {s s' : KeyStore} {k : Key} {h : Nat} (wf : s.Wf) (e : s.add k = .ok (s', h)) :
+    h ∉ s.keys := by
+  obtain ⟨rfl, -, -⟩ := KeyStore.add_handle e
+  intro hm; exact Nat.lt_irrefl _ (wf _ hm)
+
+theorem KeyStore.add_wf {s s' : KeyStore} {k : Key} {h : Nat} (wf : s.Wf) (e : s.add k = .ok (s', h)) : s'.Wf := by
+  obtain ⟨-, hn, hk⟩ := KeyStore.add_handle e
+  intro x hx
+  rw [hk, Std.HashMap.mem_insert] at hx
+  rw [hn]
+  rcases hx with hx | hx
+  · have : s.next = x := by simpa using hx
+    omega
+  · have := wf x hx; omega
+
+/-- Dropping a key keeps `next`: its handle is not given out again. -/
+theorem KeyStore.erase_wf {s : KeyStore} (wf : s.Wf) (h : Nat) : ({ s with keys := s.keys.erase h } : KeyStore).Wf := by
+  intro x hx
+  rw [Std.HashMap.mem_erase] at hx
+  exact wf x hx.2
+
+/-- An operation on a handle that was dropped fails with InvalidAccessError. -/
+theorem keyOf_dropped {s : KeyStore} {a : Args} {f : String} {h : Nat} (ha : a.nat? f = some h)
+    (hlt : h < s.next) (hn : h ∉ s.keys) : keyOf s a f = .error .invalidAccess := by
+  unfold keyOf
+  rw [ha]
+  have : s.keys[h]? = none := Std.HashMap.getElem?_eq_none hn
+  simp [this, hlt]
+
+/-- Copy key `h` of the store `src` into the store `dst` (a structured clone of a CryptoKey
+into another session): the copy gets `dst`'s next handle, whatever `h` is, so no handle
+number crosses between sessions. -/
+def KeyStore.cloneInto (src dst : KeyStore) (h : Nat) : Res (KeyStore × Nat) := do
+  let some k := src.keys[h]? | throw (if h < src.next then .invalidAccess else .typeError)
+  dst.add k
+
+/-- The copy's handle is the receiving store's next one: no number of the sending session. -/
+theorem KeyStore.cloneInto_handle {src dst dst' : KeyStore} {h h' : Nat} (e : src.cloneInto dst h = .ok (dst', h')) :
+    h' = dst.next := by
+  unfold KeyStore.cloneInto at e
+  cases hk : src.keys[h]? with
+  | none => simp [hk] at e
+  | some k => simp only [hk] at e; exact (KeyStore.add_handle e).1
+
+/-- A clone is the same key: never more extractable, never more usages (exactly the same). -/
+theorem KeyStore.cloneInto_same {src dst dst' : KeyStore} {h h' : Nat} (e : src.cloneInto dst h = .ok (dst', h')) :
+    ∃ k, src.keys[h]? = some k ∧ dst'.keys[h']? = some k := by
+  unfold KeyStore.cloneInto at e
+  cases hk : src.keys[h]? with
+  | none => simp [hk] at e
+  | some k =>
+    simp only [hk] at e
+    obtain ⟨rfl, -, hkeys⟩ := KeyStore.add_handle e
+    exact ⟨k, rfl, by rw [hkeys]; simp⟩
 
 /-- The random bytes an operation needs, drawn by the caller (`Hosts.WebApi.randomBytes`,
 the session's HMAC_DRBG) before the operation runs. -/
@@ -381,6 +460,79 @@ theorem readTlv_tlv (tag : UInt8) (c rest : List UInt8) (h : c.length < 65536) :
       simp
       omega
 
+/-- DER canonical uniqueness: what `readTlv` accepts is exactly `tlv` of what it answers. -/
+theorem readTlv_eq_tlv {b : List UInt8} {t : UInt8} {c r : List UInt8} (h : readTlv b = some (t, c, r)) :
+    b = tlv t c ++ r := by
+  match b, h with
+  | tag :: l0 :: rest, h =>
+    simp only [readTlv] at h
+    by_cases h0 : l0 < 128
+    · rw [if_pos h0] at h
+      split at h
+      · rename_i hle
+        simp only [Option.some.injEq, Prod.mk.injEq] at h
+        obtain ⟨rfl, rfl, rfl⟩ := h
+        have hl : (rest.take l0.toNat).length = l0.toNat := by simp; omega
+        have h0' : l0.toNat < 128 := by rw [UInt8.lt_iff_toNat_lt] at h0; exact h0
+        simp only [tlv, derLen, hl, if_pos h0', List.cons_append]
+        simp [Nat.toUInt8, UInt8.ofNat]
+      · cases h
+    · rw [if_neg h0] at h
+      by_cases h1 : l0 == 0x81
+      · rw [if_pos h1] at h
+        have e1 : l0 = 0x81 := by simpa using h1
+        match rest, h with
+        | l1 :: r', h =>
+          simp only at h
+          split at h
+          · rename_i hc
+            simp only [Bool.and_eq_true, decide_eq_true_eq] at hc
+            simp only [Option.some.injEq, Prod.mk.injEq] at h
+            obtain ⟨rfl, rfl, rfl⟩ := h
+            have hl : (r'.take l1.toNat).length = l1.toNat := by simp; omega
+            have hge : 128 ≤ l1.toNat := by have := hc.1; exact (UInt8.le_iff_toNat_le.mp this)
+            have hlt : l1.toNat < 256 := l1.toNat_lt
+            simp only [tlv, derLen, hl, e1, List.cons_append]
+            rw [if_neg (by omega), if_pos hlt]
+            simp [Nat.toUInt8, UInt8.ofNat]
+          · cases h
+      · rw [if_neg h1] at h
+        by_cases h2 : l0 == 0x82
+        · rw [if_pos h2] at h
+          have e2 : l0 = 0x82 := by simpa using h2
+          match rest, h with
+          | l1 :: l2 :: r', h =>
+            simp only at h
+            split at h
+            · rename_i hc
+              simp only [Bool.and_eq_true, decide_eq_true_eq] at hc
+              simp only [Option.some.injEq, Prod.mk.injEq] at h
+              obtain ⟨rfl, rfl, rfl⟩ := h
+              have hl : (r'.take (l1.toNat * 256 + l2.toNat)).length = l1.toNat * 256 + l2.toNat := by simp; omega
+              have b1 : l1.toNat < 256 := l1.toNat_lt
+              have b2 : l2.toNat < 256 := l2.toNat_lt
+              simp only [tlv, derLen, hl, e2, List.cons_append]
+              rw [if_neg (by omega), if_neg (by omega)]
+              have q1 : (l1.toNat * 256 + l2.toNat) / 256 = l1.toNat := by omega
+              have q2 : (l1.toNat * 256 + l2.toNat) % 256 = l2.toNat := by omega
+              rw [q1, q2]
+              simp [Nat.toUInt8, UInt8.ofNat]
+            · cases h
+        · rw [if_neg h2] at h; cases h
+
+theorem expect_eq_tlv {tag : UInt8} {b c r : List UInt8} (h : expect tag b = some (c, r)) : b = tlv tag c ++ r := by
+  unfold expect at h
+  split at h
+  · rename_i t c' r' hr
+    split at h
+    · rename_i ht
+      simp only [Option.some.injEq, Prod.mk.injEq] at h
+      obtain ⟨rfl, rfl⟩ := h
+      have : t = tag := by simpa using ht
+      subst this; exact readTlv_eq_tlv hr
+    · cases h
+  · cases h
+
 def oidEcPublicKey : List UInt8 := [0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01]
 def oidP256 : List UInt8 := [0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07]
 def oidP384 : List UInt8 := [0x2b, 0x81, 0x04, 0x00, 0x22]
@@ -412,6 +564,25 @@ def readSpki (b : List UInt8) : Option (List UInt8 × Option (List UInt8) × Lis
   | 0 :: key => return (oid, params, key)
   | _ => none
 
+theorem readAlgId_eq {c oid : List UInt8} {p : Option (List UInt8)} (h : readAlgId c = some (oid, p)) :
+    c = tlv 0x06 oid ++ p.getD [] := by
+  unfold readAlgId at h
+  cases he : expect 0x06 c with
+  | none => simp [he] at h
+  | some x =>
+    obtain ⟨o, r⟩ := x
+    have hc := expect_eq_tlv he
+    simp only [he, Option.bind_eq_bind, Option.bind_some] at h
+    by_cases hr : r.isEmpty
+    · simp only [hr, if_true, Option.pure_def, Option.some.injEq, Prod.mk.injEq] at h
+      obtain ⟨rfl, rfl⟩ := h
+      simp at hr; subst hr; simpa using hc
+    · simp only [hr, Bool.false_eq_true, if_false] at h
+      split at h
+      · simp only [Option.pure_def, Option.some.injEq, Prod.mk.injEq] at h
+        obtain ⟨rfl, rfl⟩ := h; simpa using hc
+      · cases h
+
 /-- PrivateKeyInfo / OneAsymmetricKey (RFC 5208, RFC 5958): the algorithm and the
 privateKey OCTET STRING's contents. After it only `[0]` attributes, and in a v2 key a
 `[1]` public key, are allowed, and nothing else (cryptosec finding F8: any bytes were
@@ -433,6 +604,48 @@ def readPkcs8 (b : List UInt8) : Option (List UInt8 × Option (List UInt8) × Li
 
 def spkiOf (oid : List UInt8) (params : List UInt8) (key : List UInt8) : List UInt8 :=
   tlv 0x30 (tlv 0x30 (tlv 0x06 oid ++ params) ++ tlv 0x03 (0 :: key))
+
+/-- SPKI canonical uniqueness: an SPKI the reader accepts is the one `spkiOf` writes for what it
+read, so one key has one SPKI encoding. -/
+theorem readSpki_eq {b oid key : List UInt8} {p : Option (List UInt8)} (h : readSpki b = some (oid, p, key)) :
+    b = spkiOf oid (p.getD []) key := by
+  unfold readSpki at h
+  cases h1 : expect 0x30 b with
+  | none => simp [h1] at h
+  | some x1 =>
+    obtain ⟨seq, rest⟩ := x1
+    simp only [h1, Option.bind_eq_bind, Option.bind_some] at h
+    by_cases hr : rest.isEmpty
+    · simp only [hr, Bool.not_true, Bool.false_eq_true, if_false] at h
+      cases h2 : expect 0x30 seq with
+      | none => simp [h2] at h
+      | some x2 =>
+        obtain ⟨aid, r⟩ := x2
+        simp only [h2, Option.bind_some] at h
+        cases h3 : expect 0x03 r with
+        | none => simp [h3] at h
+        | some x3 =>
+          obtain ⟨bits, r2⟩ := x3
+          simp only [h3, Option.bind_some] at h
+          by_cases hr2 : r2.isEmpty
+          · simp only [hr2, Bool.not_true, Bool.false_eq_true, if_false] at h
+            cases h4 : readAlgId aid with
+            | none => simp [h4] at h
+            | some x4 =>
+              obtain ⟨o, pp⟩ := x4
+              simp only [h4, Option.bind_some] at h
+              split at h
+              · rename_i k
+                simp only [Option.pure_def, Option.some.injEq, Prod.mk.injEq] at h
+                obtain ⟨rfl, rfl, rfl⟩ := h
+                have e1 := expect_eq_tlv h1; have e2 := expect_eq_tlv h2; have e3 := expect_eq_tlv h3
+                have e4 := readAlgId_eq h4
+                simp at hr hr2; subst hr hr2
+                simp only [List.append_nil] at e1 e3
+                rw [e1, e2, e3, e4]; simp [spkiOf]
+              · cases h
+          · simp [hr2] at h
+    · simp [hr] at h
 
 def pkcs8Of (oid : List UInt8) (params : List UInt8) (pk : List UInt8) : List UInt8 :=
   tlv 0x30 (tlv 0x02 [0] ++ tlv 0x30 (tlv 0x06 oid ++ params) ++ tlv 0x04 pk)
@@ -543,6 +756,66 @@ def okpPublic? : Alg → ByteArray → Option ByteArray
   | .ed25519, sk => ed25519Public? sk
   | _, sk => x25519Public? sk
 
+/-- The point of an EC SPKI (§23.7, §24.4 "import key", spki steps): DataError unless the
+algorithm is id-ecPublicKey with a named curve; NotSupportedError for P-384 and P-521
+(HACL* has only P-256); DataError when the OID's curve is not the namedCurve asked for. -/
+def ecSpkiPoint (data : ByteArray) (curve : String) : Res ByteArray :=
+  match readSpki data.toList with
+  | some (oid, some p, key) =>
+    if oid = oidEcPublicKey then
+      match expect 0x06 p with
+      | some (poid, _) =>
+        match curveOfOid? poid with
+        | some c =>
+          if c = "P-256" then (if c = curve then .ok (ByteArray.mk key.toArray) else .error .data)
+          else if c = "P-384" ∨ c = "P-521" then .error .notSupported else .error .data
+        | none => .error .data
+      | none => .error .data
+    else .error .data
+  | _ => .error .data
+
+/-- An EC SPKI is read only when its curve OID names the namedCurve the page asked for. -/
+theorem import_curve_matches_oid {data : ByteArray} {curve : String} {pt : ByteArray}
+    (h : ecSpkiPoint data curve = .ok pt) :
+    ∃ p key poid rest, readSpki data.toList = some (oidEcPublicKey, some p, key) ∧
+      expect 0x06 p = some (poid, rest) ∧ curveOfOid? poid = some curve ∧ curve = "P-256" ∧
+      pt = ByteArray.mk key.toArray := by
+  unfold ecSpkiPoint at h
+  split at h
+  · rename_i oid p key hs
+    split at h
+    · rename_i ho
+      split at h
+      · rename_i poid rest he
+        split at h
+        · rename_i c hc
+          split at h
+          · rename_i h256
+            split at h
+            · rename_i hcur
+              cases h; subst ho; subst hcur
+              exact ⟨p, key, poid, rest, hs, he, hc, h256, rfl⟩
+            · cases h
+          · split at h <;> cases h
+        · cases h
+      · cases h
+    · cases h
+  · cases h
+
+/-- Every point `decodePoint?` gives passed HACL*'s check: `p256ValidPublic` (on the curve,
+not infinity, coordinates below p), or HACL*'s decompression, which checks the same. -/
+theorem decodePoint?_valid {b xy : ByteArray} (h : decodePoint? b = some xy) :
+    p256ValidPublic xy = true ∨ p256Decompress? b = some xy := by
+  unfold decodePoint? at h
+  split at h
+  · simp only at h
+    split at h
+    · rename_i hv; cases h; exact Or.inl hv
+    · cases h
+  · split at h
+    · exact Or.inr h
+    · cases h
+
 /-- ECDSA and ECDH (§23.7, §24.4 "import key"). -/
 def importEc (alg : Alg) (format : String) (data : ByteArray) (j : Args) (curve : String)
     (us : List Usage) (extractable : Bool) : Res Made := do
@@ -557,16 +830,7 @@ def importEc (alg : Alg) (format : String) (data : ByteArray) (j : Args) (curve 
     if format == "raw" || format == "raw-public" then
       if !(curve == "P-256" || curve == "P-384" || curve == "P-521") then throw .data
     checkUsages pubU us
-    let point ← if format == "spki" then do
-        let some (oid, params, key) := readSpki data.toList | throw .data
-        if oid != oidEcPublicKey then throw .data
-        let some p := params | throw .data
-        let some (poid, _) := expect 0x06 p | throw .data
-        let some c := curveOfOid? poid | throw .data
-        haveCurve c
-        if c != curve then throw .data
-        pure (ByteArray.mk key.toArray)
-      else do haveCurve curve; pure data
+    let point ← if format == "spki" then ecSpkiPoint data curve else do haveCurve curve; pure data
     let some xy := decodePoint? point | throw .data
     return { type := .publicKey, algo := { alg, curve }, pub := xy }
   | "pkcs8" =>
@@ -1224,7 +1488,9 @@ theorem keyOf_blind (st : KeyStore) (a : Args) (f : String) :
   | none => rfl
   | some h =>
     simp only [Std.HashMap.getElem?_map]
-    cases st.keys[h]? <;> rfl
+    cases st.keys[h]? with
+    | some k => rfl
+    | none => simp only [Option.map_none]; split <;> rfl
 
 theorem checkUsages_ok {allowed us : List Usage} (h : checkUsages allowed us = .ok ()) :
     ∀ u ∈ us, u ∈ allowed := by
@@ -1286,6 +1552,79 @@ theorem importKey_usages {n : String} {p : Args} {f : String} {d : ByteArray} {j
     rw [hm] at h
     have := finishKey_ok h
     exact ⟨this.1, this.2.1, this.2.2.2⟩
+
+/-! ## Noninterference: a key's secret bytes reach an answer only through its usages
+
+`k'` is `k` with other secret bytes (its `secret`, and RSA's private parts) and nothing else
+changed. The theorems below say that an operation whose usage the key lacks answers the
+same for `k` and `k'`, and so does exportKey for a key that is not extractable: the bytes
+do not influence the answer, its error or its absence. The declassification policy
+(record, "Noninterference") is the converse: bytes reach answers only through
+  * exportKey, and wrapKey's export, of an extractable key (the bytes themselves);
+  * an operation with a usage the key has: sign, verify (HMAC), encrypt, decrypt,
+    deriveBits, deriveKey, wrapKey (as the wrapping key), unwrapKey (as the unwrapping key),
+    whose answers are the primitive's outputs;
+  * lengths, which are public. -/
+
+/-- `k'` differs from `k` at most in its secret bytes. -/
+structure Key.SameButSecret (k k' : Key) : Prop where
+  type : k'.type = k.type
+  extractable : k'.extractable = k.extractable
+  algo : k'.algo = k.algo
+  usages : k'.usages = k.usages
+  pub : k'.pub = k.pub
+  rsaPub : k'.rsa.map RsaParts.public = k.rsa.map RsaParts.public
+
+theorem keyFor_lacks {k : Key} {a : String} {u : Usage} (hu : k.usages.contains u = false) :
+    keyFor k a u = .error .invalidAccess := by
+  unfold keyFor; rw [if_pos (by simp only [hu, Bool.not_false, Bool.or_true])]
+
+theorem keyFor_same {k k' : Key} (hs : k.SameButSecret k') (a : String) (u : Usage) : keyFor k' a u = keyFor k a u := by
+  unfold keyFor; rw [hs.algo, hs.usages]
+
+theorem sign_ni {k k' : Key} (hs : k.SameButSecret k') (hu : k.usages.contains .sign = false)
+    (a : String) (p : Args) (d r : ByteArray) : sign a p k' d r = sign a p k d r := by
+  have h1 : keyFor k a .sign = .error .invalidAccess := keyFor_lacks hu
+  have h2 : keyFor k' a .sign = .error .invalidAccess := by rw [keyFor_same hs]; exact h1
+  unfold sign; rw [h1, h2]; rfl
+
+theorem verify_ni {k k' : Key} (hs : k.SameButSecret k') (hu : k.usages.contains .verify = false)
+    (a : String) (p : Args) (sig d : ByteArray) : verify a p k' sig d = verify a p k sig d := by
+  have h1 : keyFor k a .verify = .error .invalidAccess := keyFor_lacks hu
+  have h2 : keyFor k' a .verify = .error .invalidAccess := by rw [keyFor_same hs]; exact h1
+  unfold verify; rw [h1, h2]; rfl
+
+theorem crypt_ni {k k' : Key} (hs : k.SameButSecret k') (e : Bool)
+    (hu : k.usages.contains (if e then .encrypt else .decrypt) = false)
+    (a : String) (p : Args) (d r : ByteArray) : crypt e a p k' d r = crypt e a p k d r := by
+  have h1 : keyFor k a (if e then .encrypt else .decrypt) = .error .invalidAccess := keyFor_lacks hu
+  have h2 : keyFor k' a (if e then .encrypt else .decrypt) = .error .invalidAccess := by rw [keyFor_same hs]; exact h1
+  unfold crypt; rw [h1, h2]; rfl
+
+theorem deriveBits_ni {k k' : Key} (hs : k.SameButSecret k') (hu : k.usages.contains .deriveBits = false)
+    (a : String) (p : Args) (len : Option Nat) (st : KeyStore) : deriveBits a p k' len st = deriveBits a p k len st := by
+  have h1 : keyFor k a .deriveBits = .error .invalidAccess := keyFor_lacks hu
+  have h2 : keyFor k' a .deriveBits = .error .invalidAccess := by rw [keyFor_same hs]; exact h1
+  unfold deriveBits; rw [h1, h2]; rfl
+
+theorem exportKey_ni {k k' : Key} (hs : k.SameButSecret k') (hx : k.extractable = false) (f : String) :
+    exportKey k' f = exportKey k f := by
+  have hx' : k'.extractable = false := by rw [hs.extractable]; exact hx
+  unfold exportKey; rw [hs.algo, hx, hx']; simp
+
+/-! ## Algorithms: a key is used only with its own algorithm -/
+
+/-- Each key operation that answers ran on a key of the algorithm the page named (and with
+the operation's usage): `sign_usage`, `verify_usage`, `deriveBits_usage`, `crypt_usage`.
+Within the operation the branch is chosen by the KEY's algorithm (`match k.algo.alg`), so
+the name the page gave and the key's algorithm are one. -/
+theorem op_algo_matches {a : String} {p : Args} {k : Key} {d r out : ByteArray}
+    (h : sign a p k d r = .ok out) : k.algo.alg.name = a := (sign_usage h).1
+
+/-- `Alg.name` is injective: one name, one algorithm (so `op_algo_matches` pins the key's
+algorithm to the registered one). -/
+theorem Alg.name_injective {a b : Alg} (h : a.name = b.name) : a = b := by
+  cases a <;> cases b <;> first | rfl | (simp [Alg.name] at h)
 
 /-! ## Checks (pure parts; the externs do not run in the interpreter) -/
 
