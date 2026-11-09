@@ -46,6 +46,7 @@ import L4Factoidal.WasmVM.Tests.Proposals
 import L4Factoidal.WasmVM.Tests.Wasi
 import L4Factoidal.WasmVM.Tests.DomCommands
 import L4Factoidal.WasmVM.Tests.LeanJSPage
+import L4Factoidal.WasmVM.Tests.LeanJSWorkers
 import L4Factoidal.WasmVM.Tests.Aot
 
 /-
