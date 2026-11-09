@@ -92,6 +92,20 @@ for U+0308 on n and ı.
   (`labs/demos/foafnaut/SVG.lean`), and the same bounds in `Float` pixels (no order lemmas
   for `Float`); the pixel tests check them.
 
-## 5. Measurements
+## 5. Measurements (2026-11-09, Apple silicon laptop, native library)
 
-See the hand-back of the showoff agent (2026-11-09) and `zoom_bench.ts`.
+- `zoom_bench.ts` (a group with "Spın̈al Tap" in Fruktur, 80 px, scale 1 → 40 → 1 over
+  120 frames, engine time per frame): a script's `setAttribute('transform')`: before p50
+  11 to 18 ms, p95 14 to 24 ms, max 15 to 27 ms, 117 layouts; after p50 2.5, p95 3.3,
+  max 6.0 ms, 0 layouts, 120 paint-only frames. `<animateTransform>`: before, the page
+  was refused ("unsupported attribute on animateTransform"); after p50 2.5, p95 3.3,
+  max 3.4 ms, 0 layouts.
+- `run_html.ts --watch-sweep 6` on the animated page (offscreen window): 742 frames in
+  6 s, engine time p50 3.5, p95 4.3, max 7.9 ms; whole frame p50 5.6, p95 15.5 ms;
+  `--check-pixels`: 43 frames from scale 1 to 40, no GPU and Lean pixel difference.
+- Scene data at scale 1, 40 and 200: 5,228, 2,284 and 2,680 floats (`WebPaint.cull`).
+- Timers and clicks (scripted transforms of 12 circles): engine time per frame p50 13.4
+  → 12.2 ms. Layout is gone from these frames; the band compile of the whole page is what
+  is left. A compile of only the primitives that changed (damage rectangles from the ink
+  bounds of section 4) is the next step.
+- Hostile text: the Zalgo fixture draws; 10,000 marks on one base shape in linear time.
