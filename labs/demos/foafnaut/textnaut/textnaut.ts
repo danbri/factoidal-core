@@ -3,7 +3,7 @@
 // this host maps its text to terminal cells and terminal bytes.
 import { loadHTML, type HTMLEngine, type ScriptTurn } from "../native_html_engine.ts";
 import { inputURL, loadFontFile, navigationURL, prepareHTML, setScriptHost } from "../native_html_document.ts";
-import { barRow, CELL_HEIGHT, CELL_WIDTH, dumpText, fillerRow, type GlyphRun, type Grid, layoutGrid, type Level, type LinkRow, readPaint, sanitizeText, styledRow } from "./grid.ts";
+import { barRow, type BigText, bodySize, CELL_HEIGHT, CELL_WIDTH, decorateGrid, displayRow, dumpText, fillerRow, type GlyphRun, type Grid, layoutGrid, type Level, type LinkRow, readPaint, sanitizeText } from "./grid.ts";
 import { useWasm } from "./web-render-select.mjs";
 
 export type Options = { cols: number; rows: number; scripts: boolean; liberal: boolean; verbose: boolean };
@@ -39,13 +39,7 @@ function pageViewport(options: Options, charWidth = CELL_WIDTH) {
 }
 
 /** Bitmap advance of the font size that has the most characters: one cell is one character of the body text. */
-function bodyCharWidth(runs: GlyphRun[]): number {
-  const count = new Map<number, number>();
-  for (const run of runs) count.set(run.size, (count.get(run.size) ?? 0) + run.text.length);
-  let best = 16, most = 0;
-  for (const [size, n] of count) if (n > most && size > 0) { best = size; most = n; }
-  return best * CELL_WIDTH / 16;
-}
+const bodyCharWidth = (runs: GlyphRun[]): number => bodySize(runs) * CELL_WIDTH / 16;
 
 /** Run page scripts on the engine's BubblePopJS. Returns false when this engine has none. */
 export function enableScripts(engine: HTMLEngine, options: Options): boolean {
@@ -90,7 +84,7 @@ export type Rendered = { doc: Doc; grid: Grid; charWidth: number; ms: { load: nu
 /** Lay out a loaded page. No fetch and no script runs. With no `charWidth`, a page whose body text is not 16 px is laid out twice. */
 export async function layoutDoc(doc: Doc, options: Options, charWidth?: number) {
   const t0 = performance.now();
-  type Frame = Parameters<typeof readPaint>[0] & { webRender: { glyphRuns: GlyphRun[]; links: LinkRow[] } };
+  type Frame = Parameters<typeof readPaint>[0] & { webRender: { glyphRuns: GlyphRun[]; links: LinkRow[]; boxes: number[][] } };
   const compile = async (width: number) => {
     const view = pageViewport(options, width);
     return { view, artifact: await doc.compile(view.width, view.height) as unknown as Frame };
@@ -104,7 +98,7 @@ export async function layoutDoc(doc: Doc, options: Options, charWidth?: number) 
   const t1 = performance.now();
   const grid = layoutGrid({
     runs: artifact.webRender.glyphRuns, links: artifact.webRender.links as LinkRow[], cols: view.cols, cellWidth: view.cellWidth, cellHeight: view.cellHeight, trimLeft: true,
-    paint: readPaint(artifact), resolve: (href) => new URL(href, doc.baseURL).href,
+    paint: readPaint(artifact), boxes: artifact.webRender.boxes, resolve: (href) => new URL(href, doc.baseURL).href,
   });
   return { grid, charWidth: width, layout: t1 - t0, cells: performance.now() - t1 };
 }
@@ -120,7 +114,7 @@ export async function renderPage(engine: HTMLEngine, url: string, options: Optio
 
 function parseArgs(args: string[]) {
   const out = { width: 0, dump: false, engine: undefined as string | undefined, wasm: false, font: undefined as string | undefined,
-    strict: false, scripts: true, timing: false, verbose: false, colour: undefined as Level | undefined, input: undefined as string | undefined };
+    strict: false, scripts: true, timing: false, verbose: false, colour: undefined as Level | undefined, input: undefined as string | undefined, big: "auto" as BigMode };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === "--width") out.width = Number(args[++i]);
@@ -136,6 +130,10 @@ function parseArgs(args: string[]) {
       const level = { none: 0, "16": 1, "256": 2, "24bit": 3 }[args[++i]];
       if (level === undefined) throw new Error("--colour must be none, 16, 256 or 24bit");
       out.colour = level as Level;
+    } else if (a === "--big-headings" || a.startsWith("--big-headings=")) {
+      const mode = a.includes("=") ? a.slice(a.indexOf("=") + 1) : args[++i];
+      if (mode !== "auto" && mode !== "on" && mode !== "off") throw new Error("--big-headings must be auto, on or off");
+      out.big = mode;
     } else if (a.startsWith("--")) throw new Error(`unknown option ${a}`);
     else if (out.input === undefined) out.input = a;
     else throw new Error("give one URL or file");
@@ -183,10 +181,16 @@ class Input {
   }
 }
 
-export type Caps = { level: Level; osc8: boolean; sync: boolean; utf8: boolean; version: string };
+export type BigMode = "auto" | "on" | "off";
+export type Caps = { level: Level; osc8: boolean; sync: boolean; utf8: boolean; version: string; big: BigText };
 
-/** What the environment and the terminal's own answers say. No answer means not supported. */
-export function capabilities(env: (name: string) => string | undefined, answer: string, forced?: Level): Caps {
+/**
+ * What the environment and the terminal's own answers say. No answer means not supported.
+ * The first cursor position report is the column after an OSC 66 s=2 space (3 when the terminal
+ * has it). The second is the column after CUF 999 on a DECDWL line (half the width when the
+ * terminal has double-width lines). A multiplexer in between is not detected as either.
+ */
+export function capabilities(env: (name: string) => string | undefined, answer: string, forced?: Level, columns = 0, bigMode: BigMode = "auto"): Caps {
   const version = /\x1bP>\|([^\x1b]*)\x1b\\/.exec(answer)?.[1] ?? "";
   const sync = /\x1b\[\?2026;[12]\$y/.test(answer);
   const colourterm = (env("COLORTERM") ?? "").toLowerCase(), term = env("TERM") ?? "";
@@ -197,11 +201,18 @@ export function capabilities(env: (name: string) => string | undefined, answer: 
     (/kitty|wezterm|foot|ghostty|iterm2|alacritty/i.test(version) || /iTerm|WezTerm|vscode|ghostty/i.test(program) ||
       !!env("KITTY_WINDOW_ID") || !!env("WT_SESSION") || vte >= 5000);
   const utf8 = /utf-?8/i.test(env("LC_ALL") || env("LC_CTYPE") || env("LANG") || "");
-  return { level, osc8, sync, utf8, version: sanitizeText(version) };
+  const reports = [...answer.matchAll(/\x1b\[\d+;(\d+)R/g)].map((m) => Number(m[1]));
+  const kitty = reports[0] === 3;
+  const dec = columns > 0 && reports[1] !== undefined && reports[1] < columns && Math.abs(reports[1] - columns / 2) <= 1;
+  const muxed = !!env("TMUX") || term.startsWith("screen");
+  const detected: BigText = muxed ? "none" : kitty ? "kitty" : dec ? "dec" : "none";
+  const big: BigText = bigMode === "off" || level === 0 ? "none" : bigMode === "on" && detected === "none" ? "dec" : detected;
+  return { level, osc8, sync, utf8, version: sanitizeText(version), big };
 }
 
 async function queryTerminal(input: Input, write: (s: string) => void): Promise<string> {
-  write("\x1b[?2026$p\x1b[>0q\x1b[c");
+  // The two probes draw on row 1 of the alternate screen, which the first frame clears.
+  write("\x1b[?2026$p\x1b[>0q\x1b[H\r\x1b]66;s=2; \x1b\\\x1b[6n\x1b[H\x1b[2K\x1b#6\x1b[999C\x1b[6n\x1b#5\x1b[2K\x1b[c");
   let answer = "";
   const end = performance.now() + 300;
   while (performance.now() < end && !/\x1b\[\?[0-9;]*c/.test(answer)) {
@@ -228,19 +239,19 @@ export function keysOf(bytes: Uint8Array): string[] {
 /** Visible characters above a row: a position in the text that a new width keeps. */
 export function charsAbove(grid: Grid, row: number): number {
   let n = 0;
-  for (let r = 0; r < row && r < grid.rows.length; r++) for (const cell of grid.rows[r]) if (cell.c !== " " && cell.w) n++;
+  for (let r = 0; r < row && r < grid.rows.length; r++) for (const cell of grid.rows[r]) if (cell.c !== " " && cell.w && !cell.deco) n++;
   return n;
 }
 export function rowAtChars(grid: Grid, chars: number): number {
   let n = 0;
   for (let r = 0; r < grid.rows.length; r++) {
     if (n >= chars) return r;
-    for (const cell of grid.rows[r]) if (cell.c !== " " && cell.w) n++;
+    for (const cell of grid.rows[r]) if (cell.c !== " " && cell.w && !cell.deco) n++;
   }
   return Math.max(0, grid.rows.length - 1);
 }
 
-async function viewer(run: Engine, first: Rendered, firstURL: string, options: Options, forced?: Level) {
+async function viewer(run: Engine, first: Rendered, firstURL: string, options: Options, forced: Level | undefined, bigMode: BigMode) {
   let writing = "", dead = false;
   const write = (s: string) => { writing += s; };
   const flush = () => {
@@ -266,13 +277,15 @@ async function viewer(run: Engine, first: Rendered, firstURL: string, options: O
   try {
     write("\x1b[?1049h\x1b[?25l\x1b[?7l\x1b[2J");
     flush();
-    const caps = capabilities((name) => Deno.env.get(name), await queryTerminal(input, (s) => { write(s); flush(); }), forced);
-    const blocks = caps.utf8 && caps.level > 0;
+    const answer = await queryTerminal(input, (s) => { write(s); flush(); });
     const size = () => { try { const s = Deno.consoleSize(); return { columns: Math.max(1, s.columns), rows: Math.max(1, s.rows) }; } catch { return screen; } };
     let screen = { columns: first.grid.cols, rows: options.rows + 2 };
     screen = size();
+    const caps = capabilities((name) => Deno.env.get(name), answer, forced, screen.columns, bigMode);
+    const blocks = caps.utf8 && caps.level > 0;
+    const decorated = (grid: Grid) => decorateGrid(grid, { level: caps.level, utf8: caps.utf8, big: caps.big });
 
-    let current = first, top = 0, focus = 0, typed = "", message = "", loading = false, clear = false;
+    let current: Rendered = { ...first, grid: decorated(first.grid) }, top = 0, focus = 0, typed = "", message = "", loading = false, clear = false;
     const history = [firstURL];
     let index = 0, previous: string[] = [];
     let token = 0, abort: AbortController | undefined;
@@ -283,15 +296,16 @@ async function viewer(run: Engine, first: Rendered, firstURL: string, options: O
 
     const draw = () => {
       const lines: string[] = [];
-      const style = { level: caps.level, osc8: caps.osc8, focus, targets: current.grid.targets, width: screen.columns };
+      const style = { level: caps.level, osc8: caps.osc8, focus, targets: current.grid.targets, width: screen.columns, utf8: caps.utf8 };
       if (bars()) {
         const name = blocks ? " \u2593\u2592\u2591 TEXTNAUT \u2591\u2592\u2593 " : " == TEXTNAUT == ";
         const title = sanitizeText(current.doc.title || current.doc.url);
         lines.push(barRow([{ text: name, bold: true }, { text: title }], ` ${loading ? "loading " : ""}${run.name} engine `, screen.columns, caps.level, 280));
       }
       for (let y = 0; y < bodyRows(); y++) {
-        const row = current.grid.rows[top + y];
-        lines.push(row ? styledRow(row, { ...style, row: top + y }) : fillerRow(screen.columns, caps.level, blocks, y));
+        lines.push(current.grid.rows[top + y]
+          ? displayRow(current.grid, top + y, y, bodyRows(), { ...style, row: top + y }, caps.big)
+          : (caps.big === "dec" ? "\x1b#5" : "") + fillerRow(screen.columns, caps.level, blocks, y));
       }
       if (bars()) {
         const total = current.grid.rows.length;
@@ -302,7 +316,7 @@ async function viewer(run: Engine, first: Rendered, firstURL: string, options: O
         lines.push(barRow([{ text: ` ${meter} ${Math.round(shown * 100)}% `, bold: true }], hints, screen.columns, caps.level, 160));
       }
       let changed = "";
-      lines.forEach((line, y) => { if (clear || line !== previous[y]) changed += `\x1b[${y + 1};1H${line}`; });
+      lines.forEach((line, y) => { if (line && (clear || line !== previous[y])) changed += `\x1b[${y + 1};1H${line}`; });
       previous = lines;
       if (!changed && !clear) return;
       write((caps.sync ? "\x1b[?2026h" : "") + (clear ? "\x1b[2J" : "") + changed + (caps.sync ? "\x1b[?2026l" : ""));
@@ -313,7 +327,7 @@ async function viewer(run: Engine, first: Rendered, firstURL: string, options: O
       const chars = charsAbove(current.grid, top);
       try {
         const { grid } = await layoutDoc(current.doc, layoutOptions(), current.charWidth);
-        current = { ...current, grid };
+        current = { ...current, grid: decorated(grid) };
         top = Math.min(lastTop(), rowAtChars(grid, chars));
       } catch (error) { message = `layout refused: ${reason(error)}`; }
       clear = true;
@@ -328,7 +342,7 @@ async function viewer(run: Engine, first: Rendered, firstURL: string, options: O
       message = "";
       renderPage(run.engine, url, layoutOptions(), undefined, controller.signal).then((next) => {
         if (mine !== token) return;
-        current = next; top = 0; focus = 0; clear = true;
+        current = { ...next, grid: decorated(next.grid) }; top = 0; focus = 0; clear = true;
         if (record) { history.length = index + 1; history.push(next.doc.url); index = history.length - 1; }
         if (next.grid.cols !== Math.max(10, screen.columns)) resizeDue = performance.now();
       }).catch((error) => { if (mine === token && !controller.signal.aborted) message = `refused: ${reason(error)}`; })
@@ -401,7 +415,7 @@ async function viewer(run: Engine, first: Rendered, firstURL: string, options: O
   } finally { restore(); }
 }
 
-const USAGE = "usage: textnaut.ts [--width COLS] [--dump] [--wasm | --engine FILE] [--font FILE] [--colour none|16|256|24bit] [--strict] [--no-scripts] [--timing] [--verbose] URL_OR_FILE";
+const USAGE = "usage: textnaut.ts [--width COLS] [--dump] [--wasm | --engine FILE] [--font FILE] [--colour none|16|256|24bit] [--big-headings=auto|on|off] [--strict] [--no-scripts] [--timing] [--verbose] URL_OR_FILE";
 
 export async function main(args: string[]): Promise<number> {
   const saver = args.indexOf("--screensaver");
@@ -431,7 +445,7 @@ export async function main(args: string[]): Promise<number> {
       console.error(`timing: engine ${run.name}; start ${Math.round(ready - started)} ms; load ${Math.round(load)} ms; layout ${Math.round(layout)} ms; cells ${Math.round(cells)} ms; rows ${rendered.grid.rows.length}; links ${rendered.grid.targets.length}; scripts ${scripts ? "bubblepop" : "off"}`);
     } else if (dump) console.error(`textnaut: engine ${run.name}`);
     if (dump) { await Deno.stdout.write(encoder.encode(dumpText(rendered.grid))); return 0; }
-    await viewer(run, rendered, rendered.doc.url, options, parsed.colour);
+    await viewer(run, rendered, rendered.doc.url, options, parsed.colour, parsed.big);
     return 0;
   } catch (error) {
     console.error(`textnaut: page refused: ${sanitizeText(url || parsed.input)}: ${reason(error)}`);

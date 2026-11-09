@@ -11,10 +11,14 @@ export const MAX_ROW_STEP = 3;
 
 export type RGB = [number, number, number];
 /** A glyph row is [glyph id, x, y, advance, cluster start, cluster end]. */
-export type GlyphRun = { text: string; size: number; glyphs: number[][] };
+export type GlyphRun = { text: string; size: number; glyphs: number[][]; source?: number };
 /** [source node, href, x, y, width, height]. */
 export type LinkRow = [number, string, number, number, number, number];
-export type Cell = { c: string; w: number; fg?: RGB; bg?: RGB; link?: number; mark?: boolean; head?: boolean };
+/**
+ * `band` is the heading panel (1 or 2); `deco` marks a cell that is not page text (a border, a
+ * padding cell, a repeated row); `rule` is a horizontal line; `bullet` is a list marker.
+ */
+export type Cell = { c: string; w: number; fg?: RGB; bg?: RGB; link?: number; mark?: boolean; head?: boolean; band?: 1 | 2; deco?: boolean; rule?: boolean; bullet?: boolean };
 export type Rect = { x0: number; y0: number; x1: number; y1: number; rgb: RGB };
 export type Paint = { glyphs: Rect[]; fills: Rect[] };
 export type GridInput = {
@@ -23,6 +27,8 @@ export type GridInput = {
   cols: number;
   resolve?: (href: string) => string;
   paint?: Paint;
+  /** The engine's [source node, x, y, width, height] rows: used only to find list markers. */
+  boxes?: number[][];
   cellWidth?: number;
   cellHeight?: number;
   /** Move the text left by the leftmost text position, so that column 0 is used. */
@@ -35,7 +41,30 @@ export type Grid = {
   targets: string[];
   /** The first row of link n is `linkRows[n - 1]`. */
   linkRows: number[];
+  /** Heading blocks, in row order: `start` to `end` inclusive. */
+  headings: { level: 1 | 2 | 3; start: number; end: number }[];
+  /** Blank rows that the engine paints a horizontal rule across. */
+  rules: number[];
+  /** Set by `decorateGrid`: how each row goes to the terminal. Absent means one normal row. */
+  kinds?: RowKind[];
 };
+/** A row of `Grid.kinds`: two rows of a DEC double-height line, or two rows of one OSC 66 line. */
+export type RowKind = "dec-top" | "dec-bottom" | "kitty-first" | "kitty-second" | undefined;
+
+/** Bitmap size of the font size that has the most characters. */
+export function bodySize(runs: GlyphRun[]): number {
+  const count = new Map<number, number>();
+  for (const run of runs) count.set(run.size, (count.get(run.size) ?? 0) + run.text.length);
+  let best = 16, most = 0;
+  for (const [size, n] of count) if (n > most && size > 0) { best = size; most = n; }
+  return best;
+}
+/** Heading level from the ratio of a font size to the body size: the engine gives no element names. */
+export function headingLevel(size: number, body: number): 0 | 1 | 2 | 3 {
+  const ratio = size / body;
+  return ratio >= 1.75 ? 1 : ratio >= 1.3 ? 2 : ratio >= 1.1 ? 3 : 0;
+}
+const MARKER = /^(\*|[0-9]+\.|[a-zA-Z]+\.)$/;
 
 const REPLACEMENT = "\ufffd";
 
@@ -105,7 +134,7 @@ export function readPaint(artifact: { abi?: string; primitiveCount?: number; dat
   return base === rowCount ? { glyphs, fills } : undefined;
 }
 
-type Item = { x: number; endX: number; y: number; size: number; text: string; link?: number; marker?: string; fg?: RGB };
+type Item = { x: number; endX: number; y: number; size: number; text: string; link?: number; marker?: string; fg?: RGB; bullet?: boolean };
 
 function buckets<T extends { y0: number; y1: number }>(boxes: T[], step: number) {
   const map = new Map<number, T[]>();
@@ -137,6 +166,10 @@ export function layoutGrid(input: GridInput): Grid {
   const glyphAt = input.paint ? buckets(input.paint.glyphs, 32) : undefined;
   const items: Item[] = [];
   const seen = new Set<number>();
+  const body = bodySize(input.runs);
+  // A run whose source node also has a box much wider than the run is a list marker of that element.
+  const widest = new Map<number, number>();
+  for (const box of input.boxes ?? []) widest.set(box[0], Math.max(widest.get(box[0]) ?? 0, box[3]));
   for (const run of input.runs) {
     const first = run.glyphs[0], last = run.glyphs[run.glyphs.length - 1];
     const text = sanitizeText(run.text);
@@ -153,7 +186,9 @@ export function layoutGrid(input: GridInput): Grid {
         b.x0 < x + advance && b.x1 > x && b.y0 < y + size && b.y1 > y && (b.x1 - b.x0) * (b.y1 - b.y0) <= limit
       )?.rgb;
     }
-    items.push({ x, endX: last[1] + last[3], y, size, text, link, fg });
+    const endX = last[1] + last[3];
+    const bullet = MARKER.test(text) && run.source !== undefined && (widest.get(run.source) ?? 0) >= 2 * (endX - x);
+    items.push({ x, endX, y, size, text, link, fg, bullet });
   }
   // A link with no text (an image, for example) still gets its number at its place.
   for (const r of rects) {
@@ -172,7 +207,10 @@ export function layoutGrid(input: GridInput): Grid {
     if (line && item.y - line[0].y < 0.4 * Math.max(line[0].size, item.size)) line.push(item);
     else lines.push([item]);
   }
-  for (const line of lines) line.sort((a, b) => a.x - b.x);
+  for (const line of lines) {
+    line.sort((a, b) => a.x - b.x);
+    for (const item of line.slice(1)) item.bullet = false;
+  }
   // The number follows the last word of its link in reading order.
   const lastOf = new Map<number, Item>();
   for (const line of lines) for (const item of line) if (item.link) lastOf.set(item.link, item);
@@ -180,9 +218,10 @@ export function layoutGrid(input: GridInput): Grid {
 
   const rows: Cell[][] = [], rowY: number[] = [], linkRows: number[] = [];
   const row = (r: number) => (rows[r] ??= []);
-  let r = -1, prevY = 0;
+  const headings: Grid["headings"] = [];
+  let r = -1, prevY = 0, lastHeadingY = 0;
   const put = (c: string, w: number, col: number, item: Item, mark: boolean) => {
-    const cells = row(r), base = { fg: item.fg, link: item.link, mark, head: item.size >= 20 };
+    const cells = row(r), base = { fg: item.fg, link: item.link, mark, head: item.size >= 1.1 * body, bullet: item.bullet };
     cells[col] = { c, w, ...base };
     if (w === 2 && col + 1 < cols) cells[col + 1] = { c: "", w: 0, ...base };
     if (item.link && linkRows[item.link - 1] === undefined) linkRows[item.link - 1] = r;
@@ -194,6 +233,7 @@ export function layoutGrid(input: GridInput): Grid {
     r += step;
     rowY[r] = y;
     prevY = y;
+    const lineStart = r;
     const firstCol = Math.min(Math.round(line[0].x / cw), cols - 1);
     const indent = Math.min(firstCol, cols >> 1);
     let cursor = 0, prevEnd = line[0].x;
@@ -225,6 +265,15 @@ export function layoutGrid(input: GridInput): Grid {
       cursor = col;
       prevEnd = item.endX;
     }
+    // A heading line has only text of one heading size or more. The lines of one wrapped heading join.
+    const levels = line.filter((i) => i.text !== "").map((i) => headingLevel(i.size, body));
+    const level = levels.length && !levels.includes(0) ? Math.max(...levels) as 1 | 2 | 3 : 0;
+    if (level) {
+      const open = headings[headings.length - 1];
+      if (open && open.level === level && y - lastHeadingY < 1.6 * line[0].size) open.end = r;
+      else headings.push({ level, start: lineStart, end: r });
+      lastHeadingY = y;
+    }
   }
   rows.length = r + 1;
   for (let k = 0; k < rows.length; k++) {
@@ -233,7 +282,134 @@ export function layoutGrid(input: GridInput): Grid {
     cells.length = cols;
   }
   if (input.paint) paintBackgrounds(rows, rowY, input.paint.fills, cols, cw, origin);
-  return { cols, rows, targets, linkRows };
+  return { cols, rows, targets, linkRows, headings, rules: input.paint ? findRules(rows, rowY, input.paint.fills, cols * cw, ch) : [] };
+}
+
+/** A painted line at least half the text width and at most 3.5 px high, placed on a blank row at its height. */
+function findRules(rows: Cell[][], rowY: number[], fills: Rect[], textWidthPx: number, ch: number): number[] {
+  const blank = (r: number) => r >= 0 && r < rows.length && rows[r].every((c) => c.c === " ");
+  const found = new Set<number>();
+  for (const fill of fills) {
+    if (fill.y1 - fill.y0 > 3.5 || fill.x1 - fill.x0 < 0.5 * textWidthPx) continue;
+    const y = (fill.y0 + fill.y1) / 2;
+    let low = 0, high = rows.length;
+    while (low < high) { const mid = (low + high) >> 1; if (rowY[mid] + ch / 2 < y) low = mid + 1; else high = mid; }
+    const row = [low, low - 1].find((r) => blank(r) && Math.abs(rowY[r] + ch / 2 - y) <= 1.5 * ch);
+    if (row !== undefined) found.add(row);
+  }
+  return [...found].sort((a, b) => a - b);
+}
+
+// ---------------------------------------------------------------- heading panels
+
+/** "dec": ESC # 3 and ESC # 4. "kitty": OSC 66 with s=2. "none": heading text at the normal size. */
+export type BigText = "none" | "dec" | "kitty";
+export type Decor = { level: Level; utf8: boolean; big: BigText };
+type Atom = { cells: Cell[]; w: number };
+const isSpace = (a: Atom) => a.cells.length === 1 && a.cells[0].c === " " && !a.cells[0].link && !a.cells[0].mark;
+
+function atomsOf(rows: Cell[][]): Atom[] {
+  const out: Atom[] = [];
+  for (const row of rows) {
+    const atoms: Atom[] = [];
+    for (const cell of row) {
+      if (cell.w === 0 && cell.c === "") { if (atoms.length) atoms[atoms.length - 1].cells.push(cell); }
+      else atoms.push({ cells: [cell], w: cell.w });
+    }
+    while (atoms.length && isSpace(atoms[atoms.length - 1])) atoms.pop();
+    while (atoms.length && isSpace(atoms[0])) atoms.shift();
+    if (atoms.length && out.length) out.push({ cells: [{ c: " ", w: 1 }], w: 1 });
+    out.push(...atoms);
+  }
+  return out;
+}
+
+/** Word wrap with no character lost: a word wider than the line breaks between its cells. */
+function wrapAtoms(atoms: Atom[], width: number): Atom[][] {
+  const words: Atom[][] = [[]];
+  for (const a of atoms) if (isSpace(a)) words.push([]); else words[words.length - 1].push(a);
+  const lines: Atom[][] = [];
+  let line: Atom[] = [], used = 0;
+  const widthOf = (word: Atom[]) => word.reduce((n, a) => n + a.w, 0);
+  const flush = () => { if (line.length) lines.push(line); line = []; used = 0; };
+  for (const word of words) {
+    if (!word.length) continue;
+    const w = widthOf(word);
+    if (line.length && used + 1 + w > width) flush();
+    if (w > width) {
+      for (const a of word) {
+        if (used + a.w > width) flush();
+        line.push(a);
+        used += a.w;
+      }
+      continue;
+    }
+    if (line.length) { line.push({ cells: [{ c: " ", w: 1 }], w: 1 }); used++; }
+    line.push(...word);
+    used += w;
+  }
+  flush();
+  return lines.length ? lines : [[]];
+}
+
+const pad = (n: number, band: 1 | 2): Cell[] => Array.from({ length: Math.max(0, n) }, () => ({ c: " ", w: 1, band, deco: true }));
+const edge = (c: string, band: 1 | 2): Cell => ({ c, w: 1, band, deco: true });
+
+/**
+ * The rows that the viewer shows: a panel for each H1, a band for each H2, a line for each rule.
+ * The result has more rows than `grid`; link numbers and targets stay. `--dump` does not call this.
+ */
+export function decorateGrid(grid: Grid, decor: Decor): Grid {
+  const { cols } = grid, rows: Cell[][] = [], kinds: RowKind[] = [];
+  const big: BigText = decor.level === 0 || cols < 40 ? "none" : decor.big;
+  const rules = new Set(grid.rules), blocks = new Map(grid.headings.filter((h) => h.level < 3).map((h) => [h.start, h]));
+  const push = (row: Cell[], kind?: RowKind) => { rows.push(row); kinds.push(kind); };
+  const emitH1 = (block: Cell[][]) => {
+    const width = big === "none" ? cols : cols >> 1, outer = big === "none" ? cols : width * 2;
+    const [tl, tr, bl, br, h, v] = decor.utf8 ? ["\u250f", "\u2513", "\u2517", "\u251b", "\u2501", "\u2503"]
+      : decor.level ? [" ", " ", " ", " ", " ", " "] : ["=", "=", "=", "=", "=", " "];
+    const border = (left: string, right: string) => [edge(left, 1), ...Array.from({ length: outer - 2 }, () => edge(h, 1)), edge(right, 1), ...pad(cols - outer, 1)];
+    push(border(tl, tr));
+    for (const line of wrapAtoms(atomsOf(block), Math.max(6, width - 4))) {
+      const used = line.reduce((n, a) => n + a.w, 0), left = (width - 2 - used) >> 1;
+      const row: Cell[] = [edge(v, 1), ...pad(left, 1)];
+      for (const atom of line) for (const cell of atom.cells) row.push({ ...cell, band: 1, head: true });
+      row.push(...pad(width - 2 - used - left, 1), edge(v, 1));
+      if (big === "none") push(row);
+      else {
+        push(row, big === "dec" ? "dec-top" : "kitty-first");
+        push(row.map((cell) => ({ ...cell, deco: true })), big === "dec" ? "dec-bottom" : "kitty-second");
+      }
+    }
+    push(border(bl, br));
+  };
+  const emitH2 = (block: Cell[][]) => {
+    const lines = wrapAtoms(atomsOf(block), Math.max(6, cols - 4));
+    const widest = Math.max(...lines.map((l) => l.reduce((n, a) => n + a.w, 0)));
+    const barWidth = Math.min(cols, widest + 4), start = (cols - barWidth) >> 1;
+    for (const line of lines) {
+      const used = line.reduce((n, a) => n + a.w, 0), left = (barWidth - used) >> 1;
+      const row: Cell[] = Array.from({ length: start }, () => ({ c: " ", w: 1 }));
+      row.push(...pad(left, 2));
+      for (const atom of line) for (const cell of atom.cells) row.push({ ...cell, band: 2, head: true });
+      row.push(...pad(barWidth - used - left, 2));
+      while (row.reduce((n, c) => n + c.w, 0) < cols) row.push({ c: " ", w: 1 });
+      push(row);
+    }
+  };
+  for (let r = 0; r < grid.rows.length; r++) {
+    const block = blocks.get(r);
+    if (block) {
+      const source = grid.rows.slice(block.start, block.end + 1);
+      if (block.level === 1) emitH1(source); else emitH2(source);
+      r = block.end;
+    } else if (rules.has(r)) {
+      push(Array.from({ length: cols }, () => ({ c: decor.utf8 ? "\u2500" : "-", w: 1, rule: true, deco: true })));
+    } else push(grid.rows[r]);
+  }
+  const linkRows: number[] = [];
+  rows.forEach((row, r) => { for (const cell of row) if (cell.link && linkRows[cell.link - 1] === undefined) linkRows[cell.link - 1] = r; });
+  return { ...grid, rows, kinds, linkRows };
 }
 
 /** In paint order, each fill larger than one cell gives the background of the cells it covers. */
@@ -297,7 +473,15 @@ function readable(fg: RGB, bg: RGB | undefined, level: Level): RGB {
   return lightness(bg) > 128 ? [0, 0, 0] : [255, 255, 255];
 }
 
-export type StyleOptions = { level: Level; osc8: boolean; focus?: number; targets: string[]; width: number; row?: number };
+export type StyleOptions = { level: Level; osc8: boolean; focus?: number; targets: string[]; width: number; row?: number; utf8?: boolean; scale?: boolean };
+
+/** A heading panel's background at a column: a gradient at 24-bit and 256 colours, one colour at 16, none in plain mode. */
+function bandColour(band: 1 | 2, col: number, width: number, level: Level): RGB | undefined {
+  if (level === 0) return undefined;
+  if (level === 1) return band === 1 ? [0, 0, 238] : [0, 205, 205];
+  const t = col / Math.max(1, width - 1);
+  return band === 1 ? hsl(Math.floor((262 + 50 * t) / 6) * 6, 0.8, 0.36) : hsl(Math.floor((185 + 35 * t) / 6) * 6, 0.75, 0.78);
+}
 const OSC8 = (url: string) => `\x1b]8;;${url}\x1b\\`;
 const allowed = (u: string | undefined) => !!u && /^(https?|file):/i.test(u);
 
@@ -316,13 +500,25 @@ export function styledRow(cells: Cell[], options: StyleOptions): string {
     }
     const bg = level ? cell.bg : undefined, parts: string[] = ["0"];
     let fg = level ? cell.fg : undefined;
-    const light = bg ? lightness(bg) > 128 : false;
-    let bgOut = bg;
+    const band = cell.band ? bandColour(cell.band, col, options.width, level) : undefined;
+    let bgOut = cell.band ? band : bg;
+    const light = bgOut ? lightness(bgOut) > 128 : false;
+    if (cell.band && level === 0) parts.push("7");
     if (cell.link !== undefined) {
       const hue = (cell.link * 47) % 360;
       if (cell.link === options.focus) { parts.push("1"); if (level) { fg = [0, 0, 0]; bgOut = [255, 235, 0]; } else parts.push("7"); }
       else if (cell.mark) { parts.push("1"); if (level) { fg = lightness(hsl(hue, 1, 0.5)) > 128 ? [0, 0, 0] : [255, 255, 255]; bgOut = hsl(hue, 1, 0.5); } }
-      else { parts.push("4"); if (level) fg = hsl(hue, 1, light ? 0.32 : 0.72); }
+      else { parts.push("4"); if (level) fg = cell.band ? (light ? [0, 0, 0] : [255, 255, 255]) : hsl(hue, 1, light ? 0.32 : 0.72); }
+    } else if (cell.band) {
+      if (!cell.deco) { parts.push("1"); if (cell.band === 2 && level === 0) parts.push("4"); }
+      if (level) fg = light ? [0, 0, 0] : [255, 255, 255];
+    } else if (cell.rule) {
+      if (level === 1) fg = [0, 205, 205];
+      else if (level) fg = hsl((col * 3) % 360, 0.9, 0.6);
+    } else if (cell.bullet) {
+      parts.push("1");
+      if (level === 1) fg = [255, 255, 0];
+      else if (level) fg = hsl((y * 37) % 360, 1, light ? 0.35 : 0.68);
     } else if (cell.head) {
       parts.push("1");
       if (level === 1) fg = light ? [205, 0, 205] : [255, 0, 255];
@@ -332,7 +528,8 @@ export function styledRow(cells: Cell[], options: StyleOptions): string {
     if (bgOut) parts.push(sgrColour(bgOut, level, true));
     const want = parts.filter(Boolean).join(";");
     if (want !== sgr) { out += `\x1b[${want}m`; sgr = want; }
-    out += cell.c;
+    const shownText = cell.bullet && cell.c === "*" && options.utf8 && level ? "\u2022" : cell.c;
+    out += options.scale ? `\x1b]66;s=2;${shownText}\x1b\\` : shownText;
     width += cell.w;
     lastBg = bgOut;
   }
@@ -342,6 +539,20 @@ export function styledRow(cells: Cell[], options: StyleOptions): string {
     out += pad + " ".repeat(options.width - width);
   }
   return out + "\x1b[0m";
+}
+
+/**
+ * One grid row as terminal bytes, where `y` is its row in the body area of `bodyRows` rows. An
+ * OSC 66 line covers two terminal rows: half of one at an edge of the body is a normal row, and
+ * the second row of a whole one gives an empty string, which means "write nothing".
+ */
+export function displayRow(grid: Grid, index: number, y: number, bodyRows: number, style: StyleOptions, big: BigText): string {
+  const cells = grid.rows[index], kind = grid.kinds?.[index], half = Math.min(cells.length, style.width >> 1);
+  if (kind === "dec-top") return "\x1b#3" + styledRow(cells, { ...style, width: half });
+  if (kind === "dec-bottom") return "\x1b#4" + styledRow(cells, { ...style, width: half });
+  if (kind === "kitty-first" && y < bodyRows - 1) return "\x1b[2K\x1b[B\x1b[2K\x1b[A" + styledRow(cells, { ...style, width: half, scale: true });
+  if (kind === "kitty-second" && y > 0) return "";
+  return (big === "dec" ? "\x1b#5" : "") + styledRow(cells, style);
 }
 
 export type BarText = { text: string; bold?: boolean };
