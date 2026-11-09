@@ -7,7 +7,9 @@
 // engines must make the same DOM commands, logs and page GPU commands: the same prelude, the
 // same imports on the same arena, the same event loop. The script clock is as good as off
 // (a trillion instructions a ms), so the two engines' instruction counts do not move time.
-// Needs the native library (build-web-render.sh --native).
+// Needs the native library (build-web-render.sh --native). A second test runs the pages on
+// BubblePopJS in the Wasm engine (build-web-render.sh --wasm, as the Hub runs it) and asks for
+// the same turns as in the native library: the same Lean, compiled twice.
 // Run: deno test --allow-read --allow-ffi --allow-env bubblepop_pages_test.ts
 import {strict as assert} from "node:assert";
 import {loadHTML,type HTMLEngine,type ScriptTurn} from "./native_html_engine.ts";
@@ -53,5 +55,18 @@ Deno.test({name:"The demo pages run on BubblePopJS (the JavaScript engine writte
     assert.ok(lean.at(-1)!.changes>0||name==="js-status",`${name}: the scripts changed nothing`);
     if(quickjs)assert.deepEqual(essence(lean),essence(run(engine,name,source,false)),`${name}: the engines differ`);
     console.log(`${name}: ${lean.length} turns, ${lean.at(-1)!.changes} changes${quickjs?", the same on QuickJS-NG":""}`);
+  }
+}});
+
+const wasmRuntime=new URL("./.build/native-html/runtime/web-render.wasm",import.meta.url).pathname;
+Deno.test({name:"The demo pages run on BubblePopJS in the Wasm engine as in the native library",ignore:!exists(library)||!exists(wasmRuntime),fn:async()=>{
+  const wasm=await loadHTML(undefined),native=await loadHTML(library);
+  if(!(wasm.scriptInfo().engines??[]).includes("bubblepop")){console.log("NOT RUN: this Wasm engine has no BubblePopJS");return;}
+  for(const name of pages){
+    const source=await Deno.readTextFile(new URL(`./pages/${name}.html`,import.meta.url));
+    const inWasm=run(wasm,name,source,true);
+    for(const t of inWasm)assert.deepEqual(t.errors,[],`${name}: page errors on BubblePopJS in the Wasm engine`);
+    assert.deepEqual(essence(inWasm),essence(run(native,name,source,true)),`${name}: the Wasm engine differs from the native library`);
+    console.log(`${name}: ${inWasm.length} turns in the Wasm engine, the same as native`);
   }
 }});
