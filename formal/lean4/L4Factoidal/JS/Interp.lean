@@ -1484,78 +1484,88 @@ def callClosure : Nat → FunDef → Nat → Value → Value → Value → Value
     -- must not use up the call depth).
     -- the environment: the arguments are its first slots when the parameters are plain
     let info := fd.info
-    let fenv ← if info.plain then
-        pushEnv { names := info.layout, vals := fillSlots args info.nParams info.layout.size, parent := env }
-      else newEnv env
-    let go : M Value := do
-      let r ← realm
-      let thisV ← if fd.arrow then pure capThis
-        else if fd.strict then pure thisV
-        else match thisV with
-          | .undef | .null => pure (.obj r.globalObj)
-          | .obj _ => pure thisV
-          | v => do pure (.obj (← toObj n v))
-      let nt := if fd.arrow then capNT else newTarget
-      let fo := if fd.arrow then Value.undef else fnObj
-      let ctx : Ctx := { env := fenv, thisV := thisV, strict := fd.strict, newTarget := nt, home := home, fnObj := fo }
-      if !info.plain then
-        if fd.usesArgs then
-          let a ← alloc { proto := .obj r.objectProto, kind := .args }
-          for i in [0:args.size] do defineOwn a (toString i) (.data args[i]! true true true)
-          setHidden a "length" (.num (Float.ofNat args.size))
-          setHidden a (symKey symIterator) (← ownValue r.arrayProto "values")
-          if fd.strict then
-            let t := Value.obj r.throwTypeError
-            defineOwn a "callee" (.acc t t false false)
-          else setHidden a "callee" fnObj
-          declare fenv "arguments" { v := .obj a }
-        bindParams n ctx fd.params args 0
-        if let some rp := fd.rest then
-          bindPat n ctx rp (← newArray (args.extract fd.params.length args.size)) (.declare fenv true)
-        for v in fd.vars do
-          if !((← getBinding fenv v).isSome) then declare fenv v { v := .undef }
-      if fd.kind == .ctor false then initFields n ctx fnObj thisV
-      if fd.gen && fd.async then
-        let p ← getV n fnObj "prototype"
-        let ctx' ← enterBlock n ctx fd.body
-        let g ← alloc { proto := if p.isObj then p else .obj r.asyncGenProto, kind := .agen [.block ctx' fd.body] 0 #[] }
-        modify fun h => { h with depth := h.depth - 1 }
-        return .obj g
-      if fd.gen then
-        -- a generator function returns its generator, suspended at the start (§27.5.3.1)
-        let p ← getV n fnObj "prototype"
-        let ctx' ← enterBlock n ctx fd.body
-        let g ← alloc { proto := if p.isObj then p else .obj r.generatorProto,
-                        kind := .gen [.block ctx' fd.body] 0 }
-        modify fun h => { h with depth := h.depth - 1 }
-        return .obj g
-      if fd.async then
-        -- an async function runs until its first await and returns its promise (§27.7.5.1)
-        let pid ← newPromise
-        let ctx' ← enterBlock n ctx fd.body
-        let co ← alloc { kind := .coro [.block ctx' fd.body] pid }
-        asyncStep n co (.send .undef)
-        modify fun h => { h with depth := h.depth - 1 }
-        return .obj pid
-      -- a body that is one `return e`: no statement machinery, no completion record
-      match fd.body with
-      | [.ret (some e)] =>
-        let v ← evalExpr n ctx e
-        modify fun h => { h with depth := h.depth - 1 }
-        if info.frameLocal then releaseEnv fenv
-        pure v
-      | _ =>
-        let c ← evalBody n ctx fd.body
-        modify fun h => { h with depth := h.depth - 1 }
-        if info.frameLocal then releaseEnv fenv
-        match c with
-        | .ret v => pure v
-        | _ => pure .undef
-    tryCatch go fun e => do
+    -- `args` is moved into the environment on the plain path (the array must have one owner:
+    -- `fillSlots` then grows it in place)
+    let (fenv, args) ← if info.plain then do
+        let e ← pushEnv { names := info.layout, vals := fillSlots args info.nParams info.layout.size, parent := env }
+        pure (e, (#[] : Array Value))
+      else do
+        let e ← newEnv env
+        pure (e, args)
+    tryCatch (callBody n fd env capThis capNT home fnObj thisV newTarget args fenv info) fun e => do
       modify fun h => { h with depth := saved }
       if info.frameLocal then releaseEnv fenv
       throw e
 termination_by structural n _ _ _ _ _ _ _ _ _ => n
+
+/-- The rest of a call, after the environment is made (`callClosure`). -/
+def callBody : Nat → FunDef → Nat → Value → Value → Value → Value → Value → Value → Array Value → Nat → FunInfo → M Value
+  | 0, _, _, _, _, _, _, _, _, _, _, _ => throw (.halt "fuel")
+  | n + 1, fd, env, capThis, capNT, home, fnObj, thisV, newTarget, args, fenv, info => do
+    let r ← realm
+    let thisV ← if fd.arrow then pure capThis
+      else if fd.strict then pure thisV
+      else match thisV with
+        | .undef | .null => pure (.obj r.globalObj)
+        | .obj _ => pure thisV
+        | v => do pure (.obj (← toObj n v))
+    let nt := if fd.arrow then capNT else newTarget
+    let fo := if fd.arrow then Value.undef else fnObj
+    let ctx : Ctx := { env := fenv, thisV := thisV, strict := fd.strict, newTarget := nt, home := home, fnObj := fo }
+    if !info.plain then
+      if fd.usesArgs then
+        let a ← alloc { proto := .obj r.objectProto, kind := .args }
+        for i in [0:args.size] do defineOwn a (toString i) (.data args[i]! true true true)
+        setHidden a "length" (.num (Float.ofNat args.size))
+        setHidden a (symKey symIterator) (← ownValue r.arrayProto "values")
+        if fd.strict then
+          let t := Value.obj r.throwTypeError
+          defineOwn a "callee" (.acc t t false false)
+        else setHidden a "callee" fnObj
+        declare fenv "arguments" { v := .obj a }
+      bindParams n ctx fd.params args 0
+      if let some rp := fd.rest then
+        bindPat n ctx rp (← newArray (args.extract fd.params.length args.size)) (.declare fenv true)
+      for v in fd.vars do
+        if !((← getBinding fenv v).isSome) then declare fenv v { v := .undef }
+    if fd.kind == .ctor false then initFields n ctx fnObj thisV
+    if fd.gen && fd.async then
+      let p ← getV n fnObj "prototype"
+      let ctx' ← enterBlock n ctx fd.body
+      let g ← alloc { proto := if p.isObj then p else .obj r.asyncGenProto, kind := .agen [.block ctx' fd.body] 0 #[] }
+      modify fun h => { h with depth := h.depth - 1 }
+      return .obj g
+    if fd.gen then
+      -- a generator function returns its generator, suspended at the start (§27.5.3.1)
+      let p ← getV n fnObj "prototype"
+      let ctx' ← enterBlock n ctx fd.body
+      let g ← alloc { proto := if p.isObj then p else .obj r.generatorProto,
+                      kind := .gen [.block ctx' fd.body] 0 }
+      modify fun h => { h with depth := h.depth - 1 }
+      return .obj g
+    if fd.async then
+      -- an async function runs until its first await and returns its promise (§27.7.5.1)
+      let pid ← newPromise
+      let ctx' ← enterBlock n ctx fd.body
+      let co ← alloc { kind := .coro [.block ctx' fd.body] pid }
+      asyncStep n co (.send .undef)
+      modify fun h => { h with depth := h.depth - 1 }
+      return .obj pid
+    -- a body that is one `return e`: no statement machinery, no completion record
+    match fd.body with
+    | [.ret (some e)] =>
+      let v ← evalExpr n ctx e
+      modify fun h => { h with depth := h.depth - 1 }
+      if info.frameLocal then releaseEnv fenv
+      pure v
+    | _ =>
+      let c ← evalBody n ctx fd.body
+      modify fun h => { h with depth := h.depth - 1 }
+      if info.frameLocal then releaseEnv fenv
+      match c with
+      | .ret v => pure v
+      | _ => pure .undef
+termination_by structural n _ _ _ _ _ _ _ _ _ _ _ => n
 
 def bindParams : Nat → Ctx → List PatElem → Array Value → Nat → M Unit
   | 0, _, _, _, _ => throw (.halt "fuel")
@@ -4601,9 +4611,10 @@ termination_by structural n _ _ => n
 def matchArray : Nat → Re.Compiled → String → Array (Option (Nat × Nat)) → M Value
   | 0, _, _, _ => throw (.halt "fuel")
   | _ + 1, re, s, caps => do
-    let cs := charsOf s
+    let cs ← cachedChars s
+    let ascii := Str.isAscii s
     let vals := caps.map fun c => match c with
-      | some (a, b) => Value.str (Str.ofUnitChars (cs.extract a b))
+      | some (a, b) => Value.str (if ascii then Str.sliceUnits s a b else Str.ofUnitChars (cs.extract a b))
       | none => .undef
     let arr ← newArray vals
     let .obj aid := arr | pure arr
