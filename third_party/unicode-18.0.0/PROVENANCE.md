@@ -59,3 +59,15 @@
   `formal/lean4/L4Factoidal/Unicode/JoiningData.lean` (Joining_Type, with the
   Syriac joining groups ALAPH and DALATH RISH) from it and
   `DerivedGeneralCategory.txt`; the Lean shaper's Arabic joining forms read it.
+
+## Added 2026-11-09 (colour emoji, https://github.com/danbri/factoidal/issues/1276)
+
+- Source: https://www.unicode.org/Public/18.0.0/emoji/emoji-test.txt
+  (UTS #51 version 18.0, dated 2026-04-30, sha256
+  `8f3735cda1f92a779d78af67cf86066bb1f07143dc22f2ac29394d9bc57ab21a`).
+- Copied unchanged on 2026-11-09.
+- Use: `labs/demos/foafnaut/fallback_fonts.py` cuts Noto Color Emoji into slices by
+  the groups of this file (Smileys & Emotion, People & Body, ...), and
+  `tools/unicode/gen-emoji-data.py` writes
+  `formal/lean4/L4Factoidal/Unicode/EmojiData.lean` (Emoji_Presentation and the other
+  emoji properties) from `emoji-data.txt`.
