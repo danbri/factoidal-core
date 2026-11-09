@@ -23,8 +23,10 @@ The operations are `generateKey`, `importKey`, `exportKey` (raw, raw-public, raw
 JWK, SPKI and PKCS #8), `sign`, `verify`, `deriveBits`, `deriveKey`, `encrypt`,
 `decrypt`, `wrapKey` and `unwrapKey` (wrapping with ChaCha20-Poly1305).
 
-They run natively (libweb-render.dylib) and on the Hub (web-render.wasm). Both builds
-compile the same portable HACL* C. Neither uses Vale assembly or vector code.
+They run natively (libweb-render.dylib), over the portable HACL* C (no Vale assembly, no
+vector code). Since the follow-ups of section 13, the Hub (web-render.wasm) links no HACL*:
+Lean makes the same decisions there and the browser's own crypto.subtle does the
+primitives (13.4). RSA for imported keys came later the same day (13.1).
 
 The work splits three ways:
 
@@ -420,7 +422,181 @@ The HACL* precomputed tables (Ed25519 and P-256) are static data. In web-render.
 they are part of the data section, which the browser loads at instantiation. Making them
 lazy would need a separate Wasm module, linked on first use (section 12).
 
-## 12. For the owner to decide
+## 12. Decisions taken (depmap-0e, for the owner), and what is still open
+
+- **AES: open, for the owner.** HACL* has no portable AES. Natively it stays off; on the
+  Hub it comes from the browser (section 13.4).
+- **RSA for imported keys: done (13.1).** `Hacl_RSAPSS.c` is vendored. There is no
+  generateKey.
+- **P-384 and P-521: off natively.** On the Hub they come from the browser.
+- **The Hub: the browser's crypto.subtle does the primitives, Lean decides (13.4).** This
+  replaces "lazy HACL\* in Wasm": the Hub's web-render.wasm links no HACL\*.
+- **Wycheproof: populated and run (13.2).**
+- **Secret lifetime: the store is zeroed at session end (13.3).** On the Hub,
+  WebAssembly memory is readable by the embedding page. That is the platform's limit. In
+  host mode a key's bytes never enter it unless the page itself imports them.
+
+## 13. Follow-ups (2026-11-09, after the merge)
+
+### 13.1 RSA for imported keys
+
+The algorithms are RSASSA-PKCS1-v1_5, RSA-PSS and RSA-OAEP, with keys imported as SPKI,
+PKCS #8 or JWK, and exported in the same formats.
+
+- **The primitive.** The C boundary gains four entries:
+  - `rsa_public`: `Hacl_Bignum64_mod_exp_vartime`;
+  - `rsa_private`: `mod_exp_consttime`. d is padded to |n| octets, so its bit length
+    stays in Lean;
+  - `rsapss_sign`: `Hacl_RSAPSS_new_rsapss_load_skey` and `rsapss_sign`. The
+    secret-key limbs are zeroed and freed;
+  - `rsapss_verify`.
+
+  Each Lean extern takes a proof of `RsaOpPre`, `RsaPssSignPre` or `RsaPssVerifyPre`:
+  moduli of 1024 to 4096 bits in whole limbs, exponent and operand lengths, salt at most
+  |n|. The size theorems are `rsaPublic?_size`, `rsaPrivate?_size` and
+  `rsaPssSign?_size`, and `rsaPssVerify_false_of_bad_sig` covers a bad signature.
+- **The paddings are Lean's.** EMSA-PKCS1-v1_5 is `JOSE.Pkcs1.emsaEncodeGen`.
+  EME-OAEP is `Crypto.RsaOaep`, with its single refusal for every decoding failure
+  (Manger). The hashes are HACL*'s.
+- **Not supported.** RSA-PSS with SHA-1 is refused with NotSupportedError at import:
+  HACL*'s PSS is SHA-2 only. generateKey checks the usages and the parameters
+  (OperationError for an exponent other than 3 or 65537, or a length outside 1024 to
+  4096 in multiples of 64), then refuses with NotSupportedError: HACL* has no prime
+  generation.
+- **Key formats.** DER INTEGERs are read strictly: no negative and no non-minimal
+  encoding. Export rewrites them canonically.
+- **WPT** (native, QuickJS): 12,660 → 14,627 (+1,967), with no subtest lost.
+  - `rsa_importKey`: 0 → 984 of 1,056;
+  - `rsa_oaep`: +180;
+  - `rsa_pss`: +112;
+  - `rsa_pkcs`: +66;
+  - wrapKey with RSA-OAEP: +65;
+  - the RSA generateKey failures pages: +560.
+
+### 13.2 Wycheproof
+
+The `third_party/testing/wycheproof` submodule (C2SP/wycheproof `3fa63dd`, Apache-2.0,
+test input only) is populated. `tests/crypto/wycheproof_engine.ts` runs each file
+through crypto.subtle in the engine: page JS, prelude, Lean, C, HACL*.
+
+| Corpus | Tests |
+|---|---|
+| Ed25519 | 151 |
+| ECDSA P-256 SHA-256 and SHA-512 (P1363) | 594 |
+| X25519 | 518 |
+| ECDH P-256 (WebCrypto JWK) | 353 |
+| HKDF (SHA-1, 256, 384, 512) | 339 |
+| HMAC (SHA-1, 256, 384, 512) | 692 |
+| PBKDF2 (SHA-1, 256, 384, 512) | 240 |
+| ChaCha20-Poly1305 | 325 |
+| RSA-PSS 2048 SHA-256 | 108 |
+| RSASSA-PKCS1-v1_5 2048 SHA-256 and SHA-512 | 518 |
+| RSA-OAEP 2048 (SHA-1 and SHA-256) | 73 |
+
+All 3,911 pass, natively. A test passes when its outcome matches `valid`, `invalid` or
+`acceptable`.
+
+### 13.3 Secret lifetime at session end
+
+`WebScripts` ends a session on close or on a new start. Each key's bytes are then zeroed
+in place by `WebHacl.zeroNow`.
+
+The reference-counted `wipe` zeroed none there. Measured: 1,600 key bytes handed over,
+0 zeroed. While it ran, the store, the session and the held state all still referenced
+each key. `zeroNow` zeroes whatever the count, because every holder goes with the
+session, but it leaves compiled-in constants alone.
+
+The close answer reports `keyBytesWiped` and `keyBytesZeroed`. A key dropped while its
+session lives on keeps the reference-counted `wipe`, because a structuredClone copy may
+share its bytes.
+
+### 13.4 The Hub: the browser does the primitives, Lean decides
+
+With `cryptoHost` in the start request (`Page.Limits.cryptoHost`, `WebApi` host mode),
+an operation runs in four steps:
+
+1. **Lean makes its checks**, as natively:
+   - the registry;
+   - the usages for the key type the format makes;
+   - extractability, and export refused for HKDF and PBKDF2;
+   - the JWK `use`, `key_ops` and `ext`;
+   - the key's algorithm and usage for every key operation;
+   - the public and private key types;
+   - a P-256 public point on the curve (`p256OnCurve`, in Lean, over public values);
+   - a P-256 private scalar with 0 < d < n.
+2. **The primitive becomes a request in the turn answer** (`crypto`): JSON, with bytes
+   in base64url.
+3. **The host runs it on the browser's own crypto.subtle**
+   (`docs/web/hub/foafnaut/crypto-host.mjs`, imported by `browser-worker.mjs`). Keys
+   are the browser's CryptoKeys in the host's table. Lean holds their attributes and
+   number, never their bytes.
+4. **The host answers** with the `crypto` action. Lean turns the answer into the page's
+   answer and queues the page's callback as a task (both engines, `WebApi.hostDone`).
+
+Lean also checks that a secret or private key the host made has a usage.
+
+AES-CTR, AES-CBC, AES-GCM and AES-KW are registered in host mode only.
+
+The Hub's web-render.wasm links no HACL*. It links `hacl_webcrypto.c` with a core that
+refuses every primitive (`hacl_webcrypto_nohacl.c`), and `l4wc_linked` answers 0.
+Without a host (an insecure context), crypto.subtle is off. getRandomValues stays: its
+HMAC_DRBG falls back to Lean's own HMAC (`WebHacl.hmacFast`).
+
+Size of web-render.wasm, built from the follow-up tree:
+
+| | Bytes | Gzip -9 |
+|---|---|---|
+| Linking HACL* (main) | 28,225,861 | 5,798,632 |
+| Without HACL* | 27,968,048 | 5,707,201 |
+| Saved | 257,813 | 91,431 |
+
+A page without crypto loads and runs nothing more.
+
+**Checks:**
+
+- **Vectors on the Hub, in headless Chrome** (`labs/demos/foafnaut/hub_crypto_check.mjs`,
+  both guest paths, AOT and WasmVM): 38 of 39. The difference was a zero P-256 private
+  scalar in a JWK: Chrome answers OperationError, where natively the answer is
+  DataError. Lean now checks the scalar first (the 0 < d < n check above).
+- **Vectors in host mode with Deno's crypto.subtle as the host** (`webcrypto_engine.ts
+  --crypto-host`, both script engines): 36 and 35 before Lean's point check. Deno
+  accepts off-curve points and the point at infinity, which are now refused by Lean.
+- **WPT WebCryptoAPI in host mode with Deno as the host** (`testharness-run.ts
+  --crypto-host`, QuickJS, native engine): 22,876 of 34,968, against 14,627 natively.
+  - **Gains** come from what the host has: AES (generateKey, encrypt_decrypt, the
+    PBKDF2 and HKDF deriveKey to AES types), P-384 and P-521, RSA generateKey.
+  - **Small losses** come from Deno's own behaviour: okp_importKey −20 to −24, and the
+    Ed25519 small-order points −5.
+
+  The real Hub uses Chrome, whose crypto.subtle is closer to the WPT expectations.
+  Running the WPT pages through the Hub worker is not done yet.
+
+### 13.5 The task overhead
+
+The question was the 2.2 ms native and 15 ms Wasm per operation. Measured natively, on
+merge build `059a5f7b5`:
+
+| On QuickJS-NG in WasmVM, each | ms |
+|---|---|
+| `setTimeout(0)` round trip | 0.54 |
+| microtask | 0.19 |
+| `n.api` call (getRandomValues) | 0.45 (34,000 WasmVM instructions) |
+| digest | 1.69 |
+
+A JavaScript loop step costs about 730 WasmVM instructions, so the cost is QuickJS
+interpreting the glue inside WasmVM.
+
+- **BubblePopJS** (the native default) takes 0.10 ms for a whole digest operation and
+  0.026 ms for a task.
+- **Two changes to the glue:**
+  - Lean's registry answer is asked once per (op, name);
+  - operations started in one turn share one task.
+
+  On QuickJS, 200 digests at once: 2.28 → 1.66 ms each; one after another: 1.80 → 1.77.
+- **Further gains** are a question for the guest, not crypto: the Hub's AOT path, or
+  BubblePopJS on the Hub.
+
+## 14. The first round's open questions (2026-11-09, before the decisions of section 12)
 
 1. **AES.** HACL* has no portable AES at this pin or on hacl-star `main`. The choices:
    - keep AES off (as now);
