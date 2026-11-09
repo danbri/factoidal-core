@@ -18,6 +18,7 @@ InvalidNodeTypeError, -14 IndexSizeError, -15 WrongDocumentError, -16 InvalidSta
 -/
 import L4Factoidal.WasmVM.Hosts.Dom
 import L4Factoidal.DOM.Reflect
+import L4Factoidal.Rendering.CssSupports
 
 namespace L4Factoidal.WasmVM.Hosts.Dom
 open L4Factoidal.DOM L4Factoidal.DOM.Range
@@ -360,10 +361,18 @@ def selContainsNode (s : State) (node : Nat) (partial_ : Bool) : Bool :=
     if partial_ then position d r.start lastBP != .after && position d r.stop first != .before
     else position d r.start first != .after && position d r.stop lastBP != .before
 
+/-! ## HTMLHyperlinkElementUtils (HTML §4.6.4) -/
+
+/-- The URL of a hyperlink element: its `href` parsed against `base`; none when it has no
+`href` or the parse fails. -/
+def hyperlinkUrl (d : Dom) (n : Nat) (base : String) : Option L4Factoidal.WHATWG.URL.Url := do
+  let v ← attrValue? d n "href"
+  L4Factoidal.WHATWG.URL.parseUrl v (if base.isEmpty then none else some base)
+
 /-! ## The ops -/
 
 /-- The ops that change the tree (`Hosts.Page` counts them as writes for layout reads). -/
-def treeOps : List Nat := [112, 113, 114, 116, 119, 120, 149]
+def treeOps : List Nat := [112, 113, 114, 116, 119, 120, 149, 167]
 
 def bpText (b : BP) : String := s!"{b.node} {b.offset}"
 
@@ -399,13 +408,19 @@ CharacterData: 119 `replaceData` of node `id` ("offset count" U+0000 data); 120
 
 NodeIterator: 130 a new iterator of root `id` ("whatToShow"); 131 the next node to filter
 ("next node beforeNode", next 1 or 0; "node beforeNode", or -1 none); 132 set the
-reference ("node beforeNode"); 133 the reference ("node beforeNode").
+reference ("node beforeNode"); 133 the reference ("node beforeNode"); 136 the node being
+filtered ("node beforeNode", or "" for none); 137 it was accepted: it becomes the reference.
 TreeWalker: 134 start method ("method root whatToShow", from current node `id`); 135 go on
 ("method root whatToShow current node at result") (`askText`).
 
-Reflection (`DOM.Reflect`): 160 the getter of a row on element `id` ("row" U+0000 the
-document's URL); 161 the setter's decision ("row" U+0000 the converted value); 162 the rows
-of the interface named `q`.
+Reflection (`DOM.Reflect`): 160 the getter of a row on element `id` ("row", and for a URL
+U+0000 the document's URL); 161 the setter's decision ("row" U+0000 the converted value); 162 the rows
+of the interface named `q`; 163 the URL parts of hyperlink `id` (`q` the base): protocol,
+username, password, host, hostname, port, pathname, search, hash, origin, each followed by
+U+0000 (-1 with no URL); 164 a part's setter ("part" U+0000 value U+0000 base): the new
+`href`, or -1; 165 `CSS.supports` ("1" U+0000 property U+0000 value, or "0" U+0000 condition
+text; "1" or "0"); 166 `CSS.escape`; 167 a reflected setter applied ("row" U+0000 the
+converted value): the content attribute is set or removed by a command.
 
 Selection: 140 "range direction", or -1 when empty; 141 `addRange` (range `id`); 142
 `removeRange` (range `id`; -9 when it is not the selection's); 143 `removeAllRanges`; 144
@@ -511,6 +526,25 @@ def domOpM (id op : Nat) (q : String) : Op String := do
   | 133 =>
     let some it := (← get).live.iters[id]? | throw (-2)
     return s!"{it.reference} {if it.beforeRef then 1 else 0}"
+  | 136 =>
+    -- the node being filtered ("node beforeNode"), or none ("")
+    let s ← get
+    let some it := s.live.iters[id]? | throw (-2)
+    let cand := match nums q with
+      | #[k, b] => if k ≥ 0 then some (k.toNat, b == 1) else none
+      | _ => none
+    set { s with live := { s.live with iters := s.live.iters.set! id { it with cand } } }
+    return ""
+  | 137 =>
+    -- the node being filtered was accepted: it becomes the reference, as the removals during
+    -- its filtering left it
+    let s ← get
+    let some it := s.live.iters[id]? | throw (-2)
+    let it' := match it.cand with
+      | some (k, b) => { it with reference := k, beforeRef := b, cand := none }
+      | none => it
+    set { s with live := { s.live with iters := s.live.iters.set! id it' } }
+    return ""
   | 134 =>
     let cur ← nodeArg d id
     let root ← nodeArg d (num xs 1)
@@ -571,12 +605,12 @@ def domOpM (id op : Nat) (q : String) : Op String := do
   | 160 =>
     -- a reflected IDL attribute's getter (`DOM.Reflect.get`): "row" U+0000 the document's URL
     let n ← nodeArg d id
-    match q.splitOn "\x00" with
-    | [row, base] =>
-      match row.toNat?.bind (L4Factoidal.DOM.Reflect.table[·]?) with
-      | some r => return L4Factoidal.DOM.Reflect.get d n r base
-      | none => throw (-2)
-    | _ => throw (-2)
+    let (row, base) := match q.splitOn "\x00" with
+      | [row, base] => (row, base)
+      | _ => (q, "")
+    match row.toNat?.bind (L4Factoidal.DOM.Reflect.table[·]?) with
+    | some r => return L4Factoidal.DOM.Reflect.get d n r base
+    | none => throw (-2)
   | 161 =>
     -- its setter (`DOM.Reflect.set`): "row" U+0000 the converted value
     match q.splitOn "\x00" with
@@ -588,6 +622,56 @@ def domOpM (id op : Nat) (q : String) : Op String := do
       | none => throw (-2)
     | [] => throw (-2)
   | 162 => return L4Factoidal.DOM.Reflect.rowsOf q
+  | 165 =>
+    -- `CSS.supports`: "1" U+0000 property U+0000 value, or "0" U+0000 condition text
+    match q.splitOn "\x00" with
+    | ["1", p, v] => return if L4Factoidal.Rendering.CSS.supportsDeclaration p v then "1" else "0"
+    | "0" :: rest => return if L4Factoidal.Rendering.CssSupports.supportsText ("\x00".intercalate rest) then "1" else "0"
+    | _ => throw (-2)
+  | 166 => return L4Factoidal.Rendering.CssSupports.escape q
+  | 167 =>
+    -- a reflected attribute's setter, applied: the decision of 161, then the content
+    -- attribute set or removed as a command (the page has no MutationObserver and the row
+    -- is not a URL)
+    let n ← nodeArg d id
+    match q.splitOn "\x00" with
+    | row :: rest =>
+      match row.toNat?.bind (L4Factoidal.DOM.Reflect.table[·]?) with
+      | some r =>
+        if (d.get n).type != .element then throw (-2)
+        match L4Factoidal.DOM.Reflect.set r ("\x00".intercalate rest) with
+        | .ok a =>
+          if a == "r" then
+            if (L4Factoidal.DOM.Reflect.attr d n r.content).isSome then exec (.removeAttribute n r.content)
+          else if a != "" then
+            let v := (a.drop 1).toString
+            if L4Factoidal.DOM.Reflect.attr d n r.content != some v then exec (.setAttribute n r.content v)
+          return ""
+        | .error e => throw e
+      | none => throw (-2)
+    | [] => throw (-2)
+  | 163 =>
+    -- HTMLHyperlinkElementUtils getters (HTML §4.6.4): the parts of the element's URL
+    let n ← nodeArg d id
+    match hyperlinkUrl d n q with
+    | some u => return "\x00".intercalate [u.protocol, u.username, u.password, u.hostGetter, u.hostname,
+        u.portGetter, u.pathname, u.search, u.hash, u.origin]
+    | none => throw (-1)
+  | 164 =>
+    -- a setter: "part" U+0000 value U+0000 base; the new href, or -1 when nothing changes
+    let n ← nodeArg d id
+    match q.splitOn "\x00" with
+    | [part, value, base] =>
+      match hyperlinkUrl d n base with
+      | some u =>
+        if part == "protocol" || part == "username" || part == "password" || part == "host" || part == "hostname" ||
+            part == "port" || part == "pathname" || part == "search" || part == "hash" then
+          match u.set part value with
+          | some u' => return u'.href
+          | none => throw (-1)
+        else throw (-2)
+      | none => throw (-1)
+    | _ => throw (-2)
   | _ => throw (-2)
 
 /-- Run op `op`: the state after it (unchanged when it throws) and the answer. -/

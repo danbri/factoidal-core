@@ -348,7 +348,7 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
     if a 1 < 16 then
       let (dom, st, r) := Hosts.Dom.serve mem nm args h.dom st
       ({ h with dom }, st, r)
-    else if a 1 ≥ 100 then
+    else if a 1 ≥ 100 && a 1 < 200 then
       -- ranges, selection, traversal, CharacterData (`Hosts.Dom.domOp`)
       match Hosts.Dom.readStr mem st (a 2) (a 3) Hosts.Dom.maxString with
       | .error e => (h, st, Hosts.Dom.codeOrTrap e)

@@ -16,13 +16,14 @@ same sections. Attributes whose getter is not a plain reflection (`input.type`,
 `input.value`, `canvas.width`, `img.width`, `option.label`, the `meter` values, ...) are
 not in it: their own code is elsewhere.
 
-prelude.js asks for the rows of an interface once, on the first element of that interface
-(`rowsOf`), and defines one getter and setter per row: no work for a page that touches no
-HTML element, and none per element. The getter is `get` (one host call); the setter
+prelude.js asks for the rows of each interface (`rowsOf`) and defines one getter and setter
+per row when the prelude runs, which the engine does once and copies for each page: no
+work per page and none per element. The getter is `get` (one host call); the setter
 converts the value as WebIDL says, then `set` decides the content attribute's new value.
 -/
 import L4Factoidal.DOM.Arena
 import L4Factoidal.WHATWG.URL.Parser
+import L4Factoidal.Rendering.FloatFormat
 
 namespace L4Factoidal.DOM.Reflect
 open L4Factoidal.DOM
@@ -55,6 +56,14 @@ inductive Kind where
   | tabIndex
   /-- A DOMTokenList (`relList`, `sandbox`, ...): prelude.js makes it. -/
   | tokens
+  /-- `option.value` and `option.label` (HTML §4.10.10): the attribute, else the option's
+  text. -/
+  | optionText
+  /-- The `meter` values (HTML §4.10.14): 0 `value`, 1 `min`, 2 `max`, 3 `low`, 4 `high`,
+  5 `optimum`, each with its clamping. -/
+  | meter (which : Nat)
+  /-- `nonce` (HTML §2.6.5, "nonce hiding"): prelude.js keeps the internal slot. -/
+  | nonce
   deriving Repr, Inhabited
 
 structure Row where
@@ -128,7 +137,19 @@ HTMLLinkElement rel . s
 HTMLLinkElement relList rel t
 HTMLLinkElement as . e - - fetch,audio,document,embed,font,image,manifest,object,report,script,sharedworker,style,track,video,worker,xslt
 HTMLLinkElement,HTMLStyleElement,HTMLSourceElement,HTMLMetaElement media . s
-HTMLLinkElement,HTMLStyleElement nonce . s
+HTMLLinkElement,HTMLStyleElement,HTMLScriptElement nonce . nc
+HTMLBaseElement href . u
+HTMLCanvasElement width . ul 300
+HTMLCanvasElement height . ul 150
+HTMLInputElement,HTMLSelectElement,HTMLTextAreaElement autocomplete . s
+HTMLOptionElement value . ot
+HTMLOptionElement label . ot
+HTMLMeterElement value . m 0
+HTMLMeterElement min . m 1
+HTMLMeterElement max . m 2
+HTMLMeterElement low . m 3
+HTMLMeterElement high . m 4
+HTMLMeterElement optimum . m 5
 HTMLLinkElement,HTMLScriptElement integrity . s
 HTMLLinkElement hreflang . s
 HTMLLinkElement,HTMLStyleElement,HTMLScriptElement,HTMLEmbedElement,HTMLObjectElement,HTMLSourceElement type . s
@@ -299,6 +320,8 @@ def parseKind : List String → Option Kind
   | ["s"] => some (.str false) | ["sn"] => some (.str true)
   | ["u"] => some (.url false) | ["ud"] => some (.url true)
   | ["b"] => some .bool | ["ti"] => some .tabIndex | ["t"] => some .tokens
+  | ["ot"] => some .optionText | ["nc"] => some .nonce
+  | ["m", w] => w.toNat?.map .meter
   | ["ll"] => some (.limitedLong (-1))
   | ["l", d] => d.toInt?.map .long
   | ["ul", d] => d.toNat?.map .unsigned
@@ -367,11 +390,10 @@ def parseFloatLiteral (s : String) : Option String := Id.run do
   out := out ++ (if ip.isEmpty then "0" else String.ofList ip)
   -- fraction: "." then digits
   match cs with
-  | '.' :: d :: r =>
-    if isDigit d then
-      let fp := (d :: r).takeWhile isDigit
-      out := out ++ "." ++ String.ofList fp
-      cs := (d :: r).drop fp.length
+  | '.' :: r =>
+    let fp := r.takeWhile isDigit
+    if !fp.isEmpty then out := out ++ "." ++ String.ofList fp
+    cs := r.drop fp.length
   | _ => pure ()
   -- exponent: e or E, an optional sign, digits
   match cs with
@@ -386,6 +408,20 @@ def parseFloatLiteral (s : String) : Option String := Id.run do
   | [] => pure ()
   return some out
 
+/-- The value of a literal of `parseFloatLiteral`. -/
+def literalValue (lit : String) : Float :=
+  let (neg, body) := if lit.startsWith "-" then (true, (lit.drop 1).toString) else (false, lit)
+  let (mant, ex) := match body.splitOn "e" with
+    | [m, e] => (m, e.toInt?.getD 0)
+    | _ => (body, 0)
+  let (ip, fp) := match mant.splitOn "." with
+    | [a, b] => (a, b)
+    | _ => (mant, "")
+  let digits := (ip ++ fp).toNat?.getD 0
+  let e : Int := ex - fp.length
+  let v := if e ≥ 0 then Float.ofScientific digits false e.toNat else Float.ofScientific digits true (-e).toNat
+  if neg then -v else v
+
 /-- The shortest string of a valid integer (§2.6.1 setter of long). -/
 def intText (v : Int) : String := toString v
 
@@ -394,6 +430,28 @@ def intText (v : Int) : String := toString v
 /-- The value of content attribute `name` of HTML element `el`. -/
 def attr (d : Dom) (el : NodeId) (name : String) : Option String :=
   ((d.get el).attrs.find? (fun a => a.ns.isNone && a.lname == name)).map (·.value)
+
+/-- The text of an `option` (HTML §4.10.10): its descendant text, ASCII whitespace stripped
+and collapsed. -/
+def optionTextOf (d : Dom) (el : NodeId) : String :=
+  let t := Dom.descendantTextContent d el
+  " ".intercalate ((t.splitToList isWs).filter (· != ""))
+
+/-- A `meter` value (HTML §4.10.14). -/
+def meterValue (d : Dom) (el : NodeId) (which : Nat) : Float :=
+  let num := fun (name : String) => (attr d el name).bind parseFloatLiteral |>.map literalValue
+    |>.filter (·.isFinite)
+  let mn := (num "min").getD 0
+  let mx := max mn ((num "max").getD 1)
+  let clamp := fun (lo hi v : Float) => if v < lo then lo else if v > hi then hi else v
+  let low := clamp mn mx ((num "low").getD mn)
+  match which with
+  | 0 => clamp mn mx ((num "value").getD 0)
+  | 1 => mn
+  | 2 => mx
+  | 3 => low
+  | 4 => clamp low mx ((num "high").getD mx)
+  | _ => clamp mn mx ((num "optimum").getD ((mn + mx) / 2))
 
 /-- The `tabIndex` default (HTML §6.6.3): 0 for the elements that are focusable areas by
 default, else -1. -/
@@ -423,7 +481,9 @@ document's URL (for URLs). -/
 def get (d : Dom) (el : NodeId) (r : Row) (base : String) : String :=
   let v := attr d el r.content
   match r.kind with
-  | .str _ | .tokens => v.getD ""
+  | .str _ | .tokens | .nonce => v.getD ""
+  | .optionText => v.getD (optionTextOf d el)
+  | .meter w => Rendering.FloatFormat.format (meterValue d el w) ++ "\x00" ++ "0"
   | .url docDefault =>
     match v with
     | none => if docDefault then base else ""
@@ -468,7 +528,7 @@ null): "s" and the content attribute's new value, "r" to remove it, "" to leave 
 error (-14 IndexSizeError). -/
 def set (r : Row) (value : String) : Except Int String :=
   match r.kind with
-  | .str _ | .url _ | .tokens | .double _ false => .ok ("s" ++ value)
+  | .str _ | .url _ | .tokens | .double _ false | .optionText | .meter _ | .nonce => .ok ("s" ++ value)
   | .bool => .ok (if value == "1" then "s" else "r")
   | .enum _ _ _ nullable => .ok (if nullable && value == "\x01" then "r" else "s" ++ value)
   | .long _ | .tabIndex => .ok ("s" ++ value)
@@ -505,6 +565,7 @@ def rowsOf (iface : String) : String := Id.run do
       | .limitedLong _ => "I" | .unsigned _ => "U" | .positive _ false => "P" | .positive _ true => "F"
       | .clamped .. => "C" | .double _ false => "d" | .double _ true => "D"
       | .enum _ _ _ false => "e" | .enum _ _ _ true => "E" | .tokens => "t"
+      | .optionText => "s" | .meter _ => "d" | .nonce => "N"
     out := out ++ s!"{i} {r.idl} {k} {r.content}\x00"
   return out
 
@@ -517,6 +578,9 @@ def rowsOf (iface : String) : String := Id.run do
 #guard parseFloatLiteral "1e2" == some "1e2"
 #guard parseFloatLiteral " .5" == some "0.5"
 #guard parseFloatLiteral "1. 1" == some "1"
+#guard parseFloatLiteral "1.e2" == some "1e2"
+#guard literalValue "-1.5e-3" == -0.0015
+#guard literalValue "1e2" == 100
 #guard parseFloatLiteral "1e 2" == some "1"
 #guard parseFloatLiteral "-1.5e-3x" == some "-1.5e-3"
 #guard enumGet [("ltr", "ltr"), ("rtl", "rtl")] none none (some "RTL") == some "rtl"

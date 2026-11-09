@@ -312,9 +312,8 @@ def Command.reads : Command → Bool
   | .adoptNode .. | .setChecked .. | .resetForm _ | .replaceData .. | .splitText .. => true
   | _ => false
 
-/-- The live ranges and NodeIterators after command `c`, run on arena `d` (the arena before
-it): `DOM.Live` follows the standard's steps for the change. -/
-def Command.live (d : Dom) (lv : L4Factoidal.DOM.Live.Live) : Command → L4Factoidal.DOM.Live.Live
+/-- `Command.live` with a NodeIterator: each step on the arena as the change leaves it. -/
+def Command.liveExact (d : Dom) (lv : L4Factoidal.DOM.Live.Live) : Command → L4Factoidal.DOM.Live.Live
   | .setTextContent n v => (L4Factoidal.DOM.Live.setTextContent d lv n v).2
   | .appendChild p c => (L4Factoidal.DOM.Live.preInsert d lv c p none).2
   | .insertBefore p n c => (L4Factoidal.DOM.Live.preInsert d lv n p c).2
@@ -325,6 +324,27 @@ def Command.live (d : Dom) (lv : L4Factoidal.DOM.Live.Live) : Command → L4Fact
   | .replaceData n o k v => (L4Factoidal.DOM.Live.replaceData d lv n o k v).2
   | .splitText n o _ => (L4Factoidal.DOM.Live.splitText d lv n o).2.1
   | _ => lv
+
+/-- `Command.live` with live ranges only: the steps read from the arena before the change
+(`DOM.Live.fastRemove`, ...), so no arena is copied for them. -/
+def Command.liveFast (d : Dom) (lv : L4Factoidal.DOM.Live.Live) : Command → L4Factoidal.DOM.Live.Live
+  | .setTextContent n v =>
+    if charData d n then L4Factoidal.DOM.Live.fastReplaceData d lv n 0 (L4Factoidal.DOM.Range.utf16Length (d.get n).data) v
+    else if (d.get n).type == .element || (d.get n).type == .fragment then L4Factoidal.DOM.Live.fastReplaceAll d lv n
+    else lv
+  | .appendChild p c => L4Factoidal.DOM.Live.fastPreInsert d lv c p none
+  | .insertBefore p n c => L4Factoidal.DOM.Live.fastPreInsert d lv n p c
+  | .removeChild _ c => L4Factoidal.DOM.Live.fastRemove d lv c
+  | .replaceChild p n c => L4Factoidal.DOM.Live.fastReplace d lv c n p
+  | .adoptNode n _ => L4Factoidal.DOM.Live.fastRemove d lv n
+  | .replaceData n o k v => L4Factoidal.DOM.Live.fastReplaceData d lv n o k v
+  | c => c.liveExact d lv
+
+/-- The live ranges and NodeIterators after command `c`, run on arena `d` (the arena before
+it): `DOM.Live` follows the standard's steps for the change. -/
+def Command.live (d : Dom) (lv : L4Factoidal.DOM.Live.Live) (c : Command) : L4Factoidal.DOM.Live.Live :=
+  if lv.iters.isEmpty then c.liveFast d lv else c.liveExact d lv
+
 
 /-- Record command `c`, whose result is the arena `d`. A write of an attribute or of
 character data whose last write since the last reading command (`Command.reads`) is

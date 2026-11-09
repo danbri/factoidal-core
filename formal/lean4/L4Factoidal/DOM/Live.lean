@@ -172,6 +172,76 @@ def normalize (d : Dom) (lv : Live) (n : NodeId) : Dom × Live := Id.run do
     for c in run do (d, lv) := remove d lv c
   return (d, lv)
 
+/-! ## The same steps, read from the arena before the change
+
+A change of the arena array copies it when the array is shared, and the host's arena is
+(the state holds it). So with no NodeIterator (whose steps read the tree as each removal
+leaves it), the steps above are computed from the arena before the change, with the
+indexes each removal leaves: no arena is made. `fast_agrees` tests check the agreement. -/
+
+/-- The inclusive descendants of `n`. -/
+def subtree (d : Dom) (n : NodeId) : Std.HashSet NodeId := (d.treeOrder n true).foldl (·.insert ·) {}
+
+def stepRemove (d : Dom) (lv : Live) (node parent index : Nat) : Live :=
+  lv.mapBP (removeStep ((subtree d node).contains ·) parent index)
+
+/-- "Remove" `node`. -/
+def fastRemove (d : Dom) (lv : Live) (node : NodeId) : Live :=
+  match (d.get node).parent with
+  | some p => stepRemove d lv node p (indexOf d node)
+  | none => lv
+
+/-- The children of a fragment leave it one by one, each at index 0. -/
+def fastEmpty (d : Dom) (lv : Live) (frag : NodeId) : Live :=
+  (d.get frag).kids.foldl (fun lv k => stepRemove d lv k frag 0) lv
+
+/-- "Pre-insert" `node` into `parent` before `child`. -/
+def fastPreInsert (d : Dom) (lv : Live) (node parent : NodeId) (child : Option NodeId) : Live :=
+  let ref := if child == some node then d.nextSibling node else child
+  let n := d.get node
+  if n.type == .fragment then
+    let count := n.kids.size
+    if count == 0 then lv else
+    let lv := fastEmpty d lv node
+    match ref with
+    | some c => lv.mapBP (insertStep parent (indexOf d c) count)
+    | none => lv
+  else
+    let lv := match ref with
+      | some c => lv.mapBP (insertStep parent (indexOf d c) 1)
+      | none => lv
+    fastRemove d lv node
+
+/-- "Replace" `child` with `node` within `parent`, as `Dom.replace`: the node leaves its
+old parent, then the child leaves, then the node goes in before the reference child. -/
+def fastReplace (d : Dom) (lv : Live) (child node parent : NodeId) : Live :=
+  let ref0 := d.nextSibling child
+  let ref := if ref0 == some node then d.nextSibling node else ref0
+  let op := (d.get node).parent
+  let iN := indexOf d node
+  -- how many nodes before `k` in `parent` have left it
+  let before := fun (k : Nat) => if op == some parent && iN < indexOf d k then 1 else 0
+  let lv := match op with
+    | some p => stepRemove d lv node p iN
+    | none => lv
+  let lv := if (d.get child).parent.isSome then stepRemove d lv child parent (indexOf d child - before child) else lv
+  let n := d.get node
+  let count := if n.type == .fragment then n.kids.size else 1
+  if count == 0 then lv else
+  let lv := if n.type == .fragment then fastEmpty d lv node else lv
+  match ref with
+  | some r => lv.mapBP (insertStep parent (indexOf d r - before r - 1) count)
+  | none => lv
+
+/-- `textContent` of an element or fragment: its children leave, each at index 0. -/
+def fastReplaceAll (d : Dom) (lv : Live) (parent : NodeId) : Live :=
+  (d.get parent).kids.foldl (fun lv k => stepRemove d lv k parent 0) lv
+
+/-- "Replace data", the live steps only. -/
+def fastReplaceData (d : Dom) (lv : Live) (node offset count : Nat) (data : String) : Live :=
+  let len := utf16Length (d.get node).data
+  lv.mapBP (replaceDataStep node offset (min count (len - offset)) (utf16Length data))
+
 /-! ## Agreement with the arena
 
 With no live range and no iterator, these functions change the arena as `DOM.Arena` does:
@@ -201,5 +271,31 @@ private def same (a b : Dom) : Bool := a.nodes.size == b.nodes.size &&
 #guard (let t := (doc1.get (idOf doc1 "a")).kids[0]!
   (replaceData doc1 { ranges := #[some ⟨⟨t, 1⟩, ⟨t, 2⟩⟩] } t 0 1 "abc").2.ranges) ==
   (let t := (doc1.get (idOf doc1 "a")).kids[0]!; #[some ⟨⟨t, 0⟩, ⟨t, 4⟩⟩])
+
+-- the steps read from the arena before the change agree with the steps on the arena
+private def lv3 (d : Dom) : Live :=
+  let a := idOf d "a"; let b := idOf d "b"; let t := (d.get a).kids[0]!
+  { ranges := #[some ⟨⟨a, 0⟩, ⟨a, 3⟩⟩, some ⟨⟨t, 1⟩, ⟨b, 1⟩⟩, some ⟨⟨a, 2⟩, ⟨a, 2⟩⟩, some ⟨⟨0, 0⟩, ⟨idOf d "c", 0⟩⟩] }
+#guard (let d := doc1; let b := idOf d "b"
+  (fastRemove d (lv3 d) b).ranges == (remove d (lv3 d) b).2.ranges)
+#guard (let d := doc1; let a := idOf d "a"; let c := idOf d "c"; let b := idOf d "b"
+  (fastPreInsert d (lv3 d) c a (some b)).ranges == (preInsert d (lv3 d) c a (some b)).2.ranges)
+#guard (let d := doc1; let a := idOf d "a"; let b := idOf d "b"; let t := (d.get a).kids[0]!
+  (fastPreInsert d (lv3 d) t a (some b)).ranges == (preInsert d (lv3 d) t a (some b)).2.ranges)
+#guard (let d := doc1; let a := idOf d "a"; let b := idOf d "b"; let w := (d.get a).kids[2]!
+  (fastReplace d (lv3 d) b w a).ranges == (replace d (lv3 d) b w a).2.ranges)
+#guard (let d := doc1; let a := idOf d "a"; let b := idOf d "b"; let t := (d.get a).kids[0]!
+  (fastReplace d (lv3 d) t b a).ranges == (replace d (lv3 d) t b a).2.ranges)
+#guard (let d := doc1; let a := idOf d "a"; let c := idOf d "c"; let b := idOf d "b"
+  (fastReplace d (lv3 d) b c a).ranges == (replace d (lv3 d) b c a).2.ranges)
+#guard (let d := doc1; let a := idOf d "a"
+  (fastReplaceAll d (lv3 d) a).ranges == (replaceAll d (lv3 d) none a).2.ranges)
+-- a fragment of two nodes inserted before b
+#guard (let (d0, f) := doc1.createDocumentFragment 0
+  let (d0, x) := d0.createTextNode 0 "x"; let d0 := d0.linkChild f x none
+  let (d0, y) := d0.createTextNode 0 "y"; let d := d0.linkChild f y none
+  let a := idOf d "a"; let b := idOf d "b"
+  let lv : Live := { ranges := (lv3 d).ranges.push (some ⟨⟨f, 1⟩, ⟨y, 1⟩⟩) }
+  (fastPreInsert d lv f a (some b)).ranges == (preInsert d lv f a (some b)).2.ranges)
 
 end L4Factoidal.DOM.Live

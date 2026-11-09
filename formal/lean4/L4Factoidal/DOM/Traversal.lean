@@ -66,27 +66,36 @@ def preceding (d : Dom) (root n : NodeId) : Option NodeId :=
 
 /-! ## NodeIterator -/
 
-/-- A NodeIterator's state: root, reference, pointer before reference, whatToShow. -/
+/-- A NodeIterator's state: root, reference, pointer before reference, whatToShow, and the
+node being filtered in a traverse with its before flag (`cand`): the pre-removing steps
+move it as they move the reference, and an accepted node becomes the reference as moved. -/
 structure Iter where
   root : NodeId
   reference : NodeId
   beforeRef : Bool := true
   whatToShow : Nat
+  cand : Option (NodeId × Bool) := none
   deriving BEq, Repr, Inhabited
 
-/-- The NodeIterator pre-removing steps (DOM §6.1) for `node`, about to be removed. -/
-def preRemove (d : Dom) (it : Iter) (node : NodeId) : Iter := Id.run do
-  if !d.isInclusiveAncestor node it.reference || node == it.root then return it
-  let mut it := it
-  if it.beforeRef then
+/-- The NodeIterator pre-removing steps (DOM §6.1) for `node`, about to be removed, on one
+position (reference, pointer before reference) of an iterator with root `root`. -/
+def preRemovePos (d : Dom) (root : NodeId) (pos : NodeId × Bool) (node : NodeId) : NodeId × Bool := Id.run do
+  let (reference, before) := pos
+  -- a removal of the root or of an ancestor of it leaves the iterator as it is
+  if !d.isInclusiveAncestor node reference || d.isInclusiveAncestor node root then return pos
+  if before then
     -- the first following node that is an inclusive descendant of the root and not an
     -- inclusive descendant of `node`
-    match (nextSkipping d it.root node).filter (d.isInclusiveAncestor it.root ·) with
-    | some next => return { it with reference := next }
-    | none => it := { it with beforeRef := false }
+    match (nextSkipping d root node).filter (d.isInclusiveAncestor root ·) with
+    | some next => return (next, true)
+    | none => pure ()
   match d.previousSibling node with
-  | some s => return { it with reference := lastDescendant d s }
-  | none => return { it with reference := ((d.get node).parent).getD it.reference }
+  | some s => return (lastDescendant d s, false)
+  | none => return (((d.get node).parent).getD reference, false)
+
+def preRemove (d : Dom) (it : Iter) (node : NodeId) : Iter :=
+  let (reference, beforeRef) := preRemovePos d it.root (it.reference, it.beforeRef) node
+  { it with reference, beforeRef, cand := it.cand.map (preRemovePos d it.root · node) }
 
 /-- One move of "traverse" (DOM §6.1 steps 3.1, 3.2) from (`node`, `beforeNode`): the next
 node to filter and the new before flag, or none when the iterator is at its end. Nodes that
@@ -223,8 +232,8 @@ def run (d : Dom) (w : Walk) (r : Nat) : Ask := Id.run do
       -- at_ 2: find the sibling of node (or climb); at_ 1: have the result of node
       if w.at_ == 1 then
         if r == accept then return .done (some w.node)
-        -- sibling = node's first or last child when skip
-        let sib := if r == skip then firstOf d w.node nextDir else none
+        -- sibling = node's first or last child unless the result is reject
+        let sib := if r != reject then firstOf d w.node nextDir else none
         match sib with
         | some c =>
           w := { w with node := c }
@@ -307,18 +316,13 @@ def run (d : Dom) (w : Walk) (r : Nat) : Ask := Id.run do
           if !needsPage w d c then r := skip else return .filter w c
           continue
         | none => pure ()
-      -- steps 3.2, 3.3: the next sibling of node or of an ancestor below root
-      let mut temp := w.node
-      for _ in [0:d.size + 1] do
-        if temp == w.root then return .done none
-        match d.nextSibling temp with
-        | some s => w := { w with node := s }; break
-        | none =>
-          match (d.get temp).parent with
-          | some p => temp := p
-          | none => break
-      -- step 3.4 (with no sibling found, node is filtered again)
-      if !needsPage w d w.node then r := skip else return .filter w w.node
+      -- steps 3.2, 3.3: the next sibling of node or of an ancestor below root; none (a
+      -- detached tree walked to its end) is the end
+      match nextSkipping d w.root w.node with
+      | some s =>
+        w := { w with node := s }
+        if !needsPage w d s then r := skip else return .filter w s
+      | none => return .done none
   return .done none
 
 /-- Start method `m` of a walker at `current`. -/
