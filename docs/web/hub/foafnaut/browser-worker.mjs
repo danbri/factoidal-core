@@ -12,9 +12,11 @@ import {createBrowserState,indexedDbStore,memoryStore,stateAvailable} from './br
 import {createRouter} from './link-route.mjs';
 let browserState,stateReason='starting';
 const statePages=['foafnaut:bookmarks','foafnaut:history'];
-// Liberal mode (WebAccept.lean, the Settings checkbox "Be liberal in what we accept"): a page
-// is prepared with liberal:true; Lean skips what it may skip and says so in the console.
-let liberal=false;
+// Liberal mode (WebAccept.lean, the Settings checkbox "Be liberal in what we accept"), the
+// default (owner, 2026-11-09): a page is prepared with liberal:true; the built-in engine skips
+// what it may skip and says so in the console. ?strict=1 (the checks) is strict, whatever the
+// saved setting says.
+let liberal=true,strictParam=false;
 // The console of each page (foafnaut:console, WebConsole.lean): what its scripts wrote, and
 // System entries: Lean's diagnostics, refusals and fetches that failed. Lean writes the page.
 const consoleURL='foafnaut:console',MAX_CONSOLE=1000;
@@ -205,6 +207,7 @@ function unfold(){
 const push=(state,url)=>call('',{op:'historyPush',history:state,url});
 const refusal=(url,message)=>{
   const text=value=>String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+  message=String(message).replace(/^(Error: )?Lean HTML: /,'');
   const page={url,title:'Page refused',source:`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page refused</title></head><body><h1>This page can not be shown</h1><p>${text(url)}</p><p>${text(message)}</p></body></html>`};
   addEntries(page,[{source:'System',severity:'error',feature:'page',where:url,message:String(message),action:'page refused'}]);
   return page;
@@ -363,7 +366,7 @@ function settingsSource(source){
   // Liberal mode: the checkbox, in the state of now. Lean draws it as the rest of the page.
   const liberalBox=`<span class="box">${liberal?'<span class="tick"></span>':''}</span>`;
   source=source.replace('<!--foafnaut:liberal-->',`<p class="check"><a href="foafnaut:liberal/${liberal?'off':'on'}">${liberalBox} Be liberal in what we accept</a></p>`+
-    '<p>On: a page with a feature this browser does not support is drawn without it (a module script, a stylesheet it did not load, a media condition it can not read), and the console (:console, or Control-Alt-J) lists what was skipped. Off: such a page is refused.</p>');
+    '<p>On (the default): a page with a feature this browser does not support is drawn without it (a module script, a stylesheet it did not load, a media condition or inline SVG it can not read), and the console (:console, or Control-Alt-J) lists what was skipped. Off: strict, such a page is refused.</p>');
   if(!source.includes(classicMark))return source;
   const box=`<span class="box">${classicUI?'<span class="tick"></span>':''}</span>`;
   const row=canFold()
@@ -1125,7 +1128,7 @@ async function openState(){
     // An engine from before the setting does not keep it: the classic chrome then.
     if(typeof saved.settings.classicUI==='boolean')classicUI=saved.settings.classicUI;
     if(typeof saved.settings.scripts==='string')scriptSetting=saved.settings.scripts;
-    if(typeof saved.settings.liberal==='boolean')liberal=saved.settings.liberal;
+    if(typeof saved.settings.liberal==='boolean'&&!strictParam)liberal=saved.settings.liberal;
     if(typeof saved.settings.encoding==='string')encodingSetting=saved.settings.encoding;
     if(doc?.url===settingsURL)navigate(settingsURL,false);else request();}
 }
@@ -1305,6 +1308,7 @@ async function start(data){
   // A saved zoom still wins.
   percent=Math.max(50,Math.round(200*scale/5)*5);
   checkMode=data.check===true;statsMode=data.stats===true;
+  if(data.strict===true){strictParam=true;liberal=false;}
   // ?layers=0: one Lean frame for each scroll, as before the two-layer view.
   if(data.layers===false)layered=false;
   const gpuReady=gpuAdapter();

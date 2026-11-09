@@ -153,7 +153,7 @@ worker.onerror=event=>{note.hidden=false;note.textContent='The browser worker fa
 // to an OffscreenCanvas with WebGPU. If not, or with ?check=1, the worker reads each frame
 // back and the page paints it with putImageData.
 function begin(surface){
-  const options={...size(),page:hubAddress()?undefined:query.get('page'),...(hubAddress()?{address:hubAddress()}:{}),check:checkParam==='1'||checkParam==='surface',stats:showStats,platform:mac?'mac':'other',...(query.get('layers')==='0'?{layers:false}:{})};
+  const options={...size(),page:hubAddress()?undefined:query.get('page'),...(hubAddress()?{address:hubAddress()}:{}),check:checkParam==='1'||checkParam==='surface',stats:showStats,platform:mac?'mac':'other',...(query.get('strict')==='1'?{strict:true}:{}),...(query.get('layers')==='0'?{layers:false}:{})};
   if(surface&&checkParam!=='1'){
     const offscreen=canvas.transferControlToOffscreen();
     window.foafnautSurface=true;

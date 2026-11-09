@@ -157,7 +157,7 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
         GPU_LOG=$(mktemp -t foafnaut-page-gpu)
         GPU_RC=0
         QUICKJS_WASM="$QJS_GUEST" perl -e 'alarm shift; exec @ARGV' "$GPU_SECONDS" deno run --no-check --no-config --no-npm --node-modules-dir=none \
-          --unstable-webgpu --unstable-ffi -A "$LAB/run_html.ts" --offscreen --no-state --html "$LAB/pages/$gpu_page.html" ${GPU_ENGINE[@]+"${GPU_ENGINE[@]}"} >"$GPU_LOG" 2>&1 || GPU_RC=$?
+          --unstable-webgpu --unstable-ffi -A "$LAB/run_html.ts" --offscreen --no-state --strict --html "$LAB/pages/$gpu_page.html" ${GPU_ENGINE[@]+"${GPU_ENGINE[@]}"} >"$GPU_LOG" 2>&1 || GPU_RC=$?
         # 142: the alarm ended the run, as planned. Any other non-zero code is a failure.
         if { [ "$GPU_RC" != 0 ] && [ "$GPU_RC" != 142 ]; } || grep -qE 'page GPU|page error' "$GPU_LOG" || ! grep -q '"native-html-presented"' "$GPU_LOG"; then
           echo "page GPU in the window: $gpu_page failed:" >&2; grep -m5 -E 'page GPU|page error|rror' "$GPU_LOG" >&2; rm -f "$GPU_LOG"; exit 1

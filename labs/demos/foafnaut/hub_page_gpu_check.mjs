@@ -66,7 +66,7 @@ try{
   await s('Emulation.setDeviceMetricsOverride',{width:800,height:900,deviceScaleFactor:1,mobile:false});
   await s('Page.addScriptToEvaluateOnNewDocument',{source:`(()=>{let f;window.__frames=[];
     Object.defineProperty(window,'foafnautFrame',{configurable:true,get(){return f;},set(v){f=v;window.__frames.push({t:performance.now(),...v});}});})();`});
-  await s('Page.navigate',{url:base+`?page=${pageName}&stats=1`});
+  await s('Page.navigate',{url:base+`?page=${pageName}&stats=1&strict=1`});
   const evaluate=async expression=>{const r=await s('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw Error(r.exceptionDetails.text);return r.result.value;};
   const t0=Date.now();let gpuFrames=[];
   while(Date.now()-t0<60000){

@@ -58,7 +58,7 @@ for entry in "${SWEEPS[@]}"; do
     t0=$(date +%s)
     # shellcheck disable=SC2086 # the sweep arguments split on spaces, as written above
     timeout 600 deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi -A \
-      "$LAB/run_html.ts" --offscreen --perf-summary --no-state $args "${choice[@]}" >"$log" 2>&1
+      "$LAB/run_html.ts" --offscreen --perf-summary --no-state --strict $args "${choice[@]}" >"$log" 2>&1
     rc=$?
     secs=$(( $(date +%s) - t0 ))
     summary=$(python3 -I - "$log" <<'EOF'
