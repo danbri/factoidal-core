@@ -284,6 +284,24 @@ extern_lib libl4hostread pkg := do
 @[default_target] lean_lib WasmVM where
   roots := #[`L4Factoidal.WasmVM]
 
+-- `include_str` inputs: Lake does not see a file a module reads with `include_str`, so each
+-- is an `input_file` that the module's library `needs` (its hash joins the module's trace).
+-- WasmVM/Hosts/LeanJS.lean embeds the page prelude and the WebAssembly glue (BubblePopJS runs
+-- them), the tree's only include_str inputs: the module is its
+-- own library, declared after `WasmVM` (the last library whose root matches owns a module),
+-- so a change to prelude.js rebuilds LeanJS and what imports it, and nothing else.
+input_file pagePrelude where
+  path := "../../tools/wasmvm/quickjs/prelude.js"
+  text := true
+
+input_file pageWasmGlue where
+  path := "../../tools/wasmvm/quickjs/webassembly.js"
+  text := true
+
+lean_lib LeanJSHost where
+  roots := #[`L4Factoidal.WasmVM.Hosts.LeanJS]
+  needs := #[pagePrelude, pageWasmGlue]
+
 -- The HTML event loop, timers and DOM event dispatch order as a pure model, with
 -- its theorems (docs/designissues/2026-11-08-event-loop.md). Only Lean core.
 @[default_target] lean_lib EventLoop where
