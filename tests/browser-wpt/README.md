@@ -118,12 +118,13 @@ first frame is drawn, so animated tests can not match yet. Results are in
 Apple's EU browser-engine rule count it: subtests passed divided by the most
 subtests any browser runs on wpt.fyi (Chrome's count at the pinned WPT commit).
 It uses `testharness-run.ts --wpt-root DIR --list FILE`, which runs tests by
-their wpt.fyi names from any WPT checkout. That mode maps `.any.html`,
-`.window.html`, `.test262.html`, query variants (`?include=`, `?1-1000`) and
-`.sub.` pages as wptserve does. It counts worker, ShadowRealm and module variants
-as not run, and pages without testharness.js (reftests, crashtests) as not
-testharness. Run without `--list`, the runner's defaults and output are as
-before.
+their wpt.fyi names from any WPT checkout. Since 2026-11-09 it runs them through
+WPT's own server, `wptserve` (see "Running through wptserve" below); the older
+path (`wpt-score.py run --files`) reads the checkout's files and makes
+wptserve's `.any.html`, `.window.html` and `.test262.html` wrappers and the
+common `.sub.` substitutions in the runner. Pages without testharness.js
+(reftests, crashtests) are counted as not testharness. Run without `--list`, the
+runner's defaults and output are as before.
 
 ```sh
 SCRATCH=$(mktemp -d)
@@ -131,16 +132,19 @@ SCRATCH=$(mktemp -d)
 #    Find the run at https://wpt.fyi/api/runs?sha=<commit>&product=chrome&label=master
 #    and save its summary_v2.json.gz, unzipped, as $SCRATCH/chrome.json.
 # 2. Draw the stratified sample (fixed seed; 25 names a stratum, the 5 largest always).
+#    --variants all (the default) also draws the worker, shared worker, service worker,
+#    ShadowRealm and module variants, as strata of their own; --variants window draws
+#    the window sample of the 2026-11-09 score, which `all` keeps unchanged.
 python3 tests/browser-wpt/wpt-score.py sample --chrome $SCRATCH/chrome.json \
   --out $SCRATCH/sample.json --list $SCRATCH/sample.list
-# 3. A blobless, shallow, sparse WPT checkout of just those files, their scripts,
-#    resources/, common/ and third_party/test262/harness/ (about 110 MB).
-git init $SCRATCH/wpt
-git -C $SCRATCH/wpt remote add origin https://github.com/web-platform-tests/wpt.git
-git -C $SCRATCH/wpt sparse-checkout init --no-cone
-git -C $SCRATCH/wpt fetch --depth 1 --filter=blob:none origin fea36e49ddda8a206a5d3489ac377c8b9f406af9
-python3 tests/browser-wpt/wpt-score.py sparse --wpt-root $SCRATCH/wpt --list $SCRATCH/sample.list
+# 3. The part of WPT those tests need, from GitHub's tarball of the commit, streamed
+#    (no git, no full checkout): tools/ (wptserve itself), resources/, common/, fonts/,
+#    images/, interfaces/, the Test262 harness, each test's directory with its
+#    resources/ and support/, and what the pages load from elsewhere (about 380 MB).
+python3 tests/browser-wpt/wpt-score.py tree --wpt-root $SCRATCH/wpt --list $SCRATCH/sample.list
 # 4. Run (3 processes under nice; a test stalled for 300 s is recorded and skipped).
+#    One wptserve serves all three; it stops at the end. Add `-- --script-engine bubblepop`
+#    for BubblePopJS.
 python3 tests/browser-wpt/wpt-score.py run --list $SCRATCH/sample.list --dir $SCRATCH/run \
   --wpt-root $SCRATCH/wpt --native-engine labs/demos/foafnaut/.build/web-render/engines/libweb-render.dylib
 # 5. Optionally run whole directories (a list of all their names) into another --dir,
@@ -148,6 +152,9 @@ python3 tests/browser-wpt/wpt-score.py run --list $SCRATCH/sample.list --dir $SC
 python3 tests/browser-wpt/wpt-score.py score --chrome $SCRATCH/chrome.json --sample $SCRATCH/sample.json \
   --results $SCRATCH/run $SCRATCH/run-full --out tests/browser-wpt/wpt-score-$(date +%Y%m%d).json
 ```
+
+The `sparse` command (a blobless sparse git checkout of the test files and the
+scripts they load) still works for the `--files` path; wptserve needs `tree`.
 
 [wpt-score-20261109.json](wpt-score-20261109.json) is the first such score, at
 WPT fea36e49dd with the release-equivalent native engine: 31,202 subtests
@@ -163,6 +170,71 @@ and the totals: the measured lower bound, the extrapolated estimate with a 95%
 range, and their share of the denominator. Passed subtests are capped at
 Chrome's count for the same name. The method is described at the top of
 `wpt-score.py`.
+
+## Running through wptserve
+
+`testharness-run.ts --wptserve --wpt-root DIR --list FILE` is WPT test mode.
+The runner loads every test from a local wptserve, as a browser run does:
+
+- **Pages and scripts over HTTP.** A name such as `/url/a.any.html?include=x`
+  loads `http://web-platform.test:8000/url/a.any.html?include=x`; a `.https.`
+  name loads `https://web-platform.test:8443/...`, a `.www.` name the www
+  subdomain. The host (the runner, in place of run_html.ts) fetches the page,
+  then each `<script src>` the engine lists (`inspect`), on any WPT origin,
+  and gives the sources to the engine's script session. Lean decodes the page
+  bytes with the HTTP Content-Type. So wptserve's own wrappers, `.sub.`
+  substitution, `.headers` files, pipes (`?pipe=`), Python handlers,
+  redirects and the other origins (www1, www2, the IDN subdomains,
+  not-web-platform.test, port 8001) behave as they do for a browser.
+- **The server.** `wpt-score.py serve --wpt-root DIR` runs WPT's
+  `tools/serve` with WPT's vendored libraries, so it needs no virtualenv and no
+  network. It binds to 127.0.0.1 only, with HTTP on 8000-8003, HTTPS on
+  8443-8446 (WPT's pregenerated certificates), HTTP/2 on 9000 and WebSockets on
+  8888/8889. There is no WebTransport and no DNS server. `wpt-score.py run`
+  starts one server for all its processes. The runner starts its own when none
+  answers. SIGTERM or SIGINT stops it with its server processes.
+- **The test-mode resolver** (`wpt-hosts.ts`). WPT's hostnames are
+  web-platform.test and not-web-platform.test, each with www, www1, www2 and the
+  two IDN subdomains. They reach 127.0.0.1 only inside this runner process, and
+  only with `--wptserve`, on the ports above. HTTP goes through Deno's fetch
+  with a `tcp` transport to 127.0.0.1, keeping the URL's host. HTTPS goes
+  through a small HTTP/1.1 client: TCP to 127.0.0.1, then TLS with the URL's
+  host for SNI and the certificate check. Redirects are followed one hop at a
+  time, and each hop is checked again. Any other host, port or scheme is
+  refused, including `nonexistent.web-platform.test`, which WPT means to fail.
+  So this mode never reaches a real network host, and it is not a proxy.
+  Nothing is written to /etc/hosts.
+  `deno test tests/browser-wpt/wpt-hosts_test.ts` checks the refusals.
+- **Trust.** HTTPS trusts WPT's test CA (`tools/certs/cacert.pem` in the
+  checkout) as an extra root for this client only. No certificate is installed
+  and no system setting changes.
+- **testharnessreport.js** is the one file the runner still supplies itself:
+  ours reports results as console lines. wptrunner does the same for each
+  browser.
+- **Variants.** Once a process, the runner asks the engine which APIs it has
+  (`info.features` in `--out`): Worker, SharedWorker, navigator.serviceWorker,
+  ShadowRealm, fetch, XMLHttpRequest and module scripts. A variant whose API is
+  missing is `SKIP` "not supported by engine: Worker (dedicated worker
+  variant)", kind `engine`, and scores 0. That is kept apart from runner gaps
+  (kind `runner`, for example `.h2.` names, which need the HTTP/2 server). A
+  worker variant runs as soon as the engine defines `Worker`. Then wptserve
+  serves its `fetch_tests_from_worker` page and the worker script.
+
+What stays out of scope or is still missing:
+
+- **Engine features.** The runner serves what a browser would get. Whether the
+  engine follows the same-origin policy is the engine's business. Its
+  scriptSession has no host fetch for page `fetch()`/XHR, iframe documents,
+  Worker scripts or importScripts yet. Tests that need these fail in the
+  engine, not in the runner.
+- **The url/ data shim.** The url/ tests load their data with
+  `fetch("resources/x.json")`. Until page scripts have `fetch`, the runner's
+  shim answers those files. With `--wptserve` it gets them from wptserve over
+  HTTP. It goes away when the engine has fetch.
+- **Not run.** The HTTP/2 tests (`.h2.`) and WebTransport. Reftests and
+  crashtests weigh 0 in wpt.fyi's subtest counts.
+- **Provenance.** The WPT tree is BSD-3-Clause and stays in scratch. `tree`
+  writes a PROVENANCE file with the commit. Nothing from it is committed.
 
 ## History and dashboard
 
