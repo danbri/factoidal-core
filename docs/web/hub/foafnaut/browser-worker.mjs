@@ -639,7 +639,7 @@ async function startScripts(page,scripts){
 // A turn's logs, and a new frame only when the DOM changed: no DOM change, no layout (the
 // commands are part of the render request and so of the layout key).
 function scriptTurn(page,turn){
-  for(const line of turn.logs)console.log('page:',line);
+  for(const line of turn.logs)console.log('page:',line.replace(/^\u0001(\w+)\u0001/,'$1: '));
   for(const line of turn.errors)console.warn('page error:',line);
   addEntries(page,[...turn.logs.map(message=>({source:'page',severity:'log',message})),...turn.errors.map(message=>({source:'page',severity:'error',message}))]);
   if(page.script)page.script.turn=turn;

@@ -2401,9 +2401,16 @@
     Object.defineProperty(globalThis, k, { get: () => viewport()[i], set(v) {}, configurable: true, enumerable: true });
   def('devicePixelRatio', 1); def('scrollX', 0); def('scrollY', 0);
   def('pageXOffset', 0); def('pageYOffset', 0);
-  const log = (...xs) => n.log(xs.map(x => typeof x === 'string' ? x : (() => { try { return typeof x === 'object' && x !== null && !(x instanceof Error) ? JSON.stringify(x) : String(x); } catch { return String(x); } })()).join(' '));
-  def('console', Object.freeze({ log, info: log, debug: log, warn: log, error: log, trace: log, assert: (c, ...xs) => { if (!c) log('Assertion failed:', ...xs); },
-    group: log, groupEnd() {}, time() {}, timeEnd() {}, dir: log, table: log }));
+  const text = xs => xs.map(x => typeof x === 'string' ? x : (() => { try { return typeof x === 'object' && x !== null && !(x instanceof Error) ? JSON.stringify(x) : String(x); } catch { return String(x); } })()).join(' ');
+  const log = (...xs) => n.log(text(xs));
+  // A line of another level starts with the level between two U+0001 marks; the console tab
+  // (WebConsole.lean) reads it. One host import (console_log) carries every level.
+  const at = level => (...xs) => n.log('\u0001' + level + '\u0001' + text(xs));
+  const warn = at('warn'), error = at('error');
+  def('console', Object.freeze({ log, info: at('info'), debug: at('debug'), warn, error, trace: log,
+    assert: (c, ...xs) => { if (!c) error('Assertion failed:', ...xs); },
+    group: log, groupCollapsed: log, groupEnd() {}, time() {}, timeEnd() {}, timeLog() {}, count() {}, countReset() {},
+    dir: log, dirxml: log, table: log }));
   def('setTimeout', (f, delay = 0, ...args) => timer(0, f, delay, args));
   def('setInterval', (f, delay = 0, ...args) => timer(1, f, delay, args));
   def('clearTimeout', (id = 0) => { n.clearTimer(Number(id) | 0); });

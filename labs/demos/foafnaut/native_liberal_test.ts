@@ -69,3 +69,27 @@ Deno.test("liberal mode skips, reports and draws the note; strict refuses (Wasm)
 Deno.test({name:"liberal mode (native library), as the Wasm engine",ignore:noLibrary,fn:async()=>{
   assert.equal(JSON.stringify(await runs(await loadHTML(library))),JSON.stringify(await runs(await loadHTML())));
 }});
+
+// Console levels (prelude.js console, WebConsole.level): warn, error, info and debug reach the
+// console tab with their level, on BubblePopJS and on QuickJS-NG (when its guest module, built
+// from this prelude, is given in QUICKJS_WASM). Native library.
+const levelsPage='<!doctype html><title>L</title><p>x</p><script>console.log("plain");console.warn("careful",1);console.error("bad");'+
+  'console.info("note");console.debug("detail");console.table([1]);console.group("g");console.groupEnd();console.assert(false,"assert")</script>';
+Deno.test({name:"console levels reach the console tab (BubblePopJS, and QuickJS-NG with QUICKJS_WASM)",ignore:noLibrary,fn:async()=>{
+  const engine=await loadHTML(library);
+  const engines=(engine.scriptInfo().engines??[]) as string[];
+  const guest=Deno.env.get("QUICKJS_WASM");
+  const runs:[string,Record<string,unknown>][]=[];
+  if(engines.includes("bubblepop"))runs.push(["bubblepop",{engine:"bubblepop"}]);
+  if(guest){engine.scriptLoad(await Deno.readFile(guest));runs.push(["quickjs",{}]);}
+  for(const [name,extra] of runs){
+    const turn=engine.scriptSession(levelsPage,{action:"start",url:"file:///levels.html",resources:[],...extra}) as {logs:string[];errors:string[]};
+    engine.scriptSession("",{action:"close"});
+    assert.deepEqual(turn.errors,[],`${name}: page errors`);
+    assert.deepEqual(turn.logs,["plain","\u0001warn\u0001careful 1","\u0001error\u0001bad","\u0001info\u0001note","\u0001debug\u0001detail","[1]","g","\u0001error\u0001Assertion failed: assert"],name);
+    const page={url:"file:///levels.html",title:"L"};
+    const shown=engine.consolePage({tab:1,title:"L",url:page.url,entries:turn.logs.map(message=>({source:"page",severity:"log",message})),tabs:[page]});
+    for(const want of ["page warn","page error","page info","page debug","page log"])assert(shown.source.includes(want),`${name}: console page lacks ${want}`);
+    assert(!shown.source.includes("\u0001"),`${name}: a level mark is shown`);
+  }
+}});
