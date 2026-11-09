@@ -512,7 +512,7 @@ def frameBits (s : State) (el : Nat) : Nat :=
   let f := elementFrame s el
   (if frameAccessible s el then 1 else 0) + (if f.scriptsMayRun then 2 else 0) + (if f.formsMaySubmit then 4 else 0) +
   (if f.popupsAllowed then 8 else 0) + (if f.topNavigationAllowed false then 16 else 0) +
-  (if f.modalsAllowed then 32 else 0) + (if s.frames.any (·.1 == el) || s.dom.connected el then 64 else 0)
+  (if f.modalsAllowed then 32 else 0) + (if s.frames.any (·.1 == el) then 64 else 0)
 
 /-! ## Node imports (page scripts in the engine) -/
 
@@ -540,7 +540,8 @@ root's state (`shadowFlags`); 23 a slottable's `assignedSlot`; 24 the shadow-inc
 root (`getRootNode({composed: true})`); 25 1 when connected (`isConnected`), else 0; 26 an
 element's shadow root, open or closed; 27 1 when the arena has a shadow host; 28 the root
 (`getRootNode()`); 29 an `iframe`'s frame (`frameBits`): its sandbox and whether its
-document is reachable (64: it has a browsing context, as every connected `iframe` has); on a document, 128 in a frame's own session (`selfOrigin`). `contentDocument` (11) is none for a frame whose document's origin
+document is reachable (64: it has a browsing context: it is connected in a document that has
+one); on a document, 128 in a frame's own session (`selfOrigin`). `contentDocument` (11) is none for a frame whose document's origin
 is not the page's. -1 none, -2 no such node. -/
 def nodeInfo (args : Array Value) (s : State) : State × HostResult :=
   let d := s.dom

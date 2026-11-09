@@ -113,10 +113,10 @@ number per listener call: its retargeted target). Commands `attachShadow`, `assi
 - `customElements`: a registry in Lean (names, the definition's callbacks by number) and
   the reactions queue run by the prelude; the "is" value and upgrades at insertion. The
   shadow-root parts (valid custom element names) are here already.
-- Named access on the window (an element's id as a window property) as a proxy in the
-  window's prototype chain works on QuickJS-NG but breaks lookups through the chain on
-  BubblePopJS (its proxies are not consulted there), so it is not in; many shadow-dom tests
-  name elements this way.
+- Named access on the window (an element's id as a window property) is a proxy in the
+  window's prototype chain. It is on only where property lookups consult such a proxy
+  (probed once): QuickJS-NG yes, BubblePopJS not yet (its lookups skip proxies in a
+  prototype chain).
 - `relatedTarget` retargeting, `delegatesFocus` focus steps, `:host-context()`,
   `::part()`, inheritance from a slot (a slot is not a box here), and `getHTML()`.
 - Structured clone across sessions uses JSON until the Lean clone of the basics work is
