@@ -7,7 +7,7 @@ page problems logged by "System" to the console.
 ## What was wrong
 
 Foafnaut refused a whole page at the first feature it does not support. On 8 November,
-with the bleeding-edge app (`real_sites_probe.ts`, engine of main `0fb2e20b7`):
+with the bleeding-edge app of that evening (`real_sites_probe.ts`; its commit was not recorded, main `0fb2e20b7` or `bfbed32a8`):
 
 | site | strict, before |
 |---|---|
@@ -46,7 +46,7 @@ The list of what may be skipped is `WebAccept.Skip`, and nothing else:
 | `stylesheetMissing`: an external sheet the host did not fetch (HTTP error, network, the 16-sheet or 4 MiB host limit, or a host that fetches no sheets, as the Hub) | the page is drawn without it | `rulesIn`, from `resourceFailures` or a missing resource |
 | `stylesheetBytes`: sheets past 2 MiB in all | the later sheets do not apply | `rulesIn` |
 | `nestingDepth`: elements nested deeper than layout reads (64 levels) | the content below a depth is not drawn: the first of the DOM depths 48, 40, 32, 24, 16 at which the page lays out | `layOutDOMIn`, `pruneDeep` |
-| `svgContent`: an inline `svg` that the SVG reader refuses (gov.uk: the attribute `focusable`) | that `svg` is not drawn; the rest of the page is | `layOutDOMIn`: the embedding's refusals are marked, and a marked one lays the page out again with each refused `svg` empty |
+| `svgContent`: an inline `svg` that the SVG reader or layout refuses (gov.uk: the attribute `focusable`; NHS: the attribute `class`; BBC News: percentage heights) | that `svg` is not drawn; the rest of the page is | `layOutDOMIn`: one layout. Before it, an `svg` root with a percentage height is taken out; in it, a refused `svg` draws as nothing; after it, each root is read again at its box size for the diagnostic |
 
 What stays refused in both modes, and why:
 
@@ -116,14 +116,13 @@ draws it as any page. Its title counts the entries ("Console (3 System, 0 page)"
   the note's link.
 * `foafnaut:console/N` is the console of tab N.
 
-What the console shows of page scripts: both engines write through the one `console_log`
-host import into the session's `logs`, and uncaught errors into `errors`; every turn of a
-session (start, timers, clicks, pointer) goes to the page's console, for QuickJS-NG and for
-BubblePopJS alike. QuickJS-NG's prelude sends `log`, `info`, `debug`, `warn`, `error` and
-`trace` as one kind of line ("log"). BubblePopJS has only `console.log` today (98cc094f7):
-a page that calls `console.warn` gets a TypeError, which the console shows as an error.
-Levels need the guest prelude (`tools/wasmvm/quickjs/prelude.js`) and BubblePopJS's
-`console` object to pass one.
+What the console shows of page scripts: both engines run `tools/wasmvm/quickjs/prelude.js` and
+write through the one `console_log` host import into the session's `logs`; uncaught errors go
+into `errors`. Every turn of a session goes to the page's console. `warn`, `error`, `info` and
+`debug` carry their level at the start of the line, between two U+0001 marks, and
+`WebConsole.level` reads it (`native_liberal_test.ts` checks both engines). `trace`, `group`,
+`dir` and `table` write plain lines. QuickJS-NG shows levels with a guest built from this
+prelude.
 
 ## Settings and the command line
 
@@ -140,8 +139,8 @@ Levels need the guest prelude (`tools/wasmvm/quickjs/prelude.js`) and BubblePopJ
   adds one match on its result. Nothing else.
 * A page that strict mode refuses: the strict run stops at its first skip point (usually
   before layout: scripts and sheets are checked first), then the liberal run lays the page
-  out once. A refused inline SVG lays the page out a second time; too deep nesting tries up
-  to five pruned layouts.
+  out once. Inline SVG adds one cascade before that layout and one read of each `svg` root
+  after it. Too deep nesting tries up to five pruned layouts.
 * Media queries are evaluated when the cascade is made, which is part of a layout. A kept
   layout (scroll, repaint, hover painted) evaluates nothing; the layout key already has the
   viewport.
@@ -157,23 +156,54 @@ Sans, a 1600 by 1000 frame at 200%, page scripts off as with `--no-scripts`), li
 "Start" is fetches, inspect, layout and the first frame; "frame" a frame of a kept layout;
 "relayout" a frame at another width.
 
-| site | before (strict, engine of main 0fb2e20b7) | after, strict | after, liberal |
+| site | before (strict, bleeding-edge app of 8 November, see above) | after, strict | after, liberal |
 |---|---|---|---|
 | Wikipedia FOAF | refused: media condition | refused: page scripts need a script engine (`--no-scripts`); media queries now read | renders: 1 skip (scripts off); start 11.8 s, frame 111 ms, relayout 4.8 s |
 | gov.uk | refused: module script | refused: module script | renders: 3 module scripts, scripts off, 1 inline SVG (`focusable`); start 7.8 s, frame 197 ms, relayout 7.7 s |
-| BBC News | refused: module script | refused: module script | renders: 62 module scripts, scripts off, 2 inline SVG skips (an `em` length in the SVG reader; 170 `svg` with percentage heights); start 437 s, frame 80 ms, relayout 33.6 s |
+| BBC News | refused: module script | refused: module script | renders: 62 module scripts, scripts off, 2 inline SVG skips; start 437 s (three layouts), frame 80 ms, relayout 33.6 s |
 
-The BBC News start is three layouts of a 1 MiB page (the layout with the SVG reader's refusal
-marked, the one with refused `svg` empty, which then refuses a percentage height, and the one
-with no inline `svg`); one layout of it is about 14 s with the bitmap face and more with Noto
-Sans. Cutting it to one layout needs a check of SVG sizes before layout: a next step. The 64
-failed fetches are its images, which are on another origin (`ichef.bbci.co.uk`).
-
-Demo pages that strict mode accepts, strict, same machine and conditions, before (engine of
-main) and after: start 135/127 ms (index), 167/185 (showcase), 135/135 (tables), 117/119
+Demo pages that strict mode accepts, strict, same machine and conditions, before (a bleeding-edge build of 9 November, 01:13, commit not recorded) and after: start 135/127 ms (index), 167/185 (showcase), 135/135 (tables), 117/119
 (print showcase), 182/180 (status); frame 26.9/28.2, 56.4/56.5, 31.9/31.9, 33.0/32.2,
 42.4/42.8 ms. The differences are within the run-to-run spread.
 
 The Hub loads only pages of its own site, so the real sites do not open there; the Hub check
 (`hub_console_check.mjs`) uses the original fixture `fixtures/liberal/sample.html`.
 
+### The release of 9 November (`2aa065beb`: liberal default, one-layout SVG check, layout speed-ups)
+
+The release library, live, the same probe; times are for page scripts off:
+
+| site | strict | liberal | skips |
+|---|---|---|---|
+| Wikipedia FOAF | refused: scripts off | start 629 ms, frame 61 ms, relayout 158 ms | scripts off |
+| gov.uk | refused: module script | start 422 ms, frame 95 ms, relayout 122 ms | 3 module scripts, scripts off, 1 inline SVG |
+| BBC News | refused: module script | start 611 ms, frame 67 ms, relayout 367 ms | 62 module scripts, scripts off, 2 inline SVG |
+| w3.org | refused: media condition | start 1,111 ms, frame 88 ms, relayout 84 ms | 1 media condition, scripts off |
+| NHS | refused: scripts off | start 216 ms, frame 27 ms, relayout 45 ms | scripts off, 1 inline SVG |
+
+The release app itself, default mode with page scripts on, off screen: each page drew, and the
+first frame was presented 3.1 to 4.3 s after process start (Wikipedia 3.9, gov.uk 3.1, BBC
+News 4.3, w3.org 3.3, NHS 3.1), which includes engine and font load and the page's scripts.
+
+BBC News on one saved page, bitmap face, page scripts off: 51.4 s before (three layouts, the
+merged engine of `0f89690b6`), 0.58 s on this release. Most of that is the layout speed-ups,
+so the two changes are not separated: on this release a layout of the same page with its SVG
+and module scripts taken out by hand is 0.36 s, so three layouts would be about 1.1 s.
+
+Pages that strict accepts, on this release, in one process: the mode that runs first takes
+about twice the start of the second (a cold process), whichever it is. Liberal first: index 96,
+showcase 106, tables 62, print showcase 56, status 89 ms. Strict first: 105, 97, 57, 55, 91 ms.
+Frame and relayout times are equal within the spread.
+
+What looks wrong on these pages (screen pictures from the CPU raster, page scripts off, no
+chrome): the text and links are there, in one column, and much of the design is not:
+* Lists keep a `*` marker and navigation stacks vertically (no flex or grid layout).
+* A refused `svg` with no size of its own keeps the box it would have had, which fills the
+  available width: on NHS the search button is a green block about 800 by 840 px, and on BBC
+  News the masthead is an empty red band about 350 px tall. Five of the `svg` elements on NHS
+  have no `width` or `height` attribute, so this is the likely cause; it was not traced further.
+* Icons and logos that are inline SVG are missing, and BBC News's images are on another origin,
+  so they are not fetched.
+* Every one of these pages carries the "Partial page" note.
+
+The Hub loads only pages of its own site, so these sites do not open there.
