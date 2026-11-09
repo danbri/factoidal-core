@@ -2231,3 +2231,4 @@ L4Factoidal_WasmVM_Tests_Aot_run  # (c) core Array.qsort of the file list of the
 L4Factoidal_WasmVM_Aot_emit  # (s) specification only: `instrument` runs `emitAcc` (a loop), proved equal by `emitAcc_eq`; no executed code calls `emit`
 L4Factoidal_JS_agen*  # (b)(c) the async generator request queue: one request per step, genRun as L4Factoidal_JS_gen*; the queue holds the requests made while a step runs, so the cycle depth is that count
 L4Factoidal_JS_flattenArr  # (c) Array.prototype.flat: depth is the depth argument, at most 1000 (JS/Interp.lean); elements are a for loop
+L4Factoidal_Crypto_WebHacl_rfc6979Go  # (s) specification only: Secret.ecdsaSign? runs rfc6979Sign (a loop), proved equal by rfc6979Sign_eq; the #guards run it (8 or fewer candidates)

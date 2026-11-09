@@ -516,17 +516,58 @@ def rfc6979Nonces (mac : ByteArray → ByteArray → ByteArray) (hlen : Nat) (x 
   let k2 := mac k1 (v1 ++ ByteArray.mk #[1] ++ seed)
   rfc6979Go mac n k2 (mac k2 v1)
 
+/-- RFC 6979 §3.2 step h as a loop: each candidate is tried as it is made, and the loop
+stops at the first `sign` accepts (`rfc6979Go` is the list of candidates, the
+specification; `rfc6979Sign_eq`). -/
+def rfc6979Sign (mac : ByteArray → ByteArray → ByteArray) (sign : ByteArray → Option ByteArray) :
+    Nat → ByteArray → ByteArray → Option ByteArray
+  | 0, _, _ => none
+  | m + 1, k, v =>
+    let (t, v) := rfc6979T mac k 2 v ByteArray.empty
+    match sign (t.extract 0 32) with
+    | some s => some s
+    | none => let k' := mac k (v ++ ByteArray.mk #[0]); rfc6979Sign mac sign m k' (mac k' v)
+
+theorem rfc6979Sign_eq (mac : ByteArray → ByteArray → ByteArray) (sign : ByteArray → Option ByteArray) :
+    ∀ (n : Nat) (k v : ByteArray), rfc6979Sign mac sign n k v = (rfc6979Go mac n k v).findSome? sign := by
+  intro n
+  induction n with
+  | zero => intro k v; rfl
+  | succ m ih =>
+    intro k v
+    simp only [rfc6979Sign, rfc6979Go, List.findSome?_cons]
+    split <;> simp_all
+
+/-- The nonce loop from the key, the hash and `extra` (RFC 6979 §3.2 steps b-g, then h). -/
+def rfc6979SignFrom (mac : ByteArray → ByteArray → ByteArray) (hlen : Nat) (x h1 extra : ByteArray)
+    (sign : ByteArray → Option ByteArray) (n : Nat) : Option ByteArray :=
+  let v0 := ByteArray.mk (Array.replicate hlen 1)
+  let k0 := ByteArray.mk (Array.replicate hlen 0)
+  let seed := x ++ bits2octets h1 ++ extra
+  let k1 := mac k0 (v0 ++ ByteArray.mk #[0] ++ seed)
+  let v1 := mac k1 v0
+  let k2 := mac k1 (v1 ++ ByteArray.mk #[1] ++ seed)
+  rfc6979Sign mac sign n k2 (mac k2 v1)
+
+theorem rfc6979SignFrom_eq (mac : ByteArray → ByteArray → ByteArray) (hlen : Nat) (x h1 extra : ByteArray)
+    (sign : ByteArray → Option ByteArray) (n : Nat) :
+    rfc6979SignFrom mac hlen x h1 extra sign n = (rfc6979Nonces mac hlen x h1 extra n).findSome? sign := by
+  unfold rfc6979SignFrom rfc6979Nonces
+  exact rfc6979Sign_eq mac sign n _ _
+
 /-- An ECDSA P-256 signature with the hedged RFC 6979 nonce: the first candidate HACL*
 accepts (at most 8; one fails with probability below 2^-32). `digest` is the message's
 hash by `a`; `extra` is 32 bytes of the session's DRBG. -/
 def Secret.ecdsaSign? (sk : Secret) (a : HashAlg) (digest extra : ByteArray) : Option ByteArray :=
-  (rfc6979Nonces (hmacFast a) a.size sk.get digest extra 8).findSome? fun k => WebHacl.p256Sign? sk.get (p256MsgRep digest) k
+  rfc6979SignFrom (hmacFast a) a.size sk.get digest extra (fun k => WebHacl.p256Sign? sk.get (p256MsgRep digest) k) 8
 
 /-- The signature is a function of the key, the hash and `extra` alone, through RFC 6979's
-candidates: the session's generator reaches it only as `extra`. -/
+candidates (the specification list `rfc6979Nonces`, checked against RFC 6979 A.2.5): the
+session's generator reaches it only as `extra`. -/
 theorem Secret.ecdsaSign?_eq (x : ByteArray) (a : HashAlg) (digest extra : ByteArray) :
     (Secret.ofBytes x).ecdsaSign? a digest extra =
-      (rfc6979Nonces (hmacFast a) a.size x digest extra 8).findSome? fun k => WebHacl.p256Sign? x (p256MsgRep digest) k := rfl
+      (rfc6979Nonces (hmacFast a) a.size x digest extra 8).findSome? fun k => WebHacl.p256Sign? x (p256MsgRep digest) k :=
+  rfc6979SignFrom_eq _ _ _ _ _ _ _
 
 /-- Every candidate is at most 32 octets (`p256Sign?` takes exactly 32; with every hash
 here `T` has at least 32, so exactly 32). -/
