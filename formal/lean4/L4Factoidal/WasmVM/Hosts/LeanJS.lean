@@ -403,6 +403,15 @@ def prepareWith (data : String) (lim : Page.Limits := {}) : Except String Sessio
     return { heap := { heap with steps := runBudget, jobs := #[], jobHead := 0 }, api, limits := lim }
   | _ => throw "snapshot: no prelude object"
 
+/-- The deepest nesting of JavaScript calls (`Heap.maxDepth`; deeper is a `RangeError`, as in
+browsers). Natively 400. In the Wasm engine the evaluator's frames are on the browser's
+WebAssembly stack, which is about 1 MB in Chrome and Node (measured: a plain recursion
+overflowed it at 368 calls, a call inside `try` in a `for` loop at 202, `Array.prototype.map`
+callbacks at 128 levels of two calls), and overflowing it would stop the engine, not the
+script; 100 keeps that worst case under half of it (record 2026-11-08-lean-js-engine.md,
+section 17). -/
+def callDepth : Nat := if System.Platform.numBits == 32 then 100 else 400
+
 /-- Start a page on the prepared realm (as `Page.start` and `Page.Session.startP`): the
 content event handler attributes, the URL, the classic scripts in document order (each with
 the current script set and a microtask checkpoint after it), `DOMContentLoaded`, the
@@ -411,7 +420,8 @@ def start (base : Session) (dom : Arena) (url : String) (scripts : Array (Nat ×
     (reads : Reads := {}) (time : ScriptClock := {}) : Session := Id.run do
   let gpu := L4Factoidal.PageGpu.State.empty lim.gpuPage
   let domHost : Page.DomHost := { dom := dom, commandLimit := lim.commands, logLimit := lim.logs, framing := lim.frames, gpu := gpu }
-  let s := { base with limits := lim, steps := 0, jobs := 0, tasks := 0, errors := #[], lastFrame := none }
+  let s := { base with limits := lim, steps := 0, jobs := 0, tasks := 0, errors := #[], lastFrame := none,
+    heap := { base.heap with maxDepth := callDepth } }
   let mut s := s.setHost { dom := domHost, reads, time, web := { entropy := lim.entropy, docEncoding := lim.encoding } }
   s := (s.api? "start" #[]).1
   s := (s.api? "url" #[.str (JS.Str.ofHost url)]).1

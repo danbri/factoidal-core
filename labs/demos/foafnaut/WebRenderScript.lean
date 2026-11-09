@@ -215,12 +215,11 @@ structure Plan where
   notice : String
   deriving Repr, BEq
 
-/-- Why an engine can not run on a host, or "". BubblePopJS does not run in the Wasm engine
-yet (docs/designissues/2026-11-08-lean-js-engine.md, section 12). -/
-def hostRefusal (setting host : String) : String :=
-  if setting == "bubblepop" && (host == "hub" || host == "wasm") then
-    "BubblePopJS does not run in the WebAssembly engine yet"
-  else ""
+/-- Why an engine can not run on a host, or "". Every engine runs on every host: BubblePopJS
+runs in the Wasm engine since its big literals are persistent there
+(docs/designissues/2026-11-08-lean-js-engine.md, section 17); the Hub's default stays
+QuickJS-NG (`defaultEngine`). A host's own reason (no guest module) comes as `unavailable`. -/
+def hostRefusal (_setting _host : String) : String := ""
 
 def plan (setting : String) (scripts : Nat) (host : String := "native") (unavailable failure : String := "") : Plan :=
   let setting := (setting? setting).getD (defaultEngine host)

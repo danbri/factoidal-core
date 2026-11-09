@@ -58,4 +58,8 @@ private def made := dom.size
 #guard (WebRenderScript.plan "bubblepop" 0).marker == "" && !(WebRenderScript.plan "bubblepop" 0).run
 #guard (WebRenderScript.plan "quickjs" 1 "native" "no guest module").marker == "JS REFUSED"
 #guard ((WebRenderScript.choicesHTML "quickjs").splitOn "class=\"tick\"").length == 2
-#guard (WebRenderScript.plan "bubblepop" 1 "hub").marker == "JS REFUSED" && !(WebRenderScript.plan "bubblepop" 1 "hub").run
+-- BubblePopJS runs on the Hub and in the Wasm engine when chosen; QuickJS-NG stays their default.
+#guard (WebRenderScript.plan "bubblepop" 1 "hub").marker == "JS BUBBLEPOP" && (WebRenderScript.plan "bubblepop" 1 "hub").run
+#guard (WebRenderScript.plan "bubblepop" 1 "wasm").run && (WebRenderScript.plan "" 1 "wasm").engine == "quickjs"
+#guard ((WebRenderScript.choicesHTML "" "hub").splitOn "not here yet").length == 1
+#guard ((WebRenderScript.choicesHTML "" "hub").splitOn "(default here)").length == 2
