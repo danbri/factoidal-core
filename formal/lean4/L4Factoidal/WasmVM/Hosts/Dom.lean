@@ -949,12 +949,14 @@ holds it and the import runs once). -/
     if s.gpuOut.size + out.length > maxGpuOut then (s, "gpu: too many commands waiting for the host")
     else
       -- A linked WebGL program answers its interface (attribute locations, uniform offsets).
-      let answer := match op, L4Factoidal.PageGpu.Wire.decode op bytes with
-        | 9, .ok (.createProgram _ vs fs) =>
+      -- Only a program decodes again (a frame's write and pass do not).
+      let answer := if op != 9 && op != L4Factoidal.PageGpu.Wire.binaryOp + 9 then "" else
+        match L4Factoidal.PageGpu.Wire.decode op bytes with
+        | .ok (.createProgram _ vs fs) =>
           match L4Factoidal.PageGpu.Glsl.compileProgram vs fs with
           | .ok (_, info) => info.json
           | .error _ => ""
-        | _, _ => ""
+        | _ => ""
       ({ s with gpu := g, gpuOut := s.gpuOut ++ out.toArray }, answer)
   | .error e => (s, String.ofList (e.toList.take 900))
 
