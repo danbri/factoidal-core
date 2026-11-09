@@ -37,8 +37,9 @@ async function scriptZoom(){
   return {...stats(times),work:work()};
 }
 async function smilZoom(){
-  const html=svg(`<animateTransform href="#zoom" attributeName="transform" type="scale" values="1;40;1" dur="2s" repeatCount="indefinite" additive="sum"/>`)
-    .replace('<g id="zoom" transform="">','<g transform="translate(364 75)"><g id="zoom"><g transform="translate(-364 -75)">').replace("</g>","</g></g></g>");
+  // The animation is a child of the group it scales (its target is its parent).
+  const html=svg("")
+    .replace('<g id="zoom" transform="">','<g transform="translate(364 75)"><g id="zoom"><animateTransform attributeName="transform" type="scale" values="1;40;1" dur="2s" repeatCount="indefinite"/><g transform="translate(-364 -75)">').replace("</g>","</g></g></g>");
   const doc=await prepareHTML(engine,pageURL,undefined,html);
   const base=doc.request(728,250).options;
   const at=(ms:number)=>({...base,shell,checks:false,animationTime:Math.round(ms)});
