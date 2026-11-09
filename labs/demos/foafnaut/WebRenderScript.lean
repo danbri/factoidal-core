@@ -48,6 +48,8 @@ def commandJson : L4Factoidal.WasmVM.Hosts.Dom.Command → JSON.Json
   | .importNode n doc deep r => .object [("op",.string "importNode"),("source",num n),("document",num doc),("deep",.bool deep),("nodeId",num r)]
   | .setChecked n v => .object [("op",.string "setChecked"),("nodeId",num n),("value",.bool v)]
   | .resetForm n => .object [("op",.string "resetForm"),("nodeId",num n)]
+  | .replaceData n o k v => .object [("op",.string "replaceData"),("nodeId",num n),("offset",num o),("count",num k),("value",.string v)]
+  | .splitText n o r => .object [("op",.string "splitText"),("source",num n),("offset",num o),("nodeId",num r)]
 where num (n : Nat) : JSON.Json := .number (toString n)
 
 private def commandOf (command : JSON.Json) : Except String L4Factoidal.WasmVM.Hosts.Dom.Command := do
@@ -102,6 +104,10 @@ private def commandOf (command : JSON.Json) : Except String L4Factoidal.WasmVM.H
       | _ => throw "script command: deep must be a boolean"
     return .cloneNode (← node "source") deep (← node "nodeId")
   | "normalize" => exactly ["nodeId"]; return .normalize (← node "nodeId")
+  | "replaceData" =>
+    exactly ["nodeId","offset","count","value"]
+    return .replaceData (← node "nodeId") (← field command "offset" >>= nodeId) (← field command "count" >>= nodeId) (← str "value")
+  | "splitText" => exactly ["source","offset","nodeId"]; return .splitText (← node "source") (← field command "offset" >>= nodeId) (← node "nodeId")
   | _ => throw "script command: unsupported operation"
 
 /-- One command: its JSON form read, then the arena operation the script ran

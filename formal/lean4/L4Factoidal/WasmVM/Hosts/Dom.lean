@@ -43,6 +43,8 @@ import L4Factoidal.DOM.OfHtml
 import L4Factoidal.DOM.OfXml
 import L4Factoidal.DOM.Forms
 import L4Factoidal.WHATWG.URL.Parser
+import L4Factoidal.DOM.Live
+import L4Factoidal.DOM.Fragment
 
 namespace L4Factoidal.WasmVM.Hosts.Dom
 open L4Factoidal.WasmVM L4Factoidal.DOM
@@ -82,6 +84,12 @@ inductive Command where
   | setChecked (node : Nat) (value : Bool)
   /-- The reset algorithm of form `node` (`DOM.Forms.resetForm`). -/
   | resetForm (node : Nat)
+  /-- "Replace data" (DOM §4.10) of CharacterData `node`: `count` UTF-16 code units at
+  `offset` by `data` (`CharacterData.replaceData` and the methods built on it, and the
+  Range algorithms). -/
+  | replaceData (node offset count : Nat) (data : String)
+  /-- `splitText(offset)` (DOM §4.11) of Text `node` made node `result`. -/
+  | splitText (node offset result : Nat)
   deriving BEq, Repr, Inhabited
 
 /-- A request to the event loop. -/
@@ -132,6 +140,13 @@ structure State where
   /-- Navigations the page started and the embedder has not answered: an `iframe` and
   the URL of its `src` ("" for its initial `about:blank`, whose `load` event is due). -/
   navigations : Array (Nat × String) := #[]
+  /-- The page's live ranges and NodeIterators (`DOM.Live`): each command moves them, only
+  when there is one (`DOM.Live.Live.idle`). A range or iterator is its index. -/
+  live : L4Factoidal.DOM.Live.Live := {}
+  /-- The selection of the page's document (Selection API §2): its range (an index of
+  `live.ranges`) and its direction (0 directionless, 1 forwards, 2 backwards). -/
+  selection : Option Nat := none
+  selDirection : Nat := 0
   deriving Inhabited
 
 /-- Bounds, as in `WebRenderScript`. -/
@@ -294,8 +309,22 @@ def Command.sameWrite : Command → Command → Bool
 `name` and the tree): a write before one of them stays before it. -/
 def Command.reads : Command → Bool
   | .cloneNode .. | .importNode .. | .normalize _ | .setAttributeNS .. | .removeAttributeNS ..
-  | .adoptNode .. | .setChecked .. | .resetForm _ => true
+  | .adoptNode .. | .setChecked .. | .resetForm _ | .replaceData .. | .splitText .. => true
   | _ => false
+
+/-- The live ranges and NodeIterators after command `c`, run on arena `d` (the arena before
+it): `DOM.Live` follows the standard's steps for the change. -/
+def Command.live (d : Dom) (lv : L4Factoidal.DOM.Live.Live) : Command → L4Factoidal.DOM.Live.Live
+  | .setTextContent n v => (L4Factoidal.DOM.Live.setTextContent d lv n v).2
+  | .appendChild p c => (L4Factoidal.DOM.Live.preInsert d lv c p none).2
+  | .insertBefore p n c => (L4Factoidal.DOM.Live.preInsert d lv n p c).2
+  | .removeChild _ c => (L4Factoidal.DOM.Live.remove d lv c).2
+  | .replaceChild p n c => (L4Factoidal.DOM.Live.replace d lv c n p).2
+  | .normalize n => (L4Factoidal.DOM.Live.normalize d lv n).2
+  | .adoptNode n doc => (L4Factoidal.DOM.Live.adopt d lv n doc).2
+  | .replaceData n o k v => (L4Factoidal.DOM.Live.replaceData d lv n o k v).2
+  | .splitText n o _ => (L4Factoidal.DOM.Live.splitText d lv n o).2.1
+  | _ => lv
 
 /-- Record command `c`, whose result is the arena `d`. A write of an attribute or of
 character data whose last write since the last reading command (`Command.reads`) is
@@ -305,19 +334,21 @@ attributes in the order of their first write. So a page that animates attributes
 a list bounded by its DOM, and the 4096-command bound counts distinct writes. -/
 def addCommand (s : State) (c : Command) (d : Dom) : State × HostResult :=
   if d.size > maxNodes then (s, ret (-5)) else
+  -- a page with no live range and no NodeIterator runs no live step
+  let live := fun (s : State) => if s.live.idle then s.live else c.live s.dom s.live
   let key := c.writeKey s.dom
   let prior := (key.bind s.writes.get?).filter fun i =>
     match s.commands[i]? with
     | some p => p.sameWrite c
     | none => false
   match prior with
-  | some i => ({ s with dom := d, commands := s.commands.set! i c, changes := s.changes + 1 }, ret 0)
+  | some i => ({ s with live := live s, dom := d, commands := s.commands.set! i c, changes := s.changes + 1 }, ret 0)
   | none =>
     if s.commands.size ≥ s.commandLimit then (s, ret (-5)) else
     let writes := if c.reads then {} else match key with
       | some k => s.writes.insert k s.commands.size
       | none => s.writes
-    ({ s with dom := d, commands := s.commands.push c, changes := s.changes + 1, writes }, ret 0)
+    ({ s with live := live s, dom := d, commands := s.commands.push c, changes := s.changes + 1, writes }, ret 0)
 
 /-- A node argument: -1 (any value of 2^31 or more) is none. -/
 def optNode (v : Nat) : Option Nat := if v ≥ 2147483648 then none else some v
@@ -563,7 +594,10 @@ Kinds: 0 `createTextNode`, 1 `createComment`, 2 `createDocumentFragment`, 3
 `createHTMLDocument` with the title `data`, 10 the same with no title, 8 an XML document
 (`createDocument`, `new Document()`), 9 `createDocumentType` (name, U+0000, public id,
 U+0000, system id), 11 a document the HTML parser makes from `data` and 12 one the XML
-parser makes (content type, U+0000, source) (`DOMParser`). -/
+parser makes (content type, U+0000, source) (`DOMParser`), 13 the DocumentFragment that the
+HTML fragment parsing algorithm makes of a source for a context element (namespace, U+0000,
+local name, U+0000, source; `DOM.Fragment.parseInto`: `innerHTML`, `outerHTML`,
+`insertAdjacentHTML`, `createContextualFragment`). -/
 def createKind (d : Dom) (kind : Nat) (data : String) : Res Nat :=
   let doc := kind / 16
   let ok := fun (r : Dom × Nat) => ((r.1, .ok r.2) : Res Nat)
@@ -589,6 +623,7 @@ def createKind (d : Dom) (kind : Nat) (data : String) : Res Nat :=
   | 9, [name, pub, sys] => d.createDocumentType doc name pub sys
   | 11, _ => ok (d.graft (parseHtmlDocument data))
   | 12, ct :: rest => ok (d.graft (xmlDocument ct ("\x00".intercalate rest)))
+  | 13, ns :: name :: rest => ok (L4Factoidal.DOM.Fragment.parseInto d doc ns name ("\x00".intercalate rest))
   | _, _ => (d, .error .invalidCharacter)
 
 def createNode (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : State × HostResult :=
@@ -778,7 +813,9 @@ separated by spaces; 7 `querySelector(s)`: the first, or ""; 8 `matches(s)`: "1"
 it bubbles); 11 "1" for a disabled form control; 12 the URL `input` parsed against `base`
 ("base U+0000 input"; WHATWG URL), as its href; 13 the control a click on label node
 activates for the event target `s` (a decimal node number); 14 the type state of an
-`input` or `button` (DOM.Forms). Op 12 does not read the node. -/
+`input` or `button` (DOM.Forms); 15 the HTML serialization of the node's children (`s`
+"0", `innerHTML`) or of the node (`s` "1", `outerHTML`) (`DOM.Fragment.serialize`). Op 12
+does not read the node. -/
 def nodeQueryOf (d : Dom) (n op : Nat) (q : String) : Except Int String :=
   if op == 3 then (if Dom.validAttributeLocalName q then .ok "" else .error (-3)) else
   if op == 12 then
@@ -821,6 +858,7 @@ def nodeQueryOf (d : Dom) (n op : Nat) (q : String) : Except Int String :=
         | none => .error (-1)) else .error (-2)
     | none => .error (-2)
   | 14 => .ok (if Forms.isHtml d n ["button"] then Forms.buttonType d n else Forms.inputType d n)
+  | 15 => .ok (L4Factoidal.DOM.Fragment.serialize d n (q == "1"))
   | 5 => match d.getElementById n q with
     | some k => .ok (toString k)
     | none => .error (-1)
@@ -1077,6 +1115,17 @@ def Command.apply (d : Dom) : Command → Except String Dom
     checkNode d n; checkNode d doc
     if (d.get doc).type != .document || (d.get n).type == .document then throw "script command: NotSupportedError"
     made r (d.cloneNode n deep (some doc))
+  | .replaceData n o k v => do
+    checkNode d n
+    if !charData d n then throw "script command: target must be character data"
+    if o > L4Factoidal.DOM.Range.nodeLength d n then throw "script command: IndexSizeError"
+    return (L4Factoidal.DOM.Live.replaceData d {} n o k v).1
+  | .splitText n o r => do
+    checkNode d n
+    if !Dom.isTextNode (d.get n) then throw "script command: target must be a Text node"
+    if o > L4Factoidal.DOM.Range.nodeLength d n then throw "script command: IndexSizeError"
+    let (d, _, k) := L4Factoidal.DOM.Live.splitText d {} n o
+    made r (d, k)
 
 -- DOMParser: an XML document, a parse error, and an HTML document joined to an arena
 #guard (match createKind { nodes := #[{ type := .document }] } 12 "application/xml\x00<a xmlns='u'/>" with

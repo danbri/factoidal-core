@@ -28,6 +28,7 @@ import L4Factoidal.WasmVM.Wasi
 import L4Factoidal.WasmVM.Hosts.Dom
 import L4Factoidal.WasmVM.Hosts.WebApi
 import L4Factoidal.WasmVM.Hosts.PageWasm
+import L4Factoidal.WasmVM.Hosts.DomOps
 import L4Factoidal.EventLoop.Model
 import L4Factoidal.EventLoop.Dispatch
 
@@ -347,6 +348,15 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
     if a 1 < 16 then
       let (dom, st, r) := Hosts.Dom.serve mem nm args h.dom st
       ({ h with dom }, st, r)
+    else if a 1 ≥ 100 then
+      -- ranges, selection, traversal, CharacterData (`Hosts.Dom.domOp`)
+      match Hosts.Dom.readStr mem st (a 2) (a 3) Hosts.Dom.maxString with
+      | .error e => (h, st, Hosts.Dom.codeOrTrap e)
+      | .ok q =>
+        let (dom, answer) := Hosts.Dom.domOp h.dom (a 0) (a 1) q
+        let reads := if Hosts.Dom.treeOps.contains (a 1) then { h.reads with version := h.reads.version + 1 } else h.reads
+        let (st, r) := Hosts.Dom.answerStr mem st (a 4) (a 5) answer
+        ({ h with dom, reads }, st, r)
     else
       let (h, answer) := pageQuery h (a 0) (a 1)
       let (st, r) := Hosts.Dom.answerStr mem st (a 4) (a 5) answer
