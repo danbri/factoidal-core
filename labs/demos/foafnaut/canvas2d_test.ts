@@ -108,6 +108,8 @@ requestAnimationFrame(f);</script>`;
   t0=performance.now();let frames=0;for(let i=0;i<10;i++){turn=advance(turn,17);frames++;}
   const heavyMs=(performance.now()-t0)/frames;
   engine.scriptSession("",{action:"close"});
+  // The chart's labels need a font: Noto Sans, held as a host holds it.
+  engine.fontLoadBytes(await Deno.readFile(new URL("../../../third_party/fonts/noto-sans/NotoSans-Regular.ttf",import.meta.url)),"Noto Sans","noto-sans-regular");
   const chart=await Deno.readTextFile(new URL("./pages/canvas-chart.html",import.meta.url));
   turn=start(kind,chart,"file:///canvas-chart.html");turn=advance(turn,17);
   for(const e of turn.errors)console.log(`${kind} chart error:`,e);
@@ -115,7 +117,7 @@ requestAnimationFrame(f);</script>`;
   const chartMs=(performance.now()-t0)/20;
   assert.ok(px>=15,`${kind}: the chart draws a frame each step (${px})`);
   engine.scriptSession("",{action:"close"});
-  console.log(`${kind}: 1,000 commands a frame: ${heavyMs.toFixed(1)} ms a frame (first ${first.toFixed(1)} ms); chart demo: ${chartMs.toFixed(1)} ms a frame (480 x 300)`);
+  console.log(`${kind}: 1,000 commands a frame: ${heavyMs.toFixed(1)} ms a frame (first ${first.toFixed(1)} ms); chart demo: ${chartMs.toFixed(1)} ms a frame (480 x 300, with its labels)`);
   summary.push(`${kind}: 1,000-command frame ${heavyMs.toFixed(1)} ms; chart frame ${chartMs.toFixed(1)} ms`);
 }
 console.log("canvas2d_test: ok;",summary.join("; "));
