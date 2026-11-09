@@ -443,6 +443,14 @@ def p256OnCurve (xy : ByteArray) : Bool :=
     let y := natOfBytes (xy.extract 32 64)
     x < p256P && y < p256P && (y * y) % p256P == (x * x * x + 3 * (p256P - x) + p256B) % p256P
 
+def p256N : Nat := 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551
+
+/-- `0 < d < n` for a P-256 private scalar (FIPS 186-4 §B.4). On the Hub, Lean checks it
+before the host imports the key (natively HACL*'s constant-time `p256ValidPrivate` does).
+This comparison is not constant time; the page that imports a key already holds its bytes. -/
+def p256ScalarOk (d : ByteArray) : Bool :=
+  d.size == 32 && let x := natOfBytes d; 0 < x && x < p256N
+
 def b64 (b : ByteArray) : String := JOSE.Base64Url.encode b
 def unb64? (s : String) : Option ByteArray := JOSE.Base64Url.decode s
 

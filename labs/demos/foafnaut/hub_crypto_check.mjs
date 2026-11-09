@@ -69,6 +69,10 @@ try{
     if(m.id&&waiting.has(m.id)){const [r,j]=waiting.get(m.id);waiting.delete(m.id);m.error?j(Error(JSON.stringify(m.error))):r(m.result);}};
   const send=(method,params={},sessionId)=>new Promise((r,j)=>{const i=++id;waiting.set(i,[r,j]);socket.send(JSON.stringify({id:i,method,params,sessionId}));});
   await send('Target.setAutoAttach',{autoAttach:true,waitForDebuggerOnStart:false,flatten:true});
+  socket.addEventListener('message',({data})=>{const m=JSON.parse(data);
+    if(m.method==='Target.attachedToTarget'){const sid=m.params.sessionId;
+      socket.send(JSON.stringify({id:++id,method:'Runtime.enable',params:{},sessionId:sid}));
+      socket.send(JSON.stringify({id:++id,method:'Target.setAutoAttach',params:{autoAttach:true,waitForDebuggerOnStart:false,flatten:true},sessionId:sid}));}});
   async function open(page){
     const {targetId}=await send('Target.createTarget',{url:'about:blank'});
     const {sessionId}=await send('Target.attachToTarget',{targetId,flatten:true});
@@ -81,16 +85,21 @@ try{
     const evaluate=async expression=>{const r=await s('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw Error(r.exceptionDetails.text);return r.result.value;};
     return {evaluate,close:()=>send('Target.closeTarget',{targetId})};
   }
-  const title=page=>page.evaluate('window.__frames.at(-1)?.title??""');
+  // The page logs its results (worker console, "page: PASS …"); the last vector is the
+  // CryptoKey check.
   let failed=0;
   for(const m of ['aot','wasmvm']){
     mode=m;
+    consoleLines.length=0;
     const page=await open('crypto-vectors.html');
-    let t='';const t0=Date.now();
-    while(Date.now()-t0<300000){await sleep(500);t=await title(page).catch(()=>'');if(t.startsWith('vectors:'))break;}
-    results[m]={title:t,ms:Date.now()-t0};
-    console.log(`${m}: ${t||'no result'} (${Math.round((Date.now()-t0)/1000)} s)`);
-    if(!/ 0 failed$/.test(t))failed++;
+    const t0=Date.now();
+    const lines=()=>consoleLines.flatMap(l=>l.replace(/^page: /,'').split('\n')).filter(l=>/^(PASS|FAIL) /.test(l));
+    while(Date.now()-t0<Number(opt('--limit','300'))*1000){await sleep(500);if(lines().some(l=>/CryptoKey has no key bytes|FAIL threw/.test(l)))break;}
+    const ls=lines(),fails=ls.filter(l=>l.startsWith('FAIL'));
+    results[m]={passed:ls.length-fails.length,failed:fails.length,ms:Date.now()-t0};
+    console.log(`${m}: ${ls.length-fails.length} passed, ${fails.length} failed${ls.length?'':' (no result)'} (${Math.round((Date.now()-t0)/1000)} s)`);
+    for(const f of fails)console.log('  '+f);
+    if(fails.length||!ls.length)failed++;
     await page.close();
   }
   if(failed)process.exitCode=1;
