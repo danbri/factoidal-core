@@ -29,10 +29,18 @@ if [ -x "$LAB/.build/web-render/web-render-native" ]; then
 else
   echo 'NOT RUN: check-demo-pages.py needs web-render-native, which this build does not have yet'
 fi
+# Colour emoji drawn by Lean (ColrRaster) against an independent COLR renderer's pixels
+# (fixtures/emoji-reference, emoji_reference.py), through web-render-native --colour-glyph.
+if [ -x "$LAB/.build/web-render/web-render-native" ]; then
+  deno test --no-check --no-config --no-npm --node-modules-dir=none \
+    --allow-read --allow-run --allow-write "$LAB/emoji_pixels_test.ts"
+else
+  echo 'NOT RUN: emoji_pixels_test.ts needs web-render-native'
+fi
 # The native HTML tests need the web-render engine, which Builds makes after this
 # step in its engines job and before it in its macOS job, and more permissions.
 TESTS=()
-for test in "$LAB/"*_test.ts; do case "$test" in "$LAB/native_html_test.ts"|"$LAB/native_html_bytes_test.ts"|"$LAB/native_html_fonts_test.ts"|"$LAB/native_html_wasm_test.ts"|"$LAB/native_html_sparql_test.ts"|"$LAB/native_window_queue_test.ts"|"$LAB/showcase_gaps_test.ts"|"$LAB/print_gaps_test.ts"|"$LAB/svg_text_test.ts"|"$LAB/browser_state_test.ts"|"$LAB/html_images_test.ts"|"$LAB/frame_work_test.ts"|"$LAB/link_route_test.ts"|"$LAB/native_html_scripts_test.ts"|"$LAB/gesture_test.ts"|"$LAB/frame_cost_test.ts"|"$LAB/scroll_prefetch_test.ts"|"$LAB/native_html_pointer_test.ts"|"$LAB/page_gpu_test.ts"|"$LAB/bubblepop_pages_test.ts"|"$LAB/dom_breadth_test.ts"|"$LAB/canvas2d_test.ts"|"$LAB/long_words_test.ts"|"$LAB/native_liberal_test.ts") ;; *) TESTS+=("$test");; esac; done
+for test in "$LAB/"*_test.ts; do case "$test" in "$LAB/native_html_test.ts"|"$LAB/native_html_bytes_test.ts"|"$LAB/native_html_fonts_test.ts"|"$LAB/native_html_wasm_test.ts"|"$LAB/native_html_sparql_test.ts"|"$LAB/native_window_queue_test.ts"|"$LAB/showcase_gaps_test.ts"|"$LAB/print_gaps_test.ts"|"$LAB/svg_text_test.ts"|"$LAB/browser_state_test.ts"|"$LAB/html_images_test.ts"|"$LAB/frame_work_test.ts"|"$LAB/link_route_test.ts"|"$LAB/native_html_scripts_test.ts"|"$LAB/gesture_test.ts"|"$LAB/frame_cost_test.ts"|"$LAB/scroll_prefetch_test.ts"|"$LAB/native_html_pointer_test.ts"|"$LAB/page_gpu_test.ts"|"$LAB/bubblepop_pages_test.ts"|"$LAB/dom_breadth_test.ts"|"$LAB/canvas2d_test.ts"|"$LAB/long_words_test.ts"|"$LAB/native_liberal_test.ts"|"$LAB/emoji_pixels_test.ts") ;; *) TESTS+=("$test");; esac; done
 deno check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
   "$LAB/run_ui.ts" "$LAB/run_lean.ts" "$LAB/run_svg.ts" "$LAB/run_foaf_svg.ts" "${TESTS[@]}"
 deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --allow-read "${TESTS[@]}"
