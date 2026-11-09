@@ -386,6 +386,32 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
     const decoded=(engine as {decodeDocument?:(b:Uint8Array,c:string,f?:string,l?:string)=>{encoding:string;source:string}|undefined}).decodeDocument?.(bytes,contentType,pageFallback,pageLocale);
     return {html:decoded?decoded.source:new TextDecoder().decode(bytes),encoding:decoded?.encoding};
   };
+  // A frame's `src` scripts, read as the page's are.
+  const resourcesOf=async(html:string,url:string)=>{
+    const facts=engine.inspect(html,{url}) as unknown as {scripts:{nodeId:number;src:string;url:string}[]};
+    const out:{nodeId:number;source:string}[]=[];
+    for(const s of facts.scripts){if(!s.src)continue;const source=await readText(s.url);if(source!==undefined)out.push({nodeId:s.nodeId,source});}
+    return out;
+  };
+  // A frame's document: from wptserve; else as wptserve serves it (Test262's inner page, a
+  // .any/.window wrapper, or a file of the copy decoded as a page is); undefined when absent.
+  const frameSource=async(url:string):Promise<string|undefined>=>{
+    let u:URL;try{u=new URL(url);}catch{return undefined;}
+    if(http){try{const r=await http.fetch(url);if(!r.ok){await r.body?.cancel();return undefined;}return decode(new Uint8Array(await r.arrayBuffer()),r.headers.get("content-type")??"").html;}catch{return undefined;}}
+    if(!isWptHost(url))return undefined;
+    const path=decodeURIComponent(u.pathname).replace(/^\//,"");
+    const m=/^(.*)\.test262-test(\.strict)?\.html$/.exec(path);
+    if(m)try{return test262Inner(`${m[1]}.js`,!!m[2]);}catch{return undefined;}
+    const w=/^(.*)\.(any|window)\.html$/.exec(path);
+    if(w)try{return wrapper(`${w[1]}.${w[2]}.js`);}catch{return undefined;}
+    try{
+      const file=wptFile(path),bytes=await Deno.readFile(file);
+      let contentType="";
+      try{contentType=/^content-type:\s*(.*)$/im.exec(await Deno.readTextFile(file+".headers"))?.[1]?.trim()??"";}catch{/* no headers file */}
+      const text=decode(bytes,contentType).html;
+      return path.includes(".sub.")?substitute(text,u.search):text;
+    }catch{return undefined;}
+  };
   return {info,engine,run:async(file,page)=>{
     // A page's bytes become text in Lean (decodeDocument: the BOM, the charset of its .headers
     // file as wptserve sends it, the meta prescan); an engine without the op reads UTF-8.
@@ -443,8 +469,9 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
         const key=new URL(m[1],url).href,bytes=await readBytes(key);
         if(bytes)try{engine.imageLoad(bytes,key,key);}catch{/* refused */}
       }
+    // navigations:true: this runner loads frames' URLs (scriptSession action `frame`).
     let turn=start(html,{action:"start",url,resources,commandLimit:200000,logLimit:100000,instructionsPerMs:scriptRate,...(encoding?{encoding}:{}),
-      ...(scriptEngine==="bubblepop"?{engine:"bubblepop"}:{})});
+      navigations:true,...(scriptEngine==="bubblepop"?{engine:"bubblepop"}:{})});
     const logs=[...turn.logs],errors=[...turn.errors];
     let instructions=turn.instructions;
     // A worker's script and its importScripts: a turn lists what it waits for (fetches, each
@@ -465,6 +492,16 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
       turn=engine.scriptSession("",{action:"settle",session:turn.session,budgetMs:70000});
       take(turn);
       pending=[...(given.fetches??[]),...((turn as ScriptTurnWithFetches).fetches??[])].filter((f,i,all)=>!answered.has(f.id)&&all.findIndex(g=>g.id===f.id)===i);
+    }
+    // Frames: answer each navigation with its document, then settle again, until none waits.
+    for(let round=0;round<256&&turn.clock<70000&&((turn.navigations?.length??0)>0||(turn.frameLoads??0)>0);round++){
+      const session=turn.session;
+      for(const nav of turn.navigations??[]){
+        const source=await frameSource(nav.url);
+        take(turn=engine.scriptSession("",{action:"frame",session,node:nav.nodeId,url:nav.url,source:source??"",
+          ...(source===undefined?{failed:true}:{resources:await resourcesOf(source,nav.url)})}));
+      }
+      take(turn=engine.scriptSession("",{action:"settle",session,budgetMs:Math.max(1,70000-turn.clock)}));
     }
     engine.scriptSession("",{action:"close"});
     return {...resultOf(file,logs),ms:Math.round(performance.now()-t0),instructions,clock:turn.clock,...(errors.length?{errors:errors.slice(0,5)}:{})};

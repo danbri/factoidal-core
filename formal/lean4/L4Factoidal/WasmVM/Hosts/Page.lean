@@ -194,6 +194,8 @@ structure Limits where
   logs : Nat := 1024
   /-- Nested browsing contexts for `iframe` elements (`Hosts.Dom.State.framing`). -/
   frames : Bool := false
+  /-- The embedder loads frames' URLs (`Hosts.Dom.State.hostLoads`). -/
+  hostLoads : Bool := false
   /-- Entropy from the embedder's own generator, which seeds the page's
   `crypto.getRandomValues` (`Hosts.WebApi`); empty leaves it off. -/
   entropy : ByteArray := ByteArray.empty
@@ -1047,6 +1049,37 @@ def Session.attachFrame (s : Session) (el : Nat) (doc : Option Arena) : Session 
   let s := { s with host := { s.host with dom := h } }
   return s.setLoop (s.loop.queueTask .networking 0 (some { type := "load", target := el }))
 
+/-- A frame's navigation ends with document `source` ("" is `about:blank`;
+`Hosts.Dom.attachDocument`): its classic scripts run in the page's realm, in document order,
+each with the current script set (so `document` is the frame's document while it runs) and
+a microtask checkpoint after it; then the `load` event at the `iframe` is a task, and the
+window's when it was waiting for this frame. `scripts` are the script elements of `source`
+parsed on its own, with their sources. A frame of another origin, or one whose sandbox
+forbids scripts, runs none here (`Hosts.Dom.frameScriptsInRealm`). -/
+def Session.loadFrameP (s : Session) (el : Nat) (source : String) (scripts : Array (Nat × String))
+    (xml : Bool := false) : Prog Session := do
+  let run := Hosts.Dom.frameScriptsInRealm s.host.dom el
+  let (dom, root) := Hosts.Dom.attachDocument s.host.dom el source xml
+  let mut s := { s with host := { s.host with dom } }
+  if let some root := root then
+    let scripts := if run then scripts else #[]
+    for (node, src) in scripts do
+      s ← s.setScriptP (node + root : Nat)
+      let (s', status, text) ← s.evalP src
+      s := if status == 1 then s'.fail text else s'
+      s ← s.runJobsP
+    s ← s.setScriptP (-1)
+  s := s.setLoop (s.loop.queueTask .networking 0 (some { type := "load", target := el }))
+  -- the last frame that the window's load event waited for
+  if s.host.dom.loadWaits && !Hosts.Dom.framesLoading s.host.dom then
+    s := { s with host := { s.host with dom := { s.host.dom with loadWaits := false } } }
+    s := s.setLoop (s.loop.queueTask .domManipulation 0 (some { type := "load", target := windowId }))
+  return s
+
+def Session.loadFrame (s : Session) (el : Nat) (source : String) (scripts : Array (Nat × String))
+    (xml : Bool := false) : Session :=
+  (s.loadFrameP el source scripts xml).runLocal
+
 /-- The arena of a page with its frames' documents grafted in (`Dom.graft`), and each
 `iframe` element with the root of its document. -/
 def graftFrames (dom : Arena) (frames : Array (Nat × Arena)) : Arena × Array (Nat × Nat) := Id.run do
@@ -1063,6 +1096,14 @@ def graftFrames (dom : Arena) (frames : Array (Nat × Arena)) : Arena × Array (
 and the tasks due at time 0, on a session that holds the page's arena. -/
 def Session.startP (s : Session) (url : String) (scripts : Array (Nat × String)) (framed : Array (Nat × Nat)) :
     Prog Session := do
+  -- The page's own `iframe` elements get their browsing contexts before its scripts run
+  -- (HTML §4.8.5); a page with none pays one look at its nodes. Their initial about:blank
+  -- documents are there before any script runs, and that load is not an event scripts see.
+  let d0 := { s.host.dom with url }
+  let d0 := if d0.framing && d0.dom.nodes.any (L4Factoidal.DOM.Dom.isHtmlElement · "iframe") then
+    let d1 := Hosts.Dom.connectFrames d0 #[0]
+    { d1 with navigations := d1.navigations.filter (!·.2.isEmpty) } else d0
+  let s := { s with host := { s.host with dom := d0 } }
   let s := (← s.runP s.fx.page #[.i32 2, .i32 0, .i32 0]).1
   let mut s ← s.setUrlP url
   for (node, src) in scripts do
@@ -1074,7 +1115,11 @@ def Session.startP (s : Session) (url : String) (scripts : Array (Nat × String)
   s := (← s.dispatchP 0 "DOMContentLoaded").1
   for (el, _) in framed do
     s := s.setLoop (s.loop.queueTask .domManipulation 0 (some { type := "load", target := el }))
-  s := s.setLoop (s.loop.queueTask .domManipulation 0 (some { type := "load", target := windowId }))
+  -- The window's load event waits for frames still loading (`Hosts.Dom.State.loadWaits`).
+  if Hosts.Dom.framesLoading s.host.dom then
+    s := { s with host := { s.host with dom := { s.host.dom with loadWaits := true } } }
+  else
+    s := s.setLoop (s.loop.queueTask .domManipulation 0 (some { type := "load", target := windowId }))
   return (← s.advanceP 0).1
 
 /-- Start a page: its classic scripts in document order (each with the current script set
@@ -1089,13 +1134,13 @@ def start (m : Module') (dom : Arena) (url : String) (scripts : Array (Nat × St
   let (dom, framed) := graftFrames dom frames
   let s : Session ← match m.base with
     | some b =>
-      let domHost : DomHost := { dom, commandLimit := lim.commands, logLimit := lim.logs, frames := framed, framing := lim.frames }
+      let domHost : DomHost := { dom, commandLimit := lim.commands, logLimit := lim.logs, frames := framed, framing := lim.frames, hostLoads := lim.hostLoads }
       let host : Host := { dom := domHost, reads, time, web := { entropy := lim.entropy, docEncoding := lim.encoding } }
       pure { b with host, limits := lim, steps := 0 }
     | none => do
       let s ← instantiatePage m dom lim
       let web : Hosts.WebApi.State := { entropy := lim.entropy, docEncoding := lim.encoding }
-      pure { s with host := { s.host with dom := { s.host.dom with frames := framed, framing := lim.frames }, reads, time, web } }
+      pure { s with host := { s.host with dom := { s.host.dom with frames := framed, framing := lim.frames, hostLoads := lim.hostLoads }, reads, time, web } }
   let s := { s with host := { s.host with dom := { s.host.dom with gpu := L4Factoidal.PageGpu.State.empty lim.gpuPage } } }
   return (s.startP url scripts framed).runLocal
 
