@@ -8,6 +8,9 @@
 > server, JOSE, XML Signature and SAML, the crypto bindings). Owner decision,
 > 2026-10-27.
 
+**Foafnaut** is the web browser being built here, on the **BubblePopKit** rendering engine with **BubblePopJS** for
+JavaScript and **BubblePopWASM** for WebAssembly. Names, parts and status: [labs/demos/foafnaut/README.md](labs/demos/foafnaut/README.md).
+
 **Current home: `factoidal-core`.** New Shardborough development is Lean 4
 first and test first. Shardborough's native pack, activation, disk query,
 update and compaction targets now live here with their Lean dependencies.

@@ -12,7 +12,7 @@ the name of the engine in the status note, the release records and older files.
 
 Names for new text and docs: **Foafnaut** is the browser and **Textnaut** the text-mode browser. **BubblePopKit** is
 the rendering engine as a whole, by analogy with WebKit: every build of it (macOS and Linux native libraries, Wasm
-binaries). The Hub page harness is another small browser built on it, not part of it. **BubblePopJS** its JavaScript engine, and **BubblePopWASM** its WebAssembly engine
+binaries). Browsers built on it: Foafnaut, Textnaut and the WWW harness (the Hub page). **BubblePopJS** its JavaScript engine, and **BubblePopWASM** its WebAssembly engine
 (WasmVM), which runs Wasm modules. BubblePopWASM is not a build: BubblePopKit compiled to Wasm is the Wasm build of
 BubblePopKit. Code identifiers keep their existing names.
 
