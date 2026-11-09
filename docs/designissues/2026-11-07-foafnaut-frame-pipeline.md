@@ -521,3 +521,18 @@ press, graph and scroll sweeps it gave 0 hits, because the release frame differs
 idle frame (`live`, `loading` after a link, the address, the tab title).
 
 The `press` call costs about 1 ms with the 229 links (0.02 ms with none); not the cost.
+
+### Frame and click costs, 2026-11-08 (measured, native unless named)
+
+| Change | Commit | Before | After |
+|---|---|---|---|
+| Page layer kept for a chrome-only frame (`pageArtifact`) | aa23d058f | 28.7 ms | 3.0 ms |
+| Link regions decoded once per frame (`decodeLinks`, `pickKept`), Wasm | 0fb2e20b7 | hit 4.7 ms, press 6.1 ms | 0.12 ms, 0.9 ms |
+| Loading state drawn at once; painted pointer states kept | bfbed32a8 | click to first frame, max 730-800 ms | 72 ms |
+| SVG text `fmt` without the general formatter | f9deb4cac | new dataviz layout 665-833 ms | 230-257 ms |
+
+Next, from a profile of a new dataviz layout after f9deb4cac (2,256 samples in the
+library): the SVG reader parses the path text that `NativeSVGText.lowerSfnt` writes
+(`readListWith`/`readNode`, 811), and writing it costs 595 (`lowerTree`). Giving the
+reader the glyph geometry directly, with no text, removes both; it changes the reader in
+`SVG.lean`, which the CPU backend also uses.
