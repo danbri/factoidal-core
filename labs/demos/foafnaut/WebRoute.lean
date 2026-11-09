@@ -53,7 +53,7 @@ def graphURL : String := "foafnaut:graph"
 (`foafnaut:theme/arcade`, `foafnaut:zoom/150`). -/
 def commands : List String :=
   ["back","forward","reload","new","close","home","source","theme","zoom",
-   "bookmark","unbookmark","pod","sync","sparql-step","classic","liberal"]
+   "bookmark","unbookmark","pod","sync","sparql-step","classic","liberal","encoding"]
 
 /-- What the browser loads itself. -/
 structure Site where

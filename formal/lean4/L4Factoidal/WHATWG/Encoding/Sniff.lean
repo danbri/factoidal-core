@@ -1,20 +1,23 @@
 /-
 L4Factoidal.WHATWG.Encoding.Sniff — the encoding of an HTML document from its bytes,
-and the document's text decoded with it (HTML Standard §13.2.3 "The input byte stream").
+and the document's text decoded with it (HTML Standard §13.2.3 "The input byte stream",
+§13.2.3.2 "Determining the character encoding").
 
 What a host calls where page or frame bytes become text: `decodeDocument bytes charset`
 gives the document's encoding and its text, decoded by the Encoding Standard's decoders
 (`Core.decode`: BOM sniff, then the encoding's decoder in replacement mode).
 
-  * `prescan` — §13.2.3.2 "prescan a byte stream to determine its encoding", over the
+  * `prescan` — "prescan a byte stream to determine its encoding" (§13.2.3.2), over the
     first 1024 bytes: comments, `<meta>` attributes (`charset`, and `http-equiv`
     content-type with a charset in `content`, by "extract a character encoding from a
     meta element"), other tags' attributes skipped. UTF-16 is UTF-8 and x-user-defined is
     windows-1252.
-  * `sniff` — §13.2.3.1 "encoding sniffing algorithm", steps 1 (BOM), 4 (the transport
-    layer's charset, e.g. HTTP `Content-Type`), 5 (the prescan); the default of the last
-    step, which the standard leaves to the user agent, is UTF-8 for bytes that are UTF-8
-    and windows-1252 otherwise (what the Foafnaut hosts did before).
+  * `sniff` — the "encoding sniffing algorithm" (§13.2.3.2): the BOM, the transport
+    layer's charset (HTTP `Content-Type`), the prescan; then the user's setting for pages
+    that declare nothing (`Fallback`): "detect" (the default) is UTF-8 for bytes that are
+    UTF-8 and otherwise the default of the user's locale; "locale" is always the locale's
+    default; or one encoding. The locale's default is §13.2.3.2's table of suggested
+    defaults by locale (`localeEncoding`).
 
 No `partial`, no `sorry`. Every loop is a `for` over a bounded range.
 -/
@@ -184,10 +187,67 @@ def prescan (input : ByteArray) : Option Encoding := Id.run do
     else pos := pos + 1
   return none
 
-/-- §13.2.3.1 the encoding sniffing algorithm, as this engine runs it: the BOM, the
-transport layer's charset label, the prescan, then UTF-8 for UTF-8 bytes and
-windows-1252 otherwise. -/
-def sniff (bytes : ByteArray) (transportCharset : Option String := none) : Encoding :=
+/-! ## The default for pages that declare nothing -/
+
+/-- The suggested default encoding of a locale: HTML §13.2.3.2, the table "derived from
+the intersection of Windows, Chrome, and Firefox defaults". `locale` is a BCP 47 tag
+(`ja-JP`, `zh-Hant-TW`) or a POSIX one (`ja_JP.UTF-8`); the language subtag decides,
+and for Chinese the script or region (`zh-Hans`, `zh-CN`, `zh-SG`: GBK; `zh-Hant`,
+`zh-HK`, `zh-MO`, `zh-TW`: Big5). All other locales: windows-1252. -/
+def localeEncoding (locale : String) : Encoding :=
+  let tag := (locale.toList.takeWhile fun c => c != '.' && c != '@').map fun c =>
+    if c == '_' then '-' else if 'A' ≤ c && c ≤ 'Z' then Char.ofNat (c.toNat + 32) else c
+  match (String.ofList tag).splitOn "-" with
+  | [] => .windows_1252
+  | lang :: rest =>
+    if lang == "zh" then
+      if rest.any (["hant", "hk", "mo", "tw"].contains ·) then .big5
+      else if rest.any (["hans", "cn", "sg"].contains ·) then .gbk
+      else .windows_1252
+    else match lang with
+      | "ar" | "fa" => .windows_1256
+      | "az" | "ku" | "tr" => .windows_1254
+      | "ba" | "be" | "bg" | "kk" | "ky" | "mk" | "ru" | "sah" | "sr" | "tg" | "tt" | "uk" => .windows_1251
+      | "cs" | "hr" | "sk" => .windows_1250
+      | "el" => .iso_8859_7
+      | "et" | "lt" | "lv" => .windows_1257
+      | "he" => .windows_1255
+      | "hu" | "pl" | "sl" => .iso_8859_2
+      | "ja" => .shift_jis
+      | "ko" => .euc_kr
+      | "th" => .windows_874
+      | "vi" => .windows_1258
+      | _ => .windows_1252
+
+/-- What a page that declares no encoding is read as (the user's setting). -/
+inductive Fallback where
+  /-- UTF-8 when the bytes are UTF-8, else the locale's default. -/
+  | detect
+  /-- The locale's default (`localeEncoding`). -/
+  | locale
+  /-- One encoding. -/
+  | fixed (e : Encoding)
+  deriving DecidableEq, Repr, Inhabited
+
+/-- The setting's text: "" or "detect", "locale", or an encoding's label. A label that
+names no encoding, and "replacement", are "detect". -/
+def Fallback.ofSetting (s : String) : Fallback :=
+  if s.isEmpty || s == "detect" then .detect
+  else if s == "locale" then .locale
+  else match getEncoding s with
+    | some .replacement | none => .detect
+    | some e => .fixed e
+
+/-- The setting as it is stored: "detect", "locale" or the encoding's name. -/
+def Fallback.setting : Fallback → String
+  | .detect => "detect"
+  | .locale => "locale"
+  | .fixed e => e.name
+
+/-- The encoding sniffing algorithm (§13.2.3.2) as this engine runs it: the BOM, the
+transport layer's charset label, the prescan, then the user's fallback. -/
+def sniff (bytes : ByteArray) (transportCharset : Option String := none) (fallback : Fallback := .detect)
+    (locale : String := "") : Encoding :=
   match bomSniff bytes with
   | some e => e
   | none =>
@@ -196,32 +256,79 @@ def sniff (bytes : ByteArray) (transportCharset : Option String := none) : Encod
     | none =>
       match prescan bytes with
       | some e => e
-      | none => if ByteArray.validateUTF8 bytes then .utf_8 else .windows_1252
+      | none =>
+        match fallback with
+        | .detect => if ByteArray.validateUTF8 bytes then .utf_8 else localeEncoding locale
+        | .locale => localeEncoding locale
+        | .fixed e => e
 
-/-- The document's encoding and its text (HTML §13.2.3.1 and the Encoding Standard's
+/-- The document's encoding and its text (HTML §13.2.3.2 and the Encoding Standard's
 "decode", which removes a BOM). -/
-def decodeDocument (bytes : ByteArray) (transportCharset : Option String := none) : Encoding × String :=
-  let e := sniff bytes transportCharset
+def decodeDocument (bytes : ByteArray) (transportCharset : Option String := none)
+    (fallback : Fallback := .detect) (locale : String := "") : Encoding × String :=
+  let e := sniff bytes transportCharset fallback locale
   (e, decode bytes e)
 
 /-- `decodeDocument` with one fast path, for the common page: no BOM, no transport
-charset, no `meta` declaration or a UTF-8 one, and bytes that are UTF-8. Then the text is
-the bytes as they are (one validation and one copy, no decoder loop). The `#guard`s below
-compare it with `decodeDocument` on each condition. -/
-def decodeDocumentFast (bytes : ByteArray) (transportCharset : Option String := none) : Encoding × String :=
+charset, a UTF-8 `meta` declaration (or none, with the "detect" setting), and bytes that
+are UTF-8. Then the text is the bytes as they are (one validation and one copy, no
+decoder loop). `decodeDocumentFast_detect` and the `#guard`s below compare it with
+`decodeDocument`. -/
+def decodeDocumentFast (bytes : ByteArray) (transportCharset : Option String := none)
+    (fallback : Fallback := .detect) (locale : String := "") : Encoding × String :=
   if transportCharset.isNone && bomSniff bytes == none then
-    match prescan bytes with
-    | none | some .utf_8 =>
+    match prescan bytes, fallback with
+    | some .utf_8, _ | none, .detect =>
       match String.fromUTF8? bytes with
       | some s => (.utf_8, s)
-      | none => decodeDocument bytes transportCharset
-    | some _ => decodeDocument bytes transportCharset
-  else decodeDocument bytes transportCharset
+      | none => decodeDocument bytes transportCharset fallback locale
+    | _, _ => decodeDocument bytes transportCharset fallback locale
+  else decodeDocument bytes transportCharset fallback locale
+
+/-- Under "detect", a page that declares nothing and whose bytes are UTF-8 is read as
+UTF-8, whatever the locale. -/
+theorem sniff_detect_utf8 (b : ByteArray) (loc : String) (hbom : bomSniff b = none)
+    (hpre : prescan b = none) (hv : ByteArray.validateUTF8 b = true) :
+    sniff b none .detect loc = .utf_8 := by
+  simp [sniff, hbom, hpre, hv]
+
+/-- ... and its text is the bytes' string (the fast path). -/
+theorem decodeDocumentFast_detect (b : ByteArray) (s loc : String) (hbom : bomSniff b = none)
+    (hpre : prescan b = none) (hs : String.fromUTF8? b = some s) :
+    decodeDocumentFast b none .detect loc = (.utf_8, s) := by
+  simp [decodeDocumentFast, hbom, hpre, hs]
 
 /-! ## Checks -/
 
 private def agrees (b : ByteArray) (t : Option String := none) : Bool :=
-  decodeDocumentFast b t == decodeDocument b t
+  [Fallback.detect, .locale, .fixed .shift_jis].all fun f =>
+    ["", "en-GB", "ja_JP.UTF-8"].all fun loc => decodeDocumentFast b t f loc == decodeDocument b t f loc
+
+-- §13.2.3.2's table.
+#guard localeEncoding "ja-JP" == .shift_jis
+#guard localeEncoding "ja_JP.UTF-8" == .shift_jis
+#guard localeEncoding "zh-CN" == .gbk
+#guard localeEncoding "zh-Hans-SG" == .gbk
+#guard localeEncoding "zh-Hant-CN" == .big5
+#guard localeEncoding "zh_TW" == .big5
+#guard localeEncoding "zh" == .windows_1252
+#guard localeEncoding "ko-KR" == .euc_kr
+#guard localeEncoding "uk-UA" == .windows_1251
+#guard localeEncoding "el" == .iso_8859_7
+#guard localeEncoding "he-IL" == .windows_1255
+#guard localeEncoding "th" == .windows_874
+#guard localeEncoding "lt" == .windows_1257
+#guard localeEncoding "en-US" == .windows_1252
+#guard localeEncoding "" == .windows_1252
+#guard Fallback.ofSetting "" == .detect
+#guard Fallback.ofSetting "sjis" == .fixed .shift_jis
+#guard Fallback.ofSetting "replacement" == .detect
+#guard Fallback.ofSetting (Fallback.fixed .big5).setting == .fixed .big5
+-- WPT encoding/sniffing.html: UTF-8 bytes and no declaration. "detect" reads UTF-8; the
+-- English locale's default reads windows-1252, as that test expects.
+#guard sniff (ByteArray.mk #[0x3C, 0x70, 0x3E, 0xC2, 0x80]) none .detect "en" == .utf_8
+#guard sniff (ByteArray.mk #[0x3C, 0x70, 0x3E, 0xC2, 0x80]) none .locale "en" == .windows_1252
+#guard sniff (ByteArray.mk #[0x3C, 0x70, 0x3E, 0x82, 0xA0]) none .detect "ja" == .shift_jis
 
 #guard agrees "<p>caf\u00e9".toUTF8
 #guard agrees "<meta charset=utf-8><p>\u3042".toUTF8

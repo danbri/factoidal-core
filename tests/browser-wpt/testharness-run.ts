@@ -15,6 +15,7 @@
 //   deno run -A tests/browser-wpt/testharness-run.ts [--engine native|wasm|bench] [--script-engine quickjs|bubblepop] [--exclude a,b] [--wpt-root DIR]
 //     [--native-engine DYLIB] [--quickjs-wasm FILE] [--dirs a,b] [--only SUBSTRING]
 //     [--out FILE] [--baseline FILE] [--bench EXE] [--instructions-per-ms N]
+//     [--encoding-fallback detect|locale|LABEL] [--locale TAG]
 //     [--wpt-root DIR --list FILE [--jsonl FILE] [--wpt-commit SHA] [--test262-inline]]
 //
 // --wpt-root and --list run any WPT checkout's tests by their wpt.fyi names, one a line
@@ -54,6 +55,9 @@ export const directories=["html/webappapis/timers","html/webappapis/microtask-qu
   "html/webappapis/scripting/event-loops"];
 const dirs=opt("--dirs")?opt("--dirs").split(","):directories;
 const only=opt("--only");
+// --encoding-fallback detect|locale|LABEL and --locale TAG: the browser's setting for pages that
+// declare no encoding and the system's language (WHATWG.Encoding.Sniff; default detect, en).
+const pageFallback=opt("--encoding-fallback",""),pageLocale=opt("--locale","en");
 // --exclude a,b: files whose path holds one of these are counted SKIP ("excluded").
 const excluded=opt("--exclude")?opt("--exclude").split(","):[];
 const origin="http://web-platform.test",secureOrigin="https://web-platform.test";
@@ -265,7 +269,8 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>}> {
       const bytes=await Deno.readFile(wptFile(file));
       let contentType="";
       try{contentType=/^content-type:\s*(.*)$/im.exec(await Deno.readTextFile(wptFile(file)+".headers"))?.[1]?.trim()??"";}catch{/* no headers file */}
-      const decoded=(engine as {decodeDocument?:(b:Uint8Array,c:string)=>{encoding:string;source:string}|undefined}).decodeDocument?.(bytes,contentType);
+      const decoded=(engine as {decodeDocument?:(b:Uint8Array,c:string,f?:string,l?:string)=>{encoding:string;source:string}|undefined})
+        .decodeDocument?.(bytes,contentType,pageFallback,pageLocale);
       html=decoded?decoded.source:new TextDecoder().decode(bytes);encoding=decoded?.encoding;
     }
     const url=page?page.url:`${origin}/${pageOf(file)}`;

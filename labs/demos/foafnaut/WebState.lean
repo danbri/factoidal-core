@@ -1,5 +1,6 @@
 import L4Factoidal.JSON.Parser
 import L4Factoidal.JSON.Serialize
+import L4Factoidal.WHATWG.Encoding.Sniff
 
 /-! Browser state: bookmarks, history, settings and open tabs, as Linked Web Storage
 resources (design record: docs/designissues/2026-11-08-browser-state-lws.md).
@@ -366,6 +367,9 @@ structure Settings where
   /-- Liberal mode (`WebAccept`, the Settings checkbox "Be liberal in what we accept"):
   off unless a settings document says true. -/
   liberal : Bool := false
+  /-- How a page that declares no encoding is read (`WHATWG.Encoding.Sniff.Fallback`):
+  "" (detect, the default), "detect", "locale" or an encoding's name. -/
+  encoding : String := ""
   fonts : List String := []
   fallback : List String := []
   remotePod : String := ""
@@ -376,6 +380,7 @@ def Settings.doc (s : Settings) : Json :=
   document "foafnaut:Settings" ([("foafnaut:theme", .string s.theme), ("foafnaut:textZoom", num s.textZoom),
     ("foafnaut:classicUI", .bool s.classicUI), ("foafnaut:liberal", .bool s.liberal)] ++
     (if s.scripts.isEmpty then [] else [("foafnaut:scripts", .string s.scripts)]) ++
+    (if s.encoding.isEmpty then [] else [("foafnaut:defaultEncoding", .string s.encoding)]) ++
     [("foafnaut:font", .array (s.fonts.map .string)), ("foafnaut:fontFallback", .array (s.fallback.map .string))] ++
     (if s.remotePod.isEmpty then [] else [("foafnaut:remotePod", .string s.remotePod)]) ++
     [("dateModified", .string (isoOf s.modified))])
@@ -384,7 +389,7 @@ def Settings.ofDoc (j : Json) : Settings :=
   { theme := str j "foafnaut:theme" "next", textZoom := max 50 (natField j "foafnaut:textZoom" 150),
     classicUI := (match j.field? "foafnaut:classicUI" with | some (.bool b) => b | _ => true),
     scripts := str j "foafnaut:scripts",
-    liberal := j.field? "foafnaut:liberal" == some (.bool true),
+    liberal := j.field? "foafnaut:liberal" == some (.bool true), encoding := str j "foafnaut:defaultEncoding",
     fonts := strings j "foafnaut:font", fallback := strings j "foafnaut:fontFallback",
     remotePod := str j "foafnaut:remotePod", modified := (millisOf (str j "dateModified")).getD 0 }
 
@@ -396,6 +401,40 @@ def Settings.ofDoc (j : Json) : Settings :=
 #guard (Settings.ofDoc (Json.object [])).scripts == ""
 #guard (Settings.ofDoc ({scripts := "quickjs"} : Settings).doc).scripts == "quickjs"
 #guard !(Settings.ofDoc (Json.object [])).liberal && (Settings.ofDoc ({liberal := true} : Settings).doc).liberal
+-- The default encoding: detect until a choice; a choice survives a round trip.
+#guard (Settings.ofDoc (Json.object [])).encoding == ""
+#guard (Settings.ofDoc ({encoding := "locale"} : Settings).doc).encoding == "locale"
+
+/-! ## The default encoding of pages that declare none (`WHATWG.Encoding.Sniff`) -/
+
+open L4Factoidal.WHATWG.Encoding in
+/-- A setting as stored: "" for none, else `Fallback.setting` ("detect", "locale" or an
+encoding's name). A value that names nothing is "". -/
+def encodingSetting (v : String) : String :=
+  if v.isEmpty then "" else (Sniff.Fallback.ofSetting v).setting
+
+open L4Factoidal.WHATWG.Encoding in
+/-- The settings page section (`<!--foafnaut:encoding-->`): the choice now, as a heading
+in the style of the text size, then a button for each choice. `locale` is the system's
+language as the host reads it. -/
+def encodingChoicesHTML (setting locale : String) : String :=
+  let current := Sniff.Fallback.ofSetting setting
+  let localeEnc := (Sniff.localeEncoding locale).name
+  let lang := if locale.isEmpty then "unknown" else locale
+  let label := fun (f : Sniff.Fallback) => match f with
+    | .detect => s!"Detect (UTF-8 when valid, else {localeEnc})"
+    | .locale => s!"From system language ({lang}: {localeEnc})"
+    | .fixed e => e.name
+  let button := fun (f : Sniff.Fallback) =>
+    let cls := if f == current then " class=\"chosen\"" else ""
+    s!"<a{cls} href=\"foafnaut:encoding/{f.setting}\">{label f}</a>"
+  let fixed := Encoding.all.filter (· != .replacement)
+  s!"<h2 class=\"size\">Default encoding: {label current}</h2>" ++
+  "<p class=\"presets\">" ++ button .detect ++ " " ++ button .locale ++ "</p>" ++
+  "<p class=\"presets\">" ++ " ".intercalate (fixed.map (button ∘ .fixed)) ++ "</p>"
+
+#guard encodingSetting "" == "" && encodingSetting "sjis" == "Shift_JIS" && encodingSetting "nonsense" == "detect"
+#guard (encodingChoicesHTML "" "ja-JP").startsWith "<h2 class=\"size\">Default encoding: Detect (UTF-8 when valid, else Shift_JIS)</h2>"
 
 structure Tab where
   url : String
@@ -610,6 +649,9 @@ def op (name : String) (request : Json) : Except String (Option String) := do
         | some (.string v) => if v.isEmpty || ["bubblepop", "quickjs", "none"].contains v then v else old.scripts
         | _ => old.scripts),
       liberal := (match request.field? "liberal" with | some (.bool b) => b | _ => old.liberal),
+      encoding := (match request.field? "encoding" with
+        | some (.string v) => encodingSetting v
+        | _ => old.encoding),
       fonts := fonts, fallback := fallback, remotePod := str request "remotePod" old.remotePod, modified := now }
     return some (write base settingsPath s.doc.toString)
   if name == "stateSession" then
@@ -639,7 +681,7 @@ def op (name : String) (request : Json) : Except String (Option String) := do
         ("tags", .array (b.tags.map .string)), ("added", num b.added)])),
       ("visits", num vs.length),
       ("settings", match settings with
-        | some s => .object [("theme", .string s.theme), ("textZoom", num s.textZoom), ("classicUI", .bool s.classicUI), ("scripts", .string s.scripts), ("liberal", .bool s.liberal), ("fonts", .array (s.fonts.map .string)),
+        | some s => .object [("theme", .string s.theme), ("textZoom", num s.textZoom), ("classicUI", .bool s.classicUI), ("scripts", .string s.scripts), ("liberal", .bool s.liberal), ("encoding", .string s.encoding), ("fonts", .array (s.fonts.map .string)),
             ("fallback", .array (s.fallback.map .string)), ("remotePod", .string s.remotePod)]
         | none => .null),
       ("session", match session with
