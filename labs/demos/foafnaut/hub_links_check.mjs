@@ -67,7 +67,7 @@ try{
     // Frames as they come, and what the page hands to the host browser.
     await s('Page.addScriptToEvaluateOnNewDocument',{source:`(()=>{let f;window.__frames=[];window.__opened=[];window.open=u=>{window.__opened.push(String(u));return {};};
       Object.defineProperty(window,'foafnautFrame',{configurable:true,get(){return f;},set(v){f=v;window.__frames.push({t:performance.now(),...v});}});})();`});
-    await s('Page.navigate',{url:base+'?'+query});
+    await s('Page.navigate',{url:base+'?'+query+'&strict=1'});
     const evaluate=async expression=>{const r=await s('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw Error(r.exceptionDetails.text);return r.result.value;};
     const last=()=>evaluate(`({frame:window.__frames.at(-1)??null,n:window.__frames.length,opened:window.__opened,title:document.title,note:document.querySelector('#note').hidden?'':document.querySelector('#note').textContent})`);
     return {

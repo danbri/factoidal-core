@@ -20,8 +20,15 @@ script is run or not run.
 
 ## The design
 
-**Strict stays the default.** It is today's behaviour, except that the simple media queries
-below are now read in both modes.
+**Liberal is the default** in the macOS app and on the Hub (owner decision, 2026-11-09: the
+browser tries to show content and reports serious issues in the console tab). Strict is the
+Settings choice (the checkbox off), `run_html.ts --strict`, and `?strict=1` on the Hub; it is
+the behaviour of 8 November, except that the simple media queries below are now read in both
+modes. Every test entry point is strict explicitly: `sweeps.sh`, the page GPU runs of
+`test.sh` and the start check of `build-executables.sh` pass `--strict`, the Hub checks pass
+`strict=1`, and `prepareHTML`, which the engine tests and the WPT runner use, is strict unless
+it is given `{liberal:true}`. A saved setting from before the change, with no `liberal` field,
+reads as liberal (`WebState.Settings.ofDoc`).
 
 **Liberal mode is decided in Lean** (`labs/demos/foafnaut/WebAccept.lean`). A document request
 with `liberal:true` is in liberal mode. Each refusal that can be skipped safely is a *skip

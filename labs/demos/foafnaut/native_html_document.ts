@@ -139,6 +139,8 @@ export async function imageOptions(engine:ImageHolder,fetched:{key:string;bytes:
 /** A refused page must say so in the window, not only in a log. */
 export function refusalHTML(url:string,message:string) {
   const text=(s:string)=>s.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+  // The reader sees the reason, not which part of the browser gave it.
+  message=message.replace(/^(Error: )?Lean HTML: /,"");
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page refused</title></head><body><h1>This page can not be shown</h1><p>${text(url)}</p><p>${text(message)}</p></body></html>`;
 }
 /** Page scripts (WebScripts.lean): the engine that holds the script session. A host sets

@@ -76,7 +76,7 @@ try{
     await s('Emulation.setDeviceMetricsOverride',{width:800,height:900,deviceScaleFactor:1,mobile:false});
     // window.print is the host's print panel: here it only counts the images it would print.
     await s('Page.addScriptToEvaluateOnNewDocument',{source:`window.__printed=[];window.print=()=>window.__printed.push(document.querySelectorAll('#print img').length);`});
-    await s('Page.navigate',{url:base+'?'+query});
+    await s('Page.navigate',{url:base+'?'+query+'&strict=1'});
     const evaluate=async expression=>{const r=await s('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw Error(r.exceptionDetails.text);return r.result.value;};
     const state=()=>evaluate(`({frame:!!window.foafnautFrame,percent:window.foafnautFrame?.percent,print:window.foafnautPrint??null,printed:window.__printed,
       text:document.querySelector('#print')?.innerText??'',images:document.querySelectorAll('#print img').length,note:document.querySelector('#note').hidden?'':document.querySelector('#note').textContent})`);

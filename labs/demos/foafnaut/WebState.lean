@@ -363,9 +363,9 @@ structure Settings where
   /-- The page script engine (`WebRenderScript.engines`: "bubblepop", "quickjs", "none"); ""
   for the host's default (`WebRenderScript.defaultEngine`). -/
   scripts : String := ""
-  /-- Liberal mode (`WebAccept`, the Settings checkbox "Be liberal in what we accept"):
-  off unless a settings document says true. -/
-  liberal : Bool := false
+  /-- Liberal mode (`WebAccept`, the Settings checkbox "Be liberal in what we accept"): on
+  (owner, 2026-11-09) unless a settings document says false. -/
+  liberal : Bool := true
   fonts : List String := []
   fallback : List String := []
   remotePod : String := ""
@@ -384,7 +384,7 @@ def Settings.ofDoc (j : Json) : Settings :=
   { theme := str j "foafnaut:theme" "next", textZoom := max 50 (natField j "foafnaut:textZoom" 150),
     classicUI := (match j.field? "foafnaut:classicUI" with | some (.bool b) => b | _ => true),
     scripts := str j "foafnaut:scripts",
-    liberal := j.field? "foafnaut:liberal" == some (.bool true),
+    liberal := j.field? "foafnaut:liberal" != some (.bool false),
     fonts := strings j "foafnaut:font", fallback := strings j "foafnaut:fontFallback",
     remotePod := str j "foafnaut:remotePod", modified := (millisOf (str j "dateModified")).getD 0 }
 
@@ -395,7 +395,7 @@ def Settings.ofDoc (j : Json) : Settings :=
 -- The page script engine: the host's default until a choice; a choice survives a round trip.
 #guard (Settings.ofDoc (Json.object [])).scripts == ""
 #guard (Settings.ofDoc ({scripts := "quickjs"} : Settings).doc).scripts == "quickjs"
-#guard !(Settings.ofDoc (Json.object [])).liberal && (Settings.ofDoc ({liberal := true} : Settings).doc).liberal
+#guard (Settings.ofDoc (Json.object [])).liberal && !(Settings.ofDoc ({liberal := false} : Settings).doc).liberal
 
 structure Tab where
   url : String
