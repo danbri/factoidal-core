@@ -160,6 +160,8 @@ else
   done
   COMPILE=()
   while IFS= read -r file; do COMPILE+=("$file"); done < <(python3 "$ROOT/tools/wasm32-nat-literals.py" --batch "$BUILD/wasm32-src" "${NAMES[@]}")
+  # The gate: no file that is compiled for wasm32 keeps such a literal.
+  python3 "$ROOT/tools/wasm32-nat-literals.py" --check "${COMPILE[@]}"
   for i in "${!NAMES[@]}"; do
     name=${NAMES[$i]%%=*}
     object="$BUILD/obj-wasm/$name.o"
@@ -181,6 +183,7 @@ else
     emcc -O3 -DNDEBUG -DLEAN_EMSCRIPTEN -fwasm-exceptions -I "$RUNTIME/wasm-include" -I "$TOOLCHAIN/include" -c "$file" -o "$BUILD/obj-wasm/core/$name.o"
     CORE_OBJECTS+=("$BUILD/obj-wasm/core/$name.o")
   done < <(python3 "$ROOT/tools/wasm32-nat-literals.py" --batch "$BUILD/wasm32-src/core" "${CORE_NAMES[@]}")
+  python3 "$ROOT/tools/wasm32-nat-literals.py" --check "$BUILD/wasm32-src/core/"*.c
   [ "${#CORE_OBJECTS[@]}" = "$(ls "$RUNTIME/core-obj/"*.o | wc -l | tr -d ' ')" ] || { echo 'core objects and core C differ in the runtime cache' >&2; exit 1; }
   for source in "${HACL_SOURCES[@]}"; do
     object="$BUILD/obj-wasm/hacl_$(basename "$source" .c).o"

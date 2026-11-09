@@ -5,15 +5,18 @@
 // demo pages, the runtime of a local engine build (--runtime) and the guest module (--guest),
 // the rest from the live site.
 //
-// Each case runs twice: `aot` (the worker of this checkout) and `wasmvm` (the same worker
-// served with the AOT probe answered false, so the same engine runs the guest in WasmVM).
+// Each case runs in each mode of --modes (default aot,wasmvm): `aot` (the worker of this
+// checkout), `wasmvm` (the same worker served with the AOT probe answered false, so the same
+// engine runs the guest in WasmVM) and `bubblepop` (the worker with the page script setting
+// BubblePopJS, the JavaScript engine written in Lean, compiled into the engine's Wasm).
 //
+// - page start: the start turn of a page with one empty script, the worker's first;
 // - fib(24) in QuickJS: the start turn of a page whose script computes fib(24);
 // - a WPT page start: the start turn of a testharness.js page (dom/nodes);
 // - an animation frame: labs/demos/foafnaut/pages/timers-and-clicks.html, the mean and the
 //   largest time of an advance turn over a few seconds, and the turns run.
 //
-//   node labs/demos/foafnaut/hub_scripts_speed.mjs [--runtime DIR] [--guest FILE] [--seconds N]
+//   node labs/demos/foafnaut/hub_scripts_speed.mjs [--runtime DIR] [--guest FILE] [--seconds N] [--modes aot,wasmvm,bubblepop]
 // CHROME=/path/to/chrome overrides the browser. NOT RUN with no browser.
 import http from 'node:http';import zlib from 'node:zlib';import fs from 'node:fs';import path from 'node:path';
 import {spawn} from 'node:child_process';import {fileURLToPath} from 'node:url';
@@ -24,6 +27,7 @@ const wptDir=fileURLToPath(new URL('../../../third_party/testing/wpt-scripting/'
 const runtimeDir=opt('--runtime',fileURLToPath(new URL('./.build/web-render/engines/',import.meta.url)));
 const guest=opt('--guest',path.join(process.env.HOME??'','working/qjs-wasm/qjs-wasmvm.wasm'));
 const seconds=Number(opt('--seconds','4'));
+const modes=opt('--modes','aot,wasmvm').split(',');
 const LIVE='https://danbri.github.io';
 const CHROME=process.env.CHROME??'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 if(!fs.existsSync(CHROME)){console.log('NOT RUN: hub_scripts_speed.mjs needs Chrome (set CHROME)');process.exit(0);}
@@ -31,6 +35,7 @@ const types={'.html':'text/html','.mjs':'text/javascript','.js':'text/javascript
 const typeOf=f=>types[path.extname(f)]??'application/octet-stream';
 // Pages made here, served from the pages folder.
 const made={
+  'speed-start.html':'<!doctype html><html><head><meta charset="utf-8"><title>start</title></head><body><p>start</p><script>1</script></body></html>',
   'speed-fib.html':'<!doctype html><html><head><meta charset="utf-8"><title>fib(24)</title></head><body><p id="out">...</p>'+
     '<script>function fib(n){return n<2?n:fib(n-1)+fib(n-2);}document.getElementById("out").textContent="fib(24) = "+fib(24);</script></body></html>',
 };
@@ -47,6 +52,7 @@ async function get(p){
   if(p===hub+'browser-worker.mjs'){
     let text=fs.readFileSync(path.join(hubDir,'browser-worker.mjs'),'utf8');
     if(mode==='wasmvm'){const probe='info.aot===true';if(!text.includes(probe))throw Error('no AOT probe in the worker');text=text.replace(probe,'false');}
+    if(mode==='bubblepop'){const setting="let scriptSetting=''";if(!text.includes(setting))throw Error('no script setting in the worker');text=text.replace(setting,"let scriptSetting='bubblepop'");}
     return {status:200,type:'text/javascript',body:Buffer.from(text)};
   }
   if(p.startsWith(hub)&&p.endsWith('.mjs')&&(f=local(hubDir,p.slice(hub.length))))return {status:200,type:typeOf(f),body:fs.readFileSync(f)};
@@ -95,10 +101,17 @@ try{
   }
   const lastScripts=page=>page.evaluate('(window.__frames.filter(f=>f.scripts).at(-1)??{}).scripts??null');
   async function until(page,test,limit){const t=Date.now();let v;while(Date.now()-t<limit){await sleep(200);v=await lastScripts(page).catch(()=>null);if(v&&test(v))return v;}return v;}
-  for(const m of ['aot','wasmvm']){
+  for(const m of modes){
     mode=m;results[m]={};
+    // Page start: a page whose one script does nothing (the first page of the worker, so the
+    // realm with the page objects is made in this turn).
+    let page=await open('speed-start.html');
+    let st0=await until(page,s=>s.turns>=1&&s.startMs!==undefined,240000);
+    results[m].start={path:st0?.path,startMs:st0?.startMs};
+    console.error(m,'start',JSON.stringify(results[m].start));
+    await page.close();
     // fib(24): the start turn.
-    let page=await open('speed-fib.html');
+    page=await open('speed-fib.html');
     let st=await until(page,s=>s.turns>=1&&s.startMs!==undefined,240000);
     const text=await page.evaluate('window.__frames.at(-1)?.title??""');
     results[m].fib={path:st?.path,startMs:st?.startMs,instructions:st?.instructions,hostCalls:st?.hostCalls};
@@ -127,6 +140,6 @@ try{
   }
   console.log(JSON.stringify(results,null,1));
   const ratio=(a,b)=>a&&b?Math.round(b/a*10)/10:null;
-  console.log(`speedup: fib(24) start ${ratio(results.aot.fib.startMs,results.wasmvm.fib.startMs)}x, WPT start ${ratio(results.aot.wpt.startMs,results.wasmvm.wpt.startMs)}x, animation turn ${ratio(results.aot.animation.meanTurnMs,results.wasmvm.animation.meanTurnMs)}x`);
+  if(results.aot&&results.wasmvm)console.log(`speedup: fib(24) start ${ratio(results.aot.fib.startMs,results.wasmvm.fib.startMs)}x, WPT start ${ratio(results.aot.wpt.startMs,results.wasmvm.wpt.startMs)}x, animation turn ${ratio(results.aot.animation.meanTurnMs,results.wasmvm.animation.meanTurnMs)}x`);
   if(args.includes('--console'))for(const l of consoleLines.slice(-40))console.log('console:',l);
 }finally{await stop();}

@@ -25,6 +25,8 @@ the literal is a scalar and the macro returns it unchanged.
                                                 for each input, the file to compile: IN.c when it
                                                 has no site, else OUTDIR/NAME.c, rewritten
   wasm32-nat-literals.py --count FILE_OR_DIR... the sites a wasm32 build rewrites
+  wasm32-nat-literals.py --check FILE...        exit 1 if any file still has a site (the gate
+                                                build-web-render.sh --wasm runs on what it compiles)
   wasm32-nat-literals.py --self-test
 """
 import re
@@ -109,6 +111,11 @@ def self_test():
     assert rewrite(out)[1] == 0  # idempotent
     unchanged, n0 = rewrite('#include <lean/lean.h>\nv_a_1_ = lean_unsigned_to_nat(3u);\n')
     assert n0 == 0 and 'L4_PERSISTENT_LITERAL' not in unchanged
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        a, b = Path(d) / 'a.c', Path(d) / 'b.c'
+        a.write_text(src); b.write_text(out)
+        assert main(['--check', str(b)]) == 0 and main(['--check', str(a)]) == 1
     print('wasm32-nat-literals: self-test ok')
 
 
@@ -137,6 +144,11 @@ def main(argv):
                 print(src)
         print(f'wasm32-nat-literals: {total} literal sites made persistent', file=sys.stderr)
         return 0
+    if argv[:1] == ['--check'] and len(argv) > 1:
+        bad = [(f, n) for f in argv[1:] if (n := rewrite(Path(f).read_text(errors='replace'))[1])]
+        for f, n in bad:
+            print(f'wasm32-nat-literals: {n} unpatched literal sites in {f}', file=sys.stderr)
+        return 1 if bad else 0
     if argv[:1] == ['--count'] and len(argv) > 1:
         total = 0
         for arg in argv[1:]:
