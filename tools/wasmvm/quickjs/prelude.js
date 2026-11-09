@@ -1109,12 +1109,39 @@
   class GPUValidationError extends GPUError {}
   class GPUOutOfMemoryError extends GPUError {}
   let gpuNext = 1;
+  // A view over all of its buffer is sent as the buffer (n.gpu copies it); only a part is sliced.
   const gpuBytes = data => {
     if (data instanceof ArrayBuffer) return data;
-    if (ArrayBuffer.isView(data)) return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+    if (ArrayBuffer.isView(data)) return data.byteOffset === 0 && data.byteLength === data.buffer.byteLength ? data.buffer
+      : data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
     throw new TypeError('GPU data must be an ArrayBuffer or a typed array');
   };
-  const unorm = x => Math.max(0, Math.min(255, Math.round(Number(x) * 255) || 0));
+  // The frame path (shaders, 2026-11-09): a pass goes to Lean with a binary header (op + 64,
+  // PageGpu.Wire.binaryOp: a u32 count, then u32 numbers), so no number becomes text here;
+  // in a script engine in WasmVM that conversion cost more than the rest of a frame. A write
+  // sends its two numbers as text, which is cheaper than a typed array for two. Numbers are
+  // not clamped here: Lean refuses one that is not a whole number in range. Whether the
+  // engine reads binary headers is asked once, with a binary destroy of no object (an engine
+  // from before the binary op answers otherwise); if not, passes go with text headers.
+  let gpuBinary;
+  const gpuPass = (header, payload) => {
+    if (gpuBinary === undefined) {
+      const probe = n.gpu(72, new Uint32Array([1, 0]).buffer, '');
+      gpuBinary = typeof probe === 'string' && probe.startsWith('gpu: destroy');
+    }
+    if (gpuBinary) return n.gpu(71, header.buffer, payload ?? '');
+    return n.gpu(7, Array.prototype.join.call(header, ' '), payload ?? '');
+  };
+  // One pass's header: canvas, clear r g b a, the draws (each pipeline bind nVb vb* count
+  // instances first firstInstance), from the words the encoder kept.
+  const passHeader = (canvas, clear, count, words) => {
+    const h = new Uint32Array(6 + words.length);
+    h[0] = canvas; h[1] = clear[0]; h[2] = clear[1]; h[3] = clear[2]; h[4] = clear[3]; h[5] = count;
+    h.set(words, 6);
+    return h;
+  };
+  // A colour channel 0..1 as 0..255 (NaN as 0); the comparisons convert x to a number.
+  const unorm = x => x >= 1 ? 255 : x > 0 ? Math.round(x * 255) : 0;
   class GPUDevice extends EventTarget {}
   const gpuDevice = (() => {
     const device = new GPUDevice();
@@ -1187,43 +1214,57 @@
         this.ok = send(6, [this.id, d.layout?.pipeline?.id ?? 0, e?.resource?.buffer?.id ?? e?.resource?.id ?? 0]);
       }
     }
+    // A pass keeps its draws as the words of its binary header (passHeader).
     class GPURenderPassEncoder {
-      constructor(target, clear) { this.target = target; this.clear = clear; this.draws = []; this.state = { vbufs: [] }; }
-      setPipeline(p) { this.state.pipeline = p; }
-      setBindGroup(index, g) { if (index === 0) this.state.bind = g; }
-      setVertexBuffer(slot, b) { this.state.vbufs[slot] = b; }
+      constructor(target, clear) { this.target = target; this.clear = clear; this.count = 0; this.words = []; this.pipeline = 0; this.bind = 0; this.vbufs = []; }
+      setPipeline(p) { this.pipeline = p ? p.id : 0; }
+      setBindGroup(index, g) { if (index === 0) this.bind = g ? g.id : 0; }
+      setVertexBuffer(slot, b) { this.vbufs[slot] = b ? b.id : 0; }
       setViewport() {} setScissorRect() {} setBlendConstant() {} setStencilReference() {}
       draw(count, instances = 1, first = 0, firstInstance = 0) {
-        const s = this.state;
-        this.draws.push([s.pipeline?.id ?? 0, s.bind?.id ?? 0, s.vbufs.length, ...s.vbufs.map(b => b?.id ?? 0), count, instances, first, firstInstance]);
+        const w = this.words, v = this.vbufs;
+        w.push(this.pipeline, this.bind, v.length);
+        for (let i = 0; i < v.length; i++) w.push(v[i] ?? 0);
+        w.push(+count, +instances, +first, +firstInstance);
+        this.count++;
       }
       end() {}
     }
+    // The last clear colour and its bytes: a page clears to the same colour frame after frame.
+    let lastR = 0, lastG = 0, lastB = 0, lastA = 0, lastClear = [0, 0, 0, 0];
     class GPUCommandEncoder {
       constructor() { this.passes = []; }
       beginRenderPass(d) {
         const a = (d.colorAttachments ?? [])[0] ?? {}, c = a.clearValue ?? { r: 0, g: 0, b: 0, a: 0 };
-        const rgba = Array.isArray(c) ? c : [c.r, c.g, c.b, c.a];
-        const pass = new GPURenderPassEncoder(a.view?.canvas ?? 0, rgba.map(unorm));
+        const list = Array.isArray(c), r = list ? c[0] : c.r, g = list ? c[1] : c.g, b = list ? c[2] : c.b, al = list ? c[3] : c.a;
+        if (r !== lastR || g !== lastG || b !== lastB || al !== lastA) {
+          lastR = r; lastG = g; lastB = b; lastA = al; lastClear = [unorm(r), unorm(g), unorm(b), unorm(al)];
+        }
+        const pass = new GPURenderPassEncoder(a.view?.canvas ?? 0, lastClear);
         this.passes.push(pass); return pass;
       }
       finish() { return { passes: this.passes }; }
     }
     const queue = Object.freeze({
       writeBuffer(buffer, offset, data, dataOffset = 0, size) {
-        let bytes = gpuBytes(data);
+        let bytes;
         if (dataOffset || size !== undefined) {
           const unit = ArrayBuffer.isView(data) && data.BYTES_PER_ELEMENT ? data.BYTES_PER_ELEMENT : 1;
-          const from = dataOffset * unit;
-          bytes = bytes.slice(from, size === undefined ? undefined : from + size * unit);
-        }
-        send(3, [buffer.id, offset], bytes);
+          const from = (ArrayBuffer.isView(data) ? data.byteOffset : 0) + dataOffset * unit;
+          const all = ArrayBuffer.isView(data) ? data.buffer : gpuBytes(data);
+          bytes = all.slice(from, size === undefined ? (ArrayBuffer.isView(data) ? data.byteOffset + data.byteLength : undefined) : from + size * unit);
+        } else bytes = gpuBytes(data);
+        const r = n.gpu(3, buffer.id + ' ' + +offset, bytes);
+        if (r) report(typeof r === 'number' ? 'gpu: import error ' + r : r);
       },
       submit(buffers) {
-        for (const cb of buffers ?? []) for (const p of cb.passes ?? []) {
-          const header = [p.target, ...p.clear, p.draws.length];
-          for (const d of p.draws) header.push(...d);
-          send(7, header);
+        if (!buffers) return;
+        for (let i = 0; i < buffers.length; i++) {
+          const passes = buffers[i].passes;
+          if (passes) for (let j = 0; j < passes.length; j++) {
+            const p = passes[j], r = gpuPass(passHeader(p.target, p.clear, p.count, p.words));
+            if (r) report(typeof r === 'number' ? 'gpu: import error ' + r : r);
+          }
         }
       },
       onSubmittedWorkDone() { return Promise.resolve(); },
@@ -1254,20 +1295,24 @@
   const canvasSize = (el, name, fallback) => { const v = parseInt(el.getAttribute(name), 10); return v > 0 ? v : fallback; };
   const gpuContexts = new Map();
   class GPUCanvasContext {
-    constructor(canvas) { this.canvas = canvas; this.id = 0; }
+    constructor(canvas) { this.canvas = canvas; this.id = 0; this.texture = null; }
     configure(d) {
       if (this.id) return;
       this.id = gpuNext++;
       if (d?.device !== gpuDevice) throw new TypeError('configure needs the device');
       const node = nodeId(this.canvas);
-      if (!(n.gpu(1, [this.id, node, canvasSize(this.canvas, 'width', 300), canvasSize(this.canvas, 'height', 150)].join(' '), '') === '')) {
+      const width = canvasSize(this.canvas, 'width', 300), height = canvasSize(this.canvas, 'height', 150);
+      if (!(n.gpu(1, [this.id, node, width, height].join(' '), '') === '')) {
         console.warn('WebGPU: the canvas could not be configured'); this.id = 0;
       }
+      // The canvas texture Lean made has the size of the canvas at configure; each frame's
+      // texture is that one (no attribute read in a frame).
+      const view = { canvas: this.id };
+      this.texture = { width, height, format: 'rgba8unorm', createView: () => view, destroy() {} };
     }
     unconfigure() {}
     getCurrentTexture() {
-      const canvas = this.id, width = canvasSize(this.canvas, 'width', 300), height = canvasSize(this.canvas, 'height', 150);
-      return { width, height, format: 'rgba8unorm', createView: () => ({ canvas }), destroy() {} };
+      return this.texture ?? { width: 0, height: 0, format: 'rgba8unorm', createView: () => ({ canvas: 0 }), destroy() {} };
     }
   }
   // ---- WebGL 1 and 2 on the same Lean-validated layer (record, sections 6 and 6b) ----------
@@ -1308,16 +1353,16 @@
       if (send(1, [id, nodeId(canvas), canvasSize(canvas, 'width', 300), canvasSize(canvas, 'height', 150)]) !== null) canvasId = id;
       return canvasId;
     };
+    let drawCount = 0;
     const flush = () => {
       flushQueued = false;
-      if (!draws.length || !ensureCanvas()) { draws = []; return; }
-      const header = [canvasId, ...clear.map(unorm), draws.length];
-      for (const d of draws) header.push(...d);
-      draws = [];
-      send(7, header);
+      if (!drawCount || !ensureCanvas()) { draws = []; drawCount = 0; return; }
+      const header = passHeader(canvasId, [unorm(clear[0]), unorm(clear[1]), unorm(clear[2]), unorm(clear[3])], drawCount, draws);
+      draws = []; drawCount = 0;
+      const m = gpuPass(header);
+      if (m) fail(typeof m === 'number' ? 'gpu: import error ' + m : m);
     };
-    const pipelineFor = (p, layouts, mode) => {
-      const key = JSON.stringify([layouts, mode]);
+    const pipelineFor = (p, layouts, mode, key) => {
       let entry = p.pipelines.get(key);
       if (entry) return entry;
       const id = gpuNext++, header = [id, p.id, mode, layouts.length];
@@ -1331,12 +1376,19 @@
       p.pipelines.set(key, entry);
       return entry;
     };
-    const setUniform = (loc, values, ints) => {
-      if (!loc) return;
-      if (loc.program !== program) { fail('uniform location of another program'); return; }
-      const view = ints ? new Int32Array(program.uniformData, loc.offset, values.length) : new Float32Array(program.uniformData, loc.offset, values.length);
-      for (let i = 0; i < values.length; i++) view[i] = values[i];
+    // Uniform values go into the program's copy of its uniform buffer (views made at link),
+    // sent once before a draw that follows a change.
+    const up = loc => {
+      if (!loc) return null;
+      if (loc.program !== program) { fail('uniform location of another program'); return null; }
       program.uniformDirty = true;
+      return program;
+    };
+    const setUniform = (loc, values, ints) => {
+      const p = up(loc);
+      if (!p) return;
+      const view = ints ? p.i32 : p.f32, o = loc.offset >> 2;
+      for (let i = 0; i < values.length; i++) view[o + i] = values[i];
     };
     const ctx = {
       canvas, drawingBufferWidth: canvasSize(canvas, 'width', 300), drawingBufferHeight: canvasSize(canvas, 'height', 150),
@@ -1385,26 +1437,38 @@
         const answer = gpuSend(9, [p.id], vs.source + '\u0000' + fs.source);
         if (!answer.startsWith('{')) { p.log = answer; p.linked = false; console.warn('WebGL: ' + answer); return; }
         p.info = JSON.parse(answer); p.linked = true; p.log = '';
+        p.attrList = Object.entries(p.info.attributes);
         if (p.info.uniformSize) {
           const id = gpuNext++;
           if (send(2, [id, p.info.uniformSize, 64 | 8]) !== null) p.uniformBuffer = id;
           p.uniformData = new ArrayBuffer(p.info.uniformSize); p.uniformDirty = true;
+          p.f32 = new Float32Array(p.uniformData); p.i32 = new Int32Array(p.uniformData);
+          // gl_FragCoord counts y from the bottom: Lean's translation reads the drawing
+          // buffer's height from this uniform (PageGpu.Glsl, gl_FragHeight).
+          const h = p.info.uniforms.gl_FragHeight;
+          p.fragHeight = h ? h[0] >> 2 : -1;
         }
       },
       getProgramParameter(p, q) { return q === GL.LINK_STATUS ? !!p.linked : null; },
       getProgramInfoLog: p => p.log ?? '',
       useProgram(p) { program = p; },
       getAttribLocation(p, name) { const l = p.info?.attributes[name]; return l === undefined ? -1 : l; },
-      getUniformLocation(p, name) { const u = p.info?.uniforms[name]; return u ? new WebGLUniformLocation(p, u[0], u[1]) : null; },
+      getUniformLocation(p, name) {
+        const u = String(name).startsWith('gl_') ? undefined : p.info?.uniforms[name];
+        return u ? new WebGLUniformLocation(p, u[0], u[1]) : null;
+      },
       enableVertexAttribArray(i) { (attribs[i] ??= {}).enabled = true; },
       disableVertexAttribArray(i) { (attribs[i] ??= {}).enabled = false; },
       vertexAttribPointer(i, size, type, normalized, stride, offset) {
         if (type !== GL.FLOAT || size < 1 || size > 4) { fail('only FLOAT attributes of 1 to 4 components', GL.INVALID_ENUM); return; }
         Object.assign(attribs[i] ??= {}, { buffer: arrayBuffer, size, stride: stride || size * 4, offset });
       },
-      uniform1f(l, x) { setUniform(l, [x]); }, uniform2f(l, x, y) { setUniform(l, [x, y]); },
-      uniform3f(l, x, y, z) { setUniform(l, [x, y, z]); }, uniform4f(l, x, y, z, w) { setUniform(l, [x, y, z, w]); },
-      uniform1i(l, x) { setUniform(l, [x], true); }, uniform2i(l, x, y) { setUniform(l, [x, y], true); },
+      uniform1f(l, x) { const p = up(l); if (p) p.f32[l.offset >> 2] = x; },
+      uniform2f(l, x, y) { const p = up(l); if (p) { const o = l.offset >> 2; p.f32[o] = x; p.f32[o + 1] = y; } },
+      uniform3f(l, x, y, z) { const p = up(l); if (p) { const o = l.offset >> 2; p.f32[o] = x; p.f32[o + 1] = y; p.f32[o + 2] = z; } },
+      uniform4f(l, x, y, z, w) { const p = up(l); if (p) { const o = l.offset >> 2; p.f32[o] = x; p.f32[o + 1] = y; p.f32[o + 2] = z; p.f32[o + 3] = w; } },
+      uniform1i(l, x) { const p = up(l); if (p) p.i32[l.offset >> 2] = x; },
+      uniform2i(l, x, y) { const p = up(l); if (p) { const o = l.offset >> 2; p.i32[o] = x; p.i32[o + 1] = y; } },
       uniform1fv(l, v) { setUniform(l, v); }, uniform2fv(l, v) { setUniform(l, v); }, uniform3fv(l, v) { setUniform(l, v); },
       uniform4fv(l, v) { setUniform(l, v); },
       uniformMatrix4fv(l, transpose, v) { setUniform(l, v); }, uniformMatrix2fv(l, transpose, v) { setUniform(l, v); },
@@ -1416,16 +1480,27 @@
       drawArrays(mode, first, count) {
         const p = program;
         if (!p?.linked) { fail('drawArrays with no linked program'); return; }
-        const layouts = [], vbufs = [];
-        for (const [name, location] of Object.entries(p.info.attributes)) {
-          const a = attribs[location];
-          if (!a?.enabled || !a.buffer?.gpu) { fail(`attribute ${name} has no buffer`); return; }
+        const layouts = [], vbufs = [], list = p.attrList, glMode = glModes[mode] ?? 99;
+        let key = '' + glMode;
+        for (let i = 0; i < list.length; i++) {
+          const location = list[i][1], a = attribs[location];
+          if (!a?.enabled || !a.buffer?.gpu) { fail(`attribute ${list[i][0]} has no buffer`); return; }
           layouts.push({ stride: a.stride, format: a.size, offset: a.offset, location }); vbufs.push(a.buffer.gpu);
+          key += ' ' + a.stride + ' ' + a.size + ' ' + a.offset + ' ' + location;
         }
-        const pipeline = pipelineFor(p, layouts, glModes[mode] ?? 99);
+        const pipeline = pipelineFor(p, layouts, glMode, key);
         if (!pipeline) return;
-        if (p.uniformBuffer && p.uniformDirty) { send(3, [p.uniformBuffer, 0], p.uniformData.slice(0)); p.uniformDirty = false; }
-        draws.push([pipeline.id, pipeline.bind, vbufs.length, ...vbufs, count, 1, first, 0]);
+        if (p.fragHeight >= 0 && p.f32[p.fragHeight] !== ctx.drawingBufferHeight) { p.f32[p.fragHeight] = ctx.drawingBufferHeight; p.uniformDirty = true; }
+        if (p.uniformBuffer && p.uniformDirty) {
+          // n.gpu copies the bytes at once, so the program's own buffer is sent as it is.
+          const m = n.gpu(3, p.uniformBuffer + ' 0', p.uniformData);
+          if (m) fail(typeof m === 'number' ? 'gpu: import error ' + m : m);
+          p.uniformDirty = false;
+        }
+        draws.push(pipeline.id, pipeline.bind, vbufs.length);
+        for (let i = 0; i < vbufs.length; i++) draws.push(vbufs[i]);
+        draws.push(+count, 1, +first, 0);
+        drawCount++;
         if (!flushQueued) { flushQueued = true; Promise.resolve().then(flush); }
       },
     };
@@ -2376,7 +2451,16 @@
   def('opener', null); def('frameElement', null); def('name', '');
   def('document', document); def('location', location);
   def('navigator', Object.freeze({ userAgent: 'Foafnaut', language: 'en', languages: ['en'], platform: '', onLine: true,
-    cookieEnabled: false, hardwareConcurrency: 1, gpu }));
+    cookieEnabled: false, hardwareConcurrency: 1, gpu,
+    // Foafnaut's own (not a web API), for a page that shows what the engine does: the script
+    // engine and the host's wall time of this page's last script turn, read when asked
+    // (node_query op 20). Undefined in an engine without the op.
+    get foafnaut() {
+      const r = n.query(0, 20, '');
+      if (typeof r !== 'string') return undefined;
+      const k = r.lastIndexOf(' ');
+      return { engine: r.slice(0, k), lastTurnMs: Number(r.slice(k + 1)) / 1e6 };
+    } }));
   def('GPUBufferUsage', GPUBufferUsage); def('GPUTextureUsage', GPUTextureUsage); def('GPUShaderStage', GPUShaderStage);
   def('GPUColorWrite', GPUColorWrite); def('GPUValidationError', GPUValidationError); def('GPUOutOfMemoryError', GPUOutOfMemoryError);
   def('GPUCanvasContext', GPUCanvasContext); def('GPUDevice', GPUDevice);
