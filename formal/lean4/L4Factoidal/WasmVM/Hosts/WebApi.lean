@@ -85,6 +85,8 @@ structure State where
   /-- Answers the page has not yet taken (op 43). -/
   hostAnswers : Std.HashMap Nat (Except Int ByteArray) := {}
   nextReq : Nat := 1
+  /-- Work done so far (`opWork` units), charged to script time by `Page.serveExtra`. -/
+  work : Nat := 0
   deriving Inhabited
 
 /-! ## Arguments -/
@@ -527,7 +529,7 @@ def dropKey (s : State) (h : Nat) : State × Nat :=
       | some hh => if keys.fold (fun found _ k' => found || k'.host == some hh) false then s.hostReqs
         else s.hostReqs.push (.object [("id", .number "0"), ("op", .string "drop"), ("key", .number (toString hh))])
       | none => s.hostReqs
-    ({ s with keys := { s.keys with keys }, hostReqs := reqs }, n)
+    ({ s with keys := { s.keys with keys, bytes := s.keys.bytes - k.footprint }, hostReqs := reqs }, n)
 
 /-- At the end of a session (`WebScripts` close, or a new start): every key's bytes are
 zeroed in place (`WebHacl.zeroNow`): the session and everything in it is being dropped, so
@@ -831,6 +833,146 @@ def hostDone (s : State) (id : Nat) (ans : JSON.Json) : State × Option Nat :=
 
 end Host
 
+/-! ## Work: what an operation costs, decided from its arguments before it runs
+
+An operation of `web_api` runs inside one host call, outside the script's step budget. So
+that no call can hold the engine for long (cryptosec finding F3: an HMAC key of 2^31 bits
+took 9 s, and PBKDF2 allowed 2^32 - 1 iterations, about an hour), `runCharged` first
+works out an upper bound of the operation's work from its arguments and the session's
+keys (`opWork`), refuses it with -5 (an OperationError in crypto.subtle) above
+`maxOpWork`, and otherwise adds it to `State.work`, which `Page.serveExtra` charges to
+script time like the page's own WebAssembly (`stepsPerWork`).
+
+The unit is one compression of a 64- or 128-byte hash block by HACL*, about 0.27 µs
+natively (PBKDF2-SHA-256 at 2,000,000 iterations: 8,000,000 units, 2.2 s). Other
+primitives are counted in the same unit from their measured times (record, "Work"). -/
+
+/-- At most this much work in one call: 2^24 units, about 4.5 s natively. -/
+def maxOpWork : Nat := 1 <<< 24
+
+/-- Script time per unit (instructions at `ScriptClock.instructionsPerMs`, 100,000 a ms):
+0.27 µs is 27 instructions. -/
+def stepsPerWork : Nat := 27
+
+/-- A hash of `n` bytes in blocks of `blk`: the blocks, and the padding block. -/
+def hashWork (blk n : Nat) : Nat := n / blk + 2
+
+/-- HMAC with a key of `k` bytes over `m` bytes: the inner hash over the padded key block
+and the message (with its padding), the outer hash's two blocks, and the key's own hash
+when it is longer than a block (HACL* hashes a long key on every call). -/
+def hmacWork (blk k m : Nat) : Nat := (if k > blk then hashWork blk k else 0) + (blk + m + 8) / blk + 1 + 2
+
+/-- `n` bytes of the HMAC_DRBG (SHA-256): one HMAC per 32 bytes, then the update. -/
+def drbgWork (n : Nat) : Nat := 4 * (n / 32) + 24
+
+/-- A P-256 scalar multiplication (sign, verify, ECDH, a public key), an Ed25519 or X25519
+one, and RSA's modular exponentiation with a modulus of `k` octets (private: constant time,
+the exponent is |n| bits; public: a short exponent). -/
+def p256Work : Nat := 1500
+def okpWork : Nat := 400
+def rsaPrivWork (k : Nat) : Nat := (k / 64 + 1) ^ 3 * 400
+def rsaPubWork (k : Nat) : Nat := (k / 64 + 1) ^ 2 * 40
+
+open Crypto.WebCryptoKeys in
+/-- The work of a key operation with key `k` of algorithm `alg` on `n` bytes of data. -/
+def keyOpWork (alg : Alg) (k : Key) (hash : Option Crypto.WebHacl.HashAlg) (n : Nat) : Nat :=
+  let blk := (hash.map (·.block)).getD 64
+  let rsaK := ((k.rsa.map (·.n.size)).getD 0)
+  match alg with
+  | .hmac => hmacWork ((k.algo.hash.map (·.block)).getD 64) k.material.size n
+  | .ecdsa | .ecdh => hashWork blk n + p256Work
+  | .ed25519 => hashWork 64 n + okpWork
+  | .x25519 => okpWork
+  | .chacha => n / 64 + 8
+  | .rsaPkcs1 | .rsaPss | .rsaOaep => hashWork blk n + rsaPrivWork rsaK
+  | _ => hashWork 64 n
+
+open Crypto.WebCryptoKeys in
+/-- Derived bits: HKDF's extract and expand, PBKDF2's iterations for each block, or one
+ECDH. `len` is in bits. -/
+def deriveWork (k : Key) (p : Args) (len : Nat) : Nat :=
+  let h := ((p.str? "hash").bind Crypto.WebHacl.HashAlg.ofName?).getD .sha512
+  let blocks := max 1 ((len / 8 + h.size - 1) / h.size)
+  match k.algo.alg with
+  | .hkdf => hmacWork h.block ((p.get? "salt").getD .empty).size k.material.size +
+      blocks * hmacWork h.block h.size (h.size + ((p.get? "info").getD .empty).size + 1)
+  | .pbkdf2 => blocks * ((p.nat? "iterations").getD 0) * hmacWork h.block k.material.size (h.size + 4)
+      + blocks * hmacWork h.block k.material.size (((p.get? "salt").getD .empty).size + 4)
+  | .ecdh => p256Work
+  | .x25519 => okpWork
+  | _ => 0
+
+open Crypto.WebCryptoKeys in
+/-- The work of one `crypto.subtle` operation (op 41), an upper bound decided from the
+arguments and the session's keys, before anything runs. -/
+def subtleWork (s : State) (fs : Array ByteArray) : Nat :=
+  let a := pairsOf fs
+  let p := sub a "a:"
+  let algName := (p.str? "name").getD ""
+  let method := (fs[0]?.bind String.fromUTF8?).getD ""
+  let data := ((a.get? "data").getD .empty).size
+  let hash := (p.str? "hash").bind Crypto.WebHacl.HashAlg.ofName?
+  let key := fun (f : String) => (keyOf s.keys a f).toOption
+  let keyWork := fun (f : String) => match key f with
+    | some k => keyOpWork k.algo.alg k hash data
+    | none => 0
+  match method with
+  | "generateKey" => drbgWork (randNeeded algName p) + 8 * p256Work
+  | "importKey" => data / 64 + 2 * p256Work
+  | "exportKey" => (match key "key" with | some k => k.footprint / 32 + 8 | none => 8)
+  | "cloneKey" => 8
+  | "sign" | "verify" | "encrypt" | "decrypt" => drbgWork 512 + keyWork "key"
+  | "deriveBits" | "deriveKey" =>
+    -- deriveBits: its length argument; deriveKey: the derived key's length member (HMAC's
+    -- `length`), else 1,024 bits, more than any other derived key here has.
+    let len := if method == "deriveKey" then ((sub a "t:").nat? "length").getD 1024
+      else ((a.str? "length").bind String.toNat?).getD 0
+    match key "baseKey" with
+    | some k => deriveWork k p len + 2 * p256Work + len / 256
+    | none => 8
+  | "wrapKey" => drbgWork 64 + (match key "key" with | some k => k.footprint / 32 + 8 | none => 8) +
+      (match key "wrappingKey" with | some k => keyOpWork k.algo.alg k hash ((match key "key" with
+        | some x => x.footprint | none => 0) * 2) | none => 0)
+  | "unwrapKey" => data / 64 + 2 * p256Work + keyWork "unwrappingKey"
+  | _ => 8
+
+/-- The work of a call (`op`, its arguments): the arguments read once, and what the
+operation does. -/
+def opWork (s : State) (op : Nat) (fs : Array ByteArray) : Nat :=
+  fs.foldl (fun n b => n + b.size) 0 / 64 + 1 +
+  match op with
+  | 30 => drbgWork (((fs[0]?.bind String.fromUTF8?).bind String.toNat?).getD 0)
+  | 31 => drbgWork 16
+  | 32 => hashWork 64 ((fs[1]?.map (·.size)).getD 0)
+  | 33 => 8
+  | 41 => if s.hostMode then 8 else subtleWork s fs
+  | _ => 0
+
+/-- One call, charged: refused with -5 when its work is above `maxOpWork` (and then nothing
+ran and the state is as it was), else run, with its work added to `State.work`. -/
+def runCharged (run : State → Nat → Nat → Array ByteArray → State × Except Int ByteArray)
+    (s : State) (op flags : Nat) (fs : Array ByteArray) : State × Except Int ByteArray :=
+  let w := opWork s op fs
+  if w > maxOpWork then (s, .error (-5)) else
+  let (s', r) := run s op flags fs
+  ({ s' with work := s.work + w }, r)
+
+theorem runCharged_refuses {run : State → Nat → Nat → Array ByteArray → State × Except Int ByteArray}
+    {s : State} {op flags : Nat} {fs : Array ByteArray} (h : opWork s op fs > maxOpWork) :
+    runCharged run s op flags fs = (s, .error (-5)) := by
+  unfold runCharged; simp [h]
+
+/-- Every call is charged exactly its work, which is at most `maxOpWork`; a call above
+the bound is not run and charges nothing. -/
+theorem runCharged_work (run : State → Nat → Nat → Array ByteArray → State × Except Int ByteArray)
+    (s : State) (op flags : Nat) (fs : Array ByteArray) :
+    (runCharged run s op flags fs).1.work = s.work + (if opWork s op fs > maxOpWork then 0 else opWork s op fs) ∧
+    (runCharged run s op flags fs).1.work ≤ s.work + maxOpWork := by
+  unfold runCharged
+  by_cases h : opWork s op fs > maxOpWork
+  · simp [h]
+  · simp only [h, if_false]; constructor <;> simp <;> omega
+
 /-! ## The operations -/
 
 def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.DOM.Dom := default) :
@@ -939,7 +1081,7 @@ def serve (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) (dom : L
     match fields b with
     | none => (s, st, ret (-2))
     | some fs =>
-      let (s, r) := run s (arg args 0) (arg args 1) fs dom
+      let (s, r) := runCharged (fun s op flags fs => run s op flags fs dom) s (arg args 0) (arg args 1) fs
       match r with
       | .error e => (s, st, ret e)
       | .ok out =>
@@ -1000,6 +1142,18 @@ private def hmacImport (ext : String) : List String :=
 #guard (subtleRun {} ["importKey", "format", "raw", "extractable", "0", "a:name", "HMAC", "a:hash", "SHA-256", "data", "k"]).2 == "error -24"
 #guard (subtleRun {} ["exportKey", "format", "raw", "key", "7"]).2 == "error -20"
 #guard (subtleRun {} ["generateKey", "extractable", "1", "usage", "sign", "a:name", "HMAC", "a:hash", "SHA-256"]).2 == "error -6"
+-- Work (cryptosec F3): a call above `maxOpWork` is refused before it runs, and the others
+-- are charged. PBKDF2 at 2^32 - 1 iterations, and an HMAC key of 2^32 - 1 bits:
+private def chargedCode (s : State) (xs : List String) : Int × Nat :=
+  let (s', r) := runCharged (fun s op fl fs => run s op fl fs) s 41 0 ((fields (pack (xs.map (·.toUTF8)))).getD #[])
+  (match r with | .ok _ => 0 | .error e => e, s'.work)
+#guard (let (s, _) := subtleRun {} ["importKey", "format", "raw", "extractable", "0", "usage", "deriveBits", "a:name", "PBKDF2", "data", "pw"]
+  (chargedCode s ["deriveBits", "baseKey", "1", "length", "256", "a:name", "PBKDF2", "a:hash", "SHA-256", "a:iterations", "4294967295", "a:salt", "s"]).1) == -5
+#guard (let (s, _) := subtleRun {} ["importKey", "format", "raw", "extractable", "0", "usage", "deriveBits", "a:name", "PBKDF2", "data", "pw"]
+  opWork s 41 ((fields (pack (["deriveBits", "baseKey", "1", "length", "256", "a:name", "PBKDF2", "a:hash", "SHA-256",
+    "a:iterations", "600000", "a:salt", "s"].map (·.toUTF8)))).getD #[]) |> fun w => 600000 * 4 ≤ w && w ≤ maxOpWork)
+#guard (chargedCode {} ["generateKey", "extractable", "0", "usage", "sign", "a:name", "HMAC", "a:hash", "SHA-256", "a:length", "4294967295"]).1 == -5
+#guard (chargedCode {} ["generateKey", "extractable", "0", "usage", "sign", "a:name", "HMAC", "a:hash", "SHA-256", "a:length", "512"]).1 == -6
 #guard extractCharset "text/html; charset=EUC-JP" == some "EUC-JP"
 #guard extractCharset "text/html; CHARSET = 'big5' " == some "big5"
 #guard extractCharset "charset" == none

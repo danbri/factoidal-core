@@ -378,7 +378,10 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
   | "cancel_frame" => ({ h with loop := h.loop.cancelFrame (a 0) }, st, Hosts.Dom.ret 0)
   | "web_api" =>
     let (web, st, r) := Hosts.WebApi.serve mem args h.web st h.dom.dom
-    ({ h with web }, st, r)
+    -- The call's work is script time, as the page's own WebAssembly is: its clock moves
+    -- and a turn's time budget sees it (`WebApi.runCharged`, cryptosec finding F3).
+    let charged := (web.work - h.web.work) * Hosts.WebApi.stepsPerWork
+    ({ h with web, wasm := { h.wasm with steps := h.wasm.steps + charged } }, st, r)
   | "wasm_call" =>
     -- The page's WebAssembly: its store is taken out of the host while it runs, so the
     -- runs change it in place.
