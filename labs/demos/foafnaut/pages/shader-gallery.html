@@ -18,8 +18,7 @@ p { margin:0; padding-top:6px }
 .bar a.size.on { color:#f4f6f9; text-decoration:none }
 .stage { margin-top:10px; background:#000000; border:1px solid #2a2d36 }
 canvas { display:block; margin:0 auto; touch-action:none }
-.readout { padding:5px 10px 6px 10px; background:#0d0f13; border-top:1px solid #2a2d36; color:#a9b0ba; font-size:12px; line-height:18px; font-family:ui-monospace, Menlo, monospace }
-.readout b { color:#7fd1ff; font-weight:normal }
+.readout { display:block; width:818px; height:42px; background:#0d0f13; border-top:1px solid #2a2d36 }
 .blurb { color:#a9b0ba }
 pre { margin:8px 0 0 0; padding:8px 10px; background:#0d0f13; border-left:3px solid #7fd1ff; color:#c9d1db; font-family:ui-monospace, Menlo, monospace; font-size:12px; line-height:17px; white-space:pre-wrap }
 pre.head { color:#6f7785; border-left:3px solid #454a56 }
@@ -41,7 +40,7 @@ no recursion, a cost bound, every index clamped) and prints the WGSL the GPU get
 <div class="bar"><span class="k">API</span><button id="api-webgpu">WebGPU · WGSL</button><button id="api-webgl2">WebGL 2 · GLSL ES 3.00</button>
 <span class="k">size</span><span id="sizes"></span><button id="pause">Pause</button></div>
 <div class="stage" id="stage"><canvas id="c-webgpu" width="800" height="600"></canvas><canvas id="c-webgl2" width="800" height="600"></canvas>
-<div class="readout" id="readout"><b>engine</b> <span id="r-engine">This page needs scripts and WebGPU or WebGL 2.</span> · <b>api</b> <span id="r-api">-</span><br><b>fps</b> <span id="r-fps">-</span> · <b>script</b> <span id="r-script">-</span> · <b>Lean</b> <span id="r-lean">-</span></div></div>
+<canvas id="readout" class="readout" width="818" height="42" aria-label="Frame rate, script time and Lean's time a turn">This page needs scripts and WebGPU or WebGL 2.</canvas></div>
 <h2 id="title">Shader</h2>
 <p class="blurb" id="blurb"></p>
 <pre class="head" id="head"></pre>
@@ -676,9 +675,28 @@ function tick(now) {
   }
   if (now - lastReport >= 1000 && params.get('readout') !== '0') report(now);
 }
-// The readout: four text nodes, each set only when its text changes (a change is a layout).
+// The readout is a 2D canvas: redrawing it is paint only. (A change of text in the page
+// would lay the whole page out again: about 40 ms in Foafnaut, two frames lost a second.)
 const shown = {};
-const put = (id, text) => { if (shown[id] !== text) { shown[id] = text; $(id).textContent = text; } };
+const put = (id, text) => { shown[id] = text; };
+const readout = $('readout'), dpr = Math.min(2, window.devicePixelRatio || 1);
+readout.setAttribute('width', String(818 * dpr)); readout.setAttribute('height', String(42 * dpr));
+const rc = readout.getContext('2d');
+function drawReadout() {
+  if (!rc) return;
+  rc.setTransform(dpr, 0, 0, dpr, 0, 0);
+  rc.fillStyle = '#0d0f13'; rc.fillRect(0, 0, 818, 42);
+  rc.font = '12px ui-monospace, Menlo, monospace';
+  const line = (y, parts) => {
+    let x = 10;
+    for (const [label, value] of parts) {
+      rc.fillStyle = '#7fd1ff'; rc.fillText(label, x, y); x += rc.measureText(label + ' ').width;
+      rc.fillStyle = '#a9b0ba'; rc.fillText(value, x, y); x += rc.measureText(value + '   ').width;
+    }
+  };
+  line(16, [['engine', shown['r-engine'] || '-'], ['api', shown['r-api'] || '-']]);
+  line(34, [['fps', shown['r-fps'] || '-'], ['script', shown['r-script'] || '-'], ['Lean', shown['r-lean'] || '-']]);
+}
 const ua = navigator.userAgent, browser = foafnaut ? '' : (/Chrome\/\d+/.exec(ua) || /Firefox\/\d+/.exec(ua) || /Safari\/\d+/.exec(ua) || ['this browser'])[0];
 function report(now) {
   put('r-engine', foafnaut ? 'Foafnaut' + (scriptEngine ? ', scripts in ' + scriptEngine : '') + ', Lean checks every GPU command' : browser);
@@ -687,8 +705,9 @@ function report(now) {
   put('r-fps', paused ? 'paused' : mean ? (1000 / mean).toFixed(1) + ' (frame ' + mean.toFixed(1) + ' ms)' : '-');
   intervalCount = 0; intervalSum = 0;
   if (shownFrames) put('r-script', (scriptMs / shownFrames).toFixed(2) + ' ms a frame' + (foafnaut ? ' on the page clock' : ''));
-  put('r-lean', !foafnaut ? 'not in this browser' : leanSamples ? (leanMs / leanSamples).toFixed(2) + ' ms a turn (script and checks, wall time), ' + (api === 'webgpu' ? 'a uniform write and a pass' : 'one draw') + ' checked a frame' : '-');
+  put('r-lean', !foafnaut ? 'not in this browser' : leanSamples ? (leanMs / leanSamples).toFixed(2) + ' ms a turn (script and checks), ' + (api === 'webgpu' ? 'a write and a pass' : 'one draw') + ' checked' : '-');
   leanMs = 0; leanSamples = 0;
+  drawReadout();
   if (now !== undefined) lastReport = now;
   shownFrames = 0; scriptMs = 0;
 }
