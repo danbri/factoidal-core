@@ -106,6 +106,55 @@ struct VOut{@builtin(position) pos:vec4f,@location(0) @interpolate(flat) tile:u3
   throw new Error("unknown variant");
 }
 
+// --refine: the 16-sample branch with fewer samples or a higher trigger, timed like the variants
+// above, and each image compared with the shipped shader's image, byte by byte.
+function refineVariant(code:string,keep:number,threshold:number|undefined):string{
+  const at=code.indexOf("@fragment fn fragment");let tail=code.slice(at);
+  const samples=[...tail.matchAll(/total\+=samplePixel\([^;]*;/g)].map(m=>m[0]);
+  if(samples.length!==12)throw new Error("expected 12 refinement samples, found "+samples.length);
+  // Evenly spaced through the list, so that the kept samples stay spread over the pixel.
+  const kept=new Set(Array.from({length:keep},(_,i)=>Math.floor((i+0.5)*12/keep)));
+  let i=0;tail=tail.replace(/total\+=samplePixel\([^;]*;/g,m=>kept.has(i++)?m:"");
+  tail=tail.replace("return total/16.0;}",`return total/${(4+keep).toFixed(1)};}`);
+  if(threshold!==undefined)tail=tail.replace(/spread>vec4f\([^)]*\)/,`spread>vec4f(${threshold})`);
+  return code.slice(0,at)+tail;
+}
+async function refineBench(pagePath:string,dpr:number){
+  const url=new URL(pagePath,new URL("file://"+Deno.cwd()+"/")).href;
+  const doc=await prepareHTML(engine as never,url,undefined,undefined,{liberal:true});
+  const shell={tabs:[{title:"bench"}],active:0,address:url,focused:false,canBack:false,canForward:false,loading:false,scale:dpr,theme:"light",pages:1,scroll:0,pressed:""};
+  const layers=engine.compileLayers(doc.source,W,H,{...doc.request(W,H).options,shell,checks:false,liberal:true,scripting:false,textScalePercent:Math.max(50,Math.round(200*dpr/5)*5),zoomUnit:dpr*100});
+  const page=layers.page as unknown as Art;
+  const uniform=device.createBuffer({size:Math.max(16,(page.data as Float32Array).byteLength),usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST});
+  const tw=new Uint32Array(page.tiles as Uint32Array);
+  const tiles=device.createBuffer({size:Math.max(16,tw.byteLength),usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST});
+  device.queue.writeBuffer(uniform,0,page.data as Float32Array as BufferSource);device.queue.writeBuffer(tiles,0,tw);
+  const texture=device.createTexture({size:[page.width,page.height],format,usage:GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.COPY_SRC});
+  const bytesPerRow=Math.ceil(page.width*4/256)*256;
+  const read=device.createBuffer({size:bytesPerRow*page.height,usage:GPUBufferUsage.COPY_DST|GPUBufferUsage.MAP_READ});
+  async function measure(code:string){
+    const module=device.createShaderModule({code});
+    const pipeline=await device.createRenderPipelineAsync({layout:"auto",vertex:{module,entryPoint:"vertex"},fragment:{module,entryPoint:"fragment",targets:[{format}]},primitive:{topology:"triangle-list"}});
+    const bind=device.createBindGroup({layout:pipeline.getBindGroupLayout(0),entries:[{binding:0,resource:{buffer:uniform}},{binding:1,resource:{buffer:tiles}}]});
+    const run=async(n:number)=>{const t=performance.now();const enc=device.createCommandEncoder();for(let k=0;k<n;k++){const pass=enc.beginRenderPass({colorAttachments:[{view:texture.createView(),clearValue:[0,0,0,1],loadOp:"clear",storeOp:"store"}]});pass.setPipeline(pipeline);pass.setBindGroup(0,bind);pass.draw(3,1,0,0);pass.end();}device.queue.submit([enc.finish()]);await done();return performance.now()-t;};
+    await run(1);const gpu:number[]=[];for(let i=0;i<Math.max(frames,3);i++){const one=await run(1),many=await run(9);gpu.push(Math.max(0,(many-one)/8));}
+    const enc=device.createCommandEncoder();const pass=enc.beginRenderPass({colorAttachments:[{view:texture.createView(),clearValue:[0,0,0,1],loadOp:"clear",storeOp:"store"}]});pass.setPipeline(pipeline);pass.setBindGroup(0,bind);pass.draw(3,1,0,0);pass.end();
+    enc.copyTextureToBuffer({texture},{buffer:read,bytesPerRow},[page.width,page.height]);device.queue.submit([enc.finish()]);
+    await read.mapAsync(GPUMapMode.READ);const px=new Uint8Array(read.getMappedRange()).slice();read.unmap();
+    return {ms:stat(gpu).p50,px};
+  }
+  const base=await measure(page.wgsl);
+  const out:Record<string,unknown>={page:pagePath,dpr,rows:Math.round((page.data as Float32Array).length/4),shippedMs:base.ms};
+  for(const [name,keep,threshold] of [["8 samples",4,undefined],["6 samples",2,undefined],["12 samples",8,undefined],["16, trigger 1/16",12,0.0625],["16, trigger 1/8",12,0.125],["8, trigger 1/16",4,0.0625]] as [string,number,number|undefined][]){
+    const r=await measure(refineVariant(page.wgsl,keep,threshold));
+    let diff=0,big=0,max=0,sum=0;
+    for(let y=0;y<page.height;y++)for(let x=0;x<page.width;x++){let m=0;for(let c=0;c<3;c++){const d=Math.abs(r.px[y*bytesPerRow+x*4+c]-base.px[y*bytesPerRow+x*4+c]);if(d>m)m=d;}if(m>0){diff++;sum+=m;}if(m>16)big++;if(m>max)max=m;}
+    const n=page.width*page.height;
+    out[name]={ms:r.ms,pixelsChangedPct:Math.round(diff/n*10000)/100,over16of255Pct:Math.round(big/n*10000)/100,maxDiff:max,meanDiffOfChanged:diff?Math.round(sum/diff*10)/10:0};
+  }
+  texture.destroy();uniform.destroy();tiles.destroy();read.destroy();
+  console.log(JSON.stringify(out));
+}
 async function bench(pagePath:string,dpr:number){
   const url=new URL(pagePath,new URL("file://"+Deno.cwd()+"/")).href;
   const doc=await prepareHTML(engine as never,url,undefined,undefined,{liberal:true});
@@ -214,5 +263,47 @@ async function bench(pagePath:string,dpr:number){
   target.destroy();layerRenderer.dispose();
   console.log(JSON.stringify(out));
 }
-for(const page of pages)for(const dpr of dprs)await bench(page,dpr);
+// --animate: a transform on one element, frame by frame, as a script's setAttribute: the engine
+// time of the frame and the GPU time of the two-layer draw, with the retained compile and damage
+// (`retained` on) and the plain path (off). --inject puts a small SVG mover at the top of the page.
+// The GPU time is K frames in a row and one wait, over K: the completion poll is about 13 ms.
+async function animate(pagePath:string,dpr:number,id:string,inject:boolean,kind:string){
+  const url=new URL(pagePath,new URL("file://"+Deno.cwd()+"/")).href;
+  let html=await Deno.readTextFile(new URL(url));
+  if(inject)html=html.replace(/<body[^>]*>/i,m=>m+'<svg width="120" height="40" style="display:block"><g id="mover"><rect x="4" y="4" width="24" height="24" fill="#369"/></g></svg>');
+  const doc=await prepareHTML(engine as never,url,undefined,html,{liberal:true});
+  const nodes=(engine.inspect(doc.source,{url,liberal:true}) as unknown as {nodes:{id:number;attributes:Record<string,string>}[]}).nodes;
+  const node=nodes.find(n=>n.attributes?.id===id)?.id;
+  if(node===undefined)throw new Error("no element #"+id);
+  const shell={tabs:[{title:"bench"}],active:0,address:url,focused:false,canBack:false,canForward:false,loading:false,scale:dpr,theme:"light",pages:1,scroll:0,pressed:""};
+  const base=doc.request(W,H).options;
+  const value=(i:number)=>kind==="zoom"?`scale(${(1+(i%40)/10).toFixed(3)})`:`translate(${(i%200)*2} 0)`;
+  const options=(i:number,retained:boolean)=>({...base,shell,checks:false,liberal:true,scripting:false,textScalePercent:Math.max(50,Math.round(200*dpr/5)*5),zoomUnit:dpr*100,...(retained?{}:{retained:false}),
+    commands:[{op:"setAttribute",nodeId:node,name:"transform",value:value(i)}]});
+  const out:Record<string,unknown>={page:pagePath,dpr,size:[W,H],element:id,kind};
+  for(const retained of [false,true]){
+    const renderer=createLayerRenderer(device,format,device.limits);
+    engine.compileLayers(doc.source,W,H,options(0,retained));
+    engine.compileLayers(doc.source,W,H,options(1,retained));
+    engine.frameWork?.(true);
+    const engineMs:number[]=[],layers:unknown[]=[];
+    for(let i=2;i<frames+2;i++){const t=performance.now();layers.push(engine.compileLayers(doc.source,W,H,options(i,retained)));engineMs.push(performance.now()-t);}
+    const work=engine.frameWork?.(true);
+    await renderer.drawLayers(layers[0] as never,false);await done();
+    const start=performance.now();
+    for(let i=1;i<layers.length;i++)await renderer.drawLayers(layers[i] as never,false);
+    const js=performance.now()-start;await done();
+    const total=performance.now()-start;
+    const page=(layers[layers.length-1] as {page:{primitiveCount:number;data:ArrayLike<number>;damage?:{rects:number[][]|null}}}).page;
+    const rects=page.damage?.rects;
+    out[retained?"retained":"plain"]={engineMs:stat(engineMs),drawJsMsPerFrame:Math.round(js/(layers.length-1)*10)/10,gpuPlusJsMsPerFrame:Math.round(total/(layers.length-1)*10)/10,
+      primitives:page.primitiveCount,floats:page.data.length,work,damagePixels:rects?rects.reduce((n,[, ,w,h])=>n+w*h,0):null,rects:rects?.length??null,draws:{full:renderer.stats.scenesFull,partial:renderer.stats.scenesPartial,kept:renderer.stats.scenesKept}};
+    renderer.dispose();
+  }
+  console.log(JSON.stringify(out));
+}
+const animateId=opt("--animate");
+if(argv.includes("--refine"))for(const page of pages)for(const dpr of dprs)await refineBench(page,dpr);
+else if(animateId)for(const page of pages)for(const dpr of dprs)await animate(page,dpr,animateId,argv.includes("--inject"),opt("--kind")??"move");
+else for(const page of pages)for(const dpr of dprs)await bench(page,dpr);
 Deno.exit(0);

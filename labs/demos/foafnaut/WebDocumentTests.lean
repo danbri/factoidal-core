@@ -489,8 +489,9 @@ the same request with `binary:true`, for one frame and for layers. -/
 private def wordsOf (b : ByteArray) : List JSON.Json :=
   (List.range (b.size/4)).map fun i =>
     .number (toString (b[4*i]!.toNat + 256*b[4*i+1]!.toNat + 65536*b[4*i+2]!.toNat + 16777216*b[4*i+3]!.toNat))
+-- `damage` is in the binary answer only (the retained compile says what changed): the host reads it.
 private def fillOne (sections : Array ByteArray) : JSON.Json → JSON.Json
-  | .object fields => .object (fields.map fun (k,v) => match k, v with
+  | .object fields => .object ((fields.filter (·.1 != "damage")).map fun (k,v) => match k, v with
       | "dataSection", .number n => ("dataBase64",.string (NativeSVG.base64Bytes (sections.getD n.toNat! .empty)))
       | "tilesSection", .number n => ("tiles",.array (wordsOf (sections.getD n.toNat! .empty)))
       | _, _ => (k,v))

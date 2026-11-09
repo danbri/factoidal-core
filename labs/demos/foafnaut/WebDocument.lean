@@ -1044,13 +1044,23 @@ structure KeptPage where
   checks : Bool
   tree : Bool
   answer : String × Array ByteArray
+  /-- The compile of the band's primitives, for the next frame (`WebPaint.retainedAnswer`). -/
+  retained : Option WebPaint.RetainedLayer := none
+  /-- `layoutJSON` of this frame: the next frame with the same layout gives it again. -/
+  layoutText : String := ""
+  /-- The number that `damage.id` answers: a host that drew answer `id` can draw a later
+  answer with `damage.base = id` by its damage rectangles alone. -/
+  id : Nat := 0
 
 /-- Page layer answers kept: the last two, for a chrome change and back. -/
 def keptPageSlots : Nat := 2
 
 initialize keptPageRef : IO.Ref (List KeptPage) ← IO.mkRef []
-/-- Page layers made, and page layers given again from `keptPageRef`. -/
-initialize pageWorkRef : IO.Ref (Nat × Nat) ← IO.mkRef (0,0)
+/-- Page layers made and given again from `keptPageRef`; then primitives compiled again, kept
+and moved with their geometry kept by the retained compile. -/
+initialize pageWorkRef : IO.Ref (Nat × Nat × Nat × Nat × Nat) ← IO.mkRef (0,0,0,0,0)
+/-- Answers numbered for `damage.id`. -/
+initialize pageIdRef : IO.Ref Nat ← IO.mkRef 0
 
 private def formSame : NativeSVG.DataForm → NativeSVG.DataForm → Bool
   | .decimal,.decimal => true
@@ -1066,21 +1076,51 @@ the answer that `artifactWith` gives again for these inputs. -/
 set_option compiler.extract_closed false in
 private unsafe def pageArtifactImpl (page : Rendering.Scene) (extra : List Rendering.Node) (b : Band)
     (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face) (live : Bool)
-    (form : NativeSVG.DataForm) (checks tree : Bool) : Except String (String × Array ByteArray) :=
+    (form : NativeSVG.DataForm) (checks tree : Bool) (retainOn : Bool := true) : Except String (String × Array ByteArray) :=
   unsafeBaseIO do
     let same := fun (k : KeptPage) => ptrEq k.page page && ptrEq k.boxes boxes && ptrEq k.face face &&
       ptrEq k.extra extra && k.band == b && k.live == live && formSame k.form form && k.checks == checks && k.tree == tree
     let kept ← keptPageRef.get
     match kept.find? same with
     | some k =>
-      pageWorkRef.modify fun (m,g) => (m,g+1)
+      pageWorkRef.modify fun (m,g,x) => (m,g+1,x)
       return .ok k.answer
     | none =>
-      let made := WebRender.artifactWith (WebPaint.cull (pageLayer page extra b)) boxes face live form checks tree
-      if let .ok answer := made then
-        keptPageRef.set ((⟨page,extra,b,boxes,face,live,form,checks,tree,answer⟩ :: kept).take keptPageSlots)
-        pageWorkRef.modify fun (m,g) => (m+1,g)
-      return made
+      let layer := pageLayer page extra b
+      -- The retained compile only for a frame host's answer: sections, no probes, no tree.
+      -- `pageArtifact` (the reference) stays the plain path, that `partial_frame_test.ts`
+      -- compares this with.
+      let previous := kept.find? fun k => k.band == b && k.live == live && formSame k.form form && k.checks == checks && k.tree == tree && k.retained.isSome
+      match form,checks,tree,retainOn with
+      | .sections first,false,false,true =>
+        let layoutText := previous.bind fun k =>
+          if ptrEq k.boxes boxes && ptrEq k.face face && ptrEq k.page.links page.links && ptrEq k.page.glyphRuns page.glyphRuns then
+            some k.layoutText else none
+        let reuseLeaf := fun (a b : WebPaint.LeafKey) =>
+          if ptrEq a.primitive b.primitive && a.sameContext b then NativeSVG.Reuse.same
+          else if ptrEq a.primitive.geometry b.primitive.geometry && ptrEq a.primitive.style b.primitive.style then a.movedOf b
+          else NativeSVG.Reuse.different
+        match WebPaint.retainedAnswer reuseLeaf (previous.bind (·.retained)) layer boxes face first layoutText with
+        | .error e => return .error e
+        | .ok (retained,damage,value,sections,layout,recompiled,moved) =>
+          let id := (← pageIdRef.modifyGet fun n => (n+1,n+1))
+          let number := fun (n : Nat) => toString n
+          let damageText := "{\"id\":" ++ number id ++ ",\"base\":" ++
+            (match previous.bind (·.retained),damage with
+             | some _,some _ => number (previous.map (·.id)).get!
+             | _,_ => "null") ++ ",\"rects\":" ++
+            (match damage with | some rects => NativeSVG.damageJSON rects | none => "null") ++ "}"
+          let value := (value.dropEnd 1).toString ++ ",\"damage\":" ++ damageText ++ "}"
+          let answer := (value,sections)
+          keptPageRef.set ((⟨page,extra,b,boxes,face,live,form,checks,tree,answer,some retained,layout,id⟩ :: kept).take keptPageSlots)
+          pageWorkRef.modify fun (m,g,a,b,c) => (m+1,g,a+recompiled,b+(retained.items.size-recompiled-moved),c+moved)
+          return .ok answer
+      | _,_,_,_ =>
+        let made := WebRender.artifactWith (WebPaint.cull layer) boxes face live form checks tree
+        if let .ok answer := made then
+          keptPageRef.set ((⟨page,extra,b,boxes,face,live,form,checks,tree,answer,none,"",0⟩ :: kept).take keptPageSlots)
+          pageWorkRef.modify fun (m,g,x) => (m+1,g,x)
+        return made
 
 /-- The page layer of a layers answer. Its value is `artifactWith` of the band of the page,
 with its curves off the band made lines (`WebPaint.cull`: the same pixels, fewer edges for a
@@ -1090,27 +1130,28 @@ only change is in the chrome: loading, the address, a pressed chrome control, th
 @[implemented_by pageArtifactImpl]
 def pageArtifact (page : Rendering.Scene) (extra : List Rendering.Node) (b : Band)
     (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face) (live : Bool)
-    (form : NativeSVG.DataForm) (checks tree : Bool) : Except String (String × Array ByteArray) :=
+    (form : NativeSVG.DataForm) (checks tree : Bool) (_retainOn : Bool := true) : Except String (String × Array ByteArray) :=
   WebRender.artifactWith (WebPaint.cull (pageLayer page extra b)) boxes face live form checks tree
 
 theorem pageArtifact_eq (page : Rendering.Scene) (extra : List Rendering.Node) (b : Band)
     (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face) (live : Bool)
-    (form : NativeSVG.DataForm) (checks tree : Bool) :
-    pageArtifact page extra b boxes face live form checks tree =
+    (form : NativeSVG.DataForm) (checks tree retainOn : Bool) :
+    pageArtifact page extra b boxes face live form checks tree retainOn =
       WebRender.artifactWith (WebPaint.cull (pageLayer page extra b)) boxes face live form checks tree := rfl
 
 /-- The answer to a render with `layers:true`. -/
 def layersJSON (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List Rendering.Node)
     (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face)
     (width height : Nat) (live : Bool) (form : NativeSVG.DataForm) (checks tree : Bool) (hoverRules : Bool := false)
-    (canvases : List Rendering.Layout.Box := []) (animating : Bool := false) (animations : Bool := false) :
+    (canvases : List Rendering.Layout.Box := []) (animating : Bool := false) (animations : Bool := false)
+    (retainOn : Bool := true) :
     Except String (String × Array ByteArray) := do
   let top := WebShell.height shell width
   -- A chrome that may fold: the band covers the view under the strip, the most it shows,
   -- so a change of `collapse` keeps the band and only the chrome layer is drawn again.
   let view := max 1 (height-(if shell.collapsible then bandTop shell width else top))
   let b := band shell.scroll view
-  let (pageText,pageSections) ← pageArtifact page extra b boxes face live form checks tree
+  let (pageText,pageSections) ← pageArtifact page extra b boxes face live form checks tree retainOn
   let (chromeText,chromeSections) ←
     WebRender.artifactWith (chromeLayer shell page width) #[] face live form.next checks tree
   let number := fun (n : Nat) => JSON.Json.number (toString n)
@@ -1974,13 +2015,13 @@ count the work, as `heldFont` and `keepFont` do for the font. -/
 @[implemented_by countRepaintImpl, noinline] private opaque countRepaint (laid : Laid) : Laid := laid
 @[implemented_by frameWorkImpl, noinline] private opaque frameWork (reset : Bool) : Nat × Nat × Nat
 set_option compiler.extract_closed false in
-private unsafe def pageWorkImpl (reset : Bool) : Nat × Nat :=
+private unsafe def pageWorkImpl (reset : Bool) : Nat × Nat × Nat × Nat × Nat :=
   unsafeBaseIO do
     let work ← pageWorkRef.get
-    if reset then pageWorkRef.set (0,0)
+    if reset then pageWorkRef.set (0,0,0,0,0)
     return work
 /-- Page layers made and page layers kept (`pageArtifact`), as `frameWork` counts layouts. -/
-@[implemented_by pageWorkImpl, noinline] private opaque pageWork (reset : Bool) : Nat × Nat
+@[implemented_by pageWorkImpl, noinline] private opaque pageWork (reset : Bool) : Nat × Nat × Nat × Nat × Nat
 
 /-- `lookupLayout` over the kept memo. -/
 private def cachedLayOut (key : LayoutKey) : Except String Laid :=
@@ -2121,11 +2162,11 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
   if str request "op" == "frameWork" then
     let reset := request.field? "reset" == some (.bool true)
     let (layouts,kept,repaints) := frameWork reset
-    let (pagesMade,pagesKept) := pageWork reset
+    let (pagesMade,pagesKept,recompiled,reused,moved) := pageWork reset
     let paints := paintWork reset
     let number := fun (n : Nat) => JSON.Json.number (toString n)
     return ((JSON.Json.object [("layouts",number layouts),("kept",number kept),("repaints",number repaints),
-      ("paintOnly",number paints),
+      ("paintOnly",number paints),("recompiled",number recompiled),("reused",number reused),("moved",number moved),
       ("layoutSlots",number layoutSlots),("pagesMade",number pagesMade),("pagesKept",number pagesKept)]).toString,#[])
   if str request "op" == "xmlStylesheet" then
     let url := match ← WebXslt.stylesheetHref html with
@@ -2247,7 +2288,8 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
   if let some value := shell then
     if request.field? "layers" == some (.bool true) then
       return withDiagnostics request laid (← layersJSON value scene marks boxes face width height live form checks tree laid.hoverRules
-        (canvasBoxes laid.dom boxes) animating (!laid.paint.animations.isEmpty))
+        (canvasBoxes laid.dom boxes) animating (!laid.paint.animations.isEmpty)
+        (request.field? "retained" != some (.bool false)))
   let scrolled := Float.ofNat ((shell.map (·.scroll)).getD 0)
   let near := nearNodes (scrolled-512) (scrolled+Float.ofNat height+512) scene.tree
   let page := {scene with tree := near ++ marks}
