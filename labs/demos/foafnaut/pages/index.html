@@ -1,10 +1,10 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Foafnaut</title><link rel="icon" type="image/svg+xml" href="foafnaut-icon.svg"><style>body{margin:16px;font-size:14px;line-height:20px;color:#203040;background:white}h1{margin:0;font-size:21px;line-height:28px;color:#184078}p{margin:0;padding-top:6px}svg{display:block}h2{margin:0;padding-top:22px;font-size:17px;line-height:24px;color:#184078}.lead{font-size:15px;line-height:22px;color:#34485c}.start{margin-top:12px;padding:6px 14px 12px;background:#eef3fa}.item{padding-top:8px}.what{padding-top:0;color:#5b6876;font-size:13px;line-height:18px}</style></head><body><main>
 <h1>Foafnaut</h1>
-<p class="lead">A web browser written in Lean. Every page here is drawn by its own engine, with WebGPU.</p>
+<p class="lead">A web browser with its own built-in engine: it draws every page here itself, with WebGPU.</p>
 <div class="start"><h2>Start here</h2>
 <p class="item"><a href="foafnaut:graph">Interactive FOAF graph</a></p>
-<p class="what">Drag and explore a network of people, laid out by Lean.</p>
+<p class="what">Drag and explore a network of people, laid out by the browser.</p>
 <p class="item"><a href="spinal-tap-sparql.html">Spın̈al Tap: a SPARQL client for Wikidata</a></p>
 <p class="what">Ask Wikidata about the band through QLever, from the page.</p>
 <p class="item"><a href="showcase.html">Showcase: what the engine can and can not draw</a></p>
@@ -17,16 +17,16 @@
 <h2>Pages with scripts</h2>
 <p class="item"><a href="foaf-explorer.html">FOAF explorer (JavaScript)</a></p>
 <p class="what">A graph laid out by the page's own JavaScript; tap to bring in friends.</p>
-<p class="item"><a href="canvas-chart.html">A Canvas 2D chart, drawn by Lean</a></p>
+<p class="item"><a href="canvas-chart.html">A Canvas 2D chart, drawn by the built-in engine</a></p>
 <p class="what">An animated Canvas 2D chart.</p>
 <p class="item"><a href="timers-and-clicks.html">Timers and clicks</a></p>
 <p class="what">Dots moved by timers, animation frames and buttons.</p>
-<p class="item"><a href="webgpu-triangle.html">WebGPU triangle, checked by Lean</a></p>
-<p class="what">A spinning triangle from navigator.gpu; Lean checks each call.</p>
-<p class="item"><a href="webgl-triangle.html">WebGL 1 and 2, checked by Lean</a></p>
-<p class="what">WebGL 1 and 2 triangles, checked by Lean.</p>
+<p class="item"><a href="webgpu-triangle.html">WebGPU triangle, checked by the browser</a></p>
+<p class="what">A spinning triangle from navigator.gpu; the browser checks each call.</p>
+<p class="item"><a href="webgl-triangle.html">WebGL 1 and 2, checked by the browser</a></p>
+<p class="what">WebGL 1 and 2 triangles, checked by the browser.</p>
 <p class="item"><a href="wasm-mandelbrot.html">WebAssembly in a page</a></p>
-<p class="what">A tiny WebAssembly module, run by Lean, draws the Mandelbrot set.</p>
+<p class="what">A tiny WebAssembly module, run by the built-in WebAssembly engine, draws the Mandelbrot set.</p>
 <p class="item"><a href="showcase-dataviz-script.html">Data visualisation with a script</a></p>
 <p class="what">The data visualisation, drawn by a script.</p>
 <h2>SVG and graphics</h2>
@@ -48,7 +48,7 @@
 <p class="item"><a href="showcase-emoji.html">Emoji</a></p>
 <p class="what">Emoji: sequences, skin tones, flags and keycaps.</p>
 <p class="item"><a href="typography-lab.xml">Typography lab</a></p>
-<p class="what">Kerning, ligatures and marks from the Lean shaper.</p>
+<p class="what">Kerning, ligatures and marks from the built-in text shaper.</p>
 <p class="item"><a href="showcase-tables.html">Tables</a></p>
 <p class="what">HTML tables: spans, borders, alignment.</p>
 <p class="item"><a href="showcase-images.html">Images</a></p>
@@ -89,8 +89,8 @@
 <p class="what">How the engine is put together.</p>
 <p class="item"><a href="settings.html">Settings</a></p>
 <p class="what">Text size, theme and the page script engine.</p>
-<p class="item"><a href="foafnaut:wasm">WebAssembly, run by Lean (WasmVM)</a></p>
-<p class="what">Run a WebAssembly module in Lean's own WebAssembly engine.</p>
+<p class="item"><a href="foafnaut:wasm">WebAssembly, run by the built-in engine (WasmVM)</a></p>
+<p class="what">Run a WebAssembly module in the browser's built-in WebAssembly engine.</p>
 <p class="item"><a href="https://danbri.github.io/factoidal/web/hub/render-scores/#svg-tiny-pixels">SVG Tiny 1.2 test suite results (on the web)</a></p>
 <p class="what">How the engine draws the W3C SVG Tiny 1.2 tests.</p>
 </main></body></html>

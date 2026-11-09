@@ -319,7 +319,7 @@
   },
   {
    "page": "webgpu-triangle.html",
-   "title": "WebGPU triangle, checked by Lean",
+   "title": "WebGPU triangle, checked by the browser",
    "handwritten": true,
    "needs": "page scripts and the page GPU commands (gpu_command import, L4Factoidal.PageGpu) in the engine and the guest",
    "appRefused": "does not execute scripts",
@@ -328,7 +328,7 @@
   },
   {
    "page": "webgl-triangle.html",
-   "title": "WebGL 1 and 2, checked by Lean",
+   "title": "WebGL 1 and 2, checked by the browser",
    "handwritten": true,
    "needs": "page scripts and the page GPU commands with WebGL programs (gpu_command op 9, L4Factoidal.PageGpu.Glsl) in the engine and the guest",
    "appRefused": "does not execute scripts",
@@ -346,7 +346,7 @@
   },
   {
    "page": "canvas-chart.html",
-   "title": "A Canvas 2D chart, drawn by Lean",
+   "title": "A Canvas 2D chart, drawn by the built-in engine",
    "handwritten": true,
    "needs": "page scripts and Canvas 2D (gpu_command ops 200 and 201, L4Factoidal.PageCanvas) in the engine and the guest",
    "appRefused": "does not execute scripts",
