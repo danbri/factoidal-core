@@ -254,7 +254,7 @@ def VKey.of : Value → VKey
   | .obj i => .obj i
   | .sym i => .sym i
   | .big i => .big i
-  | .hole => .undef
+  | .hole | .fl => .undef
 
 /-- The typed array element types: name, bytes per element. -/
 def typedNames : Array (String × Nat) :=
@@ -524,6 +524,14 @@ structure HeapOf (H : Type) extends ColdHeap H where
   envs : Array Env := #[{}]
   /-- Environments whose slots can be reused (`callClosure`, `FunInfo.frameLocal`). -/
   envFree : Array Nat := #[]
+  /-- The register machine's registers and float registers, kept here between runs, and the
+  first free register. -/
+  vmRegs : Array Value := #[]
+  vmF : FloatArray := .empty
+  vmTop : Nat := 0
+  /-- The slot of a name in the global object's property map, by a hash of the name; checked
+  at each use (the name in that slot). Starts out empty. -/
+  globalCache : Array Nat := Array.replicate 1024 0
   /-- Steps left before the script is stopped (an interrupt, not an exception). -/
   steps : UInt64 := 1000000000
   depth : UInt32 := 0
@@ -595,7 +603,7 @@ def toBool : Value → Bool
   | .obj _ => true
   | .sym _ => true
   | .big i => i != 0
-  | .hole => false
+  | .hole | .fl => false
 
 def HeapOf.obj (h : HeapOf H) (id : Nat) : Obj := h.objs.getD id default
 

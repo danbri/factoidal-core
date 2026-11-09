@@ -1,6 +1,7 @@
 import Std.Data.HashSet
 import Std.Data.HashMap
 import L4Factoidal.JS.Syntax
+import L4Factoidal.JS.Compile
 
 /-!
 # L4Factoidal.JS.Resolve — names resolved ahead of time
@@ -64,24 +65,7 @@ def nameE (fs : Frames) (x : String) : Expr :=
   | some (h, i) => .local x h i
   | none => .ident x
 
-/-- Append names not already present. -/
-def addNames (a : Array String) (xs : List String) : Array String :=
-  (xs.foldl (fun (a, seen) x =>
-      if seen.contains x then (a, seen) else (a.push x, seen.insert x))
-    (a, a.foldl (fun (s : Std.HashSet String) x => s.insert x) {})).1
-
-/-- A block's frame: the names `enterBlock` declares, in order; `none` if it makes no
-environment. -/
-def blockFrame (ss : List Stmt) : Option (Array String) :=
-  let needs := ss.any fun s => match s with
-    | .decl .letK _ | .decl .constK _ | .funDecl .. | .classDecl .. => true
-    | _ => false
-  if !needs then none else
-  some <| addNames #[] (ss.flatMap fun s => match s with
-    | .decl .letK ds | .decl .constK ds => ds.flatMap Decl.names
-    | .classDecl name _ => [name]
-    | .funDecl name _ => [name]
-    | _ => [])
+open L4Factoidal.JS.Compile (addNames blockFrame)
 
 /-- The frame of a function's environment, in the order of `callClosure`: `arguments` when
 the function uses it, the parameters, the rest parameter's names, the `var` names. -/
@@ -232,6 +216,8 @@ def rFun : Nat → Frames → FunDef → R FunDef
           nParams := params.length
           plain := plainParams f
           frameLocal := !inner.closure && !inner.dynamic && !gen && !async }
+      let fd : FunDef := .mk name params' rest' body' vars usesArgs strict kind gen async info
+      let info := { info with code := if inner.dynamic then none else Compile.compile fd }
       pure (.mk name params' rest' body' vars usesArgs strict kind gen async info)
 
 def rParams : Nat → Frames → List PatElem → R (List PatElem)
@@ -332,7 +318,7 @@ def rS : Nat → Frames → Stmt → R Stmt
       set ({ dynamic := inner.dynamic, closure := outer.closure || inner.closure } : St)
       if (blockFrame ss).isSome && !inner.closure && !inner.dynamic then pure (.blockF ss')
       else pure (.block ss')
-    | .blockF _ => pure s
+    | .blockF _ | .compiled .. => pure s
     | .throwS e => pure (.throwS (← rE n fs e))
     | .tryS body param handler fin =>
       let body' ← rBlock n fs body
@@ -383,7 +369,15 @@ def fuel : Nat := 2000000
 there are not given slots. A script with a direct `eval` or `with` is returned unresolved. -/
 def script (s : Script) : Script :=
   let (body, st) := (rSs fuel [] s.body).run {}
-  if st.dynamic then s else { s with body }
+  if st.dynamic then s else
+  let body := body.map fun b =>
+    match b with
+    | .forS .. | .whileS .. | .doWhile .. =>
+      match Compile.compileLoop b s.strict with
+      | some c => Stmt.compiled c b
+      | none => b
+    | _ => b
+  { s with body }
 
 end L4Factoidal.JS.Resolve
 
