@@ -21,6 +21,7 @@ import L4Factoidal.WasmVM.Aot.Window
 import L4Factoidal.WasmVM.Hosts.PageAot
 import L4Factoidal.WasmVM.Hosts.PageEvents
 import L4Factoidal.WasmVM.Hosts.LeanJS
+import L4Factoidal.WasmVM.Hosts.LeanJSWorkers
 import L4Factoidal.WasmVM.Proofs.Numerics
 import L4Factoidal.WasmVM.Proofs.Simd
 import L4Factoidal.WasmVM.Proofs.Fuse
