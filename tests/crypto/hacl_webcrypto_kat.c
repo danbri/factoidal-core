@@ -35,6 +35,8 @@ lean_obj_res l4_web_hacl_p256_ecdh(b_lean_obj_arg, b_lean_obj_arg);
 lean_obj_res l4_web_hacl_chachapoly_seal(b_lean_obj_arg, b_lean_obj_arg, b_lean_obj_arg, b_lean_obj_arg);
 lean_obj_res l4_web_hacl_chachapoly_open(b_lean_obj_arg, b_lean_obj_arg, b_lean_obj_arg, b_lean_obj_arg);
 lean_obj_res l4_web_hacl_wipe(lean_obj_arg);
+lean_obj_res l4_web_hacl_zero_now(b_lean_obj_arg);
+lean_obj_res l4_web_hacl_wiped(b_lean_obj_arg);
 
 static int fails = 0, passes = 0;
 static lean_object *hx(const char *h) {
@@ -135,6 +137,13 @@ int main(void) {
   lean_object *w = hx("0102030405");
   lean_object *wn = l4_web_hacl_wipe(w);
   check("wipe answers the size", lean_unbox(wn) == 5);
+  /* Session-end zeroing: in place, whatever the reference count; the counter moves. */
+  size_t before = lean_unbox(l4_web_hacl_wiped(lean_box(0)));
+  lean_object *z = hx("a1a2a3a4a5a6a7a8");
+  lean_inc_ref(z); /* shared: zero_now zeroes it all the same */
+  check("zero_now answers the size", lean_unbox(l4_web_hacl_zero_now(z)) == 8);
+  check("zero_now zeroes the bytes", eq(z, "0000000000000000"));
+  check("the zeroed count moved by 8", lean_unbox(l4_web_hacl_wiped(lean_box(0))) == before + 8);
   printf("hacl_webcrypto KAT: %d passed, %d failed\n", passes, fails);
   return fails ? 1 : 0;
 }

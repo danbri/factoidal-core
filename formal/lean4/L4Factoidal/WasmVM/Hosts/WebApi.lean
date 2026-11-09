@@ -593,6 +593,30 @@ def importType (alg : Alg) (format : String) (j : Args) : KeyType :=
 def useOf (alg : Alg) : String :=
   if alg == .ecdsa || alg == .ed25519 || alg == .hmac || alg == .rsaPkcs1 || alg == .rsaPss then "sig" else "enc"
 
+/-- The request that exports a key on the Hub. -/
+def hostExportPlan (st : KeyStore) (a : Args) : Res (List (String × JSON.Json) × HostKind) :=
+  match hostKeyOf st a "key" with
+  | .error e => .error e
+  | .ok (k, h) =>
+    match hostExportAllowed k with
+    | .error e => .error e
+    | .ok () =>
+      let format := (a.str? "format").getD ""
+      .ok ([("op", .string "exportKey"), ("format", .string format), ("key", numJ h)],
+        if format == "jwk" then .jwk else .bytes)
+
+/-- On the Hub too, no request to export goes to the browser unless the key is extractable. -/
+theorem hostExportPlan_extractable {st : KeyStore} {a : Args} {r : List (String × JSON.Json) × HostKind}
+    (h : hostExportPlan st a = .ok r) : ∃ k n, hostKeyOf st a "key" = .ok (k, n) ∧ k.extractable = true := by
+  unfold hostExportPlan at h
+  split at h
+  · cases h
+  · rename_i k n hk
+    split at h
+    · cases h
+    · rename_i ha
+      exact ⟨k, n, hk, hostExportAllowed_extractable ha⟩
+
 /-- The checks of one operation and its request to the host: the request's fields (with
 "op") and the kind of answer. -/
 def hostPlan (st : KeyStore) (method : String) (a : Args) : Res (List (String × JSON.Json) × HostKind) := do
@@ -658,13 +682,7 @@ def hostPlan (st : KeyStore) (method : String) (a : Args) : Res (List (String ×
     let keyData := if format == "jwk" then jwkJsonOf j else bytesJ data
     return ([("op", .string "importKey"), ("format", .string format), ("keyData", keyData),
       ("algorithm", ← algJson st "importKey" p), ("extractable", .bool ext), ("usages", usagesJ us)], .key ext)
-  | "exportKey" =>
-    let (k, h) ← hostKeyOf st a "key"
-    if k.algo.alg == .hkdf || k.algo.alg == .pbkdf2 then throw .notSupported
-    if !k.extractable then throw .invalidAccess
-    let format := (a.str? "format").getD ""
-    return ([("op", .string "exportKey"), ("format", .string format), ("key", numJ h)],
-      if format == "jwk" then .jwk else .bytes)
+  | "exportKey" => hostExportPlan st a
   | "sign" | "verify" =>
     let (k, h) ← hostKeyOf st a "key"
     keyFor k algName (if method == "sign" then .sign else .verify)
@@ -697,8 +715,7 @@ def hostPlan (st : KeyStore) (method : String) (a : Args) : Res (List (String ×
     let (wk, wh) ← hostKeyOf st a "wrappingKey"
     if wk.algo.alg.name != algName || !wk.usages.contains .wrapKey then throw .invalidAccess
     let (k, h) ← hostKeyOf st a "key"
-    if k.algo.alg == .hkdf || k.algo.alg == .pbkdf2 then throw .notSupported
-    if !k.extractable then throw .invalidAccess
+    hostExportAllowed k
     let alg ← match algJson st "wrapKey" p with | .ok j => pure j | .error _ => algJson st "encrypt" p
     return ([("op", .string "wrapKey"), ("format", .string ((a.str? "format").getD "")), ("key", numJ h),
       ("wrappingKey", numJ wh), ("algorithm", alg)], .bytes)

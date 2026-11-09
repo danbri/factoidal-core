@@ -365,8 +365,11 @@ ends, `WebApi.wipeAll`): it changes the bytes under any other reference. A compi
 constant is left alone. -/
 @[extern "l4_web_hacl_zero_now"] opaque zeroNow (b : @& ByteArray) : Nat
 
-/-- Bytes zeroed in place so far (tests). -/
-@[extern "l4_web_hacl_wiped"] opaque wipedSoFar : BaseIO Nat
+/-- Bytes zeroed in place so far (diagnostics: the close answer of a script session). It
+reads a counter in C, so it takes the value it is reported with as an argument: with no
+argument the compiler makes the call a closed term, run once at start, and it answers 0
+for ever (which is what it first did). -/
+@[extern "l4_web_hacl_wiped"] opaque wipedSoFar (tag : @& Nat) : Nat
 
 /-! ## Theorems: sizes and refusals -/
 

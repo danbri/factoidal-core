@@ -5,7 +5,11 @@
 // tests/crypto/webcrypto_vectors.js with HOST true, on both of the Hub's paths for the
 // guest (AOT, and WasmVM). Exit 1 when a vector fails or the page gives no result.
 //
-//   node labs/demos/foafnaut/hub_crypto_check.mjs [--runtime DIR] [--guest FILE]
+//   node labs/demos/foafnaut/hub_crypto_check.mjs [--runtime DIR] [--guest FILE] [--wpt OUT.json]
+//
+// --wpt OUT.json also runs the pinned WebCryptoAPI window tests through the Hub worker on the
+// AOT path, one page at a time, with testharness timeouts multiplied by 20 (the Hub's clock
+// is real time; wptrunner has the same setting), and writes the runner's result format.
 // CHROME=/path/to/chrome overrides the browser. NOT RUN with no browser.
 import http from 'node:http';import zlib from 'node:zlib';import fs from 'node:fs';import path from 'node:path';
 import {spawn} from 'node:child_process';import {fileURLToPath} from 'node:url';
@@ -26,11 +30,40 @@ const made={
   'crypto-vectors.html':'<!doctype html><html><head><meta charset="utf-8"><title>crypto</title></head><body><script>const HOST = true;\n'+vectors+'</script></body></html>',
 };
 let mode='aot';
+// The WebCryptoAPI pages as wptserve serves them (window variant), under pages/wpt/.
+const wptRoot=fileURLToPath(new URL('../../../third_party/testing/wpt-webapis/',import.meta.url));
+const wptResources=fileURLToPath(new URL('../../../third_party/testing/wpt-scripting/resources/',import.meta.url));
+const reportFile=fileURLToPath(new URL('../../../tests/browser-wpt/testharnessreport.js',import.meta.url));
+const metaOf=t=>[...t.matchAll(/^\/\/ META: *([a-z-]+)=(.*)$/gm)].map(m=>[m[1],m[2].trim()]);
+function wptPages(){
+  const out=[];
+  const walk=d=>{for(const e of fs.readdirSync(path.join(wptRoot,d),{withFileTypes:true}).sort((a,b)=>a.name<b.name?-1:1)){
+    const r=`${d}/${e.name}`;
+    if(e.isDirectory()){if(!['tools','util','crashtests'].includes(e.name))walk(r);continue;}
+    if(!/\.(any|window)\.js$/.test(e.name))continue;
+    const g=metaOf(fs.readFileSync(path.join(wptRoot,r),'utf8')).find(([k])=>k==='global')?.[1];
+    if(g&&e.name.endsWith('.any.js')&&!/(^|,)\s*(window|default)\b/.test(g))continue;
+    out.push(r);
+  }};
+  walk('WebCryptoAPI');return out;
+}
+function wptWrapper(file){
+  const meta=metaOf(fs.readFileSync(path.join(wptRoot,file),'utf8'));
+  const title=meta.find(([k])=>k==='title')?.[1]??file;
+  const scripts=meta.filter(([k])=>k==='script').map(([,v])=>v.startsWith('/')?v:new URL(v,`http://x/${file}`).pathname);
+  return `<!doctype html>\n<meta charset=utf-8>\n<title>${title.replace(/</g,'&lt;')}</title>\n<script>self.GLOBAL={isWindow:function(){return true;},isWorker:function(){return false;},isShadowRealm:function(){return false;}};</script>\n`+
+    `<script src="/resources/testharness.js"></script>\n<script src="/resources/testharnessreport.js"></script>\n`+
+    scripts.map(x=>`<script src="${x}"></script>\n`).join('')+`<div id=log></div>\n<script src="/${file}"></script>\n`;
+}
 async function get(p){
   const hub='/factoidal/web/hub/foafnaut/',pages=hub+'pages/',rt='/factoidal/web/hub/html-webgpu/runtime/',guests='/factoidal/web/hub/wasm-guests/';
   const local=(dir,rest)=>{const f=path.join(dir,decodeURIComponent(rest));return f.startsWith(dir)&&fs.existsSync(f)&&fs.statSync(f).isFile()?f:undefined;};
   let f;
   if(p.startsWith(pages)&&made[p.slice(pages.length)])return {status:200,type:'text/html',body:Buffer.from(made[p.slice(pages.length)])};
+  if(p.startsWith(pages+'wpt/'))return {status:200,type:'text/html',body:Buffer.from(wptWrapper(decodeURIComponent(p.slice((pages+'wpt/').length))))};
+  if(p==='/resources/testharnessreport.js')return {status:200,type:'text/javascript',body:Buffer.from(fs.readFileSync(reportFile,'utf8').replace('setup({ output: false });','setup({ output: false, timeout_multiplier: 20 });'))};
+  if(p.startsWith('/resources/')&&(f=local(wptResources,p.slice('/resources/'.length))))return {status:200,type:typeOf(f),body:fs.readFileSync(f)};
+  if((p.startsWith('/WebCryptoAPI/')||p.startsWith('/common/'))&&(f=local(wptRoot,p.slice(1))))return {status:200,type:typeOf(f),body:fs.readFileSync(f)};
   if(p.startsWith(pages)&&(f=local(pagesDir,p.slice(pages.length))))return {status:200,type:typeOf(f),body:fs.readFileSync(f)};
   if(p===hub+'browser-worker.mjs'){
     let text=fs.readFileSync(path.join(hubDir,'browser-worker.mjs'),'utf8');
@@ -58,14 +91,15 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const stop=async()=>{if(chrome.exitCode===null){chrome.kill('SIGKILL');await new Promise(r=>chrome.once('exit',r));}
   server.close();try{fs.rmSync(profile,{recursive:true,force:true});}catch{}};
 for(const signal of ['SIGINT','SIGTERM'])process.on(signal,()=>stop().then(()=>process.exit(1)));
-const results={};
+const results={},bySession=new Map();
 try{
   let ws;for(let i=0;i<300&&!ws;i++){try{ws=(await (await fetch(`http://127.0.0.1:${port}/json/version`)).json()).webSocketDebuggerUrl;}catch{await sleep(100);}}
   if(!ws)throw Error("Chrome did not start: no answer on /json/version after 30 s");
   const socket=new WebSocket(ws);await new Promise((r,j)=>{socket.onopen=r;socket.onerror=j;});
   let id=0;const waiting=new Map(),consoleLines=[];
   socket.onmessage=({data})=>{const m=JSON.parse(data);
-    if(m.method==='Runtime.consoleAPICalled')consoleLines.push(m.params.args.map(a=>a.value??a.description).join(' '));
+    if(m.method==='Runtime.consoleAPICalled'){const line=m.params.args.map(a=>a.value??a.description).join(' ');consoleLines.push(line);
+      if(!bySession.has(m.sessionId))bySession.set(m.sessionId,[]);bySession.get(m.sessionId).push(line);}
     if(m.id&&waiting.has(m.id)){const [r,j]=waiting.get(m.id);waiting.delete(m.id);m.error?j(Error(JSON.stringify(m.error))):r(m.result);}};
   const send=(method,params={},sessionId)=>new Promise((r,j)=>{const i=++id;waiting.set(i,[r,j]);socket.send(JSON.stringify({id:i,method,params,sessionId}));});
   await send('Target.setAutoAttach',{autoAttach:true,waitForDebuggerOnStart:false,flatten:true});
@@ -101,6 +135,33 @@ try{
     for(const f of fails)console.log('  '+f);
     if(fails.length||!ls.length)failed++;
     await page.close();
+  }
+  // The WebCryptoAPI pages through the Hub worker.
+  const wptOut=opt('--wpt');
+  if(wptOut){
+    mode='aot';
+    const statusNames=['PASS','FAIL','TIMEOUT','NOTRUN','PRECONDITION_FAILED'],harnessNames=['OK','ERROR','TIMEOUT','PRECONDITION_FAILED'];
+    const cases=[];
+    for(const file of wptPages()){
+      bySession.clear();
+      const t0=Date.now();
+      const page=await open(`wpt/${file}`);
+      // The worker's console reaches two sessions: the longest one is read.
+      const logs=()=>{let best=[];for(const v of bySession.values())if(v.length>best.length)best=v;return best.flatMap(l=>l.replace(/^page: /,'').split('\n'));};
+      while(Date.now()-t0<Number(opt('--page-limit','600'))*1000){await sleep(500);if(logs().some(l=>l.startsWith('__wpt_done ')))break;}
+      const subtests=[];let harness='NO_RESULT',message;
+      for(const l of logs()){
+        if(l.startsWith('__wpt_result ')){const r=JSON.parse(l.slice(13));subtests.push({name:r.name,status:statusNames[r.status]??String(r.status),...(r.status?{message:r.message}:{})});}
+        else if(l.startsWith('__wpt_done ')){const d=JSON.parse(l.slice(11));harness=harnessNames[d.status]??String(d.status);message=d.message;}
+      }
+      const pass=subtests.filter(x=>x.status==='PASS').length;
+      console.error(`${harness.padEnd(9)} ${String(pass).padStart(5)}/${String(subtests.length).padEnd(5)} ${file} ${Date.now()-t0}ms`);
+      cases.push({file,harness,...(message?{message}:{}),subtests,ms:Date.now()-t0});
+      await page.close();
+      fs.writeFileSync(wptOut,JSON.stringify({cases}));
+    }
+    const pass=cases.reduce((n,c)=>n+c.subtests.filter(x=>x.status==='PASS').length,0),total=cases.reduce((n,c)=>n+c.subtests.length,0);
+    console.log(`WebCryptoAPI through the Hub worker: ${pass}/${total} subtests pass on ${cases.length} pages`);
   }
   if(failed)process.exitCode=1;
 }finally{await stop();}

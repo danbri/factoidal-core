@@ -901,6 +901,20 @@ def exportKey (k : Key) (format : String) : Res Exported :=
   if k.algo.alg == .hkdf || k.algo.alg == .pbkdf2 then .error .notSupported
   else if k.extractable then exportBody k format else .error .invalidAccess
 
+/-- exportKey's and wrapKey's rules on a key whose bytes the host holds (the Hub): the
+same two refusals as `exportKey`, in the same order. -/
+def hostExportAllowed (k : Key) : Res Unit :=
+  if k.algo.alg == .hkdf || k.algo.alg == .pbkdf2 then .error .notSupported
+  else if k.extractable then .ok () else .error .invalidAccess
+
+theorem hostExportAllowed_extractable {k : Key} (h : hostExportAllowed k = .ok ()) : k.extractable = true := by
+  unfold hostExportAllowed at h
+  split at h
+  · cases h
+  · cases hk : k.extractable
+    · simp [hk] at h
+    · rfl
+
 /-! ## Generate (§14.3.6) -/
 
 /-- A fresh key or key pair from `rand` (the caller drew `randNeeded` bytes). -/

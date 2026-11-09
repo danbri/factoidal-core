@@ -336,9 +336,9 @@ LEAN_EXPORT lean_obj_res l4_web_hacl_zero_now(b_lean_obj_arg b) {
   return lean_usize_to_nat(n);
 }
 
-/* `wipedSoFar : BaseIO Nat`: Lean 4.33 passes an IO action's extern no world argument
- * (its emitted prototype is `l4_web_hacl_wiped()`), so this takes none; a parameter here
- * made wasm-ld's signatures disagree and every call trap (core Wasm build, 2026-11-09). */
-LEAN_EXPORT lean_obj_res l4_web_hacl_wiped(void) {
-  return lean_io_result_mk_ok(lean_uint64_to_nat(l4w_wiped_total));
+/* `wipedSoFar (tag : @& Nat) : Nat`: the count of bytes zeroed. The argument is unused here;
+ * Lean needs it so the call is not a closed term evaluated once at initialisation. */
+LEAN_EXPORT lean_obj_res l4_web_hacl_wiped(b_lean_obj_arg tag) {
+  (void)tag;
+  return lean_uint64_to_nat(l4w_wiped_total);
 }

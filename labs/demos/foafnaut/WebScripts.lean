@@ -190,11 +190,6 @@ private unsafe def entropyImpl (id : Nat) : ByteArray :=
     | .error _ => return ByteArray.empty)
 @[implemented_by entropyImpl, noinline] private opaque entropy (id : Nat) : ByteArray
 
-/-- Key bytes zeroed in place so far in this process (`WebHacl.wipedSoFar`, the C
-counter): the close answer reports it, so a test can see that wiping happened. -/
-private unsafe def zeroedImpl (_ : Nat) : Nat := unsafeBaseIO Crypto.WebHacl.wipedSoFar
-@[implemented_by zeroedImpl, noinline] private opaque zeroedSoFar (n : Nat) : Nat
-
 def actions : List String := ["info", "load", "start", "click", "pointer", "resize", "advance", "settle", "turn", "close", "crypto",
   "aotModule", "resume", "host", "frame"]
 
@@ -725,7 +720,7 @@ def act (held : Held) (action html : String) (request : JSON.Json)
     | _, _ => (held, .error "scriptSession: no turn waits for the host")
   | "close" =>
     let held := dropSessions { held with turn := none }
-    (held, .ok s!"\{\"closed\":true,\"keyBytesWiped\":{held.keyBytesWiped},\"keyBytesZeroed\":{zeroedSoFar held.keyBytesWiped}}")
+    (held, .ok s!"\{\"closed\":true,\"keyBytesWiped\":{held.keyBytesWiped},\"keyBytesZeroed\":{Crypto.WebHacl.wipedSoFar held.keyBytesWiped}}")
   | _ =>
   if held.turn.isSome then (held, .error "scriptSession: a turn waits for the host") else
   match action with
