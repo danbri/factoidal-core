@@ -48,4 +48,18 @@ theorem positionMark_centre (base mark : Extents) (cc : Nat) (gap : Int) (h : ce
   have r' := Int.lt_tmod_of_pos (base.width - mark.width) (by decide : (0:Int) < 2)
   omega
 
+/-- An above mark (class 230) that must go up to clear its base sits above the base's top
+(y up), by the gap: its bottom is the base's top plus the gap. With
+`positionMark_inside`, the property of issue 368: the mark is over the base's ink across,
+and above it. -/
+theorem positionMark_above (base mark : Extents) (gap : Int) (hg : 0 < gap)
+    (up : 0 < base.yBearing + gap - mark.yBearing - mark.height) :
+    (positionMark base mark 230 gap).2.2 = base.yBearing + gap - mark.yBearing - mark.height ∧
+    (positionMark base mark 230 gap).2.2 + mark.yBearing + mark.height = base.yBearing + gap := by
+  have e : (positionMark base mark 230 gap).2.2 = base.yBearing + gap - mark.yBearing - mark.height := by
+    unfold positionMark
+    simp
+    split <;> simp_all <;> omega
+  exact ⟨e, by rw [e]; omega⟩
+
 end L4Factoidal.Rendering.SfntFallback

@@ -67,6 +67,9 @@ async function crossFontMark(engine:HTMLEngine){
   assert(run&&run.glyphs.length===2,JSON.stringify(runs(a)));
   const [base,mark]=run.glyphs;
   assert.equal(mark[3],0,"the mark takes no advance");
+  // One cluster for selection and copy (issue 368).
+  assert.equal(mark[4],base[4],`clusters: base ${base}, mark ${mark}`);
+  assert(mark[2]<base[2],"the mark is above the base");
   // The mark's origin is placed so that its ink is centred on the base's advance box:
   // its origin lies within the base's box widened by one em.
   assert(mark[1]>=base[1]-48&&mark[1]<=base[1]+base[3]+48,`base ${base} mark ${mark}`);
@@ -171,7 +174,7 @@ const mathFont=new URL("../../../third_party/fonts/noto-sans-math/NotoSansMath-R
 async function oracleMarks(engine:HTMLEngine){
   await loadFontFile(engine,mathFont,"Noto Sans Math","bytes",true);
   const cases:[string,string][]=[[sans,"n\u0308"],[sans,"Sp\u0131n\u0308al"],[sans,"a\u0301"],[sans,"o\u0323\u0302"],
-    [sans,"e\u0303\u0301"],[sans,"i\u0307"],[sans,"q\u0327"],[mathFont,"\u{1D52B}\u0308"],[mathFont,"\u{1D526}\u0308"]];
+    [sans,"e\u0303\u0301"],[sans,"i\u0307"],[sans,"q\u0327"]];
   let checked=0;
   for(const [font,text] of cases){
     const hb=hbShape(font,text);if(!hb)return {checked:"NOT RUN: no hb-shape on the PATH"};
@@ -187,7 +190,20 @@ async function oracleMarks(engine:HTMLEngine){
       pen+=hb[k].advance;checked++;
     }
   }
-  return {checked};
+  // Noto Sans Math has U+0308 but no mark anchor on its Fraktur letters: HarfBuzz leaves the
+  // mark after the base (hb-shape: 447=0+464|4783=0+0), right of its ink. Foafnaut places an
+  // unattached mark on the base's ink (issue 368): 𝔫 ink 30..434 and top 493, mark ink 0..281
+  // and bottom 631, gap 62: x = 30+(404-281)/2-0 = 91; y: the mark is already above the base
+  // and its gap, so HarfBuzz's rule moves it half way down, -38 (y up).
+  const fraktur="\u{1D52B}\u0308";
+  const a=engine.compile(`<!doctype html><p style="font-size:500px;margin:0;white-space:nowrap">${fraktur}</p>`,4000,1200,{url:pageURL});
+  const run=runs(a).find(r=>r.text===fraktur)!;
+  const [b,m]=run.glyphs;
+  assert.deepEqual([b[0],m[0]],[447,4783]);
+  assert(Math.abs((m[1]-b[1])*2-91)<0.01&&Math.abs((m[2]-b[2])*2-38)<0.01,`Fraktur n̈: mark at ${(m[1]-b[1])*2}, ${(m[2]-b[2])*2}`);
+  // One cluster for selection and copy.
+  assert.equal(m[4],b[4]);
+  return {checked,fraktur:[(m[1]-b[1])*2,(m[2]-b[2])*2]};
 }
 
 for(const [name,path] of [["Wasm engine",undefined],["native library",library]] as const){
