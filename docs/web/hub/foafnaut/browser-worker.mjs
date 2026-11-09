@@ -74,7 +74,7 @@ const phase=name=>{phases[name]??=performance.timeOrigin+performance.now();};
 let phasesPosted=false;
 const preloaded=new Map();
 function fetchEarly(url,kind){
-  if(!preloaded.has(url)){const p=fetch(url).then(r=>{if(!r.ok)throw Error(`HTTP ${r.status}`);return kind==='text'?r.text().then(text=>({url:r.url||url,source:text})):r.arrayBuffer();});p.catch(()=>{});preloaded.set(url,p);}
+  if(!preloaded.has(url)){const p=fetch(url).then(r=>{if(!r.ok)throw Error(`HTTP ${r.status}`);return kind==='text'?r.arrayBuffer().then(b=>({url:r.url||url,bytes:new Uint8Array(b),contentType:r.headers.get('content-type')??''})):r.arrayBuffer();});p.catch(()=>{});preloaded.set(url,p);}
   return preloaded.get(url);
 }
 // The engine's module (web-render.wasm): streaming compile, else a compile of the bytes.
@@ -299,11 +299,29 @@ async function loadFallbackFonts(source,wait){
   const now=settled.filter(Boolean);put(now);
   all.then(list=>{put(list.filter(file=>!now.includes(file)));if(doc){current=undefined;prefetched=undefined;request();}});
 }
-async function fetchText(url){
+// A page's bytes become text in Lean (web_document_decode_call_bin, WebDocument.decodeBin: the
+// BOM, the HTTP charset, the page's meta declaration, else UTF-8 for UTF-8 bytes and
+// windows-1252 otherwise). An engine from before that export reads UTF-8.
+function decodePage(bytes,contentType){
+  if(module&&typeof module._web_document_decode_call_bin==='function'&&typeof module._malloc==='function'){
+    const input=module._malloc(Math.max(1,bytes.length));
+    if(input)try{
+      module.HEAPU8.set(bytes,input);
+      const pointer=module.ccall('web_document_decode_call_bin','number',['number','number','string'],[input,bytes.length,contentType]);
+      if(pointer)try{const answer=module.UTF8ToString(pointer),i=answer.indexOf('\n');return {encoding:answer.slice(0,i),source:answer.slice(i+1)};}
+      finally{module.ccall('web_render_free',null,['number'],[pointer]);}
+    }finally{module._free(input);}
+  }
+  return {source:textDecoder.decode(bytes)};
+}
+// `page`: an HTML page (HTML encoding sniffing); otherwise the bytes are UTF-8 (scripts, XSLT, Turtle).
+async function fetchText(url,page=false){
   // A page fetched early is used once; a reload fetches it again.
-  if(preloaded.has(url)){const page=preloaded.get(url);preloaded.delete(url);try{return await page;}catch{/* fetch it again */}}
-  const response=await fetch(url);if(!response.ok)throw Error(`HTTP ${response.status}`);
-  return {url:response.url||url,source:await response.text()};
+  let got;
+  if(preloaded.has(url)){const page=preloaded.get(url);preloaded.delete(url);try{got=await page;}catch{/* fetch it again */}}
+  if(!got){const response=await fetch(url);if(!response.ok)throw Error(`HTTP ${response.status}`);
+    got={url:response.url||url,bytes:new Uint8Array(await response.arrayBuffer()),contentType:response.headers.get('content-type')??''};}
+  return {url:got.url,...(page?decodePage(got.bytes,got.contentType):{source:textDecoder.decode(got.bytes)})};
 }
 // The settings page has the checkbox of the classic UI where it says <!--foafnaut:classic-ui-->,
 // in the state of now. Lean draws it as it draws the rest of the page.
@@ -331,7 +349,7 @@ function settingsSource(source){
   return source;
 }
 async function prepare(url){
-  const page=await fetchText(url);
+  const page=await fetchText(url,true);
   if(url===settingsURL)page.source=settingsSource(page.source);
   const sources=[{kind:'Source',url:page.url,source:page.source}];
   const sheet=call(page.source,{op:'xmlStylesheet',url:page.url});
@@ -588,7 +606,7 @@ async function startScripts(page,scripts){
   if(!plan.run){if(plan.notice)console.warn('foafnaut:',plan.notice);if(page===doc)request();return;}
   // The first page of a session starts before the history exists: no shell then.
   const turn=scriptCall(page.source,{op:'scriptSession',action:'start',url:page.url,resources,width,height,...(history?{shell:shell()}:{}),layout,
-    ...(plan.engine==='bubblepop'?{engine:'bubblepop'}:{})});
+    ...(plan.engine==='bubblepop'?{engine:'bubblepop'}:{}),...(page.encoding?{encoding:page.encoding}:{})});
   scriptStats.startMs=scriptStats.lastMs;scriptStats.engine=plan.engine;
   page.script={session:turn.session,turn,epoch:performance.now()-turn.clock,engine:plan.engine};
   scriptTurn(page,turn);

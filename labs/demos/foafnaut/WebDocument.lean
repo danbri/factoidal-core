@@ -18,6 +18,7 @@ import L4Factoidal.Rendering.SfntProfile
 import L4Factoidal.FrameCost.Band
 import L4Factoidal.FrameCost.Lru
 import WebRepaint
+import L4Factoidal.WHATWG.Encoding.Sniff
 import WebHit
 
 /-! Browser document transaction. Lean discovers resources, applies DOM commands,
@@ -971,6 +972,16 @@ private def loadImageBytes (bytes : ByteArray) (key sha256 : String) (request : 
 private def loadImage (request : JSON.Json) : Except String String := do
   let bytes ← NativeImage.base64 (str request "imageBase64").toUTF8 0
   loadImageBytes bytes (str request "key") (str request "sha256") request
+
+/-- A page's bytes as its text (HTML §13.2.3 encoding sniffing, then the Encoding
+Standard's decoder: `WHATWG.Encoding.Sniff.decodeDocumentFast`), given the transport
+layer's charset label ("" for none). The answer is the encoding's name, a line feed, then
+the text. The hosts call this where a page's bytes become text, so a document declared
+in a legacy encoding is read in it and `document.characterSet` is its name. -/
+@[export web_document_decode_bin]
+def decodeBin (bytes : ByteArray) (charset : String) : String :=
+  let (e, text) := L4Factoidal.WHATWG.Encoding.Sniff.decodeDocumentFast bytes (if charset.isEmpty then none else some charset)
+  e.name ++ "\n" ++ text
 
 /-- `imageLoad` with the image as bytes, with no Base64 and no JSON around it. -/
 @[export web_document_image_load_bin]

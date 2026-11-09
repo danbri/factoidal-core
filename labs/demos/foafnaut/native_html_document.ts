@@ -18,16 +18,20 @@ export function navigationURL(href:string,baseURL:string,documentURL:string) {
     throw new Error("Remote HTML cannot read or navigate to local files");
   return target;
 }
-export async function readSource(url:string,signal?:AbortSignal):Promise<{url:string;source:string;bytes:number}> {
+/** Lean's decode of a page's bytes (HTMLEngine.decodeDocument: HTML encoding sniffing and the
+Encoding Standard's decoders), given the HTTP Content-Type ("" for none); undefined when the
+engine has no such op. */
+export type PageDecoder=(bytes:Uint8Array,contentType:string)=>{encoding:string;source:string}|undefined|Promise<{encoding:string;source:string}|undefined>;
+export async function readSource(url:string,signal?:AbortSignal,decode?:PageDecoder):Promise<{url:string;source:string;bytes:number;encoding?:string}> {
   const parsed=new URL(inputURL(url));
   const abort=()=>signal?.throwIfAborted();abort();
-  let bytes:Uint8Array,finalURL=url;
+  let bytes:Uint8Array,finalURL=url,contentType="";
   if(parsed.protocol==="file:") {
     if((await Deno.stat(parsed)).size>MAX_SOURCE_BYTES)throw new Error("Native HTML resource exceeds 1 MiB");
     bytes=await Deno.readFile(parsed);abort();
   } else {
     const response=await fetch(parsed,{signal:AbortSignal.any([AbortSignal.timeout(10000),...(signal?[signal]:[])])});
-    finalURL=inputURL(response.url);
+    finalURL=inputURL(response.url);contentType=response.headers.get("content-type")??"";
     if(!response.ok){await response.body?.cancel();throw new Error(`HTTP ${response.status}: ${url}`);}
     const reader=response.body?.getReader();
     if(!reader)throw new Error("Native HTML resource has no response body");
@@ -42,12 +46,13 @@ export async function readSource(url:string,signal?:AbortSignal):Promise<{url:st
     for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
   }
   abort();if(bytes.length>MAX_SOURCE_BYTES)throw new Error("Native HTML resource exceeds 1 MiB");
-  // Older pages are often Latin-1 and say nothing about it. Browsers read those as windows-1252.
-  let source:string;
-  try{source=new TextDecoder("utf-8",{fatal:true}).decode(bytes);}
-  catch{source=new TextDecoder("windows-1252").decode(bytes);}
+  // Lean turns the bytes into text (WebDocument.decodeBin): the BOM, the HTTP charset, the page's
+  // meta declaration, else UTF-8 for UTF-8 bytes and windows-1252 otherwise. An engine from before
+  // that op leaves UTF-8 decoding (the Encoding Standard's "UTF-8 decode").
+  const decoded=decode?await decode(bytes,contentType):undefined;
+  const source=decoded?decoded.source:new TextDecoder("utf-8").decode(bytes);
   sourceBound(source);
-  return {url:finalURL,source,bytes:bytes.length};
+  return {url:finalURL,source,bytes:bytes.length,...(decoded?{encoding:decoded.encoding}:{})};
 }
 /** Limits on image bytes: each image, and all images of a page (Lean takes at most
 8 MiB of Base64 text for a page, which is 6 MiB of bytes). */
@@ -138,7 +143,7 @@ one when its engine answers `scriptSession` info (with BubblePopJS, or the Quick
 guest module loaded); with none, a page with scripts is refused, as before. `start`
 answers no turn when the setting says the scripts do not run (`scriptPlan`), and throws
 when they are refused. */
-export type ScriptHost={start(source:string,url:string,resources:{nodeId:number;source:string}[]):Promise<ScriptTurn|undefined>|ScriptTurn|undefined};
+export type ScriptHost={start(source:string,url:string,resources:{nodeId:number;source:string}[],encoding?:string):Promise<ScriptTurn|undefined>|ScriptTurn|undefined};
 let scriptHost:ScriptHost|undefined;
 export function setScriptHost(host:ScriptHost|undefined){scriptHost=host;}
 // Fallback fonts (native_html_fonts.ts): given the page source, puts the fonts it needs into
@@ -147,15 +152,16 @@ export function setScriptHost(host:ScriptHost|undefined){scriptHost=host;}
 let fontHost:((source:string)=>Promise<unknown>)|undefined;
 export function setFontHost(host:typeof fontHost){fontHost=host;}
 /** The engine, or the same calls in a worker, which answer promises. prepareHTML awaits every call. */
-export type PageEngine=(Pick<HTMLEngine,"xmlStylesheet"|"xslt"|"inspect"|"compile"|"selectedText">&ImageHolder)|ImageHolder&{
+export type PageEngine=((Pick<HTMLEngine,"xmlStylesheet"|"xslt"|"inspect"|"compile"|"selectedText">&ImageHolder)|ImageHolder&{
   xmlStylesheet(...a:Parameters<HTMLEngine["xmlStylesheet"]>):Promise<ReturnType<HTMLEngine["xmlStylesheet"]>>;
   xslt(...a:Parameters<HTMLEngine["xslt"]>):Promise<ReturnType<HTMLEngine["xslt"]>>;
   inspect(...a:Parameters<HTMLEngine["inspect"]>):Promise<ReturnType<HTMLEngine["inspect"]>>;
   compile(...a:Parameters<HTMLEngine["compile"]>):Promise<ReturnType<HTMLEngine["compile"]>>;
   selectedText(...a:Parameters<HTMLEngine["selectedText"]>):Promise<ReturnType<HTMLEngine["selectedText"]>>;
-};
+})&{decodeDocument?:PageDecoder};
 export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSignal,inline?:string) {
-  const document=inline===undefined?await readSource(url,signal):{url,source:inline,bytes:inline.length},resources:HTMLResource[]=[];
+  const decode:PageDecoder|undefined=typeof engine.decodeDocument==="function"?(b,c)=>engine.decodeDocument!(b,c):undefined;
+  const document:{url:string;source:string;bytes:number;encoding?:string}=inline===undefined?await readSource(url,signal,decode):{url,source:inline,bytes:inline.length},resources:HTMLResource[]=[];
   // View source shows each input and the result. Lean makes the page.
   const sources=[{kind:"Source",url:document.url,source:document.source}];
   // Lean finds the stylesheet and runs it. The host only fetches the bytes.
@@ -208,7 +214,7 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
       sources.push({kind:"Script",url:resource.url,source:resource.source});
       supplied.push({nodeId:descriptor.nodeId,source:resource.source});
     }
-    const turn=await scriptHost.start(document.source,document.url,supplied);
+    const turn=await scriptHost.start(document.source,document.url,supplied,document.encoding);
     if(turn){
       script={session:turn.session,turn};
       if(turn.commands?.length)options.commands=turn.commands;

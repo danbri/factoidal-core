@@ -332,7 +332,7 @@ def start (base : Session) (dom : Arena) (url : String) (scripts : Array (Nat ×
   let gpu := L4Factoidal.PageGpu.State.empty lim.gpuPage
   let domHost : Page.DomHost := { dom := dom, commandLimit := lim.commands, logLimit := lim.logs, framing := lim.frames, gpu := gpu }
   let s := { base with limits := lim, steps := 0, jobs := 0, tasks := 0, errors := #[], lastFrame := none }
-  let mut s := s.setHost { dom := domHost, reads, time, web := { entropy := lim.entropy } }
+  let mut s := s.setHost { dom := domHost, reads, time, web := { entropy := lim.entropy, docEncoding := lim.encoding } }
   s := (s.api? "start" #[]).1
   s := (s.api? "url" #[.str url]).1
   for (node, src) in scripts do

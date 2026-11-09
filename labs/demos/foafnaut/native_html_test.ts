@@ -214,7 +214,7 @@ Deno.test("resource size, resource count, cancellation and URL schemes are bound
     const controller=new AbortController();controller.abort();
     await assert.rejects(()=>prepareHTML(engine,url,controller.signal),/abort/i);
     await Deno.writeFile(path,new Uint8Array([0x63,0x61,0x66,0xe9]));
-    assert.equal((await readSource(url)).source,"café");
+    assert.equal((await readSource(url,undefined,engine.decodeDocument)).source,"café");
     const css="/*"+"x".repeat(1048572)+"*/";
     await Deno.writeTextFile(path,html(Array.from({length:5},(_,n)=>`<link rel="stylesheet" href="${n}.css">`).join("")));
     for(let n=0;n<5;n++)await Deno.writeTextFile(dir+`/${n}.css`,css);

@@ -238,7 +238,7 @@ async function main() {
       catch(error){if(!scriptEngines.includes("bubblepop"))throw error;
         console.log(JSON.stringify({type:"native-html-scripts",engine:"quickjs",state:"off",module:quickjsPath,reason:String(error instanceof Error?error.message:error)}));}
       scriptsOn=true;
-      setScriptHost({start:async(source,pageURL,resources)=>{
+      setScriptHost({start:async(source,pageURL,resources,encoding)=>{
         // The setting: Lean's plan says which engine runs the page, or why none does.
         let plan=await askPlan(scriptSetting);
         if(plan.run&&!scriptEngines.includes(plan.engine))plan=await askPlan(scriptSetting,`this engine has no ${plan.name}`);
@@ -251,7 +251,7 @@ async function main() {
           catch{return {width:1280,height:800,textScalePercent:150};}})();
         const turn=await scriptCall("scriptSession",source,{action:"start",url:pageURL,resources,width:at.width,height:at.height,
           ...(at.shell?{shell:at.shell}:{}),layout:{url:pageURL,textScalePercent:at.textScalePercent},
-          ...(plan.engine==="bubblepop"?{engine:"bubblepop"}:{})}) as ScriptTurn;
+          ...(plan.engine==="bubblepop"?{engine:"bubblepop"}:{}),...(encoding?{encoding}:{})}) as ScriptTurn;
         scriptEpochs.set(turn.session,performance.now()-turn.clock);sessionEngines.set(turn.session,plan.engine);
         // The start turn makes the page's GPU objects (canvas, buffers, pipelines); the later turns use them.
         if(turn.gpu?.length){gpuTurns.push({page:turn.gpuPage!,commands:turn.gpu});gpuFlush();}

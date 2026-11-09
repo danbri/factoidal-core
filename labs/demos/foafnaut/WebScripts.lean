@@ -519,7 +519,7 @@ def startLean (held : Held) (html : String) (request : JSON.Json) (measure : JSO
   let commands := min 1048576 ((natField request "commandLimit").getD 4096)
   let logs := min 1048576 ((natField request "logLimit").getD 1024)
   let id := held.nextSession
-  let lim : Page.Limits := { commands, logs, gpuPage := id, entropy := entropy id }
+  let lim : Page.Limits := { commands, logs, gpuPage := id, entropy := entropy id, encoding := str request "encoding" }
   let made := show Except String (Array (Nat × String) × Array String × DOM.Dom) from do
     let dom ← parse html url
     let (scripts, missing) ← scriptSources dom request
@@ -613,7 +613,7 @@ def act (held : Held) (action html : String) (request : JSON.Json)
         let (vw, vh) := (viewport request).getD (800, 600)
         let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh }
         let rate := max 1 ((natField request "instructionsPerMs").getD 100000)
-        let prog := PageAot.startProg aot dom url scripts { commands, logs, gpuPage := held.nextSession, entropy := entropy held.nextSession } #[] missing
+        let prog := PageAot.startProg aot dom url scripts { commands, logs, gpuPage := held.nextSession, entropy := entropy held.nextSession, encoding := str request "encoding" } #[] missing
           reads { instructionsPerMs := rate }
         let id := held.nextSession
         beginTurn { held with session := none, leanSession := none, nextSession := id + 1 } id {} {} true true prog
@@ -628,7 +628,7 @@ def act (held : Held) (action html : String) (request : JSON.Json)
         let (vw, vh) := (viewport request).getD (800, 600)
         let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh }
         let rate := max 1 ((natField request "instructionsPerMs").getD 100000)
-        let s ← Page.start m dom url scripts { commands, logs, gpuPage := held.nextSession, entropy := entropy held.nextSession } #[] reads { instructionsPerMs := rate }
+        let s ← Page.start m dom url scripts { commands, logs, gpuPage := held.nextSession, entropy := entropy held.nextSession, encoding := str request "encoding" } #[] reads { instructionsPerMs := rate }
         return missing.foldl Page.Session.fail s
       match started with
       | (.error e, _) => (held, .error s!"scriptSession: {e}")

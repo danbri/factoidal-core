@@ -204,7 +204,32 @@ def decodeDocument (bytes : ByteArray) (transportCharset : Option String := none
   let e := sniff bytes transportCharset
   (e, decode bytes e)
 
+/-- `decodeDocument` with one fast path, for the common page: no BOM, no transport
+charset, no `meta` declaration or a UTF-8 one, and bytes that are UTF-8. Then the text is
+the bytes as they are (one validation and one copy, no decoder loop). The `#guard`s below
+compare it with `decodeDocument` on each condition. -/
+def decodeDocumentFast (bytes : ByteArray) (transportCharset : Option String := none) : Encoding × String :=
+  if transportCharset.isNone && bomSniff bytes == none then
+    match prescan bytes with
+    | none | some .utf_8 =>
+      match String.fromUTF8? bytes with
+      | some s => (.utf_8, s)
+      | none => decodeDocument bytes transportCharset
+    | some _ => decodeDocument bytes transportCharset
+  else decodeDocument bytes transportCharset
+
 /-! ## Checks -/
+
+private def agrees (b : ByteArray) (t : Option String := none) : Bool :=
+  decodeDocumentFast b t == decodeDocument b t
+
+#guard agrees "<p>caf\u00e9".toUTF8
+#guard agrees "<meta charset=utf-8><p>\u3042".toUTF8
+#guard agrees "<meta charset=windows-1252><p>\u00e9".toUTF8
+#guard agrees (ByteArray.mk #[0xEF, 0xBB, 0xBF, 0x41])
+#guard agrees (ByteArray.mk #[0x63, 0x61, 0x66, 0xE9])
+#guard agrees "<p>x".toUTF8 (some "shift_jis")
+#guard agrees ByteArray.empty
 
 #guard prescan "<!doctype html><meta charset=\"euc-jp\">".toUTF8 == some .euc_jp
 #guard prescan "<meta charset='Shift_JIS'>".toUTF8 == some .shift_jis

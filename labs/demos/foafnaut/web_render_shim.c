@@ -90,6 +90,16 @@ char *web_document_image_call_bin(const uint8_t *bytes,uint32_t length,const cha
   lean_object *value=web_document_image_load_bin(array,lean_mk_string(key),lean_mk_string(sha256));
   char *copy=strdup(lean_string_cstr(value)); lean_dec(value); return copy;
 }
+/* A page's bytes as text, decoded by Lean (WebDocument.decodeBin): the encoding's name, a
+   line feed, the text. `charset` is the HTTP charset label, "" for none. */
+extern lean_object *web_document_decode_bin(lean_object *,lean_object *);
+char *web_document_decode_call_bin(const uint8_t *bytes,uint32_t length,const char *charset) {
+  if (!ready()) return NULL;
+  lean_object *array=lean_alloc_sarray(1,length,length);
+  if (length) memcpy(lean_sarray_cptr(array),bytes,length);
+  lean_object *value=web_document_decode_bin(array,lean_mk_string(charset));
+  char *copy=strdup(lean_string_cstr(value)); lean_dec(value); return copy;
+}
 extern lean_object *web_render_font_requests(lean_object *);
 char *web_render_font_requests_call(const char *html) {
   if (!ready()) return NULL;

@@ -47,6 +47,9 @@ structure State where
   pending : ByteArray := ByteArray.empty
   /-- The embedder's entropy for this session (`Page.Limits.entropy`). -/
   entropy : ByteArray := ByteArray.empty
+  /-- The document's encoding as the host decoded the page (`Page.Limits.encoding`, the
+  name `WHATWG.Encoding.Sniff.decodeDocument` gave); "" when the host did not say. -/
+  docEncoding : String := ""
   rng : Option Crypto.WebCrypto.Drbg := none
   deriving Inhabited
 
@@ -200,7 +203,9 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
   match op with
   | 1 => pure' (ofStr "1")
   -- The document's encoding (the name, as `characterSet` gives it).
-  | 9 => pure' (ofStr (documentEncoding dom).name)
+  | 9 => pure' (ofStr (match Encoding.getEncoding s.docEncoding with
+    | some e => e.name
+    | none => (documentEncoding dom).name))
   -- Encoding
   | 2 => pure' do
     match Encoding.TextDecoder.new? (← strArg fs 0) false false with

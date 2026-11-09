@@ -88,7 +88,12 @@ export type FontBackend=(bytes:Uint8Array,family:string,sha256:string,fallback:b
 /** An image as bytes (`web_document_image_call_bin`, WebDocument.imageLoadBin), held by key
 and SHA-256; undefined when the engine has no such export. The answer is the imageLoad JSON. */
 export type ImageBackend=(bytes:Uint8Array,key:string,sha256:string)=>string;
-type Backends={text:DocumentBackend;bytes:BytesBackend;font:FontBackend;image?:ImageBackend};
+/** A page's bytes as text, decoded by Lean (`web_document_decode_call_bin`, WebDocument.decodeBin:
+HTML encoding sniffing and the Encoding Standard's decoders), given the HTTP charset label
+("" for none); undefined when the engine has no such export. The answer is the encoding's
+name, a line feed and the text. */
+export type DecodeBackend=(bytes:Uint8Array,charset:string)=>string;
+type Backends={text:DocumentBackend;bytes:BytesBackend;font:FontBackend;image?:ImageBackend;decode?:DecodeBackend};
 /** The answer of `imageInfo`: the engine holds images (WebDocument, issue 1292). */
 export type ImageInfo={engine:string;ops:string[];maxImages:number;maxBytes:number;held:number;layoutSlots:number};
 /** The answer of `frameWork`: layouts, kept layouts used and pointer states painted with no layout. */
@@ -101,6 +106,8 @@ export function nativeBackends(path:string):Backends {
     web_document_font_call_bin:{parameters:["buffer","u32","buffer","buffer","u32"],result:"pointer"},
     // An engine from before held images has no such symbol (issue 1274): it stays null.
     web_document_image_call_bin:{parameters:["buffer","u32","buffer","buffer"],result:"pointer",optional:true},
+    // An engine from before Lean decoded pages has no such symbol: it stays null.
+    web_document_decode_call_bin:{parameters:["buffer","u32","buffer"],result:"pointer",optional:true},
     web_render_free:{parameters:["pointer"],result:"void"},
   } as const);
   const cstring=(text:string)=>{if(text.includes("\0"))throw new Error("Native engine input contains NUL");return encoder.encode(text+"\0");};
@@ -127,6 +134,12 @@ export function nativeBackends(path:string):Backends {
     },
     image:library.symbols.web_document_image_call_bin?(bytes,key,sha256)=>{
       const pointer=library.symbols.web_document_image_call_bin!(bytes,bytes.length,cstring(key),cstring(sha256));
+      if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
+      try{return new Deno.UnsafePointerView(pointer).getCString();}
+      finally{library.symbols.web_render_free(pointer);}
+    }:undefined,
+    decode:library.symbols.web_document_decode_call_bin?(bytes,charset)=>{
+      const pointer=library.symbols.web_document_decode_call_bin!(bytes,bytes.length,cstring(charset));
       if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
       try{return new Deno.UnsafePointerView(pointer).getCString();}
       finally{library.symbols.web_render_free(pointer);}
@@ -171,6 +184,17 @@ function wasmBackends(module:Module):Backends {
       try{
         module.HEAPU8.set(bytes,input);
         const pointer=module.ccall("web_document_image_call_bin","number",["number","number","string","string"],[input,bytes.length,key,sha256]);
+        if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
+        try{return module.UTF8ToString(pointer);}
+        finally{module.ccall("web_render_free",null,["number"],[pointer]);}
+      }finally{module._free!(input);}
+    }:undefined,
+    decode:typeof (module as unknown as Record<string,unknown>)._web_document_decode_call_bin==="function"&&module._malloc&&module._free?(bytes,charset)=>{
+      const input=module._malloc!(Math.max(1,bytes.length));
+      if(!input)throw new Error("Published Lean HTML engine allocation failed");
+      try{
+        module.HEAPU8.set(bytes,input);
+        const pointer=module.ccall("web_document_decode_call_bin","number",["number","number","string"],[input,bytes.length,charset]);
         if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
         try{return module.UTF8ToString(pointer);}
         finally{module.ccall("web_render_free",null,["number"],[pointer]);}
@@ -301,6 +325,13 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     imageInfo:():ImageInfo|undefined=>{
       try{const info=documentCall("",{op:"imageInfo"}) as ImageInfo;return Array.isArray(info?.ops)&&info.ops.includes("imageLoad")?info:undefined;}
       catch{return undefined;}
+    },
+    /** The page's bytes as text, decoded by Lean (HTML encoding sniffing, the Encoding
+    Standard's decoders); undefined for an engine from before (the host then reads UTF-8). */
+    decodeDocument:(bytes:Uint8Array,charset="")=>{
+      if(!backends.decode)return undefined;
+      const answer=backends.decode(bytes,charset),i=answer.indexOf("\n");
+      return {encoding:answer.slice(0,i),source:answer.slice(i+1)};
     },
     imageLoad:(bytes:Uint8Array,key:string,sha256:string)=>{
       if(backends.image){
