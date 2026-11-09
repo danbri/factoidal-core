@@ -22,6 +22,8 @@ python3 "$LAB/../../../tools/status-to-html.py" "$LAB/../../../docs/web/hub/foaf
   "$LAB/web-render/fixtures/status.html" --check
 # The demo pages match their sources, and each one does what its manifest says.
 python3 "$LAB/../../../tools/build-demo-pages.py" --check
+# The Spinal Tap page's queries and inlined results match its Wikidata snapshot (no network).
+python3 "$LAB/tools/spinal-tap-snapshot.py" --check
 if [ -x "$LAB/.build/web-render/web-render-native" ]; then
   python3 "$LAB/../../../tools/check-demo-pages.py" "$LAB/.build/web-render/web-render-native"
 else

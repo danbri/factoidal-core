@@ -341,6 +341,15 @@
    "doesNotShow": "images from the network; without the new engine the canvas stays blank"
   },
   {
+   "page": "spinal-tap-sparql.html",
+   "title": "Spın̈al Tap: a SPARQL client for Wikidata",
+   "handwritten": true,
+   "needs": "page scripts in the engine (BubblePopJS or QuickJS-NG in WasmVM); fetch for live queries to QLever, else the inlined snapshot (tools/spinal-tap-snapshot.py, third_party/data/wikidata-spinal-tap)",
+   "appRefused": "does not execute scripts",
+   "shows": "an original chrome-and-flame wordmark drawn as SVG paths with an n̈; seven SPARQL queries with syntax highlighting; Wikidata results as amp-panel cards with dials that go to eleven, built in one DOM batch; a blackletter zoom from 1 to 40 round the n̈ that fades into Föafn̈aut; up to eleven combining marks a letter",
+   "doesNotShow": "the band's own logo or any picture from Wikimedia Commons; without fetch the results are the snapshot's, not live"
+  },
+  {
    "page": "svg-text-labels.html",
    "title": "SVG text labels",
    "handwritten": true,
