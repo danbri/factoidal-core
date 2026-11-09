@@ -90,7 +90,9 @@ try{
     const span=(gpuFrames.at(-1).t-gpuFrames[0].t)/1000,rate=(gpuFrames.length-1)/span;
     console.log(`page-gpu frames: ${gpuFrames.length} in ${span.toFixed(2)} s, ${rate.toFixed(1)} a second; last stats`,JSON.stringify(gpuFrames.at(-1).pageGpu));
     const sc=gpuFrames.at(-1).scripts,draws=gpuFrames.map(f=>f.drawMs).sort((a,b)=>a-b);
-    if(sc)console.log(`script turns: ${sc.turns}, ${(sc.ms/Math.max(1,sc.turns)).toFixed(1)} ms a turn on average (last ${sc.lastMs} ms, path ${sc.path}); page-gpu draw median ${draws[draws.length>>1]} ms`);
+    // The average carries the start turn; the median is a frame's turn.
+    const lasts=gpuFrames.map(f=>f.scripts?.lastMs??0).sort((a,b)=>a-b);
+    if(sc)console.log(`script turns: ${sc.turns}, ${(sc.ms/Math.max(1,sc.turns)).toFixed(1)} ms a turn on average (median ${lasts[lasts.length>>1]} ms, start ${sc.startMs} ms, path ${sc.path}); page-gpu draw median ${draws[draws.length>>1]} ms`);
     // The rate is reported, not checked: headless Chrome draws with a software GPU, and the
     // page's callbacks run in WasmVM in the engine (record, section 9, for measurements).
     if(rate>maxRate)fail(`frame rate ${rate.toFixed(1)}: more page canvas frames than the page draws`);
