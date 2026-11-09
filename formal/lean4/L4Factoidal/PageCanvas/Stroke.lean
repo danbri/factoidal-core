@@ -52,7 +52,7 @@ def polyOf (pts : List (Float × Float)) : FloatArray :=
 def circle (cx cy r : Float) (steps : Nat) : FloatArray := Id.run do
   let mut out := FloatArray.emptyWithCapacity (2 * steps)
   for i in [0:steps] do
-    let t := tau * i.toFloat / steps.toFloat
+    let t := tau * nf i / nf steps
     out := (out.push (cx + r * Float.cos t)).push (cy + r * Float.sin t)
   return out
 

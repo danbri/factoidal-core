@@ -93,16 +93,66 @@ def f64 (b : ByteArray) (i : Nat) : Float :=
   let w := (List.range 8).foldl (fun (acc : UInt64) k => acc ||| (b[i+k]!.toUInt64 <<< (8 * k).toUInt64)) 0
   Float.ofBits w
 
+/-- Op 203: a batch whose numbers are text (`Number::toString` of each, joined by commas),
+for an engine whose typed arrays are slow to fill (BubblePopJS); no tail bytes. -/
+def textBatchOp : Nat := 203
+
+def pow10 : Array Float := #[1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14,
+  1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22]
+
+/-- A number as JavaScript prints it (`Number::toString`): digits, a fraction, an
+exponent, `NaN`, `Infinity`. Exact: a mantissa below 2^53 with a power of ten up to 22 is
+one correctly rounded operation (both are exact Floats); anything else goes through
+`OfScientific`, which is correctly rounded. -/
+def jsNumber (b : ByteArray) (start stop : Nat) : Float := Id.run do
+  let mut i := start
+  let neg := i < stop && b[i]! == 45
+  if neg then i := i + 1
+  if i < stop && b[i]! == 73 then return if neg then -(1.0 / 0.0) else 1.0 / 0.0   -- Infinity
+  if i < stop && b[i]! == 78 then return 0.0 / 0.0                                  -- NaN
+  let mut m : Nat := 0
+  let mut e : Int := 0
+  while i < stop && 48 ≤ b[i]! && b[i]! ≤ 57 do
+    m := m * 10 + (b[i]!.toNat - 48); i := i + 1
+  if i < stop && b[i]! == 46 then
+    i := i + 1
+    while i < stop && 48 ≤ b[i]! && b[i]! ≤ 57 do
+      m := m * 10 + (b[i]!.toNat - 48); e := e - 1; i := i + 1
+  if i < stop && (b[i]! == 101 || b[i]! == 69) then
+    i := i + 1
+    let eneg := i < stop && b[i]! == 45
+    if i < stop && (b[i]! == 45 || b[i]! == 43) then i := i + 1
+    let mut x : Nat := 0
+    while i < stop && 48 ≤ b[i]! && b[i]! ≤ 57 do
+      x := x * 10 + (b[i]!.toNat - 48); i := i + 1
+    e := e + (if eneg then -(Int.ofNat x) else Int.ofNat x)
+  let v : Float :=
+    if m < 9007199254740992 && e.natAbs ≤ 22 then
+      if e ≥ 0 then nf m * pow10[e.toNat]! else nf m / pow10[e.natAbs]!
+    else if e ≥ 0 then OfScientific.ofScientific m false e.toNat else OfScientific.ofScientific m true e.natAbs
+  return if neg then -v else v
+
+/-- Comma-separated numbers. -/
+def textNumbers (b : ByteArray) : Array Float := Id.run do
+  let mut out : Array Float := #[]
+  let mut start := 0
+  for i in [0:b.size + 1] do
+    if i == b.size || b[i]! == 44 then
+      if i > start then out := out.push (jsNumber b start i)
+      start := i + 1
+  return out
+
 /-- The numbers, strings and tail bytes of a call. -/
 structure Parts where
   nums : Array Float
   strs : Array String
   tail : ByteArray
 
-def parts (bytes : ByteArray) : Except String Parts := do
+def parts (bytes : ByteArray) (text : Bool := false) : Except String Parts := do
   let (head, body) := splitLine bytes
-  let some text := String.fromUTF8? head | throw "canvas: header is not UTF-8"
-  let strs ← strings text
+  let some header := String.fromUTF8? head | throw "canvas: header is not UTF-8"
+  let strs ← strings header
+  if text then return ⟨textNumbers body, strs, ByteArray.empty⟩
   if body.size < 8 then throw "canvas: payload too short"
   let n := u32 body 0
   if n > maxNumbers || body.size < 8 + 8 * n then throw "canvas: payload too short"
@@ -238,10 +288,10 @@ def maxImageData : Nat := 16777216
 /-- One call of the import: a batch (the answer is empty or the refusal) or a query (its
 answer), and the store after it. -/
 def call (s : Store) (env : Env) (op : Nat) (bytes : ByteArray) : Store × String :=
-  match parts bytes with
+  match parts bytes (op == textBatchOp) with
   | .error e => (s, "\x02" ++ e)
   | .ok p =>
-    if op == batchOp then
+    if op == batchOp || op == textBatchOp then
       match decode p with
       | .ok cmds => (s.run env cmds, "")
       | .error e => (s, "\x02" ++ e)

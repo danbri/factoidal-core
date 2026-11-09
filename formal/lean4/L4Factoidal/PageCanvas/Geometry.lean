@@ -8,6 +8,8 @@ L4Factoidal.PageCanvas.Geometry: matrices, paths and flattening for Canvas 2D
   closed under affine maps: `Path.map m` is exact.
 - `Path.flatten`: polylines within `tolerance` pixels of the curves (Wang's bound).
 -/
+import L4Factoidal.PageCanvas.Color
+
 namespace L4Factoidal.PageCanvas
 
 /-- The affine map `(x, y) ↦ (a x + c y + e, b x + d y + f)`. -/
@@ -115,7 +117,7 @@ turn each, control length `4/3 tan(θ/4)`. Gives the segments after the start po
 def arcSegs (m : Matrix) (a0 sweep : Float) : Array Seg := Id.run do
   let n := max 1 ((sweep.abs / (pi / 2) - 1e-9).ceil.toUInt64.toNat)
   let n := min n 64
-  let step := sweep / Float.ofNat n
+  let step := sweep / nf n
   let k := 4 / 3 * Float.tan (step / 4)
   let mut out := #[]
   let mut t := a0
@@ -175,7 +177,7 @@ def Path.flatten (p : Path) (tolerance : Float := 0.1) : Array Poly := Id.run do
       let ddy := y - 2 * cy + ny
       let n := stepsFor (4 * (ddx * ddx + ddy * ddy)) tolerance
       for i in [1:n+1] do
-        let t := Float.ofNat i / Float.ofNat n
+        let t := nf i / nf n
         let u := 1 - t
         cur := (cur.push (u * u * x + 2 * u * t * cx + t * t * nx)).push (u * u * y + 2 * u * t * cy + t * t * ny)
       x := nx; y := ny
@@ -187,7 +189,7 @@ def Path.flatten (p : Path) (tolerance : Float := 0.1) : Array Poly := Id.run do
       let dd := 36 * max (d1x * d1x + d1y * d1y) (d2x * d2x + d2y * d2y)
       let n := stepsFor dd tolerance
       for i in [1:n+1] do
-        let t := Float.ofNat i / Float.ofNat n
+        let t := nf i / nf n
         let u := 1 - t
         let px := u * u * u * x + 3 * u * u * t * ax + 3 * u * t * t * bx + t * t * t * nx
         let py := u * u * u * y + 3 * u * u * t * ay + 3 * u * t * t * by_ + t * t * t * ny

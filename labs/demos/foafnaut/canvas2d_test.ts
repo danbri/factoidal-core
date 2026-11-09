@@ -11,10 +11,11 @@
 import {strict as assert} from "node:assert";
 import {loadHTML,type HTMLEngine,type ScriptTurn} from "./native_html_engine.ts";
 import {scenePage} from "./canvas2d_reference.mjs";
+import {unrle} from "../../../docs/web/hub/foafnaut/page-gpu.mjs";
 
 const library=Deno.env.get("WEB_RENDER_LIBRARY")??new URL("./.build/web-render/engines/libweb-render.dylib",import.meta.url).pathname;
 const guest=Deno.env.get("QUICKJS_WASM");
-type Turn=ScriptTurn&{gpu?:{k:string;g?:number[];node?:number;w?:number;h?:number;data?:string}[];gpuPage?:number};
+type Turn=ScriptTurn&{gpu?:{k:string;g?:number[];node?:number;w?:number;h?:number;data?:string;rle?:number}[];gpuPage?:number};
 
 const engine:HTMLEngine=await loadHTML(library);
 if(guest)engine.scriptLoad(await Deno.readFile(guest));
@@ -83,7 +84,13 @@ let frames=0;function f(){c.clearRect(0,0,40,20);c.fillStyle='#0a0';c.fillRect(f
   assert.equal(kinds.filter(k=>k==="canvas").length,1,`${kind}: one texture for the canvas`);
   const pixels=gpu.filter(c=>c.k==="pixels");
   assert.ok(pixels.length>=5,`${kind}: pixels each frame (${pixels.length})`);
-  for(const p of pixels){assert.equal(p.w,40);assert.equal(p.h,20);assert.equal(atob(p.data!).length,40*20*4);}
+  for(const p of pixels){
+    assert.equal(p.w,40);assert.equal(p.h,20);
+    const raw=Uint8Array.from(atob(p.data!),ch=>ch.charCodeAt(0)),px=unrle(raw,40,20);
+    assert.equal(px.length,40*20*4);
+    // The last frame: the green bar at x 4..13 on transparent (straight RGBA).
+    if(p===pixels.at(-1)){assert.deepEqual([...px.slice(4*(10*40+8),4*(10*40+8)+4)],[0,170,0,255]);assert.equal(px[4*(10*40+30)+3],0);}
+  }
   assert.equal(gpu.find(c=>c.k==="canvas")!.node,pixels[0].g![1]-1073741824);
   engine.scriptSession("",{action:"close"});
 

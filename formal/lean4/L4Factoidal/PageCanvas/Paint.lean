@@ -131,7 +131,7 @@ inductive Ready where
 
 def tableOf (g : Gradient) : Array Px :=
   let stops := sortStops (g.stops.map fun s => { s with offset := Color.clamp01 s.offset })
-  (Array.range gradientTable).map fun i => stopColor stops (Float.ofNat i / Float.ofNat (gradientTable - 1))
+  (Array.range gradientTable).map fun i => stopColor stops (nf i / nf (gradientTable - 1))
 
 /-- A pattern made ready under `ctm`. -/
 def Ready.ofPattern (p : Pattern) (ctm : Matrix) (smooth : Bool) : Ready :=
@@ -172,7 +172,7 @@ def Style.ready (s : Style) (gradient : Nat → Option Gradient) (pattern : Nat 
 
 @[inline] def lookup (table : Array Px) (t : Float) : Px :=
   let t := if t.isNaN then 0 else max 0 (min 1 t)
-  table[(t * Float.ofNat (gradientTable - 1)).round.toUInt64.toNat]!
+  table[(t * nf (gradientTable - 1)).round.toUInt64.toNat]!
 
 /-- HTML §4.12.5.1.11, the radial gradient: the largest ω with r(ω) > 0 for which the
 point is on the circle `(x(ω), y(ω), r(ω))`; none gives transparent black. -/
@@ -259,6 +259,6 @@ def Ready.atF (r : Ready) (px py : Float) : Px :=
 @[inline] def Ready.at (r : Ready) (x y : Nat) : Px :=
   match r with
   | .solid p => p
-  | _ => r.atF (x.toFloat + 0.5) (y.toFloat + 0.5)
+  | _ => r.atF (nf x + 0.5) (nf y + 0.5)
 
 end L4Factoidal.PageCanvas

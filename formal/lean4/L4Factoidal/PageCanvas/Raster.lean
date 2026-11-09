@@ -55,7 +55,7 @@ structure Box where
 
 /-- Clamp a coordinate to `0 .. n`. -/
 def clampNat (v : Float) (n : Nat) : Nat :=
-  if v.isNaN || v <= 0 then 0 else if v >= n.toFloat then n else v.toUInt64.toNat
+  if v.isNaN || v <= 0 then 0 else if v >= nf n then n else v.toUInt64.toNat
 
 /-- The pixels a box of floats touches, inside a canvas of `W × H`. -/
 def boxOf (W H : Nat) (minX minY maxX maxY : Float) : Box :=
@@ -101,10 +101,10 @@ def coverageIn (box : Box) (es : Array Edge) (rule : FillRule) : FloatArray := I
   let mut cov := FloatArray.mk (Array.replicate (box.w * box.h) 0)
   let mut active : Array Edge := #[]
   let mut next := 0
-  let bx := box.x.toFloat
-  let wgt := 1 / subRows.toFloat
+  let bx := nf box.x
+  let wgt := 1 / nf subRows
   for j in [0:box.h] do
-    let row := (box.y + j).toFloat
+    let row := nf (box.y + j)
     -- Edges that reach this row.
     while next < sorted.size && sorted[next]!.y0 < row + 1 do
       active := active.push sorted[next]!
@@ -114,7 +114,7 @@ def coverageIn (box : Box) (es : Array Edge) (rule : FillRule) : FloatArray := I
     let mut diff := FloatArray.mk (Array.replicate (box.w + 1) 0)
     let mut direct := FloatArray.mk (Array.replicate (box.w + 1) 0)
     for s in [0:subRows] do
-      let ys := row + (s.toFloat + 0.5) * wgt
+      let ys := row + (nf s + 0.5) * wgt
       let mut xs : Array (Float × Int) := #[]
       for e in active do
         if e.y0 <= ys && ys < e.y1 then
@@ -130,18 +130,18 @@ def coverageIn (box : Box) (es : Array Edge) (rule : FillRule) : FloatArray := I
         if !wasIn && isIn then start := x
         else if wasIn && !isIn then
           -- The interval [start, x), relative to the box.
-          let xa := max 0 (min box.w.toFloat (start - bx))
-          let xb := max 0 (min box.w.toFloat (x - bx))
+          let xa := max 0 (min (nf box.w) (start - bx))
+          let xb := max 0 (min (nf box.w) (x - bx))
           if xb > xa then
             let ia := xa.floor.toUInt64.toNat
             let ib := xb.floor.toUInt64.toNat
             if ia == ib then
               direct := direct.set! ia (direct[ia]! + (xb - xa) * wgt)
             else
-              direct := direct.set! ia (direct[ia]! + (ia.toFloat + 1 - xa) * wgt)
+              direct := direct.set! ia (direct[ia]! + (nf ia + 1 - xa) * wgt)
               diff := diff.set! (ia + 1) (diff[ia+1]! + wgt)
               diff := diff.set! ib (diff[ib]! - wgt)
-              if xb > ib.toFloat then direct := direct.set! ib (direct[ib]! + (xb - ib.toFloat) * wgt)
+              if xb > nf ib then direct := direct.set! ib (direct[ib]! + (xb - nf ib) * wgt)
     let mut run := 0.0
     let base := j * box.w
     for i in [0:box.w] do
@@ -172,10 +172,10 @@ theorem coverage_within (W H : Nat) (es : Array Edge) (rule : FillRule) :
 def rectCoverageIn (box : Box) (x0 y0 x1 y1 : Float) : FloatArray := Id.run do
   let mut cov := FloatArray.mk (Array.replicate (box.w * box.h) 0)
   for j in [0:box.h] do
-    let py := (box.y + j).toFloat
+    let py := nf (box.y + j)
     let cy := max 0 (min (py + 1) y1 - max py y0)
     for i in [0:box.w] do
-      let px := (box.x + i).toFloat
+      let px := nf (box.x + i)
       let cx := max 0 (min (px + 1) x1 - max px x0)
       cov := cov.set! (j * box.w + i) (min 1 (cx * cy))
   return cov

@@ -79,4 +79,8 @@ def pixel (w h : Nat) (cmds : List Cmd) (x y : Nat) : List Nat :=
 
 #guard Png.base64 "hello".toUTF8 == "aGVsbG8="
 
+-- Numbers as text read back exactly (JavaScript's Number::toString forms).
+#guard (Wire.textNumbers "1.5,-0.1,1e+21,123456789.123,5e-324,0.30000000000000004,-0".toUTF8).toList.map Float.toBits ==
+  [1.5, -0.1, 1e21, 123456789.123, 5e-324, 0.30000000000000004, -0.0].map Float.toBits
+
 end L4Factoidal.PageCanvas.Tests

@@ -1482,9 +1482,11 @@
     const flush = () => {
       queued = false;
       if (q.length === 0) return;
-      const buf = pack(q, tails, tailLen), header = JSON.stringify(strs);
+      // Numbers as text (op 203) unless the batch carries bytes (op 200): filling a typed
+      // array costs more than joining in BubblePopJS, and Lean reads both exactly.
+      const text = tailLen === 0, payload = text ? q.join(',') : pack(q, tails, tailLen), header = JSON.stringify(strs);
       q = []; strs = []; strIx = new Map(); tails = []; tailLen = 0; selected = -1;
-      const r = n.gpu(200, header, buf);
+      const r = n.gpu(text ? 203 : 200, header, payload);
       if (typeof r === 'number') console.warn('Canvas 2D: import error ' + r);
       else if (r.charCodeAt(0) === 2) console.warn('Canvas 2D:', r.slice(1));
     };
@@ -1510,7 +1512,7 @@
       constructor() { throw new TypeError('Illegal constructor'); }
       addColorStop(offset, color) {
         need(arguments.length, 2, 'addColorStop');
-        const r = ask([9, this[K].id, +offset, 0], [String(color)]);
+        const r = ask([9, this[K].id, dbl(offset, 'addColorStop'), 0], [String(color)]);
         if (r === 'IndexSizeError') throw new DOMException('The provided offset is outside the range [0, 1].', 'IndexSizeError');
         if (r === 'SyntaxError') throw new DOMException(`The value provided ('${color}') could not be parsed as a color.`, 'SyntaxError');
       }
@@ -2396,6 +2398,16 @@
   def('GPUBufferUsage', GPUBufferUsage); def('GPUTextureUsage', GPUTextureUsage); def('GPUShaderStage', GPUShaderStage);
   def('GPUColorWrite', GPUColorWrite); def('GPUValidationError', GPUValidationError); def('GPUOutOfMemoryError', GPUOutOfMemoryError);
   def('GPUCanvasContext', GPUCanvasContext); def('GPUDevice', GPUDevice);
+  // document.fonts (CSS Font Loading §5): the engine loads the fonts it draws with before a
+  // page runs, and loads none for scripts, so nothing is pending: `ready` is resolved.
+  if (!('fonts' in document)) {
+    const fontSet = { status: 'loaded', size: 0, check: () => true,
+      load: () => Promise.resolve([]), has: () => false, add() {}, delete: () => false, clear() {}, forEach() {},
+      addEventListener() {}, removeEventListener() {} };
+    fontSet.ready = Promise.resolve(fontSet);
+    Object.freeze(fontSet);
+    Object.defineProperty(Object.getPrototypeOf(document), 'fonts', { get: () => fontSet, configurable: true });
+  }
   // Canvas 2D globals, made on first use (the canvas2d section above).
   for (const name of ['CanvasRenderingContext2D', 'OffscreenCanvasRenderingContext2D', 'OffscreenCanvas', 'Path2D', 'ImageData',
     'ImageBitmap', 'CanvasGradient', 'CanvasPattern', 'TextMetrics', 'DOMMatrix', 'DOMMatrixReadOnly', 'DOMPoint', 'DOMPointReadOnly',

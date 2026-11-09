@@ -9,7 +9,7 @@
 const FORMAT='rgba8unorm';
 // Lean's run-length form of a 2D canvas's pixels (PageCanvas.rle): a word n, then with the
 // high bit n pixels as they are, else one pixel n times. Only copies bytes.
-function unrle(b,w,h){
+export function unrle(b,w,h){
   const out=new Uint8Array(w*h*4),o32=new Uint32Array(out.buffer),dv=new DataView(b.buffer,b.byteOffset,b.byteLength);
   let i=0,p=0;
   while(i+4<=b.length&&p<w*h){

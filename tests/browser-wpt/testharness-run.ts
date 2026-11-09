@@ -254,6 +254,7 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>}> {
     try{return engine.scriptSession(html,request);}
     catch(e){if(!guest||!/no guest module/.test(String(e)))throw e;engine.scriptLoad(guest);return engine.scriptSession(html,request);}
   };
+  let heldCanvasFont=false;
   return {info,run:async(file,page)=>{
     // A page's bytes become text in Lean (decodeDocument: the BOM, the charset of its .headers
     // file as wptserve sends it, the meta prescan); an engine without the op reads UTF-8.
@@ -281,6 +282,12 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>}> {
     }
     // The images of a canvas test (<img src>), held by the engine by their URL, as a host
     // holds the images it fetched: Canvas 2D draws them (docs/designissues/2026-11-08-canvas-2d.md).
+    // The font of the canvas text tests (an @font-face the engine does not load for
+    // scripts), held once as the engine's font, as a host holds the fonts it fetched.
+    if(file.includes("/canvas/")&&html.includes("CanvasTest")&&!heldCanvasFont){
+      const path=scriptFile(`${origin}/fonts/CanvasTest.ttf`);
+      if(path)try{engine.fontLoadBytes(await Deno.readFile(path),"CanvasTest","canvastest");heldCanvasFont=true;}catch{/* refused */}
+    }
     if(file.includes("/canvas/")&&engine.imageLoad)
       for(const m of html.matchAll(/<img[^>]*\ssrc=["']?([^"' >]+)/g)){
         const key=new URL(m[1],url).href,path=scriptFile(key);

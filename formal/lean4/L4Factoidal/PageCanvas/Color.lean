@@ -13,6 +13,10 @@ they give back the same 8-bit alpha, else three).
 -/
 namespace L4Factoidal.PageCanvas
 
+/-- A natural number as a Float, through the machine conversion (`Nat.toFloat` goes
+through `OfScientific`, which is slow in a pixel loop). Exact below 2^53. -/
+@[inline] def nf (n : Nat) : Float := n.toUInt64.toFloat
+
 /-- A colour: red, green, blue in 0..255 (whole numbers after parsing), alpha in 0..1. -/
 structure RGBA where
   r : Float
@@ -96,8 +100,8 @@ def number? (s : String) : Option Float := Id.run do
     if r.isEmpty || !r.all (digit? · |>.isSome) then return none
     let ev := r.foldl (fun n c => n * 10 + (c.toNat - 48)) 0
     exp := exp + (if eneg then -(Int.ofNat ev) else Int.ofNat ev)
-  let m := Float.ofNat mantissa
-  let v := if exp ≥ 0 then m * Float.ofNat (10 ^ exp.toNat) else m / Float.ofNat (10 ^ (-exp).toNat)
+  let m := nf mantissa
+  let v := if exp ≥ 0 then m * nf (10 ^ exp.toNat) else m / nf (10 ^ (-exp).toNat)
   return some (if neg then -v else v)
 
 private def hex? (c : Char) : Option Nat :=
@@ -198,20 +202,22 @@ def parse? (source : String) : Option RGBA := do
   if s == "transparent" then return RGBA.transparent
   if s == "currentcolor" then return RGBA.black
   if let some (_, v) := named.find? (·.1 == s) then
-    return ⟨Float.ofNat (v / 65536), Float.ofNat (v / 256 % 256), Float.ofNat (v % 256), 1⟩
+    return ⟨nf (v / 65536), nf (v / 256 % 256), nf (v % 256), 1⟩
   if s.startsWith "#" then
     let ds ← (s.drop 1).toString.toList.mapM hex?
     match ds with
-    | [r, g, b] => return ⟨Float.ofNat (r * 17), Float.ofNat (g * 17), Float.ofNat (b * 17), 1⟩
-    | [r, g, b, a] => return ⟨Float.ofNat (r * 17), Float.ofNat (g * 17), Float.ofNat (b * 17), Float.ofNat (a * 17) / 255⟩
+    | [r, g, b] => return ⟨nf (r * 17), nf (g * 17), nf (b * 17), 1⟩
+    | [r, g, b, a] => return ⟨nf (r * 17), nf (g * 17), nf (b * 17), nf (a * 17) / 255⟩
     | [r1, r2, g1, g2, b1, b2] =>
-      return ⟨Float.ofNat (r1 * 16 + r2), Float.ofNat (g1 * 16 + g2), Float.ofNat (b1 * 16 + b2), 1⟩
+      return ⟨nf (r1 * 16 + r2), nf (g1 * 16 + g2), nf (b1 * 16 + b2), 1⟩
     | [r1, r2, g1, g2, b1, b2, a1, a2] =>
-      return ⟨Float.ofNat (r1 * 16 + r2), Float.ofNat (g1 * 16 + g2), Float.ofNat (b1 * 16 + b2),
-        Float.ofNat (a1 * 16 + a2) / 255⟩
+      return ⟨nf (r1 * 16 + r2), nf (g1 * 16 + g2), nf (b1 * 16 + b2),
+        nf (a1 * 16 + a2) / 255⟩
     | _ => none
   let open_ ← (s.splitOn "(").head?
-  if !s.endsWith ")" then none
+  if !s.any (· == '(') then none
+  -- CSS Syntax 3 §5.4.8: a function that the input ends inside is closed there.
+  let s := if s.endsWith ")" then s else s ++ ")"
   let inner := ((s.drop (open_.length + 1)).toString.dropEnd 1).toString
   function? (trim open_) inner
 
@@ -222,9 +228,9 @@ def alpha8 (c : RGBA) : Nat := (clamp01 c.a * 255).round.toUInt64.toNat
 two do not give back the same byte). -/
 def alphaText (a8 : Nat) : String :=
   if a8 == 0 then "0" else
-  let two := (Float.ofNat a8 / 255 * 100).round
+  let two := (nf a8 / 255 * 100).round
   let back := (two / 100 * 255).round.toUInt64.toNat
-  let (v, places) := if back == a8 then (two.toUInt64.toNat, 2) else ((Float.ofNat a8 / 255 * 1000).round.toUInt64.toNat, 3)
+  let (v, places) := if back == a8 then (two.toUInt64.toNat, 2) else ((nf a8 / 255 * 1000).round.toUInt64.toNat, 3)
   let digits := toString v
   let padded := "".pushn '0' (places - digits.length) ++ digits
   let trimmed := String.ofList (padded.toList.reverse.dropWhile (· == (Char.ofNat 48))).reverse

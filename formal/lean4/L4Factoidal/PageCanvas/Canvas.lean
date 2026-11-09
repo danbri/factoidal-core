@@ -187,7 +187,7 @@ def boxBlur (w h r : Nat) (src : FloatArray) (horizontal : Bool) : FloatArray :=
   if r == 0 then return src
   let mut out := FloatArray.mk (Array.replicate (w * h) 0)
   let (lines, len) := if horizontal then (h, w) else (w, h)
-  let k := 1 / (2 * r + 1).toFloat
+  let k := 1 / nf (2 * r + 1)
   for l in [0:lines] do
     let at_ := fun (i : Nat) => if horizontal then l * w + i else i * w + l
     let mut sum := 0.0
@@ -216,7 +216,7 @@ def shadowDraw (W H : Nat) (st : DrawState) (d : Draw) (es : Array Edge) (rule :
     for i in [0:box.w] do
       let c := cov.cov[j * box.w + i]!
       if c <= 0 then continue
-      let s := d.ready.atF ((box.x + i).toFloat + 0.5 - ox) ((box.y + j).toFloat + 0.5 - oy)
+      let s := d.ready.atF (nf (box.x + i) + 0.5 - ox) (nf (box.y + j) + 0.5 - oy)
       a := a.set! ((box.y + j) * W + box.x + i) (c * s.a)
   let sigma := st.shadowBlur / 2
   let r := if sigma <= 0 then 0 else (sigma * 0.94).round.toUInt64.toNat   -- three boxes of 2r+1 ≈ σ√12/√3
@@ -382,8 +382,10 @@ where
   top-right, bottom-right, bottom-left), scaled down when they overlap. -/
   roundRectInto (m : Matrix) (p : Path) (x y w h : Float) (radii : Array (Float × Float)) : Path :=
     if !finite [x, y, w, h] || radii.size != 4 then p else
-    let (x, w) := if w < 0 then (x + w, -w) else (x, w)
-    let (y, h) := if h < 0 then (y + h, -h) else (y, h)
+    -- A negative width or height draws the rectangle mirrored, so its direction turns
+    -- (HTML: "flip"): the frame below mirrors it, and the corners swap with it.
+    let m := m.mul ((Matrix.translate x y).mul (Matrix.scale (if w < 0 then -1 else 1) (if h < 0 then -1 else 1)))
+    let (x, y, w, h) := (0.0, 0.0, w.abs, h.abs)
     let r := radii
     let (tl, tr, br, bl) := (r[0]!, r[1]!, r[2]!, r[3]!)
     let top := tl.1 + tr.1
@@ -538,8 +540,8 @@ def Bitmap.crop (b : Bitmap) (x y w h : Nat) : Bitmap := Id.run do
 /-- HTML §4.12.5.1.14 `drawImage`: the source rectangle (default the whole image) clipped
 to the image, the destination rectangle (default the source size) scaled with it. -/
 def Run.drawImage (r : Run) (c : Canvas) (img : Bitmap) (sx sy sw sh dx dy dw dh : Float) : Canvas :=
-  let iw := img.width.toFloat
-  let ih := img.height.toFloat
+  let iw := nf img.width
+  let ih := nf img.height
   let (sx, sy, sw, sh) := if sw.isNaN then (0, 0, iw, ih) else (sx, sy, sw, sh)
   let (dw, dh) := if dw.isNaN then (sw, sh) else (dw, dh)
   if !finite [sx, sy, sw, sh, dx, dy, dw, dh] || sw == 0 || sh == 0 || dw == 0 || dh == 0 || img.width == 0 || img.height == 0 then c else
@@ -565,8 +567,8 @@ def Run.drawImage (r : Run) (c : Canvas) (img : Bitmap) (sx sy sw sh dx dy dw dh
   let px1 := min img.width cx1.ceil.toUInt64.toNat
   let py1 := min img.height cy1.ceil.toUInt64.toNat
   let crop := img.crop px0 py0 (px1 - px0) (py1 - py0)
-  let ox := cx0 - px0.toFloat
-  let oy := cy0 - py0.toFloat
+  let ox := cx0 - nf px0
+  let oy := cy0 - nf py0
   let toUser : Matrix := { a := kx, d := ky, e := dx - ox * kx, f := dy - oy * ky }
   let pat : Pattern := ⟨crop, ⟨false, false⟩, toUser, true⟩
   let st := c.stack.cur
