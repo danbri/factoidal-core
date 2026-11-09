@@ -257,17 +257,18 @@ function render(source,options,w,h,chromeOnly=false,counted=true){
 // page cannot read the count from the export, so it uses bytes only once an answer has shown
 // that the engine holds several fonts (fonts in the answer): such an engine takes five.
 let fontBytesTakeFallback=false;
+// fallback 'web': a web font of the page (@font-face), held apart by SHA-256 (WebDocument.loadWebFont).
 function fontLoad(bytes,family,sha,fallback=false){
   if(!fontBytesTakeFallback||typeof module._web_document_font_call_bin!=='function'||typeof module._malloc!=='function'){
     let text='';
     for(let i=0;i<bytes.length;i+=32768)text+=String.fromCharCode(...bytes.subarray(i,i+32768));
-    return call('',{op:'fontLoad',fontBase64:btoa(text),fontFamily:family,fontSha256:sha,...(fallback?{fallback:true}:{})});
+    return call('',{op:'fontLoad',fontBase64:btoa(text),fontFamily:family,fontSha256:sha,...(fallback==='web'?{webFont:true}:fallback?{fallback:true}:{})});
   }
   const input=module._malloc(Math.max(1,bytes.length));
   if(!input)throw Error('Lean engine allocation failed');
   try{
     module.HEAPU8.set(bytes,input);
-    const pointer=module.ccall('web_document_font_call_bin','number',['number','number','string','string','number'],[input,bytes.length,family,sha,fallback?1:0]);
+    const pointer=module.ccall('web_document_font_call_bin','number',['number','number','string','string','number'],[input,bytes.length,family,sha,fallback==='web'?2:fallback?1:0]);
     if(!pointer)throw Error('Lean engine allocation failed');
     try{const result=JSON.parse(module.UTF8ToString(pointer));if(result?.error)throw Error(result.error);return result;}
     finally{module.ccall('web_render_free',null,['number'],[pointer]);}
@@ -385,7 +386,8 @@ async function prepare(url){
   await loadFallbackFonts(page.source,fallbackWait);
   const facts=call(page.source,{op:'inspect',url:page.url,...(liberal?{liberal:true}:{})});
   const images=await pageImages(facts.images);
-  const next={url:page.url,title:facts.title,baseURL:facts.baseURL,source:page.source,sources,...images,liberal};
+  const webFonts=await pageWebFonts(page);
+  const next={url:page.url,title:facts.title,baseURL:facts.baseURL,source:page.source,sources,...images,liberal,...(webFonts.length?{webFonts}:{})};
   if(Array.isArray(facts.diagnostics))addEntries(next,facts.diagnostics);
   if(facts.icon){const icon=await tabIcon(facts.icon);if(icon)next.icon=icon;}
   // The page is drawn first and its scripts start after that frame, as deferred scripts do:
@@ -393,6 +395,37 @@ async function prepare(url){
   if(facts.scripts?.some(s=>s.kind==='classic')){next.pendingScripts=facts.scripts;next.scripted=true;}
   return next;
 }
+// Web fonts (CSS Fonts 4 §4): Lean says which @font-face faces the page's rendered text uses
+// (fontFaces), each with its URLs in order. The page fetches the first it can, from this site
+// only and within the size caps, and gives the bytes to Lean, which checks the font with the
+// font policy and holds it by SHA-256. A face that fails or is refused is left out: its text
+// falls back to the next family. A page with no @font-face makes no call.
+const maxFontBytes=8388608,maxPageFontBytes=16777216;
+async function pageWebFonts(page){
+  const webFonts=[];
+  if(!/@font-face/i.test(page.source))return webFonts;
+  let faces;
+  try{faces=call(page.source,{op:'fontFaces',url:page.url}).faces??[];}catch{return webFonts;}
+  const loaded=new Map();let total=0;
+  for(const face of faces)for(const src of face.sources){
+    const known=loaded.get(src);
+    if(known!==undefined){if(known)break;continue;}
+    try{
+      if(new URL(src).origin!==siteOrigin)throw Error('not of this site');
+      const response=await fetch(src);if(!response.ok)throw Error(`HTTP ${response.status}`);
+      const bytes=new Uint8Array(await response.arrayBuffer());
+      if(bytes.length>maxFontBytes||total+bytes.length>maxPageFontBytes)throw Error('too large');
+      const sha=[...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(b=>b.toString(16).padStart(2,'0')).join('');
+      fontLoad(bytes,'',sha,'web');
+      total+=bytes.length;loaded.set(src,sha);webFonts.push({url:src,sha256:sha});break;
+    }catch(error){loaded.set(src,'');console.warn('foafnaut: web font refused:',src,String(error.message??error));}
+  }
+  return webFonts;
+}
+// SVG animation (WebPaint, SMIL timing in Lean): the page clock starts at its first frame;
+// `time` is the clock of the last frame, so a page whose animations ended keeps one state.
+const animationOf=page=>page.animation??={epoch:performance.now(),time:0,running:false,has:false,clicks:[]};
+const animationOptions=page=>page.animation&&(page.animation.has||page.animation.clicks.length)?{animationTime:page.animation.time,animationClicks:page.animation.clicks}:{};
 // The tab icon (HTML §4.6.7.8): Lean picks the link and resolves its URL (inspect `icon`,
 // WebDocument.iconURL) and prepares the bytes (iconPrepare); the shell draws it in the tab.
 // Only this site's files are read. An engine without iconPrepare (asked once) has no icons;
@@ -622,7 +655,7 @@ async function startScripts(page,scripts){
   }
   // The viewport and the render request that lays the page out for its scripts' layout
   // reads (clientWidth, getBoundingClientRect); an engine without them ignores the fields.
-  const layout={url:page.url,...(page.liberal?{liberal:true}:{}),...(page.images?{images:page.images}:{}),...(page.heldImages?{heldImages:page.heldImages}:{}),textScalePercent:percent};
+  const layout={url:page.url,...(page.liberal?{liberal:true}:{}),...(page.images?{images:page.images}:{}),...(page.heldImages?{heldImages:page.heldImages}:{}),...(page.webFonts?{webFonts:page.webFonts}:{}),textScalePercent:percent};
   // The setting: Lean's plan says which engine runs the page, or why none does.
   let plan=planFor(scriptSetting,1);
   if(plan.run&&!scriptEngines.includes(plan.engine))plan=planFor(scriptSetting,1,`this engine has no ${plan.name}`);
@@ -964,7 +997,7 @@ function scrollLimit(){
 }
 // The request for a frame of this page at a scroll; its signature leaves the scroll out, so
 // a band made at one scroll is known to be for the same state at another.
-const renderOptions=at=>({op:'render',url:doc.url,...(doc.liberal?{liberal:true,...(doc.diagnosticsSeen?{}:{diagnostics:true})}:{}),...(doc.images?{images:doc.images}:{}),...(doc.heldImages?{heldImages:doc.heldImages}:{}),...(doc.commands?{commands:doc.commands}:{}),textScalePercent:percent,shell:{...shell(),scroll:at},live:doc===checked,binary:true});
+const renderOptions=at=>({op:'render',url:doc.url,...(doc.liberal?{liberal:true,...(doc.diagnosticsSeen?{}:{diagnostics:true})}:{}),...(doc.images?{images:doc.images}:{}),...(doc.heldImages?{heldImages:doc.heldImages}:{}),...(doc.commands?{commands:doc.commands}:{}),...(doc.webFonts?{webFonts:doc.webFonts}:{}),...animationOptions(doc),textScalePercent:percent,shell:{...shell(),scroll:at},live:doc===checked,binary:true});
 const signature=options=>JSON.stringify({...options,images:undefined,shell:{...options.shell,scroll:0,collapse:undefined}});
 // The graph page keeps its document and changes its source: the band must be of this source.
 const canShift=()=>!!(layerSurface&&current&&current.doc===doc&&current.source===doc.source&&current.width===width&&current.height===height&&current.sig===signature(renderOptions(scroll)));
@@ -1154,6 +1187,8 @@ async function draw(){
     dirty=false;shiftPending=false;
     const start=performance.now(),inputAt=pendingStamp,shown=doc;pendingStamp=undefined;
     const calls=leanRenders;
+    const clock=animationOf(doc);
+    if(clock.running)clock.time=Math.round(performance.now()-clock.epoch);
     try{
       // A page already on screen had Lean's full probe set on its first frame.
       const options=renderOptions(scroll),wantLayers=layered!==false&&bandWanted;bandWanted=false;
@@ -1184,6 +1219,9 @@ async function draw(){
           const {offset}=L.clampOffset(layers.layers,scroll);
           pixels=await layerSurface.composite(width,height,offset);
           current={answer:layers,doc,source:doc.source,width,height,sig:signature(options),fold};shownOffset=offset;frame=layers.page;
+          clock.has=!!layers.layers.animations;clock.running=!!layers.layers.animating;
+          // The next animation frame, after this one is posted.
+          if(clock.running){const page=doc;setTimeout(()=>{if(doc===page&&page.animation?.running)request();},1);}
           path=swapped?'band':'layers';
           // A band made at another fold: the chrome layer is drawn again at the next shift.
           if(fold!==foldNow())shiftPending=true;
@@ -1543,6 +1581,8 @@ function apply(data){
   if(data.type==='release'&&frame&&!data.scrolled){
     if(call('',{op:'shellHit',shell:shell(),x:data.x,y:data.y,width}).control)return;
     if(scriptPointers()){if(doc.script)scriptPointer('up',data.x,data.y,data.pointer);}else scriptClick(data.x,data.y);
+    // A click begins the SVG animations whose `begin` is a click on what it hits.
+    if(doc.animation?.has&&current){const a=doc.animation;a.clicks=[...a.clicks,[Math.round(performance.now()-a.epoch),data.x,data.y-current.answer.layers.top+scroll]].slice(-16);a.running=true;request();}
     const target=hit(data.x,data.y);
     if(target?.href)follow(router.route({...site,href:target.href,base:doc.baseURL||doc.url}));
   }
