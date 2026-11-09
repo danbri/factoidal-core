@@ -1914,7 +1914,6 @@ def runWith (laidOut : LayoutKey → Except String Laid) (html : String) (reques
 def run := runWith cachedFrame
 def runUncached := runWith layOut
 
-/-- The request text as JSON, with the bounds of `compile`. -/
 /-- Only white space after character `pos`: `(request.toList.drop pos).all Char.isWhitespace`,
 with no list of the request's characters (realperf: a list of 1 MiB of characters for
 every frame of a large page). -/
@@ -1923,6 +1922,7 @@ def blankFrom (request : String) (pos : Nat) : Bool := (request.drop pos).all Ch
 #guard ["{\"a\":1}  ", "[1] x", "é\"é\" é", ""].all fun r =>
   (List.range (r.length+2)).all fun n => blankFrom r n == (r.toList.drop n).all Char.isWhitespace
 
+/-- The request text as JSON, with the bounds of `compile`. -/
 private def parseRequest (request : String) : Except String JSON.Json :=
   if request.utf8ByteSize > 20971520 then .error "document request exceeds20MiB"
   else match JSON.parseJsonText request with
