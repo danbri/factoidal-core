@@ -6,7 +6,8 @@
 - Copied unchanged into `third_party/testing/wpt-webapis/`: the directories
   `WebCryptoAPI/`, `html/webappapis/atob/`, `html/webappapis/structured-clone/` and
   `user-timing/`; the helpers their tests load from `common/` that the other pinned
-  copies do not have (`common/gc.js`, `common/performance-timeline-utils.js`); the
+  copies do not have (`common/gc.js`, `common/performance-timeline-utils.js`,
+  `common/subset-tests-by-key.js`, which `wpt-url` also needs); the
   repository `LICENSE.md`. Not copied: the `WEB_FEATURES.yml` metadata files.
 - Copied on 2026-11-08.
 - Specifications under test: Web Cryptography API (W3C), HTML (WHATWG) section 8.3
