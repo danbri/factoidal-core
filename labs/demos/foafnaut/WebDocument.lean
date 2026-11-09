@@ -975,12 +975,16 @@ private def loadImage (request : JSON.Json) : Except String String := do
 
 /-- A page's bytes as its text (HTML §13.2.3 encoding sniffing, then the Encoding
 Standard's decoder: `WHATWG.Encoding.Sniff.decodeDocumentFast`), given the transport
-layer's charset label ("" for none). The answer is the encoding's name, a line feed, then
-the text. The hosts call this where a page's bytes become text, so a document declared
-in a legacy encoding is read in it and `document.characterSet` is its name. -/
+layer's `Content-Type` value or a bare charset label ("" for none). The answer is the
+encoding's name, a line feed, then the text. The hosts call this where a page's bytes
+become text, so a document declared in a legacy encoding is read in it and
+`document.characterSet` is its name. -/
 @[export web_document_decode_bin]
-def decodeBin (bytes : ByteArray) (charset : String) : String :=
-  let (e, text) := L4Factoidal.WHATWG.Encoding.Sniff.decodeDocumentFast bytes (if charset.isEmpty then none else some charset)
+def decodeBin (bytes : ByteArray) (contentType : String) : String :=
+  let label := if contentType.isEmpty then none
+    else (L4Factoidal.WHATWG.Encoding.Sniff.extractFromMeta contentType).orElse fun _ =>
+      if contentType.contains ';' || contentType.contains '/' then none else some contentType
+  let (e, text) := L4Factoidal.WHATWG.Encoding.Sniff.decodeDocumentFast bytes label
   e.name ++ "\n" ++ text
 
 /-- `imageLoad` with the image as bytes, with no Base64 and no JSON around it. -/
