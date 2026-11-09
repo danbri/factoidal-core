@@ -372,6 +372,15 @@
    "doesNotShow": "the band's own logo or any picture from Wikimedia Commons; U+0308 after a Fraktur letter (Foafnaut does not place marks from another font yet, so the dots are SVG); without fetch the results are the snapshot's, not live"
   },
   {
+   "page": "shader-gallery.html",
+   "title": "Shader gallery: two triangles",
+   "handwritten": true,
+   "needs": "page scripts and the page GPU commands (gpu_command, L4Factoidal.PageGpu: WGSL, and GLSL ES 3.00 programs) in the engine and the guest; the binary pass header (op 71) and navigator.foafnaut where the engine has them",
+   "appRefused": "does not execute scripts",
+   "shows": "five fragment shaders written for the page (plasma, a domain-warped noise, three ray-marched spheres with soft shadows, a Mandelbrot zoom, an amp panel whose gain goes to 11) on a full-canvas quad of two triangles, each in WGSL for WebGPU and in GLSL ES 3.00 for WebGL 2, with iTime, iResolution, iMouse and iFrame; the source shown, with Lean's refusal of a while loop, a helper function and a 10,000-step loop; fps, script time and Lean's time a turn",
+   "doesNotShow": "textures, multiple passes or buffers between frames (Shadertoy's iChannel), editing the source in Foafnaut (no text input for page scripts yet; Chrome can edit and run it); without the new engine the canvas stays blank"
+  },
+  {
    "page": "svg-text-labels.html",
    "title": "SVG text labels",
    "handwritten": true,
