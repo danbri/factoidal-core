@@ -300,6 +300,11 @@ static JSValue n_api(JSContext *c, JSValueConst this_val, int argc, JSValueConst
   if (!block) return r;
   static char small[4096];
   int32_t n = dom_web_api(op, flags, (const char *) block, (int32_t) total, small, (int32_t) sizeof small);
+  /* Crypto operations (ops 30-49) carry key bytes, derived secrets and random bytes:
+   * the guest's own copies are zeroed once Lean has them (record
+   * docs/designissues/2026-11-09-hacl-web-crypto.md, "Secret lifetime"). */
+  int secret = op >= 30 && op < 50;
+  if (secret) memset(block, 0, total);
   free(block);
   if (n < 0) return JS_NewInt32(c, n);
   char *out = small;
@@ -310,6 +315,7 @@ static JSValue n_api(JSContext *c, JSValueConst this_val, int argc, JSValueConst
     if (m != n) { free(out); return JS_NewInt32(c, m < 0 ? m : -5); }
   }
   r = bytes ? JS_NewArrayBufferCopy(c, (const uint8_t *) out, (size_t) n) : JS_NewStringLen(c, out, (size_t) n);
+  if (secret) memset(out, 0, (size_t) n);
   if (out != small) free(out);
   return r;
 }

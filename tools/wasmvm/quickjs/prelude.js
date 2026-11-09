@@ -2696,14 +2696,20 @@
   });
 
   // ---- Web Cryptography: crypto, SubtleCrypto, CryptoKey ------------------------------------
-  // Lean: the generator (HMAC_DRBG seeded by the embedder's entropy), the hashes, HMAC, HKDF
-  // and PBKDF2. Algorithms whose primitives the engine does not link (AES, ECDSA, ECDH,
-  // Ed25519, X25519, RSA) are not supported: their operations reject NotSupportedError.
-  // Every operation's promise is settled by a task of Lean's event loop, so a long digest
-  // never runs inside the caller's turn.
+  // ==== haclweb: crypto.subtle over Lean and HACL* ====
+  // Record: docs/designissues/2026-11-09-hacl-web-crypto.md. Lean decides everything
+  // (Crypto.WebCryptoKeys: the registry, usages, extractability, key formats, the error of
+  // each refusal) and HACL* computes (Crypto.WebHacl). Keys live in Lean: a CryptoKey here
+  // holds a handle and its public attributes, never key bytes. This section only converts
+  // arguments (WebIDL), shapes objects and settles promises; each operation runs as a task
+  // of Lean's event loop (`later`), never inside the caller's turn or a frame.
+  //   n.api 40 normalize(op, name) -> "Registered\nmember:type[!]..." (the dictionary to read)
+  //   n.api 41 subtle(method, k1, v1, ...) -> packed fields (`unpack`)
+  //   n.api 42 drop(handle): the page's CryptoKey was collected; Lean zeroes the key bytes.
   let CryptoKeyC, cryptoKeys;
   lazy('crypto', () => {
     const random = typeof apiCall(30, ['0'], 0, true) !== 'number';
+    const subtleOn = typeof apiCall(40, ['digest', 'SHA-256'], 0, false) === 'string';
     const intArrays = [Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array, Uint32Array,
       ...(typeof BigInt64Array === 'function' ? [BigInt64Array, BigUint64Array] : [])];
     cryptoKeys = new WeakMap();
@@ -2712,190 +2718,219 @@
       constructor() { throw new TypeError('Illegal constructor'); }
       get type() { return keyOf(this).type; }
       get extractable() { return keyOf(this).extractable; }
-      get algorithm() { return keyOf(this).algorithmObject; }
-      get usages() { return keyOf(this).usagesObject; }
+      get algorithm() { return keyOf(this).algorithm; }
+      get usages() { return keyOf(this).usages; }
     }
     setTag(CryptoKey, 'CryptoKey');
     CryptoKeyC = CryptoKey;
-    const makeKey = (type, extractable, algorithm, usages, data) => {
-      const k = Object.create(CryptoKey.prototype);
-      cryptoKeys.set(k, { type, extractable, algorithm, usages, data, algorithmObject: algorithm, usagesObject: usages });
-      return k;
+    const dropped = typeof FinalizationRegistry === 'function' ? new FinalizationRegistry(h => { apiCall(42, [String(h)], 0, false); }) : null;
+    const errNames = { [-20]: 'TypeError', [-22]: 'OperationError', [-23]: 'NotSupportedError', [-24]: 'SyntaxError',
+      [-25]: 'InvalidAccessError', [-26]: 'DataError', [-27]: 'QuotaExceededError' };
+    const raise = (code, what) => {
+      const name = errNames[code] || 'OperationError';
+      if (name === 'TypeError') throw new TypeError(what);
+      throw new DOMException(what, name);
     };
-    const fail = (name, message) => { throw new DOMException(message, name); };
     // A task of the event loop (HTML "queue a global task") settles the promise.
     const later = f => new Promise((resolve, reject) => { timer(0, () => { try { resolve(f()); } catch (e) { reject(e); } }, 0, []); });
     const start = f => { try { return f(); } catch (e) { return Promise.reject(e); } };
-    const hashes = ['SHA-1', 'SHA-256', 'SHA-384', 'SHA-512'];
-    const known = ['AES-CTR', 'AES-CBC', 'AES-GCM', 'AES-KW', 'HMAC', 'SHA-1', 'SHA-256', 'SHA-384', 'SHA-512', 'HKDF', 'PBKDF2',
-      'ECDSA', 'ECDH', 'RSASSA-PKCS1-v1_5', 'RSA-PSS', 'RSA-OAEP', 'Ed25519', 'X25519'];
-    const hashLen = { 'SHA-1': 160, 'SHA-256': 256, 'SHA-384': 384, 'SHA-512': 512 };
-    const blockLen = { 'SHA-1': 512, 'SHA-256': 512, 'SHA-384': 1024, 'SHA-512': 1024 };
-    // Web Crypto §18.4 "normalize an algorithm": the registered name, matched ASCII
-    // case-insensitively; the dictionary members an operation reads.
-    const nameOf = alg => {
-      if (typeof alg === 'string') alg = { name: alg };
-      else if (alg === null || typeof alg !== 'object') throw new TypeError('Algorithm: not an object');
-      if (alg.name === undefined) throw new TypeError("Algorithm: Missing or not an AlgorithmIdentifier: name");
-      const name = String(alg.name), up = name.toUpperCase();
-      const reg = known.find(k => k.toUpperCase() === up);
-      return [alg, reg];
-    };
-    const supported = { digest: hashes, sign: ['HMAC'], verify: ['HMAC'], generateKey: ['HMAC'], importKey: ['HMAC', 'HKDF', 'PBKDF2'],
-      deriveBits: ['HKDF', 'PBKDF2'], get: ['HMAC'], exportKey: ['HMAC'] };
-    const normalize = (op, a) => {
-      const [alg, reg] = nameOf(a);
-      if (!reg || !supported[op].includes(reg)) fail('NotSupportedError', `Algorithm: Unrecognized name or not supported for ${op}`);
-      const out = { name: reg };
-      const hashMember = (required) => {
-        if (alg.hash === undefined) { if (required) throw new TypeError("Algorithm: Missing required member 'hash'"); return; }
-        const h = normalize('digest', alg.hash); out.hash = { name: h.name };
-      };
-      const bytes = (k) => { if (alg[k] === undefined) throw new TypeError(`Algorithm: Missing required member '${k}'`); return copyBytes(bufferSource(alg[k], 'Algorithm')); };
-      // [EnforceRange] unsigned long (WebIDL §3.2.4.8).
-      const ulong = (k, required) => {
-        if (alg[k] === undefined) { if (required) throw new TypeError(`Algorithm: Missing required member '${k}'`); return undefined; }
-        const x = Math.trunc(Number(alg[k]));
-        if (!Number.isFinite(x) || x < 0 || x > 4294967295) throw new TypeError(`Algorithm: '${k}' is outside the range of an unsigned long`);
-        return x;
-      };
-      if (reg === 'HMAC' && (op === 'generateKey' || op === 'importKey')) { hashMember(true); out.length = ulong('length', false); }
-      if (reg === 'HMAC' && op === 'get') { hashMember(true); out.length = ulong('length', false); }
-      if (reg === 'HKDF' && op === 'deriveBits') { hashMember(true); out.salt = bytes('salt'); out.info = bytes('info'); }
-      if (reg === 'PBKDF2' && op === 'deriveBits') { hashMember(true); out.salt = bytes('salt'); out.iterations = ulong('iterations', true); }
-      return out;
+    // WebIDL conversions.
+    const domString = v => { if (typeof v === 'symbol') throw new TypeError('Cannot convert a Symbol to a string'); return String(v); };
+    const enforceRange = (v, max, what) => {
+      const x = Number(v);
+      if (!Number.isFinite(x)) throw new TypeError(`${what} is not a finite number`);
+      const t = Math.trunc(x);
+      if (t < 0 || t > max) throw new TypeError(`${what} is outside the accepted range`);
+      return t;
     };
     const usageNames = ['encrypt', 'decrypt', 'sign', 'verify', 'deriveKey', 'deriveBits', 'wrapKey', 'unwrapKey',
       'encapsulateKey', 'encapsulateBits', 'decapsulateKey', 'decapsulateBits'];
-    const usagesOf = us => { const out = []; for (const u of us) { const s = String(u); if (!usageNames.includes(s)) throw new TypeError(`KeyUsage: '${s}' is not a valid enum value`); if (!out.includes(s)) out.push(s); } return out; };
-    const allowed = { HMAC: ['sign', 'verify'], HKDF: ['deriveKey', 'deriveBits'], PBKDF2: ['deriveKey', 'deriveBits'] };
-    const checkUsages = (name, us) => { for (const u of us) if (!allowed[name].includes(u)) fail('SyntaxError', `Cannot create a key using the specified key usages.`); };
-    const b64u = { enc: b => api(21, [String.fromCharCode(...new Uint8Array(b))], 0, false, 'base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_'),
-      dec: s => { if (/[^A-Za-z0-9_-]/.test(s)) fail('DataError', 'JWK: not base64url'); const r = apiCall(20, [s.replace(/-/g, '+').replace(/_/g, '/')], 0, false); if (typeof r !== 'string') fail('DataError', 'JWK: not base64url'); return Uint8Array.from(r, c => c.charCodeAt(0)); } };
-    const hmacJwkAlg = { 'SHA-1': 'HS1', 'SHA-256': 'HS256', 'SHA-384': 'HS384', 'SHA-512': 'HS512' };
+    const formatNames = ['raw', 'pkcs8', 'spki', 'jwk', 'raw-public', 'raw-private', 'raw-seed', 'raw-secret'];
+    const usagesOf = us => {
+      if (us === null || typeof us !== 'object' || typeof us[Symbol.iterator] !== 'function') throw new TypeError('keyUsages: not a sequence');
+      const out = [];
+      for (const u of us) { const x = domString(u); if (!usageNames.includes(x)) throw new TypeError(`KeyUsage: '${x}' is not a valid enum value`); out.push(x); }
+      return out;
+    };
+    const formatOf = f => { const x = domString(f); if (!formatNames.includes(x)) throw new TypeError(`KeyFormat: '${x}' is not a valid enum value`); return x; };
+    // JsonWebKey (WebIDL dictionary, members in lexicographic order).
+    const jwkMembers = ['alg', 'crv', 'd', 'dp', 'dq', 'e', 'ext', 'k', 'key_ops', 'kty', 'n', 'oth', 'p', 'q', 'qi', 'use', 'x', 'y'];
+    const jwkPairs = o => {
+      const out = [];
+      if (o === null || o === undefined) return out;
+      for (const m of jwkMembers) {
+        const v = o[m];
+        if (v === undefined) continue;
+        if (m === 'ext') out.push('j:ext', v ? 'true' : 'false');
+        else if (m === 'key_ops') {
+          if (v === null || typeof v !== 'object' || typeof v[Symbol.iterator] !== 'function') throw new TypeError('JsonWebKey: key_ops is not a sequence');
+          out.push('j:key_ops', '');
+          for (const x of v) out.push('j:key_ops[]', domString(x));
+        } else if (m === 'oth') {
+          if (v === null || typeof v !== 'object') throw new TypeError('JsonWebKey: oth is not a sequence');
+        } else out.push('j:' + m, domString(v));
+      }
+      return out;
+    };
+    // Lean's answers: a u32 count, then each field as a u32 length and its bytes.
+    const unpack = ab => {
+      const u = new Uint8Array(ab), u32 = i => u[i] | u[i + 1] << 8 | u[i + 2] << 16 | (u[i + 3] << 24 >>> 0);
+      const out = [];
+      for (let i = 0, at = 4, n = u32(0); i < n; i++) { const len = u32(at); out.push(u.subarray(at + 4, at + 4 + len)); at += 4 + len; }
+      return out;
+    };
+    const ascii = b => { let s = ''; for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); return s; };
+    const buffer = b => { const r = new ArrayBuffer(b.length); new Uint8Array(r).set(b); return r; };
+    // "normalize an algorithm" (§18.4): Lean names the registered algorithm and the members
+    // of its dictionary; here they are read and converted, in WebIDL order.
+    const normalize = (op, alg, prefix = 'a:') => {
+      if (alg === null || (typeof alg !== 'object' && typeof alg !== 'function')) alg = { name: domString(alg) };
+      const nm = alg.name;
+      if (nm === undefined) throw new TypeError("Algorithm: Missing or not an AlgorithmIdentifier: name");
+      const r = apiCall(40, [op, domString(nm)], 0, false);
+      if (typeof r === 'number') raise(r, `Algorithm: Unrecognized name or not supported for ${op}`);
+      const [reg, ...ms] = r.split('\n');
+      const pairs = [prefix + 'name', reg];
+      for (const m of ms) {
+        const i = m.indexOf(':'), k = m.slice(0, i), req = m.endsWith('!'), t = m.slice(i + 1, req ? -1 : undefined);
+        const v = alg[k];
+        if (v === undefined) { if (req) throw new TypeError(`Algorithm: Missing required member '${k}'`); continue; }
+        let x;
+        if (t === 'h') x = normalize('digest', v).name;
+        else if (t === 'b') x = copyBytes(bufferSource(v, 'Algorithm'));
+        else if (t === 'l') x = String(enforceRange(v, 4294967295, k));
+        else if (t === 'o') x = String(enforceRange(v, 255, k));
+        else if (t === 'k') x = String(keyOf(v).handle);
+        else x = domString(v);
+        pairs.push(prefix + k, x);
+      }
+      return { name: reg, pairs };
+    };
+    const call = (args, what) => {
+      const r = apiCall(41, args, 0, true);
+      if (typeof r === 'number') raise(r, what);
+      return unpack(r);
+    };
+    // A CryptoKey from Lean's fields at `i` ("key", handle, type, extractable, usages, name, n, pairs).
+    const makeKey = (f, i) => {
+      const handle = +ascii(f[i + 1]), us = ascii(f[i + 4]), np = +ascii(f[i + 6]);
+      const algorithm = { name: ascii(f[i + 5]) };
+      for (let j = 0; j < np; j++) {
+        const k = ascii(f[i + 7 + 2 * j]), v = ascii(f[i + 8 + 2 * j]);
+        algorithm[k] = k === 'hash' ? { name: v } : k === 'length' ? +v : v;
+      }
+      const key = Object.create(CryptoKey.prototype);
+      cryptoKeys.set(key, { handle, type: ascii(f[i + 2]), extractable: ascii(f[i + 3]) === '1', algorithm, usages: us ? us.split(',') : [] });
+      if (dropped) dropped.register(key, handle);
+      return [key, i + 7 + 2 * np];
+    };
+    const keyAnswer = f => {
+      if (ascii(f[0]) === 'pair') { const [publicKey, j] = makeKey(f, 1); const [privateKey] = makeKey(f, j); return { publicKey, privateKey }; }
+      return makeKey(f, 0)[0];
+    };
+    const bytesAnswer = f => buffer(f[1]);
+    const jwkAnswer = f => {
+      const o = {};
+      for (let i = 0, n = +ascii(f[1]); i < n; i++) {
+        const name = ascii(f[2 + 3 * i]), kind = ascii(f[3 + 3 * i]), v = ascii(f[4 + 3 * i]);
+        o[name] = kind === 'b' ? v === 'true' : kind === 'a' ? (v ? v.split(',') : []) : v;
+      }
+      return o;
+    };
+    const usagePairs = us => us.flatMap(u => ['usage', u]);
+    // wrapKey and unwrapKey normalize for "wrapKey" ("unwrapKey") and, failing that, for
+    // "encrypt" ("decrypt") (§14.3.11 step 3, §14.3.12 step 3).
+    const normalizeEither = (op, fallback, alg) => {
+      try { return normalize(op, alg); } catch (e) { if (e instanceof DOMException && e.name === 'NotSupportedError') return normalize(fallback, alg); throw e; }
+    };
     const subtleMethods = {
       digest(algorithm, data) {
         return start(() => { const a = normalize('digest', algorithm); const d = copyBytes(bufferSource(data, 'digest'));
-          return later(() => api(32, [a.name, d], 0, true, 'digest')); });
+          return later(() => { const r = apiCall(32, [a.name, d], 0, true); if (typeof r === 'number') raise(r, 'digest'); return r; }); });
       },
       generateKey(algorithm, extractable, keyUsages) {
         return start(() => {
-          const a = normalize('generateKey', algorithm), us = usagesOf(keyUsages);
-          return later(() => {
-            checkUsages(a.name, us);
-            const len = a.length === undefined ? blockLen[a.hash.name] : a.length;
-            if (len === 0) fail('OperationError', 'HMAC: the length is 0');
-            if (us.length === 0) fail('SyntaxError', 'Usages cannot be empty when creating a key.');
-            const bytes = new Uint8Array(api(30, [String(Math.ceil(len / 8))], 0, true, 'generateKey'));
-            if (len % 8) bytes[bytes.length - 1] &= 0xFF << (8 - len % 8);
-            return makeKey('secret', !!extractable, { name: 'HMAC', hash: { name: a.hash.name }, length: len }, us, bytes);
-          });
+          const us = usagesOf(keyUsages), a = normalize('generateKey', algorithm);
+          const args = ['generateKey', 'extractable', extractable ? '1' : '0', ...usagePairs(us), ...a.pairs];
+          return later(() => keyAnswer(call(args, 'generateKey')));
         });
       },
       importKey(format, keyData, algorithm, extractable, keyUsages) {
         return start(() => {
-          const f = String(format);
-          if (!['raw', 'pkcs8', 'spki', 'jwk'].includes(f)) throw new TypeError(`KeyFormat: '${f}' is not a valid enum value`);
-          let raw = null, jwk = null;
-          if (f === 'jwk') { if (keyData === null || typeof keyData !== 'object' || ArrayBuffer.isView(keyData) || keyData instanceof ArrayBuffer) throw new TypeError('JsonWebKey: not an object'); jwk = keyData; }
-          else raw = copyBytes(bufferSource(keyData, 'importKey'));
-          const a = normalize('importKey', algorithm), us = usagesOf(keyUsages);
-          return later(() => {
-            if (a.name !== 'HMAC') {
-              if (f !== 'raw') fail('NotSupportedError', `${a.name}: only raw keys`);
-              checkUsages(a.name, us);
-              if (extractable) fail('SyntaxError', `${a.name} keys are not extractable`);
-              if (us.length === 0) fail('SyntaxError', 'Usages cannot be empty when creating a key.');
-              return makeKey('secret', false, { name: a.name }, us, raw);
-            }
-            checkUsages(a.name, us);
-            if (f === 'jwk') {
-              if (jwk.kty !== 'oct') fail('DataError', 'JWK: kty is not oct');
-              if (typeof jwk.k !== 'string') fail('DataError', 'JWK: no k');
-              raw = b64u.dec(jwk.k);
-              if (jwk.alg !== undefined && jwk.alg !== hmacJwkAlg[a.hash.name]) fail('DataError', 'JWK: alg does not match the hash');
-              if (us.length && jwk.use !== undefined && jwk.use !== 'sig') fail('DataError', 'JWK: use is not sig');
-              if (jwk.key_ops !== undefined) { const ops = [...jwk.key_ops].map(String); if (new Set(ops).size !== ops.length || us.some(u => !ops.includes(u))) fail('DataError', 'JWK: key_ops'); }
-              if (jwk.ext === false && extractable) fail('DataError', 'JWK: ext is false');
-            } else if (f !== 'raw') fail('NotSupportedError', 'HMAC: raw or jwk keys');
-            let len = raw.length * 8;
-            if (len === 0) fail('DataError', 'HMAC: the key is empty');
-            if (a.length !== undefined) { if (a.length > len || a.length <= len - 8) fail('DataError', 'HMAC: the length does not match the key'); len = a.length; }
-            if (us.length === 0) fail('SyntaxError', 'Usages cannot be empty when creating a key.');
-            return makeKey('secret', !!extractable, { name: 'HMAC', hash: { name: a.hash.name }, length: len }, us, raw);
-          });
+          const f = formatOf(format);
+          const isBuffer = keyData instanceof ArrayBuffer || ArrayBuffer.isView(keyData) || isShared(keyData);
+          const jwk = isBuffer ? null : jwkPairs(keyData);
+          const us = usagesOf(keyUsages);
+          if (f === 'jwk' && isBuffer) throw new TypeError('importKey: keyData is not a JsonWebKey');
+          if (f !== 'jwk' && !isBuffer) throw new TypeError("importKey: keyData is not of type 'BufferSource'");
+          const a = normalize('importKey', algorithm);
+          const data = isBuffer ? copyBytes(bufferSource(keyData, 'importKey')) : null;
+          const args = ['importKey', 'format', f, 'extractable', extractable ? '1' : '0', ...usagePairs(us), ...a.pairs,
+            ...(data ? ['data', data] : jwk)];
+          return later(() => { try { return keyAnswer(call(args, 'importKey')); } finally { if (data) data.fill(0); } });
         });
       },
       exportKey(format, key) {
         return start(() => {
-          const f = String(format);
-          if (!['raw', 'pkcs8', 'spki', 'jwk'].includes(f)) throw new TypeError(`KeyFormat: '${f}' is not a valid enum value`);
-          const k = keyOf(key);
-          return later(() => {
-            if (k.algorithm.name !== 'HMAC') fail('NotSupportedError', `${k.algorithm.name}: keys are not exportable`);
-            if (!k.extractable) fail('InvalidAccessError', 'The key is not extractable');
-            if (f === 'raw') return copyBytes(k.data).buffer;
-            if (f === 'jwk') return { kty: 'oct', k: b64u.enc(k.data), alg: hmacJwkAlg[k.algorithm.hash.name], key_ops: k.usages.slice(), ext: k.extractable };
-            fail('NotSupportedError', 'HMAC: raw or jwk keys');
-          });
+          const f = formatOf(format), k = keyOf(key);
+          return later(() => { const r = call(['exportKey', 'format', f, 'key', String(k.handle)], 'exportKey'); return ascii(r[0]) === 'jwk' ? jwkAnswer(r) : bytesAnswer(r); });
         });
       },
       sign(algorithm, key, data) {
         return start(() => { const a = normalize('sign', algorithm), k = keyOf(key), d = copyBytes(bufferSource(data, 'sign'));
-          return later(() => {
-            if (a.name !== k.algorithm.name) fail('InvalidAccessError', 'The key is not of the algorithm');
-            if (!k.usages.includes('sign')) fail('InvalidAccessError', 'The key may not sign');
-            return api(33, [k.algorithm.hash.name, k.data, d], 0, true, 'sign');
-          }); });
+          return later(() => bytesAnswer(call(['sign', 'key', String(k.handle), 'data', d, ...a.pairs], 'sign'))); });
       },
       verify(algorithm, key, signature, data) {
-        return start(() => { const a = normalize('verify', algorithm), k = keyOf(key), sig = copyBytes(bufferSource(signature, 'verify')), d = copyBytes(bufferSource(data, 'verify'));
-          return later(() => {
-            if (a.name !== k.algorithm.name) fail('InvalidAccessError', 'The key is not of the algorithm');
-            if (!k.usages.includes('verify')) fail('InvalidAccessError', 'The key may not verify');
-            return new Uint8Array(api(34, [k.algorithm.hash.name, k.data, d, sig], 0, true, 'verify'))[0] === 1;
-          }); });
+        return start(() => { const a = normalize('verify', algorithm), k = keyOf(key);
+          const sig = copyBytes(bufferSource(signature, 'verify')), d = copyBytes(bufferSource(data, 'verify'));
+          return later(() => ascii(call(['verify', 'key', String(k.handle), 'signature', sig, 'data', d, ...a.pairs], 'verify')[1]) === '1'); });
       },
       deriveBits(algorithm, baseKey, length = null) {
-        return start(() => { const a = normalize('deriveBits', algorithm), k = keyOf(baseKey);
-          const len = length === null || length === undefined ? null : (Math.trunc(Number(length)) % 4294967296 + 4294967296) % 4294967296;
-          return later(() => {
-            if (a.name !== k.algorithm.name) fail('InvalidAccessError', 'The key is not of the algorithm');
-            if (!k.usages.includes('deriveBits')) fail('InvalidAccessError', 'The key may not derive bits');
-            return derive(a, k, len);
-          }); });
+        return start(() => {
+          const len = length === null || length === undefined ? 'null' : String(enforceRange(length, 4294967295, 'length'));
+          const a = normalize('deriveBits', algorithm), k = keyOf(baseKey);
+          return later(() => bytesAnswer(call(['deriveBits', 'baseKey', String(k.handle), 'length', len, ...a.pairs], 'deriveBits')));
+        });
       },
       deriveKey(algorithm, baseKey, derivedKeyType, extractable, keyUsages) {
-        return start(() => { const a = normalize('deriveBits', algorithm), k = keyOf(baseKey);
-          const ti = normalize('importKey', derivedKeyType), t = normalize('get', derivedKeyType), us = usagesOf(keyUsages);
-          return later(() => {
-            if (a.name !== k.algorithm.name) fail('InvalidAccessError', 'The key is not of the algorithm');
-            if (!k.usages.includes('deriveKey')) fail('InvalidAccessError', 'The key may not derive keys');
-            const len = t.length === undefined ? blockLen[t.hash.name] : t.length;
-            if (len === 0) throw new TypeError('HMAC: the length is 0');
-            const bits = new Uint8Array(derive(a, k, len));
-            checkUsages('HMAC', us);
-            if (us.length === 0) fail('SyntaxError', 'Usages cannot be empty when creating a key.');
-            return makeKey('secret', !!extractable, { name: 'HMAC', hash: { name: ti.hash.name }, length: len }, us, bits);
-          }); });
+        return start(() => {
+          const us = usagesOf(keyUsages), a = normalize('deriveBits', algorithm), k = keyOf(baseKey);
+          const t = normalize('importKey', derivedKeyType, 't:');
+          normalize('get key length', derivedKeyType, 't:');
+          const args = ['deriveKey', 'baseKey', String(k.handle), 'extractable', extractable ? '1' : '0', ...usagePairs(us), ...a.pairs, ...t.pairs];
+          return later(() => keyAnswer(call(args, 'deriveKey')));
+        });
       },
-      encrypt() { return Promise.reject(new DOMException('Algorithm: Unrecognized name or not supported for encrypt', 'NotSupportedError')); },
-      decrypt() { return Promise.reject(new DOMException('Algorithm: Unrecognized name or not supported for decrypt', 'NotSupportedError')); },
-      wrapKey() { return Promise.reject(new DOMException('Algorithm: Unrecognized name or not supported for wrapKey', 'NotSupportedError')); },
-      unwrapKey() { return Promise.reject(new DOMException('Algorithm: Unrecognized name or not supported for unwrapKey', 'NotSupportedError')); },
-    };
-    const derive = (a, k, len) => {
-      if (len === null) fail('OperationError', `${a.name}: the length is null`);
-      if (len % 8) fail('OperationError', `${a.name}: the length is not a multiple of 8`);
-      if (a.name === 'HKDF') return api(35, [a.hash.name, k.data, a.salt, a.info, String(len / 8)], 0, true, 'HKDF: the length is too large');
-      if (a.iterations === 0) fail('OperationError', 'PBKDF2: iterations is 0');
-      return api(36, [a.hash.name, k.data, a.salt, String(a.iterations), String(len / 8)], 0, true, 'PBKDF2');
+      encrypt(algorithm, key, data) {
+        return start(() => { const a = normalize('encrypt', algorithm), k = keyOf(key), d = copyBytes(bufferSource(data, 'encrypt'));
+          return later(() => bytesAnswer(call(['encrypt', 'key', String(k.handle), 'data', d, ...a.pairs], 'encrypt'))); });
+      },
+      decrypt(algorithm, key, data) {
+        return start(() => { const a = normalize('decrypt', algorithm), k = keyOf(key), d = copyBytes(bufferSource(data, 'decrypt'));
+          return later(() => bytesAnswer(call(['decrypt', 'key', String(k.handle), 'data', d, ...a.pairs], 'decrypt'))); });
+      },
+      wrapKey(format, key, wrappingKey, wrapAlgorithm) {
+        return start(() => {
+          const f = formatOf(format), a = normalizeEither('wrapKey', 'encrypt', wrapAlgorithm), k = keyOf(key), w = keyOf(wrappingKey);
+          return later(() => bytesAnswer(call(['wrapKey', 'format', f, 'key', String(k.handle), 'wrappingKey', String(w.handle), ...a.pairs], 'wrapKey')));
+        });
+      },
+      unwrapKey(format, wrappedKey, unwrappingKey, unwrapAlgorithm, unwrappedKeyAlgorithm, extractable, keyUsages) {
+        return start(() => {
+          const f = formatOf(format), us = usagesOf(keyUsages);
+          const a = normalizeEither('unwrapKey', 'decrypt', unwrapAlgorithm), t = normalize('importKey', unwrappedKeyAlgorithm, 't:');
+          const w = keyOf(unwrappingKey), d = copyBytes(bufferSource(wrappedKey, 'unwrapKey'));
+          const args = ['unwrapKey', 'format', f, 'unwrappingKey', String(w.handle), 'data', d, 'extractable', extractable ? '1' : '0',
+            ...usagePairs(us), ...a.pairs, ...t.pairs];
+          return later(() => keyAnswer(call(args, 'unwrapKey')));
+        });
+      },
     };
     class SubtleCrypto { constructor() { throw new TypeError('Illegal constructor'); } }
-    for (const [k, f] of Object.entries(subtleMethods)) define(SubtleCrypto.prototype, k, f);
+    if (subtleOn) for (const [k, f] of Object.entries(subtleMethods)) define(SubtleCrypto.prototype, k, f);
     setTag(SubtleCrypto, 'SubtleCrypto');
     const subtle = Object.create(SubtleCrypto.prototype);
-    class Crypto { constructor() { throw new TypeError('Illegal constructor'); } get subtle() { return subtle; } }
+    class Crypto { constructor() { throw new TypeError('Illegal constructor'); } get subtle() { return subtleOn ? subtle : undefined; } }
     if (random) {
       define(Crypto.prototype, 'getRandomValues', function getRandomValues(array) {
         if (!(intArrays.some(C => array instanceof C))) throw new DOMException("Failed to execute 'getRandomValues' on 'Crypto': The provided ArrayBufferView is of type that is not an integer array.", 'TypeMismatchError');
@@ -2909,6 +2944,7 @@
     define(globalThis, 'Crypto', Crypto); define(globalThis, 'SubtleCrypto', SubtleCrypto); define(globalThis, 'CryptoKey', CryptoKey);
     return Object.create(Crypto.prototype);
   });
+  // ==== end haclweb ====
   for (const k of ['Crypto', 'SubtleCrypto', 'CryptoKey'])
     Object.defineProperty(globalThis, k, { configurable: true, enumerable: false, get() { void globalThis.crypto; const d = Object.getOwnPropertyDescriptor(globalThis, k); return d && 'value' in d ? d.value : undefined; } });
 
