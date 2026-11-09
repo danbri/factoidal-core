@@ -106,6 +106,12 @@ DOM_IMPORT(gpu_command) int32_t dom_gpu_command(int32_t op, int32_t unused, cons
  * and each argument as a u32 length and its bytes. The answer is the length of the result
  * bytes, written at `out` when they fit in `cap`; otherwise Lean keeps them and op 0 takes
  * them, so an operation runs once. Negative: an error code. */
+/* Zero a buffer that held key bytes or derived secrets. A memset just before free() is a
+ * dead store the compiler may remove; a call through a volatile function pointer is not
+ * (record docs/designissues/2026-11-09-crypto-boundary-security.md, finding F11). */
+static void *(*const volatile memset_v)(void *, int, size_t) = memset;
+static void zero_secret(void *p, size_t n) { if (n) memset_v(p, 0, n); }
+
 /* Appended to the pinned quickjs.c by tools/wasmvm/build-quickjs.sh
  * (quickjs/random-seed.c.inc): set the context's Math.random state. */
 void JS_SetRandomSeed(JSContext *ctx, uint64_t seed);
@@ -307,7 +313,7 @@ static JSValue n_api(JSContext *c, JSValueConst this_val, int argc, JSValueConst
    * the guest's own copies are zeroed once Lean has them (record
    * docs/designissues/2026-11-09-hacl-web-crypto.md, "Secret lifetime"). */
   int secret = op >= 30 && op < 50;
-  if (secret) memset(block, 0, total);
+  if (secret) zero_secret(block, total);
   free(block);
   if (n < 0) return JS_NewInt32(c, n);
   char *out = small;
@@ -318,7 +324,7 @@ static JSValue n_api(JSContext *c, JSValueConst this_val, int argc, JSValueConst
     if (m != n) { free(out); return JS_NewInt32(c, m < 0 ? m : -5); }
   }
   r = bytes ? JS_NewArrayBufferCopy(c, (const uint8_t *) out, (size_t) n) : JS_NewStringLen(c, out, (size_t) n);
-  if (secret) memset(out, 0, (size_t) n);
+  if (secret) zero_secret(out, (size_t) n);
   if (out != small) free(out);
   return r;
 }

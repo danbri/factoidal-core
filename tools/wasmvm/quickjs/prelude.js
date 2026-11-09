@@ -2780,6 +2780,7 @@
           for (const x of v) out.push('j:key_ops[]', domString(x));
         } else if (m === 'oth') {
           if (v === null || typeof v !== 'object') throw new TypeError('JsonWebKey: oth is not a sequence');
+          out.push('j:oth', ''); // Lean refuses a multi-prime RSA key (NotSupportedError); cryptosec F14
         } else out.push('j:' + m, domString(v));
       }
       return out;

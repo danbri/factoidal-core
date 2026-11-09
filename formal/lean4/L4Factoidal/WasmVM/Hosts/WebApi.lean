@@ -741,6 +741,8 @@ def hostPlan (st : KeyStore) (method : String) (a : Args) : Res (List (String ×
       if k.type != .privateKey then throw .invalidAccess
       let pk ← keyOf st p "public"
       if pk.type != .publicKey || pk.algo.alg != k.algo.alg then throw .invalidAccess
+      -- §24.3 deriveBits step 6: the curves must be the same (as natively; cryptosec F10).
+      if k.algo.alg == .ecdh && pk.algo.curve != k.algo.curve then throw .invalidAccess
     let len : JSON.Json := match a.str? "length" with | some "null" | none => .null | some x => numJ (x.toNat?.getD 0)
     return ([("op", .string "deriveBits"), ("algorithm", ← algJson st "deriveBits" p), ("baseKey", numJ h),
       ("length", len)], .bytes)
