@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>A Canvas 2D chart, drawn by Lean</title>
+<style>
+body{margin:0;padding:16px;font-size:15px;line-height:22px;color:#22303c;background:#f4f2ec}
+h1{margin:0;font-size:26px;line-height:34px;color:#2f5d50}
+p{margin:0;padding-top:6px}
+.note{color:#5d5a6b;font-size:13px;line-height:19px}
+.out{color:#2f5d50}
+canvas{display:block;width:480px;height:300px;margin-top:10px;border:1px solid #d8d2c2;background:white}
+code{color:#7a3e12}
+</style></head><body><main>
+<p><a href="index.html">Demo index</a></p>
+<h1>A Canvas 2D chart, drawn by Lean</h1>
+<p>Bars, a line and text labels drawn with <code>canvas.getContext('2d')</code> and animated with
+<code>requestAnimationFrame</code>. The page's calls go to Lean once a frame as one display list; Lean
+parses the colours and the font, builds the paths, shapes the labels and rasterises every pixel.</p>
+<canvas id="chart" width="480" height="300"></canvas>
+<p id="status" class="out">The script has not run.</p>
+<p class="note">Record: <code>docs/designissues/2026-11-08-canvas-2d.md</code>. Lean: <code>formal/lean4/L4Factoidal/PageCanvas/</code>.</p>
+<script>
+const canvas = document.getElementById('chart');
+const status = document.getElementById('status');
+const ctx = canvas.getContext('2d');
+const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug'];
+const base = [42, 55, 38, 70, 64, 81, 58, 90];
+const W = 480, H = 300, left = 48, right = 16, top = 36, bottom = 40;
+const plotW = W - left - right, plotH = H - top - bottom;
+const slot = plotW / months.length;
+let frames = 0;
+
+function values(t) {
+  return base.map((v, i) => v * (0.75 + 0.25 * Math.sin(t / 700 + i * 0.8)));
+}
+function y(v) { return top + plotH - v / 100 * plotH; }
+
+function draw(t) {
+  const v = values(t);
+  ctx.clearRect(0, 0, W, H);
+  // Grid and axis labels.
+  ctx.strokeStyle = '#e4dfd2';
+  ctx.lineWidth = 1;
+  ctx.fillStyle = '#5d5a6b';
+  ctx.font = '12px sans-serif';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  for (let g = 0; g <= 100; g += 25) {
+    ctx.beginPath();
+    ctx.moveTo(left, Math.round(y(g)) + 0.5);
+    ctx.lineTo(W - right, Math.round(y(g)) + 0.5);
+    ctx.stroke();
+    ctx.fillText(String(g), left - 6, y(g));
+  }
+  // Bars with a vertical gradient.
+  const grad = ctx.createLinearGradient(0, top, 0, top + plotH);
+  grad.addColorStop(0, '#4f9d84');
+  grad.addColorStop(1, '#a9d8c4');
+  ctx.fillStyle = grad;
+  months.forEach((m, i) => {
+    const x = left + i * slot + slot * 0.2;
+    ctx.fillRect(x, y(v[i]), slot * 0.6, top + plotH - y(v[i]));
+  });
+  // The line through the bar tops, with round joins, and dots.
+  ctx.strokeStyle = '#c0552f';
+  ctx.lineWidth = 3;
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  months.forEach((m, i) => {
+    const x = left + i * slot + slot / 2;
+    if (i === 0) ctx.moveTo(x, y(v[i] * 0.8)); else ctx.lineTo(x, y(v[i] * 0.8));
+  });
+  ctx.stroke();
+  ctx.fillStyle = '#c0552f';
+  months.forEach((m, i) => {
+    ctx.beginPath();
+    ctx.arc(left + i * slot + slot / 2, y(v[i] * 0.8), 4.5, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  // Month labels and the title.
+  ctx.fillStyle = '#22303c';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  months.forEach((m, i) => ctx.fillText(m, left + i * slot + slot / 2, top + plotH + 8));
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  ctx.font = 'bold 16px sans-serif';
+  ctx.fillText('Monthly visits (bars) and sign-ups (line)', left, 22);
+  // Axis.
+  ctx.strokeStyle = '#22303c';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(left, top);
+  ctx.lineTo(left, top + plotH);
+  ctx.lineTo(W - right, top + plotH);
+  ctx.stroke();
+}
+
+function frame(t) {
+  draw(t);
+  frames++;
+  if (frames === 1 || frames % 30 === 0) status.textContent = `Lean drew ${frames} frames.`;
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</main></body></html>

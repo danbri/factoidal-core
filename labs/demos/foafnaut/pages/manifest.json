@@ -332,6 +332,15 @@
    "doesNotShow": "Canvas drawing, streaming compilation; without the new engine the page says the script has not run"
   },
   {
+   "page": "canvas-chart.html",
+   "title": "A Canvas 2D chart, drawn by Lean",
+   "handwritten": true,
+   "needs": "page scripts and Canvas 2D (gpu_command ops 200 and 201, L4Factoidal.PageCanvas) in the engine and the guest",
+   "appRefused": "does not execute scripts",
+   "shows": "an animated bar chart with a gradient, a line with round joins, dots and text labels, drawn by getContext('2d') each animation frame; Lean rasterises every pixel",
+   "doesNotShow": "images from the network; without the new engine the canvas stays blank"
+  },
+  {
    "page": "svg-text-labels.html",
    "title": "SVG text labels",
    "handwritten": true,
