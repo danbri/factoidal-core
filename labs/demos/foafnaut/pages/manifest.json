@@ -364,6 +364,15 @@
    "handwritten": true,
    "issue": "https://github.com/danbri/factoidal/issues/1270",
    "shows": "SVG text drawn with the held fonts: names in Noto Sans and Noto Sans Armenian beside their circles, and a caption along an arc (since bebb931ba)"
+  },
+  {
+   "page": "search.html",
+   "title": "Open Index Search",
+   "handwritten": true,
+   "needs": "page scripts with network access: XMLHttpRequest and script-inserted scripts (https://github.com/danbri/factoidal-core/issues/374)",
+   "appRefused": "a host with no script engine refuses a page with scripts",
+   "shows": "a search box that queries seven open sources (Wikidata, Wikipedia, OpenAlex, Crossref, Open Library, the Internet Archive and Wikidata SPARQL) in parallel",
+   "doesNotShow": "results in Foafnaut yet: the sources fail until page scripts have network access"
   }
  ]
 }

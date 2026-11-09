@@ -1,0 +1,337 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<!-- Prototype and acceptance test for https://github.com/danbri/factoidal-core/issues/374 (network access for page scripts). Works in other browsers; in Foafnaut it needs fetch or XMLHttpRequest and script-inserted scripts. -->
+<title>Open Index Search</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: single column; search box, then one plain section per source. */
+:root { --bg:#fbfbf9; --fg:#1d2124; --dim:#5d666c; --line:#d9ddd8; --link:#1a4f9c; --bad:#a3302a; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#16191b; --fg:#e4e7e5; --dim:#99a2a7; --line:#30363a; --link:#8db4ef; --bad:#f08a80; color-scheme:dark; } }
+:root[data-theme="dark"] { --bg:#16191b; --fg:#e4e7e5; --dim:#99a2a7; --line:#30363a; --link:#8db4ef; --bad:#f08a80; color-scheme:dark; }
+body { background:var(--bg); color:var(--fg); font-family:Georgia, "Times New Roman", serif; line-height:1.45;
+  max-width:46em; margin:0 auto; padding-block:16px 40px;
+  padding-left:max(16px, env(safe-area-inset-left, 0px)); padding-right:max(16px, env(safe-area-inset-right, 0px)); }
+h1 { font-size:1.4em; margin:0 0 4px; }
+h2 { font-size:1em; margin:24px 0 6px; padding-bottom:3px; border-bottom:1px solid var(--line); }
+p.note, .meta, .src { color:var(--dim); font-size:0.88em; }
+a { color:var(--link); }
+input[type=text] { font-size:1em; padding:6px; width:60%; max-width:100%; }
+button { font-size:1em; padding:6px 10px; }
+ul { margin:0; padding-left:1.2em; }
+li { margin:0 0 8px; }
+.err { color:var(--bad); }
+.src { word-break:break-all; font-family:monospace; font-size:0.75em; }
+</style>
+
+<h1>Open Index Search</h1>
+<p class="note">Queries open, CORS-enabled endpoints in parallel: Wikidata (search API and SPARQL), Wikipedia, OpenAlex, Crossref, Open Library and the Internet Archive. Click "related" on a Wikidata result to follow its links in the graph.</p>
+
+<form id="f">
+  <input type="text" id="q" value="knowledge representation">
+  <button type="submit" id="go">Search</button>
+</form>
+
+<p id="csp" class="err" hidden></p>
+
+<div id="out"></div>
+
+<script>
+// Plain ES5: XMLHttpRequest, var, no arrow functions, no fetch, no modules.
+
+function esc(s) {
+  s = (s === undefined || s === null) ? "" : String(s);
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function link(url, text) {
+  return '<a href="' + esc(url) + '">' + esc(text || url) + '</a>';
+}
+
+// If the hosting page's Content-Security-Policy forbids outside requests, say so once at the top.
+var cspShown = false;
+if (document.addEventListener) {
+  document.addEventListener("securitypolicyviolation", function (e) {
+    if (cspShown) return;
+    cspShown = true;
+    var p = document.getElementById("csp");
+    p.innerHTML = "This page is being shown by a host whose Content-Security-Policy forbids requests to other sites (" +
+      esc(e.violatedDirective) + "). Nothing can load here. Open the saved .html file directly in a browser, or host it on your own site.";
+    p.hidden = false;
+  });
+}
+
+// JSONP fallback: loads the response as a script, so it works without CORS
+// on APIs that support a callback parameter (Wikimedia Action API, Internet Archive).
+var jsonpCount = 0;
+function getJSONP(url, param, ok, fail) {
+  var name = "jsonp_cb_" + (jsonpCount++);
+  var s = document.createElement("script");
+  var done = false;
+  var timer = setTimeout(function () { finish(); fail("No response (JSONP timed out)"); }, 15000);
+  function finish() {
+    done = true; clearTimeout(timer);
+    window[name] = function () {};
+    if (s.parentNode) s.parentNode.removeChild(s);
+  }
+  window[name] = function (d) { if (done) return; finish(); ok(d); };
+  s.onerror = function () { if (done) return; finish(); fail("Script request failed"); };
+  s.src = url.replace("&origin=*", "") + (url.indexOf("?") < 0 ? "?" : "&") + param + "=" + name;
+  document.getElementsByTagName("head")[0].appendChild(s);
+}
+
+// XHR first; if it is blocked and the source supports JSONP, retry that way.
+function getJSONAny(url, jsonpParam, ok, fail) {
+  getJSON(url, ok, function (msg) {
+    if (!jsonpParam) { fail(msg); return; }
+    getJSONP(url, jsonpParam, ok, function (msg2) { fail(msg + "; JSONP fallback: " + msg2); });
+  });
+}
+
+function getJSON(url, ok, fail) {
+  var x;
+  try { x = new XMLHttpRequest(); } catch (e) { fail("XMLHttpRequest not available"); return; }
+  x.open("GET", url, true);
+  x.setRequestHeader("Accept", "application/json, application/sparql-results+json");
+  x.onreadystatechange = function () {
+    if (x.readyState !== 4) return;
+    if (x.status >= 200 && x.status < 300) {
+      var data;
+      try { data = JSON.parse(x.responseText); } catch (e) { fail("Response was not JSON"); return; }
+      ok(data);
+    } else {
+      fail(x.status ? "HTTP " + x.status : "Request blocked (no CORS, offline, or not allowed)");
+    }
+  };
+  x.send(null);
+}
+
+// Each source: a name, a function building the URL, and a function turning JSON into list items.
+var SOURCES = [
+  {
+    id: "wd", name: "Wikidata entities", jsonp: "callback",
+    url: function (q) {
+      return "https://www.wikidata.org/w/api.php?action=wbsearchentities&format=json&language=en&limit=8&origin=*&search=" + encodeURIComponent(q);
+    },
+    items: function (d) {
+      var r = [], i, e;
+      for (i = 0; i < (d.search || []).length; i++) {
+        e = d.search[i];
+        r.push(link("https://www.wikidata.org/wiki/" + e.id, e.label) + " <span class=\"meta\">" + esc(e.id) + "</span>" +
+          (e.description ? "<br>" + esc(e.description) : "") +
+          ' <br><a href="#" onclick="related(\'' + esc(e.id) + '\');return false;">related</a>');
+      }
+      return r;
+    }
+  },
+  {
+    id: "wdsparql", name: "Wikidata SPARQL (MWAPI search, with type and Wikipedia page)",
+    url: function (q) {
+      var s = "SELECT ?item ?itemLabel ?itemDescription (SAMPLE(?typeLabel) AS ?type) (SAMPLE(?article) AS ?wp) WHERE {\n" +
+        "  SERVICE wikibase:mwapi {\n" +
+        "    bd:serviceParam wikibase:endpoint \"www.wikidata.org\" ; wikibase:api \"Generator\" ;\n" +
+        "      mwapi:generator \"search\" ; mwapi:gsrsearch " + JSON.stringify("inlabel:" + q) + " ; mwapi:gsrlimit \"8\" .\n" +
+        "    ?item wikibase:apiOutputItem mwapi:title .\n" +
+        "  }\n" +
+        "  OPTIONAL { ?item wdt:P31 ?t . ?t rdfs:label ?typeLabel . FILTER(LANG(?typeLabel) = \"en\") }\n" +
+        "  OPTIONAL { ?article schema:about ?item ; schema:isPartOf <https://en.wikipedia.org/> . }\n" +
+        "  SERVICE wikibase:label { bd:serviceParam wikibase:language \"en\" . }\n" +
+        "} GROUP BY ?item ?itemLabel ?itemDescription LIMIT 8";
+      return "https://query.wikidata.org/sparql?format=json&query=" + encodeURIComponent(s);
+    },
+    items: function (d) {
+      var r = [], i, b;
+      for (i = 0; i < d.results.bindings.length; i++) {
+        b = d.results.bindings[i];
+        r.push(link(b.item.value, b.itemLabel ? b.itemLabel.value : b.item.value) +
+          (b.type ? " <span class=\"meta\">(" + esc(b.type.value) + ")</span>" : "") +
+          (b.itemDescription ? "<br>" + esc(b.itemDescription.value) : "") +
+          (b.wp ? "<br>" + link(b.wp.value) : ""));
+      }
+      return r;
+    }
+  },
+  {
+    id: "wp", name: "Wikipedia (English) full text", jsonp: "callback",
+    url: function (q) {
+      return "https://en.wikipedia.org/w/api.php?action=query&list=search&format=json&srlimit=8&origin=*&srsearch=" + encodeURIComponent(q);
+    },
+    items: function (d) {
+      var r = [], i, e;
+      for (i = 0; i < d.query.search.length; i++) {
+        e = d.query.search[i];
+        // snippet contains HTML highlight spans; strip tags to keep output plain
+        r.push(link("https://en.wikipedia.org/wiki/" + encodeURIComponent(e.title.replace(/ /g, "_")), e.title) +
+          "<br>" + esc(e.snippet.replace(/<[^>]*>/g, "")) + "...");
+      }
+      return r;
+    }
+  },
+  {
+    id: "oa", name: "OpenAlex (scholarly works)",
+    url: function (q) {
+      return "https://api.openalex.org/works?per-page=8&search=" + encodeURIComponent(q);
+    },
+    items: function (d) {
+      var r = [], i, w, au, j;
+      for (i = 0; i < d.results.length; i++) {
+        w = d.results[i]; au = [];
+        for (j = 0; j < Math.min(3, (w.authorships || []).length); j++) au.push(w.authorships[j].author.display_name);
+        r.push(link(w.doi || w.id, w.display_name) +
+          "<br><span class=\"meta\">" + esc(au.join(", ")) + (w.publication_year ? " · " + w.publication_year : "") +
+          " · cited by " + esc(w.cited_by_count) + "</span>");
+      }
+      return r;
+    }
+  },
+  {
+    id: "cr", name: "Crossref (publication metadata)",
+    url: function (q) {
+      return "https://api.crossref.org/works?rows=8&select=DOI,title,container-title,issued,type&query=" + encodeURIComponent(q);
+    },
+    items: function (d) {
+      var r = [], i, w, yr;
+      for (i = 0; i < d.message.items.length; i++) {
+        w = d.message.items[i];
+        yr = (w.issued && w.issued["date-parts"] && w.issued["date-parts"][0]) ? w.issued["date-parts"][0][0] : "";
+        r.push(link("https://doi.org/" + w.DOI, (w.title && w.title[0]) || w.DOI) +
+          "<br><span class=\"meta\">" + esc((w["container-title"] && w["container-title"][0]) || w.type) + (yr ? " · " + yr : "") + "</span>");
+      }
+      return r;
+    }
+  },
+  {
+    id: "ol", name: "Open Library (books)",
+    url: function (q) {
+      return "https://openlibrary.org/search.json?limit=8&fields=key,title,author_name,first_publish_year&q=" + encodeURIComponent(q);
+    },
+    items: function (d) {
+      var r = [], i, b;
+      for (i = 0; i < d.docs.length; i++) {
+        b = d.docs[i];
+        r.push(link("https://openlibrary.org" + b.key, b.title) +
+          "<br><span class=\"meta\">" + esc((b.author_name || []).join(", ")) + (b.first_publish_year ? " · " + b.first_publish_year : "") + "</span>");
+      }
+      return r;
+    }
+  },
+  {
+    id: "ia", name: "Internet Archive (items)", jsonp: "callback",
+    url: function (q) {
+      return "https://archive.org/advancedsearch.php?rows=8&output=json&fl[]=identifier&fl[]=title&fl[]=mediatype&fl[]=year&q=" + encodeURIComponent(q);
+    },
+    items: function (d) {
+      var r = [], i, a;
+      for (i = 0; i < d.response.docs.length; i++) {
+        a = d.response.docs[i];
+        r.push(link("https://archive.org/details/" + a.identifier, a.title || a.identifier) +
+          "<br><span class=\"meta\">" + esc(a.mediatype) + (a.year ? " · " + a.year : "") + "</span>");
+      }
+      return r;
+    }
+  }
+];
+
+function section(id, title) {
+  var out = document.getElementById("out");
+  var s = document.getElementById("s-" + id);
+  if (!s) {
+    s = document.createElement("div");
+    s.id = "s-" + id;
+    out.appendChild(s);
+  }
+  s.innerHTML = "<h2>" + esc(title) + "</h2><div class=\"body\">Loading...</div>";
+  return s.getElementsByTagName("div")[0];
+}
+
+function show(box, url, list) {
+  var h = list.length ? "<ul><li>" + list.join("</li><li>") + "</li></ul>" : "<p class=\"meta\">No results.</p>";
+  box.innerHTML = h + "<p class=\"src\">" + link(url, "query URL") + "</p>";
+}
+
+function runSource(src, q) {
+  var box = section(src.id, src.name);
+  var url = src.url(q);
+  getJSONAny(url, src.jsonp, function (d) {
+    var list;
+    try { list = src.items(d); } catch (e) { box.innerHTML = "<p class=\"err\">Unexpected response shape: " + esc(e.message) + "</p>"; return; }
+    show(box, url, list);
+  }, function (msg) {
+    box.innerHTML = "<p class=\"err\">" + esc(msg) + "</p><p class=\"src\">" + link(url, "query URL") + "</p>";
+  });
+}
+
+function search(q) {
+  var i, rel = document.getElementById("s-rel");
+  if (rel) rel.parentNode.removeChild(rel);
+  for (i = 0; i < SOURCES.length; i++) runSource(SOURCES[i], q);
+}
+
+// Try each URL in turn; call ok with the first one that answers.
+function getJSONFirst(urls, ok, fail) {
+  var i = 0, errors = [];
+  function next() {
+    if (i >= urls.length) { fail(errors.join("; ")); return; }
+    var u = urls[i++];
+    getJSON(u.url, function (d) { ok(d, u); }, function (msg) { errors.push(u.name + ": " + msg); next(); });
+  }
+  next();
+}
+
+// Graph expansion: outgoing item-valued statements of one entity, via SPARQL.
+// Tries QLever first (fast, but a periodic copy of Wikidata), then the main Wikidata Query Service.
+function related(qid) {
+  var qlever = "PREFIX wd: <http://www.wikidata.org/entity/>\n" +
+    "PREFIX wikibase: <http://wikiba.se/ontology#>\n" +
+    "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n" +
+    "SELECT ?pLabel ?o ?oLabel WHERE {\n" +
+    "  wd:" + qid + " ?wdt ?o .\n" +
+    "  ?p wikibase:directClaim ?wdt .\n" +
+    "  ?p rdfs:label ?pLabel . FILTER(LANG(?pLabel) = \"en\")\n" +
+    "  ?o rdfs:label ?oLabel . FILTER(LANG(?oLabel) = \"en\")\n" +
+    "  FILTER(STRSTARTS(STR(?o), \"http://www.wikidata.org/entity/Q\"))\n" +
+    "} LIMIT 60";
+  var wdqs = "SELECT ?pLabel ?o ?oLabel WHERE {\n" +
+    "  wd:" + qid + " ?wdt ?o .\n" +
+    "  ?p wikibase:directClaim ?wdt .\n" +
+    "  FILTER(STRSTARTS(STR(?o), \"http://www.wikidata.org/entity/Q\"))\n" +
+    "  SERVICE wikibase:label { bd:serviceParam wikibase:language \"en\" . }\n" +
+    "} LIMIT 60";
+  var urls = [
+    { name: "QLever", url: "https://qlever.cs.uni-freiburg.de/api/wikidata?query=" + encodeURIComponent(qlever) },
+    { name: "Wikidata Query Service", url: "https://query.wikidata.org/sparql?format=json&query=" + encodeURIComponent(wdqs) }
+  ];
+  var out = document.getElementById("out");
+  var box = section("rel", "Related to " + qid + " (Wikidata statements)");
+  out.insertBefore(document.getElementById("s-rel"), out.firstChild);
+  getJSONFirst(urls, function (d, used) {
+    var r = [], i, b, id;
+    for (i = 0; i < d.results.bindings.length; i++) {
+      b = d.results.bindings[i];
+      id = b.o.value.replace("http://www.wikidata.org/entity/", "");
+      r.push(esc(b.pLabel.value) + ": " + link("https://www.wikidata.org/wiki/" + id, b.oLabel.value) +
+        ' <a href="#" onclick="related(\'' + esc(id) + '\');return false;">related</a>' +
+        ' <a href="#" onclick="setQuery(\'' + esc(b.oLabel.value.replace(/'/g, "")) + '\');return false;">search</a>');
+    }
+    show(box, used.url, r);
+    box.innerHTML += "<p class=\"meta\">Answered by " + esc(used.name) + ".</p>";
+  }, function (msg) {
+    box.innerHTML = "<p class=\"err\">" + esc(msg) + "</p>";
+  });
+  window.scrollTo(0, 0);
+}
+
+function setQuery(text) {
+  document.getElementById("q").value = text;
+  search(text);
+}
+
+document.getElementById("f").onsubmit = function (e) {
+  if (e && e.preventDefault) e.preventDefault();
+  var q = document.getElementById("q").value.replace(/^\s+|\s+$/g, "");
+  if (q) search(q);
+  return false;
+};
+
+search(document.getElementById("q").value);
+</script>
+
+</body></html>

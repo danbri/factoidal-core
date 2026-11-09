@@ -75,6 +75,13 @@ fail, tokenizer 6 fail, numbers in the status note) after its usage limit resets
 
 ## Do next
 
+**First for real sites: network access from page scripts,**
+https://github.com/danbri/factoidal-core/issues/374 (`fetch`, `XMLHttpRequest`, script-inserted
+scripts, and CORS enforced by the engine). The prototype and acceptance page is
+`labs/demos/foafnaut/pages/search.html` (Open Index Search): in Chrome it answers from seven open
+APIs; in Foafnaut its script runs and every source fails. `network_gaps_test.ts` is the expected
+failure. When search.html shows results, move it to "Start here" in `tools/build-demo-pages.py`.
+
 1. Read the log and land what passed. Land in the order the merge lane shows.
 2. Press frame cost and text-change layout (see above). Use `frameWork` counts and a
    cost test (batch 2 KR 4.3, 4.5).

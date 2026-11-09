@@ -47,7 +47,7 @@ BUILT_IN = {'foafnaut:graph': 'Interactive FOAF graph', 'foafnaut:wasm': 'WebAss
 START = ['foafnaut:graph', 'spinal-tap-sparql.html', 'shader-gallery.html', 'showcase.html',
          'showcase-dataviz.html', 'showcase-scripts.html']
 GROUPS = [
-    ('Pages with scripts', ['foaf-explorer.html', 'foaf-explorer-verified.html', 'canvas-chart.html', 'timers-and-clicks.html', 'webgpu-triangle.html',
+    ('Pages with scripts', ['search.html', 'foaf-explorer.html', 'foaf-explorer-verified.html', 'canvas-chart.html', 'timers-and-clicks.html', 'webgpu-triangle.html',
                             'webgl-triangle.html', 'wasm-mandelbrot.html', 'showcase-dataviz-script.html']),
     ('SVG and graphics', ['showcase-lettering.html', 'showcase-textpath.html', 'showcase-tables-svg.html', 'svg-gallery.html',
                           'svg-text-labels.html', 'solving-showcase.html', 'foaf-graph.html', 'svg-affine.html', 'svg-linear-paths.html']),
@@ -65,6 +65,7 @@ BLURBS = {
     'showcase.html': 'What the engine draws well, and what it does not draw yet.',
     'showcase-dataviz.html': 'Charts drawn in SVG, labels and all.',
     'showcase-scripts.html': 'Arabic, Hebrew, Devanagari, Chinese and more, in both directions.',
+    'search.html': 'Search seven open sources at once. A prototype: results need network access for page scripts, which is not built yet.',
     'foaf-explorer.html': 'A graph laid out by the page\'s own JavaScript; tap to bring in friends.',
     'foaf-explorer-verified.html': 'The same graph, each frame checked by WebAssembly proved in Lean to compute the overlap certificate.',
     'canvas-chart.html': 'An animated Canvas 2D chart.',
