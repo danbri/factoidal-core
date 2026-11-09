@@ -112,6 +112,58 @@ removal. `filesAffectedByDrop` in the report is the ranked to-do list. Only the
 first frame is drawn, so animated tests can not match yet. Results are in
 [the dated report](svg-tiny-pixels-20261107.json).
 
+## Whole-WPT score
+
+`wpt-score.py` measures Foafnaut's score over all of WPT the way wpt.fyi and
+Apple's EU browser-engine rule count it: subtests passed divided by the most
+subtests any browser runs on wpt.fyi (Chrome's count at the pinned WPT commit).
+It uses `testharness-run.ts --wpt-root DIR --list FILE`, which runs tests by
+their wpt.fyi names from any WPT checkout. That mode maps `.any.html`,
+`.window.html`, `.test262.html`, query variants (`?include=`, `?1-1000`) and
+`.sub.` pages as wptserve does. It counts worker, ShadowRealm and module variants
+as not run, and pages without testharness.js (reftests, crashtests) as not
+testharness. Run without `--list`, the runner's defaults and output are as
+before.
+
+```sh
+SCRATCH=$(mktemp -d)
+# 1. Chrome's wpt.fyi summary for the commit (summary_v2: name -> {s, c: [passed, total]}).
+#    Find the run at https://wpt.fyi/api/runs?sha=<commit>&product=chrome&label=master
+#    and save its summary_v2.json.gz, unzipped, as $SCRATCH/chrome.json.
+# 2. Draw the stratified sample (fixed seed; 25 names a stratum, the 5 largest always).
+python3 tests/browser-wpt/wpt-score.py sample --chrome $SCRATCH/chrome.json \
+  --out $SCRATCH/sample.json --list $SCRATCH/sample.list
+# 3. A blobless, shallow, sparse WPT checkout of just those files, their scripts,
+#    resources/, common/ and third_party/test262/harness/ (about 110 MB).
+git init $SCRATCH/wpt
+git -C $SCRATCH/wpt remote add origin https://github.com/web-platform-tests/wpt.git
+git -C $SCRATCH/wpt sparse-checkout init --no-cone
+git -C $SCRATCH/wpt fetch --depth 1 --filter=blob:none origin fea36e49ddda8a206a5d3489ac377c8b9f406af9
+python3 tests/browser-wpt/wpt-score.py sparse --wpt-root $SCRATCH/wpt --list $SCRATCH/sample.list
+# 4. Run (3 processes under nice; a test stalled for 300 s is recorded and skipped).
+python3 tests/browser-wpt/wpt-score.py run --list $SCRATCH/sample.list --dir $SCRATCH/run \
+  --wpt-root $SCRATCH/wpt --native-engine labs/demos/foafnaut/.build/web-render/engines/libweb-render.dylib
+# 5. Optionally run whole directories (a list of all their names) into another --dir,
+#    then score everything together.
+python3 tests/browser-wpt/wpt-score.py score --chrome $SCRATCH/chrome.json --sample $SCRATCH/sample.json \
+  --results $SCRATCH/run $SCRATCH/run-full --out tests/browser-wpt/wpt-score-$(date +%Y%m%d).json
+```
+
+[wpt-score-20261109.json](wpt-score-20261109.json) is the first such score, at
+WPT fea36e49dd with the release-equivalent native engine: 31,202 subtests
+measured (1.38% of 2,267,658), about 39,600 by extrapolation (95% range
+36,600 to 42,700, 1.61% to 1.88%). The sample of 5,898 names took 2 h 18 min
+in 3 processes. Its `notes` list the whole strata run, and two diagnostics that
+are not counted: Test262 run at top level, and the iframe documents and fuel
+bound that hold back dom/nodes and the html/dom reflection tests.
+
+The score file gives each test run (our passed and reported subtests, and
+Chrome's count), each stratum (measured, extrapolated and Chrome's subtests)
+and the totals: the measured lower bound, the extrapolated estimate with a 95%
+range, and their share of the denominator. Passed subtests are capped at
+Chrome's count for the same name. The method is described at the top of
+`wpt-score.py`.
+
 ## History and dashboard
 
 `tools/render-dashboard/run.py` runs these probes and the font suites, adds one

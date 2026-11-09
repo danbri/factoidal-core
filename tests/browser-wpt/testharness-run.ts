@@ -15,6 +15,20 @@
 //   deno run -A tests/browser-wpt/testharness-run.ts [--engine native|wasm|bench] [--script-engine quickjs|bubblepop] [--exclude a,b]
 //     [--native-engine DYLIB] [--quickjs-wasm FILE] [--dirs a,b] [--only SUBSTRING]
 //     [--out FILE] [--baseline FILE] [--bench EXE] [--instructions-per-ms N]
+//     [--wpt-root DIR --list FILE [--jsonl FILE] [--wpt-commit SHA] [--test262-inline]]
+//
+// --wpt-root and --list run any WPT checkout's tests by their wpt.fyi names, one a line
+// (`/dom/nodes/Node-cloneNode.html`, `/url/a.any.html?include=x`, `/x/y.window.html`,
+// `/third_party/test262/test/.../z.test262.html`). Each name is mapped to its file the
+// way wptserve maps it: `.any.html` and `.window.html` get their wrappers, the query
+// stays in the page's URL (`?include=`, `?1-1000` variants), `.sub.` pages get the
+// common wptserve substitutions. Names this engine cannot run are counted, not run:
+// worker, shared worker, service worker, ShadowRealm and module variants; pages without
+// testharness.js (reftests, crashtests, visual and manual tests). Test262 pages are
+// wptserve's: an outer testharness page whose test runs in an iframe; --test262-inline
+// instead runs the iframe's page itself as the top-level page (a diagnostic, not a WPT
+// result). --jsonl appends each case as it ends and skips names already there, so a
+// killed run resumes; with `--list`, only `--dirs` is ignored.
 //
 // --engine native (default): the engine library labs/demos/foafnaut/.build/web-render/
 // engines/libweb-render.dylib. wasm: the engine's Wasm build. bench: the same session
@@ -25,9 +39,9 @@
 import {dirname,join,resolve} from "node:path";
 import {fileURLToPath as fromFileUrl} from "node:url";
 
-const here=dirname(fromFileUrl(import.meta.url)),root=resolve(here,"../.."),
-  wpt=join(root,"third_party/testing/wpt-scripting");
 const args=Deno.args,opt=(name:string,fallback="")=>{const i=args.indexOf(name);return i>=0?args[i+1]:fallback;};
+const here=dirname(fromFileUrl(import.meta.url)),root=resolve(here,"../.."),
+  wpt=resolve(opt("--wpt-root",join(root,"third_party/testing/wpt-scripting")));
 const engineKind=opt("--engine","native");
 const scriptEngine=opt("--script-engine","quickjs");
 const quickjs=opt("--quickjs-wasm",join(Deno.env.get("HOME")??"","working/qjs-wasm/qjs-wasmvm.wasm"));
@@ -37,7 +51,7 @@ const dirs=opt("--dirs")?opt("--dirs").split(","):directories;
 const only=opt("--only");
 // --exclude a,b: files whose path holds one of these are counted SKIP ("excluded").
 const excluded=opt("--exclude")?opt("--exclude").split(","):[];
-const origin="http://web-platform.test";
+const origin="http://web-platform.test",secureOrigin="https://web-platform.test";
 // The script clock's rate (Hosts.Page.ScriptClock). A test's own timeouts (testharness.js
 // gives each file 10 s) assume a browser's speed; this engine runs many more instructions
 // for the same work, so at the engine's rate (100 000 a ms) script time alone would time
@@ -50,7 +64,7 @@ const statusNames=["PASS","FAIL","TIMEOUT","NOTRUN","PRECONDITION_FAILED"];
 const harnessNames=["OK","ERROR","TIMEOUT","PRECONDITION_FAILED"];
 
 type Subtest={name:string;status:string;message?:string|null};
-export type Case={file:string;harness:string;message?:string|null;subtests:Subtest[];ms?:number;instructions?:number;
+export type Case={file:string;harness:string;kind?:string;message?:string|null;subtests:Subtest[];ms?:number;instructions?:number;
   clock?:number;errors?:string[]};
 
 /** The tests of a directory: its own files that are testharness tests a window runs. */
@@ -101,9 +115,11 @@ const pageOf=(file:string)=>file.endsWith(".js")?file.replace(/\.js$/,".html"):f
 /** A script URL of the test origin as a file: our testharnessreport.js, else the pinned WPT file. */
 function scriptFile(url:string):string|undefined {
   const u=new URL(url);
-  if(u.origin!==origin)return undefined;
+  if(u.origin!==origin&&u.origin!==secureOrigin)return undefined;
   if(u.pathname==="/resources/testharnessreport.js")return join(here,"testharnessreport.js");
-  const path=join(wpt,decodeURIComponent(u.pathname));
+  // wptserve's one rewrite (tools/serve/serve.py `rewrites`).
+  const pathname=u.pathname==="/resources/WebIDLParser.js"?"/resources/webidl2/lib/webidl2.js":u.pathname;
+  const path=join(wpt,decodeURIComponent(pathname));
   return path.startsWith(wpt)?path:undefined;
 }
 
@@ -117,25 +133,125 @@ function resultOf(file:string,logs:string[]):Case {
   return {file,harness,...(message?{message}:{}),subtests};
 }
 
+// ---- tests named as wpt.fyi names them (--list) ---------------------------------------
+/** A wpt.fyi test name as this runner runs it: the page and its URL, or why it is not run. */
+export type Named={file:string;html?:string;url?:string;skip?:string;kind:string};
+const notRunVariants:[RegExp,string,string][]=[
+  [/\.any\.worker\.html$/,"worker","dedicated worker variant"],[/\.any\.sharedworker\.html$/,"worker","shared worker variant"],
+  [/\.any\.serviceworker\.html$/,"worker","service worker variant"],[/\.any\.worker-module\.html$/,"worker","module worker variant"],
+  [/\.any\.sharedworker-module\.html$/,"worker","module shared worker variant"],[/\.any\.serviceworker-module\.html$/,"worker","module service worker variant"],
+  [/\.any\.shadowrealm[a-z-]*\.html$/,"shadowrealm","ShadowRealm variant"],[/\.any\.window-module\.html$/,"module","module script variant"],
+  [/\.worker\.html$/,"worker","worker test"],[/\.test262-module\.html$/,"module","Test262 module test (module scripts)"]];
+const testharnessPage=/\.(html?|xhtml|xht|svg|xml)$/;
+/** wptserve's common `.sub.` substitutions, with the runner's one origin on ports 80 and 443. */
+export function substitute(text:string,query:string):string {
+  const get=new URLSearchParams(query);
+  return text.replace(/\{\{([^}]*)\}\}/g,(whole,expr:string)=>{
+    const e=expr.trim().replace(/^[a-z_]+:/,"");
+    if(/^(host|domains\[[^\]]*\]|hosts\[[^\]]*\]\[[^\]]*\])$/.test(e))return "web-platform.test";
+    if(/^ports\[http\]\[\d\]$/.test(e))return "80";
+    if(/^ports\[https\]\[\d\]$/.test(e))return "443";
+    if(/^ports\[(ws|wss|h2|webtransport-h3)\]\[\d\]$/.test(e))return "0";
+    let m=/^GET\[([^\]]*)\]$/.exec(e);if(m)return get.get(m[1])??"";
+    if(e==="location[host]"||e==="location[hostname]")return "web-platform.test";
+    if(e==="location[scheme]")return "http";
+    if(e==="uuid()")return crypto.randomUUID();
+    m=/^header_or_default\([^,]*,\s*(.*)\)$/.exec(e);if(m)return m[1].replace(/^["']|["']$/g,"");
+    return whole;
+  });
+}
+/** Test262's frontmatter: includes, flags and negative, as WPT's manifest parses them. */
+export function test262Record(text:string){
+  const fm=/\/\*---([\s\S]*?)---\*\//.exec(text)?.[1]??"";
+  const list=(key:string)=>{const m=new RegExp(`^${key}:\\s*\\[([^\\]]*)\\]`,"m").exec(fm);
+    if(m)return m[1].split(",").map(x=>x.trim()).filter(Boolean);
+    const b=new RegExp(`^${key}:\\s*\\n((?:\\s+-\\s*.*\\n?)*)`,"m").exec(fm);
+    return b?b[1].split("\n").map(x=>x.replace(/^\s*-\s*/,"").trim()).filter(Boolean):[];};
+  const neg=/^negative:\s*\n((?:\s+.*\n?)*)/m.exec(fm)?.[1]??"";
+  const negative=neg?{phase:/phase:\s*(\S+)/.exec(neg)?.[1]??"",type:/type:\s*(\S+)/.exec(neg)?.[1]??""}:null;
+  const flags=list("flags");
+  return {includes:list("includes"),flags,negative,isAsync:flags.includes("async")};
+}
+/** wptserve's Test262 test page (Test262WindowTestBaseHandler), the page its iframe loads. */
+function test262Inner(source:string,strict:boolean):string {
+  const r=test262Record(Deno.readTextFileSync(join(wpt,source)));
+  const meta=(r.negative?`<script>test262Negative('${r.negative.type}', '${r.negative.phase}')</script>\n`:"")+
+    (r.isAsync?"<script>test262IsAsync(true)</script>\n":"");
+  const scripts=r.includes.map(f=>`<script src="/third_party/test262/harness/${escapeHTML(f)}"></script>\n`).join("")+
+    (r.isAsync?'<script src="/third_party/test262/harness/doneprintHandle.js"></script>\n':"");
+  return `<!doctype html>\n<meta charset=utf-8>\n<title>Test</title>\n<script src="/resources/test262/test262-reporter.js"></script>\n`+
+    `<script src="/third_party/test262/harness/assert.js"></script>\n<script src="/third_party/test262/harness/sta.js"></script>\n`+
+    `<script src="/resources/test262/test262-provider.js"></script>\n${meta}${scripts}`+
+    `<body><script>test262Setup()</script>\n<script src="/${source}${strict?"?strict":""}" onerror="test262ScriptError()"></script></body>`;
+}
+const test262Outer=(inner:string)=>`<!doctype html>\n<meta charset=utf-8>\n<title>Test</title>\n`+
+  `<script src="/resources/testharness.js"></script>\n<script src="/resources/testharnessreport.js"></script>\n<script>\n`+
+  `const t = async_test(document.title);\nwindow.test262HarnessDone = t.step_func_done(function(status, message) {\n`+
+  `    if (status === 1) {\n        throw new Error(message || "Test failed");\n    } else if (status === 2) {\n`+
+  `        throw new Error(message || "Harness Error");\n    }\n});\n</script>\n`;
+/** The outer page as wptserve serves it (its iframe, `inner`, needs a document of its own),
+ * or with --test262-inline the inner page run at top level under the outer page's test. */
+function test262Page(source:string,id:string,strict:boolean):string {
+  const inner=test262Inner(source,strict);
+  if(!args.includes("--test262-inline"))
+    return test262Outer(inner)+`<div id=log></div>\n<iframe id="test262-iframe" src="/${escapeHTML(id.replace(/\.test262(\.strict)?\.html$/,strict?".test262-test.strict.html":".test262-test.html"))}"></iframe>`;
+  return test262Outer(inner)+inner.replace(/^<!doctype html>\n<meta charset=utf-8>\n<title>Test<\/title>\n/,"");
+}
+/** A wpt.fyi test name (with or without its leading slash) as a page to run, or why not. */
+export function named(name:string):Named {
+  const id=name.replace(/^\//,""),q=id.indexOf("?"),path=q>=0?id.slice(0,q):id,query=q>=0?id.slice(q):"";
+  const secure=/\.https\./.test(path)||path.includes("/https/");
+  const url=`${secure?secureOrigin:origin}/${id}`;
+  for(const [re,kind,why] of notRunVariants)if(re.test(path))return {file:id,kind,skip:why};
+  const exists=(f:string)=>{try{return Deno.statSync(join(wpt,f)).isFile;}catch{return false;}};
+  let m=/^(.*)\.(any|window)\.html$/.exec(path);
+  if(m){const source=`${m[1]}.${m[2]}.js`;
+    if(!exists(source))return {file:id,kind:"missing",skip:`not in the checkout: ${source}`};
+    return {file:id,kind:m[2],url,html:wrapper(source)};}
+  m=/^(.*)\.test262(\.strict)?\.html$/.exec(path);
+  if(m){const source=`${m[1]}.js`;
+    if(!exists(source))return {file:id,kind:"missing",skip:`not in the checkout: ${source}`};
+    return {file:id,kind:"test262",url,html:test262Page(source,id,!!m[2])};}
+  if(!exists(path))return {file:id,kind:"missing",skip:`not in the checkout: ${path}`};
+  if(!testharnessPage.test(path))return {file:id,kind:"other",skip:"not a testharness page"};
+  let text=Deno.readTextFileSync(join(wpt,path));
+  if(!text.includes("/resources/testharness.js"))
+    return {file:id,kind:"reftest",skip:/(-crash|crashtests\/)/.test(path)?"crashtest":/-manual\./.test(path)?"manual":"not testharness.js (reftest or visual)"};
+  if(/-manual\./.test(path))return {file:id,kind:"manual",skip:"manual"};
+  if(path.includes(".sub."))text=substitute(text,query);
+  return {file:id,kind:"testharness",url,html:text};
+}
+
 // ---- the engine backend -------------------------------------------------------------
-async function engineBackend():Promise<{run:(file:string)=>Promise<Case>;info:Record<string,unknown>}> {
+type Run=(file:string,page?:{html:string;url:string})=>Promise<Case>;
+async function engineBackend():Promise<{run:Run;info:Record<string,unknown>}> {
   const {loadHTML}=await import("../../labs/demos/foafnaut/native_html_engine.ts");
   const engine=await loadHTML(engineKind==="wasm"?undefined:opt("--native-engine",join(root,"labs/demos/foafnaut/.build/web-render/engines/libweb-render.dylib")));
   const info={...engine.scriptInfo(),scriptEngine};
   if(scriptEngine==="bubblepop"&&!(info.engines??[]).includes("bubblepop"))throw new Error("this engine has no BubblePopJS");
-  if(scriptEngine!=="bubblepop")engine.scriptLoad(await Deno.readFile(quickjs));
-  return {info,run:async(file)=>{
-    const html=file.endsWith(".js")?wrapper(file):await Deno.readTextFile(join(wpt,file));
-    const url=`${origin}/${pageOf(file)}`;
+  const guest=scriptEngine==="bubblepop"?undefined:await Deno.readFile(quickjs);
+  if(guest)engine.scriptLoad(guest);
+  // A page the engine refuses (a script over its size bound) can leave the session without
+  // its guest; load it again then, so one refused page does not fail every later one.
+  const start=(html:string,request:Record<string,unknown>)=>{
+    try{return engine.scriptSession(html,request);}
+    catch(e){if(!guest||!/no guest module/.test(String(e)))throw e;engine.scriptLoad(guest);return engine.scriptSession(html,request);}
+  };
+  return {info,run:async(file,page)=>{
+    const html=page?page.html:file.endsWith(".js")?wrapper(file):await Deno.readTextFile(join(wpt,file));
+    const url=page?page.url:`${origin}/${pageOf(file)}`;
     const t0=performance.now();
     const facts=engine.inspect(html,{url}) as unknown as {scripts:{nodeId:number;src:string;url:string}[]};
     const resources=[];
     for(const s of facts.scripts) {
       if(!s.src)continue;
       const path=scriptFile(s.url);
-      if(path)try{resources.push({nodeId:s.nodeId,source:await Deno.readTextFile(path)});}catch{/* not vendored: the page reports it */}
+      if(path)try{let source=await Deno.readTextFile(path);
+        if(path.includes(".sub."))source=substitute(source,new URL(s.url).search);
+        else if(/\/test262\/test\/.*\.js$/.test(path)&&new URL(s.url).search==="?strict")source='"use strict";\n'+source;
+        resources.push({nodeId:s.nodeId,source});}catch{/* not vendored: the page reports it */}
     }
-    let turn=engine.scriptSession(html,{action:"start",url,resources,commandLimit:200000,logLimit:100000,instructionsPerMs:scriptRate,
+    let turn=start(html,{action:"start",url,resources,commandLimit:200000,logLimit:100000,instructionsPerMs:scriptRate,
       ...(scriptEngine==="bubblepop"?{engine:"bubblepop"}:{})});
     const logs=[...turn.logs],errors=[...turn.errors];
     let instructions=turn.instructions;
@@ -147,7 +263,7 @@ async function engineBackend():Promise<{run:(file:string)=>Promise<Case>;info:Re
 }
 
 // ---- the bench backend (lake exe wasmvm-bench page) -----------------------------------
-async function benchBackend():Promise<{run:(file:string)=>Promise<Case>;info:Record<string,unknown>}> {
+async function benchBackend():Promise<{run:Run;info:Record<string,unknown>}> {
   const exe=opt("--bench",join(root,"formal/lean4/.lake/build/bin/wasmvm-bench"));
   const served=await Deno.makeTempDir({prefix:"wpt-served-"});
   for(const d of ["dom","html","common"])await Deno.symlink(join(wpt,d),join(served,d));
@@ -169,7 +285,39 @@ async function benchBackend():Promise<{run:(file:string)=>Promise<Case>;info:Rec
   },cleanup:()=>Deno.remove(served,{recursive:true})} as never;
 }
 
-if(import.meta.main) {
+/** --list: run wpt.fyi-named tests from any checkout, one JSON line a case to --jsonl. */
+async function runList(listFile:string) {
+  if(engineKind==="bench")throw new Error("--list runs on the engine (native or wasm), not the bench");
+  const names=(await Deno.readTextFile(listFile)).split("\n").map(l=>l.trim()).filter(l=>l&&!l.startsWith("#"));
+  const jsonl=opt("--jsonl"),done=new Set<string>(),cases:Case[]=[];
+  if(jsonl)try{for(const l of (await Deno.readTextFile(jsonl)).split("\n"))if(l.trim()){const c=JSON.parse(l) as Case;done.add(c.file);cases.push(c);}}catch{/* a new file */}
+  let backend:{run:Run;info:Record<string,unknown>}|undefined;
+  for(const name of names) {
+    const id=name.replace(/^\//,"");
+    if(done.has(id)||(only&&!id.includes(only)))continue;
+    console.error(`START ${id}`);
+    let c:Case;
+    try{
+      const t=named(id);
+      if(t.skip)c={file:id,harness:"SKIP",message:t.skip,kind:t.kind,subtests:[]};
+      else if(excluded.some(x=>id.includes(x)))c={file:id,harness:"SKIP",message:"excluded",kind:t.kind,subtests:[]};
+      else {backend??=await engineBackend();c={...await backend.run(id,{html:t.html!,url:t.url!}),kind:t.kind};}
+    }catch(e){c={file:id,harness:"ERROR",message:String((e as Error).message??e).slice(0,300),subtests:[]};}
+    cases.push(c);done.add(id);
+    if(jsonl)await Deno.writeTextFile(jsonl,JSON.stringify(c)+"\n",{append:true});
+    const pass=c.subtests.filter(s=>s.status==="PASS").length;
+    console.error(`${c.harness.padEnd(9)} ${String(pass).padStart(3)}/${String(c.subtests.length).padEnd(3)} ${id} ${c.ms??""}ms`);
+  }
+  const totals={files:cases.length,run:cases.filter(c=>c.harness!=="SKIP").length,subtests:cases.reduce((n,c)=>n+c.subtests.length,0),
+    pass:cases.reduce((n,c)=>n+c.subtests.filter(s=>s.status==="PASS").length,0)};
+  console.log(`total: ${totals.pass}/${totals.subtests} subtests pass in ${totals.run} pages run of ${totals.files}`);
+  if(opt("--out"))await Deno.writeTextFile(opt("--out"),JSON.stringify({format:"factoidal-wpt-testharness-v1",
+    measuredAt:new Date().toISOString(),wptRoot:wpt,wptCommit:opt("--wpt-commit")||null,engine:engineKind,scriptEngine,
+    info:backend?.info??null,totals,cases},null,1)+"\n");
+}
+
+if(import.meta.main&&opt("--list"))await runList(opt("--list"));
+else if(import.meta.main) {
   const backend=engineKind==="bench"?await benchBackend():await engineBackend();
   const cases:Case[]=[];
   const started=new Date().toISOString();
