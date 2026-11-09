@@ -13,6 +13,10 @@ def out (src : String) : List String :=
   | (.syntaxError m, _) => [m]
   | (.halted w, _) => ["halted " ++ w]
 
+-- The fuel is a scalar on wasm32 (below 2^31) and covers the largest step budget.
+theorem fuel_scalar_on_wasm32 : defaultFuel < 2 ^ 31 := by decide
+theorem fuel_covers_steps : (1000000000 : Nat) < defaultFuel := by decide
+
 #guard out "print(1 + 2)" == ["3"]
 #guard out "print(0.1 + 0.2, 1/3, 1e21, 1e-7, -0, 2**53 + 2)" ==
   ["0.30000000000000004 0.3333333333333333 1e+21 1e-7 0 9007199254740994"]

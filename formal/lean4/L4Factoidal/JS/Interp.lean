@@ -6281,8 +6281,12 @@ def freshHeapOf (host : Option H) (hostCall : H → Nat → Array HostArg → Na
 /-- A fresh realm with no host. -/
 def freshHeap : Heap := freshHeapOf none fun h _ _ _ => (h, .val .undef)
 
-/-- Fuel for one script: far more than any nesting or loop the step budget allows. -/
-def defaultFuel : Nat := 1 <<< 40
+/-- Fuel for one script: far more than any nesting or loop the step budget allows (the
+default budget `Heap.steps` is 10^9; `fuel_covers_steps` in `JS/Tests.lean`). It is the
+largest Nat that is a scalar on a 32-bit target (2^31 - 1, `LEAN_MAX_SMALL_NAT` on wasm32):
+each call and loop iteration subtracts one, and above it every subtraction allocates a big
+number in the Wasm engine (fib(24) 575 ms there with 2^40, 150 ms with this). -/
+def defaultFuel : Nat := 2147483647
 
 /-- GlobalDeclarationInstantiation (§16.1.7), then the statements. -/
 def runScriptM (s : Script) (checkpoint : Bool := true) : M Unit := do
