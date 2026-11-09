@@ -512,8 +512,7 @@ def subtle (s : State) (fs : Array ByteArray) : State × Except Int ByteArray :=
 
 /-- The private parts of an RSA key, handed to `WebHacl.wipe`. -/
 def wipeRsa : Option Crypto.WebCryptoKeys.RsaParts → Nat
-  | some r => Crypto.WebHacl.wipe r.d + Crypto.WebHacl.wipe r.p + Crypto.WebHacl.wipe r.q +
-      Crypto.WebHacl.wipe r.dp + Crypto.WebHacl.wipe r.dq + Crypto.WebHacl.wipe r.qi
+  | some r => r.d.wipe + r.p.wipe + r.q.wipe + r.dp.wipe + r.dq.wipe + r.qi.wipe
   | none => 0
 
 /-- Forget a key (prelude.js calls this when the page's CryptoKey is collected): its bytes
@@ -523,7 +522,7 @@ def dropKey (s : State) (h : Nat) : State × Nat :=
   | none => (s, 0)
   | some k =>
     let keys := s.keys.keys.erase h
-    let n := Crypto.WebHacl.wipe k.material + Crypto.WebHacl.wipe k.pub + wipeRsa k.rsa
+    let n := k.secret.wipe + Crypto.WebHacl.wipe k.pub + wipeRsa k.rsa
     -- The browser's CryptoKey goes when no Lean key (a structuredClone copy) still names it.
     let reqs := match k.host with
       | some hh => if keys.fold (fun found _ k' => found || k'.host == some hh) false then s.hostReqs
@@ -538,11 +537,11 @@ store, the session and the held state all still referenced each key while it ran
 answer is the number of bytes zeroed. -/
 def wipeAll (s : State) : Nat :=
   s.keys.keys.toList.foldl (fun n (_, k) =>
-    let m := k.material
+    let m := k.secret
     let p := k.pub
     let z := Crypto.WebHacl.zeroNow
-    n + z m + z p + (match k.rsa with
-      | some r => z r.d + z r.p + z r.q + z r.dp + z r.dq + z r.qi
+    n + m.zeroNow + z p + (match k.rsa with
+      | some r => r.d.zeroNow + r.p.zeroNow + r.q.zeroNow + r.dp.zeroNow + r.dq.zeroNow + r.qi.zeroNow
       | none => 0)) 0
 
 end Subtle
@@ -787,7 +786,7 @@ def hostKey (j : JSON.Json) : Option Key := do
   return { type, extractable := j.field? "extractable" == some (.bool true),
            algo := { alg := a, hash, length := jnat alg "length", curve := jstr alg "namedCurve",
                      modulusLength := jnat alg "modulusLength", publicExponent := pe },
-           usages := us, material := .empty, host := some h }
+           usages := us, host := some h }
 
 /-- The host answered request `id`: Lean makes the page's answer and names the callback to
 run (queued as a task by the caller). -/
@@ -879,7 +878,7 @@ def keyOpWork (alg : Alg) (k : Key) (hash : Option Crypto.WebHacl.HashAlg) (n : 
   let blk := (hash.map (·.block)).getD 64
   let rsaK := ((k.rsa.map (·.n.size)).getD 0)
   match alg with
-  | .hmac => hmacWork ((k.algo.hash.map (·.block)).getD 64) k.material.size n
+  | .hmac => hmacWork ((k.algo.hash.map (·.block)).getD 64) k.secret.size n
   | .ecdsa | .ecdh => hashWork blk n + p256Work
   | .ed25519 => hashWork 64 n + okpWork
   | .x25519 => okpWork
@@ -894,10 +893,10 @@ def deriveWork (k : Key) (p : Args) (len : Nat) : Nat :=
   let h := ((p.str? "hash").bind Crypto.WebHacl.HashAlg.ofName?).getD .sha512
   let blocks := max 1 ((len / 8 + h.size - 1) / h.size)
   match k.algo.alg with
-  | .hkdf => hmacWork h.block ((p.get? "salt").getD .empty).size k.material.size +
+  | .hkdf => hmacWork h.block ((p.get? "salt").getD .empty).size k.secret.size +
       blocks * hmacWork h.block h.size (h.size + ((p.get? "info").getD .empty).size + 1)
-  | .pbkdf2 => blocks * ((p.nat? "iterations").getD 0) * hmacWork h.block k.material.size (h.size + 4)
-      + blocks * hmacWork h.block k.material.size (((p.get? "salt").getD .empty).size + 4)
+  | .pbkdf2 => blocks * ((p.nat? "iterations").getD 0) * hmacWork h.block k.secret.size (h.size + 4)
+      + blocks * hmacWork h.block k.secret.size (((p.get? "salt").getD .empty).size + 4)
   | .ecdh => p256Work
   | .x25519 => okpWork
   | _ => 0

@@ -122,16 +122,16 @@ structure KeyAlgo where
   deriving Inhabited
 
 /-- The parts of an RSA key (RFC 8017 §3), big-endian with no leading zero octet: `n` and
-`e` always; the private parts empty in a public key. -/
+`e` always (public); the private parts `Secret`s, empty in a public key. -/
 structure RsaParts where
   n : ByteArray
   e : ByteArray
-  d : ByteArray := ByteArray.empty
-  p : ByteArray := ByteArray.empty
-  q : ByteArray := ByteArray.empty
-  dp : ByteArray := ByteArray.empty
-  dq : ByteArray := ByteArray.empty
-  qi : ByteArray := ByteArray.empty
+  d : Secret := Secret.empty
+  p : Secret := Secret.empty
+  q : Secret := Secret.empty
+  dp : Secret := Secret.empty
+  dq : Secret := Secret.empty
+  qi : Secret := Secret.empty
   deriving Inhabited
 
 /-- The public half of RSA parts. -/
@@ -143,14 +143,16 @@ structure Key where
   algo : KeyAlgo
   usages : List Usage
   /-- secret: the key bytes; private: the private scalar (P-256) or seed (Ed25519,
-  X25519), 32 bytes; public: the public key (P-256 `x ‖ y`, 64 bytes; OKP, 32). -/
-  material : ByteArray
-  /-- private: the public key of the pair (P-256 `x ‖ y`; OKP 32 bytes). -/
+  X25519), 32 bytes, or RSA's `d`; public: empty. A `Secret`: only `WebHacl`'s primitives
+  and the export of an extractable key read it. -/
+  secret : Secret := Secret.empty
+  /-- public: the public key (P-256 `x ‖ y`, 64 bytes; OKP, 32; RSA `n`); private: the
+  public key of the pair; secret: empty. Public bytes. -/
   pub : ByteArray := ByteArray.empty
-  /-- RSA keys: their parts (`material` is then `d`, or `n` for a public key). -/
+  /-- RSA keys: their parts (`secret` is then `d`, and `pub` is `n`). -/
   rsa : Option RsaParts := none
   /-- On the Hub: the browser's CryptoKey that holds this key (a number in the host's
-  table); Lean then holds no key bytes at all (`material` is empty). -/
+  table); Lean then holds no key bytes at all (`secret` is empty). -/
   host : Option Nat := none
   deriving Inhabited
 
@@ -296,7 +298,7 @@ def RsaParts.footprint (r : RsaParts) : Nat :=
 
 /-- The bytes a key holds in the store. -/
 def Key.footprint (k : Key) : Nat :=
-  k.material.size + k.pub.size + (k.rsa.map RsaParts.footprint).getD 0 + k.algo.publicExponent.size
+  k.secret.size + k.pub.size + (k.rsa.map RsaParts.footprint).getD 0 + k.algo.publicExponent.size
 
 def KeyStore.add (s : KeyStore) (k : Key) : Res (KeyStore × Nat) :=
   if s.keys.size ≥ maxKeys || s.bytes + k.footprint > maxStoreBytes then .error .quota else
@@ -530,7 +532,7 @@ def jwkCommonOut (k : Key) : List (String × JwkVal) :=
 structure Made where
   type : KeyType
   algo : KeyAlgo
-  material : ByteArray
+  secret : Secret := Secret.empty
   pub : ByteArray := ByteArray.empty
   rsa : Option RsaParts := none
 
@@ -566,7 +568,7 @@ def importEc (alg : Alg) (format : String) (data : ByteArray) (j : Args) (curve 
         pure (ByteArray.mk key.toArray)
       else do haveCurve curve; pure data
     let some xy := decodePoint? point | throw .data
-    return { type := .publicKey, algo := { alg, curve }, material := xy }
+    return { type := .publicKey, algo := { alg, curve }, pub := xy }
   | "pkcs8" =>
     checkUsages privU us
     let some (oid, params, pk) := readPkcs8 data.toList | throw .data
@@ -603,7 +605,7 @@ def importEc (alg : Alg) (format : String) (data : ByteArray) (j : Args) (curve 
       match decodePoint? g with
       | some gxy => if gxy != xy then throw .data
       | none => throw .data
-    return { type := .privateKey, algo := { alg, curve }, material := d, pub := xy }
+    return { type := .privateKey, algo := { alg, curve }, secret := Secret.ofBytes d, pub := xy }
   | "jwk" =>
     let hasD := j.has "d"
     checkUsages (if hasD then privU else pubU) us
@@ -627,8 +629,8 @@ def importEc (alg : Alg) (format : String) (data : ByteArray) (j : Args) (curve 
       if d.size != 32 || !p256ValidPrivate d then throw .data
       let some pxy := p256Public? d | throw .data
       if pxy != xy then throw .data
-      return { type := .privateKey, algo := { alg, curve }, material := d, pub := xy }
-    return { type := .publicKey, algo := { alg, curve }, material := xy }
+      return { type := .privateKey, algo := { alg, curve }, secret := Secret.ofBytes d, pub := xy }
+    return { type := .publicKey, algo := { alg, curve }, pub := xy }
   | _ => throw .notSupported
 
 /-- Ed25519 and X25519 (the secure curves "import key" steps). -/
@@ -642,7 +644,7 @@ def importOkp (alg : Alg) (format : String) (data : ByteArray) (j : Args) (us : 
     let some (oid, params, key) := readSpki data.toList | throw .data
     if oid != okpOid alg || params.isSome then throw .data
     if key.length != 32 then throw .data
-    return { type := .publicKey, algo := { alg }, material := ByteArray.mk key.toArray }
+    return { type := .publicKey, algo := { alg }, pub := ByteArray.mk key.toArray }
   | "pkcs8" =>
     checkUsages privU us
     let some (oid, params, pk) := readPkcs8 data.toList | throw .data
@@ -651,11 +653,11 @@ def importOkp (alg : Alg) (format : String) (data : ByteArray) (j : Args) (us : 
     if sk.length != 32 then throw .data
     let sk := ByteArray.mk sk.toArray
     let some pub := okpPublic? alg sk | throw .data
-    return { type := .privateKey, algo := { alg }, material := sk, pub }
+    return { type := .privateKey, algo := { alg }, secret := Secret.ofBytes sk, pub }
   | "raw" | "raw-public" =>
     checkUsages pubU us
     if data.size != 32 then throw .data
-    return { type := .publicKey, algo := { alg }, material := data }
+    return { type := .publicKey, algo := { alg }, pub := data }
   | "jwk" =>
     let hasD := j.has "d"
     checkUsages (if hasD then privU else pubU) us
@@ -672,8 +674,8 @@ def importOkp (alg : Alg) (format : String) (data : ByteArray) (j : Args) (us : 
       if d.size != 32 then throw .data
       let some pub := okpPublic? alg d | throw .data
       if pub != x then throw .data
-      return { type := .privateKey, algo := { alg }, material := d, pub }
-    return { type := .publicKey, algo := { alg }, material := x }
+      return { type := .privateKey, algo := { alg }, secret := Secret.ofBytes d, pub }
+    return { type := .publicKey, algo := { alg }, pub := x }
   | _ => throw .notSupported
 
 def hmacJwkAlg (h : HashAlg) : String :=
@@ -689,7 +691,7 @@ def importSecret (alg : Alg) (format : String) (data : ByteArray) (j : Args) (p 
   match alg with
   | .hkdf | .pbkdf2 =>
     if extractable then throw .syntax
-    return { type := .secret, algo := { alg }, material := data }
+    return { type := .secret, algo := { alg }, secret := Secret.ofBytes data }
   | .hmac =>
     let some h := (p.str? "hash").bind HashAlg.ofName? | throw .notSupported
     let raw ← match format with
@@ -707,7 +709,7 @@ def importSecret (alg : Alg) (format : String) (data : ByteArray) (j : Args) (p 
     let len ← match p.nat? "length" with
       | some l => if l > bits || l ≤ bits - 8 then throw .data else pure l
       | none => pure bits
-    return { type := .secret, algo := { alg, hash := some h, length := len }, material := raw }
+    return { type := .secret, algo := { alg, hash := some h, length := len }, secret := Secret.ofBytes raw }
   | .chacha =>
     let raw ← match format with
       | "raw" | "raw-secret" => pure data
@@ -720,7 +722,7 @@ def importSecret (alg : Alg) (format : String) (data : ByteArray) (j : Args) (p 
         pure k
       | _ => throw .notSupported
     if raw.size != 32 then throw .data
-    return { type := .secret, algo := { alg }, material := raw }
+    return { type := .secret, algo := { alg }, secret := Secret.ofBytes raw }
   | _ => throw .notSupported
 
 /-! ## RSA keys (RFC 8017 Appendix A.1, RFC 5280 §4.1, RFC 7518 §6.3) -/
@@ -767,9 +769,9 @@ def readUInts (c : List UInt8) (n : Nat) : Option (List ByteArray) := Id.run do
 
 def rsaPublicDer (r : RsaParts) : List UInt8 := tlv 0x30 (derUInt r.n ++ derUInt r.e)
 
-def rsaPrivateDer (r : RsaParts) : List UInt8 :=
-  tlv 0x30 (tlv 0x02 [0] ++ derUInt r.n ++ derUInt r.e ++ derUInt r.d ++ derUInt r.p ++ derUInt r.q ++
-    derUInt r.dp ++ derUInt r.dq ++ derUInt r.qi)
+def rsaPrivateDer (n e d p q dp dq qi : ByteArray) : List UInt8 :=
+  tlv 0x30 (tlv 0x02 [0] ++ derUInt n ++ derUInt e ++ derUInt d ++ derUInt p ++ derUInt q ++
+    derUInt dp ++ derUInt dq ++ derUInt qi)
 
 /-- The RSA keys this engine can use: moduli of 1024 to 4096 bits whose octets fill
 whole 64-bit limbs (HACL*'s Hacl_Bignum64), and an odd public exponent above 1. -/
@@ -795,7 +797,7 @@ def importRsa (alg : Alg) (format : String) (data : ByteArray) (j : Args) (p : A
     -- HACL*'s PSS is SHA-2 only.
     if alg == .rsaPss && h == .sha1 then throw .notSupported
     let algo : KeyAlgo := { alg, hash := some h, modulusLength := bitLength r.n, publicExponent := r.e }
-    pure ({ type := t, algo, material := if t == .privateKey then r.d else r.n, rsa := some r } : Made)
+    pure ({ type := t, algo, secret := if t == .privateKey then r.d else Secret.empty, pub := r.n, rsa := some r } : Made)
   match format with
   | "spki" =>
     checkUsages pubU us
@@ -813,7 +815,8 @@ def importRsa (alg : Alg) (format : String) (data : ByteArray) (j : Args) (p : A
     let some (seq, []) := expect 0x30 pk | throw .data
     let some [v, n, e, d, p', q, dp, dq, qi] := readUInts seq 9 | throw .data
     if v.size != 0 then throw .data
-    made .privateKey { n, e, d, p := p', q, dp, dq, qi }
+    let sec := Secret.ofBytes
+    made .privateKey { n, e, d := sec d, p := sec p', q := sec q, dp := sec dp, dq := sec dq, qi := sec qi }
   | "jwk" =>
     let hasD := j.has "d"
     checkUsages (if hasD then privU else pubU) us
@@ -827,7 +830,9 @@ def importRsa (alg : Alg) (format : String) (data : ByteArray) (j : Args) (p : A
     let e ← b "e"
     if hasD then
       if j.has "oth" then throw .notSupported
-      made .privateKey { n, e, d := ← b "d", p := ← b "p", q := ← b "q", dp := ← b "dp", dq := ← b "dq", qi := ← b "qi" }
+      let sec := Secret.ofBytes
+      let (d, p, q, dp, dq, qi) := (← b "d", ← b "p", ← b "q", ← b "dp", ← b "dq", ← b "qi")
+      made .privateKey { n, e, d := sec d, p := sec p, q := sec q, dp := sec dp, dq := sec dq, qi := sec qi }
     else made .publicKey { n, e }
   | _ => throw .notSupported
 
@@ -853,7 +858,7 @@ def importMade (algName : String) (p : Args) (format : String) (data : ByteArray
 the key takes `extractable` and the usages. -/
 def finishKey (m : Made) (extractable : Bool) (us : List Usage) : Res Key :=
   if (m.type == .secret || m.type == .privateKey) && us.isEmpty then .error .syntax
-  else .ok { type := m.type, extractable, algo := m.algo, usages := us, material := m.material, pub := m.pub, rsa := m.rsa }
+  else .ok { type := m.type, extractable, algo := m.algo, usages := us, secret := m.secret, pub := m.pub, rsa := m.rsa }
 
 /-- §14.3.9 importKey after normalization. -/
 def importKey (algName : String) (p : Args) (format : String) (data : ByteArray) (j : Args)
@@ -872,57 +877,60 @@ def exportBody (k : Key) (format : String) : Res Exported := do
   match alg with
   | .ecdsa | .ecdh =>
     match format, k.type with
-    | "spki", .publicKey => return .bytes (ByteArray.mk (spkiOf oidEcPublicKey (tlv 0x06 oidP256) (uncompressed k.material).toList).toArray)
-    | "raw", .publicKey | "raw-public", .publicKey => return .bytes (uncompressed k.material)
+    | "spki", .publicKey => return .bytes (ByteArray.mk (spkiOf oidEcPublicKey (tlv 0x06 oidP256) (uncompressed k.pub).toList).toArray)
+    | "raw", .publicKey | "raw-public", .publicKey => return .bytes (uncompressed k.pub)
     | "pkcs8", .privateKey =>
-      let ec := tlv 0x30 (tlv 0x02 [1] ++ tlv 0x04 k.material.toList ++
+      let ec := tlv 0x30 (tlv 0x02 [1] ++ tlv 0x04 k.secret.revealForExport.toList ++
         tlv 0xa1 (tlv 0x03 (0 :: (uncompressed k.pub).toList)))
       return .bytes (ByteArray.mk (pkcs8Of oidEcPublicKey (tlv 0x06 oidP256) ec).toArray)
     | "jwk", t =>
-      let xy := if t == .privateKey then k.pub else k.material
+      let xy := k.pub
       let base := [("kty", JwkVal.str "EC"), ("crv", .str k.algo.curve),
         ("x", .str (b64 (xy.extract 0 32))), ("y", .str (b64 (xy.extract 32 64)))]
-      let d := if t == .privateKey then [("d", JwkVal.str (b64 k.material))] else []
+      let d := if t == .privateKey then [("d", JwkVal.str (b64 k.secret.revealForExport))] else []
       return .jwk (base ++ d ++ jwkCommonOut k)
     | "spki", _ | "raw", _ | "raw-public", _ | "pkcs8", _ => throw .invalidAccess
     | _, _ => throw .notSupported
   | .ed25519 | .x25519 =>
     match format, k.type with
-    | "spki", .publicKey => return .bytes (ByteArray.mk (spkiOf (okpOid alg) [] k.material.toList).toArray)
-    | "raw", .publicKey | "raw-public", .publicKey => return .bytes k.material
-    | "pkcs8", .privateKey => return .bytes (ByteArray.mk (pkcs8Of (okpOid alg) [] (tlv 0x04 k.material.toList)).toArray)
+    | "spki", .publicKey => return .bytes (ByteArray.mk (spkiOf (okpOid alg) [] k.pub.toList).toArray)
+    | "raw", .publicKey | "raw-public", .publicKey => return .bytes k.pub
+    | "pkcs8", .privateKey => return .bytes (ByteArray.mk (pkcs8Of (okpOid alg) [] (tlv 0x04 k.secret.revealForExport.toList)).toArray)
     | "jwk", t =>
-      let x := if t == .privateKey then k.pub else k.material
+      let x := k.pub
       let base := [("kty", JwkVal.str "OKP"), ("crv", .str alg.name), ("x", .str (b64 x))]
-      let d := if t == .privateKey then [("d", JwkVal.str (b64 k.material))] else []
+      let d := if t == .privateKey then [("d", JwkVal.str (b64 k.secret.revealForExport))] else []
       let a := if alg == .ed25519 then [("alg", JwkVal.str "Ed25519")] else []
       return .jwk (base ++ d ++ a ++ jwkCommonOut k)
     | "spki", _ | "raw", _ | "raw-public", _ | "pkcs8", _ => throw .invalidAccess
     | _, _ => throw .notSupported
   | .hmac =>
     match format with
-    | "raw" | "raw-secret" => return .bytes k.material
+    | "raw" | "raw-secret" => return .bytes k.secret.revealForExport
     | "jwk" =>
       let a := match k.algo.hash with | some h => [("alg", JwkVal.str (hmacJwkAlg h))] | none => []
-      return .jwk ([("kty", JwkVal.str "oct"), ("k", .str (b64 k.material))] ++ a ++ jwkCommonOut k)
+      return .jwk ([("kty", JwkVal.str "oct"), ("k", .str (b64 k.secret.revealForExport))] ++ a ++ jwkCommonOut k)
     | _ => throw .notSupported
   | .chacha =>
     match format with
-    | "raw" | "raw-secret" => return .bytes k.material
-    | "jwk" => return .jwk ([("kty", JwkVal.str "oct"), ("k", .str (b64 k.material)), ("alg", .str "C20P")] ++ jwkCommonOut k)
+    | "raw" | "raw-secret" => return .bytes k.secret.revealForExport
+    | "jwk" => return .jwk ([("kty", JwkVal.str "oct"), ("k", .str (b64 k.secret.revealForExport)), ("alg", .str "C20P")] ++ jwkCommonOut k)
     | _ => throw .notSupported
   | .rsaPkcs1 | .rsaPss | .rsaOaep =>
-    let r := k.rsa.getD { n := k.material, e := k.algo.publicExponent }
+    let r := k.rsa.getD { n := k.pub, e := k.algo.publicExponent }
     match format, k.type with
     | "spki", .publicKey =>
       return .bytes (ByteArray.mk (spkiOf oidRsaEncryption [0x05, 0x00] (rsaPublicDer r)).toArray)
     | "pkcs8", .privateKey =>
-      return .bytes (ByteArray.mk (pkcs8Of oidRsaEncryption [0x05, 0x00] (rsaPrivateDer r)).toArray)
+      return .bytes (ByteArray.mk (pkcs8Of oidRsaEncryption [0x05, 0x00] (rsaPrivateDer r.n r.e
+        r.d.revealForExport r.p.revealForExport r.q.revealForExport r.dp.revealForExport r.dq.revealForExport
+        r.qi.revealForExport)).toArray)
     | "jwk", t =>
       let base := [("kty", JwkVal.str "RSA"), ("n", .str (b64 r.n)), ("e", .str (b64 r.e))]
       let priv := if t == .privateKey then
-          [("d", JwkVal.str (b64 r.d)), ("p", .str (b64 r.p)), ("q", .str (b64 r.q)), ("dp", .str (b64 r.dp)),
-           ("dq", .str (b64 r.dq)), ("qi", .str (b64 r.qi))] else []
+          [("d", JwkVal.str (b64 r.d.revealForExport)), ("p", .str (b64 r.p.revealForExport)),
+           ("q", .str (b64 r.q.revealForExport)), ("dp", .str (b64 r.dp.revealForExport)),
+           ("dq", .str (b64 r.dq.revealForExport)), ("qi", .str (b64 r.qi.revealForExport))] else []
       let a := match k.algo.hash with | some h => [("alg", JwkVal.str (rsaJwkAlg alg h))] | none => []
       return .jwk (base ++ priv ++ a ++ jwkCommonOut k)
     | "spki", _ | "pkcs8", _ => throw .invalidAccess
@@ -978,12 +986,12 @@ def generateKey (algName : String) (p : Args) (extractable : Bool) (us : List Us
     let bytes := if len % 8 == 0 then bytes else
       bytes.set! (n - 1) (bytes.get! (n - 1) &&& (0xFF <<< (8 - len % 8).toUInt8))
     if us.isEmpty then throw .syntax
-    return .one { type := .secret, extractable, algo := { alg, hash := some h, length := len }, usages := us, material := bytes }
+    return .one { type := .secret, extractable, algo := { alg, hash := some h, length := len }, usages := us, secret := Secret.ofBytes bytes }
   | .chacha =>
     checkUsages (allowedUsages .chacha .secret) us
     if us.isEmpty then throw .syntax
     if rand.size < 32 then throw .operation
-    return .one { type := .secret, extractable, algo := { alg }, usages := us, material := rand.extract 0 32 }
+    return .one { type := .secret, extractable, algo := { alg }, usages := us, secret := Secret.ofBytes (rand.extract 0 32) }
   | .rsaPkcs1 | .rsaPss | .rsaOaep =>
     checkUsages ((allowedUsages alg .publicKey) ++ (allowedUsages alg .privateKey)) us
     -- §20.7 step 2 "generate an RSA key pair": an exponent other than 3 or 65537, or a
@@ -1012,8 +1020,8 @@ def generateKey (algName : String) (p : Args) (extractable : Bool) (us : List Us
     let pubUs := us.filter (allowedUsages alg .publicKey).contains
     let privUs := us.filter (allowedUsages alg .privateKey).contains
     if privUs.isEmpty then throw .syntax
-    return .pair { type := .publicKey, extractable := true, algo, usages := pubUs, material := pub }
-      { type := .privateKey, extractable, algo, usages := privUs, material := sk, pub }
+    return .pair { type := .publicKey, extractable := true, algo, usages := pubUs, pub }
+      { type := .privateKey, extractable, algo, usages := privUs, secret := Secret.ofBytes sk, pub }
   | _ => throw .notSupported
 
 /-! ## Sign, verify, derive, encrypt (§14.3.1-8) -/
@@ -1034,30 +1042,30 @@ def sign (algName : String) (p : Args) (k : Key) (data : ByteArray) (rand : Rand
   match k.algo.alg with
   | .hmac =>
     let some h := k.algo.hash | throw .operation
-    return (haclHash h).mac k.material data
+    return k.secret.hmac h data
   | .ecdsa =>
     if k.type != .privateKey then throw .invalidAccess
     let some h := (p.str? "hash").bind HashAlg.ofName? | throw .notSupported
     let e := p256MsgRep (hashFast h data)
-    let sig := (List.range 8).findSome? fun i => p256Sign? k.material e (rand.extract (32 * i) (32 * i + 32))
+    let sig := (List.range 8).findSome? fun i => k.secret.p256Sign? e (Secret.ofBytes (rand.extract (32 * i) (32 * i + 32)))
     let some s := sig | throw .operation
     return s
   | .ed25519 =>
     if k.type != .privateKey then throw .invalidAccess
-    let some s := ed25519Sign? k.material data | throw .operation
+    let some s := k.secret.ed25519Sign? data | throw .operation
     return s
   | .rsaPkcs1 =>
     if k.type != .privateKey then throw .invalidAccess
     let (some r, some h) := (k.rsa, k.algo.hash) | throw .operation
     let some em := JOSE.Pkcs1.emsaEncodeGen (digestInfo h) h.size (hashFast h data).toList r.n.size | throw .operation
-    let some s := rsaPrivate? r.n r.d (ByteArray.mk em.toArray) | throw .operation
+    let some s := Secret.rsaPrivate? r.n r.d (ByteArray.mk em.toArray) | throw .operation
     return s
   | .rsaPss =>
     if k.type != .privateKey then throw .invalidAccess
     let (some r, some h) := (k.rsa, k.algo.hash) | throw .operation
     let sl := (p.nat? "saltLength").getD 0
     if rand.size < sl then throw .operation
-    let some s := rsaPssSign? h r.n r.e r.d (rand.extract 0 sl) data | throw .operation
+    let some s := Secret.rsaPssSign? h r.n r.e r.d (rand.extract 0 sl) data | throw .operation
     return s
   | _ => throw .invalidAccess
 
@@ -1067,15 +1075,15 @@ def verify (algName : String) (p : Args) (k : Key) (sig data : ByteArray) : Res 
   | .hmac =>
     let some h := k.algo.hash | throw .operation
     -- HACL*'s HMAC, then the constant-time comparison in C.
-    return ctEq ((haclHash h).mac k.material data) sig
+    return ctEq (k.secret.hmac h data) sig
   | .ecdsa =>
     if k.type != .publicKey then throw .invalidAccess
     let some h := (p.str? "hash").bind HashAlg.ofName? | throw .notSupported
-    return p256Verify k.material (p256MsgRep (hashFast h data)) sig
+    return p256Verify k.pub (p256MsgRep (hashFast h data)) sig
   | .ed25519 =>
     if k.type != .publicKey then throw .invalidAccess
-    if ed25519IsSmallOrder k.material || (sig.size == 64 && ed25519IsSmallOrder (sig.extract 0 32)) then return false
-    return ed25519Verify k.material data sig
+    if ed25519IsSmallOrder k.pub || (sig.size == 64 && ed25519IsSmallOrder (sig.extract 0 32)) then return false
+    return ed25519Verify k.pub data sig
   | .rsaPkcs1 =>
     if k.type != .publicKey then throw .invalidAccess
     let (some r, some h) := (k.rsa, k.algo.hash) | throw .operation
@@ -1105,7 +1113,7 @@ def deriveBits (algName : String) (p : Args) (k : Key) (length : Option Nat) (st
     let some h := (p.str? "hash").bind HashAlg.ofName? | throw .notSupported
     let some len := length | throw .operation
     if len % 8 != 0 then throw .operation
-    let some out := WebCrypto.hkdf (haclHash h) k.material ((p.get? "salt").getD .empty)
+    let some out := k.secret.hkdf h ((p.get? "salt").getD .empty)
       ((p.get? "info").getD .empty) (len / 8) | throw .operation
     return out
   | .pbkdf2 =>
@@ -1114,15 +1122,15 @@ def deriveBits (algName : String) (p : Args) (k : Key) (length : Option Nat) (st
     if len % 8 != 0 then throw .operation
     let it := (p.nat? "iterations").getD 0
     if it == 0 then throw .operation
-    return WebCrypto.pbkdf2 (haclHash h) k.material ((p.get? "salt").getD .empty) it (len / 8)
+    return k.secret.pbkdf2 h ((p.get? "salt").getD .empty) it (len / 8)
   | .ecdh | .x25519 =>
     if k.type != .privateKey then throw .invalidAccess
     let pk ← keyOf store p "public"
     if pk.type != .publicKey || pk.algo.alg != k.algo.alg then throw .invalidAccess
     if k.algo.alg == .ecdh && pk.algo.curve != k.algo.curve then throw .invalidAccess
     let secret ← match k.algo.alg with
-      | .ecdh => match p256Ecdh? pk.material k.material with | some s => pure s | none => throw .operation
-      | _ => match x25519? k.material pk.material with | some s => pure s | none => throw .operation
+      | .ecdh => match Secret.p256Ecdh? pk.pub k.secret with | some s => pure s | none => throw .operation
+      | _ => match k.secret.x25519? pk.pub with | some s => pure s | none => throw .operation
     match length with
     | none => return secret
     | some len => if len > secret.size * 8 then throw .operation else return truncateBits secret len
@@ -1153,11 +1161,11 @@ def crypt (enc : Bool) (algName : String) (p : Args) (k : Key) (data : ByteArray
       if t != 128 then throw .operation
     let aad := (p.get? "additionalData").getD .empty
     if enc then
-      let some c := chachaSeal? k.material iv aad data | throw .operation
+      let some c := k.secret.chachaSeal? iv aad data | throw .operation
       return c
     else
       if data.size < 16 then throw .operation
-      let some m := chachaOpen? k.material iv aad data | throw .operation
+      let some m := k.secret.chachaOpen? iv aad data | throw .operation
       return m
   | .rsaOaep =>
     -- §22.3/22.4: encrypt with a public key, decrypt with a private one; EME-OAEP is Lean's
@@ -1175,7 +1183,7 @@ def crypt (enc : Bool) (algName : String) (p : Args) (k : Key) (data : ByteArray
     else
       if k.type != .privateKey then throw .invalidAccess
       if data.size != r.n.size then throw .operation
-      let some em := rsaPrivate? r.n r.d data | throw .operation
+      let some em := Secret.rsaPrivate? r.n r.d data | throw .operation
       let some m := RsaOaep.emeDecode oh r.n.size label em.toList | throw .operation
       return ByteArray.mk m.toArray
   | _ => throw .invalidAccess
@@ -1193,7 +1201,7 @@ theorem exportKey_extractable {k : Key} {f : String} {e : Exported} (h : exportK
 
 /-- A key whose bytes are replaced: what an observer could not tell apart, if the API
 leaked nothing of them. -/
-def Key.blind (k : Key) : Key := { k with material := ByteArray.empty, pub := ByteArray.empty, rsa := k.rsa.map RsaParts.public }
+def Key.blind (k : Key) : Key := { k with secret := Secret.empty, rsa := k.rsa.map RsaParts.public }
 
 /-- Exporting a non-extractable key gives the same answer whatever its bytes: the
 InvalidAccessError, and nothing else. -/

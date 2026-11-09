@@ -371,6 +371,94 @@ constant is left alone. -/
 /-- Bytes zeroed in place so far (tests). -/
 @[extern "l4_web_hacl_wiped"] opaque wipedSoFar : BaseIO Nat
 
+/-! ## Secrets: key material only this module reads
+
+`Secret` holds the bytes of a secret or private key (and of the private parts of an RSA
+key). Its representation is a PRIVATE structure behind an irreducible definition, so no
+code outside this file can read the bytes: there is no public field, constructor pattern,
+`casesOn` or projection (checked: each fails to elaborate outside this file), and no
+`Repr`, `ToString`, `BEq` or `Hashable` instance, so no code can print, log, compare or
+hash a secret. Outside this file a secret can only be
+  * made from bytes (`Secret.ofBytes`: the key a page imports, or the DRBG's output),
+  * measured (`Secret.size`: lengths are public, record section 6),
+  * cut (`Secret.extract`: a candidate scalar out of random bytes),
+  * given to a primitive (`Secret.hmac`, `Secret.ed25519Sign?`, `Secret.p256Sign?`, ...),
+    which hands the bytes to HACL* (or to the HMAC specification for HKDF and PBKDF2), or
+  * revealed for export (`Secret.revealForExport`), the one declassification point, which
+    `WebCryptoKeys.exportBody` calls and `exportKey` reaches only for an extractable key
+    (audit rule 9 checks that it is called nowhere else).
+`unsafe` code could still cast it; audit rule 9 refuses `unsafeCast` in the crypto files.
+Record: docs/designissues/2026-11-09-crypto-boundary-security.md, "The Secret type". -/
+
+private structure SecretRep where
+  bytes : ByteArray
+
+/-- Key material (see above). -/
+def Secret : Type := SecretRep
+
+instance : Inhabited Secret := ⟨(⟨ByteArray.empty⟩ : SecretRep)⟩
+
+/-- A secret made from bytes the caller has. -/
+def Secret.ofBytes (b : ByteArray) : Secret := (⟨b⟩ : SecretRep)
+def Secret.empty : Secret := Secret.ofBytes ByteArray.empty
+
+private def Secret.get (s : Secret) : ByteArray := (s : SecretRep).bytes
+
+/-- Its length (public). -/
+def Secret.size (s : Secret) : Nat := s.get.size
+/-- Bytes `a` to `b` of a secret, a secret too. -/
+def Secret.extract (s : Secret) (a b : Nat) : Secret := Secret.ofBytes (s.get.extract a b)
+
+/-- THE declassification point: the bytes of a key that is being exported. Called only by
+`WebCryptoKeys.exportBody`, which `exportKey` reaches only for an extractable key. -/
+def Secret.revealForExport (s : Secret) : ByteArray := s.get
+
+/-- Hand a secret to `wipe`. -/
+def Secret.wipe (s : Secret) : Nat := WebHacl.wipe s.get
+/-- Zero a secret in place as its session ends (`zeroNow`). -/
+def Secret.zeroNow (s : Secret) : Nat := WebHacl.zeroNow s.get
+
+theorem Secret.size_ofBytes (b : ByteArray) : (Secret.ofBytes b).size = b.size := rfl
+theorem Secret.size_empty : Secret.empty.size = 0 := rfl
+theorem Secret.reveal_ofBytes (b : ByteArray) : (Secret.ofBytes b).revealForExport = b := rfl
+theorem Secret.ofBytes_reveal (s : Secret) : Secret.ofBytes s.revealForExport = s := rfl
+theorem Secret.size_reveal (s : Secret) : s.revealForExport.size = s.size := rfl
+theorem Secret.ext {s t : Secret} (h : s.revealForExport = t.revealForExport) : s = t := by
+  rw [← Secret.ofBytes_reveal s, ← Secret.ofBytes_reveal t, h]
+
+/-! ### The primitives on secrets: each passes the bytes to HACL* (or the HMAC spec) -/
+
+def Secret.hmac (a : HashAlg) (k : Secret) (msg : ByteArray) : ByteArray := WebHacl.hmacFast a k.get msg
+def Secret.ed25519Public? (sk : Secret) : Option ByteArray := WebHacl.ed25519Public? sk.get
+def Secret.x25519Public? (sk : Secret) : Option ByteArray := WebHacl.x25519Public? sk.get
+def Secret.p256Public? (sk : Secret) : Option ByteArray := WebHacl.p256Public? sk.get
+def Secret.p256ValidPrivate (sk : Secret) : Bool := WebHacl.p256ValidPrivate sk.get
+def Secret.ed25519Sign? (sk : Secret) (msg : ByteArray) : Option ByteArray := WebHacl.ed25519Sign? sk.get msg
+def Secret.x25519? (sk : Secret) (pk : ByteArray) : Option ByteArray := WebHacl.x25519? sk.get pk
+def Secret.p256Sign? (sk : Secret) (e : ByteArray) (nonce : Secret) : Option ByteArray := WebHacl.p256Sign? sk.get e nonce.get
+def Secret.p256Ecdh? (xy : ByteArray) (sk : Secret) : Option ByteArray := WebHacl.p256Ecdh? xy sk.get
+def Secret.chachaSeal? (k : Secret) (nonce aad plain : ByteArray) : Option ByteArray := WebHacl.chachaSeal? k.get nonce aad plain
+def Secret.chachaOpen? (k : Secret) (nonce aad sealed : ByteArray) : Option ByteArray := WebHacl.chachaOpen? k.get nonce aad sealed
+def Secret.rsaPrivate? (n : ByteArray) (d : Secret) (x : ByteArray) : Option ByteArray := WebHacl.rsaPrivate? n d.get x
+def Secret.rsaPssSign? (a : HashAlg) (n e : ByteArray) (d : Secret) (salt msg : ByteArray) : Option ByteArray :=
+  WebHacl.rsaPssSign? a n e d.get salt msg
+/-- HKDF (RFC 5869) over HACL*'s HMAC with a secret input key. -/
+def Secret.hkdf (a : HashAlg) (ikm : Secret) (salt info : ByteArray) (len : Nat) : Option ByteArray :=
+  WebCrypto.hkdf (haclHash a) ikm.get salt info len
+/-- PBKDF2 (RFC 8018) over HACL*'s HMAC with a secret password. -/
+def Secret.pbkdf2 (a : HashAlg) (pw : Secret) (salt : ByteArray) (it len : Nat) : ByteArray :=
+  WebCrypto.pbkdf2 (haclHash a) pw.get salt it len
+
+/-- Each primitive on a secret is the primitive on its bytes: a secret adds no behaviour,
+only the restriction of who may read it. -/
+theorem Secret.hmac_eq (a : HashAlg) (b m : ByteArray) : (Secret.ofBytes b).hmac a m = hmacFast a b m := rfl
+theorem Secret.p256Sign?_eq (sk e n : ByteArray) :
+    (Secret.ofBytes sk).p256Sign? e (Secret.ofBytes n) = WebHacl.p256Sign? sk e n := rfl
+theorem Secret.hkdf_eq (a : HashAlg) (ikm salt info : ByteArray) (len : Nat) :
+    (Secret.ofBytes ikm).hkdf a salt info len = WebCrypto.hkdf (haclHash a) ikm salt info len := rfl
+
+attribute [irreducible] Secret
+
 /-! ## Theorems: sizes and refusals -/
 
 theorem hash?_size {a : HashAlg} {m out : ByteArray} (h : hash? a m = some out) : out.size = a.size := by
