@@ -171,8 +171,12 @@ private def clippedLink := run "<div style='height:7px;overflow:clip'><a href='u
 #guard (clippedLink.toOption.map fun r => r.1.links.size) == some 1
 #guard (clippedLink.toOption.bind fun r => hitLink r.1.links.toList 3 3 |>.map (·.href)) == some "url"
 #guard (clippedLink.toOption.bind fun r => hitLink r.1.links.toList 3 8) |>.isNone
-#guard (clippedLink.toOption.map fun r => (Node.lowerList identity [] r.1.tree).all
+-- CSS Overflow 3 §3.1: the content is clipped to the padding box; the div's own background
+-- (its first primitive) is not clipped (`Layout.clipContent`).
+#guard (clippedLink.toOption.map fun r => ((Node.lowerList identity [] r.1.tree).drop 1).all
   (fun p => p.primitive.clips.any (fun c => c.width == 24 && c.height == 7))) == some true
+#guard (clippedLink.toOption.map fun r => ((Node.lowerList identity [] r.1.tree).take 1).all
+  (fun p => p.primitive.clips.isEmpty)) == some true
 #guard ((run "<div style='height:7px;overflow:visible'><a href='url'>AA BB</a></div>" css).toOption.map fun r => r.1.links.size) == some 2
 #guard ((run "<body style='overflow:clip'>A</body>" css).toOption.isSome)
 #guard ((run "<span style='overflow:clip'>A</span>" css).toOption.isSome)
