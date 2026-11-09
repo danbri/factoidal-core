@@ -386,8 +386,8 @@ hash a secret. Outside this file a secret can only be
     which hands the bytes to HACL* (or to the HMAC specification for HKDF and PBKDF2), or
   * revealed for export (`Secret.revealForExport`), the one declassification point, which
     `WebCryptoKeys.exportBody` calls and `exportKey` reaches only for an extractable key
-    (audit rule 9 checks that it is called nowhere else).
-`unsafe` code could still cast it; audit rule 9 refuses `unsafeCast` in the crypto files.
+    (audit rule 12 checks that it is called nowhere else).
+`unsafe` code could still cast it; audit rule 12 refuses unsafe casts in the crypto files.
 Record: docs/designissues/2026-11-09-crypto-boundary-security.md, "The Secret type". -/
 
 private structure SecretRep where
