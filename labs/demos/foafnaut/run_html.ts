@@ -653,7 +653,8 @@ async function main() {
     const choices=ei>=0&&ej>ei?await lean.encodingChoices(encodingSetting,systemLocale):undefined;
     if(choices)source=source.slice(0,ei+eOpen.length)+choices+source.slice(ej);
     const size=textZoom();
-    const box=`<span class="box">${liberal?'<span class="tick"></span>':""}</span>`;
+    // A ticked box is filled (boxon), as WebRenderScript.choicesHTML does for the script rows.
+    const box=`<span class="box${liberal?" boxon":""}"></span>`;
     return source.replace("<!--foafnaut:liberal-->",`<p class="check"><a href="foafnaut:liberal/${liberal?"off":"on"}">${box} Be liberal in what we accept</a></p>`+
       "<p>On (the default): a page with a feature this browser does not support is drawn without it (a module script, a stylesheet that did not load, a media condition or inline SVG it can not read), and the console (Option-Command-J) lists what was skipped. Off: strict, such a page is refused.</p>")
       .replace("<!--foafnaut:text-size-->",size
