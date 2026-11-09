@@ -11,12 +11,14 @@ import {fileURLToPath} from 'node:url';
 const here=path.dirname(fileURLToPath(import.meta.url));
 const CHROME=process.env.CHROME??'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 if(!fs.existsSync(CHROME)){console.log('NOT RUN: canvas2d_reference.mjs needs Chrome (set CHROME)');process.exit(0);}
+// With log, one scene a task (setTimeout), so an engine with a step budget a task
+// (BubblePopJS) draws them all; Chrome's reference draws them in one script.
 export const scenePage=(scenes,log)=>`<!doctype html><html><body><pre id="out"></pre><script>
 ${scenes}
 const hexes='0123456789abcdef',tab=[];
 for(let i=0;i<256;i++)tab.push(hexes[i>>4]+hexes[i&15]);
 const out={};
-for(const [name,draw] of canvas2dScenes){
+function scene([name,draw]){
   const cv=document.createElement('canvas');cv.width=48;cv.height=48;
   const c=cv.getContext('2d');draw(c);
   const d=c.getImageData(0,0,48,48).data,parts=[];
@@ -24,7 +26,7 @@ for(const [name,draw] of canvas2dScenes){
   const h=parts.join('');
   ${log?"console.log('scene '+name+' '+h);":"out[name]=h;"}
 }
-${log?"":"document.getElementById('out').textContent=JSON.stringify(out);"}
+${log?"canvas2dScenes.forEach((s,i)=>setTimeout(()=>scene(s),i));":"canvas2dScenes.forEach(scene);document.getElementById('out').textContent=JSON.stringify(out);"}
 </script></body></html>`;
 if(process.argv[1]===fileURLToPath(import.meta.url)){
   const work=fs.mkdtempSync(path.join(os.tmpdir(),'canvas2d-ref-'));

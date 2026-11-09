@@ -38,10 +38,10 @@ for(const kind of engines){
   // 1. Pixels against Chrome.
   let t0=performance.now();
   let turn=start(kind,scenePage(scenes,true),"file:///canvas2d-scenes.html");
-  const sceneLogs=[...turn.logs];
-  turn=advance(turn,10);sceneLogs.push(...turn.logs);
+  const sceneLogs=[...turn.logs],sceneErrors=[...turn.errors];
+  turn=advance(turn,40);sceneLogs.push(...turn.logs);sceneErrors.push(...turn.errors);
+  assert.deepEqual(sceneErrors,[],`${kind}: the scene page runs without errors`);
   console.log(`${kind}: the 27 scenes drawn and read back in ${(performance.now()-t0).toFixed(0)} ms`);
-  for(const e of turn.errors)console.log(`${kind} page error:`,e);
   const got=new Map<string,Uint8Array>();
   for(const line of sceneLogs){const m=/^scene (\S+) ([0-9a-f]+)$/.exec(line);if(m)got.set(m[1],hexBytes(m[2]));}
   let pass=0;const rows:string[]=[];
@@ -59,6 +59,7 @@ for(const kind of engines){
   }
   console.log(`${kind}: ${pass} of ${Object.keys(reference.scenes).length} scenes match ${reference.browser}`);for(const r of rows)console.log("  "+r);
   summary.push(`${kind}: scenes ${pass}/${Object.keys(reference.scenes).length}`);
+  assert.equal(pass,Object.keys(reference.scenes).length,`${kind}: every scene matches ${reference.browser}`);
   engine.scriptSession("",{action:"close"});
 
   // 2 and 3. Host commands and answers.
