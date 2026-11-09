@@ -4,7 +4,7 @@ processes, and report CPU milliseconds (user + system of the child), minus the e
 start (empty.js), best of N runs. Ratios are against the first engine named.
 
   run.py [--runs N] [--only a,b] [--json F] NAME=CMD ...
-  e.g. bubblepop=/path/leanjs\ run  qjs=/path/qjs  node-jitless='node --jitless shim.js'
+  e.g. bubblepop=/path/leanjs\\ run  qjs=/path/qjs  node-jitless='node --jitless shim.js'
 
 Each CMD gets the script path as its last argument. CPU time, not wall time: the machine
 this runs on is usually busy. No script uses the clock, so every run does the same work.
@@ -34,19 +34,18 @@ def main():
             n, c = a.split("=", 1); engines.append((n, shlex.split(c)))
     if not engines: print(__doc__); return 2
     names = [b for b in ORDER if only is None or b in only or b == "empty"]
-    res = {}; expected = {}
-    for ename, cmd in engines:
-        res[ename] = {}
-        for b in names:
-            path = os.path.join(HERE, b + ".js")
-            best = None
-            for _ in range(runs):
+    res = {e: {} for e, _ in engines}
+    # rounds interleave the engines, so a drift in the machine's load hits them alike
+    for _ in range(runs):
+        for ename, cmd in engines:
+            for b in names:
+                path = os.path.join(HERE, b + ".js")
                 cpu, wall, rc, out, err = run_once(cmd, path)
                 if rc != 0:
-                    print(f"FAIL {ename} {b}: rc={rc} {err}", file=sys.stderr); best = None; break
-                best = cpu if best is None or cpu < best else best
-                res[ename].setdefault("_out", {})[b] = out[0] if out else ""
-            res[ename][b] = best
+                    print(f"FAIL {ename} {b}: rc={rc} {err}", file=sys.stderr); res[ename][b] = None; continue
+                prev = res[ename].get(b)
+                if prev is None or cpu < prev: res[ename][b] = cpu
+                res[ename].setdefault("_out", {})[b] = (out[0] if out else "").split("\t")[-1]
     print("| bench | " + " | ".join(e for e, _ in engines) + " |")
     print("|---|" + "---|" * len(engines))
     first = engines[0][0]

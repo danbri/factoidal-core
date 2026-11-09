@@ -57,6 +57,38 @@ two classes with the same private name share it. Record, section 5. -/
 def privKey (name : String) : String := String.singleton (Char.ofNat 0x10FFFE) ++ name
 def isPrivKey (k : String) : Bool := k.front == Char.ofNat 0x10FFFE
 
+/-- What the name resolver (`JS/Resolve.lean`) found about a function. -/
+structure FunInfo where
+  /-- The names of the function's environment, in the order they are declared. -/
+  layout : Array String := #[]
+  /-- The number of parameters (when `plain`, the first `nParams` slots). -/
+  nParams : Nat := 0
+  /-- The parameters are plain distinct names with no initialisers or rest, and the
+  function does not use `arguments`: the arguments array becomes the slots. -/
+  plain : Bool := false
+  /-- Nothing made during a call can hold its environment afterwards (no closure, class,
+  generator, direct `eval`): the environment's slot is reused when the call returns. -/
+  frameLocal : Bool := false
+  deriving Inhabited
+
+/-- JavaScript values (§6.1); see `Value.lean`. -/
+inductive Value where
+  | undef
+  | null
+  | bool (b : Bool)
+  | num (n : Float)
+  | str (s : String)
+  | obj (id : Nat)
+  /-- A Symbol (§6.1.5): its number in `Heap.syms`. -/
+  | sym (id : Nat)
+  /-- A BigInt (§6.1.6.2). -/
+  | big (i : Int)
+  /-- Not a language value: the content of a binding that is not initialised yet (the
+  temporal dead zone). It never leaves an environment. -/
+  | hole
+  deriving Inhabited
+
+
 mutual
 /-- Expressions. -/
 inductive Expr where
@@ -67,6 +99,12 @@ inductive Expr where
   | bool (b : Bool)
   | null
   | ident (name : String)
+  /-- A literal value (number, string, `true`, `false`, `null`) already boxed: the resolver
+  makes these, so evaluating a literal does not allocate. -/
+  | lit (v : Value)
+  /-- A name the resolver placed: `hops` environments up, slot `idx`. The evaluator checks
+  the name in that slot, and looks the name up the plain way when they differ. -/
+  | local (name : String) (hops idx : Nat)
   | this
   | array (elems : List Expr)
   | object (props : List PropDef)
@@ -142,7 +180,7 @@ constructor. `params` are patterns with initialisers; `rest` is `...p`. -/
 inductive FunDef where
   | mk (name : Option String) (params : List PatElem) (rest : Option Pat) (body : List Stmt)
       (vars : List String) (usesArgs : Bool) (strict : Bool) (kind : FunKind) (gen : Bool)
-      (async : Bool)
+      (async : Bool) (info : FunInfo)
 
 /-- A class (§15.7): name, heritage, constructor, members. A field is a member whose
 function returns the initial value. -/
@@ -161,6 +199,9 @@ inductive Case where
 inductive ForInit where
   | decl (kind : DeclKind) (decls : List Decl)
   | expr (e : Expr)
+  /-- `let` declarations whose loop has no closure: one environment serves every iteration
+  (nothing can observe a per-iteration copy, §14.7.4.4). Made by the resolver. -/
+  | letOnce (decls : List Decl)
 
 /-- One declarator: `p = e`. -/
 inductive Decl where
@@ -181,6 +222,8 @@ inductive Stmt where
   | forIn (kind : Option DeclKind) (target : Pat) (obj : Expr) (body : Stmt)
   | forOf (kind : Option DeclKind) (target : Pat) (obj : Expr) (body : Stmt)
   | block (body : List Stmt)
+  /-- A block whose environment no closure can hold: its slot is reused when it ends. -/
+  | blockF (body : List Stmt)
   | throwS (e : Expr)
   | tryS (body : List Stmt) (param : Option Pat) (handler : Option (List Stmt))
       (finalizer : Option (List Stmt))
@@ -194,7 +237,7 @@ inductive Stmt where
 end
 
 instance : Inhabited Expr := ⟨.null⟩
-instance : Inhabited FunDef := ⟨.mk none [] none [] [] false false .normal false false⟩
+instance : Inhabited FunDef := ⟨.mk none [] none [] [] false false .normal false false {}⟩
 instance : Inhabited Stmt := ⟨.empty⟩
 instance : Inhabited PropDef := ⟨.init (.lit "") .null⟩
 instance : Inhabited PropKey := ⟨.lit ""⟩
@@ -210,13 +253,14 @@ def FunDef.rest : FunDef → Option Pat | .mk _ _ r .. => r
 def FunDef.body : FunDef → List Stmt | .mk _ _ _ b .. => b
 def FunDef.vars : FunDef → List String | .mk _ _ _ _ v .. => v
 def FunDef.usesArgs : FunDef → Bool | .mk _ _ _ _ _ u .. => u
-def FunDef.strict : FunDef → Bool | .mk _ _ _ _ _ _ s _ _ _ => s
-def FunDef.kind : FunDef → FunKind | .mk _ _ _ _ _ _ _ k _ _ => k
-def FunDef.gen : FunDef → Bool | .mk _ _ _ _ _ _ _ _ g _ => g
-def FunDef.async : FunDef → Bool | .mk _ _ _ _ _ _ _ _ _ a => a
+def FunDef.strict : FunDef → Bool | .mk _ _ _ _ _ _ s _ _ _ _ => s
+def FunDef.kind : FunDef → FunKind | .mk _ _ _ _ _ _ _ k _ _ _ => k
+def FunDef.gen : FunDef → Bool | .mk _ _ _ _ _ _ _ _ g _ _ => g
+def FunDef.async : FunDef → Bool | .mk _ _ _ _ _ _ _ _ _ a _ => a
+def FunDef.info : FunDef → FunInfo | .mk _ _ _ _ _ _ _ _ _ _ i => i
 def FunDef.arrow (f : FunDef) : Bool := f.kind == .arrow
 def FunDef.withName (f : FunDef) (n : String) : FunDef :=
-  match f with | .mk _ p r b v u s k g a => .mk (some n) p r b v u s k g a
+  match f with | .mk _ p r b v u s k g a i => .mk (some n) p r b v u s k g a i
 
 /-- The `length` of a function: parameters before the first initialiser or rest (§15.1.5). -/
 def FunDef.expectedArgs (f : FunDef) : Nat :=
@@ -269,7 +313,7 @@ def Expr.hasYieldF : Nat → Expr → Bool
   | n + 1, e =>
     match e with
     | .yieldE .. => true
-    | .num _ | .bigint _ | .str _ | .bool _ | .null | .ident _ | .this | .newTarget | .superMember _
+    | .num _ | .bigint _ | .str _ | .bool _ | .null | .ident _ | .local .. | .lit _ | .this | .newTarget | .superMember _
     | .func _ | .classE _ | .regex _ _ => false
     | .chain a | .optBase a | .optCallee a => Expr.hasYieldF n a
     | .array es | .template _ es | .superCall es | .tagged _ _ _ es => Expr.anyYield n es
@@ -311,12 +355,12 @@ def Stmt.hasYieldF : Nat → Stmt → Bool
     | .forS i t u b =>
       (match i with
         | some (.expr e) => Expr.hasYieldF n e
-        | some (.decl _ ds) => Decl.anyYield n ds
+        | some (.decl _ ds) | some (.letOnce ds) => Decl.anyYield n ds
         | none => false) ||
       (match t with | some e => Expr.hasYieldF n e | none => false) ||
       (match u with | some e => Expr.hasYieldF n e | none => false) || Stmt.hasYieldF n b
     | .forIn _ _ o b | .forOf _ _ o b => Expr.hasYieldF n o || Stmt.hasYieldF n b
-    | .block ss => Stmt.anyYield n ss
+    | .block ss | .blockF ss => Stmt.anyYield n ss
     | .tryS b _ h f => Stmt.anyYield n b ||
         (match h with | some h => Stmt.anyYield n h | none => false) ||
         (match f with | some f => Stmt.anyYield n f | none => false)

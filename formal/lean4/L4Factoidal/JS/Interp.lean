@@ -1,5 +1,6 @@
 import L4Factoidal.JS.Value
 import L4Factoidal.JS.Parser
+import L4Factoidal.JS.Resolve
 import L4Factoidal.JS.Date
 import L4Factoidal.JS.NumFmt
 import L4Factoidal.JSON.Parser
@@ -30,9 +31,9 @@ local notation "M" => JSM H
 
 /-! ## Heap primitives -/
 
-def alloc (o : Obj) : M Nat := modifyGet fun h => (h.objs.size, { h with objs := h.objs.push o })
-def getObj (id : Nat) : M Obj := do pure ((← get).obj id)
-def modifyObj (id : Nat) (f : Obj → Obj) : M Unit :=
+@[inline] def alloc (o : Obj) : M Nat := modifyGet fun h => (h.objs.size, { h with objs := h.objs.push o })
+@[inline] def getObj (id : Nat) : M Obj := do pure ((← get).obj id)
+@[inline] def modifyObj (id : Nat) (f : Obj → Obj) : M Unit :=
   -- the object array is taken out of the heap first, and `Array.modify` moves the object
   -- out of the array for `f`: both are changed in place when nothing else holds them
   modify fun h =>
@@ -65,18 +66,80 @@ def Obj.takeArray (o : Obj) : Option (Array Value) × Obj :=
   match o.kind with
   | .array es => let o := { o with kind := .ordinary }; (some es, o)
   | _ => (none, o)
-def realm : M Realm := do pure (← get).realm
+/-- Write element `i` of the Array object `id`, in place, when the object is an Array and `i`
+is below its length (no attribute can stand in the way there: elements are always writable,
+`Obj.getOwn`); `false` otherwise (the caller takes the general path). -/
+def setElem (id i : Nat) (v : Value) : M Bool :=
+  updateObj id fun o =>
+    match o.kind with
+    | .array es =>
+      if h : i < es.size then
+        let o := { o with kind := .ordinary }
+        (true, { o with kind := .array (es.set i v) })
+      else (false, o)
+    | _ => (false, o)
 
-def newEnv (parent : Option Nat) : M Nat :=
-  modifyGet fun h => (h.envs.size, { h with envs := h.envs.push { parent } })
+/-- Overwrite an own writable data property of a non-exotic object, in place; `false` when
+the property is absent or not plain (the caller takes the general path). -/
+def setOwnData (id : Nat) (key : String) (v : Value) : M Bool :=
+  updateObj id fun o =>
+    match o.kind with
+    | .array _ | .proxy .. | .typed .. | .prim _ => (false, o)
+    | _ =>
+      match o.props.get? key with
+      | some (.data _ true e c) =>
+        (true, { o with props := o.props.insert key (.data v true e c) })
+      | _ => (false, o)
 
-def declare (env : Nat) (name : String) (b : Binding) : M Unit :=
-  modify fun h => { h with envs := h.envs.modify env fun e => { e with vars := e.vars.insert name b } }
+@[inline] def realm : M Realm := do pure (← get).realm
+
+/-- Put an environment record in a free slot of the environment array. -/
+@[inline] def pushEnv (en : Env) : M Nat :=
+  modifyGet fun h =>
+    let envs := h.envs
+    let h := { h with envs := #[] }
+    match h.envFree.back? with
+    | some e => (e, { h with envFree := h.envFree.pop, envs := envs.set! e en })
+    | none => (envs.size, { h with envs := envs.push en })
+
+@[inline] def newEnv (parent : Nat) : M Nat := pushEnv { parent }
+
+/-- Environment `e` is not reachable any more: drop its contents and reuse its slot. -/
+@[inline] def releaseEnv (e : Nat) : M Unit :=
+  modify fun h =>
+    let envs := h.envs
+    let h := { h with envs := #[] }
+    { h with envs := envs.set! e default, envFree := h.envFree.push e }
+
+/-- Change an environment in place: the array and the record are taken out while `f` runs. -/
+@[inline] def modifyEnv (e : Nat) (f : Env → Env) : M Unit :=
+  modify fun h =>
+    let envs := h.envs
+    let h := { h with envs := #[] }
+    { h with envs := envs.modify e f }
+
+@[inline] def declare (env : Nat) (name : String) (b : Binding) : M Unit :=
+  modifyEnv env (·.put name b)
 
 def getBinding (env : Nat) (name : String) : M (Option Binding) := do
-  pure (((← get).envs.getD env default).vars.get? name)
+  pure (((← get).envs.getD env default).get? name)
 
-def tick : M Unit := do
+/-- Check every resolved name against the plain lookup (`JS/Tests.lean` sets it through
+`verifyLocalsDefault`; off in the engine). -/
+def verifyLocals : Bool := false
+
+/-- Set a slot, in place. -/
+@[inline] def setSlot (e i : Nat) (v : Value) : M Unit :=
+  modifyEnv e fun en => { en with vals := en.vals.set! i v }
+
+/-- The slots of a call with plain parameters: the arguments array, cut to the parameters and
+filled with `undefined` to the size of the layout. -/
+def fillSlots (args : Array Value) (nParams size : Nat) : Array Value :=
+  let a := if args.size > nParams then args.shrink nParams else args
+  if a.size == size then a else
+  (List.range (size - a.size)).foldl (fun a _ => a.push .undef) a
+
+@[inline] def tick : M Unit := do
   let h ← get
   if h.steps == 0 then throw (.halt "step budget exhausted")
   set { h with steps := h.steps - 1 }
@@ -86,6 +149,7 @@ an array or a buffer) is counted, so a script stops at its budget however it spe
 def charge (k : Nat) : M Unit := do
   if k == 0 then return
   let h ← get
+  let k := k.toUInt64
   if h.steps < k then
     set { h with steps := 0 }
     throw (.halt "step budget exhausted")
@@ -93,6 +157,16 @@ def charge (k : Nat) : M Unit := do
 
 /-- The longest string `repeat` and `padStart` make: 256 MiB of UTF-8. -/
 def maxStringBytes : Nat := 268435456
+
+/-- The UTF-16 units of `s` as characters, kept for the last string: repeated matches on one
+string (`exec` in a loop, `replace` with a global regexp) do not decode it each time. -/
+def cachedChars (s : String) : M (Array Char) := do
+  match (← get).reCache with
+  | some (t, cs) => if t == s then return cs else pure ()
+  | none => pure ()
+  let cs := Str.unitChars s
+  modify fun h => { h with reCache := some (s, cs) }
+  return cs
 
 /-- The steps a value's size is worth to a built-in that walks it: a step for every 64
 bytes of a string, 64 elements of an array, or 4096 bytes of an ArrayBuffer or typed
@@ -135,10 +209,13 @@ def Obj.putOwn (o : Obj) (key : String) (p : PropV) : Obj :=
     else if i < es.size + 100000 then
       { o with kind := .array ((es ++ Array.replicate (i - es.size) Value.undef).push v) }
     else
+      let known := o.props.contains key
       { o with kind := .array es, props := o.props.insert key p,
-               keys := if o.props.contains key then o.keys else o.keys.push key }
+               keys := if known then o.keys else o.keys.push key }
   | _, _, _ =>
-    { o with props := o.props.insert key p, keys := if o.props.contains key then o.keys else o.keys.push key }
+    -- `known` is computed first: `insert` must hold the only reference to the table
+    let known := o.props.contains key
+    { o with props := o.props.insert key p, keys := if known then o.keys else o.keys.push key }
 
 def defineOwn (id : Nat) (key : String) (p : PropV) : M Unit := modifyObj id (·.putOwn key p)
 
@@ -182,13 +259,14 @@ def isConstructor (v : Value) : M Bool := do
     | _ => pure false
   | _ => pure false
 
-def isCallable (v : Value) : M Bool := do
+@[inline] def isCallable (v : Value) : M Bool := do
   match v with
   | .obj id => pure (← getObj id).kind.callable
   | _ => pure false
 
 def typeOf (v : Value) : M String := do
   match v with
+  | .hole => pure "undefined"
   | .undef => pure "undefined"
   | .null => pure "object"
   | .bool _ => pure "boolean"
@@ -215,7 +293,7 @@ def makeClosure (ctx : Ctx) (f : FunDef) (nameHint : String := "") (home : Value
   -- a named function expression sees its own name (§15.2.5)
   let env ← match f.name with
     | some n => if f.arrow then pure ctx.env else do
-        let e ← newEnv (some ctx.env); pure e
+        let e ← newEnv ctx.env; pure e
     | none => pure ctx.env
   let home := if f.arrow then ctx.home else home
   let id ← alloc { proto := .obj r.functionProto, kind := .closure f env ctx.thisV ctx.newTarget home #[] }
@@ -839,7 +917,7 @@ def hostAnswer (args : Array Value) : HostAns → M Value
 /-- Call a native of the host (`Native.host k`). The host's state is taken out of the heap
 for the call, so the host changes it in place. -/
 def callHost (k : Nat) (args : Array Value) : M Value := do
-  let (st, call, left) ← modifyGet fun h => ((h.host, h.hostCall, h.steps), { h with host := none })
+  let (st, call, left) ← modifyGet fun h => ((h.host, h.hostCall, h.steps.toNat), { h with host := none })
   -- An ArrayBuffer or a typed array reaches the host as its bytes.
   let hargs ← args.mapM fun a => do
     match a with
@@ -953,6 +1031,7 @@ def getV : Nat → Value → String → M Value
     | .bool _ => getProto n (← realm).booleanProto key v
     | .sym _ => getProto n (← realm).symbolProto key v
     | .big _ => getProto n (← realm).bigintProto key v
+    | .hole => pure .undef
     | .undef => throwErr .type s!"Cannot read properties of undefined (reading '{key}')"
     | .null => throwErr .type s!"Cannot read properties of null (reading '{key}')"
 termination_by structural n _ _ => n
@@ -1050,6 +1129,8 @@ def putV : Nat → Value → String → Value → Bool → M Unit
   | n + 1, target, key, val, strict => do
     match target with
     | .obj id =>
+      -- an own writable data property of a non-exotic object is overwritten in place
+      if ← setOwnData id key val then return
       let o ← getObj id
       match o.kind with
       | .proxy t hnd =>
@@ -1139,7 +1220,7 @@ def toNum : Nat → Value → M Float
   | 0, _ => throw (.halt "fuel")
   | n + 1, v => do
     match v with
-    | .undef => pure nan
+    | .hole | .undef => pure nan
     | .null => pure 0
     | .bool b => pure (if b then 1 else 0)
     | .num x => pure x
@@ -1177,7 +1258,7 @@ def toStr : Nat → Value → M String
   | 0, _ => throw (.halt "fuel")
   | n + 1, v => do
     match v with
-    | .undef => pure "undefined"
+    | .hole | .undef => pure "undefined"
     | .null => pure "null"
     | .bool b => pure (if b then "true" else "false")
     | .num x => pure (numToString x)
@@ -1206,7 +1287,7 @@ def toObj : Nat → Value → M Nat
     let r ← realm
     match v with
     | .obj id => pure id
-    | .undef | .null => throwErr .type "Cannot convert undefined or null to object"
+    | .hole | .undef | .null => throwErr .type "Cannot convert undefined or null to object"
     | .str _ => alloc { proto := .obj r.stringProto, kind := .prim v }
     | .num _ => alloc { proto := .obj r.numberProto, kind := .prim v }
     | .bool _ => alloc { proto := .obj r.booleanProto, kind := .prim v }
@@ -1401,8 +1482,12 @@ def callClosure : Nat → FunDef → Nat → Value → Value → Value → Value
     set { h with depth := h.depth + 1 }
     -- The depth comes back on every exit, a throw included (a throw that a caller catches
     -- must not use up the call depth).
+    -- the environment: the arguments are its first slots when the parameters are plain
+    let info := fd.info
+    let fenv ← if info.plain then
+        pushEnv { names := info.layout, vals := fillSlots args info.nParams info.layout.size, parent := env }
+      else newEnv env
     let go : M Value := do
-      let fenv ← newEnv (some env)
       let r ← realm
       let thisV ← if fd.arrow then pure capThis
         else if fd.strict then pure thisV
@@ -1413,21 +1498,22 @@ def callClosure : Nat → FunDef → Nat → Value → Value → Value → Value
       let nt := if fd.arrow then capNT else newTarget
       let fo := if fd.arrow then Value.undef else fnObj
       let ctx : Ctx := { env := fenv, thisV := thisV, strict := fd.strict, newTarget := nt, home := home, fnObj := fo }
-      if fd.usesArgs then
-        let a ← alloc { proto := .obj r.objectProto, kind := .args }
-        for i in [0:args.size] do defineOwn a (toString i) (.data args[i]! true true true)
-        setHidden a "length" (.num (Float.ofNat args.size))
-        setHidden a (symKey symIterator) (← ownValue r.arrayProto "values")
-        if fd.strict then
-          let t := Value.obj r.throwTypeError
-          defineOwn a "callee" (.acc t t false false)
-        else setHidden a "callee" fnObj
-        declare fenv "arguments" { v := .obj a }
-      bindParams n ctx fd.params args 0
-      if let some rp := fd.rest then
-        bindPat n ctx rp (← newArray (args.extract fd.params.length args.size)) (.declare fenv true)
-      for v in fd.vars do
-        if !((← getBinding fenv v).isSome) then declare fenv v { v := .undef }
+      if !info.plain then
+        if fd.usesArgs then
+          let a ← alloc { proto := .obj r.objectProto, kind := .args }
+          for i in [0:args.size] do defineOwn a (toString i) (.data args[i]! true true true)
+          setHidden a "length" (.num (Float.ofNat args.size))
+          setHidden a (symKey symIterator) (← ownValue r.arrayProto "values")
+          if fd.strict then
+            let t := Value.obj r.throwTypeError
+            defineOwn a "callee" (.acc t t false false)
+          else setHidden a "callee" fnObj
+          declare fenv "arguments" { v := .obj a }
+        bindParams n ctx fd.params args 0
+        if let some rp := fd.rest then
+          bindPat n ctx rp (← newArray (args.extract fd.params.length args.size)) (.declare fenv true)
+        for v in fd.vars do
+          if !((← getBinding fenv v).isSome) then declare fenv v { v := .undef }
       if fd.kind == .ctor false then initFields n ctx fnObj thisV
       if fd.gen && fd.async then
         let p ← getV n fnObj "prototype"
@@ -1451,13 +1537,23 @@ def callClosure : Nat → FunDef → Nat → Value → Value → Value → Value
         asyncStep n co (.send .undef)
         modify fun h => { h with depth := h.depth - 1 }
         return .obj pid
-      let c ← evalBody n ctx fd.body
-      modify fun h => { h with depth := h.depth - 1 }
-      match c with
-      | .ret v => pure v
-      | _ => pure .undef
+      -- a body that is one `return e`: no statement machinery, no completion record
+      match fd.body with
+      | [.ret (some e)] =>
+        let v ← evalExpr n ctx e
+        modify fun h => { h with depth := h.depth - 1 }
+        if info.frameLocal then releaseEnv fenv
+        pure v
+      | _ =>
+        let c ← evalBody n ctx fd.body
+        modify fun h => { h with depth := h.depth - 1 }
+        if info.frameLocal then releaseEnv fenv
+        match c with
+        | .ret v => pure v
+        | _ => pure .undef
     tryCatch go fun e => do
       modify fun h => { h with depth := saved }
+      if info.frameLocal then releaseEnv fenv
       throw e
 termination_by structural n _ _ _ _ _ _ _ _ _ => n
 
@@ -1552,7 +1648,7 @@ def enterBlock : Nat → Ctx → List Stmt → M Ctx
       | .decl .letK _ | .decl .constK _ | .funDecl .. | .classDecl .. => true
       | _ => false
     if !needs then return ctx
-    let env ← newEnv (some ctx.env)
+    let env ← newEnv ctx.env
     let ctx' := { ctx with env }
     declareLexical n ctx' ss
     return ctx'
@@ -1597,9 +1693,9 @@ def assignName : Nat → Ctx → String → Value → M Unit
   | 0, _, _, _ => throw (.halt "fuel")
   | n + 1, ctx, x, v => do
     let h ← get
-    match h.findEnv x 100000 (some ctx.env) with
+    match h.findEnv x 100000 ctx.env with
     | some e =>
-      match (h.envs.getD e default).vars.get? x with
+      match (h.envs.getD e default).get? x with
       | some b =>
         if !b.init then throwErr .reference s!"Cannot access '{x}' before initialization"
         if !b.mutable then
@@ -1612,17 +1708,73 @@ def assignName : Nat → Ctx → String → Value → M Unit
         | none => pure ()
     | none =>
       let g := h.realm.globalObj
-      if (h.findProp g x 1000).isSome || !ctx.strict then putV n (.obj g) x v ctx.strict
+      if !ctx.strict || (h.findProp g x 1000).isSome then putV n (.obj g) x v ctx.strict
       else throwErr .reference s!"{x} is not defined"
 termination_by structural n _ _ _ => n
+
+/-- Read a resolved name: slot `idx`, `hops` environments up, when that slot has the name
+(`JS/Resolve.lean`); otherwise the plain lookup. -/
+def lookupLocal : Nat → Ctx → String → Nat → Nat → M Value
+  | 0, _, _, _, _ => throw (.halt "fuel")
+  | n + 1, ctx, x, hops, idx => do
+    let h ← get
+    let env := h.envs.getD (h.envUp hops ctx.env) default
+    match env.names[idx]?, env.vals[idx]? with
+    | some y, some v =>
+      if y == x then
+        match v with
+        | .hole => throwErr .reference s!"Cannot access '{x}' before initialization"
+        | _ =>
+          if verifyLocals then
+            let w ← lookup n ctx x
+            if !sameValue v w then throw (.halt s!"verifyLocals: {x} {hops} {idx}")
+          pure v
+      else lookup n ctx x
+    | _, _ => lookup n ctx x
+termination_by structural n _ _ _ _ => n
+
+/-- Assign a resolved name; the plain assignment when the hint does not hold. -/
+def assignLocal : Nat → Ctx → String → Nat → Nat → Value → M Unit
+  | 0, _, _, _, _, _ => throw (.halt "fuel")
+  | n + 1, ctx, x, hops, idx, v => do
+    let h ← get
+    let e := h.envUp hops ctx.env
+    let env := h.envs.getD e default
+    match env.names[idx]?, env.vals[idx]? with
+    | some y, some old =>
+      if y == x then
+        if let .hole := old then throwErr .reference s!"Cannot access '{x}' before initialization"
+        if !env.mutableAt idx then throwErr .type "Assignment to constant variable."
+        if verifyLocals then
+          -- the plain path must find the same binding
+          if (h.findEnv x 100000 ctx.env) != some e then throw (.halt s!"verifyLocals: {x} {hops} {idx}")
+        setSlot e idx v
+      else assignName n ctx x v
+    | _, _ => assignName n ctx x v
+termination_by structural n _ _ _ _ _ => n
+
+/-- The value of a leaf expression that reads no outside state beyond the heap and has no
+effects: a literal, a resolved name that holds, `this`. `Value.hole` for anything else (the
+caller evaluates the expression the full way, which also reports an uninitialised binding). -/
+@[inline] def leafV (h : HeapOf H) (ctx : Ctx) (e : Expr) : Value :=
+  match e with
+  | .lit v => v
+  | .local x hops idx =>
+    if verifyLocals then .hole else  -- every read goes through `lookupLocal`, which checks it
+    let env := h.envs.getD (h.envUp hops ctx.env) default
+    match env.names[idx]?, env.vals[idx]? with
+    | some y, some v => if y == x then v else .hole
+    | _, _ => .hole
+  | .this => ctx.thisV
+  | _ => .hole
 
 def lookup : Nat → Ctx → String → M Value
   | 0, _, _ => throw (.halt "fuel")
   | n + 1, ctx, x => do
     let h ← get
-    match h.findEnv x 100000 (some ctx.env) with
+    match h.findEnv x 100000 ctx.env with
     | some e =>
-      match (h.envs.getD e default).vars.get? x with
+      match (h.envs.getD e default).get? x with
       | some b =>
         if b.init then pure b.v else throwErr .reference s!"Cannot access '{x}' before initialization"
       | none =>
@@ -1631,8 +1783,10 @@ def lookup : Nat → Ctx → String → M Value
         | none => pure .undef
     | none =>
       let g := h.realm.globalObj
-      if (h.findProp g x 1000).isSome then getV n (.obj g) x
-      else throwErr .reference s!"{x} is not defined"
+      match h.findProp g x 1000 with
+      | some (.data v ..) => pure v
+      | some _ => getV n (.obj g) x
+      | none => throwErr .reference s!"{x} is not defined"
 termination_by structural n _ _ => n
 
 /-- PutValue on an assignment target, after its parts are evaluated. -/
@@ -1641,6 +1795,7 @@ def putTarget : Nat → Ctx → Expr → Option Value → Option String → Valu
   | n + 1, ctx, target, base, key, v => do
     match target, base, key with
     | .ident x, _, _ => assignName n ctx x v
+    | .local x h i, _, _ => assignLocal n ctx x h i v
     | _, some b, some k => putV n b k v ctx.strict
     | _, _, _ => throwErr .syntax "Invalid assignment target"
 termination_by structural n _ _ _ _ _ => n
@@ -1665,6 +1820,7 @@ def getRef : Nat → Ctx → Expr → Option Value → Option String → M Value
   | n + 1, ctx, e, base, key => do
     match e, base, key with
     | .ident x, _, _ => lookup n ctx x
+    | .local x h i, _, _ => lookupLocal n ctx x h i
     | _, some b, some k => getV n b k
     | _, _, _ => evalExpr n ctx e
 termination_by structural n _ _ _ _ => n
@@ -1673,6 +1829,14 @@ def evalArgs : Nat → Ctx → List Expr → Array Value → M (Array Value)
   | 0, _, _, _ => throw (.halt "fuel")
   | _ + 1, _, [], acc => pure acc
   | n + 1, ctx, a :: as, acc => do
+    match leafV (← get) ctx a with
+    | .hole => evalArg n ctx a as acc
+    | v => evalArgs n ctx as (acc.push v)
+termination_by structural n _ _ _ => n
+
+def evalArg : Nat → Ctx → Expr → List Expr → Array Value → M (Array Value)
+  | 0, _, _, _, _ => throw (.halt "fuel")
+  | n + 1, ctx, a, as, acc => do
     match a with
     | .spread e =>
       let it ← getIterator n (← evalExpr n ctx e)
@@ -1744,6 +1908,8 @@ def evalExpr : Nat → Ctx → Expr → M Value
     | .bool b => pure (.bool b)
     | .null => pure .null
     | .ident x => lookup n ctx x
+    | .local x h i => lookupLocal n ctx x h i
+    | .lit v => pure v
     | .this => pure ctx.thisV
     | .array es => newArray (← evalArgs n ctx es #[])
     | .spread _ => throwErr .syntax "unexpected spread"
@@ -1797,7 +1963,7 @@ def evalExpr : Nat → Ctx → Expr → M Value
       match op, a with
       | .typeof, .ident x =>
         let h ← get
-        if (h.findEnv x 100000 (some ctx.env)).isNone && (h.findProp h.realm.globalObj x 1000).isNone then
+        if (h.findEnv x 100000 ctx.env).isNone && (h.findProp h.realm.globalObj x 1000).isNone then
           pure (.str "undefined")
         else pure (.str (← typeOf (← lookup n ctx x)))
       | .delete, t =>
@@ -1832,7 +1998,7 @@ def evalExpr : Nat → Ctx → Expr → M Value
           | none, _ => pure (.bool true)
         | .ident x =>
           let h ← get
-          match h.findEnv x 100000 (some ctx.env) with
+          match h.findEnv x 100000 ctx.env with
           | some _ => pure (.bool false)
           | none =>
             let g := h.realm.globalObj
@@ -1855,13 +2021,20 @@ def evalExpr : Nat → Ctx → Expr → M Value
         | .void => pure .undef
         | .delete => pure (.bool true)
     | .binary op a b =>
-      let x ← evalExpr n ctx a
-      let y ← evalExpr n ctx b
+      let x ← (match leafV (← get) ctx a with | .hole => evalExpr n ctx a | v => pure v)
+      let y ← (match leafV (← get) ctx b with | .hole => evalExpr n ctx b | v => pure v)
+      -- the constant values `.bool true`, `.bool false` are not allocated (`if`, not `.bool (p < q)`)
       match op, x, y with
       | .add, .num p, .num q => pure (.num (p + q))
       | .sub, .num p, .num q => pure (.num (p - q))
-      | .lt, .num p, .num q => pure (.bool (p < q))
-      | .seq, _, _ => pure (.bool (strictEq x y))
+      | .mul, .num p, .num q => pure (.num (p * q))
+      | .div, .num p, .num q => pure (.num (p / q))
+      | .lt, .num p, .num q => if p < q then pure (.bool true) else pure (.bool false)
+      | .gt, .num p, .num q => if p > q then pure (.bool true) else pure (.bool false)
+      | .le, .num p, .num q => if p ≤ q then pure (.bool true) else pure (.bool false)
+      | .ge, .num p, .num q => if p ≥ q then pure (.bool true) else pure (.bool false)
+      | .seq, _, _ => if strictEq x y then pure (.bool true) else pure (.bool false)
+      | .sne, _, _ => if strictEq x y then pure (.bool false) else pure (.bool true)
       | _, _, _ => binop n op x y
     | .logical op a b =>
       let x ← evalExpr n ctx a
@@ -1871,10 +2044,43 @@ def evalExpr : Nat → Ctx → Expr → M Value
       | .coalesce => match x with
         | .undef | .null => evalExpr n ctx b
         | _ => pure x
+    | .assign none (.index o k) rhs =>
+      -- `a[i] = v`: an element of an Array is written in place, with no key string
+      let b ← evalExpr n ctx o
+      let kv ← evalExpr n ctx k
+      if let .undef := b then throwErr .type "Cannot read properties of undefined"
+      if let .null := b then throwErr .type "Cannot read properties of null"
+      match b, kv with
+      | .obj id, .num x =>
+        let v ← evalExpr n ctx rhs
+        let isIdx := x ≥ 0 && x < 4294967295.0 && x.floor == x
+        let done ← if isIdx then setElem id x.toUInt64.toNat v else pure false
+        if !done then putV n b (keyOfNum x) v ctx.strict
+        pure v
+      | _, _ =>
+        let key ← toKey n kv
+        let v ← evalExpr n ctx rhs
+        putV n b key v ctx.strict
+        pure v
+    | .assign none (.member o k) rhs =>
+      let b ← (match leafV (← get) ctx o with | .hole => evalExpr n ctx o | v => pure v)
+      let v ← (match leafV (← get) ctx rhs with | .hole => evalExpr n ctx rhs | v => pure v)
+      putV n b k v ctx.strict
+      pure v
+    | .assign (some op) (.local x h i) rhs =>
+      let old ← lookupLocal n ctx x h i
+      let r ← (match leafV (← get) ctx rhs with | .hole => evalExpr n ctx rhs | v => pure v)
+      let v ← match op, old, r with
+        | .add, .num p, .num q => pure (.num (p + q))
+        | .sub, .num p, .num q => pure (.num (p - q))
+        | _, _, _ => binop n op old r
+      assignLocal n ctx x h i v
+      pure v
     | .assign none target rhs =>
       let (b, k) ← evalRef n ctx target
       let v ← match target, rhs with
-        | .ident x, .func f => if f.name.isNone then makeClosure ctx f x else evalExpr n ctx rhs
+        | .ident x, .func f | .local x _ _, .func f =>
+          if f.name.isNone then makeClosure ctx f x else evalExpr n ctx rhs
         | _, _ => evalExpr n ctx rhs
       putTarget n ctx target b k v
       pure v
@@ -1896,6 +2102,23 @@ def evalExpr : Nat → Ctx → Expr → M Value
       let v ← evalExpr n ctx rhs
       putTarget n ctx target b k v
       pure v
+    | .update pre inc (.local x h i) =>
+      match ← lookupLocal n ctx x h i with
+      | .num old =>
+        let nv := if inc then old + 1 else old - 1
+        assignLocal n ctx x h i (.num nv)
+        pure (.num (if pre then nv else old))
+      | p =>
+        match ← toPrim n p "number" with
+        | .big big =>
+          let nv := if inc then big + 1 else big - 1
+          assignLocal n ctx x h i (.big nv)
+          pure (.big (if pre then nv else big))
+        | p =>
+          let old ← toNum n p
+          let nv := if inc then old + 1 else old - 1
+          assignLocal n ctx x h i (.num nv)
+          pure (.num (if pre then nv else old))
     | .update pre inc target =>
       let (b, k) ← evalRef n ctx target
       match ← toPrim n (← getRef n ctx target b k) "number" with
@@ -1908,7 +2131,9 @@ def evalExpr : Nat → Ctx → Expr → M Value
         let nv := if inc then old + 1 else old - 1
         putTarget n ctx target b k (.num nv)
         pure (.num (if pre then nv else old))
-    | .cond c t f => if toBool (← evalExpr n ctx c) then evalExpr n ctx t else evalExpr n ctx f
+    | .cond c t f =>
+      let cv ← (match leafV (← get) ctx c with | .hole => evalExpr n ctx c | v => pure v)
+      if toBool cv then evalExpr n ctx t else evalExpr n ctx f
     | .seq a b => let _ ← evalExpr n ctx a; evalExpr n ctx b
     | .call callee args =>
       let (f, thisV) ← match callee with
@@ -1924,8 +2149,9 @@ def evalExpr : Nat → Ctx → Expr → M Value
           | .undef | .null => throw (.halt shortSignal)
           | _ => pure (f, t)
         | .member o k =>
-          let b ← evalExpr n ctx o
-          pure (← getV n b k, b)
+          let b ← (match leafV (← get) ctx o with | .hole => evalExpr n ctx o | v => pure v)
+          let f ← (match (← get).fastGetV b k with | .hole => getV n b k | v => pure v)
+          pure (f, b)
         | .index o k =>
           let b ← evalExpr n ctx o
           let key ← toKey n (← evalExpr n ctx k)
@@ -1933,11 +2159,12 @@ def evalExpr : Nat → Ctx → Expr → M Value
         | .superMember k =>
           let proto ← homeProto ctx
           pure (← getSuper n proto k ctx.thisV, ctx.thisV)
+        | .local x h i => pure (← lookupLocal n ctx x h i, Value.undef)
         | .ident x =>
           let h ← get
-          let thisV := match h.findEnv x 100000 (some ctx.env) with
+          let thisV := match h.findEnv x 100000 ctx.env with
             | some e => match (h.envs.getD e default).withObj with
-              | some o => if ((h.envs.getD e default).vars.contains x) then Value.undef else .obj o
+              | some o => if (h.envs.getD e default).has x then Value.undef else .obj o
               | none => .undef
             | none => .undef
           pure (← lookup n ctx x, thisV)
@@ -1950,7 +2177,7 @@ def evalExpr : Nat → Ctx → Expr → M Value
             return ← directEval n ctx (argD argv 0)
       if !(← isCallable f) then
         let what := match callee with
-          | .ident x => x | .member _ k => k | _ => "expression"
+          | .ident x | .local x .. => x | .member _ k => k | _ => "expression"
         throwErr .type s!"{what} is not a function"
       callV n f thisV argv
     | .new callee args =>
@@ -1958,13 +2185,17 @@ def evalExpr : Nat → Ctx → Expr → M Value
       let argv ← evalArgs n ctx args #[]
       if !(← isConstructor f) then
         let what := match callee with
-          | .ident x => x | .member _ k => k | _ => "expression"
+          | .ident x | .local x .. => x | .member _ k => k | _ => "expression"
         throwErr .type s!"{what} is not a constructor"
       construct n f argv f
-    | .member o k => getV n (← evalExpr n ctx o) k
+    | .member o k =>
+      let b ← (match leafV (← get) ctx o with | .hole => evalExpr n ctx o | v => pure v)
+      match (← get).fastGetV b k with
+      | .hole => getV n b k
+      | v => pure v
     | .index o k =>
-      let b ← evalExpr n ctx o
-      let kv ← evalExpr n ctx k
+      let b ← (match leafV (← get) ctx o with | .hole => evalExpr n ctx o | v => pure v)
+      let kv ← (match leafV (← get) ctx k with | .hole => evalExpr n ctx k | v => pure v)
       match b, kv with
       | .obj id, .num x =>
         match (← getObj id).kind with
@@ -2028,11 +2259,9 @@ termination_by structural n _ _ _ _ _ _ _ => n
 def copyEnv : Nat → Ctx → List String → M Ctx
   | 0, _, _ => throw (.halt "fuel")
   | _ + 1, ctx, names => do
-    let h ← get
-    let old := h.envs.getD ctx.env default
-    let e ← newEnv old.parent
-    for x in names do
-      if let some b := old.vars.get? x then declare e x b
+    let old := (← get).envs.getD ctx.env default
+    -- all the names of the record are the loop's (the record is the loop's alone): a copy
+    let e ← pushEnv (if names.isEmpty then { parent := old.parent } else old)
     pure { ctx with env := e }
 termination_by structural n _ _ => n
 
@@ -2060,7 +2289,7 @@ def bindIter : Nat → Ctx → Option DeclKind → Pat → Value → M Ctx
   | n + 1, ctx, kind, target, v => do
     match kind with
     | some .letK | some .constK =>
-      let e ← newEnv (some ctx.env)
+      let e ← newEnv ctx.env
       for x in target.names do declare e x { v := .undef, mutable := true, init := false }
       let ctx' := { ctx with env := e }
       bindPat n ctx' target v (.declare e (kind == some .letK))
@@ -2142,9 +2371,12 @@ def evalStmt : Nat → Ctx → List String → Stmt → M Compl
     | .decl k ds => evalDecls n ctx k ds; pure .normal
     | .funDecl .. => pure .normal
     | .ret none => pure (.ret .undef)
-    | .ret (some e) => pure (.ret (← evalExpr n ctx e))
+    | .ret (some e) =>
+      let v ← (match leafV (← get) ctx e with | .hole => evalExpr n ctx e | v => pure v)
+      pure (.ret v)
     | .ifS c t f =>
-      if toBool (← evalExpr n ctx c) then evalStmt n ctx [] t
+      let cv ← (match leafV (← get) ctx c with | .hole => evalExpr n ctx c | v => pure v)
+      if toBool cv then evalStmt n ctx [] t
       else match f with
         | some f => evalStmt n ctx [] f
         | none => pure .normal
@@ -2156,13 +2388,20 @@ def evalStmt : Nat → Ctx → List String → Stmt → M Compl
         evalDecls n ctx .var ds
         forLoop n ctx labels [] test update body true
       | some (.decl k ds) =>
-        let env ← newEnv (some ctx.env)
+        let env ← newEnv ctx.env
         let ctx' := { ctx with env }
         for d in ds do
           for x in d.names do declare env x { v := .undef, mutable := k == .letK, init := false }
         evalDecls n ctx' k ds
         let names := ds.flatMap Decl.names
         forLoop n ctx' labels (if k == .letK then names else []) test update body true
+      | some (.letOnce ds) =>
+        let env ← newEnv ctx.env
+        let ctx' := { ctx with env }
+        for d in ds do
+          for x in d.names do declare env x { v := .undef, mutable := true, init := false }
+        evalDecls n ctx' .letK ds
+        forLoop n ctx' labels [] test update body true
       | some (.expr e) =>
         let _ ← evalExpr n ctx e
         forLoop n ctx labels [] test update body true
@@ -2177,13 +2416,20 @@ def evalStmt : Nat → Ctx → List String → Stmt → M Compl
       forOfLoop n ctx labels kind target it body
     | .withS o body =>
       let id ← toObj n (← evalExpr n ctx o)
-      let env ← modifyGet fun h => (h.envs.size, { h with envs := h.envs.push { parent := some ctx.env, withObj := some id } })
+      let env ← pushEnv { parent := ctx.env, withObj := some id }
       evalStmt n { ctx with env } [] body
     | .classDecl name c =>
       let v ← evalClass n ctx c name
       declare ctx.env name { v }
       pure .normal
     | .block ss => evalBlock n ctx ss
+    | .blockF ss =>
+      -- no closure holds this block's environment: its slot is reused on a normal end
+      -- (after a throw it stays allocated, which is only memory)
+      let ctx' ← enterBlock n ctx ss
+      let c ← evalStmts n ctx' ss
+      if ctx'.env != ctx.env then releaseEnv ctx'.env
+      pure c
     | .throwS e => throw (.throw (← evalExpr n ctx e))
     | .tryS body param handler fin =>
       let r ← tryCatch (do let c ← evalBlock n ctx body; pure (Except.ok c))
@@ -2191,7 +2437,7 @@ def evalStmt : Nat → Ctx → List String → Stmt → M Compl
       let r ← match r, handler with
         | .error (.throw v), some hs =>
           tryCatch (do
-            let env ← newEnv (some ctx.env)
+            let env ← newEnv ctx.env
             if let some p := param then
               for x in p.names do declare env x { v := .undef, init := false }
               bindPat n { ctx with env } p v (.declare env true)
@@ -2432,7 +2678,7 @@ def evalClass : Nat → Ctx → ClassDef → String → M Value
   | 0, _, _, _ => throw (.halt "fuel")
   | n + 1, ctx, .mk name heritage ctor members, nameHint => do
     let r ← realm
-    let cenv ← newEnv (some ctx.env)
+    let cenv ← newEnv ctx.env
     if let some x := name then declare cenv x { v := .undef, mutable := false, init := false }
     let cctx : Ctx := { ctx with env := cenv, strict := true }
     let (protoParent, ctorParent) ← match heritage with
@@ -2453,8 +2699,8 @@ def evalClass : Nat → Ctx → ClassDef → String → M Value
       | some f => f
       | none =>
         if derived then
-          FunDef.mk none [] (some (.id "args")) [.expr (.superCall [.spread (.ident "args")])] [] false true (.ctor true) false false
-        else FunDef.mk none [] none [] [] false true (.ctor false) false false
+          FunDef.mk none [] (some (.id "args")) [.expr (.superCall [.spread (.ident "args")])] [] false true (.ctor true) false false {}
+        else FunDef.mk none [] none [] [] false true (.ctor false) false false {}
     let cname := name.getD nameHint
     let fid ← alloc { proto := ctorParent, kind := .closure fd cenv .undef .undef (.obj proto) #[] }
     defineOwn fid "length" (.data (.num (Float.ofNat fd.expectedArgs)) false false true)
@@ -2523,15 +2769,15 @@ def directEval : Nat → Ctx → Value → M Value
   | n + 1, ctx, src => do
     match src with
     | .str code =>
-      match parseScript code ctx.strict with
+      match (parseScript code ctx.strict).map Resolve.script with
       | .error e => throwErr .syntax ((e.drop 13).toString)
       | .ok sc =>
-        let env ← newEnv (some ctx.env)
+        let env ← newEnv ctx.env
         let ectx := { ctx with env, strict := sc.strict }
         -- var declarations of sloppy eval code go to the caller's variable scope
         for x in sc.vars do
           if sc.strict then declare env x { v := .undef }
-          else if ((← get).findEnv x 100000 (some ctx.env)).isNone then
+          else if ((← get).findEnv x 100000 ctx.env).isNone then
             if ctx.env == 0 then
               let g := (← realm).globalObj
               if ((← getObj g).getOwn x).isNone then defineOwn g x (.data .undef true true true)
@@ -2736,18 +2982,25 @@ def genEnter : Nat → Ctx → List String → Stmt → List GFrame → M GOut
       else genRun n (.block ctx [body] :: .loopDo ctx labels body c :: rest) (.send .undef)
     | .forS init test update body =>
       let ok := !(test.any Expr.hasYield) && !(update.any Expr.hasYield) &&
-        (match init with | some (.expr e) => !e.hasYield | some (.decl _ ds) => !(ds.any Decl.hasYield) | none => true)
+        (match init with | some (.expr e) => !e.hasYield | some (.decl _ ds) | some (.letOnce ds) => !(ds.any Decl.hasYield) | none => true)
       if !ok then genUnsupported n rest else
       let r ← tryCatch (do
           match init with
           | some (.decl .var ds) => evalDecls n ctx .var ds; pure (Except.ok (ctx, ([] : List String)))
           | some (.decl k ds) =>
-            let env ← newEnv (some ctx.env)
+            let env ← newEnv ctx.env
             let ctx' := { ctx with env }
             for d in ds do
               for x in d.names do declare env x { v := .undef, mutable := k == .letK, init := false }
             evalDecls n ctx' k ds
             pure (Except.ok (ctx', if k == .letK then ds.flatMap Decl.names else []))
+          | some (.letOnce ds) =>
+            let env ← newEnv ctx.env
+            let ctx' := { ctx with env }
+            for d in ds do
+              for x in d.names do declare env x { v := .undef, mutable := true, init := false }
+            evalDecls n ctx' .letK ds
+            pure (Except.ok (ctx', []))
           | some (.expr e) => let _ ← evalExpr n ctx e; pure (Except.ok (ctx, []))
           | none => pure (Except.ok (ctx, [])))
         (fun a => pure (Except.error a))
@@ -2834,7 +3087,7 @@ def genUnwind : Nat → List GFrame → GCompl → M GOut
         if toBool (← getV n res "done") then genUnwind n rest (.ret (← getV n res "value"))
         else pure (.yielded (← getV n res "value") (f :: rest))
     | .tryF ctx param (some hs) fin 0, .throw v =>
-      let env ← newEnv (some ctx.env)
+      let env ← newEnv ctx.env
       let ctx' := { ctx with env }
       let r ← tryCatch (do
           if let some p := param then
@@ -3125,9 +3378,9 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
             let o := (List.range es.size).foldl (fun (o : Obj) i => o.putOwn (toString i) (.data es[i]! true true true)) o
             o.putOwn "length" (.data (.num (Float.ofNat es.size)) false false false)
           | _ => o
-        let props := o.props.fold (fun (m : Std.HashMap String PropV) k p => m.insert k (match p with
+        let props := o.props.mapValues (fun p => (match p with
           | .data v _ e _ => .data v false e false
-          | .acc g s e _ => .acc g s e false)) {}
+          | .acc g s e _ => .acc g s e false))
         modifyObj id fun _ => { o with props, extensible := false }
         pure a0
       | _ => pure a0
@@ -3195,7 +3448,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
         | [] => ([], "")
         | b :: rest => (rest.reverse, b)
       let src := "(function anonymous(" ++ ",".intercalate ps ++ "\n) {\n" ++ body ++ "\n})"
-      match parseScript src false with
+      match (parseScript src false).map Resolve.script with
       | .error e => throwErr .syntax ((e.drop 13).toString)
       | .ok { body := [.expr e], .. } =>
         evalExpr n { env := 0, thisV := .obj r.globalObj, strict := false } e
@@ -3883,9 +4136,9 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       match a0 with
       | .obj id =>
         let o ← getObj id
-        let props := o.props.fold (fun (m : Std.HashMap String PropV) k p => m.insert k (match p with
+        let props := o.props.mapValues (fun p => (match p with
           | .data v w e _ => .data v w e false
-          | .acc g s e _ => .acc g s e false)) {}
+          | .acc g s e _ => .acc g s e false))
         modifyObj id fun o => { o with props, extensible := false }
         pure a0
       | _ => pure a0
@@ -4288,7 +4541,7 @@ def jsonStr : Nat → Value → Nat → M Value
         if ← isCallable tj then callV n tj v #[] else pure v
       | _ => pure v
     match v with
-    | .undef => pure .undef
+    | .hole | .undef => pure .undef
     | .null => pure (.str "null")
     | .bool b => pure (.str (if b then "true" else "false"))
     | .num x => pure (.str (if x.isFinite then numToString x else "null"))
@@ -4321,7 +4574,7 @@ def regexExec : Nat → Value → String → M (Option (Array (Option (Nat × Na
   | 0, _, _ => throw (.halt "fuel")
   | n + 1, rv, s => do
     let (re, _, _) ← regexpOf rv
-    let cs := charsOf s
+    let cs ← cachedChars s
     let g := re.flags.global || re.flags.sticky
     let li ← if g then do pure (toIntegerOrInf (← toNum n (← getV n rv "lastIndex"))) else pure 0
     let start := if li ≤ 0 then 0 else li.toUInt64.toNat
@@ -4330,14 +4583,15 @@ def regexExec : Nat → Value → String → M (Option (Array (Option (Nat × Na
       return none
     -- The matcher's own fuel bounds one match (Re.matchFuel); the steps count it, so a
     -- loop of matches over a long string stops at the budget.
-    charge (cs.size / 64 + 1)
     match Re.exec re cs start with
     | none =>
+      charge ((cs.size - start) / 64 + 1)
       if g then putV n rv "lastIndex" (.num 0) true
       pure none
     | some caps =>
+      let e := match caps[0]? with | some (some (_, b)) => b | _ => start
+      charge ((e - start) / 64 + 1)
       if g then
-        let e := match caps[0]? with | some (some (_, b)) => b | _ => start
         putV n rv "lastIndex" (.num (Float.ofNat e)) true
       pure (some caps)
 termination_by structural n _ _ => n
@@ -6373,7 +6627,7 @@ def describeThrown (h : HeapOf H) (v : Value) : String :=
   | .error _ _ => "(an exception whose string conversion threw)"
 
 def runScript (h : HeapOf H) (src : String) (strict : Bool := false) : Outcome × HeapOf H :=
-  match parseScript src strict with
+  match (parseScript src strict).map Resolve.script with
   | .error e => (.syntaxError e, h)
   | .ok s =>
     match (runScriptM s : M Unit).run h with
@@ -6389,7 +6643,7 @@ checkpoint when its event loop says (`checkpoint`). -/
 
 /-- Run a classic script, with no microtask checkpoint after it. -/
 def evalScript (h : HeapOf H) (src : String) : Outcome × HeapOf H :=
-  match parseScript src false with
+  match (parseScript src false).map Resolve.script with
   | .error e => (.syntaxError e, h)
   | .ok s =>
     match (runScriptM s false : M Unit).run h with
