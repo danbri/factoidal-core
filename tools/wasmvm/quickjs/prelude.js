@@ -2734,7 +2734,17 @@
     // A task of the event loop (HTML "queue a global task") settles the promise. `keep`
     // holds the operation's CryptoKeys until the task has run: a key the page dropped in
     // the meantime must not be collected (and its bytes wiped in Lean) before its use.
-    const later = (f, keep) => new Promise((resolve, reject) => { timer(0, () => { try { resolve(f(keep)); } catch (e) { reject(e); } }, 0, []); });
+    // Operations started in the same turn share one task: each settles its own promise, in
+    // the order started (the crypto task source keeps its order), and a page that starts
+    // many at once pays one task, not one each.
+    let batch = null;
+    const later = (f, keep) => new Promise((resolve, reject) => {
+      if (!batch) {
+        batch = [];
+        timer(0, () => { const ops = batch; batch = null; for (const op of ops) op(); }, 0, []);
+      }
+      batch.push(() => { try { resolve(f(keep)); } catch (e) { reject(e); } });
+    });
     const start = f => { try { return f(); } catch (e) { return Promise.reject(e); } };
     // WebIDL conversions.
     const domString = v => { if (typeof v === 'symbol') throw new TypeError('Cannot convert a Symbol to a string'); return String(v); };
@@ -2785,13 +2795,21 @@
     const buffer = b => { const r = new ArrayBuffer(b.length); new Uint8Array(r).set(b); return r; };
     // "normalize an algorithm" (§18.4): Lean names the registered algorithm and the members
     // of its dictionary; here they are read and converted, in WebIDL order.
+    const specs = new Map();
     const normalize = (op, alg, prefix = 'a:') => {
       if (alg === null || (typeof alg !== 'object' && typeof alg !== 'function')) alg = { name: domString(alg) };
       const nm = alg.name;
       if (nm === undefined) throw new TypeError("Algorithm: Missing or not an AlgorithmIdentifier: name");
-      const r = apiCall(40, [op, domString(nm)], 0, false);
-      if (typeof r === 'number') raise(r, `Algorithm: Unrecognized name or not supported for ${op}`);
-      const [reg, ...ms] = r.split('\n');
+      // Lean's registry answer for (op, name) does not change in a session: asked once.
+      const name = domString(nm), ck = op + '\0' + name;
+      let spec = specs.get(ck);
+      if (spec === undefined) {
+        const r = apiCall(40, [op, name], 0, false);
+        spec = typeof r === 'number' ? r : r.split('\n');
+        specs.set(ck, spec);
+      }
+      if (typeof spec === 'number') raise(spec, `Algorithm: Unrecognized name or not supported for ${op}`);
+      const [reg, ...ms] = spec;
       const pairs = [prefix + 'name', reg], keys = [];
       for (const m of ms) {
         const i = m.indexOf(':'), k = m.slice(0, i), req = m.endsWith('!'), t = m.slice(i + 1, req ? -1 : undefined);
