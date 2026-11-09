@@ -13,8 +13,8 @@ for an enumerated attribute limited to only known values its keywords and its mi
 invalid value defaults. It was checked against the element tables of the
 web-platform-tests `html/dom/elements-*.js` (wpt ce5ca396), which are derived from the
 same sections. Attributes whose getter is not a plain reflection (`input.type`,
-`input.value`, `canvas.width`, `img.width`, `option.label`, the `meter` values, ...) are
-not in it: their own code is elsewhere.
+`input.value`, `img.width`, ...) are not in it: their own code is elsewhere, as is
+`href` of `a` and `area` (HTMLHyperlinkElementUtils, prelude.js section basics).
 
 prelude.js asks for the rows of each interface (`rowsOf`) and defines one getter and setter
 per row when the prelude runs, which the engine does once and copies for each page: no
@@ -94,7 +94,6 @@ HTMLElement accessKey . s
 HTMLElement tabIndex . ti
 HTMLElement enterKeyHint . e - - enter,done,go,next,previous,search,send
 HTMLElement inputMode . e - - none,text,tel,url,email,numeric,decimal,search
-HTMLAnchorElement,HTMLAreaElement href . u
 HTMLAnchorElement,HTMLAreaElement target . s
 HTMLAnchorElement,HTMLAreaElement download . s
 HTMLAnchorElement,HTMLAreaElement ping . s

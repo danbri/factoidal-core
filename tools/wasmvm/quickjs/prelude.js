@@ -3269,21 +3269,6 @@
       }
     }
   };
-  // ---- HTMLHyperlinkElementUtils (HTML §4.6.4) on a and area: the URL is Lean's -------------
-  const linkParts = ['protocol', 'username', 'password', 'host', 'hostname', 'port', 'pathname', 'search', 'hash', 'origin'];
-  const linkBase = el => (info(nodeId(el), 7) === 0 ? href : 'about:blank');
-  for (const C of [named.HTMLAnchorElement, named.HTMLAreaElement]) linkParts.forEach((part, i) => {
-    Object.defineProperty(C.prototype, part, {
-      get() { const r = op(nodeId(this), 163, linkBase(this)); return r === null ? (part === 'protocol' ? ':' : '') : r.split('\u0000')[i]; },
-      set: part === 'origin' ? undefined : function (v) {
-        const r = op(nodeId(this), 164, part + '\u0000' + String(v) + '\u0000' + linkBase(this));
-        if (r !== null) this.setAttribute('href', r);
-      },
-      configurable: true, enumerable: true,
-    });
-  });
-  define(named.HTMLAnchorElement.prototype, 'toString', function () { return this.href; });
-  define(named.HTMLAreaElement.prototype, 'toString', function () { return this.href; });
   // ---- Range and StaticRange (DOM §5) ------------------------------------------------------
   // One Range object per live range of Lean. When the engine collects a Range object, its
   // live range is released (op 118): Lean stops moving it, and a new range takes its slot.

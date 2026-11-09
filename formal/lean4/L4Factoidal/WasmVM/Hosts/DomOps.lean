@@ -361,14 +361,6 @@ def selContainsNode (s : State) (node : Nat) (partial_ : Bool) : Bool :=
     if partial_ then position d r.start lastBP != .after && position d r.stop first != .before
     else position d r.start first != .after && position d r.stop lastBP != .before
 
-/-! ## HTMLHyperlinkElementUtils (HTML §4.6.4) -/
-
-/-- The URL of a hyperlink element: its `href` parsed against `base`; none when it has no
-`href` or the parse fails. -/
-def hyperlinkUrl (d : Dom) (n : Nat) (base : String) : Option L4Factoidal.WHATWG.URL.Url := do
-  let v ← attrValue? d n "href"
-  L4Factoidal.WHATWG.URL.parseUrl v (if base.isEmpty then none else some base)
-
 /-! ## The ops -/
 
 /-- The ops that change the tree (`Hosts.Page` counts them as writes for layout reads). -/
@@ -415,10 +407,7 @@ TreeWalker: 134 start method ("method root whatToShow", from current node `id`);
 
 Reflection (`DOM.Reflect`): 160 the getter of a row on element `id` ("row", and for a URL
 U+0000 the document's URL); 161 the setter's decision ("row" U+0000 the converted value); 162 the rows
-of the interface named `q`; 163 the URL parts of hyperlink `id` (`q` the base): protocol,
-username, password, host, hostname, port, pathname, search, hash, origin, each followed by
-U+0000 (-1 with no URL); 164 a part's setter ("part" U+0000 value U+0000 base): the new
-`href`, or -1; 165 `CSS.supports` ("1" U+0000 property U+0000 value, or "0" U+0000 condition
+of the interface named `q`; 165 `CSS.supports` ("1" U+0000 property U+0000 value, or "0" U+0000 condition
 text; "1" or "0"); 166 `CSS.escape`; 167 a reflected setter applied ("row" U+0000 the
 converted value): the content attribute is set or removed by a command.
 
@@ -650,28 +639,6 @@ def domOpM (id op : Nat) (q : String) : Op String := do
         | .error e => throw e
       | none => throw (-2)
     | [] => throw (-2)
-  | 163 =>
-    -- HTMLHyperlinkElementUtils getters (HTML §4.6.4): the parts of the element's URL
-    let n ← nodeArg d id
-    match hyperlinkUrl d n q with
-    | some u => return "\x00".intercalate [u.protocol, u.username, u.password, u.hostGetter, u.hostname,
-        u.portGetter, u.pathname, u.search, u.hash, u.origin]
-    | none => throw (-1)
-  | 164 =>
-    -- a setter: "part" U+0000 value U+0000 base; the new href, or -1 when nothing changes
-    let n ← nodeArg d id
-    match q.splitOn "\x00" with
-    | [part, value, base] =>
-      match hyperlinkUrl d n base with
-      | some u =>
-        if part == "protocol" || part == "username" || part == "password" || part == "host" || part == "hostname" ||
-            part == "port" || part == "pathname" || part == "search" || part == "hash" then
-          match u.set part value with
-          | some u' => return u'.href
-          | none => throw (-1)
-        else throw (-2)
-      | none => throw (-1)
-    | _ => throw (-2)
   | _ => throw (-2)
 
 /-- Run op `op`: the state after it (unchanged when it throws) and the answer. -/

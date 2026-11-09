@@ -22,8 +22,6 @@ Records it joins: `2026-11-08-page-scripts.md` (the page objects and the imports
 - The `CSS` namespace: `CSS.supports` (both forms) and `CSS.escape`.
 - `document.fonts`: a FontFaceSet that is loaded (the fonts of a page are held before its
   scripts run, and a page can not add font faces yet), `ready` resolved.
-- `HTMLHyperlinkElementUtils` on `a` and `area` (`protocol`, `host`, `pathname`, ... from
-  Lean's URL parser, getters and setters).
 
 ## 2. Where the algorithms are
 
