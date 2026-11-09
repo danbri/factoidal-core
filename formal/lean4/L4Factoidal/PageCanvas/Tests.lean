@@ -89,4 +89,12 @@ def pixel (w h : Nat) (cmds : List Cmd) (x y : Nat) : List Nat :=
 -- 1,000 rectangles at one place: the fill is the same as one.
 #guard pixel 10 10 ((List.range 1000).map (fun _ => Cmd.rect 0 0 5 5) ++ [.fill 0 .nonzero]) 2 2 == [0, 0, 0, 255]
 
+-- The fast straight pixels agree with the reference, inside and across the edge.
+#guard
+  let s := ({} : Store).run {} #[.init 1 6 4 true, .fillColor "rgba(200, 100, 50, 0.5)", .fillRect 1 1 3 2, .fillColor "#0f0", .fillRect 4 0 2 4]
+  match s.canvases.get? 1 with
+  | some c => (c.straight 0 0 6 4).toList == (c.straightRef 0 0 6 4).toList && (c.straight 2 1 3 2).toList == (c.straightRef 2 1 3 2).toList
+      && (c.straight (-1) 0 3 2).toList == (c.straightRef (-1) 0 3 2).toList
+  | none => false
+
 end L4Factoidal.PageCanvas.Tests
