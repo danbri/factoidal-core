@@ -33,7 +33,7 @@ function run(script:string):{logs:string[];ms:number} {
 }
 
 const vectors=String.raw`
-const hex = s => Uint8Array.from(s.match(/../g) || [], b => parseInt(b, 16));
+const hex = s => { const u = new Uint8Array(s.length / 2); for (let i = 0; i < u.length; i++) u[i] = parseInt(s.substr(2 * i, 2), 16); return u; };
 const toHex = b => Array.from(new Uint8Array(b), x => x.toString(16).padStart(2, '0')).join('');
 const S = crypto.subtle, out = [];
 const ok = (n, c) => out.push((c ? 'PASS ' : 'FAIL ') + n);
@@ -99,7 +99,7 @@ const rejects = async (n, p, name) => { try { await p; ok(n + ' (no error)', fal
   await rejects('P-256 off-curve point', S.importKey('raw', off, {name: 'ECDH', namedCurve: 'P-256'}, true, []), 'DataError');
   const inf = new Uint8Array(65); inf[0] = 4;
   await rejects('P-256 point at infinity', S.importKey('raw', inf, {name: 'ECDH', namedCurve: 'P-256'}, true, []), 'DataError');
-  await rejects('P-256 x >= p', S.importKey('raw', Uint8Array.from([4, ...new Uint8Array(32).fill(255), ...q.slice(33)]), {name: 'ECDSA', namedCurve: 'P-256'}, true, ['verify']), 'DataError');
+  await rejects('P-256 x >= p', S.importKey('raw', (() => { const u = new Uint8Array(q); u.fill(255, 1, 33); return u; })(), {name: 'ECDSA', namedCurve: 'P-256'}, true, ['verify']), 'DataError');
   await rejects('P-256 zero private (jwk d)', S.importKey('jwk', {kty: 'EC', crv: 'P-256', d: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
     x: 'YP7UuiVanTHJYet0xjVtaMBJuJI7Yfps5mliLmDyn7Y', y: 'eQP-EAi4vJmkGunpVii8ZPLxsgwtfp9Rd6PClNRGIpk'}, {name: 'ECDSA', namedCurve: 'P-256'}, false, ['sign']), 'DataError');
   await rejects('P-384 not in HACL*', S.generateKey({name: 'ECDSA', namedCurve: 'P-384'}, false, ['sign']), 'NotSupportedError');
