@@ -88,7 +88,7 @@ try{
   for(const run of runs){
     if(run.runtime&&!fs.existsSync(path.join(run.runtime,'web-render.wasm'))){console.log(`NOT RUN: ${run.name}: no web-render.wasm in ${run.runtime}`);continue;}
     runtimeDir=run.runtime;cache.clear();
-    const width=1000,height=4800; // the index is about 4,100 px tall on 2026-11-09; links below the window cannot be clicked
+    const width=1000,height=4096; // browser.mjs caps the canvas at 4,096 px; a link outside it is scrolled to below
     const page=await open('page=index.html&stats=1&layers=0',width,height);
     const atIndex=st=>st.frame?.url===indexURL&&Array.isArray(st.frame.links);
     let st=await page.until(atIndex,90000);
@@ -100,10 +100,14 @@ try{
     const results={navigated:0,host:0,refused:0,other:0};
     for(const href of hrefs){
       st=await page.until(atIndex,20000);
-      const link=st?.frame?.links?.find(l=>l[1]===href);
+      let link=st?.frame?.links?.find(l=>l[1]===href);
+      for(let i=0;i<12&&link&&(link[3]+link[5]/2>=height||link[3]+link[5]/2<0);i++){
+        await page.wheel(500,500,Math.round(link[3]+link[5]/2-height/2));await sleep(400);
+        st=await page.until(atIndex,20000);link=st?.frame?.links?.find(l=>l[1]===href);
+      }
       if(!link){fail(run.name,href,'the index is not on screen to click it');continue;}
       const [,,x,y,w,h]=link,cx=Math.round(x+w/2),cy=Math.round(y+h/2);
-      if(cy>=height){fail(run.name,href,'is below the window',cy);continue;}
+      if(cy>=height||cy<0){fail(run.name,href,'could not be scrolled into the window',cy);continue;}
       const opened=st.opened.length;
       const target=href.startsWith('foafnaut:')?href:new URL(href,indexURL).href;
       const elsewhere=/^https?:/.test(target)&&new URL(target).origin!==origin;
