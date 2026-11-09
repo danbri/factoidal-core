@@ -86,6 +86,8 @@ inductive Native where
   | functionHasInstance
   | genNext | genReturn | genThrow
   | bigintCtor | bigintToString | bigintValueOf
+  /-- `BigInt.asIntN` (signed) and `BigInt.asUintN` (§21.2.2.1, §21.2.2.2). -/
+  | bigintAsN (signed : Bool)
   | promiseCtor | promiseThen | promiseCatch | promiseFinally | promiseResolveStatic
   | promiseRejectStatic | promiseAll | promiseResolveFn | promiseRejectFn | promiseReactionJob
   | promiseThenableJob | promiseAllElement | promiseFinallyF | promiseFinallyR | promiseValueThunk
@@ -112,6 +114,9 @@ inductive Native where
   (`typedNames`). -/
   | bufferCtor | bufferSlice | bufferIsView
   | typedCtor (ty : Nat) | typedSet | typedSubarray | typedFill
+  /-- DataView (§25.3): the constructor, and `get`/`set` of element type `ty` (the
+  `typedNames` numbering, then 9 BigInt64 and 10 BigUint64). -/
+  | dataViewCtor | dataViewGet (ty : Nat) | dataViewSet (ty : Nat)
   /-- `Date` as a constructor and `Date.prototype.getTime` (the host's clock). -/
   | dateCtor | dateGetTime
   /-- `performance.now()`: the host's clock in ms. -/
@@ -255,6 +260,8 @@ inductive Kind where
   /-- A typed array (§10.4.5): the element type (`typedNames`), the ArrayBuffer object,
   the byte offset and the element count. -/
   | typed (ty : Nat) (buf : Nat) (off len : Nat)
+  /-- A DataView (§25.3): the ArrayBuffer object, the byte offset and the byte length. -/
+  | dataView (buf : Nat) (off len : Nat)
   /-- A Boolean, Number or String object (`[[BooleanData]]` etc.). -/
   | prim (v : Value)
   | error
@@ -307,6 +314,7 @@ structure Realm where
   bufferProto : Nat := 0
   /-- The prototype of each typed array type (`typedNames`). -/
   typedProtos : Array Nat := #[]
+  dataViewProto : Nat := 0
   dateProto : Nat := 0
   deriving Inhabited
 
@@ -348,6 +356,12 @@ inductive HostAns where
   /-- A new ArrayBuffer with these bytes. -/
   | bytes (b : ByteArray)
   | err (msg : String)
+  /-- Write into the ArrayBuffer that was argument `arg` (offset, bytes; a write that does
+  not fit is skipped), then answer `ans`. -/
+  | writes (arg : Nat) (ws : Array (Nat × ByteArray)) (ans : HostAns)
+  /-- Detach the ArrayBuffer that was argument `arg` (§25.1.3.5 DetachArrayBuffer: its
+  bytes become empty and its `byteLength` 0); answers `undefined`. -/
+  | detach (arg : Nat)
   deriving Inhabited
 
 /-- An argument of a host's native: a value, or the bytes of an ArrayBuffer or of a typed

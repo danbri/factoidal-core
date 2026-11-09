@@ -36,6 +36,8 @@ session before the current run. -/
 structure LHost where
   page : Host
   base : Nat := 0
+  /-- The page's WebAssembly instructions when the run started: those since are script time. -/
+  wasm0 : Nat := 0
   deriving Inhabited
 
 abbrev JHeap := JS.HeapOf LHost
@@ -52,7 +54,8 @@ def natives : Array (String × Nat) :=
   #[("byId", 1), ("info", 2), ("str", 2), ("kids", 1), ("attr", 2), ("query", 3), ("setAttr", 3),
     ("removeAttr", 2), ("setText", 2), ("create", 2), ("insert", 3), ("remove", 2), ("replace", 3),
     ("clone", 2), ("treeOp", 3), ("listen", 4), ("unlisten", 1), ("plan", 3), ("timer", 3),
-    ("clearTimer", 1), ("frame", 1), ("cancelFrame", 1), ("log", 1), ("gpu", 3), ("api", 3)]
+    ("clearTimer", 1), ("frame", 1), ("cancelFrame", 1), ("log", 1), ("gpu", 3), ("api", 3), ("wasm", 6), ("detach", 1),
+    ("wasmGlue", 0)]
 
 /-! ## The natives: each is an import of `foafnaut_dom`, served by `Hosts.Page` -/
 
@@ -143,6 +146,10 @@ def listAns (r : Except String Int) (out : ByteArray) (emptyOnError : Bool) : JS
       let v := Page.u32At out (4 * i)
       if v ≥ 2147483648 then (v : Int) - 4294967296 else v)
 
+/-- The WebAssembly API's glue (`tools/wasmvm/quickjs/webassembly.js`), which the prelude
+compiles on the first read of `WebAssembly` (native `wasmGlue`). -/
+def wasmGlue : String := include_str "../../../../../tools/wasmvm/quickjs/webassembly.js"
+
 /-- Serve native `k` of `n` with its arguments (as the `n_*` functions of
 `qjs_wasmvm_entry.c`), or the clock (`JS.hostClockId`). -/
 def serveNative (h : Host) (k : Nat) (args : Array JS.HostArg) : Host × JS.HostAns :=
@@ -198,13 +205,41 @@ def serveNative (h : Host) (k : Nat) (args : Array JS.HostArg) : Host × JS.Host
      | .ok n => if n < 0 then (h, .val (.num (Float.ofInt n)))
        else if asBytes then (h, .bytes (o.extract 0 n.toNat)) else (h, strAns r o false)
      | .error m => (h, .err m))
+  | 25 =>
+    -- The WebAssembly API (`n.wasm(op, handle, payload, view, text)`): the same Lean as the
+    -- `wasm_call` import (`Hosts.PageWasm.core`), with the view's bytes given directly and
+    -- the changed chunks written back into that ArrayBuffer (`HostAns.writes`).
+    let u := fun (j : Nat) => Int.toNat (intOf (a j) % 4294967296)
+    let payload := match a 2 with
+      | .val .undef | .val .null => ByteArray.empty
+      | p => bytesOf p
+    let view := match a 3 with | .bytes b => some b | _ => none
+    let viewLen := (view.map (·.size)).getD 0
+    let text := match a 4 with | .val (.bool true) => true | _ => false
+    let w := h.wasm
+    let h := { h with wasm := {} }
+    let read : Hosts.PageWasm.ReadView := fun _ => if viewLen > w.config.viewBytes then none else view
+    let (w, ws, ans) := Hosts.PageWasm.core (u 0) (u 1) payload viewLen read w
+    -- With an `out` ArrayBuffer (argument 5) that holds the answer, it is written there and
+    -- its length answered, as the QuickJS native does.
+    let outLen := match a 5 with | .bytes o => some o.size | _ => none
+    let ans : JS.HostAns := match ans with
+      | .error c => .val (.num (Float.ofInt c))
+      | .ok b =>
+        if text then .val (.str ((String.fromUTF8? b).getD ""))
+        else match outLen with
+          | some cap => if b.size ≤ cap then .writes 5 #[(0, b)] (.val (.num (Float.ofNat b.size))) else .bytes b
+          | none => .bytes b
+    ({ h with wasm := w }, if ws.isEmpty then ans else .writes 3 ws ans)
+  | 26 => (h, .detach 0)
+  | 27 => (h, .val (.str wasmGlue))
   | _ => (h, .err "foafnaut_dom: no such native")
 
 /-- The host's natives with the script clock: the instructions run so far are the steps of
 the session before this run and the steps of this run (`runBudget` less the steps left),
 as `Page.Session.run` counts the instructions of a run at each host call. -/
 def hostCall (lh : LHost) (k : Nat) (args : Array JS.HostArg) (left : Nat) : LHost × JS.HostAns :=
-  let steps := lh.base + (runBudget - left)
+  let steps := lh.base + (runBudget - left) + (lh.page.wasm.steps - lh.wasm0)
   let h := lh.page
   let h := { h with time := h.time.atRun h.loop.clock steps }
   let (h, ans) := serveNative h k args
@@ -246,10 +281,12 @@ def Session.run (s : Session) (f : JHeap → (JS.Outcome × JS.Value) × JHeap) 
   let lh := heap.host.getD default
   let page := lh.page
   let page := { page with time := page.time.atRun page.loop.clock steps }
-  let heap := { heap with steps := runBudget, host := some { lh with page, base := steps } }
+  let wasm0 := page.wasm.steps
+  let heap := { heap with steps := runBudget, host := some { lh with page, base := steps, wasm0 } }
   let ((o, v), heap) := f heap
-  let steps := steps + (runBudget - heap.steps)
   let lh := heap.host.getD default
+  -- The page's WebAssembly ran in this run's natives: its instructions are script time too.
+  let steps := steps + (runBudget - heap.steps) + (lh.page.wasm.steps - wasm0)
   let page := lh.page
   let time := page.time.atRun page.loop.clock steps
   let page := { page with time, loop := { page.loop with clock := time.sync page.loop.clock } }

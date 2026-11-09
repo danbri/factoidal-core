@@ -96,7 +96,7 @@ def isConstructor (v : Value) : M Bool := do
     | .native nid => pure (match nid with
         | .objectCtor | .functionCtor | .arrayCtor | .stringCtor | .numberCtor | .booleanCtor
         | .errorCtor _ | .symbolCtor | .promiseCtor | .mapCtor _ | .regexpCtor | .proxyCtor
-        | .bufferCtor | .typedCtor _ | .dateCtor => true
+        | .bufferCtor | .typedCtor _ | .dateCtor | .dataViewCtor => true
         | _ => false)
     | .bound .. => pure true
     | _ => pure false
@@ -624,6 +624,30 @@ def typedWrite (ty buf off i : Nat) (x : Float) : M Unit :=
 /-- The number of `HeapOf.hostCall` that answers the clock: ns as a number. -/
 def hostClockId : Nat := 1000000
 
+/-- The value of a host's answer; writes into an argument's ArrayBuffer and detaching it
+happen here. -/
+def hostAnswer (args : Array Value) : HostAns → M Value
+  | .val v => pure v
+  | .ints xs => newArray (xs.map fun i => .num (Float.ofInt i))
+  | .err m => throwErr .type m
+  | .bytes b => newBuffer b
+  | .detach i => do
+    if let some (.obj id) := args[i]? then
+      if let .buffer _ := (← getObj id).kind then
+        modifyObj id fun bo => { bo with kind := .buffer ByteArray.empty }
+        defineOwn id "byteLength" (.data (.num 0) false false true)
+    pure .undef
+  | .writes i ws ans => do
+    if let some (.obj id) := args[i]? then
+      modifyObj id fun bo => match bo.kind with
+        | .buffer bytes =>
+          -- Take the bytes out first, so the writes change them in place.
+          let bo := { bo with kind := .buffer ByteArray.empty }
+          { bo with kind := .buffer (ws.foldl (fun acc (o, c) =>
+              if o + c.size ≤ acc.size then c.copySlice 0 acc o c.size else acc) bytes) }
+        | _ => bo
+    hostAnswer args ans
+
 /-- Call a native of the host (`Native.host k`). The host's state is taken out of the heap
 for the call, so the host changes it in place. -/
 def callHost (k : Nat) (args : Array Value) : M Value := do
@@ -641,11 +665,8 @@ def callHost (k : Nat) (args : Array Value) : M Value := do
   | some st =>
     let (st, ans) := call st k hargs left
     modify fun h => { h with host := some st }
-    match ans with
-    | .val v => pure v
-    | .ints xs => newArray (xs.map fun i => .num (Float.ofInt i))
-    | .bytes b => newBuffer b
-    | .err m => throwErr .type m
+    hostAnswer args ans
+
 
 /-- The host's clock in ns (0 with no host). -/
 def hostNowNs : M Float := do
@@ -3126,7 +3147,10 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       | .str s => pure (.str s)
       | _ => throwErr .type "String.prototype.toString requires that 'this' be a String"
     | .numberCtor =>
-      let x ← if args.isEmpty then pure 0 else toNum n a0
+      -- §21.1.1.1: ToNumeric, and a BigInt becomes the Number of its value.
+      let x ← if args.isEmpty then pure 0 else match ← toPrim n a0 "number" with
+        | .big i => pure (Float.ofInt i)
+        | p => toNum n p
       match newTarget with
       | some _ => pure (.obj (← alloc { proto := .obj r.numberProto, kind := .prim (.num x) }))
       | none => pure (.num x)
@@ -3726,6 +3750,24 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       | .bool b => pure (.big (if b then 1 else 0))
       | .big i => pure (.big i)
       | _ => throwErr .type "Cannot convert value to a BigInt"
+    | .bigintAsN signed =>
+      -- ToIndex (§7.1.22).
+      let bf := toIntegerOrInf (← toNum n a0)
+      if bf < 0 || bf > 9007199254740991 then throwErr .range "Invalid value: not (convertible to) a safe integer"
+      let bits := bf.toUInt64.toNat
+      if bits > 1000000 then throwErr .range "Maximum BigInt size exceeded"
+      -- ToBigInt (§7.1.13): a Number is a TypeError.
+      let x ← match ← toPrim n a1 "number" with
+        | .big i => pure i
+        | .bool b => pure (if b then 1 else 0)
+        | .str t => match strToBigInt t with
+          | some i => pure i
+          | none => throwErr .syntax s!"Cannot convert {t} to a BigInt"
+        | .num _ => throwErr .type "Cannot convert a Number to a BigInt"
+        | _ => throwErr .type "Cannot convert value to a BigInt"
+      let m : Int := 2 ^ bits
+      let r := x.emod m
+      pure (.big (if signed && bits > 0 && r ≥ 2 ^ (bits - 1) then r - m else r))
     | .bigintToString | .bigintValueOf =>
       match ← thisPrim thisV with
       | .big i =>
@@ -3774,6 +3816,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
     | .regexpCtor | .regexpExec | .regexpTest | .regexpToString | .regexpGetter _ | .stringMatch
     | .stringMatchAll | .stringSearch | .proxyCtor | .jsonParse | .bufferCtor | .bufferSlice
     | .bufferIsView | .typedCtor _ | .typedSet | .typedSubarray | .typedFill | .dateCtor
+    | .dataViewCtor | .dataViewGet _ | .dataViewSet _
     | .dateGetTime | .perfNow | .host _ =>
       extraNative n id thisV args newTarget
     | _ =>
@@ -4195,7 +4238,7 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
     | .bufferIsView =>
       match a0 with
       | .obj oid => match (← getObj oid).kind with
-        | .typed .. => pure (.bool true)
+        | .typed .. | .dataView .. => pure (.bool true)
         | _ => pure (.bool false)
       | _ => pure (.bool false)
     | .typedCtor ty =>
@@ -4233,6 +4276,77 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
         let buf ← newBuffer (ByteArray.mk (Array.replicate (len.toUInt64.toNat * es) 0))
         let .obj bid := buf | pure buf
         newTyped ty bid 0 len.toUInt64.toNat
+    | .dataViewCtor =>
+      needNew "DataView"
+      let bid ← match a0 with
+        | .obj oid => match (← getObj oid).kind with
+          | .buffer _ => pure oid
+          | _ => throwErr .type "First argument to DataView constructor must be an ArrayBuffer"
+        | _ => throwErr .type "First argument to DataView constructor must be an ArrayBuffer"
+      let size := (bufferBytes (← getObj bid)).size
+      -- ToIndex (§7.1.22) of the offset and of the length.
+      let off := toIntegerOrInf (← toNum n a1)
+      if off < 0 || off > 9007199254740991 then throwErr .range "Start offset is outside the bounds of the buffer"
+      let off := off.toUInt64.toNat
+      if off > size then throwErr .range "Start offset is outside the bounds of the buffer"
+      let len ← match argD args 2 with
+        | .undef => pure (size - off)
+        | v => do
+          let l := toIntegerOrInf (← toNum n v)
+          if l < 0 || l > 9007199254740991 then throwErr .range "Invalid DataView length"
+          pure l.toUInt64.toNat
+      if off + len > size then throwErr .range "Invalid DataView length"
+      let id ← alloc { proto := .obj (← realm).dataViewProto, kind := .dataView bid off len }
+      defineOwn id "byteLength" (.data (.num (Float.ofNat len)) false false true)
+      defineOwn id "byteOffset" (.data (.num (Float.ofNat off)) false false true)
+      defineOwn id "buffer" (.data (.obj bid) false false true)
+      pure (.obj id)
+    | .dataViewGet ty | .dataViewSet ty =>
+      -- GetViewValue and SetViewValue (§25.3.1.5, §25.3.1.6).
+      let (b, voff, vlen) ← match thisV with
+        | .obj oid => match (← getObj oid).kind with
+          | .dataView b off len => pure (b, off, len)
+          | _ => throwErr .type "not a DataView"
+        | _ => throwErr .type "not a DataView"
+      let idx := toIntegerOrInf (← toNum n a0)
+      if idx < 0 || idx > 9007199254740991 then throwErr .range "Offset is outside the bounds of the DataView"
+      let idx := idx.toUInt64.toNat
+      let size := if ty ≥ 9 then 8 else elemSize ty
+      let isSet := match id with | .dataViewSet _ => true | _ => false
+      -- set: the value is converted before the offset is checked.
+      let bits : Option ByteArray ← if !isSet then pure none else
+        if ty ≥ 9 then do
+          let i ← match ← toPrim n a1 "number" with
+            | .big i => pure i
+            | .bool bb => pure (if bb then 1 else 0)
+            | .str t => match strToBigInt t with
+              | some i => pure i
+              | none => throwErr .syntax s!"Cannot convert {t} to a BigInt"
+            | _ => throwErr .type "Cannot convert value to a BigInt"
+          let u := (i.emod (2 ^ 64)).toNat
+          pure (some (ByteArray.mk ((List.range 8).toArray.map fun k => (u / 2 ^ (8 * k) % 256).toUInt8)))
+        else do pure (some (typedBytes ty (← toNum n a1)))
+      let little := toBool (argD args (if isSet then 2 else 1))
+      if idx + size > vlen then throwErr .range "Offset is outside the bounds of the DataView"
+      let at_ := voff + idx
+      match bits with
+      | some le =>
+        let bs := if little then le else ByteArray.mk le.data.reverse
+        modifyObj b fun bo => match bo.kind with
+          | .buffer bytes =>
+            let bo := { bo with kind := .buffer ByteArray.empty }
+            { bo with kind := .buffer (if at_ + size ≤ bytes.size then bs.copySlice 0 bytes at_ size else bytes) }
+          | _ => bo
+        pure .undef
+      | none =>
+        let bytes := bufferBytes (← getObj b)
+        if at_ + size > bytes.size then throwErr .type "Cannot perform DataView get on a detached ArrayBuffer"
+        let raw := bytes.extract at_ (at_ + size)
+        let le := if little then raw else ByteArray.mk raw.data.reverse
+        if ty ≥ 9 then
+          let u := (List.range 8).foldl (fun a k => a + (le.get! k).toNat * 2 ^ (8 * k)) 0
+          pure (.big (if ty == 9 && u ≥ 2 ^ 63 then (u : Int) - 2 ^ 64 else u))
+        else pure (typedRead ty le 0)
     | .typedSet | .typedSubarray | .typedFill =>
       let (ty, b, off, len) ← match thisV with
         | .obj oid => match (← getObj oid).kind with
@@ -4668,7 +4782,11 @@ def initRealm : M Unit := do
   defineOwn promiseProto (symKey symToStringTag) (.data (.str "Promise") false false true)
   let bigintProto ← mk
   modify fun h => { h with realm := { h.realm with bigintProto := bigintProto } }
-  setHidden g "BigInt" (← ctorWith "BigInt" .bigintCtor 1 bigintProto)
+  let bigC ← ctorWith "BigInt" .bigintCtor 1 bigintProto
+  setHidden g "BigInt" bigC
+  if let .obj bc := bigC then
+    method bc "asIntN" (.bigintAsN true) 2
+    method bc "asUintN" (.bigintAsN false) 2
   method bigintProto "toString" .bigintToString 0
   method bigintProto "valueOf" .bigintValueOf 0
   defineOwn bigintProto (symKey symToStringTag) (.data (.str "BigInt") false false true)
@@ -4727,6 +4845,16 @@ def initRealm : M Unit := do
     setHidden g nm c
     typedProtos := typedProtos.push p
   modify fun h => { h with realm := { h.realm with typedProtos } }
+  -- DataView (§25.3)
+  let dataViewProto ← mk
+  modify fun h => { h with realm := { h.realm with dataViewProto } }
+  setHidden g "DataView" (← ctorWith "DataView" .dataViewCtor 1 dataViewProto)
+  defineOwn dataViewProto (symKey symToStringTag) (.data (.str "DataView") false false true)
+  for (nm, ty) in [("Int8", 0), ("Uint8", 1), ("Int16", 3), ("Uint16", 4), ("Int32", 5), ("Uint32", 6),
+      ("Float32", 7), ("Float64", 8), ("BigInt64", 9), ("BigUint64", 10)] do
+    method dataViewProto ("get" ++ nm) (.dataViewGet ty) 1
+    method dataViewProto ("set" ++ nm) (.dataViewSet ty) 2
+  defineOwn bufferProto (symKey symToStringTag) (.data (.str "ArrayBuffer") false false true)
 
 /-- A fresh realm. -/
 def freshHeapOf (host : Option H) (hostCall : H → Nat → Array HostArg → Nat → H × HostAns) : HeapOf H :=
