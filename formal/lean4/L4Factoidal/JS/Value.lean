@@ -54,6 +54,50 @@ def PropV.configurable : PropV → Bool
   | .data _ _ _ c => c
   | .acc _ _ _ c => c
 
+/-- The built-ins added on 2026-11-09 (`Native.x`). -/
+inductive NativeX where
+  /-- ArrayBuffer (§25.1.6) accessors: 0 `byteLength`, 1 `maxByteLength`, 2 `resizable`,
+  3 `detached`; `resize`; `transfer` and `transferToFixedLength`. -/
+  | bufferGetter (which : Nat) | bufferResize | bufferTransfer (fixed : Bool)
+  /-- SharedArrayBuffer (§25.2): the constructor, 0 `byteLength`, 1 `maxByteLength`,
+  2 `growable`; `grow`; `slice`. -/
+  | sharedCtor | sharedGetter (which : Nat) | sharedGrow | sharedSlice
+  /-- %TypedArray% (§23.2.1): the constructor (which throws), `from`, `of`, the accessors
+  (0 `buffer`, 1 `byteLength`, 2 `byteOffset`, 3 `length`, 4 `@@toStringTag`) and the
+  methods that answer a typed array or work on its bytes (`typedMethods`). -/
+  | typedArrayCtor | typedFrom | typedOf | typedGetter (which : Nat) | typedMethod (which : Nat)
+  /-- Atomics (§25.4) on integer typed arrays, without waiting (`atomicsOps`). -/
+  | atomics (op : Nat)
+  /-- `String.prototype.isWellFormed` and `toWellFormed` (§22.1.3.10, §22.1.3.32). -/
+  | stringIsWellFormed | stringToWellFormed
+  /-- Date.prototype methods (§21.4.4, `dateMethodNames`), `Date.UTC`, `Date.parse`. -/
+  | dateMethod (k : Nat) | dateUTC | dateParse
+  /-- Iterator (§27.1.3): the constructor, `Iterator.from`, the lazy methods that make an
+  iterator helper (0 `map`, 1 `filter`, 2 `take`, 3 `drop`, 4 `flatMap`), the eager ones
+  (0 `reduce`, 1 `toArray`, 2 `forEach`, 3 `some`, 4 `every`, 5 `find`), and `next` and
+  `return` of a helper (and of the wrapper of `Iterator.from`). -/
+  | iteratorCtor | iteratorFrom | iterLazy (k : Nat) | iterEager (k : Nat) | helperNext | helperReturn
+  /-- `Promise.race` (0) and `Promise.allSettled` (1) (§27.2.4.5, §27.2.4.2), and the
+  function that records one settled element of `allSettled` (0 fulfilled, 1 rejected). -/
+  | promiseCombinator (k : Nat) | promiseSettleElement (rejected : Nat)
+  /-- `Number.prototype.toExponential` and `toPrecision` (§21.1.3.2, §21.1.3.5). -/
+  | numberToExponential | numberToPrecision
+  /-- The Set methods of ES2025 (§24.2.4: 0 `union`, 1 `intersection`, 2 `difference`,
+  3 `symmetricDifference`, 4 `isSubsetOf`, 5 `isSupersetOf`, 6 `isDisjointFrom`), and
+  `Proxy.revocable` with its revoke function (§28.2.2.1). -/
+  | setMethod (k : Nat) | proxyRevocable | proxyRevoke
+  /-- Array.prototype methods (§23.1.3): 0 `copyWithin`, 1 `reduceRight`, 2 `toReversed`,
+  3 `toSorted`, 4 `toSpliced`, 5 `with`. -/
+  | arrayMethod (k : Nat)
+  /-- `Object.hasOwn` (§20.1.2.13), `Object.groupBy` and `Map.groupBy` (§20.1.2.12,
+  §24.1.2.1; `true` for Map), `String.prototype.localeCompare` (§22.1.3.12, code unit order:
+  there is no Intl here). -/
+  | objectHasOwn | groupBy (map : Bool) | stringLocaleCompare
+  /-- AggregateError (§20.5.7), `Promise.any` (§27.2.4.3) and the function that records one
+  rejected element of it. -/
+  | aggregateErrorCtor | promiseAny | promiseAnyReject
+  deriving BEq, Repr, Inhabited
+
 /-- The built-in functions (§19 to §28 for the subset). -/
 inductive Native where
   | print | isNaN | isFinite | parseInt | parseFloat
@@ -127,46 +171,9 @@ inductive Native where
   | uriFn (which : Nat)
   /-- A native of the embedding host: `HeapOf.hostCall` with this number. -/
   | host (k : Nat)
-  /-- ArrayBuffer (§25.1.6) accessors: 0 `byteLength`, 1 `maxByteLength`, 2 `resizable`,
-  3 `detached`; `resize`; `transfer` and `transferToFixedLength`. -/
-  | bufferGetter (which : Nat) | bufferResize | bufferTransfer (fixed : Bool)
-  /-- SharedArrayBuffer (§25.2): the constructor, 0 `byteLength`, 1 `maxByteLength`,
-  2 `growable`; `grow`; `slice`. -/
-  | sharedCtor | sharedGetter (which : Nat) | sharedGrow | sharedSlice
-  /-- %TypedArray% (§23.2.1): the constructor (which throws), `from`, `of`, the accessors
-  (0 `buffer`, 1 `byteLength`, 2 `byteOffset`, 3 `length`, 4 `@@toStringTag`) and the
-  methods that answer a typed array or work on its bytes (`typedMethods`). -/
-  | typedArrayCtor | typedFrom | typedOf | typedGetter (which : Nat) | typedMethod (which : Nat)
-  /-- Atomics (§25.4) on integer typed arrays, without waiting (`atomicsOps`). -/
-  | atomics (op : Nat)
-  /-- `String.prototype.isWellFormed` and `toWellFormed` (§22.1.3.10, §22.1.3.32). -/
-  | stringIsWellFormed | stringToWellFormed
-  /-- Date.prototype methods (§21.4.4, `dateMethodNames`), `Date.UTC`, `Date.parse`. -/
-  | dateMethod (k : Nat) | dateUTC | dateParse
-  /-- Iterator (§27.1.3): the constructor, `Iterator.from`, the lazy methods that make an
-  iterator helper (0 `map`, 1 `filter`, 2 `take`, 3 `drop`, 4 `flatMap`), the eager ones
-  (0 `reduce`, 1 `toArray`, 2 `forEach`, 3 `some`, 4 `every`, 5 `find`), and `next` and
-  `return` of a helper (and of the wrapper of `Iterator.from`). -/
-  | iteratorCtor | iteratorFrom | iterLazy (k : Nat) | iterEager (k : Nat) | helperNext | helperReturn
-  /-- `Promise.race` (0) and `Promise.allSettled` (1) (§27.2.4.5, §27.2.4.2), and the
-  function that records one settled element of `allSettled` (0 fulfilled, 1 rejected). -/
-  | promiseCombinator (k : Nat) | promiseSettleElement (rejected : Nat)
-  /-- `Number.prototype.toExponential` and `toPrecision` (§21.1.3.2, §21.1.3.5). -/
-  | numberToExponential | numberToPrecision
-  /-- The Set methods of ES2025 (§24.2.4: 0 `union`, 1 `intersection`, 2 `difference`,
-  3 `symmetricDifference`, 4 `isSubsetOf`, 5 `isSupersetOf`, 6 `isDisjointFrom`), and
-  `Proxy.revocable` with its revoke function (§28.2.2.1). -/
-  | setMethod (k : Nat) | proxyRevocable | proxyRevoke
-  /-- Array.prototype methods (§23.1.3): 0 `copyWithin`, 1 `reduceRight`, 2 `toReversed`,
-  3 `toSorted`, 4 `toSpliced`, 5 `with`. -/
-  | arrayMethod (k : Nat)
-  /-- `Object.hasOwn` (§20.1.2.13), `Object.groupBy` and `Map.groupBy` (§20.1.2.12,
-  §24.1.2.1; `true` for Map), `String.prototype.localeCompare` (§22.1.3.12, code unit order:
-  there is no Intl here). -/
-  | objectHasOwn | groupBy (map : Bool) | stringLocaleCompare
-  /-- AggregateError (§20.5.7), `Promise.any` (§27.2.4.3) and the function that records one
-  rejected element of it. -/
-  | aggregateErrorCtor | promiseAny | promiseAnyReject
+  /-- The built-ins added on 2026-11-09 (`NativeX`): one constructor, so that `Native`
+  stays under the runtime's limit on constructor tags. -/
+  | x (op : NativeX)
   deriving BEq, Repr, Inhabited
 
 /-- What a running function sees. -/

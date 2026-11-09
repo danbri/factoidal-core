@@ -125,7 +125,7 @@ def isConstructor (v : Value) : M Bool := do
         | .objectCtor | .functionCtor | .arrayCtor | .stringCtor | .numberCtor | .booleanCtor
         | .errorCtor _ | .symbolCtor | .promiseCtor | .mapCtor _ | .regexpCtor | .proxyCtor
         | .bufferCtor | .typedCtor _ | .dateCtor | .dataViewCtor => true
-        | .sharedCtor | .typedArrayCtor | .iteratorCtor | .aggregateErrorCtor => true
+        | (.x .sharedCtor) | (.x .typedArrayCtor) | (.x .iteratorCtor) | (.x .aggregateErrorCtor) => true
         | _ => false)
     | .bound .. => pure true
     | _ => pure false
@@ -3627,7 +3627,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       | some a => throw a
       | none => pure ()
       pure (.obj res)
-    | .promiseCombinator k =>
+    | (.x (.promiseCombinator k)) =>
       let res ← newPromise
       let x ← tryCatch (do
           let it ← getIterator n a0
@@ -3643,8 +3643,8 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
               performThen n p (.obj rs) (.obj rj) .undef
             else
               let elArgs : Array Value := #[.obj res, vals, .obj counter, .num (Float.ofNat i)]
-              let onF ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn (.promiseSettleElement 0)) .undef elArgs }
-              let onR ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn (.promiseSettleElement 1)) .undef elArgs }
+              let onF ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn ((.x (.promiseSettleElement 0)))) .undef elArgs }
+              let onR ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn ((.x (.promiseSettleElement 1)))) .undef elArgs }
               performThen n p (.obj onF) (.obj onR) .undef
           if k != 0 then
             let _ ← callNative n .promiseAllElement .undef #[.obj res, vals, .obj counter, .num (-1), .undef] none
@@ -3655,7 +3655,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       | some a => throw a
       | none => pure ()
       pure (.obj res)
-    | .promiseSettleElement rejected =>
+    | (.x (.promiseSettleElement rejected)) =>
       -- args: result promise, values, counter, index, value: the value becomes
       -- { status, value } or { status, reason } (§27.2.4.2.2, §27.2.4.2.3)
       let o ← newObject
@@ -4047,13 +4047,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
     | .dataViewCtor | .dataViewGet _ | .dataViewSet _
     | .dateGetTime | .perfNow | .host _ | .uriFn _ =>
       extraNative n id thisV args newTarget
-    | .bufferGetter _ | .bufferResize | .bufferTransfer _ | .sharedCtor | .sharedGetter _ | .sharedGrow
-    | .sharedSlice | .typedArrayCtor | .typedFrom | .typedOf | .typedGetter _ | .typedMethod _ | .atomics _
-    | .stringIsWellFormed | .stringToWellFormed | .dateMethod _ | .dateUTC | .dateParse
-    | .iteratorCtor | .iteratorFrom | .iterLazy _ | .iterEager _ | .helperNext | .helperReturn
-    | .numberToExponential | .numberToPrecision | .setMethod _ | .proxyRevocable | .proxyRevoke
-    | .arrayMethod _ | .objectHasOwn | .groupBy _ | .stringLocaleCompare | .aggregateErrorCtor | .promiseAny
-    | .promiseAnyReject =>
+    | .x _ =>
       moreNative n id thisV args newTarget
     | _ =>
       -- string methods and Math
@@ -4916,7 +4910,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
     let resized (bytes : ByteArray) (l : Nat) : ByteArray :=
       if l ≤ bytes.size then bytes.extract 0 l else bytes ++ ByteArray.mk (Array.replicate (l - bytes.size) 0)
     match id with
-    | .bufferGetter which =>
+    | (.x (.bufferGetter which)) =>
       let (_, o) ← thisBuf false "ArrayBuffer.prototype accessor"
       let size := if isDetached o then 0 else (bufferBytes o).size
       match which with
@@ -4924,7 +4918,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       | 1 => pure (.num (Float.ofNat (if isDetached o then 0 else (hiddenNum o bufMaxKey).getD size)))
       | 2 => pure (.bool (hiddenNum o bufMaxKey).isSome)
       | _ => pure (.bool (isDetached o))
-    | .bufferResize =>
+    | (.x .bufferResize) =>
       let (oid, o) ← thisBuf false "ArrayBuffer.prototype.resize"
       let some m := hiddenNum o bufMaxKey | throwErr .type "ArrayBuffer.prototype.resize called on a fixed-length ArrayBuffer"
       let l := toIntegerOrInf (← toNum n a0)
@@ -4936,7 +4930,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
           { bo with kind := .buffer (resized bytes l.toUInt64.toNat) }
         | _ => bo
       pure .undef
-    | .bufferTransfer fixed =>
+    | (.x (.bufferTransfer fixed)) =>
       -- §25.1.6.9 ArrayBufferCopyAndDetach
       let (oid, o) ← thisBuf false "ArrayBuffer.prototype.transfer"
       let bytes := bufferBytes o
@@ -4956,7 +4950,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       modifyObj oid fun bo => { bo with kind := .buffer ByteArray.empty }
       defineOwn oid bufDetachedKey (.data (.bool true) true false false)
       pure nb
-    | .sharedCtor =>
+    | (.x .sharedCtor) =>
       let some nt := newTarget | throwErr .type "Constructor SharedArrayBuffer requires 'new'"
       let len := toIntegerOrInf (← toNum n a0)
       if len < 0 || len > 268435456 then throwErr .range "Invalid array buffer length"
@@ -4969,14 +4963,14 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       defineOwn sid bufSharedKey (.data (.bool true) true false false)
       if let some m := max then defineOwn sid bufMaxKey (.data (.num m) true false false)
       pure (.obj sid)
-    | .sharedGetter which =>
+    | (.x (.sharedGetter which)) =>
       let (_, o) ← thisBuf true "SharedArrayBuffer.prototype accessor"
       let size := (bufferBytes o).size
       match which with
       | 0 => pure (.num (Float.ofNat size))
       | 1 => pure (.num (Float.ofNat ((hiddenNum o bufMaxKey).getD size)))
       | _ => pure (.bool (hiddenNum o bufMaxKey).isSome)
-    | .sharedGrow =>
+    | (.x .sharedGrow) =>
       let (oid, o) ← thisBuf true "SharedArrayBuffer.prototype.grow"
       let some m := hiddenNum o bufMaxKey | throwErr .type "SharedArrayBuffer.prototype.grow called on a fixed-length SharedArrayBuffer"
       let l := toIntegerOrInf (← toNum n a0)
@@ -4988,7 +4982,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
           { bo with kind := .buffer (resized bytes l.toUInt64.toNat) }
         | _ => bo
       pure .undef
-    | .sharedSlice =>
+    | (.x .sharedSlice) =>
       let (_, o) ← thisBuf true "SharedArrayBuffer.prototype.slice"
       let bytes := bufferBytes o
       let a := relIndex (toIntegerOrInf (← toNum n a0)) bytes.size
@@ -4998,11 +4992,11 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       let sid ← alloc { proto := .obj r.sharedBufferProto, kind := .buffer (bytes.extract a (max a b)) }
       defineOwn sid bufSharedKey (.data (.bool true) true false false)
       pure (.obj sid)
-    | .typedArrayCtor => throwErr .type "Abstract class TypedArray not directly constructable"
-    | .typedOf | .typedFrom =>
+    | (.x .typedArrayCtor) => throwErr .type "Abstract class TypedArray not directly constructable"
+    | (.x .typedOf) | (.x .typedFrom) =>
       -- §23.2.2.1 %TypedArray%.from, §23.2.2.2 %TypedArray%.of: `this` makes the array
       if !(← isConstructor thisV) then throwErr .type "TypedArray.from/of: this is not a constructor"
-      let items ← if id == .typedOf then pure args else do
+      let items ← if id == (.x .typedOf) then pure args else do
         let mapFn := a1
         let mapping := match mapFn with | .undef => false | _ => true
         if mapping && !(← isCallable mapFn) then throwErr .type "TypedArray.from: the map function is not callable"
@@ -5028,7 +5022,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       | _ => throwErr .type "TypedArray.from/of: the constructor did not make a typed array"
       for i in [0:items.size] do putV n ta (toString i) items[i]! true
       pure ta
-    | .typedGetter which =>
+    | (.x (.typedGetter which)) =>
       let info : Option (Nat × Nat × Nat × Nat) ← match thisV with
         | .obj oid => do
           match (← getObj oid).kind with
@@ -5045,7 +5039,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       | 2 => pure (.num (Float.ofNat (if gone then 0 else off)))
       | 3 => pure (.num (Float.ofNat live))
       | _ => pure (.str ((typedNames[ty]?.map (·.1)).getD ""))
-    | .typedMethod which =>
+    | (.x (.typedMethod which)) =>
       let (ty, b, off, len) ← thisTyped "TypedArray method"
       let xs ← valuesOf ty b off len
       let size := xs.size
@@ -5152,7 +5146,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
           let i := last - 1 - j
           acc ← callV n a0 .undef #[acc, xs[i]!, .num (Float.ofNat i), thisV]
         pure acc
-    | .atomics op =>
+    | (.x (.atomics op)) =>
       if op == 4 then
         let k := toIntegerOrInf (← toNum n a0)
         return .bool (k == 1 || k == 2 || k == 4 || k == 8)
@@ -5205,13 +5199,13 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
         | _ => pure (some (mk (bigBits Nat.xor o x)))
       if let some nv := newV? then typedWriteV ty b off i nv
       pure old
-    | .iteratorCtor =>
+    | (.x .iteratorCtor) =>
       -- §27.1.3.1 Iterator: abstract; a subclass may construct
       let some nt := newTarget | throwErr .type "Constructor Iterator requires 'new'"
       if strictEq nt (← getV n (.obj r.globalObj) "Iterator") then throwErr .type "Abstract class Iterator not directly constructable"
       let p ← getV n nt "prototype"
       pure (.obj (← alloc { proto := if p.isObj then p else .obj r.iterProto }))
-    | .iteratorFrom =>
+    | (.x .iteratorFrom) =>
       -- §27.1.3.2.1 Iterator.from: GetIteratorFlattenable, then wrap unless it inherits Iterator.prototype
       let it ← match a0 with
         | .str _ => getIterator n a0
@@ -5232,7 +5226,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       defineOwn w helperNextKey (.data next true false false)
       defineOwn w helperKind (.data (.num 5) true false false)
       pure (.obj w)
-    | .iterLazy k =>
+    | (.x (.iterLazy k)) =>
       -- §27.1.4.{5,4,12,3,6}: GetIteratorDirect, the argument checked, a helper made
       if !thisV.isObj then throwErr .type "Iterator.prototype method called on a non-object"
       let lim ← if k == 2 || k == 3 then do
@@ -5259,7 +5253,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       defineOwn h helperCount (.data (.num 0) true false false)
       defineOwn h helperInner (.data .undef true false false)
       pure (.obj h)
-    | .iterEager k =>
+    | (.x (.iterEager k)) =>
       if !thisV.isObj then throwErr .type "Iterator.prototype method called on a non-object"
       if k != 1 && !(← isCallable a0) then
         iterClose n thisV
@@ -5305,7 +5299,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       | 3 => pure (.bool false)
       | 4 => pure (.bool true)
       | _ => pure .undef
-    | .helperNext | .helperReturn =>
+    | (.x .helperNext) | (.x .helperReturn) =>
       let some (hid, o) ← (match thisV with
           | .obj i => do
             let o ← getObj i
@@ -5323,13 +5317,13 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
         pure (.obj ro)
       if kind == 5 then
         -- %WrapForValidIteratorPrototype%: the wrapped iterator's own next and return
-        if id == .helperNext then return ← callV n (field helperNextKey) it #[]
+        if id == (.x .helperNext) then return ← callV n (field helperNextKey) it #[]
         let ret ← getV n it "return"
         match ret with
         | .undef | .null => return ← result .undef true
         | f => return ← callV n f it #[]
       if hiddenFlag o helperRunning then throwErr .type "Iterator helper is already running"
-      if id == .helperReturn then
+      if id == (.x .helperReturn) then
         if !(hiddenFlag o helperDone) then
           setF helperDone (.bool true)
           match field helperInner with
@@ -5408,15 +5402,15 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       match out with
       | some v => pure v
       | none => finish
-    | .numberToExponential | .numberToPrecision =>
+    | (.x .numberToExponential) | (.x .numberToPrecision) =>
       let x ← match ← thisPrim thisV with
         | .num x => pure x
         | _ => throwErr .type "Number.prototype method requires that 'this' be a Number"
-      if id == .numberToPrecision && (a0 matches .undef) then return .str (numToString x)
+      if id == (.x .numberToPrecision) && (a0 matches .undef) then return .str (numToString x)
       let f := toIntegerOrInf (← toNum n a0)
       if !x.isFinite then return .str (numToString x)
       let (neg, num, den) := NumFmt.ofFloat x
-      if id == .numberToExponential then
+      if id == (.x .numberToExponential) then
         if f < 0 || f > 100 then throwErr .range "toExponential() argument must be between 0 and 100"
         if a0 matches .undef then
           -- as many digits as Number::toString gives
@@ -5425,7 +5419,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       else
         if f < 1 || f > 100 then throwErr .range "toPrecision() argument must be between 1 and 100"
         pure (.str (NumFmt.precision neg num den f.toUInt64.toNat))
-    | .setMethod k =>
+    | (.x (.setMethod k)) =>
       -- the receiver: a Set (§24.2.4, RequireInternalSlot [[SetData]])
       let (sid, es) ← match thisV with
         | .obj i => do
@@ -5520,23 +5514,23 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
               iterClose n it
               return .bool false
           pure (.bool true)
-    | .proxyRevocable =>
+    | (.x .proxyRevocable) =>
       if !a0.isObj || !a1.isObj then throwErr .type "Cannot create proxy with a non-object as target or handler"
       let p ← alloc { proto := .null, kind := .proxy a0 a1, extensible := true }
-      let rv ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .proxyRevoke) .undef #[.obj p] }
+      let rv ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn (.x .proxyRevoke)) .undef #[.obj p] }
       defineOwn rv "length" (.data (.num 0) false false true)
       defineOwn rv "name" (.data (.str "") false false true)
       let o ← newObject
       defineOwn o "proxy" (.data (.obj p) true true true)
       defineOwn o "revoke" (.data (.obj rv) true true true)
       pure (.obj o)
-    | .proxyRevoke =>
+    | (.x .proxyRevoke) =>
       if let .obj p := a0 then
         modifyObj p fun o => match o.kind with
           | .proxy t _ => { o with kind := .proxy t .null }
           | _ => o
       pure .undef
-    | .arrayMethod k =>
+    | (.x (.arrayMethod k)) =>
       -- generic over array-likes: ToObject(this), LengthOfArrayLike (§23.1.3)
       let oid ← toObj n thisV
       let o := Value.obj oid
@@ -5611,11 +5605,11 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
         if len > 4294967295 then throwErr .range "Invalid array length"
         let vs ← valuesUpTo len
         newArray (vs.set! i.toUInt64.toNat a1)
-    | .objectHasOwn =>
+    | (.x .objectHasOwn) =>
       let id ← toObj n a0
       let k ← toKey n a1
       pure (.bool (← ownDesc n id k).isSome)
-    | .groupBy isMap =>
+    | (.x (.groupBy isMap)) =>
       -- GroupBy (§7.3.35): the items of an iterable, by key (property key or SameValueZero)
       if !(← isCallable a1) then throwErr .type "groupBy: the callback is not a function"
       let items ← iterToArray n (← getIterator n a0) #[]
@@ -5641,7 +5635,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
         for j in [0:keys.size] do
           defineOwn res (← toKey n keys[j]!) (.data (← newArray groups[j]!) true true true)
         pure (.obj res)
-    | .stringLocaleCompare =>
+    | (.x .stringLocaleCompare) =>
       match ← thisPrim thisV with
       | .undef | .null => throwErr .type "String.prototype.localeCompare called on null or undefined"
       | _ => pure ()
@@ -5650,7 +5644,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       let a := Str.units s
       let b := Str.units t
       pure (.num (if a == b then 0 else if decide (a < b) then -1 else 1))
-    | .aggregateErrorCtor =>
+    | (.x .aggregateErrorCtor) =>
       let proto ← match newTarget with
         | some nt => do
           let p ← getV n nt "prototype"
@@ -5666,7 +5660,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       let errs ← iterToArray n (← getIterator n a0) #[]
       setHidden o "errors" (← newArray errs)
       pure (.obj o)
-    | .promiseAny =>
+    | (.x .promiseAny) =>
       let res ← newPromise
       let x ← tryCatch (do
           let it ← getIterator n a0
@@ -5678,9 +5672,9 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
             let p ← promiseResolve n items[i]!
             let rs ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .promiseResolveFn) .undef #[.obj res] }
             let elArgs : Array Value := #[.obj res, errs, .obj counter, .num (Float.ofNat i)]
-            let rj ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .promiseAnyReject) .undef elArgs }
+            let rj ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn (.x .promiseAnyReject)) .undef elArgs }
             performThen n p (.obj rs) (.obj rj) .undef
-          let _ ← callNative n .promiseAnyReject .undef #[.obj res, errs, .obj counter, .num (-1), .undef] none
+          let _ ← callNative n (.x .promiseAnyReject) .undef #[.obj res, errs, .obj counter, .num (-1), .undef] none
           pure none)
         (fun a => pure (some a))
       match x with
@@ -5688,7 +5682,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       | some a => throw a
       | none => pure ()
       pure (.obj res)
-    | .promiseAnyReject =>
+    | (.x .promiseAnyReject) =>
       -- args: result promise, errors, counter, index, reason
       let idx := match argD args 3 with | .num i => i | _ => -1
       if idx ≥ 0 then putV n a1 (numToString idx) (argD args 4) true
@@ -5703,12 +5697,12 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
         | .obj p => rejectPromise n p (.obj e)
         | _ => pure ()
       pure .undef
-    | .dateUTC =>
+    | (.x .dateUTC) =>
       let mut xs : Array Float := #[]
       for i in [0:min 7 args.size] do xs := xs.push (← toNum n args[i]!)
       pure (.num (Date.timeClip (dateOfParts xs)))
-    | .dateParse => pure (.num (Date.parse (← toStr n a0)))
-    | .dateMethod k =>
+    | (.x .dateParse) => pure (.num (Date.parse (← toStr n a0)))
+    | (.x (.dateMethod k)) =>
       if k == 32 then
         -- toJSON (§21.4.4.37)
         let o ← toObj n thisV
@@ -5771,13 +5765,13 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
         | 35 | 37 => Date.timeString t
         | 38 => Date.utcString t
         | _ => Date.toStr t))
-    | .stringIsWellFormed | .stringToWellFormed =>
+    | (.x .stringIsWellFormed) | (.x .stringToWellFormed) =>
       let tp ← thisPrim thisV
       match tp with
       | .undef | .null => throwErr .type "String.prototype method called on null or undefined"
       | _ => pure ()
       let s ← toStr n tp
-      if id == .stringIsWellFormed then pure (.bool (Str.isWellFormed s)) else pure (.str (Str.toWellFormed s))
+      if id == (.x .stringIsWellFormed) then pure (.bool (Str.isWellFormed s)) else pure (.str (Str.toWellFormed s))
     | _ => throwErr .type "not a function"
 termination_by structural n _ _ _ _ => n
 
@@ -5917,8 +5911,8 @@ def initRealm : M Unit := do
   method numberProto "toString" .numberToString 1
   method numberProto "valueOf" .numberValueOf 0
   method numberProto "toFixed" .numberToFixed 1
-  method numberProto "toExponential" .numberToExponential 1
-  method numberProto "toPrecision" .numberToPrecision 1
+  method numberProto "toExponential" (.x .numberToExponential) 1
+  method numberProto "toPrecision" (.x .numberToPrecision) 1
   setHidden g "Boolean" (← ctorWith "Boolean" .booleanCtor 1 booleanProto)
   method booleanProto "toString" .booleanToString 0
   method booleanProto "valueOf" .booleanValueOf 0
@@ -5936,7 +5930,7 @@ def initRealm : M Unit := do
   -- AggregateError (§20.5.7)
   let aggProto ← alloc { proto := .obj errorProto }
   modify fun h => { h with realm := { h.realm with aggregateErrorProto := aggProto } }
-  let aggC ← ctorWith "AggregateError" .aggregateErrorCtor 2 aggProto
+  let aggC ← ctorWith "AggregateError" (.x .aggregateErrorCtor) 2 aggProto
   if let .obj cid := aggC then
     if let .obj e0 ← ownValue g "Error" then modifyObj cid fun o => { o with proto := .obj e0 }
   setHidden g "AggregateError" aggC
@@ -5969,7 +5963,7 @@ def initRealm : M Unit := do
     if k == 1 then
       for (nm, j) in [("union", 0), ("intersection", 1), ("difference", 2), ("symmetricDifference", 3),
           ("isSubsetOf", 4), ("isSupersetOf", 5), ("isDisjointFrom", 6)] do
-        method p nm (.setMethod j) 1
+        method p nm ((.x (.setMethod j))) 1
     method p "has" .mapHas 1
     method p "delete" .mapDelete 1
     if k < 2 then
@@ -6000,26 +5994,26 @@ def initRealm : M Unit := do
     method oc "isSealed" .objectIsSealed 1
     method oc "getOwnPropertyDescriptors" .objectGetOwnPropertyDescriptors 1
     method oc "fromEntries" .objectFromEntries 1
-    method oc "hasOwn" .objectHasOwn 2
-    method oc "groupBy" (.groupBy false) 2
+    method oc "hasOwn" (.x .objectHasOwn) 2
+    method oc "groupBy" ((.x (.groupBy false))) 2
   for (nm, f, l) in [("flat", Native.arrayFlat, 0), ("flatMap", .arrayFlatMap, 1), ("at", .arrayAt, 1),
       ("findLast", .arrayFindLast, 1), ("findLastIndex", .arrayFindLastIndex, 1)] do
     method arrayProto nm f l
   for (nm, k, l) in [("copyWithin", 0, 2), ("reduceRight", 1, 1), ("toReversed", 2, 0), ("toSorted", 3, 1),
       ("toSpliced", 4, 2), ("with", 5, 2)] do
-    method arrayProto nm (.arrayMethod k) l
+    method arrayProto nm ((.x (.arrayMethod k))) l
   for (nm, f, l) in [("padStart", Native.stringPadStart, 1), ("padEnd", .stringPadEnd, 1),
       ("at", .stringAt, 1), ("codePointAt", .stringCodePointAt, 1), ("trimStart", .stringTrimStart, 0),
       ("trimEnd", .stringTrimEnd, 0), ("replace", .stringReplace, 2), ("replaceAll", .stringReplaceAll, 2)] do
     method stringProto nm f l
   if let .obj sc := stringC then method sc "fromCodePoint" .stringFromCodePoint 1
-  method stringProto "localeCompare" .stringLocaleCompare 1
+  method stringProto "localeCompare" (.x .stringLocaleCompare) 1
   -- Annex B.2.2.15, B.2.2.16: trimLeft and trimRight are trimStart and trimEnd
   for (alias, nm) in [("trimLeft", "trimStart"), ("trimRight", "trimEnd"), ("toLocaleUpperCase", "toUpperCase"),
       ("toLocaleLowerCase", "toLowerCase")] do
     if let some (.data f ..) := (← getObj stringProto).getOwn nm then setHidden stringProto alias f
   match ← getV 100 (.obj g) "Map" with
-  | .obj mc => method mc "groupBy" (.groupBy true) 2
+  | .obj mc => method mc "groupBy" ((.x (.groupBy true))) 2
   | _ => pure ()
   if let .obj nc := numberC then
     method nc "isFinite" .numberIsFinite 1
@@ -6096,9 +6090,9 @@ def initRealm : M Unit := do
     method pc "resolve" .promiseResolveStatic 1
     method pc "reject" .promiseRejectStatic 1
     method pc "all" .promiseAll 1
-    method pc "race" (.promiseCombinator 0) 1
-    method pc "allSettled" (.promiseCombinator 1) 1
-    method pc "any" .promiseAny 1
+    method pc "race" ((.x (.promiseCombinator 0))) 1
+    method pc "allSettled" ((.x (.promiseCombinator 1))) 1
+    method pc "any" (.x .promiseAny) 1
   method promiseProto "then" .promiseThen 2
   method promiseProto "catch" .promiseCatch 1
   method promiseProto "finally" .promiseFinally 1
@@ -6121,13 +6115,13 @@ def initRealm : M Unit := do
   if let .obj dc := dateC then method dc "now" .dateNow 0
   method dateProto "getTime" .dateGetTime 0
   method dateProto "valueOf" .dateGetTime 0
-  for (nm, k, l) in dateMethodNames do method dateProto nm (.dateMethod k) l
+  for (nm, k, l) in dateMethodNames do method dateProto nm ((.x (.dateMethod k))) l
   setHidden dateProto "toGMTString" ((← getObj dateProto).getOwn "toUTCString" |>.map (fun p => match p with
     | .data v .. => v | _ => .undef) |>.getD .undef)
-  defineOwn dateProto (symKey symToPrimitive) (.data (← mkNative (.dateMethod 39) "[Symbol.toPrimitive]" 1) false false true)
+  defineOwn dateProto (symKey symToPrimitive) (.data (← mkNative ((.x (.dateMethod 39))) "[Symbol.toPrimitive]" 1) false false true)
   if let .obj dc := dateC then
-    method dc "UTC" .dateUTC 7
-    method dc "parse" .dateParse 1
+    method dc "UTC" (.x .dateUTC) 7
+    method dc "parse" (.x .dateParse) 1
   -- performance.now() (High Resolution Time §4.3): the host's clock in ms.
   let perf ← mk
   setHidden g "performance" (.obj perf)
@@ -6150,7 +6144,7 @@ def initRealm : M Unit := do
   -- Proxy (§28.2)
   let proxyC ← mkNative .proxyCtor "Proxy" 2
   setHidden g "Proxy" proxyC
-  if let .obj pc := proxyC then method pc "revocable" .proxyRevocable 2
+  if let .obj pc := proxyC then method pc "revocable" (.x .proxyRevocable) 2
   -- ArrayBuffer (§25.1) and the typed arrays (§23.2)
   let bufferProto ← mk
   modify fun h => { h with realm := { h.realm with bufferProto } }
@@ -6189,67 +6183,67 @@ def initRealm : M Unit := do
   defineOwn bufferProto (symKey symToStringTag) (.data (.str "ArrayBuffer") false false true)
   -- %TypedArray% (§23.2.1, §23.2.2): the constructor that every typed array constructor
   -- inherits, with `from` and `of`; its prototype holds the accessors and methods
-  let taC ← mkNative .typedArrayCtor "TypedArray" 0
+  let taC ← mkNative (.x .typedArrayCtor) "TypedArray" 0
   if let .obj tc := taC then
     defineOwn tc "prototype" (.data (.obj typedProto) false false false)
-    method tc "from" .typedFrom 1
-    method tc "of" .typedOf 0
+    method tc "from" (.x .typedFrom) 1
+    method tc "of" (.x .typedOf) 0
     modify fun h => { h with realm := { h.realm with typedArrayCtor := tc } }
     for p in typedProtos do
       if let some (.data (.obj c) ..) := (← getObj p).getOwn "constructor" then
         modifyObj c fun o => { o with proto := .obj tc }
   setHidden typedProto "constructor" taC
   for (nm, w) in [("buffer", 0), ("byteLength", 1), ("byteOffset", 2), ("length", 3)] do
-    getter typedProto nm (.typedGetter w)
+    getter typedProto nm ((.x (.typedGetter w)))
   defineOwn typedProto (symKey symToStringTag)
-    (.acc (← mkNative (.typedGetter 4) "get [Symbol.toStringTag]" 0) .undef false true)
-  for (nm, k, l) in typedMethodNames do method typedProto nm (.typedMethod k) l
+    (.acc (← mkNative ((.x (.typedGetter 4))) "get [Symbol.toStringTag]" 0) .undef false true)
+  for (nm, k, l) in typedMethodNames do method typedProto nm ((.x (.typedMethod k))) l
   -- ArrayBuffer (§25.1.6): accessors, `resize`, `transfer`
   for (nm, w) in [("byteLength", 0), ("maxByteLength", 1), ("resizable", 2), ("detached", 3)] do
-    getter bufferProto nm (.bufferGetter w)
-  method bufferProto "resize" .bufferResize 1
-  method bufferProto "transfer" (.bufferTransfer false) 0
-  method bufferProto "transferToFixedLength" (.bufferTransfer true) 0
+    getter bufferProto nm ((.x (.bufferGetter w)))
+  method bufferProto "resize" (.x .bufferResize) 1
+  method bufferProto "transfer" ((.x (.bufferTransfer false))) 0
+  method bufferProto "transferToFixedLength" ((.x (.bufferTransfer true))) 0
   -- SharedArrayBuffer (§25.2)
   let sharedProto ← mk
   modify fun h => { h with realm := { h.realm with sharedBufferProto := sharedProto } }
-  setHidden g "SharedArrayBuffer" (← ctorWith "SharedArrayBuffer" .sharedCtor 1 sharedProto)
+  setHidden g "SharedArrayBuffer" (← ctorWith "SharedArrayBuffer" (.x .sharedCtor) 1 sharedProto)
   for (nm, w) in [("byteLength", 0), ("maxByteLength", 1), ("growable", 2)] do
-    getter sharedProto nm (.sharedGetter w)
-  method sharedProto "grow" .sharedGrow 1
-  method sharedProto "slice" .sharedSlice 2
+    getter sharedProto nm ((.x (.sharedGetter w)))
+  method sharedProto "grow" (.x .sharedGrow) 1
+  method sharedProto "slice" (.x .sharedSlice) 2
   defineOwn sharedProto (symKey symToStringTag) (.data (.str "SharedArrayBuffer") false false true)
   -- Atomics (§25.4), without `wait`
   let atomicsObj ← mk
-  for (nm, k, l) in atomicsNames do method atomicsObj nm (.atomics k) l
+  for (nm, k, l) in atomicsNames do method atomicsObj nm ((.x (.atomics k))) l
   defineOwn atomicsObj (symKey symToStringTag) (.data (.str "Atomics") false false true)
   setHidden g "Atomics" (.obj atomicsObj)
   -- Iterator (§27.1.3) and the iterator helpers (§27.1.4)
   let ip := (← realm).iterProto
-  let iterC ← mkNative .iteratorCtor "Iterator" 0
+  let iterC ← mkNative (.x .iteratorCtor) "Iterator" 0
   if let .obj ic := iterC then
     defineOwn ic "prototype" (.data (.obj ip) false false false)
-    method ic "from" .iteratorFrom 1
+    method ic "from" (.x .iteratorFrom) 1
   setHidden g "Iterator" iterC
   setHidden ip "constructor" iterC
   for (nm, k) in [("map", 0), ("filter", 1), ("take", 2), ("drop", 3), ("flatMap", 4)] do
-    method ip nm (.iterLazy k) 1
+    method ip nm ((.x (.iterLazy k))) 1
   for (nm, k, l) in [("reduce", 0, 1), ("toArray", 1, 0), ("forEach", 2, 1), ("some", 3, 1), ("every", 4, 1), ("find", 5, 1)] do
-    method ip nm (.iterEager k) l
+    method ip nm ((.x (.iterEager k))) l
   if ((← getObj ip).getOwn (symKey symToStringTag)).isNone then
     setHidden ip (symKey symToStringTag) (.str "Iterator")
   let helperProto ← alloc { proto := .obj ip }
-  method helperProto "next" .helperNext 0
-  method helperProto "return" .helperReturn 0
+  method helperProto "next" (.x .helperNext) 0
+  method helperProto "return" (.x .helperReturn) 0
   defineOwn helperProto (symKey symToStringTag) (.data (.str "Iterator Helper") false false true)
   let wrapProto ← alloc { proto := .obj ip }
-  method wrapProto "next" .helperNext 0
-  method wrapProto "return" .helperReturn 0
+  method wrapProto "next" (.x .helperNext) 0
+  method wrapProto "return" (.x .helperReturn) 0
   modify fun h => { h with realm := { h.realm with iterHelperProto := helperProto, wrapIterProto := wrapProto } }
   -- String.prototype.isWellFormed and toWellFormed (§22.1.3.10, §22.1.3.32)
   let sp := (← realm).stringProto
-  method sp "isWellFormed" .stringIsWellFormed 0
-  method sp "toWellFormed" .stringToWellFormed 0
+  method sp "isWellFormed" (.x .stringIsWellFormed) 0
+  method sp "toWellFormed" (.x .stringToWellFormed) 0
 
 /-- A fresh realm. -/
 def freshHeapOf (host : Option H) (hostCall : H → Nat → Array HostArg → Nat → H × HostAns) : HeapOf H :=
