@@ -8,10 +8,10 @@ and CPAL with fontTools and paints with Skia (skia-python); HarfBuzz (uharfbuzz)
 glyph of each sequence. Nothing here shares code with the engine. For each emoji below, the
 glyph of the vendored Noto Color Emoji slice is drawn at the pixel size given, in the box the
 engine uses (`ColrRaster.draw`): the clip box at `px / unitsPerEm`, rounded out to whole
-pixels, y down. The PNG files and manifest.json go to fixtures/emoji-reference/;
+pixels, y down. manifest.json in fixtures/emoji-reference/ holds each box and its PNG (Base64);
 emoji_pixels_test.ts compares the engine's pixels with them.
 """
-import json, math, os
+import base64, json, math, os
 import uharfbuzz as hb
 from fontTools.ttLib import TTFont
 from blackrenderer.font import BlackRendererFont
@@ -59,9 +59,13 @@ def main():
         with surface.canvas((ox, -oy - h, ox + w, -oy)) as canvas:
             canvas.scale(s)
             font.drawGlyph(names[gid], canvas, palette=font.getPalette(0))
-        surface.saveImage(os.path.join(OUT, name + '.png'))
+        png = os.path.join(OUT, name + '.png')
+        surface.saveImage(png)
+        # The PNG goes into the manifest as Base64 text (the repository keeps no binary files
+        # here); the file itself is only for looking at, and is not committed.
+        data = base64.b64encode(open(png, 'rb').read()).decode('ascii')
         manifest.append({'name': name, 'font': f'noto-color-emoji/NotoColorEmoji-{stem}.ttf', 'text': text,
-                         'px': px, 'glyph': gid, 'width': w, 'height': h, 'left': ox, 'top': oy})
+                         'px': px, 'glyph': gid, 'width': w, 'height': h, 'left': ox, 'top': oy, 'png': data})
         print(name, names[gid], w, h, ox, oy)
     with open(os.path.join(OUT, 'manifest.json'), 'w') as f:
         json.dump(manifest, f, indent=1, ensure_ascii=False)
