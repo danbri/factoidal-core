@@ -72,6 +72,9 @@ structure Store where
   bitmaps : Std.HashMap Nat Bitmap := {}
   /-- Shaped text, by font and text (a frame draws the same labels again). -/
   shaped : Std.HashMap String Text.Shaped := {}
+  /-- Flattened glyph outlines of shaped text at the origin, by text, font and flatness:
+  a label drawn again each frame is moved, not flattened again. -/
+  textPolys : Std.HashMap String (Array Poly) := {}
   /-- The canvas sizes the host has textures for. -/
   textures : Std.HashMap Nat (Nat × Nat) := {}
   /-- Images of the page decoded for drawing, by URL key (decoded once). -/
@@ -750,10 +753,27 @@ def Run.step (r : Run) (cmd : Cmd) : Run :=
       let p := if w == 0 && h == 0 then {} else rectPath x y w h
       if c.stack.cur.ctm.inverse?.isNone then (c, r) else (r.strokeUser c p c.stack.cur.stroke, r)
   | .fillText s x y maxW => r.withCur fun c r =>
-      let (r, p) := r.textPath c.stack.cur s x y maxW
-      match p with
-      | some p => (r.fillDevice c (p.map c.stack.cur.ctm) .nonzero, r)
+      let st := c.stack.cur
+      if !finite [x, y] || (!maxW.isNaN && (!maxW.isFinite || maxW <= 0)) then (c, r) else
+      let (r, sh) := r.shape st.font s
+      match sh with
       | none => (c, r)
+      | some sh =>
+        let width := sh.word.advance * sh.scale
+        let sx := if !maxW.isNaN && width > maxW && width > 0 then maxW / width else 1
+        let x0 := x + Text.alignShift st.align st.direction (width * sx)
+        let y0 := y + Text.baselineShift st.baseline sh - sh.word.ascent * sh.scale
+        -- The outline flattened once for this flatness (0.1 device pixels at this scale).
+        let k := max 1e-9 (st.ctm.mul (Matrix.scale sx 1)).stretch
+        let key := st.font.text ++ "\x00" ++ s ++ "\x00" ++ toString (k * 64).round
+        let (r, polys) := match r.store.textPolys.get? key with
+          | some ps => (r, ps)
+          | none =>
+            let ps := (Text.outlinePath sh 0 0 1).flatten (0.1 / k)
+            let cache := if r.store.textPolys.size ≥ 1024 then {} else r.store.textPolys
+            ({ r with store := { r.store with textPolys := cache.insert key ps } }, ps)
+        let m := st.ctm.mul ((Matrix.translate x0 y0).mul (Matrix.scale sx 1))
+        (r.drawPolys c (mapPolys m polys) .nonzero st.fill, r)
   | .strokeText s x y maxW => r.withCur fun c r =>
       let (r, p) := r.textPath c.stack.cur s x y maxW
       match p with
