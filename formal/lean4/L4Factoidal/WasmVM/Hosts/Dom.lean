@@ -179,6 +179,10 @@ structure State where
   `document.URL` and `location` of a same-origin frame (`DomOps` op 171), and the base of a
   form submission in it. A frame document not listed is `about:blank` (or `about:srcdoc`). -/
   docURLs : Array (Nat × String) := #[]
+  /-- (encoding100) The encoding of the document that each `iframe` element's last navigation
+  loaded, as the embedder's decode named it (`document.characterSet`, `DomOps` op 172, and a
+  form's document encoding). -/
+  frameEncodings : Array (Nat × String) := #[]
   deriving Inhabited
 
 /-- Bounds, as in `WebRenderScript`. -/
@@ -863,6 +867,12 @@ def framesLoading (s : State) : Bool :=
   -- a lazy-loading frame does not delay its document's load event (HTML §4.8.5,
   -- "will lazy load element steps")
   s.navigations.any fun (el, u) => !u.isEmpty && (attrValue? s.dom el "loading").map Dom.asciiLower != some "lazy"
+
+/-- (encoding100) The embedder decoded the document of `iframe` `el` with encoding `enc`
+("" when it did not say: the frame's earlier encoding is forgotten). -/
+def State.noteFrameEncoding (s : State) (el : Nat) (enc : String) : State :=
+  let rest := s.frameEncodings.filter fun (e : Nat × String) => e.1 != el
+  { s with frameEncodings := if enc.isEmpty then rest else rest.push (el, enc) }
 
 open L4Factoidal.HTML.Frames in
 /-- (encoding100) Frame `el` navigated to URL `u` and its document is `doc`: the document's

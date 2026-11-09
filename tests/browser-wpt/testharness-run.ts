@@ -395,9 +395,12 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
   };
   // A frame's document: from wptserve; else as wptserve serves it (Test262's inner page, a
   // .any/.window wrapper, or a file of the copy decoded as a page is); undefined when absent.
+  // The encoding name of the frame document frameSource last decoded (the `frame` action's `encoding`).
+  let frameEncoding:string|undefined;
   const frameSource=async(url:string):Promise<string|undefined>=>{
+    frameEncoding=undefined;
     let u:URL;try{u=new URL(url);}catch{return undefined;}
-    if(http){try{const r=await http.fetch(url);if(!r.ok){await r.body?.cancel();return undefined;}return decode(new Uint8Array(await r.arrayBuffer()),r.headers.get("content-type")??"").html;}catch{return undefined;}}
+    if(http){try{const r=await http.fetch(url);if(!r.ok){await r.body?.cancel();return undefined;}const d=decode(new Uint8Array(await r.arrayBuffer()),r.headers.get("content-type")??"");frameEncoding=d.encoding;return d.html;}catch{return undefined;}}
     if(!isWptHost(url))return undefined;
     const path=decodeURIComponent(u.pathname).replace(/^\//,"");
     const m=/^(.*)\.test262-test(\.strict)?\.html$/.exec(path);
@@ -408,7 +411,7 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
       const file=wptFile(path),bytes=await Deno.readFile(file);
       let contentType="";
       try{contentType=/^content-type:\s*(.*)$/im.exec(await Deno.readTextFile(file+".headers"))?.[1]?.trim()??"";}catch{/* no headers file */}
-      const text=decode(bytes,contentType).html;
+      const d=decode(bytes,contentType),text=d.html;frameEncoding=d.encoding;
       return path.includes(".sub.")?substitute(text,u.search):text;
     }catch{return undefined;}
   };
@@ -498,7 +501,7 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
       const session=turn.session;
       for(const nav of turn.navigations??[]){
         const source=await frameSource(nav.url);
-        take(turn=engine.scriptSession("",{action:"frame",session,node:nav.nodeId,url:nav.url,source:source??"",
+        take(turn=engine.scriptSession("",{action:"frame",session,node:nav.nodeId,url:nav.url,source:source??"",...(frameEncoding?{encoding:frameEncoding}:{}),
           ...(source===undefined?{failed:true}:{resources:await resourcesOf(source,nav.url)})}));
       }
       take(turn=engine.scriptSession("",{action:"settle",session,budgetMs:Math.max(1,70000-turn.clock)}));
