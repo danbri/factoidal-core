@@ -242,8 +242,8 @@ def encodeByte (b : UInt8) : List Char :=
 def encodeBytes (bs : List UInt8) : List Char := bs.flatMap encodeByte
 
 /-- `+` is a space, `%` and two hex digits the byte they name, any other ASCII character
-its byte. -/
-def decodeChars : List Char → List UInt8
+its byte. Specification only (the theorems below): not compiled. -/
+noncomputable def decodeChars : List Char → List UInt8
   | [] => []
   | '+' :: r => 0x20 :: decodeChars r
   | '%' :: h :: l :: r =>
