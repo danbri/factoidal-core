@@ -49,17 +49,12 @@ for(const api of ["webgpu","webgl2"] as const)for(const shader of ["plasma","mar
 }
 // Outside the subset: Lean's reason reaches the page (a GPUValidationError, a program's log).
 const refusals=`<!doctype html><script>
-(async () => {
-  const device = await (await navigator.gpu.requestAdapter()).requestDevice();
-  const head = 'struct U { t: f32 }\\n@group(0) @binding(0) var<uniform> u: U;\\n';
-  for (const body of ['@fragment fn fs() -> @location(0) vec4f { var i = 0; while (i < 4) { i += 1; } return vec4f(0.0); }',
-    'fn wave(x: f32) -> f32 { return x; }',
-    '@fragment fn fs() -> @location(0) vec4f { var x = 0.0; for (var b = 0; b < 10000; b++) { x += 1.0; } return vec4f(x); }']) {
-    device.pushErrorScope('validation');
-    device.createShaderModule({ code: head + body });
-    const e = await device.popErrorScope();
-    console.log('wgsl: ' + (e ? e.message : 'accepted'));
-  }
+// Promise chains, no await in a loop (BubblePopJS: 'yield in this position is not supported').
+const head = 'struct U { t: f32 }\\n@group(0) @binding(0) var<uniform> u: U;\\n';
+const bodies = ['@fragment fn fs() -> @location(0) vec4f { var i = 0; while (i < 4) { i += 1; } return vec4f(0.0); }',
+  'fn wave(x: f32) -> f32 { return x; }',
+  '@fragment fn fs() -> @location(0) vec4f { var x = 0.0; for (var b = 0; b < 10000; b++) { x += 1.0; } return vec4f(x); }'];
+const glsl = () => {
   const gl = document.querySelector('canvas').getContext('webgl2');
   const sh = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); return s; };
   const p = gl.createProgram();
@@ -67,7 +62,15 @@ const refusals=`<!doctype html><script>
   gl.attachShader(p, sh(gl.FRAGMENT_SHADER, '#version 300 es\\nprecision highp float;\\nout vec4 c;\\nfloat wave(float x) { return x; }\\nvoid main() { c = vec4(1.0); }'));
   gl.linkProgram(p);
   console.log('glsl: ' + gl.getProgramInfoLog(p));
-})();
+};
+let device;
+const next = i => {
+  if (i >= bodies.length) { glsl(); return; }
+  device.pushErrorScope('validation');
+  device.createShaderModule({ code: head + bodies[i] });
+  return device.popErrorScope().then(e => { console.log('wgsl: ' + (e ? e.message : 'accepted')); return next(i + 1); });
+};
+navigator.gpu.requestAdapter().then(a => a.requestDevice()).then(d => { device = d; return next(0); }).catch(e => console.log('error: ' + e));
 </script><canvas width="8" height="8"></canvas>`;
 let r=start(refusals,"file:///refusals.html");const said=[...r.logs];
 for(let i=0;i<4;i++){r=advance(r);said.push(...r.logs);}
