@@ -314,10 +314,41 @@ def scanNum (cs : Array Char) (i : Nat) : Except String (Float × Nat) :=
         else "SyntaxError: identifier starts immediately after numeric literal")
     else .ok (f, j)
 
-def matchPunct (cs : Array Char) (i : Nat) : Option String :=
+/-- The punctuator at `i`, by the definition: the first of `punctuators` (longest first)
+whose characters are there. The lexer uses `matchPunct`, which agrees with it (the checks
+after `lex`). -/
+def matchPunctSpec (cs : Array Char) (i : Nat) : Option String :=
   punctuators.find? fun p =>
     let pc := p.toList
     (List.range pc.length).all fun k => charAt cs (i + k) == pc.getD k ' ' && i + k < cs.size
+
+/-- `punctuators` as an array, and the characters of each (made once, at start). -/
+def punctArr : Array String := punctuators.toArray
+def punctChars : Array (Array Char) := punctArr.map (·.toList.toArray)
+
+/-- The characters `p` are at `i` (no allocation). -/
+def charsAt (cs : Array Char) (i : Nat) (p : Array Char) : Nat → Nat → Bool
+  | 0, _ => true
+  | fuel + 1, k =>
+    if h : k < p.size then
+      i + k < cs.size && charAt cs (i + k) == p[k] && charsAt cs i p fuel (k + 1)
+    else true
+
+/-- The first punctuator of `punctArr` at `i`, from index `j` on. -/
+def punctFrom (cs : Array Char) (i : Nat) : Nat → Nat → Option String
+  | 0, _ => none
+  | fuel + 1, j =>
+    if h : j < punctChars.size then
+      let p := punctChars[j]
+      -- the first character decides most candidates without the loop
+      if p.size > 0 && charAt cs i == p[0]! && charsAt cs i p p.size 0 then punctArr[j]?
+      else punctFrom cs i fuel (j + 1)
+    else none
+
+/-- The punctuator at `i` (§12.8), longest first: `matchPunctSpec` without building a list
+or a string for each candidate. -/
+def matchPunct (cs : Array Char) (i : Nat) : Option String :=
+  punctFrom cs i punctChars.size 0
 
 /-- The end of a block comment that starts at `i` (after `/*`), and whether it
 holds a line terminator. -/
@@ -410,5 +441,17 @@ def lexGo (cs : Array Char) : Nat → Nat → Bool → Array Token → Except St
 def lex (src : String) : Except String (Array Token) :=
   let cs := src.toList.toArray
   lexGo cs (cs.size + 1) 0 false #[]
+
+/-! The fast punctuator scan agrees with the definition: every punctuator alone, followed
+by each punctuator character, at the end of the input, and after another token. -/
+#guard punctuators.all fun p =>
+  let cs := p.toList.toArray
+  matchPunct cs 0 == matchPunctSpec cs 0 &&
+  (punctuators.all fun q =>
+    let ds := (p ++ q).toList.toArray
+    matchPunct ds 0 == matchPunctSpec ds 0 && matchPunct ds p.length == matchPunctSpec ds p.length)
+#guard ["a+b", "x>>>=1", "a?.b", "a??=b", "...", "..", "=", "", "@", "a"].all fun s =>
+  let cs := s.toList.toArray
+  (List.range (cs.size + 1)).all fun i => matchPunct cs i == matchPunctSpec cs i
 
 end L4Factoidal.JS
