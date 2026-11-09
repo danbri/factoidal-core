@@ -272,7 +272,7 @@ guest's native is `n.api(op, flags, bytes, ...args)`; BubblePopJS serves the sam
 | `document.characterSet`; `a` and `area` URL attributes, parsed with the document's encoding | `WebApi.documentEncoding`, `parseWith` | 9, 10 |
 | `atob`, `btoa` | `WHATWG.Base64` (forgiving-base64) | 20, 21 |
 | `crypto.getRandomValues`, `randomUUID` | `Crypto.WebCrypto` (HMAC_DRBG over HMAC-SHA-256) | 30, 31 |
-| `crypto.subtle`: `digest`, HMAC, HKDF, PBKDF2 | `Crypto.WebCrypto` over the existing SHA-1/2 and HMAC | 32-36 |
+| `crypto.subtle`: `digest`; HMAC, HKDF, PBKDF2, ECDSA and ECDH on P-256, Ed25519, X25519, ChaCha20-Poly1305 (keys behind handles) | `Crypto.WebCryptoKeys` over HACL* (`Crypto.WebHacl`); record `2026-11-09-hacl-web-crypto.md` | 32, 40-42 |
 
 State in `Page.Host.web`: the decoders of `TextDecoder`s in the middle of a stream (by the
 number the page gave them; at most 4096), the waiting answer, and the generator. The
@@ -284,9 +284,10 @@ gives 32 bytes of `IO.getRandomBytes`, the operating system's natively and the b
 prelude.js (section "basics") does WebIDL conversion, object shapes and promises only.
 Each API is a getter on the global object that probes `n.api` once on first use; an
 engine without the op leaves the API undefined. Nothing runs at page start.
-`crypto.subtle` promises are settled by a task of Lean's event loop. Off, because the
-engine links no such primitive (HACL* is not in the web engine): AES, ECDSA, ECDH,
-Ed25519, X25519, RSA; their operations reject with NotSupportedError.
+`crypto.subtle` promises are settled by a task of Lean's event loop. Since 2026-11-09
+the engine links HACL* (record `2026-11-09-hacl-web-crypto.md`). Off, because HACL* has no
+such primitive: AES, P-384, P-521, Ed448, X448; RSA is future work. Their operations reject
+with NotSupportedError.
 
 `structuredClone` (HTML §2.7) is glue that walks JavaScript values, step for step:
 primitives, the wrapper objects, Date, RegExp, ArrayBuffer (and resizable ones), views,
