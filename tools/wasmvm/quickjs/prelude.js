@@ -3605,18 +3605,18 @@
   def('CSS', CSSns);
   // ---- document.fonts (CSS Font Loading 3 §2): the fonts a page uses are held before its
   // scripts run, and a page can not add font faces here ----
-  // showoff: the faces are those of the page's @font-face rules, from Lean (node_query op 22,
+  // showoff: the faces are those of the page's @font-face rules, from Lean (node_query op 23,
   // asked on first use): family, descriptors and status, "loaded" when the engine holds the
   // face for this page (the host fetched it because the page's text uses it), else
   // "unloaded". So nothing is loading and `ready` is resolved. load() and check() match the
   // families of a CSS font shorthand (§2.5, without weight and style, which this engine's
-  // text does not have). An engine without op 22 answers no faces.
+  // text does not have). An engine without op 23 answers no faces.
   const fontKey = {};
   let fontFaces;
   const facesNow = () => {
     if (fontFaces) return fontFaces;
     let list = [];
-    try { const s = n.query(0, 22, ''); if (typeof s === 'string' && s !== '') list = JSON.parse(s); } catch { list = []; }
+    try { const s = n.query(0, 23, ''); if (typeof s === 'string' && s !== '') list = JSON.parse(s); } catch { list = []; }
     return fontFaces = list.map(f => {
       const face = { family: f.family, style: f.style, weight: f.weight, stretch: 'normal', unicodeRange: f.unicodeRange,
         variant: 'normal', featureSettings: 'normal', display: 'auto', status: f.status };
