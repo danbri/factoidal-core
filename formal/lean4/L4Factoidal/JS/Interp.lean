@@ -125,7 +125,7 @@ def isConstructor (v : Value) : M Bool := do
         | .objectCtor | .functionCtor | .arrayCtor | .stringCtor | .numberCtor | .booleanCtor
         | .errorCtor _ | .symbolCtor | .promiseCtor | .mapCtor _ | .regexpCtor | .proxyCtor
         | .bufferCtor | .typedCtor _ | .dateCtor | .dataViewCtor => true
-        | .sharedCtor | .typedArrayCtor | .iteratorCtor => true
+        | .sharedCtor | .typedArrayCtor | .iteratorCtor | .aggregateErrorCtor => true
         | _ => false)
     | .bound .. => pure true
     | _ => pure false
@@ -4051,7 +4051,8 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
     | .stringIsWellFormed | .stringToWellFormed | .dateMethod _ | .dateUTC | .dateParse
     | .iteratorCtor | .iteratorFrom | .iterLazy _ | .iterEager _ | .helperNext | .helperReturn
     | .numberToExponential | .numberToPrecision | .setMethod _ | .proxyRevocable | .proxyRevoke
-    | .arrayMethod _ | .objectHasOwn | .groupBy _ | .stringLocaleCompare =>
+    | .arrayMethod _ | .objectHasOwn | .groupBy _ | .stringLocaleCompare | .aggregateErrorCtor | .promiseAny
+    | .promiseAnyReject =>
       moreNative n id thisV args newTarget
     | _ =>
       -- string methods and Math
@@ -5652,6 +5653,59 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       let a := Str.units s
       let b := Str.units t
       pure (.num (if a == b then 0 else if decide (a < b) then -1 else 1))
+    | .aggregateErrorCtor =>
+      let proto ← match newTarget with
+        | some nt => do
+          let p ← getV n nt "prototype"
+          pure (if p.isObj then p else .obj r.aggregateErrorProto)
+        | none => pure (.obj r.aggregateErrorProto)
+      let o ← alloc { proto, kind := .error }
+      match a1 with
+      | .undef => pure ()
+      | v => setHidden o "message" (.str (← toStr n v))
+      -- InstallErrorCause (§20.5.8.1)
+      if let .obj opts := argD args 2 then
+        if ← hasProp n opts "cause" then setHidden o "cause" (← getV n (.obj opts) "cause")
+      let errs ← iterToArray n (← getIterator n a0) #[]
+      setHidden o "errors" (← newArray errs)
+      pure (.obj o)
+    | .promiseAny =>
+      let res ← newPromise
+      let x ← tryCatch (do
+          let it ← getIterator n a0
+          let items ← iterToArray n it #[]
+          let errs ← newArray (Array.replicate items.size .undef)
+          let counter ← newObject
+          setHidden counter "n" (.num (Float.ofNat items.size + 1))
+          for i in [0:items.size] do
+            let p ← promiseResolve n items[i]!
+            let rs ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .promiseResolveFn) .undef #[.obj res] }
+            let elArgs : Array Value := #[.obj res, errs, .obj counter, .num (Float.ofNat i)]
+            let rj ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .promiseAnyReject) .undef elArgs }
+            performThen n p (.obj rs) (.obj rj) .undef
+          let _ ← callNative n .promiseAnyReject .undef #[.obj res, errs, .obj counter, .num (-1), .undef] none
+          pure none)
+        (fun a => pure (some a))
+      match x with
+      | some (.throw e) => rejectPromise n res e
+      | some a => throw a
+      | none => pure ()
+      pure (.obj res)
+    | .promiseAnyReject =>
+      -- args: result promise, errors, counter, index, reason
+      let idx := match argD args 3 with | .num i => i | _ => -1
+      if idx ≥ 0 then putV n a1 (numToString idx) (argD args 4) true
+      let c := argD args 2
+      let k ← toNum n (← getV n c "n")
+      putV n c "n" (.num (k - 1)) true
+      if k - 1 == 0 then
+        let e ← alloc { proto := .obj r.aggregateErrorProto, kind := .error }
+        setHidden e "message" (.str "All promises were rejected")
+        setHidden e "errors" (← newArray (← elemsOf n a1))
+        match a0 with
+        | .obj p => rejectPromise n p (.obj e)
+        | _ => pure ()
+      pure .undef
     | .dateUTC =>
       let mut xs : Array Float := #[]
       for i in [0:min 7 args.size] do xs := xs.push (← toNum n args[i]!)
@@ -5882,6 +5936,15 @@ def initRealm : M Unit := do
     setHidden p "name" (.str (errorNames[i]!))
     setHidden p "message" (.str "")
   method errorProto "toString" .errorToString 0
+  -- AggregateError (§20.5.7)
+  let aggProto ← alloc { proto := .obj errorProto }
+  modify fun h => { h with realm := { h.realm with aggregateErrorProto := aggProto } }
+  let aggC ← ctorWith "AggregateError" .aggregateErrorCtor 2 aggProto
+  if let .obj cid := aggC then
+    if let .obj e0 ← ownValue g "Error" then modifyObj cid fun o => { o with proto := .obj e0 }
+  setHidden g "AggregateError" aggC
+  setHidden aggProto "name" (.str "AggregateError")
+  setHidden aggProto "message" (.str "")
   -- Math
   let math ← mk
   setHidden g "Math" (.obj math)
@@ -6038,6 +6101,7 @@ def initRealm : M Unit := do
     method pc "all" .promiseAll 1
     method pc "race" (.promiseCombinator 0) 1
     method pc "allSettled" (.promiseCombinator 1) 1
+    method pc "any" .promiseAny 1
   method promiseProto "then" .promiseThen 2
   method promiseProto "catch" .promiseCatch 1
   method promiseProto "finally" .promiseFinally 1

@@ -97,7 +97,7 @@ theorem memberKinds_complete (k : MemberKind) : k ∈ memberKinds.toList := by
 def runtimeNatives : Array Native :=
   #[.asyncResume, .promiseThenableJob, .promiseReactionJob, .agenResume, .promiseResolveFn,
     .promiseRejectFn, .promiseFinallyF, .promiseFinallyR, .promiseValueThunk, .promiseThrower,
-    .promiseAllElement, .promiseSettleElement 0, .promiseSettleElement 1, .proxyRevoke]
+    .promiseAllElement, .promiseSettleElement 0, .promiseSettleElement 1, .proxyRevoke, .promiseAnyReject]
 
 /-! ## Writing -/
 
@@ -485,7 +485,7 @@ def eRealm (r : Realm) : EM Unit := do
   for x in [r.globalObj, r.objectProto, r.functionProto, r.arrayProto, r.stringProto, r.numberProto,
       r.booleanProto, r.throwTypeError, r.symbolProto, r.iterProto, r.arrayIterProto, r.evalFn,
       r.generatorProto, r.bigintProto, r.promiseProto, r.promiseCtor, r.asyncGenProto, r.regexpProto,
-      r.bufferProto, r.dateProto, r.sharedBufferProto, r.typedArrayCtor, r.iterHelperProto, r.wrapIterProto] do putNat x
+      r.bufferProto, r.dateProto, r.sharedBufferProto, r.typedArrayCtor, r.iterHelperProto, r.wrapIterProto, r.aggregateErrorProto] do putNat x
   putNat r.errorProtos.size; for x in r.errorProtos do putNat x
   putNat r.typedProtos.size; for x in r.typedProtos do putNat x
 

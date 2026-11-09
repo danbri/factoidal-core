@@ -164,6 +164,9 @@ inductive Native where
   §24.1.2.1; `true` for Map), `String.prototype.localeCompare` (§22.1.3.12, code unit order:
   there is no Intl here). -/
   | objectHasOwn | groupBy (map : Bool) | stringLocaleCompare
+  /-- AggregateError (§20.5.7), `Promise.any` (§27.2.4.3) and the function that records one
+  rejected element of it. -/
+  | aggregateErrorCtor | promiseAny | promiseAnyReject
   deriving BEq, Repr, Inhabited
 
 /-- What a running function sees. -/
@@ -367,6 +370,7 @@ structure Realm where
   /-- %IteratorHelperPrototype% and %WrapForValidIteratorPrototype% (§27.1.2.1, §27.1.3.2.1.1). -/
   iterHelperProto : Nat := 0
   wrapIterProto : Nat := 0
+  aggregateErrorProto : Nat := 0
   deriving Inhabited
 
 /-- The error constructors, by their index in `Realm.errorProtos`. -/
