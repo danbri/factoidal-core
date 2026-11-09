@@ -17,7 +17,7 @@ name the engine that ran.
     deno run ... textnaut/textnaut.ts --wasm --timing --dump pages/showcase.html
 
 Options: `--width COLS` (`--dump`), `--dump`, `--wasm`, `--engine FILE`, `--font FILE`,
-`--colour none|16|256|24bit`, `--strict`, `--no-scripts`, `--timing`, `--verbose`.
+`--colour none|16|256|24bit`, `--big-headings=auto|on|off`, `--strict`, `--no-scripts`, `--timing`, `--verbose`.
 
 Output is plain text when standard input or output is not a terminal, or when `TERM` is unset or
 `dumb`. A page that the engine refuses gives the reason on standard error and exit code 1.
@@ -33,7 +33,7 @@ Ctrl-C quits.
 - It uses every row and column. Layout is to the terminal's actual width; rows past the end of
   the page are filled.
 - Header and status bars change colour by column. Links have a colour from their number and a
-  bold number badge. Headings have a colour by column.
+  bold number badge.
 - Colour level: `COLORTERM` truecolor or 24bit gives 24-bit colour; `TERM` with 256color gives
   the 256-colour palette; another `TERM` gives 16 colours; `NO_COLOR`, an empty `TERM` or `dumb`
   gives no colour. Block characters need a UTF-8 locale.
@@ -46,6 +46,38 @@ Ctrl-C quits.
   stays at about the same text. A resize that changes only the height redraws with no layout.
 - The terminal is restored on `q`, Ctrl-C, end of input, SIGINT, SIGTERM, SIGHUP, SIGQUIT and on
   an uncaught error.
+
+## Headings, rules and bullets
+
+Interactive mode only; `--dump` output does not change. The engine gives no element names, so
+each of these comes from what it does give:
+
+- A heading is a line of text where every text item has a font size well above the body size
+  (the size with the most characters on the page): 1.75 times or more is H1, 1.3 is H2, 1.1 is
+  H3. A line that also has body-size text is not a heading. The lines of one wrapped heading
+  join and wrap again to the terminal width; no character is cut.
+- H1 is a centred panel in heavy box-drawing lines over a full-width band, gradient at 24-bit
+  and 256 colours, blue at 16 colours, reverse video with no colour. H2 is a centred lighter
+  band as wide as its text. H3 stays in place, in bold colour. The panel rows move the page
+  down: the scroll length grows, and link numbers and targets stay.
+- A horizontal rule is a painted line at least half the text width and at most 3.5 px high,
+  drawn across the blank row at its height. With no blank row there, no line is drawn.
+- A list marker is a run that reads `*` or `1.` or `a.` and whose source node has a box at
+  least twice as wide as the run. It shows in colour, with `*` as a bullet in a UTF-8 locale.
+
+Large text for H1 (`--big-headings=auto`, the default), used only when the terminal's answer at
+start shows it. Each answer is a cursor position report (CPR):
+
+- OSC 66 with `s=2` (Kitty's text sizing protocol): the cursor moves to column 3 after a space
+  at scale 2. Expected from Kitty 0.40 and later (not run here).
+- DEC double-width and double-height lines (ESC # 3 and ESC # 4): `CUF 999` on a DECDWL line
+  stops at half the width. Expected from xterm and Windows Terminal (not run here).
+- Any other answer, no answer, tmux or screen: the colour band. `on` uses DEC lines when
+  nothing was detected; `off` never uses large text. Plain mode never uses it.
+
+An OSC 66 line covers two terminal rows. When only one of them is in the body area, that row
+is drawn at normal size. The tests and `pty_check.py` use simulated answers; no real Kitty,
+xterm or Windows Terminal was run.
 
 ## Safety rule
 
@@ -79,7 +111,9 @@ test page: 1 second). After load, the page gets no timer, key or pointer events.
 
 ## Not done yet (all under https://github.com/danbri/factoidal-core/issues/371)
 
-Forms and text input; images, SVG and canvas (only a link's number shows for a linked image);
+H4, H5 and H6 have no heading style: H4 has the body size, and H5 and H6 are smaller. `<code>`,
+`<pre>`, `<blockquote>` and tables have no style of their own: the engine's boxes, runs and
+draw list do not tell them apart from other blocks, and no engine change is made here. Forms and text input; images, SVG and canvas (only a link's number shows for a linked image);
 in-page `#fragment` scrolling; page key and pointer events. Expected-failure tests: the end of `textnaut.test.ts`.
 
 ## Tests
