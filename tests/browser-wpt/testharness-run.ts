@@ -331,6 +331,18 @@ export function named(name:string):Named {
     `${secure?secureOrigin:origin}/${id}`;
   const variant=missingFeatures(path,engineFeatures);
   if(variant?.missing.length)return {file:id,kind:"engine",skip:`not supported by engine: ${variant.missing.join(", ")} (${variant.why})`};
+  // workers: without --wptserve, a dedicated worker variant on an engine with Worker
+  // (BubblePopJS) runs from the wrapper wptserve would generate (workerWrapper, workerScript)
+  if(variant&&!wptserveMode&&engineFeatures.Worker){
+    const has=(f:string)=>{try{return Deno.statSync(join(wpt,f)).isFile;}catch{return false;}};
+    let w=/^(.*)\.any\.worker\.html$/.exec(path);
+    if(w){const source=`${w[1]}.any.js`;
+      if(!has(source))return {file:id,kind:"missing",skip:`not in the checkout: ${source}`};
+      return {file:id,kind:"worker",url,html:workerWrapper(source,query)};}
+    w=/^(.*)\.worker\.html$/.exec(path);
+    if(w&&!/\.(shared|service)worker\.html$/.test(path)&&has(`${w[1]}.worker.js`))
+      return {file:id,kind:"worker",url,html:workerWrapper(`${w[1]}.worker.js`,query)};
+  }
   if(variant&&!wptserveMode)return {file:id,kind:"runner",skip:`${variant.why}: run with --wptserve`};
   const exists=(f:string)=>{try{return Deno.statSync(join(wpt,f)).isFile;}catch{return false;}};
   if(wptserveMode)return servedName(id,path,url,exists);
