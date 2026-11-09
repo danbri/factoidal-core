@@ -2,7 +2,7 @@
 //   deno test --no-prompt --allow-read --allow-ffi --allow-env --allow-run --import-map=textnaut/import_map.json --no-check textnaut/textnaut.test.ts
 // Local content only; no network. The engine tests are ignored when no engine library is found.
 import { strict as assert } from "node:assert";
-import { barRow, type BigText, cellWidth, decorateGrid, displayRow, dumpText, fillerRow, type GlyphRun, type Grid, headingLevel, layoutGrid, type LinkRow, plainRow, sanitizeText, sanitizeURL, styledRow } from "./grid.ts";
+import { barRow, type BigText, cellWidth, textWidth, decorateGrid, displayRow, dumpText, fillerRow, type GlyphRun, type Grid, headingLevel, layoutGrid, type LinkRow, plainRow, sanitizeText, sanitizeURL, styledRow } from "./grid.ts";
 import { capabilities, charsAbove, enableScripts, findNative, keysOf, renderPage, rowAtChars, startEngine } from "./textnaut.ts";
 
 const run = (text: string, x: number, y: number, advance = 12): GlyphRun =>
@@ -348,15 +348,228 @@ Deno.test({ name: "engine: h1 to h3 are identified from the glyph runs, and the 
   assert.equal(shown.rows[shown.linkRows[0]].find((c) => c.link === 1)?.c, "l");
 } });
 
-Deno.test("screensavers draw a frame of colour cells at any size", async () => {
-  const { effects } = await import("./screensaver.ts");
-  for (const [name, make] of Object.entries(effects)) {
-    const frame = make();
-    for (const [cols, rows] of [[80, 24], [1, 1], [200, 60]]) {
-      const out = frame(1.5, cols, rows, "24bit");
-      if (!out.includes("\x1b[")) throw new Error(`${name} drew nothing at ${cols}x${rows}`);
-      frame(1.6, cols, rows, "256");
+const SGR = /\x1b\[[0-9;]*m/g;
+/** The rows of one presenter output: [row number, visible text]. */
+function frameRows(out: string): Map<number, string> {
+  const rows = new Map<number, string>();
+  for (const m of out.matchAll(/\x1b\[(\d+);1H((?:(?!\x1b\[\d+;1H)[^])*)/g)) rows.set(Number(m[1]), m[2].replace(SGR, "").replace(/\x1b\[\?2026[hl]/g, ""));
+  return rows;
+}
+
+Deno.test("every screensaver draws whole frames of the right size at every colour level, with and without UTF-8", async () => {
+  const { savers, eggs, Renderer } = await import("./screensaver.ts");
+  for (const saver of [...savers, ...eggs]) {
+    for (const [cols, rows] of [[80, 24], [1, 1], [2, 3], [37, 11], [200, 60]]) {
+      for (const level of [0, 1, 2, 3] as const) for (const utf8 of [true, false]) {
+        const r = new Renderer(saver, { seed: 5, level, utf8 });
+        const where = `${saver.name} ${cols}x${rows} level ${level} utf8 ${utf8}`;
+        const first = r.frame(1.5, 0.033, cols, rows, "a caption");
+        const lines = frameRows(first);
+        assert.equal(lines.size, rows, `${where}: rows`);
+        for (const [y, text] of lines) {
+          assert(y >= 1 && y <= rows, `${where}: row ${y}`);
+          assert.equal(textWidth(text), cols, `${where}: row ${y} is ${textWidth(text)} wide`);
+          if (!utf8) assert(!/[^\x20-\x7e]/.test(text), `${where}: non-ASCII without UTF-8`);
+        }
+        const second = r.frame(1.533, 0.033, cols, rows);
+        for (const y of frameRows(second).keys()) assert(y >= 1 && y <= rows, `${where}: second frame row ${y}`);
+        const colours = (first + second).match(/\x1b\[[0-9;]*m/g) ?? [];
+        const kinds = new Set(colours.map((c) => /38;2|48;2/.test(c) ? "24" : /38;5|48;5/.test(c) ? "256" : /\x1b\[(?:[0-9;]*;)?(?:3[0-7]|4[0-7]|9[0-7]|10[0-7])(?:;[0-9;]*)?m/.test(c) ? "16" : "other"));
+        if (level === 0) assert(!kinds.has("24") && !kinds.has("256") && !kinds.has("16"), `${where}: colour at level 0`);
+        if (level === 1) assert(!kinds.has("24") && !kinds.has("256"), `${where}: 24-bit or 256 colour at level 1`);
+        if (level === 2) assert(!kinds.has("24"), `${where}: 24-bit colour at level 2`);
+        if (level === 3 && cols >= 80) assert(kinds.has("24"), `${where}: no colour at level 3`);
+      }
     }
+  }
+});
+
+Deno.test("a screensaver with the same seed draws the same frames", async () => {
+  const { savers, eggs, Renderer } = await import("./screensaver.ts");
+  for (const saver of [...savers, ...eggs]) {
+    const a = new Renderer(saver, { seed: 42, level: 3, utf8: true }), b = new Renderer(saver, { seed: 42, level: 3, utf8: true });
+    for (let i = 0; i < 4; i++) assert.equal(a.frame(i / 30, 1 / 30, 60, 20), b.frame(i / 30, 1 / 30, 60, 20), `${saver.name} frame ${i}`);
+  }
+});
+
+Deno.test("a screensaver follows a resize at once, with a full redraw of the new size", async () => {
+  const { savers, eggs, Renderer } = await import("./screensaver.ts");
+  for (const saver of [...savers, ...eggs]) {
+    const r = new Renderer(saver, { seed: 1, level: 2, utf8: true });
+    for (const [cols, rows] of [[80, 24], [100, 30], [20, 5], [200, 60]]) {
+      const out = r.frame(1, 0.033, cols, rows);
+      assert(out.includes("\x1b[2J"), `${saver.name}: no clear on resize to ${cols}x${rows}`);
+      const lines = frameRows(out);
+      assert.equal(lines.size, rows, `${saver.name} ${cols}x${rows}`);
+      for (const text of lines.values()) assert.equal(textWidth(text), cols);
+    }
+  }
+});
+
+Deno.test("the presenter writes only the rows that changed", async () => {
+  const { Presenter, Surface } = await import("./screensaver.ts");
+  const s = new Surface(3, true), p = new Presenter();
+  s.resize(10, 4);
+  for (let i = 0; i < s.px.length; i++) s.px[i] = (i * 7) & 255;
+  assert.equal(frameRows(p.frame(s)).size, 4);
+  assert.equal(p.frame(s), "", "an identical frame writes nothing");
+  s.set(3, 5, 255, 0, 0); // pixel row 5 is in cell row 2
+  const out = p.frame(s);
+  assert.deepEqual([...frameRows(out).keys()], [3]);
+});
+
+Deno.test("screensaver keys: Tab, Space and n go on; b goes back through the history; q, Ctrl-C and others end it", async () => {
+  const { Navigator } = await import("./screensaver.ts");
+  const nav = new Navigator("plasma", ["plasma", "tunnel", "fire", "rain"]);
+  assert.equal(nav.key("\t"), "switch"); assert.equal(nav.current, "tunnel");
+  assert.equal(nav.key(" "), "switch"); assert.equal(nav.current, "fire");
+  assert.equal(nav.key("n"), "switch"); assert.equal(nav.current, "rain");
+  assert.equal(nav.key("n"), "switch"); assert.equal(nav.current, "plasma", "the list wraps");
+  for (const want of ["rain", "fire", "tunnel", "plasma"]) { assert.equal(nav.key("b"), "switch"); assert.equal(nav.current, want); }
+  assert.equal(nav.key("b"), "none", "nothing before the first");
+  assert.equal(nav.current, "plasma");
+  assert.equal(nav.key("q"), "quit");
+  assert.equal(nav.key("\x03"), "exit");
+  assert.equal(nav.key("z"), "quit");
+  assert.equal(nav.key("up"), "quit");
+});
+
+Deno.test("hidden savers are out of the list and the random choice except in December", async () => {
+  const { savers, eggs, pool, orderFor, findSaver } = await import("./screensaver.ts");
+  assert.equal(savers.length, 15);
+  assert(eggs.length >= 2 && eggs.every((e) => e.egg));
+  assert(savers.every((s) => !s.egg && !/xmas/.test(s.name + s.help)));
+  for (let month = 1; month <= 11; month++) assert(pool(month).every((s) => !s.egg), `month ${month}`);
+  assert(eggs.every((e) => pool(12).includes(e)));
+  assert(orderFor("plasma", 6).every((n) => !findSaver(n)!.egg));
+  assert(orderFor("plasma", 12).includes("xmas-tree"));
+  assert.deepEqual(orderFor("xmas-tree", 6), eggs.map((e) => e.name), "a hidden one outside December walks the hidden ones");
+  assert.equal(findSaver("xmas")?.name, "xmas-tree");
+  assert.equal(findSaver("nonesuch"), undefined);
+});
+
+/** A fake terminal input: one chunk per call, then the end of input. */
+function fakeInput(chunks: string[]) {
+  const queue = chunks.map((c) => new TextEncoder().encode(c));
+  const input = { closed: false, async next(_timeout?: number) { await new Promise((r) => setTimeout(r, 1)); const c = queue.shift(); if (!c) { if (queue.length === 0 && chunks.length) input.closed = true; return null; } return c; } };
+  return input;
+}
+
+Deno.test("runSavers: Tab, Space, b and q on a terminal input; a started saver names itself", async () => {
+  const { runSavers } = await import("./screensaver.ts");
+  let out = "";
+  // Frames take 30 ms; each key arrives while the frame wait is on.
+  const input = fakeInput(["\t", " ", "b", "n", "q"]);
+  const end = await runSavers({ input, write: (s) => { out += s; }, size: () => ({ columns: 80, rows: 24 }), level: 3, utf8: true }, "plasma", { seed: 1, month: 6 });
+  assert.equal(end, "quit");
+  const names = [...out.replace(SGR, "").matchAll(/(plasma|tunnel|fire|rain): /g)].map((m) => m[1]);
+  assert.deepEqual(names.filter((n, i) => n !== names[i - 1]), ["plasma", "tunnel", "fire", "tunnel", "fire"]);
+});
+
+Deno.test("runSavers: Ctrl-C is exit, any other key is quit, a pipe with frames just stops", async () => {
+  const { runSavers } = await import("./screensaver.ts");
+  const run = (keys: string[]) => runSavers({ input: fakeInput(keys), write: () => {}, size: () => ({ columns: 40, rows: 10 }), level: 0, utf8: false }, "stars", { seed: 1, month: 6 });
+  assert.equal(await run(["\x03"]), "exit");
+  assert.equal(await run(["x"]), "quit");
+  assert.equal(await run(["\x1b[A"]), "quit");
+  let n = 0;
+  assert.equal(await runSavers({ write: () => { n++; }, size: () => ({ columns: 40, rows: 10 }), level: 3, utf8: true }, "fire", { frames: 3, fps: 1000 }), "quit");
+  assert.equal(n, 3);
+});
+
+Deno.test("4D: a rotation keeps the distance from the centre, and unrotate undoes it", async () => {
+  const { rotate4, unrotate4 } = await import("./screensaver.ts");
+  let seed = 7;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff * 2 - 1; };
+  for (let i = 0; i < 200; i++) {
+    const p: [number, number, number, number] = [rnd(), rnd(), rnd(), rnd()], a = rnd() * 7, b = rnd() * 7, c = rnd() * 7;
+    const q = rotate4(p, a, b, c);
+    assert(Math.abs(Math.hypot(...q) - Math.hypot(...p)) < 1e-12, "distance from the centre");
+    const back = unrotate4(q, a, b, c);
+    for (let k = 0; k < 4; k++) assert(Math.abs(back[k] - p[k]) < 1e-12);
+  }
+  // XW turns x into w: a quarter turn takes (1,0,0,0) to (0,0,0,1).
+  const turned = rotate4([1, 0, 0, 0], Math.PI / 2, 0);
+  assert(Math.abs(turned[0]) < 1e-12 && Math.abs(turned[3] - 1) < 1e-12);
+  // YW leaves x alone.
+  assert.equal(rotate4([1, 0, 0, 0], 0, 1.3)[0], 1);
+});
+
+Deno.test("Menger sponges: 20 of 27 cubes per step in 3D, 48 of 81 hypercells per step in 4D", async () => {
+  const { mengerGrid, mengerCells4 } = await import("./screensaver.ts");
+  for (const level of [1, 2, 3]) assert.equal(mengerGrid(level).count, 20 ** level);
+  for (const level of [1, 2]) assert.equal(mengerCells4(level).count, 48 ** level);
+  // The 4D sponge keeps the corners and drops the centre; 3D drops the centre and the face centres.
+  const one = mengerCells4(1);
+  assert.equal(one.cells[0], 1);
+  assert.equal(one.cells[1 + 3 * (1 + 3 * (1 + 3 * 1))], 0);
+});
+
+Deno.test("help: lists every saver, fills the screen, scrolls and keeps its selection in view", async () => {
+  const { HelpView } = await import("./help.ts");
+  const { savers } = await import("./screensaver.ts");
+  for (const [cols, rows] of [[80, 24], [40, 8], [200, 60], [20, 3], [10, 1]]) for (const level of [0, 1, 2, 3] as const) {
+    const help = new HelpView();
+    const lines = help.render(cols, rows, level, level > 1, "A page");
+    assert.equal(lines.length, rows);
+    for (const line of lines) assert.equal(textWidth(line.replace(SGR, "")), cols, `${cols}x${rows} level ${level}`);
+  }
+  const help = new HelpView();
+  const all = help.render(200, 100, 3, true, "").map((l) => l.replace(SGR, "")).join("\n");
+  for (const s of savers) assert(all.includes(s.name), s.name);
+  assert(/\[n\] then Enter/.test(all) && /follow link number n/.test(all));
+  assert(!/xmas/i.test(all), "hidden savers are not listed");
+  // Moving down through the list of a small window keeps the selection on screen.
+  for (let i = 0; i < 14; i++) {
+    help.key("down");
+    const view = help.render(60, 10, 0, false, "").join("\n");
+    assert(view.includes("\x1b[7m"), `selection ${help.selected} is visible`);
+  }
+});
+
+Deno.test("help keys: arrows and Enter, a number and Enter, close, quit and the hidden one", async () => {
+  const { HelpView } = await import("./help.ts");
+  const { savers } = await import("./screensaver.ts");
+  const help = new HelpView();
+  assert.deepEqual(help.key("down"), { action: "none" });
+  assert.deepEqual(help.key("down"), { action: "none" });
+  assert.deepEqual(help.key("\r"), { action: "launch", saver: savers[2].name });
+  assert.deepEqual(help.key("up"), { action: "none" });
+  assert.equal(help.key("\r").saver, savers[1].name);
+  help.key("7"); assert.equal(help.key("\r").saver, savers[6].name);
+  help.key("1"); help.key("2"); assert.equal(help.key("\r").saver, savers[11].name);
+  help.key("9"); help.key("9"); const none = help.key("\r");
+  assert.equal(none.action, "none"); assert(/no screensaver 99/.test(none.message ?? ""));
+  for (const k of ["q", "?", "h", "b", "left"]) assert.equal(help.key(k).action, "close", k);
+  assert.equal(help.key("\x03").action, "exit");
+  assert.equal(help.key("x").saver, "xmas-tree");
+  assert.equal(help.typed, "");
+});
+
+Deno.test("help: a page title with escape sequences reaches the terminal only as text", async () => {
+  const { HelpView } = await import("./help.ts");
+  const title = "Evil \x1b[2J\x1b]0;owned\x07 \x9b31m title ‮";
+  for (const level of [0, 3] as const) {
+    const out = new HelpView().render(80, 24, level, true, title).join("\n").replace(SGR, "");
+    assert(!/[\x00-\x08\x0b-\x1f\x7f-\x9f‮]/.test(out.replace(/\n/g, "")), JSON.stringify(out.slice(0, 200)));
+    assert(/Evil/.test(out));
+  }
+});
+
+Deno.test("the browser's hint line names the help key", async () => {
+  const src = await Deno.readTextFile(new URL("./textnaut.ts", import.meta.url));
+  assert(/"\? help \| \[n\] Enter follow/.test(src));
+});
+
+Deno.test("screensaver frame time stays usable: every saver under 60 ms a frame at 200x60 (generous bound)", async () => {
+  const { savers, eggs, Renderer } = await import("./screensaver.ts");
+  for (const saver of [...savers, ...eggs]) {
+    const r = new Renderer(saver, { seed: 3, level: 3, utf8: true });
+    r.frame(0, 0.033, 200, 60);
+    const start = performance.now();
+    for (let i = 1; i <= 10; i++) r.frame(i / 30, 1 / 30, 200, 60);
+    const each = (performance.now() - start) / 10;
+    assert(each < 60, `${saver.name}: ${each.toFixed(1)} ms a frame`);
   }
 });
 
