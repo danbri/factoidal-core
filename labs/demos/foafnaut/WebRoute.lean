@@ -519,7 +519,7 @@ theorem builtin_resolves (site : Site) (base : String) :
     ∀ p ∈ builtinPages, route site base ("foafnaut:" ++ p.1) = .page p.1 (pageURL site p.1) := by
   intro p hp
   simp only [builtinPages, List.mem_cons, List.not_mem_nil, or_false] at hp
-  rcases hp with rfl | rfl | rfl | rfl | rfl | rfl <;>
+  rcases hp with rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
     simp only [route, analyze_foafnaut, decide, foafnautRoute]
   · rw [show builtin ((trimEnd "bookmarks".toList).filter (!isTabOrNewline ·)) = .page "bookmarks" none by decide]; rfl
   · rw [show builtin ((trimEnd "history".toList).filter (!isTabOrNewline ·)) = .page "history" none by decide]; rfl
@@ -527,6 +527,7 @@ theorem builtin_resolves (site : Site) (base : String) :
   · rw [show builtin ((trimEnd "wasm".toList).filter (!isTabOrNewline ·)) = .page "wasm" none by decide]; rfl
   · rw [show builtin ((trimEnd "sparql".toList).filter (!isTabOrNewline ·)) = .page "sparql" none by decide]; rfl
   · rw [show builtin ((trimEnd "console".toList).filter (!isTabOrNewline ·)) = .page "console" none by decide]; rfl
+  · rw [show builtin ((trimEnd "about".toList).filter (!isTabOrNewline ·)) = .page "about" none by decide]; rfl
 
 /-- `foafnaut:graph` runs the graph app. -/
 theorem graph_resolves (site : Site) (base : String) : route site base graphURL = .graph := by
