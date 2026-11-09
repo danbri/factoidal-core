@@ -3,6 +3,7 @@ import L4Factoidal.DOM.OfHtml
 import L4Factoidal.Unicode.Bidi
 import L4Factoidal.Rendering.MediaQuery
 import Std.Data.TreeMap
+import Std.Data.HashMap
 
 /-! Computed styles for an explicitly bounded CSS block/inline profile.
 Selectors: universal, type, id and class compound selectors, selector lists and
@@ -343,27 +344,69 @@ private def pseudoMatches (dom : Dom) (state : ElementState) (id : Nat) (n : DOM
 /-- The rules of a sheet on a screen. -/
 def parse (source : String) : Except String (List Rule) := parseFor "screen" source
 
-private def selectorMatchesCompound (dom : Dom) (state : ElementState) (id : Nat) (s : Compound) : Bool :=
+/-- What the matcher reads of an element besides its tag and pseudo-classes: its class
+words and its `id` attribute. `ElemKey.read` reads them from the node; a cascade reads
+them once per element (`ElemKeys`), not once per element and rule (realperf, record
+docs/designissues/2026-11-09-real-site-layout-speed.md: splitting `class` for every
+element and rule was 95% of a Wikipedia layout). -/
+structure ElemKey where
+  classes : List String := []
+  id : String := ""
+  deriving Inhabited
+def ElemKey.read (n : DOM.Node) : ElemKey := ⟨words (attrValue n "class"), attrValue n "id"⟩
+/-- The keys of each node, read from the arena when asked: the reference. -/
+def readKeys (dom : Dom) : Nat → ElemKey := fun i => ElemKey.read (dom.get i)
+
+private def compoundMatchesK (keys : Nat → ElemKey) (dom : Dom) (state : ElementState) (id : Nat) (s : Compound) : Bool :=
   let n := dom.get id
   n.type == .element && (s.tag.map (· == n.lname)).getD true &&
-    (s.id.map (· == attrValue n "id")).getD true &&
-    s.classes.all ((words (attrValue n "class")).contains ·) &&
+    (s.id.map (· == (keys id).id)).getD true &&
+    s.classes.all ((keys id).classes.contains ·) &&
     s.pseudo.all (pseudoMatches dom state id n)
-private def matchAncestors (dom : Dom) (state : ElementState) : Nat → Option Nat → Compound → Option Nat
+private def matchAncestorsK (keys : Nat → ElemKey) (dom : Dom) (state : ElementState) : Nat → Option Nat → Compound → Option Nat
   | 0, _, _ => none
   | _+1, none, _ => none
   | f+1, some id, sel =>
-    if selectorMatchesCompound dom state id sel then some id else matchAncestors dom state f (dom.get id).parent sel
-private def selectorMatchesParts (dom : Dom) (state : ElementState) : List Compound → Option Nat → Bool
+    if compoundMatchesK keys dom state id sel then some id else matchAncestorsK keys dom state f (dom.get id).parent sel
+private def partsMatchK (keys : Nat → ElemKey) (dom : Dom) (state : ElementState) : List Compound → Option Nat → Bool
   | [], _ => true
-  | sel::rest, ancestor => match matchAncestors dom state (dom.size+1) ancestor sel with
+  | sel::rest, ancestor => match matchAncestorsK keys dom state (dom.size+1) ancestor sel with
     | none => false
-    | some id => selectorMatchesParts dom state rest (dom.get id).parent
+    | some id => partsMatchK keys dom state rest (dom.get id).parent
 
-def selectorMatches (dom : Dom) (id : Nat) (sel : Selector) (state : ElementState := {}) : Bool :=
+/-- `selectorMatches` with the element keys `keys` (`readKeys dom` or a table of them). -/
+def selectorMatchesK (keys : Nat → ElemKey) (dom : Dom) (id : Nat) (sel : Selector) (state : ElementState := {}) : Bool :=
   match sel.parts with
   | [] => false
-  | head::rest => selectorMatchesCompound dom state id head && selectorMatchesParts dom state rest (dom.get id).parent
+  | head::rest => compoundMatchesK keys dom state id head && partsMatchK keys dom state rest (dom.get id).parent
+
+def selectorMatches (dom : Dom) (id : Nat) (sel : Selector) (state : ElementState := {}) : Bool :=
+  selectorMatchesK (readKeys dom) dom id sel state
+
+/-- The keys of every node of an arena, read once. -/
+def ElemKeys := Array ElemKey
+def ElemKeys.of (dom : Dom) : ElemKeys := dom.nodes.map ElemKey.read
+/-- The keys of node `i`: from the table, or read (a node outside the table). -/
+def ElemKeys.get (ks : ElemKeys) (dom : Dom) (i : Nat) : ElemKey :=
+  match (show Array ElemKey from ks)[i]? with
+  | some k => k
+  | none => ElemKey.read (dom.get i)
+
+/-- The table gives the keys that the arena gives. -/
+theorem ElemKeys.get_of (dom : Dom) : (ElemKeys.of dom).get dom = readKeys dom := by
+  funext i
+  unfold ElemKeys.get ElemKeys.of readKeys Dom.get
+  rw [Array.getElem?_map]
+  cases h : dom.nodes[i]? with
+  | none => simp [Array.getD]
+  | some n =>
+    have hi := (Array.getElem?_eq_some_iff.mp h)
+    simp [Array.getD, hi.1, hi.2]
+
+/-- The matcher over a key table is the matcher of the arena. -/
+theorem selectorMatchesK_of (dom : Dom) (id : Nat) (sel : Selector) (state : ElementState) :
+    selectorMatchesK ((ElemKeys.of dom).get dom) dom id sel state = selectorMatches dom id sel state := by
+  rw [ElemKeys.get_of]; rfl
 
 /-- Strict finite decimal conversion for CSS lengths; exponent syntax is outside
 this first profile, and malformed declarations are refused. -/
@@ -750,11 +793,142 @@ def userAgentRules : List Rule := (parse userAgentSheet).toOption.getD []
 the privacy restriction that browsers apply to visited links). -/
 def visitedProperties : List String := ["color","background-color","border-color"]
 
+/-- A rule that matches an element: its origin (0 the user agent, 1 the author), the rule,
+and those of its selectors that match. -/
+abbrev Match := Nat × Rule × List Selector
+
+/-- Every rule with its origin, the user agent's first, in sheet order. -/
+def ruleEntries (rules : List Rule) : List (Nat × Rule) := userAgentRules.map (0,·) ++ rules.map (1,·)
+
+/-- The entry `e` as a match of element `id`, when one of its selectors matches. -/
+def matchEntry (keys : Nat → ElemKey) (dom : Dom) (id : Nat) (state : ElementState) (e : Nat × Rule) : Option Match :=
+  let m := e.2.selectors.filter (selectorMatchesK keys dom id · state)
+  if m.isEmpty then none else some (e.1,e.2,m)
+
+/-- The reference: every rule tried, in order. -/
+def matchedRules (dom : Dom) (id : Nat) (rules : List Rule) (state : ElementState := {}) : List Match :=
+  (ruleEntries rules).filterMap (matchEntry (readKeys dom) dom id state)
+
+/-! ### Rule buckets
+
+As browsers do, each selector goes in one bucket by its rightmost compound: its id, else
+its first class, else its tag, else the bucket of every element. An element tries only
+the rules of the buckets it is in (`RuleIndex.candidates`), in sheet order. A selector
+outside those buckets can not match (`selectorMatchesK_admits`), so the rules matched
+are those of the plain loop (`matchedRules`); `RuleIndex.matched_eq` checks this on
+the test pages (`CascadeTests.lean`) and `computeAll_eq_linear` lifts it to the styles. -/
+inductive Bucket where
+  | id (s : String) | cls (s : String) | tag (s : String) | any
+def Compound.bucket (c : Compound) : Bucket :=
+  match c.id with
+  | some i => .id i
+  | none => match c.classes with
+    | k :: _ => .cls k
+    | [] => match c.tag with
+      | some t => .tag t
+      | none => .any
+def Selector.bucket (sel : Selector) : Bucket :=
+  match sel.parts with
+  | [] => .any
+  | c :: _ => c.bucket
+/-- An element with keys `k` and local name `lname` is in bucket `b`. -/
+def Bucket.admits (k : ElemKey) (lname : String) : Bucket → Bool
+  | .id i => i == k.id
+  | .cls c => k.classes.contains c
+  | .tag t => t == lname
+  | .any => true
+
+/-- A selector that matches an element has the element in its bucket. -/
+theorem selectorMatchesK_admits (keys : Nat → ElemKey) (dom : Dom) (id : Nat) (sel : Selector)
+    (state : ElementState) (h : selectorMatchesK keys dom id sel state = true) :
+    sel.bucket.admits (keys id) (dom.get id).lname = true := by
+  unfold selectorMatchesK at h
+  cases hp : sel.parts with
+  | nil => simp [Selector.bucket, hp, Bucket.admits]
+  | cons c rest =>
+    rw [hp] at h
+    simp only [Bool.and_eq_true] at h
+    have hc := h.1
+    unfold compoundMatchesK at hc
+    simp only [Bool.and_eq_true] at hc
+    obtain ⟨⟨⟨⟨_, htag⟩, hid⟩, hcls⟩, _⟩ := hc
+    cases hi : c.id with
+    | some i =>
+      rw [hi] at hid
+      simpa [Selector.bucket, hp, Compound.bucket, hi, Bucket.admits] using hid
+    | none =>
+      cases hk : c.classes with
+      | cons k ks =>
+        rw [hk] at hcls
+        simp only [List.all_cons, Bool.and_eq_true] at hcls
+        simpa [Selector.bucket, hp, Compound.bucket, hi, hk, Bucket.admits] using hcls.1
+      | nil =>
+        cases ht : c.tag with
+        | some t =>
+          rw [ht] at htag
+          simpa [Selector.bucket, hp, Compound.bucket, hi, hk, ht, Bucket.admits] using htag
+        | none => simp [Selector.bucket, hp, Compound.bucket, hi, hk, ht, Bucket.admits]
+
+/-- The rules in buckets: `entries` is `ruleEntries`, and each bucket lists the entries
+(by index, ascending, each once) with a selector in that bucket. -/
+structure RuleIndex where
+  entries : Array (Nat × Rule)
+  byId : Std.HashMap String (Array Nat) := {}
+  byClass : Std.HashMap String (Array Nat) := {}
+  byTag : Std.HashMap String (Array Nat) := {}
+  universal : Array Nat := #[]
+
+private def bucketAdd (m : Std.HashMap String (List Nat)) (k : String) (i : Nat) : Std.HashMap String (List Nat) :=
+  match m.get? k with
+  | some (j :: rest) => if j == i then m else m.insert k (i :: j :: rest)
+  | _ => m.insert k [i]
+private def bucketArrays (m : Std.HashMap String (List Nat)) : Std.HashMap String (Array Nat) :=
+  m.map fun _ l => l.reverse.toArray
+
+/-- The buckets of `rules` (and the user agent's): one pass over the selectors. -/
+def RuleIndex.build (rules : List Rule) : RuleIndex := Id.run do
+  let entries := (ruleEntries rules).toArray
+  let mut byId : Std.HashMap String (List Nat) := {}
+  let mut byClass : Std.HashMap String (List Nat) := {}
+  let mut byTag : Std.HashMap String (List Nat) := {}
+  let mut universal : List Nat := []
+  for h : i in [:entries.size] do
+    for sel in entries[i].2.selectors do
+      match sel.bucket with
+      | .id k => byId := bucketAdd byId k i
+      | .cls k => byClass := bucketAdd byClass k i
+      | .tag k => byTag := bucketAdd byTag k i
+      | .any => if universal.head? != some i then universal := i :: universal
+  let ix : RuleIndex := ⟨entries, bucketArrays byId, bucketArrays byClass, bucketArrays byTag, universal.reverse.toArray⟩
+  return ix
+
+/-- The entries that element (keys `k`, local name `lname`) may match: those of its
+buckets, ascending, each once. -/
+def RuleIndex.candidates (ix : RuleIndex) (k : ElemKey) (lname : String) : Array Nat := Id.run do
+  let mut c := ix.universal
+  if let some a := ix.byTag[lname]? then c := c ++ a
+  if !k.id.isEmpty then
+    if let some a := ix.byId[k.id]? then c := c ++ a
+  for cl in k.classes do
+    if let some a := ix.byClass[cl]? then c := c ++ a
+  let sorted := c.qsort (· < ·)
+  let mut out : Array Nat := Array.mkEmpty sorted.size
+  for i in sorted do
+    if out.back? != some i then out := out.push i
+  return out
+
+/-- The rules that match element `id`, from its buckets. -/
+def RuleIndex.matched (ix : RuleIndex) (keys : Nat → ElemKey) (dom : Dom) (id : Nat) (state : ElementState := {}) : List Match :=
+  (ix.candidates (keys id) (dom.get id).lname).toList.filterMap fun i =>
+    match ix.entries[i]? with
+    | some e => matchEntry keys dom id state e
+    | none => none
+
 /-- Winning declarations are keyed by property, with importance, origin, specificity
 and source order compared lexicographically (CSS Cascade 4 §6.1). The user agent
-origin (`userAgentRules`) is below the author origin. Inheritance is applied first. -/
-def computed (dom : Dom) (id : Nat) (rules : List Rule) (parent : Computed)
-    (state : ElementState := {}) : Except String Computed := do
+origin (`userAgentRules`) is below the author origin. Inheritance is applied first.
+`matched` are the rules that match the element, in sheet order (`matchedRules`). -/
+def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Computed) : Except String Computed := do
   let n := dom.get id
   let block := ["html","body","div","p","section","main","article","header","footer","nav","aside",
     "h1","h2","h3","h4","h5","h6","ul","ol","li","dir","menu","dl","dt","dd","pre","listing","xmp","plaintext",
@@ -806,17 +980,15 @@ def computed (dom : Dom) (id : Nat) (rules : List Rule) (parent : Computed)
           else {initial with height := dimension}
   let mut winners : Std.TreeMap String (List Nat × Declaration) := {}
   let mut order : Nat := 0
-  for (origin,rule) in userAgentRules.map (0,·) ++ rules.map (1,·) do
-    let matched := rule.selectors.filter (selectorMatches dom id · state)
+  for (origin,rule,matched) in matched do
     let specificity := matched.foldl (fun m s => if lexLE [m.1,m.2.1,m.2.2] [s.specificity.1,s.specificity.2.1,s.specificity.2.2] then s.specificity else m) (0,0,0)
-    if !matched.isEmpty then
-      let onlyVisited := matched.all (·.visitedDependent)
-      for d in rule.declarations do
-        if !onlyVisited || visitedProperties.contains d.property then
-          let key := [if d.important then 1 else 0,origin,0,specificity.1,specificity.2.1,specificity.2.2,order]
-          if (winners.get? d.property).all (fun old => lexLE old.1 key) then
-            winners := winners.insert d.property (key,d)
-        order := order+1
+    let onlyVisited := matched.all (·.visitedDependent)
+    for d in rule.declarations do
+      if !onlyVisited || visitedProperties.contains d.property then
+        let key := [if d.important then 1 else 0,origin,0,specificity.1,specificity.2.1,specificity.2.2,order]
+        if (winners.get? d.property).all (fun old => lexLE old.1 key) then
+          winners := winners.insert d.property (key,d)
+      order := order+1
   for d in ← declarations (attrValue n "style") do
     let key := [if d.important then 1 else 0,1,1,0,0,0,order]
     if (winners.get? d.property).all (fun old => lexLE old.1 key) then winners := winners.insert d.property (key,d)
@@ -835,6 +1007,11 @@ def computed (dom : Dom) (id : Nat) (rules : List Rule) (parent : Computed)
   let decoration := parent.decorationColor.orElse (fun _ => if result.underline then some result.color else none)
   return {result with underline := decoration.isSome, decorationColor := decoration}
 
+/-- The style of element `id` with every rule tried (`matchedRules`): the reference. -/
+def computed (dom : Dom) (id : Nat) (rules : List Rule) (parent : Computed)
+    (state : ElementState := {}) : Except String Computed :=
+  computedFrom dom id (matchedRules dom id rules state) parent
+
 /-- Reader text scaling is applied once after inheritance/cascade. Pixel sizes
 are rounded to match the supplied-font raster contract; explicit line heights
 scale too. Geometry, SVG viewports and DOM source are unchanged. -/
@@ -844,9 +1021,9 @@ def Computed.scaleText (s : Computed) (scale : Float) : Computed :=
   let height := (s.lineHeightFactor.map (size*·)).getD (s.lineHeight*scale)
   {s with fontSize := size, lineHeight := height}
 
-/-- Visit parents before children, using a work list and bounded arena size. -/
-def computeAll (dom : Dom) (rules : List Rule) (textScale : Float := 1)
-    (state : ElementState := {}) : Except String (Array Computed) := do
+/-- Visit parents before children, using a work list and bounded arena size.
+`matchesOf id` are the rules that match element `id`, in sheet order. -/
+def computeAllWith (matchesOf : Nat → List Match) (dom : Dom) (textScale : Float := 1) : Except String (Array Computed) := do
   if !textScale.isFinite || textScale < 0.5 then throw "text scale must be finite and at least 50%"
   let mut pending := [0]
   let mut styles := Array.replicate dom.size ({} : Computed)
@@ -857,7 +1034,7 @@ def computeAll (dom : Dom) (rules : List Rule) (textScale : Float := 1)
       let n := dom.get id
       let parent := (n.parent.bind (styles[·]?)).getD {}
       let svgDescendant := n.ns == some DOM.svgNS && (n.parent.map (fun p => (dom.get p).ns == some DOM.svgNS)).getD false
-      let style ← if n.type == .element && !svgDescendant then computed dom id rules parent state else pure {parent with
+      let style ← if n.type == .element && !svgDescendant then computedFrom dom id (matchesOf id) parent else pure {parent with
         display := .inline, width := .auto, height := .auto,
         margin := {}, padding := {}, background := none, clipOverflow := false,
         borderStyle := .none, borderWidth := ⟨3,3,3,3⟩, borderColor := none,
@@ -865,6 +1042,27 @@ def computeAll (dom : Dom) (rules : List Rule) (textScale : Float := 1)
       styles := styles.set! id style
       pending := n.kids.toList ++ rest
   throw "DOM style traversal exceeds arena bound"
+
+/-- The styles of every node with every rule tried for every element: the reference. -/
+def computeAllLinear (dom : Dom) (rules : List Rule) (textScale : Float := 1)
+    (state : ElementState := {}) : Except String (Array Computed) :=
+  computeAllWith (fun id => matchedRules dom id rules state) dom textScale
+
+/-- The styles of every node: the element keys read once, the rules in buckets. -/
+def computeAll (dom : Dom) (rules : List Rule) (textScale : Float := 1)
+    (state : ElementState := {}) : Except String (Array Computed) :=
+  let ix := RuleIndex.build rules
+  let ks := ElemKeys.of dom
+  computeAllWith (fun id => ix.matched (ks.get dom) dom id state) dom textScale
+
+/-- The buckets give the styles of the plain loop wherever they give its matches. -/
+theorem computeAll_eq_linear (dom : Dom) (rules : List Rule) (textScale : Float) (state : ElementState)
+    (h : ∀ id, (RuleIndex.build rules).matched ((ElemKeys.of dom).get dom) dom id state = matchedRules dom id rules state) :
+    computeAll dom rules textScale state = computeAllLinear dom rules textScale state := by
+  unfold computeAll computeAllLinear
+  simp only []
+  rw [show (fun id => (RuleIndex.build rules).matched ((ElemKeys.of dom).get dom) dom id state) =
+    (fun id => matchedRules dom id rules state) from funext h]
 
 end L4Factoidal.Rendering.CSS
 
