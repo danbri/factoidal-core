@@ -92,6 +92,8 @@ def referencedIds (dom : DOM.Dom) : Std.TreeMap String Unit := Id.run do
   let mut out : Std.TreeMap String Unit := {}
   for n in dom.nodes do
     if n.type != .element then continue
+    -- An animation names its target by `href`; it draws no copy of it.
+    if n.ns == some DOM.svgNS && animationTags.contains n.lname then continue
     for a in n.attrs do
       let v := a.value.trimAscii.toString
       if a.lname == "href" && v.startsWith "#" then out := out.insert (v.drop 1).toString ()
