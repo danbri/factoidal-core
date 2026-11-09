@@ -8,7 +8,7 @@
 // Wasm engine, and the native library when it is built. Run with --allow-read --allow-ffi.
 import {strict as assert} from "node:assert";
 import {loadHTML,type HTMLArtifact,type HTMLEngine} from "./native_html_engine.ts";
-import {inputURL,loadFontFile,prepareHTML} from "./native_html_document.ts";
+import {inputURL,loadFontFile,prepareHTML,setScriptHost} from "./native_html_document.ts";
 
 const font=new URL("../../../third_party/fonts/noto-sans/NotoSans-Regular.ttf",import.meta.url).pathname;
 const library=new URL("./.build/web-render/engines/libweb-render.dylib",import.meta.url).pathname;
@@ -57,6 +57,8 @@ async function check(nativeEngine?:string){
   assert.ok(main,`no 760 CSS px column at x 16 CSS px in ${JSON.stringify(boxesOf(two).slice(0,6))}`);
   return boxes;
 }
+// The layout is what is compared: the pages' scripts are not started (no turn), so both frames are of the same DOM.
+setScriptHost({start:()=>undefined} as unknown as Parameters<typeof setScriptHost>[0]);
 const hasLibrary=(()=>{try{Deno.statSync(library);return true;}catch{return false;}})();
 Deno.test("a 2x and a 3x frame are the 1x layout scaled (Wasm)",async()=>{
   const boxes=await check();console.log(`Wasm: ${boxes} boxes scaled`);
