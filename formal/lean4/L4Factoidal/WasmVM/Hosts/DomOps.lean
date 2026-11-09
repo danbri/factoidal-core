@@ -661,7 +661,10 @@ def domOpM (id op : Nat) (q : String) : Op String := do
     if let some el := docEl then
       if !(elementFrame st el).formsMaySubmit then return "0"
     let docURL := if doc == 0 then st.url else ((st.docURLs.find? (·.1 == doc)).map (·.2)).getD "about:blank"
-    let enc := (L4Factoidal.WHATWG.Encoding.getEncoding label).getD .utf_8
+    let frameLabel := match docEl with
+      | some el => ((st.frameEncodings.find? (·.1 == el)).map (·.2)).getD label
+      | none => label
+    let enc := (L4Factoidal.WHATWG.Encoding.getEncoding frameLabel).getD .utf_8
     let baseTarget := (((d.treeOrder doc).find? fun k => L4Factoidal.DOM.Forms.isHtml d k ["base"] &&
       (L4Factoidal.DOM.Forms.attr? d k "target").isSome).bind (L4Factoidal.DOM.Forms.attr? d · "target")).getD ""
     match L4Factoidal.HTML.FormSubmission.plan d form submitter docURL enc baseTarget with
@@ -688,6 +691,16 @@ def domOpM (id op : Nat) (q : String) : Op String := do
     | some (el, _) =>
       if !frameAccessible st el then throw (-2)
       return ((st.docURLs.find? (·.1 == id)).map (·.2)).getD "about:blank"
+    | none => throw (-2)
+  | 172 =>
+    -- the encoding name of frame document `id` the page may reach (`characterSet`), as the
+    -- embedder's decode named it; UTF-8 when it did not say
+    let st ← get
+    match st.frames.find? (·.2 == id) with
+    | some (el, _) =>
+      if !frameAccessible st el then throw (-2)
+      let e := ((st.frameEncodings.find? (·.1 == el)).map (·.2)).bind L4Factoidal.WHATWG.Encoding.getEncoding
+      return (e.getD .utf_8).name
     | none => throw (-2)
   -- ==== end of encoding100 ====
   | _ => throw (-2)
