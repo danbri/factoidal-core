@@ -18,13 +18,13 @@ textnaut only chooses how a standard thing looks in cells.
 |---|---|---|---|---|---|
 | Label, static text | Label, Static | Text | TTkLabel | text | yes |
 | Link | Link | links (OSC 8) | | `<a>` | yes, numbered; OSC 8 when detected |
-| Heading | Markdown | Markdown H1 panel | | `<h1>`..`<h6>` | colour only; bands in progress |
-| Rule | Rule | Rule | | `<hr>` | in progress |
+| Heading | Markdown | Markdown H1 panel | | `<h1>`..`<h6>` | H1 panel, H2 band, H3 bold colour (from font size; the engine gives no element names) |
+| Rule | Rule | Rule | | `<hr>` | full-width line, on a blank row |
 | Panel, frame, box | (CSS borders) | Panel | TTkFrame, TTkResizableFrame | borders, `<fieldset>`, `<section>` | no |
-| Code block | TextArea, Markdown | Syntax | TTkTextEdit | `<pre>`, `<code>` | in progress |
-| Blockquote | Markdown | Markdown | | `<blockquote>` | in progress |
-| List | ListView, OptionList | Markdown | TTkList | `<ul>`, `<ol>` | bullets as text |
-| Table | DataTable | Table | TTkTable | `<table>` | text placed by layout; borders in progress |
+| Code block | TextArea, Markdown | Syntax | TTkTextEdit | `<pre>`, `<code>` | no: needs element information from the engine |
+| Blockquote | Markdown | Markdown | | `<blockquote>` | no: needs element information from the engine |
+| List | ListView, OptionList | Markdown | TTkList | `<ul>`, `<ol>` | coloured markers |
+| Table | DataTable | Table | TTkTable | `<table>` | text placed by layout; no borders (needs element information) |
 | Tree | Tree, DirectoryTree | Tree | TTkTree, TTkFileTree | `<details>`, nested lists | no |
 | Collapsible | Collapsible | | | `<details>` | no |
 | Tabs | Tabs, TabbedContent, ContentSwitcher | | TTkTabWidget, TTkKodeTab | browser tabs; ARIA tablist | no |
@@ -70,7 +70,7 @@ textnaut only chooses how a standard thing looks in cells.
 | Bracketed paste, OSC 52 clipboard | safe paste, copy over SSH | no |
 | Text selection and copy | reading | terminal's own |
 | Kitty graphics, iTerm2 images, Sixel | real images | no |
-| Double-size text (DEC, Kitty OSC 66) | large headings | in progress |
+| Double-size text (DEC, Kitty OSC 66) | large headings | detected at start; not yet seen on a real terminal |
 | Undercurl, coloured underlines, dim, italic | richer text | no |
 | Themes, light and dark detection (OSC 11) | fits the terminal | no |
 | Animation with a frame budget | motion | screensavers |
