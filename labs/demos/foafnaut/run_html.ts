@@ -258,10 +258,10 @@ async function main() {
         // The viewport (innerWidth, innerHeight) and the render request that lays the page out
         // for its scripts' layout reads; an engine without them ignores the fields.
         // (The first page starts before the window's size and chrome are set: then 1280 by 800.)
-        const at=(()=>{try{return {width,height,shell:shell(),textScalePercent:view.textScalePercent??100};}
-          catch{return {width:1280,height:800,textScalePercent:150};}})();
-        const turn=await scriptCall("scriptSession",source,{action:"start",url:pageURL,resources,width:at.width,height:at.height,
-          ...(at.shell?{shell:at.shell}:{}),layout:{url:pageURL,textScalePercent:at.textScalePercent,...mode},
+        const at=(()=>{try{return {width,height,shell:shell(),textScalePercent:view.textScalePercent??100,zoomUnit:view.zoomUnit??100};}
+          catch{return {width:1280,height:800,textScalePercent:150,zoomUnit:100};}})();
+        const turn=await scriptCall("scriptSession",source,{action:"start",url:pageURL,resources,width:at.width,height:at.height,zoomUnit:at.zoomUnit,
+          ...(at.shell?{shell:at.shell}:{}),layout:{url:pageURL,textScalePercent:at.textScalePercent,zoomUnit:at.zoomUnit,...mode},
           ...(plan.engine==="bubblepop"?{engine:"bubblepop"}:{}),...(encoding?{encoding}:{})}) as ScriptTurn;
         scriptEpochs.set(turn.session,performance.now()-turn.clock);sessionEngines.set(turn.session,plan.engine);
         // The start turn makes the page's GPU objects (canvas, buffers, pipelines); the later turns use them.
@@ -344,8 +344,8 @@ async function main() {
   };
   // View state is held here and applied by Lean. Pointer positions are in the
   // coordinates of the presented frame, as link picking is.
-  // Text zoom 200 (WebSelection.defaultPercent; it was 150): this window keeps zoom unit 100,
-  // so the settings page shows it as 200%.
+  // Text zoom 200 (WebSelection.defaultPercent; it was 150) until the window's backing scale is
+  // known; then zoom unit 100*scale and zoom 200*scale, which the settings page shows as 200%.
   const view:PageView={textScalePercent:200};
   let press:number[]|undefined,lastCopied:string|undefined,loading=false;
   // The press on screen (issue 1268): Lean's `press` answer (a chrome control, or the link's
@@ -602,7 +602,7 @@ async function main() {
   let zoomOps:boolean|undefined;
   const textZoom=(argument="")=>{
     if(zoomOps===false)return undefined;
-    try{const answer=engine.textZoom(argument,view.textScalePercent??200);zoomOps=true;return answer;}
+    try{const answer=engine.textZoom(argument,view.textScalePercent??200,view.zoomUnit??100);zoomOps=true;return answer;}
     catch{zoomOps=false;return undefined;}
   };
   const zoomTo=(next:number)=>{
@@ -787,7 +787,7 @@ async function main() {
   };
   const windowCommand=(id:number)=>{
     const answer=engine.command(id,view.textScalePercent??100,history.history,focused,
-      {tabs:tabs.length,active,scroll:Math.round(scroll),view:height,scrollLimit:Math.floor(scrollLimit()),scale});
+      {tabs:tabs.length,active,scroll:Math.round(scroll),view:height,scrollLimit:Math.floor(scrollLimit()),scale,zoomUnit:view.zoomUnit??100});
     // Lean says when an edit command acts on the address bar: when it has the focus, and paste
     // always. The host only reads and writes the clipboard (issue 1268).
     if(answer.target==="address"){
@@ -930,6 +930,10 @@ async function main() {
       if(restoreSession)(saved.session?.tabs??[]).forEach((tab:{url:string},index:number)=>{if(index>0)newTab();navigate(tab.url);});
     }).catch(()=>{/* state off: said once in the log */});
     scale=Math.max(1,Math.round(native.surfaceState().contentsScale||1));
+    // Layout in points, drawn at the backing scale (WebDocument, Device pixels): Lean lays the page
+    // out width/scale CSS px wide. The starting text zoom is 200% of a usual browser's text at this
+    // scale (WebSelection.unitPercent), as on the Hub; a saved zoom (read above, applied later) wins.
+    view.zoomUnit=scale*100;view.textScalePercent=Math.max(50,Math.round(200*scale/5)*5);
     if(commands)native.testRaise();
     device.addEventListener("uncapturederror",event=>{console.error("Native HTML GPU error:",(event as GPUUncapturedErrorEvent).error.message);running=false;Deno.exitCode=1;});
     device.lost.then(info=>{if(running){console.error("Native HTML GPU lost:",info.message);running=false;Deno.exitCode=1;}});
@@ -1068,7 +1072,7 @@ async function main() {
           if(event.a>4096||event.b>4096)throw new Error("Native HTML window exceeds 4096 backing pixels; close or use a smaller window");
           if(event.a!==width||event.b!==height){width=event.a;height=event.b;dirty=true;if((document as Page).graph)graphInput(1,width,height);
             if(scriptsOn&&document.script&&scriptOps.includes("resize")){const page=document;
-              (scriptCall("scriptSession","",{action:"resize",session:document.script.session,width,height,shell:shell()}) as Promise<ScriptTurn>)
+              (scriptCall("scriptSession","",{action:"resize",session:document.script.session,width,height,zoomUnit:view.zoomUnit??100,shell:shell()}) as Promise<ScriptTurn>)
                 .then(turn=>scriptTurn(page,turn,"resize")).catch(error=>console.error("Native HTML: page script resize failed:",String(error)));}resizeAt??=performance.now();trace("native-html-resize",{width,height});}
         }
         if(event.kind===8&&event.a)dirty=true;

@@ -4,7 +4,9 @@ import {sourceBound,MAX_SOURCE_BYTES,type HTMLEngine,type HTMLResource,type Scri
 import {addEntries,noteDiagnostics,noteTurn} from "./native_console.ts";
 
 /** The view state of a page. Lean applies it; the host only keeps the values. */
-export type PageView={textScalePercent?:number;selection?:"all"|number[];shell?:unknown;live?:boolean};
+// zoomUnit: the backing pixels for each point, in percent (WebDocument.zoomUnit): Lean lays the page
+// out in points (CSS px) and draws it at the backing scale.
+export type PageView={textScalePercent?:number;zoomUnit?:number;selection?:"all"|number[];shell?:unknown;live?:boolean};
 const MAX_RESOURCES=16, MAX_RESOURCE_BYTES=4*MAX_SOURCE_BYTES;
 export function inputURL(input:string,file=false) {
   const url=file?pathToFileURL(resolve(input)):new URL(input);

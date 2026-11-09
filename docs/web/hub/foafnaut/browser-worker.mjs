@@ -666,7 +666,7 @@ async function startScripts(page,scripts){
   }
   // The viewport and the render request that lays the page out for its scripts' layout
   // reads (clientWidth, getBoundingClientRect); an engine without them ignores the fields.
-  const layout={url:page.url,...(page.liberal?{liberal:true}:{}),...(page.images?{images:page.images}:{}),...(page.heldImages?{heldImages:page.heldImages}:{}),textScalePercent:percent};
+  const layout={url:page.url,...(page.liberal?{liberal:true}:{}),...(page.images?{images:page.images}:{}),...(page.heldImages?{heldImages:page.heldImages}:{}),textScalePercent:percent,zoomUnit:zoomUnit()};
   // The setting: Lean's plan says which engine runs the page, or why none does.
   let plan=planFor(scriptSetting,1);
   if(plan.run&&plan.engine==='quickjs')await loadGuest();
@@ -675,7 +675,7 @@ async function startScripts(page,scripts){
   page.scriptEngine=plan.engine;
   if(!plan.run){if(plan.notice)console.warn('foafnaut:',plan.notice);if(page===doc)request();return;}
   // The first page of a session starts before the history exists: no shell then.
-  const turn=scriptCall(page.source,{op:'scriptSession',action:'start',url:page.url,resources,width,height,...(history?{shell:shell()}:{}),layout,
+  const turn=scriptCall(page.source,{op:'scriptSession',action:'start',url:page.url,resources,width,height,zoomUnit:zoomUnit(),...(history?{shell:shell()}:{}),layout,
     ...(plan.engine==='bubblepop'?{engine:'bubblepop'}:{}),...(page.encoding?{encoding:page.encoding}:{})});
   scriptStats.startMs=scriptStats.lastMs;scriptStats.engine=plan.engine;
   page.script={session:turn.session,turn,epoch:performance.now()-turn.clock,engine:plan.engine};
@@ -759,7 +759,7 @@ setInterval(()=>{
 function scriptClick(x,y){
   const script=doc?.script;if(!script)return;
   try{
-    const node=call(doc.source,{op:'nodeAt',url:doc.url,textScalePercent:percent,shell:shell(),...(doc.commands?{commands:doc.commands}:{}),x,y},width,height).node;
+    const node=call(doc.source,{op:'nodeAt',url:doc.url,textScalePercent:percent,zoomUnit:zoomUnit(),shell:shell(),...(doc.commands?{commands:doc.commands}:{}),x,y},width,height).node;
     if(typeof node==='number')scriptTurn(doc,scriptCall('',{op:'scriptSession',action:'click',session:script.session,node}));
   }catch(error){scriptFailed(doc,error,'click');}
 }
@@ -770,7 +770,7 @@ const scriptPointers=()=>scriptOps.includes('pointer');
 function scriptPointer(kind,x,y,pointerType){
   const script=doc?.script;if(!script)return;
   try{
-    const at=call(doc.source,{op:'nodeAt',url:doc.url,textScalePercent:percent,shell:shell(),...(doc.commands?{commands:doc.commands}:{}),x,y},width,height);
+    const at=call(doc.source,{op:'nodeAt',url:doc.url,textScalePercent:percent,zoomUnit:zoomUnit(),shell:shell(),...(doc.commands?{commands:doc.commands}:{}),x,y},width,height);
     if(typeof at.node!=='number')return;
     const down=kind==='down'||kind==='move';
     scriptTurn(doc,scriptCall('',{op:'scriptSession',action:'pointer',session:script.session,kind,...at,button:0,buttons:down?1:0,
@@ -779,7 +779,7 @@ function scriptPointer(kind,x,y,pointerType){
 }
 function scriptResize(){
   const script=doc?.script;if(!script||!scriptOps.includes('resize'))return;
-  try{scriptTurn(doc,scriptCall('',{op:'scriptSession',action:'resize',session:script.session,width,height,shell:shell()}));}
+  try{scriptTurn(doc,scriptCall('',{op:'scriptSession',action:'resize',session:script.session,width,height,zoomUnit:zoomUnit(),shell:shell()}));}
   catch(error){scriptFailed(doc,error,'resize');}
 }
 // foafnaut:wasm (issue 1244): WebAssembly run by WasmVM, the engine written in Lean, inside this
@@ -1009,7 +1009,9 @@ function scrollLimit(){
 }
 // The request for a frame of this page at a scroll; its signature leaves the scroll out, so
 // a band made at one scroll is known to be for the same state at another.
-const renderOptions=at=>({op:'render',url:doc.url,...(doc.liberal?{liberal:true,...(doc.diagnosticsSeen?{}:{diagnostics:true})}:{}),...(doc.images?{images:doc.images}:{}),...(doc.heldImages?{heldImages:doc.heldImages}:{}),...(doc.commands?{commands:doc.commands}:{}),textScalePercent:percent,shell:{...shell(),scroll:at},live:doc===checked,binary:true});
+// zoomUnit: Lean lays the page out in CSS pixels (the window over the pixel ratio) and draws
+// it at the ratio, so a 2x screen shows the layout of a 1x one, sharper (WebDocument, Device pixels).
+const renderOptions=at=>({op:'render',url:doc.url,...(doc.liberal?{liberal:true,...(doc.diagnosticsSeen?{}:{diagnostics:true})}:{}),...(doc.images?{images:doc.images}:{}),...(doc.heldImages?{heldImages:doc.heldImages}:{}),...(doc.commands?{commands:doc.commands}:{}),textScalePercent:percent,zoomUnit:zoomUnit(),shell:{...shell(),scroll:at},live:doc===checked,binary:true});
 const signature=options=>JSON.stringify({...options,images:undefined,shell:{...options.shell,scroll:0,collapse:undefined}});
 // The graph page keeps its document and changes its source: the band must be of this source.
 const canShift=()=>!!(layerSurface&&current&&current.doc===doc&&current.source===doc.source&&current.width===width&&current.height===height&&current.sig===signature(renderOptions(scroll)));

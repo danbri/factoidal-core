@@ -4,7 +4,7 @@
 import createModule from "./.build/native-html/runtime/web-render.mjs";
 
 /** What a tab or scroll command needs: tab count and active tab; scroll, view height, scroll limit and screen scale. */
-export type CommandState={tabs?:number;active?:number;scroll?:number;view?:number;scrollLimit?:number;scale?:number};
+export type CommandState={tabs?:number;active?:number;scroll?:number;view?:number;scrollLimit?:number;scale?:number;zoomUnit?:number};
 export type HTMLArtifact = {
   abi:string; width:number; height:number; data:number[]|Float32Array; wgsl:string; tiles:number[]|Uint32Array;
   primitiveCount:number; checks:{x:number;y:number;rgb:number[]}[];
