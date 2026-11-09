@@ -87,7 +87,7 @@ async function startServe() {
   const fetcher=wptFetcher(serveSpec);
   const up=async()=>{try{const r=await fetcher.fetch(`${serveOrigin}/resources/testharness.js`,{signal:AbortSignal.timeout(3000)});await r.body?.cancel();return r.ok;}catch{return false;}};
   if(await up()){serve={fetcher};return;}
-  const child=new Deno.Command("python3",{args:[join(here,"wpt-score.py"),"serve","--wpt-root",wpt],stdout:"null",stderr:"piped"}).spawn();
+  const child=new Deno.Command("python3",{args:[join(here,"wpt-score.py"),"serve","--wpt-root",wpt],stdout:"null",stderr:"null"}).spawn();
   for(let i=0;i<120&&!(await up());i++)await new Promise(r=>setTimeout(r,500));
   if(!(await up())){try{child.kill();}catch{/* gone */}throw new Error(`wptserve did not start for ${wpt} (python3 tests/browser-wpt/wpt-score.py serve --wpt-root ${wpt})`);}
   serve={fetcher,stop:async()=>{try{child.kill("SIGINT");}catch{/* gone */}await child.status.catch(()=>{});}};
@@ -199,7 +199,8 @@ export const variants:[RegExp,string,string[]][]=[
   [/\.any\.sharedworker-module\.html$/,"module shared worker variant",["SharedWorker","module scripts"]],
   [/\.any\.serviceworker-module\.html$/,"module service worker variant",["serviceWorker","module scripts"]],
   [/\.any\.shadowrealm[a-z-]*\.html$/,"ShadowRealm variant",["ShadowRealm"]],[/\.any\.window-module\.html$/,"module script variant",["module scripts"]],
-  [/\.worker\.html$/,"worker test",["Worker"]],[/\.test262-module\.html$/,"Test262 module test",["module scripts"]]];
+  [/\.worker\.html$/,"worker test",["Worker"]],[/\.test262-module\.html$/,"Test262 module test",["module scripts"]],
+  [/\.extension\.html$/,"browser extension test",["browser extensions"]]];
 /** The engine features a test name needs that this engine lacks (`features`: the probe's answer). */
 export function missingFeatures(path:string,features:Record<string,boolean>):{why:string;missing:string[]}|undefined {
   for(const [re,why,needs] of variants)if(re.test(path))return {why,missing:needs.filter(f=>!features[f])};
@@ -271,9 +272,13 @@ function servedName(id:string,path:string,url:string,exists:(f:string)=>boolean)
   if(/\.h2\./.test(path))return {file:id,kind:"runner",skip:"needs wptserve's HTTP/2 server (not started)"};
   const kind=/\.test262/.test(path)?"test262":/\.any\.html$/.test(path)?"any":/\.any\.[a-z-]+\.html$/.test(path)?path.replace(/^.*\.any\.([a-z-]+)\.html$/,"any-$1"):
     /\.(window|worker)\.html$/.test(path)?path.replace(/^.*\.(window|worker)\.html$/,"$1"):"testharness";
+  // wpt.fyi's .py names are wdspec tests: pytest drives a browser over WebDriver (webdriver/)
+  // or reads its accessibility tree (aria/, core-aam/, mathml-aam/). wptserve has no page for them.
+  if(kind==="testharness"&&path.endsWith(".py"))return {file:id,kind:"wdspec",skip:"wdspec (pytest over WebDriver or an accessibility API), not a page"};
   if(kind==="testharness"){
     if(!testharnessPage.test(path))return {file:id,kind:"other",skip:"not a testharness page"};
-    const text=Deno.readTextFileSync(join(wpt,path));
+    // NULs out: a UTF-16 page (html/infrastructure/urls/.../utf-16le.html) names the harness too.
+    const text=Deno.readTextFileSync(join(wpt,path)).replace(/\0/g,"");
     if(!text.includes("/resources/testharness.js"))
       return {file:id,kind:"reftest",skip:/(-crash|crashtests\/)/.test(path)?"crashtest":/-manual\./.test(path)?"manual":"not testharness.js (reftest or visual)"};
     if(/-manual\./.test(path))return {file:id,kind:"manual",skip:"manual"};
