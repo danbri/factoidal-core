@@ -108,7 +108,7 @@ type Backends={text:DocumentBackend;bytes:BytesBackend;font:FontBackend;image?:I
 /** The answer of `imageInfo`: the engine holds images (WebDocument, issue 1292). */
 export type ImageInfo={engine:string;ops:string[];maxImages:number;maxBytes:number;held:number;layoutSlots:number};
 /** The answer of `frameWork`: layouts, kept layouts used and pointer states painted with no layout. */
-export type FrameWork={layouts:number;kept:number;repaints:number;layoutSlots:number;pagesMade?:number;pagesKept?:number};
+export type FrameWork={layouts:number;kept:number;repaints:number;layoutSlots:number;pagesMade?:number;pagesKept?:number;paintOnly?:number;recompiled?:number;reused?:number;moved?:number};
 /** Backend 2: a native dylib of the same Lean objects. Every call must come from one thread; no nonblocking FFI. */
 export function nativeBackends(path:string):Backends {
   const library=Deno.dlopen(path,{
