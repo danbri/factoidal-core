@@ -4,9 +4,10 @@ Test pages for the Lean engine, and the start page of `foafnaut`. `manifest.json
 lists each page and what the engine must do with it.
 
 - `tools/build-demo-pages.py` writes the `.html` files from `source/`, the status note
-  and `../svg-fixtures`. Do not edit them by hand.
+  and `../svg-fixtures`, and `feed.xml` from the Foafnaut notes of the Hub. Do not edit
+  them by hand.
 - `tools/check-demo-pages.py WEB_RENDER_NATIVE` renders every page. `test.sh` runs both.
-- A `.xml` page is its own source. It names a stylesheet with `<?xml-stylesheet?>`, and
+- A `.xml` page other than `feed.xml` is its own source. It names a stylesheet with `<?xml-stylesheet?>`, and
   Lean runs it: `version` 1.x uses `XSLT/`, and 2.0, 3.0 and 4.0 use `XSLT4/`.
 - A page marked `refused` is an expected failure with an open issue; the check fails
   when it starts to render.
@@ -41,7 +42,9 @@ stylesheet that Lean runs, SVG, CSS tables and fonts. Each page says what it sho
   (needs fontTools).
 - The data is self-written or comes from this repository: the FOAF people are invented; `sparql-results.xml` is the
   output of `factoidal query` over `foaf-people.xml` (the comment in the file gives the query and the commands);
-  `feed.xml` entries are commits on the main branch; `sitemap.xml` dates and `lab-files.xml` counts were read
+  `feed.xml` is written by `tools/build-demo-pages.py` from the Foafnaut notes of the Hub
+  (`docs/web/hub/web-platform/foafnaut/notes/posts/*.md`, one Markdown file a note, each naming a commit on main),
+  so edit the notes, not the feed; `sitemap.xml` dates and `lab-files.xml` counts were read
   with git on 2026-11-08.
 - "Needs the next engine": `timers-and-clicks.html` needs an engine with page scripts (`scriptSession`);
   `svg-text-labels.html` needs SVG text (an expected refusal until then). Each says so on the page and in `needs`.

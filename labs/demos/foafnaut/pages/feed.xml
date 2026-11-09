@@ -1,83 +1,168 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <?xml-stylesheet type="text/xsl" href="feed.xsl"?>
-<!-- A self-written Atom 1.0 feed (RFC 4287) for a demo page. Each entry is a real
-     commit on the main branch of danbri/factoidal; the summaries are written for this file. -->
+<!-- An Atom 1.0 feed (RFC 4287): the Foafnaut notes of the Hub. tools/build-demo-pages.py writes it from
+     docs/web/hub/web-platform/foafnaut/notes/posts/*.md; do not edit it by hand. -->
 <feed xmlns="http://www.w3.org/2005/Atom">
  <title>Foafnaut notes</title>
  <subtitle>What changed in the Lean browser engine, one entry for each step</subtitle>
  <id>https://danbri.github.io/factoidal/web/hub/foafnaut/pages/feed.xml</id>
  <link rel="self" href="https://danbri.github.io/factoidal/web/hub/foafnaut/pages/feed.xml"/>
- <link rel="alternate" href="https://danbri.github.io/factoidal/web/hub/foafnaut/"/>
- <updated>2026-11-08T18:00:00Z</updated>
+ <link rel="alternate" type="text/html" href="https://danbri.github.io/factoidal/web/hub/web-platform/foafnaut/notes/"/>
+ <updated>2026-11-09T08:34:22Z</updated>
  <author><name>Foafnaut demo pages</name></author>
  <entry>
+  <title>Spın̈al Tap: a SPARQL client for Wikidata</title>
+  <id>https://danbri.github.io/factoidal/web/hub/web-platform/foafnaut/notes/spinal-tap-sparql/</id>
+  <link rel="alternate" type="text/html" href="https://danbri.github.io/factoidal/web/hub/web-platform/foafnaut/notes/spinal-tap-sparql/"/>
+  <link rel="via" href="https://github.com/danbri/factoidal-core/commit/28982978a"/>
+  <link rel="related" href="spinal-tap-sparql.html" title="Spın̈al Tap: a SPARQL client for Wikidata"/>
+  <updated>2026-11-09T08:34:22Z</updated>
+  <category term="Scripts"/>
+  <summary>A demo page asks Wikidata seven SPARQL questions about Spın̈al Tap, through QLever, and shows the answers as amp-panel cards with dials that go to eleven.</summary>
+ </entry>
+ <entry>
+  <title>crypto.subtle over HACL*</title>
+  <id>https://danbri.github.io/factoidal/web/hub/web-platform/foafnaut/notes/crypto-subtle-hacl/</id>
+  <link rel="alternate" type="text/html" href="https://danbri.github.io/factoidal/web/hub/web-platform/foafnaut/notes/crypto-subtle-hacl/"/>
+  <link rel="via" href="https://github.com/danbri/factoidal-core/commit/e80ae6ff8"/>
+  <updated>2026-11-09T03:52:48Z</updated>
+  <category term="Web APIs"/>
+  <summary>Page scripts have crypto.subtle: SHA digests, HMAC, HKDF, PBKDF2, ECDSA and ECDH on P-256, Ed25519, X25519 and ChaCha20-Poly1305. Lean holds the WebCrypto rules; HACL*, verified C from Project Everest, computes the primitives.</summary>
+ </entry>
+ <entry>
+  <title>WebAssembly in pages</title>
+  <id>https://danbri.github.io/factoidal/web/hub/web-platform/foafnaut/notes/webassembly-in-pages/</id>
+  <link rel="alternate" type="text/html" href="https://danbri.github.io/factoidal/web/hub/web-platform/foafnaut/notes/webassembly-in-pages/"/>
+  <link rel="via" href="https://github.com/danbri/factoidal-core/commit/8c0a68eb0"/>
+  <link rel="related" href="wasm-mandelbrot.html" title="WebAssembly in a page"/>
+  <updated>2026-11-09T02:52:09Z</updated>
+  <category term="Wasm"/>
+  <summary>Page scripts have the WebAssembly JavaScript API on both script engines. Lean decodes, validates and runs each module in WasmVM; the browser's own WebAssembly engine runs none of them.</summary>
+ </entry>
+ <entry>
+  <title>A first score over the whole of WPT: 1.75%</title>
+  <id>https://danbri.github.io/factoidal/web/hub/web-platform/foafnaut/notes/wpt-whole-score/</id>
+  <link rel="alternate" type="text/html" href="https://danbri.github.io/factoidal/web/hub/web-platform/foafnaut/notes/wpt-whole-score/"/>
+  <link rel="via" href="https://github.com/danbri/factoidal-core/commit/127c5bd75"/>
+  <updated>2026-11-09T01:32:09Z</updated>
+  <category term="Tests"/>
+  <summary>Foafnaut passes about 39,600 of the 2,267,658 subtests of the web-platform-tests, 1.75%, counted the way wpt.fyi counts them. It is the baseline for later scores.</summary>
+ </entry>
+ <entry>
+  <title>Canvas 2D, drawn by Lean</title>
+  <id>https://danbri.github.io/factoidal/web/hub/web-platform/foafnaut/notes/canvas-2d/</id>
+  <link rel="alternate" type="text/html" href="https://danbri.github.io/factoidal/web/hub/web-platform/foafnaut/notes/canvas-2d/"/>
+  <link rel="via" href="https://github.com/danbri/factoidal-core/commit/b5e306863"/>
+  <link rel="related" href="canvas-chart.html" title="A Canvas 2D chart, drawn by Lean"/>
+  <updated>2026-11-09T00:28:21Z</updated>
+  <category term="Canvas"/>
+  <summary>Page scripts can draw with canvas.getContext('2d'). Lean parses the colours and fonts, builds and strokes the paths, shapes the text and rasterises every pixel.</summary>
+ </entry>
+ <entry>
+  <title>TextDecoder, URL and friends, computed by Lean</title>
+  <id>https://danbri.github.io/factoidal/web/hub/web-platform/foafnaut/notes/textdecoder-url-and-friends/</id>
+  <link rel="alternate" type="text/html" href="https://danbri.github.io/factoidal/web/hub/web-platform/foafnaut/notes/textdecoder-url-and-friends/"/>
+  <link rel="via" href="https://github.com/danbri/factoidal-core/commit/6f53d6ab7"/>
+  <link rel="related" href="js-status.html" title="JavaScript in Foafnaut: status"/>
+  <updated>2026-11-08T22:35:06Z</updated>
+  <category term="Web APIs"/>
+  <summary>Page scripts have TextDecoder and TextEncoder, URL and URLSearchParams, atob and btoa, crypto.getRandomValues and randomUUID, structuredClone, and performance.mark and measure. Lean computes each operation in one call.</summary>
+ </entry>
+ <entry>
+  <title>BubblePopJS runs page scripts in the desktop browser</title>
+  <id>https://danbri.github.io/factoidal/web/hub/web-platform/foafnaut/notes/bubblepopjs-native-default/</id>
+  <link rel="alternate" type="text/html" href="https://danbri.github.io/factoidal/web/hub/web-platform/foafnaut/notes/bubblepopjs-native-default/"/>
+  <link rel="via" href="https://github.com/danbri/factoidal-core/commit/98cc094f7"/>
+  <link rel="related" href="settings.html" title="Settings"/>
+  <link rel="related" href="js-status.html" title="JavaScript in Foafnaut: status"/>
+  <updated>2026-11-08T22:30:54Z</updated>
+  <category term="Scripts"/>
+  <summary>BubblePopJS, the JavaScript engine written in Lean, is now the default for page scripts in the native browser. The Hub keeps QuickJS-NG in WasmVM. Settings chooses between them.</summary>
+ </entry>
+ <entry>
   <title>JavaScript: 12,605 web platform subtests, and scripts 36 to 216 times faster on the Hub</title>
-  <id>https://github.com/danbri/factoidal/commit/e1d73b961</id>
-  <link href="js-status.html"/>
+  <id>https://danbri.github.io/factoidal/web/hub/web-platform/foafnaut/notes/javascript-12605-subtests/</id>
+  <link rel="alternate" type="text/html" href="https://danbri.github.io/factoidal/web/hub/web-platform/foafnaut/notes/javascript-12605-subtests/"/>
+  <link rel="via" href="https://github.com/danbri/factoidal-core/commit/e1d73b961"/>
+  <link rel="related" href="js-status.html" title="JavaScript in Foafnaut: status"/>
   <updated>2026-11-08T18:00:00Z</updated>
   <category term="Scripts"/>
   <summary>Page scripts pass 12,605 of 13,705 web platform subtests, up from 7,788 this morning. On the Hub, WasmVM now translates the QuickJS guest for the browser's own WebAssembly engine, which makes scripts 36 to 216 times faster. BubblePopJS, a JavaScript engine written in Lean, passes 89.2% of a Test262 language subset.</summary>
  </entry>
  <entry>
   <title>WebAssembly runs inside the engine</title>
-  <id>https://github.com/danbri/factoidal/commit/1ab843b7c</id>
-  <link href="https://github.com/danbri/factoidal/commit/1ab843b7c"/>
+  <id>https://danbri.github.io/factoidal/web/hub/web-platform/foafnaut/notes/wasm-in-the-engine/</id>
+  <link rel="alternate" type="text/html" href="https://danbri.github.io/factoidal/web/hub/web-platform/foafnaut/notes/wasm-in-the-engine/"/>
+  <link rel="via" href="https://github.com/danbri/factoidal-core/commit/1ab843b7c"/>
   <updated>2026-11-08T01:45:13Z</updated>
   <category term="Wasm"/>
   <summary>The page foafnaut:wasm runs a WebAssembly module in the WasmVM, which is written in Lean, inside the engine.</summary>
  </entry>
  <entry>
   <title>Two-finger pinch sets the text zoom</title>
-  <id>https://github.com/danbri/factoidal/commit/c585d21e0</id>
-  <link href="https://github.com/danbri/factoidal/commit/c585d21e0"/>
+  <id>https://danbri.github.io/factoidal/web/hub/web-platform/foafnaut/notes/pinch-text-zoom/</id>
+  <link rel="alternate" type="text/html" href="https://danbri.github.io/factoidal/web/hub/web-platform/foafnaut/notes/pinch-text-zoom/"/>
+  <link rel="via" href="https://github.com/danbri/factoidal-core/commit/c585d21e0"/>
   <updated>2026-11-07T22:25:58Z</updated>
   <category term="Hub"/>
   <summary>On a touch screen, a pinch on the Hub page changes the text zoom that Lean applies when it lays out the page.</summary>
  </entry>
  <entry>
   <title>Fallback fonts</title>
-  <id>https://github.com/danbri/factoidal/commit/efb5b8d28</id>
-  <link href="https://github.com/danbri/factoidal/commit/efb5b8d28"/>
+  <id>https://danbri.github.io/factoidal/web/hub/web-platform/foafnaut/notes/fallback-fonts/</id>
+  <link rel="alternate" type="text/html" href="https://danbri.github.io/factoidal/web/hub/web-platform/foafnaut/notes/fallback-fonts/"/>
+  <link rel="via" href="https://github.com/danbri/factoidal-core/commit/efb5b8d28"/>
+  <link rel="related" href="showcase-scripts.html" title="Writing systems and direction"/>
   <updated>2026-11-07T18:16:06Z</updated>
   <category term="Fonts"/>
   <summary>The engine holds more than one font. A character that Noto Sans lacks, such as Armenian, is drawn from Noto Sans Armenian.</summary>
  </entry>
  <entry>
   <title>Table layout in Lean</title>
-  <id>https://github.com/danbri/factoidal/commit/caf0e2a52</id>
-  <link href="https://github.com/danbri/factoidal/commit/caf0e2a52"/>
+  <id>https://danbri.github.io/factoidal/web/hub/web-platform/foafnaut/notes/table-layout/</id>
+  <link rel="alternate" type="text/html" href="https://danbri.github.io/factoidal/web/hub/web-platform/foafnaut/notes/table-layout/"/>
+  <link rel="via" href="https://github.com/danbri/factoidal-core/commit/caf0e2a52"/>
+  <link rel="related" href="showcase-tables.html" title="Tables"/>
   <updated>2026-11-07T17:17:37Z</updated>
   <category term="Layout"/>
   <summary>CSS tables: columns sized from their cells, colspan, rowspan, captions, header and footer groups. Checked against WPT css-tables.</summary>
  </entry>
  <entry>
   <title>Printing</title>
-  <id>https://github.com/danbri/factoidal/commit/0f3cfdd67</id>
-  <link href="https://github.com/danbri/factoidal/commit/0f3cfdd67"/>
+  <id>https://danbri.github.io/factoidal/web/hub/web-platform/foafnaut/notes/printing/</id>
+  <link rel="alternate" type="text/html" href="https://danbri.github.io/factoidal/web/hub/web-platform/foafnaut/notes/printing/"/>
+  <link rel="via" href="https://github.com/danbri/factoidal-core/commit/0f3cfdd67"/>
+  <link rel="related" href="print-showcase.html" title="Print showcase"/>
   <updated>2026-11-07T16:41:55Z</updated>
   <category term="Print"/>
   <summary>Lean lays the page out for paper with the print media type, says where the pages break, and draws each page.</summary>
  </entry>
  <entry>
   <title>Images in SVG</title>
-  <id>https://github.com/danbri/factoidal/commit/1f532de8e</id>
-  <link href="https://github.com/danbri/factoidal/commit/1f532de8e"/>
+  <id>https://danbri.github.io/factoidal/web/hub/web-platform/foafnaut/notes/images-in-svg/</id>
+  <link rel="alternate" type="text/html" href="https://danbri.github.io/factoidal/web/hub/web-platform/foafnaut/notes/images-in-svg/"/>
+  <link rel="via" href="https://github.com/danbri/factoidal-core/commit/1f532de8e"/>
   <updated>2026-11-07T04:20:22Z</updated>
   <category term="SVG"/>
   <summary>The SVG image element, with PNG and JPEG decoders written in Lean.</summary>
  </entry>
  <entry>
   <title>XML pages through their XSLT stylesheet</title>
-  <id>https://github.com/danbri/factoidal/commit/e30570c1a</id>
-  <link href="https://github.com/danbri/factoidal/commit/e30570c1a"/>
+  <id>https://danbri.github.io/factoidal/web/hub/web-platform/foafnaut/notes/xml-through-xslt/</id>
+  <link rel="alternate" type="text/html" href="https://danbri.github.io/factoidal/web/hub/web-platform/foafnaut/notes/xml-through-xslt/"/>
+  <link rel="via" href="https://github.com/danbri/factoidal-core/commit/e30570c1a"/>
+  <link rel="related" href="feed.xml" title="A feed reader with no JavaScript"/>
+  <link rel="related" href="books-xslt4.xml" title="XSLT 4 in a browser: maps, records, xsl:switch, new functions"/>
   <updated>2026-11-05T21:45:53Z</updated>
   <category term="XSLT"/>
-  <summary>An XML page that names a stylesheet with xml-stylesheet is transformed by Lean before it is laid out. This feed is shown that way.</summary>
+  <summary>An XML page that names a stylesheet with xml-stylesheet is transformed by Lean before it is laid out. The feed of these notes is shown that way.</summary>
  </entry>
  <entry>
   <title>Page scripts in QuickJS</title>
-  <id>https://github.com/danbri/factoidal/commit/285f83448</id>
-  <link href="https://github.com/danbri/factoidal/commit/285f83448"/>
+  <id>https://danbri.github.io/factoidal/web/hub/web-platform/foafnaut/notes/page-scripts-in-quickjs/</id>
+  <link rel="alternate" type="text/html" href="https://danbri.github.io/factoidal/web/hub/web-platform/foafnaut/notes/page-scripts-in-quickjs/"/>
+  <link rel="via" href="https://github.com/danbri/factoidal-core/commit/285f83448"/>
+  <link rel="related" href="timers-and-clicks.html" title="Timers and clicks"/>
   <updated>2026-11-03T10:34:55Z</updated>
   <category term="Scripts"/>
   <summary>Page scripts run in an isolated QuickJS heap. They change the DOM only through commands that Lean checks.</summary>

@@ -124,7 +124,8 @@
 <ty:g c="~" a="572" d="M269 319Q233 335 210 340Q186 346 164 346Q136 346 105 329Q74 312 50 287V365Q98 418 170 418Q199 418 228 412Q256 406 302 386Q338 370 362 364Q385 359 406 359Q435 359 466 376Q497 393 521 418V341Q472 287 401 287Q373 287 344 294Q314 300 269 319Z"/>
 </xsl:variable>
 <!-- typeset:end -->
- <xsl:variable name="colours" select="map{'Wasm':'#6a4fb8','Hub':'#7d7568','Fonts':'#b5487a','Layout':'#2d63a8','Print':'#3f7f5f','SVG':'#e07020','XSLT':'#1f7a8c','Scripts':'#a8432f'}"/>
+ <!-- One colour for each category that tools/build-demo-pages.py accepts in a note (CATEGORIES there). -->
+ <xsl:variable name="colours" select="map{'Wasm':'#6a4fb8','Hub':'#7d7568','Fonts':'#b5487a','Layout':'#2d63a8','Print':'#3f7f5f','SVG':'#e07020','XSLT':'#1f7a8c','Scripts':'#a8432f','Canvas':'#2f5d50','Web APIs':'#8a6d3b','Tests':'#4a5a6a'}"/>
  <xsl:template match="/a:feed">
   <xsl:variable name="entries" select="sort(a:entry, (), fn { xs:dateTime(a:updated) }) => reverse()"/>
   <xsl:variable name="first" select="min($entries/xs:date(substring(a:updated, 1, 10)))"/>
@@ -141,7 +142,7 @@ h2{{margin:0;padding-top:20px;font-size:14px;line-height:20px;color:#8a6d3b;lett
 .entry h3{{margin:0;font-size:20px;line-height:28px}}.entry h3 a{{color:#1f3b4d}}
 .meta{{margin:0;padding-top:2px;font-size:13px;color:#7d7568}}.chip{{display:inline-block;color:white;padding:0 8px;font-size:12px;line-height:18px}}
 svg{{display:block}}.gap{{padding-top:14px}}code{{color:#7a3e12}}
-.about{{margin-top:22px;padding:10px 14px;background:#efe9dc;color:#6b6458;font-size:13px;line-height:19px}}.about p{{padding-top:4px}}</style></head>
+.links{{margin:0;padding-top:4px;font-size:13px}}.about{{margin-top:22px;padding:10px 14px;background:#efe9dc;color:#6b6458;font-size:13px;line-height:19px}}.about p{{padding-top:4px}}</style></head>
   <body>
    <div class="top">
     <p><a href="index.html">Demo index</a></p>
@@ -167,10 +168,14 @@ svg{{display:block}}.gap{{padding-top:14px}}code{{color:#7a3e12}}
      <h2>{upper-case(format-date(xs:date(current-grouping-key()), '[FNn] [D] [MNn] [Y]'))}</h2>
      <xsl:for-each select="current-group()">
       <div class="entry">
-       <h3><a href="{a:link/@href}">{a:title}</a></h3>
+       <!-- The title opens the first demo in this tab; with none, the note on the Hub. -->
+       <xsl:variable name="note" select="string(a:link[@rel = 'alternate'][1]/@href)"/>
+       <xsl:variable name="demos" select="a:link[@rel = 'related']"/>
+       <h3><a href="{($demos/@href, $note)[1]}">{a:title}</a></h3>
        <p class="meta"><span class="chip" style="background:{$colours(string(a:category/@term))}">{a:category/@term}</span>
-        {`{format-dateTime(xs:dateTime(a:updated), '[H01]:[m01] UTC')} · commit `}<code>{tokenize(a:id, '/') => foot()}</code></p>
+        {`{format-dateTime(xs:dateTime(a:updated), '[H01]:[m01] UTC')} · commit `}<code>{tokenize(a:link[@rel = 'via'][1]/@href, '/') => foot()}</code></p>
        <p>{a:summary}</p>
+       <p class="links"><xsl:for-each select="$demos"><a href="{@href}">Open {@title}</a>{' · '}</xsl:for-each><a href="{$note}">The note on the Hub</a></p>
       </div>
      </xsl:for-each>
     </xsl:for-each-group>
@@ -178,6 +183,7 @@ svg{{display:block}}.gap{{padding-top:14px}}code{{color:#7a3e12}}
     <div class="about">
      <p>An Atom feed, <code>feed.xml</code>, drawn by its XSLT 4.0 stylesheet; the page has no script. XSLT 4 at work: <code>sort</code> with an
       <code>fn {{ }}</code> key, <code>map:build</code>, string templates and the <code>=&gt;</code> arrow; also grouping by day and dates in words.</p>
+     <p>Each entry is a Foafnaut note, a Markdown file of the Hub; <code>tools/build-demo-pages.py</code> writes this feed from the notes.</p>
      <p>Not yet: a built-in view for a feed with no stylesheet, and RSS (<a href="https://github.com/danbri/factoidal/issues/1287">issue 1287</a>).</p>
     </div>
    </div>

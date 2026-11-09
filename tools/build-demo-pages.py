@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Build the foafnaut2525 demo pages from their sources.
 
-    tools/build-demo-pages.py          rewrite labs/demos/foafnaut/pages/*.html
+    tools/build-demo-pages.py          rewrite labs/demos/foafnaut/pages/*.html and feed.xml
     tools/build-demo-pages.py --check  exit 1 if a page differs
 
 Markdown goes through tools/status-to-html.py. An SVG source is embedded in a
 small HTML page. manifest.json lists every page, with what the engine must do.
+feed.xml is written from the Foafnaut notes of the Hub (see feed() below).
 """
-import html, json, os, subprocess, sys, tempfile
+import html, json, os, re, subprocess, sys, tempfile
 
 ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 PAGES = os.path.join(ROOT, 'labs/demos/foafnaut/pages')
@@ -79,6 +80,90 @@ def index():
             f'<h2>More pages</h2>\n{rest}\n</main></body></html>\n')
 
 
+# The Foafnaut notes: one Markdown file a note, the one source of two things. Eleventy makes
+# a Hub page of each (docs/web/hub/web-platform/foafnaut/notes/), and feed() makes the Atom
+# feed that Foafnaut draws through feed.xsl. A note's front matter is one "key: value" a
+# line; every value but the date is JSON (a quoted string, or a list of quoted strings).
+NOTES = os.path.join(ROOT, 'docs/web/hub/web-platform/foafnaut/notes/posts')
+NOTES_URL = 'https://danbri.github.io/factoidal/web/hub/web-platform/foafnaut/notes/'
+FEED_URL = 'https://danbri.github.io/factoidal/web/hub/foafnaut/pages/feed.xml'
+COMMIT_URL = 'https://github.com/danbri/factoidal-core/commit/'
+# The categories feed.xsl has a colour for.
+CATEGORIES = {'Canvas', 'Fonts', 'Hub', 'Layout', 'Print', 'SVG', 'Scripts', 'Tests', 'Wasm', 'Web APIs', 'XSLT'}
+REQUIRED = {'title', 'date', 'category', 'commit', 'summary'}
+
+
+def note(path, titles):
+    name = os.path.basename(path)
+    slug = name[:-len('.md')]
+    bad = lambda why: SystemExit(f'{os.path.relpath(path, ROOT)}: {why}')
+    # Eleventy drops a leading date from a file's slug, so a name that starts with one would
+    # give the note another address than the feed says.
+    if not re.fullmatch(r'[a-z0-9]+(-[a-z0-9]+)*', slug) or re.match(r'\d{4}-\d{2}-\d{2}-', slug):
+        raise bad('the file name is lower-case words joined by -, with no leading date')
+    text = open(path, encoding='utf-8').read()
+    match = re.match(r'---\n(.*?)\n---\n', text, re.S)
+    if not match:
+        raise bad('no front matter')
+    fields = {}
+    for line in match.group(1).split('\n'):
+        key, sep, value = line.partition(': ')
+        if not sep or key in fields or key not in REQUIRED | {'demos'}:
+            raise bad(f'front matter line not understood: {line!r}')
+        try:
+            fields[key] = value.strip() if key == 'date' else json.loads(value)
+        except json.JSONDecodeError:
+            raise bad(f'{key}: the value is not JSON (quote it)')
+    if REQUIRED - fields.keys():
+        raise bad(f'missing {sorted(REQUIRED - fields.keys())}')
+    if not re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z', fields['date']):
+        raise bad('date: write it in UTC as 2026-11-09T08:34:22Z')
+    if not all(isinstance(fields[k], str) and fields[k].strip() for k in REQUIRED - {'date'}):
+        raise bad('title, category, commit and summary are strings')
+    if not re.fullmatch(r'[0-9a-f]{7,40}', fields['commit']):
+        raise bad('commit: an abbreviated commit name of danbri/factoidal-core')
+    if fields['category'] not in CATEGORIES:
+        raise bad(f'category: one of {sorted(CATEGORIES)} (feed.xsl colours)')
+    demos = fields.get('demos', [])
+    for demo in demos if isinstance(demos, list) else [None]:
+        # The Hub opens ?page=NAME only for such names (docs/web/hub/foafnaut/browser-worker.mjs).
+        if not isinstance(demo, str) or not re.fullmatch(r'[a-z0-9-]+\.(html|xml)', demo) or demo not in titles:
+            raise bad(f'demos: a list of pages in manifest.json, not {demo!r}')
+    return {**fields, 'slug': slug, 'demos': demos}
+
+
+def feed():
+    titles = {p['page']: p['title'] for p in manifest['pages']}
+    notes = sorted((note(os.path.join(NOTES, name), titles) for name in os.listdir(NOTES) if name.endswith('.md')),
+                   key=lambda n: (n['date'], n['slug']), reverse=True)
+    e = lambda text: text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;')
+    out = ['<?xml version="1.0" encoding="UTF-8"?>',
+           '<?xml-stylesheet type="text/xsl" href="feed.xsl"?>',
+           '<!-- An Atom 1.0 feed (RFC 4287): the Foafnaut notes of the Hub. tools/build-demo-pages.py writes it from',
+           '     docs/web/hub/web-platform/foafnaut/notes/posts/*.md; do not edit it by hand. -->',
+           '<feed xmlns="http://www.w3.org/2005/Atom">',
+           ' <title>Foafnaut notes</title>',
+           ' <subtitle>What changed in the Lean browser engine, one entry for each step</subtitle>',
+           f' <id>{FEED_URL}</id>',
+           f' <link rel="self" href="{FEED_URL}"/>',
+           f' <link rel="alternate" type="text/html" href="{NOTES_URL}"/>',
+           f' <updated>{max(n["date"] for n in notes)}</updated>',
+           ' <author><name>Foafnaut demo pages</name></author>']
+    for n in notes:
+        out += [' <entry>',
+                f'  <title>{e(n["title"])}</title>',
+                f'  <id>{NOTES_URL}{n["slug"]}/</id>',
+                f'  <link rel="alternate" type="text/html" href="{NOTES_URL}{n["slug"]}/"/>',
+                f'  <link rel="via" href="{COMMIT_URL}{n["commit"]}"/>']
+        # A demo's address is relative to this feed: the demo pages sit beside it, in Foafnaut and on the site.
+        out += [f'  <link rel="related" href="{demo}" title="{e(titles[demo])}"/>' for demo in n['demos']]
+        out += [f'  <updated>{n["date"]}</updated>',
+                f'  <category term="{e(n["category"])}"/>',
+                f'  <summary>{e(n["summary"])}</summary>',
+                ' </entry>']
+    return '\n'.join(out + ['</feed>']) + '\n'
+
+
 pages = {}
 for page in manifest['pages']:
     source = page.get('source')
@@ -91,6 +176,7 @@ for page in manifest['pages']:
     else:
         path = os.path.normpath(os.path.join(PAGES, source))
         pages[page['page']] = markdown(path) if source.endswith('.md') else svg(path, page['title'])
+pages['feed.xml'] = feed()
 stale = 0
 for name, text in pages.items():
     target = os.path.join(PAGES, name)
