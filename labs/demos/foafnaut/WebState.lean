@@ -431,7 +431,7 @@ def encodingChoicesHTML (setting locale : String) : String :=
   let fixed := Encoding.all.filter (· != .replacement)
   s!"<h2 class=\"size\">Default encoding: {label current}</h2>" ++
   "<p class=\"presets\">" ++ button .detect ++ " " ++ button .locale ++ "</p>" ++
-  "<p class=\"presets\">" ++ " ".intercalate (fixed.map (button ∘ .fixed)) ++ "</p>"
+  "<p class=\"presets\">" ++ " ".intercalate (fixed.map (fun e => button (.fixed e))) ++ "</p>"
 
 #guard encodingSetting "" == "" && encodingSetting "sjis" == "Shift_JIS" && encodingSetting "nonsense" == "detect"
 #guard (encodingChoicesHTML "" "ja-JP").startsWith "<h2 class=\"size\">Default encoding: Detect (UTF-8 when valid, else Shift_JIS)</h2>"

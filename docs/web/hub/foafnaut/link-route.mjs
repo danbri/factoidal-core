@@ -14,7 +14,7 @@
 const externalHosts=['github.com','www.github.com','duckduckgo.com'];
 const systemSchemes=['mailto','tel','sms'];
 const builtinPages=new Map([['bookmarks',false],['history',false],['settings',false],['wasm',true],['sparql',true]]);
-const commands=['back','forward','reload','new','close','home','source','theme','zoom','bookmark','unbookmark','pod','sync','sparql-step','classic'];
+const commands=['back','forward','reload','new','close','home','source','theme','zoom','bookmark','unbookmark','pod','sync','sparql-step','classic','encoding'];
 const special=scheme=>scheme==='http'||scheme==='https'||scheme==='file';
 const noHost='a relative link needs a web page or a local file around it';
 

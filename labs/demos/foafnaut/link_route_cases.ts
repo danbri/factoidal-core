@@ -16,7 +16,7 @@ export const places:{origin:string;pages:string;files:boolean;bases:string[]}[]=
 ];
 
 const builtin=["graph","bookmarks","history","settings","wasm","sparql","help"];
-const commands=["back","forward","reload","new","close","home","source","theme","zoom","bookmark","unbookmark","pod","sync","sparql-step","classic"];
+const commands=["back","forward","reload","new","close","home","source","theme","zoom","bookmark","unbookmark","pod","sync","sparql-step","classic","encoding"];
 
 function hrefsFor(origin:string):string[]{
   const out:string[]=[];
