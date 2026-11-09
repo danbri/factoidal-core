@@ -685,7 +685,7 @@ def pathOfContours (cs : List Rendering.Contour) : Path := Id.run do
 /-- Keep at most `maxObjects` entries: past it, the smallest ids (the oldest) go. -/
 def bound {α} (m : Std.HashMap Nat α) : Std.HashMap Nat α :=
   if m.size < maxObjects then m else
-  let keys := (m.toArray.map (·.1)).qsort (· < ·)
+  let keys := sortBy (fun k => nf k) (m.toArray.map (·.1))
   (keys.extract 0 (maxObjects / 4)).foldl (fun m k => m.erase k) m
 
 /-- Apply one command. -/

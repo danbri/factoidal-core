@@ -93,11 +93,38 @@ private def insertSorted (xs : Array (Float × Int)) (x : Float) (d : Int) : Arr
   while i > 0 && xs[i-1]!.1 > x do i := i - 1
   return xs.insertIdx! i (x, d)
 
+/-- Sorted by `key`, stable: a bottom-up merge sort (no recursion; n log n whatever the
+input, also when many keys are equal, as for shapes drawn over each other). -/
+def sortBy {α} [Inhabited α] (key : α → Float) (xs : Array α) : Array α := Id.run do
+  let n := xs.size
+  let mut a := xs
+  let mut width := 1
+  -- At most log2 n + 1 passes; `n` bounds the loop.
+  for _ in [0:n] do
+    if width ≥ n then break
+    let mut out : Array α := Array.emptyWithCapacity n
+    let mut lo := 0
+    for _ in [0:n] do
+      if lo ≥ n then break
+      let mid := min n (lo + width)
+      let hi := min n (lo + 2 * width)
+      let mut i := lo
+      let mut j := mid
+      for _ in [lo:hi] do
+        if i < mid && (j ≥ hi || key a[i]! <= key a[j]!) then
+          out := out.push a[i]!; i := i + 1
+        else
+          out := out.push a[j]!; j := j + 1
+      lo := hi
+    a := out
+    width := 2 * width
+  return a
+
 /-- The coverage values of polygons with edges `es` under `rule`, in `box`. -/
 def coverageIn (box : Box) (es : Array Edge) (rule : FillRule) : FloatArray := Id.run do
   if box.w == 0 || box.h == 0 then return FloatArray.empty
   -- Edges by their first row, for an active list.
-  let sorted := es.qsort (fun a b => a.y0 < b.y0)
+  let sorted := sortBy (·.y0) es
   let mut cov := fzeros (box.w * box.h)
   let mut active : Array Edge := #[]
   let mut next := 0
@@ -119,7 +146,9 @@ def coverageIn (box : Box) (es : Array Edge) (rule : FillRule) : FloatArray := I
       for e in active do
         if e.y0 <= ys && ys < e.y1 then
           let x := e.x0 + (ys - e.y0) * (e.x1 - e.x0) / (e.y1 - e.y0)
-          xs := insertSorted xs x e.dir
+          xs := xs.push (x, e.dir)
+      -- Few crossings: insertion; many (overlapping shapes): a sort.
+      xs := if xs.size ≤ 16 then xs.foldl (fun acc (x, d) => insertSorted acc x d) #[] else sortBy (·.1) xs
       let mut wind : Int := 0
       let mut start := 0.0
       for (x, d) in xs do

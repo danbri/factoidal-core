@@ -83,4 +83,10 @@ def pixel (w h : Nat) (cmds : List Cmd) (x y : Nat) : List Nat :=
 #guard (Wire.textNumbers "1.5,-0.1,1e+21,123456789.123,5e-324,0.30000000000000004,-0".toUTF8).toList.map Float.toBits ==
   [1.5, -0.1, 1e21, 123456789.123, 5e-324, 0.30000000000000004, -0.0].map Float.toBits
 
+-- The merge sort of crossings and edges: sorted, stable.
+#guard (sortBy id #[3.0, 1, 2, 1, 5, 0, 4]).toList == [0, 1, 1, 2, 3, 4, 5]
+#guard (sortBy (·.1) #[(1.0, 1), (0.0, 2), (1.0, 3)]).toList.map (·.2) == [2, 1, 3]
+-- 1,000 rectangles at one place: the fill is the same as one.
+#guard pixel 10 10 ((List.range 1000).map (fun _ => Cmd.rect 0 0 5 5) ++ [.fill 0 .nonzero]) 2 2 == [0, 0, 0, 255]
+
 end L4Factoidal.PageCanvas.Tests
