@@ -2006,6 +2006,7 @@
     if (ArrayBuffer.isView(x)) return new Uint8Array(x.buffer, x.byteOffset, x.byteLength);
     throw new TypeError(what + ": parameter is not of type 'BufferSource'");
   };
+  const copyBytes = v => new Uint8Array(v);
   const brand = (map, o, what) => { const s = map.get(o); if (!s) throw new TypeError('Illegal invocation: ' + what); return s; };
   const setTag = (C, tag) => Object.defineProperty(C.prototype, Symbol.toStringTag, { value: tag, configurable: true });
 
@@ -2055,7 +2056,8 @@
         if (!encoders.has(this)) throw new TypeError('Illegal invocation');
         if (!(destination instanceof Uint8Array)) throw new TypeError("Failed to execute 'encodeInto' on 'TextEncoder': parameter 2 is not of type 'Uint8Array'.");
         const r = api(5, [usv(source), String(destination.length)], 0, true, 'TextEncoder');
-        const v = new DataView(r), read = v.getUint32(0, true), written = v.getUint32(4, true);
+        const h = new Uint8Array(r, 0, 8), u32 = k => (h[k] | h[k + 1] << 8 | h[k + 2] << 16 | h[k + 3] << 24) >>> 0;
+        const read = u32(0), written = u32(4);
         destination.set(new Uint8Array(r, 8, written));
         return { read, written };
       }
@@ -2267,7 +2269,7 @@
         if (alg.hash === undefined) { if (required) throw new TypeError("Algorithm: Missing required member 'hash'"); return; }
         const h = normalize('digest', alg.hash); out.hash = { name: h.name };
       };
-      const bytes = (k) => { if (alg[k] === undefined) throw new TypeError(`Algorithm: Missing required member '${k}'`); return bufferSource(alg[k], 'Algorithm').slice(); };
+      const bytes = (k) => { if (alg[k] === undefined) throw new TypeError(`Algorithm: Missing required member '${k}'`); return copyBytes(bufferSource(alg[k], 'Algorithm')); };
       const ulong = (k, required) => {
         if (alg[k] === undefined) { if (required) throw new TypeError(`Algorithm: Missing required member '${k}'`); return undefined; }
         const x = Number(alg[k]); if (!Number.isFinite(x)) throw new TypeError(`Algorithm: '${k}' is not a number`);
@@ -2288,7 +2290,7 @@
     const hmacJwkAlg = { 'SHA-1': 'HS1', 'SHA-256': 'HS256', 'SHA-384': 'HS384', 'SHA-512': 'HS512' };
     const subtleMethods = {
       digest(algorithm, data) {
-        return start(() => { const a = normalize('digest', algorithm); const d = bufferSource(data, 'digest').slice();
+        return start(() => { const a = normalize('digest', algorithm); const d = copyBytes(bufferSource(data, 'digest'));
           return later(() => api(32, [a.name, d], 0, true, 'digest')); });
       },
       generateKey(algorithm, extractable, keyUsages) {
@@ -2311,7 +2313,7 @@
           if (!['raw', 'pkcs8', 'spki', 'jwk'].includes(f)) throw new TypeError(`KeyFormat: '${f}' is not a valid enum value`);
           let raw = null, jwk = null;
           if (f === 'jwk') { if (keyData === null || typeof keyData !== 'object' || ArrayBuffer.isView(keyData) || keyData instanceof ArrayBuffer) throw new TypeError('JsonWebKey: not an object'); jwk = keyData; }
-          else raw = bufferSource(keyData, 'importKey').slice();
+          else raw = copyBytes(bufferSource(keyData, 'importKey'));
           const a = normalize('importKey', algorithm), us = usagesOf(keyUsages);
           return later(() => {
             if (a.name !== 'HMAC') {
@@ -2347,14 +2349,14 @@
           return later(() => {
             if (k.algorithm.name !== 'HMAC') fail('NotSupportedError', `${k.algorithm.name}: keys are not exportable`);
             if (!k.extractable) fail('InvalidAccessError', 'The key is not extractable');
-            if (f === 'raw') return k.data.slice().buffer;
+            if (f === 'raw') return copyBytes(k.data).buffer;
             if (f === 'jwk') return { kty: 'oct', k: b64u.enc(k.data), alg: hmacJwkAlg[k.algorithm.hash.name], key_ops: k.usages.slice(), ext: k.extractable };
             fail('NotSupportedError', 'HMAC: raw or jwk keys');
           });
         });
       },
       sign(algorithm, key, data) {
-        return start(() => { const a = normalize('sign', algorithm), k = keyOf(key), d = bufferSource(data, 'sign').slice();
+        return start(() => { const a = normalize('sign', algorithm), k = keyOf(key), d = copyBytes(bufferSource(data, 'sign'));
           return later(() => {
             if (a.name !== k.algorithm.name) fail('InvalidAccessError', 'The key is not of the algorithm');
             if (!k.usages.includes('sign')) fail('InvalidAccessError', 'The key may not sign');
@@ -2362,7 +2364,7 @@
           }); });
       },
       verify(algorithm, key, signature, data) {
-        return start(() => { const a = normalize('verify', algorithm), k = keyOf(key), sig = bufferSource(signature, 'verify').slice(), d = bufferSource(data, 'verify').slice();
+        return start(() => { const a = normalize('verify', algorithm), k = keyOf(key), sig = copyBytes(bufferSource(signature, 'verify')), d = copyBytes(bufferSource(data, 'verify'));
           return later(() => {
             if (a.name !== k.algorithm.name) fail('InvalidAccessError', 'The key is not of the algorithm');
             if (!k.usages.includes('verify')) fail('InvalidAccessError', 'The key may not verify');
@@ -2462,7 +2464,7 @@
     if (ArrayBuffer.isView(value)) {
       if (value.buffer.detached) throw cloneError('An ArrayBufferView is detached and');
       const buffer = structuredCloneOf(value.buffer, memory);
-      if (value instanceof DataView) return keep(new DataView(buffer, value.byteOffset, value.byteLength));
+      if (typeof DataView === 'function' && value instanceof DataView) return keep(new DataView(buffer, value.byteOffset, value.byteLength));
       const C = typedArrays.find(T => value instanceof T);
       return keep(new C(buffer, value.byteOffset, value.length));
     }

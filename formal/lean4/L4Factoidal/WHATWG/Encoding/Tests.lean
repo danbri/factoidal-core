@@ -5,6 +5,7 @@ makes about its own tables. The web-platform-tests run is
 `tests/whatwg-encoding/run.sh`.
 -/
 import L4Factoidal.WHATWG.Encoding.Core
+import L4Factoidal.WHATWG.Encoding.SingleByteTheorems
 
 namespace L4Factoidal.WHATWG.Encoding.Tests
 

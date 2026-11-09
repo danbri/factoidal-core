@@ -194,10 +194,10 @@ def serveNative (h : Host) (k : Nat) (args : Array JS.HostArg) : Host × JS.Host
     if block.size > outCap then (h, .val (.num (-5))) else
     let (h, r, o) := callImport h "web_api" [i 0, i 1, .str block, .out]
     let asBytes := match a 2 with | .val (.bool b) => b | _ => false
-    match r with
-    | .ok n => if n < 0 then (h, .val (.num (Float.ofInt n)))
-      else if asBytes then (h, .bytes (o.extract 0 n.toNat)) else (h, strAns r o false)
-    | .error m => (h, .err m)
+    (match r with
+     | .ok n => if n < 0 then (h, .val (.num (Float.ofInt n)))
+       else if asBytes then (h, .bytes (o.extract 0 n.toNat)) else (h, strAns r o false)
+     | .error m => (h, .err m))
   | _ => (h, .err "foafnaut_dom: no such native")
 
 /-- The host's natives with the script clock: the instructions run so far are the steps of

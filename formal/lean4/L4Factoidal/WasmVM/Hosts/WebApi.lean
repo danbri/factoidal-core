@@ -152,9 +152,20 @@ def extractCharset (content : String) : Option String :=
 /-- The encoding a document declares in a `meta` element (HTML §13.2.3.2, the prescan's
 rules on the parsed tree: the first `meta` whose `charset`, or whose `http-equiv`
 content-type `content`, names an encoding; UTF-16 is UTF-8 and x-user-defined is
-windows-1252). The engine is given the page as text, so with no declaration it is UTF-8. -/
+windows-1252).
+
+The hosts give the engine the page as text: UTF-8 when the bytes are UTF-8, else
+windows-1252 (`native_html_document.ts`), whatever a `meta` says. A declaration is the
+document's encoding only when the page is ASCII (its text, comments and attribute values),
+where every ASCII-compatible encoding reads the same characters; otherwise, and with no
+declaration, the encoding is UTF-8. A byte-level decode of the page by its declaration
+(HTML §13.2.3) is the hosts' to add. -/
 def documentEncoding (d : L4Factoidal.DOM.Dom) : Encoding.Encoding := Id.run do
-  for k in d.treeOrder 0 false do
+  let nodes := d.treeOrder 0 false
+  let ascii := fun (x : String) => x.all (·.toNat < 0x80)
+  if !(nodes.all fun k => let n := d.get k; ascii n.data && n.attrs.all (fun a => ascii a.value)) then
+    return .utf_8
+  for k in nodes do
     if L4Factoidal.DOM.Dom.isHtmlElement (d.get k) "meta" then
       let label := match attrValue? d k "charset" with
         | some c => some c
@@ -219,11 +230,8 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
     let q := if flag flags 0 && q.startsWith "?" then String.ofList (q.toList.drop 1) else q
     ofStr (lengthPrefixed ((URL.urlencodedParse q).flatMap fun (n, v) => [n, v]))
   | 13 => pure' do
-    let xs ← (List.range fs.size).mapM (strArg fs)
-    let rec pairs : List String → List (String × String)
-      | n :: v :: rest => (n, v) :: pairs rest
-      | _ => []
-    ofStr (URL.urlencodedSerialize (pairs xs))
+    let xs := (← (List.range fs.size).mapM (strArg fs)).toArray
+    ofStr (URL.urlencodedSerialize ((List.range (xs.size / 2)).map fun k => (xs[2 * k]!, xs[2 * k + 1]!)))
   -- Base64
   | 20 => pure' do match Base64.atob (← strArg fs 0) with | some r => ofStr r | none => .error (-3)
   | 21 => pure' (match strArg fs 0 with
@@ -309,7 +317,7 @@ private def runStr (op flags : Nat) (xs : List String) : String :=
 #guard runStr 10 1 ["../c?d#e", "http://x/a/b"] ==
   "http://x/c?d#e\x00http://x\x00http:\x00\x00\x00x\x00x\x00\x00/c\x00?d\x00#e\x00"
 #guard runStr 10 0 ["not a url"] == "error -1"
-#guard runStr 11 0 ["http://x/", "port", "8080"].startsWith "http://x:8080/\x00"
+#guard (runStr 11 0 ["http://x/", "port", "8080"]).startsWith "http://x:8080/\x00"
 #guard runStr 12 1 ["?a=1&b=%20+&a"] == "1:a1:11:b2:  1:a0:"
 #guard runStr 13 0 ["a b", "&"] == "a+b=%26"
 #guard runStr 20 0 ["YQ=="] == "a"

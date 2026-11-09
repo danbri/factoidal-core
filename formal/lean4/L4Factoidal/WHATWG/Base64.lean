@@ -42,75 +42,74 @@ def isAsciiWhitespace (c : Char) : Bool :=
 /-- The six-bit group `i` (0 to 3) of a 24-bit word. -/
 def sextet (w i : Nat) : Char := alphabet[(w >>> (18 - 6 * i)) % 64]!
 
-/-- The characters of one group of up to three bytes: four characters with `=` for
-each missing byte. -/
-def encodeGroup : List UInt8 → List Char
-  | [a, b, c] =>
-    let w := a.toNat * 65536 + b.toNat * 256 + c.toNat
-    [sextet w 0, sextet w 1, sextet w 2, sextet w 3]
-  | [a, b] =>
-    let w := a.toNat * 65536 + b.toNat * 256
-    [sextet w 0, sextet w 1, sextet w 2, '=']
-  | [a] =>
-    let w := a.toNat * 65536
-    [sextet w 0, sextet w 1, '=', '=']
-  | _ => []
+/-- forgiving-base64 encode: RFC 4648 section 4 base64 with padding. Each group of three
+bytes is four characters; a last group of two bytes is three and `=`, of one byte two and
+`==`. A loop over the groups (no recursion on the input's length). -/
+def encodeBytes (b : Array UInt8) : String := Id.run do
+  let mut out := ""
+  let n := b.size
+  for g in [0:(n + 2) / 3] do
+    let i := 3 * g
+    let at_ := fun (k : Nat) => if i + k < n then b[i + k]!.toNat else 0
+    let w := at_ 0 * 65536 + at_ 1 * 256 + at_ 2
+    out := (out.push (sextet w 0)).push (sextet w 1)
+    out := out.push (if i + 1 < n then sextet w 2 else '=')
+    out := out.push (if i + 2 < n then sextet w 3 else '=')
+  return out
 
-/-- The groups of three bytes, the last one shorter. -/
-def groups : List UInt8 → List (List UInt8)
-  | a :: b :: c :: rest => [a, b, c] :: groups rest
-  | [] => []
-  | xs => [xs]
+def encode (bs : ByteArray) : String := encodeBytes bs.data
 
-/-- forgiving-base64 encode: RFC 4648 section 4 base64 with padding. -/
-def encodeList (bs : List UInt8) : List Char := (groups bs).flatMap encodeGroup
-
-def encode (bs : ByteArray) : String := String.ofList (encodeList bs.data.toList)
-
-/-- The bytes of a run of sextets (Infra step 7): every four sextets are three
-bytes; a tail of three sextets (18 bits) is two bytes and a tail of two (12 bits)
-is one byte, the remaining bits discarded. -/
-def bytesOf : List Nat → List UInt8
-  | a :: b :: c :: d :: rest =>
-    let w := ((a * 64 + b) * 64 + c) * 64 + d
-    (w / 65536).toUInt8 :: (w / 256 % 256).toUInt8 :: (w % 256).toUInt8 :: bytesOf rest
-  | [a, b, c] =>
-    let w := (a * 64 + b) * 64 + c
-    [(w / 1024).toUInt8, (w / 4 % 256).toUInt8]
-  | [a, b] => [((a * 64 + b) / 16).toUInt8]
-  | _ => []
+/-- The bytes of a run of sextets (Infra step 7): every four sextets are three bytes; a
+tail of three sextets (18 bits) is two bytes and a tail of two (12 bits) is one byte, the
+remaining bits discarded. -/
+def bytesOf (xs : Array Nat) : Array UInt8 := Id.run do
+  let mut out : Array UInt8 := Array.emptyWithCapacity (xs.size * 3 / 4 + 2)
+  let n := xs.size
+  for g in [0:(n + 3) / 4] do
+    let i := 4 * g
+    let x := fun (k : Nat) => if i + k < n then xs[i + k]! else 0
+    let w := ((x 0 * 64 + x 1) * 64 + x 2) * 64 + x 3
+    let left := n - i
+    if left ≥ 2 then out := out.push (w / 65536).toUInt8
+    if left ≥ 3 then out := out.push (w / 256 % 256).toUInt8
+    if left ≥ 4 then out := out.push (w % 256).toUInt8
+  return out
 
 /-- forgiving-base64 decode (Infra): `none` is failure. -/
-def decodeList (input : List Char) : Option (List UInt8) :=
+def decodeChars (input : Array Char) : Option (Array UInt8) := Id.run do
   -- 1. Remove all ASCII whitespace.
   let cs := input.filter (!isAsciiWhitespace ·)
   -- 2. If the length divides by 4, remove one or two trailing `=`.
   let cs :=
-    if cs.length % 4 == 0 then
-      match cs.reverse with
-      | '=' :: '=' :: rest => rest.reverse
-      | '=' :: rest => rest.reverse
-      | _ => cs
+    if cs.size % 4 == 0 then
+      if cs.size ≥ 2 && cs[cs.size - 1]! == '=' && cs[cs.size - 2]! == '=' then cs.extract 0 (cs.size - 2)
+      else if cs.size ≥ 1 && cs[cs.size - 1]! == '=' then cs.extract 0 (cs.size - 1)
+      else cs
     else cs
   -- 3. A length of 1 modulo 4 is failure.
-  if cs.length % 4 == 1 then none
+  if cs.size % 4 == 1 then return none
   -- 4. A character outside the alphabet is failure; 5 to 8: the bytes.
-  else (cs.mapM value?).map bytesOf
+  let mut vs : Array Nat := Array.emptyWithCapacity cs.size
+  for c in cs do
+    match value? c with
+    | some v => vs := vs.push v
+    | none => return none
+  return some (bytesOf vs)
 
-def decode (s : String) : Option ByteArray := (decodeList s.toList).map (·.toByteArray)
+def decode (s : String) : Option ByteArray := (decodeChars s.toList.toArray).map ByteArray.mk
 
 /-! ## The HTML methods -/
 
 /-- `btoa(data)`: `none` is an "InvalidCharacterError" (a code point above U+00FF). -/
 def btoa (data : String) : Option String :=
   if data.toList.all (·.toNat ≤ 0xFF) then
-    some (String.ofList (encodeList (data.toList.map (·.toNat.toUInt8))))
+    some (encodeBytes (data.toList.toArray.map (·.toNat.toUInt8)))
   else none
 
 /-- `atob(data)`: the isomorphic decode of the bytes; `none` is an
 "InvalidCharacterError". -/
 def atob (data : String) : Option String :=
-  (decodeList data.toList).map fun bs => String.ofList (bs.map fun b => Char.ofNat b.toNat)
+  (decodeChars data.toList.toArray).map fun bs => bs.foldl (fun s b => s.push (Char.ofNat b.toNat)) ""
 
 /-! ## Checks (Infra examples and the WPT `html/webappapis/atob/base64.html` cases) -/
 

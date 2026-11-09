@@ -1035,8 +1035,8 @@ def start (m : Module') (dom : Arena) (url : String) (scripts : Array (Nat × St
       pure { b with host, limits := lim, steps := 0 }
     | none => do
       let s ← instantiatePage m dom lim
-      pure { s with host := { s.host with dom := { s.host.dom with frames := framed, framing := lim.frames }, reads, time,
-        web := { entropy := lim.entropy } } }
+      let web : Hosts.WebApi.State := { entropy := lim.entropy }
+      pure { s with host := { s.host with dom := { s.host.dom with frames := framed, framing := lim.frames }, reads, time, web } }
   let s := { s with host := { s.host with dom := { s.host.dom with gpu := L4Factoidal.PageGpu.State.empty lim.gpuPage } } }
   return (s.startP url scripts framed).runLocal
 
