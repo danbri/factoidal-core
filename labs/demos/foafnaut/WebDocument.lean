@@ -1322,20 +1322,32 @@ def partialNote (dom : DOM.Dom) : DOM.Dom := Id.run do
   let d := d.linkChild a t none
   d.linkChild body a (d.get body).kids[0]?
 
-/-- The arena with every inline `svg` root (an SVG `svg` element whose parent is not SVG) taken
-out of the tree, and how many. -/
-def stripSvg (dom : DOM.Dom) : DOM.Dom × Nat := Id.run do
-  let roots := (dom.treeOrder 0).toList.filter fun id =>
+/-- The inline `svg` roots: SVG `svg` elements whose parent is not SVG, in tree order. -/
+def svgRoots (dom : DOM.Dom) : List Nat :=
+  (dom.treeOrder 0).toList.filter fun id =>
     let n := dom.get id
     n.type == .element && n.ns == some DOM.svgNS && n.lname == "svg" &&
       (n.parent.map fun p => (dom.get p).ns != some DOM.svgNS).getD false
-  return (roots.foldl DOM.Dom.remove dom,roots.length)
+
+/-- The refusals of the embedding for the `svg` roots `roots` that a layout drew, each read at
+the size of its box. -/
+def svgRefusals (embedding : Rendering.Layout.Embedding) (styles : Array Rendering.CSS.Computed)
+    (boxes : Array Rendering.Layout.Box) (roots : List Nat) (size : Nat) : List String :=
+  let byId := boxes.foldl (fun (a : Array (Option Rendering.Layout.Box)) b => if b.source < a.size then a.set! b.source (some b) else a)
+    (Array.replicate size none)
+  roots.filterMap fun id => match byId[id]?, styles[id]? with
+    | some (some b), some s => match embedding id s b.width b.height with
+      | .error e => some e
+      | .ok _ => none
+    | _, _ => none
+
+/-- The arena with every inline `svg` root (an SVG `svg` element whose parent is not SVG) taken
+out of the tree, and how many. -/
+def stripSvg (dom : DOM.Dom) : DOM.Dom × Nat :=
+  let roots := svgRoots dom
+  (roots.foldl DOM.Dom.remove dom,roots.length)
 
 private def depthRefusal : String := "unsupported HTML nesting depth (maximum 64)"
-/-- The mark of a refusal of the SVG embedding in a liberal layout (a control character, so no
-refusal text starts with it). -/
-private def svgMark : String := "\u0001svg: "
-
 /-- `layOutDOM` in mode `m`, with its skip points. A liberal run is made only after a strict
 run refused (`WebAccept.accept`), so it puts `partialNote` on the page. -/
 def layOutDOMIn (m : WebAccept.Mode) (request : JSON.Json) (graph : Option NativeFoafNaut.Model) (dom : DOM.Dom)
@@ -1382,28 +1394,39 @@ def layOutDOMIn (m : WebAccept.Mode) (request : JSON.Json) (graph : Option Nativ
   -- A window shorter than the chrome still lays out, on one row.
   let state := withPointer dom (← elementState dom url request) pointer
   let draw := fun (d : DOM.Dom) (e : Rendering.Layout.Embedding) => Rendering.Layout.render d rules font e width rows textScale state pictures
-  -- Inline SVG that the SVG reader refuses is a skip point: in liberal mode the refusals of the
-  -- embedding are marked (`svgMark`), and a marked one makes the layout run again with every
-  -- refused `svg` not drawn, as a browser without that SVG feature would leave it out.
-  let marked : Rendering.Layout.Embedding := fun id s w h => (embedding id s w h).mapError (svgMark ++ ·)
+  -- Inline SVG is a skip point, checked so that liberal mode lays the page out once
+  -- (2026-11-09: BBC News took three layouts). Before layout: an `svg` root with a percentage
+  -- height, which layout refuses (`Layout.checkSVGBox`), is taken out. In the layout: the
+  -- embedding draws a refused `svg` as nothing (`quiet`). After it: each `svg` root that was laid
+  -- out is read again at its box size, and the refusals become one diagnostic.
   let quiet : Rendering.Layout.Embedding := fun id s w h => match embedding id s w h with
     | .ok nodes => .ok nodes
     | .error _ => .ok []
-  let unmark := fun (e : String) => if e.startsWith svgMark then (e.drop svgMark.length).toString else e
-  let (first,used,d3) := match m with
-    | .strict => (draw dom embedding,embedding,([] : List WebAccept.Diagnostic))
-    | .liberal => match draw dom marked with
-      | .error e =>
-        if e.startsWith svgMark then
-          (draw dom quiet,quiet,[{skip := .svgContent, «where» := "inline svg", refusal := unmark e}])
-        else (.error e,quiet,[])
-      | ok => (ok,quiet,[])
+  let (first,used,d3,dom) ← match m with
+    | .strict => pure (draw dom embedding,embedding,([] : List WebAccept.Diagnostic),dom)
+    | .liberal => do
+      let roots := svgRoots dom
+      let styles ← if roots.isEmpty then pure #[] else Rendering.CSS.computeAll dom rules textScale state
+      let tall := roots.filter fun id => match (styles[id]?).map (·.height) with
+        | some (.percent _) => true
+        | _ => false
+      let bare := tall.foldl DOM.Dom.remove dom
+      let dTall : List WebAccept.Diagnostic := if tall.isEmpty then [] else
+        [{skip := .svgContent, «where» := s!"{tall.length} inline svg elements with a percentage height",
+          refusal := "unsupported percentage SVG height without definite containing height"}]
+      let result := draw bare quiet
+      let refused := match result with
+        | .ok (_,boxes) => svgRefusals embedding styles boxes (roots.filter (!tall.contains ·)) bare.size
+        | .error _ => []
+      let dRefused : List WebAccept.Diagnostic := match refused with
+        | [] => []
+        | e :: _ => [{skip := .svgContent, «where» := s!"{refused.length} inline svg elements", refusal := e}]
+      pure (result,quiet,dTall ++ dRefused,bare)
   -- Nesting deeper than layout reads is a skip point: liberal mode draws the page with the
   -- content below some depth taken out, the first of these depths that lays out.
   let (scene,boxes,dom,d4) ← match first with
     | .ok (scene,boxes) => pure (scene,boxes,dom,([] : List WebAccept.Diagnostic))
     | .error e =>
-      let e := unmark e
       match m with
       | .strict => throw e
       | .liberal =>
