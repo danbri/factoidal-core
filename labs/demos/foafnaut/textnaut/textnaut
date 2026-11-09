@@ -23,7 +23,7 @@ if [ -z "${TEXTNAUT_NATIVE:-}" ] && [ -z "${TEXTNAUT_WASM_DIR:-}" ]; then
     *) lib=libweb-render.so ;;
   esac
   for candidate in \
-    "$here/../.build/web-render/$lib" \
+    "$here/../.build/web-render/engines/$lib" \
     "$here/../.build/engines/$lib" \
     "${FOAFNAUT_HOME:-$HOME/.foafnaut}/current/foafnaut/$lib"; do
     if [ -f "$candidate" ]; then
