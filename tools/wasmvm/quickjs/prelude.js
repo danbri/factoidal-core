@@ -1475,7 +1475,10 @@
     const K = Symbol('canvas2d');
     // A context's canvas id, read by the calls a frame makes most (one property, no checks of a kind).
     const KC = Symbol('canvas2d id');
-    let q = [], strs = [], strIx = new Map(), tails = [], tailLen = 0, queued = false, selected = -1;
+    // The batch's numbers in chunks of a few hundred: BubblePopJS copies an array that a push
+    // grows (O(length) a push), so one long array made a frame of n calls cost n^2.
+    let q = [], qs = [], strs = [], strIx = new Map(), tails = [], tailLen = 0, queued = false, selected = -1;
+    const roll = () => { qs.push(q); q = []; };
     let nextObj = 1, nextOffscreen = 0x20000000;
     const objs = new Map(); // Lean's object ids, for the fillStyle and strokeStyle getters
     const str = s => { s = String(s); let i = strIx.get(s); if (i === undefined) { i = strs.length; strs.push(s); strIx.set(s, i); } return i; };
@@ -1488,17 +1491,19 @@
     };
     const flush = () => {
       queued = false;
-      if (q.length === 0) return;
+      if (q.length === 0 && qs.length === 0) return;
+      qs.push(q);
       // Numbers as text (op 203) unless the batch carries bytes (op 200): filling a typed
       // array costs more than joining in BubblePopJS, and Lean reads both exactly.
-      const text = tailLen === 0, payload = text ? q.join(',') : pack(q, tails, tailLen), header = JSON.stringify(strs);
-      q = []; strs = []; strIx = new Map(); tails = []; tailLen = 0; selected = -1;
+      const text = tailLen === 0, header = JSON.stringify(strs);
+      const payload = text ? qs.map(c => c.join(',')).join(',') : pack([].concat(...qs), tails, tailLen);
+      q = []; qs = []; strs = []; strIx = new Map(); tails = []; tailLen = 0; selected = -1;
       const r = n.gpu(text ? 203 : 200, header, payload);
       if (typeof r === 'number') console.warn('Canvas 2D: import error ' + r);
       else if (r.charCodeAt(0) === 2) console.warn('Canvas 2D:', r.slice(1));
     };
     const later = () => { if (!queued) { queued = true; Promise.resolve().then(flush); } };
-    const on = id => { if (selected !== id) { q.push(1, id); selected = id; } later(); };
+    const on = id => { if (q.length > 250) roll(); if (selected !== id) { q.push(1, id); selected = id; } later(); };
     const tail = bytes => { const off = tailLen; tails.push(bytes); tailLen += bytes.length; return off; };
     const ask = (nums, ss = []) => {
       flush();
@@ -1626,7 +1631,7 @@
         set(v) {
           const id = this?.[KC]; if (id === undefined) illegal();
           if (selected !== id) { q.push(1, id); selected = id; }
-          if (!queued) { queued = true; Promise.resolve().then(flush); }
+          if (!queued) { queued = true; Promise.resolve().then(flush); } else if (q.length > 250) roll();
           q.push(op, t === 'n' ? +v : t === 'b' ? (v ? 1 : 0) : str(v));
         } });
     }
@@ -1637,7 +1642,7 @@
         set(v) {
           const id = this?.[KC]; if (id === undefined) illegal();
           if (selected !== id) { q.push(1, id); selected = id; }
-          if (!queued) { queued = true; Promise.resolve().then(flush); }
+          if (!queued) { queued = true; Promise.resolve().then(flush); } else if (q.length > 250) roll();
           if (typeof v === 'string') q.push(ops[0], str(v));
           else if (v instanceof CanvasGradient) q.push(ops[1], 1, v[K].id);
           else if (v instanceof CanvasPattern) q.push(ops[1], 2, v[K].id);
@@ -1659,31 +1664,31 @@
     const hot = (name, op, k) => k === 0 ? function () {
         const id = this?.[KC]; if (id === undefined) illegal();
         if (selected !== id) { q.push(1, id); selected = id; }
-        if (!queued) { queued = true; Promise.resolve().then(flush); }
+        if (!queued) { queued = true; Promise.resolve().then(flush); } else if (q.length > 250) roll();
         q.push(op);
       } : k === 1 ? function (a) {
         const id = this?.[KC]; if (id === undefined) illegal();
         if (a === undefined && arguments.length < 1) need(arguments.length, 1, name);
         if (selected !== id) { q.push(1, id); selected = id; }
-        if (!queued) { queued = true; Promise.resolve().then(flush); }
+        if (!queued) { queued = true; Promise.resolve().then(flush); } else if (q.length > 250) roll();
         q.push(op, +a);
       } : k === 2 ? function (a, b) {
         const id = this?.[KC]; if (id === undefined) illegal();
         if (b === undefined && arguments.length < 2) need(arguments.length, 2, name);
         if (selected !== id) { q.push(1, id); selected = id; }
-        if (!queued) { queued = true; Promise.resolve().then(flush); }
+        if (!queued) { queued = true; Promise.resolve().then(flush); } else if (q.length > 250) roll();
         q.push(op, +a, +b);
       } : k === 4 ? function (a, b, c, d) {
         const id = this?.[KC]; if (id === undefined) illegal();
         if (d === undefined && arguments.length < 4) need(arguments.length, 4, name);
         if (selected !== id) { q.push(1, id); selected = id; }
-        if (!queued) { queued = true; Promise.resolve().then(flush); }
+        if (!queued) { queued = true; Promise.resolve().then(flush); } else if (q.length > 250) roll();
         q.push(op, +a, +b, +c, +d);
       } : function (a, b, c, d, e, f) {
         const id = this?.[KC]; if (id === undefined) illegal();
         if (f === undefined && arguments.length < 6) need(arguments.length, 6, name);
         if (selected !== id) { q.push(1, id); selected = id; }
-        if (!queued) { queued = true; Promise.resolve().then(flush); }
+        if (!queued) { queued = true; Promise.resolve().then(flush); } else if (q.length > 250) roll();
         q.push(op, +a, +b, +c, +d, +e, +f);
       };
     for (const [name, op, k] of [['fillRect', 73, 4], ['strokeRect', 74, 4], ['clearRect', 75, 4], ['save', 3, 0], ['restore', 4, 0],
@@ -1734,7 +1739,7 @@
       r = +r;
       if (r < 0) throw new DOMException('The radius provided (' + r + ') is negative.', 'IndexSizeError');
       if (selected !== id) { q.push(1, id); selected = id; }
-      if (!queued) { queued = true; Promise.resolve().then(flush); }
+      if (!queued) { queued = true; Promise.resolve().then(flush); } else if (q.length > 250) roll();
       q.push(56, +x, +y, r, +a0, +a1, ccw ? 1 : 0);
     });
     const pathId = (p, name) => { if (!(p instanceof Path2D)) throw new TypeError("Failed to execute '" + (name) + "': parameter 1 is not of type 'Path2D'."); return p[K].id; };
