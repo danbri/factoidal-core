@@ -235,19 +235,27 @@ static JSValue n_query(JSContext *c, JSValueConst this_val, int argc, JSValueCon
   return r;
 }
 /* gpu(op, header, payload): payload a string or an ArrayBuffer. Answers "" when Lean
- * accepted the command, else Lean's refusal; a negative number for a memory error. */
+ * accepted the command, else Lean's refusal; a negative number for a memory error.
+ * The header is a string, or an ArrayBuffer for a binary header (op 64 + k,
+ * PageGpu.Wire.binaryOp): its bytes are copied as they are. */
 static JSValue n_gpu(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
-  I32(0, op); STR(1, h, hl);
+  I32(0, op);
+  size_t hl = 0; const char *h = 0; uint8_t *hb = 0;
+  if (JS_IsString(argv[1])) h = JS_ToCStringLen(c, &hl, argv[1]);
+  else hb = JS_GetArrayBuffer(c, &hl, argv[1]);
+  if (!h && !hb) { JS_FreeValue(c, JS_GetException(c)); h = JS_ToCStringLen(c, &hl, argv[1]); if (!h) return JS_EXCEPTION; }
   size_t pl = 0; const char *ps = 0; uint8_t *pb = 0;
   if (JS_IsString(argv[2])) ps = JS_ToCStringLen(c, &pl, argv[2]);
   else pb = JS_GetArrayBuffer(c, &pl, argv[2]);
   if (!ps && !pb) pl = 0;
-  if (hl + 1 + pl > (size_t) (1 << 26)) { JS_FreeCString(c, h); if (ps) JS_FreeCString(c, ps); return JS_NewInt32(c, -5); }
+  if (hl + 1 + pl > (size_t) (1 << 26)) { if (h) JS_FreeCString(c, h); if (ps) JS_FreeCString(c, ps); return JS_NewInt32(c, -5); }
   char *buf = malloc(hl + 1 + pl + 1);
-  if (!buf) { JS_FreeCString(c, h); if (ps) JS_FreeCString(c, ps); return JS_NewInt32(c, -5); }
-  memcpy(buf, h, hl); buf[hl] = '\n';
+  if (!buf) { if (h) JS_FreeCString(c, h); if (ps) JS_FreeCString(c, ps); return JS_NewInt32(c, -5); }
+  if (hl) memcpy(buf, h ? (const void *) h : (const void *) hb, hl);
+  buf[hl] = '\n';
   if (pl) memcpy(buf + hl + 1, ps ? (const void *) ps : (const void *) pb, pl);
-  JS_FreeCString(c, h); if (ps) JS_FreeCString(c, ps);
+  if (h) JS_FreeCString(c, h);
+  if (ps) JS_FreeCString(c, ps);
   JSValue r = string_result(c, rd_gpu, op, 0, buf, (int32_t) (hl + 1 + pl));
   free(buf);
   return r;
