@@ -52,10 +52,8 @@ Deno.test("expected failure, issue 1286: SVG text gives no glyph runs, so it can
   assert.equal(runs("<svg width='200' height='100'><text x='10' y='50'>Selectable</text></svg>").filter(r=>r.text==="Selectable").length,0,stillGap("1286"));
 });
 
-Deno.test("expected failure, issue 1271: the window refuses the showcase script page",async()=>{
-  await assert.rejects(()=>prepareHTML(engine,inputURL(pages+"showcase-dataviz-script.html",true)),
-    /does not execute scripts|need the QuickJS guest module/,stillGap("1271"));
-});
+// Issue 1271 (scripts refused, no timers) is closed by the page script engines: the showcase
+// script page runs on BubblePopJS and QuickJS-NG, with timers, in bubblepop_pages_test.ts.
 
 Deno.test("issue 1272: table cells are side by side, and colspan widens a cell",()=>{
   const body="<table><tr><td>alpha</td><td>beta</td></tr></table>";

@@ -42,14 +42,14 @@ manner of D3 with no library, from real data (this browser's own Lean files).</p
 
 <div class="card"><p class="title"><a href="showcase-dataviz-script.html">Data visualisation with a script</a></p>
 <p>The same bar chart, but sized and animated by a script from a data array.</p>
-<p class="gap">Gap: the window refuses pages with scripts, and the script binding has no timers
-(<a href="https://github.com/danbri/factoidal/issues/1271">issue 1271</a>).</p></div>
+<p class="good">Works: the script runs in BubblePopJS in the desktop app and in QuickJS-NG in WasmVM on the Hub,
+with timers and animation frames (<code>bubblepop_pages_test.ts</code>).</p></div>
 
 <div class="card"><p class="title"><a href="showcase-tables.html">Tables</a></p>
 <p>A caption, a header row, zebra rows, numbers aligned right, colspan and rowspan.</p>
-<p class="gap">Gap: no table layout, and no text alignment
-(<a href="https://github.com/danbri/factoidal/issues/1272">issue 1272</a>,
-<a href="https://github.com/danbri/factoidal/issues/1273">issue 1273</a>).</p></div>
+<p class="good">Works: table layout with colspan, rowspan and borders, and text alignment.</p>
+<p class="gap">Gap: cells aligned on the baseline, and inline tables
+(<a href="https://github.com/danbri/factoidal/issues/1272">issue 1272</a>).</p></div>
 
 <div class="card"><p class="title"><a href="showcase-tables-svg.html">Tables drawn as SVG</a></p>
 <p>The same tables, with zebra rows, a rule under the header, numbers aligned right, a spanning cell and a totals row.</p>
@@ -69,8 +69,9 @@ manner of D3 with no library, from real data (this browser's own Lean files).</p
 <div class="card"><p class="title"><a href="showcase-scripts.html">Writing systems and direction</a></p>
 <p>Latin with diacritics, Greek, Cyrillic, Arabic, Hebrew, Devanagari, Thai, Chinese, Japanese, Korean; right to left and mixed direction.</p>
 <p class="gap">Each script draws from a fallback font fetched for the page
-(<a href="https://github.com/danbri/factoidal/issues/1274">issue 1274</a>). Gaps: no bidirectional layout
-or right-to-left shaping (<a href="https://github.com/danbri/factoidal/issues/1275">issue 1275</a>), and no Indic conjuncts yet.</p></div>
+(<a href="https://github.com/danbri/factoidal/issues/1274">issue 1274</a>). Right-to-left and mixed text is ordered by
+the Unicode bidirectional algorithm, and Arabic letters join (<a href="https://github.com/danbri/factoidal/issues/1275">issue 1275</a>).
+Gap: no Indic conjuncts yet.</p></div>
 
 <div class="card"><p class="title"><a href="showcase-emoji.html">Emoji</a></p>
 <p>Single emoji, ZWJ sequences, skin tones, flags and keycaps.</p>
