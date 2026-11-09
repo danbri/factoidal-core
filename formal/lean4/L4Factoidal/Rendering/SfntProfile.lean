@@ -96,7 +96,11 @@ def Font.word (f : Font) (text : String) (pixelSize : Nat) (rtl : Option Bool :=
   -- A TreeMap gives each cluster once, in order, with no recursive sort.
   let clusters : Std.TreeMap Nat Unit := placed.foldl (fun seen g => seen.insert g.cluster ()) {}
   let starts := (clusters.toList.map Prod.fst).toArray
-  let finish := fun (c : Nat) => (starts.find? (· > c)).getD length
+  -- The end of each cluster: the start of the next, by one pass (a search for each
+  -- glyph was quadratic in the length of a long word).
+  let nextStart : Std.TreeMap Nat Nat := (starts.zipIdx.map fun (c,k) => (c,starts.getD (k+1) length)).foldl
+    (fun m (c,e) => m.insert c e) {}
+  let finish := fun (c : Nat) => nextStart.getD c length
   let mut outlines : Std.TreeMap Nat FontData.Outline := {}
   for g in placed do
     unless outlines.contains g.id do
@@ -231,11 +235,31 @@ def wordIn (fonts : Array Font) (text : String) (pixelSize : Nat) (rtl : Option 
   return ⟨text,primary.sha256,primary.faceIndex,primary.family,"",pixelSize,units,
     ascent,-ofInt face.descender,ofInt face.lineGap,glyphs,pen⟩
 
-/-- The words of a document's text nodes, each once, for the memo of `profile`. -/
+/-- Elements whose text is never drawn as text: script and style data, the
+inert content of `template`, `noscript` (scripts run here, so its content is not
+rendered), and `title` (the tab, not the page). -/
+def unrenderedText : List String := ["script","style","template","noscript","title"]
+
+/-- The text node `id` is inside an element of `unrenderedText` or a document
+fragment (the content of a `template`). The walk is bounded by the arena size. -/
+def inUnrendered (dom : DOM.Dom) (id : Nat) : Bool := Id.run do
+  let mut at_ := (dom.get id).parent
+  for _ in [:dom.size+1] do
+    let some p := at_ | return false
+    let n := dom.get p
+    if n.type == .fragment then return true
+    if n.type == .element && unrenderedText.contains n.lname then return true
+    at_ := n.parent
+  return false
+
+/-- The words of a document's drawn text, each once, for the memo of `profile`:
+not the text of `unrenderedText` elements, which is data (a JSON script of a page can
+be one word of thousands of characters). -/
 def wordsOf (dom : DOM.Dom) (limit : Nat := 8192) : Array String := Id.run do
   let mut seen : Std.TreeMap String Unit := {}
-  for node in dom.nodes do
-    if node.type == .text then
+  for id in [:dom.size] do
+    let node := dom.get id
+    if node.type == .text && !inUnrendered dom id then
       for word in node.data.splitToList Char.isWhitespace do
         if !word.isEmpty && seen.size < limit then seen := seen.insert word ()
   return (seen.toList.map Prod.fst).toArray

@@ -141,10 +141,26 @@ def skipMaybe (g : NominalGlyph) : Bool :=
   let c := g.codepoint
   !g.substituted && ((0xFE00 ≤ c && c ≤ 0xFE0F) || (0xE0100 ≤ c && c ≤ 0xE01EF))
 
-def nextOf (keep : Array Bool) (k : Nat) : Option Nat :=
+/-- The first kept position after `k`. A loop that stops there: building the list of
+every later position made a kern pass over a long word quadratic. -/
+def nextOf (keep : Array Bool) (k : Nat) : Option Nat := Id.run do
+  for p in [k+1:keep.size] do
+    if keep[p]! then return some p
+  return none
+/-- The last kept position before `k`. -/
+def prevOf (keep : Array Bool) (k : Nat) : Option Nat := Id.run do
+  for d in [0:k] do
+    if keep[k-1-d]! then return some (k-1-d)
+  return none
+
+/-- The list forms these replace, for the checks below. -/
+def nextOfRef (keep : Array Bool) (k : Nat) : Option Nat :=
   ((List.range (keep.size - k - 1)).map (k + 1 + ·)).find? (keep[·]!)
-def prevOf (keep : Array Bool) (k : Nat) : Option Nat :=
+def prevOfRef (keep : Array Bool) (k : Nat) : Option Nat :=
   ((List.range k).reverse).find? (keep[·]!)
+#guard (List.range 7).all fun k => nextOf #[true,false,true,true,false,false,true] k == nextOfRef #[true,false,true,true,false,false,true] k
+#guard (List.range 7).all fun k => prevOf #[true,false,true,true,false,false,true] k == prevOfRef #[true,false,true,true,false,false,true] k
+#guard (List.range 4).all fun k => nextOf #[false,false,false,false] k == nextOfRef #[false,false,false,false] k && prevOf #[false,false,false,false] k == prevOfRef #[false,false,false,false] k
 
 /-- The next position after `k` that the lookup flags keep (`keep`) and `test`
 accepts, passing over kept positions that `test` refuses only where `maybe`
@@ -484,13 +500,17 @@ def edit (c : Ctx) (run : Array NominalGlyph) (i : Nat) (step : Step) :
 /-- Apply lookup `l` at position i once. Returns the new run and the position
 after the matched input, or none when no subtable matched. Recursion through
 context lookups is bounded by `depth`. -/
-def applyAt (c : Ctx) : Nat → Nat → Array NominalGlyph → Nat → SubM (Option (Array NominalGlyph × Nat))
+def applyAt (c : Ctx) (cached : Option (Array Bool × Array Nat) := none) :
+    Nat → Nat → Array NominalGlyph → Nat → SubM (Option (Array NominalGlyph × Nat))
   | 0, _, _, _ => throw "font.layout.limit: nested GSUB context lookups deeper than 8"
   | depth + 1, l, run, i => do
     let (_, flag, subs) ← lookupInfo c l
-    let keep ← unskipped c flag run
+    -- The kept positions and glyph ids of the run, given by `substitute` while the run
+    -- is unchanged (made here for each position, they made a long word quadratic).
+    let (keep,ids) ← match cached with
+      | some kc => pure kc
+      | none => pure (← unskipped c flag run,run.map (·.id))
     if !keep[i]! then return none
-    let ids := run.map (·.id)
     let maybe (p : Nat) : Bool := skipMaybe run[p]!
     for (t, s) in subs do
       if t == 5 || t == 6 then
@@ -499,7 +519,7 @@ def applyAt (c : Ctx) : Nat → Nat → Array NominalGlyph → Nat → SubM (Opt
         let mut pos : List (Option Nat) := inputs.map some
         for (seq, nested) in recs do
           let some (some p) := pos[seq]? | continue
-          match ← applyAt c depth nested cur p with
+          match ← applyAt c none depth nested cur p with
           | none => pure ()
           | some (next, _) =>
             -- Recompute where the remaining inputs are: positions after p shift
@@ -547,6 +567,9 @@ def substitute (f : Face) (b : ByteArray) (dir : Array TableRecord) (text : Stri
   let mut serial := 0
   for (_, l, mask) in lookups do
     let mut i := 0
+    -- The kept positions and ids of `out` for this lookup, made again only when it changes.
+    let (_, flag, _) ← lookupInfo c l
+    let mut cache : Option (Array Bool × Array Nat) := none
     -- Each step moves i forward by at least one position.
     for _ in [0:limits.lookupOperationsPerRun] do
       if i ≥ out.size then break
@@ -557,11 +580,25 @@ def substitute (f : Face) (b : ByteArray) (dir : Array TableRecord) (text : Stri
       if out[i]!.mask &&& mask == 0 then
         i := i + 1
         continue
-      let (r, s') ← (applyAt c 8 l out i).run serial
+      if cache.isNone then cache := some (← unskipped c flag out,out.map (·.id))
+      let (r, s') ← (applyAt c cache 8 l out i).run serial
       serial := s'
       match r with
       | none => i := i + 1
       | some (next, after) =>
+        -- A change that keeps the length changes positions `i .. after` only (a context
+        -- lookup applies at its inputs, from `i` on): those are made again; a change of
+        -- length (a ligature, a multiple substitution) makes the cache again.
+        if next.size == out.size && after ≤ next.size then
+          if let some (keep, ids) := cache then
+            let window ← unskipped c flag (next.extract i after)
+            let mut keep := keep
+            let mut ids := ids
+            for k in [i:after] do
+              keep := keep.set! k (window.getD (k - i) true)
+              ids := ids.set! k next[k]!.id
+            cache := some (keep, ids)
+        else cache := none
         out := next
         i := max (i + 1) after
   return out

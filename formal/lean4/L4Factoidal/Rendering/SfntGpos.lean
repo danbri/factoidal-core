@@ -195,17 +195,32 @@ def gposKeep (c : PCtx) (flag : Nat) (set? : Option Nat) (out : Array Glyph) : E
   (Array.range out.size).mapM fun k => do
     pure !(← skipsWithSet c.b c.gdef? flag set? c.classes[k]! out[k]!.id)
 
-/-- One subtable of type 1 to 6 at position i: the new run and the
-position to continue from, or none when the subtable does not apply. -/
+/-- The last position before `i` that `p` accepts: a loop from `i-1` down (a list of
+all earlier positions, for each mark, made a run of many marks quadratic). -/
+def lastBefore (i : Nat) (p : Nat → Bool) : Option Nat := Id.run do
+  for d in [0:i] do
+    if p (i-1-d) then return some (i-1-d)
+  return none
+
+#guard lastBefore 5 (· % 2 == 0) == some 4
+#guard lastBefore 4 (· % 2 == 0) == some 2
+#guard lastBefore 3 (fun _ => false) == none
+#guard (List.range 9).all fun i => lastBefore i (· % 3 == 1) == ((List.range i).reverse).find? (· % 3 == 1)
+
+/-- One subtable of type 1 to 6 at position i: the new run and the position to continue
+from, or the run as it was and none when the subtable does not apply. The run comes back
+changed or as it was, so that the
+caller does not hold a second reference to it and each change is made in place (a
+copy of the run for each kern pair made a long word quadratic). -/
 def applyPosSubtable (c : PCtx) (flag : Nat) (keep : Array Bool) (t s : Nat) (out0 : Array Glyph) (i : Nat) :
-    Except String (Option (Array Glyph × Nat)) := do
+    Except String (Array Glyph × Option Nat) := do
   let b := c.b
   let isMark (k : Nat) : Bool := c.classes[k]!.1 == 3
   let mut out := out0
   let g := out[i]!
   need b s 6 "subtable header"
     if t == 1 then
-      let some ci ← coverage b (s + u16 b (s + 2)) g.id | return none
+      let some ci ← coverage b (s + u16 b (s + 2)) g.id | return (out0, none)
       let fmt := u16 b s
       let vf := u16 b (s + 4)
       let rec_ ← if fmt == 1 then pure (s + 6)
@@ -216,23 +231,23 @@ def applyPosSubtable (c : PCtx) (flag : Nat) (keep : Array Bool) (t s : Nat) (ou
       need b rec_ (valueSize vf) "single adjustment value"
       let (xp, yp, xa) := valueXYA b vf rec_
       out := out.set! i { g with xOffset := g.xOffset + xp, yOffset := g.yOffset + yp, advance := g.advance + xa }
-      return some (out, i + 1)
+      return (out, some (i + 1))
     else if t == 2 then
-      let some j := nextOf keep i | return none
-      let some r ← pairPos b s g.id out[j]!.id | return none
+      let some j := nextOf keep i | return (out0, none)
+      let some r ← pairPos b s g.id out[j]!.id | return (out0, none)
       let c := out[j]!
       out := out.set! i { g with xOffset := g.xOffset + r.first.1, yOffset := g.yOffset + r.firstY,
                                  advance := g.advance + r.first.2 }
       out := out.set! j { c with xOffset := c.xOffset + r.second.1, yOffset := c.yOffset + r.secondY,
                                  advance := c.advance + r.second.2 }
-      return some (out, if r.skipSecond then j + 1 else j)
+      return (out, some (if r.skipSecond then j + 1 else j))
     else if t == 3 then
       -- Cursive attachment (HarfBuzz CursivePosFormat1::apply, left to right).
-      let some ci ← coverage b (s + u16 b (s + 2)) g.id | return none
-      let (some entry, _) ← entryExit b s ci | return none
-      let some pi := prevOf keep i | return none
-      let some pci ← coverage b (s + u16 b (s + 2)) out[pi]!.id | return none
-      let (_, some exit) ← entryExit b s pci | return none
+      let some ci ← coverage b (s + u16 b (s + 2)) g.id | return (out0, none)
+      let (some entry, _) ← entryExit b s ci | return (out0, none)
+      let some pi := prevOf keep i | return (out0, none)
+      let some pci ← coverage b (s + u16 b (s + 2)) out[pi]!.id | return (out0, none)
+      let (_, some exit) ← entryExit b s pci | return (out0, none)
       let gp := out[pi]!
       -- Main-direction adjustment (HarfBuzz CursivePosFormat1::apply): the
       -- previous glyph's exit meets this glyph's entry.
@@ -253,16 +268,16 @@ def applyPosSubtable (c : PCtx) (flag : Nat) (keep : Array Bool) (t s : Nat) (ou
       out := out.set! child { out[child]! with cursiveChain := chain, attachedTo := none, yOffset := yOff }
       if out[parent]!.cursiveChain == -chain then
         out := out.set! parent { out[parent]! with cursiveChain := 0, yOffset := 0 }
-      return some (out, i + 1)
+      return (out, some (i + 1))
     else if t == 5 then
       -- Mark to ligature (HarfBuzz MarkLigPosFormat1::apply). The ligature is
       -- the previous glyph that is not a mark.
       need b s 12 "mark-to-ligature header"
-      let some mci ← coverage b (s + u16 b (s + 2)) g.id | return none
+      let some mci ← coverage b (s + u16 b (s + 2)) g.id | return (out0, none)
       let nClasses := u16 b (s + 6)
       let (cls, ma) ← markRecord b (s + u16 b (s + 8)) mci
-      let some p := ((List.range i).reverse).find? (fun k => !isMark k) | return none
-      let some lci ← coverage b (s + u16 b (s + 4)) out[p]!.id | return none
+      let some p := lastBefore i (fun k => !isMark k) | return (out0, none)
+      let some lci ← coverage b (s + u16 b (s + 4)) out[p]!.id | return (out0, none)
       let la := s + u16 b (s + 10)
       need b la 2 "ligature array"
       if lci ≥ u16 b la then throw "font.file.malformed: ligature coverage index beyond ligature array"
@@ -270,17 +285,17 @@ def applyPosSubtable (c : PCtx) (flag : Nat) (keep : Array Bool) (t s : Nat) (ou
       let attach := la + u16 b (la + 2 + 2 * lci)
       need b attach 2 "ligature attach"
       let comps := u16 b attach
-      if comps == 0 then return none
+      if comps == 0 then return (out0, none)
       -- The mark's component when it belongs to this ligature (HarfBuzz lig_id/lig_comp).
       let lg := out[p]!
       let comp := if lg.ligId != 0 && lg.ligId == g.ligId && g.ligComp > 0 then min comps g.ligComp - 1 else comps - 1
-      let some ba ← baseAnchor b attach comp nClasses cls | return none
+      let some ba ← baseAnchor b attach comp nClasses cls | return (out0, none)
       out := out.set! i { g with xOffset := ba.1 - ma.1, yOffset := ba.2 - ma.2, attachedTo := some p, cursiveChain := 0 }
-      return some (out, i + 1)
+      return (out, some (i + 1))
     else
       -- Mark attachment: t == 4 (to base) or t == 6 (to mark).
       need b s 12 "mark attachment header"
-      let some mci ← coverage b (s + u16 b (s + 2)) g.id | return none
+      let some mci ← coverage b (s + u16 b (s + 2)) g.id | return (out0, none)
       let nClasses := u16 b (s + 6)
       let (cls, ma) ← markRecord b (s + u16 b (s + 8)) mci
       -- The glyph to attach to: for type 4 the previous glyph that is
@@ -301,44 +316,44 @@ def applyPosSubtable (c : PCtx) (flag : Nat) (keep : Array Bool) (t s : Nat) (ou
         if id1 == id2 then id1 == 0 || c1 == c2
         else (id1 > 0 && c1 == 0) || (id2 > 0 && c2 == 0)
       let parent? : Option Nat :=
-        if t == 4 then ((List.range i).reverse).find? (fun k => !isMark k && acceptBase k)
+        if t == 4 then lastBefore i (fun k => !isMark k && acceptBase k)
         else match prevOf keep i with
           | some k => if isMark k && sameBase k then some k else none
           | none => none
-      let some p := parent? | return none
-      let some bci ← coverage b (s + u16 b (s + 4)) out[p]!.id | return none
-      let some ba ← baseAnchor b (s + u16 b (s + 10)) bci nClasses cls | return none
+      let some p := parent? | return (out0, none)
+      let some bci ← coverage b (s + u16 b (s + 4)) out[p]!.id | return (out0, none)
+      let some ba ← baseAnchor b (s + u16 b (s + 10)) bci nClasses cls | return (out0, none)
       out := out.set! i { g with xOffset := ba.1 - ma.1, yOffset := ba.2 - ma.2, attachedTo := some p, cursiveChain := 0 }
-      return some (out, i + 1)
+      return (out, some (i + 1))
 
 /-- Apply GPOS lookup `l` at position i once (HarfBuzz `apply_forward` step).
 Context subtables (types 7 and 8) match as GSUB types 5 and 6 and apply their
 nested lookups at the matched positions; the nesting depth starts at 8. -/
 def posAt (c : PCtx) : Nat → Nat → Array Glyph → Nat → Option (Array Bool) →
-    Except String (Option (Array Glyph × Nat))
+    Except String (Array Glyph × Option Nat)
   | 0, _, _, _, _ => throw "font.layout.limit: nested GPOS context lookups deeper than 8"
   | depth + 1, l, out, i, keep? => do
     let (flag, set?, subs) ← gposLookup c l
     let keep ← match keep? with
       | some k => pure k
       | none => gposKeep c flag set? out
-    if i ≥ out.size || !keep[i]! then return none
-    let ids := out.map (·.id)
+    if i ≥ out.size || !keep[i]! then return (out, none)
+    let mut out := out
     for (t, s) in subs do
       if t == 7 || t == 8 then
+        let ids := out.map (·.id)
         let some (inputs, recs) ← SfntSubst.matchContext c.b (t - 2) s ids keep i | continue
         let mut cur := out
         for (seq, nested) in recs do
           let some p := inputs[seq]? | continue
-          match ← posAt c depth nested cur p none with
-          | none => pure ()
-          | some (next, _) => cur := next
-        return some (cur, inputs.foldl max i + 1)
+          let (next, _) ← posAt c depth nested cur p none
+          cur := next
+        return (cur, some (inputs.foldl max i + 1))
       else
-        match ← applyPosSubtable c flag keep t s out i with
-        | some r => return some r
-        | none => pure ()
-    return none
+        let (o, r) ← applyPosSubtable c flag keep t s out i
+        out := o
+        if let some n := r then return (out, some n)
+    return (out, none)
 
 /-- Apply the default GPOS features to a substituted run. A synthesized
 glyph class uses the glyph's source code point (`NominalGlyph.codepoint`). -/
@@ -378,10 +393,10 @@ def position (b : ByteArray) (dir : Array TableRecord) (text : String)
         if !keep[i]! then
           i := i + 1
           continue
-        match ← posAt c 8 l out i (some keep) with
-        | some (next, n) =>
-          out := next
-          i := max n (i + 1)
+        let (next, r) ← posAt c 8 l out i (some keep)
+        out := next
+        match r with
+        | some n => i := max n (i + 1)
         | none => i := i + 1
   -- Zero the width of marks; move them only when the font has no GPOS.
   let hasGpos := dir.any (·.tag == "GPOS")
