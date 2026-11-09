@@ -153,6 +153,10 @@ inductive Native where
   | promiseCombinator (k : Nat) | promiseSettleElement (rejected : Nat)
   /-- `Number.prototype.toExponential` and `toPrecision` (§21.1.3.2, §21.1.3.5). -/
   | numberToExponential | numberToPrecision
+  /-- The Set methods of ES2025 (§24.2.4: 0 `union`, 1 `intersection`, 2 `difference`,
+  3 `symmetricDifference`, 4 `isSubsetOf`, 5 `isSupersetOf`, 6 `isDisjointFrom`), and
+  `Proxy.revocable` with its revoke function (§28.2.2.1). -/
+  | setMethod (k : Nat) | proxyRevocable | proxyRevoke
   deriving BEq, Repr, Inhabited
 
 /-- What a running function sees. -/

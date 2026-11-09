@@ -97,7 +97,7 @@ theorem memberKinds_complete (k : MemberKind) : k ∈ memberKinds.toList := by
 def runtimeNatives : Array Native :=
   #[.asyncResume, .promiseThenableJob, .promiseReactionJob, .agenResume, .promiseResolveFn,
     .promiseRejectFn, .promiseFinallyF, .promiseFinallyR, .promiseValueThunk, .promiseThrower,
-    .promiseAllElement, .promiseSettleElement 0, .promiseSettleElement 1]
+    .promiseAllElement, .promiseSettleElement 0, .promiseSettleElement 1, .proxyRevoke]
 
 /-! ## Writing -/
 

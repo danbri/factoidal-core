@@ -4050,7 +4050,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
     | .sharedSlice | .typedArrayCtor | .typedFrom | .typedOf | .typedGetter _ | .typedMethod _ | .atomics _
     | .stringIsWellFormed | .stringToWellFormed | .dateMethod _ | .dateUTC | .dateParse
     | .iteratorCtor | .iteratorFrom | .iterLazy _ | .iterEager _ | .helperNext | .helperReturn
-    | .numberToExponential | .numberToPrecision =>
+    | .numberToExponential | .numberToPrecision | .setMethod _ | .proxyRevocable | .proxyRevoke =>
       moreNative n id thisV args newTarget
     | _ =>
       -- string methods and Math
@@ -5426,6 +5426,117 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       else
         if f < 1 || f > 100 then throwErr .range "toPrecision() argument must be between 1 and 100"
         pure (.str (NumFmt.precision neg num den f.toUInt64.toNat))
+    | .setMethod k =>
+      -- the receiver: a Set (§24.2.4, RequireInternalSlot [[SetData]])
+      let (sid, es) ← match thisV with
+        | .obj i => do
+          match (← getObj i).kind with
+          | .coll 1 es _ => pure (i, es)
+          | _ => throwErr .type "Set.prototype method called on an object that is not a Set"
+        | _ => throwErr .type "Set.prototype method called on a value that is not a Set"
+      -- GetSetRecord (§24.2.1.2)
+      if !a0.isObj then throwErr .type "Set method: the argument is not an object"
+      let rawSize ← getV n a0 "size"
+      let numSize ← toNum n rawSize
+      if numSize.isNaN then throwErr .type "Set method: the argument's size is not a number"
+      let otherSize := toIntegerOrInf numSize
+      if otherSize < 0 then throwErr .range "Set method: the argument's size is negative"
+      let has ← getV n a0 "has"
+      if !(← isCallable has) then throwErr .type "Set method: the argument's has is not a function"
+      let keys ← getV n a0 "keys"
+      if !(← isCallable keys) then throwErr .type "Set method: the argument's keys is not a function"
+      let mine : Array Value := es.filterMap (·.map (·.1))
+      let inThis (v : Value) : M Bool := do
+        match (← getObj sid).kind with
+        | .coll _ _ idx => pure (collFind idx v).isSome
+        | _ => pure false
+      let canon (v : Value) : Value := match v with | .num x => if x == 0 then .num 0 else v | _ => v
+      let otherKeys : M (Value × Value) := do
+        let it ← callV n keys a0 #[]
+        if !it.isObj then throwErr .type "Set method: keys() did not return an object"
+        pure (it, ← getV n it "next")
+      let stepKeys (it next : Value) : M (Option Value) := do
+        let r ← callV n next it #[]
+        if !r.isObj then throwErr .type "Iterator result is not an object"
+        if toBool (← getV n r "done") then pure none else pure (some (canon (← getV n r "value")))
+      let otherHas (v : Value) : M Bool := do pure (toBool (← callV n has a0 #[v]))
+      let thisSize := Float.ofNat mine.size
+      let mkSet (vs : Array Value) : M Value := do
+        let mut o : Obj := { proto := (← getObj sid).proto, kind := .coll 1 #[] {} }
+        for v in vs do o := collPut v v o
+        -- %Set.prototype%, not the receiver's
+        let sc ← getV n (.obj r.globalObj) "Set"
+        let sp ← getV n sc "prototype"
+        pure (.obj (← alloc { o with proto := if sp.isObj then sp else o.proto }))
+      match k with
+      | 0 | 3 =>
+        let (it, next) ← otherKeys
+        let mut out := mine
+        let mut removed : Array Value := #[]
+        for _ in [0:1000000000] do
+          let some v ← stepKeys it next | break
+          if k == 0 then out := out.push v
+          else if (← inThis v) then removed := removed.push v
+          else if !(out.any (sameValueZero · v)) then out := out.push v
+        mkSet (if k == 3 then out.filter (fun x => !(removed.any (sameValueZero · x))) else out)
+      | 1 | 2 =>
+        if thisSize ≤ otherSize then
+          let mut out := #[]
+          for v in mine do
+            let h ← otherHas v
+            if (k == 1 && h) || (k == 2 && !h) then out := out.push v
+          mkSet out
+        else
+          let (it, next) ← otherKeys
+          let mut hit : Array Value := #[]
+          for _ in [0:1000000000] do
+            let some v ← stepKeys it next | break
+            if (← inThis v) then hit := hit.push v
+          if k == 1 then mkSet (mine.filter fun x => hit.any (sameValueZero · x))
+          else mkSet (mine.filter fun x => !(hit.any (sameValueZero · x)))
+      | 4 =>
+        if thisSize > otherSize then return .bool false
+        for v in mine do
+          if !(← otherHas v) then return .bool false
+        pure (.bool true)
+      | 5 =>
+        if thisSize < otherSize then return .bool false
+        let (it, next) ← otherKeys
+        for _ in [0:1000000000] do
+          let some v ← stepKeys it next | break
+          if !(← inThis v) then
+            iterClose n it
+            return .bool false
+        pure (.bool true)
+      | _ =>
+        if thisSize ≤ otherSize then
+          for v in mine do
+            if (← otherHas v) then return .bool false
+          pure (.bool true)
+        else
+          let (it, next) ← otherKeys
+          for _ in [0:1000000000] do
+            let some v ← stepKeys it next | break
+            if (← inThis v) then
+              iterClose n it
+              return .bool false
+          pure (.bool true)
+    | .proxyRevocable =>
+      if !a0.isObj || !a1.isObj then throwErr .type "Cannot create proxy with a non-object as target or handler"
+      let p ← alloc { proto := .null, kind := .proxy a0 a1, extensible := true }
+      let rv ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn .proxyRevoke) .undef #[.obj p] }
+      defineOwn rv "length" (.data (.num 0) false false true)
+      defineOwn rv "name" (.data (.str "") false false true)
+      let o ← newObject
+      defineOwn o "proxy" (.data (.obj p) true true true)
+      defineOwn o "revoke" (.data (.obj rv) true true true)
+      pure (.obj o)
+    | .proxyRevoke =>
+      if let .obj p := a0 then
+        modifyObj p fun o => match o.kind with
+          | .proxy t _ => { o with kind := .proxy t .null }
+          | _ => o
+      pure .undef
     | .dateUTC =>
       let mut xs : Array Float := #[]
       for i in [0:min 7 args.size] do xs := xs.push (← toNum n args[i]!)
@@ -5680,6 +5791,10 @@ def initRealm : M Unit := do
       method p "get" .mapGet 1
       method p "set" .mapSet 2
     else method p "add" .setAdd 1
+    if k == 1 then
+      for (nm, j) in [("union", 0), ("intersection", 1), ("difference", 2), ("symmetricDifference", 3),
+          ("isSubsetOf", 4), ("isSupersetOf", 5), ("isDisjointFrom", 6)] do
+        method p nm (.setMethod j) 1
     method p "has" .mapHas 1
     method p "delete" .mapDelete 1
     if k < 2 then
@@ -5844,7 +5959,9 @@ def initRealm : M Unit := do
   method sp "matchAll" .stringMatchAll 1
   method sp "search" .stringSearch 1
   -- Proxy (§28.2)
-  setHidden g "Proxy" (← mkNative .proxyCtor "Proxy" 2)
+  let proxyC ← mkNative .proxyCtor "Proxy" 2
+  setHidden g "Proxy" proxyC
+  if let .obj pc := proxyC then method pc "revocable" .proxyRevocable 2
   -- ArrayBuffer (§25.1) and the typed arrays (§23.2)
   let bufferProto ← mk
   modify fun h => { h with realm := { h.realm with bufferProto } }
