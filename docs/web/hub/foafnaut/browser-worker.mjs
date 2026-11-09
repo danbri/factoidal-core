@@ -377,7 +377,7 @@ function settingsSource(source){
   // The page script rows, as Lean makes them for the setting (scriptChoices); an engine
   // from before the op keeps the static links.
   const open='<!--foafnaut:scripts-->',close='<!--/foafnaut:scripts-->',i=source.indexOf(open),j=source.indexOf(close);
-  if(planOp&&i>=0&&j>i)try{source=source.slice(0,i+open.length)+call('',{op:'scriptChoices',setting:scriptSetting,host:'hub'}).html+source.slice(j);}catch{planOp=false;}
+  if(planOp&&i>=0&&j>i)try{source=source.slice(0,i+open.length)+call('',{op:'scriptChoices',setting:scriptSetting,host:scriptHost}).html+source.slice(j);}catch{planOp=false;}
   // The default encoding section, as Lean makes it for the setting and the browser's language;
   // an engine from before the op keeps the static links.
   const eOpen='<!--foafnaut:encoding-->',eClose='<!--/foafnaut:encoding-->',ei=source.indexOf(eOpen),ej=source.indexOf(eClose);
@@ -492,17 +492,19 @@ async function pageImageBytes(wanted){
 // the engine runtime by factoidal-builds) loads; otherwise the page shows without its scripts, as before. An
 // older engine answers "unknown document operation" (no new export is called, issue 1274).
 let engineScripts,scriptOps=[],scriptEngines=[],quickjsLoaded=false;
-// The page script setting (WebRenderScript.plan): "" is Lean's default for the Hub
-// (QuickJS-NG, translated to this browser's WebAssembly). Lean says what a setting means; an
-// engine from before the op (probed once) runs QuickJS-NG, as before.
+// The page script setting (WebRenderScript.plan): "" is Lean's default, BubblePopJS, as in the
+// app (the host name Lean's default is asked for: `scriptHost`). A saved setting is kept.
+// Lean says what a setting means; an engine from before the op (probed once) runs QuickJS-NG.
 let scriptSetting='',planOp=true;
+const scriptHost='native';
 function planFor(setting,scripts,unavailable=''){
-  if(planOp)try{return call('',{op:'scriptPlan',setting,scripts,host:'hub',...(unavailable?{unavailable}:{})});}catch{planOp=false;}
+  if(planOp)try{return call('',{op:'scriptPlan',setting,scripts,host:scriptHost,...(unavailable?{unavailable}:{})});}catch{planOp=false;}
   return {engine:'quickjs',name:'QuickJS-NG',run:scripts>0&&!unavailable,marker:'',notice:unavailable};
 }
 // The chrome marker of the page's scripts: the engine that runs them, else what the setting says.
 function scriptMarker(){
   if(!doc?.scripted||!planOp)return {};
+  if(doc.scriptStopped)return {script:'JS STOPPED'};
   const marker=planFor(doc.script?.engine??doc.scriptEngine??scriptSetting,1).marker;
   return marker?{script:marker}:{};
 }
@@ -514,18 +516,27 @@ function scriptMarker(){
 // loop stay Lean's. This code only copies bytes and calls what Lean names. Without aot in
 // the info, or when the module does not compile, the guest runs in WasmVM as before.
 let aot,guest;
+let scriptInfo;
 async function hasScripts(){
   if(engineScripts!==undefined)return engineScripts;
   engineScripts=false;
-  let info;
-  try{info=call('',{op:'scriptSession',action:'info'});scriptOps=info.ops??[];if(!scriptOps.includes('start'))return false;}catch{return false;}
-  scriptEngines=info.engines??['quickjs'];
+  try{scriptInfo=call('',{op:'scriptSession',action:'info'});scriptOps=scriptInfo.ops??[];if(!scriptOps.includes('start'))return false;}catch{return false;}
+  scriptEngines=scriptInfo.engines??['quickjs'];
+  engineScripts=true;
+  // An engine with scriptSession takes the five arguments of the bytes call.
+  fontBytesTakeFallback=true;
+  return true;
+}
+// The QuickJS-NG guest: fetched and translated only when a page is to run on it, so a page on
+// BubblePopJS (the default) pays nothing for it.
+let guestLoading;
+function loadGuest(){return guestLoading??=loadGuestOnce();}
+async function loadGuestOnce(){
+  const info=scriptInfo;
   try{
     const response=await fetch(new URL('../wasm-guests/qjs-wasmvm.wasm',import.meta.url));
-    if(!response.ok)return false;
+    if(!response.ok)return;
     const bytes=new Uint8Array(await response.arrayBuffer());
-    // An engine with scriptSession takes the five arguments of the bytes call.
-    fontBytesTakeFallback=true;
     if(info.aot===true&&typeof module._web_document_call_bin==='function'){
       try{
         fontLoad(bytes,'guest:quickjs-aot','',false);
@@ -535,19 +546,17 @@ async function hasScripts(){
     }
     if(!aot)fontLoad(bytes,'guest:quickjs','',false);
     scriptStats.path=aot?'aot':'wasmvm';
-    engineScripts=true;quickjsLoaded=true;
-  }catch(error){console.warn('foafnaut: page scripts off:',String(error.message??error));}
-  return engineScripts;
+    quickjsLoaded=true;
+  }catch(error){console.warn('foafnaut: the QuickJS-NG guest did not load:',String(error.message??error));}
 }
 function startPendingScripts(page){
   if(!page?.pendingScripts)return;
-  // Loading the QuickJS guest into WasmVM (the first scripted page only) and the start turn
-  // both come after the frame.
+  // The start turn (and the QuickJS guest, when a page runs on it) come after the frame.
   setTimeout(async()=>{
     if(doc!==page||!page.pendingScripts)return;
     const scripts=page.pendingScripts;page.pendingScripts=undefined;
     try{if(await hasScripts()&&doc===page)await startScripts(page,scripts);}
-    catch(error){console.warn('foafnaut: page scripts did not start:',String(error.message??error));}
+    catch(error){scriptFailed(page,error,'start');}
   },120);
 }
 // A request answered as bytes: the JSON head and its raw sections (WebDocument.packAnswer).
@@ -617,7 +626,29 @@ function drive(answer){
   return answer;
 }
 // One scriptSession action: the call, then what it asks of the guest (AOT); timed for the stats.
+// A trap in the script engine (the browser's WebAssembly stack ran out, or a Wasm trap): the
+// page already drawn stays, its scripts stop, and its console says why. A saved stack pointer
+// is put back so the engine's own stack does not stay down after the trap (an engine built
+// before stackRestore: after two traps scripts stay off until the page is reloaded). Scripts
+// never move to the other engine.
+const runtimeFunction=name=>{const d=Object.getOwnPropertyDescriptor(module,name);return typeof d?.value==='function'?d.value:undefined;};
+let scriptStackTop,scriptTraps=0;
+function scriptFailed(page,error,what){
+  const message=String(error?.message??error);
+  if(!(error instanceof WebAssembly.RuntimeError||error instanceof RangeError)){console.warn(`foafnaut: page script ${what}:`,message);return;}
+  const restore=runtimeFunction('stackRestore');
+  if(restore&&scriptStackTop!==undefined)restore(scriptStackTop);
+  scriptTraps++;
+  console.error(`foafnaut: page scripts stopped (${what}):`,message);
+  if(!page)return;
+  page.script=undefined;page.pendingScripts=undefined;page.scriptStopped=true;
+  addEntries(page,[{source:'System',severity:'error',feature:'script',where:page.url,
+    message:`Page scripts stopped: the script engine failed (${message}). The page stays as it was drawn.`,action:'scripts stopped'}]);
+  if(page===doc)request();
+}
 function scriptCall(source,request){
+  if(!runtimeFunction('stackRestore')&&scriptTraps>=2)throw Error('page scripts are off after two engine failures; reload the page');
+  scriptStackTop??=runtimeFunction('stackSave')?.();
   const t0=performance.now();let answer;
   try{answer=drive(call(source,request));}catch(error){scriptStats.error=String(error.message??error);throw error;}
   scriptStats.turns++;scriptStats.lastMs=Math.round((performance.now()-t0)*100)/100;scriptStats.ms+=scriptStats.lastMs;
@@ -638,6 +669,7 @@ async function startScripts(page,scripts){
   const layout={url:page.url,...(page.liberal?{liberal:true}:{}),...(page.images?{images:page.images}:{}),...(page.heldImages?{heldImages:page.heldImages}:{}),textScalePercent:percent};
   // The setting: Lean's plan says which engine runs the page, or why none does.
   let plan=planFor(scriptSetting,1);
+  if(plan.run&&plan.engine==='quickjs')await loadGuest();
   if(plan.run&&!scriptEngines.includes(plan.engine))plan=planFor(scriptSetting,1,`this engine has no ${plan.name}`);
   else if(plan.run&&plan.engine==='quickjs'&&!quickjsLoaded)plan=planFor(scriptSetting,1,'the QuickJS-NG guest module did not load');
   page.scriptEngine=plan.engine;
@@ -722,14 +754,14 @@ setInterval(()=>{
   // 100 ms past the page's own clock per advance, and the epoch slips by the rest.
   if(elapsed-script.turn.clock>100){script.epoch+=elapsed-script.turn.clock-100;elapsed=script.turn.clock+100;}
   try{scriptTurn(doc,scriptCall('',{op:'scriptSession',action:'advance',session:script.session,ms:Math.max(0,Math.ceil(elapsed-script.turn.clock))}));}
-  catch(error){console.warn('foafnaut: page script timers:',String(error.message??error));script.turn.nextWake=null;}
+  catch(error){scriptFailed(doc,error,'timers');script.turn.nextWake=null;}
 },16);
 function scriptClick(x,y){
   const script=doc?.script;if(!script)return;
   try{
     const node=call(doc.source,{op:'nodeAt',url:doc.url,textScalePercent:percent,shell:shell(),...(doc.commands?{commands:doc.commands}:{}),x,y},width,height).node;
     if(typeof node==='number')scriptTurn(doc,scriptCall('',{op:'scriptSession',action:'click',session:script.session,node}));
-  }catch(error){console.warn('foafnaut: page script click:',String(error.message??error));}
+  }catch(error){scriptFailed(doc,error,'click');}
 }
 // Pointer input for page scripts: Lean finds the target and its coordinates (nodeAt), then
 // dispatches pointer and mouse events, a click on release, at most one move in a frame
@@ -743,12 +775,12 @@ function scriptPointer(kind,x,y,pointerType){
     const down=kind==='down'||kind==='move';
     scriptTurn(doc,scriptCall('',{op:'scriptSession',action:'pointer',session:script.session,kind,...at,button:0,buttons:down?1:0,
       pressure:down?0.5:0,pointerType:pointerType??'mouse'}));
-  }catch(error){console.warn('foafnaut: page script pointer:',String(error.message??error));}
+  }catch(error){scriptFailed(doc,error,'pointer');}
 }
 function scriptResize(){
   const script=doc?.script;if(!script||!scriptOps.includes('resize'))return;
   try{scriptTurn(doc,scriptCall('',{op:'scriptSession',action:'resize',session:script.session,width,height,shell:shell()}));}
-  catch(error){console.warn('foafnaut: page script resize:',String(error.message??error));}
+  catch(error){scriptFailed(doc,error,'resize');}
 }
 // foafnaut:wasm (issue 1244): WebAssembly run by WasmVM, the engine written in Lean, inside this
 // Lean engine. The host browser's WebAssembly never runs the module: the page only fetches its

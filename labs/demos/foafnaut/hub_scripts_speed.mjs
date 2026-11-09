@@ -6,9 +6,9 @@
 // the rest from the live site.
 //
 // Each case runs in each mode of --modes (default aot,wasmvm): `aot` (the worker of this
-// checkout), `wasmvm` (the same worker served with the AOT probe answered false, so the same
-// engine runs the guest in WasmVM) and `bubblepop` (the worker with the page script setting
-// BubblePopJS, the JavaScript engine written in Lean, compiled into the engine's Wasm).
+// checkout, pinned to QuickJS-NG), `wasmvm` (the same, with the AOT probe answered false, so the
+// same engine runs the guest in WasmVM) and `bubblepop` (the worker with no setting: the Hub's
+// default, BubblePopJS, the JavaScript engine written in Lean).
 //
 // - page start: the start turn of a page whose script writes one text node, the worker's first;
 // - fib(24) in QuickJS: the start turn of a page whose script computes fib(24);
@@ -52,7 +52,8 @@ async function get(p){
   if(p===hub+'browser-worker.mjs'){
     let text=fs.readFileSync(path.join(hubDir,'browser-worker.mjs'),'utf8');
     if(mode==='wasmvm'){const probe='info.aot===true';if(!text.includes(probe))throw Error('no AOT probe in the worker');text=text.replace(probe,'false');}
-    if(mode==='bubblepop'){const setting="let scriptSetting=''";if(!text.includes(setting))throw Error('no script setting in the worker');text=text.replace(setting,"let scriptSetting='bubblepop'");}
+    // aot and wasmvm pin QuickJS-NG; bubblepop runs the Hub's default, BubblePopJS.
+    if(mode!=='bubblepop'){const setting="let scriptSetting=''";if(!text.includes(setting))throw Error('no script setting in the worker');text=text.replace(setting,"let scriptSetting='quickjs'");}
     return {status:200,type:'text/javascript',body:Buffer.from(text)};
   }
   if(p.startsWith(hub)&&p.endsWith('.mjs')&&(f=local(hubDir,p.slice(hub.length))))return {status:200,type:typeOf(f),body:fs.readFileSync(f)};
@@ -109,7 +110,9 @@ try{
     let st0=await until(page,s=>s.turns>=1&&s.startMs!==undefined,240000);
     // The time from navigation to the first frame the Hub shows: boot, the first script turn, a draw.
     const firstFrameMs=await page.evaluate('Math.round(window.__frames[0]?.t??0)');
-    results[m].start={engine:st0?.engine,path:st0?.path,startMs:st0?.startMs,firstFrameMs};
+    // And to the first frame after the page's script has run: boot, guest (QuickJS-NG only), start turn.
+    const scriptDoneMs=await page.evaluate('Math.round(window.__frames.find(f=>(f.scripts?.turns??0)>=1)?.t??0)');
+    results[m].start={engine:st0?.engine,path:st0?.path,startMs:st0?.startMs,firstFrameMs,scriptDoneMs};
     console.error(m,'start',JSON.stringify(results[m].start));
     await page.close();
     // fib(24): the start turn.

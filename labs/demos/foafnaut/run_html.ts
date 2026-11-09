@@ -227,9 +227,9 @@ async function main() {
     if(planOp)try{return await scriptCall("scriptPlan",{setting,scripts:1,host:scriptHostKind(),...(unavailable?{unavailable}:{})}) as ScriptPlan;}catch{planOp=false;}
     return {engine:"quickjs",name:"QuickJS-NG",run:!unavailable,marker:"",notice:unavailable};
   };
-  // The host Lean's plan is for: "native" when the native library runs the scripts (in the
-  // worker), else "wasm" (the engine's WebAssembly build).
-  const scriptHostKind=()=>worker&&nativeEngine?"native":"wasm";
+  // The host name Lean's default engine is asked for: "native", for the native library and for
+  // the engine's WebAssembly build alike (BubblePopJS is the default on both).
+  const scriptHostKind=()=>"native";
   const keepPlans=async()=>{for(const setting of ["","bubblepop","quickjs","none"])plans.set(setting,await askPlan(setting));};
   const planFor=(setting:string)=>plans.get(setting)??plans.get("");
   // The real time at which each session's virtual clock was 0.

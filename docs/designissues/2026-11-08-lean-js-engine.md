@@ -522,7 +522,9 @@ A script that loops until its budget ends is slower: the budget is 5 M steps
 at each step (`dom/events/Event-timestamp-safe-resolution.html`) spends minutes on it, where
 QuickJS's 4 G instructions take 40 s. The heap has no collector yet (section 8).
 
-**The defaults.** Native hosts (`run_html.ts`, the desktop app) run BubblePopJS by default
+**The defaults.** Since 2026-11-09 (section 17) BubblePopJS is the default in the app and on
+the Hub, and QuickJS-NG is a choice in Settings. Before that: native hosts (`run_html.ts`, the
+desktop app) ran BubblePopJS by default
 (`WebRenderScript.defaultEngine "native"`): it passes the scripted-page tests, gives the
 demo pages the same commands as QuickJS, and is faster there. The Hub keeps QuickJS-NG:
 it runs there translated to the browser's WebAssembly (36 to 216 times faster than
@@ -705,8 +707,10 @@ ISO-2022-JP decoder subtests that build strings by code unit, SharedArrayBuffer 
 ## 17. BubblePopJS in the Foafnaut Wasm build (2026-11-09)
 
 The crash that kept it out, and its fix, are in `2026-11-09-wasm32-nat-literals.md`. Our own
-block (`hostRefusal`) is removed: BubblePopJS is a choice in Settings on the Hub. The Hub's
-default stays QuickJS-NG.
+block (`hostRefusal`) is removed. BubblePopJS is the default in the app and on the Hub (the
+owner's decision of 2026-11-09, after the timings below), and QuickJS-NG is a choice in
+Settings. The Hub worker and `run_html.ts` ask Lean's default for the host `native`, and the
+QuickJS-NG guest is fetched and translated only when a page is to run on it.
 
 **The stack.** The prelude's run needs less than a 1 MB shadow stack
 (`-sSTACK_OVERFLOW_CHECK=2`). What limits depth is the browser's own WebAssembly stack, which
@@ -750,3 +754,20 @@ page from 118-202 ms to 81-100 ms in Deno (three runs each), and in Chrome the s
 about 82 ms to 66 ms (one run). While QuickJS-NG is the Hub's default, a cost for every visitor
 that helps only those who choose BubblePopJS is not worth it; if BubblePopJS becomes the
 default, it is.
+
+**With BubblePopJS as the Hub default** (`hub_scripts_speed.mjs`, headless Chrome, build of main
+of 2026-11-09, two runs, first page of a tab): the guest is fetched only for QuickJS-NG, so a
+page on BubblePopJS does not fetch or translate the 1.25 MB guest. The first frame is about the
+same (1,307 and 1,381 ms on BubblePopJS, 1,478 and 1,427 ms pinned to QuickJS-NG, because the
+guest loaded after the first frame already). The first frame after the page's script has run
+comes earlier: 1,455 and 1,522 ms on BubblePopJS against 1,936 and 1,888 ms.
+
+**A trap in BubblePopJS does not take the page down** (Hub worker, `scriptFailed`;
+`hub_script_trap_check.mjs` forces one by evaluating 200,000 nested array literals, which
+`callDepth` does not bound, so the browser's WebAssembly stack overflows). The page stays as
+drawn, its scripts stop, the chrome says `JS STOPPED`, the console tab has a System entry, and
+the engine still runs the next page's scripts (the shadow stack is put back with
+`stackRestore`, a runtime method the build now exports; in a build without it, scripts stay off
+after two traps until a reload). Scripts never move to QuickJS-NG on a failure. The page's
+heap inside the Lean runtime may leak what the trapped turn had allocated.
+

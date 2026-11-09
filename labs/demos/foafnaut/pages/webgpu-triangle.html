@@ -12,7 +12,7 @@ code{color:#7a3e12}
 </style></head><body><main>
 <p><a href="index.html">Demo index</a></p>
 <h1>WebGPU triangle, checked by Lean</h1>
-<p>This page's script draws a spinning triangle with <code>navigator.gpu</code>. The script runs inside the Lean engine: in BubblePopJS in the desktop app, in QuickJS-NG in the Lean Wasm VM on the Hub.
+<p>This page's script draws a spinning triangle with <code>navigator.gpu</code>. The script runs inside the Lean engine: in BubblePopJS in the app and on the Hub.
 Each WebGPU call is a typed command that Lean checks before the GPU sees it: the shader is parsed and checked against a small WGSL
 subset, every array index is clamped, every buffer write and every draw is bounds-checked, and the page has a GPU memory quota.
 Lean then draws the canvas into the page.</p>

@@ -57,7 +57,7 @@
    "page": "foaf-explorer.html",
    "title": "FOAF explorer (JavaScript)",
    "handwritten": true,
-   "needs": "page scripts in foafnaut (BubblePopJS in the desktop app, QuickJS-NG in the Lean Wasm VM on the Hub): requestAnimationFrame, createElementNS, setAttribute and click events",
+   "needs": "page scripts in foafnaut (BubblePopJS in the app and on the Hub): requestAnimationFrame, createElementNS, setAttribute and click events",
    "appRefused": "does not execute scripts",
    "shows": "a FOAF graph explored by expansion: a tap brings in a person's friends; the page's own force layout (springs, repulsion, cooling) writes one transform per moved person and one path for all links per frame, and stops when it settles; ?debug shows fps and script time",
    "doesNotShow": "dragging: script events carry no pointer coordinates in foafnaut yet"
@@ -309,7 +309,7 @@
    "title": "Timers and clicks",
    "handwritten": true,
    "needs": "page scripts in the engine (scriptSession: BubblePopJS, or QuickJS-NG in WasmVM)",
-   "appRefused": "a host with no QuickJS guest module refuses a page with scripts",
+   "appRefused": "a host with no QuickJS guest module refuses a page with scripts when QuickJS-NG is chosen",
    "shows": "twelve SVG dots eased between grid, ring and bars by requestAnimationFrame, auto-played by setInterval; buttons with click listeners; centred with text-align and auto margins",
    "doesNotShow": "CSS transitions or SVG animation elements: the script moves each dot"
   },

@@ -1,5 +1,5 @@
 // The Hub with a page that draws with WebGPU (docs/designissues/2026-11-08-page-gpu.md):
-// pages/webgpu-triangle.html runs in QuickJS in WasmVM inside the engine; Lean validates each
+// pages/webgpu-triangle.html runs in the script engine of the Hub (--script-setting quickjs pins QuickJS-NG); Lean validates each
 // GPU command (L4Factoidal.PageGpu); the Hub worker replays Lean's host commands on its WebGPU
 // device (page-gpu.mjs) and blits the page canvas into the page layer at Lean's rectangle.
 // Checks, in headless Chrome with WebGPU: frames with the path "page-gpu" (no Lean layout);

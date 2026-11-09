@@ -21,8 +21,8 @@ th{background:#e8eef6}
 <h2>Page scripts today</h2>
 <p>Two engines run a page's scripts, and Settings chooses between them (Page scripts: BubblePopJS, QuickJS-NG, None). Both run the same page objects on Lean's DOM: Lean's event loop decides every callback, and every change to the page is a typed command on Lean's DOM.</p>
 <ul>
-<li><b>BubblePopJS</b>, the JavaScript engine written in Lean, compiled with the rest of the engine. The default in the desktop browser.</li>
-<li><b>QuickJS-NG</b>, compiled to WebAssembly and run by WasmVM, the WebAssembly engine written in Lean. The default on the Hub.</li>
+<li><b>BubblePopJS</b>, the JavaScript engine written in Lean, compiled with the rest of the engine. The default in the app and on the Hub.</li>
+<li><b>QuickJS-NG</b>, compiled to WebAssembly and run by WasmVM, the WebAssembly engine written in Lean. A choice in Settings.</li>
 </ul>
 <table>
 <tr><th>Measure</th><th class="num">BubblePopJS</th><th class="num">QuickJS-NG</th></tr>
@@ -52,7 +52,7 @@ th{background:#e8eef6}
 <tr><td><code>fib(24)</code>, native</td><td class="num">110–135 ms (QuickJS in WasmVM: about 1,100 to 1,800 ms; native QuickJS: 6 ms)</td></tr>
 </table>
 <p class="note">Stages: core language; destructuring, classes, iterators; generators; BigInt; Promises and async functions; async generators and private members; Map, Set, Reflect; for pages: regular expressions, Proxy, optional chaining, typed arrays, JSON.parse.</p>
-<p class="note">On the Hub, BubblePopJS is compiled to WebAssembly with the engine. It does not run there yet (its evaluator needs more stack than WebAssembly gives it), so the Hub runs QuickJS-NG.</p>
+<p class="note">On the Hub, BubblePopJS is compiled to WebAssembly with the engine and runs the page scripts by default. QuickJS-NG is a choice in Settings.</p>
 
 <h2>WebAssembly in pages</h2>
 <p>Page scripts have the WebAssembly JavaScript API on both engines: <code>WebAssembly.validate</code>, <code>compile</code>, <code>instantiate</code>, <code>Module</code>, <code>Instance</code>, <code>Memory</code> (with <code>buffer</code> and <code>grow</code>), <code>Table</code>, <code>Global</code>, <code>Tag</code>, <code>Exception</code> and the three error types. Lean decodes, validates and runs each module in WasmVM, in a store of the page's own. The browser's own WebAssembly engine runs none of them.</p>
