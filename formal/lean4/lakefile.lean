@@ -97,6 +97,10 @@ target hacl_chachapoly_shim.o pkg : FilePath :=
 
 /-- The web engine's boundary to HACL* (`L4Factoidal/Crypto/WebHacl.lean`,
 crypto.subtle of page scripts): `ffi/hacl_webcrypto.c`, over the units below. -/
+/-- RSASSA-PSS (Hacl_RSAPSS.c, vendored 2026-11-09 for crypto.subtle RSA-PSS). -/
+target Hacl_RSAPSS.o pkg : FilePath :=
+  buildHaclO pkg "Hacl_RSAPSS" (haclDir pkg / "src" / "Hacl_RSAPSS.c")
+
 target hacl_webcrypto_shim.o pkg : FilePath :=
   buildHaclO pkg "hacl_webcrypto_shim" (pkg.dir / "ffi" / "hacl_webcrypto.c")
 
@@ -201,6 +205,7 @@ extern_lib libl4hacl pkg := do
   let cpShim ← hacl_chachapoly_shim.o.fetch
   let kdfShim ← hacl_kdf_shim.o.fetch
   let webShim ← hacl_webcrypto_shim.o.fetch
+  let rsapss ← Hacl_RSAPSS.o.fetch
   let hpkeShim ← hacl_hpke_shim.o.fetch
   let aead ← Hacl_AEAD_Chacha20Poly1305.o.fetch
   let chacha ← Hacl_Chacha20.o.fetch
@@ -221,7 +226,7 @@ extern_lib libl4hacl pkg := do
   let name := nameToStaticLib "l4hacl"
   buildStaticLib (pkg.staticLibDir / name)
     (#[shim, ed, curve, sha2, p256Shim, rsaShim, p256, bn64, bn,
-      cpShim, kdfShim, hpkeShim, webShim,
+      cpShim, kdfShim, hpkeShim, webShim, rsapss,
       aead, chacha, poly, hkdf, hmac, sha1, blake2s, blake2b, memzero, hpke,
       aesShim] ++ vale)
 

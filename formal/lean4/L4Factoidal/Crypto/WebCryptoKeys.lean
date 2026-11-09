@@ -24,6 +24,8 @@ No `partial`, no `sorry`, no `axiom`.
 -/
 import L4Factoidal.Crypto.WebHacl
 import L4Factoidal.JOSE.Base64Url
+import L4Factoidal.JOSE.Pkcs1
+import L4Factoidal.Crypto.RsaOaep
 import Std.Data.HashMap
 
 namespace L4Factoidal.Crypto.WebCryptoKeys
@@ -91,12 +93,15 @@ def KeyType.name : KeyType → String
 /-- The algorithms this engine has keys for. AES and RSA are not here: HACL* has no
 portable AES (record, "What stays off"), and RSA keys are future work. -/
 inductive Alg where
-  | hmac | hkdf | pbkdf2 | ecdsa | ecdh | ed25519 | x25519 | chacha
+  | hmac | hkdf | pbkdf2 | ecdsa | ecdh | ed25519 | x25519 | chacha | rsaPkcs1 | rsaPss | rsaOaep
   deriving DecidableEq, Repr, Inhabited
 
 def Alg.name : Alg → String
   | .hmac => "HMAC" | .hkdf => "HKDF" | .pbkdf2 => "PBKDF2" | .ecdsa => "ECDSA" | .ecdh => "ECDH"
   | .ed25519 => "Ed25519" | .x25519 => "X25519" | .chacha => "ChaCha20-Poly1305"
+  | .rsaPkcs1 => "RSASSA-PKCS1-v1_5" | .rsaPss => "RSA-PSS" | .rsaOaep => "RSA-OAEP"
+
+def Alg.isRsa (a : Alg) : Bool := a == .rsaPkcs1 || a == .rsaPss || a == .rsaOaep
 
 /-- A key's `[[algorithm]]`. -/
 structure KeyAlgo where
@@ -106,7 +111,26 @@ structure KeyAlgo where
   length : Nat := 0
   /-- ECDSA, ECDH: the named curve (only "P-256" makes keys here). -/
   curve : String := ""
+  /-- RSA: the modulus length in bits and the public exponent (big-endian). -/
+  modulusLength : Nat := 0
+  publicExponent : ByteArray := ByteArray.empty
   deriving Inhabited
+
+/-- The parts of an RSA key (RFC 8017 §3), big-endian with no leading zero octet: `n` and
+`e` always; the private parts empty in a public key. -/
+structure RsaParts where
+  n : ByteArray
+  e : ByteArray
+  d : ByteArray := ByteArray.empty
+  p : ByteArray := ByteArray.empty
+  q : ByteArray := ByteArray.empty
+  dp : ByteArray := ByteArray.empty
+  dq : ByteArray := ByteArray.empty
+  qi : ByteArray := ByteArray.empty
+  deriving Inhabited
+
+/-- The public half of RSA parts. -/
+def RsaParts.public (r : RsaParts) : RsaParts := { n := r.n, e := r.e }
 
 structure Key where
   type : KeyType
@@ -118,6 +142,8 @@ structure Key where
   material : ByteArray
   /-- private: the public key of the pair (P-256 `x ‖ y`; OKP 32 bytes). -/
   pub : ByteArray := ByteArray.empty
+  /-- RSA keys: their parts (`material` is then `d`, or `n` for a public key). -/
+  rsa : Option RsaParts := none
   deriving Inhabited
 
 /-- The usages a key of this algorithm and type may have (§23-§34, and the modern
@@ -130,6 +156,10 @@ def allowedUsages : Alg → KeyType → List Usage
   | .ecdh, .privateKey | .x25519, .privateKey => [.deriveKey, .deriveBits]
   | .ecdh, _ | .x25519, _ => []
   | .chacha, _ => [.encrypt, .decrypt, .wrapKey, .unwrapKey]
+  | .rsaPkcs1, .privateKey | .rsaPss, .privateKey => [.sign]
+  | .rsaPkcs1, _ | .rsaPss, _ => [.verify]
+  | .rsaOaep, .privateKey => [.decrypt, .unwrapKey]
+  | .rsaOaep, _ => [.encrypt, .wrapKey]
 
 /-- The usage check of every import and generate step: SyntaxError when a usage is not
 the algorithm's. -/
@@ -206,10 +236,16 @@ def normalizeSpec (op name : String) : Res (String × List String) :=
     | "deriveBits", "PBKDF2" => r ["hash:h!", "iterations:l!", "salt:b!"]
     | "deriveBits", "ECDH" | "deriveBits", "X25519" => r ["public:k!"]
     | "encrypt", "ChaCha20-Poly1305" | "decrypt", "ChaCha20-Poly1305" => r ["additionalData:b", "iv:b!", "tagLength:o"]
+    | "generateKey", "RSASSA-PKCS1-v1_5" | "generateKey", "RSA-PSS" | "generateKey", "RSA-OAEP" =>
+      r ["modulusLength:l!", "publicExponent:n!", "hash:h!"]
+    | "importKey", "RSASSA-PKCS1-v1_5" | "importKey", "RSA-PSS" | "importKey", "RSA-OAEP" => r ["hash:h!"]
+    | "sign", "RSASSA-PKCS1-v1_5" | "verify", "RSASSA-PKCS1-v1_5" => r []
+    | "sign", "RSA-PSS" | "verify", "RSA-PSS" => r ["saltLength:l!"]
+    | "encrypt", "RSA-OAEP" | "decrypt", "RSA-OAEP" => r ["label:b"]
     | _, _ => .error .notSupported
 
 def algOf? (name : String) : Option Alg :=
-  [Alg.hmac, .hkdf, .pbkdf2, .ecdsa, .ecdh, .ed25519, .x25519, .chacha].find? (·.name == name)
+  [Alg.hmac, .hkdf, .pbkdf2, .ecdsa, .ecdh, .ed25519, .x25519, .chacha, .rsaPkcs1, .rsaPss, .rsaOaep].find? (·.name == name)
 
 /-! ## The store -/
 
@@ -417,6 +453,7 @@ structure Made where
   algo : KeyAlgo
   material : ByteArray
   pub : ByteArray := ByteArray.empty
+  rsa : Option RsaParts := none
 
 def okpOid : Alg → List UInt8
   | .ed25519 => oidEd25519 | _ => oidX25519
@@ -605,6 +642,114 @@ def importSecret (alg : Alg) (format : String) (data : ByteArray) (j : Args) (p 
     return { type := .secret, algo := { alg }, material := raw }
   | _ => throw .notSupported
 
+/-! ## RSA keys (RFC 8017 Appendix A.1, RFC 5280 §4.1, RFC 7518 §6.3) -/
+
+def oidRsaEncryption : List UInt8 := [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01]
+
+/-- A DER INTEGER's contents as a non-negative number: big-endian, no leading zero
+octet. `none` for a negative or non-minimal encoding (X.690 §8.3.2). -/
+def readUInt (c : List UInt8) : Option ByteArray :=
+  match c with
+  | [] => none
+  | 0 :: [] => some ByteArray.empty
+  | 0 :: b :: rest => if b < 0x80 then none else some (ByteArray.mk (b :: rest).toArray)
+  | b :: rest => if b ≥ 0x80 then none else some (ByteArray.mk (b :: rest).toArray)
+
+/-- The DER INTEGER contents of a non-negative big-endian number. -/
+def uintContents (b : ByteArray) : List UInt8 :=
+  match b.toList.dropWhile (· == 0) with
+  | [] => [0]
+  | x :: rest => if x ≥ 0x80 then 0 :: x :: rest else x :: rest
+
+def derUInt (b : ByteArray) : List UInt8 := tlv 0x02 (uintContents b)
+
+def stripZeros (b : ByteArray) : ByteArray := ByteArray.mk (b.toList.dropWhile (· == 0)).toArray
+
+/-- Bit length of a big-endian number. -/
+def bitLength (b : ByteArray) : Nat :=
+  match b.toList.dropWhile (· == 0) with
+  | [] => 0
+  | x :: rest => rest.length * 8 + (Nat.log2 x.toNat + 1)
+
+/-- A sequence of DER INTEGERs filling `c` exactly. -/
+def readUInts (c : List UInt8) (n : Nat) : Option (List ByteArray) := Id.run do
+  let mut rest := c
+  let mut out : Array ByteArray := #[]
+  for _ in [0:n] do
+    match expect 0x02 rest with
+    | some (v, r) =>
+      match readUInt v with
+      | some x => out := out.push x; rest := r
+      | none => return none
+    | none => return none
+  if rest.isEmpty then return some out.toList else return none
+
+def rsaPublicDer (r : RsaParts) : List UInt8 := tlv 0x30 (derUInt r.n ++ derUInt r.e)
+
+def rsaPrivateDer (r : RsaParts) : List UInt8 :=
+  tlv 0x30 (tlv 0x02 [0] ++ derUInt r.n ++ derUInt r.e ++ derUInt r.d ++ derUInt r.p ++ derUInt r.q ++
+    derUInt r.dp ++ derUInt r.dq ++ derUInt r.qi)
+
+/-- The RSA keys this engine can use: moduli of 1024 to 4096 bits whose octets fill
+whole 64-bit limbs (HACL*'s Hacl_Bignum64), and an odd public exponent above 1. -/
+def rsaUsable (r : RsaParts) : Bool :=
+  r.n.size % 8 == 0 && 128 ≤ r.n.size && r.n.size ≤ 512 && r.n.size > 0 && r.n.get! (r.n.size - 1) % 2 == 1 &&
+    r.e.size > 0 && r.e.size ≤ r.n.size && r.e.get! (r.e.size - 1) % 2 == 1 && bitLength r.e > 1
+
+def rsaJwkAlg (alg : Alg) (h : HashAlg) : String :=
+  match alg, h with
+  | .rsaPkcs1, .sha1 => "RS1" | .rsaPkcs1, .sha256 => "RS256" | .rsaPkcs1, .sha384 => "RS384"
+  | .rsaPkcs1, .sha512 => "RS512"
+  | .rsaPss, .sha1 => "PS1" | .rsaPss, .sha256 => "PS256" | .rsaPss, .sha384 => "PS384" | .rsaPss, .sha512 => "PS512"
+  | _, .sha1 => "RSA-OAEP" | _, .sha256 => "RSA-OAEP-256" | _, .sha384 => "RSA-OAEP-384" | _, .sha512 => "RSA-OAEP-512"
+
+/-- RSASSA-PKCS1-v1_5, RSA-PSS, RSA-OAEP "import key" (§20.8, §21.8, §22.8). -/
+def importRsa (alg : Alg) (format : String) (data : ByteArray) (j : Args) (p : Args) (us : List Usage)
+    (extractable : Bool) : Res Made := do
+  let pubU := allowedUsages alg .publicKey
+  let privU := allowedUsages alg .privateKey
+  let some h := (p.str? "hash").bind HashAlg.ofName? | throw .notSupported
+  let made := fun (t : KeyType) (r : RsaParts) => do
+    if !rsaUsable r then throw .data
+    -- HACL*'s PSS is SHA-2 only.
+    if alg == .rsaPss && h == .sha1 then throw .notSupported
+    let algo : KeyAlgo := { alg, hash := some h, modulusLength := bitLength r.n, publicExponent := r.e }
+    pure ({ type := t, algo, material := if t == .privateKey then r.d else r.n, rsa := some r } : Made)
+  match format with
+  | "spki" =>
+    checkUsages pubU us
+    let some (oid, params, key) := readSpki data.toList | throw .data
+    if oid != oidRsaEncryption then throw .data
+    if let some ps := params then if ps != [0x05, 0x00] then throw .data
+    let some (seq, []) := expect 0x30 key | throw .data
+    let some [n, e] := readUInts seq 2 | throw .data
+    made .publicKey { n, e }
+  | "pkcs8" =>
+    checkUsages privU us
+    let some (oid, params, pk) := readPkcs8 data.toList | throw .data
+    if oid != oidRsaEncryption then throw .data
+    if let some ps := params then if ps != [0x05, 0x00] then throw .data
+    let some (seq, []) := expect 0x30 pk | throw .data
+    let some [v, n, e, d, p', q, dp, dq, qi] := readUInts seq 9 | throw .data
+    if v.size != 0 then throw .data
+    made .privateKey { n, e, d, p := p', q, dp, dq, qi }
+  | "jwk" =>
+    let hasD := j.has "d"
+    checkUsages (if hasD then privU else pubU) us
+    if j.str? "kty" != some "RSA" then throw .data
+    if let some a := j.str? "alg" then
+      if a != rsaJwkAlg alg h then throw .data
+    jwkCommon j us extractable (if alg == .rsaOaep then "enc" else "sig")
+    let b := fun (k : String) => match (j.str? k).bind unb64? with
+      | some x => Except.ok (stripZeros x) | none => Except.error Err.data
+    let n ← b "n"
+    let e ← b "e"
+    if hasD then
+      if j.has "oth" then throw .notSupported
+      made .privateKey { n, e, d := ← b "d", p := ← b "p", q := ← b "q", dp := ← b "dp", dq := ← b "dq", qi := ← b "qi" }
+    else made .publicKey { n, e }
+  | _ => throw .notSupported
+
 /-- The algorithm's import steps. -/
 def importMade (algName : String) (p : Args) (format : String) (data : ByteArray) (j : Args)
     (extractable : Bool) (us : List Usage) : Res Made :=
@@ -614,13 +759,14 @@ def importMade (algName : String) (p : Args) (format : String) (data : ByteArray
     match alg with
     | .ecdsa | .ecdh => importEc alg format data j ((p.str? "namedCurve").getD "") us extractable
     | .ed25519 | .x25519 => importOkp alg format data j us extractable
+    | .rsaPkcs1 | .rsaPss | .rsaOaep => importRsa alg format data j p us extractable
     | _ => importSecret alg format data j p us extractable
 
 /-- §14.3.9 steps 10-11: a secret or private key with no usages is a SyntaxError; then
 the key takes `extractable` and the usages. -/
 def finishKey (m : Made) (extractable : Bool) (us : List Usage) : Res Key :=
   if (m.type == .secret || m.type == .privateKey) && us.isEmpty then .error .syntax
-  else .ok { type := m.type, extractable, algo := m.algo, usages := us, material := m.material, pub := m.pub }
+  else .ok { type := m.type, extractable, algo := m.algo, usages := us, material := m.material, pub := m.pub, rsa := m.rsa }
 
 /-- §14.3.9 importKey after normalization. -/
 def importKey (algName : String) (p : Args) (format : String) (data : ByteArray) (j : Args)
@@ -678,6 +824,22 @@ def exportBody (k : Key) (format : String) : Res Exported := do
     | "raw" | "raw-secret" => return .bytes k.material
     | "jwk" => return .jwk ([("kty", JwkVal.str "oct"), ("k", .str (b64 k.material)), ("alg", .str "C20P")] ++ jwkCommonOut k)
     | _ => throw .notSupported
+  | .rsaPkcs1 | .rsaPss | .rsaOaep =>
+    let r := k.rsa.getD { n := k.material, e := k.algo.publicExponent }
+    match format, k.type with
+    | "spki", .publicKey =>
+      return .bytes (ByteArray.mk (spkiOf oidRsaEncryption [0x05, 0x00] (rsaPublicDer r)).toArray)
+    | "pkcs8", .privateKey =>
+      return .bytes (ByteArray.mk (pkcs8Of oidRsaEncryption [0x05, 0x00] (rsaPrivateDer r)).toArray)
+    | "jwk", t =>
+      let base := [("kty", JwkVal.str "RSA"), ("n", .str (b64 r.n)), ("e", .str (b64 r.e))]
+      let priv := if t == .privateKey then
+          [("d", JwkVal.str (b64 r.d)), ("p", .str (b64 r.p)), ("q", .str (b64 r.q)), ("dp", .str (b64 r.dp)),
+           ("dq", .str (b64 r.dq)), ("qi", .str (b64 r.qi))] else []
+      let a := match k.algo.hash with | some h => [("alg", JwkVal.str (rsaJwkAlg alg h))] | none => []
+      return .jwk (base ++ priv ++ a ++ jwkCommonOut k)
+    | "spki", _ | "pkcs8", _ => throw .invalidAccess
+    | _, _ => throw .notSupported
   | .hkdf | .pbkdf2 => throw .notSupported
 
 /-- §14.3.10 exportKey: InvalidAccessError unless the key is extractable; only then are
@@ -734,6 +896,15 @@ def generateKey (algName : String) (p : Args) (extractable : Bool) (us : List Us
     if us.isEmpty then throw .syntax
     if rand.size < 32 then throw .operation
     return .one { type := .secret, extractable, algo := { alg }, usages := us, material := rand.extract 0 32 }
+  | .rsaPkcs1 | .rsaPss | .rsaOaep =>
+    checkUsages ((allowedUsages alg .publicKey) ++ (allowedUsages alg .privateKey)) us
+    -- §20.7 step 2 "generate an RSA key pair": an exponent other than 3 or 65537, or a
+    -- modulus length this engine could never make, fails the generation (OperationError).
+    let e := stripZeros ((p.get? "publicExponent").getD .empty)
+    let ml := (p.nat? "modulusLength").getD 0
+    if !(e.toList == [3] || e.toList == [1, 0, 1]) || ml < 1024 || ml > 4096 || ml % 64 != 0 then throw .operation
+    -- HACL* has no prime generation: a valid request is not supported here.
+    throw .notSupported
   | .ecdsa | .ecdh | .ed25519 | .x25519 =>
     checkUsages ((allowedUsages alg .publicKey) ++ (allowedUsages alg .privateKey)) us
     let curve := (p.str? "namedCurve").getD ""
@@ -765,6 +936,11 @@ does not contain …": InvalidAccessError). -/
 def keyFor (k : Key) (algName : String) (u : Usage) : Res Unit :=
   if k.algo.alg.name != algName || !k.usages.contains u then .error .invalidAccess else .ok ()
 
+/-- The DER DigestInfo prefix of EMSA-PKCS1-v1_5 (RFC 8017 §9.2 note 1). -/
+def digestInfo : HashAlg → List UInt8
+  | .sha1 => JOSE.Pkcs1.sha1DigestInfo | .sha256 => JOSE.Pkcs1.sha256DigestInfo
+  | .sha384 => JOSE.Pkcs1.sha384DigestInfo | .sha512 => JOSE.Pkcs1.sha512DigestInfo
+
 def sign (algName : String) (p : Args) (k : Key) (data : ByteArray) (rand : Rand) : Res ByteArray := do
   keyFor k algName .sign
   match k.algo.alg with
@@ -781,6 +957,19 @@ def sign (algName : String) (p : Args) (k : Key) (data : ByteArray) (rand : Rand
   | .ed25519 =>
     if k.type != .privateKey then throw .invalidAccess
     let some s := ed25519Sign? k.material data | throw .operation
+    return s
+  | .rsaPkcs1 =>
+    if k.type != .privateKey then throw .invalidAccess
+    let (some r, some h) := (k.rsa, k.algo.hash) | throw .operation
+    let some em := JOSE.Pkcs1.emsaEncodeGen (digestInfo h) h.size (hashFast h data).toList r.n.size | throw .operation
+    let some s := rsaPrivate? r.n r.d (ByteArray.mk em.toArray) | throw .operation
+    return s
+  | .rsaPss =>
+    if k.type != .privateKey then throw .invalidAccess
+    let (some r, some h) := (k.rsa, k.algo.hash) | throw .operation
+    let sl := (p.nat? "saltLength").getD 0
+    if rand.size < sl then throw .operation
+    let some s := rsaPssSign? h r.n r.e r.d (rand.extract 0 sl) data | throw .operation
     return s
   | _ => throw .invalidAccess
 
@@ -799,6 +988,19 @@ def verify (algName : String) (p : Args) (k : Key) (sig data : ByteArray) : Res 
     if k.type != .publicKey then throw .invalidAccess
     if ed25519IsSmallOrder k.material || (sig.size == 64 && ed25519IsSmallOrder (sig.extract 0 32)) then return false
     return ed25519Verify k.material data sig
+  | .rsaPkcs1 =>
+    if k.type != .publicKey then throw .invalidAccess
+    let (some r, some h) := (k.rsa, k.algo.hash) | throw .operation
+    if sig.size != r.n.size then return false
+    -- RFC 8017 §8.2.2: RSAVP1, then the encoding of the message compared at full length
+    -- (public values: the signature and the message).
+    match rsaPublic? r.n r.e sig, JOSE.Pkcs1.emsaEncodeGen (digestInfo h) h.size (hashFast h data).toList r.n.size with
+    | some em, some want => return em.toList == want
+    | _, _ => return false
+  | .rsaPss =>
+    if k.type != .publicKey then throw .invalidAccess
+    let (some r, some h) := (k.rsa, k.algo.hash) | throw .operation
+    return rsaPssVerify h r.n r.e ((p.nat? "saltLength").getD 0) sig data
   | _ => throw .invalidAccess
 
 /-- The first `bits` bits of `secret` (the ECDH and X25519 truncation). -/
@@ -852,7 +1054,8 @@ def keyLength (algName : String) (t : Args) : Res (Option Nat) := do
   | _ => throw .notSupported
 
 /-- ChaCha20-Poly1305 (modern algorithms draft, "encrypt" and "decrypt"). -/
-def crypt (enc : Bool) (algName : String) (p : Args) (k : Key) (data : ByteArray) : Res ByteArray := do
+def crypt (enc : Bool) (algName : String) (p : Args) (k : Key) (data : ByteArray) (rand : Rand := .empty) :
+    Res ByteArray := do
   keyFor k algName (if enc then .encrypt else .decrypt)
   match k.algo.alg with
   | .chacha =>
@@ -868,6 +1071,25 @@ def crypt (enc : Bool) (algName : String) (p : Args) (k : Key) (data : ByteArray
       if data.size < 16 then throw .operation
       let some m := chachaOpen? k.material iv aad data | throw .operation
       return m
+  | .rsaOaep =>
+    -- §22.3/22.4: encrypt with a public key, decrypt with a private one; EME-OAEP is Lean's
+    -- (`Crypto.RsaOaep`, with its single refusal for every decoding failure), RSAEP and
+    -- RSADP are HACL*'s.
+    let (some r, some h) := (k.rsa, k.algo.hash) | throw .operation
+    let oh : RsaOaep.OaepHash := ⟨hashFast h, h.size⟩
+    let label := ((p.get? "label").getD .empty).toList
+    if enc then
+      if k.type != .publicKey then throw .invalidAccess
+      if rand.size < h.size then throw .operation
+      let some em := RsaOaep.emeEncode oh r.n.size label data.toList (rand.extract 0 h.size).toList | throw .operation
+      let some c := rsaPublic? r.n r.e (ByteArray.mk em.toArray) | throw .operation
+      return c
+    else
+      if k.type != .privateKey then throw .invalidAccess
+      if data.size != r.n.size then throw .operation
+      let some em := rsaPrivate? r.n r.d data | throw .operation
+      let some m := RsaOaep.emeDecode oh r.n.size label em.toList | throw .operation
+      return ByteArray.mk m.toArray
   | _ => throw .invalidAccess
 
 /-! ## Theorems: extractability and the usages rules -/
@@ -883,7 +1105,7 @@ theorem exportKey_extractable {k : Key} {f : String} {e : Exported} (h : exportK
 
 /-- A key whose bytes are replaced: what an observer could not tell apart, if the API
 leaked nothing of them. -/
-def Key.blind (k : Key) : Key := { k with material := ByteArray.empty, pub := ByteArray.empty }
+def Key.blind (k : Key) : Key := { k with material := ByteArray.empty, pub := ByteArray.empty, rsa := k.rsa.map RsaParts.public }
 
 /-- Exporting a non-extractable key gives the same answer whatever its bytes: the
 InvalidAccessError, and nothing else. -/

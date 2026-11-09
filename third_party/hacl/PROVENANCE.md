@@ -245,6 +245,23 @@ Reproduce: clone `cryspen/hacl-packages`, check out
 (the `.S` files are under `vale/src/` upstream and here). `SHA256SUMS` in this
 directory lists them too (`sha256sum -c SHA256SUMS`).
 
+### RSA-PSS for crypto.subtle, 2026-11-09 — Hacl_RSAPSS
+
+For the web engine's RSA-PSS (design record
+`docs/designissues/2026-11-09-hacl-web-crypto.md`). From the SAME pinned commit
+`05c3d8fb321ed65e3db3a6a8b853019e86fb40a2`, unmodified. It uses the already vendored
+`Hacl_Bignum.c`, `Hacl_Hash_SHA2.c` and their headers. hacl-packages has no RSA-OAEP and
+no RSA key generation: OAEP is `formal/lean4/L4Factoidal/Crypto/RsaOaep.lean` over the
+bignum's modular exponentiation, and generateKey is refused.
+
+| Path | SHA-256 |
+|---|---|
+| `src/Hacl_RSAPSS.c` | `85206e0434c01594d4e473f4173e9768aac4e326afa165afda2353d77ad2de22` |
+| `include/Hacl_RSAPSS.h` | `55f42c53e249c28b588361697037373259360e757b66e2399f01b1ab993799a1` |
+
+Reproduce: clone `cryspen/hacl-packages`, check out the pinned commit, then
+`shasum -a 256` the two paths.
+
 ## How it is wired in — Lean 4 tree (`formal/lean4/`)
 
 - `ffi/hacl_ed25519.c` — Ed25519 and SHA-256 (`@[extern]` of
