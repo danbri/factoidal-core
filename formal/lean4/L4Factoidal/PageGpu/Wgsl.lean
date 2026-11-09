@@ -350,6 +350,32 @@ def glslTy? : String → Option Ty
   | "mat2" => some (.mat 2 2) | "mat3" => some (.mat 3 3) | "mat4" => some (.mat 4 4)
   | _ => none
 
+/-- GLSL ES builtins that WGSL spells differently (`glslCall`). -/
+def glslRenamed : List String := ["mod", "atan", "inversesqrt"]
+
+/-- A call of a GLSL builtin of `glslRenamed`, as WGSL: `mod(x, y)` is
+`x - y * floor(x / y)` (GLSL ES 3.00 §8.3; WGSL's `%` truncates instead); `atan(y, x)` is
+`atan2(y, x)` (`atan(y_over_x)` stays); `inversesqrt` is `inverseSqrt`. The arguments of
+`mod` are pure expressions (the subset has no calls with effects and no assignments in
+expressions), so writing them twice changes no value. -/
+def glslCall (name : String) (as : Args) : P Expr :=
+  match name, as with
+  | "mod", .cons x (.cons y .nil) =>
+    return .binary "-" x (.binary "*" y (.call (.fn "floor") (.cons (.binary "/" x y) .nil)))
+  | "mod", _ => throw "shader: mod takes two arguments"
+  | "atan", .cons y (.cons x .nil) => return .call (.fn "atan2") (.cons y (.cons x .nil))
+  | "atan", _ => return .call (.fn "atan") as
+  | _, _ => return .call (.fn "inverseSqrt") as
+
+/-- Statement words outside the subset, each with what to write instead. -/
+def notInSubset (w : String) : Option String :=
+  if ["while", "loop", "do"].contains w then
+    some s!"shader: '{w}' is not in the subset: loops are for loops with integer literal bounds, at most {maxLoop} steps"
+  else if ["break", "continue"].contains w then
+    some s!"shader: '{w}' is not in the subset: run the loop to its bound and guard the body with an if"
+  else if ["switch", "discard", "goto"].contains w then some s!"shader: '{w}' is not in the subset"
+  else none
+
 def precOf : String → Option Nat
   | "||" => some 1 | "&&" => some 2
   | "==" | "!=" | "<" | "<=" | ">" | ">=" => some 3
@@ -419,6 +445,10 @@ def primary (fuel : Nat) : P Expr :=
           if (← peekAt 1) == some (.sym "(") then
             advance; advance
             return .call (.ty t) (← args fuel)
+        -- GLSL builtins whose WGSL is another name or an expression (`glslCall`).
+        if glslRenamed.contains name && (← peekAt 1) == some (.sym "(") then
+          advance; advance
+          return ← glslCall name (← args fuel)
       if builtins.contains name then
         if (← peekAt 1) == some (.sym "(") then
           advance; advance
@@ -536,6 +566,8 @@ def stmt (fuel : Nat) : P Stmt :=
         | some (.scalar .u32), _ => Scalar.u32 | _, "u" => .u32 | _, _ => .i32
       return .forS v sc lo hi incl (← block fuel)
     -- assignment
+    if let some (.ident w) := (← peek) then
+      if let some why := notInSubset w then throw why
     let lhs ← expr (exprFuel)
     let op ← match ← peek with
       | some (.sym "=") => advance; pure ""
@@ -609,7 +641,7 @@ def moduleP : P Module := do
       advance
       let stage ← if flags.contains "vertex" then pure Stage.vertex
         else if flags.contains "fragment" then pure Stage.fragment
-        else throw "shader: only @vertex and @fragment functions"
+        else throw "shader: only @vertex and @fragment functions: functions of your own are not in the subset (write their bodies inline)"
       if !as.isEmpty then throw "shader: function attributes"
       let n ← ident; expect "("
       let ps ← members ")"
@@ -730,8 +762,30 @@ end
 
 /-! ## The subset, node by node -/
 
+/-- WGSL's keywords and reserved words (WGSL §15.1, §15.2): never names. A GLSL shader may
+use one as a name; the host's compiler would refuse the printed module, so Lean refuses
+it first, with the word (`whyNot`). -/
+def wgslReserved : List String :=
+  ["alias","break","case","const","const_assert","continue","continuing","default","diagnostic","discard",
+   "else","enable","false","fn","for","if","let","loop","override","requires","return","struct","switch",
+   "true","var","while",
+   "NULL","Self","abstract","active","alignas","alignof","as","asm","asm_fragment","async","attribute","auto",
+   "await","become","cast","catch","class","co_await","co_return","co_yield","coherent","column_major","common",
+   "compile","compile_fragment","concept","const_cast","consteval","constexpr","constinit","crate","debugger",
+   "decltype","delete","demote","demote_to_helper","do","dynamic_cast","enum","explicit","export","extends",
+   "extern","external","fallthrough","filter","final","finally","friend","from","fxgroup","get","goto",
+   "groupshared","highp","impl","implements","import","inline","instanceof","interface","layout","lowp","macro",
+   "macro_rules","match","mediump","meta","mod","module","move","mut","mutable","namespace","new","nil",
+   "noexcept","noinline","nointerpolation","non_coherent","noncoherent","noperspective","null","nullptr","of",
+   "operator","package","packoffset","partition","pass","patch","pixelfragment","precise","precision","premerge",
+   "priv","protected","pub","public","readonly","ref","regardless","register","reinterpret_cast","require",
+   "resource","restrict","self","set","shared","sizeof","smooth","snorm","static","static_assert","static_cast",
+   "std","subroutine","super","target","template","this","thread_local","throw","trait","try","type","typedef",
+   "typeid","typename","typeof","union","unless","unorm","unsafe","unsized","use","using","varying","virtual",
+   "volatile","wgsl","where","with","writeonly","yield"]
+
 def identOk (s : String) : Bool :=
-  !s.isEmpty && s.length ≤ maxIdent && !s.startsWith "__" &&
+  !s.isEmpty && s.length ≤ maxIdent && !s.startsWith "__" && !wgslReserved.contains s &&
   match s.toList with
   | c :: cs => isIdStart c && cs.all isIdChar
   | [] => false
@@ -1004,15 +1058,53 @@ def Module.print (m : Module) : String :=
   String.join (m.consts.map fun (n, t, e) => s!"const {n}{optTyPrint t} = {e.print};\n") ++
   String.join (m.fns.map Fn.print)
 
+/-- Why `validate` refuses a module: the first node, statement or declaration that is
+outside the subset, in words for the page (`finish` answers it). Only the text of a
+refusal; `validate` alone decides. -/
+def whyNot (m : Module) : String :=
+  let structs := m.structs.map (·.name)
+  if m.structs.length > maxStructs then s!"shader: more than {maxStructs} structs"
+  else if m.fns.length > maxFns then s!"shader: more than {maxFns} entry points"
+  else match m.exprs.find? (fun e => !exprNodeOk structs e) with
+  | some (.call (.fn f) _) => s!"shader: {f} is not a builtin function of the subset"
+  | some (.call (.ty (.named n)) _) =>
+    s!"shader: {n}(...) is neither a builtin function of the subset nor a struct; functions of your own are not in the subset"
+  | some (.call (.ty t) _) => s!"shader: the type {t.print} is not in the subset"
+  | some (.lit _) => "shader: a number out of range"
+  | some (.name n) =>
+    if wgslReserved.contains n then s!"shader: {n} is a reserved word of WGSL; give the variable another name"
+    else s!"shader: the name {String.ofList (n.toList.take 64)} is not allowed"
+  | some (.unary op _) => s!"shader: the operator {op} is not in the subset"
+  | some (.binary op _ _) => s!"shader: the operator {op} is not in the subset"
+  | some (.member _ f) => s!"shader: the member name {String.ofList (f.toList.take 64)} is not allowed"
+  | some (.index _ _) => "shader: an index not in the subset"
+  | none => match m.stmts.find? (fun st => !stmtNodeOk structs st) with
+    | some (.forS v _ lo hi incl _) =>
+      if trips lo hi incl > maxLoop then
+        s!"shader: the for loop over {v} runs {trips lo hi incl} times; the bound is {maxLoop}"
+      else if hi ≥ 2^31 then "shader: a for loop bound out of range"
+      else s!"shader: the body of the for loop over {v} assigns its counter"
+    | some (.assign _ _ _) => "shader: an assignment to something other than a variable"
+    | some (.letS n _ _) | some (.varS n _ _) =>
+      if wgslReserved.contains n then s!"shader: {n} is a reserved word of WGSL; give the variable another name"
+      else s!"shader: the name or type of {String.ofList (n.toList.take 64)} is not in the subset"
+    | some _ => "shader: a statement not in the subset"
+    | none => match m.fns.find? (fun f => !fnOk structs f) with
+      | some f =>
+        if f.body.cost > maxCost then
+          s!"shader: {f.name} costs {f.body.cost} operations for each pixel or vertex; the bound is {maxCost}"
+        else s!"shader: a parameter, result or attribute of {f.name} is not in the subset"
+      | none => "shader: a struct, the uniform or a constant is not in the subset"
+
 /-- What every page shader becomes, WGSL or translated GLSL: validated, hardened, and the
 hardened module validated again (clamping adds nodes and cost). The host gets
 `Module.print` of the result. -/
 def finish (m : Module) : Except String Module :=
   if validate m then
     match harden m with
-    | some h => if validate h then .ok h else .error "shader: over the cost bound after index clamping"
+    | some h => if validate h then .ok h else .error (whyNot h)
     | none => .error "shader: an index whose base has no known length"
-  else .error "shader: not in the WGSL subset"
+  else .error (whyNot m)
 
 /-- WGSL text from a page: `parse`, then `finish`. -/
 def compile (src : String) : Except String Module := do

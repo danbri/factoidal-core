@@ -18,7 +18,10 @@ Translation:
 - loose uniforms are the members of `struct U` at `@group(0) @binding(0)`; each entry
   point starts with `let name = u.name;` for each, so the GLSL body is unchanged;
 - the fragment output is `gl_FragColor` (1.00) or the one `out vec4` (3.00), returned
-  at `@location(0)`; `gl_FragCoord` is `@builtin(position)` (WGSL's origin, top left).
+  at `@location(0)`; `gl_FragCoord` is `@builtin(position)` with y measured from the
+  bottom, GL's origin: the drawing buffer's height (uniform `gl_FragHeight`, written by
+  the page's context) less WGSL's y;
+- `mod`, two-argument `atan` and `inversesqrt` are WGSL expressions (`Wgsl.glslCall`).
 
 Refused: user functions, `discard`, `return` in `main`, `while`, samplers and textures,
 arrays of varyings or uniforms, `#define` and other preprocessor lines than `#version`,
@@ -95,6 +98,8 @@ def gStmt (fuel : Nat) : P Stmt :=
         | some e => return .letS n (some t) e
         | none => throw "shader: const needs a value"
       return .varS n (some t) e
+    if let some (.ident w) := (← peek) then
+      if let some why := notInSubset w then throw why
     if (← isIdent "return") then throw "shader: return in main is not in the subset"
     if (← isIdent "discard") then throw "shader: discard is not in the subset"
     if (← isIdent "if") then
@@ -165,7 +170,7 @@ def shaderP (vertex : Bool) : P Shader := do
       advance; skipPrecision; let _ ← glslType; expect ";"; continue
     if (← isIdent "void") then
       advance
-      if (← ident) != "main" then throw "shader: only main"
+      if (← ident) != "main" then throw "shader: only main: functions of your own are not in the subset (write their bodies inline)"
       expect "("; let _ ← eat "void"; expect ")"
       if !(sh.body matches .nil) then throw "shader: two mains"
       sh := { sh with body := ← gBlock maxDepth }
@@ -175,6 +180,11 @@ def shaderP (vertex : Bool) : P Shader := do
       let t ← glslType; let n ← ident; expect "="; let e ← expr exprFuel; expect ";"
       sh := { sh with consts := sh.consts ++ [(n, some t, e)] }
       continue
+    -- A type, a name and `(`: a function of the shader's own.
+    if isTypeName (← peek) then
+      if let some (.ident f) := (← peekAt 1) then
+        if (← peekAt 2) == some (.sym "(") then
+          throw s!"shader: the function {String.ofList (f.toList.take 64)} is not in the subset: only main (write its body inline)"
     let mut location : Option Nat := none
     if (← isIdent "layout") then
       advance; expect "("
@@ -223,7 +233,12 @@ structure Info where
   uniformSize : Nat
   deriving Repr, Inhabited
 
-def reserved : List String := ["u", "vout", "U", "VOut", "vs", "fs"]
+def reserved : List String := ["u", "vout", "U", "VOut", "vs", "fs", "gl_FragPos", "gl_FragHeight"]
+
+/-- The fragment shader reads `gl_FragCoord`. -/
+def readsFragCoord (sh : Shader) : Bool :=
+  (sh.body.nodes.flatMap (·.exprs)).any fun e => e.nodes.any fun x =>
+    match x with | .name "gl_FragCoord" => true | _ => false
 
 /-- Byte offsets of the members of a struct in the uniform address space. -/
 def offsets (structs : List StructDecl) (ms : List Member) : Option (List (String × Nat × Ty) × Nat) := do
@@ -262,6 +277,11 @@ def translate (vsh fsh : Shader) : Except String (Module × Info) := do
     match uniforms.find? (·.1 == d.name) with
     | some (_, t) => if t != d.ty then throw s!"shader: uniform {d.name} has two types"
     | none => uniforms := uniforms.push (d.name, d.ty)
+  -- `gl_FragCoord` has its origin at the bottom left (GLSL ES 3.00 §7.2), WGSL's
+  -- `@builtin(position)` at the top left: y is the drawing buffer's height less the
+  -- position's y. The height is a uniform the page's context writes (`gl_FragHeight`).
+  let flipY := readsFragCoord fsh
+  if flipY then uniforms := uniforms.push ("gl_FragHeight", .scalar .f32)
   let uMembers := uniforms.toList.map fun (n, t) => ({ name := n, ty := t } : Member)
   let outs := vsh.decls.filter (·.storage == .varyingOut)
   let ins := fsh.decls.filter (·.storage == .varyingIn)
@@ -290,11 +310,16 @@ def translate (vsh fsh : Shader) : Except String (Module × Info) := do
          (.call (.ty v4) (.cons (.member gp "x") (.cons (.member gp "y") (.cons depth (.cons (.member gp "w") .nil)))))] ++
       outs.map (fun o => Stmt.assign (.member (.name "vout") o.name) "" (.name o.name)) ++
       [.ret (some (.name "vout"))])
-  let fsBody := Stmts.append uniformLets <| Stmts.append
+  let fp := Expr.name "gl_FragPos"
+  let fragCoord : Stmts := if flipY then
+      .cons (.letS "gl_FragCoord" none (.call (.ty v4) (.cons (.member fp "x") (.cons
+        (.binary "-" (.name "gl_FragHeight") (.member fp "y")) (.cons (.member fp "z") (.cons (.member fp "w") .nil)))))) .nil
+    else .nil
+  let fsBody := Stmts.append uniformLets <| Stmts.append fragCoord <| Stmts.append
     (.cons (.varS fragOut (some v4) none) .nil) <| Stmts.append fsh.body (.cons (.ret (some (.name fragOut))) .nil)
   let vsParams := attrs.map (fun (n, l, t) => ({ name := n, ty := t, attrs := [Attr.location l] } : Member))
   let vs : Fn := { stage := .vertex, name := "vs", params := vsParams, ret := some (.named "VOut", []), body := vsBody }
-  let fsParams := ({ name := "gl_FragCoord", ty := v4, attrs := [Attr.builtin "position"] } : Member) ::
+  let fsParams := ({ name := if flipY then "gl_FragPos" else "gl_FragCoord", ty := v4, attrs := [Attr.builtin "position"] } : Member) ::
       ins.map (fun i => ((vary.find? (·.name == i.name)).getD ({ name := i.name, ty := i.ty } : Member)))
   let fs : Fn := { stage := .fragment, name := "fs", params := fsParams, ret := some (v4, [.location 0]), body := fsBody }
   let consts := vsh.consts ++ fsh.consts.filter (fun c => !vsh.consts.any (·.1 == c.1))

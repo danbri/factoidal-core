@@ -128,6 +128,60 @@ void main() { gl_FragColor = vec4(vcolor, 1.0); }"
 #guard !ok (Glsl.compileProgram vs100 "varying vec3 other; void main() { gl_FragColor = vec4(other, 1.0); }")
 #guard ok (step (run (State.empty 1) page).1 (.createProgram 20 vs100 fs100))
 
+def vsQuad0 : String := "#version 300 es\nin vec2 pos;\nvoid main() { gl_Position = vec4(pos, 0.0, 1.0); }"
+-- Refusals say why (`Wgsl.whyNot`), for the page to show.
+#guard errOf (Wgsl.compile "@fragment fn fs() -> @location(0) vec4f { var x = 0.0; for (var j = 0; j < 10000; j++) { x += 1.0; } return vec4f(x); }") ==
+  "shader: the for loop over j runs 10000 times; the bound is 256"
+#guard errOf (Wgsl.compile "@fragment fn fs() -> @location(0) vec4f { return wave(1.0) * vec4f(1.0); }") ==
+  "shader: wave(...) is neither a builtin function of the subset nor a struct; functions of your own are not in the subset"
+#guard errOf (Wgsl.compile "fn wave(x: f32) -> f32 { return x; }") ==
+  "shader: only @vertex and @fragment functions: functions of your own are not in the subset (write their bodies inline)"
+#guard errOf (Wgsl.compile "@fragment fn fs() -> @location(0) vec4f { var i = 0; while (i < 4) { i += 1; } return vec4f(0.0); }") ==
+  "shader: 'while' is not in the subset: loops are for loops with integer literal bounds, at most 256 steps"
+#guard errOf (Wgsl.compile "@fragment fn fs() -> @location(0) vec4f { var x = 0.0; for (var i = 0; i < 200; i++) { for (var j = 0; j < 200; j++) { for (var k = 0; k < 30; k++) { x += 1.0; } } } return vec4f(x); }") ==
+  "shader: fs costs 6160807 operations for each pixel or vertex; the bound is 1000000"
+#guard errOf (Glsl.compileProgram "attribute vec2 p; void main() { while (true) { } }" fs100) ==
+  "shader: 'while' is not in the subset: loops are for loops with integer literal bounds, at most 256 steps"
+#guard errOf (Glsl.compileProgram vs100 "float wave(float x) { return x; }\nvoid main() { gl_FragColor = vec4(1.0); }") ==
+  "shader: the function wave is not in the subset: only main (write its body inline)"
+
+-- A GLSL name that is a WGSL reserved word: refused by Lean with the word, not by the host's compiler.
+#guard errOf (Glsl.compileProgram vsQuad0 "#version 300 es\nprecision highp float;\nout vec4 c;\nvoid main() { float target = 1.0; c = vec4(target); }") ==
+  "shader: target is a reserved word of WGSL; give the variable another name"
+
+-- GLSL builtins with other WGSL forms: mod, atan(y, x), inversesqrt.
+def fsMod : String := "#version 300 es
+precision highp float;
+out vec4 c;
+void main() { float a = mod(gl_FragCoord.x, 2.0); float b = atan(1.0, a); float d = atan(b); c = vec4(a, b, d, inversesqrt(4.0)); }"
+def vsQuad : String := "#version 300 es
+in vec2 pos;
+void main() { gl_Position = vec4(pos, 0.0, 1.0); }"
+#guard ok (Glsl.compileProgram vsQuad fsMod)
+#guard ((Glsl.compileProgram vsQuad fsMod).toOption.map (·.1.print)).any fun t =>
+  (t.splitOn "floor((gl_FragCoord.x / 2.0))").length == 2 && (t.splitOn "atan2(1.0, a)").length == 2 &&
+  (t.splitOn "atan(b)").length == 2 && (t.splitOn "inverseSqrt(4.0)").length == 2
+-- gl_FragCoord counts y from the bottom, as in GL: the drawing buffer's height comes as a uniform.
+#guard ((Glsl.compileProgram vsQuad fsMod).toOption.map (·.1.print)).any fun t =>
+  (t.splitOn "let gl_FragCoord = vec4<f32>(gl_FragPos.x, (gl_FragHeight - gl_FragPos.y), gl_FragPos.z, gl_FragPos.w);").length == 2
+#guard ((Glsl.compileProgram vsQuad fsMod).toOption.map (·.2.json)) ==
+  some "{\"attributes\":{\"pos\":0},\"uniforms\":{\"gl_FragHeight\":[0,\"float\"]},\"uniformSize\":16}"
+-- A program that does not read gl_FragCoord is as before (no uniform added).
+#guard ((Glsl.compileProgram vs300 fs300).toOption.map (·.2.uniformSize)) == some 16
+
+-- The binary header (op 64 + k) gives the same command as the text header.
+def passText : String := "1 0 0 0 255 1 5 6 1 2 3 1 0 0"
+def passNums : List Nat := [1, 0, 0, 0, 255, 1, 5, 6, 1, 2, 3, 1, 0, 0]
+#guard match Wire.decode 7 passText.toUTF8, Wire.decode (Wire.binaryOp + 7) (Wire.binaryHeader passNums) with
+  | .ok (.pass c1 k1 d1), .ok (.pass c2 k2 d2) => c1 == c2 && k1 == k2 && d1 == d2
+  | _, _ => false
+#guard match Wire.decode (Wire.binaryOp + 3) (Wire.binaryHeader [2, 8] ++ bytes 12) with
+  | .ok (.writeBuffer 2 8 d) => d.size == 12
+  | _ => false
+-- A count that does not fit, a missing separator: refused.
+#guard !ok (Wire.decode (Wire.binaryOp + 7) (Wire.binaryHeader passNums |>.extract 0 20))
+#guard !ok (Wire.decode (Wire.binaryOp + 8) (ByteArray.mk #[255, 255, 255, 255, 10]))
+
 #print axioms program_inSubset
 #print axioms compile_inSubset
 #print axioms compile_cost
