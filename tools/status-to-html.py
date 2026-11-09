@@ -51,5 +51,7 @@ def convert(source):
 
 result = convert(open(sys.argv[1], encoding='utf-8').read())
 if '--check' in sys.argv:
-    sys.exit(0 if open(sys.argv[2], encoding='utf-8').read() == result else 1)
+    if open(sys.argv[2], encoding="utf-8").read() != result:
+        sys.exit(f"{sys.argv[2]} is stale: run tools/status-to-html.py {sys.argv[1]} {sys.argv[2]}")
+    sys.exit(0)
 open(sys.argv[2], 'w', encoding='utf-8').write(result)

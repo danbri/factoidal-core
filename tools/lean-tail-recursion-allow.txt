@@ -2243,3 +2243,7 @@ L4Factoidal_WasmVM_Hosts_Dom_extractR  # (b) one call per level of the DOM tree 
 L4Factoidal_WasmVM_Hosts_Dom_cloneR  # (b) as extractR: one call per tree level of the range (DOM §5.5 clone the contents)
 L4Factoidal_Rendering_CssSupports_condition  # (b) the nesting of parentheses in one CSS.supports condition text; fuel is the text length
 L4Factoidal_Rendering_CssSupports_condition_inParensValue  # (b) mutual with condition: the nesting of parentheses of one condition text
+# --- 2026-11-09 bpperf: BubblePopJS speed work
+L4Factoidal_JS_Resolve_*  # (c) the name resolver's walk of a parsed script: depth is the nesting of the source, capped by Resolve.fuel (1000, a deeper subtree stays unresolved); lists are mapped with a tail-recursive loop
+L4Factoidal_JS_lookupLocal  # (c) on a cycle only through the plain lookup fallback and the evaluator (getV, user code): bounded by Heap.maxDepth as the evaluator is
+L4Factoidal_JS_assignLocal  # (c) as lookupLocal

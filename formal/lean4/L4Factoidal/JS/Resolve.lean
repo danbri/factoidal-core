@@ -148,19 +148,16 @@ def rE : Nat → Frames → Expr → R Expr
 
 def rEs : Nat → Frames → List Expr → R (List Expr)
   | 0, _, es => pure es
-  | _ + 1, _, [] => pure []
-  | n + 1, fs, e :: es => do pure ((← rE n fs e) :: (← rEs n fs es))
+  | n + 1, fs, es => es.mapM fun e => rE n fs e
 
 def rProps : Nat → Frames → List PropDef → R (List PropDef)
   | 0, _, ps => pure ps
-  | _ + 1, _, [] => pure []
-  | n + 1, fs, p :: ps => do
-    let p ← match p with
-      | .init k v => pure (.init (← rKey n fs k) (← rE n fs v))
-      | .getter k f => pure (.getter (← rKey n fs k) (← rFun n fs f))
-      | .setter k f => pure (.setter (← rKey n fs k) (← rFun n fs f))
-      | .spread e => pure (.spread (← rE n fs e))
-    pure (p :: (← rProps n fs ps))
+  | n + 1, fs, ps => ps.mapM fun p => do
+    match p with
+    | .init k v => pure (.init (← rKey n fs k) (← rE n fs v))
+    | .getter k f => pure (.getter (← rKey n fs k) (← rFun n fs f))
+    | .setter k f => pure (.setter (← rKey n fs k) (← rFun n fs f))
+    | .spread e => pure (.spread (← rE n fs e))
 
 def rKey : Nat → Frames → PropKey → R PropKey
   | 0, _, k => pure k
@@ -184,18 +181,16 @@ def rPatOpt : Nat → Frames → Option Pat → R (Option Pat)
 
 def rPatProps : Nat → Frames → List PatProp → R (List PatProp)
   | 0, _, ps => pure ps
-  | _ + 1, _, [] => pure []
-  | n + 1, fs, (.mk k v d) :: ps => do
-    pure (.mk (← rKey n fs k) (← rPat n fs v) (← rOptE n fs d) :: (← rPatProps n fs ps))
+  | n + 1, fs, ps => ps.mapM fun p => do
+    match p with
+    | .mk k v d => pure (.mk (← rKey n fs k) (← rPat n fs v) (← rOptE n fs d))
 
 def rPatElems : Nat → Frames → List (Option PatElem) → R (List (Option PatElem))
   | 0, _, es => pure es
-  | _ + 1, _, [] => pure []
-  | n + 1, fs, e :: es => do
-    let e ← match e with
-      | none => pure none
-      | some (.mk p d) => do pure (some (.mk (← rPat n fs p) (← rOptE n fs d)))
-    pure (e :: (← rPatElems n fs es))
+  | n + 1, fs, es => es.mapM fun e => do
+    match e with
+    | none => pure none
+    | some (.mk p d) => pure (some (.mk (← rPat n fs p) (← rOptE n fs d)))
 
 def rOptE : Nat → Frames → Option Expr → R (Option Expr)
   | 0, _, e => pure e
@@ -236,9 +231,9 @@ def rFun : Nat → Frames → FunDef → R FunDef
 
 def rParams : Nat → Frames → List PatElem → R (List PatElem)
   | 0, _, ps => pure ps
-  | _ + 1, _, [] => pure []
-  | n + 1, fs, (.mk p d) :: ps => do
-    pure (.mk (← rPat n fs p) (← rOptE n fs d) :: (← rParams n fs ps))
+  | n + 1, fs, ps => ps.mapM fun p => do
+    match p with
+    | .mk x d => pure (.mk (← rPat n fs x) (← rOptE n fs d))
 
 def rClass : Nat → Frames → ClassDef → R ClassDef
   | 0, _, c => pure c
@@ -255,22 +250,22 @@ def rClass : Nat → Frames → ClassDef → R ClassDef
 
 def rMembers : Nat → Frames → List Member → R (List Member)
   | 0, _, ms => pure ms
-  | _ + 1, _, [] => pure []
-  | n + 1, fs, (.mk st k key f) :: ms => do
-    let key' ← rKey n fs key
-    let f' ← rFun n fs f
-    pure (.mk st k key' f' :: (← rMembers n fs ms))
+  | n + 1, fs, ms => ms.mapM fun m => do
+    match m with
+    | .mk st k key f =>
+      let key' ← rKey n fs key
+      let f' ← rFun n fs f
+      pure (.mk st k key' f')
 
 def rSs : Nat → Frames → List Stmt → R (List Stmt)
   | 0, _, ss => pure ss
-  | _ + 1, _, [] => pure []
-  | n + 1, fs, s :: ss => do pure ((← rS n fs s) :: (← rSs n fs ss))
+  | n + 1, fs, ss => ss.mapM fun st => rS n fs st
 
 def rDecls : Nat → Frames → List Decl → R (List Decl)
   | 0, _, ds => pure ds
-  | _ + 1, _, [] => pure []
-  | n + 1, fs, (.mk p i) :: ds => do
-    pure (.mk (← rPat n fs p) (← rOptE n fs i) :: (← rDecls n fs ds))
+  | n + 1, fs, ds => ds.mapM fun d => do
+    match d with
+    | .mk p i => pure (.mk (← rPat n fs p) (← rOptE n fs i))
 
 /-- A statement list that is a block of the evaluator: its frame when it has one. -/
 def rBlock : Nat → Frames → List Stmt → R (List Stmt)
@@ -359,9 +354,9 @@ def rS : Nat → Frames → Stmt → R Stmt
 
 def rCases : Nat → Frames → List Case → R (List Case)
   | 0, _, cs => pure cs
-  | _ + 1, _, [] => pure []
-  | n + 1, fs, (.mk t b) :: cs => do
-    pure (.mk (← rOptE n fs t) (← rSs n fs b) :: (← rCases n fs cs))
+  | n + 1, fs, cs => cs.mapM fun c => do
+    match c with
+    | .mk t b => pure (.mk (← rOptE n fs t) (← rSs n fs b))
 
 /-- The frame of a for-in/of with let/const (`bindIter`): its names, then the target. -/
 def rForTarget : Nat → Frames → Option DeclKind → Pat → R (Frames × Pat)
@@ -375,8 +370,10 @@ def rForTarget : Nat → Frames → Option DeclKind → Pat → R (Frames × Pat
     | _ => pure (fs, ← rPat n fs p)
 end
 
-/-- The fuel of the pass: more than any parse tree the parser makes. -/
-def fuel : Nat := 2000000
+/-- The fuel of the pass: the nesting depth it follows. A subtree nested deeper keeps its plain
+names and runs the plain way; the stack the pass uses stays bounded whatever the source. A
+list (statements, arguments, elements) costs one unit of nesting, not one per element. -/
+def fuel : Nat := 1000
 
 /-- Resolve a whole script: its functions and its top-level statements. Top-level `let`,
 `const` and classes are bindings of the global environment, in the global record; names

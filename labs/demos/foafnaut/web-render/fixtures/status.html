@@ -6,11 +6,11 @@
 <h2>Where it is</h2>
 <p>- The engine parses HTML, computes CSS, lays out text and boxes, and draws with WebGPU.</p>
 <p>- It runs in a web page, in its own macOS window, and as a sandboxed guest.</p>
-<p>- Page scripts run in BubblePopJS, a JavaScript engine written in Lean, in the macOS app, and in QuickJS-NG inside WasmVM, a WebAssembly engine written in Lean, on the Hub. Settings choose between them. Lean's event loop and DOM decide every callback and every change.</p>
+<p>- Page scripts run in BubblePopJS, a JavaScript engine written in Lean, in the app and on the Hub. QuickJS-NG inside WasmVM, a WebAssembly engine written in Lean, is a choice in Settings. Lean's event loop and DOM decide every callback and every change.</p>
 <p>- Pages can draw with WebGPU and WebGL 1 and 2; Lean checks every command first. Without WebGPU, a CPU renderer draws the same pixels.</p>
 <p>- Real sites mostly do not load yet.</p>
 <h2>Since 6 November</h2>
-<p>- BubblePopJS is the default script engine in the macOS app, with a switch in settings. There it runs the same scripts 10 to 13 times faster than QuickJS-NG in WasmVM.</p>
+<p>- BubblePopJS is the default script engine in the app and on the Hub, with a switch in settings. There it runs the same scripts 10 to 13 times faster than QuickJS-NG in WasmVM.</p>
 <p>- WasmVM runs QuickJS-NG, HarfBuzz and media decoders, and on the Hub it translates guest WebAssembly for the browser's own engine: 36 to 216 times faster.</p>
 <p>- Page scripts: timers, animation frames, Promises, clicks and pointer events, forms, DOMParser, MutationObserver and layout reads.</p>
 <p>- Arabic letters join, and mixed left-to-right and right-to-left text is ordered by the Unicode bidi algorithm. Emoji draw from Noto Emoji.</p>
