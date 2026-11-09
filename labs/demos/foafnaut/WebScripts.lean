@@ -573,9 +573,11 @@ the Encoding Standard's decoder, `WHATWG.Encoding.Sniff.decodeDocumentFast`), or
 as text; empty, or `failed:true`, for a load that failed (the frame keeps `about:blank`).
 Parsed as XML for an `.xht` or `.xhtml` URL. With its classic scripts and the sources of
 the `resources` the embedder read (node numbers of the document parsed on its own). -/
-def frameDocument (request : JSON.Json) : Except String (String × Bool × Array (Nat × String)) := do
+def frameDocument (request : JSON.Json) : Except String (String × Bool × Array (Nat × String) × String) := do
   let url := str request "url"
-  let src ← if request.field? "failed" == some (.bool true) then pure "" else
+  -- (encoding100) the document's encoding: the decode's here, or the name the embedder sends
+  -- with `source` when it decoded the bytes (`encoding`)
+  let (src, enc) ← if request.field? "failed" == some (.bool true) then pure ("", "") else
     match request.field? "bytesBase64" with
     | some (.string b) =>
       match Rendering.SfntProfile.decodeBase64 b with
@@ -584,13 +586,14 @@ def frameDocument (request : JSON.Json) : Except String (String × Bool × Array
         let label := if ct.isEmpty then none
           else (L4Factoidal.WHATWG.Encoding.Sniff.extractFromMeta ct).orElse fun _ =>
             if ct.contains ';' || ct.contains '/' then none else some ct
-        pure (L4Factoidal.WHATWG.Encoding.Sniff.decodeDocumentFast bytes label).2
+        let (e, t) := L4Factoidal.WHATWG.Encoding.Sniff.decodeDocumentFast bytes label
+        pure (t, e.name)
       | none => throw "bytesBase64 is not Base64"
-    | _ => pure (str request "source")
-  if src.isEmpty then return ("", false, #[])
+    | _ => pure (str request "source", str request "encoding")
+  if src.isEmpty then return ("", false, #[], enc)
   let dom ← parse src url
   let (scripts, _) ← scriptSources dom request
-  return (src, DOM.isXhtmlPath url, scripts)
+  return (src, DOM.isXhtmlPath url, scripts, enc)
 
 /-- The answer of a turn of the Lean engine; the session is kept. -/
 def leanTurn (held : Held) (id : Nat) (before : Before) (s : LeanJS.Session) (marks : Marks) (full : Bool) (ns : Nat) :
@@ -660,7 +663,8 @@ def actLean (held : Held) (action : String) (request : JSON.Json) (id : Nat) (s 
   | "turn" => run fun s => let s := e.flushMove s; (e.advance s (e.loop s).clock).1
   | "frame" =>
     match natField request "node", frameDocument request with
-    | some node, .ok (src, xml, scripts) => run (LeanJS.loadFrame · node src scripts xml)
+    | some node, .ok (src, xml, scripts, enc) =>
+      run fun s => LeanJS.loadFrame (s.setHost { s.host with dom := s.host.dom.noteFrameEncoding node enc }) node src scripts xml
     | _, .error e => keep s!"scriptSession: frame: {e}"
     | none, _ => keep "scriptSession: frame needs node"
   | _ => keep "scriptSession: unknown action"
@@ -784,7 +788,8 @@ def act (held : Held) (action html : String) (request : JSON.Json)
           return (← s.advanceP s.loop.clock).1
       | "frame" =>
         match natField request "node", frameDocument request with
-        | some node, .ok (src, xml, scripts) => run (·.loadFrameP node src scripts xml)
+        | some node, .ok (src, xml, scripts, enc) =>
+          run fun s => ({ s with host := { s.host with dom := s.host.dom.noteFrameEncoding node enc } } : Page.Session).loadFrameP node src scripts xml
         | _, .error e => ({ held with session := some (id, s, marks) }, .error s!"scriptSession: frame: {e}")
         | none, _ => ({ held with session := some (id, s, marks) }, .error "scriptSession: frame needs node")
       | _ => ({ held with session := some (id, s, marks) }, .error "scriptSession: unknown action")

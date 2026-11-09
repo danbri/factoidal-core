@@ -1979,9 +1979,9 @@
     get URL() { return this === document ? location.href : docURL(nodeId(this)); }
     get documentURI() { return this.URL; }
     get compatMode() { return 'CSS1Compat'; }
-    get characterSet() { return this === document ? docEncoding() : 'UTF-8'; }
+    get characterSet() { if (this === document) return docEncoding(); const r = n.query(nodeId(this), 172, ''); return typeof r === 'string' ? r : 'UTF-8'; }
     get charset() { return this.characterSet; }
-    get inputEncoding() { return 'UTF-8'; }
+    get inputEncoding() { return this.characterSet; }
     get contentType() { return str(nodeId(this), 9); }
     get readyState() { return readyState; }
     get defaultView() { return this === document ? window : (info(nodeId(this), 12) >= 0 ? frameWindow(nodeId(this)) : null); }
