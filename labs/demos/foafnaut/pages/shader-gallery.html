@@ -745,7 +745,8 @@ $('pause').addEventListener('click', () => {
 const run = text => { edits[current.id + ':' + api] = text; show(); use(current, api, text); };
 $('run').addEventListener('click', () => run(foafnaut ? sourceOf(current, api) : $('src').value));
 $('reset').addEventListener('click', () => { delete edits[current.id + ':' + api]; show(); use(current, api, sourceOf(current, api)); });
-for (const id of Object.keys(TRIES)) $(id).addEventListener('click', () => run(TRIES[id][api === 'webgpu' ? 'wgsl' : 'glsl'](sourceOf(current, api))));
+// Each try starts from the shader as written, not from the last try.
+for (const id of Object.keys(TRIES)) $(id).addEventListener('click', () => run(TRIES[id][api === 'webgpu' ? 'wgsl' : 'glsl'](api === 'webgpu' ? current.wgsl : current.glsl)));
 // iMouse: xy the pointer on the canvas in drawing-buffer pixels, origin bottom left; z 1 while pressed; w 1 once the pointer was on the canvas.
 for (const id of ['c-webgpu', 'c-webgl2']) {
   const c = $(id);
