@@ -254,7 +254,18 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>}> {
     catch(e){if(!guest||!/no guest module/.test(String(e)))throw e;engine.scriptLoad(guest);return engine.scriptSession(html,request);}
   };
   return {info,run:async(file,page)=>{
-    const html=page?page.html:file.endsWith(".js")?wrapper(file):await Deno.readTextFile(wptFile(file));
+    // A page's bytes become text in Lean (decodeDocument: the BOM, the charset of its .headers
+    // file as wptserve sends it, the meta prescan); an engine without the op reads UTF-8.
+    let html:string,encoding:string|undefined;
+    if(page)html=page.html;
+    else if(file.endsWith(".js"))html=wrapper(file);
+    else {
+      const bytes=await Deno.readFile(wptFile(file));
+      let contentType="";
+      try{contentType=/^content-type:\s*(.*)$/im.exec(await Deno.readTextFile(wptFile(file)+".headers"))?.[1]?.trim()??"";}catch{/* no headers file */}
+      const decoded=(engine as {decodeDocument?:(b:Uint8Array,c:string)=>{encoding:string;source:string}|undefined}).decodeDocument?.(bytes,contentType);
+      html=decoded?decoded.source:new TextDecoder().decode(bytes);encoding=decoded?.encoding;
+    }
     const url=page?page.url:`${origin}/${pageOf(file)}`;
     const t0=performance.now();
     const facts=engine.inspect(html,{url}) as unknown as {scripts:{nodeId:number;src:string;url:string}[]};
@@ -267,7 +278,7 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>}> {
         else if(/\/test262\/test\/.*\.js$/.test(path)&&new URL(s.url).search==="?strict")source='"use strict";\n'+source;
         resources.push({nodeId:s.nodeId,source});}catch{/* not vendored: the page reports it */}
     }
-    let turn=start(html,{action:"start",url,resources,commandLimit:200000,logLimit:100000,instructionsPerMs:scriptRate,
+    let turn=start(html,{action:"start",url,resources,commandLimit:200000,logLimit:100000,instructionsPerMs:scriptRate,...(encoding?{encoding}:{}),
       ...(scriptEngine==="bubblepop"?{engine:"bubblepop"}:{})});
     const logs=[...turn.logs],errors=[...turn.errors];
     let instructions=turn.instructions;
