@@ -50,6 +50,7 @@ def commandJson : L4Factoidal.WasmVM.Hosts.Dom.Command → JSON.Json
   | .resetForm n => .object [("op",.string "resetForm"),("nodeId",num n)]
   | .replaceData n o k v => .object [("op",.string "replaceData"),("nodeId",num n),("offset",num o),("count",num k),("value",.string v)]
   | .splitText n o r => .object [("op",.string "splitText"),("source",num n),("offset",num o),("nodeId",num r)]
+  | .frameDocument el src xml r => .object [("op",.string "frameDocument"),("frame",num el),("source",.string src),("xml",.bool xml),("nodeId",num r)]
 where num (n : Nat) : JSON.Json := .number (toString n)
 
 private def commandOf (command : JSON.Json) : Except String L4Factoidal.WasmVM.Hosts.Dom.Command := do
@@ -107,6 +108,14 @@ private def commandOf (command : JSON.Json) : Except String L4Factoidal.WasmVM.H
   | "replaceData" =>
     exactly ["nodeId","offset","count","value"]
     return .replaceData (← node "nodeId") (← field command "offset" >>= nodeId) (← field command "count" >>= nodeId) (← str "value")
+  | "frameDocument" =>
+    exactly ["frame","source","xml","nodeId"]
+    let .string src ← field command "source" | throw "script command: source must be a string"
+    if src.utf8ByteSize > 1048576 then throw "script command: frame document exceeds 1MiB"
+    let xml ← match ← field command "xml" with
+      | .bool b => pure b
+      | _ => throw "script command: xml must be a boolean"
+    return .frameDocument (← node "frame") src xml (← node "nodeId")
   | "splitText" => exactly ["source","offset","nodeId"]; return .splitText (← node "source") (← field command "offset" >>= nodeId) (← node "nodeId")
   | _ => throw "script command: unsupported operation"
 

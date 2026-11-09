@@ -43,6 +43,7 @@ import L4Factoidal.DOM.OfHtml
 import L4Factoidal.DOM.OfXml
 import L4Factoidal.DOM.Forms
 import L4Factoidal.WHATWG.URL.Parser
+import L4Factoidal.HTML.Frames
 import L4Factoidal.DOM.Live
 import L4Factoidal.DOM.Fragment
 
@@ -90,6 +91,11 @@ inductive Command where
   | replaceData (node offset count : Nat) (data : String)
   /-- `splitText(offset)` (DOM §4.11) of Text `node` made node `result`. -/
   | splitText (node offset result : Nat)
+  /-- `iframe` element `el` got a document: the one the HTML parser (the XML parser with
+  `xml`, for an XHTML document) makes from `source`, or `about:blank` for ""; its document
+  node is `root` (`Dom.graft`, the next node numbers). So a replay over the parsed page
+  makes the same node numbers after a frame loads. -/
+  | frameDocument (el : Nat) (source : String) (xml : Bool) (root : Nat)
   deriving BEq, Repr, Inhabited
 
 /-- A request to the event loop. -/
@@ -158,6 +164,17 @@ structure State where
   selDirection : Nat := 0
   /-- What `commit` reads of the arena before a change (`change` sets it). -/
   pre : Option Pre := none
+  /-- The document's URL (the base of a frame's `src`, and the page's origin). -/
+  url : String := ""
+  /-- Each `iframe` element's frame (`HTML.Frames.frameOf`) as it was when its browsing
+  context was made: its sandboxing flags and its document's origin. -/
+  frameInfo : Array (Nat × L4Factoidal.HTML.Frames.Frame) := #[]
+  /-- The embedder loads URLs for frames (it answers `navigations`). Without it, a frame
+  whose `src` is a URL keeps its `about:blank` document and gets its `load` event. -/
+  hostLoads : Bool := false
+  /-- The window's `load` event waits for frames that are still loading (HTML §8.4 "the
+  end": the document's load event is delayed by its iframes' navigations). -/
+  loadWaits : Bool := false
   deriving Inhabited
 
 /-- Bounds, as in `WebRenderScript`. -/
@@ -320,7 +337,7 @@ def Command.sameWrite : Command → Command → Bool
 `name` and the tree): a write before one of them stays before it. -/
 def Command.reads : Command → Bool
   | .cloneNode .. | .importNode .. | .normalize _ | .setAttributeNS .. | .removeAttributeNS ..
-  | .adoptNode .. | .setChecked .. | .resetForm _ | .replaceData .. | .splitText .. => true
+  | .adoptNode .. | .setChecked .. | .resetForm _ | .replaceData .. | .splitText .. | .frameDocument .. => true
   | _ => false
 
 /-- `Command.live` with a NodeIterator: each step on the arena as the change leaves it. -/
@@ -466,6 +483,13 @@ def textContentSet (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M)
       if s.live.idle then (s, ret 0) else ({ s with live := (Command.setTextContent n v).live s.dom s.live }, ret 0)
     else change s (.setTextContent n v) fun d => changed (.setTextContent n v) (d.setTextContent n v)
 
+/-- A frame's `src` value parsed against the page's URL (HTML §4.8.5 "process the iframe
+attributes": "parse a URL"), as its href; the value itself when it does not parse. -/
+def frameURL (s : State) (v : String) : String :=
+  match L4Factoidal.WHATWG.URL.parseUrl v (if s.url.isEmpty then none else some s.url) with
+  | some u => u.href
+  | none => v
+
 def setAttribute (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : State × HostResult :=
   let n := arg args 0
   if !isElement s.dom n then (s, ret (-2)) else
@@ -491,7 +515,7 @@ def setAttribute (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) :
       | (s, r) =>
         -- HTML §4.8.5: setting `src` of an iframe with a browsing context navigates it.
         if Dom.isHtmlElement (s.dom.get n) "iframe" && Dom.asciiLower name == "src" && s.frames.any (·.1 == n) then
-          ({ s with navigations := s.navigations.push (n, v) }, r)
+          ({ s with navigations := s.navigations.push (n, if s.hostLoads && !v.trimAscii.toString.isEmpty then frameURL s v else "") }, r)
         else (s, r)
 
 def createElement (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : State × HostResult :=
@@ -534,13 +558,77 @@ def consoleLog (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : S
   | .ok t => if s.logs.size ≥ s.logLimit then (s, ret (-5)) else ({ s with logs := s.logs.push t }, ret 0)
 
 
+/-! ## Frames: origins and the sandbox (`HTML.Frames`) -/
+
+open L4Factoidal.HTML.Frames in
+/-- The origin of the page's document: of its URL, or an opaque origin of its own. -/
+def pageOrigin (s : State) : L4Factoidal.HTML.Frames.Origin := originOfString s.url 999999999
+
+open L4Factoidal.HTML.Frames in
+/-- The frame of `iframe` element `el` whose container document has `parent`: the one kept
+when its browsing context was made, else `frameOf` its attributes now (its `src` resolved
+against the page's URL). A sandboxed origin's identity is `el` + 10^9: one per element. -/
+def frameFor (s : State) (parent : L4Factoidal.HTML.Frames.Frame) (el : Nat) : L4Factoidal.HTML.Frames.Frame :=
+  match s.frameInfo.find? (·.1 == el) with
+  | some (_, f) => f
+  | none =>
+    let src := (attrValue? s.dom el "src").map fun v => match L4Factoidal.WHATWG.URL.parseUrl v (if s.url.isEmpty then none else some s.url) with
+      | some u => u.href
+      | none => v
+    frameOf parent.flags parent.origin (attrValue? s.dom el "sandbox") (attrValue? s.dom el "srcdoc") src (1000000000 + el)
+
+open L4Factoidal.HTML.Frames in
+/-- The frame of a document: the page's (no flags, `pageOrigin`), or, for a frame's
+document, its `iframe`'s, through at most `fuel` containing frames. -/
+def docFrameGo (s : State) : Nat → Nat → L4Factoidal.HTML.Frames.Frame
+  | 0, _ => { flags := {}, origin := pageOrigin s }
+  | f + 1, doc =>
+    match s.frames.find? (·.2 == doc) with
+    | some (el, _) => frameFor s (docFrameGo s f (s.dom.get el).doc) el
+    | none => { flags := {}, origin := pageOrigin s }
+
+def docFrame (s : State) (doc : Nat) : L4Factoidal.HTML.Frames.Frame := docFrameGo s (s.frames.size + 1) doc
+
+/-- The frame of `iframe` element `el`. -/
+def elementFrame (s : State) (el : Nat) : L4Factoidal.HTML.Frames.Frame :=
+  frameFor s (docFrame s (s.dom.get el).doc) el
+
+/-- The page's scripts (one realm, the page's) may reach the document of `iframe` `el`:
+same origin (`HTML.Frames.mayAccess`); a sandboxed frame without `allow-same-origin` has an
+opaque origin and is never reached (`HTML.Frames.sandboxed_no_access`). -/
+def frameAccessible (s : State) (el : Nat) : Bool :=
+  L4Factoidal.HTML.Frames.mayAccess (pageOrigin s) (elementFrame s el).origin
+
+/-- The scripts of the document of `iframe` `el` run in the page's realm: its document is
+one the page may reach (the same origin) and its scripts may run. A sandboxed frame's
+scripts never run there (`HTML.Frames.scripts_need_allow`, `sandboxed_no_access`). -/
+def frameScriptsInRealm (s : State) (el : Nat) : Bool :=
+  frameAccessible s el && (elementFrame s el).scriptsMayRun
+
+/-- Isolation: a frame's scripts run in the page's realm only when the page may reach the
+frame's document (the same origin) and the frame's sandbox allows scripts. -/
+theorem frameScriptsInRealm_sameOrigin (s : State) (el : Nat) (h : frameScriptsInRealm s el = true) :
+    frameAccessible s el = true ∧ (elementFrame s el).scriptsMayRun = true := by
+  simpa [frameScriptsInRealm] using h
+
+/-- The state of `iframe` `el` as bits (`node_info` 29): 1 its document is reachable, 2
+scripts may run, 4 forms may submit, 8 popups, 16 top-level navigation, 32 modals, 64 it
+has a browsing context (it is connected in a document that has one). -/
+def frameBits (s : State) (el : Nat) : Nat :=
+  let f := elementFrame s el
+  (if frameAccessible s el then 1 else 0) + (if f.scriptsMayRun then 2 else 0) + (if f.formsMaySubmit then 4 else 0) +
+  (if f.popupsAllowed then 8 else 0) + (if f.topNavigationAllowed false then 16 else 0) +
+  (if f.modalsAllowed then 32 else 0) + (if s.frames.any (·.1 == el) then 64 else 0)
+
 /-! ## Node imports (page scripts in the engine) -/
 
 /-- `node_info(node, which)`: 0 `nodeType`; 1 parent; 2 first child; 3 last child;
 4 previous sibling; 5 next sibling; 6 number of children; 7 node document; 8 1 when an
 HTML element of an HTML document, else 0; 9 the template contents of a `template`
 element; 10 1 for an HTML document; 11 the content document of an `iframe` element; 12
-the `iframe` element whose content document this is. -1 none, -2 no such node. -/
+the `iframe` element whose content document this is (11 only for a frame whose document's
+origin is the page's: `frameAccessible`); 29 an `iframe`'s frame (`frameBits`). -1 none, -2
+no such node. -/
 def nodeInfo (args : Array Value) (s : State) : State × HostResult :=
   let d := s.dom
   let n := arg args 0
@@ -559,8 +647,9 @@ def nodeInfo (args : Array Value) (s : State) : State × HostResult :=
   | 8 => (s, ret (if x.type == .element && x.ns == some htmlNS && (d.get x.doc).htmlDoc then 1 else 0))
   | 9 => opt x.content
   | 10 => (s, ret (if x.htmlDoc then 1 else 0))
-  | 11 => opt ((s.frames.find? (·.1 == n)).map (·.2))
+  | 11 => opt ((s.frames.find? (·.1 == n && frameAccessible s n)).map (·.2))
   | 12 => opt ((s.frames.find? (·.2 == n)).map (·.1))
+  | 29 => if Dom.isHtmlElement x "iframe" then (s, ret (frameBits s n)) else (s, ret (-1))
   | _ => (s, ret (-2))
 
 /-- `nodeName` (DOM §4.4). -/
@@ -743,9 +832,47 @@ def connectFrames (s : State) (inserted : Array Nat) : State := Id.run do
     for k in s.dom.treeOrder top do
       if Dom.isHtmlElement (s.dom.get k) "iframe" && !(s.frames.any (·.1 == k)) then
         let (d, doc) := s.dom.graft aboutBlank
-        s := { s with dom := d, frames := s.frames.push (k, doc),
-                      navigations := s.navigations.push (k, (frameSrc d k).getD "") }
+        -- the frame's flags and origin as they are now (HTML §4.8.5: kept until it navigates)
+        let info := frameFor s (docFrame s root) k
+        -- HTML §4.8.5 "process the iframe attributes": `srcdoc` first (Lean loads it),
+        -- then a `src` URL (the embedder's, when it loads URLs), else `about:blank`.
+        let nav := if (attrValue? d k "srcdoc").isSome then "about:srcdoc"
+          else if s.hostLoads then ((frameSrc d k).map (frameURL s)).getD "" else ""
+        match addCommand s (.frameDocument k "" false doc) d with
+        | (s', .values #[.i32 0]) =>
+          s := { s' with frames := s'.frames.push (k, doc), frameInfo := s'.frameInfo.push (k, info),
+                         navigations := s'.navigations.push (k, nav) }
+        | _ => pure ()
   return s
+
+/-- A frame's document from its source: `about:blank` for "", else what the HTML parser
+makes of it, or with `xml` the XML parser (an XHTML document; a parse error gives the
+`parsererror` document of `xmlDocument`). -/
+def frameArena (source : String) (xml : Bool) : Dom :=
+  if source.isEmpty then aboutBlank
+  else if xml then xmlDocument "application/xhtml+xml" source
+  else parseHtmlDocument source
+
+/-- A frame navigation the document's load event waits for is under way: a `src` URL for the
+embedder, or a `srcdoc`. -/
+def framesLoading (s : State) : Bool :=
+  -- a lazy-loading frame does not delay its document's load event (HTML §4.8.5,
+  -- "will lazy load element steps")
+  s.navigations.any fun (el, u) => !u.isEmpty && (attrValue? s.dom el "loading").map Dom.asciiLower != some "lazy"
+
+/-- The navigation of `iframe` `el` ends with document `source` ("" is `about:blank`):
+it joins the arena (`Dom.graft`, recorded as `Command.frameDocument`), becomes the frame's
+document, and the frames it holds get their own browsing contexts. The answer has the new
+document node, or none when the command was refused. -/
+def attachDocument (s : State) (el : Nat) (source : String) (xml : Bool := false) : State × Option Nat :=
+  let s := { s with navigations := s.navigations.filter (·.1 != el) }
+  if !isNode s.dom el then (s, none) else
+  let (d, root) := s.dom.graft (frameArena source xml)
+  match addCommand s (.frameDocument el source xml root) d with
+  | (s, .values #[.i32 0]) =>
+    let s := { s with frames := (s.frames.filter (·.1 != el)).push (el, root) }
+    (connectFrames s #[root], some root)
+  | (s, _) => (s, none)
 
 /-- The nodes an insertion of `n` inserts: the children of a fragment, else `n`. -/
 def insertedBy (d : Dom) (n : Nat) : Array Nat :=
@@ -1175,6 +1302,9 @@ def Command.apply (d : Dom) : Command → Except String Dom
     checkNode d n
     if !Forms.isHtml d n ["form"] then throw "script command: target must be a form"
     return Forms.resetForm d n
+  | .frameDocument el source xml r => do
+    checkNode d el
+    made r (d.graft (frameArena source xml))
   | .importNode n doc deep r => do
     checkNode d n; checkNode d doc
     if (d.get doc).type != .document || (d.get n).type == .document then throw "script command: NotSupportedError"
