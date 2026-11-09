@@ -1,0 +1,739 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Shader gallery: two triangles</title>
+<link rel="icon" type="image/svg+xml" href="foafnaut-icon.svg">
+<style>
+body { margin:0; padding:16px; font-family:'Noto Sans', system-ui, sans-serif; font-size:14px; line-height:20px; color:#d6dae1; background:#08090c }
+main { max-width:820px; margin:0 auto }
+a { color:#7fd1ff }
+h1 { margin:6px 0 0 0; font-size:26px; line-height:34px; color:#f4f6f9; font-weight:normal }
+h2 { margin:0; padding-top:14px; font-size:18px; line-height:24px; color:#f4f6f9; font-weight:normal }
+p { margin:0; padding-top:6px }
+.nav { padding-top:0; color:#8a919c }
+.lede { color:#a9b0ba }
+.bar { margin-top:10px; padding:6px 6px 0 6px; background:#111318; border-top:2px solid #7fd1ff }
+.bar button { margin:0 4px 6px 0; padding:3px 10px; font-size:13px; color:#cfd4dc; background:#1b1d24; border:1px solid #454a56 }
+.bar button.on { color:#06121a; background:#7fd1ff; border:1px solid #7fd1ff }
+.bar .k { color:#8a919c; font-size:12px; padding:0 6px 0 2px }
+.bar a.size { margin:0 8px 6px 0; font-size:13px; color:#7fd1ff }
+.bar a.size.on { color:#f4f6f9; text-decoration:none }
+.stage { margin-top:10px; background:#000000; border:1px solid #2a2d36 }
+canvas { display:block; margin:0 auto; touch-action:none }
+.readout { padding:5px 10px 6px 10px; background:#0d0f13; border-top:1px solid #2a2d36; color:#a9b0ba; font-size:12px; line-height:18px; font-family:ui-monospace, Menlo, monospace }
+.readout b { color:#7fd1ff; font-weight:normal }
+.blurb { color:#a9b0ba }
+pre { margin:8px 0 0 0; padding:8px 10px; background:#0d0f13; border-left:3px solid #7fd1ff; color:#c9d1db; font-family:ui-monospace, Menlo, monospace; font-size:12px; line-height:17px; white-space:pre-wrap }
+pre.head { color:#6f7785; border-left:3px solid #454a56 }
+textarea { display:block; box-sizing:border-box; width:100%; margin-top:0; padding:8px 10px; font-family:ui-monospace, Menlo, monospace; font-size:12px; line-height:17px; color:#c9d1db; background:#0d0f13; border:0; border-left:3px solid #7fd1ff }
+.tools { padding-top:8px }
+.tools button { margin:0 6px 6px 0; padding:3px 10px; font-size:13px; color:#cfd4dc; background:#1b1d24; border:1px solid #454a56 }
+.tools button.run { color:#06121a; background:#7fd1ff; border:1px solid #7fd1ff }
+.status { padding-top:4px; color:#8a919c; font-size:12px; line-height:18px }
+.status.bad { color:#ff8a6a }
+.about { padding-top:16px; color:#6f7785; font-size:12px; line-height:18px }
+</style></head><body><main>
+<p class="nav"><a href="index.html">Demo index</a> · fragment shaders on two triangles, as on Shadertoy</p>
+<h1>Shader gallery</h1>
+<p class="lede">Two triangles cover the canvas; a fragment shader colours every pixel from <code>iTime</code>,
+<code>iResolution</code>, <code>iMouse</code> and <code>iFrame</code>. Each shader is here twice: in WGSL for WebGPU and in
+GLSL ES 3.00 for WebGL 2. In Foafnaut, Lean parses each one, checks it against a small subset (loops with literal bounds,
+no recursion, a cost bound, every index clamped) and prints the WGSL the GPU gets. Drag on the picture to move <code>iMouse</code>.</p>
+<div class="bar" id="shaders"></div>
+<div class="bar"><span class="k">API</span><button id="api-webgpu">WebGPU · WGSL</button><button id="api-webgl2">WebGL 2 · GLSL ES 3.00</button>
+<span class="k">size</span><span id="sizes"></span><button id="pause">Pause</button></div>
+<div class="stage" id="stage"><canvas id="c-webgpu" width="800" height="600"></canvas><canvas id="c-webgl2" width="800" height="600"></canvas>
+<div class="readout" id="readout"><b>engine</b> <span id="r-engine">This page needs scripts and WebGPU or WebGL 2.</span> · <b>api</b> <span id="r-api">-</span><br><b>fps</b> <span id="r-fps">-</span> · <b>script</b> <span id="r-script">-</span> · <b>Lean</b> <span id="r-lean">-</span></div></div>
+<h2 id="title">Shader</h2>
+<p class="blurb" id="blurb"></p>
+<pre class="head" id="head"></pre>
+<pre id="srcview"></pre>
+<textarea id="src" spellcheck="false" rows="22"></textarea>
+<div class="tools"><button class="run" id="run">Run</button><button id="reset">Reset</button><button id="try-while">Try a while loop</button><button id="try-fn">Try a helper function</button><button id="try-big">Try a 10,000-step loop</button></div>
+<p class="status" id="status"></p>
+<p class="about">The five shaders are written for this page (MIT, like the rest of the repository); none is copied from Shadertoy.
+In Foafnaut every WebGPU and WebGL call is a command that Lean checks (<code>L4Factoidal.PageGpu</code>; record
+<code>docs/designissues/2026-11-08-page-gpu.md</code>); a frame is one uniform write and one render pass. The readout counts frames
+on the page's own clock; script time is the time the page's frame callback takes on that clock.</p>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const foafnaut = navigator.userAgent === 'Foafnaut';
+// ---- The shaders. Each has a WGSL fragment entry and a GLSL ES 3.00 main. Same picture in both. ----
+// WGSL: fragCoord is computed with the origin at the bottom left, as in GLSL and on Shadertoy.
+const WGSL_HEAD = `struct U { iResolution: vec2f, iTime: f32, iFrame: i32, iMouse: vec4f }
+@group(0) @binding(0) var<uniform> u: U;
+@vertex fn vs(@location(0) p: vec2f) -> @builtin(position) vec4f { return vec4f(p, 0.0, 1.0); }`;
+const GLSL_HEAD = `#version 300 es
+precision highp float;
+uniform vec2 iResolution;
+uniform float iTime;
+uniform int iFrame;
+uniform vec4 iMouse;
+out vec4 fragColor;`;
+const GLSL_VS = `#version 300 es
+in vec2 pos;
+void main() { gl_Position = vec4(pos, 0.0, 1.0); }`;
+const SHADERS = [
+{ id: 'plasma', title: 'Plasma',
+  blurb: 'Five sine waves, one of them a ring around the mouse, summed and run through a cosine palette.',
+  wgsl: `@fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+  let r = u.iResolution;
+  let t = u.iTime;
+  let fragCoord = vec2f(pos.x, r.y - pos.y);
+  let uv = (fragCoord - 0.5 * r) / r.y;
+  let m = (u.iMouse.xy - 0.5 * r) / r.y;
+  var v = sin(uv.x * 7.0 + t);
+  v += sin(uv.y * 5.0 - t * 1.3);
+  v += sin((uv.x + uv.y) * 6.0 + t * 0.7);
+  v += sin(length(uv - m) * 12.0 - t * 2.4);
+  v += sin(length(uv + vec2f(0.4 * sin(t * 0.3), 0.3 * cos(t * 0.4))) * 9.0);
+  let col = 0.5 + 0.5 * cos(6.28318 * (0.12 * v + vec3f(0.0, 0.33, 0.67)) + t * 0.25);
+  return vec4f(col, 1.0);
+}`,
+  glsl: `void main() {
+  vec2 r = iResolution;
+  float t = iTime;
+  vec2 uv = (gl_FragCoord.xy - 0.5 * r) / r.y;
+  vec2 m = (iMouse.xy - 0.5 * r) / r.y;
+  float v = sin(uv.x * 7.0 + t);
+  v += sin(uv.y * 5.0 - t * 1.3);
+  v += sin((uv.x + uv.y) * 6.0 + t * 0.7);
+  v += sin(length(uv - m) * 12.0 - t * 2.4);
+  v += sin(length(uv + vec2(0.4 * sin(t * 0.3), 0.3 * cos(t * 0.4))) * 9.0);
+  vec3 col = 0.5 + 0.5 * cos(6.28318 * (0.12 * v + vec3(0.0, 0.33, 0.67)) + t * 0.25);
+  fragColor = vec4(col, 1.0);
+}` },
+{ id: 'marble', title: 'Marbled warp',
+  blurb: 'Value noise in five octaves, warped by two more noise fields: a domain warp, with every loop bounded and every hash inline.',
+  wgsl: `@fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+  let r = u.iResolution;
+  let t = u.iTime * 0.25;
+  let fragCoord = vec2f(pos.x, r.y - pos.y);
+  let base = (fragCoord - 0.5 * r) / r.y * 3.0 + (u.iMouse.xy - 0.5 * r) / r.y;
+  let rot = mat2x2f(1.6, 1.2, -1.2, 1.6);
+  let k1 = vec2f(12.9898, 78.233);
+  var a = 0.5;
+  var p1 = base;
+  var p2 = base + vec2f(5.2 + 0.3 * t, 1.3 - 0.2 * t);
+  var q = vec2f(0.0, 0.0);
+  for (var k = 0; k < 5; k++) {
+    let i1 = floor(p1);
+    let f1 = fract(p1);
+    let w1 = f1 * f1 * (3.0 - 2.0 * f1);
+    let a1 = fract(sin(dot(i1, k1)) * 43758.547);
+    let b1 = fract(sin(dot(i1 + vec2f(1.0, 0.0), k1)) * 43758.547);
+    let c1 = fract(sin(dot(i1 + vec2f(0.0, 1.0), k1)) * 43758.547);
+    let d1 = fract(sin(dot(i1 + vec2f(1.0, 1.0), k1)) * 43758.547);
+    let i2 = floor(p2);
+    let f2 = fract(p2);
+    let w2 = f2 * f2 * (3.0 - 2.0 * f2);
+    let a2 = fract(sin(dot(i2, k1)) * 43758.547);
+    let b2 = fract(sin(dot(i2 + vec2f(1.0, 0.0), k1)) * 43758.547);
+    let c2 = fract(sin(dot(i2 + vec2f(0.0, 1.0), k1)) * 43758.547);
+    let d2 = fract(sin(dot(i2 + vec2f(1.0, 1.0), k1)) * 43758.547);
+    q += a * vec2f(mix(mix(a1, b1, w1.x), mix(c1, d1, w1.x), w1.y), mix(mix(a2, b2, w2.x), mix(c2, d2, w2.x), w2.y));
+    p1 = rot * p1;
+    p2 = rot * p2;
+    a *= 0.5;
+  }
+  var s = base + 4.0 * q + vec2f(1.7 + t, 9.2 + 0.6 * t);
+  var n = 0.0;
+  a = 0.5;
+  for (var k = 0; k < 6; k++) {
+    let i3 = floor(s);
+    let f3 = fract(s);
+    let w3 = f3 * f3 * (3.0 - 2.0 * f3);
+    let a3 = fract(sin(dot(i3, k1)) * 43758.547);
+    let b3 = fract(sin(dot(i3 + vec2f(1.0, 0.0), k1)) * 43758.547);
+    let c3 = fract(sin(dot(i3 + vec2f(0.0, 1.0), k1)) * 43758.547);
+    let d3 = fract(sin(dot(i3 + vec2f(1.0, 1.0), k1)) * 43758.547);
+    n += a * mix(mix(a3, b3, w3.x), mix(c3, d3, w3.x), w3.y);
+    s = rot * s;
+    a *= 0.5;
+  }
+  var col = mix(vec3f(0.06, 0.08, 0.22), vec3f(0.80, 0.42, 0.20), clamp(n * n * 2.2, 0.0, 1.0));
+  col = mix(col, vec3f(0.05, 0.38, 0.45), clamp(length(q) * 0.9 - 0.3, 0.0, 1.0));
+  col = mix(col, vec3f(0.96, 0.90, 0.78), clamp(q.x * q.x * 1.8 - 0.2, 0.0, 1.0));
+  col = col * (0.4 + 1.3 * n);
+  return vec4f(col, 1.0);
+}`,
+  glsl: `void main() {
+  vec2 r = iResolution;
+  float t = iTime * 0.25;
+  vec2 base = (gl_FragCoord.xy - 0.5 * r) / r.y * 3.0 + (iMouse.xy - 0.5 * r) / r.y;
+  mat2 rot = mat2(1.6, 1.2, -1.2, 1.6);
+  vec2 k1 = vec2(12.9898, 78.233);
+  float a = 0.5;
+  vec2 p1 = base;
+  vec2 p2 = base + vec2(5.2 + 0.3 * t, 1.3 - 0.2 * t);
+  vec2 q = vec2(0.0, 0.0);
+  for (int k = 0; k < 5; k++) {
+    vec2 i1 = floor(p1);
+    vec2 f1 = fract(p1);
+    vec2 w1 = f1 * f1 * (3.0 - 2.0 * f1);
+    float a1 = fract(sin(dot(i1, k1)) * 43758.547);
+    float b1 = fract(sin(dot(i1 + vec2(1.0, 0.0), k1)) * 43758.547);
+    float c1 = fract(sin(dot(i1 + vec2(0.0, 1.0), k1)) * 43758.547);
+    float d1 = fract(sin(dot(i1 + vec2(1.0, 1.0), k1)) * 43758.547);
+    vec2 i2 = floor(p2);
+    vec2 f2 = fract(p2);
+    vec2 w2 = f2 * f2 * (3.0 - 2.0 * f2);
+    float a2 = fract(sin(dot(i2, k1)) * 43758.547);
+    float b2 = fract(sin(dot(i2 + vec2(1.0, 0.0), k1)) * 43758.547);
+    float c2 = fract(sin(dot(i2 + vec2(0.0, 1.0), k1)) * 43758.547);
+    float d2 = fract(sin(dot(i2 + vec2(1.0, 1.0), k1)) * 43758.547);
+    q += a * vec2(mix(mix(a1, b1, w1.x), mix(c1, d1, w1.x), w1.y), mix(mix(a2, b2, w2.x), mix(c2, d2, w2.x), w2.y));
+    p1 = rot * p1;
+    p2 = rot * p2;
+    a *= 0.5;
+  }
+  vec2 s = base + 4.0 * q + vec2(1.7 + t, 9.2 + 0.6 * t);
+  float n = 0.0;
+  a = 0.5;
+  for (int k = 0; k < 6; k++) {
+    vec2 i3 = floor(s);
+    vec2 f3 = fract(s);
+    vec2 w3 = f3 * f3 * (3.0 - 2.0 * f3);
+    float a3 = fract(sin(dot(i3, k1)) * 43758.547);
+    float b3 = fract(sin(dot(i3 + vec2(1.0, 0.0), k1)) * 43758.547);
+    float c3 = fract(sin(dot(i3 + vec2(0.0, 1.0), k1)) * 43758.547);
+    float d3 = fract(sin(dot(i3 + vec2(1.0, 1.0), k1)) * 43758.547);
+    n += a * mix(mix(a3, b3, w3.x), mix(c3, d3, w3.x), w3.y);
+    s = rot * s;
+    a *= 0.5;
+  }
+  vec3 col = mix(vec3(0.06, 0.08, 0.22), vec3(0.80, 0.42, 0.20), clamp(n * n * 2.2, 0.0, 1.0));
+  col = mix(col, vec3(0.05, 0.38, 0.45), clamp(length(q) * 0.9 - 0.3, 0.0, 1.0));
+  col = mix(col, vec3(0.96, 0.90, 0.78), clamp(q.x * q.x * 1.8 - 0.2, 0.0, 1.0));
+  col = col * (0.4 + 1.3 * n);
+  fragColor = vec4(col, 1.0);
+}` },
+{ id: 'spheres', title: 'Three spheres',
+  blurb: 'A ray marcher with a fixed step count (96 steps, then 40 for the soft shadow): three spheres over a chequered floor. Drag to turn the camera.',
+  wgsl: `@fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+  let r = u.iResolution;
+  let t = u.iTime;
+  let fragCoord = vec2f(pos.x, r.y - pos.y);
+  let uv = (fragCoord - 0.5 * r) / r.y;
+  let yaw = 0.25 * t + 6.28318 * u.iMouse.x / r.x;
+  let ro = vec3f(4.0 * sin(yaw), 1.2 + 1.2 * u.iMouse.y / r.y, 4.0 * cos(yaw));
+  let fw = normalize(vec3f(0.0, 0.6, 0.0) - ro);
+  let rt = normalize(cross(fw, vec3f(0.0, 1.0, 0.0)));
+  let up = cross(rt, fw);
+  let rd = normalize(uv.x * rt + uv.y * up + 1.7 * fw);
+  let c1 = vec3f(1.3 * sin(t), 0.7 + 0.25 * sin(2.0 * t), 1.3 * cos(t));
+  let c2 = vec3f(-1.2 * cos(0.7 * t), 0.5, 1.2 * sin(0.7 * t));
+  let c3 = vec3f(0.0, 1.1 + 0.3 * sin(1.3 * t), 0.0);
+  var dist = 0.0;
+  var hit = 0.0;
+  for (var i = 0; i < 96; i++) {
+    let p = ro + rd * dist;
+    let d = min(min(p.y, length(p - c1) - 0.55), min(length(p - c2) - 0.45, length(p - c3) - 0.6));
+    if (hit < 0.5 && dist < 30.0) {
+      if (d < 0.0005 * dist + 0.0002) { hit = 1.0; } else { dist += d; }
+    }
+  }
+  let sky = vec3f(0.55, 0.68, 0.85) - 0.35 * rd.y;
+  var col = sky;
+  if (hit > 0.5) {
+    let p = ro + rd * dist;
+    var n = vec3f(0.0, 0.0, 0.0);
+    for (var k = 0; k < 4; k++) {
+      var e = vec3f(-1.0, -1.0, -1.0);
+      if (k == 0 || k == 3) { e.x = 1.0; }
+      if (k >= 2) { e.y = 1.0; }
+      if (k == 1 || k == 3) { e.z = 1.0; }
+      let q = p + 0.0008 * e;
+      n += e * min(min(q.y, length(q - c1) - 0.55), min(length(q - c2) - 0.45, length(q - c3) - 0.6));
+    }
+    n = normalize(n);
+    let ld = normalize(vec3f(0.6, 0.9, 0.4));
+    var sh = 1.0;
+    var st = 0.02;
+    for (var j = 0; j < 40; j++) {
+      let q = p + n * 0.002 + ld * st;
+      let h = min(min(q.y, length(q - c1) - 0.55), min(length(q - c2) - 0.45, length(q - c3) - 0.6));
+      sh = min(sh, 12.0 * h / st);
+      st += clamp(h, 0.02, 0.3);
+    }
+    sh = clamp(sh, 0.0, 1.0);
+    let d1 = length(p - c1) - 0.55;
+    let d2 = length(p - c2) - 0.45;
+    let d3 = length(p - c3) - 0.6;
+    var alb = vec3f(0.95, 0.8, 0.25);
+    if (p.y < min(min(d1, d2), d3)) {
+      let ch = fract(0.5 * (floor(p.x) + floor(p.z))) * 2.0;
+      alb = mix(vec3f(0.22, 0.24, 0.28), vec3f(0.75, 0.73, 0.68), ch);
+    } else if (d1 < d2 && d1 < d3) {
+      alb = vec3f(0.95, 0.35, 0.2);
+    } else if (d2 < d3) {
+      alb = vec3f(0.2, 0.6, 0.95);
+    }
+    let dif = max(dot(n, ld), 0.0) * sh;
+    let amb = 0.5 + 0.5 * n.y;
+    let spe = pow(max(dot(reflect(rd, n), ld), 0.0), 24.0) * sh;
+    col = alb * (0.2 * amb + dif) + 0.5 * spe;
+    col = mix(col, sky, 1.0 - exp(-0.004 * dist * dist));
+  }
+  col = pow(col, vec3f(0.4545, 0.4545, 0.4545));
+  return vec4f(col, 1.0);
+}`,
+  glsl: `void main() {
+  vec2 r = iResolution;
+  float t = iTime;
+  vec2 uv = (gl_FragCoord.xy - 0.5 * r) / r.y;
+  float yaw = 0.25 * t + 6.28318 * iMouse.x / r.x;
+  vec3 ro = vec3(4.0 * sin(yaw), 1.2 + 1.2 * iMouse.y / r.y, 4.0 * cos(yaw));
+  vec3 fw = normalize(vec3(0.0, 0.6, 0.0) - ro);
+  vec3 rt = normalize(cross(fw, vec3(0.0, 1.0, 0.0)));
+  vec3 up = cross(rt, fw);
+  vec3 rd = normalize(uv.x * rt + uv.y * up + 1.7 * fw);
+  vec3 c1 = vec3(1.3 * sin(t), 0.7 + 0.25 * sin(2.0 * t), 1.3 * cos(t));
+  vec3 c2 = vec3(-1.2 * cos(0.7 * t), 0.5, 1.2 * sin(0.7 * t));
+  vec3 c3 = vec3(0.0, 1.1 + 0.3 * sin(1.3 * t), 0.0);
+  float dist = 0.0;
+  float hit = 0.0;
+  for (int i = 0; i < 96; i++) {
+    vec3 p = ro + rd * dist;
+    float d = min(min(p.y, length(p - c1) - 0.55), min(length(p - c2) - 0.45, length(p - c3) - 0.6));
+    if (hit < 0.5 && dist < 30.0) {
+      if (d < 0.0005 * dist + 0.0002) { hit = 1.0; } else { dist += d; }
+    }
+  }
+  vec3 sky = vec3(0.55, 0.68, 0.85) - 0.35 * rd.y;
+  vec3 col = sky;
+  if (hit > 0.5) {
+    vec3 p = ro + rd * dist;
+    vec3 n = vec3(0.0, 0.0, 0.0);
+    for (int k = 0; k < 4; k++) {
+      vec3 e = vec3(-1.0, -1.0, -1.0);
+      if (k == 0 || k == 3) { e.x = 1.0; }
+      if (k >= 2) { e.y = 1.0; }
+      if (k == 1 || k == 3) { e.z = 1.0; }
+      vec3 q = p + 0.0008 * e;
+      n += e * min(min(q.y, length(q - c1) - 0.55), min(length(q - c2) - 0.45, length(q - c3) - 0.6));
+    }
+    n = normalize(n);
+    vec3 ld = normalize(vec3(0.6, 0.9, 0.4));
+    float sh = 1.0;
+    float st = 0.02;
+    for (int j = 0; j < 40; j++) {
+      vec3 q = p + n * 0.002 + ld * st;
+      float h = min(min(q.y, length(q - c1) - 0.55), min(length(q - c2) - 0.45, length(q - c3) - 0.6));
+      sh = min(sh, 12.0 * h / st);
+      st += clamp(h, 0.02, 0.3);
+    }
+    sh = clamp(sh, 0.0, 1.0);
+    float d1 = length(p - c1) - 0.55;
+    float d2 = length(p - c2) - 0.45;
+    float d3 = length(p - c3) - 0.6;
+    vec3 alb = vec3(0.95, 0.8, 0.25);
+    if (p.y < min(min(d1, d2), d3)) {
+      float ch = mod(floor(p.x) + floor(p.z), 2.0);
+      alb = mix(vec3(0.22, 0.24, 0.28), vec3(0.75, 0.73, 0.68), ch);
+    } else if (d1 < d2 && d1 < d3) {
+      alb = vec3(0.95, 0.35, 0.2);
+    } else if (d2 < d3) {
+      alb = vec3(0.2, 0.6, 0.95);
+    }
+    float dif = max(dot(n, ld), 0.0) * sh;
+    float amb = 0.5 + 0.5 * n.y;
+    float spe = pow(max(dot(reflect(rd, n), ld), 0.0), 24.0) * sh;
+    col = alb * (0.2 * amb + dif) + 0.5 * spe;
+    col = mix(col, sky, 1.0 - exp(-0.004 * dist * dist));
+  }
+  col = pow(col, vec3(0.4545, 0.4545, 0.4545));
+  fragColor = vec4(col, 1.0);
+}` },
+{ id: 'seahorse', title: 'Seahorse zoom',
+  blurb: 'The Mandelbrot set, zooming into the seahorse valley and out again over 50 seconds, at most 256 iterations a pixel, with smooth colouring. Drag to pan.',
+  wgsl: `@fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+  let r = u.iResolution;
+  let t = u.iTime;
+  let fragCoord = vec2f(pos.x, r.y - pos.y);
+  let uv = (fragCoord - 0.5 * r) / r.y;
+  let pan = (u.iMouse.xy - 0.5 * r) / r.y * 0.3;
+  let ph = 9.0 * (1.0 - abs(1.0 - 2.0 * fract(t / 50.0)));
+  let c = vec2f(-0.743643887, 0.131825904) + (uv + pan) * 2.5 * exp(-ph);
+  var z = vec2f(0.0, 0.0);
+  var it = 0.0;
+  var zz = 0.0;
+  var done = 0.0;
+  for (var i = 0; i < 256; i++) {
+    if (done < 0.5) {
+      z = vec2f(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c;
+      zz = dot(z, z);
+      if (zz > 256.0) { done = 1.0; } else { it += 1.0; }
+    }
+  }
+  var col = vec3f(0.0, 0.0, 0.0);
+  if (done > 0.5) {
+    let sm = it - log2(log2(zz)) + 4.0;
+    col = 0.5 + 0.5 * cos(3.0 + sm * 0.12 + vec3f(0.0, 0.6, 1.0) + t * 0.1);
+  }
+  return vec4f(col, 1.0);
+}`,
+  glsl: `void main() {
+  vec2 r = iResolution;
+  float t = iTime;
+  vec2 uv = (gl_FragCoord.xy - 0.5 * r) / r.y;
+  vec2 pan = (iMouse.xy - 0.5 * r) / r.y * 0.3;
+  float ph = 9.0 * (1.0 - abs(1.0 - 2.0 * fract(t / 50.0)));
+  vec2 c = vec2(-0.743643887, 0.131825904) + (uv + pan) * 2.5 * exp(-ph);
+  vec2 z = vec2(0.0, 0.0);
+  float it = 0.0;
+  float zz = 0.0;
+  float done = 0.0;
+  for (int i = 0; i < 256; i++) {
+    if (done < 0.5) {
+      z = vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c;
+      zz = dot(z, z);
+      if (zz > 256.0) { done = 1.0; } else { it += 1.0; }
+    }
+  }
+  vec3 col = vec3(0.0, 0.0, 0.0);
+  if (done > 0.5) {
+    float sm = it - log2(log2(zz)) + 4.0;
+    col = 0.5 + 0.5 * cos(3.0 + sm * 0.12 + vec3(0.0, 0.6, 1.0) + t * 0.1);
+  }
+  fragColor = vec4(col, 1.0);
+}` },
+{ id: 'eleven', title: 'These go to eleven',
+  blurb: 'An amplifier panel: two LED meters on a 120 bpm kick, and a gain knob whose scale goes to 11. The knob sweeps by itself; move the pointer across the picture to set the gain. Past 10 the red segments clip, and the clip light blinks on iFrame.',
+  wgsl: `@fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+  let r = u.iResolution;
+  let t = u.iTime;
+  let fragCoord = vec2f(pos.x, r.y - pos.y);
+  let uv = fragCoord / r.y;
+  let w = r.x / r.y;
+  var gain = 11.0 * clamp(0.5 + 0.7 * sin(0.3 * t - 1.2), 0.0, 1.0);
+  if (u.iMouse.w > 0.5) { gain = 11.0 * clamp(u.iMouse.x / r.x, 0.0, 1.0); }
+  let grain = fract(sin(floor(fragCoord.y) * 12.9898 + floor(fragCoord.x * 0.02) * 4.1414) * 43758.547);
+  var col = vec3f(0.10, 0.10, 0.11) + 0.035 * grain - 0.05 * uv.y;
+  let kick = exp(-6.0 * fract(t * 2.0));
+  let lvlL = (0.35 + 0.35 * kick + 0.12 * sin(t * 5.3) + 0.08 * sin(t * 11.7)) * gain / 10.0;
+  let lvlR = (0.33 + 0.37 * kick + 0.12 * sin(t * 4.7 + 1.0) + 0.08 * sin(t * 13.1)) * gain / 10.0;
+  let fx = (uv.x - 0.08 * w) / (0.84 * w);
+  let seg = floor(fx * 24.0);
+  let cell = fract(fx * 24.0);
+  var lvl = -1.0;
+  if (uv.y > 0.62 && uv.y < 0.70) { lvl = lvlL; }
+  if (uv.y > 0.73 && uv.y < 0.81) { lvl = lvlR; }
+  if (lvl > -0.5 && fx >= 0.0 && fx < 1.0) {
+    col = vec3f(0.03, 0.03, 0.035);
+    if (cell > 0.14 && cell < 0.86) {
+      let at = (seg + 0.5) / 24.0;
+      var led = vec3f(0.15, 0.95, 0.35);
+      if (at > 0.62) { led = vec3f(1.0, 0.8, 0.15); }
+      if (at > 0.84) { led = vec3f(1.0, 0.22, 0.12); }
+      col = mix(led * 0.13, led, step(at, lvl));
+      if (seg > 22.5 && lvl > 1.0 && (u.iFrame / 6) % 2 == 0) { col = vec3f(1.0, 0.92, 0.9); }
+    }
+  }
+  let kc = vec2f(0.5 * w, 0.30);
+  let d = uv - kc;
+  let rr = length(d);
+  let pa = atan2(d.x, d.y);
+  if (rr < 0.15) {
+    col = vec3f(0.07, 0.07, 0.08) + 0.05 * d.y / 0.15 + 0.02 * sin(pa * 48.0) * smoothstep(0.11, 0.15, rr);
+    let ang = -2.35619 + 4.71239 * gain / 11.0;
+    let dir = vec2f(sin(ang), cos(ang));
+    let dl = length(d - dir * clamp(dot(d, dir), 0.02, 0.125));
+    col = mix(col, vec3f(0.95, 0.95, 0.92), 1.0 - smoothstep(0.004, 0.008, dl));
+  }
+  let stp = 4.71239 / 11.0;
+  let kk = round((pa + 2.35619) / stp);
+  let eleven = step(10.5, kk);
+  if (kk > -0.5 && kk < 11.5 && rr > 0.17 && rr < 0.2 + 0.025 * eleven) {
+    if (abs(pa + 2.35619 - kk * stp) * rr < 0.004 + 0.003 * eleven) {
+      col = mix(vec3f(0.85, 0.85, 0.82), vec3f(1.0, 0.25, 0.12), eleven);
+    }
+  }
+  let g = uv - kc - vec2f(0.2, -0.2);
+  let bars = step(abs(g.y), 0.03) * (step(abs(g.x + 0.013), 0.0055) + step(abs(g.x - 0.013), 0.0055));
+  col = mix(col, vec3f(1.0, 0.3, 0.15), clamp(bars, 0.0, 1.0) * (0.35 + 0.65 * step(10.5, gain)));
+  col += vec3f(0.3, 0.03, 0.0) * smoothstep(10.0, 11.0, gain) * kick * (1.0 - smoothstep(0.0, 0.9, rr));
+  return vec4f(col, 1.0);
+}`,
+  glsl: `void main() {
+  vec2 r = iResolution;
+  float t = iTime;
+  vec2 uv = gl_FragCoord.xy / r.y;
+  float w = r.x / r.y;
+  float gain = 11.0 * clamp(0.5 + 0.7 * sin(0.3 * t - 1.2), 0.0, 1.0);
+  if (iMouse.w > 0.5) { gain = 11.0 * clamp(iMouse.x / r.x, 0.0, 1.0); }
+  float grain = fract(sin(floor(gl_FragCoord.y) * 12.9898 + floor(gl_FragCoord.x * 0.02) * 4.1414) * 43758.547);
+  vec3 col = vec3(0.10, 0.10, 0.11) + 0.035 * grain - 0.05 * uv.y;
+  float kick = exp(-6.0 * fract(t * 2.0));
+  float lvlL = (0.35 + 0.35 * kick + 0.12 * sin(t * 5.3) + 0.08 * sin(t * 11.7)) * gain / 10.0;
+  float lvlR = (0.33 + 0.37 * kick + 0.12 * sin(t * 4.7 + 1.0) + 0.08 * sin(t * 13.1)) * gain / 10.0;
+  float fx = (uv.x - 0.08 * w) / (0.84 * w);
+  float seg = floor(fx * 24.0);
+  float cell = fract(fx * 24.0);
+  float lvl = -1.0;
+  if (uv.y > 0.62 && uv.y < 0.70) { lvl = lvlL; }
+  if (uv.y > 0.73 && uv.y < 0.81) { lvl = lvlR; }
+  if (lvl > -0.5 && fx >= 0.0 && fx < 1.0) {
+    col = vec3(0.03, 0.03, 0.035);
+    if (cell > 0.14 && cell < 0.86) {
+      float at = (seg + 0.5) / 24.0;
+      vec3 led = vec3(0.15, 0.95, 0.35);
+      if (at > 0.62) { led = vec3(1.0, 0.8, 0.15); }
+      if (at > 0.84) { led = vec3(1.0, 0.22, 0.12); }
+      col = mix(led * 0.13, led, step(at, lvl));
+      if (seg > 22.5 && lvl > 1.0 && (iFrame / 6) % 2 == 0) { col = vec3(1.0, 0.92, 0.9); }
+    }
+  }
+  vec2 kc = vec2(0.5 * w, 0.30);
+  vec2 d = uv - kc;
+  float rr = length(d);
+  float pa = atan(d.x, d.y);
+  if (rr < 0.15) {
+    col = vec3(0.07, 0.07, 0.08) + 0.05 * d.y / 0.15 + 0.02 * sin(pa * 48.0) * smoothstep(0.11, 0.15, rr);
+    float ang = -2.35619 + 4.71239 * gain / 11.0;
+    vec2 dir = vec2(sin(ang), cos(ang));
+    float dl = length(d - dir * clamp(dot(d, dir), 0.02, 0.125));
+    col = mix(col, vec3(0.95, 0.95, 0.92), 1.0 - smoothstep(0.004, 0.008, dl));
+  }
+  float stp = 4.71239 / 11.0;
+  float kk = round((pa + 2.35619) / stp);
+  float eleven = step(10.5, kk);
+  if (kk > -0.5 && kk < 11.5 && rr > 0.17 && rr < 0.2 + 0.025 * eleven) {
+    if (abs(pa + 2.35619 - kk * stp) * rr < 0.004 + 0.003 * eleven) {
+      col = mix(vec3(0.85, 0.85, 0.82), vec3(1.0, 0.25, 0.12), eleven);
+    }
+  }
+  vec2 g = uv - kc - vec2(0.2, -0.2);
+  float bars = step(abs(g.y), 0.03) * (step(abs(g.x + 0.013), 0.0055) + step(abs(g.x - 0.013), 0.0055));
+  col = mix(col, vec3(1.0, 0.3, 0.15), clamp(bars, 0.0, 1.0) * (0.35 + 0.65 * step(10.5, gain)));
+  col += vec3(0.3, 0.03, 0.0) * smoothstep(10.0, 11.0, gain) * kick * (1.0 - smoothstep(0.0, 0.9, rr));
+  fragColor = vec4(col, 1.0);
+}` }];
+// Edits that leave the subset, to show the check (each is applied to the shown shader).
+const TRIES = {
+  'try-while': { wgsl: s => s.replace(/for \(var (\w+) = 0; \1 < (\d+); \1\+\+\) \{/, 'var $1 = 0;\n  while ($1 < $2) {\n    $1++;'),
+                 glsl: s => s.replace(/for \(int (\w+) = 0; \1 < (\d+); \1\+\+\) \{/, 'int $1 = 0;\n  while ($1 < $2) {\n    $1++;') },
+  'try-fn': { wgsl: s => 'fn wave(x: f32) -> f32 { return 0.5 + 0.5 * sin(x); }\n' + s.replace('return vec4f(', 'return wave(1.0) * vec4f('),
+              glsl: s => 'float wave(float x) { return 0.5 + 0.5 * sin(x); }\n' + s.replace('fragColor = vec4(', 'fragColor = wave(1.0) * vec4(') },
+  'try-big': { wgsl: s => s.replace('return vec4f(', 'var spin = 0.0;\n  for (var b = 0; b < 10000; b++) { spin += 0.0001; }\n  return spin * vec4f('),
+               glsl: s => s.replace('fragColor = vec4(', 'float spin = 0.0;\n  for (int b = 0; b < 10000; b++) { spin += 0.0001; }\n  fragColor = spin * vec4(') },
+};
+// ---- State ----
+const params = new URLSearchParams(location.search || '');
+const SIZES = [[640, 400], [800, 600], [1600, 1000]];
+const size = (/^(\d+)x(\d+)$/.exec(params.get('size') || '') || [0, 800, 600]).slice(1, 3).map(Number);
+const W = Math.min(2048, Math.max(16, size[0])), H = Math.min(2048, Math.max(16, size[1]));
+// Shown at most 800 wide (a 1600 x 1000 canvas is drawn at half size, like a 2x display).
+const shownW = Math.min(W, 800), shownH = Math.round(H * shownW / W);
+let api = params.get('api') === 'webgl2' ? 'webgl2' : 'webgpu';
+let current = SHADERS.find(s => s.id === params.get('shader')) || SHADERS[0];
+let paused = false, frame = 0, t0 = null, tPaused = 0, pausedAt = 0;
+const mouse = [W / 2, H / 2, 0, 0];
+const edits = {}; // shader id + api -> edited source
+const say = (text, bad) => { const s = $('status'); s.textContent = text; s.className = bad ? 'status bad' : 'status'; };
+// ---- Quad: two triangles over clip space ----
+const QUAD = new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]);
+// ---- WebGPU ----
+const gpu = { ready: null, programs: new Map() };
+async function gpuInit() {
+  if (!navigator.gpu) throw new Error('no navigator.gpu');
+  const adapter = await navigator.gpu.requestAdapter();
+  if (!adapter) throw new Error('no GPU adapter');
+  const device = await adapter.requestDevice();
+  const canvas = $('c-webgpu'), ctx = canvas.getContext('webgpu'), format = navigator.gpu.getPreferredCanvasFormat();
+  ctx.configure({ device, format, alphaMode: 'opaque' });
+  const vbuf = device.createBuffer({ size: QUAD.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(vbuf, 0, QUAD);
+  const ubuf = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  const data = new ArrayBuffer(32);
+  return { device, ctx, format, vbuf, ubuf, data, f32: new Float32Array(data), i32: new Int32Array(data) };
+}
+async function gpuProgram(g, body) {
+  const code = WGSL_HEAD + '\n' + body;
+  g.device.pushErrorScope('validation');
+  const module = g.device.createShaderModule({ code });
+  const pipeline = g.device.createRenderPipeline({ layout: 'auto',
+    vertex: { module, entryPoint: 'vs', buffers: [{ arrayStride: 8, attributes: [{ format: 'float32x2', offset: 0, shaderLocation: 0 }] }] },
+    fragment: { module, entryPoint: 'fs', targets: [{ format: g.format }] },
+    primitive: { topology: 'triangle-list' } });
+  let bind = null;
+  try { bind = g.device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: g.ubuf } }] }); }
+  catch (e) { /* reported by the error scope */ }
+  const error = await g.device.popErrorScope();
+  let info = { messages: [] };
+  if (module.getCompilationInfo) info = await module.getCompilationInfo();
+  const msgs = info.messages.filter(m => m.type === 'error').map(m => (m.lineNum ? 'line ' + (m.lineNum - 3) + ': ' : '') + m.message);
+  if (error || msgs.length || !bind) return { error: msgs.length ? msgs.join('\n') : error ? error.message : 'no bind group' };
+  return { pipeline, bind };
+}
+function gpuDraw(g, p, t) {
+  g.f32[0] = W; g.f32[1] = H; g.f32[2] = t; g.i32[3] = frame;
+  g.f32[4] = mouse[0]; g.f32[5] = mouse[1]; g.f32[6] = mouse[2]; g.f32[7] = mouse[3];
+  g.device.queue.writeBuffer(g.ubuf, 0, g.data);
+  const encoder = g.device.createCommandEncoder();
+  const pass = encoder.beginRenderPass({ colorAttachments: [{ view: g.ctx.getCurrentTexture().createView(),
+    clearValue: { r: 0, g: 0, b: 0, a: 1 }, loadOp: 'clear', storeOp: 'store' }] });
+  pass.setPipeline(p.pipeline);
+  pass.setBindGroup(0, p.bind);
+  pass.setVertexBuffer(0, g.vbuf);
+  pass.draw(6);
+  pass.end();
+  g.device.queue.submit([encoder.finish()]);
+}
+// ---- WebGL 2 ----
+const gl2 = { ready: null, programs: new Map() };
+function glInit() {
+  const canvas = $('c-webgl2'), gl = canvas.getContext('webgl2');
+  if (!gl) throw new Error('no WebGL 2 context');
+  const buffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+  gl.bufferData(gl.ARRAY_BUFFER, QUAD, gl.STATIC_DRAW);
+  return { gl, buffer };
+}
+function glProgram(g, body) {
+  const gl = g.gl;
+  const shader = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); return s; };
+  const vs = shader(gl.VERTEX_SHADER, GLSL_VS), fs = shader(gl.FRAGMENT_SHADER, GLSL_HEAD + '\n' + body);
+  if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) return { error: gl.getShaderInfoLog(fs) };
+  const program = gl.createProgram();
+  gl.attachShader(program, vs); gl.attachShader(program, fs);
+  gl.linkProgram(program);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) return { error: gl.getProgramInfoLog(program) || 'the program did not link' };
+  const loc = name => gl.getUniformLocation(program, name);
+  return { program, pos: gl.getAttribLocation(program, 'pos'), res: loc('iResolution'), time: loc('iTime'), frame: loc('iFrame'), mouse: loc('iMouse') };
+}
+function glDraw(g, p, t) {
+  const gl = g.gl;
+  gl.viewport(0, 0, W, H);
+  gl.useProgram(p.program);
+  gl.bindBuffer(gl.ARRAY_BUFFER, g.buffer);
+  gl.enableVertexAttribArray(p.pos);
+  gl.vertexAttribPointer(p.pos, 2, gl.FLOAT, false, 8, 0);
+  if (p.res) gl.uniform2f(p.res, W, H);
+  if (p.time) gl.uniform1f(p.time, t);
+  if (p.frame) gl.uniform1i(p.frame, frame);
+  if (p.mouse) gl.uniform4f(p.mouse, mouse[0], mouse[1], mouse[2], mouse[3]);
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+}
+// ---- Choosing a shader and an API ----
+const ctxOf = a => a === 'webgpu' ? gpu : gl2;
+const sourceOf = (s, a) => edits[s.id + ':' + a] ?? (a === 'webgpu' ? s.wgsl : s.glsl);
+let active = null; // { draw, program }
+async function use(s, a, body) {
+  const c = ctxOf(a);
+  let g;
+  try { c.ready ??= a === 'webgpu' ? gpuInit() : Promise.resolve(glInit()); g = await c.ready; }
+  catch (e) { active = null; say((a === 'webgpu' ? 'WebGPU' : 'WebGL 2') + ' is not available here: ' + e.message, true); return false; }
+  const key = s.id + ':' + body;
+  let p = c.programs.get(key);
+  if (!p) {
+    const t = performance.now();
+    if (a === 'webgpu') p = await gpuProgram(g, body); else p = glProgram(g, body);
+    p.ms = performance.now() - t;
+    if (!p.error) c.programs.set(key, p);
+  }
+  if (p.error) { say((foafnaut ? 'Lean refused this shader: ' : 'The shader compiler refused this shader: ') + p.error, true); return false; }
+  active = { draw: a === 'webgpu' ? () => gpuDraw(g, p, timeNow()) : () => glDraw(g, p, timeNow()) };
+  say((foafnaut ? 'Lean checked this shader and printed the WGSL the GPU runs' : 'Compiled') + (p.ms >= 1 ? ' (' + p.ms.toFixed(0) + ' ms).' : '.'));
+  return true;
+}
+function show() {
+  for (const b of $('shaders').children) b.className = b.dataset.id === current.id ? 'on' : '';
+  $('api-webgpu').className = api === 'webgpu' ? 'on' : '';
+  $('api-webgl2').className = api === 'webgl2' ? 'on' : '';
+  $('c-webgpu').style.display = api === 'webgpu' ? 'block' : 'none';
+  $('c-webgl2').style.display = api === 'webgl2' ? 'block' : 'none';
+  $('title').textContent = current.title;
+  $('blurb').textContent = current.blurb;
+  $('head').textContent = api === 'webgpu' ? WGSL_HEAD : GLSL_HEAD;
+  const src = sourceOf(current, api);
+  if (foafnaut) $('srcview').textContent = src; else $('src').value = src;
+}
+async function choose(s, a) {
+  current = s; api = a; show(); linkSizes();
+  await use(current, api, sourceOf(current, api));
+  report();
+}
+// ---- The frame loop ----
+const timeNow = () => ((paused ? pausedAt : performance.now()) - (t0 ?? 0) - tPaused) / 1000;
+let shownFrames = 0, scriptMs = 0, lastReport = 0, lastStamp = null, leanMs = 0, leanSamples = 0, scriptEngine = '';
+// Frame intervals since the last report: their count and sum (a sort of many numbers would
+// cost a frame's time in an interpreted script engine).
+let intervalCount = 0, intervalSum = 0;
+function tick(now) {
+  requestAnimationFrame(tick);
+  if (t0 === null) t0 = now;
+  if (paused || !active) return;
+  const start = performance.now();
+  active.draw();
+  scriptMs += performance.now() - start;
+  frame++; shownFrames++;
+  if (lastStamp !== null) { intervalCount++; intervalSum += now - lastStamp; }
+  lastStamp = now;
+  // Foafnaut's time for the last turn (navigator.foafnaut, not a web API): every 8th frame.
+  if (foafnaut && (frame & 7) === 0) {
+    const fx = navigator.foafnaut;
+    if (fx && fx.lastTurnMs > 0) { leanMs += fx.lastTurnMs; leanSamples++; scriptEngine = fx.engine; }
+  }
+  if (now - lastReport >= 1000 && params.get('readout') !== '0') report(now);
+}
+// The readout: four text nodes, each set only when its text changes (a change is a layout).
+const shown = {};
+const put = (id, text) => { if (shown[id] !== text) { shown[id] = text; $(id).textContent = text; } };
+const ua = navigator.userAgent, browser = foafnaut ? '' : (/Chrome\/\d+/.exec(ua) || /Firefox\/\d+/.exec(ua) || /Safari\/\d+/.exec(ua) || ['this browser'])[0];
+function report(now) {
+  put('r-engine', foafnaut ? 'Foafnaut' + (scriptEngine ? ', scripts in ' + scriptEngine : '') + ', Lean checks every GPU command' : browser);
+  put('r-api', (api === 'webgpu' ? 'WebGPU, WGSL' : 'WebGL 2, GLSL ES 3.00' + (foafnaut ? ' as WGSL' : '')) + ', ' + W + '×' + H);
+  const mean = intervalCount ? intervalSum / intervalCount : 0;
+  put('r-fps', paused ? 'paused' : mean ? (1000 / mean).toFixed(1) + ' (frame ' + mean.toFixed(1) + ' ms)' : '-');
+  intervalCount = 0; intervalSum = 0;
+  if (shownFrames) put('r-script', (scriptMs / shownFrames).toFixed(2) + ' ms a frame' + (foafnaut ? ' on the page clock' : ''));
+  put('r-lean', !foafnaut ? 'not in this browser' : leanSamples ? (leanMs / leanSamples).toFixed(2) + ' ms a turn (script and checks, wall time), ' + (api === 'webgpu' ? 'a uniform write and a pass' : 'one draw') + ' checked a frame' : '-');
+  leanMs = 0; leanSamples = 0;
+  if (now !== undefined) lastReport = now;
+  shownFrames = 0; scriptMs = 0;
+}
+// ---- Controls ----
+for (const s of SHADERS) {
+  const b = document.createElement('button');
+  b.textContent = s.title; b.dataset.id = s.id;
+  b.addEventListener('click', () => choose(s, api));
+  $('shaders').appendChild(b);
+}
+$('api-webgpu').addEventListener('click', () => choose(current, 'webgpu'));
+$('api-webgl2').addEventListener('click', () => choose(current, 'webgl2'));
+// A size is a new page (a canvas keeps the size it was made with): links, kept up to date.
+const sizeLinks = SIZES.map(([w, h]) => {
+  const a = document.createElement('a');
+  a.textContent = w + '×' + h; a.className = w === W && h === H ? 'size on' : 'size';
+  $('sizes').appendChild(a);
+  return [a, w, h];
+});
+const linkSizes = () => { for (const [a, w, h] of sizeLinks) a.setAttribute('href', '?shader=' + current.id + '&api=' + api + '&size=' + w + 'x' + h); };
+$('pause').addEventListener('click', () => {
+  paused = !paused;
+  if (paused) pausedAt = performance.now(); else { tPaused += performance.now() - pausedAt; lastStamp = null; }
+  $('pause').textContent = paused ? 'Play' : 'Pause'; report();
+});
+const run = text => { edits[current.id + ':' + api] = text; show(); use(current, api, text); };
+$('run').addEventListener('click', () => run(foafnaut ? sourceOf(current, api) : $('src').value));
+$('reset').addEventListener('click', () => { delete edits[current.id + ':' + api]; show(); use(current, api, sourceOf(current, api)); });
+for (const id of Object.keys(TRIES)) $(id).addEventListener('click', () => run(TRIES[id][api === 'webgpu' ? 'wgsl' : 'glsl'](sourceOf(current, api))));
+// iMouse: xy the pointer on the canvas in drawing-buffer pixels, origin bottom left; z 1 while pressed; w 1 once the pointer was on the canvas.
+for (const id of ['c-webgpu', 'c-webgl2']) {
+  const c = $(id);
+  const at = e => { mouse[0] = e.offsetX * W / shownW; mouse[1] = H - e.offsetY * H / shownH; mouse[3] = 1; };
+  c.addEventListener('pointermove', at);
+  c.addEventListener('pointerdown', e => { at(e); mouse[2] = 1; });
+  c.addEventListener('pointerup', e => { at(e); mouse[2] = 0; });
+}
+// ---- Start ----
+for (const id of ['c-webgpu', 'c-webgl2']) {
+  const c = $(id);
+  c.setAttribute('width', String(W)); c.setAttribute('height', String(H));
+  c.style.width = shownW + 'px'; c.style.height = shownH + 'px';
+}
+$(foafnaut ? 'src' : 'srcview').style.display = 'none';
+if (foafnaut) { $('run').textContent = 'Run again'; }
+choose(current, api).then(() => requestAnimationFrame(tick), e => { console.error(e); say('Error: ' + (e && e.message), true); });
+</script>
+</main></body></html>
