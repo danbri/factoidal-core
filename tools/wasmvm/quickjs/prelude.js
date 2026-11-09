@@ -3369,18 +3369,6 @@
     }
   }
   if (frameEngine()) { def('MessageChannel', MessageChannel); def('MessagePort', MessagePort); }
-  // HTML §7.2.2.3 "Named access on the Window object": an element with an id (or an
-  // embed, form, iframe, img or object with a name) is a property of the window when no
-  // other property has that name. The window's named properties object is a proxy in its
-  // prototype chain (WebIDL §3.7.4); the lookup is Lean's (node_query 5, getElementById),
-  // asked only for a name that nothing else defines.
-  if (frameEngine()) {
-    const named = name => { const r = n.query(0, 5, name); return typeof r === 'string' ? wrap(Number(r)) : null; };
-    Object.setPrototypeOf(Window.prototype, new Proxy(EventTarget.prototype, {
-      get(t, p, r) { if (typeof p !== 'string' || p in t) return Reflect.get(t, p, r); return named(p) ?? undefined; },
-      has(t, p) { return Reflect.has(t, p) || (typeof p === 'string' && p !== '' && named(p) !== null); },
-    }));
-  }
   // ==== end shadowframes: frames ========================================================
   for (const [k, v] of Object.entries({ EventTarget, Event, CustomEvent, UIEvent, MouseEvent, KeyboardEvent, FocusEvent, ErrorEvent,
     WheelEvent, PointerEvent, DOMRect, DOMRectReadOnly, CompositionEvent, InputEvent, DragEvent, HashChangeEvent, MessageEvent, StorageEvent, DeviceMotionEvent,
