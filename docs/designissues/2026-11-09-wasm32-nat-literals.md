@@ -114,10 +114,16 @@ given to two owners, then one owner dropped. Natively it prints `kept [0, 400000
 wasm32 it prints a wrong value (`kept [0, 8519952]` in one run, the literal's memory reused).
 The control makes the same value at run time and is right on both.
 
-Whether this counts as a defect in Lean is not settled. The IR types the literal `tagged`, the
-C is generated on 64-bit, and whether Lean supports compiling that C for a 32-bit target is
-not known here. Our one runtime patch (`string_to_list_core`, `build-wasm.sh` step 1b) is not
-on this path.
+Lean's own later change addresses this: leanprover/lean4 PR 16283, "fix: use Nat.isPossibleRef
+everywhere" (commit efd261787, merged 2026-11-05), replaces the host-sized `maxSmallNat` test
+in ExplicitBoxing and the `n < UInt32.size` test in ToImpure with `n > 2^31 - 1`, so literals
+of 2^31 or more are typed `tobject` and get reference counts. It is not in v4.36.0-rc2 or any
+release yet (checked by depmap-0e, 2026-11-09). In v4.33.1 a 2^40 literal is typed `tagged`.
+
+So `tools/wasm32-nat-literals.py` and its gate are a workaround for 4.33.1. They should be
+removed when the toolchain moves to a release containing that commit. Lean's WebAssembly target
+is officially unsupported (RFC 16134), so this route is ours to keep working. Our one runtime
+patch (`string_to_list_core`, `build-wasm.sh` step 1b) is not on this path.
 
 ## 7. Owner decisions
 

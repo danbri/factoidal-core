@@ -6,8 +6,9 @@ machine, and we compile that C for wasm32. In that C a Nat literal that is a sca
 64-bit machine (the IR types it `tagged`) has no reference counting: it is emitted as
 `lean_unsigned_to_nat(Nu)` or `lean_cstr_to_nat("N")` and passed to as many owners as the
 program has, with no `lean_inc`. On wasm32 a Nat of 2^31 or more is a heap object (an mpz), so
-the first owner that is done with it frees it and the others keep a dangling pointer. Whether
-Lean supports this route (C made on 64-bit, compiled for 32-bit) is not known here.
+the first owner that is done with it frees it and the others keep a dangling pointer. This is a
+workaround for Lean 4.33.1: remove it when the toolchain moves to a release containing
+leanprover/lean4 commit efd261787 (PR 16283), which reference-counts these literals.
 tests/wasm32-literals/ reproduces it in a few lines. In the Foafnaut Wasm build
 (2026-11-09) `JS.callMethod` gave one literal 2^40 (the evaluator's fuel) to `getV` and to
 `callV`, and `WebScripts.startLean` put the literal 4,000,000,000 (`Page.Limits.fuel`) into a
