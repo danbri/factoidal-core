@@ -133,6 +133,26 @@ Page time (a loaded machine: Lean builds and three runners at once): encode-form
 per encode-href page moved by at most 1,016 of about 2.5 million (0.04%). The same three
 encode-form pages on QuickJS-NG in WasmVM pass too (36 to 52 s each).
 
+### Which tree each number is from
+
+No subtest has been measured on the final tree (this branch rebased on main 6e1359c0d,
+with the frame `characterSet` commit): that tree has not been built locally; the cloud
+build is its first full test, and a whole-suite BubblePopJS rescore follows it. Every
+number above is from an earlier build:
+
+- Build b1: wip/frames on main 6f08a9824 plus the form submission commits, without the
+  frame `characterSet` commit. The full runs of the four families (1,139,189 subtests
+  passed), on the pinned `third_party/testing/wpt-encoding` copies with the runner
+  applying `.headers`; a check of 103 names through wptserve (one variant per page,
+  94,053 of 94,221, its only misses being the `data:` URL page and
+  `single-byte-decoder-iframe`); and the script test suites.
+- Baseline: main 0f89690b6 (encode-href 216,479 in full; encode-form and decode are 0, seen
+  on three and two sampled pages, and by construction: `form.submit` did nothing and frames
+  had no documents).
+
+The frame `characterSet` commit (`single-byte-decoder-iframe`, 168 subtests when it passes)
+has only been typechecked (`Hosts.Dom`, `Hosts.DomOps`, `WebScripts`); it has not run.
+
 ## Theorems and checks (HTML.FormSubmission)
 
 - `decode_encodeBytes`: percent-decoding a serialized component gives back exactly the
