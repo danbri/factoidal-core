@@ -373,6 +373,7 @@
 
   // ---- reporting an exception (HTML "report an exception") -------------------------
   let reporting = false;
+  let windowOfScript = () => window, frameLoad = () => {};
   const report = e => {
     const message = e instanceof Error ? `${e.name}: ${e.message}` : 'Uncaught ' + String(e);
     if (reporting) { n.log('Uncaught (in error handler) ' + message); return; }
@@ -381,7 +382,7 @@
     try {
       const event = new ErrorEvent('error', { message, error: e, cancelable: true, filename: '', lineno: 0, colno: 0 });
       state(event).trusted = true;
-      const notCanceled = dispatch(window, event);
+      const notCanceled = dispatch(windowOfScript(), event);
       if (notCanceled) n.log('Uncaught ' + message + (stack ? ' at ' + stack : ''));
     } finally { reporting = false; }
   };
@@ -2374,7 +2375,11 @@
   Object.defineProperty(globalThis, 'event', { get: () => globalEvent,
     set(v) { Object.defineProperty(globalThis, 'event', { value: v, writable: true, configurable: true, enumerable: true }); }, configurable: true, enumerable: true });
   def('opener', null); def('frameElement', null); def('name', '');
-  def('document', document); def('location', location);
+  // A script of a frame's document runs in this realm with `document` its own document
+  // (Hosts.Page.Session.loadFrameP sets the current script).
+  let scriptDocument = null;
+  Object.defineProperty(globalThis, 'document', { get: () => scriptDocument ?? document, configurable: true, enumerable: true });
+  def('location', location);
   def('navigator', Object.freeze({ userAgent: 'Foafnaut', language: 'en', languages: ['en'], platform: '', onLine: true,
     cookieEnabled: false, hardwareConcurrency: 1, gpu }));
   def('GPUBufferUsage', GPUBufferUsage); def('GPUTextureUsage', GPUTextureUsage); def('GPUShaderStage', GPUShaderStage);
@@ -3116,6 +3121,20 @@
   def('focus', () => {}); def('blur', () => {}); def('close', () => {}); def('stop', () => {}); def('scrollTo', () => {}); def('scrollBy', () => {});
   def('alert', () => {}); def('confirm', () => false); def('prompt', () => null);
   def('open', () => null);
+
+  // ==== frames (shadowframes) ==========================================================
+  // A same-origin frame's document is in this realm's arena and its scripts run here
+  // (Hosts.Page.Session.loadFrameP): while one runs, `addEventListener` on the window
+  // registers on that frame's own window target, its uncaught errors go there, and its
+  // `load` fires there before the iframe's (HTML §4.8.5 "iframe load event steps").
+  // node_info 11 answers a frame's document only for the same origin (HTML.Frames).
+  const frameTargets = new Map();
+  const frameTarget = doc => { let t = frameTargets.get(doc); if (!t) { t = new EventTarget(); frameTargets.set(doc, t); } return t; };
+  windowOfScript = () => scriptDocument ? frameTarget(nodeId(scriptDocument)) : window;
+  frameLoad = el => { const d = info(el, 11), t = d >= 0 ? frameTargets.get(d) : undefined; if (t) { const e = new Event('load'); state(e).trusted = true; dispatch(t, e); } };
+  for (const k of ['addEventListener', 'removeEventListener'])
+    define(Window.prototype, k, function (...a) { return EventTarget.prototype[k].apply((this === window || this == null) && scriptDocument ? windowOfScript() : this, a); });
+  // ==== end frames =====================================================================
   for (const [k, v] of Object.entries({ EventTarget, Event, CustomEvent, UIEvent, MouseEvent, KeyboardEvent, FocusEvent, ErrorEvent,
     WheelEvent, PointerEvent, DOMRect, DOMRectReadOnly, CompositionEvent, InputEvent, DragEvent, HashChangeEvent, MessageEvent, StorageEvent, DeviceMotionEvent,
     DeviceOrientationEvent, BeforeUnloadEvent, TextEvent,
@@ -3644,13 +3663,14 @@
       state(e).trusted = true;
       if (type === 'DOMContentLoaded') readyState = 'interactive';
       if (type === 'load' && target === WINDOW) readyState = 'complete';
+      if (type === 'load' && target !== WINDOW && target !== 0 && info(target, 29) >= 0) frameLoad(target);
       return dispatch(wrapTarget(target), e) ? '' : 'prevented';
     },
     report(e) { report(e); },
     // A page starts: the content event handler attributes of its elements. The host may
     // run the prelude once on an empty document and copy that state for each page.
     start() { scanHandlers(0, false); },
-    script(id) { currentScript = id < 0 ? null : wrap(id); },
+    script(id) { currentScript = id < 0 ? null : wrap(id); const d = id < 0 ? 0 : info(id, 7); scriptDocument = d > 0 ? wrap(d) : null; },
     url(u) { href = String(u); },
     release(id) { callbacks.delete(id); },
   };

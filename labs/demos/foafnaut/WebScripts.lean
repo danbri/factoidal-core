@@ -2,6 +2,7 @@ import L4Factoidal.WasmVM.Hosts.Page
 import L4Factoidal.WasmVM.Hosts.PageAot
 import L4Factoidal.WasmVM.Hosts.LeanJSRealm
 import L4Factoidal.DOM.OfXml
+import L4Factoidal.WHATWG.Encoding.Sniff
 import WebRenderScript
 import WebWasm
 import WebShell
@@ -35,6 +36,13 @@ argument for `start`:
   `Page.Session.pointer`, with a click on release; at most one move in a frame. A host
   that finds no `pointer` in `info` sends `click`.
 - `resize` (`width`, `height`): the viewport in CSS pixels; `resize` at the window.
+- `frame` (`node`, `url`, and `bytesBase64` with `contentType`, or `source`, with
+  `resources`; or `failed`): the embedder's answer to a frame navigation of a turn's
+  `navigations` (a host that sets `navigations:true` in `start` loads frames' URLs; without
+  it a frame with a URL keeps `about:blank`). `srcdoc` frames are Lean's own. The frame's
+  document joins the arena (`Command.frameDocument`), its scripts run in the page's realm
+  with `document` the frame's, and its `load` event follows (`frameLoads` counts the
+  `srcdoc` loads of a turn).
 
 `start` also takes `width` and `height` (the viewport in CSS pixels: `innerWidth`,
 `innerHeight`), `layout` (the render request whose `layoutFields` lay the page out for
@@ -169,7 +177,7 @@ private unsafe def entropyImpl (id : Nat) : ByteArray :=
 @[implemented_by entropyImpl, noinline] private opaque entropy (id : Nat) : ByteArray
 
 def actions : List String := ["info", "load", "start", "click", "pointer", "resize", "advance", "settle", "turn", "close",
-  "aotModule", "resume", "host"]
+  "aotModule", "resume", "host", "frame"]
 
 /-- An answer object with `nextSession` first: the value `keep` answered, so the
 compiled code keeps the call. -/
@@ -516,10 +524,77 @@ def hostCall (held : Held) (aot : PageAot.Prepared) (t : Turn) (request : JSON.J
 
 /-! ## BubblePopJS, the engine written in Lean -/
 
+/-! ### Frame documents (HTML §4.8.5)
+
+The script session gives every connected `iframe` a browsing context (`frames:true`):
+`about:blank` at once, a `srcdoc` document that Lean parses and loads after the turn
+(`srcdocLoads`), and a URL for the embedder when it set `navigations:true` in `start`: each
+turn lists them (`navigations`), and the embedder answers each with the action `frame`. A
+frame's scripts run in the page's realm with `document` the frame's
+(`Page.Session.loadFrameP`, `LeanJS.loadFrame`). Not on the AOT path (the Hub). -/
+
+/-- Rounds of `srcdoc` loads after a turn (for frames in frames). -/
+def frameRounds : Nat := 4
+
+/-- The `srcdoc` documents of frames that wait (`about:srcdoc` navigations): Lean parses each
+and loads it with its inline scripts, at most `frameRounds` rounds. A page with no waiting
+navigation pays one look at an empty list. -/
+def srcdocLoads {σ : Type} (host : σ → Page.Host) (load : σ → Nat → String → Array (Nat × String) → σ) (s : σ) :
+    σ × Nat := Id.run do
+  let mut s := s
+  let mut n := 0
+  for _ in [0:frameRounds] do
+    let navs := (host s).dom.navigations.filter (·.2 == "about:srcdoc")
+    if navs.isEmpty then break
+    for (el, _) in navs do
+      let src := (Dom.attrValue? (host s).dom.dom el "srcdoc").getD ""
+      let scripts := ((scriptSources (DOM.parseHtmlDocument src) (.object [])).toOption.map (·.1)).getD #[]
+      s := load s el src scripts
+      n := n + 1
+  return (s, n)
+
+/-- The frame navigations the embedder is to answer (action `frame`): an `iframe` and a URL. -/
+def hostNavigations (h : Page.Host) : JSON.Json :=
+  .array ((h.dom.navigations.filter fun (_, u) => !u.isEmpty && u != "about:srcdoc").toList.map fun (el, u) =>
+    .object [("nodeId", num el), ("url", .string u)])
+
+/-- The frame fields of a turn answer, only when there is something to say: `navigations`
+for the embedder, and `frameLoads`, the `srcdoc` documents Lean loaded in the turn. -/
+def frameFields (h : Page.Host) (loads : Nat) : List (String × JSON.Json) :=
+  let waiting := h.dom.navigations.any fun (_, u) => !u.isEmpty && u != "about:srcdoc"
+  (if waiting then [("navigations", hostNavigations h)] else []) ++ (if loads == 0 then [] else [("frameLoads", num loads)])
+
+/-- The document of a `frame` action (the embedder's answer to a navigation): `bytesBase64`
+with `contentType` (decoded by Lean: HTML §13.2.3 sniffing with the transport charset, then
+the Encoding Standard's decoder, `WHATWG.Encoding.Sniff.decodeDocumentFast`), or `source`
+as text; empty, or `failed:true`, for a load that failed (the frame keeps `about:blank`).
+Parsed as XML for an `.xht` or `.xhtml` URL. With its classic scripts and the sources of
+the `resources` the embedder read (node numbers of the document parsed on its own). -/
+def frameDocument (request : JSON.Json) : Except String (String × Bool × Array (Nat × String)) := do
+  let url := str request "url"
+  let src ← if request.field? "failed" == some (.bool true) then pure "" else
+    match request.field? "bytesBase64" with
+    | some (.string b) =>
+      match Rendering.SfntProfile.decodeBase64 b with
+      | some bytes =>
+        let ct := str request "contentType"
+        let label := if ct.isEmpty then none
+          else (L4Factoidal.WHATWG.Encoding.Sniff.extractFromMeta ct).orElse fun _ =>
+            if ct.contains ';' || ct.contains '/' then none else some ct
+        pure (L4Factoidal.WHATWG.Encoding.Sniff.decodeDocumentFast bytes label).2
+      | none => throw "bytesBase64 is not Base64"
+    | _ => pure (str request "source")
+  if src.isEmpty then return ("", false, #[])
+  let dom ← parse src url
+  let (scripts, _) ← scriptSources dom request
+  return (src, DOM.isXhtmlPath url, scripts)
+
 /-- The answer of a turn of the Lean engine; the session is kept. -/
 def leanTurn (held : Held) (id : Nat) (before : Before) (s : LeanJS.Session) (marks : Marks) (full : Bool) (ns : Nat) :
     Held × Except String String :=
-  let (answer, marks) := turnAnswerOf id before (View.ofLean s) marks full ns [("engine",.string "bubblepop")]
+  let (s, loads) := srcdocLoads (·.host) (fun s el src scripts => LeanJS.loadFrame s el src scripts) s
+  let (answer, marks) := turnAnswerOf id before (View.ofLean s) marks full ns
+    ([("engine",.string "bubblepop")] ++ frameFields s.host loads)
   ({ held with leanSession := some (id, drainedLean s, marks) }, .ok answer)
 
 /-- `start` on the Lean engine: its realm is made at the first page (the prelude runs
@@ -530,7 +605,8 @@ def startLean (held : Held) (html : String) (request : JSON.Json) (measure : JSO
   let commands := min 1048576 ((natField request "commandLimit").getD 4096)
   let logs := min 1048576 ((natField request "logLimit").getD 1024)
   let id := held.nextSession
-  let lim : Page.Limits := { commands, logs, gpuPage := id, entropy := entropy id, encoding := str request "encoding" }
+  let hostLoads := request.field? "navigations" == some (.bool true)
+  let lim : Page.Limits := { commands, logs, gpuPage := id, entropy := entropy id, encoding := str request "encoding", frames := true, hostLoads }
   let made := show Except String (Array (Nat × String) × Array String × DOM.Dom) from do
     let dom ← parse html url
     let (scripts, missing) ← scriptSources dom request
@@ -579,6 +655,11 @@ def actLean (held : Held) (action : String) (request : JSON.Json) (id : Nat) (s 
   | "advance" => run fun s => e.flushMove (e.advance s ((e.loop s).clock + ((natField request "ms").getD 0))).1
   | "settle" => run fun s => (e.settle (e.flushMove s) ((natField request "budgetMs").getD 30000)).1
   | "turn" => run fun s => let s := e.flushMove s; (e.advance s (e.loop s).clock).1
+  | "frame" =>
+    match natField request "node", frameDocument request with
+    | some node, .ok (src, xml, scripts) => run (LeanJS.loadFrame · node src scripts xml)
+    | _, .error e => keep s!"scriptSession: frame: {e}"
+    | none, _ => keep "scriptSession: frame needs node"
   | _ => keep "scriptSession: unknown action"
 
 /-- One action on what the engine holds. `measure` lays out an arena for the layout reads
@@ -641,13 +722,15 @@ def act (held : Held) (action html : String) (request : JSON.Json)
         let (vw, vh) := (viewport request).getD (800, 600)
         let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh, canvasEnv := canvas }
         let rate := max 1 ((natField request "instructionsPerMs").getD 100000)
-        let s ← Page.start m dom url scripts { commands, logs, gpuPage := held.nextSession, entropy := entropy held.nextSession, encoding := str request "encoding" } #[] reads { instructionsPerMs := rate }
+        let hostLoads := request.field? "navigations" == some (.bool true)
+        let s ← Page.start m dom url scripts { commands, logs, gpuPage := held.nextSession, entropy := entropy held.nextSession, encoding := str request "encoding", frames := true, hostLoads } #[] reads { instructionsPerMs := rate }
         return missing.foldl Page.Session.fail s
       match started with
       | (.error e, _) => (held, .error s!"scriptSession: {e}")
       | (.ok s, ns) =>
         let id := held.nextSession
-        let (answer, marks) := turnAnswer id {} s {} true ns
+        let (s, loads) := srcdocLoads (·.host) (fun s el src scripts => s.loadFrame el src scripts) s
+        let (answer, marks) := turnAnswer id {} s {} true ns (frameFields s.host loads)
         let s := drained s
         ({ held with session := some (id, s, marks), leanSession := none, nextSession := id + 1 }, .ok answer)
   | _ =>
@@ -669,7 +752,8 @@ def act (held : Held) (action html : String) (request : JSON.Json)
           beginTurn held id before marks full false (Except.ok <$> f s)
         else
           let (s', ns) := WebWasm.timed fun _ => (f s).runLocal
-          let (answer, marks) := turnAnswer id before s' marks full ns
+          let (s', loads) := srcdocLoads (·.host) (fun s el src scripts => s.loadFrame el src scripts) s'
+          let (answer, marks) := turnAnswer id before s' marks full ns (frameFields s'.host loads)
           ({ held with session := some (id, drained s', marks) }, Except.ok answer)
       match action with
       | "click" =>
@@ -695,6 +779,11 @@ def act (held : Held) (action html : String) (request : JSON.Json)
       | "turn" => run fun s => do
           let s ← s.flushMoveP
           return (← s.advanceP s.loop.clock).1
+      | "frame" =>
+        match natField request "node", frameDocument request with
+        | some node, .ok (src, xml, scripts) => run (·.loadFrameP node src scripts xml)
+        | _, .error e => ({ held with session := some (id, s, marks) }, .error s!"scriptSession: frame: {e}")
+        | none, _ => ({ held with session := some (id, s, marks) }, .error "scriptSession: frame needs node")
       | _ => ({ held with session := some (id, s, marks) }, .error "scriptSession: unknown action")
 
 /-- The `scriptSession` operation. `html` is the page, for `start`. -/
