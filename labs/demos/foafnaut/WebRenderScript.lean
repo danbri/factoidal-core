@@ -48,6 +48,9 @@ def commandJson : L4Factoidal.WasmVM.Hosts.Dom.Command → JSON.Json
   | .importNode n doc deep r => .object [("op",.string "importNode"),("source",num n),("document",num doc),("deep",.bool deep),("nodeId",num r)]
   | .setChecked n v => .object [("op",.string "setChecked"),("nodeId",num n),("value",.bool v)]
   | .resetForm n => .object [("op",.string "resetForm"),("nodeId",num n)]
+  | .attachShadow h f r => .object [("op",.string "attachShadow"),("host",num h),("flags",num f),("nodeId",num r)]
+  | .assignSlot sl ns => .object [("op",.string "assignSlot"),("nodeId",num sl),("nodes",.array (ns.toList.map num))]
+  | .frameDocument el src xml r => .object [("op",.string "frameDocument"),("frame",num el),("source",.string src),("xml",.bool xml),("nodeId",num r)]
 where num (n : Nat) : JSON.Json := .number (toString n)
 
 private def commandOf (command : JSON.Json) : Except String L4Factoidal.WasmVM.Hosts.Dom.Command := do
@@ -102,6 +105,24 @@ private def commandOf (command : JSON.Json) : Except String L4Factoidal.WasmVM.H
       | _ => throw "script command: deep must be a boolean"
     return .cloneNode (← node "source") deep (← node "nodeId")
   | "normalize" => exactly ["nodeId"]; return .normalize (← node "nodeId")
+  | "attachShadow" =>
+    exactly ["host","flags","nodeId"]
+    let flags ← node "flags"
+    if flags ≥ 64 then throw "script command: shadow flags exceed bound"
+    return .attachShadow (← node "host") flags (← node "nodeId")
+  | "frameDocument" =>
+    exactly ["frame","source","xml","nodeId"]
+    let .string src ← field command "source" | throw "script command: source must be a string"
+    if src.utf8ByteSize > 1048576 then throw "script command: frame document exceeds 1MiB"
+    let xml ← match ← field command "xml" with
+      | .bool b => pure b
+      | _ => throw "script command: xml must be a boolean"
+    return .frameDocument (← node "frame") src xml (← node "nodeId")
+  | "assignSlot" =>
+    exactly ["nodeId","nodes"]
+    let .array items ← field command "nodes" | throw "script command: nodes must be an array"
+    if items.length > 65536 then throw "script command: nodes exceed bound"
+    return .assignSlot (← node "nodeId") (← items.toArray.mapM nodeId)
   | _ => throw "script command: unsupported operation"
 
 /-- One command: its JSON form read, then the arena operation the script ran

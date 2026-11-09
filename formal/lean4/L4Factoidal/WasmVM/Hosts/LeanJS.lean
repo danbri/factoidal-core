@@ -402,11 +402,15 @@ def prepareWith (data : String) (lim : Page.Limits := {}) : Except String Sessio
 /-- Start a page on the prepared realm (as `Page.start` and `Page.Session.startP`): the
 content event handler attributes, the URL, the classic scripts in document order (each with
 the current script set and a microtask checkpoint after it), `DOMContentLoaded`, the
-window's `load` event as a task, and the tasks due at time 0. -/
+window's `load` event as a task, and the tasks due at time 0. `origins`: a sandboxed
+frame's own session (`HTML.FrameSessions`), with its own origin and its parent's. -/
 def start (base : Session) (dom : Arena) (url : String) (scripts : Array (Nat × String)) (lim : Page.Limits := {})
-    (reads : Reads := {}) (time : ScriptClock := {}) : Session := Id.run do
+    (reads : Reads := {}) (time : ScriptClock := {})
+    (origins : Option (L4Factoidal.HTML.Frames.Origin × L4Factoidal.HTML.Frames.Origin) := none) : Session := Id.run do
   let gpu := L4Factoidal.PageGpu.State.empty lim.gpuPage
-  let domHost : Page.DomHost := { dom := dom, commandLimit := lim.commands, logLimit := lim.logs, framing := lim.frames, gpu := gpu }
+  let domHost : Page.DomHost := { dom := dom, commandLimit := lim.commands, logLimit := lim.logs, framing := lim.frames, gpu := gpu, url, selfOrigin := origins.map (·.1), parentOrigin := origins.map (·.2), hostLoads := lim.hostLoads }
+  let domHost := if domHost.framing && dom.nodes.any (L4Factoidal.DOM.Dom.isHtmlElement · "iframe") then
+    Hosts.Dom.connectFrames domHost #[0] else domHost
   let s := { base with limits := lim, steps := 0, jobs := 0, tasks := 0, errors := #[], lastFrame := none }
   let mut s := s.setHost { dom := domHost, reads, time, web := { entropy := lim.entropy, docEncoding := lim.encoding } }
   s := (s.api? "start" #[]).1
@@ -417,10 +421,34 @@ def start (base : Session) (dom : Arena) (url : String) (scripts : Array (Nat ×
     s := engine.checkpoint s
   s := (s.api? "script" #[.num (-1)]).1
   s := (engine.dispatch s 0 "DOMContentLoaded").1
-  s := engine.setLoop s ((engine.loop s).queueTask .domManipulation 0 (some { type := "load", target := Page.windowId }))
+  if Hosts.Dom.framesLoading s.host.dom then
+    s := s.setHost { s.host with dom := { s.host.dom with loadWaits := true } }
+  else
+    s := engine.setLoop s ((engine.loop s).queueTask .domManipulation 0 (some { type := "load", target := Page.windowId }))
   return (engine.advance s 0).1
 
 /-! ## What a turn did -/
+
+/-- A frame's navigation ends with document `source` (as `Page.Session.loadFrameP`): it
+joins the arena, its classic scripts run in the page's realm with the current script set,
+and its `load` event at the `iframe` is a task. -/
+def loadFrame (s : Session) (el : Nat) (source : String) (scripts : Array (Nat × String)) (xml : Bool := false) :
+    Session := Id.run do
+  let run := Hosts.Dom.frameScriptsInRealm s.host.dom el
+  let (dom, root) := Hosts.Dom.attachDocument s.host.dom el source xml
+  let mut s := s.setHost { s.host with dom }
+  if let some root := root then
+    let scripts := if run then scripts else #[]
+    for (node, src) in scripts do
+      s := (s.api? "script" #[.num (Float.ofNat (node + root))]).1
+      s := s.eval src
+      s := engine.checkpoint s
+    s := (s.api? "script" #[.num (-1)]).1
+  s := engine.setLoop s ((engine.loop s).queueTask .networking 0 (some { type := "load", target := el }))
+  if s.host.dom.loadWaits && !Hosts.Dom.framesLoading s.host.dom then
+    s := s.setHost { s.host with dom := { s.host.dom with loadWaits := false } }
+    s := engine.setLoop s ((engine.loop s).queueTask .domManipulation 0 (some { type := "load", target := Page.windowId }))
+  return s
 
 def Session.commands (s : Session) : Array Hosts.Dom.Command := s.host.dom.commands
 def Session.logs (s : Session) : Array String := s.host.dom.logs

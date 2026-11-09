@@ -30,6 +30,8 @@ import L4Factoidal.WasmVM.Hosts.WebApi
 import L4Factoidal.WasmVM.Hosts.PageWasm
 import L4Factoidal.EventLoop.Model
 import L4Factoidal.EventLoop.Dispatch
+import L4Factoidal.HTML.FrameSessions
+import L4Factoidal.JSON.Serialize
 
 namespace L4Factoidal.WasmVM.Hosts.Page
 open L4Factoidal.WasmVM
@@ -173,6 +175,12 @@ structure Host where
   /-- The page's WebAssembly (`Hosts.PageWasm`): its own WasmVM store, empty until a
   script uses the JavaScript API. -/
   wasm : Hosts.PageWasm.State := {}
+  /-- The slots of the shadow trees with their assigned nodes when `node_query` op 33 last
+  answered (`DOM.Dom.slotAssignments`): what "signal a slot change" compares with. -/
+  slots : Array (Nat × Array Nat) := #[]
+  /-- Messages this session posted to a frame's session or to its parent's
+  (`HTML.FrameSessions`), which the host has not taken. -/
+  outbox : Array L4Factoidal.HTML.FrameSessions.Message := #[]
   deriving Inhabited
 
 /-- Budgets of one session. -/
@@ -198,6 +206,8 @@ structure Limits where
   entropy : ByteArray := ByteArray.empty
   /-- The encoding the host decoded the page with (`document.characterSet`); "" if unknown. -/
   encoding : String := ""
+  /-- The embedder loads frames' URLs (`Hosts.Dom.State.hostLoads`). -/
+  hostLoads : Bool := false
   deriving Inhabited
 
 /-- The exports of the module, by function address. -/
@@ -266,18 +276,58 @@ def path (d : Arena) (target : Nat) : List Nat := Id.run do
   let atDocument := (d.get k).type == .document
   return (if atDocument then windowId :: out else out).reverse
 
+/-- The event path through shadow trees (`DOM.Dom.eventPath`, DOM §2.9), target first, then
+the window when the last node is a document. Any target that is not a node is a path of
+one. -/
+def shadowPath (d : Arena) (target : Nat) (composed : Bool) : List Nat :=
+  if target ≥ d.size then [target] else
+  let p := d.eventPath target composed
+  match p.getLast? with
+  | some k => if (d.get k).type == .document then p ++ [windowId] else p
+  | none => p
+
+/-- The target a listener at `node` sees (DOM §2.5 "retarget"): the window sees the
+target retargeted against its document; -1 when none. -/
+def targetFor (d : Arena) (path : List Nat) (target node : Nat) : Int :=
+  if target ≥ d.size then target else
+  let at_ := if node == windowId then (path.reverse.find? (· < d.size)).getD 0 else node
+  if at_ ≥ d.size then target else
+  match d.retarget target at_ with
+  | some t => t
+  | none => -1
+
 def phaseCode : L4Factoidal.EventLoop.Dispatch.Phase → Nat
   | .capturing => 1 | .atTarget => 2 | .bubbling => 3
 
 /-- `dispatch_plan`: `[path length, path (target first)..., then for each listener call
-of `Dispatch.plan`: callback, node, phase + 8 × capture, depth]`. -/
-def planList (h : Host) (target : Nat) (type : String) (bubbles : Bool) : Array Nat :=
-  let p := path h.dom.dom target
+of `Dispatch.plan`: callback, node, phase + 8 × capture, depth]`. Flags: 1 the event bubbles,
+2 it is composed, 4 the path goes through shadow trees (`shadowPath`, `Dispatch.planAt`)
+and each listener call has a fifth number, the target it sees (`targetFor`, DOM §2.5;
+-1 for none). Without 4, the answer is the first form on the tree's parents alone. -/
+def planList (h : Host) (target : Nat) (type : String) (flags : Nat) : Array Int :=
+  let bubbles := flags % 2 == 1
   let ls := (h.listeners.toList.filter (·.type == type)).map fun l =>
     ({ node := l.target, capture := l.capture, callback := l.callback } : L4Factoidal.EventLoop.Dispatch.Listener)
-  let visits := L4Factoidal.EventLoop.Dispatch.plan p.reverse ls bubbles
-  #[p.length] ++ p.toArray ++ (visits.toArray.flatMap fun v =>
-    #[v.callback, v.node, phaseCode v.phase + (if v.capture then 8 else 0), v.depth])
+  if flags / 4 % 2 == 0 then
+    let p := path h.dom.dom target
+    let visits := L4Factoidal.EventLoop.Dispatch.plan p.reverse ls bubbles
+    (#[p.length] ++ p.toArray ++ (visits.toArray.flatMap fun v =>
+      #[v.callback, v.node, phaseCode v.phase + (if v.capture then 8 else 0), v.depth])).map Int.ofNat
+  else
+    let d := h.dom.dom
+    let p := shadowPath d target (flags / 2 % 2 == 1)
+    let rootFirst := p.reverse
+    -- A path through no shadow root stays in the target's tree: every listener sees the
+    -- target, and only the target is at the target (the plan of `Dispatch.plan`), so the
+    -- retargeting walks are skipped.
+    let crossing := p.any (fun k => k < d.size && d.isShadowRoot k)
+    let targetFor := fun (d : Arena) (p : List Nat) (target node : Nat) =>
+      if crossing then targetFor d p target node else (target : Int)
+    let atTarget := fun (k : Nat) => if crossing then (let node := rootFirst.getD k 0; targetFor d p target node == node)
+      else k + 1 == rootFirst.length
+    let visits := L4Factoidal.EventLoop.Dispatch.planAt rootFirst atTarget ls bubbles
+    #[(p.length : Int)] ++ (p.toArray.map Int.ofNat) ++ (visits.toArray.flatMap fun v =>
+      #[(v.callback : Int), v.node, phaseCode v.phase + (if v.capture then 8 else 0), v.depth, targetFor d p target v.node])
 
 section
 variable {M : Type} [LinearMemory M]
@@ -303,13 +353,54 @@ def Host.measured (h : Host) : Host × Option (Nat → Nat → Option String) :=
   | some (v, f) => if v == h.reads.version then (h, some f) else h.measureNow
   | none => h.measureNow
 
+/-- The `node_query` ops that `pageQuery` serves; the others are `Hosts.Dom`'s. -/
+def pageQueryOps : List Nat := [16, 17, 18, 19, 33, 34]
+
+/-- The most messages a session may have waiting for the host. -/
+def maxOutbox : Nat := 4096
+
+/-- `node_query` op 34: `postMessage` to the window of a frame with a session of its own
+(`node` its `iframe` element) or, in a frame's session, to its parent (`node` the window);
+`q` is "targetOrigin U+0000 data" (the data serialized). The origin check is
+`HTML.Frames.postMessageDelivers`: "1" queued in the outbox, "0" not delivered, -12 a
+target origin that is not a URL, -2 no such frame. -/
+def postToFrame (h : Host) (node : Nat) (q : String) : Host × Except Int String :=
+  match q.splitOn "\x00" with
+  | targetOrigin :: rest =>
+    let data := "\x00".intercalate rest
+    let d := h.dom
+    let src := Hosts.Dom.pageOrigin d
+    let target : Option (Nat × Bool × L4Factoidal.HTML.Frames.Origin) :=
+      if node == windowId then d.parentOrigin.map fun o => (0, true, o)
+      else if node < d.dom.size && L4Factoidal.DOM.Dom.isHtmlElement (d.dom.get node) "iframe" then
+        some (node, false, (Hosts.Dom.elementFrame d node).origin)
+      else none
+    match target with
+    | none => (h, .error (-2))
+    | some (el, up, o) =>
+      match L4Factoidal.HTML.Frames.postMessageDelivers src o targetOrigin with
+      | none => (h, .error (-12))
+      | some false => (h, .ok "0")
+      | some true =>
+        if h.outbox.size ≥ maxOutbox then (h, .error (-5)) else
+        ({ h with outbox := h.outbox.push { frame := el, toParent := up, data, origin := src.serialize } }, .ok "1")
+  | [] => (h, .error (-2))
+
 /-- `node_query` ops served here: 16 the init of the event being dispatched; 17 a node's
 layout, "x y w h left top width height" (border box in the page, then the client box);
-18 an SVG element's bounding box in its user space, "x y w h"; 19 the viewport, "w h". -/
+18 an SVG element's bounding box in its user space, "x y w h"; 19 the viewport, "w h";
+33 the slots whose assigned nodes changed since the last op 33 (DOM §4.2.2.5 "signal a
+slot change"), as decimal node numbers separated by spaces. -/
 def pageQuery (h : Host) (node op : Nat) : Host × Except Int String :=
   match op with
   | 16 => (h, if h.event.isEmpty then .error (-1) else .ok h.event)
   | 19 => (h, .ok s!"{h.reads.width} {h.reads.height}")
+  | 34 => (h, .error (-2))
+  | 33 =>
+    let d := h.dom.dom
+    let roots := ((List.range d.size).filter (d.isShadowRoot ·)).toArray
+    let now := d.slotAssignments roots
+    ({ h with slots := now }, .ok (" ".intercalate ((L4Factoidal.DOM.Dom.slotChanges h.slots now).toList.map toString)))
   | _ =>
     let (h, f) := h.measured
     match f with
@@ -344,13 +435,21 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
       let (st, r) := Hosts.Dom.answerStr mem st (a 4) (a 5) (.ok answer)
       ({ h with dom := { h.dom with canvas } }, st, r)
   | "node_query" =>
-    if a 1 < 16 then
+    if !pageQueryOps.contains (a 1) then
       let (dom, st, r) := Hosts.Dom.serve mem nm args h.dom st
       ({ h with dom }, st, r)
     else
-      let (h, answer) := pageQuery h (a 0) (a 1)
-      let (st, r) := Hosts.Dom.answerStr mem st (a 4) (a 5) answer
-      (h, st, r)
+      if a 1 == 34 then
+        (match Hosts.Dom.readStr mem st (a 2) (a 3) Hosts.Dom.maxString with
+        | .error e => (h, st, Hosts.Dom.codeOrTrap e)
+        | .ok q =>
+          let (h, answer) := postToFrame h (a 0) q
+          let (st, r) := Hosts.Dom.answerStr mem st (a 4) (a 5) answer
+          (h, st, r))
+      else
+        let (h, answer) := pageQuery h (a 0) (a 1)
+        let (st, r) := Hosts.Dom.answerStr mem st (a 4) (a 5) answer
+        (h, st, r)
   | "listen" =>
     match Hosts.Dom.readStr mem st (a 1) (a 2) Hosts.Dom.maxAttrName with
     | .error e => (h, st, Hosts.Dom.codeOrTrap e)
@@ -363,7 +462,7 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
     match Hosts.Dom.readStr mem st (a 1) (a 2) Hosts.Dom.maxAttrName with
     | .error e => (h, st, Hosts.Dom.codeOrTrap e)
     | .ok type =>
-      let (st, r) := Hosts.Dom.answerList mem st (a 4) (a 5) (.ok (planList h (a 0) type (a 3 != 0)))
+      let (st, r) := Hosts.Dom.answerList mem st (a 4) (a 5) (.ok ((planList h (a 0) type (a 3)).map fun x => (x % 4294967296).toNat))
       (h, st, r)
   | "set_timer" =>
     let (loop, id) := { h.loop with clock := h.time.sync h.loop.clock }.setTimer (a 0) (a 1) (a 2 != 0)
@@ -823,6 +922,19 @@ def Session.dispatchWithP (s : Session) (target : Nat) (type init : String) : Pr
 
 def Session.setPointer (s : Session) (p : PointerState) : Session := { s with host := { s.host with pointer := p } }
 
+/-- The init of the `message` event of a message from another session (HTML §9.3.3, the
+posted message task): the data as its serialization, the source's origin, and the frame
+it came through (-1 from the parent). -/
+def messageInit (m : L4Factoidal.HTML.FrameSessions.Message) : String :=
+  let q := fun (t : String) => "\"" ++ L4Factoidal.JSON.escapeString t ++ "\""
+  "{\"data\":" ++ q m.data ++ ",\"origin\":" ++ q m.origin ++ ",\"frame\":" ++
+    (if m.toParent then toString m.frame else "-1") ++ "}"
+
+/-- Deliver a message from another session: a `message` event at the window. -/
+def Session.deliverP (s : Session) (m : L4Factoidal.HTML.FrameSessions.Message) : Prog Session := do
+  let (s, _) ← s.dispatchWithP windowId "message" (messageInit m)
+  s.runJobsP
+
 /-- The nearest inclusive ancestor of `a` that is also an inclusive ancestor of `b` (HTML
 "click": the press and the release on different elements click their common ancestor). -/
 def commonAncestor (d : Arena) (a b : Nat) : Nat :=
@@ -1028,6 +1140,35 @@ def Session.attachFrame (s : Session) (el : Nat) (doc : Option Arena) : Session 
   let s := { s with host := { s.host with dom := h } }
   return s.setLoop (s.loop.queueTask .networking 0 (some { type := "load", target := el }))
 
+/-- A frame's navigation ends with document `source` ("" is `about:blank`;
+`Hosts.Dom.State.attachDocument`): its classic scripts run in the page's realm, in document
+order, each with the current script set (so `document` is the frame's document while it
+runs) and a microtask checkpoint after it; then the `load` event at the `iframe` is a task.
+`scripts` are the script elements of `source` parsed on its own, with their sources. -/
+def Session.loadFrameP (s : Session) (el : Nat) (source : String) (scripts : Array (Nat × String))
+    (xml : Bool := false) : Prog Session := do
+  let run := Hosts.Dom.frameScriptsInRealm s.host.dom el
+  let (dom, root) := Hosts.Dom.attachDocument s.host.dom el source xml
+  let mut s := { s with host := { s.host with dom } }
+  if let some root := root then
+    let scripts := if run then scripts else #[]
+    for (node, src) in scripts do
+      s ← s.setScriptP (node + root : Nat)
+      let (s', status, text) ← s.evalP src
+      s := if status == 1 then s'.fail text else s'
+      s ← s.runJobsP
+    s ← s.setScriptP (-1)
+  s := s.setLoop (s.loop.queueTask .networking 0 (some { type := "load", target := el }))
+  -- the last frame that the window's load event waited for
+  if s.host.dom.loadWaits && !Hosts.Dom.framesLoading s.host.dom then
+    s := { s with host := { s.host with dom := { s.host.dom with loadWaits := false } } }
+    s := s.setLoop (s.loop.queueTask .domManipulation 0 (some { type := "load", target := windowId }))
+  return s
+
+def Session.loadFrame (s : Session) (el : Nat) (source : String) (scripts : Array (Nat × String))
+    (xml : Bool := false) : Session :=
+  (s.loadFrameP el source scripts xml).runLocal
+
 /-- The arena of a page with its frames' documents grafted in (`Dom.graft`), and each
 `iframe` element with the root of its document. -/
 def graftFrames (dom : Arena) (frames : Array (Nat × Arena)) : Arena × Array (Nat × Nat) := Id.run do
@@ -1044,6 +1185,12 @@ def graftFrames (dom : Arena) (frames : Array (Nat × Arena)) : Arena × Array (
 and the tasks due at time 0, on a session that holds the page's arena. -/
 def Session.startP (s : Session) (url : String) (scripts : Array (Nat × String)) (framed : Array (Nat × Nat)) :
     Prog Session := do
+  -- The page's own `iframe` elements get their browsing contexts before its scripts run
+  -- (HTML §4.8.5); a page with none pays one look at its nodes.
+  let d0 := { s.host.dom with url }
+  let d0 := if d0.framing && d0.dom.nodes.any (L4Factoidal.DOM.Dom.isHtmlElement · "iframe") then
+    Hosts.Dom.connectFrames d0 #[0] else d0
+  let s := { s with host := { s.host with dom := { d0 with url } } }
   let s := (← s.runP s.fx.page #[.i32 2, .i32 0, .i32 0]).1
   let mut s ← s.setUrlP url
   for (node, src) in scripts do
@@ -1055,7 +1202,11 @@ def Session.startP (s : Session) (url : String) (scripts : Array (Nat × String)
   s := (← s.dispatchP 0 "DOMContentLoaded").1
   for (el, _) in framed do
     s := s.setLoop (s.loop.queueTask .domManipulation 0 (some { type := "load", target := el }))
-  s := s.setLoop (s.loop.queueTask .domManipulation 0 (some { type := "load", target := windowId }))
+  -- The window's load event waits for frames still loading (`Hosts.Dom.State.loadWaits`).
+  if Hosts.Dom.framesLoading s.host.dom then
+    s := { s with host := { s.host with dom := { s.host.dom with loadWaits := true } } }
+  else
+    s := s.setLoop (s.loop.queueTask .domManipulation 0 (some { type := "load", target := windowId }))
   return (← s.advanceP 0).1
 
 /-- Start a page: its classic scripts in document order (each with the current script set
@@ -1064,19 +1215,22 @@ event at the window as a task, and the tasks that are due at time 0. `scripts` a
 script element's node and its source. `frames` are the `iframe` elements whose documents
 the embedder loaded, each with its document parsed on its own: each joins the page's arena
 (`Dom.graft`), and its `load` event at the `iframe` is a task before the window's. The
-frames share the page's script realm. -/
+frames share the page's script realm. `origins`: this is a sandboxed frame's own session
+(`HTML.FrameSessions`), with its own origin and its parent's. -/
 def start (m : Module') (dom : Arena) (url : String) (scripts : Array (Nat × String)) (lim : Limits := {})
-    (frames : Array (Nat × Arena) := #[]) (reads : Reads := {}) (time : ScriptClock := {}) : Except String Session := do
+    (frames : Array (Nat × Arena) := #[]) (reads : Reads := {}) (time : ScriptClock := {})
+    (origins : Option (L4Factoidal.HTML.Frames.Origin × L4Factoidal.HTML.Frames.Origin) := none) : Except String Session := do
   let (dom, framed) := graftFrames dom frames
   let s : Session ← match m.base with
     | some b =>
-      let domHost : DomHost := { dom, commandLimit := lim.commands, logLimit := lim.logs, frames := framed, framing := lim.frames }
+      let domHost : DomHost := { dom, commandLimit := lim.commands, logLimit := lim.logs, frames := framed, framing := lim.frames, hostLoads := lim.hostLoads, selfOrigin := origins.map (·.1), parentOrigin := origins.map (·.2) }
       let host : Host := { dom := domHost, reads, time, web := { entropy := lim.entropy, docEncoding := lim.encoding } }
       pure { b with host, limits := lim, steps := 0 }
     | none => do
       let s ← instantiatePage m dom lim
       let web : Hosts.WebApi.State := { entropy := lim.entropy, docEncoding := lim.encoding }
-      pure { s with host := { s.host with dom := { s.host.dom with frames := framed, framing := lim.frames }, reads, time, web } }
+      let dh := { s.host.dom with frames := framed, framing := lim.frames, hostLoads := lim.hostLoads, selfOrigin := origins.map (·.1), parentOrigin := origins.map (·.2) }
+      pure { s with host := { s.host with dom := dh, reads, time, web } }
   let s := { s with host := { s.host with dom := { s.host.dom with gpu := L4Factoidal.PageGpu.State.empty lim.gpuPage } } }
   return (s.startP url scripts framed).runLocal
 

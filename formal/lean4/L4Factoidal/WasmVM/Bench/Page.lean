@@ -92,7 +92,7 @@ def aotRun (e : Tests.AotPage.Engine) (root dir : System.FilePath) (dom : Dom) (
     (frames : Array (Nat × Dom)) (commands settleMs rate : Nat) (s : Session) (quiet : Bool) :
     IO (List (String × Json) × Bool) := do
   let d0 ← IO.monoNanosNow
-  match Tests.AotPage.start e dom ("http://web-platform.test/" ++ f) scripts { commands, logs := 100000, frames := true } frames {}
+  match Tests.AotPage.start e dom ("http://web-platform.test/" ++ f) scripts { commands, logs := 100000, frames := true, hostLoads := true } frames {}
       { instructionsPerMs := rate } with
   | .error err => return ([("aot", .str s!"error: {err}")], true)
   | .ok (inst, s2) =>
@@ -209,7 +209,7 @@ def run (args : List String) : IO UInt32 := do
       if let some fd ← frameDocument root dir src then frames := frames.push (node, fd)
     let a ← IO.monoNanosNow
     let entropy ← IO.getRandomBytes 32
-    match start m dom ("http://web-platform.test/" ++ f) scripts { commands, logs := 100000, frames := true, entropy } frames {}
+    match start m dom ("http://web-platform.test/" ++ f) scripts { commands, logs := 100000, frames := true, entropy, hostLoads := true } frames {}
         { instructionsPerMs := rate } with
     | .error e =>
       bad := bad + 1

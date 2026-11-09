@@ -127,7 +127,7 @@ def session (p : Prepared) (dom : Arena) (lim : Hosts.Page.Limits := {}) (framed
   let idx := fun (name : String) => (exportNames.idxOf? name).getD 0
   let (fx, init, qnew, mode) := (Exports.of fun n => .ok (idx n)).toOption.getD (default, 0, 0, 0)
   let gpu := L4Factoidal.PageGpu.State.empty lim.gpuPage
-  let domHost : DomHost := { dom := dom, commandLimit := lim.commands, logLimit := lim.logs, frames := framed, framing := lim.frames, gpu := gpu }
+  let domHost : DomHost := { dom := dom, commandLimit := lim.commands, logLimit := lim.logs, frames := framed, framing := lim.frames, hostLoads := lim.hostLoads, gpu := gpu }
   let host : Host := { dom := domHost, reads := reads, time := time, web := { entropy := lim.entropy, docEncoding := lim.encoding } }
   ({ store := {}, inst := 0, mem := 0, bindings := p.bindings, host, fx, limits := lim }, init, qnew, mode)
 

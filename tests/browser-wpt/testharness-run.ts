@@ -255,21 +255,8 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>}> {
     catch(e){if(!guest||!/no guest module/.test(String(e)))throw e;engine.scriptLoad(guest);return engine.scriptSession(html,request);}
   };
   let heldCanvasFont=false;
-  return {info,run:async(file,page)=>{
-    // A page's bytes become text in Lean (decodeDocument: the BOM, the charset of its .headers
-    // file as wptserve sends it, the meta prescan); an engine without the op reads UTF-8.
-    let html:string,encoding:string|undefined;
-    if(page)html=page.html;
-    else if(file.endsWith(".js"))html=wrapper(file);
-    else {
-      const bytes=await Deno.readFile(wptFile(file));
-      let contentType="";
-      try{contentType=/^content-type:\s*(.*)$/im.exec(await Deno.readTextFile(wptFile(file)+".headers"))?.[1]?.trim()??"";}catch{/* no headers file */}
-      const decoded=(engine as {decodeDocument?:(b:Uint8Array,c:string)=>{encoding:string;source:string}|undefined}).decodeDocument?.(bytes,contentType);
-      html=decoded?decoded.source:new TextDecoder().decode(bytes);encoding=decoded?.encoding;
-    }
-    const url=page?page.url:`${origin}/${pageOf(file)}`;
-    const t0=performance.now();
+  // The sources of a page's `src` scripts that this WPT copy holds.
+  const resourcesOf=async(html:string,url:string)=>{
     const facts=engine.inspect(html,{url}) as unknown as {scripts:{nodeId:number;src:string;url:string}[]};
     const resources=[];
     for(const s of facts.scripts) {
@@ -280,6 +267,37 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>}> {
         else if(/\/test262\/test\/.*\.js$/.test(path)&&new URL(s.url).search==="?strict")source='"use strict";\n'+source;
         resources.push({nodeId:s.nodeId,source});}catch{/* not vendored: the page reports it */}
     }
+    return resources;
+  };
+  // A page's bytes become text in Lean (decodeDocument: the BOM, the charset of its .headers
+  // file as wptserve sends it, the meta prescan); an engine without the op reads UTF-8.
+  const decode=async(path:string)=>{
+    const bytes=await Deno.readFile(path);
+    let contentType="";
+    try{contentType=/^content-type:\s*(.*)$/im.exec(await Deno.readTextFile(path+".headers"))?.[1]?.trim()??"";}catch{/* no headers file */}
+    const decoded=(engine as {decodeDocument?:(b:Uint8Array,c:string)=>{encoding:string;source:string}|undefined}).decodeDocument?.(bytes,contentType);
+    return decoded?{html:decoded.source,encoding:decoded.encoding as string|undefined}:{html:new TextDecoder().decode(bytes),encoding:undefined};
+  };
+  // A frame's document, as wptserve serves it: Test262's inner page, a .any/.window wrapper,
+  // or a file of this copy (decoded as a page is, with .sub. substitution); undefined when
+  // it is not here.
+  const frameSource=async(url:string):Promise<string|undefined>=>{
+    let u:URL;try{u=new URL(url);}catch{return undefined;}
+    if(u.origin!==origin&&u.origin!==secureOrigin)return undefined;
+    const path=decodeURIComponent(u.pathname).replace(/^\//,"");
+    const m=/^(.*)\.test262-test(\.strict)?\.html$/.exec(path);
+    if(m)try{return test262Inner(`${m[1]}.js`,!!m[2]);}catch{return undefined;}
+    const w=/^(.*)\.(any|window)\.html$/.exec(path);
+    if(w)try{return wrapper(`${w[1]}.${w[2]}.js`);}catch{return undefined;}
+    try{const text=(await decode(wptFile(path))).html;return path.includes(".sub.")?substitute(text,u.search):text;}catch{return undefined;}
+  };
+  return {info,run:async(file,page)=>{
+    let html:string,encoding:string|undefined;
+    if(page)html=page.html;
+    else if(file.endsWith(".js"))html=wrapper(file);
+    else ({html,encoding}=await decode(wptFile(file)));
+    const url=page?page.url:`${origin}/${pageOf(file)}`;
+    const t0=performance.now();
     // The images of a canvas test (<img src>), held by the engine by their URL, as a host
     // holds the images it fetched: Canvas 2D draws them (docs/designissues/2026-11-08-canvas-2d.md).
     // The font of the canvas text tests (an @font-face the engine does not load for
@@ -293,12 +311,28 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>}> {
         const key=new URL(m[1],url).href,path=scriptFile(key);
         if(path)try{engine.imageLoad(await Deno.readFile(path),key,key);}catch{/* not vendored or refused */}
       }
+    const resources=await resourcesOf(html,url);
+    // navigations:true: this runner loads frames' URLs (scriptSession action `frame`).
     let turn=start(html,{action:"start",url,resources,commandLimit:200000,logLimit:100000,instructionsPerMs:scriptRate,...(encoding?{encoding}:{}),
-      ...(scriptEngine==="bubblepop"?{engine:"bubblepop"}:{})});
+      navigations:true,...(scriptEngine==="bubblepop"?{engine:"bubblepop"}:{})});
     const logs=[...turn.logs],errors=[...turn.errors];
     let instructions=turn.instructions;
-    turn=engine.scriptSession("",{action:"settle",session:turn.session,budgetMs:70000});
+    const session=turn.session;
+    turn=engine.scriptSession("",{action:"settle",session,budgetMs:70000});
     logs.push(...turn.logs);errors.push(...turn.errors);instructions+=turn.instructions;
+    // Frames: answer each navigation with its document, then settle again, until none waits.
+    for(let round=0;round<256&&turn.clock<70000&&((turn.navigations?.length??0)>0||(turn.frameLoads??0)>0);round++){
+      for(const nav0 of turn.navigations??[]){
+        let navUrl=nav0.url;try{navUrl=new URL(nav0.url,url).href;}catch{/* kept */}
+        const nav={nodeId:nav0.nodeId,url:navUrl};
+        const source=await frameSource(nav.url);
+        turn=engine.scriptSession("",{action:"frame",session,node:nav.nodeId,url:nav.url,source:source??"",
+          ...(source===undefined?{failed:true}:{resources:await resourcesOf(source,nav.url)})});
+        logs.push(...turn.logs);errors.push(...turn.errors);instructions+=turn.instructions;
+      }
+      turn=engine.scriptSession("",{action:"settle",session,budgetMs:Math.max(1,70000-turn.clock)});
+      logs.push(...turn.logs);errors.push(...turn.errors);instructions+=turn.instructions;
+    }
     engine.scriptSession("",{action:"close"});
     return {...resultOf(file,logs),ms:Math.round(performance.now()-t0),instructions,clock:turn.clock,...(errors.length?{errors:errors.slice(0,5)}:{})};
   }};
