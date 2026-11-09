@@ -2073,7 +2073,7 @@
   const urlParts = new WeakMap(), paramState = new WeakMap();
   const PARTS = ['href', 'origin', 'protocol', 'username', 'password', 'host', 'hostname', 'port', 'pathname', 'search', 'hash'];
   const splitPrefixed = s => { const out = []; let i = 0; while (i < s.length) { const j = s.indexOf(':', i), k = Number(s.slice(i, j)); out.push(s.slice(j + 1, j + 1 + k)); i = j + 1 + k; } return out; };
-  const parseQuery = q => { const xs = splitPrefixed(api(12, [q], 1, false, 'URLSearchParams')); const list = []; for (let i = 0; i + 1 < xs.length; i += 2) list.push([xs[i], xs[i + 1]]); return list; };
+  const parseQuery = (q, strip = false) => { const xs = splitPrefixed(api(12, [q], strip ? 1 : 0, false, 'URLSearchParams')); const list = []; for (let i = 0; i + 1 < xs.length; i += 2) list.push([xs[i], xs[i + 1]]); return list; };
   let URLSearchParamsC;
   const makeURLSearchParams = () => {
     if (URLSearchParamsC) return URLSearchParamsC;
@@ -2110,7 +2110,7 @@
               list.push([usv(k), usv(init[k])]);
             }
           }
-        } else list.push(...parseQuery(usv(init)));
+        } else list.push(...parseQuery(usv(init), true));
         paramState.set(this, { list, url: null });
       }
       get size() { return st(this).list.length; }
