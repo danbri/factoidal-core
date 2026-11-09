@@ -11,6 +11,20 @@ claims about the current implementation. SVG scope and refusals are in
 [SVG_README.md](SVG_README.md). Local tests, official-suite input audits, and real
 GPU observations are separate evidence classes.
 
+## Hub pages and notes without an engine build
+
+A change to the Hub pages, the demo pages or the Foafnaut notes can go to the site
+without an engine build. `tools/hub-quick-ship.sh` (from the repository root) refuses
+unless every commit since the live site's build touches only page paths
+(`docs/web/hub/**`, `labs/demos/foafnaut/pages/**`, `tools/showcase-pages.mjs` here,
+`tools/build-demo-pages.py`, `third_party/data/**`). It then runs
+`tools/build-demo-pages.py --check`, an Eleventy build and
+`hub_links_check.mjs --only published`, and prints the Pages deploy command without
+running it. The Foafnaut notes
+(`docs/web/hub/web-platform/foafnaut/notes/posts/*.md`) are the one source of
+`pages/feed.xml`: `tools/build-demo-pages.py` writes the feed from them.
+`docs/web/hub/README.md` has both in full.
+
 ## Solving retained-scene showcase
 
 In a source checkout, double-click [`Solving.command`](Solving.command) to compile

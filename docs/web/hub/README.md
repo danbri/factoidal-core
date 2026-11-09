@@ -634,6 +634,72 @@ guards against: `foafnaut:graph` was routed by Lean as a page and then handed
 to the host browser by a second URL test in the worker, so the click bounced
 back (issue 1268).
 
+### The fast lane: page-only changes with no engine build
+
+The Pages workflow builds the site from `main`, and takes the Hub's Lean runtimes
+from the factoidal-builds release whose source commit is `main` or an ancestor of it.
+So a change that touches only pages can go out with the runtime already released.
+`tools/hub-quick-ship.sh` checks that, from the repository root:
+
+```
+tools/hub-quick-ship.sh              # base: the commit the live site was built from
+tools/hub-quick-ship.sh --base COMMIT
+tools/hub-quick-ship.sh --no-eleventy
+```
+
+1. The base is `source-commit.txt` of the live site (the workflow writes it), or `--base`.
+2. It refuses (exit 2) when a commit after the base, on `HEAD` or on `origin/main`,
+   touches a path outside `docs/web/hub/**`, `labs/demos/foafnaut/pages/**`,
+   `labs/demos/foafnaut/tools/showcase-pages.mjs`, `tools/build-demo-pages.py` and
+   `third_party/data/**`. Those changes take the normal path: an engine release, then
+   the deploy.
+3. It runs `tools/build-demo-pages.py --check`, builds the site with the vendored
+   Eleventy into a temporary directory, and runs
+   `labs/demos/foafnaut/hub_links_check.mjs --only published` (the pages of this
+   checkout with the runtime on the live site). A check that does not run is a failure.
+4. It prints the deploy command and does not run it:
+   `gh workflow run 243250067 -R danbri/factoidal --ref claude/main`. When `HEAD` is
+   not on `origin/main` yet, it says to push first.
+
+### Foafnaut notes: one Markdown file a note
+
+[Foafnaut notes](../web-platform/foafnaut/notes/) are short dated posts about the
+browser, at `/web/hub/web-platform/foafnaut/notes/<name>/`. Each is one file in
+`docs/web/hub/web-platform/foafnaut/notes/posts/<name>.md` (lower-case words joined by
+`-`, no leading date). The same file makes the note's Hub page and its entry in the
+Atom feed that Foafnaut draws, `labs/demos/foafnaut/pages/feed.xml`.
+
+```yaml
+---
+title: "Canvas 2D, drawn by Lean"
+date: 2026-11-09T00:28:21Z
+category: "Canvas"
+commit: "b5e306863"
+summary: "One or two plain sentences: what a reader can do now."
+demos: ["canvas-chart.html"]
+---
+Body in Markdown: a number or two, each with the record it comes from, and links.
+```
+
+- One `key: value` a line. Every value but `date` is JSON: a quoted string, or a list
+  of quoted strings. `date` is UTC.
+- `category` is one of the categories `feed.xsl` has a colour for (`CATEGORIES` in
+  `tools/build-demo-pages.py`). `commit` names a commit of danbri/factoidal-core.
+- `demos` are pages of `labs/demos/foafnaut/pages/manifest.json`. The note's page links
+  each as "Open in Foafnaut" (`/web/hub/foafnaut/?page=<page>`), and the feed entry's
+  title opens the first in the tab.
+- The data file `posts/posts.11tydata.json` gives the layout
+  (`docs/_includes/foafnaut-note.njk`), the tag `foafnautNotes` (the collection the
+  lists read, sorted by date) and the address.
+  `web-platform/web-platform.11tydata.js` reads the demo titles from the manifest and
+  writes each styled name (`STYLED` there) in a span with the plain name as its
+  `aria-label`, as `spinal-tap-sparql.html` does.
+
+After adding or changing a note, run `python3 tools/build-demo-pages.py` to write
+`feed.xml`, and commit both. `tools/build-demo-pages.py --check` (run by
+`labs/demos/foafnaut/test.sh` and by the fast lane) fails when `feed.xml` is not what the notes give. Then ship it with
+`tools/hub-quick-ship.sh`.
+
 ### Touch feel: fling and the folding chrome
 
 `labs/demos/foafnaut/hub_feel_check.mjs` (same stand-in server and runs) drives
