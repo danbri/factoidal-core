@@ -106,6 +106,9 @@ DOM_IMPORT(gpu_command) int32_t dom_gpu_command(int32_t op, int32_t unused, cons
  * and each argument as a u32 length and its bytes. The answer is the length of the result
  * bytes, written at `out` when they fit in `cap`; otherwise Lean keeps them and op 0 takes
  * them, so an operation runs once. Negative: an error code. */
+/* Appended to the pinned quickjs.c by tools/wasmvm/build-quickjs.sh
+ * (quickjs/random-seed.c.inc): set the context's Math.random state. */
+void JS_SetRandomSeed(JSContext *ctx, uint64_t seed);
 DOM_IMPORT(web_api) int32_t dom_web_api(int32_t op, int32_t flags, const char *s, int32_t slen,
                                         char *buf, int32_t cap);
 /* wasm_call(op, handle, bytes, len, out, cap, view, view_len): the WebAssembly JavaScript API
@@ -664,6 +667,20 @@ void qjs_page_mode(int32_t on) { page_mode = on != 0; }
 __attribute__((export_name("qjs_page")))
 void qjs_page(int32_t op, const char *s, int32_t len) {
   if (!ctx) return;
+  if (op == 2) {
+    /* Math.random: this session's own seed (web_api op 33, Hosts.WebApi.mathRandomSeed).
+     * The guest's memory is prepared once and copied for every session, so the seed
+     * QuickJS-NG took when the context was made would repeat in every page (record
+     * docs/designissues/2026-11-09-crypto-boundary-security.md, finding F2). An engine
+     * without op 33 answers a negative number and the seed stays. */
+    static const char no_args[4] = {0, 0, 0, 0};
+    unsigned char seed[8];
+    if (dom_web_api(33, 0, no_args, 4, (char *) seed, 8) == 8) {
+      uint64_t x = 0;
+      for (int i = 0; i < 8; i++) x |= (uint64_t) seed[i] << (8 * i);
+      JS_SetRandomSeed(ctx, x);
+    }
+  }
   JSValue f = JS_GetPropertyStr(ctx, dispatch_fn, op == 0 ? "url" : op == 1 ? "script" : "start");
   JSValue arg = op == 0 ? JS_NewStringLen(ctx, s, (size_t) len) : JS_NewInt32(ctx, len);
   JSValue v = JS_Call(ctx, f, dispatch_fn, 1, &arg);

@@ -253,6 +253,31 @@ def randomBytes (s : State) (n : Nat) : Except Int (ByteArray × State) :=
   let (out, d) := d.generate h n
   .ok (out, { s with rng := some d, draws := s.draws + 1 })
 
+/-- The seed of a session's `Math.random`: the first 8 bytes (little-endian) of
+SHA-256("foafnaut Math.random" ‖ 0 ‖ entropy), and never 0 (xorshift's fixed point). Both
+engines' `Math.random` is xorshift, not a cryptographic generator, and its outputs give
+its state away: the hash keeps them from telling anything of the session's entropy, which
+also seeds the HMAC_DRBG. `none` without entropy (the engine keeps its own seed).
+
+Before this, every session of a process had the same `Math.random` sequence: BubblePopJS's
+seed was a constant in its realm snapshot, and QuickJS-NG's was set once when the guest was
+prepared (cryptosec finding F2, record 2026-11-09-crypto-boundary-security.md). -/
+def mathRandomSeed (entropy : ByteArray) : Option UInt64 :=
+  if entropy.size < minEntropy then none else
+  let d := Crypto.WebHacl.hashFast .sha256 ("foafnaut Math.random".toUTF8 ++ ByteArray.mk #[0] ++ entropy)
+  let x := (List.range 8).foldl (fun (acc : UInt64) i => acc ||| ((d.get! i).toUInt64 <<< (8 * i).toUInt64)) 0
+  some (if x == 0 then 1 else x)
+
+theorem mathRandomSeed_ne_zero {e : ByteArray} {x : UInt64} (h : mathRandomSeed e = some x) : x ≠ 0 := by
+  unfold mathRandomSeed at h
+  split at h
+  · cases h
+  · simp only [Option.some.injEq] at h
+    subst h
+    split
+    · decide
+    · rename_i hx; simpa using hx
+
 /-- No path draws from an unseeded generator: every successful draw had at least 256
 bits of the embedder's entropy. -/
 theorem randomBytes_seeded {s s' : State} {n : Nat} {out : ByteArray}
@@ -864,6 +889,11 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
       match randomBytes s n with
       | .error e => (s, .error e)
       | .ok (out, s) => (s, if op == 30 then .ok out else ofStr (Crypto.WebCrypto.uuidOf out))
+  -- The session's Math.random seed (`mathRandomSeed`), 8 bytes little-endian: the
+  -- QuickJS-NG guest takes it when a page starts.
+  | 33 => pure' (match mathRandomSeed s.entropy with
+    | some x => .ok (ByteArray.mk ((List.range 8).map fun i => (x >>> (8 * i).toUInt64).toUInt8).toArray)
+    | none => .error (-6))
   | 32 => pure' do
     match Crypto.WebHacl.HashAlg.ofName? (← strArg fs 0) with
     | some h => .ok (Crypto.WebHacl.hashFast h (bytesArg fs 1))

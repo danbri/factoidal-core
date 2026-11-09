@@ -408,6 +408,11 @@ def start (base : Session) (dom : Arena) (url : String) (scripts : Array (Nat ×
   let gpu := L4Factoidal.PageGpu.State.empty lim.gpuPage
   let domHost : Page.DomHost := { dom := dom, commandLimit := lim.commands, logLimit := lim.logs, framing := lim.frames, gpu := gpu }
   let s := { base with limits := lim, steps := 0, jobs := 0, tasks := 0, errors := #[], lastFrame := none }
+  -- Math.random: a seed of this session's own, not the realm snapshot's constant
+  -- (`WebApi.mathRandomSeed`, cryptosec finding F2).
+  let s := match Hosts.WebApi.mathRandomSeed lim.entropy with
+    | some x => { s with heap := { s.heap with rng := x } }
+    | none => s
   let mut s := s.setHost { dom := domHost, reads, time, web := { entropy := lim.entropy, docEncoding := lim.encoding, hostMode := lim.cryptoHost } }
   s := (s.api? "start" #[]).1
   s := (s.api? "url" #[.str (JS.Str.ofHost url)]).1

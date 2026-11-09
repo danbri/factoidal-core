@@ -49,6 +49,9 @@ if [ "$got" != "$QJS_SHA256" ]; then
   echo "quickjs-ng $QJS_TAG tarball has sha256 $got, expected $QJS_SHA256" >&2; exit 1
 fi
 [ -d "$SRC" ] || tar xzf "$TAR" -C "$WORK/src"
+# One addition to the pinned source: JS_SetRandomSeed, so each page session gets its own
+# Math.random seed (quickjs/random-seed.c.inc; qjs_wasmvm_entry.c calls it at page start).
+grep -q JS_SetRandomSeed "$SRC/quickjs.c" || cat "$HERE/quickjs/random-seed.c.inc" >> "$SRC/quickjs.c"
 
 # The JavaScript prelude (quickjs/prelude.js) goes into the module as QuickJS-NG bytecode:
 # a native build of the same pinned sources compiles it (quickjs/prelude_bytecode.c), so
