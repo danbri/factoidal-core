@@ -1,7 +1,7 @@
 // Colour emoji pixels (issue 1276): the engine's Lean COLR renderer (ColrRaster, through
 // `web-render-native FONT PX 0 --colour-glyph TEXT OUT`) against reference PNGs drawn by an
-// independent renderer, blackrenderer with Skia (emoji_reference.py writes them, with the
-// box of each glyph, to fixtures/emoji-reference/). Each glyph must have the same box, and
+// independent renderer, blackrenderer with Skia (emoji_reference.py writes them, as Base64,
+// with the box of each glyph, to fixtures/emoji-reference/manifest.json). Each glyph must have the same box, and
 // pixels close to the reference: anti-aliasing differs at edges (Skia's coverage against
 // 16 sample rows a pixel), so the check bounds the mean difference and the share of pixels
 // that differ by more than 32 in a channel (premultiplied by alpha).
@@ -56,7 +56,7 @@ function difference(a:Image,b:Image){
   return {mean:total/(a.width*a.height),big:big/(a.width*a.height)};
 }
 
-type Case={name:string;font:string;text:string;px:number;width:number;height:number;left:number;top:number};
+type Case={name:string;font:string;text:string;px:number;width:number;height:number;left:number;top:number;png:string};
 Deno.test({name:"colour emoji drawn by Lean match an independent COLR renderer (blackrenderer, Skia)",ignore:noNative,fn:async()=>{
   const cases:Case[]=JSON.parse(await Deno.readTextFile(new URL("manifest.json",references)));
   const dir=await Deno.makeTempDir({prefix:"emoji-pixels-"});
@@ -71,7 +71,7 @@ Deno.test({name:"colour emoji drawn by Lean match an independent COLR renderer (
       assert(g.width===c.width&&g.height===c.height&&g.left===c.left&&g.top===c.top,`${c.name}: box ${JSON.stringify(g)}, reference ${JSON.stringify(c)}`);
       const index=(await Array.fromAsync(Deno.readDir(dir))).map(e=>e.name).find(n=>n.startsWith(c.name+"-"))!;
       const lean=decodePNG(await Deno.readFile(`${dir}/${index}`));
-      const reference=decodePNG(await Deno.readFile(new URL(c.name+".png",references)));
+      const reference=decodePNG(Uint8Array.from(atob(c.png),ch=>ch.charCodeAt(0)));
       const {mean,big}=difference(lean,reference);
       console.log(`${c.name.padEnd(16)} mean ${mean.toFixed(2)}, over 32: ${(100*big).toFixed(2)}%, drawn in ${g.us} us`);
       assert(mean<=4&&big<=0.025,`${c.name}: mean difference ${mean.toFixed(2)}, ${(100*big).toFixed(2)}% of pixels over 32`);
