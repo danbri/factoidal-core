@@ -27,7 +27,7 @@ Related: https://github.com/danbri/factoidal/issues/1268 (responsiveness), https
   their CSS family, which puts the named one first.
 - Pages with no `@font-face` pay one substring search of their sheets; the host makes no
   call for them.
-- `document.fonts` (prelude, `node_query` op 20): the faces of the page with their status
+- `document.fonts` (prelude, `node_query` op 23): the faces of the page with their status
   (`loaded` when held for this page). The host loads the used faces before the scripts
   start, so `ready` is resolved. `load(font, text)` and `check(font, text)` match the
   families of a font shorthand. No `FontFace` constructor.
@@ -42,11 +42,14 @@ for U+0308 on n and ı.
   both, when one does (as browsers fall back by cluster).
 - Otherwise `SfntProfile.wordWith` places the mark run on the last base glyph of the run
   before it with HarfBuzz's fallback rule (`SfntFallback.positionMark`): the base's
-  advance box across, its ink above and below, a gap of 1/16 em; the mark takes no
-  advance.
+  ink box across, above and below, a gap of 1/16 em; the mark takes no advance. Base and
+  mark are one cluster: selection and copy give the text once (`WebSelection`).
+- In one font, a mark that GPOS did not attach is placed by the same rule when the font
+  has a GPOS table (`Font.word`); the positions of a font that does anchor the mark
+  match `hb-shape` 15.0.0.
 - `Rendering/SfntMarkTheorems.lean`: `positionMark_inside` (a mark no wider than its base
-  lies in the base's box across) and `positionMark_centre` (any mark: the centres agree to
-  one unit).
+  lies in the base's box across), `positionMark_centre` (any mark: the centres agree to
+  one unit) and `positionMark_above` (the mark is above the base's ink).
 
 ## 3. Paint-only transforms and SVG animation (`WebPaint`)
 
@@ -68,12 +71,17 @@ for U+0308 on n and ı.
 - Theorems: `Smil.phase_before`, `phase_active_lt`, `phase_after_end`;
   `FrameCost.paint_never_layouts` and `run_paints_never_layout` (a paint-only change costs
   no layout from a warm session). The engine counts painted frames (`frameWork.paintOnly`);
+  `opacity` set by script or by `animate` is a slot in the same way; on a `g` it is put on
+  each primitive, which differs from true group opacity where children overlap.
   `showoff_test.ts` checks that 40 transform frames and 125 animation frames lay out 0
   times, and that a painted frame equals the page with that transform written in it.
 - Text stays vectors at every scale: glyphs are outline paths; the backend flattens them
   in screen space. `WebPaint.cull` turns curves whose control points are all off the
   band into lines (the same pixels: the region between a curve and its chord lies in the
-  hull of its points), so a group at scale 40 does not cost its unseen ink.
+  hull of its points), so a group at scale 40 does not cost its unseen ink. A curve that crosses the band and
+  is long on screen is cut by de Casteljau (`maxPieces` a curve), so scale 200 stays
+  within the backend's limit of 8192 path points; the same pixels are tested at scales 1,
+  8, 40 and 200 (`cullPixels`).
 
 ## 4. Ink bounds for hostile text ("Zalgo")
 
