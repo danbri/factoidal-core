@@ -1189,7 +1189,10 @@ def Session.startP (s : Session) (url : String) (scripts : Array (Nat × String)
   -- (HTML §4.8.5); a page with none pays one look at its nodes.
   let d0 := { s.host.dom with url }
   let d0 := if d0.framing && d0.dom.nodes.any (L4Factoidal.DOM.Dom.isHtmlElement · "iframe") then
-    Hosts.Dom.connectFrames d0 #[0] else d0
+    -- the initial about:blank documents of the parser's iframes are there before any
+    -- script runs, and their load is not an event scripts see (iframe-nosrc.html)
+    let d1 := Hosts.Dom.connectFrames d0 #[0]
+    { d1 with navigations := d1.navigations.filter (!·.2.isEmpty) } else d0
   let s := { s with host := { s.host with dom := { d0 with url } } }
   let s := (← s.runP s.fx.page #[.i32 2, .i32 0, .i32 0]).1
   let mut s ← s.setUrlP url

@@ -803,8 +803,12 @@ def connectFrames (s : State) (inserted : Array Nat) : State := Id.run do
         | _ => pure ()
   return s
 
-/-- A frame navigation is still under way: a `src` URL for the embedder, or a `srcdoc`. -/
-def framesLoading (s : State) : Bool := s.navigations.any (!·.2.isEmpty)
+/-- A frame navigation the document's load event waits for is under way: a `src` URL for the
+embedder, or a `srcdoc`. -/
+def framesLoading (s : State) : Bool :=
+  -- a lazy-loading frame does not delay its document's load event (HTML §4.8.5,
+  -- "will lazy load element steps")
+  s.navigations.any fun (el, u) => !u.isEmpty && (attrValue? s.dom el "loading").map Dom.asciiLower != some "lazy"
 
 /-- The navigation of `iframe` `el` ends with document `source` (HTML; "" is
 `about:blank`): it joins the arena (`Dom.graft`, recorded as `Command.frameDocument`),

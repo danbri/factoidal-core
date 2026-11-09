@@ -47,9 +47,6 @@ Records it joins: `2026-11-01-dom-arena.md` (the DOM arena), `2026-11-08-page-sc
   a frame defines (`contentWindow.run`) work. The window's `load` event waits for frames that
   are still loading (`Hosts.Dom.State.loadWaits`). A sandboxed frame's scripts never run in
   the page's realm (`Hosts.Dom.frameScriptsInRealm`).
-- Named access on the window (HTML §7.2.2.3): an element's id is a property of the window
-  when nothing else has that name (a proxy in the window's prototype chain; Lean finds the
-  element).
 - `window.postMessage` with the target origin check (`HTML.Frames.postMessageDelivers`)
   delivers a `MessageEvent` as a task; `MessageChannel` and `MessagePort` work in one realm.
 
@@ -116,6 +113,10 @@ number per listener call: its retargeted target). Commands `attachShadow`, `assi
 - `customElements`: a registry in Lean (names, the definition's callbacks by number) and
   the reactions queue run by the prelude; the "is" value and upgrades at insertion. The
   shadow-root parts (valid custom element names) are here already.
+- Named access on the window (an element's id as a window property) as a proxy in the
+  window's prototype chain works on QuickJS-NG but breaks lookups through the chain on
+  BubblePopJS (its proxies are not consulted there), so it is not in; many shadow-dom tests
+  name elements this way.
 - `relatedTarget` retargeting, `delegatesFocus` focus steps, `:host-context()`,
   `::part()`, inheritance from a slot (a slot is not a box here), and `getHTML()`.
 - Structured clone across sessions uses JSON until the Lean clone of the basics work is

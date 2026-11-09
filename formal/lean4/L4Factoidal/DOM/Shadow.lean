@@ -333,14 +333,14 @@ def eventParent (d : Dom) (first : NodeId) (composed : Bool) (n : NodeId) : Opti
 
 /-- The event path of DOM §2.9 over nodes, target first, at most `fuel` nodes: each node's
 `eventParent`. -/
-def eventPathGo (d : Dom) (first : NodeId) (composed : Bool) : Nat → NodeId → List NodeId
-  | 0, _ => []
-  | f + 1, n => n :: match d.eventParent first composed n with
-    | some p => d.eventPathGo first composed f p
-    | none => []
+def eventPathGo (d : Dom) (first : NodeId) (composed : Bool) : Nat → NodeId → List NodeId → List NodeId
+  | 0, _, acc => acc.reverse
+  | f + 1, n, acc => match d.eventParent first composed n with
+    | some p => d.eventPathGo first composed f p (n :: acc)
+    | none => (n :: acc).reverse
 
 def eventPath (d : Dom) (target : NodeId) (composed : Bool) : List NodeId :=
-  d.eventPathGo target composed (2 * d.size + 2) target
+  d.eventPathGo target composed (2 * d.size + 2) target []
 
 /-- `composedPath()` (DOM §2.2) for the listener at `current`: the path without the
 nodes a closed shadow root hides from it. A node is kept when every closed shadow root

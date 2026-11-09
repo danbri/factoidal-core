@@ -410,7 +410,8 @@ def start (base : Session) (dom : Arena) (url : String) (scripts : Array (Nat ×
   let gpu := L4Factoidal.PageGpu.State.empty lim.gpuPage
   let domHost : Page.DomHost := { dom := dom, commandLimit := lim.commands, logLimit := lim.logs, framing := lim.frames, gpu := gpu, url, selfOrigin := origins.map (·.1), parentOrigin := origins.map (·.2), hostLoads := lim.hostLoads }
   let domHost := if domHost.framing && dom.nodes.any (L4Factoidal.DOM.Dom.isHtmlElement · "iframe") then
-    Hosts.Dom.connectFrames domHost #[0] else domHost
+    let d1 := Hosts.Dom.connectFrames domHost #[0]
+    { d1 with navigations := d1.navigations.filter (!·.2.isEmpty) } else domHost
   let s := { base with limits := lim, steps := 0, jobs := 0, tasks := 0, errors := #[], lastFrame := none }
   let mut s := s.setHost { dom := domHost, reads, time, web := { entropy := lim.entropy, docEncoding := lim.encoding } }
   s := (s.api? "start" #[]).1
