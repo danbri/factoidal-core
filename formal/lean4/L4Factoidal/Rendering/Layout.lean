@@ -42,6 +42,12 @@ structure FontProfile where
   shapedWordDir : Option (String → Nat → Bool → Except String FontProvider.Word) := none
   /-- Outlines scale to any size, so a fractional size is not refused. -/
   scalable : Bool := false
+  /-- Words of an element whose `font-family` value (`Computed.fontFamily`) names a
+  web font (CSS Fonts 4 §4): shaped with its faces first, in this profile's units and
+  metrics, as fallback runs are (`SfntProfile.wordWith`), with the bidi direction
+  when it is not the script's. `none`: the family list names no web font, and
+  `shapedWord` serves. -/
+  familyWord : String → Option (String → Nat → Option Bool → Except String FontProvider.Word) := fun _ => none
 
 def FontProfile.ofFace (face : FontProvider.Face) : FontProfile :=
   {family := face.family,unitsPerEm := face.unitsPerEm,advance := 0,
@@ -59,7 +65,13 @@ private def FontProfile.word (font : FontProfile) (style : Computed) (text : Str
     let size := if font.scalable then max 1 (min 512 style.fontSize.round.toUInt32.toNat) else style.fontSize.toUInt32.toNat
     if !font.scalable && (Float.ofNat size != style.fontSize || size == 0 || size > 512) then
       throw "unsupported shaped font size: integer pixels 1 to 512 required"
-    let word ← match rtl, font.shapedWordDir with
+    let word ← match font.familyWord style.fontFamily with
+      | some shapeIn =>
+        shapeIn text size (match rtl with
+          | some r => if r == Unicode.ScriptDirection.guessRtl text then none else some r
+          | none => none)
+      | none =>
+      match rtl, font.shapedWordDir with
       | some r, some shapeDir =>
         if r == Unicode.ScriptDirection.guessRtl text then shape text size else shapeDir text size r
       | _, _ => shape text size
@@ -81,6 +93,13 @@ private def spaceWidth (font : FontProfile) (style : Computed) : Except String F
 not equal one em (ordinary real fonts often differ). -/
 private def lineLeading (font : FontProfile) (style : Computed) : Float :=
   (style.lineHeight-(font.ascent+font.descent)*style.fontSize/font.unitsPerEm)/2
+
+/-- CSS Overflow 3 §3.1: `overflow: hidden` and `overflow: clip` clip the content of a
+box to its padding box (`paddingBox`); the box's own background and border are drawn
+whole (`decorations`). With `clip` false the content is drawn whole. Each primitive of
+clipped content carries the padding box (`ClipTheorems.clipContent_clips`). -/
+def clipContent (clip : Bool) (decorations content : Array Node) (paddingBox : ClipRect) : Array Node :=
+  if clip then decorations.push (.clipped none identity paddingBox content.toList) else decorations ++ content
 
 structure Box where
   source : Nat
@@ -1139,10 +1158,8 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         | _ => max 0 ((CSS.resolve 0 s.height).getD content.height)
       let borderWidth := width+padding.left+padding.right+border.left+border.right
       let borderHeight := height+padding.top+padding.bottom+border.top+border.bottom
-      let nodes := decorations id s outerX outerY borderWidth borderHeight ++ content.nodes
-      let nodes := if s.clipOverflow then
-        #[.clipped none identity ⟨outerX,outerY,borderWidth,borderHeight,identity⟩ nodes.toList]
-        else nodes
+      let nodes := clipContent s.clipOverflow (decorations id s outerX outerY borderWidth borderHeight) content.nodes
+        ⟨outerX+border.left,outerY+border.top,width+padding.left+padding.right,height+padding.top+padding.bottom,identity⟩
       let box : Box := ⟨id,outerX,outerY,borderWidth,borderHeight⟩
       return {content with nodes, boxes := #[box] ++ content.boxes, height := margin.top+borderHeight+margin.bottom}
 
