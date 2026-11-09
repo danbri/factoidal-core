@@ -106,7 +106,7 @@ private def validateResources (dom : DOM.Dom) (request : JSON.Json) : Except Str
     if !(dom.treeOrder 0).contains id || !(stylesheet node || DOM.Dom.isHtmlElement node "script") then
       throw "resource is not a connected stylesheet or script"
     let some (.string source) := resource.field? "source" | throw "resource source must be a string"
-    if source.utf8ByteSize > 1048576 then throw "resource exceeds1MiB"
+    if source.utf8ByteSize > WebRender.maxSourceBytes then throw "resource exceeds 16 MiB"
     bytes := bytes+source.utf8ByteSize
     if bytes > 4194304 then throw "resources exceed4MiB"
     ids := id::ids
@@ -200,7 +200,7 @@ def sheetKept (source : String) : Except String (List (Option String × Renderin
 /-- The document tree: the XML syntax of HTML for a `.xht` or `.xhtml` URL (HTML §14,
 `DOM.parseXmlDocument`), else the HTML syntax (HTML §13). -/
 def prepareDOM (html : String) (request : JSON.Json) : Except String DOM.Dom := do
-  if html.utf8ByteSize > 1048576 then throw "document HTML exceeds 1MiB"
+  if html.utf8ByteSize > WebRender.maxSourceBytes then throw "document HTML exceeds 16 MiB"
   let dom ← parseKept html (DOM.isXhtmlPath (str request "url"))
   WebRenderScript.applyCommands dom
     ((request.field? "commands").getD (.array []))
@@ -336,7 +336,7 @@ private def supplied (request : JSON.Json) (id : Nat) : Except String (Option St
   | [] => return none
   | [resource] =>
     let some (.string source) := resource.field? "source" | throw "stylesheet source must be a string"
-    if source.utf8ByteSize > 1048576 then throw "stylesheet exceeds 1MiB"
+    if source.utf8ByteSize > WebRender.maxSourceBytes then throw "stylesheet exceeds 16 MiB"
     return some source
   | _ => throw s!"stylesheet resource missing or duplicated for node {id}"
 

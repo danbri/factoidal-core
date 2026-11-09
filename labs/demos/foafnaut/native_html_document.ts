@@ -7,7 +7,7 @@ import {addEntries,noteDiagnostics,noteTurn} from "./native_console.ts";
 // zoomUnit: the backing pixels for each point, in percent (WebDocument.zoomUnit): Lean lays the page
 // out in points (CSS px) and draws it at the backing scale.
 export type PageView={textScalePercent?:number;zoomUnit?:number;selection?:"all"|number[];shell?:unknown;live?:boolean};
-const MAX_RESOURCES=16, MAX_RESOURCE_BYTES=4*MAX_SOURCE_BYTES;
+const MAX_RESOURCES=16, MAX_RESOURCE_BYTES=2*MAX_SOURCE_BYTES;
 export function inputURL(input:string,file=false) {
   const url=file?pathToFileURL(resolve(input)):new URL(input);
   if(!["file:","http:","https:"].includes(url.protocol))throw new Error("Native HTML accepts file, HTTP and HTTPS inputs only");
@@ -34,7 +34,7 @@ export async function readSource(url:string,signal?:AbortSignal,decode?:PageDeco
   const abort=()=>signal?.throwIfAborted();abort();
   let bytes:Uint8Array,finalURL=url,contentType="";
   if(parsed.protocol==="file:") {
-    if((await Deno.stat(parsed)).size>MAX_SOURCE_BYTES)throw new Error("Native HTML resource exceeds 1 MiB");
+    if((await Deno.stat(parsed)).size>MAX_SOURCE_BYTES)throw new Error("Native HTML resource exceeds 16 MiB");
     bytes=await Deno.readFile(parsed);abort();
   } else {
     const response=await fetch(parsed,{signal:AbortSignal.any([AbortSignal.timeout(10000),...(signal?[signal]:[])])});
@@ -45,14 +45,14 @@ export async function readSource(url:string,signal?:AbortSignal,decode?:PageDeco
     const chunks:Uint8Array[]=[];let length=0;
     try {
       while(true){const next=await reader.read();if(next.done)break;
-        length+=next.value.length;if(length>MAX_SOURCE_BYTES)throw new Error("Native HTML resource exceeds 1 MiB");
+        length+=next.value.length;if(length>MAX_SOURCE_BYTES)throw new Error("Native HTML resource exceeds 16 MiB");
         chunks.push(next.value);
       }
     } finally {await reader.cancel();}
     bytes=new Uint8Array(length);let offset=0;
     for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
   }
-  abort();if(bytes.length>MAX_SOURCE_BYTES)throw new Error("Native HTML resource exceeds 1 MiB");
+  abort();if(bytes.length>MAX_SOURCE_BYTES)throw new Error("Native HTML resource exceeds 16 MiB");
   // Lean turns the bytes into text (WebDocument.decodeBin): the BOM, the HTTP charset, the page's
   // meta declaration, else UTF-8 for UTF-8 bytes and windows-1252 otherwise. An engine from before
   // that op leaves UTF-8 decoding (the Encoding Standard's "UTF-8 decode").
