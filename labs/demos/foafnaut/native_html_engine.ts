@@ -78,10 +78,11 @@ export type ScriptTurn = {session:number;clock:number;changed:boolean;commandCou
 type Module = {ccall(name:string,result:string|null,types:string[],values:unknown[]):number;
   UTF8ToString(pointer:number):string;HEAPU8:Uint8Array;_malloc?(size:number):number;_free?(pointer:number):void};
 const encoder = new TextEncoder();
-export const MAX_SOURCE_BYTES = 1048576;
+// One HTML document or stylesheet; the same limit as WebRender.maxSourceBytes.
+export const MAX_SOURCE_BYTES = 16*1048576;
 export function sourceBound(source:string) {
   if(source.includes("\0") || encoder.encode(source).length>MAX_SOURCE_BYTES)
-    throw new Error("HTML/CSS input contains NUL or exceeds 1 MiB");
+    throw new Error("HTML/CSS input contains NUL or exceeds 16 MiB");
 }
 /** One call into Lean's document engine: HTML text, a JSON request, a viewport; a JSON answer. */
 export type DocumentBackend=(html:string,requestJSON:string,width:number,height:number)=>string;
