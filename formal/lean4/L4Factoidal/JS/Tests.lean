@@ -82,7 +82,7 @@ theorem fuel_covers_steps : (1000000000 : Nat) < defaultFuel := by decide
 (`charge`, `sizeCost`), so a loop of `charCodeAt` over a long string stops at the budget
 instead of running for minutes (WPT wasm/jsapi/js-string/constants.any.js did). -/
 def outWith (steps : Nat) (src : String) : List String :=
-  match runScript { freshHeap with steps } src with
+  match runScript { freshHeap with steps := steps.toUInt64 } src with
   | (.ok, h) => h.out.toList
   | (.threw _ m, h) => h.out.toList ++ ["Uncaught " ++ m]
   | (.syntaxError m, _) => [m]
@@ -121,5 +121,54 @@ ends well within a page's budget (5 M steps). -/
 
 #guard out "var d = new Date(Date.UTC(2026, 10, 9, 3, 4, 5)); print(d.toISOString(), d.getMonth(), d.getDay(), Date.parse(d.toString()) === d.getTime())" ==
   ["2026-11-09T03:04:05.000Z 10 1 true"]
+
+
+/-! ## Resolved names (`JS/Resolve.lean`): the shapes a slot hint must get right.
+Each is a program whose meaning depends on which binding a name means: shadowing, closures in
+loops, the temporal dead zone, a function expression's own name, parameters and `var`s of
+the same name, class scopes; with `eval` and `with`, the script stays unresolved. -/
+
+#guard out "var x = 1; function f(x) { { let x = 2; print(x) } print(x) } f(3); print(x)" == ["2", "3", "1"]
+#guard out "function f() { var r = []; for (let i = 0; i < 3; i++) r.push(() => i); return r.map(g => g()) } print(f())" == ["0,1,2"]
+#guard out "function f() { var r = []; for (var i = 0; i < 3; i++) r.push(() => i); return r.map(g => g()) } print(f())" == ["3,3,3"]
+#guard out "function f() { try { x; let x = 1 } catch (e) { print(e.name) } } f()" == ["ReferenceError"]
+#guard out "function f() { const c = 1; try { c = 2 } catch (e) { print(e.name) } print(c) } f()" == ["TypeError", "1"]
+#guard out "var f = function g(n) { return n ? g(n - 1) + 1 : 0 }; print(f(3)); print(typeof g)" == ["3", "undefined"]
+#guard out "function f(a, a2) { var a; print(a); a = 5; print(a); return arguments.length } print(f(1, 2, 3))" == ["1", "5", "3"]
+#guard out "function f(a, b = a + 1) { var c = b + 1; return [a, b, c].join() } print(f(1))" == ["1,2,3"]
+#guard out "class C { static n = 1; m() { return C.n + 1 } } print(new C().m()); print(typeof C)" == ["2", "function"]
+#guard out "function f() { var x = 'local'; return (function () { return x + typeof y })(); var y } print(f())" == ["localundefined"]
+#guard out "function f() { eval('var z = 7'); return z } print(f())" == ["7"]
+#guard out "var o = { p: 1 }; with (o) { var q = p + 1 } print(q)" == ["2"]
+#guard out "function f() { let x = 1; { let y = x + 1; { let z = y + 1; return () => x + y + z } } } print(f()())" == ["6"]
+#guard out "function f(n) { let s = 0; for (let i = 0; i < n; i++) { let j = i * 2; s += j } return s } print(f(4))" == ["12"]
+#guard out "var s = ''; for (var k in { a: 1, b: 2 }) { let v = k + '!'; s += v } print(s)" == ["a!b!"]
+#guard out "var s = 0; for (const v of [1, 2, 3]) { s += v } print(s)" == ["6"]
+#guard out "function f() { switch (1) { case 1: let a = 'x'; return a } } print(f())" == ["x"]
+#guard out "function f() { try { throw 1 } catch (e) { let g = e + 1; return g } } print(f())" == ["2"]
+#guard out "function* g() { let i = 0; while (i < 3) yield i++ } print([...g()].join())" == ["0,1,2"]
+#guard out "async function f() { let v = await 1; return v + 1 } f().then(x => print(x))" == ["2"]
+-- an environment reused after a call: the second call must not see the first call's slots
+#guard out "function f(n) { var v; if (n) v = n; return v } print(f(1), f(0))" == ["1 undefined"]
+#guard out "function f(n) { let u; if (n > 0) { let w = n; u = w } return u } print(f(1), f(0))" == ["1 undefined"]
+
+/-! `PropMap` against its association-list reading. -/
+def propMapSeq : List (Bool × String × Nat) :=
+  (List.range 40).flatMap fun i =>
+    [(true, s!"k{i % 12}", i), (true, s!"j{i}", i)] ++ (if i % 5 == 0 then [(false, s!"k{i % 12}", 0)] else [])
+
+/-- Apply a sequence of inserts and erases to a `PropMap` and to an association list. -/
+def propMapRun (seq : List (Bool × String × Nat)) : PropMap Nat × List (String × Nat) :=
+  seq.foldl (fun (m, l) (ins, k, v) =>
+    if ins then (m.insert k v, (k, v) :: l.filter (·.1 != k))
+    else (m.erase k, l.filter (·.1 != k))) ({}, [])
+
+/-- The map answers as the association list does, for every key that occurs. -/
+def propMapAgrees (seq : List (Bool × String × Nat)) : Bool :=
+  let (m, l) := propMapRun seq
+  (seq.map (·.2.1)).all fun k => m.get? k == (l.find? (·.1 == k)).map (·.2) && m.contains k == (l.any (·.1 == k))
+
+#guard propMapAgrees propMapSeq
+#guard (propMapRun propMapSeq).1.size == (propMapRun propMapSeq).2.length
 
 end L4Factoidal.JS.Tests

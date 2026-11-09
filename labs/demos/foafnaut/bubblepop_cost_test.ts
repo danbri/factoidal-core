@@ -18,6 +18,11 @@ const cases:[string,(n:number)=>string][]=[
   ["push",n=>`var a=[];for(var i=0;i<${n};i++)a.push(i);document.title=String(a.length);`],
   ["index append",n=>`var a=[];for(var i=0;i<${n};i++)a[i]=i;document.title=String(a.length);`],
   ["charCodeAt",n=>`var s='x'.repeat(${n}),t=0;for(var i=0;i<s.length;i++)t+=s.charCodeAt(i);document.title=String(t);`],
+  ["property write",n=>`var o={a:1,b:2,c:3};for(var i=0;i<${n};i++)o.b=i;document.title=String(o.b);`],
+  ["new keys on one object",n=>`var o={};for(var i=0;i<${n};i++)o['k'+i]=i;document.title=String(Object.keys(o).length);`],
+  ["function calls",n=>`function f(x){return x+1}var t=0;for(var i=0;i<${n};i++)t=f(t);document.title=String(t);`],
+  ["closure per iteration",n=>`var fs=[];for(let i=0;i<${n};i++)fs.push(()=>i);document.title=String(fs[${n}-1]());`],
+  ["regexp exec on one string",n=>`var s='ab1 '.repeat(${n}),r=/\\d/g,c=0;while(r.exec(s))c++;document.title=String(c);`],
 ];
 
 Deno.test({name:"BubblePopJS: element-by-element work is linear",ignore:!exists(library),fn:async()=>{

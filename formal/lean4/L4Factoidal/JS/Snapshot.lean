@@ -141,6 +141,17 @@ def putStrs (xs : List String) : EM Unit := do
   putNat xs.length
   for x in xs do putStr x
 
+def eValue (v : Value) : EM Unit :=
+  match v with
+  | .hole | .undef => putNat 0
+  | .null => putNat 1
+  | .bool b => putNat (if b then 3 else 2)
+  | .num x => do putNat 4; putFloat x
+  | .str s => do putNat 5; putStr s
+  | .obj i => do putNat 6; putNat i
+  | .sym i => do putNat 7; putNat i
+  | .big i => do putNat 8; putInt i
+
 mutual
 def eExpr : Nat → Expr → EM Unit
   | 0, _ => throw "snapshot: syntax too deep"
@@ -151,6 +162,8 @@ def eExpr : Nat → Expr → EM Unit
     | .bool b => do putNat 3; putBool b
     | .null => putNat 4
     | .ident x => do putNat 5; putStr x
+    | .local x h i => do putNat 60; putStr x; putNat h; putNat i
+    | .lit v => do putNat 61; eValue v
     | .this => putNat 6
     | .array es => do putNat 7; eExprs n es
     | .object ps => do putNat 8; eProps n ps
@@ -254,11 +267,12 @@ def eElems : Nat → List PatElem → EM Unit
 literal, written once). -/
 def eFun : Nat → FunDef → EM Unit
   | 0, _ => throw "snapshot: syntax too deep"
-  | n + 1, .mk name params rest body vars usesArgs strict kind gen async => do
+  | n + 1, .mk name params rest body vars usesArgs strict kind gen async info => do
     let saved := (← get).out
     modify fun s => { s with out := .empty }
     eElems n params; eOptPat n rest; eStmts n body; putStrs vars
     putBool usesArgs; putBool strict; putCode funKinds kind; putBool gen; putBool async
+    putStrs info.layout.toList; putNat info.nParams; putBool info.plain; putBool info.frameLocal
     let s ← get
     let core := s.out
     let key := String.fromUTF8? core |>.getD ""
@@ -311,6 +325,7 @@ def eStmt : Nat → Stmt → EM Unit
       match i with
       | none => putNat 0
       | some (.decl k ds) => do putNat 1; putCode declKinds k; eDecls n ds
+      | some (.letOnce ds) => do putNat 3; eDecls n ds
       | some (.expr e) => do putNat 2; eExpr n e
       eOptExpr n t; eOptExpr n u; eStmt n b
     | .forIn k p o b => do
@@ -318,6 +333,7 @@ def eStmt : Nat → Stmt → EM Unit
     | .forOf k p o b => do
       putNat 10; putOpt k (putCode declKinds); ePat n p; eExpr n o; eStmt n b
     | .block ss => do putNat 11; eStmts n ss
+    | .blockF ss => do putNat 40; eStmts n ss
     | .throwS e => do putNat 12; eExpr n e
     | .tryS b p h f => do
       putNat 13; eStmts n b; eOptPat n p
@@ -347,17 +363,6 @@ end
 
 /-- Fuel for the nesting of syntax. -/
 def depth : Nat := 100000
-
-def eValue (v : Value) : EM Unit :=
-  match v with
-  | .undef => putNat 0
-  | .null => putNat 1
-  | .bool b => putNat (if b then 3 else 2)
-  | .num x => do putNat 4; putFloat x
-  | .str s => do putNat 5; putStr s
-  | .obj i => do putNat 6; putNat i
-  | .sym i => do putNat 7; putNat i
-  | .big i => do putNat 8; putInt i
 
 def eValues (vs : Array Value) : EM Unit := do
   putNat vs.size
@@ -476,11 +481,15 @@ def eObj (o : Obj) : EM Unit := do
   eValue o.proto; eKind o.kind; putBool o.extensible
 
 def eEnv (e : Env) : EM Unit := do
-  -- in the order of the names, so the data does not depend on the hash map's layout
-  let vs := e.vars.toList.mergeSort fun a b => a.1 < b.1
-  putNat vs.length
-  for (x, b) in vs do putStr x; eValue b.v; putBool b.mutable; putBool b.init
-  putOpt e.parent putNat; putOpt e.withObj putNat
+  -- in the order of the slots: a resolved name's slot number must stay right
+  putNat e.names.size
+  for i in [0:e.names.size] do
+    putStr e.names[i]!
+    let (v, init) := match e.vals[i]! with
+      | .hole => (Value.undef, false)
+      | v => (v, true)
+    eValue v; putBool (e.mutableAt i); putBool init
+  putNat e.parent; putOpt e.withObj putNat
 
 def eRealm (r : Realm) : EM Unit := do
   for x in [r.globalObj, r.objectProto, r.functionProto, r.arrayProto, r.stringProto, r.numberProto,
@@ -529,7 +538,7 @@ def encode (base h : HeapOf H) (extra : Array Value) : Except String String :=
     for e in h.envs do eEnv e
     putStrs h.syms.toList
     putStrs h.out.toList
-    putNat h.rng.toNat; putNat h.maxDepth; putNat h.jobsRun
+    putNat h.rng.toNat; putNat h.maxDepth.toNat; putNat h.jobsRun
     putNat (h.jobs.size - h.jobHead)
     for (f, args) in h.jobs.extract h.jobHead h.jobs.size do eValue f; eValues args
     eValues extra
@@ -600,6 +609,19 @@ def getStrs : DM (List String) := do
 
 def deep {α} : DM α := throw "snapshot: syntax too deep"
 
+def dValue : DM Value := do
+  match ← getNat with
+  | 0 => pure .undef
+  | 1 => pure .null
+  | 2 => pure (.bool false)
+  | 3 => pure (.bool true)
+  | 4 => pure (.num (← getFloat))
+  | 5 => pure (.str (← getStr))
+  | 6 => pure (.obj (← getNat))
+  | 7 => pure (.sym (← getNat))
+  | 8 => pure (.big (← getInt))
+  | _ => throw "snapshot: bad value"
+
 mutual
 def dExpr : Nat → DM Expr
   | 0 => deep
@@ -611,6 +633,8 @@ def dExpr : Nat → DM Expr
     | 3 => pure (.bool (← getBool))
     | 4 => pure .null
     | 5 => pure (.ident (← getStr))
+    | 60 => do let x ← getStr; let h ← getNat; let i ← getNat; pure (.local x h i)
+    | 61 => pure (.lit (← dValue))
     | 6 => pure .this
     | 7 => pure (.array (← dExprs n))
     | 8 => pure (.object (← dProps n))
@@ -733,7 +757,7 @@ def dFun : Nat → DM FunDef
     let name ← getOpt getStr
     let k ← getNat
     match (← get).funs[k]? with
-    | some (.mk _ p r b v u s kd g a) => pure (.mk name p r b v u s kd g a)
+    | some (.mk _ p r b v u s kd g a i) => pure (.mk name p r b v u s kd g a i)
     | none => throw "snapshot: bad function number"
 
 /-- An entry of the function table (the literal without its name). -/
@@ -743,7 +767,9 @@ def dFunCore : Nat → DM FunDef
     let params ← dElems n; let rest ← dOptPat n; let body ← dStmts n; let vars ← getStrs
     let usesArgs ← getBool; let strict ← getBool; let kind ← getCode funKinds
     let gen ← getBool; let async ← getBool
-    pure (.mk none params rest body vars usesArgs strict kind gen async)
+    let layout ← getStrs; let nParams ← getNat; let plain ← getBool; let frameLocal ← getBool
+    pure (.mk none params rest body vars usesArgs strict kind gen async
+      { layout := layout.toArray, nParams, plain, frameLocal })
 
 def dClass : Nat → DM ClassDef
   | 0 => deep
@@ -787,6 +813,7 @@ def dStmt : Nat → DM Stmt
       let i ← match (← getNat) with
         | 0 => pure none
         | 1 => do let k ← getCode declKinds; pure (some (ForInit.decl k (← dDecls n)))
+        | 3 => do pure (some (ForInit.letOnce (← dDecls n)))
         | _ => do pure (some (ForInit.expr (← dExpr n)))
       let t ← dOptExpr n; let u ← dOptExpr n
       pure (.forS i t u (← dStmt n))
@@ -797,6 +824,7 @@ def dStmt : Nat → DM Stmt
       let k ← getOpt (getCode declKinds); let p ← dPat n; let o ← dExpr n
       pure (.forOf k p o (← dStmt n))
     | 11 => pure (.block (← dStmts n))
+    | 40 => pure (.blockF (← dStmts n))
     | 12 => pure (.throwS (← dExpr n))
     | 13 =>
       let b ← dStmts n; let p ← dOptPat n
@@ -826,19 +854,6 @@ def dStmts : Nat → DM (List Stmt)
     for _ in [0:k] do out := out.push (← dStmt n)
     pure out.toList
 end
-
-def dValue : DM Value := do
-  match ← getNat with
-  | 0 => pure .undef
-  | 1 => pure .null
-  | 2 => pure (.bool false)
-  | 3 => pure (.bool true)
-  | 4 => pure (.num (← getFloat))
-  | 5 => pure (.str (← getStr))
-  | 6 => pure (.obj (← getNat))
-  | 7 => pure (.sym (← getNat))
-  | 8 => pure (.big (← getInt))
-  | _ => throw "snapshot: bad value"
 
 def dValues : DM (Array Value) := do
   let k ← getNat
@@ -990,7 +1005,7 @@ def dObj (base : HeapOf H) : DM Obj := do
   let mut keys := Array.emptyWithCapacity nk
   for _ in [0:nk] do keys := keys.push (← getStr)
   let np ← getNat
-  let mut props : Std.HashMap String PropV := Std.HashMap.emptyWithCapacity np
+  let mut props : PropMap PropV := {}
   for _ in [0:np] do
     let k ← getStr
     props := props.insert k (← dProp)
@@ -999,12 +1014,12 @@ def dObj (base : HeapOf H) : DM Obj := do
 
 def dEnv : DM Env := do
   let k ← getNat
-  let mut vars : Std.HashMap String Binding := Std.HashMap.emptyWithCapacity k
+  let mut e : Env := {}
   for _ in [0:k] do
     let x ← getStr; let v ← dValue; let m ← getBool; let i ← getBool
-    vars := vars.insert x { v, mutable := m, init := i }
-  let parent ← getOpt getNat; let withObj ← getOpt getNat
-  pure { vars, parent, withObj }
+    e := e.put x { v, mutable := m, init := i }
+  let parent ← getNat; let withObj ← getOpt getNat
+  pure { e with parent, withObj }
 
 /-- The heap and the values in data `s` made by `encode` from the same `base`. -/
 def decode (base : HeapOf H) (s : String) : Except String (HeapOf H × Array Value) := do
@@ -1065,7 +1080,7 @@ def decode (base : HeapOf H) (s : String) : Except String (HeapOf H × Array Val
     let heap : HeapOf H :=
       { base with
         objs := objs, envs := envs, syms := syms.toArray, out := out.toArray
-        rng := rng.toUInt64, maxDepth := maxDepth, jobsRun := jobsRun, jobs := jobs, jobHead := 0 }
+        rng := rng.toUInt64, maxDepth := maxDepth.toUInt32, jobsRun := jobsRun, jobs := jobs, jobHead := 0 }
     pure (heap, extra)
   match (run.run env).run {} with
   | .ok r _ => pure r
