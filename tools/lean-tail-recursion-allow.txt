@@ -2238,3 +2238,8 @@ L4Factoidal_JS_Str_decodeUnits  # (c) executed only on two-unit lists (JS/Interp
 L4Factoidal_JS_Str_lengthSpec  # (s) specification only: the theorem units_length; executed code takes Str.jsLength
 L4Factoidal_JS_moreNative  # (c) a cycle through the evaluator's native call: depth bounded by the interpreter's call depth (Heap.maxDepth, a RangeError beyond it)
 L4Factoidal_JS_typedConv  # (c) a cycle through the evaluator (valueOf/toString of a typed-array element): bounded by Heap.maxDepth as above
+# --- 2026-11-09 dombreadth (DOM ranges, CSS.supports)
+L4Factoidal_WasmVM_Hosts_Dom_extractR  # (b) one call per level of the DOM tree between a range's ends and their common ancestor (DOM §5.5 extract recurses on the partially contained child); fuel is the arena size
+L4Factoidal_WasmVM_Hosts_Dom_cloneR  # (b) as extractR: one call per tree level of the range (DOM §5.5 clone the contents)
+L4Factoidal_Rendering_CssSupports_condition  # (b) the nesting of parentheses in one CSS.supports condition text; fuel is the text length
+L4Factoidal_Rendering_CssSupports_condition_inParensValue  # (b) mutual with condition: the nesting of parentheses of one condition text
