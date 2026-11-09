@@ -2270,10 +2270,12 @@
         const h = normalize('digest', alg.hash); out.hash = { name: h.name };
       };
       const bytes = (k) => { if (alg[k] === undefined) throw new TypeError(`Algorithm: Missing required member '${k}'`); return copyBytes(bufferSource(alg[k], 'Algorithm')); };
+      // [EnforceRange] unsigned long (WebIDL §3.2.4.8).
       const ulong = (k, required) => {
         if (alg[k] === undefined) { if (required) throw new TypeError(`Algorithm: Missing required member '${k}'`); return undefined; }
-        const x = Number(alg[k]); if (!Number.isFinite(x)) throw new TypeError(`Algorithm: '${k}' is not a number`);
-        return (Math.trunc(x) % 4294967296 + 4294967296) % 4294967296;
+        const x = Math.trunc(Number(alg[k]));
+        if (!Number.isFinite(x) || x < 0 || x > 4294967295) throw new TypeError(`Algorithm: '${k}' is outside the range of an unsigned long`);
+        return x;
       };
       if (reg === 'HMAC' && (op === 'generateKey' || op === 'importKey')) { hashMember(true); out.length = ulong('length', false); }
       if (reg === 'HMAC' && op === 'get') { hashMember(true); out.length = ulong('length', false); }
@@ -2281,7 +2283,8 @@
       if (reg === 'PBKDF2' && op === 'deriveBits') { hashMember(true); out.salt = bytes('salt'); out.iterations = ulong('iterations', true); }
       return out;
     };
-    const usageNames = ['encrypt', 'decrypt', 'sign', 'verify', 'deriveKey', 'deriveBits', 'wrapKey', 'unwrapKey'];
+    const usageNames = ['encrypt', 'decrypt', 'sign', 'verify', 'deriveKey', 'deriveBits', 'wrapKey', 'unwrapKey',
+      'encapsulateKey', 'encapsulateBits', 'decapsulateKey', 'decapsulateBits'];
     const usagesOf = us => { const out = []; for (const u of us) { const s = String(u); if (!usageNames.includes(s)) throw new TypeError(`KeyUsage: '${s}' is not a valid enum value`); if (!out.includes(s)) out.push(s); } return out; };
     const allowed = { HMAC: ['sign', 'verify'], HKDF: ['deriveKey', 'deriveBits'], PBKDF2: ['deriveKey', 'deriveBits'] };
     const checkUsages = (name, us) => { for (const u of us) if (!allowed[name].includes(u)) fail('SyntaxError', `Cannot create a key using the specified key usages.`); };
@@ -2290,7 +2293,7 @@
     const hmacJwkAlg = { 'SHA-1': 'HS1', 'SHA-256': 'HS256', 'SHA-384': 'HS384', 'SHA-512': 'HS512' };
     const subtleMethods = {
       digest(algorithm, data) {
-        return start(() => { const a = normalize('digest', algorithm); const d = copyBytes(bufferSource(data, 'digest'));
+        return start(() => { const d = copyBytes(bufferSource(data, 'digest')); const a = normalize('digest', algorithm);
           return later(() => api(32, [a.name, d], 0, true, 'digest')); });
       },
       generateKey(algorithm, extractable, keyUsages) {
