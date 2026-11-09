@@ -9,7 +9,7 @@ h1 { margin:6px 0 0 0; font-size:26px; line-height:34px; color:#f4f6f9; font-wei
 h2 { margin:0; padding-top:14px; font-size:18px; line-height:24px; color:#f4f6f9; font-weight:normal }
 p { margin:0; padding-top:6px }
 .nav { padding-top:0; color:#8a919c }
-.lede { color:#a9b0ba }
+.lede { color:#a9b0ba; padding-top:10px }
 .bar { margin-top:10px; padding:6px 6px 0 6px; background:#111318; border-top:2px solid #7fd1ff }
 .bar button { margin:0 4px 6px 0; padding:3px 10px; font-size:13px; color:#cfd4dc; background:#1b1d24; border:1px solid #454a56 }
 .bar button.on { color:#06121a; background:#7fd1ff; border:1px solid #7fd1ff }
@@ -32,15 +32,15 @@ textarea { display:block; box-sizing:border-box; width:100%; margin-top:0; paddi
 </style></head><body><main>
 <p class="nav"><a href="index.html">Demo index</a> · fragment shaders on two triangles, as on Shadertoy</p>
 <h1>Shader gallery</h1>
-<p class="lede">Two triangles cover the canvas; a fragment shader colours every pixel from <code>iTime</code>,
-<code>iResolution</code>, <code>iMouse</code> and <code>iFrame</code>. Each shader is here twice: in WGSL for WebGPU and in
-GLSL ES 3.00 for WebGL 2. In Foafnaut, Lean parses each one, checks it against a small subset (loops with literal bounds,
-no recursion, a cost bound, every index clamped) and prints the WGSL the GPU gets. Drag on the picture to move <code>iMouse</code>.</p>
 <div class="bar" id="shaders"></div>
 <div class="bar"><span class="k">API</span> <button id="api-webgpu">WebGPU · WGSL</button> <button id="api-webgl2">WebGL 2 · GLSL ES 3.00</button>
 <span class="k">size</span> <span id="sizes"></span> <button id="pause">Pause</button></div>
 <div class="stage" id="stage"><canvas id="c-webgpu" width="800" height="600"></canvas><canvas id="c-webgl2" width="800" height="600"></canvas>
 <canvas id="readout" class="readout" width="800" height="42" aria-label="Frame rate, script time and Lean's time a turn">This page needs scripts and WebGPU or WebGL 2.</canvas></div>
+<p class="lede">Two triangles cover the canvas; a fragment shader colours every pixel from <code>iTime</code>,
+<code>iResolution</code>, <code>iMouse</code> and <code>iFrame</code>. Each shader is here twice: in WGSL for WebGPU and in
+GLSL ES 3.00 for WebGL 2. In Foafnaut, Lean parses each one, checks it against a small subset (loops with literal bounds,
+no recursion, a cost bound, every index clamped) and prints the WGSL the GPU gets. Drag on the picture to move <code>iMouse</code>.</p>
 <h2 id="title">Shader</h2>
 <p class="blurb" id="blurb"></p>
 <pre class="head" id="head"></pre>
