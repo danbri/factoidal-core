@@ -217,10 +217,10 @@ Deno.test("resource size, resource count, cancellation and URL schemes are bound
     await assert.rejects(()=>prepareHTML(engine,url,controller.signal),/abort/i);
     await Deno.writeFile(path,new Uint8Array([0x63,0x61,0x66,0xe9]));
     assert.equal((await readSource(url,undefined,engine.decodeDocument)).source,"café");
-    const css="/*"+"x".repeat(1048572)+"*/";
+    const css="/*"+"x".repeat(7*1048576)+"*/";
     await Deno.writeTextFile(path,html(Array.from({length:5},(_,n)=>`<link rel="stylesheet" href="${n}.css">`).join("")));
     for(let n=0;n<5;n++)await Deno.writeTextFile(dir+`/${n}.css`,css);
-    await assert.rejects(()=>prepareHTML(engine,url),/stylesheets exceed 4 MiB/);
+    await assert.rejects(()=>prepareHTML(engine,url),/stylesheets exceed 32 MiB/);
     assert.throws(()=>inputURL("javascript:alert(1)"),/file, HTTP and HTTPS/);
     assert.throws(()=>inputURL("https://name:secret@example.invalid/"),/Credentials/);
     assert.throws(()=>inputURL("file://remotehost/private/file.html"),/Remote file URL hosts/);
