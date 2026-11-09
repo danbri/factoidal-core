@@ -32,6 +32,9 @@ private structure Placed where
   xOffset : Int
   yOffset : Int
   cluster : Nat
+  /-- GPOS attached the glyph to another (a mark to its base). -/
+  attached : Bool := false
+  deriving Inhabited
 
 private def ofInt (v : Int) : Float :=
   if v < 0 then -(Float.ofNat v.natAbs) else Float.ofNat v.natAbs
@@ -78,7 +81,7 @@ private def shaped (f : Font) (text : String) (rtl : Option Bool) :
   let mut out := #[]
   for (g,byte) in s.glyphs.zip s.clusterBytes do
     let some cluster := chars.get? byte | throw "font profile: cluster inside a character"
-    out := out.push ⟨g.id,g.advance.toNat,g.xOffset,g.yOffset,cluster⟩
+    out := out.push ⟨g.id,g.advance.toNat,g.xOffset,g.yOffset,cluster,g.attachedTo.isSome⟩
   return (s.script,s.rtl,out)
 
 /-- One glyph for each character, in visual order for right-to-left text. -/
@@ -152,6 +155,43 @@ def Font.word (f : Font) (text : String) (pixelSize : Nat) (rtl : Option Bool :=
       | none => (pen,pen+g.advance))
     pen := pen+g.advance
   let boxes : Std.TreeMap Nat (Option InkBound.Box) := outlines.foldl (fun m id o => m.insert id (outlineBox o)) {}
+  -- A mark that the font's GPOS did not attach (no anchor for this base: Noto Sans Math has
+  -- U+0308 but no mark anchor on its Fraktur letters) is placed on the ink of the base before
+  -- it as HarfBuzz places marks in a font with no GPOS (`SfntFallback.positionMark`), in
+  -- place of drawing it after the base. A font with no GPOS was placed so by the shaper.
+  -- (Issue https://github.com/danbri/factoidal-core/issues/368.)
+  let hasGpos := f.dir.any (·.tag == "GPOS")
+  let sourceChars := chars.toArray
+  let markAt := fun (g : Placed) => let c := (sourceChars.getD g.cluster ' ').toNat
+    SfntFallback.recategorize c (SfntFallback.modifiedCcc c)
+  let mut placed := placed
+  if hasGpos && !backward then
+    let gap : Int := (f.face.unitsPerEm / 16 : Nat)
+    let mut baseIdx : Option Nat := none
+    let mut cluster : Option SfntFallback.Extents := none
+    let mut lastCc := 255
+    for k in [0:placed.size] do
+      let g := placed[k]!
+      let cc := markAt g
+      if cc == 0 || g.advance != 0 then
+        baseIdx := some k
+        cluster := none
+        lastCc := 255
+        continue
+      if g.attached then continue
+      let some bi := baseIdx | continue
+      let b := placed[bi]!
+      let (some (some bInk),some (some mInk)) := (boxes.get? b.id,boxes.get? g.id) | continue
+      if lastCc != cc || cluster.isNone then
+        lastCc := cc
+        cluster := some ⟨bInk.x0,bInk.y1+b.yOffset,bInk.x1-bInk.x0,-(bInk.y1-bInk.y0)⟩
+      let some c := cluster | continue
+      let (c',x,y) := SfntFallback.positionMark c ⟨mInk.x0,mInk.y1,mInk.x1-mInk.x0,-(mInk.y1-mInk.y0)⟩ cc gap
+      cluster := some c'
+      -- From the base's origin (its pen plus offset) to the mark's pen.
+      let penB := pens.getD bi 0
+      let penM := pens.getD k 0
+      placed := placed.set! k {g with xOffset := penB+b.xOffset+x-penM, yOffset := y, attached := true}
   let mut bounded : Array Placed := #[]
   for (g,p) in placed.zip pens do
     let (a,b) := (spans.get? g.cluster).getD (p,p+g.advance)
@@ -288,12 +328,11 @@ def markClass (c : Nat) : Nat :=
 private def toInt (v : Float) : Int :=
   if v < 0 then -((-v).round.toUInt64.toNat : Int) else (v.round.toUInt64.toNat : Int)
 
-/-- Where a mark of one font goes on a base of another (HarfBuzz
-`position_around_base`, `SfntFallback.positionMark`), in the word's y-down units with
-the baseline at `baseline`: the base's advance box across (HarfBuzz uses the advance,
-not the ink, for the horizontal place) and its ink above and below; the mark by its
-own ink. The answer is the shift of the mark glyph, and the cluster box for a next
-mark of the same class. A gap of 1/16 em (`gap`) parts mark and base, as in HarfBuzz. -/
+/-- Where a mark goes on a base (HarfBuzz `position_around_base`,
+`SfntFallback.positionMark`), in the word's y-down units with the baseline at `baseline`:
+`cluster` is the base's box (its ink, issue 368) and the mark goes by its own ink. The
+answer is the shift of the mark glyph, and the cluster box for a next mark of the same
+class. A gap of 1/16 em (`gap`) parts mark and base, as in HarfBuzz. -/
 def placeMark (cluster : SfntFallback.Extents) (mark : Float × Float × Float × Float) (markOrigin baseOrigin baseline : Float)
     (cc : Nat) (gap : Int) : SfntFallback.Extents × Float × Float :=
   let (l,t,r,b) := mark
@@ -337,6 +376,9 @@ def wordWith (primary : Font) (fonts : Array Font) (text : String) (pixelSize : 
   let order := if backward then (List.range runs.size).reverse else List.range runs.size
   -- The last base glyph placed: its origin, advance and ink box, for marks of a next run.
   let mut base : Option (Float × Float × Option (Float × Float × Float × Float)) := none
+  -- The index in `glyphs` of that base: a mark placed on it joins its cluster, so that
+  -- selection and copy take base and mark as one.
+  let mut baseGlyph : Option Nat := none
   let mut lastFont : Option Nat := none
   for r in order do
     let (i,part) := runs[r]!
@@ -352,33 +394,44 @@ def wordWith (primary : Font) (fonts : Array Font) (text : String) (pixelSize : 
     let mut lastCc := 255
     let mut skipped : Float := 0
     let mut runBase := base
+    let mut runBaseGlyph := baseGlyph
     let chars := part.toList.toArray
     for g in w.glyphs do
       let geometry := g.geometry.map (scaleGeometry k)
       let x := pen+k*g.x-skipped
       let y := k*g.y+down
       if attach && g.clusterStart < leading then
+        -- One cluster: the mark takes its base's start, and the base's end grows to the mark's.
+        let (cs,ce) := match baseGlyph.bind (glyphs[·]?) with
+          | some bg => (bg.clusterStart,max bg.clusterEnd (start+g.clusterEnd))
+          | none => (start+g.clusterStart,start+g.clusterEnd)
+        if let some bi := baseGlyph then
+          glyphs := glyphs.modify bi fun bg => {bg with clusterEnd := ce}
         match base with
-        | some (origin,advance,some (_,top,_,bottom)) =>
+        | some (origin,_,some (l,top,r,bottom)) =>
           let cc := markClass (chars.getD g.clusterStart ' ').toNat
           if lastCc != cc then
             lastCc := cc
-            cluster := some ⟨0,toInt (ascent-top),toInt advance,-(toInt (bottom-top))⟩
+            -- The base's ink across and up and down (issue 368): a mark of another font is
+            -- centred on the ink it is drawn over.
+            cluster := some ⟨toInt (l-origin),toInt (ascent-top),toInt (r-l),-(toInt (bottom-top))⟩
           match inkBox geometry,cluster with
           | some (ml,mt,mr,mb),some c =>
             let (c',dx,dy) := placeMark c (ml+x,mt+y,mr+x,mb+y) x origin ascent cc gap
             cluster := some c'
-            glyphs := glyphs.push ⟨g.index,x+dx,y+dy,0,start+g.clusterStart,start+g.clusterEnd,geometry⟩
-          | _,_ => glyphs := glyphs.push ⟨g.index,x,y,0,start+g.clusterStart,start+g.clusterEnd,geometry⟩
-        | _ => glyphs := glyphs.push ⟨g.index,x,y,0,start+g.clusterStart,start+g.clusterEnd,geometry⟩
+            glyphs := glyphs.push ⟨g.index,x+dx,y+dy,0,cs,ce,geometry⟩
+          | _,_ => glyphs := glyphs.push ⟨g.index,x,y,0,cs,ce,geometry⟩
+        | _ => glyphs := glyphs.push ⟨g.index,x,y,0,cs,ce,geometry⟩
         skipped := skipped+k*g.advance
       else
         let placed : FontProvider.Glyph := ⟨g.index,x,y,k*g.advance,start+g.clusterStart,start+g.clusterEnd,geometry⟩
         glyphs := glyphs.push placed
         if markClass (chars.getD g.clusterStart ' ').toNat == 0 then
           runBase := some (x,k*g.advance,(inkBox geometry).map fun (l,t,r,b) => (l+x,t+y,r+x,b+y))
+          runBaseGlyph := some (glyphs.size-1)
     pen := pen+k*w.advance-skipped
     base := runBase
+    baseGlyph := runBaseGlyph
     lastFont := some i
   -- FontProvider.Word in field order: text, font, face, family, style, size, units,
   -- ascent, descent, line gap, glyphs, advance.
