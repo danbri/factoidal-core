@@ -49,6 +49,17 @@ def maxDecoders : Nat := 4096
 /-- Arguments of one call. -/
 def maxFields : Nat := 1 <<< 20
 
+/-- What Lean makes of the host's answer to a crypto request. -/
+inductive HostKind where
+  | key (extractable : Bool) | bytes | bool | jwk
+  deriving Inhabited
+
+structure HostWait where
+  /-- The page's callback (a prelude callback handle) that takes the answer, in a task. -/
+  wake : Nat
+  kind : HostKind
+  deriving Inhabited
+
 structure State where
   decoders : Std.HashMap Nat Encoding.TextDecoder := {}
   /-- The answer that did not fit; op 0 takes it. -/
@@ -63,6 +74,17 @@ structure State where
   draws : Nat := 0
   /-- The CryptoKeys of the session. -/
   keys : Crypto.WebCryptoKeys.KeyStore := {}
+  /-- crypto.subtle's primitives are the host's (the Hub: the browser's own crypto.subtle,
+  `Page.Limits.cryptoHost`); Lean still decides every rule. -/
+  hostMode : Bool := false
+  /-- Requests for the host, given with the next turn's answer (`crypto`). -/
+  hostReqs : Array JSON.Json := #[]
+  /-- Requests the host has not answered: the page's callback to wake and what to make of
+  the answer. -/
+  hostWaits : Std.HashMap Nat HostWait := {}
+  /-- Answers the page has not yet taken (op 43). -/
+  hostAnswers : Std.HashMap Nat (Except Int ByteArray) := {}
+  nextReq : Nat := 1
   deriving Inhabited
 
 /-! ## Arguments -/
@@ -475,7 +497,12 @@ def dropKey (s : State) (h : Nat) : State × Nat :=
   | some k =>
     let keys := s.keys.keys.erase h
     let n := Crypto.WebHacl.wipe k.material + Crypto.WebHacl.wipe k.pub + wipeRsa k.rsa
-    ({ s with keys := { s.keys with keys } }, n)
+    -- The browser's CryptoKey goes when no Lean key (a structuredClone copy) still names it.
+    let reqs := match k.host with
+      | some hh => if keys.fold (fun found _ k' => found || k'.host == some hh) false then s.hostReqs
+        else s.hostReqs.push (.object [("id", .number "0"), ("op", .string "drop"), ("key", .number (toString hh))])
+      | none => s.hostReqs
+    ({ s with keys := { s.keys with keys }, hostReqs := reqs }, n)
 
 /-- At the end of a session (`WebScripts` close, or a new start): every key's bytes are
 handed to `WebHacl.wipe`, which zeroes them where the store held the last reference. The
@@ -489,6 +516,262 @@ def wipeAll (s : State) : Nat :=
     n + Crypto.WebHacl.wipe m + Crypto.WebHacl.wipe p + wipeRsa r) 0
 
 end Subtle
+
+
+/-! ## crypto.subtle on the Hub: the browser does the primitives
+
+With `hostMode` (the Hub, `Page.Limits.cryptoHost`), an operation is decided here as
+natively: the registry, the usages, extractability, the key types, the JWK members, the
+error of each refusal. What is left, the primitive, is a request to the host (the
+browser's crypto.subtle, `labs/demos/foafnaut/crypto_host.mjs`). Keys are the browser's
+CryptoKeys in the host's table; Lean holds their attributes and the host's number, never
+their bytes. The page's promise waits on a callback that Lean queues as a task when the
+host answers (`hostDone`). Record docs/designissues/2026-11-09-hacl-web-crypto.md, "The
+Hub". -/
+
+section Host
+open Crypto.WebCryptoKeys
+
+def b64url (b : ByteArray) : String := JOSE.Base64Url.encode b
+
+/-- A member of a normalized algorithm for the host, by its WebIDL type (`normalizeSpec`). -/
+def memberJson (st : KeyStore) (t : String) (v : ByteArray) : Res JSON.Json := do
+  let str := (String.fromUTF8? v).getD ""
+  match t with
+  | "h" => return .object [("name", .string str)]
+  | "b" | "n" => return .object [("$b", .string (b64url v))]
+  | "l" | "o" => return .number (toString (str.toNat?.getD 0))
+  | "k" =>
+    let some k := (str.toNat?).bind (st.keys[·]?) | throw .typeError
+    let some h := k.host | throw .invalidAccess
+    return .object [("$key", .number (toString h))]
+  | _ => return .string str
+
+/-- The normalized algorithm `p` (op `op`) as the host's dictionary. -/
+def algJson (st : KeyStore) (op : String) (p : Args) : Res JSON.Json := do
+  let name := (p.str? "name").getD ""
+  let (reg, ms) ← normalizeSpec op name true
+  let members ← ms.foldlM (fun (acc : List (String × JSON.Json)) m => do
+    let k := (m.splitOn ":").headD ""
+    let t := ((m.splitOn ":").getD 1 "").replace "!" ""
+    match p.get? k with
+    | some v => return acc ++ [(k, ← memberJson st t v)]
+    | none => return acc) []
+  return .object (("name", .string reg) :: members)
+
+def hostKeyOf (st : KeyStore) (a : Args) (field : String) : Res (Key × Nat) := do
+  let k ← keyOf st a field
+  let some h := k.host | throw .invalidAccess
+  return (k, h)
+
+def numJ (n : Nat) : JSON.Json := .number (toString n)
+def bytesJ (b : ByteArray) : JSON.Json := .object [("$b", .string (b64url b))]
+def usagesJ (us : List Usage) : JSON.Json := .array (us.map (.string ∘ Usage.name))
+
+/-- A JsonWebKey (`j:` members) as JSON for the host. -/
+def jwkJsonOf (j : Args) : JSON.Json :=
+  let ops := (j.all "key_ops[]").filterMap String.fromUTF8?
+  .object (j.toList.filterMap fun (k, v) =>
+    if k == "key_ops[]" then none
+    else if k == "key_ops" then some (k, .array (ops.map .string))
+    else if k == "ext" then some (k, .bool (v == "true".toUTF8))
+    else some (k, .string ((String.fromUTF8? v).getD "")))
+
+def isSecretAlg (a : Alg) : Bool :=
+  a == .hmac || a == .hkdf || a == .pbkdf2 || a == .chacha || a.isAes
+
+/-- The key type an import makes, from its format and data (§14.3.9 and each algorithm). -/
+def importType (alg : Alg) (format : String) (j : Args) : KeyType :=
+  if isSecretAlg alg then .secret
+  else if format == "pkcs8" then .privateKey
+  else if format == "jwk" then (if j.has "d" then .privateKey else .publicKey)
+  else .publicKey
+
+def useOf (alg : Alg) : String :=
+  if alg == .ecdsa || alg == .ed25519 || alg == .hmac || alg == .rsaPkcs1 || alg == .rsaPss then "sig" else "enc"
+
+/-- The checks of one operation and its request to the host: the request's fields (with
+"op") and the kind of answer. -/
+def hostPlan (st : KeyStore) (method : String) (a : Args) : Res (List (String × JSON.Json) × HostKind) := do
+  let p := sub a "a:"
+  let algName := (p.str? "name").getD ""
+  let ext := a.bool "extractable"
+  let data := (a.get? "data").getD .empty
+  match method with
+  | "digest" =>
+    return ([("op", .string "digest"), ("algorithm", .object [("name", .string algName)]), ("data", bytesJ data)], .bytes)
+  | "generateKey" =>
+    let us ← usagesOf a
+    let some alg := algOf? algName | throw .notSupported
+    if isSecretAlg alg then
+      checkUsages (allowedUsages alg .secret) us
+      if alg.isAes && !([128, 192, 256].contains ((p.nat? "length").getD 0)) then throw .operation
+      if alg == .hmac && p.nat? "length" == some 0 then throw .operation
+    else
+      checkUsages (allowedUsages alg .publicKey ++ allowedUsages alg .privateKey) us
+      if alg == .ecdsa || alg == .ecdh then
+        if !(["P-256", "P-384", "P-521"].contains ((p.str? "namedCurve").getD "")) then throw .notSupported
+    return ([("op", .string "generateKey"), ("algorithm", ← algJson st "generateKey" p), ("extractable", .bool ext),
+      ("usages", usagesJ us)], .key ext)
+  | "importKey" =>
+    let us ← usagesOf a
+    let some alg := algOf? algName | throw .notSupported
+    let format := (a.str? "format").getD ""
+    let j := sub a "j:"
+    if (alg == .hkdf || alg == .pbkdf2) && format != "raw" && format != "raw-secret" then throw .notSupported
+    checkUsages (allowedUsages alg (importType alg format j)) us
+    if (alg == .hkdf || alg == .pbkdf2) && ext then throw .syntax
+    if format == "jwk" then jwkCommon j us ext (useOf alg)
+    let keyData := if format == "jwk" then jwkJsonOf j else bytesJ data
+    return ([("op", .string "importKey"), ("format", .string format), ("keyData", keyData),
+      ("algorithm", ← algJson st "importKey" p), ("extractable", .bool ext), ("usages", usagesJ us)], .key ext)
+  | "exportKey" =>
+    let (k, h) ← hostKeyOf st a "key"
+    if k.algo.alg == .hkdf || k.algo.alg == .pbkdf2 then throw .notSupported
+    if !k.extractable then throw .invalidAccess
+    let format := (a.str? "format").getD ""
+    return ([("op", .string "exportKey"), ("format", .string format), ("key", numJ h)],
+      if format == "jwk" then .jwk else .bytes)
+  | "sign" | "verify" =>
+    let (k, h) ← hostKeyOf st a "key"
+    keyFor k algName (if method == "sign" then .sign else .verify)
+    if k.type != .secret && k.type != (if method == "sign" then .privateKey else .publicKey) then throw .invalidAccess
+    return ([("op", .string method), ("algorithm", ← algJson st method p), ("key", numJ h), ("data", bytesJ data)] ++
+      (if method == "verify" then [("signature", bytesJ ((a.get? "signature").getD .empty))] else []),
+      if method == "sign" then .bytes else .bool)
+  | "encrypt" | "decrypt" =>
+    let (k, h) ← hostKeyOf st a "key"
+    keyFor k algName (if method == "encrypt" then .encrypt else .decrypt)
+    if k.type != .secret && k.type != (if method == "encrypt" then .publicKey else .privateKey) then throw .invalidAccess
+    return ([("op", .string method), ("algorithm", ← algJson st method p), ("key", numJ h), ("data", bytesJ data)], .bytes)
+  | "deriveBits" =>
+    let (k, h) ← hostKeyOf st a "baseKey"
+    keyFor k algName .deriveBits
+    if k.algo.alg == .ecdh || k.algo.alg == .x25519 then
+      if k.type != .privateKey then throw .invalidAccess
+      let pk ← keyOf st p "public"
+      if pk.type != .publicKey || pk.algo.alg != k.algo.alg then throw .invalidAccess
+    let len : JSON.Json := match a.str? "length" with | some "null" | none => .null | some x => numJ (x.toNat?.getD 0)
+    return ([("op", .string "deriveBits"), ("algorithm", ← algJson st "deriveBits" p), ("baseKey", numJ h),
+      ("length", len)], .bytes)
+  | "deriveKey" =>
+    let us ← usagesOf a
+    let (k, h) ← hostKeyOf st a "baseKey"
+    keyFor k algName .deriveKey
+    return ([("op", .string "deriveKey"), ("algorithm", ← algJson st "deriveBits" p), ("baseKey", numJ h),
+      ("derivedKeyType", ← algJson st "importKey" (sub a "t:")), ("extractable", .bool ext), ("usages", usagesJ us)], .key ext)
+  | "wrapKey" =>
+    let (wk, wh) ← hostKeyOf st a "wrappingKey"
+    if wk.algo.alg.name != algName || !wk.usages.contains .wrapKey then throw .invalidAccess
+    let (k, h) ← hostKeyOf st a "key"
+    if k.algo.alg == .hkdf || k.algo.alg == .pbkdf2 then throw .notSupported
+    if !k.extractable then throw .invalidAccess
+    let alg ← match algJson st "wrapKey" p with | .ok j => pure j | .error _ => algJson st "encrypt" p
+    return ([("op", .string "wrapKey"), ("format", .string ((a.str? "format").getD "")), ("key", numJ h),
+      ("wrappingKey", numJ wh), ("algorithm", alg)], .bytes)
+  | "unwrapKey" =>
+    let us ← usagesOf a
+    let (uk, uh) ← hostKeyOf st a "unwrappingKey"
+    if uk.algo.alg.name != algName || !uk.usages.contains .unwrapKey then throw .invalidAccess
+    let alg ← match algJson st "unwrapKey" p with | .ok j => pure j | .error _ => algJson st "decrypt" p
+    return ([("op", .string "unwrapKey"), ("format", .string ((a.str? "format").getD "")), ("wrappedKey", bytesJ data),
+      ("unwrappingKey", numJ uh), ("algorithm", alg), ("unwrappedKeyAlgorithm", ← algJson st "importKey" (sub a "t:")),
+      ("extractable", .bool ext), ("usages", usagesJ us)], .key ext)
+  | _ => throw .notSupported
+
+/-- One operation in host mode: Lean's checks, then a request (`["pending", id]`), or the
+answer at once (cloneKey, a refusal). `wake` is the page's callback for the answer. -/
+def hostSubtle (s : State) (fs : Array ByteArray) : State × Except Int ByteArray :=
+  let a := pairsOf fs
+  let method := (fs[0]?.bind String.fromUTF8?).getD ""
+  if method == "cloneKey" then subtle s fs else
+  match a.nat? "wake" with
+  | none => (s, .error (-20))
+  | some wake =>
+    match errInt (hostPlan s.keys method a) with
+    | .error e => (s, .error e)
+    | .ok (fields, kind) =>
+      let id := s.nextReq
+      ({ s with nextReq := id + 1, hostReqs := s.hostReqs.push (.object (("id", numJ id) :: fields)),
+                hostWaits := s.hostWaits.insert id { wake, kind } },
+       .ok (pack ["pending".toUTF8, (toString id).toUTF8]))
+
+def errOfName (n : String) : Err :=
+  match n with
+  | "TypeError" => .typeError | "NotSupportedError" => .notSupported | "SyntaxError" => .syntax
+  | "InvalidAccessError" => .invalidAccess | "DataError" => .data | "QuotaExceededError" => .quota
+  | _ => .operation
+
+def jstr (j : JSON.Json) (k : String) : String := match j.field? k with | some (.string x) => x | _ => ""
+def jnat (j : JSON.Json) (k : String) : Nat := match j.field? k with | some (.number n) => n.toNat?.getD 0 | _ => 0
+
+def jwkMember : String × JSON.Json → String × JwkVal
+  | (n, .bool b) => (n, .bool b)
+  | (n, .array xs) => (n, .arr (xs.filterMap fun x => match x with | .string u => some u | _ => none))
+  | (n, .string x) => (n, .str x)
+  | (n, _) => (n, .str "")
+
+/-- A key the host made, as a Lean key (attributes only) with the host's number. -/
+def hostKey (j : JSON.Json) : Option Key := do
+  let h ← match j.field? "h" with | some (.number n) => n.toNat? | _ => none
+  let type ← match jstr j "type" with
+    | "secret" => some KeyType.secret | "public" => some .publicKey | "private" => some .privateKey | _ => none
+  let alg := (j.field? "algorithm").getD .null
+  let a ← algOf? (jstr alg "name")
+  let hash := match alg.field? "hash" with | some hj => Crypto.WebHacl.HashAlg.ofName? (jstr hj "name") | none => none
+  let us := match j.field? "usages" with
+    | some (.array xs) => xs.filterMap fun x => match x with | .string u => Usage.ofName? u | _ => none
+    | _ => []
+  let pe := match alg.field? "publicExponent" with
+    | some (.string b) => (unb64? b).getD .empty | _ => .empty
+  return { type, extractable := j.field? "extractable" == some (.bool true),
+           algo := { alg := a, hash, length := jnat alg "length", curve := jstr alg "namedCurve",
+                     modulusLength := jnat alg "modulusLength", publicExponent := pe },
+           usages := us, material := .empty, host := some h }
+
+/-- The host answered request `id`: Lean makes the page's answer and names the callback to
+run (queued as a task by the caller). -/
+def hostDone (s : State) (id : Nat) (ans : JSON.Json) : State × Option Nat :=
+  match s.hostWaits[id]? with
+  | none => (s, none)
+  | some w =>
+    let s := { s with hostWaits := s.hostWaits.erase id }
+    let r : Except Int ByteArray × State :=
+      match ans.field? "error" with
+      | some (.string n) => (.error (errOfName n).code, s)
+      | some _ => (.error Err.operation.code, s)
+      | none =>
+        match w.kind with
+        | .bytes => match ans.field? "bytes" with
+          | some (.string b) => match unb64? b with
+            | some x => (.ok (pack ["bytes".toUTF8, x]), s)
+            | none => (.error Err.operation.code, s)
+          | _ => (.error Err.operation.code, s)
+        | .bool => (.ok (pack ["bool".toUTF8, (if ans.field? "bool" == some (.bool true) then "1" else "0").toUTF8]), s)
+        | .jwk => match ans.field? "jwk" with
+          | some (.object ms) => (.ok (pack (jwkFields (ms.map jwkMember))), s)
+          | _ => (.error Err.operation.code, s)
+        | .key _ =>
+          let ks := match ans.field? "pair" with
+            | some (.array xs) => xs.filterMap hostKey
+            | _ => ((ans.field? "key").bind hostKey).toList
+          -- §14.3.6 step 10 and §14.3.9 step 10: a secret or private key with no usages.
+          let empty := ks.any fun k => (k.type == .secret || k.type == .privateKey) && k.usages.isEmpty
+          if ks.isEmpty then (.error Err.operation.code, s) else
+          if empty then
+            let drops := ks.filterMap (·.host) |>.map fun h =>
+              JSON.Json.object [("id", numJ 0), ("op", .string "drop"), ("key", numJ h)]
+            (.error Err.syntax.code, { s with hostReqs := s.hostReqs ++ drops.toArray })
+          else
+            match ks.foldlM (fun (acc : KeyStore × List ByteArray) k => do
+                let (st, f) ← addKey acc.1 k
+                pure (st, acc.2 ++ f)) (s.keys, []) with
+            | .ok (st, f) => (.ok (pack (if ks.length == 2 then "pair".toUTF8 :: f else f)), { s with keys := st })
+            | .error e => (.error e.code, s)
+    let (r, s) := r
+    ({ s with hostAnswers := s.hostAnswers.insert id r }, some w.wake)
+
+end Host
 
 /-! ## The operations -/
 
@@ -554,10 +837,19 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
     | none => .error (-23)
   -- The registry: the registered name and the dictionary members to convert.
   | 40 => pure' do
-    match Crypto.WebCryptoKeys.normalizeSpec (← strArg fs 0) (← strArg fs 1) with
+    if !s.hostMode && Crypto.WebHacl.haclLinked () != 1 then .error (-2) else
+    match Crypto.WebCryptoKeys.normalizeSpec (← strArg fs 0) (← strArg fs 1) s.hostMode with
     | .ok (reg, ms) => ofStr ("\n".intercalate (reg :: ms))
     | .error e => .error e.code
-  | 41 => subtle s fs
+  | 41 => if s.hostMode then hostSubtle s fs else subtle s fs
+  -- Where crypto.subtle's primitives are: the host's ("host", the Hub) or HACL*'s.
+  | 44 => pure' (ofStr (if s.hostMode then "host" else "native"))
+  -- The answer of a request the host has answered (its callback is running).
+  | 43 => match natArg fs 0 with
+    | .ok id => match s.hostAnswers[id]? with
+      | some r => ({ s with hostAnswers := s.hostAnswers.erase id }, r)
+      | none => (s, .error (-1))
+    | .error e => (s, .error e)
   | 42 => match natArg fs 0 with
     | .ok h => let (s, n) := dropKey s h; (s, ofStr (toString n))
     | .error e => (s, .error e)
@@ -615,8 +907,19 @@ private def runStr (op flags : Nat) (xs : List String) : String :=
 #guard runStr 30 0 ["4"] == "error -6"
 -- crypto.subtle without HACL* (the interpreter cannot call it): the registry, an HMAC key
 -- imported, exported only when extractable, and the errors in order.
-#guard runStr 40 0 ["sign", "ecdsa"] == "ECDSA\nhash:h!"
-#guard runStr 40 0 ["encrypt", "AES-GCM"] == "error -23"
+private def runHost (op : Nat) (xs : List String) : String :=
+  match (run { hostMode := true } op 0 (((fields (pack (xs.map (·.toUTF8)))).getD #[]))).2 with
+  | .ok b => String.fromUTF8! b
+  | .error e => s!"error {e}"
+#guard runHost 40 ["sign", "ecdsa"] == "ECDSA\nhash:h!"
+#guard runHost 40 ["encrypt", "AES-GCM"] == "AES-GCM\nadditionalData:b\niv:b!\ntagLength:o"
+#guard runHost 40 ["sign", "AES-GCM"] == "error -23"
+-- Host mode: Lean's checks first, then a request for the browser (the Hub).
+#guard runHost 41 ["generateKey", "wake", "5", "extractable", "1", "usage", "sign", "a:name", "AES-GCM", "a:length", "128"] == "error -24"
+#guard runHost 41 ["generateKey", "wake", "5", "extractable", "1", "usage", "encrypt", "a:name", "AES-GCM", "a:length", "100"] == "error -22"
+#guard (runHost 41 ["generateKey", "wake", "5", "extractable", "1", "usage", "encrypt", "a:name", "AES-GCM", "a:length", "128"]).length > 0
+#guard (let (s, _) := run { hostMode := true } 41 0 ((fields (pack (["digest", "wake", "3", "a:name", "SHA-256", "data", "abc"].map (·.toUTF8)))).getD #[])
+        s.hostReqs.size == 1 && (((s.hostReqs[0]?).map (·.toString)).getD "").startsWith "{\"id\":1,\"op\":\"digest\"")
 private def subtleRun (s : State) (xs : List String) : State × String :=
   let (s, r) := run s 41 0 (((fields (pack (xs.map (·.toUTF8)))).getD #[]))
   (s, match r with

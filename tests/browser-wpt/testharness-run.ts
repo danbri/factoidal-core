@@ -13,7 +13,7 @@
 // get the window wrapper that wptserve gives them.
 //
 //   deno run -A tests/browser-wpt/testharness-run.ts [--engine native|wasm|bench] [--script-engine quickjs|bubblepop] [--exclude a,b] [--wpt-root DIR]
-//     [--native-engine DYLIB] [--quickjs-wasm FILE] [--dirs a,b] [--only SUBSTRING]
+//     [--native-engine DYLIB] [--quickjs-wasm FILE] [--dirs a,b] [--only SUBSTRING] [--crypto-host]
 //     [--out FILE] [--baseline FILE] [--bench EXE] [--instructions-per-ms N]
 //     [--encoding-fallback detect|locale|LABEL] [--locale TAG]
 //     [--wpt-root DIR --list FILE [--wptserve] [--jsonl FILE] [--wpt-commit SHA] [--test262-inline]]
@@ -105,6 +105,9 @@ async function startServe() {
 // file name, so run this runner with a bench built from the same tree.
 const scriptRate=Number(opt("--instructions-per-ms","1000000000000"));
 const statusNames=["PASS","FAIL","TIMEOUT","NOTRUN","PRECONDITION_FAILED"];
+// --crypto-host: crypto.subtle as on the Hub (the host's primitives, Lean's rules).
+const {cryptoHost:makeCryptoHost,settleCrypto}=await import("../../docs/web/hub/foafnaut/crypto-host.mjs");
+const cryptoHost=args.includes("--crypto-host")?makeCryptoHost(crypto.subtle):undefined;
 const harnessNames=["OK","ERROR","TIMEOUT","PRECONDITION_FAILED"];
 
 type Subtest={name:string;status:string;message?:string|null};
@@ -474,7 +477,7 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
       }
     // navigations:true: this runner loads frames' URLs (scriptSession action `frame`).
     let turn=start(html,{action:"start",url,resources,commandLimit:200000,logLimit:100000,instructionsPerMs:scriptRate,...(encoding?{encoding}:{}),
-      navigations:true,...(scriptEngine==="bubblepop"?{engine:"bubblepop"}:{})});
+      navigations:true,...(scriptEngine==="bubblepop"?{engine:"bubblepop"}:{}),...(cryptoHost?{cryptoHost:true}:{})});
     const logs=[...turn.logs],errors=[...turn.errors];
     let instructions=turn.instructions;
     // A worker's script and its importScripts: a turn lists what it waits for (fetches, each
@@ -484,16 +487,26 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
     const answered=new Set<number>();
     const take=(t:ScriptTurnWithFetches)=>{logs.push(...t.logs);errors.push(...t.errors);instructions+=t.instructions;};
     const startFetches=(turn as ScriptTurnWithFetches).fetches??[];
-    turn=engine.scriptSession("",{action:"settle",session:turn.session,budgetMs:70000});
-    take(turn);
+    // --crypto-host: the Hub's arrangement, crypto.subtle's primitives by the host's
+    // (Deno's) crypto.subtle, Lean deciding the rest (docs/web/hub/foafnaut/crypto-host.mjs).
+    const cryptoSession=turn.session;
+    const settled=async(budgetMs:number)=>{
+      for(let rounds=0;;rounds++){
+        // deno-lint-ignore no-explicit-any
+        if(cryptoHost&&turn.crypto?.length)await settleCrypto(cryptoHost,turn,(r:any)=>engine.scriptSession("",{...r,session:cryptoSession}),take);
+        turn=engine.scriptSession("",{action:"settle",session:cryptoSession,budgetMs});
+        take(turn);
+        if(!cryptoHost||!turn.crypto?.length||rounds>100000)break;
+      }
+    };
+    await settled(70000);
     let pending:Fetch[]=[...startFetches,...((turn as ScriptTurnWithFetches).fetches??[])].filter(f=>!answered.has(f.id));
     for(let round=0;pending.length&&round<1000;round++){
       for(const f of pending)answered.add(f.id);
       const results=await Promise.all(pending.map(hostFetch));
       const given=engine.scriptSession("",{action:"fetched",session:turn.session,results}) as ScriptTurnWithFetches;
       take(given);
-      turn=engine.scriptSession("",{action:"settle",session:turn.session,budgetMs:70000});
-      take(turn);
+      await settled(70000);
       pending=[...(given.fetches??[]),...((turn as ScriptTurnWithFetches).fetches??[])].filter((f,i,all)=>!answered.has(f.id)&&all.findIndex(g=>g.id===f.id)===i);
     }
     // Frames: answer each navigation with its document, then settle again, until none waits.
@@ -504,8 +517,9 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
         take(turn=engine.scriptSession("",{action:"frame",session,node:nav.nodeId,url:nav.url,source:source??"",...(frameEncoding?{encoding:frameEncoding}:{}),
           ...(source===undefined?{failed:true}:{resources:await resourcesOf(source,nav.url)})}));
       }
-      take(turn=engine.scriptSession("",{action:"settle",session,budgetMs:Math.max(1,70000-turn.clock)}));
+      await settled(Math.max(1,70000-turn.clock));
     }
+    cryptoHost?.clear();
     engine.scriptSession("",{action:"close"});
     return {...resultOf(file,logs),ms:Math.round(performance.now()-t0),instructions,clock:turn.clock,...(errors.length?{errors:errors.slice(0,5)}:{})};
   }};

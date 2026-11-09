@@ -28,6 +28,8 @@
 #include "lib_memzero0.h"
 #include "hacl_webcrypto_core.h"
 
+int l4wc_linked(void) { return Hacl_Hash_SHA2_hash_256 != 0; }
+
 int l4wc_hash(uint32_t alg, uint8_t *msg, uint32_t len, uint8_t *out) {
   switch (alg) {
     case 1: Hacl_Hash_SHA1_hash(out, msg, len); return 1;

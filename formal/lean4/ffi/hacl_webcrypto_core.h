@@ -3,6 +3,7 @@
 #ifndef L4_HACL_WEBCRYPTO_CORE_H
 #define L4_HACL_WEBCRYPTO_CORE_H
 #include <stdint.h>
+int l4wc_linked(void);
 int l4wc_hash(uint32_t alg, uint8_t *msg, uint32_t len, uint8_t *out);
 int l4wc_hmac(uint32_t alg, uint8_t *key, uint32_t klen, uint8_t *msg, uint32_t mlen, uint8_t *out);
 int l4wc_ed25519_public(uint8_t *sk, uint8_t *out);

@@ -297,6 +297,14 @@ LEAN_EXPORT uint8_t l4_web_hacl_rsapss_verify(uint8_t alg, b_lean_obj_arg n, b_l
                             L4W_PTR(sig), L4W_PTR(msg), (uint32_t)L4W_SIZE(msg)) ? 1 : 0;
 }
 
+/* ---- Linked? --------------------------------------------------------------------------
+ * 1 when the core is HACL* (hacl_webcrypto_core.c); 0 with hacl_webcrypto_nohacl.c (the
+ * Hub's engine, where the browser does the primitives). */
+LEAN_EXPORT uint8_t l4_web_hacl_linked(lean_obj_arg u) {
+  (void)u;
+  return (uint8_t)l4wc_linked();
+}
+
 /* ---- Erasure ----------------------------------------------------------------------
  * `WebHacl.wipe`: the argument is OWNED. When this is its only reference (the key store
  * dropped its copy first) its bytes are zeroed in place before it is freed; a shared

@@ -74,7 +74,7 @@ export type HTMLResource = {nodeId:number;url:string;source:string};
 list, given only when `changed`: a host lays the page out again only then. */
 /** What a page script setting means for a page (WebRenderScript.Plan). */
 export type ScriptPlan={engine:string;name:string;run:boolean;marker:string;notice:string};
-export type ScriptTurn = {session:number;clock:number;changed:boolean;commandCount:number;commands?:unknown[];
+export type ScriptTurn = {crypto?:Record<string,unknown>[];session:number;clock:number;changed:boolean;commandCount:number;commands?:unknown[];
   navigations?:{nodeId:number;url:string}[];frameLoads?:number;
   logs:string[];errors:string[];timers:number;nextTimer:number|null;frames:number;nextWake:number|null;quiet:boolean;
   instructions:number;jobs:number;tasks:number;ns:number;

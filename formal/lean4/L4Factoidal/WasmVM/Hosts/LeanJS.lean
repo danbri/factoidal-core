@@ -428,7 +428,7 @@ def start (base : Session) (dom : Arena) (url : String) (scripts : Array (Nat ×
   let s := { base with
     heap := { base.heap with maxDepth := callDepth },
     limits := lim, steps := 0, jobs := 0, tasks := 0, errors := #[], lastFrame := none }
-  let mut s := s.setHost { dom := domHost, reads, time, web := { entropy := lim.entropy, docEncoding := lim.encoding } }
+  let mut s := s.setHost { dom := domHost, reads, time, web := { entropy := lim.entropy, docEncoding := lim.encoding, hostMode := lim.cryptoHost } }
   s := (s.api? "start" #[]).1
   s := (s.api? "url" #[.str (JS.Str.ofHost url)]).1
   for (node, src) in scripts do

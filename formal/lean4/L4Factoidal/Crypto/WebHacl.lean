@@ -178,6 +178,10 @@ opaque chachaSealRaw (key nonce aad plain : @& ByteArray) (h : ChaChaSealPre key
 @[extern "l4_web_hacl_chachapoly_open"]
 opaque chachaOpenRaw (key nonce aad sealed : @& ByteArray) (h : ChaChaOpenPre key nonce aad sealed) : ByteArray
 
+/-- 1 when the engine links HACL* (natively); 0 when it does not (the Hub's engine, whose
+primitives are the browser's: `WebApi.State.hostMode`). -/
+@[extern "l4_web_hacl_linked"]
+opaque haclLinked (u : Unit) : UInt8
 @[extern "l4_web_hacl_rsa_public"]
 opaque rsaPublicRaw (n e x : @& ByteArray) (h : RsaOpPre n e x) : ByteArray
 @[extern "l4_web_hacl_rsa_private"]
