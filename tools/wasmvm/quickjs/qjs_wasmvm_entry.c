@@ -355,6 +355,28 @@ static JSValue n_detach(JSContext *c, JSValueConst this_val, int argc, JSValueCo
   if (argc > 0 && JS_IsObject(argv[0])) JS_DetachArrayBuffer(c, argv[0]);
   return JS_UNDEFINED;
 }
+/* gpuBytes(op, header, payload): gpu_command answered as bytes, an ArrayBuffer (Canvas 2D
+ * getImageData, op 202: the pixels as straight RGBA). */
+static JSValue n_gpu_bytes(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
+  I32(0, op); STR(1, h, hl);
+  size_t pl = 0; const char *ps = 0; uint8_t *pb = 0;
+  if (JS_IsString(argv[2])) ps = JS_ToCStringLen(c, &pl, argv[2]);
+  else pb = JS_GetArrayBuffer(c, &pl, argv[2]);
+  if (!ps && !pb) pl = 0;
+  if (hl + 1 + pl > (size_t) (1 << 26)) { JS_FreeCString(c, h); if (ps) JS_FreeCString(c, ps); return JS_NewInt32(c, -5); }
+  char *buf = malloc(hl + 1 + pl + 1);
+  if (!buf) { JS_FreeCString(c, h); if (ps) JS_FreeCString(c, ps); return JS_NewInt32(c, -5); }
+  memcpy(buf, h, hl); buf[hl] = '\n';
+  if (pl) memcpy(buf + hl + 1, ps ? (const void *) ps : (const void *) pb, pl);
+  JS_FreeCString(c, h); if (ps) JS_FreeCString(c, ps);
+  char *p = 0;
+  int32_t n = read_bytes(rd_gpu, op, 0, buf, (int32_t) (hl + 1 + pl), 1, &p);
+  free(buf);
+  if (n < 0) return JS_NewInt32(c, n);
+  JSValue r = JS_NewArrayBufferCopy(c, (const uint8_t *) p, (size_t) n);
+  if (n > 1024) free(p);
+  return r;
+}
 static JSValue n_set_attr(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
   I32(0, node); STR(1, nm, nl);
   size_t vl; const char *v = JS_ToCStringLen(c, &vl, argv[2]);
@@ -548,6 +570,7 @@ static const JSCFunctionListEntry native_fns[] = {
   JS_CFUNC_DEF("wasm", 6, n_wasm),
   JS_CFUNC_DEF("detach", 1, n_detach),
   JS_CFUNC_DEF("wasmGlue", 0, n_wasm_glue),
+  JS_CFUNC_DEF("gpuBytes", 3, n_gpu_bytes),
 };
 
 __attribute__((export_name("qjs_new")))

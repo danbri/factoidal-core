@@ -1456,15 +1456,461 @@
     ensureCanvas();
     return ctx;
   };
+  // ==== Canvas 2D (docs/designissues/2026-11-08-canvas-2d.md) ===== begin canvas2d section ====
+  // Page-facing objects only. Each call is recorded as numbers (an opcode and its
+  // arguments) and strings; at the end of the task, or before a call that needs an answer,
+  // the whole batch goes to Lean in one `gpu_command` import (op 200; queries op 201).
+  // Lean (L4Factoidal.PageCanvas) parses colours and fonts, keeps the drawing state, builds
+  // paths, shapes text and rasterises every draw into the canvas bitmap. Nothing here
+  // decides what is drawn: this converts arguments (WebIDL) and makes objects. Made on first
+  // use, so a page with no 2D canvas pays nothing.
+  let c2dMade = null;
+  const c2d = () => c2dMade ??= make2d();
+  function make2d() {
+    const K = Symbol('canvas2d');
+    let q = [], strs = [], strIx = new Map(), tails = [], tailLen = 0, queued = false, selected = -1;
+    let nextObj = 1, nextOffscreen = 0x20000000;
+    const objs = new Map(); // Lean's object ids, for the fillStyle and strokeStyle getters
+    const str = s => { s = String(s); let i = strIx.get(s); if (i === undefined) { i = strs.length; strs.push(s); strIx.set(s, i); } return i; };
+    const pack = (nums, ts, tl) => {
+      const k = nums.length, buf = new ArrayBuffer(8 + 8 * k + tl);
+      new Uint32Array(buf, 0, 2)[0] = k;
+      if (k) new Float64Array(buf, 8, k).set(nums);
+      if (tl) { const u8 = new Uint8Array(buf); let o = 8 + 8 * k; for (const t of ts) { u8.set(t, o); o += t.length; } }
+      return buf;
+    };
+    const flush = () => {
+      queued = false;
+      if (q.length === 0) return;
+      const buf = pack(q, tails, tailLen), header = JSON.stringify(strs);
+      q = []; strs = []; strIx = new Map(); tails = []; tailLen = 0; selected = -1;
+      const r = n.gpu(200, header, buf);
+      if (typeof r === 'number') console.warn('Canvas 2D: import error ' + r);
+      else if (r.charCodeAt(0) === 2) console.warn('Canvas 2D:', r.slice(1));
+    };
+    const later = () => { if (!queued) { queued = true; Promise.resolve().then(flush); } };
+    const on = id => { if (selected !== id) { q.push(1, id); selected = id; } later(); };
+    const tail = bytes => { const off = tailLen; tails.push(bytes); tailLen += bytes.length; return off; };
+    const ask = (nums, ss = []) => {
+      flush();
+      const r = n.gpu(201, JSON.stringify(ss), pack(nums, [], 0));
+      if (typeof r !== 'string') throw new DOMException('Canvas 2D: import error ' + r, 'InvalidStateError');
+      if (r.charCodeAt(0) === 2) throw new DOMException(r.slice(1), 'InvalidStateError');
+      return r.slice(1);
+    };
+    const nums = r => r === '' ? [] : r.split(' ').map(Number);
+    const need = (got, k, name) => { if (got < k) throw new TypeError(`Failed to execute '${name}': ${k} arguments required, but only ${got} present.`); };
+    const dbl = (x, name) => { x = +x; if (!Number.isFinite(x)) throw new TypeError(`Failed to execute '${name}': the provided double value is non-finite.`); return x; };
+    const self = o => { const s = o?.[K]; if (!s || s.kind !== 'ctx') throw new TypeError('Illegal invocation'); return s; };
+    const ruleOf = (r, name) => { if (r === undefined || r === 'nonzero') return 0; if (r === 'evenodd') return 1;
+      throw new TypeError(`Failed to execute '${name}': The provided value '${r}' is not a valid enum value of type CanvasFillRule.`); };
+
+    // ---- Objects ------------------------------------------------------------------------
+    class CanvasGradient {
+      constructor() { throw new TypeError('Illegal constructor'); }
+      addColorStop(offset, color) {
+        need(arguments.length, 2, 'addColorStop');
+        const r = ask([9, this[K].id, +offset, 0], [String(color)]);
+        if (r === 'IndexSizeError') throw new DOMException('The provided offset is outside the range [0, 1].', 'IndexSizeError');
+        if (r === 'SyntaxError') throw new DOMException(`The value provided ('${color}') could not be parsed as a color.`, 'SyntaxError');
+      }
+    }
+    class CanvasPattern {
+      constructor() { throw new TypeError('Illegal constructor'); }
+      setTransform(m = {}) { const t = matrixOf(m); q.push(92, this[K].id, ...t); later(); }
+    }
+    const made = (C, kind, id) => { const o = Object.create(C.prototype); define(o, K, { kind, id }); objs.set(id, o); return o; };
+    class DOMMatrixReadOnly {
+      constructor(init) {
+        const v = init === undefined ? [1, 0, 0, 1, 0, 0] : Array.from(init, Number);
+        if (v.length === 6) { [this.a, this.b, this.c, this.d, this.e, this.f] = v; this.is2D = true; }
+        else if (v.length === 16) { [this.a, this.b, , , this.c, this.d, , , , , , , this.e, this.f] = v; this.is2D = false; }
+        else throw new TypeError('DOMMatrix needs 6 or 16 numbers');
+      }
+      get m11() { return this.a; } get m12() { return this.b; } get m21() { return this.c; } get m22() { return this.d; }
+      get m41() { return this.e; } get m42() { return this.f; }
+      get m13() { return 0; } get m14() { return 0; } get m23() { return 0; } get m24() { return 0; } get m31() { return 0; }
+      get m32() { return 0; } get m33() { return 1; } get m34() { return 0; } get m43() { return 0; } get m44() { return 1; }
+      get isIdentity() { return this.a === 1 && this.b === 0 && this.c === 0 && this.d === 1 && this.e === 0 && this.f === 0; }
+    }
+    class DOMMatrix extends DOMMatrixReadOnly {}
+    class DOMPointReadOnly {
+      constructor(x = 0, y = 0, z = 0, w = 1) { this.x = +x; this.y = +y; this.z = +z; this.w = +w; }
+      static fromPoint(p = {}) { return new this(p.x ?? 0, p.y ?? 0, p.z ?? 0, p.w ?? 1); }
+      toJSON() { return { x: this.x, y: this.y, z: this.z, w: this.w }; }
+    }
+    class DOMPoint extends DOMPointReadOnly {}
+    const matrixOf = m => {
+      if (m === null || typeof m !== 'object') throw new TypeError('The matrix is not an object');
+      const g = (x, y, d) => m[x] !== undefined ? +m[x] : m[y] !== undefined ? +m[y] : d;
+      return [g('a', 'm11', 1), g('b', 'm12', 0), g('c', 'm21', 0), g('d', 'm22', 1), g('e', 'm41', 0), g('f', 'm42', 0)];
+    };
+    class ImageData {
+      constructor(a, b, c, settings) {
+        need(arguments.length, 2, 'ImageData');
+        let data, w, h;
+        if (a instanceof Uint8ClampedArray) {
+          data = a; w = b >>> 0; const len = data.length;
+          if (len === 0 || len % 4 !== 0) throw new DOMException('The input data has zero elements, or a length that is not a multiple of 4.', 'InvalidStateError');
+          if (w === 0) throw new DOMException('The source width is zero or not a number.', 'IndexSizeError');
+          if ((len / 4) % w !== 0) throw new DOMException('The input data length is not a multiple of (4 * width).', 'IndexSizeError');
+          h = len / 4 / w;
+          if (c !== undefined && (c >>> 0) !== h) throw new DOMException('The input data length is not equal to (4 * width * height).', 'IndexSizeError');
+        } else {
+          w = +a; h = +b;
+          if (!Number.isFinite(w) || !Number.isFinite(h)) throw new TypeError('ImageData sizes must be finite');
+          w = Math.trunc(w) >>> 0; h = Math.trunc(h) >>> 0;
+          if (w === 0 || h === 0) throw new DOMException('The source width or height is zero.', 'IndexSizeError');
+          if (w * h > 268435456) throw new RangeError('Out of memory at ImageData creation');
+          data = new Uint8ClampedArray(w * h * 4);
+        }
+        define(this, K, { kind: 'data' });
+        Object.defineProperty(this, 'data', { value: data, enumerable: true });
+        Object.defineProperty(this, 'width', { value: w, enumerable: true });
+        Object.defineProperty(this, 'height', { value: h, enumerable: true });
+        Object.defineProperty(this, 'colorSpace', { value: 'srgb', enumerable: true });
+        Object.defineProperty(this, 'pixelFormat', { value: 'rgba-unorm8', enumerable: true });
+      }
+    }
+    class ImageBitmap {
+      constructor() { throw new TypeError('Illegal constructor'); }
+      get width() { return this[K].closed ? 0 : this[K].w; }
+      get height() { return this[K].closed ? 0 : this[K].h; }
+      close() { if (!this[K].closed) { this[K].closed = true; q.push(94, 4, this[K].id); later(); } }
+    }
+    class TextMetrics { constructor() { throw new TypeError('Illegal constructor'); } }
+    const metricNames = ['width', 'actualBoundingBoxLeft', 'actualBoundingBoxRight', 'fontBoundingBoxAscent',
+      'fontBoundingBoxDescent', 'actualBoundingBoxAscent', 'actualBoundingBoxDescent', 'emHeightAscent',
+      'emHeightDescent', 'hangingBaseline', 'alphabeticBaseline', 'ideographicBaseline'];
+
+    // An image source as Lean names it: [kind, number or string]. 1 a canvas, 2 an
+    // ImageBitmap, 3 an image of the page by URL.
+    const sourceOf = (img, name) => {
+      if (img instanceof named.HTMLCanvasElement) { const id = nodeId(img); ensure(img, id); return [1, id]; }
+      if (img instanceof OffscreenCanvas) { const s = img[K]; if (!s.ctx) blankOffscreen(img); return [1, s.id]; }
+      if (img instanceof ImageBitmap) {
+        if (img[K].closed) throw new DOMException('The image source is detached.', 'InvalidStateError');
+        return [2, img[K].id];
+      }
+      if (img instanceof named.HTMLImageElement) return [3, img.src];
+      throw new TypeError(`Failed to execute '${name}': The provided value is not of a supported image source type.`);
+    };
+    // A canvas element read as an image before it has a 2D context: a blank bitmap of its size in Lean.
+    const ensure = (canvas, id) => {
+      const held = gpuContexts.get(id);
+      if (!held) { q.push(2, id, canvasSize(canvas, 'width', 300), canvasSize(canvas, 'height', 150), 0); selected = id; later(); gpuContexts.set(id, { kind: 'blank' }); }
+    };
+    const blankOffscreen = oc => { const s = oc[K]; q.push(2, s.id, s.w, s.h, 0); selected = s.id; later(); };
+
+    // ---- The context --------------------------------------------------------------------
+    class CanvasRenderingContext2D { constructor() { throw new TypeError('Illegal constructor'); } }
+    const P = CanvasRenderingContext2D.prototype;
+    const attrs = { globalAlpha: [20, 'n'], globalCompositeOperation: [21, 's'], lineWidth: [26, 'n'], lineCap: [27, 's'],
+      lineJoin: [28, 's'], miterLimit: [29, 'n'], lineDashOffset: [31, 'n'], shadowColor: [32, 's'], shadowBlur: [33, 'n'],
+      shadowOffsetX: [34, 'n'], shadowOffsetY: [35, 'n'], font: [36, 's'], textAlign: [37, 's'], textBaseline: [38, 's'],
+      direction: [39, 's'], imageSmoothingEnabled: [40, 'b'], imageSmoothingQuality: [41, 's'], filter: [42, 's'],
+      letterSpacing: [43, 's'], wordSpacing: [44, 's'], fontKerning: [45, 's'], fontStretch: [46, 's'],
+      fontVariantCaps: [47, 's'], textRendering: [48, 's'], lang: [49, 's'] };
+    for (const [name, [op, t]] of Object.entries(attrs)) {
+      Object.defineProperty(P, name, { configurable: true, enumerable: true,
+        get() { const s = self(this); const r = ask([1, s.id, 0], [name]); return t === 'n' ? Number(r) : t === 'b' ? r === '1' : r; },
+        set(v) {
+          const s = this?.[K];
+          if (s === undefined || s.kind !== 'ctx') throw new TypeError('Illegal invocation');
+          if (selected !== s.id) { q.push(1, s.id); selected = s.id; }
+          if (!queued) { queued = true; Promise.resolve().then(flush); }
+          q.push(op, t === 'n' ? +v : t === 'b' ? (v ? 1 : 0) : str(v));
+        } });
+    }
+    for (const [name, ops] of [['fillStyle', [22, 24]], ['strokeStyle', [23, 25]]]) {
+      Object.defineProperty(P, name, { configurable: true, enumerable: true,
+        get() { const s = self(this); const r = ask([1, s.id, 0], [name]);
+          return r.charCodeAt(0) === 1 ? objs.get(Number(r.slice(2))) ?? null : r; },
+        set(v) {
+          const s = this?.[K];
+          if (s === undefined || s.kind !== 'ctx') throw new TypeError('Illegal invocation');
+          if (selected !== s.id) { q.push(1, s.id); selected = s.id; }
+          if (!queued) { queued = true; Promise.resolve().then(flush); }
+          if (typeof v === 'string') q.push(ops[0], str(v));
+          else if (v instanceof CanvasGradient) q.push(ops[1], 1, v[K].id);
+          else if (v instanceof CanvasPattern) q.push(ops[1], 2, v[K].id);
+          else q.push(ops[0], str(v));
+        } });
+    }
+    // The calls a frame makes most are written out (no helper calls): BubblePopJS pays for each call.
+    const simple = { save: [3, 0], restore: [4, 0], reset: [5, 0], resetTransform: [15, 0], beginPath: [51, 0],
+      scale: [13, 2], rotate: [14, 1], translate: [12, 2], transform: [11, 6] };
+    for (const [name, [op, k]] of Object.entries(simple))
+      define(P, name, function (a, b, c, d, e, f) {
+        const s = self(this); need(arguments.length, k, name); on(s.id);
+        if (k === 0) q.push(op); else if (k === 1) q.push(op, +a); else if (k === 2) q.push(op, +a, +b);
+        else q.push(op, +a, +b, +c, +d, +e, +f);
+      });
+    const rectOp = (op, name) => function (x, y, w, h) {
+      const s = this?.[K];
+      if (s === undefined || s.kind !== 'ctx') throw new TypeError('Illegal invocation');
+      if (arguments.length < 4) need(arguments.length, 4, name);
+      if (selected !== s.id) { q.push(1, s.id); selected = s.id; }
+      if (!queued) { queued = true; Promise.resolve().then(flush); }
+      q.push(op, +x, +y, +w, +h);
+    };
+    define(P, 'fillRect', rectOp(73, 'fillRect'));
+    define(P, 'strokeRect', rectOp(74, 'strokeRect'));
+    define(P, 'clearRect', rectOp(75, 'clearRect'));
+    // CanvasPath: the context's path (target 0) or a Path2D's (target its id).
+    const pathOps = { moveTo: [52, 2], lineTo: [53, 2], quadraticCurveTo: [54, 4], bezierCurveTo: [55, 6], rect: [59, 4], closePath: [61, 0] };
+    const pathMethods = (proto, start, end) => {
+      for (const [name, [op, k]] of Object.entries(pathOps))
+        define(proto, name, function (...a) {
+          need(a.length, k, name); start(this); q.push(op); for (let i = 0; i < k; i++) q.push(+a[i]); end(this);
+        });
+      define(proto, 'arc', function (x, y, r, a0, a1, ccw = false) {
+        need(arguments.length, 5, 'arc');
+        if (+r < 0) throw new DOMException(`The radius provided (${r}) is negative.`, 'IndexSizeError');
+        start(this); q.push(56, +x, +y, +r, +a0, +a1, ccw ? 1 : 0); end(this);
+      });
+      define(proto, 'arcTo', function (x1, y1, x2, y2, r) {
+        need(arguments.length, 5, 'arcTo');
+        if (+r < 0) throw new DOMException(`The radius provided (${r}) is negative.`, 'IndexSizeError');
+        start(this); q.push(57, +x1, +y1, +x2, +y2, +r); end(this);
+      });
+      define(proto, 'ellipse', function (x, y, rx, ry, rot, a0, a1, ccw = false) {
+        need(arguments.length, 7, 'ellipse');
+        if (+rx < 0 || +ry < 0) throw new DOMException('The major-axis or minor-axis radius provided is negative.', 'IndexSizeError');
+        start(this); q.push(58, +x, +y, +rx, +ry, +rot, +a0, +a1, ccw ? 1 : 0); end(this);
+      });
+      // roundRect radii (WebIDL conversion and the list of 1 to 4 radii, HTML §4.12.5.1.9).
+      define(proto, 'roundRect', function (x, y, w, h, radii = 0) {
+        need(arguments.length, 4, 'roundRect');
+        const list = (typeof radii === 'object' && radii !== null && typeof radii[Symbol.iterator] === 'function') ? [...radii] : [radii];
+        if (list.length < 1 || list.length > 4) throw new RangeError(`${list.length} radii provided. Between one and four radii are necessary.`);
+        const pts = list.map(r => (typeof r === 'object' && r !== null) ? [+(r.x ?? 0), +(r.y ?? 0)] : [+r, +r]);
+        if (![x, y, w, h].every(v => Number.isFinite(+v)) || pts.some(p => !Number.isFinite(p[0]) || !Number.isFinite(p[1]))) return;
+        if (pts.some(p => p[0] < 0 || p[1] < 0)) throw new RangeError('A radius provided is negative.');
+        const [tl, tr, br, bl] = pts.length === 1 ? [pts[0], pts[0], pts[0], pts[0]] : pts.length === 2 ? [pts[0], pts[1], pts[0], pts[1]]
+          : pts.length === 3 ? [pts[0], pts[1], pts[2], pts[1]] : pts;
+        start(this); q.push(60, +x, +y, +w, +h, 4, ...tl, ...tr, ...br, ...bl); end(this);
+      });
+    };
+    pathMethods(P, c => on(self(c).id), () => {});
+    // moveTo and lineTo, written out for the same reason.
+    for (const [name, op] of [['moveTo', 52], ['lineTo', 53]])
+      define(P, name, function (x, y) {
+        const s = this?.[K];
+        if (s === undefined || s.kind !== 'ctx') throw new TypeError('Illegal invocation');
+        if (arguments.length < 2) need(arguments.length, 2, name);
+        if (selected !== s.id) { q.push(1, s.id); selected = s.id; }
+        if (!queued) { queued = true; Promise.resolve().then(flush); }
+        q.push(op, +x, +y);
+      });
+    const pathId = (p, name) => { if (!(p instanceof Path2D)) throw new TypeError(`Failed to execute '${name}': parameter 1 is not of type 'Path2D'.`); return p[K].id; };
+    const drawPath = (op, hasRule) => function (a, b) {
+      const s = self(this); let path = 0, rule = a;
+      if (a instanceof Path2D) { path = a[K].id; rule = b; } else if (typeof a === 'object' && a !== null) pathId(a, 'fill');
+      const r = hasRule ? ruleOf(rule, 'fill') : 0;
+      on(s.id); if (hasRule) q.push(op, path, r); else q.push(op, path);
+    };
+    define(P, 'fill', drawPath(70, true));
+    define(P, 'stroke', drawPath(71, false));
+    define(P, 'clip', drawPath(72, true));
+    define(P, 'isPointInPath', function (...a) {
+      const s = self(this); let path = 0;
+      if (a[0] instanceof Path2D) { path = a[0][K].id; a = a.slice(1); }
+      need(a.length, 2, 'isPointInPath');
+      return ask([4, s.id, path, +a[0], +a[1], ruleOf(a[2], 'isPointInPath')]) === '1';
+    });
+    define(P, 'isPointInStroke', function (...a) {
+      const s = self(this); let path = 0;
+      if (a[0] instanceof Path2D) { path = a[0][K].id; a = a.slice(1); }
+      need(a.length, 2, 'isPointInStroke');
+      return ask([5, s.id, path, +a[0], +a[1]]) === '1';
+    });
+    define(P, 'setTransform', function (...a) {
+      const s = self(this);
+      const m = a.length === 0 ? [1, 0, 0, 1, 0, 0] : a.length === 1 ? matrixOf(a[0]) : (need(a.length, 6, 'setTransform'), a.slice(0, 6).map(Number));
+      on(s.id); q.push(10, ...m);
+    });
+    define(P, 'getTransform', function () { const s = self(this); return new DOMMatrix(nums(ask([6, s.id]))); });
+    define(P, 'setLineDash', function (segments) {
+      const s = self(this); need(arguments.length, 1, 'setLineDash');
+      const v = Array.from(segments, Number); on(s.id); q.push(30, v.length, ...v);
+    });
+    define(P, 'getLineDash', function () { return nums(ask([8, self(this).id])); });
+    const text = op => function (t, x, y, maxWidth) {
+      const s = self(this); need(arguments.length, 3, op === 76 ? 'fillText' : 'strokeText'); on(s.id);
+      q.push(op, str(t), +x, +y, maxWidth === undefined ? NaN : +maxWidth);
+    };
+    define(P, 'fillText', text(76));
+    define(P, 'strokeText', text(77));
+    define(P, 'measureText', function (t) {
+      const s = self(this); need(arguments.length, 1, 'measureText');
+      const v = nums(ask([3, s.id, 0], [String(t)]));
+      const m = Object.create(TextMetrics.prototype);
+      metricNames.forEach((k, i) => Object.defineProperty(m, k, { value: v[i] ?? 0, enumerable: true }));
+      return m;
+    });
+    define(P, 'drawImage', function (img, ...a) {
+      const s = self(this);
+      if (a.length !== 2 && a.length !== 4 && a.length !== 8) throw new TypeError(`Failed to execute 'drawImage': Valid arities are: [3, 5, 9], but ${a.length + 1} arguments provided.`);
+      const [kind, src] = sourceOf(img, 'drawImage');
+      if (kind === 3 && src === '') return;
+      const v = a.map(Number);
+      const r = a.length === 2 ? [NaN, NaN, NaN, NaN, v[0], v[1], NaN, NaN] : a.length === 4 ? [NaN, NaN, NaN, NaN, ...v] : v;
+      on(s.id); q.push(80, kind, kind === 3 ? str(src) : src, ...r);
+    });
+    define(P, 'createImageData', function (a, b) {
+      self(this); need(arguments.length, 1, 'createImageData');
+      if (a instanceof ImageData) return new ImageData(a.width, a.height);
+      need(arguments.length, 2, 'createImageData');
+      let w = Math.trunc(+a), h = Math.trunc(+b);
+      if (!Number.isFinite(+a) || !Number.isFinite(+b)) throw new TypeError('createImageData sizes must be finite');
+      if (w === 0 || h === 0) throw new DOMException('The source width or height is 0.', 'IndexSizeError');
+      return new ImageData(Math.abs(w), Math.abs(h));
+    });
+    define(P, 'getImageData', function (sx, sy, sw, sh) {
+      const s = self(this); need(arguments.length, 4, 'getImageData');
+      if (![sx, sy, sw, sh].every(v => Number.isFinite(+v))) throw new TypeError("Failed to execute 'getImageData': The provided value is non-finite.");
+      sx = Math.trunc(+sx); sy = Math.trunc(+sy); sw = Math.trunc(+sw); sh = Math.trunc(+sh);
+      if (sw === 0 || sh === 0) throw new DOMException(`The source ${sw === 0 ? 'width' : 'height'} is 0.`, 'IndexSizeError');
+      if (sw < 0) { sx += sw; sw = -sw; }
+      if (sh < 0) { sy += sh; sh = -sh; }
+      const img = new ImageData(sw, sh);
+      flush();
+      // One word a pixel (op 202), copied into the data at once.
+      const words = n.gpuList(202, '[]', pack([2, s.id, sx, sy, sw, sh], [], 0));
+      if (!Array.isArray(words)) throw new DOMException('Canvas 2D: getImageData failed', 'InvalidStateError');
+      new Uint32Array(img.data.buffer).set(words);
+      return img;
+    });
+    define(P, 'putImageData', function (img, dx, dy, x, y, w, h) {
+      const s = self(this);
+      if (arguments.length !== 3 && arguments.length !== 7) need(arguments.length, arguments.length < 3 ? 3 : 7, 'putImageData');
+      if (!(img instanceof ImageData)) throw new TypeError("Failed to execute 'putImageData': parameter 1 is not of type 'ImageData'.");
+      const all = arguments.length === 3, v = all ? [dx, dy, 0, 0, img.width, img.height] : [dx, dy, x, y, w, h];
+      if (!v.every(t => Number.isFinite(+t))) return;
+      const bytes = new Uint8Array(img.data.length); bytes.set(img.data);
+      on(s.id); q.push(81, tail(bytes), img.width, img.height, ...v.map(t => Math.trunc(+t)));
+    });
+    const gradient = (kind, args, name, k) => {
+      need(args.length, k, name);
+      const v = Array.from(args).slice(0, k).map(x => dbl(x, name));
+      if (kind === 2 && (v[2] < 0 || v[5] < 0)) throw new DOMException(`The ${v[2] < 0 ? 'r0' : 'r1'} provided is less than 0.`, 'IndexSizeError');
+      const id = nextObj++; q.push(90, id, kind, ...v, ...Array(6 - k).fill(0)); later();
+      return made(CanvasGradient, 'gradient', id);
+    };
+    define(P, 'createLinearGradient', function () { self(this); return gradient(1, arguments, 'createLinearGradient', 4); });
+    define(P, 'createRadialGradient', function () { self(this); return gradient(2, arguments, 'createRadialGradient', 6); });
+    define(P, 'createConicGradient', function () { self(this); return gradient(3, arguments, 'createConicGradient', 3); });
+    define(P, 'createPattern', function (img, repetition) {
+      self(this); need(arguments.length, 2, 'createPattern');
+      const [kind, src] = sourceOf(img, 'createPattern');
+      const id = nextObj++, rep = repetition === null ? '' : String(repetition);
+      const r = ask([10, id, kind, kind === 3 ? 0 : src, kind === 3 ? 1 : 0], kind === 3 ? [src, rep] : [rep]);
+      if (r === 'SyntaxError') throw new DOMException(`The provided type ('${rep}') is not one of 'repeat', 'no-repeat', 'repeat-x', or 'repeat-y'.`, 'SyntaxError');
+      if (r === 'InvalidStateError') throw new DOMException('The image argument is a canvas element with a width or height of 0.', 'InvalidStateError');
+      return r === 'null' ? null : made(CanvasPattern, 'pattern', id);
+    });
+    Object.defineProperty(P, 'canvas', { get() { return self(this).canvas; }, configurable: true, enumerable: true });
+    define(P, 'getContextAttributes', function () { self(this); return { alpha: true, colorSpace: 'srgb', desynchronized: false, willReadFrequently: false }; });
+    define(P, 'isContextLost', function () { self(this); return false; });
+    define(P, 'drawFocusIfNeeded', function () { self(this); });
+
+    class Path2D {
+      constructor(path) {
+        const id = nextObj++;
+        define(this, K, { kind: 'path', id });
+        if (path instanceof Path2D) q.push(62, id, path[K].id);
+        else if (path !== undefined) q.push(63, id, str(path));
+        else q.push(62, id, 0);
+        later();
+      }
+      addPath(path, transform = {}) {
+        need(arguments.length, 1, 'addPath'); const src = pathId(path, 'addPath');
+        q.push(64, this[K].id, src, ...matrixOf(transform)); later();
+      }
+    }
+    pathMethods(Path2D.prototype, p => q.push(50, p[K].id), () => { q.push(50, 0); later(); });
+
+    class OffscreenCanvasRenderingContext2D { constructor() { throw new TypeError('Illegal constructor'); } }
+    for (const k of Reflect.ownKeys(P)) if (k !== 'constructor') Object.defineProperty(OffscreenCanvasRenderingContext2D.prototype, k, Object.getOwnPropertyDescriptor(P, k));
+    const contextFor = (C, canvas, id, w, h, element) => {
+      const ctx = Object.create(C.prototype);
+      define(ctx, K, { kind: 'ctx', id, canvas });
+      q.push(2, id, w, h, element ? 1 : 0); selected = id; later();
+      return ctx;
+    };
+    class OffscreenCanvas extends EventTarget {
+      constructor(w, h) {
+        super(); need(arguments.length, 2, 'OffscreenCanvas');
+        define(this, K, { id: nextOffscreen++, w: Math.trunc(+w) >>> 0, h: Math.trunc(+h) >>> 0, ctx: null, kind: null });
+      }
+      get width() { return this[K].w; }
+      set width(v) { const s = this[K]; s.w = Math.trunc(+v) >>> 0; if (s.ctx) { q.push(2, s.id, s.w, s.h, 0); selected = s.id; later(); } }
+      get height() { return this[K].h; }
+      set height(v) { const s = this[K]; s.h = Math.trunc(+v) >>> 0; if (s.ctx) { q.push(2, s.id, s.w, s.h, 0); selected = s.id; later(); } }
+      getContext(kind) {
+        need(arguments.length, 1, 'getContext');
+        const s = this[K]; kind = String(kind);
+        if (!['2d', 'webgl', 'webgl2', 'webgpu', 'bitmaprenderer'].includes(kind)) throw new TypeError(`The provided value '${kind}' is not a valid enum value of type OffscreenRenderingContextType.`);
+        if (s.kind) return s.kind === kind ? s.ctx : null;
+        if (kind !== '2d') return null;
+        s.kind = kind; s.ctx = contextFor(OffscreenCanvasRenderingContext2D, this, s.id, s.w, s.h, false);
+        return s.ctx;
+      }
+      transferToImageBitmap() {
+        const s = this[K];
+        if (!s.ctx) blankOffscreen(this);
+        const b = bitmapOf(1, s.id, NaN, NaN, NaN, NaN, s.w, s.h);
+        q.push(2, s.id, s.w, s.h, 0); selected = s.id; later();
+        return b;
+      }
+    }
+    const bitmapOf = (kind, src, sx, sy, sw, sh, w, h) => {
+      const id = nextObj++;
+      q.push(93, id, kind, src, sx, sy, sw, sh, w, h); later();
+      const b = Object.create(ImageBitmap.prototype); define(b, K, { id, w, h, closed: false });
+      return b;
+    };
+    const createImageBitmap = (img, ...a) => new Promise((resolve, reject) => {
+      try {
+        let sx = NaN, sy = NaN, sw = NaN, sh = NaN;
+        if (a.length >= 4) {
+          [sx, sy, sw, sh] = a.slice(0, 4).map(Number);
+          if (sw === 0 || sh === 0) throw new RangeError('The crop rect width or height is 0.');
+          if (sw < 0) { sx += sw; sw = -sw; }
+          if (sh < 0) { sy += sh; sh = -sh; }
+        }
+        if (img instanceof ImageData) {
+          const bytes = new Uint8Array(img.data.length); bytes.set(img.data);
+          resolve(bitmapOf(4, tail(bytes), 0, 0, img.width, img.height, img.width, img.height));
+          return;
+        }
+        const [kind, src] = sourceOf(img, 'createImageBitmap');
+        const size = nums(ask([11, kind, kind === 3 ? 0 : src], kind === 3 ? [src] : []));
+        if (size.length < 2) throw new DOMException('The source image could not be decoded.', 'InvalidStateError');
+        resolve(bitmapOf(kind, kind === 3 ? str(src) : src, sx, sy, sw, sh, Number.isNaN(sw) ? size[0] : sw, Number.isNaN(sh) ? size[1] : sh));
+      } catch (e) { reject(e); }
+    });
+    return { CanvasRenderingContext2D, OffscreenCanvasRenderingContext2D, OffscreenCanvas, Path2D, ImageData,
+      ImageBitmap, CanvasGradient, CanvasPattern, TextMetrics, DOMMatrix, DOMMatrixReadOnly, DOMPoint, DOMPointReadOnly, createImageBitmap,
+      context: canvas => contextFor(CanvasRenderingContext2D, canvas, nodeId(canvas), canvasSize(canvas, 'width', 300), canvasSize(canvas, 'height', 150), true),
+      resized: canvas => { const id = nodeId(canvas); q.push(2, id, canvasSize(canvas, 'width', 300), canvasSize(canvas, 'height', 150), 1); selected = id; later(); },
+      dataURL: (canvas, type) => { const id = nodeId(canvas); ensure(canvas, id); return ask([7, id, 0], [type === undefined ? 'image/png' : String(type)]); } };
+  }
+  // ==== end canvas2d section ====
+  // A 2D canvas whose width or height is set starts again (HTML §4.12.5: the bitmap and the context's state are reset).
+  const sized = (el, name, v) => { el.setAttribute(name, String(v >>> 0)); if (gpuContexts.get(nodeId(el))?.kind === '2d') c2d().resized(el); };
   Object.defineProperties(named.HTMLCanvasElement.prototype, {
-    width: { get() { return canvasSize(this, 'width', 300); }, set(v) { this.setAttribute('width', String(v >>> 0)); }, configurable: true },
-    height: { get() { return canvasSize(this, 'height', 150); }, set(v) { this.setAttribute('height', String(v >>> 0)); }, configurable: true },
+    width: { get() { return canvasSize(this, 'width', 300); }, set(v) { sized(this, 'width', v); }, configurable: true },
+    height: { get() { return canvasSize(this, 'height', 150); }, set(v) { sized(this, 'height', v); }, configurable: true },
+    toDataURL: { value(type) { return c2d().dataURL(this, type); }, writable: true, configurable: true },
     getContext: { value(kind) {
       // One context kind per canvas, as in HTML.
       const id = nodeId(this), held = gpuContexts.get(id);
-      if (held) return held.kind === kind ? held.context : null;
+      if (held && held.kind !== 'blank') return held.kind === kind ? held.context : null;
       let context = null;
-      if (kind === 'webgpu') context = new GPUCanvasContext(this);
+      if (kind === '2d') context = c2d().context(this);
+      else if (kind === 'webgpu') context = new GPUCanvasContext(this);
       else if (kind === 'webgl2') context = glContextFor(this, 2);
       else if (kind === 'webgl' || kind === 'experimental-webgl') context = glContextFor(this, 1);
       if (context) gpuContexts.set(id, { kind, context });
@@ -1950,6 +2396,12 @@
   def('GPUBufferUsage', GPUBufferUsage); def('GPUTextureUsage', GPUTextureUsage); def('GPUShaderStage', GPUShaderStage);
   def('GPUColorWrite', GPUColorWrite); def('GPUValidationError', GPUValidationError); def('GPUOutOfMemoryError', GPUOutOfMemoryError);
   def('GPUCanvasContext', GPUCanvasContext); def('GPUDevice', GPUDevice);
+  // Canvas 2D globals, made on first use (the canvas2d section above).
+  for (const name of ['CanvasRenderingContext2D', 'OffscreenCanvasRenderingContext2D', 'OffscreenCanvas', 'Path2D', 'ImageData',
+    'ImageBitmap', 'CanvasGradient', 'CanvasPattern', 'TextMetrics', 'DOMMatrix', 'DOMMatrixReadOnly', 'DOMPoint', 'DOMPointReadOnly',
+    'createImageBitmap'])
+    if (!(name in globalThis)) Object.defineProperty(globalThis, name, { get: () => c2d()[name], configurable: true,
+      set(v) { Object.defineProperty(globalThis, name, { value: v, writable: true, configurable: true }); } });
   def('WebGLRenderingContext', Object.freeze({ ...GL })); def('WebGL2RenderingContext', Object.freeze({ ...GL }));
   def('WebGLBuffer', WebGLBuffer); def('WebGLShader', WebGLShader); def('WebGLProgram', WebGLProgram);
   def('WebGLUniformLocation', WebGLUniformLocation);

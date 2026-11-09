@@ -630,6 +630,8 @@ function gpuTake(p,commands){
   if(p!==gpuPage){gpuPage=p;gpuLog=[];gpuPending=[];}
   for(const c of commands){
     if(c.k==='write'){const i=gpuLog.findIndex(x=>x.k==='write'&&x.g[1]===c.g[1]&&x.offset===c.offset&&x.data.length===c.data.length);if(i>=0)gpuLog.splice(i,1);}
+    // A 2D canvas's pixels are the whole canvas: only the last of each canvas is needed.
+    if(c.k==='pixels'){const i=gpuLog.findIndex(x=>x.k==='pixels'&&x.g[1]===c.g[1]);if(i>=0)gpuLog.splice(i,1);}
     if(c.k!=='pass')gpuLog.push(c);
   }
   gpuPending.push(...commands);
