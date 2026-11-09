@@ -101,6 +101,15 @@ inductive Request where
   | clearTimer (id : Nat)
   deriving BEq, Repr, Inhabited
 
+/-- What recording a command reads of the arena before the change (`change`, `commit`): the
+key of the write (`Command.writeKey`), the earlier command it takes the place of, and the
+live ranges after it. -/
+structure Pre where
+  key : Option (Nat × String) := none
+  prior : Option Nat := none
+  live : L4Factoidal.DOM.Live.Live := {}
+  deriving Inhabited
+
 /-- The host's state: the arena and what the page asked for. -/
 structure State where
   dom : Dom
@@ -147,6 +156,8 @@ structure State where
   `live.ranges`) and its direction (0 directionless, 1 forwards, 2 backwards). -/
   selection : Option Nat := none
   selDirection : Nat := 0
+  /-- What `commit` reads of the arena before a change (`change` sets it). -/
+  pre : Option Pre := none
   deriving Inhabited
 
 /-- Bounds, as in `WebRenderScript`. -/
@@ -381,6 +392,50 @@ def addCommandAnswer (s : State) (c : Command) (d : Dom) (r : Int) : State × Ho
   | (s', .values #[.i32 0]) => (s', ret r)
   | other => other
 
+/-- The command that `c` takes the place of (`addCommand`). -/
+def priorOf (s : State) (c : Command) (key : Option (Nat × String)) : Option Nat :=
+  (key.bind s.writes.get?).filter fun i =>
+    match s.commands[i]? with
+    | some p => p.sameWrite c
+    | none => false
+
+/-- Record command `c` of the change that made `d`, with what `change` read before it
+(`s.pre`), answering `r`: as `addCommand`. -/
+def commit (s : State) (c : Command) (d : Dom) (r : Int) : State × HostResult :=
+  let p := s.pre.getD {}
+  match p.prior with
+  | some i => ({ s with pre := none, live := p.live, dom := d, commands := s.commands.set! i c, changes := s.changes + 1 }, ret r)
+  | none =>
+    let writes := if c.reads then {} else match p.key with
+      | some k => s.writes.insert k s.commands.size
+      | none => s.writes
+    ({ s with pre := none, live := p.live, dom := d, commands := s.commands.push c, changes := s.changes + 1, writes }, ret r)
+
+/-- Run the change `f` of a command like `c0` on the arena, in place: what recording reads
+of the arena before the change is read first (into `s.pre`), and the budgets are checked;
+then the arena leaves the state, so that `f` holds the only reference and `Array` changes
+it in place (no copy of the arena per change). `f` answers the command made and the
+answer, `none` for no change, or a DOM error with the arena as it was. -/
+def change (s : State) (c0 : Command) (f : Dom → Dom × Except DomError (Option (Command × Int))) : State × HostResult :=
+  let key := c0.writeKey s.dom
+  let prior := priorOf s c0 key
+  if s.dom.size > maxNodes || (prior.isNone && s.commands.size ≥ s.commandLimit) then (s, ret (-5)) else
+  let s := { s with pre := some { key, prior, live := if s.live.idle then s.live else c0.live s.dom s.live } }
+  let dom := s.dom
+  let s := { s with dom := {} }
+  match f dom with
+  | (d, .error e) => ({ s with dom := d, pre := none }, ret (domErr e))
+  | (d, .ok none) => ({ s with dom := d, pre := none }, ret 0)
+  | (d, .ok (some (c, r))) => commit s c d r
+
+/-- A change that always succeeds. -/
+def changed (c : Command) (d : Dom) (r : Int := 0) : Dom × Except DomError (Option (Command × Int)) := (d, .ok (some (c, r)))
+
+/-- A change by an arena operation that can throw. -/
+def changedRes (c : Command) : Res Unit → Dom × Except DomError (Option (Command × Int))
+  | (d, .ok ()) => (d, .ok (some (c, 0)))
+  | (d, .error e) => (d, .error e)
+
 /-! ## The imports that do not write VM memory: `State → State × HostResult` -/
 
 def getElementById (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : State × HostResult :=
@@ -407,7 +462,7 @@ def textContentSet (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M)
     if t == .document || t == .doctype then (s, ret 0)
     -- The same data again changes nothing: no command, no layout.
     else if charData s.dom n && (s.dom.get n).data == v then (s, ret 0)
-    else addCommand s (.setTextContent n v) (s.dom.setTextContent n v)
+    else change s (.setTextContent n v) fun d => changed (.setTextContent n v) (d.setTextContent n v)
 
 def setAttribute (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : State × HostResult :=
   let n := arg args 0
@@ -417,20 +472,21 @@ def setAttribute (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) :
   | _, .error e => (s, codeOrTrap e)
   | .ok name, .ok v =>
     -- The same value again changes nothing: no command, no layout.
-    let record := fun (c : Command) (d : Dom) =>
-      if (d.get n).attrs == (s.dom.get n).attrs then (s, ret 0) else addCommand s c d
+    let record := fun (c : Command) (op : Dom → Res Unit) (d : Dom) =>
+      let old := (d.get n).attrs
+      match op d with
+      | (d, .error e) => (d, .error e)
+      | (d, .ok ()) => (d, .ok (if (d.get n).attrs == old then none else some (c, 0)))
     match nsName? name with
     | some (ns, q) =>
       if q.utf8ByteSize > maxAttrName then (s, ret (-5)) else
-      match s.dom.setAttributeNS n ns q v with
-      | (_, .error e) => (s, ret (domErr e))
-      | (d, .ok ()) => record (.setAttributeNS n (ns.getD "") q v) d
+      let c := Command.setAttributeNS n (ns.getD "") q v
+      change s c (record c fun d => d.setAttributeNS n ns q v)
     | none =>
       if name.utf8ByteSize > maxAttrName then (s, ret (-5)) else
-      match s.dom.setAttribute n name v with
-      | (_, .error e) => (s, ret (domErr e))
-      | (d, .ok ()) =>
-        let (s, r) := record (.setAttribute n name v) d
+      let c := Command.setAttribute n name v
+      match change s c (record c fun d => d.setAttribute n name v) with
+      | (s, r) =>
         -- HTML §4.8.5: setting `src` of an iframe with a browsing context navigates it.
         if Dom.isHtmlElement (s.dom.get n) "iframe" && Dom.asciiLower name == "src" && s.frames.any (·.1 == n) then
           ({ s with navigations := s.navigations.push (n, v) }, r)
@@ -440,20 +496,15 @@ def createElement (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) 
   match readStr mem st (arg args 0) (arg args 1) maxAttrName with
   | .error e => (s, codeOrTrap e)
   | .ok name =>
-    match s.dom.createElement 0 name with
-    | (_, .error e) => (s, ret (domErr e))
-    | (d, .ok n) =>
-      match addCommand s (.createElement name n) d with
-      | (s', .values #[.i32 0]) => (s', ret n)
-      | r => r
+    change s (.createElement name 0) fun d => match d.createElement 0 name with
+      | (d, .error e) => (d, .error e)
+      | (d, .ok n) => changed (.createElement name n) d n
 
 def appendChild (args : Array Value) (s : State) : State × HostResult :=
   let p := arg args 0
   let c := arg args 1
   if !isElement s.dom p || !isElement s.dom c then (s, ret (-2)) else
-  match s.dom.appendChild p c with
-  | (_, .error e) => (s, ret (domErr e))
-  | (d, .ok ()) => addCommand s (.appendChild p c) d
+  change s (.appendChild p c) fun d => changedRes (.appendChild p c) (d.appendChild p c)
 
 def addRequest (s : State) (r : Request) (answer : Int) : State × HostResult :=
   if s.requests.size ≥ maxRequests then (s, ret (-5))
@@ -651,12 +702,11 @@ def createNode (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : S
   | .error e => (s, codeOrTrap e)
   | .ok data =>
     let kind := arg args 0
-    match createKind s.dom kind data with
-    | (_, .error e) => (s, ret (domErr e))
-    | (d, .ok n) =>
-      -- `createElement` of the page's own document keeps its first command form.
-      let c := if kind == 3 then Command.createElement data n else Command.createNode kind data n
-      addCommandAnswer s c d n
+    change s (.createNode kind data 0) fun d => match createKind d kind data with
+      | (d, .error e) => (d, .error e)
+      | (d, .ok n) =>
+        -- `createElement` of the page's own document keeps its first command form.
+        changed (if kind == 3 then Command.createElement data n else Command.createNode kind data n) d n
 
 /-- The document of an `iframe` with no `src` (HTML §7.3.1 "about:blank"): an HTML
 document with `html`, `head` and `body` and no doctype. -/
@@ -705,19 +755,15 @@ def insertBefore (args : Array Value) (s : State) : State × HostResult :=
   let c := optNode (arg args 2)
   if !isNode s.dom p || !isNode s.dom n || !(c.all (isNode s.dom)) then (s, ret (-2)) else
   let moved := insertedBy s.dom n
-  match s.dom.insertBefore p n c with
-  | (_, .error e) => (s, ret (domErr e))
-  | (d, .ok ()) =>
-    let (s, r) := addCommand s (if c.isNone then .appendChild p n else .insertBefore p n c) d
-    (connectFrames s moved, r)
+  let cmd := if c.isNone then Command.appendChild p n else .insertBefore p n c
+  match change s cmd fun d => changedRes cmd (d.insertBefore p n c) with
+  | (s, r) => (connectFrames s moved, r)
 
 def removeChild (args : Array Value) (s : State) : State × HostResult :=
   let p := arg args 0
   let c := arg args 1
   if !isNode s.dom p || !isNode s.dom c then (s, ret (-2)) else
-  match s.dom.preRemove c p with
-  | (_, .error e) => (s, ret (domErr e))
-  | (d, .ok ()) => addCommand s (.removeChild p c) d
+  change s (.removeChild p c) fun d => changedRes (.removeChild p c) (d.preRemove c p)
 
 def replaceChild (args : Array Value) (s : State) : State × HostResult :=
   let p := arg args 0
@@ -725,11 +771,8 @@ def replaceChild (args : Array Value) (s : State) : State × HostResult :=
   let c := arg args 2
   if !isNode s.dom p || !isNode s.dom n || !isNode s.dom c then (s, ret (-2)) else
   let moved := insertedBy s.dom n
-  match s.dom.replace c n p with
-  | (_, .error e) => (s, ret (domErr e))
-  | (d, .ok ()) =>
-    let (s, r) := addCommand s (.replaceChild p n c) d
-    (connectFrames s moved, r)
+  match change s (.replaceChild p n c) fun d => changedRes (.replaceChild p n c) (d.replace c n p) with
+  | (s, r) => (connectFrames s moved, r)
 
 /-- `removeAttribute(qualifiedName)` (DOM §4.9): the first attribute with that
 qualified name (lower case on an HTML element of an HTML document). -/
@@ -749,17 +792,18 @@ def removeAttribute (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M
   match readStr mem st (arg args 1) (arg args 2) (maxAttrName + maxString) with
   | .error e => (s, codeOrTrap e)
   | .ok name => match nsName? name with
-    | some (ns, l) => addCommand s (.removeAttributeNS n (ns.getD "") l) (s.dom.removeAttributeNS n ns l)
+    | some (ns, l) =>
+      let c := Command.removeAttributeNS n (ns.getD "") l
+      change s c fun d => changed c (d.removeAttributeNS n ns l)
     | none =>
       if name.utf8ByteSize > maxAttrName then (s, ret (-5))
-      else addCommand s (.removeAttribute n name) (removeAttr s.dom n name)
+      else change s (.removeAttribute n name) fun d => changed (.removeAttribute n name) (removeAttr d n name)
 
 def cloneNode (args : Array Value) (s : State) : State × HostResult :=
   let n := arg args 0
   if !isNode s.dom n then (s, ret (-2)) else
   let deep := arg args 1 != 0
-  let (d, c) := s.dom.cloneNode n deep
-  addCommandAnswer s (.cloneNode n deep c) d c
+  change s (.cloneNode n deep 0) fun d => let (d, c) := d.cloneNode n deep; changed (.cloneNode n deep c) d c
 
 /-- `tree_op(a, b, which)`: 1 `isEqualNode` (1 or 0); 2 `normalize()` of `a`; 3
 `b.adoptNode(a)` (DOM §4.5: a document is NotSupportedError); 4 and 5
@@ -775,19 +819,18 @@ def treeOp (args : Array Value) (s : State) : State × HostResult :=
   | 3 => if !isNode s.dom b || !isDoc b then (s, ret (-2)) else if isDoc a then (s, ret (-10))
     -- the template contents of a template element stay where they are
     else if (s.dom.get a).type == .fragment && (s.dom.get a).host.isSome then (s, ret 0)
-    else addCommand s (.adoptNode a b) (s.dom.adopt a b)
+    else change s (.adoptNode a b) fun d => changed (.adoptNode a b) (d.adopt a b)
   | 6 => if !Forms.isHtml s.dom a ["input"] then (s, ret (-2))
-    else addCommand s (.setChecked a (b != 0)) (Forms.setChecked s.dom a (b != 0))
+    else change s (.setChecked a (b != 0)) fun d => changed (.setChecked a (b != 0)) (Forms.setChecked d a (b != 0))
   | 7 => (s, ret (if Forms.checkedness s.dom a then 1 else 0))
   | 8 => match Forms.checkedInGroup s.dom a with | some k => (s, ret k) | none => (s, ret (-1))
   | 9 => if !Forms.isHtml s.dom a ["form"] then (s, ret (-2))
-    else addCommand s (.resetForm a) (Forms.resetForm s.dom a)
+    else change s (.resetForm a) fun d => changed (.resetForm a) (Forms.resetForm d a)
   | 4 | 5 => if !isNode s.dom b || !isDoc b then (s, ret (-2)) else if isDoc a then (s, ret (-10)) else
     let deep := arg args 2 == 5
-    let (d, c) := s.dom.cloneNode a deep (some b)
-    addCommandAnswer s (.importNode a b deep c) d c
+    change s (.importNode a b deep 0) fun d => let (d, c) := d.cloneNode a deep (some b); changed (.importNode a b deep c) d c
   | 1 => if !isNode s.dom b then (s, ret (-2)) else (s, ret (if s.dom.isEqualNode a b then 1 else 0))
-  | 2 => addCommand s (.normalize a) (s.dom.normalize a)
+  | 2 => change s (.normalize a) fun d => changed (.normalize a) (d.normalize a)
   | _ => (s, ret (-2))
 
 def nodeString (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : StoreOf M × HostResult :=
@@ -926,33 +969,32 @@ def gpuCommand (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : S
 /-- One import: the new state, the new store and the answer. -/
 def call (mem : Nat) (f : Import) (args : Array Value) (s : State) (st : StoreOf M) :
     State × StoreOf M × HostResult :=
-  let pure1 := fun (r : State × HostResult) => (r.1, st, r.2)
-  let write := fun (r : StoreOf M × HostResult) => (s, r.1, r.2)
+  -- no closure holds `s`: a change of the arena is then in place (`change`)
   match f with
-  | .getElementById => pure1 (getElementById mem args s st)
-  | .documentElement => pure1 (documentElement args s)
-  | .tagName => write (tagName mem args s st)
-  | .textContentGet => write (textContentGet mem args s st)
-  | .textContentSet => pure1 (textContentSet mem args s st)
-  | .getAttribute => write (getAttribute mem args s st)
-  | .setAttribute => pure1 (setAttribute mem args s st)
-  | .createElement => pure1 (createElement mem args s st)
-  | .appendChild => pure1 (appendChild args s)
-  | .addEventListener => pure1 (addEventListener mem args s st)
-  | .setTimer => pure1 (setTimer args s)
-  | .clearTimer => pure1 (clearTimer args s)
-  | .consoleLog => pure1 (consoleLog mem args s st)
-  | .nodeInfo => pure1 (nodeInfo args s)
-  | .nodeString => write (nodeString mem args s st)
-  | .nodeChildren => write (nodeChildren mem args s st)
-  | .createNode => pure1 (createNode mem args s st)
-  | .insertBefore => pure1 (insertBefore args s)
-  | .removeChild => pure1 (removeChild args s)
-  | .replaceChild => pure1 (replaceChild args s)
-  | .removeAttribute => pure1 (removeAttribute mem args s st)
-  | .cloneNode => pure1 (cloneNode args s)
-  | .treeOp => pure1 (treeOp args s)
-  | .nodeQuery => write (nodeQuery mem args s st)
+  | .getElementById => let r := getElementById mem args s st; (r.1, st, r.2)
+  | .documentElement => let r := documentElement args s; (r.1, st, r.2)
+  | .tagName => let r := tagName mem args s st; (s, r.1, r.2)
+  | .textContentGet => let r := textContentGet mem args s st; (s, r.1, r.2)
+  | .textContentSet => let r := textContentSet mem args s st; (r.1, st, r.2)
+  | .getAttribute => let r := getAttribute mem args s st; (s, r.1, r.2)
+  | .setAttribute => let r := setAttribute mem args s st; (r.1, st, r.2)
+  | .createElement => let r := createElement mem args s st; (r.1, st, r.2)
+  | .appendChild => let r := appendChild args s; (r.1, st, r.2)
+  | .addEventListener => let r := addEventListener mem args s st; (r.1, st, r.2)
+  | .setTimer => let r := setTimer args s; (r.1, st, r.2)
+  | .clearTimer => let r := clearTimer args s; (r.1, st, r.2)
+  | .consoleLog => let r := consoleLog mem args s st; (r.1, st, r.2)
+  | .nodeInfo => let r := nodeInfo args s; (r.1, st, r.2)
+  | .nodeString => let r := nodeString mem args s st; (s, r.1, r.2)
+  | .nodeChildren => let r := nodeChildren mem args s st; (s, r.1, r.2)
+  | .createNode => let r := createNode mem args s st; (r.1, st, r.2)
+  | .insertBefore => let r := insertBefore args s; (r.1, st, r.2)
+  | .removeChild => let r := removeChild args s; (r.1, st, r.2)
+  | .replaceChild => let r := replaceChild args s; (r.1, st, r.2)
+  | .removeAttribute => let r := removeAttribute mem args s st; (r.1, st, r.2)
+  | .cloneNode => let r := cloneNode args s; (r.1, st, r.2)
+  | .treeOp => let r := treeOp args s; (r.1, st, r.2)
+  | .nodeQuery => let r := nodeQuery mem args s st; (s, r.1, r.2)
   | .gpuCommand => gpuCommand mem args s st
 
 /-! ## What a DOM import can do to VM memory -/

@@ -317,6 +317,9 @@ def pageQuery (h : Host) (node op : Nat) : Host × Except Int String :=
     | some f => (h, match f node op with | some r => .ok r | none => .error (-1))
     | none => (h, .error (-2))
 
+/-- A placeholder for the DOM state while an import holds it. -/
+def emptyDomHost : DomHost := { dom := {} }
+
 /-- Serve one `foafnaut_dom` import, or `env.emscripten_notify_memory_growth`. -/
 def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st : StoreOf M) :
     Host × StoreOf M × HostResult :=
@@ -353,7 +356,9 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
       match Hosts.Dom.readStr mem st (a 2) (a 3) Hosts.Dom.maxString with
       | .error e => (h, st, Hosts.Dom.codeOrTrap e)
       | .ok q =>
-        let (dom, answer) := Hosts.Dom.domOp h.dom (a 0) (a 1) q
+        let ds := h.dom
+        let h := { h with dom := emptyDomHost }
+        let (dom, answer) := Hosts.Dom.domOp ds (a 0) (a 1) q
         let reads := if Hosts.Dom.treeOps.contains (a 1) then { h.reads with version := h.reads.version + 1 } else h.reads
         let (st, r) := Hosts.Dom.answerStr mem st (a 4) (a 5) answer
         ({ h with dom, reads }, st, r)
@@ -394,8 +399,12 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
     let (w, st, r) := Hosts.PageWasm.serve mem args w st
     ({ h with wasm := w }, st, r)
   | _ =>
-    let (dom, st, r) := Hosts.Dom.serve mem nm args h.dom st
     let reads := if readOnlyImports.contains nm then h.reads else { h.reads with version := h.reads.version + 1 }
+    -- the DOM state leaves the host for the call, so that a change of the arena is in place
+    -- (`Hosts.Dom.change`)
+    let ds := h.dom
+    let h := { h with dom := emptyDomHost }
+    let (dom, st, r) := Hosts.Dom.serve mem nm args ds st
     ({ h with dom, reads }, st, r)
 
 /-- Host id `id` (an import index) with its binding. -/

@@ -251,11 +251,15 @@ def serveNative (h : Host) (k : Nat) (args : Array JS.HostArg) : Host × JS.Host
 the session before this run and the steps of this run (`runBudget` less the steps left),
 as `Page.Session.run` counts the instructions of a run at each host call. -/
 def hostCall (lh : LHost) (k : Nat) (args : Array JS.HostArg) (left : Nat) : LHost × JS.HostAns :=
-  let steps := lh.base + (runBudget - left) + (lh.page.wasm.steps - lh.wasm0)
+  let base := lh.base
+  let wasm0 := lh.wasm0
+  let steps := base + (runBudget - left) + (lh.page.wasm.steps - wasm0)
+  -- `lh` is not used again: the page host is then the only reference to the DOM state, and
+  -- a change of the arena is in place (`Hosts.Dom.change`)
   let h := lh.page
   let h := { h with time := h.time.atRun h.loop.clock steps }
   let (h, ans) := serveNative h k args
-  ({ lh with page := h }, ans)
+  ({ page := h, base, wasm0 }, ans)
 
 /-! ## The session -/
 
