@@ -2231,3 +2231,10 @@ L4Factoidal_WasmVM_Tests_Aot_run  # (c) core Array.qsort of the file list of the
 L4Factoidal_WasmVM_Aot_emit  # (s) specification only: `instrument` runs `emitAcc` (a loop), proved equal by `emitAcc_eq`; no executed code calls `emit`
 L4Factoidal_JS_agen*  # (b)(c) the async generator request queue: one request per step, genRun as L4Factoidal_JS_gen*; the queue holds the requests made while a step runs, so the cycle depth is that count
 L4Factoidal_JS_flattenArr  # (c) Array.prototype.flat: depth is the depth argument, at most 1000 (JS/Interp.lean); elements are a for loop
+# --- Added 2026-11-09: BubblePopJS 2 (ebc9a643c), found by the release CI gate
+L4Factoidal_JS_Snapshot_e*  # (b) encoder of the BubblePopJS realm snapshot, run at engine BUILD time on the realm made from tools/wasmvm/quickjs/prelude.js: the depth is the nesting of the prelude's syntax tree and heap, not page input
+L4Factoidal_JS_Snapshot_d*  # (b) decoder of that snapshot, run once at engine start on the build-time data above (LeanJSRealmData), never on page input; depth is the prelude's nesting
+L4Factoidal_JS_Str_decodeUnits  # (c) executed only on two-unit lists (JS/Interp.lean, a surrogate pair); bulk decoding runs decodeGo, a tail-recursive loop
+L4Factoidal_JS_Str_lengthSpec  # (s) specification only: the theorem units_length; executed code takes Str.jsLength
+L4Factoidal_JS_moreNative  # (c) a cycle through the evaluator's native call: depth bounded by the interpreter's call depth (Heap.maxDepth, a RangeError beyond it)
+L4Factoidal_JS_typedConv  # (c) a cycle through the evaluator (valueOf/toString of a typed-array element): bounded by Heap.maxDepth as above
