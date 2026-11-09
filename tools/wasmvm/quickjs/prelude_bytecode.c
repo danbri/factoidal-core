@@ -7,8 +7,9 @@
  * format is QuickJS-NG's own (JS_WriteObject, BC_VERSION checked on read); it holds no
  * pointers, and both the build host and wasm32 are little-endian.
  *
- *   prelude_bytecode PRELUDE.js OUT.h
- * writes `static const uint8_t prelude_bc[]` and `prelude_bc_len`.
+ *   prelude_bytecode PRELUDE.js OUT.h [NAME]
+ * writes `static const uint8_t prelude_bc[]` and `prelude_bc_len`; with NAME, `NAME_bc[]` and `NAME_bc_len` (webassembly.js is
+ * compiled the same way, as `wasm_glue`).
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,7 +17,8 @@
 #include "quickjs.h"
 
 int main(int argc, char **argv) {
-  if (argc != 3) { fprintf(stderr, "usage: prelude_bytecode PRELUDE.js OUT.h\n"); return 2; }
+  if (argc != 3 && argc != 4) { fprintf(stderr, "usage: prelude_bytecode PRELUDE.js OUT.h [NAME]\n"); return 2; }
+  const char *name = argc == 4 ? argv[3] : "prelude";
   FILE *in = fopen(argv[1], "rb");
   if (!in) { perror(argv[1]); return 1; }
   fseek(in, 0, SEEK_END); long n = ftell(in); fseek(in, 0, SEEK_SET);
@@ -38,10 +40,10 @@ int main(int argc, char **argv) {
   if (!bc) { fprintf(stderr, "JS_WriteObject failed\n"); return 1; }
   FILE *out = fopen(argv[2], "w");
   if (!out) { perror(argv[2]); return 1; }
-  fprintf(out, "/* prelude.js as QuickJS-NG bytecode (prelude_bytecode.c); %zu bytes. */\n", len);
-  fprintf(out, "static const uint8_t prelude_bc[] = {");
+  fprintf(out, "/* %s as QuickJS-NG bytecode (prelude_bytecode.c); %zu bytes. */\n", argv[1], len);
+  fprintf(out, "static const uint8_t %s_bc[] = {", name);
   for (size_t i = 0; i < len; i++) fprintf(out, "%s%u,", i % 32 ? "" : "\n", bc[i]);
-  fprintf(out, "\n};\nstatic const size_t prelude_bc_len = %zu;\n", len);
+  fprintf(out, "\n};\nstatic const size_t %s_bc_len = %zu;\n", name, len);
   fclose(out);
   js_free(ctx, bc);
   JS_FreeValue(ctx, f); JS_FreeContext(ctx); JS_FreeRuntime(rt);

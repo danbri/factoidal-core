@@ -108,6 +108,14 @@ DOM_IMPORT(gpu_command) int32_t dom_gpu_command(int32_t op, int32_t unused, cons
  * them, so an operation runs once. Negative: an error code. */
 DOM_IMPORT(web_api) int32_t dom_web_api(int32_t op, int32_t flags, const char *s, int32_t slen,
                                         char *buf, int32_t cap);
+/* wasm_call(op, handle, bytes, len, out, cap, view, view_len): the WebAssembly JavaScript API
+ * of the page (L4Factoidal.WasmVM.Hosts.PageWasm; docs/designissues/2026-11-08-page-wasm.md).
+ * Lean holds the page's modules in a WasmVM store of their own. `view` is the data of a
+ * Memory.buffer ArrayBuffer (or 0): Lean copies the chunks that changed between it and the
+ * module's memory. The answer is its length; a longer answer than `cap` is kept by Lean
+ * and written by op 31. */
+DOM_IMPORT(wasm_call) int32_t dom_wasm_call(int32_t op, int32_t handle, const uint8_t *s, int32_t slen,
+                                            uint8_t *buf, int32_t cap, uint8_t *view, int32_t view_len);
 
 static JSRuntime *rt;
 static JSContext *ctx;
@@ -305,6 +313,48 @@ static JSValue n_api(JSContext *c, JSValueConst this_val, int argc, JSValueConst
   if (out != small) free(out);
   return r;
 }
+/* wasm(op, handle, payload, view, text, out): payload an ArrayBuffer, a string (sent as UTF-8) or
+ * undefined; view an ArrayBuffer or undefined. The answer: an ArrayBuffer, or a string when
+ * `text` is true, or a negative number. With `out` (an ArrayBuffer), Lean writes the answer
+ * straight into it and the native answers its length; an answer longer than `out` comes
+ * back as a new ArrayBuffer. */
+static JSValue n_wasm(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
+  I32(0, op); I32(1, handle);
+  size_t pl = 0, vl = 0;
+  const char *ps = argc > 2 && JS_IsString(argv[2]) ? JS_ToCStringLen(c, &pl, argv[2]) : 0;
+  uint8_t *pb = ps ? (uint8_t *) ps : argc > 2 && JS_IsObject(argv[2]) ? JS_GetArrayBuffer(c, &pl, argv[2]) : 0;
+  uint8_t *vb = argc > 3 && JS_IsObject(argv[3]) ? JS_GetArrayBuffer(c, &vl, argv[3]) : 0;
+  int text = argc > 4 && JS_ToBool(c, argv[4]);
+  size_t ol = 0;
+  uint8_t *ob = argc > 5 && JS_IsObject(argv[5]) ? JS_GetArrayBuffer(c, &ol, argv[5]) : 0;
+  if (!pb) pl = 0;
+  if (!vb) vl = 0;
+  static uint8_t small[2048];
+  int32_t n = ob ? dom_wasm_call(op, handle, pb, (int32_t) pl, ob, (int32_t) ol, vb, (int32_t) vl)
+                 : dom_wasm_call(op, handle, pb, (int32_t) pl, small, (int32_t) sizeof small, vb, (int32_t) vl);
+  if (ps) JS_FreeCString(c, ps);
+  if (n < 0) return JS_NewInt32(c, n);
+  if (ob && n <= (int32_t) ol) return JS_NewInt32(c, n);
+  uint8_t *p = small;
+  if (ob || n > (int32_t) sizeof small) {
+    p = malloc((size_t) n);
+    if (!p) return JS_NewInt32(c, -5);
+    int32_t m = dom_wasm_call(31, 0, 0, 0, p, n, 0, 0);
+    if (m != n) { free(p); return JS_NewInt32(c, m < 0 ? m : -5); }
+  }
+  JSValue r = text ? JS_NewStringLen(c, (const char *) p, (size_t) n) : JS_NewArrayBufferCopy(c, p, (size_t) n);
+  if (p != small) free(p);
+  return r;
+}
+/* wasmGlue(): the function of webassembly.js (bytecode in wasm_glue.h, made by
+ * build-quickjs.sh), which the prelude runs on the first read of `WebAssembly`. */
+static JSValue n_wasm_glue(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv);
+/* detach(buffer): a Memory.buffer whose memory grew (WebAssembly JS API, "refresh the
+ * memory buffer"). */
+static JSValue n_detach(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
+  if (argc > 0 && JS_IsObject(argv[0])) JS_DetachArrayBuffer(c, argv[0]);
+  return JS_UNDEFINED;
+}
 static JSValue n_set_attr(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
   I32(0, node); STR(1, nm, nl);
   size_t vl; const char *v = JS_ToCStringLen(c, &vl, argv[2]);
@@ -397,6 +447,15 @@ static JSValue n_log(JSContext *c, JSValueConst this_val, int argc, JSValueConst
 
 #include "prelude.h"
 
+#include "wasm_glue.h"
+
+/* The glue's bytecode is a script whose value is its function (webassembly.js). */
+static JSValue n_wasm_glue(JSContext *c, JSValueConst this_val, int argc, JSValueConst *argv) {
+  JSValue fn = JS_ReadObject(c, wasm_glue_bc, wasm_glue_bc_len, JS_READ_OBJ_BYTECODE);
+  if (JS_IsException(fn)) return fn;
+  return JS_EvalFunction(c, fn);
+}
+
 /* ---- results ---------------------------------------------------------------- */
 
 static uint8_t *result(uint32_t status, const char *s, size_t len) {
@@ -486,6 +545,9 @@ static const JSCFunctionListEntry native_fns[] = {
   JS_CFUNC_DEF("log", 1, n_log),
   JS_CFUNC_DEF("gpu", 3, n_gpu),
   JS_CFUNC_DEF("api", 3, n_api),
+  JS_CFUNC_DEF("wasm", 6, n_wasm),
+  JS_CFUNC_DEF("detach", 1, n_detach),
+  JS_CFUNC_DEF("wasmGlue", 0, n_wasm_glue),
 };
 
 __attribute__((export_name("qjs_new")))
@@ -704,6 +766,8 @@ int32_t dom_request_frame(int32_t callback) { return -6; }
 int32_t dom_cancel_frame(int32_t id) { return -6; }
 int32_t dom_node_query(int32_t node, int32_t op, const char *s, int32_t slen, char *buf, int32_t cap) { return -6; }
 int32_t dom_gpu_command(int32_t op, int32_t unused, const char *s, int32_t slen, char *buf, int32_t cap) { return -6; }
+int32_t dom_wasm_call(int32_t op, int32_t handle, const uint8_t *s, int32_t slen, uint8_t *buf, int32_t cap,
+                      uint8_t *view, int32_t view_len) { return -6; }
 
 /* qjs-native FILE...: for each file, one line: FILE <tab> status <tab> text (400 bytes, one line) */
 int main(int argc, char **argv) {

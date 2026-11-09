@@ -58,6 +58,9 @@ mkdir -p "$WORK/gen" "$WORK/prelude-tool"
   "$SRC/quickjs.c" "$SRC/libregexp.c" "$SRC/libunicode.c" "$SRC/dtoa.c" "$HERE/quickjs/prelude_bytecode.c" \
   -lm -o "$WORK/prelude-tool/prelude_bytecode"
 "$WORK/prelude-tool/prelude_bytecode" "$HERE/quickjs/prelude.js" "$WORK/gen/prelude.h"
+# The WebAssembly API glue (quickjs/webassembly.js) the same way; the prelude runs it on the
+# first read of `WebAssembly` (native wasmGlue), so a page without WebAssembly never loads it.
+"$WORK/prelude-tool/prelude_bytecode" "$HERE/quickjs/webassembly.js" "$WORK/gen/wasm_glue.h" wasm_glue
 
 build() {
   local opt=$1 out=$2
@@ -82,7 +85,9 @@ if [ "${QJS_BOTH:-0}" = 1 ]; then build -Oz "$WORK/qjs-wasmvm-Oz.wasm"; fi
 if command -v wasm-tools >/dev/null; then
   echo "imports:"; wasm-tools print "$WORK/qjs-wasmvm.wasm" | grep '(import ' | sed 's/^ */  /'
   echo "exports:"; wasm-tools print "$WORK/qjs-wasmvm.wasm" | grep '(export ' | sed 's/^ */  /'
-  if wasm-tools print "$WORK/qjs-wasmvm.wasm" | grep -q 'atomic\|shared'; then
+  # Instructions and types only: the data segments hold the prelude's text, which may
+  # name the words (the WebAssembly API reads a `shared` memory descriptor field).
+  if wasm-tools print "$WORK/qjs-wasmvm.wasm" | grep -v '^ *(data ' | grep -q 'atomic\|shared'; then
     echo "error: the module uses atomics or shared memory" >&2; exit 1
   fi
 fi

@@ -1874,6 +1874,13 @@
     takeRecords() { const st = observerState.get(this), rs = st.records; st.records = []; return rs; }
   }
 
+  // ---- WebAssembly (pagewasm) -------------------------------------------------------------
+  // The WebAssembly JavaScript API is tools/wasmvm/quickjs/webassembly.js, run on the first
+  // read of `WebAssembly`, so a page without WebAssembly never loads it. Lean serves it (L4Factoidal.WasmVM.Hosts.PageWasm). An engine that
+  // does not serve wasm_call leaves WebAssembly undefined.
+  const wasmServed = typeof n.wasm === 'function' && typeof n.wasmGlue === 'function' && typeof n.wasm(0, 0) !== 'number';
+  // ---- end of WebAssembly (pagewasm) ------------------------------------------------------
+
   // ---- Window -----------------------------------------------------------------------
   class Window extends EventTarget { constructor() { throw new TypeError('Illegal constructor'); } }
   addHandlers(Window.prototype);
@@ -1946,6 +1953,11 @@
   def('WebGLRenderingContext', Object.freeze({ ...GL })); def('WebGL2RenderingContext', Object.freeze({ ...GL }));
   def('WebGLBuffer', WebGLBuffer); def('WebGLShader', WebGLShader); def('WebGLProgram', WebGLProgram);
   def('WebGLUniformLocation', WebGLUniformLocation);
+  // pagewasm: a data property once read (WebIDL); before that an accessor that compiles the glue.
+  if (wasmServed) Object.defineProperty(globalThis, 'WebAssembly', { configurable: true, enumerable: false,
+    // QuickJS-NG hands the glue's function (bytecode); BubblePopJS hands its source.
+    get() { const g = n.wasmGlue(), W = (typeof g === 'function' ? g : (0, eval)(g))(n, define); def('WebAssembly', W); return W; },
+    set(v) { def('WebAssembly', v); } });
   def('history', Object.freeze({ length: 1, state: null, pushState() {}, replaceState() {}, back() {}, forward() {}, go() {} }));
   def('screen', Object.freeze({ width: 800, height: 600, availWidth: 800, availHeight: 600, colorDepth: 24, pixelDepth: 24 }));
   for (const [k, i] of [['innerWidth', 0], ['innerHeight', 1], ['outerWidth', 0], ['outerHeight', 1]])
