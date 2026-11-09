@@ -771,3 +771,66 @@ the engine still runs the next page's scripts (the shadow stack is put back with
 after two traps until a reload). Scripts never move to QuickJS-NG on a failure. The page's
 heap inside the Lean runtime may leak what the trapped turn had allocated.
 
+## 18. The speed work of 2026-11-09 (stage A)
+
+**The set.** `labs/demos/foafnaut/bubblepop_perf/`: original programs (`fib`, property read and
+write, method calls, array push and index, string concat and char access, closures, object
+allocation, JSON, regexp, a mixed program), `run.py` (process CPU time minus start-up, rounds
+interleaved across engines, so a drifting machine hits them alike) and `scaling.py` (each of 28
+operations at N and 4N; a ratio far above 4 is a super-linear cost).
+
+**Where the time went (sampled, `fib(36)`, before).** About 44% in allocation and its
+bookkeeping (on macOS each allocation also pays a thread-local lookup, about 15% of the
+total alone), 15% in `evalExpr`, about 10% in environment lookup (`findEnv`, hashing names). The
+heap's hot fields being split from the cold ones gave no measurable gain on its own.
+
+**What changed.** Environment records are slot arrays with shared names;
+`JS/Resolve.lean` places each name as (hops, slot), checked at run time against the name in the
+slot, so a wrong hint is a plain lookup and not a wrong value (`verifyLocals` compares every
+read and write with the plain lookup; on, the Test262 subset and the benchmarks pass). A
+script with direct `eval` or `with` is left unresolved, and generator and async bodies are not resolved.
+Calls with plain parameters use the arguments array as the slots; environments that no
+closure can hold (calls, blocks, `for (let ...)` loops) are reused or not copied. `Obj.props`
+is `PropMap`: a pointer-first key scan up to 8 keys, a hash map above. `Obj.putOwn` no longer
+holds a second reference to the table while inserting (it copied the table on every
+property write). Fast paths: leaf reads, plain own and inherited data properties, `a[i] = v`,
+`i++`, `s += x` appending in place.
+
+**Quadratic costs removed (`scaling.py`).** `indexOf` decoded the whole string per call (a loop
+of `indexOf` over 80,000 characters: 196 s, 112 ms now), Map and Set copied their entry array
+per insert, `delete` rewrote the key list per delete, `exec` decoded the string per call,
+`s += x` copied the string. `shift` is still linear in the array per call.
+
+**Numbers** (native `leanjs` CLI built with `leanc -O3`, this Mac, CPU ms minus start-up, 3
+interleaved rounds, the machine busy with other builds; comparators native on the same machine,
+`jsc --useJIT=false` and `node --jitless` being the comparable no-JIT class):
+
+| | before | after | QuickJS-NG | JSC no JIT | V8 jitless |
+|---|---|---|---|---|---|
+| fib(26) | 377 | 122 | 17 | 11 | 15 |
+| property read/write | 835 | 431 | 32 | 21 | 16 |
+| method calls | 1318 | 621 | 57 | 47 | 34 |
+| array push/index | 1256 | 683 | 44 | 31 | 35 |
+| string | 259 | 155 | 12 | 9 | 6 |
+| closures | 1092 | 552 | 32 | 33 | 20 |
+| allocation | 983 | 572 | 50 | 30 | 17 |
+| JSON | 196 | 186 | 41 | 7 | 11 |
+| regexp | 11665 | 32 | 5 | 2 | 1 |
+| mixed | 121 | 69 | 8 | 7 | 1 |
+
+So BubblePopJS is 2 to 3 times faster than this morning on interpretive work, and 7 to 17 times
+slower than QuickJS-NG (a boxing, allocating AST interpreter against a bytecode VM with unboxed
+numbers); regexp is 370 times faster and about 6 times QuickJS. Not state of the art.
+
+**Language.** `await` and `yield` in `while`, `do` and `for` tests, for-of iterables, and the
+branches of `?:`, `&&`, `||`, `??` now work; operands before a yield evaluate first (Test262
+subset 5,627 → 5,629 of 6,297, no file that passed fails).
+
+**What is proved and what is tested.** The resolver hints are checked at run time (the plain
+lookup is the fallback), and tested by `verifyLocals`, not proved correct. `PropMap` is
+tested against its association-list reading by `#guard`s. The cost test
+`bubblepop_cost_test.ts` covers property writes, new keys, calls, a closure per iteration and exec
+on one string.
+
+**The Foafnaut Wasm build carries the realm as data** since BubblePopJS is its default.
+
