@@ -573,16 +573,18 @@ def mkParam (y : String × String × Option String) : Param :=
 def mkSig (x : String × String × String × List (String × String × Option String)) : Sig :=
   Sig.mk (pfxUri x.1) x.2.1 (parseTy x.2.2.1) (x.2.2.2.map mkParam)
 
-def sigs : Array Sig := ((catalogRaw ++ catalogExt).map mkSig).toArray
+/-- The function signatures, built on first use: a constant would be built when the module is
+initialized, at every engine start, whether or not a page uses XPath (the Hub's first frame). -/
+def sigs : Thunk (Array Sig) := Thunk.mk fun _ => ((catalogRaw ++ catalogExt).map mkSig).toArray
 
 def Sig.minArity (s : Sig) : Nat := (s.ps.filter (·.dflt.isNone)).length
 def Sig.maxArity (s : Sig) : Nat := s.ps.length
 
 def findSig (q : QN) (arity : Nat) : Option Sig :=
-  sigs.find? (fun s => s.uri == q.uri && s.loc == q.loc && s.minArity ≤ arity && arity ≤ s.maxArity)
+  sigs.get.find? (fun s => s.uri == q.uri && s.loc == q.loc && s.minArity ≤ arity && arity ≤ s.maxArity)
 
 def findSigAny (q : QN) : Option Sig :=
-  sigs.find? (fun s => s.uri == q.uri && s.loc == q.loc)
+  sigs.get.find? (fun s => s.uri == q.uri && s.loc == q.loc)
 
 def Item.fnArity : Item → Option Nat
   | .fn f => some f.arity

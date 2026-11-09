@@ -387,8 +387,10 @@ def preludeMark : String := toString (hash prelude)
 
 /-- The realm of `prepareSource` as data (`JS.Snapshot.encode`), with the prelude's object
 and `preludeMark`. `lake exe bubblepop-realm` writes it into `LeanJSRealmData.lean` at
-build time (build-web-render.sh). -/
-def snapshotData : Except String String := do
+build time (build-web-render.sh). A function of `Unit`, not a constant: a constant is computed
+when the module is initialized, which ran the whole prelude at the first call into every
+engine, for every page (about 300 ms of the Hub's first frame), and threw the result away. -/
+def snapshotData (_ : Unit) : Except String String := do
   let s ← prepareSource
   JS.Snapshot.encode (freshRealm {}) s.heap #[s.api, .str preludeMark]
 

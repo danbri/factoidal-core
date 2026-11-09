@@ -256,7 +256,7 @@ def _root_.NativeSVG.Scene.rgba (s : Scene) : ByteArray := s.rasterFast 0 s.heig
 /-- A small scene with each kind of record the fast form treats apart: a rectangle fill
 (prepared as a plain rectangle test), a stroked circle with opacity, an even-odd path, a
 linear gradient and a transform. -/
-private def guardScene : Option Scene := (parse ("<svg xmlns='http://www.w3.org/2000/svg' width='40' height='36'>" ++
+private def guardScene (_ : Unit) : Option Scene := (parse ("<svg xmlns='http://www.w3.org/2000/svg' width='40' height='36'>" ++
   "<defs><linearGradient id='g'><stop offset='0' stop-color='yellow'/><stop offset='1' stop-color='purple'/></linearGradient></defs>" ++
   "<rect x='1.5' y='2.25' width='30' height='7' fill='url(#g)'/><rect x='3' y='12' width='9.5' height='4.5' fill='red'/>" ++
   "<circle cx='25' cy='22' r='9' fill='blue' stroke='green' stroke-width='2' opacity='0.5'/>" ++
@@ -270,9 +270,9 @@ private def guardScene : Option Scene := (parse ("<svg xmlns='http://www.w3.org/
   "<path d='M4 4 Q 12 0 18 8' fill='none' stroke='black' stroke-width='1' stroke-linejoin='miter'/></svg>") 40 36).toOption
 
 -- The fast form gives the reference bytes on this scene, for the whole target and a band of rows.
-#guard (guardScene.map fun s => (s.rasterFast 0 s.height).data == (s.rasterSpec 0 s.height).data) == some true
-#guard (guardScene.map fun s => (s.rasterFast 9 20).data == (s.rasterSpec 9 20).data) == some true
-#guard (guardScene.map fun s => (s.rgba.size,s.width*s.height*4)) == some (40*36*4,40*36*4)
+#guard ((guardScene ()).map fun s => (s.rasterFast 0 s.height).data == (s.rasterSpec 0 s.height).data) == some true
+#guard ((guardScene ()).map fun s => (s.rasterFast 9 20).data == (s.rasterSpec 9 20).data) == some true
+#guard ((guardScene ()).map fun s => (s.rgba.size,s.width*s.height*4)) == some (40*36*4,40*36*4)
 
 #print axioms samplePrepared_eq
 #print axioms rasterPrepared_eq

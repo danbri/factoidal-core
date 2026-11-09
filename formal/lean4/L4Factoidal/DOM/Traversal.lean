@@ -338,9 +338,9 @@ def runAll (d : Dom) (m : Method) (root current : NodeId) (whatToShow : Nat := 0
     | .filter w _ => a := run d w accept
   return none
 
-private def tdoc : Dom := parseHtmlDocument "<div id=r><p id=a><b id=b></b></p><i id=c></i></div>"
-private def tid (s : String) : NodeId := (tdoc.getElementById 0 s).getD 0
-private def walk (m : Method) (from_ : String) : Option NodeId := runAll tdoc m (tid "r") (tid from_)
+private def tdoc (_ : Unit) : Dom := parseHtmlDocument "<div id=r><p id=a><b id=b></b></p><i id=c></i></div>"
+private def tid (s : String) : NodeId := ((tdoc ()).getElementById 0 s).getD 0
+private def walk (m : Method) (from_ : String) : Option NodeId := runAll (tdoc ()) m (tid "r") (tid from_)
 #guard walk .nextNode "r" == some (tid "a")
 #guard walk .nextNode "a" == some (tid "b")
 #guard walk .nextNode "b" == some (tid "c")
@@ -357,10 +357,10 @@ private def walk (m : Method) (from_ : String) : Option NodeId := runAll tdoc m 
 #guard walk .previousSibling "c" == some (tid "a")
 #guard walk .nextSibling "c" == none
 -- whatToShow SHOW_TEXT only: no element is a result
-#guard runAll tdoc .nextNode (tid "r") (tid "r") 4 == none
+#guard runAll (tdoc ()) .nextNode (tid "r") (tid "r") 4 == none
 -- the NodeIterator pre-removing steps: removing the reference moves it to the next node
-#guard (preRemove tdoc { root := tid "r", reference := tid "a", whatToShow := 0xFFFFFFFF } (tid "a")).reference == tid "c"
-#guard (preRemove tdoc { root := tid "r", reference := tid "b", beforeRef := false, whatToShow := 0xFFFFFFFF } (tid "a")).reference == tid "r"
+#guard (preRemove (tdoc ()) { root := tid "r", reference := tid "a", whatToShow := 0xFFFFFFFF } (tid "a")).reference == tid "c"
+#guard (preRemove (tdoc ()) { root := tid "r", reference := tid "b", beforeRef := false, whatToShow := 0xFFFFFFFF } (tid "a")).reference == tid "r"
 
 end L4Factoidal.DOM.Traversal
 
