@@ -12,7 +12,7 @@
 // third_party/testing/wpt-scripting-PROVENANCE.md). `.any.js` and `.window.js` files
 // get the window wrapper that wptserve gives them.
 //
-//   deno run -A tests/browser-wpt/testharness-run.ts [--engine native|wasm|bench] [--script-engine quickjs|bubblepop] [--exclude a,b]
+//   deno run -A tests/browser-wpt/testharness-run.ts [--engine native|wasm|bench] [--script-engine quickjs|bubblepop] [--exclude a,b] [--wpt-root DIR]
 //     [--native-engine DYLIB] [--quickjs-wasm FILE] [--dirs a,b] [--only SUBSTRING]
 //     [--out FILE] [--baseline FILE] [--bench EXE] [--instructions-per-ms N]
 //     [--wpt-root DIR --list FILE [--jsonl FILE] [--wpt-commit SHA] [--test262-inline]]
@@ -279,6 +279,13 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>}> {
         else if(/\/test262\/test\/.*\.js$/.test(path)&&new URL(s.url).search==="?strict")source='"use strict";\n'+source;
         resources.push({nodeId:s.nodeId,source});}catch{/* not vendored: the page reports it */}
     }
+    // The images of a canvas test (<img src>), held by the engine by their URL, as a host
+    // holds the images it fetched: Canvas 2D draws them (docs/designissues/2026-11-08-canvas-2d.md).
+    if(file.includes("/canvas/")&&engine.imageLoad)
+      for(const m of html.matchAll(/<img[^>]*\ssrc=["']?([^"' >]+)/g)){
+        const key=new URL(m[1],url).href,path=scriptFile(key);
+        if(path)try{engine.imageLoad(await Deno.readFile(path),key,key);}catch{/* not vendored or refused */}
+      }
     let turn=start(html,{action:"start",url,resources,commandLimit:200000,logLimit:100000,instructionsPerMs:scriptRate,...(encoding?{encoding}:{}),
       ...(scriptEngine==="bubblepop"?{engine:"bubblepop"}:{})});
     const logs=[...turn.logs],errors=[...turn.errors];

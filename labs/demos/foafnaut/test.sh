@@ -126,13 +126,16 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
     # Pointer events, layout reads and the page GPU subset run in page scripts too.
     QUICKJS_WASM="$QJS_GUEST" deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
       --allow-read --allow-ffi --allow-env "$LAB/native_html_pointer_test.ts" "$LAB/page_gpu_test.ts"
+    # Canvas 2D drawn by Lean: Chrome's pixels for small scenes, host commands, answers, frame cost (both engines).
+    QUICKJS_WASM="$QJS_GUEST" deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-ffi \
+      --allow-read --allow-ffi --allow-env "$LAB/canvas2d_test.ts"
     # The window replays the page GPU commands (2026-11-08: the start turn's commands, which make
     # the canvas and buffers, were dropped, so every later turn failed and the canvas stayed
     # blank). Each triangle page runs off screen for 8 s (25 s on Wasm); any page GPU or page error fails.
     if [ "$(uname -s)" = Darwin ] && [ -f "$LAB/.build/native/libnative-window.dylib" ]; then
       GPU_ENGINE=() GPU_SECONDS=25
       if [ -f "$LAB/.build/web-render/engines/libweb-render.dylib" ]; then GPU_ENGINE=(--native-engine "$LAB/.build/web-render/engines/libweb-render.dylib"); GPU_SECONDS=8; fi
-      for gpu_page in webgpu-triangle webgl-triangle; do
+      for gpu_page in webgpu-triangle webgl-triangle canvas-chart; do
         GPU_LOG=$(mktemp -t foafnaut-page-gpu)
         GPU_RC=0
         QUICKJS_WASM="$QJS_GUEST" perl -e 'alarm shift; exec @ARGV' "$GPU_SECONDS" deno run --no-check --no-config --no-npm --node-modules-dir=none \

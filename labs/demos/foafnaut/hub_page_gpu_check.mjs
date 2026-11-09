@@ -4,7 +4,7 @@
 // device (page-gpu.mjs) and blits the page canvas into the page layer at Lean's rectangle.
 // Checks, in headless Chrome with WebGPU: frames with the path "page-gpu" (no Lean layout);
 // passes and blits counted by the replay; no replay errors. The frame rate is printed.
-//   node labs/demos/foafnaut/hub_page_gpu_check.mjs [--runtime DIR] [--guest FILE] [--shot FILE] [--page webgl-triangle.html]
+//   node labs/demos/foafnaut/hub_page_gpu_check.mjs [--runtime DIR] [--guest FILE] [--shot FILE] [--page webgl-triangle.html|canvas-chart.html]
 // --runtime: an engine with gpu_command (build-web-render.sh --wasm); --guest: a QuickJS guest
 // built from this prelude (tools/wasmvm/build-quickjs.sh).
 import http from 'node:http';import zlib from 'node:zlib';import fs from 'node:fs';import path from 'node:path';
@@ -88,7 +88,8 @@ try{
     if(rate>40)fail(`frame rate ${rate.toFixed(1)}: more page canvas frames than the page draws`);
     if(gpuFrames.some(f=>f.leanRenders))fail('a page-gpu frame asked Lean for a render');
     const st=gpuFrames.at(-1).pageGpu;
-    if(!st||st.passes<10||st.blits<10||st.errors)fail('replay stats',JSON.stringify(st));
+    // A Canvas 2D page (canvas-chart.html) gives Lean's pixels in place of passes.
+    if(!st||(st.passes+(st.pixels??0))<10||st.blits<10||st.errors)fail('replay stats',JSON.stringify(st));
   }
   const replayWarnings=logs.filter(l=>/page GPU|WebGPU:|WebGL:/.test(l));
   if(replayWarnings.length)fail('console:',replayWarnings.slice(0,5).join(' | '));
