@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HELP = `foafnaut [--latest|--bleeding-edge] [PAGE | --url URL | --html FILE] [APP_OPTIONS] [-- APP_ARGS]
 
@@ -118,7 +118,9 @@ const APP_VALUES = ['--native-engine', '--font'];
 function pageArgs(page) {
   if (page === undefined) return [];
   if (/^https?:\/\//i.test(page)) return ['--url', page];
-  if (/^file:/i.test(page)) page = new URL(page).pathname;
+  // file:///abs/path is a URL; file:name.html has no // and is relative to here.
+  if (/^file:\/\//i.test(page)) page = fileURLToPath(page);
+  else if (/^file:/i.test(page)) page = decodeURIComponent(page.slice(5));
   const path = resolve(page);
   if (!existsSync(path)) fail(`no such file: ${page}`);
   return ['--html', path];
