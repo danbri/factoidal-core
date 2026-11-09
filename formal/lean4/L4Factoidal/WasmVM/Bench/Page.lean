@@ -18,6 +18,7 @@ the line says whether the logs, errors, commands, clock, tasks, jobs and body te
 the same (`"aot":"same"`) or which differ.
 -/
 import L4Factoidal.WasmVM.Hosts.Page
+import L4Factoidal.WasmVM.Hosts.LeanJS
 import L4Factoidal.WasmVM.Tests.AotPage
 import L4Factoidal.DOM.OfHtml
 import L4Factoidal.DOM.OfXml
@@ -119,6 +120,40 @@ def aotRun (e : Tests.AotPage.Engine) (root dir : System.FilePath) (dom : Dom) (
         ("aotFuel", jn s2.steps), ("aotMs", jn ((d1 - d0) / 1000000)),
         ("aotErrors", .arr ((s2.errors.toList.take 3).toArray.map .str))], !diffs.isEmpty)
 
+/-- `--bubblepop`: the same pages on BubblePopJS (`Hosts.LeanJS`; WASM is not read). No
+iframes. -/
+def runBubblePop (root : String) (files : List String) (settleMs commands rate : Nat) : IO UInt32 := do
+  let t0 ← IO.monoNanosNow
+  let base ← match Hosts.LeanJS.prepare { commands, logs := 100000 } with
+    | .ok b => pure b
+    | .error e => throw (IO.userError e)
+  let t1 ← IO.monoNanosNow
+  IO.eprintln s!"BubblePopJS: prelude {(t1 - t0) / 1000000} ms"
+  for f in files do
+    let file : System.FilePath := if f.startsWith "/" then f else System.FilePath.mk root / f
+    let html ← IO.FS.readFile file
+    let dom := parseHtmlDocument html
+    let dir := file.parent.getD "."
+    let mut scripts := #[]
+    for (node, src, text) in scriptElements dom do
+      let source ← match src with
+        | some s => readScript root dir s
+        | none => pure text
+      scripts := scripts.push (node, source)
+    let a ← IO.monoNanosNow
+    let s := Hosts.LeanJS.start base dom ("http://web-platform.test/" ++ f) scripts { commands, logs := 100000 } {}
+      { instructionsPerMs := rate }
+    let b ← IO.monoNanosNow
+    let (s, quiet) := Hosts.LeanJS.engine.settle s settleMs
+    let c ← IO.monoNanosNow
+    IO.println (Json.mkObj [("file", .str f), ("engine", .str "bubblepop"), ("quiet", .bool quiet),
+      ("clock", jn (Hosts.LeanJS.engine.loop s).clock), ("logs", .arr (s.logs.map .str)), ("errors", .arr (s.errors.map .str)),
+      ("commands", jn s.commands.size), ("tasks", jn s.tasks), ("jobs", jn s.jobs), ("instructions", jn s.steps),
+      ("wasmInstructions", jn s.host.wasm.steps),
+      ("startMs", jn ((b - a) / 1000000)), ("settleMs", jn ((c - b) / 1000000)),
+      ("body", .str ((bodyText s.host.dom.dom).take 400).toString)]).compress
+  return 0
+
 def run (args : List String) : IO UInt32 := do
   let (wasm, root, rest) ← match args with
     | w :: r :: rest => pure (w, r, rest)
@@ -129,6 +164,7 @@ def run (args : List String) : IO UInt32 := do
   -- The rate of the script clock (`ScriptClock`): the engine's by default.
   let mut rate := 100000
   let mut aot := false
+  let mut bubble := false
   let xs := rest.toArray
   let mut i := 0
   while i < xs.size do
@@ -137,7 +173,9 @@ def run (args : List String) : IO UInt32 := do
     | "--commands" => commands := (xs[i+1]?.bind String.toNat?).getD commands; i := i + 2
     | "--instructions-per-ms" => rate := max 1 ((xs[i+1]?.bind String.toNat?).getD rate); i := i + 2
     | "--aot" => aot := true; i := i + 1
+    | "--bubblepop" => bubble := true; i := i + 1
     | f => files := files.push f; i := i + 1
+  if bubble then return ← runBubblePop root files.toList settleMs commands rate
   let t0 ← IO.monoNanosNow
   let bytes ← IO.FS.readBinFile wasm
   let m ← match prepare bytes with
@@ -197,7 +235,8 @@ def run (args : List String) : IO UInt32 := do
       IO.println (Json.mkObj ([("file", .str f), ("quiet", .bool quiet), ("clock", jn s.loop.clock),
         ("logs", .arr (s.logs.map .str)), ("errors", .arr (s.errors.map .str)),
         ("commands", jn s.commands.size), ("tasks", jn s.tasks), ("jobs", jn s.jobs),
-        ("instructions", jn s.steps), ("startMs", jn ((b - a) / 1000000)), ("settleMs", jn ((c - b) / 1000000)),
+        ("instructions", jn s.steps), ("wasmInstructions", jn s.host.wasm.steps),
+        ("startMs", jn ((b - a) / 1000000)), ("settleMs", jn ((c - b) / 1000000)),
         ("body", .str ((bodyText s.host.dom.dom).take 400).toString)] ++ aotField)).compress
   return if bad == 0 then 0 else 1
 

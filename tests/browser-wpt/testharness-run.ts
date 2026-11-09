@@ -44,7 +44,7 @@ const here=dirname(fromFileUrl(import.meta.url)),root=resolve(here,"../.."),
   wpt=resolve(opt("--wpt-root",join(root,"third_party/testing/wpt-scripting")));
 // The pinned WPT copies, one tree to the tests: a path is in the first copy that has it
 // (the --wpt-root checkout, or wpt-scripting, first).
-const roots=[wpt,...["wpt-encoding","wpt-url","wpt-webapis"].map(r=>join(root,"third_party/testing",r))];
+const roots=[...new Set([wpt,...["wpt-scripting","wpt-encoding","wpt-url","wpt-webapis","wpt-wasm"].map(r=>join(root,"third_party/testing",r))])];
 const exists=(p:string)=>{try{Deno.statSync(p);return true;}catch{return false;}};
 const wptFile=(path:string)=>join(roots.find(r=>exists(join(r,path)))??wpt,path);
 const engineKind=opt("--engine","native");
@@ -109,7 +109,8 @@ export function wrapper(file:string):string {
   const meta=metaOf(Deno.readTextFileSync(wptFile(file)));
   const title=meta.find(([k])=>k==="title")?.[1];
   const long=meta.some(([k,v])=>k==="timeout"&&v==="long");
-  const scripts=meta.filter(([k])=>k==="script").map(([,v])=>v);
+  // A relative META script is relative to the test file (the generated page may live elsewhere).
+  const scripts=meta.filter(([k])=>k==="script").map(([,v])=>v.startsWith("/")?v:new URL(v,`${origin}/${file}`).pathname);
   return `<!doctype html>\n<meta charset=utf-8>\n${long?'<meta name="timeout" content="long">\n':""}${title?`<title>${escapeHTML(title)}</title>\n`:""}`+
     `<script>\nself.GLOBAL = {isWindow: function() { return true; }, isWorker: function() { return false; }, isShadowRealm: function() { return false; }};\n</script>\n`+
     `<script src="/resources/testharness.js"></script>\n<script src="/resources/testharnessreport.js"></script>\n`+
@@ -313,7 +314,7 @@ async function benchBackend():Promise<{run:Run;info:Record<string,unknown>}> {
       await Deno.writeTextFile(join(served,page),wrapper(file));}
     const t0=performance.now();
     const out=await new Deno.Command(exe,{args:["page",quickjs,served,page,"--settle","70000","--commands","200000",
-      "--instructions-per-ms",String(scriptRate)],stdout:"piped",stderr:"null"}).output();
+      "--instructions-per-ms",String(scriptRate),...(scriptEngine==="bubblepop"?["--bubblepop"]:[])],stdout:"piped",stderr:"null"}).output();
     const line=new TextDecoder().decode(out.stdout).trim().split("\n").pop()??"{}";
     const r=JSON.parse(line||"{}");
     if(r.error)return {file,harness:"ERROR",message:r.error,subtests:[]};
