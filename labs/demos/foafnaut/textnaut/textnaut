@@ -2,7 +2,7 @@
 # textnaut: start the text-mode browser. Link this file onto your PATH; it finds its own directory.
 #
 # The engine library is not in the repository. It is taken from, in order: $TEXTNAUT_NATIVE,
-# this checkout's build, the installed `foafnaut` release. With none of these, set TEXTNAUT_WASM_DIR.
+# this checkout's build, the bleeding-edge build, the installed `foafnaut` release. With none of these, set TEXTNAUT_WASM_DIR.
 # Screensavers need no engine.
 set -eu
 
@@ -22,10 +22,14 @@ if [ -z "${TEXTNAUT_NATIVE:-}" ] && [ -z "${TEXTNAUT_WASM_DIR:-}" ]; then
     Darwin) lib=libweb-render.dylib ;;
     *) lib=libweb-render.so ;;
   esac
+  home=${FOAFNAUT_HOME:-$HOME/.foafnaut}
+  # The local build named by `foafnaut --bleeding-edge`, when there is one.
+  bleeding=$(sed -n 's/.*"bleedingEdge"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$home/config.json" 2>/dev/null || true)
   for candidate in \
     "$here/../.build/web-render/engines/$lib" \
     "$here/../.build/engines/$lib" \
-    "${FOAFNAUT_HOME:-$HOME/.foafnaut}/current/foafnaut/$lib"; do
+    "${bleeding%/*}/$lib" \
+    "$home/current/foafnaut/$lib"; do
     if [ -f "$candidate" ]; then
       TEXTNAUT_NATIVE=$candidate
       export TEXTNAUT_NATIVE
