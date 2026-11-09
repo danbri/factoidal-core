@@ -104,6 +104,9 @@ target Hacl_RSAPSS.o pkg : FilePath :=
 target hacl_webcrypto_shim.o pkg : FilePath :=
   buildHaclO pkg "hacl_webcrypto_shim" (pkg.dir / "ffi" / "hacl_webcrypto.c")
 
+target hacl_webcrypto_core.o pkg : FilePath :=
+  buildHaclO pkg "hacl_webcrypto_core" (pkg.dir / "ffi" / "hacl_webcrypto_core.c")
+
 target hacl_kdf_shim.o pkg : FilePath :=
   buildHaclO pkg "hacl_kdf_shim" (pkg.dir / "ffi" / "hacl_kdf.c")
 
@@ -205,6 +208,7 @@ extern_lib libl4hacl pkg := do
   let cpShim ← hacl_chachapoly_shim.o.fetch
   let kdfShim ← hacl_kdf_shim.o.fetch
   let webShim ← hacl_webcrypto_shim.o.fetch
+  let webCore ← hacl_webcrypto_core.o.fetch
   let rsapss ← Hacl_RSAPSS.o.fetch
   let hpkeShim ← hacl_hpke_shim.o.fetch
   let aead ← Hacl_AEAD_Chacha20Poly1305.o.fetch
@@ -226,7 +230,7 @@ extern_lib libl4hacl pkg := do
   let name := nameToStaticLib "l4hacl"
   buildStaticLib (pkg.staticLibDir / name)
     (#[shim, ed, curve, sha2, p256Shim, rsaShim, p256, bn64, bn,
-      cpShim, kdfShim, hpkeShim, webShim, rsapss,
+      cpShim, kdfShim, hpkeShim, webShim, webCore, rsapss,
       aead, chacha, poly, hkdf, hmac, sha1, blake2s, blake2b, memzero, hpke,
       aesShim] ++ vale)
 

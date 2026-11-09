@@ -83,7 +83,7 @@ while IFS= read -r file; do SOURCES+=("$file"); done < "$BUILD/core-c-files.txt"
 HACL="$ROOT/third_party/hacl"
 # ffi/hacl_rsa.c: the externs of Crypto/RsaNative and Crypto/RsaOaep, which WebCryptoKeys imports for
 # EME-OAEP (their compiled code names them; the web engine calls its own RSA entries).
-HACL_SOURCES=("$PROJECT/ffi/hacl_webcrypto.c" "$PROJECT/ffi/hacl_rsa.c")
+HACL_SOURCES=("$PROJECT/ffi/hacl_webcrypto.c" "$PROJECT/ffi/hacl_webcrypto_core.c" "$PROJECT/ffi/hacl_rsa.c")
 for unit in Hacl_Hash_SHA1 Hacl_Hash_SHA2 Hacl_HMAC Hacl_Hash_Blake2s Hacl_Hash_Blake2b Hacl_Ed25519 \
   Hacl_Curve25519_51 Hacl_P256 Hacl_AEAD_Chacha20Poly1305 Hacl_Chacha20 Hacl_MAC_Poly1305 Hacl_Bignum Hacl_Bignum64 Hacl_RSAPSS Lib_Memzero0; do
   HACL_SOURCES+=("$HACL/src/$unit.c")
