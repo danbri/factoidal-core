@@ -331,6 +331,45 @@ def remember (fonts : Array Font) (memo : Memo) (texts : Array String) (limit : 
       if let .ok word := wordIn fonts text 16 then out := out.insert text ⟨word,flatWord word⟩
   return out
 
+/-! ### Shaped words kept across layouts (realperf)
+
+The memo of `profile` holds the words of the document's text nodes. Layout also asks for
+words that are not there (pieces of words cut by bidi levels, a word in a direction other
+than its script's), and before this each layout shaped those again: on Wikipedia's FOAF
+article, 70% of the time of a relayout after the cascade (record
+docs/designissues/2026-11-09-real-site-layout-speed.md). `shapeKept` is `shapeFresh`;
+its implementation keeps what it shapes, by the fonts, the text, the size and the
+direction, so that no layout of the session shapes a word twice. -/
+
+/-- A word of `fonts` at `px` pixels, in direction `rtl` (`none`: its script's), as the
+profile hands it to layout: the plain function. -/
+def shapeFresh (fonts : Array Font) (text : String) (px : Nat) (rtl : Option Bool) : Except String FontProvider.Word := do
+  let word ← wordIn fonts text px rtl
+  return {(if px < flatBelow then flatWord word else word) with pixelSize := px}
+
+/-- What names `fonts` in the kept table: each font's SHA-256 and face. -/
+def fontsKey (fonts : Array Font) : String :=
+  fonts.foldl (fun k f => k ++ f.sha256 ++ ":" ++ toString f.faceIndex ++ ";") ""
+
+/-- Words kept at most; the table starts again when full. -/
+def keptWordLimit : Nat := 16384
+
+initialize shapedKept : IO.Ref (Std.HashMap (String × String × Nat × Option Bool) (Except String FontProvider.Word)) ← IO.mkRef {}
+
+private unsafe def shapeKeptImpl (key : String) (fonts : Array Font) (text : String) (px : Nat) (rtl : Option Bool) :
+    Except String FontProvider.Word :=
+  unsafeBaseIO do
+    let k := (key,text,px,rtl)
+    if let some w := (← shapedKept.get)[k]? then return w
+    let w := shapeFresh fonts text px rtl
+    shapedKept.modify fun m => (if m.size ≥ keptWordLimit then {} else m).insert k w
+    return w
+
+/-- `shapeFresh`, kept: `key` is `fontsKey fonts`, which the caller makes once. -/
+@[implemented_by shapeKeptImpl, noinline]
+def shapeKept (_key : String) (fonts : Array Font) (text : String) (px : Nat) (rtl : Option Bool) :
+    Except String FontProvider.Word := shapeFresh fonts text px rtl
+
 /-- The memo is only a shortcut: a word that is not in it is shaped when asked for.
 The profile is named by the first font of `fonts`; the others draw what it lacks. -/
 def profile (fonts : Array Font) (memo : Memo) : Except String Layout.FontProfile := do
@@ -338,17 +377,13 @@ def profile (fonts : Array Font) (memo : Memo) : Except String Layout.FontProfil
   let space ← match memo.get? " " with
     | some shaped => pure shaped.curves
     | none => wordIn fonts " " 16
+  let key := fontsKey fonts
   let shapedWord := fun (text : String) (px : Nat) => do
-    let word ← match memo.get? text with
-      | some shaped => pure (if px < flatBelow then shaped.flat else shaped.curves)
-      | none => do
-        let word ← wordIn fonts text px
-        pure (if px < flatBelow then flatWord word else word)
-    return {word with pixelSize := px}
+    match memo.get? text with
+    | some shaped => return {(if px < flatBelow then shaped.flat else shaped.curves) with pixelSize := px}
+    | none => shapeKept key fonts text px none
   -- A word in a direction other than its script's (bidi levels in layout) is not in the memo.
-  let shapedWordDir := fun (text : String) (px : Nat) (rtl : Bool) => do
-    let word ← wordIn fonts text px (some rtl)
-    return {(if px < flatBelow then flatWord word else word) with pixelSize := px}
+  let shapedWordDir := fun (text : String) (px : Nat) (rtl : Bool) => shapeKept key fonts text px (some rtl)
   return {
     family := f.family,unitsPerEm := space.unitsPerEm,advance := 0,ascent := space.ascent,
     descent := space.descent,outline := fun _ => [],admits := fun _ => false,cssFamilies := [f.family],
