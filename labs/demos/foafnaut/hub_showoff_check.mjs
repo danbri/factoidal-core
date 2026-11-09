@@ -3,10 +3,12 @@
 // <animateTransform> 1 -> 40 -> 1 over 2 s. Checks, in headless Chrome with WebGPU: frames keep
 // coming with no script and no input (the animation clock), and no web font is refused. Prints
 // the engine time of each frame (layoutMs: Lean's render) and the frame rate.
-//   node labs/demos/foafnaut/hub_showoff_check.mjs [--runtime DIR] [--shot FILE]
+//   node labs/demos/foafnaut/hub_showoff_check.mjs [--runtime DIR] [--shot FILE] [--pages DIR --page NAME]
+import http from 'node:http';import zlib from 'node:zlib';import fs from 'node:fs';import path from 'node:path';
+import {spawn} from 'node:child_process';import {fileURLToPath} from 'node:url';
 const opt=(name,fallback)=>{const i=process.argv.indexOf(name);return i>0?process.argv[i+1]:fallback;};
 const hubDir=fileURLToPath(new URL('../../../docs/web/hub/foafnaut/',import.meta.url));
-const pagesDir=fileURLToPath(new URL('./fixtures/showoff/',import.meta.url));
+const pagesDir=opt('--pages',fileURLToPath(new URL('./fixtures/showoff/',import.meta.url)));
 const fontsDir=fileURLToPath(new URL('../../../third_party/fonts/',import.meta.url));
 const runtimeDir=opt('--runtime',fileURLToPath(new URL('./.build/web-render/engines/',import.meta.url)));
 const pageName=opt('--page','zoom-hub.html');

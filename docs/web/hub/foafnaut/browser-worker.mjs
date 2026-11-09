@@ -1088,7 +1088,7 @@ function scrollTo(next){
 // it is a composite. Its first answer also says whether this engine makes layers at all.
 function scheduleBand(){
   clearTimeout(bandTimer);
-  if(layered===false||!L||!doc||canShift())return;
+  if(layered===false||!L||!doc||canShift()||doc.animation?.running)return;
   bandTimer=setTimeout(async()=>{
     if(drawing||dirty||shiftPending||canShift()||layered===false)return;
     const options=renderOptions(scroll),shownDoc=doc,at=scroll;
@@ -1107,6 +1107,9 @@ function scheduleBand(){
       current={answer,doc:shownDoc,source:shownDoc.source,width,height,sig:signature(options),fold:options.shell.collapse??0};
       shownOffset=L.clampOffset(answer.layers,at).offset;frame=answer.page;
       if(scroll!==at||current.fold!==foldNow())shiftPending=true;
+      // The first band is the first answer that says the page has SVG animations.
+      const clock=animationOf(shownDoc);clock.has=!!answer.layers.animations;clock.running=!!answer.layers.animating;
+      if(clock.running&&doc===shownDoc){bandWanted=true;dirty=true;}
     }catch(error){console.warn('foafnaut: the band was not drawn:',String(error));current=undefined;}
     finally{drawing=false;incoming=undefined;}
     if(shiftPending||dirty)draw();
@@ -1275,7 +1278,7 @@ async function draw(){
           current={answer:layers,doc,source:doc.source,width,height,sig:signature(options),fold};shownOffset=offset;frame=layers.page;
           clock.has=!!layers.layers.animations;clock.running=!!layers.layers.animating;
           // The next animation frame, after this one is posted.
-          if(clock.running){const page=doc;setTimeout(()=>{if(doc===page&&page.animation?.running)request();},1);}
+          if(clock.running){const page=doc;setTimeout(()=>{if(doc===page&&page.animation?.running){bandWanted=true;request();}},1);}
           path=swapped?'band':'layers';
           // A band made at another fold: the chrome layer is drawn again at the next shift.
           if(fold!==foldNow())shiftPending=true;
