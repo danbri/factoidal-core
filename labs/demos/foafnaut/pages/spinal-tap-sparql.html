@@ -2,11 +2,13 @@
 <html lang="en"><head><meta charset="utf-8"><title>Spın̈al Tap SPARQL client</title>
 <link rel="icon" type="image/svg+xml" href="foafnaut-icon.svg">
 <style>
-/* The blackletter face (OFL; third_party/fonts/unifraktur-maguntia). First the Hub's copy
-   (web/hub/foafnaut/fonts, next to pages/), then the repository's. */
-@font-face { font-family:'UnifrakturMaguntia'; font-display:swap;
-  src:url('../fonts/unifraktur-maguntia/UnifrakturMaguntia-Book.ttf') format('truetype'),
-      url('../../../../third_party/fonts/unifraktur-maguntia/UnifrakturMaguntia-Book.ttf') format('truetype') }
+/* The Fraktur letters (U+1D504 to U+1D537) come from Noto Sans Math (OFL;
+   third_party/fonts/noto-sans-math), Foafnaut's fallback font for them. Other browsers get the
+   same face here, so the diaeresis drawn over the n sits where it does in Foafnaut. First the
+   Hub's copy (web/hub/foafnaut/fonts, beside pages/), then the repository's. */
+@font-face { font-family:'Noto Sans Math'; font-display:swap;
+  src:url('../fonts/noto-sans-math/NotoSansMath-Regular.ttf') format('truetype'),
+      url('../../../../third_party/fonts/noto-sans-math/NotoSansMath-Regular.ttf') format('truetype') }
 body { margin:0; padding:16px; font-family:'Noto Sans', system-ui, sans-serif; font-size:14px; line-height:20px; color:#d6dae1; background:#070709 }
 main { max-width:760px; margin:0 auto }
 a { color:#e2b85a }
@@ -48,38 +50,42 @@ td.empty { background:#070709; border:0 }
 .about { padding-top:14px; color:#6f7785; font-size:12px; line-height:18px }
 </style></head><body><main>
 <p class="nav"><a href="index.html">Demo index</a> · a SPARQL client for Wikidata, through QLever</p>
-<!-- The wordmark: original angular lettering drawn as SVG paths for this page (not the band's
-     logo). Chrome fill, black cut line and a flame edge; the two diamonds over the n are the
-     diaeresis of n̈. Lean draws every path. -->
-<div class="mark" aria-label="Spinal Tap"><svg width="728" height="229" viewBox="-14 -26 578 182"><title>Spinal Tap</title>
+<!-- The wordmark: the band's name in Mathematical Fraktur letters (real text, Noto Sans Math),
+     with chrome fill, a black cut line and a flame edge: three uses of one group. Fraktur has no
+     dotless i, so it is 𝔦. The diaeresis over the 𝔫 is drawn here as two diamonds: U+0308 after a
+     Fraktur letter comes from another font, and Foafnaut does not place such marks yet. -->
+<div class="mark" aria-label="Spinal Tap"><svg width="728" height="200" viewBox="0 0 728 200"><title>Spinal Tap</title>
 <defs>
-<linearGradient id="chrome" gradientUnits="userSpaceOnUse" x1="0" y1="-12" x2="0" y2="142">
-<stop offset="0" stop-color="#ffffff"/><stop offset="0.28" stop-color="#cfd6df"/><stop offset="0.47" stop-color="#6c7682"/><stop offset="0.49" stop-color="#16191f"/><stop offset="0.62" stop-color="#59626e"/><stop offset="0.8" stop-color="#e8edf3"/><stop offset="1" stop-color="#8a939e"/>
+<linearGradient id="chrome" gradientUnits="userSpaceOnUse" x1="0" y1="35" x2="0" y2="180">
+<stop offset="0" stop-color="#ffffff"/><stop offset="0.3" stop-color="#cfd6df"/><stop offset="0.5" stop-color="#6c7682"/><stop offset="0.52" stop-color="#16191f"/><stop offset="0.66" stop-color="#59626e"/><stop offset="0.82" stop-color="#e8edf3"/><stop offset="1" stop-color="#8a939e"/>
 </linearGradient>
-<linearGradient id="flame" gradientUnits="userSpaceOnUse" x1="0" y1="-12" x2="0" y2="142">
+<linearGradient id="flame" gradientUnits="userSpaceOnUse" x1="0" y1="35" x2="0" y2="180">
 <stop offset="0" stop-color="#ffd23a"/><stop offset="0.5" stop-color="#ff6a00"/><stop offset="1" stop-color="#b3120a"/>
 </linearGradient>
-<path id="wm" d="M39.6 0 99.6 0 96.8 14 36.8 14ZM39.6 0 53.6 0 42.2 57 28.2 57ZM31 43 91 43 88.2 57 28.2 57ZM77 43 91 43 79.6 100 65.6 100ZM22.4 86 82.4 86 79.6 100 19.6 100ZM83.6 0 116 -12 96.8 14ZM22.4 86 33.6 100 3.2 112ZM101.4 36 115.4 36 97 128 83 128ZM83 128 97 128 87.2 142ZM101.4 36 151.4 36 148.6 50 98.6 50ZM137.4 36 151.4 36 138.6 100 124.6 100ZM91.4 86 141.4 86 138.6 100 88.6 100ZM101.4 36 98.6 50 89.8 34ZM160.4 36 174.4 36 161.6 100 147.6 100ZM160.4 36 157.6 50 148.8 34ZM150.4 86 161.6 100 141.6 100ZM183.4 36 197.4 36 184.6 100 170.6 100ZM183.4 36 233.4 36 230.6 50 180.6 50ZM219.4 36 233.4 36 220.6 100 206.6 100ZM183.4 36 180.6 50 171.8 34ZM209.4 86 220.6 100 227 108ZM191 8 196.6 15 188.2 22 182.6 15ZM219 8 224.6 15 216.2 22 210.6 15ZM246.4 36 292.4 36 289.6 50 243.6 50ZM278.4 36 292.4 36 279.6 100 265.6 100ZM237.2 62 287.2 62 284.4 76 234.4 76ZM237.2 62 251.2 62 243.6 100 229.6 100ZM232.4 86 282.4 86 279.6 100 229.6 100ZM268.4 86 279.6 100 286 108ZM308.6 0 322.6 0 302.6 100 288.6 100ZM308.6 0 305.8 14 297 -2ZM291.4 86 302.6 100 282.6 100ZM305.4 86 314.6 100 302.6 100ZM361.6 0 435.6 0 432.8 14 358.8 14ZM391.6 0 405.6 0 385.6 100 371.6 100ZM371.6 100 385.6 100 375.4 116ZM358.8 14 372.8 14 358.6 30ZM418.8 14 432.8 14 426.6 30ZM361.6 0 358.8 14 350.8 -6ZM435.6 0 448.8 -6 432.8 14ZM441.4 36 487.4 36 484.6 50 438.6 50ZM473.4 36 487.4 36 474.6 100 460.6 100ZM432.2 62 482.2 62 479.4 76 429.4 76ZM432.2 62 446.2 62 438.6 100 424.6 100ZM427.4 86 477.4 86 474.6 100 424.6 100ZM463.4 86 474.6 100 481 108ZM496.4 36 510.4 36 492 128 478 128ZM478 128 492 128 482.2 142ZM496.4 36 546.4 36 543.6 50 493.6 50ZM532.4 36 546.4 36 533.6 100 519.6 100ZM486.4 86 536.4 86 533.6 100 483.6 100ZM496.4 36 493.6 50 484.8 34Z"/>
+<g id="wm"><text x="31.8" y="150" font-size="150" font-family="'Noto Sans Math', serif">𝔖𝔭𝔦𝔫𝔞𝔩 𝔗𝔞𝔭</text>
+<path d="M267.1 44 277.1 54 267.1 64 257.1 54ZM299.1 44 309.1 54 299.1 64 289.1 54Z"/></g>
 </defs>
-<use href="#wm" fill="none" stroke="url(#flame)" stroke-width="14" stroke-linejoin="miter"/>
-<use href="#wm" fill="none" stroke="#000" stroke-width="7" stroke-linejoin="miter"/>
+<use href="#wm" fill="none" stroke="url(#flame)" stroke-width="12" stroke-linejoin="round"/>
+<use href="#wm" fill="none" stroke="#000" stroke-width="5" stroke-linejoin="round"/>
 <use href="#wm" fill="url(#chrome)"/>
 </svg></div>
 <p class="lede">Seven SPARQL queries about the band, the films and the people in them. Every fact on the cards is a row from Wikidata.</p>
 
-<!-- The zoom: the band's name as real text in a blackletter face, scaled from 1 to 40 and back
-     round the n̈; then it fades into "Föafn̈aut", this browser's name with the same n̈ and an ö.
-     Text stays sharp at every scale: Lean draws the glyph outlines. Only transforms and opacity
-     change, so every frame is paint only. -->
+<!-- The zoom: the band's name in Fraktur letters, scaled from 1 to 40 and back round the
+     diaeresis of the 𝔫 (the eye flies between its two diamonds); then it fades into "𝔉𝔬𝔞𝔣𝔫𝔞𝔲𝔱",
+     this browser's name, with the same diamonds over 𝔬 and 𝔫. Text stays sharp at every scale:
+     Lean draws the glyph outlines. Only transforms and opacity change: paint only. -->
 <div class="stage" style="overflow:clip" aria-label="Spinal Tap, then Foafnaut">
-<svg id="zoomsvg" width="728" height="150" viewBox="0 0 728 150">
+<svg id="zoomsvg" width="728" height="150" viewBox="0 0 728 150"><title>Spinal Tap, then Foafnaut</title>
 <rect width="728" height="150" fill="#0d0d11"/>
-<g transform="translate(320 60)"><g id="zoom">
-<g transform="translate(-320 -60)"><text id="gothic" x="364" y="104" text-anchor="middle" font-size="80" font-family="'Noto Sans Math', serif" fill="#eef1f5" stroke="#ff6a00" stroke-width="1.2">𝔖𝔭𝔦𝔫̈𝔞𝔩 𝔗𝔞𝔭</text></g>
+<g transform="translate(320.8 52.8)"><g id="zoom">
+<g transform="translate(-320.8 -52.8)"><text id="gothic" x="186.8" y="104" font-size="80" font-family="'Noto Sans Math', serif" fill="#eef1f5" stroke="#ff6a00" stroke-width="1.2">𝔖𝔭𝔦𝔫𝔞𝔩 𝔗𝔞𝔭</text>
+<path id="gothicdots" d="M312 47.3 317.5 52.8 312 58.3 306.5 52.8ZM329.6 47.3 335.1 52.8 329.6 58.3 324.1 52.8Z" fill="#eef1f5" stroke="#ff6a00" stroke-width="1.2"/></g>
 </g></g>
-<text id="signoff" opacity="0" x="364" y="104" text-anchor="middle" font-size="80" font-family="'Noto Sans Math', serif" fill="#e2b85a" stroke="#ff3b12" stroke-width="1.2">𝔉𝔬̈𝔞𝔣𝔫̈𝔞𝔲𝔱</text>
+<text id="signoff" opacity="0" x="225.5" y="104" font-size="80" font-family="'Noto Sans Math', serif" fill="#e2b85a" stroke="#ff3b12" stroke-width="1.2">𝔉𝔬𝔞𝔣𝔫𝔞𝔲𝔱</text>
+<path id="signoffdots" opacity="0" d="M283.3 47.3 288.8 52.8 283.3 58.3 277.8 52.8ZM300.9 47.3 306.4 52.8 300.9 58.3 295.4 52.8ZM380.9 47.3 386.4 52.8 380.9 58.3 375.4 52.8ZM398.5 47.3 404 52.8 398.5 58.3 393 52.8Z" fill="#e2b85a" stroke="#ff3b12" stroke-width="1.2"/>
 </svg>
-<p class="stagebar"><button id="zoombtn">Zoom in</button><button id="gainbtn">Gain 0: turn it up</button><span id="gainknob"></span> <span id="zoominfo">Scale 1 to 40 and back round the n̈ (n and U+0308 COMBINING DIAERESIS), then Föafn̈aut.</span></p>
+<p class="stagebar"><button id="zoombtn">Zoom in</button><button id="gainbtn">Gain 0: turn it up</button><span id="gainknob"></span> <span id="zoominfo">Scale 1 to 40 and back, between the two dots over the 𝔫, then 𝔉𝔬𝔞𝔣𝔫𝔞𝔲𝔱.</span></p>
 </div>
 
 <div class="picker" id="picker"></div>
@@ -496,7 +502,8 @@ tools();
 // ---- The zoom: declarative (SVG animateTransform on the engine's clock) where the browser has
 // it, else one transform a frame from requestAnimationFrame. ----
 const SVGNS = 'http://www.w3.org/2000/svg';
-const zoom = $('zoom'), signoff = $('signoff'), gothic = $('gothic');
+const zoom = $('zoom'), gothic = $('gothic');
+const outgoing = [gothic, $('gothicdots')], incoming = [$('signoff'), $('signoffdots')];
 const ZOOM_MS = 7000, FADE_MS = 1400, TOTAL_MS = ZOOM_MS + FADE_MS;
 const smil = (() => { try { return typeof document.createElementNS(SVGNS, 'animateTransform').beginElement === 'function'; } catch (e) { return false; } })();
 // A Foafnaut without declarative animation lays out the page again for each transform, so
@@ -516,8 +523,8 @@ if (smil) {
   const times = scales.map((_, i) => i < scales.length - 1 ? (i / (scales.length - 2) * z).toFixed(4) : '1');
   const dur = TOTAL_MS / 1000 + 's';
   animation('animateTransform', zoom, {attributeName: 'transform', type: 'scale', dur, begin: 'indefinite', values: scales.join(';'), keyTimes: times.join(';')});
-  animation('animate', gothic, {attributeName: 'opacity', dur, begin: 'indefinite', values: '1;1;0', keyTimes: '0;' + z.toFixed(4) + ';1', fill: 'freeze'});
-  animation('animate', signoff, {attributeName: 'opacity', dur, begin: 'indefinite', values: '0;0;1', keyTimes: '0;' + z.toFixed(4) + ';1', fill: 'freeze'});
+  for (const el of outgoing) animation('animate', el, {attributeName: 'opacity', dur, begin: 'indefinite', values: '1;1;0', keyTimes: '0;' + z.toFixed(4) + ';1', fill: 'freeze'});
+  for (const el of incoming) animation('animate', el, {attributeName: 'opacity', dur, begin: 'indefinite', values: '0;0;1', keyTimes: '0;' + z.toFixed(4) + ';1', fill: 'freeze'});
 }
 function measure(stop) {
   // Frame intervals while the zoom runs; the median is the frame time shown.
@@ -531,8 +538,8 @@ function pose(e) {
   const k = Math.min(1, e / ZOOM_MS), f = Math.min(1, Math.max(0, (e - ZOOM_MS) / FADE_MS));
   const u = k < 0.45 ? ease(k / 0.45) : k < 0.55 ? 1 : ease((1 - k) / 0.45);
   zoom.setAttribute('transform', 'scale(' + Math.pow(PEAK, u).toFixed(3) + ')');
-  gothic.setAttribute('opacity', (1 - ease(f)).toFixed(3));
-  signoff.setAttribute('opacity', ease(f).toFixed(3));
+  for (const el of outgoing) el.setAttribute('opacity', (1 - ease(f)).toFixed(3));
+  for (const el of incoming) el.setAttribute('opacity', ease(f).toFixed(3));
   return f < 1;
 }
 function startZoom() {
@@ -558,28 +565,15 @@ function holdAt(ms) {
 }
 $('zoombtn').addEventListener('click', startZoom);
 
-// ---- Blackletter: Fraktur letters (Noto Sans Math) by default; a blackletter web font with
-// plain Latin text where the browser loads it (document.fonts.load says so). ----
-const BLACKLETTER = 'UnifrakturMaguntia';
-let latin = false;
-if (document.fonts && document.fonts.load)
-  document.fonts.load('80px ' + BLACKLETTER, 'Spın̈al').then(faces => {
-    if (!faces || !faces.length) return;
-    latin = true;
-    for (const t of [gothic, signoff]) t.setAttribute('font-family', BLACKLETTER + ', serif');
-    signoff.firstChild.nodeValue = 'Föafn̈aut';
-    setGain(gain);
-  }, () => {});
-
 // ---- Up to eleven: 0 to 11 combining marks on each letter of the gothic name (Zalgo text).
 // Each mark is a real combining character; the shaper stacks them, the stage clips them. ----
-const LETTERS = ['𝔖', '𝔭', '𝔦', '𝔫\u0308', '𝔞', '𝔩', ' ', '𝔗', '𝔞', '𝔭'], LATIN = ['S', 'p', 'ı', 'n\u0308', 'a', 'l', ' ', 'T', 'a', 'p'];
+const LETTERS = ['𝔖', '𝔭', '𝔦', '𝔫', '𝔞', '𝔩', ' ', '𝔗', '𝔞', '𝔭'];
 const ABOVE = [0x300, 0x301, 0x302, 0x303, 0x304, 0x306, 0x307, 0x308, 0x30a, 0x30b, 0x30c, 0x311, 0x313, 0x314, 0x33d, 0x346, 0x34a, 0x350, 0x357, 0x35b];
 const BELOW = [0x316, 0x317, 0x318, 0x319, 0x31c, 0x31d, 0x31e, 0x31f, 0x320, 0x323, 0x324, 0x325, 0x326, 0x329, 0x32a, 0x32b, 0x32c, 0x32d, 0x32e, 0x330];
 let gain = 0;
 function zalgo(level) {
   let out = '', seed = 11;
-  for (const l of latin ? LATIN : LETTERS) {
+  for (const l of LETTERS) {
     out += l;
     if (l === ' ') continue;
     for (let i = 0; i < level; i++) {
@@ -608,7 +602,7 @@ function engineReport() {
     '<b>cards</b> ' + built.cards + ' in one batch (' + innerSetter + ')' + (built.ms > 0 ? ', ' + built.ms.toFixed(1) + ' ms' : ''),
     '<b>zoom</b> to ' + PEAK + ': ' + (smil ? 'SVG animateTransform, on the engine clock' : 'requestAnimationFrame, one transform a frame') +
       (median ? ', frame ' + median.toFixed(1) + ' ms (' + Math.round(1000 / median) + ' fps)' : ''),
-    '<b>lettering</b> header: SVG paths; zoom: SVG text, ' + (latin ? 'web font ' + BLACKLETTER + ' (@font-face)' : 'Fraktur letters from Noto Sans Math') + '; n̈ is n + U+0308, placed by the shaper' +
+    '<b>lettering</b> Mathematical Fraktur letters as SVG text in Noto Sans Math, chrome by three uses of one group; the diaeresis over 𝔫 drawn as SVG' +
       (gain ? '; ' + gain * 9 + ' combining marks stacked' : ''),
     '<b>start</b> ' + (startMs > 0 ? startMs.toFixed(1) + ' ms of script to the first cards' : 'first cards in the first script turn')];
   setHTML($('eng'), parts.join(' · '));
@@ -621,6 +615,6 @@ setGain(0);
 const at = /[?&]at=(\d+)/.exec(location.search || '');
 if (at) holdAt(Number(at[1]));
 else if (!slowZoom) setTimeout(startZoom, 600);
-if (PEAK !== 40) $('zoominfo').textContent = 'Scale 1 to ' + PEAK + ' and back round the n̈ (n and U+0308 COMBINING DIAERESIS), then Föafn̈aut. Press Zoom in.';
+if (PEAK !== 40) $('zoominfo').textContent = 'Scale 1 to ' + PEAK + ' and back, between the two dots over the 𝔫, then 𝔉𝔬𝔞𝔣𝔫𝔞𝔲𝔱. Press Zoom in.';
 </script>
 </main></body></html>
