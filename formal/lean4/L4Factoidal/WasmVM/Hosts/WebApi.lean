@@ -162,9 +162,11 @@ declaration, the encoding is UTF-8. A byte-level decode of the page by its decla
 (HTML §13.2.3) is the hosts' to add. -/
 def documentEncoding (d : L4Factoidal.DOM.Dom) : Encoding.Encoding := Id.run do
   let nodes := d.treeOrder 0 false
-  let ascii := fun (x : String) => x.all (·.toNat < 0x80)
-  if !(nodes.all fun k => let n := d.get k; ascii n.data && n.attrs.all (fun a => ascii a.value)) then
-    return .utf_8
+  let ascii := fun (x : String) => x.toList.all (fun (c : Char) => c.toNat < 0x80)
+  let pageAscii := nodes.all fun (k : Nat) =>
+    let n : L4Factoidal.DOM.Node := d.get k
+    ascii n.data && n.attrs.all (fun (a : L4Factoidal.DOM.Attr) => ascii a.value)
+  if !pageAscii then return .utf_8
   for k in nodes do
     if L4Factoidal.DOM.Dom.isHtmlElement (d.get k) "meta" then
       let label := match attrValue? d k "charset" with
