@@ -23,7 +23,9 @@ if [ ! -s "$EM_CACHE/sysroot_install.stamp" ]; then
   TOOL_CACHE=$(python3 - "$(command -v emcc)" <<'PY'
 from pathlib import Path
 import sys
-print(Path(sys.argv[1]).resolve().parent/"cache")
+emcc=Path(sys.argv[1]).resolve().parent
+# Beside emcc in an emsdk install; ../libexec/cache in a Homebrew one.
+print(next((c for c in (emcc/"cache",emcc.parent/"libexec"/"cache") if c.is_dir()),emcc/"cache"))
 PY
 )
   mkdir -p "$EM_CACHE"
