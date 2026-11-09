@@ -182,6 +182,21 @@ private unsafe def entropyImpl (id : Nat) : ByteArray :=
     | .error _ => return ByteArray.empty)
 @[implemented_by entropyImpl, noinline] private opaque entropy (id : Nat) : ByteArray
 
+/-- Entropy for the script session of the sandboxed frame of `iframe` element `el`: 32 fresh
+bytes of the host's generator, then `frame:` and `el`. A frame's HMAC_DRBG (`Hosts.WebApi`)
+so never starts from its page's seed or another frame's: with the page's entropy it would
+repeat the page's random values, generated keys and ECDSA nonces (record
+docs/designissues/2026-11-09-crypto-boundary-security.md, finding F1). `parent` is the
+page's entropy: a frame gets none when its page has none, and the argument keeps the call
+per frame. -/
+private unsafe def frameEntropyImpl (el : Nat) (parent : ByteArray) : ByteArray :=
+  unsafeBaseIO (do
+    if parent.isEmpty then return ByteArray.empty
+    match ← (IO.getRandomBytes 32).toBaseIO with
+    | .ok b => return b ++ ("frame:" ++ toString el).toUTF8
+    | .error _ => return ByteArray.empty)
+@[implemented_by frameEntropyImpl, noinline] private opaque frameEntropy (el : Nat) (parent : ByteArray) : ByteArray
+
 def actions : List String := ["info", "load", "start", "click", "pointer", "resize", "advance", "settle", "turn", "close",
   "aotModule", "resume", "host", "frame"]
 
@@ -613,8 +628,8 @@ path (the Hub). -/
 /-- The budgets of a frame's session: an eighth of the page's instructions for one task,
 at most 32 MiB of memory, at most 4096 commands and 256 console lines, so a frame cannot
 starve its page. -/
-def frameLimits (lim : Page.Limits) : Page.Limits :=
-  { lim with fuel := lim.fuel / 8, pages := min lim.pages 512, commands := min lim.commands 4096, logs := 256, frames := false }
+def frameLimits (lim : Page.Limits) (el : Nat) : Page.Limits :=
+  { lim with entropy := frameEntropy el lim.entropy, fuel := lim.fuel / 8, pages := min lim.pages 512, commands := min lim.commands 4096, logs := 256, frames := false }
 
 /-- Tasks a frame's session may run in one round; rounds of messages in one pump; frames
 with sessions in one page. -/
@@ -627,7 +642,8 @@ structure FrameOps (σ : Type) where
   setHost : σ → Page.Host → σ
   deliver : σ → HTML.FrameSessions.Message → σ
   advanceTo : σ → Nat → σ
-  start : DOM.Dom → Array (Nat × String) → HTML.Frames.Origin × HTML.Frames.Origin → Option σ
+  /-- A frame's session for the `iframe` element `el` (its own entropy: `frameLimits`). -/
+  start : Nat → DOM.Dom → Array (Nat × String) → HTML.Frames.Origin × HTML.Frames.Origin → Option σ
   /-- A frame's navigation ends with a document: `loadFrame` of the engine. -/
   load : σ → Nat → String → Array (Nat × String) → σ
 
@@ -651,7 +667,7 @@ def pumpFrames {σ : Type} (ops : FrameOps σ) (parent : σ) (frames : Array (Na
       if !frames.any (·.1 == el) && frames.size < maxFrameSessions then
         let dom := DOM.parseHtmlDocument src
         let scripts := ((scriptSources dom (.object [])).toOption.map (·.1)).getD #[]
-        if let some c := ops.start dom scripts (f.origin, Dom.pageOrigin h.dom) then
+        if let some c := ops.start el dom scripts (f.origin, Dom.pageOrigin h.dom) then
           frames := frames.push (el, c)
   if frames.isEmpty then return (parent, frames, d.size)
   let clock := h.loop.clock
@@ -668,8 +684,8 @@ def pageFrameOps (m : Page.Module') (lim : Page.Limits) : FrameOps Page.Session 
   { host := (·.host), setHost := fun s h => { s with host := h },
     deliver := fun s msg => (s.deliverP msg).runLocal,
     advanceTo := fun s c => (s.advance c frameTasks).1,
-    start := fun dom scripts o =>
-      (Page.start m dom "about:srcdoc" scripts (frameLimits lim) #[] {} {} (some o)).toOption,
+    start := fun el dom scripts o =>
+      (Page.start m dom "about:srcdoc" scripts (frameLimits lim el) #[] {} {} (some o)).toOption,
     load := fun s el src scripts => s.loadFrame el src scripts }
 
 def leanFrameOps (base : LeanJS.Session) (lim : Page.Limits) : FrameOps LeanJS.Session :=
@@ -678,7 +694,7 @@ def leanFrameOps (base : LeanJS.Session) (lim : Page.Limits) : FrameOps LeanJS.S
       let e := LeanJS.engine
       e.checkpoint (e.dispatchWith s Page.windowId "message" (Page.messageInit msg)).1,
     advanceTo := fun s c => (LeanJS.engine.advance s c frameTasks).1,
-    start := fun dom scripts o => some (LeanJS.start base dom "about:srcdoc" scripts (frameLimits lim) {} {} (some o)),
+    start := fun el dom scripts o => some (LeanJS.start base dom "about:srcdoc" scripts (frameLimits lim el) {} {} (some o)),
     load := fun s el src scripts => LeanJS.loadFrame s el src scripts }
 
 /-- The answer of a turn of the Lean engine; the session is kept. -/
