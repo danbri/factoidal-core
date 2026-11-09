@@ -57,5 +57,5 @@ private def made := dom.size
 #guard (WebRenderScript.plan "none" 1).marker == "JS OFF" && !(WebRenderScript.plan "none" 1).run
 #guard (WebRenderScript.plan "bubblepop" 0).marker == "" && !(WebRenderScript.plan "bubblepop" 0).run
 #guard (WebRenderScript.plan "quickjs" 1 "native" "no guest module").marker == "JS REFUSED"
-#guard ((WebRenderScript.choicesHTML "quickjs").splitOn "class=\"tick\"").length == 2
+#guard ((WebRenderScript.choicesHTML "quickjs").splitOn "class=\"box boxon\"").length == 2
 #guard (WebRenderScript.plan "bubblepop" 1 "hub").marker == "JS REFUSED" && !(WebRenderScript.plan "bubblepop" 1 "hub").run

@@ -244,7 +244,9 @@ part of `settings.html` between the comments `foafnaut:scripts` and `/foafnaut:s
 def choicesHTML (setting : String) (host : String := "native") : String :=
   let current := (setting? setting).getD (defaultEngine host)
   let row := fun (e : String × String) =>
-    let box := if e.1 == current then "<span class=\"box\"><span class=\"tick\"></span></span>" else "<span class=\"box\"></span>"
+    -- The chosen row's box is filled (`boxon`): an empty block inside the inline-block box is
+    -- not painted yet (issue in showcase_gaps_test.ts), so the tick is the box's own colour.
+    let box := if e.1 == current then "<span class=\"box boxon\"></span>" else "<span class=\"box\"></span>"
     let note := if e.1 == defaultEngine host then " (default here)"
       else if !(hostRefusal e.1 host).isEmpty then " (not here yet)" else ""
     s!"<p class=\"check\"><a href=\"foafnaut:scripts/{e.1}\">{box} {e.2}{note}</a></p>"

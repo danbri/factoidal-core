@@ -625,7 +625,8 @@ async function main() {
     const open="<!--foafnaut:scripts-->",close="<!--/foafnaut:scripts-->",i=source.indexOf(open),j=source.indexOf(close);
     if(planOp&&scriptsOn&&i>=0&&j>i)try{source=source.slice(0,i+open.length)+await scriptCall("scriptChoices",scriptSetting,scriptHostKind())+source.slice(j);}catch{/* the static links */}
     const size=textZoom();
-    const box=`<span class="box">${liberal?'<span class="tick"></span>':""}</span>`;
+    // A ticked box is filled (boxon), as WebRenderScript.choicesHTML does for the script rows.
+    const box=`<span class="box${liberal?" boxon":""}"></span>`;
     return source.replace("<!--foafnaut:liberal-->",`<p class="check"><a href="foafnaut:liberal/${liberal?"off":"on"}">${box} Be liberal in what we accept</a></p>`+
       "<p>On: a page with a feature this browser does not support is drawn without it (a module script, a stylesheet that did not load, a media condition it can not read), and the console (Option-Command-J) lists what was skipped. Off: such a page is refused.</p>")
       .replace("<!--foafnaut:text-size-->",size
