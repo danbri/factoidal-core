@@ -445,9 +445,11 @@ def cullCurve (t : Transform) (x0 y0 x1 y1 : Float) (start : Point) (seg : PathS
         out := out.push (.line (segmentEnd piece))
         pending := rest
       else
-        let ps := points.map (apply t)
-        let span := max ((ps.map (·.x)).foldl max (-1e300)-(ps.map (·.x)).foldl min 1e300)
-          ((ps.map (·.y)).foldl max (-1e300)-(ps.map (·.y)).foldl min 1e300)
+        let first := apply t a
+        let (lx,hx,ly,hy) := points.foldl (fun (b : Float × Float × Float × Float) q =>
+          let p := apply t q
+          (min b.1 p.x,max b.2.1 p.x,min b.2.2.1 p.y,max b.2.2.2 p.y)) (first.x,first.x,first.y,first.y)
+        let span := max (hx-lx) (hy-ly)
         match (if span > reach && depth < 12 then halves a piece else none) with
         | some ((l,m),r) => pending := (a,l,depth+1)::(m,r,depth+1)::rest
         | none =>
