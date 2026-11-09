@@ -1,0 +1,259 @@
+/* hacl_webcrypto.c — the web engine's boundary to HACL* (crypto.subtle of page scripts).
+ *
+ * Realises the `@[extern "l4_web_hacl_*"]` opaques of
+ * formal/lean4/L4Factoidal/Crypto/WebHacl.lean over the vendored HACL* C
+ * (third_party/hacl/, cryspen/hacl-packages 05c3d8fb321ed65e3db3a6a8b853019e86fb40a2,
+ * Apache-2.0; third_party/hacl/PROVENANCE.md). Design record:
+ * docs/designissues/2026-11-09-hacl-web-crypto.md, section "The C boundary".
+ *
+ * This file is the only C between page scripts and HACL*. It holds NO cryptographic
+ * logic: every primitive is one HACL* call. Every entry point has the same shape, which
+ * tools/hacl-web-glue-audit.py checks:
+ *
+ *   1. Length checks on every argument, BEFORE any HACL* call. The Lean side has already
+ *      checked the same lengths: each extern takes a proof of its precondition
+ *      (WebHacl.lean), so a call that would fail here does not type-check there. These
+ *      checks are the second line, for a caller outside Lean.
+ *   2. The output is a FRESH Lean byte array of exactly the size the primitive writes,
+ *      allocated here. It is therefore disjoint from every input (HACL*'s F*
+ *      preconditions ask `disjoint output input`; inputs may alias each other, which
+ *      HACL* allows for read-only buffers).
+ *   3. One HACL* call.
+ *   4. On a HACL* refusal the output is zeroed (Lib_Memzero0, which the compiler may not
+ *      remove) and freed, and an EMPTY array is answered. A failure never answers a
+ *      partly written buffer.
+ *   5. Secret temporaries on the stack are zeroed with Lib_Memzero0 before return.
+ *
+ * Inputs are BORROWED (`@&` on the Lean side). HACL* takes non-const `uint8_t *` for
+ * inputs but does not write through them (its F* specifications `modifies` only the
+ * output). No function here compares secret bytes with `==`, `memcmp` or a branch:
+ * `l4_web_hacl_ct_eq` folds KaRaMeL's constant-time `FStar_UInt8_eq_mask`, the mask HACL*
+ * itself uses (Hacl_Curve25519_51_ecdh). The only branches are on lengths and on HACL*'s
+ * own success flags, which are public.
+ */
+#include <lean/lean.h>
+#include <stdint.h>
+#include <string.h>
+
+#include "Hacl_Hash_SHA1.h"
+#include "Hacl_Hash_SHA2.h"
+#include "Hacl_HMAC.h"
+#include "Hacl_Ed25519.h"
+#include "Hacl_Curve25519_51.h"
+#include "Hacl_P256.h"
+#include "Hacl_AEAD_Chacha20Poly1305.h"
+#include "lib_memzero0.h"
+
+/* The hash family at the boundary: 1 SHA-1, 2 SHA-256, 3 SHA-384, 4 SHA-512
+ * (WebHacl.HashAlg.code). */
+static size_t l4w_hash_size(uint8_t alg) {
+  switch (alg) { case 1: return 20; case 2: return 32; case 3: return 48; case 4: return 64; default: return 0; }
+}
+static size_t l4w_block_size(uint8_t alg) {
+  switch (alg) { case 1: case 2: return 64; case 3: case 4: return 128; default: return 0; }
+}
+
+static lean_obj_res l4w_empty(void) { return lean_alloc_sarray(1, 0, 0); }
+static lean_obj_res l4w_fresh(size_t n) { return lean_alloc_sarray(1, n, n); }
+/* Step 4: zero and free a fresh output that HACL* refused to fill. */
+static lean_obj_res l4w_refuse(lean_obj_res out) {
+  size_t n = lean_sarray_size(out);
+  if (n) Lib_Memzero0_memzero0(lean_sarray_cptr(out), (uint64_t)n);
+  lean_dec_ref(out);
+  return l4w_empty();
+}
+#define L4W_SIZE(x) lean_sarray_size(x)
+#define L4W_PTR(x) lean_sarray_cptr(x)
+
+/* ---- Hashes: Hacl_Hash_SHA1_hash, Hacl_Hash_SHA2_hash_{256,384,512} ----------------
+ * Precondition (F*, Spec.Hash.Definitions): input_len <= max_input_length, and the C API
+ * takes a uint32_t, so input_len < 2^32. Output: exactly the digest size. */
+LEAN_EXPORT lean_obj_res l4_web_hacl_hash(uint8_t alg, b_lean_obj_arg msg) {
+  size_t hn = l4w_hash_size(alg), n = L4W_SIZE(msg);
+  if (hn == 0 || n > UINT32_MAX) return l4w_empty();
+  lean_obj_res out = l4w_fresh(hn);
+  switch (alg) {
+    case 1: Hacl_Hash_SHA1_hash(L4W_PTR(out), L4W_PTR(msg), (uint32_t)n); break;
+    case 2: Hacl_Hash_SHA2_hash_256(L4W_PTR(out), L4W_PTR(msg), (uint32_t)n); break;
+    case 3: Hacl_Hash_SHA2_hash_384(L4W_PTR(out), L4W_PTR(msg), (uint32_t)n); break;
+    default: Hacl_Hash_SHA2_hash_512(L4W_PTR(out), L4W_PTR(msg), (uint32_t)n); break;
+  }
+  return out;
+}
+
+/* ---- HMAC: Hacl_HMAC_compute_{sha1,sha2_256,sha2_384,sha2_512} -----------------------
+ * Precondition (F*, Hacl.HMAC.compute_st): key_len < 2^32 (keysized), and
+ * data_len + block_length < 2^32. Output: exactly the hash size. */
+LEAN_EXPORT lean_obj_res l4_web_hacl_hmac(uint8_t alg, b_lean_obj_arg key, b_lean_obj_arg msg) {
+  size_t hn = l4w_hash_size(alg), bn = l4w_block_size(alg);
+  size_t kn = L4W_SIZE(key), mn = L4W_SIZE(msg);
+  if (hn == 0 || kn > UINT32_MAX || mn > (size_t)UINT32_MAX - bn) return l4w_empty();
+  lean_obj_res out = l4w_fresh(hn);
+  switch (alg) {
+    case 1: Hacl_HMAC_compute_sha1(L4W_PTR(out), L4W_PTR(key), (uint32_t)kn, L4W_PTR(msg), (uint32_t)mn); break;
+    case 2: Hacl_HMAC_compute_sha2_256(L4W_PTR(out), L4W_PTR(key), (uint32_t)kn, L4W_PTR(msg), (uint32_t)mn); break;
+    case 3: Hacl_HMAC_compute_sha2_384(L4W_PTR(out), L4W_PTR(key), (uint32_t)kn, L4W_PTR(msg), (uint32_t)mn); break;
+    default: Hacl_HMAC_compute_sha2_512(L4W_PTR(out), L4W_PTR(key), (uint32_t)kn, L4W_PTR(msg), (uint32_t)mn); break;
+  }
+  return out;
+}
+
+/* ---- Constant-time equality of two byte strings of the same (public) length ---------
+ * 1 when equal. Unequal lengths answer 0 at once: lengths are public. The fold has no
+ * branch on the bytes: FStar_UInt8_eq_mask is KaRaMeL's verified constant-time mask. */
+LEAN_EXPORT uint8_t l4_web_hacl_ct_eq(b_lean_obj_arg a, b_lean_obj_arg b) {
+  size_t n = L4W_SIZE(a);
+  if (n != L4W_SIZE(b)) return 0;
+  const uint8_t *x = L4W_PTR(a), *y = L4W_PTR(b);
+  uint8_t acc = 255U;
+  for (size_t i = 0; i < n; i++) acc = (uint8_t)(FStar_UInt8_eq_mask(x[i], y[i]) & acc);
+  return (uint8_t)(acc & 1U);
+}
+
+/* ---- Ed25519 (RFC 8032): Hacl_Ed25519_{secret_to_public,sign,verify} ----------------
+ * Preconditions (F*, Hacl.Ed25519): private and public keys 32 bytes, signature 64,
+ * msg_len + 64 <= max_size_t, so msg_len <= 2^32 - 65 for the uint32_t API. */
+#define L4W_ED_MAX ((size_t)UINT32_MAX - 64U)
+LEAN_EXPORT lean_obj_res l4_web_hacl_ed25519_public(b_lean_obj_arg sk) {
+  if (L4W_SIZE(sk) != 32) return l4w_empty();
+  lean_obj_res out = l4w_fresh(32);
+  Hacl_Ed25519_secret_to_public(L4W_PTR(out), L4W_PTR(sk));
+  return out;
+}
+LEAN_EXPORT lean_obj_res l4_web_hacl_ed25519_sign(b_lean_obj_arg sk, b_lean_obj_arg msg) {
+  if (L4W_SIZE(sk) != 32 || L4W_SIZE(msg) > L4W_ED_MAX) return l4w_empty();
+  lean_obj_res out = l4w_fresh(64);
+  Hacl_Ed25519_sign(L4W_PTR(out), L4W_PTR(sk), (uint32_t)L4W_SIZE(msg), L4W_PTR(msg));
+  return out;
+}
+LEAN_EXPORT uint8_t l4_web_hacl_ed25519_verify(b_lean_obj_arg pk, b_lean_obj_arg msg, b_lean_obj_arg sig) {
+  if (L4W_SIZE(pk) != 32 || L4W_SIZE(sig) != 64 || L4W_SIZE(msg) > L4W_ED_MAX) return 0;
+  return Hacl_Ed25519_verify(L4W_PTR(pk), (uint32_t)L4W_SIZE(msg), L4W_PTR(msg), L4W_PTR(sig)) ? 1 : 0;
+}
+
+/* ---- X25519 (RFC 7748): Hacl_Curve25519_51_{secret_to_public,ecdh} -------------------
+ * 32-byte scalar and u-coordinate. HACL* clamps the scalar. Hacl_Curve25519_51_ecdh
+ * refuses an all-zero shared secret (a small-order input point) with a constant-time
+ * test; WebCrypto's X25519 deriveBits then rejects with OperationError. */
+LEAN_EXPORT lean_obj_res l4_web_hacl_x25519_public(b_lean_obj_arg sk) {
+  if (L4W_SIZE(sk) != 32) return l4w_empty();
+  lean_obj_res out = l4w_fresh(32);
+  Hacl_Curve25519_51_secret_to_public(L4W_PTR(out), L4W_PTR(sk));
+  return out;
+}
+LEAN_EXPORT lean_obj_res l4_web_hacl_x25519(b_lean_obj_arg sk, b_lean_obj_arg pk) {
+  if (L4W_SIZE(sk) != 32 || L4W_SIZE(pk) != 32) return l4w_empty();
+  lean_obj_res out = l4w_fresh(32);
+  if (!Hacl_Curve25519_51_ecdh(L4W_PTR(out), L4W_PTR(sk), L4W_PTR(pk))) return l4w_refuse(out);
+  return out;
+}
+
+/* ---- P-256 (FIPS 186-4, SP 800-56A): Hacl_P256_* --------------------------------------
+ * Keys: private 32 bytes (HACL* checks 0 < d < n), public x || y 64 bytes (HACL* checks
+ * the point: not infinity, coordinates below p, on the curve). Message representative
+ * `e`: exactly 32 bytes (HACL*: msg_len >= 32, and it reads the first 32), made in Lean
+ * from the hash (WebHacl.p256MsgRep). Nonce: 32 bytes from the page's HMAC_DRBG. */
+LEAN_EXPORT lean_obj_res l4_web_hacl_p256_public(b_lean_obj_arg sk) {
+  if (L4W_SIZE(sk) != 32) return l4w_empty();
+  lean_obj_res out = l4w_fresh(64);
+  if (!Hacl_P256_dh_initiator(L4W_PTR(out), L4W_PTR(sk))) return l4w_refuse(out);
+  return out;
+}
+LEAN_EXPORT uint8_t l4_web_hacl_p256_valid_public(b_lean_obj_arg xy) {
+  if (L4W_SIZE(xy) != 64) return 0;
+  return Hacl_P256_validate_public_key(L4W_PTR(xy)) ? 1 : 0;
+}
+LEAN_EXPORT uint8_t l4_web_hacl_p256_valid_private(b_lean_obj_arg sk) {
+  if (L4W_SIZE(sk) != 32) return 0;
+  return Hacl_P256_validate_private_key(L4W_PTR(sk)) ? 1 : 0;
+}
+/* SEC 1 §2.3.4 compressed point (0x02 or 0x03, then x) to x || y; HACL* checks the point. */
+LEAN_EXPORT lean_obj_res l4_web_hacl_p256_decompress(b_lean_obj_arg c) {
+  if (L4W_SIZE(c) != 33) return l4w_empty();
+  lean_obj_res out = l4w_fresh(64);
+  if (!Hacl_P256_compressed_to_raw(L4W_PTR(c), L4W_PTR(out))) return l4w_refuse(out);
+  return out;
+}
+LEAN_EXPORT lean_obj_res l4_web_hacl_p256_sign(b_lean_obj_arg sk, b_lean_obj_arg e, b_lean_obj_arg nonce) {
+  if (L4W_SIZE(sk) != 32 || L4W_SIZE(e) != 32 || L4W_SIZE(nonce) != 32) return l4w_empty();
+  lean_obj_res out = l4w_fresh(64);
+  if (!Hacl_P256_ecdsa_sign_p256_without_hash(L4W_PTR(out), 32U, L4W_PTR(e), L4W_PTR(sk), L4W_PTR(nonce)))
+    return l4w_refuse(out);
+  return out;
+}
+LEAN_EXPORT uint8_t l4_web_hacl_p256_verify(b_lean_obj_arg xy, b_lean_obj_arg e, b_lean_obj_arg rs) {
+  if (L4W_SIZE(xy) != 64 || L4W_SIZE(e) != 32 || L4W_SIZE(rs) != 64) return 0;
+  uint8_t *s = L4W_PTR(rs);
+  return Hacl_P256_ecdsa_verif_without_hash(32U, L4W_PTR(e), L4W_PTR(xy), s, s + 32) ? 1 : 0;
+}
+/* ECDH: the x-coordinate of d·Q (SP 800-56A §5.7.1.2, the "Z" WebCrypto's deriveBits
+ * returns). HACL* writes the whole point to a stack buffer, which is zeroed; only x
+ * leaves. HACL* checks d and Q (Hacl_P256_dh_responder). */
+LEAN_EXPORT lean_obj_res l4_web_hacl_p256_ecdh(b_lean_obj_arg xy, b_lean_obj_arg sk) {
+  if (L4W_SIZE(xy) != 64 || L4W_SIZE(sk) != 32) return l4w_empty();
+  uint8_t point[64];
+  if (!Hacl_P256_dh_responder(point, L4W_PTR(xy), L4W_PTR(sk))) {
+    Lib_Memzero0_memzero0(point, sizeof point);
+    return l4w_empty();
+  }
+  lean_obj_res out = l4w_fresh(32);
+  memcpy(L4W_PTR(out), point, 32);
+  Lib_Memzero0_memzero0(point, sizeof point);
+  return out;
+}
+
+/* ---- ChaCha20-Poly1305 (RFC 8439): Hacl_AEAD_Chacha20Poly1305_{encrypt,decrypt} ------
+ * Key 32 bytes, nonce 12, tag 16; input_len and data_len below 2^32 (and the sealed
+ * length input_len + 16 too). Seal answers ciphertext || tag. Open answers 1 || plaintext,
+ * or the single byte 0 when HACL*'s constant-time tag check fails (HACL* then leaves the
+ * output unwritten; it is zeroed and freed all the same). */
+LEAN_EXPORT lean_obj_res l4_web_hacl_chachapoly_seal(b_lean_obj_arg key, b_lean_obj_arg nonce,
+                                                    b_lean_obj_arg aad, b_lean_obj_arg plain) {
+  size_t pn = L4W_SIZE(plain), an = L4W_SIZE(aad);
+  if (L4W_SIZE(key) != 32 || L4W_SIZE(nonce) != 12 || pn > (size_t)UINT32_MAX - 16U || an > UINT32_MAX)
+    return l4w_empty();
+  lean_obj_res out = l4w_fresh(pn + 16);
+  uint8_t *o = L4W_PTR(out);
+  Hacl_AEAD_Chacha20Poly1305_encrypt(o, o + pn, L4W_PTR(plain), (uint32_t)pn, L4W_PTR(aad), (uint32_t)an,
+                                     L4W_PTR(key), L4W_PTR(nonce));
+  return out;
+}
+LEAN_EXPORT lean_obj_res l4_web_hacl_chachapoly_open(b_lean_obj_arg key, b_lean_obj_arg nonce,
+                                                    b_lean_obj_arg aad, b_lean_obj_arg sealed) {
+  size_t cn = L4W_SIZE(sealed), an = L4W_SIZE(aad);
+  if (L4W_SIZE(key) != 32 || L4W_SIZE(nonce) != 12 || cn < 16 || cn - 16 > UINT32_MAX || an > UINT32_MAX)
+    return l4w_empty();
+  size_t pn = cn - 16;
+  lean_obj_res out = l4w_fresh(pn + 1);
+  uint8_t *o = L4W_PTR(out), *c = L4W_PTR(sealed);
+  if (Hacl_AEAD_Chacha20Poly1305_decrypt(o + 1, c, (uint32_t)pn, L4W_PTR(aad), (uint32_t)an,
+                                         L4W_PTR(key), L4W_PTR(nonce), c + pn) != 0U) {
+    l4w_refuse(out);
+    lean_obj_res fail = l4w_fresh(1);
+    L4W_PTR(fail)[0] = 0;
+    return fail;
+  }
+  o[0] = 1;
+  return out;
+}
+
+/* ---- Erasure ----------------------------------------------------------------------
+ * `WebHacl.wipe`: the argument is OWNED. When this is its only reference (the key store
+ * dropped its copy first) its bytes are zeroed in place before it is freed; a shared
+ * array cannot be zeroed without changing another holder's value, so it is only
+ * released. The answer is the array's size in both cases (the Lean specification of
+ * `wipe` is `b.size`); `l4_web_hacl_wiped` counts the bytes actually zeroed, for tests. */
+static uint64_t l4w_wiped_total = 0;
+LEAN_EXPORT lean_obj_res l4_web_hacl_wipe(lean_obj_arg b) {
+  size_t n = L4W_SIZE(b);
+  if (lean_is_exclusive(b) && n) {
+    Lib_Memzero0_memzero0(L4W_PTR(b), (uint64_t)n);
+    l4w_wiped_total += n;
+  }
+  lean_dec_ref(b);
+  return lean_usize_to_nat(n);
+}
+LEAN_EXPORT lean_obj_res l4_web_hacl_wiped(lean_obj_arg w) {
+  (void)w;
+  return lean_io_result_mk_ok(lean_uint64_to_nat(l4w_wiped_total));
+}

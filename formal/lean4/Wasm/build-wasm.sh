@@ -460,6 +460,8 @@ emcc $CFLAGS -I "$HACL_DIR/include" -c "$LEAN_DIR/ffi/hacl_p256.c" -o "$LIB_OBJ/
 emcc $CFLAGS -I "$HACL_DIR/include" -c "$LEAN_DIR/ffi/hacl_rsa.c" -o "$LIB_OBJ/l4_hacl_rsa_shim.o"
 emcc $CFLAGS -I "$HACL_DIR/include" -c "$LEAN_DIR/ffi/hacl_chachapoly.c" -o "$LIB_OBJ/l4_hacl_chachapoly_shim.o"
 emcc $CFLAGS -I "$HACL_DIR/include" -c "$LEAN_DIR/ffi/hacl_kdf.c" -o "$LIB_OBJ/l4_hacl_kdf_shim.o"
+# The web engine's crypto.subtle boundary (L4Factoidal/Crypto/WebHacl.lean).
+emcc $CFLAGS -I "$HACL_DIR/include" -c "$LEAN_DIR/ffi/hacl_webcrypto.c" -o "$LIB_OBJ/l4_hacl_webcrypto_shim.o"
 emcc $CFLAGS -I "$HACL_DIR/include" -c "$LEAN_DIR/ffi/hacl_hpke.c" -o "$LIB_OBJ/l4_hacl_hpke_shim.o"
 emcc $CFLAGS -I "$HACL_DIR/include" -c "$LEAN_DIR/ffi/hacl_aesgcm.c" -o "$LIB_OBJ/l4_hacl_aesgcm_shim.o"
 # The SPARQL 1.1 section 17.6 extension-function host call-out
