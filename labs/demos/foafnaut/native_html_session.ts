@@ -212,6 +212,8 @@ export async function createHTMLWindowSession(device:GPUDevice,target:PresentTar
         :last?render(last,true):Promise.resolve(undefined));
     },
     get lastChecked(){return lastChecked;},
+    /** Off screen: the texture the last frame was presented to (it has COPY_SRC), for --shot. */
+    get offscreenTexture(){return offscreenTexture;},
     get frames(){return lifecycle?.framesPresented??0;},
     get steps(){return lastSteps;},
     get pixelHash(){return lastHash;},
