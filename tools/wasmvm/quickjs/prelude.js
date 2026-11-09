@@ -3093,7 +3093,9 @@
     const urlOf = el => {
       const v = el.getAttribute('href');
       if (v === null || !apiOn()) return null;
-      const r = apiCall(10, [v, document.baseURI, docEncoding()], 3);
+      // The element's node document's encoding: the page's, or UTF-8 for a document a
+      // script made (createHTMLDocument, DOMParser).
+      const r = apiCall(10, [v, document.baseURI, el.ownerDocument === document ? docEncoding() : 'UTF-8'], 3);
       return typeof r === 'string' ? r.split('\0') : null;
     };
     PARTS.forEach((k, i) => {
