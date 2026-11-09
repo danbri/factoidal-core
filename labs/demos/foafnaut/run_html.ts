@@ -20,6 +20,13 @@ import type {UIEvent} from "./ui_engine.ts";
 
 async function main() {
   const args=[...Deno.args];
+  // What this program was built from: BUILD-INFO.json, which build-executables.sh writes beside it.
+  if(args.includes("--version")){
+    let info:{commit?:string;dirty?:boolean;builtAt?:string}={};
+    try{info=JSON.parse(await Deno.readTextFile(new URL("BUILD-INFO.json",`file://${Deno.execPath().replace(/[^/]*$/,"")}`)));}catch{/* run from source, or built before the record existed */}
+    console.log(info.commit?`foafnaut ${info.commit}${info.dirty?" (with uncommitted changes)":""}, built ${info.builtAt}`:"foafnaut: no build record (run from source, or an older build)");
+    return;
+  }
   if(args.includes("--help")){
     console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--shortcut-sweep] [--print-pdf FILE] [--scroll-sweep] [--watch-sweep SECONDS] [--single-frame] [--offscreen] [--check-pixels] [--perf-summary] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts] [--strict | --be-liberal-in-what-we-accept]\nCommand-Q quits; Command-R and R reload; Command-T, Command-W and Shift-Command-T open, close and reopen tabs; Command-1 to 9, Control-Tab and Shift-Command-[ ] change tab; Space, Page Up, Page Down, Home, End and arrows scroll; Escape stops loading; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints; Option-Command-J opens the console tab (foafnaut:console). By default the browser draws a page without what the built-in engine may skip (module scripts, media conditions it can not read, stylesheets not fetched, scripts when they are off, inline SVG it can not draw) and lists each skip in the console; --strict refuses such a page. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
   }
