@@ -160,6 +160,41 @@ private unsafe def parseKeptImpl (html : String) (xhtml : Bool) : Except String 
 @[implemented_by parseKeptImpl, noinline]
 def parseKept (html : String) (xhtml : Bool) : Except String DOM.Dom := parseFresh html xhtml
 
+/-! Words that miss the font memo (`SfntProfile.profile`) and the sheets of a page were
+also read again by each layout (realperf). `shapeKept` is `SfntProfile.shapeFresh` and
+`sheetKept` is `CSS.parseRaw`; their implementations keep what they made: shaped words
+by `SfntProfile.fontsKey`, text, size and direction (at most 16,384, then the table
+starts again), sheets by their text (the last 8). -/
+initialize shapedKept : IO.Ref (Std.HashMap (String × String × Nat × Option Bool) (Except String Rendering.FontProvider.Word)) ← IO.mkRef {}
+
+private unsafe def shapeKeptImpl (key : String) (fonts : Array Rendering.SfntProfile.Font) (text : String) (px : Nat)
+    (rtl : Option Bool) : Except String Rendering.FontProvider.Word :=
+  unsafeBaseIO do
+    let k := (key,text,px,rtl)
+    if let some w := (← shapedKept.get)[k]? then return w
+    let w := Rendering.SfntProfile.shapeFresh fonts text px rtl
+    shapedKept.modify fun m => (if m.size ≥ 16384 then {} else m).insert k w
+    return w
+
+/-- `SfntProfile.shapeFresh fonts`, kept; `key` is `SfntProfile.fontsKey fonts`. -/
+@[implemented_by shapeKeptImpl, noinline]
+def shapeKept (_key : String) (fonts : Array Rendering.SfntProfile.Font) (text : String) (px : Nat) (rtl : Option Bool) :
+    Except String Rendering.FontProvider.Word := Rendering.SfntProfile.shapeFresh fonts text px rtl
+
+initialize sheetsKept : IO.Ref (Array (String × Except String (List (Option String × Rendering.CSS.Rule)))) ← IO.mkRef #[]
+
+private unsafe def sheetKeptImpl (source : String) : Except String (List (Option String × Rendering.CSS.Rule)) :=
+  unsafeBaseIO do
+    if let some (_,r) := (← sheetsKept.get).find? (·.1 == source) then return r
+    let r := Rendering.CSS.parseRaw source
+    sheetsKept.modify fun kept => (if kept.size ≥ 8 then kept.extract 1 kept.size else kept).push (source,r)
+    return r
+
+/-- `CSS.parseRaw`, kept by the sheet's text. -/
+@[implemented_by sheetKeptImpl, noinline]
+def sheetKept (source : String) : Except String (List (Option String × Rendering.CSS.Rule)) :=
+  Rendering.CSS.parseRaw source
+
 /-- The document tree: the XML syntax of HTML for a `.xht` or `.xhtml` URL (HTML §14,
 `DOM.parseXmlDocument`), else the HTML syntax (HTML §13). -/
 def prepareDOM (html : String) (request : JSON.Json) : Except String DOM.Dom := do
@@ -341,7 +376,8 @@ def rulesIn (m : WebAccept.Mode) (dom : DOM.Dom) (request : JSON.Json) (env : Re
       continue
     bytes := bytes+source.utf8ByteSize
     sheets := source::sheets
-  return (← Rendering.CSS.parseIn env (String.intercalate "\n" sheets.reverse),ds)
+  -- `CSS.parseIn env`, with the sheets read once (`sheetKept`).
+  return (Rendering.CSS.parseInRaw env (← sheetKept (String.intercalate "\n" sheets.reverse)),ds)
 
 /-- The rules of a request, in its mode (`WebAccept.accept`). `env` is the media environment;
 with none given, the media type of the request and no viewport. -/
@@ -1323,6 +1359,7 @@ def layOutDOMIn (m : WebAccept.Mode) (request : JSON.Json) (graph : Option Nativ
   let font ← match loaded,memo with
     | some held,some words =>
       Rendering.SfntProfile.profile held.fonts (keepWords words request)
+        (shapeKept (Rendering.SfntProfile.fontsKey held.fonts) held.fonts)
     | _,_ => pure (match face with | some f => Rendering.Layout.FontProfile.ofFace f | none => WebRender.asciiFont)
   let url := baseURL dom (str request "url")
   -- SVG text is drawn with the fonts of the HTML text.

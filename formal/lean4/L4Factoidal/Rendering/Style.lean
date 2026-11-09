@@ -338,28 +338,17 @@ def parseRaw (source : String) : Except String (List (Option String × Rule)) :=
           out := (query,⟨selectors,← declarations content⟩) :: out
   return out.reverse
 
-/-! A relayout at another width reads the same sheets in another media environment.
-`parseRawKept` is `parseRaw`; its implementation keeps the last sheets it read (by
-their text), so that a relayout reads no sheet again and only evaluates the media
-queries (realperf: 30 ms of each relayout of Wikipedia's FOAF article). -/
-initialize sheetsKept : IO.Ref (Array (String × Except String (List (Option String × Rule)))) ← IO.mkRef #[]
+/-- The rules of `parseRaw` that hold in the media environment `env`: those outside an
+`@media` block or in one whose query list holds. A relayout at another width needs only
+this step; a host may keep what `parseRaw` read (realperf: reading Wikipedia's sheets
+again was 30 ms of each relayout). -/
+def parseInRaw (env : MediaQuery.Env) (raw : List (Option String × Rule)) : List Rule :=
+  raw.filterMap fun (query,rule) => if query.all (MediaQuery.applies env) then some rule else none
 
-private unsafe def parseRawKeptImpl (source : String) : Except String (List (Option String × Rule)) :=
-  unsafeBaseIO do
-    if let some (_,r) := (← sheetsKept.get).find? (·.1 == source) then return r
-    let r := parseRaw source
-    sheetsKept.modify fun kept => (if kept.size ≥ 8 then kept.extract 1 kept.size else kept).push (source,r)
-    return r
-
-@[implemented_by parseRawKeptImpl, noinline]
-def parseRawKept (source : String) : Except String (List (Option String × Rule)) := parseRaw source
-
-/-- Rules of a sheet in the media environment `env`: those of `parseRaw` outside an
-`@media` block or in one whose query list holds. Agrees with `parseInBlocks`, which
-reads the blocks in place (`CascadeTests`). -/
+/-- Rules of a sheet in the media environment `env`: `parseRaw`, then `parseInRaw`. Agrees
+with `parseInBlocks`, which reads the blocks in place (`CascadeTests`). -/
 def parseIn (env : MediaQuery.Env) (source : String) : Except String (List Rule) := do
-  return (← parseRawKept source).filterMap fun (query,rule) =>
-    if query.all (MediaQuery.applies env) then some rule else none
+  return parseInRaw env (← parseRaw source)
 
 /-- Rules of a sheet for the media type `medium` ("screen" or "print") with no viewport:
 an `@media` query with a width or colour-scheme feature does not hold. -/
