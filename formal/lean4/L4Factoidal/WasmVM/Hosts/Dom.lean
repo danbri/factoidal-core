@@ -175,6 +175,10 @@ structure State where
   /-- The window's `load` event waits for frames that are still loading (HTML §8.4 "the
   end": the document's load event is delayed by its iframes' navigations). -/
   loadWaits : Bool := false
+  /-- (encoding100) The URL of each frame document that a navigation to a URL loaded:
+  `document.URL` and `location` of a same-origin frame (`DomOps` op 171), and the base of a
+  form submission in it. A frame document not listed is `about:blank` (or `about:srcdoc`). -/
+  docURLs : Array (Nat × String) := #[]
   deriving Inhabited
 
 /-- Bounds, as in `WebRenderScript`. -/
@@ -860,17 +864,33 @@ def framesLoading (s : State) : Bool :=
   -- "will lazy load element steps")
   s.navigations.any fun (el, u) => !u.isEmpty && (attrValue? s.dom el "loading").map Dom.asciiLower != some "lazy"
 
+open L4Factoidal.HTML.Frames in
+/-- (encoding100) Frame `el` navigated to URL `u` and its document is `doc`: the document's
+URL is `u`, and the frame's origin is that of `u` under its sandboxing flags (HTML §7.4.2.3:
+the new document's origin is the response URL's), so a frame that a form or a `src` change
+sent to another origin is no longer reached (`frameAccessible`). -/
+def navigatedTo (s : State) (el doc : Nat) (u : String) : State :=
+  let parent := docFrame s (s.dom.get el).doc
+  let f := frameOf parent.flags parent.origin (attrValue? s.dom el "sandbox") none (some u) (1000000000 + el)
+  { s with docURLs := (s.docURLs.filter (·.1 != doc)).push (doc, u),
+           frameInfo := (s.frameInfo.filter (·.1 != el)).push (el, f) }
+
 /-- The navigation of `iframe` `el` ends with document `source` ("" is `about:blank`):
 it joins the arena (`Dom.graft`, recorded as `Command.frameDocument`), becomes the frame's
 document, and the frames it holds get their own browsing contexts. The answer has the new
 document node, or none when the command was refused. -/
 def attachDocument (s : State) (el : Nat) (source : String) (xml : Bool := false) : State × Option Nat :=
+  -- (encoding100) the URL this navigation went to, when it was one ("" is about:blank)
+  let navURL := ((s.navigations.find? (·.1 == el)).map (·.2)).filter fun u => !u.isEmpty && u != "about:srcdoc"
   let s := { s with navigations := s.navigations.filter (·.1 != el) }
   if !isNode s.dom el then (s, none) else
   let (d, root) := s.dom.graft (frameArena source xml)
   match addCommand s (.frameDocument el source xml root) d with
   | (s, .values #[.i32 0]) =>
     let s := { s with frames := (s.frames.filter (·.1 != el)).push (el, root) }
+    let s := match navURL with
+      | none => s
+      | some u => navigatedTo s el root u
     (connectFrames s #[root], some root)
   | (s, _) => (s, none)
 
