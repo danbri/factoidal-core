@@ -307,8 +307,8 @@ def call (s : Store) (env : Env) (op : Nat) (bytes : ByteArray) : Store × Strin
       | .ok q => let (s, a) := s.answer env q; (s, "\x01" ++ a)
       | .error e => (s, "\x02" ++ e)
 
-/-- Op 202: `getImageData` answered as words (one a pixel, red in the low byte), for the
-`gpuList` native, so the page copies them into its `ImageData` at once. -/
+/-- Op 202: `getImageData` answered as raw bytes (straight RGBA), for the `gpuBytes` native
+(an ArrayBuffer), so the page copies them into its `ImageData` at once. -/
 def wordsOp : Nat := 202
 
 def callWords (s : Store) (op : Nat) (bytes : ByteArray) : Except String ByteArray := do

@@ -1783,10 +1783,10 @@
       if (sh < 0) { sy += sh; sh = -sh; }
       const img = new ImageData(sw, sh);
       flush();
-      // One word a pixel (op 202), copied into the data at once.
-      const words = n.gpuList(202, '[]', pack([2, s.id, sx, sy, sw, sh], [], 0));
-      if (!Array.isArray(words)) throw new DOMException('Canvas 2D: getImageData failed', 'InvalidStateError');
-      new Uint32Array(img.data.buffer).set(words);
+      // The pixels as bytes (op 202, an ArrayBuffer), copied into the data at once.
+      const bytes = n.gpuBytes(202, '[]', pack([2, s.id, sx, sy, sw, sh], [], 0));
+      if (!(bytes instanceof ArrayBuffer)) throw new DOMException('Canvas 2D: getImageData failed', 'InvalidStateError');
+      img.data.set(new Uint8Array(bytes));
       return img;
     });
     define(P, 'putImageData', function (img, dx, dy, x, y, w, h) {
