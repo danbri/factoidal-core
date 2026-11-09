@@ -560,6 +560,12 @@ abbrev DM := ReaderT DecEnv (EStateM String DecState)
 def getNat : DM Nat := do
   let e ← read
   let s ← get
+  -- most numbers are one digit: no `Option` or pair for them
+  if h : s.pos < e.bytes.size then
+    let x := e.bytes[s.pos].toNat
+    if 0x23 ≤ x && x ≤ 0x42 then
+      set { s with pos := s.pos + 1 }
+      return x - 0x23
   match readNat e.bytes s.pos with
   | some (n, i) => set { s with pos := i }; pure n
   | none => throw "snapshot: bad number"

@@ -221,6 +221,22 @@ theorem units_decodeUnits (us : List Nat) (h : ∀ u ∈ us, u < 0x10000) :
 
 /-! ## The operations of the evaluator, with their fast paths -/
 
+/-- `decodeUnits` as a loop (a tail call, so a long string does not grow the stack); the
+characters are gathered in reverse. Checked against `decodeUnits` below. -/
+def decodeGo : List Nat → List Char → List Char
+  | [], acc => acc.reverse
+  | [u], acc => (unitChar u :: acc).reverse
+  | u :: l :: rest, acc =>
+    if isHigh u && isLow l then
+      let cp := 0x10000 + (u - 0xD800) * 0x400 + (l - 0xDC00)
+      if 0x10F000 ≤ cp && cp < 0x10F800 then decodeGo rest (loneChar l :: loneChar u :: acc)
+      else decodeGo rest (Char.ofNat cp :: acc)
+    else decodeGo (l :: rest) (unitChar u :: acc)
+
+/-- `ofUnits`, by the loop. -/
+def ofUnitsFast (us : List Nat) : String := String.ofList (decodeGo us [])
+
+
 /-- Every character is ASCII: as many bytes as characters (both counts kept by the
 runtime, so this is constant time). -/
 @[inline] def isAscii (s : String) : Bool := s.utf8ByteSize == s.length
@@ -249,12 +265,12 @@ def unitChars (s : String) : Array Char :=
 one character again (`decodeUnits`). -/
 def ofUnitChars (cs : Array Char) : String :=
   if cs.all (fun c : Char => !isLoneChar c) then String.ofList cs.toList
-  else ofUnits (cs.toList.map charUnit)
+  else ofUnitsFast (cs.toList.map charUnit)
 
 /-- The canonical form of a string whose lone characters may stand next to each other as
 a pair (built by joining parts). -/
 def canonical (s : String) : String :=
-  if isAscii s || s.all (fun c : Char => !isLoneChar c) then s else ofUnits (units s)
+  if isAscii s || s.all (fun c : Char => !isLoneChar c) then s else ofUnitsFast (units s)
 
 /-- Concatenation (§6.1.4.1 string-concatenation): a high surrogate at the end of `a` and a
 low one at the start of `b` become one character. -/
@@ -288,7 +304,7 @@ def sliceUnits (s : String) (i j : Nat) : String :=
   else ofUnitChars ((unitChars s).extract i j)
 
 /-- The string of code units (`String.fromCharCode`). -/
-def ofCodeUnits (us : List Nat) : String := ofUnits (us.map (· % 0x10000))
+def ofCodeUnits (us : List Nat) : String := ofUnitsFast (us.map (· % 0x10000))
 
 /-- The string of a code point (`String.fromCodePoint`, a `\u{...}` escape): a surrogate
 code point is a lone unit. -/
@@ -307,19 +323,19 @@ def ofHost (w : String) : String :=
 /-- A JavaScript string as host text (WebIDL USVString): a lone surrogate is U+FFFD; a
 pair held as two lone characters is its code point. -/
 def toHost (s : String) : String :=
-  if isAscii s || s.all (fun c : Char => !isLoneChar c) then s else String.ofList (go s.toList)
+  if isAscii s || s.all (fun c : Char => !isLoneChar c) then s else String.ofList (go s.toList [])
 where
-  go : List Char → List Char
-    | [] => []
-    | [c] => [if isLoneChar c then '\uFFFD' else c]
-    | c :: d :: rest =>
+  go : List Char → List Char → List Char
+    | [], acc => acc.reverse
+    | [c], acc => ((if isLoneChar c then '\uFFFD' else c) :: acc).reverse
+    | c :: d :: rest, acc =>
       if isLoneChar c then
         let h := charUnit c
         let l := charUnit d
         if isLoneChar d && isHigh h && isLow l then
-          Char.ofNat (0x10000 + (h - 0xD800) * 0x400 + (l - 0xDC00)) :: go rest
-        else '\uFFFD' :: go (d :: rest)
-      else c :: go (d :: rest)
+          go rest (Char.ofNat (0x10000 + (h - 0xD800) * 0x400 + (l - 0xDC00)) :: acc)
+        else go (d :: rest) ('\uFFFD' :: acc)
+      else go (d :: rest) (c :: acc)
 
 /-- §22.1.3.32 toWellFormed: each lone surrogate replaced by U+FFFD. -/
 def toWellFormed (s : String) : String := ofHost (toHost s)
@@ -340,6 +356,9 @@ def samples : List String :=
   units (sliceUnits s i j) == ((units s).drop i).take (j - i)
 #guard samples.all fun a => samples.all fun b => jsAppend a b == ofUnits (units a ++ units b)
 #guard samples.all fun s => canonical s == s
+#guard ([[], [0x61], [0xD800], [0xDC00], [0xD83D, 0xDE00], [0xDBFC, 0xDC00], [0xD83D, 0x61, 0xDE00],
+    [0xDE00, 0xD83D], [0xD83D, 0xD83D, 0xDE00], [0x61, 0xD800, 0xDC00, 0xDFFF]] : List (List Nat)).all fun us =>
+  ofUnitsFast us == ofUnits us && decodeGo us [] == decodeUnits us
 #guard jsLength "a😀b" == 4 && units (ofCodeUnits [0xD83D, 0xDE00]) == [0xD83D, 0xDE00] && ofCodeUnits [0xD83D, 0xDE00] == "😀"
 #guard toHost (ofUnits [0x61, 0xD800, 0x62]) == "a\uFFFDb" && toHost (ofUnits [0xDBFC, 0xDC00]) == String.singleton (Char.ofNat 0x10F000)
 #guard ofHost (String.singleton (Char.ofNat 0x10F000)) == ofUnits [0xDBFC, 0xDC00]
