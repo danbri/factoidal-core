@@ -269,11 +269,6 @@ def decodeDocument (bytes : ByteArray) (transportCharset : Option String := none
   let e := sniff bytes transportCharset fallback locale
   (e, decode bytes e)
 
-/-- `decodeDocument` with one fast path, for the common page: no BOM, and UTF-8 by the
-HTTP charset, or with no HTTP charset by a `meta` declaration or (with the "detect"
-setting) by none, and bytes that are UTF-8. Then the text is the bytes as they are (one validation and one copy, no
-decoder loop). `decodeDocumentFast_detect` and the `#guard`s below compare it with
-`decodeDocument`. -/
 /-- The conditions of the fast path of `decodeDocumentFast`. -/
 def utf8Fast (bytes : ByteArray) (transportCharset : Option String) (fallback : Fallback) : Bool :=
   bomSniff bytes == none &&
@@ -284,6 +279,11 @@ def utf8Fast (bytes : ByteArray) (transportCharset : Option String) (fallback : 
        | some .utf_8, _ | none, .detect => true
        | _, _ => false)
 
+/-- `decodeDocument` with one fast path, for the common page: no BOM, and UTF-8 by the
+HTTP charset, or with no HTTP charset by a `meta` declaration or (with the "detect"
+setting) by none, and bytes that are UTF-8. Then the text is the bytes as they are (one
+validation and one copy, no decoder loop). `decodeDocumentFast_detect` and the `#guard`s
+below compare it with `decodeDocument`. -/
 def decodeDocumentFast (bytes : ByteArray) (transportCharset : Option String := none)
     (fallback : Fallback := .detect) (locale : String := "") : Encoding × String :=
   if utf8Fast bytes transportCharset fallback then
