@@ -9,6 +9,7 @@ shapes and draws them; no font library runs.
 | `noto-sans-armenian/` | Noto Sans Armenian Regular, unhinted | 2.008 | SIL OFL 1.1 (`OFL.txt`) | https://github.com/notofonts/notofonts.github.io/tree/main/fonts/NotoSansArmenian/unhinted/ttf (commit 1aaeb679c581) |
 | `noto-sans-georgian/`, `-ethiopic/`, `-hebrew/`, `-arabic/`, `-devanagari/`, `-bengali/`, `-tamil/`, `-thai/`, `-math/` | Noto Sans Georgian, Ethiopic, Hebrew, Arabic, Devanagari, Bengali, Tamil, Thai and Math Regular, unhinted, unchanged | as published at the commit | SIL OFL 1.1 (`OFL.txt` of each script repository) | https://github.com/notofonts/notofonts.github.io/tree/86ce02c0fe7890f5936c5dffb26fca0797d1be64/fonts |
 | `noto-sans-cjk/` | Slices of Noto Sans CJK JP, SC and KR Regular (SubsetOTF), cut with fontTools pyftsubset | 2.004 (SC, JP, KR SubsetOTF) | SIL OFL 1.1 (`OFL.txt`) | https://github.com/notofonts/noto-cjk/tree/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/SubsetOTF |
+| `fruktur/` | Fruktur Regular, a blackletter display font: an asset of the web font demonstration, not a fallback font (`PROVENANCE.md`) | 1.008 | SIL OFL 1.1 (`OFL.txt`) | https://github.com/google/fonts/tree/a60a77e14f28abd4ef243a1b5dfc48df0cec5205/ofl/fruktur |
 | `noto-emoji/` | Noto Emoji, monochrome outlines, instanced at weight 400 and subset with fontTools | 3.002 (`NotoEmoji[wght].ttf`) | SIL OFL 1.1 (`OFL.txt` of the google/fonts family) | https://github.com/google/fonts/tree/8b0a1d0f5983c89bc2b93f1b5fb55f9e252744b5/ofl/notoemoji |
 
 `NotoSans-Regular.ttf` SHA-256:
