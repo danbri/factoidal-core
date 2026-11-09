@@ -99,7 +99,9 @@ def documentNamespaceTree (dom : DOM.Dom) : Except String (Nat × XML.NamespaceN
         else
           let children ← node.kids.toList.mapM (fun child =>
             match values.get? child with | some tree => .ok tree | none => .error "HTML namespace child missing")
-          let attrs := (node.attrs.toList.filter (fun a => a.ns != some DOM.xmlnsNS)).map fun a =>
+          -- An attribute in `NativeSVG.glyphNS` names an entry of the glyph table of
+          -- lowered SVG text; page content (markup or script) cannot give one.
+          let attrs := (node.attrs.toList.filter (fun a => a.ns != some DOM.xmlnsNS && a.ns != some NativeSVG.glyphNS)).map fun a =>
             ({name := ⟨a.ns,a.lname⟩,value := a.value} : XML.NamespaceAttribute)
           values := values.insert id (.element ⟨node.ns,node.lname⟩ attrs children)
       else if node.type == .text || node.type == .cdata then
@@ -223,7 +225,8 @@ def picturesOf (store : NativeImage.Store) (keys : List (Nat × String)) : Rende
 store: each image decodes once, and the ids of bitmaps do not collide. One
 source-bound index per render, shared by all embedded SVG roots. SVG text is lowered
 to glyph paths first, with `fonts`, the fonts that draw HTML text
-(`NativeSVGText.lowerDocument`); each element keeps its source path. -/
+(`NativeSVGText.lowerDocumentGlyphs`); each element keeps its source path, and the
+glyph outlines go to the reader as numbers in a table. -/
 def makeReplaced (dom : DOM.Dom) (documentURL : Option String := none)
     (images : List (String × ByteArray) := []) (fonts : Array Rendering.SfntProfile.Font := #[]) :
     Except String (Rendering.Layout.Embedding × Rendering.Layout.Pictures) := do
@@ -233,7 +236,7 @@ def makeReplaced (dom : DOM.Dom) (documentURL : Option String := none)
   if documentURL.isNone && dom.nodes.any (fun node => DOM.Dom.isHtmlElement node "base" && Rendering.CSS.hasAttribute node "href") then
     throw "unsupported HTML base href without explicit document URL/base transport"
   let (root,tree) ← documentNamespaceTree dom
-  let (tree,_) := NativeSVGText.lowerDocument fonts tree
+  let (tree,_,glyphs) := NativeSVGText.lowerDocumentGlyphs fonts tree
   let context ← NativeSVG.ReferenceContext.create tree documentURL
   -- Each image decodes once for the document, not once for each SVG root.
   let store := NativeSVG.imageStoreOf (NativeSVG.imageKeys tree documentURL ++ imgs.map (·.2)) images
@@ -242,7 +245,7 @@ def makeReplaced (dom : DOM.Dom) (documentURL : Option String := none)
   return (fun id style width height => do
     let path ← sourcePath dom root (dom.size+1) id []
     let inherited : NativeSVG.Style := {currentColor := WebRenderSVG.toColor style.color, visible := style.visible}
-    let scene ← NativeSVG.parseRootInContextSized context path width height inherited embeddedAttributes (some store)
+    let scene ← NativeSVG.parseRootInContextSized context path width height inherited embeddedAttributes (some store) glyphs
     return placeSVG scene id style width height,picturesOf store imgs)
 
 /-- The SVG embedding of `makeReplaced`. -/
