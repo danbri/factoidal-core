@@ -11,7 +11,7 @@
 //   frame is the frame of the page with that transform written in it.
 // * Hostile text: 10,000 combining marks on one base cost time in proportion to their
 //   number (Stream-Safe Text Format, InkBound), and their ink stays within 31 em.
-// Run with --allow-read --allow-ffi.
+// Run with --allow-read --allow-ffi --allow-run=hb-shape.
 import {strict as assert} from "node:assert";
 import {loadHTML,type HTMLEngine,type HTMLArtifact} from "./native_html_engine.ts";
 import {prepareHTML,loadFontFile} from "./native_html_document.ts";
@@ -155,6 +155,41 @@ function bigScale(engine:HTMLEngine){
   return {one,forty,twoHundred};
 }
 
+// Combining marks against HarfBuzz: `hb-shape` 15 on the PATH is the oracle (as in the
+// HarfBuzz test suite, cases of a base and marks, with and without GPOS mark anchors).
+// Glyph ids, advances and offsets in font units: the page is drawn at 500 px, half the
+// 1000 units per em of both fonts, so a unit is half a pixel.
+const hbShape=(font:string,text:string)=>{
+  try{const out=new Deno.Command("hb-shape",{args:["--no-glyph-names",font,text]}).outputSync();
+    if(!out.success)return undefined;
+    return new TextDecoder().decode(out.stdout).trim().slice(1,-1).split("|").map(item=>{
+      const m=/^(\d+)=(\d+)(?:@(-?\d+),(-?\d+))?\+(-?\d+)$/.exec(item)!;
+      return {id:+m[1],dx:+(m[3]??0),dy:+(m[4]??0),advance:+m[5]};});
+  }catch{return undefined;}
+};
+const mathFont=new URL("../../../third_party/fonts/noto-sans-math/NotoSansMath-Regular.ttf",import.meta.url).pathname;
+async function oracleMarks(engine:HTMLEngine){
+  await loadFontFile(engine,mathFont,"Noto Sans Math","bytes",true);
+  const cases:[string,string][]=[[sans,"n\u0308"],[sans,"Sp\u0131n\u0308al"],[sans,"a\u0301"],[sans,"o\u0323\u0302"],
+    [sans,"e\u0303\u0301"],[sans,"i\u0307"],[sans,"q\u0327"],[mathFont,"\u{1D52B}\u0308"],[mathFont,"\u{1D526}\u0308"]];
+  let checked=0;
+  for(const [font,text] of cases){
+    const hb=hbShape(font,text);if(!hb)return {checked:"NOT RUN: no hb-shape on the PATH"};
+    const a=engine.compile(`<!doctype html><p style="font-size:500px;margin:0;white-space:nowrap">${text}</p>`,4000,1200,{url:pageURL});
+    const run=runs(a).find(r=>r.text===text)!;
+    assert(run,`${text}: no run`);
+    assert.deepEqual(run.glyphs.map(g=>g[0]),hb.map(g=>g.id),`${JSON.stringify(text)}: glyph ids`);
+    let pen=0;
+    for(let k=0;k<hb.length;k++){
+      const g=run.glyphs[k],x=(g[1]-run.glyphs[0][1])*2,y=(g[2]-run.glyphs[0][2])*2;
+      assert(Math.abs(x-(pen+hb[k].dx))<0.01,`${JSON.stringify(text)} glyph ${k}: x ${x}, HarfBuzz ${pen+hb[k].dx}`);
+      assert(Math.abs(y+(hb[k].dy-hb[0].dy))<0.01,`${JSON.stringify(text)} glyph ${k}: y ${y}, HarfBuzz ${hb[k].dy}`);
+      pen+=hb[k].advance;checked++;
+    }
+  }
+  return {checked};
+}
+
 for(const [name,path] of [["Wasm engine",undefined],["native library",library]] as const){
   const ignore=path!==undefined&&noLibrary;
   Deno.test({name:`web fonts: used faces only, refused face falls back, HTML and SVG text, ${name}`,ignore,fn:async()=>{console.log(JSON.stringify(await webFonts(await engineWithFont(path))));}});
@@ -162,6 +197,7 @@ for(const [name,path] of [["Wasm engine",undefined],["native library",library]] 
   Deno.test({name:`paint-only: a script's transform lays out once, ${name}`,ignore,fn:async()=>{console.log(JSON.stringify(transformCounts(await engineWithFont(path))));}});
   Deno.test({name:`paint-only: animateTransform lays out once, ${name}`,ignore,fn:async()=>{console.log(JSON.stringify(animationCounts(await engineWithFont(path))));}});
   Deno.test({name:`same-font mark: Noto Sans n + U+0308 as HarfBuzz places it, ${name}`,ignore,fn:async()=>{console.log(JSON.stringify(sameFontMark(await engineWithFont(path))));}});
+  Deno.test({name:`combining marks placed as HarfBuzz 15 places them (hb-shape), ${name}`,ignore,fn:async()=>{console.log(JSON.stringify(await oracleMarks(await engineWithFont(path))));}});
   Deno.test({name:`a group at scale 40 and 200 compiles, its data bounded, ${name}`,ignore,fn:async()=>{console.log(JSON.stringify(bigScale(await engineWithFont(path))));}});
   Deno.test({name:`hostile text: 10,000 marks, ${name}`,ignore,fn:async()=>{console.log(JSON.stringify(zalgo(await engineWithFont(path))));}});
 }
