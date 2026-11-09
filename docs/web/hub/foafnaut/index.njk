@@ -43,10 +43,10 @@ eleventyExcludeFromCollections: true
   </style>
 </head>
 <body>
-  <canvas id="page" aria-label="foafnaut browser, drawn by the Lean engine with WebGPU"></canvas>
+  <canvas id="page" aria-label="foafnaut browser, drawn by the built-in engine with WebGPU"></canvas>
   <input id="keys" aria-label="Address" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false">
   <p id="stats" role="status" hidden></p>
-  <p id="note" role="status">Starting the Lean engine...</p>
+  <p id="note" role="status">Starting the built-in engine...</p>
   <div id="print" aria-hidden="true"></div>
   <noscript>foafnaut needs JavaScript, WebAssembly and WebGPU.</noscript>
   <script type="module" src="{{ '/web/hub/foafnaut/browser.mjs' | url }}?v={{ buildVersion }}"></script>

@@ -872,3 +872,31 @@ the same result on every file with the machine on (useVm) as with the evaluator 
 `this`, re-entry from natives and getters, exceptions, deep recursion), and the benchmark
 programs give the same output.
 
+## 20. What it costs to start a page on the Hub (2026-11-09)
+
+`labs/demos/foafnaut/hub_boot_breakdown.mjs` splits navigation-to-first-frame in headless Chrome (800x900 at 1x, median of three runs each, machine load 3-10, local files served gzip: real networks add download, which this does not measure; 5.96 MB gzip of engine). The first number is `main` before these changes (with the QuickJS guest still loaded eagerly for pages with scripts), the second this work plus bpwasm's lazy guest.
+
+| | Default page | Scripted page (BubblePopJS) |
+|---|---|---|
+| Worker start to engine compiled (streaming) | 68-75 | 67-79 |
+| Lean init (first call) | 505-530 -> 170-187 | 510-540 -> 175-187 |
+| Fonts and home page | 25 -> 33 | 25 -> 36 |
+| First layout | 285 -> 210 | 70 -> 50 |
+| First draw | 110 -> 110 | 70 -> 69 |
+| **Navigation to first frame** | **1,060 -> 676** | **870 -> 490** |
+| Script start turn | | 68 -> 255 (the realm build moved here from Lean init; below) |
+| **Navigation to the frame the script changed** | | **1,320 -> 753** |
+| A returning visit (compiled-code cache) to first frame | 376 | 387 (scripted frame) |
+
+Causes found with a CPU profile of the Wasm build linked with `--profiling-funcs`:
+
+- `LeanJS.snapshotData` was a constant, so the first call into any engine ran the prelude in BubblePopJS and encoded it, for every page: about 300 of 520 ms. It is now a function of `Unit` (only `bubblepop-realm` calls it). Two `#guard` fixtures were built at start too. `XPath4.sigs` is a `Thunk`. So the start turn of a page on BubblePopJS now holds the realm's cost: it goes from 68 to about 255 ms, but the first frame the script changed comes earlier: 1,320 to 1,140 ms from the engine changes alone, and 1,140 to 753 ms with the worker's changes (about 344 ms of that is bpwasm's lazy QuickJS guest, the rest the shorter wait after the frame).
+- The big literals that `tools/wasm32-nat-literals.py` makes persistent (bpwasm) cut the first layout: `Float.ofScientific` parsed `lean_cstr_to_nat("9007199254740992")` on every call on wasm32.
+- `SfntKern.coverage` is a binary search: the sorted table was scanned linearly, about 20 % of a first layout.
+- The first frame of a page computed six expected-colour probes (`Scene.checks`) that only `?check=` reads: 80 ms. The worker sends `checks:false` otherwise.
+- The page's scripts started 120 ms after their frame was asked for; they start one frame after it is drawn.
+- `PageCanvas.sortBy`, a polymorphic function with `for` over ranges, was compiled with the generic `Std.Legacy.Range.forIn'.loop`: about five Wasm frames per element, depth proportional to the input, so `canvas-chart.html` overflowed the Hub worker's stack (a RangeError, the script stopped). It is written with self tail calls. `WasmVM/Api.lean` (`maxHostCalls`) and `Wasi.lean` still have a loop of that form; they are not on the BubblePopJS path.
+
+Stack. A Web Worker's Wasm stack is about 480 KB in headless Chrome (main thread about twice that), measured by `docs/web/hub/wasm-stack.njk` (`/web/hub/wasm-stack/`). A Node `worker_threads` bisect of the stack limit, with a page recursing to the limit (`callDepth` 100), needs 425-690 KB by shape on this build: its numbers are upper estimates for Chrome, where all shapes end in the `RangeError` (not a trap); 281 KB of the Node figure is the engine's own start. The limit stays 100. The number for an iPhone comes from the probe page.
+
+`-O3` at the Wasm link is 3.8 % smaller over gzip (6.20 to 5.96 MB) with no change at first frame beyond noise. The numbers above were measured before the realm went into the Wasm build as data (section 18): that change moves the 255 ms start turn, and this table has not been measured again with it.
