@@ -53,6 +53,8 @@ structure Shell where
   scale : Nat := 1
   theme : String := "next"
   pages : Nat := 0
+  /-- Which engine runs this page's scripts ("JS BUBBLEPOP", "JS QUICKJS-NG", "JS OFF"), or "". -/
+  script : String := ""
   /-- How far the page has moved up, in backing pixels. -/
   scroll : Nat := 0
   /-- The control the pointer is pressed on (`:active`), or "". -/
@@ -524,6 +526,9 @@ private def controlNodes (s : Shell) (t : Theme) (width : Nat) : List Rendering.
     let x := width-(label.length*charWidth s)-16*u
     let y := (row-7*dot s)/2+u
     out := out ++ bitmapNodes t.coin (icon "coin") 7 (x-10*dot s) y (dot s) ++ text t.coin label x y (dot s)
+    -- The script engine of this page, left of the page count.
+    if !s.script.isEmpty then
+      out := out ++ text t.coin s.script (x-10*dot s-(s.script.length+2)*charWidth s) y (dot s)
   return out
 
 /-- Colour `c` faded `p` percent of the way to `to`: the chrome has no alpha, and over
@@ -910,7 +915,7 @@ def Shell.ofJson (j : JSON.Json) : Shell :=
     -- No anchor is no selection.
     anchor := min (nat j "anchor" cursor) address.length,undo := step "undo",redo := step "redo",typing := flag j "typing",
     focused := flag j "focused",canBack := flag j "canBack",canForward := flag j "canForward",
-    loading := flag j "loading",scale := max 1 (nat j "scale" 1),theme := str j "theme" "next",pages := nat j "pages",
+    loading := flag j "loading",scale := max 1 (nat j "scale" 1),theme := str j "theme" "next",pages := nat j "pages",script := str j "script" "",
     scroll := nat j "scroll", pressed := str j "pressed",
     collapse := min 100 (nat j "collapse"), collapsible := flag j "collapsible",
     swipe := match j.field? "swipe" with
