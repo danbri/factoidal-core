@@ -649,7 +649,8 @@ tools/hub-quick-ship.sh --no-eleventy
 
 1. The base is `source-commit.txt` of the live site (the workflow writes it), or `--base`.
 2. It refuses (exit 2) when a commit after the base, on `HEAD` or on `origin/main`,
-   touches a path outside `docs/web/hub/**`, `labs/demos/foafnaut/pages/**`,
+   touches a path outside `docs/web/hub/**`, `docs/_includes/**`, `docs/designissues/**`,
+   `labs/demos/foafnaut/pages/**`,
    `labs/demos/foafnaut/tools/showcase-pages.mjs`, `tools/build-demo-pages.py` and
    `third_party/data/**`. Those changes take the normal path: an engine release, then
    the deploy.

@@ -16,7 +16,8 @@ GPU observations are separate evidence classes.
 A change to the Hub pages, the demo pages or the Foafnaut notes can go to the site
 without an engine build. `tools/hub-quick-ship.sh` (from the repository root) refuses
 unless every commit since the live site's build touches only page paths
-(`docs/web/hub/**`, `labs/demos/foafnaut/pages/**`, `tools/showcase-pages.mjs` here,
+(`docs/web/hub/**`, `docs/_includes/**`, `docs/designissues/**`,
+`labs/demos/foafnaut/pages/**`, `tools/showcase-pages.mjs` here,
 `tools/build-demo-pages.py`, `third_party/data/**`). It then runs
 `tools/build-demo-pages.py --check`, an Eleventy build and
 `hub_links_check.mjs --only published`, and prints the Pages deploy command without

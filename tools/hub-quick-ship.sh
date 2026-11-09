@@ -14,7 +14,8 @@
 # 1. The base is the commit the live site was built from: source-commit.txt on the site,
 #    written by the workflow (or --base COMMIT).
 # 2. It refuses when a commit after the base, on HEAD or on origin/main (what the workflow
-#    builds), touches a path outside the page-only list below.
+#    builds), touches a path outside the page-only list below (pages, layouts, design
+#    records, demo pages and their tools, vendored data: nothing the engine is built from).
 # 3. It runs tools/build-demo-pages.py --check (the demo pages and feed.xml are up to date
 #    with their sources, among them the Foafnaut notes), builds the site with the vendored
 #    Eleventy into a temporary directory (skip with --no-eleventy), and runs
@@ -34,6 +35,8 @@ DEPLOY="gh workflow run 243250067 -R danbri/factoidal --ref claude/main"
 # The page-only paths (extended regular expressions, matched against whole paths).
 ALLOWED=(
   '^docs/web/hub/'
+  '^docs/_includes/'
+  '^docs/designissues/'
   '^labs/demos/foafnaut/pages/'
   '^labs/demos/foafnaut/tools/showcase-pages\.mjs$'
   '^tools/build-demo-pages\.py$'
