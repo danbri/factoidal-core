@@ -75,5 +75,5 @@ export const fallbackFonts=[
   {path:'./fonts/noto-color-emoji/NotoColorEmoji-FlagsTZ.ttf',family:'Noto Color Emoji Flags T-Z',bytes:279504,sha256:'0574523b61e2b210a86134ed9a237088e69c0daa7738786115fbca78ad617a1b',
    regional:'1f1f9-1f1ff'},
   {path:'./fonts/noto-emoji/NotoEmoji-Regular.ttf',family:'Noto Emoji',bytes:863016,sha256:'7856a372a8de8a7fccb27dee654a237b7438a16df7354adfb394d4fb14931a97',
-   adds:'fe0e'},
+   adds:'fe0e',svgText:true},
 ];

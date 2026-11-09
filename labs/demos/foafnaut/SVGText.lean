@@ -589,7 +589,9 @@ def shapeRuns (fonts : Array Font) (runs : Array Run) : Array GlyphCell × Array
     let n := run.text.length
     if run.size > 0 && n > 0 then
       let px := min 512 (max 1 run.size.round.toUInt32.toNat)
-      match wordKept (familyOrder fonts run.family) run.text px with
+      -- SVG text draws outlines: colour glyphs (COLR) have none, so their fonts are left
+      -- out and an emoji comes from an outline font, Noto Emoji when held (issue 1276).
+      match wordKept ((familyOrder fonts run.family).filter (·.colour.isNone)) run.text px with
       | .error e => log := log ++ [s!"text run not shaped: {e}"]
       | .ok word =>
         let scale := run.size/word.unitsPerEm
