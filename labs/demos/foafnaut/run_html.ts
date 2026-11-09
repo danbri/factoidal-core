@@ -222,10 +222,15 @@ async function main() {
   // window session replays them in order and presents the page canvases. Before the session
   // exists they wait here. Declared before the first page, whose scripts start before the window.
   const gpuTurns:{page:number;commands:unknown[]}[]=[];
+  // Presents of page canvases with no Lean frame (a turn's replay, blit and composite), and
+  // their times, for the exit summary.
+  const pageGpuMs:number[]=[];
   const gpuFlush=()=>{
     if(!session)return;
-    while(gpuTurns.length){const t=gpuTurns.shift()!;
-      session.pageGpu(t.page,t.commands).catch(error=>console.error("Native HTML: page GPU failed:",String(error)));}
+    while(gpuTurns.length){const t=gpuTurns.shift()!,start=performance.now();
+      session.pageGpu(t.page,t.commands).then(r=>{if(!r?.presented)return;const ms=Math.round((performance.now()-start)*10)/10;
+        pageGpuMs.push(ms);if(perfSummary)console.log(JSON.stringify({type:"native-html-page-canvas",t:Math.round(performance.now()),ms}));})
+        .catch(error=>console.error("Native HTML: page GPU failed:",String(error)));}
   };
   let scriptsOn=false,scriptOps:string[]=[];
   // The page script setting (WebRenderScript.plan): "" is Lean's default for this host (the
@@ -363,7 +368,9 @@ async function main() {
     for(const line of turn.errors)console.error(`page error: ${line}`);
     trace("native-html-script",{cause,session:turn.session,clock:turn.clock,changed:turn.changed,commands:turn.commandCount,
       instructions:turn.instructions,jobs:turn.jobs,tasks:turn.tasks,leanMs:Math.round(turn.ns/1e5)/10,nextWake:turn.nextWake});
-    if(turn.gpu?.length){gpuTurns.push({page:turn.gpuPage!,commands:turn.gpu});gpuFlush();}
+    // A turn that draws a page canvas is activity: no idle check (a Lean frame drawn again
+    // with probes, which held up the next turns) while the page animates its canvas.
+    if(turn.gpu?.length){gpuTurns.push({page:turn.gpuPage!,commands:turn.gpu});gpuFlush();lastActivity=Math.max(lastActivity,performance.now());}
     if(page.applyTurn(turn)&&page===document)dirty=true;
   };
   // View state is held here and applied by Lean. Pointer positions are in the
@@ -943,6 +950,7 @@ async function main() {
       slowCalls,
       pumpGapMs:{p50:percentile(pumpGaps,0.5),p95:percentile(pumpGaps,0.95),max:pumpGaps.length?Math.round(Math.max(...pumpGaps)*10)/10:null},
       prefetch:prefetchStats,frameCost,animationFrames,queueMax,sessionStats:session?.stats,
+      pageCanvasPresents:{count:pageGpuMs.length,p50Ms:percentile(pageGpuMs,0.5),p95Ms:percentile(pageGpuMs,0.95)},
       // Pointer press to the present that shows it: the composite darkening, and the Lean frame of a held press.
       press:{overlay:{count:pressOverlayMs.length,p50Ms:percentile(pressOverlayMs,0.5),maxMs:pressOverlayMs.length?Math.round(Math.max(...pressOverlayMs)*10)/10:null},
         frame:{count:pressFrameMs.length,p50Ms:percentile(pressFrameMs,0.5),maxMs:pressFrameMs.length?Math.round(Math.max(...pressFrameMs)*10)/10:null}}};
@@ -1452,8 +1460,11 @@ async function main() {
             .finally(()=>{scriptBusy=false;});
         }
       }
-      // Wake at least every 8 ms to pump; wake at once when a frame ends.
-      const nap=new Promise(resolve=>setTimeout(resolve,8));
+      // Wake at least every 8 ms to pump, sooner for the page's next timer or animation frame
+      // (a fixed 8 ms paced 16 ms frames at about 21 ms); wake at once when a frame ends.
+      const wakeIn=scriptsOn&&script&&script.turn.nextWake!==null
+        ?script.turn.nextWake-(performance.now()-(scriptEpochs.get(script.session)??performance.now())):8;
+      const nap=new Promise(resolve=>setTimeout(resolve,Math.max(1,Math.min(8,Math.ceil(wakeIn)))));
       await Promise.race([nap,...(rendering?[rendering]:[]),...(shifting?[shifting]:[])]);
     }
   } finally {
