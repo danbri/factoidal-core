@@ -63,7 +63,7 @@ p{font-family:Pua;font-size:48px;margin:0}</style><p>&#x25CA;&#x308;</p>`;
 async function crossFontMark(engine:HTMLEngine){
   const doc=await prepareHTML(engine,pageURL,undefined,markPage);
   const a=engine.compile(doc.source,400,200,doc.request(400,200).options);
-  const run=runs(a).find(r=>r.text.startsWith(""))!;
+  const run=runs(a).find(r=>r.text.startsWith("\u25CA"))!;
   assert(run&&run.glyphs.length===2,JSON.stringify(runs(a)));
   const [base,mark]=run.glyphs;
   assert.equal(mark[3],0,"the mark takes no advance");
@@ -123,14 +123,14 @@ function zalgo(engine:HTMLEngine){
   const page=(n:number)=>`<!doctype html><p style="font-size:20px">a${"́".repeat(n)} b</p>`;
   const time=(n:number)=>{const t=performance.now();const a=engine.compile(page(n),400,300,{url:pageURL});return {ms:performance.now()-t,a};};
   time(10);
-  const small=time(100),big=time(10000);
-  // Linear: 100 times the marks cost at most 300 times the time (the base cost included).
-  assert(big.ms<Math.max(50,small.ms*300),`10,000 marks ${big.ms} ms, 100 marks ${small.ms} ms`);
+  const small=time(2500),big=time(10000);
+  // Linear: four times the marks cost at most eight times the time (room for noise).
+  assert(big.ms<Math.max(50,small.ms*8),`10,000 marks ${big.ms} ms, 2,500 marks ${small.ms} ms`);
   // The ink of each mark stays within 31 em of its line (InkBound.clusterBound).
   for(const run of runs(big.a))for(const g of run.glyphs)assert(Math.abs(g[2])<=31*20+40,`glyph at y ${g[2]}`);
   const fixture=Deno.readTextFileSync(new URL("./fixtures/showoff/zalgo.html",import.meta.url));
   engine.compile(fixture,800,1000,{url:pageURL});
-  return {marks100Ms:Math.round(small.ms),marks10000Ms:Math.round(big.ms)};
+  return {marks2500Ms:Math.round(small.ms),marks10000Ms:Math.round(big.ms)};
 }
 
 // The same font: "Spın̈al" in Noto Sans is shaped as HarfBuzz 15.0.0 shapes it (hb-shape:
