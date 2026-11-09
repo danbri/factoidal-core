@@ -34,21 +34,39 @@ private def i16 (b : ByteArray) (i : Nat) : Int :=
 private def tagAt (b : ByteArray) (i : Nat) : String :=
   String.ofList ((List.range 4).map fun k => Char.ofNat (b.get! (i + k)).toNat)
 
-/-- Coverage index of a glyph, if covered. -/
+/-- Coverage index of a glyph, if covered. A coverage table is sorted by glyph (OpenType common
+layout tables), so this is a binary search; every read is inside the checked range, so a
+table that is out of order at worst misses a glyph. (A linear scan took about 20 % of a first
+page's layout on the Hub.) -/
 def coverage (b : ByteArray) (off g : Nat) : Except String (Option Nat) := do
   need b off 4 "coverage"
   let fmt := u16 b off
   let n := u16 b (off + 2)
   if fmt == 1 then
     need b (off + 4) (2 * n) "coverage glyphs"
-    for k in [0:n] do
-      if u16 b (off + 4 + 2 * k) == g then return some k
+    let mut lo := 0
+    let mut hi := n
+    -- `n` is at most 65535, so 17 halvings reach an empty range.
+    for _ in [0:17] do
+      if lo ≥ hi then break
+      let mid := (lo + hi) / 2
+      let v := u16 b (off + 4 + 2 * mid)
+      if v == g then return some mid
+      if v < g then lo := mid + 1 else hi := mid
     return none
   else if fmt == 2 then
     need b (off + 4) (6 * n) "coverage ranges"
-    for k in [0:n] do
-      let r := off + 4 + 6 * k
-      if u16 b r ≤ g && g ≤ u16 b (r + 2) then return some (u16 b (r + 4) + g - u16 b r)
+    let mut lo := 0
+    let mut hi := n
+    for _ in [0:17] do
+      if lo ≥ hi then break
+      let mid := (lo + hi) / 2
+      let r := off + 4 + 6 * mid
+      let start := u16 b r
+      let stop := u16 b (r + 2)
+      if g < start then hi := mid
+      else if g > stop then lo := mid + 1
+      else return some (u16 b (r + 4) + g - start)
     return none
   else throw s!"font.file.malformed: coverage format {fmt}"
 
