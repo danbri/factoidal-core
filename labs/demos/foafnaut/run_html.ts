@@ -2,7 +2,7 @@ import {loadHTML,type HTMLArtifact,type HTMLLayers,type HistoryAnswer,type Shell
 import {printImages,pdfPageCount,DEFAULT_PAPER} from "./native_print.ts";
 import {clampOffset,keeps} from "./layer_compositor.ts";
 import {prefetchTarget,trackMotion,stateKey,sameState,canSwap,keepReach,PREFETCH_MARGIN_ROWS,FRAME_MS,type Motion,type StateKey} from "./scroll_prefetch.ts";
-import {inputURL,loadFontFile,prepareHTML,refusalHTML,setFontHost,setScriptHost,type PageView} from "./native_html_document.ts";
+import {inputURL,loadFontFile,prepareHTML,refusalHTML,setFontHost,setPageDecoding,setScriptHost,type PageView} from "./native_html_document.ts";
 import {fallbackFontHost,loadFallbackFonts,mayNeedFallbackFonts,type FallbackFont,type PageFonts} from "./native_html_fonts.ts";
 import type {ScriptPlan,ScriptTurn} from "./native_html_engine.ts";
 import {addEntries,consoleRequest,noteDiagnostics} from "./native_console.ts";
@@ -132,7 +132,7 @@ async function main() {
   // Every engine call that can take more than about 2 ms runs in one worker, in order. `lean` is that
   // engine (promises), or the main-thread engine when the worker can not start (said once, loudly) or in --check-engine.
   let worker:CompileClient|undefined,mainFont=false;
-  type Lean=Pick<typeof engine,"xmlStylesheet"|"xslt"|"inspect"|"compile"|"selectedText"|"graphStart"|"graphEvent"|"graphPage"|"sourcePage"|"wasmPage"|"sparqlPage"|"printLayout">;
+  type Lean=Pick<typeof engine,"xmlStylesheet"|"xslt"|"inspect"|"compile"|"selectedText"|"graphStart"|"graphEvent"|"graphPage"|"sourcePage"|"wasmPage"|"sparqlPage"|"printLayout"|"encodingSetting"|"encodingChoices">;
   let lean:Lean=engine;
   // The engine that runs Lean's renders: the native library in the worker, or Wasm (in the
   // worker, or on the main thread, which has only the Wasm engine). Said at start and in the summary.
@@ -211,6 +211,11 @@ async function main() {
   // Lean engine where the engine has it). Lean says what a setting means; an engine from
   // before the op (probed once) runs QuickJS-NG, as before.
   let scriptSetting="",scriptEngines:string[]=[],quickjsLoaded=false,planOp=true;
+  // Pages that declare no encoding: the setting ("" detect) and the system's language. The
+  // language is Deno's navigator.language (from LANG / LC_ALL); Lean maps it by HTML
+  // §13.2.3.2's table of suggested defaults (WHATWG.Encoding.Sniff.localeEncoding).
+  let encodingSetting="";const systemLocale=navigator.language??"";
+  setPageDecoding({fallback:encodingSetting,locale:systemLocale});
   const sessionEngines=new Map<number,string>();
   // Lean's plan, from the engine that runs the scripts (the worker's); the plans of the
   // settings are kept for the chrome marker, which is drawn without waiting.
@@ -614,6 +619,10 @@ async function main() {
     let source=await Deno.readTextFile(new URL(settingsURL));
     const open="<!--foafnaut:scripts-->",close="<!--/foafnaut:scripts-->",i=source.indexOf(open),j=source.indexOf(close);
     if(planOp&&scriptsOn&&i>=0&&j>i)try{source=source.slice(0,i+open.length)+await scriptCall("scriptChoices",scriptSetting,scriptHostKind())+source.slice(j);}catch{/* the static links */}
+    // The default encoding section, as Lean makes it for the setting and the system's language.
+    const eOpen="<!--foafnaut:encoding-->",eClose="<!--/foafnaut:encoding-->",ei=source.indexOf(eOpen),ej=source.indexOf(eClose);
+    const choices=ei>=0&&ej>ei?await lean.encodingChoices(encodingSetting,systemLocale):undefined;
+    if(choices)source=source.slice(0,ei+eOpen.length)+choices+source.slice(ej);
     const size=textZoom();
     const box=`<span class="box">${liberal?'<span class="tick"></span>':""}</span>`;
     return source.replace("<!--foafnaut:liberal-->",`<p class="check"><a href="foafnaut:liberal/${liberal?"off":"on"}">${box} Be liberal in what we accept</a></p>`+
@@ -646,6 +655,15 @@ async function main() {
       liberal=argument==="on"?true:argument==="off"?false:!liberal;
       browserState?.settings({liberal});trace("native-html-liberal",{liberal});
       if(document.url===settingsURL)navigate(settingsURL,false);
+    }
+    else if(name==="encoding"){
+      // The default for pages that declare no encoding: Lean checks the value; pages opened after it use it.
+      Promise.resolve(lean.encodingSetting(argument)).then(chosen=>{
+        if(chosen===undefined){refuse(`foafnaut:encoding/${argument}`,"this engine has no encoding setting");return;}
+        encodingSetting=chosen;setPageDecoding({fallback:chosen});browserState?.settings({encoding:chosen});
+        trace("native-html-encoding-setting",{setting:chosen});
+        if(document.url===settingsURL)navigate(settingsURL,false);else dirty=true;
+      }).catch(error=>refuse(`foafnaut:encoding/${argument}`,error));
     }
     else if(STATE_COMMANDS.includes(name)){
       if(!browserState){refuse(`foafnaut:${name}`,"Browser state is off (--no-state, a sweep or a check)");return;}
@@ -901,7 +919,8 @@ async function main() {
       if(saved.settings){theme=saved.settings.theme;view.textScalePercent=saved.settings.textZoom;dirty=true;
         if(typeof saved.settings.scripts==="string")scriptSetting=saved.settings.scripts;
         if(!cliLiberal&&typeof saved.settings.liberal==="boolean"&&saved.settings.liberal!==liberal){
-          liberal=saved.settings.liberal;if(liberal&&document.title==="Page refused")navigate(document.url,false);}}
+          liberal=saved.settings.liberal;if(liberal&&document.title==="Page refused")navigate(document.url,false);}
+        if(typeof saved.settings.encoding==="string"){encodingSetting=saved.settings.encoding;setPageDecoding({fallback:encodingSetting});}}
       if(restoreSession)(saved.session?.tabs??[]).forEach((tab:{url:string},index:number)=>{if(index>0)newTab();navigate(tab.url);});
     }).catch(()=>{/* state off: said once in the log */});
     scale=Math.max(1,Math.round(native.surfaceState().contentsScale||1));

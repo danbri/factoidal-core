@@ -576,6 +576,12 @@ private def inputOp (op : String) (request : JSON.Json) : Except String (Option 
     let scripts := match request.field? "scripts" with | some (.number n) => n.toNat?.getD 0 | _ => 0
     return some (WebRenderScript.plan (str request "setting") scripts (str request "host" "native")
       (str request "unavailable") (str request "failure")).json.toString
+  -- The default encoding of pages that declare none (WebState.encodingSetting, the
+  -- settings page section).
+  if op == "encodingSetting" then
+    return some (JSON.Json.object [("setting",.string (WebState.encodingSetting (str request "setting")))]).toString
+  if op == "encodingChoices" then
+    return some (JSON.Json.object [("html",.string (WebState.encodingChoicesHTML (str request "setting") (str request "locale")))]).toString
   if op == "scriptChoices" then
     return some (JSON.Json.object [("html",.string (WebRenderScript.choicesHTML (str request "setting") (str request "host" "native")))]).toString
   -- The tab icon from the bytes of an icon resource (`iconPrepare`).
@@ -1087,14 +1093,22 @@ Standard's decoder: `WHATWG.Encoding.Sniff.decodeDocumentFast`), given the trans
 layer's `Content-Type` value or a bare charset label ("" for none). The answer is the
 encoding's name, a line feed, then the text. The hosts call this where a page's bytes
 become text, so a document declared in a legacy encoding is read in it and
-`document.characterSet` is its name. -/
-@[export web_document_decode_bin]
-def decodeBin (bytes : ByteArray) (contentType : String) : String :=
+`document.characterSet` is its name. `fallback` is the user's default for pages that
+declare no encoding (`WebState.encodingSetting`; "" is detect) and `locale` the system's
+language (a BCP 47 or POSIX tag; "" for none), which `Sniff.localeEncoding` maps by HTML
+§13.2.3.2's table. -/
+@[export web_document_decode2_bin]
+def decodeBinWith (bytes : ByteArray) (contentType fallback locale : String) : String :=
   let label := if contentType.isEmpty then none
     else (L4Factoidal.WHATWG.Encoding.Sniff.extractFromMeta contentType).orElse fun _ =>
       if contentType.contains ';' || contentType.contains '/' then none else some contentType
   let (e, text) := L4Factoidal.WHATWG.Encoding.Sniff.decodeDocumentFast bytes label
+    (L4Factoidal.WHATWG.Encoding.Sniff.Fallback.ofSetting fallback) locale
   e.name ++ "\n" ++ text
+
+/-- `decodeBinWith` with the default setting and no locale (an older host). -/
+@[export web_document_decode_bin]
+def decodeBin (bytes : ByteArray) (contentType : String) : String := decodeBinWith bytes contentType "" ""
 
 /-- `imageLoad` with the image as bytes, with no Base64 and no JSON around it. -/
 @[export web_document_image_load_bin]

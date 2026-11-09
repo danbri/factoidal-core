@@ -22,7 +22,11 @@ export function navigationURL(href:string,baseURL:string,documentURL:string) {
 /** Lean's decode of a page's bytes (HTMLEngine.decodeDocument: HTML encoding sniffing and the
 Encoding Standard's decoders), given the HTTP Content-Type ("" for none); undefined when the
 engine has no such op. */
-export type PageDecoder=(bytes:Uint8Array,contentType:string)=>{encoding:string;source:string}|undefined|Promise<{encoding:string;source:string}|undefined>;
+export type PageDecoder=(bytes:Uint8Array,contentType:string,fallback?:string,locale?:string)=>{encoding:string;source:string}|undefined|Promise<{encoding:string;source:string}|undefined>;
+/** The user's default for pages that declare no encoding (the setting, "" is detect) and the
+system's language; the host sets them, Lean decides with them (WebDocument.decodeBinWith). */
+let pageDecoding={fallback:"",locale:""};
+export function setPageDecoding(next:{fallback?:string;locale?:string}){pageDecoding={...pageDecoding,...next};}
 export async function readSource(url:string,signal?:AbortSignal,decode?:PageDecoder):Promise<{url:string;source:string;bytes:number;encoding?:string}> {
   const parsed=new URL(inputURL(url));
   const abort=()=>signal?.throwIfAborted();abort();
@@ -167,7 +171,7 @@ and the Settings checkbox): Lean skips what it may skip and says so, and this ho
 the fetches that failed instead of refusing the page. */
 export type AcceptOptions={liberal?:boolean};
 export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSignal,inline?:string,accept:AcceptOptions={}) {
-  const decode:PageDecoder|undefined=typeof engine.decodeDocument==="function"?(b,c)=>engine.decodeDocument!(b,c):undefined;
+  const decode:PageDecoder|undefined=typeof engine.decodeDocument==="function"?(b,c)=>engine.decodeDocument!(b,c,pageDecoding.fallback,pageDecoding.locale):undefined;
   const document:{url:string;source:string;bytes:number;encoding?:string}=inline===undefined?await readSource(url,signal,decode):{url,source:inline,bytes:inline.length},resources:HTMLResource[]=[];
   // The page's console (native_console.ts): System entries now, script lines later.
   const page={};

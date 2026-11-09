@@ -321,12 +321,18 @@ async function loadFallbackFonts(source,wait){
 // A page's bytes become text in Lean (web_document_decode_call_bin, WebDocument.decodeBin: the
 // BOM, the HTTP charset, the page's meta declaration, else UTF-8 for UTF-8 bytes and
 // windows-1252 otherwise). An engine from before that export reads UTF-8.
+// Pages that declare no encoding: the setting ('' detect) and the browser's language
+// (navigator.language), which Lean maps by HTML §13.2.3.2's table of suggested defaults.
+let encodingSetting='';const systemLocale=self.navigator?.language??'';
 function decodePage(bytes,contentType){
   if(module&&typeof module._web_document_decode_call_bin==='function'&&typeof module._malloc==='function'){
+    const two=typeof module._web_document_decode2_call_bin==='function';
     const input=module._malloc(Math.max(1,bytes.length));
     if(input)try{
       module.HEAPU8.set(bytes,input);
-      const pointer=module.ccall('web_document_decode_call_bin','number',['number','number','string'],[input,bytes.length,contentType]);
+      const pointer=two
+        ?module.ccall('web_document_decode2_call_bin','number',['number','number','string','string','string'],[input,bytes.length,contentType,encodingSetting,systemLocale])
+        :module.ccall('web_document_decode_call_bin','number',['number','number','string'],[input,bytes.length,contentType]);
       if(pointer)try{const answer=module.UTF8ToString(pointer),i=answer.indexOf('\n');return {encoding:answer.slice(0,i),source:answer.slice(i+1)};}
       finally{module.ccall('web_render_free',null,['number'],[pointer]);}
     }finally{module._free(input);}
@@ -369,6 +375,10 @@ function settingsSource(source){
   // from before the op keeps the static links.
   const open='<!--foafnaut:scripts-->',close='<!--/foafnaut:scripts-->',i=source.indexOf(open),j=source.indexOf(close);
   if(planOp&&i>=0&&j>i)try{source=source.slice(0,i+open.length)+call('',{op:'scriptChoices',setting:scriptSetting,host:'hub'}).html+source.slice(j);}catch{planOp=false;}
+  // The default encoding section, as Lean makes it for the setting and the browser's language;
+  // an engine from before the op keeps the static links.
+  const eOpen='<!--foafnaut:encoding-->',eClose='<!--/foafnaut:encoding-->',ei=source.indexOf(eOpen),ej=source.indexOf(eClose);
+  if(ei>=0&&ej>ei)try{source=source.slice(0,ei+eOpen.length)+call('',{op:'encodingChoices',setting:encodingSetting,locale:systemLocale}).html+source.slice(ej);}catch{/* the static links */}
   return source;
 }
 async function prepare(url){
@@ -1079,6 +1089,12 @@ function shellCommand(name,argument){
     browserState?.settings({liberal}).catch(()=>{});
     if(doc?.url===settingsURL)navigate(settingsURL,false);
   }
+  else if(name==='encoding'){
+    // The default for pages that declare no encoding: Lean checks the value; pages opened after it use it.
+    try{encodingSetting=call('',{op:'encodingSetting',setting:argument}).setting;browserState?.settings({encoding:encodingSetting}).catch(()=>{});
+      if(doc?.url===settingsURL)navigate(settingsURL,false);else request();}
+    catch(error){doc=refusal('foafnaut:encoding/'+argument,String(error.message??error));request();}
+  }
   else if(['bookmarks','history'].includes(name))navigate('foafnaut:'+name);
   else if(['bookmark','unbookmark','pod','sync'].includes(name))stateCommand(name,argument);
   else if(name==='wasm')navigate(wasmURL+(argument?'/'+argument:''));
@@ -1110,6 +1126,7 @@ async function openState(){
     if(typeof saved.settings.classicUI==='boolean')classicUI=saved.settings.classicUI;
     if(typeof saved.settings.scripts==='string')scriptSetting=saved.settings.scripts;
     if(typeof saved.settings.liberal==='boolean')liberal=saved.settings.liberal;
+    if(typeof saved.settings.encoding==='string')encodingSetting=saved.settings.encoding;
     if(doc?.url===settingsURL)navigate(settingsURL,false);else request();}
 }
 // Lean's route for a link or an address (link-route.mjs), done as it says. This host tests

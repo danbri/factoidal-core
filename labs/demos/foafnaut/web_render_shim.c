@@ -100,6 +100,16 @@ char *web_document_decode_call_bin(const uint8_t *bytes,uint32_t length,const ch
   lean_object *value=web_document_decode_bin(array,lean_mk_string(charset));
   char *copy=strdup(lean_string_cstr(value)); lean_dec(value); return copy;
 }
+/* The same with the user's default for undeclared pages ("" detect, "locale", or an
+   encoding's name) and the system's language (WebDocument.decodeBinWith). */
+extern lean_object *web_document_decode2_bin(lean_object *,lean_object *,lean_object *,lean_object *);
+char *web_document_decode2_call_bin(const uint8_t *bytes,uint32_t length,const char *contentType,const char *fallback,const char *locale) {
+  if (!ready()) return NULL;
+  lean_object *array=lean_alloc_sarray(1,length,length);
+  if (length) memcpy(lean_sarray_cptr(array),bytes,length);
+  lean_object *value=web_document_decode2_bin(array,lean_mk_string(contentType),lean_mk_string(fallback),lean_mk_string(locale));
+  char *copy=strdup(lean_string_cstr(value)); lean_dec(value); return copy;
+}
 extern lean_object *web_render_font_requests(lean_object *);
 char *web_render_font_requests_call(const char *html) {
   if (!ready()) return NULL;
