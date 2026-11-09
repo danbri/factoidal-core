@@ -4050,7 +4050,8 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
     | .sharedSlice | .typedArrayCtor | .typedFrom | .typedOf | .typedGetter _ | .typedMethod _ | .atomics _
     | .stringIsWellFormed | .stringToWellFormed | .dateMethod _ | .dateUTC | .dateParse
     | .iteratorCtor | .iteratorFrom | .iterLazy _ | .iterEager _ | .helperNext | .helperReturn
-    | .numberToExponential | .numberToPrecision | .setMethod _ | .proxyRevocable | .proxyRevoke =>
+    | .numberToExponential | .numberToPrecision | .setMethod _ | .proxyRevocable | .proxyRevoke
+    | .arrayMethod _ =>
       moreNative n id thisV args newTarget
     | _ =>
       -- string methods and Math
@@ -5537,6 +5538,81 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
           | .proxy t _ => { o with kind := .proxy t .null }
           | _ => o
       pure .undef
+    | .arrayMethod k =>
+      -- generic over array-likes: ToObject(this), LengthOfArrayLike (§23.1.3)
+      let oid ← toObj n thisV
+      let o := Value.obj oid
+      let lenF := toIntegerOrInf (← toNum n (← getV n o "length"))
+      let len := if lenF ≤ 0 then 0 else if lenF > 9007199254740991 then 9007199254740991 else lenF.toUInt64.toNat
+      let rel (v : Value) (dflt : Nat) : M Nat := do
+        match v with
+        | .undef => pure dflt
+        | v => pure (relIndex (toIntegerOrInf (← toNum n v)) len)
+      let valuesUpTo (m : Nat) : M (Array Value) := do
+        let mut out := Array.emptyWithCapacity m
+        for i in [0:m] do out := out.push (← getV n o (toString i))
+        pure out
+      match k with
+      | 0 =>
+        let to ← rel a0 0
+        let from_ ← rel a1 0
+        let fin ← rel (argD args 2) len
+        let count := min (fin - from_) (len - to)
+        if count > 10000000 then throwErr .range "copyWithin: too many elements"
+        -- §23.1.3.4 steps 13-14: backwards when the ranges overlap that way
+        let back := from_ < to && to < from_ + count
+        for j in [0:count] do
+          let i := if back then count - 1 - j else j
+          let fk := toString (from_ + i)
+          let tk := toString (to + i)
+          if (← hasProp n oid fk) then putV n o tk (← getV n o fk) true
+          else deleteOwn oid tk
+        pure o
+      | 1 =>
+        if !(← isCallable a0) then throwErr .type "reduceRight: the callback is not a function"
+        if len > 10000000 then throwErr .range "reduceRight: too many elements"
+        let mut acc := a1
+        let mut got : Bool := args.size ≥ 2
+        for j in [0:len] do
+          let i := len - 1 - j
+          if (← hasProp n oid (toString i)) then
+            let v ← getV n o (toString i)
+            if got then acc ← callV n a0 .undef #[acc, v, .num (Float.ofNat i), o]
+            else
+              acc := v
+              got := true
+        if !got then throwErr .type "Reduce of empty array with no initial value"
+        pure acc
+      | 2 =>
+        if len > 4294967295 then throwErr .range "Invalid array length"
+        newArray (← valuesUpTo len).reverse
+      | 3 =>
+        match a0 with
+        | .undef => pure ()
+        | f => if !(← isCallable f) then throwErr .type "The comparison function must be either a function or undefined"
+        if len > 4294967295 then throwErr .range "Invalid array length"
+        newArray (← mergeSort n a0 (← valuesUpTo len).toList).toArray
+      | 4 =>
+        let st ← rel a0 0
+        let skip ← if args.size == 0 then pure 0 else if args.size == 1 then pure (len - st) else do
+          let d := toIntegerOrInf (← toNum n a1)
+          pure (if d < 0 then 0 else min d.toUInt64.toNat (len - st))
+        let items := args.extract (min 2 args.size) args.size
+        let newLen := len + items.size - skip
+        if Float.ofNat newLen > 9007199254740991 then throwErr .type "toSpliced: the length is too large"
+        if newLen > 4294967295 then throwErr .range "Invalid array length"
+        let mut out := Array.emptyWithCapacity newLen
+        for i in [0:st] do out := out.push (← getV n o (toString i))
+        out := out ++ items
+        for i in [st + skip:len] do out := out.push (← getV n o (toString i))
+        newArray out
+      | _ =>
+        let r := toIntegerOrInf (← toNum n a0)
+        let i := if r ≥ 0 then r else Float.ofNat len + r
+        if i ≥ Float.ofNat len || i < 0 then throwErr .range "Invalid index for Array.prototype.with"
+        if len > 4294967295 then throwErr .range "Invalid array length"
+        let vs ← valuesUpTo len
+        newArray (vs.set! i.toUInt64.toNat a1)
     | .dateUTC =>
       let mut xs : Array Float := #[]
       for i in [0:min 7 args.size] do xs := xs.push (← toNum n args[i]!)
@@ -5828,6 +5904,9 @@ def initRealm : M Unit := do
   for (nm, f, l) in [("flat", Native.arrayFlat, 0), ("flatMap", .arrayFlatMap, 1), ("at", .arrayAt, 1),
       ("findLast", .arrayFindLast, 1), ("findLastIndex", .arrayFindLastIndex, 1)] do
     method arrayProto nm f l
+  for (nm, k, l) in [("copyWithin", 0, 2), ("reduceRight", 1, 1), ("toReversed", 2, 0), ("toSorted", 3, 1),
+      ("toSpliced", 4, 2), ("with", 5, 2)] do
+    method arrayProto nm (.arrayMethod k) l
   for (nm, f, l) in [("padStart", Native.stringPadStart, 1), ("padEnd", .stringPadEnd, 1),
       ("at", .stringAt, 1), ("codePointAt", .stringCodePointAt, 1), ("trimStart", .stringTrimStart, 0),
       ("trimEnd", .stringTrimEnd, 0), ("replace", .stringReplace, 2), ("replaceAll", .stringReplaceAll, 2)] do

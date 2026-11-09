@@ -157,6 +157,9 @@ inductive Native where
   3 `symmetricDifference`, 4 `isSubsetOf`, 5 `isSupersetOf`, 6 `isDisjointFrom`), and
   `Proxy.revocable` with its revoke function (§28.2.2.1). -/
   | setMethod (k : Nat) | proxyRevocable | proxyRevoke
+  /-- Array.prototype methods (§23.1.3): 0 `copyWithin`, 1 `reduceRight`, 2 `toReversed`,
+  3 `toSorted`, 4 `toSpliced`, 5 `with`. -/
+  | arrayMethod (k : Nat)
   deriving BEq, Repr, Inhabited
 
 /-- What a running function sees. -/
