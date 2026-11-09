@@ -1865,6 +1865,25 @@ def dropSlotStr (ctx : Ctx) (hops idx : Nat) (p : String) : M Unit := do
   | some (.str y) => if y == p then setSlot e idx .undef
   | _ => pure ()
 
+/-- The binding of the name `x` lets go of the string `p`, if it holds it (a name not
+resolved to a slot: top-level code, a `with`): as `dropSlotStr`. -/
+def dropNameStr (ctx : Ctx) (x : String) (p : String) : M Unit := do
+  let h ← get
+  match h.findEnv x 100000 ctx.env with
+  | some e =>
+    let env := h.envs.getD e default
+    if env.withObj.isSome then pure () else
+    let i := env.slotN x
+    match env.vals[i]? with
+    | some (.str y) => if y == p then setSlot e i .undef
+    | _ => pure ()
+  | none =>
+    let g := h.realm.globalObj
+    match (h.obj g).props.get? x with
+    | some (.data (.str y) true _ _) =>
+      if y == p then let _ ← setOwnData g x .undef
+    | _ => pure ()
+
 /-- Assign a resolved name; the plain assignment when the hint does not hold. -/
 def assignLocal : Nat → Ctx → String → Nat → Nat → Value → M Unit
   | 0, _, _, _, _, _ => throw (.halt "fuel")
@@ -2209,6 +2228,16 @@ def evalExpr : Nat → Ctx → Expr → M Value
         | .str p, .num q => dropSlotStr ctx h i p; pure (.str (Str.jsAppend p (numToString q)))
         | _, _ => binop n .add old r
       assignLocal n ctx x h i v
+      pure v
+    | .assign (some .add) (.ident x) rhs =>
+      let old ← lookup n ctx x
+      let r ← (match leafV (← get) ctx rhs with | .hole => evalExpr n ctx rhs | v => pure v)
+      let v ← match old, r with
+        | .num p, .num q => pure (.num (p + q))
+        | .str p, .str q => dropNameStr ctx x p; pure (.str (Str.jsAppend p q))
+        | .str p, .num q => dropNameStr ctx x p; pure (.str (Str.jsAppend p (numToString q)))
+        | _, _ => binop n .add old r
+      assignName n ctx x v
       pure v
     | .assign (some op) (.local x h i) rhs =>
       let old ← lookupLocal n ctx x h i
