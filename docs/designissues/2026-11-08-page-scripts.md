@@ -312,8 +312,19 @@ chose (passed to the session as `encoding`). A page that is UTF-8 with no other
 declaration takes the fast path (one validation and one copy: 7.2 ms for 1 MB, against
 4.9 ms for Deno's TextDecoder); a 1 MB Shift_JIS page decodes in 66 ms. Subresources
 (scripts, stylesheets, XSLT) are read as UTF-8.
-An undeclared page whose bytes are UTF-8 is read as UTF-8 (like Firefox's detector);
-WPT `encoding/sniffing.html`, which expects windows-1252 there, is an expected difference.
+A page that declares nothing (no BOM, no HTTP charset, no `meta`) is read by the
+setting "Default encoding for pages without one" (Settings; `WebState.Settings.encoding`,
+`WHATWG.Encoding.Sniff.Fallback`): "Detect" (the default) reads UTF-8 bytes as UTF-8 and
+anything else in the system language's default; "From system language" always uses that
+default; or one encoding. The language's default is HTML §13.2.3.2's table of suggested
+defaults by locale (`Sniff.localeEncoding`: ja Shift_JIS, zh-Hans/CN/SG GBK,
+zh-Hant/HK/MO/TW Big5, ko EUC-KR, ru and the Cyrillic languages windows-1251, el
+ISO-8859-7, ...; others windows-1252). The native host reads the language from Deno's
+`navigator.language` (LANG / LC_ALL), the Hub from the browser's `navigator.language`.
+`sniff_detect_utf8` and `decodeDocumentFast_detect`: under "Detect" an undeclared UTF-8
+page is UTF-8, by the fast path. WPT `encoding/sniffing.html` expects windows-1252 for
+undeclared UTF-8 bytes: it passes with "From system language" and an English locale, and
+is an expected difference under "Detect".
 
 Measured (native engine, 2026-11-09; QuickJS-NG in WasmVM unless named): the guest's
 module load (the prelude) 1,261 → 1,504 ms with the prelude as source, once for each
