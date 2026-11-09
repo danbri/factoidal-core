@@ -35,49 +35,105 @@ def svg(path, title):
             f'<h1>{html.escape(title)}</h1>\n{text}\n</main></body></html>\n')
 
 
-# The SVG pages that draw well, linked first from the start page (owner, 2026-11-07:
-# "please get the cool svg enriched demo pages linked into our start page").
-FEATURED = ['showcase-dataviz.html', 'showcase-lettering.html', 'showcase-tables-svg.html',
-            'svg-gallery.html', 'solving-showcase.html', 'books-svg.xml']
-# Text and layout pages, linked next (owner, 2026-11-07, on the writing systems page).
-TEXT = ['showcase-scripts.html', 'showcase-tables.html', 'showcase-images.html', 'showcase-emoji.html', 'print-showcase.html']
-# Pages that combine two or more parts: XSLT, SVG, fonts, tables, print, RDF and SPARQL (owner, 2026-11-08:
-# "Think of creative demo pages and exciting combinations of our technologies!").
-COMBINATIONS = ['books-xslt4.xml', 'foaf-people.xml', 'sparql-results.xml', 'feed.xml', 'sitemap.xml', 'lab-files.xml',
-                'engine-pipeline.xml', 'typography-lab.xml', 'print-poster.html', 'svg-text-labels.html', 'spinal-tap-sparql.html']
-# Pages written for features that are still in progress; the manifest says what each one needs.
-NEXT = ['timers-and-clicks.html', 'webgpu-triangle.html', 'webgl-triangle.html', 'wasm-mandelbrot.html']
-# A scripted page linked beside foafnaut:graph at the top: the same kind of graph, drawn by the page's own JavaScript.
-TOP = ['foaf-explorer.html', 'js-status.html']
+# The start page (owner, 2026-11-09: "The front page the browser starts at is horribly
+# chaotic can you improve it please"): a few pages to start with, then the rest in five
+# groups, each link with one line on what it shows. A page that a group names but the
+# manifest lacks (a branch not merged yet) is left out; a manifest page that no group
+# names goes under "Other pages", so no page is lost. The FOAF graph stays the first link:
+# the sweeps press links[0] of this page.
 SVG_TINY_SCORES = 'https://danbri.github.io/factoidal/web/hub/render-scores/#svg-tiny-pixels'
+BUILT_IN = {'foafnaut:graph': 'Interactive FOAF graph', 'foafnaut:wasm': 'WebAssembly, run by Lean (WasmVM)',
+            SVG_TINY_SCORES: 'SVG Tiny 1.2 test suite results (on the web)'}
+START = ['foafnaut:graph', 'spinal-tap-sparql.html', 'shader-gallery.html', 'showcase.html',
+         'showcase-dataviz.html', 'showcase-scripts.html']
+GROUPS = [
+    ('Pages with scripts', ['foaf-explorer.html', 'canvas-chart.html', 'timers-and-clicks.html', 'webgpu-triangle.html',
+                            'webgl-triangle.html', 'wasm-mandelbrot.html', 'showcase-dataviz-script.html']),
+    ('SVG and graphics', ['showcase-lettering.html', 'showcase-textpath.html', 'showcase-tables-svg.html', 'svg-gallery.html',
+                          'svg-text-labels.html', 'solving-showcase.html', 'foaf-graph.html', 'svg-affine.html', 'svg-linear-paths.html']),
+    ('Text, type and layout', ['showcase-emoji.html', 'typography-lab.xml', 'showcase-tables.html', 'showcase-images.html',
+                               'showcase-image-formats.html', 'print-showcase.html', 'print-poster.html', 'markdown-sample.html']),
+    ('XML, XSLT and data', ['foaf-people.xml', 'sparql-results.xml', 'feed.xml', 'sitemap.xml', 'lab-files.xml',
+                            'engine-pipeline.xml', 'books-svg.xml', 'books-xslt4.xml', 'books-xslt1.xml']),
+    ('About the engine', ['status.html', 'js-status.html', 'architecture.html', 'settings.html', 'foafnaut:wasm', SVG_TINY_SCORES]),
+]
+# One line for each link. A page with none here uses the start of its manifest "shows".
+BLURBS = {
+    'foafnaut:graph': 'Drag and explore a network of people, laid out by Lean.',
+    'spinal-tap-sparql.html': 'Ask Wikidata about the band through QLever, from the page.',
+    'shader-gallery.html': 'WebGPU shaders to change and run, a ray marcher among them.',
+    'showcase.html': 'What the engine draws well, and what it does not draw yet.',
+    'showcase-dataviz.html': 'Charts drawn in SVG, labels and all.',
+    'showcase-scripts.html': 'Arabic, Hebrew, Devanagari, Chinese and more, in both directions.',
+    'foaf-explorer.html': 'A graph laid out by the page\'s own JavaScript; tap to bring in friends.',
+    'canvas-chart.html': 'An animated Canvas 2D chart.',
+    'timers-and-clicks.html': 'Dots moved by timers, animation frames and buttons.',
+    'webgpu-triangle.html': 'A spinning triangle from navigator.gpu; Lean checks each call.',
+    'webgl-triangle.html': 'WebGL 1 and 2 triangles, checked by Lean.',
+    'wasm-mandelbrot.html': 'A tiny WebAssembly module, run by Lean, draws the Mandelbrot set.',
+    'showcase-dataviz-script.html': 'The data visualisation, drawn by a script.',
+    'showcase-lettering.html': 'Lettering along curves.',
+    'svg-gallery.html': 'A gallery of SVG drawings.',
+    'svg-text-labels.html': 'SVG text in several fonts and scripts.',
+    'solving-showcase.html': 'A proof search, drawn.',
+    'foaf-graph.html': 'The FOAF graph as a static SVG picture.',
+    'showcase-emoji.html': 'Emoji: sequences, skin tones, flags and keycaps.',
+    'typography-lab.xml': 'Kerning, ligatures and marks from the Lean shaper.',
+    'showcase-tables.html': 'HTML tables: spans, borders, alignment.',
+    'showcase-images.html': 'Images in text: baseline, alignment, sizes.',
+    'showcase-image-formats.html': 'PNG, JPEG, GIF and SVG images.',
+    'print-showcase.html': 'Page breaks and print rules (Command-P).',
+    'print-poster.html': 'A poster and cards made for paper.',
+    'markdown-sample.html': 'A Markdown file, shown as a page.',
+    'foaf-people.xml': 'FOAF in RDF/XML, drawn as SVG by XSLT.',
+    'sparql-results.xml': 'SPARQL results turned into a page by XSLT.',
+    'feed.xml': 'A feed reader made with XSLT, no JavaScript.',
+    'sitemap.xml': 'A sitemap explorer made with XSLT.',
+    'lab-files.xml': 'A table whose totals XSLT computes.',
+    'engine-pipeline.xml': 'The engine\'s stages, drawn from an XML description.',
+    'books-xslt4.xml': 'XSLT 4: maps, records and xsl:switch.',
+    'status.html': 'Where the project is, and its measured scores.',
+    'js-status.html': 'The two JavaScript engines and their test scores.',
+    'architecture.html': 'How the engine is put together.',
+    'settings.html': 'Text size, theme and the page script engine.',
+    'foafnaut:wasm': 'Run a WebAssembly module in Lean\'s own WebAssembly engine.',
+    SVG_TINY_SCORES: 'How the engine draws the W3C SVG Tiny 1.2 tests.',
+}
+INDEX_STYLE = ('h2{margin:0;padding-top:22px;font-size:17px;line-height:24px;color:#184078}'
+               '.lead{font-size:15px;line-height:22px;color:#34485c}'
+               '.start{margin-top:12px;padding:6px 14px 12px;background:#eef3fa}'
+               '.item{padding-top:8px}.what{padding-top:0;color:#5b6876;font-size:13px;line-height:18px}')
 
 
 def index():
-    # foafnaut:graph is a built-in page: the interactive graph, run by the Lean app.
     titles = {p['page']: p['title'] for p in manifest['pages']}
-    missing = [page for page in TOP + FEATURED + TEXT + COMBINATIONS + NEXT if page not in titles]
-    if missing:
-        raise SystemExit(f'featured pages not in manifest.json: {missing}')
-    link = lambda page: f'<p><a href="{page}">{html.escape(titles[page])}</a></p>'
-    featured = '\n'.join(link(page) for page in FEATURED)
-    text = '\n'.join(link(page) for page in TEXT)
-    combinations = '\n'.join(link(page) for page in COMBINATIONS)
-    later = '\n'.join(link(page) for page in NEXT)
-    rest = '\n'.join(link(p['page']) for p in manifest['pages']
-                     if p['page'] != 'index.html' and not p.get('showcase') and p['page'] not in TOP + FEATURED + TEXT + COMBINATIONS + NEXT)
-    return (f'<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>Demo pages</title>{ICON}'
-            f'<style>{STYLE}h2{{margin:0;padding-top:14px;font-size:17px;line-height:24px;color:#184078}}</style></head><body><main>\n<h1>foafnaut2525 demo pages</h1>\n'
-            f'<p>Every page here is rendered by the Lean engine with WebGPU.</p>\n'
-            f'<p><a href="foafnaut:graph">Interactive FOAF graph</a></p>\n'
-            + ''.join(link(page) + '\n' for page in TOP) +
-            f'<h2>Drawn with SVG</h2>\n{featured}\n'
-            f'<p><a href="{SVG_TINY_SCORES}">SVG Tiny 1.2 test suite results (web)</a></p>\n'
-            f'<h2>Text and layout</h2>\n{text}\n'
-            f'<h2>Combinations</h2>\n{combinations}\n'
-            f'<h2>Needs the next engine</h2>\n{later}\n'
-            # foafnaut:wasm is a built-in page: WebAssembly run by WasmVM, Lean's engine, in this engine (issue 1244).
-            f'<h2>Engine</h2>\n<p><a href="foafnaut:wasm">WebAssembly, run by Lean (WasmVM)</a></p>\n'
-            f'<h2>More pages</h2>\n{rest}\n</main></body></html>\n')
+    shows = {p['page']: p.get('shows') or '' for p in manifest['pages']}
+    titles.update(BUILT_IN)
+    def blurb(page):
+        if page in BLURBS:
+            return BLURBS[page]
+        first = re.split(r'[;:]', shows.get(page, ''), maxsplit=1)[0].strip()
+        return (first[:1].upper() + first[1:] + '.') if first else ''
+    def item(page):
+        what = blurb(page)
+        # A line that only says the title again is left out.
+        if re.sub(r'[^a-z0-9]', '', what.lower()) in re.sub(r'[^a-z0-9]', '', titles[page].lower()):
+            what = ''
+        return (f'<p class="item"><a href="{html.escape(page)}">{html.escape(titles[page])}</a></p>\n'
+                + (f'<p class="what">{html.escape(what, quote=False)}</p>\n' if what else ''))
+    present = lambda pages: [page for page in pages if page in titles]
+    named = set(START) | {page for _, pages in GROUPS for page in pages}
+    other = [p['page'] for p in manifest['pages'] if p['page'] != 'index.html' and p['page'] not in named]
+    body = ''.join(f'<h2>{html.escape(name)}</h2>\n' + ''.join(item(page) for page in present(pages) if page not in START)
+                   for name, pages in GROUPS)
+    if other:
+        body += '<h2>Other pages</h2>\n' + ''.join(item(page) for page in other)
+    return (f'<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>Foafnaut</title>{ICON}'
+            f'<style>{STYLE}{INDEX_STYLE}</style></head><body><main>\n<h1>Foafnaut</h1>\n'
+            '<p class="lead">A web browser written in Lean. Every page here is drawn by its own engine, '
+            'with WebGPU.</p>\n'
+            '<div class="start"><h2>Start here</h2>\n' + ''.join(item(page) for page in present(START)) + '</div>\n'
+            + body + '</main></body></html>\n')
 
 
 # The Foafnaut notes: one Markdown file a note, the one source of two things. Eleventy makes

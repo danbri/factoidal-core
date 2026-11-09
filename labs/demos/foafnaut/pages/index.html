@@ -1,52 +1,94 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>Demo pages</title><link rel="icon" type="image/svg+xml" href="foafnaut-icon.svg"><style>body{margin:16px;font-size:14px;line-height:20px;color:#203040;background:white}h1{margin:0;font-size:21px;line-height:28px;color:#184078}p{margin:0;padding-top:6px}svg{display:block}h2{margin:0;padding-top:14px;font-size:17px;line-height:24px;color:#184078}</style></head><body><main>
-<h1>foafnaut2525 demo pages</h1>
-<p>Every page here is rendered by the Lean engine with WebGPU.</p>
-<p><a href="foafnaut:graph">Interactive FOAF graph</a></p>
-<p><a href="foaf-explorer.html">FOAF explorer (JavaScript)</a></p>
-<p><a href="js-status.html">JavaScript in Foafnaut: status</a></p>
-<h2>Drawn with SVG</h2>
-<p><a href="showcase-dataviz.html">Data visualisation</a></p>
-<p><a href="showcase-lettering.html">Lettering on curves</a></p>
-<p><a href="showcase-tables-svg.html">Tables drawn as SVG</a></p>
-<p><a href="svg-gallery.html">SVG gallery</a></p>
-<p><a href="solving-showcase.html">Solving showcase</a></p>
-<p><a href="books-svg.xml">XML to SVG with XSLT 3.0</a></p>
-<p><a href="https://danbri.github.io/factoidal/web/hub/render-scores/#svg-tiny-pixels">SVG Tiny 1.2 test suite results (web)</a></p>
-<h2>Text and layout</h2>
-<p><a href="showcase-scripts.html">Writing systems and direction</a></p>
-<p><a href="showcase-tables.html">Tables</a></p>
-<p><a href="showcase-images.html">Images</a></p>
-<p><a href="showcase-emoji.html">Emoji</a></p>
-<p><a href="print-showcase.html">Print showcase</a></p>
-<h2>Combinations</h2>
-<p><a href="books-xslt4.xml">XSLT 4 in a browser: maps, records, xsl:switch, new functions</a></p>
-<p><a href="foaf-people.xml">FOAF to SVG through XSLT</a></p>
-<p><a href="sparql-results.xml">SPARQL results through XSLT</a></p>
-<p><a href="feed.xml">A feed reader with no JavaScript</a></p>
-<p><a href="sitemap.xml">Sitemap explorer</a></p>
-<p><a href="lab-files.xml">Tables that compute</a></p>
-<p><a href="engine-pipeline.xml">The engine explains itself</a></p>
-<p><a href="typography-lab.xml">Typography lab</a></p>
-<p><a href="print-poster.html">Print-ready poster and cards</a></p>
-<p><a href="svg-text-labels.html">SVG text labels</a></p>
-<p><a href="spinal-tap-sparql.html">Spın̈al Tap: a SPARQL client for Wikidata</a></p>
-<h2>Needs the next engine</h2>
-<p><a href="timers-and-clicks.html">Timers and clicks</a></p>
-<p><a href="webgpu-triangle.html">WebGPU triangle, checked by Lean</a></p>
-<p><a href="webgl-triangle.html">WebGL 1 and 2, checked by Lean</a></p>
-<p><a href="wasm-mandelbrot.html">WebAssembly in a page</a></p>
-<h2>Engine</h2>
-<p><a href="foafnaut:wasm">WebAssembly, run by Lean (WasmVM)</a></p>
-<h2>More pages</h2>
-<p><a href="showcase.html">Showcase: what the engine can and can not draw</a></p>
-<p><a href="architecture.html">How foafnaut is built</a></p>
-<p><a href="settings.html">Settings</a></p>
-<p><a href="books-xslt1.xml">XML with XSLT 1.0</a></p>
-<p><a href="status.html">Project status</a></p>
-<p><a href="markdown-sample.html">Markdown sample</a></p>
-<p><a href="foaf-graph.html">FOAF graph (static)</a></p>
-<p><a href="svg-affine.html">SVG transforms</a></p>
-<p><a href="svg-linear-paths.html">SVG paths</a></p>
-<p><a href="canvas-chart.html">A Canvas 2D chart, drawn by Lean</a></p>
+<html lang="en"><head><meta charset="utf-8"><title>Foafnaut</title><link rel="icon" type="image/svg+xml" href="foafnaut-icon.svg"><style>body{margin:16px;font-size:14px;line-height:20px;color:#203040;background:white}h1{margin:0;font-size:21px;line-height:28px;color:#184078}p{margin:0;padding-top:6px}svg{display:block}h2{margin:0;padding-top:22px;font-size:17px;line-height:24px;color:#184078}.lead{font-size:15px;line-height:22px;color:#34485c}.start{margin-top:12px;padding:6px 14px 12px;background:#eef3fa}.item{padding-top:8px}.what{padding-top:0;color:#5b6876;font-size:13px;line-height:18px}</style></head><body><main>
+<h1>Foafnaut</h1>
+<p class="lead">A web browser written in Lean. Every page here is drawn by its own engine, with WebGPU.</p>
+<div class="start"><h2>Start here</h2>
+<p class="item"><a href="foafnaut:graph">Interactive FOAF graph</a></p>
+<p class="what">Drag and explore a network of people, laid out by Lean.</p>
+<p class="item"><a href="spinal-tap-sparql.html">Spın̈al Tap: a SPARQL client for Wikidata</a></p>
+<p class="what">Ask Wikidata about the band through QLever, from the page.</p>
+<p class="item"><a href="showcase.html">Showcase: what the engine can and can not draw</a></p>
+<p class="what">What the engine draws well, and what it does not draw yet.</p>
+<p class="item"><a href="showcase-dataviz.html">Data visualisation</a></p>
+<p class="what">Charts drawn in SVG, labels and all.</p>
+<p class="item"><a href="showcase-scripts.html">Writing systems and direction</a></p>
+<p class="what">Arabic, Hebrew, Devanagari, Chinese and more, in both directions.</p>
+</div>
+<h2>Pages with scripts</h2>
+<p class="item"><a href="foaf-explorer.html">FOAF explorer (JavaScript)</a></p>
+<p class="what">A graph laid out by the page's own JavaScript; tap to bring in friends.</p>
+<p class="item"><a href="canvas-chart.html">A Canvas 2D chart, drawn by Lean</a></p>
+<p class="what">An animated Canvas 2D chart.</p>
+<p class="item"><a href="timers-and-clicks.html">Timers and clicks</a></p>
+<p class="what">Dots moved by timers, animation frames and buttons.</p>
+<p class="item"><a href="webgpu-triangle.html">WebGPU triangle, checked by Lean</a></p>
+<p class="what">A spinning triangle from navigator.gpu; Lean checks each call.</p>
+<p class="item"><a href="webgl-triangle.html">WebGL 1 and 2, checked by Lean</a></p>
+<p class="what">WebGL 1 and 2 triangles, checked by Lean.</p>
+<p class="item"><a href="wasm-mandelbrot.html">WebAssembly in a page</a></p>
+<p class="what">A tiny WebAssembly module, run by Lean, draws the Mandelbrot set.</p>
+<p class="item"><a href="showcase-dataviz-script.html">Data visualisation with a script</a></p>
+<p class="what">The data visualisation, drawn by a script.</p>
+<h2>SVG and graphics</h2>
+<p class="item"><a href="showcase-lettering.html">Lettering on curves</a></p>
+<p class="what">Lettering along curves.</p>
+<p class="item"><a href="showcase-textpath.html">SVG text and textPath</a></p>
+<p class="item"><a href="showcase-tables-svg.html">Tables drawn as SVG</a></p>
+<p class="item"><a href="svg-gallery.html">SVG gallery</a></p>
+<p class="what">A gallery of SVG drawings.</p>
+<p class="item"><a href="svg-text-labels.html">SVG text labels</a></p>
+<p class="what">SVG text in several fonts and scripts.</p>
+<p class="item"><a href="solving-showcase.html">Solving showcase</a></p>
+<p class="what">A proof search, drawn.</p>
+<p class="item"><a href="foaf-graph.html">FOAF graph (static)</a></p>
+<p class="what">The FOAF graph as a static SVG picture.</p>
+<p class="item"><a href="svg-affine.html">SVG transforms</a></p>
+<p class="item"><a href="svg-linear-paths.html">SVG paths</a></p>
+<h2>Text, type and layout</h2>
+<p class="item"><a href="showcase-emoji.html">Emoji</a></p>
+<p class="what">Emoji: sequences, skin tones, flags and keycaps.</p>
+<p class="item"><a href="typography-lab.xml">Typography lab</a></p>
+<p class="what">Kerning, ligatures and marks from the Lean shaper.</p>
+<p class="item"><a href="showcase-tables.html">Tables</a></p>
+<p class="what">HTML tables: spans, borders, alignment.</p>
+<p class="item"><a href="showcase-images.html">Images</a></p>
+<p class="what">Images in text: baseline, alignment, sizes.</p>
+<p class="item"><a href="showcase-image-formats.html">Image formats</a></p>
+<p class="what">PNG, JPEG, GIF and SVG images.</p>
+<p class="item"><a href="print-showcase.html">Print showcase</a></p>
+<p class="what">Page breaks and print rules (Command-P).</p>
+<p class="item"><a href="print-poster.html">Print-ready poster and cards</a></p>
+<p class="what">A poster and cards made for paper.</p>
+<p class="item"><a href="markdown-sample.html">Markdown sample</a></p>
+<p class="what">A Markdown file, shown as a page.</p>
+<h2>XML, XSLT and data</h2>
+<p class="item"><a href="foaf-people.xml">FOAF to SVG through XSLT</a></p>
+<p class="what">FOAF in RDF/XML, drawn as SVG by XSLT.</p>
+<p class="item"><a href="sparql-results.xml">SPARQL results through XSLT</a></p>
+<p class="what">SPARQL results turned into a page by XSLT.</p>
+<p class="item"><a href="feed.xml">A feed reader with no JavaScript</a></p>
+<p class="what">A feed reader made with XSLT, no JavaScript.</p>
+<p class="item"><a href="sitemap.xml">Sitemap explorer</a></p>
+<p class="what">A sitemap explorer made with XSLT.</p>
+<p class="item"><a href="lab-files.xml">Tables that compute</a></p>
+<p class="what">A table whose totals XSLT computes.</p>
+<p class="item"><a href="engine-pipeline.xml">The engine explains itself</a></p>
+<p class="what">The engine's stages, drawn from an XML description.</p>
+<p class="item"><a href="books-svg.xml">XML to SVG with XSLT 3.0</a></p>
+<p class="item"><a href="books-xslt4.xml">XSLT 4 in a browser: maps, records, xsl:switch, new functions</a></p>
+<p class="what">XSLT 4: maps, records and xsl:switch.</p>
+<p class="item"><a href="books-xslt1.xml">XML with XSLT 1.0</a></p>
+<h2>About the engine</h2>
+<p class="item"><a href="status.html">Project status</a></p>
+<p class="what">Where the project is, and its measured scores.</p>
+<p class="item"><a href="js-status.html">JavaScript in Foafnaut: status</a></p>
+<p class="what">The two JavaScript engines and their test scores.</p>
+<p class="item"><a href="architecture.html">How foafnaut is built</a></p>
+<p class="what">How the engine is put together.</p>
+<p class="item"><a href="settings.html">Settings</a></p>
+<p class="what">Text size, theme and the page script engine.</p>
+<p class="item"><a href="foafnaut:wasm">WebAssembly, run by Lean (WasmVM)</a></p>
+<p class="what">Run a WebAssembly module in Lean's own WebAssembly engine.</p>
+<p class="item"><a href="https://danbri.github.io/factoidal/web/hub/render-scores/#svg-tiny-pixels">SVG Tiny 1.2 test suite results (on the web)</a></p>
+<p class="what">How the engine draws the W3C SVG Tiny 1.2 tests.</p>
 </main></body></html>
