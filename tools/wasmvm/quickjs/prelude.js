@@ -2380,16 +2380,7 @@
   def('GPUBufferUsage', GPUBufferUsage); def('GPUTextureUsage', GPUTextureUsage); def('GPUShaderStage', GPUShaderStage);
   def('GPUColorWrite', GPUColorWrite); def('GPUValidationError', GPUValidationError); def('GPUOutOfMemoryError', GPUOutOfMemoryError);
   def('GPUCanvasContext', GPUCanvasContext); def('GPUDevice', GPUDevice);
-  // document.fonts (CSS Font Loading §5): the engine loads the fonts it draws with before a
-  // page runs, and loads none for scripts, so nothing is pending: `ready` is resolved.
-  if (!('fonts' in document)) {
-    const fontSet = { status: 'loaded', size: 0, check: () => true,
-      load: () => Promise.resolve([]), has: () => false, add() {}, delete: () => false, clear() {}, forEach() {},
-      addEventListener() {}, removeEventListener() {} };
-    fontSet.ready = Promise.resolve(fontSet);
-    Object.freeze(fontSet);
-    Object.defineProperty(Object.getPrototypeOf(document), 'fonts', { get: () => fontSet, configurable: true });
-  }
+  // document.fonts: a FontFaceSet (section dombreadth).
   // Canvas 2D globals, made on first use (the canvas2d section above).
   for (const name of ['CanvasRenderingContext2D', 'OffscreenCanvasRenderingContext2D', 'OffscreenCanvas', 'Path2D', 'ImageData',
     'ImageBitmap', 'CanvasGradient', 'CanvasPattern', 'TextMetrics', 'DOMMatrix', 'DOMMatrixReadOnly', 'DOMPoint', 'DOMPointReadOnly',
