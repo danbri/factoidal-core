@@ -75,6 +75,10 @@ structure Store where
   /-- Flattened glyph outlines of shaped text at the origin, by text, font and flatness:
   a label drawn again each frame is moved, not flattened again. -/
   textPolys : Std.HashMap String (Array Poly) := {}
+  /-- Coverage of text drawn with a translation only, by text, font and the sixteenths of a
+  pixel of its place: the box relative to the whole pixel of the place. A label drawn again
+  at the same place is composited, not rasterised again. -/
+  textCov : Std.HashMap String (Int × Int × Coverage) := {}
   /-- The canvas sizes the host has textures for. -/
   textures : Std.HashMap Nat (Nat × Nat) := {}
   /-- Images of the page decoded for drawing, by URL key (decoded once). -/
@@ -779,7 +783,35 @@ def Run.step (r : Run) (cmd : Cmd) : Run :=
             let cache := if r.store.textPolys.size ≥ 1024 then {} else r.store.textPolys
             ({ r with store := { r.store with textPolys := cache.insert key ps } }, ps)
         let m := st.ctm.mul ((Matrix.translate x0 y0).mul (Matrix.scale sx 1))
-        (r.drawPolys c (mapPolys m polys) .nonzero st.fill, r)
+        -- A translation only: the coverage is the same at every whole pixel of the place.
+        let shiftOnly := m.a == 1 && m.b == 0 && m.c == 0 && m.d == 1 && m.e.isFinite && m.f.isFinite
+          && m.e.abs < 1e9 && m.f.abs < 1e9 && !shadowOn st
+        if !shiftOnly then (r.drawPolys c (mapPolys m polys) .nonzero st.fill, r) else
+        let ex := m.e.floor
+        let ey := m.f.floor
+        let fx := ((m.e - ex) * 16).round
+        let fy := ((m.f - ey) * 16).round
+        let ckey := key ++ "\x00" ++ toString fx ++ "," ++ toString fy
+        let toInt := fun (v : Float) => if v < 0 then -(Int.ofNat (-v).toUInt64.toNat) else Int.ofNat v.toUInt64.toNat
+        let (r, entry) := match r.store.textCov.get? ckey with
+          | some e => (r, e)
+          | none =>
+            -- Rasterised once at the fraction, 1024 pixels in on a large canvas.
+            let moved := mapPolys (Matrix.translate (fx / 16 + 1024) (fy / 16 + 1024)) polys
+            let cov := coverage 4096 4096 (edgesOf moved) .nonzero
+            let e := (Int.ofNat cov.box.x - 1024, Int.ofNat cov.box.y - 1024, cov)
+            let cache := if r.store.textCov.size ≥ 1024 then {} else r.store.textCov
+            ({ r with store := { r.store with textCov := cache.insert ckey e } }, e)
+        let (rx, ry, cov) := entry
+        let bx := toInt ex + rx
+        let by_ := toInt ey + ry
+        -- Placed whole inside the canvas: composited as it is; otherwise drawn as any path.
+        if bx < 0 || by_ < 0 || bx + cov.box.w > c.width || by_ + cov.box.h > c.height || cov.box.w == 0 then
+          (r.drawPolys c (mapPolys m polys) .nonzero st.fill, r)
+        else
+          let placed : Coverage := { cov with box := ⟨bx.toNat, by_.toNat, cov.box.w, cov.box.h⟩ }
+          let ready := st.fill.ready r.gradient r.pattern st.ctm st.smoothing
+          (c.paint st ⟨ready, placed, Color.clamp01 st.alpha, st.op, st.clip⟩ fun _ => (#[], .nonzero), r)
   | .strokeText s x y maxW => r.withCur fun c r =>
       let (r, p) := r.textPath c.stack.cur s x y maxW
       match p with
