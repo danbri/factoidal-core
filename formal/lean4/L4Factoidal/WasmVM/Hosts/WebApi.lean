@@ -269,7 +269,9 @@ def keyFields (handle : Nat) (k : Key) : List ByteArray :=
   let pairs : List (String × String) :=
     (match algo.hash with | some h => [("hash", h.name)] | none => []) ++
     (if algo.alg == .hmac then [("length", toString algo.length)] else []) ++
-    (if algo.curve != "" then [("namedCurve", algo.curve)] else [])
+    (if algo.curve != "" then [("namedCurve", algo.curve)] else []) ++
+    (if algo.alg.isRsa then [("modulusLength", toString algo.modulusLength),
+      ("publicExponent", Crypto.bytesToHex algo.publicExponent)] else [])
   ["key", toString handle, k.type.name, if k.extractable then "1" else "0",
     ",".intercalate (k.usages.map (·.name)), algo.alg.name, toString pairs.length].map (·.toUTF8) ++
     pairs.flatMap fun (a, b) => [a.toUTF8, b.toUTF8]
@@ -397,7 +399,7 @@ def subtle (s : State) (fs : Array ByteArray) : State × Except Int ByteArray :=
     match errInt (keyOf s.keys a "key") with
     | .error e => fail e
     | .ok k =>
-      match drawFor s (if k.algo.alg == .ecdsa then 256 else 0) with
+      match drawFor s (if k.algo.alg == .ecdsa then 256 else if k.algo.alg == .rsaPss then min ((p.nat? "saltLength").getD 0) 512 else 0) with
       | .error e => fail e
       | .ok (rand, s) => (s, errInt ((sign algName p k ((a.get? "data").getD .empty) rand).map fun b => pack ["bytes".toUTF8, b]))
   | "verify" => (s, errInt (do
@@ -423,18 +425,25 @@ def subtle (s : State) (fs : Array ByteArray) : State × Except Int ByteArray :=
         addKey s.keys nk) with
     | .ok (st, f) => ({ s with keys := st }, .ok (pack f))
     | .error e => fail e
-  | "encrypt" | "decrypt" => (s, errInt (do
-      let k ← keyOf s.keys a "key"
-      let b ← crypt (method == "encrypt") algName p k ((a.get? "data").getD .empty)
-      pure (pack ["bytes".toUTF8, b])))
-  | "wrapKey" => (s, errInt (do
+  | "encrypt" | "decrypt" =>
+    match errInt (keyOf s.keys a "key") with
+    | .error e => fail e
+    | .ok k =>
+      match drawFor s (if method == "encrypt" && k.algo.alg == .rsaOaep then 64 else 0) with
+      | .error e => fail e
+      | .ok (rand, s) => (s, errInt ((crypt (method == "encrypt") algName p k ((a.get? "data").getD .empty) rand).map
+          fun b => pack ["bytes".toUTF8, b]))
+  | "wrapKey" =>
+    match drawFor s 64 with
+    | .error e => fail e
+    | .ok (rand, s) => (s, errInt (do
       let wk ← keyOf s.keys a "wrappingKey"
       if wk.algo.alg.name != algName || !wk.usages.contains .wrapKey then throw .invalidAccess
       let k ← keyOf s.keys a "key"
       let e ← exportKey k ((a.str? "format").getD "")
       let bytes := match e with | .bytes b => b | .jwk ms => (jwkJson ms).toUTF8
       let wk' := { wk with usages := wk.usages ++ [.encrypt] }
-      let c ← crypt true algName p wk' bytes
+      let c ← crypt true algName p wk' bytes rand
       pure (pack ["bytes".toUTF8, c])))
   | "unwrapKey" =>
     let t := sub a "t:"
@@ -452,6 +461,12 @@ def subtle (s : State) (fs : Array ByteArray) : State × Except Int ByteArray :=
     | .error e => fail e
   | _ => fail (-2)
 
+/-- The private parts of an RSA key, handed to `WebHacl.wipe`. -/
+def wipeRsa : Option Crypto.WebCryptoKeys.RsaParts → Nat
+  | some r => Crypto.WebHacl.wipe r.d + Crypto.WebHacl.wipe r.p + Crypto.WebHacl.wipe r.q +
+      Crypto.WebHacl.wipe r.dp + Crypto.WebHacl.wipe r.dq + Crypto.WebHacl.wipe r.qi
+  | none => 0
+
 /-- Forget a key (prelude.js calls this when the page's CryptoKey is collected): its bytes
 are zeroed in place when the store held the only reference (`WebHacl.wipe`). -/
 def dropKey (s : State) (h : Nat) : State × Nat :=
@@ -459,8 +474,19 @@ def dropKey (s : State) (h : Nat) : State × Nat :=
   | none => (s, 0)
   | some k =>
     let keys := s.keys.keys.erase h
-    let n := Crypto.WebHacl.wipe k.material + Crypto.WebHacl.wipe k.pub
+    let n := Crypto.WebHacl.wipe k.material + Crypto.WebHacl.wipe k.pub + wipeRsa k.rsa
     ({ s with keys := { s.keys with keys } }, n)
+
+/-- At the end of a session (`WebScripts` close, or a new start): every key's bytes are
+handed to `WebHacl.wipe`, which zeroes them where the store held the last reference. The
+state is consumed, so the store's references are the last ones unless an answer still
+shares the bytes. The answer is the number of bytes handed over. -/
+def wipeAll (s : State) : Nat :=
+  s.keys.keys.toList.foldl (fun n (_, k) =>
+    let m := k.material
+    let p := k.pub
+    let r := k.rsa
+    n + Crypto.WebHacl.wipe m + Crypto.WebHacl.wipe p + wipeRsa r) 0
 
 end Subtle
 

@@ -139,8 +139,22 @@ structure Held where
   leanBase : Option LeanJS.Session := none
   /-- The session on the Lean engine. -/
   leanSession : Option (Nat × LeanJS.Session × Marks) := none
+  /-- Key bytes handed to `WebHacl.wipe` when sessions ended (`dropSessions`). -/
+  keyBytesWiped : Nat := 0
 
 instance : Inhabited Held := ⟨{}⟩
+
+/-- End the held sessions: their CryptoKeys' bytes are wiped (`WebApi.wipeAll`; the
+sessions are taken out of `held` first, so the stores hold the last references). -/
+def dropSessions (held : Held) : Held :=
+  let ps := held.session
+  let ls := held.leanSession
+  let held := { held with session := none, leanSession := none }
+  let n := (match ps with | some (_, s, _) => Hosts.WebApi.wipeAll s.host.web | none => 0) +
+    (match ls with
+     | some (_, s, _) => match s.heap.host with | some h => Hosts.WebApi.wipeAll h.page.web | none => 0
+     | none => 0)
+  { held with keyBytesWiped := held.keyBytesWiped + n }
 
 initialize heldRef : IO.Ref Held ← IO.mkRef {}
 
@@ -167,6 +181,11 @@ private unsafe def entropyImpl (id : Nat) : ByteArray :=
     | .ok b => return b ++ (toString id).toUTF8
     | .error _ => return ByteArray.empty)
 @[implemented_by entropyImpl, noinline] private opaque entropy (id : Nat) : ByteArray
+
+/-- Key bytes zeroed in place so far in this process (`WebHacl.wipedSoFar`, the C
+counter): the close answer reports it, so a test can see that wiping happened. -/
+private unsafe def zeroedImpl (_ : Nat) : Nat := unsafeBaseIO Crypto.WebHacl.wipedSoFar
+@[implemented_by zeroedImpl, noinline] private opaque zeroedSoFar (n : Nat) : Nat
 
 def actions : List String := ["info", "load", "start", "click", "pointer", "resize", "advance", "settle", "turn", "close",
   "aotModule", "resume", "host"]
@@ -604,11 +623,14 @@ def act (held : Held) (action html : String) (request : JSON.Json)
     match held.turn, held.aot with
     | some t, some aot => hostCall held aot t request
     | _, _ => (held, .error "scriptSession: no turn waits for the host")
-  | "close" => ({ held with session := none, turn := none, leanSession := none }, .ok "{\"closed\":true}")
+  | "close" =>
+    let held := dropSessions { held with turn := none }
+    (held, .ok s!"\{\"closed\":true,\"keyBytesWiped\":{held.keyBytesWiped},\"keyBytesZeroed\":{zeroedSoFar held.keyBytesWiped}}")
   | _ =>
   if held.turn.isSome then (held, .error "scriptSession: a turn waits for the host") else
   match action with
   | "start" =>
+    let held := dropSessions held
     if str request "engine" == "bubblepop" then startLean held html request measure canvas else
     match held.module, held.aot with
     | none, some aot =>

@@ -2802,6 +2802,7 @@
         else if (t === 'b') x = copyBytes(bufferSource(v, 'Algorithm'));
         else if (t === 'l') x = String(enforceRange(v, 4294967295, k));
         else if (t === 'o') x = String(enforceRange(v, 255, k));
+        else if (t === 'n') { if (!(v instanceof Uint8Array)) throw new TypeError(`Algorithm: '${k}' is not a Uint8Array`); x = copyBytes(v); }
         else if (t === 'k') { x = String(keyOf(v).handle); keys.push(v); }
         else x = domString(v);
         pairs.push(prefix + k, x);
@@ -2819,7 +2820,8 @@
       const algorithm = { name: ascii(f[i + 5]) };
       for (let j = 0; j < np; j++) {
         const k = ascii(f[i + 7 + 2 * j]), v = ascii(f[i + 8 + 2 * j]);
-        algorithm[k] = k === 'hash' ? { name: v } : k === 'length' ? +v : v;
+        algorithm[k] = k === 'hash' ? { name: v } : k === 'length' || k === 'modulusLength' ? +v
+          : k === 'publicExponent' ? (() => { const u = new Uint8Array(v.length >> 1); for (let j = 0; j < u.length; j++) u[j] = parseInt(v.substr(2 * j, 2), 16); return u; })() : v;
       }
       const key = Object.create(CryptoKey.prototype);
       cryptoKeys.set(key, { handle, type: ascii(f[i + 2]), extractable: ascii(f[i + 3]) === '1', algorithm, usages: us ? us.split(',') : [] });

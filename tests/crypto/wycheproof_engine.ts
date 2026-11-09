@@ -5,6 +5,7 @@
 // "Vectors".
 //
 //   git submodule update --init --depth 1 third_party/testing/wycheproof
+// RSA (RSA-PSS SHA-256, PKCS #1 v1.5 SHA-256/512, OAEP SHA-1/256) needs an engine with RSA.
 //   deno run -A tests/crypto/wycheproof_engine.ts [--native-engine DYLIB | --wasm]
 //     [--quickjs-wasm FILE] [--script-engine quickjs|bubblepop] [--only NAME]
 //
@@ -33,6 +34,9 @@ ecdh|async (g, t) => { const sk = await S.importKey('jwk', t.private, {name: 'EC
 hkdf|async (g, t) => { const k = await S.importKey('raw', hex(t.ikm), 'HKDF', false, ['deriveBits']); return {ok: true, bytes: toHex(await S.deriveBits({name: 'HKDF', hash: HASH, salt: hex(t.salt), info: hex(t.info)}, k, t.size * 8)), want: t.okm}; }
 hmac|async (g, t) => { const k = await S.importKey('raw', hex(t.key), {name: 'HMAC', hash: HASH}, false, ['sign', 'verify']); const m = toHex(await S.sign('HMAC', k, hex(t.msg))); const full = await S.verify('HMAC', k, hex(m), hex(t.msg)); return {ok: full, bytes: m.slice(0, g.tagSize / 4), want: t.tag}; }
 pbkdf2|async (g, t) => { const k = await S.importKey('raw', hex(t.password), 'PBKDF2', false, ['deriveBits']); return {ok: true, bytes: toHex(await S.deriveBits({name: 'PBKDF2', hash: HASH, salt: hex(t.salt), iterations: t.iterationCount}, k, t.dkLen * 8)), want: t.dk}; }
+rsapss|async (g, t) => { const k = await S.importKey('spki', hex(g.publicKeyDer), {name: 'RSA-PSS', hash: g.sha}, false, ['verify']); return {ok: await S.verify({name: 'RSA-PSS', saltLength: g.sLen}, k, hex(t.sig), hex(t.msg))}; }
+rsapkcs1|async (g, t) => { const k = await S.importKey('spki', hex(g.publicKeyDer), {name: 'RSASSA-PKCS1-v1_5', hash: g.sha}, false, ['verify']); return {ok: await S.verify('RSASSA-PKCS1-v1_5', k, hex(t.sig), hex(t.msg))}; }
+rsaoaep|async (g, t) => { const k = await S.importKey('pkcs8', hex(g.privateKeyPkcs8), {name: 'RSA-OAEP', hash: g.sha}, false, ['decrypt']); return {ok: true, bytes: toHex(await S.decrypt({name: 'RSA-OAEP', label: hex(t.label)}, k, hex(t.ct))), want: t.msg}; }
 chacha|async (g, t) => { const k = await S.importKey('raw', hex(t.key), 'ChaCha20-Poly1305', false, ['encrypt', 'decrypt']); const p = {name: 'ChaCha20-Poly1305', iv: hex(t.iv), additionalData: hex(t.aad)}; const m = toHex(await S.decrypt(p, k, cat(hex(t.ct), hex(t.tag)))); if (t.result === 'valid') { const c = toHex(await S.encrypt(p, k, hex(t.msg))); if (c !== t.ct + t.tag) return {ok: false}; } return {ok: true, bytes: m, want: t.msg}; }
 `.trim().split("\n").reduce((o,l)=>{const i=l.indexOf("|");o[l.slice(0,i)]=l.slice(i+1);return o;},{} as Record<string,string>);
 
@@ -49,6 +53,9 @@ const files:[string,string,string][]=[
   ["pbkdf2_hmacsha1_test.json","pbkdf2","SHA-1"],["pbkdf2_hmacsha256_test.json","pbkdf2","SHA-256"],
   ["pbkdf2_hmacsha384_test.json","pbkdf2","SHA-384"],["pbkdf2_hmacsha512_test.json","pbkdf2","SHA-512"],
   ["chacha20_poly1305_test.json","chacha",""],
+  ["rsa_pss_2048_sha256_mgf1_32_test.json","rsapss",""],
+  ["rsa_signature_2048_sha256_test.json","rsapkcs1",""],["rsa_signature_2048_sha512_test.json","rsapkcs1",""],
+  ["rsa_oaep_2048_sha1_mgf1sha1_test.json","rsaoaep",""],["rsa_oaep_2048_sha256_mgf1sha256_test.json","rsaoaep",""],
 ];
 const only=opt("--only");
 let allPass=0,allFail=0;
