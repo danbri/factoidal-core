@@ -32,10 +32,9 @@ fi
 fi
 # BubblePopJS's realm as data: the prelude runs once here, and LeanJSRealmData.lean (not in
 # git) holds the heap it leaves, which the first page decodes (WasmVM/Hosts/LeanJSRealm.lean).
-# include_str is not a dependency Lake tracks, so a newer prelude.js rebuilds LeanJS first.
+# LeanJS's include_str inputs (prelude.js, webassembly.js) are Lake input_files its library
+# needs (lakefile.lean), so a newer prelude rebuilds LeanJS, and the realm, in this lake build.
 PRELUDE="$ROOT/tools/wasmvm/quickjs/prelude.js"
-LEANJS_OUT=.lake/build/lib/lean/L4Factoidal/WasmVM/Hosts/LeanJS
-if [ -f "$LEANJS_OUT.olean" ] && [ "$PRELUDE" -nt "$LEANJS_OUT.olean" ]; then rm -f "$LEANJS_OUT".*; fi
 lake build bubblepop-realm
 # The Wasm engine refuses BubblePopJS, so it carries no realm data.
 if [ "$MODE" = --wasm ]; then REALM_SOURCE=--empty; else REALM_SOURCE="$PRELUDE"; fi
