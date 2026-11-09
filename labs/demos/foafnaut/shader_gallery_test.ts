@@ -19,9 +19,9 @@ const start=(html:string,url:string)=>engine.scriptSession(html,{action:"start",
 const advance=(t:Turn,ms=16)=>engine.scriptSession("",{action:"advance",session:t.session,ms}) as unknown as Turn;
 const page=await Deno.readTextFile(new URL("./pages/shader-gallery.html",import.meta.url));
 // The ratchet: QuickJS-NG instructions of one frame's turn (a uniform write and a pass, or a
-// WebGL draw). 2026-11-09: about 286k (WebGPU) and 325k (WebGL) before the prelude's frame path,
-// about 105k and 115k after.
-const RATCHET={webgpu:130000,webgl2:140000};
+// WebGL draw). 2026-11-09: 286k (WebGPU) and 325k (WebGL) before the prelude's frame path,
+// 118k and 112k after.
+const RATCHET={webgpu:125000,webgl2:120000};
 for(const api of ["webgpu","webgl2"] as const)for(const shader of ["plasma","marble","spheres","seahorse","eleven"]){
   let t=start(page,`file:///shader-gallery.html?shader=${shader}&api=${api}&size=640x400&readout=0`);
   const all:Gpu[]=[...(t.gpu??[])],errors=[...t.errors],logs=[...t.logs];

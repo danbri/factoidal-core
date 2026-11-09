@@ -658,6 +658,7 @@ async function choose(s, a) {
   report();
 }
 // ---- The frame loop ----
+const readoutOn = params.get('readout') !== '0';
 const timeNow = () => ((paused ? pausedAt : performance.now()) - (t0 ?? 0) - tPaused) / 1000;
 let shownFrames = 0, scriptMs = 0, lastReport = 0, lastStamp = null, leanMs = 0, leanSamples = 0, scriptEngine = '';
 // Frame intervals since the last report: their count and sum (a sort of many numbers would
@@ -678,7 +679,7 @@ function tick(now) {
     const fx = navigator.foafnaut;
     if (fx && fx.lastTurnMs > 0) { leanMs += fx.lastTurnMs; leanSamples++; scriptEngine = fx.engine; }
   }
-  if (now - lastReport >= 1000 && params.get('readout') !== '0') report(now);
+  if (readoutOn && now - lastReport >= 1000) report(now);
 }
 // The readout is a 2D canvas: redrawing it is paint only. (A change of text in the page
 // would lay the whole page out again: about 40 ms in Foafnaut, two frames lost a second.)
