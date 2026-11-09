@@ -464,7 +464,7 @@
     get length() { return answer32(W(16, brand(this, Table, 'WebAssembly.Table.length').addr)); }
     type() {
       const s = brand(this, Table, 'WebAssembly.Table.type');
-      const u = new Uint8Array(W(16, s.addr)), mx = u32at(u, 4), element = s.type === 'funcref' ? 'anyfunc' : s.type;
+      const u = new Uint8Array(W(16, s.addr)), mx = u32at(u, 4), element = s.type;
       return mx === NONE ? { minimum: u32at(u, 0), element } : { minimum: u32at(u, 0), maximum: mx, element };
     }
     get(index) {
@@ -517,7 +517,7 @@
     valueOf() { return getGlobal(brand(this, Global, 'WebAssembly.Global.valueOf')); }
     type() {
       const s = brand(this, Global, 'WebAssembly.Global.type');
-      return { mutable: s.mutable, value: s.type === 'funcref' ? 'anyfunc' : s.type };
+      return { mutable: s.mutable, value: s.type };
     }
     get value() { return getGlobal(brand(this, Global, 'WebAssembly.Global.value')); }
     set value(v) {
@@ -545,7 +545,7 @@
     }
     type() {
       const s = brand(this, Tag, 'WebAssembly.Tag.type');
-      return { parameters: s.params.map(t => t === 'funcref' ? 'anyfunc' : t) };
+      return { parameters: s.params.slice() };
     }
   }
   const tagObject = (a, ps) => {

@@ -121,6 +121,9 @@ inductive Native where
   | dateCtor | dateGetTime
   /-- `performance.now()`: the host's clock in ms. -/
   | perfNow
+  /-- encodeURIComponent, decodeURIComponent (§19.2.6) and Annex B escape, unescape
+  (§B.2.1); 0, 1, 2, 3. -/
+  | uriFn (which : Nat)
   /-- A native of the embedding host: `HeapOf.hostCall` with this number. -/
   | host (k : Nat)
   deriving BEq, Repr, Inhabited

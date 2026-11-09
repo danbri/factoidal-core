@@ -3817,7 +3817,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
     | .stringMatchAll | .stringSearch | .proxyCtor | .jsonParse | .bufferCtor | .bufferSlice
     | .bufferIsView | .typedCtor _ | .typedSet | .typedSubarray | .typedFill | .dateCtor
     | .dataViewCtor | .dataViewGet _ | .dataViewSet _
-    | .dateGetTime | .perfNow | .host _ =>
+    | .dateGetTime | .perfNow | .host _ | .uriFn _ =>
       extraNative n id thisV args newTarget
     | _ =>
       -- string methods and Math
@@ -4389,6 +4389,76 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
         | _ => throwErr .type "this is not a Date object."
       | _ => throwErr .type "this is not a Date object."
     | .perfNow => pure (.num ((← hostNowNs) / 1000000))
+    | .uriFn which =>
+      let s ← toStr n a0
+      let hex := fun (v : Nat) (w : Nat) =>
+        String.ofList ((List.range w).reverse.map fun k => "0123456789ABCDEF".toList[(v / 16 ^ k) % 16]!)
+      let hexVal := fun (cs : List Char) => cs.foldl (fun (acc : Option Nat) c =>
+        acc.bind fun a => if c.isDigit then some (a * 16 + (c.toNat - 48))
+          else if 'a' ≤ c && c ≤ 'f' then some (a * 16 + (c.toNat - 87))
+          else if 'A' ≤ c && c ≤ 'F' then some (a * 16 + (c.toNat - 55)) else none) (some 0)
+      match which with
+      | 0 =>
+        -- encodeURIComponent: the unreserved marks stay, every other code point is its
+        -- UTF-8 bytes as %XX (a code point here is never a lone surrogate).
+        let keep := fun (c : Char) => c.isAlphanum && c.toNat < 128 || "-_.!~*'()".toList.contains c
+        pure (.str (String.join (s.toList.map fun c =>
+          if keep c then String.singleton c
+          else String.join ((String.singleton c).toUTF8.toList.map fun b => "%" ++ hex b.toNat 2))))
+      | 1 =>
+        -- decodeURIComponent: %XX sequences are UTF-8; anything malformed is a URIError.
+        let cs := s.toList.toArray
+        let mut out := ByteArray.empty
+        let mut i := 0
+        for _ in [0:cs.size] do
+          if i ≥ cs.size then break
+          let c := cs[i]!
+          if c == '%' then
+            match (if i + 2 < cs.size then hexVal [cs[i+1]!, cs[i+2]!] else none) with
+            | some v => out := out.push v.toUInt8; i := i + 3
+            | none => throwErr .uri "URI malformed"
+          else
+            out := out ++ (String.singleton c).toUTF8; i := i + 1
+        match String.fromUTF8? out with
+        | some r => pure (.str r)
+        | none => throwErr .uri "URI malformed"
+      | 2 =>
+        -- escape (§B.2.1.1): code units, as %XX or %uXXXX.
+        let keep := fun (c : Char) => c.isAlphanum && c.toNat < 128 || "@*_+-./".toList.contains c
+        let unit := fun (u : Nat) => if u < 256 then "%" ++ hex u 2 else "%u" ++ hex u 4
+        pure (.str (String.join (s.toList.map fun c =>
+          if keep c then String.singleton c
+          else if c.toNat < 65536 then unit c.toNat
+          else let v := c.toNat - 65536; unit (0xD800 + v / 1024) ++ unit (0xDC00 + v % 1024))))
+      | _ =>
+        -- unescape (§B.2.1.2): %XX and %uXXXX are code units; a surrogate pair becomes its
+        -- code point, a lone surrogate U+FFFD (strings here are code points).
+        let cs := s.toList.toArray
+        let mut units : Array Nat := #[]
+        let mut i := 0
+        for _ in [0:cs.size] do
+          if i ≥ cs.size then break
+          let c := cs[i]!
+          if c == '%' && i + 5 < cs.size + 0 && cs[i+1]! == 'u' then
+            match hexVal [cs[i+2]!, cs[i+3]!, cs[i+4]!, cs[i+5]!] with
+            | some v => units := units.push v; i := i + 6
+            | none => units := units.push c.toNat; i := i + 1
+          else if c == '%' && i + 2 < cs.size then
+            match hexVal [cs[i+1]!, cs[i+2]!] with
+            | some v => units := units.push v; i := i + 3
+            | none => units := units.push c.toNat; i := i + 1
+          else
+            units := units.push c.toNat; i := i + 1
+        let mut out := ""
+        let mut j := 0
+        for _ in [0:units.size] do
+          if j ≥ units.size then break
+          let u := units[j]!
+          if 0xD800 ≤ u && u < 0xDC00 && j + 1 < units.size && 0xDC00 ≤ units[j+1]! && units[j+1]! < 0xE000 then
+            out := out.push (Char.ofNat (65536 + (u - 0xD800) * 1024 + (units[j+1]! - 0xDC00))); j := j + 2
+          else
+            out := out.push (if 0xD800 ≤ u && u < 0xE000 then '\uFFFD' else Char.ofNat u); j := j + 1
+        pure (.str out)
     | .host k => callHost k args
     | _ => throwErr .type "not a function"
 termination_by structural n _ _ _ _ => n
@@ -4725,6 +4795,8 @@ def initRealm : M Unit := do
   setHidden g "console" (.obj console)
   method console "log" .print 0
   -- eval, Symbol, iterators, Date.now
+  for (nm, k) in [("encodeURIComponent", 0), ("decodeURIComponent", 1), ("escape", 2), ("unescape", 3)] do
+    setHidden g nm (← mkNative (.uriFn k) nm 1)
   let ev ← mkNative .eval "eval" 1
   setHidden g "eval" ev
   if let .obj e := ev then modify fun h => { h with realm := { h.realm with evalFn := e } }
