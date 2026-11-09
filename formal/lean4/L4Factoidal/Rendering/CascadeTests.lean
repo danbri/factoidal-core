@@ -57,6 +57,12 @@ private def sheet :=
 #guard agrees page ""
 #guard agrees "<p class=' a\tb\n a '>x</p>" ".a{color:red}.b.a{color:blue}"
 
+#guard RuleIndex.mergeRuns #[] == #[]
+#guard RuleIndex.mergeRuns #[#[1,3]] == #[1,3]
+#guard RuleIndex.mergeRuns #[#[1,3,9],#[2,3],#[],#[0,9,10],#[3]] == #[0,1,2,3,9,10]
+#guard RuleIndex.mergeRuns ((List.range 33).toArray.map fun i => #[i,40+i%3]) ==
+  ((List.range 33) ++ [40,41,42]).toArray
+
 /-- The candidates all elements try. -/
 def candidateTotal (html css : String) : Nat :=
   match CSS.parse css with

@@ -931,20 +931,63 @@ def RuleIndex.build (rules : List Rule) : RuleIndex := Id.run do
   let ix : RuleIndex := ⟨entries, bucketArrays byId, bucketArrays byClass, bucketArrays byTag, universal.reverse.toArray⟩
   return ix
 
+/-- The union of two ascending arrays, ascending, each value once: one pass, no recursion. -/
+def RuleIndex.mergeAsc (a b : Array Nat) : Array Nat := Id.run do
+  let mut out : Array Nat := Array.mkEmpty (a.size+b.size)
+  let mut i := 0
+  let mut j := 0
+  for _ in [:a.size+b.size] do
+    match a[i]?, b[j]? with
+    | some x, some y =>
+      if x < y then
+        out := out.push x
+        i := i+1
+      else if y < x then
+        out := out.push y
+        j := j+1
+      else
+        out := out.push x
+        i := i+1
+        j := j+1
+    | some x, none =>
+      out := out.push x
+      i := i+1
+    | none, some y =>
+      out := out.push y
+      j := j+1
+    | none, none => break
+  return out
+
+/-- The union of ascending arrays: pairs merged in passes, so that an element with many
+classes costs its candidates times the logarithm of its classes. Loops only: a sort here
+recursed as deep as its input. -/
+def RuleIndex.mergeRuns (runs : Array (Array Nat)) : Array Nat := Id.run do
+  let mut current := runs
+  for _ in [:runs.size] do
+    if current.size ≤ 1 then break
+    let mut next : Array (Array Nat) := Array.mkEmpty (current.size/2+1)
+    let mut k := 0
+    for _ in [:current.size] do
+      if k+1 < current.size then
+        next := next.push (RuleIndex.mergeAsc (current.getD k #[]) (current.getD (k+1) #[]))
+        k := k+2
+      else if k < current.size then
+        next := next.push (current.getD k #[])
+        k := k+2
+      else break
+    current := next
+  return current.getD 0 #[]
+
 /-- The entries that element (keys `k`, local name `lname`) may match: those of its
 buckets, ascending, each once. -/
 def RuleIndex.candidates (ix : RuleIndex) (k : ElemKey) (lname : String) : Array Nat := Id.run do
-  let mut c := ix.universal
-  if let some a := ix.byTag[lname]? then c := c ++ a
+  let mut runs : Array (Array Nat) := #[ix.universal]
+  if let some a := ix.byTag[lname]? then runs := runs.push a
   if !k.id.isEmpty then
-    if let some a := ix.byId[k.id]? then c := c ++ a
+    if let some a := ix.byId[k.id]? then runs := runs.push a
   for cl in k.classes do
-    if let some a := ix.byClass[cl]? then c := c ++ a
-  let sorted := c.qsort (· < ·)
-  let mut out : Array Nat := Array.mkEmpty sorted.size
-  for i in sorted do
-    if out.back? != some i then out := out.push i
-  return out
+    if let some a := ix.byClass[cl]? then runs := runs.push a
+  return RuleIndex.mergeRuns runs
 
 /-- The rules that match element `id`, from its buckets. -/
 def RuleIndex.matched (ix : RuleIndex) (keys : Nat → ElemKey) (dom : Dom) (id : Nat) (state : ElementState := {}) : List Match :=
