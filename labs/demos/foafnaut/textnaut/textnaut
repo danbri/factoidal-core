@@ -1,0 +1,40 @@
+#!/bin/sh
+# textnaut: start the text-mode browser. Link this file onto your PATH; it finds its own directory.
+#
+# The engine library is not in the repository. It is taken from, in order: $TEXTNAUT_NATIVE,
+# this checkout's build, the installed `foafnaut` release. With none of these, set TEXTNAUT_WASM_DIR.
+# Screensavers need no engine.
+set -eu
+
+# Follow symbolic links to the real location of this script.
+self=$0
+while [ -L "$self" ]; do
+  target=$(readlink "$self")
+  case $target in
+    /*) self=$target ;;
+    *) self=$(dirname "$self")/$target ;;
+  esac
+done
+here=$(cd "$(dirname "$self")" && pwd -P)
+
+if [ -z "${TEXTNAUT_NATIVE:-}" ] && [ -z "${TEXTNAUT_WASM_DIR:-}" ]; then
+  case $(uname -s) in
+    Darwin) lib=libweb-render.dylib ;;
+    *) lib=libweb-render.so ;;
+  esac
+  for candidate in \
+    "$here/../.build/web-render/$lib" \
+    "$here/../.build/engines/$lib" \
+    "${FOAFNAUT_HOME:-$HOME/.foafnaut}/current/foafnaut/$lib"; do
+    if [ -f "$candidate" ]; then
+      TEXTNAUT_NATIVE=$candidate
+      export TEXTNAUT_NATIVE
+      break
+    fi
+  done
+fi
+
+exec deno run --no-check --no-config --no-prompt \
+  --import-map="$here/import_map.json" \
+  --allow-read --allow-ffi --allow-net --allow-env \
+  "$here/textnaut.ts" "$@"
