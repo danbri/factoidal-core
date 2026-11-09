@@ -199,8 +199,15 @@ def draw (o : Outlines) (upem : Nat) (p : Program) (px : Nat) (fg : RGBA) : Opti
   let d : Matrix := {a := s, d := -s, e := -fl ox, f := -fl oy}
   let blank := (Bitmap.blank W H).data
   let full := rectCoverage W H 0 0 (nf W) (nf H)
+  -- Each outline read once a drawing: a glyph is often filled several times (layers, scales).
+  let mut paths : Std.HashMap Nat Path := {}
+  for st in p.steps do
+    let g? := match st with | .fill (some g) .. | .clip g _ => some g | _ => none
+    if let some g := g? then
+      unless paths.contains g do paths := paths.insert g (pathOf (o.get g))
+  let read := paths
   let coverOf := fun (g : Nat) (m : Matrix) =>
-    coverage W H (edgesOf (((pathOf (o.get g)).map (d.mul m)).flatten 0.1)) .nonzero
+    coverage W H (edgesOf (((read.getD g {}).map (d.mul m)).flatten 0.1)) .nonzero
   let put := fun (dst : ByteArray) (dr : Draw) => sameSize dst (composite W H dst dr)
   let mut stack : Array ByteArray := #[blank]
   for st in p.steps do
