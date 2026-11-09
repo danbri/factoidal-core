@@ -82,10 +82,12 @@ def edgeBox (W H : Nat) (es : Array Edge) : Box :=
 /-- Sample rows a pixel row is cut at. -/
 def subRows : Nat := 16
 
-/-- Coverage of the pixels of `box`, row by row (`box.w × box.h` values in 0..1). -/
+/-- Coverage of the pixels of `box`, row by row (`box.w × box.h` values in 0..1), and
+for each row the columns `[lo, hi)` (relative to the box) outside which it is 0. -/
 structure Coverage where
   box : Box
   cov : FloatArray
+  spans : Array (Nat × Nat) := #[]
 
 /-- Insert a crossing into an array sorted by `x` (few crossings on one row). -/
 private def insertSorted (xs : Array (Float × Int)) (x : Float) (d : Int) : Array (Float × Int) := Id.run do
@@ -120,16 +122,21 @@ def sortBy {α} [Inhabited α] (key : α → Float) (xs : Array α) : Array α :
     width := 2 * width
   return a
 
-/-- The coverage values of polygons with edges `es` under `rule`, in `box`. -/
-def coverageIn (box : Box) (es : Array Edge) (rule : FillRule) : FloatArray := Id.run do
-  if box.w == 0 || box.h == 0 then return FloatArray.empty
+/-- The coverage values of polygons with edges `es` under `rule`, in `box`, and for each
+row of the box the columns `[lo, hi)` that may be covered (outside them the value is 0). -/
+def coverageIn (box : Box) (es : Array Edge) (rule : FillRule) : FloatArray × Array (Nat × Nat) := Id.run do
+  if box.w == 0 || box.h == 0 then return (FloatArray.empty, #[])
   -- Edges by their first row, for an active list.
   let sorted := sortBy (·.y0) es
   let mut cov := fzeros (box.w * box.h)
+  let mut spans : Array (Nat × Nat) := Array.emptyWithCapacity box.h
   let mut active : Array Edge := #[]
   let mut next := 0
   let bx := nf box.x
   let wgt := 1 / nf subRows
+  -- One row's sums, kept zero outside the columns a row touched.
+  let mut diff := fzeros (box.w + 2)
+  let mut direct := fzeros (box.w + 2)
   for j in [0:box.h] do
     let row := nf (box.y + j)
     -- Edges that reach this row.
@@ -137,9 +144,11 @@ def coverageIn (box : Box) (es : Array Edge) (rule : FillRule) : FloatArray := I
       active := active.push sorted[next]!
       next := next + 1
     active := active.filter (·.y1 > row)
-    if active.isEmpty then continue
-    let mut diff := fzeros (box.w + 1)
-    let mut direct := fzeros (box.w + 1)
+    if active.isEmpty then
+      spans := spans.push (0, 0)
+      continue
+    let mut lo := box.w + 1
+    let mut hi := 0
     for s in [0:subRows] do
       let ys := row + (nf s + 0.5) * wgt
       let mut xs : Array (Float × Int) := #[]
@@ -164,6 +173,8 @@ def coverageIn (box : Box) (es : Array Edge) (rule : FillRule) : FloatArray := I
           if xb > xa then
             let ia := xa.floor.toUInt64.toNat
             let ib := xb.floor.toUInt64.toNat
+            lo := min lo ia
+            hi := max hi (ib + 1)
             if ia == ib then
               direct := direct.set! ia (direct[ia]! + (xb - xa) * wgt)
             else
@@ -171,18 +182,27 @@ def coverageIn (box : Box) (es : Array Edge) (rule : FillRule) : FloatArray := I
               diff := diff.set! (ia + 1) (diff[ia+1]! + wgt)
               diff := diff.set! ib (diff[ib]! - wgt)
               if xb > nf ib then direct := direct.set! ib (direct[ib]! + (xb - nf ib) * wgt)
+    let hiC := min hi box.w
+    if lo >= hiC then
+      spans := spans.push (0, 0)
+    else
+      spans := spans.push (lo, hiC)
     let mut run := 0.0
     let base := j * box.w
-    for i in [0:box.w] do
+    for i in [lo:hi+1] do
       run := run + diff[i]!
-      let c := run + direct[i]!
-      cov := cov.set! (base + i) (if c <= 0 then 0 else if c >= 1 then 1 else c)
-  return cov
+      if i < box.w then
+        let c := run + direct[i]!
+        cov := cov.set! (base + i) (if c <= 0 then 0 else if c >= 1 then 1 else c)
+      diff := diff.set! i 0
+      direct := direct.set! i 0
+  return (cov, spans)
 
 /-- The coverage of polygons with edges `es` under `rule`, in the canvas `W × H`. -/
 def coverage (W H : Nat) (es : Array Edge) (rule : FillRule) : Coverage :=
   let box := edgeBox W H es
-  ⟨box, coverageIn box es rule⟩
+  let (cov, spans) := coverageIn box es rule
+  ⟨box, cov, spans⟩
 
 theorem edgeBox_within (W H : Nat) (es : Array Edge) :
     (edgeBox W H es).x + (edgeBox W H es).w ≤ W ∧ (edgeBox W H es).y + (edgeBox W H es).h ≤ H := by
@@ -212,7 +232,7 @@ def rectCoverageIn (box : Box) (x0 y0 x1 y1 : Float) : FloatArray := Id.run do
 /-- The coverage of an axis-aligned rectangle (exact). -/
 def rectCoverage (W H : Nat) (x0 y0 x1 y1 : Float) : Coverage :=
   let box := boxOf W H x0 y0 x1 y1
-  ⟨box, rectCoverageIn box x0 y0 x1 y1⟩
+  ⟨box, rectCoverageIn box x0 y0 x1 y1, Array.replicate box.h (0, box.w)⟩
 
 theorem rectCoverage_within (W H : Nat) (a b c d : Float) :
     (rectCoverage W H a b c d).box.x + (rectCoverage W H a b c d).box.w ≤ W ∧
@@ -375,9 +395,12 @@ def composite (W H : Nat) (bm : ByteArray) (dr : Draw) : ByteArray := Id.run do
   let box := dr.cov.box
   let v := dr.visits W H
   let (x0, y0, w, h) := (v.x, v.y, v.w, v.h)
+  let bounded := !dr.op.unbounded
   for j in [0:h] do
     let y := y0 + j
-    for i in [0:w] do
+    -- A bounded operator changes only covered pixels: the row's span is enough.
+    let (lo, hi) := if bounded then dr.cov.spans.getD j (0, w) else (0, w)
+    for i in [lo:hi] do
       let x := x0 + i
       let idx := y * W + x
       let m := maskAt dr.clip idx

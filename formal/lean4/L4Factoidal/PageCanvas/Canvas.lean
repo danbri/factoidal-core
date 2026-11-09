@@ -230,7 +230,7 @@ def shadowDraw (W H : Nat) (st : DrawState) (d : Draw) (es : Array Edge) (rule :
   let mut b := a
   for _ in [0:3] do
     b := boxBlur W H r (boxBlur W H r b true) false
-  return { d with ready := .solid st.shadowColor.px, cov := ⟨⟨0, 0, W, H⟩, b⟩ }
+  return { d with ready := .solid st.shadowColor.px, cov := ⟨⟨0, 0, W, H⟩, b, #[]⟩ }
 
 /-- Composite a draw (with its shadow first) into the canvas. `shape` gives the draw's
 edges and rule, asked for only when there is a shadow. -/

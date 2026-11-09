@@ -71,7 +71,7 @@ try{
   const t0=Date.now();let gpuFrames=[];
   while(Date.now()-t0<60000){
     await sleep(500);
-    gpuFrames=await evaluate(`window.__frames.filter(f=>f.path?.startsWith('page-gpu')).map(f=>({t:f.t,pageGpu:f.pageGpu,leanRenders:f.leanRenders}))`).catch(()=>[]);
+    gpuFrames=await evaluate(`window.__frames.filter(f=>f.path?.startsWith('page-gpu')).map(f=>({t:f.t,pageGpu:f.pageGpu,leanRenders:f.leanRenders,scripts:f.scripts,drawMs:f.drawMs}))`).catch(()=>[]);
     if(gpuFrames.length>=24)break;
   }
   if(gpuFrames.length<10){
@@ -83,6 +83,8 @@ try{
   else{
     const span=(gpuFrames.at(-1).t-gpuFrames[0].t)/1000,rate=(gpuFrames.length-1)/span;
     console.log(`page-gpu frames: ${gpuFrames.length} in ${span.toFixed(2)} s, ${rate.toFixed(1)} a second; last stats`,JSON.stringify(gpuFrames.at(-1).pageGpu));
+    const sc=gpuFrames.at(-1).scripts,draws=gpuFrames.map(f=>f.drawMs).sort((a,b)=>a-b);
+    if(sc)console.log(`script turns: ${sc.turns}, ${(sc.ms/Math.max(1,sc.turns)).toFixed(1)} ms a turn on average (last ${sc.lastMs} ms, path ${sc.path}); page-gpu draw median ${draws[draws.length>>1]} ms`);
     // The rate is reported, not checked: headless Chrome draws with a software GPU, and the
     // page's callbacks run in WasmVM in the engine (record, section 9, for measurements).
     if(rate>40)fail(`frame rate ${rate.toFixed(1)}: more page canvas frames than the page draws`);
