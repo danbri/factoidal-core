@@ -1,0 +1,571 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>FOAF explorer, verified overlap check</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+body{margin:0;padding:12px 16px 20px 16px;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:15px;line-height:22px;color:#26303f;background:#f4f2fa}
+main{max-width:760px}
+h1{margin:0;font-size:24px;line-height:32px;color:#3d3486}
+p{margin:0;padding-top:4px}
+a{color:#4b5bd1}
+.lede{color:#5f6475}
+.card{margin-top:10px;background:#fbfaff;border:1px solid #dcd8ec}
+#graph{display:block;cursor:pointer}
+.info{padding:10px 14px 12px 14px;background:white;border-top:1px solid #ebe8f4;min-height:66px}
+.name{font-size:18px;line-height:26px;color:#3d3486}
+.meta{color:#5f6475;font-size:14px;line-height:20px}
+.note{padding-top:14px;color:#6a6f80;font-size:13px;line-height:19px}
+button{font-size:15px;min-height:44px;padding:0 14px;margin:0 6px 6px 0}
+.chips{padding-top:10px}
+.kernel{padding:6px 14px;font-size:13px;line-height:19px;color:#3d3486;background:#f1effa;border-top:1px solid #ebe8f4}
+</style></head><body><main>
+<p><a href="index.html">Demo index</a></p>
+<h1>FOAF explorer, verified overlap check</h1>
+<p class="lede" id="lede">Tap a person, or their button below, to meet their friends.</p>
+<div class="card">
+<svg id="graph" width="340" height="420" viewBox="0 0 340 420">
+<rect id="bg" x="0" y="0" width="340" height="420" fill="#fbfaff"/>
+<path id="edges" d="" fill="none" stroke="#c3bfdc" stroke-width="1.5"/>
+<path id="hot" d="" fill="none" stroke="#7a6fd6" stroke-width="2.5"/>
+<g id="nodes"></g>
+</svg>
+<div class="info">
+<p class="name" id="who">This page needs JavaScript.</p>
+<p class="meta" id="nick">Each person is a foaf:Person; each line is a foaf:knows link.</p>
+<p class="meta"><a id="home" href="index.html">Demo index</a></p>
+</div>
+<p class="kernel" id="kernel">layout check: starting</p>
+</div>
+<p class="chips" id="chips"></p>
+<p><button id="reset">Start again</button></p>
+<p class="note">The same explorer as <a href="foaf-explorer.html">FOAF explorer</a>, with one rule added: a frame is drawn only if it passes the FOAF graph's overlap check, the certificate of Foafnaut's Lean graph (each person's box may share at most 5% of its area with the others). The check is a 353-byte WebAssembly function, assembled from <a href="https://github.com/danbri/factoidal/blob/main/labs/demos/foafnaut/wasm/foaf-check.wat">foaf-check.wat</a> and proved in Lean, on those exact bytes and under the WebAssembly specification's semantics, to compute the Lean certificate (theorem <code>FoafCheck.page_check_certifies</code>). The page calls it through the standard WebAssembly API, as any browser does; the layout itself (springs and repulsion) is the page's own JavaScript and is not proved. Where WebAssembly is missing the page draws every frame and says the check is off.</p>
+<script type="text/turtle" id="foaf-data">
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+@prefix : <https://example.org/friends/> .
+# Synthetic people. The first nine are those of foaf-people.xml.
+:alice a foaf:Person ; foaf:name "Alice" ; foaf:nick "alice" ; foaf:knows :bob, :ani, :eleni, :carol, :dan .
+:bob a foaf:Person ; foaf:name "Bob" ; foaf:nick "bob" ; foaf:knows :alice, :maria, :erin, :kofi .
+:ani a foaf:Person ; foaf:name "Անի" ; foaf:nick "ani" ; foaf:knows :aram, :alice, :lusine .
+:aram a foaf:Person ; foaf:name "Արամ" ; foaf:nick "aram" ; foaf:knows :ani, :hiro, :gor .
+:eleni a foaf:Person ; foaf:name "Ελένη" ; foaf:nick "eleni" ; foaf:knows :farah, :nikos, :sofia .
+:maria a foaf:Person ; foaf:name "Мария" ; foaf:nick "maria" ; foaf:knows :bob, :farah, :ivan, :vera .
+:farah a foaf:Person ; foaf:name "Farah" ; foaf:nick "farah" ; foaf:knows :grace, :maria, :tariq, :zainab .
+:grace a foaf:Person ; foaf:name "Grace" ; foaf:nick "grace" ; foaf:knows :hiro, :alice, :lena .
+:hiro a foaf:Person ; foaf:name "Hiro" ; foaf:nick "hiro" ; foaf:knows :grace, :kenji, :jun .
+:carol a foaf:Person ; foaf:name "Carol" ; foaf:nick "carol" ; foaf:knows :farah, :rosa, :ines .
+:dan a foaf:Person ; foaf:name "Dan" ; foaf:nick "dan" ; foaf:knows :grace, :erin, :quentin .
+:erin a foaf:Person ; foaf:name "Erin" ; foaf:nick "erin" ; foaf:knows :hiro, :zoe, :sven .
+:zoe a foaf:Person ; foaf:name "Zoë" ; foaf:nick "zoe" ; foaf:knows :farah, :uma, :xavier .
+:kofi a foaf:Person ; foaf:name "Kofi" ; foaf:nick "kofi" ; foaf:knows :amara, :olu, :bob .
+:amara a foaf:Person ; foaf:name "Amara" ; foaf:nick "amara" ; foaf:knows :olu, :zainab, :yara .
+:olu a foaf:Person ; foaf:name "Olu" ; foaf:nick "olu" ; foaf:knows :kofi, :priya .
+:lusine a foaf:Person ; foaf:name "Լուսինե" ; foaf:nick "lusine" ; foaf:knows :gor, :aram, :sofia .
+:gor a foaf:Person ; foaf:name "Գոռ" ; foaf:nick "gor" ; foaf:knows :lusine, :pavel .
+:nikos a foaf:Person ; foaf:name "Νίκος" ; foaf:nick "nikos" ; foaf:knows :sofia, :mehmet, :eleni .
+:sofia a foaf:Person ; foaf:name "Σοφία" ; foaf:nick "sofia" ; foaf:knows :nikos, :ines, :rosa .
+:ivan a foaf:Person ; foaf:name "Иван" ; foaf:nick "ivan" ; foaf:knows :pavel, :vera, :sven .
+:vera a foaf:Person ; foaf:name "Вера" ; foaf:nick "vera" ; foaf:knows :ivan, :nadia .
+:pavel a foaf:Person ; foaf:name "Павел" ; foaf:nick "pavel" ; foaf:knows :ivan, :mehmet .
+:tariq a foaf:Person ; foaf:name "Tariq" ; foaf:nick "tariq" ; foaf:knows :nadia, :mehmet, :yara .
+:zainab a foaf:Person ; foaf:name "Zainab" ; foaf:nick "zainab" ; foaf:knows :tariq, :amara .
+:lena a foaf:Person ; foaf:name "Lena" ; foaf:nick "lena" ; foaf:knows :sven, :quentin, :wen .
+:kenji a foaf:Person ; foaf:name "Kenji" ; foaf:nick "kenji" ; foaf:knows :jun, :wen, :priya .
+:jun a foaf:Person ; foaf:name "Jun" ; foaf:nick "jun" ; foaf:knows :wen, :hiro .
+:wen a foaf:Person ; foaf:name "Wen" ; foaf:nick "wen" ; foaf:knows :li, :kenji .
+:li a foaf:Person ; foaf:name "Li" ; foaf:nick "li" ; foaf:knows :wen, :uma .
+:rosa a foaf:Person ; foaf:name "Rosa" ; foaf:nick "rosa" ; foaf:knows :ines, :xavier, :quentin .
+:ines a foaf:Person ; foaf:name "Inês" ; foaf:nick "ines" ; foaf:knows :rosa, :carol .
+:quentin a foaf:Person ; foaf:name "Quentin" ; foaf:nick "quentin" ; foaf:knows :xavier, :dan .
+:sven a foaf:Person ; foaf:name "Sven" ; foaf:nick "sven" ; foaf:knows :lena, :erin .
+:uma a foaf:Person ; foaf:name "Uma" ; foaf:nick "uma" ; foaf:knows :priya, :zoe, :li .
+:priya a foaf:Person ; foaf:name "Priya" ; foaf:nick "priya" ; foaf:knows :uma, :olu, :kenji .
+:xavier a foaf:Person ; foaf:name "Xavier" ; foaf:nick "xavier" ; foaf:knows :rosa, :zoe .
+:nadia a foaf:Person ; foaf:name "Nadia" ; foaf:nick "nadia" ; foaf:knows :tariq, :vera .
+:mehmet a foaf:Person ; foaf:name "Mehmet" ; foaf:nick "mehmet" ; foaf:knows :nikos, :pavel, :tariq .
+:yara a foaf:Person ; foaf:name "Yara" ; foaf:nick "yara" ; foaf:knows :amara, :tariq .
+</script>
+<script>
+// FOAF explorer: start with one person and their friends; a tap brings in that
+// person's friends and lets people far from the focus fade and leave. Layout,
+// drawing and pacing are this script's own; it measures no text.
+(function () {
+  var SVGNS = 'http://www.w3.org/2000/svg';
+  var FOAF = 'http://xmlns.com/foaf/0.1/';
+  var RDF_TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
+  var MAX_NODES = 25;
+  var debug = /[?&]debug\b/.test(String(location.search || ''));
+
+  // ---- The verified overlap check (WebAssembly) ---------------------------------------
+  /* foaf-check.wasm: BEGIN (generated by labs/demos/foafnaut/wasm/build.sh; do not edit) */
+  var FOAF_CHECK_WASM_HEX = // 353 bytes, SHA-256 2799c77176824bdae8e66837c4f6bda94434bd9d292e3d13e394617b78f196f7, wabt wat2wasm 1.0.42
+    '0061736d0100000001090160047f7f7f7f017f030201000503010001071202066d656d6f7279020005636865636b0000' +
+    '0aae0201ab0202057f087e4101210602400340200420004f0d012002200441106c6a21072007280200ad210920072802' +
+    '04ad210a2007280208ad210b200728020cad210c200b20097d220f4200200f4200551b200c200a7d2210420020104200' +
+    '551b7e210d4200210e4100210502400340200520004f0d01200520044704402002200541106c6a2107200b2007280208' +
+    'ad220f200b200f531b20092007280200ad221020092010551b7d220f4200200f4200551b210f200c200728020cad2210' +
+    '200c2010531b200a2007280204ad2210200a2010551b7d2210420020104200551b200f7e200e7c210e0b200541016a21' +
+    '050c000b0b200e4290ce007e2001ad200d7e574100200d4200551b21082003200441046c6a2008360200200641002008' +
+    '1b2106200441016a21040c000b0b20060b';
+  /* foaf-check.wasm: END */
+  // The glue only copies: boxes in as little-endian i32 (left, top, right, bottom) at byte 0,
+  // flags out (one i32 per person) after them. Its contract is the hypothesis `Inputs` of
+  // FoafCheck.page_check_certifies: whole-pixel coordinates in [0, 32768), at most 3276 people
+  // in the 64 KiB memory, and the flags written apart from the boxes.
+  var BPS = 500;                       // LayoutPolicy.defaultConfig: 5% of a box's area
+  var kernel = null, kernelState = 'loading', checkedFrames = 0, heldFrames = 0, lastBad = 0;
+  var littleEndian = new Uint8Array(new Uint32Array([1]).buffer)[0] === 1;
+  var boxScratch = null;
+  function startKernel(then) {
+    if (typeof WebAssembly !== 'object' || !littleEndian) { kernelState = 'off'; then(); return; }
+    var bytes = new Uint8Array(FOAF_CHECK_WASM_HEX.length / 2);
+    for (var i = 0; i < bytes.length; i++) bytes[i] = parseInt(FOAF_CHECK_WASM_HEX.slice(2 * i, 2 * i + 2), 16);
+    WebAssembly.instantiate(bytes, {}).then(function (r) {
+      kernel = r.instance.exports; kernelState = 'on'; then();
+    }, function (e) { kernelState = 'off'; then(); });
+  }
+  // One call: n boxes in, n flags out, the certificate's verdict back.
+  function checkBoxes(boxes, n) {
+    var words = 4 * n;
+    if (n > 3276) return { ok: false, bad: n };
+    var mem = new Int32Array(kernel.memory.buffer);
+    mem.set(boxes.subarray(0, words), 0);
+    var ok = kernel.check(n, BPS, 0, 16 * n) === 1;
+    var bad = 0;
+    if (!ok) for (var i = 0; i < n; i++) if (mem[words + i] !== 1) bad++;
+    return { ok: ok, bad: bad };
+  }
+
+  // ---- Turtle (the subset written above): prefixes, a, ; and , lists ----------
+  function parseTurtle(text) {
+    var prefixes = {}, triples = [];
+    var re = /\s*(#[^\n]*|@prefix|<[^>]*>|"(?:[^"\\]|\\.)*"|[A-Za-z_][\w-]*:[\w-]*|:[\w-]*|\ba\b|[.;,])/g;
+    var toks = [], m;
+    while ((m = re.exec(text)) !== null) { if (m[1].charAt(0) !== '#') toks.push(m[1]); if (m[0] === '') break; }
+    var i = 0;
+    function term(t) {
+      if (t === 'a') return RDF_TYPE;
+      if (t.charAt(0) === '<') return t.slice(1, -1);
+      if (t.charAt(0) === '"') return { literal: t.slice(1, -1).replace(/\\(.)/g, '$1') };
+      var c = t.indexOf(':');
+      return (prefixes[t.slice(0, c)] || '') + t.slice(c + 1);
+    }
+    while (i < toks.length) {
+      if (toks[i] === '@prefix') { prefixes[toks[i + 1].slice(0, -1)] = term(toks[i + 2]); i += 4; continue; }
+      var s = term(toks[i++]);
+      for (;;) {
+        var p = term(toks[i++]);
+        for (;;) {
+          triples.push([s, p, term(toks[i++])]);
+          if (toks[i] === ',') { i++; continue; }
+          break;
+        }
+        if (toks[i] === ';') { i++; continue; }
+        i++; // '.'
+        break;
+      }
+    }
+    return triples;
+  }
+
+  // ---- People and their (undirected) friends ------------------------------------
+  var people = {}, order = [];
+  function person(iri) {
+    var p = people[iri];
+    if (!p) {
+      p = people[iri] = { iri: iri, name: iri.replace(/.*\//, ''), nick: '', home: '', friends: [] };
+      order.push(iri);
+    }
+    return p;
+  }
+  var data = document.getElementById('foaf-data');
+  var triples = parseTurtle(data ? data.textContent : '');
+  for (var t = 0; t < triples.length; t++) {
+    var tr = triples[t], s = person(tr[0]);
+    if (tr[1] === FOAF + 'name') s.name = tr[2].literal;
+    else if (tr[1] === FOAF + 'nick') s.nick = tr[2].literal;
+    else if (tr[1] === FOAF + 'homepage') s.home = tr[2];
+    else if (tr[1] === FOAF + 'knows' && typeof tr[2] === 'string') {
+      var o = person(tr[2]);
+      if (s.friends.indexOf(o.iri) < 0) s.friends.push(o.iri);
+      if (o.friends.indexOf(s.iri) < 0) o.friends.push(s.iri);
+    }
+  }
+  for (var k = 0; k < order.length; k++) {
+    var pp = people[order[k]];
+    if (!pp.home) pp.home = 'https://example.org/~' + (pp.nick || pp.name) + '/';
+  }
+
+  // ---- Stage ------------------------------------------------------------------------
+  var svg = document.getElementById('graph');
+  var layer = document.getElementById('nodes');
+  var edgesPath = document.getElementById('edges');
+  var hotPath = document.getElementById('hot');
+  var W = 340, H = 420;
+  // A browser that knows the card's width gets a stage that fills it, in whole pixels
+  // (Foafnaut draws an inline SVG only at a whole-pixel size). A script host that
+  // answers 0 keeps the 340 by 420 stage.
+  var cw = (svg.parentNode && svg.parentNode.clientWidth) || 0;
+  if (cw >= 300) {
+    W = Math.min(900, Math.floor(cw));
+    H = Math.max(400, Math.min(540, Math.round(W * 0.62)));
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+    svg.setAttribute('width', String(W));
+    svg.setAttribute('height', String(H));
+    var bg = document.getElementById('bg');
+    bg.setAttribute('width', String(W)); bg.setAttribute('height', String(H));
+  }
+  var CX = W / 2, CY = H / 2 - 6;
+  var SPRING = Math.max(78, Math.min(130, W / 5));
+  var REPEL = 0.045 * SPRING * SPRING, FAR = 9 * SPRING * SPRING;
+
+  // Colours by hop distance from the focus: 0, 1, 2.
+  var FILL = ['#4c3fa8', '#6f86e8', '#c3cbee'];
+  var HALO = ['#4c3fa8', '#6f86e8', '#aab4e0'];
+  var INK = ['#2a2266', '#2f3a6b', '#9aa0b8'];
+  var RADIUS = [16, 13, 11];
+
+  var nodes = {};   // iri -> {x,y,vx,vy,g,halo,dot,label,dist,shownX,shownY,shownDist,selected}
+  var count = 0, focus = null, selected = null;
+
+  function el(name, attrs, parent) {
+    var e = document.createElementNS(SVGNS, name);
+    for (var a in attrs) e.setAttribute(a, String(attrs[a]));
+    if (parent) parent.appendChild(e);
+    return e;
+  }
+
+  function addNode(iri, x, y) {
+    var p = people[iri];
+    var g = el('g', { id: 'n-' + (p.nick || count), transform: 'translate(' + (x | 0) + ' ' + (y | 0) + ')' });
+    var halo = el('circle', { r: 22, fill: HALO[1], 'fill-opacity': 0.14 }, g);
+    var dot = el('circle', { r: RADIUS[1], fill: FILL[1], stroke: 'white', 'stroke-width': 2 }, g);
+    var label = el('text', { y: 30, 'font-size': W >= 500 ? 14 : 13, 'text-anchor': 'middle', fill: INK[1],
+      'font-family': 'Noto Sans, system-ui, sans-serif' }, g);
+    label.textContent = p.name;
+    // A person joins the stage with the first frame that passes the check.
+    var n = { iri: iri, x: x, y: y, vx: 0, vy: 0, g: g, halo: halo, dot: dot, label: label,
+      dist: 1, shownX: x | 0, shownY: y | 0, shownDist: 1, shownSel: false, fixed: false, staged: false,
+      // The person's footprint: the halo, and the label below it at its estimated width
+      // (the page measures no text: 0.6 of the font size a character, a generous estimate).
+      half: Math.max(22, Math.ceil(String(p.name).length * (W >= 500 ? 14 : 13) * 0.3) + 2) };
+    nodes[iri] = n; count++;
+    return n;
+  }
+
+  function removeNode(iri) {
+    var n = nodes[iri];
+    if (!n) return;
+    if (n.staged) layer.removeChild(n.g);
+    delete nodes[iri]; count--;
+  }
+
+  // Hop distances from the focus over the people on stage.
+  function distances() {
+    for (var iri in nodes) nodes[iri].dist = 99;
+    var queue = [focus]; nodes[focus].dist = 0;
+    for (var q = 0; q < queue.length; q++) {
+      var a = nodes[queue[q]], fs = people[a.iri].friends;
+      for (var f = 0; f < fs.length; f++) {
+        var b = nodes[fs[f]];
+        if (b && b.dist > a.dist + 1) { b.dist = a.dist + 1; queue.push(b.iri); }
+      }
+    }
+  }
+
+  // Focus on a person: bring in their friends, keep friends of friends faded, let
+  // the rest go, and never show more than MAX_NODES.
+  function setFocus(iri) {
+    keep();
+    focus = iri; selected = iri;
+    var c = nodes[iri] || addNode(iri, CX, CY);
+    var fs = people[iri].friends;
+    for (var f = 0; f < fs.length; f++) {
+      if (!nodes[fs[f]]) {
+        var a = (f / fs.length) * 6.283 + 0.5;
+        addNode(fs[f], c.x + Math.cos(a) * SPRING * 0.7, c.y + Math.sin(a) * SPRING * 0.7);
+      }
+    }
+    distances();
+    var all = [];
+    for (var id in nodes) all.push(nodes[id]);
+    all.sort(function (p, q) { return p.dist - q.dist; });
+    for (var i = 0; i < all.length; i++) if (all[i].dist > 2 || i >= MAX_NODES) removeNode(all[i].iri);
+    restyle();
+    recast();
+    show(iri);
+    chips();
+    wake();
+  }
+
+  // A button for each person on stage, nearest first: taps that every engine can route
+  // to an element (an SVG shape is not always a hit target of its own).
+  var chipRow = document.getElementById('chips');
+  function chips() {
+    while (chipRow.firstChild) chipRow.removeChild(chipRow.firstChild);
+    var list = [];
+    for (var id in nodes) if (id !== focus) list.push(nodes[id]);
+    list.sort(function (p, q) { return p.dist - q.dist; });
+    for (var i = 0; i < list.length; i++) {
+      var b = document.createElement('button');
+      b.textContent = people[list[i].iri].name;
+      b.setAttribute('id', 'c-' + people[list[i].iri].nick);
+      chipRow.appendChild(b);
+      chipRow.appendChild(document.createTextNode(' '));
+    }
+  }
+
+  // Colours change only when a person's distance or selection changes.
+  function restyle() {
+    for (var iri in nodes) {
+      var n = nodes[iri], d = n.dist, sel = iri === selected;
+      if (d === n.shownDist && sel === n.shownSel) continue;
+      n.dot.setAttribute('fill', FILL[d]);
+      n.dot.setAttribute('r', String(RADIUS[d]));
+      n.halo.setAttribute('fill', HALO[d]);
+      n.halo.setAttribute('fill-opacity', sel ? '0.32' : '0.14');
+      n.label.setAttribute('fill', INK[d]);
+      n.label.setAttribute('y', String(RADIUS[d] + 16));
+      n.shownDist = d; n.shownSel = sel;
+    }
+  }
+
+  var who = document.getElementById('who'), nickEl = document.getElementById('nick'), home = document.getElementById('home');
+  function show(iri) {
+    var p = people[iri];
+    who.textContent = p.name;
+    var names = [];
+    for (var f = 0; f < p.friends.length; f++) names.push(people[p.friends[f]].name);
+    nickEl.textContent = 'nick ' + p.nick + ' · knows ' + names.join(', ');
+    home.textContent = p.home;
+    home.setAttribute('href', p.home);
+  }
+
+  // ---- Forces -------------------------------------------------------------------------
+  // The people on stage in dense arrays, and their links as index pairs, rebuilt only
+  // when the cast changes: the step itself touches no strings and no objects.
+  var act = [], X = [], Y = [], VX = [], VY = [], FX = [], FY = [], D = [], HW = [];
+  var EA = [], EB = [], ER = [];
+  function recast() {
+    act = []; var at = {}, iri, i, j;
+    for (iri in nodes) { at[iri] = act.length; act.push(nodes[iri]); }
+    X = []; Y = []; VX = []; VY = []; FX = []; FY = []; D = []; HW = [];
+    for (i = 0; i < act.length; i++) {
+      var n = act[i];
+      X.push(n.x); Y.push(n.y); VX.push(n.vx); VY.push(n.vy); FX.push(0); FY.push(0); D.push(n.dist); HW.push(n.half);
+    }
+    boxScratch = new Int32Array(4 * Math.max(1, act.length));
+    EA = []; EB = []; ER = [];
+    for (i = 0; i < act.length; i++) {
+      var fs = people[act[i].iri].friends;
+      for (j = 0; j < fs.length; j++) {
+        var k = at[fs[j]];
+        if (k === undefined || k <= i) continue;
+        EA.push(i); EB.push(k); ER.push(D[i] === 0 || D[k] === 0 ? SPRING : SPRING * 0.85);
+      }
+    }
+  }
+  function keep() {
+    for (var i = 0; i < act.length; i++) { var n = act[i]; n.x = X[i]; n.y = Y[i]; n.vx = VX[i]; n.vy = VY[i]; }
+  }
+  // alpha cools each step, as in d3-force, so every layout ends in a bounded number of steps.
+  var energy = 0, alpha = 1, cool = 0.982;
+  function step() {
+    var n = act.length, i, j, dx, dy, d2, d, f, ax, ay, fx, fy;
+    for (i = 0; i < n; i++) { FX[i] = (CX - X[i]) * 0.012; FY[i] = (CY - Y[i]) * 0.012; }
+    // Repulsion: every pair (n is at most 25).
+    for (i = 0; i < n; i++) {
+      ax = X[i]; ay = Y[i]; fx = 0; fy = 0;
+      for (j = i + 1; j < n; j++) {
+        dx = ax - X[j]; dy = ay - Y[j]; d2 = dx * dx + dy * dy;
+        if (d2 > FAR) continue;
+        if (d2 < 1) { dx = (i - j) * 0.7 + 0.3; dy = (j % 3) - 1 + 0.2; d2 = dx * dx + dy * dy; }
+        f = REPEL / d2 * (1 - d2 / FAR);
+        dx *= f; dy *= f;
+        fx += dx; fy += dy; FX[j] -= dx; FY[j] -= dy;
+      }
+      FX[i] += fx; FY[i] += fy;
+    }
+    // Footprints that overlap push apart along the shorter way out (layout only: the
+    // check below decides what is drawn).
+    for (i = 0; i < n; i++) {
+      for (j = i + 1; j < n; j++) {
+        dx = X[i] - X[j]; dy = Y[i] - Y[j];
+        var ox = HW[i] + HW[j] - Math.abs(dx), oy = 58 - Math.abs(dy);
+        if (ox <= 0 || oy <= 0) continue;
+        if (ox * 0.5 < oy) { f = (dx < 0 ? -ox : ox) * 0.05; FX[i] += f; FX[j] -= f; }
+        else { f = (dy < 0 ? -oy : oy) * 0.05; FY[i] += f; FY[j] -= f; }
+      }
+    }
+    // Springs on the foaf:knows links between people on stage.
+    for (j = 0; j < EA.length; j++) {
+      var a = EA[j], b = EB[j];
+      dx = X[b] - X[a]; dy = Y[b] - Y[a]; d = Math.sqrt(dx * dx + dy * dy) || 0.01;
+      f = (d - ER[j]) * 0.04 / d;
+      dx *= f; dy *= f;
+      FX[a] += dx; FY[a] += dy; FX[b] -= dx; FY[b] -= dy;
+    }
+    var e = 0, m = 28, v2, x, y, vx, vy, top = H - m - 14, right = W - m;
+    for (i = 0; i < n; i++) {
+      if (D[i] === 0) { FX[i] += (CX - X[i]) * 0.08; FY[i] += (CY - Y[i]) * 0.08; }
+      vx = (VX[i] + FX[i] * alpha) * 0.76; vy = (VY[i] + FY[i] * alpha) * 0.76;
+      v2 = vx * vx + vy * vy;
+      if (v2 > 400) { f = 20 / Math.sqrt(v2); vx *= f; vy *= f; }
+      x = X[i] + vx; y = Y[i] + vy;
+      if (x < m) { x = m; vx = 0; } else if (x > right) { x = right; vx = 0; }
+      if (y < m) { y = m; vy = 0; } else if (y > top) { y = top; vy = 0; }
+      // Energy: how far a person really moved (one held at the edge does not count).
+      dx = x - X[i]; dy = y - Y[i]; v2 = dx * dx + dy * dy;
+      if (v2 > e) e = v2;
+      X[i] = x; Y[i] = y; VX[i] = vx; VY[i] = vy;
+    }
+    energy = e;
+    alpha *= cool;
+  }
+
+  // ---- Drawing: one transform per moved person, one path for all links -------------
+  var writes = 0, edgesDirty = true;
+  // The footprints of this frame, in whole pixels, inside the stage (as Lean's footprints
+  // are cut to the viewport).
+  function footprints() {
+    var b = boxScratch, i, x, y, r;
+    for (i = 0; i < act.length; i++) {
+      x = Math.round(X[i]); y = Math.round(Y[i]); r = RADIUS[D[i]] || 11;
+      b[4 * i] = Math.max(0, Math.min(W, x - HW[i]));
+      b[4 * i + 1] = Math.max(0, Math.min(H, y - 22));
+      b[4 * i + 2] = Math.max(0, Math.min(W, x + HW[i]));
+      b[4 * i + 3] = Math.max(0, Math.min(H, y + r + 20));
+    }
+    return b;
+  }
+  var checkMs = 0;
+  // A frame is drawn only if the verified check accepts it; otherwise the last accepted
+  // frame stays on screen (as in Foafnaut's Lean graph).
+  function checked() {
+    if (kernelState !== 'on' || !act.length) return true;
+    var t0 = performance.now();
+    var r = checkBoxes(footprints(), act.length);
+    checkMs = checkMs * 0.9 + (performance.now() - t0) * 0.1;
+    checkedFrames++;
+    if (!r.ok) { heldFrames++; lastBad = r.bad; }
+    return r.ok;
+  }
+  var kernelLine = document.getElementById('kernel'), kernelShown = '';
+  function showKernel() {
+    var t = kernelState === 'on'
+      ? 'layout check: verified Wasm (theorem FoafCheck.page_check_certifies) · ' + checkedFrames + ' frames checked, ' +
+        heldFrames + ' held' + (heldFrames ? ' (last: ' + lastBad + ' over the 5% budget)' : '')
+      : kernelState === 'off' ? 'layout check: off (no WebAssembly here); every frame is drawn unchecked'
+      : 'layout check: starting';
+    if (t !== kernelShown) { kernelLine.textContent = t; kernelShown = t; }
+  }
+  function draw() {
+    if (!checked()) return;
+    var moved = false, i, n, x, y;
+    for (i = 0; i < act.length; i++) {
+      n = act[i];
+      if (!n.staged) { layer.appendChild(n.g); n.staged = true; moved = true; }
+      // Drawn at exactly the whole-pixel position the check saw.
+      x = Math.round(X[i]); y = Math.round(Y[i]);
+      if (x === n.shownX && y === n.shownY) continue;
+      n.g.setAttribute('transform', 'translate(' + x + ' ' + y + ')');
+      n.shownX = x; n.shownY = y; moved = true; writes++;
+    }
+    if (moved || edgesDirty) drawEdges();
+  }
+  function drawEdges() {
+    var d = '', hot = '', j, a, b;
+    for (j = 0; j < EA.length; j++) {
+      a = act[EA[j]]; b = act[EB[j]];
+      if (!a.staged || !b.staged) continue;
+      var seg = 'M' + a.shownX + ' ' + a.shownY + 'L' + b.shownX + ' ' + b.shownY;
+      if (a.iri === selected || b.iri === selected) hot += seg; else d += seg;
+    }
+    edgesPath.setAttribute('d', d);
+    hotPath.setAttribute('d', hot);
+    edgesDirty = false;
+  }
+
+  // ---- Pacing -----------------------------------------------------------------------
+  // Physics runs at about 60 steps per second of real time, whatever the frame rate:
+  // a slow frame takes more steps (at most maxSteps). If a frame's script time runs
+  // long, maxSteps drops; if frames come faster than the page needs, it skips writes
+  // to stay near minGap. The loop stops when the layout settles: no idle frames.
+  var running = false, lastFrame = 0, maxSteps = 4, minGap = 0, settledFrames = 0, slowGap = 0;
+  var stat = { frames: 0, scriptMs: 0, intervalMs: 0, steps: 0, settles: 0, writes: 0 };
+  var readout = null;
+  if (debug) {
+    readout = el('text', { x: 8, y: 16, 'font-size': 11, fill: '#8a8fa3', 'font-family': 'Noto Sans, monospace' }, svg);
+    readout.textContent = 'debug';
+  }
+  function wake() {
+    alpha = 1; settledFrames = 0; edgesDirty = true; slowGap = 0;
+    if (!running) { running = true; lastFrame = 0; requestAnimationFrame(frame); }
+  }
+  function frame(now) {
+    var gap = lastFrame ? now - lastFrame : 16.7;
+    if (lastFrame && gap < minGap) { requestAnimationFrame(frame); return; }
+    var t0 = performance.now();
+    lastFrame = now;
+    var steps = Math.max(1, Math.min(maxSteps, Math.round(gap / 16.7)));
+    for (var s = 0; s < steps; s++) step();
+    draw();
+    var ms = performance.now() - t0;
+    // Adapt: long script frames, or frames further apart than 24 Hz allows, take fewer
+    // steps; quick ones may take up to four. A host whose clock stands still while a
+    // script runs reports 0 ms of script, so the frame gap is the measure there. On a
+    // slow host the layout cools faster, so it settles in fewer frames.
+    slowGap = slowGap * 0.7 + gap * 0.3;
+    if ((ms > 12 || slowGap > 62) && maxSteps > 1) maxSteps--;
+    else if (ms < 4 && slowGap < 30 && maxSteps < 4) maxSteps++;
+    cool = slowGap > 62 ? 0.96 : 0.982;
+    minGap = gap > 50 ? 1000 / 24 : 0;
+    showKernel();
+    stat.frames++; stat.steps += steps;
+    stat.scriptMs = stat.scriptMs * 0.9 + ms * 0.1;
+    stat.intervalMs = stat.intervalMs * 0.9 + gap * 0.1;
+    stat.writes = writes;
+    if (readout && stat.frames % 6 === 0) readout.textContent = (1000 / stat.intervalMs).toFixed(1) + ' fps · ' +
+      stat.scriptMs.toFixed(1) + ' ms · ' + count + ' people · ' + steps + ' steps';
+    if (energy < 0.04) settledFrames++; else settledFrames = 0;
+    if (settledFrames > 2 || alpha < 0.03) {
+      running = false; stat.settles++;
+      if (debug) {
+        var at = [];
+        for (var q = 0; q < act.length; q++) at.push(people[act[q].iri].nick + ' ' + act[q].shownX + ' ' + act[q].shownY);
+        console.log('explorer settled: ' + JSON.stringify(stat) + ' people ' + count + ' stage ' + W + 'x' + H + ' at ' + at.join(','));
+      }
+      return;
+    }
+    requestAnimationFrame(frame);
+  }
+  window.explorerStats = function () { return { frames: stat.frames, scriptMs: stat.scriptMs, intervalMs: stat.intervalMs,
+    steps: stat.steps, settles: stat.settles, writes: writes, people: count, running: running, focus: focus,
+    kernel: kernelState, checked: checkedFrames, held: heldFrames, checkMs: checkMs }; };
+
+  // ---- Taps: one listener on the stage --------------------------------------------
+  svg.addEventListener('click', function (e) {
+    var t = e.target;
+    if (debug) console.log('explorer click: ' + (t && t.nodeName) + ' ' + (t && t.getAttribute ? t.getAttribute('id') : '') + ' at ' + e.clientX + ',' + e.clientY);
+    while (t && t !== svg) {
+      var id = t.getAttribute ? t.getAttribute('id') : null;
+      if (id && id.slice(0, 2) === 'n-') {
+        for (var iri in nodes) if (nodes[iri].g === t) { iri === focus ? show(iri) : setFocus(iri); return; }
+      }
+      t = t.parentNode;
+    }
+  });
+  chipRow.addEventListener('click', function (e) {
+    var id = e.target && e.target.getAttribute ? e.target.getAttribute('id') : null;
+    if (!id || id.slice(0, 2) !== 'c-') return;
+    for (var iri in nodes) if (people[iri].nick === id.slice(2)) { setFocus(iri); return; }
+  });
+  document.getElementById('reset').addEventListener('click', function () {
+    for (var iri in nodes) removeNode(iri);
+    setFocus(order[0]);
+  });
+
+  document.getElementById('lede').textContent = 'Tap a person, or their button below, to meet their friends. ' + order.length + ' people, ' +
+    (triples.length ? 'read from Turtle in the page.' : 'none found.');
+  startKernel(function () { showKernel(); if (order.length) setFocus(order[0]); });
+})();
+</script>
+</main></body></html>

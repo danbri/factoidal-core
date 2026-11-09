@@ -63,6 +63,15 @@
    "doesNotShow": "dragging: script events carry no pointer coordinates in foafnaut yet"
   },
   {
+   "page": "foaf-explorer-verified.html",
+   "title": "FOAF explorer, verified overlap check (WebAssembly)",
+   "handwritten": true,
+   "needs": "page scripts and page WebAssembly in foafnaut (WebAssembly.instantiate, exports.check, exports.memory)",
+   "appRefused": "does not execute scripts",
+   "shows": "the FOAF explorer drawing only frames that pass the Lean overlap certificate, checked by a 353-byte WebAssembly function proved in Lean, on its bytes and under the WebAssembly spec semantics, to compute LayoutPolicy.certify (theorem FoafCheck.page_check_certifies); the status line counts frames checked and held",
+   "doesNotShow": "a proved layout: the springs and repulsion are the page's own unproved JavaScript; the label widths in the footprints are estimates"
+  },
+  {
    "page": "js-status.html",
    "title": "JavaScript in Foafnaut: status",
    "handwritten": true,

@@ -22,6 +22,10 @@ python3 "$LAB/../../../tools/status-to-html.py" "$LAB/../../../docs/web/hub/foaf
   "$LAB/web-render/fixtures/status.html" --check
 # The demo pages match their sources, and each one does what its manifest says.
 python3 "$LAB/../../../tools/build-demo-pages.py" --check
+# The verified FOAF overlap check: the bytes in the page and in FoafCheckBytes.lean are the
+# assembler output of wasm/foaf-check.wat (docs/designissues/2026-11-09-verified-foaf-layout.md).
+rc=0; bash "$LAB/wasm/build.sh" --check || rc=$?
+if [ "$rc" = 2 ]; then echo 'NOT RUN: wasm/build.sh --check needs the pinned wabt wat2wasm'; elif [ "$rc" != 0 ]; then exit "$rc"; fi
 # The Spinal Tap page's queries and inlined results match its Wikidata snapshot (no network).
 python3 "$LAB/tools/spinal-tap-snapshot.py" --check
 if [ -x "$LAB/.build/web-render/web-render-native" ]; then
