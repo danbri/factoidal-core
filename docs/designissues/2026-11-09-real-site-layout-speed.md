@@ -151,7 +151,7 @@ this branch does not change the script engine.
 **Same drawing.** A digest of each frame's `webRender` answer (every box, glyph run and link),
 and the paint count, at two widths, is the same for both engines on index, status, showcase,
 showcase-tables, showcase-lettering, showcase-images, print-showcase, architecture, js-status,
-timers-and-clicks, Wikipedia and gov.uk.
+timers-and-clicks, Wikipedia, gov.uk and BBC News.
 
 ## Where a relayout goes now
 
