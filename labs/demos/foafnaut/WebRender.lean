@@ -220,7 +220,7 @@ def picturesOf (store : NativeImage.Store) (keys : List (Nat × String)) : Rende
   fun id => found.get? id
 
 /-! Each layout decoded the page's images again (`imageStoreOf`): 44 ms of a relayout of
-gov.uk, whose images are `data:` URIs (realperf). `imageStoreKept` is `imageStoreOf`;
+gov.uk (realperf). `imageStoreKept` is `imageStoreOf`;
 its implementation keeps the last two stores by their keys and supplied bytes. -/
 initialize imageStoresKept : IO.Ref (Array ((List String × List (String × ByteArray)) × NativeImage.Store)) ← IO.mkRef #[]
 

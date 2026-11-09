@@ -41,15 +41,15 @@ Wikipedia, 5 of gov.uk, on a loaded machine):
 The quadratic part: for every element, the cascade tried every rule of the page and of the
 user agent (`userAgentRules.map ++ rules.map`, a new list per element), and for every class
 selector it split the element's `class` attribute again (`words`: three `replace` passes,
-a split and a filter, all allocating). Wikipedia has about 2,500 elements and a few
-thousand rules after the first 128 KiB of each sheet; the matching itself was cheap, the
-string work around it was not.
+a split and a filter, all allocating). Comparing selectors was cheap; the string work
+around it was not.
 
 Smaller costs found on the way:
 
-* Words that miss the profile's memo were shaped again by every layout. The memo holds the
-  words of the text nodes; layout also asks for pieces of words cut by bidi levels and for
-  words in a direction other than their script's (`shapedWordDir`, never kept).
+* Words that miss the profile's memo were shaped again by every layout: 72% of `layoutTask`
+  on Wikipedia was word shaping. The memo holds the words of the text nodes; pieces of words
+  cut by bidi levels are not in it, and words in a direction other than their script's
+  (`shapedWordDir`) never were. Which words missed on Wikipedia was not determined.
 * Every layout read the page's sheets again, though only `@media` blocks depend on the
   viewport; parsed the page source again; and decoded its images again.
 * Every frame, `parseRequest` turned the whole request (the page source and its sheets, up
@@ -63,8 +63,8 @@ Each is a separate commit on `wip/realperf`.
    one bucket by its rightmost compound: its id, else its first class, else its tag, else
    the bucket of every element (`Selector.bucket`, `RuleIndex.build`, once per cascade).
    An element tries only the rules of its buckets, ascending and each once
-   (`RuleIndex.candidates`), so the cascade sees the matched rules in sheet order as
-   before (`computedFrom`). The matcher reads each element's class words and id from a
+   (`RuleIndex.candidates`: pairwise merges of the ascending buckets, loops only), so the
+   cascade sees the matched rules in sheet order as before (`computedFrom`). The matcher reads each element's class words and id from a
    table made once per cascade (`ElemKeys.of`).
 2. **Shaped words kept across layouts.** `SfntProfile.profile` takes the function that
    shapes a word that misses the memo, and every word shaped in a direction other than
@@ -106,4 +106,78 @@ Each is a separate commit on `wip/realperf`.
 
 ## Numbers
 
-(After the first build of `wip/realperf`.)
+Native, 1600 by 1000 at 200%, liberal mode, scripts off, snapshots of the pages' HTML with
+their sheets fetched live. Before is the engine of `0f89690b6` (liberal mode, no fixes);
+after is this branch. The two engines ran one after the other on the same loaded machine
+(load average 14 to 20, other builds running), twice each; these are the second pass, and the
+first agrees within about 10% except Wikipedia's first compile before (2.6 to 3.0 s). Times
+are milliseconds. A relayout is the median of 5 widths never laid out before (3 for BBC
+News, 1 before).
+
+| page | first compile, before | after | relayout, before | after | kept frame, before | after |
+|---|---|---|---|---|---|---|
+| Wikipedia FOAF | 2,958 | 336 | 2,450 | 97 | 61 | 62 |
+| gov.uk | 4,427 | 250 | 4,326 | 122 | 99 | 92 |
+| BBC News | 57,603 | 951 | 58,648 | 537 | 138 | 83 |
+
+`prepare` (the host's fetches and `inspect`) is unchanged: 420 ms for Wikipedia, 100 ms for
+gov.uk, 116 ms for BBC News. So the first frame, without fetching the page's own HTML, is about 0.75 s,
+0.35 s and 1.1 s, against the goal of 1 s. The relayout goal of 200 ms is met for Wikipedia and gov.uk and not for BBC
+News, whose liberal path still lays out up to three times (the retries of
+record 2026-11-08-liberal-mode-and-console.md). BBC's kept frame was measured once each, so
+that difference is not a result.
+
+Demo pages, same conditions, one pass each in the order after then before (scripts off;
+first compile, kept frame and relayout, before / after):
+
+| page | first compile | kept frame | relayout |
+|---|---|---|---|
+| index | 119 / 105 | 38 / 41 | 43 / 43 |
+| showcase | 106 / 118 | 54 / 54 | 59 / 58 |
+| showcase-tables | 61 / 52 | 28 / 26 | 35 / 29 |
+| print-showcase | 67 / 55 | 32 / 28 | 36 / 32 |
+| status | 107 / 97 | 40 / 37 | 43 / 41 |
+| timers-and-clicks | 13 / 11 | 7 / 7 | 8 / 7 |
+
+These differences are within the spread between runs on this machine: small pages have
+few rules, so the cascade was never their cost. `first_compile_bench`: foaf-explorer 29 / 26,
+timers-and-clicks 12 / 12, json-script-1600 2 / 2.
+
+BubblePopJS (`bubblepop_bench.ts`, before / after, native engine): first start 19.2 / 17.5 ms,
+later start 0.37 / 0.34, fib(24) 116 / 123, a WPT page start 19.9 / 21.5, a frame of Timers
+and clicks 0.06 / 0.06 mean and 0.84 / 0.89 largest. One run each on a loaded machine;
+this branch does not change the script engine.
+
+**Same drawing.** A digest of each frame's `webRender` answer (every box, glyph run and link),
+and the paint count, at two widths, is the same for both engines on index, status, showcase,
+showcase-tables, showcase-lettering, showcase-images, print-showcase, architecture, js-status,
+timers-and-clicks, Wikipedia and gov.uk.
+
+## Where a relayout goes now
+
+A sample of Wikipedia's relayouts on the new engine (share of `web_document_compile_bin`):
+
+| phase | share |
+|---|---|
+| frame (`artifactWith`) | 47% |
+| of which scene JSON and its checks | 20% |
+| of which `layoutJSON`, mostly `lean_float_to_string` | 15% |
+| of which outlines flattened (`Scene.make`) | 11% |
+| block and inline layout (`layoutTask`) | 18% |
+| cascade (`computeAll`) | 13% |
+| request JSON read (`parseRequest`) | 9% |
+
+## Next
+
+1. BBC News: one layout instead of three: read the sizes of inline `svg` before layout, so
+   that a refusal is known without laying the page out.
+2. A frame serializes every box and glyph run of the whole page with `toString` on floats
+   (`layoutJSON`). The native window reuses page layers (`pageArtifact`), so this is the cost
+   of a new layer, not of a scroll frame; a binary form or a band of runs would remove it.
+3. Each request parses the whole page source and sheets as JSON. A handle to a source the
+   engine already holds would make it constant.
+4. The theorem that `RuleIndex.matched` equals `matchedRules` for every page: today its
+   premise of `computeAll_eq_linear` is checked on the test pages, not proved. Soundness of a
+   bucket is proved; the remaining part is the index construction and the merge.
+5. Word-shaping misses: the cause of the memo misses on Wikipedia was not identified; the
+   kept table removes their cost after the first layout, not the misses themselves.
