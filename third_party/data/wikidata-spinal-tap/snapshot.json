@@ -1,0 +1,2749 @@
+{
+ "provenance": {
+  "source": "Wikidata (https://www.wikidata.org/), through the QLever SPARQL endpoint",
+  "endpoint": "https://qlever.dev/api/wikidata",
+  "method": "HTTP GET with query=, Accept: application/sparql-results+json",
+  "retrieved": "2026-11-09T08:15:12Z",
+  "licence": "CC0 1.0",
+  "licenceURL": "https://creativecommons.org/publicdomain/zero/1.0/",
+  "tool": "labs/demos/foafnaut/tools/spinal-tap-snapshot.py --capture",
+  "page": "labs/demos/foafnaut/pages/spinal-tap-sparql.html"
+ },
+ "queries": {
+  "band": {
+   "query": "PREFIX wd: <http://www.wikidata.org/entity/>\nPREFIX wdt: <http://www.wikidata.org/prop/direct/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX schema: <http://schema.org/>\n# One row for each fact about the band, with a label for each item\nSELECT ?facet ?value ?valueLabel WHERE {\n  { wd:Q741661 rdfs:label ?value . FILTER(LANG(?value) = \"en\") BIND(\"name\" AS ?facet) }\n  UNION { wd:Q741661 schema:description ?value . FILTER(LANG(?value) = \"en\") BIND(\"description\" AS ?facet) }\n  UNION { wd:Q741661 wdt:P9989 ?value . BIND(\"stylized name\" AS ?facet) }\n  UNION { wd:Q741661 wdt:P2031 ?value . BIND(\"start of work period\" AS ?facet) }\n  UNION { wd:Q741661 wdt:P31 ?value . BIND(\"instance of\" AS ?facet) }\n  UNION { wd:Q741661 wdt:P136 ?value . BIND(\"genre\" AS ?facet) }\n  UNION { wd:Q741661 wdt:P495 ?value . BIND(\"country of origin\" AS ?facet) }\n  UNION { wd:Q741661 wdt:P138 ?value . BIND(\"named after\" AS ?facet) }\n  UNION { wd:Q741661 wdt:P264 ?value . BIND(\"record label\" AS ?facet) }\n  UNION { wd:Q741661 wdt:P170 ?value . BIND(\"created by\" AS ?facet) }\n  UNION { ?value wdt:P737 wd:Q741661 . BIND(\"influenced\" AS ?facet) }\n  OPTIONAL { ?value rdfs:label ?valueLabel . FILTER(LANG(?valueLabel) = \"en\") }\n}",
+   "results": {
+    "head": {
+     "vars": [
+      "facet",
+      "value",
+      "valueLabel"
+     ]
+    },
+    "results": {
+     "bindings": [
+      {
+       "facet": {
+        "type": "literal",
+        "value": "description"
+       },
+       "value": {
+        "type": "literal",
+        "value": "parody heavy metal band",
+        "xml:lang": "en"
+       }
+      },
+      {
+       "facet": {
+        "type": "literal",
+        "value": "name"
+       },
+       "value": {
+        "type": "literal",
+        "value": "Spinal Tap",
+        "xml:lang": "en"
+       }
+      },
+      {
+       "facet": {
+        "type": "literal",
+        "value": "stylized name"
+       },
+       "value": {
+        "type": "literal",
+        "value": "Spin̈al Tap"
+       }
+      },
+      {
+       "facet": {
+        "type": "literal",
+        "value": "stylized name"
+       },
+       "value": {
+        "type": "literal",
+        "value": "Spın̈al Tap"
+       }
+      },
+      {
+       "facet": {
+        "type": "literal",
+        "value": "start of work period"
+       },
+       "value": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#dateTime",
+        "type": "literal",
+        "value": "1964-01-01T00:00:00Z"
+       }
+      },
+      {
+       "facet": {
+        "type": "literal",
+        "value": "genre"
+       },
+       "value": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q1133657"
+       },
+       "valueLabel": {
+        "type": "literal",
+        "value": "traditional heavy metal",
+        "xml:lang": "en"
+       }
+      },
+      {
+       "facet": {
+        "type": "literal",
+        "value": "created by"
+       },
+       "value": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q1384181"
+       },
+       "valueLabel": {
+        "type": "literal",
+        "value": "Michael McKean",
+        "xml:lang": "en"
+       }
+      },
+      {
+       "facet": {
+        "type": "literal",
+        "value": "genre"
+       },
+       "value": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q1391336"
+       },
+       "valueLabel": {
+        "type": "literal",
+        "value": "comedy rock",
+        "xml:lang": "en"
+       }
+      },
+      {
+       "facet": {
+        "type": "literal",
+        "value": "country of origin"
+       },
+       "value": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q145"
+       },
+       "valueLabel": {
+        "type": "literal",
+        "value": "United Kingdom",
+        "xml:lang": "en"
+       }
+      },
+      {
+       "facet": {
+        "type": "literal",
+        "value": "record label"
+       },
+       "value": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q155152"
+       },
+       "valueLabel": {
+        "type": "literal",
+        "value": "Polydor Records",
+        "xml:lang": "en"
+       }
+      },
+      {
+       "facet": {
+        "type": "literal",
+        "value": "record label"
+       },
+       "value": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q212699"
+       },
+       "valueLabel": {
+        "type": "literal",
+        "value": "Geffen Records",
+        "xml:lang": "en"
+       }
+      },
+      {
+       "facet": {
+        "type": "literal",
+        "value": "record label"
+       },
+       "value": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q231694"
+       },
+       "valueLabel": {
+        "type": "literal",
+        "value": "Interscope Records",
+        "xml:lang": "en"
+       }
+      },
+      {
+       "facet": {
+        "type": "literal",
+        "value": "country of origin"
+       },
+       "value": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q30"
+       },
+       "valueLabel": {
+        "type": "literal",
+        "value": "United States",
+        "xml:lang": "en"
+       }
+      },
+      {
+       "facet": {
+        "type": "literal",
+        "value": "created by"
+       },
+       "value": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q336074"
+       },
+       "valueLabel": {
+        "type": "literal",
+        "value": "Christopher Guest",
+        "xml:lang": "en"
+       }
+      },
+      {
+       "facet": {
+        "type": "literal",
+        "value": "created by"
+       },
+       "value": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q345325"
+       },
+       "valueLabel": {
+        "type": "literal",
+        "value": "Harry Shearer",
+        "xml:lang": "en"
+       }
+      },
+      {
+       "facet": {
+        "type": "literal",
+        "value": "genre"
+       },
+       "value": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q38848"
+       },
+       "valueLabel": {
+        "type": "literal",
+        "value": "heavy metal music",
+        "xml:lang": "en"
+       }
+      },
+      {
+       "facet": {
+        "type": "literal",
+        "value": "influenced"
+       },
+       "value": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q421794"
+       },
+       "valueLabel": {
+        "type": "literal",
+        "value": "The Darkness",
+        "xml:lang": "en"
+       }
+      },
+      {
+       "facet": {
+        "type": "literal",
+        "value": "instance of"
+       },
+       "value": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q5741069"
+       },
+       "valueLabel": {
+        "type": "literal",
+        "value": "rock band",
+        "xml:lang": "en"
+       }
+      },
+      {
+       "facet": {
+        "type": "literal",
+        "value": "instance of"
+       },
+       "value": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q6619719"
+       },
+       "valueLabel": {
+        "type": "literal",
+        "value": "fictional musical ensemble",
+        "xml:lang": "en"
+       }
+      },
+      {
+       "facet": {
+        "type": "literal",
+        "value": "named after"
+       },
+       "value": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q719444"
+       },
+       "valueLabel": {
+        "type": "literal",
+        "value": "lumbar puncture",
+        "xml:lang": "en"
+       }
+      },
+      {
+       "facet": {
+        "type": "literal",
+        "value": "genre"
+       },
+       "value": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q83270"
+       },
+       "valueLabel": {
+        "type": "literal",
+        "value": "hard rock",
+        "xml:lang": "en"
+       }
+      }
+     ]
+    }
+   }
+  },
+  "members": {
+   "query": "PREFIX wd: <http://www.wikidata.org/entity/>\nPREFIX wdt: <http://www.wikidata.org/prop/direct/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX schema: <http://schema.org/>\nSELECT ?member ?memberLabel ?description\n       (GROUP_CONCAT(DISTINCT ?roleLabel; separator=\", \") AS ?roles)\n       (SAMPLE(?playedByLabel) AS ?playedBy) (SAMPLE(?bornInLabel) AS ?bornIn)\n       (SAMPLE(?notableLabel) AS ?notableWork) WHERE {\n  { ?member wdt:P463 wd:Q741661 } UNION { wd:Q741661 wdt:P527 ?member }\n  ?member rdfs:label ?memberLabel . FILTER(LANG(?memberLabel) = \"en\")\n  OPTIONAL { ?member schema:description ?description . FILTER(LANG(?description) = \"en\") }\n  OPTIONAL { ?member wdt:P106 ?role . ?role rdfs:label ?roleLabel . FILTER(LANG(?roleLabel) = \"en\") }\n  OPTIONAL { ?member wdt:P175 ?player . ?player rdfs:label ?playedByLabel . FILTER(LANG(?playedByLabel) = \"en\") }\n  OPTIONAL { ?member wdt:P19 ?place . ?place rdfs:label ?bornInLabel . FILTER(LANG(?bornInLabel) = \"en\") }\n  OPTIONAL { ?member wdt:P800 ?notable . ?notable rdfs:label ?notableLabel . FILTER(LANG(?notableLabel) = \"en\") }\n}\nGROUP BY ?member ?memberLabel ?description",
+   "results": {
+    "head": {
+     "vars": [
+      "member",
+      "memberLabel",
+      "description",
+      "roles",
+      "playedBy",
+      "bornIn",
+      "notableWork"
+     ]
+    },
+    "results": {
+     "bindings": [
+      {
+       "member": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q1381281"
+       },
+       "memberLabel": {
+        "type": "literal",
+        "value": "Gregg Bissonette",
+        "xml:lang": "en"
+       },
+       "description": {
+        "type": "literal",
+        "value": "American drummer",
+        "xml:lang": "en"
+       },
+       "roles": {
+        "type": "literal",
+        "value": "session musician, jazz musician, drummer, musician"
+       },
+       "bornIn": {
+        "type": "literal",
+        "value": "Detroit",
+        "xml:lang": "en"
+       }
+      },
+      {
+       "member": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q5240008"
+       },
+       "memberLabel": {
+        "type": "literal",
+        "value": "David St. Hubbins",
+        "xml:lang": "en"
+       },
+       "description": {
+        "type": "literal",
+        "value": "fictional musician",
+        "xml:lang": "en"
+       },
+       "roles": {
+        "type": "literal",
+        "value": "singer, guitarist"
+       },
+       "playedBy": {
+        "type": "literal",
+        "value": "Michael McKean",
+        "xml:lang": "en"
+       }
+      },
+      {
+       "member": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q5262360"
+       },
+       "memberLabel": {
+        "type": "literal",
+        "value": "Derek Smalls",
+        "xml:lang": "en"
+       },
+       "description": {
+        "type": "literal",
+        "value": "fictional musician",
+        "xml:lang": "en"
+       },
+       "roles": {
+        "type": "literal",
+        "value": "bass guitarist"
+       },
+       "bornIn": {
+        "type": "literal",
+        "value": "West Midlands",
+        "xml:lang": "en"
+       }
+      },
+      {
+       "member": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q7032682"
+       },
+       "memberLabel": {
+        "type": "literal",
+        "value": "Nigel Tufnel",
+        "xml:lang": "en"
+       },
+       "description": {
+        "type": "literal",
+        "value": "fictional musician",
+        "xml:lang": "en"
+       },
+       "roles": {
+        "type": "literal",
+        "value": "guitarist"
+       },
+       "playedBy": {
+        "type": "literal",
+        "value": "Christopher Guest",
+        "xml:lang": "en"
+       },
+       "bornIn": {
+        "type": "literal",
+        "value": "London",
+        "xml:lang": "en"
+       },
+       "notableWork": {
+        "type": "literal",
+        "value": "up to eleven",
+        "xml:lang": "en"
+       }
+      },
+      {
+       "member": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q5006588"
+       },
+       "memberLabel": {
+        "type": "literal",
+        "value": "C. J. Vanston",
+        "xml:lang": "en"
+       },
+       "description": {
+        "type": "literal",
+        "value": "film composer, music producer, songwriter, keyboardist",
+        "xml:lang": "en"
+       },
+       "roles": {
+        "type": "literal",
+        "value": "keyboardist, record producer, composer, musician, songwriter"
+       },
+       "bornIn": {
+        "type": "literal",
+        "value": "Denver",
+        "xml:lang": "en"
+       }
+      }
+     ]
+    }
+   }
+  },
+  "film": {
+   "query": "PREFIX wd: <http://www.wikidata.org/entity/>\nPREFIX wdt: <http://www.wikidata.org/prop/direct/>\nPREFIX p: <http://www.wikidata.org/prop/>\nPREFIX ps: <http://www.wikidata.org/prop/statement/>\nPREFIX pq: <http://www.wikidata.org/prop/qualifier/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT ?film ?title ?year ?directorLabel ?actor ?actorLabel ?character ?characterName WHERE {\n  VALUES ?film { wd:Q7810384 }\n  ?film wdt:P1476 ?title .\n  OPTIONAL { SELECT ?film (MIN(YEAR(?date)) AS ?year) WHERE { ?film wdt:P577 ?date } GROUP BY ?film }\n  OPTIONAL { ?film wdt:P57 ?director . ?director rdfs:label ?directorLabel . FILTER(LANG(?directorLabel) = \"en\") }\n  ?film p:P161 ?credit . ?credit ps:P161 ?actor .\n  ?actor rdfs:label ?actorLabel . FILTER(LANG(?actorLabel) = \"en\")\n  OPTIONAL { ?credit pq:P453 ?role . ?role rdfs:label ?character . FILTER(LANG(?character) = \"en\") }\n  OPTIONAL { ?credit pq:P4633 ?characterName }\n}",
+   "results": {
+    "head": {
+     "vars": [
+      "film",
+      "title",
+      "year",
+      "directorLabel",
+      "actor",
+      "actorLabel",
+      "character",
+      "characterName"
+     ]
+    },
+    "results": {
+     "bindings": [
+      {
+       "film": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q7810384"
+       },
+       "title": {
+        "type": "literal",
+        "value": "This Is Spinal Tap",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1984"
+       },
+       "directorLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "actor": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q190998"
+       },
+       "actorLabel": {
+        "type": "literal",
+        "value": "Anjelica Huston",
+        "xml:lang": "en"
+       },
+       "characterName": {
+        "type": "literal",
+        "value": "Polly Deutsch"
+       }
+      },
+      {
+       "film": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q7810384"
+       },
+       "title": {
+        "type": "literal",
+        "value": "This Is Spinal Tap",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1984"
+       },
+       "directorLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "actor": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q464425"
+       },
+       "actorLabel": {
+        "type": "literal",
+        "value": "Ed Begley, Jr.",
+        "xml:lang": "en"
+       },
+       "characterName": {
+        "type": "literal",
+        "value": "John 'Stumpy' Pepys"
+       }
+      },
+      {
+       "film": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q7810384"
+       },
+       "title": {
+        "type": "literal",
+        "value": "This Is Spinal Tap",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1984"
+       },
+       "directorLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "actor": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q3156753"
+       },
+       "actorLabel": {
+        "type": "literal",
+        "value": "J. J. Barry",
+        "xml:lang": "en"
+       }
+      },
+      {
+       "film": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q7810384"
+       },
+       "title": {
+        "type": "literal",
+        "value": "This Is Spinal Tap",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1984"
+       },
+       "directorLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "actor": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q2925592"
+       },
+       "actorLabel": {
+        "type": "literal",
+        "value": "Brinke Stevens",
+        "xml:lang": "en"
+       }
+      },
+      {
+       "film": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q7810384"
+       },
+       "title": {
+        "type": "literal",
+        "value": "This Is Spinal Tap",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1984"
+       },
+       "directorLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "actor": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q433827"
+       },
+       "actorLabel": {
+        "type": "literal",
+        "value": "Joyce Hyser",
+        "xml:lang": "en"
+       }
+      },
+      {
+       "film": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q7810384"
+       },
+       "title": {
+        "type": "literal",
+        "value": "This Is Spinal Tap",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1984"
+       },
+       "directorLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "actor": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q1384181"
+       },
+       "actorLabel": {
+        "type": "literal",
+        "value": "Michael McKean",
+        "xml:lang": "en"
+       },
+       "character": {
+        "type": "literal",
+        "value": "David St. Hubbins",
+        "xml:lang": "en"
+       }
+      },
+      {
+       "film": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q7810384"
+       },
+       "title": {
+        "type": "literal",
+        "value": "This Is Spinal Tap",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1984"
+       },
+       "directorLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "actor": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q1164670"
+       },
+       "actorLabel": {
+        "type": "literal",
+        "value": "Danny Kortchmar",
+        "xml:lang": "en"
+       },
+       "characterName": {
+        "type": "literal",
+        "value": "Ronnie Pudding."
+       }
+      },
+      {
+       "film": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q7810384"
+       },
+       "title": {
+        "type": "literal",
+        "value": "This Is Spinal Tap",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1984"
+       },
+       "directorLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "actor": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q517379"
+       },
+       "actorLabel": {
+        "type": "literal",
+        "value": "Bruno Kirby",
+        "xml:lang": "en"
+       },
+       "characterName": {
+        "type": "literal",
+        "value": "Tommy Pischedda"
+       }
+      },
+      {
+       "film": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q7810384"
+       },
+       "title": {
+        "type": "literal",
+        "value": "This Is Spinal Tap",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1984"
+       },
+       "directorLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "actor": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q3086782"
+       },
+       "actorLabel": {
+        "type": "literal",
+        "value": "Fred Asparagus",
+        "xml:lang": "en"
+       },
+       "characterName": {
+        "type": "literal",
+        "value": "Joe 'Mama' Besser"
+       }
+      },
+      {
+       "film": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q7810384"
+       },
+       "title": {
+        "type": "literal",
+        "value": "This Is Spinal Tap",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1984"
+       },
+       "directorLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "actor": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q287607"
+       },
+       "actorLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "characterName": {
+        "type": "literal",
+        "value": "Marti DiBergi"
+       }
+      },
+      {
+       "film": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q7810384"
+       },
+       "title": {
+        "type": "literal",
+        "value": "This Is Spinal Tap",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1984"
+       },
+       "directorLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "actor": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q455646"
+       },
+       "actorLabel": {
+        "type": "literal",
+        "value": "June Chadwick",
+        "xml:lang": "en"
+       },
+       "characterName": {
+        "type": "literal",
+        "value": "Jeanine Pettibone"
+       }
+      },
+      {
+       "film": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q7810384"
+       },
+       "title": {
+        "type": "literal",
+        "value": "This Is Spinal Tap",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1984"
+       },
+       "directorLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "actor": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q436719"
+       },
+       "actorLabel": {
+        "type": "literal",
+        "value": "Patrick Macnee",
+        "xml:lang": "en"
+       },
+       "characterName": {
+        "type": "literal",
+        "value": "Sir Denis Eton-Hogg"
+       }
+      },
+      {
+       "film": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q7810384"
+       },
+       "title": {
+        "type": "literal",
+        "value": "This Is Spinal Tap",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1984"
+       },
+       "directorLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "actor": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q545924"
+       },
+       "actorLabel": {
+        "type": "literal",
+        "value": "Dana Carvey",
+        "xml:lang": "en"
+       },
+       "characterName": {
+        "type": "literal",
+        "value": "Mime Waiter"
+       }
+      },
+      {
+       "film": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q7810384"
+       },
+       "title": {
+        "type": "literal",
+        "value": "This Is Spinal Tap",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1984"
+       },
+       "directorLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "actor": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q449521"
+       },
+       "actorLabel": {
+        "type": "literal",
+        "value": "Fred Willard",
+        "xml:lang": "en"
+       },
+       "characterName": {
+        "type": "literal",
+        "value": "Lt. Hookstratten"
+       }
+      },
+      {
+       "film": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q7810384"
+       },
+       "title": {
+        "type": "literal",
+        "value": "This Is Spinal Tap",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1984"
+       },
+       "directorLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "actor": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q230632"
+       },
+       "actorLabel": {
+        "type": "literal",
+        "value": "Fran Drescher",
+        "xml:lang": "en"
+       },
+       "characterName": {
+        "type": "literal",
+        "value": "Bobbi Flekman"
+       }
+      },
+      {
+       "film": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q7810384"
+       },
+       "title": {
+        "type": "literal",
+        "value": "This Is Spinal Tap",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1984"
+       },
+       "directorLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "actor": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q1645740"
+       },
+       "actorLabel": {
+        "type": "literal",
+        "value": "Paul Benedict",
+        "xml:lang": "en"
+       }
+      },
+      {
+       "film": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q7810384"
+       },
+       "title": {
+        "type": "literal",
+        "value": "This Is Spinal Tap",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1984"
+       },
+       "directorLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "actor": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q275310"
+       },
+       "actorLabel": {
+        "type": "literal",
+        "value": "Marcia Strassman",
+        "xml:lang": "en"
+       }
+      },
+      {
+       "film": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q7810384"
+       },
+       "title": {
+        "type": "literal",
+        "value": "This Is Spinal Tap",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1984"
+       },
+       "directorLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "actor": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q194881"
+       },
+       "actorLabel": {
+        "type": "literal",
+        "value": "Howard Hesseman",
+        "xml:lang": "en"
+       },
+       "characterName": {
+        "type": "literal",
+        "value": "Terry Ladd"
+       }
+      },
+      {
+       "film": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q7810384"
+       },
+       "title": {
+        "type": "literal",
+        "value": "This Is Spinal Tap",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1984"
+       },
+       "directorLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "actor": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q345325"
+       },
+       "actorLabel": {
+        "type": "literal",
+        "value": "Harry Shearer",
+        "xml:lang": "en"
+       },
+       "character": {
+        "type": "literal",
+        "value": "Derek Smalls",
+        "xml:lang": "en"
+       }
+      },
+      {
+       "film": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q7810384"
+       },
+       "title": {
+        "type": "literal",
+        "value": "This Is Spinal Tap",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1984"
+       },
+       "directorLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "actor": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q3953565"
+       },
+       "actorLabel": {
+        "type": "literal",
+        "value": "Sean Frye",
+        "xml:lang": "en"
+       }
+      },
+      {
+       "film": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q7810384"
+       },
+       "title": {
+        "type": "literal",
+        "value": "This Is Spinal Tap",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1984"
+       },
+       "directorLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "actor": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q336074"
+       },
+       "actorLabel": {
+        "type": "literal",
+        "value": "Christopher Guest",
+        "xml:lang": "en"
+       },
+       "character": {
+        "type": "literal",
+        "value": "Nigel Tufnel",
+        "xml:lang": "en"
+       }
+      },
+      {
+       "film": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q7810384"
+       },
+       "title": {
+        "type": "literal",
+        "value": "This Is Spinal Tap",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1984"
+       },
+       "directorLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "actor": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q186485"
+       },
+       "actorLabel": {
+        "type": "literal",
+        "value": "Billy Crystal",
+        "xml:lang": "en"
+       },
+       "characterName": {
+        "type": "literal",
+        "value": "Morty the Mime"
+       }
+      }
+     ]
+    }
+   }
+  },
+  "elsewhere": {
+   "query": "PREFIX wd: <http://www.wikidata.org/entity/>\nPREFIX wdt: <http://www.wikidata.org/prop/direct/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX wikibase: <http://wikiba.se/ontology#>\nSELECT ?person ?personLabel ?work ?workLabel (MIN(?y) AS ?year)\n       (GROUP_CONCAT(DISTINCT ?credit; separator=\" and \") AS ?credits)\n       (MAX(?links) AS ?sitelinks) WHERE {\n  VALUES ?person { wd:Q1384181 wd:Q336074 wd:Q345325 wd:Q287607 }\n  { ?work wdt:P161 ?person . BIND(\"cast\" AS ?credit) }\n  UNION { ?work wdt:P57 ?person . BIND(\"director\" AS ?credit) }\n  ?work wdt:P31 wd:Q11424 ; wikibase:sitelinks ?links .\n  FILTER(?links >= 30)\n  FILTER NOT EXISTS { wd:Q741661 wdt:P1441 ?work }\n  OPTIONAL { ?work wdt:P577 ?date . BIND(YEAR(?date) AS ?y) }\n  ?person rdfs:label ?personLabel . FILTER(LANG(?personLabel) = \"en\")\n  ?work rdfs:label ?workLabel . FILTER(LANG(?workLabel) = \"en\")\n}\nGROUP BY ?person ?personLabel ?work ?workLabel\nORDER BY ?personLabel DESC(?sitelinks)",
+   "results": {
+    "head": {
+     "vars": [
+      "person",
+      "personLabel",
+      "work",
+      "workLabel",
+      "year",
+      "credits",
+      "sitelinks"
+     ]
+    },
+    "results": {
+     "bindings": [
+      {
+       "person": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q336074"
+       },
+       "personLabel": {
+        "type": "literal",
+        "value": "Christopher Guest",
+        "xml:lang": "en"
+       },
+       "work": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q108946"
+       },
+       "workLabel": {
+        "type": "literal",
+        "value": "A Few Good Men",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1992"
+       },
+       "credits": {
+        "type": "literal",
+        "value": "cast"
+       },
+       "sitelinks": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "48"
+       }
+      },
+      {
+       "person": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q336074"
+       },
+       "personLabel": {
+        "type": "literal",
+        "value": "Christopher Guest",
+        "xml:lang": "en"
+       },
+       "work": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q506418"
+       },
+       "workLabel": {
+        "type": "literal",
+        "value": "The Princess Bride",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1987"
+       },
+       "credits": {
+        "type": "literal",
+        "value": "cast"
+       },
+       "sitelinks": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "47"
+       }
+      },
+      {
+       "person": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q336074"
+       },
+       "personLabel": {
+        "type": "literal",
+        "value": "Christopher Guest",
+        "xml:lang": "en"
+       },
+       "work": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q841961"
+       },
+       "workLabel": {
+        "type": "literal",
+        "value": "Death Wish",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1974"
+       },
+       "credits": {
+        "type": "literal",
+        "value": "cast"
+       },
+       "sitelinks": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "34"
+       }
+      },
+      {
+       "person": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q336074"
+       },
+       "personLabel": {
+        "type": "literal",
+        "value": "Christopher Guest",
+        "xml:lang": "en"
+       },
+       "work": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q178966"
+       },
+       "workLabel": {
+        "type": "literal",
+        "value": "The Invention of Lying",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "2009"
+       },
+       "credits": {
+        "type": "literal",
+        "value": "cast"
+       },
+       "sitelinks": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "30"
+       }
+      },
+      {
+       "person": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q345325"
+       },
+       "personLabel": {
+        "type": "literal",
+        "value": "Harry Shearer",
+        "xml:lang": "en"
+       },
+       "work": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q24075"
+       },
+       "workLabel": {
+        "type": "literal",
+        "value": "Godzilla",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1998"
+       },
+       "credits": {
+        "type": "literal",
+        "value": "cast"
+       },
+       "sitelinks": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "49"
+       }
+      },
+      {
+       "person": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q345325"
+       },
+       "personLabel": {
+        "type": "literal",
+        "value": "Harry Shearer",
+        "xml:lang": "en"
+       },
+       "work": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q918380"
+       },
+       "workLabel": {
+        "type": "literal",
+        "value": "My Best Friend's Wedding",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1997"
+       },
+       "credits": {
+        "type": "literal",
+        "value": "cast"
+       },
+       "sitelinks": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "43"
+       }
+      },
+      {
+       "person": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q345325"
+       },
+       "personLabel": {
+        "type": "literal",
+        "value": "Harry Shearer",
+        "xml:lang": "en"
+       },
+       "work": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q1197185"
+       },
+       "workLabel": {
+        "type": "literal",
+        "value": "The Right Stuff",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1983"
+       },
+       "credits": {
+        "type": "literal",
+        "value": "cast"
+       },
+       "sitelinks": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "43"
+       }
+      },
+      {
+       "person": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q345325"
+       },
+       "personLabel": {
+        "type": "literal",
+        "value": "Harry Shearer",
+        "xml:lang": "en"
+       },
+       "work": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q1306472"
+       },
+       "workLabel": {
+        "type": "literal",
+        "value": "A League of Their Own",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1992"
+       },
+       "credits": {
+        "type": "literal",
+        "value": "cast"
+       },
+       "sitelinks": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "39"
+       }
+      },
+      {
+       "person": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q345325"
+       },
+       "personLabel": {
+        "type": "literal",
+        "value": "Harry Shearer",
+        "xml:lang": "en"
+       },
+       "work": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q327332"
+       },
+       "workLabel": {
+        "type": "literal",
+        "value": "Ghost Dog: The Way of the Samurai",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1999"
+       },
+       "credits": {
+        "type": "literal",
+        "value": "cast"
+       },
+       "sitelinks": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "33"
+       }
+      },
+      {
+       "person": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q345325"
+       },
+       "personLabel": {
+        "type": "literal",
+        "value": "Harry Shearer",
+        "xml:lang": "en"
+       },
+       "work": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q1139023"
+       },
+       "workLabel": {
+        "type": "literal",
+        "value": "The Robe",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1953"
+       },
+       "credits": {
+        "type": "literal",
+        "value": "cast"
+       },
+       "sitelinks": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "33"
+       }
+      },
+      {
+       "person": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q1384181"
+       },
+       "personLabel": {
+        "type": "literal",
+        "value": "Michael McKean",
+        "xml:lang": "en"
+       },
+       "work": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q207482"
+       },
+       "workLabel": {
+        "type": "literal",
+        "value": "1941",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1979"
+       },
+       "credits": {
+        "type": "literal",
+        "value": "cast"
+       },
+       "sitelinks": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "42"
+       }
+      },
+      {
+       "person": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q1384181"
+       },
+       "personLabel": {
+        "type": "literal",
+        "value": "Michael McKean",
+        "xml:lang": "en"
+       },
+       "work": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q1305799"
+       },
+       "workLabel": {
+        "type": "literal",
+        "value": "True Crime",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1999"
+       },
+       "credits": {
+        "type": "literal",
+        "value": "cast"
+       },
+       "sitelinks": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "31"
+       }
+      },
+      {
+       "person": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q1384181"
+       },
+       "personLabel": {
+        "type": "literal",
+        "value": "Michael McKean",
+        "xml:lang": "en"
+       },
+       "work": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q1321370"
+       },
+       "workLabel": {
+        "type": "literal",
+        "value": "The Words",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "2012"
+       },
+       "credits": {
+        "type": "literal",
+        "value": "cast"
+       },
+       "sitelinks": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "31"
+       }
+      },
+      {
+       "person": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q1384181"
+       },
+       "personLabel": {
+        "type": "literal",
+        "value": "Michael McKean",
+        "xml:lang": "en"
+       },
+       "work": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q692208"
+       },
+       "workLabel": {
+        "type": "literal",
+        "value": "Whatever Works",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "2009"
+       },
+       "credits": {
+        "type": "literal",
+        "value": "cast"
+       },
+       "sitelinks": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "30"
+       }
+      },
+      {
+       "person": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q287607"
+       },
+       "personLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "work": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q1392744"
+       },
+       "workLabel": {
+        "type": "literal",
+        "value": "The Wolf of Wall Street",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "2013"
+       },
+       "credits": {
+        "type": "literal",
+        "value": "cast"
+       },
+       "sitelinks": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "75"
+       }
+      },
+      {
+       "person": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q287607"
+       },
+       "personLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "work": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q471169"
+       },
+       "workLabel": {
+        "type": "literal",
+        "value": "When Harry Met Sally",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1989"
+       },
+       "credits": {
+        "type": "literal",
+        "value": "director"
+       },
+       "sitelinks": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "53"
+       }
+      },
+      {
+       "person": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q287607"
+       },
+       "personLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "work": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q725552"
+       },
+       "workLabel": {
+        "type": "literal",
+        "value": "Misery",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1990"
+       },
+       "credits": {
+        "type": "literal",
+        "value": "director and cast"
+       },
+       "sitelinks": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "50"
+       }
+      },
+      {
+       "person": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q287607"
+       },
+       "personLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "work": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q494722"
+       },
+       "workLabel": {
+        "type": "literal",
+        "value": "Stand by Me",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1986"
+       },
+       "credits": {
+        "type": "literal",
+        "value": "director"
+       },
+       "sitelinks": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "49"
+       }
+      },
+      {
+       "person": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q287607"
+       },
+       "personLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "work": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q463768"
+       },
+       "workLabel": {
+        "type": "literal",
+        "value": "The Bucket List",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "2007"
+       },
+       "credits": {
+        "type": "literal",
+        "value": "director"
+       },
+       "sitelinks": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "48"
+       }
+      },
+      {
+       "person": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q287607"
+       },
+       "personLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "work": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q108946"
+       },
+       "workLabel": {
+        "type": "literal",
+        "value": "A Few Good Men",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1992"
+       },
+       "credits": {
+        "type": "literal",
+        "value": "director"
+       },
+       "sitelinks": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "48"
+       }
+      },
+      {
+       "person": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q287607"
+       },
+       "personLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "work": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q506418"
+       },
+       "workLabel": {
+        "type": "literal",
+        "value": "The Princess Bride",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1987"
+       },
+       "credits": {
+        "type": "literal",
+        "value": "director"
+       },
+       "sitelinks": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "47"
+       }
+      },
+      {
+       "person": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q287607"
+       },
+       "personLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "work": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q1004531"
+       },
+       "workLabel": {
+        "type": "literal",
+        "value": "Bullets Over Broadway",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1994"
+       },
+       "credits": {
+        "type": "literal",
+        "value": "cast"
+       },
+       "sitelinks": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "38"
+       }
+      },
+      {
+       "person": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q287607"
+       },
+       "personLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "work": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q1427222"
+       },
+       "workLabel": {
+        "type": "literal",
+        "value": "Postcards from the Edge",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1990"
+       },
+       "credits": {
+        "type": "literal",
+        "value": "cast"
+       },
+       "sitelinks": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "37"
+       }
+      },
+      {
+       "person": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q287607"
+       },
+       "personLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "work": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q429311"
+       },
+       "workLabel": {
+        "type": "literal",
+        "value": "The American President",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1995"
+       },
+       "credits": {
+        "type": "literal",
+        "value": "director"
+       },
+       "sitelinks": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "34"
+       }
+      },
+      {
+       "person": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q287607"
+       },
+       "personLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "work": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q1422110"
+       },
+       "workLabel": {
+        "type": "literal",
+        "value": "Throw Momma from the Train",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1987"
+       },
+       "credits": {
+        "type": "literal",
+        "value": "cast"
+       },
+       "sitelinks": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "33"
+       }
+      },
+      {
+       "person": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q287607"
+       },
+       "personLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "work": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q913620"
+       },
+       "workLabel": {
+        "type": "literal",
+        "value": "The First Wives Club",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1996"
+       },
+       "credits": {
+        "type": "literal",
+        "value": "cast"
+       },
+       "sitelinks": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "32"
+       }
+      },
+      {
+       "person": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q287607"
+       },
+       "personLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "work": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q1322943"
+       },
+       "workLabel": {
+        "type": "literal",
+        "value": "The Majestic",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "2001"
+       },
+       "credits": {
+        "type": "literal",
+        "value": "cast"
+       },
+       "sitelinks": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "31"
+       }
+      },
+      {
+       "person": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q287607"
+       },
+       "personLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "work": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q1330571"
+       },
+       "workLabel": {
+        "type": "literal",
+        "value": "Rumor Has It",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "2005"
+       },
+       "credits": {
+        "type": "literal",
+        "value": "director"
+       },
+       "sitelinks": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "30"
+       }
+      }
+     ]
+    }
+   }
+  },
+  "albums": {
+   "query": "PREFIX wd: <http://www.wikidata.org/entity/>\nPREFIX wdt: <http://www.wikidata.org/prop/direct/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX schema: <http://schema.org/>\nPREFIX wikibase: <http://wikiba.se/ontology#>\nSELECT ?release ?releaseLabel ?description (MIN(?y) AS ?year)\n       (GROUP_CONCAT(DISTINCT ?typeLabel; separator=\", \") AS ?kind)\n       (MAX(?links) AS ?sitelinks) WHERE {\n  ?release wdt:P175 wd:Q741661 .\n  ?release rdfs:label ?releaseLabel . FILTER(LANG(?releaseLabel) = \"en\")\n  OPTIONAL { ?release schema:description ?description . FILTER(LANG(?description) = \"en\") }\n  OPTIONAL { ?release wdt:P31 ?type . ?type rdfs:label ?typeLabel . FILTER(LANG(?typeLabel) = \"en\") }\n  OPTIONAL { ?release wdt:P577 ?date . BIND(YEAR(?date) AS ?y) }\n  OPTIONAL { ?release wikibase:sitelinks ?links }\n}\nGROUP BY ?release ?releaseLabel ?description\nORDER BY ?year",
+   "results": {
+    "head": {
+     "vars": [
+      "release",
+      "releaseLabel",
+      "description",
+      "year",
+      "kind",
+      "sitelinks"
+     ]
+    },
+    "results": {
+     "bindings": [
+      {
+       "release": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q7544392"
+       },
+       "releaseLabel": {
+        "type": "literal",
+        "value": "Smell the Glove",
+        "xml:lang": "en"
+       },
+       "description": {
+        "type": "literal",
+        "value": "album by Spın̈al Tap",
+        "xml:lang": "en"
+       },
+       "kind": {
+        "type": "literal",
+        "value": "album"
+       },
+       "sitelinks": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1"
+       }
+      },
+      {
+       "release": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q3524739"
+       },
+       "releaseLabel": {
+        "type": "literal",
+        "value": "This Is Spinal Tap",
+        "xml:lang": "en"
+       },
+       "description": {
+        "type": "literal",
+        "value": "album by Spinal Tap (1984)",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1984"
+       },
+       "kind": {
+        "type": "literal",
+        "value": "album"
+       },
+       "sitelinks": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "4"
+       }
+      },
+      {
+       "release": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q20616479"
+       },
+       "releaseLabel": {
+        "type": "literal",
+        "value": "The Freddie Mercury Tribute Concert for AIDS Awareness",
+        "xml:lang": "en"
+       },
+       "description": {
+        "type": "literal",
+        "value": "1992 benefit concert",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1992"
+       },
+       "kind": {
+        "type": "literal",
+        "value": "television special, benefit concert"
+       },
+       "sitelinks": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "31"
+       }
+      },
+      {
+       "release": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q2924223"
+       },
+       "releaseLabel": {
+        "type": "literal",
+        "value": "Break Like the Wind",
+        "xml:lang": "en"
+       },
+       "description": {
+        "type": "literal",
+        "value": "album by Spın̈al Tap",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1992"
+       },
+       "kind": {
+        "type": "literal",
+        "value": "album"
+       },
+       "sitelinks": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "3"
+       }
+      },
+      {
+       "release": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q4839242"
+       },
+       "releaseLabel": {
+        "type": "literal",
+        "value": "Back from the Dead",
+        "xml:lang": "en"
+       },
+       "description": {
+        "type": "literal",
+        "value": "album by Spın̈al Tap",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "2009"
+       },
+       "kind": {
+        "type": "literal",
+        "value": "album"
+       },
+       "sitelinks": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "2"
+       }
+      },
+      {
+       "release": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q136352220"
+       },
+       "releaseLabel": {
+        "type": "literal",
+        "value": "The End Continues",
+        "xml:lang": "en"
+       },
+       "description": {
+        "type": "literal",
+        "value": "2025 soundtrack album by Spinal Tap",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "2025"
+       },
+       "kind": {
+        "type": "literal",
+        "value": "album"
+       },
+       "sitelinks": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1"
+       }
+      }
+     ]
+    }
+   }
+  },
+  "saga": {
+   "query": "PREFIX wd: <http://www.wikidata.org/entity/>\nPREFIX wdt: <http://www.wikidata.org/prop/direct/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nSELECT DISTINCT ?work ?workLabel ?typeLabel ?year ?directorLabel ?follows ?followsLabel WHERE {\n  wd:Q741661 wdt:P1441 ?work .\n  ?work rdfs:label ?workLabel . FILTER(LANG(?workLabel) = \"en\")\n  OPTIONAL { ?work wdt:P31 ?type . ?type rdfs:label ?typeLabel . FILTER(LANG(?typeLabel) = \"en\") }\n  OPTIONAL { ?work wdt:P577 ?date . BIND(YEAR(?date) AS ?year) }\n  OPTIONAL { ?work wdt:P57 ?director . ?director rdfs:label ?directorLabel . FILTER(LANG(?directorLabel) = \"en\") }\n  OPTIONAL { ?work wdt:P155 ?follows . ?follows rdfs:label ?followsLabel . FILTER(LANG(?followsLabel) = \"en\") }\n}\nORDER BY ?year",
+   "results": {
+    "head": {
+     "vars": [
+      "work",
+      "workLabel",
+      "typeLabel",
+      "year",
+      "directorLabel",
+      "follows",
+      "followsLabel"
+     ]
+    },
+    "results": {
+     "bindings": [
+      {
+       "work": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q137423795"
+       },
+       "workLabel": {
+        "type": "literal",
+        "value": "Spinal Tap at Stonehenge: The Final Finale",
+        "xml:lang": "en"
+       },
+       "typeLabel": {
+        "type": "literal",
+        "value": "film project",
+        "xml:lang": "en"
+       },
+       "directorLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "follows": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q121088318"
+       },
+       "followsLabel": {
+        "type": "literal",
+        "value": "Spinal Tap II: The End Continues",
+        "xml:lang": "en"
+       }
+      },
+      {
+       "work": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q7810384"
+       },
+       "workLabel": {
+        "type": "literal",
+        "value": "This Is Spinal Tap",
+        "xml:lang": "en"
+       },
+       "typeLabel": {
+        "type": "literal",
+        "value": "film",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1984"
+       },
+       "directorLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "follows": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q109044930"
+       },
+       "followsLabel": {
+        "type": "literal",
+        "value": "Spinal Tap: The Final Tour",
+        "xml:lang": "en"
+       }
+      },
+      {
+       "work": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q105426878"
+       },
+       "workLabel": {
+        "type": "literal",
+        "value": "A Spinal Tap Reunion",
+        "xml:lang": "en"
+       },
+       "typeLabel": {
+        "type": "literal",
+        "value": "film",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1992"
+       },
+       "follows": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q7810384"
+       },
+       "followsLabel": {
+        "type": "literal",
+        "value": "This Is Spinal Tap",
+        "xml:lang": "en"
+       }
+      },
+      {
+       "work": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q2500134"
+       },
+       "workLabel": {
+        "type": "literal",
+        "value": "The Otto Show",
+        "xml:lang": "en"
+       },
+       "typeLabel": {
+        "type": "literal",
+        "value": "television series episode",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "1992"
+       },
+       "directorLabel": {
+        "type": "literal",
+        "value": "Wes Archer",
+        "xml:lang": "en"
+       },
+       "follows": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q2499472"
+       },
+       "followsLabel": {
+        "type": "literal",
+        "value": "Black Widower",
+        "xml:lang": "en"
+       }
+      },
+      {
+       "work": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q121088318"
+       },
+       "workLabel": {
+        "type": "literal",
+        "value": "Spinal Tap II: The End Continues",
+        "xml:lang": "en"
+       },
+       "typeLabel": {
+        "type": "literal",
+        "value": "film",
+        "xml:lang": "en"
+       },
+       "year": {
+        "datatype": "http://www.w3.org/2001/XMLSchema#int",
+        "type": "literal",
+        "value": "2025"
+       },
+       "directorLabel": {
+        "type": "literal",
+        "value": "Rob Reiner",
+        "xml:lang": "en"
+       },
+       "follows": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q105426878"
+       },
+       "followsLabel": {
+        "type": "literal",
+        "value": "A Spinal Tap Reunion",
+        "xml:lang": "en"
+       }
+      }
+     ]
+    }
+   }
+  },
+  "drummers": {
+   "query": "PREFIX wd: <http://www.wikidata.org/entity/>\nPREFIX wdt: <http://www.wikidata.org/prop/direct/>\nPREFIX p: <http://www.wikidata.org/prop/>\nPREFIX ps: <http://www.wikidata.org/prop/statement/>\nPREFIX pq: <http://www.wikidata.org/prop/qualifier/>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX schema: <http://schema.org/>\nSELECT ?person ?personLabel ?description ?how ?work ?workLabel ?character WHERE {\n  {\n    ?person wdt:P463 wd:Q741661 ; wdt:P106 wd:Q386854 .\n    BIND(\"band member, occupation drummer\" AS ?how)\n  } UNION {\n    wd:Q741661 wdt:P1441 ?work .\n    ?work rdfs:label ?workLabel . FILTER(LANG(?workLabel) = \"en\")\n    ?work p:P161 ?credit . ?credit ps:P161 ?person .\n    ?person wdt:P106 wd:Q386854 .\n    OPTIONAL { ?credit pq:P4633 ?character }\n    BIND(\"cast member, occupation drummer\" AS ?how)\n  } UNION {\n    wd:Q741661 wdt:P1441 ?work .\n    ?work rdfs:label ?workLabel . FILTER(LANG(?workLabel) = \"en\")\n    ?work p:P161 ?credit . ?credit ps:P161 ?person ; pq:P4633 ?character .\n    FILTER(REGEX(?character, \"Stumpy|Shrimpton|Childs|Besser|James Bond\"))\n    BIND(\"plays one of the band's drummers\" AS ?how)\n  }\n  ?person rdfs:label ?personLabel . FILTER(LANG(?personLabel) = \"en\")\n  OPTIONAL { ?person schema:description ?description . FILTER(LANG(?description) = \"en\") }\n}",
+   "results": {
+    "head": {
+     "vars": [
+      "person",
+      "personLabel",
+      "description",
+      "how",
+      "work",
+      "workLabel",
+      "character"
+     ]
+    },
+    "results": {
+     "bindings": [
+      {
+       "person": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q136261919"
+       },
+       "personLabel": {
+        "type": "literal",
+        "value": "Valerie Franco",
+        "xml:lang": "en"
+       },
+       "description": {
+        "type": "literal",
+        "value": "musical artist",
+        "xml:lang": "en"
+       },
+       "how": {
+        "type": "literal",
+        "value": "cast member, occupation drummer"
+       },
+       "work": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q121088318"
+       },
+       "workLabel": {
+        "type": "literal",
+        "value": "Spinal Tap II: The End Continues",
+        "xml:lang": "en"
+       },
+       "character": {
+        "type": "literal",
+        "value": "Didi Crockett"
+       }
+      },
+      {
+       "person": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q136261919"
+       },
+       "personLabel": {
+        "type": "literal",
+        "value": "Valerie Franco",
+        "xml:lang": "en"
+       },
+       "description": {
+        "type": "literal",
+        "value": "musical artist",
+        "xml:lang": "en"
+       },
+       "how": {
+        "type": "literal",
+        "value": "cast member, occupation drummer"
+       },
+       "work": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q137423795"
+       },
+       "workLabel": {
+        "type": "literal",
+        "value": "Spinal Tap at Stonehenge: The Final Finale",
+        "xml:lang": "en"
+       },
+       "character": {
+        "type": "literal",
+        "value": "Didi Crockett"
+       }
+      },
+      {
+       "person": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q1381281"
+       },
+       "personLabel": {
+        "type": "literal",
+        "value": "Gregg Bissonette",
+        "xml:lang": "en"
+       },
+       "description": {
+        "type": "literal",
+        "value": "American drummer",
+        "xml:lang": "en"
+       },
+       "how": {
+        "type": "literal",
+        "value": "band member, occupation drummer"
+       }
+      },
+      {
+       "person": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q3086782"
+       },
+       "personLabel": {
+        "type": "literal",
+        "value": "Fred Asparagus",
+        "xml:lang": "en"
+       },
+       "description": {
+        "type": "literal",
+        "value": "American actor (1947-1998)",
+        "xml:lang": "en"
+       },
+       "how": {
+        "type": "literal",
+        "value": "plays one of the band's drummers"
+       },
+       "work": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q7810384"
+       },
+       "workLabel": {
+        "type": "literal",
+        "value": "This Is Spinal Tap",
+        "xml:lang": "en"
+       },
+       "character": {
+        "type": "literal",
+        "value": "Joe 'Mama' Besser"
+       }
+      },
+      {
+       "person": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q464425"
+       },
+       "personLabel": {
+        "type": "literal",
+        "value": "Ed Begley, Jr.",
+        "xml:lang": "en"
+       },
+       "description": {
+        "type": "literal",
+        "value": "American actor",
+        "xml:lang": "en"
+       },
+       "how": {
+        "type": "literal",
+        "value": "plays one of the band's drummers"
+       },
+       "work": {
+        "type": "uri",
+        "value": "http://www.wikidata.org/entity/Q7810384"
+       },
+       "workLabel": {
+        "type": "literal",
+        "value": "This Is Spinal Tap",
+        "xml:lang": "en"
+       },
+       "character": {
+        "type": "literal",
+        "value": "John 'Stumpy' Pepys"
+       }
+      }
+     ]
+    }
+   }
+  }
+ }
+}

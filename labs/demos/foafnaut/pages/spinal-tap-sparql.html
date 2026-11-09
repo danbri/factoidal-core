@@ -1,0 +1,607 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Spın̈al Tap SPARQL client</title>
+<link rel="icon" type="image/svg+xml" href="foafnaut-icon.svg">
+<style>
+body { margin:0; padding:16px; font-family:'Noto Sans', system-ui, sans-serif; font-size:14px; line-height:20px; color:#d6dae1; background:#070709 }
+main { max-width:760px; margin:0 auto }
+a { color:#e2b85a }
+p { margin:0; padding-top:6px }
+svg { display:block }
+.nav { padding-top:0; color:#8a919c }
+.mark { margin:6px 0 0 0; text-align:center }
+.lede { text-align:center; color:#a9b0ba }
+.stage { margin-top:12px; background:#0d0d11; border:1px solid #2c2c35 }
+.stage svg { margin:0 auto }
+.stagebar { padding:4px 10px 6px 10px; color:#8a919c; font-size:12px; line-height:18px }
+.stagebar svg { display:inline-block; vertical-align:middle }
+.stagebar button { margin-right:6px; padding:2px 10px; font-size:13px; color:#140d00; background:#e2b85a; border:1px solid #e2b85a }
+.picker { margin-top:16px; padding:8px 6px 4px 6px; background:#111116; border-top:2px solid #e2b85a; border-bottom:1px solid #2c2c35 }
+.picker button { margin:0 4px 6px 0; padding:3px 9px; font-size:13px; color:#cfd4dc; background:#1b1b22; border:1px solid #4a4a55 }
+.picker button.on { color:#140d00; background:#e2b85a; border:1px solid #e2b85a }
+.qhead { padding-top:12px; font-size:19px; line-height:26px; color:#f1f3f6 }
+.qblurb { color:#a9b0ba }
+.mode { color:#ff6a3d; font-size:12px; line-height:18px }
+pre { font-family:inherit; margin:8px 0 0 0; padding:8px 10px; background:#0d0d11; border-left:3px solid #ff4d1f; color:#c9d1db; font-size:12px; line-height:17px; white-space:pre-wrap }
+textarea { font-family:inherit; display:block; width:100%; margin-top:8px; font-size:12px; line-height:17px; color:#c9d1db; background:#0d0d11; border:1px solid #4a4a55 }
+.tools { padding-top:8px }
+.tools button { margin-right:6px; padding:3px 10px; font-size:13px; color:#cfd4dc; background:#1b1b22; border:1px solid #4a4a55 }
+.kw { color:#ff6a3d }.var { color:#7fd1ff }.iri { color:#9be37a }.pn { color:#e2b85a }.str { color:#f0a6ff }.cmt { color:#6f7785 }.num { color:#ffd23a }
+.status { padding-top:8px; color:#8a919c; font-size:12px; line-height:18px }
+.cards { margin-top:4px; border-collapse:separate; border-spacing:12px 10px; width:100% }
+.card { vertical-align:top; width:50%; padding:0; background:#121217; border:1px solid #34343e }
+td.empty { background:#070709; border:0 }
+.cbody { padding:4px 12px 10px 12px }
+.kicker { padding-top:2px; color:#e2b85a; font-size:11px; line-height:16px }
+.title { padding-top:2px; color:#f4f6f9; font-size:19px; line-height:25px }
+.sub { padding-top:0; color:#a9b0ba; font-size:13px; line-height:18px }
+.row { padding-top:5px; font-size:13px; line-height:18px }
+.k { color:#8a919c }
+.big { font-size:30px; line-height:40px; color:#f4f6f9 }
+.link { padding-top:7px; font-size:12px; line-height:16px }
+.engine { margin-top:22px; padding:8px 12px 10px 12px; background:#0d0d11; border-top:2px solid #ff4d1f; color:#a9b0ba; font-size:12px; line-height:18px }
+.engine b { color:#e2b85a; font-weight:normal }
+.about { padding-top:14px; color:#6f7785; font-size:12px; line-height:18px }
+</style></head><body><main>
+<p class="nav"><a href="index.html">Demo index</a> · a SPARQL client for Wikidata, through QLever</p>
+<!-- The wordmark: original angular lettering drawn as SVG paths for this page (not the band's
+     logo). Chrome fill, black cut line and a flame edge; the two diamonds over the n are the
+     diaeresis of n̈. Lean draws every path. -->
+<div class="mark" aria-label="Spinal Tap"><svg width="728" height="229" viewBox="-14 -26 578 182"><title>Spinal Tap</title>
+<defs>
+<linearGradient id="chrome" gradientUnits="userSpaceOnUse" x1="0" y1="-12" x2="0" y2="142">
+<stop offset="0" stop-color="#ffffff"/><stop offset="0.28" stop-color="#cfd6df"/><stop offset="0.47" stop-color="#6c7682"/><stop offset="0.49" stop-color="#16191f"/><stop offset="0.62" stop-color="#59626e"/><stop offset="0.8" stop-color="#e8edf3"/><stop offset="1" stop-color="#8a939e"/>
+</linearGradient>
+<linearGradient id="flame" gradientUnits="userSpaceOnUse" x1="0" y1="-12" x2="0" y2="142">
+<stop offset="0" stop-color="#ffd23a"/><stop offset="0.5" stop-color="#ff6a00"/><stop offset="1" stop-color="#b3120a"/>
+</linearGradient>
+<path id="wm" d="M39.6 0 99.6 0 96.8 14 36.8 14ZM39.6 0 53.6 0 42.2 57 28.2 57ZM31 43 91 43 88.2 57 28.2 57ZM77 43 91 43 79.6 100 65.6 100ZM22.4 86 82.4 86 79.6 100 19.6 100ZM83.6 0 116 -12 96.8 14ZM22.4 86 33.6 100 3.2 112ZM101.4 36 115.4 36 97 128 83 128ZM83 128 97 128 87.2 142ZM101.4 36 151.4 36 148.6 50 98.6 50ZM137.4 36 151.4 36 138.6 100 124.6 100ZM91.4 86 141.4 86 138.6 100 88.6 100ZM101.4 36 98.6 50 89.8 34ZM160.4 36 174.4 36 161.6 100 147.6 100ZM160.4 36 157.6 50 148.8 34ZM150.4 86 161.6 100 141.6 100ZM183.4 36 197.4 36 184.6 100 170.6 100ZM183.4 36 233.4 36 230.6 50 180.6 50ZM219.4 36 233.4 36 220.6 100 206.6 100ZM183.4 36 180.6 50 171.8 34ZM209.4 86 220.6 100 227 108ZM191 8 196.6 15 188.2 22 182.6 15ZM219 8 224.6 15 216.2 22 210.6 15ZM246.4 36 292.4 36 289.6 50 243.6 50ZM278.4 36 292.4 36 279.6 100 265.6 100ZM237.2 62 287.2 62 284.4 76 234.4 76ZM237.2 62 251.2 62 243.6 100 229.6 100ZM232.4 86 282.4 86 279.6 100 229.6 100ZM268.4 86 279.6 100 286 108ZM308.6 0 322.6 0 302.6 100 288.6 100ZM308.6 0 305.8 14 297 -2ZM291.4 86 302.6 100 282.6 100ZM305.4 86 314.6 100 302.6 100ZM361.6 0 435.6 0 432.8 14 358.8 14ZM391.6 0 405.6 0 385.6 100 371.6 100ZM371.6 100 385.6 100 375.4 116ZM358.8 14 372.8 14 358.6 30ZM418.8 14 432.8 14 426.6 30ZM361.6 0 358.8 14 350.8 -6ZM435.6 0 448.8 -6 432.8 14ZM441.4 36 487.4 36 484.6 50 438.6 50ZM473.4 36 487.4 36 474.6 100 460.6 100ZM432.2 62 482.2 62 479.4 76 429.4 76ZM432.2 62 446.2 62 438.6 100 424.6 100ZM427.4 86 477.4 86 474.6 100 424.6 100ZM463.4 86 474.6 100 481 108ZM496.4 36 510.4 36 492 128 478 128ZM478 128 492 128 482.2 142ZM496.4 36 546.4 36 543.6 50 493.6 50ZM532.4 36 546.4 36 533.6 100 519.6 100ZM486.4 86 536.4 86 533.6 100 483.6 100ZM496.4 36 493.6 50 484.8 34Z"/>
+</defs>
+<use href="#wm" fill="none" stroke="url(#flame)" stroke-width="14" stroke-linejoin="miter"/>
+<use href="#wm" fill="none" stroke="#000" stroke-width="7" stroke-linejoin="miter"/>
+<use href="#wm" fill="url(#chrome)"/>
+</svg></div>
+<p class="lede">Seven SPARQL queries about the band, the films and the people in them. Every fact on the cards is a row from Wikidata.</p>
+
+<!-- The zoom: the band's name as real text in a blackletter face, scaled from 1 to 40 and back
+     round the n̈; then it fades into "Föafn̈aut", this browser's name with the same n̈ and an ö.
+     Text stays sharp at every scale: Lean draws the glyph outlines. Only transforms and opacity
+     change, so every frame is paint only. -->
+<div class="stage" style="overflow:clip" aria-label="Spinal Tap, then Foafnaut">
+<svg id="zoomsvg" width="728" height="150" viewBox="0 0 728 150">
+<rect width="728" height="150" fill="#0d0d11"/>
+<g transform="translate(320 60)"><g id="zoom">
+<g transform="translate(-320 -60)"><text id="gothic" x="364" y="104" text-anchor="middle" font-size="80" font-family="'Noto Sans Math', serif" fill="#eef1f5" stroke="#ff6a00" stroke-width="1.2">𝔖𝔭𝔦𝔫̈𝔞𝔩 𝔗𝔞𝔭</text></g>
+</g></g>
+<text id="signoff" opacity="0" x="364" y="104" text-anchor="middle" font-size="80" font-family="'Noto Sans Math', serif" fill="#e2b85a" stroke="#ff3b12" stroke-width="1.2">𝔉𝔬̈𝔞𝔣𝔫̈𝔞𝔲𝔱</text>
+</svg>
+<p class="stagebar"><button id="zoombtn">Zoom in</button><button id="gainbtn">Gain 0: turn it up</button><span id="gainknob"></span> <span id="zoominfo">Scale 1 to 40 and back round the n̈ (n and U+0308 COMBINING DIAERESIS), then Föafn̈aut.</span></p>
+</div>
+
+<div class="picker" id="picker"></div>
+<p class="qhead" id="qtitle">Loading</p>
+<p class="qblurb" id="qblurb"></p>
+<p class="mode" id="mode"></p>
+<pre id="qtext"></pre>
+<textarea id="qedit" rows="14" style="display:none"></textarea>
+<p class="tools" id="tools"></p>
+<p class="status" id="status"></p>
+<div id="cards"></div>
+
+<div class="engine" id="engine"><b>Engine</b> <span id="eng">This page needs scripts.</span></div>
+<p class="about">Data: Wikidata, CC0 1.0, queried through QLever (qlever.dev). Snapshot and its provenance: third_party/data/wikidata-spinal-tap in the repository; tools/spinal-tap-snapshot.py captures it again. Lettering, knobs and dials are drawn for this page; there are no images from Wikimedia Commons, only links to Wikidata.</p>
+
+<!-- The queries. The page shows each one, runs it on QLever when the browser has fetch, and
+     otherwise shows the results captured from QLever by tools/spinal-tap-snapshot.py. -->
+<script type="application/sparql-query" id="q-band" data-title="The band" data-blurb="Spinal Tap (Q741661): its names, kind, genres, countries, labels, creators and what it is named after.">
+PREFIX wd: <http://www.wikidata.org/entity/>
+PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX schema: <http://schema.org/>
+# One row for each fact about the band, with a label for each item
+SELECT ?facet ?value ?valueLabel WHERE {
+  { wd:Q741661 rdfs:label ?value . FILTER(LANG(?value) = "en") BIND("name" AS ?facet) }
+  UNION { wd:Q741661 schema:description ?value . FILTER(LANG(?value) = "en") BIND("description" AS ?facet) }
+  UNION { wd:Q741661 wdt:P9989 ?value . BIND("stylized name" AS ?facet) }
+  UNION { wd:Q741661 wdt:P2031 ?value . BIND("start of work period" AS ?facet) }
+  UNION { wd:Q741661 wdt:P31 ?value . BIND("instance of" AS ?facet) }
+  UNION { wd:Q741661 wdt:P136 ?value . BIND("genre" AS ?facet) }
+  UNION { wd:Q741661 wdt:P495 ?value . BIND("country of origin" AS ?facet) }
+  UNION { wd:Q741661 wdt:P138 ?value . BIND("named after" AS ?facet) }
+  UNION { wd:Q741661 wdt:P264 ?value . BIND("record label" AS ?facet) }
+  UNION { wd:Q741661 wdt:P170 ?value . BIND("created by" AS ?facet) }
+  UNION { ?value wdt:P737 wd:Q741661 . BIND("influenced" AS ?facet) }
+  OPTIONAL { ?value rdfs:label ?valueLabel . FILTER(LANG(?valueLabel) = "en") }
+}
+</script>
+<script type="application/sparql-query" id="q-members" data-title="The members" data-blurb="Members of the band (P463, or the band's P527), with their occupations, who plays them, where they were born and what they are known for.">
+PREFIX wd: <http://www.wikidata.org/entity/>
+PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX schema: <http://schema.org/>
+SELECT ?member ?memberLabel ?description
+       (GROUP_CONCAT(DISTINCT ?roleLabel; separator=", ") AS ?roles)
+       (SAMPLE(?playedByLabel) AS ?playedBy) (SAMPLE(?bornInLabel) AS ?bornIn)
+       (SAMPLE(?notableLabel) AS ?notableWork) WHERE {
+  { ?member wdt:P463 wd:Q741661 } UNION { wd:Q741661 wdt:P527 ?member }
+  ?member rdfs:label ?memberLabel . FILTER(LANG(?memberLabel) = "en")
+  OPTIONAL { ?member schema:description ?description . FILTER(LANG(?description) = "en") }
+  OPTIONAL { ?member wdt:P106 ?role . ?role rdfs:label ?roleLabel . FILTER(LANG(?roleLabel) = "en") }
+  OPTIONAL { ?member wdt:P175 ?player . ?player rdfs:label ?playedByLabel . FILTER(LANG(?playedByLabel) = "en") }
+  OPTIONAL { ?member wdt:P19 ?place . ?place rdfs:label ?bornInLabel . FILTER(LANG(?bornInLabel) = "en") }
+  OPTIONAL { ?member wdt:P800 ?notable . ?notable rdfs:label ?notableLabel . FILTER(LANG(?notableLabel) = "en") }
+}
+GROUP BY ?member ?memberLabel ?description
+</script>
+<script type="application/sparql-query" id="q-film" data-title="This Is Spinal Tap (1984)" data-blurb="The film (Q7810384): its director, and each cast member with the character they play (qualifier P453, or the character name P4633).">
+PREFIX wd: <http://www.wikidata.org/entity/>
+PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+PREFIX p: <http://www.wikidata.org/prop/>
+PREFIX ps: <http://www.wikidata.org/prop/statement/>
+PREFIX pq: <http://www.wikidata.org/prop/qualifier/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT ?film ?title ?year ?directorLabel ?actor ?actorLabel ?character ?characterName WHERE {
+  VALUES ?film { wd:Q7810384 }
+  ?film wdt:P1476 ?title .
+  OPTIONAL { SELECT ?film (MIN(YEAR(?date)) AS ?year) WHERE { ?film wdt:P577 ?date } GROUP BY ?film }
+  OPTIONAL { ?film wdt:P57 ?director . ?director rdfs:label ?directorLabel . FILTER(LANG(?directorLabel) = "en") }
+  ?film p:P161 ?credit . ?credit ps:P161 ?actor .
+  ?actor rdfs:label ?actorLabel . FILTER(LANG(?actorLabel) = "en")
+  OPTIONAL { ?credit pq:P453 ?role . ?role rdfs:label ?character . FILTER(LANG(?character) = "en") }
+  OPTIONAL { ?credit pq:P4633 ?characterName }
+}
+</script>
+<script type="application/sparql-query" id="q-elsewhere" data-title="The cast, elsewhere" data-blurb="Other films with Michael McKean, Christopher Guest, Harry Shearer and Rob Reiner in the cast or the director's chair, with at least 30 Wikipedia editions. The dial is the number of editions, scaled to eleven.">
+PREFIX wd: <http://www.wikidata.org/entity/>
+PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX wikibase: <http://wikiba.se/ontology#>
+SELECT ?person ?personLabel ?work ?workLabel (MIN(?y) AS ?year)
+       (GROUP_CONCAT(DISTINCT ?credit; separator=" and ") AS ?credits)
+       (MAX(?links) AS ?sitelinks) WHERE {
+  VALUES ?person { wd:Q1384181 wd:Q336074 wd:Q345325 wd:Q287607 }
+  { ?work wdt:P161 ?person . BIND("cast" AS ?credit) }
+  UNION { ?work wdt:P57 ?person . BIND("director" AS ?credit) }
+  ?work wdt:P31 wd:Q11424 ; wikibase:sitelinks ?links .
+  FILTER(?links >= 30)
+  FILTER NOT EXISTS { wd:Q741661 wdt:P1441 ?work }
+  OPTIONAL { ?work wdt:P577 ?date . BIND(YEAR(?date) AS ?y) }
+  ?person rdfs:label ?personLabel . FILTER(LANG(?personLabel) = "en")
+  ?work rdfs:label ?workLabel . FILTER(LANG(?workLabel) = "en")
+}
+GROUP BY ?person ?personLabel ?work ?workLabel
+ORDER BY ?personLabel DESC(?sitelinks)
+</script>
+<script type="application/sparql-query" id="q-albums" data-title="The records" data-blurb="Everything Wikidata credits to the band as performer (P175): albums, a soundtrack and a concert. Wikidata has no singles for the band.">
+PREFIX wd: <http://www.wikidata.org/entity/>
+PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX schema: <http://schema.org/>
+PREFIX wikibase: <http://wikiba.se/ontology#>
+SELECT ?release ?releaseLabel ?description (MIN(?y) AS ?year)
+       (GROUP_CONCAT(DISTINCT ?typeLabel; separator=", ") AS ?kind)
+       (MAX(?links) AS ?sitelinks) WHERE {
+  ?release wdt:P175 wd:Q741661 .
+  ?release rdfs:label ?releaseLabel . FILTER(LANG(?releaseLabel) = "en")
+  OPTIONAL { ?release schema:description ?description . FILTER(LANG(?description) = "en") }
+  OPTIONAL { ?release wdt:P31 ?type . ?type rdfs:label ?typeLabel . FILTER(LANG(?typeLabel) = "en") }
+  OPTIONAL { ?release wdt:P577 ?date . BIND(YEAR(?date) AS ?y) }
+  OPTIONAL { ?release wikibase:sitelinks ?links }
+}
+GROUP BY ?release ?releaseLabel ?description
+ORDER BY ?year
+</script>
+<script type="application/sparql-query" id="q-saga" data-title="The sequel, and the rest" data-blurb="Works the band appears in (P1441), among them Spinal Tap II: The End Continues (Q121088318), with the year, the director and the work each one follows (P155).">
+PREFIX wd: <http://www.wikidata.org/entity/>
+PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT DISTINCT ?work ?workLabel ?typeLabel ?year ?directorLabel ?follows ?followsLabel WHERE {
+  wd:Q741661 wdt:P1441 ?work .
+  ?work rdfs:label ?workLabel . FILTER(LANG(?workLabel) = "en")
+  OPTIONAL { ?work wdt:P31 ?type . ?type rdfs:label ?typeLabel . FILTER(LANG(?typeLabel) = "en") }
+  OPTIONAL { ?work wdt:P577 ?date . BIND(YEAR(?date) AS ?year) }
+  OPTIONAL { ?work wdt:P57 ?director . ?director rdfs:label ?directorLabel . FILTER(LANG(?directorLabel) = "en") }
+  OPTIONAL { ?work wdt:P155 ?follows . ?follows rdfs:label ?followsLabel . FILTER(LANG(?followsLabel) = "en") }
+}
+ORDER BY ?year
+</script>
+<script type="application/sparql-query" id="q-drummers" data-title="The drummers" data-blurb="Everyone Wikidata links to the band's drum stool: members whose occupation is drummer (Q386854), drummers in the films' casts, and cast members whose character name in the credit is one of the band's drummers.">
+PREFIX wd: <http://www.wikidata.org/entity/>
+PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+PREFIX p: <http://www.wikidata.org/prop/>
+PREFIX ps: <http://www.wikidata.org/prop/statement/>
+PREFIX pq: <http://www.wikidata.org/prop/qualifier/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX schema: <http://schema.org/>
+SELECT ?person ?personLabel ?description ?how ?work ?workLabel ?character WHERE {
+  {
+    ?person wdt:P463 wd:Q741661 ; wdt:P106 wd:Q386854 .
+    BIND("band member, occupation drummer" AS ?how)
+  } UNION {
+    wd:Q741661 wdt:P1441 ?work .
+    ?work rdfs:label ?workLabel . FILTER(LANG(?workLabel) = "en")
+    ?work p:P161 ?credit . ?credit ps:P161 ?person .
+    ?person wdt:P106 wd:Q386854 .
+    OPTIONAL { ?credit pq:P4633 ?character }
+    BIND("cast member, occupation drummer" AS ?how)
+  } UNION {
+    wd:Q741661 wdt:P1441 ?work .
+    ?work rdfs:label ?workLabel . FILTER(LANG(?workLabel) = "en")
+    ?work p:P161 ?credit . ?credit ps:P161 ?person ; pq:P4633 ?character .
+    FILTER(REGEX(?character, "Stumpy|Shrimpton|Childs|Besser|James Bond"))
+    BIND("plays one of the band's drummers" AS ?how)
+  }
+  ?person rdfs:label ?personLabel . FILTER(LANG(?personLabel) = "en")
+  OPTIONAL { ?person schema:description ?description . FILTER(LANG(?description) = "en") }
+}
+</script>
+
+<!-- snapshot:begin -->
+<script type="application/json" id="snapshot-meta">{"endpoint": "https://qlever.dev/api/wikidata", "retrieved": "2026-11-09T08:15:12Z", "licence": "CC0 1.0"}</script>
+<script type="application/json" id="s-band">{"head": {"vars": ["facet", "value", "valueLabel"]}, "results": {"bindings": [{"facet": {"type": "literal", "value": "description"}, "value": {"type": "literal", "value": "parody heavy metal band", "xml:lang": "en"}}, {"facet": {"type": "literal", "value": "name"}, "value": {"type": "literal", "value": "Spinal Tap", "xml:lang": "en"}}, {"facet": {"type": "literal", "value": "stylized name"}, "value": {"type": "literal", "value": "Spin̈al Tap"}}, {"facet": {"type": "literal", "value": "stylized name"}, "value": {"type": "literal", "value": "Spın̈al Tap"}}, {"facet": {"type": "literal", "value": "start of work period"}, "value": {"datatype": "http://www.w3.org/2001/XMLSchema#dateTime", "type": "literal", "value": "1964-01-01T00:00:00Z"}}, {"facet": {"type": "literal", "value": "genre"}, "value": {"type": "uri", "value": "http://www.wikidata.org/entity/Q1133657"}, "valueLabel": {"type": "literal", "value": "traditional heavy metal", "xml:lang": "en"}}, {"facet": {"type": "literal", "value": "created by"}, "value": {"type": "uri", "value": "http://www.wikidata.org/entity/Q1384181"}, "valueLabel": {"type": "literal", "value": "Michael McKean", "xml:lang": "en"}}, {"facet": {"type": "literal", "value": "genre"}, "value": {"type": "uri", "value": "http://www.wikidata.org/entity/Q1391336"}, "valueLabel": {"type": "literal", "value": "comedy rock", "xml:lang": "en"}}, {"facet": {"type": "literal", "value": "country of origin"}, "value": {"type": "uri", "value": "http://www.wikidata.org/entity/Q145"}, "valueLabel": {"type": "literal", "value": "United Kingdom", "xml:lang": "en"}}, {"facet": {"type": "literal", "value": "record label"}, "value": {"type": "uri", "value": "http://www.wikidata.org/entity/Q155152"}, "valueLabel": {"type": "literal", "value": "Polydor Records", "xml:lang": "en"}}, {"facet": {"type": "literal", "value": "record label"}, "value": {"type": "uri", "value": "http://www.wikidata.org/entity/Q212699"}, "valueLabel": {"type": "literal", "value": "Geffen Records", "xml:lang": "en"}}, {"facet": {"type": "literal", "value": "record label"}, "value": {"type": "uri", "value": "http://www.wikidata.org/entity/Q231694"}, "valueLabel": {"type": "literal", "value": "Interscope Records", "xml:lang": "en"}}, {"facet": {"type": "literal", "value": "country of origin"}, "value": {"type": "uri", "value": "http://www.wikidata.org/entity/Q30"}, "valueLabel": {"type": "literal", "value": "United States", "xml:lang": "en"}}, {"facet": {"type": "literal", "value": "created by"}, "value": {"type": "uri", "value": "http://www.wikidata.org/entity/Q336074"}, "valueLabel": {"type": "literal", "value": "Christopher Guest", "xml:lang": "en"}}, {"facet": {"type": "literal", "value": "created by"}, "value": {"type": "uri", "value": "http://www.wikidata.org/entity/Q345325"}, "valueLabel": {"type": "literal", "value": "Harry Shearer", "xml:lang": "en"}}, {"facet": {"type": "literal", "value": "genre"}, "value": {"type": "uri", "value": "http://www.wikidata.org/entity/Q38848"}, "valueLabel": {"type": "literal", "value": "heavy metal music", "xml:lang": "en"}}, {"facet": {"type": "literal", "value": "influenced"}, "value": {"type": "uri", "value": "http://www.wikidata.org/entity/Q421794"}, "valueLabel": {"type": "literal", "value": "The Darkness", "xml:lang": "en"}}, {"facet": {"type": "literal", "value": "instance of"}, "value": {"type": "uri", "value": "http://www.wikidata.org/entity/Q5741069"}, "valueLabel": {"type": "literal", "value": "rock band", "xml:lang": "en"}}, {"facet": {"type": "literal", "value": "instance of"}, "value": {"type": "uri", "value": "http://www.wikidata.org/entity/Q6619719"}, "valueLabel": {"type": "literal", "value": "fictional musical ensemble", "xml:lang": "en"}}, {"facet": {"type": "literal", "value": "named after"}, "value": {"type": "uri", "value": "http://www.wikidata.org/entity/Q719444"}, "valueLabel": {"type": "literal", "value": "lumbar puncture", "xml:lang": "en"}}, {"facet": {"type": "literal", "value": "genre"}, "value": {"type": "uri", "value": "http://www.wikidata.org/entity/Q83270"}, "valueLabel": {"type": "literal", "value": "hard rock", "xml:lang": "en"}}]}}</script>
+<script type="application/json" id="s-members">{"head": {"vars": ["member", "memberLabel", "description", "roles", "playedBy", "bornIn", "notableWork"]}, "results": {"bindings": [{"member": {"type": "uri", "value": "http://www.wikidata.org/entity/Q1381281"}, "memberLabel": {"type": "literal", "value": "Gregg Bissonette", "xml:lang": "en"}, "description": {"type": "literal", "value": "American drummer", "xml:lang": "en"}, "roles": {"type": "literal", "value": "session musician, jazz musician, drummer, musician"}, "bornIn": {"type": "literal", "value": "Detroit", "xml:lang": "en"}}, {"member": {"type": "uri", "value": "http://www.wikidata.org/entity/Q5240008"}, "memberLabel": {"type": "literal", "value": "David St. Hubbins", "xml:lang": "en"}, "description": {"type": "literal", "value": "fictional musician", "xml:lang": "en"}, "roles": {"type": "literal", "value": "singer, guitarist"}, "playedBy": {"type": "literal", "value": "Michael McKean", "xml:lang": "en"}}, {"member": {"type": "uri", "value": "http://www.wikidata.org/entity/Q5262360"}, "memberLabel": {"type": "literal", "value": "Derek Smalls", "xml:lang": "en"}, "description": {"type": "literal", "value": "fictional musician", "xml:lang": "en"}, "roles": {"type": "literal", "value": "bass guitarist"}, "bornIn": {"type": "literal", "value": "West Midlands", "xml:lang": "en"}}, {"member": {"type": "uri", "value": "http://www.wikidata.org/entity/Q7032682"}, "memberLabel": {"type": "literal", "value": "Nigel Tufnel", "xml:lang": "en"}, "description": {"type": "literal", "value": "fictional musician", "xml:lang": "en"}, "roles": {"type": "literal", "value": "guitarist"}, "playedBy": {"type": "literal", "value": "Christopher Guest", "xml:lang": "en"}, "bornIn": {"type": "literal", "value": "London", "xml:lang": "en"}, "notableWork": {"type": "literal", "value": "up to eleven", "xml:lang": "en"}}, {"member": {"type": "uri", "value": "http://www.wikidata.org/entity/Q5006588"}, "memberLabel": {"type": "literal", "value": "C. J. Vanston", "xml:lang": "en"}, "description": {"type": "literal", "value": "film composer, music producer, songwriter, keyboardist", "xml:lang": "en"}, "roles": {"type": "literal", "value": "keyboardist, record producer, composer, musician, songwriter"}, "bornIn": {"type": "literal", "value": "Denver", "xml:lang": "en"}}]}}</script>
+<script type="application/json" id="s-film">{"head": {"vars": ["film", "title", "year", "directorLabel", "actor", "actorLabel", "character", "characterName"]}, "results": {"bindings": [{"film": {"type": "uri", "value": "http://www.wikidata.org/entity/Q7810384"}, "title": {"type": "literal", "value": "This Is Spinal Tap", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1984"}, "directorLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "actor": {"type": "uri", "value": "http://www.wikidata.org/entity/Q190998"}, "actorLabel": {"type": "literal", "value": "Anjelica Huston", "xml:lang": "en"}, "characterName": {"type": "literal", "value": "Polly Deutsch"}}, {"film": {"type": "uri", "value": "http://www.wikidata.org/entity/Q7810384"}, "title": {"type": "literal", "value": "This Is Spinal Tap", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1984"}, "directorLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "actor": {"type": "uri", "value": "http://www.wikidata.org/entity/Q464425"}, "actorLabel": {"type": "literal", "value": "Ed Begley, Jr.", "xml:lang": "en"}, "characterName": {"type": "literal", "value": "John 'Stumpy' Pepys"}}, {"film": {"type": "uri", "value": "http://www.wikidata.org/entity/Q7810384"}, "title": {"type": "literal", "value": "This Is Spinal Tap", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1984"}, "directorLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "actor": {"type": "uri", "value": "http://www.wikidata.org/entity/Q3156753"}, "actorLabel": {"type": "literal", "value": "J. J. Barry", "xml:lang": "en"}}, {"film": {"type": "uri", "value": "http://www.wikidata.org/entity/Q7810384"}, "title": {"type": "literal", "value": "This Is Spinal Tap", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1984"}, "directorLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "actor": {"type": "uri", "value": "http://www.wikidata.org/entity/Q2925592"}, "actorLabel": {"type": "literal", "value": "Brinke Stevens", "xml:lang": "en"}}, {"film": {"type": "uri", "value": "http://www.wikidata.org/entity/Q7810384"}, "title": {"type": "literal", "value": "This Is Spinal Tap", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1984"}, "directorLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "actor": {"type": "uri", "value": "http://www.wikidata.org/entity/Q433827"}, "actorLabel": {"type": "literal", "value": "Joyce Hyser", "xml:lang": "en"}}, {"film": {"type": "uri", "value": "http://www.wikidata.org/entity/Q7810384"}, "title": {"type": "literal", "value": "This Is Spinal Tap", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1984"}, "directorLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "actor": {"type": "uri", "value": "http://www.wikidata.org/entity/Q1384181"}, "actorLabel": {"type": "literal", "value": "Michael McKean", "xml:lang": "en"}, "character": {"type": "literal", "value": "David St. Hubbins", "xml:lang": "en"}}, {"film": {"type": "uri", "value": "http://www.wikidata.org/entity/Q7810384"}, "title": {"type": "literal", "value": "This Is Spinal Tap", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1984"}, "directorLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "actor": {"type": "uri", "value": "http://www.wikidata.org/entity/Q1164670"}, "actorLabel": {"type": "literal", "value": "Danny Kortchmar", "xml:lang": "en"}, "characterName": {"type": "literal", "value": "Ronnie Pudding."}}, {"film": {"type": "uri", "value": "http://www.wikidata.org/entity/Q7810384"}, "title": {"type": "literal", "value": "This Is Spinal Tap", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1984"}, "directorLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "actor": {"type": "uri", "value": "http://www.wikidata.org/entity/Q517379"}, "actorLabel": {"type": "literal", "value": "Bruno Kirby", "xml:lang": "en"}, "characterName": {"type": "literal", "value": "Tommy Pischedda"}}, {"film": {"type": "uri", "value": "http://www.wikidata.org/entity/Q7810384"}, "title": {"type": "literal", "value": "This Is Spinal Tap", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1984"}, "directorLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "actor": {"type": "uri", "value": "http://www.wikidata.org/entity/Q3086782"}, "actorLabel": {"type": "literal", "value": "Fred Asparagus", "xml:lang": "en"}, "characterName": {"type": "literal", "value": "Joe 'Mama' Besser"}}, {"film": {"type": "uri", "value": "http://www.wikidata.org/entity/Q7810384"}, "title": {"type": "literal", "value": "This Is Spinal Tap", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1984"}, "directorLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "actor": {"type": "uri", "value": "http://www.wikidata.org/entity/Q287607"}, "actorLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "characterName": {"type": "literal", "value": "Marti DiBergi"}}, {"film": {"type": "uri", "value": "http://www.wikidata.org/entity/Q7810384"}, "title": {"type": "literal", "value": "This Is Spinal Tap", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1984"}, "directorLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "actor": {"type": "uri", "value": "http://www.wikidata.org/entity/Q455646"}, "actorLabel": {"type": "literal", "value": "June Chadwick", "xml:lang": "en"}, "characterName": {"type": "literal", "value": "Jeanine Pettibone"}}, {"film": {"type": "uri", "value": "http://www.wikidata.org/entity/Q7810384"}, "title": {"type": "literal", "value": "This Is Spinal Tap", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1984"}, "directorLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "actor": {"type": "uri", "value": "http://www.wikidata.org/entity/Q436719"}, "actorLabel": {"type": "literal", "value": "Patrick Macnee", "xml:lang": "en"}, "characterName": {"type": "literal", "value": "Sir Denis Eton-Hogg"}}, {"film": {"type": "uri", "value": "http://www.wikidata.org/entity/Q7810384"}, "title": {"type": "literal", "value": "This Is Spinal Tap", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1984"}, "directorLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "actor": {"type": "uri", "value": "http://www.wikidata.org/entity/Q545924"}, "actorLabel": {"type": "literal", "value": "Dana Carvey", "xml:lang": "en"}, "characterName": {"type": "literal", "value": "Mime Waiter"}}, {"film": {"type": "uri", "value": "http://www.wikidata.org/entity/Q7810384"}, "title": {"type": "literal", "value": "This Is Spinal Tap", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1984"}, "directorLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "actor": {"type": "uri", "value": "http://www.wikidata.org/entity/Q449521"}, "actorLabel": {"type": "literal", "value": "Fred Willard", "xml:lang": "en"}, "characterName": {"type": "literal", "value": "Lt. Hookstratten"}}, {"film": {"type": "uri", "value": "http://www.wikidata.org/entity/Q7810384"}, "title": {"type": "literal", "value": "This Is Spinal Tap", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1984"}, "directorLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "actor": {"type": "uri", "value": "http://www.wikidata.org/entity/Q230632"}, "actorLabel": {"type": "literal", "value": "Fran Drescher", "xml:lang": "en"}, "characterName": {"type": "literal", "value": "Bobbi Flekman"}}, {"film": {"type": "uri", "value": "http://www.wikidata.org/entity/Q7810384"}, "title": {"type": "literal", "value": "This Is Spinal Tap", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1984"}, "directorLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "actor": {"type": "uri", "value": "http://www.wikidata.org/entity/Q1645740"}, "actorLabel": {"type": "literal", "value": "Paul Benedict", "xml:lang": "en"}}, {"film": {"type": "uri", "value": "http://www.wikidata.org/entity/Q7810384"}, "title": {"type": "literal", "value": "This Is Spinal Tap", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1984"}, "directorLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "actor": {"type": "uri", "value": "http://www.wikidata.org/entity/Q275310"}, "actorLabel": {"type": "literal", "value": "Marcia Strassman", "xml:lang": "en"}}, {"film": {"type": "uri", "value": "http://www.wikidata.org/entity/Q7810384"}, "title": {"type": "literal", "value": "This Is Spinal Tap", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1984"}, "directorLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "actor": {"type": "uri", "value": "http://www.wikidata.org/entity/Q194881"}, "actorLabel": {"type": "literal", "value": "Howard Hesseman", "xml:lang": "en"}, "characterName": {"type": "literal", "value": "Terry Ladd"}}, {"film": {"type": "uri", "value": "http://www.wikidata.org/entity/Q7810384"}, "title": {"type": "literal", "value": "This Is Spinal Tap", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1984"}, "directorLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "actor": {"type": "uri", "value": "http://www.wikidata.org/entity/Q345325"}, "actorLabel": {"type": "literal", "value": "Harry Shearer", "xml:lang": "en"}, "character": {"type": "literal", "value": "Derek Smalls", "xml:lang": "en"}}, {"film": {"type": "uri", "value": "http://www.wikidata.org/entity/Q7810384"}, "title": {"type": "literal", "value": "This Is Spinal Tap", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1984"}, "directorLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "actor": {"type": "uri", "value": "http://www.wikidata.org/entity/Q3953565"}, "actorLabel": {"type": "literal", "value": "Sean Frye", "xml:lang": "en"}}, {"film": {"type": "uri", "value": "http://www.wikidata.org/entity/Q7810384"}, "title": {"type": "literal", "value": "This Is Spinal Tap", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1984"}, "directorLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "actor": {"type": "uri", "value": "http://www.wikidata.org/entity/Q336074"}, "actorLabel": {"type": "literal", "value": "Christopher Guest", "xml:lang": "en"}, "character": {"type": "literal", "value": "Nigel Tufnel", "xml:lang": "en"}}, {"film": {"type": "uri", "value": "http://www.wikidata.org/entity/Q7810384"}, "title": {"type": "literal", "value": "This Is Spinal Tap", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1984"}, "directorLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "actor": {"type": "uri", "value": "http://www.wikidata.org/entity/Q186485"}, "actorLabel": {"type": "literal", "value": "Billy Crystal", "xml:lang": "en"}, "characterName": {"type": "literal", "value": "Morty the Mime"}}]}}</script>
+<script type="application/json" id="s-elsewhere">{"head": {"vars": ["person", "personLabel", "work", "workLabel", "year", "credits", "sitelinks"]}, "results": {"bindings": [{"person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q336074"}, "personLabel": {"type": "literal", "value": "Christopher Guest", "xml:lang": "en"}, "work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q108946"}, "workLabel": {"type": "literal", "value": "A Few Good Men", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1992"}, "credits": {"type": "literal", "value": "cast"}, "sitelinks": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "48"}}, {"person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q336074"}, "personLabel": {"type": "literal", "value": "Christopher Guest", "xml:lang": "en"}, "work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q506418"}, "workLabel": {"type": "literal", "value": "The Princess Bride", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1987"}, "credits": {"type": "literal", "value": "cast"}, "sitelinks": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "47"}}, {"person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q336074"}, "personLabel": {"type": "literal", "value": "Christopher Guest", "xml:lang": "en"}, "work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q841961"}, "workLabel": {"type": "literal", "value": "Death Wish", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1974"}, "credits": {"type": "literal", "value": "cast"}, "sitelinks": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "34"}}, {"person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q336074"}, "personLabel": {"type": "literal", "value": "Christopher Guest", "xml:lang": "en"}, "work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q178966"}, "workLabel": {"type": "literal", "value": "The Invention of Lying", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "2009"}, "credits": {"type": "literal", "value": "cast"}, "sitelinks": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "30"}}, {"person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q345325"}, "personLabel": {"type": "literal", "value": "Harry Shearer", "xml:lang": "en"}, "work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q24075"}, "workLabel": {"type": "literal", "value": "Godzilla", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1998"}, "credits": {"type": "literal", "value": "cast"}, "sitelinks": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "49"}}, {"person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q345325"}, "personLabel": {"type": "literal", "value": "Harry Shearer", "xml:lang": "en"}, "work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q918380"}, "workLabel": {"type": "literal", "value": "My Best Friend's Wedding", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1997"}, "credits": {"type": "literal", "value": "cast"}, "sitelinks": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "43"}}, {"person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q345325"}, "personLabel": {"type": "literal", "value": "Harry Shearer", "xml:lang": "en"}, "work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q1197185"}, "workLabel": {"type": "literal", "value": "The Right Stuff", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1983"}, "credits": {"type": "literal", "value": "cast"}, "sitelinks": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "43"}}, {"person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q345325"}, "personLabel": {"type": "literal", "value": "Harry Shearer", "xml:lang": "en"}, "work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q1306472"}, "workLabel": {"type": "literal", "value": "A League of Their Own", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1992"}, "credits": {"type": "literal", "value": "cast"}, "sitelinks": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "39"}}, {"person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q345325"}, "personLabel": {"type": "literal", "value": "Harry Shearer", "xml:lang": "en"}, "work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q327332"}, "workLabel": {"type": "literal", "value": "Ghost Dog: The Way of the Samurai", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1999"}, "credits": {"type": "literal", "value": "cast"}, "sitelinks": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "33"}}, {"person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q345325"}, "personLabel": {"type": "literal", "value": "Harry Shearer", "xml:lang": "en"}, "work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q1139023"}, "workLabel": {"type": "literal", "value": "The Robe", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1953"}, "credits": {"type": "literal", "value": "cast"}, "sitelinks": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "33"}}, {"person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q1384181"}, "personLabel": {"type": "literal", "value": "Michael McKean", "xml:lang": "en"}, "work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q207482"}, "workLabel": {"type": "literal", "value": "1941", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1979"}, "credits": {"type": "literal", "value": "cast"}, "sitelinks": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "42"}}, {"person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q1384181"}, "personLabel": {"type": "literal", "value": "Michael McKean", "xml:lang": "en"}, "work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q1305799"}, "workLabel": {"type": "literal", "value": "True Crime", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1999"}, "credits": {"type": "literal", "value": "cast"}, "sitelinks": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "31"}}, {"person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q1384181"}, "personLabel": {"type": "literal", "value": "Michael McKean", "xml:lang": "en"}, "work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q1321370"}, "workLabel": {"type": "literal", "value": "The Words", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "2012"}, "credits": {"type": "literal", "value": "cast"}, "sitelinks": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "31"}}, {"person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q1384181"}, "personLabel": {"type": "literal", "value": "Michael McKean", "xml:lang": "en"}, "work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q692208"}, "workLabel": {"type": "literal", "value": "Whatever Works", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "2009"}, "credits": {"type": "literal", "value": "cast"}, "sitelinks": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "30"}}, {"person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q287607"}, "personLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q1392744"}, "workLabel": {"type": "literal", "value": "The Wolf of Wall Street", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "2013"}, "credits": {"type": "literal", "value": "cast"}, "sitelinks": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "75"}}, {"person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q287607"}, "personLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q471169"}, "workLabel": {"type": "literal", "value": "When Harry Met Sally", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1989"}, "credits": {"type": "literal", "value": "director"}, "sitelinks": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "53"}}, {"person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q287607"}, "personLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q725552"}, "workLabel": {"type": "literal", "value": "Misery", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1990"}, "credits": {"type": "literal", "value": "director and cast"}, "sitelinks": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "50"}}, {"person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q287607"}, "personLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q494722"}, "workLabel": {"type": "literal", "value": "Stand by Me", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1986"}, "credits": {"type": "literal", "value": "director"}, "sitelinks": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "49"}}, {"person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q287607"}, "personLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q463768"}, "workLabel": {"type": "literal", "value": "The Bucket List", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "2007"}, "credits": {"type": "literal", "value": "director"}, "sitelinks": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "48"}}, {"person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q287607"}, "personLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q108946"}, "workLabel": {"type": "literal", "value": "A Few Good Men", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1992"}, "credits": {"type": "literal", "value": "director"}, "sitelinks": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "48"}}, {"person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q287607"}, "personLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q506418"}, "workLabel": {"type": "literal", "value": "The Princess Bride", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1987"}, "credits": {"type": "literal", "value": "director"}, "sitelinks": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "47"}}, {"person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q287607"}, "personLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q1004531"}, "workLabel": {"type": "literal", "value": "Bullets Over Broadway", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1994"}, "credits": {"type": "literal", "value": "cast"}, "sitelinks": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "38"}}, {"person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q287607"}, "personLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q1427222"}, "workLabel": {"type": "literal", "value": "Postcards from the Edge", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1990"}, "credits": {"type": "literal", "value": "cast"}, "sitelinks": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "37"}}, {"person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q287607"}, "personLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q429311"}, "workLabel": {"type": "literal", "value": "The American President", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1995"}, "credits": {"type": "literal", "value": "director"}, "sitelinks": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "34"}}, {"person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q287607"}, "personLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q1422110"}, "workLabel": {"type": "literal", "value": "Throw Momma from the Train", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1987"}, "credits": {"type": "literal", "value": "cast"}, "sitelinks": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "33"}}, {"person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q287607"}, "personLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q913620"}, "workLabel": {"type": "literal", "value": "The First Wives Club", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1996"}, "credits": {"type": "literal", "value": "cast"}, "sitelinks": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "32"}}, {"person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q287607"}, "personLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q1322943"}, "workLabel": {"type": "literal", "value": "The Majestic", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "2001"}, "credits": {"type": "literal", "value": "cast"}, "sitelinks": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "31"}}, {"person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q287607"}, "personLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q1330571"}, "workLabel": {"type": "literal", "value": "Rumor Has It", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "2005"}, "credits": {"type": "literal", "value": "director"}, "sitelinks": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "30"}}]}}</script>
+<script type="application/json" id="s-albums">{"head": {"vars": ["release", "releaseLabel", "description", "year", "kind", "sitelinks"]}, "results": {"bindings": [{"release": {"type": "uri", "value": "http://www.wikidata.org/entity/Q7544392"}, "releaseLabel": {"type": "literal", "value": "Smell the Glove", "xml:lang": "en"}, "description": {"type": "literal", "value": "album by Spın̈al Tap", "xml:lang": "en"}, "kind": {"type": "literal", "value": "album"}, "sitelinks": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1"}}, {"release": {"type": "uri", "value": "http://www.wikidata.org/entity/Q3524739"}, "releaseLabel": {"type": "literal", "value": "This Is Spinal Tap", "xml:lang": "en"}, "description": {"type": "literal", "value": "album by Spinal Tap (1984)", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1984"}, "kind": {"type": "literal", "value": "album"}, "sitelinks": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "4"}}, {"release": {"type": "uri", "value": "http://www.wikidata.org/entity/Q20616479"}, "releaseLabel": {"type": "literal", "value": "The Freddie Mercury Tribute Concert for AIDS Awareness", "xml:lang": "en"}, "description": {"type": "literal", "value": "1992 benefit concert", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1992"}, "kind": {"type": "literal", "value": "television special, benefit concert"}, "sitelinks": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "31"}}, {"release": {"type": "uri", "value": "http://www.wikidata.org/entity/Q2924223"}, "releaseLabel": {"type": "literal", "value": "Break Like the Wind", "xml:lang": "en"}, "description": {"type": "literal", "value": "album by Spın̈al Tap", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1992"}, "kind": {"type": "literal", "value": "album"}, "sitelinks": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "3"}}, {"release": {"type": "uri", "value": "http://www.wikidata.org/entity/Q4839242"}, "releaseLabel": {"type": "literal", "value": "Back from the Dead", "xml:lang": "en"}, "description": {"type": "literal", "value": "album by Spın̈al Tap", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "2009"}, "kind": {"type": "literal", "value": "album"}, "sitelinks": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "2"}}, {"release": {"type": "uri", "value": "http://www.wikidata.org/entity/Q136352220"}, "releaseLabel": {"type": "literal", "value": "The End Continues", "xml:lang": "en"}, "description": {"type": "literal", "value": "2025 soundtrack album by Spinal Tap", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "2025"}, "kind": {"type": "literal", "value": "album"}, "sitelinks": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1"}}]}}</script>
+<script type="application/json" id="s-saga">{"head": {"vars": ["work", "workLabel", "typeLabel", "year", "directorLabel", "follows", "followsLabel"]}, "results": {"bindings": [{"work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q137423795"}, "workLabel": {"type": "literal", "value": "Spinal Tap at Stonehenge: The Final Finale", "xml:lang": "en"}, "typeLabel": {"type": "literal", "value": "film project", "xml:lang": "en"}, "directorLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "follows": {"type": "uri", "value": "http://www.wikidata.org/entity/Q121088318"}, "followsLabel": {"type": "literal", "value": "Spinal Tap II: The End Continues", "xml:lang": "en"}}, {"work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q7810384"}, "workLabel": {"type": "literal", "value": "This Is Spinal Tap", "xml:lang": "en"}, "typeLabel": {"type": "literal", "value": "film", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1984"}, "directorLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "follows": {"type": "uri", "value": "http://www.wikidata.org/entity/Q109044930"}, "followsLabel": {"type": "literal", "value": "Spinal Tap: The Final Tour", "xml:lang": "en"}}, {"work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q105426878"}, "workLabel": {"type": "literal", "value": "A Spinal Tap Reunion", "xml:lang": "en"}, "typeLabel": {"type": "literal", "value": "film", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1992"}, "follows": {"type": "uri", "value": "http://www.wikidata.org/entity/Q7810384"}, "followsLabel": {"type": "literal", "value": "This Is Spinal Tap", "xml:lang": "en"}}, {"work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q2500134"}, "workLabel": {"type": "literal", "value": "The Otto Show", "xml:lang": "en"}, "typeLabel": {"type": "literal", "value": "television series episode", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "1992"}, "directorLabel": {"type": "literal", "value": "Wes Archer", "xml:lang": "en"}, "follows": {"type": "uri", "value": "http://www.wikidata.org/entity/Q2499472"}, "followsLabel": {"type": "literal", "value": "Black Widower", "xml:lang": "en"}}, {"work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q121088318"}, "workLabel": {"type": "literal", "value": "Spinal Tap II: The End Continues", "xml:lang": "en"}, "typeLabel": {"type": "literal", "value": "film", "xml:lang": "en"}, "year": {"datatype": "http://www.w3.org/2001/XMLSchema#int", "type": "literal", "value": "2025"}, "directorLabel": {"type": "literal", "value": "Rob Reiner", "xml:lang": "en"}, "follows": {"type": "uri", "value": "http://www.wikidata.org/entity/Q105426878"}, "followsLabel": {"type": "literal", "value": "A Spinal Tap Reunion", "xml:lang": "en"}}]}}</script>
+<script type="application/json" id="s-drummers">{"head": {"vars": ["person", "personLabel", "description", "how", "work", "workLabel", "character"]}, "results": {"bindings": [{"person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q136261919"}, "personLabel": {"type": "literal", "value": "Valerie Franco", "xml:lang": "en"}, "description": {"type": "literal", "value": "musical artist", "xml:lang": "en"}, "how": {"type": "literal", "value": "cast member, occupation drummer"}, "work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q121088318"}, "workLabel": {"type": "literal", "value": "Spinal Tap II: The End Continues", "xml:lang": "en"}, "character": {"type": "literal", "value": "Didi Crockett"}}, {"person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q136261919"}, "personLabel": {"type": "literal", "value": "Valerie Franco", "xml:lang": "en"}, "description": {"type": "literal", "value": "musical artist", "xml:lang": "en"}, "how": {"type": "literal", "value": "cast member, occupation drummer"}, "work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q137423795"}, "workLabel": {"type": "literal", "value": "Spinal Tap at Stonehenge: The Final Finale", "xml:lang": "en"}, "character": {"type": "literal", "value": "Didi Crockett"}}, {"person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q1381281"}, "personLabel": {"type": "literal", "value": "Gregg Bissonette", "xml:lang": "en"}, "description": {"type": "literal", "value": "American drummer", "xml:lang": "en"}, "how": {"type": "literal", "value": "band member, occupation drummer"}}, {"person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q3086782"}, "personLabel": {"type": "literal", "value": "Fred Asparagus", "xml:lang": "en"}, "description": {"type": "literal", "value": "American actor (1947-1998)", "xml:lang": "en"}, "how": {"type": "literal", "value": "plays one of the band's drummers"}, "work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q7810384"}, "workLabel": {"type": "literal", "value": "This Is Spinal Tap", "xml:lang": "en"}, "character": {"type": "literal", "value": "Joe 'Mama' Besser"}}, {"person": {"type": "uri", "value": "http://www.wikidata.org/entity/Q464425"}, "personLabel": {"type": "literal", "value": "Ed Begley, Jr.", "xml:lang": "en"}, "description": {"type": "literal", "value": "American actor", "xml:lang": "en"}, "how": {"type": "literal", "value": "plays one of the band's drummers"}, "work": {"type": "uri", "value": "http://www.wikidata.org/entity/Q7810384"}, "workLabel": {"type": "literal", "value": "This Is Spinal Tap", "xml:lang": "en"}, "character": {"type": "literal", "value": "John 'Stumpy' Pepys"}}]}}</script>
+<!-- snapshot:end -->
+
+<script>
+// A SPARQL client in one script. Queries come from the sparql-query blocks above; results from
+// QLever when this browser has fetch, else from the snapshot blocks (SPARQL 1.1 JSON results).
+// Each result set becomes cards in one DOM batch: one HTML string, parsed once.
+const $ = id => document.getElementById(id);
+const ENDPOINT = 'https://qlever.dev/api/wikidata';
+const live = typeof fetch === 'function';
+const t0 = performance.now();
+const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const queries = [];
+// querySelectorAll is one static query (a live getElementsByTagName walks the page per item).
+for (const s of Array.from(document.querySelectorAll('script[type="application/sparql-query"]')))
+  queries.push({id: s.id.slice(2), title: s.getAttribute('data-title'), blurb: s.getAttribute('data-blurb'), text: s.textContent.trim()});
+const metaNode = $('snapshot-meta');
+const meta = metaNode ? JSON.parse(metaNode.textContent) : null;
+
+// ---- SPARQL syntax highlighting: one pass of a small scanner (a big regular expression is
+// slow in a JavaScript engine that is itself interpreted) ----
+const KEYWORDS = new Set(['PREFIX', 'SELECT', 'DISTINCT', 'WHERE', 'OPTIONAL', 'UNION', 'FILTER', 'BIND', 'AS', 'VALUES',
+  'GROUP', 'BY', 'ORDER', 'DESC', 'ASC', 'LIMIT', 'NOT', 'EXISTS', 'LANG', 'YEAR', 'MIN', 'MAX', 'SAMPLE', 'GROUP_CONCAT',
+  'SEPARATOR', 'separator', 'REGEX', 'STR', 'IRI']);
+const isWord = c => (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c === '_' || c === '-';
+function highlight(text) {
+  let out = '', i = 0, plain = 0;
+  const span = (cls, end) => { out += esc(text.slice(plain, i)) + '<span class="' + cls + '">' + esc(text.slice(i, end)) + '</span>'; i = plain = end; };
+  while (i < text.length) {
+    const c = text[i];
+    let j = i + 1;
+    if (c === '#') { while (j < text.length && text[j] !== '\n') j++; span('cmt', j); }
+    else if (c === '"') { while (j < text.length && text[j] !== '"' && text[j] !== '\n') j += text[j] === '\\' ? 2 : 1; span('str', Math.min(j + 1, text.length)); }
+    else if (c === '<' && /[a-z]/.test(text[j] || '')) { while (j < text.length && text[j] !== '>' && text[j] !== ' ') j++; span('iri', j + 1); }
+    else if (c === '?' || c === '$') { while (j < text.length && isWord(text[j])) j++; if (j > i + 1) span('var', j); else i = j; }
+    else if (isWord(c) && (i === 0 || !isWord(text[i - 1]))) {
+      while (j < text.length && isWord(text[j])) j++;
+      if (text[j] === ':') { j++; while (j < text.length && (isWord(text[j]) || text[j] === '.') ) j++; while (text[j - 1] === '.') j--; span('pn', j); }
+      else if (KEYWORDS.has(text.slice(i, j))) span('kw', j);
+      else if (c >= '0' && c <= '9') span('num', j);
+      else i = j;
+    }
+    else i = j;
+  }
+  return out + esc(text.slice(plain));
+}
+
+// ---- One DOM batch: the HTML string goes in with one call ----
+const innerSetter = (() => { const d = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML'); return d && d.set ? 'innerHTML' : 'DOMParser'; })();
+function setHTML(el, html, block) {
+  if (innerSetter === 'innerHTML') { el.innerHTML = html; return; }
+  // One wrapper element moves into the page: one adopt and one insert, whatever the size.
+  const tag = block ? 'div' : 'span';
+  const wrap = new DOMParser().parseFromString('<!doctype html><body><' + tag + '>' + html + '</' + tag + '>', 'text/html').body.firstChild;
+  el.replaceChildren(document.adoptNode(wrap));
+}
+
+// ---- Drawing for the cards (inline SVG: Lean draws it) ----
+const val = (b, k) => b[k] ? b[k].value : '';
+const qid = iri => iri.slice(iri.lastIndexOf('/') + 1);
+const wd = iri => iri ? '<a href="https://www.wikidata.org/wiki/' + qid(iri) + '">' + qid(iri) + '</a>' : '';
+// The amp panel along the top of a card: gold strip, a jewel light, the card's kind, and a dial
+// that goes to eleven when the card has a number to show.
+function panel(w, kind, dial) {
+  let s = '<svg width="' + w + '" height="34" viewBox="0 0 ' + w + ' 34"><rect width="' + w + '" height="34" fill="#1c1a16"/>' +
+    '<rect y="0" width="' + w + '" height="3" fill="#e2b85a"/><rect y="31" width="' + w + '" height="3" fill="#3a3326"/>' +
+    '<circle cx="16" cy="17" r="6" fill="#5a0e05"/><circle cx="16" cy="17" r="4" fill="#ff3b12"/><circle cx="14.6" cy="15.4" r="1.4" fill="#ffd6c8"/>' +
+    '<text x="30" y="22" font-size="11" fill="#e2b85a">' + esc(kind.toUpperCase()) + '</text>';
+  if (dial) s += knob(w - 30, 17, dial.value) + '<text x="' + (w - 52) + '" y="22" font-size="11" text-anchor="end" fill="#cfd4dc">' + esc(dial.label) + '</text>';
+  return s + '</svg>';
+}
+// A knob with eleven ticks; the pointer at value (0 to 11).
+function knob(cx, cy, v) {
+  let s = '<circle cx="' + cx + '" cy="' + cy + '" r="13" fill="#0b0b0d" stroke="#6a6250" stroke-width="1"/>';
+  for (let i = 0; i <= 11; i++) {
+    const a = (-225 + i * 270 / 11) * Math.PI / 180, c = Math.cos(a), d = Math.sin(a);
+    s += '<line x1="' + (cx + 10 * c).toFixed(1) + '" y1="' + (cy + 10 * d).toFixed(1) + '" x2="' + (cx + 13 * c).toFixed(1) + '" y2="' + (cy + 13 * d).toFixed(1) +
+      '" stroke="' + (i === 11 ? '#ff3b12' : '#8a8270') + '" stroke-width="1.2"/>';
+  }
+  const a = (-225 + Math.max(0, Math.min(11, v)) * 270 / 11) * Math.PI / 180;
+  return s + '<circle cx="' + cx + '" cy="' + cy + '" r="7" fill="#c9d1db"/><line x1="' + cx + '" y1="' + cy + '" x2="' + (cx + 8 * Math.cos(a)).toFixed(1) + '" y2="' + (cy + 8 * Math.sin(a)).toFixed(1) + '" stroke="#16191f" stroke-width="2"/>';
+}
+function card(o) {
+  const w = o.wide ? 734 : 360;
+  let s = panel(w, o.kind, o.dial) + '<div class="cbody">';
+  if (o.kicker) s += '<p class="kicker">' + esc(o.kicker) + '</p>';
+  s += '<p class="title">' + esc(o.title) + '</p>';
+  if (o.sub) s += '<p class="sub">' + esc(o.sub) + '</p>';
+  for (const [k, v, raw] of o.rows || []) if (v) s += '<p class="row"><span class="k">' + esc(k) + '</span> ' + (raw ? v : esc(v)) + '</p>';
+  if (o.extra) s += o.extra;
+  if (o.links) s += '<p class="link">Wikidata ' + o.links + '</p>';
+  return {wide: !!o.wide, html: s + '</div>'};
+}
+// Cards two to a row in a table (Foafnaut lays out tables well; inline-block boxes with block
+// children not yet). A wide card has a row to itself.
+function layout(cards) {
+  let s = '<table class="cards" role="presentation">', open = 0;
+  for (const c of cards) {
+    if (c.wide) { if (open) s += '<td class="empty"></td></tr>'; s += '<tr><td colspan="2" class="card">' + c.html + '</td></tr>'; open = 0; continue; }
+    s += (open ? '' : '<tr>') + '<td class="card">' + c.html + '</td>' + (open ? '</tr>' : '');
+    open ^= 1;
+  }
+  return s + (open ? '<td class="empty"></td></tr>' : '') + '</table>';
+}
+const scale11 = (x, max) => max > 0 ? Math.round(110 * x / max) / 10 : 0;
+
+// ---- One renderer for each query: rows in, card HTML out ----
+const render = {
+  band(rows) {
+    const f = {};
+    for (const b of rows) { const k = val(b, 'facet'); (f[k] = f[k] || []).push(b); }
+    const items = k => (f[k] || []).map(b => val(b, 'valueLabel') || val(b, 'value'));
+    const links = k => (f[k] || []).filter(b => b.value.type === 'uri').map(b => wd(b.value.value)).join(' ');
+    const start = items('start of work period').map(d => d.slice(0, 4));
+    const styl = items('stylized name');
+    return [card({kind: 'band', wide: true, kicker: items('instance of').join(', '), title: items('name').join(', '), sub: items('description').join(', '),
+      rows: [['stylized names', styl.length ? '<span class="big">' + styl.map(esc).join(' · ') + '</span>' : '', true],
+        ['genre', items('genre').join(', ')], ['start of work period', start.join(', ')], ['country of origin', items('country of origin').join(', ')],
+        ['created by', items('created by').join(', ')], ['named after', items('named after').join(', ')],
+        ['record label', items('record label').join(', ')], ['influenced', items('influenced').join(', ')]],
+      links: wd('http://www.wikidata.org/entity/Q741661') + ' · ' + links('genre') + ' ' + links('created by')})];
+  },
+  members(rows) {
+    return rows.map(b => {
+      const notable = val(b, 'notableWork');
+      return card({kind: 'member', title: val(b, 'memberLabel'), sub: val(b, 'description'),
+        dial: /eleven/.test(notable) ? {value: 11, label: notable} : null,
+        rows: [['occupations', val(b, 'roles')], ['played by', val(b, 'playedBy')], ['born in', val(b, 'bornIn')], ['notable work', notable]],
+        links: wd(val(b, 'member'))});
+    });
+  },
+  film(rows) {
+    if (!rows.length) return [];
+    const f = rows[0];
+    const cast = rows.map(b => ({b, as: val(b, 'character') || val(b, 'characterName').replace(/\.$/, '')}))
+      .sort((x, y) => (x.as ? 0 : 1) - (y.as ? 0 : 1) || (val(x.b, 'character') ? 0 : 1) - (val(y.b, 'character') ? 0 : 1));
+    const s = [card({kind: 'film', wide: true, kicker: 'directed by ' + val(f, 'directorLabel'), title: val(f, 'title') + ' (' + val(f, 'year') + ')',
+      sub: rows.length + ' cast members in Wikidata, ' + cast.filter(c => c.as).length + ' with the character they play', links: wd(val(f, 'film'))})];
+    for (const c of cast) s.push(card({kind: 'cast', title: val(c.b, 'actorLabel'), sub: c.as ? 'as ' + c.as : 'character not recorded', links: wd(val(c.b, 'actor'))}));
+    return s;
+  },
+  elsewhere(rows) {
+    const by = {}, order = [];
+    for (const b of rows) { const p = val(b, 'personLabel'); if (!by[p]) { by[p] = []; order.push(p); } by[p].push(b); }
+    const max = Math.max(...rows.map(b => Number(val(b, 'sitelinks')) || 0));
+    return order.map(p => {
+      const top = by[p][0];
+      const list = by[p].map(b => '<p class="row">' + esc(val(b, 'workLabel')) + ' <span class="k">' + esc(val(b, 'year')) + ', ' + esc(val(b, 'credits')) +
+        ', ' + esc(val(b, 'sitelinks')) + ' Wikipedias</span></p>').join('');
+      return card({kind: 'filmography', title: p, sub: by[p].length + ' films with 30 or more Wikipedia editions',
+        dial: {value: scale11(Number(val(top, 'sitelinks')), max), label: val(top, 'workLabel')}, extra: list, links: wd(val(top, 'person'))});
+    });
+  },
+  albums(rows) {
+    const max = Math.max(...rows.map(b => Number(val(b, 'sitelinks')) || 0));
+    return rows.map(b => card({kind: 'record', title: val(b, 'releaseLabel'), sub: val(b, 'description'),
+      dial: {value: scale11(Number(val(b, 'sitelinks')), max), label: (val(b, 'sitelinks') || '0') + ' Wikipedias'},
+      rows: [['year', val(b, 'year') || 'not recorded'], ['kind', val(b, 'kind')]], extra: disc(val(b, 'year')), links: wd(val(b, 'release'))}));
+  },
+  saga(rows) {
+    return rows.map(b => card({kind: val(b, 'typeLabel') || 'work', kicker: val(b, 'year') || 'no date in Wikidata', title: val(b, 'workLabel'),
+      rows: [['directed by', val(b, 'directorLabel')], ['follows', val(b, 'followsLabel')]],
+      links: wd(val(b, 'work')) + (val(b, 'follows') ? ' · follows ' + wd(val(b, 'follows')) : '')}));
+  },
+  drummers(rows) {
+    // One card for each person; a person in two works gets both.
+    const by = {}, order = [];
+    for (const b of rows) { const p = val(b, 'person'); if (!by[p]) { by[p] = []; order.push(p); } by[p].push(b); }
+    const list = (bs, k) => bs.map(b => val(b, k)).filter((x, i, xs) => x && xs.indexOf(x) === i).join('; ');
+    return order.map((p, i) => { const bs = by[p], b = bs[0];
+      return card({kind: 'drum stool ' + (i + 1), title: val(b, 'personLabel'), sub: val(b, 'description'),
+        rows: [['how', list(bs, 'how')], ['in', list(bs, 'workLabel')], ['as', list(bs, 'character')]], extra: drum(), links: wd(p)}); });
+  },
+};
+// A record and a drum, drawn for the cards (not pictures of real objects).
+function disc(year) {
+  return '<svg width="338" height="44" viewBox="0 0 338 44"><circle cx="22" cy="22" r="20" fill="#050506" stroke="#2c2c35"/><circle cx="22" cy="22" r="15" fill="none" stroke="#1d1d24"/>' +
+    '<circle cx="22" cy="22" r="11" fill="none" stroke="#1d1d24"/><circle cx="22" cy="22" r="7" fill="#b3120a"/><circle cx="22" cy="22" r="1.5" fill="#050506"/>' +
+    '<rect x="52" y="20" width="' + (year ? Math.max(8, (Number(year) - 1980) * 6) : 8) + '" height="4" fill="#e2b85a"/><text x="52" y="38" font-size="10" fill="#8a919c">1980 to ' + esc(year || '?') + '</text></svg>';
+}
+function drum() {
+  return '<svg width="338" height="40" viewBox="0 0 338 40"><rect x="4" y="12" width="44" height="24" fill="#b3120a"/><rect x="4" y="10" width="44" height="4" fill="#c9d1db"/>' +
+    '<rect x="4" y="34" width="44" height="4" fill="#c9d1db"/><line x1="8" y1="14" x2="44" y2="34" stroke="#e2b85a"/><line x1="44" y1="14" x2="8" y2="34" stroke="#e2b85a"/>' +
+    '<line x1="14" y1="2" x2="30" y2="11" stroke="#d6dae1" stroke-width="2"/><line x1="40" y1="1" x2="24" y2="11" stroke="#d6dae1" stroke-width="2"/></svg>';
+}
+
+// ---- The client ----
+let current = null, edited = false, built = {cards: 0, ms: 0}, startMs = 0;
+function snapshotRows(id) {
+  const node = $('s-' + id);
+  return node ? JSON.parse(node.textContent) : null;
+}
+function show(q, results, source) {
+  const t = performance.now();
+  const rows = results && results.results ? results.results.bindings : [];
+  const cards = render[q.id] ? render[q.id](rows) : [], html = layout(cards);
+  setHTML($('cards'), html, true);
+  built = {cards: cards.length, ms: performance.now() - t};
+  $('status').textContent = rows.length + (rows.length === 1 ? ' row, ' : ' rows, ') + built.cards + (built.cards === 1 ? ' card, ' : ' cards, ') + source +
+    '. Built in one DOM batch (' + innerSetter + ')' + (built.ms > 0 ? ' in ' + built.ms.toFixed(1) + ' ms.' : '.');
+  engineReport();
+}
+function choose(id) {
+  const q = queries.find(x => x.id === id);
+  current = q; edited = false;
+  for (const b of Array.from($('picker').querySelectorAll('button'))) b.className = b.id === 'pick-' + id ? 'on' : '';
+  $('qtitle').textContent = q.title;
+  $('qblurb').textContent = q.blurb;
+  setHTML($('qtext'), highlight(q.text));
+  $('qtext').style.display = 'block'; $('qedit').style.display = 'none';
+  if (live) run(q.text, 'live from QLever');
+  else show(q, snapshotRows(q.id), meta ? 'snapshot of ' + meta.retrieved.slice(0, 10) : 'no snapshot');
+}
+async function run(text, source) {
+  $('status').textContent = 'Running on QLever...';
+  try {
+    const r = await fetch(ENDPOINT + '?query=' + encodeURIComponent(text), {headers: {Accept: 'application/sparql-results+json'}});
+    if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()).slice(0, 200));
+    show(current, await r.json(), source);
+  } catch (e) {
+    $('status').textContent = 'QLever did not answer (' + e.message + '). Showing the snapshot.';
+    if (!edited) show(current, snapshotRows(current.id), meta ? 'snapshot of ' + meta.retrieved.slice(0, 10) + ' (QLever unreachable)' : 'no snapshot');
+  }
+}
+function tools() {
+  if (!live) { setHTML($('tools'), ''); return; }
+  setHTML($('tools'), '<button id="edit">Edit</button><button id="run">Run on QLever</button>');
+  $('edit').addEventListener('click', () => {
+    const ta = $('qedit'), editing = ta.style.display !== 'none';
+    if (editing) { setHTML($('qtext'), highlight(ta.value)); ta.style.display = 'none'; $('qtext').style.display = 'block'; $('edit').textContent = 'Edit'; }
+    else { ta.value = current.text; ta.style.display = 'block'; $('qtext').style.display = 'none'; $('edit').textContent = 'Done'; }
+  });
+  $('run').addEventListener('click', () => {
+    const ta = $('qedit'), text = ta.style.display !== 'none' ? ta.value : current.text;
+    edited = text !== current.text;
+    if (ta.style.display !== 'none') setHTML($('qtext'), highlight(text));
+    run(text, edited ? 'live from QLever, edited query' : 'live from QLever');
+  });
+}
+$('mode').textContent = live ? 'Live: queries go to ' + ENDPOINT + ' (SPARQL 1.1, JSON results).'
+  : 'Snapshot of ' + (meta ? meta.retrieved.slice(0, 10) + ' from ' + meta.endpoint : 'no date') + ': this browser has no fetch yet, so the page shows the results QLever gave these queries then.';
+setHTML($('picker'), queries.map(q => '<button id="pick-' + q.id + '">' + esc(q.title) + '</button>').join(''));
+$('picker').addEventListener('click', e => { const id = e.target && e.target.id; if (id && id.indexOf('pick-') === 0) choose(id.slice(5)); });
+tools();
+
+// ---- The zoom: declarative (SVG animateTransform on the engine's clock) where the browser has
+// it, else one transform a frame from requestAnimationFrame. ----
+const SVGNS = 'http://www.w3.org/2000/svg';
+const zoom = $('zoom'), signoff = $('signoff'), gothic = $('gothic');
+const ZOOM_MS = 7000, FADE_MS = 1400, TOTAL_MS = ZOOM_MS + FADE_MS;
+const smil = (() => { try { return typeof document.createElementNS(SVGNS, 'animateTransform').beginElement === 'function'; } catch (e) { return false; } })();
+// A Foafnaut without declarative animation lays out the page again for each transform, so
+// there the zoom waits for the button and stops at 12 (logged for the engine, 2026-11-09).
+const foafnaut = navigator.userAgent === 'Foafnaut', slowZoom = foafnaut && !smil, PEAK = slowZoom ? 12 : 40;
+let anims = [], frames = [], zoomRunning = false;
+function animation(tag, target, attrs) {
+  const a = document.createElementNS(SVGNS, tag);
+  for (const k in attrs) a.setAttribute(k, attrs[k]);
+  target.appendChild(a); anims.push(a);
+}
+if (smil) {
+  // One timeline of TOTAL_MS: the zoom (a geometric run from 1 to 40, a hold, and back), then
+  // the cross-fade. keyTimes place each part; fill="freeze" keeps the sign-off.
+  const up = []; for (let i = 0; i <= 8; i++) up.push(+Math.pow(PEAK, i / 8).toFixed(3));
+  const scales = up.concat([PEAK], up.slice().reverse(), [1]), z = ZOOM_MS / TOTAL_MS;
+  const times = scales.map((_, i) => i < scales.length - 1 ? (i / (scales.length - 2) * z).toFixed(4) : '1');
+  const dur = TOTAL_MS / 1000 + 's';
+  animation('animateTransform', zoom, {attributeName: 'transform', type: 'scale', dur, begin: 'indefinite', values: scales.join(';'), keyTimes: times.join(';')});
+  animation('animate', gothic, {attributeName: 'opacity', dur, begin: 'indefinite', values: '1;1;0', keyTimes: '0;' + z.toFixed(4) + ';1', fill: 'freeze'});
+  animation('animate', signoff, {attributeName: 'opacity', dur, begin: 'indefinite', values: '0;0;1', keyTimes: '0;' + z.toFixed(4) + ';1', fill: 'freeze'});
+}
+function measure(stop) {
+  // Frame intervals while the zoom runs; the median is the frame time shown.
+  let last;
+  const tick = t => { if (last !== undefined) frames.push(t - last); last = t; if (performance.now() < stop) requestAnimationFrame(tick); else engineReport(); };
+  requestAnimationFrame(tick);
+}
+function startZoom() {
+  if (zoomRunning) return;
+  frames = [];
+  const start = performance.now();
+  if (smil) { for (const a of anims) a.beginElement(); measure(start + 1500); return; }
+  zoomRunning = true;
+  const ease = u => u * u * (3 - 2 * u);
+  let last;
+  const step = t => {
+    if (last !== undefined) frames.push(t - last); last = t;
+    const e = performance.now() - start, k = Math.min(1, e / ZOOM_MS), f = Math.min(1, Math.max(0, (e - ZOOM_MS) / FADE_MS));
+    const u = k < 0.45 ? ease(k / 0.45) : k < 0.55 ? 1 : ease((1 - k) / 0.45);
+    zoom.setAttribute('transform', 'scale(' + Math.pow(PEAK, u).toFixed(3) + ')');
+    gothic.setAttribute('opacity', (1 - ease(f)).toFixed(3));
+    signoff.setAttribute('opacity', ease(f).toFixed(3));
+    if (f < 1) requestAnimationFrame(step); else { zoomRunning = false; engineReport(); }
+  };
+  requestAnimationFrame(step);
+}
+$('zoombtn').addEventListener('click', startZoom);
+
+// ---- Blackletter: Fraktur letters (Noto Sans Math) by default; a blackletter web font with
+// plain Latin text where the browser loads it (document.fonts.load says so). ----
+const BLACKLETTER = 'UnifrakturMaguntia';
+let latin = false;
+if (document.fonts && document.fonts.load)
+  document.fonts.load('80px ' + BLACKLETTER, 'Spın̈al').then(faces => {
+    if (!faces || !faces.length) return;
+    latin = true;
+    for (const t of [gothic, signoff]) t.setAttribute('font-family', BLACKLETTER + ', serif');
+    signoff.firstChild.nodeValue = 'Föafn̈aut';
+    setGain(gain);
+  }, () => {});
+
+// ---- Up to eleven: 0 to 11 combining marks on each letter of the gothic name (Zalgo text).
+// Each mark is a real combining character; the shaper stacks them, the stage clips them. ----
+const LETTERS = ['𝔖', '𝔭', '𝔦', '𝔫\u0308', '𝔞', '𝔩', ' ', '𝔗', '𝔞', '𝔭'], LATIN = ['S', 'p', 'ı', 'n\u0308', 'a', 'l', ' ', 'T', 'a', 'p'];
+const ABOVE = [0x300, 0x301, 0x302, 0x303, 0x304, 0x306, 0x307, 0x308, 0x30a, 0x30b, 0x30c, 0x311, 0x313, 0x314, 0x33d, 0x346, 0x34a, 0x350, 0x357, 0x35b];
+const BELOW = [0x316, 0x317, 0x318, 0x319, 0x31c, 0x31d, 0x31e, 0x31f, 0x320, 0x323, 0x324, 0x325, 0x326, 0x329, 0x32a, 0x32b, 0x32c, 0x32d, 0x32e, 0x330];
+let gain = 0;
+function zalgo(level) {
+  let out = '', seed = 11;
+  for (const l of latin ? LATIN : LETTERS) {
+    out += l;
+    if (l === ' ') continue;
+    for (let i = 0; i < level; i++) {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      const set = i % 2 ? BELOW : ABOVE;
+      out += String.fromCharCode(set[seed % set.length]);
+    }
+  }
+  return out;
+}
+function setGain(g) {
+  gain = g;
+  gothic.firstChild.nodeValue = zalgo(gain);
+  setHTML($('gainknob'), '<svg width="30" height="30" viewBox="0 0 30 30">' + knob(15, 15, gain) + '</svg>');
+  $('gainbtn').textContent = gain === 11 ? 'Gain 11: back to 0' : 'Gain ' + gain + ': turn it up';
+}
+$('gainbtn').addEventListener('click', () => setGain(gain === 11 ? 0 : gain + 1));
+
+// ---- What the engine is doing, from what the page can see ----
+function engineReport() {
+  const sorted = frames.slice().sort((a, b) => a - b), median = sorted.length ? sorted[sorted.length >> 1] : 0;
+  const ua = navigator.userAgent;
+  const name = ua === 'Foafnaut' ? 'Foafnaut: Lean parses, lays out and draws; the script engine runs in Lean' : 'this browser, for comparison (' + (/Chrome\/\d+/.exec(ua) || /Firefox\/\d+/.exec(ua) || /Safari\/\d+/.exec(ua) || ['other'])[0] + ')';
+  const parts = [esc(name),
+    '<b>data</b> ' + (live ? 'live from QLever' : 'snapshot, ' + (meta ? esc(meta.retrieved.slice(0, 10)) : 'none')),
+    '<b>cards</b> ' + built.cards + ' in one batch (' + innerSetter + ')' + (built.ms > 0 ? ', ' + built.ms.toFixed(1) + ' ms' : ''),
+    '<b>zoom</b> to ' + PEAK + ': ' + (smil ? 'SVG animateTransform, on the engine clock' : 'requestAnimationFrame, one transform a frame') +
+      (median ? ', frame ' + median.toFixed(1) + ' ms (' + Math.round(1000 / median) + ' fps)' : ''),
+    '<b>lettering</b> header: SVG paths; zoom: SVG text, ' + (latin ? 'web font ' + BLACKLETTER + ' (@font-face)' : 'Fraktur letters from Noto Sans Math') + '; n̈ is n + U+0308, placed by the shaper' +
+      (gain ? '; ' + gain * 9 + ' combining marks stacked' : ''),
+    '<b>start</b> ' + (startMs > 0 ? startMs.toFixed(1) + ' ms of script to the first cards' : 'first cards in the first script turn')];
+  setHTML($('eng'), parts.join(' · '));
+}
+// A query named in the address (spinal-tap-sparql.html#drummers) is shown first.
+choose((queries.find(q => '#' + q.id === location.hash) || queries[0]).id);
+startMs = performance.now() - t0;
+engineReport();
+setGain(0);
+if (!slowZoom) setTimeout(startZoom, 600);
+if (PEAK !== 40) $('zoominfo').textContent = 'Scale 1 to ' + PEAK + ' and back round the n̈ (n and U+0308 COMBINING DIAERESIS), then Föafn̈aut. Press Zoom in.';
+</script>
+</main></body></html>
