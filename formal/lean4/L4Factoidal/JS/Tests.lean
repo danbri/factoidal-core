@@ -89,6 +89,13 @@ def outWith (steps : Nat) (src : String) : List String :=
 #guard outWith 2000000 "var s = 'ab'.repeat(1000), t = 0; for (var i = 0; i < s.length; i++) t += s.charCodeAt(i); print(t)" == ["195000"]
 #guard outWith 2000000 "try { 'x'.repeat(2 ** 30) } catch (e) { print(e.name) }" == ["RangeError"]
 #guard outWith 1000000 "var a = new Array(4000000000)" == ["halted step budget exhausted"]
+/-- The String methods that index an ASCII string do not walk it (`indexesReceiver`): a
+loop of 100 000 `charCodeAt`, `at` and one-unit `slice` calls on a 100 000-character string
+ends well within a page's budget (5 M steps). -/
+#guard outWith 5000000 "var s = '0'.repeat(100000), t = 0; for (var i = 0; i < s.length; i++) t += s.charCodeAt(i); print(t)" ==
+  ["4800000"]
+#guard outWith 5000000 "var s = 'ab'.repeat(50000), t = 0; for (var i = 0; i < s.length; i++) t += s.at(i) === s.slice(i, i + 1) ? 1 : 0; print(t)" ==
+  ["100000"]
 
 /-! Strings are UTF-16 code units (§6.1.4; `JS/Str.lean`). -/
 #guard out "var s = 'a\\u{1F600}b'; print(s.length, s.charCodeAt(1), s.charCodeAt(2), s.codePointAt(1), [...s].length)" ==

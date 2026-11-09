@@ -76,6 +76,17 @@ def sizeCost (v : Value) : M Nat := do
     | _ => pure 0
   | _ => pure 0
 
+/-- The String methods that do not walk an ASCII receiver: they index it in constant time
+(`Str.unitAt?`) or copy only their result (and take steps for that). -/
+def indexesReceiver (id : Native) (thisV : Value) : Bool :=
+  match thisV with
+  | .str s =>
+    Str.isAscii s && match id with
+      | .stringCharAt | .stringCharCodeAt | .stringAt | .stringCodePointAt | .stringSlice
+      | .stringSubstring | .stringSubstr => true
+      | _ => false
+  | _ => false
+
 /-- Set or add an own data property with all attributes true (CreateDataProperty). -/
 def Obj.putOwn (o : Obj) (key : String) (p : PropV) : Obj :=
   match o.kind, arrayIndex? key, p with
@@ -2976,9 +2987,12 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
   | 0, _, _, _, _ => throw (.halt "fuel")
   | n + 1, id, thisV, args, newTarget => do
     -- A built-in's loops are over its receiver and arguments: one step per call is not
-    -- enough (`charCodeAt` on a 100 000-character string walks it), so the call takes
-    -- steps for their size (`sizeCost`).
-    charge ((← sizeCost thisV) + args.size / 64 + (← args.foldlM (fun acc a => do pure (acc + (← sizeCost a))) 0))
+    -- enough when it walks them, so the call takes steps for their size (`sizeCost`). The
+    -- String methods that index an ASCII receiver in constant time (`charAt`, `charCodeAt`,
+    -- `at`, `codePointAt`) or copy only their result (`slice`, `substring`, `substr`, which
+    -- take steps for the result) do not walk it, and take no steps for it.
+    let recvCost ← if indexesReceiver id thisV then pure 0 else sizeCost thisV
+    charge (recvCost + args.size / 64 + (← args.foldlM (fun acc a => do pure (acc + (← sizeCost a))) 0))
     let a0 := argD args 0
     let a1 := argD args 1
     let r ← realm
@@ -3865,9 +3879,16 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
         | .num d => if d.isNaN || d < 1 then 0 else (if d > 1000 then 1000 else d.toUInt64.toNat)
         | _ => 1
       newArray (← flattenArr depth es (depth + 1))
-    | .arrayAt | .stringAt =>
-      let es ← if id_ == .arrayAt then elemsOf n thisV else do
-        pure ((charsOf (← toStr n (← thisPrim thisV))).map fun c => Value.str (String.singleton c))
+    | .stringAt =>
+      -- §22.1.3.1: one code unit, found in constant time for ASCII (`Str.unitStrAt?`)
+      let s ← toStr n (← thisPrim thisV)
+      let len := Str.jsLength s
+      let k := toIntegerOrInf (← toNum n a0)
+      let i := if k < 0 then Float.ofNat len + k else k
+      if i < 0 || i ≥ Float.ofNat len then pure .undef
+      else pure ((Str.unitStrAt? s i.toUInt64.toNat).map Value.str |>.getD .undef)
+    | .arrayAt =>
+      let es ← elemsOf n thisV
       let k := toIntegerOrInf (← toNum n a0)
       let i := if k < 0 then Float.ofNat es.size + k else k
       if i < 0 || i ≥ Float.ofNat es.size then pure .undef else pure es[i.toUInt64.toNat]!
@@ -3895,15 +3916,17 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       let pad := substr reps 0 need
       pure (.str (if id_ == .stringPadStart then Str.jsAppend pad s else Str.jsAppend s pad))
     | .stringCodePointAt =>
-      let cs := charsOf (← toStr n (← thisPrim thisV))
+      let s ← toStr n (← thisPrim thisV)
       let i := toIntegerOrInf (← toNum n a0)
-      if i < 0 || i ≥ Float.ofNat cs.size then pure .undef else
+      if i < 0 then pure .undef else
       -- §11.1.4 CodePointAt: a high surrogate followed by a low one is their code point
       let k := i.toUInt64.toNat
-      let u := Str.charUnit cs[k]!
-      let l := Str.charUnit (cs.getD (k + 1) ' ')
-      pure (.num (Float.ofNat (if Str.isHigh u && k + 1 < cs.size && Str.isLow l
-        then 0x10000 + (u - 0xD800) * 0x400 + (l - 0xDC00) else u)))
+      match Str.unitAt? s k with
+      | none => pure .undef
+      | some u =>
+        match (if Str.isHigh u then Str.unitAt? s (k + 1) else none) with
+        | some l => pure (.num (Float.ofNat (if Str.isLow l then 0x10000 + (u - 0xD800) * 0x400 + (l - 0xDC00) else u)))
+        | none => pure (.num (Float.ofNat u))
     | .stringTrimStart | .stringTrimEnd =>
       match ← thisPrim thisV with
       | .undef | .null => throwErr .type "String.prototype.trimStart/trimEnd called on null or undefined"
@@ -4797,11 +4820,12 @@ def stringOrMath : Nat → Native → Value → Array Value → M Value
           | some u => Float.ofNat u
           | none => nan))
       | _ =>
-        let cs := charsOf s
+        -- the unit count only: `charsOf` is made by the methods that walk the string
+        let len := Str.jsLength s
         match id with
         | .stringIndexOf =>
           let p ← toStr n a0
-          let st := relIndex (toIntegerOrInf (← toNum n a1)) cs.size
+          let st := relIndex (toIntegerOrInf (← toNum n a1)) len
           let st := if (toIntegerOrInf (← toNum n a1)) < 0 then 0 else st
           pure (.num (match indexOfFrom s p st with | some i => Float.ofNat i | none => -1))
         | .stringLastIndexOf =>
@@ -4813,29 +4837,32 @@ def stringOrMath : Nat → Native → Value → Array Value → M Value
         | .stringStartsWith =>
           let p ← toStr n a0
           pure (.bool (if Str.isBmp s && Str.isBmp p then s.startsWith p
-            else (charsOf p).toList.isPrefixOf cs.toList))
+            else (charsOf p).toList.isPrefixOf (charsOf s).toList))
         | .stringEndsWith =>
           let p ← toStr n a0
           pure (.bool (if Str.isBmp s && Str.isBmp p then s.endsWith p
-            else (charsOf p).toList.isSuffixOf cs.toList))
+            else (charsOf p).toList.isSuffixOf (charsOf s).toList))
         | .stringSlice =>
-          let st := relIndex (← toNum n a0) cs.size
-          let en ← match a1 with | .undef => pure cs.size | v => do pure (relIndex (← toNum n v) cs.size)
+          let st := relIndex (← toNum n a0) len
+          let en ← match a1 with | .undef => pure len | v => do pure (relIndex (← toNum n v) len)
+          charge ((en - st) / 64)
           pure (.str (if st < en then substr s st en else ""))
         | .stringSubstring =>
           let clamp (x : Float) : Nat :=
             let x := toIntegerOrInf x
-            if x < 0 then 0 else if x > Float.ofNat cs.size then cs.size else x.toUInt64.toNat
+            if x < 0 then 0 else if x > Float.ofNat len then len else x.toUInt64.toNat
           let st := clamp (← toNum n a0)
-          let en ← match a1 with | .undef => pure cs.size | v => do pure (clamp (← toNum n v))
+          let en ← match a1 with | .undef => pure len | v => do pure (clamp (← toNum n v))
+          charge ((max st en - min st en) / 64)
           pure (.str (substr s (min st en) (max st en)))
         | .stringSubstr =>
-          let st := relIndex (← toNum n a0) cs.size
+          let st := relIndex (← toNum n a0) len
           let len ← match a1 with
-            | .undef => pure (cs.size - st)
+            | .undef => pure (len - st)
             | v => do
               let l := toIntegerOrInf (← toNum n v)
-              pure (if l < 0 then 0 else min l.toUInt64.toNat (cs.size - st))
+              pure (if l < 0 then 0 else min l.toUInt64.toNat (len - st))
+          charge (len / 64)
           pure (.str (substr s st (st + len)))
         | .stringToUpperCase => pure (.str s.toUpper)
         | .stringToLowerCase => pure (.str s.toLower)
