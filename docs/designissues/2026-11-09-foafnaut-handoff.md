@@ -91,6 +91,7 @@ failure. When search.html shows results, move it to "Start here" in `tools/build
 
 ## Known gaps in the test path
 
+- Performance state and branches in flight: [2026-11-09-bubblepop-perf-handoff.md](2026-11-09-bubblepop-perf-handoff.md).
 - Lean on 32-bit Wasm is unsupported upstream; known faults, fixes and our workarounds are in
   [2026-11-09-lean-upstream-wasm32.md](2026-11-09-lean-upstream-wasm32.md).
 - CI does not run `sweeps.sh`, the input queue test, QuickJS script tests or the page GPU window
