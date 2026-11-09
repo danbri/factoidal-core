@@ -10,7 +10,7 @@
 // engine runs the guest in WasmVM) and `bubblepop` (the worker with the page script setting
 // BubblePopJS, the JavaScript engine written in Lean, compiled into the engine's Wasm).
 //
-// - page start: the start turn of a page with one empty script, the worker's first;
+// - page start: the start turn of a page whose script writes one text node, the worker's first;
 // - fib(24) in QuickJS: the start turn of a page whose script computes fib(24);
 // - a WPT page start: the start turn of a testharness.js page (dom/nodes);
 // - an animation frame: labs/demos/foafnaut/pages/timers-and-clicks.html, the mean and the
@@ -35,7 +35,7 @@ const types={'.html':'text/html','.mjs':'text/javascript','.js':'text/javascript
 const typeOf=f=>types[path.extname(f)]??'application/octet-stream';
 // Pages made here, served from the pages folder.
 const made={
-  'speed-start.html':'<!doctype html><html><head><meta charset="utf-8"><title>start</title></head><body><p>start</p><script>1</script></body></html>',
+  'speed-start.html':'<!doctype html><html><head><meta charset="utf-8"><title>start</title></head><body><p id="s">...</p><script>document.getElementById("s").textContent="started";</script></body></html>',
   'speed-fib.html':'<!doctype html><html><head><meta charset="utf-8"><title>fib(24)</title></head><body><p id="out">...</p>'+
     '<script>function fib(n){return n<2?n:fib(n-1)+fib(n-2);}document.getElementById("out").textContent="fib(24) = "+fib(24);</script></body></html>',
 };
@@ -103,7 +103,7 @@ try{
   async function until(page,test,limit){const t=Date.now();let v;while(Date.now()-t<limit){await sleep(200);v=await lastScripts(page).catch(()=>null);if(v&&test(v))return v;}return v;}
   for(const m of modes){
     mode=m;results[m]={};
-    // Page start: a page whose one script does nothing (the first page of the worker, so the
+    // Page start: a page whose one script writes one text node, so that a frame follows (the first page of the worker, so the
     // realm with the page objects is made in this turn).
     let page=await open('speed-start.html');
     let st0=await until(page,s=>s.turns>=1&&s.startMs!==undefined,240000);

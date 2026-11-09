@@ -701,3 +701,44 @@ stays 2 of 8, section 15); the five directories of section 12 8,844 → 8,853 of
 ISO-2022-JP decoder subtests that build strings by code unit, SharedArrayBuffer views);
 `url/` 1,101 of 1,104, unchanged. The demo pages give the same commands on both engines
 (`bubblepop_pages_test.ts`), and the scripted-page tests pass on both.
+
+## 17. BubblePopJS in the Foafnaut Wasm build (2026-11-09)
+
+The crash that kept it out, and its fix, are in `2026-11-09-wasm32-nat-literals.md`. Our own
+block (`hostRefusal`) is removed: BubblePopJS is a choice in Settings on the Hub. The Hub's
+default stays QuickJS-NG.
+
+**The stack.** The prelude's run needs less than a 1 MB shadow stack
+(`-sSTACK_OVERFLOW_CHECK=2`). What limits depth is the browser's own WebAssembly stack, which
+holds the evaluator's frames. In Node at 984 KB a plain recursion overflowed at 368 calls, a
+call in `try` in `for` at 202, a `switch` with loops at 182, and `Array.prototype.map`
+callbacks at 128 levels of two calls: at most about 5.4 KB a call. `LeanJS.callDepth` is 100
+when `System.Platform.numBits` is 32, so the worst case measured uses about 540 KB, some 55 %
+of that stack. `bubblepop_pages_test.ts` checks these shapes are a `RangeError` the script can
+catch. Safari's worker stack was not measured, so the margin on an iPhone is not known.
+
+**Tail calls.** Chrome 112, Firefox 121 and Safari 18.2 (so iOS 18.2) have WebAssembly tail
+calls (https://github.com/WebAssembly/website/blob/main/features.json,
+https://webkit.org/blog/16301/webkit-features-in-safari-18-2/). A build with `-mtail-call` was
+not used: JavaScript recursion is not a tail call in the evaluator, and it moved the plain
+recursion from 368 to 379 calls. Statement lists and loops already run in constant stack
+without it (200,000 statements in one list, 10^6 loop iterations).
+
+**The speed.** Headless Chrome, one browser, `hub_scripts_speed.mjs --modes`, three runs (each
+engine first at least once), Foafnaut Wasm build of this tree, median [range]; each page reports
+the script engine that ran it. The machine was running other work, so differences under about
+20 % are noise. "First frame" includes the Hub's boot, which loads the QuickJS-NG guest for
+both.
+
+| | BubblePopJS | QuickJS-NG (translated by `WasmVM.Aot`) |
+|---|---|---|
+| First page, start turn | 82 ms [79-84] | 66 ms [47-70] |
+| First page, navigation to first frame | 1,189 ms [1,187-1,561] | 1,466 ms [1,092-1,537] |
+| `fib(24)` turn | 262 ms [217-337] | 79 ms [79-99] |
+| WPT page start (`Node-appendChild.html`) | 185 ms [154-206] | 285 ms [258-286] |
+| Timers and clicks, turn, mean | 1.09 ms [0.83-1.18] | 1.48 ms [1.25-1.64] |
+| Timers and clicks, turn, largest | 1.3 ms [1.1-2.2] | 2.5 ms [1.5-2.8] |
+| Timers and clicks, whole frame | 35 ms [29-43] | 33 ms [31-35] |
+
+BubblePopJS is faster at the WPT start and the page's turns, slower on tight `fib` calls and
+slightly slower at the start turn. The first-frame ranges overlap.

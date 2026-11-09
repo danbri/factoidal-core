@@ -49,7 +49,8 @@ In all, the C of the Foafnaut Wasm build has 254 literal sites (main of
 2026-11-09): 207 in our modules and 47 in 13 of the runtime cache's `Init` and `Std` modules
 (for example `Init.Prelude`, `Init.Data.UInt.BasicAux`, `Std.Time`). An `Int` made from such
 a literal (`lean_nat_to_int`) has the same flaw above 2^30 - 1, the largest small `Int` on
-wasm32; 38 of the 254 sites are such `Int`s.
+wasm32; 38 of the 254 sites are such `Int`s. On the tree pushed with this record the build rewrites 253
+(206 and 47).
 
 ## 3. How it was found
 
