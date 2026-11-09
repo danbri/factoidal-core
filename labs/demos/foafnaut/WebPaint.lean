@@ -511,4 +511,140 @@ def cull (scene : Scene) : Scene :=
   let root : Transform := ⟨m.sx,0,0,m.sy,m.tx-m.minX*m.sx,m.ty-m.minY*m.sy⟩
   {scene with tree := cullNodes 64 0 0 (Float.ofNat scene.width) (Float.ofNat scene.height) root scene.tree}
 
+/-! ### Retained compile of a layer (`NativeSVG.Retained`)
+
+A frame in which few primitives changed: the rest keep their compile. A leaf of the layer's
+tree is the leaf of the last frame at the same place when it is the same object of the
+layout's scene (`WebDocument` compares the address) in the same context: the transforms
+down to it, the cull box and the clips around it. So `cull`, `toScene` and the lowering, which
+are pure maps over the leaves, give the same primitive for it. The tree here is walked in the
+order of `lowerFromRootList` and with the same `cullNodes` arithmetic; the bytes are checked
+against the plain path (`partial_frame_test.ts`). -/
+
+/-- The source of a primitive of a layer and its context. -/
+structure LeafKey where
+  primitive : Rendering.Primitive
+  cull : Float × Float × Float × Float
+  t : Transform
+  parent : Transform
+  clips : List NativeSVG.ClipRect
+
+/-- A leaf: its key, and how to make the primitive that it compiles (`cullPrimitive`, `toPrimitive`,
+the lowering of `lower`), as `leavesOf` found it. -/
+abbrev Leaf := LeafKey × (Unit → Except String NativeSVG.Primitive)
+
+private def sameFloat (a b : Float) : Bool := a.toBits == b.toBits
+private def sameTransform (a b : Transform) : Bool :=
+  sameFloat a.a b.a && sameFloat a.b b.b && sameFloat a.c b.c && sameFloat a.d b.d && sameFloat a.e b.e && sameFloat a.f b.f
+private def sameClip (a b : NativeSVG.ClipRect) : Bool :=
+  sameFloat a.x b.x && sameFloat a.y b.y && sameFloat a.width b.width && sameFloat a.height b.height && sameTransform a.transform b.transform
+/-- The context of the two keys is the same (their source object is compared apart). -/
+def LeafKey.sameContext (a b : LeafKey) : Bool :=
+  sameFloat a.cull.1 b.cull.1 && sameFloat a.cull.2.1 b.cull.2.1 && sameFloat a.cull.2.2.1 b.cull.2.2.1 && sameFloat a.cull.2.2.2 b.cull.2.2.2 &&
+  sameTransform a.t b.t && sameTransform a.parent b.parent &&
+  a.clips.length == b.clips.length && (a.clips.zip b.clips).all fun (x,y) => sameClip x y
+
+/-- `cullPrimitive` gives this primitive back with its geometry as it was: no curve is off the
+canvas on one side, or long enough for `cullCurve` to cut. Then the flattened geometry of one
+transform serves another with the same linear part. -/
+private def cullFree (k : LeafKey) : Bool :=
+  let p := k.primitive
+  if p.dashParts.isSome || p.pathLength.isSome || !p.style.dashArray.isEmpty ||
+      !solidPaint p.style.fill || !solidPaint p.style.stroke then true else
+  match p.geometry with
+  | .path contours =>
+    let t := Math.Affine2.compose .float k.t p.transform
+    let norm := max (t.a.abs+t.c.abs) (t.b.abs+t.d.abs)
+    let stroke := match p.style.stroke with
+      | .none => 0
+      | _ => p.style.strokeWidth*norm*(max 1 p.style.miterLimit)/2
+    let m := 2+stroke
+    if !m.isFinite then true else
+    let (x0,y0,x1,y1) := (k.cull.1-m,k.cull.2.1-m,k.cull.2.2.1+m,k.cull.2.2.2+m)
+    let reach := max (x1-x0) (y1-y0)/2
+    contours.all fun
+      | .empty _ => true
+      | .path start segments _ => Id.run do
+        let mut current := start
+        for seg in segments do
+          match seg with
+          | .quadratic .. | .cubic .. =>
+            let points := controls current seg
+            if outside t x0 y0 x1 y1 points then return false
+            let first := apply t current
+            let (lx,hx,ly,hy) := points.foldl (fun (b : Float × Float × Float × Float) q =>
+              let p := apply t q
+              (min b.1 p.x,max b.2.1 p.x,min b.2.2.1 p.y,max b.2.2.2 p.y)) (first.x,first.x,first.y,first.y)
+            if max (hx-lx) (hy-ly) > reach then return false
+          | _ => pure ()
+          current := segmentEnd seg
+        return true
+  | _ => true
+
+/-- Same geometry and style objects (the caller compares their addresses; this is the rest):
+the record of `a` serves `b` with `b`'s transform when both have no clips of their own, no
+dashes kept in the source, the same clips around and cull box, the same linear part of the
+screen transform (so `flatten` and the stroke widening do the same), and `cull` changes
+neither. -/
+def LeafKey.movedOf (a b : LeafKey) : NativeSVG.Reuse :=
+  let ta := Math.Affine2.compose .float a.t a.primitive.transform
+  let tb := Math.Affine2.compose .float b.t b.primitive.transform
+  let linear := sameFloat ta.a tb.a && sameFloat ta.b tb.b && sameFloat ta.c tb.c && sameFloat ta.d tb.d
+  if linear && a.primitive.clips.isEmpty && b.primitive.clips.isEmpty &&
+      a.primitive.dashParts.isNone && b.primitive.dashParts.isNone &&
+      a.primitive.pathLength.isNone && b.primitive.pathLength.isNone &&
+      sameFloat a.cull.1 b.cull.1 && sameFloat a.cull.2.1 b.cull.2.1 && sameFloat a.cull.2.2.1 b.cull.2.2.1 && sameFloat a.cull.2.2.2 b.cull.2.2.2 &&
+      a.clips.length == b.clips.length && (a.clips.zip b.clips).all (fun (x,y) => sameClip x y) &&
+      cullFree a && cullFree b then
+    .moved (Math.Affine2.compose .float b.parent b.primitive.transform) b.primitive.opacity
+  else .different
+
+/-- The leaves of `nodes` in paint order, from the same arguments as `cullNodes` and
+`lowerList`: the cull box and transform, the transform from the root, the clips around. -/
+private def leavesGo : Nat → Float → Float → Float → Float → Transform → Transform →
+    List NativeSVG.ClipRect → List Node → Array Leaf → Except String (Array Leaf)
+  | 0, _, _, _, _, _, _, _, _, _ => .error "retained compile: tree too deep"
+  | fuel+1, x0, y0, x1, y1, t, parent, clips, nodes, acc =>
+    nodes.foldlM (m := Except String) (fun acc node =>
+      match node with
+      | .paint item =>
+        let prim := item.primitive
+        pure (acc.push (⟨prim,(x0,y0,x1,y1),t,parent,clips⟩, fun (_ : Unit) =>
+          let culled := cullPrimitive x0 y0 x1 y1 (Math.Affine2.compose .float t prim.transform) prim
+          let lowered := NativeSVG.Primitive.lowerUnder parent [] (WebRenderSVG.toPrimitive culled)
+          .ok {lowered with clips := clips ++ lowered.clips}))
+      | .group _ g children =>
+        leavesGo fuel x0 y0 x1 y1 (Math.Affine2.compose .float t g) (Math.Affine2.compose .float parent g) clips children acc
+      | .clipped _ c clip children =>
+        let (a,b,e,f) := clipBox t clip x0 y0 x1 y1
+        let lowered := NativeSVG.ClipRect.lowerUnder parent (WebRenderSVG.toClip clip)
+        leavesGo fuel a b e f (Math.Affine2.compose .float t c) (Math.Affine2.compose .float parent c) (clips ++ [lowered]) children acc) acc
+
+/-- The leaves of a layer's tree (`cull` then `toScene` then `lowerFromRootList`). -/
+def leavesOf (scene : Scene) : Except String (Array Leaf) :=
+  let m := scene.mapping
+  let root : Transform := ⟨m.sx,0,0,m.sy,m.tx-m.minX*m.sx,m.ty-m.minY*m.sy⟩
+  leavesGo 64 0 0 (Float.ofNat scene.width) (Float.ofNat scene.height) root Rendering.identity [] scene.tree #[]
+
+abbrev RetainedLayer := NativeSVG.Retained LeafKey
+
+/-- A layer's answer with the compile of the last frame kept where it serves: the new
+retained compile, the rectangles of damage (`none`: draw the whole layer), the JSON of the
+answer and its sections. `layoutText` is `WebRender.layoutJSON` of the layer when the
+caller knows it is the one of the last frame. -/
+def retainedAnswer (reuse : LeafKey → LeafKey → NativeSVG.Reuse) (prev : Option RetainedLayer) (layer : Scene)
+    (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face) (first : Nat)
+    (layoutText : Option String) : Except String (RetainedLayer × Option (Array NativeSVG.DamageRect) × String × Array ByteArray × String × Nat × Nat) := do
+  let leaves ← leavesOf layer
+  let (retained,changed,moved) ← NativeSVG.compileRetained reuse prev layer.width layer.height (WebRenderSVG.toMapping layer.mapping) leaves
+  let tiles := retained.tileWords
+  if tiles.back! > NativeSVG.maxPaintTableWords then throw s!"paint table exceeds {NativeSVG.maxPaintTableWords} words"
+  let (head,sections) := retained.json first tiles
+  let layout := layoutText.getD (WebRender.layoutJSON layer boxes face)
+  let value := (head.dropEnd 1).toString ++ ",\"webRender\":" ++ layout ++ "}"
+  let damage := match changed,prev with
+    | some idx,some p => NativeSVG.damageRects p.items retained.items idx layer.width layer.height
+    | _,_ => none
+  return (retained,damage,value,sections,layout,(changed.map (·.size)).getD retained.items.size-moved,moved)
+
 end WebPaint

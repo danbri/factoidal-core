@@ -1751,6 +1751,10 @@ private def compilePrimitive (mapping : Mapping) (cursor : Nat) (p : Primitive) 
     | none,_ => pure none
   return {geometry,style,opacity:=p.opacity,transform:=p.transform,dashParts,groupPath:=p.groupPath,clips:=p.clips,pathLength:=p.pathLength}
 
+/-- `compilePrimitive`, for the retained compile of a layer (`Retained`). -/
+def compileOne (mapping : Mapping) (cursor : Nat) (p : Primitive) : Except String BackendPrimitive :=
+  compilePrimitive mapping cursor p
+
 private def compilePrimitivesLoop (mapping : Mapping) : List Primitive →
     List BackendPrimitive → Nat → Nat → Except String (List BackendPrimitive)
   | [],acc,_,_ => pure acc.reverse
@@ -3109,19 +3113,19 @@ private def Paint.tableWordsAt (paint : Paint) (start : Nat) (offsets : Std.Hash
 /-- The words of all records as binary32 bit patterns, in the order that
 `compilePrimitives` gave their cursors; then the pixels of each image once, one
 word for each pixel; then the count of those words. -/
-private def Scene.paintTableTail (s : Scene) : Array Nat := Id.run do
+private def paintTailOf (compiled : List BackendPrimitive) : Array Nat := Id.run do
   let mut offsets : Std.HashMap Nat Nat := {}
   let mut bitmaps : Array L4Factoidal.Rendering.Bitmap := #[]
   let mut used := 0
-  for p in s.compiled do
+  for p in compiled do
     for paint in [p.style.fill,p.style.stroke] do
       if let .imageRecord _ record := paint then
         if !offsets.contains record.id then
           offsets := offsets.insert record.id used
           bitmaps := bitmaps.push record.bitmap
           used := used+record.bitmap.width*record.bitmap.height
-  let start := (s.compiled.flatMap Primitive.paintWords).length
-  let words := s.compiled.flatMap fun p =>
+  let start := (compiled.flatMap Primitive.paintWords).length
+  let words := compiled.flatMap fun p =>
     p.style.fill.tableWordsAt start offsets ++ p.style.stroke.tableWordsAt start offsets
   let mut out := (words.map (·.toFloat32.toBits.toNat)).toArray
   for bitmap in bitmaps do
@@ -3134,14 +3138,14 @@ across, tiles down, one start offset for each tile and a final end offset, then
 the record row of each listed primitive, then the paint table. A primitive is left out of a tile only
 when its conservative box does not touch the tile; there it can not change a
 pixel, so the image does not change. -/
-def Scene.tiles (s : Scene) : Array Nat := Id.run do
-  let tail := s.paintTableTail
-  let across := (s.width+tileSize-1)/tileSize
-  let down := (s.height+tileSize-1)/tileSize
+def tilesOf (width height : Nat) (mapping : Mapping) (compiled : List BackendPrimitive) : Array Nat := Id.run do
+  let tail := paintTailOf compiled
+  let across := (width+tileSize-1)/tileSize
+  let down := (height+tileSize-1)/tileSize
   let mut lists : Array (Array Nat) := Array.replicate (across*down) #[]
   let mut base := 2
-  for p in s.compiled do
-    let (left,top,right,bottom) := match p.screenBox s.mapping with
+  for p in compiled do
+    let (left,top,right,bottom) := match p.screenBox mapping with
       | some (x0,y0,x1,y1) => (tileIndex x0 across,tileIndex y0 down,tileIndex x1 across,tileIndex y1 down)
       | none => (0,0,across-1,down-1)
     for y in [top:bottom+1] do
@@ -3158,14 +3162,17 @@ def Scene.tiles (s : Scene) : Array Nat := Id.run do
   if total > maxTileEntries then
     let mut rows : Array Nat := #[]
     let mut row := 2
-    for p in s.compiled do
+    for p in compiled do
       rows := rows.push row
       row := row+p.rowCount
-    return #[max s.width s.height+1,1,1,0,rows.size] ++ rows ++ tail
+    return #[max width height+1,1,1,0,rows.size] ++ rows ++ tail
   let mut out : Array Nat := #[tileSize,across,down] ++ offsets
   for list in lists do
     out := out ++ list
   return out ++ tail
+
+/-- The tile words of a scene (`tilesOf` of its compiled primitives). -/
+def Scene.tiles (s : Scene) : Array Nat := tilesOf s.width s.height s.mapping s.compiled
 
 private def sampleCall (x y : Float) : String :=
   "samplePixel(vec4f(pixel.xy+vec2f(" ++ toString (x-0.5) ++ "," ++ toString (y-0.5) ++ "),0.0,1.0))"
@@ -3976,6 +3983,168 @@ private def Scene.jsonWith (s : Scene) (live : Bool) (form : DataForm) (checks t
     ",\"height\":" ++ toString s.height ++ ",\"primitiveCount\":" ++ toString s.compiled.length ++
     ",\"tree\":" ++ tree ++ dataText ++ tilesText ++ ",\"wgsl\":" ++ sceneShaderJSON ++ ",\"checks\":" ++ jsonArray checks ++ "}",
     sections)
+/-! ### Retained compile of a layer (issue 1268, "partial compile")
+
+A frame in which little of the page changed (a transform or an opacity set by a script or
+by SMIL, the next frame of a canvas) keeps the compile of the rest of the page. The compile
+is per primitive: `Retained` holds for each primitive of the last frame its key (`κ`, chosen
+by the caller: what makes two primitives of the source the same, here the object of the
+layout's scene and its place, `WebPaint.LeafKey`), its compiled record, its bytes and its
+paint cursor. The next frame compiles a primitive again only when `same` says that its key
+is not the one at the same index, and copies the bytes of the others.
+
+`compileRetained` also says which primitives changed; `damageRects` turns them into rectangles
+of tiles, from the conservative boxes of `Primitive.screenBox` (`Scene.tiles`: a primitive is
+listed only in tiles that touch it, so it can change no pixel elsewhere). A primitive that
+keeps its index and key keeps its pixels. A primitive added or removed is not a change at an
+index: the answer is then no rectangles (`none`), and the host draws the whole layer.
+
+Not proved equal to `Scene.artifactWith`: `partial_frame_test.ts` compares the bytes with the
+plain path (`same` always false) frame by frame. -/
+
+/-- The compile of one primitive, kept for the next frame. -/
+structure RetainedItem (κ : Type) where
+  key : κ
+  compiled : BackendPrimitive
+  /-- Its records: `compiled.writeRows` on empty bytes. -/
+  bytes : ByteArray
+  /-- The paint table cursor it was compiled at: a gradient or image record carries it. -/
+  cursor : Nat
+  rows : Nat
+  paintWords : Nat
+  box : Option (Float × Float × Float × Float)
+
+/-- The compile of a layer. -/
+structure Retained (κ : Type) where
+  width : Nat
+  height : Nat
+  mapping : Mapping
+  items : Array (RetainedItem κ)
+
+private def sameFloat (a b : Float) : Bool := a.toBits == b.toBits
+private def sameMapping (a b : Mapping) : Bool :=
+  sameFloat a.sx b.sx && sameFloat a.sy b.sy && sameFloat a.tx b.tx && sameFloat a.ty b.ty &&
+  sameFloat a.minX b.minX && sameFloat a.minY b.minY &&
+  sameFloat a.viewportWidth b.viewportWidth && sameFloat a.viewportHeight b.viewportHeight
+
+/-- What the last frame's compile of a primitive is worth for this frame. -/
+inductive Reuse where
+  /-- The same primitive in the same place: the record is kept. -/
+  | same
+  /-- The same geometry and style under another transform with the same linear part: curves
+  flattened for the old screen are those of the new one, so only the transform and opacity of
+  the record change (a group moved by a script or SMIL: no curve is flattened again). -/
+  | moved (transform : Transform) (opacity : Float)
+  | different
+
+/-- Compile the primitives of `leaves` (a key, and how to make the primitive when it has to be
+compiled), reusing the items of `prev` by `reuse` of their key and the key at their index. The
+second result is the indices whose pixels can change, or `none` when `prev` does not serve
+(first frame, a size change, a different number of primitives). The third is how many of those
+kept their geometry (`Reuse.moved`). -/
+def compileRetained {κ : Type} (reuse : κ → κ → Reuse) (prev : Option (Retained κ))
+    (width height : Nat) (mapping : Mapping) (leaves : Array (κ × (Unit → Except String Primitive))) :
+    Except String (Retained κ × Option (Array Nat) × Nat) := do
+  let usable := prev.filter fun (r : Retained κ) => r.width == width && r.height == height &&
+    sameMapping r.mapping mapping && r.items.size == leaves.size
+  let mut items : Array (RetainedItem κ) := Array.emptyWithCapacity leaves.size
+  let mut changed : Option (Array Nat) := usable.map fun _ => #[]
+  let mut rows := 2
+  let mut cursor := 0
+  let mut moved := 0
+  for (key,render) in leaves, i in [0:leaves.size] do
+    let kept : Option (RetainedItem κ × Reuse) := match usable with
+      | some r => match r.items[i]? with
+        | some item => if item.cursor == cursor then some (item,reuse item.key key) else none
+        | none => none
+      | none => none
+    let record := fun (compiled : BackendPrimitive) =>
+      (⟨key,compiled,Primitive.writeRows (ByteArray.emptyWithCapacity (compiled.storageRows*16)) compiled,
+        cursor,compiled.storageRows,compiled.paintWords.length,compiled.screenBox mapping⟩ : RetainedItem κ)
+    let item ← match kept with
+      | some (item,.same) => pure {item with key}
+      | some (item,.moved transform opacity) =>
+        changed := changed.map (fun (c : Array Nat) => c.push i)
+        moved := moved+1
+        pure (record {item.compiled with transform,opacity})
+      | _ => do
+        let p ← render ()
+        let compiled ← compilePrimitive mapping cursor p
+        changed := changed.map (fun (c : Array Nat) => c.push i)
+        pure (record compiled)
+    rows := rows+item.rows
+    if rows*4 > maxDataFloats then throw s!"storage data exceeds {maxDataFloats} floats"
+    cursor := cursor+item.paintWords
+    items := items.push item
+  return (⟨width,height,mapping,items⟩,changed,moved)
+
+/-- The storage bytes of a retained compile: the same as `Scene.float32Bytes` of its scene:
+the two mapping rows, then the records. -/
+def Retained.dataBytes {κ : Type} (r : Retained κ) : ByteArray :=
+  let m := r.mapping
+  let header := push4 (push4 (ByteArray.emptyWithCapacity ((r.items.foldl (fun n i => n+i.rows) 2)*16))
+    m.sx m.sy m.tx m.ty) m.minX m.minY m.viewportWidth m.viewportHeight
+  r.items.foldl (fun acc item => acc.append item.bytes) header
+
+/-- The tile words of a retained compile. -/
+def Retained.tileWords {κ : Type} (r : Retained κ) : Array Nat :=
+  tilesOf r.width r.height r.mapping (r.items.toList.map (·.compiled))
+
+/-- The JSON of a layer answer with `sections` data (checks and inspector tree off), as
+`Scene.artifactWith` gives it, and its sections. -/
+def Retained.json {κ : Type} (r : Retained κ) (first : Nat) (tiles : Array Nat) : String × Array ByteArray :=
+  ("{\"abi\":\"lean-svg-v1\",\"profile\":\"painted-primitives-experiment\",\"binding\":\"read-only-storage\",\"width\":" ++ toString r.width ++
+    ",\"height\":" ++ toString r.height ++ ",\"primitiveCount\":" ++ toString r.items.size ++
+    ",\"tree\":null,\"dataSection\":" ++ toString first ++ ",\"tilesSection\":" ++ toString (first+1) ++
+    ",\"wgsl\":" ++ sceneShaderJSON ++ ",\"checks\":[]}",
+   #[r.dataBytes,wordBytes tiles])
+
+/-- A damage rectangle: pixels `x .. x+w`, `y .. y+h`. -/
+abbrev DamageRect := Nat × Nat × Nat × Nat
+
+/-- The tiles whose pixels the primitives `changed` can touch, before (`prev`) and after
+(`items`), as merged rectangles; `none` when a box is not known or the damage is more than
+half the tiles (then one full draw is no slower). Rows of a tile are merged across, then
+equal runs are merged down. -/
+def damageRects {κ : Type} (prev items : Array (RetainedItem κ)) (changed : Array Nat)
+    (width height : Nat) : Option (Array DamageRect) := Id.run do
+  let across := (width+tileSize-1)/tileSize
+  let down := (height+tileSize-1)/tileSize
+  let mut marks : Array Bool := Array.replicate (across*down) false
+  let mut marked := 0
+  for i in changed do
+    for box in [(prev[i]?).bind (·.box),(items[i]?).bind (·.box)] do
+      let some (x0,y0,x1,y1) := box | return none
+      for y in [tileIndex y0 down:tileIndex y1 down+1] do
+        for x in [tileIndex x0 across:tileIndex x1 across+1] do
+          let at_ := y*across+x
+          if !marks[at_]! then
+            marks := marks.set! at_ true
+            marked := marked+1
+  if marked*2 > across*down then return none
+  let mut rects : Array DamageRect := #[]
+  -- Runs of each row, a run joined to a rectangle above with the same columns.
+  for y in [0:down] do
+    let mut start : Option Nat := none
+    for x in [0:across+1] do
+      if x < across && marks[y*across+x]! then
+        if start.isNone then start := some x
+      else if let some sx := start then
+        start := none
+        let (x0,w) := (sx*tileSize,min (x*tileSize) width-sx*tileSize)
+        let y0 := y*tileSize
+        let h := min ((y+1)*tileSize) height-y0
+        rects := match rects.back? with
+          | some (rx,ry,rw,rh) =>
+            if rx == x0 && rw == w && ry+rh == y0 then rects.pop.push (rx,ry,rw,rh+h)
+            else rects.push (x0,y0,w,h)
+          | none => rects.push (x0,y0,w,h)
+  return some rects
+
+/-- The rectangles as JSON numbers. -/
+def damageJSON (rects : Array DamageRect) : String :=
+  jsonArray (rects.toList.map fun (x,y,w,h) => jsonArray [toString x,toString y,toString w,toString h])
+
 private def Scene.json (s : Scene) (live binary : Bool := false) (checks : Bool := true)
     (tree : Bool := true) : Except String String :=
   Prod.fst <$> s.jsonWith live (if binary then .base64 else .decimal) checks tree

@@ -2,6 +2,7 @@ import L4Factoidal.FrameCost.Band
 import L4Factoidal.FrameCost.Lru
 import L4Factoidal.FrameCost.Model
 import L4Factoidal.FrameCost.Theorems
+import L4Factoidal.FrameCost.Retained
 import L4Factoidal.FrameCost.Cases
 import L4Factoidal.FrameCost.Tests
 

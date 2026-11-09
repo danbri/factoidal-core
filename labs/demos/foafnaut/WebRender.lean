@@ -285,7 +285,7 @@ private def runJSON (r : Rendering.GlyphRun) : String :=
   "{\"source\":" ++ toString r.source ++ ",\"font\":" ++ quote r.font ++ ",\"size\":" ++ toString r.fontSize ++
   ",\"text\":" ++ quote r.text ++ ",\"glyphs\":" ++ array (r.glyphs.toList.map fun g =>
     array [toString g.index,toString g.x,toString g.y,toString g.advance,toString g.clusterStart,toString g.clusterEnd]) ++ "}"
-private def layoutJSON (s : Rendering.Scene) (boxes : Array Rendering.Layout.Box)
+def layoutJSON (s : Rendering.Scene) (boxes : Array Rendering.Layout.Box)
     (font : Option Rendering.FontProvider.Face) : String :=
   let header := match font with
     | none => "{\"profile\":\"lean-block-inline-ascii-bitmap-v1\",\"fontScope\":\"ASCII bitmap; no real font shaping\""
