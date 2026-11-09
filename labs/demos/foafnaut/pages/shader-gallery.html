@@ -530,7 +530,7 @@ const W = Math.min(2048, Math.max(16, size[0])), H = Math.min(2048, Math.max(16,
 const shownW = Math.min(W, 800), shownH = Math.round(H * shownW / W);
 let api = params.get('api') === 'webgl2' ? 'webgl2' : 'webgpu';
 let current = SHADERS.find(s => s.id === params.get('shader')) || SHADERS[0];
-let paused = false, frame = 0, t0 = null, tPaused = 0, pausedAt = 0;
+let paused = false, frame = 0, t0 = null, tPaused = 0, pausedAt = 0, lastNow = 0;
 const mouse = [W / 2, H / 2, 0, 0];
 const edits = {}; // shader id + api -> edited source
 const say = (text, bad) => { const s = $('status'); s.textContent = text; s.className = bad ? 'status bad' : 'status'; };
@@ -659,7 +659,8 @@ async function choose(s, a) {
 }
 // ---- The frame loop ----
 const readoutOn = params.get('readout') !== '0';
-const timeNow = () => ((paused ? pausedAt : performance.now()) - (t0 ?? 0) - tPaused) / 1000;
+// iTime is on the animation frames' clock (their timestamps), as on Shadertoy.
+const timeNow = () => ((paused ? pausedAt : lastNow) - (t0 ?? 0) - tPaused) / 1000;
 let shownFrames = 0, scriptMs = 0, lastReport = 0, lastStamp = null, leanMs = 0, leanSamples = 0, scriptEngine = '';
 // Frame intervals since the last report: their count and sum (a sort of many numbers would
 // cost a frame's time in an interpreted script engine).
@@ -667,6 +668,7 @@ let intervalCount = 0, intervalSum = 0;
 function tick(now) {
   requestAnimationFrame(tick);
   if (t0 === null) t0 = now;
+  lastNow = now;
   if (paused || !active) return;
   const start = performance.now();
   active.draw();
@@ -737,7 +739,7 @@ const sizeLinks = SIZES.map(([w, h]) => {
 const linkSizes = () => { for (const [a, w, h] of sizeLinks) a.setAttribute('href', '?shader=' + current.id + '&api=' + api + '&size=' + w + 'x' + h); };
 $('pause').addEventListener('click', () => {
   paused = !paused;
-  if (paused) pausedAt = performance.now(); else { tPaused += performance.now() - pausedAt; lastStamp = null; }
+  if (paused) pausedAt = lastNow; else { tPaused += lastNow - pausedAt; lastStamp = null; }
   $('pause').textContent = paused ? 'Play' : 'Pause'; report();
 });
 const run = text => { edits[current.id + ':' + api] = text; show(); use(current, api, text); };
