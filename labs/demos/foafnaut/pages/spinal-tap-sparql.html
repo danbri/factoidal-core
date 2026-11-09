@@ -520,24 +520,36 @@ function measure(stop) {
   const tick = t => { if (last !== undefined) frames.push(t - last); last = t; if (performance.now() < stop) requestAnimationFrame(tick); else engineReport(); };
   requestAnimationFrame(tick);
 }
+// The sequence at e ms: the zoom, then the cross-fade. Transforms and opacity only.
+const ease = u => u * u * (3 - 2 * u);
+function pose(e) {
+  const k = Math.min(1, e / ZOOM_MS), f = Math.min(1, Math.max(0, (e - ZOOM_MS) / FADE_MS));
+  const u = k < 0.45 ? ease(k / 0.45) : k < 0.55 ? 1 : ease((1 - k) / 0.45);
+  zoom.setAttribute('transform', 'scale(' + Math.pow(PEAK, u).toFixed(3) + ')');
+  gothic.setAttribute('opacity', (1 - ease(f)).toFixed(3));
+  signoff.setAttribute('opacity', ease(f).toFixed(3));
+  return f < 1;
+}
 function startZoom() {
   if (zoomRunning) return;
   frames = [];
   const start = performance.now();
   if (smil) { for (const a of anims) a.beginElement(); measure(start + 1500); return; }
   zoomRunning = true;
-  const ease = u => u * u * (3 - 2 * u);
   let last;
   const step = t => {
     if (last !== undefined) frames.push(t - last); last = t;
-    const e = performance.now() - start, k = Math.min(1, e / ZOOM_MS), f = Math.min(1, Math.max(0, (e - ZOOM_MS) / FADE_MS));
-    const u = k < 0.45 ? ease(k / 0.45) : k < 0.55 ? 1 : ease((1 - k) / 0.45);
-    zoom.setAttribute('transform', 'scale(' + Math.pow(PEAK, u).toFixed(3) + ')');
-    gothic.setAttribute('opacity', (1 - ease(f)).toFixed(3));
-    signoff.setAttribute('opacity', ease(f).toFixed(3));
-    if (f < 1) requestAnimationFrame(step); else { zoomRunning = false; engineReport(); }
+    if (pose(performance.now() - start)) requestAnimationFrame(step); else { zoomRunning = false; engineReport(); }
   };
   requestAnimationFrame(step);
+}
+// spinal-tap-sparql.html?at=4000 holds the sequence at 4 s (for pictures and print).
+function holdAt(ms) {
+  if (!smil) { pose(ms); return; }
+  const svg = $('zoomsvg');
+  svg.pauseAnimations();
+  for (const a of anims) a.beginElement();
+  svg.setCurrentTime(svg.getCurrentTime() + ms / 1000);
 }
 $('zoombtn').addEventListener('click', startZoom);
 
@@ -601,7 +613,9 @@ choose((queries.find(q => '#' + q.id === location.hash) || queries[0]).id);
 startMs = performance.now() - t0;
 engineReport();
 setGain(0);
-if (!slowZoom) setTimeout(startZoom, 600);
+const at = /[?&]at=(\d+)/.exec(location.search || '');
+if (at) holdAt(Number(at[1]));
+else if (!slowZoom) setTimeout(startZoom, 600);
 if (PEAK !== 40) $('zoominfo').textContent = 'Scale 1 to ' + PEAK + ' and back round the n̈ (n and U+0308 COMBINING DIAERESIS), then Föafn̈aut. Press Zoom in.';
 </script>
 </main></body></html>
