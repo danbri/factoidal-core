@@ -32,6 +32,13 @@ import L4Factoidal.WasmVM.Proofs.RefineRun
 import L4Factoidal.WasmVM.Proofs.Aot
 import L4Factoidal.WasmVM.Proofs.AotCheck
 import L4Factoidal.WasmVM.Proofs.AotNames
+import L4Factoidal.WasmVM.Proofs.SpecWP
+import L4Factoidal.WasmVM.Proofs.SpecWPOps
+import L4Factoidal.WasmVM.Proofs.SpecWPSubset
+import L4Factoidal.WasmVM.Proofs.FoafCheckSpec
+import L4Factoidal.WasmVM.Proofs.FoafCheck
+import L4Factoidal.WasmVM.Proofs.FoafCheckBytes
+import L4Factoidal.WasmVM.Proofs.FoafCheckBinary
 import L4Factoidal.WasmVM.Tests.Memory
 import L4Factoidal.WasmVM.Tests.Proposals
 import L4Factoidal.WasmVM.Tests.Wasi
