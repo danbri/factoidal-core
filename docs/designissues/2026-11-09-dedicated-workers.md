@@ -78,7 +78,10 @@ inbox's first entry; `terminate b` empties `b`'s queues and closes it. Theorems:
 - `terminated_no_step`: after `terminate b`, `b` runs no task again.
 
 The code keeps the model's shape: each message is one task (`eventHandle`) on the
-receiver's loop plus one inbox entry; inbox and same-source tasks are both FIFO. A
+receiver's loop plus one inbox entry; inbox and same-source tasks are both FIFO. The
+inbox of the code is a queue with its own theorems (`LeanJS.WorkerHost.push_pending`,
+`take_pending`, `push_head`, `take_head`): the events not yet taken are a list that a
+message appends to and a delivery task takes the first of. A
 worker's runs (`runTo`) take only the worker's value, so they cannot read or write the
 page's session; the page gets only events (bytes) from them.
 
