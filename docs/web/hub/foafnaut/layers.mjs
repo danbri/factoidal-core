@@ -132,9 +132,12 @@ export async function createLayerSurface(canvas,{check=false,waitForGpu=false}={
         slot.texture?.destroy();stats.layerTextures++;
         slot.texture=device.createTexture({size:[frame.width,frame.height],format:p.format,
           usage:GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_SRC});
-        slot.size=size;
+        slot.size=size;slot.drawn=undefined;
       }
     }
+    // Lean's damage (WebPaint.retainedAnswer): the texture holds the answer it names.
+    const damage=frame.damage;
+    if(!target&&!checking&&damage&&slot.drawn===damage.id){stats.scenesKept=(stats.scenesKept??0)+1;return undefined;}
     const tileWords=frame.tiles,uniformBytes=p.uniform.bytes,tileBytes=tileWords?Math.max(16,tileWords.length*4):0;
     const before=[slot.uniform?.buffer,slot.tiles?.buffer];
     slot.uniform=grow(slot.uniform,uniformBytes,bufferUsage(p.uniform.usage));
@@ -146,11 +149,33 @@ export async function createLayerSurface(canvas,{check=false,waitForGpu=false}={
       slot.bind=device.createBindGroup({layout:pipeline.getBindGroupLayout(p.bindGroup.layoutIndex),entries});slot.bindKey=want;slot.pipeline=pipeline;
     }
     stats.scenes++;
-    const pixels=await run(p,{pipeline,bindGroup:slot.bind},target??slot.texture,checking,()=>{
+    const write=()=>{
       device.queue.writeBuffer(slot.uniform.buffer,p.uniform.offset,frame.data instanceof Float32Array?frame.data:new Float32Array(frame.data));
       if(tileWords)device.queue.writeBuffer(slot.tiles.buffer,0,tileWords instanceof Uint32Array?tileWords:new Uint32Array(tileWords));
-    });
-    if(checking&&pixels)checkPixels(frame,pixels);
+    };
+    // A frame whose damage Lean knows and whose base is in the texture: only those rectangles.
+    const rects=!target&&!checking&&damage?.rects&&damage.base!==null&&slot.drawn===damage.base&&slot.texture?damage.rects:undefined;
+    let pixels;
+    if(rects){
+      stats.scenesPartial=(stats.scenesPartial??0)+1;
+      if(rects.length){
+        device.pushErrorScope('validation');let scoped=true;
+        try{
+          write();
+          const encoder=device.createCommandEncoder();
+          const pass=encoder.beginRenderPass({colorAttachments:[{view:slot.texture.createView(),loadOp:'load',storeOp:'store'}]});
+          pass.setPipeline(pipeline);pass.setBindGroup(p.bindGroup.index,slot.bind);
+          for(const [x,y,w,h] of rects){pass.setScissorRect(x,y,w,h);pass.draw(p.draw.vertexCount,p.draw.instanceCount,p.draw.firstVertex,p.draw.firstInstance);}
+          pass.end();device.queue.submit([encoder.finish()]);
+          const error=await device.popErrorScope();scoped=false;if(error)throw Error(error.message);
+        }catch(error){if(scoped)try{await device.popErrorScope();}catch{/* the first failure */}failed=true;throw error;}
+      }else write();
+    }else{
+      stats.scenesFull=(stats.scenesFull??0)+1;
+      pixels=await run(p,{pipeline,bindGroup:slot.bind},target??slot.texture,checking,write);
+      if(checking&&pixels)checkPixels(frame,pixels);
+    }
+    if(!target)slot.drawn=damage?.id;
     return pixels;
   }
   const chrome={},page={},single={};
