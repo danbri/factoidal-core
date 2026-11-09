@@ -2001,9 +2001,10 @@
   const usv = x => { const s = String(x); return typeof s.toWellFormed === 'function' ? s.toWellFormed() : s; };
   const dict = (x, what) => { if (x === undefined || x === null) return {}; if (typeof x !== 'object' && typeof x !== 'function') throw new TypeError(what + ': the options are not an object'); return x; };
   const isShared = x => typeof SharedArrayBuffer === 'function' && x instanceof SharedArrayBuffer;
+  // A detached buffer holds no bytes (WebIDL "get a copy of the buffer source").
   const bufferSource = (x, what) => {
-    if (x instanceof ArrayBuffer || isShared(x)) return new Uint8Array(x);
-    if (ArrayBuffer.isView(x)) return new Uint8Array(x.buffer, x.byteOffset, x.byteLength);
+    if (x instanceof ArrayBuffer || isShared(x)) return x.detached ? new Uint8Array(0) : new Uint8Array(x);
+    if (ArrayBuffer.isView(x)) return x.buffer.detached ? new Uint8Array(0) : new Uint8Array(x.buffer, x.byteOffset, x.byteLength);
     throw new TypeError(what + ": parameter is not of type 'BufferSource'");
   };
   const copyBytes = v => new Uint8Array(v);
@@ -2293,7 +2294,7 @@
     const hmacJwkAlg = { 'SHA-1': 'HS1', 'SHA-256': 'HS256', 'SHA-384': 'HS384', 'SHA-512': 'HS512' };
     const subtleMethods = {
       digest(algorithm, data) {
-        return start(() => { const d = copyBytes(bufferSource(data, 'digest')); const a = normalize('digest', algorithm);
+        return start(() => { const a = normalize('digest', algorithm); const d = copyBytes(bufferSource(data, 'digest'));
           return later(() => api(32, [a.name, d], 0, true, 'digest')); });
       },
       generateKey(algorithm, extractable, keyUsages) {
