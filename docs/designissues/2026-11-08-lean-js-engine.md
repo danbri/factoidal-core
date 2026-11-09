@@ -742,3 +742,11 @@ both.
 
 BubblePopJS is faster at the WPT start and the page's turns, slower on tight `fib` calls and
 slightly slower at the start turn. The first-frame ranges overlap.
+
+**The realm snapshot in the Wasm build** (not committed: `bubblepop-realm --empty` stays). Data
+of 607,831 bytes in the realm module adds 598 KB to `web-render.wasm` (29.94 to 30.54 MB) and
+140 KB gzipped (6.20 to 6.34 MB), for everyone who loads the Hub. It takes the first BubblePopJS
+page from 118-202 ms to 81-100 ms in Deno (three runs each), and in Chrome the start turn from
+about 82 ms to 66 ms (one run). While QuickJS-NG is the Hub's default, a cost for every visitor
+that helps only those who choose BubblePopJS is not worth it; if BubblePopJS becomes the
+default, it is.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Make Lean's big Nat and Int literals persistent in C that is compiled for wasm32.
+"""Make Lean's big Nat literals persistent in C that is compiled for wasm32.
 
 Why (docs/designissues/2026-11-09-wasm32-nat-literals.md): Lean 4.33 generates C on a 64-bit
 machine, and we compile that C for wasm32. In that C a Nat literal that is a scalar on the
@@ -13,9 +13,8 @@ tests/wasm32-literals/ reproduces it in a few lines. In the Foafnaut Wasm build
 (2026-11-09) `JS.callMethod` gave one literal 2^40 (the evaluator's fuel) to `getV` and to
 `callV`, and `WebScripts.startLean` put the literal 4,000,000,000 (`Page.Limits.fuel`) into a
 closure and into the `Limits` record; the frees that followed broke the allocator ("memory
-access out of bounds" in `mi_malloc_small`, dlmalloc aborts). The same holds for an `Int`
-made from such a literal (`lean_nat_to_int`): small on 64-bit up to 2^31 - 1, a heap object
-on wasm32 above 2^30 - 1.
+access out of bounds" in `mi_malloc_small`, dlmalloc aborts). An `Int` needs no rewrite: its
+literal is built by `Int.ofNat`, whose result the IR types `tobj` and reference-counts.
 
 The fix is the representation the generated C already assumes: each such literal becomes
 one persistent object per call site (reference count 0, so every `lean_inc` and
@@ -36,13 +35,11 @@ import sys
 from pathlib import Path
 
 NAT_LIMIT = 2 ** 31          # LEAN_MAX_SMALL_NAT + 1 on wasm32
-INT_LIMIT = 2 ** 30          # LEAN_MAX_SMALL_INT + 1 on wasm32
 
 NAT = re.compile(r'(?P<var>v_\w+) = (?:lean_cstr_to_nat\("(?P<s>\d+)"\)|lean_unsigned_to_nat\((?P<u>\d+)u\));')
-TOINT = re.compile(r'(?P<var>v_\w+) = lean_nat_to_int\((?P<arg>v_\w+)\);')
 
 PRELUDE = r'''
-/* tools/wasm32-nat-literals.py: big Nat and Int literals are persistent on wasm32. */
+/* tools/wasm32-nat-literals.py: big Nat literals are persistent on wasm32. */
 #ifndef L4_PERSISTENT_LITERAL
 #define L4_PERSISTENT_LITERAL(MAKE) ({ static lean_object * l4_lit_; \
   if (l4_lit_ == 0) { lean_object * l4_v_ = (MAKE); if (!lean_is_scalar(l4_v_)) lean_mark_persistent(l4_v_); l4_lit_ = l4_v_; } \
@@ -57,7 +54,6 @@ def literal_value(m):
 
 def rewrite(text):
     """The text with every big literal made persistent, and the number of sites."""
-    big = {}
     count = 0
 
     def nat(m):
@@ -65,23 +61,11 @@ def rewrite(text):
         v = literal_value(m)
         if v < NAT_LIMIT:
             return m.group(0)
-        big[m.group('var')] = v
         count += 1
         make = m.group(0).split(' = ', 1)[1].rstrip(';')
         return f"{m.group('var')} = L4_PERSISTENT_LITERAL({make});"
 
-    small = {m.group('var'): literal_value(m) for m in NAT.finditer(text)}
     text = NAT.sub(nat, text)
-
-    def toint(m):
-        nonlocal count
-        v = big.get(m.group('arg'), small.get(m.group('arg')))
-        if v is None or v < INT_LIMIT:
-            return m.group(0)
-        count += 1
-        return f"{m.group('var')} = L4_PERSISTENT_LITERAL(lean_nat_to_int({m.group('arg')}));"
-
-    text = TOINT.sub(toint, text)
     if count:
         at = text.find('#include <lean/lean.h>')
         if at < 0:
@@ -102,12 +86,12 @@ def self_test():
            'v_x_6_ = lean_nat_to_int(v_x_3_);\n'
            '}\n')
     out, n = rewrite(src)
-    assert n == 3, n
+    assert n == 2, n
     assert 'L4_PERSISTENT_LITERAL(lean_unsigned_to_nat(4000000000u))' in out
     assert 'L4_PERSISTENT_LITERAL(lean_cstr_to_nat("1099511627776"))' in out
     assert 'v_x_3_ = lean_unsigned_to_nat(7u);' in out
     assert 'v_x_4_ = lean_unsigned_to_nat(2147483647u);' in out       # a scalar on wasm32
-    assert 'v_x_5_ = L4_PERSISTENT_LITERAL(lean_nat_to_int(v_x_4_));' in out  # not a small Int there
+    assert 'v_x_5_ = lean_nat_to_int(v_x_4_);' in out                 # an Int is reference-counted
     assert 'v_x_6_ = lean_nat_to_int(v_x_3_);' in out
     assert out.index('#define L4_PERSISTENT_LITERAL') > out.index('#include <lean/lean.h>')
     assert rewrite(out)[1] == 0  # idempotent

@@ -45,12 +45,20 @@ this fault at those sites. The scan that says so counts owner lines in the emitt
 engine; it is a text scan, not a proof. The fix covers every site, so that a later change of
 the emitted code can not turn a single owner into two.
 
-In all, the C of the Foafnaut Wasm build has 254 literal sites (main of
-2026-11-09): 207 in our modules and 47 in 13 of the runtime cache's `Init` and `Std` modules
-(for example `Init.Prelude`, `Init.Data.UInt.BasicAux`, `Std.Time`). An `Int` made from such
-a literal (`lean_nat_to_int`) has the same flaw above 2^30 - 1, the largest small `Int` on
-wasm32; 38 of the 254 sites are such `Int`s. On the tree pushed with this record the build rewrites 253
-(206 and 47).
+In all, the C of the Foafnaut Wasm build has 214 `Nat` literal sites (181 in our modules,
+33 in 13 of the runtime cache's `Init` and `Std` modules, on the tree of 2026-11-09). The first
+version of the tool also rewrote 39 `Int` sites (253 in all, 254 on an earlier tree). They need no rewrite: an `Int`
+literal is built by `Int.ofNat`, whose result the IR types `tobj` and reference-counts. A test
+gave one `Int` literal of 1,500,000,000 and one of -1,500,000,000 (between 2^30 and 2^31, heap
+objects on wasm32) to two owners, and both came back right on wasm32, so the Int branch
+was removed.
+
+The other Wasm build, `formal/lean4/Wasm/build-wasm.sh`, compiles its own `Init` and library
+C without this tool. A text scan of the generated C of the library, `Init` and `Std` found no
+literal of 2^31 or more with two owners on one path: in `LWS.fnv1a32Spec` and
+`XSD.fvalToBits64` the several uses are on exclusive branches. So that build has no change.
+`WebScripts.startLean` has two owners but is only in the Foafnaut build. This is a text scan,
+not a proof.
 
 ## 3. How it was found
 
