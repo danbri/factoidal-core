@@ -71,8 +71,40 @@ children, and a slot of a shadow tree is replaced by what it shows (as `display:
 contents`, which is a slot's default). An arena with no shadow host is answered
 unchanged.
 
+## 2a. Shadow trees and the fast cascade
+
+The cascade of the real-site work (`2026-11-09-real-site-layout-speed.md`) is
+keys, buckets and `computedFrom`. A shadow page uses the same pieces:
+
+- `CSS.computeFor treeScope` sends a page with no shadow host to `computeAll`, unchanged
+  (`computeFor_none`). `:host` and `::slotted()` selectors go in no bucket of `RuleIndex`
+  (`Bucket.never`), so they cost a page with no shadow tree nothing, and a selector that
+  names them never matches there.
+- A page with a shadow host uses `computeAllIn`: the key table is of the node tree,
+  and `ScopedIndex` holds one set of buckets per tree (the rules of that tree's
+  `style` elements) with the user agent's rules in a set of their own. An element tries
+  the user agent's buckets, its own tree's, the `:host` rules of the tree it hosts (only
+  on that host) and the `::slotted()` rules of the tree its parent hosts (only on the
+  children of a host). Numbers index one entry array, so the merged list keeps sheet order.
+  Each slot lookup is made only for a rule whose `::slotted()` compound matched.
+- The cascade key keeps its length: the context of CSS Cascade 4 shares a position
+  with the origin (`origin*2 + context`), so the inline-style position that the SVG
+  paint boundary reads did not move.
+
 ## 3. Theorems
 
+- `CSS.computeFor_none`: with no shadow tree the cascade is `computeAll`, the same term.
+- `CSS.selectorMatchesK_admits` (statement unchanged): a selector that matches an element has the
+  element in its bucket, with `:host` and `::slotted()` outside every bucket of `RuleIndex`.
+- `CSS.selectorMatchesInK_admits`: a selector of tree `scope` that matches element `id` has it
+  where `ScopedIndex` looks: under `::slotted(c)` in the bucket of `c` with a slot of that
+  tree assigned, under `:host` as that tree's host, otherwise in the bucket of the rightmost
+  compound and in that tree.
+- `CSS.computeAllIn_eq_linear`: wherever `ScopedIndex` gives the plain loop's matches
+  (`matchedRulesIn`, every rule tried in order), `computeAllIn` gives `computeAllInLinear`.
+  The premise is checked on every node of shadow test pages (`CascadeTests.lean`, with
+  `:host`, `:host()`, `::slotted()`, nested shadow roots and pointer states), not proved,
+  as for the unscoped buckets.
 - `DOM.Dom.flat_eq_of_noShadow`, `flatChildren_eq_kids`: with no shadow tree the flat tree
   is the tree, so pages without shadow DOM lay out as before.
 - `DOM.Dom.shadowIncludingRoot_eq_root`: with no shadow root, the shadow-including root
@@ -117,6 +149,9 @@ number per listener call: its retargeted target). Commands `attachShadow`, `assi
   window's prototype chain. It is on only where property lookups consult such a proxy
   (probed once): QuickJS-NG yes, BubblePopJS not yet (its lookups skip proxies in a
   prototype chain).
+- `::slotted()` matches the elements directly assigned to a slot, not those assigned through
+  a chain of nested slots ("after flattening"). A style attribute of an element in a shadow tree
+  is treated as outside the tree for the cascade context; both are edge cases of the port.
 - `relatedTarget` retargeting, `delegatesFocus` focus steps, `:host-context()`,
   `::part()`, inheritance from a slot (a slot is not a box here), and `getHTML()`.
 - Structured clone across sessions uses JSON until the Lean clone of the basics work is
