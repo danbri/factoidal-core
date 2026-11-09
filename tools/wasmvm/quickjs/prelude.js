@@ -774,8 +774,6 @@
     closest(sel) { if (arguments.length < 1) throw new TypeError('closest: 1 argument required'); const k = selectorQuery(nodeId(this), 9, sel); return k === null ? null : wrap(Number(k)); }
     insertAdjacentElement(where, el) { return insertAdjacent(this, where, el); }
     insertAdjacentText(where, text) { insertAdjacent(this, where, document.createTextNode(text)); }
-    get innerHTML() { return kids(nodeId(this)).map(serialize).join(''); }
-    get outerHTML() { return serialize(nodeId(this)); }
   }
   // ---- Attr and NamedNodeMap (DOM §4.9.1, §4.9.2) ----------------------------------------
   // The attributes are Lean's, on their element (Hosts.Dom node_query 2 lists them). An Attr
@@ -909,29 +907,8 @@
       default: throw new DOMException('bad position', 'SyntaxError');
     }
   };
-  const voids = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr']);
-  const escapeText = s => s.replace(/&/g, '&amp;').replace(/ /g, '&nbsp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  const serialize = k => {
-    const t = info(k, 0);
-    if (t === 3) { const p = info(k, 1); const raw = p >= 0 && ['style', 'script', 'xmp', 'iframe', 'noembed', 'noframes', 'plaintext'].includes(str(p, 0)); return raw ? str(k, 3) : escapeText(str(k, 3)); }
-    if (t === 8) return '<!--' + str(k, 3) + '-->';
-    if (t !== 1) return '';
-    const name = str(k, 0), a = str(k, 6) ?? '', xs = a === '' ? [] : a.split('\u0000');
-    let out = '<' + name;
-    for (let i = 0; i + 1 < xs.length; i += 2) out += ' ' + xs[i] + '="' + xs[i + 1].replace(/&/g, '&amp;').replace(/ /g, '&nbsp;').replace(/"/g, '&quot;') + '"';
-    out += '>';
-    if (voids.has(name)) return out;
-    return out + kids(k).map(serialize).join('') + '</' + name + '>';
-  };
   class HTMLElement extends Element {
-    get title() { return this.getAttribute('title') ?? ''; }
-    set title(v) { this.setAttribute('title', v); }
-    get lang() { return this.getAttribute('lang') ?? ''; }
-    set lang(v) { this.setAttribute('lang', v); }
-    get dir() { return this.getAttribute('dir') ?? ''; }
-    set dir(v) { this.setAttribute('dir', v); }
-    get hidden() { return this.hasAttribute('hidden'); }
-    set hidden(v) { this.toggleAttribute('hidden', !!v); }
+    // title, lang, dir, hidden and the other reflected attributes: DOM.Reflect (dombreadth section).
     get dataset() {
       const el = this;
       return new Proxy({}, {
@@ -2111,7 +2088,9 @@
     switch (t) {
       case 1: {
         if (info(id, 8) !== 1) return (str(id, 2) === 'http://www.w3.org/2000/svg' ? SVGElement : Element).prototype;
-        return (htmlClasses[str(id, 0)] ?? HTMLUnknownElement).prototype;
+        const C = htmlClasses[str(id, 0)] ?? HTMLUnknownElement;
+        if (!reflected.has(C)) reflectInstall(C);
+        return C.prototype;
       }
       case 3: return Text.prototype;
       case 4: return CDATASection.prototype;
@@ -3143,7 +3122,6 @@
     define(C.prototype, 'toString', function toString() { return this.href; });
   }
   // ==== end of basics ====
-  def('getComputedStyle', el => el.style);
   def('matchMedia', q => ({ matches: false, media: String(q), addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {} }));
   def('postMessage', () => {});
   def('focus', () => {}); def('blur', () => {}); def('close', () => {}); def('stop', () => {}); def('scrollTo', () => {}); def('scrollBy', () => {});
@@ -3155,6 +3133,383 @@
     PromiseRejectionEvent, Node, Element, HTMLElement, HTMLUnknownElement, SVGElement, CharacterData, Text, CDATASection, Comment,
     ProcessingInstruction, DocumentType, DocumentFragment, Document, HTMLDocument, XMLDocument, DOMImplementation, NodeList, HTMLCollection, NamedNodeMap, Attr, DOMParser, SubmitEvent,
     DOMTokenList, DOMException, AbortController, AbortSignal, Window, MutationObserver, MutationRecord, ...named })) def(k, v);
+
+  // ==== dombreadth: markup setters, Range, StaticRange, Selection, NodeIterator, TreeWalker ====
+  // The algorithms are Lean's: the HTML fragment parsing and serialization algorithms
+  // (DOM.Fragment: create kind 13, node_query op 15), and the live ranges, the selection,
+  // NodeIterator and TreeWalker (DOM.Range, DOM.Live, DOM.Traversal, served as node_query ops
+  // from 32 by Hosts.Dom.domOp). Here: argument conversion, the objects, and the filter
+  // callbacks of the page.
+  const failD = code => {
+    switch (code) {
+      case -13: throw new DOMException('The node is of an invalid type.', 'InvalidNodeTypeError');
+      case -14: throw new DOMException('The index is not in the allowed range.', 'IndexSizeError');
+      case -15: throw new DOMException('The two ranges are in different documents.', 'WrongDocumentError');
+      case -16: throw new DOMException('The object is in an invalid state.', 'InvalidStateError');
+      default: return fail(code);
+    }
+  };
+  const op = (id, code, s = '') => { const r = n.query(id, code, String(s)); return typeof r === 'number' ? failD(r) : r; };
+  const HTML_NS = 'http://www.w3.org/1999/xhtml';
+  const needArgs = (args, k, name) => { if (args.length < k) throw new TypeError(`${name}: ${k} argument${k > 1 ? 's' : ''} required`); };
+  // ---- markup (DOM Parsing and Serialization; HTML §13.3, §13.4) --------------------------
+  // The fragment Lean's parser makes of `markup` for a context element (namespace, local
+  // name), in document `doc`; its content event handler attributes become handlers.
+  const fragmentOf = (doc, ns, name, markup) => {
+    const f = chk(n.create(13 + 16 * doc, (ns ?? '') + '\u0000' + name + '\u0000' + markup));
+    scanHandlers(f, false);
+    return f;
+  };
+  const contextOf = (ctx, doc) => (info(ctx, 0) !== 1 || (info(ctx, 8) === 1 && str(ctx, 0) === 'html'))
+    ? [HTML_NS, 'body'] : [str(ctx, 2), str(ctx, 0)];
+  const setInner = (el, v) => {
+    const id = nodeId(el), f = fragmentOf(info(id, 7), str(id, 2), str(id, 0), v === null ? '' : String(v));
+    const target = info(id, 8) === 1 && str(id, 0) === 'template' ? info(id, 9) : id;
+    chk(n.setText(target, '')); chk(n.insert(target, f, -1));
+  };
+  const noModification = () => new DOMException('The node has no parent element to change.', 'NoModificationAllowedError');
+  Object.defineProperties(Element.prototype, {
+    innerHTML: { get() { return chk(n.query(nodeId(this), 15, '0')); }, set(v) { setInner(this, v); }, configurable: true, enumerable: true },
+    outerHTML: { get() { return chk(n.query(nodeId(this), 15, '1')); }, set(v) {
+      const id = nodeId(this), p = info(id, 1);
+      if (p < 0) return;
+      if (info(p, 0) === 9) throw noModification();
+      const [ns, name] = info(p, 0) === 11 ? [HTML_NS, 'body'] : [str(p, 2), str(p, 0)];
+      chk(n.replace(p, fragmentOf(info(id, 7), ns, name, v === null ? '' : String(v)), id));
+    }, configurable: true, enumerable: true },
+    insertAdjacentHTML: { value(position, text) {
+      needArgs(arguments, 2, 'insertAdjacentHTML');
+      const id = nodeId(this), pos = String(position).toLowerCase(), outside = pos === 'beforebegin' || pos === 'afterend';
+      if (!outside && pos !== 'afterbegin' && pos !== 'beforeend')
+        throw new DOMException(`'${position}' is not a valid position.`, 'SyntaxError');
+      const ctx = outside ? info(id, 1) : id;
+      if (ctx < 0 || info(ctx, 0) === 9) throw noModification();
+      const [ns, name] = contextOf(ctx, info(id, 7));
+      const f = fragmentOf(info(id, 7), ns, name, String(text));
+      if (pos === 'beforebegin') chk(n.insert(ctx, f, id));
+      else if (pos === 'afterbegin') chk(n.insert(id, f, info(id, 2)));
+      else if (pos === 'beforeend') chk(n.insert(id, f, -1));
+      else chk(n.insert(ctx, f, info(id, 5)));
+    }, writable: true, configurable: true },
+    setHTMLUnsafe: { value(html) { setInner(this, String(html)); }, writable: true, configurable: true },
+    getHTML: { value() { return this.innerHTML; }, writable: true, configurable: true },
+  });
+  define(Document, 'parseHTMLUnsafe', html => wrap(chk(n.create(11, String(html)))));
+  // ---- CharacterData changes that move live ranges (DOM §4.10, §4.11) ------------------------
+  Object.defineProperties(CharacterData.prototype, {
+    replaceData: { value(offset, count, data) {
+      needArgs(arguments, 3, 'replaceData');
+      const id = nodeId(this), old = observed.size ? str(id, 3) : null;
+      op(id, 119, `${offset >>> 0} ${count >>> 0}\u0000${String(data)}`);
+      if (observed.size) queueRecord('characterData', id, { oldValue: old });
+    }, writable: true, configurable: true },
+    appendData: { value(data) { needArgs(arguments, 1, 'appendData'); this.replaceData(this.length, 0, data); }, writable: true, configurable: true },
+    insertData: { value(offset, data) { needArgs(arguments, 2, 'insertData'); this.replaceData(offset, 0, data); }, writable: true, configurable: true },
+    deleteData: { value(offset, count) { needArgs(arguments, 2, 'deleteData'); this.replaceData(offset, count, ''); }, writable: true, configurable: true },
+  });
+  define(Text.prototype, 'splitText', function (offset) {
+    const id = nodeId(this), p = info(id, 1), old = observed.size ? str(id, 3) : null;
+    const k = Number(op(id, 120, String(offset >>> 0)));
+    if (observed.size) { if (p >= 0) childList(p, [k], [], id, info(k, 5)); queueRecord('characterData', id, { oldValue: old }); }
+    return wrap(k);
+  });
+  // ---- reflected IDL attributes (HTML §2.6.1): the table and the algorithms are Lean's ----
+  // (DOM.Reflect). The rows of an interface are installed on its prototype when the page
+  // wraps its first element of that interface; each get is one host call.
+  const reflected = new Set();
+  const finite = v => { v = Number(v); if (!Number.isFinite(v)) throw new TypeError('The provided double value is non-finite.'); return String(v); };
+  const reflectConv = { s: String, n: v => v === null ? '' : String(v), u: String, b: v => (v ? '1' : '0'), i: v => String(v | 0),
+    I: v => String(v | 0), U: v => String(v >>> 0), P: v => String(v >>> 0), F: v => String(v >>> 0), C: v => String(v >>> 0),
+    d: finite, D: finite, e: String, E: v => (v === null || v === undefined ? '\u0001' : String(v)) };
+  const reflectTokens = new WeakMap();
+  const reflectInstall = C => {
+    for (let P = C; P && P !== Element && !reflected.has(P); P = Object.getPrototypeOf(P)) {
+      reflected.add(P);
+      const rows = op(0, 162, P.name);
+      for (const line of (rows ?? '').split('\u0000')) {
+        if (line === '') continue;
+        const [row, idl, k, content] = line.split(' ');
+        if (k === 't') {
+          Object.defineProperty(P.prototype, idl, { get() {
+            let m = reflectTokens.get(this); if (!m) reflectTokens.set(this, m = new Map());
+            let l = m.get(content); if (!l) m.set(content, l = tokenList(this, content)); return l;
+          }, set(v) { this[idl].value = v; }, configurable: true, enumerable: true });
+          continue;
+        }
+        Object.defineProperty(P.prototype, idl, {
+          get() {
+            const id = nodeId(this), r = op(id, 160, row + '\u0000' + (info(id, 7) === 0 ? href : 'about:blank'));
+            switch (k) {
+              case 'b': return r === '1';
+              case 'i': case 'I': case 'U': case 'P': case 'F': case 'C': return Number(r);
+              case 'd': case 'D': { const [lit, dflt] = r.split('\u0000'); const x = Number(lit); return Number.isFinite(x) ? x : Number(dflt); }
+              case 'E': return r === '\u0001' ? null : r;
+              default: return r;
+            }
+          },
+          set(v) {
+            const a = op(nodeId(this), 161, row + '\u0000' + reflectConv[k](v));
+            if (a === 'r') this.removeAttribute(content);
+            else if (a !== '') this.setAttribute(content, a.slice(1));
+          },
+          configurable: true, enumerable: true,
+        });
+      }
+    }
+  };
+  // ---- Range and StaticRange (DOM §5) ------------------------------------------------------
+  // One Range object per live range of Lean. When the engine collects a Range object, its
+  // live range is released (op 118): Lean stops moving it, and a new range takes its slot.
+  // An engine without WeakRef keeps every range.
+  const weakRanges = typeof WeakRef === 'function' && typeof FinalizationRegistry === 'function';
+  const rangeObjects = new Map(), rangeNumbers = new WeakMap();
+  const rangeGone = weakRanges ? new FinalizationRegistry(k => {
+    const w = rangeObjects.get(k);
+    if (w && w.deref()) return;
+    rangeObjects.delete(k); n.query(k, 118, '');
+  }) : null;
+  const rid = r => { const k = rangeNumbers.get(r); if (k === undefined) throw new TypeError("parameter is not of type 'Range'"); return k; };
+  const rangeOf = k => {
+    const w = rangeObjects.get(k);
+    let r = weakRanges ? w?.deref() : w;
+    if (!r) {
+      r = Object.create(Range.prototype); rangeNumbers.set(r, k);
+      if (weakRanges) { rangeObjects.set(k, new WeakRef(r)); rangeGone.register(r, k); } else rangeObjects.set(k, r);
+    }
+    return r;
+  };
+  const boundsOf = k => op(k, 101).split(' ').map(Number);
+  const point = (node, offset) => nodeId(node) + ' ' + (offset >>> 0);
+  class AbstractRange { constructor() { throw new TypeError('Illegal constructor'); } }
+  class Range extends AbstractRange {
+    constructor() { return rangeOf(Number(op(nodeId(document), 100))); }
+    get startContainer() { return wrap(boundsOf(rid(this))[0]); }
+    get startOffset() { return boundsOf(rid(this))[1]; }
+    get endContainer() { return wrap(boundsOf(rid(this))[2]); }
+    get endOffset() { return boundsOf(rid(this))[3]; }
+    get collapsed() { const b = boundsOf(rid(this)); return b[0] === b[2] && b[1] === b[3]; }
+    get commonAncestorContainer() { return wrap(Number(op(rid(this), 110))); }
+    setStart(node, offset) { needArgs(arguments, 2, 'setStart'); op(rid(this), 102, '1 ' + point(node, offset)); }
+    setEnd(node, offset) { needArgs(arguments, 2, 'setEnd'); op(rid(this), 102, '0 ' + point(node, offset)); }
+    setStartBefore(node) { op(rid(this), 103, '0 ' + nodeId(node)); }
+    setStartAfter(node) { op(rid(this), 103, '1 ' + nodeId(node)); }
+    setEndBefore(node) { op(rid(this), 103, '2 ' + nodeId(node)); }
+    setEndAfter(node) { op(rid(this), 103, '3 ' + nodeId(node)); }
+    collapse(toStart = false) { op(rid(this), 104, toStart ? '1' : '0'); }
+    selectNode(node) { op(rid(this), 105, '0 ' + nodeId(node)); }
+    selectNodeContents(node) { op(rid(this), 105, '1 ' + nodeId(node)); }
+    compareBoundaryPoints(how, sourceRange) {
+      needArgs(arguments, 2, 'compareBoundaryPoints');
+      const h = Number(how) & 0xFFFF;
+      return Number(op(rid(this), 106, h + ' ' + rid(sourceRange)));
+    }
+    deleteContents() { op(rid(this), 112, '0'); }
+    extractContents() { return wrap(Number(op(rid(this), 112, '1'))); }
+    cloneContents() { const f = Number(op(rid(this), 112, '2')); scanHandlers(f, false); return wrap(f); }
+    insertNode(node) { op(rid(this), 113, String(nodeId(node))); }
+    surroundContents(newParent) { op(rid(this), 114, String(nodeId(newParent))); }
+    cloneRange() { return rangeOf(Number(op(rid(this), 115))); }
+    detach() {}
+    isPointInRange(node, offset) { needArgs(arguments, 2, 'isPointInRange'); return op(rid(this), 108, point(node, offset)) === '1'; }
+    comparePoint(node, offset) { needArgs(arguments, 2, 'comparePoint'); return Number(op(rid(this), 107, point(node, offset))); }
+    intersectsNode(node) { needArgs(arguments, 1, 'intersectsNode'); return op(rid(this), 109, String(nodeId(node))) === '1'; }
+    toString() { return op(rid(this), 111); }
+    createContextualFragment(fragment) { needArgs(arguments, 1, 'createContextualFragment'); const f = Number(op(rid(this), 116, String(fragment))); scanHandlers(f, false); return wrap(f); }
+    // CSSOM View §6.1: the boxes of the range's common ancestor element in Lean's layout.
+    getBoundingClientRect() { let k = Number(op(rid(this), 110)); if (info(k, 0) !== 1) k = info(k, 1); if (k < 0 || info(k, 0) !== 1) return new DOMRect(0, 0, 0, 0); return wrap(k).getBoundingClientRect(); }
+    getClientRects() { const r = this.getBoundingClientRect(); return r.width === 0 && r.height === 0 ? [] : [r]; }
+  }
+  const howConsts = { START_TO_START: 0, START_TO_END: 1, END_TO_END: 2, END_TO_START: 3 };
+  consts(Range, howConsts); consts(Range.prototype, howConsts);
+  const staticState = new WeakMap();
+  class StaticRange extends AbstractRange {
+    constructor(init) {
+      if (init === null || init === undefined || typeof init !== 'object') throw new TypeError("Failed to construct 'StaticRange': 1 argument required");
+      for (const k of ['startContainer', 'startOffset', 'endContainer', 'endOffset'])
+        if (init[k] === undefined) throw new TypeError(`StaticRangeInit: required member ${k} is undefined`);
+      const sc = init.startContainer, ec = init.endContainer;
+      if (!(sc instanceof Node) || !(ec instanceof Node)) throw new TypeError("member startContainer is not of type 'Node'");
+      if (sc.nodeType === 10 || sc.nodeType === 2 || ec.nodeType === 10 || ec.nodeType === 2) failD(-13);
+      const o = Object.create(StaticRange.prototype);
+      staticState.set(o, { sc, so: init.startOffset >>> 0, ec, eo: init.endOffset >>> 0 });
+      return o;
+    }
+    get startContainer() { return staticState.get(this).sc; }
+    get startOffset() { return staticState.get(this).so; }
+    get endContainer() { return staticState.get(this).ec; }
+    get endOffset() { return staticState.get(this).eo; }
+    get collapsed() { const s = staticState.get(this); return s.sc === s.ec && s.so === s.eo; }
+  }
+  // ---- Selection (Selection API): one per document with a browsing context ----------------
+  class Selection { constructor() { throw new TypeError('Illegal constructor'); } }
+  const selection = Object.create(Selection.prototype);
+  const selState = () => { const r = op(0, 140); if (r === null) return null; const [k, dir] = r.split(' ').map(Number); return { k, dir, b: boundsOf(k) }; };
+  const collapsedB = b => b[0] === b[2] && b[1] === b[3];
+  for (const [k, f] of Object.entries({
+    getRangeAt(index) { needArgs(arguments, 1, 'getRangeAt'); const s = selState(); if (!s || (index >>> 0) !== 0) failD(-14); return rangeOf(s.k); },
+    addRange(range) { needArgs(arguments, 1, 'addRange'); op(rid(range), 141); },
+    removeRange(range) { needArgs(arguments, 1, 'removeRange'); op(rid(range), 142); },
+    removeAllRanges() { op(0, 143); },
+    empty() { op(0, 143); },
+    collapse(node, offset = 0) { needArgs(arguments, 1, 'collapse'); if (node === null) { op(0, 143); return; } op(0, 144, point(node, offset)); },
+    setPosition(node, offset = 0) { needArgs(arguments, 1, 'setPosition'); if (node === null) { op(0, 143); return; } op(0, 144, point(node, offset)); },
+    collapseToStart() { op(0, 145, '1'); },
+    collapseToEnd() { op(0, 145, '0'); },
+    extend(node, offset = 0) { needArgs(arguments, 1, 'extend'); op(0, 146, point(node, offset)); },
+    setBaseAndExtent(anchorNode, anchorOffset, focusNode, focusOffset) {
+      needArgs(arguments, 4, 'setBaseAndExtent'); op(0, 147, point(anchorNode, anchorOffset) + ' ' + point(focusNode, focusOffset)); },
+    selectAllChildren(node) { needArgs(arguments, 1, 'selectAllChildren'); op(0, 148, String(nodeId(node))); },
+    deleteFromDocument() { op(0, 149); },
+    containsNode(node, allowPartialContainment = false) { needArgs(arguments, 1, 'containsNode'); return op(0, 150, nodeId(node) + ' ' + (allowPartialContainment ? 1 : 0)) === '1'; },
+    modify() {},
+    getComposedRanges() { const s = selState(); return s ? [new StaticRange({ startContainer: wrap(s.b[0]), startOffset: s.b[1], endContainer: wrap(s.b[2]), endOffset: s.b[3] })] : []; },
+    toString() { const s = selState(); return s ? op(s.k, 111) : ''; },
+  })) define(Selection.prototype, k, f);
+  for (const [k, f] of Object.entries({
+    anchorNode() { const s = selState(); return s ? wrap(s.dir === 2 ? s.b[2] : s.b[0]) : null; },
+    anchorOffset() { const s = selState(); return s ? (s.dir === 2 ? s.b[3] : s.b[1]) : 0; },
+    focusNode() { const s = selState(); return s ? wrap(s.dir === 2 ? s.b[0] : s.b[2]) : null; },
+    focusOffset() { const s = selState(); return s ? (s.dir === 2 ? s.b[1] : s.b[3]) : 0; },
+    isCollapsed() { const s = selState(); return !s || collapsedB(s.b); },
+    rangeCount() { return selState() ? 1 : 0; },
+    type() { const s = selState(); return !s ? 'None' : collapsedB(s.b) ? 'Caret' : 'Range'; },
+    direction() { const s = selState(); return !s || collapsedB(s.b) || s.dir === 0 ? 'none' : s.dir === 2 ? 'backward' : 'forward'; },
+  })) Object.defineProperty(Selection.prototype, k, { get: f, configurable: true, enumerable: true });
+  const getSelection = function () { return this === undefined || this === window || this === document ? selection : null; };
+  define(Document.prototype, 'getSelection', function () { return this === document ? selection : null; });
+  // ---- NodeIterator and TreeWalker (DOM §6) -------------------------------------------------
+  const NodeFilter = function NodeFilter() { throw new TypeError('Illegal constructor'); };
+  consts(NodeFilter, { FILTER_ACCEPT: 1, FILTER_REJECT: 2, FILTER_SKIP: 3, SHOW_ALL: 0xFFFFFFFF, SHOW_ELEMENT: 0x1,
+    SHOW_ATTRIBUTE: 0x2, SHOW_TEXT: 0x4, SHOW_CDATA_SECTION: 0x8, SHOW_ENTITY_REFERENCE: 0x10, SHOW_ENTITY: 0x20,
+    SHOW_PROCESSING_INSTRUCTION: 0x40, SHOW_COMMENT: 0x80, SHOW_DOCUMENT: 0x100, SHOW_DOCUMENT_TYPE: 0x200,
+    SHOW_DOCUMENT_FRAGMENT: 0x400, SHOW_NOTATION: 0x800 });
+  const traversers = new WeakMap();
+  const tstate = t => { const s = traversers.get(t); if (!s) throw new TypeError('Illegal invocation'); return s; };
+  // "Filter" (DOM §6) for a node that whatToShow shows (Lean passed over the others).
+  const filterNode = (st, node) => {
+    if (st.active) failD(-16);
+    const f = st.filter;
+    if (f === null || f === undefined) return 1;
+    st.active = true;
+    try {
+      let r;
+      if (typeof f === 'function') r = f.call(undefined, node);
+      else { const m = f.acceptNode; if (typeof m !== 'function') throw new TypeError('NodeFilter.acceptNode is not a function'); r = m.call(f, node); }
+      return Number(r) & 0xFFFF;
+    } finally { st.active = false; }
+  };
+  class NodeIterator { constructor() { throw new TypeError('Illegal constructor'); } }
+  const iterate = (it, next) => {
+    const st = tstate(it);
+    let [node, before] = op(st.k, 133).split(' ').map(Number);
+    for (;;) {
+      const r = op(st.k, 131, `${next ? 1 : 0} ${node} ${before}`);
+      if (r === null) return null;
+      [node, before] = r.split(' ').map(Number);
+      if (filterNode(st, wrap(node)) === 1) break;
+    }
+    op(st.k, 132, `${node} ${before}`);
+    return wrap(node);
+  };
+  for (const [k, f] of Object.entries({
+    nextNode() { return iterate(this, true); },
+    previousNode() { return iterate(this, false); },
+    detach() {},
+  })) define(NodeIterator.prototype, k, f);
+  for (const [k, f] of Object.entries({
+    root() { return tstate(this).root; },
+    whatToShow() { return tstate(this).whatToShow; },
+    filter() { return tstate(this).filter; },
+    referenceNode() { return wrap(Number(op(tstate(this).k, 133).split(' ')[0])); },
+    pointerBeforeReferenceNode() { return op(tstate(this).k, 133).split(' ')[1] === '1'; },
+  })) Object.defineProperty(NodeIterator.prototype, k, { get: f, configurable: true, enumerable: true });
+  class TreeWalker { constructor() { throw new TypeError('Illegal constructor'); } }
+  // A method of the walker: Lean's machine (Traversal.run) stops at each node to filter.
+  const walk = (tw, m) => {
+    const st = tstate(tw);
+    let a = op(st.cur, 134, `${m} ${st.rootId} ${st.whatToShow}`);
+    for (;;) {
+      const p = a.split(' ');
+      if (p[0] === 'd') { const k = Number(p[1]); if (k < 0) return null; st.cur = k; return wrap(k); }
+      const r = filterNode(st, wrap(Number(p[1])));
+      a = op(0, 135, p.slice(2).join(' ') + ' ' + r);
+    }
+  };
+  ['parentNode', 'firstChild', 'lastChild', 'previousSibling', 'nextSibling', 'previousNode', 'nextNode']
+    .forEach((name, m) => define(TreeWalker.prototype, name, function () { return walk(this, m); }));
+  for (const [k, f] of Object.entries({
+    root() { return tstate(this).root; },
+    whatToShow() { return tstate(this).whatToShow; },
+    filter() { return tstate(this).filter; },
+  })) Object.defineProperty(TreeWalker.prototype, k, { get: f, configurable: true, enumerable: true });
+  Object.defineProperty(TreeWalker.prototype, 'currentNode', { get() { return wrap(tstate(this).cur); },
+    set(node) { tstate(this).cur = nodeId(node); }, configurable: true, enumerable: true });
+  Object.defineProperties(Document.prototype, {
+    createRange: { value() { return rangeOf(Number(op(nodeId(this), 100))); }, writable: true, configurable: true },
+    createNodeIterator: { value(root, whatToShow = 0xFFFFFFFF, filter = null) {
+      needArgs(arguments, 1, 'createNodeIterator');
+      const id = nodeId(root), w = whatToShow >>> 0;
+      const it = Object.create(NodeIterator.prototype);
+      traversers.set(it, { k: Number(op(id, 130, String(w))), root, whatToShow: w, filter, active: false });
+      return it;
+    }, writable: true, configurable: true },
+    createTreeWalker: { value(root, whatToShow = 0xFFFFFFFF, filter = null) {
+      needArgs(arguments, 1, 'createTreeWalker');
+      const id = nodeId(root), tw = Object.create(TreeWalker.prototype);
+      traversers.set(tw, { rootId: id, root, cur: id, whatToShow: whatToShow >>> 0, filter, active: false });
+      return tw;
+    }, writable: true, configurable: true },
+  });
+  // ---- getComputedStyle (CSSOM §9): Lean's cascade (Rendering.CSS, the cascade alone, op 20)
+  // and Lean's layout for the used width and height (op 21). Live: each read asks again; the
+  // engine keeps one cascade and one layout per DOM version, and a read of a style property
+  // makes no layout.
+  class CSSStyleDeclaration { constructor() { throw new TypeError('Illegal constructor'); } }
+  const computedValues = el => {
+    const r = n.query(nodeId(el), 20, ''), m = new Map();
+    if (typeof r !== 'string') return m;
+    const xs = r.split('\u0000');
+    for (let i = 0; i + 1 < xs.length; i += 2) m.set(xs[i], xs[i + 1]);
+    if (m.get('display') !== 'none') {
+      const u = n.query(nodeId(el), 21, '');
+      if (typeof u === 'string' && u !== '') { const [w, h] = u.split(' '); m.set('width', w + 'px'); m.set('height', h + 'px'); }
+    }
+    return m;
+  };
+  const cssName = p => p.startsWith('--') ? p : p.replace(/[A-Z]/g, c => '-' + c.toLowerCase()).replace(/^webkit-/, '-webkit-');
+  const readOnlyDecl = () => new DOMException('The computed style declaration is read-only.', 'NoModificationAllowedError');
+  const computedStyle = el => {
+    const target = Object.create(CSSStyleDeclaration.prototype);
+    const methods = {
+      getPropertyValue: name => computedValues(el).get(String(name).startsWith('--') ? String(name) : String(name).toLowerCase()) ?? '',
+      getPropertyPriority: () => '',
+      setProperty: () => { throw readOnlyDecl(); },
+      removeProperty: () => { throw readOnlyDecl(); },
+      item: i => [...computedValues(el).keys()][i >>> 0] ?? '',
+    };
+    return new Proxy(target, {
+      get(t, p) {
+        if (typeof p !== 'string') return Reflect.get(t, p);
+        if (Object.prototype.hasOwnProperty.call(methods, p)) return methods[p];
+        if (p === 'length') return computedValues(el).size;
+        if (p === 'cssText') return '';
+        if (p === 'parentRule') return null;
+        if (/^(0|[1-9][0-9]*)$/.test(p)) return [...computedValues(el).keys()][Number(p)];
+        if (p === 'cssFloat') return computedValues(el).get('float') ?? '';
+        const m = computedValues(el), k = cssName(p);
+        return m.has(k) ? m.get(k) : (m.has(p) ? m.get(p) : (p in t ? Reflect.get(t, p) : ''));
+      },
+      set() { throw readOnlyDecl(); },
+    });
+  };
+  def('getComputedStyle', (el, pseudo) => {
+    if (!(el instanceof Element)) throw new TypeError("Failed to execute 'getComputedStyle': parameter 1 is not of type 'Element'.");
+    return computedStyle(el);
+  });
+  def('CSSStyleDeclaration', CSSStyleDeclaration);
+  def('getSelection', getSelection);
+  for (const [k, v] of Object.entries({ AbstractRange, Range, StaticRange, Selection, NodeFilter, NodeIterator, TreeWalker })) def(k, v);
+  // ==== end dombreadth ====
 
   // Content event handler attributes (HTML §8.1.8.1): onclick="..." and <body onload>.
   // The event handler content attributes of the elements of a subtree (a page's, or a clone's:
