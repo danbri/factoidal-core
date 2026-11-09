@@ -346,7 +346,7 @@
    "handwritten": true,
    "needs": "page scripts in the engine (BubblePopJS or QuickJS-NG in WasmVM); fetch for live queries to QLever, else the inlined snapshot (tools/spinal-tap-snapshot.py, third_party/data/wikidata-spinal-tap)",
    "appRefused": "does not execute scripts",
-   "shows": "the band's name in Mathematical Fraktur letters (Noto Sans Math) with chrome, a black cut line and a flame edge, and a diaeresis drawn over the 𝔫; seven SPARQL queries with syntax highlighting; Wikidata results as amp-panel cards with dials that go to eleven, built in one DOM batch; a zoom from 1 to 40 between the two dots that fades into 𝔉𝔬𝔞𝔣𝔫𝔞𝔲𝔱; up to eleven combining marks a letter",
+   "shows": "the band's name in Mathematical Fraktur letters (Noto Sans Math) with chrome, a black cut line and a flame edge, and a diaeresis over the 𝔫 that is U+0308 in the text, placed by the shaper (issue 368); seven SPARQL queries with syntax highlighting; Wikidata results as amp-panel cards with dials that go to eleven, built in one DOM batch; a zoom from 1 to 40 between the two dots that fades into 𝔉𝔬𝔞𝔣𝔫𝔞𝔲𝔱; up to eleven combining marks a letter",
    "doesNotShow": "the band's own logo or any picture from Wikimedia Commons; U+0308 after a Fraktur letter (Foafnaut does not place marks from another font yet, so the dots are SVG); without fetch the results are the snapshot's, not live"
   },
   {

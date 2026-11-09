@@ -81,6 +81,17 @@ structure Plan where
 
 def Plan.empty (p : Plan) : Bool := p.targets.isEmpty
 
+/-- The attributes a script sets that a frame paints with no layout. -/
+def slotAttributes : List String := ["transform","opacity"]
+
+/-- The values of a script's slots, by node: `transform` and `opacity`. -/
+structure Slots where
+  transforms : Std.TreeMap Nat String := {}
+  opacities : Std.TreeMap Nat String := {}
+  deriving Inhabited
+
+def Slots.isEmpty (s : Slots) : Bool := s.transforms.isEmpty && s.opacities.isEmpty
+
 private def attr (n : DOM.Node) (key : String) : Option String :=
   (n.attrs.find? fun a => a.ns.isNone && a.lname == key).map (·.value)
 
@@ -220,13 +231,14 @@ def clicksOn (dom : DOM.Dom) (clicks : List (Nat × Nat)) (e : Nat) : List Nat :
 
 /-- What the elements of the plan are at time `now`: their transforms and opacities, and
 whether an animation runs or will begin by the clock (the host then draws the next
-frame). `values` are the script values of `transform` slots. -/
-def state (plan : Plan) (dom : DOM.Dom) (values : Std.TreeMap Nat String) (now : Nat) (clicks : List (Nat × Nat)) :
+frame). `values` are the script values of `transform` and `opacity` slots. -/
+def state (plan : Plan) (dom : DOM.Dom) (values : Slots) (now : Nat) (clicks : List (Nat × Nat)) :
     Std.TreeMap Nat (Transform × Option Float) × Bool := Id.run do
   let mut out : Std.TreeMap Nat (Transform × Option Float) := {}
   for (id,t) in plan.targets do
-    let base := (values.get? id).getD t.base
-    out := out.insert id ((NativeSVG.transformOf base).toOption.getD identity,none)
+    let base := (values.transforms.get? id).getD t.base
+    let opacity := (values.opacities.get? id).map fun v => max 0 (min 1 ((CSS.number v).toOption.getD 1))
+    out := out.insert id ((NativeSVG.transformOf base).toOption.getD identity,opacity)
   let mut running := false
   for a in plan.animations do
     let clicks := fun (e : Option String) => match e with
@@ -254,44 +266,48 @@ def state (plan : Plan) (dom : DOM.Dom) (values : Std.TreeMap Nat String) (now :
       out := out.insert a.target (m,some (max 0 (min 1 (if a.additive then o.getD baseOpacity+x else x))))
   return (out,running)
 
-private def patchNodes (groups : Std.TreeMap String Transform)
-    (shapeOf : List Nat → Option (Transform × Option Float)) : Nat → List Node → List Node
-  | 0, nodes => nodes
-  | fuel+1, nodes => nodes.map fun
+private def patchNodes (groups : Std.TreeMap String (Transform × Option Float))
+    (shapeOf : List Nat → Option (Transform × Option Float)) : Nat → Float → List Node → List Node
+  | 0, _, nodes => nodes
+  | fuel+1, fade, nodes => nodes.map fun
     | .group (some g) t children =>
-      .group (some g) ((groups.get? g).getD t) (patchNodes groups shapeOf fuel children)
-    | .group none t children => .group none t (patchNodes groups shapeOf fuel children)
+      let (m,o) := (groups.get? g).getD (t,none)
+      .group (some g) m (patchNodes groups shapeOf fuel (fade*o.getD 1) children)
+    | .group none t children => .group none t (patchNodes groups shapeOf fuel fade children)
     | .clipped (some g) t clip children =>
       match groups.get? g with
-      | some m => .clipped (some g) m {clip with transform := m} (patchNodes groups shapeOf fuel children)
-      | none => .clipped (some g) t clip (patchNodes groups shapeOf fuel children)
-    | .clipped none t clip children => .clipped none t clip (patchNodes groups shapeOf fuel children)
+      | some (m,o) => .clipped (some g) m {clip with transform := m} (patchNodes groups shapeOf fuel (fade*o.getD 1) children)
+      | none => .clipped (some g) t clip (patchNodes groups shapeOf fuel fade children)
+    | .clipped none t clip children => .clipped none t clip (patchNodes groups shapeOf fuel fade children)
     | .paint item =>
-      if item.primitive.element.isEmpty then .paint item else
-      match shapeOf item.primitive.element with
-      | some (m,o) =>
-        let p := {item.primitive with transform := m, opacity := o.getD item.primitive.opacity}
-        .paint {item with primitive := p}
-      | none => .paint item
+      let shape := if item.primitive.element.isEmpty then none else shapeOf item.primitive.element
+      let p := match shape with
+        | some (m,o) => {item.primitive with transform := m, opacity := o.getD item.primitive.opacity}
+        | none => item.primitive
+      if fade == 1 && shape.isNone then .paint item else .paint {item with primitive := {p with opacity := p.opacity*fade}}
 
 /-- The scene with the transforms and opacities of `values` (by node) put on the nodes
-of their elements. The depth is that of the SVG reader's groups (at most 64 here). -/
+of their elements. The opacity of a group (a `text`, whose glyphs are its paths) fades
+each of its primitives: the same as the group's opacity where they do not overlap. The
+depth is that of the SVG reader's groups (at most 64 here). -/
 def patch (plan : Plan) (values : Std.TreeMap Nat (Transform × Option Float)) (scene : Scene) : Scene := Id.run do
-  let mut groups : Std.TreeMap String Transform := {}
+  let mut groups : Std.TreeMap String (Transform × Option Float) := {}
   let mut shapes : List (List Nat × Transform × Option Float) := []
   for (id,t) in plan.targets do
     let some (m,o) := values.get? id | continue
     match t.group with
-    | some g => groups := groups.insert g m
+    | some g => groups := groups.insert g (m,o)
     | none => shapes := (t.path,m,o) :: shapes
   let shapeOf := fun (p : List Nat) => (shapes.find? (·.1 == p)).map (·.2)
-  return {scene with tree := patchNodes groups shapeOf 64 scene.tree}
+  return {scene with tree := patchNodes groups shapeOf 64 1 scene.tree}
 
 /-! ### `transform` slots of the script commands -/
 
-/-- The value that stands for a script's `transform` in the layout key: it can not be
-a transform, so the layout knows the slot (`unmark`). -/
+/-- The value that stands for a script's `transform` or `opacity` in the layout key: it
+can not be either, so the layout knows the slot (`unmark`). -/
 def slotMark : String := "\x01transform"
+def opacityMark : String := "\x01opacity"
+
 
 private def field (c : JSON.Json) (k : String) : Option JSON.Json := c.field? k
 private def nodeOf (c : JSON.Json) (k : String) : Option Nat :=
@@ -304,7 +320,7 @@ attribute) with the value of each `setAttribute` of `transform` replaced by
 `slotMark`, and those values by node. A command is a slot only when no later command
 could read the value: no `cloneNode`, `importNode` or `adoptNode` after it, and no
 other command on the node's `transform` (`removeAttribute`, the `NS` forms). -/
-def slots (commands : List JSON.Json) : List JSON.Json × Std.TreeMap Nat String := Id.run do
+def slots (commands : List JSON.Json) : List JSON.Json × Slots := Id.run do
   let op := fun (c : JSON.Json) => match field c "op" with | some (.string o) => o | _ => ""
   let name := fun (c : JSON.Json) => match field c "name" with | some (.string n) => n | _ => ""
   let arr := commands.toArray
@@ -312,24 +328,27 @@ def slots (commands : List JSON.Json) : List JSON.Json × Std.TreeMap Nat String
   let lastCopy := (List.range arr.size).foldl (fun acc i =>
     if ["cloneNode","importNode","adoptNode"].contains (op (arr.getD i .null)) then some i else acc) none
   let touched := commands.filterMap fun c =>
-    if ["removeAttribute","setAttributeNS","removeAttributeNS"].contains (op c) && name c == "transform"
-    then nodeOf c "nodeId" else none
+    if ["removeAttribute","setAttributeNS","removeAttributeNS"].contains (op c) && slotAttributes.contains (name c)
+    then (nodeOf c "nodeId").map ((·,name c)) else none
   let mut out : Array JSON.Json := #[]
-  let mut values : Std.TreeMap Nat String := {}
+  let mut values : Slots := {}
   for i in [:arr.size] do
     let c := arr.getD i .null
-    let isSlot := op c == "setAttribute" && name c == "transform" &&
+    let isSlot := op c == "setAttribute" && slotAttributes.contains (name c) &&
       (match lastCopy with | some j => j < i | none => true) &&
-      (match nodeOf c "nodeId" with | some n => !touched.contains n | none => false)
+      (match nodeOf c "nodeId" with | some n => !touched.contains (n,name c) | none => false)
     match isSlot, nodeOf c "nodeId", field c "value", c with
     | true, some n, some (.string v), .object fs =>
-      values := values.insert n v
-      out := out.push (.object (fs.map fun (k,x) => if k == "value" then (k,.string slotMark) else (k,x)))
+      let opacity := name c == "opacity"
+      values := if opacity then {values with opacities := values.opacities.insert n v}
+        else {values with transforms := values.transforms.insert n v}
+      let mark := if opacity then opacityMark else slotMark
+      out := out.push (.object (fs.map fun (k,x) => if k == "value" then (k,.string mark) else (k,x)))
     | _, _, _, _ => out := out.push c
   return (out.toList,values)
 
 /-- The layout request with the slot values out (`slots`), and those values. -/
-def slotKey (request : JSON.Json) : JSON.Json × Std.TreeMap Nat String :=
+def slotKey (request : JSON.Json) : JSON.Json × Slots :=
   match request with
   | .object fields =>
     match fields.find? (·.1 == "commands") with
@@ -341,14 +360,20 @@ def slotKey (request : JSON.Json) : JSON.Json × Std.TreeMap Nat String :=
   | _ => (request,{})
 
 /-- The arena of a layout with slots: each `transform` that holds `slotMark` is made
-empty (the identity), and its element is a slot. -/
+empty (the identity), each `opacity` that holds `opacityMark` is taken out (opacity 1),
+and their elements are slots. -/
 def unmark (dom : DOM.Dom) : DOM.Dom × List Nat := Id.run do
   let mut out := dom
   let mut found : List Nat := []
   for id in [:dom.size] do
     let n := dom.get id
-    if n.type == .element && n.attrs.any (fun a => a.ns.isNone && a.lname == "transform" && a.value == slotMark) then
-      out := {out with nodes := out.nodes.set! id (setAttr n "transform" "")}
+    if n.type != .element then continue
+    let t := n.attrs.any (fun a => a.ns.isNone && a.lname == "transform" && a.value == slotMark)
+    let o := n.attrs.any (fun a => a.ns.isNone && a.lname == "opacity" && a.value == opacityMark)
+    if t || o then
+      let n := if t then setAttr n "transform" "" else n
+      let n := if o then {n with attrs := n.attrs.filter (fun a => !(a.ns.isNone && a.lname == "opacity"))} else n
+      out := {out with nodes := out.nodes.set! id n}
       found := id :: found
   return (out,found.reverse)
 
