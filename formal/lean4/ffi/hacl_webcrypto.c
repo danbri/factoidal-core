@@ -207,7 +207,7 @@ LEAN_EXPORT lean_obj_res l4_web_hacl_chachapoly_open(b_lean_obj_arg key, b_lean_
   uint8_t *o = L4W_PTR(out);
   if (!l4wc_chacha_open(L4W_PTR(key), L4W_PTR(nonce), L4W_PTR(aad), (uint32_t)an, L4W_PTR(sealed), (uint32_t)pn,
                         o + 1)) {
-    l4w_refuse(out);
+    lean_dec_ref(l4w_refuse(out)); /* the empty array l4w_refuse answers is not used here */
     lean_obj_res fail = l4w_fresh(1);
     L4W_PTR(fail)[0] = 0;
     return fail;
