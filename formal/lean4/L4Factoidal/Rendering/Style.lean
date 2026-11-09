@@ -856,3 +856,19 @@ def computeAll (dom : Dom) (rules : List Rule) (textScale : Float := 1)
   throw "DOM style traversal exceeds arena bound"
 
 end L4Factoidal.Rendering.CSS
+
+namespace L4Factoidal.Rendering.CSS
+/-- `CSS.supports(property, value)` (CSS Conditional 3 §8.1) for this profile: the
+declaration is one the profile reads and applies (`apply`); a custom property takes any
+value; the CSS-wide keywords stand for any property of the profile. -/
+def supportsDeclaration (property value : String) : Bool :=
+  let p := (property.trimAscii.toString).toLower
+  let v := value.trimAscii.toString
+  if p.startsWith "--" then p.length > 2
+  else if v.isEmpty || v.contains ';' || v.contains '!' then false
+  else if ["inherit", "initial", "unset", "revert", "revert-layer"].contains v.toLower then
+    htmlProperties.contains p
+  else match declarations (p ++ ":" ++ v) with
+    | .ok ds => !ds.isEmpty && ds.all fun d => (apply {} d).toOption.isSome
+    | .error _ => false
+end L4Factoidal.Rendering.CSS

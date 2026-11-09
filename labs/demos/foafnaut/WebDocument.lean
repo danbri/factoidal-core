@@ -1217,10 +1217,13 @@ def measure (request : JSON.Json) : WasmVM.Hosts.Page.Measure := fun dom width h
     let rules ← rules dom request
     let state := withPointer dom (← elementState dom (baseURL dom (str request "url")) request) (none,none)
     Rendering.CSS.computeAll dom rules textScale state
-  fun node op => if op == 20 then
+  fun node op => if op == 20 || op ≥ 200 then
       match styled.get with
       | .ok styles => if node < dom.size && (dom.get node).type == .element then
-          some (Rendering.ComputedValues.text (styles[node]?.getD {})) else some ""
+          let c := styles[node]?.getD {}
+          some (if op == 20 then Rendering.ComputedValues.text c
+            else (((Rendering.ComputedValues.values c)[op - 200]?).map (·.2)).getD "")
+        else some ""
       | .error _ => none
     else match laid.get with
     | .ok l => readAnswer l node op
