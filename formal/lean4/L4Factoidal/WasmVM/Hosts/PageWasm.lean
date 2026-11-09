@@ -22,8 +22,8 @@ page store only through the one import `foafnaut_dom.wasm_call`, served here.
 `[out, out + cap)` and `[view, view + viewLen)`. Everything else it changes is this
 module's own state.
 
-The calls into a module are WasmVM's `invokeSteps`/`resumeSteps`: a call of a JavaScript
-import stops the run (`Outcome.hostCall`), the run is kept here (`State.paused`), and the
+The calls into a module are WasmVM's `invokeSteps`/`resumeSteps`: a call of an imported
+JavaScript function stops the run (`Outcome.hostCall`), the run is kept here (`State.paused`), and the
 answer tells the prelude which JavaScript function to call; the prelude answers with op
 `resume`. So a page module never runs while a script runs, and the script engine is never
 entered from Lean: there is no re-entrant call.
