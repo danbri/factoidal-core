@@ -4,7 +4,7 @@
     python3 tools/test_lean_csimp_reach.py                  # synthetic cases and the real build
     python3 tools/test_lean_csimp_reach.py --synthetic-only # no Lean build needed
     python3 tools/test_lean_csimp_reach.py --tool PATH      # another copy of the tool (a mutant, an old version)
-    python3 tools/test_lean_csimp_reach.py --mutants        # break the tool 17 ways; each must fail a case
+    python3 tools/test_lean_csimp_reach.py --mutants        # break the tool 20 ways; each must fail a case
 
 Two groups.
 
@@ -644,6 +644,50 @@ def _():
         t.close()
 
 
+CORE_LEAN = """namespace C
+def g (n : Nat) : Float := 0
+def h (xs : List Nat) : Nat := 0
+@[csimp] theorem ofNat_eq : @Float.ofNat = @g := rfl
+end C
+"""
+
+
+def core_c():
+    return {"C.c": cfun(sym("C", "g"), []) + cfun(sym("C", "h"), []) + cfun(sym("C", "uses"), [call(sym("C", "g"))])}
+
+
+@case("a theorem whose left side is a Lean core definition is listed as CORE; it does not fail the gate")
+def _():
+    t = with_tree({"A.lean": BASE_LEAN, "C.lean": CORE_LEAN}, base_c() | core_c())
+    try:
+        rc, res, out, err = t.run("--gate")
+        assert rc == 0 and res["problems"] == [], (rc, res["problems"], err)
+        assert [(x["theorem"], x["left"]) for x in res["core"]] == [("ofNat_eq", "Float.ofNat")], res["core"]
+        assert "CORE C.lean" in out and "Float.ofNat -> g" in out, out
+        assert res["stats"]["left_sides"] == 1, res["stats"]   # the core theorem is not a target
+    finally:
+        t.close()
+
+
+@case("a left side with no C symbol that is not in the core list still fails the gate; so does a core left "
+      "side whose replacement has no C symbol")
+def _():
+    other = CORE_LEAN.replace("@Float.ofNat = @g", "@List.sum = @h")
+    t = with_tree({"A.lean": BASE_LEAN, "C.lean": other}, base_c() | core_c())
+    try:
+        rc, res, out, err = t.run("--gate")
+        assert rc == 1 and len(res["problems"]) == 1 and res["core"] == [], (rc, res["problems"], res["core"])
+    finally:
+        t.close()
+    missing = CORE_LEAN.replace("@Float.ofNat = @g", "@Float.ofNat = @notCompiled")
+    t = with_tree({"A.lean": BASE_LEAN, "C.lean": missing}, base_c() | core_c())
+    try:
+        rc, res, out, err = t.run("--gate")
+        assert rc == 1 and len(res["problems"]) == 1 and res["core"] == [], (rc, res["problems"], res["core"])
+    finally:
+        t.close()
+
+
 # ---------------------------------------------------------------- real build
 
 REQUIRED_REAL_MODULES = ("L4Factoidal.CsimpReachFixture", "Harness.Qlvr", "Harness.CryptoProbe")
@@ -808,6 +852,13 @@ MUTANTS = {
         '        if ma and any(a.strip() == "csimp" for a in ma.group(1).split(",")):', '        if False:'),
     "comments are not blanked": (
         '        code.append("".join(out))\n    return code', '        code.append(raw.rstrip("\\n"))\n    return code'),
+    "a core left side is a problem": (
+        '        if lc is None and th["lhs"] in CORE_LEFT_SIDES:', '        if False:'),
+    "every unresolved left side is a core one": (
+        '        if lc is None and th["lhs"] in CORE_LEFT_SIDES:', '        if lc is None:'),
+    "a core theorem needs no compiled replacement": (
+        '            if rc is None:\n                problems.append((th, "replacement `%s` has no emitted C symbol" % th["rhs"]))\n            else:\n                core.append(th)',
+        '            core.append(th)'),
     "C files of deleted modules are read": (
         '            if module in modules:\n                found.append((path, rel, module))',
         '            if True:\n                found.append((path, rel, module))'),

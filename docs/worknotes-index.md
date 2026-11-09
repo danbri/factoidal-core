@@ -15,6 +15,7 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-11-09 | [Foafnaut performance exploration](designissues/2026-11-09-foafnaut-perf-exploration.md) | this commit | current — BubblePopJS by operation against QuickJS-NG and V8 with no JIT (main and `wip/bpperf`), the engine's start, first compile and frame by phase on Linux, integers through GMP repaired, ranked next steps |
 | 2026-11-09 | [Foafnaut handoff](designissues/2026-11-09-foafnaut-handoff.md) | | current — state, work in flight and next work at 2026-11-09; entry point is `skills/foafnaut/SKILL.md` |
 | 2026-11-08 | [Foafnaut browser state in Linked Web Storage](designissues/2026-11-08-browser-state-lws.md) | | current — local pod and IndexedDB; pod sync native only |
 | 2026-11-06 | [Deployable modules: the mechanism, by measurement](20261106-deployable-modules.md) | | |

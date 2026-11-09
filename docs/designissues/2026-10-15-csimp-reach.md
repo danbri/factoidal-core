@@ -96,6 +96,15 @@ allow list with its reason (`leaf`, `bound`, `twin`, `guard`, `spec`, `dead arm`
 - It lists the callers of the left sides of theorems. A specification that compiled code calls and
   that has no theorem of its own is not listed (`XML.parseChildren` until 2026-10-15); it shows
   only as the OWNER of a finding.
+- Added 2026-11-09. A theorem of this tree whose left side is a definition of Lean core
+  (`Float.ofNat`, `Float.ofInt` and `Nat.toFloat` in `L4Factoidal/Prim/FloatOfNat.lean`; the
+  list is `CORE_LEFT_SIDES` in the tool) is printed as `CORE` and its reach is not audited.
+  The core function has no C symbol in this tree, and every module that does not import the
+  theorem still calls it. `python3 tools/lean-literal-parse-audit.py --conversions` lists the
+  compiled functions that still call the core conversions. A left side with no C symbol that
+  is not in the list fails the gate as before. The self-test has 2 synthetic cases and 3
+  deliberate breaks for this rule (31 synthetic cases and 20 breaks on that day). Record:
+  [2026-11-09-foafnaut-perf-exploration.md](2026-11-09-foafnaut-perf-exploration.md), section 7.
 - It does not measure speed.
 
 ## 5. Checks of the tool, with their results

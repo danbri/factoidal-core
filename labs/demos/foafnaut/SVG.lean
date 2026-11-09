@@ -8,6 +8,10 @@ import SVGDash
 import SVGDashUnits
 import SVGStroke
 import ImageData
+-- The `csimp` theorems of `Prim.FloatOfNat` make this module's `Float.ofNat`, `Float.ofInt` and
+-- `n.toFloat` calls the fast twins (no decimal parse of 2^53 at each call, Lean 4.33.1): keep
+-- this import.
+import L4Factoidal.Prim.FloatOfNat
 import L4Factoidal.Math.Affine
 import L4Factoidal.Tdb2.Format
 import L4Factoidal.Rendering.FloatFormat

@@ -29,6 +29,19 @@ namespace L4Factoidal.JS
 def nan : Float := 0.0 / 0.0
 def inf : Float := 1.0 / 0.0
 
+/-! Constants that hot functions read. A `Float` literal that the compiler leaves in a function
+body is a call of `Float.ofScientific` at each evaluation, and in Lean 4.33.1 that call reads
+2^53 from decimal text (`L4Factoidal/Prim/FloatOfNat.lean`). A definition with no argument is
+made once, when the module starts. `tools/lean-literal-parse-audit.py` and the generated C
+(`.lake/build/ir/L4Factoidal/JS/Number.c`) show which literals stay in a body. -/
+
+/-- `+0`. -/
+@[noinline] def posZero : Float := 0.0
+/-- `-0`. -/
+@[noinline] def negZero : Float := -0.0
+/-- 10^21: from here `Number::toString` writes an exponent (§6.1.6.1.20). -/
+@[noinline] def tenPow21 : Float := 1e21
+
 /-- `x` is `-0`. -/
 def isNegZero (x : Float) : Bool := x == 0 && (x.toBits >>> 63) == 1
 
@@ -51,7 +64,7 @@ def numToString (x : Float) : String :=
   if x.isNaN then "NaN"
   else if x == 0 then "0"
   else if x.isInf then (if x < 0 then "-Infinity" else "Infinity")
-  else if isIntegral x && x.abs < 1e21 then
+  else if isIntegral x && x.abs < tenPow21 then
     let i := truncInt x
     toString i
   else
@@ -136,7 +149,7 @@ def jsMod (n d : Float) : Float :=
   else if n == 0 then n
   else if n.abs < 9007199254740992.0 && d.abs < 9007199254740992.0 && isIntegral n && isIntegral d then
     let r := (truncInt n).tmod (truncInt d)
-    if r == 0 then (if n < 0 then -0.0 else 0.0) else Float.ofInt r
+    if r == 0 then (if n < 0 then negZero else posZero) else Float.ofInt r
   else
     let (nn, an, bn) := parts n
     let (_, ad, bd) := parts d
@@ -145,7 +158,7 @@ def jsMod (n d : Float) : Float :=
     let a := an * (den / bn)
     let b := ad * (den / bd)
     let r := a % b
-    if r == 0 then (if nn then -0.0 else 0.0) else
+    if r == 0 then (if nn then negZero else posZero) else
     -- r / den with den = 2^k
     let k := Nat.log2 den
     dyadic nn r (-(k : Int))
@@ -159,6 +172,79 @@ def toInt32 (x : Float) : Int :=
 /-- ToUint32 (§7.1.7). -/
 def toUint32 (x : Float) : Nat :=
   if !x.isFinite || x == 0 then 0 else ((truncInt x) % 4294967296).toNat
+
+/-! ### ToInt32 and ToUint32 on machine integers
+
+`toInt32` and `toUint32` above are the definitions: exact, on `Int`. Their compiled code is slow
+for a reason that is not in the algorithm. A Lean `Int` is a machine scalar only in the signed
+32-bit range, so the modulus 4294967296 is a GMP number and every `% 4294967296` is a GMP
+remainder (`lean_int_big_emod`). Measured 2026-11-09 (Linux x86_64, `leanc -O3`): 45 ns for one
+`toInt32` against 2 ns for the form below. Every bit operator of a script calls them two or
+three times.
+
+Below 2^53 in magnitude `truncInt x` is `x.toInt64.toInt`, and the low 32 bits of that `Int64`
+are the answer (`Int64.toInt32`, a truncation). The theorems prove the two forms equal for every
+`x`; the `csimp` theorems make compiled code use the fast forms. -/
+
+/-- `t.bmod (2 ^ 32)` written the way `toInt32` writes it. -/
+theorem bmod_two_pow_32 (t : Int) :
+    t.bmod (2 ^ 32) =
+      (if t % 4294967296 ≥ 2147483648 then t % 4294967296 - 4294967296 else t % 4294967296) := by
+  unfold Int.bmod
+  simp only [show ((2 : Nat) ^ 32 : Nat) = 4294967296 from by decide]
+  split <;> split <;> omega
+
+/-- The unsigned value of an `Int32` is its `Int` value modulo 2^32. -/
+theorem toNat_toUInt32_eq_emod (i : Int32) : i.toUInt32.toNat = (i.toInt % 4294967296).toNat := by
+  rw [← Int32.toNat_toBitVec, ← Int32.toInt_toBitVec, BitVec.toInt_eq_toNat_bmod]
+  have hlt := i.toBitVec.isLt
+  unfold Int.bmod
+  simp only [show ((2 : Nat) ^ 32 : Nat) = 4294967296 from by decide]
+  split <;> omega
+
+/-- 2^53 as a `Float`, made once when the module starts. Written in place, in a function small
+enough to be inlined, the literal is read from decimal text at each call (its mantissa,
+90071992547409920, is a `Nat` literal above 2^32; checked in the generated C of Lean 4.33.1). -/
+@[noinline] def twoPow53F : Float := 9007199254740992.0
+
+/-- `toInt32` for compiled code: the low 32 bits of `x.toInt64` when `|x| < 2^53`. -/
+def toInt32Fast (x : Float) : Int :=
+  if !x.isFinite || x == 0 then 0 else
+  if x.abs < twoPow53F then x.toInt64.toInt32.toInt else toInt32 x
+
+theorem toInt32_eq_fast (x : Float) : toInt32 x = toInt32Fast x := by
+  unfold toInt32Fast
+  split
+  · simp [toInt32, *]
+  · next h0 =>
+    split
+    · next hs =>
+      have hs : x.abs < 9007199254740992.0 := hs
+      simp only [toInt32, h0, truncInt, hs, if_true, Bool.false_eq_true, if_false]
+      rw [Int64.toInt_toInt32, bmod_two_pow_32]
+    · rfl
+
+@[csimp] theorem toInt32_eq_toInt32Fast : @toInt32 = @toInt32Fast := funext toInt32_eq_fast
+
+/-- `toUint32` for compiled code: the low 32 bits of `x.toInt64`, unsigned, when `|x| < 2^53`. -/
+def toUint32Fast (x : Float) : Nat :=
+  if !x.isFinite || x == 0 then 0 else
+  if x.abs < twoPow53F then x.toInt64.toInt32.toUInt32.toNat else toUint32 x
+
+theorem toUint32_eq_fast (x : Float) : toUint32 x = toUint32Fast x := by
+  unfold toUint32Fast
+  split
+  · simp [toUint32, *]
+  · next h0 =>
+    split
+    · next hs =>
+      have hs : x.abs < 9007199254740992.0 := hs
+      simp only [toUint32, h0, truncInt, hs, if_true, Bool.false_eq_true, if_false]
+      rw [toNat_toUInt32_eq_emod, Int64.toInt_toInt32, bmod_two_pow_32]
+      split <;> omega
+    · rfl
+
+@[csimp] theorem toUint32_eq_toUint32Fast : @toUint32 = @toUint32Fast := funext toUint32_eq_fast
 
 /-- Number::exponentiate (§6.1.6.1.3). -/
 def jsPow (b e : Float) : Float :=

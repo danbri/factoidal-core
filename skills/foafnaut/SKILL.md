@@ -1,6 +1,6 @@
 ---
 name: foafnaut
-description: Contribute to Foafnaut, the web browser with its own rendering engine (labs/demos/foafnaut, formal/lean4/L4Factoidal/Rendering, docs/web/hub/foafnaut). The code map (window, worker, engines, page generator, Hub host, Lean modules, page script engines BubblePopJS and QuickJS-NG in WasmVM), how to build, test, run and measure, the shared-machine rules (coordination log, one Lean build at a time, disk limits), the traps that cost time, and how to land work. Use before any Foafnaut change, build, sweep, Hub deploy or status report.
+description: Contribute to Foafnaut, the web browser with its own rendering engine (labs/demos/foafnaut, formal/lean4/L4Factoidal/Rendering, docs/web/hub/foafnaut). The code map (window, worker, engines, page generator, Hub host, Lean modules, page script engines BubblePopJS and QuickJS-NG in WasmVM, the text terminal front end Textnaut), what the owner says Foafnaut is and where each part is in the tree, how to build, test, run and measure (on the Mac, and the engine and BubblePopJS on a Linux cloud machine), the shared-machine rules (coordination log, one Lean build at a time, disk limits), the traps that cost time, and how to land work. Use before any Foafnaut change, build, sweep, Hub deploy or status report.
 ---
 
 # Foafnaut
@@ -23,6 +23,62 @@ This skill changes slowly. The handoff record goes stale first: check it against
 
 Every command here was read from the scripts at commit `6f08a9824` (2026-11-09). When a
 command and a script disagree, the script is correct. Fix this file.
+
+## What Foafnaut is (owner, 2026-11-09)
+
+Owner, 2026-11-09, verbatim, to a cloud session: "In the last ~10 days we have (using Lean)
+implemented some SVG on top of our XML stack and created a brand new browser, with builds
+including native OSX, and a wasm web-based version exposed in Factoidal hub. It is called
+FOAFNaut, and will touch on ideas explored 20 years ago under that name." "We have
+whatwg-based html parsing, an. Implementation of web assembly that permits us to safely run
+some legacy code when needed, our own new JS engine called BubblePopJS, font rendering, html
+layout, css, networking, tls and much more. We have beginnings of protocol support for chrome
+debugger, headless control and mcp. Also a text terminal frontend, Textnaut. The goal is to be
+competitive as a real browser, measured against the official Web Platform Tests, and to be
+efficient, performant, fast, private, accessible, international, and secure."
+
+Rules from it:
+
+- The measure of the browser is the Web Platform Tests (`tests/browser-wpt/`,
+  `tests/browser-wpt/wpt-score.py`; batch 2 KR 1.1). A score needs its suite, denominator
+  and date.
+- Seven qualities have equal standing with standards: efficient, performant, fast, private,
+  accessible, international, secure. A change that helps one and harms another says so.
+- Factoidal's first product line (the W3C data standards in `@factoidal/core`) continues. The
+  browser is built on the same Lean tree (XML, URL, encodings, RDF, SPARQL, XSLT).
+
+Where each part is in the tree. Checked on `origin/main` at `489d5cd3a` (2026-11-09, 22:41
+UTC) by file name and by text search. "Not found" means the search found no file on `main` or,
+by file name, on the `wip/` branches that were on origin at that time; the work may be in a
+local clone that is not pushed. Check again before you write that a part is missing.
+
+- HTML parsing after the WHATWG standard: `formal/lean4/L4Factoidal/HTML/` (`Tokenizer`,
+  `TreeBuilder`), DOM in `L4Factoidal/DOM/`; URL and encodings in `L4Factoidal/WHATWG/`.
+- SVG over the XML stack: `labs/demos/foafnaut/SVG*.lean`, `L4Factoidal/XML/`.
+- BubblePopWASM, the WebAssembly engine (it runs QuickJS-NG and other guests in a sandbox):
+  `L4Factoidal/WasmVM/`.
+- BubblePopJS: `L4Factoidal/JS/`; its page host `L4Factoidal/WasmVM/Hosts/LeanJS.lean`; its
+  command line `lake exe leanjs` (`run FILE`, `eval SRC`, `test262 ROOT DIR...`, `bench`).
+- Fonts: `L4Factoidal/Rendering/Sfnt*.lean`, `FontPolicy`, `FontProvider`; fonts in
+  `third_party/fonts/`.
+- Layout and CSS: `L4Factoidal/Rendering/Style.lean`, `Layout.lean`, `TableLayout.lean`.
+- Networking: the desktop host loads pages with the host's `fetch`
+  (`labs/demos/foafnaut/native_html_document.ts`), so TLS is the host's (Deno). Page scripts
+  have no network access yet: https://github.com/danbri/factoidal-core/issues/374 (`fetch`,
+  `XMLHttpRequest`, CORS in the engine). Record and replay proxy: `tools/devproxy/`. HTTP
+  code of the library: `L4Factoidal/HTTP/`, `L4Factoidal/Net/`.
+- A TLS implementation in BubblePopKit: not found.
+- Chrome debugger protocol, headless control, MCP served by the browser: not found. The
+  `labs/demos/foafnaut/hub_*_check.mjs` files use the Chrome debugger protocol as a client, to
+  drive headless Chrome against the Hub: that is test tooling. The WPT runner on
+  `wip/wptserve` classifies WebDriver tests. MCP for the data tools is
+  https://github.com/danbri/factoidal/issues/1121 (MCP over XMPP, and MCP controls for the
+  command line tools).
+- Textnaut, the browser in a text terminal: `labs/demos/foafnaut/textnaut/` (`README.md`,
+  `TUI-CATALOGUE.md`, the launcher `textnaut`).
+- Names, parts and the state of each build: `labs/demos/foafnaut/README.md`, "Names and parts".
+- macOS app and window: `labs/demos/foafnaut/run_html.ts`, `native_window.m`,
+  `build-executables.sh`. Hub version: `docs/web/hub/foafnaut/`.
 
 ## Owner rules
 
@@ -231,6 +287,50 @@ Measuring:
 - Profiling: macOS `sample` against a Deno loop over `engine.compileLayers`. No script for
   this is in the repository.
 
+### Measure BubblePopKit and BubblePopJS with no Mac
+
+A Linux cloud session can build and measure everything that is CPU work: the native build of
+BubblePopKit (`web-render-native`) and BubblePopJS (`leanjs`). It can not run the window, the
+GPU or the Deno host. Record of the first such session, with every number and command:
+[docs/designissues/2026-11-09-foafnaut-perf-exploration.md](../../docs/designissues/2026-11-09-foafnaut-perf-exploration.md).
+
+```sh
+# tools (Ubuntu 24.04): elan and the pinned Lean (skills/session-restore), then
+apt-get install -y --no-install-recommends time linux-tools-generic valgrind
+# BubblePopJS command line: about 3 minutes on 4 vCPUs. From formal/lean4:
+lake build leanjs && .lake/build/bin/leanjs bench
+# BubblePopKit, native: 16 to 20 minutes on 4 vCPUs, 1.1 GB of build output. From the repository root:
+bash labs/demos/foafnaut/build-web-render.sh --native
+```
+
+- One page, timed (font loaded, first compile, then COUNT frames, microseconds each). From
+  `labs/demos/foafnaut`, with `REQ` a file that holds
+  `{"op":"render","url":"https://example.invalid/","resources":[],"commands":[],"checks":false}`:
+  `.build/web-render/web-render-native pages/index.html 1600 1000 --document-bin REQ ../../../third_party/fonts/noto-sans/NotoSans-Regular.ttf OUT.bin 8`.
+  With no `"checks":false` each frame also computes the probe pixels (two to three times the time).
+- Exact cost by function: `valgrind --tool=callgrind` on that command at COUNT 1 and COUNT 4;
+  the difference, divided by 3, is one frame. COUNT 0 is start, font load and first compile.
+  `perf` on this kind of VM has only `-e cpu-clock` (no hardware counters); the binary is
+  `/usr/lib/linux-tools/*/perf`.
+- The cost of one JavaScript operation, for each engine, and its instructions, allocations
+  and big-number calls: `labs/demos/foafnaut/bubblepop_perf/opcost.py` (its header has the
+  commands). Comparison engines: QuickJS-NG `v0.18.0` built natively (`git clone --depth 1
+  --branch v0.18.0 https://github.com/quickjs-ng/quickjs`, then `cc -O2 -D_GNU_SOURCE
+  -funsigned-char -I. quickjs.c libregexp.c libunicode.c dtoa.c quickjs-libc.c qjs.c
+  gen/repl.c gen/standalone.c -lm -lpthread -ldl -o qjs`) and `node --jitless`.
+- Literals and conversions that the generated C evaluates at each call:
+  `python3 tools/lean-literal-parse-audit.py` (a `Nat` literal of 2^32 or more read from text),
+  `--float-literals` (a `Float` literal left in a function body, with its case) and
+  `--conversions` (`Float.ofNat`, `Float.ofInt`). Its positive control, to run after a
+  toolchain change: `python3 tools/test_lean_literal_parse_audit.py`.
+- Machine speed differs between cloud machines and from the Mac. Compare engines and builds
+  in one run on one machine; never compare a number from here with a number from a record.
+- A before and after comparison needs two builds of one base commit. `main` moved 3 times in
+  2 hours on 2026-11-09; build the unchanged base in a second worktree (`git worktree add`,
+  with a copy of `formal/lean4/.lake` and of `labs/demos/foafnaut/.build` to save the first
+  build; delete the stale files of modules that the base does not have), and name the base in
+  the report.
+
 Frame costs and design: [docs/designissues/2026-11-07-foafnaut-frame-pipeline.md](../../docs/designissues/2026-11-07-foafnaut-frame-pipeline.md).
 
 ## Shared machine
@@ -290,6 +390,28 @@ Several sessions work on the owner's laptop at once.
   https://github.com/danbri/factoidal-core/issues/369 (the empty block has a size and a background).
 - Lean: a new doc comment directly under an existing doc comment is a syntax error. Cost: a
   queued build on 2026-11-09. Module-level `#guard`s run on every build: keep them small.
+- In Lean 4.33.1 every `Float.ofNat`, `Float.ofInt` and `Nat.toFloat` call reads the number
+  2^53 from decimal text through GMP (45 ns), and a Lean `Int` outside the signed 32-bit range
+  is a GMP number. Found 2026-11-09: 359,009 such parses in the font load and first compile of
+  the status page (10% of its instructions), and three GMP remainders for one JavaScript `|`.
+  A module with a hot conversion imports `L4Factoidal.Prim.FloatOfNat` (the specification is
+  the core function; the fast version is proved equal to it; `csimp` puts it in the compiled
+  code). Rules and the other forms of this cost: `skills/lean4-performance`, "Integers through
+  GMP".
+- A `Float` literal that the compiler leaves in a function body is converted at each call. With
+  an exponent above 22 or a mantissa of 2^53 or more the conversion is big number arithmetic.
+  Two finds on 2026-11-09, by two sessions: `1e300` in `WebPaint.cullCurve` was 85% of a frame
+  (commit `57fe3531d`), and `9007199254740991.0` in `Number.isSafeInteger` costs 16,800
+  instructions a call. `python3 tools/lean-literal-parse-audit.py --float-literals` lists them.
+- A Lean definition with no argument is computed when the engine starts, in every program
+  that links its module. `LeanJS.snapshotData` runs the whole page prelude at each start (740 M
+  of 1,109 M start instructions on Linux at `036198f2`) and only a build tool reads it. The
+  branch `wip/bootstack` makes it a function (not on `main` at `489d5cd3a`). Before you add a
+  table or a constant that needs real work, give it an argument or measure the start
+  (`valgrind --tool=callgrind web-render-native` with no argument; list the `_init_` functions).
+- A speed result for BubblePopJS names the branch and commit it was measured on. On 2026-11-09
+  `main`, `wip/bpperf` (stage A) and `wip/bpperf-vm` (stage B) took 926, 267 and 81 ms for one
+  loop (`for (let ...)` in a function), and six operations are quadratic on `main` only.
 
 ## Land work
 
@@ -310,6 +432,9 @@ Several sessions work on the owner's laptop at once.
   [BubblePopJS](../../docs/designissues/2026-11-08-lean-js-engine.md),
   [event loop](../../docs/designissues/2026-11-08-event-loop.md),
   [WasmVM](../../docs/designissues/2026-11-07-wasmvm-engine.md).
+- [Performance exploration of 2026-11-09](../../docs/designissues/2026-11-09-foafnaut-perf-exploration.md):
+  BubblePopJS against QuickJS-NG and V8 without a JIT by operation, where the instructions go,
+  the engine's start, first compile and frame by phase, and the ranked list of what to do next.
 - [Liberal mode and console](../../docs/designissues/2026-11-08-liberal-mode-and-console.md),
   [browser state](../../docs/designissues/2026-11-08-browser-state-lws.md),
   [CPU backend](../../docs/designissues/2026-11-08-cpu-render-backend.md),

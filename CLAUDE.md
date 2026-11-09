@@ -1005,6 +1005,21 @@ JS."; "VerifiedJS: implement now, I will talk to them, we can always back out.";
   doesn't come with the inability for a node to occlude another". Cost of the
   earlier choice: on 2026-11-06 a refused drag was fixed by removing the check.
 
+### Foafnaut: what it is, its measure, BubblePopJS and Textnaut (owner, 2026-11-09)
+
+Owner, 2026-11-09, verbatim: "created a brand new browser, with builds including native OSX,
+and a wasm web-based version exposed in Factoidal hub. It is called FOAFNaut"; "our own new JS
+engine called BubblePopJS"; "Also a text terminal frontend, Textnaut. The goal is to be
+competitive as a real browser, measured against the official Web Platform Tests, and to be
+efficient, performant, fast, private, accessible, international, and secure."
+
+- The measure of the browser is the Web Platform Tests. The seven qualities have equal standing.
+- The whole statement, and where each part is in the tree: `skills/foafnaut/SKILL.md`, "What
+  Foafnaut is".
+- Speed work is measured: by operation against QuickJS-NG and V8 with no JIT for BubblePopJS,
+  by phase for the engine. A cloud session with no Mac can do both. First record:
+  `docs/designissues/2026-11-09-foafnaut-perf-exploration.md`.
+
 ### One owner per release (owner, 2026-10-28)
 
 Owner, 2026-10-28, verbatim: "Ok you are release manager for 0.20.0" and

@@ -134,7 +134,11 @@ LIMITS (state these with any result; anti-pattern 28)
     not elaborate.  A theorem that depends on `export`, a notation or a macro for the
     name of `f` is unresolved, and says so.
   * Only `formal/lean4` is read.  A `@[csimp]` theorem of the Lean core library
-    (`List.map` and the like) is not audited.  A repair by an instance of higher
+    (`List.map` and the like) is not audited.  A theorem of this tree whose LEFT side is
+    a core definition (`CORE_LEFT_SIDES`: `Float.ofNat`, `Float.ofInt`, `Nat.toFloat`) is listed as CORE
+    and its reach is not audited either: the core function has no C symbol here, and every
+    module that does not import the theorem still calls it.
+    `tools/lean-literal-parse-audit.py --conversions` lists those callers.  A repair by an instance of higher
     priority (`instHashableTermLoop`) is not a `@[csimp]` theorem and is not audited.
   * `--cross-check` compares the theorems found in the source with Lean's own table (the
     environment extension `Lean.Compiler.CSimp.ext`) after importing every built
@@ -193,6 +197,13 @@ LEAN_DIR = os.path.join(REPO, "formal", "lean4")
 IR_DIR = os.path.join(LEAN_DIR, ".lake", "build", "ir")
 ALLOW_FILE = os.path.join(REPO, "tools", "lean-csimp-reach-allow.txt")
 DEFAULT_PACKAGE = "l4factoidal"
+
+# Left sides that the Lean core library defines.  Their code is in the toolchain's libInit, so this tree
+# emits no C symbol for them and step 2 cannot resolve them.  A theorem for one of them is listed as
+# CORE and is not audited here (LIMITS): `tools/lean-literal-parse-audit.py --conversions` lists the C
+# functions that still call the core function.  Add a name only for a theorem whose left side is a core
+# definition (first: `L4Factoidal/Prim/FloatOfNat.lean`, 2026-11-09).
+CORE_LEFT_SIDES = ("Float.ofNat", "Float.ofInt", "Nat.toFloat")
 
 # ------------------------------------------------------------------ mangling
 # Lean 4.33 `Lean.Name.mangle` (src/lean/Lean/Compiler/NameMangling.lean).  The
@@ -900,11 +911,13 @@ def own_family(owner, comps, owner_cfile, decl_cfile):
 
 
 def resolve_theorems(sc, defs, prefix):
-    """(targets by left symbol, [(theorem, why)] for the theorems that could not be resolved)."""
+    """(targets by left symbol, [(theorem, why)] for the theorems that could not be resolved,
+    the theorems whose left side is a Lean core definition: `CORE_LEFT_SIDES`)."""
     defined = set(defs)
     # a nullary constant is initialised by `_init_<symbol>`
     defined.update(n[len("_init_"):] for n in defs if n.startswith("_init_"))
     problems = []
+    core = []
     targets = {}
     for th in sc.theorems:
         if th["error"]:
@@ -912,6 +925,12 @@ def resolve_theorems(sc, defs, prefix):
             continue
         lc, lp = resolve(th, th["lhs"], defined, prefix)
         rc, rp = resolve(th, th["rhs"], defined, prefix)
+        if lc is None and th["lhs"] in CORE_LEFT_SIDES:
+            if rc is None:
+                problems.append((th, "replacement `%s` has no emitted C symbol" % th["rhs"]))
+            else:
+                core.append(th)
+            continue
         if lc is None:
             problems.append((th, "left side `%s` has no emitted C symbol (the module is not built, it is not a "
                                  "compiled definition, or its name is one this tool cannot resolve)" % th["lhs"]))
@@ -925,7 +944,7 @@ def resolve_theorems(sc, defs, prefix):
             t = targets[lsym] = Target(lc, lp, lsym, defs.get(lsym) or defs.get("_init_" + lsym) or "")
         rsym = private_symbol(rp, rc, prefix) if rp else public_symbol(rc, prefix)
         t.theorems.append((th, tuple(rc), rsym, rp))
-    return targets, problems
+    return targets, problems, core
 
 
 def collect(cfiles, defs, prefix, targets):
@@ -1009,7 +1028,7 @@ def run(ir_dir, lean_dir, allow_path, package=None):
     built = {m for _p, _r, m in cfiles}
     not_built = [th for th in sc.theorems if th["module"] not in built]
     sc.theorems = [th for th in sc.theorems if th["module"] in built]
-    targets, problems = resolve_theorems(sc, defs, prefix)
+    targets, problems, core = resolve_theorems(sc, defs, prefix)
     raw, uses = collect(cfiles, defs, prefix, targets)
     right_total = sum(len(v) for v in uses.values())
     if targets and right_total == 0:
@@ -1059,7 +1078,7 @@ def run(ir_dir, lean_dir, allow_path, package=None):
                                      replacement_callers=sorted(uses.get(t.sym, ()))))
     return dict(
         package=package, prefix=prefix, theorems=theorem_rows, problems=problems, findings=findings,
-        not_built=not_built, allow=allow, targets=targets, stats=dict(
+        not_built=not_built, core=core, allow=allow, targets=targets, stats=dict(
             cfiles=len(cfiles), stale_cfiles=stale, definitions=len(defs), duplicate_definitions=dup,
             lean_modules=len(sc.modules), theorems=len(sc.theorems), left_sides=len(targets),
             replacement_uses=right_total, not_built=len(not_built)))
@@ -1232,6 +1251,11 @@ def main(argv=None):
         print("@[csimp] theorems in modules this build did not compile (not checked): %d" % len(res["not_built"]))
         for th in res["not_built"]:
             print("  NOT BUILT %s:%d %s" % (th["file"], th["line"], th["thm"] or "?"))
+    if res["core"]:
+        print("@[csimp] theorems whose left side is a Lean core definition (listed, reach not audited): %d"
+              % len(res["core"]))
+        for th in res["core"]:
+            print("  CORE %s:%d %s: %s -> %s" % (th["file"], th["line"], th["thm"] or "?", th["lhs"], th["rhs"]))
     print("Findings (a left side that compiled code still reaches): %d" % len(findings))
     print("  new: %d   allowed: %d   suppressed, held by a specification nothing reaches: %d"
           % (len(new), len(allowed), len(internal)))
@@ -1286,6 +1310,7 @@ def main(argv=None):
             package=res["package"], stats=st, theorems=res["theorems"],
             problems=[dict(file=th["file"], line=th["line"], theorem=th["thm"], why=why) for th, why in res["problems"]],
             not_built=[dict(file=th["file"], line=th["line"], theorem=th["thm"]) for th in res["not_built"]],
+            core=[dict(file=th["file"], line=th["line"], theorem=th["thm"], left=th["lhs"]) for th in res["core"]],
             findings=[{k: v for k, v in f.items() if k not in ("owner_comps", "spec", "allowed_by")} for f in findings],
             stale_allow=[dict(left=e[0], caller=e[1], line=e[3]) for e in stale],
             allow_errors=allow.errors)

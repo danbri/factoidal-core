@@ -1,5 +1,6 @@
 import L4Factoidal.XPath4.Atomic
 import L4Factoidal.JS.Str
+import L4Factoidal.Prim.FloatOfNat
 
 /-!
 # L4Factoidal.JS.Lexer — ECMAScript tokens (§12)
@@ -80,6 +81,23 @@ def slice (cs : Array Char) (i j : Nat) : String :=
 def floatOfNat (n : Nat) : Float :=
   if n < 2 ^ 53 then Float.ofNat n
   else XPath4.floatOfParsed (.num false n 0)
+
+/-- `floatOfNat` for compiled code (`floatOfNat_eq_fast`). The test `n < 2 ^ 53` reads its
+literal from decimal text at each call (Lean 4.33.1 emits `lean_cstr_to_nat` for a `Nat`
+literal of 2^32 or more); a number below 2^32 is decided by a small literal first. -/
+def floatOfNatFast (n : Nat) : Float :=
+  if n ≤ 4294967295 then Prim.natToFloat n else floatOfNat n
+
+theorem floatOfNat_eq_fast (n : Nat) : floatOfNat n = floatOfNatFast n := by
+  unfold floatOfNatFast
+  split
+  · next h =>
+    have hb : n < 2 ^ 53 := by omega
+    simp [floatOfNat, hb, Prim.natToFloat_eq]
+  · rfl
+
+@[csimp] theorem floatOfNat_eq_floatOfNatFast : @floatOfNat = @floatOfNatFast :=
+  funext floatOfNat_eq_fast
 
 /-- `4 hex digits` at `i`. -/
 def hex4 (cs : Array Char) (i : Nat) : Option Nat := do

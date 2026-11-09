@@ -2,6 +2,10 @@ import L4Factoidal.Rendering.Layout
 import L4Factoidal.Rendering.SfntShape
 import L4Factoidal.Rendering.SfntOutline
 import L4Factoidal.Rendering.InkBound
+-- The `csimp` theorems of `Prim.FloatOfNat` make this module's `Float.ofNat`, `Float.ofInt` and
+-- `n.toFloat` calls the fast twins (no decimal parse of 2^53 at each call, Lean 4.33.1): keep
+-- this import.
+import L4Factoidal.Prim.FloatOfNat
 
 /-! A font profile from the bytes of a font file. Lean reads the file, shapes
 each word and takes the outlines, so no font library and no host runs.
