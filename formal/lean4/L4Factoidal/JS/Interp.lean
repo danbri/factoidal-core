@@ -40,6 +40,12 @@ def modifyObj (id : Nat) (f : Obj → Obj) : M Unit :=
     let h := { h with objs := #[] }
     { h with objs := objs.modify id f }
 
+/-- Object `id` and the array with a placeholder in its place. Not inlined: the compiler
+must not move the write of the placeholder after the uses of the object, or the object
+would still be shared with the array while it changes (and its elements copied). -/
+@[noinline] def takeAt (objs : Array Obj) (id : Nat) : Obj × Array Obj :=
+  objs.swapAt! id default
+
 /-- Change object `id` with `f`, which also answers a value. The object is moved out of the
 heap while `f` runs, so `f` holds the only reference and a change to its elements does not
 copy them (an Array push is amortised constant time, not a copy of the array). -/
@@ -48,8 +54,7 @@ def updateObj {α} [Inhabited α] (id : Nat) (f : Obj → α × Obj) : M α :=
     let objs := h.objs
     let h := { h with objs := #[] }
     if id < objs.size then
-      let o := objs[id]!
-      let objs := objs.set! id default
+      let (o, objs) := takeAt objs id
       let (a, o) := f o
       (a, { h with objs := objs.set! id o })
     else (default, { h with objs })
