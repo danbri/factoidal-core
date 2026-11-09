@@ -406,6 +406,13 @@ def composite (W H : Nat) (bm : ByteArray) (dr : Draw) : ByteArray := Id.run do
   let v := dr.visits W H
   let (x0, y0, w, h) := (v.x, v.y, v.w, v.h)
   let bounded := !dr.op.unbounded
+  -- An opaque colour drawn source-over at full coverage is its own bytes: written as they are.
+  let solidOpaque : Option Px := match dr.ready with
+    | .solid p => if dr.op == .sourceOver && dr.alpha >= 1 && p.a >= 1 then some p else none
+    | _ => none
+  let (or_, og, ob) := match solidOpaque with
+    | some p => (toByte p.r, toByte p.g, toByte p.b)
+    | none => (0, 0, 0)
   for j in [0:h] do
     let y := y0 + j
     -- A bounded operator changes only covered pixels: the row's span is enough.
@@ -418,8 +425,14 @@ def composite (W H : Nat) (bm : ByteArray) (dr : Draw) : ByteArray := Id.run do
       let c := if x >= box.x && x < box.x + box.w && y >= box.y && y < box.y + box.h then
         dr.cov.cov[(y - box.y) * box.w + (x - box.x)]! else 0
       if c <= 0 && !dr.op.unbounded then continue
-      let s := dr.ready.at x y
       let k := idx * 4
+      if solidOpaque.isSome && c >= 1 && m >= 1 then
+        out := out.set! k or_
+        out := out.set! (k+1) og
+        out := out.set! (k+2) ob
+        out := out.set! (k+3) 255
+        continue
+      let s := dr.ready.at x y
       let d : Px := ⟨out[k]!.toFloat / 255, out[k+1]!.toFloat / 255, out[k+2]!.toFloat / 255, out[k+3]!.toFloat / 255⟩
       let r := blendPixel dr.op s (c * dr.alpha) m d
       out := out.set! k (toByte r.r)
