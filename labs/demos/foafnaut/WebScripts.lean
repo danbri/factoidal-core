@@ -251,9 +251,12 @@ def turnAnswerOf (id : Nat) (before : Before) (s : View) (marks : Marks) (full :
   -- The page's GPU commands, validated by Lean (L4Factoidal.PageGpu): the host replays them
   -- on its WebGPU device. They need no layout; the canvas rectangles come with a render.
   let gpu := dom.gpuOut
-  let text := if gpu.isEmpty then text else
+  -- Canvas 2D (PageCanvas): the pixels of each canvas drawn in the turn, as host commands
+  -- of the same list (a texture, then its pixels), blitted like a WebGPU canvas.
+  let canvas := dom.canvas.hostCmds
+  let text := if gpu.isEmpty && canvas.isEmpty then text else
     (text.dropEnd 1).toString ++ ",\"gpuPage\":" ++ toString dom.gpu.page ++ ",\"gpu\":[" ++
-      ",".intercalate (gpu.toList.map PageGpu.Wire.HostCmd.json) ++ "]}"
+      ",".intercalate (gpu.toList.map PageGpu.Wire.HostCmd.json ++ canvas.map (PageCanvas.HostCmd.json dom.gpu.page)) ++ "]}"
   (text, { logs := logs.size, errors := s.errors.size })
 
 def turnAnswer (id : Nat) (before : Before) (s : Page.Session) (marks : Marks) (full : Bool) (ns : Nat)
@@ -262,12 +265,20 @@ def turnAnswer (id : Nat) (before : Before) (s : Page.Session) (marks : Marks) (
 
 /-- The session after a turn answer: the GPU commands it carried are the host's now. -/
 def drained (s : Page.Session) : Page.Session :=
-  { s with host := { s.host with dom := { s.host.dom with gpuOut := #[] } } }
+  { s with host := { s.host with dom := { s.host.dom with gpuOut := #[], canvas := s.host.dom.canvas.sent } } }
 
 def drainedLean (s : LeanJS.Session) : LeanJS.Session :=
-  if s.host.dom.gpuOut.isEmpty then s else
+  if s.host.dom.gpuOut.isEmpty && s.host.dom.canvas.drawn.isEmpty then s else
   let h := s.host
-  s.setHost { h with dom := { h.dom with gpuOut := #[] } }
+  s.setHost { h with dom := { h.dom with gpuOut := #[], canvas := h.dom.canvas.sent } }
+
+/-- What Canvas 2D draws with, given anew before each action (fonts and images the engine
+holds may have changed since the page started). -/
+def setCanvas (held : Held) (env : PageCanvas.Env) : Held :=
+  let page := fun (h : Page.Host) => { h with reads := { h.reads with canvasEnv := env } }
+  { held with
+    session := held.session.map fun (id, s, m) => (id, { s with host := page s.host }, m),
+    leanSession := held.leanSession.map fun (id, s, m) => (id, s.setHost (page s.host), m) }
 
 /-- The page's arena, parsed as `WebDocument.prepareDOM` parses it, so node numbers agree
 with a render's replay of the commands. -/
@@ -513,8 +524,8 @@ def leanTurn (held : Held) (id : Nat) (before : Before) (s : LeanJS.Session) (ma
 
 /-- `start` on the Lean engine: its realm is made at the first page (the prelude runs
 once), and each page starts from it with its own arena. -/
-def startLean (held : Held) (html : String) (request : JSON.Json) (measure : JSON.Json → Option Page.Measure) :
-    Held × Except String String :=
+def startLean (held : Held) (html : String) (request : JSON.Json) (measure : JSON.Json → Option Page.Measure)
+    (canvas : PageCanvas.Env := {}) : Held × Except String String :=
   let url := str request "url"
   let commands := min 1048576 ((natField request "commandLimit").getD 4096)
   let logs := min 1048576 ((natField request "logLimit").getD 1024)
@@ -534,7 +545,7 @@ def startLean (held : Held) (html : String) (request : JSON.Json) (measure : JSO
     | .error e => (held, .error s!"scriptSession: BubblePopJS: {e}")
     | .ok base =>
       let (vw, vh) := (viewport request).getD (800, 600)
-      let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh }
+      let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh, canvasEnv := canvas }
       let rate := max 1 ((natField request "instructionsPerMs").getD 100000)
       let (s, ns) := WebWasm.timed fun _ =>
         let s := LeanJS.start base dom url scripts lim reads { instructionsPerMs := rate }
@@ -573,7 +584,9 @@ def actLean (held : Held) (action : String) (request : JSON.Json) (id : Nat) (s 
 /-- One action on what the engine holds. `measure` lays out an arena for the layout reads
 of its scripts (`WebDocument.measure`), with the `layout` request of `start`. -/
 def act (held : Held) (action html : String) (request : JSON.Json)
-    (measure : JSON.Json → Option Page.Measure := fun _ => none) : Held × Except String String :=
+    (measure : JSON.Json → Option Page.Measure := fun _ => none) (canvas : PageCanvas.Env := {}) :
+    Held × Except String String :=
+  let held := setCanvas held canvas
   let full := request.field? "full" == some (.bool true)
   match action with
   | "load" =>
@@ -596,7 +609,7 @@ def act (held : Held) (action html : String) (request : JSON.Json)
   if held.turn.isSome then (held, .error "scriptSession: a turn waits for the host") else
   match action with
   | "start" =>
-    if str request "engine" == "bubblepop" then startLean held html request measure else
+    if str request "engine" == "bubblepop" then startLean held html request measure canvas else
     match held.module, held.aot with
     | none, some aot =>
       -- The AOT path: Lean asks the host for a fresh instance, then runs the program.
@@ -611,7 +624,7 @@ def act (held : Held) (action html : String) (request : JSON.Json)
       | .error e => (held, .error s!"scriptSession: {e}")
       | .ok (scripts, missing, dom) =>
         let (vw, vh) := (viewport request).getD (800, 600)
-        let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh }
+        let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh, canvasEnv := canvas }
         let rate := max 1 ((natField request "instructionsPerMs").getD 100000)
         let prog := PageAot.startProg aot dom url scripts { commands, logs, gpuPage := held.nextSession, entropy := entropy held.nextSession, encoding := str request "encoding" } #[] missing
           reads { instructionsPerMs := rate }
@@ -626,7 +639,7 @@ def act (held : Held) (action html : String) (request : JSON.Json)
         let dom ← parse html url
         let (scripts, missing) ← scriptSources dom request
         let (vw, vh) := (viewport request).getD (800, 600)
-        let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh }
+        let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh, canvasEnv := canvas }
         let rate := max 1 ((natField request "instructionsPerMs").getD 100000)
         let s ← Page.start m dom url scripts { commands, logs, gpuPage := held.nextSession, entropy := entropy held.nextSession, encoding := str request "encoding" } #[] reads { instructionsPerMs := rate }
         return missing.foldl Page.Session.fail s
@@ -685,8 +698,8 @@ def act (held : Held) (action html : String) (request : JSON.Json)
       | _ => ({ held with session := some (id, s, marks) }, .error "scriptSession: unknown action")
 
 /-- The `scriptSession` operation. `html` is the page, for `start`. -/
-def op (name html : String) (request : JSON.Json) (measure : JSON.Json → Option Page.Measure := fun _ => none) :
-    Except String (Option String) := do
+def op (name html : String) (request : JSON.Json) (measure : JSON.Json → Option Page.Measure := fun _ => none)
+    (canvas : Unit → PageCanvas.Env := fun _ => {}) : Except String (Option String) := do
   if name != "scriptSession" then return none
   let action := str request "action"
   if !actions.contains action then throw "scriptSession: unknown action"
@@ -695,15 +708,15 @@ def op (name html : String) (request : JSON.Json) (measure : JSON.Json → Optio
     return some (JSON.Json.object [("ops",.array (actions.map .string)),("module",.bool loaded),
       ("bytes",num bytes),("engine",.string "QuickJS-NG in WasmVM"),("aot",.bool true),("aotLoaded",.bool aot),
       ("engines",.array [.string "quickjs", .string "bubblepop"])]).toString
-  let (held, answer) := act (take request) action html request measure
+  let (held, answer) := act (take request) action html request measure (canvas ())
   let n := keep held request
   return some (← answer.map (withNext n))
 
 /-- The ops that answer bytes (`web_document_call_bin`): `aotModule`, the host module of
 the guest loaded with `guest:quickjs-aot`, as section 0, with `moduleHead` as the head.
 Every other request is `op`'s, with no section. -/
-def opSections (name html : String) (request : JSON.Json) (measure : JSON.Json → Option Page.Measure := fun _ => none) :
-    Except String (Option (String × Array ByteArray)) := do
+def opSections (name html : String) (request : JSON.Json) (measure : JSON.Json → Option Page.Measure := fun _ => none)
+    (canvas : Unit → PageCanvas.Env := fun _ => {}) : Except String (Option (String × Array ByteArray)) := do
   if name == "scriptSession" && str request "action" == "aotModule" then
     let held := take request
     let answer := match held.aot with
@@ -711,6 +724,6 @@ def opSections (name html : String) (request : JSON.Json) (measure : JSON.Json �
       | none => .error "scriptSession: no guest module for AOT; load it with guest:quickjs-aot"
     let n := keep held request
     return some (← answer.map fun (h, b) => (withNext n h, b))
-  return (← op name html request measure).map (·, #[])
+  return (← op name html request measure canvas).map (·, #[])
 
 end WebScripts

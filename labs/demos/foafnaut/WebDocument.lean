@@ -1015,6 +1015,17 @@ private def heldBytes (request : JSON.Json) (names : List (String × String)) : 
   let held := heldImages request
   names.filterMap fun (key,sha) => (held.find? fun image => image.key == key && image.sha256 == sha).map (key,·.bytes)
 
+/-- What Canvas 2D draws with (L4Factoidal.PageCanvas): the fonts the engine holds, the SVG
+path parser (`new Path2D(d)`), and the held images by key, decoded by Lean when a page
+draws one (the canvas keeps it decoded). -/
+def canvasEnv (request : JSON.Json) : L4Factoidal.PageCanvas.Env :=
+  { fonts := ((heldFont request).map (·.fonts)).getD #[],
+    svgPath := fun d => (NativeSVGPath.parse NativeSVG.number d).toOption,
+    image := fun key => ((heldImages request).find? (·.key == key)).bind fun img =>
+      match NativeImage.decode img.bytes with
+      | .ok b => some (L4Factoidal.PageCanvas.Bitmap.ofStraight b.width b.height b.rgba)
+      | .error _ => none }
+
 /-- The request fields that a render reads before its layout ends. `shell` gives only
 the height of the chrome, which the key holds as `top`; `selection`, `live`, `binary`,
 `checks`, `tree`, `op` and the scroll act after layout. `hover` and `active` are not
@@ -1471,7 +1482,8 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
     return ((JSON.Json.object [("source",.string source),("engine",.string engine)]).toString,#[])
   if let some answer ← inputOp (str request "op" "render") request then return (answer,#[])
   -- Page scripts run by Lean: QuickJS in WasmVM on the page's arena (WebScripts).
-  if let some answer ← WebScripts.opSections (str request "op" "render") html request (fun r => some (measure r)) then return answer
+  if let some answer ← WebScripts.opSections (str request "op" "render") html request (fun r => some (measure r))
+      (fun _ => canvasEnv request) then return answer
   let op := str request "op" "render"
   if op != "render" && op != "selectedText" && op != "printLayout" && op != "nodeAt" then
     let dom ← prepareDOM html request

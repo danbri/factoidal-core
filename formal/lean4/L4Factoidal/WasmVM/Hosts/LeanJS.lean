@@ -55,7 +55,7 @@ def natives : Array (String × Nat) :=
     ("removeAttr", 2), ("setText", 2), ("create", 2), ("insert", 3), ("remove", 2), ("replace", 3),
     ("clone", 2), ("treeOp", 3), ("listen", 4), ("unlisten", 1), ("plan", 3), ("timer", 3),
     ("clearTimer", 1), ("frame", 1), ("cancelFrame", 1), ("log", 1), ("gpu", 3), ("api", 3), ("wasm", 6), ("detach", 1),
-    ("wasmGlue", 0)]
+    ("wasmGlue", 0), ("gpuBytes", 3)]
 
 /-! ## The natives: each is an import of `foafnaut_dom`, served by `Hosts.Page` -/
 
@@ -233,6 +233,17 @@ def serveNative (h : Host) (k : Nat) (args : Array JS.HostArg) : Host × JS.Host
     ({ h with wasm := w }, if ws.isEmpty then ans else .writes 3 ws ans)
   | 26 => (h, .detach 0)
   | 27 => (h, .val (.str wasmGlue))
+  -- `gpu_command` answered as bytes, an ArrayBuffer (Canvas 2D getImageData, op 202).
+  | 28 =>
+    let payload := match a 2 with
+      | .val .undef | .val .null => ByteArray.empty
+      | p => bytesOf p
+    let msg := bytesOf (a 1) ++ "\n".toUTF8 ++ payload
+    if msg.size > outCap then (h, .val (.num (-5))) else
+    let (h, r, o) := callImport h "gpu_command" [i 0, .int 0, .str msg, .out]
+    (match r with
+     | .ok n => if n < 0 then (h, .val (.num (Float.ofInt n))) else (h, .bytes (o.extract 0 n.toNat))
+     | .error m => (h, .err m))
   | _ => (h, .err "foafnaut_dom: no such native")
 
 /-- The host's natives with the script clock: the instructions run so far are the steps of

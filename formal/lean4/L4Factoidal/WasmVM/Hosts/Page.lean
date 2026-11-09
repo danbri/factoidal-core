@@ -153,6 +153,8 @@ structure Reads where
   kept : Option (Nat × (Nat → Nat → Option String)) := none
   /-- Layouts made for reads. -/
   layouts : Nat := 0
+  /-- The fonts, SVG path parser and images Canvas 2D draws with (the engine's). -/
+  canvasEnv : L4Factoidal.PageCanvas.Env := {}
   deriving Inhabited
 
 /-- Everything the imports change, except the store. -/
@@ -320,6 +322,27 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
   if mo != Hosts.Dom.moduleName then (h, st, .values #[]) else
   let a := Hosts.Dom.arg args
   match nm with
+  | "gpu_command" =>
+    -- Canvas 2D (L4Factoidal.PageCanvas; docs/designissues/2026-11-08-canvas-2d.md): a batch
+    -- of drawing commands, or a query; WebGPU and WebGL ops are below 200.
+    if a 0 < L4Factoidal.PageCanvas.Wire.batchOp then
+      let (dom, st, r) := Hosts.Dom.serve mem nm args h.dom st
+      ({ h with dom }, st, r)
+    else if a 3 > L4Factoidal.PageGpu.maxBuffer + 65536 then (h, st, Hosts.Dom.ret (-5)) else
+    match st.readMem mem (a 2) (a 3) with
+    | .error _ => (h, st, Hosts.Dom.codeOrTrap (-8))
+    | .ok b =>
+      if a 0 == L4Factoidal.PageCanvas.Wire.wordsOp then
+        -- Pixels as bytes (the `gpuBytes` native, an ArrayBuffer): the answer counts bytes.
+        match L4Factoidal.PageCanvas.Wire.callWords h.dom.canvas (a 0) b with
+        | .error _ => (h, st, Hosts.Dom.ret (-1))
+        | .ok bytes =>
+          let (st, r) := Hosts.Dom.putOut mem st (a 4) (a 5) bytes
+          (h, st, r)
+      else
+      let (canvas, answer) := L4Factoidal.PageCanvas.Wire.call h.dom.canvas h.reads.canvasEnv (a 0) b
+      let (st, r) := Hosts.Dom.answerStr mem st (a 4) (a 5) (.ok answer)
+      ({ h with dom := { h.dom with canvas } }, st, r)
   | "node_query" =>
     if a 1 < 16 then
       let (dom, st, r) := Hosts.Dom.serve mem nm args h.dom st

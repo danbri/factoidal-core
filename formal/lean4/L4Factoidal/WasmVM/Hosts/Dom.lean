@@ -36,6 +36,7 @@ the only memory a DOM import can change is at most `capacity` bytes at that buff
 import L4Factoidal.WasmVM.Api
 import L4Factoidal.DOM.Arena
 import L4Factoidal.PageGpu.Wire
+import L4Factoidal.PageCanvas.Wire
 import L4Factoidal.DOM.Selectors
 import Std.Data.HashMap
 import L4Factoidal.DOM.OfHtml
@@ -121,6 +122,9 @@ structure State where
   that the host has not taken yet (a turn of `scriptSession` takes them). -/
   gpu : L4Factoidal.PageGpu.State := {}
   gpuOut : Array L4Factoidal.PageGpu.HostCmd := #[]
+  /-- The page's Canvas 2D canvases and objects (`L4Factoidal.PageCanvas`); a canvas drawn
+  since the last turn gives the host its pixels in that turn (`PageCanvas.Store.hostCmds`). -/
+  canvas : L4Factoidal.PageCanvas.Store := {}
   /-- Whether an `iframe` that becomes connected gets a browsing context (HTML §4.8.5).
   A host that replays the command list over the parsed document for layout keeps this
   off: a frame's document is not a command. -/
