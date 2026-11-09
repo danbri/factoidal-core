@@ -160,10 +160,16 @@ theorem fitTo_size (n : Nat) (b : ByteArray) : (fitTo n b).size = n := by
 
 def zeros (n : Nat) : ByteArray := ByteArray.mk (Array.replicate n 0)
 
-/-- Every byte zero, in place. -/
+/-- 64 KiB of zero bytes, made once. -/
+def zeroChunk : ByteArray := bzeros 65536
+
+/-- Every byte zero, in place: copies of `zeroChunk` (a memory copy each), not a write a byte. -/
 def clearBytes (b : ByteArray) : ByteArray := Id.run do
   let mut b := b
-  for i in [0:b.size] do b := b.set! i 0
+  let n := b.size
+  for k in [0:(n + 65535) / 65536] do
+    let off := k * 65536
+    b := zeroChunk.copySlice 0 b off (min 65536 (n - off))
   return b
 
 /-- Run `f` on the bitmap with the canvas holding no reference to it (so `f` changes it in
