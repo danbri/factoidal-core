@@ -152,6 +152,12 @@ theorem fitTo_size (n : Nat) (b : ByteArray) : (fitTo n b).size = n := by
 
 def zeros (n : Nat) : ByteArray := ByteArray.mk (Array.replicate n 0)
 
+/-- Every byte zero, in place. -/
+def clearBytes (b : ByteArray) : ByteArray := Id.run do
+  let mut b := b
+  for i in [0:b.size] do b := b.set! i 0
+  return b
+
 /-- Run `f` on the bitmap with the canvas holding no reference to it (so `f` changes it in
 place), and keep the result only at the same size. -/
 @[inline] def Canvas.onBitmap (c : Canvas) (f : ByteArray → ByteArray) : Canvas :=
@@ -185,7 +191,7 @@ def shadowOn (st : DrawState) : Bool :=
 /-- A box blur of radius `r` along rows (`horizontal`) or columns of a `w × h` alpha map. -/
 def boxBlur (w h r : Nat) (src : FloatArray) (horizontal : Bool) : FloatArray := Id.run do
   if r == 0 then return src
-  let mut out := FloatArray.mk (Array.replicate (w * h) 0)
+  let mut out := fzeros (w * h)
   let (lines, len) := if horizontal then (h, w) else (w, h)
   let k := 1 / nf (2 * r + 1)
   for l in [0:lines] do
@@ -211,7 +217,7 @@ def shadowDraw (W H : Nat) (st : DrawState) (d : Draw) (es : Array Edge) (rule :
   let oy := st.shadowY
   let cov := coverage W H (shiftEdges es ox oy) rule
   let box := cov.box
-  let mut a := FloatArray.mk (Array.replicate (W * H) 0)
+  let mut a := fzeros (W * H)
   for j in [0:box.h] do
     for i in [0:box.w] do
       let c := cov.cov[j * box.w + i]!
@@ -290,7 +296,7 @@ def Run.rectDraw (r : Run) (c : Canvas) (x y w h : Float) (style : Style) (clear
     -- HTML: clearRect clears to transparent black, ignoring alpha, operator and shadow.
     let full := cov.box == ⟨0, 0, c.width, c.height⟩ && st.clip.isNone && m.b == 0 && m.c == 0 &&
       cov.cov.data.all (· >= 1)
-    if full then c.onBitmap fun bm => zeros bm.size
+    if full then c.onBitmap clearBytes
     else c.onBitmap fun bm => composite c.width c.height bm ⟨.solid ⟨1, 1, 1, 1⟩, cov, 1, .destinationOut, st.clip⟩
   else
     c.paint st ⟨style.ready r.gradient r.pattern m st.smoothing, cov, Color.clamp01 st.alpha, st.op, st.clip⟩
@@ -619,10 +625,15 @@ def Run.withCur (r : Run) (f : Canvas → Run → Canvas × Run) : Run :=
 /-- Path commands on the target path. -/
 def Run.onPath (r : Run) (cmd : Cmd) : Run :=
   if r.target == 0 then
-    r.withCur fun c r => ({ c with path := pathCmd c.stack.cur.ctm c.path cmd }, r)
+    -- The path is taken out of the canvas first, so its segments are pushed in place.
+    r.withCur fun c r =>
+      let p := c.path
+      let c := { c with path := {} }
+      ({ c with path := pathCmd c.stack.cur.ctm p cmd }, r)
   else
     let p := (r.store.paths.get? r.target).getD {}
-    { r with store := { r.store with paths := r.store.paths.insert r.target (pathCmd {} p cmd) } }
+    let paths := r.store.paths.erase r.target
+    { r with store := { r.store with paths := paths.insert r.target (pathCmd {} p cmd) } }
 
 /-- A path from SVG path data (SVG 2 §9.3, parsed by the engine's SVG parser). -/
 def pathOfContours (cs : List Rendering.Contour) : Path := Id.run do
@@ -687,7 +698,7 @@ def Run.step (r : Run) (cmd : Cmd) : Run :=
     { r with store := { r.store with canvases := r.store.canvases.insert id c } } |>.take id
   | .save => r.withCur fun c r => ({ c with stack := c.stack.save }, r)
   | .restore => r.withCur fun c r => ({ c with stack := c.stack.restore }, r)
-  | .reset => r.withCur fun c r => ({ c with stack := {}, path := {} }.onBitmap fun bm => zeros bm.size, r)
+  | .reset => r.withCur fun c r => ({ c with stack := {}, path := {} }.onBitmap clearBytes, r)
   | .pathTarget id => { r with target := id }
   | .beginPath => if r.target == 0 then r.withCur (fun c r => ({ c with path := {} }, r))
       else { r with store := { r.store with paths := r.store.paths.insert r.target {} } }
@@ -714,7 +725,7 @@ def Run.step (r : Run) (cmd : Cmd) : Run :=
       let n := c.width * c.height
       let old := c.stack.cur.clip
       let mask := Id.run do
-        let mut m := ByteArray.mk (Array.replicate n 0)
+        let mut m := bzeros n
         let b := cov.box
         for j in [0:b.h] do
           for i in [0:b.w] do
@@ -902,7 +913,7 @@ def Store.answer (s : Store) (env : Env) (q : Query) : Store × String :=
   | .imageData id x y w h =>
     match canvas id with
     | some c => (s, latin1 (c.straight x y w h))
-    | none => (s, latin1 (ByteArray.mk (Array.replicate (w * h * 4) 0)))
+    | none => (s, latin1 (bzeros (w * h * 4)))
   | .measure id text =>
     match canvas id with
     | none => (s, "")
@@ -989,7 +1000,8 @@ def Store.answer (s : Store) (env : Env) (q : Query) : Store × String :=
 /-! ### What the host gets -/
 
 /-- A host command for the canvases of a page (beside `PageGpu.HostCmd`): a texture for
-an element canvas, and its pixels (straight RGBA, the whole canvas). -/
+an element canvas, and its pixels (the whole premultiplied bitmap; the host gets them as
+straight RGBA, run-length, `rle`). -/
 inductive HostCmd where
   | texture (id node w h : Nat)
   | destroy (id : Nat)
@@ -1004,7 +1016,8 @@ def emitOne (held : Option (Nat × Nat)) (id : Nat) (c : Canvas) : List HostCmd 
   if c.width == 0 || c.height == 0 then [] else
   let tex := if held == some (c.width, c.height) then []
     else (if held.isSome then [HostCmd.destroy (textureBase + id)] else []) ++ [.texture (textureBase + id) id c.width c.height]
-  let data := c.straight 0 0 c.width c.height
+  -- The premultiplied bitmap; its JSON form is straight RGBA (`rle`).
+  let data := c.bitmap
   tex ++ (if data.size == c.width * c.height * 4 then [.pixels (textureBase + id) c.width c.height data] else [])
 
 /-- Every pixels command of `emitOne` is of the canvas's size, with that many bytes. -/
@@ -1053,9 +1066,20 @@ theorem emit_pixels (s : Store) (t w h : Nat) (d : ByteArray) (mem : HostCmd.pix
 def pushWord (b : ByteArray) (v : Nat) : ByteArray :=
   (((b.push (v % 256).toUInt8).push (v / 256 % 256).toUInt8).push (v / 65536 % 256).toUInt8).push (v / 16777216 % 256).toUInt8
 
-/-- Run-length form of RGBA pixels for the host: runs, each a little-endian word, then
-the pixels: with the high bit set, that many pixels follow as they are; without it, one
-pixel follows, repeated that many times. A canvas is mostly runs (backgrounds, bars). -/
+/-- Pixel `i` of a premultiplied bitmap pushed as straight RGBA. -/
+@[inline] def pushStraight (b : ByteArray) (i : Nat) (out : ByteArray) : ByteArray :=
+  let k := 4 * i
+  let a := b[k+3]!.toNat
+  if a == 255 then (((out.push b[k]!).push b[k+1]!).push b[k+2]!).push 255
+  else if a == 0 then (((out.push 0).push 0).push 0).push 0
+  else
+    let un := fun (v : UInt8) => (min 255 ((v.toNat * 255 + a / 2) / a)).toUInt8
+    (((out.push (un b[k]!)).push (un b[k+1]!)).push (un b[k+2]!)).push a.toUInt8
+
+/-- Run-length form of a premultiplied bitmap's pixels for the host, as straight RGBA:
+runs, each a little-endian word, then the pixels: with the high bit set, that many pixels
+follow; without it, one pixel follows, repeated that many times. One pass; only the pixels
+written are converted. A canvas is mostly runs (backgrounds, bars). -/
 def rle (d : ByteArray) : ByteArray := Id.run do
   let n := d.size / 4
   let mut out := ByteArray.emptyWithCapacity (n / 4 + 16)
@@ -1068,14 +1092,14 @@ def rle (d : ByteArray) : ByteArray := Id.run do
     if j - i >= 3 then
       if lit < i then
         out := pushWord out (2147483648 + (i - lit))
-        out := out ++ d.extract (4 * lit) (4 * i)
+        for k in [lit:i] do out := pushStraight d k out
       out := pushWord out (j - i)
-      out := out ++ d.extract (4 * i) (4 * i + 4)
+      out := pushStraight d i out
       lit := j
     i := j
   if lit < n then
     out := pushWord out (2147483648 + (n - lit))
-    out := out ++ d.extract (4 * lit) (4 * n)
+    for k in [lit:n] do out := pushStraight d k out
   return out
 
 def HostCmd.json (page : Nat) : HostCmd → String

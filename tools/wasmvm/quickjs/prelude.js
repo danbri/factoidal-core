@@ -1466,7 +1466,12 @@
   // use, so a page with no 2D canvas pays nothing.
   let c2dMade = null;
   const c2d = () => c2dMade ??= make2d();
-  function make2d() {
+  // The section's code is text until a page first uses Canvas 2D: compiled then, so pages
+  // without a 2D canvas carry no more JavaScript (QuickJS's collector walks every function's
+  // code on each cycle). It sees the prelude only through these parameters.
+  const make2d = () => new Function('n', 'define', 'named', 'nodeId', 'canvasSize', 'gpuContexts', 'DOMException', 'EventTarget',
+    make2dSource)(n, define, named, nodeId, canvasSize, gpuContexts, DOMException, EventTarget);
+  const make2dSource = `'use strict';
     const K = Symbol('canvas2d');
     let q = [], strs = [], strIx = new Map(), tails = [], tailLen = 0, queued = false, selected = -1;
     let nextObj = 1, nextOffscreen = 0x20000000;
@@ -1501,11 +1506,11 @@
       return r.slice(1);
     };
     const nums = r => r === '' ? [] : r.split(' ').map(Number);
-    const need = (got, k, name) => { if (got < k) throw new TypeError(`Failed to execute '${name}': ${k} arguments required, but only ${got} present.`); };
-    const dbl = (x, name) => { x = +x; if (!Number.isFinite(x)) throw new TypeError(`Failed to execute '${name}': the provided double value is non-finite.`); return x; };
+    const need = (got, k, name) => { if (got < k) throw new TypeError("Failed to execute '" + (name) + "': " + (k) + ' arguments required, but only ' + (got) + ' present.'); };
+    const dbl = (x, name) => { x = +x; if (!Number.isFinite(x)) throw new TypeError("Failed to execute '" + (name) + "': the provided double value is non-finite."); return x; };
     const self = o => { const s = o?.[K]; if (!s || s.kind !== 'ctx') throw new TypeError('Illegal invocation'); return s; };
     const ruleOf = (r, name) => { if (r === undefined || r === 'nonzero') return 0; if (r === 'evenodd') return 1;
-      throw new TypeError(`Failed to execute '${name}': The provided value '${r}' is not a valid enum value of type CanvasFillRule.`); };
+      throw new TypeError("Failed to execute '" + (name) + "': The provided value '" + (r) + "' is not a valid enum value of type CanvasFillRule."); };
 
     // ---- Objects ------------------------------------------------------------------------
     class CanvasGradient {
@@ -1514,7 +1519,7 @@
         need(arguments.length, 2, 'addColorStop');
         const r = ask([9, this[K].id, dbl(offset, 'addColorStop'), 0], [String(color)]);
         if (r === 'IndexSizeError') throw new DOMException('The provided offset is outside the range [0, 1].', 'IndexSizeError');
-        if (r === 'SyntaxError') throw new DOMException(`The value provided ('${color}') could not be parsed as a color.`, 'SyntaxError');
+        if (r === 'SyntaxError') throw new DOMException("The value provided ('" + (color) + "') could not be parsed as a color.", 'SyntaxError');
       }
     }
     class CanvasPattern {
@@ -1595,7 +1600,7 @@
         return [2, img[K].id];
       }
       if (img instanceof named.HTMLImageElement) return [3, img.src];
-      throw new TypeError(`Failed to execute '${name}': The provided value is not of a supported image source type.`);
+      throw new TypeError("Failed to execute '" + (name) + "': The provided value is not of a supported image source type.");
     };
     // A canvas element read as an image before it has a 2D context: a blank bitmap of its size in Lean.
     const ensure = (canvas, id) => {
@@ -1668,12 +1673,12 @@
         });
       define(proto, 'arc', function (x, y, r, a0, a1, ccw = false) {
         need(arguments.length, 5, 'arc');
-        if (+r < 0) throw new DOMException(`The radius provided (${r}) is negative.`, 'IndexSizeError');
+        if (+r < 0) throw new DOMException('The radius provided (' + (r) + ') is negative.', 'IndexSizeError');
         start(this); q.push(56, +x, +y, +r, +a0, +a1, ccw ? 1 : 0); end(this);
       });
       define(proto, 'arcTo', function (x1, y1, x2, y2, r) {
         need(arguments.length, 5, 'arcTo');
-        if (+r < 0) throw new DOMException(`The radius provided (${r}) is negative.`, 'IndexSizeError');
+        if (+r < 0) throw new DOMException('The radius provided (' + (r) + ') is negative.', 'IndexSizeError');
         start(this); q.push(57, +x1, +y1, +x2, +y2, +r); end(this);
       });
       define(proto, 'ellipse', function (x, y, rx, ry, rot, a0, a1, ccw = false) {
@@ -1685,7 +1690,7 @@
       define(proto, 'roundRect', function (x, y, w, h, radii = 0) {
         need(arguments.length, 4, 'roundRect');
         const list = (typeof radii === 'object' && radii !== null && typeof radii[Symbol.iterator] === 'function') ? [...radii] : [radii];
-        if (list.length < 1 || list.length > 4) throw new RangeError(`${list.length} radii provided. Between one and four radii are necessary.`);
+        if (list.length < 1 || list.length > 4) throw new RangeError((list.length) + ' radii provided. Between one and four radii are necessary.');
         const pts = list.map(r => (typeof r === 'object' && r !== null) ? [+(r.x ?? 0), +(r.y ?? 0)] : [+r, +r]);
         if (![x, y, w, h].every(v => Number.isFinite(+v)) || pts.some(p => !Number.isFinite(p[0]) || !Number.isFinite(p[1]))) return;
         if (pts.some(p => p[0] < 0 || p[1] < 0)) throw new RangeError('A radius provided is negative.');
@@ -1705,7 +1710,7 @@
         if (!queued) { queued = true; Promise.resolve().then(flush); }
         q.push(op, +x, +y);
       });
-    const pathId = (p, name) => { if (!(p instanceof Path2D)) throw new TypeError(`Failed to execute '${name}': parameter 1 is not of type 'Path2D'.`); return p[K].id; };
+    const pathId = (p, name) => { if (!(p instanceof Path2D)) throw new TypeError("Failed to execute '" + (name) + "': parameter 1 is not of type 'Path2D'."); return p[K].id; };
     const drawPath = (op, hasRule) => function (a, b) {
       const s = self(this); let path = 0, rule = a;
       if (a instanceof Path2D) { path = a[K].id; rule = b; } else if (typeof a === 'object' && a !== null) pathId(a, 'fill');
@@ -1753,7 +1758,7 @@
     });
     define(P, 'drawImage', function (img, ...a) {
       const s = self(this);
-      if (a.length !== 2 && a.length !== 4 && a.length !== 8) throw new TypeError(`Failed to execute 'drawImage': Valid arities are: [3, 5, 9], but ${a.length + 1} arguments provided.`);
+      if (a.length !== 2 && a.length !== 4 && a.length !== 8) throw new TypeError("Failed to execute 'drawImage': Valid arities are: [3, 5, 9], but " + (a.length + 1) + ' arguments provided.');
       const [kind, src] = sourceOf(img, 'drawImage');
       if (kind === 3 && src === '') return;
       const v = a.map(Number);
@@ -1773,7 +1778,7 @@
       const s = self(this); need(arguments.length, 4, 'getImageData');
       if (![sx, sy, sw, sh].every(v => Number.isFinite(+v))) throw new TypeError("Failed to execute 'getImageData': The provided value is non-finite.");
       sx = Math.trunc(+sx); sy = Math.trunc(+sy); sw = Math.trunc(+sw); sh = Math.trunc(+sh);
-      if (sw === 0 || sh === 0) throw new DOMException(`The source ${sw === 0 ? 'width' : 'height'} is 0.`, 'IndexSizeError');
+      if (sw === 0 || sh === 0) throw new DOMException('The source ' + (sw === 0 ? 'width' : 'height') + ' is 0.', 'IndexSizeError');
       if (sw < 0) { sx += sw; sw = -sw; }
       if (sh < 0) { sy += sh; sh = -sh; }
       const img = new ImageData(sw, sh);
@@ -1796,7 +1801,7 @@
     const gradient = (kind, args, name, k) => {
       need(args.length, k, name);
       const v = Array.from(args).slice(0, k).map(x => dbl(x, name));
-      if (kind === 2 && (v[2] < 0 || v[5] < 0)) throw new DOMException(`The ${v[2] < 0 ? 'r0' : 'r1'} provided is less than 0.`, 'IndexSizeError');
+      if (kind === 2 && (v[2] < 0 || v[5] < 0)) throw new DOMException('The ' + (v[2] < 0 ? 'r0' : 'r1') + ' provided is less than 0.', 'IndexSizeError');
       const id = nextObj++; q.push(90, id, kind, ...v, ...Array(6 - k).fill(0)); later();
       return made(CanvasGradient, 'gradient', id);
     };
@@ -1808,7 +1813,7 @@
       const [kind, src] = sourceOf(img, 'createPattern');
       const id = nextObj++, rep = repetition === null ? '' : String(repetition);
       const r = ask([10, id, kind, kind === 3 ? 0 : src, kind === 3 ? 1 : 0], kind === 3 ? [src, rep] : [rep]);
-      if (r === 'SyntaxError') throw new DOMException(`The provided type ('${rep}') is not one of 'repeat', 'no-repeat', 'repeat-x', or 'repeat-y'.`, 'SyntaxError');
+      if (r === 'SyntaxError') throw new DOMException("The provided type ('" + (rep) + "') is not one of 'repeat', 'no-repeat', 'repeat-x', or 'repeat-y'.", 'SyntaxError');
       if (r === 'InvalidStateError') throw new DOMException('The image argument is a canvas element with a width or height of 0.', 'InvalidStateError');
       return r === 'null' ? null : made(CanvasPattern, 'pattern', id);
     });
@@ -1853,7 +1858,7 @@
       getContext(kind) {
         need(arguments.length, 1, 'getContext');
         const s = this[K]; kind = String(kind);
-        if (!['2d', 'webgl', 'webgl2', 'webgpu', 'bitmaprenderer'].includes(kind)) throw new TypeError(`The provided value '${kind}' is not a valid enum value of type OffscreenRenderingContextType.`);
+        if (!['2d', 'webgl', 'webgl2', 'webgpu', 'bitmaprenderer'].includes(kind)) throw new TypeError("The provided value '" + (kind) + "' is not a valid enum value of type OffscreenRenderingContextType.");
         if (s.kind) return s.kind === kind ? s.ctx : null;
         if (kind !== '2d') return null;
         s.kind = kind; s.ctx = contextFor(OffscreenCanvasRenderingContext2D, this, s.id, s.w, s.h, false);
@@ -1898,7 +1903,7 @@
       context: canvas => contextFor(CanvasRenderingContext2D, canvas, nodeId(canvas), canvasSize(canvas, 'width', 300), canvasSize(canvas, 'height', 150), true),
       resized: canvas => { const id = nodeId(canvas); q.push(2, id, canvasSize(canvas, 'width', 300), canvasSize(canvas, 'height', 150), 1); selected = id; later(); },
       dataURL: (canvas, type) => { const id = nodeId(canvas); ensure(canvas, id); return ask([7, id, 0], [type === undefined ? 'image/png' : String(type)]); } };
-  }
+`;
   // ==== end canvas2d section ====
   // A 2D canvas whose width or height is set starts again (HTML §4.12.5: the bitmap and the context's state are reset).
   const sized = (el, name, v) => { el.setAttribute(name, String(v >>> 0)); if (gpuContexts.get(nodeId(el))?.kind === '2d') c2d().resized(el); };

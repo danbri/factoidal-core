@@ -17,6 +17,18 @@ namespace L4Factoidal.PageCanvas
 through `OfScientific`, which is slow in a pixel loop). Exact below 2^53. -/
 @[inline] def nf (n : Nat) : Float := n.toUInt64.toFloat
 
+/-- `n` zero Floats, pushed (an `Array.replicate` of Floats boxes each one first). -/
+def fzeros (n : Nat) : FloatArray := Id.run do
+  let mut a := FloatArray.emptyWithCapacity n
+  for _ in [0:n] do a := a.push 0
+  return a
+
+/-- `n` zero bytes, pushed. -/
+def bzeros (n : Nat) : ByteArray := Id.run do
+  let mut a := ByteArray.emptyWithCapacity n
+  for _ in [0:n] do a := a.push 0
+  return a
+
 /-- A colour: red, green, blue in 0..255 (whole numbers after parsing), alpha in 0..1. -/
 structure RGBA where
   r : Float

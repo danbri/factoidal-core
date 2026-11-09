@@ -45,9 +45,23 @@ def num (v : Float) : String :=
   let ft := String.ofList (ft.toList.reverse.dropWhile (· == '0')).reverse
   (if neg && (whole > 0 || !ft.isEmpty) then "-" else "") ++ toString whole.toUInt64.toNat ++ (if ft.isEmpty then "" else "." ++ ft)
 
-/-- The family list, with spaces after commas as CSS serialises it. -/
-def familyText (s : String) : String :=
-  ", ".intercalate ((s.splitOn ",").map Color.trim)
+/-- The generic families (CSS Fonts 4 §2.1.3), serialised in lower case. -/
+def generics : List String := ["serif", "sans-serif", "cursive", "fantasy", "monospace", "system-ui", "math",
+  "emoji", "fangsong", "ui-serif", "ui-sans-serif", "ui-monospace", "ui-rounded"]
+
+/-- The family list, with spaces after commas as CSS serialises it, generic names in lower
+case. `none` for a list CSS does not accept (an empty name, a CSS-wide keyword, or a
+character that is not part of a name). -/
+def familyText? (s : String) : Option String := do
+  let names := (s.splitOn ",").map Color.trim
+  let out ← names.mapM fun n => do
+    if n.isEmpty then none
+    let low := Color.asciiLower n
+    if ["inherit", "initial", "unset", "default", "revert", "revert-layer"].contains low then none
+    if n.startsWith "\"" || n.startsWith "'" then return n
+    if n.any (fun c => "{}()[];!@#$%^&*=+<>?/\\|`~".toList.contains c) then none
+    return if generics.contains low then low else n
+  return ", ".intercalate out
 
 /-- The words before the size, the size word, and the words after it. -/
 def splitAtSize (pre : List String) : List String → Option (List String × String × List String)
@@ -106,7 +120,7 @@ def parseFont? (source : String) : Option Font := do
   if family.isEmpty then none
   let lead := (if italic then "italic " else "") ++ (if smallCaps then "small-caps " else "") ++
     (match weight with | some w => w ++ " " | none => "") ++ (match stretch with | some t => t ++ " " | none => "")
-  let fam := familyText family
+  let fam ← familyText? family
   return { text := lead ++ num size ++ "px " ++ fam, size, bold, italic, family := fam }
 
 /-- The held fonts in the order the family list asks: a held font whose family is named

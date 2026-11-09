@@ -319,7 +319,7 @@ def callWords (s : Store) (op : Nat) (bytes : ByteArray) : Except String ByteArr
     if w * h > maxImageData then throw "canvas: getImageData too large"
     match s.canvases.get? id with
     | some c => return c.straight x y w h
-    | none => return ByteArray.mk (Array.replicate (w * h * 4) 0)
+    | none => return bzeros (w * h * 4)
   | _ => throw "canvas: not a words query"
 
 end L4Factoidal.PageCanvas.Wire

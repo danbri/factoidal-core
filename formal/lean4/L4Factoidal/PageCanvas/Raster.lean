@@ -98,7 +98,7 @@ def coverageIn (box : Box) (es : Array Edge) (rule : FillRule) : FloatArray := I
   if box.w == 0 || box.h == 0 then return FloatArray.empty
   -- Edges by their first row, for an active list.
   let sorted := es.qsort (fun a b => a.y0 < b.y0)
-  let mut cov := FloatArray.mk (Array.replicate (box.w * box.h) 0)
+  let mut cov := fzeros (box.w * box.h)
   let mut active : Array Edge := #[]
   let mut next := 0
   let bx := nf box.x
@@ -111,8 +111,8 @@ def coverageIn (box : Box) (es : Array Edge) (rule : FillRule) : FloatArray := I
       next := next + 1
     active := active.filter (·.y1 > row)
     if active.isEmpty then continue
-    let mut diff := FloatArray.mk (Array.replicate (box.w + 1) 0)
-    let mut direct := FloatArray.mk (Array.replicate (box.w + 1) 0)
+    let mut diff := fzeros (box.w + 1)
+    let mut direct := fzeros (box.w + 1)
     for s in [0:subRows] do
       let ys := row + (nf s + 0.5) * wgt
       let mut xs : Array (Float × Int) := #[]
@@ -170,7 +170,7 @@ theorem coverage_within (W H : Nat) (es : Array Edge) (rule : FillRule) :
 
 /-- The coverage values of an axis-aligned rectangle (exact) in `box`. -/
 def rectCoverageIn (box : Box) (x0 y0 x1 y1 : Float) : FloatArray := Id.run do
-  let mut cov := FloatArray.mk (Array.replicate (box.w * box.h) 0)
+  let mut cov := fzeros (box.w * box.h)
   for j in [0:box.h] do
     let py := nf (box.y + j)
     let cy := max 0 (min (py + 1) y1 - max py y0)
