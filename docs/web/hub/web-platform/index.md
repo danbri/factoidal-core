@@ -19,6 +19,7 @@ The pages below are about both.
 <ul class="post-series">
   <li><a href="{{ '/web/hub/foafnaut/' | url }}">Foafnaut</a> — the Lean browser in a page: tabs, an address bar for URLs, searches and commands, view source, XML with XSLT, drawn with WebGPU. It works at phone width.</li>
   <li><a href="./foafnaut/notes/">Foafnaut notes</a> — short dated notes on what the browser can do, newest first, with links that open each demo in Foafnaut. The same notes make its Atom feed.</li>
+  <li><a href="./foafnaut/okrs/">Objectives and key results</a> — four objectives of equal weight (standards, security, privacy, performance) and the milestones on the way to 90% of the Web Platform Tests.</li>
   <li><a href="./foafnaut/">About Foafnaut</a> — what the browser is, where to start, and the latest notes.</li>
   <li><a href="{{ '/web/hub/foafnaut2525-status/' | url }}">foafnaut2525 project status</a> — where the Lean web rendering engine stands, suite by suite; the engine renders this note too.</li>
   <li><a href="{{ '/web/hub/html-webgpu/' | url }}">HTML and CSS in Lean</a> — editable HTML/CSS, Lean block and inline layout, shared vector geometry, WebGPU pixels and clickable source-mapped links.</li>
