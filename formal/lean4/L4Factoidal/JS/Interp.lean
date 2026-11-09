@@ -771,7 +771,8 @@ def hostAnswer (args : Array Value) : HostAns → M Value
     if let some (.obj id) := args[i]? then
       if let .buffer _ := (← getObj id).kind then
         modifyObj id fun bo => { bo with kind := .buffer ByteArray.empty }
-        defineOwn id "byteLength" (.data (.num 0) false false true)
+        -- IsDetachedBuffer reads this slot; `byteLength` (an accessor) then answers 0
+        defineOwn id bufDetachedKey (.data (.bool true) true false false)
     pure .undef
   | .writes i ws ans => do
     if let some (.obj id) := args[i]? then
@@ -4686,40 +4687,44 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
       match which with
       | 0 =>
         -- encodeURIComponent: the unreserved marks stay, every other code point is its
-        -- UTF-8 bytes as %XX (a code point here is never a lone surrogate).
+        -- UTF-8 bytes as %XX; a lone surrogate is a URIError (§19.2.6.5 Encode)
+        if !Str.isWellFormed s then throwErr .uri "URI malformed"
         let keep := fun (c : Char) => c.isAlphanum && c.toNat < 128 || "-_.!~*'()".toList.contains c
-        pure (.str (String.join (s.toList.map fun c =>
+        pure (.str (String.join ((Str.toHost s).toList.map fun c =>
           if keep c then String.singleton c
           else String.join ((String.singleton c).toUTF8.toList.map fun b => "%" ++ hex b.toNat 2))))
       | 1 =>
         -- decodeURIComponent: %XX sequences are UTF-8; anything malformed is a URIError.
+        -- a run of %XX is UTF-8 text (host text: `Str.ofHost`); other characters stay
         let cs := s.toList.toArray
-        let mut out := ByteArray.empty
+        let mut out := ""
+        let mut pend := ByteArray.empty
         let mut i := 0
-        for _ in [0:cs.size] do
-          if i ≥ cs.size then break
-          let c := cs[i]!
-          if c == '%' then
+        for _ in [0:cs.size + 1] do
+          let c := cs.getD i ' '
+          if i < cs.size && c == '%' then
             match (if i + 2 < cs.size then hexVal [cs[i+1]!, cs[i+2]!] else none) with
-            | some v => out := out.push v.toUInt8; i := i + 3
+            | some v => pend := pend.push v.toUInt8; i := i + 3
             | none => throwErr .uri "URI malformed"
           else
-            out := out ++ (String.singleton c).toUTF8; i := i + 1
-        match String.fromUTF8? out with
-        | some r => pure (.str r)
-        | none => throwErr .uri "URI malformed"
+            if pend.size > 0 then
+              match String.fromUTF8? pend with
+              | some r => out := out ++ Str.ofHost r
+              | none => throwErr .uri "URI malformed"
+              pend := ByteArray.empty
+            if i ≥ cs.size then break
+            out := out.push c; i := i + 1
+        pure (.str (Str.canonical out))
       | 2 =>
         -- escape (§B.2.1.1): code units, as %XX or %uXXXX.
         let keep := fun (c : Char) => c.isAlphanum && c.toNat < 128 || "@*_+-./".toList.contains c
         let unit := fun (u : Nat) => if u < 256 then "%" ++ hex u 2 else "%u" ++ hex u 4
-        pure (.str (String.join (s.toList.map fun c =>
-          if keep c then String.singleton c
-          else if c.toNat < 65536 then unit c.toNat
-          else let v := c.toNat - 65536; unit (0xD800 + v / 1024) ++ unit (0xDC00 + v % 1024))))
+        pure (.str (String.join ((Str.units s).map fun u =>
+          if u < 128 && keep (Char.ofNat u) then String.singleton (Char.ofNat u) else unit u)))
       | _ =>
-        -- unescape (§B.2.1.2): %XX and %uXXXX are code units; a surrogate pair becomes its
-        -- code point, a lone surrogate U+FFFD (strings here are code points).
-        let cs := s.toList.toArray
+        -- unescape (§B.2.1.2): %XX and %uXXXX are code units (the other characters' units
+        -- are taken as they are)
+        let cs := (Str.units s).toArray.map Str.unitChar
         let mut units : Array Nat := #[]
         let mut i := 0
         for _ in [0:cs.size] do
@@ -4728,23 +4733,15 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
           if c == '%' && i + 5 < cs.size + 0 && cs[i+1]! == 'u' then
             match hexVal [cs[i+2]!, cs[i+3]!, cs[i+4]!, cs[i+5]!] with
             | some v => units := units.push v; i := i + 6
-            | none => units := units.push c.toNat; i := i + 1
+            | none => units := units.push (Str.charUnit c); i := i + 1
           else if c == '%' && i + 2 < cs.size then
             match hexVal [cs[i+1]!, cs[i+2]!] with
             | some v => units := units.push v; i := i + 3
-            | none => units := units.push c.toNat; i := i + 1
+            | none => units := units.push (Str.charUnit c); i := i + 1
           else
-            units := units.push c.toNat; i := i + 1
-        let mut out := ""
-        let mut j := 0
-        for _ in [0:units.size] do
-          if j ≥ units.size then break
-          let u := units[j]!
-          if 0xD800 ≤ u && u < 0xDC00 && j + 1 < units.size && 0xDC00 ≤ units[j+1]! && units[j+1]! < 0xE000 then
-            out := out.push (Char.ofNat (65536 + (u - 0xD800) * 1024 + (units[j+1]! - 0xDC00))); j := j + 2
-          else
-            out := out.push (if 0xD800 ≤ u && u < 0xE000 then '\uFFFD' else Char.ofNat u); j := j + 1
-        pure (.str out)
+            units := units.push (Str.charUnit c); i := i + 1
+        -- the units as a string: a lone surrogate stays one (§6.1.4, `Str`)
+        pure (.str (Str.ofUnitsFast units.toList))
     | .host k => callHost k args
     | _ => throwErr .type "not a function"
 termination_by structural n _ _ _ _ => n

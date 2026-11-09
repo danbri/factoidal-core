@@ -458,6 +458,7 @@ def eKind (k : Kind) : EM Unit :=
     putNat 13; putNat bs.size
     for b in bs.data do putNat b.toNat
   | .typed ty buf off len => do putNat 14; putNat ty; putNat buf; putNat off; putNat len
+  | .dataView buf off len => do putNat 18; putNat buf; putNat off; putNat len
   | .prim v => do putNat 15; eValue v
   | .error => putNat 16
   | .args => putNat 17
@@ -485,7 +486,7 @@ def eRealm (r : Realm) : EM Unit := do
   for x in [r.globalObj, r.objectProto, r.functionProto, r.arrayProto, r.stringProto, r.numberProto,
       r.booleanProto, r.throwTypeError, r.symbolProto, r.iterProto, r.arrayIterProto, r.evalFn,
       r.generatorProto, r.bigintProto, r.promiseProto, r.promiseCtor, r.asyncGenProto, r.regexpProto,
-      r.bufferProto, r.dateProto, r.sharedBufferProto, r.typedArrayCtor, r.iterHelperProto, r.wrapIterProto, r.aggregateErrorProto] do putNat x
+      r.bufferProto, r.dataViewProto, r.dateProto, r.sharedBufferProto, r.typedArrayCtor, r.iterHelperProto, r.wrapIterProto, r.aggregateErrorProto] do putNat x
   putNat r.errorProtos.size; for x in r.errorProtos do putNat x
   putNat r.typedProtos.size; for x in r.typedProtos do putNat x
 
@@ -981,6 +982,7 @@ def dKind (base : HeapOf H) : DM Kind := do
   | 15 => pure (.prim (← dValue))
   | 16 => pure .error
   | 17 => pure .args
+  | 18 => let buf ← getNat; let off ← getNat; pure (.dataView buf off (← getNat))
   | _ => throw "snapshot: bad object kind"
 
 def dObj (base : HeapOf H) : DM Obj := do
