@@ -8,7 +8,7 @@ map, build, test, shared-machine rules) and the
 
 | Name | What it is | State |
 |---|---|---|
-| **BubblePopKit** | The rendering engine, in the sense that WebKit is one: every build of it, native libraries and Wasm binaries | macOS and Wasm built and released; Linux engine library builds from source |
+| **BubblePopKit** | The rendering engine, in the sense that WebKit is one: every build of it, native libraries and Wasm binaries | macOS and Wasm built and released; Linux builds exist, undertested |
 | **BubblePopJS** | Its JavaScript engine (engine id `bubblepop`) | The default page script engine |
 | **BubblePopWASM** | Its WebAssembly engine, which runs Wasm modules (WasmVM in the code) | Runs page Wasm and guests |
 
@@ -31,7 +31,7 @@ BubblePopWASM is closest to Ladybird's arrangement: a WebAssembly engine of its 
 
 | Browser | State |
 |---|---|
-| **Foafnaut**, the windowed browser | macOS app released. Linux and Windows are targets, with no window program yet. Under investigation: Android, iOS, iPadOS, ESP32, a Raspberry Pi graphics backend |
+| **Foafnaut**, the windowed browser | macOS app released. Linux builds exist but are undertested. Windows has no build yet and is the nearest next target. Android, iOS, iPadOS, ESP32 and a Raspberry Pi graphics backend are under investigation, and depend on large performance gains to be viable |
 | **Textnaut**, in a terminal | Prototype: [textnaut/README.md](textnaut/README.md) |
 | **WWW harness**, the web page that runs the Wasm build ([on the Hub](https://danbri.github.io/factoidal/web/hub/foafnaut/)) | Live |
 
