@@ -171,4 +171,17 @@ def propMapAgrees (seq : List (Bool × String × Nat)) : Bool :=
 #guard propMapAgrees propMapSeq
 #guard (propMapRun propMapSeq).1.size == (propMapRun propMapSeq).2.length
 
+
+/-! ## `await` and `yield` in conditions, loop tests and expressions -/
+#guard out "async function f(x){ let t = 0; while (await x(t)) t++; return t } f(i => Promise.resolve(i < 3)).then(print)" == ["3"]
+#guard out "async function f(){ let n = 0, i = 0; do { n += i; i++ } while (await Promise.resolve(i < 4)); return n } f().then(print)" == ["6"]
+#guard out "async function f(){ let s = 0; for (let i = 0; await Promise.resolve(i < 3); i = await Promise.resolve(i + 1)) { if (i == 1) continue; s += i } return s } f().then(print)" == ["2"]
+#guard out "async function f(){ let s = ''; for (const v of await Promise.resolve([1, 2])) s += v; return s } f().then(print)" == ["12"]
+#guard out "async function f(a){ return a ? await Promise.resolve(1) : 2 } f(true).then(print); f(false).then(print)" == ["2", "1"]
+#guard out "async function f(a){ return a && await Promise.resolve(5) } f(true).then(print); f(0).then(print)" == ["0", "5"]
+#guard out "var s = ''; function g(){ s += 'g'; return 1 } async function f(){ return [g(), await (s += 'h', 2)] } f().then(v => print(s))" == ["gh"]
+#guard out "async function f(){ const x = await Promise.resolve(2) ?? 9; return x } f().then(print)" == ["2"]
+#guard out "function* g(){ const r = yield 1; if (r) { yield 2 } else { yield 3 } } var it = g(); it.next(); print(it.next(false).value)" == ["3"]
+#guard out "async function f(){ if (await Promise.resolve(true)) { return (await Promise.resolve(1)) + 1 } } f().then(print)" == ["2"]
+
 end L4Factoidal.JS.Tests
