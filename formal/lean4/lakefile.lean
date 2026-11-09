@@ -298,6 +298,10 @@ lean_exe leanjs where root := `L4Factoidal.JS.Main
 -- BubblePopJS's realm with the page objects as data, made at build time
 -- (labs/demos/foafnaut/build-web-render.sh writes L4Factoidal/WasmVM/Hosts/LeanJSRealmData.lean).
 lean_exe «bubblepop-realm» where root := `L4Factoidal.WasmVM.Hosts.LeanJSRealmGen
+-- The realm decoded from that data and its check: not a default target, since the data
+-- file exists only after the generator ran.
+lean_lib BubblePopRealm where
+  roots := #[`L4Factoidal.WasmVM.Hosts.LeanJSRealm, `L4Factoidal.WasmVM.Tests.LeanJSRealm]
 
 -- Frame scheduling in the Foafnaut hosts with a cost semantics, and its cost theorems
 -- (docs/designissues/2026-11-08-cost-theorems.md). Only Lean core.
