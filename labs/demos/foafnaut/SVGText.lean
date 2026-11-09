@@ -551,6 +551,31 @@ def glyphData (cell : GlyphCell) : String := Id.run do
           if closed then out := out ++ "Z"
   return out
 
+/-- Words that SVG text has shaped, by the fonts' SHA-256 values, the text and the pixel
+size: a layout at another width, or the same labels again, does not shape them again.
+Emptied above `keptWordsLimit` entries. -/
+initialize keptWordsRef : IO.Ref (Std.HashMap (List String × String × Nat) L4Factoidal.Rendering.FontProvider.Word) ← IO.mkRef {}
+def keptWordsLimit : Nat := 8192
+
+set_option compiler.extract_closed false in
+private unsafe def wordKeptImpl (fonts : Array Font) (text : String) (px : Nat) :
+    Except String L4Factoidal.Rendering.FontProvider.Word :=
+  unsafeBaseIO do
+    let key := (fonts.toList.map (·.sha256),text,px)
+    if let some word := (← keptWordsRef.get).get? key then return .ok word
+    let made := L4Factoidal.Rendering.SfntProfile.wordIn fonts text px
+    if let .ok word := made then
+      keptWordsRef.modify fun m => (if m.size > keptWordsLimit then {} else m).insert key word
+    return made
+
+/-- `SfntProfile.wordIn`; the engine gives a word shaped before with the same fonts again. -/
+@[implemented_by wordKeptImpl]
+def wordKept (fonts : Array Font) (text : String) (px : Nat) : Except String L4Factoidal.Rendering.FontProvider.Word :=
+  L4Factoidal.Rendering.SfntProfile.wordIn fonts text px
+
+theorem wordKept_eq (fonts : Array Font) (text : String) (px : Nat) :
+    wordKept fonts text px = L4Factoidal.Rendering.SfntProfile.wordIn fonts text px := rfl
+
 /-- Shape each run with the held fonts. A run that does not shape is logged and not
     drawn; the rest of the text is. -/
 def shapeRuns (fonts : Array Font) (runs : Array Run) : Array GlyphCell × Array Nat × List String := Id.run do
@@ -564,7 +589,7 @@ def shapeRuns (fonts : Array Font) (runs : Array Run) : Array GlyphCell × Array
     let n := run.text.length
     if run.size > 0 && n > 0 then
       let px := min 512 (max 1 run.size.round.toUInt32.toNat)
-      match L4Factoidal.Rendering.SfntProfile.wordIn (familyOrder fonts run.family) run.text px with
+      match wordKept (familyOrder fonts run.family) run.text px with
       | .error e => log := log ++ [s!"text run not shaped: {e}"]
       | .ok word =>
         let scale := run.size/word.unitsPerEm
