@@ -962,6 +962,31 @@ def deriveWork (k : Key) (p : Args) (len : Nat) : Nat :=
   | .x25519 => okpWork
   | _ => 0
 
+/-- An HMAC is charged at least its four compressions (inner key block and message, outer
+two blocks), and its key's and message's blocks. -/
+theorem hmacWork_ge (blk k m : Nat) (hb : 0 < blk) : 4 ≤ hmacWork blk k m ∧ m / blk ≤ hmacWork blk k m := by
+  unfold hmacWork
+  have h1 : 1 ≤ (blk + m + 8) / blk := (Nat.le_div_iff_mul_le hb).2 (by omega)
+  have h2 : m / blk ≤ (blk + m + 8) / blk := Nat.div_le_div_right (by omega)
+  constructor <;> omega
+
+open Crypto.WebCryptoKeys in
+/-- PBKDF2 is charged in proportion to its work: at least four compressions for each of its
+`iterations` HMACs in each output block (so 2^32 - 1 iterations are refused before they
+run, `runCharged_refuses`). -/
+theorem deriveWork_pbkdf2 (k : Key) (p : Args) (len : Nat) (hk : k.algo.alg = .pbkdf2) :
+    ∃ h : Crypto.WebHacl.HashAlg,
+      max 1 ((len / 8 + h.size - 1) / h.size) * ((p.nat? "iterations").getD 0) * 4 ≤ deriveWork k p len := by
+  unfold deriveWork
+  rw [hk]
+  generalize ((p.str? "hash").bind Crypto.WebHacl.HashAlg.ofName?).getD .sha512 = h
+  refine ⟨h, ?_⟩
+  simp only
+  have hb : 0 < h.block := by cases h <;> decide
+  have h4 := (hmacWork_ge h.block k.secret.size (h.size + 4) hb).1
+  have := Nat.mul_le_mul_left (max 1 ((len / 8 + h.size - 1) / h.size) * ((p.nat? "iterations").getD 0)) h4
+  omega
+
 open Crypto.WebCryptoKeys in
 /-- The work of one `crypto.subtle` operation (op 41), an upper bound decided from the
 arguments and the session's keys, before anything runs. -/
