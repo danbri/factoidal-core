@@ -140,12 +140,31 @@ private def imageRequests (dom : DOM.Dom) (base : String) : Except String (List 
   let keys := ((svgKeys ++ htmlKeys).eraseDups.filter (!·.toLower.startsWith "data:")).take maxDocumentImages
   return keys.map fun key => .object [("key",.string key),("url",.string key)]
 
+/-- The tree of `html` in the XML syntax (`xhtml`) or the HTML syntax. -/
+def parseFresh (html : String) (xhtml : Bool) : Except String DOM.Dom :=
+  if xhtml then DOM.parseXmlDocument html else pure (DOM.parseHtmlDocument html)
+
+/-! Every layout of a page (a relayout at another width, a pointer state that changes
+geometry) parsed its source again: 13 to 30 ms of a relayout of Wikipedia or gov.uk
+(realperf). `parseKept` is `parseFresh`; its implementation keeps the last two trees by
+their source. -/
+initialize parsedKept : IO.Ref (Array (String × Bool × Except String DOM.Dom)) ← IO.mkRef #[]
+
+private unsafe def parseKeptImpl (html : String) (xhtml : Bool) : Except String DOM.Dom :=
+  unsafeBaseIO do
+    if let some (_,_,d) := (← parsedKept.get).find? (fun (h,x,_) => x == xhtml && h == html) then return d
+    let d := parseFresh html xhtml
+    parsedKept.modify fun kept => (if kept.size ≥ 2 then kept.extract 1 kept.size else kept).push (html,xhtml,d)
+    return d
+
+@[implemented_by parseKeptImpl, noinline]
+def parseKept (html : String) (xhtml : Bool) : Except String DOM.Dom := parseFresh html xhtml
+
 /-- The document tree: the XML syntax of HTML for a `.xht` or `.xhtml` URL (HTML §14,
 `DOM.parseXmlDocument`), else the HTML syntax (HTML §13). -/
 def prepareDOM (html : String) (request : JSON.Json) : Except String DOM.Dom := do
   if html.utf8ByteSize > 1048576 then throw "document HTML exceeds 1MiB"
-  let dom ← if DOM.isXhtmlPath (str request "url") then DOM.parseXmlDocument html
-    else pure (DOM.parseHtmlDocument html)
+  let dom ← parseKept html (DOM.isXhtmlPath (str request "url"))
   WebRenderScript.applyCommands dom
     ((request.field? "commands").getD (.array []))
 
