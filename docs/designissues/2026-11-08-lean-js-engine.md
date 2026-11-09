@@ -237,13 +237,9 @@ private name share the key, so the brand check of §7.3.31 is not exact.
 
 ## 7. Strings and numbers
 
-- Strings: ECMAScript strings are sequences of UTF-16 code units (§6.1.4). The slice
-  uses Lean `String` (Unicode scalar values): `length` counts UTF-16 units
-  (`utf16Length`), but indexing and `charCodeAt` are per scalar value, and a lone
-  surrogate from `\uD800` becomes U+FFFD. The target representation is a pair of
-  forms, as engines use: Latin-1 bytes (`ByteArray`) when every unit is below 256,
-  else `Array UInt16`, with ropes for repeated concatenation. That change is local to
-  `Value.str` and the string built-ins.
+- Strings: ECMAScript strings are sequences of UTF-16 code units (§6.1.4), and since
+  2026-11-09 BubblePopJS's are (section 15): a Lean `String` read as its UTF-16 units, a
+  lone surrogate held as a character of U+10F000..U+10F7FF.
 - Numbers: Lean `Float` is IEEE 754 binary64; `+ - * /` are the hardware operations,
   correctly rounded. Lean 4.33 gives `Float` a logical model (`Float.Model`, a subtype
   of `UInt64`, in `Init/Data/Float/Model`), so arithmetic is not opaque to proofs.
@@ -257,7 +253,9 @@ private name share the key, so the brand check of §7.3.31 is not exact.
   layout), `StringToNumber` (the grammar here, the rounding by `XPath4.floatOfParsed`
   through `XSD.IEEE754`), `%` (exact `fmod` on dyadic rationals), `ToInt32` and
   `ToUint32` (exact on the integer part), `**` (C `pow` with JavaScript's NaN cases).
-  Numeric literals are rounded correctly the same way.
+  Numeric literals are rounded correctly the same way. `toFixed`, `toExponential` and
+  `toPrecision` (`JS/NumFmt.lean`) take their digits exactly from the value's
+  `num / den`, the larger integer on a tie, as §21.1.3 says.
 
 ## 8. Parser and memory
 
@@ -554,13 +552,152 @@ keeps it (`WebState.Settings.scripts`, `foafnaut:scripts`); "" is the host's def
    `L4Factoidal.Regex` engines are candidates); `yield` in conditional positions
    (lift into `if` statements); a call depth limit set from the native stack rather
    than 400.
-2. Built-ins, by the failures of section 9a: TypedArray, ArrayBuffer and DataView;
+2. Built-ins, by the failures of section 9a (section 16 did TypedArray, ArrayBuffer, Date,
+   Iterator helpers): length-tracking views, `$262` in the runner;
    RegExp (the repository's `L4Factoidal.Regex` engines are candidates); Date (on the
    virtual clock); Proxy; Iterator helpers; then a vendored built-ins subset of
    Test262, as for `language`.
-3. UTF-16 strings (section 7).
+3. UTF-16 strings: done (section 15); DOM text that holds lone surrogates is next.
 4. The fast form: slot-resolved names, shapes, inline caches; each with a theorem
    that it computes what the definitional evaluator computes, as for WasmVM.
 5. The generated reference semantics from ESMeta's IR, and refinement theorems
    (section 4d).
 6. The collector (section 8).
+
+## 14. The realm at build time, a faster lexer (2026-11-09)
+
+**Where the first page's time went.** `leanjs run` on the prelude (2,685 lines), the
+owner's Mac: lexing and parsing about 180 ms, running it about 20 ms. A sample of the
+lexer showed nearly all of it in `matchPunct`: for every punctuator token it tried the 60
+punctuators in turn, each turned into a list of characters (`String.toList`, a UTF-8
+decode and a list) and compared through `List.range`. `matchPunct` now scans an array of
+character arrays made once, comparing the first character before the rest; it agrees
+with the old definition (`matchPunctSpec`, kept) on every punctuator alone, on every pair
+of punctuators and on mixed inputs (`#guard`s in `JS/Lexer.lean`). Every script gains:
+testharness.js too.
+
+**The realm as data** (`JS/Snapshot.lean`, `WasmVM/Hosts/LeanJSRealm.lean`). The heap that
+the prelude leaves is the same for every page, so the build keeps it:
+
+- `lake exe bubblepop-realm` (`LeanJSRealmGen.lean`) runs the prelude
+  (`LeanJS.prepareSource`) and writes the heap with `JS.Snapshot.encode` into
+  `LeanJSRealmData.lean`, a string literal (`realmData`). `build-web-render.sh` runs it
+  before it builds the engine; the file is not in git. Because `include_str` is not a
+  dependency Lake tracks, the script first removes LeanJS's build outputs when
+  `prelude.js` is newer, and the generator refuses (exit 3) a prelude on disk that is not
+  the one compiled in.
+- The first page decodes it (`LeanJS.prepare` = `prepareWith realmData`): no lexing,
+  parsing or running of the prelude. Later pages copy the decoded realm as before.
+- Format: printable text. Numbers in base 32, one character a digit (`#`..`B` last
+  digit, `]`..`|` the others), so the literal has almost no escapes; strings in a table;
+  function literals (`FunDef`) in a second table, nested literals by number, so code that
+  many closures share is written and decoded once; an object of the fresh realm that the
+  prelude left unchanged is one character, and a built-in function is the number of the
+  fresh-realm object that holds it.
+- Stale data is refused, never used: the data starts with a fingerprint of the fresh realm
+  (object, environment and symbol counts, the realm's intrinsics), and its extra values
+  carry the prelude's hash (`preludeMark`). A refused snapshot makes `prepare` run the
+  prelude (correct, slow), and the build check `WasmVM/Tests/LeanJSRealm.lean` fails:
+  the data must be accepted, decoding and encoding again must give the same data, and a
+  page on the decoded realm must behave as on the prelude's run (`LeanJSPage`'s script,
+  click and timer).
+- Theorems: the operator and kind tables of the codec are complete (`binOps_complete`
+  and five more); the base-32 numbers and the zigzag integers round-trip (`#guard`s on
+  edge values).
+
+## 15. UTF-16 strings (§6.1.4)
+
+A JavaScript string is a sequence of 16-bit code units. BubblePopJS keeps it as a Lean
+`String` (`JS/Str.lean`), read as units:
+
+- a character below U+10000 is one unit, a character from U+10000 two (a surrogate pair);
+- a lone surrogate unit `u` is the character U+10F000 + (u − 0xD800). Those 2,048
+  characters (the end of plane 16, private use) are kept for this: a real code point there
+  (`\u{10F000}`) is held as its two units, both lone characters. So every unit sequence
+  has exactly one form, and equal strings are equal Lean strings (property keys too).
+
+Theorems (`JS/Str.lean`): `units_length` (the length is the number of units,
+`lengthSpec`); `decodeUnits_units` (a well-formed Lean string, written as UTF-16 and read
+back, is itself); `units_decodeUnits` (every unit sequence read into the representation
+and written out again is itself); `decodeUnits_charUnits` (one character). The fast paths
+are checked against these definitions by `#guard`s (`jsLength`, `unitAt?`, `sliceUnits`
+on every index pair, `jsAppend`, `canonical`, `toHost`/`ofHost`).
+
+Fast paths: an ASCII string (as many bytes as characters; the runtime keeps both counts)
+is indexed by byte: `.length`, `s[i]`, `charAt`, `charCodeAt` and `slice` are constant
+time or a byte copy (before, `charAt` built the whole character list). A string with no
+supplementary character keeps the old character-indexed code. Concatenation joins a high
+and a low surrogate at the seam in constant time (`jsAppend`).
+
+The evaluator: indices of every String method, RegExp match positions (`index`,
+`lastIndex`), the string iterator (code points), `split`, `padStart`, `codePointAt`,
+`String.fromCharCode`/`fromCodePoint`, `\u` escapes in literals and templates (a lone
+surrogate is no longer U+FFFD), `JSON.stringify` (a lone surrogate as `\udXXX`),
+`isWellFormed`/`toWellFormed`.
+
+The DOM boundary (`Hosts/LeanJS.lean`): the arena holds Unicode scalar values, so a
+string going to the host is converted as WebIDL's USVString (`Str.toHost`: a lone
+surrogate becomes U+FFFD), and host text coming in is `Str.ofHost`. So a lone surrogate
+written into DOM text reads back as U+FFFD (`CharacterData-surrogates.html`, 2 of 8): DOM
+text with lone surrogates needs the arena to hold DOMString, not scalar values.
+
+## 16. Built-ins of 2026-11-09, and the measurements
+
+Added (`JS/Interp.lean` `moreNative`, `JS/Date.lean`, `JS/NumFmt.lean`):
+
+- %TypedArray% (the abstract constructor every typed array constructor inherits, `from`,
+  `of`; `buffer`, `byteLength`, `byteOffset`, `length` and `@@toStringTag` as accessors;
+  `copyWithin`, `reverse`, `slice`, `sort`, `at`, `lastIndexOf`, `filter`, `map`,
+  `toReversed`, `toSorted`, `with`, `findLast`, `findLastIndex`, `reduceRight`),
+  BigInt64Array and BigUint64Array, a view's length 0 once its buffer is detached or too
+  small (`liveLen`);
+- ArrayBuffer `resize`, `transfer`, `transferToFixedLength`, the `maxByteLength` option and
+  the `byteLength`, `maxByteLength`, `resizable`, `detached` accessors; SharedArrayBuffer
+  (`grow`, `slice`, accessors); Atomics (`add`, `and`, `compareExchange`, `exchange`,
+  `isLockFree`, `load`, `or`, `store`, `sub`, `xor`, `notify`) on integer typed arrays.
+  Off: `Atomics.wait` and `waitAsync` (one agent, nothing to wait for), length-tracking
+  views of resizable buffers (a view keeps the length it was made with);
+- Date: the constructor with parts and strings, `Date.UTC`, `Date.parse` (the Date Time
+  String Format and the `toString`/`toUTCString` forms), every getter and setter (local
+  time is UTC: the pages run on the host's virtual clock), `toISOString`, `toJSON`, the
+  string methods, `@@toPrimitive`; a Date is told from a Number object by a hidden slot;
+- Iterator, `Iterator.from` and the helpers (`map`, `filter`, `take`, `drop`, `flatMap`,
+  `reduce`, `toArray`, `forEach`, `some`, `every`, `find`);
+- Array `copyWithin`, `reduceRight`, `toReversed`, `toSorted`, `toSpliced`, `with`; Set
+  `union`, `intersection`, `difference`, `symmetricDifference`, `isSubsetOf`,
+  `isSupersetOf`, `isDisjointFrom`; `Object.hasOwn`, `Object.groupBy`, `Map.groupBy`;
+  `Promise.race`, `allSettled`, `any` with AggregateError; `Proxy.revocable`; Number
+  `toExponential`, `toPrecision` and an exact `toFixed`; String `isWellFormed`,
+  `toWellFormed`, `localeCompare` (code unit order: there is no Intl), Annex B `trimLeft`,
+  `trimRight`; RegExp `flags` in the order of §22.2.6.4; `Reflect.construct` checks its
+  new target.
+
+DataView, `BigInt.asIntN`/`asUintN` and the URI functions come with the page WebAssembly
+work (`2026-11-08-page-scripts.md`), not here.
+
+**Measured** (the owner's Mac, 2026-11-09, native engine library from
+`build-web-render.sh --native`; before: a library of the same day without these changes):
+
+| | before | after |
+|---|---|---|
+| Lexing and parsing prelude.js (`leanjs run`) | 180 ms | 20 ms |
+| First page start (`bubblepop_bench.ts`, realm made) | 112 ms (165 ms with today's prelude, page-scripts record) | 10.1 ms |
+| A later page start | 0.48 ms | 0.31 ms |
+| Start of a WPT page (Node-appendChild.html, testharness.js) | 83 ms | 18.5 ms |
+| `fib(24)` | 123 ms | 116 ms |
+| Timers and clicks, 16 ms turn, mean / largest over 3 s | 0.08 / 1.49 ms | 0.05 / 0.74 ms |
+| Test262 language subset, whole run | 6.0 s | 1.7 s |
+
+The engine library grows by the realm data (341,560 bytes as a string literal); the data is
+made at each build in about the time of one prelude run.
+
+Test262 (same runners as section 9): language subset 5,625 → 5,627 of 6,297; the QuickJS
+sample (section 9a) 261 → 308 of 436 (70.6 %). No test that passed before fails.
+
+WPT on BubblePopJS (subtests; Chrome's count in brackets): `dom/nodes/CharacterData-*`
+137 → 147 of 157 [157] (the ten with characters outside the BMP; `CharacterData-surrogates`
+stays 2 of 8, section 15); the five directories of section 12 8,844 → 8,853 of 9,729;
+`encoding/` 11,273 → 11,279 of 11,549 (TextEncoder.encodeInto into BigInt arrays, the
+ISO-2022-JP decoder subtests that build strings by code unit, SharedArrayBuffer views);
+`url/` 1,101 of 1,104, unchanged. The demo pages give the same commands on both engines
+(`bubblepop_pages_test.ts`), and the scripted-page tests pass on both.
