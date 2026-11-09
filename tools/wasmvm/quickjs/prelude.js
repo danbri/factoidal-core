@@ -1359,6 +1359,7 @@
     };
     let error = 0, canvasId = 0, arrayBuffer = null, program = null, clear = [0, 0, 0, 0], draws = [], flushQueued = false;
     const attribs = [];
+    let attribVersion = 0;
     const fail = (message, code = GL.INVALID_OPERATION) => { if (!error) error = code; console.warn('WebGL: ' + message); };
     const send = (op, header, payload) => { const m = gpuSend(op, header, payload); if (m && !m.startsWith('{')) { fail(m); return null; } return m; };
     const ensureCanvas = () => {
@@ -1429,7 +1430,7 @@
         const bytes = typeof data === 'number' ? new ArrayBuffer(data) : gpuBytes(data);
         const b = arrayBuffer, size = bytes.byteLength;
         if (b.gpu && b.size !== size) { send(8, [b.gpu]); b.gpu = 0; }
-        if (!b.gpu) { const id = gpuNext++; if (send(2, [id, size, 32 | 8]) === null) return; b.gpu = id; b.size = size; }
+        if (!b.gpu) { const id = gpuNext++; if (send(2, [id, size, 32 | 8]) === null) return; b.gpu = id; b.size = size; attribVersion++; }
         if (size) send(3, [b.gpu, 0], bytes);
       },
       bufferSubData(target, offset, data) {
@@ -1471,11 +1472,16 @@
         const u = String(name).startsWith('gl_') ? undefined : p.info?.uniforms[name];
         return u ? new WebGLUniformLocation(p, u[0], u[1]) : null;
       },
-      enableVertexAttribArray(i) { (attribs[i] ??= {}).enabled = true; },
-      disableVertexAttribArray(i) { (attribs[i] ??= {}).enabled = false; },
+      // attribVersion moves only when an attribute changes, so a draw with the attributes of
+      // the draw before reuses its pipeline and buffers (pages set them again each frame).
+      enableVertexAttribArray(i) { const a = attribs[i] ??= {}; if (a.enabled !== true) { a.enabled = true; attribVersion++; } },
+      disableVertexAttribArray(i) { const a = attribs[i] ??= {}; if (a.enabled !== false) { a.enabled = false; attribVersion++; } },
       vertexAttribPointer(i, size, type, normalized, stride, offset) {
         if (type !== GL.FLOAT || size < 1 || size > 4) { fail('only FLOAT attributes of 1 to 4 components', GL.INVALID_ENUM); return; }
-        Object.assign(attribs[i] ??= {}, { buffer: arrayBuffer, size, stride: stride || size * 4, offset });
+        const a = attribs[i] ??= {}, st = stride || size * 4;
+        if (a.buffer !== arrayBuffer || a.size !== size || a.stride !== st || a.offset !== offset) {
+          a.buffer = arrayBuffer; a.size = size; a.stride = st; a.offset = offset; attribVersion++;
+        }
       },
       uniform1f(l, x) { const p = up(l); if (p) p.f32[l.offset >> 2] = x; },
       uniform2f(l, x, y) { const p = up(l); if (p) { const o = l.offset >> 2; p.f32[o] = x; p.f32[o + 1] = y; } },
@@ -1494,16 +1500,22 @@
       drawArrays(mode, first, count) {
         const p = program;
         if (!p?.linked) { fail('drawArrays with no linked program'); return; }
-        const layouts = [], vbufs = [], list = p.attrList, glMode = glModes[mode] ?? 99;
-        let key = '' + glMode;
-        for (let i = 0; i < list.length; i++) {
-          const location = list[i][1], a = attribs[location];
-          if (!a?.enabled || !a.buffer?.gpu) { fail(`attribute ${list[i][0]} has no buffer`); return; }
-          layouts.push({ stride: a.stride, format: a.size, offset: a.offset, location }); vbufs.push(a.buffer.gpu);
-          key += ' ' + a.stride + ' ' + a.size + ' ' + a.offset + ' ' + location;
+        let pipeline, vbufs;
+        if (p.drawVersion === attribVersion && p.drawMode === mode) { pipeline = p.drawPipeline; vbufs = p.drawVbufs; }
+        else {
+          const layouts = [], list = p.attrList, glMode = glModes[mode] ?? 99;
+          vbufs = [];
+          let key = '' + glMode;
+          for (let i = 0; i < list.length; i++) {
+            const location = list[i][1], a = attribs[location];
+            if (!a?.enabled || !a.buffer?.gpu) { fail(`attribute ${list[i][0]} has no buffer`); return; }
+            layouts.push({ stride: a.stride, format: a.size, offset: a.offset, location }); vbufs.push(a.buffer.gpu);
+            key += ' ' + a.stride + ' ' + a.size + ' ' + a.offset + ' ' + location;
+          }
+          pipeline = pipelineFor(p, layouts, glMode, key);
+          if (!pipeline) return;
+          p.drawVersion = attribVersion; p.drawMode = mode; p.drawPipeline = pipeline; p.drawVbufs = vbufs;
         }
-        const pipeline = pipelineFor(p, layouts, glMode, key);
-        if (!pipeline) return;
         if (p.fragHeight >= 0 && p.f32[p.fragHeight] !== ctx.drawingBufferHeight) { p.f32[p.fragHeight] = ctx.drawingBufferHeight; p.uniformDirty = true; }
         if (p.uniformBuffer && p.uniformDirty) {
           // n.gpu copies the bytes at once, so the program's own buffer is sent as it is.
