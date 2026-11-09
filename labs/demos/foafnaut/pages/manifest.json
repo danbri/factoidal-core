@@ -5,6 +5,19 @@
    "title": "Demo index"
   },
   {
+   "page": "start.html",
+   "title": "Foafnaut start page",
+   "handwritten": true,
+   "size": [
+    900,
+    1100
+   ],
+   "needs": "page scripts in the engine (scriptSession: BubblePopJS, or QuickJS-NG in WasmVM) for the carousel; Noto Sans Math for the Fraktur, double-struck and script letters",
+   "appRefused": "a host with no QuickJS guest module refuses a page with scripts (run_html.ts then opens index.html)",
+   "shows": "a carousel of seven Foafnaut wordmarks (gradient fills, layered strokes, textPath on an arc, radial gradients, mathematical letters), one use element whose href a timer changes, flipped by a scale transform each animation frame; links to the live and bundled demo pages and to web sites that draw now",
+   "doesNotShow": "SVG filters or SMIL animation: the engine has neither, so the glow is layered strokes and the script moves the wordmark"
+  },
+  {
    "page": "showcase.html",
    "title": "Showcase: what the engine can and can not draw",
    "handwritten": true,
