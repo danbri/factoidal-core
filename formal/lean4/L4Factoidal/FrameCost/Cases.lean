@@ -57,6 +57,9 @@ def event (x : Nat) (s : Session) : Event × Nat :=
     let (p,x) := pick x 2
     (.navigate p (if p == 0 then 3000 else 9000),x)
   else if kind < 85 then (.fontLoad,x)
+  else if kind < 88 then
+    let (v,x) := pick x 4
+    (.paintOnly (v+1),x)
   else (.tick,x)
 
 def eventJSON : Event → String
@@ -69,6 +72,7 @@ def eventJSON : Event → String
   | .fontLoad => "[\"fontLoad\"]"
   | .prefetch t => s!"[\"prefetch\",{t}]"
   | .tick => "[\"tick\"]"
+  | .paintOnly v => s!"[\"paintOnly\",{v}]"
 
 def bandJSON (view : Nat) : Option (Shown × Band) → String
   | some (_,b) => s!"[{b.top},{b.height},{b.keepFrom},{b.keepTo view}]"

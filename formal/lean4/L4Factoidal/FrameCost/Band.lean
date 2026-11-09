@@ -85,6 +85,13 @@ theorem composite_eq_frame {α : Type} (image chrome : Nat → Nat → α) (b : 
   · dsimp only
     rw [show y-top+(scroll-b.top)+b.top = y-top+scroll by omega]
 
+/-- Security (owner, 2026-11-09): a window row of the chrome comes from the chrome layer
+only. Whatever the page draws, and however far its ink goes past its boxes (stacked
+marks, transforms), two pages give the same chrome rows. -/
+theorem composite_chrome {α : Type} (chrome page page' : Nat → Nat → α) (top offset offset' x y : Nat)
+    (h : y < top) : composite chrome page top offset x y = composite chrome page' top offset' x y := by
+  simp [composite, h]
+
 /-- The composite reads only rows of the page layer, for a view in the band. -/
 theorem composite_row_lt (b : Band) (top view scroll y : Nat) (fits : b.fits view scroll = true)
     (below : top ≤ y) (within : y < top+view) : y-top+(scroll-b.top) < b.height := by

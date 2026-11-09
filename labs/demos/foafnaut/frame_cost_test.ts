@@ -62,6 +62,8 @@ function replay(c:Case):{decision:string;cost:[number,number,number];due:[number
     else if(kind==="hover"){paint=a;key={...key,pointer:b?a:0};}
     else if(kind==="navigate"){key={...key,page:a,pointer:0};paint=0;scroll=0;limit=b;}
     else if(kind==="fontLoad")key={...key,fonts:key.fonts+1};
+    // A paint-only change (WebPaint: an SVG transform, an animation frame): what the frame paints.
+    else if(kind==="paintOnly")paint=a;
     const now=state(key,paint,scroll),view=key.height-key.top;
     const bytes=(band:Band)=>key.width*band.bandHeight*4;
     // canShift() && keeps(...): the composite moves, no Lean call.
@@ -121,14 +123,16 @@ Deno.test("scroll_prefetch.prefetchTarget asks for the band Lean's rule asks for
 // The section Ratchet of FrameCost/Theorems.lean, checked on every case.
 const reach=(view:number)=>Math.min(512,Math.floor((4096-view)/2))-128;
 
-Deno.test("ratchet: no scroll and no colour-only hover lays out after the first frame; a scroll in the band costs nothing",()=>{
-  let hovers=0;
+Deno.test("ratchet: no scroll, no colour-only hover and no paint-only change lays out after the first frame; a scroll in the band costs nothing",()=>{
+  let hovers=0,paints=0;
   for(const c of cases){
     // Before the first frame nothing is kept: that frame is a layout whatever the event.
     let framed=false,geometry=false;
     c.steps.forEach((step,i)=>{
       const [kind,,g]=step.event;
       if(framed&&["scroll","prefetch","tick"].includes(kind))assert(step.cost[0]===0,`seed ${c.seed} step ${i}: ${kind} laid out`);
+      // paint_never_layouts: a transform or animation frame on a kept layout.
+      if(framed&&kind==="paintOnly"){paints++;assert(step.cost[0]===0,`seed ${c.seed} step ${i}: a paint-only change laid out`);}
       // hover_never_layouts: a colour-only hover, with no geometry hover in the key.
       if(framed&&kind==="hover"&&g===0&&!geometry){hovers++;assert(step.cost[0]===0,`seed ${c.seed} step ${i}: a colour-only hover laid out`);}
       if(kind==="hover")geometry=g===1&&step.event[1]!==0;
@@ -138,6 +142,7 @@ Deno.test("ratchet: no scroll and no colour-only hover lays out after the first 
     });
   }
   assert(hovers>20,`only ${hovers} colour-only hovers: the cases do not test the bound`);
+  assert(paints>20,`only ${paints} paint-only changes: the cases do not test paint_never_layouts`);
 });
 
 Deno.test("ratchet: layouts are at most the key changes, plus the first frame",()=>{
