@@ -21,13 +21,18 @@ if(!fs.existsSync(CHROME)){console.log('NOT RUN: hub_page_gpu_check.mjs needs Ch
 if(!fs.existsSync(path.join(runtimeDir,'web-render.wasm'))){console.log(`NOT RUN: no engine in ${runtimeDir}`);process.exit(0);}
 const types={'.html':'text/html','.mjs':'text/javascript','.js':'text/javascript','.wasm':'application/wasm','.json':'application/json'};
 const typeOf=f=>types[path.extname(f)]??'application/octet-stream';
+const scriptSetting=opt('--script-setting','');
 const cache=new Map();
 async function get(p){
   const hub='/factoidal/web/hub/foafnaut/',pages=hub+'pages/',rt='/factoidal/web/hub/html-webgpu/runtime/',guests='/factoidal/web/hub/wasm-guests/';
   const local=(dir,rest)=>{const f=path.join(dir,decodeURIComponent(rest));return f.startsWith(dir)&&fs.existsSync(f)&&fs.statSync(f).isFile()?f:undefined;};
   let f;
   if(p.startsWith(pages)&&(f=local(pagesDir,p.slice(pages.length))))return {status:200,type:typeOf(f),body:fs.readFileSync(f)};
-  if(p.startsWith(hub)&&p.endsWith('.mjs')&&(f=local(hubDir,p.slice(hub.length))))return {status:200,type:typeOf(f),body:fs.readFileSync(f)};
+  if(p.startsWith(hub)&&p.endsWith('.mjs')&&(f=local(hubDir,p.slice(hub.length)))){
+    let body=fs.readFileSync(f);
+    // --script-setting ENGINE: the worker served with that page script setting (WebRenderScript.plan).
+    if(scriptSetting&&f.endsWith('browser-worker.mjs')){const at="let scriptSetting=''",text=body.toString();if(!text.includes(at))throw Error('no script setting in the worker');body=Buffer.from(text.replace(at,`let scriptSetting='${scriptSetting}'`));}
+    return {status:200,type:typeOf(f),body};}
   if(p.startsWith(rt)&&(f=local(runtimeDir,p.slice(rt.length))))return {status:200,type:typeOf(f),body:fs.readFileSync(f)};
   if(p===guests+'qjs-wasmvm.wasm')return {status:200,type:'application/wasm',body:fs.readFileSync(guest)};
   if(!cache.has(p))cache.set(p,fetch(LIVE+p).then(async r=>({status:r.status,type:r.headers.get('content-type')??'application/octet-stream',body:Buffer.from(await r.arrayBuffer())})));

@@ -10,7 +10,7 @@
 // so (a) checks the fallback rules of link-route.mjs and (b) Lean's.
 //
 // Run it before every Pages deploy (docs/web/hub/README.md):
-//   node labs/demos/foafnaut/hub_links_check.mjs [--runtime DIR] [--only published|local]
+//   node labs/demos/foafnaut/hub_links_check.mjs [--runtime DIR] [--only published|local] [--script-setting bubblepop]
 // CHROME=/path/to/chrome overrides the browser. Exit 1 on a failure; NOT RUN with no browser.
 import http from 'node:http';import zlib from 'node:zlib';import fs from 'node:fs';import path from 'node:path';
 import {spawn} from 'node:child_process';import {fileURLToPath} from 'node:url';
@@ -25,6 +25,7 @@ const types={'.html':'text/html','.xml':'application/xml','.xsl':'application/xm
   '.wasm':'application/wasm','.ttl':'text/turtle','.css':'text/css','.svg':'image/svg+xml','.png':'image/png','.jpg':'image/jpeg','.json':'application/json'};
 const typeOf=f=>types[path.extname(f)]??'application/octet-stream';
 
+const scriptSetting=opt('--script-setting','');
 let runtimeDir='';
 const cache=new Map();
 async function get(p){
@@ -32,7 +33,11 @@ async function get(p){
   const local=(dir,rest)=>{const f=path.join(dir,decodeURIComponent(rest));return f.startsWith(dir)&&fs.existsSync(f)&&fs.statSync(f).isFile()?f:undefined;};
   let f;
   if(p.startsWith(pages)&&(f=local(pagesDir,p.slice(pages.length))))return {status:200,type:typeOf(f),body:fs.readFileSync(f)};
-  if(p.startsWith(hub)&&p.endsWith('.mjs')&&(f=local(hubDir,p.slice(hub.length))))return {status:200,type:typeOf(f),body:fs.readFileSync(f)};
+  if(p.startsWith(hub)&&p.endsWith('.mjs')&&(f=local(hubDir,p.slice(hub.length)))){
+    let body=fs.readFileSync(f);
+    // --script-setting ENGINE: the worker served with that page script setting (WebRenderScript.plan).
+    if(scriptSetting&&f.endsWith('browser-worker.mjs')){const at="let scriptSetting=''",text=body.toString();if(!text.includes(at))throw Error('no script setting in the worker');body=Buffer.from(text.replace(at,`let scriptSetting='${scriptSetting}'`));}
+    return {status:200,type:typeOf(f),body};}
   if(runtimeDir&&p.startsWith(rt)&&(f=local(runtimeDir,p.slice(rt.length))))return {status:200,type:typeOf(f),body:fs.readFileSync(f)};
   if(!cache.has(p))cache.set(p,fetch(LIVE+p).then(async r=>({status:r.status,type:r.headers.get('content-type')??'application/octet-stream',body:Buffer.from(await r.arrayBuffer())})));
   return cache.get(p);
