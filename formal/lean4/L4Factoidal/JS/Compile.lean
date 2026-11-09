@@ -102,12 +102,14 @@ def fresh : C Nat := do
 /-- Release the registers from `r` up (temporaries). -/
 def release (r : Nat) : C Unit := modify fun s => { s with next := r }
 
-def findVar (x : String) : List Scope → Option (Nat × Var)
-  | [] => none
-  | s :: rest =>
-    match s.get? x with
-    | some v => some (0, v)
-    | none => (findVar x rest).map fun (h, v) => (h + 1, v)
+def findVarAt (x : String) : Nat → List Scope → Option (Nat × Var)
+  | _, [] => none
+  | h, s :: rest =>
+    match Std.HashMap.get? s x with
+    | some v => some (h, v)
+    | none => findVarAt x (h + 1) rest
+
+def findVar (x : String) (scopes : List Scope) : Option (Nat × Var) := findVarAt x 0 scopes
 
 def setScope (scopes : List Scope) : C Unit := modify fun s => { s with scopes }
 
@@ -464,31 +466,32 @@ def operand : Nat → Expr → Bool → C Nat
 /-- Arguments (or array elements) in consecutive fresh registers. No spread and no holes. -/
 def cArgs : Nat → List Expr → C Nat
   | 0, _ => fail
-  | _ + 1, [] => pure 0
-  | n + 1, e :: es => do
-    match e with
-    | .spread _ | .ident "" => fail
-    | _ => pure ()
-    let t ← fresh
-    cE n e t
-    pure (1 + (← cArgs n es))
+  | n + 1, es => do
+    let mut k := 0
+    for e in es do
+      match e with
+      | .spread _ | .ident "" => fail
+      | _ => pure ()
+      let t ← fresh
+      cE n e t
+      k := k + 1
+    pure k
 
 def cProps : Nat → List PropDef → Nat → C Unit
   | 0, _, _ => fail
-  | _ + 1, [], _ => pure ()
-  | n + 1, p :: ps, o => do
-    match p with
-    | .init (.lit k) v =>
-      if k == "__proto__" then fail
-      match v with
-      | .func _ | .classE _ => fail
-      | _ => pure ()
-      let base := (← get).next
-      let r ← operand n v false
-      discard <| emit (.defProp o k r)
-      release base
-      cProps n ps o
-    | _ => fail
+  | n + 1, ps, o => do
+    for p in ps do
+      match p with
+      | .init (.lit k) v =>
+        if k == "__proto__" then fail
+        match v with
+        | .func _ | .classE _ => fail
+        | _ => pure ()
+        let base := (← get).next
+        let r ← operand n v false
+        discard <| emit (.defProp o k r)
+        release base
+      | _ => fail
 
 /-- The false-exit jumps of a condition (patched by the caller). -/
 def cCond : Nat → Expr → C (List Nat)
@@ -537,37 +540,38 @@ def cCond : Nat → Expr → C (List Nat)
 
 def cDecls : Nat → DeclKind → List Decl → C Unit
   | 0, _, _ => fail
-  | _ + 1, _, [] => pure ()
-  | n + 1, k, (.mk p i) :: ds => do
-    let x ← match p with
-      | .id x => pure x
-      | _ => fail
-    match k with
-    | .var =>
-      match i with
-      | some e =>
-        let base := (← get).next
-        let t ← fresh
-        cE n e t
-        match findVar x (← get).scopes with
-        | some (_, v) => discard <| emit (.move v.reg t)
-        | none => discard <| emit (.setGlobal t x ((hash x).toNat % 1024))  -- a top-level `var`: an ordinary assignment
-        release base
-      | none => pure ()
-    | _ =>
-      match findVar x (← get).scopes with
-      | some (h, v) =>
+  | n + 1, k, ds => do
+    for d in ds do
+      match d with
+      | .mk p i =>
+      let x ← match p with
+        | .id x => pure x
+        | _ => fail
+      match k with
+      | .var =>
         match i with
         | some e =>
           let base := (← get).next
           let t ← fresh
           cE n e t
-          discard <| emit (.move v.reg t)
+          match findVar x (← get).scopes with
+          | some (_, v) => discard <| emit (.move v.reg t)
+          | none => discard <| emit (.setGlobal t x ((hash x).toNat % 1024))  -- a top-level `var`: an ordinary assignment
           release base
-        | none => discard <| emit (.loadV v.reg .undef)
-        markReady x h
-      | none => fail
-    cDecls n k ds
+        | none => pure ()
+      | _ =>
+        match findVar x (← get).scopes with
+        | some (h, v) =>
+          match i with
+          | some e =>
+            let base := (← get).next
+            let t ← fresh
+            cE n e t
+            discard <| emit (.move v.reg t)
+            release base
+          | none => discard <| emit (.loadV v.reg .undef)
+          markReady x h
+        | none => fail
 
 /-- The block frame of `ss`, if the evaluator makes one: registers for its names, marked not
 initialised, and a hole written at entry. -/
@@ -593,8 +597,7 @@ def popBlock (pushed : Bool) (savedNext : Nat) : C Unit := do
 
 def cSs : Nat → List Stmt → C Unit
   | 0, _ => fail
-  | _ + 1, [] => pure ()
-  | n + 1, s :: ss => do cS n s; cSs n ss
+  | n + 1, ss => do for st in ss do cS n st
 
 def cBlock : Nat → List Stmt → C Unit
   | 0, _ => fail
@@ -734,8 +737,9 @@ def finishLoop (top : Option Nat) : C Unit := do
   | [] => pure ()
 end
 
-/-- Fuel for the walk of one function. -/
-def fuel : Nat := 200000
+/-- The nesting depth the compiler follows: a function nested deeper is not compiled. Lists
+of statements or arguments do not use it up. -/
+def fuel : Nat := 500
 
 /-- Code for a function, or `none` when it is not compilable (`FunInfo` is already filled).
 Parameters take the first registers (the arguments of a call are already there), then the
