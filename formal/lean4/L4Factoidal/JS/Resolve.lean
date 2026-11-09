@@ -40,6 +40,9 @@ structure St where
   dynamic : Bool := false
   /-- A closure was made in the current function (nested function or class). -/
   closure : Bool := false
+  /-- Functions seen and functions compiled (coverage statistics). -/
+  funs : Nat := 0
+  compiled : Nat := 0
 
 abbrev R := StateM St
 
@@ -210,14 +213,16 @@ def rFun : Nat → Frames → FunDef → R FunDef
         | none => fs1
       let body' ← rSs n fs2 body
       let inner ← get
-      set ({ dynamic := outer.dynamic || inner.dynamic, closure := true } : St)
+      set ({ inner with dynamic := outer.dynamic || inner.dynamic, closure := true, funs := inner.funs + 1 } : St)
       let info : FunInfo :=
         { layout := frame
           nParams := params.length
           plain := plainParams f
           frameLocal := !inner.closure && !inner.dynamic && !gen && !async }
       let fd : FunDef := .mk name params' rest' body' vars usesArgs strict kind gen async info
-      let info := { info with code := if inner.dynamic then none else Compile.compile fd }
+      let code := if inner.dynamic then none else Compile.compile fd
+      if code.isSome then modify fun s => { s with compiled := s.compiled + 1 }
+      let info := { info with code }
       pure (.mk name params' rest' body' vars usesArgs strict kind gen async info)
 
 def rParams : Nat → Frames → List PatElem → R (List PatElem)
@@ -296,7 +301,7 @@ def rS : Nat → Frames → Stmt → R Stmt
           let u' ← rOptE n fs1 u
           let b' ← rS n fs1 b
           let inner ← get
-          set ({ dynamic := inner.dynamic, closure := outer.closure || inner.closure } : St)
+          set { inner with closure := outer.closure || inner.closure }
           -- no closure in the loop: no one can tell the iterations' environments apart
           let once := k == .letK && !inner.closure && !inner.dynamic
           pure (.forS (some (if once then .letOnce ds' else .decl k ds')) t' u' b')
@@ -315,7 +320,7 @@ def rS : Nat → Frames → Stmt → R Stmt
       set { outer with closure := false }
       let ss' ← rBlock n fs ss
       let inner ← get
-      set ({ dynamic := inner.dynamic, closure := outer.closure || inner.closure } : St)
+      set { inner with closure := outer.closure || inner.closure }
       if (blockFrame ss).isSome && !inner.closure && !inner.dynamic then pure (.blockF ss')
       else pure (.block ss')
     | .blockF _ | .compiled .. => pure s
@@ -363,6 +368,11 @@ end
 
 /-- The fuel of the pass: more than any parse tree the parser makes. -/
 def fuel : Nat := 2000000
+
+/-- Functions seen and compiled in a parsed script (a coverage figure for tools). -/
+def stats (s : Script) : Nat × Nat :=
+  let (_, st) := (rSs fuel [] s.body).run {}
+  (st.funs, st.compiled)
 
 /-- Resolve a whole script: its functions and its top-level statements. Top-level `let`,
 `const` and classes are bindings of the global environment, in the global record; names

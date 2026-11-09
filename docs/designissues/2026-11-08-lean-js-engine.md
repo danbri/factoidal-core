@@ -834,3 +834,41 @@ on one string.
 
 **The Foafnaut Wasm build carries the realm as data** since BubblePopJS is its default.
 
+## 19. A register machine for hot functions (2026-11-09, stage B)
+
+`JS/Compile.lean` compiles a function with plain parameters whose variables no closure can
+hold (`FunInfo.frameLocal`), and any top-level loop with no closure, to register code run by
+`vmLoop` (`JS/Interp.lean`). Registers hold values, and a number stays unboxed in the parallel
+float registers (`Value.fl` marks it; it never leaves the registers). A call from compiled code
+to compiled code stays in the loop: no native frame, environment, `Ctx` or arguments array, so
+JavaScript recursion between compiled functions is limited by `vmMaxDepth` (20,000), not by the
+host's stack. Global names go through a cache of slots checked by the name in the slot
+(`PropMap`'s big mode now keeps stable slots). Everything other than plain number
+arithmetic and plain property access goes through the evaluator's helpers, so the semantics
+of the slow paths are the same code. Anything the compiler does not handle (`try`, `switch`,
+for-in/of, closures, spread, classes with `super`, ...) leaves the function in the evaluator:
+765 of 1,135 functions of `prelude.js` and 209 of 322 of
+`testharness.js` compile (`leanjs compile-stats FILE`).
+
+**Numbers** (same method as section 18; columns in order: machine, stage A, QuickJS-NG, JSC no
+JIT, V8 jitless, this morning):
+
+| | machine | stage A | QuickJS-NG | JSC no JIT | V8 jitless | before |
+|---|---|---|---|---|---|---|
+| fib(26) | 79 | 129 | 17 | 10 | 14 | 370 |
+| property read/write | 312 | 443 | 34 | 20 | 18 | 838 |
+| method calls | 430 | 651 | 57 | 44 | 26 | 1319 |
+| array push/index | 546 | 713 | 45 | 30 | 25 | 1186 |
+| string | 152 | 158 | 12 | 7 | 3 | 263 |
+| closures | 369 | 547 | 34 | 31 | 20 | 1093 |
+| allocation | 499 | 586 | 55 | 27 | 16 | 1017 |
+| JSON | 197 | 196 | 43 | 6 | 12 | 183 |
+| regexp | 31 | 30 | 5 | 2 | 4 | 11489 |
+| mixed | 66 | 68 | 7 | 6 | 5 | 109 |
+
+**Not proved.** The compiler and the machine are tested, not proved: the Test262 subset gives
+the same result on every file with the machine on (useVm) as with the evaluator alone,
+`JS/Tests.lean` has guards for the semantics of compiled code (the temporal dead zone,
+`this`, re-entry from natives and getters, exceptions, deep recursion), and the benchmark
+programs give the same output.
+
