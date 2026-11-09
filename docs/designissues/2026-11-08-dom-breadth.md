@@ -86,3 +86,15 @@ holds it and the import runs once. Ops 20 and 21 are layout reads (`WebDocument.
   over glyph cells), and Lean does not paint it yet.
 - XML documents: their markup is parsed and serialized as HTML.
 - Mutation records for the changes of the Range algorithms.
+
+## 6. Next
+
+- Link the page's Selection to the user's drag selection, and paint it from Lean.
+- MutationObserver records for the changes of the Range algorithms.
+- `matchMedia` on liberal's MediaQuery module (interface asked in the coordination log).
+- A live HTMLCollection (`getElementsByTagName` and the others) walks the whole document
+  on every indexed access, so a loop over it is quadratic. Keep its node list and drop it
+  when the DOM changes (a version counter of the arena, as browsers do), with a cost test.
+- For the layout backlog (found with the Spinal Tap demo): inside an `inline-block`, block
+  children lose their padding and gain spacing; `float` does not float.
+
