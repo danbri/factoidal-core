@@ -1,0 +1,224 @@
+/-
+L4Factoidal.WHATWG.Encoding.Sniff — the encoding of an HTML document from its bytes,
+and the document's text decoded with it (HTML Standard §13.2.3 "The input byte stream").
+
+What a host calls where page or frame bytes become text: `decodeDocument bytes charset`
+gives the document's encoding and its text, decoded by the Encoding Standard's decoders
+(`Core.decode`: BOM sniff, then the encoding's decoder in replacement mode).
+
+  * `prescan` — §13.2.3.2 "prescan a byte stream to determine its encoding", over the
+    first 1024 bytes: comments, `<meta>` attributes (`charset`, and `http-equiv`
+    content-type with a charset in `content`, by "extract a character encoding from a
+    meta element"), other tags' attributes skipped. UTF-16 is UTF-8 and x-user-defined is
+    windows-1252.
+  * `sniff` — §13.2.3.1 "encoding sniffing algorithm", steps 1 (BOM), 4 (the transport
+    layer's charset, e.g. HTTP `Content-Type`), 5 (the prescan); the default of the last
+    step, which the standard leaves to the user agent, is UTF-8 for bytes that are UTF-8
+    and windows-1252 otherwise (what the Foafnaut hosts did before).
+
+No `partial`, no `sorry`. Every loop is a `for` over a bounded range.
+-/
+import L4Factoidal.WHATWG.Encoding.Core
+
+namespace L4Factoidal.WHATWG.Encoding.Sniff
+
+open L4Factoidal.WHATWG.Encoding
+
+def isWs (b : UInt8) : Bool := b == 0x09 || b == 0x0A || b == 0x0C || b == 0x0D || b == 0x20
+def isAlpha (b : UInt8) : Bool := (0x41 ≤ b && b ≤ 0x5A) || (0x61 ≤ b && b ≤ 0x7A)
+def lowerB (b : UInt8) : UInt8 := if 0x41 ≤ b && b ≤ 0x5A then b + 0x20 else b
+
+/-- The bytes as characters U+0000 to U+00FF (isomorphic decode). -/
+def iso (bs : Array UInt8) : String := bs.foldl (fun s b => s.push (Char.ofNat b.toNat)) ""
+
+/-- Whether the bytes at `pos` are `pat`, ASCII case-insensitively. -/
+def at? (b : ByteArray) (pos : Nat) (pat : String) : Bool :=
+  let ps := pat.toUTF8
+  pos + ps.size ≤ b.size && (List.range ps.size).all fun i => lowerB b[pos + i]! == ps[i]!
+
+/-- §13.2.3.2 "get an attribute": the attribute (name, value) at `pos` and the position
+after it, or `none` at `>` or the end. -/
+def getAttribute (b : ByteArray) (pos0 : Nat) : Option (String × String) × Nat := Id.run do
+  let n := b.size
+  let mut pos := pos0
+  -- 1. Skip whitespace and `/`.
+  for _ in [0:n] do
+    if pos < n && (isWs b[pos]! || b[pos]! == 0x2F) then pos := pos + 1 else break
+  if pos ≥ n then return (none, pos)
+  -- 2. `>` ends the attributes.
+  if b[pos]! == 0x3E then return (none, pos)
+  -- 3 to 5. The name.
+  let mut name : Array UInt8 := #[]
+  let mut sawEq := false
+  for _ in [0:n] do
+    if pos ≥ n then break
+    let c := b[pos]!
+    if c == 0x3D && !name.isEmpty then
+      pos := pos + 1; sawEq := true; break
+    if isWs c then break
+    if c == 0x2F || c == 0x3E then return (some (iso name, ""), pos)
+    name := name.push (lowerB c); pos := pos + 1
+  if pos ≥ n then return (some (iso name, ""), pos)
+  if !sawEq then
+    -- 6. Spaces, then `=` or an attribute with no value.
+    for _ in [0:n] do
+      if pos < n && isWs b[pos]! then pos := pos + 1 else break
+    if pos ≥ n || b[pos]! != 0x3D then return (some (iso name, ""), pos)
+    pos := pos + 1
+  -- 8. Spaces before the value.
+  for _ in [0:n] do
+    if pos < n && isWs b[pos]! then pos := pos + 1 else break
+  if pos ≥ n then return (some (iso name, ""), pos)
+  -- 9 and 10. The value.
+  let mut value : Array UInt8 := #[]
+  let q := b[pos]!
+  if q == 0x22 || q == 0x27 then
+    pos := pos + 1
+    for _ in [0:n] do
+      if pos ≥ n then break
+      if b[pos]! == q then return (some (iso name, iso value), pos + 1)
+      value := value.push (lowerB b[pos]!); pos := pos + 1
+    return (some (iso name, iso value), pos)
+  if q == 0x3E then return (some (iso name, ""), pos)
+  for _ in [0:n] do
+    if pos ≥ n then break
+    let c := b[pos]!
+    if isWs c || c == 0x3E then break
+    value := value.push (lowerB c); pos := pos + 1
+  return (some (iso name, iso value), pos)
+
+/-- HTML §2.5 "algorithm for extracting a character encoding from a meta element". -/
+def extractFromMeta (content : String) : Option String :=
+  let cs := content.toList
+  let ws := fun (c : Char) => c == '\t' || c == '\n' || c == '\x0C' || c == '\r' || c == ' '
+  let lower := fun (c : Char) => if 'A' ≤ c && c ≤ 'Z' then Char.ofNat (c.toNat + 32) else c
+  let rec go (fuel : Nat) (xs : List Char) : Option String :=
+    match fuel, xs with
+    | 0, _ | _, [] => none
+    | fuel + 1, _ :: rest =>
+      if (xs.take 7).map lower != "charset".toList then go fuel rest else
+      match (xs.drop 7).dropWhile ws with
+      | '=' :: more =>
+        match more.dropWhile ws with
+        | q :: tail =>
+          if q == '"' || q == '\'' then
+            if tail.contains q then some (String.ofList (tail.takeWhile (· != q))) else none
+          else
+            let v := (q :: tail).takeWhile (fun c => !ws c && c != ';')
+            if v.isEmpty then none else some (String.ofList v)
+        | [] => none
+      | _ => go fuel (xs.drop 7)
+  go (cs.length + 1) cs
+
+/-- The encoding a `meta` element's attributes declare (§13.2.3.2, the steps after the
+attributes), or `none`. -/
+def metaEncoding (attrs : Array (String × String)) : Option Encoding := Id.run do
+  let mut gotPragma := false
+  let mut needPragma : Option Bool := none
+  let mut charset : Option Encoding := none
+  let mut seen : Array String := #[]
+  for (name, value) in attrs do
+    if seen.contains name then continue
+    seen := seen.push name
+    if name == "http-equiv" then
+      if value == "content-type" then gotPragma := true
+    else if name == "content" then
+      if charset.isNone then
+        if let some l := extractFromMeta value then
+          if let some e := getEncoding l then
+            charset := some e; needPragma := some true
+    else if name == "charset" then
+      charset := getEncoding value; needPragma := some false
+  match needPragma, charset with
+  | none, _ | _, none => return none
+  | some true, _ => if !gotPragma then return none
+  | _, _ => pure ()
+  return charset.map fun e => match e with
+    | .utf_16be | .utf_16le => .utf_8
+    | .x_user_defined => .windows_1252
+    | e => e
+
+/-- §13.2.3.2 "prescan a byte stream to determine its encoding", over the first 1024
+bytes. -/
+def prescan (input : ByteArray) : Option Encoding := Id.run do
+  let b := input.extract 0 (min 1024 input.size)
+  let n := b.size
+  let mut pos := 0
+  for _ in [0:n + 1] do
+    if pos ≥ n then break
+    if at? b pos "<!--" then
+      -- Advance to the end of the comment: the `-->`, which may share the `--` of `<!--`.
+      let mut p := pos + 2
+      for _ in [0:n] do
+        if p + 3 > n then p := n; break
+        if at? b p "-->" then p := p + 3; break
+        p := p + 1
+      pos := p
+    else if at? b pos "<meta" && pos + 5 < n && (isWs b[pos + 5]! || b[pos + 5]! == 0x2F) then
+      pos := pos + 6
+      let mut attrs : Array (String × String) := #[]
+      for _ in [0:n] do
+        let (a, p) := getAttribute b pos
+        match a with
+        | some kv => attrs := attrs.push kv; pos := max p (pos + 1)
+        | none => pos := p; break
+      if let some e := metaEncoding attrs then return some e
+      pos := pos + 1
+    else if pos + 1 < n && b[pos]! == 0x3C &&
+        (isAlpha b[pos + 1]! || (b[pos + 1]! == 0x2F && pos + 2 < n && isAlpha b[pos + 2]!)) then
+      -- A tag: skip its name, then its attributes.
+      let mut p := pos + 1
+      for _ in [0:n] do
+        if p < n && !(isWs b[p]! || b[p]! == 0x3E) then p := p + 1 else break
+      for _ in [0:n] do
+        let (a, q) := getAttribute b p
+        match a with
+        | some _ => p := max q (p + 1)
+        | none => p := q; break
+      pos := p + 1
+    else if at? b pos "<!" || at? b pos "</" || at? b pos "<?" then
+      let mut p := pos + 2
+      for _ in [0:n] do
+        if p < n && b[p]! != 0x3E then p := p + 1 else break
+      pos := p + 1
+    else pos := pos + 1
+  return none
+
+/-- §13.2.3.1 the encoding sniffing algorithm, as this engine runs it: the BOM, the
+transport layer's charset label, the prescan, then UTF-8 for UTF-8 bytes and
+windows-1252 otherwise. -/
+def sniff (bytes : ByteArray) (transportCharset : Option String := none) : Encoding :=
+  match bomSniff bytes with
+  | some e => e
+  | none =>
+    match transportCharset.bind getEncoding with
+    | some e => e
+    | none =>
+      match prescan bytes with
+      | some e => e
+      | none => if ByteArray.validateUTF8 bytes then .utf_8 else .windows_1252
+
+/-- The document's encoding and its text (HTML §13.2.3.1 and the Encoding Standard's
+"decode", which removes a BOM). -/
+def decodeDocument (bytes : ByteArray) (transportCharset : Option String := none) : Encoding × String :=
+  let e := sniff bytes transportCharset
+  (e, decode bytes e)
+
+/-! ## Checks -/
+
+#guard prescan "<!doctype html><meta charset=\"euc-jp\">".toUTF8 == some .euc_jp
+#guard prescan "<meta charset='Shift_JIS'>".toUTF8 == some .shift_jis
+#guard prescan "<META HTTP-EQUIV=Content-Type CONTENT='text/html; charset=big5'>".toUTF8 == some .big5
+#guard prescan "<meta content='text/html; charset=big5'>".toUTF8 == none
+#guard prescan "<!-- <meta charset=euc-kr> --><meta charset=gbk>".toUTF8 == some .gbk
+#guard prescan "<p title='<meta charset=koi8-r>'><meta charset=iso-8859-2>".toUTF8 == some .iso_8859_2
+#guard prescan "<meta charset=utf-16le>".toUTF8 == some .utf_8
+#guard prescan "<meta charset=x-user-defined>".toUTF8 == some .windows_1252
+#guard prescan "<meta charset=nonsense><meta charset=euc-jp>".toUTF8 == some .euc_jp
+#guard sniff (ByteArray.mk #[0xEF, 0xBB, 0xBF] ++ "<meta charset=windows-1252>".toUTF8) == .utf_8
+#guard sniff "<p>x".toUTF8 (some "euc-jp") == .euc_jp
+#guard sniff (ByteArray.mk #[0x3C, 0x70, 0x3E, 0xE9]) == .windows_1252
+#guard (decodeDocument (ByteArray.mk #[0x3C, 0x6D, 0x65, 0x74, 0x61, 0x20, 0x63, 0x68, 0x61, 0x72, 0x73, 0x65, 0x74,
+  0x3D, 0x73, 0x6A, 0x69, 0x73, 0x3E, 0x82, 0xA0])).2 == "<meta charset=sjis>あ"
+
+end L4Factoidal.WHATWG.Encoding.Sniff

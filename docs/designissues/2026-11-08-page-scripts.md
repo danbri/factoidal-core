@@ -252,3 +252,54 @@ flag are arena state (`Node.checkedness`, commands `setChecked` and `resetForm`)
 `click()` does nothing on a disabled form control. Event handler content attributes of
 cloned and imported subtrees are compiled as those of the page are; on `body` and
 `frameset` the window-reflecting handlers are the window's.
+
+## 7. Web APIs over Lean
+
+The everyday web APIs that are pure algorithms are computed by Lean
+(`formal/lean4/L4Factoidal/WasmVM/Hosts/WebApi.lean`), through one import,
+`foafnaut_dom.web_api(op, flags, args, len, out, cap)`: the arguments are one byte block
+(a count, then each argument as a length and its bytes), the answer is bytes. One call is
+one whole operation (a `decode` of 1 MiB is one call), and an answer that does not fit the
+guest's buffer waits in the host for op 0, so a stateful operation runs once. The QuickJS
+guest's native is `n.api(op, flags, bytes, ...args)`; BubblePopJS serves the same native
+(`Hosts.LeanJS` native 24) through `Page.serveExtra`, with ArrayBuffer answers
+(`JS.HostAns.bytes`).
+
+| API | Lean | Ops |
+|---|---|---|
+| `TextDecoder` (all 40 encodings, `fatal`, `ignoreBOM`, `stream`), `TextEncoder` (`encode`, `encodeInto`) | `WHATWG.Encoding.Core` (existing), `.Api` (bytes out, a UTF-8 fast path) | 2-5 |
+| `URL` (every attribute and setter, `canParse`, `parse`), `URLSearchParams` | `WHATWG.URL.Parser` (existing) | 10-13 |
+| `document.characterSet`; `a` and `area` URL attributes, parsed with the document's encoding | `WebApi.documentEncoding`, `parseWith` | 9, 10 |
+| `atob`, `btoa` | `WHATWG.Base64` (forgiving-base64) | 20, 21 |
+| `crypto.getRandomValues`, `randomUUID` | `Crypto.WebCrypto` (HMAC_DRBG over HMAC-SHA-256) | 30, 31 |
+| `crypto.subtle`: `digest`, HMAC, HKDF, PBKDF2 | `Crypto.WebCrypto` over the existing SHA-1/2 and HMAC | 32-36 |
+
+State in `Page.Host.web`: the decoders of `TextDecoder`s in the middle of a stream (by the
+number the page gave them; at most 4096), the waiting answer, and the generator. The
+generator is seeded per session by the embedder (`Page.Limits.entropy`: `WebScripts`
+gives 32 bytes of `IO.getRandomBytes`, the operating system's natively and the browser's
+`crypto.getRandomValues` under Emscripten, then the session number). With no entropy,
+`getRandomValues` and `randomUUID` are absent.
+
+prelude.js (section "basics") does WebIDL conversion, object shapes and promises only.
+Each API is a getter on the global object that probes `n.api` once on first use; an
+engine without the op leaves the API undefined. Nothing runs at page start.
+`crypto.subtle` promises are settled by a task of Lean's event loop. Off, because the
+engine links no such primitive (HACL* is not in the web engine): AES, ECDSA, ECDH,
+Ed25519, X25519, RSA; their operations reject with NotSupportedError.
+
+`structuredClone` (HTML §2.7) is glue that walks JavaScript values, step for step:
+primitives, the wrapper objects, Date, RegExp, ArrayBuffer (and resizable ones), views,
+Map, Set, the native errors, DOMException, arrays and plain objects, with the memory map
+for repeated and cyclic references, DataCloneError for functions, symbols, platform
+objects and objects with internal slots, and `transfer`. `performance.mark`, `measure`
+and the entry list are glue over QuickJS-NG's `performance.now`, which reads Lean's
+script clock through WASI.
+
+Theorems: `decodeLoop_replacement_ne_error` (the decoder loop never ends in error in
+mode "replacement"), `xUserDefined_roundTrip`, `singleByte_roundTrip` and
+`reverseIndex_getElem?` (`SingleByteTheorems.lean`), with `#guard`s that every single-byte
+index is a bijection on its used pointers; the existing `utf8_decode_encodeList` and
+`utf8DecodeWithoutBOMOrFail_toUTF8` (decode of encode is the identity on scalar values).
+The UTF-8 fast path of `decodeBytes` is checked against `decodeBytesRef` by `#guard`s
+on each of its conditions.

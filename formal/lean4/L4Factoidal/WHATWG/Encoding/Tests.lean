@@ -6,6 +6,7 @@ makes about its own tables. The web-platform-tests run is
 -/
 import L4Factoidal.WHATWG.Encoding.Core
 import L4Factoidal.WHATWG.Encoding.SingleByteTheorems
+import L4Factoidal.WHATWG.Encoding.Sniff
 
 namespace L4Factoidal.WHATWG.Encoding.Tests
 
