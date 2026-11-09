@@ -1859,12 +1859,20 @@ def run := runWith cachedFrame
 def runUncached := runWith layOut
 
 /-- The request text as JSON, with the bounds of `compile`. -/
+/-- Only white space after character `pos`: `(request.toList.drop pos).all Char.isWhitespace`,
+with no list of the request's characters (realperf: a list of 1 MiB of characters for
+every frame of a large page). -/
+def blankFrom (request : String) (pos : Nat) : Bool := (request.drop pos).all Char.isWhitespace
+#guard blankFrom "{} \n" 2 && !blankFrom "{} x" 2 && blankFrom "é{}" 3 && !blankFrom "é{}é" 3 && blankFrom "" 5
+#guard ["{\"a\":1}  ", "[1] x", "é\"é\" é", ""].all fun r =>
+  (List.range (r.length+2)).all fun n => blankFrom r n == (r.toList.drop n).all Char.isWhitespace
+
 private def parseRequest (request : String) : Except String JSON.Json :=
   if request.utf8ByteSize > 20971520 then .error "document request exceeds20MiB"
   else match JSON.parseJsonText request with
   | .error _ => .error "invalid document request JSON"
   | .ok (j,pos) =>
-    if !(request.toList.drop pos).all Char.isWhitespace then .error "trailing document request data"
+    if !blankFrom request pos then .error "trailing document request data"
     else .ok j
 
 @[inline] private def pushU32 (bytes : ByteArray) (n : Nat) : ByteArray :=
