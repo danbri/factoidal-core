@@ -32,13 +32,28 @@ def escape (s : String) : String :=
 def severityClass (severity : String) : String :=
   if severity == "error" then "error" else if severity == "warning" || severity == "warn" then "warning" else "log"
 
+/-- A script line of another level than log starts with the level between two U+0001 marks
+(the prelude's `console.warn`, `error`, `info`, `debug`): the level and the text. -/
+def level (message : String) : Option (String × String) :=
+  match message.toList with
+  | '\u0001' :: rest =>
+    let (name,after) := rest.span (· != '\u0001')
+    match after with
+    | '\u0001' :: text => some (String.ofList name,String.ofList text)
+    | _ => none
+  | _ => none
+
 /-- One entry as a block of the page. -/
 def entryHTML (e : JSON.Json) : String :=
   let source := str e "source" "page"
-  let severity := severityClass (str e "severity" "log")
+  let (named,message) := match level (str e "message") with
+    | some (l,text) => (some l,text)
+    | none => (none,str e "message")
+  let severity := severityClass (named.getD (str e "severity" "log"))
+  let shown := named.getD severity
   let detail := [("feature",str e "feature"),("where",str e "where"),("action",str e "action")].filter (!·.2.isEmpty)
-  "<div class=\"entry " ++ severity ++ "\"><p><span class=\"tag\">" ++ escape source ++ " " ++ severity ++ "</span> " ++
-    escape (str e "message") ++ "</p>" ++
+  "<div class=\"entry " ++ severity ++ "\"><p><span class=\"tag\">" ++ escape source ++ " " ++ escape shown ++ "</span> " ++
+    escape message ++ "</p>" ++
     (if detail.isEmpty then "" else
       "<p class=\"dim\">" ++ "; ".intercalate (detail.map fun (k,v) => k ++ ": " ++ escape v) ++ "</p>") ++ "</div>"
 
@@ -51,7 +66,8 @@ def page (request : JSON.Json) : String × String := Id.run do
   let tab := match request.field? "tab" with | some (.number n) => n | _ => "1"
   let tabs := match request.field? "tabs" with | some (.array ts) => ts | _ => []
   let system := count entries (str · "source" == "System")
-  let errors := count entries fun e => severityClass (str e "severity") == "error"
+  let errors := count entries fun e =>
+    severityClass (((level (str e "message")).map (·.1)).getD (str e "severity")) == "error"
   -- The title says the counts, so a tab strip (and a check) reads them.
   let title := s!"Console ({system} System, {entries.length-system} page)"
   let pageTitle := str request "title"
@@ -84,6 +100,9 @@ def answer (request : JSON.Json) : String :=
 #guard ((page (.object [("entries",.array [.object [("source",.string "System"),("severity",.string "warning"),
   ("message",.string "unsupported JavaScript module script"),("feature",.string "module script")]])])).1.splitOn
   "System warning").length == 2
+#guard level "\u0001warn\u0001careful" == some ("warn","careful") && level "plain" == none
+#guard ((page (.object [("entries",.array [.object [("source",.string "page"),("severity",.string "log"),
+  ("message",.string "\u0001warn\u0001careful")]])])).1.splitOn "entry warning").length == 2
 #guard escape "<a href=\"x\">&" == "&lt;a href=&quot;x&quot;&gt;&amp;"
 
 end WebConsole

@@ -116,7 +116,7 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
   # fixtures (fixtures/liberal), strict refusals, the note, the console page, media queries
   # against the viewport, and the same frame with no entries on pages strict accepts. Wasm and native.
   deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
-    --allow-read --allow-ffi "$LAB/native_liberal_test.ts"
+    --allow-read --allow-ffi --allow-env "$LAB/native_liberal_test.ts"
   # The SPARQL planner page (WebSparql.lean): plans, rows and the drawn page, Wasm and native.
   deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
     --allow-read --allow-ffi "$LAB/native_html_sparql_test.ts"
