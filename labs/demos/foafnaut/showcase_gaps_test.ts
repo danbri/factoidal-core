@@ -191,3 +191,11 @@ Deno.test("expected failure, issue 1284: an animated GIF shows its first frame o
   assert.equal(frame.error,undefined);
   assert.equal(frame.nextFrameMs,undefined,stillGap("1284"));
 });
+
+// https://github.com/danbri/factoidal-core/issues/369: an empty block with a size and a
+// background inside an inline-block is not painted (the Settings tick was such a block).
+Deno.test("expected failure, factoidal-core issue 369: an empty block inside an inline-block is not painted",()=>{
+  const box=(inner:string)=>(engine.compile(html(`<p><span style="display:inline-block;width:32px;height:32px;border:3px solid #184078">${inner}</span> x</p>`),400,200,options) as unknown as {primitiveCount:number}).primitiveCount;
+  assert.equal(box('<span style="display:block;margin:6px;width:20px;height:20px;background:#184078"></span>'),box(""),
+    "expected failure of https://github.com/danbri/factoidal-core/issues/369 no longer fails: make this test assert the correct result and close the issue");
+});
