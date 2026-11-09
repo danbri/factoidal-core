@@ -1056,12 +1056,11 @@ structure KeptPage where
 def keptPageSlots : Nat := 2
 
 initialize keptPageRef : IO.Ref (List KeptPage) ← IO.mkRef []
-/-- Page layers made, and page layers given again from `keptPageRef`. -/
-initialize pageWorkRef : IO.Ref (Nat × Nat) ← IO.mkRef (0,0)
+/-- Page layers made and given again from `keptPageRef`; then primitives compiled again, kept
+and moved with their geometry kept by the retained compile. -/
+initialize pageWorkRef : IO.Ref (Nat × Nat × Nat × Nat × Nat) ← IO.mkRef (0,0,0,0,0)
 /-- Answers numbered for `damage.id`. -/
 initialize pageIdRef : IO.Ref Nat ← IO.mkRef 0
-/-- Primitives compiled again, given again from the last frame, and moved with their geometry kept, by the retained compile. -/
-initialize retainedWorkRef : IO.Ref (Nat × Nat × Nat) ← IO.mkRef (0,0,0)
 
 private def formSame : NativeSVG.DataForm → NativeSVG.DataForm → Bool
   | .decimal,.decimal => true
@@ -1084,7 +1083,7 @@ private unsafe def pageArtifactImpl (page : Rendering.Scene) (extra : List Rende
     let kept ← keptPageRef.get
     match kept.find? same with
     | some k =>
-      pageWorkRef.modify fun (m,g) => (m,g+1)
+      pageWorkRef.modify fun (m,g,x) => (m,g+1,x)
       return .ok k.answer
     | none =>
       let layer := pageLayer page extra b
@@ -1113,15 +1112,14 @@ private unsafe def pageArtifactImpl (page : Rendering.Scene) (extra : List Rende
             (match damage with | some rects => NativeSVG.damageJSON rects | none => "null") ++ "}"
           let value := (value.dropEnd 1).toString ++ ",\"damage\":" ++ damageText ++ "}"
           let answer := (value,sections)
-          retainedWorkRef.modify fun (a,b,c) => (a+recompiled,b+(retained.items.size-recompiled-moved),c+moved)
           keptPageRef.set ((⟨page,extra,b,boxes,face,live,form,checks,tree,answer,some retained,layout,id⟩ :: kept).take keptPageSlots)
-          pageWorkRef.modify fun (m,g) => (m+1,g)
+          pageWorkRef.modify fun (m,g,a,b,c) => (m+1,g,a+recompiled,b+(retained.items.size-recompiled-moved),c+moved)
           return .ok answer
       | _,_,_,_ =>
         let made := WebRender.artifactWith (WebPaint.cull layer) boxes face live form checks tree
         if let .ok answer := made then
           keptPageRef.set ((⟨page,extra,b,boxes,face,live,form,checks,tree,answer,none,"",0⟩ :: kept).take keptPageSlots)
-          pageWorkRef.modify fun (m,g) => (m+1,g)
+          pageWorkRef.modify fun (m,g,x) => (m+1,g,x)
         return made
 
 /-- The page layer of a layers answer. Its value is `artifactWith` of the band of the page,
@@ -2017,21 +2015,13 @@ count the work, as `heldFont` and `keepFont` do for the font. -/
 @[implemented_by countRepaintImpl, noinline] private opaque countRepaint (laid : Laid) : Laid := laid
 @[implemented_by frameWorkImpl, noinline] private opaque frameWork (reset : Bool) : Nat × Nat × Nat
 set_option compiler.extract_closed false in
-private unsafe def pageWorkImpl (reset : Bool) : Nat × Nat :=
+private unsafe def pageWorkImpl (reset : Bool) : Nat × Nat × Nat × Nat × Nat :=
   unsafeBaseIO do
     let work ← pageWorkRef.get
-    if reset then pageWorkRef.set (0,0)
+    if reset then pageWorkRef.set (0,0,0,0,0)
     return work
 /-- Page layers made and page layers kept (`pageArtifact`), as `frameWork` counts layouts. -/
-@[implemented_by pageWorkImpl, noinline] private opaque pageWork (reset : Bool) : Nat × Nat
-set_option compiler.extract_closed false in
-private unsafe def retainedWorkImpl (reset : Bool) : Nat × Nat × Nat :=
-  unsafeBaseIO do
-    let work ← retainedWorkRef.get
-    if reset then retainedWorkRef.set (0,0,0)
-    return work
-/-- Primitives compiled again and given again by the retained compile of the page layer. -/
-@[implemented_by retainedWorkImpl, noinline] private opaque retainedWork (reset : Bool) : Nat × Nat × Nat
+@[implemented_by pageWorkImpl, noinline] private opaque pageWork (reset : Bool) : Nat × Nat × Nat × Nat × Nat
 
 /-- `lookupLayout` over the kept memo. -/
 private def cachedLayOut (key : LayoutKey) : Except String Laid :=
@@ -2172,9 +2162,8 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
   if str request "op" == "frameWork" then
     let reset := request.field? "reset" == some (.bool true)
     let (layouts,kept,repaints) := frameWork reset
-    let (pagesMade,pagesKept) := pageWork reset
+    let (pagesMade,pagesKept,recompiled,reused,moved) := pageWork reset
     let paints := paintWork reset
-    let (recompiled,reused,moved) := retainedWork reset
     let number := fun (n : Nat) => JSON.Json.number (toString n)
     return ((JSON.Json.object [("layouts",number layouts),("kept",number kept),("repaints",number repaints),
       ("paintOnly",number paints),("recompiled",number recompiled),("reused",number reused),("moved",number moved),
