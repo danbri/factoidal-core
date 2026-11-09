@@ -1,3 +1,4 @@
+import L4Factoidal.Rendering.ComputedValues
 import L4Factoidal.Rendering.Layout
 import L4Factoidal.Rendering.Links
 import L4Factoidal.Rendering.LinkTheorems

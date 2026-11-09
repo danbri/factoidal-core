@@ -17,6 +17,7 @@ import WebScripts
 import L4Factoidal.Rendering.SfntProfile
 import L4Factoidal.FrameCost.Band
 import L4Factoidal.FrameCost.Lru
+import L4Factoidal.Rendering.ComputedValues
 import WebRepaint
 import L4Factoidal.WHATWG.Encoding.Sniff
 import WebHit
@@ -1192,6 +1193,15 @@ def readAnswer (l : Laid) (node op : Nat) : Option String :=
   | 18 => match (WebHit.boundsOf l.dom l.scene node).2 with
     | some (x0,y0,x1,y1) => some (line [x0,y0,x1-x0,y1-y0])
     | none => some "0 0 0 0"
+  -- 21: the used width and height of the node's content box (CSSOM §9.1 resolved values
+  -- of `width` and `height`), "" when the node has no box
+  | 21 => match box, l.styles.get with
+    | some (x0,y0,x1,y1), .ok styles =>
+      let s := styles[node]?.getD {}
+      let b := s.borderEdges
+      some (line [max 0 (x1-x0-b.left-b.right-s.padding.left-s.padding.right),
+                  max 0 (y1-y0-b.top-b.bottom-s.padding.top-s.padding.bottom)])
+    | _, _ => some ""
   | _ => none
 
 /-- The layout reads of a script session (`Page.Measure`) with the render request
@@ -1201,7 +1211,18 @@ def measure (request : JSON.Json) : WasmVM.Hosts.Page.Measure := fun dom width h
   let request := layoutRequest request
   let held := heldNamed request ((namedImages request).toOption.getD [])
   let laid : Thunk (Except String Laid) := Thunk.mk fun _ => layOutDOM request none dom width height held (none,none)
-  fun node op => match laid.get with
+  -- `getComputedStyle` (op 20) reads the cascade alone: no layout for it
+  let styled : Thunk (Except String (Array Rendering.CSS.Computed)) := Thunk.mk fun _ => do
+    let textScale := Float.ofNat (← scalePercent request) / 100
+    let rules ← rules dom request
+    let state := withPointer dom (← elementState dom (baseURL dom (str request "url")) request) (none,none)
+    Rendering.CSS.computeAll dom rules textScale state
+  fun node op => if op == 20 then
+      match styled.get with
+      | .ok styles => if node < dom.size && (dom.get node).type == .element then
+          some (Rendering.ComputedValues.text (styles[node]?.getD {})) else some ""
+      | .error _ => none
+    else match laid.get with
     | .ok l => readAnswer l node op
     | .error _ => none
 
