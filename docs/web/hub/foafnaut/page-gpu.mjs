@@ -7,18 +7,20 @@
 // The page's objects are kept apart from the engine's (a table per page session).
 
 const FORMAT='rgba8unorm';
-// Lean's run-length form of a 2D canvas's pixels (PageCanvas.rle): a word n, then with the
-// high bit n pixels as they are, else one pixel n times. Only copies bytes.
-export function unrle(b,w,h){
-  const out=new Uint8Array(w*h*4),o32=new Uint32Array(out.buffer),dv=new DataView(b.buffer,b.byteOffset,b.byteLength);
-  let i=0,p=0;
-  while(i+4<=b.length&&p<w*h){
-    const head=dv.getUint32(i,true),n=Math.min(head&0x7fffffff,w*h-p);i+=4;
-    if(head&0x80000000){out.set(b.subarray(i,i+4*n),4*p);i+=4*n;}
-    else{o32.fill(new Uint32Array(b.slice(i,i+4).buffer)[0],p,p+n);i+=4;}
-    p+=n;
-  }
-  return out;
+// The full image of each 2D canvas, for the replay log (a new device needs the whole canvas,
+// a turn sends only the rectangle that changed). Only copies bytes.
+export function canvasImages(){
+  const images=new Map();
+  return {
+    /** The command to log for `c`: a texture's, or the canvas's whole image after `c`'s rectangle. */
+    take(c){
+      if(c.k==='canvas'&&c.twoD){images.set(c.g[1],{w:c.w,h:c.h,bytes:new Uint8Array(c.w*c.h*4)});return c;}
+      if(c.k!=='pixels'||!c.bytes)return c;
+      const im=images.get(c.g[1]);if(!im)return c;
+      for(let y=0;y<c.h;y++)im.bytes.set(c.bytes.subarray(y*c.w*4,(y+1)*c.w*4),((c.y+y)*im.w+c.x)*4);
+      return {k:'pixels',g:c.g,x:0,y:0,w:im.w,h:im.h,bytes:im.bytes};
+    },
+  };
 }
 
 export function createPageGpu(device){
@@ -48,8 +50,10 @@ export function createPageGpu(device){
       case 'shader':objs.set(c.g[1],device.createShaderModule({code:c.code}));break;
       // Canvas 2D (docs/designissues/2026-11-08-canvas-2d.md): the pixels Lean drew, the whole canvas.
       case 'pixels':{
-        const raw=Uint8Array.from(atob(c.data),ch=>ch.charCodeAt(0)),bytes=c.rle?unrle(raw,c.w,c.h):raw;
-        device.queue.writeTexture({texture:of(c.g)},bytes,{bytesPerRow:c.w*4},[c.w,c.h]);stats.pixels++;break;
+        // A rectangle of Lean's pixels (straight RGBA, raw bytes from the host's bytes call).
+        if(!c.bytes){warn('pixels','no bytes');break;}
+        if(c.w>0&&c.h>0)device.queue.writeTexture({texture:of(c.g),origin:[c.x??0,c.y??0]},c.bytes,{bytesPerRow:c.w*4},[c.w,c.h]);
+        stats.pixels++;break;
       }
       case 'pipeline':{
         const module=of(c.shader);
