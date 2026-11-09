@@ -93,7 +93,7 @@ try{
     consoleLines.length=0;
     const page=await open('crypto-vectors.html');
     const t0=Date.now();
-    const lines=()=>consoleLines.flatMap(l=>l.replace(/^page: /,'').split('\n')).filter(l=>/^(PASS|FAIL) /.test(l));
+    const lines=()=>[...new Set(consoleLines.flatMap(l=>l.replace(/^page: /,'').split('\n')).filter(l=>/^(PASS|FAIL) /.test(l)))];
     while(Date.now()-t0<Number(opt('--limit','300'))*1000){await sleep(500);if(lines().some(l=>/CryptoKey has no key bytes|FAIL threw/.test(l)))break;}
     const ls=lines(),fails=ls.filter(l=>l.startsWith('FAIL'));
     results[m]={passed:ls.length-fails.length,failed:fails.length,ms:Date.now()-t0};
