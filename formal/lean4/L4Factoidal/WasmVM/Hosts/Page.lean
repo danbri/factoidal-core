@@ -27,6 +27,7 @@ import L4Factoidal.WasmVM.Api
 import L4Factoidal.WasmVM.Wasi
 import L4Factoidal.WasmVM.Hosts.Dom
 import L4Factoidal.WasmVM.Hosts.WebApi
+import L4Factoidal.WasmVM.Hosts.PageWasm
 import L4Factoidal.EventLoop.Model
 import L4Factoidal.EventLoop.Dispatch
 
@@ -167,6 +168,9 @@ structure Host where
   reads : Reads := {}
   /-- The web APIs over Lean (`Hosts.WebApi`): streaming decoders and the generator. -/
   web : Hosts.WebApi.State := {}
+  /-- The page's WebAssembly (`Hosts.PageWasm`): its own WasmVM store, empty until a
+  script uses the JavaScript API. -/
+  wasm : Hosts.PageWasm.State := {}
   deriving Inhabited
 
 /-- Budgets of one session. -/
@@ -241,7 +245,7 @@ def caps : Wasi.Caps (StateM Host) :=
 /-- The imports served here rather than by `Hosts.Dom`. -/
 def loopImports : List (String × Nat) :=
   [("listen", 5), ("unlisten", 1), ("dispatch_plan", 6), ("set_timer", 3), ("clear_timer", 1),
-   ("request_frame", 1), ("cancel_frame", 1), ("web_api", 6)]
+   ("request_frame", 1), ("cancel_frame", 1), ("web_api", 6), ("wasm_call", 8)]
 
 def accepts (mo nm : String) : Bool :=
   (mo == Hosts.Dom.moduleName && (Hosts.Dom.accepts mo nm || loopImports.any (·.1 == nm))) ||
@@ -349,6 +353,13 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
   | "web_api" =>
     let (web, st, r) := Hosts.WebApi.serve mem args h.web st h.dom.dom
     ({ h with web }, st, r)
+  | "wasm_call" =>
+    -- The page's WebAssembly: its store is taken out of the host while it runs, so the
+    -- runs change it in place.
+    let w := h.wasm
+    let h := { h with wasm := {} }
+    let (w, st, r) := Hosts.PageWasm.serve mem args w st
+    ({ h with wasm := w }, st, r)
   | _ =>
     let (dom, st, r) := Hosts.Dom.serve mem nm args h.dom st
     let reads := if readOnlyImports.contains nm then h.reads else { h.reads with version := h.reads.version + 1 }
@@ -390,14 +401,18 @@ def Session.run (s : Session) (fa : Nat) (args : Array Value) : Session × Outco
   let mut o := o0
   let mut n := n0
   let mut h := { h with time := h.time.atRun h.loop.clock steps }
+  -- The page's WebAssembly runs in this run's host calls: its instructions are script time
+  -- too, from the call that ran them on.
+  let wasm0 := h.wasm.steps
   for _ in [0:lim.hostCalls] do
     match o with
     | .hostCall id vs k =>
-      let (h', st', r) := serve mem bs id vs { h with time := h.time.atRun h.loop.clock (steps + n) } st
+      let (h', st', r) := serve mem bs id vs { h with time := h.time.atRun h.loop.clock (steps + n + (h.wasm.steps - wasm0)) } st
       h := h'
       let (st'', o', n') := resumeSteps st' k r { budget with fuel := lim.fuel - n }
       st := st''; o := o'; n := n + n'
     | _ => break
+  n := n + (h.wasm.steps - wasm0)
   -- Script time passed: the loop's clock moves up to it.
   let time := h.time.atRun h.loop.clock (steps + n)
   h := { h with time, loop := { h.loop with clock := time.sync h.loop.clock } }

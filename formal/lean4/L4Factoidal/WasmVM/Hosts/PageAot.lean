@@ -77,6 +77,8 @@ def readsOf : Wasi.Binding → Option (List Read)
       | "listen" | "dispatch_plan" => some [⟨1, 2, Hosts.Dom.maxAttrName⟩]
       | "unlisten" | "set_timer" | "clear_timer" | "request_frame" | "cancel_frame" => some []
       | "web_api" => some [⟨2, 3, Hosts.WebApi.maxInput⟩]
+      -- The request, and the bytes of the Memory.buffer view it copies from.
+      | "wasm_call" => some [⟨2, 3, Hosts.PageWasm.maxRequest⟩, ⟨6, 7, Hosts.PageWasm.maxRequest⟩]
       | _ => (Hosts.Dom.Import.ofName? nm).map domReads
 
 /-- A guest prepared for the host's engine. -/
@@ -154,6 +156,9 @@ structure Paused (α : Type) where
   k : Session → Reply → Prog α
   /-- Host calls served in the current run. -/
   hostCalls : Nat := 0
+  /-- The page's WebAssembly instructions when the run started (`Hosts.PageWasm`): those
+  run since are script time, as in `Session.run`. -/
+  wasm0 : Nat := 0
 
 /-- The script clock at the start of a run, as `Session.run` sets it. -/
 def startRun (s : Session) : Session :=
@@ -162,7 +167,9 @@ def startRun (s : Session) : Session :=
 /-- Where a program stands: finished, or stopped at an ask. -/
 def Prog.next : Prog α → α ⊕ Paused α
   | .done a => .inl a
-  | .ask q s k => .inr { ask := q, session := (match q with | .invoke _ _ => startRun s | _ => s), k }
+  | .ask q s k =>
+    let session := match q with | .invoke _ _ => startRun s | _ => s
+    .inr { ask := q, session := session, k := k, wasm0 := s.host.wasm.steps }
 
 /-- Continue with the machine's reply. -/
 def Paused.resume (p : Paused α) (r : Reply) : α ⊕ Paused α :=
@@ -172,7 +179,7 @@ def Paused.resume (p : Paused α) (r : Reply) : α ⊕ Paused α :=
 message; `fuelLeft` is the fuel global after the run. Fuel units spent are added to
 `steps`. -/
 def ranReply (p : Paused α) (o : Outcome) (fuelLeft : Int) : Paused α × Reply :=
-  let spent := (Int.ofNat p.session.limits.fuel - fuelLeft).toNat
+  let spent := (Int.ofNat p.session.limits.fuel - fuelLeft).toNat + (p.session.host.wasm.steps - p.wasm0)
   let o := match o with
     | .trap t => if fuelLeft < 0 then Outcome.trap (.host "out of fuel") else .trap t
     | o => o
@@ -192,7 +199,7 @@ def serveHost (p : Paused α) (id : Nat) (args : Array Value) (memSize : Nat)
   let s := p.session
   let st : StoreOf Aot.Window := { mems := #[{ data := { size := memSize, segs }, max := none }] }
   -- The script clock counts the run so far, as `Session.run` does at each host call.
-  let spent := (Int.ofNat s.limits.fuel - fuelLeft).toNat
+  let spent := (Int.ofNat s.limits.fuel - fuelLeft).toNat + (s.host.wasm.steps - p.wasm0)
   let h := { s.host with time := s.host.time.atRun s.host.loop.clock (s.steps + spent) }
   let (h, st, r) := serve 0 s.bindings id args h st
   let writes := match st.mems[0]? with
