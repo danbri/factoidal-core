@@ -18,12 +18,16 @@ import {requestRenderPlan} from "./render_plan.ts";
 import {startCompileWorker,type CompileClient} from "./native_html_compile.ts";
 import type {UIEvent} from "./ui_engine.ts";
 
+/** What this program was built from: the record build-executables.sh compiles into it. */
+async function buildInfo():Promise<{commit?:string;dirty?:boolean;builtAt?:string}> {
+  try{return JSON.parse(await Deno.readTextFile(new URL("./.build/native-html/build-info.json",import.meta.url)));}
+  catch{return {};} // run from source with no app build
+}
 async function main() {
   const args=[...Deno.args];
-  // What this program was built from: BUILD-INFO.json, which build-executables.sh writes beside it.
+  // What this program was built from: the record build-executables.sh compiled into it.
   if(args.includes("--version")){
-    let info:{commit?:string;dirty?:boolean;builtAt?:string}={};
-    try{info=JSON.parse(await Deno.readTextFile(new URL("BUILD-INFO.json",`file://${Deno.execPath().replace(/[^/]*$/,"")}`)));}catch{/* run from source, or built before the record existed */}
+    const info=await buildInfo();
     console.log(info.commit?`foafnaut ${info.commit}${info.dirty?" (with uncommitted changes)":""}, built ${info.builtAt}`:"foafnaut: no build record (run from source, or an older build)");
     return;
   }
@@ -493,6 +497,22 @@ async function main() {
   // `:sparql-step` goes to the address Lean gives as the next step.
   const sparqlURL="foafnaut:sparql";let sparqlNext=sparqlURL;
   const isSparql=(target:string)=>target===sparqlURL||target.startsWith(sparqlURL+"/");
+  // about:foafnaut: which build this is, from the record compiled into the program.
+  const aboutURL="foafnaut:about";
+  const aboutPage=async()=>{
+    const info=await buildInfo();
+    const esc=(t:unknown)=>String(t).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]!));
+    const row=(k:string,v:unknown)=>`<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`;
+    return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>About Foafnaut</title><style>body{margin:24px;font-size:15px;line-height:22px;color:#203040;background:white}h1{margin:0 0 12px;font-size:24px;line-height:32px;color:#184078}th{text-align:left;padding:4px 18px 4px 0;font-weight:normal;color:#5b6876}td{padding:4px 0}</style></head><body><h1>Foafnaut</h1><table>`+
+      row("Build commit",(info.commit??"unknown: run from source")+(info.dirty?" (with uncommitted changes)":""))+
+      row("Built",info.builtAt??"unknown")+
+      row("Rendering engine",engineRan.startsWith("native")?"native library":"WebAssembly")+
+      row("Page scripts",planFor(scriptSetting)?.name??"none")+
+      row("Liberal mode",liberal?"on":"off")+
+      row("Platform",`${Deno.build.os} ${Deno.build.arch}`)+
+      row("Runtime",`Deno ${Deno.version.deno}, V8 ${Deno.version.v8}`)+
+      `</table></body></html>`;
+  };
   const sparqlPage=async(target:string)=>{
     let answer:{source:string;next?:string};
     try{answer=await lean.sparqlPage(target.slice(sparqlURL.length+1));}
@@ -853,7 +873,7 @@ async function main() {
     // is answered on screen before the new page is prepared and laid out.
     dirty=true;
     console.log(JSON.stringify({type:"native-html-loading",url:target}));
-    (STATE_PAGES.includes(target)?(browserState?browserState.page(target):Promise.reject(new Error("Browser state is off"))).then(source=>prepareHTML(lean,target,undefined,source)):target===settingsURL?settingsSource().then(source=>prepareHTML(lean,target,current.signal,source)):target===graphURL?graphPage():target===wasmURL||target.startsWith(wasmURL+"/")?wasmPage(target):isSparql(target)?sparqlPage(target):isConsole(target)?consolePage(target):prepareHTML(lean,target,current.signal,undefined,{liberal})).then(next=>{
+    (target===aboutURL?aboutPage().then(source=>prepareHTML(lean,target,undefined,source)):STATE_PAGES.includes(target)?(browserState?browserState.page(target):Promise.reject(new Error("Browser state is off"))).then(source=>prepareHTML(lean,target,undefined,source)):target===settingsURL?settingsSource().then(source=>prepareHTML(lean,target,current.signal,source)):target===graphURL?graphPage():target===wasmURL||target.startsWith(wasmURL+"/")?wasmPage(target):isSparql(target)?sparqlPage(target):isConsole(target)?consolePage(target):prepareHTML(lean,target,current.signal,undefined,{liberal})).then(next=>{
       if(current===controller&&!current.signal.aborted&&running){
         candidate=next;dirty=true;loading=false;
         if(push)remember(engine.historyPush(history.history,next.url),"push");
