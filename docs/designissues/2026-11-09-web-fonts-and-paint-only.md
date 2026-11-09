@@ -108,6 +108,14 @@ for U+0308 on n and ı.
   max 6.0 ms, 0 layouts, 120 paint-only frames. `<animateTransform>`: before, the page
   was refused ("unsupported attribute on animateTransform"); after p50 2.5, p95 3.3,
   max 3.4 ms, 0 layouts.
+- Final build, 1600 by 1000 window, the same animation through `compileLayers` with the
+  chrome: engine p50 5.3, p95 6.1, max 18.2 ms (p50 87.9 ms before the literals `1e300` left
+  `cullCurve`). In the window, worker time 4.4 to 5.1 ms a frame.
+- Hub, headless Chrome, 800 by 600: `zoom-hub.html` engine p50 6, p95 7, max 7 ms; whole
+  frame p50 80, p95 105 ms (12 frames a second): the GPU draw is what is left.
+- `spinal-tap-sparql.html`, 732 primitives, the whole page compiled each frame: engine p50
+  63 ms in the native window (1600 by 1000), 116 ms on the Hub (800 by 600). The target of
+  8 ms holds for the zoom alone, not for this page: it needs the partial compile below.
 - Scene data at scale 1, 40 and 200: 5,228, 2,284 and 2,680 floats (`WebPaint.cull`).
 - Timers and clicks (scripted transforms of 12 circles): engine time per frame p50 13.4
   → 12.2 ms. Layout is gone from these frames; the band compile of the whole page is what

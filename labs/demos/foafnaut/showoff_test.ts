@@ -206,8 +206,19 @@ async function oracleMarks(engine:HTMLEngine){
   return {checked,fraktur:[(m[1]-b[1])*2,(m[2]-b[2])*2]};
 }
 
+// document.fonts asks Lean (node_query op 23); the device pixel ratio (op 22) stays apart.
+function documentFonts(engine:HTMLEngine):void{
+  const page=`<!doctype html><style>@font-face{font-family:"Spinal";src:url(F.ttf) format("truetype");unicode-range:U+41-5A}h1{font-family:Spinal}</style><h1>A</h1>
+<script>console.log('RESULT '+[...document.fonts].map(f=>f.family+'/'+f.status+'/'+f.unicodeRange).join(';')+' '+devicePixelRatio);</script>`;
+  const turn=engine.scriptSession(page,{action:"start",url:"http://example.test/p.html",resources:[],instructionsPerMs:1e12,engine:"bubblepop"}) as {logs:string[];errors:string[]};
+  engine.scriptSession("",{action:"close"});
+  assert.deepEqual(turn.errors,[]);
+  assert.equal(turn.logs.find(l=>l.startsWith("RESULT ")),"RESULT Spinal/unloaded/U+41-5A 1");
+}
+
 for(const [name,path] of [["Wasm engine",undefined],["native library",library]] as const){
   const ignore=path!==undefined&&noLibrary;
+  Deno.test({name:`document.fonts lists the page's faces, BubblePopJS, ${name}`,ignore,fn:async()=>{documentFonts(await engineWithFont(path));}});
   Deno.test({name:`web fonts: used faces only, refused face falls back, HTML and SVG text, ${name}`,ignore,fn:async()=>{console.log(JSON.stringify(await webFonts(await engineWithFont(path))));}});
   Deno.test({name:`combining mark of one font on a base of another, ${name}`,ignore,fn:async()=>{console.log(JSON.stringify(await crossFontMark(await engineWithFont(path))));}});
   Deno.test({name:`paint-only: a script's transform lays out once, ${name}`,ignore,fn:async()=>{console.log(JSON.stringify(transformCounts(await engineWithFont(path))));}});
