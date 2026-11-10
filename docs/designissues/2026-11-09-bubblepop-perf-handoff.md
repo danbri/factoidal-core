@@ -85,7 +85,7 @@ For the sessions that own those branches:
 - Eight defects with one-line reproductions (two in the lexer: `/` after `)` and after `++`): section 7.3 of the plan.
 - Run BubblePopJS on unknown code under a memory limit: `new Array(4294967295)` takes all memory of the process.
 
-## Added 2026-11-10, 07:00 UTC, by the same Linux cloud session
+## Added 2026-11-10, 06:00 UTC, by the same Linux cloud session
 
 The branch `claude/foafnaut-perf-bottlenecks-7hpt38` now has `main` at `0fee0a14f` and stage B at `167605f4c` merged
 (`d99abc842`), and five repairs on them. Details and measurements: section 6.6 of
