@@ -576,6 +576,28 @@ def verdict (a : Action) : Option Bool := (doneJson a).getBool? "accept"
 -- The inbox URL as subscribed: the receiver's base and the request target.
 #guard inboxUrl { kind := "verifyNotification", url := "http://in.example/", requestTarget := "/inbox/1" } ==
   "http://in.example/inbox/1"
+-- `@query` is a covered component (RFC 9421 §2.2.7): the query with its
+-- leading `?`, and `?` alone for an inbox URL with no query
+-- (https://github.com/danbri/factoidal-core/issues/379).
+def qparams : String := "(\"@method\" \"@scheme\" \"@authority\" \"@path\" \"@query\" \"content-type\" \"content-digest\");created=1;keyid=\"https://s.example/st#k1\";alg=\"ecdsa-p256-sha256\""
+def qheaders : List (String × String) := [("Content-Type", "application/lws+json"), ("Content-Digest", "sha-256=:AAAA:")]
+#guard inboxBase "post" "http://in.example/inbox/1" qheaders qparams == some (
+  "\"@method\": POST\n\"@scheme\": http\n\"@authority\": in.example\n\"@path\": /inbox/1\n\"@query\": ?\n" ++
+  "\"content-type\": application/lws+json\n\"content-digest\": sha-256=:AAAA:\n\"@signature-params\": " ++ qparams)
+#guard urlQuery "http://in.example/inbox/1?a=b&c=d#f" == "?a=b&c=d"
+#guard urlQuery "http://in.example/inbox/1?" == "?"
+#guard urlQuery "http://in.example/inbox/1#f?x" == "?"
+#guard (inboxBase "POST" "http://in.example/inbox/1?a=b" qheaders qparams).map (fun b => (b.splitOn "\"@query\": ?a=b\n").length) == some 2
+-- The request target carries the query to the inbox URL.
+#guard urlQuery (inboxUrl { kind := "verifyNotification", url := "http://in.example/", requestTarget := "/inbox/1?t=9" }) == "?t=9"
+-- A derived component this client does not know is refused, not read as a header field.
+#guard inboxBase "POST" "http://in.example/inbox/1" (qheaders ++ [("@target-uri", "x")]) "(\"@method\" \"@target-uri\");created=1" == none
+-- A whole verification with `@query` covered.
+#guard verdict (script { nop "https://s.example/st#k1" "good" with
+    headers := [ ("Content-Type", mediaLwsJson), ("Content-Digest", digestOf nbody.toUTF8)
+               , ("Signature-Input", "sig1=" ++ qparams.replace "ecdsa-p256-sha256" "ed25519")
+               , ("Signature", "sig1=:" ++ Base64.encode "good".toUTF8 ++ ":") ] }
+  [sdesc "https://s.example/st"]).2 == some true
 -- A document that names another id.
 #guard verdict (script (nop "https://s.example/st/fake#k1" "good") [sdesc "https://s.example/st"]).2 == some false
 
