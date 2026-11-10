@@ -30,6 +30,13 @@ audit to `labs/` is an open decision for the owner.
 
 Do not add one "for now", and do not weaken or delete a theorem to make something build. If a theorem cannot carry over, say so.
 
+Scope, 2026-11-10: the "must be 0" counts are for `formal/lean4`. The browser's host modules in
+`labs/demos/foafnaut/*.lean` have 29 `unsafe` definitions and 29 `@[implemented_by]` attributes
+(state kept between C ABI calls); the audit holds them at that baseline, and
+https://github.com/danbri/factoidal-core/issues/390 tracks their removal. Do not add one. Do
+not write "no `unsafe` in the engine" in a report: say which directory. Cost: a status note of
+2026-11-10 gave the ban with no scope, and the owner sent it to a reader outside the project.
+
 ## 2. `@[csimp]` is only as good as its lemma
 
 `@[csimp] theorem f_eq : @f = @g` makes the compiler emit `g` where the source says `f`. Proofs stay about `f`.

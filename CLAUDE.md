@@ -119,6 +119,15 @@ measurement, never by assertion.
 Standing priorities: `docs/claude-rules/current-state.md` § Standing
 priorities.
 
+## Browser and web platform work starts at the foafnaut skill (owner, 2026-11-10)
+
+Owner, verbatim: "Update CLAUDE.md to point to the Foafnaut skill as entry point for working on
+browsers and webplatform." Before any work on Foafnaut, Textnaut, BubblePopKit (rendering),
+BubblePopJS (JavaScript), BubblePopWASM (WebAssembly), the Hub browser page, HTML, DOM, CSS,
+fonts, or the Web Platform Tests, read [`skills/foafnaut/SKILL.md`](skills/foafnaut/SKILL.md)
+first: code map, build, test, measure, traps, how to land. Then the newest handoff record that
+it names. Current release: https://github.com/danbri/factoidal-core/issues/389 (release 0.35.0).
+
 ## Work goes on main (owner, 2026-11-05)
 
 Owner, verbatim: **"THE MAIN BRANCH IS OK FOR WORK IN PROGRESS! This whole project is in

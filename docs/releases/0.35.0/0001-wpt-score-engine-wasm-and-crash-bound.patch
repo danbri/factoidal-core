@@ -1,0 +1,73 @@
+--- a/tests/browser-wpt/wpt-score.py
++++ b/tests/browser-wpt/wpt-score.py
+@@ -114,8 +114,15 @@
+ 
+ def cmd_run(a):
+     """Run a list in --jobs parts, restarting a part past a test that stalls."""
++    if a.engine == "native" and not a.native_engine:
++        sys.exit("run: --engine native needs --native-engine FILE")
+     names = [l.strip() for l in open(a.list) if l.strip() and not l.startswith("#")]
+     parts = [names[i::a.jobs] for i in range(a.jobs)]
++    # Restarts of a part with no new result line since its last start. A runner that cannot
++    # start (no engine library, no Wasm runtime, no QuickJS guest) exits before its first
++    # test; without this bound it was started again until --max-hours.
++    barren = [0] * a.jobs
++    failed = []
+     os.makedirs(a.dir, exist_ok=True)
+     procs = []
+     server = None
+@@ -143,8 +150,9 @@
+ 
+     def start(i):
+         lst, jsonl, err = (os.path.join(a.dir, f"part{i}.{x}") for x in ("list", "jsonl", "log"))
+-        cmd = ["nice", "-n", "10", "deno", "run", "-A", os.path.join(HERE, "testharness-run.ts"), "--engine", "native",
+-               "--native-engine", a.native_engine, "--wpt-root", a.wpt_root, "--list", lst, "--jsonl", jsonl] + a.extra
++        cmd = ["nice", "-n", "10", "deno", "run", "-A", os.path.join(HERE, "testharness-run.ts"), "--engine", a.engine] + \
++              (["--native-engine", a.native_engine] if a.engine == "native" else []) + \
++              ["--wpt-root", a.wpt_root, "--list", lst, "--jsonl", jsonl] + a.extra
+         return subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=open(err, "a"), start_new_session=True)
+ 
+     for i, p in enumerate(parts):
+@@ -160,6 +168,7 @@
+             now = len(done_in(jsonl))
+             if now != count:
+                 slot[1], slot[2] = time.time(), now
++                barren[i] = 0
+             if p.poll() is None:
+                 alive += 1
+                 if time.time() - slot[1] > a.stall:
+@@ -181,6 +190,13 @@
+                 if stuck and stuck not in done_in(jsonl):
+                     with open(jsonl, "a") as f:
+                         f.write(json.dumps({"file": stuck, "harness": "CRASH", "message": f"runner exit {p.returncode}", "subtests": []}) + "\n")
++                else:
++                    barren[i] += 1
++                if barren[i] >= 3:
++                    if i not in failed:
++                        failed.append(i)
++                        print(f"part {i}: the runner ended {barren[i]} times with exit {p.returncode} and no result (see part{i}.log); not started again", file=sys.stderr)
++                    continue
+                 slot[0], slot[1], slot[2] = start(i), time.time(), len(done_in(jsonl))
+                 alive += 1
+         total = sum(len(done_in(os.path.join(a.dir, f"part{i}.jsonl"))) for i in range(a.jobs))
+@@ -201,6 +217,8 @@
+         except subprocess.TimeoutExpired:
+             server.kill()
+     print(f"run: {time.time() - t0:.0f}s wall for {len(names)} names in {a.jobs} processes")
++    if failed:
++        sys.exit(f"run: {len(failed)} of {a.jobs} processes could not run their tests")
+ 
+ 
+ def read_results(dirs):
+@@ -522,7 +540,10 @@
+     r.add_argument("--list", required=True)
+     r.add_argument("--dir", required=True)
+     r.add_argument("--wpt-root", required=True)
+-    r.add_argument("--native-engine", required=True)
++    r.add_argument("--engine", choices=["native", "wasm"], default="native",
++                   help="native (default): the engine library given by --native-engine; wasm: the engine's Wasm build "
++                        "(labs/demos/foafnaut/.build/native-html/runtime/web-render.{mjs,wasm}), which needs no library")
++    r.add_argument("--native-engine", help="the engine library (libweb-render.dylib); needed with --engine native")
+     r.add_argument("--jobs", type=int, default=3)
+     r.add_argument("--stall", type=int, default=300)
+     r.add_argument("--max-hours", type=float, default=6)
