@@ -313,9 +313,11 @@ Deno.test("a low-priority layers call runs after ordinary calls, a newer one rep
     const [,oldAnswer,newerAnswer]=await Promise.all([ordinary,old,newer,after]);
     assert.equal(oldAnswer,undefined);
     assert(newerAnswer);
-    // The worker takes the low calls in after the first call ends. The second ordinary call
-    // was sent after the low call and still ran before it.
-    assert.deepEqual(order,["ordinary","old-dropped","ordinary2","newer"]);
+    // The replaced low call is answered undefined when the newer one arrives (the queue drops it
+    // at once), so its place in the order is not fixed. The second ordinary call was sent after
+    // the low call and still ran before it.
+    assert.deepEqual(order.filter(o=>o!=="old-dropped"),["ordinary","ordinary2","newer"]);
+    assert(order.includes("old-dropped"));
     assert.equal(client.pending,0);
     // The prefetched band is Lean's answer for that request, the same as an ordinary call.
     const direct=await client.compileLayers(third.source,640,400,third.options);
