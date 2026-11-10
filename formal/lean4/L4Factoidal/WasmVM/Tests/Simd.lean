@@ -129,9 +129,40 @@ def moves : IO Bool := do
   IO.println s!"simd moves: {cases.length} cases: {if ok then "pass" else "FAIL"}"
   return ok
 
+/-- The three parts of SIMD that the engine refuses
+(https://github.com/danbri/factoidal-core/issues/385): relaxed SIMD, a tag type with a v128,
+a host function type with a v128. Each check expects the refusal with its text. When a part
+is implemented its check fails here: change the check and the issue together. -/
+def refusals : IO Bool := do
+  -- a module whose one function body is `i8x16.relaxed_swizzle` (0xFD 0x100)
+  let bin : ByteArray := ⟨#[0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+    0x01, 0x04, 0x01, 0x60, 0x00, 0x00, 0x03, 0x02, 0x01, 0x00,
+    0x0a, 0x07, 0x01, 0x05, 0x00, 0xfd, 0x80, 0x02, 0x0b]⟩
+  let relaxed := match decode bin with
+    | .error e => e.toString == "unsupported: relaxed SIMD instruction at byte 23"
+    | .ok _ => false
+  let tagM : Module := { types := #[⟨#[.v128], #[]⟩], tags := #[0] }
+  let tag := match validate tagM with
+    | .error e => e.msg == "unsupported: v128 in a tag type"
+    | .ok _ => false
+  let hostM : Module := { types := #[⟨#[.v128], #[]⟩], imports := #[⟨"env", "f", .func 0⟩] }
+  let hostText := match validate hostM with
+    | .error e => "validate: " ++ e.msg
+    | .ok vm =>
+      let (st, fa) := ({} : Store).addHostFunc ⟨#[.v128], #[]⟩ 0
+      match (instantiateRun (M := ByteMem) (fun _ _ st => (st, .values #[])) st vm #[.func fa]).2 with
+      | .error e => e.toString
+      | .ok _ => "instantiated"
+  let host := (hostText.splitOn "unsupported: v128 in the type of a host function").length == 2
+  if !host then IO.println s!"  simd refusals: host function: {hostText}"
+  let ok := relaxed && tag && host
+  IO.println s!"simd refusals (issue 385): relaxed SIMD {relaxed}, v128 in a tag type {tag}, v128 in a host function type {host}: {if ok then "pass" else "FAIL"}"
+  return ok
+
 def run : IO Bool := do
   let a ← moves
   let b ← noCopy
-  return a && b
+  let c ← refusals
+  return a && b && c
 
 end L4Factoidal.WasmVM.Tests.Simd
