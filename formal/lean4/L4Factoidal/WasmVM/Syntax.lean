@@ -9,8 +9,8 @@ that nests a flat body is the bridge for the refinement proofs
 (docs/designissues/2026-11-07-wasmvm-engine.md, "Proof plan"). Flat code keeps the
 decoder and the validator as loops, with no recursion on nesting depth.
 
-Scope now: WebAssembly 2.0 plus multi-memory, the reference types of 3.0 without
-GC types, exception handling (3.0 `try_table` and the legacy `try`/`catch`/`delegate`/
+Scope now: WebAssembly 2.0 plus multi-memory, the reference types of 3.0,
+exception handling (3.0 `try_table` and the legacy `try`/`catch`/`delegate`/
 `rethrow`), tail calls, typed function references, fixed-width SIMD (`Instr.simd`) and
 garbage collection (`TypeDef`, `Instr.gc`). Constructors for memory64 come later.
 -/

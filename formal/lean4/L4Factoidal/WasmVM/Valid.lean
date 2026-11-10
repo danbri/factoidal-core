@@ -62,8 +62,9 @@ def comp? (c : Ctx) (i : Nat) : Option CompType := c.defs[i]?.map (·.sub.comp)
 (the entry of `types` is then a placeholder). -/
 def funcT? (c : Ctx) (i : Nat) : Option FuncType :=
   match c.comp? i with
-  | some (.struct _) | some (.array _) => none
-  | _ => c.types[i]?
+  | some (.func ft) => some ft
+  | some _ => none
+  | none => c.types[i]?
 
 def structT? (c : Ctx) (i : Nat) : Option (Array FieldType) :=
   match c.comp? i with
