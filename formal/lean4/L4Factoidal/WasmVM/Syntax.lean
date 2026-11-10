@@ -11,9 +11,9 @@ decoder and the validator as loops, with no recursion on nesting depth.
 
 Scope now: WebAssembly 2.0 plus multi-memory, the reference types of 3.0 without
 GC types, exception handling (3.0 `try_table` and the legacy `try`/`catch`/`delegate`/
-`rethrow`), tail calls and typed function references. Constructors for SIMD, GC and
-memory64 come later; `ValType.v128` and `HeapType.idx` already exist so that the types
-do not change shape.
+`rethrow`), tail calls, typed function references and fixed-width SIMD (`Instr.simd`).
+Constructors for GC and memory64 come later; `HeapType.idx` already exists so that the
+types do not change shape.
 -/
 namespace L4Factoidal.WasmVM
 
@@ -195,6 +195,11 @@ inductive Instr where
   | returnCall (f : Nat) | returnCallIndirect (type : Nat) (table : Nat) | returnCallRef (type : Nat)
   -- Typed function references.
   | callRef (type : Nat) | refAsNonNull | brOnNull (l : Nat) | brOnNonNull (l : Nat)
+  /-- A fixed-width SIMD instruction: `code` is the opcode number after the 0xFD
+  prefix. The immediates that the opcode does not have are zero: the memarg, the lane
+  index, and 16 bytes as two little-endian halves (`v128.const`: the value;
+  `i8x16.shuffle`: the 16 lane indices). Shapes and results: `Simd.lean`. -/
+  | simd (code : Nat) (m : MemArg) (lane : Nat) (lo hi : UInt64)
   deriving BEq, Repr, Inhabited
 
 /-- A constant expression or a function body: flat instructions ending in `end_`. -/

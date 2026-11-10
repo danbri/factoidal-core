@@ -114,6 +114,28 @@ inductive Op where
   /-- The function's handler table. Data, not an instruction: the validator puts it
   last, after the final `return_`, only in functions with a `try`. -/
   | handlers (hs : Array Handler)
+  -- Fixed-width SIMD (record, "SIMD"). All of these run in `cold`. A v128 value has
+  -- one slot index: its low half is in the operand stack, its high half in the slot of
+  -- the same index of the hi stack (`ExcStore.hi`). The ops of the hot loop move low
+  -- halves only, so where the validator knows that a moved value is a v128 it emits
+  -- one of the ops below.
+  /-- A SIMD instruction with no 16-byte immediate: opcode number, then memory index,
+  offset and lane index (zero when the opcode has none). -/
+  | simd (code mem offset lane : Nat)
+  /-- `v128.const` (the value) and `i8x16.shuffle` (the 16 lane indices). -/
+  | simdImm (code : Nat) (lo hi : UInt64)
+  | vLocalGet (x : Nat) | vLocalSet (x : Nat) | vLocalTee (x : Nat)
+  | vSelect
+  | vGlobalGet (x : Nat) | vGlobalSet (x : Nat)
+  /-- `brTable` that moves both halves of the kept values. -/
+  | vBrTable (ts : Array BrTarget) (d : BrTarget)
+  /-- Move the high halves of the `n` slots below the top `skip` slots down to
+  `fp + height`. The validator puts it before a `br`, `return_` or tail call that
+  moves v128 values; that op then moves the low halves. -/
+  | hiMove (skip n height : Nat)
+  /-- Zero the high halves of locals `x` to `x + n - 1` (function entry, when a
+  declared local is a v128). -/
+  | hiZero (x n : Nat)
   deriving Repr, Inhabited
 
 /-- The conditional jump at the end of a fused op. -/
@@ -227,6 +249,13 @@ def grow (s : Slots) : Nat → Slots
   | k + 1 => grow (s.push 0 |>.push 0 |>.push 0 |>.push 0 |>.push 0 |>.push 0 |>.push 0 |>.push 0) k
 
 def push (s : Slots) (v : UInt64) : Slots := wr (grow s 1) s.count.toUSize v
+
+/-- Write slot `i`, growing the array when `i` is past its end (to twice its size at
+least, so repeated writes at the top cost amortised constant time). -/
+def wrGrow (s : Slots) (i : USize) (v : UInt64) : Slots :=
+  let n := i.toNat
+  let s := if n < s.count then s else grow s (max (n + 1) (2 * s.count) - s.count)
+  wr s i v
 
 def zeros (n : Nat) : Slots := grow (ByteArray.emptyWithCapacity (8 * n)) n
 
@@ -345,6 +374,17 @@ def Op.freshWith (k : Nat) : Op → Op
   | .brOnNull t => .brOnNull (t.freshWith k)
   | .brOnNonNull t => .brOnNonNull (t.freshWith k)
   | .handlers hs => .handlers (hs.map (Handler.freshWith k))
+  | .simd code mem offset lane => .simd (code + k) (mem + k) (offset + k) (lane + k)
+  | .simdImm code lo hi => .simdImm (code + k) (lo + k.toUInt64) (hi + k.toUInt64)
+  | .vLocalGet x => .vLocalGet (x + k)
+  | .vLocalSet x => .vLocalSet (x + k)
+  | .vLocalTee x => .vLocalTee (x + k)
+  | .vSelect => .vSelect
+  | .vGlobalGet x => .vGlobalGet (x + k)
+  | .vGlobalSet x => .vGlobalSet (x + k)
+  | .vBrTable ts d => .vBrTable (ts.map (BrTarget.freshWith k)) (d.freshWith k)
+  | .hiMove skip n height => .hiMove (skip + k) (n + k) (height + k)
+  | .hiZero x n => .hiZero (x + k) (n + k)
 
 /-- A new copy of an op (see above). -/
 def Op.fresh (o : Op) : Op := o.freshWith freshZero

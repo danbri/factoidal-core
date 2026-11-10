@@ -167,7 +167,7 @@ theorem return_call_keeps_args (z : Spec.state) (k : Nat) (fr : Spec.frame) (vs 
   simpa using h
 
 section
-variable {M : Type}
+variable {M : Type} [LinearMemory M]
 open Run
 
 /-- The tail-call ops go on with the same frame stack and frame base. -/

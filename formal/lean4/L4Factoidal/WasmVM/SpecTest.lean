@@ -9,8 +9,8 @@ run to files whose directory is NAME.
 
 Each command counts as pass, fail or not run. Not run: a text-format module (the
 engine reads the binary format only), a construct of a proposal the engine does not
-run yet (the decoder says `unsupported`), v128 values, and assertions on a module that
-was not run. Files run in parallel (one task each, each with its own store) unless
+run yet (the decoder says `unsupported`), and assertions on a module that was not
+run. Files run in parallel (one task each, each with its own store) unless
 `--serial` is given; both times are printed.
 
 Not part of the verified library: it does file I/O and prints scores.
@@ -18,6 +18,7 @@ Not part of the verified library: it does file I/O and prints scores.
 import L4Factoidal.WasmVM.Tests.Memory
 import L4Factoidal.WasmVM.Tests.Proposals
 import L4Factoidal.WasmVM.Tests.Wasi
+import L4Factoidal.WasmVM.Tests.Simd
 import Lean.Data.Json
 import L4Factoidal.WasmVM.Api
 
@@ -79,7 +80,23 @@ def parseInt (s : String) : Option Int := s.toInt?
 
 def wrap (bits : Nat) (i : Int) : Nat := (i % (2 ^ bits : Int)).toNat
 
-/-- An argument value, or none when the engine has no such value (v128). -/
+/-- Lane width in bits of a v128 value's `lane_type`. -/
+def laneBits : String → Nat
+  | "i8" => 8 | "i16" => 16 | "i32" | "f32" => 32 | _ => 64
+
+/-- The lane strings of a v128 value: `{"type":"v128","lane_type":"i32","value":["1",..]}`. -/
+def laneStrings (j : Json) : Option (Nat × Array String) := do
+  let w := laneBits (← str j "lane_type")
+  let vs ← (j.getObjValAs? (Array String) "value").toOption
+  if vs.size != 128 / w then none else some (w, vs)
+
+def v128Value (j : Json) : Option Value := do
+  let (w, vs) ← laneStrings j
+  let v ← vs.zipIdx.foldlM (init := (⟨0, 0⟩ : V128)) fun v (s, i) => do
+    pure (v.setLane w i (UInt64.ofNat (wrap w (← parseInt s))))
+  some (.v128 v.lo v.hi)
+
+/-- An argument value, or none when the engine has no such value. -/
 def argValue (j : Json) : Option Value := do
   let ty ← str j "type"
   let v := (str j "value").getD "null"
@@ -90,13 +107,24 @@ def argValue (j : Json) : Option Value := do
   | "f64" => some (.f64 (UInt64.ofNat (wrap 64 (← parseInt v))))
   | "externref" => if v == "null" then some (.externRef none) else (v.toNat?).map (.externRef ∘ some)
   | "funcref" => if v == "null" then some (.funcRef none) else (v.toNat?).map (.funcRef ∘ some)
+  | "v128" => v128Value j
   | _ => none
 
 def isNaN32 (b : UInt32) : Bool := (b &&& 0x7F800000) == 0x7F800000 && (b &&& 0x007FFFFF) != 0
 def isNaN64 (b : UInt64) : Bool :=
   (b &&& 0x7FF0000000000000) == 0x7FF0000000000000 && (b &&& 0x000FFFFFFFFFFFFF) != 0
 
-/-- Does `got` match the expected JSON value? `none`: the engine cannot tell (v128). -/
+/-- Does lane bits `b` (width `w`) match the expected lane string? Float lanes may be
+`nan:canonical` or `nan:arithmetic`. -/
+def laneMatches (w : Nat) (s : String) (b : UInt64) : Option Bool := do
+  if s == "nan:canonical" then
+    some (if w == 32 then (b &&& 0x7FFFFFFF) == 0x7FC00000 else (b &&& 0x7FFFFFFFFFFFFFFF) == 0x7FF8000000000000)
+  else if s == "nan:arithmetic" then
+    some (if w == 32 then isNaN32 b.toUInt32 && (b &&& 0x00400000) != 0
+      else isNaN64 b && (b &&& 0x0008000000000000) != 0)
+  else some (b == UInt64.ofNat (wrap w (← parseInt s)))
+
+/-- Does `got` match the expected JSON value? `none`: the engine cannot tell. -/
 def matches1 (e : Json) (got : Value) : Option Bool := do
   let ty ← str e "type"
   -- A reference with no value means any non-null reference of the type.
@@ -129,6 +157,13 @@ def matches1 (e : Json) (got : Value) : Option Bool := do
   | "exnref" =>
     match got with
     | .exnRef a => some (if v == "null" then a.isNone else a.isSome)
+    | _ => some false
+  | "v128" =>
+    let (w, vs) ← laneStrings e
+    match got with
+    | .v128 lo hi =>
+      let ms ← vs.zipIdx.mapM fun (s, i) => laneMatches w s ((V128.mk lo hi).lane w i)
+      some (ms.all id)
     | _ => some false
   | "refnull" | "nullfuncref" | "nullexternref" | "nullref" | "nullexnref" =>
     match got with
@@ -226,8 +261,7 @@ def doAction (s : St) (act : Json) : Except Res (St × Ended) := do
   | some "get" =>
     match s.store.export? inst field with
     | some (.global a) =>
-      let t := (s.store.globalTypes[a]!).type
-      .ok (s, .values #[Value.ofBits t (s.store.globalBits a)])
+      .ok (s, .values #[s.store.globalValue a])
     | _ => .error (.fail s!"no global {field}")
   | _ =>
     let args := ((act.getObjValAs? (Array Json) "args").toOption).getD #[]
@@ -374,7 +408,8 @@ def main (args : List String) : IO UInt32 := do
   let memOk ← if names.isEmpty then Tests.Memory.run else pure true
   let propOk ← if names.isEmpty then Tests.Proposals.run else pure true
   let wasiOk ← if names.isEmpty then Tests.Wasi.run else pure true
-  return if tot.fail == 0 && memOk && propOk && wasiOk then 0 else 1
+  let simdOk ← if names.isEmpty then Tests.Simd.run else pure true
+  return if tot.fail == 0 && memOk && propOk && wasiOk && simdOk then 0 else 1
 
 end L4Factoidal.WasmVM.SpecTest
 

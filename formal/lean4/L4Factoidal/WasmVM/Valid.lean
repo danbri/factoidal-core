@@ -17,6 +17,7 @@ import Std.Data.HashSet
 import L4Factoidal.WasmVM.Syntax
 import L4Factoidal.WasmVM.Numerics
 import L4Factoidal.WasmVM.Exec.Code
+import L4Factoidal.WasmVM.Simd
 
 namespace L4Factoidal.WasmVM
 
@@ -230,6 +231,88 @@ structure FnCtx where
 def target (nLocals : Nat) (f : Ctrl) : BrTarget :=
   { pc := f.label, keep := f.labelTypes.size, height := nLocals + f.base }
 
+/-- Whether a v128 is among `ts`. -/
+def hasV128 (ts : Array ValType) : Bool := ts.any (· == .v128)
+
+/-- Emit `br t`, which moves values of types `ts`. When a v128 is among them, a
+`hiMove` goes first: it moves their high halves (record, "SIMD"). -/
+def emitBr (s : VState) (ts : Array ValType) (t : BrTarget) : VState :=
+  let s := if hasV128 ts then s.emit (.hiMove 0 t.keep t.height) else s
+  s.emit (.br t)
+
+/-- Emit `return_` of values of types `ts` (with a `hiMove` first, as `emitBr`). -/
+def emitReturn (s : VState) (ts : Array ValType) : VState :=
+  let s := if hasV128 ts then s.emit (.hiMove 0 ts.size 0) else s
+  s.emit (.return_ ts.size)
+
+/-- Emit a tail call op whose callee takes `ps`, with `skip` slots above the
+arguments (the table index or the function reference). -/
+def emitTail (s : VState) (ps : Array ValType) (skip : Nat) (o : Op) : VState :=
+  let s := if hasV128 ps then s.emit (.hiMove skip ps.size 0) else s
+  s.emit o
+
+/-- Validate and compile a SIMD instruction (`Simd.lean` has the shapes). -/
+def stepSimd (c : Ctx) (nL : Nat) (s : VState) (k : Nat) (m : MemArg) (lane : Nat) (lo hi : UInt64) :
+    V VState := do
+  let some sh := simdShape k | .error "unknown SIMD instruction"
+  let memOk := fun (w : Nat) => (show V Unit from do
+    if m.mem ≥ c.mems.size then .error "unknown memory"
+    if m.offset ≥ 4294967296 then .error "offset out of range"
+    if 2 ^ m.align > w then .error "alignment must not be larger than natural")
+  let laneOk := fun (n : Nat) => (show V Unit from
+    if lane < n then .ok () else .error "invalid lane index")
+  match sh with
+  | .load w =>
+    memOk w
+    let s ← s.pop c .i32
+    .ok ((s.push nL (some .v128)).emit (.simd k m.mem m.offset 0))
+  | .store =>
+    memOk 16
+    let s ← s.pop c .v128
+    let s ← s.pop c .i32
+    .ok (s.emit (.simd k m.mem m.offset 0))
+  | .const => .ok ((s.push nL (some .v128)).emit (.simdImm k lo hi))
+  | .shuffle =>
+    if !((List.range 16).all fun i => (V128.mk lo hi).lane 8 i < 32) then .error "invalid lane index"
+    let s ← s.popAll c #[.v128, .v128]
+    .ok ((s.push nL (some .v128)).emit (.simdImm k lo hi))
+  | .un =>
+    let s ← s.pop c .v128
+    .ok ((s.push nL (some .v128)).emit (.simd k 0 0 0))
+  | .bin =>
+    let s ← s.popAll c #[.v128, .v128]
+    .ok ((s.push nL (some .v128)).emit (.simd k 0 0 0))
+  | .tern =>
+    let s ← s.popAll c #[.v128, .v128, .v128]
+    .ok ((s.push nL (some .v128)).emit (.simd k 0 0 0))
+  | .test =>
+    let s ← s.pop c .v128
+    .ok ((s.push nL (some .i32)).emit (.simd k 0 0 0))
+  | .shift =>
+    let s ← s.popAll c #[.v128, .i32]
+    .ok ((s.push nL (some .v128)).emit (.simd k 0 0 0))
+  | .splat t =>
+    let s ← s.pop c t
+    .ok ((s.push nL (some .v128)).emit (.simd k 0 0 0))
+  | .extract t n =>
+    laneOk n
+    let s ← s.pop c .v128
+    .ok ((s.push nL (some t)).emit (.simd k 0 0 lane))
+  | .replace t n =>
+    laneOk n
+    let s ← s.popAll c #[.v128, t]
+    .ok ((s.push nL (some .v128)).emit (.simd k 0 0 lane))
+  | .loadLane w =>
+    memOk w
+    laneOk (16 / w)
+    let s ← s.popAll c #[.i32, .v128]
+    .ok ((s.push nL (some .v128)).emit (.simd k m.mem m.offset lane))
+  | .storeLane w =>
+    memOk w
+    laneOk (16 / w)
+    let s ← s.popAll c #[.i32, .v128]
+    .ok (s.emit (.simd k m.mem m.offset lane))
+
 /-- Check `ts` against the top of the stack without popping it. -/
 def checkTop (c : Ctx) (s : VState) (ts : Array ValType) : V Unit := do
   let s' ← s.popAll c ts
@@ -268,7 +351,7 @@ def step (c : Ctx) (fc : FnCtx) (s : VState) (i : Instr) : V VState := do
     let s := match f.closeEntry with | some i => s.setStop i | none => s
     -- A legacy catch clause: move the results down over the exception slot.
     let s := if f.kind == .catch_ then
-        { (s.emit (.br { pc := f.label, keep := f.results.size, height := nL + f.base })) with
+        { (emitBr s f.results { pc := f.label, keep := f.results.size, height := nL + f.base }) with
           vals := s.vals.pop }
       else s
     let s ← if f.kind == .if_ then
@@ -277,12 +360,12 @@ def step (c : Ctx) (fc : FnCtx) (s : VState) (i : Instr) : V VState := do
       else .ok s
     let s := if f.kind == .loop then s else s.place f.label
     if f.kind == .func then
-      .ok ((s.emit (.return_ f.results.size)).pushAll nL f.results)
+      .ok ((emitReturn s f.results).pushAll nL f.results)
     else .ok (s.pushAll nL f.results)
   | .br l =>
     let some f := s.label? l | .error "unknown label"
     let s ← s.popAll c f.labelTypes
-    .ok ((s.emit (.br (target nL f))).setUnreachable)
+    .ok ((emitBr s f.labelTypes (target nL f)).setUnreachable)
   | .brIf l =>
     let some f := s.label? l | .error "unknown label"
     let s ← s.pop c .i32
@@ -291,8 +374,13 @@ def step (c : Ctx) (fc : FnCtx) (s : VState) (i : Instr) : V VState := do
     let s := s.pushAll nL ts
     let t := target nL f
     -- When the kept values already sit at the label's height, nothing moves.
-    let o := if s.vals.size == f.base + ts.size then Op.jumpIf t.pc else Op.brIf t
-    .ok (s.emit o)
+    if s.vals.size == f.base + ts.size then .ok (s.emit (.jumpIf t.pc))
+    else if hasV128 ts then
+      -- Values with a v128 move: skip a `hiMove` and a `br` when the condition is 0.
+      let (s, skip) := s.newLabel
+      let s := emitBr (s.emit (.jumpUnless skip)) ts t
+      .ok (s.place skip)
+    else .ok (s.emit (.brIf t))
   | .brTable ls d =>
     let some fd := s.label? d | .error "unknown label"
     let s ← s.pop c .i32
@@ -304,10 +392,11 @@ def step (c : Ctx) (fc : FnCtx) (s : VState) (i : Instr) : V VState := do
       checkTop c s f.labelTypes
       ts := ts.push (target nL f)
     let s ← s.popAll c fd.labelTypes
-    .ok ((s.emit (.brTable ts (target nL fd))).setUnreachable)
+    let o := if hasV128 fd.labelTypes then Op.vBrTable ts (target nL fd) else Op.brTable ts (target nL fd)
+    .ok ((s.emit o).setUnreachable)
   | .return_ =>
     let s ← s.popAll c fc.results
-    .ok ((s.emit (.return_ fc.results.size)).setUnreachable)
+    .ok ((emitReturn s fc.results).setUnreachable)
   | .call f =>
     let some ti := c.funcs[f]? | .error "unknown function"
     let some ft := c.types[ti]? | .error "unknown type"
@@ -334,7 +423,7 @@ def step (c : Ctx) (fc : FnCtx) (s : VState) (i : Instr) : V VState := do
       | some a, none | none, some a =>
         if a.isNum || a == .v128 then .ok (some a) else .error "type mismatch: select needs a type"
       | none, none => .ok none
-    .ok ((s.push nL t).emit .select)
+    .ok ((s.push nL t).emit (if t == some .v128 then .vSelect else .select))
   | .select (some ts) =>
     if ts.size != 1 then .error "invalid result arity"
     let t := ts[0]!
@@ -342,29 +431,29 @@ def step (c : Ctx) (fc : FnCtx) (s : VState) (i : Instr) : V VState := do
     let s ← s.pop c .i32
     let s ← s.pop c t
     let s ← s.pop c t
-    .ok ((s.push nL (some t)).emit .select)
+    .ok ((s.push nL (some t)).emit (if t == .v128 then .vSelect else .select))
   | .localGet x =>
     let some t := fc.locals[x]? | .error "unknown local"
     if s.inits.size > 0 && !s.inits[x]! then .error "uninitialized local"
-    .ok ((s.push nL (some t)).emit (.localGet x))
+    .ok ((s.push nL (some t)).emit (if t == .v128 then .vLocalGet x else .localGet x))
   | .localSet x =>
     let some t := fc.locals[x]? | .error "unknown local"
     let s ← s.pop c t
     let s := if s.inits.size > 0 then { s with inits := s.inits.set! x true } else s
-    .ok (s.emit (.localSet x))
+    .ok (s.emit (if t == .v128 then .vLocalSet x else .localSet x))
   | .localTee x =>
     let some t := fc.locals[x]? | .error "unknown local"
     let s ← s.pop c t
     let s := if s.inits.size > 0 then { s with inits := s.inits.set! x true } else s
-    .ok ((s.push nL (some t)).emit (.localTee x))
+    .ok ((s.push nL (some t)).emit (if t == .v128 then .vLocalTee x else .localTee x))
   | .globalGet x =>
     let some g := c.globals[x]? | .error "unknown global"
-    .ok ((s.push nL (some g.type)).emit (.globalGet x))
+    .ok ((s.push nL (some g.type)).emit (if g.type == .v128 then .vGlobalGet x else .globalGet x))
   | .globalSet x =>
     let some g := c.globals[x]? | .error "unknown global"
     if !g.mutable then .error "global is immutable"
     let s ← s.pop c g.type
-    .ok (s.emit (.globalSet x))
+    .ok (s.emit (if g.type == .v128 then .vGlobalSet x else .globalSet x))
   | .tableGet x =>
     let some t := c.tables[x]? | .error "unknown table"
     let s ← s.pop c .i32
@@ -517,7 +606,7 @@ def step (c : Ctx) (fc : FnCtx) (s : VState) (i : Instr) : V VState := do
       else
         match f.tryEntry with
         | some e =>
-          pure ({ (s.emit (.br { pc := f.label, keep := f.results.size, height := nL + f.base })) with
+          pure ({ (emitBr s f.results { pc := f.label, keep := f.results.size, height := nL + f.base }) with
                   vals := s.vals.pop }, e)
         | none => .error "catch without try"
     let base := s.vals.size
@@ -551,7 +640,7 @@ def step (c : Ctx) (fc : FnCtx) (s : VState) (i : Instr) : V VState := do
     let some ft := c.types[ti]? | .error "unknown type"
     if !c.resultSub ft.results fc.results then .error "type mismatch: tail call results"
     let s ← s.popAll c ft.params
-    .ok (((s.emit (.returnCall f)).emit (.return_ fc.results.size)).setUnreachable)
+    .ok (((emitTail s ft.params 0 (.returnCall f)).emit (.return_ fc.results.size)).setUnreachable)
   | .returnCallIndirect ti x =>
     let some tt := c.tables[x]? | .error "unknown table"
     if !c.refSub tt.elem ⟨true, .func⟩ then .error "type mismatch: call_indirect table is not funcref"
@@ -559,7 +648,7 @@ def step (c : Ctx) (fc : FnCtx) (s : VState) (i : Instr) : V VState := do
     if !c.resultSub ft.results fc.results then .error "type mismatch: tail call results"
     let s ← s.pop c .i32
     let s ← s.popAll c ft.params
-    .ok (((s.emit (.returnCallIndirect ti x)).emit (.return_ fc.results.size)).setUnreachable)
+    .ok (((emitTail s ft.params 1 (.returnCallIndirect ti x)).emit (.return_ fc.results.size)).setUnreachable)
   -- Typed function references.
   | .callRef ti =>
     let some ft := c.types[ti]? | .error "unknown type"
@@ -571,7 +660,7 @@ def step (c : Ctx) (fc : FnCtx) (s : VState) (i : Instr) : V VState := do
     if !c.resultSub ft.results fc.results then .error "type mismatch: tail call results"
     let s ← s.pop c (.ref ⟨true, .idx ti⟩)
     let s ← s.popAll c ft.params
-    .ok (((s.emit .returnCallRef).emit (.return_ fc.results.size)).setUnreachable)
+    .ok (((emitTail s ft.params 1 .returnCallRef).emit (.return_ fc.results.size)).setUnreachable)
   | .refAsNonNull =>
     let (s, a) ← s.popRef
     let t := a.map fun | .ref r => .ref { r with nullable := false } | t => t
@@ -599,6 +688,7 @@ def step (c : Ctx) (fc : FnCtx) (s : VState) (i : Instr) : V VState := do
     let s ← s.popAll c rest
     let s := s.pushAll nL rest
     .ok (s.emit (.brOnNonNull (target nL f)))
+  | .simd k m lane lo hi => stepSimd c nL s k m lane lo hi
 
 /-- Replace label ids by pcs. -/
 def resolveT (labels : Array Nat) (t : BrTarget) : BrTarget := { t with pc := labels[t.pc]! }
@@ -610,6 +700,7 @@ def resolve (labels : Array Nat) : Op → Op
   | .jumpIf l => .jumpIf labels[l]!
   | .jumpUnless l => .jumpUnless labels[l]!
   | .brTable ts d => .brTable (ts.map (resolveT labels)) (resolveT labels d)
+  | .vBrTable ts d => .vBrTable (ts.map (resolveT labels)) (resolveT labels d)
   | .brOnNull t => .brOnNull (resolveT labels t)
   | .brOnNonNull t => .brOnNonNull (resolveT labels t)
   | o => o
@@ -643,6 +734,8 @@ def compileFunc (c : Ctx) (fIdx : Nat) (f : Func) : Except ValidationError Compi
   let (s0, l) := s0.newLabel
   let s0 := { s0 with ctrls := #[{ kind := .func, params := #[], results := ft.results,
                                      height := 0, label := l }] }
+  -- The high halves of the declared locals start at zero, when one is a v128.
+  let s0 := if hasV128 f.locals then s0.emit (.hiZero ft.params.size f.locals.size) else s0
   match bodyLoop c fc f.body 0 s0 with
   | .error (i, e) => .error { msg := e, func := some fIdx, at_ := i }
   | .ok s =>
@@ -663,6 +756,7 @@ def constType (c : Ctx) (nGlobals : Nat) (e : Expr) : V ValType := do
     | .i64Const _ => st := st.push .i64
     | .f32Const _ => st := st.push .f32
     | .f64Const _ => st := st.push .f64
+    | .simd k .. => if k == 0x0c then st := st.push .v128 else .error "constant expression required"
     | .refNull h => if !c.heapOk h then .error "unknown type"
                     st := st.push (.ref ⟨true, h⟩)
     | .refFunc f =>
@@ -808,7 +902,9 @@ def validateWith (parallel : Bool) (m : Module) : Except ValidationError ValidMo
     | .global g => if !c.valOk g.type then err "unknown type"
     | .tag t => match m.types[t]? with
       | none => err "unknown type"
-      | some ft => if !ft.results.isEmpty then err "non-empty tag result type"
+      | some ft =>
+        if !ft.results.isEmpty then err "non-empty tag result type"
+        if hasV128 ft.params then err "unsupported: v128 in a tag type"
   let nImpFuncs := m.importedFuncTypes.size
   let nImpGlobals := m.importedGlobals.size
   for t in m.tables do
@@ -820,7 +916,9 @@ def validateWith (parallel : Bool) (m : Module) : Except ValidationError ValidMo
   for t in m.tags do
     match m.types[t]? with
     | none => err "unknown type"
-    | some ft => if !ft.results.isEmpty then err "non-empty tag result type"
+    | some ft =>
+      if !ft.results.isEmpty then err "non-empty tag result type"
+      if hasV128 ft.params then err "unsupported: v128 in a tag type"
   for mt in m.mems do
     if !limitsOk mt.limits 65536 then err "memory size must be at most 65536 pages (4GiB)"
   let mut gi := nImpGlobals

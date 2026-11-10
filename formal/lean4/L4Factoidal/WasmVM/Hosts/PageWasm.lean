@@ -144,6 +144,7 @@ def typesOfName (s : String) : Option (Array ValType) :=
 /-- A value as the prelude reads it: a tag, then the 8 bytes of its bits. -/
 def valTag : Value → UInt8
   | .i32 _ => 0 | .i64 _ => 1 | .f32 _ => 2 | .f64 _ => 3 | .funcRef _ => 4 | .externRef _ => 5 | .exnRef _ => 6
+  | .v128 .. => 7
 
 def putVal (b : ByteArray) (v : Value) : ByteArray := u64 (b.push (valTag v)) v.toBits
 

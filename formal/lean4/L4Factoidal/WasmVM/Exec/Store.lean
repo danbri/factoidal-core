@@ -24,17 +24,20 @@ inductive Value where
   | externRef (a : Option Nat)
   /-- An exception reference: an exception address in the store, or `none` for null. -/
   | exnRef (a : Option Nat)
+  /-- A 128-bit vector: bits 0 to 63 and bits 64 to 127. -/
+  | v128 (lo hi : UInt64)
   deriving BEq, Repr, Inhabited
 
 def Value.toBits : Value → UInt64
   | .i32 v => v.toUInt64 | .i64 v => v | .f32 b => b.toUInt64 | .f64 b => b
+  | .v128 lo _ => lo
   | .funcRef none | .externRef none | .exnRef none => nullRef
   | .funcRef (some a) | .externRef (some a) | .exnRef (some a) => a.toUInt64
 
 def Value.ofBits (t : ValType) (b : UInt64) : Value :=
   match t with
   | .i32 => .i32 b.toUInt32 | .i64 => .i64 b | .f32 => .f32 b.toUInt32 | .f64 => .f64 b
-  | .v128 => .i64 b
+  | .v128 => .v128 b 0
   | .ref r =>
     let a := if b == nullRef then none else some b.toNat
     match r.heap with
@@ -42,8 +45,21 @@ def Value.ofBits (t : ValType) (b : UInt64) : Value :=
     | .exn | .noexn => .exnRef a
     | _ => .funcRef a
 
+/-- The value of type `t` whose slot bits are `b`, and whose high half is `hi` when it
+is a v128. -/
+def Value.ofSlot (t : ValType) (b hi : UInt64) : Value :=
+  match t with
+  | .v128 => .v128 b hi
+  | t => Value.ofBits t b
+
+/-- The high half of a v128 value; 0 for every other value. -/
+def Value.hiBits : Value → UInt64
+  | .v128 _ hi => hi
+  | _ => 0
+
 def Value.type : Value → ValType
   | .i32 _ => .i32 | .i64 _ => .i64 | .f32 _ => .f32 | .f64 _ => .f64
+  | .v128 .. => .v128
   | .funcRef _ => .ref .funcref | .externRef _ => .ref .externref
   | .exnRef _ => .ref ⟨true, .exn⟩
 
@@ -97,6 +113,13 @@ structure ExcStore where
   /-- Exceptions thrown so far. An exception reference is an index here. They are
   never freed: the store grows with each `throw` (record, "Exception handling"). -/
   exns : Array ExnInst := #[]
+  /-- The hi stack: the high 64 bits of the v128 value whose low 64 bits are in the
+  operand-stack slot of the same index. It is here, not a register of `run`, so that
+  only the cold ops pay for it (record, "SIMD"). A slot past its end reads as 0; a
+  write grows it. -/
+  hi : Slots := ByteArray.empty
+  /-- The high 64 bits of the v128 globals, by global address (as `hi`). -/
+  ghi : Slots := ByteArray.empty
   deriving Inhabited
 
 /-- A memory instance; `M` is the backend (`Exec/Memory.lean`). -/
@@ -160,6 +183,28 @@ def addTable (st : StoreOf M) (t : TableType) (init : UInt64) : StoreOf M × Nat
    st.tables.size)
 
 def globalBits (st : StoreOf M) (a : Nat) : UInt64 := Slots.rd st.globals a.toUSize
+
+/-- Change the hi stack and the high halves of the globals. The store and its `exc`
+field are taken apart first, so each has one reference when `f` and `g` run and they
+write in place. -/
+@[inline] def modHi (st : StoreOf M) (f g : Slots → Slots) : StoreOf M :=
+  match st with
+  | { funcs, tables, mems, globals, globalTypes, elems, datas, insts, exc, typeTable, pageLimit } =>
+    match exc with
+    | { tags, exns, hi, ghi } =>
+      { funcs, tables, mems, globals, globalTypes, elems, datas, insts,
+        exc := { tags, exns, hi := f hi, ghi := g ghi }, typeTable, pageLimit }
+
+/-- The high half of v128 global `a`. -/
+def globalHi (st : StoreOf M) (a : Nat) : UInt64 := Slots.rd st.exc.ghi a.toUSize
+
+/-- Set the high half of v128 global `a`. -/
+def setGlobalHi (st : StoreOf M) (a : Nat) (v : UInt64) : StoreOf M :=
+  st.modHi id fun g => Slots.wrGrow g a.toUSize v
+
+/-- The value of global `a`. -/
+def globalValue (st : StoreOf M) (a : Nat) : Value :=
+  Value.ofSlot ((st.globalTypes[a]?.map (·.type)).getD .i64) (st.globalBits a) (st.globalHi a)
 
 /-- Bounds-checked read of `n` bytes of memory `a` (for host functions). -/
 def readMem (st : StoreOf M) (a off n : Nat) : Except String ByteArray :=

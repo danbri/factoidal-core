@@ -65,7 +65,7 @@ export async function createLayerSurface(canvas,{check=false,waitForGpu=false}={
   const format=navigator.gpu.getPreferredCanvasFormat();
   const plans=new Map(),pipelines=new Map();
   const stats={planRequests:0,pipelineBuilds:0,layerTextures:0,composites:0,scenes:0};
-  let failed=false,lost='',closed=false,configured='';
+  let failed=false,lost='',cause='',closed=false,configured='';
   device.lost.then(info=>{lost=info.message||info.reason;failed=true;});
   const grow=(slot,bytes,usage)=>{
     if(slot&&slot.capacity>=bytes)return slot;
@@ -114,6 +114,8 @@ export async function createLayerSurface(canvas,{check=false,waitForGpu=false}={
       return pixels;
     }catch(error){
       if(scoped)try{await device.popErrorScope();}catch{/* the first failure */}
+      // keep the first error: every later draw reports it (a validation error is thrown once)
+      if(!cause)cause=String(error?.message??error);
       failed=true;throw error;
     }
   }
@@ -173,11 +175,11 @@ export async function createLayerSurface(canvas,{check=false,waitForGpu=false}={
     }
     return context.getCurrentTexture();
   }
-  const ensure=()=>{if(closed||failed)throw Error('GPU layer surface is closed or failed'+(lost?': '+lost:''));};
+  const ensure=()=>{if(closed||failed)throw Error('GPU layer surface is '+(failed?'failed':'closed')+(lost?': device lost: '+lost:'')+(cause?': first error: '+cause:''));};
   const finish=async()=>{if(waitForGpu)await device.queue.onSubmittedWorkDone();};
   return {
     format,
-    get stats(){return {...stats,failed,lost};},
+    get stats(){return {...stats,failed,lost,cause};},
     get layers(){return shown;},
     /** Draw both layers of one Lean render into their textures. */
     async drawLayers(answer){
