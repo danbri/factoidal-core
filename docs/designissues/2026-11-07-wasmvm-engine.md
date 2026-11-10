@@ -200,8 +200,9 @@ randomness from `IO.getRandomBytes` reached the module. The constant-byte stub i
 - **Operand stack**: one `ByteArray` for the whole run, 8 little-endian bytes per
   slot (`Slots` in `Exec/Code.lean`), read and written as one 8-byte access at a
   `USize` slot index (see "Speed pass"). i32 and f32 are zero-extended, f64 and i64 use
-  the whole slot, a reference is an address with all-ones for null. v128 (SIMD,
-  later) takes two slots. A `FloatArray` read through `Float.ofBits` measured faster
+  the whole slot, a reference is an address with all-ones for null. A v128 value
+  has one slot index: its low half is in this stack and its high half is in a second
+  slot array (see "SIMD"). A `FloatArray` read through `Float.ofBits` measured faster
   but is wrong: see "Measurements".
 - **Locals** are slots of the operand stack at the frame base (`fp + i`).
 - **Registers**: `run` takes the stack, `sp`, `fp`, `pc` (`USize`), the code, the
@@ -293,8 +294,9 @@ Stage 1: Wasm 1.0 (MVP) plus multi-value, sign extension, non-trapping float-to-
 bulk memory, reference types and multi-memory. Stage 2 (2026-11-08): exception handling
 (3.0 `try_table`, `throw`, `throw_ref`, `exnref`, tags; and the legacy `try`, `catch`,
 `catch_all`, `delegate`, `rethrow` that Emscripten emits), tail calls and typed function
-references. Later, with room left in `Syntax` (`ValType.v128`, `HeapType` with type
-indices, `Op` constructors): SIMD, GC, memory64, threads.
+references. Stage 3 (2026-11-10): fixed-width SIMD (see "SIMD"). Later, with room left
+in `Syntax` (`HeapType` with type indices, `Op` constructors): GC, memory64, threads,
+relaxed SIMD.
 
 Floating point, where the host C library can differ: `Float.sqrt`/`Float32.sqrt`
 (correctly rounded by IEEE 754 in every C library we use), `floor`/`ceil`/`trunc`
@@ -315,7 +317,11 @@ sessions' builds running on the machine (load average about 2.5). Commands run i
 ### Spec tests
 
 `lake exe wasmvm-spectest` over `third_party/wasm-spec/test/core-json` (259 files,
-65353 commands). 2026-11-08, after exceptions, tail calls and typed function
+65353 commands). 2026-11-10, after fixed-width SIMD: **pass 60858, fail 0, not run
+4495.** The `simd` directory went from pass 122, not run 25868 to pass 25479, fail 0,
+not run 511 (all 511 are text-format modules); no other part changed. See "SIMD".
+
+2026-11-08, after exceptions, tail calls and typed function
 references: **pass 35501, fail 0, not run 29852.** By part:
 
 | Part | pass | not run | why not run |
@@ -811,6 +817,101 @@ with a call-depth limit of 4 and 64 operand slots, give the right sums (93 ms fo
 the typing of `ref.func` as `(ref $t)`. Non-null reference types and non-defaultable
 locals were already validated. A reference is a slot (`nullRef` is all ones), so
 `br_on_null` and `br_on_non_null` are a compare and a `brMove`.
+
+## SIMD
+
+Fixed-width SIMD (the v128 type; the 236 instructions with binary prefix 0xFD), added
+2026-11-10. Relaxed SIMD (opcode numbers 0x100 and up) is not done: the decoder says
+`unsupported`.
+
+### Representation
+
+- **Syntax.** One constructor, `Instr.simd code memarg lane lo hi`. `code` is the opcode
+  number after the prefix. The other fields are the immediates (zero when the opcode
+  has none): the memarg, the lane index, and 16 bytes as two 64-bit halves (the value
+  of `v128.const`, the 16 lane indices of `i8x16.shuffle`). `simdShape` in `Simd.lean`
+  gives, for each opcode number, its immediates and its stack signature. The decoder,
+  the validator and the AOT encoder read that one table.
+- **Values.** The operand stack keeps one slot index for each value. Heights, branch
+  keep counts and local indices did not change. A v128 value at slot `i` has its low 64
+  bits in slot `i` of the operand stack and its high 64 bits in slot `i` of the hi
+  stack. The hi stack is the field `hi` of `ExcStore` (the `exc` field of the store).
+  It is not an argument of `run` and not a new field of `StoreOf`: each of those costs
+  time in the hot loop ("Cold ops"). A slot past the end of the hi stack reads as 0. A
+  write grows it. A v128 global has its high half in `ExcStore.ghi`, at the global's
+  address.
+- **Ops.** Every SIMD instruction is one of two ops, `Op.simd` and `Op.simdImm` (the
+  two with 16 bytes). Both run in `cold`. `run` has no new case.
+- **Moves.** The ops of the hot loop move low halves only. The validator knows the
+  type of each value that an instruction moves. When the type is v128 it emits an op
+  that also moves the high half. These ops run in `cold`:
+  - `vLocalGet`, `vLocalSet`, `vLocalTee`, `vSelect`, `vGlobalGet`, `vGlobalSet`.
+  - `hiMove skip n height`, put before a `br`, a `return_` or a tail call that moves
+    v128 values. It moves the high halves; the op after it moves the low halves. A
+    `br_if` that moves a v128 becomes `jumpUnless L; hiMove; br; L:`.
+  - `vBrTable`, because each target of `br_table` has its own height.
+  - `hiZero x n`, the first op of a function that declares a v128 local. It sets the
+    high halves of the declared locals to zero.
+  - `brOnNull` and `brOnNonNull` (already cold) move the high halves when the hi stack
+    is not empty.
+  A call needs no move: the arguments are in place, as for other values. The end of a
+  block needs no move: the results are in place.
+- **Numerics.** `V128` in `Simd.lean` is two `UInt64`. Each result is computed lane by
+  lane. Float lanes go through `NumOp.evalUn` and `NumOp.evalBin` of `Numerics.lean`,
+  so NaN and signed-zero results are those of the scalar instructions. Signed integer
+  lanes use `Int`. No instruction of this set can trap except on a memory access.
+- **API.** `Value.v128 lo hi`. `invoke` writes the high halves of v128 arguments;
+  results read both halves.
+- **In-place writes.** `StoreOf.modHi` takes the store and its `exc` field apart
+  before it changes the hi stack, so the hi stack has one reference and a write does
+  not copy it. `Tests/Simd.lean` (`noCopy`) fails if it does.
+
+### Refused
+
+- A tag whose type has a v128 parameter: validation error `unsupported: v128 in a tag
+  type`. An exception keeps its payload as one 64-bit word for each value.
+- A host function whose type has a v128: link error `unsupported: v128 in the type of
+  a host function`. Arguments and results of host calls are one word each.
+- Relaxed SIMD: decode error `unsupported`.
+
+There is no failing test for these three: the spec suite has no case for the first two
+in the binary format, and the 79 relaxed-SIMD commands count as not run.
+
+### Tests
+
+Command, in `formal/lean4`: `lake exe wasmvm-spectest` (2 s). To run one file:
+`lake exe wasmvm-spectest simd_lane`.
+
+| Part | before: pass, fail, not run | after: pass, fail, not run |
+|---|---|---|
+| `simd` directory (59 files) | 122, 0, 25868 | 25479, 0, 511 |
+| all 259 files | 35501, 0, 29852 | 60858, 0, 4495 |
+
+The 511 commands of `simd` that are not run are text-format modules (the engine reads
+the binary format only). The runner builds v128 arguments and compares v128 results
+from the JSON form (`lane_type` and one string for each lane; a float lane can be
+`nan:canonical` or `nan:arithmetic`).
+
+`Tests/Simd.lean` runs after the spec tests. `moves`: 15 cases, one for each op of the
+list above; each case leaves a different high half in the slot that the value moves to.
+With `hiMoveDown` and `hiZero` switched off, 12 of the 15 fail (checked 2026-11-10).
+`noCopy`: 20 000 iterations of `i8x16.add` on a local at slot 2 (18 ms) and at slot
+40 000 (21 ms).
+
+### Cost for code with no SIMD
+
+`lake exe wasmvm-bench engine 10000000`, Linux x86-64 cloud VM with 4 virtual CPUs,
+2026-11-10, six runs of each binary in turn (million instructions per second):
+
+| Function | before (median; range) | after (median; range) |
+|---|---|---|
+| sum | 227; 213 to 233 | 223; 206 to 231 |
+| memsum | 171; 157 to 176 | 166; 151 to 173 |
+| fib | 115; 78 to 131 | 122; 85 to 134 |
+
+The differences are smaller than the range of one binary. The C of the specialised
+`run` loop has the same 27 990 lines before and after; the lines that differ are the
+order of assignments to join-point arguments and the names of shared constants.
 
 ## Cold ops: new cases outside `run`
 
