@@ -1,0 +1,28 @@
+--- a/labs/demos/foafnaut/build-web-render.sh
++++ b/labs/demos/foafnaut/build-web-render.sh
+@@ -122,10 +122,23 @@
+   LEANLIB="$TOOLCHAIN/lib/lean"
+   case "$(uname -s)" in
+     Darwin) LIBRARY="$BUILD/engines/libweb-render.dylib"; SHARED=(-dynamiclib -Wl,-dead_strip -lc++);;
++    Linux) LIBRARY="$BUILD/engines/libweb-render.so";;
+     *) LIBRARY="";;
+   esac
+-  # The desktop app is macOS only, so other hosts make no library.
+-  if [ -n "$LIBRARY" ]; then
++  # The desktop app is macOS only. Linux makes the library for the WPT runner
++  # (tests/browser-wpt/testharness-run.ts --native-engine); other hosts make none.
++  if [ "$(uname -s)" = Linux ]; then
++  mkdir -p "$BUILD/engines"
++  "${CC:-cc}" -O3 -DNDEBUG -fPIC -I "$TOOLCHAIN/include" -c "$LAB/web_render_shim.c" -o "$BUILD/obj-native/web_render_shim.o"
++  # Lean's shared runtime, not the static one: libleanrt.a holds mimalloc with
++  # local-exec thread-local storage, which a shared library can not link
++  # ("relocation R_X86_64_TPOFF32 against _mi_heap_default cannot be used with
++  # -shared", Lean 4.33.1). So this library needs the same Lean toolchain at run time.
++  leanc -shared -O3 -o "$LIBRARY" "${LIBRARY_OBJECTS[@]}" "$BUILD/obj-native/web_render_shim.o" \
++    -L"$LEANLIB" -lInit_shared -lleanshared_2 -lleanshared_1 -lleanshared \
++    -Wl,-rpath,"$LEANLIB" -Wl,--no-undefined
++  echo "WEB_RENDER_LIBRARY=$LIBRARY"
++  elif [ -n "$LIBRARY" ]; then
+   "${CC:-cc}" -O3 -DNDEBUG -I "$TOOLCHAIN/include" -c "$LAB/web_render_shim.c" -o "$BUILD/obj-native/web_render_shim.o"
+   # Static Lean runtime from the same toolchain: the library needs no Lean at run time.
+   "${CC:-cc}" -O2 -o "$LIBRARY" "${LIBRARY_OBJECTS[@]}" "$BUILD/obj-native/web_render_shim.o" \
