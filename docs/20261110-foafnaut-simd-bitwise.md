@@ -89,5 +89,18 @@ Rebased onto the checked main commit. The Lean sources used in both successful
 builds are unchanged by that rebase. Review branch:
 https://github.com/danbri/factoidal-core/tree/wip/388-simd-bitwise.
 
-No merge or deployment is part of this contribution. Further work can take
-another small item from the same theorem task issue.
+PR: https://github.com/danbri/factoidal-core/pull/405 (SIMD bitwise algebraic
+laws). It is open and has no merge conflicts. No merge or deployment is part
+of this contribution.
+
+## Usefulness and next target
+
+These laws have modest value: reusable rewrite lemmas and checks that future
+changes preserve the stated identities. No current optimization uses the new
+lemmas. The identities are weak checks of instruction correctness: replacing
+AND with OR would still satisfy commutativity and associativity.
+
+A more valuable next target from the same task issue is proving that indexed
+JavaScript variable lookup agrees with its reference scan (`Env.slotN` and
+`Env.scan`). That would check an existing optimization directly. It is not
+implemented or claimed here.
