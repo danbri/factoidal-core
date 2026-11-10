@@ -99,10 +99,15 @@ def addrLen? (familyTransport : UInt8) : Option Nat :=
   else if familyTransport == 0x21 then some 36
   else none
 
+/-- The loop of `groups16`: a tail call, so it uses no stack per group. -/
+def groups16Go (acc : List Nat) : List UInt8 → List Nat
+  | a :: b :: rest => groups16Go (be16 a b :: acc) rest
+  | _ => acc.reverse
+
 /-- 16-bit groups of an IPv6 address, big-endian. -/
-def groups16 : List UInt8 → List Nat
-  | a :: b :: rest => be16 a b :: groups16 rest
-  | _ => []
+def groups16 (bs : List UInt8) : List Nat := groups16Go [] bs
+
+#guard groups16 [0x20, 0x01, 0x0d, 0xb8, 0xff] == [0x2001, 0x0db8]
 
 /-- The text of a source address: dotted IPv4; the IPv4 address of an
 IPv4-mapped IPv6 address; else eight lower-case hexadecimal groups. -/

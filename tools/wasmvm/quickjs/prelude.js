@@ -1027,15 +1027,28 @@
     if (!form.isConnected) return; // a form that is not connected does not submit (§4.10.21.3 step 1)
     const e = new SubmitEvent('submit', { bubbles: true, cancelable: true, submitter: submitter === form ? null : submitter });
     state(e).trusted = true;
-    dispatch(form, e);
+    if (dispatch(form, e)) planSubmission(form, submitter === form ? null : submitter);
   };
+  // ---- encoding100: the form submission algorithm after the submit event (HTML §4.10.21.3)
+  // is Lean's (node_query 170, HTML.FormSubmission): the entry list, the form's encoding,
+  // the URL and the target frame, whose navigation the embedder then answers. Here: which
+  // form, which submitter, and the page's encoding label. An engine without op 170 answers
+  // -2 and nothing navigates.
+  const planSubmission = (form, submitter) => {
+    if (!form.isConnected) return;
+    const enc = form.ownerDocument === document ? docEncoding() : '';
+    n.query(nodeId(form), 170, (submitter ? String(nodeId(submitter)) : '') + '\u0000' + enc);
+  };
+  // A document's URL (node_query 171): the page's, or a same-origin frame document's.
+  const docURL = doc => { const r = n.query(doc, 171, ''); return typeof r === 'string' ? r : 'about:blank'; };
+  // ---- end of encoding100 (forms) ----
   const resetForm = form => {
     const e = new Event('reset', { bubbles: true, cancelable: true });
     state(e).trusted = true;
     if (dispatch(form, e)) chk(n.treeOp(nodeId(form), 0, 9));
   };
   Object.defineProperties(named.HTMLFormElement.prototype, {
-    submit: { value() {}, writable: true, configurable: true },
+    submit: { value() { planSubmission(this, null); }, writable: true, configurable: true },
     requestSubmit: { value(submitter) { submitForm(this, submitter ?? this); }, writable: true, configurable: true },
     reset: { value() { resetForm(this); }, writable: true, configurable: true },
   });
@@ -1963,12 +1976,12 @@
   let readyState = 'loading';
   class Document extends Node {
     constructor() { return wrap(chk(n.create(8, ''))); }
-    get URL() { return this === document ? location.href : 'about:blank'; }
+    get URL() { return this === document ? location.href : docURL(nodeId(this)); }
     get documentURI() { return this.URL; }
     get compatMode() { return 'CSS1Compat'; }
-    get characterSet() { return this === document ? docEncoding() : 'UTF-8'; }
+    get characterSet() { if (this === document) return docEncoding(); const r = n.query(nodeId(this), 172, ''); return typeof r === 'string' ? r : 'UTF-8'; }
     get charset() { return this.characterSet; }
-    get inputEncoding() { return 'UTF-8'; }
+    get inputEncoding() { return this.characterSet; }
     get contentType() { return str(nodeId(this), 9); }
     get readyState() { return readyState; }
     get defaultView() { return this === document ? window : (info(nodeId(this), 12) >= 0 ? frameWindow(nodeId(this)) : null); }
@@ -2324,13 +2337,27 @@
     let w = frameWindows.get(doc);
     if (w) return w;
     const own = { document: () => wrap(doc), window: () => w, self: () => w, frames: () => w, globalThis: () => w,
-      parent: () => window, top: () => window, frameElement: () => wrap(info(doc, 12)), length: () => 0 };
+      parent: () => window, top: () => window, frameElement: () => wrap(info(doc, 12)), length: () => 0,
+      location: () => frameLocation(doc) };
     w = new Proxy(window, {
       get(t, p) { return Object.prototype.hasOwnProperty.call(own, p) ? own[p]() : Reflect.get(t, p, t); },
       has(t, p) { return Object.prototype.hasOwnProperty.call(own, p) || Reflect.has(t, p); },
     });
     frameWindows.set(doc, w);
     return w;
+  };
+  // encoding100: a same-origin frame's Location: its document's URL (node_query 171) and
+  // that URL's parts as the URL class (Lean's URL parser) gives them. Read only here.
+  const frameLocations = new Map();
+  const frameLocation = doc => {
+    let l = frameLocations.get(doc);
+    if (l) return l;
+    const parts = () => { try { return new URL(docURL(doc)); } catch { return null; } };
+    l = { get href() { return docURL(doc); }, toString() { return docURL(doc); } };
+    for (const k of ['protocol', 'host', 'hostname', 'port', 'pathname', 'search', 'hash', 'origin'])
+      Object.defineProperty(l, k, { get() { const u = parts(); return u ? u[k] : ''; }, enumerable: true });
+    frameLocations.set(doc, l);
+    return l;
   };
   let href = 'about:blank';
   const location = {

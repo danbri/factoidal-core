@@ -5,7 +5,7 @@ description: Rules for every Lean change in this repository, so soundness and bu
 
 # Local Lean rules
 
-These hold for all Lean under `formal/lean4` and `labs/`. How to write proofs is in
+These hold for all Lean under `formal/lean4`, and they are the rules to aim for under `labs/` (see the exception in section 1). How to write proofs is in
 [`lean4-proof-patterns`](../lean4-proof-patterns/SKILL.md). Speed is in
 [`lean4-performance`](../lean4-performance/SKILL.md).
 
@@ -21,6 +21,12 @@ Zero uses of each, in code. A mention in a comment is not a use. `tools/lean-hyg
 - a new `partial def` (the count may only fall; 163 on 2026-11-09)
 
 The only axioms a theorem may report are `propext`, `Classical.choice` and `Quot.sound`.
+
+**Known exception, 2026-11-09:** `tools/lean-hygiene-audit.py` scans `formal/lean4` only. The browser engine's host code under
+`labs/` is not covered, and it has 29 `@[implemented_by]` and 29 `unsafe` declarations, mostly page-lifetime caches of parsed and shaped data
+(`labs/demos/foafnaut/WebDocument.lean`, `SVGText.lean`). A theorem about engine behaviour that runs through one of these depends on that
+implementation being correct, and no proof covers it. Do not add more without saying so and listing it in the record. Whether to extend the
+audit to `labs/` is an open decision for the owner.
 
 Do not add one "for now", and do not weaken or delete a theorem to make something build. If a theorem cannot carry over, say so.
 
