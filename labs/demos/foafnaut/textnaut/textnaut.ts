@@ -5,6 +5,10 @@ import { loadHTML, type HTMLEngine, type ScriptTurn } from "../native_html_engin
 import { inputURL, loadFontFile, navigationURL, prepareHTML, setScriptHost } from "../native_html_document.ts";
 import { barRow, type BigText, bodySize, CELL_HEIGHT, CELL_WIDTH, decorateGrid, displayRow, dumpText, fillerRow, type GlyphRun, type Grid, layoutGrid, type Level, type LinkRow, readPaint, sanitizeText } from "./grid.ts";
 import { useWasm } from "./web-render-select.mjs";
+import { Input, keysOf } from "./input.ts";
+import { HelpView } from "./help.ts";
+import { runSavers } from "./screensaver.ts";
+export { keysOf };
 
 export type Options = { cols: number; rows: number; scripts: boolean; liberal: boolean; verbose: boolean };
 type Doc = Awaited<ReturnType<typeof prepareHTML>>;
@@ -147,40 +151,6 @@ const reason = (error: unknown) => sanitizeText(String(error instanceof Error ? 
 
 // ---------------------------------------------------------------- interactive viewer
 
-/** Reads stdin in one loop, so that a query with a timeout does not lose a key. */
-class Input {
-  private queue: Uint8Array[] = [];
-  private wake?: () => void;
-  private poked = false;
-  closed = false;
-  constructor() { this.pump(); }
-  private async pump() {
-    const buffer = new Uint8Array(4096);
-    while (true) { // Ends at the end of input.
-      const n = await Deno.stdin.read(buffer).catch(() => null);
-      if (n === null) { this.closed = true; this.wake?.(); return; }
-      this.queue.push(buffer.slice(0, n));
-      this.wake?.();
-    }
-  }
-  /** Make a waiting or the next `next` return at once. */
-  poke() { this.poked = true; this.wake?.(); }
-  /** The next chunk; null on timeout, on poke or at the end of input. */
-  async next(timeout?: number): Promise<Uint8Array | null> {
-    if (!this.queue.length && !this.poked && !this.closed) {
-      let timer: number | undefined;
-      await new Promise<void>((resolve) => {
-        this.wake = resolve;
-        if (timeout !== undefined) timer = setTimeout(resolve, timeout);
-      });
-      clearTimeout(timer);
-      this.wake = undefined;
-    }
-    this.poked = false;
-    return this.queue.shift() ?? null;
-  }
-}
-
 export type BigMode = "auto" | "on" | "off";
 export type Caps = { level: Level; osc8: boolean; sync: boolean; utf8: boolean; version: string; big: BigText };
 
@@ -220,20 +190,6 @@ async function queryTerminal(input: Input, write: (s: string) => void): Promise<
     if (chunk) answer += decoder.decode(chunk);
   }
   return answer;
-}
-
-/** Key names of one input chunk. An unknown sequence gives no key. */
-export function keysOf(bytes: Uint8Array): string[] {
-  const text = decoder.decode(bytes), keys: string[] = [];
-  const names: Record<string, string> = { A: "up", B: "down", C: "right", D: "left", H: "home", F: "end", Z: "backtab", "5~": "pageup", "6~": "pagedown", "1~": "home", "4~": "end" };
-  for (let i = 0; i < text.length;) {
-    if (text[i] !== "\x1b") { keys.push(text[i]); i++; continue; }
-    const match = /^\x1b(?:\[([0-9;?]*[ -/]*[@-~])|O([@-~])|.)?/s.exec(text.slice(i))!;
-    const name = names[match[1] ?? match[2] ?? ""];
-    if (name) keys.push(name);
-    i += match[0].length;
-  }
-  return keys;
 }
 
 /** Visible characters above a row: a position in the text that a new width keeps. */
@@ -287,6 +243,8 @@ async function viewer(run: Engine, first: Rendered, firstURL: string, options: O
 
     let current: Rendered = { ...first, grid: decorated(first.grid) }, top = 0, focus = 0, typed = "", message = "", loading = false, clear = false;
     const history = [firstURL];
+    let helpOpen = false;
+    const help = new HelpView();
     let index = 0, previous: string[] = [];
     let token = 0, abort: AbortController | undefined;
     const bars = () => screen.rows >= 3;
@@ -295,6 +253,17 @@ async function viewer(run: Engine, first: Rendered, firstURL: string, options: O
     const layoutOptions = () => ({ ...options, cols: screen.columns, rows: bodyRows() });
 
     const draw = () => {
+      if (helpOpen) {
+        const lines = help.render(screen.columns, screen.rows, caps.level, caps.utf8, current.doc.title || current.doc.url);
+        let changed = "";
+        lines.forEach((line, y) => { if (clear || line !== previous[y]) changed += `\x1b[${y + 1};1H${line}`; });
+        previous = lines;
+        if (!changed && !clear) return;
+        write((caps.sync ? "\x1b[?2026h" : "") + (clear ? "\x1b[2J" : "") + changed + (caps.sync ? "\x1b[?2026l" : ""));
+        clear = false;
+        flush();
+        return;
+      }
       const lines: string[] = [];
       const style = { level: caps.level, osc8: caps.osc8, focus, targets: current.grid.targets, width: screen.columns, utf8: caps.utf8 };
       if (bars()) {
@@ -312,7 +281,7 @@ async function viewer(run: Engine, first: Rendered, firstURL: string, options: O
         const shown = total ? Math.min(top + bodyRows(), total) / total : 1;
         const meterWidth = 12, filled = Math.round(shown * meterWidth);
         const meter = blocks ? "\u2588".repeat(filled) + "\u2591".repeat(meterWidth - filled) : "#".repeat(filled) + "-".repeat(meterWidth - filled);
-        const hints = message || (typed ? `go to link ${typed} then Enter` : "[n] Enter follow | Tab next | b back | q quit ");
+        const hints = message || (typed ? `go to link ${typed} then Enter` : "? help | [n] Enter follow | Tab next | b back | q quit ");
         lines.push(barRow([{ text: ` ${meter} ${Math.round(shown * 100)}% `, bold: true }], hints, screen.columns, caps.level, 160));
       }
       let changed = "";
@@ -389,7 +358,22 @@ async function viewer(run: Engine, first: Rendered, firstURL: string, options: O
         top = Math.min(lastTop(), top);
       }
       if (chunk) for (const key of keysOf(chunk)) {
+        if (helpOpen) {
+          // The help screen has its own keys; the page's top, focus and typed number stay as they were.
+          const result = help.key(key, bodyRows());
+          if (result.action === "exit") return;
+          if (result.action === "close") { helpOpen = false; clear = true; previous = []; }
+          else if (result.action === "launch") {
+            const end = await runSavers({ input, write: (text) => { write(text); flush(); }, size, level: caps.level, utf8: caps.utf8, embedded: true }, result.saver);
+            write("\x1b[0m\x1b[2J"); flush();
+            if (end === "exit") return;
+            clear = true; previous = [];
+            input.poke(); // a resize during the saver is handled at once
+          }
+          continue;
+        }
         if (key === "q" || key === "\x03") return;
+        if (key === "?" || key === "h") { helpOpen = true; typed = ""; clear = true; previous = []; continue; }
         if (/^[0-9]$/.test(key)) { typed += key; continue; }
         message = "";
         if (key === "\r" || key === "\n" || key === "right") {
@@ -421,8 +405,14 @@ export async function main(args: string[]): Promise<number> {
   const saver = args.indexOf("--screensaver");
   if (saver >= 0) {
     const { screensaver } = await import("./screensaver.ts");
-    const name = args[saver + 1], frames = args.indexOf("--frames");
-    return screensaver(name && !name.startsWith("-") ? name : undefined, frames >= 0 ? Number(args[frames + 1]) : undefined);
+    const name = args[saver + 1], frames = args.indexOf("--frames"), colour = args.indexOf("--colour");
+    let forced: Level | undefined;
+    if (colour >= 0) {
+      forced = ({ none: 0, "16": 1, "256": 2, "24bit": 3 } as Record<string, Level>)[args[colour + 1]];
+      if (forced === undefined) { console.error("--colour must be none, 16, 256 or 24bit"); return 2; }
+    }
+    const caps = capabilities((n) => Deno.env.get(n), "", forced);
+    return screensaver(name && !name.startsWith("-") ? name : undefined, frames >= 0 ? Number(args[frames + 1]) : undefined, { level: caps.level, utf8: caps.utf8 });
   }
   const started = performance.now();
   let parsed: ReturnType<typeof parseArgs>;
