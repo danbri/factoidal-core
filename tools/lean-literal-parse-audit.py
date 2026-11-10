@@ -35,14 +35,19 @@ made once when the module starts), or test a bound below 2^32 first.
       the `Float` literals with a decimal point that the compiler left in the body of a
       function: the calls of `Float.ofScientific` (C symbol `l_Float_ofScientific`, printed as
       `core`) and of its twin `Prim.ofScientificFast` (printed as `twin`; a module that imports
-      `L4Factoidal.Prim.FloatOfNat` calls the twin). A `core` call reads 2^53 from text (the
-      first test of `Float.ofScientific`, about 40 ns). A literal with an exponent above 22, or
-      with a mantissa of 2^53 or more, takes the slow case, in core and in the twin: big number
-      arithmetic at every call (`1e300` in `WebPaint.cullCurve` was 85% of a frame until commit
-      57fe3531d, 2026-11-09). The line says `slow case` for those, `fast case` for the others,
-      and `?` for an argument that is not a literal in the same function. A `twin` call in the
-      fast case costs a few machine operations and needs no repair. `lean_cstr_to_nat` does not
-      appear for `1e300`, so the default mode does not list it.
+      `L4Factoidal.Prim.FloatOfNat` calls the twin). Each line ends with what one evaluation
+      costs:
+        no parse    through the twin, mantissa below 2^32 and exponent at most 22: a few
+                    machine operations; needs no repair
+        parse       the fast case of `Float.ofScientific` with a decimal parse: 2^53 is read
+                    from text (about 40 ns), and so is a mantissa of 2^32 or more. Every `core`
+                    line with a mantissa below 2^53 and an exponent at most 22, and a `twin`
+                    line whose mantissa is 2^32 or more
+        slow case   exponent above 22, or mantissa of 2^53 or more: big number arithmetic at
+                    every call, in core and in the twin (`1e300` in `WebPaint.cullCurve` was 85%
+                    of a frame until commit 57fe3531d, 2026-11-09)
+        ?           an argument is not a literal in the same function
+      `lean_cstr_to_nat` does not appear for `1e300`, so the default mode does not list it.
 
 Exit status: 0; 2 when a path does not exist or holds no C file (an empty walk is an error, not
 a clean result). The tool lists; it is not a gate.
@@ -131,14 +136,17 @@ def float_literals(path):
     return out
 
 
-def literal_text(mantissa, sign, exponent):
-    """The literal as `MeE` or `Me-E`, with `?` for a part that is not known; and its case."""
+def literal_text(mantissa, sign, exponent, callee='core'):
+    """The literal as `MeE` or `Me-E`, with `?` for a part that is not known; and what one
+    evaluation costs: `no parse`, `parse`, `slow case` or `?` (see the header)."""
     if mantissa is None or exponent is None:
         case = '?'
-    elif mantissa < 2 ** 53 and exponent <= 22:
-        case = 'fast case'
-    else:
+    elif mantissa >= 2 ** 53 or exponent > 22:
         case = 'slow case'
+    elif callee == 'twin' and mantissa <= 4294967295:
+        case = 'no parse'
+    else:
+        case = 'parse'
     text = '%se%s%s' % ('?' if mantissa is None else mantissa,
                         '?' if sign is None else ('-' if sign else ''),
                         '?' if exponent is None else exponent)
@@ -189,19 +197,22 @@ def main(argv=None):
         return 0
     if '--float-literals' in args:
         base = str(DEFAULT) + '/'
-        total = slow = core = 0
+        total = core = 0
+        cases = {'no parse': 0, 'parse': 0, 'slow case': 0, '?': 0}
         with_calls = set()
         for f in files:
             for fn, mantissa, sign, exponent, line, callee in float_literals(f):
-                text, case = literal_text(mantissa, sign, exponent)
+                text, case = literal_text(mantissa, sign, exponent, callee)
                 total += 1
-                slow += case == 'slow case'
+                cases[case] += 1
                 core += callee == 'core'
                 with_calls.add(str(f))
                 if not count:
-                    print('%s:%d  %s  %s  %s  %s' % (str(f).replace(base, ''), line, short(fn), text, case, callee))
-        print('%d Float literals converted outside init code: %d core, %d twin; %d slow case; in %d files '
-              '(%d C files read)' % (total, core, total - core, slow, len(with_calls), len(files)))
+                    print('%s:%d  %s  %s  %s  %s' % (str(f).replace(base, ''), line, short(fn), text, callee, case))
+        print('%d Float literals converted outside init code (%d core, %d twin): %d slow case, %d parse, '
+              '%d no parse, %d not known; in %d files (%d C files read)'
+              % (total, core, total - core, cases['slow case'], cases['parse'], cases['no parse'], cases['?'],
+                 len(with_calls), len(files)))
         return 0
     rows = []
     for f in files:

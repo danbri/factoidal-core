@@ -1,18 +1,13 @@
-# Foafnaut performance exploration: BubblePopJS and the native engine (2026-11-09)
-
-> DRAFT, 2026-11-09 23:05 UTC. This text is being rewritten on this branch. Sections 2, 9, 11
-> and 12 were written before the branches `wip/bpperf-vm` and `wip/bootstack` were read: they
-> have placeholders (`SEE-...`) and two statements that are wrong (the start-up constant is
-> repaired on `wip/bootstack`, not here; the register machine of section 12 exists on
-> `wip/bpperf-vm`). The next commit on this branch replaces them.
+# Foafnaut performance exploration: BubblePopJS and the native build of BubblePopKit (2026-11-09)
 
 Owner, 2026-11-09, verbatim: "spend your first session working on a deep dive hands-on,
 measurement driven exploration of our perf bottlenecks, especially around our native builds
 (esp OSX) and ourJavascript engine. BubblePopJS."
 
-This record holds the method, every number, what this session changed, and a ranked list of
-what to do next. Skill: [skills/foafnaut/SKILL.md](../../skills/foafnaut/SKILL.md), section
-"Measure the engine and BubblePopJS with no Mac". Lean rules that came out of it:
+This record holds the method, every number, what this branch changed, and what to do next.
+The plan that follows from it: [2026-11-09-bubblepopjs-plan.md](2026-11-09-bubblepopjs-plan.md).
+Skill: [skills/foafnaut/SKILL.md](../../skills/foafnaut/SKILL.md), section "Measure BubblePopKit
+and BubblePopJS with no Mac". Lean rules that came out of it:
 [skills/lean4-performance/SKILL.md](../../skills/lean4-performance/SKILL.md), sections
 "Integers through GMP" and "A definition with no argument runs when the program starts".
 
@@ -23,58 +18,84 @@ what to do next. Skill: [skills/foafnaut/SKILL.md](../../skills/foafnaut/SKILL.m
   here measures the macOS window, Cocoa, the GPU, Deno, the FFI boundary or the Hub. The CPU
   work of the engine is the same Lean code on both machines; the times are not.
 - `perf` on this VM has no hardware counters (`-e cpu-clock` only). Exact figures are
-  instruction counts from `valgrind --tool=callgrind`; times are wall or CPU time, least of 3.
-- Sources: `main` at `036198f2`, and the branch `wip/bpperf` at `e8d2a3e6e`, both of
-  2026-11-09. `wip/bpperf` is the BubblePopJS speed work of another session, of the same day,
-  not on `main` (its own record is section 18 of
-  [2026-11-08-lean-js-engine.md](2026-11-08-lean-js-engine.md) on that branch). Each
-  BubblePopJS number below names its source.
-- Comparison engines, all native on the same VM: QuickJS-NG `v0.18.0` (`d7215b0a`, built with
-  `cc -O2`), and Node 22 (V8) with `--jitless` and with its JIT.
+  instruction counts from `valgrind --tool=callgrind`; times are CPU time, least of 3.
+- Trees. `main` moved 4 times during the session. BubblePopJS (`L4Factoidal/JS/`) did not
+  change from `036198f2` to `489d5cd3a`: the `leanjs` program built at both is the same file,
+  byte for byte. "This branch" is `claude/foafnaut-perf-bottlenecks-7hpt38` at `f178e43c1`
+  (base `489d5cd3a`). Stage A is `wip/bpperf` at `e8d2a3e6e`; stage B is `wip/bpperf-vm` at
+  `167605f4c` (stage A and one commit: a register machine). Both belong to another session
+  and are not on `main`. `wip/bootstack` (`2f923ecf1`, a third session) was read, not built.
+- "Stage A with the conversions" and "stage B with the conversions" are those trees with this
+  branch's `Prim/FloatOfNat.lean`, `JS/Number.lean` and `JS/Lexer.lean` copied in, at their
+  first form (two `csimp` theorems for `Float.ofNat` and `Float.ofInt`, and the JavaScript
+  twins). The four later theorems (section 7.2) are on this branch only.
+- The engine phases of section 9.2 and 9.4 were measured at `036198f2`. The before and after
+  figures of 9.5 are two builds of `489d5cd3a`: unchanged, and with this branch.
+- Comparison engines, native on the same VM: QuickJS-NG `v0.18.0` (`d7215b0a`, `cc -O2`), and
+  Node 22 (V8) with `--jitless` and with its JIT.
+- Wording: "proved" is used only for a Lean theorem. For this branch's fast paths: the
+  specification is the earlier definition or the Lean core function; the fast version is
+  proved equal to it; the compiler is trusted. A `#guard` is a test.
 
 ## 2. Results
 
-1. On `main`, BubblePopJS is 15 to 83 times slower than QuickJS-NG on single operations, five
-   common operations are quadratic, and each call keeps 330 to 500 bytes for good.
-2. `wip/bpperf` repairs the five quadratic operations and the memory kept by calls, and is 1.4
-   to 3.5 times faster than `main`. This session confirms those results on another machine with
-   another benchmark set. It is 9 to 61 times slower than QuickJS-NG on single operations.
-3. A cost that neither tree had seen: integers went through the big number runtime (GMP).
-   Every `Float.ofNat` call in Lean 4.33.1 reads the number 2^53 from decimal text, and every
-   JavaScript bit operator ran three GMP remainders. Repaired in this landing with proved
-   twins. JavaScript `|`, `&`, `^`: 2.2 times fewer instructions; `a[i & 7]`: 2.0 times; the
-   engine's font load and first compile of the status page: SEE-SECTION-9 fewer instructions.
-4. The native engine ran 1,109 M instructions before `main` (0.11 s). 740 M were one constant
-   that only a build tool reads. Repaired in this landing.
-5. For one loop iteration, BubblePopJS on `wip/bpperf` runs 2,555 instructions and makes 10
-   heap allocations. A register bytecode loop with unboxed numbers, written in Lean, runs the
-   same loop in 13 ns against 133 ns for a tree walk of the present shape and 18 ns for
-   QuickJS-NG. The gap to QuickJS-NG comes from the execution model, not from Lean.
-6. Objects are never freed (no collector): 330 bytes for each small object on both trees.
-7. A frame of the status page on a kept layout is 249 M instructions: 28% writes floats into
-   a byte array one byte at a time, 28% builds the scene again, 19% writes layout text (13% is
-   float to decimal text), 27% of all of it is allocate and free.
+1. On `main`, BubblePopJS is 5 to 83 times slower than QuickJS-NG on the programs that scale
+   linearly, six operations are quadratic, and each call keeps 330 to 500 bytes for good.
+2. Stage A and stage B, measured here on another machine and with other programs than their
+   own: stage A makes the six operations linear and is 1.2 to 3.5 times faster than `main` on
+   the others; stage B's loop is 48 ns against 132 ns on stage A and 320 ns on `main`
+   (QuickJS-NG 7 ns).
+   One regression on stage B: `s += x` is quadratic again (section 5.3).
+3. A cost that no tree had seen: numbers that fit a machine word went through the big number
+   runtime (GMP). `Float.ofNat` and every `Float` literal left in a function body read 2^53
+   from decimal text at each call, and each JavaScript bit operator ran three GMP remainders.
+   This branch repairs it with fast versions proved equal to the specifications (section 7).
+   On `main`: `i | 1` 8,356 to 3,667 instructions, `a[i & 7]` 10,126 to 4,783. On stage B:
+   `i | 1` 394 to 92 ns, `a[i & 7]` 433 to 121 ns, and 4 to 26% off five real-world workloads. In the engine: the first compile of five pages takes 12 to 23% less time, and the font load and first
+   compile of the status page 21% fewer instructions (361,853 decimal parses to 2,612). Outputs are the same, byte for byte.
+4. The same fault in another form was found the same day by another session in
+   `WebPaint.cullCurve` (a literal `1e300`, 85% of a frame, commit `57fe3531d`).
+   `tools/lean-literal-parse-audit.py` now lists every such site from the generated C.
+5. Real-world code (section 6): BubblePopJS gives the right answer on 5 of 6 library
+   workloads, among them a 1.18 MB `js_of_ocaml` bundle extracted from F\*. Stage B is 5.5 to
+   43 times slower than QuickJS-NG on them (geometric mean 13.4) and uses up to 10 times the
+   memory. 43% of the F\* bundle's run is one function that finds a variable of an enclosing
+   scope by its name.
+6. Differential runs against two engines found 7 defects of BubblePopJS that the Test262
+   part in the tree does not show (section 6.4).
+7. For one loop iteration, stage B runs 972 instructions and stage A 2,475. A Lean model of
+   a register machine on flat arrays of value words runs it in 153, and a call of `fib` in
+   17 ns against 23 ns for QuickJS-NG (section 8 and the plan). The distance to QuickJS-NG is
+   the data layout, not Lean.
+8. The native engine ran 1,109 M instructions before `main` (0.11 s), 740 M of them one
+   constant that only a build tool reads. `wip/bootstack` repairs it; it is not on `main`.
+9. A frame of the status page on a kept layout is 249 M instructions: 39% writes the scene's
+   floats one byte at a time, 32% builds the scene again, 19% writes layout text.
 
-Ranked next steps: section 12.
+What to do next: section 12, and the plan.
 
 ## 3. Method
 
 ### 3.1 Benchmarks
 
-- **Programs** (26 files, each reads a global `N`): one engine operation each, in a function
+- **Programs** (25 files, each reads a global `N`): one engine operation each, in a function
   unless the name says global. Run at N, 2N and 4N. Net time is wall time less the engine's
   start (4.6 ms BubblePopJS, 2.4 ms QuickJS-NG, 23 to 26 ms Node). The exponent `k` in
   time ~ N^k comes from the N and 4N points.
-- **Single operations** (59): `labs/demos/foafnaut/bubblepop_perf/opcost.py`. Each is the body
-  of one loop. The cost is the slope of the time between N and 5N, less the slope of the empty
+- **Single operations** (61): `labs/demos/foafnaut/bubblepop_perf/opcost.py`. Each is the body
+  of one loop in a function that makes no closure, so that stage B's register machine runs
+  it. The cost is the slope of the CPU time between N and 5N, less the slope of the empty
   loop. `--callgrind` gives instructions, heap allocations (`mi_malloc_small` calls) and calls
   into the big number runtime, each for one iteration.
+- **Real-world code**: `labs/demos/foafnaut/bubblepop_perf/realworld.py` (section 6).
 - Commands (engines as `NAME=CMD`):
 
       python3 labs/demos/foafnaut/bubblepop_perf/opcost.py \
         bubblepop='formal/lean4/.lake/build/bin/leanjs run' qjs=/path/qjs v8-jitless='node --jitless'
       python3 labs/demos/foafnaut/bubblepop_perf/opcost.py --callgrind \
         bubblepop='formal/lean4/.lake/build/bin/leanjs run'
+      python3 labs/demos/foafnaut/bubblepop_perf/realworld.py \
+        bubblepop='formal/lean4/.lake/build/bin/leanjs run' v8=node qjs=/path/qjs
 
 ### 3.2 The engine
 
@@ -85,274 +106,457 @@ makes each call its own. `REQ` is
 callgrind at COUNT 0, 1 and 4 separates: start, font load and first compile (COUNT 0); one frame
 on a kept layout ((COUNT 4 - COUNT 1) / 3).
 
-## 4. BubblePopJS on `main` (036198f2)
+### 3.3 Before and after
 
-Net milliseconds at the largest size, and ratios. `qjs` is QuickJS-NG, `v8jl` is
-`node --jitless`.
+A comparison is two builds of one base commit. The unchanged base was built in a second
+worktree with a copy of the build caches (and the stale files of this branch's module
+removed). `main` moved four times in three hours, and the first comparison of the session, on
+`036198f2`, had to be repeated on `489d5cd3a`.
 
-| Program | N | main | branch | qjs | v8jl | main/qjs | branch/qjs | main/branch |
+## 4. BubblePopJS by program: `main`, stage A, stage B
+
+Net milliseconds at the largest size, and the exponent `k` on each tree (1.0 is linear).
+`qjs` is QuickJS-NG, `v8jl` is `node --jitless`.
+
+| Program | N | main | stage A | stage B | qjs | v8jl | main/qjs | A/qjs | B/qjs | k main | k A | k B |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| arith (`* / %` and bit operators) | 400,000 | 1,568 | 1,156 | 1,013 | 18.8 | 14.7 | 83 | 62 | 54 | 1.06 | 1.00 | 1.01 |
+| string_concat | 400,000 | 2,361 | 313 | 2,031 | 46.5 | 60.4 | 51 | 6.7 | 44 | 1.64 | 0.99 | 1.77 |
+| array_index_write | 800,000 | 1,616 | 1,091 | 836 | 32.1 | 45.1 | 50 | 34 | 26 | 0.99 | 0.98 | 1.00 |
+| string_index (`charCodeAt`, `s[i]`) | 600,000 | 1,030 | 731 | 714 | 42.2 | 24.5 | 24 | 17 | 17 | 1.03 | 0.90 | 1.04 |
+| loop_global_var | 800,000 | 908 | 429 | 226 | 13.5 | 12.2 | 67 | 32 | 17 | 1.02 | 1.00 | 1.00 |
+| array_index_read | 1,200,000 | 913 | 558 | 352 | 21.4 | 24.5 | 43 | 26 | 16 | 0.99 | 1.00 | 0.99 |
+| global_fn_call | 800,000 | 1,480 | 596 | 330 | 22.8 | 17.7 | 65 | 26 | 14 | 1.05 | 0.99 | 1.01 |
+| try_catch | 800,000 | 909 | 617 | 622 | 54.5 | 38.7 | 17 | 11 | 11 | 1.01 | 1.00 | 0.99 |
+| closure_call | 800,000 | 1,063 | 418 | 238 | 23.2 | 24.3 | 46 | 18 | 10 | 0.98 | 1.02 | 1.00 |
+| deep_scope (8 scopes up) | 1,200,000 | 724 | 278 | 128 | 12.6 | 15.7 | 58 | 22 | 10 | 1.02 | 0.98 | 1.00 |
+| array_push | 80,000 | 4,920 | 39.8 | 33.4 | 3.5 | 7.6 | 1406 | 11 | 9.5 | 2.07 | 0.92 | 1.00 |
+| array_methods | 80,000 | 4,882 | 88.9 | 91.8 | 10.3 | 7.2 | 474 | 8.6 | 8.9 | 1.98 | 0.98 | 0.97 |
+| class_new | 400,000 | 1,268 | 722 | 577 | 69.7 | 31.2 | 18 | 10 | 8.3 | 1.00 | 1.03 | 0.97 |
+| call_args | 800,000 | 1,336 | 437 | 197 | 26.8 | 32.9 | 50 | 16 | 7.4 | 1.01 | 1.00 | 0.99 |
+| empty_loop | 2,000,000 | 625 | 274 | 99.1 | 14.8 | 16.0 | 42 | 19 | 6.7 | 0.90 | 0.97 | 0.99 |
+| method_call | 800,000 | 1,228 | 470 | 282 | 42.9 | 33.4 | 29 | 11 | 6.6 | 1.04 | 0.98 | 1.01 |
+| prop_rw | 1,200,000 | 850 | 374 | 221 | 34.9 | 25.5 | 24 | 11 | 6.3 | 1.03 | 1.02 | 1.01 |
+| obj_alloc | 800,000 | 829 | 518 | 350 | 57.0 | 20.4 | 15 | 9.1 | 6.1 | 0.97 | 0.98 | 1.00 |
+| fib(20), 24 times | 24 | 404 | 132 | 76.9 | 12.7 | 15.2 | 32 | 10 | 6.1 | 1.01 | 0.94 | 0.99 |
+| regex | 400,000 | 849 | 730 | 734 | 157 | 63.1 | 5.4 | 4.6 | 4.7 | 1.03 | 1.01 | 1.01 |
+| loop_fn_var | 1,600,000 | 797 | 351 | 106 | 28.6 | 24.3 | 28 | 12 | 3.7 | 1.02 | 0.98 | 0.99 |
+| dict_build (one object, N keys) | 40,000 | 9,639 | 56.1 | 46.7 | 12.9 | 35.5 | 747 | 4.3 | 3.6 | 2.09 | 0.95 | 1.06 |
+| json | 40,000 | 2,775 | 232 | 230 | 69.3 | 27.7 | 40 | 3.4 | 3.3 | 2.09 | 1.01 | 1.06 |
+| loop_fn_let | 1,200,000 | 926 | 267 | 80.8 | 25.8 | 17.1 | 36 | 10 | 3.1 | 1.00 | 1.00 | 1.01 |
+| map_set | 80,000 | 12,749 | 139 | 129 | 111 | 15.2 | 115 | 1.3 | 1.2 | 2.53 | 1.04 | 1.09 |
+
+**Quadratic on `main`**: `array_push`, `array_methods`, `dict_build`, `json`, `map_set`,
+`string_concat`. At N = 100,000: `a.push(i)` 9.9 s, `o['k'+i] = i` 62.8 s, `m.set(i, i)` 23.3 s,
+JSON of 100,000 objects 28.6 s. Causes, read in the source: `Array.prototype.push` builds
+`es ++ args` from a copy of the elements that the object still holds; `collPut` reads `es.size`
+after `es.push`, so the push copies; `Obj.putOwn` reads `o.props.contains` after
+`o.props.insert`, so the insert copies the bucket array. Stage A repairs all six.
+
+**Memory kept on `main`** (peak resident growth for each iteration; nothing frees it): a call
+334 to 494 bytes (800,000 calls: 267 to 388 MB), a `for (let ...)` iteration 315 bytes, a small
+object 458 bytes, `new` and one method call 897 bytes. QuickJS-NG and V8: 0. On stage A a call
+keeps 0 bytes; an object keeps 328 bytes (`s = { k: i, v: i }`), a class instance 314. No tree
+has a collector.
+
+## 5. BubblePopJS by operation
+
+### 5.1 Time
+
+Nanoseconds for one operation, less the loop; the first two rows are the loops themselves.
+Least CPU time of 3 runs, N = 200,000 and 1,000,000, one run of the script on a quiet machine.
+A difference under 10 ns or 10% is not a result. "main + branch" is this branch.
+
+| Operation | main | main + branch | stage A | stage B | stage B with the conversions | qjs | v8jl | stage B / qjs |
 |---|---|---|---|---|---|---|---|---|
-| arith (`* / %` and bit operators) | 400,000 | 1,568 | 1,157 | 18.8 | 14.7 | 83 | 61 | 1.4 |
-| array_index_write | 800,000 | 1,617 | 1,091 | 32.1 | 45.1 | 50 | 34 | 1.5 |
-| loop_global_var | 800,000 | 908 | 429 | 13.5 | 12.2 | 67 | 32 | 2.1 |
-| global_fn_call | 800,000 | 1,480 | 597 | 22.8 | 17.7 | 65 | 26 | 2.5 |
-| array_index_read | 1,200,000 | 913 | 558 | 21.4 | 24.5 | 43 | 26 | 1.6 |
-| deep_scope (8 scopes up) | 1,200,000 | 725 | 278 | 12.6 | 15.7 | 58 | 22 | 2.6 |
-| empty_loop | 2,000,000 | 625 | 274 | 14.8 | 16.0 | 42 | 19 | 2.3 |
-| closure_call | 800,000 | 1,063 | 418 | 23.2 | 24.3 | 46 | 18 | 2.5 |
-| string_index (`charCodeAt`, `s[i]`) | 600,000 | 1,030 | 731 | 42.2 | 24.5 | 24 | 17 | 1.4 |
-| call_args | 800,000 | 1,336 | 437 | 26.8 | 32.9 | 50 | 16 | 3.1 |
-| loop_fn_var | 1,600,000 | 797 | 351 | 28.6 | 24.3 | 28 | 12 | 2.3 |
-| try_catch | 800,000 | 909 | 617 | 54.5 | 38.7 | 17 | 11 | 1.5 |
-| method_call | 800,000 | 1,228 | 470 | 42.9 | 33.4 | 29 | 11 | 2.6 |
-| prop_rw | 1,200,000 | 850 | 374 | 34.9 | 25.5 | 24 | 11 | 2.3 |
-| fib(20), 24 times | 24 | 404 | 132 | 12.7 | 15.2 | 32 | 10 | 3.1 |
-| loop_fn_let | 1,200,000 | 926 | 267 | 25.8 | 17.1 | 36 | 10 | 3.5 |
-| class_new | 400,000 | 1,268 | 722 | 69.7 | 31.2 | 18 | 10 | 1.8 |
-| obj_alloc | 800,000 | 829 | 518 | 57.0 | 20.4 | 15 | 9.1 | 1.6 |
-| string_concat | 400,000 | 2,361 | 313 | 46.5 | 60.4 | 51 | 6.7 | 7.6 |
-| regex | 400,000 | 849 | 730 | 157 | 63.1 | 5.4 | 4.6 | 1.2 |
-| array_push | 80,000 | 4,920 | 39.8 | 3.5 | 7.6 | 1,406 | 11 | 124 |
-| array_methods | 80,000 | 4,883 | 88.9 | 10.3 | 7.2 | 474 | 8.6 | 55 |
-| dict_build (one object, N keys) | 40,000 | 9,639 | 56.1 | 12.9 | 35.5 | 747 | 4.3 | 172 |
-| json | 40,000 | 2,775 | 232 | 69.3 | 27.7 | 40 | 3.4 | 12 |
-| map_set | 80,000 | 12,749 | 139 | 111 | 15.2 | 115 | 1.3 | 92 |
+| the loop itself (`i < n; i++`) | 320 | 305 | 132 | 48 | 50 | 8 | 8 | 6 |
+| the loop in a function that has an inner function | 339 | 330 | 140 | 136 | 147 | 7 | 7 | 19 |
+| `s = function () { return i; }` | 1309 | 1314 | 1098 | 1049 | 968 | 119 | 11 | 9 |
+| `s = () => i` | 773 | 764 | 655 | 641 | 534 | 94 | 15 | 7 |
+| `s = a[i & 7]` | 687 | 339 | 538 | 433 | 121 | 7 | 8 | 60 |
+| `s = t.charCodeAt(3)` | 556 | 474 | 483 | 416 | 362 | 25 | 12 | 17 |
+| `s = { x: i, y: k }` | 735 | 804 | 597 | 411 | 386 | 66 | 13 | 6 |
+| `s = i << 1` | 542 | 303 | 488 | 398 | 158 | 5 | 6 | 81 |
+| `s = i \| 1` | 536 | 236 | 465 | 394 | 92 | 5 | 5 | 81 |
+| `s = i ^ 5` | 529 | 243 | 517 | 373 | 94 | 5 | 4 | 75 |
+| `s = i & 255` | 515 | 234 | 472 | 368 | 100 | 5 | 6 | 71 |
+| `s = i >>> 1` | 486 | 306 | 427 | 332 | 148 | 5 | 6 | 68 |
+| `s = String(i)` | 570 | 479 | 473 | 320 | 260 | 35 | 24 | 9 |
+| `s = Math.floor(i)` | 485 | 493 | 404 | 298 | 270 | 20 | 7 | 15 |
+| `s = i >> 1` | 440 | 277 | 376 | 298 | 152 | 5 | 2 | 56 |
+| `s = h1(i)` (inner function) | 795 | 798 | 264 | 286 | 298 | 16 | 12 | 17 |
+| `s = 'k' + i` | 404 | 320 | 310 | 249 | 179 | 45 | 28 | 6 |
+| `try { s = i; } catch (e) {}` | 177 | 197 | 139 | 221 | 224 | 7 | 3 | 31 |
+| `a[3] = i` | 400 | 368 | 243 | 195 | 175 | 6 | 6 | 35 |
+| `s = t[3]` | 359 | 275 | 279 | 187 | 136 | 20 | 5 | 9 |
+| `s = g1(i)` (top-level function) | 848 | 912 | 343 | 166 | 150 | 15 | 12 | 11 |
+| `s = ~i` | 315 | 242 | 274 | 161 | 65 | 4 | 4 | 41 |
+| `s = [i, k, 1]` | 361 | 386 | 302 | 160 | 167 | 39 | 26 | 4 |
+| `s = i % 7` | 284 | 266 | 231 | 153 | 98 | 5 | 5 | 33 |
+| `s = g0()` | 587 | 561 | 354 | 148 | 154 | 12 | 10 | 12 |
+| `s = gf(i)` | 894 | 935 | 360 | 146 | 146 | 15 | 17 | 10 |
+| `s = o.m(i)` | 822 | 757 | 269 | 142 | 136 | 18 | 14 | 8 |
+| `s = []` | 214 | 233 | 206 | 99 | 102 | 23 | 6 | 4 |
+| `G = i` | 434 | 422 | 228 | 90 | 83 | 3 | 6 | 33 |
+| `o.x = i` | 258 | 340 | 114 | 86 | 81 | 6 | 2 | 15 |
+| `s = a[3]` | 231 | 186 | 172 | 79 | 27 | 5 | 2 | 15 |
+| `s = {}` | 184 | 191 | 175 | 75 | 76 | 22 | 4 | 3 |
+| `s = a.length` | 258 | 202 | 178 | 59 | 19 | 6 | 5 | 10 |
+| `s = t.length` | 228 | 178 | 163 | 58 | 18 | 6 | 5 | 9 |
+| `s = i != k` | 189 | 234 | 140 | 54 | 51 | 5 | 4 | 11 |
+| `s = i == k` | 200 | 189 | 116 | 50 | 46 | 4 | 3 | 11 |
+| `s = typeof i` | 164 | 173 | 223 | 41 | 34 | 6 | 2 | 7 |
+| `s = Math.PI` | 215 | 210 | 154 | 38 | 29 | 4 | 2 | 9 |
+| `s = undefined` | 232 | 195 | 167 | 37 | 29 | 4 | -1 | 8 |
+| `s = G` (global) | 184 | 194 | 175 | 36 | 29 | 3 | 3 | 14 |
+| `s++` | 156 | 161 | 71 | 32 | 26 | 2 | 5 | 17 |
+| `s = o.m` (on the prototype) | 218 | 219 | 138 | 31 | 35 | 9 | 2 | 3 |
+| `++s` | 191 | 178 | 76 | 30 | 26 | 1 | 3 | - |
+| `{ let q = i; s = q; }` | 637 | 700 | 363 | 27 | 31 | 8 | 6 | 3 |
+| `s = o.x` | 179 | 192 | 113 | 27 | 20 | 7 | 5 | 4 |
+| `s = i ? 1 : 2` | 154 | 195 | 100 | 26 | 20 | 7 | 1 | 4 |
+| `s = i && k` | 172 | 164 | 115 | 25 | 27 | 9 | 4 | 3 |
+| `s += k` | 181 | 176 | 84 | 23 | 22 | 2 | 6 | 9 |
+| `s = s / k` | 224 | 208 | 104 | 21 | 21 | 5 | 4 | 4 |
+| `s = i === k` | 189 | 200 | 107 | 20 | 13 | 5 | 4 | 4 |
+| `s = s - k` | 178 | 196 | 110 | 18 | 16 | 4 | 4 | 5 |
+| `s = s + k` | 204 | 214 | 113 | 18 | 15 | 2 | 2 | 9 |
+| `s = i < k` | 175 | 185 | 108 | 17 | 13 | 5 | 4 | 3 |
+| `s = i <= k` | 268 | 308 | 113 | 17 | 14 | 4 | 7 | 4 |
+| `s = i !== k` | 227 | 215 | 111 | 16 | 10 | 5 | 6 | 3 |
+| `s = -i` | 173 | 197 | 143 | 15 | 18 | 4 | 1 | 4 |
+| `s = s * k` | 221 | 210 | 114 | 15 | 17 | 5 | 5 | 3 |
+| `s = !i` | 172 | 168 | 112 | 14 | 15 | 3 | 3 | 4 |
+| `s = k` | 124 | 129 | 95 | 12 | 13 | 3 | 2 | 4 |
+| `s = 1` | 110 | 105 | 92 | 10 | 14 | 3 | -1 | 4 |
+| `if (i < 0) s = 2` | 67 | 77 | 51 | 3 | 2 | 5 | 2 | 1 |
 
-**Quadratic on `main`** (exponent `k`; 1.0 is linear): `array_push` 2.07, `array_methods`
-1.98, `dict_build` 2.09, `json` 2.09, `map_set` 2.53, `string_concat` 1.64. At N = 100,000:
-`a.push(i)` 9.9 s, `o['k'+i] = i` 62.8 s, `m.set(i, i)` 23.3 s, JSON of 100,000 objects 28.6 s.
-Causes, read in the source: `Array.prototype.push` builds `es ++ args` from a copy of the
-elements that the object still holds; `collPut` reads `es.size` after `es.push`, so the push
-copies; `Obj.putOwn` reads `o.props.contains` after `o.props.insert`, so the insert copies the
-bucket array. On `wip/bpperf` every exponent is 0.9 to 1.04.
+### 5.2 Instructions and allocations
 
-**Memory kept on `main`** (peak RSS growth for each iteration; nothing frees it):
-a call 334 to 494 bytes (800,000 calls: 267 to 388 MB), a `for (let ...)` iteration 315
-bytes, a small object 458 bytes, `new` and one method call 897 bytes. QuickJS-NG and V8: 0.
+callgrind, for one iteration, less the loop (instructions / allocations). The loop itself, as
+the difference of N = 300,000 and N = 100,000: `main` with the first conversions 5,238
+instructions and 25 allocations; stage A with them 2,475 and 10; stage B with them 972 and 0.
 
-## 5. The branch `wip/bpperf` (e8d2a3e6e)
-
-Confirmed here, on another machine and with other programs than the branch's own
-`scaling.py`: the six operations above are linear; calls, blocks and `for (let ...)` loops
-keep no memory (0 bytes for each call in `call_args`, `closure_call`, `method_call`, `fib`,
-`loop_fn_let`); Test262 language subset 5,629 pass, 668 fail, 4 skip (out of 6,301; `main`:
-5,627 pass, 670 fail, 4 skip), whole run 0.9 to 1.0 s on both.
-
-What stays, by single operation (ns, the empty loop subtracted; `main` for comparison):
-
-| Operation | main | branch | qjs | v8jl | branch/qjs |
-|---|---|---|---|---|---|
-| the loop itself (`i < n; i++`) | 358 | 157 | 9 | 12 | 17 |
-| `s = 1` | 129 | 80 | 3 | 0 | 27 |
-| `s = k` (local) | 148 | 87 | 3 | 0 | 33 |
-| `s = s + k` | 220 | 98 | 1 | 0 | 71 |
-| `s = i < k` | 206 | 102 | 4 | 1 | 24 |
-| `if (i < 0) s = 2` | 91 | 42 | 4 | 0 | 9 |
-| `s = i \| 1` | 659 | 491 | 4 | 0 | 123 |
-| `s = i << 1` | 589 | 480 | 4 | 0 | 116 |
-| `s = i % 7` | 299 | 225 | 4 | 0 | 56 |
-| `s = a[3]` | 249 | 152 | 4 | 0 | 36 |
-| `a[3] = i` | 454 | 206 | 5 | 6 | 45 |
-| `s = a.length` | 278 | 165 | 6 | 5 | 26 |
-| `s = o.x` | 216 | 99 | 6 | 0 | 18 |
-| `o.x = i` | 286 | 94 | 5 | 2 | 19 |
-| `s = G` (global) | 227 | 220 | 2 | 0 | 88 |
-| `G = i` | 484 | 211 | 3 | 0 | 74 |
-| `{ let q = i; s = q; }` | 663 | 402 | 8 | 1 | 52 |
-| `s = g1(i)` (local function) | 825 | 250 | 17 | 5 | 15 |
-| `s = gf(i)` (global function) | 1,064 | 373 | 14 | 4 | 27 |
-| `s = o.m(i)` | 933 | 273 | 20 | 9 | 13 |
-| `s = Math.floor(i)` | 587 | 427 | 20 | 2 | 22 |
-| `s = t.charCodeAt(3)` | 556 | 491 | 25 | 16 | 20 |
-| `s = 'k' + i` | 427 | 306 | 47 | 23 | 6.5 |
-| `s = {}` | 208 | 152 | 23 | 3 | 6.4 |
-| `s = { x: i, y: k }` | 821 | 521 | 65 | 6 | 8.1 |
-| `s = function () { return i; }` | 1,446 | 1,040 | 132 | 16 | 7.9 |
-| `s = () => i` | 775 | 585 | 100 | 10 | 5.9 |
-
-Each cost is one run of 3 on a quiet machine; a difference under 10 ns or 10% is not a result.
-
-Memory that stays on the branch: an object. `s = { k: i, v: i }` keeps 328 bytes (`main`: 458),
-`new V(i, 1)` 314 bytes. 800,000 small objects: 263 MB. The engine has no collector (section 8
-of the engine record). A page that makes 1,000 short-lived objects in each frame at 60 frames
-a second would keep about 20 MB more each second.
-
-## 6. Where the instructions go (branch)
-
-The empty loop `for (var i = 0; i < n; i++) {}` in a function, callgrind, the difference of
-N = 300,000 and N = 100,000: **2,555 instructions and 10 heap allocations for each iteration.**
-
-| Function | Instructions | Calls |
-|---|---|---|
-| `evalExpr` | 615 | 2 |
-| `forLoop` | 296 | (loop) |
-| `assignLocal` | 274 | 1 |
-| `mi_free` | 260 | 10 |
-| `HeapOf.envUp` | 180 | 4 |
-| `lean_dec_ref_cold` | 153 | 4 |
-| `lookupLocal` | 144 | 1 |
-| `mi_malloc_small` | 120 | 10 |
-| `lean_alloc_ctor` | 119 | 3 |
-| `evalBlock`, `evalStmt`, `evalStmts`, `enterBlock` | 216 | 1 each |
-| the rest | 178 | |
-
-Allocate, free and reference counts are about 30% of the instructions (42% of the time in a
-`perf` sample). The 10 allocations are one result object for each evaluator function that
-returns (`EStateM.Result`; a pure function that returns a pair costs the same, section 8) and
-one box for the number. `evalExpr` alone is 307 instructions a call.
-
-Added instructions and allocations for one operation (branch, less the empty loop):
-
-| Operation | Instructions | Allocations | Largest parts |
+| Operation | stage A | stage B | stage B with the conversions (instructions) |
 |---|---|---|---|
-| `s = 1` | 1,286 | 4 | `evalExpr` 307, `assignLocal` 273 |
-| `s = s + k` | 1,839 | 5 | `evalExpr` 618, `assignLocal` 274 |
-| `s = o.x` | 1,693 | 4 | `evalExpr` 490, `fastGet` 112 |
-| `s = a[3]` | 2,484 | 4 | `evalExpr` 590, GMP 480 (section 7) |
-| `s = G` | 2,648 | 5 | `Env.scan` 380, `findEnv` 250 |
-| `s = i % 7` | 3,172 | 8 | GMP 304 and more (section 7) |
-| `a[3] = i` | 3,565 | 6 | GMP 850 (section 7), `lookupLocal` 288 |
-| `s = g1(i)` | 3,775 | 11 | `evalExpr` 572, `callBody` 345, `callClosure` 317 |
-| `s = typeof i` | 3,838 | 10 | `Env.scan` 792, `memcmp` 396 |
-| `{ let q = i; s = q; }` | 5,246 | 19 | free and reference counts 1,040 |
-| `s = Math.floor(i)` | 5,285 | 15 | `evalExpr` 611, `callNative` 355, `Env.scan` 348 |
-| `s = gf(i)` | 5,688 | 12 | `Env.scan` 728, `findEnv` 500 |
-| `s = { x: i, y: k }` | 5,359 | 20 | free 1,155, `evalProps` 557 |
-| `s = t.charCodeAt(3)` | 6,221 | 20 | `evalExpr` 695, GMP 480 |
-| `s = i \| 1` | 7,100 | 9 | GMP about 4,500 (section 7) |
-| `s = function () { return i; }` | 8,232 | 31 | free and reference counts 2,140, `makeClosure` 463 |
+| `s = 1` | 1,265 / 4 | 238 / 0 | 238 |
+| `s = s + k` | 1,776 / 5 | 331 / 0 | 331 |
+| `s = i < k` | 1,778 / 5 | 381 / 1 | 381 |
+| `s = o.x` | 1,652 / 4 | 477 / 0 | 477 |
+| `o.x = i` | 1,660 / 4 | 1,456 / 4 | 1,457 |
+| `s = a[3]` | 2,443 / 4 | 1,396 / 0 | 623 |
+| `a[3] = i` | 3,524 / 6 | 2,955 / 5 | 2,955 |
+| `s = a[i & 7]` | 8,289 / 10 | 7,362 / 8 | 2,002 |
+| `s = a.length` | 2,516 / 5 | 1,217 / 0 | 444 |
+| `s = G` (global) | 2,449 / 5 | 729 / 0 | 729 |
+| `G = i` | 3,053 / 7 | 1,502 / 4 | 1,501 |
+| `s = g1(i)` (top-level function) | 4,990 / 12 | 2,560 / 7 | 2,561 |
+| `s = o.m(i)` | 3,738 / 9 | 2,438 / 6 | 2,438 |
+| `s = h1(i)` (inner function) | 3,802 / 11 | 4,125 / 12 | 4,125 |
+| `{ let q = i; s = q; }` | 5,206 / 19 | 652 / 0 | 652 |
+| `s = i \| 1` | 7,060 / 9 | 6,306 / 8 | 1,617 |
+| `s = i << 1` | 7,191 / 8 | 6,433 / 7 | 2,474 |
+| `s = i % 7` | 3,132 / 8 | 2,373 / 7 | 1,599 |
+| `s = Math.floor(i)` | 5,060 / 15 | 3,885 / 10 | 3,885 |
+| `s = t.charCodeAt(3)` | 6,179 / 20 | 5,705 / 17 | 4,932 |
+| `s = String(i)` | 6,218 / 13 | 4,413 / 8 | 3,614 |
+| `s = {}` | 1,846 / 8 | 871 / 4 | 871 |
+| `s = { x: i, y: k }` | 5,300 / 20 | 3,430 / 13 | 3,430 |
+| `s = [i, k, 1]` | 2,677 / 9 | 1,846 / 8 | 1,847 |
+| `s = function () { return i; }` | 8,238 / 31 | 8,217 / 29 | 7,444 |
+| `s = () => i` | 5,193 / 18 | 5,209 / 17 | 4,436 |
+| `try { s = i; } catch (e) {}` | 2,091 / 8 | 3,641 / 18 | 3,642 |
+| `s = typeof i` | 3,425 / 10 | 702 / 3 | 703 |
 
-What the table says about the branch:
+Where one iteration of the empty loop goes on stage A (2,475 instructions): `evalExpr` 615
+for 2 calls, `forLoop` 296, `assignLocal` 274, `mi_free` 260, `lean_dec_ref_cold` 153,
+`lookupLocal` 144, `mi_malloc_small` 120, `lean_alloc_ctor` 119. Allocate, free and reference
+counts are about 30%. The 10 allocations are one result object for each evaluator function
+that returns (`EStateM.Result`) and one box for the number.
 
-- A name that is not in a function's own scopes (`G`, `gf`, `Math`, and `typeof` of any name)
-  walks the scope chain and compares names (`Env.scan`, `findEnv`): 130 ns more than a local.
-  Page scripts read globals all the time (`document`, `Math`, their own top-level functions).
-- A block with `let` costs 400 ns and 19 allocations.
-- A function expression costs 1,040 ns and 31 allocations: the function object, its
-  `prototype` object and four property writes, made at each evaluation.
+On stage B the whole iteration is in `vmLoop` (972 instructions, no allocation), `s = s + k`
+adds 329 and a call of a compiled function 2,558. A register is a Lean value in an
+`Array Value`, an instruction is a Lean object whose read changes two reference counts, and
+operands are `Nat`s. Section 8 measures the same operations with none of the three.
+
+### 5.3 What stage B does not cover, and one regression
+
+- A function that makes a closure, or uses `try`, `switch`, `for-in`, `for-of`, spread or a
+  class with `super`, stays in the evaluator (its own record). A `try` with nothing thrown is
+  221 ns on stage B against 139 ns on stage A.
+- `leanjs compile-stats FILE`: functions compiled, of functions seen: lodash 540 of 691,
+  acorn 301 of 340, pako 76 of 100, immutable 504 of 701, the F\* bundle 3,353 of 4,457.
+- **Regression.** `s += 'x'`, 100,000, 200,000 and 400,000 times, CPU seconds: stage A 0.05,
+  0.07, 0.13; stage B 0.14, 0.50, 1.86 (in a function and at the top level). On stage B a
+  loop is compiled, and `vmLoop`'s `.add` (`JS/Interp.lean` line 4793 at `167605f4c`) reads
+  the string from its register and appends while the register still holds it, so the append
+  copies. The evaluator lets the slot go first (`dropSlotStr`). `s = s + 'x'` is quadratic on
+  every tree.
+- `a[3] = i` does not gain from the conversions on stage A or B: the indexed write has the
+  literal `4294967295.0` in `evalExpr` and in `vmLoop`, read from text at each write.
+
+## 6. Real-world code
+
+### 6.1 Method
+
+`realworld.py` builds one script for each workload and size: `var N = n;`, a prelude with
+`module` and `exports` (no language feature), the library's single-file build, and a driver
+that prints `RESULT <checksum>`. A library comes from the npm registry by exact version
+(`npm pack --ignore-scripts`), its tarball's sha256 is checked against
+`realworld/manifest.json`, and no library code is in this repository. A run counts only when
+its line equals the reference engine's. Every run is under a watchdog (resident memory and
+time). Sizes: 0 (load only), N and 4N.
+
+### 6.2 Results
+
+CPU milliseconds at 4N less the load, the ratio to QuickJS-NG, and peak resident memory.
+Quiet machine, least of 3.
+
+| Workload (N) | main | main + branch | stage A | stage B | stage B with the conversions | QuickJS-NG | V8 no JIT | V8 |
+|---|---|---|---|---|---|---|---|---|
+| lodash 4.17.21 (1000) | 1,709 ms, x22.7, 412 MB | 1,660 ms, x22.0, 412 MB | 733 ms, x9.7, 42 MB | 417 ms, x5.5, 42 MB | 359 ms, x4.8, 42 MB | 75 ms, 17 MB | 34 ms, x0.4, 51 MB | 42 ms, x0.6, 58 MB |
+| acorn 8.11.3 (1) | 1,609 ms, x12.6, 254 MB | 1,522 ms, x12.0, 254 MB | 1,007 ms, x7.9, 32 MB | 935 ms, x7.3, 34 MB | 895 ms, x7.0, 32 MB | 127 ms, 17 MB | 57 ms, x0.4, 46 MB | 94 ms, x0.7, 55 MB |
+| pako 2.1.0 (32) | 3,648 ms, x57.2, 100 MB | 3,152 ms, x49.4, 100 MB | 2,910 ms, x45.7, 21 MB | 2,744 ms, x43.0, 20 MB | 2,019 ms, x31.7, 20 MB | 64 ms, 17 MB | 51 ms, x0.8, 44 MB | 61 ms, x1.0, 51 MB |
+| marked 4.3.0 (6) | does not load | does not load | does not load | does not load | does not load | 32 ms, 17 MB | 14 ms, x0.5, 45 MB | 14 ms, x0.4, 50 MB |
+| immutable 4.3.5 (1000) | 2,682 ms, x22.2, 412 MB | 2,611 ms, x21.6, 411 MB | 1,569 ms, x13.0, 77 MB | 1,176 ms, x9.7, 80 MB | 992 ms, x8.2, 80 MB | 121 ms, 17 MB | 65 ms, x0.5, 50 MB | 138 ms, x1.1, 59 MB |
+| the F\* bundle (`js_of_ocaml` 6.4.1) (40) | 6,585 ms, x27.5, 1,636 MB | 5,811 ms, x24.3, 1,636 MB | 5,754 ms, x24.0, 207 MB | 5,990 ms, x25.0, 213 MB | 4,983 ms, x20.8, 214 MB | 239 ms, 21 MB | 149 ms, x0.6, 61 MB | 95 ms, x0.4, 71 MB |
+| geometric mean of x (workloads that run) | 25.1 (of 5) | 23.3 (of 5) | 16.1 (of 5) | 13.4 (of 5) | 11.3 (of 5) | 1 | 0.5 (of 6) | 0.7 (of 6) |
+
+Load only (parse and top-level evaluation), CPU ms:
+
+| Library (size) | main | main + branch | stage A | stage B | stage B with the conversions | QuickJS-NG | V8 no JIT | V8 |
+|---|---|---|---|---|---|---|---|---|
+| lodash 4.17.21 (544 kB) | 47 | 50 | 47 | 52 | 57 | 24 | 35 | 31 |
+| acorn 8.11.3 (231 kB) | 85 | 85 | 37 | 42 | 37 | 19 | 28 | 26 |
+| pako 2.1.0 (238 kB) | 30 | 28 | 32 | 30 | 28 | 13 | 26 | 22 |
+| marked 4.3.0 (49 kB) | does not load | does not load | does not load | does not load | does not load | 9 | 26 | 24 |
+| immutable 4.3.5 (171 kB) | 25 | 24 | 30 | 33 | 32 | 17 | 34 | 30 |
+| the F\* bundle (`js_of_ocaml` 6.4.1) (1178 kB) | 1,838 | 1,678 | 1,712 | 1,633 | 1,587 | 272 | 98 | 107 |
+
+- BubblePopJS gives the reference answer on 5 of 6 workloads, on every tree. `marked` does not
+  load (6.4, item 1).
+- This branch's conversions on `main`: 3 to 14% less run time. On stage B (first form): 4 to
+  26% less; the geometric mean of the ratio to QuickJS-NG goes from 13.4 to 11.3.
+- V8's CPU time includes its compiler threads, so on runs this short V8 with its JIT can show
+  more CPU time than V8 without it.
+
+### 6.3 Where the time goes (stage B with the conversions, `perf` samples, self time)
+
+| Workload | Largest shares |
+|---|---|
+| the F\* bundle | `Env.scan` 42.9%, `vmLoop` 12.1%, `memcmp` 6.2%, allocate and free 7.4%, `lean_dec_ref_cold` 2.8%, `List.filterTR` in `parseBlock` 2.0% |
+| pako | `vmLoop` 9.6%, allocate and free 25.8% (of it the C library's `malloc`, `free`: 9.1%), `evalExpr` 4.0%, `arrayIndex?` and its helpers 5.6%, `Obj.getOwn` 2.9%, `findProp` 2.7%, `PropMap.scan` 1.7%, `__gmpz_n_pow_ui` 1.3% |
+| acorn | `vmLoop` 20.8%, allocate and free 21.0%, `fastGet` 4.9%, `evalExpr` 4.0%, hash map lookups of `PropMap` and `hash_str` 5.2%, `Re.matchNode` 1.6% |
+| immutable | `vmLoop` 31.5%, allocate and free 12.4%, `Env.scan` 6.6%, `fastGet` 3.6%, `__gmpz_set_str` and its helper 3.2% |
+
+- `Env.scan` finds a name in an environment by comparing strings. A bundle is one function
+  with thousands of names, and an inner function's use of one of them scans that list.
+- `arrayIndex?` parses an array index from a string: an element of a typed array is read
+  through a string key.
+- The `__gmpz_set_str` in immutable is a `Float` literal in a function body: the first form of
+  the conversions did not reach those; section 7.2 does.
+
+### 6.4 Defects found
+
+By `realworld.py` and by a differential script of 1,671 lines of output (index, length, bit
+operator and number-to-string cases at the edges of 2^31, 2^32 and 2^53), run on BubblePopJS,
+QuickJS-NG and V8. QuickJS-NG and V8 agree on every line. BubblePopJS differs on 23 lines, the
+same on `main`, stage A and stage B. None has a test or an issue yet; the plan lists them.
+
+1. `if (s) /y/.test(s);`, `for (...) /re/.test(x)`, `if (1) {} /re/.test(x)`: SyntaxError
+   "regular expression literals are not supported". The lexer takes `/` after `)` and after `}`
+   as a division. `marked.min.js` has `for(...)/^ *-+: *$/.test(...)`.
+2. `var b = a.x++ / 2;`: SyntaxError "missing ';'". The lexer takes `/` after `++` as the
+   start of a regular expression.
+3. `[10,11,12,13,14].lastIndexOf(13, 0)` gives 3 (17 of 34 start indices differ). Answer: -1.
+4. `(0.5).toString(16)` gives `0.5`. Answer: `0.8`.
+5. `var b = [1,2,3]; b[1000000] = 7; b.length` gives 3. Answer: 1000001. (A gap of 100,000
+   gives the right length.)
+6. `var b = []; b.length = 5; 0 in b` gives true. Answer: false.
+7. `new Array(4294967295)` and `b.length = 4294967295` take memory until the process is
+   killed (1.5 GB in 1 s). `b.length = 10000000` takes 295 MB. Strings and typed arrays have a
+   limit (`Invalid string length`); arrays have none. During the session this killed a
+   running build on the same machine.
 
 ## 7. Integers through GMP
 
 ### 7.1 What was found
 
 callgrind showed `__gmpz_set_str` (GMP reads a number from decimal text) under ordinary
-JavaScript operations. Three mechanisms, all present on `main` and on the branch:
+JavaScript operations and under font loading. Mechanisms, on every tree:
 
-1. **`Float.ofNat` and `Float.ofInt`.** In Lean 4.33.1, `Float.ofNat n` is
+1. **`Float.ofNat`, `Float.ofInt`, `Nat.toFloat`.** In Lean 4.33.1, `Float.ofNat n` is
    `Float.ofScientific n false 0` (`Init/Data/OfScientific.lean`), whose first test is
    `m < 2 ^ 53`. The compiler writes a `Nat` literal of 2^32 or more as
    `lean_cstr_to_nat("9007199254740992")`. So each call makes a GMP number from text and
    frees it. A JavaScript engine with `Float` numbers and `Nat` sizes converts all the time:
-   the bounds test of `a[i]`, `.length`, `charCodeAt`, an index passed to a callback, a typed
-   array read, every result of a bit operator.
-2. **`Int` above 31 bits.** A Lean `Int` is a machine scalar only from -2^31 to 2^31 - 1
+   the bounds test of `a[i]`, `.length`, `charCodeAt`, an index passed to a callback, every
+   result of a bit operator.
+2. **`Float` literals left in a function body.** `0.5` is a `Float.ofScientific` call, and
+   `0` or `-1` typed `Float` is `Float.ofNat` through the `OfNat` instance. The compiler moves
+   a literal to start-up code in some functions and leaves it in others (`k < 0` in the native
+   functions of `JS/Interp.lean`, `19.2` in `Layout.inlineLayout`).
+3. **`Int` above 31 bits.** A Lean `Int` is a machine scalar only from -2^31 to 2^31 - 1
    (`LEAN_MAX_SMALL_INT` in `lean.h`; a `Nat` is one up to 2^63 - 1). `ToInt32` and `ToUint32`
    were `(truncInt x) % 4294967296` on `Int`: the modulus is a GMP number, so each is
    `lean_int_big_emod`. One `i | 1` ran three of them and three text parses: about 4,500 of
-   its 7,100 instructions, with 9 `malloc` and `free` pairs of GMP.
-3. **Literals in function bodies.** `floatOfNat` tested `n < 2 ^ 53` with the literal read at
-   each call; `numToString` evaluated `1e21`, and `%` evaluated `-0.0` or `0.0`, each a
-   `Float.ofScientific` call with that same internal test.
+   its 7,100 instructions on stage A.
+4. **A literal in the slow case.** A `Float` literal with an exponent above 22 or a mantissa of
+   2^53 or more takes the slow case of `Float.ofScientific`, big number arithmetic.
+   `Number.isSafeInteger(x)` has `9007199254740991.0` in its body: 28,612 instructions a call
+   against 11,796 for `Number.isInteger(x)`. `1e300` in `WebPaint.cullCurve` was 85% of a
+   frame (commit `57fe3531d`, another session, the same day).
 
-In compiled Lean alone (`labs/demos/foafnaut/bubblepop_perf/lean/IntConversions.lean`, run by
-`run.sh` beside it; `leanc -O3`, 3 M iterations, three runs):
+In compiled Lean alone (`bubblepop_perf/lean/IntConversions.lean`, `run.sh` beside it; three
+runs of 3 M iterations): `Float.ofNat n` 52 to 55 ns; `n.toUInt64.toFloat` 10 to 15;
+`Float.ofInt i` 55; `ToInt32` on `Int` 45 to 47; `x.toInt64.toInt32` 2.2; a test
+`n < 9007199254740992` (the literal alone) 39 to 40.
 
-| Form | ns a call |
-|---|---|
-| `Float.ofNat n` | 52 to 55 |
-| `n.toUInt64.toFloat` | 10 to 15 |
-| `Float.ofInt i` | 55 |
-| `ToInt32` on `Int`, as `JS/Number.lean` had it | 45 to 47 |
-| `x.toInt64.toInt32` | 2.2 |
-| a test `n < 9007199254740992` (the literal alone) | 39 to 40 |
+Upstream: Lean issue 16007 and its pull request 16015, as recorded in
+[2026-11-09-lean-upstream-wasm32.md](2026-11-09-lean-upstream-wasm32.md) (literals from 2^32 to
+2^64 - 1 read from a string each time). With that repair in the toolchain, mechanisms 1 and 2
+cost nothing; mechanism 3 stays.
 
-### 7.2 The repair in this landing
+### 7.2 The repair on this branch
 
-- `formal/lean4/L4Factoidal/Prim/FloatOfNat.lean`: `natToFloat` and `intToFloat`, with
-  `natToFloat_eq : natToFloat n = Float.ofNat n` and `intToFloat_eq` for every argument, and
-  two `@[csimp]` theorems. For `n < 2^32` the twin is the fast case of `Float.ofScientific`
-  itself with a bound that is a small literal, so the proof only unfolds both sides: it uses
-  no fact about `Float` arithmetic. Axioms: `propext`, `Classical.choice`, `Quot.sound`.
+- `formal/lean4/L4Factoidal/Prim/FloatOfNat.lean`: `natToFloat`, `intToFloat` and
+  `ofScientificFast`, with `natToFloat_eq`, `intToFloat_eq` and `ofScientificFast_eq` for every
+  argument, and six `@[csimp]` theorems: for `Float.ofNat`, `Nat.toFloat`, `Float.ofInt`,
+  `Float.ofScientific`, and for the instances `instOfNatFloat` and `instOfScientificFloat`.
+  For a number below 2^32 a twin is the fast case of the core function with a bound that is a
+  small literal, so the proof only unfolds both sides: it uses no fact about `Float`
+  arithmetic. Three mutants of the twins are each rejected by the proofs and by the guards.
 - `JS/Number.lean`: `toInt32Fast` and `toUint32Fast` on `Float.toInt64` and `Int64.toInt32`,
   proved equal to `toInt32` and `toUint32` for every `Float` (`toInt32_eq_fast`,
   `toUint32_eq_fast`, through `Int64.toInt_toInt32` and `Int.bmod`), each a `csimp`. The `Int`
   definitions stay as the specification; `toInt32_range` and `toUint32_lt` are about them.
-  Named constants `twoPow53F`, `tenPow21`, `posZero`, `negZero` take the literals out of the
-  bodies of `toInt32Fast`, `numToString` and `jsMod`.
+  Named constants `twoPow53F`, `tenPow21`, `posZero`, `negZero`.
 - `JS/Lexer.lean`: `floatOfNatFast`, proved equal to `floatOfNat`, a `csimp`.
 - Imports of `Prim.FloatOfNat` in `Rendering/FontProvider.lean`, `Rendering/SfntOutline.lean`,
   `Rendering/SfntProfile.lean` and `labs/demos/foafnaut/SVG.lean`. `JS/Interp.lean` and
   `JS/Value.lean` are not edited: the `csimp` theorems change their compiled code through the
-  import of `Lexer`. So this landing touches no line that `wip/bpperf` touches.
-- `tools/lean-csimp-reach.py`: a theorem whose left side is a Lean core function has no C
-  symbol in this tree; the gate lists it as `CORE` and does not audit its reach
-  (`CORE_LEFT_SIDES`). `tools/lean-literal-parse-audit.py --conversions` lists the C functions
-  that still call the core functions: 262 calls in 27 files of the engine's library closure
-  before this landing (151 in `JS/Interp.c`), and 177 in the lab modules.
+  import of `Lexer`. So this branch touches no file that stage A or B changes.
+- All 15 theorems: axioms `propext`, `Classical.choice`, `Quot.sound`.
 
-Checks: Test262 language subset, verdict of every file the same before and after, on `main`
-(5,627 pass, 670 fail, 4 skip, out of 6,301) and on the branch (5,629, 668, 4); the output of
-six benchmark programs the same; the engine's answers for ten pages byte for byte the same
-(section 9.4).
+**Why six theorems.** The compiler replaces a name where the source of an importing module
+says it. A body that core compiled keeps the core conversion. With the theorems for
+`Float.ofNat` and `Float.ofInt` only, the generated C of `JS/Interp.c` still had 29 core
+conversions: `len.toFloat` (`Nat.toFloat` is a core `abbrev`) and integer-style `Float`
+literals (`k < 0`, `.num (-1)`: the core `OfNat` instance). With all six: 0 in `Interp.c` and
+`Lexer.c`; 16 in `Date.c`, which does not import the module.
 
-### 7.3 Effect on BubblePopJS
+**What it does not reach.** A literal in the slow case goes to core through the twin
+(`Number.isSafeInteger`). A `Float` literal with a mantissa of 2^32 or more still reads it
+from text (`4294967296.0` in `putV`). Modules that do not import the twins.
 
-Instructions for one operation on `main`, before and after (callgrind, N = 20,000):
+### 7.3 Tools
 
-| Operation | Before | After | Ratio |
-|---|---|---|---|
-| `i \| 1`, `i & 255`, `i ^ 5` | 8,718 | 4,030 | 2.16 |
-| `a[i & 7]` | 10,622 | 5,261 | 2.02 |
-| `i << 1` | 8,850 | 4,891 | 1.81 |
-| `i >>> 1` | 7,862 | 4,762 | 1.65 |
-| `i >> 1` | 7,175 | 4,803 | 1.49 |
-| `~i` | 5,039 | 3,449 | 1.46 |
-| `t.length`, `a.length`, `a[3]` | 3,860 to 4,163 | 3,087 to 3,390 | 1.23 to 1.25 |
-| `i % 7` | 4,790 | 4,015 | 1.19 |
-| `t[3]` | 5,238 | 4,438 | 1.18 |
-| `'k' + i` | 5,924 | 5,124 | 1.16 |
-| `a[3] = i` | 6,202 | 5,438 | 1.14 |
-| `t.charCodeAt(3)` | 7,565 | 6,792 | 1.11 |
-| `String(i)` | 8,479 | 7,697 | 1.10 |
-| a function expression | 10,568 | 9,795 | 1.08 |
-| `+`, `-`, `*`, a call, `Math.floor`, an array literal | no change | | 1.00 |
+- `tools/lean-literal-parse-audit.py` reads the generated C. Default: `Nat` literals of 2^32
+  or more outside start-up code. `--float-literals`: every `Float` literal converted outside
+  start-up code, through core or through the twin, with what it costs (`no parse`, `parse`,
+  `slow case`). `--conversions`: `Float.ofNat` and `Float.ofInt` calls that are still the core
+  ones. It lists; it is not a gate.
+- `tools/test_lean_literal_parse_audit.py`: 7 cases, one of which compiles a small Lean file
+  with the pinned toolchain and checks that the tool finds the known sites. It fails when the
+  compiler stops writing these literals as text: the sign that the twins can go.
+- `tools/lean-csimp-reach.py`: a theorem whose left side is a Lean core definition has no C
+  symbol in this tree; the gate prints it as `CORE` and does not audit its reach
+  (`CORE_LEFT_SIDES`; 2 cases and 3 mutants in its self-test). `toInt32Fast`, `toUint32Fast`
+  and `floatOfNatFast` call their specifications in the slow branch: three lines with the
+  reason in `tools/lean-csimp-reach-allow.txt`. Without them the gate fails.
 
-The same twins on top of `wip/bpperf` (wall time for one operation, with a build running on
-the machine, so read the ratios): `a[i & 7]` 556 to 208 ns (2.7), `|` and `&` 465 to 176 ns
-(2.6), `^` 2.2, `<<` 1.9, `>>>` 1.8, `>>` and `~` 1.7, `a.length` 195 to 116 ns (1.7),
-`t.length` 1.5, `a[3]` 1.4, `%` 1.3, `charCodeAt` 1.2; `+`, calls and `a[3] = i` unchanged.
-`a[3] = i` does not change there because the branch's own fast path for indexed writes has the
-literal `4294967295.0` in `evalExpr`, read from text at each write: one line for that branch
-(section 12, item 2).
+### 7.4 Checks
 
-## 8. The execution model: a measurement
+On `489d5cd3a` against this branch (`f178e43c1`), unless a line says otherwise:
 
-Question: is the distance to QuickJS-NG a cost of Lean, or of walking a tree with a result
-object for each node? Three programs in Lean run `var s = 0; for (var i = 0; i < n; i++) s = s + i`
-(`labs/demos/foafnaut/bubblepop_perf/lean/VmFloor.lean`, run by `run.sh` beside it; compiled
-with `leanc -O3`, 3 M iterations, five runs):
+- Test262 (the tree's 6,301 files of `test/language`): 5,627 pass, 670 fail, 4 skip on both;
+  the verdict of every file is the same. On stage A and stage B with the first form of the
+  conversions: 5,629 pass, 668 fail, 4 skip, every verdict the same as without.
+- The differential script of 6.4: 1,671 lines, the same on both.
+- The real-world workloads: the same `RESULT` lines on both (5 of 6 run).
+- The engine: for ten pages, the packed bytes at 1600 by 1000 with Noto Sans and the text
+  answer at 1280 by 800: 20 of 20 files the same, 20,965,877 bytes.
+- Gates on this branch's build (the engine's module closure and `leanjs`, not the whole
+  tree): `lean-csimp-reach.py --gate` exit 0; `lean-hygiene-audit.py` clean (`partial def`
+  163, the baseline); `lean-unbuilt-modules.py --gate` exit 0 (1,662 modules reached);
+  `lean-tail-recursion-audit.py --gate` exit 0. `test_lean_csimp_reach.py`: 31 synthetic cases
+  pass, 20 of 20 mutants killed; its real-build cases were NOT RUN (they need the full build).
 
-| Program | ns for one iteration |
-|---|---|
-| A: tree walk in `EStateM`, boxed values, fuel, a step budget (the shape of `JS/Interp.lean`, locals in slots) | 128 to 150 |
-| B: the same tree walk as pure functions that return a value and the slots | 130 to 140 |
-| C: register bytecode in an `Array UInt32`, numbers unboxed in a `FloatArray`, one tail-recursive function | 12.5 to 14.5 |
-| BubblePopJS on the branch, the same loop (`loop_fn_var`) | 219 |
-| QuickJS-NG | 18 |
-| V8 with no JIT | 15 |
+### 7.5 Effect on BubblePopJS
 
-- The monad is not the cost: A and B are the same.
-- C makes no allocation in the loop and is in the class of QuickJS-NG. It has no type test and
-  no property access; a real engine pays for both. It was not tuned (`Nat` program counter,
-  bounds tests on each register).
-- So the "fast form" of section 13 of the engine record can reach that class in Lean, and it
-  needs: code as a flat array, registers as an array that one loop owns, numbers unboxed, and
-  no result object for each step. The cost of each further step of the tree walk (resolved
-  slots, caches) is bounded by the 10 allocations and 2,555 instructions that remain.
+Instructions for one operation on `main` (callgrind, N = 20,000), unchanged and with this branch, and CPU ns
+for the same operation on `main` and on stage B (stage B with the first form of the conversions):
 
-## 9. The native engine (main)
+| Operation | Instructions before | after | ratio | main ns | main + branch ns | stage B ns | stage B with the conversions ns |
+|---|---|---|---|---|---|---|---|
+| `s = i \| 1` | 8,356 | 3,667 | 2.28 | 536 | 236 | 394 | 92 |
+| `s = i ^ 5` | 8,358 | 3,669 | 2.28 | 529 | 243 | 373 | 94 |
+| `s = i & 255` | 8,355 | 3,669 | 2.28 | 515 | 234 | 368 | 100 |
+| `s = a[i & 7]` | 10,126 | 4,783 | 2.12 | 687 | 339 | 433 | 121 |
+| `s = i << 1` | 8,488 | 4,529 | 1.87 | 542 | 303 | 398 | 158 |
+| `s = i >>> 1` | 7,500 | 4,399 | 1.70 | 486 | 306 | 332 | 148 |
+| `s = i >> 1` | 6,813 | 4,442 | 1.53 | 440 | 277 | 298 | 152 |
+| `s = ~i` | 4,676 | 3,087 | 1.51 | 315 | 242 | 161 | 65 |
+| `s = t.length` | 3,497 | 2,724 | 1.28 | 228 | 178 | 58 | 18 |
+| `s = a[3]` | 3,739 | 2,948 | 1.27 | 231 | 186 | 79 | 27 |
+| `s = a.length` | 3,800 | 3,045 | 1.25 | 258 | 202 | 59 | 19 |
+| `s = i % 7` | 4,428 | 3,653 | 1.21 | 284 | 266 | 153 | 98 |
+| `s = t[3]` | 4,877 | 4,077 | 1.20 | 359 | 275 | 187 | 136 |
+| `s = 'k' + i` | 5,562 | 4,762 | 1.17 | 404 | 320 | 249 | 179 |
+| `a[3] = i` | 5,952 | 5,152 | 1.16 | 400 | 368 | 195 | 175 |
+| `s = t.charCodeAt(3)` | 7,203 | 6,441 | 1.12 | 556 | 474 | 416 | 362 |
+| `s = String(i)` | 7,762 | 6,976 | 1.11 | 570 | 479 | 320 | 260 |
+| `s = function () { return i; }` | 10,464 | 9,690 | 1.08 | 1309 | 1314 | 1049 | 968 |
+| `s = Math.floor(i)` | 6,803 | 6,794 | 1.00 | 485 | 493 | 298 | 270 |
+| `s = [i, k, 1]` | 4,777 | 4,777 | 1.00 | 361 | 386 | 160 | 167 |
+| `s = s * k` | 3,363 | 3,363 | 1.00 | 221 | 210 | 15 | 17 |
+| `s = s + k` | 3,322 | 3,322 | 1.00 | 204 | 214 | 18 | 15 |
+| `s = s - k` | 3,321 | 3,321 | 1.00 | 178 | 196 | 18 | 16 |
+| `s = g1(i)` (top-level function) | 10,283 | 10,288 | 1.00 | 848 | 912 | 166 | 150 |
 
-### 9.1 Times on this VM
+The number of allocations does not change for any operation. The ns columns are one run each;
+a difference under 10% there is not a result (`s = g1(i)` shows 848 and 912 with the same instruction count).
+
+## 8. The execution model: two measurements
+
+**The first** (before stage B was read): is the distance to QuickJS-NG a cost of Lean, or of
+walking a tree with a result object for each node? Three programs in Lean run
+`var s = 0; for (var i = 0; i < n; i++) s = s + i`
+(`bubblepop_perf/lean/VmFloor.lean`; 3 M iterations, five runs): a tree walk in `EStateM` with
+boxed values 128 to 150 ns for one iteration; the same as pure functions 130 to 140; register
+bytecode with numbers in a `FloatArray` 12.5 to 14.5. The monad is not the cost. Stage B is
+that step, built by another session: its loop of the same shape is 66 ns.
+
+**The second**: what remains between stage B and QuickJS-NG?
+`bubblepop_perf/lean/CoreModel.lean` has values as 64-bit words in a `ByteArray`, code as
+32-bit words, inline caches in the code, objects with a shape word, calls on the register
+file. It is a model of fast paths, with their tag, shape and bounds tests, and no engine.
+Quiet machine, 3 M iterations, three runs:
+
+| | Core model, median of 5 [range] | Core model with Lean's own bit conversions, 3 runs | QuickJS-NG | V8 no JIT | Stage B |
+|---|---|---|---|---|---|
+| the loop `i < n; i++`, ns for one iteration | 7.6 [7.3 to 7.6] | 10.6 to 13.0 | 7 | 8 | 48 |
+| `s = s + k`, less the loop | 1.9 [1.8 to 2.2] | 4.2 to 6.3 | 2 | 2 | 18 |
+| `s = o.x` (inline cache) | 3.3 [2.9 to 9.4] | 3.0 to 4.9 | 7 | 5 | 27 |
+| `o.x = i` (inline cache) | 3.4 [2.8 to 8.3] | -0.4 to 3.0 | 6 | 2 | 86 |
+| `s = g1(i)` (call and return) | 7.1 [5.9 to 9.4] | 6.3 to 11.8 | 15 | 12 | 165 |
+| `s = { x: i, y: k }` (no collector) | 4.4 [3.5 to 4.8] | 1.4 to 4.8 | 66 | 13 | 411 |
+| `fib(30)`, ns for one call | 17.3 [16.3 to 18.8] | 23.8 to 25.7 | 23.4 | 23.0 | 145 |
+| instructions: loop, add, property read, call | 153, 46, 78, 139 | 224, 83, 78, 145 | | | 972, 329, 475, 2,558 |
+
+The first column casts between a number and its word with one inline C instruction. The second
+uses `Float.toBits` and `Float.ofBits`, which in Lean 4.33.1 are calls into the runtime (5 in
+one loop iteration). The second run of the five had other work on the machine (the two high
+ends of the property rows).
+
+`fib(30)`, CPU ns for one call of `fib`: `main` 752, stage A 293, stage B 145, QuickJS-NG
+23.4, V8 with no JIT 23.0, V8 3.5.
+
+The plan ([2026-11-09-bubblepopjs-plan.md](2026-11-09-bubblepopjs-plan.md)) is built on this.
+
+## 9. The native build of BubblePopKit
+
+### 9.1 Times on this VM (at `036198f2`)
 
 Status page is `labs/demos/foafnaut/web-render/fixtures/status.html`. 1600 by 1000, Noto Sans,
 milliseconds; the frame is the median of 8.
@@ -366,7 +570,7 @@ milliseconds; the frame is the median of 8.
 | timers-and-clicks | 9.9 | 3.4 | not run |
 | showcase-dataviz | 214 | 67 | not run |
 
-### 9.2 Start: 1,109 M instructions before `main`
+### 9.2 Start: 1,109 M instructions before `main` (at `036198f2`)
 
 `web-render-native` with no argument: 0.11 s, 60 MB. Every module's constants are computed at
 start. By inclusive cost: `LeanJS.snapshotData` 740 M (it runs the BubblePopJS page prelude and
@@ -375,15 +579,13 @@ encodes the realm; only `bubblepop-realm`, a build tool, reads it); the scene sh
 IDNA table 60 M; Unicode normalisation 55 M and segmentation 28 M; a regular expression category
 table 56 M.
 
-Repair in this landing: `snapshotData` is a function of `Unit`. After: SEE-START.
+`wip/bootstack` makes `snapshotData` a function of `Unit` (found there first, for the Hub). It
+is not on `main` at `489d5cd3a`. With that one change this start is 369 M instructions, 0.03 s
+and 44 MB (measured here on `036198f2`, then taken out of this branch as a duplicate).
 
-The same start runs in the engine library of the macOS app and in the Wasm module of the Hub.
-On `main` the Hub's Wasm build carries no realm data, so there the prelude ran once at module
-start for nothing and once more at the first page.
+### 9.3 Font load and first compile of the status page: 2,251 M instructions (at `036198f2`)
 
-### 9.3 Font load and first compile of the status page: 2,251 M instructions
-
-Start 1,109 M, then the compile 1,141 M:
+Start 1,109 M, then the compile 1,142 M:
 
 | Phase | M instructions | Share of the compile |
 |---|---|---|
@@ -395,13 +597,12 @@ Start 1,109 M, then the compile 1,141 M:
 | block and inline layout (`Layout.layoutTask`) | 68 | 6% |
 | the frame (`WebRender.artifactWith`) | 244 | 21% |
 
-A word costs about 2 M instructions to shape. In the whole run, decimal parses of 2^53 were
-360,928 calls (`Float.ofNat` 359,009: `FontProvider.fromInt` 128,592, `SfntOutline.ofInt`
-96,808, `SfntProfile` 93,490, the JavaScript lexer 18,786 at start, `writeFixed` 11,760):
-`__gmpz_set_str` and its helpers, `malloc` and `free` were about 235 M instructions, 10%.
-After this landing: SEE-FIRST.
+A word costs about 2 M instructions to shape. Decimal parses of 2^53 in the whole run: 360,928
+(`Float.ofNat` 359,009: `FontProvider.fromInt` 128,592, `SfntOutline.ofInt` 96,808,
+`SfntProfile` 93,490, the JavaScript lexer 18,786 at start, `writeFixed` 11,760), about 235 M
+instructions, 10%. `wip/bootstack` has a binary search for `SfntKern.coverage`.
 
-### 9.4 One frame on a kept layout: 249 M instructions
+### 9.4 One frame on a kept layout: 249 M instructions (at `036198f2`)
 
 Status page, 2,940 primitives, 401,060 floats, `"checks":false`:
 
@@ -421,80 +622,109 @@ Status page, 2,940 primitives, 401,060 floats, `"checks":false`:
 | `NativeSVGCurves.flatten` | 5.1% | 4,146 |
 | `List.lengthTR` | 3.1% | 66,015 |
 | `lean_apply_2` | 3.0% | 175,952 |
-| GMP text parse (`Float.ofNat` in `writeFixed`) | about 3% | 11,763 |
 
 With checks on (the default of a request) a frame is 2.6 times as long: the probe pixels are
 sampled on the CPU (`NativeSVG.pathHitFast` 9.4% of that profile).
 
-After this landing: SEE-FRAME. Output bytes: SEE-BYTES.
+### 9.5 Before and after this branch (two builds of `489d5cd3a`)
 
-## 10. Literals read from text at each call: the audit
+Status page, callgrind, M instructions:
 
-`python3 tools/lean-literal-parse-audit.py` reads the generated C. Engine closure at
-`036198f2`: 54 sites in 48 functions of 29 library files (WasmVM 13, XPath 4 9, Crypto 7,
-XSLT 4 6, JS 6) and 9 in the lab modules. Sites in loops or per-item paths that are worth a
-look: `ImageJPEG` (`cosines`, a literal inside the loop), `SVG.transformFunction` (pi for each
-`rotate` or `skew`), `SVGText.lowerSfnt` (pi inside a loop), `WasmVM.Num.inI32` and `inU32` and
-the `trapUn` conversions (float to integer instructions), `WasmVM.step` (two sites; not on the
-path of every instruction, since WasmVM runs 360 M instructions a second). Not measured: how
-often each runs.
+| | `main` (`489d5cd3a`) | this branch | change |
+|---|---|---|---|
+| start (no argument) | 1,115.7 | 1,096.5 | -1.7% |
+| start, font load and first compile | 2,328.2 | 2,050.9 | -11.9% |
+| of which the compile (less the start) | 1,212.6 | 954.4 | -21.3% |
+| one frame on a kept layout | 286.0 | 277.0 | -3.1% |
+| decimal parses of a literal (`lean_cstr_to_nat` calls), start to first compile | 361,853 | 2,612 | |
+| the same after 4 more frames | 408,785 | 2,612 | |
+| calls of the twin `natToFloat`, start to first compile | 0 | 358,945 | |
 
-## 11. What this landing changed
+Wall milliseconds, 1600 by 1000, Noto Sans, `"checks":false`; six processes for each build,
+interleaved; first compile is the least of the six, the frame is the least and the largest of
+the six medians of 8 frames:
 
-- New: `formal/lean4/L4Factoidal/Prim/FloatOfNat.lean`,
-  `labs/demos/foafnaut/bubblepop_perf/opcost.py`, `tools/lean-literal-parse-audit.py`, this
-  record.
-- Changed: `JS/Number.lean`, `JS/Lexer.lean` (twins, constants), three `Rendering` modules and
-  `labs/demos/foafnaut/SVG.lean` (one import each), `WasmVM/Hosts/LeanJS.lean` and
-  `LeanJSRealmGen.lean` (`snapshotData` is a function), `tools/lean-csimp-reach.py` (core left
-  sides), the `foafnaut` and `lean4-performance` skills, the worknote index.
-- Not changed: `JS/Interp.lean`, `JS/Value.lean`, and every file that `wip/bpperf` changes
-  except `LeanJS.lean` and `LeanJSRealmGen.lean`, where the changed lines are apart.
+| Page | First compile, `main` | this branch | ratio | Frame, `main` | this branch |
+|---|---|---|---|---|---|
+| index | 89.3 | 74.0 | 1.21 | 21.4 to 29.2 | 20.9 to 27.2 |
+| status | 105.9 | 91.6 | 1.16 | 29.9 to 41.5 | 29.7 to 39.3 |
+| showcase | 92.1 | 80.6 | 1.14 | 27.6 to 35.8 | 27.0 to 36.2 |
+| showcase-dataviz | 116.1 | 103.3 | 1.12 | 20.1 to 26.3 | 19.9 to 26.1 |
+| showcase-tables | 48.6 | 39.4 | 1.23 | 11.5 to 16.1 | 10.8 to 14.3 |
 
-## 12. Ranked next steps
+The frame does not change within the spread between processes. The answers are the same,
+byte for byte (section 7.4). The start does not change: its 740 M instructions are the constant
+of 9.2.
 
-For BubblePopJS (the session that owns `wip/bpperf`; each item has its measurement above):
+## 10. Literals and conversions that the generated C still evaluates at each call
 
-1. Land `wip/bpperf`. It is 1.4 to 3.5 times faster than `main` and removes six quadratic
-   operations and the memory kept by calls. Until then `main` is what the app and the Hub run.
-2. On that branch, `evalExpr` has the literal `4294967295.0` in the indexed write path, read
-   from text at each `a[i] = v` (about 1,500 of 3,565 instructions). Make it a named constant
-   (as `twoPow53F`), or test the index as an integer. `python3 tools/lean-literal-parse-audit.py
-   --under L4Factoidal/JS/` shows it.
-3. Bit operators and `%` on machine integers in `binop` (no `Int`, no `Nat.pow` for a shift):
-   after this landing `i | 1` is still 176 ns against 98 ns for `+`.
-4. Globals: `s = G` 220 ns against 87 ns for a local; `gf(i)` 373 ns against 250 ns. Resolve
-   a global name to the global object's slot once, with a check, as the branch does for locals.
-5. A collector, or at least reuse of dead objects between tasks: 328 bytes kept for each
-   object is the limit for a page that animates.
-6. Function expressions (1,040 ns, 31 allocations): make the `prototype` object when it is
-   first read. Blocks with `let` (402 ns, 19 allocations).
-7. The fast form of section 8: a register bytecode loop. It is the only step that removes
-   the result object for each node. Decide it with section 8 in hand.
+`python3 tools/lean-literal-parse-audit.py`, on the generated C of two builds of `489d5cd3a`
+(the engine's module closure, 382 C files; and the 51 lab modules):
 
-For the engine:
+| | `main`, library | this branch, library | `main`, lab modules | this branch, lab modules |
+|---|---|---|---|---|
+| `Nat` literals of 2^32 or more read from text, sites outside start-up code | 54 (in 48 functions of 29 files) | 54 | 9 | 9 |
+| `Float.ofNat` and `Float.ofInt` calls that are the core ones (`--conversions`) | 267 in 28 files | 61 in 16 files | 186 in 16 files | 53 in 7 files |
+| `Float` literals converted outside start-up code (`--float-literals`) | 116, all through core | 111: 77 through core, 34 through the twin | 33, all through core | 33: 15 through core, 18 through the twin |
 
-8. Write the scene's float32 values four bytes at a time into a buffer with its capacity set
-   (a `pushU32LE` beside `Prim.Bytes.pushU64LE`): `lean_byte_array_push` is 10.3% of a frame.
-9. Keep the lowered scene and its bytes with the kept layout (already named in
+What stays on this branch is in modules that do not import `Prim.FloatOfNat`. Core conversions:
+`JS/Date.c` 16, `Rendering/TableLayout.c` 10, `Rendering/Scene.c` 8, `Rendering/Style.c` 7,
+`Rendering/MediaQuery.c` 4, and in the lab modules `WebSparql.c` 26, `ImageJPEG.c` 10,
+`Graphics.c` 8, `SVGCurves.c` 5. `Float` literals through core: `XSLT4/Static.c` 17,
+`WasmVM/Numerics.c` 16, `Rendering/Style.c` 10, `XPath4/Atomic.c` 7. One literal is in the slow
+case: `9007199254740991.0` in `JS.callNative` (`Number.isSafeInteger`).
+
+Sites of `Nat` literals in loops or on per-item paths, from the first run of the session (at
+`036198f2`): `ImageJPEG` (`cosines`, a literal inside the loop), `SVG.transformFunction` (pi for
+each `rotate` or `skew`), `SVGText.lowerSfnt` (pi inside a loop), `WasmVM.Num.inI32` and `inU32`
+and the `trapUn` conversions (float to integer instructions), `WasmVM.step` (two sites).
+
+An import is one line and costs nothing at run time. This branch adds it where a profile
+showed the cost (fonts, the JavaScript engine, SVG). How often the other sites run was not
+measured.
+
+## 11. What this branch changed
+
+- New: `formal/lean4/L4Factoidal/Prim/FloatOfNat.lean`;
+  `labs/demos/foafnaut/bubblepop_perf/opcost.py`, `realworld.py`, `realworld/` (manifest,
+  prelude, 6 drivers) and `lean/` (`IntConversions.lean`, `VmFloor.lean`, `CoreModel.lean`,
+  `run.sh`); `tools/lean-literal-parse-audit.py` and its test; this record and the plan.
+- Changed: `JS/Number.lean`, `JS/Lexer.lean` (twins, constants); three `Rendering` modules and
+  `labs/demos/foafnaut/SVG.lean` (one import each); `tools/lean-csimp-reach.py`, its test and
+  its allow list; the `foafnaut` and `lean4-performance` skills; `CLAUDE.md` (what Foafnaut
+  is); the worknote index; the csimp reach record; the handoff records.
+- Not changed: `JS/Interp.lean`, `JS/Value.lean`, and every file that stage A, stage B or
+  `wip/bootstack` changes.
+- Not on `main`: the owner's instruction for the night was to commit on branches only.
+
+## 12. Next
+
+BubblePopJS: the plan, section 8. Its first items come from this record: captured variables
+by slot (6.3), the defects of 6.4, typed arrays with no key string, the regression of 5.3
+(stage B's owner), the literals of 5.3 and 7.1.
+
+For BubblePopKit, in order of measured share:
+
+1. Write the scene's float32 values four bytes at a time into a buffer with its capacity set:
+   `lean_byte_array_push` is 10.3% of a frame.
+2. Keep the lowered scene and its bytes with the kept layout (named in
    [2026-11-07-foafnaut-frame-pipeline.md](2026-11-07-foafnaut-frame-pipeline.md)): `toScene`
    and `jsonWith` are 71% of a frame on a kept layout.
-10. Float to text through `printf` is 13% of a frame: a binary form for the layout answer, or
-    the cached formatter of `Rendering.FloatFormat`.
-11. First compile is shaping: 2 M instructions for each word. `SfntKern.coverage` (42,395
-    calls, 144 M) and `SfntGpos.posAt` (30,975 calls, 243 M) are the first functions to read.
-12. Start: the tables of section 9.2 as `Thunk`s, read where they are used (about 370 M
-    instructions remain after this landing).
-13. Import `Prim.FloatOfNat` in the other modules that `--conversions` lists, by profile.
+3. Float to text through `printf` is 13% of a frame: a binary form for the layout answer, or
+   the cached formatter of `Rendering.FloatFormat`.
+4. First compile is shaping, 2 M instructions for each word: `SfntGpos.posAt` (30,975 calls,
+   243 M) after `wip/bootstack`'s `SfntKern.coverage`.
+5. Start: land `wip/bootstack`; then the tables of 9.2 as `Thunk`s read where they are used.
+6. The sites of section 10 that are in loops.
 
 ## 13. Not measured
 
 - Anything on a Mac: the window, the GPU draw, Deno, FFI calls, input latency, the Hub.
-- The Wasm build of the engine and BubblePopJS in it.
+- The Wasm build of BubblePopKit, and BubblePopJS in it. BubblePopWASM on this machine.
 - Page scripts in real pages (DOM calls through the host), WPT run times.
 - The engine's layout on real sites (see
   [2026-11-09-real-site-layout-speed.md](2026-11-09-real-site-layout-speed.md)).
 - How often each site of section 10 runs.
-- The whole Lean tree was not built here: only the engine closure (372 modules) and the lab
-  modules. The gates `lean-tail-recursion-audit.py --gate` and `lean-unbuilt-modules.py --gate`
-  need the full build of `danbri/factoidal-builds`.
+- The whole Lean tree was not built here: the engine's closure (382 modules), the lab modules
+  and `leanjs`. CI's full build decides the gates.
+- Test262 beyond the 6,301 files in the tree; any `test/built-ins` file.

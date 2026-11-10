@@ -15,7 +15,8 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
-| 2026-11-09 | [Foafnaut performance exploration](designissues/2026-11-09-foafnaut-perf-exploration.md) | this commit | current — BubblePopJS by operation against QuickJS-NG and V8 with no JIT (main and `wip/bpperf`), the engine's start, first compile and frame by phase on Linux, integers through GMP repaired, ranked next steps |
+| 2026-11-09 | [BubblePopJS plan](designissues/2026-11-09-bubblepopjs-plan.md) | branch `claude/foafnaut-perf-bottlenecks-7hpt38` | proposed — data layout (value words, flat heap, shapes, inline caches), tiers with and without a JIT, theorems, profiles, key results and stages; a Lean model measures the layout against QuickJS-NG |
+| 2026-11-09 | [Foafnaut performance exploration](designissues/2026-11-09-foafnaut-perf-exploration.md) | branch `claude/foafnaut-perf-bottlenecks-7hpt38` | current — BubblePopJS (`main`, stage A, stage B) by operation and on real-world libraries against QuickJS-NG and V8, defects found by differential runs, the native engine's start, first compile and frame by phase on Linux, conversions to `Float` repaired with proved twins |
 | 2026-11-09 | [Foafnaut handoff](designissues/2026-11-09-foafnaut-handoff.md) | | current — state, work in flight and next work at 2026-11-09; entry point is `skills/foafnaut/SKILL.md` |
 | 2026-11-08 | [Foafnaut browser state in Linked Web Storage](designissues/2026-11-08-browser-state-lws.md) | | current — local pod and IndexedDB; pod sync native only |
 | 2026-11-06 | [Deployable modules: the mechanism, by measurement](20261106-deployable-modules.md) | | |

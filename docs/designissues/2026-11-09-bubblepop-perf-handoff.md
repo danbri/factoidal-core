@@ -59,3 +59,28 @@ script has run 1,320 to 753. Returning visits: 376 and 387.
 - Local Mac builds go one at a time through a queue, and timings there are taken under load.
 - Records of per-area measurements are in this directory, and `skills/foafnaut/SKILL.md` and `2026-11-09-foafnaut-handoff.md`
   describe the browser as a whole.
+
+## Added 2026-11-09, 23:59 UTC, by a Linux cloud session
+
+Branch `claude/foafnaut-perf-bottlenecks-7hpt38`. Records:
+[2026-11-09-foafnaut-perf-exploration.md](2026-11-09-foafnaut-perf-exploration.md) (measurements) and
+[2026-11-09-bubblepopjs-plan.md](2026-11-09-bubblepopjs-plan.md) (the plan from "compile functions with captured
+variables" onward). Stage A (`e8d2a3e6e`) and stage B (`167605f4c`) were built on Linux x86_64 and measured by operation
+(61 operations, CPU time and instruction counts) and on six real-world libraries, against QuickJS-NG and V8.
+
+For the sessions that own those branches:
+
+- On stage B `s += x` is quadratic (400,000 appends: 0.13 s on stage A, 1.86 s on stage B). `vmLoop`'s `.add` reads the
+  string from its register and appends while the register still holds it, so the append copies. The evaluator lets the
+  slot go first (`dropSlotStr`); the machine has no counterpart.
+- Conversions to `Float` and `ToInt32`, `ToUint32` went through the big number runtime on every tree. The cloud branch
+  has fast versions proved equal to the specifications (`L4Factoidal/Prim/FloatOfNat.lean`, `JS/Number.lean`,
+  `JS/Lexer.lean`). They touch no file that stage A or B changes. With them stage B's `i | 1` goes from 394 to 92 ns,
+  `a[i & 7]` from 433 to 121 ns, and five library workloads take 4 to 26% less time.
+- `python3 tools/lean-literal-parse-audit.py` (also `--float-literals`, `--conversions`) lists what the generated C still
+  converts at each call. On stage B: the literal `4294967295.0` in `vmLoop` and in `evalExpr` (the indexed write), and
+  `9007199254740991.0` in `Number.isSafeInteger` (the slow case: 16,800 instructions a call).
+- Stage B compiles 72 to 89% of the functions of those libraries and is 5.5 to 43 times slower than QuickJS-NG on them.
+  43% of the run of a `js_of_ocaml` bundle is `Env.scan`: a variable of an enclosing scope found by its name.
+- Eight defects with one-line reproductions (two in the lexer: `/` after `)` and after `++`): section 7.3 of the plan.
+- Run BubblePopJS on unknown code under a memory limit: `new Array(4294967295)` takes all memory of the process.

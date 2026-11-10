@@ -1307,19 +1307,22 @@ fits a machine word goes through the big number runtime.
   under `lean_float_of_nat`. The font load and first compile of the Foafnaut status page made
   359,009 such calls (glyph coordinates and advances), 10% of all its instructions; one
   JavaScript `a[i]` made one (the bounds test `x < Float.ofNat es.size`).
-  Repair: `L4Factoidal.Prim.FloatOfNat` has `natToFloat` and `intToFloat`. The core functions
-  are the specification; the twins are proved equal to them for every argument (the proof
-  unfolds both sides; it needs no fact about `Float` arithmetic); `@[csimp]` theorems put the
-  twins in the compiled code, and the compiler is trusted. A module whose hot path converts
-  integers imports that module, with a comment that says why.
-  What `csimp` does not reach: a body that comes from Lean core already compiled. `n.toFloat`
-  (`Nat.toFloat`, a core `abbrev`) kept the core conversion until it had a theorem of its own
-  (seen in the generated C of `JS.relIndex`). A `Float` literal with no decimal point
-  (`x > 1114111`) is `OfNat.ofNat` through the core instance and keeps it; that costs nothing
-  when the compiler makes the literal once at module start, and one conversion a call where it
-  leaves the literal in a body. `python3 tools/lean-literal-parse-audit.py --conversions` lists
-  the compiled functions that still call the core conversions. Do not write that a module "has
-  no slow conversion" from its import list; run that command on its C.
+  Repair: `L4Factoidal.Prim.FloatOfNat` has `natToFloat`, `intToFloat` and
+  `ofScientificFast`. The core functions are the specification; the twins are proved equal to
+  them for every argument (the proof unfolds both sides; it needs no fact about `Float`
+  arithmetic); `@[csimp]` theorems put the twins in the compiled code, and the compiler is
+  trusted. A module whose hot path converts integers or has `Float` literals imports that
+  module, with a comment that says why.
+  What a `csimp` theorem does not reach: a body that comes from Lean core already compiled.
+  With theorems for `Float.ofNat` and `Float.ofInt` only, `JS/Interp.c` kept 29 core
+  conversions: `n.toFloat` (`Nat.toFloat` is a core `abbrev`) and `Float` literals with no
+  decimal point (`k < 0`, `.num (-1)`: the core `OfNat` instance). So `Nat.toFloat`,
+  `Float.ofScientific` and the instances `instOfNatFloat` and `instOfScientificFloat` have
+  theorems of their own (six in all); then `Interp.c` has none. A twin is defined BEFORE the
+  theorem for its core function: its slow branch names the core function, and a definition
+  after the theorem would call itself. `python3 tools/lean-literal-parse-audit.py
+  --conversions` and `--float-literals` list what a build still converts through core. Do not
+  write that a module "has no slow conversion" from its import list; run them on its C.
 - **A Lean `Int` is a machine scalar only from -2^31 to 2^31 - 1** (a `Nat` up to 2^63 - 1).
   `i % 4294967296` on an `Int` is a GMP remainder (`lean_int_big_emod`) for every `i`, because
   the modulus is a GMP number. JavaScript `ToInt32` written on `Int` cost 45 ns; on

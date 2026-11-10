@@ -1020,6 +1020,26 @@ efficient, performant, fast, private, accessible, international, and secure."
   by phase for the engine. A cloud session with no Mac can do both. First record:
   `docs/designissues/2026-11-09-foafnaut-perf-exploration.md`.
 
+Owner, 2026-11-09, verbatim, the goal for BubblePopJS: "concrete plan to take BubblePopJS into
+the big league of SOTA engines, blazing fast with and without JIT. Efficient and light profiles
+for lower end hardware. Modern and freshly thought through design aesthetic. Fast, compliant, and
+taking every advantage from being Lean-based, with theorems typing the codebase together and
+underwriting daring heuristics, optimisations, and shortcuts." And: "Remember to test on commin
+real world js and wasm, including the patterns we'll increasingly see downstream from verified
+languages like Lean and Rocq."
+
+- The plan, with its key results and the decisions it asks for:
+  `docs/designissues/2026-11-09-bubblepopjs-plan.md`. It is a proposal until the owner approves
+  its key results as an OKR batch.
+- A BubblePopJS speed or compliance claim is measured on real-world code
+  (`labs/demos/foafnaut/bubblepop_perf/realworld.py`, which includes output of verified-language
+  toolchains) before single operations.
+- Relayed by the owner the same day from the session that wrote stages A and B (`wip/bpperf`,
+  `wip/bpperf-vm`): "That session stops after landing A and B, so everything from "compile
+  functions with captured variables" onward is yours" (the cloud session of the plan).
+- Owner, 2026-11-09, verbatim: "To avoid clashing with daily work, commit only in branches for
+  tonight." This was for that night; "Work goes on main" above is the standing rule.
+
 ### One owner per release (owner, 2026-10-28)
 
 Owner, 2026-10-28, verbatim: "Ok you are release manager for 0.20.0" and

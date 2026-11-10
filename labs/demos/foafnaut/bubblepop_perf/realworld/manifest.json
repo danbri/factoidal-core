@@ -1,0 +1,11 @@
+{
+  "note": "Library code is not in this repository. realworld.py fetches each npm package by exact version with `npm pack --ignore-scripts`, checks the sha256 of the tarball, and unpacks it into its cache directory. `local` entries name a file of another checkout by path and sha256.",
+  "workloads": [
+    {"name": "lodash", "source": "npm", "package": "lodash", "version": "4.17.21", "licence": "MIT", "sha256": "6a087ac9e5702a0c9d60fbcd48696012646ec8df1491dea472b150e79fcaf804", "file": "lodash.js", "driver": "lodash.js", "n": 1000, "kind": "collections of records; a 544 kB library"},
+    {"name": "acorn", "source": "npm", "package": "acorn", "version": "8.11.3", "licence": "MIT", "sha256": "d2ebe93e3c36aa0d9278af06f894ecc3f0ab37cd4e5230592e8ae2b237af9442", "file": "dist/acorn.js", "driver": "acorn.js", "n": 1, "kind": "a JavaScript parser: character codes, switch, many small objects"},
+    {"name": "pako", "source": "npm", "package": "pako", "version": "2.1.0", "licence": "MIT AND Zlib", "sha256": "49fedc8866b4abfc8e71dc7fe75ad4ef1ff1ac9601b0642cff88ee5bf2338709", "file": "dist/pako.js", "driver": "pako.js", "n": 32, "kind": "zlib in JavaScript: typed arrays and bit operators"},
+    {"name": "marked", "source": "npm", "package": "marked", "version": "4.3.0", "licence": "MIT", "sha256": "bc795399d6e7c096521080d66ce6ca96a00875b4bb0df36e0f041815484f633b", "file": "marked.min.js", "driver": "marked.js", "n": 6, "kind": "Markdown to HTML: regular expressions and strings"},
+    {"name": "immutable", "source": "npm", "package": "immutable", "version": "4.3.5", "licence": "MIT", "sha256": "d3022feaeb2a7352724e48bfc69938ad0d09341cbb8649249e7684441c129e85", "file": "dist/immutable.js", "driver": "immutable.js", "n": 1000, "kind": "persistent maps and lists: the allocation pattern of functional programs"},
+    {"name": "fstar-sparql", "source": "local", "path": "../factoidal/npm/factoidal/factoidal-npm-entry.js", "licence": "Apache-2.0", "sha256": "6d3c48828b78af645c6567d04c3a80b53928a866d4d7b7c89f9770bd66d5be2d", "driver": "fstar-sparql.js", "n": 40, "kind": "output of a verified-language toolchain: an RDF and SPARQL engine extracted from F* to OCaml, compiled by js_of_ocaml 6.4.1 (1.18 MB)"}
+  ]
+}

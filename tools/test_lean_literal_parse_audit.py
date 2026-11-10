@@ -220,8 +220,8 @@ def _():
         t.close()
 
 
-@case("--float-literals: fast case, slow case, unknown arguments, core and twin; an _init_ function and the "
-      "twin's own slow branch are not listed")
+@case("--float-literals: parse, slow case, no parse, unknown arguments, core and twin; an _init_ function and "
+      "the twin's own slow branch are not listed")
 def _():
     t = Tree({"A.c": SYNTHETIC_C})
     try:
@@ -229,25 +229,29 @@ def _():
         assert rc == 0, (rc, err)
         lines = out.strip().split("\n")
         assert len(lines) == 5, out
-        assert "A_floatLit  42949672950e-1  fast case  core" in lines[0], lines[0]
-        assert "A_slowLit  1e300  slow case  core" in lines[1], lines[1]
-        assert "A_unknownLit  ?e??  ?  core" in lines[2], lines[2]
-        assert "A_twinLit  192e-1  fast case  twin" in lines[3], lines[3]
-        assert lines[4] == ("4 Float literals converted outside init code: 3 core, 1 twin; 1 slow case; in 1 files "
-                            "(1 C files read)"), lines[4]
+        assert "A_floatLit  42949672950e-1  core  parse" in lines[0], lines[0]
+        assert "A_slowLit  1e300  core  slow case" in lines[1], lines[1]
+        assert "A_unknownLit  ?e??  core  ?" in lines[2], lines[2]
+        assert "A_twinLit  192e-1  twin  no parse" in lines[3], lines[3]
+        assert lines[4] == ("4 Float literals converted outside init code (3 core, 1 twin): 1 slow case, 1 parse, "
+                            "1 no parse, 1 not known; in 1 files (1 C files read)"), lines[4]
         assert "A_half" not in out, out
         assert "Prim_ofScientificFast  " not in out, out      # the twin's own slow branch is not listed
     finally:
         t.close()
 
 
-@case("the case of a literal: the bounds of the fast case of Float.ofScientific in Lean 4.33.1")
+@case("the cost of a literal: the bounds of the fast case of Float.ofScientific in Lean 4.33.1 and of the twin")
 def _():
-    assert tool.literal_text(2 ** 53 - 1, 0, 22) == ("%de22" % (2 ** 53 - 1), "fast case")
+    assert tool.literal_text(2 ** 53 - 1, 0, 22) == ("%de22" % (2 ** 53 - 1), "parse")
     assert tool.literal_text(2 ** 53, 0, 0)[1] == "slow case"
     assert tool.literal_text(1, 1, 23) == ("1e-23", "slow case")
     assert tool.literal_text(None, 1, 2) == ("?e-2", "?")
     assert tool.literal_text(7, None, None) == ("7e??", "?")
+    assert tool.literal_text(4294967295, 1, 22, "twin")[1] == "no parse"
+    assert tool.literal_text(4294967296, 1, 22, "twin")[1] == "parse"      # the twin gives it to core
+    assert tool.literal_text(5, 0, 23, "twin")[1] == "slow case"
+    assert tool.literal_text(5, 0, 1, "core")[1] == "parse"
 
 
 @case("a path that does not exist, and a directory with no C file, give exit status 2")

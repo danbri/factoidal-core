@@ -312,6 +312,10 @@ bash labs/demos/foafnaut/build-web-render.sh --native
   the difference, divided by 3, is one frame. COUNT 0 is start, font load and first compile.
   `perf` on this kind of VM has only `-e cpu-clock` (no hardware counters); the binary is
   `/usr/lib/linux-tools/*/perf`.
+- Real-world libraries on each engine (right answer, CPU time, memory), under a memory
+  watchdog: `labs/demos/foafnaut/bubblepop_perf/realworld.py`. Run every BubblePopJS test of
+  unknown code under a memory limit: `new Array(4294967295)` takes all memory, and on
+  2026-11-09 the kernel then killed a build on the same machine.
 - The cost of one JavaScript operation, for each engine, and its instructions, allocations
   and big-number calls: `labs/demos/foafnaut/bubblepop_perf/opcost.py` (its header has the
   commands). Comparison engines: QuickJS-NG `v0.18.0` built natively (`git clone --depth 1
@@ -394,10 +398,11 @@ Several sessions work on the owner's laptop at once.
   2^53 from decimal text through GMP (45 ns), and a Lean `Int` outside the signed 32-bit range
   is a GMP number. Found 2026-11-09: 359,009 such parses in the font load and first compile of
   the status page (10% of its instructions), and three GMP remainders for one JavaScript `|`.
-  A module with a hot conversion imports `L4Factoidal.Prim.FloatOfNat` (the specification is
-  the core function; the fast version is proved equal to it; `csimp` puts it in the compiled
-  code). Rules and the other forms of this cost: `skills/lean4-performance`, "Integers through
-  GMP".
+  A module with a hot conversion or with `Float` literals in hot functions imports
+  `L4Factoidal.Prim.FloatOfNat` (the specification is the core function; the fast version is
+  proved equal to it; `csimp` puts it in the compiled code). On two builds of `489d5cd3a` the
+  first compile of five pages took 12 to 23% less time with it. Rules and the other forms of
+  this cost: `skills/lean4-performance`, "Integers through GMP".
 - A `Float` literal that the compiler leaves in a function body is converted at each call. With
   an exponent above 22 or a mantissa of 2^53 or more the conversion is big number arithmetic.
   Two finds on 2026-11-09, by two sessions: `1e300` in `WebPaint.cullCurve` was 85% of a frame
@@ -433,8 +438,12 @@ Several sessions work on the owner's laptop at once.
   [event loop](../../docs/designissues/2026-11-08-event-loop.md),
   [WasmVM](../../docs/designissues/2026-11-07-wasmvm-engine.md).
 - [Performance exploration of 2026-11-09](../../docs/designissues/2026-11-09-foafnaut-perf-exploration.md):
-  BubblePopJS against QuickJS-NG and V8 without a JIT by operation, where the instructions go,
-  the engine's start, first compile and frame by phase, and the ranked list of what to do next.
+  BubblePopJS (`main`, stage A, stage B) against QuickJS-NG and V8 by operation and on
+  real-world libraries, where the instructions go, defects found by differential runs, the
+  engine's start, first compile and frame by phase.
+- [BubblePopJS plan of 2026-11-09](../../docs/designissues/2026-11-09-bubblepopjs-plan.md):
+  the data layout (value words, flat heap, shapes, inline caches), the tiers, the theorems,
+  the profiles, key results and stages; with a Lean model that measures the layout.
 - [Liberal mode and console](../../docs/designissues/2026-11-08-liberal-mode-and-console.md),
   [browser state](../../docs/designissues/2026-11-08-browser-state-lws.md),
   [CPU backend](../../docs/designissues/2026-11-08-cpu-render-backend.md),
