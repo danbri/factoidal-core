@@ -223,6 +223,7 @@ async function main() {
   type ScriptCall=(name:"scriptInfo"|"scriptLoad"|"scriptSession"|"nodeAt"|"pointerAt"|"scriptPlan"|"scriptSetting"|"scriptChoices",...args:unknown[])=>Promise<unknown>;
   const scriptCall:ScriptCall=async(name,...args)=>worker?await worker.engine[name](...args)
     :(engine as unknown as Record<string,(...a:unknown[])=>unknown>)[name](...args);
+  const scriptInput:ScriptCall=async(name,...args)=>worker?(await worker.inputCall(name,...args)).value:await scriptCall(name,...args);
   let session:Awaited<ReturnType<typeof createHTMLWindowSession>>|undefined;
   // Page GPU commands (docs/designissues/2026-11-08-page-gpu.md): Lean validated each one; the
   // window session replays them in order and presents the page canvases. Before the session
@@ -374,11 +375,11 @@ async function main() {
     // Capture before queueing so a later present cannot change this event's request.
     const session=page.script.session,hit=scriptHitRequest(page),options={...hit.options,x,y};
     queuePointer(kind,async()=>{
-      const at=await scriptCall("pointerAt",page.source,hit.width,hit.height,options) as {node:number|null};
+      const at=await scriptInput("pointerAt",page.source,hit.width,hit.height,options) as {node:number|null};
       const node=pointerNode(held,kind,at.node);
       if(node===undefined)return;
       const ended=kind==="up"||kind==="cancel";
-      const turn=await scriptCall("scriptSession","",{action:"pointer",session,kind,...at,node,button:0,
+      const turn=await scriptInput("scriptSession","",{action:"pointer",session,kind,...at,node,button:0,
         buttons:ended?0:1,pressure:ended?0:0.5,pointerType:"mouse"}) as ScriptTurn;
       scriptTurn(page,turn,`pointer ${kind}`);
     }).catch(error=>console.error("Native HTML: page script pointer failed:",String(error)));
@@ -1259,8 +1260,8 @@ async function main() {
           // the page's event loop; Lean runs the listeners in QuickJS and changes its DOM.
           if(scriptsOn&&document.script&&!scriptOps.includes("pointer")){
             const page=held.page,session=page.script!.session,hit=scriptHitRequest(page);
-            scriptCall("nodeAt",page.source,hit.width,hit.height,{...hit.options,x:released[0],y:released[1]})
-              .then(node=>typeof node==="number"?scriptCall("scriptSession","",{action:"click",session,node}) as Promise<ScriptTurn>:undefined)
+            scriptInput("nodeAt",page.source,hit.width,hit.height,{...hit.options,x:released[0],y:released[1]})
+              .then(node=>typeof node==="number"?scriptInput("scriptSession","",{action:"click",session,node}) as Promise<ScriptTurn>:undefined)
               .then(turn=>{if(turn)scriptTurn(page,turn,"click");})
               .catch(error=>console.error("Native HTML: page script click failed:",String(error)));
           }

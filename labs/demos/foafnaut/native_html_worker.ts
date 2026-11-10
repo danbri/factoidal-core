@@ -1,10 +1,12 @@
 // The Lean HTML engine in a Deno Worker. Every engine call that can take more than
-// about 2 ms runs here, in one queue, so calls stay in order and the main thread keeps
+// about 2 ms runs here, one at a time, so the main thread keeps
 // only the window, the event pump, input and the GPU (issue 1268). The engine is the
 // Wasm module or, when a path is given, a native dylib; all Lean calls stay on this
 // one thread. The worker holds no page state: each request carries its inputs, and
 // the font is loaded once at start. No GPU or native window is used here.
 //
+// Input runs before ordinary work, in arrival order. All scriptSession turns use that
+// lane too, so input cannot pass an earlier resize or timer turn of the same session.
 // A request with `low` (a scroll prefetch) runs only when no other request waits, and a
 // newer low request replaces a low one that has not started; the replaced one is answered
 // `dropped`. `dropLow` drops the low request that has not started. A low request that has
@@ -12,12 +14,13 @@
 import {loadHTML,type HTMLArtifact,type HTMLEngine} from "./native_html_engine.ts";
 import {loadFontFile} from "./native_html_document.ts";
 import {fallbackFontHost,loadFallbackFonts} from "./native_html_fonts.ts";
+import {htmlQueue} from "./native_html_queue.ts";
 
 import {REMOTE_CALLS,type RemoteCall} from "./native_html_calls.ts";
 export {REMOTE_CALLS};
 export type {RemoteCall};
 export type WorkerRequest={id:number;op:"init";font?:{path:string;family:string};nativeEngine?:string}
-  |{id:number;op:"call";name:RemoteCall;args:unknown[];low?:boolean}
+  |{id:number;op:"call";name:RemoteCall;args:unknown[];input?:boolean;low?:boolean}
   |{id:number;op:"dropLow"}
   // The fallback fonts a page needs (native_html_fonts.ts): chosen and read here, as bytes,
   // into this engine, before the calls sent after it.
@@ -61,30 +64,26 @@ const handle=async(request:WorkerRequest)=>{
     scope.postMessage({id:request.id,ok:false,error:String(error instanceof Error?error.message:error)} satisfies WorkerReply);
   }
 };
-// One queue: a request starts when the one before it has ended. Ordinary requests run in
-// the order sent; the one low request runs when none of them waits.
-const ordinary:WorkerRequest[]=[];
-let low:WorkerRequest|undefined,busy=false;
+const queue=htmlQueue<WorkerRequest>();
+let busy=false;
 const drop=(request:WorkerRequest)=>scope.postMessage({id:request.id,ok:false,error:"dropped",dropped:true} satisfies WorkerReply);
 const pump=async()=>{
   if(busy)return;
   busy=true;
   try{
     for(;;){
-      // Messages that came while a Lean call ran are taken in before a low request starts:
-      // a Lean call holds the thread, so they wait as tasks behind this loop.
-      if(!ordinary.length&&low)await new Promise(resolve=>setTimeout(resolve,0));
-      const next=ordinary.shift()??low;
+      // A Lean call holds this thread. Take in messages waiting as tasks before choosing
+      // the next request, even with ordinary work queued: one of them may be input.
+      await new Promise(resolve=>setTimeout(resolve,0));
+      const next=queue.shift();
       if(!next)break;
-      if(next===low)low=undefined;
       await handle(next);
     }
   }finally{busy=false;}
 };
 scope.onmessage=event=>{
   const request=event.data;
-  if(request.op==="dropLow"){if(low){drop(low);low=undefined;}scope.postMessage({id:request.id,ok:true,ms:0} satisfies WorkerReply);return;}
-  if(request.op==="call"&&request.low){if(low)drop(low);low=request;}
-  else ordinary.push(request);
+  if(request.op==="dropLow"){const low=queue.dropLow();if(low)drop(low);scope.postMessage({id:request.id,ok:true,ms:0} satisfies WorkerReply);return;}
+  const dropped=queue.push(request);if(dropped)drop(dropped);
   pump();
 };
