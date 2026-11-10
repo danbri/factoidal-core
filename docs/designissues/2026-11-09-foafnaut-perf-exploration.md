@@ -62,7 +62,9 @@ and BubblePopJS with no Mac". Lean rules that came out of it:
    memory. 43% of the F\* bundle's run is one function that finds a variable of an enclosing
    scope by its name.
 6. Differential runs against two engines found 7 defects of BubblePopJS that the Test262
-   part in the tree does not show (section 6.4).
+   part in the tree does not show (section 6.4). In BubblePopWASM the Lean-compiled module of
+   this project runs (1.5 GB of memory for a 32.7 MB module); the `wasm_of_ocaml` modules do not
+   decode, for lack of the garbage collection proposal (section 6.5).
 7. For one loop iteration, stage B runs 972 instructions and stage A 2,475. A Lean model of
    a register machine on flat arrays of value words runs it in 153, and a call of `fib` in
    17 ns against 23 ns for QuickJS-NG (section 8 and the plan). The distance to QuickJS-NG is
@@ -361,7 +363,9 @@ Load only (parse and top-level evaluation), CPU ms:
 By `realworld.py` and by a differential script of 1,671 lines of output (index, length, bit
 operator and number-to-string cases at the edges of 2^31, 2^32 and 2^53), run on BubblePopJS,
 QuickJS-NG and V8. QuickJS-NG and V8 agree on every line. BubblePopJS differs on 23 lines, the
-same on `main`, stage A and stage B. None has a test or an issue yet; the plan lists them.
+same on `main`, stage A and stage B. The defects are a checklist in
+https://github.com/danbri/factoidal-core/issues/378 (the plan and its key results); none has a
+test yet.
 
 1. `if (s) /y/.test(s);`, `for (...) /re/.test(x)`, `if (1) {} /re/.test(x)`: SyntaxError
    "regular expression literals are not supported". The lexer takes `/` after `)` and after `}`
@@ -377,6 +381,30 @@ same on `main`, stage A and stage B. None has a test or an issue yet; the plan l
    killed (1.5 GB in 1 s). `b.length = 10000000` takes 295 MB. Strings and typed arrays have a
    limit (`Invalid string length`); arrays have none. During the session this killed a
    running build on the same machine.
+
+### 6.5 WebAssembly from verified-language toolchains, in BubblePopWASM
+
+`lake exe wasmvm-bench` (native, this VM), with the modules of the project's own release
+`build-730684b2a754` as inputs (`tools/fetch-builds.sh --set web` and `--set foafnaut-web`;
+they are test inputs here, not the build of this tree).
+
+| Module | Made by | Result |
+|---|---|---|
+| `l4factoidal.wasm`, 32.7 MB, 23,747 functions, 12.9 M operations | Lean 4, to C, to WebAssembly by Emscripten | decode 3.7 s; validate and compile 3.6 s; instantiate; `l4_init` (the Lean runtime and every module) 3.7 s; `l4_version_c` gives the version text. Peak resident memory 1,489 MB. The process took 41.6 s; the 30 s outside the three steps were not attributed |
+| `l4factoidal-core.wasm`, 9.3 MB | the same | validates and compiles in 0.9 s, 527 MB |
+| `factoidal-npm-entry.wasm`, `factoidal.wasm`, `w3c-runner.wasm` code modules, 0.9 to 1.5 MB | F\*, to OCaml, to WebAssembly by `wasm_of_ocaml` | `decode: unsupported: GC type definition at byte 13`. BubblePopWASM has no garbage collection proposal, so no `wasm_of_ocaml` module runs |
+| `qjs-wasmvm.wasm`, 1.25 MB, 377,234 operations | QuickJS-NG 0.18.0 (C), by Emscripten | validate and compile 65 ms. `fib(24)`: 148.5 M instructions in 720 ms (205 M a second). Loop and JSON: 331.5 M instructions in 1,629 ms. Its plain JavaScript checks: 23 pass, 2 fail (not looked at) |
+
+- The engine's own benchmark here: `sum` 388 M instructions a second, `memsum` 283 M, `fib(30)`
+  193 M; `engine --check` passes its floors. (Apple M1 in the WasmVM record: 359 to 381, 207 to
+  228, 177.)
+- `fib(24)` is 150,049 calls. QuickJS-NG as WebAssembly inside BubblePopWASM: 4,800 ns for one
+  call. Native: QuickJS-NG 23 ns, BubblePopJS stage B 145 ns, `main` 752 ns.
+- A 32.7 MB module needs 1.5 GB: each operation is a Lean object. The WasmVM record names code
+  as bytes as a next step; this is its size on a real module.
+- On `main` at `489d5cd3a`, `lake build wasmvm-bench` fails: `WasmVM/Bench/Page.lean` names
+  `Hosts.LeanJS.prepare`, which is in `Hosts/LeanJSRealm.lean`, and does not import that
+  module. This branch adds the import (one line).
 
 ## 7. Integers through GMP
 
@@ -690,7 +718,8 @@ measured.
   prelude, 6 drivers) and `lean/` (`IntConversions.lean`, `VmFloor.lean`, `CoreModel.lean`,
   `run.sh`); `tools/lean-literal-parse-audit.py` and its test; this record and the plan.
 - Changed: `JS/Number.lean`, `JS/Lexer.lean` (twins, constants); three `Rendering` modules and
-  `labs/demos/foafnaut/SVG.lean` (one import each); `tools/lean-csimp-reach.py`, its test and
+  `labs/demos/foafnaut/SVG.lean` (one import each); `WasmVM/Bench/Page.lean` (one import, so
+  that `wasmvm-bench` builds); `tools/lean-csimp-reach.py`, its test and
   its allow list; the `foafnaut` and `lean4-performance` skills; `CLAUDE.md` (what Foafnaut
   is); the worknote index; the csimp reach record; the handoff records.
 - Not changed: `JS/Interp.lean`, `JS/Value.lean`, and every file that stage A, stage B or
@@ -720,7 +749,7 @@ For BubblePopKit, in order of measured share:
 ## 13. Not measured
 
 - Anything on a Mac: the window, the GPU draw, Deno, FFI calls, input latency, the Hub.
-- The Wasm build of BubblePopKit, and BubblePopJS in it. BubblePopWASM on this machine.
+- The Wasm build of BubblePopKit, and BubblePopJS in it. BubblePopWASM beyond section 6.5.
 - Page scripts in real pages (DOM calls through the host), WPT run times.
 - The engine's layout on real sites (see
   [2026-11-09-real-site-layout-speed.md](2026-11-09-real-site-layout-speed.md)).

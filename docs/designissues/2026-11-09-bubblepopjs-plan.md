@@ -20,14 +20,14 @@ other work in this repository, not on a measurement of a BubblePopJS JIT: none e
 ## 1. Decisions for the owner
 
 1. Approve, change or refuse the key results of section 9 as an OKR batch for BubblePopJS
-   (tracking issue: SEE-ISSUE).
+   (tracking issue: https://github.com/danbri/factoidal-core/issues/378).
 2. The data layout of section 4 replaces the run-time state of stages A and B (values as Lean
    objects, registers as an `Array Value`) after stage B lands. Stage B's compiler, resolver
    and instruction set stay. Yes or no.
-3. JIT route: generated WebAssembly through the existing `WasmVM.Aot` path first (the Hub, and
-   the desktop host, which has a WebAssembly engine), machine code from build-time templates
-   later. The later step needs one new trusted primitive (run bytes as code); it is not
-   started without a separate decision.
+3. JIT route: generated WebAssembly through the existing `WasmVM.Aot` path first (the Hub; the
+   desktop app's host also has a WebAssembly engine, and whether that path is wired there was
+   not checked), machine code from build-time templates later. The later step needs one new
+   trusted primitive (run bytes as code); it is not started without a separate decision.
 4. A memory limit for a page's JavaScript heap, on by default (today one statement,
    `new Array(4294967295)`, takes all memory of the process). Proposed default: 512 MB for a
    desktop page, 64 MB in the light profile, as `RangeError: out of memory` in the page.
@@ -88,8 +88,8 @@ What the table and the profiles of the exploration record (its section on real-w
 
 - BubblePopJS gives the right answer on 5 of the 6 workloads on every tree, among them a
   1.18 MB `js_of_ocaml` bundle extracted from F\*. `marked` does not load: the lexer takes `/`
-  after `)` of a `for` or `if` header as a division (two more lexer and four library defects
-  from the same day's differential runs are in section 7.3).
+  after `)` of a `for` or `if` header as a division (one more lexer defect and six other
+  defects found the same day are in section 7.3).
 - Stage B compiles 72 to 89% of the functions of these libraries and is still 5.5 to 43 times
   slower than QuickJS-NG on them. The time is in what the operations do, in four places:
   1. **Names of enclosing scopes found by text.** 43% of the F\* bundle's run is `Env.scan`
@@ -235,13 +235,15 @@ of section 10; the conversions themselves are already proved (`toInt32Fast`, `to
 |---|---|---|
 | 0 | Register bytecode in the loop of 4.4, inline caches | Everywhere, and the only tier where a host forbids generated code |
 | 1 | The same loop with operations fused and specialised from counters, each proved equal to the sequence it replaces (as `fused_refines` in WasmVM) | Everywhere |
-| 2 | Each bytecode instruction as a WebAssembly template; a function is the templates of its instructions, joined | Hosts with a WebAssembly engine: the Hub and the desktop app, through `WasmVM.Aot` (validate in Lean, then the host compiles it; fuel metering and import routing exist and are partly proved, `2026-11-08-wasmvm-aot.md`) |
+| 2 | Each bytecode instruction as a WebAssembly template; a function is the templates of its instructions, joined | Hosts with a WebAssembly engine: the Hub, through `WasmVM.Aot` (validate in Lean, then the host compiles it; fuel metering and import routing exist and are partly proved, `2026-11-08-wasmvm-aot.md`). The desktop app's host has such an engine too; that path was not checked there |
 | 2n | The same templates as machine code made at build time, copied and patched at run time | Native builds, after the decision of section 1, item 3 |
 | 3 | An optimiser over a typed intermediate form: inlining, unboxed registers, bounds tests removed by a proved range analysis. Each rewrite is a theorem; the pass that applies proved rewrites needs no proof of its own | Where tier 2 or 2n runs |
-| build | JavaScript that ships with the browser (`prelude.js`, 1,135 functions) compiled when the browser is built: the interpreter specialised to that bytecode, as Lean definitions that `leanc` compiles, each equal to interpreting the bytecode | Every platform, the ones with no JIT included |
+| build | JavaScript that ships with the browser (what stays of `prelude.js`, 1,135 functions today, after https://github.com/danbri/factoidal-core/issues/376) compiled when the browser is built: a specialiser written in Lean turns the bytecode of a function into a Lean definition, which `leanc` compiles | Every platform, the ones with no JIT included |
 
-The "build" row is the one no engine in C can have in this form: the compiled prelude is a
-Lean term, and its equality with the interpreted prelude is checked when the browser is built.
+The "build" row has no counterpart in an engine written in C. One theorem about the
+specialiser (`specialise_sound`: the definition it makes equals the interpreter on that
+bytecode) would make the compiled prelude equal to the interpreted one by proof. It is a
+design: no part of it exists, and section 10 has its risk (E8).
 
 ### 4.8 Profiles
 
@@ -270,7 +272,7 @@ Compiled as Lake compiles the library (`leanc -O3 -DNDEBUG`), quiet machine, 3 M
 
 | | Core model | Core model, Lean's own bit conversions | QuickJS-NG | V8 no JIT | Stage B |
 |---|---|---|---|---|---|
-| the loop `i < n; i++`, ns | 7.6 | 10.6 to 13.0 | 7 | 8 | 48 |
+| the loop `i < n; i++`, ns | 7.6 | 10.6 to 13.0 | 8 | 8 | 48 |
 | `s = s + k` | 1.9 | 4.2 to 6.3 | 2 | 2 | 18 |
 | `s = o.x` | 3.3 | 3.0 to 4.9 | 7 | 5 | 27 |
 | `o.x = i` | 3.4 | -0.4 to 3.0 | 6 | 2 | 86 |
@@ -287,9 +289,9 @@ second is the range of 3 runs.
   runtime: 5 calls in one loop iteration.
 - So the distance from stage B to QuickJS-NG on these paths is the data layout. Compiled Lean
   is not the limit: the same compiler gives 17 ns for a call of `fib` where QuickJS-NG takes 23.
-- What the model leaves out costs on slow paths in every engine. Three of them cost on fast
-  paths too and are not in these numbers: the argument count and `this` of a real call, the
-  write barrier of a nursery, and the step budget of a page turn (present in the model).
+- What the model leaves out costs on slow paths in every engine. Two things cost on fast
+  paths too and are not in these numbers: the argument count and `this` of a real call, and
+  the write barrier of a nursery. The step budget of a page turn is in the model.
 
 ## 6. Theorems
 
@@ -308,7 +310,8 @@ order they pay:
 | T6 | `fuse_sound` and `fused_charges_parts` for each fused or specialised instruction | tier 1, and step counts that do not change | to do; the WasmVM lemmas are the pattern |
 | T7 | `template_refines` for each instruction's WebAssembly template, against the WebAssembly semantics of `WasmVM.Spec`; a composition lemma for a function | tier 2 | to do |
 | T8 | `rewrite_sound` for each rewrite of tier 3 | the optimiser | to do |
-| T9 | cost statements: instructions for each operation as a bound, checked on the benchmarks | a ratchet that a refactor cannot lower | to do; `Proofs/Cost.lean` in WasmVM is the pattern |
+| T9 | cost statements: instructions for each operation as a bound, checked on the benchmarks | a ratchet that a refactor cannot lower | to do; `Proofs/Cost.lean` in WasmVM is the pattern; https://github.com/danbri/factoidal/issues/1292 (cost theorems as a ratchet) |
+| T10 | `specialise_sound`: the definition that the specialiser makes from a function's bytecode equals the interpreter on that bytecode | the "build" tier | to do |
 
 Until a row is proved, the same claim is a differential check that runs in the tests: the
 machine against the evaluator on Test262 and on the corpus (stage B's `useVm` check does this
@@ -331,10 +334,13 @@ To add, in this order:
    section 2.2 found: thousands of functions in one scope, closures and partial application,
    exceptions as control flow, integers as `x | 0`, arbitrary-precision integers, high
    allocation rates.
-2. WebAssembly, in BubblePopWASM: `l4factoidal.wasm` (Lean compiled to WebAssembly: 23,300
-   functions; its start took 2.8 s on the Mac after the repair in the WasmVM record),
-   QuickJS-NG, HarfBuzz. A module from `wasm_of_ocaml` needs the garbage collection proposal,
-   which BubblePopWASM does not have: an expected failure with an issue when the corpus gets it.
+2. WebAssembly, in BubblePopWASM. Measured on 2026-11-09 (the exploration record, 6.5):
+   `l4factoidal.wasm` (Lean compiled to WebAssembly, 32.7 MB, 23,747 functions) decodes,
+   validates and starts in 3.7 s for each step, with 1.5 GB of memory; QuickJS-NG as a guest
+   runs `fib(24)` in 720 ms; the three `wasm_of_ocaml` modules of the F\* tree do not decode
+   ("unsupported: GC type definition"). So the corpus gets these as rows, the third as an
+   expected failure with an issue, and the garbage collection proposal is a need of this
+   plan's users even though it is BubblePopWASM work.
 3. Tools that pages and build systems run: a second parser, a minifier, a template engine,
    a Markdown renderer once the lexer defect is repaired.
 4. `testharness.js` with a real WPT file: every WPT test pays for it.
@@ -349,7 +355,9 @@ To add, in this order:
 
 ### 7.3 Defects found on 2026-11-09, on `main`, stage A and stage B
 
-Each is one line to reproduce. None has a test or an issue yet; the tracking issue lists them.
+Each is one line to reproduce. They are a checklist in
+https://github.com/danbri/factoidal-core/issues/378 (the plan and its key results). None has a
+test yet: each gets an expected failure that names the issue before its repair (stage B2, item 3).
 
 1. `if (s) /y/.test(s);` and `for (...) /re/.test(x)`: "regular expression literals are not
    supported" (the lexer takes `/` after `)` and after `}` as division). `marked` fails on it.
@@ -398,7 +406,7 @@ Each stage ends with numbers from the commands named. Work items are one commit 
 
 11. Counters; fused and specialised instructions with T6; the 32-bit integer path if E2 says so.
 12. Functions compiled at first call; scripts stored as bytecode; the `light` profile.
-13. The prelude compiled at build time (the "build" row of 4.7).
+13. The prelude compiled at build time (the "build" row of 4.7), after E8.
 14. Test262 whole; the differential test; `step_refines` for the instruction set (T3).
 
 **Stage E: tier 2**, after experiment E3. **Stage F: tier 3 and tier 2n.**
@@ -436,6 +444,7 @@ what could make them wrong.
 | E5 | The proofs T3 and T4 are large | Prove `step_refines` for 5 instructions first and count the lines for each; then set the order |
 | E6 | 32-bit WebAssembly: boxed `UInt32`, call depth 100 | Compile the model with the engine's Wasm toolchain; its loop makes no host call, so depth should not matter. Measure |
 | E7 | Two layouts live at once during stage C (the evaluator's objects and the flat heap) | The bridge converts at calls between compiled and uncompiled functions; stage B2 item 2 makes those rare first |
+| E8 | The build-time specialiser makes Lean definitions too large for Lean's compiler, or `specialise_sound` is out of reach | Specialise 10 functions of `prelude.js` by hand first: compile time, code size, speed against the loop; state the theorem for 3 instructions |
 
 ## 11. Not measured, not known
 
@@ -443,6 +452,6 @@ what could make them wrong.
 - A whole-suite Test262 or WPT figure for any tree.
 - JavaScriptCore, Hermes, SpiderMonkey, XS, MicroQuickJS: no binaries here.
 - A BubblePopJS JIT of any kind. Section 4.7's tiers 2 to 3 are designs.
-- BubblePopWASM on this machine (its numbers above are the Mac's, from its record).
+- BubblePopWASM beyond the four modules of the exploration record, section 6.5.
 - The corpus has 6 workloads. Six do not make a geometric mean that a decision should rest on
   alone; section 7.1 is there to change that.

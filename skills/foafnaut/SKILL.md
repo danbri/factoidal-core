@@ -71,7 +71,9 @@ local clone that is not pushed. Check again before you write that a part is miss
 - Chrome debugger protocol, headless control, MCP served by the browser: not found. The
   `labs/demos/foafnaut/hub_*_check.mjs` files use the Chrome debugger protocol as a client, to
   drive headless Chrome against the Hub: that is test tooling. The WPT runner on
-  `wip/wptserve` classifies WebDriver tests. MCP for the data tools is
+  `wip/wptserve` classifies WebDriver tests. The work is tracked in
+  https://github.com/danbri/factoidal-core/issues/372 (developer tools: console input, an MCP
+  server for agents, WebDriver BiDi, Chrome DevTools Protocol). MCP for the data tools is
   https://github.com/danbri/factoidal/issues/1121 (MCP over XMPP, and MCP controls for the
   command line tools).
 - Textnaut, the browser in a text terminal: `labs/demos/foafnaut/textnaut/` (`README.md`,
@@ -443,7 +445,8 @@ Several sessions work on the owner's laptop at once.
   engine's start, first compile and frame by phase.
 - [BubblePopJS plan of 2026-11-09](../../docs/designissues/2026-11-09-bubblepopjs-plan.md):
   the data layout (value words, flat heap, shapes, inline caches), the tiers, the theorems,
-  the profiles, key results and stages; with a Lean model that measures the layout.
+  the profiles, key results and stages; with a Lean model that measures the layout. Its
+  tracking issue, with the decisions it needs: https://github.com/danbri/factoidal-core/issues/378.
 - [Liberal mode and console](../../docs/designissues/2026-11-08-liberal-mode-and-console.md),
   [browser state](../../docs/designissues/2026-11-08-browser-state-lws.md),
   [CPU backend](../../docs/designissues/2026-11-08-cpu-render-backend.md),

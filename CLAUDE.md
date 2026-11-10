@@ -1029,8 +1029,9 @@ real world js and wasm, including the patterns we'll increasingly see downstream
 languages like Lean and Rocq."
 
 - The plan, with its key results and the decisions it asks for:
-  `docs/designissues/2026-11-09-bubblepopjs-plan.md`. It is a proposal until the owner approves
-  its key results as an OKR batch.
+  `docs/designissues/2026-11-09-bubblepopjs-plan.md`; tracking issue
+  https://github.com/danbri/factoidal-core/issues/378 (BubblePopJS plan and proposed key
+  results). It is a proposal until the owner approves its key results as an OKR batch.
 - A BubblePopJS speed or compliance claim is measured on real-world code
   (`labs/demos/foafnaut/bubblepop_perf/realworld.py`, which includes output of verified-language
   toolchains) before single operations.
