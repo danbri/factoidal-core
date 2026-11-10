@@ -107,4 +107,42 @@ section 5.
 
 ## 5. Status
 
-(Updated with each step.)
+Branch `wip/390-state`. Lab counts 29/29 → 3/3.
+
+| Cell | Now |
+|---|---|
+| 1 `heldRef` | `Engine.scripts`; taken out of the state for a `scriptSession` call |
+| 2 `entropy` | `WebWasm.Machine.randomBytes` (`BaseIO`: `IO.getRandomBytes`; `Id`: none) |
+| 3, 4 `timed` | `WebWasm.Machine.timed` (`BaseIO`: host clock; `Id`: 0). WasmVM ops, SPARQL ops and script sessions run in `M` |
+| 5 SVG words | `Kept.words`; `NativeSVGText.wordIn`, `wordIn_eq` |
+| 6 image stores | `Kept.stores`; `WebRender.storeIn`, `storeIn_eq` |
+| 7 parsed trees | `Kept.parsed`; `parseIn`, `parseIn_eq` |
+| 8 `shapeKept` | **left** (see below) |
+| 9 sheets | `Kept.sheets`; `sheetIn`, `sheetIn_eq` |
+| 10 links | `Engine.links`; `decodeKept`, `decodeKept_eq`, `decodeKept_valid`, `pickIn_eq` |
+| 11 page layers | **left**: `pageArtifact`, `pageWork` (see below) |
+| 12–14 fonts, web fonts, images | `Engine.holds` (`Holds`), passed to layout as a value; a layout gives back its word memo (`Laid.words`) |
+| 15, 16 layout memos, counters | `Engine.layouts`, `Engine.painted`, `Engine.frameWork`; `Engine.layOutKept`, `frameKept`, `frame` |
+| 17 paint-only scene | `Engine.paintedScene`, `paintWork`; kept by the layout's number (`Laid.serial`) in place of `ptrEq` |
+
+How a layout uses `Kept`: it looks entries up and gives back what it made (`Laid.made`);
+`Engine.layOutKept` adds them and keeps the layout without them. In liberal mode the
+liberal run gets what the strict run made, as the old cells gave it.
+
+Left, and why:
+
+- `shapeKept` (cell 8): the shaper is a closure that `Rendering.Layout` calls for words
+  outside the memo; it can look a table up, but the layout has no way to give back what
+  it shaped. Needs either a layout that returns its shaped words (a change in
+  `formal/lean4/L4Factoidal/Rendering/Layout.lean`) or a pass that finds those words
+  (bidi pieces, other directions) before layout. Measure before choosing.
+- `pageArtifact`, `pageWork` (cell 11): the kept page-layer answer compares scene, boxes,
+  face and marks by address, and the retained compile (partial frames) compares each
+  primitive, geometry and style by address (`WebPaint.retainedAnswer`'s `reuseLeaf`).
+  The layout serial covers the first part; the per-primitive part needs `WebPaint.patch`
+  to say which primitives it changed. Released in 0.35.0, so left for a separate change
+  with the partial-frame tests and timings.
+
+Not proved: that the memos in `Engine` are valid for `Engine.holds` and `Kept` (a layout
+changes the word memo and `Kept`, which by design change no layout). The refinement
+theorems above each take validity as a hypothesis.

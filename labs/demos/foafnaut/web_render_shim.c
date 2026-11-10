@@ -20,12 +20,8 @@ static lean_object *next_state(lean_object *pair) {
   lean_dec(pair);
   return answer;
 }
-/* The same for a BaseIO result (the ops that read the clock or random bytes). */
-static lean_object *next_state_io(lean_object *result) {
-  lean_object *pair=lean_io_result_get_value(result); lean_inc(pair);
-  lean_dec(result);
-  return next_state(pair);
-}
+/* The exports that read the clock or random bytes are BaseIO; this Lean passes no world
+   argument to them and returns the value itself, as for a pure export. */
 #ifdef __EMSCRIPTEN__
 // Wasm has no libuv; the native runtime has its own.
 void initialize_libuv(void) {}
@@ -63,19 +59,19 @@ char *web_render_font_call(const char *html,const char *font_data,uint32_t width
   char *copy=strdup(lean_string_cstr(value)); lean_dec(value); return copy;
 }
 void web_render_free(char *value) { free(value); }
-extern lean_object *web_document_compile(lean_object *,lean_object *,lean_object *,uint32_t,uint32_t,lean_object *);
+extern lean_object *web_document_compile(lean_object *,lean_object *,lean_object *,uint32_t,uint32_t);
 char *web_document_call(const char *html,const char *request,uint32_t width,uint32_t height) {
   if (!ready()) return NULL;
-  lean_object *value=next_state_io(web_document_compile(engine,lean_mk_string(html),lean_mk_string(request),width,height,lean_io_mk_world()));
+  lean_object *value=next_state(web_document_compile(engine,lean_mk_string(html),lean_mk_string(request),width,height));
   char *copy=strdup(lean_string_cstr(value)); lean_dec(value); return copy;
 }
-extern lean_object *web_document_compile_bin(lean_object *,lean_object *,lean_object *,uint32_t,uint32_t,lean_object *);
+extern lean_object *web_document_compile_bin(lean_object *,lean_object *,lean_object *,uint32_t,uint32_t);
 /* The same request as web_document_call; the answer is bytes (WebDocument.packAnswer):
    a JSON head and the storage floats and tile words as raw sections, with no Base64.
    The first uint32 is the total length; out_len, if not NULL, gets it too. */
 uint8_t *web_document_call_bin(const char *html,const char *request,uint32_t width,uint32_t height,uint32_t *out_len) {
   if (!ready()) return NULL;
-  lean_object *value=next_state_io(web_document_compile_bin(engine,lean_mk_string(html),lean_mk_string(request),width,height,lean_io_mk_world()));
+  lean_object *value=next_state(web_document_compile_bin(engine,lean_mk_string(html),lean_mk_string(request),width,height));
   size_t size=lean_sarray_size(value);
   uint8_t *copy=malloc(size ? size : 1);
   if (copy) memcpy(copy,lean_sarray_cptr(value),size);
