@@ -7,7 +7,7 @@ import {fallbackFontHost,loadFallbackFonts,mayNeedFallbackFonts,type FallbackFon
 import type {ScriptPlan,ScriptTurn} from "./native_html_engine.ts";
 import {addEntries,consoleRequest,noteDiagnostics} from "./native_console.ts";
 import {loadNativeWindow} from "./native_window.ts";
-import {POINTER_CANCEL,beginPress,movePress,pointerNode,pressPointers,beforeFirstFrame,type NativePress,type PointerKind} from "./native_press.ts";
+import {POINTER_CANCEL,beginPress,movePress,pointerNode,pointerRequest,pressPointers,beforeFirstFrame,type NativePress,type PointerKind,type PresentedState} from "./native_press.ts";
 import {nativePreflight} from "./native_preflight.ts";
 import {cocoaSurfaceOptions} from "./cocoa_surface.ts";
 import {createHTMLWindowSession,type PresentTarget} from "./native_html_session.ts";
@@ -369,9 +369,12 @@ async function main() {
   const scriptPointer=(kind:PointerKind,x:number,y:number,held:NativePress<typeof document>)=>{
     const page=held.page;
     if(!scriptsOn||!page.script||!scriptOps.includes("pointer"))return;
-    const session=page.script.session,w=width,h=height,options={...requestAt(page,page===document?scroll:0).options,x,y};
+    // WebHit returns this event's coordinates; the engine keeps the down target
+    // separately. Use what is shown for each event, not a frame frozen at press.
+    // Capture before queueing so a later present cannot change this event's request.
+    const session=page.script.session,hit=scriptHitRequest(page),options={...hit.options,x,y};
     queuePointer(kind,async()=>{
-      const at=await scriptCall("pointerAt",page.source,w,h,options) as {node:number|null};
+      const at=await scriptCall("pointerAt",page.source,hit.width,hit.height,options) as {node:number|null};
       const node=pointerNode(held,kind,at.node);
       if(node===undefined)return;
       const ended=kind==="up"||kind==="cancel";
@@ -652,6 +655,11 @@ async function main() {
     const animated=clock&&(clock.has||clock.clicks.length)?{animationTime:clock.time,animationClicks:clock.clicks}:{};
     return page.request(width,height,{...view0,...animated,live:page===checked,...(everyFrame?{}:{checks:false})});
   };
+  let presented:PresentedState<typeof document>|undefined;
+  const recordPresented=(record:RequestRecord,at:number)=>{
+    if(record.document===document)presented={document:record.document,width:record.width,height:record.height,scroll:at,options:record.request.options};
+  };
+  const scriptHitRequest=(page:typeof document)=>pointerRequest(page,presented,()=>({width,height,options:requestAt(page,page===document?scroll:0).options}));
   const stateNow=()=>stateKey(document,requestAt(document,scroll).options,width,height);
   // The prefetched band can be shown now in place of a Lean frame.
   const swapReady=()=>!!current&&!!prefetched&&canSwap(current.layers.layers,{key:prefetched.key,band:prefetched.layers.layers},stateNow(),scroll);
@@ -662,7 +670,7 @@ async function main() {
     return sameState(prefetching.key,stateNow());
   };
   // The layers on screen, and the page row of the band shown at the top of the view.
-  let current:{layers:HTMLLayers;document:typeof document;width:number;height:number}|undefined,shownOffset=0;
+  let current:({layers:HTMLLayers}&RequestRecord)|undefined,shownOffset=0;
   let shiftPending=false,shiftedByEvent=false;
   let checked:typeof document|undefined;
   // A selection is in window coordinates, so with one a scroll needs a Lean frame.
@@ -1107,7 +1115,7 @@ async function main() {
       lastActivity=Math.max(lastActivity,finished);
       settle(stamps,result.presentedAt);
       if(nextLayers){
-        current={layers:nextLayers,document:nextDocument,width:sentWidth,height:sentHeight};shownOffset=place!.offset;
+        current={layers:nextLayers,request,document:nextDocument,width:sentWidth,height:sentHeight};shownOffset=place!.offset;
         // Scrolls taken while Lean worked: shown now if the band holds them, else after the next band.
         if(place!.exact){settle(awaitingShift,result.presentedAt);settle(awaitingBand,result.presentedAt);awaitingShift=[];awaitingBand=[];}
         if(nextDocument===document&&!keeps(nextLayers.layers,scroll)&&!bandComing())dirty=true;
@@ -1118,6 +1126,8 @@ async function main() {
       checked=nextDocument;
       if(nextDocument!==document)view.selection=undefined;
       if(nextDocument!==document){scroll=0;if(!focused)field=showURL(nextDocument.url);}frame=next;document=nextDocument;
+      // Composite offsets are relative to the band; nodeAt takes document scroll.
+      recordPresented({request,width:sentWidth,height:sentHeight,document:nextDocument},nextLayers?nextLayers.layers.bandTop+shownOffset:(request.options.shell as {scroll:number}).scroll);
       // A page that a navigation prepared while this frame was drawn is still to come: keep it.
       if(candidate===nextDocument)candidate=undefined;else if(candidate)dirty=true;native!.setTitle(windowTitle(document));
       // A new page under a pointer that has not moved.
@@ -1135,8 +1145,9 @@ async function main() {
         if(dirty||shiftPending||shifting||lastRequest!==shownRequest||document!==shownRequest.document)return;
         const {offset}=clampOffset(layers.layers,scroll);
         result=await session!.drawLayers(layers,shownRequest.width,shownRequest.height,offset,true);
+        if(result.presented)recordPresented({...shownRequest,request:{...shownRequest.request,options}},layers.layers.bandTop+offset);
         if(dirty||shiftPending||shifting||lastRequest!==shownRequest||document!==shownRequest.document){dirty=true;return;}
-        if(result.presented){current={layers,document,width:shownRequest.width,height:shownRequest.height};frame=layers.page;shownOffset=offset;}
+        if(result.presented){current={...shownRequest,request:{...shownRequest.request,options},layers};frame=layers.page;shownOffset=offset;}
       } else if(lastRequest&&lastRequest.request.options.checks===false&&worker?.alive){
         // The frame on screen was made with no probe: Lean makes it again with its probe.
         // The page must not have changed meanwhile; if it has, the next idle time checks.
@@ -1144,6 +1155,7 @@ async function main() {
         const {artifact}=await worker.compile(shownRequest.request.source,shownRequest.width,shownRequest.height,options);
         if(dirty||lastRequest!==shownRequest||document!==shownRequest.document)return;
         result=await session!.draw(artifact,true);
+        if(result.presented)recordPresented({...shownRequest,request:{...shownRequest.request,options}},(options.shell as {scroll:number}).scroll);
         if(dirty||lastRequest!==shownRequest||document!==shownRequest.document){dirty=true;return;}
       } else result=await session!.checkLast();
       if(!result?.presented)return;
@@ -1246,8 +1258,8 @@ async function main() {
           // A page with scripts: Lean finds the node under the point, and the click is a task of
           // the page's event loop; Lean runs the listeners in QuickJS and changes its DOM.
           if(scriptsOn&&document.script&&!scriptOps.includes("pointer")){
-            const page=document,session=document.script.session;
-            scriptCall("nodeAt",page.source,width,height,{...requestAt(page,scroll).options,x:released[0],y:released[1]})
+            const page=held.page,session=page.script!.session,hit=scriptHitRequest(page);
+            scriptCall("nodeAt",page.source,hit.width,hit.height,{...hit.options,x:released[0],y:released[1]})
               .then(node=>typeof node==="number"?scriptCall("scriptSession","",{action:"click",session,node}) as Promise<ScriptTurn>:undefined)
               .then(turn=>{if(turn)scriptTurn(page,turn,"click");})
               .catch(error=>console.error("Native HTML: page script click failed:",String(error)));
@@ -1295,11 +1307,12 @@ async function main() {
       // No Lean call; it waits only for GPU work already asked for.
       if(pressPresent&&!shifting&&current&&canPresent()){
         pressPresent=false;
-        const start=performance.now(),p=pressed;
-        shifting=session!.shift(shownOffset,false).then(result=>{
+        const start=performance.now(),p=pressed,shown=current,offset=shownOffset;
+        shifting=session!.shift(offset,false).then(result=>{
           trace("native-html-press",{state:p?"down":"up",control:p?.control??null,active:p?.active??null,rects:p?.rects.length??0,
             presented:result.presented,totalMs:ms(start,performance.now()),...(p?{fromQueuedMs:ms(p.at,result.presentedAt)}:{})});
           if(!result.presented){pressPresent=true;return;}
+          recordPresented(shown,shown.layers.layers.bandTop+offset);
           if(p&&p===pressed)pressOverlayMs.push(result.presentedAt-p.at);
           lastActivity=Math.max(lastActivity,performance.now());
         }).catch(error=>{fatal=error;}).finally(()=>{shifting=undefined;});
@@ -1316,7 +1329,7 @@ async function main() {
         // Press rectangles are in the rows of the band on screen; another band needs a Lean frame.
         if(swap&&pressed&&session!.pressed){session!.setPress(undefined);dirty=true;}
         if(!swap&&!keeps(current.layers.layers,scroll)&&!bandComing())dirty=true;
-        const shownLayers=swap?swap.layers:current.layers;
+        const shown=swap?{...swap.record,layers:swap.layers}:current,shownLayers=shown.layers;
         const start=performance.now(),{offset,exact}=clampOffset(shownLayers.layers,scroll),at=scroll;
         shifting=(swap?session!.drawLayers(swap.layers,swap.record.width,swap.record.height,offset,everyFrame):session!.shift(offset,everyFrame)).then(result=>{
           if(swap&&document!==swap.record.document){awaitingShift=[...stamps,...awaitingShift];dirty=true;return;}
@@ -1325,12 +1338,13 @@ async function main() {
             presented:result.presented,checked:result.checked,pixelHash:result.checked?result.pixelHash:null,...(swap?{bandTop:swap.layers.layers.bandTop,target:swap.target}:{})});
           if(swap){
             // The textures hold the prefetched layers now, presented or not.
-            current={layers:swap.layers,document:swap.record.document,width:swap.record.width,height:swap.record.height};
+            current={...swap.record,layers:swap.layers};
             frame=swap.layers.page;lastRequest=swap.record;if(prefetched===swap)prefetched=undefined;
           }
           if(!result.presented){awaitingShift=[...stamps,...awaitingShift];shiftPending=true;return;}
           if(swap)prefetchStats.swaps++;
           shownOffset=offset;shifts.push(finished-start);lastActivity=Math.max(lastActivity,finished);if(result.checked)checkedFrames++;
+          recordPresented(shown,shownLayers.layers.bandTop+offset);
           // A scroll past the band is not fully shown: it waits for the next band.
           if(exact){settle(stamps,result.presentedAt);settle(awaitingBand,result.presentedAt);awaitingBand=[];}
           else awaitingBand=[...awaitingBand,...stamps];

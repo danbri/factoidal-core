@@ -1,5 +1,44 @@
 import {strict as assert} from "node:assert";
-import {POINTER_CANCEL,beginPress,movePress,pointerNode,pressPointers,beforeFirstFrame} from "./native_press.ts";
+import {POINTER_CANCEL,beginPress,movePress,pointerNode,pointerRequest,pressPointers,beforeFirstFrame} from "./native_press.ts";
+
+Deno.test("pending scroll, resize and zoom keep the presented hit-test request",()=>{
+  const page={},options={shell:{scroll:400,collapse:20},zoomUnit:200,commands:[[1,2]]};
+  // The band was rendered for scroll 400, but the composite showed scroll 450.
+  const presented={document:page,width:800,height:600,scroll:450,options};
+  const expected={width:800,height:600,options:{...options,shell:{scroll:450,collapse:20}}};
+  let pending=450,calls=0;
+  const fallback=()=>{calls++;return {width:1000,height:700,options:{shell:{scroll:pending},zoomUnit:300}};};
+  assert.deepEqual(pointerRequest(page,presented,fallback),expected);
+  pending=900;
+  assert.deepEqual(pointerRequest(page,presented,fallback),expected);
+  assert.equal(calls,0);
+  assert.equal(options.shell.scroll,400);
+});
+
+Deno.test("another page's presented record is not used",()=>{
+  const page={},other={},fallback={width:640,height:480,options:{shell:{scroll:0}}};
+  const presented={document:other,width:800,height:600,scroll:450,options:{zoomUnit:200}};
+  let calls=0;
+  assert.equal(pointerRequest(page,presented,()=>{calls++;return fallback;}),fallback);
+  assert.equal(calls,1);
+});
+
+Deno.test("no presented record uses the fallback",()=>{
+  const fallback={width:640,height:480,options:{shell:{scroll:123},zoomUnit:100}};
+  let calls=0;
+  assert.equal(pointerRequest({},undefined,()=>{calls++;return fallback;}),fallback);
+  assert.equal(calls,1);
+});
+
+Deno.test("later pointer events use a new presented frame without changing a queued request",()=>{
+  const page={},press=beginPress(page,10,20),fallback=()=>{throw new Error("unexpected fallback");};
+  let presented={document:page,width:800,height:600,scroll:50,options:{shell:{scroll:0},zoomUnit:100}};
+  const down=pointerRequest(press.page,presented,fallback);
+  presented={...presented,width:1000,scroll:100,options:{shell:{scroll:100},zoomUnit:200}};
+  const up=pointerRequest(press.page,presented,fallback);
+  assert.deepEqual(down,{width:800,height:600,options:{shell:{scroll:50},zoomUnit:100}});
+  assert.deepEqual(up,{width:1000,height:600,options:{shell:{scroll:100},zoomUnit:200}});
+});
 
 Deno.test("release uses its own endpoint without a final move",()=>{
   const page={},press=beginPress(page,10,20);

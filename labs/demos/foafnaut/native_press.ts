@@ -1,6 +1,15 @@
 // Native input bookkeeping only. The engine owns hit testing and click decisions.
 export const POINTER_CANCEL=14;
 export type PointerKind="down"|"move"|"up"|"cancel";
+type HitRequest={width:number;height:number;options:Record<string,unknown>};
+export type PresentedState<Page>=HitRequest&{document:Page;scroll:number};
+export function pointerRequest<Page>(page:Page,presented:PresentedState<Page>|undefined,fallback:()=>HitRequest):HitRequest{
+  // Before this page has a presented frame (or after a tab change), retain the
+  // existing request path; another page's visible state cannot describe its layout.
+  if(!presented||presented.document!==page)return fallback();
+  const {width,height,options,scroll}=presented;
+  return {width,height,options:{...options,shell:{...options.shell as Record<string,unknown>,scroll}}};
+}
 export type NativePress<Page>={page:Page;points:number[];node?:number};
 export function beginPress<Page>(page:Page,x:number,y:number):NativePress<Page>{
   return {page,points:[x,y,x,y]};
