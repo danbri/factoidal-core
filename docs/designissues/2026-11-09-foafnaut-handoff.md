@@ -69,6 +69,17 @@ Other sessions, from the log (branch and clone name, what it does):
   layout kernel), `wip/haclweb-2` (HACL\* for `crypto.subtle`).
 - Open PR: https://github.com/danbri/factoidal-core/pull/370 (Canvas chart status text).
 
+Added 2026-11-09, about 23:00 UTC, by a cloud session (branch
+`claude/foafnaut-perf-bottlenecks-7hpt38`). The speed branches in flight are listed in
+[2026-11-09-bubblepop-perf-handoff.md](2026-11-09-bubblepop-perf-handoff.md). That session built
+`wip/bpperf` (`e8d2a3e6e`, stage A) and `wip/bpperf-vm` (`167605f4c`, stage A and one commit:
+the register machine, stage B) on Linux and measured each by operation. It read `wip/bootstack`
+(`2f923ecf1`) and did not build it. Its record,
+[2026-11-09-foafnaut-perf-exploration.md](2026-11-09-foafnaut-perf-exploration.md), has: the
+measurements; one regression on stage B (`s += x` is quadratic there); a cost that no branch
+had (integer conversions through the big number runtime, repaired by that landing);
+BubblePopKit's start, first compile and frame by phase; a ranked list (its section 12).
+
 Codex is scheduled for the HTML parser failures (batch 1 KR 3.1, 3.2: tree construction 10
 fail, tokenizer 6 fail, numbers in the status note) after its usage limit resets at 2026-11-10
 10:07. Test it first with a one-line `codex exec`.

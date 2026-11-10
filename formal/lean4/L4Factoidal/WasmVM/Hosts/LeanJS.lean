@@ -298,11 +298,11 @@ def Session.run (s : Session) (f : JHeap → (JS.Outcome × JS.Value) × JHeap) 
   let page := lh.page
   let page := { page with time := page.time.atRun page.loop.clock steps }
   let wasm0 := page.wasm.steps
-  let heap := { heap with steps := runBudget, host := some { lh with page, base := steps, wasm0 } }
+  let heap := { heap with steps := runBudget.toUInt64, host := some { lh with page, base := steps, wasm0 } }
   let ((o, v), heap) := f heap
   let lh := heap.host.getD default
   -- The page's WebAssembly ran in this run's natives: its instructions are script time too.
-  let steps := steps + (runBudget - heap.steps) + (lh.page.wasm.steps - wasm0)
+  let steps := steps + (runBudget - heap.steps.toNat) + (lh.page.wasm.steps - wasm0)
   let page := lh.page
   let time := page.time.atRun page.loop.clock steps
   let page := { page with time, loop := { page.loop with clock := time.sync page.loop.clock } }
@@ -374,7 +374,7 @@ each page starts from it with its own arena, so the prelude runs once (as
 kept as data at build time (`snapshotData`), without lexing, parsing or running the
 prelude. -/
 def prepareSource (lim : Page.Limits := {}) : Except String Session := do
-  let heap := { freshRealm lim with steps := runBudget }
+  let heap := { freshRealm lim with steps := runBudget.toUInt64 }
   let (nobj, heap) := JS.hostObject heap natives
   let ((o, f), heap) := JS.evalValue heap prelude
   if let some m := failure o then throw s!"prelude: {m}"
@@ -400,7 +400,7 @@ def prepareWith (data : String) (lim : Page.Limits := {}) : Except String Sessio
   match extra with
   | #[api, .str mark] =>
     if mark != preludeMark then throw "snapshot: made from another prelude"
-    return { heap := { heap with steps := runBudget, jobs := #[], jobHead := 0 }, api, limits := lim }
+    return { heap := { heap with steps := runBudget.toUInt64, jobs := #[], jobHead := 0 }, api, limits := lim }
   | _ => throw "snapshot: no prelude object"
 
 /-- The deepest nesting of JavaScript calls (`Heap.maxDepth`; deeper is a `RangeError`, as in
@@ -426,7 +426,7 @@ def start (base : Session) (dom : Arena) (url : String) (scripts : Array (Nat ×
     let d1 := Hosts.Dom.connectFrames domHost #[0]
     { d1 with navigations := d1.navigations.filter (!·.2.isEmpty) } else domHost
   let s := { base with
-    heap := { base.heap with maxDepth := callDepth },
+    heap := { base.heap with maxDepth := callDepth.toUInt32 },
     limits := lim, steps := 0, jobs := 0, tasks := 0, errors := #[], lastFrame := none }
   let mut s := s.setHost { dom := domHost, reads, time, web := { entropy := lim.entropy, docEncoding := lim.encoding } }
   s := (s.api? "start" #[]).1

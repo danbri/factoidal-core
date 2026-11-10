@@ -19,6 +19,7 @@ the same (`"aot":"same"`) or which differ.
 -/
 import L4Factoidal.WasmVM.Hosts.Page
 import L4Factoidal.WasmVM.Hosts.LeanJS
+import L4Factoidal.WasmVM.Hosts.LeanJSRealm
 import L4Factoidal.WasmVM.Tests.AotPage
 import L4Factoidal.DOM.OfHtml
 import L4Factoidal.DOM.OfXml

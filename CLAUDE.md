@@ -1005,6 +1005,42 @@ JS."; "VerifiedJS: implement now, I will talk to them, we can always back out.";
   doesn't come with the inability for a node to occlude another". Cost of the
   earlier choice: on 2026-11-06 a refused drag was fixed by removing the check.
 
+### Foafnaut: what it is, its measure, BubblePopJS and Textnaut (owner, 2026-11-09)
+
+Owner, 2026-11-09, verbatim: "created a brand new browser, with builds including native OSX,
+and a wasm web-based version exposed in Factoidal hub. It is called FOAFNaut"; "our own new JS
+engine called BubblePopJS"; "Also a text terminal frontend, Textnaut. The goal is to be
+competitive as a real browser, measured against the official Web Platform Tests, and to be
+efficient, performant, fast, private, accessible, international, and secure."
+
+- The measure of the browser is the Web Platform Tests. The seven qualities have equal standing.
+- The whole statement, and where each part is in the tree: `skills/foafnaut/SKILL.md`, "What
+  Foafnaut is".
+- Speed work is measured: by operation against QuickJS-NG and V8 with no JIT for BubblePopJS,
+  by phase for the engine. A cloud session with no Mac can do both. First record:
+  `docs/designissues/2026-11-09-foafnaut-perf-exploration.md`.
+
+Owner, 2026-11-09, verbatim, the goal for BubblePopJS: "concrete plan to take BubblePopJS into
+the big league of SOTA engines, blazing fast with and without JIT. Efficient and light profiles
+for lower end hardware. Modern and freshly thought through design aesthetic. Fast, compliant, and
+taking every advantage from being Lean-based, with theorems typing the codebase together and
+underwriting daring heuristics, optimisations, and shortcuts." And: "Remember to test on commin
+real world js and wasm, including the patterns we'll increasingly see downstream from verified
+languages like Lean and Rocq."
+
+- The plan, with its key results and the decisions it asks for:
+  `docs/designissues/2026-11-09-bubblepopjs-plan.md`; tracking issue
+  https://github.com/danbri/factoidal-core/issues/378 (BubblePopJS plan and proposed key
+  results). It is a proposal until the owner approves its key results as an OKR batch.
+- A BubblePopJS speed or compliance claim is measured on real-world code
+  (`labs/demos/foafnaut/bubblepop_perf/realworld.py`, which includes output of verified-language
+  toolchains) before single operations.
+- Relayed by the owner the same day from the session that wrote stages A and B (`wip/bpperf`,
+  `wip/bpperf-vm`): "That session stops after landing A and B, so everything from "compile
+  functions with captured variables" onward is yours" (the cloud session of the plan).
+- Owner, 2026-11-09, verbatim: "To avoid clashing with daily work, commit only in branches for
+  tonight." This was for that night; "Work goes on main" above is the standing rule.
+
 ### One owner per release (owner, 2026-10-28)
 
 Owner, 2026-10-28, verbatim: "Ok you are release manager for 0.20.0" and

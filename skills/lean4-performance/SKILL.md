@@ -1291,6 +1291,95 @@ of the thread, with no patched runtime. `LEAN_STACK_SIZE_KB` sets the stack of
 `main`, and the smallest value that passes is a measure of the stack depth: the
 floor on macOS is about 16 KB. `ulimit -s` has no effect.
 
+## Integers through GMP: `Float.ofNat`, `Int` above 2^31, literals above 2^32 (paid for 2026-11-09)
+
+Record, method and every number:
+[`docs/designissues/2026-11-09-foafnaut-perf-exploration.md`](../../docs/designissues/2026-11-09-foafnaut-perf-exploration.md).
+Measured on Linux x86_64, Lean 4.33.1, `leanc -O3`. Three costs with one cause: a number that
+fits a machine word goes through the big number runtime.
+
+- **`Float.ofNat n`, `Float.ofInt i` and `Nat.toFloat n` cost 52 to 55 ns a call; the machine
+  conversion costs 10.** In Lean 4.33.1 `Float.ofNat n` is `Float.ofScientific n false 0`
+  (`Init/Data/OfScientific.lean`), whose first test is `m < 2 ^ 53`. The compiler writes a `Nat`
+  literal of 2^32 or more as `lean_cstr_to_nat("9007199254740992")`: a GMP number made from
+  decimal text at every evaluation (a `malloc`, a parse, a `free`). The call is inside Lean
+  core, so no source of ours shows it. Found by `valgrind --tool=callgrind`: `__gmpz_set_str`
+  under `lean_float_of_nat`. The font load and first compile of the Foafnaut status page made
+  359,009 such calls (glyph coordinates and advances), 10% of all its instructions; one
+  JavaScript `a[i]` made one (the bounds test `x < Float.ofNat es.size`).
+  Repair: `L4Factoidal.Prim.FloatOfNat` has `natToFloat`, `intToFloat` and
+  `ofScientificFast`. The core functions are the specification; the twins are proved equal to
+  them for every argument (the proof unfolds both sides; it needs no fact about `Float`
+  arithmetic); `@[csimp]` theorems put the twins in the compiled code, and the compiler is
+  trusted. A module whose hot path converts integers or has `Float` literals imports that
+  module, with a comment that says why.
+  What a `csimp` theorem does not reach: a body that comes from Lean core already compiled.
+  With theorems for `Float.ofNat` and `Float.ofInt` only, `JS/Interp.c` kept 29 core
+  conversions: `n.toFloat` (`Nat.toFloat` is a core `abbrev`) and `Float` literals with no
+  decimal point (`k < 0`, `.num (-1)`: the core `OfNat` instance). So `Nat.toFloat`,
+  `Float.ofScientific` and the instances `instOfNatFloat` and `instOfScientificFloat` have
+  theorems of their own (six in all); then `Interp.c` has none. A twin is defined BEFORE the
+  theorem for its core function: its slow branch names the core function, and a definition
+  after the theorem would call itself. `python3 tools/lean-literal-parse-audit.py
+  --conversions` and `--float-literals` list what a build still converts through core. Do not
+  write that a module "has no slow conversion" from its import list; run them on its C.
+- **A Lean `Int` is a machine scalar only from -2^31 to 2^31 - 1** (a `Nat` up to 2^63 - 1).
+  `i % 4294967296` on an `Int` is a GMP remainder (`lean_int_big_emod`) for every `i`, because
+  the modulus is a GMP number. JavaScript `ToInt32` written on `Int` cost 45 ns; on
+  `Float.toInt64` and `Int64.toInt32` it costs 2 ns. Keep the `Int` definition as the
+  specification and prove the machine form equal: `Int64.toInt_toInt32` gives `bmod (2 ^ 32)`,
+  and `Int.bmod` unfolds to the `if m ≥ 2147483648 then m - 4294967296 else m` of the
+  specification (`JS/Number.lean`, `toInt32_eq_fast`, `toUint32_eq_fast`, each a `csimp`).
+- **A literal of 2^32 or more that stays in a function body is read from text at each call
+  (about 40 ns).** This skill already says so for `Nat`. Two additions. A `Float` literal is one
+  too when its digits make such a number: `4294967295.0` is the mantissa 42949672950, and
+  `9007199254740992.0` is 90071992547409920. And the compiler moves a closed term into
+  start-up code in some functions and not in others: in the same module `truncInt` got its
+  `9007199254740992.0` once, and the small functions `toInt32Fast` and `floatOfNat` got it at
+  every call. Do not predict it; read the generated C. `python3 tools/lean-literal-parse-audit.py`
+  prints every site that is not in start-up code. Repair for a hot site: a definition with no
+  argument and `@[noinline]` (`twoPow53F`, `tenPow21`, `posZero` in `JS/Number.lean`), or a test
+  against a bound below 2^32 first (`floatOfNatFast`, `natToFloat`).
+  Upstream: https://github.com/leanprover/lean4/issues/16007 (and its pull request 16015; both
+  are in `docs/designissues/2026-11-09-lean-upstream-wasm32.md`). When the toolchain has the
+  repair, run `python3 tools/test_lean_literal_parse_audit.py` (its compiler control fails when
+  the compiler stops writing these literals as text), measure again and remove what no longer
+  pays.
+- **Any `Float` literal in a body is a `Float.ofScientific` call**, with that same internal
+  test, so `0.0` in a branch that runs often costs the parse too (`jsMod` returned `-0.0` or
+  `0.0` this way). `--callgrind` of `labs/demos/foafnaut/bubblepop_perf/opcost.py` prints the
+  calls into the big number runtime for each operation; the answer for a hot path is none.
+- **A `Float` literal with an exponent above 22, or with a mantissa of 2^53 or more, takes the
+  slow case of `Float.ofScientific`: big number arithmetic at each evaluation.** `1e300` and
+  `-1e300` as the start values of a `min` and `max` fold in `WebPaint.cullCurve` were 85% of a
+  frame until commit `57fe3531d` (2026-11-09, another session); `x.abs ≤ 9007199254740991.0`
+  in `Number.isSafeInteger` costs 16,800 instructions a call. `lean_cstr_to_nat` does not
+  appear for `1e300` (mantissa 1, exponent 300), so the default mode of the audit does not
+  list it: `python3 tools/lean-literal-parse-audit.py --float-literals` lists every
+  `Float.ofScientific` call outside start-up code, with `slow case` or `fast case`. For a
+  fold, start from the first element. For a bound, use a named constant.
+
+## A definition with no argument runs when the program starts (paid for 2026-11-09)
+
+This skill says above that top-level constants are evaluated when the module is initialised.
+The size it can reach: the native build of BubblePopKit (the Foafnaut engine) ran 1,109 M instructions (0.11 s, 60 MB)
+before `main`, and 740 M of them were one constant, `LeanJS.snapshotData`, which runs the
+page prelude of BubblePopJS and encodes the realm. Only the build tool `bubblepop-realm` reads
+it; every start of the engine, native and on the Hub, computed it and dropped it. The branch
+`wip/bootstack` makes it `snapshotData (_ : Unit)` (found there first, for the Hub; not on
+`main` at `489d5cd3a`, 2026-11-09). With that one change the same native start is 369 M
+instructions (0.03 s, 44 MB), measured on `036198f2`. The rest of that start is tables (IDNA
+60 M, the XPath function signatures 74 M, an ixml grammar 35 M, Unicode normalisation 55 M,
+the scene shader text about 190 M).
+
+- To see it: `valgrind --tool=callgrind PROGRAM` with arguments that make it stop at once,
+  then the inclusive cost of the functions named `_init_...` and `initialize_...`.
+- A value that only a tool or a test needs is a function (`def x (_ : Unit) : T`), or lives in
+  a module that the product does not link.
+- A table that the product needs on some paths only: a `Thunk` in the constant
+  (`def t : Thunk T := Thunk.mk fun _ => build`), read with `t.get` inside the functions that
+  use it. `def table : T := t.get` would run it at the start again.
+
 ## Verification and measurement
 
 After a semantic hot-path change, run the closest Lean guards and targeted

@@ -59,3 +59,53 @@ script has run 1,320 to 753. Returning visits: 376 and 387.
 - Local Mac builds go one at a time through a queue, and timings there are taken under load.
 - Records of per-area measurements are in this directory, and `skills/foafnaut/SKILL.md` and `2026-11-09-foafnaut-handoff.md`
   describe the browser as a whole.
+
+## Added 2026-11-09, 23:59 UTC, by a Linux cloud session
+
+Branch `claude/foafnaut-perf-bottlenecks-7hpt38`. Records:
+[2026-11-09-foafnaut-perf-exploration.md](2026-11-09-foafnaut-perf-exploration.md) (measurements) and
+[2026-11-09-bubblepopjs-plan.md](2026-11-09-bubblepopjs-plan.md) (the plan from "compile functions with captured
+variables" onward). Stage A (`e8d2a3e6e`) and stage B (`167605f4c`) were built on Linux x86_64 and measured by operation
+(61 operations, CPU time and instruction counts) and on six real-world libraries, against QuickJS-NG and V8.
+
+For the sessions that own those branches:
+
+- On stage B `s += x` is quadratic (400,000 appends: 0.13 s on stage A, 1.86 s on stage B). `vmLoop`'s `.add` reads the
+  string from its register and appends while the register still holds it, so the append copies. The evaluator lets the
+  slot go first (`dropSlotStr`); the machine has no counterpart.
+- Conversions to `Float` and `ToInt32`, `ToUint32` went through the big number runtime on every tree. The cloud branch
+  has fast versions proved equal to the specifications (`L4Factoidal/Prim/FloatOfNat.lean`, `JS/Number.lean`,
+  `JS/Lexer.lean`). They touch no file that stage A or B changes. With them stage B's `i | 1` goes from 394 to 92 ns,
+  `a[i & 7]` from 433 to 121 ns, and five library workloads take 4 to 26% less time.
+- `python3 tools/lean-literal-parse-audit.py` (also `--float-literals`, `--conversions`) lists what the generated C still
+  converts at each call. On stage B: the literal `4294967295.0` in `vmLoop` and in `evalExpr` (the indexed write), and
+  `9007199254740991.0` in `Number.isSafeInteger` (the slow case: 16,800 instructions a call).
+- Stage B compiles 72 to 89% of the functions of those libraries and is 5.5 to 43 times slower than QuickJS-NG on them.
+  43% of the run of a `js_of_ocaml` bundle is `Env.scan`: a variable of an enclosing scope found by its name.
+- Eight defects with one-line reproductions (two in the lexer: `/` after `)` and after `++`): section 7.3 of the plan.
+- Run BubblePopJS on unknown code under a memory limit: `new Array(4294967295)` takes all memory of the process.
+
+## Added 2026-11-10, 06:00 UTC, by the same Linux cloud session
+
+The branch `claude/foafnaut-perf-bottlenecks-7hpt38` now has `main` at `0fee0a14f` and stage B at `167605f4c` merged
+(`d99abc842`), and five repairs on them. Details and measurements: section 6.6 of
+[2026-11-09-foafnaut-perf-exploration.md](2026-11-09-foafnaut-perf-exploration.md). Each repair is one commit and can
+be taken alone:
+
+- `16577fc02`: the parser chooses between a division and a regular expression literal (`JS/Lexer.lean`,
+  `JS/Parser.lean`). `if (s) /x/.test(s)`, `k++ / 2` and `o.default / 2` parse.
+- `ff0ebeeef`: a function declaration has no private scope for its name (`JS/Interp.lean` `makeClosure`,
+  `JS/Resolve.lean` `rFun`). `function f() { f = ... }` threw before; Babel's helpers do this.
+- `5d6d0d10e`: `encodeURI`, `decodeURI`.
+- `0861f4b91`: an index for a function environment with more than 24 names (`FunInfo.index`), and no linear scan of
+  the `var` names in the parser. A `js_of_ocaml` bundle: run 8,031 to 3,401 ms, load 2,195 to 1,058 ms.
+- `195096766`: the statement `s += v` on a local variable of compiled code appends in place; three large `Float`
+  literals are named constants.
+
+State: Test262 (6,301 files of `test/language`) 5,633 pass, 664 fail, 4 skip (stage B: 5,629 pass); the six library
+workloads of `realworld.py` all give the reference answer; the four Lean gates exit 0; `lake build leanjs L4Factoidal.JS`
+passes with `JS/RegressionTests.lean` (91 scripts). Not done on this tree: a native engine build and `test.sh`.
+
+Open, in the order of measured cost: typed array element access through a string key (pako is about 31 times
+QuickJS-NG); `s += v` on a global in a compiled top-level loop (still copies); allocation (16 to 26% of each profile);
+defects 3 to 7 of the plan's section 7.3.
