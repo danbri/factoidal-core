@@ -9,6 +9,7 @@ import L4Factoidal.JS.Str
 import L4Factoidal.JS.Date
 import L4Factoidal.JS.Theorems
 import L4Factoidal.JS.Tests
+import L4Factoidal.JS.RegressionTests
 
 /-! A JavaScript engine written in Lean: parser, evaluator, built-ins.
 Record: `docs/designissues/2026-11-08-lean-js-engine.md`. -/
