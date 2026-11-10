@@ -146,7 +146,21 @@ function parseArgs(args: string[]) {
   return out;
 }
 const isURL = (input: string) => /^[a-zA-Z][a-zA-Z0-9+.-]+:/.test(input);
-const toURL = (input: string) => isURL(input) ? inputURL(input) : inputURL(input, true);
+/** The built-in start page, shown when no page is given. */
+export const START_PAGE = new URL("./start.html", import.meta.url).href;
+const exists = (path: string) => { try { Deno.statSync(path); return true; } catch { return false; } };
+/**
+ * The URL for a command-line argument. A URL is taken as it is; a local file wins; a bare host name
+ * with no such file (info.cern.ch, example.org/path) becomes https://, with a note that says so.
+ */
+export function resolveInput(input: string, isFile: (path: string) => boolean = exists): { url: string; note?: string } {
+  if (isURL(input)) return { url: inputURL(input) };
+  if (!isFile(input) && /^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+(:\d+)?(\/\S*)?$/.test(input)) {
+    const url = inputURL(`https://${input}`);
+    return { url, note: `textnaut: no file named ${input}; opening ${url}` };
+  }
+  return { url: inputURL(input, true) };
+}
 const reason = (error: unknown) => sanitizeText(String(error instanceof Error ? error.message : error).replace(/^(Error: )?Lean HTML: /, ""));
 
 // ---------------------------------------------------------------- interactive viewer
@@ -399,7 +413,7 @@ async function viewer(run: Engine, first: Rendered, firstURL: string, options: O
   } finally { restore(); }
 }
 
-const USAGE = "usage: textnaut.ts [--width COLS] [--dump] [--wasm | --engine FILE] [--font FILE] [--colour none|16|256|24bit] [--big-headings=auto|on|off] [--strict] [--no-scripts] [--timing] [--verbose] URL_OR_FILE";
+const USAGE = "usage: textnaut.ts [--width COLS] [--dump] [--wasm | --engine FILE] [--font FILE] [--colour none|16|256|24bit] [--big-headings=auto|on|off] [--strict] [--no-scripts] [--timing] [--verbose] [URL_OR_FILE]";
 
 export async function main(args: string[]): Promise<number> {
   const saver = args.indexOf("--screensaver");
@@ -417,14 +431,18 @@ export async function main(args: string[]): Promise<number> {
   const started = performance.now();
   let parsed: ReturnType<typeof parseArgs>;
   try { parsed = parseArgs(args); } catch (error) { console.error(`${reason(error)}\n${USAGE}`); return 2; }
-  if (!parsed.input) { console.error(USAGE); return 2; }
   const tty = Deno.stdout.isTerminal() && Deno.stdin.isTerminal() && (Deno.env.get("TERM") ?? "dumb") !== "dumb";
   const dump = parsed.dump || !tty;
   const size = !dump || (Deno.stdout.isTerminal() && !parsed.width) ? Deno.consoleSize() : { columns: 80, rows: 24 };
   const options: Options = { cols: parsed.width || size.columns, rows: dump ? size.rows : Math.max(1, size.rows - 2), scripts: parsed.scripts, liberal: !parsed.strict, verbose: parsed.verbose };
   let url = "";
   try {
-    url = toURL(parsed.input);
+    if (parsed.input === undefined) url = START_PAGE;
+    else {
+      const resolved = resolveInput(parsed.input);
+      if (resolved.note) console.error(sanitizeText(resolved.note));
+      url = resolved.url;
+    }
     const run = await startEngine(parsed.wasm, parsed.engine);
     if (parsed.font) await loadFontFile(run.engine, parsed.font, "font");
     const scripts = enableScripts(run.engine, options);
@@ -438,7 +456,7 @@ export async function main(args: string[]): Promise<number> {
     await viewer(run, rendered, rendered.doc.url, options, parsed.colour, parsed.big);
     return 0;
   } catch (error) {
-    console.error(`textnaut: page refused: ${sanitizeText(url || parsed.input)}: ${reason(error)}`);
+    console.error(`textnaut: page refused: ${sanitizeText(url || parsed.input || "")}: ${reason(error)}`);
     return 1;
   }
 }

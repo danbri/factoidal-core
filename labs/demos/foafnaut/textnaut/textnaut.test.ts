@@ -579,3 +579,14 @@ Deno.test("text with no colour of its own on a background gets a colour with con
   const out = styledRow([cell as never], { level: 3, osc8: false, targets: [], width: 1 } as never);
   if (!/38;2;0;0;0/.test(out)) throw new Error("no dark text on a light background: " + JSON.stringify(out));
 });
+
+Deno.test("input: a URL as it is, a file wins, a bare host name becomes https with a note", async () => {
+  const { resolveInput, START_PAGE } = await import("./textnaut.ts");
+  assert(resolveInput("https://info.cern.ch/").url === "https://info.cern.ch/" && !resolveInput("https://info.cern.ch/").note);
+  const bare = resolveInput("info.cern.ch", () => false);
+  assert(bare.url === "https://info.cern.ch/" && /no file named info\.cern\.ch/.test(bare.note ?? ""));
+  assert(resolveInput("example.org/a/b", () => false).url === "https://example.org/a/b");
+  assert(resolveInput("info.cern.ch", () => true).url.startsWith("file:"));
+  assert(resolveInput("notes", () => false).url.startsWith("file:"));
+  assert(START_PAGE.startsWith("file:") && START_PAGE.endsWith("/start.html"));
+});

@@ -25,7 +25,7 @@ test('app/ holds exactly what textnaut.ts imports, plus the import map and its t
   const info = JSON.parse(execFileSync('deno', ['info', '--json', `--import-map=${join(source, 'textnaut', 'import_map.json')}`, join(source, 'textnaut', 'textnaut.ts')], { encoding: 'utf8' }));
   const imported = info.modules.map((m) => m.specifier).filter((s) => s.startsWith('file://')).map((s) => relative(source, new URL(s).pathname)).sort();
   assert(imported.length >= 10, imported.join());
-  const wanted = [...imported, 'textnaut/import_map.json'].sort();
+  const wanted = [...imported, 'textnaut/import_map.json', 'textnaut/start.html'].sort();
   assert.deepEqual(appFiles(), wanted);
   for (const f of wanted) assert(existsSync(join(root, 'app', f)), f);
 });
