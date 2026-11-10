@@ -17,16 +17,28 @@ name the engine that ran.
     deno run ... textnaut/textnaut.ts --wasm --timing --dump pages/showcase.html
 
 Options: `--width COLS` (`--dump`), `--dump`, `--wasm`, `--engine FILE`, `--font FILE`,
-`--colour none|16|256|24bit`, `--big-headings=auto|on|off`, `--strict`, `--no-scripts`, `--timing`, `--verbose`.
+`--colour none|16|256|24bit`, `--big-headings=auto|on|off`, `--strict`, `--no-scripts`, `--timing`, `--verbose`, `--screensaver [NAME]` (see Screensavers).
 
 Output is plain text when standard input or output is not a terminal, or when `TERM` is unset or
 `dumb`. A page that the engine refuses gives the reason on standard error and exit code 1.
 
 ## Keys
 
-Arrows, `j`, `k`, Page Up, Page Down, space, Home, End scroll. A number, then Enter, follows that
-link; Tab and Shift-Tab select a link, Enter or Right follows it. `b` or Left goes back. `q` or
-Ctrl-C quits.
+Arrows, `j`, `k`, Page Up, Page Down, space, Home, End scroll. `[n]` is a link number: type the
+number shown beside a link, then Enter, to follow it. Tab and Shift-Tab select a link, Enter or
+Right follows it. `b` or Left goes back. `?` or `h` opens the help screen (below). `q` or Ctrl-C
+quits. The bottom line shows `? help | [n] Enter follow | Tab next | b back | q quit`.
+
+### Help screen
+
+`?` or `h` opens a full-screen help: all the keys, the options, and the list of screensavers.
+Up and Down (or `j`, `k`, Tab, Shift-Tab) move the selection; a number then Enter, or Enter on
+the selection, starts that screensaver. Page Up, Page Down and Space scroll the help. `q`, `?`,
+`h`, `b` or Left close it. Ctrl-C quits. Opening help does not touch the page: its scroll
+position, selected link and typed number are as they were when you close it. A screensaver
+started from help returns to help when you quit it (`q` or another key); Ctrl-C quits the
+program. Help redraws on resize. The header shows the page title through the same sanitiser as
+the page header.
 
 ## What the display does
 
@@ -125,8 +137,78 @@ Run from `labs/demos/foafnaut`. No network.
     python3 textnaut/pty_check.py pages/showcase.html
 
 `pty_check.py` drives the program on a pseudo-terminal at each colour level: frame size, a burst
-of resizes, signals, follow and back. Its exit code is the number of failed checks.
+of resizes, signals, follow and back; every screensaver on its own (frame, keys, resize, exits,
+frame cap); and the help screen (open, page position kept, start a saver and return, a number and
+Enter, resize, Ctrl-C and signals inside a saver). Its exit code is the number of failed checks.
+The `--wasm` checks are skipped when no Wasm runtime is found.
+
+`textnaut.test.ts` also covers every saver at several sizes (1x1 to 200x60), at all four colour
+levels with and without UTF-8 (frame size, colour kinds, ASCII only without UTF-8), seeded
+determinism, resize, changed-row output, the key handling, the help view and its keys, the
+sanitised page title in help, the 4D rotation, and the sponge cell counts.
 
 ## Screensavers
 
-`textnaut --screensaver [plasma|tunnel|fire|rain|stars]` (a random one with no name). `n` changes effect; any other key quits. No engine and no page. 24-bit colour when `COLORTERM` says so, else 256 colours.
+`textnaut --screensaver [NAME]` (a random one with no name). No engine and no page. `--frames N`
+stops after N frames (for tests and pipes); `--colour none|16|256|24bit` sets the colour level.
+The browser's help screen starts any of them too, and returns to help afterwards.
+
+Keys inside a screensaver:
+
+- Tab, Space or `n`: the next one. `b` (or Shift-Tab): the one before; the history is kept, so
+  `b` walks back through every one you have seen. `b` with nothing before it does nothing.
+- `q` or Ctrl-C: quit. Any other key (arrows, Enter, letters) also quits.
+- Each saver shows a one-line caption on the bottom row for four seconds: its name, what it is,
+  and these keys.
+
+The savers:
+
+| name | what you see |
+| --- | --- |
+| `plasma` | sine plasma in rainbow colour |
+| `tunnel` | a chequered tunnel, flying down it |
+| `fire` | flames rising from the bottom edge |
+| `rain` | falling glyphs in rainbow columns |
+| `stars` | stars flying towards you |
+| `life` | Conway's Game of Life on a torus: young cells white, older cells shift hue, the dead leave a glow; it reseeds when it settles |
+| `snakes` | snakes hunting dots on a wrapping board, growing as they eat, leaving colour trails |
+| `sponge` | a rotating 3D Menger sponge, ray-cast through a voxel grid and lit (level 2, level 3 on tall terminals) |
+| `sponge4d` | a 4D Menger sponge turning in the XW and YW planes (see below) |
+| `lissajous` | three Lissajous curves drawn with a phosphor glow that fades |
+| `metaballs` | blobs that merge and part as their fields add |
+| `torus` | a spinning shaded torus with a specular highlight |
+| `waves` | ripples from raindrops, spreading and reflecting from the edges |
+| `maze` | a maze carved depth-first, then flooded in colour from the corner and solved |
+| `cyclic` | a cyclic cellular automaton: 14 states chase each other into nested bands |
+
+There are also a few hidden ones, which are not listed here, in help or in the normal rotation.
+
+### The 4D sponge
+
+The 4D Menger sponge keeps 48 of the 81 sub-hypercubes at each step (the 3D one keeps 20 of 27),
+shown at level 2 (2304 hypercubes). It turns in the XW and YW planes, so parts of it pass
+through the fourth dimension. The picture is made in two steps. The eye is at a point in 4D; each
+voxel of a 3D "retina" cube looks along a 4D ray (with 4D perspective: things nearer the eye in W
+are larger) through a slab of W and takes the first hypercube it meets. That 3D shape is then
+ray-cast, lit and drawn like the 3D sponge. Colour is W depth: red nearest the eye in W, through
+yellow and green, to blue farthest. Parts of the sponge appear, vanish and change colour as the
+rotation carries them into and out of the slab; this is a view through a slab, not a full 4D
+projection of every hypercube, and it shows the sponge's outer surface only. The rotation code
+(`rotate4`) is checked in the tests to keep distance from the centre.
+
+### How they are drawn
+
+Each saver fills a pixel surface (two pixels per cell: an upper and a lower half block, so 80x24
+is 80x48 pixels) and sometimes a glyph layer. A presenter turns it into bytes and writes only the
+rows that changed, in one synchronized-output block. Frames are capped at 30 a second and at
+about 6 MB a second of output (a full 24-bit redraw of a 200x60 terminal runs at about 20 a
+second); the loop waits on input with a timeout, so it never spins. Resize is read every frame; the surface and the saver's state are
+rebuilt for the new size.
+
+Colour: 24-bit when `COLORTERM` says so, 256 colours for a `256color` `TERM`, 16 colours for
+another `TERM`, none with `NO_COLOR` or no `TERM`. With no colour a saver is drawn as characters
+from a brightness ramp. Without a UTF-8 locale there are no half blocks: a cell is a space with
+a background colour (one colour per cell, half the vertical detail) and glyphs are ASCII.
+
+The terminal is restored (alternate screen, cursor, wrap, raw mode) on `q`, Ctrl-C, end of
+input, SIGINT, SIGTERM, SIGHUP, SIGQUIT and an uncaught error. Savers show no text from any page.
