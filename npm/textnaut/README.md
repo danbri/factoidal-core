@@ -2,7 +2,7 @@
 
 > ⚠️ **EXPERIMENTAL UNDER-REVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.**
 
-A web browser for the terminal, on the Foafnaut engine. Needs [Deno](https://deno.com) 2 or later and Node 18 or later.
+A web browser for the terminal, on the Foafnaut engine. Needs Node 18 or later. Deno comes with it, or uses yours.
 
     npx -y @foafos/textnaut https://info.cern.ch/
 
