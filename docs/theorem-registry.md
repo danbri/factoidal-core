@@ -3718,5 +3718,15 @@ The module is imported by the default `WasmVM` build root. All seven axiom
 reports contain only `propext`, `Classical.choice` and `Quot.sound`.
 
 Worklog: [SIMD bitwise theorems](20261110-foafnaut-simd-bitwise.md).
+
+## BubblePopJS byte-array refinement (2026-11-10)
+
+| Theorem | Module | Statement |
+|---|---|---|
+| `typedRead_eq_byteFast` | `JS/Interp.lean` | Direct unsigned byte reads equal `typedRead` for all type tags, buffers and offsets. |
+| `typedBytes_eq_byteFast` | `JS/Interp.lean` | Direct byte-sized writes equal `typedBytes` for all type tags and Floats. |
+
+Both are unconditional compiler replacements, with reference fallbacks for other
+types. [Measurements and limits](designissues/2026-11-10-js-byte-array-fast-path.md).
 Tracking: https://github.com/danbri/factoidal-core/issues/388
 (small theorem contributions).
