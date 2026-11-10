@@ -3263,7 +3263,7 @@ def genEnter : Nat → Ctx → List String → Stmt → List GFrame → M GOut
       | .error e => genUnwind n rest (.throw e)
       | .ok v => pure (.yielded v (.resume ctx (some (.id "%ret", .declare ctx.env true)) ::
           .block ctx [.ret (some (.ident "%ret"))] :: rest))
-    | .block ss =>
+    | .block ss | .blockF ss =>
       let ctx' ← enterBlock n ctx ss
       genRun n (.block ctx' ss :: rest) (.send .undef)
     | .ifS c t e =>

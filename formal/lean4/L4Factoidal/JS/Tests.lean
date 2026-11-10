@@ -173,6 +173,9 @@ def propMapAgrees (seq : List (Bool × String × Nat)) : Bool :=
 
 
 /-! ## `await` and `yield` in conditions, loop tests and expressions -/
+
+-- A block of its own with a `const` before the `await` (the resolver makes it `.blockF`).
+#guard out "async function f() { if (1) { const t = 1; let p = await Promise.resolve(9); return p + t } } f().then(print)" == ["10"]
 #guard out "async function f(x){ let t = 0; while (await x(t)) t++; return t } f(i => Promise.resolve(i < 3)).then(print)" == ["3"]
 #guard out "async function f(){ let n = 0, i = 0; do { n += i; i++ } while (await Promise.resolve(i < 4)); return n } f().then(print)" == ["6"]
 #guard out "async function f(){ let s = 0; for (let i = 0; await Promise.resolve(i < 3); i = await Promise.resolve(i + 1)) { if (i == 1) continue; s += i } return s } f().then(print)" == ["2"]
