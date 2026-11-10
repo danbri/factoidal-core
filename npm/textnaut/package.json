@@ -19,7 +19,6 @@
     "LICENSE",
     "NOTICE"
   ],
-  "dependencies": { "deno": "2.9.6" },
   "engines": { "node": ">=18" },
   "scripts": {
     "prepack": "node scripts/sync.mjs",

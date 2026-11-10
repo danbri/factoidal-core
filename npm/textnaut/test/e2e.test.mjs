@@ -17,8 +17,9 @@ const skip = !hasDeno ? 'no deno' : process.env.TEXTNAUT_NO_NETWORK ? 'TEXTNAUT_
 test('packed tarball, installed elsewhere, dumps a page on the fetched Wasm engine', { skip, timeout: 300000 }, () => {
   const work = mkdtempSync(join(tmpdir(), 'textnaut-e2e-'));
   process.on('exit', () => rmSync(work, { recursive: true, force: true }));
-  // Only Node on the PATH: the run must use the Deno that the package brings.
+  // Only Node and npm on the PATH: the run must fetch Deno once.
   const onlyNode = join(work, 'only-node'); mkdirSync(onlyNode); symlinkSync(process.execPath, join(onlyNode, 'node'));
+  symlinkSync(execFileSync('/bin/sh', ['-c', 'command -v npm'], { encoding: 'utf8' }).trim(), join(onlyNode, 'npm'));
   const packed = JSON.parse(execFileSync('npm', ['pack', '--json', '--pack-destination', work], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }));
   const tarball = join(work, packed[0].filename);
   console.log(`tarball ${packed[0].filename}: ${statSync(tarball).size} bytes packed, ${packed[0].unpackedSize} unpacked, ${packed[0].files.length} files`);
@@ -30,13 +31,14 @@ test('packed tarball, installed elsewhere, dumps a page on the fetched Wasm engi
 
   const first = spawnSync(bin, ['--dump', '--width', '70', page], { encoding: 'utf8', env, cwd: work, timeout: 240000 });
   assert.equal(first.status, 0, first.stderr);
+  assert(/fetching Deno 2\.9\.6 from npm, once/.test(first.stderr), first.stderr);
   assert(/fetching the Wasm engine, once: 8\.1 MB/.test(first.stderr), first.stderr);
   assert(/engine wasm/.test(first.stderr), first.stderr);
   assert(first.stdout.length > 200 && /\[\d+\]/.test(first.stdout), first.stdout.slice(0, 300));
   console.log(first.stderr.trim().split('\n').slice(-1)[0]);
 
   // The cache holds the two runtime files only.
-  const cached = readdirSync(join(work, 'cache'))[0];
+  const cached = readdirSync(join(work, 'cache')).find((name) => name.startsWith('engine-'));
   assert.deepEqual(readdirSync(join(work, 'cache', cached)).sort(), ['PIN.json', 'web-render.mjs', 'web-render.wasm']);
 
   // The second run uses the cache and gives the same text.
@@ -46,7 +48,7 @@ test('packed tarball, installed elsewhere, dumps a page on the fetched Wasm engi
   assert.equal(second.stdout, first.stdout);
 
   // A screensaver needs no engine: with an empty cache directory nothing is fetched.
-  const saver = spawnSync(bin, ['--screensaver', 'life', '--frames', '2'], { encoding: 'utf8', env: { ...env, TEXTNAUT_CACHE: join(work, 'empty') }, cwd: work, timeout: 60000 });
+  const saver = spawnSync(bin, ['--screensaver', 'life', '--frames', '2'], { encoding: 'utf8', env: { ...env, TEXTNAUT_CACHE: join(work, 'empty'), DENO: join(work, 'cache', 'deno-2.9.6', 'node_modules', 'deno', 'deno') }, cwd: work, timeout: 60000 });
   assert.equal(saver.status, 0, saver.stderr);
   assert(!/fetching/.test(saver.stderr) && saver.stdout.includes('\x1b['));
   assert.throws(() => readdirSync(join(work, 'empty')));

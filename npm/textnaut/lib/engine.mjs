@@ -18,6 +18,12 @@ export function cacheDir(env = process.env, home = homedir()) {
   return join(base, `engine-${pin.commit.slice(0, 12)}`);
 }
 
+/** Where a fetched Deno is kept, beside the engine cache. */
+export function denoDir(version, env = process.env, home = homedir()) {
+  const base = env.TEXTNAUT_CACHE || join(env.XDG_CACHE_HOME || join(home, '.cache'), 'textnaut');
+  return join(base, `deno-${version}`);
+}
+
 /** True when both runtime files are in `dir` with the pinned size and sha256. */
 export function cacheValid(dir) {
   return RUNTIME.every((f) => {

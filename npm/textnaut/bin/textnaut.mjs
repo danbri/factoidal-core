@@ -6,7 +6,9 @@ import { createRequire } from 'node:module';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chooseEngine, ensureEngine } from '../lib/engine.mjs';
+import { chooseEngine, denoDir, ensureEngine } from '../lib/engine.mjs';
+
+const DENO_VERSION = '2.9.6';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const MIN_DENO = [2, 0, 0];
@@ -24,7 +26,7 @@ Options: --width COLS (with --dump), --dump, --colour none|16|256|24bit, --big-h
 Engine, in order: --engine FILE or TEXTNAUT_NATIVE; TEXTNAUT_WASM_DIR; the library of an installed
 foafnaut (FOAFNAUT_HOME or ~/.foafnaut); else the pinned Wasm engine, downloaded once on first use
 into $TEXTNAUT_CACHE, $XDG_CACHE_HOME/textnaut or ~/.cache/textnaut.
-Uses your Deno if it is ${MIN_DENO.join('.')} or later; otherwise the Deno that comes with this package.`;
+Uses your Deno if it is ${MIN_DENO.join('.')} or later; otherwise fetches Deno once.`;
 
 if (args.includes('--help') || args.includes('-h')) { console.log(HELP); process.exit(0); }
 if (args.includes('--version')) { console.log(JSON.parse((await import('node:fs')).readFileSync(join(root, 'package.json'), 'utf8')).version); process.exit(0); }
@@ -35,20 +37,27 @@ function denoVersion(command) {
   const m = /deno (\d+)\.(\d+)\.(\d+)/.exec(run.stdout);
   return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
 }
-/** The Deno that came with this package (the deno npm package), or undefined on a platform it does not cover. */
-function bundledDeno() {
-  try { return createRequire(import.meta.url)("deno/install_api.cjs").runInstall(); } catch { return undefined; }
+/** A Deno fetched once from npm into the cache. Only used when there is no usable Deno. */
+function fetchedDeno() {
+  const dir = denoDir(DENO_VERSION), exe = join(dir, "node_modules", "deno", process.platform === "win32" ? "deno.exe" : "deno");
+  if (!existsSync(exe)) {
+    console.error(`textnaut: no Deno found; fetching Deno ${DENO_VERSION} from npm, once (about 96 MB, kept in ${dir}).`);
+    const run = spawnSync("npm", ["install", "--prefix", dir, "--no-audit", "--no-fund", "--loglevel=error", `deno@${DENO_VERSION}`],
+      { stdio: ["ignore", "ignore", "inherit"], shell: process.platform === "win32" });
+    if (run.status !== 0 || !existsSync(exe)) return undefined;
+  }
+  return exe;
 }
 const isNew = (v) => v && v[0] >= MIN_DENO[0];
-// $DENO if set; else a Deno on the PATH that is new enough; else the bundled one.
+// $DENO if set; else a Deno on the PATH that is new enough; else one fetched once.
 let deno = process.env.DENO || "deno", version = denoVersion(deno);
 if (!process.env.DENO && !isNew(version)) {
-  const bundled = bundledDeno();
-  if (bundled) { deno = bundled; version = denoVersion(deno); }
+  const fetched = fetchedDeno();
+  if (fetched) { deno = fetched; version = denoVersion(deno); }
 }
 const need = `Deno ${MIN_DENO.join(".")} or later`;
 if (!version) {
-  console.error(`textnaut: Deno was not found, and no bundled Deno exists for this platform. Textnaut runs on Deno (${need}).\n` +
+  console.error(`textnaut: Deno was not found, and it could not be fetched. Textnaut runs on Deno (${need}).\n` +
     `  Install it: curl -fsSL https://deno.land/install.sh | sh   (or: brew install deno)\n` +
     `  then run textnaut again. See https://docs.deno.com/runtime/getting_started/installation/`);
   process.exit(127);

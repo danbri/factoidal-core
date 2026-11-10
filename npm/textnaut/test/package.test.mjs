@@ -16,7 +16,7 @@ test('the bin is textnaut and nothing in @factoidal/core uses that name', () => 
   assert.deepEqual(Object.keys(mine.bin), ['textnaut']);
   assert(!(mine.name in { [core.name]: 1 }));
   for (const name of Object.keys(mine.bin)) assert(!(name in core.bin), `${name} is also a bin of ${core.name}`);
-  assert.deepEqual(Object.keys(mine.dependencies), ['deno'], 'Deno is the only runtime dependency');
+  assert.deepEqual(mine.dependencies ?? {}, {}, 'no runtime dependencies');
   assert.equal(mine.license, 'Apache-2.0');
 });
 
