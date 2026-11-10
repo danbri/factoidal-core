@@ -1041,6 +1041,25 @@ languages like Lean and Rocq."
 - Owner, 2026-11-09, verbatim: "To avoid clashing with daily work, commit only in branches for
   tonight." This was for that night; "Work goes on main" above is the standing rule.
 
+### Theorems from any contributor; a theorem is not a design rule (owner, 2026-11-10)
+
+Owner, verbatim: "a proof is a proof is a proof and once any model - however useless in general -
+blunders into a proof then it contributes to a web of independently verified observations that
+can constrain and inform engineering work." And: "We must be careful to avoid cases where poorly
+considered theorems might be misinterpreted by humans or fallible AI as requiring or forbidding
+particular engineering directions or UI/UX/feature design choices. This needs careful
+documentation. By analogy early developer reception around RDFS often assumed that missing data
+was evidence of invalid content, rather than embracing RDF's open world web ethos."
+
+- Theorem-only tasks for new contributors and tools, with setup pointers:
+  https://github.com/danbri/factoidal-core/issues/388 (theorem tasks for new contributors).
+- A missing theorem is not a defect and not a prohibition. A hypothesis is not a requirement
+  on web pages. An invariant describes today's code; it is not a design rule. No theorem
+  decides a feature, a default or the user interface. The reading rules, the five kinds of
+  theorem and the doc comment form ("Says:", "Does not say:") are in
+  `docs/designissues/2026-11-10-theorems-as-contributions.md`. Those rules are a session's
+  proposal: add each real misreading to that record's section 5 with its date and cost.
+
 ### One owner per release (owner, 2026-10-28)
 
 Owner, 2026-10-28, verbatim: "Ok you are release manager for 0.20.0" and

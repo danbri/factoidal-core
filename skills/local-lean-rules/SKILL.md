@@ -62,6 +62,11 @@ Never write "proved" or "verified" for code whose fast path has only been tested
 
 Every report names what was measured on the exact tree being pushed, and what came from an earlier build.
 
+Every new theorem's doc comment names its kind and has a "Says:" line and a "Does not say:"
+line: `docs/designissues/2026-11-10-theorems-as-contributions.md` (what a theorem here does not
+license: a missing theorem is not a defect, an invariant is not a design rule, no theorem decides
+a feature). Theorem-only starter tasks: https://github.com/danbri/factoidal-core/issues/388.
+
 ## 4. Fast paths
 
 Prefer a plain spec function and a fast implementation with a proved `csimp` equality. Where equality cannot be proved yet,
