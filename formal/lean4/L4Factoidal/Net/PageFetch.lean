@@ -189,6 +189,8 @@ structure Transfer where
   /-- Tainted: the request crossed origins on a redirect, so its origin is `null` (Fetch §4.4). -/
   crossed : Bool := false
   phase : Phase := .main
+  /-- Fetch mode "same-origin": a request that leaves the page's origin is refused. -/
+  sameOriginOnly : Bool := false
   deriving Inhabited
 
 /-- The header `name` of a field list (`none` when absent). -/
@@ -272,6 +274,7 @@ inductive Step where
 needed, or send the request. -/
 def plan (t : Transfer) : Step :=
   if !t.allowed then .fail "refused by policy"
+  else if t.sameOriginOnly && !t.same then .fail "refused by mode same-origin"
   else if !t.page.hostCors && !t.same && t.needsPreflight then
     let t' := { t with phase := .preflight }
     .send t' t'.preflightWire
@@ -370,8 +373,10 @@ theorem plan_send_allowed (t t' : Transfer) (w : Wire) (h : plan t = .send t' w)
   unfold plan at h
   by_cases ha : t.allowed = true
   · simp only [ha, Bool.not_true, Bool.false_eq_true, if_false] at h
-    split at h <;> simp only [Step.send.injEq] at h <;> obtain ⟨h1, h2⟩ := h <;> subst h1 <;> subst h2 <;>
-      exact ⟨ha, rfl⟩
+    split at h
+    · simp at h
+    · split at h <;> simp only [Step.send.injEq] at h <;> obtain ⟨h1, h2⟩ := h <;> subst h1 <;> subst h2 <;>
+        exact ⟨ha, rfl⟩
   · simp [ha] at h
 
 /-- Kind: policy theorem. Says: on a native host, `onAnswer` gives a page the response to a
@@ -398,11 +403,14 @@ theorem plan_cross_unsafe_is_preflight (t t' : Transfer) (w : Wire)
     (h : plan t = .send t' w) : t'.phase = .preflight ∧ w.method = "OPTIONS" ∧ w.body = none := by
   unfold plan at h
   by_cases ha : t.allowed = true
-  · simp only [ha, Bool.not_true, Bool.false_eq_true, if_false, hn, hc, hu, Bool.not_false, Bool.and_self,
-      if_true, Step.send.injEq] at h
-    obtain ⟨h1, h2⟩ := h
-    subst h1; subst h2
-    exact ⟨rfl, rfl, rfl⟩
+  · have hs : (t.sameOriginOnly && !t.same) = t.sameOriginOnly := by simp [hc]
+    simp only [ha, Bool.not_true, Bool.false_eq_true, if_false, hs] at h
+    split at h
+    · simp at h
+    · simp only [hn, hc, hu, Bool.not_false, Bool.and_self, if_true, Step.send.injEq] at h
+      obtain ⟨h1, h2⟩ := h
+      subst h1; subst h2
+      exact ⟨rfl, rfl, rfl⟩
   · simp [ha] at h
 
 /-- Kind: policy theorem. Says: a preflight turns into the real request only after its answer
@@ -428,22 +436,24 @@ theorem plan_wire_forbidden (t : Transfer) (t' : Transfer) (w : Wire) (h : plan 
   split at h
   · simp at h
   · split at h
-    · simp only [Step.send.injEq] at h
-      obtain ⟨_, h2⟩ := h
-      subst h2
-      exact Or.inr rfl
-    · simp only [Step.send.injEq] at h
-      obtain ⟨h1, h2⟩ := h
-      subst h1; subst h2
-      left
-      simp only [Transfer.mainWire] at hn
-      split at hn
-      · rcases List.mem_append.mp hn with hl | hr
-        · have := (List.mem_filter.mp hl).2
+    · simp at h
+    · split at h
+      · simp only [Step.send.injEq] at h
+        obtain ⟨_, h2⟩ := h
+        subst h2
+        exact Or.inr rfl
+      · simp only [Step.send.injEq] at h
+        obtain ⟨h1, h2⟩ := h
+        subst h1; subst h2
+        left
+        simp only [Transfer.mainWire] at hn
+        split at hn
+        · rcases List.mem_append.mp hn with hl | hr
+          · have := (List.mem_filter.mp hl).2
+            simp [hf] at this
+          · simp at hr; rw [hr]
+        · have := (List.mem_filter.mp hn).2
           simp [hf] at this
-        · simp at hr; rw [hr]
-      · have := (List.mem_filter.mp hn).2
-        simp [hf] at this
 
 /-- Kind: invariant of the response filter. Says: no response the page reads has a
 `Set-Cookie` or `Set-Cookie2` field. Does not say: anything of the host's own cookie jar

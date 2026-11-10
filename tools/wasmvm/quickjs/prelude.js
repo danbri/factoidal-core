@@ -2797,7 +2797,7 @@
     class XMLHttpRequest extends XMLHttpRequestEventTarget {
       constructor() {
         super(key);
-        st.set(this, { h: Number(call(60, [], 'XMLHttpRequest')), upload: new XMLHttpRequestUpload(key), timer: 0, ms: 0, cred: false, text: null, json: null, buf: null, doc: null });
+        xhrState.set(this, st.set(this, { h: Number(call(60, [], 'XMLHttpRequest')), upload: new XMLHttpRequestUpload(key), timer: 0, ms: 0, cred: false, text: null, json: null, buf: null, doc: null }).get(this));
       }
       get upload() { return S(this).upload; }
       get readyState() { return Number(call(67, [S(this).h, 0])); }
@@ -2892,7 +2892,93 @@
     define(globalThis, 'XMLHttpRequestUpload', XMLHttpRequestUpload);
     return XMLHttpRequest;
   };
+  const xhrState = new WeakMap();
   lazy('XMLHttpRequest', makeXHR);
+
+  // ---- fetch (Fetch Standard, the first slice): one call of the XMLHttpRequest core ---------
+  // Lean decides every request (Net/PageFetch.lean, the object is Net/Xhr.lean's); this is the
+  // promise surface. `no-cors` opaque responses, streams and Request bodies are not here yet.
+  lazy('Headers', () => {
+    if (apiCall(75, []) !== '1') return undefined;
+    class Headers {
+      constructor(init = undefined) {
+        this._m = new Map();
+        if (init instanceof Headers) { for (const [k, v] of init) this.append(k, v); return; }
+        if (init !== undefined && init !== null) {
+          const pairs = Array.isArray(init) ? init : (typeof init[Symbol.iterator] === 'function' ? [...init] : Object.entries(init));
+          for (const [k, v] of pairs) this.append(k, v);
+        }
+      }
+      append(k, v) { k = String(k).toLowerCase(); v = String(v).trim(); this._m.set(k, this._m.has(k) ? this._m.get(k) + ', ' + v : v); }
+      get(k) { k = String(k).toLowerCase(); return this._m.has(k) ? this._m.get(k) : null; }
+      has(k) { return this._m.has(String(k).toLowerCase()); }
+      set(k, v) { this._m.set(String(k).toLowerCase(), String(v).trim()); }
+      delete(k) { this._m.delete(String(k).toLowerCase()); }
+      forEach(f, t) { for (const [k, v] of this) f.call(t, v, k, this); }
+      *entries() { for (const k of [...this._m.keys()].sort()) yield [k, this._m.get(k)]; }
+      *keys() { for (const [k] of this.entries()) yield k; }
+      *values() { for (const [, v] of this.entries()) yield v; }
+      [Symbol.iterator]() { return this.entries(); }
+    }
+    setTag(Headers, 'Headers');
+    return Headers;
+  });
+  lazy('Response', () => {
+    if (apiCall(75, []) !== '1') return undefined;
+    const H = () => globalThis.Headers;
+    class Response {
+      constructor(body = null, init = {}) {
+        const bytes = body === null || body === undefined ? new Uint8Array(0)
+          : typeof body === 'string' ? new TextEncoder().encode(body) : bufferSource(body, 'Response');
+        this._b = bytes; this._used = false;
+        this.status = init.status ?? 200; this.statusText = String(init.statusText ?? ''); this.headers = new (H())(init.headers);
+        this.url = ''; this.redirected = false; this.type = 'default';
+      }
+      get ok() { return this.status >= 200 && this.status < 300; }
+      get bodyUsed() { return this._used; }
+      _take() { if (this._used) return Promise.reject(new TypeError('body already used')); this._used = true; return Promise.resolve(this._b); }
+      arrayBuffer() { return this._take().then(b => b.slice().buffer); }
+      text() { return this._take().then(b => new TextDecoder().decode(b)); }
+      json() { return this.text().then(JSON.parse); }
+      clone() { if (this._used) throw new TypeError('body already used'); const r = new Response(this._b, this); r.url = this.url; r.type = this.type; r.redirected = this.redirected; return r; }
+    }
+    setTag(Response, 'Response');
+    return Response;
+  });
+  lazy('fetch', () => {
+    if (apiCall(75, []) !== '1') return undefined;
+    return function fetch(input, init = {}) {
+      return new Promise((resolve, reject) => {
+        const url = typeof input === 'object' && input !== null && 'url' in input ? String(input.url) : usv(input);
+        const method = init.method ?? (typeof input === 'object' && input !== null ? input.method : undefined) ?? 'GET';
+        const body = init.body === undefined ? null : init.body;
+        const x = new globalThis.XMLHttpRequest(), s = st_xhr(x);
+        const fail = e => reject(e);
+        const signal = init.signal;
+        if (signal && signal.aborted) { reject(signal.reason ?? new DOMException('aborted', 'AbortError')); return; }
+        if (signal) signal.addEventListener('abort', () => { try { x.abort(); } catch { /* done */ } reject(signal.reason ?? new DOMException('aborted', 'AbortError')); });
+        try { x.open(String(method), url, true); } catch (e) { reject(new TypeError(String(e && e.message || e))); return; }
+        apiCall(73, [s.h, init.credentials === 'include' ? 1 : 0]);
+        if (init.mode === 'same-origin') apiCall(77, [s.h, 1]);
+        x.responseType = 'arraybuffer';
+        const headers = new globalThis.Headers(init.headers);
+        for (const [k, v] of headers) x.setRequestHeader(k, v);
+        x.onload = () => {
+          const raw = x.response;
+          const r = new globalThis.Response(raw === null ? new Uint8Array(0) : new Uint8Array(raw), { status: 200 });
+          r.status = x.status; r.statusText = x.statusText; r.url = x.responseURL;
+          r.type = 'basic';
+          for (const line of x.getAllResponseHeaders().split('\r\n')) { const i = line.indexOf(': '); if (i > 0) r.headers.append(line.slice(0, i), line.slice(i + 2)); }
+          resolve(r);
+        };
+        x.onerror = () => fail(new TypeError('Failed to fetch'));
+        x.onabort = () => fail(new DOMException('aborted', 'AbortError'));
+        x.ontimeout = () => fail(new TypeError('Failed to fetch'));
+        x.send(body);
+      });
+    };
+  });
+  const st_xhr = x => xhrState.get(x);
   lazy('URL', () => {
     const parse = (url, base) => {
       const r = base === undefined ? apiCall(10, [usv(url)], 0, false) : apiCall(10, [usv(url), usv(base)], 1, false);

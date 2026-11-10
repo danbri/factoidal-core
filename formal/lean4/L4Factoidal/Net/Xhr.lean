@@ -56,6 +56,8 @@ structure Xhr where
   headers : Array (String × String) := #[]
   body : Option ByteArray := none
   cred : Bool := false
+  /-- Fetch mode "same-origin" (`fetch`); XHR is always "cors". -/
+  sameOnly : Bool := false
   timeout : Nat := 0
   responseType : String := ""
   mimeOverride : Option String := none
@@ -219,7 +221,7 @@ this mode (the steps "if xhr's synchronous flag is unset" hold it). -/
 def syncSend (s : State) (h : Nat) (x : Xhr) : State × Except Int String :=
   let id := s.nextTransfer
   let s := { s with nextTransfer := id + 1 }
-  let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred }
+  let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred, sameOriginOnly := x.sameOnly }
   let (s, out) := syncFetch s t
   match out with
   | .need => (s.set h { x with events := #[] }, .error errNeedHost)
@@ -276,7 +278,7 @@ def beginFetch (s : State) (h : Nat) (x : Xhr) : State :=
   if x.state != 1 || !x.sendFlag then s else
   let id := s.nextTransfer
   let s := { s with nextTransfer := id + 1 }
-  let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred }
+  let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred, sameOriginOnly := x.sameOnly }
   match plan t with
   | .send t' w => (s.set h { x with transfer := some id }) |> fun s => { s with live := s.live.push (id, h, t'), outbox := s.outbox.push w }
   | .fail _ | .deliver .. => s.set h { x with deferFail := true }
@@ -519,6 +521,11 @@ def op (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int Byt
       if x.state > 1 || x.sendFlag then (s, .error errInvalidState)
       else (s.set (natAt fs 0) { x with cred := natAt fs 1 != 0 }, okStr "")
   | 75 => (s, okStr "1")
+  | 77 =>
+    -- mode same-origin (`fetch`)
+    match s.get? (natAt fs 0) with
+    | none => (s, .error errType)
+    | some x => (s.set (natAt fs 0) { x with sameOnly := natAt fs 1 != 0 }, okStr "")
   | 76 =>
     -- the deferred error of a `send` that the policy refused (the page's next task)
     match s.get? (natAt fs 0) with
