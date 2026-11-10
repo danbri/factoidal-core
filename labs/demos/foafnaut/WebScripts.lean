@@ -626,9 +626,10 @@ def wireJson (w : Net.PageFetch.Wire) : JSON.Json :=
 def netSyncAnswer (id : Nat) (w : Net.PageFetch.Wire) : Except String String :=
   .ok (JSON.Json.object [("session", num id), ("netSync", wireJson w)]).toString
 
-/-- A sync-answer list for a run, on the Lean engine's net state. -/
-def setSync (w : WebApi.State) (cache : Array Net.PageFetch.Answer) : WebApi.State :=
-  { w with net := { w.net with syncOk := true, syncAnswers := cache, syncUsed := 0, syncWanted := none } }
+/-- A sync-answer list for a run, on the Lean engine's net state. `snap`: the action keeps the
+session before it (only a page that has made an `XMLHttpRequest` pays that copy, see `run`). -/
+def setSync (w : WebApi.State) (snap : Bool) (cache : Array Net.PageFetch.Answer) : WebApi.State :=
+  { w with net := { w.net with syncOk := snap, syncAnswers := cache, syncUsed := 0, syncWanted := none } }
 
 /-- The page requests of a turn: `netRequests`, and `netCancels` for the host to stop. Only
 when there are some. -/
@@ -716,12 +717,17 @@ def actLean (held : Held) (action : String) (request : JSON.Json) (id : Nat) (s 
   let full := request.field? "full" == some (.bool true)
   let e := LeanJS.engine
   let before := Before.ofLean s
-  let s0 := s.setHost { s.host with web := setSync s.host.web held.syncCache }
+  -- Undo needs the session as it was. It is kept only for a page that has made an XHR before
+  -- this action (and a start, whose undo is the base realm): holding it would copy the page's
+  -- heap array at the action's first write, and other pages must not pay that.
+  let keepIt := s.host.web.net.xhrs.size > 0
+  let snap := if keepIt then some s else none
+  let s0 := s.setHost { s.host with web := setSync s.host.web keepIt held.syncCache }
   let run := fun (f : LeanJS.Session → LeanJS.Session) =>
     let (s', ns) := WebWasm.timed fun _ => f s0
-    match s'.host.web.net.syncWanted with
-    | some w => ({ held with pendingSync := some (action, "", request) }, netSyncAnswer id w)
-    | none => leanTurn { held with syncCache := #[], pendingSync := none } id before s' marks full ns
+    match s'.host.web.net.syncWanted, snap with
+    | some w, some old => ({ held with leanSession := some (id, old, marks), pendingSync := some (action, "", request) }, netSyncAnswer id w)
+    | _, _ => leanTurn { held with syncCache := #[], pendingSync := none } id before s' marks full ns
   let keep := fun (msg : String) => ({ held with leanSession := some (id, s, marks) }, Except.error msg)
   match action with
   | "click" =>
@@ -846,11 +852,13 @@ def act (held : Held) (action html : String) (request : JSON.Json)
         if held.aot.isSome && held.module.isNone then
           beginTurn held id before marks full false (Except.ok <$> f s)
         else
-          let s0 : Page.Session := { s with host := { s.host with web := setSync s.host.web held.syncCache } }
+          let keepIt := s.host.web.net.xhrs.size > 0
+          let snap : Option Page.Session := if keepIt then some s else none
+          let s0 : Page.Session := { s with host := { s.host with web := setSync s.host.web keepIt held.syncCache } }
           let (s', ns) := WebWasm.timed fun _ => (f s0).runLocal
-          match s'.host.web.net.syncWanted with
-          | some w => ({ held with pendingSync := some (action, "", request) }, netSyncAnswer id w)
-          | none =>
+          match s'.host.web.net.syncWanted, snap with
+          | some w, some old => ({ held with session := some (id, old, marks), pendingSync := some (action, "", request) }, netSyncAnswer id w)
+          | _, _ =>
           let (s', loads) := srcdocLoads (·.host) (fun s el src scripts => s.loadFrame el src scripts) s'
           let (answer, marks) := turnAnswer id before s' marks full ns (frameFields s'.host loads ++ netFields s'.host)
           ({ held with session := some (id, drained s', marks), syncCache := #[], pendingSync := none }, Except.ok answer)

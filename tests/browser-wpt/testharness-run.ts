@@ -488,13 +488,13 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
         const r=await http.fetch(w.url,{method:w.method,headers,body,noFollow:true,signal:AbortSignal.timeout(30000)} as RequestInit);
         const bytes=new Uint8Array(await r.arrayBuffer());
         return {id:w.id,answer:{id:w.id,status:r.status,statusText:r.statusText,headers:[...r.headers],bodyBase64:b64(bytes)}};
-      }catch(e){console.error("netFetch",String(e));return failed;}
+      }catch{return failed;}
     };
     // A sync XMLHttpRequest (netSync in a turn): the run was undone; answer and it runs again.
     const resolveSync=async(t:ScriptTurnWithFetches):Promise<ScriptTurnWithFetches>=>{
       let r:ScriptTurnWithFetches=t;
       for(let i=0;(r as {netSync?:NetWire}).netSync&&i<4096;i++){
-        const answer=(await netFetch((r as unknown as {netSync:NetWire}).netSync)).answer;if(Deno.env.get("XHRDBG"))console.error("sync",JSON.stringify((r as unknown as {netSync:NetWire}).netSync).slice(0,90),answer.status);
+        const answer=(await netFetch((r as unknown as {netSync:NetWire}).netSync)).answer;
         r=engine.scriptSession("",{action:"syncAnswer",session:r.session,answer}) as ScriptTurnWithFetches;
       }
       return r;

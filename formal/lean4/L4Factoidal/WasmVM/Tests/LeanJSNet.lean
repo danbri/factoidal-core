@@ -115,6 +115,22 @@ def syncFlow : Except String (Option String × List String) := do
 
 #guard syncFlow == .ok (some "http://a.test/s", ["load 200 sync", "after 4"])
 
+-- fetch: same core, the promise resolves with the body.
+def fetchFlow : Except String (List String) := do
+  let s ← startPage ("fetch('/d').then(r=>r.text().then(t=>console.log(r.status,r.ok,r.headers.get('X-Y'),t)));")
+  let s := answerAll s fun _ => { status := 200, statusText := "OK", headers := [("X-Y", "z")], body := "ok".toUTF8 }
+  return logOf s
+
+#guard fetchFlow == .ok ["200 true z ok"]
+
+-- fetch: a cross-origin answer with no CORS rejects, and nothing reaches the page.
+def fetchRefused : Except String (List String) := do
+  let s ← startPage ("fetch('http://b.test/x').then(r=>console.log('resolved'),e=>console.log(e.name));")
+  let s := answerAll s fun _ => { status := 200, body := "secret".toUTF8 }
+  return logOf s
+
+#guard fetchRefused == .ok ["TypeError"]
+
 -- Off when the embedder does not turn it on: no such global.
 def off : Except String (List String) := do
   let s ← startPage "console.log(typeof XMLHttpRequest);" false
