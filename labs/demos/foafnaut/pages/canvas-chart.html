@@ -97,7 +97,7 @@ function draw(t) {
 function frame(t) {
   draw(t);
   frames++;
-  if (frames === 1 || frames % 30 === 0) status.textContent = `Lean drew ${frames} frames.`;
+  if (frames === 1 || frames % 30 === 0) status.textContent = `Drew ${frames} frames.`;
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
