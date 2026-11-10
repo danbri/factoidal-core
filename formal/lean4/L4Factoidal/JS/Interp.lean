@@ -199,6 +199,17 @@ def indexesReceiver (id : Native) (thisV : Value) : Bool :=
     | _ => false
   | _ => false
 
+/-- `RegExp.prototype.exec` and `test` on the string whose code units `cachedChars` holds: they
+do not walk it again and take steps for the distance matched (`regexExec`), so the size of
+the subject is not charged again on each call. -/
+def subjectCached (id : Native) (args : Array Value) : M Bool := do
+  match id, (args[0]? : Option Value) with
+  | .regexpExec, some (Value.str s) | .regexpTest, some (Value.str s) =>
+    match (← get).reCache with
+    | some (t, _) => pure (t == s)
+    | none => pure false
+  | _, _ => pure false
+
 /-- Set or add an own data property with all attributes true (CreateDataProperty). -/
 def Obj.putOwn (o : Obj) (key : String) (p : PropV) : Obj :=
   match o.kind, arrayIndex? key, p with
@@ -3613,7 +3624,9 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
     -- `at`, `codePointAt`) or copy only their result (`slice`, `substring`, `substr`, which
     -- take steps for the result) do not walk it, and take no steps for it.
     let recvCost ← if indexesReceiver id thisV then pure 0 else sizeCost thisV
-    charge (recvCost + args.size / 64 + (← args.foldlM (fun acc a => do pure (acc + (← sizeCost a))) 0))
+    let argsCost ← if (← subjectCached id args) then pure 0
+      else args.foldlM (fun acc a => do pure (acc + (← sizeCost a))) 0
+    charge (recvCost + args.size / 64 + argsCost)
     let a0 := argD args 0
     let a1 := argD args 1
     let r ← realm
