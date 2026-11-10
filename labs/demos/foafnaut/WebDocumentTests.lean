@@ -215,10 +215,16 @@ private def frames : List (String × JSON.Json × Nat) :=
    (keptPage,frame 80 [("op",.string "selectedText"),("selection",.array [.number "0",.number "0",.number "300",.number "90"])],300),
    (keptPage,frame 80,280),(keptPage,frame 80 [] "165",280),
    (keptPage ++ "<p>more</p>",frame 80,280),(keptPage,frame 0 [("checks",.bool false)],280),(keptPage,frame 0,280)]
-#guard frames.all fun (html,request,width) =>
-  let kept := WebDocument.run html request width 200
-  let fresh := WebDocument.runUncached html request width 200
-  kept.toOption.isSome && kept.toOption == fresh.toOption
+/-- The answers of a sequence of requests on one engine, which keeps layouts between them. -/
+private def keptRuns (items : List (String × JSON.Json × Nat × Nat)) : List (Except String String) :=
+  (items.foldl (fun (e,out) (html,request,width,height) =>
+    let (e,r) := WebDocument.runIn e html request width height
+    (e,out.push r)) (({} : WebDocument.Engine),(#[] : Array (Except String String)))).2.toList
+/-- Each answer on one engine is the answer with no kept layout. -/
+private def keptAgree (items : List (String × JSON.Json × Nat × Nat)) : Bool :=
+  (keptRuns items).zip items |>.all fun (kept,(html,request,width,height)) =>
+    kept.toOption.isSome && kept.toOption == (WebDocument.runUncached html request width height).toOption
+#guard keptAgree (frames.map fun (html,request,width) => (html,request,width,200))
 #guard (WebDocument.run keptPage (frame 0 [("checks",.bool false)]) 280 200).toOption.any (·.contains "\"checks\":[]")
 
 /-! Layers (issue 1268). The CPU sampler of the composite of the two layers must
@@ -229,7 +235,7 @@ private def sameAsFrame (html : String) (width height frameScroll : Nat) (scroll
   let top := WebShell.height (layerShell 0) width
   let view := max 1 (height-top)
   let b := WebDocument.band frameScroll view
-  match WebDocument.layOut ⟨html,WebDocument.layoutRequest (json []),width,height,top,[],[],(none,none)⟩ with
+  match WebDocument.layOut {} ⟨html,WebDocument.layoutRequest (json []),width,height,top,[],[],(none,none)⟩ with
   | .error _ => false
   | .ok laid =>
     match WebRenderSVG.toScene (WebDocument.pageLayer laid.scene [] b) with
@@ -295,9 +301,7 @@ private def anchorId : Nat :=
 private def stateFrames : List JSON.Json :=
   [frame 0, frame 0 [("active",.number (toString anchorId))], frame 0 [("hover",.number (toString anchorId))],
    frame 0 [("visited",.array [.string "https://x.test/a"])], frame 0 [("active",.number "99999")]]
-#guard stateFrames.all fun request =>
-  let kept := WebDocument.run linkPage request 300 200
-  kept.toOption.isSome && kept.toOption == (WebDocument.runUncached linkPage request 300 200).toOption
+#guard keptAgree (stateFrames.map fun request => (linkPage,request,300,200))
 #guard (WebDocument.run linkPage (frame 0 [("active",.number (toString anchorId))]) 300 200).toOption !=
   (WebDocument.run linkPage (frame 0) 300 200).toOption
 #guard (WebDocument.run linkPage (frame 0 [("visited",.array [.string "https://x.test/a"])]) 300 200).toOption !=
@@ -317,19 +321,17 @@ private def pointerPages : List String :=
    "<style>a:hover{background-color:#ffff00}</style>",
    "<style>a:hover{padding:4px;border:1px solid red}</style>",
    "<style>a{color:#ff0000;background-color:#0000ff}a:hover{color:#0000ff;background-color:#ff0000}</style>"].map (· ++ linkPage)
-#guard pointerPages.all fun html =>
+#guard keptAgree (pointerPages.flatMap fun html =>
   [frame 0 [("hover",.number (toString anchorId))],frame 0 [("active",.number (toString anchorId))],
-   frame 0 [("hover",.number (toString anchorId)),("active",.number (toString anchorId))],frame 0].all fun request =>
-    let kept := WebDocument.run html request 300 200
-    kept.toOption.isSome && kept.toOption == (WebDocument.runUncached html request 300 200).toOption
+   frame 0 [("hover",.number (toString anchorId)),("active",.number (toString anchorId))],frame 0].map fun request =>
+    (html,request,300,200))
 -- A button: its :active style sinks the border (inset) and darkens the background.
 private def buttonPage := "<p><button id=b>Press</button></p>"
 private def buttonId : Nat :=
   let dom := DOM.parseHtmlDocument buttonPage
   ((dom.treeOrder 0).find? fun id => DOM.Dom.isHtmlElement (dom.get id) "button").getD 0
-#guard [frame 0 [("hover",.number (toString buttonId))],frame 0 [("active",.number (toString buttonId))],frame 0].all fun request =>
-  let kept := WebDocument.run buttonPage request 300 200
-  kept.toOption.isSome && kept.toOption == (WebDocument.runUncached buttonPage request 300 200).toOption
+#guard keptAgree ([frame 0 [("hover",.number (toString buttonId))],frame 0 [("active",.number (toString buttonId))],frame 0].map
+  fun request => (buttonPage,request,300,200))
 -- The pointer is not in the layout request: the shell and the hover and active nodes are
 -- not layout fields (`pointer_not_layout_field`).
 #guard WebDocument.layoutRequest (json [("hover",.number "3"),("active",.number "4"),("url",.string "u")]) ==
@@ -337,7 +339,7 @@ private def buttonId : Nat :=
 -- `WebRepaint.recolor` answers a scene for colours only, and none for geometry.
 private def restyled (html : String) : Option Bool :=
   let dom := DOM.parseHtmlDocument html
-  match WebDocument.layOut ⟨html,WebDocument.layoutRequest (json []),300,200,0,[],[],(none,none)⟩ with
+  match WebDocument.layOut {} ⟨html,WebDocument.layoutRequest (json []),300,200,0,[],[],(none,none)⟩ with
   | .ok laid => some (WebDocument.restyle laid (some (((dom.treeOrder 0).find? fun id => DOM.Dom.isHtmlElement (dom.get id) "a").getD 0),none)).isSome
   | .error _ => none
 #guard restyled (pointerPages[0]!) == some true
@@ -377,24 +379,24 @@ def main (args : List String) : IO UInt32 := do
 private def imagePage := "<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20'><image href='a.png' width='20' height='20'/></svg>"
 private def imageBytes := "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR4nGP4z8DwHwwZGP6DCAYAP9IF+9wCo9QAAAAASUVORK5CYII="
 private def contains (text part : String) : Bool := (text.splitOn part).length > 1
-#guard contains (WebDocument.compile imagePage "{\"op\":\"inspect\",\"url\":\"https://e.test/p/\"}" 40 40)
+#guard contains (WebDocument.compileText imagePage "{\"op\":\"inspect\",\"url\":\"https://e.test/p/\"}" 40 40)
   "\"images\":[{\"key\":\"https://e.test/p/a.png\",\"url\":\"https://e.test/p/a.png\"}]"
-#guard contains (WebDocument.compile imagePage "{\"op\":\"render\",\"url\":\"https://e.test/p/\"}" 40 40)
+#guard contains (WebDocument.compileText imagePage "{\"op\":\"render\",\"url\":\"https://e.test/p/\"}" 40 40)
   "image resource not supplied: https://e.test/p/a.png"
-#guard !contains (WebDocument.compile imagePage ("{\"op\":\"render\",\"url\":\"https://e.test/p/\",\"images\":[{\"key\":\"https://e.test/p/a.png\",\"base64\":\"" ++ imageBytes ++ "\"}]}") 40 40) "\"error\""
-#guard contains (WebDocument.compile imagePage "{\"op\":\"render\",\"url\":\"https://e.test/p/\",\"images\":[{\"key\":\"https://e.test/p/a.png\",\"base64\":\"aGk=\"}]}" 40 40)
+#guard !contains (WebDocument.compileText imagePage ("{\"op\":\"render\",\"url\":\"https://e.test/p/\",\"images\":[{\"key\":\"https://e.test/p/a.png\",\"base64\":\"" ++ imageBytes ++ "\"}]}") 40 40) "\"error\""
+#guard contains (WebDocument.compileText imagePage "{\"op\":\"render\",\"url\":\"https://e.test/p/\",\"images\":[{\"key\":\"https://e.test/p/a.png\",\"base64\":\"aGk=\"}]}" 40 40)
   "image is not PNG, JPEG or GIF"
-#guard contains (WebDocument.compile imagePage "{\"op\":\"render\",\"url\":\"https://e.test/p/\",\"images\":3}" 40 40) "document images must be an array"
+#guard contains (WebDocument.compileText imagePage "{\"op\":\"render\",\"url\":\"https://e.test/p/\",\"images\":3}" 40 40) "document images must be an array"
 
 -- HTML `img` (Layout `Picture`): `inspect` lists its key; with the bytes it is drawn as an
 -- image, and with none (missing, broken, or an older host) as its alt text.
 private def imgPage := "<body style='margin:0'><img src='a.png' alt='Gone' style='display:block'></body>"
-#guard contains (WebDocument.compile imgPage "{\"op\":\"inspect\",\"url\":\"https://e.test/p/\"}" 40 40)
+#guard contains (WebDocument.compileText imgPage "{\"op\":\"inspect\",\"url\":\"https://e.test/p/\"}" 40 40)
   "\"images\":[{\"key\":\"https://e.test/p/a.png\",\"url\":\"https://e.test/p/a.png\"}]"
-private def imgDrawn := WebDocument.compile imgPage ("{\"op\":\"render\",\"url\":\"https://e.test/p/\",\"images\":[{\"key\":\"https://e.test/p/a.png\",\"base64\":\"" ++ imageBytes ++ "\"}]}") 40 40
+private def imgDrawn := WebDocument.compileText imgPage ("{\"op\":\"render\",\"url\":\"https://e.test/p/\",\"images\":[{\"key\":\"https://e.test/p/a.png\",\"base64\":\"" ++ imageBytes ++ "\"}]}") 40 40
 #guard !contains imgDrawn "\"error\"" && !contains imgDrawn "[Gone]"
-#guard contains (WebDocument.compile imgPage "{\"op\":\"render\",\"url\":\"https://e.test/p/\"}" 40 40) "\"text\":\"[Gone]\""
-#guard contains (WebDocument.compile imgPage ("{\"op\":\"render\",\"url\":\"https://e.test/p/\",\"images\":[{\"key\":\"https://e.test/p/a.png\",\"base64\":\"aGk=\"}]}") 40 40) "\"text\":\"[Gone]\""
+#guard contains (WebDocument.compileText imgPage "{\"op\":\"render\",\"url\":\"https://e.test/p/\"}" 40 40) "\"text\":\"[Gone]\""
+#guard contains (WebDocument.compileText imgPage ("{\"op\":\"render\",\"url\":\"https://e.test/p/\",\"images\":[{\"key\":\"https://e.test/p/a.png\",\"base64\":\"aGk=\"}]}") 40 40) "\"text\":\"[Gone]\""
 
 -- The tab icon (HTML §4.6.7.8): a scalable icon first, then the smallest at least 32
 -- device pixels, the last of equal ones; ICO is skipped (issue 1282); with no icon link,
@@ -409,9 +411,9 @@ private def iconOf (head : String) : Option String :=
 #guard iconOf "<link rel=apple-touch-icon href='t.png'>" == some "https://e.test/p/t.png"
 #guard iconOf "<link rel=apple-touch-icon href='t.png'><link rel=icon href='i.png'>" == some "https://e.test/p/i.png"
 #guard iconOf "<link rel=stylesheet href='a.css'>" == none
-#guard contains (WebDocument.compile "<link rel=icon href='i.svg'>" "{\"op\":\"inspect\",\"url\":\"https://e.test/p/\"}" 40 40) "\"icon\":\"https://e.test/p/i.svg\""
+#guard contains (WebDocument.compileText "<link rel=icon href='i.svg'>" "{\"op\":\"inspect\",\"url\":\"https://e.test/p/\"}" 40 40) "\"icon\":\"https://e.test/p/i.svg\""
 private def prepared (base64 : String) : String :=
-  WebDocument.compile "" ("{\"op\":\"iconPrepare\",\"scale\":1,\"base64\":\"" ++ base64 ++ "\"}") 1 1
+  WebDocument.compileText "" ("{\"op\":\"iconPrepare\",\"scale\":1,\"base64\":\"" ++ base64 ++ "\"}") 1 1
 #guard contains (prepared imageBytes) "\"kind\":\"bitmap\",\"width\":2,\"height\":2"
 -- <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 4 4'><rect width='4' height='4'/></svg>
 #guard contains (prepared "PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHZpZXdCb3g9JzAgMCA0IDQnPjxyZWN0IHdpZHRoPSc0JyBoZWlnaHQ9JzQnLz48L3N2Zz4=") "\"kind\":\"svg\""
@@ -505,7 +507,7 @@ private def sectionRequest (layers : Bool) : JSON.Json :=
   .object ([("op",.string "render"),("url",.string "https://e.test/"),("binary",.bool true),("checks",.bool false)] ++
     (if layers then [("layers",.bool true),("shell",.object [("scroll",.number "0")])] else []))
 private def sameAsText (layers : Bool) : Bool :=
-  match WebDocument.answerWith WebDocument.layOut true sectionPage (sectionRequest layers) 200 100,
+  match WebDocument.answerUncached true sectionPage (sectionRequest layers) 200 100,
       WebDocument.runUncached sectionPage (sectionRequest layers) 200 100 with
   | .ok (head,sections), .ok text =>
     match JSON.parseJsonText head, JSON.parseJsonText text with
@@ -516,7 +518,7 @@ private def sameAsText (layers : Bool) : Bool :=
 #guard sameAsText false
 #guard sameAsText true
 -- Other answers have no section.
-#guard (WebDocument.answerWith WebDocument.layOut true "" (json [("op",.string "shellSubmit"),("address",.string "a")]) 1 1).toOption.map (·.2.size) == some 0
+#guard (WebDocument.answerUncached true "" (json [("op",.string "shellSubmit"),("address",.string "a")]) 1 1).toOption.map (·.2.size) == some 0
 -- The layout of `packAnswer`.
 #guard (WebDocument.packAnswer "{}" #[⟨#[1,2,3,4,5]⟩]).data.toList ==
   [28,0,0,0, 4,0,0,0, 1,0,0,0, 5,0,0,0, 123,125,32,32, 1,2,3,4,5,0,0,0]
@@ -634,7 +636,7 @@ private def svgBoxPage := "<!doctype html><title>B</title><div><svg width=\"10\"
 -- is the 1x box times two; a 16px margin is 32 device pixels and a 760px column 1520.
 private def dprPage := "<!doctype html><style>body{margin:16px}main{width:760px}div{height:20px;background:#c00}</style><main><div></div><p>Words of text in a column of the page, in a few lines.</p><a href=x>link</a></main>"
 private def laidAt (width height percent unit : Nat) : Option WebDocument.Laid :=
-  (WebDocument.layOut ⟨dprPage,WebDocument.layoutRequest (json [("textScalePercent",.number (toString percent)),
+  (WebDocument.layOut {} ⟨dprPage,WebDocument.layoutRequest (json [("textScalePercent",.number (toString percent)),
     ("zoomUnit",.number (toString unit))]),width,height,0,[],[],(none,none)⟩).toOption
 private def scaledBy (k : Nat) : Bool :=
   match laidAt 900 600 200 100, laidAt (900*k) (600*k) (200*k) (100*k) with
@@ -656,7 +658,7 @@ private def scaledBy (k : Nat) : Bool :=
     | .error _ => false
   | none => false
 #guard (laidAt 900 600 200 100).map (·.boxes.size) ==
-  (WebDocument.layOut ⟨dprPage,WebDocument.layoutRequest (json [("textScalePercent",.number "200")]),900,600,0,[],[],(none,none)⟩).toOption.map (·.boxes.size)
+  (WebDocument.layOut {} ⟨dprPage,WebDocument.layoutRequest (json [("textScalePercent",.number "200")]),900,600,0,[],[],(none,none)⟩).toOption.map (·.boxes.size)
 -- A page script sees CSS pixels: the viewport of a 2x window is half its device pixels.
 #guard WebScripts.viewport (json [("width",.number "2880"),("height",.number "1800"),("zoomUnit",.number "200")]) == some (1440,900)
 #guard WebScripts.viewport (json [("width",.number "1440"),("height",.number "900")]) == some (1440,900)
@@ -666,7 +668,7 @@ private def scaledBy (k : Nat) : Bool :=
 pixels (the CPU raster of the backend, with and without it). -/
 private def cullPixels (svg : String) (w : Nat := 80) (h : Nat := 60) : Option Nat :=
   let html := "<!doctype html><style>body{margin:0}</style>" ++ svg
-  match WebDocument.layOut ⟨html,WebDocument.layoutRequest (json []),w,h,0,[],[],(none,none)⟩ with
+  match WebDocument.layOut {} ⟨html,WebDocument.layoutRequest (json []),w,h,0,[],[],(none,none)⟩ with
   | .error _ => none
   | .ok laid =>
     match WebRenderSVG.toScene laid.scene, WebRenderSVG.toScene (WebPaint.cull laid.scene) with

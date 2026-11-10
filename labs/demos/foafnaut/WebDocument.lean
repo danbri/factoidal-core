@@ -537,39 +537,71 @@ private def natField (j : JSON.Json) (key : String) : Nat :=
   match j.field? key with | some (.number n) => n.toNat?.getD 0 | _ => 0
 
 /-- The link regions of the frame on screen, decoded once: a press, a hover and a click
-on the same frame send the same text. One slot, by string equality. -/
-initialize keptLinksRef : IO.Ref (Option (String × List Rendering.LinkRegion)) ← IO.mkRef none
+on the same frame send the same text. One slot (`Engine.links`), by string equality:
+`Links.decode text`, with the regions of the last text again when the text is equal. -/
+def decodeKept (kept : Option (String × List Rendering.LinkRegion)) (text : String) :
+    Option (String × List Rendering.LinkRegion) × Except String (List Rendering.LinkRegion) :=
+  match kept with
+  | some (k,regions) => if k == text then (kept,.ok regions) else fresh
+  | none => fresh
+where fresh := match Rendering.Links.decode text with
+  | .ok regions => (some (text,regions),.ok regions)
+  | .error e => (kept,.error e)
 
-set_option compiler.extract_closed false in
-private unsafe def decodeLinksImpl (text : String) : Except String (List Rendering.LinkRegion) :=
-  unsafeBaseIO do
-    if let some (kept,regions) ← keptLinksRef.get then
-      if kept == text then return .ok regions
-    let made := Rendering.Links.decode text
-    if let .ok regions := made then keptLinksRef.set (some (text,regions))
-    return made
+/-- A slot is valid when its regions are the decoding of its text. -/
+def LinksValid (kept : Option (String × List Rendering.LinkRegion)) : Prop :=
+  ∀ k r, kept = some (k,r) → Rendering.Links.decode k = .ok r
 
-/-- `Links.decode`; the engine gives the regions of the last text again when the text is equal. -/
-@[implemented_by decodeLinksImpl]
-def decodeLinks (text : String) : Except String (List Rendering.LinkRegion) := Rendering.Links.decode text
+/-- Refinement: from a valid slot, `decodeKept` answers `Links.decode text`. -/
+theorem decodeKept_eq (kept : Option (String × List Rendering.LinkRegion)) (valid : LinksValid kept) (text : String) :
+    (decodeKept kept text).2 = Rendering.Links.decode text := by
+  unfold decodeKept decodeKept.fresh
+  rcases kept with _ | ⟨k,regions⟩
+  · simp only; split <;> simp_all
+  · simp only
+    split
+    · next h => have := valid k regions rfl; simp_all
+    · split <;> simp_all
 
-/-- `Links.pick` over `decodeLinks` (the C shim's `web_render_hit`). -/
-@[export web_render_pick_link_kept]
-def pickKept (regions : String) (width height : UInt32) (x y : Float) : String :=
+/-- Invariant: the slot `decodeKept` leaves is valid. -/
+theorem decodeKept_valid (kept : Option (String × List Rendering.LinkRegion)) (valid : LinksValid kept) (text : String) :
+    LinksValid (decodeKept kept text).1 := by
+  unfold decodeKept decodeKept.fresh
+  rcases kept with _ | ⟨k,regions⟩
+  · simp only; split
+    · next h => intro a b e; simp_all
+    · exact valid
+  · simp only
+    split
+    · exact valid
+    · split
+      · next h => intro a b e; simp_all
+      · exact valid
+
+/-- `Links.pick` over the engine's kept regions (the C shim's `web_render_hit`). -/
+def pickIn (links : Option (String × List Rendering.LinkRegion)) (regions : String) (width height : UInt32) (x y : Float) :
+    Option (String × List Rendering.LinkRegion) × String :=
   if !x.isFinite || !y.isFinite || x < 0 || y < 0 ||
-    x >= Float.ofNat width.toNat || y >= Float.ofNat height.toNat then "null"
-  else match decodeLinks regions with
-    | .error message => "{\"error\":" ++ "\"" ++ JSON.escapeString message ++ "\"" ++ "}"
-    | .ok regions => Rendering.Links.targetJSON (Rendering.hitLink regions x y)
+    x >= Float.ofNat width.toNat || y >= Float.ofNat height.toNat then (links,"null")
+  else match decodeKept links regions with
+    | (links,.error message) => (links,"{\"error\":" ++ "\"" ++ JSON.escapeString message ++ "\"" ++ "}")
+    | (links,.ok regions) => (links,Rendering.Links.targetJSON (Rendering.hitLink regions x y))
 
-theorem pickKept_eq (regions : String) (width height : UInt32) (x y : Float) :
-    pickKept regions width height x y = Rendering.Links.pick regions width height x y := by
-  unfold pickKept Rendering.Links.pick decodeLinks; rfl
+/-- Refinement: from a valid slot, `pickIn` answers `Links.pick`. -/
+theorem pickIn_eq (links : Option (String × List Rendering.LinkRegion)) (valid : LinksValid links)
+    (regions : String) (width height : UInt32) (x y : Float) :
+    (pickIn links regions width height x y).2 = Rendering.Links.pick regions width height x y := by
+  have h := decodeKept_eq links valid regions
+  unfold pickIn Rendering.Links.pick
+  split
+  · rfl
+  · revert h; cases decodeKept links regions with
+    | mk l r => cases r <;> intro h <;> simp only at h <;> rw [← h] <;> rfl
 
 /-- The answer to `press`: `control` for a chrome control; `sourceNode` and `href` for a
 link of the page layer (`linksText` or `links`, in band rows, as the frame answered them, picked at
 `(x,row)`); `rects` for the composite. -/
-def press (request : JSON.Json) : Except String String := do
+def press (decode : String → Except String (List Rendering.LinkRegion)) (request : JSON.Json) : Except String String := do
   let shell := WebShell.Shell.ofJson ((request.field? "shell").getD .null)
   let width := natField request "width"
   let x := natField request "x"
@@ -582,10 +614,10 @@ def press (request : JSON.Json) : Except String String := do
     let rects := (WebShell.pressBox shell width control).toList
     return (JSON.Json.object [("control",.string control),("rects",.array (rects.map rect))]).toString
   | none =>
-    -- `linksText`: the regions as the frame gave them, decoded once per frame (`decodeLinks`);
+    -- `linksText`: the regions as the frame gave them, decoded once per frame (`decodeKept`);
     -- `links`: the same as a JSON array, decoded on each call (older hosts).
     let regions ← match request.field? "linksText",request.field? "links" with
-      | some (.string text),_ => decodeLinks text
+      | some (.string text),_ => decode text
       | _,some (.array items) => Rendering.Links.decode (JSON.Json.array items).toString
       | _,_ => pure []
     -- `row`: the page-layer row under the pointer, as the host converts it for `hit`.
@@ -666,7 +698,7 @@ def textZoomAnswer (request : JSON.Json) : Except String String := do
     ("step",n WebSelection.textStep)] ++ refused)).toString
 
 /-- Input decisions need no document, so they do not parse one. -/
-private def inputOp (op : String) (request : JSON.Json) : Except String (Option String) := do
+private def inputOp {M : Type → Type} [Monad M] [WebWasm.Machine M] (op : String) (request : JSON.Json) : ExceptT String M (Option String) := do
   if op == "textZoom" then return some (← textZoomAnswer request)
   -- The console tab (WebConsole): the page of the entries the host kept for a tab.
   if op == "consolePage" then return some (WebConsole.answer request)
@@ -746,7 +778,6 @@ private def inputOp (op : String) (request : JSON.Json) : Except String (Option 
   if op == "shellActions" then
     let shell := WebShell.Shell.ofJson ((request.field? "shell").getD .null)
     return some (JSON.Json.object [("actions",.array ((WebShell.menuActions shell (natField request "width")).map (·.json)))]).toString
-  if op == "press" then return some (← press request)
   -- The pointer for a point of the window (issue 1268): the chrome's control, else the page.
   -- On the page a click acts over a person of the graph `model`, or over a link of
   -- `links` (the regions of the frame on screen, as for picking) at page row `pageY`.
@@ -1062,6 +1093,15 @@ initialize pageWorkRef : IO.Ref (Nat × Nat × Nat × Nat × Nat) ← IO.mkRef (
 /-- Answers numbered for `damage.id`. -/
 initialize pageIdRef : IO.Ref Nat ← IO.mkRef 0
 
+set_option compiler.extract_closed false in
+private unsafe def pageWorkImpl (reset : Bool) : Nat × Nat × Nat × Nat × Nat :=
+  unsafeBaseIO do
+    let work ← pageWorkRef.get
+    if reset then pageWorkRef.set (0,0,0,0,0)
+    return work
+/-- Page layers made and page layers kept (`pageArtifact`), as `frameWork` counts layouts. -/
+@[implemented_by pageWorkImpl, noinline] private opaque pageWork (reset : Bool) : Nat × Nat × Nat × Nat × Nat
+
 private def formSame : NativeSVG.DataForm → NativeSVG.DataForm → Bool
   | .decimal,.decimal => true
   | .base64,.base64 => true
@@ -1175,20 +1215,23 @@ structure HeldFont where
 def HeldFont.names (held : HeldFont) : List (String × String) :=
   held.fonts.toList.map fun f => (f.family,f.sha256)
 
-initialize heldFontRef : IO.Ref (Option HeldFont) ← IO.mkRef none
+/-- An image the engine holds: the key `inspect` gave, its SHA-256 as the host said,
+and its bytes, opaque until `NativeImage.decode`. -/
+structure HeldImage where
+  key : String
+  sha256 : String
+  bytes : ByteArray
 
--- Without this the read does not depend on its argument, so it would run once and be kept.
-set_option compiler.extract_closed false in
-private unsafe def heldFontImpl (_ : JSON.Json) : Option HeldFont := unsafeBaseIO heldFontRef.get
-private unsafe def keepFontImpl (held : HeldFont) (_ : JSON.Json) : HeldFont :=
-  unsafeBaseIO (do heldFontRef.set (some held); return held)
-private unsafe def keepWordsImpl (words : Rendering.SfntProfile.Memo) (_ : JSON.Json) : Rendering.SfntProfile.Memo :=
-  unsafeBaseIO (do heldFontRef.modify (·.map ({· with memo := words})); return words)
-/-- These read and change the held font. The request argument keeps each call in place,
-and each returns what it kept so that the caller uses the result and the call stays. -/
-@[implemented_by heldFontImpl, noinline] private opaque heldFont (request : JSON.Json) : Option HeldFont
-@[implemented_by keepFontImpl, noinline] private opaque keepFont (held : HeldFont) (_ : JSON.Json) : HeldFont := held
-@[implemented_by keepWordsImpl, noinline] private opaque keepWords (words : Rendering.SfntProfile.Memo) (request : JSON.Json) : Rendering.SfntProfile.Memo
+/-- The fonts and images the engine holds between calls, which layout reads: a field of
+`Engine` (issue 390), passed to layout as a value. `fontLoad` and `imageLoad` change it;
+a layout gives back the word memo it grew (`Laid.words`). -/
+structure Holds where
+  font : Option HeldFont := none
+  /-- Web fonts (`@font-face`) by SHA-256, oldest first. -/
+  webFonts : Array Rendering.SfntProfile.Font := #[]
+  images : List HeldImage := []
+
+instance : Inhabited Holds := ⟨{}⟩
 
 /-- Most fonts that the engine holds at once. -/
 def maxHeldFonts : Nat := 64
@@ -1206,31 +1249,21 @@ holds it by SHA-256, apart from the fallback list: a web font draws only the tex
 /-- Most web fonts held at once; the oldest goes first. -/
 def maxWebFonts : Nat := 16
 
-initialize webFontRef : IO.Ref (Array Rendering.SfntProfile.Font) ← IO.mkRef #[]
-set_option compiler.extract_closed false in
-private unsafe def webFontsImpl (_ : JSON.Json) : Array Rendering.SfntProfile.Font := unsafeBaseIO webFontRef.get
-private unsafe def keepWebFontImpl (font : Rendering.SfntProfile.Font) (_ : JSON.Json) : Nat :=
-  unsafeBaseIO do
-    let held ← webFontRef.get
-    let held := if held.any (·.sha256 == font.sha256) then held else
-      let more := held.push font
-      if more.size > maxWebFonts then more.extract 1 more.size else more
-    webFontRef.set held
-    return held.size
-@[implemented_by webFontsImpl, noinline] private opaque webFontsHeld (request : JSON.Json) : Array Rendering.SfntProfile.Font
-@[implemented_by keepWebFontImpl, noinline] private opaque keepWebFont (font : Rendering.SfntProfile.Font) (request : JSON.Json) : Nat
-
 /-- Read a web font; the policy refuses it or the store holds it. -/
-private def loadWebFont (bytes : ByteArray) (sha256 : String) (request : JSON.Json) : Except String String := do
-  let font ← Rendering.SfntProfile.Font.read bytes "" sha256
-  let held := keepWebFont font request
-  return (JSON.Json.object [("webFont",.string sha256),("glyphs",.number (toString font.face.numGlyphs)),
-    ("held",.number (toString held))]).toString
+private def loadWebFont (h : Holds) (bytes : ByteArray) (sha256 : String) : Holds × Except String String :=
+  match Rendering.SfntProfile.Font.read bytes "" sha256 with
+  | .error e => (h, .error e)
+  | .ok font =>
+    let held := if h.webFonts.any (·.sha256 == font.sha256) then h.webFonts else
+      let more := h.webFonts.push font
+      if more.size > maxWebFonts then more.extract 1 more.size else more
+    ({h with webFonts := held}, .ok (JSON.Json.object [("webFont",.string sha256),
+      ("glyphs",.number (toString font.face.numGlyphs)),("held",.number (toString held.size))]).toString)
 
 /-- The faces of `faces` with their held fonts, by the `webFonts` of the request: the
 font of the first source URL of each face that the request names with a held SHA-256,
 with the rule's family and `unicode-range`. -/
-def webFaceFonts (faces : Array Rendering.FontFaceRule.Face) (request : JSON.Json) :
+def webFaceFonts (h : Holds) (faces : Array Rendering.FontFaceRule.Face) (request : JSON.Json) :
     Array (Option Rendering.SfntProfile.Font) :=
   let named : List (String × String) := match request.field? "webFonts" with
     | some (.array items) => items.filterMap fun item => match item.field? "url",item.field? "sha256" with
@@ -1238,7 +1271,7 @@ def webFaceFonts (faces : Array Rendering.FontFaceRule.Face) (request : JSON.Jso
       | _,_ => none
     | _ => []
   if named.isEmpty then faces.map (fun _ => none) else
-  let held := webFontsHeld request
+  let held := h.webFonts
   faces.map fun face => do
     let sha ← face.sources.findSome? fun u => (named.find? (·.1 == u)).map (·.2)
     let font ← held.find? (·.sha256 == sha)
@@ -1259,41 +1292,28 @@ def familyFonts (faces : Array Rendering.FontFaceRule.Face) (fonts : Array (Opti
 /-- Read the bytes of a font file once. Later renders use it until another load
 changes the list. With `fallback`, the font goes at the end of the held list (a font
 with the same SHA-256 is not added twice); otherwise it replaces the list. Either
-way the word memo starts again, as words may now draw differently. `request` only
-keeps the call in place (see `keepFont`). -/
-private def loadFontBytes (bytes : ByteArray) (family sha256 : String) (fallback : Bool) (request : JSON.Json) :
-    Except String String := do
-  let font ← Rendering.SfntProfile.Font.read bytes family sha256
-  let fonts := match fallback,heldFont request with
-    | true,some held => if held.fonts.any (·.sha256 == sha256) then held.fonts else held.fonts.push font
-    | _,_ => #[font]
-  if fonts.size > maxHeldFonts then throw "font file: more than 64 fonts held"
-  let held := keepFont ⟨fonts,{}⟩ request
-  return (JSON.Json.object [("family",.string font.family),("glyphs",.number (toString font.face.numGlyphs)),
-    ("fonts",.number (toString held.fonts.size))]).toString
+way the word memo starts again, as words may now draw differently. -/
+private def loadFontBytes (h : Holds) (bytes : ByteArray) (family sha256 : String) (fallback : Bool) :
+    Holds × Except String String :=
+  match Rendering.SfntProfile.Font.read bytes family sha256 with
+  | .error e => (h, .error e)
+  | .ok font =>
+    let fonts := match fallback,h.font with
+      | true,some held => if held.fonts.any (·.sha256 == sha256) then held.fonts else held.fonts.push font
+      | _,_ => #[font]
+    if fonts.size > maxHeldFonts then (h, .error "font file: more than 64 fonts held") else
+    ({h with font := some ⟨fonts,{}⟩}, .ok (JSON.Json.object [("family",.string font.family),
+      ("glyphs",.number (toString font.face.numGlyphs)),("fonts",.number (toString fonts.size))]).toString)
 
 /-- The `fontLoad` op: the font file as Base64 in the JSON request. This is the text
 reference path; `fontLoadBin` takes the same file as bytes. -/
-private def loadFont (request : JSON.Json) : Except String String := do
-  let some bytes := Rendering.SfntProfile.decodeBase64 (str request "fontBase64") | throw "font file: invalid base64"
-  if request.field? "webFont" == some (.bool true) then return ← loadWebFont bytes (str request "fontSha256" "unnamed") request
-  loadFontBytes bytes (str request "fontFamily" "font") (str request "fontSha256" "unnamed")
-    (request.field? "fallback" == some (.bool true)) request
-
-/-- `fontLoad` with the font file as bytes, with no Base64 and no JSON around it.
-A host copies the file into engine memory, so a font is not limited by the call stack,
-which holds string arguments in Wasm. `fallback` is 2 for a web font (`loadWebFont`), 1 to add the font to the held
-list, 0 to replace the list. The answer is the `fontLoad` answer. -/
-@[export web_document_font_load_bin]
-def fontLoadBin (bytes : ByteArray) (family sha256 : String) (fallback : UInt32) : String :=
-  let request := JSON.Json.object [("op",.string "fontLoad"),("fontFamily",.string family),
-    ("fontSha256",.string sha256),("fontBytes",.number (toString bytes.size)),("fallback",.bool (fallback != 0))]
-  -- The guest module of page scripts comes the same way, as bytes (WebScripts).
-  let loaded := if family == "guest:quickjs" || family == "guest:quickjs-aot" then WebScripts.loadModuleBytes family bytes request
-    else if fallback == 2 then loadWebFont bytes sha256 request
-    else loadFontBytes bytes family sha256 (fallback != 0) request
-  match loaded with
-  | .ok value => value | .error message => WebRender.errorJSON message
+private def loadFont (h : Holds) (request : JSON.Json) : Holds × Except String String :=
+  match Rendering.SfntProfile.decodeBase64 (str request "fontBase64") with
+  | none => (h, .error "font file: invalid base64")
+  | some bytes =>
+  if request.field? "webFont" == some (.bool true) then loadWebFont h bytes (str request "fontSha256" "unnamed") else
+  loadFontBytes h bytes (str request "fontFamily" "font") (str request "fontSha256" "unnamed")
+    (request.field? "fallback" == some (.bool true))
 
 /-! ### Held images (issues 1268, 1274 and 1292)
 
@@ -1303,45 +1323,29 @@ a render names the images in `heldImages`, `[{key,sha256}]`, so the bytes of a r
 request do not grow with the images (`frame_work_test.ts` counts them). `imageInfo`
 says that the engine has these ops: a host calls none of them before it asks. -/
 
-/-- An image the engine holds: the key `inspect` gave, its SHA-256 as the host said,
-and its bytes, opaque until `NativeImage.decode`. -/
-structure HeldImage where
-  key : String
-  sha256 : String
-  bytes : ByteArray
-
 /-- Most images, and most bytes of images, that the engine holds; the oldest go first. -/
 def maxHeldImages : Nat := 64
 def maxHeldImageBytes : Nat := 33554432
 
-initialize heldImagesRef : IO.Ref (List HeldImage) ← IO.mkRef []
-
-set_option compiler.extract_closed false in
-private unsafe def heldImagesImpl (_ : JSON.Json) : List HeldImage := unsafeBaseIO heldImagesRef.get
-private unsafe def keepImagesImpl (images : List HeldImage) (_ : JSON.Json) : List HeldImage :=
-  unsafeBaseIO (do heldImagesRef.set images; return images)
-/-- These read and change the held images, as `heldFont` and `keepFont` do. -/
-@[implemented_by heldImagesImpl, noinline] private opaque heldImages (request : JSON.Json) : List HeldImage
-@[implemented_by keepImagesImpl, noinline] private opaque keepImages (images : List HeldImage) (request : JSON.Json) : List HeldImage := images
-
 /-- Hold `bytes` as the image `key` with `sha256`, first; drop another image of the same
 key, then the oldest past the limits. -/
-private def loadImageBytes (bytes : ByteArray) (key sha256 : String) (request : JSON.Json) : Except String String := do
-  if key.isEmpty || sha256.isEmpty then throw "image key and sha256 required"
-  if bytes.size > maxHeldImageBytes then throw s!"image exceeds {maxHeldImageBytes} bytes"
-  let others := (heldImages request).filter (·.key != key)
+private def loadImageBytes (h : Holds) (bytes : ByteArray) (key sha256 : String) : Holds × Except String String :=
+  if key.isEmpty || sha256.isEmpty then (h, .error "image key and sha256 required") else
+  if bytes.size > maxHeldImageBytes then (h, .error s!"image exceeds {maxHeldImageBytes} bytes") else
+  let others := h.images.filter (·.key != key)
   let (kept,_) := others.foldl (fun (acc : List HeldImage × Nat) image =>
     if acc.1.length+1 < maxHeldImages && acc.2+image.bytes.size ≤ maxHeldImageBytes then (acc.1 ++ [image],acc.2+image.bytes.size)
     else acc) ([],bytes.size)
-  let held := keepImages (⟨key,sha256,bytes⟩ :: kept) request
+  let held := ⟨key,sha256,bytes⟩ :: kept
   let number := fun (n : Nat) => JSON.Json.number (toString n)
-  return (JSON.Json.object [("key",.string key),("sha256",.string sha256),("bytes",number bytes.size),
-    ("held",number held.length)]).toString
+  ({h with images := held}, .ok (JSON.Json.object [("key",.string key),("sha256",.string sha256),("bytes",number bytes.size),
+    ("held",number held.length)]).toString)
 
 /-- `imageLoad`: the image as Base64 in the JSON request. -/
-private def loadImage (request : JSON.Json) : Except String String := do
-  let bytes ← NativeImage.base64 (str request "imageBase64").toUTF8 0
-  loadImageBytes bytes (str request "key") (str request "sha256") request
+private def loadImage (h : Holds) (request : JSON.Json) : Holds × Except String String :=
+  match NativeImage.base64 (str request "imageBase64").toUTF8 0 with
+  | .error e => (h, .error e)
+  | .ok bytes => loadImageBytes h bytes (str request "key") (str request "sha256")
 
 /-- A page's bytes as its text (HTML §13.2.3 encoding sniffing, then the Encoding
 Standard's decoder: `WHATWG.Encoding.Sniff.decodeDocumentFast`), given the transport
@@ -1365,14 +1369,6 @@ def decodeBinWith (bytes : ByteArray) (contentType fallback locale : String) : S
 @[export web_document_decode_bin]
 def decodeBin (bytes : ByteArray) (contentType : String) : String := decodeBinWith bytes contentType "" ""
 
-/-- `imageLoad` with the image as bytes, with no Base64 and no JSON around it. -/
-@[export web_document_image_load_bin]
-def imageLoadBin (bytes : ByteArray) (key sha256 : String) : String :=
-  let request := JSON.Json.object [("op",.string "imageLoad"),("key",.string key),("sha256",.string sha256),
-    ("imageBytes",.number (toString bytes.size))]
-  match loadImageBytes bytes key sha256 request with
-  | .ok value => value | .error message => WebRender.errorJSON message
-
 /-- The images a render names (`heldImages`), as key and SHA-256. -/
 def namedImages (request : JSON.Json) : Except String (List (String × String)) := do
   let .array items := (request.field? "heldImages").getD (.array []) | throw "heldImages must be an array"
@@ -1384,22 +1380,22 @@ def namedImages (request : JSON.Json) : Except String (List (String × String)) 
 
 /-- The named images that the engine holds: the image part of `LayoutKey`. A named
 image that is not held is left out (the page shows its alt text), and the key says so. -/
-def heldNamed (request : JSON.Json) (names : List (String × String)) : List (String × String) :=
-  let held := heldImages request
+def heldNamed (h : Holds) (names : List (String × String)) : List (String × String) :=
+  let held := h.images
   names.filter fun (key,sha) => held.any fun image => image.key == key && image.sha256 == sha
 
 /-- The bytes of the held images of a key. -/
-private def heldBytes (request : JSON.Json) (names : List (String × String)) : List (String × ByteArray) :=
-  let held := heldImages request
+private def heldBytes (h : Holds) (names : List (String × String)) : List (String × ByteArray) :=
+  let held := h.images
   names.filterMap fun (key,sha) => (held.find? fun image => image.key == key && image.sha256 == sha).map (key,·.bytes)
 
 /-- What Canvas 2D draws with (L4Factoidal.PageCanvas): the fonts the engine holds, the SVG
 path parser (`new Path2D(d)`), and the held images by key, decoded by Lean when a page
 draws one (the canvas keeps it decoded). -/
-def canvasEnv (request : JSON.Json) : L4Factoidal.PageCanvas.Env :=
-  { fonts := ((heldFont request).map (·.fonts)).getD #[],
+def canvasEnv (h : Holds) : L4Factoidal.PageCanvas.Env :=
+  { fonts := (h.font.map (·.fonts)).getD #[],
     svgPath := fun d => (NativeSVGPath.parse NativeSVG.number d).toOption,
-    image := fun key => ((heldImages request).find? (·.key == key)).bind fun img =>
+    image := fun key => (h.images.find? (·.key == key)).bind fun img =>
       match NativeImage.decode img.bytes with
       | .ok b => some (L4Factoidal.PageCanvas.Bitmap.ofStraight b.width b.height b.rgba)
       | .error _ => none }
@@ -1457,6 +1453,9 @@ structure Laid where
   /-- What a frame paints on this layout with no layout: the `transform` of script
   slots and SVG animations (`WebPaint`). -/
   paint : WebPaint.Plan := {}
+  /-- The word memo of the held fonts after this layout (`SfntProfile.remember`), which
+  the engine keeps for the next layout (`Holds.font`); none with no held font. -/
+  words : Option Rendering.SfntProfile.Memo := none
 
 /-- The element state of a request (Selectors 4 §9): `hover` and `active` are node ids
 of the page (a link's `sourceNode`); `visited` lists URLs of the session history. A
@@ -1553,7 +1552,7 @@ def stripSvg (dom : DOM.Dom) : DOM.Dom × Nat :=
 private def depthRefusal : String := "unsupported HTML nesting depth (maximum 64)"
 /-- `layOutDOM` in mode `m`, with its skip points. A liberal run is made only after a strict
 run refused (`WebAccept.accept`), so it puts `partialNote` on the page. -/
-def layOutDOMIn (m : WebAccept.Mode) (request : JSON.Json) (graph : Option NativeFoafNaut.Model) (dom : DOM.Dom)
+def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : Option NativeFoafNaut.Model) (dom : DOM.Dom)
     (width rows : Nat) (held : List (String × String)) (pointer : Option Nat × Option Nat) :
     Except String (Laid × List WebAccept.Diagnostic) := do
   -- Paint-only changes (WebPaint): script `transform` slots are the identity here, and
@@ -1578,22 +1577,22 @@ def layOutDOMIn (m : WebAccept.Mode) (request : JSON.Json) (graph : Option Nativ
   let face ← if fontData.isEmpty then pure none else
     some <$> Rendering.FontProvider.Face.decode fontData
   -- A font loaded by the fontLoad op: Lean shapes the words and takes the outlines.
-  let loaded := heldFont request
+  let loaded := h.font
   let memo := loaded.map fun held => Rendering.SfntProfile.remember held.fonts held.memo (Rendering.SfntProfile.wordsOf dom)
   -- Web fonts (`@font-face`): those the request names and the engine holds.
   let faces := facesOf env sheets
-  let faceFonts := webFaceFonts faces request
+  let faceFonts := webFaceFonts h faces request
   let heldFamilies := ((loaded.map (·.fonts)).getD #[]).toList.map (·.family.toLower)
   let font ← match loaded,memo with
     | some held,some words =>
-      Rendering.SfntProfile.profile held.fonts (keepWords words request)
+      Rendering.SfntProfile.profile held.fonts words
         (shapeKept (Rendering.SfntProfile.fontsKey held.fonts) held.fonts)
         (if faceFonts.all Option.isNone then fun _ => #[] else familyFonts faces faceFonts heldFamilies)
     | _,_ => pure (match face with | some f => Rendering.Layout.FontProfile.ofFace f | none => WebRender.asciiFont)
   let url := baseURL dom (str request "url")
   -- SVG text is drawn with the fonts of the HTML text.
   let svgFonts := (loaded.map (·.fonts)).getD #[] ++ faceFonts.filterMap id
-  let images := (← suppliedImages request) ++ heldBytes request held
+  let images := (← suppliedImages request) ++ heldBytes h held
   -- The SVG of the page is read here. In liberal mode a refusal of it (the SVG reader reads all
   -- inline `svg` roots of the document together) lays the page out with no inline `svg`.
   let documentURL := if url.isEmpty then none else some url
@@ -1662,7 +1661,7 @@ def layOutDOMIn (m : WebAccept.Mode) (request : JSON.Json) (graph : Option Nativ
           | .ok (scene,boxes) => pure (scene,boxes,bare,[{skip := .svgContent, «where» := s!"{n} inline svg elements", refusal := e}])
           | .error _ => throw e
   let hoverRules := rules.any fun rule => rule.selectors.any fun sel => sel.parts.any (·.pseudo.contains .hover)
-  let laid : Laid := {scene := scene,boxes := boxes,face := face,hoverRules := hoverRules}
+  let laid : Laid := {scene := scene,boxes := boxes,face := face,hoverRules := hoverRules,words := memo}
   return ({laid with dom := dom}
     |> fun l => {l with rules := rules}
     |> fun l => {l with textScale := textScale}
@@ -1673,18 +1672,18 @@ def layOutDOMIn (m : WebAccept.Mode) (request : JSON.Json) (graph : Option Nativ
 /-- `layOut` after the parse: the layout of the arena `dom`, `width` by `rows` CSS pixels,
 in the mode of the request (`WebAccept.accept`). A script session's layout reads
 (`measure`) lay its arena out here, with no parse. -/
-def layOutDOM (request : JSON.Json) (graph : Option NativeFoafNaut.Model) (dom : DOM.Dom) (width rows : Nat)
+def layOutDOM (h : Holds) (request : JSON.Json) (graph : Option NativeFoafNaut.Model) (dom : DOM.Dom) (width rows : Nat)
     (held : List (String × String)) (pointer : Option Nat × Option Nat) : Except String Laid := do
-  let (laid,ds) ← WebAccept.accept (WebAccept.mode request) fun m => layOutDOMIn m request graph dom width rows held pointer
+  let (laid,ds) ← WebAccept.accept (WebAccept.mode request) fun m => layOutDOMIn h m request graph dom width rows held pointer
   return {laid with diagnostics := ds}
 
 /-- Liberal mode is a conservative extension of strict mode for layout: when the strict
 layout of a request succeeds, the liberal layout is the same, with no diagnostics. -/
-theorem layOut_liberal_conservative (request : JSON.Json) (graph : Option NativeFoafNaut.Model) (dom : DOM.Dom)
+theorem layOut_liberal_conservative (h₀ : Holds) (request : JSON.Json) (graph : Option NativeFoafNaut.Model) (dom : DOM.Dom)
     (width rows : Nat) (held : List (String × String)) (pointer : Option Nat × Option Nat)
     (laid : Laid) (ds : List WebAccept.Diagnostic)
-    (h : WebAccept.accept .strict (fun m => layOutDOMIn m request graph dom width rows held pointer) = .ok (laid,ds)) :
-    WebAccept.accept .liberal (fun m => layOutDOMIn m request graph dom width rows held pointer) = .ok (laid,[]) ∧ ds = [] :=
+    (h : WebAccept.accept .strict (fun m => layOutDOMIn h₀ m request graph dom width rows held pointer) = .ok (laid,ds)) :
+    WebAccept.accept .liberal (fun m => layOutDOMIn h₀ m request graph dom width rows held pointer) = .ok (laid,[]) ∧ ds = [] :=
   WebAccept.liberal_conservative _ laid ds h
 
 /-- The same for what the host fetches (`inspect`). -/
@@ -1752,7 +1751,7 @@ theorem toDevice_sources (l : Laid) (unit width rows : Nat) :
 request it reads is `key.request`, which has only `layoutFields`. With `graphModel`
 (the FOAF graph page) the document is `WebGraph.skeleton` of the model, not `key.html`,
 and the picture comes from the model with no SVG text (`WebGraph.embedding`). -/
-def layOut (key : LayoutKey) : Except String Laid := do
+def layOut (h : Holds) (key : LayoutKey) : Except String Laid := do
   let request := key.request
   let graph ← match request.field? "graphModel" with
     | none => pure none
@@ -1767,10 +1766,10 @@ def layOut (key : LayoutKey) : Except String Laid := do
   -- keeps device pixels: its model is drawn at the size of the window (`graphInput`).
   let unit := if graph.isSome then 100 else zoomUnit request
   if unit == 100 then
-    layOutDOM (if graph.isSome then withoutField "zoomUnit" request else request) graph dom key.width rows key.held key.pointer
+    layOutDOM h (if graph.isSome then withoutField "zoomUnit" request else request) graph dom key.width rows key.held key.pointer
   else
     let (cssWidth,cssRows,_) := layoutInputs key.width rows 0 unit
-    let laid ← layOutDOM request graph dom (max 1 cssWidth) (max 1 cssRows) key.held key.pointer
+    let laid ← layOutDOM h request graph dom (max 1 cssWidth) (max 1 cssRows) key.held key.pointer
     return laid.toDevice unit key.width rows
 
 /-! ### Layout reads of page scripts
@@ -1819,9 +1818,9 @@ def readAnswer (l : Laid) (node op : Nat) : Option String :=
 page's `@font-face` rules as JSON, each with its family, descriptors and status:
 `loaded` when the engine holds its font for this page (`webFonts`), else `unloaded`.
 The host loads the faces the text uses before the scripts run, so no face is loading. -/
-def fontFacesAnswer (dom : DOM.Dom) (request : JSON.Json) : String :=
+def fontFacesAnswer (h : Holds) (dom : DOM.Dom) (request : JSON.Json) : String :=
   let faces := (fontFaces dom request).toOption.getD #[]
-  let fonts := webFaceFonts faces request
+  let fonts := webFaceFonts h faces request
   let hex := fun (n : Nat) => String.ofList (Nat.toDigits 16 n) |>.toUpper
   let entries := (List.range faces.size).map fun i =>
     let f := faces[i]!
@@ -1834,10 +1833,10 @@ def fontFacesAnswer (dom : DOM.Dom) (request : JSON.Json) : String :=
 /-- The layout reads of a script session (`Page.Measure`) with the render request
 `request` (its `layoutFields`): the arena laid out `width` by `height` (`layOutDOM`)
 when a read first asks, then the answers from that one layout. -/
-def measure (request : JSON.Json) : WasmVM.Hosts.Page.Measure := fun dom width height =>
+def measure (h : Holds) (request : JSON.Json) : WasmVM.Hosts.Page.Measure := fun dom width height =>
   let request := layoutRequest request
-  let held := heldNamed request ((namedImages request).toOption.getD [])
-  let laid : Thunk (Except String Laid) := Thunk.mk fun _ => layOutDOM request none dom width height held (none,none)
+  let held := heldNamed h ((namedImages request).toOption.getD [])
+  let laid : Thunk (Except String Laid) := Thunk.mk fun _ => layOutDOM h request none dom width height held (none,none)
   -- `getComputedStyle` (op 20) reads the cascade alone: no layout for it
   let styled : Thunk (Except String (Array Rendering.CSS.Computed)) := Thunk.mk fun _ => do
     let textScale := cssTextScale (← scalePercent request) (zoomUnit request)
@@ -1847,7 +1846,7 @@ def measure (request : JSON.Json) : WasmVM.Hosts.Page.Measure := fun dom width h
   -- 22: the device pixel ratio of the layout request (`zoomUnit`/100), with no layout
   -- 23: the `@font-face` faces of the page and the state of each (`document.fonts`)
   fun node op => if op == 22 then some (Rendering.FloatFormat.format (Float.ofNat (zoomUnit request) / 100))
-    else if op == 23 then some (fontFacesAnswer dom request)
+    else if op == 23 then some (fontFacesAnswer h dom request)
     else if op == 20 || op ≥ 200 then
       match styled.get with
       -- CSSOM §9 getComputedStyle: an element that is not connected to the page's
@@ -1876,21 +1875,21 @@ for any memo so made (`FrameCost.Lru.lookup_eq`). -/
 
 open L4Factoidal.FrameCost
 
-/-- A memo is valid when each value is the layout of its key. `keepLayout` makes only
-such entries. -/
-def ValidEntry (memo : Lru LayoutKey Laid) : Prop := Lru.Valid layOut memo
+/-- A memo is valid when each value is the layout of its key. `Engine.layOutKept` makes
+only such entries. -/
+def ValidEntry (h : Holds) (memo : Lru LayoutKey Laid) : Prop := Lru.Valid (layOut h) memo
 
-def lookupLayout (memo : Lru LayoutKey Laid) (key : LayoutKey) : Except String Laid :=
-  Lru.lookup layOut memo key
+def lookupLayout (h : Holds) (memo : Lru LayoutKey Laid) (key : LayoutKey) : Except String Laid :=
+  Lru.lookup (layOut h) memo key
 
-theorem lookupLayout_eq (memo : Lru LayoutKey Laid) (valid : ValidEntry memo) (key : LayoutKey) :
-    lookupLayout memo key = layOut key :=
-  Lru.lookup_eq layOut memo valid key
+theorem lookupLayout_eq (h : Holds) (memo : Lru LayoutKey Laid) (valid : ValidEntry h memo) (key : LayoutKey) :
+    lookupLayout h memo key = layOut h key :=
+  Lru.lookup_eq (layOut h) memo valid key
 
 /-- The memo that a render leaves is valid. -/
-theorem stored_valid (memo : Lru LayoutKey Laid) (valid : ValidEntry memo) (key : LayoutKey) (laid : Laid)
-    (made : layOut key = .ok laid) : ValidEntry (Lru.putIn LayoutKey.html layoutSlots memo key laid) :=
-  Lru.putIn_valid LayoutKey.html layOut layoutSlots memo valid key laid made
+theorem stored_valid (h : Holds) (memo : Lru LayoutKey Laid) (valid : ValidEntry h memo) (key : LayoutKey) (laid : Laid)
+    (made : layOut h key = .ok laid) : ValidEntry h (Lru.putIn LayoutKey.html layoutSlots memo key laid) :=
+  Lru.putIn_valid LayoutKey.html (layOut h) layoutSlots memo valid key laid made
 
 /-- The frame cost model's cache hit is this memo's: leaving out the values keeps
 `find?`'s answer and commutes with the scoped put (`FrameCost.Session.kept` is
@@ -1943,12 +1942,6 @@ theorem layoutTop_classic (shell : WebShell.Shell) (width : Nat) (classic : shel
 theorem shell_height_scroll (shell : WebShell.Shell) (scroll width : Nat) :
     WebShell.height {shell with scroll} width = WebShell.height shell width := rfl
 
-/-- Frame work the engine did since it started (or since `frameWork` with `reset`):
-layouts, kept layouts used, and pointer states painted on a kept layout. -/
-initialize frameWorkRef : IO.Ref (Nat × Nat × Nat) ← IO.mkRef (0,0,0)
-
-initialize layoutRef : IO.Ref (Lru LayoutKey Laid) ← IO.mkRef []
-
 /-- Frames painted on a kept layout with transforms or animation values (`WebPaint`),
 and the last such scene with its values, so that a frame whose values did not change
 gives the same scene object (and `pageArtifact` its kept band). -/
@@ -1984,51 +1977,6 @@ layouts so that they do not push a layout out: a press, a hover and a loading fr
 the pointer then give the same layout object again, and the page layer that
 `pageArtifact` keeps for it. -/
 def paintedSlots : Nat := 2
-initialize paintedRef : IO.Ref (Lru LayoutKey Laid) ← IO.mkRef []
-
-set_option compiler.extract_closed false in
-private unsafe def keptLayoutImpl (key : LayoutKey) : Option Laid :=
-  unsafeBaseIO do
-    let memo ← layoutRef.get
-    match Lru.find? memo key with
-    | some laid =>
-      layoutRef.set (Lru.putIn LayoutKey.html layoutSlots memo key laid)
-      frameWorkRef.modify fun (l,k,r) => (l,k+1,r)
-      return some laid
-    | none => return none
-private unsafe def keepLayoutImpl (key : LayoutKey) (laid : Laid) : Laid :=
-  unsafeBaseIO do
-    layoutRef.modify (Lru.putIn LayoutKey.html layoutSlots · key laid)
-    frameWorkRef.modify fun (l,k,r) => (l+1,k,r)
-    return laid
-private unsafe def countRepaintImpl (laid : Laid) : Laid :=
-  unsafeBaseIO (do frameWorkRef.modify (fun (l,k,r) => (l,k,r+1)); return laid)
-set_option compiler.extract_closed false in
-private unsafe def frameWorkImpl (reset : Bool) : Nat × Nat × Nat :=
-  unsafeBaseIO do
-    let work ← frameWorkRef.get
-    if reset then frameWorkRef.set (0,0,0)
-    return work
-/-- These read and change the memo (a hit moves its entry first, as `Lru.put`), and
-count the work, as `heldFont` and `keepFont` do for the font. -/
-@[implemented_by keptLayoutImpl, noinline] private opaque keptLayout (key : LayoutKey) : Option Laid
-@[implemented_by keepLayoutImpl, noinline] private opaque keepLayout (key : LayoutKey) (laid : Laid) : Laid := laid
-@[implemented_by countRepaintImpl, noinline] private opaque countRepaint (laid : Laid) : Laid := laid
-@[implemented_by frameWorkImpl, noinline] private opaque frameWork (reset : Bool) : Nat × Nat × Nat
-set_option compiler.extract_closed false in
-private unsafe def pageWorkImpl (reset : Bool) : Nat × Nat × Nat × Nat × Nat :=
-  unsafeBaseIO do
-    let work ← pageWorkRef.get
-    if reset then pageWorkRef.set (0,0,0,0,0)
-    return work
-/-- Page layers made and page layers kept (`pageArtifact`), as `frameWork` counts layouts. -/
-@[implemented_by pageWorkImpl, noinline] private opaque pageWork (reset : Bool) : Nat × Nat × Nat × Nat × Nat
-
-/-- `lookupLayout` over the kept memo. -/
-private def cachedLayOut (key : LayoutKey) : Except String Laid :=
-  match keptLayout key with
-  | some laid => .ok laid
-  | none => keepLayout key <$> layOut key
 
 /-- The pointer state of `pointer` painted on a layout with none (`WebRepaint`): the
 layout with the new colours, or none when a style of that state changes geometry. -/
@@ -2054,52 +2002,89 @@ def frameWith (laidOut : LayoutKey → Except String Laid) (key : LayoutKey) (pa
 /-- What `WebDocumentTests.lean` checks on pages with pointer styles: a restyled layout
 is the layout with the pointer state. -/
 def RestyleSound : Prop :=
-  ∀ key base laid, layOut {key with pointer := (none,none)} = .ok base → restyle base key.pointer = some laid →
-    layOut key = .ok laid
+  ∀ h key base laid, layOut h {key with pointer := (none,none)} = .ok base → restyle base key.pointer = some laid →
+    layOut h key = .ok laid
 
 /-- With a valid memo and a sound restyle, a frame is the layout of its key: the cost
-cut (no layout for a colour-only hover) gives the picture of the expensive path. The
-engine passes `countRepaint` as `painted`, which counts and gives back its argument,
-as `keepLayout` does for `lookupLayout`. -/
-theorem frameWith_eq (memo : Lru LayoutKey Laid) (valid : ValidEntry memo) (sound : RestyleSound) (key : LayoutKey) :
-    frameWith (lookupLayout memo) key = layOut key := by
+cut (no layout for a colour-only hover) gives the picture of the expensive path.
+`Engine.frame` is this with the counting of `frameWork` added. -/
+theorem frameWith_eq (h : Holds) (memo : Lru LayoutKey Laid) (valid : ValidEntry h memo) (sound : RestyleSound)
+    (key : LayoutKey) : frameWith (lookupLayout h memo) key = layOut h key := by
   unfold frameWith
-  simp only [lookupLayout_eq memo valid]
+  simp only [lookupLayout_eq h memo valid]
   split
   · rfl
-  · cases hb : layOut {key with pointer := (none,none)} with
+  · cases hb : layOut h {key with pointer := (none,none)} with
     | error e => rfl
     | ok base =>
       simp only
       cases hr : restyle base key.pointer with
       | none => rfl
-      | some laid => exact (sound key base laid hb hr).symm
+      | some laid => exact (sound h key base laid hb hr).symm
 
-set_option compiler.extract_closed false in
-private unsafe def keptPaintedImpl (key : LayoutKey) : Option Laid :=
-  unsafeBaseIO do
-    match Lru.find? (← paintedRef.get) key with
-    | some laid =>
-      paintedRef.modify (Lru.putIn LayoutKey.html paintedSlots · key laid)
-      frameWorkRef.modify fun (l,k,r) => (l,k+1,r)
-      return some laid
-    | none => return none
-private unsafe def keepPaintedImpl (key : LayoutKey) (laid : Laid) : Laid :=
-  unsafeBaseIO do
-    paintedRef.modify (Lru.putIn LayoutKey.html paintedSlots · key laid)
-    return laid
-/-- A frame with a pointer state that the engine painted before, and keeping one. The
-entries are values of `frameWith cachedLayOut` for their keys. -/
-@[implemented_by keptPaintedImpl, noinline] private opaque keptPainted (key : LayoutKey) : Option Laid
-@[implemented_by keepPaintedImpl, noinline] private opaque keepPainted (key : LayoutKey) (laid : Laid) : Laid := laid
+/-! ### The engine's state (issue 390)
 
-/-- `frameWith` over the kept memo: what a render uses. A key with a pointer state is
-looked up in the painted memo first. -/
-private def cachedFrame (key : LayoutKey) : Except String Laid :=
-  if key.pointer == (none,none) then frameWith cachedLayOut key countRepaint else
-  match keptPainted key with
-  | some laid => .ok laid
-  | none => keepPainted key <$> frameWith cachedLayOut key countRepaint
+What the engine keeps between calls of its C ABI, as a value: the shim holds it and
+passes it to each call, which gives back the next one. -/
+
+/-- The engine's state between calls. -/
+structure Engine where
+  /-- Held fonts, web fonts and images (`fontLoad`, `imageLoad`). -/
+  holds : Holds := {}
+  /-- Page scripts: the guest module and the session (`WebScripts`). -/
+  scripts : WebScripts.Held := {}
+  /-- The layouts of the last keys (`lookupLayout`). -/
+  layouts : Lru LayoutKey Laid := []
+  /-- Frames with a pointer state painted on a kept layout (`paintedSlots`). -/
+  painted : Lru LayoutKey Laid := []
+  /-- Layouts done, kept layouts used, pointer states painted on a kept layout, since the
+  start or the last `frameWork` with `reset`. -/
+  frameWork : Nat × Nat × Nat := (0,0,0)
+  /-- The link regions of the frame on screen, decoded once, by their text (`decodeKept`). -/
+  links : Option (String × List Rendering.LinkRegion) := none
+
+instance : Inhabited Engine := ⟨{}⟩
+
+/-- The layout of `key` from the memo, or laid out and kept. A layout also gives back the
+word memo of the held fonts, which the engine keeps (`Laid.words`). A hit moves its entry
+first, as `Lru.put`. -/
+def Engine.layOutKept (e : Engine) (key : LayoutKey) : Engine × Except String Laid :=
+  let (l,k,r) := e.frameWork
+  match Lru.find? e.layouts key with
+  | some laid => ({e with layouts := Lru.putIn LayoutKey.html layoutSlots e.layouts key laid,frameWork := (l,k+1,r)},.ok laid)
+  | none =>
+    match layOut e.holds key with
+    | .error x => (e,.error x)
+    | .ok laid =>
+      let holds := match laid.words with
+        | some words => {e.holds with font := e.holds.font.map ({· with memo := words})}
+        | none => e.holds
+      ({e with layouts := Lru.putIn LayoutKey.html layoutSlots e.layouts key laid,frameWork := (l+1,k,r),holds},.ok laid)
+
+/-- `frameWith` over the kept layouts, counting a repaint. -/
+def Engine.frameKept (e : Engine) (key : LayoutKey) : Engine × Except String Laid :=
+  if key.pointer == (none,none) then e.layOutKept key else
+  match e.layOutKept {key with pointer := (none,none)} with
+  | (e,.ok base) =>
+    match restyle base key.pointer with
+    | some laid => let (l,k,r) := e.frameWork; ({e with frameWork := (l,k,r+1)},.ok laid)
+    | none => e.layOutKept key
+  | (e,.error _) => e.layOutKept key
+
+/-- The layout of a render: a key with a pointer state is looked up in the painted memo
+first. Does not say: that the answer is `layOut e.holds key`. `frameWith_eq` gives that
+for a valid memo and a sound restyle; that `e.layouts` is valid for `e.holds` is not
+proved (a layout changes the word memo in `e.holds`, which changes no layout). -/
+def Engine.frame (e : Engine) (key : LayoutKey) : Engine × Except String Laid :=
+  if key.pointer == (none,none) then e.frameKept key else
+  match Lru.find? e.painted key with
+  | some laid =>
+    let (l,k,r) := e.frameWork
+    ({e with painted := Lru.putIn LayoutKey.html paintedSlots e.painted key laid,frameWork := (l,k+1,r)},.ok laid)
+  | none =>
+    match e.frameKept key with
+    | (e,.ok laid) => ({e with painted := Lru.putIn LayoutKey.html paintedSlots e.painted key laid},.ok laid)
+    | other => other
 
 /-- `cpu:true`: each scene of a bytes answer also carries its CPU pixels. -/
 private def cpuPixels (request : JSON.Json) : Bool := request.field? "cpu" == some (.bool true)
@@ -2112,23 +2097,41 @@ def withDiagnostics (request : JSON.Json) (laid : Laid) (answer : String × Arra
   if request.field? "diagnostics" != some (.bool true) || laid.diagnostics.isEmpty || !text.endsWith "}" then answer
   else ((text.dropEnd 1).toString ++ ",\"diagnostics\":" ++ (WebAccept.diagnosticsJSON laid.diagnostics).toString ++ "}",sections)
 
+/-- An operation of the engine: it reads and changes the engine's state, and reads the
+machine through `M` (`BaseIO` in the engine, `Id` in tests: time 0, no random bytes). -/
+abbrev DocM (M : Type → Type) := ExceptT String (StateT Engine M)
+
+/-- A step on the state that also answers. -/
+@[inline] def stepState {M : Type → Type} [Monad M] {α : Type} (f : Engine → Engine × Except String α) : DocM M α := do
+  match ← modifyGet fun e => let (e,r) := f e; (r,e) with
+  | .ok a => pure a
+  | .error x => throw x
+
+/-- An `ExceptT String M` operation in `DocM M`. -/
+@[inline] def ofExceptT {M : Type → Type} [Monad M] {α : Type} (x : ExceptT String M α) : DocM M α := do
+  match ← (x.run : M _) with
+  | .ok a => pure a
+  | .error e => throw e
+
 /-- A document request, with `laidOut` as the layout of a render. `run` passes the
-kept layout; `runUncached` passes `layOut`, so that tests compare the two. With
+kept layout (`Engine.frame`); `runUncached` passes `layOut`, so that tests compare the two. With
 `bytes`, a render answer names its storage floats and tile words as sections
 (`DataForm.sections`) and gives their bytes; other answers have no section. -/
-def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html : String) (request : JSON.Json)
-    (width height : Nat) : Except String (String × Array ByteArray) := do
+def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : LayoutKey → DocM M Laid) (bytes : Bool) (html : String)
+    (request : JSON.Json) (width height : Nat) : DocM M (String × Array ByteArray) := do
   let .object fields := request | throw "document request must be an object"
   if (fields.map Prod.fst).eraseDups.length != fields.length then throw "duplicate document request field"
-  if str request "op" == "fontLoad" then return (← loadFont request,#[])
-  if str request "op" == "imageLoad" then return (← loadImage request,#[])
+  if str request "op" == "fontLoad" then
+    return (← stepState fun e => let (h,r) := loadFont e.holds request; ({e with holds := h},r),#[])
+  if str request "op" == "imageLoad" then
+    return (← stepState fun e => let (h,r) := loadImage e.holds request; ({e with holds := h},r),#[])
   -- The ops of held images and frame work: a host asks this before it calls them (issue 1274).
   if str request "op" == "imageInfo" then
     let number := fun (n : Nat) => JSON.Json.number (toString n)
     return ((JSON.Json.object [("engine",.string "heldImages"),
       ("ops",.array (["imageLoad","imageLoadBin","imageDrop","frameWork"].map .string)),
       ("maxImages",number maxHeldImages),("maxBytes",number maxHeldImageBytes),
-      ("held",number (heldImages request).length),("layoutSlots",number layoutSlots)]).toString,#[])
+      ("held",number (← get).holds.images.length),("layoutSlots",number layoutSlots)]).toString,#[])
   -- The folding chrome (owner, 2026-11-08). A host asks `shellInfo` before it sends a shell
   -- with `collapse` or calls `chromeLayer`: an older engine answers "unknown document
   -- operation" and the host keeps the classic chrome (issue 1274). `full` and `strip` are
@@ -2157,12 +2160,12 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
     let (text,sections) ← WebRender.artifactWith scene #[] none live form checks false
     return ("{\"top\":" ++ toString scene.height ++ ",\"chrome\":" ++ text ++ "}",sections)
   if str request "op" == "imageDrop" then
-    let held := keepImages [] request
-    return ((JSON.Json.object [("held",.number (toString held.length))]).toString,#[])
+    modify fun e => {e with holds := {e.holds with images := []}}
+    return ((JSON.Json.object [("held",.number "0")]).toString,#[])
   -- Layouts done, kept layouts used and pointer states painted with no layout.
   if str request "op" == "frameWork" then
     let reset := request.field? "reset" == some (.bool true)
-    let (layouts,kept,repaints) := frameWork reset
+    let (layouts,kept,repaints) ← modifyGet fun e => (e.frameWork,if reset then {e with frameWork := (0,0,0)} else e)
     let (pagesMade,pagesKept,recompiled,reused,moved) := pageWork reset
     let paints := paintWork reset
     let number := fun (n : Nat) => JSON.Json.number (toString n)
@@ -2177,10 +2180,26 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
   if str request "op" == "xslt" then
     let (source,engine) ← WebXslt.transform html (str request "stylesheet") (str request "url") (str request "stylesheetURL")
     return ((JSON.Json.object [("source",.string source),("engine",.string engine)]).toString,#[])
-  if let some answer ← inputOp (str request "op" "render") request then return (answer,#[])
-  -- Page scripts run by Lean: QuickJS in WasmVM on the page's arena (WebScripts).
-  if let some answer ← WebScripts.opSections (str request "op" "render") html request (fun r => some (measure r))
-      (fun _ => canvasEnv request) then return answer
+  -- `press` reads the link regions of the frame, decoded once (`decodeKept`).
+  if str request "op" == "press" then
+    match request.field? "linksText" with
+    | some (.string text) =>
+      let regions ← modifyGet fun e => let (links,r) := decodeKept e.links text; (r,{e with links})
+      return (← press (fun _ => regions) request,#[])
+    | _ => return (← press Rendering.Links.decode request,#[])
+  if let some answer ← ofExceptT (inputOp (str request "op" "render") request) then return (answer,#[])
+  -- Page scripts run by Lean: QuickJS in WasmVM on the page's arena (WebScripts). The
+  -- session is taken out of the state for the call, so that it is not shared.
+  if str request "op" == "scriptSession" then
+    let holds := (← get).holds
+    let held ← modifyGet fun e => (e.scripts,{e with scripts := {}})
+    let (held,answer) ← WebScripts.opSections held "scriptSession" html request (fun r => some (measure holds r))
+      (fun _ => canvasEnv holds)
+    modify fun e => {e with scripts := held}
+    match answer with
+    | .ok (some a) => return a
+    | .ok none => pure ()
+    | .error x => throw x
   let op := str request "op" "render"
   if op != "render" && op != "selectedText" && op != "printLayout" && op != "nodeAt" then
     let dom ← prepareDOM html request
@@ -2196,7 +2215,7 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
     if op == "fontFaces" then
       let faces ← fontFaces dom request
       let styles ← Rendering.CSS.computeAll dom rules textScale
-      let held := ((heldFont request).map (fun h => h.fonts.toList.map (·.family))).getD []
+      let held := (((← get).holds.font).map (fun h => h.fonts.toList.map (·.family))).getD []
       let used := Rendering.FontFaceRule.usedFaces faces held dom styles
       let list := (List.range faces.size).filterMap fun i =>
         if used[i]! then some (JSON.Json.object [("family",.string faces[i]!.family),
@@ -2209,13 +2228,14 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
   -- `top` is the chrome on screen; the layout reads the full chrome (`layoutTop`), so a
   -- folding chrome lays nothing out again.
   let top := (shell.map (fun value => WebShell.height value width)).getD 0
-  let fonts := ((heldFont request).map HeldFont.names).getD []
+  let holds := (← get).holds
+  let fonts := (holds.font.map HeldFont.names).getD []
   -- A script's `transform` values are not in the key (`WebPaint.slotKey`): the frame
   -- paints them on the kept layout. When a slot's element can not be painted alone,
   -- the layout takes the values (the key with them).
   let (slotRequest,slotValues) := WebPaint.slotKey (layoutRequest request)
   let key : LayoutKey := ⟨html,slotRequest,width,height,layoutTop shell width,fonts,
-    heldNamed request (← namedImages request),requestPointer request⟩
+    heldNamed holds (← namedImages request),requestPointer request⟩
   let laid ← laidOut key
   let (laid,slotValues) ← if laid.paint.unpaintable.isEmpty || slotValues.isEmpty then pure (laid,slotValues)
     else do pure (← laidOut {key with request := layoutRequest request},{})
@@ -2294,17 +2314,42 @@ def answerWith (laidOut : LayoutKey → Except String Laid) (bytes : Bool) (html
   let scrolled := Float.ofNat ((shell.map (·.scroll)).getD 0)
   let near := nearNodes (scrolled-512) (scrolled+Float.ofNat height+512) scene.tree
   let page := {scene with tree := near ++ marks}
-  withDiagnostics request laid <$> WebRender.artifactWith (WebPaint.cull (match shell with
+  return withDiagnostics request laid (← WebRender.artifactWith (WebPaint.cull (match shell with
     | some value => WebShell.compose value page width height
-    | none => page)) boxes face live form checks tree
+    | none => page)) boxes face live form checks tree)
 
-/-- The JSON text answer: storage floats in Base64 (`binary:true`) or decimal. -/
-def runWith (laidOut : LayoutKey → Except String Laid) (html : String) (request : JSON.Json) (width height : Nat) :
-    Except String String :=
-  Prod.fst <$> answerWith laidOut false html request width height
+/-- The layout source of the engine: `Engine.frame`, which keeps layouts in the state. -/
+def keptFrame {M : Type → Type} [Monad M] (key : LayoutKey) : DocM M Laid := stepState (·.frame key)
 
-def run := runWith cachedFrame
-def runUncached := runWith layOut
+/-- The layout source with no memo: `layOut` of the held fonts and images. -/
+def freshLayOut {M : Type → Type} [Monad M] (key : LayoutKey) : DocM M Laid := do
+  match layOut (← get).holds key with
+  | .ok laid => pure laid
+  | .error x => throw x
+
+/-- A request on the engine `e`: the next state and the answer. -/
+def answerIn {M : Type → Type} [Monad M] [WebWasm.Machine M] (e : Engine) (bytes : Bool) (html : String)
+    (request : JSON.Json) (width height : Nat) : M (Engine × Except String (String × Array ByteArray)) := do
+  let (r,e) ← ((answerWith keptFrame bytes html request width height).run).run e
+  return (e,r)
+
+/-- The JSON text answer, in the logical model (`Id`), from the state `e`: storage floats
+in Base64 (`binary:true`) or decimal. -/
+def runIn (e : Engine) (html : String) (request : JSON.Json) (width height : Nat) : Engine × Except String String :=
+  let (e,r) := Id.run (answerIn e false html request width height)
+  (e,Prod.fst <$> r)
+
+/-- `runIn` from an empty engine. -/
+def run (html : String) (request : JSON.Json) (width height : Nat) : Except String String :=
+  (runIn {} html request width height).2
+
+/-- The answer with no kept layout, from an empty engine (tests compare it with `runIn`). -/
+def answerUncached (bytes : Bool) (html : String) (request : JSON.Json) (width height : Nat) :
+    Except String (String × Array ByteArray) :=
+  (Id.run (((answerWith (M := Id) freshLayOut bytes html request width height).run).run {})).1
+
+def runUncached (html : String) (request : JSON.Json) (width height : Nat) : Except String String :=
+  Prod.fst <$> answerUncached false html request width height
 
 /-- Only white space after character `pos`: `(request.toList.drop pos).all Char.isWhitespace`,
 with no list of the request's characters (realperf: a list of 1 MiB of characters for
@@ -2352,13 +2397,68 @@ and tile words as raw sections (`packAnswer`). The head is the `compile` answer 
 `"dataSection":k` in place of `"dataBase64"` and `"tilesSection":k+1` in place of
 `"tiles"`; other answers have no section. -/
 @[export web_document_compile_bin]
-def compileBin (html request : String) (width height : UInt32) : ByteArray :=
-  match parseRequest request >>= fun j => answerWith cachedFrame true html j width.toNat height.toNat with
-  | .ok (head,sections) => packAnswer head sections
-  | .error message => packAnswer (WebRender.errorJSON message) #[]
+def compileBin (e : Engine) (html request : String) (width height : UInt32) : BaseIO (Engine × ByteArray) := do
+  match parseRequest request with
+  | .error message => return (e,packAnswer (WebRender.errorJSON message) #[])
+  | .ok j =>
+    let (e,r) ← answerIn e true html j width.toNat height.toNat
+    return (e,match r with
+      | .ok (head,sections) => packAnswer head sections
+      | .error message => packAnswer (WebRender.errorJSON message) #[])
 
 @[export web_document_compile]
-def compile (html request : String) (width height : UInt32) : String :=
-  match parseRequest request >>= fun j => run html j width.toNat height.toNat with
-  | .ok value => value | .error message => WebRender.errorJSON message
+def compile (e : Engine) (html request : String) (width height : UInt32) : BaseIO (Engine × String) := do
+  match parseRequest request with
+  | .error message => return (e,WebRender.errorJSON message)
+  | .ok j =>
+    let (e,r) ← answerIn e false html j width.toNat height.toNat
+    return (e,match r with
+      | .ok (value,_) => value
+      | .error message => WebRender.errorJSON message)
+
+/-- `compile` from an empty engine in the logical model (`Id`), for tests. -/
+def compileText (html request : String) (width height : UInt32) : String :=
+  match parseRequest request with
+  | .error message => WebRender.errorJSON message
+  | .ok j => match (Id.run (answerIn {} false html j width.toNat height.toNat)).2 with
+    | .ok (value,_) => value
+    | .error message => WebRender.errorJSON message
+
+/-- A new engine, with nothing held: the shim makes one when it starts. -/
+@[export web_document_engine_new]
+def engineNew (_ : Unit) : Engine := {}
+
+/-- `fontLoad` with the font file as bytes, with no Base64 and no JSON around it.
+A host copies the file into engine memory, so a font is not limited by the call stack,
+which holds string arguments in Wasm. `fallback` is 2 for a web font (`loadWebFont`), 1 to add the font to the held
+list, 0 to replace the list. The answer is the `fontLoad` answer. The guest module of page
+scripts comes the same way, as bytes (WebScripts). -/
+@[export web_document_font_load_bin]
+def fontLoadBin (e : Engine) (bytes : ByteArray) (family sha256 : String) (fallback : UInt32) : Engine × String :=
+  let (e,loaded) := if family == "guest:quickjs" || family == "guest:quickjs-aot" then
+      let held := e.scripts
+      let e := {e with scripts := {}}
+      let (held,r) := WebScripts.loadModuleBytes held family bytes
+      ({e with scripts := held},r)
+    else
+      let holds := e.holds
+      let e := {e with holds := {}}
+      let (holds,r) := if fallback == 2 then loadWebFont holds bytes sha256
+        else loadFontBytes holds bytes family sha256 (fallback != 0)
+      ({e with holds},r)
+  (e,match loaded with | .ok value => value | .error message => WebRender.errorJSON message)
+
+/-- `imageLoad` with the image as bytes, with no Base64 and no JSON around it. -/
+@[export web_document_image_load_bin]
+def imageLoadBin (e : Engine) (bytes : ByteArray) (key sha256 : String) : Engine × String :=
+  let holds := e.holds
+  let e := {e with holds := {}}
+  let (holds,r) := loadImageBytes holds bytes key sha256
+  ({e with holds},match r with | .ok value => value | .error message => WebRender.errorJSON message)
+
+/-- `pickIn` on the engine's kept regions (the C shim's `web_render_hit`). -/
+@[export web_render_pick_link_kept]
+def pickKept (e : Engine) (regions : String) (width height : UInt32) (x y : Float) : Engine × String :=
+  let (links,answer) := pickIn e.links regions width height x y
+  ({e with links},answer)
 end WebDocument

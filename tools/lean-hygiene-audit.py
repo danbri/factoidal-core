@@ -59,7 +59,7 @@ SCAN_DIRS = ["L4Factoidal", "Harness", "Wasm"]
 BASELINE_FILE = ROOT / "tools" / "lean-partial-def-baseline.txt"
 LAB_ROOT = ROOT / "labs" / "demos" / "foafnaut"
 # Counts on main at 41a1aaeab (2026-11-10), by the patterns of CHECKS.
-LAB_BASELINE = {"unsafe": 29, "@[implemented_by]": 29}
+LAB_BASELINE = {"unsafe": 9, "@[implemented_by]": 9}
 
 # The three axioms Lean's own standard library uses. Anything else in a
 # `#print axioms` line is a user axiom, a `sorryAx`, or the
