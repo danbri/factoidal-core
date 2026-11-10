@@ -49,6 +49,8 @@ private def ttc : ByteArray :=
 #guard classifyTag "Silf" == .graphite
 #guard classifyTag "GPOS" == .layout
 #guard classifyTag "cmap" == .fontFiles
+#guard classifyTag "COLR" == .colour
+#guard classifyTag "CPAL" == .colour
 #guard classifyTag "feat" == .fontFiles   -- AAT feature names are data; Graphite is "Feat"
 
 -- policy and modes
@@ -64,6 +66,8 @@ private def ttc : ByteArray :=
 #guard (Policy.standard.set .svg true .page).toOption.isNone          -- no implementation
 #guard ((Policy.standard.set .layout false .page).toOption.map (·.mode)) == some .custom
 #guard (Policy.safe.set .cff true .page).toOption.isNone              -- safe reads no file
+#guard (Policy.standard.settings .colour).allowed        -- COLR and CPAL are drawn by Lean (SfntColr)
+#guard !(Policy.safe.settings .colour).allowed
 
 -- decisions
 private def wasmFont := (readDirectory (sfnt tt ["cmap", "glyf", "GSUB", "Wasm", "fpgm", "DSIG"])).toOption.getD #[]
@@ -79,4 +83,8 @@ private def wasmFont := (readDirectory (sfnt tt ["cmap", "glyf", "GSUB", "Wasm",
    "Risk: the program can do any computation and can change every glyph.\n" ++
    "Setting: font.wasm = refuse (default). A WebAssembly engine in Lean is planned (https://github.com/danbri/factoidal/issues/1244); until then it can not be allowed.\n" ++
    "Action: the font was used without this table.")
+private def colourFont := (readDirectory (sfnt tt ["cmap", "glyf", "COLR", "CPAL"])).toOption.getD #[]
+#guard (decide Policy.standard font colourFont).used == [.fontFiles, .colour]
+#guard (decide Policy.standard font colourFont).refusals.isEmpty
+#guard ((decide ((Policy.standard.set .colour false .page).toOption.getD Policy.standard) font colourFont).refusals.map (·.code)) == ["font.table.colr"]
 end L4Factoidal.Rendering.FontPolicyTests

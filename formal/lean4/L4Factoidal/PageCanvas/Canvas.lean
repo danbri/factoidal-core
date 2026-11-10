@@ -512,6 +512,20 @@ def Run.textPath (r : Run) (st : DrawState) (s : String) (x y maxW : Float) : Ru
     let y0 := y + Text.baselineShift st.baseline sh - sh.word.ascent * sh.scale
     (r, some (Text.outlinePath sh x0 y0 sx))
 
+/-- The colour glyphs of text at `(x, y)`, placed as `textPath` places outlines. -/
+def Run.textColour (r : Run) (st : DrawState) (s : String) (x y maxW : Float) :
+    Run × Array (Bitmap × Float × Float × Float × Float) :=
+  if !finite [x, y] || (!maxW.isNaN && (!maxW.isFinite || maxW <= 0)) then (r, #[]) else
+  let (r, sh) := r.shape st.font s
+  match sh with
+  | none => (r, #[])
+  | some sh =>
+    let width := sh.word.advance * sh.scale
+    let sx := if !maxW.isNaN && width > maxW && width > 0 then maxW / width else 1
+    let x0 := x + Text.alignShift st.align st.direction (width * sx)
+    let y0 := y + Text.baselineShift st.baseline sh - sh.word.ascent * sh.scale
+    (r, Text.colourImages sh x0 y0 sx)
+
 /-! ### Images -/
 
 /-- The bitmap of an image source: 1 a canvas, 2 an `ImageBitmap`, 3 an image by key. -/
@@ -743,9 +757,12 @@ def Run.step (r : Run) (cmd : Cmd) : Run :=
       if c.stack.cur.ctm.inverse?.isNone then (c, r) else (r.strokeUser c p c.stack.cur.stroke, r)
   | .fillText s x y maxW => r.withCur fun c r =>
       let (r, p) := r.textPath c.stack.cur s x y maxW
-      match p with
-      | some p => (r.fillDevice c (p.map c.stack.cur.ctm) .nonzero, r)
-      | none => (c, r)
+      let c := match p with
+        | some p => r.fillDevice c (p.map c.stack.cur.ctm) .nonzero
+        | none => c
+      -- Colour glyphs (emoji) have no outline: their images, as drawImage draws them.
+      let (r, images) := r.textColour c.stack.cur s x y maxW
+      (images.foldl (fun c (b, dx, dy, dw, dh) => r.drawImage c b 0 0 (nf b.width) (nf b.height) dx dy dw dh) c, r)
   | .strokeText s x y maxW => r.withCur fun c r =>
       let (r, p) := r.textPath c.stack.cur s x y maxW
       match p with

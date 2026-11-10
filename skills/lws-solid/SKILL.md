@@ -294,6 +294,16 @@ header quotes each section it decides.
   `alg="ed25519"`, with the vendored HACL* Ed25519. The key is derived from
   `entropy` that the host passes to `lwsOpen` (32 random bytes) and kept in
   the snapshot with the subscriptions (member `notifications`).
+* Verifying (the client, `inboxBase` in `LWS/Client/Machine.lean`): a storage
+  may cover more than the six required components. The client derives
+  `@method`, `@scheme`, `@authority`, `@path` and `@query` (RFC 9421 §2.2.7:
+  `?` plus the query, `?` alone when there is none) and reads every other
+  name as a header field. A derived component it does not know (`@target-uri`,
+  `@request-target`, `@query-param`) is refused. Cost of the gap: until
+  2026-11-10 `@query` was looked up as a header, so every notification from
+  sparq-lws-core was answered 401 on the W3C interop page (0.26.0 and 0.34.0);
+  our own tests and Touchstone sign only the six required components, so
+  no test saw it (https://github.com/danbri/factoidal-core/issues/379).
 
 * This server under another name (https://github.com/danbri/factoidal/issues/915,
   `L4Factoidal/LWS/InboxGuard.lean`): an inbox whose authority is the base
