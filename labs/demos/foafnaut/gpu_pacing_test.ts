@@ -10,19 +10,34 @@ function fakeQueue(){
 }
 const tick=()=>new Promise(resolve=>setTimeout(resolve,0));
 
-Deno.test("gate: the next GPU work waits until the work before is done", async()=>{
+Deno.test("gate: light work has three submissions unanswered, the fourth waits", async()=>{
   const queue=fakeQueue(),gate=createGpuGate(queue,1);
-  await gate.before();gate.after();
-  assert.equal(gate.inFlight,1);
+  for(let i=0;i<3;i++){await gate.before();gate.after();}
   let started=false;
   const next=gate.before().then(()=>{started=true;});
   await tick();
   assert.equal(started,false);
-  queue.finishAll();await next;
+  // One ask at a time: the first answers for submission 1, the next ask covers 2 and 3.
+  for(let i=0;i<4&&!started;i++){queue.finishAll();await tick();}
+  await next;
   assert.equal(started,true);
+  assert.equal(gate.stats.maxInFlight,3);
+  assert.equal(gate.stats.waits,1);
+});
+
+Deno.test("gate: after heavy work, one submission in flight", async()=>{
+  // A GPU that takes 60 ms per submission.
+  const queue={onSubmittedWorkDone:()=>new Promise<void>(resolve=>setTimeout(resolve,60))};
+  const gate=createGpuGate(queue,1);
+  gate.after();await gate.idle();
+  await gate.before();gate.after();
+  let started=false;
+  const next=gate.before().then(()=>{started=true;});
+  await new Promise(resolve=>setTimeout(resolve,5));
+  assert.equal(started,false);
+  await next;
   assert.equal(gate.inFlight,0);
   assert.equal(gate.stats.maxInFlight,1);
-  assert.equal(gate.stats.waits,1);
 });
 
 Deno.test("gate: no wait when the GPU has finished", async()=>{
@@ -37,6 +52,7 @@ Deno.test("gate: 0 is no bound and asks the GPU nothing until idle", async()=>{
   const queue=fakeQueue(),gate=createGpuGate(queue,0);
   for(let i=0;i<5;i++){await gate.before();gate.after();}
   assert.equal(queue.asked,0);
+  assert.equal(gate.stats.submits,5);
   assert.equal(gate.stats.submits,5);
   const idle=gate.idle();await tick();queue.finishAll();await idle;
 });

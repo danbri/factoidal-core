@@ -42,46 +42,68 @@ type Queue={onSubmittedWorkDone():Promise<unknown>};
  * this gate, for measurement only). `before` is awaited before new GPU work, `after` called
  * when that work is submitted.
  *
- * Deno's onSubmittedWorkDone polls the device with a blocking wait on the calling thread: the
- * host loop takes no input until the GPU is done (measured: a 356 ms GPU job held a 2 ms timer
- * for 356 ms). So the gate does not ask at once: it sleeps (a timer, the loop keeps pumping)
- * for 3/4 of the GPU time of the work before, then asks, and blocks only for what is left.
- * When the sleep is longer than the work, the time it measures is the sleep, so the estimate
- * falls by a quarter each frame until it meets the GPU time again. */
+ * Deno's onSubmittedWorkDone polls the device with a blocking wait on the calling thread (a
+ * 356 ms GPU job held a 2 ms timer for 356 ms), then sleeps 10 ms between polls, so it answers
+ * no sooner than about 10 ms after it is asked. So:
+ *  - one ask at a time, about the newest submission; its answer covers every one before it;
+ *  - for work estimated at 50 ms or more the gate sleeps (a timer: the loop keeps pumping) for
+ *    the estimate before it asks, and the thread blocks only for what is left. An ask that
+ *    answers within 25 ms after such a sleep (its 10 ms and some) means the work was done during the sleep: the
+ *    estimate falls by 30% a frame until an ask waits again;
+ *  - light work (estimate under 50 ms, so at most about 150 ms queued) may have 3 submissions
+ *    not yet answered for, so the 10 ms answer does not hold a 16 ms frame; heavy work has
+ *    `limit`. (Measured on the shader gallery: with 3, frame spacing is that of no gate;
+ *    with 1 or 2, one frame in five was over 25 ms.) */
 export function createGpuGate(queue:Queue,limit=1,onDone?:(gpuMs:number)=>void) {
-  let latest:Promise<unknown>|undefined,inFlight=0,estimateMs=0;
+  const LIGHT_MS=50,LIGHT_BOUND=3;
+  let submitted=0,answered=0,estimateMs=0;
+  let asking:Promise<void>|undefined;
+  const submittedAt=new Map<number,number>();
   const recent:number[]=[];
   const stats={submits:0,waits:0,waitMs:0,maxInFlight:0,blockedMs:0};
+  const ask=(seq:number)=>{
+    const at=submittedAt.get(seq)??performance.now();
+    const sleep=estimateMs>=LIGHT_MS?estimateMs:0;
+    asking=(sleep?new Promise(resolve=>setTimeout(resolve,Math.max(0,at+sleep-performance.now()))):Promise.resolve())
+      .then(()=>{const asked=performance.now();return queue.onSubmittedWorkDone().then(()=>performance.now()-asked);})
+      .then(blocked=>{
+        stats.blockedMs+=blocked;
+        const early=sleep>0&&blocked<25;
+        const ms=early?estimateMs*0.7:performance.now()-at;
+        estimateMs=ms;
+        recent.push(ms);if(recent.length>240)recent.shift();
+        for(const k of submittedAt.keys())if(k<=seq)submittedAt.delete(k);
+        answered=Math.max(answered,seq);
+        onDone?.(ms);
+      },()=>{answered=Math.max(answered,seq);})
+      .finally(()=>{asking=undefined;if(submitted>answered)ask(submitted);});
+  };
   return {
     async before():Promise<void> {
-      if(limit<=0||!latest||inFlight<limit)return;
+      if(limit<=0)return;
+      const bound=()=>estimateMs<LIGHT_MS?Math.max(limit,LIGHT_BOUND):limit;
+      if(submitted-answered<bound())return;
       const start=performance.now();stats.waits++;
-      // onSubmittedWorkDone resolves in submission order: the latest done means all are.
-      await latest;
+      while(asking&&submitted-answered>=bound())await asking;
       stats.waitMs+=performance.now()-start;
     },
     after():void {
       stats.submits++;
       if(limit<=0)return;
-      const submitted=performance.now();
-      inFlight++;stats.maxInFlight=Math.max(stats.maxInFlight,inFlight);
-      const sleep=estimateMs>=2?estimateMs*0.75:0;
-      const previous=latest??Promise.resolve();
-      latest=previous.then(()=>sleep?new Promise(resolve=>setTimeout(resolve,Math.max(0,submitted+sleep-performance.now()))):undefined)
-        .then(()=>{const asked=performance.now();return queue.onSubmittedWorkDone().then(()=>{stats.blockedMs+=performance.now()-asked;});})
-        .then(()=>{
-          inFlight--;
-          const ms=performance.now()-submitted;estimateMs=ms;
-          recent.push(ms);if(recent.length>240)recent.shift();
-          onDone?.(ms);
-        },()=>{inFlight--;});
+      submitted++;submittedAt.set(submitted,performance.now());
+      stats.maxInFlight=Math.max(stats.maxInFlight,submitted-answered);
+      if(!asking)ask(submitted);
     },
     /** Wait for every submission so far (a quit: nothing new is submitted after this). */
-    idle:()=>latest??(stats.submits?queue.onSubmittedWorkDone():Promise.resolve()),
-    get inFlight(){return inFlight;},
-    /** Submit to done of recent submissions, ms. With the gate on this is about the GPU time. */
+    async idle():Promise<void> {
+      if(limit<=0){if(stats.submits)await queue.onSubmittedWorkDone();return;}
+      while(asking&&submitted>answered)await asking;
+    },
+    /** Submissions not yet answered for (at most; some may be done). */
+    get inFlight(){return submitted-answered;},
+    /** Submit to done of recent answers, ms. With heavy work this is about the GPU time. */
     get recent(){return recent.slice();},
-    get stats(){return {...stats,waitMs:Math.round(stats.waitMs*10)/10,blockedMs:Math.round(stats.blockedMs*10)/10,inFlight};},
+    get stats(){return {...stats,waitMs:Math.round(stats.waitMs*10)/10,blockedMs:Math.round(stats.blockedMs*10)/10,inFlight:submitted-answered};},
   };
 }
 export type GpuGate=ReturnType<typeof createGpuGate>;
