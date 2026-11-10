@@ -145,6 +145,7 @@ cp "$LAB/"{policy-demo.html,policy-demo.mjs,policy_engine.mjs,foafnaut_transport
 cp "$LAB/.build/engines/"{foafnaut-engine,layout-policy-engine}.{mjs,wasm} "$OUT/web/.build/engines/"
 cp "$LAB/foaf/fixtures/people.ttl" "$OUT/web/foaf/fixtures/"
 for doc in README.md SVG_README.md; do [ ! -f "$LAB/$doc" ] || cp "$LAB/$doc" "$OUT/$doc"; done
+cp "$LAB/../../../third_party/notices/GMP-NOTICE.txt" "$OUT/"
 cp "$LAB/.build/source-SHA256SUMS" "$LAB/.build/tool-versions.txt" "$LAB/.build/runtime-object-witness.txt" "$OUT/"
 (
   cd "$REPO"
