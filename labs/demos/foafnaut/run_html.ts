@@ -1038,7 +1038,7 @@ async function main() {
       gpuHoldUntil=gpuGuard.slowed?performance.now()+gpuGuard.gapMs():0;
       if(!changed)return;
       const slowed=gpuGuard.slowed,fact={state:slowed?"slowed":"full-rate",gpuMs:Math.round(gpuMs),gapMs:Math.round(gpuGuard.gapMs()),url:document.url};
-      trace("native-html-gpu-guard",fact);console.log(JSON.stringify({type:"native-html-gpu-guard",...fact}));
+      trace("native-html-gpu-guard",fact);
       if(slowed)addEntries(document,[{source:"System",severity:"warning",feature:"animation",where:document.url,
         message:`Each frame of this page takes the GPU about ${Math.round(gpuMs)} ms: animation runs at a lower rate so the computer stays usable. It returns to the full rate when frames are fast again.`,action:"animation slowed"}]);
       // The chrome shows the note, or stops showing it.
@@ -1567,7 +1567,7 @@ async function main() {
     }
     try{await gpuIdle;}catch{/* a lost device has nothing in flight */}
     const quitFact={ms:Math.round(performance.now()-quitAt),gpu:session?.stats.gpu??null};
-    trace("native-html-quit",quitFact);if(perfSummary)console.log(JSON.stringify({type:"native-html-quit",...quitFact}));
+    trace("native-html-quit",quitFact);
     if(!cleanupUI({session,device,native}))Deno.exitCode=1;
   }
 }
