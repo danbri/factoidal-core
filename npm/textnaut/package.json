@@ -1,5 +1,5 @@
 {
-  "name": "@factoidal/textnaut",
+  "name": "@foafos/textnaut",
   "version": "0.1.0",
   "description": "EXPERIMENTAL UNDER-REVIEWED CODE: a text-mode web browser on the Foafnaut engine, with screensavers. Runs on Deno; fetches a pinned Wasm engine on first use.",
   "keywords": ["terminal", "browser", "text-mode", "tui", "screensaver", "webassembly", "deno"],

@@ -1,4 +1,4 @@
-# @factoidal/textnaut
+# @foafos/textnaut
 
 > ⚠️ **EXPERIMENTAL UNDER-REVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.**
 
@@ -13,7 +13,7 @@ the details (what is drawn, safety rule, tests).
 Textnaut runs on [Deno](https://deno.com) 2.0 or later (tested with 2.9.4); the launcher needs
 Node 18 or later and checks for Deno, with an install hint if it is missing.
 
-    npm install -g @factoidal/textnaut
+    npm install -g @foafos/textnaut
     textnaut https://info.cern.ch/
     textnaut --dump --width 80 page.html
     textnaut --screensaver            # no engine, no download

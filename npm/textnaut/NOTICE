@@ -1,4 +1,4 @@
-@factoidal/textnaut: notices
+@foafos/textnaut: notices
 ============================
 
 The code in this package (the launcher, the Textnaut program and the TypeScript it imports) is
