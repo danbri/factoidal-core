@@ -11,7 +11,7 @@ These hold for all Lean under `formal/lean4`, and they are the rules to aim for 
 
 ## 1. Banned escape hatches
 
-Zero uses of each, in code. A mention in a comment is not a use. `tools/lean-hygiene-audit.py` fails on any of them.
+Zero uses of each, in code. A mention in a comment is not a use. `tools/lean-hygiene-audit.py` fails on any of them in `formal/lean4`.
 
 - `sorry`
 - user `axiom`
@@ -22,19 +22,19 @@ Zero uses of each, in code. A mention in a comment is not a use. `tools/lean-hyg
 
 The only axioms a theorem may report are `propext`, `Classical.choice` and `Quot.sound`.
 
-**Known exception, 2026-11-09:** `tools/lean-hygiene-audit.py` scans `formal/lean4` only. The browser engine's host code under
-`labs/` is not covered, and it has 29 `@[implemented_by]` and 29 `unsafe` declarations, mostly page-lifetime caches of parsed and shaped data
-(`labs/demos/foafnaut/WebDocument.lean`, `SVGText.lean`). A theorem about engine behaviour that runs through one of these depends on that
-implementation being correct, and no proof covers it. Do not add more without saying so and listing it in the record. Whether to extend the
-audit to `labs/` is an open decision for the owner.
+**The browser engine's lab modules (2026-11-11).** `labs/demos/foafnaut/*.lean` is checked by Lean, not by the Python
+audit: `labs/demos/foafnaut/LabHygiene.lean` imports every module of the engine build (`LAB_MODULES` in
+`build-web-render.sh`), counts what Lean recorded for each declaration (`unsafe`, `@[implemented_by]`, `partial def`,
+`@[extern]`, `opaque`) in those modules and in the `L4Factoidal` modules they import, and its theorem `lab_ratchet`
+(`by decide`) fails to compile when a count is above `baseline`. The build stops, native and Wasm, and the build record
+(`source-witness.json`, field `hygiene`) carries the counts. Baseline on 2026-11-10: 29 `unsafe` and 29
+`@[implemented_by]` (state kept between C ABI calls, https://github.com/danbri/factoidal-core/issues/390), 37 `opaque`,
+1 `partial def`. Do not add one. When you remove some, lower `baseline` in `LabHygiene.lean` in the same commit.
+Raising a number needs the owner. Record: `docs/designissues/2026-11-11-lean-hygiene-ratchet.md`.
 
 Do not add one "for now", and do not weaken or delete a theorem to make something build. If a theorem cannot carry over, say so.
 
-Scope, 2026-11-10: the "must be 0" counts are for `formal/lean4`. The browser's host modules in
-`labs/demos/foafnaut/*.lean` have 29 `unsafe` definitions and 29 `@[implemented_by]` attributes
-(state kept between C ABI calls); the audit holds them at that baseline, and
-https://github.com/danbri/factoidal-core/issues/390 tracks their removal. Do not add one. Do
-not write "no `unsafe` in the engine" in a report: say which directory. Cost: a status note of
+Do not write "no `unsafe` in the engine" in a report: say which directory. Cost: a status note of
 2026-11-10 gave the ban with no scope, and the owner sent it to a reader outside the project.
 
 ## 2. `@[csimp]` is only as good as its lemma
