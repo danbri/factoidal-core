@@ -146,27 +146,96 @@ private def imageRequests (dom : DOM.Dom) (base : String) : Except String (List 
 def parseFresh (html : String) (xhtml : Bool) : Except String DOM.Dom :=
   if xhtml then DOM.parseXmlDocument html else pure (DOM.parseHtmlDocument html)
 
-/-! Every layout of a page (a relayout at another width, a pointer state that changes
-geometry) parsed its source again: 13 to 30 ms of a relayout of Wikipedia or gov.uk
-(realperf). `parseKept` is `parseFresh`; its implementation keeps the last two trees by
-their source. -/
-initialize parsedKept : IO.Ref (Array (String × Bool × Except String DOM.Dom)) ← IO.mkRef #[]
+/-! ### Work kept between layouts (issue 390)
 
-private unsafe def parseKeptImpl (html : String) (xhtml : Bool) : Except String DOM.Dom :=
-  unsafeBaseIO do
-    if let some (_,_,d) := (← parsedKept.get).find? (fun (h,x,_) => x == xhtml && h == html) then return d
-    let d := parseFresh html xhtml
-    parsedKept.modify fun kept => (if kept.size ≥ 2 then kept.extract 1 kept.size else kept).push (html,xhtml,d)
-    return d
+Every layout of a page (a relayout at another width, a pointer state that changes
+geometry) parsed its source again: 13 to 30 ms of a relayout of Wikipedia or gov.uk; and
+read its sheets and decoded its images again (realperf). The engine keeps the last two
+trees by their source, the last eight sheets by their text, and the last two image
+stores (`WebRender.StoresKept`) in `Kept`, a field of its state. A layout looks them up
+there, and gives back what it made (`Made`), which the engine adds (`Kept.add`). -/
 
-@[implemented_by parseKeptImpl, noinline]
-def parseKept (html : String) (xhtml : Bool) : Except String DOM.Dom := parseFresh html xhtml
+/-- A style sheet's text, read (`CSS.parseRaw`). -/
+abbrev RawSheet := Except String (List (Option String × Rendering.CSS.Rule))
 
-/-! Words that miss the font memo (`SfntProfile.profile`) and the sheets of a page were
-also read again by each layout (realperf). `shapeKept` is `SfntProfile.shapeFresh` and
-`sheetKept` is `CSS.parseRaw`; their implementations keep what they made: shaped words
-by `SfntProfile.fontsKey`, text, size and direction (at most 16,384, then the table
-starts again), sheets by their text (the last 8). -/
+structure Kept where
+  parsed : Array (String × Bool × Except String DOM.Dom) := #[]
+  sheets : Array (String × RawSheet) := #[]
+  stores : WebRender.StoresKept := #[]
+
+/-- What one operation made that `Kept` did not have. -/
+structure Made where
+  parsed : Option (String × Bool × Except String DOM.Dom) := none
+  sheet : Option (String × RawSheet) := none
+  store : Option ((List String × List (String × ByteArray)) × NativeImage.Store) := none
+
+/-- `a` then the entries of `b` that `a` lacks (the first operation's wins). -/
+def Made.merge (a b : Made) : Made :=
+  {parsed := a.parsed.orElse fun _ => b.parsed,sheet := a.sheet.orElse fun _ => b.sheet,
+   store := a.store.orElse fun _ => b.store}
+
+/-- `xs` with `x` last, at most `n`. -/
+def keepLast {α : Type} (n : Nat) (xs : Array α) : Option α → Array α
+  | some x => (if xs.size ≥ n then xs.extract 1 xs.size else xs).push x
+  | none => xs
+
+/-- `kept` with `made`: the last two trees, the last eight sheets, the last two stores. -/
+def Kept.add (kept : Kept) (made : Made) : Kept :=
+  let last := @keepLast
+  {parsed := last 2 kept.parsed made.parsed,sheets := last 8 kept.sheets made.sheet,
+   stores := match made.store with | some s => WebRender.keepStore kept.stores s | none => kept.stores}
+
+/-- The tree of `html`: the kept one, or `parseFresh`, which is also given back. -/
+def parseIn (kept : Kept) (html : String) (xhtml : Bool) : Except String DOM.Dom × Made :=
+  match kept.parsed.find? (fun (h,x,_) => x == xhtml && h == html) with
+  | some (_,_,d) => (d,{})
+  | none => let d := parseFresh html xhtml; (d,{parsed := some (html,xhtml,d)})
+
+/-- The rules of a sheet's text: the kept ones, or `CSS.parseRaw`, also given back. -/
+def sheetIn (kept : Kept) (source : String) : RawSheet × Made :=
+  match kept.sheets.find? (·.1 == source) with
+  | some (_,r) => (r,{})
+  | none => let r := Rendering.CSS.parseRaw source; (r,{sheet := some (source,r)})
+
+/-- A table is valid when each entry is what it keeps: the parse of its source, the
+rules of its text, the image store of its keys and bytes. -/
+def Kept.Valid (kept : Kept) : Prop :=
+  (∀ e ∈ kept.parsed, e.2.2 = parseFresh e.1 e.2.1) ∧ (∀ e ∈ kept.sheets, e.2 = Rendering.CSS.parseRaw e.1) ∧
+  WebRender.StoresValid kept.stores
+
+/-- Refinement: from a valid table, `parseIn` gives `parseFresh`. -/
+theorem parseIn_eq (kept : Kept) (valid : kept.Valid) (html : String) (xhtml : Bool) :
+    (parseIn kept html xhtml).1 = parseFresh html xhtml := by
+  unfold parseIn
+  split
+  · next _ h' x d h =>
+    have mem := Array.mem_of_find?_eq_some h
+    have sat := Array.find?_some h
+    simp only [Bool.and_eq_true, beq_iff_eq] at sat
+    have v := valid.1 _ mem
+    simp only at v
+    rw [v, sat.1, sat.2]
+  · rfl
+
+/-- Refinement: from a valid table, `sheetIn` gives `CSS.parseRaw`. -/
+theorem sheetIn_eq (kept : Kept) (valid : kept.Valid) (source : String) :
+    (sheetIn kept source).1 = Rendering.CSS.parseRaw source := by
+  unfold sheetIn
+  split
+  · next _ s raw h =>
+    have mem := Array.mem_of_find?_eq_some h
+    have sat := Array.find?_some h
+    simp only [beq_iff_eq] at sat
+    have v := valid.2.1 _ mem
+    simp only at v
+    rw [v, sat]
+  · rfl
+
+/-! Words that miss the font memo (`SfntProfile.profile`) were also shaped again by each
+layout (realperf). `shapeKept` is `SfntProfile.shapeFresh`; its implementation keeps
+what it made, by `SfntProfile.fontsKey`, text, size and direction (at most 16,384, then
+the table starts again). It is called from inside `Rendering.Layout`, so it is not yet
+a field of the engine's state (issue 390). -/
 initialize shapedKept : IO.Ref (Std.HashMap (String × String × Nat × Option Bool) (Except String Rendering.FontProvider.Word)) ← IO.mkRef {}
 
 private unsafe def shapeKeptImpl (key : String) (fonts : Array Rendering.SfntProfile.Font) (text : String) (px : Nat)
@@ -183,27 +252,16 @@ private unsafe def shapeKeptImpl (key : String) (fonts : Array Rendering.SfntPro
 def shapeKept (_key : String) (fonts : Array Rendering.SfntProfile.Font) (text : String) (px : Nat) (rtl : Option Bool) :
     Except String Rendering.FontProvider.Word := Rendering.SfntProfile.shapeFresh fonts text px rtl
 
-initialize sheetsKept : IO.Ref (Array (String × Except String (List (Option String × Rendering.CSS.Rule)))) ← IO.mkRef #[]
-
-private unsafe def sheetKeptImpl (source : String) : Except String (List (Option String × Rendering.CSS.Rule)) :=
-  unsafeBaseIO do
-    if let some (_,r) := (← sheetsKept.get).find? (·.1 == source) then return r
-    let r := Rendering.CSS.parseRaw source
-    sheetsKept.modify fun kept => (if kept.size ≥ 8 then kept.extract 1 kept.size else kept).push (source,r)
-    return r
-
-/-- `CSS.parseRaw`, kept by the sheet's text. -/
-@[implemented_by sheetKeptImpl, noinline]
-def sheetKept (source : String) : Except String (List (Option String × Rendering.CSS.Rule)) :=
-  Rendering.CSS.parseRaw source
-
 /-- The document tree: the XML syntax of HTML for a `.xht` or `.xhtml` URL (HTML §14,
 `DOM.parseXmlDocument`), else the HTML syntax (HTML §13). -/
-def prepareDOM (html : String) (request : JSON.Json) : Except String DOM.Dom := do
+def prepareDOMIn (kept : Kept) (html : String) (request : JSON.Json) : Except String (DOM.Dom × Made) := do
   if html.utf8ByteSize > WebRender.maxSourceBytes then throw "document HTML exceeds 16 MiB"
-  let dom ← parseKept html (DOM.isXhtmlPath (str request "url"))
-  WebRenderScript.applyCommands dom
-    ((request.field? "commands").getD (.array []))
+  let (dom,made) := parseIn kept html (DOM.isXhtmlPath (str request "url"))
+  return (← WebRenderScript.applyCommands (← dom) ((request.field? "commands").getD (.array [])),made)
+
+/-- `prepareDOMIn` with nothing kept. -/
+def prepareDOM (html : String) (request : JSON.Json) : Except String DOM.Dom :=
+  Prod.fst <$> prepareDOMIn {} html request
 
 def baseURL (dom : DOM.Dom) (url : String) : String := Id.run do
   for id in dom.treeOrder 0 do
@@ -392,22 +450,32 @@ def sheetsIn (m : WebAccept.Mode) (dom : DOM.Dom) (request : JSON.Json) (env : R
     sheets := (from_,source)::sheets
   return (sheets.reverse,ds)
 
-/-- The rules of sheets in `env`: `CSS.parseIn env`, with the sheets read once (`sheetKept`). -/
-def rulesOfSheets (env : Rendering.MediaQuery.Env) (sheets : List (String × String)) :
-    Except String (List Rendering.CSS.Rule) := do
-  return Rendering.CSS.parseInRaw env (← sheetKept (String.intercalate "\n" (sheets.map (·.2))))
+/-- The text of a document's sheets, read as one. -/
+def sheetSource (sheets : List (String × String)) : String := String.intercalate "\n" (sheets.map (·.2))
+
+/-- The rules of sheets in `env`: `CSS.parseIn env`, with the sheets read once (`sheetIn`). -/
+def rulesOfSheets (kept : Kept) (env : Rendering.MediaQuery.Env) (sheets : List (String × String)) :
+    Except String (List Rendering.CSS.Rule × Made) := do
+  let (raw,made) := sheetIn kept (sheetSource sheets)
+  return (Rendering.CSS.parseInRaw env (← raw),made)
 
 /-- The rules of the document's sheets in `env` (`sheetsIn`). -/
-def rulesIn (m : WebAccept.Mode) (dom : DOM.Dom) (request : JSON.Json) (env : Rendering.MediaQuery.Env) :
-    Except String (List Rendering.CSS.Rule × List WebAccept.Diagnostic) := do
+def rulesIn (kept : Kept) (m : WebAccept.Mode) (dom : DOM.Dom) (request : JSON.Json) (env : Rendering.MediaQuery.Env) :
+    Except String ((List Rendering.CSS.Rule × Made) × List WebAccept.Diagnostic) := do
   let (sheets,ds) ← sheetsIn m dom request env
-  return (← rulesOfSheets env sheets,ds)
+  return (← rulesOfSheets kept env sheets,ds)
 
-/-- The rules of a request, in its mode (`WebAccept.accept`). `env` is the media environment;
-with none given, the media type of the request and no viewport. -/
+/-- The rules of a request, in its mode (`WebAccept.accept`), and the sheet it read that
+`kept` did not have. `env` is the media environment; with none given, the media type of
+the request and no viewport. -/
+def rulesWith (kept : Kept) (dom : DOM.Dom) (request : JSON.Json) (env : Rendering.MediaQuery.Env := {medium := medium request}) :
+    Except String (List Rendering.CSS.Rule × Made) :=
+  (WebAccept.accept (WebAccept.mode request) fun m => rulesIn kept m dom request env).map (·.1)
+
+/-- `rulesWith` with nothing kept. -/
 def rules (dom : DOM.Dom) (request : JSON.Json) (env : Rendering.MediaQuery.Env := {medium := medium request}) :
     Except String (List Rendering.CSS.Rule) :=
-  (WebAccept.accept (WebAccept.mode request) fun m => rulesIn m dom request env).map (·.1)
+  Prod.fst <$> rulesWith {} dom request env
 
 /-- The `@font-face` rules of sheets (CSS Fonts 4 §4), URLs resolved. Pages with no
 `@font-face` pay one substring search of their sheets. -/
@@ -1456,6 +1524,12 @@ structure Laid where
   /-- The word memo of the held fonts after this layout (`SfntProfile.remember`), which
   the engine keeps for the next layout (`Holds.font`); none with no held font. -/
   words : Option Rendering.SfntProfile.Memo := none
+  /-- The number the engine gave this layout when it made it (`Engine.serial`); 0 for a
+  layout the engine does not keep. Two kept layouts with one number are one value. -/
+  serial : Nat := 0
+  /-- What this layout made that the engine's `Kept` did not have; the engine adds it and
+  keeps the layout without it. -/
+  made : Made := {}
 
 /-- The element state of a request (Selectors 4 §9): `hover` and `active` are node ids
 of the page (a link's `sourceNode`); `visited` lists URLs of the session history. A
@@ -1553,8 +1627,8 @@ private def depthRefusal : String := "unsupported HTML nesting depth (maximum 64
 /-- `layOutDOM` in mode `m`, with its skip points. A liberal run is made only after a strict
 run refused (`WebAccept.accept`), so it puts `partialNote` on the page. -/
 def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : Option NativeFoafNaut.Model) (dom : DOM.Dom)
-    (width rows : Nat) (held : List (String × String)) (pointer : Option Nat × Option Nat) :
-    Except String (Laid × List WebAccept.Diagnostic) := do
+    (width rows : Nat) (held : List (String × String)) (pointer : Option Nat × Option Nat) (kept : Kept := {}) :
+    ExceptT String (StateM Made) (Laid × List WebAccept.Diagnostic) := do
   -- Paint-only changes (WebPaint): script `transform` slots are the identity here, and
   -- animation elements are comments; the frame puts their values on the scene.
   let (dom,slots) := WebPaint.unmark dom
@@ -1568,7 +1642,8 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
   -- One pass over the sheets gives the rules and the `@font-face` faces.
   let env := mediaEnv (medium request) width rows (percent*100/unit)
   let (sheets,d2) ← sheetsIn m dom request env
-  let rules ← rulesOfSheets env sheets
+  let (rules,madeSheet) ← rulesOfSheets kept env sheets
+  modify (·.merge madeSheet)
   let dom := if m == .liberal && graph.isNone then partialNote dom else dom
   if width == 0 || rows == 0 || width > 4096 || rows > 4096 then throw "unsupported document viewport"
   let fontData := str request "fontData"
@@ -1596,17 +1671,18 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
   -- The SVG of the page is read here. In liberal mode a refusal of it (the SVG reader reads all
   -- inline `svg` roots of the document together) lays the page out with no inline `svg`.
   let documentURL := if url.isEmpty then none else some url
-  let (embedding,pictures,dom,d0) ← match graph with
-    | some g => pure (WebGraph.embedding g,Rendering.Layout.noPictures,dom,([] : List WebAccept.Diagnostic))
-    | none => match WebRender.makeReplaced dom documentURL images svgFonts, m with
-      | .ok (e,p), _ => pure (e,p,dom,[])
+  let (embedding,pictures,dom,d0,madeStore) ← match graph with
+    | some g => pure (WebGraph.embedding g,Rendering.Layout.noPictures,dom,([] : List WebAccept.Diagnostic),none)
+    | none => match WebRender.makeReplacedIn kept.stores dom documentURL images svgFonts, m with
+      | .ok (e,p,s), _ => pure (e,p,dom,[],s)
       | .error e, .strict => throw e
       | .error e, .liberal =>
         let (bare,n) := stripSvg dom
         if n == 0 then throw e else
-        match WebRender.makeReplaced bare documentURL images svgFonts with
-        | .ok (e',p) => pure (e',p,bare,[{skip := .svgContent, «where» := s!"{n} inline svg elements", refusal := e}])
+        match WebRender.makeReplacedIn kept.stores bare documentURL images svgFonts with
+        | .ok (e',p,s) => pure (e',p,bare,[{skip := .svgContent, «where» := s!"{n} inline svg elements", refusal := e}],s)
         | .error _ => throw e
+  modify (·.merge {store := madeStore})
   -- A window shorter than the chrome still lays out, on one row.
   let state := withPointer dom (← elementState dom url request) pointer
   let draw := fun (d : DOM.Dom) (e : Rendering.Layout.Embedding) => Rendering.Layout.render d rules font e width rows textScale state pictures
@@ -1673,17 +1749,26 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
 in the mode of the request (`WebAccept.accept`). A script session's layout reads
 (`measure`) lay its arena out here, with no parse. -/
 def layOutDOM (h : Holds) (request : JSON.Json) (graph : Option NativeFoafNaut.Model) (dom : DOM.Dom) (width rows : Nat)
-    (held : List (String × String)) (pointer : Option Nat × Option Nat) : Except String Laid := do
-  let (laid,ds) ← WebAccept.accept (WebAccept.mode request) fun m => layOutDOMIn h m request graph dom width rows held pointer
-  return {laid with diagnostics := ds}
+    (held : List (String × String)) (pointer : Option Nat × Option Nat) (kept : Kept := {}) : Except String Laid := do
+  -- `WebAccept.accept`, with what the strict run made kept for the liberal run.
+  let run := fun (k : Kept) (m : WebAccept.Mode) => (layOutDOMIn h m request graph dom width rows held pointer k).run.run {}
+  let (first,made1) := run kept .strict
+  let (result,made) := match WebAccept.strictly first,WebAccept.mode request with
+    | .ok a,_ => (Except.ok (a,[]),made1)
+    | .error e,.strict => (.error e,made1)
+    | .error _,.liberal => let (second,made2) := run (kept.add made1) .liberal; (second,made1.merge made2)
+  let (laid,ds) ← result
+  return {laid with diagnostics := ds,made}
 
 /-- Liberal mode is a conservative extension of strict mode for layout: when the strict
-layout of a request succeeds, the liberal layout is the same, with no diagnostics. -/
+layout of a request succeeds, the liberal layout is the same, with no diagnostics. Stated
+with nothing kept. Does not say: that `layOutDOM` is this `accept`; it gives the liberal
+run what the strict run made, and that this changes no layout is not proved. -/
 theorem layOut_liberal_conservative (h₀ : Holds) (request : JSON.Json) (graph : Option NativeFoafNaut.Model) (dom : DOM.Dom)
     (width rows : Nat) (held : List (String × String)) (pointer : Option Nat × Option Nat)
     (laid : Laid) (ds : List WebAccept.Diagnostic)
-    (h : WebAccept.accept .strict (fun m => layOutDOMIn h₀ m request graph dom width rows held pointer) = .ok (laid,ds)) :
-    WebAccept.accept .liberal (fun m => layOutDOMIn h₀ m request graph dom width rows held pointer) = .ok (laid,[]) ∧ ds = [] :=
+    (h : WebAccept.accept .strict (fun m => Id.run ((layOutDOMIn h₀ m request graph dom width rows held pointer).run.run' {})) = .ok (laid,ds)) :
+    WebAccept.accept .liberal (fun m => Id.run ((layOutDOMIn h₀ m request graph dom width rows held pointer).run.run' {})) = .ok (laid,[]) ∧ ds = [] :=
   WebAccept.liberal_conservative _ laid ds h
 
 /-- The same for what the host fetches (`inspect`). -/
@@ -1751,7 +1836,7 @@ theorem toDevice_sources (l : Laid) (unit width rows : Nat) :
 request it reads is `key.request`, which has only `layoutFields`. With `graphModel`
 (the FOAF graph page) the document is `WebGraph.skeleton` of the model, not `key.html`,
 and the picture comes from the model with no SVG text (`WebGraph.embedding`). -/
-def layOut (h : Holds) (key : LayoutKey) : Except String Laid := do
+def layOut (h : Holds) (key : LayoutKey) (kept : Kept := {}) : Except String Laid := do
   let request := key.request
   let graph ← match request.field? "graphModel" with
     | none => pure none
@@ -1759,18 +1844,19 @@ def layOut (h : Holds) (key : LayoutKey) : Except String Laid := do
       | some m => pure (some m)
       | none => throw "invalid FOAF graph model"
     | some _ => throw "graphModel must be a string"
-  let dom ← prepareDOM (match graph with | some m => WebGraph.skeleton m | none => key.html) request
+  let (dom,madeParse) ← prepareDOMIn kept (match graph with | some m => WebGraph.skeleton m | none => key.html) request
   if key.width == 0 || key.height == 0 || key.width > 4096 || key.height > 4096 then throw "unsupported document viewport"
   let rows := max 1 (key.height-key.top)
   -- Device pixels: a page is laid out in CSS pixels and drawn at the ratio. The graph page
   -- keeps device pixels: its model is drawn at the size of the window (`graphInput`).
   let unit := if graph.isSome then 100 else zoomUnit request
   if unit == 100 then
-    layOutDOM h (if graph.isSome then withoutField "zoomUnit" request else request) graph dom key.width rows key.held key.pointer
+    let laid ← layOutDOM h (if graph.isSome then withoutField "zoomUnit" request else request) graph dom key.width rows key.held key.pointer kept
+    return {laid with made := laid.made.merge madeParse}
   else
     let (cssWidth,cssRows,_) := layoutInputs key.width rows 0 unit
-    let laid ← layOutDOM h request graph dom (max 1 cssWidth) (max 1 cssRows) key.held key.pointer
-    return laid.toDevice unit key.width rows
+    let laid ← layOutDOM h request graph dom (max 1 cssWidth) (max 1 cssRows) key.held key.pointer kept
+    return {laid.toDevice unit key.width rows with made := laid.made.merge madeParse}
 
 /-! ### Layout reads of page scripts
 
@@ -1833,14 +1919,14 @@ def fontFacesAnswer (h : Holds) (dom : DOM.Dom) (request : JSON.Json) : String :
 /-- The layout reads of a script session (`Page.Measure`) with the render request
 `request` (its `layoutFields`): the arena laid out `width` by `height` (`layOutDOM`)
 when a read first asks, then the answers from that one layout. -/
-def measure (h : Holds) (request : JSON.Json) : WasmVM.Hosts.Page.Measure := fun dom width height =>
+def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts.Page.Measure := fun dom width height =>
   let request := layoutRequest request
   let held := heldNamed h ((namedImages request).toOption.getD [])
-  let laid : Thunk (Except String Laid) := Thunk.mk fun _ => layOutDOM h request none dom width height held (none,none)
+  let laid : Thunk (Except String Laid) := Thunk.mk fun _ => layOutDOM h request none dom width height held (none,none) kept
   -- `getComputedStyle` (op 20) reads the cascade alone: no layout for it
   let styled : Thunk (Except String (Array Rendering.CSS.Computed)) := Thunk.mk fun _ => do
     let textScale := cssTextScale (← scalePercent request) (zoomUnit request)
-    let rules ← rules dom request
+    let (rules,_) ← rulesWith kept dom request
     let state := withPointer dom (← elementState dom (baseURL dom (str request "url")) request) (none,none)
     Rendering.CSS.computeAll dom rules textScale state
   -- 22: the device pixel ratio of the layout request (`zoomUnit`/100), with no layout
@@ -1942,35 +2028,9 @@ theorem layoutTop_classic (shell : WebShell.Shell) (width : Nat) (classic : shel
 theorem shell_height_scroll (shell : WebShell.Shell) (scroll width : Nat) :
     WebShell.height {shell with scroll} width = WebShell.height shell width := rfl
 
-/-- Frames painted on a kept layout with transforms or animation values (`WebPaint`),
-and the last such scene with its values, so that a frame whose values did not change
-gives the same scene object (and `pageArtifact` its kept band). -/
-initialize paintWorkRef : IO.Ref Nat ← IO.mkRef 0
-initialize paintedSceneRef : IO.Ref (Option (Rendering.Scene × String × Rendering.Scene)) ← IO.mkRef none
-set_option compiler.extract_closed false in
-private unsafe def paintedImpl (plan : WebPaint.Plan) (values : Std.TreeMap Nat (Rendering.Transform × Option Float))
-    (base : Rendering.Scene) : Rendering.Scene :=
-  unsafeBaseIO do
-    let key := ";".intercalate (values.toList.map fun (n,(m,o)) =>
-      s!"{n}:{m.a},{m.b},{m.c},{m.d},{m.e},{m.f},{o.getD (-1)}")
-    if let some (b,k,made) := ← paintedSceneRef.get then
-      if ptrEq b base && k == key then return made
-    let made := WebPaint.patch plan values base
-    paintedSceneRef.set (some (base,key,made))
-    paintWorkRef.modify (·+1)
-    return made
-set_option compiler.extract_closed false in
-private unsafe def paintWorkImpl (reset : Bool) : Nat :=
-  unsafeBaseIO do
-    let n ← paintWorkRef.get
-    if reset then paintWorkRef.set 0
-    return n
-/-- `WebPaint.patch`; the engine gives the scene it made before for the same layout and
-values again. -/
-@[implemented_by paintedImpl, noinline] def painted (plan : WebPaint.Plan)
-    (values : Std.TreeMap Nat (Rendering.Transform × Option Float)) (base : Rendering.Scene) : Rendering.Scene :=
-  WebPaint.patch plan values base
-@[implemented_by paintWorkImpl, noinline] private opaque paintWork (reset : Bool) : Nat
+/-- The key of paint-only values (`WebPaint.state`): equal values give equal keys. -/
+def paintKey (values : Std.TreeMap Nat (Rendering.Transform × Option Float)) : String :=
+  ";".intercalate (values.toList.map fun (n,(m,o)) => s!"{n}:{m.a},{m.b},{m.c},{m.d},{m.e},{m.f},{o.getD (-1)}")
 
 /-- Pointer states painted on a kept layout (`:hover`, `:active`), kept apart from the
 layouts so that they do not push a layout out: a press, a hover and a loading frame under
@@ -2042,6 +2102,16 @@ structure Engine where
   frameWork : Nat × Nat × Nat := (0,0,0)
   /-- The link regions of the frame on screen, decoded once, by their text (`decodeKept`). -/
   links : Option (String × List Rendering.LinkRegion) := none
+  /-- The last layout number given (`Laid.serial`). -/
+  serial : Nat := 0
+  /-- The last paint-only scene: the number of its layout, its values' key (`paintKey`),
+  and the scene, so that a frame whose values did not change gives the same scene object
+  (and `pageArtifact` its kept band). -/
+  paintedScene : Option (Nat × String × Rendering.Scene) := none
+  /-- Frames painted on a kept layout with transforms or animation values (`WebPaint`). -/
+  paintWork : Nat := 0
+  /-- Parsed trees, read sheets and image stores of the last layouts (`Kept`). -/
+  kept : Kept := {}
 
 instance : Inhabited Engine := ⟨{}⟩
 
@@ -2053,13 +2123,16 @@ def Engine.layOutKept (e : Engine) (key : LayoutKey) : Engine × Except String L
   match Lru.find? e.layouts key with
   | some laid => ({e with layouts := Lru.putIn LayoutKey.html layoutSlots e.layouts key laid,frameWork := (l,k+1,r)},.ok laid)
   | none =>
-    match layOut e.holds key with
+    match layOut e.holds key e.kept with
     | .error x => (e,.error x)
     | .ok laid =>
+      let kept := e.kept.add laid.made
       let holds := match laid.words with
         | some words => {e.holds with font := e.holds.font.map ({· with memo := words})}
         | none => e.holds
-      ({e with layouts := Lru.putIn LayoutKey.html layoutSlots e.layouts key laid,frameWork := (l+1,k,r),holds},.ok laid)
+      let laid := {laid with serial := e.serial+1,made := {}}
+      let layouts := Lru.putIn LayoutKey.html layoutSlots e.layouts key laid
+      ({e with layouts,frameWork := (l+1,k,r),holds,serial := e.serial+1,kept},.ok laid)
 
 /-- `frameWith` over the kept layouts, counting a repaint. -/
 def Engine.frameKept (e : Engine) (key : LayoutKey) : Engine × Except String Laid :=
@@ -2067,7 +2140,9 @@ def Engine.frameKept (e : Engine) (key : LayoutKey) : Engine × Except String La
   match e.layOutKept {key with pointer := (none,none)} with
   | (e,.ok base) =>
     match restyle base key.pointer with
-    | some laid => let (l,k,r) := e.frameWork; ({e with frameWork := (l,k,r+1)},.ok laid)
+    | some laid =>
+      let (l,k,r) := e.frameWork
+      ({e with frameWork := (l,k,r+1),serial := e.serial+1},.ok {laid with serial := e.serial+1})
     | none => e.layOutKept key
   | (e,.error _) => e.layOutKept key
 
@@ -2085,6 +2160,22 @@ def Engine.frame (e : Engine) (key : LayoutKey) : Engine × Except String Laid :
     match e.frameKept key with
     | (e,.ok laid) => ({e with painted := Lru.putIn LayoutKey.html paintedSlots e.painted key laid},.ok laid)
     | other => other
+
+/-- `WebPaint.patch` of `laid`'s scene with `values`: the scene made before for the same
+kept layout (`Laid.serial`) and values again, else a new one (counted in `paintWork`).
+Not proved: that the kept scene is `WebPaint.patch laid.paint values laid.scene`. It is
+made only by `fresh`, for the layout of its number, and kept layouts with one number are
+one value. -/
+def Engine.paint (e : Engine) (laid : Laid) (values : Std.TreeMap Nat (Rendering.Transform × Option Float)) :
+    Rendering.Scene × Engine :=
+  let key := paintKey values
+  match e.paintedScene with
+  | some (n,k,made) =>
+    if laid.serial != 0 && n == laid.serial && k == key then (made,e) else fresh key
+  | none => fresh key
+where fresh (key : String) :=
+  let made := WebPaint.patch laid.paint values laid.scene
+  (made,{e with paintedScene := some (laid.serial,key,made),paintWork := e.paintWork+1})
 
 /-- `cpu:true`: each scene of a bytes answer also carries its CPU pixels. -/
 private def cpuPixels (request : JSON.Json) : Bool := request.field? "cpu" == some (.bool true)
@@ -2167,7 +2258,7 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
     let reset := request.field? "reset" == some (.bool true)
     let (layouts,kept,repaints) ← modifyGet fun e => (e.frameWork,if reset then {e with frameWork := (0,0,0)} else e)
     let (pagesMade,pagesKept,recompiled,reused,moved) := pageWork reset
-    let paints := paintWork reset
+    let paints ← modifyGet fun e => (e.paintWork,if reset then {e with paintWork := 0} else e)
     let number := fun (n : Nat) => JSON.Json.number (toString n)
     return ((JSON.Json.object [("layouts",number layouts),("kept",number kept),("repaints",number repaints),
       ("paintOnly",number paints),("recompiled",number recompiled),("reused",number reused),("moved",number moved),
@@ -2193,7 +2284,8 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
   if str request "op" == "scriptSession" then
     let holds := (← get).holds
     let held ← modifyGet fun e => (e.scripts,{e with scripts := {}})
-    let (held,answer) ← WebScripts.opSections held "scriptSession" html request (fun r => some (measure holds r))
+    let kept := (← get).kept
+    let (held,answer) ← WebScripts.opSections held "scriptSession" html request (fun r => some (measure holds r kept))
       (fun _ => canvasEnv holds)
     modify fun e => {e with scripts := held}
     match answer with
@@ -2202,12 +2294,16 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
     | .error x => throw x
   let op := str request "op" "render"
   if op != "render" && op != "selectedText" && op != "printLayout" && op != "nodeAt" then
-    let dom ← prepareDOM html request
+    let dom ← stepState fun e => match prepareDOMIn e.kept html request with
+      | .ok (dom,made) => ({e with kept := e.kept.add made},.ok dom)
+      | .error x => (e,.error x)
     validateResources dom request
     if op == "inspect" then return ((← inspect dom (str request "url") request).toString,#[])
     let _ ← classicScripts request (WebRenderScript.scriptRecords dom)
     let textScale := cssTextScale (← scalePercent request) (zoomUnit request)
-    let rules ← rules dom request
+    let rules ← stepState fun e => match rulesWith e.kept dom request with
+      | .ok (rules,made) => ({e with kept := e.kept.add made},.ok rules)
+      | .error x => (e,.error x)
     if op == "droppedCSS" then
       return ((JSON.Json.object [("dropped",.array ((Rendering.CSS.droppedDeclarations dom rules).toList.map .string))]).toString,#[])
     -- The `@font-face` faces that the rendered text uses (CSS Fonts 4 §4.8), with the
@@ -2252,9 +2348,9 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
         some (t,node)
       | _ => none
     | _ => []
-  let (scene,animating) := if laid.paint.empty then (laid.scene,false) else
+  let (scene,animating) ← if laid.paint.empty then pure (laid.scene,false) else do
     let (values,running) := WebPaint.state laid.paint laid.dom slotValues now clicks
-    (painted laid.paint values laid.scene,running)
+    pure (← modifyGet (·.paint laid values),running)
   let boxes := laid.boxes
   let face := laid.face
   -- Printing (issue 1268): the host lays the document out at the paper width, with
