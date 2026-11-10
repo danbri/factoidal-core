@@ -228,9 +228,6 @@ def next (s : State) (h : Nat) : State × Option (Bool × String × Nat × Nat �
     match s.get? h with
     | none => return (s, none)
     | some x =>
-      if x.deferFail && x.events.isEmpty then
-        s := requestError s h x "error"
-        continue
       match x.events[0]? with
       | none => return (s, none)
       | some ev =>
@@ -439,6 +436,11 @@ def op (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int Byt
       if x.state > 1 || x.sendFlag then (s, .error errInvalidState)
       else (s.set (natAt fs 0) { x with cred := natAt fs 1 != 0 }, okStr "")
   | 75 => (s, okStr "1")
+  | 76 =>
+    -- the deferred error of a `send` that the policy refused (the page's next task)
+    match s.get? (natAt fs 0) with
+    | some x => if x.deferFail then (requestError s (natAt fs 0) x "error", okStr "") else (s, okStr "")
+    | none => (s, .error errType)
   | 74 =>
     -- the body as bytes (responseType "arraybuffer")
     match s.get? (natAt fs 0) with

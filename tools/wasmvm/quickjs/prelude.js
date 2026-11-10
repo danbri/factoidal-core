@@ -2856,7 +2856,7 @@
         s.text = s.json = s.buf = null;
         call(63, [s.h, cb, up ? 1 : 0, has, ct, bytes], what);
         drain(this, s);
-        if (call(67, [s.h, 5]) === '1') chk(n.timer(cb, 0, 0));
+        if (call(67, [s.h, 5]) === '1') chk(n.timer(register(() => { call(76, [s.h]); drain(x, s); }), 0, 0));
         if (s.ms > 0 && call(67, [s.h, 0]) !== '4') s.timer = chk(n.timer(register(() => { s.timer = 0; call(66, [s.h]); drain(x, s); }), s.ms, 0));
       }
       abort() { const s = S(this); call(65, [s.h]); s.text = s.json = s.buf = null; drain(this, s); }
