@@ -30,6 +30,7 @@ Uniqueness: the store and the stack are passed along and never kept twice, so
 stores and `Array.modify` update in place.
 -/
 import L4Factoidal.WasmVM.Exec.Store
+import L4Factoidal.WasmVM.Simd
 
 namespace L4Factoidal.WasmVM
 
@@ -333,12 +334,107 @@ is an ordinary host call; the `return_` after the tail call op returns its resul
     (inst : ModuleInst) (frames : Array Frame) (fa : Nat) (retPc : USize) : Enter :=
   enter lim st stack sp fp code inst frames fa retPc
 
+/-! ### Fixed-width SIMD
+
+A v128 value at slot `i` has its low half in the operand stack and its high half in
+slot `i` of the hi stack (`st.exc.hi`). Everything here is reached from `cold`.
+Record: "SIMD" in docs/designissues/2026-11-07-wasmvm-engine.md. -/
+
+@[inline] def hiRd (st : StoreOf M) (i : USize) : UInt64 := Slots.rd st.exc.hi i
+
+@[inline] def hiWr (st : StoreOf M) (i : USize) (v : UInt64) : StoreOf M :=
+  st.modHi (fun h => Slots.wrGrow h i v) id
+
+/-- The v128 value at slot `i`. -/
+@[inline] def vAt (st : StoreOf M) (stack : Slots) (i : USize) : V128 := ⟨rd stack i, hiRd st i⟩
+
+/-- Move the high halves of `n` slots from `src` down to `dst`. A slot past the end
+of the hi stack is 0, and `dst ≤ src`, so nothing is lost when the hi stack is short;
+when it is empty no v128 was ever written and there is nothing to move. -/
+def hiMoveDown (st : StoreOf M) (src dst : USize) (n : Nat) : StoreOf M :=
+  if st.exc.hi.size == 0 || src == dst then st else st.modHi (fun h => moveDown h src dst n) id
+
+/-- Write 0 into `n` slots from `i`. -/
+def zeroSlots (s : Slots) (i : USize) : Nat → Slots
+  | 0 => s
+  | k + 1 => zeroSlots (wr s i 0) (i + 1) k
+
+def hiZero (st : StoreOf M) (i : USize) (n : Nat) : StoreOf M :=
+  if st.exc.hi.size == 0 then st else st.modHi (fun h => zeroSlots h i n) id
+
+/-- What a SIMD instruction gives. -/
+inductive SimdRes (M : Type) where
+  | ok (st : StoreOf M) (stack : Slots) (sp : USize)
+  | trap (st : StoreOf M) (stack : Slots) (t : Trap)
+
+/-- The scalar load and store of `w` bytes (1, 2, 4 or 8), zero-extended. -/
+def simdLoadOp (w : Nat) : LoadOp :=
+  if w == 1 then .i32_8u else if w == 2 then .i32_16u else if w == 4 then .i32 else .i64
+def simdStoreOp (w : Nat) : StoreOp :=
+  if w == 1 then .i32_8 else if w == 2 then .i32_16 else if w == 4 then .i32 else .i64
+
+/-- A checked load. -/
+def loadW (d : M) (ea : Nat) (op : LoadOp) : Option UInt64 :=
+  if h : ea + LoadOp.width op ≤ LinearMemory.size d then some (loadVal d ea op h) else none
+
+/-- Write the v128 `r` at slot `i`. -/
+@[inline] def putV (st : StoreOf M) (stack : Slots) (i sp : USize) (r : V128) : SimdRes M :=
+  .ok (hiWr st i r.hi) (wr stack i r.lo) sp
+
+/-- One SIMD instruction with no 16-byte immediate (`Op.simd`). -/
+@[noinline] def simdStep (st : StoreOf M) (stack : Slots) (sp : USize) (inst : ModuleInst)
+    (c mem off lane : Nat) : SimdRes M :=
+  match simdShape c with
+  | some .un => putV st stack (sp - 1) sp (V128.evalUn c (vAt st stack (sp - 1)))
+  | some .bin => putV st stack (sp - 2) (sp - 1) (V128.evalBin c (vAt st stack (sp - 2)) (vAt st stack (sp - 1)))
+  | some .tern =>
+    putV st stack (sp - 3) (sp - 2)
+      (V128.bitselect (vAt st stack (sp - 3)) (vAt st stack (sp - 2)) (vAt st stack (sp - 1)))
+  | some .test => .ok st (wr stack (sp - 1) (V128.evalTest c (vAt st stack (sp - 1)))) sp
+  | some .shift => putV st stack (sp - 2) (sp - 1) (V128.evalShift c (vAt st stack (sp - 2)) (rd stack (sp - 1)))
+  | some (.splat _) => putV st stack (sp - 1) sp (V128.splat c (rd stack (sp - 1)))
+  | some (.extract ..) => .ok st (wr stack (sp - 1) (V128.extract c lane (vAt st stack (sp - 1)))) sp
+  | some (.replace ..) =>
+    putV st stack (sp - 2) (sp - 1) (V128.replace c lane (vAt st stack (sp - 2)) (rd stack (sp - 1)))
+  | some (.load w) =>
+    let ea := (rd stack (sp - 1)).toNat + off
+    let d := memData st inst mem
+    if w == 16 then
+      match loadW d ea .i64, loadW d (ea + 8) .i64 with
+      | some lo, some hi => putV st stack (sp - 1) sp ⟨lo, hi⟩
+      | _, _ => .trap st stack .memOOB
+    else
+      match loadW d ea (simdLoadOp w) with
+      | some x => putV st stack (sp - 1) sp (V128.ofLoad c x)
+      | none => .trap st stack .memOOB
+  | some .store =>
+    let v := vAt st stack (sp - 1)
+    let ea := (rd stack (sp - 2)).toNat + off
+    let ma := inst.mems[mem]!
+    if ea + 16 ≤ LinearMemory.size (st.mems[ma]!).data then
+      .ok (storeMem (storeMem st ma ea v.lo .i64) ma (ea + 8) v.hi .i64) stack (sp - 2)
+    else .trap st stack .memOOB
+  | some (.loadLane w) =>
+    let v := vAt st stack (sp - 1)
+    let ea := (rd stack (sp - 2)).toNat + off
+    match loadW (memData st inst mem) ea (simdLoadOp w) with
+    | some x => putV st stack (sp - 2) (sp - 1) (v.setLane (8 * w) lane x)
+    | none => .trap st stack .memOOB
+  | some (.storeLane w) =>
+    let v := vAt st stack (sp - 1)
+    let ea := (rd stack (sp - 2)).toNat + off
+    let ma := inst.mems[mem]!
+    if ea + w ≤ LinearMemory.size (st.mems[ma]!).data then
+      .ok (storeMem st ma ea (v.lane (8 * w) lane) (simdStoreOp w)) stack (sp - 2)
+    else .trap st stack .memOOB
+  | _ => .trap st stack .unreachable
+
 /-- What a cold op gives: go on from these registers, or stop. -/
 inductive Cold (M : Type) where
   | go (st : StoreOf M) (stack : Slots) (sp fp pc : USize) (code : Array Op) (inst : ModuleInst) (frames : Array Frame)
   | stop (st : StoreOf M) (m : Machine) (ev : Event)
 
-/-- The ops off the hot path: exceptions, tail calls, typed function references. They
+/-- The ops off the hot path: exceptions, tail calls, typed function references, SIMD. They
 are a separate function, reached from the one `default` case of `run`, because as cases
 of `run` they made every benchmark slower (sum 363 to 265 million instructions per
 second, measured 2026-11-08): the C of the hot cases was the same, the C compiler's
@@ -406,14 +502,59 @@ Record: "Cold ops" in docs/designissues/2026-11-07-wasmvm-engine.md. -/
     else .go st stack sp fp (pc + 1) code inst frames
   | .brOnNull t =>
     if rd stack (sp - 1) == nullRef then
+      let st := hiMoveDown st (sp - 1 - t.keep.toUSize) (fp + t.height.toUSize) t.keep
       let x := brMove stack (sp - 1) fp t
       .go st x.stack x.sp fp t.pc.toUSize code inst frames
     else .go st stack sp fp (pc + 1) code inst frames
   | .brOnNonNull t =>
     if rd stack (sp - 1) != nullRef then
+      let st := hiMoveDown st (sp - t.keep.toUSize) (fp + t.height.toUSize) t.keep
       let x := brMove stack sp fp t
       .go st x.stack x.sp fp t.pc.toUSize code inst frames
     else .go st stack (sp - 1) fp (pc + 1) code inst frames
+  -- Fixed-width SIMD.
+  | .simd c mem off lane =>
+    match simdStep st stack sp inst c mem off lane with
+    | .ok st stack sp => .go st stack sp fp (pc + 1) code inst frames
+    | .trap st stack t => .stop st ⟨stack, sp, fp, pc, code, inst, frames⟩ (.trap t)
+  | .simdImm c lo hi =>
+    if c == 0x0c then .go (hiWr st sp hi) (wr stack sp lo) (sp + 1) fp (pc + 1) code inst frames
+    else
+      let r := V128.shuffle ⟨lo, hi⟩ (vAt st stack (sp - 2)) (vAt st stack (sp - 1))
+      .go (hiWr st (sp - 2) r.hi) (wr stack (sp - 2) r.lo) (sp - 1) fp (pc + 1) code inst frames
+  | .vLocalGet x =>
+    let i := fp + x.toUSize
+    .go (hiWr st sp (hiRd st i)) (wr stack sp (rd stack i)) (sp + 1) fp (pc + 1) code inst frames
+  | .vLocalSet x =>
+    let i := fp + x.toUSize
+    .go (hiWr st i (hiRd st (sp - 1))) (wr stack i (rd stack (sp - 1))) (sp - 1) fp (pc + 1) code inst frames
+  | .vLocalTee x =>
+    let i := fp + x.toUSize
+    .go (hiWr st i (hiRd st (sp - 1))) (wr stack i (rd stack (sp - 1))) sp fp (pc + 1) code inst frames
+  | .vSelect =>
+    if rd stack (sp - 1) != 0 then .go st stack (sp - 2) fp (pc + 1) code inst frames
+    else
+      .go (hiWr st (sp - 3) (hiRd st (sp - 2))) (wr stack (sp - 3) (rd stack (sp - 2))) (sp - 2) fp (pc + 1)
+        code inst frames
+  | .vGlobalGet x =>
+    let a := inst.globals[x]!
+    .go (hiWr st sp (st.globalHi a)) (wr stack sp (st.globalBits a)) (sp + 1) fp (pc + 1) code inst frames
+  | .vGlobalSet x =>
+    let a := inst.globals[x]!
+    let lo := rd stack (sp - 1)
+    let hi := hiRd st (sp - 1)
+    let st := { st with globals := Slots.wr st.globals a.toUSize lo }
+    .go (st.setGlobalHi a hi) stack (sp - 1) fp (pc + 1) code inst frames
+  | .vBrTable ts d =>
+    let i := (rd stack (sp - 1)).toNat
+    let t := if h : i < ts.size then ts[i] else d
+    let st := hiMoveDown st (sp - 1 - t.keep.toUSize) (fp + t.height.toUSize) t.keep
+    let x := brMove stack (sp - 1) fp t
+    .go st x.stack x.sp fp t.pc.toUSize code inst frames
+  | .hiMove skip n height =>
+    .go (hiMoveDown st (sp - skip.toUSize - n.toUSize) (fp + height.toUSize) n) stack sp fp (pc + 1)
+      code inst frames
+  | .hiZero x n => .go (hiZero st (fp + x.toUSize) n) stack sp fp (pc + 1) code inst frames
   | _ => .stop st ⟨stack, sp, fp, pc, code, inst, frames⟩ (.trap .unreachable)
 
 /-! ### The loop -/

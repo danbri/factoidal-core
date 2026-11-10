@@ -34,6 +34,7 @@ def evalConst (st : StoreOf M) (inst : ModuleInst) (e : Expr) : UInt64 :=
     | .i64Const v => s.push v
     | .f32Const v => s.push v.toUInt64
     | .f64Const v => s.push v
+    | .simd _ _ _ lo _ => s.push lo
     | .refNull _ => s.push nullRef
     | .refFunc f => s.push (inst.funcs[f]!).toUInt64
     | .globalGet x => s.push (st.globalBits inst.globals[x]!)
@@ -42,6 +43,14 @@ def evalConst (st : StoreOf M) (inst : ModuleInst) (e : Expr) : UInt64 :=
       s.push (op.evalBin a b)
     | _ => s
   stack.back!
+
+/-- The high half of a constant expression of type v128 (validated: it is `v128.const`
+or `global.get`). -/
+def evalConstHi (st : StoreOf M) (inst : ModuleInst) (e : Expr) : UInt64 :=
+  match (e : Array Instr)[0]? with
+  | some (Instr.simd _ _ _ _ hi) => hi
+  | some (Instr.globalGet x) => st.globalHi inst.globals[x]!
+  | _ => 0
 
 /-! ### Types across modules
 
@@ -90,7 +99,14 @@ def checkImport (st : StoreOf M) (types : Array FuncType) (ids : Array Nat) (d :
   match d, v with
   | .func t, .func a =>
     match st.funcs[a]?, types[t]? with
-    | some fi, some ft => if fi.type == canonFunc ids ft then .ok () else .error "incompatible import type"
+    | some fi, some ft =>
+      if fi.type != canonFunc ids ft then .error "incompatible import type"
+      else match fi.kind with
+        | .host _ =>
+          if hasV128 fi.type.params || hasV128 fi.type.results then
+            .error "unsupported: v128 in the type of a host function"
+          else .ok ()
+        | .wasm .. => .ok ()
     | _, _ => .error "unknown import"
   | .table tt, .table a =>
     match st.tables[a]? with
@@ -162,8 +178,9 @@ def instantiate (st : StoreOf M) (vm : ValidModule) (imports : Array ExternVal) 
     st := st'
     inst := { inst with tags := inst.tags.push a }
   for g in m.globals do
+    let hi := if g.type.type == .v128 then evalConstHi st inst g.init else 0
     let (st', a) := st.addGlobal { g.type with type := canonVal typeIds g.type.type } (evalConst st inst g.init)
-    st := st'
+    st := if g.type.type == .v128 then st'.setGlobalHi a hi else st'
     inst := { inst with globals := inst.globals.push a }
   for t in m.tables do
     let init := match t.init with | some e => evalConst st inst e | none => nullRef

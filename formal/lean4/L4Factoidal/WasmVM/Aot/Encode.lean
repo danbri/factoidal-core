@@ -17,6 +17,7 @@ Custom sections are not written (`decode` skips them). `Tests/Aot.lean` checks
 `decode (encode m)` against `m` on every module of the spec tests and on the guests.
 -/
 import L4Factoidal.WasmVM.Syntax
+import L4Factoidal.WasmVM.Simd
 
 namespace L4Factoidal.WasmVM.Aot.Encode
 
@@ -190,6 +191,14 @@ def instr (out : ByteArray) : Instr → ByteArray
   | .refAsNonNull => out.push 0xD4
   | .brOnNull l => uleb (out.push 0xD5) l
   | .brOnNonNull l => uleb (out.push 0xD6) l
+  | .simd k m lane lo hi =>
+    let out := uleb (out.push 0xFD) k
+    match simdShape k with
+    | some (.load _) | some .store => memArg out m
+    | some (.loadLane _) | some (.storeLane _) => (memArg out m).push lane.toUInt8
+    | some (.extract ..) | some (.replace ..) => out.push lane.toUInt8
+    | some .const | some .shuffle => fixedLE (fixedLE out lo.toNat 8) hi.toNat 8
+    | _ => out
 
 def expr (out : ByteArray) (e : Expr) : ByteArray := e.foldl instr out
 

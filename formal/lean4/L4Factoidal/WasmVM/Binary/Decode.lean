@@ -9,11 +9,12 @@ instruction sequence is read with the bytes left as its fuel. The loops are tail
 calls, so they compile to C loops.
 
 `DecodeError.unsupported` marks a construct of a proposal that this engine does not
-run yet (SIMD, GC types, memory64, threads); the spec-test
+run yet (relaxed SIMD, GC types, memory64, threads); the spec-test
 runner counts those as not run, not as failures.
 -/
 import L4Factoidal.WasmVM.Syntax
 import L4Factoidal.WasmVM.Binary.Leb
+import L4Factoidal.WasmVM.Simd
 
 namespace L4Factoidal.WasmVM.Binary
 
@@ -183,6 +184,29 @@ def catchClause (b : ByteArray) (p : Nat) : Except DecodeError (Catch × Nat) :=
   | 3 => let (l, q) ← u32 b q; .ok (.catchAllRef l, q)
   | _ => bad "malformed catch clause" p
 
+/-- A SIMD instruction: `k` is the opcode number after the 0xFD prefix (at `p`), and
+`q` is the position of its immediates. -/
+def simdInstr (b : ByteArray) (p q k : Nat) : Except DecodeError (Instr × Nat × Bool) := do
+  let noMem : MemArg := ⟨0, 0, 0⟩
+  match simdShape k with
+  | none =>
+    if 0x100 ≤ k && k ≤ 0x113 then unsup "relaxed SIMD instruction" p else bad "illegal opcode" p
+  | some (.load _) | some .store =>
+    let (m, q) ← memArg b q
+    .ok (.simd k m 0 0 0, q, false)
+  | some (.loadLane _) | some (.storeLane _) =>
+    let (m, q) ← memArg b q
+    let (l, q) ← byte b q
+    .ok (.simd k m l.toNat 0 0, q, false)
+  | some (.extract ..) | some (.replace ..) =>
+    let (l, q) ← byte b q
+    .ok (.simd k noMem l.toNat 0 0, q, false)
+  | some .const | some .shuffle =>
+    let (lo, q) ← fixedLE b q 8
+    let (hi, q) ← fixedLE b q 8
+    .ok (.simd k noMem 0 (UInt64.ofNat lo) (UInt64.ofNat hi), q, false)
+  | some _ => .ok (.simd k noMem 0 0 0, q, false)
+
 /-- One instruction. `usesData` is set when the instruction names a data segment
 (the data-count section is then required). -/
 def instr (b : ByteArray) (p : Nat) : Except DecodeError (Instr × Nat × Bool) := do
@@ -238,7 +262,7 @@ def instr (b : ByteArray) (p : Nat) : Except DecodeError (Instr × Nat × Bool) 
       if k < 8 then r (.num (NumOp.ofNat (128 + k))) q
       else if k ≤ 19 then unsup "0xFC instruction" p
       else bad "illegal opcode" p
-  | 0xFD => unsup "SIMD instruction" p
+  | 0xFD => let (k, q) ← u32 b q; simdInstr b p q k
   | 0xFB => unsup "GC instruction" p
   | 0xFE => unsup "atomic instruction" p
   -- Exception handling.

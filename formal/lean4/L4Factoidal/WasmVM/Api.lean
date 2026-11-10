@@ -75,7 +75,8 @@ private def finish (st : StoreOf M) (results : Array ValType) (r : StoreOf M × 
   match ev with
   | .done =>
     let base := m.sp - results.size.toUSize
-    (st', .values ((results.zipIdx).map fun (t, i) => Value.ofBits t (Run.rd m.stack (base + i.toUSize))))
+    (st', .values ((results.zipIdx).map fun (t, i) =>
+      Value.ofSlot t (Run.rd m.stack (base + i.toUSize)) (Run.hiRd st' (base + i.toUSize))))
   | .trap t => (st', .trap t)
   | .outOfFuel => (st', .outOfFuel { machine := m, results, hostResults := none })
   | .hostCall id fa args =>
@@ -87,6 +88,16 @@ private def finish (st : StoreOf M) (results : Array ValType) (r : StoreOf M × 
     let ps := (st'.exc.tags[e.tag]?).map (·.params) |>.getD #[]
     (st', .exception e.tag ((ps.zip e.fields).map fun (t, b) => Value.ofBits t b))
 
+/-- Write the high halves of the v128 values among `args` into the hi stack, for
+arguments at slots 0 and up. -/
+def putArgsHi (st : StoreOf M) (args : Array Value) : StoreOf M :=
+  if args.any (fun v => match v with | .v128 .. => true | _ => false) then
+    (args.foldl (init := (st, 0)) fun (st, i) v =>
+      (match v with
+        | .v128 _ hi => Run.hiWr st (Nat.toUSize i) hi
+        | _ => st, i + 1)).1
+  else st
+
 @[specialize] def invoke (st : StoreOf M) (fa : Nat) (args : Array Value) (lim : Budget := {}) : StoreOf M × Outcome :=
   match st.funcs[fa]? with
   | none => (st, .trap (.host "unknown function"))
@@ -97,6 +108,7 @@ private def finish (st : StoreOf M) (results : Array ValType) (r : StoreOf M × 
       (fun (s, i) v => (Run.wr s i.toUSize v.toBits, i + 1)) |>.1
     let code : Array Op := #[.call 0, .return_ fi.type.results.size]
     let inst : ModuleInst := { funcs := #[fa] }
+    let st := putArgsHi st args
     finish st fi.type.results (Run.run lim.run st stack n.toUSize 0 0 code inst #[] lim.fuel)
 
 /-- `invoke`, also giving the number of instructions run (for measurements). -/
@@ -108,6 +120,7 @@ private def finish (st : StoreOf M) (results : Array ValType) (r : StoreOf M × 
       (fun (s, i) v => (Run.wr s i.toUSize v.toBits, i + 1)) |>.1
     let code : Array Op := #[.call 0, .return_ fi.type.results.size]
     let inst : ModuleInst := { funcs := #[fa] }
+    let st := putArgsHi st args
     let r := Run.run lim.run st stack args.size.toUSize 0 0 code inst #[] lim.fuel
     let (st', o) := finish st fi.type.results r
     (st', o, lim.fuel - r.2.2.1)
