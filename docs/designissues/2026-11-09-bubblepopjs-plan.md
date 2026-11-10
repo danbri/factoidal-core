@@ -107,6 +107,13 @@ What the table and the profiles of the exploration record (its section on real-w
 - Load: the F\* bundle takes 1.6 to 1.8 s to parse and start, QuickJS-NG 0.27 s, V8 0.10 s.
 - The proved number conversions of 2026-11-09 (not in stage A or B) take 4 to 26% off stage B
   on these workloads.
+- Added 2026-11-10. The first of the four places is repaired for names that the scope does
+  not have (globals, absent names): a function environment with more than 24 names has an
+  index. With the defects 1, 2, 9 and 10 repaired, `marked` runs (5.3 times QuickJS-NG) and all
+  6 workloads give the reference answer. The F\* bundle went from 26.1 to 11.0 times
+  QuickJS-NG in one run on one machine, and its load from 2,195 to 1,058 ms (QuickJS-NG 442).
+  Geometric mean of the ratio over the six workloads: 8.4. The table above is the state
+  before these repairs; the table after them is in the exploration record, section 6.6.
 
 ### 2.3 Start, size, compliance
 
@@ -356,8 +363,10 @@ To add, in this order:
 ### 7.3 Defects found on 2026-11-09, on `main`, stage A and stage B
 
 Each is one line to reproduce. They are a checklist in
-https://github.com/danbri/factoidal-core/issues/378 (the plan and its key results). None has a
-test yet: each gets an expected failure that names the issue before its repair (stage B2, item 3).
+https://github.com/danbri/factoidal-core/issues/378 (the plan and its key results). Items 1, 2,
+8, 9 and 10 were repaired on 2026-11-10 on the branch `claude/foafnaut-perf-bottlenecks-7hpt38`,
+with tests in `formal/lean4/L4Factoidal/JS/RegressionTests.lean`. Items 3 to 7 have no test
+yet: each gets an expected failure that names the issue before its repair (stage B2, item 3).
 
 1. `if (s) /y/.test(s);` and `for (...) /re/.test(x)`: "regular expression literals are not
    supported" (the lexer takes `/` after `)` and after `}` as division). `marked` fails on it.
@@ -369,6 +378,12 @@ test yet: each gets an expected failure that names the issue before its repair (
 7. `new Array(4294967295)` takes all memory (section 1, item 4).
 8. On stage B only: `s += x` copies the string at each append (400,000 appends: 0.13 s on stage
    A, 1.86 s on stage B). `vmLoop`'s `.add` appends while the register still holds the string.
+   Repaired for a local variable; a global in a compiled top-level loop still copies.
+9. Found 2026-11-10: `function f() { f = 1 }` threw "Assignment to constant variable" (a
+   function declaration had the private name scope of a function expression). Babel's helpers
+   do this. Repaired.
+10. Found 2026-11-10: no `encodeURI` and no `decodeURI`; `marked` then wrote links as plain
+    text. Repaired.
 
 ### 7.4 Speed and memory in CI
 

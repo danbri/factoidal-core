@@ -318,6 +318,11 @@ bash labs/demos/foafnaut/build-web-render.sh --native
   watchdog: `labs/demos/foafnaut/bubblepop_perf/realworld.py`. Run every BubblePopJS test of
   unknown code under a memory limit: `new Array(4294967295)` takes all memory, and on
   2026-11-09 the kernel then killed a build on the same machine.
+- A repaired defect of BubblePopJS gets its scripts in
+  `formal/lean4/L4Factoidal/JS/RegressionTests.lean`: `#guard out "<script>" == [lines]`, with
+  the lines that QuickJS-NG and Node both print. `lake build L4Factoidal.JS` runs them. When a
+  library of `realworld.py` fails, repair and run it again: `marked` had three more defects
+  behind the first one (2026-11-10), and the last gave a wrong answer with no error.
 - The cost of one JavaScript operation, for each engine, and its instructions, allocations
   and big-number calls: `labs/demos/foafnaut/bubblepop_perf/opcost.py` (its header has the
   commands). Comparison engines: QuickJS-NG `v0.18.0` built natively (`git clone --depth 1

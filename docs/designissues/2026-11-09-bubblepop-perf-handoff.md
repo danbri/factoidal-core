@@ -84,3 +84,28 @@ For the sessions that own those branches:
   43% of the run of a `js_of_ocaml` bundle is `Env.scan`: a variable of an enclosing scope found by its name.
 - Eight defects with one-line reproductions (two in the lexer: `/` after `)` and after `++`): section 7.3 of the plan.
 - Run BubblePopJS on unknown code under a memory limit: `new Array(4294967295)` takes all memory of the process.
+
+## Added 2026-11-10, 07:00 UTC, by the same Linux cloud session
+
+The branch `claude/foafnaut-perf-bottlenecks-7hpt38` now has `main` at `0fee0a14f` and stage B at `167605f4c` merged
+(`d99abc842`), and five repairs on them. Details and measurements: section 6.6 of
+[2026-11-09-foafnaut-perf-exploration.md](2026-11-09-foafnaut-perf-exploration.md). Each repair is one commit and can
+be taken alone:
+
+- `16577fc02`: the parser chooses between a division and a regular expression literal (`JS/Lexer.lean`,
+  `JS/Parser.lean`). `if (s) /x/.test(s)`, `k++ / 2` and `o.default / 2` parse.
+- `ff0ebeeef`: a function declaration has no private scope for its name (`JS/Interp.lean` `makeClosure`,
+  `JS/Resolve.lean` `rFun`). `function f() { f = ... }` threw before; Babel's helpers do this.
+- `5d6d0d10e`: `encodeURI`, `decodeURI`.
+- `0861f4b91`: an index for a function environment with more than 24 names (`FunInfo.index`), and no linear scan of
+  the `var` names in the parser. A `js_of_ocaml` bundle: run 8,031 to 3,401 ms, load 2,195 to 1,058 ms.
+- `195096766`: the statement `s += v` on a local variable of compiled code appends in place; three large `Float`
+  literals are named constants.
+
+State: Test262 (6,301 files of `test/language`) 5,633 pass, 664 fail, 4 skip (stage B: 5,629 pass); the six library
+workloads of `realworld.py` all give the reference answer; the four Lean gates exit 0; `lake build leanjs L4Factoidal.JS`
+passes with `JS/RegressionTests.lean` (91 scripts). Not done on this tree: a native engine build and `test.sh`.
+
+Open, in the order of measured cost: typed array element access through a string key (pako is about 31 times
+QuickJS-NG); `s += v` on a global in a compiled top-level loop (still copies); allocation (16 to 26% of each profile);
+defects 3 to 7 of the plan's section 7.3.

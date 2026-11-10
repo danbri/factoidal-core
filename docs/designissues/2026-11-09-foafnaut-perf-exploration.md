@@ -73,6 +73,12 @@ and BubblePopJS with no Mac". Lean rules that came out of it:
    constant that only a build tool reads. `wip/bootstack` repairs it; it is not on `main`.
 9. A frame of the status page on a kept layout is 249 M instructions: 39% writes the scene's
    floats one byte at a time, 32% builds the scene again, 19% writes layout text.
+10. Added 2026-11-10 (section 6.6): this branch now has `main` and stage B merged, and five
+    repairs on them. BubblePopJS gives the right answer on 6 of 6 library workloads. The
+    `js_of_ocaml` bundle runs 2.4 times faster and loads 2.1 times faster (26 to 11 times
+    QuickJS-NG): the name scan of item 5 is gone. Three defects more were found behind the
+    first one in `marked` and repaired. `s += v` in a compiled function is linear again.
+    Test262: 5,633 pass of 6,301 (5,629 before).
 
 What to do next: section 12, and the plan.
 
@@ -288,7 +294,7 @@ operands are `Nat`s. Section 8 measures the same operations with none of the thr
   221 ns on stage B against 139 ns on stage A.
 - `leanjs compile-stats FILE`: functions compiled, of functions seen: lodash 540 of 691,
   acorn 301 of 340, pako 76 of 100, immutable 504 of 701, the F\* bundle 3,353 of 4,457.
-- **Regression.** `s += 'x'`, 100,000, 200,000 and 400,000 times, CPU seconds: stage A 0.05,
+- **Regression** (repaired for a local variable on 2026-11-10, section 6.6). `s += 'x'`, 100,000, 200,000 and 400,000 times, CPU seconds: stage A 0.05,
   0.07, 0.13; stage B 0.14, 0.50, 1.86 (in a function and at the top level). On stage B a
   loop is compiled, and `vmLoop`'s `.add` (`JS/Interp.lean` line 4793 at `167605f4c`) reads
   the string from its register and appends while the register still holds it, so the append
@@ -364,8 +370,9 @@ By `realworld.py` and by a differential script of 1,671 lines of output (index, 
 operator and number-to-string cases at the edges of 2^31, 2^32 and 2^53), run on BubblePopJS,
 QuickJS-NG and V8. QuickJS-NG and V8 agree on every line. BubblePopJS differs on 23 lines, the
 same on `main`, stage A and stage B. The defects are a checklist in
-https://github.com/danbri/factoidal-core/issues/378 (the plan and its key results); none has a
-test yet.
+https://github.com/danbri/factoidal-core/issues/378 (the plan and its key results). Items 1, 2,
+9 and 10 are repaired on this branch (2026-11-10), with tests in
+`formal/lean4/L4Factoidal/JS/RegressionTests.lean` (section 6.6); items 3 to 7 have no test yet.
 
 1. `if (s) /y/.test(s);`, `for (...) /re/.test(x)`, `if (1) {} /re/.test(x)`: SyntaxError
    "regular expression literals are not supported". The lexer takes `/` after `)` and after `}`
@@ -381,6 +388,17 @@ test yet.
    killed (1.5 GB in 1 s). `b.length = 10000000` takes 295 MB. Strings and typed arrays have a
    limit (`Invalid string length`); arrays have none. During the session this killed a
    running build on the same machine.
+8. On stage B only: `s += x` copies the string at each append (section 5.3). Repaired on this
+   branch (section 6.6).
+9. Found 2026-11-10, behind item 1 in `marked`: `function f() { f = 1 }` threw "Assignment to
+   constant variable". A function declaration got the private scope that only a function
+   expression has for its name, so the name inside the body was a read-only copy; a read of it
+   did not see a later assignment from outside. Helpers that Babel writes replace themselves
+   this way (`function _extends() { _extends = Object.assign ...`). On `main`, stage A and
+   stage B. Also: an assignment to a function expression's own name from code that is not
+   strict threw; ECMA-262 §9.1.1.1.5 says it does nothing.
+10. Found 2026-11-10, behind item 9: `encodeURI` and `decodeURI` did not exist. `marked` catches
+    the ReferenceError and writes a link as plain text: a wrong answer with no error.
 
 ### 6.5 WebAssembly from verified-language toolchains, in BubblePopWASM
 
@@ -405,6 +423,70 @@ they are test inputs here, not the build of this tree).
 - On `main` at `489d5cd3a`, `lake build wasmvm-bench` fails: `WasmVM/Bench/Page.lean` names
   `Hosts.LeanJS.prepare`, which is in `Hosts/LeanJSRealm.lean`, and does not import that
   module. This branch adds the import (one line).
+
+### 6.6 Repairs of 2026-11-10 on this branch
+
+Six commits on the merged tree (`main` at `0fee0a14f` with stage B at `167605f4c`, section 11).
+Each has tests in `formal/lean4/L4Factoidal/JS/RegressionTests.lean` (91 scripts; the expected
+lines are those of QuickJS-NG 0.18.0 and Node 22).
+
+| Commit | Repair | Defect of 6.4 |
+|---|---|---|
+| `16577fc02` | The parser chooses between a division and a regular expression literal. The lexer makes a first choice from the tokens before the `/`; the parser asks for the other reading at the two places where the grammar decides (`P.relexAt`). | 1, 2 |
+| `ff0ebeeef` | A function declaration has no private scope for its name. An assignment to a function expression's name from code that is not strict does nothing. | 9 |
+| `5d6d0d10e` | `encodeURI`, `decodeURI`. | 10 |
+| `0861f4b91` | A function environment with more than 24 names has an index, shared by its environments (`FunInfo.index`). The parser keeps its `var` names in a set too, and takes the names added in a block from the end of the list. | section 6.3, `Env.scan` |
+| `195096766` | The statement `s += v` on a local variable of compiled code is one add on the variable's register, and the string is appended to in place. `4294967295.0`, `4294967296.0`, `9007199254740991.0` are named constants. | 8; section 5.3 |
+
+The corpus, one run of `realworld.py` with three engines (CPU ms, least of 3; "before" is the
+merged tree, "after" is `0861f4b91`). The session's machine was replaced during the night, and
+the same binaries take about 1.5 times the times of section 6.2 on the new one: compare inside
+this table only.
+
+| Workload | before: load, run, x QuickJS-NG | after: load, run, x QuickJS-NG | QuickJS-NG: load, run |
+|---|---|---|---|
+| lodash | 70, 614, x5.4 | 68, 579, x5.1 | 35, 113 |
+| acorn | 53, 1,320, x7.4 | 50, 1,268, x7.1 | 27, 179 |
+| pako | 36, 3,061, x18.6 | 38, 2,995, x18.2 | 18, 165 |
+| marked | does not load | 23, 232, x5.3 | 13, 44 |
+| immutable | 37, 1,454, x9.5 | 38, 1,388, x9.1 | 32, 153 |
+| the F\* bundle | 2,195, 8,031, x26.1 | 1,058, 3,401, x11.0 | 442, 308 |
+
+- BubblePopJS gives the reference answer on 6 of 6 workloads (5 of 6 before).
+- The F\* bundle: the run is 2.4 times faster and the load 2.1 times. Geometric mean of the
+  ratio to QuickJS-NG over the five workloads that ran before: 11.3 to 9.2; over all six
+  after: 8.4.
+- QuickJS-NG's time for pako in this run (165 ms) is an outlier; two other runs of the same
+  night gave 94 and 96 ms, which puts pako at about 31 times QuickJS-NG, as in section 6.2.
+- Profile of the F\* bundle after (`perf`, self time, size 4N): `vmLoop` 24.8%, allocate and
+  free 16.4%, page clearing in the kernel 5.3%, `lean_dec_ref_cold` 5.0%, `evalExpr` 3.2%.
+  `Env.scan` is not in the first 40 lines. At size 0 (load): `vmLoop` 10.0%,
+  `lean_dec_ref_cold` 8.9%, allocate and free 17.7%, `punctFrom` (the lexer's punctuator
+  match) 7.8%, `memcmp` 3.8%. Before, `memcmp` and string equality were 44% of the load and
+  the parser's per-block filter 7.9%.
+
+Single causes, CPU seconds before and after:
+
+| Script | before | after |
+|---|---|---|
+| 300,000 reads of `Math.abs` in an inner function of a function with 10,000 `var` names | 7.27 | 0.32 |
+| the same with `typeof` of an absent name | 7.22 | 0.16 |
+| 40,000 `var` declarations in one function | 3.13 | 0.25 |
+| 40,000 function declarations in one function | 3.69 | 0.52 |
+| `s += 'x'` 400,000 times in a function | 2.32 | 0.09 |
+| `s += i` 400,000 times in a function | 27.6 | 0.10 |
+| `s += 'x'` 400,000 times at the top level of a script (the variable is a global) | 2.50 | 2.57 |
+
+- The last line is not repaired: at the top level the register machine reads the global into a
+  register, adds and writes back, so the string has two holders at the add. The evaluator's
+  `dropNameStr` has no counterpart in `vmLoop`.
+- Test262 (6,301 files of `test/language`): 5,633 pass, 664 fail, 4 skip; before 5,629 pass,
+  668 fail. Each verdict is equal or better (4 tests of a function expression's name pass now).
+- Gates on the tree at `195096766`: `lean-tail-recursion-audit.py --gate`,
+  `lean-hygiene-audit.py`, `lean-csimp-reach.py --gate`, `lean-unbuilt-modules.py --gate`: exit 0.
+- Not done on this tree: a native build of the engine (`build-web-render.sh --native`) and
+  `test.sh`. `lake build leanjs L4Factoidal.JS` passes, with the 91 scripts and the suite of
+  `JS/Tests.lean`.
 
 ## 7. Integers through GMP
 
@@ -722,15 +804,24 @@ measured.
   that `wasmvm-bench` builds); `tools/lean-csimp-reach.py`, its test and
   its allow list; the `foafnaut` and `lean4-performance` skills; `CLAUDE.md` (what Foafnaut
   is); the worknote index; the csimp reach record; the handoff records.
-- Not changed: `JS/Interp.lean`, `JS/Value.lean`, and every file that stage A, stage B or
-  `wip/bootstack` changes.
+- Not changed up to `b46cfa7d5` (2026-11-09): `JS/Interp.lean`, `JS/Value.lean`, and every
+  file that stage A, stage B or `wip/bootstack` changes.
+- From `94906aebc` (2026-11-10): `main` at `0fee0a14f` and stage B (`wip/bpperf-vm` at
+  `167605f4c`) are merged into this branch, and the repairs of section 6.6 change `JS/Lexer.lean`,
+  `JS/Parser.lean`, `JS/Syntax.lean`, `JS/Resolve.lean`, `JS/Compile.lean`, `JS/Interp.lean`,
+  `JS/Value.lean`, `JS/Number.lean`, `JS/Snapshot.lean`; new `JS/RegressionTests.lean`. The
+  owner of stage A and B said that the work after their landing belongs to this session
+  (`CLAUDE.md`, the Foafnaut section).
 - Not on `main`: the owner's instruction for the night was to commit on branches only.
 
 ## 12. Next
 
 BubblePopJS: the plan, section 8. Its first items come from this record: captured variables
-by slot (6.3), the defects of 6.4, typed arrays with no key string, the regression of 5.3
-(stage B's owner), the literals of 5.3 and 7.1.
+by slot (6.3), the defects of 6.4, typed arrays with no key string, the regression of 5.3,
+the literals of 5.3 and 7.1. Done on 2026-11-10 (section 6.6): defects 1, 2, 8, 9, 10, the
+name scan, the literals of 5.3. Open: defects 3 to 7, typed arrays (pako is still about 31
+times QuickJS-NG), `s += v` on a global in a compiled top-level loop, captured variables in
+compiled code, allocation (16 to 26% of every profile).
 
 For BubblePopKit, in order of measured share:
 
