@@ -3720,3 +3720,13 @@ reports contain only `propext`, `Classical.choice` and `Quot.sound`.
 Worklog: [SIMD bitwise theorems](20261110-foafnaut-simd-bitwise.md).
 Tracking: https://github.com/danbri/factoidal-core/issues/388
 (small theorem contributions).
+
+## JavaScript environment index refinement (2026-11-10)
+
+`JS/EnvIndexTheorems.lean`: `Env.slotN_eq_scan_of_indexOf` proves equality with
+`Env.scan` when `e.index = FunInfo.indexOf e.names`; `Env.get?_with_indexOf`
+preserves the complete optional binding. The actual index builder selects the
+first duplicate slot (`FunInfo.indexOf_lookup`); absence and both threshold
+branches are covered. No claim about arbitrary indexes, all environment
+mutations, JavaScript conformance or speed. Imported by `L4Factoidal.JS`;
+standard axioms only. See [scope and checks](20261110-foafnaut-js-env-index.md).
