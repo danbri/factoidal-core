@@ -45,8 +45,8 @@ Deno.test({name:"partial compile counts and bytes",ignore:noLibrary,sanitizeReso
     assert(d,"the answer has a damage record");
     assert(d.base!==null&&d.rects,"damage against the last frame");
     assert.equal(work.layouts,0,"no layout");
-    // One primitive moved: it is compiled, and the others are kept.
-    assert.equal(work.recompiled,1,`recompiled at n=${n}: ${JSON.stringify(work)}`);
+    // One primitive moved: it is compiled again or keeps its geometry, and the others are kept.
+    assert.equal(work.recompiled!+work.moved!,1,`changed at n=${n}: ${JSON.stringify(work)}`);
     assert(work.reused!>=n,`reused at n=${n}: ${JSON.stringify(work)}`);
     // The rectangles cover only the rows of the moved rect (its row of tiles, and a little).
     const damagedRows=new Set(d.rects.flatMap(([, y,,h])=>Array.from({length:h},(_,i)=>y+i)));
@@ -66,9 +66,11 @@ Deno.test({name:"partial compile counts and bytes",ignore:noLibrary,sanitizeReso
     sameBytes(shifted.page.data,groupPlain.page.data,`group move data n=${n}`);
     sameBytes(shifted.page.tiles as ArrayLike<number>,groupPlain.page.tiles as ArrayLike<number>,`group move tiles n=${n}`);
     // The same frame again: the kept answer, nothing to draw.
+    // (The frames of the group move above took the kept slots, so `frame` is compiled once more.)
+    const first=engine.compileLayers(doc.source,800,600,at(90));
     engine.frameWork(true);
     const again=engine.compileLayers(doc.source,800,600,at(90));
-    assert.equal(damageOf(again)!.id,d.id,"a frame with no change answers the same id");
+    assert.equal(damageOf(again)!.id,damageOf(first)!.id,"a frame with no change answers the same id");
     assert.equal(engine.frameWork(true)!.recompiled,0,"a frame with no change compiles nothing");
     // The bytes are those of the plain compile of the same frame.
     const plain=engine.compileLayers(doc.source,800,600,at(90,{retained:false}));
