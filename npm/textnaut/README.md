@@ -6,6 +6,12 @@ A web browser for the terminal, on the Foafnaut engine. Needs [Deno](https://den
 
     npx -y @foafos/textnaut https://info.cern.ch/
 
+![Textnaut showing the Foafnaut showcase page in a terminal: a coloured title bar, a heading panel, numbered links with one selected, and a status bar with the keys.](https://raw.githubusercontent.com/danbri/factoidal-core/main/npm/textnaut/media/page.png)
+
+![The Textnaut help screen, listing the keys and a menu of 15 screensavers with a short description of each.](https://raw.githubusercontent.com/danbri/factoidal-core/main/npm/textnaut/media/help.png)
+
+![Six Textnaut screensavers in a grid: colour plasma, a chequered tunnel, fire, a 4D Menger sponge, metaballs and a maze being carved.](https://raw.githubusercontent.com/danbri/factoidal-core/main/npm/textnaut/media/screensavers.png)
+
 Or install it: `npm install -g @foafos/textnaut`, then:
 
     textnaut https://info.cern.ch/
