@@ -5,6 +5,7 @@ import { loadFoafLive, type LiveFrame } from "./foafnaut_live.ts";
 import { render, encodePPM } from "./gpu_transport.ts";
 import { openPreview } from "./preview.ts";
 import { loadNativeWindow, libraryPath } from "./native_window.ts";
+import { POINTER_CANCEL } from "./native_press.ts";
 import { createWindowSession } from "./ui_session.ts";
 import { cleanupUI } from "./ui_cleanup.ts";
 import { applyCommands, startLoop } from "./ui_commands.ts";
@@ -150,7 +151,8 @@ async function main() {
       let event;
       while (running && (event=native.next())) {
         if(event.kind===8) { if(event.a)dirty=true; }
-        else dispatch(event);
+        // These demos use pointer-up only to stop dragging; they have no link activation.
+        else dispatch(event.kind===POINTER_CANCEL?{...event,kind:4}:event);
       }
       const now=performance.now();
       if (running && clock && now-lastTick >= 16) {
