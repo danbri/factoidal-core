@@ -1,8 +1,10 @@
 import Std.Data.HashMap
+import Std.Data.HashSet
 import L4Factoidal.JS.Syntax
 import L4Factoidal.JS.Number
 import L4Factoidal.JS.Regex
 import L4Factoidal.JS.Str
+import L4Factoidal.JS.PropMap
 
 /-!
 # L4Factoidal.JS.Value — values, objects, environments, the heap (§6, §9, §10)
@@ -26,19 +28,6 @@ import L4Factoidal.JS.Str
 namespace L4Factoidal.JS
 
 variable {H : Type}
-
-inductive Value where
-  | undef
-  | null
-  | bool (b : Bool)
-  | num (n : Float)
-  | str (s : String)
-  | obj (id : Nat)
-  /-- A Symbol (§6.1.5): its number in `Heap.syms`. -/
-  | sym (id : Nat)
-  /-- A BigInt (§6.1.6.2). -/
-  | big (i : Int)
-  deriving Inhabited
 
 /-- A property: data (value, writable, enumerable, configurable) or accessor. -/
 inductive PropV where
@@ -265,6 +254,7 @@ def VKey.of : Value → VKey
   | .obj i => .obj i
   | .sym i => .sym i
   | .big i => .big i
+  | .hole | .fl => .undef
 
 /-- The typed array element types: name, bytes per element. -/
 def typedNames : Array (String × Nat) :=
@@ -324,7 +314,7 @@ inductive Kind where
   deriving Inhabited
 
 structure Obj where
-  props : Std.HashMap String PropV := {}
+  props : PropMap PropV := {}
   keys : Array String := #[]
   proto : Value := .null
   kind : Kind := .ordinary
@@ -337,12 +327,77 @@ structure Binding where
   init : Bool := true
   deriving Inhabited
 
+/-- An environment record: bindings in slots. `names[i]` is the name of slot `i`; a function's
+environment shares its names array with the other activations of the function
+(`FunInfo.layout`). A slot holds `Value.hole` while its binding is not initialised. -/
 structure Env where
-  vars : Std.HashMap String Binding := {}
-  parent : Option Nat := none
+  names : Array String := #[]
+  vals : Array Value := #[]
+  /-- The slots whose bindings are immutable (`const`, a function expression's own name). -/
+  immut : Array Nat := #[]
+  /-- Name to slot, once the record has many names (the global record). -/
+  index : Option (Std.HashMap String Nat) := none
+  /-- The enclosing environment; the global environment, number 0, has none. -/
+  parent : Nat := 0
   /-- The binding object of an Object Environment Record (§9.1.1.2, `with`). -/
   withObj : Option Nat := none
   deriving Inhabited
+
+/-- The first index at or after `i` where `names` has `x`; `names.size` when it does not. -/
+def Env.scan (names : Array String) (x : String) (i : Nat) : Nat :=
+  if h : i < names.size then
+    if names[i] == x then i else scan names x (i + 1)
+  else names.size
+termination_by names.size - i
+decreasing_by simp_wf; omega
+
+/-- The slot of a name in this record; `names.size` when absent. -/
+def Env.slotN (e : Env) (x : String) : Nat :=
+  match e.index with
+  | some m => (m.get? x).getD e.names.size
+  | none => Env.scan e.names x 0
+
+def Env.slot? (e : Env) (x : String) : Option Nat :=
+  let i := e.slotN x
+  if i == e.names.size then none else some i
+
+def Env.has (e : Env) (x : String) : Bool := e.slotN x != e.names.size
+
+def Env.mutableAt (e : Env) (i : Nat) : Bool := e.immut.isEmpty || !e.immut.contains i
+
+/-- The binding of a name, as a record (`Binding`). -/
+def Env.get? (e : Env) (x : String) : Option Binding :=
+  match e.slot? x with
+  | some i => match e.vals.getD i .undef with
+    | .hole => some { v := .undef, mutable := e.mutableAt i, init := false }
+    | v => some { v, mutable := e.mutableAt i, init := true }
+  | none => none
+
+/-- Records with more names than this keep an index (`Env.index`). -/
+def envIndexed : Nat := 24
+
+/-- Declare or replace a binding. The new binding takes the next slot. -/
+def Env.put (e : Env) (x : String) (b : Binding) : Env :=
+  let val := if b.init then b.v else .hole
+  match e.slot? x with
+  | some i =>
+    let immut :=
+      if b.mutable then (if e.immut.contains i then e.immut.filter (· != i) else e.immut)
+      else if e.immut.contains i then e.immut else e.immut.push i
+    { e with vals := e.vals.set! i val, immut }
+  | none =>
+    let i := e.names.size
+    let names := e.names.push x
+    let vals := e.vals.push val
+    let immut := if b.mutable then e.immut else e.immut.push i
+    let index :=
+      match e.index with
+      | some m => some (m.insert x i)
+      | none =>
+        if names.size > envIndexed then
+          some ((names.zipIdx).foldl (fun m (n, k) => m.insert n k) {})
+        else none
+    { e with names, vals, immut, index }
 
 /-- The intrinsics of the realm (§9.3). -/
 structure Realm where
@@ -433,18 +488,13 @@ inductive HostArg where
   | bytes (b : ByteArray)
   deriving Inhabited
 
-/-- The heap, with the state `H` of the host that embeds the engine. A page host keeps
-its DOM arena and event loop here (`WasmVM.Hosts.LeanJS`), so a native of the page
-(`Native.host k`) reads and changes them at the call; the engine itself never looks
-inside `H`. `Heap` is the heap with no host. -/
-structure HeapOf (H : Type) where
-  objs : Array Obj := #[]
-  envs : Array Env := #[{}]
+/-- The fields of the heap that change rarely. They live apart from the hot fields of
+`HeapOf`, so that a change of a hot field (the step count on every call and loop iteration,
+the environment and object arrays) copies a small record, not all of these. -/
+structure ColdHeap (H : Type) where
   out : Array String := #[]
-  /-- Steps left before the script is stopped (an interrupt, not an exception). -/
-  steps : Nat := 1000000000
-  depth : Nat := 0
-  maxDepth : Nat := 400
+  /-- The last string decoded for a regular expression, and its units (`cachedChars`). -/
+  reCache : Option (String × Array Char) := none
   rng : UInt64 := 0x2545F4914F6CDD1D
   /-- The job queue (§9.5 HostEnqueuePromiseJob): a function and its arguments.
   In a page these are the microtasks of the Lean event loop (record, section 6). -/
@@ -461,6 +511,31 @@ structure HeapOf (H : Type) where
   /-- The host's natives: `hostCall state k args steps`, with the steps left in the
   budget (`steps`), so a host can tell how far the script has run. -/
   hostCall : H → Nat → Array HostArg → Nat → H × HostAns := fun h _ _ _ => (h, .val .undef)
+
+/-- The heap, with the state `H` of the host that embeds the engine. A page host keeps
+its DOM arena and event loop here (`WasmVM.Hosts.LeanJS`), so a native of the page
+(`Native.host k`) reads and changes them at the call; the engine itself never looks
+inside `H`. `Heap` is the heap with no host.
+
+The counters are machine integers held in the record itself: no boxing, and no reference
+counts to update when the record changes. -/
+structure HeapOf (H : Type) extends ColdHeap H where
+  objs : Array Obj := #[]
+  envs : Array Env := #[{}]
+  /-- Environments whose slots can be reused (`callClosure`, `FunInfo.frameLocal`). -/
+  envFree : Array Nat := #[]
+  /-- The register machine's registers and float registers, kept here between runs, and the
+  first free register. -/
+  vmRegs : Array Value := #[]
+  vmF : FloatArray := .empty
+  vmTop : Nat := 0
+  /-- The slot of a name in the global object's property map, by a hash of the name; checked
+  at each use (the name in that slot). Starts out empty. -/
+  globalCache : Array Nat := Array.replicate 1024 0
+  /-- Steps left before the script is stopped (an interrupt, not an exception). -/
+  steps : UInt64 := 1000000000
+  depth : UInt32 := 0
+  maxDepth : UInt32 := 400
 
 instance : Inhabited (HeapOf H) := ⟨{}⟩
 
@@ -528,6 +603,7 @@ def toBool : Value → Bool
   | .obj _ => true
   | .sym _ => true
   | .big i => i != 0
+  | .hole | .fl => false
 
 def HeapOf.obj (h : HeapOf H) (id : Nat) : Obj := h.objs.getD id default
 
@@ -548,13 +624,25 @@ def Obj.getOwn (o : Obj) (key : String) : Option PropV :=
       | none => o.props.get? key
   | _ => o.props.get? key
 
+/-- The keys of `props` in insertion order. A `delete` leaves its key in `keys` (and
+removing it there would cost a scan), so a key can be stale and, if added back, appear
+twice: the last occurrence is the one that counts. When the sizes agree there is nothing
+stale, and this is `keys` itself. -/
+def Obj.liveKeys (o : Obj) : Array String :=
+  if o.keys.size == o.props.size then o.keys else
+  let (out, _) : Array String × Std.HashSet String :=
+    o.keys.foldr (fun k (acc, seen) =>
+      if seen.contains k || !o.props.contains k then (acc, seen)
+      else (acc.push k, seen.insert k)) (#[], {})
+  out.reverse
+
 /-- The own keys in order (§10.1.11): array indices, then the rest by insertion. -/
 def Obj.ownKeys (o : Obj) : Array String :=
   let idx := match o.kind with
     | .array es => (List.range es.size).toArray.map toString
     | .prim (.str s) => (List.range (Str.jsLength s)).toArray.map toString
     | _ => #[]
-  let ks := o.keys.filter fun k => o.props.contains k && !isPrivKey k
+  let ks := o.liveKeys.filter fun k => !isPrivKey k
   let (ints, rest) := ks.partition fun k => (arrayIndex? k).isSome
   let ints := (ints.toList.mergeSort fun a b => (arrayIndex? a).getD 0 ≤ (arrayIndex? b).getD 0).toArray
   let extra := match o.kind with
@@ -578,6 +666,43 @@ def HeapOf.findProp (h : HeapOf H) (id : Nat) (key : String) : Nat → Option Pr
       | .obj p => h.findProp p key fuel
       | _ => none
 
+/-- The value of a data property found on the prototype chain, for the common kinds of
+object, without building a `PropV`; `Value.hole` when the general path must decide (an accessor,
+an exotic own key, or a miss). It gives the value of `findProp` on these objects: the
+ordinary kinds keep their properties in `props` alone (`Obj.getOwn`), and an Array or
+String exotic object is only skipped for keys that cannot be an index or `length`. -/
+def HeapOf.fastGet (h : HeapOf H) (id : Nat) (key : String) : Nat → Value
+  | 0 => .hole
+  | fuel + 1 =>
+    let o := h.objs.getD id default
+    let kindOk := match o.kind with
+      | .proxy .. | .typed .. | .prim _ => false
+      | .array _ => key != "length" && !key.front.isDigit
+      | _ => true
+    if !kindOk then .hole else
+    match o.props.get? key with
+    | some (.data v ..) => v
+    | some _ => .hole
+    | none => match o.proto with
+      | .obj p => h.fastGet p key fuel
+      | _ => .hole
+
+/-- `fastGet` from a value: an object, or a string's prototype. -/
+@[inline] def HeapOf.fastGetV (h : HeapOf H) (v : Value) (key : String) : Value :=
+  match v with
+  | .obj id =>
+    if key == "length" then
+      match (h.objs.getD id default).kind with
+      | .array es => .num (Float.ofNat es.size)
+      | .proxy .. | .typed .. | .prim _ => .hole
+      | _ => h.fastGet id key 1000
+    else h.fastGet id key 1000
+  | .str s =>
+    if key == "length" then .num (Float.ofNat (Str.jsLength s))
+    else if key.front.isDigit then .hole
+    else h.fastGet h.realm.stringProto key 1000
+  | _ => .hole
+
 /-- `@@unscopables` of a `with` object names `name` with a true data value. -/
 def HeapOf.unscopable (h : HeapOf H) (o : Nat) (name : String) : Bool :=
   match h.findProp o (String.singleton (Char.ofNat 0x10FFFF) ++ "5") 1000 with
@@ -587,17 +712,22 @@ def HeapOf.unscopable (h : HeapOf H) (o : Nat) (name : String) : Bool :=
     | _ => false
   | _ => false
 
-/-- The binding of a name: the number of the environment that holds it. -/
-def HeapOf.findEnv (h : HeapOf H) (name : String) : Nat → Option Nat → Option Nat
+/-- The binding of a name: the number of the environment that holds it, walking out from
+environment `e`. -/
+def HeapOf.findEnv (h : HeapOf H) (name : String) : Nat → Nat → Option Nat
   | 0, _ => none
-  | _, none => none
-  | fuel + 1, some e =>
+  | fuel + 1, e =>
     let env := h.envs.getD e default
-    if env.vars.contains name then some e
+    if env.has name then some e
     else match env.withObj with
       | some o =>
         if (h.findProp o name 1000).isSome && !h.unscopable o name then some e
-        else h.findEnv name fuel env.parent
-      | none => h.findEnv name fuel env.parent
+        else if e == 0 then none else h.findEnv name fuel env.parent
+      | none => if e == 0 then none else h.findEnv name fuel env.parent
+
+/-- The environment `hops` up from `e`. -/
+def HeapOf.envUp (h : HeapOf H) : Nat → Nat → Nat
+  | 0, e => e
+  | k + 1, e => h.envUp k (h.envs.getD e default).parent
 
 end L4Factoidal.JS

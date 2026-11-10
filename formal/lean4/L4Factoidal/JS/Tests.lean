@@ -82,7 +82,7 @@ theorem fuel_covers_steps : (1000000000 : Nat) < defaultFuel := by decide
 (`charge`, `sizeCost`), so a loop of `charCodeAt` over a long string stops at the budget
 instead of running for minutes (WPT wasm/jsapi/js-string/constants.any.js did). -/
 def outWith (steps : Nat) (src : String) : List String :=
-  match runScript { freshHeap with steps } src with
+  match runScript { freshHeap with steps := steps.toUInt64 } src with
   | (.ok, h) => h.out.toList
   | (.threw _ m, h) => h.out.toList ++ ["Uncaught " ++ m]
   | (.syntaxError m, _) => [m]
@@ -121,5 +121,94 @@ ends well within a page's budget (5 M steps). -/
 
 #guard out "var d = new Date(Date.UTC(2026, 10, 9, 3, 4, 5)); print(d.toISOString(), d.getMonth(), d.getDay(), Date.parse(d.toString()) === d.getTime())" ==
   ["2026-11-09T03:04:05.000Z 10 1 true"]
+
+
+/-! ## Resolved names (`JS/Resolve.lean`): the shapes a slot hint must get right.
+Each is a program whose meaning depends on which binding a name means: shadowing, closures in
+loops, the temporal dead zone, a function expression's own name, parameters and `var`s of
+the same name, class scopes; with `eval` and `with`, the script stays unresolved. -/
+
+#guard out "var x = 1; function f(x) { { let x = 2; print(x) } print(x) } f(3); print(x)" == ["2", "3", "1"]
+#guard out "function f() { var r = []; for (let i = 0; i < 3; i++) r.push(() => i); return r.map(g => g()) } print(f())" == ["0,1,2"]
+#guard out "function f() { var r = []; for (var i = 0; i < 3; i++) r.push(() => i); return r.map(g => g()) } print(f())" == ["3,3,3"]
+#guard out "function f() { try { x; let x = 1 } catch (e) { print(e.name) } } f()" == ["ReferenceError"]
+#guard out "function f() { const c = 1; try { c = 2 } catch (e) { print(e.name) } print(c) } f()" == ["TypeError", "1"]
+#guard out "var f = function g(n) { return n ? g(n - 1) + 1 : 0 }; print(f(3)); print(typeof g)" == ["3", "undefined"]
+#guard out "function f(a, a2) { var a; print(a); a = 5; print(a); return arguments.length } print(f(1, 2, 3))" == ["1", "5", "3"]
+#guard out "function f(a, b = a + 1) { var c = b + 1; return [a, b, c].join() } print(f(1))" == ["1,2,3"]
+#guard out "class C { static n = 1; m() { return C.n + 1 } } print(new C().m()); print(typeof C)" == ["2", "function"]
+#guard out "function f() { var x = 'local'; return (function () { return x + typeof y })(); var y } print(f())" == ["localundefined"]
+#guard out "function f() { eval('var z = 7'); return z } print(f())" == ["7"]
+#guard out "var o = { p: 1 }; with (o) { var q = p + 1 } print(q)" == ["2"]
+#guard out "function f() { let x = 1; { let y = x + 1; { let z = y + 1; return () => x + y + z } } } print(f()())" == ["6"]
+#guard out "function f(n) { let s = 0; for (let i = 0; i < n; i++) { let j = i * 2; s += j } return s } print(f(4))" == ["12"]
+#guard out "var s = ''; for (var k in { a: 1, b: 2 }) { let v = k + '!'; s += v } print(s)" == ["a!b!"]
+#guard out "var s = 0; for (const v of [1, 2, 3]) { s += v } print(s)" == ["6"]
+#guard out "function f() { switch (1) { case 1: let a = 'x'; return a } } print(f())" == ["x"]
+#guard out "function f() { try { throw 1 } catch (e) { let g = e + 1; return g } } print(f())" == ["2"]
+#guard out "function* g() { let i = 0; while (i < 3) yield i++ } print([...g()].join())" == ["0,1,2"]
+#guard out "async function f() { let v = await 1; return v + 1 } f().then(x => print(x))" == ["2"]
+-- an environment reused after a call: the second call must not see the first call's slots
+#guard out "function f(n) { var v; if (n) v = n; return v } print(f(1), f(0))" == ["1 undefined"]
+#guard out "function f(n) { let u; if (n > 0) { let w = n; u = w } return u } print(f(1), f(0))" == ["1 undefined"]
+
+/-! `PropMap` against its association-list reading. -/
+def propMapSeq : List (Bool × String × Nat) :=
+  (List.range 40).flatMap fun i =>
+    [(true, s!"k{i % 12}", i), (true, s!"j{i}", i)] ++ (if i % 5 == 0 then [(false, s!"k{i % 12}", 0)] else [])
+
+/-- Apply a sequence of inserts and erases to a `PropMap` and to an association list. -/
+def propMapRun (seq : List (Bool × String × Nat)) : PropMap Nat × List (String × Nat) :=
+  seq.foldl (fun (m, l) (ins, k, v) =>
+    if ins then (m.insert k v, (k, v) :: l.filter (·.1 != k))
+    else (m.erase k, l.filter (·.1 != k))) ({}, [])
+
+/-- The map answers as the association list does, for every key that occurs. -/
+def propMapAgrees (seq : List (Bool × String × Nat)) : Bool :=
+  let (m, l) := propMapRun seq
+  (seq.map (·.2.1)).all fun k => m.get? k == (l.find? (·.1 == k)).map (·.2) && m.contains k == (l.any (·.1 == k))
+
+#guard propMapAgrees propMapSeq
+#guard (propMapRun propMapSeq).1.size == (propMapRun propMapSeq).2.length
+
+
+/-! ## `await` and `yield` in conditions, loop tests and expressions -/
+#guard out "async function f(x){ let t = 0; while (await x(t)) t++; return t } f(i => Promise.resolve(i < 3)).then(print)" == ["3"]
+#guard out "async function f(){ let n = 0, i = 0; do { n += i; i++ } while (await Promise.resolve(i < 4)); return n } f().then(print)" == ["6"]
+#guard out "async function f(){ let s = 0; for (let i = 0; await Promise.resolve(i < 3); i = await Promise.resolve(i + 1)) { if (i == 1) continue; s += i } return s } f().then(print)" == ["2"]
+#guard out "async function f(){ let s = ''; for (const v of await Promise.resolve([1, 2])) s += v; return s } f().then(print)" == ["12"]
+#guard out "async function f(a){ return a ? await Promise.resolve(1) : 2 } f(true).then(print); f(false).then(print)" == ["2", "1"]
+#guard out "async function f(a){ return a && await Promise.resolve(5) } f(true).then(print); f(0).then(print)" == ["0", "5"]
+#guard out "var s = ''; function g(){ s += 'g'; return 1 } async function f(){ return [g(), await (s += 'h', 2)] } f().then(v => print(s))" == ["gh"]
+#guard out "async function f(){ const x = await Promise.resolve(2) ?? 9; return x } f().then(print)" == ["2"]
+#guard out "function* g(){ const r = yield 1; if (r) { yield 2 } else { yield 3 } } var it = g(); it.next(); print(it.next(false).value)" == ["3"]
+#guard out "async function f(){ if (await Promise.resolve(true)) { return (await Promise.resolve(1)) + 1 } } f().then(print)" == ["2"]
+
+
+/-! ## The register machine (`JS/Compile.lean`, `vmLoop`) -/
+#guard out "function f(a, b) { return a + b * 2 } print(f(1, 2), f('x', 3))" == ["5 x6"]
+#guard out "function f(n) { if (n < 2) return n; return f(n - 1) + f(n - 2) } print(f(15))" == ["610"]
+#guard out "function f(n) { var s = 0; for (let i = 0; i < n; i++) { if (i == 2) continue; if (i > 4) break; s += i } return s } print(f(10))" == ["8"]
+#guard out "function f() { let x = 1; { let y = x + 1; x = y * 2 } return x } print(f())" == ["4"]
+#guard out "function f() { try { return g() } catch (e) { return e.name } function g() { return z; let z = 1 } } print(f())" == ["ReferenceError"]
+#guard out "function g() { return z; let z = 1 } try { g() } catch (e) { print(e.name) }" == ["ReferenceError"]
+#guard out "function g() { 'use strict'; return this } print(g() === undefined)" == ["true"]
+#guard out "function g() { return this } print(g() === globalThis, typeof g.call(5))" == ["true object"]
+#guard out "var o = { x: 1, inc(d) { this.x += d; return this.x } }; print(o.inc(2), o.inc(0.5))" == ["3 3.5"]
+#guard out "function deep(n) { return n == 0 ? 0 : 1 + deep(n - 1) } print(deep(5000))" == ["5000"]
+#guard out "function f(n) { return n == 0 ? 0 : 1 + g(n) } function g(n) { return [n].map(x => f(x - 1))[0] } print(f(100))" == ["100"]
+#guard out "function t() { throw 7 } function u() { t() } try { u() } catch (e) { print(e) } function v() { return 1 } print(v())" == ["7", "1"]
+#guard out "var o = { get v() { return k(2) } }; function k(x) { return x * 3 } function r() { return o.v + 1 } print(r())" == ["7"]
+#guard out "function f() { var a = [1, 2]; a[5] = 3; a.length = 7; return a.length + (a[5] | 0) } print(f())" == ["10"]
+#guard out "function f(x) { var y = x; y++; var z = y--; return [x, y, z].join() } print(f(1n)); print(f('2'))" == ["1,1,2", "2,2,3"]
+#guard out "function f(o) { return o.a?.b } try { print(f({})) } catch (e) { print('err') }" == ["undefined"]
+#guard out "function f() { return typeof undeclared + typeof f } print(f())" == ["undefinedfunction"]
+#guard out "let top = 2; function f() { top = top * 2; return top } f(); print(f())" == ["8"]
+#guard out "var v = 5; for (var i = 0; i < 3; i++) { v += i } print(v, i)" == ["8 3"]
+#guard out "var s = 0; for (let i = 0; i < 3; i++) { for (let j = 0; j < 2; j++) { s += i * j } } print(s)" == ["3"]
+#guard out "function g(x) { return x } var t = g; for (var i = 0; i < 2; i++) t = g(g); print(t === g)" == ["true"]
+#guard out "function C(x) { this.x = x } C.prototype.m = function () { return this.x * 2 }; print(new C(4).m(), new C(1) instanceof C)" == ["8 true"]
+#guard out "class B { constructor(x) { this.x = x } m() { return this.x + 1 } } print(new B(1).m())" == ["2"]
+#guard out "class D { v = 3; constructor() { this.w = this.v * 2 } } print(new D().w)" == ["6"]
 
 end L4Factoidal.JS.Tests

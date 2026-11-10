@@ -1,5 +1,6 @@
 import L4Factoidal.JS.Value
 import L4Factoidal.JS.Parser
+import L4Factoidal.JS.Resolve
 import L4Factoidal.JS.Date
 import L4Factoidal.JS.NumFmt
 import L4Factoidal.JSON.Parser
@@ -21,6 +22,8 @@ script that runs too long (`Abrupt.halt`), and `Heap.maxDepth` turns deep
 recursion into a `RangeError`, as engines do.
 -/
 
+set_option maxHeartbeats 8000000
+
 namespace L4Factoidal.JS
 
 variable {H : Type}
@@ -30,22 +33,115 @@ local notation "M" => JSM H
 
 /-! ## Heap primitives -/
 
-def alloc (o : Obj) : M Nat := modifyGet fun h => (h.objs.size, { h with objs := h.objs.push o })
-def getObj (id : Nat) : M Obj := do pure ((← get).obj id)
-def modifyObj (id : Nat) (f : Obj → Obj) : M Unit :=
-  modify fun h => { h with objs := h.objs.modify id f }
-def realm : M Realm := do pure (← get).realm
+@[inline] def alloc (o : Obj) : M Nat := modifyGet fun h => (h.objs.size, { h with objs := h.objs.push o })
+@[inline] def getObj (id : Nat) : M Obj := do pure ((← get).obj id)
+@[inline] def modifyObj (id : Nat) (f : Obj → Obj) : M Unit :=
+  -- the object array is taken out of the heap first, and `Array.modify` moves the object
+  -- out of the array for `f`: both are changed in place when nothing else holds them
+  modify fun h =>
+    let objs := h.objs
+    let h := { h with objs := #[] }
+    { h with objs := objs.modify id f }
 
-def newEnv (parent : Option Nat) : M Nat :=
-  modifyGet fun h => (h.envs.size, { h with envs := h.envs.push { parent } })
+/-- Object `id` and the array with a placeholder in its place. Not inlined: the compiler
+must not move the write of the placeholder after the uses of the object, or the object
+would still be shared with the array while it changes (and its elements copied). -/
+@[noinline] def takeAt (objs : Array Obj) (id : Nat) : Obj × Array Obj :=
+  objs.swapAt! id default
 
-def declare (env : Nat) (name : String) (b : Binding) : M Unit :=
-  modify fun h => { h with envs := h.envs.modify env fun e => { e with vars := e.vars.insert name b } }
+/-- Change object `id` with `f`, which also answers a value. The object is moved out of the
+heap while `f` runs, so `f` holds the only reference and a change to its elements does not
+copy them (an Array push is amortised constant time, not a copy of the array). -/
+def updateObj {α} [Inhabited α] (id : Nat) (f : Obj → α × Obj) : M α :=
+  modifyGet fun h =>
+    let objs := h.objs
+    let h := { h with objs := #[] }
+    if id < objs.size then
+      let (o, objs) := takeAt objs id
+      let (a, o) := f o
+      (a, { h with objs := objs.set! id o })
+    else (default, { h with objs })
+
+/-- The elements of an Array object, taken out of it: the object is left with no elements
+(`Kind.ordinary`) so the elements are the only reference. -/
+def Obj.takeArray (o : Obj) : Option (Array Value) × Obj :=
+  match o.kind with
+  | .array es => let o := { o with kind := .ordinary }; (some es, o)
+  | _ => (none, o)
+/-- Write element `i` of the Array object `id`, in place, when the object is an Array and `i`
+is below its length (no attribute can stand in the way there: elements are always writable,
+`Obj.getOwn`); `false` otherwise (the caller takes the general path). -/
+def setElem (id i : Nat) (v : Value) : M Bool :=
+  updateObj id fun o =>
+    match o.kind with
+    | .array es =>
+      if h : i < es.size then
+        let o := { o with kind := .ordinary }
+        (true, { o with kind := .array (es.set i v) })
+      else (false, o)
+    | _ => (false, o)
+
+/-- Overwrite an own writable data property of a non-exotic object, in place; `false` when
+the property is absent or not plain (the caller takes the general path). -/
+def setOwnData (id : Nat) (key : String) (v : Value) : M Bool :=
+  updateObj id fun o =>
+    match o.kind with
+    | .array _ | .proxy .. | .typed .. | .prim _ => (false, o)
+    | _ =>
+      match o.props.get? key with
+      | some (.data _ true e c) =>
+        (true, { o with props := o.props.insert key (.data v true e c) })
+      | _ => (false, o)
+
+@[inline] def realm : M Realm := do pure (← get).realm
+
+/-- Put an environment record in a free slot of the environment array. -/
+@[inline] def pushEnv (en : Env) : M Nat :=
+  modifyGet fun h =>
+    let envs := h.envs
+    let h := { h with envs := #[] }
+    match h.envFree.back? with
+    | some e => (e, { h with envFree := h.envFree.pop, envs := envs.set! e en })
+    | none => (envs.size, { h with envs := envs.push en })
+
+@[inline] def newEnv (parent : Nat) : M Nat := pushEnv { parent }
+
+/-- Environment `e` is not reachable any more: drop its contents and reuse its slot. -/
+@[inline] def releaseEnv (e : Nat) : M Unit :=
+  modify fun h =>
+    let envs := h.envs
+    let h := { h with envs := #[] }
+    { h with envs := envs.set! e default, envFree := h.envFree.push e }
+
+/-- Change an environment in place: the array and the record are taken out while `f` runs. -/
+@[inline] def modifyEnv (e : Nat) (f : Env → Env) : M Unit :=
+  modify fun h =>
+    let envs := h.envs
+    let h := { h with envs := #[] }
+    { h with envs := envs.modify e f }
+
+@[inline] def declare (env : Nat) (name : String) (b : Binding) : M Unit :=
+  modifyEnv env (·.put name b)
 
 def getBinding (env : Nat) (name : String) : M (Option Binding) := do
-  pure (((← get).envs.getD env default).vars.get? name)
+  pure (((← get).envs.getD env default).get? name)
 
-def tick : M Unit := do
+/-- Check every resolved name against the plain lookup (`JS/Tests.lean` sets it through
+`verifyLocalsDefault`; off in the engine). -/
+def verifyLocals : Bool := false
+
+/-- Set a slot, in place. -/
+@[inline] def setSlot (e i : Nat) (v : Value) : M Unit :=
+  modifyEnv e fun en => { en with vals := en.vals.set! i v }
+
+/-- The slots of a call with plain parameters: the arguments array, cut to the parameters and
+filled with `undefined` to the size of the layout. -/
+def fillSlots (args : Array Value) (nParams size : Nat) : Array Value :=
+  let a := if args.size > nParams then args.shrink nParams else args
+  if a.size == size then a else
+  (List.range (size - a.size)).foldl (fun a _ => a.push .undef) a
+
+@[inline] def tick : M Unit := do
   let h ← get
   if h.steps == 0 then throw (.halt "step budget exhausted")
   set { h with steps := h.steps - 1 }
@@ -55,6 +151,7 @@ an array or a buffer) is counted, so a script stops at its budget however it spe
 def charge (k : Nat) : M Unit := do
   if k == 0 then return
   let h ← get
+  let k := k.toUInt64
   if h.steps < k then
     set { h with steps := 0 }
     throw (.halt "step budget exhausted")
@@ -62,6 +159,16 @@ def charge (k : Nat) : M Unit := do
 
 /-- The longest string `repeat` and `padStart` make: 256 MiB of UTF-8. -/
 def maxStringBytes : Nat := 268435456
+
+/-- The UTF-16 units of `s` as characters, kept for the last string: repeated matches on one
+string (`exec` in a loop, `replace` with a global regexp) do not decode it each time. -/
+def cachedChars (s : String) : M (Array Char) := do
+  match (← get).reCache with
+  | some (t, cs) => if t == s then return cs else pure ()
+  | none => pure ()
+  let cs := Str.unitChars s
+  modify fun h => { h with reCache := some (s, cs) }
+  return cs
 
 /-- The steps a value's size is worth to a built-in that walks it: a step for every 64
 bytes of a string, 64 elements of an array, or 4096 bytes of an ArrayBuffer or typed
@@ -76,8 +183,9 @@ def sizeCost (v : Value) : M Nat := do
     | _ => pure 0
   | _ => pure 0
 
-/-- The String methods that do not walk an ASCII receiver: they index it in constant time
-(`Str.unitAt?`) or copy only their result (and take steps for that). -/
+/-- The built-ins that do not walk their receiver: String methods on an ASCII string index it
+in constant time (`Str.unitAt?`) or copy only their result (and take steps for that); an
+Array's `push`, `pop` and `at`. -/
 def indexesReceiver (id : Native) (thisV : Value) : Bool :=
   match thisV with
   | .str s =>
@@ -85,20 +193,31 @@ def indexesReceiver (id : Native) (thisV : Value) : Bool :=
       | .stringCharAt | .stringCharCodeAt | .stringAt | .stringCodePointAt | .stringSlice
       | .stringSubstring | .stringSubstr => true
       | _ => false
+  -- an Array's push, pop and at change or read one end in place (`updateObj`)
+  | .obj _ => match id with
+    | .arrayPush | .arrayPop | .arrayAt => true
+    | _ => false
   | _ => false
 
 /-- Set or add an own data property with all attributes true (CreateDataProperty). -/
 def Obj.putOwn (o : Obj) (key : String) (p : PropV) : Obj :=
   match o.kind, arrayIndex? key, p with
-  | .array es, some i, .data v _ _ _ =>
+  | .array _, some i, .data v _ _ _ =>
+    -- the elements leave the object first, so `set!` and `push` change them in place
+    let (es, o) := o.takeArray
+    let es := es.getD #[]
     if i < es.size then { o with kind := .array (es.set! i v) }
     else if i == es.size then { o with kind := .array (es.push v) }
     else if i < es.size + 100000 then
       { o with kind := .array ((es ++ Array.replicate (i - es.size) Value.undef).push v) }
     else
-      { o with props := o.props.insert key p, keys := if o.props.contains key then o.keys else o.keys.push key }
+      let known := o.props.contains key
+      { o with kind := .array es, props := o.props.insert key p,
+               keys := if known then o.keys else o.keys.push key }
   | _, _, _ =>
-    { o with props := o.props.insert key p, keys := if o.props.contains key then o.keys else o.keys.push key }
+    -- `known` is computed first: `insert` must hold the only reference to the table
+    let known := o.props.contains key
+    { o with props := o.props.insert key p, keys := if known then o.keys else o.keys.push key }
 
 def defineOwn (id : Nat) (key : String) (p : PropV) : M Unit := modifyObj id (·.putOwn key p)
 
@@ -112,7 +231,10 @@ def deleteOwn (id : Nat) (key : String) : M Unit :=
       if i + 1 == es.size then { o with kind := .array es.pop }
       else if i < es.size then { o with kind := .array (es.set! i .undef) }
       else o
-    | _, _ => { o with props := o.props.erase key, keys := o.keys.filter (· != key) }
+    | _, _ =>
+      -- the key stays in `keys` for now (`Obj.liveKeys`); `keys` is rebuilt when mostly stale
+      let o := { o with props := o.props.erase key }
+      if o.keys.size > 2 * o.props.size + 16 then { o with keys := o.liveKeys } else o
 
 def mkError (k : ErrKind) (msg : String) : M Value := do
   let r ← realm
@@ -142,13 +264,14 @@ def isConstructor (v : Value) : M Bool := do
     | _ => pure false
   | _ => pure false
 
-def isCallable (v : Value) : M Bool := do
+@[inline] def isCallable (v : Value) : M Bool := do
   match v with
   | .obj id => pure (← getObj id).kind.callable
   | _ => pure false
 
 def typeOf (v : Value) : M String := do
   match v with
+  | .hole | .fl => pure "undefined"
   | .undef => pure "undefined"
   | .null => pure "object"
   | .bool _ => pure "boolean"
@@ -175,7 +298,7 @@ def makeClosure (ctx : Ctx) (f : FunDef) (nameHint : String := "") (home : Value
   -- a named function expression sees its own name (§15.2.5)
   let env ← match f.name with
     | some n => if f.arrow then pure ctx.env else do
-        let e ← newEnv (some ctx.env); pure e
+        let e ← newEnv ctx.env; pure e
     | none => pure ctx.env
   let home := if f.arrow then ctx.home else home
   let id ← alloc { proto := .obj r.functionProto, kind := .closure f env ctx.thisV ctx.newTarget home #[] }
@@ -224,16 +347,22 @@ changed in place). -/
 def collPut (key v : Value) (o : Obj) : Obj :=
   match o.kind with
   | .coll k es idx =>
+    -- the object lets go of the tables first, so `set!`, `push` and `insert` work in place
+    let o := { o with kind := .ordinary }
     match idx.get? (VKey.of key) with
     | some i => { o with kind := .coll k (es.set! i (some (key, v))) idx }
-    | none => { o with kind := .coll k (es.push (some (key, v))) (idx.insert (VKey.of key) es.size) }
+    | none =>
+      let at_ := es.size  -- `es` is used up by `push`
+      { o with kind := .coll k (es.push (some (key, v))) (idx.insert (VKey.of key) at_) }
   | _ => o
 
 def collDel (key : Value) (o : Obj) : Obj :=
   match o.kind with
   | .coll k es idx =>
     match idx.get? (VKey.of key) with
-    | some i => { o with kind := .coll k (es.set! i none) (idx.erase (VKey.of key)) }
+    | some i =>
+      let o := { o with kind := .ordinary }
+      { o with kind := .coll k (es.set! i none) (idx.erase (VKey.of key)) }
     | none => o
   | _ => o
 
@@ -345,14 +474,36 @@ def charsOf (s : String) : Array Char := Str.unitChars s
 /-- Code units `i` to `j` (exclusive) of a string. -/
 def substr (s : String) (i j : Nat) : String := Str.sliceUnits s i j
 
+/-- Whether the ASCII string `pat` occurs in the ASCII string `s` at byte `i` (`k` of its
+bytes are checked). -/
+def asciiMatchAt (s pat : String) (i : Nat) : Nat → Nat → Bool
+  | 0, _ => true
+  | fuel + 1, k =>
+    if k ≥ pat.utf8ByteSize then true
+    else if String.Pos.Raw.get s ⟨i + k⟩ != String.Pos.Raw.get pat ⟨k⟩ then false
+    else asciiMatchAt s pat i fuel (k + 1)
+
+/-- `indexOf` on ASCII strings: no decoding, and the search stops at the first match. -/
+def asciiIndexOf (s pat : String) : Nat → Nat → Option Nat
+  | 0, _ => none
+  | fuel + 1, i =>
+    if i + pat.utf8ByteSize > s.utf8ByteSize then none
+    else if asciiMatchAt s pat i pat.utf8ByteSize 0 then some i
+    else asciiIndexOf s pat fuel (i + 1)
+
 def indexOfFrom (s pat : String) (from_ : Nat) : Option Nat :=
+  if Str.isAscii s && Str.isAscii pat then
+    if pat.isEmpty then (if from_ ≤ s.utf8ByteSize then some from_ else some s.utf8ByteSize)
+    else asciiIndexOf s pat (s.utf8ByteSize + 1) from_
+  else
   let cs := charsOf s; let ps := charsOf pat
   if ps.size == 0 then (if from_ ≤ cs.size then some from_ else some cs.size) else
+  let first := ps[0]!
   let rec go : Nat → Nat → Option Nat
     | 0, _ => none
     | fuel + 1, i =>
       if i + ps.size > cs.size then none
-      else if (List.range ps.size).all (fun k => cs[i + k]! == ps[k]!) then some i
+      else if cs[i]! == first && (List.range ps.size).all (fun k => cs[i + k]! == ps[k]!) then some i
       else go fuel (i + 1)
   go (cs.size + 1) from_
 
@@ -362,7 +513,7 @@ def lastIndexOfStr (s pat : String) : Option Nat :=
   let rec go : Nat → Nat → Option Nat
     | 0, _ => none
     | fuel + 1, i =>
-      if (List.range ps.size).all (fun k => cs[i + k]! == ps[k]!) then some i
+      if (cs[i]! == ps[0]!) && (List.range ps.size).all (fun k => cs[i + k]! == ps[k]!) then some i
       else if i == 0 then none else go fuel (i - 1)
   go (cs.size + 1) (cs.size - ps.size)
 
@@ -466,11 +617,29 @@ evaluated after the suspension, not before: a known difference from §13.3.6 whe
 they have side effects. `yield` inside `&&`, `||`, `??`, `?:`, functions and classes
 stays, and the machine refuses that statement. -/
 
-abbrev Lift := StateM (Nat × Array (String × Bool × Option Expr))
+/-- Lifting: the next temporary, and the statements that must run first. -/
+abbrev Lift := StateM (Nat × Array Stmt)
 
 def liftName (k : Nat) : String := "%y" ++ toString k
 
+/-- A literal: its evaluation cannot be observed, and it is not worth a temporary. -/
+def isLiteral : Expr → Bool
+  | .num _ | .str _ | .bool _ | .null | .bigint _ | .lit _ => true
+  | _ => false
+
+def liftPush (st : Stmt) : Lift Unit := modify fun s => (s.1, s.2.push st)
+
+/-- A fresh temporary, declared by the statements that run first, holding `e`. -/
+def liftTemp (e : Expr) : Lift Expr := do
+  let (k, acc) ← get
+  let x := liftName k
+  set (k + 1, acc.push (Stmt.decl .letK [Decl.mk (.id x) (some e)]))
+  pure (.ident x)
+
 mutual
+/-- Move each `yield` out of `e`, in order, into statements before it. Operands evaluated
+before a `yield` move too (into temporaries), so they still come first; a `yield` on one
+branch of `?:`, `&&`, `||` or `??` runs only when its branch does (an `if` statement). -/
 def liftE : Nat → Expr → Lift Expr
   | 0, e => pure e
   | n + 1, e => do
@@ -480,18 +649,63 @@ def liftE : Nat → Expr → Lift Expr
         | some a => do pure (some (← liftE n a))
         | none => pure none
       let (k, acc) ← get
-      set (k + 1, acc.push (liftName k, d, arg))
-      pure (.ident (liftName k))
+      let x := liftName k
+      set (k + 1, acc.push (Stmt.decl .letK [Decl.mk (.id x) (some (.yieldE d arg))]))
+      pure (.ident x)
     | .unary op a => pure (.unary op (← liftE n a))
-    | .binary op a b => do let a ← liftE n a; let b ← liftE n b; pure (.binary op a b)
+    | .binary op a b => do
+      let a ← liftE n a
+      let a ← if b.hasYield && !isLiteral a then liftTemp a else pure a
+      let b ← liftE n b
+      pure (.binary op a b)
+    | .logical op a b =>
+      if !b.hasYield then
+        pure (.logical op (← liftE n a) b)
+      else
+        -- `a && b`: b's statements run only when a is true (for `||` false, for `??` nullish)
+        let (k, acc) ← get
+        let t := liftName k
+        set (k + 1, acc)
+        let a ← liftE n a
+        let (b', pre) ← liftBranch n b
+        let test : Expr := match op with
+          | .and => .ident t
+          | .or => .unary .not (.ident t)
+          | .coalesce => .binary .seq (.binary .eq (.ident t) .null) (.bool true)
+        let body := Stmt.block (pre ++ [.expr (.assign none (.ident t) b')])
+        liftPush (.decl .letK [Decl.mk (.id t) (some a)])
+        liftPush (.ifS test body none)
+        pure (.ident t)
+    | .cond c a b =>
+      if !a.hasYield && !b.hasYield then
+        pure (.cond (← liftE n c) a b)
+      else
+        let c ← liftE n c
+        let (k, acc) ← get
+        let t := liftName k
+        set (k + 1, acc)
+        let (a', preA) ← liftBranch n a
+        let (b', preB) ← liftBranch n b
+        liftPush (.decl .letK [Decl.mk (.id t) none])
+        liftPush (.ifS c (.block (preA ++ [.expr (.assign none (.ident t) a')]))
+          (some (.block (preB ++ [.expr (.assign none (.ident t) b')]))))
+        pure (.ident t)
     | .call f args => do let f ← liftE n f; pure (.call f (← liftL n args))
     | .new f args => do let f ← liftE n f; pure (.new f (← liftL n args))
     | .member o k => pure (.member (← liftE n o) k)
-    | .index o k => do let o ← liftE n o; pure (.index o (← liftE n k))
+    | .index o k => do
+      let o ← liftE n o
+      let o ← if k.hasYield && !isLiteral o then liftTemp o else pure o
+      pure (.index o (← liftE n k))
     | .array es => pure (.array (← liftL n es))
     | .template c subs => pure (.template c (← liftL n subs))
     | .spread a => pure (.spread (← liftE n a))
-    | .seq a b => do let a ← liftE n a; pure (.seq a (← liftE n b))
+    | .seq a b => do
+      let a ← liftE n a
+      if b.hasYield then
+        liftPush (.expr a)
+        liftE n b
+      else pure (.seq a (← liftE n b))
     | .assign op t v => do
       let t ← match t with
         | .member o k => do pure (Expr.member (← liftE n o) k)
@@ -501,10 +715,28 @@ def liftE : Nat → Expr → Lift Expr
     | _ => pure e
 termination_by structural n _ => n
 
+/-- Lift `e` into statements of its own (one branch of a conditional). -/
+def liftBranch : Nat → Expr → Lift (Expr × List Stmt)
+  | 0, e => pure (e, [])
+  | n + 1, e => do
+    let (k, acc) ← get
+    set (k, (#[] : Array Stmt))
+    let e' ← liftE n e
+    let (k', pre) ← get
+    set (k', acc)
+    pure (e', pre.toList)
+termination_by structural n _ => n
+
 def liftL : Nat → List Expr → Lift (List Expr)
   | 0, es => pure es
   | _ + 1, [] => pure []
-  | n + 1, e :: es => do let e ← liftE n e; pure (e :: (← liftL n es))
+  | n + 1, e :: es => do
+    let e ← liftE n e
+    -- an argument before a `yield` is evaluated first
+    let e ← match e with
+      | .spread _ => pure e
+      | _ => if es.any Expr.hasYield && !isLiteral e then liftTemp e else pure e
+    pure (e :: (← liftL n es))
 termination_by structural n _ => n
 
 def liftP : Nat → List PropDef → Lift (List PropDef)
@@ -521,23 +753,24 @@ end
 
 /-- A statement with its lifted `yield`s before it, or `none` when nothing moved. -/
 def liftStmt (seed : Nat) (s : Stmt) : Option (List Stmt) :=
-  let run (e : Expr) : Expr × Array (String × Bool × Option Expr) :=
+  let run (e : Expr) : Expr × Array Stmt :=
     let (e', (_, acc)) := (liftE 10000 e).run (seed, #[])
     (e', acc)
-  let pre (acc : Array (String × Bool × Option Expr)) : List Stmt :=
-    acc.toList.map fun (x, d, a) => Stmt.decl .letK [Decl.mk (.id x) (some (.yieldE d a))]
   let wrap (e : Expr) (mk : Expr → Stmt) : Option (List Stmt) :=
     match e with
     | .yieldE _ _ => none
     | _ =>
       let (e', acc) := run e
-      if acc.isEmpty then none else some (pre acc ++ [mk e'])
+      if acc.isEmpty then none else some (acc.toList ++ [mk e'])
   match s with
   | .expr e => wrap e .expr
   | .ret (some e) => wrap e (fun x => .ret (some x))
   | .throwS e => wrap e .throwS
   | .decl k [Decl.mk p (some e)] => wrap e (fun x => .decl k [Decl.mk p (some x)])
-  | .ifS c t f => wrap c (fun x => .ifS x t f)
+  | .ifS c t f =>
+    -- the test may itself be a `yield` (`if (await x)`), which `genEnter` does not take apart
+    let (c', acc) := run c
+    if acc.isEmpty then none else some (acc.toList ++ [.ifS c' t f])
   | _ => none
 
 /-! ## BigInt (§6.1.6.2) -/
@@ -799,7 +1032,7 @@ def hostAnswer (args : Array Value) : HostAns → M Value
 /-- Call a native of the host (`Native.host k`). The host's state is taken out of the heap
 for the call, so the host changes it in place. -/
 def callHost (k : Nat) (args : Array Value) : M Value := do
-  let (st, call, left) ← modifyGet fun h => ((h.host, h.hostCall, h.steps), { h with host := none })
+  let (st, call, left) ← modifyGet fun h => ((h.host, h.hostCall, h.steps.toNat), { h with host := none })
   -- An ArrayBuffer or a typed array reaches the host as its bytes.
   let hargs ← args.mapM fun a => do
     match a with
@@ -878,6 +1111,84 @@ def jsonLone (s : String) : String :=
     return out
 
 set_option maxHeartbeats 4000000 in
+/-! ## The register machine (`JS/Compile.lean`)
+
+One loop interprets a compiled function; a call from compiled code to compiled code stays in
+the loop (no native frame, no environment, no arguments array), so JavaScript recursion
+between compiled functions is limited by `vmMaxDepth`, not by the host's stack. Registers
+hold values; a number is kept unboxed in the parallel float registers, with `Value.fl` in
+the value register. Everything other than plain number arithmetic and plain property access
+goes through the same helpers as the evaluator. The registers are put back in the heap
+(`vmStash`) before anything that can run JavaScript or fail, so a nested run finds them and an
+exception does not lose them. -/
+
+/-- A compiled function suspended at a call. -/
+structure VFrame where
+  code : Code
+  pc : Nat
+  bp : Nat
+  env : Nat
+  /-- The caller's register for the result. -/
+  dst : Nat
+  depth : Nat
+
+/-- Compiled functions may nest this deep (they do not use the host's stack). -/
+def vmMaxDepth : Nat := 20000
+
+/-- The register machine is on. Off, every function runs in the evaluator (a differential test
+and a way to compare). -/
+def useVm : Bool := true
+
+@[inline] def vmStash (regs : Array Value) (fregs : FloatArray) (top : Nat) : M Unit :=
+  modify fun h => { h with vmRegs := regs, vmF := fregs, vmTop := top }
+
+/-- Take the registers back out of the heap, for the caller to own. -/
+@[inline] def vmTake : M (Array Value × FloatArray) :=
+  modifyGet fun h => ((h.vmRegs, h.vmF), { h with vmRegs := #[], vmF := .empty })
+
+/-- A register as a language value (boxing a number). -/
+@[inline] def vmRd (regs : Array Value) (fregs : FloatArray) (i : Nat) : Value :=
+  match regs[i]! with
+  | .fl => .num (fregs.get! i)
+  | v => v
+
+/-- Grow the value registers to `n`. -/
+def vmGrowRegs (regs : Array Value) (n : Nat) : Array Value :=
+  if regs.size >= n then regs else
+  let cap := Nat.max n (2 * regs.size + 64)
+  go regs (cap - regs.size)
+where go (r : Array Value) : Nat → Array Value
+  | 0 => r
+  | k + 1 => go (r.push .undef) k
+
+/-- Grow the float registers to `n`. -/
+def vmGrowF (fregs : FloatArray) (n : Nat) : FloatArray :=
+  if fregs.size >= n then fregs else
+  let cap := Nat.max n (2 * fregs.size + 64)
+  go fregs (cap - fregs.size)
+where go (r : FloatArray) : Nat → FloatArray
+  | 0 => r
+  | k + 1 => go (r.push 0) k
+
+/-- Registers `lo` to `hi` are set to `undefined`. -/
+def vmClear (regs : Array Value) (lo : Nat) : Nat → Array Value
+  | 0 => regs
+  | k + 1 => vmClear (regs.set! lo .undef) (lo + 1) k
+
+/-- The `k` registers from `base`, as values. -/
+def vmArgs (regs : Array Value) (fregs : FloatArray) (base : Nat) : Nat → Array Value → Array Value
+  | 0, acc => acc
+  | k + 1, acc => vmArgs regs fregs (base + 1) k (acc.push (vmRd regs fregs base))
+
+/-- Write the first `n` arguments into registers from `base`, numbers unboxed. -/
+def vmFill (regs : Array Value) (fregs : FloatArray) (base : Nat) (args : Array Value) :
+    Nat → Nat → Array Value × FloatArray
+  | 0, _ => (regs, fregs)
+  | k + 1, i =>
+    match args.getD i .undef with
+    | .num x => vmFill (regs.set! (base + i) .fl) (fregs.set! (base + i) x) base args k (i + 1)
+    | v => vmFill (regs.set! (base + i) v) fregs base args k (i + 1)
+
 mutual
 
 /-- `[[Get]]` on any value (§7.3.2 GetV). -/
@@ -913,6 +1224,7 @@ def getV : Nat → Value → String → M Value
     | .bool _ => getProto n (← realm).booleanProto key v
     | .sym _ => getProto n (← realm).symbolProto key v
     | .big _ => getProto n (← realm).bigintProto key v
+    | .hole | .fl => pure .undef
     | .undef => throwErr .type s!"Cannot read properties of undefined (reading '{key}')"
     | .null => throwErr .type s!"Cannot read properties of null (reading '{key}')"
 termination_by structural n _ _ => n
@@ -1010,6 +1322,8 @@ def putV : Nat → Value → String → Value → Bool → M Unit
   | n + 1, target, key, val, strict => do
     match target with
     | .obj id =>
+      -- an own writable data property of a non-exotic object is overwritten in place
+      if ← setOwnData id key val then return
       let o ← getObj id
       match o.kind with
       | .proxy t hnd =>
@@ -1099,7 +1413,7 @@ def toNum : Nat → Value → M Float
   | 0, _ => throw (.halt "fuel")
   | n + 1, v => do
     match v with
-    | .undef => pure nan
+    | .hole | .fl | .undef => pure nan
     | .null => pure 0
     | .bool b => pure (if b then 1 else 0)
     | .num x => pure x
@@ -1137,7 +1451,7 @@ def toStr : Nat → Value → M String
   | 0, _ => throw (.halt "fuel")
   | n + 1, v => do
     match v with
-    | .undef => pure "undefined"
+    | .hole | .fl | .undef => pure "undefined"
     | .null => pure "null"
     | .bool b => pure (if b then "true" else "false")
     | .num x => pure (numToString x)
@@ -1166,7 +1480,7 @@ def toObj : Nat → Value → M Nat
     let r ← realm
     match v with
     | .obj id => pure id
-    | .undef | .null => throwErr .type "Cannot convert undefined or null to object"
+    | .hole | .fl | .undef | .null => throwErr .type "Cannot convert undefined or null to object"
     | .str _ => alloc { proto := .obj r.stringProto, kind := .prim v }
     | .num _ => alloc { proto := .obj r.numberProto, kind := .prim v }
     | .bool _ => alloc { proto := .obj r.booleanProto, kind := .prim v }
@@ -1361,18 +1675,48 @@ def callClosure : Nat → FunDef → Nat → Value → Value → Value → Value
     set { h with depth := h.depth + 1 }
     -- The depth comes back on every exit, a throw included (a throw that a caller catches
     -- must not use up the call depth).
-    let go : M Value := do
-      let fenv ← newEnv (some env)
-      let r ← realm
-      let thisV ← if fd.arrow then pure capThis
-        else if fd.strict then pure thisV
-        else match thisV with
-          | .undef | .null => pure (.obj r.globalObj)
-          | .obj _ => pure thisV
-          | v => do pure (.obj (← toObj n v))
-      let nt := if fd.arrow then capNT else newTarget
-      let fo := if fd.arrow then Value.undef else fnObj
-      let ctx : Ctx := { env := fenv, thisV := thisV, strict := fd.strict, newTarget := nt, home := home, fnObj := fo }
+    -- the environment: the arguments are its first slots when the parameters are plain
+    if useVm then
+      if let some c := fd.info.code then
+        return ← tryCatch (do
+            if fd.kind == .ctor false then
+              initFields n { env, thisV, strict := fd.strict, fnObj } fnObj thisV
+            let v ← vmEnter n c env capThis thisV args
+            modify fun h => { h with depth := h.depth - 1 }
+            pure v)
+          fun e => do
+            modify fun h => { h with depth := saved }
+            throw e
+    let info := fd.info
+    -- `args` is moved into the environment on the plain path (the array must have one owner:
+    -- `fillSlots` then grows it in place)
+    let (fenv, args) ← if info.plain then do
+        let e ← pushEnv { names := info.layout, vals := fillSlots args info.nParams info.layout.size, parent := env }
+        pure (e, (#[] : Array Value))
+      else do
+        let e ← newEnv env
+        pure (e, args)
+    tryCatch (callBody n fd env capThis capNT home fnObj thisV newTarget args fenv info) fun e => do
+      modify fun h => { h with depth := saved }
+      if info.frameLocal then releaseEnv fenv
+      throw e
+termination_by structural n _ _ _ _ _ _ _ _ _ => n
+
+/-- The rest of a call, after the environment is made (`callClosure`). -/
+def callBody : Nat → FunDef → Nat → Value → Value → Value → Value → Value → Value → Array Value → Nat → FunInfo → M Value
+  | 0, _, _, _, _, _, _, _, _, _, _, _ => throw (.halt "fuel")
+  | n + 1, fd, env, capThis, capNT, home, fnObj, thisV, newTarget, args, fenv, info => do
+    let r ← realm
+    let thisV ← if fd.arrow then pure capThis
+      else if fd.strict then pure thisV
+      else match thisV with
+        | .undef | .null => pure (.obj r.globalObj)
+        | .obj _ => pure thisV
+        | v => do pure (.obj (← toObj n v))
+    let nt := if fd.arrow then capNT else newTarget
+    let fo := if fd.arrow then Value.undef else fnObj
+    let ctx : Ctx := { env := fenv, thisV := thisV, strict := fd.strict, newTarget := nt, home := home, fnObj := fo }
+    if !info.plain then
       if fd.usesArgs then
         let a ← alloc { proto := .obj r.objectProto, kind := .args }
         for i in [0:args.size] do defineOwn a (toString i) (.data args[i]! true true true)
@@ -1388,38 +1732,44 @@ def callClosure : Nat → FunDef → Nat → Value → Value → Value → Value
         bindPat n ctx rp (← newArray (args.extract fd.params.length args.size)) (.declare fenv true)
       for v in fd.vars do
         if !((← getBinding fenv v).isSome) then declare fenv v { v := .undef }
-      if fd.kind == .ctor false then initFields n ctx fnObj thisV
-      if fd.gen && fd.async then
-        let p ← getV n fnObj "prototype"
-        let ctx' ← enterBlock n ctx fd.body
-        let g ← alloc { proto := if p.isObj then p else .obj r.asyncGenProto, kind := .agen [.block ctx' fd.body] 0 #[] }
-        modify fun h => { h with depth := h.depth - 1 }
-        return .obj g
-      if fd.gen then
-        -- a generator function returns its generator, suspended at the start (§27.5.3.1)
-        let p ← getV n fnObj "prototype"
-        let ctx' ← enterBlock n ctx fd.body
-        let g ← alloc { proto := if p.isObj then p else .obj r.generatorProto,
-                        kind := .gen [.block ctx' fd.body] 0 }
-        modify fun h => { h with depth := h.depth - 1 }
-        return .obj g
-      if fd.async then
-        -- an async function runs until its first await and returns its promise (§27.7.5.1)
-        let pid ← newPromise
-        let ctx' ← enterBlock n ctx fd.body
-        let co ← alloc { kind := .coro [.block ctx' fd.body] pid }
-        asyncStep n co (.send .undef)
-        modify fun h => { h with depth := h.depth - 1 }
-        return .obj pid
+    if fd.kind == .ctor false then initFields n ctx fnObj thisV
+    if fd.gen && fd.async then
+      let p ← getV n fnObj "prototype"
+      let ctx' ← enterBlock n ctx fd.body
+      let g ← alloc { proto := if p.isObj then p else .obj r.asyncGenProto, kind := .agen [.block ctx' fd.body] 0 #[] }
+      modify fun h => { h with depth := h.depth - 1 }
+      return .obj g
+    if fd.gen then
+      -- a generator function returns its generator, suspended at the start (§27.5.3.1)
+      let p ← getV n fnObj "prototype"
+      let ctx' ← enterBlock n ctx fd.body
+      let g ← alloc { proto := if p.isObj then p else .obj r.generatorProto,
+                      kind := .gen [.block ctx' fd.body] 0 }
+      modify fun h => { h with depth := h.depth - 1 }
+      return .obj g
+    if fd.async then
+      -- an async function runs until its first await and returns its promise (§27.7.5.1)
+      let pid ← newPromise
+      let ctx' ← enterBlock n ctx fd.body
+      let co ← alloc { kind := .coro [.block ctx' fd.body] pid }
+      asyncStep n co (.send .undef)
+      modify fun h => { h with depth := h.depth - 1 }
+      return .obj pid
+    -- a body that is one `return e`: no statement machinery, no completion record
+    match fd.body with
+    | [.ret (some e)] =>
+      let v ← evalExpr n ctx e
+      modify fun h => { h with depth := h.depth - 1 }
+      if info.frameLocal then releaseEnv fenv
+      pure v
+    | _ =>
       let c ← evalBody n ctx fd.body
       modify fun h => { h with depth := h.depth - 1 }
+      if info.frameLocal then releaseEnv fenv
       match c with
       | .ret v => pure v
       | _ => pure .undef
-    tryCatch go fun e => do
-      modify fun h => { h with depth := saved }
-      throw e
-termination_by structural n _ _ _ _ _ _ _ _ _ => n
+termination_by structural n _ _ _ _ _ _ _ _ _ _ _ => n
 
 def bindParams : Nat → Ctx → List PatElem → Array Value → Nat → M Unit
   | 0, _, _, _, _ => throw (.halt "fuel")
@@ -1512,7 +1862,7 @@ def enterBlock : Nat → Ctx → List Stmt → M Ctx
       | .decl .letK _ | .decl .constK _ | .funDecl .. | .classDecl .. => true
       | _ => false
     if !needs then return ctx
-    let env ← newEnv (some ctx.env)
+    let env ← newEnv ctx.env
     let ctx' := { ctx with env }
     declareLexical n ctx' ss
     return ctx'
@@ -1557,9 +1907,9 @@ def assignName : Nat → Ctx → String → Value → M Unit
   | 0, _, _, _ => throw (.halt "fuel")
   | n + 1, ctx, x, v => do
     let h ← get
-    match h.findEnv x 100000 (some ctx.env) with
+    match h.findEnv x 100000 ctx.env with
     | some e =>
-      match (h.envs.getD e default).vars.get? x with
+      match (h.envs.getD e default).get? x with
       | some b =>
         if !b.init then throwErr .reference s!"Cannot access '{x}' before initialization"
         if !b.mutable then
@@ -1572,17 +1922,101 @@ def assignName : Nat → Ctx → String → Value → M Unit
         | none => pure ()
     | none =>
       let g := h.realm.globalObj
-      if (h.findProp g x 1000).isSome || !ctx.strict then putV n (.obj g) x v ctx.strict
+      if !ctx.strict || (h.findProp g x 1000).isSome then putV n (.obj g) x v ctx.strict
       else throwErr .reference s!"{x} is not defined"
 termination_by structural n _ _ _ => n
+
+/-- Read a resolved name: slot `idx`, `hops` environments up, when that slot has the name
+(`JS/Resolve.lean`); otherwise the plain lookup. -/
+def lookupLocal : Nat → Ctx → String → Nat → Nat → M Value
+  | 0, _, _, _, _ => throw (.halt "fuel")
+  | n + 1, ctx, x, hops, idx => do
+    let h ← get
+    let env := h.envs.getD (h.envUp hops ctx.env) default
+    match env.names[idx]?, env.vals[idx]? with
+    | some y, some v =>
+      if y == x then
+        match v with
+        | .hole => throwErr .reference s!"Cannot access '{x}' before initialization"
+        | _ =>
+          if verifyLocals then
+            let w ← lookup n ctx x
+            if !sameValue v w then throw (.halt s!"verifyLocals: {x} {hops} {idx}")
+          pure v
+      else lookup n ctx x
+    | _, _ => lookup n ctx x
+termination_by structural n _ _ _ _ => n
+
+/-- Slot `idx` (`hops` up) lets go of the string `p`, if it holds that string: the only
+other reference is the caller's, so an append works in place (`s += x` is linear). -/
+def dropSlotStr (ctx : Ctx) (hops idx : Nat) (p : String) : M Unit := do
+  let h ← get
+  let e := h.envUp hops ctx.env
+  match (h.envs.getD e default).vals[idx]? with
+  | some (.str y) => if y == p then setSlot e idx .undef
+  | _ => pure ()
+
+/-- The binding of the name `x` lets go of the string `p`, if it holds it (a name not
+resolved to a slot: top-level code, a `with`): as `dropSlotStr`. -/
+def dropNameStr (ctx : Ctx) (x : String) (p : String) : M Unit := do
+  let h ← get
+  match h.findEnv x 100000 ctx.env with
+  | some e =>
+    let env := h.envs.getD e default
+    if env.withObj.isSome then pure () else
+    let i := env.slotN x
+    match env.vals[i]? with
+    | some (.str y) => if y == p then setSlot e i .undef
+    | _ => pure ()
+  | none =>
+    let g := h.realm.globalObj
+    match (h.obj g).props.get? x with
+    | some (.data (.str y) true _ _) =>
+      if y == p then let _ ← setOwnData g x .undef
+    | _ => pure ()
+
+/-- Assign a resolved name; the plain assignment when the hint does not hold. -/
+def assignLocal : Nat → Ctx → String → Nat → Nat → Value → M Unit
+  | 0, _, _, _, _, _ => throw (.halt "fuel")
+  | n + 1, ctx, x, hops, idx, v => do
+    let h ← get
+    let e := h.envUp hops ctx.env
+    let env := h.envs.getD e default
+    match env.names[idx]?, env.vals[idx]? with
+    | some y, some old =>
+      if y == x then
+        if let .hole := old then throwErr .reference s!"Cannot access '{x}' before initialization"
+        if !env.mutableAt idx then throwErr .type "Assignment to constant variable."
+        if verifyLocals then
+          -- the plain path must find the same binding
+          if (h.findEnv x 100000 ctx.env) != some e then throw (.halt s!"verifyLocals: {x} {hops} {idx}")
+        setSlot e idx v
+      else assignName n ctx x v
+    | _, _ => assignName n ctx x v
+termination_by structural n _ _ _ _ _ => n
+
+/-- The value of a leaf expression that reads no outside state beyond the heap and has no
+effects: a literal, a resolved name that holds, `this`. `Value.hole` for anything else (the
+caller evaluates the expression the full way, which also reports an uninitialised binding). -/
+@[inline] def leafV (h : HeapOf H) (ctx : Ctx) (e : Expr) : Value :=
+  match e with
+  | .lit v => v
+  | .local x hops idx =>
+    if verifyLocals then .hole else  -- every read goes through `lookupLocal`, which checks it
+    let env := h.envs.getD (h.envUp hops ctx.env) default
+    match env.names[idx]?, env.vals[idx]? with
+    | some y, some v => if y == x then v else .hole
+    | _, _ => .hole
+  | .this => ctx.thisV
+  | _ => .hole
 
 def lookup : Nat → Ctx → String → M Value
   | 0, _, _ => throw (.halt "fuel")
   | n + 1, ctx, x => do
     let h ← get
-    match h.findEnv x 100000 (some ctx.env) with
+    match h.findEnv x 100000 ctx.env with
     | some e =>
-      match (h.envs.getD e default).vars.get? x with
+      match (h.envs.getD e default).get? x with
       | some b =>
         if b.init then pure b.v else throwErr .reference s!"Cannot access '{x}' before initialization"
       | none =>
@@ -1591,8 +2025,10 @@ def lookup : Nat → Ctx → String → M Value
         | none => pure .undef
     | none =>
       let g := h.realm.globalObj
-      if (h.findProp g x 1000).isSome then getV n (.obj g) x
-      else throwErr .reference s!"{x} is not defined"
+      match h.findProp g x 1000 with
+      | some (.data v ..) => pure v
+      | some _ => getV n (.obj g) x
+      | none => throwErr .reference s!"{x} is not defined"
 termination_by structural n _ _ => n
 
 /-- PutValue on an assignment target, after its parts are evaluated. -/
@@ -1601,6 +2037,7 @@ def putTarget : Nat → Ctx → Expr → Option Value → Option String → Valu
   | n + 1, ctx, target, base, key, v => do
     match target, base, key with
     | .ident x, _, _ => assignName n ctx x v
+    | .local x h i, _, _ => assignLocal n ctx x h i v
     | _, some b, some k => putV n b k v ctx.strict
     | _, _, _ => throwErr .syntax "Invalid assignment target"
 termination_by structural n _ _ _ _ _ => n
@@ -1625,6 +2062,7 @@ def getRef : Nat → Ctx → Expr → Option Value → Option String → M Value
   | n + 1, ctx, e, base, key => do
     match e, base, key with
     | .ident x, _, _ => lookup n ctx x
+    | .local x h i, _, _ => lookupLocal n ctx x h i
     | _, some b, some k => getV n b k
     | _, _, _ => evalExpr n ctx e
 termination_by structural n _ _ _ _ => n
@@ -1633,6 +2071,14 @@ def evalArgs : Nat → Ctx → List Expr → Array Value → M (Array Value)
   | 0, _, _, _ => throw (.halt "fuel")
   | _ + 1, _, [], acc => pure acc
   | n + 1, ctx, a :: as, acc => do
+    match leafV (← get) ctx a with
+    | .hole => evalArg n ctx a as acc
+    | v => evalArgs n ctx as (acc.push v)
+termination_by structural n _ _ _ => n
+
+def evalArg : Nat → Ctx → Expr → List Expr → Array Value → M (Array Value)
+  | 0, _, _, _, _ => throw (.halt "fuel")
+  | n + 1, ctx, a, as, acc => do
     match a with
     | .spread e =>
       let it ← getIterator n (← evalExpr n ctx e)
@@ -1704,6 +2150,8 @@ def evalExpr : Nat → Ctx → Expr → M Value
     | .bool b => pure (.bool b)
     | .null => pure .null
     | .ident x => lookup n ctx x
+    | .local x h i => lookupLocal n ctx x h i
+    | .lit v => pure v
     | .this => pure ctx.thisV
     | .array es => newArray (← evalArgs n ctx es #[])
     | .spread _ => throwErr .syntax "unexpected spread"
@@ -1757,7 +2205,7 @@ def evalExpr : Nat → Ctx → Expr → M Value
       match op, a with
       | .typeof, .ident x =>
         let h ← get
-        if (h.findEnv x 100000 (some ctx.env)).isNone && (h.findProp h.realm.globalObj x 1000).isNone then
+        if (h.findEnv x 100000 ctx.env).isNone && (h.findProp h.realm.globalObj x 1000).isNone then
           pure (.str "undefined")
         else pure (.str (← typeOf (← lookup n ctx x)))
       | .delete, t =>
@@ -1792,7 +2240,7 @@ def evalExpr : Nat → Ctx → Expr → M Value
           | none, _ => pure (.bool true)
         | .ident x =>
           let h ← get
-          match h.findEnv x 100000 (some ctx.env) with
+          match h.findEnv x 100000 ctx.env with
           | some _ => pure (.bool false)
           | none =>
             let g := h.realm.globalObj
@@ -1815,13 +2263,20 @@ def evalExpr : Nat → Ctx → Expr → M Value
         | .void => pure .undef
         | .delete => pure (.bool true)
     | .binary op a b =>
-      let x ← evalExpr n ctx a
-      let y ← evalExpr n ctx b
+      let x ← (match leafV (← get) ctx a with | .hole => evalExpr n ctx a | v => pure v)
+      let y ← (match leafV (← get) ctx b with | .hole => evalExpr n ctx b | v => pure v)
+      -- the constant values `.bool true`, `.bool false` are not allocated (`if`, not `.bool (p < q)`)
       match op, x, y with
       | .add, .num p, .num q => pure (.num (p + q))
       | .sub, .num p, .num q => pure (.num (p - q))
-      | .lt, .num p, .num q => pure (.bool (p < q))
-      | .seq, _, _ => pure (.bool (strictEq x y))
+      | .mul, .num p, .num q => pure (.num (p * q))
+      | .div, .num p, .num q => pure (.num (p / q))
+      | .lt, .num p, .num q => if p < q then pure (.bool true) else pure (.bool false)
+      | .gt, .num p, .num q => if p > q then pure (.bool true) else pure (.bool false)
+      | .le, .num p, .num q => if p ≤ q then pure (.bool true) else pure (.bool false)
+      | .ge, .num p, .num q => if p ≥ q then pure (.bool true) else pure (.bool false)
+      | .seq, _, _ => if strictEq x y then pure (.bool true) else pure (.bool false)
+      | .sne, _, _ => if strictEq x y then pure (.bool false) else pure (.bool true)
       | _, _, _ => binop n op x y
     | .logical op a b =>
       let x ← evalExpr n ctx a
@@ -1831,10 +2286,64 @@ def evalExpr : Nat → Ctx → Expr → M Value
       | .coalesce => match x with
         | .undef | .null => evalExpr n ctx b
         | _ => pure x
+    | .assign none (.index o k) rhs =>
+      -- `a[i] = v`: an element of an Array is written in place, with no key string
+      let b ← evalExpr n ctx o
+      let kv ← evalExpr n ctx k
+      if let .undef := b then throwErr .type "Cannot read properties of undefined"
+      if let .null := b then throwErr .type "Cannot read properties of null"
+      match b, kv with
+      | .obj id, .num x =>
+        let v ← evalExpr n ctx rhs
+        let isIdx := x ≥ 0 && x < 4294967295.0 && x.floor == x
+        let done ← if isIdx then setElem id x.toUInt64.toNat v else pure false
+        if !done then putV n b (keyOfNum x) v ctx.strict
+        pure v
+      | _, _ =>
+        let key ← toKey n kv
+        let v ← evalExpr n ctx rhs
+        putV n b key v ctx.strict
+        pure v
+    | .assign none (.member o k) rhs =>
+      let b ← (match leafV (← get) ctx o with | .hole => evalExpr n ctx o | v => pure v)
+      let v ← (match leafV (← get) ctx rhs with | .hole => evalExpr n ctx rhs | v => pure v)
+      putV n b k v ctx.strict
+      pure v
+    | .assign (some .add) (.local x h i) rhs =>
+      let old ← lookupLocal n ctx x h i
+      let r ← (match leafV (← get) ctx rhs with | .hole => evalExpr n ctx rhs | v => pure v)
+      -- a string held by this binding alone is appended to in place: the slot lets go first
+      let v ← match old, r with
+        | .num p, .num q => pure (.num (p + q))
+        | .str p, .str q => dropSlotStr ctx h i p; pure (.str (Str.jsAppend p q))
+        | .str p, .num q => dropSlotStr ctx h i p; pure (.str (Str.jsAppend p (numToString q)))
+        | _, _ => binop n .add old r
+      assignLocal n ctx x h i v
+      pure v
+    | .assign (some .add) (.ident x) rhs =>
+      let old ← lookup n ctx x
+      let r ← (match leafV (← get) ctx rhs with | .hole => evalExpr n ctx rhs | v => pure v)
+      let v ← match old, r with
+        | .num p, .num q => pure (.num (p + q))
+        | .str p, .str q => dropNameStr ctx x p; pure (.str (Str.jsAppend p q))
+        | .str p, .num q => dropNameStr ctx x p; pure (.str (Str.jsAppend p (numToString q)))
+        | _, _ => binop n .add old r
+      assignName n ctx x v
+      pure v
+    | .assign (some op) (.local x h i) rhs =>
+      let old ← lookupLocal n ctx x h i
+      let r ← (match leafV (← get) ctx rhs with | .hole => evalExpr n ctx rhs | v => pure v)
+      let v ← match op, old, r with
+        | .add, .num p, .num q => pure (.num (p + q))
+        | .sub, .num p, .num q => pure (.num (p - q))
+        | _, _, _ => binop n op old r
+      assignLocal n ctx x h i v
+      pure v
     | .assign none target rhs =>
       let (b, k) ← evalRef n ctx target
       let v ← match target, rhs with
-        | .ident x, .func f => if f.name.isNone then makeClosure ctx f x else evalExpr n ctx rhs
+        | .ident x, .func f | .local x _ _, .func f =>
+          if f.name.isNone then makeClosure ctx f x else evalExpr n ctx rhs
         | _, _ => evalExpr n ctx rhs
       putTarget n ctx target b k v
       pure v
@@ -1856,6 +2365,23 @@ def evalExpr : Nat → Ctx → Expr → M Value
       let v ← evalExpr n ctx rhs
       putTarget n ctx target b k v
       pure v
+    | .update pre inc (.local x h i) =>
+      match ← lookupLocal n ctx x h i with
+      | .num old =>
+        let nv := if inc then old + 1 else old - 1
+        assignLocal n ctx x h i (.num nv)
+        pure (.num (if pre then nv else old))
+      | p =>
+        match ← toPrim n p "number" with
+        | .big big =>
+          let nv := if inc then big + 1 else big - 1
+          assignLocal n ctx x h i (.big nv)
+          pure (.big (if pre then nv else big))
+        | p =>
+          let old ← toNum n p
+          let nv := if inc then old + 1 else old - 1
+          assignLocal n ctx x h i (.num nv)
+          pure (.num (if pre then nv else old))
     | .update pre inc target =>
       let (b, k) ← evalRef n ctx target
       match ← toPrim n (← getRef n ctx target b k) "number" with
@@ -1868,7 +2394,9 @@ def evalExpr : Nat → Ctx → Expr → M Value
         let nv := if inc then old + 1 else old - 1
         putTarget n ctx target b k (.num nv)
         pure (.num (if pre then nv else old))
-    | .cond c t f => if toBool (← evalExpr n ctx c) then evalExpr n ctx t else evalExpr n ctx f
+    | .cond c t f =>
+      let cv ← (match leafV (← get) ctx c with | .hole => evalExpr n ctx c | v => pure v)
+      if toBool cv then evalExpr n ctx t else evalExpr n ctx f
     | .seq a b => let _ ← evalExpr n ctx a; evalExpr n ctx b
     | .call callee args =>
       let (f, thisV) ← match callee with
@@ -1884,8 +2412,9 @@ def evalExpr : Nat → Ctx → Expr → M Value
           | .undef | .null => throw (.halt shortSignal)
           | _ => pure (f, t)
         | .member o k =>
-          let b ← evalExpr n ctx o
-          pure (← getV n b k, b)
+          let b ← (match leafV (← get) ctx o with | .hole => evalExpr n ctx o | v => pure v)
+          let f ← (match (← get).fastGetV b k with | .hole => getV n b k | v => pure v)
+          pure (f, b)
         | .index o k =>
           let b ← evalExpr n ctx o
           let key ← toKey n (← evalExpr n ctx k)
@@ -1893,11 +2422,12 @@ def evalExpr : Nat → Ctx → Expr → M Value
         | .superMember k =>
           let proto ← homeProto ctx
           pure (← getSuper n proto k ctx.thisV, ctx.thisV)
+        | .local x h i => pure (← lookupLocal n ctx x h i, Value.undef)
         | .ident x =>
           let h ← get
-          let thisV := match h.findEnv x 100000 (some ctx.env) with
+          let thisV := match h.findEnv x 100000 ctx.env with
             | some e => match (h.envs.getD e default).withObj with
-              | some o => if ((h.envs.getD e default).vars.contains x) then Value.undef else .obj o
+              | some o => if (h.envs.getD e default).has x then Value.undef else .obj o
               | none => .undef
             | none => .undef
           pure (← lookup n ctx x, thisV)
@@ -1910,7 +2440,7 @@ def evalExpr : Nat → Ctx → Expr → M Value
             return ← directEval n ctx (argD argv 0)
       if !(← isCallable f) then
         let what := match callee with
-          | .ident x => x | .member _ k => k | _ => "expression"
+          | .ident x | .local x .. => x | .member _ k => k | _ => "expression"
         throwErr .type s!"{what} is not a function"
       callV n f thisV argv
     | .new callee args =>
@@ -1918,13 +2448,17 @@ def evalExpr : Nat → Ctx → Expr → M Value
       let argv ← evalArgs n ctx args #[]
       if !(← isConstructor f) then
         let what := match callee with
-          | .ident x => x | .member _ k => k | _ => "expression"
+          | .ident x | .local x .. => x | .member _ k => k | _ => "expression"
         throwErr .type s!"{what} is not a constructor"
       construct n f argv f
-    | .member o k => getV n (← evalExpr n ctx o) k
+    | .member o k =>
+      let b ← (match leafV (← get) ctx o with | .hole => evalExpr n ctx o | v => pure v)
+      match (← get).fastGetV b k with
+      | .hole => getV n b k
+      | v => pure v
     | .index o k =>
-      let b ← evalExpr n ctx o
-      let kv ← evalExpr n ctx k
+      let b ← (match leafV (← get) ctx o with | .hole => evalExpr n ctx o | v => pure v)
+      let kv ← (match leafV (← get) ctx k with | .hole => evalExpr n ctx k | v => pure v)
       match b, kv with
       | .obj id, .num x =>
         match (← getObj id).kind with
@@ -1988,11 +2522,9 @@ termination_by structural n _ _ _ _ _ _ _ => n
 def copyEnv : Nat → Ctx → List String → M Ctx
   | 0, _, _ => throw (.halt "fuel")
   | _ + 1, ctx, names => do
-    let h ← get
-    let old := h.envs.getD ctx.env default
-    let e ← newEnv old.parent
-    for x in names do
-      if let some b := old.vars.get? x then declare e x b
+    let old := (← get).envs.getD ctx.env default
+    -- all the names of the record are the loop's (the record is the loop's alone): a copy
+    let e ← pushEnv (if names.isEmpty then { parent := old.parent } else old)
     pure { ctx with env := e }
 termination_by structural n _ _ => n
 
@@ -2020,7 +2552,7 @@ def bindIter : Nat → Ctx → Option DeclKind → Pat → Value → M Ctx
   | n + 1, ctx, kind, target, v => do
     match kind with
     | some .letK | some .constK =>
-      let e ← newEnv (some ctx.env)
+      let e ← newEnv ctx.env
       for x in target.names do declare e x { v := .undef, mutable := true, init := false }
       let ctx' := { ctx with env := e }
       bindPat n ctx' target v (.declare e (kind == some .letK))
@@ -2102,9 +2634,12 @@ def evalStmt : Nat → Ctx → List String → Stmt → M Compl
     | .decl k ds => evalDecls n ctx k ds; pure .normal
     | .funDecl .. => pure .normal
     | .ret none => pure (.ret .undef)
-    | .ret (some e) => pure (.ret (← evalExpr n ctx e))
+    | .ret (some e) =>
+      let v ← (match leafV (← get) ctx e with | .hole => evalExpr n ctx e | v => pure v)
+      pure (.ret v)
     | .ifS c t f =>
-      if toBool (← evalExpr n ctx c) then evalStmt n ctx [] t
+      let cv ← (match leafV (← get) ctx c with | .hole => evalExpr n ctx c | v => pure v)
+      if toBool cv then evalStmt n ctx [] t
       else match f with
         | some f => evalStmt n ctx [] f
         | none => pure .normal
@@ -2116,13 +2651,20 @@ def evalStmt : Nat → Ctx → List String → Stmt → M Compl
         evalDecls n ctx .var ds
         forLoop n ctx labels [] test update body true
       | some (.decl k ds) =>
-        let env ← newEnv (some ctx.env)
+        let env ← newEnv ctx.env
         let ctx' := { ctx with env }
         for d in ds do
           for x in d.names do declare env x { v := .undef, mutable := k == .letK, init := false }
         evalDecls n ctx' k ds
         let names := ds.flatMap Decl.names
         forLoop n ctx' labels (if k == .letK then names else []) test update body true
+      | some (.letOnce ds) =>
+        let env ← newEnv ctx.env
+        let ctx' := { ctx with env }
+        for d in ds do
+          for x in d.names do declare env x { v := .undef, mutable := true, init := false }
+        evalDecls n ctx' .letK ds
+        forLoop n ctx' labels [] test update body true
       | some (.expr e) =>
         let _ ← evalExpr n ctx e
         forLoop n ctx labels [] test update body true
@@ -2137,13 +2679,25 @@ def evalStmt : Nat → Ctx → List String → Stmt → M Compl
       forOfLoop n ctx labels kind target it body
     | .withS o body =>
       let id ← toObj n (← evalExpr n ctx o)
-      let env ← modifyGet fun h => (h.envs.size, { h with envs := h.envs.push { parent := some ctx.env, withObj := some id } })
+      let env ← pushEnv { parent := ctx.env, withObj := some id }
       evalStmt n { ctx with env } [] body
     | .classDecl name c =>
       let v ← evalClass n ctx c name
       declare ctx.env name { v }
       pure .normal
+    | .compiled c s =>
+      if useVm then
+        let _ ← vmEnter n c ctx.env ctx.thisV ctx.thisV #[]
+        pure .normal
+      else evalStmt n ctx labels s
     | .block ss => evalBlock n ctx ss
+    | .blockF ss =>
+      -- no closure holds this block's environment: its slot is reused on a normal end
+      -- (after a throw it stays allocated, which is only memory)
+      let ctx' ← enterBlock n ctx ss
+      let c ← evalStmts n ctx' ss
+      if ctx'.env != ctx.env then releaseEnv ctx'.env
+      pure c
     | .throwS e => throw (.throw (← evalExpr n ctx e))
     | .tryS body param handler fin =>
       let r ← tryCatch (do let c ← evalBlock n ctx body; pure (Except.ok c))
@@ -2151,7 +2705,7 @@ def evalStmt : Nat → Ctx → List String → Stmt → M Compl
       let r ← match r, handler with
         | .error (.throw v), some hs =>
           tryCatch (do
-            let env ← newEnv (some ctx.env)
+            let env ← newEnv ctx.env
             if let some p := param then
               for x in p.names do declare env x { v := .undef, init := false }
               bindPat n { ctx with env } p v (.declare env true)
@@ -2392,7 +2946,7 @@ def evalClass : Nat → Ctx → ClassDef → String → M Value
   | 0, _, _, _ => throw (.halt "fuel")
   | n + 1, ctx, .mk name heritage ctor members, nameHint => do
     let r ← realm
-    let cenv ← newEnv (some ctx.env)
+    let cenv ← newEnv ctx.env
     if let some x := name then declare cenv x { v := .undef, mutable := false, init := false }
     let cctx : Ctx := { ctx with env := cenv, strict := true }
     let (protoParent, ctorParent) ← match heritage with
@@ -2413,8 +2967,8 @@ def evalClass : Nat → Ctx → ClassDef → String → M Value
       | some f => f
       | none =>
         if derived then
-          FunDef.mk none [] (some (.id "args")) [.expr (.superCall [.spread (.ident "args")])] [] false true (.ctor true) false false
-        else FunDef.mk none [] none [] [] false true (.ctor false) false false
+          FunDef.mk none [] (some (.id "args")) [.expr (.superCall [.spread (.ident "args")])] [] false true (.ctor true) false false {}
+        else FunDef.mk none [] none [] [] false true (.ctor false) false false {}
     let cname := name.getD nameHint
     let fid ← alloc { proto := ctorParent, kind := .closure fd cenv .undef .undef (.obj proto) #[] }
     defineOwn fid "length" (.data (.num (Float.ofNat fd.expectedArgs)) false false true)
@@ -2483,15 +3037,15 @@ def directEval : Nat → Ctx → Value → M Value
   | n + 1, ctx, src => do
     match src with
     | .str code =>
-      match parseScript code ctx.strict with
+      match (parseScript code ctx.strict).map Resolve.script with
       | .error e => throwErr .syntax ((e.drop 13).toString)
       | .ok sc =>
-        let env ← newEnv (some ctx.env)
+        let env ← newEnv ctx.env
         let ectx := { ctx with env, strict := sc.strict }
         -- var declarations of sloppy eval code go to the caller's variable scope
         for x in sc.vars do
           if sc.strict then declare env x { v := .undef }
-          else if ((← get).findEnv x 100000 (some ctx.env)).isNone then
+          else if ((← get).findEnv x 100000 ctx.env).isNone then
             if ctx.env == 0 then
               let g := (← realm).globalObj
               if ((← getObj g).getOwn x).isNone then defineOwn g x (.data .undef true true true)
@@ -2689,25 +3243,65 @@ def genEnter : Nat → Ctx → List String → Stmt → List GFrame → M GOut
           | some e => genRun n (.block ctx [e] :: rest) (.send .undef)
           | none => genRun n rest (.send .undef)
     | .whileS c body =>
-      if c.hasYield then genUnsupported n rest
+      if c.hasYield then
+        -- `while (c) b` is `while (true) { if (!c) break; b }`: `c`'s yields are then lifted
+        genEnter n ctx labels (.whileS (.bool true)
+          (.block [.ifS (.unary .not c) (.brk none) none, body])) rest
       else genRun n (.loopW ctx labels c body :: rest) (.send .undef)
     | .doWhile body c =>
-      if c.hasYield then genUnsupported n rest
+      if c.hasYield then
+        -- a flag makes the test run after the body, also after `continue`
+        let f := s!"%dw{(← get).envs.size}"
+        let loop : Stmt := .whileS (.bool true) (.block [
+          .ifS (.ident f) (.ifS (.unary .not c) (.brk none) none) none,
+          .expr (.assign none (.ident f) (.bool true)), body])
+        genRun n (.block ctx [.decl .letK [Decl.mk (.id f) (some (.bool false))],
+          labels.foldr .labeled loop] :: rest) (.send .undef)
       else genRun n (.block ctx [body] :: .loopDo ctx labels body c :: rest) (.send .undef)
     | .forS init test update body =>
-      let ok := !(test.any Expr.hasYield) && !(update.any Expr.hasYield) &&
-        (match init with | some (.expr e) => !e.hasYield | some (.decl _ ds) => !(ds.any Decl.hasYield) | none => true)
-      if !ok then genUnsupported n rest else
+      let initYields := match init with
+        | some (.expr e) => e.hasYield
+        | some (.decl _ ds) | some (.letOnce ds) => ds.any Decl.hasYield
+        | none => false
+      if initYields then
+        match init with
+        | some (.expr e) =>
+          genRun n (.block ctx [.expr e, labels.foldr .labeled (.forS none test update body)] :: rest) (.send .undef)
+        | some (.decl .var ds) =>
+          genRun n (.block ctx [.decl .var ds, labels.foldr .labeled (.forS none test update body)] :: rest) (.send .undef)
+        | _ => genUnsupported n rest
+      else if test.any Expr.hasYield || update.any Expr.hasYield then
+        -- the test and update move into the body, after a flag for the first pass, so
+        -- `continue` still runs the update
+        let f := s!"%fy{(← get).envs.size}"
+        let upd : List Stmt := match update with
+          | some u => [.ifS (.ident f) (.expr u) none]
+          | none => []
+        let tst : List Stmt := match test with
+          | some t => [.ifS (.unary .not t) (.brk none) none]
+          | none => []
+        let loop : Stmt := .forS init none none
+          (.block (upd ++ [.expr (.assign none (.ident f) (.bool true))] ++ tst ++ [body]))
+        genRun n (.block ctx [.decl .letK [Decl.mk (.id f) (some (.bool false))],
+          labels.foldr .labeled loop] :: rest) (.send .undef)
+      else
       let r ← tryCatch (do
           match init with
           | some (.decl .var ds) => evalDecls n ctx .var ds; pure (Except.ok (ctx, ([] : List String)))
           | some (.decl k ds) =>
-            let env ← newEnv (some ctx.env)
+            let env ← newEnv ctx.env
             let ctx' := { ctx with env }
             for d in ds do
               for x in d.names do declare env x { v := .undef, mutable := k == .letK, init := false }
             evalDecls n ctx' k ds
             pure (Except.ok (ctx', if k == .letK then ds.flatMap Decl.names else []))
+          | some (.letOnce ds) =>
+            let env ← newEnv ctx.env
+            let ctx' := { ctx with env }
+            for d in ds do
+              for x in d.names do declare env x { v := .undef, mutable := true, init := false }
+            evalDecls n ctx' .letK ds
+            pure (Except.ok (ctx', []))
           | some (.expr e) => let _ ← evalExpr n ctx e; pure (Except.ok (ctx, []))
           | none => pure (Except.ok (ctx, [])))
         (fun a => pure (Except.error a))
@@ -2716,7 +3310,12 @@ def genEnter : Nat → Ctx → List String → Stmt → List GFrame → M GOut
       | .error a => throw a
       | .ok (ctx', perIter) => genRun n (.loopFor ctx' labels perIter test update body true :: rest) (.send .undef)
     | .forOf kind target obj body =>
-      if obj.hasYield then genUnsupported n rest else
+      if obj.hasYield then
+        -- the iterable's yields first, in a temporary
+        let t := s!"%it{(← get).envs.size}"
+        genRun n (.block ctx [.decl .letK [Decl.mk (.id t) (some obj)],
+          labels.foldr .labeled (.forOf kind target (.ident t) body)] :: rest) (.send .undef)
+      else
       let r ← tryCatch (do pure (Except.ok (← getIterator n (← evalExpr n ctx obj))))
         (fun a => pure (Except.error a))
       match r with
@@ -2794,7 +3393,7 @@ def genUnwind : Nat → List GFrame → GCompl → M GOut
         if toBool (← getV n res "done") then genUnwind n rest (.ret (← getV n res "value"))
         else pure (.yielded (← getV n res "value") (f :: rest))
     | .tryF ctx param (some hs) fin 0, .throw v =>
-      let env ← newEnv (some ctx.env)
+      let env ← newEnv ctx.env
       let ctx' := { ctx with env }
       let r ← tryCatch (do
           if let some p := param then
@@ -3085,9 +3684,9 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
             let o := (List.range es.size).foldl (fun (o : Obj) i => o.putOwn (toString i) (.data es[i]! true true true)) o
             o.putOwn "length" (.data (.num (Float.ofNat es.size)) false false false)
           | _ => o
-        let props := o.props.fold (fun (m : Std.HashMap String PropV) k p => m.insert k (match p with
+        let props := o.props.mapValues (fun p => (match p with
           | .data v _ e _ => .data v false e false
-          | .acc g s e _ => .acc g s e false)) {}
+          | .acc g s e _ => .acc g s e false))
         modifyObj id fun _ => { o with props, extensible := false }
         pure a0
       | _ => pure a0
@@ -3155,7 +3754,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
         | [] => ([], "")
         | b :: rest => (rest.reverse, b)
       let src := "(function anonymous(" ++ ",".intercalate ps ++ "\n) {\n" ++ body ++ "\n})"
-      match parseScript src false with
+      match (parseScript src false).map Resolve.script with
       | .error e => throwErr .syntax ((e.drop 13).toString)
       | .ok { body := [.expr e], .. } =>
         evalExpr n { env := 0, thisV := .obj r.globalObj, strict := false } e
@@ -3209,29 +3808,33 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       | _ => pure (.bool false)
     | .arrayPush =>
       match thisV with
-      | .obj id => match (← getObj id).kind with
-        | .array es =>
-          modifyObj id fun o => { o with kind := .array (es ++ args) }
-          pure (.num (Float.ofNat (es.size + args.size)))
-        | _ => genericPush n thisV args
+      | .obj id =>
+        let r ← updateObj id fun o =>
+          match o.takeArray with
+          | (some es, o) => let es := es ++ args; (some es.size, { o with kind := .array es })
+          | (none, o) => (none, o)
+        match r with
+        | some k => pure (.num (Float.ofNat k))
+        | none => genericPush n thisV args
       | _ => genericPush n thisV args
     | .arrayPop =>
       match thisV with
-      | .obj id => match (← getObj id).kind with
-        | .array es =>
-          if es.isEmpty then pure .undef else
-          modifyObj id fun o => { o with kind := .array es.pop }
-          pure es.back!
-        | _ => pure .undef
+      | .obj id =>
+        updateObj id fun o =>
+          match o.takeArray with
+          | (some es, o) => (es.back?.getD .undef, { o with kind := .array es.pop })
+          | (none, o) => (.undef, o)
       | _ => pure .undef
     | .arrayShift =>
       match thisV with
-      | .obj id => match (← getObj id).kind with
-        | .array es =>
-          if es.isEmpty then pure .undef else
-          modifyObj id fun o => { o with kind := .array (es.extract 1 es.size) }
-          pure es[0]!
-        | _ => pure .undef
+      | .obj id =>
+        updateObj id fun o =>
+          match o.takeArray with
+          | (some es, o) =>
+            match es[0]? with
+            | some v => (v, { o with kind := .array (es.eraseIdxIfInBounds 0) })
+            | none => (.undef, { o with kind := .array es })
+          | (none, o) => (.undef, o)
       | _ => pure .undef
     | .arrayUnshift =>
       match thisV with
@@ -3841,9 +4444,9 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       match a0 with
       | .obj id =>
         let o ← getObj id
-        let props := o.props.fold (fun (m : Std.HashMap String PropV) k p => m.insert k (match p with
+        let props := o.props.mapValues (fun p => (match p with
           | .data v w e _ => .data v w e false
-          | .acc g s e _ => .acc g s e false)) {}
+          | .acc g s e _ => .acc g s e false))
         modifyObj id fun o => { o with props, extensible := false }
         pure a0
       | _ => pure a0
@@ -4077,6 +4680,692 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       stringOrMath n id thisV args
 termination_by structural n _ _ _ _ => n
 
+
+/-- A global name read through the cache: the value, or `Value.hole` when the general path
+must look (not a plain writable data property, or a lexical binding may shadow it). -/
+def vmGlobalHit (h : HeapOf H) (env : Nat) (x : String) (site : Nat) : Value :=
+  match h.findEnv x 100000 env with
+  | some _ => .hole
+  | none =>
+    let g := h.obj h.realm.globalObj
+    let slot := h.globalCache[site]!
+    match g.props.ks[slot]?, g.props.vs[slot]? with
+    | some k, some (.data v ..) => if k == x then v else .hole
+    | _, _ => .hole
+
+/-- Assign a global name through the cache: only when no lexical binding shadows it and the
+cached slot holds this name as a plain writable data property; `false` otherwise. -/
+def vmGlobalSet (env : Nat) (x : String) (site : Nat) (v : Value) : M Bool := do
+  let h ← get
+  if (h.findEnv x 100000 env).isSome then return false
+  let gid := h.realm.globalObj
+  let slot := h.globalCache[site]!
+  let g := h.obj gid
+  match g.props.ks[slot]?, g.props.vs[slot]? with
+  | some k, some (.data _ true e c) =>
+    if k == x then
+      updateObj gid fun o =>
+        (true, { o with props := { o.props with vs := o.props.vs.set! slot (.data v true e c) } })
+    else pure false
+  | _, _ => pure false
+
+/-- Assign a variable `hops` above the closure environment, when the slot holds that name
+and the binding is initialised and mutable; `false` otherwise. -/
+def vmSetUp (env hops idx : Nat) (x : String) (v : Value) : M Bool := do
+  let h ← get
+  let e := h.envUp hops env
+  let en := h.envs.getD e default
+  match en.names[idx]?, en.vals[idx]? with
+  | some y, some old =>
+    if y == x && en.mutableAt idx then
+      match old with
+      | .hole => pure false
+      | _ => setSlot e idx v; pure true
+    else pure false
+  | _, _ => pure false
+
+/-- The slow path of a global name: the lookup, and the cache learns the slot. -/
+def vmGlobalMiss : Nat → Nat → String → Nat → Bool → M Value
+  | 0, _, _, _, _ => throw (.halt "fuel")
+  | n + 1, env, x, site, strict => do
+    let v ← lookup n { env, thisV := .undef, strict } x
+    let h ← get
+    if (h.findEnv x 100000 env).isNone then
+      match (h.obj h.realm.globalObj).props.slot? x with
+      | some slot => set { h with globalCache := h.globalCache.setIfInBounds site slot }
+      | none => pure ()
+    pure v
+termination_by structural n _ _ _ _ => n
+
+/-- The unary operators, as the evaluator does them. -/
+def vmUnary : Nat → UnOp → Value → M Value
+  | 0, _, _ => throw (.halt "fuel")
+  | n + 1, op, v => do
+    match op with
+    | .neg => match ← toPrim n v "number" with
+      | .big i => pure (.big (-i))
+      | p => pure (.num (-(← toNum n p)))
+    | .plus => pure (.num (← toNum n v))
+    | .not => pure (.bool !(toBool v))
+    | .bnot => match ← toPrim n v "number" with
+      | .big i => pure (.big (-i - 1))
+      | p => pure (intV (-(toInt32 (← toNum n p)) - 1))
+    | .typeof => pure (.str (← typeOf v))
+    | .void => pure .undef
+    | .delete => pure (.bool true)
+termination_by structural n _ _ => n
+
+/-- `b[kv]`, as the evaluator's `.index` arm does it. -/
+def vmGetIndex : Nat → Value → Value → M Value
+  | 0, _, _ => throw (.halt "fuel")
+  | n + 1, b, kv => do
+    match b, kv with
+    | .obj id, .num x =>
+      match (← getObj id).kind with
+      | .array es =>
+        if x ≥ 0 && x < Float.ofNat es.size && x.floor == x then pure (es.getD x.toUInt64.toNat .undef)
+        else getV n b (← toKey n kv)
+      | _ => getV n b (← toKey n kv)
+    | _, _ =>
+      if let .undef := b then throwErr .type "Cannot read properties of undefined"
+      if let .null := b then throwErr .type "Cannot read properties of null"
+      getV n b (← toKey n kv)
+termination_by structural n _ _ => n
+
+/-- Run a compiled function: registers `bp` up. -/
+def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Value → FloatArray → M Value
+  | 0, _, _, _, _, _, regs, fregs => do vmStash regs fregs 0; throw (.halt "fuel")
+  | n + 1, code, pc, bp, env, fr, regs, fregs => do
+    match code.instrs[pc]! with
+    | .move dst src =>
+      match regs[bp + src]! with
+      | .fl => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) (fregs.get! (bp + src)))
+      | v => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) v) fregs
+    | .loadF dst x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+    | .loadV dst v => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) v) fregs
+    | .setHole r => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + r) .hole) fregs
+    | .checkInit r x =>
+      match regs[bp + r]! with
+      | .hole =>
+        vmStash regs fregs (bp + code.nregs)
+        throwErr .reference s!"Cannot access '{x}' before initialization"
+      | _ => vmLoop n code (pc + 1) bp env fr regs fregs
+    | .add dst a b =>
+      match regs[bp + a]!, regs[bp + b]! with
+      | .fl, .fl => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) (fregs.get! (bp + a) + fregs.get! (bp + b)))
+      | _, _ =>
+        let x := vmRd regs fregs (bp + a)
+        let y := vmRd regs fregs (bp + b)
+        vmStash regs fregs (bp + code.nregs)
+        let v ← binop n .add x y
+        let (regs, fregs) ← vmTake
+        match (v) with
+          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+    | .sub dst a b =>
+      match regs[bp + a]!, regs[bp + b]! with
+      | .fl, .fl => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) (fregs.get! (bp + a) - fregs.get! (bp + b)))
+      | _, _ =>
+        let x := vmRd regs fregs (bp + a)
+        let y := vmRd regs fregs (bp + b)
+        vmStash regs fregs (bp + code.nregs)
+        let v ← binop n .sub x y
+        let (regs, fregs) ← vmTake
+        match (v) with
+          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+    | .mul dst a b =>
+      match regs[bp + a]!, regs[bp + b]! with
+      | .fl, .fl => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) (fregs.get! (bp + a) * fregs.get! (bp + b)))
+      | _, _ =>
+        let x := vmRd regs fregs (bp + a)
+        let y := vmRd regs fregs (bp + b)
+        vmStash regs fregs (bp + code.nregs)
+        let v ← binop n .mul x y
+        let (regs, fregs) ← vmTake
+        match (v) with
+          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+    | .div dst a b =>
+      match regs[bp + a]!, regs[bp + b]! with
+      | .fl, .fl => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) (fregs.get! (bp + a) / fregs.get! (bp + b)))
+      | _, _ =>
+        let x := vmRd regs fregs (bp + a)
+        let y := vmRd regs fregs (bp + b)
+        vmStash regs fregs (bp + code.nregs)
+        let v ← binop n .div x y
+        let (regs, fregs) ← vmTake
+        match (v) with
+          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+    | .lt dst a b =>
+      match regs[bp + a]!, regs[bp + b]! with
+      | .fl, .fl =>
+        if fregs.get! (bp + a) < fregs.get! (bp + b) then vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool true)) fregs
+        else vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool false)) fregs
+      | _, _ =>
+        let x := vmRd regs fregs (bp + a)
+        let y := vmRd regs fregs (bp + b)
+        vmStash regs fregs (bp + code.nregs)
+        let v ← binop n .lt x y
+        let (regs, fregs) ← vmTake
+        match (v) with
+          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+    | .gt dst a b =>
+      match regs[bp + a]!, regs[bp + b]! with
+      | .fl, .fl =>
+        if fregs.get! (bp + a) > fregs.get! (bp + b) then vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool true)) fregs
+        else vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool false)) fregs
+      | _, _ =>
+        let x := vmRd regs fregs (bp + a)
+        let y := vmRd regs fregs (bp + b)
+        vmStash regs fregs (bp + code.nregs)
+        let v ← binop n .gt x y
+        let (regs, fregs) ← vmTake
+        match (v) with
+          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+    | .le dst a b =>
+      match regs[bp + a]!, regs[bp + b]! with
+      | .fl, .fl =>
+        if fregs.get! (bp + a) ≤ fregs.get! (bp + b) then vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool true)) fregs
+        else vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool false)) fregs
+      | _, _ =>
+        let x := vmRd regs fregs (bp + a)
+        let y := vmRd regs fregs (bp + b)
+        vmStash regs fregs (bp + code.nregs)
+        let v ← binop n .le x y
+        let (regs, fregs) ← vmTake
+        match (v) with
+          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+    | .ge dst a b =>
+      match regs[bp + a]!, regs[bp + b]! with
+      | .fl, .fl =>
+        if fregs.get! (bp + a) ≥ fregs.get! (bp + b) then vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool true)) fregs
+        else vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool false)) fregs
+      | _, _ =>
+        let x := vmRd regs fregs (bp + a)
+        let y := vmRd regs fregs (bp + b)
+        vmStash regs fregs (bp + code.nregs)
+        let v ← binop n .ge x y
+        let (regs, fregs) ← vmTake
+        match (v) with
+          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+    | .addK dst a k =>
+      match regs[bp + a]! with
+      | .fl => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) (fregs.get! (bp + a) + k))
+      | _ =>
+        let x := vmRd regs fregs (bp + a)
+        vmStash regs fregs (bp + code.nregs)
+        let v ← binop n .add x (.num k)
+        let (regs, fregs) ← vmTake
+        match v with
+        | .num r => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) r)
+        | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+    | .subK dst a k =>
+      match regs[bp + a]! with
+      | .fl => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) (fregs.get! (bp + a) - k))
+      | _ =>
+        let x := vmRd regs fregs (bp + a)
+        vmStash regs fregs (bp + code.nregs)
+        let v ← binop n .sub x (.num k)
+        let (regs, fregs) ← vmTake
+        match v with
+        | .num r => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) r)
+        | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+    | .mulK dst a k =>
+      match regs[bp + a]! with
+      | .fl => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) (fregs.get! (bp + a) * k))
+      | _ =>
+        let x := vmRd regs fregs (bp + a)
+        vmStash regs fregs (bp + code.nregs)
+        let v ← binop n .mul x (.num k)
+        let (regs, fregs) ← vmTake
+        match v with
+        | .num r => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) r)
+        | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+    | .jnltK a k t =>
+      match regs[bp + a]! with
+      | .fl =>
+        if fregs.get! (bp + a) < k then vmLoop n code (pc + 1) bp env fr regs fregs
+        else vmLoop n code t bp env fr regs fregs
+      | _ =>
+        let x := vmRd regs fregs (bp + a)
+        vmStash regs fregs (bp + code.nregs)
+        let v ← binop n .lt x (.num k)
+        let (regs, fregs) ← vmTake
+        if toBool v then vmLoop n code (pc + 1) bp env fr regs fregs else vmLoop n code t bp env fr regs fregs
+    | .jngtK a k t =>
+      match regs[bp + a]! with
+      | .fl =>
+        if fregs.get! (bp + a) > k then vmLoop n code (pc + 1) bp env fr regs fregs
+        else vmLoop n code t bp env fr regs fregs
+      | _ =>
+        let x := vmRd regs fregs (bp + a)
+        vmStash regs fregs (bp + code.nregs)
+        let v ← binop n .gt x (.num k)
+        let (regs, fregs) ← vmTake
+        if toBool v then vmLoop n code (pc + 1) bp env fr regs fregs else vmLoop n code t bp env fr regs fregs
+    | .jnleK a k t =>
+      match regs[bp + a]! with
+      | .fl =>
+        if fregs.get! (bp + a) ≤ k then vmLoop n code (pc + 1) bp env fr regs fregs
+        else vmLoop n code t bp env fr regs fregs
+      | _ =>
+        let x := vmRd regs fregs (bp + a)
+        vmStash regs fregs (bp + code.nregs)
+        let v ← binop n .le x (.num k)
+        let (regs, fregs) ← vmTake
+        if toBool v then vmLoop n code (pc + 1) bp env fr regs fregs else vmLoop n code t bp env fr regs fregs
+    | .jngeK a k t =>
+      match regs[bp + a]! with
+      | .fl =>
+        if fregs.get! (bp + a) ≥ k then vmLoop n code (pc + 1) bp env fr regs fregs
+        else vmLoop n code t bp env fr regs fregs
+      | _ =>
+        let x := vmRd regs fregs (bp + a)
+        vmStash regs fregs (bp + code.nregs)
+        let v ← binop n .ge x (.num k)
+        let (regs, fregs) ← vmTake
+        if toBool v then vmLoop n code (pc + 1) bp env fr regs fregs else vmLoop n code t bp env fr regs fregs
+    | .seq dst a b =>
+      match regs[bp + a]!, regs[bp + b]! with
+      | .fl, .fl =>
+        if fregs.get! (bp + a) == fregs.get! (bp + b) then vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool true)) fregs
+        else vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool false)) fregs
+      | _, _ =>
+        let r := strictEq (vmRd regs fregs (bp + a)) (vmRd regs fregs (bp + b))
+        vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (if r then .bool true else .bool false)) fregs
+    | .sne dst a b =>
+      match regs[bp + a]!, regs[bp + b]! with
+      | .fl, .fl =>
+        if fregs.get! (bp + a) == fregs.get! (bp + b) then vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool false)) fregs
+        else vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool true)) fregs
+      | _, _ =>
+        let r := strictEq (vmRd regs fregs (bp + a)) (vmRd regs fregs (bp + b))
+        vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (if r then .bool false else .bool true)) fregs
+    | .binop op dst a b =>
+      let x := vmRd regs fregs (bp + a)
+      let y := vmRd regs fregs (bp + b)
+      vmStash regs fregs (bp + code.nregs)
+      let v ← binop n op x y
+      let (regs, fregs) ← vmTake
+      match (v) with
+          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+    | .inc nw old src up =>
+      match regs[bp + src]! with
+      | .fl =>
+        let x := fregs.get! (bp + src)
+        let d := if up then x + 1 else x - 1
+        vmLoop n code (pc + 1) bp env fr (regs.set! (bp + old) .fl |>.set! (bp + nw) .fl) (fregs.set! (bp + old) x |>.set! (bp + nw) d)
+      | _ =>
+        let v := vmRd regs fregs (bp + src)
+        vmStash regs fregs (bp + code.nregs)
+        let (o, nv) ← match ← toPrim n v "number" with
+          | .big i => pure (Value.big i, Value.big (if up then i + 1 else i - 1))
+          | p =>
+            let x ← toNum n p
+            pure (Value.num x, Value.num (if up then x + 1 else x - 1))
+        let (regs, fregs) ← vmTake
+        let regs := regs.set! (bp + old) o
+        match (nv) with
+          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + nw) .fl) (fregs.set! (bp + nw) x)
+          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + nw) wv) fregs
+    | .unop op dst a =>
+      match op, regs[bp + a]! with
+      | .neg, .fl => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) (-(fregs.get! (bp + a))))
+      | .plus, .fl => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) (fregs.get! (bp + a)))
+      | _, _ =>
+        let x := vmRd regs fregs (bp + a)
+        vmStash regs fregs (bp + code.nregs)
+        let v ← vmUnary n op x
+        let (regs, fregs) ← vmTake
+        match (v) with
+          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+    | .not dst a =>
+      match regs[bp + a]! with
+      | .fl =>
+        let x := fregs.get! (bp + a)
+        if x == 0 || x.isNaN then vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool true)) fregs
+        else vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (.bool false)) fregs
+      | v => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (if toBool v then .bool false else .bool true)) fregs
+    | .jmp t => vmLoop n code t bp env fr regs fregs
+    | .jf a t =>
+      match regs[bp + a]! with
+      | .fl =>
+        let x := fregs.get! (bp + a)
+        if x == 0 || x.isNaN then vmLoop n code t bp env fr regs fregs else vmLoop n code (pc + 1) bp env fr regs fregs
+      | v => if toBool v then vmLoop n code (pc + 1) bp env fr regs fregs else vmLoop n code t bp env fr regs fregs
+    | .jt a t =>
+      match regs[bp + a]! with
+      | .fl =>
+        let x := fregs.get! (bp + a)
+        if x == 0 || x.isNaN then vmLoop n code (pc + 1) bp env fr regs fregs else vmLoop n code t bp env fr regs fregs
+      | v => if toBool v then vmLoop n code t bp env fr regs fregs else vmLoop n code (pc + 1) bp env fr regs fregs
+    | .jnull a t =>
+      match regs[bp + a]! with
+      | .undef | .null => vmLoop n code t bp env fr regs fregs
+      | _ => vmLoop n code (pc + 1) bp env fr regs fregs
+    | .jnotnull a t =>
+      match regs[bp + a]! with
+      | .undef | .null => vmLoop n code (pc + 1) bp env fr regs fregs
+      | _ => vmLoop n code t bp env fr regs fregs
+    | .jnlt a b t =>
+      match regs[bp + a]!, regs[bp + b]! with
+      | .fl, .fl =>
+        if fregs.get! (bp + a) < fregs.get! (bp + b) then vmLoop n code (pc + 1) bp env fr regs fregs
+        else vmLoop n code t bp env fr regs fregs
+      | _, _ =>
+        let x := vmRd regs fregs (bp + a)
+        let y := vmRd regs fregs (bp + b)
+        vmStash regs fregs (bp + code.nregs)
+        let v ← binop n .lt x y
+        let (regs, fregs) ← vmTake
+        if toBool v then vmLoop n code (pc + 1) bp env fr regs fregs else vmLoop n code t bp env fr regs fregs
+    | .jngt a b t =>
+      match regs[bp + a]!, regs[bp + b]! with
+      | .fl, .fl =>
+        if fregs.get! (bp + a) > fregs.get! (bp + b) then vmLoop n code (pc + 1) bp env fr regs fregs
+        else vmLoop n code t bp env fr regs fregs
+      | _, _ =>
+        let x := vmRd regs fregs (bp + a)
+        let y := vmRd regs fregs (bp + b)
+        vmStash regs fregs (bp + code.nregs)
+        let v ← binop n .gt x y
+        let (regs, fregs) ← vmTake
+        if toBool v then vmLoop n code (pc + 1) bp env fr regs fregs else vmLoop n code t bp env fr regs fregs
+    | .jnle a b t =>
+      match regs[bp + a]!, regs[bp + b]! with
+      | .fl, .fl =>
+        if fregs.get! (bp + a) ≤ fregs.get! (bp + b) then vmLoop n code (pc + 1) bp env fr regs fregs
+        else vmLoop n code t bp env fr regs fregs
+      | _, _ =>
+        let x := vmRd regs fregs (bp + a)
+        let y := vmRd regs fregs (bp + b)
+        vmStash regs fregs (bp + code.nregs)
+        let v ← binop n .le x y
+        let (regs, fregs) ← vmTake
+        if toBool v then vmLoop n code (pc + 1) bp env fr regs fregs else vmLoop n code t bp env fr regs fregs
+    | .jnge a b t =>
+      match regs[bp + a]!, regs[bp + b]! with
+      | .fl, .fl =>
+        if fregs.get! (bp + a) ≥ fregs.get! (bp + b) then vmLoop n code (pc + 1) bp env fr regs fregs
+        else vmLoop n code t bp env fr regs fregs
+      | _, _ =>
+        let x := vmRd regs fregs (bp + a)
+        let y := vmRd regs fregs (bp + b)
+        vmStash regs fregs (bp + code.nregs)
+        let v ← binop n .ge x y
+        let (regs, fregs) ← vmTake
+        if toBool v then vmLoop n code (pc + 1) bp env fr regs fregs else vmLoop n code t bp env fr regs fregs
+    | .tick =>
+      tick
+      vmLoop n code (pc + 1) bp env fr regs fregs
+    | .getGlobal dst x site =>
+      let h ← get
+      match vmGlobalHit h env x site with
+      | .num xf => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) xf)
+      | .hole =>
+        vmStash regs fregs (bp + code.nregs)
+        let v ← vmGlobalMiss n env x site code.strict
+        let (regs, fregs) ← vmTake
+        match v with
+        | .num xf => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) xf)
+        | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+      | v => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) v) fregs
+    | .setGlobal src x site =>
+      let v := vmRd regs fregs (bp + src)
+      if ← vmGlobalSet env x site v then
+        vmLoop n code (pc + 1) bp env fr regs fregs
+      else
+        vmStash regs fregs (bp + code.nregs)
+        assignName n { env, thisV := .undef, strict := code.strict } x v
+        let h ← get
+        if (h.findEnv x 100000 env).isNone then
+          match (h.obj h.realm.globalObj).props.slot? x with
+          | some slot => set { h with globalCache := h.globalCache.setIfInBounds site slot }
+          | none => pure ()
+        let (regs, fregs) ← vmTake
+        vmLoop n code (pc + 1) bp env fr regs fregs
+    | .typeofGlobal dst x =>
+      vmStash regs fregs (bp + code.nregs)
+      let h ← get
+      let v ← if (h.findEnv x 100000 env).isNone && (h.findProp h.realm.globalObj x 1000).isNone then
+          pure (Value.str "undefined")
+        else pure (.str (← typeOf (← lookup n { env, thisV := .undef, strict := code.strict } x)))
+      let (regs, fregs) ← vmTake
+      match (v) with
+          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+    | .getUp dst hops idx x =>
+      let h ← get
+      let e := h.envUp hops env
+      let en := h.envs.getD e default
+      match en.names[idx]?, en.vals[idx]? with
+      | some y, some v =>
+        if y == x then
+          match v with
+          | .hole =>
+            vmStash regs fregs (bp + code.nregs)
+            throwErr .reference s!"Cannot access '{x}' before initialization"
+          | _ => match (v) with
+          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+        else
+          vmStash regs fregs (bp + code.nregs)
+          let v ← lookup n { env, thisV := .undef, strict := code.strict } x
+          let (regs, fregs) ← vmTake
+          match (v) with
+          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+      | _, _ =>
+        vmStash regs fregs (bp + code.nregs)
+        let v ← lookup n { env, thisV := .undef, strict := code.strict } x
+        let (regs, fregs) ← vmTake
+        match (v) with
+          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+    | .setUp src hops idx x =>
+      let v := vmRd regs fregs (bp + src)
+      if ← vmSetUp env hops idx x v then
+        vmLoop n code (pc + 1) bp env fr regs fregs
+      else
+        vmStash regs fregs (bp + code.nregs)
+        assignName n { env, thisV := .undef, strict := code.strict } x v
+        let (regs, fregs) ← vmTake
+        vmLoop n code (pc + 1) bp env fr regs fregs
+    | .getMember dst o k =>
+      let b := vmRd regs fregs (bp + o)
+      match (← get).fastGetV b k with
+      | .hole =>
+        vmStash regs fregs (bp + code.nregs)
+        let v ← getV n b k
+        let (regs, fregs) ← vmTake
+        match (v) with
+          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+      | v => match (v) with
+          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+    | .setMember o k src =>
+      let b := vmRd regs fregs (bp + o)
+      let v := vmRd regs fregs (bp + src)
+      vmStash regs fregs (bp + code.nregs)
+      putV n b k v code.strict
+      let (regs, fregs) ← vmTake
+      vmLoop n code (pc + 1) bp env fr regs fregs
+    | .getIndex dst o i =>
+      let b := vmRd regs fregs (bp + o)
+      match b, regs[bp + i]! with
+      | .obj id, .fl =>
+        let x := fregs.get! (bp + i)
+        match (← get).obj id |>.kind with
+        | .array es =>
+          if x ≥ 0 && x < Float.ofNat es.size && x.floor == x then
+            match ((es.getD x.toUInt64.toNat .undef)) with
+          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+          else
+            vmStash regs fregs (bp + code.nregs)
+            let v ← getV n b (keyOfNum x)
+            let (regs, fregs) ← vmTake
+            match (v) with
+          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+        | _ =>
+          vmStash regs fregs (bp + code.nregs)
+          let v ← getV n b (keyOfNum x)
+          let (regs, fregs) ← vmTake
+          match (v) with
+          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+      | _, _ =>
+        let kv := vmRd regs fregs (bp + i)
+        vmStash regs fregs (bp + code.nregs)
+        let v ← vmGetIndex n b kv
+        let (regs, fregs) ← vmTake
+        match (v) with
+          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+    | .setIndex o i src =>
+      let b := vmRd regs fregs (bp + o)
+      let kv := vmRd regs fregs (bp + i)
+      let v := vmRd regs fregs (bp + src)
+      vmStash regs fregs (bp + code.nregs)
+      if let .undef := b then throwErr .type "Cannot read properties of undefined"
+      if let .null := b then throwErr .type "Cannot read properties of null"
+      match b, kv with
+      | .obj id, .num x =>
+        let isIdx := x ≥ 0 && x < 4294967295.0 && x.floor == x
+        let done ← if isIdx then setElem id x.toUInt64.toNat v else pure false
+        if !done then putV n b (keyOfNum x) v code.strict
+      | _, _ =>
+        let key ← toKey n kv
+        putV n b key v code.strict
+      let (regs, fregs) ← vmTake
+      vmLoop n code (pc + 1) bp env fr regs fregs
+    | .call dst f thisR base k what =>
+      let fv := vmRd regs fregs (bp + f)
+      let thisV := if thisR == noReg then Value.undef else vmRd regs fregs (bp + thisR)
+      let h ← get
+      let callee := match fv with
+        | .obj id => match (h.obj id).kind with
+          | .closure fd cenv capThis _ _ _ => match fd.info.code with
+            | some c => some (c, cenv, capThis)
+            | none => none
+          | _ => none
+        | _ => none
+      -- a primitive `this` for a sloppy function needs an object made: the general path
+      let primThis := match thisV with | .undef | .null | .obj _ => false | _ => true
+      let callee := match callee with
+        | some (c, cenv, capThis) => if primThis && !c.isArrow && !c.strict then none else some (c, cenv, capThis)
+        | none => none
+      match callee with
+      | some (c, cenv, capThis) =>
+        tick
+        let depth := (match fr with | f0 :: _ => f0.depth + 1 | [] => 1)
+        if depth > vmMaxDepth then
+          vmStash regs fregs (bp + code.nregs)
+          throwErr .range "Maximum call stack size exceeded"
+        let bp' := bp + base
+        let need := bp' + c.nregs + 1
+        let regs := vmGrowRegs regs need
+        let fregs := vmGrowF fregs need
+        -- missing arguments are undefined, extra ones are not read; the rest of the frame is cleared
+        let regs := vmClear regs (bp' + Nat.min k c.nparams) (c.nvars - Nat.min k c.nparams)
+        let thisC ← if c.isArrow then pure capThis
+          else if c.strict then pure thisV
+          else match thisV with
+            | .undef | .null => pure (.obj (← realm).globalObj)
+            | _ => pure thisV
+        let regs := match c.thisReg with
+          | some r => regs.set! (bp' + r) thisC
+          | none => regs
+        let frame : VFrame := { code, pc := pc + 1, bp, env, dst, depth }
+        vmLoop n c 0 bp' cenv (frame :: fr) regs fregs
+      | none =>
+        let args := vmArgs regs fregs (bp + base) k (Array.emptyWithCapacity k)
+        vmStash regs fregs (bp + code.nregs)
+        if !(← isCallable fv) then throwErr .type s!"{what} is not a function"
+        let v ← callV n fv thisV args
+        let (regs, fregs) ← vmTake
+        match (v) with
+          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+    | .new dst f base k what =>
+      let fv := vmRd regs fregs (bp + f)
+      let args := vmArgs regs fregs (bp + base) k (Array.emptyWithCapacity k)
+      vmStash regs fregs (bp + code.nregs)
+      if !(← isConstructor fv) then throwErr .type s!"{what} is not a constructor"
+      let v ← construct n fv args fv
+      let (regs, fregs) ← vmTake
+      match (v) with
+          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+    | .ret a =>
+      let v := if a == noReg then Value.undef else vmRd regs fregs (bp + a)
+      match fr with
+      | [] =>
+        vmStash regs fregs bp
+        pure v
+      | f0 :: rest =>
+        match v with
+        | .num x => vmLoop n f0.code f0.pc f0.bp f0.env rest (regs.set! (f0.bp + f0.dst) .fl) (fregs.set! (f0.bp + f0.dst) x)
+        | _ => vmLoop n f0.code f0.pc f0.bp f0.env rest (regs.set! (f0.bp + f0.dst) v) fregs
+    | .arr dst base k =>
+      let es := vmArgs regs fregs (bp + base) k (Array.emptyWithCapacity k)
+      let a ← newArray es
+      vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) a) fregs
+    | .obj dst =>
+      let id ← newObject
+      vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (.obj id)) fregs
+    | .defProp o k src =>
+      let v := vmRd regs fregs (bp + src)
+      match regs[bp + o]! with
+      | .obj id => defineOwn id k (.data v true true true); vmLoop n code (pc + 1) bp env fr regs fregs
+      | _ => vmLoop n code (pc + 1) bp env fr regs fregs
+    | .throw a =>
+      let v := vmRd regs fregs (bp + a)
+      vmStash regs fregs (bp + code.nregs)
+      throw (.throw v)
+termination_by structural n _ _ _ _ _ _ _ => n
+
+/-- Enter a compiled function from the evaluator. -/
+def vmEnter : Nat → Code → Nat → Value → Value → Array Value → M Value
+  | 0, _, _, _, _, _ => throw (.halt "fuel")
+  | n + 1, c, env, capThis, thisV, args => do
+    let thisC ← if c.isArrow then pure capThis
+      else if c.strict then pure thisV
+      else match thisV with
+        | .undef | .null => pure (.obj (← realm).globalObj)
+        | .obj _ => pure thisV
+        | v => do pure (.obj (← toObj n v))
+    let base := (← get).vmTop
+    let (regs, fregs) ← vmTake
+    let need := base + c.nregs + 1
+    let regs := vmGrowRegs regs need
+    let fregs := vmGrowF fregs need
+    let k := Nat.min args.size c.nparams
+    let (regs, fregs) := vmFill regs fregs base args k 0
+    let regs := vmClear regs (base + k) (c.nvars - k)
+    let regs := match c.thisReg with
+      | some r => regs.set! (base + r) thisC
+      | none => regs
+    tryCatch (do
+        let v ← vmLoop n c 0 base env [] regs fregs
+        modify fun h => { h with vmTop := base }
+        pure v)
+      fun e => do
+        modify fun h => { h with vmTop := base }
+        throw e
+termination_by structural n _ _ _ _ _ => n
+
+
 def genericPush : Nat → Value → Array Value → M Value
   | 0, _, _ => throw (.halt "fuel")
   | n + 1, thisV, args => do
@@ -4246,7 +5535,7 @@ def jsonStr : Nat → Value → Nat → M Value
         if ← isCallable tj then callV n tj v #[] else pure v
       | _ => pure v
     match v with
-    | .undef => pure .undef
+    | .hole | .fl | .undef => pure .undef
     | .null => pure (.str "null")
     | .bool b => pure (.str (if b then "true" else "false"))
     | .num x => pure (.str (if x.isFinite then numToString x else "null"))
@@ -4279,7 +5568,7 @@ def regexExec : Nat → Value → String → M (Option (Array (Option (Nat × Na
   | 0, _, _ => throw (.halt "fuel")
   | n + 1, rv, s => do
     let (re, _, _) ← regexpOf rv
-    let cs := charsOf s
+    let cs ← cachedChars s
     let g := re.flags.global || re.flags.sticky
     let li ← if g then do pure (toIntegerOrInf (← toNum n (← getV n rv "lastIndex"))) else pure 0
     let start := if li ≤ 0 then 0 else li.toUInt64.toNat
@@ -4288,14 +5577,15 @@ def regexExec : Nat → Value → String → M (Option (Array (Option (Nat × Na
       return none
     -- The matcher's own fuel bounds one match (Re.matchFuel); the steps count it, so a
     -- loop of matches over a long string stops at the budget.
-    charge (cs.size / 64 + 1)
     match Re.exec re cs start with
     | none =>
+      charge ((cs.size - start) / 64 + 1)
       if g then putV n rv "lastIndex" (.num 0) true
       pure none
     | some caps =>
+      let e := match caps[0]? with | some (some (_, b)) => b | _ => start
+      charge ((e - start) / 64 + 1)
       if g then
-        let e := match caps[0]? with | some (some (_, b)) => b | _ => start
         putV n rv "lastIndex" (.num (Float.ofNat e)) true
       pure (some caps)
 termination_by structural n _ _ => n
@@ -4305,9 +5595,10 @@ termination_by structural n _ _ => n
 def matchArray : Nat → Re.Compiled → String → Array (Option (Nat × Nat)) → M Value
   | 0, _, _, _ => throw (.halt "fuel")
   | _ + 1, re, s, caps => do
-    let cs := charsOf s
+    let cs ← cachedChars s
+    let ascii := Str.isAscii s
     let vals := caps.map fun c => match c with
-      | some (a, b) => Value.str (Str.ofUnitChars (cs.extract a b))
+      | some (a, b) => Value.str (if ascii then Str.sliceUnits s a b else Str.ofUnitChars (cs.extract a b))
       | none => .undef
     let arr ← newArray vals
     let .obj aid := arr | pure arr
@@ -6331,7 +7622,7 @@ def describeThrown (h : HeapOf H) (v : Value) : String :=
   | .error _ _ => "(an exception whose string conversion threw)"
 
 def runScript (h : HeapOf H) (src : String) (strict : Bool := false) : Outcome × HeapOf H :=
-  match parseScript src strict with
+  match (parseScript src strict).map Resolve.script with
   | .error e => (.syntaxError e, h)
   | .ok s =>
     match (runScriptM s : M Unit).run h with
@@ -6347,7 +7638,7 @@ checkpoint when its event loop says (`checkpoint`). -/
 
 /-- Run a classic script, with no microtask checkpoint after it. -/
 def evalScript (h : HeapOf H) (src : String) : Outcome × HeapOf H :=
-  match parseScript src false with
+  match (parseScript src false).map Resolve.script with
   | .error e => (.syntaxError e, h)
   | .ok s =>
     match (runScriptM s false : M Unit).run h with

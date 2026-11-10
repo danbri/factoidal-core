@@ -1,3 +1,4 @@
+import Std.Data.HashMap
 import L4Factoidal.JS.Syntax
 import L4Factoidal.JS.Number
 
@@ -496,7 +497,7 @@ def parseFor : Nat → P Stmt
         | some (.decl .var [Decl.mk (.id x) (some _)]) =>
           if isOf || (← get).strict then fail "for-in/of declarations may not have initializers"
           pure (some DeclKind.var, Pat.id x)
-        | some (.decl _ _) => fail "invalid for-in/of declaration"
+        | some (.decl _ _) | some (.letOnce _) => fail "invalid for-in/of declaration"
         | some (.expr e) =>
           match exprToPat 64 e with
           | some p => pure (none, p)
@@ -603,7 +604,7 @@ def parseBody : Nat → Option String → List PatElem → Option Pat → FunKin
                      loops := outer.loops, breakables := outer.breakables, labels := outer.labels,
                      inGen := outer.inGen, inAsync := outer.inAsync, usesArgs := outer.usesArgs || (arrow && usesArgs) }
     return FunDef.mk name params rest body inner.vars.toList (usesArgs && !arrow) strict kind
-      (gen == 1 || gen == 3) (gen == 2 || gen == 3)
+      (gen == 1 || gen == 3) (gen == 2 || gen == 3) {}
 
 /-- An arrow function after its parameters and `=>`. -/
 def parseArrowBody : Nat → List PatElem → Option Pat → Nat → P Expr
@@ -615,7 +616,7 @@ def parseArrowBody : Nat → List PatElem → Option Pat → Nat → P Expr
     let e ← parseAssign n false
     let inner ← get
     set { inner with vars := outer.vars, inFun := outer.inFun, inAsync := outer.inAsync, inGen := outer.inGen }
-    return .func (FunDef.mk none params rest [.ret (some e)] inner.vars.toList false outer.strict .arrow false (coro == 2))
+    return .func (FunDef.mk none params rest [.ret (some e)] inner.vars.toList false outer.strict .arrow false (coro == 2) {})
 
 def parseExpr : Nat → Bool → P Expr
   | 0, _ => fail "parser fuel exhausted"
@@ -1151,7 +1152,7 @@ def parseMembers : Nat → Bool → Option FunDef → List Member → P (Option 
       let init ← if ← atP "=" then advance; pure (some (← parseAssign n false)) else pure none
       set { (← get) with vars := outer.vars, inFun := outer.inFun }
       semi
-      let f := FunDef.mk none [] none [.ret init] [] false true .method false false
+      let f := FunDef.mk none [] none [.ret init] [] false true .method false false {}
       parseMembers n derived ctor (.mk static .field k f :: acc)
 
 end
@@ -1160,11 +1161,22 @@ end
 on any path from the root. -/
 def parseFuel (tokens : Nat) : Nat := 64 * tokens + 1024
 
+/-- Equal identifier texts become one `String` object: names compare by pointer first. -/
+def internToks (toks : Array Token) : Array Token :=
+  (toks.foldl (init := ((Array.emptyWithCapacity toks.size, {}) : Array Token × Std.HashMap String String))
+    fun (out, m) t =>
+      if t.kind == .ident then
+        match m.get? t.text with
+        | some s => (out.push { t with text := s }, m)
+        | none => (out.push t, m.insert t.text t.text)
+      else (out.push t, m)).1
+
 /-- Parse a script (§16.1). `strict` forces strict mode code. -/
 def parseScript (src : String) (strict : Bool := false) : Except String Script :=
   match lex src with
   | .error e => .error e
   | .ok toks =>
+    let toks := internToks toks
     let strict := strict || hasUseStrict toks 0
     let st : PState := { toks, strict }
     match (parseStmts (parseFuel toks.size) #[]).run st with
