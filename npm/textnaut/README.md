@@ -22,6 +22,20 @@ The package has no runtime npm dependencies. Deno runs it with `--allow-read --a
 --allow-net --allow-env` (read page files and the engine, load a native library, fetch pages,
 read the environment), no prompts.
 
+## Try it, and see which engine ran
+
+Each command needs [Deno](https://deno.com). `npx` runs the package with no install. Add `--timing`
+to any page command: its last line says `engine native` or `engine wasm`.
+
+| Command | Engine |
+|---|---|
+| `npx -y @foafos/textnaut https://info.cern.ch/` | Native if foafnaut is installed, else Wasm |
+| `npx -y @foafos/textnaut --wasm https://info.cern.ch/` | Wasm |
+| `FOAFNAUT_HOME=/nonexistent TEXTNAUT_CACHE=$(mktemp -d) npx -y @foafos/textnaut https://info.cern.ch/` | Wasm, downloaded as for a new user |
+
+The package holds no engine. There is a native library for macOS on Apple silicon only, and it comes
+with foafnaut. Linux uses the Wasm engine.
+
 ## Engine
 
 The first match wins:
