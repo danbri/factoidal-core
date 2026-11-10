@@ -234,6 +234,33 @@ async function nativeHostDraws(nativeEngine?:string){
 Deno.test("the native host draws Arabic, Hebrew, Devanagari, Thai and Han with no .notdef (Wasm worker)",()=>nativeHostDraws());
 Deno.test({name:"the native host draws Arabic, Hebrew, Devanagari, Thai and Han with no .notdef (native library worker)",ignore:noLibrary,fn:()=>nativeHostDraws(library)});
 
+// Arabic joining on the writing page (pages/showcase-scripts.html): each word's glyphs are the
+// joined forms HarfBuzz chooses with the same font (hb-shape 15.0.0, NotoSansArabic-Regular.ttf,
+// left to right as drawn): .init, .medi and .fina forms, the rlig lam-alef, the dots as marks.
+// A change in GSUB coverage, joining or bidi shows here as other glyph ids.
+const arabicJoined:Record<string,number[]>={
+  "مرحبا":[9,316,16,27,31,79],     // uni0627.fina dotbelowar uni066E.medi uni062D.init uni0631.fina uni0645.init
+  "بالعالم":[77,72,9,48,72,9,316,19],
+  "سلام":[74,11,71,37],              // uni0645 uni0627.fina.rlig.2 uni0644.medi.rlig uni0633.init
+  "السعر":[31,48,36,72,8],
+  "دينار":[30,9,282,16,318,21,28],
+};
+async function arabicJoins(nativeEngine?:string){
+  const client=await startCompileWorker({path:sans,family:"Noto Sans"},nativeEngine);
+  try{
+    setFontHost(async source=>{await client.pageFonts(source);});
+    const file=new URL("./pages/showcase-scripts.html",import.meta.url);
+    const page=await prepareHTML(client.engine as unknown as PageEngine,file.href,undefined,await Deno.readTextFile(file));
+    const scene=await page.compile(900,1200,{checks:false} as Record<string,unknown>) as unknown as HTMLArtifact;
+    const runs=scene.webRender.glyphRuns as {text:string;glyphs:number[][]}[];
+    const drawn:Record<string,number[]>={};
+    for(const run of runs)if(run.text in arabicJoined)drawn[run.text]=run.glyphs.map(g=>g[0]);
+    assert.deepEqual(drawn,arabicJoined);
+  }finally{setFontHost(undefined);client.terminate();}
+}
+Deno.test("Arabic on the writing page draws HarfBuzz's joined forms (Wasm worker)",()=>arabicJoins());
+Deno.test({name:"Arabic on the writing page draws HarfBuzz's joined forms (native library worker)",ignore:noLibrary,fn:()=>arabicJoins(library)});
+
 // What each page costs: a Latin page reads nothing, not even the table module; a page with
 // a character Noto Sans has reads the table only; a script outside CJK loads its font with
 // no coverage file; Han reads the coverage file once; held fonts are not asked for again.
