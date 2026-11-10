@@ -87,5 +87,5 @@ Deno.test("only a page with emoji fetches an emoji font, and only the slices it 
   assert(JSON.stringify(await emojiFamilies("<svg><text>\u{1F600}</text></svg>"))===JSON.stringify(["Noto Color Emoji Smileys","Noto Emoji"]),"SVG text emoji");
   // A page of one smiley fetches a small part of the colour font.
   const smileys=emojiFonts.find((f:{family:string})=>f.family==="Noto Color Emoji Smileys");
-  assert(smileys.bytes<200000,`the smileys slice is ${smileys.bytes} bytes`);
+  assert(smileys!==undefined&&smileys.bytes<200000,`the smileys slice is ${smileys?.bytes} bytes`);
 });
