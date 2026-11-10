@@ -275,6 +275,7 @@ async function main() {
   const planFor=(setting:string)=>plans.get(setting)??plans.get("");
   // The real time at which each session's virtual clock was 0.
   const scriptEpochs=new Map<number,number>();
+  const netQueue:{session:number;wire:NonNullable<ScriptTurn["netRequests"]>[number]}[]=[];
   // The guest module: --quickjs-wasm FILE, else a local build (tools/wasmvm/build-quickjs.sh),
   // else the one tools/fetch-builds.sh --set foafnaut-web installs.
   const installed=decodeURIComponent(new URL("../../../docs/web/hub/wasm-guests/qjs-wasmvm.wasm",import.meta.url).pathname);
@@ -303,7 +304,9 @@ async function main() {
           catch{return {width:1280,height:800,textScalePercent:150,zoomUnit:100};}})();
         const turn=await scriptCall("scriptSession",source,{action:"start",url:pageURL,resources,width:at.width,height:at.height,zoomUnit:at.zoomUnit,
           ...(at.shell?{shell:at.shell}:{}),layout:{url:pageURL,textScalePercent:at.textScalePercent,zoomUnit:at.zoomUnit,...mode},
-          ...(plan.engine==="bubblepop"?{engine:"bubblepop"}:{}),...(encoding?{encoding}:{})}) as ScriptTurn;
+          ...(plan.engine==="bubblepop"?{engine:"bubblepop"}:{}),...(encoding?{encoding}:{}),
+          ...(scriptOps.includes("net")?{network:true}:{})}) as ScriptTurn;
+        netQueue.push(...(turn.netRequests??[]).map(wire=>({session:turn.session,wire})));
         scriptEpochs.set(turn.session,performance.now()-turn.clock);sessionEngines.set(turn.session,plan.engine);
         // The start turn makes the page's GPU objects (canvas, buffers, pipelines); the later turns use them.
         if(turn.gpu?.length){gpuTurns.push({page:turn.gpuPage!,commands:turn.gpu});gpuFlush();}
@@ -392,7 +395,23 @@ async function main() {
       scriptTurn(page,turn,`pointer ${kind}`);
     }).catch(error=>console.error("Native HTML: page script pointer failed:",String(error)));
   };
+  // Page requests (XMLHttpRequest): the host only moves bytes. The engine chose them (origin,
+  // CORS, redirects, what a page may reach: Net.PageFetch), so the fetch does what it says:
+  // redirect "manual" (each hop goes back to the engine), no cookies, a body of at most 64 MiB.
+  const netFetch=async(w:NonNullable<ScriptTurn["netRequests"]>[number])=>{
+    const failed={id:w.id,status:0};
+    try{
+      const body=w.bodyBase64!==undefined?Uint8Array.from(atob(w.bodyBase64),c=>c.charCodeAt(0)):undefined;
+      const r=await fetch(w.url,{method:w.method,headers:w.headers,body,redirect:"manual",signal:AbortSignal.timeout(300000)});
+      const reader=r.body?.getReader();let total=0;const parts:Uint8Array[]=[];
+      for(;reader;){const {done,value}=await reader.read();if(done)break;total+=value.length;if(total>67108864){await reader.cancel();return failed;}parts.push(value);}
+      const bytes=new Uint8Array(total);let at=0;for(const p of parts){bytes.set(p,at);at+=p.length;}
+      let s="";for(let i=0;i<bytes.length;i+=32768)s+=String.fromCharCode(...bytes.subarray(i,i+32768));
+      return {id:w.id,status:r.status,statusText:r.statusText,headers:[...r.headers],bodyBase64:btoa(s)};
+    }catch{return failed;}
+  };
   const scriptTurn=(page:typeof document,turn:ScriptTurn,cause:string)=>{
+    netQueue.push(...(turn.netRequests??[]).map(wire=>({session:turn.session,wire})));
     for(const line of turn.logs)console.log(`page: ${line.replace(/^\u0001(\w+)\u0001/,"$1: ")}`);
     for(const line of turn.errors)console.error(`page error: ${line}`);
     trace("native-html-script",{cause,session:turn.session,clock:turn.clock,changed:turn.changed,commands:turn.commandCount,
@@ -1542,6 +1561,11 @@ async function main() {
             .finally(()=>{scriptBusy=false;});
         }
       }
+      // Page requests of any turn (the start turn's too): made here, answered by action `net`.
+      for(const {session,wire} of netQueue.splice(0))
+        netFetch(wire).then(answer=>scriptCall("scriptSession","",{action:"net",session,results:[answer]}) as Promise<ScriptTurn>)
+          .then(turn=>{if(document.script?.session===session)scriptTurn(document,turn,"net");})
+          .catch(error=>console.error("Native HTML: page request failed:",String(error)));
       // Wake at least every 8 ms to pump, sooner for the page's next timer or animation frame
       // (a fixed 8 ms paced 16 ms frames at about 21 ms); wake at once when a frame ends.
       const wakeIn=scriptsOn&&script&&script.turn.nextWake!==null

@@ -76,6 +76,9 @@ list, given only when `changed`: a host lays the page out again only then. */
 export type ScriptPlan={engine:string;name:string;run:boolean;marker:string;notice:string};
 export type ScriptTurn = {session:number;clock:number;changed:boolean;commandCount:number;commands?:unknown[];
   navigations?:{nodeId:number;url:string}[];frameLoads?:number;
+  /** Requests the page asked for (XMLHttpRequest): the policy is the engine's; the host only makes them. */
+  netRequests?:{id:number;method:string;url:string;headers:[string,string][];bodyBase64?:string}[];
+  netCancels?:number[];
   logs:string[];errors:string[];timers:number;nextTimer:number|null;frames:number;nextWake:number|null;quiet:boolean;
   instructions:number;jobs:number;tasks:number;ns:number;
   /** Lean-validated page GPU commands of this turn (L4Factoidal.PageGpu) and their page session. */
