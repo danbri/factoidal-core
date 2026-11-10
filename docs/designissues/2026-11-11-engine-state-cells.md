@@ -146,3 +146,21 @@ Left, and why:
 Not proved: that the memos in `Engine` are valid for `Engine.holds` and `Kept` (a layout
 changes the word memo and `Kept`, which by design change no layout). The refinement
 theorems above each take validity as a hypothesis.
+
+## 6. Timings (2026-11-10, M-series Mac, main `4078eafa2` against this branch, alternated runs)
+
+| Measure | main | branch |
+|---|---|---|
+| Frame engine ms p50, `pages/status.html`, 1600×1000 dpr 2 (`frame_split_bench.ts`) | 3.8–4.0 | 3.9–4.1 |
+| Same, `pages/spinal-tap-sparql.html` | 11.3–11.5 | 11.3–11.5 |
+| First compile ms, native: foaf-explorer / timers-and-clicks / json-script (`first_compile_bench.ts`) | 22–23 / 8 / 2 | 21–22 / 8 / 2 |
+| First compile ms, Wasm, same pages | 208–249 / 16–18 / 3–4 | 220–221 / 17–18 / 3 |
+| `fib(24)` page start, QuickJS-NG in WasmVM, native, wall ms | 1328–1331 | 794–803 |
+| `fib(24)` page start, BubblePopJS, native, wall ms | 28.0–28.2 | 27.5 |
+| WPT page start (Node-appendChild), QuickJS-NG, native ms (`bubblepop_bench.ts`) | 807 | 508 |
+| Timer frame mean ms, QuickJS-NG, native | 0.52 | 0.35 |
+
+The QuickJS-NG gain was not a goal. A likely cause, not checked: the old `timed` kept the
+closure `fun _ => (f s).runLocal` alive for its error path, so the session was shared and
+its arrays were copied on write; `Machine.timed` drops it. `partial_frame_test.ts` passes
+(retained bytes equal to `retained:false`).
