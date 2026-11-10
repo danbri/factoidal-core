@@ -9,7 +9,7 @@ instruction sequence is read with the bytes left as its fuel. The loops are tail
 calls, so they compile to C loops.
 
 `DecodeError.unsupported` marks a construct of a proposal that this engine does not
-run yet (relaxed SIMD, GC types, memory64, threads); the spec-test
+run yet (relaxed SIMD, memory64, threads); the spec-test
 runner counts those as not run, not as failures.
 -/
 import L4Factoidal.WasmVM.Syntax
@@ -207,6 +207,29 @@ def simdInstr (b : ByteArray) (p q k : Nat) : Except DecodeError (Instr × Nat �
     .ok (.simd k noMem 0 (UInt64.ofNat lo) (UInt64.ofNat hi), q, false)
   | some _ => .ok (.simd k noMem 0 0 0, q, false)
 
+/-- A garbage-collection instruction: `k` is the opcode number after the 0xFB prefix
+(at `p`), and `q` is the position of its immediates. -/
+def gcInstr (b : ByteArray) (p q k : Nat) : Except DecodeError (Instr × Nat × Bool) := do
+  if k == 15 || (26 ≤ k && k ≤ 30) then .ok (.gc k 0 0, q, false)
+  else if k == 2 || k == 3 || k == 4 || k == 5 || k == 8 || k == 10 || k == 17 || k == 19 then
+    let (x, q) ← u32 b q; let (y, q) ← u32 b q; .ok (.gc k x y, q, false)
+  else if k == 9 || k == 18 then
+    let (x, q) ← u32 b q; let (y, q) ← u32 b q; .ok (.gc k x y, q, true)
+  else if k ≤ 16 then
+    let (x, q) ← u32 b q; .ok (.gc k x 0, q, false)
+  else if k == 20 || k == 21 then
+    let (h, q) ← heapType b q; .ok (.refTest ⟨k == 21, h⟩, q, false)
+  else if k == 22 || k == 23 then
+    let (h, q) ← heapType b q; .ok (.refCast ⟨k == 23, h⟩, q, false)
+  else if k == 24 || k == 25 then
+    let (f, q) ← byte b q
+    if f ≥ 4 then bad "malformed br_on_cast flags" p else
+    let (l, q) ← u32 b q
+    let (h1, q) ← heapType b q
+    let (h2, q) ← heapType b q
+    .ok (.brOnCast (k == 25) l ⟨f &&& 1 != 0, h1⟩ ⟨f &&& 2 != 0, h2⟩, q, false)
+  else bad "illegal opcode" p
+
 /-- One instruction. `usesData` is set when the instruction names a data segment
 (the data-count section is then required). -/
 def instr (b : ByteArray) (p : Nat) : Except DecodeError (Instr × Nat × Bool) := do
@@ -263,7 +286,7 @@ def instr (b : ByteArray) (p : Nat) : Except DecodeError (Instr × Nat × Bool) 
       else if k ≤ 19 then unsup "0xFC instruction" p
       else bad "illegal opcode" p
   | 0xFD => let (k, q) ← u32 b q; simdInstr b p q k
-  | 0xFB => unsup "GC instruction" p
+  | 0xFB => let (k, q) ← u32 b q; gcInstr b p q k
   | 0xFE => unsup "atomic instruction" p
   -- Exception handling.
   | 0x08 => let (x, q) ← u32 b q; r (.throw x) q
@@ -287,7 +310,7 @@ def instr (b : ByteArray) (p : Nat) : Except DecodeError (Instr × Nat × Bool) 
   | 0xD4 => r .refAsNonNull q
   | 0xD5 => let (l, q) ← u32 b q; r (.brOnNull l) q
   | 0xD6 => let (l, q) ← u32 b q; r (.brOnNonNull l) q
-  | 0xD3 => unsup "GC instruction" p
+  | 0xD3 => r .refEq q
   | _ =>
     if op ≥ 0x28 && op ≤ 0x35 then
       let (m, q) ← memArg b q; r (.load loadOps[(op - 0x28).toNat]! m) q
@@ -354,15 +377,59 @@ def import_ (b : ByteArray) (p : Nat) : Except DecodeError (Import × Nat) := do
   let (d, p) ← importDesc b p
   .ok (⟨mod, nm, d⟩, p)
 
-def funcType (b : ByteArray) (p : Nat) : Except DecodeError (FuncType × Nat) := do
+def storageType (b : ByteArray) (p : Nat) : Except DecodeError (StorageType × Nat) := do
+  let t ← peek b p
+  if t == 0x78 then .ok (.i8, p + 1) else if t == 0x77 then .ok (.i16, p + 1) else
+  let (v, q) ← valType b p
+  .ok (.val v, q)
+
+def fieldType (b : ByteArray) (p : Nat) : Except DecodeError (FieldType × Nat) := do
+  let (t, p) ← storageType b p
+  let (m, q) ← byte b p
+  match m with
+  | 0 => .ok (⟨false, t⟩, q)
+  | 1 => .ok (⟨true, t⟩, q)
+  | _ => bad "malformed mutability" p
+
+def compType (b : ByteArray) (p : Nat) : Except DecodeError (CompType × Nat) := do
   let (t, q) ← byte b p
   match t with
   | 0x60 =>
     let (ps, q) ← vec valType b q
     let (rs, q) ← vec valType b q
-    .ok (⟨ps, rs⟩, q)
-  | 0x4E | 0x50 | 0x4F | 0x5F | 0x5E => unsup "GC type definition" p
+    .ok (.func ⟨ps, rs⟩, q)
+  | 0x5F => let (fs, q) ← vec fieldType b q; .ok (.struct fs, q)
+  | 0x5E => let (f, q) ← fieldType b q; .ok (.array f, q)
   | _ => bad "integer representation too long" p
+
+def subType (b : ByteArray) (p : Nat) : Except DecodeError (SubType × Nat) := do
+  let t ← peek b p
+  if t == 0x50 || t == 0x4F then
+    let (xs, q) ← vec u32 b (p + 1)
+    let (c, q) ← compType b q
+    .ok ({ final := t == 0x4F, supers := xs, comp := c }, q)
+  else
+    let (c, q) ← compType b p
+    .ok ({ comp := c }, q)
+
+/-- A recursion group: `rec` with its sub types, or one sub type. -/
+def recType (b : ByteArray) (p : Nat) : Except DecodeError (Array SubType × Nat) := do
+  let t ← peek b p
+  if t == 0x4E then vec subType b (p + 1) else
+  let (s, q) ← subType b p
+  .ok (#[s], q)
+
+/-- The type definitions of the recursion groups, in index order. -/
+def flattenRecs (gs : Array (Array SubType)) : Array TypeDef :=
+  gs.foldl (init := #[]) fun acc g =>
+    g.foldl (init := acc) fun a s => a.push { sub := s, recStart := acc.size, recSize := g.size }
+
+/-- The entry of `Module.types` for a definition (a placeholder when it is not a
+function type). -/
+def funcTypeOf (d : TypeDef) : FuncType :=
+  match d.sub.comp with
+  | .func ft => ft
+  | _ => ⟨#[], #[]⟩
 
 def table (b : ByteArray) (p : Nat) : Except DecodeError (Table × Nat) := do
   let t ← peek b p
@@ -564,7 +631,10 @@ def readSection (parallel : Bool) (b : ByteArray) (id : Nat) (p e : Nat) (s : DS
   let m := s.m
   match id with
   | 0 => let (_, q) ← name b p; if q > e then bad "unexpected end" p else .ok (s, e)
-  | 1 => let (ts, q) ← vec funcType b p; .ok ({ s with m := { m with types := ts } }, q)
+  | 1 =>
+    let (gs, q) ← vec recType b p
+    let defs := flattenRecs gs
+    .ok ({ s with m := { m with types := defs.map funcTypeOf, typeDefs := defs } }, q)
   | 2 => let (is, q) ← vec import_ b p; .ok ({ s with m := { m with imports := is } }, q)
   | 3 => let (fs, q) ← vec u32 b p; .ok ({ s with funcTypes := fs, sawFunc := true }, q)
   | 4 => let (ts, q) ← vec table b p; .ok ({ s with m := { m with tables := ts } }, q)

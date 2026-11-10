@@ -429,6 +429,259 @@ def loadW (d : M) (ea : Nat) (op : LoadOp) : Option UInt64 :=
     else .trap st stack .memOOB
   | _ => .trap st stack .unreachable
 
+/-! ### Garbage collection
+
+Structs and arrays are `Obj`s in `st.exc.gc.objs`; a reference is one slot
+(`Exec/Code.lean`, "Reference bits"). Everything here is reached from `cold`. Record:
+"GC" in docs/designissues/2026-11-07-wasmvm-engine.md. -/
+
+/-- Most elements of one array (an engine limit: 512 MiB of slots). -/
+def maxArrayLen : Nat := 1 <<< 26
+
+/-- The bits kept in an object slot for pack code `p` (`packCode`). -/
+@[inline] def packBits (p : Nat) (v : UInt64) : UInt64 :=
+  if p == 1 then v &&& 0xFF else if p == 2 then v &&& 0xFFFF else v
+
+/-- A packed slot sign-extended to an i32. -/
+def unpackSigned (p : Nat) (v : UInt64) : UInt64 :=
+  if p == 1 then v.toUInt8.toInt8.toInt32.toUInt32.toUInt64
+  else if p == 2 then v.toUInt16.toInt16.toInt32.toUInt32.toUInt64 else v
+
+/-- Write `v` into `n` slots from `i`. -/
+def fillSlots (s : Slots) (i : USize) (v : UInt64) : Nat → Slots
+  | 0 => s
+  | k + 1 => fillSlots (wr s i v) (i + 1) v k
+
+/-- `n` slots that all hold `v`. -/
+def newSlots (n : Nat) (v : UInt64) : Slots :=
+  if v == 0 then Slots.zeros n else fillSlots (Slots.zeros n) 0 v n
+
+/-- Copy `fs.size` operand-stack slots from `base` into `d`, each cut to its field's
+storage type. -/
+def packFields (d stack : Slots) (base : USize) (fs : Array FieldType) (i : Nat) : Slots :=
+  if h : i < fs.size then
+    packFields (wr d i.toUSize (packBits (packCode fs[i].type) (rd stack (base + i.toUSize)))) stack base fs (i + 1)
+  else d
+termination_by fs.size - i
+
+/-- Copy `n` operand-stack slots from `base` into `d` at `i`, cut for pack code `p`. -/
+def packSlots (d stack : Slots) (base : USize) (p : Nat) (i : USize) : Nat → Slots
+  | 0 => d
+  | k + 1 => packSlots (wr d i (packBits p (rd stack (base + i)))) stack base p (i + 1) k
+
+/-- `w` little-endian bytes of `b` at `p` (0 for a byte past the end). -/
+def leBytes (b : ByteArray) (p : Nat) : Nat → UInt64 → UInt64
+  | 0, acc => acc
+  | k + 1, acc => leBytes b p k ((acc <<< 8) ||| (b.get! (p + k)).toUInt64)
+
+/-- Write `n` elements of `w` bytes each, read from `src` at byte `off`, into `d` at `i`. -/
+def dataSlots (d : Slots) (src : ByteArray) (off w : Nat) (i : USize) : Nat → Slots
+  | 0 => d
+  | k + 1 => dataSlots (wr d i (leBytes src off w 0)) src (off + w) w (i + 1) k
+
+/-- Write `seg[s .. s+n)` into `d` at `i`. -/
+def elemSlots (d : Slots) (seg : Array UInt64) (s : Nat) (i : USize) : Nat → Slots
+  | 0 => d
+  | k + 1 => elemSlots (wr d i seg[s]!) seg (s + 1) (i + 1) k
+
+/-- The composite type of module type `x`, from the store. -/
+def gcComp (st : StoreOf M) (inst : ModuleInst) (x : Nat) : CompType :=
+  match st.gcType? inst.typeIds[x]! with
+  | some t => t.comp
+  | none => .struct #[]
+
+/-- The default bits of a field. -/
+def defaultBits : StorageType → UInt64
+  | .val t => t.zeroBits
+  | _ => 0
+
+/-- Whether reference `r` has heap type `h` (a `heapCode`), or is null and `nullable`.
+Validation gives that `r` is of the hierarchy of `h`. -/
+def refMatches (st : StoreOf M) (inst : ModuleInst) (r : UInt64) (nullable : Bool) (h : Nat) : Bool :=
+  if r == nullRef then nullable
+  -- func, extern, any, exn: every value of the hierarchy.
+  else if h == 0 || h == 1 || h == 2 || h == 10 then true
+  -- none, nofunc, noextern, noexn: no value.
+  else if h == 7 || h == 8 || h == 9 || h == 11 then false
+  else if h == 3 then r &&& hostTag == 0
+  else if h == 4 then r &&& i31Tag != 0
+  else if h == 5 || h == 6 then
+    refIsObj r && (match st.obj? r.toNat with
+      | some o => st.idKind o.type == h - 4
+      | none => false)
+  else
+    let id := inst.typeIds[h - 12]!
+    if st.idKind id == 0 then
+      match st.funcs[r.toNat]? with
+      | some fi => st.isSubId fi.typeId id
+      | none => false
+    else
+      refIsObj r && (match st.obj? r.toNat with
+        | some o => st.isSubId o.type id
+        | none => false)
+
+def trapNullStruct : Trap := .host "null structure reference"
+def trapNullArray : Trap := .host "null array reference"
+def trapNullI31 : Trap := .host "null i31 reference"
+def trapArrayOOB : Trap := .host "out of bounds array access"
+def trapCast : Trap := .host "cast failure"
+def trapArrayLimit : Trap := .host "array larger than the engine limit"
+
+/-- One garbage-collection op (`Op.gc code a b c`). The fields, by code (`GcCode`):
+`struct.new`: type, field count. `struct.new_default`: type. `struct.get*`, `struct.set`:
+field index, pack code. `array.new`: type, pack code. `array.new_default`: type, 1 when
+the element is a reference. `array.new_fixed`: type, length, pack code. `array.new_data`:
+type, data index, element bytes. `array.new_elem`: type, element segment.
+`array.get*`, `array.set`, `array.fill`: nothing, pack code. `array.init_data`: nothing,
+data index, element bytes. `array.init_elem`: nothing, element segment. `ref.test`,
+`ref.cast`: heap code, 1 when null matches. -/
+@[noinline] def gcStep (st : StoreOf M) (stack : Slots) (sp : USize) (inst : ModuleInst)
+    (c a b x : Nat) : SimdRes M :=
+  if c == GcCode.structNew then
+    let base := sp - b.toUSize
+    let fs := match gcComp st inst a with | .struct fs => fs | _ => #[]
+    let (st, addr) := st.allocObj inst.typeIds[a]! (packFields (Slots.zeros b) stack base fs 0)
+    .ok st (wr stack base addr.toUInt64) (base + 1)
+  else if c == GcCode.structNewDefault then
+    let fs := match gcComp st inst a with | .struct fs => fs | _ => #[]
+    let (st, addr) := st.allocObj inst.typeIds[a]! (fs.foldl (fun d f => d.push (defaultBits f.type)) ByteArray.empty)
+    .ok st (wr stack sp addr.toUInt64) (sp + 1)
+  else if c == GcCode.structGet || c == GcCode.structGetS || c == GcCode.structGetU then
+    let r := rd stack (sp - 1)
+    if r == nullRef then .trap st stack trapNullStruct else
+    match st.obj? r.toNat with
+    | none => .trap st stack trapNullStruct
+    | some o =>
+      let v := rd o.data a.toUSize
+      .ok st (wr stack (sp - 1) (if c == GcCode.structGetS then unpackSigned b v else v)) sp
+  else if c == GcCode.structSet then
+    let r := rd stack (sp - 2)
+    let v := packBits b (rd stack (sp - 1))
+    if r == nullRef then .trap st stack trapNullStruct else
+    .ok (st.modObj r.toNat fun d => wr d a.toUSize v) stack (sp - 2)
+  else if c == GcCode.arrayNew then
+    let n := (rd stack (sp - 1)).toNat
+    if n > maxArrayLen then .trap st stack trapArrayLimit else
+    let (st, addr) := st.allocObj inst.typeIds[a]! (newSlots n (packBits b (rd stack (sp - 2))))
+    .ok st (wr stack (sp - 2) addr.toUInt64) (sp - 1)
+  else if c == GcCode.arrayNewDefault then
+    let n := (rd stack (sp - 1)).toNat
+    if n > maxArrayLen then .trap st stack trapArrayLimit else
+    let (st, addr) := st.allocObj inst.typeIds[a]! (newSlots n (if b == 1 then nullRef else 0))
+    .ok st (wr stack (sp - 1) addr.toUInt64) sp
+  else if c == GcCode.arrayNewFixed then
+    let base := sp - b.toUSize
+    let (st, addr) := st.allocObj inst.typeIds[a]! (packSlots (Slots.zeros b) stack base x 0 b)
+    .ok st (wr stack base addr.toUInt64) (base + 1)
+  else if c == GcCode.arrayNewData then
+    let n := (rd stack (sp - 1)).toNat
+    let off := (rd stack (sp - 2)).toNat
+    let src := st.datas[inst.datas[b]!]!
+    if off + n * x > src.size then .trap st stack .memOOB else
+    let (st, addr) := st.allocObj inst.typeIds[a]! (dataSlots (Slots.zeros n) src off x 0 n)
+    .ok st (wr stack (sp - 2) addr.toUInt64) (sp - 1)
+  else if c == GcCode.arrayNewElem then
+    let n := (rd stack (sp - 1)).toNat
+    let off := (rd stack (sp - 2)).toNat
+    let seg := st.elems[inst.elems[b]!]!
+    if off + n > seg.size then .trap st stack .tableOOB else
+    let (st, addr) := st.allocObj inst.typeIds[a]! (elemSlots (Slots.zeros n) seg off 0 n)
+    .ok st (wr stack (sp - 2) addr.toUInt64) (sp - 1)
+  else if c == GcCode.arrayGet || c == GcCode.arrayGetS || c == GcCode.arrayGetU then
+    let r := rd stack (sp - 2)
+    let i := (rd stack (sp - 1)).toNat
+    if r == nullRef then .trap st stack trapNullArray else
+    match st.obj? r.toNat with
+    | none => .trap st stack trapNullArray
+    | some o =>
+      if i ≥ o.data.count then .trap st stack trapArrayOOB else
+      let v := rd o.data i.toUSize
+      .ok st (wr stack (sp - 2) (if c == GcCode.arrayGetS then unpackSigned b v else v)) (sp - 1)
+  else if c == GcCode.arraySet then
+    let r := rd stack (sp - 3)
+    let i := (rd stack (sp - 2)).toNat
+    let v := packBits b (rd stack (sp - 1))
+    if r == nullRef then .trap st stack trapNullArray else
+    match st.obj? r.toNat with
+    | none => .trap st stack trapNullArray
+    | some o =>
+      if i ≥ o.data.count then .trap st stack trapArrayOOB else
+      .ok (st.modObj r.toNat fun d => wr d i.toUSize v) stack (sp - 3)
+  else if c == GcCode.arrayLen then
+    let r := rd stack (sp - 1)
+    if r == nullRef then .trap st stack trapNullArray else
+    match st.obj? r.toNat with
+    | none => .trap st stack trapNullArray
+    | some o => .ok st (wr stack (sp - 1) o.data.count.toUInt64) sp
+  else if c == GcCode.arrayFill then
+    let r := rd stack (sp - 4)
+    let i := (rd stack (sp - 3)).toNat
+    let v := packBits b (rd stack (sp - 2))
+    let n := (rd stack (sp - 1)).toNat
+    if r == nullRef then .trap st stack trapNullArray else
+    match st.obj? r.toNat with
+    | none => .trap st stack trapNullArray
+    | some o =>
+      if i + n > o.data.count then .trap st stack trapArrayOOB else
+      .ok (st.modObj r.toNat fun d => fillSlots d i.toUSize v n) stack (sp - 4)
+  else if c == GcCode.arrayCopy then
+    let dr := rd stack (sp - 5)
+    let di := (rd stack (sp - 4)).toNat
+    let sr := rd stack (sp - 3)
+    let si := (rd stack (sp - 2)).toNat
+    let n := (rd stack (sp - 1)).toNat
+    if dr == nullRef || sr == nullRef then .trap st stack trapNullArray else
+    match st.obj? dr.toNat, st.obj? sr.toNat with
+    | some d, some s =>
+      if di + n > d.data.count || si + n > s.data.count then .trap st stack trapArrayOOB else
+      -- The source slots are copied out first, so the two arrays may be one.
+      let part := s.data.extract (8 * si) (8 * (si + n))
+      .ok (st.modObj dr.toNat fun d => part.copySlice 0 d (8 * di) (8 * n)) stack (sp - 5)
+    | _, _ => .trap st stack trapNullArray
+  else if c == GcCode.arrayInitData then
+    let r := rd stack (sp - 4)
+    let d := (rd stack (sp - 3)).toNat
+    let s := (rd stack (sp - 2)).toNat
+    let n := (rd stack (sp - 1)).toNat
+    if r == nullRef then .trap st stack trapNullArray else
+    match st.obj? r.toNat with
+    | none => .trap st stack trapNullArray
+    | some o =>
+      if d + n > o.data.count then .trap st stack trapArrayOOB else
+      let src := st.datas[inst.datas[b]!]!
+      if s + n * x > src.size then .trap st stack .memOOB else
+      .ok (st.modObj r.toNat fun dd => dataSlots dd src s x d.toUSize n) stack (sp - 4)
+  else if c == GcCode.arrayInitElem then
+    let r := rd stack (sp - 4)
+    let d := (rd stack (sp - 3)).toNat
+    let s := (rd stack (sp - 2)).toNat
+    let n := (rd stack (sp - 1)).toNat
+    if r == nullRef then .trap st stack trapNullArray else
+    match st.obj? r.toNat with
+    | none => .trap st stack trapNullArray
+    | some o =>
+      if d + n > o.data.count then .trap st stack trapArrayOOB else
+      let seg := st.elems[inst.elems[b]!]!
+      if s + n > seg.size then .trap st stack .tableOOB else
+      .ok (st.modObj r.toNat fun dd => elemSlots dd seg s d.toUSize n) stack (sp - 4)
+  else if c == GcCode.refTest then
+    .ok st (wr stack (sp - 1) (if refMatches st inst (rd stack (sp - 1)) (b == 1) a then 1 else 0)) sp
+  else if c == GcCode.refCast then
+    if refMatches st inst (rd stack (sp - 1)) (b == 1) a then .ok st stack sp else .trap st stack trapCast
+  else if c == GcCode.anyConvertExtern || c == GcCode.externConvertAny then
+    .ok st (wr stack (sp - 1) (refConvert (rd stack (sp - 1)))) sp
+  else if c == GcCode.refI31 then
+    .ok st (wr stack (sp - 1) (i31Tag ||| (rd stack (sp - 1) &&& 0x7FFFFFFF))) sp
+  else if c == GcCode.i31GetS || c == GcCode.i31GetU then
+    let r := rd stack (sp - 1)
+    if r == nullRef then .trap st stack trapNullI31 else
+    let v := r &&& 0x7FFFFFFF
+    let v := if c == GcCode.i31GetS && v &&& 0x40000000 != 0 then v ||| 0x80000000 else v
+    .ok st (wr stack (sp - 1) v) sp
+  else if c == GcOp.refEq then
+    .ok st (wr stack (sp - 2) (if rd stack (sp - 2) == rd stack (sp - 1) then 1 else 0)) (sp - 1)
+  else .trap st stack .unreachable
+
 /-- What a cold op gives: go on from these registers, or stop. -/
 inductive Cold (M : Type) where
   | go (st : StoreOf M) (stack : Slots) (sp fp pc : USize) (code : Array Op) (inst : ModuleInst) (frames : Array Frame)
@@ -555,6 +808,40 @@ Record: "Cold ops" in docs/designissues/2026-11-07-wasmvm-engine.md. -/
     .go (hiMoveDown st (sp - skip.toUSize - n.toUSize) (fp + height.toUSize) n) stack sp fp (pc + 1)
       code inst frames
   | .hiZero x n => .go (hiZero st (fp + x.toUSize) n) stack sp fp (pc + 1) code inst frames
+  -- Garbage collection.
+  | .gc c a b x =>
+    if c == GcOp.callIndirectSub || c == GcOp.returnCallIndirectSub then
+      -- `call_indirect` through a type that is not final: the function's type may be
+      -- a declared subtype of it.
+      let i := (rd stack (sp - 1)).toNat
+      let tab := st.tables[inst.tables[b]!]!
+      if i ≥ tab.elems.size then .stop st ⟨stack, sp, fp, pc, code, inst, frames⟩ (.trap .undefinedElement) else
+      let r := tab.elems[i]!
+      if r == nullRef then .stop st ⟨stack, sp, fp, pc, code, inst, frames⟩ (.trap .uninitializedElement) else
+      if !st.isSubId (st.funcs[r.toNat]!).typeId inst.typeIds[a]! then
+        .stop st ⟨stack, sp, fp, pc, code, inst, frames⟩ (.trap .indirectTypeMismatch) else
+      if c == GcOp.callIndirectSub then
+        match enterCold lim st stack (sp - 1) fp code inst frames r.toNat (pc + 1) with
+        | .ok stack sp fp code inst frames => .go st stack sp fp 0 code inst frames
+        | .host id fa args stack sp =>
+          .stop st ⟨stack, sp, fp, pc + 1, code, inst, frames⟩ (.hostCall id fa args)
+        | .trap t stack => .stop st ⟨stack, sp - 1, fp, pc, code, inst, frames⟩ (.trap t)
+      else
+        match enterTail lim st stack (sp - 1) fp r.toNat with
+        | .ok stack sp code inst => .go st stack sp fp 0 code inst frames
+        | .host id fa args stack sp =>
+          .stop st ⟨stack, sp, fp, pc + 1, code, inst, frames⟩ (.hostCall id fa args)
+        | .trap t stack => .stop st ⟨stack, sp - 1, fp, pc, code, inst, frames⟩ (.trap t)
+    else
+      match gcStep st stack sp inst c a b x with
+      | .ok st stack sp => .go st stack sp fp (pc + 1) code inst frames
+      | .trap st stack t => .stop st ⟨stack, sp, fp, pc, code, inst, frames⟩ (.trap t)
+  | .gcBr t flags ht =>
+    if refMatches st inst (rd stack (sp - 1)) (flags / 2 == 1) ht != (flags % 2 == 1) then
+      let st := hiMoveDown st (sp - t.keep.toUSize) (fp + t.height.toUSize) t.keep
+      let x := brMove stack sp fp t
+      .go st x.stack x.sp fp t.pc.toUSize code inst frames
+    else .go st stack sp fp (pc + 1) code inst frames
   | _ => .stop st ⟨stack, sp, fp, pc, code, inst, frames⟩ (.trap .unreachable)
 
 /-! ### The loop -/

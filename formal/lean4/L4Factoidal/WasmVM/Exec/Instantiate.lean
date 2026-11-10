@@ -11,6 +11,7 @@ the same suspension as any other.
 -/
 import L4Factoidal.WasmVM.Valid
 import L4Factoidal.WasmVM.Exec.Store
+import L4Factoidal.WasmVM.Exec.Run
 
 namespace L4Factoidal.WasmVM
 
@@ -86,6 +87,81 @@ def valSubC : ValType → ValType → Bool
   | .ref a, .ref b => (b.nullable || !a.nullable) && heapSubC a.heap b.heap
   | a, b => a == b
 
+/-! ### Recursion groups in the store (garbage collection)
+
+A type id is an index of `StoreOf.typeTable`. `StoreOf.typeId` gives the id of a
+final function type that is alone in its group and has no supertype, the only kind of
+type before the garbage-collection proposal; it compares function types. Every other
+group gets its ids here: the group is looked up by its canonical form (`canonSubIn`
+with the ids of the earlier types of the module), and a new group takes the next ids,
+one for each of its types. `typeTable` holds a placeholder at those ids, which no
+function type equals, and `GcStore.types` holds the supertype and the composite type. -/
+
+/-- The entry of `typeTable` for an id that a recursion group made. -/
+def groupPlaceholder : FuncType := ⟨#[.ref ⟨false, .idx (selfIdx - 1)⟩], #[]⟩
+
+/-- The ids of the types of one recursion group; `ids` are those of the module's
+earlier types. -/
+def internGroup (st : StoreOf M) (ids : Array Nat) (group : Array SubType) : StoreOf M × Array Nat :=
+  let plain : Option FuncType := match group with
+    | #[{ final := true, supers := #[], comp := .func ft }] => some ft
+    | _ => none
+  match plain with
+  | some ft =>
+    let (st, i) := st.typeId (canonFunc ids ft)
+    (st, #[i])
+  | none =>
+    let n := group.size
+    let key := group.map (canonSubIn ids ids.size)
+    match st.exc.gc.groups.find? (·.1 == key) with
+    | some (_, first) => (st, (Array.range n).map (first + ·))
+    | none =>
+      let first := st.typeTable.size
+      let new := (Array.range n).map (first + ·)
+      -- With the ids of the group itself, every index of the group is a type id.
+      let all := ids ++ new
+      let infos := group.map fun t =>
+        let t := canonSubIn all all.size t
+        some ({ super := t.supers[0]?, comp := t.comp } : GcType)
+      let st := { st with typeTable := st.typeTable ++ Array.replicate n groupPlaceholder }
+      (st.modGc fun g =>
+        { g with types := g.types ++ Array.replicate (first - g.types.size) none ++ infos,
+                 groups := g.groups.push (key, first) }, new)
+
+/-- The type id of each type of a module. -/
+def internTypes (st : StoreOf M) (defs : Array TypeDef) : StoreOf M × Array Nat := Id.run do
+  let mut st := st
+  let mut ids : Array Nat := #[]
+  for x in [0:defs.size] do
+    let d := defs[x]!
+    if d.recStart == x then
+      let (st', new) := internGroup st ids ((defs.extract x (x + d.recSize)).map (·.sub))
+      st := st'
+      ids := ids ++ new
+  return (st, ids)
+
+/-- Subtyping of heap types whose indices are type ids. -/
+def heapSubS (st : StoreOf M) (a b : HeapType) : Bool :=
+  a == b ||
+  match a, b with
+  | .idx i, .idx j => st.isSubId i j
+  | .idx i, .func => st.idKind i == 0
+  | .idx i, .struct => st.idKind i == 1
+  | .idx i, .array => st.idKind i == 2
+  | .idx i, .eq | .idx i, .any => st.idKind i != 0
+  | .nofunc, .func => true
+  | .nofunc, .idx j => st.idKind j == 0
+  | .none, .idx j => st.idKind j != 0
+  | .noextern, .extern | .noexn, .exn => true
+  | .none, .any | .none, .eq | .none, .i31 | .none, .struct | .none, .array => true
+  | .eq, .any | .i31, .any | .struct, .any | .array, .any => true
+  | .i31, .eq | .struct, .eq | .array, .eq => true
+  | _, _ => false
+
+def valSubS (st : StoreOf M) : ValType → ValType → Bool
+  | .ref a, .ref b => (b.nullable || !a.nullable) && heapSubS st a.heap b.heap
+  | a, b => a == b
+
 def limitsMatch (actualMin : Nat) (actualMax : Option Nat) (decl : Limits) : Bool :=
   actualMin ≥ decl.min &&
   match decl.max with
@@ -98,16 +174,21 @@ def checkImport (st : StoreOf M) (types : Array FuncType) (ids : Array Nat) (d :
     (v : ExternVal) : Except String Unit :=
   match d, v with
   | .func t, .func a =>
-    match st.funcs[a]?, types[t]? with
-    | some fi, some ft =>
-      if fi.type != canonFunc ids ft then .error "incompatible import type"
+    match st.funcs[a]?, ids[t]?, types[t]? with
+    | some fi, some id, some ft =>
+      -- Type ids: equal for equivalent types, so for a final type this is the
+      -- comparison of canonical function types that it was before recursion groups.
+      -- A host function has no declared type: its function type is compared.
+      let isHost := match fi.kind with | .host _ => true | .wasm .. => false
+      if !(st.isSubId fi.typeId id || (isHost && fi.type == canonFunc ids ft)) then
+        .error "incompatible import type"
       else match fi.kind with
         | .host _ =>
           if hasV128 fi.type.params || hasV128 fi.type.results then
             .error "unsupported: v128 in the type of a host function"
           else .ok ()
         | .wasm .. => .ok ()
-    | _, _ => .error "unknown import"
+    | _, _, _ => .error "unknown import"
   | .table tt, .table a =>
     match st.tables[a]? with
     | some ti =>
@@ -125,14 +206,37 @@ def checkImport (st : StoreOf M) (types : Array FuncType) (ids : Array Nat) (d :
     match st.globalTypes[a]? with
     | some t =>
       let want := canonVal ids gt.type
-      let ok := if gt.mutable then t.mutable && t.type == want else !t.mutable && valSubC t.type want
+      let ok := if gt.mutable then t.mutable && t.type == want else !t.mutable && valSubS st t.type want
       if ok then .ok () else .error "incompatible import type"
     | none => .error "unknown import"
   | .tag t, .tag a =>
     match st.exc.tags[a]?, types[t]? with
-    | some tt, some ft => if tt == canonFunc ids ft then .ok () else .error "incompatible import type"
+    | some tt, some ft =>
+      -- Tag types must be equivalent: equal type ids. A tag that the embedder added
+      -- has no id; its function type is compared.
+      let same := match (st.exc.gc.tagIds[a]?).join, ids[t]? with
+        | some i, some j => i == j
+        | _, _ => tt == canonFunc ids ft
+      if same then .ok () else .error "incompatible import type"
     | _, _ => .error "unknown import"
   | _, _ => .error "incompatible import type"
+
+/-- Value of a constant expression of type `t`, and the store: an expression with a
+garbage-collection instruction allocates, so the interpreter runs its compiled form
+(`constCode`); every other expression goes through `evalConst` and the store does not
+change. -/
+def evalConstS (st : StoreOf M) (inst : ModuleInst) (c : Ctx) (e : Expr) (t : ValType) :
+    StoreOf M × Except Trap UInt64 :=
+  if !hasGc e then (st, .ok (evalConst st inst e)) else
+  match constCode c c.globals.size e t with
+  | .error m => (st, .error (.host m))
+  | .ok cf =>
+    -- Straight-line code: each op runs once.
+    let (st, m, _, ev) := Run.run {} st (Slots.zeros (cf.maxHeight + 4)) 0 0 0 cf.code inst #[] (cf.code.size + 4)
+    match ev with
+    | .done => (st, .ok (Run.rd m.stack 0))
+    | .trap t => (st, .error t)
+    | _ => (st, .error (.host "constant expression did not end"))
 
 /-- Write `vals` into table `ta` at `d`. -/
 def initTable (st : StoreOf M) (ta d : Nat) (vals : Array UInt64) : Except Trap (StoreOf M) :=
@@ -152,11 +256,8 @@ def instantiate (st : StoreOf M) (vm : ValidModule) (imports : Array ExternVal) 
   let m := vm.module
   if imports.size != m.imports.size then return (st, .error (.link "wrong number of imports"))
   let mut st := st
-  let mut typeIds := #[]
-  for ft in m.types do
-    let (st', i) := st.typeId (canonFunc typeIds ft)
-    st := st'
-    typeIds := typeIds.push i
+  let (st', typeIds) := internTypes st m.defs
+  st := st'
   let mut inst : ModuleInst := { types := m.types, typeIds }
   for (imp, v) in m.imports.zip imports do
     match checkImport st m.types typeIds imp.desc v with
@@ -174,16 +275,28 @@ def instantiate (st : StoreOf M) (vm : ValidModule) (imports : Array ExternVal) 
     inst := { inst with funcs := inst.funcs.push st.funcs.size }
     st := { st with funcs := st.funcs.push { type := ft, typeId := typeIds[f.type]!, kind := .wasm instAddr cf } }
   for t in m.tags do
-    let (st', a) := st.addTag (canonFunc typeIds m.types[t]!)
+    let (st', a) := st.addTag (canonFunc typeIds m.types[t]!) typeIds[t]?
     st := st'
     inst := { inst with tags := inst.tags.push a }
   for g in m.globals do
     let hi := if g.type.type == .v128 then evalConstHi st inst g.init else 0
-    let (st', a) := st.addGlobal { g.type with type := canonVal typeIds g.type.type } (evalConst st inst g.init)
+    let (st', r) := evalConstS st inst vm.ctx g.init g.type.type
+    st := st'
+    let bits ← match r with
+      | .ok b => pure b
+      | .error t => return (st, .error (.trap t))
+    let (st', a) := st.addGlobal { g.type with type := canonVal typeIds g.type.type } bits
     st := if g.type.type == .v128 then st'.setGlobalHi a hi else st'
     inst := { inst with globals := inst.globals.push a }
   for t in m.tables do
-    let init := match t.init with | some e => evalConst st inst e | none => nullRef
+    let init ← match t.init with
+      | some e =>
+        let (st', r) := evalConstS st inst vm.ctx e (.ref t.type.elem)
+        st := st'
+        match r with
+        | .ok b => pure b
+        | .error t => return (st, .error (.trap t))
+      | none => pure nullRef
     let elem := match canonVal typeIds (.ref t.type.elem) with | .ref r => r | _ => t.type.elem
     let (st', a) := st.addTable { t.type with elem } init
     st := st'
@@ -193,7 +306,13 @@ def instantiate (st : StoreOf M) (vm : ValidModule) (imports : Array ExternVal) 
     st := st'
     inst := { inst with mems := inst.mems.push a }
   for el in m.elems do
-    let vals := el.init.map (evalConst st inst)
+    let mut vals : Array UInt64 := Array.mkEmpty el.init.size
+    for e in el.init do
+      let (st', r) := evalConstS st inst vm.ctx e (.ref el.type)
+      st := st'
+      match r with
+      | .ok b => vals := vals.push b
+      | .error t => return (st, .error (.trap t))
     inst := { inst with elems := inst.elems.push st.elems.size }
     st := { st with elems := st.elems.push vals }
   for d in m.datas do

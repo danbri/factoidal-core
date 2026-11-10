@@ -145,6 +145,8 @@ def typesOfName (s : String) : Option (Array ValType) :=
 def valTag : Value → UInt8
   | .i32 _ => 0 | .i64 _ => 1 | .f32 _ => 2 | .f64 _ => 3 | .funcRef _ => 4 | .externRef _ => 5 | .exnRef _ => 6
   | .v128 .. => 7
+  -- A reference of the `any` hierarchy: opaque to the page, as an external reference.
+  | .anyRef _ => 5
 
 def putVal (b : ByteArray) (v : Value) : ByteArray := u64 (b.push (valTag v)) v.toBits
 
@@ -436,12 +438,7 @@ def exportJson (st : Store) (m : Module) (name : String) (x : ExternIdx) (v : Ex
 
 /-- The canonical function type of a module's type `t`, as `instantiate` makes it. -/
 def canonType (st : Store) (m : Module) (t : Nat) : Store × FuncType := Id.run do
-  let mut st := st
-  let mut ids := #[]
-  for ft in m.types do
-    let (st', i) := st.typeId (canonFunc ids ft)
-    st := st'
-    ids := ids.push i
+  let (st, ids) := internTypes st m.defs
   return (st, canonFunc ids (m.types[t]?.getD ⟨#[], #[]⟩))
 
 /-- Op 4: instantiate module `mi`. Each import is 8 bytes, a kind and a number (u32 each): 0 a function
