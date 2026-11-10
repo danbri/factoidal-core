@@ -181,7 +181,8 @@ void ng_set_cursor(int kind) {
 - (BOOL)windowShouldClose:(NSWindow *)sender { (void)sender; enqueue(6,0,0); return NO; }
 - (void)windowDidResize:(NSNotification *)note { (void)note; resizeEvent(); }
 - (void)windowDidChangeBackingProperties:(NSNotification *)note { (void)note; resizeEvent(); }
-- (void)windowDidResignKey:(NSNotification *)note { (void)note; enqueue(4,0,0); }
+// Kind 14 cancels a press; focus loss must never activate a link.
+- (void)windowDidResignKey:(NSNotification *)note { (void)note; enqueue(14,0,0); }
 - (void)windowDidChangeOcclusionState:(NSNotification *)note { (void)note; enqueue(8,canPresent(),0); }
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
   (void)sender; enqueue(6,0,0); return NSTerminateCancel;

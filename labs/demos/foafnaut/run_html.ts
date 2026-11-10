@@ -7,6 +7,7 @@ import {fallbackFontHost,loadFallbackFonts,mayNeedFallbackFonts,type FallbackFon
 import type {ScriptPlan,ScriptTurn} from "./native_html_engine.ts";
 import {addEntries,consoleRequest,noteDiagnostics} from "./native_console.ts";
 import {loadNativeWindow} from "./native_window.ts";
+import {POINTER_CANCEL,beginPress,movePress,pointerNode,pressPointers,beforeFirstFrame,type NativePress,type PointerKind} from "./native_press.ts";
 import {nativePreflight} from "./native_preflight.ts";
 import {cocoaSurfaceOptions} from "./cocoa_surface.ts";
 import {createHTMLWindowSession,type PresentTarget} from "./native_html_session.ts";
@@ -364,17 +365,20 @@ async function main() {
   // coordinates (nodeAt), then dispatches pointer and mouse events, a click on release, at
   // most one move in a frame. A move waits while one is on its way. An engine without the
   // action gets a click on release.
-  let pointerBusy=false;
-  const scriptPointer=(kind:"down"|"move"|"up",x:number,y:number)=>{
-    if(!scriptsOn||!document.script||!scriptOps.includes("pointer"))return;
-    if(kind==="move"&&pointerBusy)return;
-    const page=document,session=document.script.session;pointerBusy=true;
-    (scriptCall("pointerAt",page.source,width,height,{...requestAt(page,scroll).options,x,y}) as Promise<{node:number|null}>)
-      .then(at=>typeof at.node==="number"?scriptCall("scriptSession","",{action:"pointer",session,kind,...at,button:0,
-        buttons:kind==="up"?0:1,pressure:kind==="up"?0:0.5,pointerType:"mouse"}) as Promise<ScriptTurn>:undefined)
-      .then(turn=>{if(turn)scriptTurn(page,turn,`pointer ${kind}`);})
-      .catch(error=>console.error("Native HTML: page script pointer failed:",String(error)))
-      .finally(()=>{pointerBusy=false;});
+  const queuePointer=pressPointers();
+  const scriptPointer=(kind:PointerKind,x:number,y:number,held:NativePress<typeof document>)=>{
+    const page=held.page;
+    if(!scriptsOn||!page.script||!scriptOps.includes("pointer"))return;
+    const session=page.script.session,w=width,h=height,options={...requestAt(page,page===document?scroll:0).options,x,y};
+    queuePointer(kind,async()=>{
+      const at=await scriptCall("pointerAt",page.source,w,h,options) as {node:number|null};
+      const node=pointerNode(held,kind,at.node);
+      if(node===undefined)return;
+      const ended=kind==="up"||kind==="cancel";
+      const turn=await scriptCall("scriptSession","",{action:"pointer",session,kind,...at,node,button:0,
+        buttons:ended?0:1,pressure:ended?0:0.5,pointerType:"mouse"}) as ScriptTurn;
+      scriptTurn(page,turn,`pointer ${kind}`);
+    }).catch(error=>console.error("Native HTML: page script pointer failed:",String(error)));
   };
   const scriptTurn=(page:typeof document,turn:ScriptTurn,cause:string)=>{
     for(const line of turn.logs)console.log(`page: ${line.replace(/^\u0001(\w+)\u0001/,"$1: ")}`);
@@ -391,7 +395,7 @@ async function main() {
   // Text zoom 200 (WebSelection.defaultPercent; it was 150) until the window's backing scale is
   // known; then zoom unit 100*scale and zoom 200*scale, which the settings page shows as 200%.
   const view:PageView={textScalePercent:200};
-  let press:number[]|undefined,lastCopied:string|undefined,loading=false;
+  let press:NativePress<typeof document>|undefined,lastCopied:string|undefined,loading=false;
   // The press on screen (issue 1268): Lean's `press` answer (a chrome control, or the link's
   // node for `:active`, and the rectangles that the composite darkens), the time its event was
   // queued, and whether a Lean frame that includes it was asked for and presented.
@@ -489,8 +493,8 @@ async function main() {
       }
     }finally{graphRunning=false;}
   };
-  const graphInput=(kind:number,a:number,b:number)=>{
-    const page=document as Page,last=graphQueue[graphQueue.length-1];
+  const graphInput=(kind:number,a:number,b:number,page=document as Page)=>{
+    const last=graphQueue[graphQueue.length-1];
     if(last&&last.page===page&&last.kind===kind&&(kind===1||kind===3||kind===7)){
       if(kind===7)last.a+=a;else{last.a=a;last.b=b;}
     } else graphQueue.push({kind,a,b,page});
@@ -1020,8 +1024,9 @@ async function main() {
     const IDLE_CHECK_MS=500,QUEUE_WARN=1024;
     // Off screen the texture can always take a frame; a window can not while it is hidden or occluded.
     const canPresent=()=>offscreen||native!.canPresent();
-    const STAMPED=new Set([2,4,5,11]);
-    const KIND_NAMES:Record<number,string>={2:"pointer-down",4:"pointer-up",5:"key",11:"scroll"};
+    const STAMPED=new Set([2,4,5,11,POINTER_CANCEL]);
+    const readyInput=beforeFirstFrame<{event:UIEvent;at:number}>();
+    const KIND_NAMES:Record<number,string>={2:"pointer-down",4:"pointer-up",[POINTER_CANCEL]:"pointer-cancel",5:"key",11:"scroll"};
     // Events carry the time the window library queued them (see the event loop).
     const settle=(stamps:{kind:number;at:number}[],at:number)=>{
       for(const stamp of stamps){
@@ -1066,6 +1071,7 @@ async function main() {
       }
       // Liberal mode: what Lean skipped goes to the page's console.
       noteDiagnostics(nextDocument,nextLayers??next);
+      const engineFact=frameNumber===0?{engine:await engineInfo}:{};
       const compiled=performance.now();
       // A newer page was chosen while this one compiled: drop this scene.
       if((candidate??document)!==nextDocument){awaiting=[...stamps,...awaiting];dirty=true;return;}
@@ -1075,6 +1081,7 @@ async function main() {
       // Lean draws the press in this frame: the composite does not darken it again.
       if(carried&&carried===pressed)session!.setPress(undefined);
       const result=nextLayers?await session!.drawLayers(nextLayers,sentWidth,sentHeight,place!.offset,everyFrame):await session!.draw(next,everyFrame);
+      if((candidate??document)!==nextDocument){awaiting=[...stamps,...awaiting];dirty=true;return;}
       if(carried&&carried===pressed){
         if(result.presented){carried.framed=true;pressFrameMs.push(result.presentedAt-carried.at);
           trace("native-html-press",{state:"frame",control:carried.control??null,active:carried.active??null,fromQueuedMs:ms(carried.at,result.presentedAt)});}
@@ -1085,7 +1092,6 @@ async function main() {
       if(result.presented)lastRequest={request,width:sentWidth,height:sentHeight,document:nextDocument};
       const finished=performance.now();
       const stats=session!.stats;
-      const engineFact=frameNumber===0?{engine:await engineInfo}:{};
       trace("native-html-frame",{frame:++frameNumber,width:sentWidth,height:sentHeight,primitives:next.primitiveCount,wgslBytes:next.wgsl.length,dataFloats:next.data.length,
         layoutMs:ms(frameStart,compiled),sessionMs:Math.round(result.prepareMs*10)/10,drawMs:Math.round(result.drawMs*10)/10,totalMs:ms(frameStart,finished),
         resizeToFrameMs:resizeAt===undefined?null:ms(resizeAt,finished),presented:result.presented,compiledIn:where,workerMs:workerMs===undefined?null:Math.round(workerMs*10)/10,
@@ -1126,6 +1132,7 @@ async function main() {
         if(dirty||shiftPending||shifting||lastRequest!==shownRequest||document!==shownRequest.document)return;
         const {offset}=clampOffset(layers.layers,scroll);
         result=await session!.drawLayers(layers,shownRequest.width,shownRequest.height,offset,true);
+        if(dirty||shiftPending||shifting||lastRequest!==shownRequest||document!==shownRequest.document){dirty=true;return;}
         if(result.presented){current={layers,document,width:shownRequest.width,height:shownRequest.height};frame=layers.page;shownOffset=offset;}
       } else if(lastRequest&&lastRequest.request.options.checks===false&&worker?.alive){
         // The frame on screen was made with no probe: Lean makes it again with its probe.
@@ -1134,6 +1141,7 @@ async function main() {
         const {artifact}=await worker.compile(shownRequest.request.source,shownRequest.width,shownRequest.height,options);
         if(dirty||lastRequest!==shownRequest||document!==shownRequest.document)return;
         result=await session!.draw(artifact,true);
+        if(dirty||lastRequest!==shownRequest||document!==shownRequest.document){dirty=true;return;}
       } else result=await session!.checkLast();
       if(!result?.presented)return;
       checkedFrames++;
@@ -1141,8 +1149,25 @@ async function main() {
     };
     const handle=(event:UIEvent)=>{
         if(event.kind===6){running=false;return;}
-        // A release ends the press look, on the graph page too.
-        if(event.kind===4&&pressed)endPress();
+        // End input on its owning page, even after a tab change or address focus.
+        if(event.kind===4||event.kind===POINTER_CANCEL){
+          endPress();holding=undefined;
+          if(event.kind===POINTER_CANCEL){
+            const cancelled=press;press=undefined;
+            if(view.selection){view.selection=undefined;dirty=true;}
+            if(cancelled){
+              if((cancelled.page as Page).graph)graphInput(4,cancelled.points[2],cancelled.points[3],cancelled.page);
+              else scriptPointer("cancel",cancelled.points[2],cancelled.points[3],cancelled);
+            }
+            return;
+          }
+          if(press&&((press.page as Page).graph||press.page!==document)){
+            const released=press;press=undefined;movePress(released,event.a,event.b);
+            if((released.page as Page).graph)graphInput(4,event.a,event.b,released.page);
+            else scriptPointer("up",event.a,event.b,released);
+            return;
+          }
+        }
         if(event.kind===1){
           if(event.a<1||event.b<1)return;
           if(event.a>4096||event.b>4096)throw new Error("Native HTML window exceeds 4096 backing pixels; close or use a smaller window");
@@ -1154,7 +1179,10 @@ async function main() {
         if(event.kind===8&&event.a)dirty=true;
         if(event.kind===3)pointAt(event.a,event.b);
         const graph=(document as Page).graph;
-        if(graph&&!focused&&(event.kind===3||event.kind===4||event.kind===9||(event.kind===5&&!(event.b&2)))){graphInput(event.kind,event.a,event.b);return;}
+        if(graph&&!focused&&(event.kind===3||event.kind===9||(event.kind===5&&!(event.b&2)))){
+          if(event.kind===3&&press?.page===document)movePress(press,event.a,event.b);
+          graphInput(event.kind,event.a,event.b);return;
+        }
         if(event.kind===5&&focused&&!(event.b&2)){
           if(event.a===36)goTo(field.address);
           else if(event.a===53)leaveAddress();
@@ -1180,7 +1208,6 @@ async function main() {
         if(event.kind===10)windowCommand(event.a);
         if(event.kind===2){
           // Hit coordinates and boxes belong to the successfully presented frame.
-          if(!session?.frames)return;
           // One small Lean call: the control or the link pressed, and what the composite darkens.
           const answer=engine.press(shell(),event.a,event.b,width,pageRow(event.b),layered&&current?frame.webRender.links as unknown[]:[]);
           const control=answer.control;
@@ -1192,9 +1219,9 @@ async function main() {
             return;
           }
           if(focused)leaveAddress();
+          press=beginPress(document,event.a,event.b);
           if((document as Page).graph){graphInput(2,event.a,event.b);return;}
-          press=[event.a,event.b,event.a,event.b];
-          scriptPointer("down",event.a,event.b);
+          scriptPointer("down",event.a,event.b,press);
           if(typeof answer.sourceNode==="number")startPress({active:answer.sourceNode,rects:answer.rects});
           if(view.selection){view.selection=undefined;dirty=true;}
         }
@@ -1204,10 +1231,10 @@ async function main() {
           const node=engine.hit(frame,event.a,pageRow(event.b))?.sourceNode;
           if(node!==hoverNode){hoverNode=node;dirty=true;}
         }
-        if(event.kind===3&&press){press=[press[0],press[1],event.a,event.b];view.selection=press;dirty=true;scriptPointer("move",event.a,event.b);}
+        if(event.kind===3&&press&&press.page===document&&!(press.page as Page).graph){view.selection=movePress(press,event.a,event.b);dirty=true;scriptPointer("move",event.a,event.b,press);}
         if(event.kind===4&&press){
-          const released=press;press=undefined;
-          scriptPointer("up",released[2],released[3]);
+          const held=press,released=movePress(held,event.a,event.b);press=undefined;
+          scriptPointer("up",released[2],released[3],held);
           if(engine.pointerUp(released)!=="click")return;
           // A click begins the SVG animations whose `begin` is a click on what it hits.
           const clock=animation.get(document);
@@ -1237,7 +1264,7 @@ async function main() {
       while((taken=native.next()))batch.push({event:taken,at:offset===null||!taken.time?arrived:Math.min(arrived,taken.time+offset)});
       if(batch.length){lastActivity=arrived;queueMax=Math.max(queueMax,batch.length);
         if(batch.length>QUEUE_WARN)trace("native-html-queue-high",{queued:batch.length});}
-      for(const {event,at} of batch){
+      for(const {event,at} of readyInput(batch,firstFrameAt!==undefined)){
         if(!running)break;
         shiftedByEvent=false;eventAt=at;
         handle(event);
@@ -1289,6 +1316,7 @@ async function main() {
         const shownLayers=swap?swap.layers:current.layers;
         const start=performance.now(),{offset,exact}=clampOffset(shownLayers.layers,scroll),at=scroll;
         shifting=(swap?session!.drawLayers(swap.layers,swap.record.width,swap.record.height,offset,everyFrame):session!.shift(offset,everyFrame)).then(result=>{
+          if(swap&&(candidate??document)!==swap.record.document){awaitingShift=[...stamps,...awaitingShift];dirty=true;return;}
           const finished=performance.now();
           trace("native-html-scroll",{frame:frameNumber,scroll:at,offset,exact,swap:!!swap,totalMs:ms(start,finished),drawMs:Math.round(result.drawMs*10)/10,
             presented:result.presented,checked:result.checked,pixelHash:result.checked?result.pixelHash:null,...(swap?{bandTop:swap.layers.layers.bandTop,target:swap.target}:{})});
