@@ -3,7 +3,7 @@
 // temporary cache. Skipped, with the reason, when there is no Deno or TEXTNAUT_NO_NETWORK is set.
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
@@ -16,14 +16,17 @@ const skip = !hasDeno ? 'no deno' : process.env.TEXTNAUT_NO_NETWORK ? 'TEXTNAUT_
 
 test('packed tarball, installed elsewhere, dumps a page on the fetched Wasm engine', { skip, timeout: 300000 }, () => {
   const work = mkdtempSync(join(tmpdir(), 'textnaut-e2e-'));
+  process.on('exit', () => rmSync(work, { recursive: true, force: true }));
+  // Only Node on the PATH: the run must use the Deno that the package brings.
+  const onlyNode = join(work, 'only-node'); mkdirSync(onlyNode); symlinkSync(process.execPath, join(onlyNode, 'node'));
   const packed = JSON.parse(execFileSync('npm', ['pack', '--json', '--pack-destination', work], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }));
   const tarball = join(work, packed[0].filename);
   console.log(`tarball ${packed[0].filename}: ${statSync(tarball).size} bytes packed, ${packed[0].unpackedSize} unpacked, ${packed[0].files.length} files`);
   const prefix = join(work, 'install');
-  execFileSync('npm', ['install', '--prefix', prefix, '--no-audit', '--no-fund', '--ignore-scripts', tarball], { stdio: 'ignore' });
+  execFileSync('npm', ['install', '--prefix', prefix, '--no-audit', '--no-fund', tarball], { stdio: 'ignore' });
   const bin = join(prefix, 'node_modules', '.bin', 'textnaut');
   const home = join(work, 'home');
-  const env = { PATH: process.env.PATH, HOME: home, TEXTNAUT_CACHE: join(work, 'cache'), DENO_DIR: join(work, 'deno'), TERM: 'dumb' };
+  const env = { PATH: `${onlyNode}:/usr/bin:/bin`, HOME: home, TEXTNAUT_CACHE: join(work, 'cache'), DENO_DIR: join(work, 'deno'), TERM: 'dumb' };
 
   const first = spawnSync(bin, ['--dump', '--width', '70', page], { encoding: 'utf8', env, cwd: work, timeout: 240000 });
   assert.equal(first.status, 0, first.stderr);

@@ -1,7 +1,7 @@
 {
   "name": "@foafos/textnaut",
-  "version": "0.1.1",
-  "description": "EXPERIMENTAL UNDER-REVIEWED CODE: a text-mode web browser on the Foafnaut engine, with screensavers. Runs on Deno; fetches a pinned Wasm engine on first use.",
+  "version": "0.1.2",
+  "description": "EXPERIMENTAL UNDER-REVIEWED CODE: a text-mode web browser on the Foafnaut engine, with screensavers. Fetches a pinned Wasm engine on first use.",
   "keywords": ["terminal", "browser", "text-mode", "tui", "screensaver", "webassembly", "deno"],
   "homepage": "https://github.com/danbri/factoidal",
   "bugs": { "url": "https://github.com/danbri/factoidal/issues" },
@@ -19,6 +19,7 @@
     "LICENSE",
     "NOTICE"
   ],
+  "dependencies": { "deno": "2.9.6" },
   "engines": { "node": ">=18" },
   "scripts": {
     "prepack": "node scripts/sync.mjs",
