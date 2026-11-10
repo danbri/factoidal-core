@@ -3694,3 +3694,29 @@ or a complete XML admission algorithm. Four parser guards and the separate
 public expected-failure record are described in the
 [boundary report](20261031-compositor-xml-representability.md).
 Tracking: https://github.com/danbri/factoidal/issues/1215.
+
+## WasmVM SIMD bitwise laws (2026-11-10)
+
+[`WasmVM/Proofs/Simd.lean`](../formal/lean4/L4Factoidal/WasmVM/Proofs/Simd.lean)
+lifts Lean core's `UInt64` laws to the engine's actual `V128.evalUn` and
+`V128.evalBin` functions. All statements quantify over arbitrary vectors,
+with no hypotheses. Names below are in `L4Factoidal.WasmVM.V128`.
+
+| Operation | Opcode after `0xfd` | Theorems |
+|---|---|---|
+| `v128.not` | `0x4d` | `not_not` |
+| `v128.and` | `0x4e` | `and_comm`, `and_assoc` |
+| `v128.or` | `0x50` | `or_comm`, `or_assoc` |
+| `v128.xor` | `0x51` | `xor_comm`, `xor_assoc` |
+
+These are bridge theorems to the corresponding
+[`UInt64` laws in Lean 4.33.1](https://github.com/leanprover/lean4/blob/v4.33.1/src/Init/Data/UInt/Bitwise.lean).
+They establish double complement, commutativity and associativity of vector
+values. These algebraic laws alone do not specify the full operations, prove
+decoder or stack-machine conformance, or permit reordering effects.
+The module is imported by the default `WasmVM` build root. All seven axiom
+reports contain only `propext`, `Classical.choice` and `Quot.sound`.
+
+Worklog: [SIMD bitwise theorems](20261110-foafnaut-simd-bitwise.md).
+Tracking: https://github.com/danbri/factoidal-core/issues/388
+(small theorem contributions).
