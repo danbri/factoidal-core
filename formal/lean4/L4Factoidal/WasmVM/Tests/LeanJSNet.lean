@@ -102,6 +102,19 @@ def errors : Except String (List String) := do
 
 #guard errors == .ok ["SecurityError", "SyntaxError"]
 
+-- Sync: the first run stops and asks; the run again with the answer goes through.
+def syncFlow : Except String (Option String × List String) := do
+  let base ← LeanJS.prepareSource
+  let src := "const x = new XMLHttpRequest(); x.open('GET','/s', false); x.onload=()=>console.log('load',x.status,x.responseText); x.send(); console.log('after',x.readyState);"
+  let dom := DOM.parseHtmlDocument ("<!doctype html><script>" ++ src ++ "</script>")
+  let s0 := LeanJS.start base dom "http://a.test/p.html" (scriptsOf dom) { network := true, syncOk := true } {} { instructionsPerMs := 1000000000000 }
+  let wanted := s0.host.web.net.syncWanted.map (·.url)
+  let a : Answer := { status := 200, statusText := "OK", body := "sync".toUTF8 }
+  let s1 := LeanJS.start base dom "http://a.test/p.html" (scriptsOf dom) { network := true, syncOk := true, syncAnswers := #[a] } {} { instructionsPerMs := 1000000000000 }
+  return (wanted, logOf s1)
+
+#guard syncFlow == .ok (some "http://a.test/s", ["load 200 sync", "after 4"])
+
 -- Off when the embedder does not turn it on: no such global.
 def off : Except String (List String) := do
   let s ← startPage "console.log(typeof XMLHttpRequest);" false
