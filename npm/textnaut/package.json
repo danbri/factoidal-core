@@ -1,0 +1,28 @@
+{
+  "name": "@factoidal/textnaut",
+  "version": "0.1.0",
+  "description": "EXPERIMENTAL UNDER-REVIEWED CODE: a text-mode web browser on the Foafnaut engine, with screensavers. Runs on Deno; fetches a pinned Wasm engine on first use.",
+  "keywords": ["terminal", "browser", "text-mode", "tui", "screensaver", "webassembly", "deno"],
+  "homepage": "https://github.com/danbri/factoidal",
+  "bugs": { "url": "https://github.com/danbri/factoidal/issues" },
+  "license": "Apache-2.0",
+  "author": "Dan Brickley <danbri@danbri.org>",
+  "repository": { "type": "git", "url": "git+https://github.com/danbri/factoidal.git", "directory": "npm/textnaut" },
+  "bin": { "textnaut": "./bin/textnaut.mjs" },
+  "type": "module",
+  "files": [
+    "bin/",
+    "lib/",
+    "app/",
+    "engine-pin.json",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "prepack": "node scripts/sync.mjs",
+    "test": "node --test --test-concurrency=1 test/*.test.mjs"
+  },
+  "publishConfig": { "access": "public" }
+}
