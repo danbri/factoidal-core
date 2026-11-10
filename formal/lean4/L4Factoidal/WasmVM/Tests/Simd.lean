@@ -14,6 +14,11 @@ result.
 
 The module is a `Module` value, not a binary: the cases need instruction sequences
 that a compiler does not emit on request.
+
+`noCopy`: a loop of `i8x16.add` on a v128 local runs with the local at slot 2 and at
+slot 40 000 (a hi stack of 320 KiB). A write that copied the hi stack would make the
+second run take seconds; the test allows 4 times the first run plus 200 ms, as
+`Tests/Memory.lean` does for the linear memory.
 -/
 import L4Factoidal.WasmVM.Api
 
@@ -71,7 +76,37 @@ def cases : List (String × Array Value × Array Value) :=
    ("global", #[vA], #[vC]), ("global", #[vB], #[vA]), ("catch", #[], #[vA]),
    ("br_on_null", #[], #[vA]), ("tee", #[], #[vA]), ("pair", #[.i32 9], #[.i32 9, vA])]
 
-def run : IO Bool := do
+/-- `(func (export "loop") (param i32) (local v128 × k) ...)`: the last local is added
+to itself (`i8x16.add`) the parameter's number of times. -/
+def loopModule (k : Nat) : Module :=
+  { types := #[⟨#[.i32], #[]⟩]
+    funcs := #[{ type := 0, locals := Array.replicate k .v128,
+                 body := #[.loop .empty, .localGet k, .localGet k, .simd 0x6e ⟨0, 0, 0⟩ 0 0 0, .localSet k,
+                           .localGet 0, .i32Const 1, .num .i32_sub, .localTee 0, .brIf 0, .end_, .end_] }]
+    exports := #[{ name := "loop", desc := .func 0 }] }
+
+/-- Time of `n` iterations with `k` v128 locals, in nanoseconds; none when the run failed. -/
+def timeLoop (k n : Nat) : IO (Option Nat) := do
+  let .ok vm := validate (loopModule k) | return none
+  let (st, r) := instantiateRun (M := ByteMem) (fun _ _ st => (st, .values #[])) {} vm #[]
+  let .ok ia := r | return none
+  let some (.func fa) := st.export? ia "loop" | return none
+  let t0 ← IO.monoNanosNow
+  let (_, o) ← IO.lazyPure fun _ => invoke st fa #[.i32 (UInt32.ofNat n)]
+  let t1 ← IO.monoNanosNow
+  match o with
+  | .values _ => return some (t1 - t0)
+  | _ => return none
+
+def noCopy : IO Bool := do
+  let n := 20000
+  let some small ← timeLoop 2 n | IO.println "simd hi stack no-copy: FAIL (setup)"; return false
+  let some big ← timeLoop 40000 n | IO.println "simd hi stack no-copy: FAIL (setup)"; return false
+  let ok := big ≤ 4 * small + 200000000
+  IO.println s!"simd hi stack no-copy: {n} iterations, local at slot 2 {small / 1000000} ms, at slot 40000 {big / 1000000} ms: {if ok then "pass" else "FAIL"}"
+  return ok
+
+def moves : IO Bool := do
   let vm ← match validate module with
     | .ok vm => pure vm
     | .error e => IO.println s!"simd moves: FAIL (validate: {e.toString})"; return false
@@ -93,5 +128,10 @@ def run : IO Bool := do
     | _ => IO.println s!"  simd {name}: no export"; ok := false
   IO.println s!"simd moves: {cases.length} cases: {if ok then "pass" else "FAIL"}"
   return ok
+
+def run : IO Bool := do
+  let a ← moves
+  let b ← noCopy
+  return a && b
 
 end L4Factoidal.WasmVM.Tests.Simd
