@@ -117,7 +117,8 @@ def shown : Value → String
   | .i64 v => toString (signed 64 v.toNat)
   | .f32 b => toString (Float32.ofBits b)
   | .f64 b => toString (Float.ofBits b)
-  | .funcRef a | .externRef a | .exnRef a => match a with | some n => s!"ref {n}" | none => "null"
+  | .funcRef a | .externRef a | .exnRef a | .anyRef a => match a with | some n => s!"ref {n}" | none => "null"
+  | .v128 lo hi => s!"v128 {lo.toNat} {hi.toNat}"
 
 def valueJSON (v : Value) : JSON.Json :=
   let (ty, bits) := match v with
@@ -126,6 +127,8 @@ def valueJSON (v : Value) : JSON.Json :=
     | .funcRef a => ("funcref", (a.map toString).getD "null")
     | .externRef a => ("externref", (a.map toString).getD "null")
     | .exnRef a => ("exnref", (a.map toString).getD "null")
+    | .anyRef a => ("anyref", (a.map toString).getD "null")
+    | .v128 lo hi => ("v128", s!"{lo.toNat} {hi.toNat}")
   .object [("type", .string ty), ("value", .string bits), ("shown", .string (shown v))]
 
 /-! ## Imports: the spectest set, and nothing else -/
