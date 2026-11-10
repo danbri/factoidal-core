@@ -1695,7 +1695,8 @@ def callClosure : Nat → FunDef → Nat → Value → Value → Value → Value
     -- `args` is moved into the environment on the plain path (the array must have one owner:
     -- `fillSlots` then grows it in place)
     let (fenv, args) ← if info.plain then do
-        let e ← pushEnv { names := info.layout, vals := fillSlots args info.nParams info.layout.size, parent := env }
+        let e ← pushEnv { names := info.layout, vals := fillSlots args info.nParams info.layout.size, parent := env,
+                          index := info.index }
         pure (e, (#[] : Array Value))
       else do
         let e ← newEnv env

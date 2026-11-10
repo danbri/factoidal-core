@@ -212,6 +212,7 @@ def rFun : Nat → Frames → Bool → FunDef → R FunDef
       set ({ inner with dynamic := outer.dynamic || inner.dynamic, closure := true, funs := inner.funs + 1 } : St)
       let info : FunInfo :=
         { layout := frame
+          index := FunInfo.indexOf frame
           nParams := params.length
           plain := plainParams f
           frameLocal := !inner.closure && !inner.dynamic && !gen && !async }

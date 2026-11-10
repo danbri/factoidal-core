@@ -149,4 +149,33 @@ then writes a link as plain text. `encodeURI` keeps the reserved characters and 
 #guard out "try { decodeURI('%zz') } catch (e) { print(e instanceof URIError) }" == ["true"]
 #guard out "print(decodeURI(encodeURI('a b/c?d=e&f=ü#g')) === 'a b/c?d=e&f=ü#g', encodeURI(decodeURI('%2F%20')))" == ["true %252F%20"]
 
+/-! ## A function with many names
+
+A function whose environment has more than `FunInfo.indexedFrom` names gets an index from name
+to slot, shared by its environments (`FunInfo.index`). Before 2026-11-10 a name that such an
+environment does not have (a global, `typeof` of an absent name) cost one string comparison for
+each of its names, on every read: a program from `js_of_ocaml` has one function with thousands
+of names around all of its code. The parser's list of `var` names had the same cost for each
+declaration and each block (`P.addVar`, `parseBlock`). These scripts check the answers; the times
+are in `docs/designissues/2026-11-09-foafnaut-perf-exploration.md`, section 6.6. -/
+
+/-- `var v0 = 0; ... ` for `n` names. -/
+def manyVars (n : Nat) : String :=
+  String.join ((List.range n).map fun i => s!"var v{i} = {i};")
+
+-- a global, a name of the large function, an absent name, from an inner function
+#guard out ("(function () {" ++ manyVars 40 ++
+    "function f() { return Math.abs(-3) + v7 + (typeof nothere === 'undefined' ? 1 : 0) }" ++
+    "print(f(), v39, typeof v40) })()") == ["11 39 undefined"]
+-- a name of the large function hides a global; an assignment from an inner function reaches it
+#guard out ("(function () {" ++ manyVars 30 ++
+    "var Math = { abs: function () { return 'mine' } }; function g() { v3 = 'w'; return Math.abs(1) }" ++
+    "print(g(), v3, v29) })()") == ["mine w 29"]
+-- the same name twice, a block with its own declarations, a function declared after its use
+#guard out ("function big() {" ++ manyVars 30 ++ manyVars 3 ++
+    "{ let v1 = 'inner'; var late = v1 + after() } function after() { return v2 } return late + v1 }" ++
+    "print(big())") == ["inner21"]
+-- at the top level of a script
+#guard out (manyVars 30 ++ "function h() { return v28 + (typeof zz) } print(h())") == ["28undefined"]
+
 end L4Factoidal.JS.Tests

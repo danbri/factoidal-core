@@ -1,3 +1,5 @@
+import Std.Data.HashMap
+
 /-!
 # L4Factoidal.JS.Syntax — abstract syntax of the ECMAScript core subset
 
@@ -183,7 +185,21 @@ structure FunInfo where
   frameLocal : Bool := false
   /-- The function's code for the register machine, when it can be compiled. -/
   code : Option Code := none
+  /-- Name to slot for a layout with many names (`FunInfo.indexOf`): every environment of the
+  function shares it, so a name that the layout does not have is found absent with one hash
+  and not with a comparison for each name. -/
+  index : Option (Std.HashMap String Nat) := none
   deriving Inhabited
+
+/-- Layouts with more names than this get an index (the same limit as `envIndexed` for an
+environment that grows one name at a time). -/
+def FunInfo.indexedFrom : Nat := 24
+
+/-- The index of a layout: each name to its first slot; `none` for a short layout. -/
+def FunInfo.indexOf (layout : Array String) : Option (Std.HashMap String Nat) :=
+  if layout.size > FunInfo.indexedFrom then
+    some ((layout.zipIdx).foldl (fun m (x, i) => if m.contains x then m else m.insert x i) {})
+  else none
 
 mutual
 /-- Expressions. -/

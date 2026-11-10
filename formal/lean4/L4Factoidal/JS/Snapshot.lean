@@ -771,7 +771,7 @@ def dFunCore : Nat → DM FunDef
     let gen ← getBool; let async ← getBool
     let layout ← getStrs; let nParams ← getNat; let plain ← getBool; let frameLocal ← getBool
     let f : FunDef := .mk none params rest body vars usesArgs strict kind gen async
-      { layout := layout.toArray, nParams, plain, frameLocal }
+      { layout := layout.toArray, nParams, plain, frameLocal, index := FunInfo.indexOf layout.toArray }
     -- the code is not in the data: it is compiled from the literal
     pure (match f with
       | .mk nm p r b v u st kd g a info =>

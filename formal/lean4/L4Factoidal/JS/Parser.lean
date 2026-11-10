@@ -1,4 +1,5 @@
 import Std.Data.HashMap
+import Std.Data.HashSet
 import L4Factoidal.JS.Syntax
 import L4Factoidal.JS.Number
 
@@ -32,6 +33,9 @@ structure PState where
   src : Array Char := #[]
   /-- `var` and function names of the current function body. -/
   vars : Array String := #[]
+  /-- The names in `vars`, for the test in `P.addVar` (a function of a generated program has
+  thousands of `var` names). -/
+  varSet : Std.HashSet String := {}
   usesArgs : Bool := false
   strict : Bool := false
   inFun : Bool := false
@@ -124,8 +128,13 @@ def bindingName : P String := do
   else if t.kind == .kw && (t.text == "let" || t.text == "yield") then advance; pure t.text
   else fail "expected an identifier"
 
+/-- Add a `var` or function name of the current function body, once. `vars` only grows at its
+end while a body is parsed, so the names added after a point are `vars` from the size it had
+there (`parseBlock`, `switch`). -/
 def addVar (n : String) : P Unit :=
-  modify fun s => if s.vars.contains n then s else { s with vars := s.vars.push n }
+  modify fun s =>
+    if s.varSet.contains n then s
+    else { s with vars := s.vars.push n, varSet := s.varSet.insert n }
 
 end P
 
@@ -372,7 +381,7 @@ def parseStmt : Nat → P Stmt
         let cs ← parseCases n false []
         modify fun s => { s with breakables := st.breakables }
         let after := (← get).vars
-        checkDecls (cs.flatMap fun c => match c with | .mk _ b => b) (after.toList.filter (!st.vars.contains ·))
+        checkDecls (cs.flatMap fun c => match c with | .mk _ b => b) (after.extract st.vars.size after.size).toList
         return .switchS d cs
       | "debugger" => advance; semi; return .empty
       | "class" =>
@@ -469,7 +478,7 @@ def parseBlock : Nat → P (List Stmt)
     let before := (← get).vars
     let ss ← parseStmts n #[]
     let after := (← get).vars
-    checkDecls ss (after.toList.filter (!before.contains ·))
+    checkDecls ss (after.extract before.size after.size).toList
     expectP "}"
     return ss
 
@@ -619,14 +628,14 @@ def parseBody : Nat → Option String → List PatElem → Option Pat → FunKin
     let simple := rest.isNone && params.all (fun p => match p with | .mk (.id _) none => true | _ => false)
     if (strict || kind == .arrow || kind == .method || !simple) && names.eraseDups.length != names.length then
       fail "duplicate parameter name not allowed in this context"
-    set { outer with vars := #[], usesArgs := false, strict, inFun := true, loops := 0,
+    set { outer with vars := #[], varSet := {}, usesArgs := false, strict, inFun := true, loops := 0,
                      breakables := 0, labels := [],
                      inGen := gen == 1 || gen == 3, inAsync := gen == 2 || gen == 3 }
     let body ← parseBlock n
     let inner ← get
     let usesArgs := inner.usesArgs
     let arrow := kind == .arrow
-    set { inner with vars := outer.vars, strict := outer.strict, inFun := outer.inFun,
+    set { inner with vars := outer.vars, varSet := outer.varSet, strict := outer.strict, inFun := outer.inFun,
                      loops := outer.loops, breakables := outer.breakables, labels := outer.labels,
                      inGen := outer.inGen, inAsync := outer.inAsync, usesArgs := outer.usesArgs || (arrow && usesArgs) }
     return FunDef.mk name params rest body inner.vars.toList (usesArgs && !arrow) strict kind
@@ -638,10 +647,10 @@ def parseArrowBody : Nat → List PatElem → Option Pat → Nat → P Expr
   | n + 1, params, rest, coro => do
     if ← atP "{" then return .func (← parseBody n none params rest .arrow coro)
     let outer ← get
-    set { outer with vars := #[], inFun := true, inAsync := coro == 2, inGen := false }
+    set { outer with vars := #[], varSet := {}, inFun := true, inAsync := coro == 2, inGen := false }
     let e ← parseAssign n false
     let inner ← get
-    set { inner with vars := outer.vars, inFun := outer.inFun, inAsync := outer.inAsync, inGen := outer.inGen }
+    set { inner with vars := outer.vars, varSet := outer.varSet, inFun := outer.inFun, inAsync := outer.inAsync, inGen := outer.inGen }
     return .func (FunDef.mk none params rest [.ret (some e)] inner.vars.toList false outer.strict .arrow false (coro == 2) {})
 
 def parseExpr : Nat → Bool → P Expr
@@ -1183,9 +1192,9 @@ def parseMembers : Nat → Bool → Option FunDef → List Member → P (Option 
       if accessor then fail "expected '('"
       -- a field: its initialiser is the body of a method that returns it
       let outer ← get
-      set { outer with vars := #[], inFun := true }
+      set { outer with vars := #[], varSet := {}, inFun := true }
       let init ← if ← atP "=" then advance; pure (some (← parseAssign n false)) else pure none
-      set { (← get) with vars := outer.vars, inFun := outer.inFun }
+      set { (← get) with vars := outer.vars, varSet := outer.varSet, inFun := outer.inFun }
       semi
       let f := FunDef.mk none [] none [.ret init] [] false true .method false false {}
       parseMembers n derived ctor (.mk static .field k f :: acc)
