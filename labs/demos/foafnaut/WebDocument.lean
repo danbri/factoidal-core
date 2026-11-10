@@ -1079,7 +1079,8 @@ private unsafe def pageArtifactImpl (page : Rendering.Scene) (extra : List Rende
     (form : NativeSVG.DataForm) (checks tree : Bool) (retainOn : Bool := true) : Except String (String × Array ByteArray) :=
   unsafeBaseIO do
     let same := fun (k : KeptPage) => ptrEq k.page page && ptrEq k.boxes boxes && ptrEq k.face face &&
-      ptrEq k.extra extra && k.band == b && k.live == live && formSame k.form form && k.checks == checks && k.tree == tree
+      ptrEq k.extra extra && k.band == b && k.live == live && formSame k.form form && k.checks == checks && k.tree == tree &&
+      (retainOn || k.retained.isNone)
     let kept ← keptPageRef.get
     match kept.find? same with
     | some k =>
