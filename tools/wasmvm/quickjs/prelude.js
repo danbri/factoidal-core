@@ -2797,7 +2797,7 @@
     class XMLHttpRequest extends XMLHttpRequestEventTarget {
       constructor() {
         super(key);
-        st.set(this, { h: Number(call(60, [], 'XMLHttpRequest')), upload: new XMLHttpRequestUpload(key), timer: 0, ms: 0, cred: false, text: null, json: null, buf: null });
+        st.set(this, { h: Number(call(60, [], 'XMLHttpRequest')), upload: new XMLHttpRequestUpload(key), timer: 0, ms: 0, cred: false, text: null, json: null, buf: null, doc: null });
       }
       get upload() { return S(this).upload; }
       get readyState() { return Number(call(67, [S(this).h, 0])); }
@@ -2819,15 +2819,26 @@
         return v;
       }
       get responseXML() {
-        const t = call(67, [S(this).h, 6]);
+        const s = S(this), t = call(67, [s.h, 6]);
         if (t !== '' && t !== 'document') throw new DOMException('responseXML is only for responseType document', 'InvalidStateError');
-        return null;
+        if (s.doc !== null) return s.doc.v;
+        const kind = call(67, [s.h, 7]);
+        let v = null;
+        if (kind !== '' && typeof DOMParser === 'function') {
+          try {
+            const d = new DOMParser().parseFromString(call(67, [s.h, 4]), kind === 'html' ? 'text/html' : 'application/xml');
+            v = kind === 'xml' && d.documentElement && d.documentElement.localName === 'parsererror' ? null : d;
+          } catch { v = null; }
+        }
+        s.doc = { v };
+        return v;
       }
       get response() {
         const s = S(this), t = call(67, [s.h, 6]);
         if (t === '' || t === 'text') return this.responseText;
         if (call(67, [s.h, 0]) !== '4') return null;
         if (t === 'json') { if (s.json === null) { try { s.json = { v: JSON.parse(call(67, [s.h, 4])) }; } catch { s.json = { v: null }; } } return s.json.v; }
+        if (t === 'document') return this.responseXML;
         if (t === 'arraybuffer') { if (s.buf === null) { const b = apiCall(74, [s.h], 0, true); s.buf = b instanceof ArrayBuffer ? b : new ArrayBuffer(0); } return s.buf; }
         return null;
       }
@@ -2836,7 +2847,7 @@
         const s = S(this), isAsync = arguments.length < 3 ? true : !!async;
         const base = document.baseURI ?? '';
         call(61, [s.h, String(method), usv(url), base, isAsync ? 1 : 0], "Failed to execute 'open' on 'XMLHttpRequest'");
-        s.text = s.json = s.buf = null;
+        s.text = s.json = s.buf = s.doc = null;
         if (s.timer) { n.clearTimer(s.timer); s.timer = 0; }
         drain(this, s);
       }
@@ -2855,13 +2866,13 @@
         }
         const x = this, cb = register(() => drain(x, s));
         const up = upload.get(s.upload).listened;
-        s.text = s.json = s.buf = null;
+        s.text = s.json = s.buf = s.doc = null;
         call(63, [s.h, cb, up ? 1 : 0, has, ct, bytes], what);
         drain(this, s);
         if (call(67, [s.h, 5]) === '1') chk(n.timer(register(() => { call(76, [s.h]); drain(x, s); }), 0, 0));
         if (s.ms > 0 && call(67, [s.h, 0]) !== '4') s.timer = chk(n.timer(register(() => { s.timer = 0; call(66, [s.h]); drain(x, s); }), s.ms, 0));
       }
-      abort() { const s = S(this); call(65, [s.h]); s.text = s.json = s.buf = null; drain(this, s); }
+      abort() { const s = S(this); call(65, [s.h]); s.text = s.json = s.buf = s.doc = null; drain(this, s); }
       getResponseHeader(name) {
         if (arguments.length < 1) throw new TypeError("Failed to execute 'getResponseHeader' on 'XMLHttpRequest': 1 argument required");
         const r = apiCall(68, [S(this).h, String(name)]);

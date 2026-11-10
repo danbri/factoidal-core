@@ -205,7 +205,9 @@ def syncFetch (s : State) (t0 : Transfer) : State × SyncOutcome := Id.run do
     | .deliver _ r => return (s, .done r)
     | .send t w =>
       match s.syncAnswers[s.syncUsed]? with
-      | none => return ({ s with syncWanted := some w }, .need)
+      -- the first request the run needs wins: a page that catches the throw and goes on
+      -- does not change what the host is asked (`syncWanted` is set once in a run)
+      | none => return ({ s with syncWanted := s.syncWanted.orElse fun _ => some w }, .need)
       | some a =>
         s := { s with syncUsed := s.syncUsed + 1 }
         step := onAnswer t a
@@ -380,6 +382,25 @@ def responseText (x : Xhr) : String :=
   | some r => if x.state ≥ 3 then Encoding.decode r.body (textEncoding x r) else ""
   | none => ""
 
+/-- The essence of a MIME type (lowercase, parameters removed). -/
+def mimeEssence (ct : String) : String := lower (trimWs ((ct.splitOn ";").headD ""))
+
+/-- Which document `responseXML` makes (XHR "set a document response"): `"xml"`, `"html"`
+(only when `responseType` is `document`), or `""` (none). -/
+def docKind (x : Xhr) : String :=
+  match x.response with
+  | none => ""
+  | some r =>
+    if x.state != 4 || !(x.responseType == "" || x.responseType == "document") then "" else
+    let ct := match x.mimeOverride, headerGet r.headers "content-type" with
+      | some m, _ => m
+      | none, some c => c
+      | none, none => "text/xml"
+    let e := mimeEssence ct
+    if e == "text/html" then (if x.responseType == "document" then "html" else "")
+    else if e == "text/xml" || e == "application/xml" || e.endsWith "+xml" then "xml"
+    else ""
+
 /-- `getAllResponseHeaders()`: names lowercased and sorted, one `name: value` CRLF each. -/
 def allHeaders (x : Xhr) : String :=
   match x.response with
@@ -446,6 +467,7 @@ def op (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int Byt
         | 4 => responseText x
         | 5 => if x.deferFail then "1" else "0"
         | 6 => x.responseType
+        | 7 => docKind x
         | _ => ""
       (s, okStr body)
   | 68 =>
