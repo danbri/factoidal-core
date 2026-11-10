@@ -292,12 +292,16 @@ def mkNative (id : Native) (name : String) (len : Nat) : M Value := do
 def method (target : Nat) (name : String) (id : Native) (len : Nat) : M Unit := do
   setHidden target name (← mkNative id name len)
 
-/-- OrdinaryFunctionCreate and MakeConstructor (§10.2.3, §10.2.5). -/
-def makeClosure (ctx : Ctx) (f : FunDef) (nameHint : String := "") (home : Value := .undef) : M Value := do
+/-- OrdinaryFunctionCreate and MakeConstructor (§10.2.3, §10.2.5). `decl`: the closure of a
+function declaration. Its name is a binding of the scope that has the declaration (§10.2.11,
+§16.1.7), so it gets no scope of its own for the name: `function f() { f = 1 }` changes that
+binding. -/
+def makeClosure (ctx : Ctx) (f : FunDef) (nameHint : String := "") (home : Value := .undef)
+    (decl : Bool := false) : M Value := do
   let r ← realm
   -- a named function expression sees its own name (§15.2.5)
   let env ← match f.name with
-    | some n => if f.arrow then pure ctx.env else do
+    | some _ => if f.arrow || decl then pure ctx.env else do
         let e ← newEnv ctx.env; pure e
     | none => pure ctx.env
   let home := if f.arrow then ctx.home else home
@@ -1879,7 +1883,7 @@ def declareLexical : Nat → Ctx → List Stmt → M Unit
         for x in d.names do declare ctx.env x { v := .undef, mutable, init := false }
     | .classDecl name _ => declare ctx.env name { v := .undef, mutable := true, init := false }
     | .funDecl name f =>
-      let c ← makeClosure ctx f
+      let c ← makeClosure ctx f (decl := true)
       declare ctx.env name { v := c }
     | _ => pure ()
     declareLexical n ctx ss
@@ -1902,6 +1906,21 @@ def evalBlock : Nat → Ctx → List Stmt → M Compl
     evalStmts n ctx ss
 termination_by structural n _ _ => n
 
+/-- Environment `e` is the scope of the own name `x` of a function expression (§15.2.5; made by
+`makeClosure`): one binding, whose value is the closure that has `e` as its environment. That
+binding is immutable and not strict (CreateImmutableBinding(name, false)): an assignment to it
+from code that is not strict does nothing, and from strict code it throws a TypeError
+(§9.1.1.1.5 SetMutableBinding). A `const` binding throws for both. -/
+def fnNameScope (h : HeapOf H) (e : Nat) (x : String) : Bool :=
+  let env := h.envs.getD e default
+  if env.names.size != 1 || env.names[0]! != x then false else
+  match env.vals.getD 0 .undef with
+  | .obj id =>
+    match (h.obj id).kind with
+    | .closure f fenv .. => fenv == e && f.name == some x
+    | _ => false
+  | _ => false
+
 /-- InitializeReferencedBinding / PutValue for a name (§9.1.1.1.5, §6.2.5.6). -/
 def assignName : Nat → Ctx → String → Value → M Unit
   | 0, _, _, _ => throw (.halt "fuel")
@@ -1913,8 +1932,8 @@ def assignName : Nat → Ctx → String → Value → M Unit
       | some b =>
         if !b.init then throwErr .reference s!"Cannot access '{x}' before initialization"
         if !b.mutable then
-          if b.v.isObj && ctx.strict == false && false then pure ()
-          else throwErr .type "Assignment to constant variable."
+          if !ctx.strict && fnNameScope h e x then return
+          throwErr .type "Assignment to constant variable."
         declare e x { b with v }
       | none =>
         match (h.envs.getD e default).withObj with
@@ -1986,7 +2005,9 @@ def assignLocal : Nat → Ctx → String → Nat → Nat → Value → M Unit
     | some y, some old =>
       if y == x then
         if let .hole := old then throwErr .reference s!"Cannot access '{x}' before initialization"
-        if !env.mutableAt idx then throwErr .type "Assignment to constant variable."
+        if !env.mutableAt idx then
+          if !ctx.strict && fnNameScope h e x then return
+          throwErr .type "Assignment to constant variable."
         if verifyLocals then
           -- the plain path must find the same binding
           if (h.findEnv x 100000 ctx.env) != some e then throw (.halt s!"verifyLocals: {x} {hops} {idx}")
@@ -7590,7 +7611,7 @@ def runScriptM (s : Script) (checkpoint : Bool := true) : M Unit := do
   -- top-level functions are properties of the global object
   for st in s.body do
     if let .funDecl name f := st then
-      defineOwn g name (.data (← makeClosure ctx f) true true false)
+      defineOwn g name (.data (← makeClosure ctx f (decl := true)) true true false)
   -- top-level let/const are bindings of the global environment record
   for st in s.body do
     match st with

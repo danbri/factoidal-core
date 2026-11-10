@@ -100,7 +100,7 @@ def rE : Nat → Frames → Expr → R Expr
     | .ident x => pure (nameE fs x)
     | .array es => pure (.array (← rEs n fs es))
     | .object ps => pure (.object (← rProps n fs ps))
-    | .func f => pure (.func (← rFun n fs f))
+    | .func f => pure (.func (← rFun n fs false f))
     | .unary op a =>
       -- `typeof x` and `delete x` of a plain name keep the name
       match op, a with
@@ -142,8 +142,8 @@ def rProps : Nat → Frames → List PropDef → R (List PropDef)
   | n + 1, fs, ps => ps.mapM fun p => do
     match p with
     | .init k v => pure (.init (← rKey n fs k) (← rE n fs v))
-    | .getter k f => pure (.getter (← rKey n fs k) (← rFun n fs f))
-    | .setter k f => pure (.setter (← rKey n fs k) (← rFun n fs f))
+    | .getter k f => pure (.getter (← rKey n fs k) (← rFun n fs false f))
+    | .setter k f => pure (.setter (← rKey n fs k) (← rFun n fs false f))
     | .spread e => pure (.spread (← rE n fs e))
 
 def rKey : Nat → Frames → PropKey → R PropKey
@@ -185,16 +185,17 @@ def rOptE : Nat → Frames → Option Expr → R (Option Expr)
     | some e => do pure (some (← rE n fs e))
     | none => pure none
 
-/-- A function literal: the frame of its own name (`makeClosure`), its own frame, the body. -/
-def rFun : Nat → Frames → FunDef → R FunDef
-  | 0, _, f => pure f
-  | n + 1, fs, f => do
+/-- A function literal: the frame of its own name (`makeClosure`), its own frame, the body.
+`decl`: a function declaration, which has no frame for its own name. -/
+def rFun : Nat → Frames → Bool → FunDef → R FunDef
+  | 0, _, _, f => pure f
+  | n + 1, fs, decl, f => do
     match f with
     | .mk name params rest body vars usesArgs strict kind gen async _ =>
       let outer ← get
       set { outer with closure := false }
       let fs0 := match name with
-        | some x => if kind == .arrow then fs else frameOf #[x] :: fs
+        | some x => if kind == .arrow || decl then fs else frameOf #[x] :: fs
         | none => fs
       let frame := funFrame f
       -- generators and async functions run on their own machine (`genRun`), which matches
@@ -235,7 +236,7 @@ def rClass : Nat → Frames → ClassDef → R ClassDef
     let fs1 := frameOf frame :: fs
     let heritage' ← rOptE n fs1 heritage
     let ctor' ← match ctor with
-      | some f => do pure (some (← rFun n fs1 f))
+      | some f => do pure (some (← rFun n fs1 false f))
       | none => pure none
     pure (.mk name heritage' ctor' (← rMembers n fs1 members))
 
@@ -245,7 +246,7 @@ def rMembers : Nat → Frames → List Member → R (List Member)
     match m with
     | .mk st k key f =>
       let key' ← rKey n fs key
-      let f' ← rFun n fs f
+      let f' ← rFun n fs false f
       pure (.mk st k key' f')
 
 def rSs : Nat → Frames → List Stmt → R (List Stmt)
@@ -270,7 +271,7 @@ def rS : Nat → Frames → Stmt → R Stmt
     match s with
     | .expr e => pure (.expr (← rE n fs e))
     | .decl k ds => pure (.decl k (← rDecls n fs ds))
-    | .funDecl name f => pure (.funDecl name (← rFun n fs f))
+    | .funDecl name f => pure (.funDecl name (← rFun n fs true f))
     | .classDecl name c => pure (.classDecl name (← rClass n fs c))
     | .ret e => pure (.ret (← rOptE n fs e))
     | .ifS c t e =>

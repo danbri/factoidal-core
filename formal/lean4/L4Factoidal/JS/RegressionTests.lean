@@ -90,4 +90,43 @@ regular expression: 19 of these 46 scripts gave a SyntaxError (for example
 #guard out "try { eval('var w9 = 1 /\\n 2/') } catch (e) { print(e instanceof SyntaxError) }" == ["true"]
 #guard out "var t9 = eval('var q9 = 8\\n/2/1; q9'); print(t9)" == ["4"]
 
+/-! ## The name of a function
+
+A function declaration's name is a binding of the scope that has the declaration (§10.2.11,
+§16.1.7): code in the body that assigns to the name changes that binding. A function
+expression's name is a binding of a scope of its own (§15.2.5), immutable and not strict: an
+assignment from code that is not strict does nothing, and from strict code it throws a TypeError
+(§9.1.1.1.5). Before the repair of 2026-11-10 a declaration also got the scope of an expression,
+and every assignment to either name threw "Assignment to constant variable": 13 of these 21
+scripts failed. Helpers that Babel writes replace themselves this way
+(`function _extends() { _extends = Object.assign ...`), and the `marked` library did not load. -/
+
+-- Function declarations.
+#guard out "function f() { f = 1 } f(); print(typeof f)" == ["number"]
+#guard out "function g() { 'use strict'; g = function () { return 2 }; return g() } print(g(), g())" == ["2 2"]
+#guard out "(function () { 'use strict'; function h() { h = Object.assign || function () { return 3 }; return typeof h } print(h(), typeof h) })()" == ["function function"]
+#guard out "function k() { return k } var k2 = k; k = 5; print(typeof k2(), k)" == ["number 5"]
+#guard out "{ function b1() { b1 = 7 } b1(); print(b1) }" == ["7"]
+#guard out "function outer() { function inner() { inner = 8 } inner(); return inner } print(outer())" == ["8"]
+#guard out "function fact(n) { return n < 2 ? 1 : n * fact(n - 1) } var f0 = fact; fact = function () { return 0 }; print(f0(5))" == ["0"]
+#guard out "function _ext() { _ext = Object.assign ? Object.assign.bind() : function (t) { return t }; return _ext.apply(this, arguments) } print(_ext({a: 1}, {b: 2}).b, _ext({}, {c: 3}).c)" == ["2 3"]
+#guard out "function cnt() { var n = 0; function step() { n++; if (n < 3) step(); } step(); return n } print(cnt())" == ["3"]
+#guard out "function* gen() { gen = 1; yield 1 } var it = gen(); it.next(); print(gen)" == ["1"]
+
+-- Function expressions. A parameter or a `var` with the same name is a different binding.
+#guard out "var b = function g() { 'use strict'; try { g = 1 } catch (e) { return e instanceof TypeError } return 'no' }; print(b())" == ["true"]
+#guard out "const d = function d2() { return 1 }; try { d = 2 } catch (e) { print(e instanceof TypeError) }" == ["true"]
+#guard out "var e2 = function w() { var w = 5; w = 6; return w }; print(e2())" == ["6"]
+#guard out "var f3 = function q(q) { q = 7; return q }; print(f3(1))" == ["7"]
+#guard out "class C { m() { try { C = 1 } catch (e) { return e instanceof TypeError } } } print(new C().m())" == ["true"]
+#guard out "var o = { m: function n() { return typeof n } }; print(o.m())" == ["function"]
+#guard out "var fe = function fact2(n) { return n < 2 ? 1 : n * fact2(n - 1) }; var fact2 = 0; print(fe(5))" == ["120"]
+
+-- Function expressions, an assignment to the name from code that is not strict. The expected
+-- lines are those of V8 and of §9.1.1.1.5; QuickJS-NG 0.18.0 throws a TypeError here.
+#guard out "var a = function f() { f = 1; return typeof f }; print(a())" == ["function"]
+#guard out "var c = function h() { h++; h += 1; var k = 0; for (var i = 0; i < 3; i++) { h = i; k += typeof h == 'function' ? 1 : 0 } return k }; print(c())" == ["3"]
+#guard out "var g3 = function r() { return (() => { r = 3; return typeof r })() }; print(g3())" == ["function"]
+#guard out "var h3 = function s() { eval('s = 4'); return typeof s }; print(h3())" == ["function"]
+
 end L4Factoidal.JS.Tests
