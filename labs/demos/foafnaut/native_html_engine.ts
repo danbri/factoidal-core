@@ -79,6 +79,8 @@ export type ScriptTurn = {session:number;clock:number;changed:boolean;commandCou
   /** Requests the page asked for (XMLHttpRequest): the policy is the engine's; the host only makes them. */
   netRequests?:{id:number;method:string;url:string;headers:[string,string][];bodyBase64?:string}[];
   netCancels?:number[];
+  /** A sync request: the turn changed nothing; answer it with action `syncAnswer` and the turn comes again. */
+  netSync?:{id:number;method:string;url:string;headers:[string,string][];bodyBase64?:string};
   logs:string[];errors:string[];timers:number;nextTimer:number|null;frames:number;nextWake:number|null;quiet:boolean;
   instructions:number;jobs:number;tasks:number;ns:number;
   /** Lean-validated page GPU commands of this turn (L4Factoidal.PageGpu) and their page session. */

@@ -205,6 +205,10 @@ structure Limits where
   network : Bool := false
   /-- The browser that runs the Hub enforces CORS (`Net.PageFetch.Page.hostCors`). -/
   hostCors : Bool := false
+  /-- Sync requests: the run is redone with these answers (`Net.Xhr.syncAnswers`). -/
+  syncAnswers : Array L4Factoidal.Net.PageFetch.Answer := #[]
+  /-- The embedder can undo and redo a run (not the AOT path). -/
+  syncOk : Bool := false
   deriving Inhabited
 
 /-- The exports of the module, by function address. -/
@@ -812,9 +816,9 @@ def Session.settleP (s : Session) (budgetMs : Nat) (maxTasks : Nat := 100000) : 
   for _ in [0:maxTasks] do
     let (s', _) ← s.advanceP s.loop.clock 1000
     s := s'
-    if s.quiet && !s.host.web.net.waiting then return (s, true)
+    if s.quiet && !s.host.web.net.waiting && s.host.web.net.syncWanted.isNone then return (s, true)
     -- A request waits for the embedder: give the session back (not quiet).
-    if s.host.web.net.waiting then return (s, false)
+    if s.host.web.net.waiting || s.host.web.net.syncWanted.isSome then return (s, false)
     -- A navigation waits for the embedder: give the session back (not quiet).
     if s.host.dom.navigations.any (!·.2.isEmpty) then return (s, false)
     let next := match s.loop.timers, s.nextFrame with
@@ -1113,7 +1117,7 @@ def Session.startP (s : Session) (url : String) (scripts : Array (Nat × String)
   -- (HTML §4.8.5); a page with none pays one look at its nodes. Their initial about:blank
   -- documents are there before any script runs, and that load is not an event scripts see.
   let d0 := { s.host.dom with url }
-  let web := { s.host.web with net := { enabled := s.limits.network, page := L4Factoidal.Net.PageFetch.Page.ofUrl url s.limits.hostCors } }
+  let web := { s.host.web with net := { enabled := s.limits.network, page := L4Factoidal.Net.PageFetch.Page.ofUrl url s.limits.hostCors, syncOk := s.limits.syncOk, syncAnswers := s.limits.syncAnswers } }
   let s := { s with host := { s.host with web } }
   let d0 := if d0.framing && d0.dom.nodes.any (L4Factoidal.DOM.Dom.isHtmlElement · "iframe") then
     let d1 := Hosts.Dom.connectFrames d0 #[0]

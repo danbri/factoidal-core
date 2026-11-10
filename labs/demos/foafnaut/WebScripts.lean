@@ -48,6 +48,10 @@ argument for `start`:
   `elapsedMs`): the host's answers to a turn's `netRequests` (a host that sets
   `network:true` in `start` makes page requests; without it `XMLHttpRequest` is not defined).
   `elapsedMs` moves the virtual clock before the answers apply (a test host's waiting time).
+- `syncAnswer` (`answer`, the form of one `results` entry): a sync `XMLHttpRequest` was reached.
+  A turn with `netSync` (one request) carries nothing else and changes nothing: the host
+  makes the request and answers here, and the action runs again from its start with the
+  answer (undo and redo; on a run with several, one more each time). Not on the AOT path.
   Status 0 is a network failure. Every decision is `L4Factoidal.Net.PageFetch`.
 
 `start` also takes `width` and `height` (the viewport in CSS pixels: `innerWidth`,
@@ -153,6 +157,11 @@ structure Held where
   leanBase : Option LeanJS.Session := none
   /-- The session on the Lean engine. -/
   leanSession : Option (Nat × LeanJS.Session × Marks) := none
+  /-- The answers of the sync requests of the action being redone (`Net.Xhr`). -/
+  syncCache : Array Net.PageFetch.Answer := #[]
+  /-- The action that waits for the answer to a sync request (`netSync`), and its page and
+  request; `syncAnswer` puts the answer in `syncCache` and does the action again. -/
+  pendingSync : Option (String × String × JSON.Json) := none
 
 instance : Inhabited Held := ⟨{}⟩
 
@@ -183,7 +192,7 @@ private unsafe def entropyImpl (id : Nat) : ByteArray :=
 @[implemented_by entropyImpl, noinline] private opaque entropy (id : Nat) : ByteArray
 
 def actions : List String := ["info", "load", "start", "click", "pointer", "resize", "advance", "settle", "turn", "close",
-  "aotModule", "resume", "host", "frame", "net"]
+  "aotModule", "resume", "host", "frame", "net", "syncAnswer"]
 
 /-- An answer object with `nextSession` first: the value `keep` answered, so the
 compiled code keeps the call. -/
@@ -279,7 +288,7 @@ def turnAnswer (id : Nat) (before : Before) (s : Page.Session) (marks : Marks) (
 
 /-- The page requests and cancels a turn carries away (the host keeps them from here). -/
 def netDrained (w : WebApi.State) : WebApi.State :=
-  { w with net := { w.net with outbox := #[], cancels := #[] } }
+  { w with net := { w.net with outbox := #[], cancels := #[], syncAnswers := #[], syncUsed := 0 } }
 
 /-- The session after a turn answer: the GPU commands it carried are the host's now. -/
 def drained (s : Page.Session) : Page.Session :=
@@ -288,8 +297,8 @@ def drained (s : Page.Session) : Page.Session :=
 
 def drainedLean (s : LeanJS.Session) : LeanJS.Session :=
   let h := s.host
-  let web := if h.web.net.outbox.isEmpty && h.web.net.cancels.isEmpty then h.web else netDrained h.web
-  if h.dom.gpuOut.isEmpty && h.dom.canvas.drawn.isEmpty && web.net.outbox.isEmpty && h.web.net.outbox.isEmpty && h.web.net.cancels.isEmpty then s else
+  let web := if h.web.net.outbox.isEmpty && h.web.net.cancels.isEmpty && h.web.net.syncAnswers.isEmpty then h.web else netDrained h.web
+  if h.dom.gpuOut.isEmpty && h.dom.canvas.drawn.isEmpty && h.web.net.outbox.isEmpty && h.web.net.cancels.isEmpty && h.web.net.syncAnswers.isEmpty then s else
   s.setHost { h with dom := { h.dom with gpuOut := #[], canvas := h.dom.canvas.sent }, web }
 
 /-- What Canvas 2D draws with, given anew before each action (fonts and images the engine
@@ -607,14 +616,25 @@ def frameDocument (request : JSON.Json) : Except String (String × Bool × Array
   let (scripts, _) ← scriptSources dom request
   return (src, DOM.isXhtmlPath url, scripts, enc)
 
+/-- One request to the host, as JSON. -/
+def wireJson (w : Net.PageFetch.Wire) : JSON.Json :=
+  .object ([("id", num w.id), ("method", .string w.method), ("url", .string w.url),
+      ("headers", .array (w.headers.map fun (n, v) => .array [.string n, .string v]))] ++
+      (match w.body with | some b => [("bodyBase64", .string (WHATWG.Base64.encode b))] | none => []))
+
+/-- The answer that undoes this run and asks the host for one sync request. -/
+def netSyncAnswer (id : Nat) (w : Net.PageFetch.Wire) : Except String String :=
+  .ok (JSON.Json.object [("session", num id), ("netSync", wireJson w)]).toString
+
+/-- A sync-answer list for a run, on the Lean engine's net state. -/
+def setSync (w : WebApi.State) (cache : Array Net.PageFetch.Answer) : WebApi.State :=
+  { w with net := { w.net with syncOk := true, syncAnswers := cache, syncUsed := 0, syncWanted := none } }
+
 /-- The page requests of a turn: `netRequests`, and `netCancels` for the host to stop. Only
 when there are some. -/
 def netFields (h : Page.Host) : List (String × JSON.Json) :=
   let net := h.web.net
-  (if net.outbox.isEmpty then [] else [("netRequests", .array (net.outbox.toList.map fun w =>
-    .object ([("id", num w.id), ("method", .string w.method), ("url", .string w.url),
-      ("headers", .array (w.headers.map fun (n, v) => .array [.string n, .string v]))] ++
-      (match w.body with | some b => [("bodyBase64", .string (WHATWG.Base64.encode b))] | none => []))))]) ++
+  (if net.outbox.isEmpty then [] else [("netRequests", .array (net.outbox.toList.map wireJson))]) ++
   (if net.cancels.isEmpty then [] else [("netCancels", .array (net.cancels.toList.map num))])
 
 /-- One answer of action `net` (`Net.PageFetch.Answer`). -/
@@ -665,7 +685,7 @@ def startLean (held : Held) (html : String) (request : JSON.Json) (measure : JSO
   let hostLoads := request.field? "navigations" == some (.bool true)
   let network := request.field? "network" == some (.bool true)
   let hostCors := request.field? "hostCors" == some (.bool true)
-  let lim : Page.Limits := { commands, logs, gpuPage := id, entropy := entropy id, encoding := str request "encoding", frames := true, hostLoads := hostLoads, network := network, hostCors := hostCors }
+  let lim : Page.Limits := { commands, logs, gpuPage := id, entropy := entropy id, encoding := str request "encoding", frames := true, hostLoads := hostLoads, network := network, hostCors := hostCors, syncOk := true, syncAnswers := held.syncCache }
   let made := show Except String (Array (Nat × String) × Array String × DOM.Dom) from do
     let dom ← parse html url
     let (scripts, missing) ← scriptSources dom request
@@ -685,8 +705,10 @@ def startLean (held : Held) (html : String) (request : JSON.Json) (measure : JSO
       let (s, ns) := WebWasm.timed fun _ =>
         let s := LeanJS.start base dom url scripts lim reads { instructionsPerMs := rate }
         missing.foldl LeanJS.Session.fail s
-      leanTurn { held with leanBase := some base, session := none, leanSession := none, nextSession := id + 1 }
-        id {} s {} true (ns0 + ns)
+      match s.host.web.net.syncWanted with
+      | some w => ({ held with leanBase := some base, pendingSync := some ("start", html, request) }, netSyncAnswer id w)
+      | none => leanTurn { held with leanBase := some base, session := none, leanSession := none, nextSession := id + 1, syncCache := #[], pendingSync := none }
+          id {} s {} true (ns0 + ns)
 
 /-- A later action on the Lean engine's session (the actions of `act`). -/
 def actLean (held : Held) (action : String) (request : JSON.Json) (id : Nat) (s : LeanJS.Session) (marks : Marks) :
@@ -694,9 +716,12 @@ def actLean (held : Held) (action : String) (request : JSON.Json) (id : Nat) (s 
   let full := request.field? "full" == some (.bool true)
   let e := LeanJS.engine
   let before := Before.ofLean s
+  let s0 := s.setHost { s.host with web := setSync s.host.web held.syncCache }
   let run := fun (f : LeanJS.Session → LeanJS.Session) =>
-    let (s', ns) := WebWasm.timed fun _ => f s
-    leanTurn held id before s' marks full ns
+    let (s', ns) := WebWasm.timed fun _ => f s0
+    match s'.host.web.net.syncWanted with
+    | some w => ({ held with pendingSync := some (action, "", request) }, netSyncAnswer id w)
+    | none => leanTurn { held with syncCache := #[], pendingSync := none } id before s' marks full ns
   let keep := fun (msg : String) => ({ held with leanSession := some (id, s, marks) }, Except.error msg)
   match action with
   | "click" =>
@@ -789,14 +814,18 @@ def act (held : Held) (action html : String) (request : JSON.Json)
         let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh, canvasEnv := canvas }
         let rate := max 1 ((natField request "instructionsPerMs").getD 100000)
         let hostLoads := request.field? "navigations" == some (.bool true)
-        let s ← Page.start m dom url scripts { commands, logs, gpuPage := held.nextSession, entropy := entropy held.nextSession, encoding := str request "encoding", network := request.field? "network" == some (.bool true), hostCors := request.field? "hostCors" == some (.bool true), frames := true, hostLoads } #[] reads { instructionsPerMs := rate }
+        let s ← Page.start m dom url scripts { commands, logs, gpuPage := held.nextSession, entropy := entropy held.nextSession, encoding := str request "encoding", network := request.field? "network" == some (.bool true), hostCors := request.field? "hostCors" == some (.bool true), syncOk := true, syncAnswers := held.syncCache, frames := true, hostLoads } #[] reads { instructionsPerMs := rate }
         return missing.foldl Page.Session.fail s
       match started with
       | (.error e, _) => (held, .error s!"scriptSession: {e}")
       | (.ok s, ns) =>
         let id := held.nextSession
+        match s.host.web.net.syncWanted with
+        | some w => ({ held with pendingSync := some ("start", html, request) }, netSyncAnswer id w)
+        | none =>
+        let held := { held with syncCache := #[], pendingSync := none }
         let (s, loads) := srcdocLoads (·.host) (fun s el src scripts => s.loadFrame el src scripts) s
-        let (answer, marks) := turnAnswer id {} s {} true ns (frameFields s.host loads)
+        let (answer, marks) := turnAnswer id {} s {} true ns (frameFields s.host loads ++ netFields s.host)
         let s := drained s
         ({ held with session := some (id, s, marks), leanSession := none, nextSession := id + 1 }, .ok answer)
   | _ =>
@@ -817,10 +846,14 @@ def act (held : Held) (action html : String) (request : JSON.Json)
         if held.aot.isSome && held.module.isNone then
           beginTurn held id before marks full false (Except.ok <$> f s)
         else
-          let (s', ns) := WebWasm.timed fun _ => (f s).runLocal
+          let s0 : Page.Session := { s with host := { s.host with web := setSync s.host.web held.syncCache } }
+          let (s', ns) := WebWasm.timed fun _ => (f s0).runLocal
+          match s'.host.web.net.syncWanted with
+          | some w => ({ held with pendingSync := some (action, "", request) }, netSyncAnswer id w)
+          | none =>
           let (s', loads) := srcdocLoads (·.host) (fun s el src scripts => s.loadFrame el src scripts) s'
           let (answer, marks) := turnAnswer id before s' marks full ns (frameFields s'.host loads ++ netFields s'.host)
-          ({ held with session := some (id, drained s', marks) }, Except.ok answer)
+          ({ held with session := some (id, drained s', marks), syncCache := #[], pendingSync := none }, Except.ok answer)
       match action with
       | "click" =>
         match natField request "node" with
@@ -869,7 +902,16 @@ def op (name html : String) (request : JSON.Json) (measure : JSON.Json → Optio
     return some (JSON.Json.object [("ops",.array (actions.map .string)),("module",.bool loaded),
       ("bytes",num bytes),("engine",.string "QuickJS-NG in WasmVM"),("aot",.bool true),("aotLoaded",.bool aot),
       ("engines",.array [.string "quickjs", .string "bubblepop"])]).toString
-  let (held, answer) := act (take request) action html request measure (canvas ())
+  let held := take request
+  let (held, action, html, request) :=
+    if action == "syncAnswer" then
+      match held.pendingSync with
+      | some (a, h, r) =>
+        let answer := (request.field? "answer").map (fun x => (netAnswer x).2)
+        ({ held with syncCache := held.syncCache.push (answer.getD {}), pendingSync := none }, a, h, r)
+      | none => (held, action, html, request)
+    else (held, action, html, request)
+  let (held, answer) := act held action html request measure (canvas ())
   let n := keep held request
   return some (← answer.map (withNext n))
 

@@ -224,9 +224,19 @@ async function main() {
   // the renders (the worker), once. The engine must answer scriptSession info first: an older
   // engine has no such op, and then a page with scripts is refused as before (issue 1274).
   type ScriptCall=(name:"scriptInfo"|"scriptLoad"|"scriptSession"|"nodeAt"|"pointerAt"|"scriptPlan"|"scriptSetting"|"scriptChoices",...args:unknown[])=>Promise<unknown>;
-  const scriptCall:ScriptCall=async(name,...args)=>worker?await worker.engine[name](...args)
+  const scriptCallRaw:ScriptCall=async(name,...args)=>worker?await worker.engine[name](...args)
     :(engine as unknown as Record<string,(...a:unknown[])=>unknown>)[name](...args);
-  const scriptInput:ScriptCall=async(name,...args)=>worker?(await worker.inputCall(name,...args)).value:await scriptCall(name,...args);
+  // A sync XMLHttpRequest of a turn (netSync): the run was undone; the host answers and the
+  // same action runs again (Net.Xhr), so no call here ever blocks the worker on the network.
+  const syncAnswers=async(t:unknown)=>{
+    for(let i=0;(t as ScriptTurn|undefined)?.netSync&&i<4096;i++){
+      const a=await netFetch((t as ScriptTurn).netSync!);
+      t=await scriptCallRaw("scriptSession","",{action:"syncAnswer",session:(t as ScriptTurn).session,answer:a});
+    }
+    return t;
+  };
+  const scriptCall:ScriptCall=async(name,...args)=>syncAnswers(await scriptCallRaw(name,...args));
+  const scriptInput:ScriptCall=async(name,...args)=>worker?syncAnswers((await worker.inputCall(name,...args)).value):await scriptCall(name,...args);
   let session:Awaited<ReturnType<typeof createHTMLWindowSession>>|undefined;
   // Page GPU commands (docs/designissues/2026-11-08-page-gpu.md): Lean validated each one; the
   // window session replays them in order and presents the page canvases. Before the session
@@ -276,6 +286,21 @@ async function main() {
   // The real time at which each session's virtual clock was 0.
   const scriptEpochs=new Map<number,number>();
   const netQueue:{session:number;wire:NonNullable<ScriptTurn["netRequests"]>[number]}[]=[];
+  // Page requests (XMLHttpRequest): the host only moves bytes. The engine chose them (origin,
+  // CORS, redirects, what a page may reach: Net.PageFetch), so the fetch does what it says:
+  // redirect "manual" (each hop goes back to the engine), no cookies, a body of at most 64 MiB.
+  const netFetch=async(w:NonNullable<ScriptTurn["netRequests"]>[number])=>{
+    const failed={id:w.id,status:0};
+    try{
+      const body=w.bodyBase64!==undefined?Uint8Array.from(atob(w.bodyBase64),c=>c.charCodeAt(0)):undefined;
+      const r=await fetch(w.url,{method:w.method,headers:w.headers,body,redirect:"manual",signal:AbortSignal.timeout(300000)});
+      const reader=r.body?.getReader();let total=0;const parts:Uint8Array[]=[];
+      for(;reader;){const {done,value}=await reader.read();if(done)break;total+=value.length;if(total>67108864){await reader.cancel();return failed;}parts.push(value);}
+      const bytes=new Uint8Array(total);let at=0;for(const p of parts){bytes.set(p,at);at+=p.length;}
+      let s="";for(let i=0;i<bytes.length;i+=32768)s+=String.fromCharCode(...bytes.subarray(i,i+32768));
+      return {id:w.id,status:r.status,statusText:r.statusText,headers:[...r.headers],bodyBase64:btoa(s)};
+    }catch{return failed;}
+  };
   // The guest module: --quickjs-wasm FILE, else a local build (tools/wasmvm/build-quickjs.sh),
   // else the one tools/fetch-builds.sh --set foafnaut-web installs.
   const installed=decodeURIComponent(new URL("../../../docs/web/hub/wasm-guests/qjs-wasmvm.wasm",import.meta.url).pathname);
@@ -394,21 +419,6 @@ async function main() {
         buttons:ended?0:1,pressure:ended?0:0.5,pointerType:"mouse"}) as ScriptTurn;
       scriptTurn(page,turn,`pointer ${kind}`);
     }).catch(error=>console.error("Native HTML: page script pointer failed:",String(error)));
-  };
-  // Page requests (XMLHttpRequest): the host only moves bytes. The engine chose them (origin,
-  // CORS, redirects, what a page may reach: Net.PageFetch), so the fetch does what it says:
-  // redirect "manual" (each hop goes back to the engine), no cookies, a body of at most 64 MiB.
-  const netFetch=async(w:NonNullable<ScriptTurn["netRequests"]>[number])=>{
-    const failed={id:w.id,status:0};
-    try{
-      const body=w.bodyBase64!==undefined?Uint8Array.from(atob(w.bodyBase64),c=>c.charCodeAt(0)):undefined;
-      const r=await fetch(w.url,{method:w.method,headers:w.headers,body,redirect:"manual",signal:AbortSignal.timeout(300000)});
-      const reader=r.body?.getReader();let total=0;const parts:Uint8Array[]=[];
-      for(;reader;){const {done,value}=await reader.read();if(done)break;total+=value.length;if(total>67108864){await reader.cancel();return failed;}parts.push(value);}
-      const bytes=new Uint8Array(total);let at=0;for(const p of parts){bytes.set(p,at);at+=p.length;}
-      let s="";for(let i=0;i<bytes.length;i+=32768)s+=String.fromCharCode(...bytes.subarray(i,i+32768));
-      return {id:w.id,status:r.status,statusText:r.statusText,headers:[...r.headers],bodyBase64:btoa(s)};
-    }catch{return failed;}
   };
   const scriptTurn=(page:typeof document,turn:ScriptTurn,cause:string)=>{
     netQueue.push(...(turn.netRequests??[]).map(wire=>({session:turn.session,wire})));

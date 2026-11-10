@@ -2746,7 +2746,9 @@
       case -32: throw new DOMException(what, 'SecurityError');
       case -24: throw new DOMException(what, 'SyntaxError');
       case -25: throw new DOMException(what, 'InvalidAccessError');
-      case -23: throw new DOMException(what + ': sync requests are not supported yet', 'NotSupportedError');
+      case -23: throw new DOMException(what + ': sync requests are not supported in this build', 'NotSupportedError');
+      case -33: throw new DOMException(what, 'NetworkError');
+      case -40: throw { name: '__syncWait' };   // the run is undone and redone with the answer
       default: return apiError(r, what);
     }
   };

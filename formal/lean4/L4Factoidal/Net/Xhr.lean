@@ -30,6 +30,9 @@ def errType : Int := -20
 def errSyntax : Int := -24
 def errNotSupported : Int := -23
 def errAccess : Int := -25
+def errNetwork : Int := -33
+/-- A sync request waits for the host: the run is undone and done again. -/
+def errNeedHost : Int := -40
 
 /-- One step of the sequence a task runs: an event to fire, or a change between events. -/
 inductive Ev where
@@ -81,6 +84,15 @@ structure State where
   cancels : Array Nat := #[]
   /-- Response bytes held for the page. -/
   held : Nat := 0
+  /-- Sync `send` works by undo and rerun: the embedder runs this action only when it can
+  redo it (not the AOT path). -/
+  syncOk : Bool := false
+  /-- Answers to the sync requests of this run, in order (given when the run is redone). -/
+  syncAnswers : Array Answer := #[]
+  syncUsed : Nat := 0
+  /-- A sync request this run needs the host for: the run is thrown away, the host answers
+  it, and the run happens again with one more answer (`WebScripts`, action `syncAnswer`). -/
+  syncWanted : Option Wire := none
   deriving Inhabited
 
 /-- A page's objects (each handle is its index plus one). -/
@@ -174,6 +186,54 @@ def mimeCharset (ct : String) : Option String :=
       else none
     | _ => none
 
+/-- What a sync fetch came to. -/
+inductive SyncOutcome where
+  | done (r : Response)
+  | failed
+  | need
+  deriving Inhabited
+
+/-- Run a fetch on the answers given so far: the `k`-th request of this run takes the `k`-th
+answer (determinism of the run is what makes the numbering stable: the redone run is the same
+run, with the same clock, random numbers and order). -/
+def syncFetch (s : State) (t0 : Transfer) : State × SyncOutcome := Id.run do
+  let mut s := s
+  let mut step := plan t0
+  for _ in [0:2 * maxRedirects + 8] do
+    match step with
+    | .fail _ => return (s, .failed)
+    | .deliver _ r => return (s, .done r)
+    | .send t w =>
+      match s.syncAnswers[s.syncUsed]? with
+      | none => return ({ s with syncWanted := some w }, .need)
+      | some a =>
+        s := { s with syncUsed := s.syncUsed + 1 }
+        step := onAnswer t a
+  return (s, .failed)
+
+/-- Sync `send` (XHR §4.5.2 step 12): the fetch happens now; on failure a `NetworkError` is
+thrown; on success the object is done with its last events. `send` has no `loadstart` in
+this mode (the steps "if xhr's synchronous flag is unset" hold it). -/
+def syncSend (s : State) (h : Nat) (x : Xhr) : State × Except Int String :=
+  let id := s.nextTransfer
+  let s := { s with nextTransfer := id + 1 }
+  let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred }
+  let (s, out) := syncFetch s t
+  match out with
+  | .need => (s.set h { x with events := #[] }, .error errNeedHost)
+  | .failed => (s.set h { x with state := 4, sendFlag := false, response := none, events := #[] }, .error errNetwork)
+  | .done r =>
+    if r.body.size > maxBody || s.held + r.body.size > maxHeld then
+      (s.set h { x with state := 4, sendFlag := false, response := none, events := #[] }, .error errNetwork)
+    else
+      let bodySize := r.body.size
+      let total := match headerGet r.headers "content-length" with
+        | some v => (trimWs v).toNat?.getD 0
+        | none => 0
+      let evs : Array Ev := #[.setState 4, rsc, .guardDone, .fire false "load" bodySize total (total > 0),
+        .fire false "loadend" bodySize total (total > 0)]
+      ((s.set h { x with response := some r, events := evs }) |> fun s => { s with held := s.held + r.body.size }, .ok "")
+
 def textDefault : String := "text/plain;charset=UTF-8"
 
 /-- `send(body)`. `ctDefault`: the type of the body when the page did not set one, as "extract a body"
@@ -185,7 +245,7 @@ def sendX (s : State) (h : Nat) (body : Option ByteArray) (ctDefault : String) (
   | none => (s, .error errType)
   | some x =>
   if x.state != 1 || x.sendFlag then (s, .error errInvalidState) else
-  if !x.async then (s, .error errNotSupported) else
+  if !x.async && !s.syncOk then (s, .error errNotSupported) else
   let body := if x.method == "GET" || x.method == "HEAD" then none else body
   let headers :=
     if body.isSome && !ctDefault.isEmpty then
@@ -202,6 +262,7 @@ def sendX (s : State) (h : Nat) (body : Option ByteArray) (ctDefault : String) (
     else x.headers
   let headers := if headers.any (fun (k, _) => lower k == "accept") then headers else headers.push ("Accept", "*/*")
   let total := (body.map ByteArray.size).getD 0
+  if !x.async then syncSend s h { x with body, headers, sendFlag := true, uploadComplete := true, response := none } else
   let up := body.isSome
   let up' := up && listener
   let evs : Array Ev :=
