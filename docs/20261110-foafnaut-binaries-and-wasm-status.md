@@ -19,7 +19,9 @@ C ABI in all three. Experimental code, one author with AI coding tools, no users
 
 Releases come from the builds repository, one release for each source commit and artifact set
 (`foafnaut-darwin-arm64`, `foafnaut-web`); every file has a sha256 in `build-info.json`.
-No Linux desktop app and no Windows build exist. A Linux engine library is not released yet.
+Linux: the Factoidal library and command-line set is released (`linux-x86_64`). The browser
+engine builds on Linux as the command-line binary above; that binary and a Linux engine library
+are in no release. No Linux desktop app exists (the window library is Cocoa). No Windows build.
 
 ## 1. Lake configuration and FFI boundaries
 
@@ -139,12 +141,18 @@ also in the Wasm build inside a browser.
   (https://github.com/danbri/factoidal-core/tree/main/formal/lean4/L4Factoidal/WasmVM).
   In the Wasm build this is Wasm interpreted by Lean compiled to Wasm; it is slow, and it is
   the same code path as native. Official WebAssembly spec tests on the native binary: 61,698
-  pass, 0 fail, 3,655 not run (memory64, text-format modules, relaxed SIMD). The GC proposal
-  is in https://github.com/danbri/factoidal-core/pull/387 (open).
+  pass, 0 fail, 3,655 not run (memory64, text-format modules, rAbout 740 theorems under the browser's directories. In `formal/lean4` (the library: DOM, HTML,
+CSS, layout, fonts, the JavaScript and WebAssembly engines) these are banned and checked by CI:
+`sorry`, user axioms, `native_decide`, `unsafe`, `@[implemented_by]`, new `partial def`.
 
-DOM bindings are Lean (`WasmVM/Hosts/Dom.lean`, `DomOps.lean`).
-
-## 5. Proofs and invariants
+**The ban does not cover the engine's host modules.** `labs/demos/foafnaut/*.lean` (the
+document operations, script sessions and caches that the C ABI calls) have 29 `unsafe`
+definitions and 29 `@[implemented_by]` attributes, 21 of each in `WebDocument.lean`. They keep
+state between calls in mutable cells that functions of a pure type read. A theorem about a
+caller of one of these is about an opaque declaration, not about the compiled code. The audit
+now counts them with a baseline that must not go up:
+https://github.com/danbri/factoidal-core/issues/390 (open; replacement by explicit state).
+Corrected 2026-11-10; the first form of this note gave the ban with no scope.. Proofs and invariants
 
 About 740 theorems under the browser's directories. Banned and checked by CI: `sorry`, user
 axioms, `native_decide`, `unsafe`, `@[implemented_by]`, new `partial def`.
