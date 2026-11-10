@@ -6014,35 +6014,47 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
           else if 'a' ≤ c && c ≤ 'f' then some (a * 16 + (c.toNat - 87))
           else if 'A' ≤ c && c ≤ 'F' then some (a * 16 + (c.toNat - 55)) else none) (some 0)
       match which with
-      | 0 =>
+      | 0 | 4 =>
         -- encodeURIComponent: the unreserved marks stay, every other code point is its
-        -- UTF-8 bytes as %XX; a lone surrogate is a URIError (§19.2.6.5 Encode)
+        -- UTF-8 bytes as %XX; a lone surrogate is a URIError (§19.2.6.5 Encode).
+        -- encodeURI (4): the reserved characters and `#` stay too (§19.2.6.3).
         if !Str.isWellFormed s then throwErr .uri "URI malformed"
-        let keep := fun (c : Char) => c.isAlphanum && c.toNat < 128 || "-_.!~*'()".toList.contains c
+        let marks := (if which == 4 then "-_.!~*'();/?:@&=+$,#" else "-_.!~*'()").toList
+        let keep := fun (c : Char) => c.isAlphanum && c.toNat < 128 || marks.contains c
         pure (.str (String.join ((Str.toHost s).toList.map fun c =>
           if keep c then String.singleton c
           else String.join ((String.singleton c).toUTF8.toList.map fun b => "%" ++ hex b.toNat 2))))
-      | 1 =>
+      | 1 | 5 =>
         -- decodeURIComponent: %XX sequences are UTF-8; anything malformed is a URIError.
-        -- a run of %XX is UTF-8 text (host text: `Str.ofHost`); other characters stay
+        -- a run of %XX is UTF-8 text (host text: `Str.ofHost`); other characters stay.
+        -- decodeURI (5): the escape of a reserved character or of `#` stays as it is written
+        -- (§19.2.6.1, §19.2.6.6 Decode with the preserved set).
+        let preserve : List Char := if which == 5 then ";/?:@&=+$,#".toList else []
         let cs := s.toList.toArray
         let mut out := ""
         let mut pend := ByteArray.empty
         let mut i := 0
         for _ in [0:cs.size + 1] do
           let c := cs.getD i ' '
-          if i < cs.size && c == '%' then
-            match (if i + 2 < cs.size then hexVal [cs[i+1]!, cs[i+2]!] else none) with
-            | some v => pend := pend.push v.toUInt8; i := i + 3
-            | none => throwErr .uri "URI malformed"
-          else
+          let isEsc := i < cs.size && c == '%'
+          let esc := if isEsc && i + 2 < cs.size then hexVal [cs[i+1]!, cs[i+2]!] else none
+          if isEsc && esc.isNone then throwErr .uri "URI malformed"
+          let kept := match esc with
+            | some v => v < 128 && preserve.contains (Char.ofNat v)
+            | none => false
+          match esc, kept with
+          | some v, false => pend := pend.push v.toUInt8; i := i + 3
+          | _, _ =>
             if pend.size > 0 then
               match String.fromUTF8? pend with
               | some r => out := out ++ Str.ofHost r
               | none => throwErr .uri "URI malformed"
               pend := ByteArray.empty
             if i ≥ cs.size then break
-            out := out.push c; i := i + 1
+            if kept then
+              out := ((out.push c).push (cs.getD (i + 1) ' ')).push (cs.getD (i + 2) ' '); i := i + 3
+            else
+              out := out.push c; i := i + 1
         pure (.str (Str.canonical out))
       | 2 =>
         -- escape (§B.2.1.1): code units, as %XX or %uXXXX.
@@ -7376,7 +7388,8 @@ def initRealm : M Unit := do
   setHidden g "console" (.obj console)
   method console "log" .print 0
   -- eval, Symbol, iterators, Date.now
-  for (nm, k) in [("encodeURIComponent", 0), ("decodeURIComponent", 1), ("escape", 2), ("unescape", 3)] do
+  for (nm, k) in [("encodeURIComponent", 0), ("decodeURIComponent", 1), ("escape", 2), ("unescape", 3),
+      ("encodeURI", 4), ("decodeURI", 5)] do
     setHidden g nm (← mkNative (.uriFn k) nm 1)
   let ev ← mkNative .eval "eval" 1
   setHidden g "eval" ev

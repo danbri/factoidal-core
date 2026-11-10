@@ -129,4 +129,24 @@ scripts failed. Helpers that Babel writes replace themselves this way
 #guard out "var g3 = function r() { return (() => { r = 3; return typeof r })() }; print(g3())" == ["function"]
 #guard out "var h3 = function s() { eval('s = 4'); return typeof s }; print(h3())" == ["function"]
 
+/-! ## encodeURI and decodeURI
+
+§19.2.6.1 and §19.2.6.3. Before 2026-11-10 the global object had `encodeURIComponent` and
+`decodeURIComponent` only; the `marked` library catches the ReferenceError of `encodeURI` and
+then writes a link as plain text. `encodeURI` keeps the reserved characters and `#`;
+`decodeURI` keeps the escape of a reserved character or of `#` as it is written. -/
+
+#guard out "print(typeof encodeURI, typeof decodeURI, encodeURI.length, decodeURI.name)" == ["function function 1 decodeURI"]
+#guard out "print(encodeURI('https://example.org/p/0?a=b c&d=é#x%'))" == ["https://example.org/p/0?a=b%20c&d=%C3%A9#x%25"]
+#guard out "print(encodeURI(\";/?:@&=+$,#-_.!~*'()AZaz09 \\\"<>[]\\\\^`{|}\"))" == [";/?:@&=+$,#-_.!~*'()AZaz09%20%22%3C%3E%5B%5D%5C%5E%60%7B%7C%7D"]
+#guard out "print(encodeURI('\\u{1F600}é中'), encodeURI(''), encodeURI(undefined))" == ["%F0%9F%98%80%C3%A9%E4%B8%AD  undefined"]
+#guard out "try { encodeURI('\\uD800') } catch (e) { print(e instanceof URIError, e.name) }" == ["true URIError"]
+#guard out "print(decodeURI('https://example.org/a%20b%2Fc?x=%C3%A9&y=%F0%9F%98%80'))" == ["https://example.org/a b%2Fc?x=é&y=😀"]
+#guard out "print(decodeURI('%3B%2F%3F%3A%40%26%3D%2B%24%2C%23'), decodeURI('%3b%2f%41%7A%7e'))" == ["%3B%2F%3F%3A%40%26%3D%2B%24%2C%23 %3b%2fAz~"]
+#guard out "print(decodeURI('%E4%B8%AD%2fa%25%20'), decodeURIComponent('%3B%2F%23%25'))" == ["中%2fa%  ;/#%"]
+#guard out "try { decodeURI('%') } catch (e) { print(e instanceof URIError) }" == ["true"]
+#guard out "try { decodeURI('%E4%B8') } catch (e) { print(e instanceof URIError) }" == ["true"]
+#guard out "try { decodeURI('%zz') } catch (e) { print(e instanceof URIError) }" == ["true"]
+#guard out "print(decodeURI(encodeURI('a b/c?d=e&f=ü#g')) === 'a b/c?d=e&f=ü#g', encodeURI(decodeURI('%2F%20')))" == ["true %252F%20"]
+
 end L4Factoidal.JS.Tests
