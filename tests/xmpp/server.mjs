@@ -263,11 +263,11 @@ console.log('RFC 6121 section 2 — the roster');
     `<item jid='romeo@example.com' name='Romeo'/></query></iq>` +
     `<iq type='get' id='r2'><query xmlns='${NS_ROSTER}'/></iq>`, { dir: d });
   check('2.3 a roster set is answered with an empty IQ result',
-    out.includes('<iq type="result" id="r1"/>'));
+    out.includes('<iq from="juliet@example.com" type="result" id="r1"/>'));
   check('2.1.6 the set is pushed back to the session',
     out.includes('id="push-r1"') && out.includes('jid="romeo@example.com"'));
   check('2.1.3 the roster get returns the stored item',
-    out.includes('<iq type="result" id="r2"><query xmlns="jabber:iq:roster">') &&
+    out.includes('<iq from="juliet@example.com" type="result" id="r2"><query xmlns="jabber:iq:roster">') &&
     out.includes('name="Romeo"'));
   check('2 the roster is persisted where the server said to put it',
     existsSync(join(d, 'roster', 'juliet%40example.com.tsv')) &&
@@ -286,7 +286,7 @@ console.log('RFC 6121 section 2 — the roster');
     `<item jid='romeo@example.com' subscription='remove'/></query></iq>` +
     `<iq type='get' id='r4'><query xmlns='${NS_ROSTER}'/></iq>`, { dir: d });
   check('2.5 subscription=remove deletes the item and the next get is empty',
-    out.includes('<iq type="result" id="r4"><query xmlns="jabber:iq:roster"/></iq>'));
+    out.includes('<iq from="juliet@example.com" type="result" id="r4"><query xmlns="jabber:iq:roster"/></iq>'));
   rmSync(d, { recursive: true, force: true });
 }
 
