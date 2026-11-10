@@ -178,4 +178,20 @@ def manyVars (n : Nat) : String :=
 -- at the top level of a script
 #guard out (manyVars 30 ++ "function h() { return v28 + (typeof zz) } print(h())") == ["28undefined"]
 
+/-! ## String append in compiled code
+
+`s += t` in a compiled function or loop: the register lets go of the string before the append,
+so the append is in place when nothing else holds the string (`vmLoop`, `.add`). Before
+2026-11-10 the register machine copied the string at each append (400,000 appends: 1.86 s; the
+evaluator: 0.13 s). These scripts check that a second holder of the string keeps its value. -/
+
+#guard out "function f(n) { var s = ''; for (var i = 0; i < n; i++) { s += 'ab'; } return s.length } print(f(1000))" == ["2000"]
+#guard out "function g(n) { var s = 'x', t = s; for (var i = 0; i < n; i++) { s += i; } return t + '|' + s } print(g(5))" == ["x|x01234"]
+#guard out "function h() { var s = 'a'; s += s; s += s; return s } print(h())" == ["aaaa"]
+#guard out "function k(n) { var a = []; var s = ''; for (var i = 0; i < n; i++) { s += 'q'; a.push(s) } return a.join() } print(k(3))" == ["q,qq,qqq"]
+#guard out "var s = ''; for (var i = 0; i < 4; i++) { s += i + ',' } print(s)" == ["0,1,2,3,"]
+#guard out "function m() { var s = '\\uD83D'; s += '\\uDE00'; return s.length + ':' + s.codePointAt(0) } print(m())" == ["2:128512"]
+#guard out "function p(n) { var s = '', u; for (var i = 0; i < n; i++) { u = s; s += 1.5; s += true; s += null; } return u + '>' + s } print(p(2))" == ["1.5truenull>1.5truenull1.5truenull"]
+#guard out "function q(o) { var s = 'k'; for (var i = 0; i < 3; i++) { o.v = s; s += i } return o.v + ' ' + s } print(q({}))" == ["k01 k012"]
+
 end L4Factoidal.JS.Tests

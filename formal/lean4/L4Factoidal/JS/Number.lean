@@ -41,6 +41,13 @@ made once, when the module starts. `tools/lean-literal-parse-audit.py` and the g
 @[noinline] def negZero : Float := -0.0
 /-- 10^21: from here `Number::toString` writes an exponent (§6.1.6.1.20). -/
 @[noinline] def tenPow21 : Float := 1e21
+/-- 2^32 - 1: an array index is an integer below it (§6.1.7 array index). A named constant:
+a `Float` literal in a function body is converted from its decimal digits at each use. -/
+@[noinline] def maxIndexF : Float := 4294967295.0
+/-- 2^32: an array length is an integer below it (§10.4.2.4 ArraySetLength). -/
+@[noinline] def twoPow32F : Float := 4294967296.0
+/-- 2^53 - 1 (§21.1.2.6 Number.MAX_SAFE_INTEGER). -/
+@[noinline] def maxSafeF : Float := 9007199254740991.0
 
 /-- `x` is `-0`. -/
 def isNegZero (x : Float) : Bool := x == 0 && (x.toBits >>> 63) == 1

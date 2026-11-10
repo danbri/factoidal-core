@@ -169,6 +169,18 @@ def targetOf (e : Expr) : C (String × Target) := do
     | none => pure (x, .global)
   | _ => fail
 
+/-- The register of a name that is a mutable, initialised local variable of the code being
+compiled; nothing is emitted. -/
+def localReg? (e : Expr) : C (Option Nat) := do
+  let s ← get
+  let v? : Option Var := match e with
+    | .local x h _ => (s.scopes[h]?).bind (·.get? x)
+    | .ident x => (findVar x s.scopes).map (·.2)
+    | _ => none
+  pure (match v? with
+    | some v => if v.mutable && v.ready then some v.reg else none
+    | none => none)
+
 /-- Read a target into register `dst`. -/
 def readTarget (x : String) (t : Target) (dst : Nat) : C Unit :=
   match t with
@@ -367,11 +379,23 @@ def cE : Nat → Expr → Nat → C Unit
         discard <| emit (.setIndex ro rk dst)
       | _ =>
         let (x, tgt) ← targetOf t
-        let old ← fresh
-        readTarget x tgt old
-        let rv ← operand n v false
-        discard <| emit (opInstr op dst old rv)
-        writeTarget x tgt dst
+        -- The statement `s += v` on a local variable (`cS`, `.expr`, gives the variable's own
+        -- register as `dst`): one instruction on that register, with no copy of the old value
+        -- in another register. A string that only this register holds is then appended to in
+        -- place (`vmLoop`, `.add`). `v` is evaluated first; it does not write the variable
+        -- (`writes`), and no other code can write a register.
+        let own := match tgt, op with
+          | .reg r, .add => r == dst
+          | _, _ => false
+        if own then
+          let rv ← operand n v false
+          discard <| emit (opInstr op dst dst rv)
+        else
+          let old ← fresh
+          readTarget x tgt old
+          let rv ← operand n v false
+          discard <| emit (opInstr op dst old rv)
+          writeTarget x tgt dst
       release base
     | .update pre inc t =>
       let base := (← get).next
@@ -613,8 +637,15 @@ def cS : Nat → Stmt → C Unit
     match s with
     | .expr e =>
       let base := (← get).next
-      let t ← fresh
-      cE n e t
+      -- `s += v` on a local variable: the sum goes to the variable's own register (`cE`)
+      let own ← match e with
+        | .assign (some .add) t v => if writes n v then pure none else localReg? t
+        | _ => pure none
+      match own with
+      | some r => cE n e r
+      | none =>
+        let t ← fresh
+        cE n e t
       release base
     | .decl k ds => cDecls n k ds
     | .ret none => discard <| emit (.ret noReg)

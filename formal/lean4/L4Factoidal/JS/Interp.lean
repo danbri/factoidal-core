@@ -1347,7 +1347,7 @@ def putV : Nat → Value → String → Value → Bool → M Unit
       match o.kind, key with
       | .array es, "length" =>
         let len ← toNum n val
-        if len < 0 || !isIntegral len || len ≥ 4294967296.0 then throwErr .range "Invalid array length"
+        if len < 0 || !isIntegral len || len ≥ twoPow32F then throwErr .range "Invalid array length"
         let l := len.toUInt64.toNat
         let es' := if l ≤ es.size then es.extract 0 l else es ++ Array.replicate (l - es.size) .undef
         modifyObj id fun o => { o with kind := .array es' }
@@ -2317,7 +2317,7 @@ def evalExpr : Nat → Ctx → Expr → M Value
       match b, kv with
       | .obj id, .num x =>
         let v ← evalExpr n ctx rhs
-        let isIdx := x ≥ 0 && x < 4294967295.0 && x.floor == x
+        let isIdx := x ≥ 0 && x < maxIndexF && x.floor == x
         let done ← if isIdx then setElem id x.toUInt64.toNat v else pure false
         if !done then putV n b (keyOfNum x) v ctx.strict
         pure v
@@ -3817,7 +3817,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       if args.size == 1 then
         match a0 with
         | .num x =>
-          if x < 0 || !isIntegral x || x ≥ 4294967296.0 then throwErr .range "Invalid array length"
+          if x < 0 || !isIntegral x || x ≥ twoPow32F then throwErr .range "Invalid array length"
           charge (x.toUInt64.toNat / 64)
           newArray (Array.replicate x.toUInt64.toNat .undef)
         | v => newArray #[v]
@@ -4587,7 +4587,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       pure (.str (Str.canonical (String.join cs)))
     | .numberIsFinite => pure (.bool (match a0 with | .num x => x.isFinite | _ => false))
     | .numberIsNaN => pure (.bool (match a0 with | .num x => x.isNaN | _ => false))
-    | .numberIsSafeInteger => pure (.bool (match a0 with | .num x => isIntegral x && x.abs ≤ 9007199254740991.0 | _ => false))
+    | .numberIsSafeInteger => pure (.bool (match a0 with | .num x => isIntegral x && x.abs ≤ maxSafeF | _ => false))
     | .math1 op =>
       let x ← toNum n a0
       pure (.num (match op with
@@ -4815,6 +4815,16 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
     | .add dst a b =>
       match regs[bp + a]!, regs[bp + b]! with
       | .fl, .fl => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) (fregs.get! (bp + a) + fregs.get! (bp + b)))
+      -- `s += t` on strings (`dst` = `a`): the register lets go of the string before the
+      -- append, so the append is in place when nothing else holds the string, and a loop of
+      -- appends is linear (as `dropSlotStr` in the evaluator)
+      | .str x, .str y =>
+        let regs := if dst == a then regs.set! (bp + a) .undef else regs
+        vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (.str (Str.jsAppend x y))) fregs
+      | .str x, .fl =>
+        let y := numToString (fregs.get! (bp + b))
+        let regs := if dst == a then regs.set! (bp + a) .undef else regs
+        vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (.str (Str.jsAppend x y))) fregs
       | _, _ =>
         let x := vmRd regs fregs (bp + a)
         let y := vmRd regs fregs (bp + b)
@@ -5263,7 +5273,7 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
       if let .null := b then throwErr .type "Cannot read properties of null"
       match b, kv with
       | .obj id, .num x =>
-        let isIdx := x ≥ 0 && x < 4294967295.0 && x.floor == x
+        let isIdx := x ≥ 0 && x < maxIndexF && x.floor == x
         let done ← if isIdx then setElem id x.toUInt64.toNat v else pure false
         if !done then putV n b (keyOfNum x) v code.strict
       | _, _ =>
@@ -7251,8 +7261,8 @@ def initRealm : M Unit := do
   let numberC ← ctorWith "Number" .numberCtor 1 numberProto
   setHidden g "Number" numberC
   if let .obj nc := numberC then
-    defineOwn nc "MAX_SAFE_INTEGER" (.data (.num 9007199254740991.0) false false false)
-    defineOwn nc "MIN_SAFE_INTEGER" (.data (.num (-9007199254740991.0)) false false false)
+    defineOwn nc "MAX_SAFE_INTEGER" (.data (.num maxSafeF) false false false)
+    defineOwn nc "MIN_SAFE_INTEGER" (.data (.num (-maxSafeF)) false false false)
     defineOwn nc "MAX_VALUE" (.data (.num (Float.ofBits 0x7FEFFFFFFFFFFFFF)) false false false)
     defineOwn nc "MIN_VALUE" (.data (.num (Float.ofBits 1)) false false false)
     defineOwn nc "EPSILON" (.data (.num (Float.ofBits 0x3CB0000000000000)) false false false)
