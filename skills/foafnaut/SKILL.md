@@ -391,6 +391,14 @@ Several sessions work on the owner's laptop at once.
   `56fcb3002` removed 935 lines of the Hub worker; `5b79ae85d` reverted it. Check
   `git diff --stat origin/main HEAD` before you push, and push only after
   `git merge-base --is-ancestor origin/main HEAD`.
+- Two scripts compile the lab modules, each with its own list: `build-web-render.sh` (the
+  browser engine) and `build-engines.sh` (the smaller engines; `CORE_MODULES` and explicit link
+  lists). A new `import L4Factoidal...` in a lab module (`SVG.lean`, `Graphics.lean`, ...) must
+  be added to `build-engines.sh` too. 2026-11-10: PR 382 added `import L4Factoidal.Prim.FloatOfNat`
+  to `SVG.lean` and was checked with `build-web-render.sh --native` only; the `foafnaut-engines`
+  job of the build repository then failed on `main` and no Foafnaut release was made for about
+  two hours of commits. A cloud VM with no Emscripten can not run `build-engines.sh`: search it
+  for the module list by hand, and say in the PR that it was not run.
 - Lake does not track `include_str`. `build-web-render.sh` removes the `LeanJS` outputs when
   `prelude.js` is newer. A direct `lake build` does not, and the prelude stays old.
 - The GPU commands of the script's start turn must be replayed. The start turn's commands
