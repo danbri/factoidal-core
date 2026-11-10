@@ -1080,8 +1080,11 @@ async function main() {
       const place=nextLayers?clampOffset(nextLayers.layers,scrollNow):undefined;
       // Lean draws the press in this frame: the composite does not darken it again.
       if(carried&&carried===pressed)session!.setPress(undefined);
+      // A tab chosen during the draw must not be replaced by this page. A page that a navigation
+      // prepares during the draw is not a reason to drop the frame: see the candidate check below.
+      const shownBefore=document;
       const result=nextLayers?await session!.drawLayers(nextLayers,sentWidth,sentHeight,place!.offset,everyFrame):await session!.draw(next,everyFrame);
-      if((candidate??document)!==nextDocument){awaiting=[...stamps,...awaiting];dirty=true;return;}
+      if(document!==shownBefore){awaiting=[...stamps,...awaiting];dirty=true;return;}
       if(carried&&carried===pressed){
         if(result.presented){carried.framed=true;pressFrameMs.push(result.presentedAt-carried.at);
           trace("native-html-press",{state:"frame",control:carried.control??null,active:carried.active??null,fromQueuedMs:ms(carried.at,result.presentedAt)});}
@@ -1316,7 +1319,7 @@ async function main() {
         const shownLayers=swap?swap.layers:current.layers;
         const start=performance.now(),{offset,exact}=clampOffset(shownLayers.layers,scroll),at=scroll;
         shifting=(swap?session!.drawLayers(swap.layers,swap.record.width,swap.record.height,offset,everyFrame):session!.shift(offset,everyFrame)).then(result=>{
-          if(swap&&(candidate??document)!==swap.record.document){awaitingShift=[...stamps,...awaitingShift];dirty=true;return;}
+          if(swap&&document!==swap.record.document){awaitingShift=[...stamps,...awaitingShift];dirty=true;return;}
           const finished=performance.now();
           trace("native-html-scroll",{frame:frameNumber,scroll:at,offset,exact,swap:!!swap,totalMs:ms(start,finished),drawMs:Math.round(result.drawMs*10)/10,
             presented:result.presented,checked:result.checked,pixelHash:result.checked?result.pixelHash:null,...(swap?{bandTop:swap.layers.layers.bandTop,target:swap.target}:{})});
