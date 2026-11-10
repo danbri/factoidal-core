@@ -110,6 +110,7 @@ def settle (s : σ) (budgetMs : Nat) (maxTasks : Nat := 100000) : σ × Bool := 
   let mut s := s
   for _ in [0:maxTasks] do
     s := (e.advance s (e.loop s).clock 1000).1
+    if (e.host s).web.net.waiting then return (s, false)
     if e.quiet s then return (s, true)
     if (e.host s).dom.navigations.any (!·.2.isEmpty) then return (s, false)
     let next := match (e.loop s).timers, e.nextFrame s with

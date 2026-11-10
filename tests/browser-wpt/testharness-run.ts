@@ -474,7 +474,7 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
       }
     // navigations:true: this runner loads frames' URLs (scriptSession action `frame`).
     let turn=start(html,{action:"start",url,resources,commandLimit:200000,logLimit:100000,instructionsPerMs:scriptRate,...(encoding?{encoding}:{}),
-      navigations:true,...(scriptEngine==="bubblepop"?{engine:"bubblepop"}:{})});
+      navigations:true,...(http?{network:true}:{}),...(scriptEngine==="bubblepop"?{engine:"bubblepop"}:{})});
     const logs=[...turn.logs],errors=[...turn.errors];
     let instructions=turn.instructions;
     // A worker's script and its importScripts: a turn lists what it waits for (fetches, each
@@ -482,7 +482,24 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
     // what is due, and the page settles again (the workers record).
     type Fetch={id:number;url:string;kind?:string};
     const answered=new Set<number>();
-    const take=(t:ScriptTurnWithFetches)=>{logs.push(...t.logs);errors.push(...t.errors);instructions+=t.instructions;};
+    // The engine's page requests in flight (each from one turn): http.fetch to wptserve.
+    type NetWire={id:number;method:string;url:string;headers:[string,string][];bodyBase64?:string};
+    const inflight=new Map<number,Promise<{id:number;answer:Record<string,unknown>}>>();
+    const b64=(u:Uint8Array)=>{let s="";for(let i=0;i<u.length;i+=32768)s+=String.fromCharCode(...u.subarray(i,i+32768));return btoa(s);};
+    const netFetch=async(w:NetWire):Promise<{id:number;answer:Record<string,unknown>}>=>{
+      const failed={id:w.id,answer:{id:w.id,status:0}};
+      if(!http)return failed;
+      try{
+        const headers=new Headers();for(const [n,v] of w.headers)headers.append(n,v);
+        const body=w.bodyBase64!==undefined?Uint8Array.from(atob(w.bodyBase64),c=>c.charCodeAt(0)):undefined;
+        const r=await http.fetch(w.url,{method:w.method,headers,body,noFollow:true,signal:AbortSignal.timeout(30000)} as RequestInit);
+        const bytes=new Uint8Array(await r.arrayBuffer());
+        return {id:w.id,answer:{id:w.id,status:r.status,statusText:r.statusText,headers:[...r.headers],bodyBase64:b64(bytes)}};
+      }catch{return failed;}
+    };
+    const collectNet=(t:{netRequests?:NetWire[]})=>{for(const w of t.netRequests??[])inflight.set(w.id,netFetch(w));};
+    const take=(t:ScriptTurnWithFetches)=>{logs.push(...t.logs);errors.push(...t.errors);instructions+=t.instructions;collectNet(t as {netRequests?:NetWire[]});};
+    collectNet(turn as {netRequests?:NetWire[]});
     const startFetches=(turn as ScriptTurnWithFetches).fetches??[];
     turn=engine.scriptSession("",{action:"settle",session:turn.session,budgetMs:70000});
     take(turn);
@@ -496,15 +513,29 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
       take(turn);
       pending=[...(given.fetches??[]),...((turn as ScriptTurnWithFetches).fetches??[])].filter((f,i,all)=>!answered.has(f.id)&&all.findIndex(g=>g.id===f.id)===i);
     }
-    // Frames: answer each navigation with its document, then settle again, until none waits.
-    for(let round=0;round<256&&turn.clock<70000&&((turn.navigations?.length??0)>0||(turn.frameLoads??0)>0);round++){
-      const session=turn.session;
-      for(const nav of turn.navigations??[]){
-        const source=await frameSource(nav.url);
-        take(turn=engine.scriptSession("",{action:"frame",session,node:nav.nodeId,url:nav.url,source:source??"",...(frameEncoding?{encoding:frameEncoding}:{}),
-          ...(source===undefined?{failed:true}:{resources:await resourcesOf(source,nav.url)})}));
+    // Frames and page requests (XMLHttpRequest: `network:true`): answer each navigation with
+    // its document and each request from wptserve; the engine decides all (redirect "manual").
+    // `elapsedMs` moves the virtual clock by the real time waited, so timers and `timeout` still fire.
+    const answerFrames=async()=>{
+      for(let round=0;round<256&&turn.clock<70000&&((turn.navigations?.length??0)>0||(turn.frameLoads??0)>0);round++){
+        const session=turn.session;
+        for(const nav of turn.navigations??[]){
+          const source=await frameSource(nav.url);
+          take(turn=engine.scriptSession("",{action:"frame",session,node:nav.nodeId,url:nav.url,source:source??"",...(frameEncoding?{encoding:frameEncoding}:{}),
+            ...(source===undefined?{failed:true}:{resources:await resourcesOf(source,nav.url)})}));
+        }
+        take(turn=engine.scriptSession("",{action:"settle",session,budgetMs:Math.max(1,70000-turn.clock)}));
       }
-      take(turn=engine.scriptSession("",{action:"settle",session,budgetMs:Math.max(1,70000-turn.clock)}));
+    };
+    await answerFrames();
+    let lastNet=performance.now();
+    for(let round=0;inflight.size&&round<5000&&turn.clock<70000;round++){
+      const {id,answer}=await Promise.race(inflight.values());
+      inflight.delete(id);
+      const now=performance.now(),elapsedMs=Math.round(now-lastNet);lastNet=now;
+      take(turn=engine.scriptSession("",{action:"net",session:turn.session,results:[answer],elapsedMs}));
+      take(turn=engine.scriptSession("",{action:"settle",session:turn.session,budgetMs:Math.max(1,70000-turn.clock)}));
+      await answerFrames();
     }
     engine.scriptSession("",{action:"close"});
     return {...resultOf(file,logs),ms:Math.round(performance.now()-t0),instructions,clock:turn.clock,...(errors.length?{errors:errors.slice(0,5)}:{})};
