@@ -2733,6 +2733,153 @@
     return URLSearchParams;
   };
   lazy('URLSearchParams', makeURLSearchParams);
+
+  // ---- XMLHttpRequest (XHR Standard) -------------------------------------------------------
+  // The object's state, what each method may do, the order of events and the text of a
+  // response are Lean's (formal/lean4/L4Factoidal/Net/Xhr.lean, web_api ops 60 to 79; the
+  // policy of what a page may reach is Net/PageFetch.lean). This class holds a handle,
+  // converts WebIDL arguments, fires the events Lean lists, and arms the timeout. Off
+  // (undefined) unless the embedder turned the network on: op 75 answers -2 then.
+  const xhrErr = (r, what) => {
+    switch (r) {
+      case -31: throw new DOMException(what, 'InvalidStateError');
+      case -32: throw new DOMException(what, 'SecurityError');
+      case -24: throw new DOMException(what, 'SyntaxError');
+      case -25: throw new DOMException(what, 'InvalidAccessError');
+      case -23: throw new DOMException(what + ': sync requests are not supported yet', 'NotSupportedError');
+      default: return apiError(r, what);
+    }
+  };
+  let ProgressEventC;
+  const makeProgressEvent = () => {
+    if (ProgressEventC) return ProgressEventC;
+    class ProgressEvent extends Event {
+      constructor(type, init = undefined) { super(type, init); const d = initOf(init); const s = state(this);
+        s.lengthComputable = !!d.lengthComputable; s.loaded = Number(d.loaded ?? 0); s.total = Number(d.total ?? 0); }
+    }
+    getters(ProgressEvent, ['lengthComputable', 'loaded', 'total']);
+    return ProgressEventC = ProgressEvent;
+  };
+  lazy('ProgressEvent', makeProgressEvent);
+  const makeXHR = () => {
+    if (apiCall(75, []) !== '1') return undefined;
+    const PE = makeProgressEvent();
+    const key = {};
+    const st = new WeakMap();
+    const S = (o, what) => brand(st, o, 'XMLHttpRequest' + (what ? '.' + what : ''));
+    const call = (op, args, what) => { const r = apiCall(op, args); return typeof r === 'number' ? xhrErr(r, what) : r; };
+    class XMLHttpRequestEventTarget extends EventTarget {
+      constructor(k) { if (k !== key) throw new TypeError('Illegal constructor'); super(); }
+    }
+    const upload = new WeakMap();
+    class XMLHttpRequestUpload extends XMLHttpRequestEventTarget {
+      constructor(k) { super(k); upload.set(this, { listened: false }); }
+      addEventListener(type, cb, opts) { upload.get(this).listened = true; return super.addEventListener(type, cb, opts); }
+    }
+    const handlerAttr = (C, name) => Object.defineProperty(C.prototype, 'on' + name, { configurable: true, enumerable: true,
+      get() { return handlerOf(this, name); },
+      set(f) { if (this instanceof XMLHttpRequestUpload) upload.get(this).listened = true; setHandler(this, name, f); } });
+    for (const name of ['loadstart', 'progress', 'abort', 'error', 'load', 'timeout', 'loadend']) handlerAttr(XMLHttpRequestEventTarget, name);
+    const fireOne = (x, s, line) => {
+      const [up, type, loaded, total, computable] = line.split('\u0000');
+      const target = up === '1' ? s.upload : x;
+      const ev = type === 'readystatechange' ? new Event(type)
+        : new PE(type, { lengthComputable: computable === '1', loaded: Number(loaded), total: Number(total) });
+      state(ev).trusted = true;
+      dispatch(target, ev);
+    };
+    const drain = (x, s) => {
+      for (;;) { const e = call(64, [s.h], 'XMLHttpRequest'); if (e === '') break; fireOne(x, s, e); }
+      if (s.timer && call(67, [s.h, 0]) === '4') { n.clearTimer(s.timer); s.timer = 0; }
+    };
+    class XMLHttpRequest extends XMLHttpRequestEventTarget {
+      constructor() {
+        super(key);
+        st.set(this, { h: Number(call(60, [], 'XMLHttpRequest')), upload: new XMLHttpRequestUpload(key), timer: 0, ms: 0, cred: false, text: null, json: null, buf: null });
+      }
+      get upload() { return S(this).upload; }
+      get readyState() { return Number(call(67, [S(this).h, 0])); }
+      get status() { return Number(call(67, [S(this).h, 1])); }
+      get statusText() { return call(67, [S(this).h, 2]); }
+      get responseURL() { return call(67, [S(this).h, 3]); }
+      get responseType() { return call(67, [S(this).h, 6]); }
+      set responseType(v) { const s = S(this); call(71, [s.h, String(v)], "Failed to set 'responseType' on 'XMLHttpRequest'"); }
+      get timeout() { return S(this).ms; }
+      set timeout(v) { const s = S(this), ms = Number(v) >>> 0; call(72, [s.h, ms], "Failed to set 'timeout' on 'XMLHttpRequest'"); s.ms = ms; }
+      get withCredentials() { return S(this).cred; }
+      set withCredentials(v) { const s = S(this), b = !!v; call(73, [s.h, b ? 1 : 0], "Failed to set 'withCredentials' on 'XMLHttpRequest'"); s.cred = b; }
+      get responseText() {
+        const s = S(this), t = call(67, [s.h, 6]);
+        if (t !== '' && t !== 'text') throw new DOMException("responseText is only for responseType '' and 'text'", 'InvalidStateError');
+        if (s.text !== null) return s.text;
+        const v = call(67, [s.h, 4]);
+        if (call(67, [s.h, 0]) === '4') s.text = v;
+        return v;
+      }
+      get responseXML() {
+        const t = call(67, [S(this).h, 6]);
+        if (t !== '' && t !== 'document') throw new DOMException('responseXML is only for responseType document', 'InvalidStateError');
+        return null;
+      }
+      get response() {
+        const s = S(this), t = call(67, [s.h, 6]);
+        if (t === '' || t === 'text') return this.responseText;
+        if (call(67, [s.h, 0]) !== '4') return null;
+        if (t === 'json') { if (s.json === null) { try { s.json = { v: JSON.parse(call(67, [s.h, 4])) }; } catch { s.json = { v: null }; } } return s.json.v; }
+        if (t === 'arraybuffer') { if (s.buf === null) { const b = apiCall(74, [s.h], 0, true); s.buf = b instanceof ArrayBuffer ? b : new ArrayBuffer(0); } return s.buf; }
+        return null;
+      }
+      open(method, url, async = true, user = null, password = null) {
+        if (arguments.length < 2) throw new TypeError("Failed to execute 'open' on 'XMLHttpRequest': 2 arguments required");
+        const s = S(this), isAsync = arguments.length < 3 ? true : !!async;
+        const base = document.baseURI ?? '';
+        call(61, [s.h, String(method), usv(url), base, isAsync ? 1 : 0], "Failed to execute 'open' on 'XMLHttpRequest'");
+        s.text = s.json = s.buf = null;
+        if (s.timer) { n.clearTimer(s.timer); s.timer = 0; }
+        drain(this, s);
+      }
+      setRequestHeader(name, value) {
+        if (arguments.length < 2) throw new TypeError("Failed to execute 'setRequestHeader' on 'XMLHttpRequest': 2 arguments required");
+        call(62, [S(this).h, String(name), String(value)], "Failed to execute 'setRequestHeader' on 'XMLHttpRequest'");
+      }
+      send(body = null) {
+        const s = S(this), what = "Failed to execute 'send' on 'XMLHttpRequest'";
+        let has = 0, ct = '', bytes = '';
+        if (body !== null && body !== undefined) {
+          has = 1;
+          if (typeof body === 'object' && (body instanceof ArrayBuffer || ArrayBuffer.isView(body))) bytes = bufferSource(body, what);
+          else if (typeof body === 'object' && URLSearchParamsC && body instanceof URLSearchParamsC) { bytes = String(body); ct = 'application/x-www-form-urlencoded;charset=UTF-8'; }
+          else { bytes = usv(body); ct = 'text/plain;charset=UTF-8'; }
+        }
+        const x = this, cb = register(() => drain(x, s));
+        const up = upload.get(s.upload).listened;
+        s.text = s.json = s.buf = null;
+        call(63, [s.h, cb, up ? 1 : 0, has, ct, bytes], what);
+        drain(this, s);
+        if (call(67, [s.h, 5]) === '1') chk(n.timer(cb, 0, 0));
+        if (s.ms > 0 && call(67, [s.h, 0]) !== '4') s.timer = chk(n.timer(register(() => { s.timer = 0; call(66, [s.h]); drain(x, s); }), s.ms, 0));
+      }
+      abort() { const s = S(this); call(65, [s.h]); s.text = s.json = s.buf = null; drain(this, s); }
+      getResponseHeader(name) {
+        if (arguments.length < 1) throw new TypeError("Failed to execute 'getResponseHeader' on 'XMLHttpRequest': 1 argument required");
+        const r = apiCall(68, [S(this).h, String(name)]);
+        return typeof r === 'number' ? (r === -1 ? null : xhrErr(r, 'getResponseHeader')) : r;
+      }
+      getAllResponseHeaders() { return call(69, [S(this).h], 'getAllResponseHeaders'); }
+      overrideMimeType(mime) {
+        if (arguments.length < 1) throw new TypeError("Failed to execute 'overrideMimeType' on 'XMLHttpRequest': 1 argument required");
+        call(70, [S(this).h, String(mime)], "Failed to execute 'overrideMimeType' on 'XMLHttpRequest'");
+      }
+    }
+    handlerAttr(XMLHttpRequest, 'readystatechange');
+    const readyStates = { UNSENT: 0, OPENED: 1, HEADERS_RECEIVED: 2, LOADING: 3, DONE: 4 };
+    consts(XMLHttpRequest, readyStates); consts(XMLHttpRequest.prototype, readyStates);
+    setTag(XMLHttpRequest, 'XMLHttpRequest'); setTag(XMLHttpRequestEventTarget, 'XMLHttpRequestEventTarget'); setTag(XMLHttpRequestUpload, 'XMLHttpRequestUpload');
+    define(globalThis, 'XMLHttpRequestEventTarget', XMLHttpRequestEventTarget);
+    define(globalThis, 'XMLHttpRequestUpload', XMLHttpRequestUpload);
+    return XMLHttpRequest;
+  };
+  lazy('XMLHttpRequest', makeXHR);
   lazy('URL', () => {
     const parse = (url, base) => {
       const r = base === undefined ? apiCall(10, [usv(url)], 0, false) : apiCall(10, [usv(url), usv(base)], 1, false);

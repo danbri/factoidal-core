@@ -80,6 +80,8 @@ export function wptFetcher(s: WptServe) {
     const response = r.scheme === "https" ? await httpsGet(url, r.port, s.caPEM, init)
       : await fetch(url, { ...init, redirect: "manual", client: clientFor(r.port, r.scheme) } as RequestInit);
     const location = response.headers.get("location");
+    // An XMLHttpRequest of a page (the engine follows redirects itself: Net.PageFetch).
+    if ((init as { noFollow?: boolean }).noFollow) return Object.defineProperty(response, "finalURL", { value: url });
     if (response.status >= 300 && response.status < 400 && location) {
       await response.body?.cancel();
       if (hops >= 20) throw new TypeError(`too many redirects: ${url}`);
