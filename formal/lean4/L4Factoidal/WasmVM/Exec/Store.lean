@@ -4,7 +4,8 @@ L4Factoidal.WasmVM.Exec.Store: the run-time store, module instances and values
 
 Values in the store and on the operand stack are 64-bit slots of bits: i32 and f32
 zero-extended, i64 and f64 whole, a reference is a store address with all-ones
-(`nullRef`) for null. A global's slot lives in the store-wide slot array `globals`,
+(`nullRef`) for null (the forms of a reference of the `any` hierarchy: `Exec/Code.lean`,
+"Reference bits"). A global's slot lives in the store-wide slot array `globals`,
 read and written as bits.
 -/
 import L4Factoidal.WasmVM.Syntax
@@ -26,12 +27,17 @@ inductive Value where
   | exnRef (a : Option Nat)
   /-- A 128-bit vector: bits 0 to 63 and bits 64 to 127. -/
   | v128 (lo hi : UInt64)
+  /-- A reference of the `any` hierarchy (garbage collection): its slot bits, or `none`
+  for null. The bits say what it is: an i31 value, a host value or the address of a
+  struct or an array (`Exec/Code.lean`, "Reference bits"). -/
+  | anyRef (bits : Option UInt64)
   deriving BEq, Repr, Inhabited
 
 def Value.toBits : Value → UInt64
   | .i32 v => v.toUInt64 | .i64 v => v | .f32 b => b.toUInt64 | .f64 b => b
   | .v128 lo _ => lo
-  | .funcRef none | .externRef none | .exnRef none => nullRef
+  | .funcRef none | .externRef none | .exnRef none | .anyRef none => nullRef
+  | .anyRef (some b) => b
   | .funcRef (some a) | .externRef (some a) | .exnRef (some a) => a.toUInt64
 
 def Value.ofBits (t : ValType) (b : UInt64) : Value :=
@@ -43,6 +49,8 @@ def Value.ofBits (t : ValType) (b : UInt64) : Value :=
     match r.heap with
     | .extern | .noextern => .externRef a
     | .exn | .noexn => .exnRef a
+    | .any | .eq | .i31 | .struct | .array | .none => .anyRef (if b == nullRef then none else some b)
+    -- A defined type: a function address or an object address; the store says which.
     | _ => .funcRef a
 
 /-- The value of type `t` whose slot bits are `b`, and whose high half is `hi` when it
@@ -62,6 +70,7 @@ def Value.type : Value → ValType
   | .v128 .. => .v128
   | .funcRef _ => .ref .funcref | .externRef _ => .ref .externref
   | .exnRef _ => .ref ⟨true, .exn⟩
+  | .anyRef _ => .ref ⟨true, .any⟩
 
 inductive ExternVal where
   | func (a : Nat) | table (a : Nat) | mem (a : Nat) | global (a : Nat) | tag (a : Nat)
@@ -106,7 +115,39 @@ structure ExnInst where
   fields : Array UInt64
   deriving Inhabited
 
-/-- The exception part of the store. -/
+/-- What the store knows of a type id that a recursion group made (garbage collection):
+the id of its declared supertype and its composite type, with type ids for indices. -/
+structure GcType where
+  super : Option Nat
+  comp : CompType
+  deriving Inhabited
+
+/-- A struct or an array: its type id and its fields or elements, one 64-bit slot each
+(an i8 or i16 field holds its 8 or 16 bits). -/
+structure Obj where
+  type : Nat
+  data : Slots
+  deriving Inhabited
+
+/-- The garbage-collection part of the store (record, "GC"). -/
+structure GcStore where
+  /-- By type id (an index of `StoreOf.typeTable`). `none`, and every id past the end:
+  a final function type alone in its recursion group with no supertype, the only kind
+  that `StoreOf.typeId` makes. -/
+  types : Array (Option GcType) := #[]
+  /-- The other recursion groups: canonical form (`canonSubIn`) and the id of the
+  first type. -/
+  groups : Array (Array SubType × Nat) := #[]
+  /-- Structs and arrays. A reference to one is its index here. They are never freed:
+  there is no collector yet, so the store grows with each allocation. -/
+  objs : Array Obj := #[]
+  /-- The type id of each tag, by tag address; `none` for a tag that the embedder
+  added with a function type only (`StoreOf.addTag`). -/
+  tagIds : Array (Option Nat) := #[]
+  deriving Inhabited
+
+/-- The exception part of the store (and, since each new field of the store costs time
+in the loop, the parts that later proposals added: `hi`, `ghi`, `gc`). -/
 structure ExcStore where
   /-- Tag instances: the canonical type of each tag (results empty). -/
   tags : Array FuncType := #[]
@@ -120,6 +161,7 @@ structure ExcStore where
   hi : Slots := ByteArray.empty
   /-- The high 64 bits of the v128 globals, by global address (as `hi`). -/
   ghi : Slots := ByteArray.empty
+  gc : GcStore := {}
   deriving Inhabited
 
 /-- A memory instance; `M` is the backend (`Exec/Memory.lean`). -/
@@ -166,8 +208,10 @@ def addHostFunc (st : StoreOf M) (ft : FuncType) (id : Nat) : StoreOf M × Nat :
   let (st, tid) := st.typeId ft
   ({ st with funcs := st.funcs.push { type := ft, typeId := tid, kind := .host id } }, st.funcs.size)
 
-def addTag (st : StoreOf M) (ft : FuncType) : StoreOf M × Nat :=
-  ({ st with exc := { st.exc with tags := st.exc.tags.push ft } }, st.exc.tags.size)
+def addTag (st : StoreOf M) (ft : FuncType) (typeId : Option Nat := none) : StoreOf M × Nat :=
+  ({ st with exc := { st.exc with tags := st.exc.tags.push ft,
+                                  gc := { st.exc.gc with tagIds := st.exc.gc.tagIds.push typeId } } },
+   st.exc.tags.size)
 
 def addGlobal (st : StoreOf M) (t : GlobalType) (v : UInt64) : StoreOf M × Nat :=
   ({ st with globals := st.globals.push v, globalTypes := st.globalTypes.push t },
@@ -191,9 +235,56 @@ write in place. -/
   match st with
   | { funcs, tables, mems, globals, globalTypes, elems, datas, insts, exc, typeTable, pageLimit } =>
     match exc with
-    | { tags, exns, hi, ghi } =>
+    | { tags, exns, hi, ghi, gc } =>
       { funcs, tables, mems, globals, globalTypes, elems, datas, insts,
-        exc := { tags, exns, hi := f hi, ghi := g ghi }, typeTable, pageLimit }
+        exc := { tags, exns, hi := f hi, ghi := g ghi, gc }, typeTable, pageLimit }
+
+/-- Change the garbage-collection part. The store and its `exc` field are taken apart
+first (as in `modHi`), so the part has one reference when `f` runs. -/
+@[inline] def modGc (st : StoreOf M) (f : GcStore → GcStore) : StoreOf M :=
+  match st with
+  | { funcs, tables, mems, globals, globalTypes, elems, datas, insts, exc, typeTable, pageLimit } =>
+    match exc with
+    | { tags, exns, hi, ghi, gc } =>
+      { funcs, tables, mems, globals, globalTypes, elems, datas, insts,
+        exc := { tags, exns, hi, ghi, gc := f gc }, typeTable, pageLimit }
+
+/-- What a recursion group said of type id `id`; none for a plain function type. -/
+def gcType? (st : StoreOf M) (id : Nat) : Option GcType := (st.exc.gc.types[id]?).join
+
+/-- 0 for a function type, 1 for a struct type, 2 for an array type. -/
+def idKind (st : StoreOf M) (id : Nat) : Nat :=
+  match st.gcType? id with
+  | some { comp := .struct _, .. } => 1
+  | some { comp := .array _, .. } => 2
+  | _ => 0
+
+/-- Declared subtyping of type ids: `a` is `b`, or the supertype chain of `a` reaches
+`b`. Equivalent types have one id, so equality of ids is type equivalence. -/
+def isSubId (st : StoreOf M) (a b : Nat) : Bool :=
+  if a == b then true else go (st.exc.gc.types.size + 1) a
+where
+  go : Nat → Nat → Bool
+    | 0, _ => false
+    | fuel + 1, a =>
+      if a == b then true else
+      match (st.gcType? a).bind (·.super) with
+      | some s => go fuel s
+      | none => false
+
+/-- Add a struct or an array; gives its address. -/
+def allocObj (st : StoreOf M) (type : Nat) (data : Slots) : StoreOf M × Nat :=
+  let a := st.exc.gc.objs.size
+  (st.modGc fun g => match g with
+    | { types, groups, objs, tagIds } => { types, groups, objs := objs.push { type, data }, tagIds }, a)
+
+def obj? (st : StoreOf M) (a : Nat) : Option Obj := st.exc.gc.objs[a]?
+
+/-- Change the slots of object `a`, in place: each structure on the way is taken apart
+before the change. -/
+@[inline] def modObj (st : StoreOf M) (a : Nat) (f : Slots → Slots) : StoreOf M :=
+  st.modGc fun g => match g with
+    | { types, groups, objs, tagIds } => { types, groups, objs := objs.modify a fun ⟨t, d⟩ => ⟨t, f d⟩, tagIds }
 
 /-- The high half of v128 global `a`. -/
 def globalHi (st : StoreOf M) (a : Nat) : UInt64 := Slots.rd st.exc.ghi a.toUSize

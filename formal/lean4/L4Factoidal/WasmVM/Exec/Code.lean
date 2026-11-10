@@ -136,7 +136,35 @@ inductive Op where
   /-- Zero the high halves of locals `x` to `x + n - 1` (function entry, when a
   declared local is a v128). -/
   | hiZero (x n : Nat)
+  -- Garbage collection (record, "GC"). Both run in `cold`.
+  /-- A garbage-collection op: `code` is the instruction's number after the 0xFB prefix
+  (`GcCode`), or one of `GcOp`; `a`, `b`, `c` are what `Run.gcStep` says for the code. -/
+  | gc (code a b c : Nat)
+  /-- `br_on_cast` (`flags` bit 0 clear) and `br_on_cast_fail` (bit 0 set): branch to
+  `t` with the reference on top when it matches (does not match) the heap type `ht`
+  (`heapCode`; null matches when bit 1 of `flags` is set). The reference stays. -/
+  | gcBr (t : BrTarget) (flags ht : Nat)
   deriving Repr, Inhabited
+
+/-! Codes of `Op.gc` that are not instruction numbers. -/
+namespace GcOp
+def refEq : Nat := 31
+/-- `call_indirect` and `return_call_indirect` through a type that is not final: the
+function's type may be a declared subtype (`a`: type index, `b`: table index). -/
+def callIndirectSub : Nat := 100
+def returnCallIndirectSub : Nat := 101
+end GcOp
+
+/-- A heap type as a number, for `Op.gc` and `Op.gcBr`. -/
+def heapCode : HeapType → Nat
+  | .func => 0 | .extern => 1 | .any => 2 | .eq => 3 | .i31 => 4 | .struct => 5 | .array => 6
+  | .none => 7 | .nofunc => 8 | .noextern => 9 | .exn => 10 | .noexn => 11
+  | .idx i => 12 + i
+
+/-- How a storage type is kept in an object's 64-bit slot: 1 for i8 and 2 for i16
+(the value is cut to 8 or 16 bits), 0 for a value type (the slot bits). -/
+def packCode : StorageType → Nat
+  | .i8 => 1 | .i16 => 2 | .val _ => 0
 
 /-- The conditional jump at the end of a fused op. -/
 def Op.condJump (t : Nat) : Bool → Op
@@ -264,6 +292,28 @@ end Slots
 /-- The bits of a null reference. -/
 def nullRef : UInt64 := 0xFFFFFFFFFFFFFFFF
 
+/-! ### Reference bits (record, "GC")
+
+A reference is one slot. All ones is null in every hierarchy. In the `any` hierarchy:
+bit 63 set is an i31 value (bits 0 to 30), bit 62 set is a host value (an external
+reference made internal by `any.convert_extern`), and with both clear the slot is the
+address of a struct or an array in `GcStore.objs`. In the `extern` hierarchy: a slot
+with bits 62 and 63 clear is the embedder's number, and the other forms are values of
+the `any` hierarchy made external. A function reference is a function address and an
+exception reference an exception address; validation keeps the hierarchies apart. -/
+
+def i31Tag : UInt64 := 0x8000000000000000
+def hostTag : UInt64 := 0x4000000000000000
+
+/-- `any.convert_extern` and `extern.convert_any`: null and i31 values stay; an object
+address and a host number change places (bit 62 flips). The function is its own
+inverse. -/
+def refConvert (r : UInt64) : UInt64 :=
+  if r == nullRef || r &&& i31Tag != 0 then r else r ^^^ hostTag
+
+/-- Whether a non-null slot of the `any` hierarchy is an object address. -/
+def refIsObj (r : UInt64) : Bool := r &&& 0xC000000000000000 == 0
+
 /-- The zero value of a type, as slot bits (null for a reference type). -/
 def ValType.zeroBits : ValType → UInt64
   | .ref _ => nullRef
@@ -385,6 +435,8 @@ def Op.freshWith (k : Nat) : Op → Op
   | .vBrTable ts d => .vBrTable (ts.map (BrTarget.freshWith k)) (d.freshWith k)
   | .hiMove skip n height => .hiMove (skip + k) (n + k) (height + k)
   | .hiZero x n => .hiZero (x + k) (n + k)
+  | .gc code a b c => .gc (code + k) (a + k) (b + k) (c + k)
+  | .gcBr t flags ht => .gcBr (t.freshWith k) (flags + k) (ht + k)
 
 /-- A new copy of an op (see above). -/
 def Op.fresh (o : Op) : Op := o.freshWith freshZero

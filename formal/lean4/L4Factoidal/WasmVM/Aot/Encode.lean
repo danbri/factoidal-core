@@ -199,6 +199,20 @@ def instr (out : ByteArray) : Instr → ByteArray
     | some (.extract ..) | some (.replace ..) => out.push lane.toUInt8
     | some .const | some .shuffle => fixedLE (fixedLE out lo.toNat 8) hi.toNat 8
     | _ => out
+  -- Garbage collection: the immediates that `Binary.gcInstr` reads.
+  | .gc k x y =>
+    let out := uleb (out.push 0xFB) k
+    if k == 15 || (26 ≤ k && k ≤ 30) then out
+    else if k == 2 || k == 3 || k == 4 || k == 5 || k == 8 || k == 9 || k == 10 || k == 17 || k == 18 || k == 19 then
+      uleb (uleb out x) y
+    else uleb out x
+  | .refTest r => heapType (uleb (out.push 0xFB) (if r.nullable then 21 else 20)) r.heap
+  | .refCast r => heapType (uleb (out.push 0xFB) (if r.nullable then 23 else 22)) r.heap
+  | .brOnCast fail l r1 r2 =>
+    let out := uleb (out.push 0xFB) (if fail then 25 else 24)
+    let out := out.push ((if r1.nullable then 1 else 0) + (if r2.nullable then 2 else 0))
+    heapType (heapType (uleb out l) r1.heap) r2.heap
+  | .refEq => out.push 0xD3
 
 def expr (out : ByteArray) (e : Expr) : ByteArray := e.foldl instr out
 
@@ -224,6 +238,33 @@ def import_ (out : ByteArray) (i : Import) : ByteArray := importDesc (nameB (nam
 
 def funcType (out : ByteArray) (t : FuncType) : ByteArray :=
   vecB (vecB (out.push 0x60) t.params valType) t.results valType
+
+def fieldType (out : ByteArray) (f : FieldType) : ByteArray :=
+  let out := match f.type with
+    | .i8 => out.push 0x78
+    | .i16 => out.push 0x77
+    | .val t => valType out t
+  out.push (if f.mutable then 1 else 0)
+
+def compType (out : ByteArray) : CompType → ByteArray
+  | .func ft => funcType out ft
+  | .struct fs => vecB (out.push 0x5F) fs fieldType
+  | .array f => fieldType (out.push 0x5E) f
+
+/-- A sub type; the short form for a final type with no supertype. -/
+def subType (out : ByteArray) (t : SubType) : ByteArray :=
+  if t.final && t.supers.isEmpty then compType out t.comp
+  else compType (vecB (out.push (if t.final then 0x4F else 0x50)) t.supers uleb) t.comp
+
+/-- The recursion groups of the type definitions. A group of one type is written
+without `rec`: the binary format reads both forms as the same group. A group with no
+type is not in `defs`, so it is not written. -/
+def recGroups (defs : Array TypeDef) : Array (Array SubType) :=
+  defs.zipIdx.filterMap fun (d, x) =>
+    if d.recStart == x then some ((defs.extract x (x + d.recSize)).map (·.sub)) else none
+
+def recType (out : ByteArray) (g : Array SubType) : ByteArray :=
+  if g.size == 1 then subType out g[0]! else vecB (out.push 0x4E) g subType
 
 def table (out : ByteArray) (t : Table) : ByteArray :=
   match t.init with
@@ -275,7 +316,7 @@ def sect (out : ByteArray) (id : UInt8) (content : ByteArray) : ByteArray :=
 def encode (m : Module) : ByteArray := Id.run do
   let mut out : ByteArray := ⟨#[0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00]⟩
   let e := ByteArray.empty
-  if !m.types.isEmpty then out := sect out 1 (vecB e m.types funcType)
+  if !m.types.isEmpty then out := sect out 1 (vecB e (recGroups m.defs) recType)
   if !m.imports.isEmpty then out := sect out 2 (vecB e m.imports import_)
   if !m.funcs.isEmpty then out := sect out 3 (vecB e m.funcs fun o f => uleb o f.type)
   if !m.tables.isEmpty then out := sect out 4 (vecB e m.tables table)
