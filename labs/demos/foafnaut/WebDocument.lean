@@ -162,17 +162,20 @@ structure Kept where
   parsed : Array (String × Bool × Except String DOM.Dom) := #[]
   sheets : Array (String × RawSheet) := #[]
   stores : WebRender.StoresKept := #[]
+  /-- Words of SVG text (`NativeSVGText.wordIn`). -/
+  words : NativeSVGText.Words := {}
 
 /-- What one operation made that `Kept` did not have. -/
 structure Made where
   parsed : Option (String × Bool × Except String DOM.Dom) := none
   sheet : Option (String × RawSheet) := none
   store : Option ((List String × List (String × ByteArray)) × NativeImage.Store) := none
+  words : NativeSVGText.Words := {}
 
 /-- `a` then the entries of `b` that `a` lacks (the first operation's wins). -/
 def Made.merge (a b : Made) : Made :=
   {parsed := a.parsed.orElse fun _ => b.parsed,sheet := a.sheet.orElse fun _ => b.sheet,
-   store := a.store.orElse fun _ => b.store}
+   store := a.store.orElse fun _ => b.store,words := b.words.fold (fun m k v => m.insert k v) a.words}
 
 /-- `xs` with `x` last, at most `n`. -/
 def keepLast {α : Type} (n : Nat) (xs : Array α) : Option α → Array α
@@ -183,7 +186,10 @@ def keepLast {α : Type} (n : Nat) (xs : Array α) : Option α → Array α
 def Kept.add (kept : Kept) (made : Made) : Kept :=
   let last := @keepLast
   {parsed := last 2 kept.parsed made.parsed,sheets := last 8 kept.sheets made.sheet,
-   stores := match made.store with | some s => WebRender.keepStore kept.stores s | none => kept.stores}
+   stores := match made.store with | some s => WebRender.keepStore kept.stores s | none => kept.stores,
+   words := if made.words.isEmpty then kept.words
+     else if kept.words.size + made.words.size > NativeSVGText.keptWordsLimit then made.words
+     else made.words.fold (fun m k v => m.insert k v) kept.words}
 
 /-- The tree of `html`: the kept one, or `parseFresh`, which is also given back. -/
 def parseIn (kept : Kept) (html : String) (xhtml : Bool) : Except String DOM.Dom × Made :=
@@ -1671,18 +1677,18 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
   -- The SVG of the page is read here. In liberal mode a refusal of it (the SVG reader reads all
   -- inline `svg` roots of the document together) lays the page out with no inline `svg`.
   let documentURL := if url.isEmpty then none else some url
-  let (embedding,pictures,dom,d0,madeStore) ← match graph with
-    | some g => pure (WebGraph.embedding g,Rendering.Layout.noPictures,dom,([] : List WebAccept.Diagnostic),none)
-    | none => match WebRender.makeReplacedIn kept.stores dom documentURL images svgFonts, m with
-      | .ok (e,p,s), _ => pure (e,p,dom,[],s)
+  let (embedding,pictures,dom,d0,madeStore,madeWords) ← match graph with
+    | some g => pure (WebGraph.embedding g,Rendering.Layout.noPictures,dom,([] : List WebAccept.Diagnostic),none,({} : NativeSVGText.Words))
+    | none => match WebRender.makeReplacedIn kept.stores kept.words dom documentURL images svgFonts, m with
+      | .ok (e,p,s,w), _ => pure (e,p,dom,[],s,w)
       | .error e, .strict => throw e
       | .error e, .liberal =>
         let (bare,n) := stripSvg dom
         if n == 0 then throw e else
-        match WebRender.makeReplacedIn kept.stores bare documentURL images svgFonts with
-        | .ok (e',p,s) => pure (e',p,bare,[{skip := .svgContent, «where» := s!"{n} inline svg elements", refusal := e}],s)
+        match WebRender.makeReplacedIn kept.stores kept.words bare documentURL images svgFonts with
+        | .ok (e',p,s,w) => pure (e',p,bare,[{skip := .svgContent, «where» := s!"{n} inline svg elements", refusal := e}],s,w)
         | .error _ => throw e
-  modify (·.merge {store := madeStore})
+  modify (·.merge {store := madeStore,words := madeWords})
   -- A window shorter than the chrome still lays out, on one row.
   let state := withPointer dom (← elementState dom url request) pointer
   let draw := fun (d : DOM.Dom) (e : Rendering.Layout.Embedding) => Rendering.Layout.render d rules font e width rows textScale state pictures

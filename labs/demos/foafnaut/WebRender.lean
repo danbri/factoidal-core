@@ -265,18 +265,18 @@ source-bound index per render, shared by all embedded SVG roots. SVG text is low
 to glyph paths first, with `fonts`, the fonts that draw HTML text
 (`NativeSVGText.lowerDocumentGlyphs`); each element keeps its source path, and the
 glyph outlines go to the reader as numbers in a table. -/
-def makeReplacedIn (kept : StoresKept) (dom : DOM.Dom) (documentURL : Option String := none)
+def makeReplacedIn (kept : StoresKept) (words : NativeSVGText.Words) (dom : DOM.Dom) (documentURL : Option String := none)
     (images : List (String × ByteArray) := []) (fonts : Array Rendering.SfntProfile.Font := #[]) :
     Except String (Rendering.Layout.Embedding × Rendering.Layout.Pictures ×
-      Option ((List String × List (String × ByteArray)) × NativeImage.Store)) := do
+      Option ((List String × List (String × ByteArray)) × NativeImage.Store) × NativeSVGText.Words) := do
   let imgs := htmlImageKeys dom documentURL
   if !(dom.nodes.any (fun node => node.type == .element && node.ns == some DOM.svgNS)) then
     let (store,made) := storeIn kept (imgs.map (·.2)) images
-    return (embedding dom,picturesOf store imgs,made)
+    return (embedding dom,picturesOf store imgs,made,{})
   if documentURL.isNone && dom.nodes.any (fun node => DOM.Dom.isHtmlElement node "base" && Rendering.CSS.hasAttribute node "href") then
     throw "unsupported HTML base href without explicit document URL/base transport"
   let (root,tree) ← documentNamespaceTree dom
-  let (tree,_,glyphs) := NativeSVGText.lowerDocumentGlyphs fonts tree
+  let (tree,_,glyphs,madeWords) := NativeSVGText.lowerDocumentGlyphsIn words fonts tree
   let context ← NativeSVG.ReferenceContext.create tree documentURL
   -- Each image decodes once for the document, not once for each SVG root.
   let (store,made) := storeIn kept (NativeSVG.imageKeys tree documentURL ++ imgs.map (·.2)) images
@@ -286,13 +286,13 @@ def makeReplacedIn (kept : StoresKept) (dom : DOM.Dom) (documentURL : Option Str
     let path ← sourcePath dom root (dom.size+1) id []
     let inherited : NativeSVG.Style := {currentColor := WebRenderSVG.toColor style.color, visible := style.visible}
     let scene ← NativeSVG.parseRootInContextSized context path width height inherited embeddedAttributes (some store) glyphs
-    return placeSVG scene id style width height,picturesOf store imgs,made)
+    return placeSVG scene id style width height,picturesOf store imgs,made,madeWords)
 
 /-- `makeReplacedIn` with no kept store. -/
 def makeReplaced (dom : DOM.Dom) (documentURL : Option String := none)
     (images : List (String × ByteArray) := []) (fonts : Array Rendering.SfntProfile.Font := #[]) :
     Except String (Rendering.Layout.Embedding × Rendering.Layout.Pictures) :=
-  (fun (e,p,_) => (e,p)) <$> makeReplacedIn #[] dom documentURL images fonts
+  (fun (e,p,_) => (e,p)) <$> makeReplacedIn #[] {} dom documentURL images fonts
 
 /-- The SVG embedding of `makeReplaced`. -/
 def makeEmbedding (dom : DOM.Dom) (documentURL : Option String := none)
