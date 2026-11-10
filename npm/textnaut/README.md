@@ -14,7 +14,8 @@ A web browser for the terminal, on the Foafnaut engine. Needs Node 18 or later. 
 
 Or install it: `npm install -g @foafos/textnaut`, then:
 
-    textnaut https://info.cern.ch/
+    textnaut                     # a start page with links to try
+    textnaut info.cern.ch        # a bare name opens https://, with a note
     textnaut --dump --width 80 page.html
     textnaut --screensaver
 

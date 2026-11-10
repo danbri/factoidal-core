@@ -71,16 +71,7 @@ if (!existsSync(join(root, 'app', 'textnaut', 'textnaut.ts'))) {
   process.exit(1);
 }
 
-// Screensavers and a run with no page need no engine and download nothing.
-function hasPage(list) {
-  const takesValue = new Set(['--width', '--engine', '--font', '--colour', '--frames', '--big-headings']);
-  for (let i = 0; i < list.length; i++) {
-    if (takesValue.has(list[i])) i++;
-    else if (!list[i].startsWith('--')) return true;
-  }
-  return false;
-}
-const needsEngine = !args.includes('--screensaver') && hasPage(args);
+const needsEngine = !args.includes('--screensaver');
 const env = { ...process.env };
 if (needsEngine) {
   const choice = chooseEngine(args, process.env);
