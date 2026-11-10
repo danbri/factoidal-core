@@ -431,6 +431,43 @@ def typedBytes (ty : Nat) (x : Float) : ByteArray :=
   | 7 => le x.toFloat32.toBits.toNat 4
   | _ => le x.toBits.toNat 8
 
+/-- Direct reads for Uint8Array and Uint8ClampedArray. -/
+def typedReadByteFast (ty : Nat) (bytes : ByteArray) (at_ : Nat) : Value :=
+  match ty with
+  | 1 | 2 => .num (Float.ofNat (bytes.get! at_).toNat)
+  | _ => typedRead ty bytes at_
+
+/-- **Kind: refinement.** Says the direct byte read preserves every result of
+`typedRead`, for all type tags, buffers and offsets. Does not say the reference
+implements all of ECMA-262 or that this is faster. -/
+@[csimp] theorem typedRead_eq_byteFast : typedRead = typedReadByteFast := by
+  funext ty bytes at_
+  match ty with
+  | 0 | _ + 3 => rfl
+  | 1 | 2 =>
+    simp only [typedRead, typedReadByteFast, List.range_one, List.foldl_cons,
+      List.foldl_nil, Nat.mul_zero, Nat.pow_zero, Nat.mul_one, Nat.zero_add, Nat.add_zero]
+
+/-- Direct singleton buffers for the three byte-sized numeric element types. -/
+def typedBytesByteFast (ty : Nat) (x : Float) : ByteArray :=
+  match ty with
+  | 0 | 1 => ByteArray.mk #[(Int.toNat (toInt32Wide x % 256) % 256).toUInt8]
+  | 2 => ByteArray.mk #[(clampByte x % 256).toUInt8]
+  | _ => typedBytes ty x
+
+/-- **Kind: refinement.** Says direct byte writes produce exactly the reference
+bytes for every type tag and Float. Does not say anything about speed. -/
+@[csimp] theorem typedBytes_eq_byteFast : typedBytes = typedBytesByteFast := by
+  funext ty x
+  match ty with
+  | _ + 3 => rfl
+  | 0 | 1 | 2 =>
+    simp only [typedBytes, typedBytesByteFast, List.range_one, Array.map_singleton, Nat.mul_zero, Nat.pow_zero, Nat.div_one,
+      show (2 : Int) ^ (8 * 1) = 256 from by decide]
+
+#print axioms typedRead_eq_byteFast
+#print axioms typedBytes_eq_byteFast
+
 /-- The `name` of a function stored under a property key (§10.2.9 SetFunctionName). -/
 def nameOfKey (key : String) : M String := do
   match symOfKey? key with
