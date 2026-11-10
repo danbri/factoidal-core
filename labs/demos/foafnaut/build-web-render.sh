@@ -91,6 +91,14 @@ done
 for module in "${LAB_MODULES[@]}"; do SOURCES+=("$BUILD/ir/$module.c"); done
 if [ "$MODE" = --source-only ]; then echo 'WEB_RENDER_SOURCE_RC=0'; exit 0; fi
 TOOLCHAIN=$(lean --print-prefix)
+# Fails the build if GNU MP reached a linked binary (issue 393).
+assert_no_gmp(){
+  if nm "$1" 2>/dev/null | grep -q '__gmp'; then
+    echo "GNU MP symbols in $1 ($(nm "$1" 2>/dev/null | grep -c '__gmp')), expected none" >&2
+    exit 1
+  fi
+  echo "NO_GMP $(basename "$1"): nm shows no __gmp symbol"
+}
 if [ "$MODE" = --native ]; then
   OBJECTS=()
   for source in "${SOURCES[@]}" "$BUILD/ir/WebRenderCLI.c"; do
@@ -113,13 +121,23 @@ if [ "$MODE" = --native ]; then
     "${CC:-cc}" -O3 -DNDEBUG -I "$HACL/include" -I "$TOOLCHAIN/include" -c "$source" -o "$object"
     OBJECTS+=("$object")
   done
-  leanc -O3 -o "$BUILD/web-render-native" "${OBJECTS[@]}"
+  LEANLIB="$TOOLCHAIN/lib/lean"
+  # Native macOS builds link Lean's runtime without GNU MP (issue 393): see
+  # build-leanrt-no-gmp.sh. Linux still links through leanc with GMP (not yet changed).
+  if [ "$(uname -s)" = Darwin ]; then
+    LEANRT=$("$LAB/build-leanrt-no-gmp.sh" "$TOOLCHAIN" "$LAB/.build/leanrt-no-gmp" | tail -1)
+    "${CC:-cc}" -O3 -o "$BUILD/web-render-native" "${OBJECTS[@]}" \
+      "$LEANLIB/libInit.a" "$LEANLIB/libStd.a" "$LEANLIB/libleancpp.a" "$LEANRT" \
+      -L"$TOOLCHAIN/lib" -luv -lc++ -Wl,-dead_strip 2>&1 | { grep -v "was built for newer .macOS. version" >&2 || true; }
+    assert_no_gmp "$BUILD/web-render-native"
+  else
+    leanc -O3 -o "$BUILD/web-render-native" "${OBJECTS[@]}"
+  fi
   echo "WEB_RENDER_NATIVE=$BUILD/web-render-native"
   # The same objects and the Wasm C shim, as a library the desktop app opens through FFI.
   # Native output is the same bytes as Wasm output (native_html_test.ts checks this).
   LIBRARY_OBJECTS=()
   for object in "${OBJECTS[@]}"; do [ "$(basename "$object")" = WebRenderCLI.o ] || LIBRARY_OBJECTS+=("$object"); done
-  LEANLIB="$TOOLCHAIN/lib/lean"
   case "$(uname -s)" in
     Darwin) LIBRARY="$BUILD/engines/libweb-render.dylib"; SHARED=(-dynamiclib -Wl,-dead_strip -lc++);;
     *) LIBRARY="";;
@@ -129,8 +147,9 @@ if [ "$MODE" = --native ]; then
   "${CC:-cc}" -O3 -DNDEBUG -I "$TOOLCHAIN/include" -c "$LAB/web_render_shim.c" -o "$BUILD/obj-native/web_render_shim.o"
   # Static Lean runtime from the same toolchain: the library needs no Lean at run time.
   "${CC:-cc}" -O2 -o "$LIBRARY" "${LIBRARY_OBJECTS[@]}" "$BUILD/obj-native/web_render_shim.o" \
-    "$LEANLIB/libInit.a" "$LEANLIB/libStd.a" "$LEANLIB/libleancpp.a" "$LEANLIB/libleanrt.a" \
-    -L"$TOOLCHAIN/lib" -lgmp -luv "${SHARED[@]}" 2>&1 | { grep -v "was built for newer .macOS. version" >&2 || true; }
+    "$LEANLIB/libInit.a" "$LEANLIB/libStd.a" "$LEANLIB/libleancpp.a" "$LEANRT" \
+    -L"$TOOLCHAIN/lib" -luv "${SHARED[@]}" 2>&1 | { grep -v "was built for newer .macOS. version" >&2 || true; }
+  assert_no_gmp "$LIBRARY"
   echo "WEB_RENDER_LIBRARY=$LIBRARY"
   fi
 else
