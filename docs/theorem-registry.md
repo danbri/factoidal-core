@@ -3720,3 +3720,12 @@ reports contain only `propext`, `Classical.choice` and `Quot.sound`.
 Worklog: [SIMD bitwise theorems](20261110-foafnaut-simd-bitwise.md).
 Tracking: https://github.com/danbri/factoidal-core/issues/388
 (small theorem contributions).
+
+## WasmVM bitwise dispatch refinement (2026-11-10)
+
+`Run.simdStep_eq_fast` in [`WasmVM/Exec/Run.lean`](../formal/lean4/L4Factoidal/WasmVM/Exec/Run.lean)
+proves the specialized dispatcher equal to the generic step for every memory backend,
+store, stack, pointer, opcode and immediate. It preserves the complete `SimdRes`,
+including traps; `csimp` installs the fast form in compiled callers. This is an
+implementation refinement, not external Wasm conformance or a speed theorem.
+[Measurements and checks](20261110-simd-dispatch.md).

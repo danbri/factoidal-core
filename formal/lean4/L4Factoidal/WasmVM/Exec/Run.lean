@@ -382,7 +382,7 @@ def loadW (d : M) (ea : Nat) (op : LoadOp) : Option UInt64 :=
   .ok (hiWr st i r.hi) (wr stack i r.lo) sp
 
 /-- One SIMD instruction with no 16-byte immediate (`Op.simd`). -/
-@[noinline] def simdStep (st : StoreOf M) (stack : Slots) (sp : USize) (inst : ModuleInst)
+@[noinline] def simdStepGeneric (st : StoreOf M) (stack : Slots) (sp : USize) (inst : ModuleInst)
     (c mem off lane : Nat) : SimdRes M :=
   match simdShape c with
   | some .un => putV st stack (sp - 1) sp (V128.evalUn c (vAt st stack (sp - 1)))
@@ -428,6 +428,53 @@ def loadW (d : M) (ea : Nat) (op : LoadOp) : Option UInt64 :=
       .ok (storeMem st ma ea (v.lane (8 * w) lane) (simdStoreOp w)) stack (sp - 2)
     else .trap st stack .memOOB
   | _ => .trap st stack .unreachable
+
+/-- The reference SIMD step, kept separate from the dispatch implementation so
+its compiled replacement can reuse the generic fallback without replacing itself. -/
+@[inline] def simdStep (st : StoreOf M) (stack : Slots) (sp : USize) (inst : ModuleInst)
+    (c mem off lane : Nat) : SimdRes M :=
+  simdStepGeneric st stack sp inst c mem off lane
+
+/-- Bitwise SIMD instructions avoid the shape and lane-operation dispatchers.
+All other instructions retain the plain interpreter, including its traps. -/
+@[noinline] def simdStepFast (st : StoreOf M) (stack : Slots) (sp : USize) (inst : ModuleInst)
+    (c mem off lane : Nat) : SimdRes M :=
+  match c with
+  | 0x4d =>
+    let a := vAt st stack (sp - 1)
+    putV st stack (sp - 1) sp ⟨~~~a.lo, ~~~a.hi⟩
+  | 0x4e =>
+    let a := vAt st stack (sp - 2)
+    let b := vAt st stack (sp - 1)
+    putV st stack (sp - 2) (sp - 1) ⟨a.lo &&& b.lo, a.hi &&& b.hi⟩
+  | 0x4f =>
+    let a := vAt st stack (sp - 2)
+    let b := vAt st stack (sp - 1)
+    putV st stack (sp - 2) (sp - 1) ⟨a.lo &&& ~~~b.lo, a.hi &&& ~~~b.hi⟩
+  | 0x50 =>
+    let a := vAt st stack (sp - 2)
+    let b := vAt st stack (sp - 1)
+    putV st stack (sp - 2) (sp - 1) ⟨a.lo ||| b.lo, a.hi ||| b.hi⟩
+  | 0x51 =>
+    let a := vAt st stack (sp - 2)
+    let b := vAt st stack (sp - 1)
+    putV st stack (sp - 2) (sp - 1) ⟨a.lo ^^^ b.lo, a.hi ^^^ b.hi⟩
+  | _ => simdStepGeneric st stack sp inst c mem off lane
+
+/-- Optimization refinement.
+Says: specialized bitwise dispatch returns exactly the same store, both stack
+halves, stack pointer and trap as `simdStep`, for every input and memory backend.
+Does not say: SIMD follows an external Wasm specification or any host is faster. -/
+@[csimp] theorem simdStep_eq_fast : @simdStep = @simdStepFast := by
+  funext M lm st stack sp inst c mem off lane
+  unfold simdStepFast
+  split
+  · simp [simdStep, simdStepGeneric, simdShape, V128.evalUn]
+  · simp [simdStep, simdStepGeneric, simdShape, V128.evalBin]
+  · simp [simdStep, simdStepGeneric, simdShape, V128.evalBin]
+  · simp [simdStep, simdStepGeneric, simdShape, V128.evalBin]
+  · simp [simdStep, simdStepGeneric, simdShape, V128.evalBin]
+  · rfl
 
 /-! ### Garbage collection
 
@@ -1180,3 +1227,5 @@ the result inline (see "The dispatch loop in C" in the record). -/
 end
 end Run
 end L4Factoidal.WasmVM
+
+#print axioms L4Factoidal.WasmVM.Run.simdStep_eq_fast
