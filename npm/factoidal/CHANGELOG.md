@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.35.0 (2026-11-10)
+
+- Foafnaut: partial frames. A frame compiles again only the primitives that changed, keeps a damage rectangle, and redraws only that part of a layer. On the Spinal Tap page, one animated frame went from 351 ms to 3.9 ms of GPU and JS time at 1x (1225 ms to 4.0 ms at 2x); engine time per frame 28.5 ms to 10.9 ms. `retained:false` still gives the full path, and tests check that both give the same bytes.
+- Foafnaut: BubblePopJS, the built-in JavaScript engine, runs page scripts by default everywhere, also on the Hub. QuickJS-NG stays in the builds for comparison. Fixes: `r.exec(s)` in a loop no longer pays for the length of `s` on each call; a block with `let` or `const` may hold an `await`.
+- Foafnaut: a shader gallery page (WebGPU, WGSL), the same results on both JavaScript engines.
+- Foafnaut: the Hub starts faster, and layout is faster on large pages.
+- Foafnaut: on a Retina Mac the page is drawn at full resolution.
+- Foafnaut: iframes; form submission in the page's encoding; colour emoji (COLR/CPAL) in text, SVG text and canvas text; more fonts and SMIL animation.
+- Foafnaut: a click is no longer lost when the engine is busy; pointer input runs before queued engine work, and script hit tests use the frame on screen.
+- Foafnaut (macOS): the app links Lean's runtime without GNU MP. The releases that still contain GNU MP carry its notice.
+- `foafnaut` command: with no channel, it starts the newer of the installed release and the local bleeding-edge build, and says which. `--bleeding-edge` says the commit and age of the local build and warns when it is more than 6 hours old.
+- LWS client: `verifyNotification` accepts a notification whose `Signature-Input` covers the derived component `@query` (RFC 9421 section 2.2.7; https://github.com/danbri/factoidal-core/issues/379). The value comes from the inbox URL: `?` and the query, or `?` alone when the URL has no query. Before, the client read `@query` as a header field and refused the notification with "a covered component is missing", so `createNotificationReceiver` answered 401 to every notification from a storage that signs `@query` (sparq-lws-core; seen with 0.26.0 and 0.34.0). The client derives `@method`, `@scheme`, `@authority`, `@path` and `@query` only. Another name that starts with `@` (`@target-uri`, `@request-target`, `@query-param`) is refused and is not read as a header field. The decision is in Lean (`inboxBase` and `urlQuery`, `L4Factoidal/LWS/Client/Machine.lean`), through the wasm op `lwsClientStep`.
+- `foafnaut` command: `--version` prints the commit and the build time of the app that would run. The app gives the answer, from the record that its build wrote. An app that is too old to answer gives the line "this build is too old to answer --version".
+- `foafnaut` command: a page given as `file:name.html`, with no `//`, is a path relative to the current directory. A `file://` URL is read as a URL, so percent-encoded characters in its path are decoded.
+- XMPP: every IQ result the server sends has a `from` (RFC 6120 section 8.1.2.1): the address asked, or the account's bare JID when the request had no `to`. Theorems `handleIq_send_has_from` and `handleIq_domain_from`.
+
 ## 0.34.0 (2026-11-08)
 
 - `foafnaut` command: `--url` and `--html` open a page or a file (`file:` URLs too), and other options are passed to the app.
