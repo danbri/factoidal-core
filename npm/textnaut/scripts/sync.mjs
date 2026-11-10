@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Copies the files Textnaut needs into app/, keeping their relative paths (textnaut.ts imports
-// ../native_html_engine.ts, and so on). Run by `prepack`. test/closure.test.mjs checks the list
+// ../native_html_engine.ts, and so on). Run by `prepack`. test/package.test.mjs checks the list
 // against what Deno says textnaut.ts imports.
 import { cpSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
