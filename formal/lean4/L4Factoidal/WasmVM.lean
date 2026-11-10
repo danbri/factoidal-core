@@ -22,6 +22,7 @@ import L4Factoidal.WasmVM.Hosts.PageAot
 import L4Factoidal.WasmVM.Hosts.PageEvents
 import L4Factoidal.WasmVM.Hosts.LeanJS
 import L4Factoidal.WasmVM.Proofs.Numerics
+import L4Factoidal.WasmVM.Proofs.Simd
 import L4Factoidal.WasmVM.Proofs.Fuse
 import L4Factoidal.WasmVM.Proofs.Cost
 import L4Factoidal.WasmVM.Proofs.Proposals
