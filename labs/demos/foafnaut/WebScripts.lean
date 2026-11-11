@@ -155,6 +155,9 @@ structure Held where
   leanSession : Option (Nat × LeanJS.Session × Marks) := none
   /-- The dedicated workers of that session's page (`Hosts.LeanJSWorkers`). -/
   leanWorkers : LeanJSWorkers.Workers := {}
+  /-- The `layout` request of the session's `start`: its layout reads (`Page.Reads.measure`)
+  are made anew from it before each action, with the fonts and images held then. -/
+  layoutRequest : JSON.Json := .object []
 
 instance : Inhabited Held := ⟨{}⟩
 
@@ -178,6 +181,9 @@ when the machine has none (`Id`). -/
 def workerEntropy {M : Type → Type} [Monad M] [WebWasm.Machine M] (id : Nat) : M (Nat → ByteArray) := do
   let b ← WebWasm.Machine.randomBytes 32
   return fun w => if b.isEmpty then b else b ++ (toString (id * 65536 + w)).toUTF8
+
+/-- The `layout` request of a `start` (`Held.layoutRequest`). -/
+def layoutOf (request : JSON.Json) : JSON.Json := (request.field? "layout").getD (.object [])
 
 def actions : List String := ["info", "load", "start", "click", "pointer", "resize", "advance", "settle", "turn", "close",
   "aotModule", "resume", "host", "frame", "fetched"]
@@ -280,10 +286,12 @@ def drainedLean (s : LeanJS.Session) : LeanJS.Session :=
   let h := s.host
   s.setHost { h with dom := { h.dom with gpuOut := #[], canvas := h.dom.canvas.sent } }
 
-/-- What Canvas 2D draws with, given anew before each action (fonts and images the engine
-holds may have changed since the page started). -/
-def setCanvas (held : Held) (env : PageCanvas.Env) : Held :=
-  let page := fun (h : Page.Host) => { h with reads := { h.reads with canvasEnv := env } }
+/-- What Canvas 2D draws with and the layout reads, given anew before each action: the
+fonts and images the engine holds may have changed since the page started (`fontLoad`,
+`imageLoad`, `imageDrop`), and a read lays the page out with those held at the read, as
+the frame does. A layout already made for the DOM's version is kept (`Reads.kept`). -/
+def setReads (held : Held) (env : PageCanvas.Env) (measure : Option Page.Measure) : Held :=
+  let page := fun (h : Page.Host) => { h with reads := { h.reads with canvasEnv := env, measure } }
   { held with
     session := held.session.map fun (id, s, m) => (id, { s with host := page s.host }, m),
     leanSession := held.leanSession.map fun (id, s, m) => (id, s.setHost (page s.host), m) }
@@ -642,7 +650,7 @@ def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (h
         let s := missing.foldl LeanJS.Session.fail s
         -- workers the page's scripts made: their scripts are asked for
         LeanJSWorkers.pump { page := s, base := some base, entropy := wEnt }
-      return leanTurn { held with leanBase := some base, session := none, leanSession := none, nextSession := id + 1, leanWorkers := {} }
+      return leanTurn { held with leanBase := some base, session := none, leanSession := none, nextSession := id + 1, leanWorkers := {}, layoutRequest := layoutOf request }
         id {} a {} true (ns0 + ns)
 
 /-- A later action on the Lean engine's session (the actions of `act`). -/
@@ -698,7 +706,7 @@ of its scripts (`WebDocument.measure`), with the `layout` request of `start`. -/
 def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action html : String) (request : JSON.Json)
     (measure : JSON.Json → Option Page.Measure := fun _ => none) (canvas : PageCanvas.Env := {}) :
     M (Held × Except String String) := do
-  let held := setCanvas held canvas
+  let held := setReads held canvas (measure held.layoutRequest)
   let full := request.field? "full" == some (.bool true)
   match action with
   | "load" =>
@@ -741,7 +749,7 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
         let prog := PageAot.startProg aot dom url scripts { commands, logs, gpuPage := held.nextSession, entropy := ← entropy held.nextSession, encoding := str request "encoding" } #[] missing
           reads { instructionsPerMs := rate }
         let id := held.nextSession
-        beginTurn { held with session := none, leanSession := none, nextSession := id + 1 } id {} {} true true prog
+        beginTurn { held with session := none, leanSession := none, nextSession := id + 1, layoutRequest := layoutOf request } id {} {} true true prog
     | none, none => return (held, .error "scriptSession: no guest module; load it first")
     | some m, _ =>
       let url := str request "url"
@@ -764,7 +772,7 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
         let (s, loads) := srcdocLoads (·.host) (fun s el src scripts => s.loadFrame el src scripts) s
         let (answer, marks) := turnAnswer id {} s {} true ns (frameFields s.host loads)
         let s := drained s
-        return ({ held with session := some (id, s, marks), leanSession := none, nextSession := id + 1 }, .ok answer)
+        return ({ held with session := some (id, s, marks), leanSession := none, nextSession := id + 1, layoutRequest := layoutOf request }, .ok answer)
   | _ =>
     match held.leanSession with
     | some (id, s, marks) =>
