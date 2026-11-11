@@ -1,4 +1,6 @@
-/-!
+import Std
+
+/-
 Copyright 2026 Factoidal contributors. SPDX-License-Identifier: Apache-2.0
 
 A fresh, specification-first implementation of a finite RDF triple relation
@@ -10,7 +12,6 @@ The initial candidate-domain engine deliberately uses lists. It is the
 executable correctness reference for a subsequent compressed trie cursor,
 NOT yet an efficient CompactLTJ index nor a worst-case optimal evaluator.
 -/
-import Std
 
 namespace L4Factoidal.CompactLTJ
 
