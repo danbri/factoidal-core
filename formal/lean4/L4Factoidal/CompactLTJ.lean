@@ -5,3 +5,4 @@ succinct physical index or a production SPARQL execution backend.
 -/
 import L4Factoidal.CompactLTJ.Model
 import L4Factoidal.CompactLTJ.Succinct
+import L4Factoidal.CompactLTJ.SparqlBridge
