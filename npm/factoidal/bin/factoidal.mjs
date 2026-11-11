@@ -2998,7 +2998,9 @@ async function commandXmppServe (positional, options) {
     dir: positional[0],
     port: servePort(options, useTls && !startTls ? 5223 : 5222),
     host: serveHost(options),
-    onError: (error) => { if (!quiet) err(`xmpp-serve: ${error.message}`) }
+    onError: (error) => { if (!quiet) err(`xmpp-serve: ${error.message}`) },
+    // Connection events: an address tag (never an address), closes at a timeout.
+    onLog: (line) => { if (!quiet) err(`xmpp-serve: ${line}`) }
   }
   if (typeof options.domain === 'string') settings.domain = options.domain
   if (typeof options.accounts === 'string') {
