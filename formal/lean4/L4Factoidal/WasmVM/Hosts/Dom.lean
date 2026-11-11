@@ -665,11 +665,15 @@ origin is the page's: `frameAccessible`); 29 an `iframe`'s frame (`frameBits`); 
 shadow root when open (`shadowRoot`); 21 a shadow root's host; 22 a shadow root's state
 (`shadowFlags`); 23 a slottable's `assignedSlot`; 24 the shadow-including root
 (`getRootNode({composed: true})`); 25 1 when connected (`isConnected`), else 0; 26 an
-element's shadow root, open or closed; 27 1 when the arena has a shadow host; 28 the root
+element's shadow root, open or closed; 27 1 when the arena has a shadow host (for any `node`,
+even with no document); 28 the root
 (`getRootNode()`). -1 none, -2 no such node. -/
 def nodeInfo (args : Array Value) (s : State) : State × HostResult :=
   let d := s.dom
   let n := arg args 0
+  -- 27 asks about the arena, not a node: answered for any node number, so a script engine
+  -- can ask it before there is a document (the prelude's probe for shadow trees)
+  if arg args 1 == 27 then (s, ret (if d.hasShadow then 1 else 0)) else
   if !isNode d n then (s, ret (-2)) else
   let x := d.get n
   let opt := fun (o : Option Nat) => match o with | some k => (s, ret k) | none => (s, ret (-1))

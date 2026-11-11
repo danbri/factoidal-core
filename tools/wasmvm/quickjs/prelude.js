@@ -2437,10 +2437,12 @@
   // ==== shadowframes: Shadow DOM ========================================================
   // DOM §4.2.2 (slots), §4.8 (ShadowRoot), §4.9 (attachShadow). The algorithms are Lean's
   // (L4Factoidal.DOM.Shadow): node_info 20-28, node_query 30, 31 and 33, tree_op 20, 22 and
-  // 23. An engine without them answers -2 to node_info 20: then this section defines
-  // nothing and events keep the old plan.
+  // 23. An engine without them answers -2 to node_info 27, which an engine with them answers
+  // for any node, so the probe works before there is a document (BubblePopJS runs this
+  // prelude once, with none, for its realm): then this section defines nothing and events
+  // keep the old plan.
   let shadowProbe;
-  function shadowEngine() { return shadowProbe ?? (shadowProbe = info(0, 20) !== -2); }
+  function shadowEngine() { return shadowProbe ?? (shadowProbe = info(0, 27) !== -2); }
   // "Signal a slot change" (DOM §4.2.2.5): once a shadow root has been seen, a change of the
   // tree marks the slots for one Lean comparison (node_query 33) in a microtask, which
   // fires slotchange at each slot whose assigned nodes changed.

@@ -119,6 +119,56 @@ keys, buckets and `computedFrom`. A shadow page uses the same pieces:
 - `HTML.FrameSessions.exchange_frame`, `exchange_parent`, `exchange_isolated`: after an
   exchange each session is a function of its own state and of the message strings
   addressed to it, so no session reads or writes another session's heap.
+- `HTML.Frames.frameFlags_narrows`, `frameOf_narrows` (2026-11-11): sandbox flags only
+  narrow. `SandboxFlags.Narrows a b` says `b` sets every flag `a` sets (`a ∪ b = b`); a
+  frame's flags narrow its parent document's whatever its `sandbox` attribute says, and
+  `Narrows` is reflexive and transitive, so it holds down any chain of nested frames.
+  `nested_sandboxed_opaque`, `nested_no_scripts`: a frame in a frame with the sandboxed
+  origin flag has an opaque origin, and one in a frame without scripts runs none, whatever
+  its own `allow-same-origin` or `allow-scripts`.
+- `HTML.FrameSessions.exchange_out`, `exchange_data` (2026-11-11): each message out of an
+  exchange is one a session posted, with its data and origin unchanged; the page's go to
+  the frame they name, and a frame's go only to the page, as from the frame's own element,
+  whatever address the frame wrote. A message is a record of strings, so what crosses is
+  the serialized clone (`JSON.stringify(structuredClone(x))` in the sender's realm), never
+  a reference into a heap; the origin is set by Lean (`Page.postToFrame`), not by the
+  sender's script.
+
+### 3a. Isolation: what is proved, what is tested, what is open (2026-11-11)
+
+Proved, on the decisions (`HTML.Frames`, `HTML.FrameSessions`, `Hosts.Dom`): a sandboxed
+frame without `allow-same-origin` has a fresh opaque origin and neither side's access check
+passes (`sandboxed_no_access`); without `allow-scripts` no script runs and no session is
+made (`scripts_need_allow`, `sessionFrames_scripts`); flags only narrow, down nested frames
+too (above); a frame's scripts run in the page's realm only for a same-origin frame
+(`frameScriptsInRealm_sameOrigin`); sessions meet only through message records
+(`exchange_*`).
+
+Tested, not proved: that every host path that hands out a frame's document asks
+`frameAccessible` (`node_info` 11 does, by its definition; `contentWindow` in prelude.js
+goes through it); that the page's scripts cannot name a node of a same-arena frame
+document by number (node numbers reach a script only through the natives' answers); the
+per-frame entropy (`WebScripts.frameEntropyOf`: fresh machine bytes each turn, suffix
+`frame:<session>:<element>`, never a worker's suffix, and none when the page has none).
+
+Open:
+- Storage: the engine has no `localStorage`, `sessionStorage`, IndexedDB or cookies, so a
+  frame reaches no storage of its parent's because there is none. When storage comes it
+  must be keyed by `Frame.origin` (an opaque origin gets a fresh, empty store), with a
+  theorem like `sandboxed_no_access` for the store lookup.
+- Host-level narrowing: `frameFor` uses a frame kept when its browsing context was made
+  (`frameInfo`) before computing one; that the kept frame's flags narrow its container's
+  is an invariant of `connectFrames`, not proved.
+- Opaque origin identity is `10^9 + element` in each arena. Within one arena two elements
+  never share one; a frame's own session numbers its elements from 0, so a frame in a
+  sandboxed frame (which gets no browsing context there: `frames := false`) could share
+  the number of its parent frame's origin. Harmless while frames in frame sessions get no
+  context; to fix before they do (a per-session counter).
+- Same-origin frames share the page's realm (section 5), as before; only the sandboxed
+  ones are separate sessions. The AOT path (the Hub) makes no frame sessions: a sandboxed
+  frame's scripts do not run there at all, which is safe and incomplete.
+- The structured clone across sessions is JSON (section 5): cyclic data, Maps, Dates and
+  ArrayBuffers do not survive; a failure to clone throws in the sender, as it should.
 
 ## 4. Codes
 
@@ -156,3 +206,27 @@ number per listener call: its retargeted target). Commands `attachShadow`, `assi
   `::part()`, inheritance from a slot (a slot is not a box here), and `getHTML()`.
 - Structured clone across sessions uses JSON until the Lean clone of the basics work is
   exposed as bytes.
+
+## 6. Merge with main of 2026-11-11
+
+Main had landed frame documents for 0.35.0 (`srcdocLoads`, the `frame` action, the
+embedder's navigations), the engine state as a value passed through the C ABI (issue 390)
+and dedicated workers. The merge keeps main's frame loading and adds the sandbox, frame
+sessions and shadow trees on it: one frame implementation. Changes the merge needed:
+
+- Frame entropy comes from the machine (`WebWasm.Machine.randomBytes`), as workers' does,
+  not from an `@[implemented_by]` of its own, so the lab keeps 3 `unsafe` and 3
+  `implemented_by` (`LabHygiene.lab_ratchet`). One draw a turn (`turnBytes`) feeds the
+  turn's workers (`workerEntropyOf`) and its new frames (`frameEntropyOf`); the interpreter
+  path draws only when the turn made an `iframe`.
+- `Page.serveExtra` sends `node_query` ops 30 to 32 to `Hosts.Dom` with those below 16
+  (`domQueryOps`); the branch had sent every op but 16-19, 33 and 34 there, which took
+  ops 20-29 from the measure and 100-199 from `domOp`.
+- BubblePopJS runs the prelude once, with no document, to make its realm. The shadow probe
+  asks `node_info` 27, which `Hosts.Dom` answers for any node number, in place of 20,
+  which needs a node.
+- Shadow trees' `style` text is read through the engine's kept sheets (`sheetIn`) in
+  place of the module-level memo main removed.
+- `findFlattenedSlottables` keeps its nesting in a work list (`flattenedLoop`), so a page
+  that nests slots deeply does not deepen the stack; checked against the recursive
+  `flattenedGo` on every slot of test pages, not proved equal.

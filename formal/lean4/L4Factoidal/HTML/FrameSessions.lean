@@ -15,6 +15,9 @@ Theorems (`exchange_frame`, `exchange_parent`, `exchange_isolated`): after an ex
 each session is a function of its own state before and of the messages addressed to it;
 two maps that differ only in another session's state give it the same new state. So a
 frame's script session never reads or writes another session's heap: only strings cross.
+`exchange_out`, `exchange_data`: each message out of an exchange is one a session posted,
+with its data and origin unchanged; a frame's messages go only to the page, as from the
+frame's own element, whatever address the frame wrote.
 -/
 namespace L4Factoidal.HTML.FrameSessions
 
@@ -68,5 +71,30 @@ theorem exchange_isolated {σ : Type} (run : σ → Array Message → σ × Arra
     (same : m.frames[i] = m'.frames[i]) :
     (exchange run m ms).1.frames[i]? = (exchange run m' ms).1.frames[i]? := by
   rw [exchange_frame run m ms i h, exchange_frame run m' ms i h', same]
+
+/-- What crosses in an exchange: each message out is one a session posted, unchanged but for
+its address. The page's messages go to the frame they name; a frame's messages go to the page
+only, as from its own element, whatever address the frame wrote (a frame never reaches
+another frame's session). -/
+theorem exchange_out {σ : Type} (run : σ → Array Message → σ × Array Message) (m : SessionMap σ)
+    (ms : Array Message) (x : Message) (hx : x ∈ (exchange run m ms).2) :
+    (∃ y ∈ (run m.parent (forParent ms)).2, x = { y with toParent := false }) ∨
+    (∃ p ∈ m.frames, ∃ y ∈ (run p.2 (forFrame ms p.1)).2, x = { y with toParent := true, frame := p.1 }) := by
+  simp only [exchange, Array.mem_append, Array.mem_map, Array.mem_flatMap] at hx
+  rcases hx with ⟨y, hy, rfl⟩ | ⟨q, hq, y, hy, rfl⟩
+  · exact Or.inl ⟨y, hy, rfl⟩
+  · right
+    obtain ⟨p, hp, rfl⟩ := hq
+    exact ⟨p, hp, y, hy, rfl⟩
+
+/-- Only data a session posted crosses: the data of each message out is the data of a message
+some session put in its outbox. -/
+theorem exchange_data {σ : Type} (run : σ → Array Message → σ × Array Message) (m : SessionMap σ)
+    (ms : Array Message) (x : Message) (hx : x ∈ (exchange run m ms).2) :
+    (∃ y ∈ (run m.parent (forParent ms)).2, x.data = y.data ∧ x.origin = y.origin) ∨
+    (∃ p ∈ m.frames, ∃ y ∈ (run p.2 (forFrame ms p.1)).2, x.data = y.data ∧ x.origin = y.origin ∧ x.toParent = true) := by
+  rcases exchange_out run m ms x hx with ⟨y, hy, rfl⟩ | ⟨p, hp, y, hy, rfl⟩
+  · exact Or.inl ⟨y, hy, rfl, rfl⟩
+  · exact Or.inr ⟨p, hp, y, hy, rfl, rfl, rfl⟩
 
 end L4Factoidal.HTML.FrameSessions

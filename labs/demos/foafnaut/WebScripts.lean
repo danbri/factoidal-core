@@ -777,8 +777,8 @@ def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (h
         let s := missing.foldl LeanJS.Session.fail s
         -- workers the page's scripts made: their scripts are asked for
         LeanJSWorkers.pump { page := s, base := some base, entropy := wEnt }
-      return leanTurn { held with leanBase := some base, session := none, leanSession := none, nextSession := id + 1, leanWorkers := {}, layoutRequest := layoutOf request,
-          frames := #[], leanFrames := #[], frameScan := 0 }
+      let held := { held with leanBase := some base, session := none, leanSession := none, nextSession := id + 1, leanWorkers := {}, layoutRequest := layoutOf request }
+      return leanTurn { held with frames := #[], leanFrames := #[], frameScan := 0 }
         id {} a {} true (ns0 + ns) (frameEntropyOf id lim.entropy b)
 
 /-- A later action on the Lean engine's session (the actions of `act`). -/
@@ -853,8 +853,7 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
     match held.turn, held.aot with
     | some t, some aot => hostCall held aot t request
     | _, _ => return (held, .error "scriptSession: no turn waits for the host")
-  | "close" => return ({ held with session := none, turn := none, leanSession := none, leanWorkers := {}, frames := #[], leanFrames := #[], frameScan := 0 },
-      .ok "{\"closed\":true}")
+  | "close" => return ({ held with session := none, turn := none, leanSession := none, leanWorkers := {}, frames := #[], leanFrames := #[], frameScan := 0 }, .ok "{\"closed\":true}")
   | _ =>
   if held.turn.isSome then return (held, .error "scriptSession: a turn waits for the host")
   match action with

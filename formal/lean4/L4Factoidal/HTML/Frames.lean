@@ -20,7 +20,9 @@ Theorems:
   `allow-same-origin` has a fresh opaque origin, so neither its parent nor any other
   document reaches its document, and it reaches none of theirs.
 - `flags_inherit`: a flag set on the parent's document stays set on the frame
-  (nested frames never gain a permission back).
+  (nested frames never gain a permission back); `frameFlags_narrows` for every flag at
+  once (`SandboxFlags.Narrows`), and `nested_sandboxed_opaque`, `nested_no_scripts`: a frame
+  in a sandboxed frame gets an opaque origin and no scripts whatever its own attribute says.
 - `postMessage_star`, `postMessage_mismatch`: a message with target origin "*" is
   delivered; one whose target origin is another origin is not.
 -/
@@ -264,6 +266,66 @@ theorem postMessage_star (s t : Origin) : postMessageDelivers s t "*" = some tru
 theorem postMessage_mismatch (s t : Origin) (o : String) (u : Url) (hs : o ≠ "*") (hslash : o ≠ "/")
     (hu : parseUrl o = some u) (hne : originOf u 0 ≠ t) : postMessageDelivers s t o = some false := by
   simp [postMessageDelivers, hs, hslash, hu, sameOrigin, hne]
+
+/-! ## Flags only narrow -/
+
+/-- `b` sets every flag that `a` sets: a frame with flags `b` is allowed nothing that one with
+`a` is not. -/
+def SandboxFlags.Narrows (a b : SandboxFlags) : Prop := a.union b = b
+
+theorem SandboxFlags.union_comm (a b : SandboxFlags) : a.union b = b.union a := by
+  cases a; cases b; simp only [SandboxFlags.union, Bool.or_comm]
+
+theorem SandboxFlags.union_assoc (a b c : SandboxFlags) : (a.union b).union c = a.union (b.union c) := by
+  cases a; cases b; cases c; simp only [SandboxFlags.union, Bool.or_assoc]
+
+theorem SandboxFlags.union_self (a : SandboxFlags) : a.union a = a := by
+  cases a; simp only [SandboxFlags.union, Bool.or_self]
+
+theorem SandboxFlags.narrows_refl (a : SandboxFlags) : a.Narrows a := a.union_self
+
+theorem SandboxFlags.narrows_trans {a b c : SandboxFlags} (h₁ : a.Narrows b) (h₂ : b.Narrows c) : a.Narrows c := by
+  unfold SandboxFlags.Narrows at *
+  rw [← h₂, ← SandboxFlags.union_assoc, h₁]
+
+/-- Adding flags narrows. -/
+theorem SandboxFlags.narrows_union (a b : SandboxFlags) : b.Narrows (a.union b) := by
+  unfold SandboxFlags.Narrows
+  rw [← SandboxFlags.union_assoc, SandboxFlags.union_comm b a, SandboxFlags.union_assoc, SandboxFlags.union_self]
+
+/-- What narrowing keeps: each flag set in `a` is set in `b`. -/
+theorem SandboxFlags.Narrows.flag {a b : SandboxFlags} (h : a.Narrows b) (f : SandboxFlags → Bool)
+    (hf : ∀ x y : SandboxFlags, f (x.union y) = (f x || f y)) (ha : f a = true) : f b = true := by
+  rw [← h, hf, ha, Bool.true_or]
+
+/-- Sandbox flags only ever narrow: a frame's flags set every flag of its parent's document,
+whatever its `sandbox` attribute says (HTML §7.1.5 "determine the creation sandboxing flags"). -/
+theorem frameFlags_narrows (parent : SandboxFlags) (sandbox : Option String) :
+    parent.Narrows (frameFlags parent sandbox) := by
+  cases sandbox with
+  | none => exact SandboxFlags.narrows_refl parent
+  | some v => exact SandboxFlags.narrows_union (parseSandbox v) parent
+
+theorem frameOf_narrows (parentFlags : SandboxFlags) (parentOrigin : Origin) (sandbox srcdoc src : Option String)
+    (fresh : Nat) : parentFlags.Narrows (frameOf parentFlags parentOrigin sandbox srcdoc src fresh).flags :=
+  frameFlags_narrows parentFlags sandbox
+
+/-- A frame in a frame whose document has the sandboxed origin flag gets an opaque origin,
+whatever its own `sandbox` attribute (`allow-same-origin` there gives nothing back). -/
+theorem nested_sandboxed_opaque (parentFlags : SandboxFlags) (parentOrigin : Origin) (sandbox srcdoc src : Option String)
+    (fresh : Nat) (h : parentFlags.origin = true) :
+    (frameOf parentFlags parentOrigin sandbox srcdoc src fresh).origin = .opaque fresh := by
+  have ho : (frameFlags parentFlags sandbox).origin = true :=
+    (frameFlags_narrows parentFlags sandbox).flag (·.origin) (fun _ _ => rfl) h
+  simp only [frameOf]; exact frameOrigin_sandboxed _ _ _ _ ho
+
+/-- Nor do scripts come back: a frame in a frame whose document may not run scripts may not
+run them either. -/
+theorem nested_no_scripts (parentFlags : SandboxFlags) (parentOrigin : Origin) (sandbox srcdoc src : Option String)
+    (fresh : Nat) (h : parentFlags.scripts = true) :
+    (frameOf parentFlags parentOrigin sandbox srcdoc src fresh).scriptsMayRun = false := by
+  have := (frameFlags_narrows parentFlags sandbox).flag (·.scripts) (fun _ _ => rfl) h
+  simp [frameOf, Frame.scriptsMayRun, this]
 
 #guard (parseSandbox "").scripts && (parseSandbox "").origin
 #guard !(parseSandbox "allow-scripts ALLOW-SAME-ORIGIN").scripts && !(parseSandbox "allow-scripts allow-same-origin").origin

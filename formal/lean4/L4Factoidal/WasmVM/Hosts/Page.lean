@@ -354,8 +354,10 @@ def Host.measured (h : Host) : Host × Option (Nat → Nat → Option String) :=
   | some (v, f) => if v == h.reads.version then (h, some f) else h.measureNow
   | none => h.measureNow
 
-/-- The `node_query` ops that `pageQuery` serves; the others are `Hosts.Dom`'s. -/
-def pageQueryOps : List Nat := [16, 17, 18, 19, 33, 34]
+/-- The `node_query` ops that `Hosts.Dom.serve` answers: below 16, and 30 to 32 (slots, the
+composed path, the postMessage origin check). Ops 100 to 199 are `Hosts.Dom.domOp`'s; the
+others (16 to 29, 33, 34, 200 and up) are this module's (`pageQuery`, `postToFrame`). -/
+def domQueryOps (op : Nat) : Bool := op < 16 || (op ≥ 30 && op ≤ 32)
 
 /-- The most messages a session may have waiting for the host. -/
 def maxOutbox : Nat := 4096
@@ -446,7 +448,7 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
       let (st, r) := Hosts.Dom.answerStr mem st (a 4) (a 5) (.ok answer)
       ({ h with dom := { h.dom with canvas } }, st, r)
   | "node_query" =>
-    if !pageQueryOps.contains (a 1) then
+    if domQueryOps (a 1) then
       let (dom, st, r) := Hosts.Dom.serve mem nm args h.dom st
       ({ h with dom }, st, r)
     else if a 1 ≥ 100 && a 1 < 200 then

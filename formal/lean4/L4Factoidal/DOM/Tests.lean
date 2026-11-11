@@ -175,4 +175,17 @@ def dsd : Dom := parseHtmlDocument "<div id='h'><template shadowrootmode='open'>
   match (d2.get c).shadow with | some sr => (d2.get sr).kids.size == 1 | none => false)
 #guard (let (d2, c) := dsd.cloneNode (byId dsd "h") true; (d2.get c).shadow.isNone)
 
+-- Flattened slottables (DOM §4.2.2.3): the work-list version (`findFlattenedSlottables`)
+-- answers what the recursive one (`flattenedGo`) does, for every slot, with slots nested
+-- through two shadow trees, fallback children, and an unassigned slot.
+def nestedSlots : Dom := parseHtmlDocument ("<div id='o'><template shadowrootmode='open'><div id='i'>" ++
+  "<template shadowrootmode='open'><a>1</a><slot id='s3'><i>fb</i></slot><slot name='n'></slot></template>" ++
+  "<slot id='s2'><u>fb2</u></slot><em slot='n'>e</em></div><slot name='z'><q>fb3</q></slot></template>" ++
+  "<b>x</b><span>y</span>t</div>")
+#guard (List.range nestedSlots.size).all fun k => !nestedSlots.isSlot k ||
+  nestedSlots.findFlattenedSlottables k == nestedSlots.flattenedGo (nestedSlots.size + 1) k
+#guard (List.range dsd.size).all fun k => !dsd.isSlot k || dsd.findFlattenedSlottables k == dsd.flattenedGo (dsd.size + 1) k
+-- the inner default slot gets the outer slot, which flattens to the outer host's b, span and text
+#guard (List.range nestedSlots.size).any fun k => nestedSlots.isSlot k && (nestedSlots.findFlattenedSlottables k).size == 3
+
 end L4Factoidal.DOM.Tests

@@ -500,8 +500,10 @@ private def scriptWhere (script : JSON.Json) : String :=
   s!"<script> node {id}" ++ (if src.isEmpty then "" else " src=\"" ++ src ++ "\"")
 
 /-- The rules of the `style` elements of each connected shadow tree (CSS Scoping 1 §3.1),
-each rule with that shadow root as its scope, read once per text (`sheetKept`). -/
-def shadowRulesIn (dom : DOM.Dom) (env : Rendering.MediaQuery.Env) : List Rendering.CSS.Rule := Id.run do
+each rule with that shadow root as its scope. A text the engine keeps (`sheetIn`) is not read
+again; a new one is read on each layout and not kept (the engine's `Made` holds one sheet,
+the document's). -/
+def shadowRulesIn (kept : Kept) (dom : DOM.Dom) (env : Rendering.MediaQuery.Env) : List Rendering.CSS.Rule := Id.run do
   let mut out : List Rendering.CSS.Rule := []
   for sr in [0:dom.size] do
     if dom.isShadowRoot sr && dom.connected sr then
@@ -512,16 +514,16 @@ def shadowRulesIn (dom : DOM.Dom) (env : Rendering.MediaQuery.Env) : List Render
           | .ok (true,_) => sheets := ((dom.textContent id).getD "") :: sheets
           | _ => pure ()
       if !sheets.isEmpty then
-        let rules := (sheetKept (String.intercalate "\n" sheets.reverse)).toOption.getD []
+        let rules := ((sheetIn kept (String.intercalate "\n" sheets.reverse)).1).toOption.getD []
         out := out ++ (Rendering.CSS.parseInRaw env rules).map fun r => {r with scope := some sr}
   return out
 
 /-- A page with a shadow host is laid out on its flat tree, with its node tree for
 selectors, and with the rules of its shadow trees (CSS Scoping 1). A page with none takes
 none of this (`DOM.Dom.flat_eq_of_noShadow`, `CSS.computeFor_none`). -/
-def flatView (dom : DOM.Dom) (env : Rendering.MediaQuery.Env) (rules : List Rendering.CSS.Rule) :
+def flatView (kept : Kept) (dom : DOM.Dom) (env : Rendering.MediaQuery.Env) (rules : List Rendering.CSS.Rule) :
     DOM.Dom × List Rendering.CSS.Rule × Option Rendering.CSS.TreeScope :=
-  if dom.hasShadow then (dom.flat, rules ++ shadowRulesIn dom env, some (Rendering.CSS.TreeScope.of dom))
+  if dom.hasShadow then (dom.flat, rules ++ shadowRulesIn kept dom env, some (Rendering.CSS.TreeScope.of dom))
   else (dom, rules, none)
 
 /-- Script MIME classification has one owner: the Lean scripting snapshot.
@@ -1680,7 +1682,7 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
   let dom := if m == .liberal && graph.isNone then partialNote dom else dom
   -- Shadow trees (CSS Scoping 1): the layout is of the flat tree, and the selectors match
   -- on the node tree. A page with no shadow host takes none of this (`flatView`).
-  let (dom,rules,treeScope) := flatView dom env rules
+  let (dom,rules,treeScope) := flatView kept dom env rules
   if width == 0 || rows == 0 || width > 4096 || rows > 4096 then throw "unsupported document viewport"
   let fontData := str request "fontData"
   if !fontData.isEmpty then
@@ -1966,7 +1968,7 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
     let textScale := cssTextScale (← scalePercent request) (zoomUnit request)
     let (rules,_) ← rulesWith kept dom request
     let state := withPointer dom (← elementState dom (baseURL dom (str request "url")) request) (none,none)
-    let (flat,rules,treeScope) := flatView dom {medium := medium request} rules
+    let (flat,rules,treeScope) := flatView kept dom {medium := medium request} rules
     Rendering.CSS.computeFor treeScope flat rules textScale state
   -- 22: the device pixel ratio of the layout request (`zoomUnit`/100), with no layout
   -- 23: the `@font-face` faces of the page and the state of each (`document.fonts`)

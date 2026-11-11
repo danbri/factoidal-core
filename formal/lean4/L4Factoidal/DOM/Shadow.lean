@@ -159,8 +159,37 @@ def flattenedGo (d : Dom) : Nat → NodeId → Array NodeId
     let list := if assigned.isEmpty then (d.get slot).kids.filter (d.isSlottable ·) else assigned
     list.flatMap fun k => if d.isSlotInShadow k then d.flattenedGo fuel k else #[k]
 
-/-- `assignedNodes({flatten: true})`: the flattened slottables of `slot`. -/
-def findFlattenedSlottables (d : Dom) (slot : NodeId) : Array NodeId := d.flattenedGo (d.size + 1) slot
+/-- A work item of `flattenedLoop`: a node of the answer, or a slot to expand as
+`flattenedGo fuel slot` does. -/
+inductive FlatItem where
+  | node (k : NodeId)
+  | slot (k : NodeId) (fuel : Nat)
+
+/-- The items one step of `flattenedGo fuel slot` expands to, in order. -/
+def flattenedItems (d : Dom) : Nat → NodeId → List FlatItem
+  | 0, _ => []
+  | fuel + 1, slot =>
+    if !d.isShadowRoot (d.root slot) then [] else
+    let assigned := d.findSlottables slot
+    let list := if assigned.isEmpty then (d.get slot).kids.filter (d.isSlottable ·) else assigned
+    list.toList.map fun k => if d.isSlotInShadow k then .slot k fuel else .node k
+
+/-- `flattenedGo` with the nesting kept in a work list, not on the stack (a page decides how
+deep slots nest): each step takes the first item, adds a node to `acc` or puts a slot's items
+in its place. At most `steps` steps. -/
+def flattenedLoop (d : Dom) : Nat → List FlatItem → Array NodeId → Array NodeId
+  | 0, _, acc => acc
+  | _ + 1, [], acc => acc
+  | steps + 1, .node k :: rest, acc => d.flattenedLoop steps rest (acc.push k)
+  | steps + 1, .slot k fuel :: rest, acc => d.flattenedLoop steps (d.flattenedItems fuel k ++ rest) acc
+
+/-- `assignedNodes({flatten: true})`: the flattened slottables of `slot` (`flattenedGo` with
+at most `d.size + 1` nested slots), by `flattenedLoop`. Each node is assigned to one slot or
+is the fallback child of one, so the steps are about twice the nodes; the bound
+`(d.size + 2)^2` leaves room. Checked against `flattenedGo` by tests (DOM/Tests.lean); not
+proved equal. -/
+def findFlattenedSlottables (d : Dom) (slot : NodeId) : Array NodeId :=
+  d.flattenedLoop ((d.size + 2) * (d.size + 2)) [.slot slot (d.size + 1)] #[]
 
 /-- `assignedSlot` of a slottable (DOM §4.2.2.2): "find a slot" with open only. -/
 def assignedSlot (d : Dom) (s : NodeId) : Option NodeId := d.findSlot s true

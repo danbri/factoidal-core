@@ -2228,7 +2228,6 @@ L4Factoidal_WasmVM_Hosts_Page_Session_settleP  # (c) Std.Range.forIn in Prog: ea
 L4Factoidal_WasmVM_Hosts_Page_Session_startP  # (c) Array.forIn over the page's scripts in Prog: each script is an ask
 L4Factoidal_WasmVM_Hosts_Page_Session_loadFrameP  # (c) Array.forIn over a frame document's scripts in Prog: each script is an ask (as startP)
 L4Factoidal_WasmVM_Hosts_Dom_docFrameGo  # (b) the nesting of frames in frames (each step goes to the containing frame's document; fuel frames.size + 1)
-L4Factoidal_DOM_Dom_flattenedGo  # (b) the nesting of slots assigned into slots of enclosing shadow trees (a document's shadow nesting)
 L4Factoidal_WasmVM_Tests_Aot_run  # (c) core Array.qsort of the file list of the AOT round-trip test; not in the engine
 L4Factoidal_WasmVM_Aot_emit  # (s) specification only: `instrument` runs `emitAcc` (a loop), proved equal by `emitAcc_eq`; no executed code calls `emit`
 L4Factoidal_JS_agen*  # (b)(c) the async generator request queue: one request per step, genRun as L4Factoidal_JS_gen*; the queue holds the requests made while a step runs, so the cycle depth is that count
