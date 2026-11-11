@@ -41,6 +41,7 @@ own binding, those rows are the difference.
 | `Linkset.lean` | client-managed links: the `Link` request field parser, `Prefer: set-linkset`, the server-managed relations (409), link validation (400), and the linkset document read and written (https://github.com/danbri/factoidal/issues/888). |
 | `PaginationLinksTests.lean` | `#guard`s of both through `step`, positive and negative. |
 | `Authorization.lean` | storage-server authorization of the 2026-10-19 draft: Bearer tokens, RFC 9728 metadata, Web Access Control (https://github.com/danbri/factoidal/issues/886). |
+| `RootAclInstall.lean` | the first root ACL of an EXISTING storage (a storage made with `insecureNoAuth` has no `/.acl`). At open, with authorization on and a root ACL given (`rootAcl`, or `Authorization.ownerRootAcl` of `owner`), a storage with no `/.acl` gets the given one, before any request is answered; the op layer (`Wasm/Ops/Lws.lean`, `installRootAcl`) runs it in `lwsOpen` (a snapshot) and at the end of `lwsLoad` (a storage kept in files), and answers `changed` and `rootAclNotice`. Theorems below. |
 | `Notifications.lean` | notifications: the core draft's "Notifications" section and the webhook notification suite (`lws10-notifications-webhook`), both at w3c/lws-protocol 9a08ff65 — discovery, subscriptions (subscribe-time and delivery-time authorization), the changes of a step (`changesOf`, theorem `classify_sound`), routing (theorem `routed_authorized`), Activity Streams 2.0 envelopes, RFC 9421 signatures, retry and deactivation, and `serverStep`, which the wasm handle runs (https://github.com/danbri/factoidal/issues/890). |
 | `NotificationsTests.lean` | `#guard`s through `serverStep`, positive and negative, and `lwsGuardNotificationsDelivered` for the registry row `lws-core-16`. |
 | `Move.lean` | moving resources (LWS §Moving Resources, https://github.com/danbri/factoidal/issues/914): the `up` link of a linkset changed by JSON Patch or PUT, the refusals (409: destination missing or not a container, a cycle, the storage root, a name already taken, another storage), `move` as one function from store to store, and the theorems `move_tree` (the store stays a containment tree; with `tree_acyclic`, `parentOf_unique`, `tree_parent`), `move_unmoved`, `move_moved`, `move_vacated`. |
@@ -54,6 +55,33 @@ own binding, those rows are the difference.
 | `DatasetViewRead.lean` | the crawl plan of a listing (members to list, to read, and whose linksets to read), each read and each linkset read (RFC 9264 §4.2), over the client's `done` documents (wasm ops `lwsViewPlan`, `lwsDatasetView`); guards in `DatasetViewTests.lean`. |
 | `Conformance.lean` | the registry: id, section, verbatim statement, module, binding, status. |
 | `Tests.lean` | one `#guard` per `guarded` row, and the theorems the `proved` rows name. |
+
+## The first root ACL of an existing storage (`RootAclInstall.lean`)
+
+Before this, a storage made with `lws-serve --insecure-no-auth` and started
+later with `--authz --root-acl FILE` refused every agent, its owner too,
+because `--root-acl` was written only into a NEW storage; the way out was to
+serve it with authorization off for a moment and PUT `/.acl`. Now the open
+installs it. `install S i r s` is stated over every store with `StoreLaws`
+(`i` is `insecureNoAuth`, `r` the root ACL given, `rootAclPath` is `/.acl`):
+
+| theorem | statement |
+|---|---|
+| `install_only_when_absent` | `(install S i r s).2 = .installed → S.lookup s rootAclPath = none ∧ i = false ∧ r.isSome`: the open writes only when the storage has no root ACL, authorization is on and a root ACL is given. |
+| `install_keeps_existing` | `S.lookup s rootAclPath = some e → (install S i r s).1 = s`: an existing root ACL is never replaced (the storage is returned unchanged). |
+| `install_off_unchanged` | `install S true r s = (s, .none)`: with authorization off, nothing changes. |
+| `install_no_acl_given_unchanged` | `(install S i none s).1 = s`. |
+| `install_has_root_acl` | `StoreLaws S → (S.lookup (install S false (some b) s).1 rootAclPath).isSome`: after an open with authorization and a root ACL, the storage has a root ACL. |
+| `install_writes_given` | `StoreLaws S → S.lookup s rootAclPath = none → S.lookup (install S false (some b) s).1 rootAclPath = some (rootAclEntry b (S.now s))`: what is written is the given body. |
+| `install_other_paths` | `StoreLaws S → p ≠ rootAclPath → S.lookup (install S i r s).1 p = S.lookup s p`: no other resource changes. |
+| `allowed_without_acl` | `(∀ q, S.lookup s (aclPathOf q) = none) → Solid.Server.allowed S parseAcl b s t who m = false`: the authorization decision is unchanged and fails closed; with no ACL resource, Web Access Control allows no agent any mode (WAC §5.3). |
+
+`#guard`s at the end of the module check the three outcomes on `MemStore`.
+The host prints `rootAclNotice` on standard error and persists when the open
+says `changed`. The socket of `lws-serve` is bound before the open (the port
+names `baseIri`), but every request waits for the open, which includes the
+install; and before the install, authorization is already on and fails
+closed. `L4Factoidal/Solid` (`solid-serve`) is not changed.
 
 ## What is pure and what is not
 

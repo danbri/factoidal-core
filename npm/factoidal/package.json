@@ -36,10 +36,10 @@
   "browser": "./browser.js",
   "types": "./index.d.ts",
   "bin": {
-    "factoidal": "./bin/factoidal.mjs",
-    "foafnaut": "./bin/foafnaut.mjs",
-    "foafnaut-latest": "./bin/foafnaut-latest.mjs",
-    "foafnaut-bleedingedge": "./bin/foafnaut-bleedingedge.mjs"
+    "factoidal": "bin/factoidal.mjs",
+    "foafnaut": "bin/foafnaut.mjs",
+    "foafnaut-latest": "bin/foafnaut-latest.mjs",
+    "foafnaut-bleedingedge": "bin/foafnaut-bleedingedge.mjs"
   },
   "exports": {
     ".": {

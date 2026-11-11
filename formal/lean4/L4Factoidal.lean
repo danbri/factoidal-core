@@ -413,6 +413,9 @@ import L4Factoidal.CID.Retrieve
 import L4Factoidal.CID.Validate
 import L4Factoidal.CID.Fetch
 import L4Factoidal.CID.Tests
+import L4Factoidal.Identity.Binding
+import L4Factoidal.Authz.CredentialMatch
+import L4Factoidal.Authz.Acp
 import L4Factoidal.Geo.Types
 import L4Factoidal.Geo.Order
 import L4Factoidal.Geo.BBox
@@ -998,6 +1001,7 @@ import L4Factoidal.LWS.DatasetViewTests
 import L4Factoidal.LWS.PaginationLinksTests
 import L4Factoidal.LWS.Authorization
 import L4Factoidal.LWS.AuthorizationTests
+import L4Factoidal.LWS.RootAclInstall
 import L4Factoidal.LWS.Notifications
 import L4Factoidal.LWS.NotificationsTests
 import L4Factoidal.LWS.Move

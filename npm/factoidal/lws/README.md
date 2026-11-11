@@ -91,6 +91,16 @@ const running = await listen({
   the keys inline instead.
 * `insecureNoAuth: true` serves every request with no authorization. It is
   for development only, and must be asked for.
+* A root ACL (`rootAcl`, or the owner's from `owner`) is written into a
+  NEW storage. An EXISTING storage with no root ACL resource (`/.acl`), for
+  example one made with `insecureNoAuth`, gets it at open, before any
+  request is answered; an existing `/.acl` is kept and never replaced. The
+  start notices say which (`lws-serve` prints them on standard error). So a
+  storage made with no authorization moves to authorization with no moment
+  of open access: `lws-serve DIR --authz AS --root-acl FILE`. The decision
+  and its theorems are in `formal/lean4/L4Factoidal/LWS/RootAclInstall.lean`
+  (listed in `formal/lean4/L4Factoidal/LWS/README.md`); with authorization
+  off nothing is installed.
 
 ## Pagination and client links
 

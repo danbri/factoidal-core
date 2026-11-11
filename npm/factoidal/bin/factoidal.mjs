@@ -667,7 +667,12 @@ is required):
                         https://github.com/danbri/factoidal/issues/1124
   --owner WEBID         the storage owner: a new storage gets a root ACL
                         that gives this agent Read, Write and Control
-  --root-acl FILE       a Turtle root ACL for a new storage instead
+  --root-acl FILE       a Turtle root ACL for a new storage instead.
+                        An EXISTING storage with no root ACL (/.acl), for
+                        example one made with --insecure-no-auth, gets this
+                        root ACL (or the --owner one) at start, before the
+                        first request is answered; an existing /.acl is
+                        kept and never replaced (a notice says which)
   --audience IRI        the aud value tokens must carry (default: the
                         storage IRI, BASE.well-known/lws-storage, which
                         every lws#storage link names)

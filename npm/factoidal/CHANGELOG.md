@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- LWS: `lws-serve DIR --authz AS --root-acl FILE` (and `--owner`) on an EXISTING storage with no root ACL, for example one made with `--insecure-no-auth`, installs FILE as `/.acl` at start, before any request is answered. Before, the root ACL was written only into a new storage, and such a storage refused every agent (403), its owner too, so the only way out was to serve it with no authorization for a moment. An existing `/.acl` is never replaced; a line on standard error says which happened. No other resource changes, and with `--insecure-no-auth` nothing is installed. The decision is in Lean (`L4Factoidal/LWS/RootAclInstall.lean`; theorems `install_only_when_absent`, `install_keeps_existing`, `install_has_root_acl`, `install_other_paths`, `allowed_without_acl`). `openLwsStorage` and `openInPageLwsStorage` do the same with a snapshot. Test: `test/lws-root-acl-install.test.mjs`.
+
 ## 0.35.1 (2026-11-11)
 
 - Foafnaut (macOS): a heavy page no longer freezes the app. The host keeps one frame of GPU work in flight for heavy frames (three for light ones); after three frames over 250 ms it slows the page's animation and shows "SLOWED: HEAVY PAGE". Quitting or closing the window stops GPU work, so the app quits within seconds (before, up to 209 s on the Spinal Tap page at 2x). `--gpu-frames-in-flight N` sets the limit.
