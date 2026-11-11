@@ -155,12 +155,14 @@ open LabHygiene
 /-- The ratchet: (modules, unsafe, implemented_by, partial def, extern, opaque) for the
 lab modules, then for the L4Factoidal modules they import. Lower a number in the commit
 that removes declarations; raising one needs the owner. `modules` is a floor, not a
-ceiling. Measured by `#hygiene_counts` on main 4078eafa2 (2026-11-10). The lab's 37 opaque
-constants are its 18 `initialize` cells (`IO.Ref`s kept between C ABI calls) and 19
-`opaque` declarations that carry an `@[implemented_by]`; its 1 `partial def` is the
-`deriving Repr` of `NativeSVG.DisplayNode`. -/
+ceiling. Measured by `#hygiene_counts` on main 4078eafa2 (2026-11-10), then lowered by the
+engine-state rework (issue 390, PR 413): the engine's state is a value passed through the C
+ABI, so the lab keeps 3 `unsafe` and 3 `@[implemented_by]` (`shapeKept`, `pageWork`,
+`pageArtifact`); it has 4 `initialize` cells left. Its opaque count, 5, is measured by
+`#hygiene_counts` on wip/390-state after main 26323aaf5 (2026-11-11). Its 1 `partial def`
+is the `deriving Repr` of `NativeSVG.DisplayNode`. -/
 def baseline : Counts :=
-  ⟨⟨50, 29, 29, 1, 0, 37⟩, ⟨369, 0, 0, 153, 22, 1⟩⟩
+  ⟨⟨50, 3, 3, 1, 0, 5⟩, ⟨369, 0, 0, 153, 22, 1⟩⟩
 
 /-- Fails to compile when a count rises above `baseline`, or when either part read fewer
 modules than the baseline says (an empty walk does not pass). -/
