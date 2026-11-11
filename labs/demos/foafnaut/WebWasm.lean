@@ -36,8 +36,8 @@ table and a memory). Every other import is refused, so a module reaches nothing 
 Limits: module size, fuel, host calls, memory pages, table size and the call depth and
 operand stack below; the engine checks them, not the host.
 
-Times come from the host clock through `timed`, whose logical model is time 0: a
-measurement, not part of any result that a proof reads.
+Times come from the machine through `timed` (`Machine`): the host clock in `BaseIO`, time 0
+in `Id`, the logical model. A time is a measurement, not part of any result that a proof reads.
 -/
 
 set_option compiler.extract_closed false
@@ -59,20 +59,46 @@ def maxArgs : Nat := 64
 def maxPrints : Nat := 64
 def runLimits : RunLimits := { maxDepth := 10000, maxSlots := 1 <<< 20 }
 
-/-! ## Time -/
+/-! ## The machine: time and random bytes (issue 390)
 
-private unsafe def timedImpl {α : Type} (f : Unit → α) : α × Nat :=
-  let timing : IO (α × Nat) := do
+What the engine reads from the machine it runs on. The engine's export runs in `BaseIO`,
+which reads the host clock and the host's random bytes; tests and proofs run in `Id`, the
+logical model: time 0 and no random bytes. -/
+
+class Machine (m : Type → Type) where
+  /-- `f ()` and the nanoseconds it took. -/
+  timed {α : Type} : (Unit → α) → m (α × Nat)
+  /-- `n` random bytes from the host's generator; empty when it has none. -/
+  randomBytes : Nat → m ByteArray
+
+instance : Machine Id where
+  timed f := (f (), 0)
+  randomBytes _ := ByteArray.empty
+
+/-- `f ()`, evaluated when this action runs (so not moved out of a timed span). -/
+@[noinline] def evalNow {α : Type} (f : Unit → α) : BaseIO α := pure (f ())
+
+instance : Machine BaseIO where
+  timed f := do
     let t0 ← IO.monoNanosNow
-    let r ← IO.lazyPure f
+    let r ← evalNow f
     let t1 ← IO.monoNanosNow
     pure (r, t1 - t0)
-  match unsafeIO timing with
-  | .ok r => r
-  | .error _ => (f (), 0)
+  randomBytes n := do
+    match ← (IO.getRandomBytes n.toUSize).toBaseIO with
+    | .ok b => pure b
+    | .error _ => pure ByteArray.empty
 
-/-- `f ()` and the nanoseconds it took on the host clock. The logical model has time 0. -/
-@[implemented_by timedImpl] def timed {α : Type} (f : Unit → α) : α × Nat := (f (), 0)
+instance {ε : Type} {m : Type → Type} [Monad m] [Machine m] : Machine (ExceptT ε m) where
+  timed f := ExceptT.lift (Machine.timed f)
+  randomBytes n := ExceptT.lift (Machine.randomBytes n)
+
+instance {σ : Type} {m : Type → Type} [Monad m] [Machine m] : Machine (StateT σ m) where
+  timed f := StateT.lift (Machine.timed f)
+  randomBytes n := StateT.lift (Machine.randomBytes n)
+
+/-- `f ()` and the nanoseconds it took on the machine's clock (0 in `Id`). -/
+@[inline] def timed {m : Type → Type} [Machine m] {α : Type} (f : Unit → α) : m (α × Nat) := Machine.timed f
 
 /-! ## Values in the spec-test JSON form -/
 
@@ -262,12 +288,13 @@ def checkLimits (m : Module) : Except String Unit := do
 else; any other module gets the spectest set. -/
 def usesWasi (m : Module) : Bool := m.imports.any (·.module == Wasi.moduleName)
 
-def load (bytes : ByteArray) (fuel : Nat) (allowDemo : Bool := false) : Except Failed Loaded := do
+def load {M : Type → Type} [Monad M] [Machine M] (bytes : ByteArray) (fuel : Nat) (allowDemo : Bool := false) :
+    ExceptT Failed M Loaded := do
   if bytes.size > maxModuleBytes then throw ("decode", s!"module of {bytes.size} bytes is over the limit of {maxModuleBytes}")
-  let (d, tD) := timed fun _ => decode bytes
+  let (d, tD) ← timed fun _ => decode bytes
   let m ← match d with | .ok m => pure m | .error e => throw ("decode", e.toString)
   match checkLimits m with | .ok () => pure () | .error e => throw ("limits", e)
-  let (v, tV) := timed fun _ => validate m
+  let (v, tV) ← timed fun _ => validate m
   let vm ← match v with | .ok vm => pure vm | .error e => throw ("validate", e.toString)
   let wasi := usesWasi m
   let (st0, imps, bindings) ← if wasi then
@@ -279,7 +306,7 @@ def load (bytes : ByteArray) (fuel : Nat) (allowDemo : Bool := false) : Except F
       match resolveImports st0 spec demo allowDemo m with
       | .ok i => pure (st0, i, #[])
       | .error e => throw ("link", e)
-  let ((st, r), tI) := timed fun _ => instantiate st0 vm imps
+  let ((st, r), tI) ← timed fun _ => instantiate st0 vm imps
   let times := [("decode", tD), ("validate", tV), ("instantiate", tI)]
   let hostOf := fun (i : Nat) =>
     if wasi then wasiHost (((st.insts[i]?).bind (·.mems[0]?)).getD 0) bindings else specHost
@@ -329,11 +356,11 @@ def outcomeFields : Outcome → List (String × JSON.Json)
 def perSecond (steps ns : Nat) : Nat := if ns == 0 then 0 else steps * 1000000000 / ns
 
 /-- One run: the module, an export and its arguments. Gives the JSON fields. -/
-def runFields (bytes : ByteArray) (export_ : Option String) (args : Array Value) (fuel : Nat)
-    (allowDemo : Bool := false) : List (String × JSON.Json) :=
+def runFields {M : Type → Type} [Monad M] [Machine M] (bytes : ByteArray) (export_ : Option String)
+    (args : Array Value) (fuel : Nat) (allowDemo : Bool := false) : M (List (String × JSON.Json)) := do
   let head := [("engine", JSON.Json.string "WasmVM"), ("bytes", num bytes.size)]
-  match load bytes fuel allowDemo with
-  | .error (stage, msg) => head ++ [("stage", .string stage), ("outcome", .string "error"), ("message", .string msg)]
+  match ← (load bytes fuel allowDemo).run with
+  | .error (stage, msg) => return head ++ [("stage", .string stage), ("outcome", .string "error"), ("message", .string msg)]
   | .ok l =>
     let stages := [("stages", JSON.Json.object (l.times.map fun (k, t) => (k, num t))),
       ("exports", exportsJSON l.module), ("imports", importsJSON l.module), ("importSet", .string l.imports)] ++
@@ -341,16 +368,16 @@ def runFields (bytes : ByteArray) (export_ : Option String) (args : Array Value)
         | some r => [("startInstructions", num r.steps)]
         | none => [])
     match export_ with
-    | none => head ++ stages ++ [("stage", .string "instantiate"), ("outcome", .string "loaded")]
+    | none => return head ++ stages ++ [("stage", .string "instantiate"), ("outcome", .string "loaded")]
     | some name =>
       match l.store.export? l.inst name with
       | some (.func fa) =>
-        let (r, ns) := timed fun _ => call l.host l.store fa args fuel
-        head ++ stages ++ [("stage", .string "run"), ("export", .string name)] ++ outcomeFields r.outcome ++
+        let (r, ns) ← timed fun _ => call l.host l.store fa args fuel
+        return head ++ stages ++ [("stage", .string "run"), ("export", .string name)] ++ outcomeFields r.outcome ++
           [("instructions", num r.steps), ("ns", num ns), ("perSecond", num (perSecond r.steps ns)),
            ("fuel", num fuel), ("prints", .array (r.prints.toList.map .string))]
-      | some _ => head ++ stages ++ [("stage", .string "run"), ("outcome", .string "error"), ("message", .string s!"export {name} is not a function")]
-      | none => head ++ stages ++ [("stage", .string "run"), ("outcome", .string "error"), ("message", .string s!"no export {name}")]
+      | some _ => return head ++ stages ++ [("stage", .string "run"), ("outcome", .string "error"), ("message", .string s!"export {name} is not a function")]
+      | none => return head ++ stages ++ [("stage", .string "run"), ("outcome", .string "error"), ("message", .string s!"no export {name}")]
 
 def fuelOf (request : JSON.Json) : Except String Nat :=
   match request.field? "fuel" with
@@ -375,11 +402,11 @@ def moduleOf (request : JSON.Json) : Except String ByteArray :=
     | some b => .ok b
     | none => .error "wasmBase64: invalid base64"
 
-def run (request : JSON.Json) : Except String String := do
+def run {M : Type → Type} [Monad M] [Machine M] (request : JSON.Json) : ExceptT String M String := do
   let bytes ← moduleOf request
   let fuel ← fuelOf request
   let args ← argsOf request
-  return (JSON.Json.object (runFields bytes (str request "export") args fuel)).toString
+  return (JSON.Json.object (← runFields bytes (str request "export") args fuel)).toString
 
 /-! ## Built-in demos -/
 
@@ -453,17 +480,17 @@ structure DemoRow where
   steps : Nat
   ns : Nat
 
-def runDemo (d : Demo) : DemoRow :=
-  match load d.bytes d.fuel (allowDemo := true) with
-  | .error (stage, msg) => { demo := d, result := s!"{stage}: {msg}", ok := false, steps := 0, ns := 0 }
+def runDemo {M : Type → Type} [Monad M] [Machine M] (d : Demo) : M DemoRow := do
+  match ← (load d.bytes d.fuel (allowDemo := true)).run with
+  | .error (stage, msg) => return { demo := d, result := s!"{stage}: {msg}", ok := false, steps := 0, ns := 0 }
   | .ok l =>
     match l.store.export? l.inst d.export_ with
     | some (.func fa) =>
-      let (r, ns) := timed fun _ => call l.host l.store fa d.args d.fuel
+      let (r, ns) ← timed fun _ => call l.host l.store fa d.args d.fuel
       let t := resultText r.outcome
       let printed := if r.prints.isEmpty then "" else s!"; printed: {" | ".intercalate (r.prints.toList.map fun line => line.trimAscii.toString)}"
-      { demo := d, result := t ++ printed, ok := d.expect.isEmpty || t == d.expect, steps := r.steps, ns }
-    | _ => { demo := d, result := s!"no export {d.export_}", ok := false, steps := 0, ns := 0 }
+      return { demo := d, result := t ++ printed, ok := d.expect.isEmpty || t == d.expect, steps := r.steps, ns }
+    | _ => return { demo := d, result := s!"no export {d.export_}", ok := false, steps := 0, ns := 0 }
 
 /-! ## The spec sample -/
 
@@ -529,7 +556,7 @@ def step (mods : JSON.Json) (current : Option Loaded) (cmd : JSON.Json) : Option
   | some "module" =>
     match bytesOf () with
     | none => (none, .error "module bytes missing")
-    | some b => match load b sampleFuel with
+    | some b => match Id.run (load b sampleFuel).run with
       | .ok l => (some l, .ok true)
       | .error (stage, msg) => (none, .error s!"{stage}: {msg}")
   | some "assert_return" =>
@@ -595,21 +622,21 @@ def legacyTally (_ : Unit) : Tally := Id.run do
     return t
 
 /-- The sample: one tally for each spec file, and the legacy exception cases. -/
-def specSample (_ : Unit) : Except String (List (String × Tally)) := do
+def specSample {M : Type → Type} [Monad M] [Machine M] (_ : Unit) : ExceptT String M (List (String × Tally)) := do
   let files ← match JSON.parseJsonText WebWasmSample.text with
     | .ok (.array fs, _) => pure fs
     | _ => throw "spec sample: invalid JSON"
-  let rows := files.map fun f =>
-    let (t, ns) := timed fun _ => runFile f
-    ((str f "name").getD "?", { t with ns })
-  let (l, ns) := timed fun _ => legacyTally ()
+  let rows ← files.mapM fun f => do
+    let (t, ns) ← timed fun _ => runFile f
+    return ((str f "name").getD "?", { t with ns })
+  let (l, ns) ← timed fun _ => legacyTally ()
   return rows ++ [("exceptions (legacy try, V8 results)", { l with ns })]
 
 def tallyJSON (name : String) (t : Tally) : JSON.Json :=
   .object [("name", .string name), ("pass", num t.pass), ("fail", num t.fail), ("notRun", num t.notRun),
     ("ns", num t.ns), ("fails", .array (t.fails.toList.map .string))]
 
-def specSampleJSON (_ : Unit) : Except String String := do
+def specSampleJSON {M : Type → Type} [Monad M] [Machine M] (_ : Unit) : ExceptT String M String := do
   let rows ← specSample ()
   let total := rows.foldl (fun (p, f, n) (_, t) => (p + t.pass, f + t.fail, n + t.notRun)) (0, 0, 0)
   return (JSON.Json.object [("pass", num total.1), ("fail", num total.2.1), ("notRun", num total.2.2),
@@ -659,14 +686,14 @@ def sampleTable (rows : List (String × Tally)) : String :=
   String.join (rows.map fun (_, t) => String.join (t.fails.toList.map fun f => s!"<p class=\"bad\">{escape f}</p>"))
 
 /-- The section for a module the page was given: its stages and, with an export, its run. -/
-def givenSection (request : JSON.Json) : String :=
+def givenSection {M : Type → Type} [Monad M] [Machine M] (request : JSON.Json) : M String := do
   match moduleOf request with
-  | .error _ => ""
+  | .error _ => return ""
   | .ok bytes =>
     let url := (str request "url").getD "the given module"
     let fuel := (fuelOf request).toOption.getD defaultFuel
     let args := (argsOf request).toOption.getD #[]
-    let fields := runFields bytes (str request "export") args fuel
+    let fields ← runFields bytes (str request "export") args fuel
     let get := fun (k : String) => (fields.find? (·.1 == k)).map (·.2)
     let s := fun (k : String) => match get k with | some (.string v) => v | some (.number v) => v | _ => ""
     let exportsText := match get "exports" with
@@ -676,23 +703,23 @@ def givenSection (request : JSON.Json) : String :=
     let result := match get "values" with
       | some (.array vs) => ", ".intercalate (vs.map fun v => (str v "shown").getD "?")
       | _ => s "message"
-    s!"<h2>Module {escape url}</h2><p>{s "bytes"} bytes. Stage reached: {escape (s "stage")}. Outcome: <b>{escape (s "outcome")}</b> {escape result}</p>" ++
+    return s!"<h2>Module {escape url}</h2><p>{s "bytes"} bytes. Stage reached: {escape (s "stage")}. Outcome: <b>{escape (s "outcome")}</b> {escape result}</p>" ++
     s!"<p>Exports: {escape exportsText}</p>" ++
     (if (str request "export").isSome then s!"<p>Instructions: {s "instructions"}. Time: {ms ((s "ns").toNat?.getD 0)}.</p>" else "")
 
-def page (request : JSON.Json) : String :=
+def page {M : Type → Type} [Monad M] [Machine M] (request : JSON.Json) : M String := do
   let n := match request.field? "scale" with
     | some (.number v) => max 1 (min 100 (v.toNat?.getD 1))
     | _ => 1
-  let rows := (demos n).map runDemo
-  let sample := match specSample () with
+  let rows ← (demos n).mapM runDemo
+  let sample := match ← (specSample ()).run with
     | .ok rows => sampleTable rows
     | .error e => s!"<p class=\"bad\">{escape e}</p>"
-  "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>WebAssembly in Lean</title><style>" ++ style ++
+  return "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>WebAssembly in Lean</title><style>" ++ style ++
   "</style></head><body><h1>WebAssembly, run by Lean</h1>" ++
   "<p>Every module on this page runs in WasmVM, the WebAssembly engine written in Lean, inside this Foafnaut engine. " ++
   "The host browser's own WebAssembly does not run them. Imports: WASI Preview 1, deny by default (only writes to stdout and stderr are granted), or the spectest set; every other import is refused.</p>" ++
-  givenSection request ++
+  (← givenSection request) ++
   "<h2>Demo modules</h2>" ++ demoTable rows ++
   "<h2>Official core tests, a sample</h2>" ++
   "<p>Files of the WebAssembly core test suite (fac, i32, i64, conversions, call, loop), run here, and the legacy exception cases.</p>" ++
@@ -708,7 +735,7 @@ def info : String :=
     ("pageLimit", num pageLimit), ("imports", .array [.string "wasi_snapshot_preview1", .string "spectest"])]).toString
 
 /-- The ops of this module, or `none` for another op. -/
-def op (name : String) (request : JSON.Json) : Except String (Option String) := do
+def op {M : Type → Type} [Monad M] [Machine M] (name : String) (request : JSON.Json) : ExceptT String M (Option String) := do
   if name == "wasmInfo" then return some info
   if name == "wasmRun" then return some (← run request)
   if name == "wasmSpecSample" then return some (← specSampleJSON ())
@@ -717,7 +744,7 @@ def op (name : String) (request : JSON.Json) : Except String (Option String) := 
     if (request.field? "wasmBase64").isSome then
       let _ ← moduleOf request
       pure ()
-    return some (JSON.Json.object [("source", .string (page request)), ("title", .string "WebAssembly in Lean")]).toString
+    return some (JSON.Json.object [("source", .string (← page request)), ("title", .string "WebAssembly in Lean")]).toString
   return none
 
 end WebWasm

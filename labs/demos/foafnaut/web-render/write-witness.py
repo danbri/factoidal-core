@@ -21,5 +21,12 @@ if (build/'web-render-native').exists():
     record['nativeProducedAfterCurrentC']=all(p.stat().st_mtime<=native.stat().st_mtime for p in core_files+sorted((build/'ir').glob('*.c')))
     record['nativeNote']='The native SHA identifies bytes. If nativeProducedAfterCurrentC is false, native belongs to an earlier checkpoint; it is not evidence for this current source/C closure.'
 if (build/'runtime-object-witness.txt').exists():record['runtimeObjectWitness']=(build/'runtime-object-witness.txt').read_text()
+# The Lean hygiene ratchet's counts (LabHygiene.lean, written by build-web-render.sh this run).
+# No counts, no record: a build that skipped the ratchet does not get one.
+hygiene=build/'hygiene.json'
+if not hygiene.exists():
+    raise SystemExit('write-witness: no hygiene.json from this build (LabHygiene.lean did not run); record refused')
+record['hygiene']={'counts':json.loads(hygiene.read_text()),'commit':record['commit'],'theorem':'lab_ratchet','module':'labs/demos/foafnaut/LabHygiene.lean'}
+record['files']['labs/demos/foafnaut/LabHygiene.lean']=digest(lab/'LabHygiene.lean')
 (build/'source-witness.json').write_text(json.dumps(record,indent=2)+'\n')
 print(build/'source-witness.json')

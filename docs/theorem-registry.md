@@ -3718,6 +3718,16 @@ The module is imported by the default `WasmVM` build root. All seven axiom
 reports contain only `propext`, `Classical.choice` and `Quot.sound`.
 
 Worklog: [SIMD bitwise theorems](20261110-foafnaut-simd-bitwise.md).
+
+## BubblePopJS byte-array refinement (2026-11-10)
+
+| Theorem | Module | Statement |
+|---|---|---|
+| `typedRead_eq_byteFast` | `JS/Interp.lean` | Direct unsigned byte reads equal `typedRead` for all type tags, buffers and offsets. |
+| `typedBytes_eq_byteFast` | `JS/Interp.lean` | Direct byte-sized writes equal `typedBytes` for all type tags and Floats. |
+
+Both are unconditional compiler replacements, with reference fallbacks for other
+types. [Measurements and limits](designissues/2026-11-10-js-byte-array-fast-path.md).
 Tracking: https://github.com/danbri/factoidal-core/issues/388
 (small theorem contributions).
 
@@ -3729,3 +3739,13 @@ store, stack, pointer, opcode and immediate. It preserves the complete `SimdRes`
 including traps; `csimp` installs the fast form in compiled callers. This is an
 implementation refinement, not external Wasm conformance or a speed theorem.
 [Measurements and checks](20261110-simd-dispatch.md).
+
+## JavaScript environment index refinement (2026-11-10)
+
+`JS/EnvIndexTheorems.lean`: `Env.slotN_eq_scan_of_indexOf` proves equality with
+`Env.scan` when `e.index = FunInfo.indexOf e.names`; `Env.get?_with_indexOf`
+preserves the complete optional binding. The actual index builder selects the
+first duplicate slot (`FunInfo.indexOf_lookup`); absence and both threshold
+branches are covered. No claim about arbitrary indexes, all environment
+mutations, JavaScript conformance or speed. Imported by `L4Factoidal.JS`;
+standard axioms only. See [scope and checks](20261110-foafnaut-js-env-index.md).

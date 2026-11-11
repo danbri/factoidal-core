@@ -119,9 +119,9 @@ def allAgree (name : String) : Bool :=
 #guard param "q=ASK+%7B%7D&step=3" "q" == some "ASK {}" && param "q=ASK+%7B%7D&step=3" "step" == some "3"
 
 -- The page: an SVG plan, the operator table and a marked step.
-#guard let (src, _, next) := page ("q=" ++ encode (exampleQuery "OPTIONAL") ++ "&step=2") graph
+#guard let (src, _, next) := Id.run <| page ("q=" ++ encode (exampleQuery "OPTIONAL") ++ "&step=2") graph
   (src.splitOn "<svg").length > 2 && (src.splitOn "#ff2a2a").length == 2 && next.endsWith "&step=3"
-#guard let (src, _, _) := page "" graph
+#guard let (src, _, _) := Id.run <| page "" graph
   (src.splitOn "class=\"bad\"").length == 1 && (src.splitOn "<h2>Result").length == 2
 
 end WebSparqlTests

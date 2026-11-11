@@ -12,8 +12,8 @@ import assert from 'node:assert/strict'
 import net from 'node:net'
 import tls from 'node:tls'
 import { once } from 'node:events'
-import { execFileSync } from 'node:child_process'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { execFileSync, spawn } from 'node:child_process'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -302,4 +302,28 @@ test('the log holds address tags, never an address', { skip }, async () => {
   for (const address of [A, B, C, '127.0.0.1', '2001:db8', '::1', '203.0.113.1']) {
     assert.ok(!all.includes(address), `the log must not hold ${address}`)
   }
+})
+
+test('xmpp-serve --proxy-protocol logs each connection by address tag, never by address', { skip }, async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'l4xmpp-cli-proxy-'))
+  await writeFile(join(dir, 'accounts'), 'alice:alice-pw\n')
+  const cli = new URL('../bin/factoidal.mjs', import.meta.url).pathname
+  const child = spawn(process.execPath, [cli, 'xmpp-serve', dir, '--domain', DOMAIN, '--port', '0', '--proxy-protocol'], { stdio: ['ignore', 'pipe', 'pipe'] })
+  t.after(async () => { child.kill('SIGTERM'); await rm(dir, { recursive: true, force: true }) })
+  let stderr = ''
+  child.stderr.on('data', (d) => { stderr += d.toString('utf8') })
+  const until = async (re, ms = 20000) => {
+    const end = Date.now() + ms
+    while (!re.test(stderr) && Date.now() < end) await sleep(20)
+    const m = re.exec(stderr)
+    assert.ok(m, `wanted ${re}, got ${stderr.slice(-400)}`)
+    return m
+  }
+  const port = Number((await until(/listening on \S*:(\d+)/))[1])
+  const c = await connect(port, Buffer.concat([v4(A), Buffer.from(HEADER)]))
+  await c.until('</stream:features>')
+  c.socket.destroy()
+  const m = await until(/xmpp-serve: connection from address ([0-9a-f]{12})\b/)
+  assert.ok(!stderr.includes(A), 'the address itself is never logged')
+  assert.equal(m[1].length, 12)
 })
