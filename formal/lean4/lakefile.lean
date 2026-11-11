@@ -340,6 +340,7 @@ lean_exe «frame-cost-cases» where root := `Harness.FrameCostCases
 
 -- WasmVM measurements (issue 1244): `lake exe wasmvm-bench`.
 lean_exe «wasmvm-bench» where root := `L4Factoidal.WasmVM.Bench
+lean_exe «wasmvm-simd-dispatch» where root := `L4Factoidal.WasmVM.Bench.SimdDispatch
 -- The official core test suite (third_party/wasm-spec/test/core-json): `lake exe wasmvm-spectest`.
 lean_exe «wasmvm-spectest» where root := `L4Factoidal.WasmVM.SpecTest
 
