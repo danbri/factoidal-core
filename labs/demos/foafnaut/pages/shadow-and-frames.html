@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Shadow DOM and sandboxed frames</title>
+<style>
+body{margin:0;padding:16px;font-size:15px;line-height:22px;color:#22303c;background:#f4f6f9}
+main{max-width:680px;margin:0 auto}
+h1{margin:0;font-size:26px;line-height:34px;color:#184078}
+h2{margin:0;padding-top:20px;font-size:18px;line-height:26px;color:#184078}
+p{margin:0;padding-top:6px}
+.card{margin-top:10px}
+.note{color:#5b6876;font-size:13px;line-height:19px}
+#log{margin-top:8px;padding:8px 12px;background:#eef2f7}
+button{margin-top:8px}
+</style></head><body><main>
+<p><a href="index.html">Demo index</a> · <a href="js-status.html">JavaScript in Foafnaut</a></p>
+<h1>Shadow DOM and sandboxed frames</h1>
+<p class="note">The shadow trees, their slots and their style rules are computed by the built-in engine; the page is laid out on the flat tree. The frame's sandbox and its messages are decided by the built-in engine too.</p>
+
+<h2>A card component</h2>
+<p>Each card keeps its own markup and style in a shadow root. The page's own content goes into the card's slots.</p>
+<div class="card" id="card1">
+<template shadowrootmode="open">
+<style>
+:host{display:block;border:2px solid #184078;padding:8px 12px;background:#ffffff}
+.title{color:#184078;font-size:20px;line-height:28px}
+.body{color:#5b6876}
+::slotted(b){color:#a03030}
+</style>
+<div class="title"><slot name="title">Untitled</slot></div>
+<div class="body"><slot>No content.</slot></div>
+</template>
+<span slot="title">A declarative card</span>
+<span>Its shadow root comes from the HTML parser (<b>template shadowrootmode</b>).</span>
+</div>
+<div class="card" id="card2"><span slot="title">A card made by a script</span><span>The script calls <b>attachShadow</b> and adds the slots.</span></div>
+<button id="more">Add a line to the second card</button>
+<p id="slots" class="note">Slots: waiting for the script.</p>
+
+<h2>A sandboxed frame</h2>
+<p>The frame below has <b>sandbox="allow-scripts"</b>: its scripts run in a session of their own, with a heap of their own and an opaque origin. It can not reach this page's document, and this page can not reach its document. The two talk only with <b>postMessage</b>.</p>
+<iframe id="frame" sandbox="allow-scripts" width="300" height="60" srcdoc="<p>Sandboxed frame</p><script>parent.postMessage({hello: 'from the sandbox', origin: location.href}, '*'); addEventListener('message', e => parent.postMessage({echo: e.data, from: e.origin}, '*'));</script>"></iframe>
+<p id="log">Waiting for the frame.</p>
+<button id="ping">Send a message to the frame</button>
+<script>
+// The second card: a shadow root made by a script, with a named slot and the default slot.
+const card2 = document.getElementById('card2');
+const root = card2.attachShadow({mode: 'open'});
+const style = document.createElement('style');
+style.textContent = ':host{display:block;border:2px dashed #2a7a4a;padding:8px 12px;background:#ffffff} .title{color:#2a7a4a;font-size:20px;line-height:28px}';
+const title = document.createElement('div'); title.className = 'title';
+const named = document.createElement('slot'); named.name = 'title'; title.append(named);
+const body = document.createElement('div'); body.append(document.createElement('slot'));
+root.append(style, title, body);
+const report = () => {
+  const lines = root.querySelectorAll('slot');
+  document.getElementById('slots').textContent = 'Slots: the title slot shows ' + lines[0].assignedNodes().length +
+    ' node(s); the default slot shows ' + lines[1].assignedElements().length + ' element(s).';
+};
+report();
+root.addEventListener('slotchange', report);
+let added = 0;
+document.getElementById('more').addEventListener('click', () => {
+  const line = document.createElement('div'); line.textContent = 'Line ' + (++added) + ', added to the light tree.';
+  card2.append(line);
+});
+// The frame: messages in both directions.
+const log = document.getElementById('log');
+let sent = 0;
+window.addEventListener('message', e => {
+  log.textContent = 'From the frame (origin ' + e.origin + '): ' + JSON.stringify(e.data) +
+    '. contentDocument is ' + document.getElementById('frame').contentDocument + '.';
+});
+document.getElementById('ping').addEventListener('click', () => {
+  document.getElementById('frame').contentWindow.postMessage({ping: ++sent}, '*');
+});
+</script>
+</main></body></html>

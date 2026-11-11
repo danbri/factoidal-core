@@ -499,6 +499,33 @@ private def scriptWhere (script : JSON.Json) : String :=
   let id := match script.field? "nodeId" with | some (.number n) => n | _ => "?"
   s!"<script> node {id}" ++ (if src.isEmpty then "" else " src=\"" ++ src ++ "\"")
 
+/-- The rules of the `style` elements of each connected shadow tree (CSS Scoping 1 §3.1),
+each rule with that shadow root as its scope. A text the engine keeps (`sheetIn`) is not read
+again; a new one is read on each layout and not kept (the engine's `Made` holds one sheet,
+the document's). -/
+def shadowRulesIn (kept : Kept) (dom : DOM.Dom) (env : Rendering.MediaQuery.Env) : List Rendering.CSS.Rule := Id.run do
+  let mut out : List Rendering.CSS.Rule := []
+  for sr in [0:dom.size] do
+    if dom.isShadowRoot sr && dom.connected sr then
+      let mut sheets : List String := []
+      for id in dom.treeOrder sr do
+        if DOM.Dom.isHtmlElement (dom.get id) "style" then
+          match activeSheetIn .liberal env (dom.get id) id with
+          | .ok (true,_) => sheets := ((dom.textContent id).getD "") :: sheets
+          | _ => pure ()
+      if !sheets.isEmpty then
+        let rules := ((sheetIn kept (String.intercalate "\n" sheets.reverse)).1).toOption.getD []
+        out := out ++ (Rendering.CSS.parseInRaw env rules).map fun r => {r with scope := some sr}
+  return out
+
+/-- A page with a shadow host is laid out on its flat tree, with its node tree for
+selectors, and with the rules of its shadow trees (CSS Scoping 1). A page with none takes
+none of this (`DOM.Dom.flat_eq_of_noShadow`, `CSS.computeFor_none`). -/
+def flatView (kept : Kept) (dom : DOM.Dom) (env : Rendering.MediaQuery.Env) (rules : List Rendering.CSS.Rule) :
+    DOM.Dom × List Rendering.CSS.Rule × Option Rendering.CSS.TreeScope :=
+  if dom.hasShadow then (dom.flat, rules ++ shadowRulesIn kept dom env, some (Rendering.CSS.TreeScope.of dom))
+  else (dom, rules, none)
+
 /-- Script MIME classification has one owner: the Lean scripting snapshot.
 All callers use its normalized kind, including whitespace/case and legacy
 classic JavaScript MIME types. A module script is a skip point (not run, as in a
@@ -1522,6 +1549,8 @@ structure Laid where
   textScale : Float := 1
   state : Rendering.CSS.ElementState := {}
   styles : Thunk (Except String (Array Rendering.CSS.Computed)) := Thunk.pure (.ok #[])
+  /-- The node tree of a page with shadow trees, whose `dom` is its flat tree. -/
+  treeScope : Option Rendering.CSS.TreeScope := none
   /-- What liberal mode skipped (`WebAccept`); empty in strict mode. -/
   diagnostics : List WebAccept.Diagnostic := []
   /-- What a frame paints on this layout with no layout: the `transform` of script
@@ -1651,6 +1680,9 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
   let (rules,madeSheet) ← rulesOfSheets kept env sheets
   modify (·.merge madeSheet)
   let dom := if m == .liberal && graph.isNone then partialNote dom else dom
+  -- Shadow trees (CSS Scoping 1): the layout is of the flat tree, and the selectors match
+  -- on the node tree. A page with no shadow host takes none of this (`flatView`).
+  let (dom,rules,treeScope) := flatView kept dom env rules
   if width == 0 || rows == 0 || width > 4096 || rows > 4096 then throw "unsupported document viewport"
   let fontData := str request "fontData"
   if !fontData.isEmpty then
@@ -1691,7 +1723,7 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
   modify (·.merge {store := madeStore,words := madeWords})
   -- A window shorter than the chrome still lays out, on one row.
   let state := withPointer dom (← elementState dom url request) pointer
-  let draw := fun (d : DOM.Dom) (e : Rendering.Layout.Embedding) => Rendering.Layout.render d rules font e width rows textScale state pictures
+  let draw := fun (d : DOM.Dom) (e : Rendering.Layout.Embedding) => Rendering.Layout.render d rules font e width rows textScale state pictures treeScope
   -- Inline SVG is a skip point, checked so that liberal mode lays the page out once
   -- (2026-11-09: BBC News took three layouts). Before layout: an `svg` root with a percentage
   -- height, which layout refuses (`Layout.checkSVGBox`), is taken out. In the layout: the
@@ -1704,7 +1736,7 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
     | .strict => pure (draw dom embedding,embedding,([] : List WebAccept.Diagnostic),dom)
     | .liberal => do
       let roots := svgRoots dom
-      let styles ← if roots.isEmpty then pure #[] else Rendering.CSS.computeAll dom rules textScale state
+      let styles ← if roots.isEmpty then pure #[] else Rendering.CSS.computeFor treeScope dom rules textScale state
       let tall := roots.filter fun id => match (styles[id]?).map (·.height) with
         | some (.percent _) => true
         | _ => false
@@ -1742,13 +1774,15 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
           match draw bare used with
           | .ok (scene,boxes) => pure (scene,boxes,bare,[{skip := .svgContent, «where» := s!"{n} inline svg elements", refusal := e}])
           | .error _ => throw e
-  let hoverRules := rules.any fun rule => rule.selectors.any fun sel => sel.parts.any (·.pseudo.contains .hover)
+  let hoverRules := rules.any fun rule => rule.selectors.any fun sel =>
+    sel.parts.any (·.pseudo.contains .hover) || sel.slotted.any (·.pseudo.contains .hover)
   let laid : Laid := {scene := scene,boxes := boxes,face := face,hoverRules := hoverRules,words := memo}
   return ({laid with dom := dom}
     |> fun l => {l with rules := rules}
     |> fun l => {l with textScale := textScale}
     |> fun l => {l with state := state}
-    |> fun l => {l with styles := Thunk.mk fun _ => Rendering.CSS.computeAll dom rules textScale state}
+    |> fun l => {l with treeScope := treeScope}
+    |> fun l => {l with styles := Thunk.mk fun _ => Rendering.CSS.computeFor treeScope dom rules textScale state}
     |> fun l => {l with paint := paint},d1 ++ d2 ++ d0 ++ d3 ++ d4)
 
 /-- `layOut` after the parse: the layout of the arena `dom`, `width` by `rows` CSS pixels,
@@ -1934,7 +1968,8 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
     let textScale := cssTextScale (← scalePercent request) (zoomUnit request)
     let (rules,_) ← rulesWith kept dom request
     let state := withPointer dom (← elementState dom (baseURL dom (str request "url")) request) (none,none)
-    Rendering.CSS.computeAll dom rules textScale state
+    let (flat,rules,treeScope) := flatView kept dom {medium := medium request} rules
+    Rendering.CSS.computeFor treeScope flat rules textScale state
   -- 22: the device pixel ratio of the layout request (`zoomUnit`/100), with no layout
   -- 23: the `@font-face` faces of the page and the state of each (`document.fonts`)
   fun node op => if op == 22 then some (Rendering.FloatFormat.format (Float.ofNat (zoomUnit request) / 100))
@@ -1943,7 +1978,7 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
       match styled.get with
       -- CSSOM §9 getComputedStyle: an element that is not connected to the page's
       -- document has no computed style (the declaration is empty)
-      | .ok styles => if node < dom.size && (dom.get node).type == .element && dom.root node == 0 then
+      | .ok styles => if node < dom.size && (dom.get node).type == .element && dom.connected node then
           let c := styles[node]?.getD {}
           some (if op == 20 then Rendering.ComputedValues.text c
             else (((Rendering.ComputedValues.values c)[op - 200]?).map (·.2)).getD "")
@@ -2048,7 +2083,7 @@ def paintedSlots : Nat := 2
 layout with the new colours, or none when a style of that state changes geometry. -/
 def restyle (base : Laid) (pointer : Option Nat × Option Nat) : Option Laid := do
   let .ok old := base.styles.get | none
-  let .ok new := Rendering.CSS.computeAll base.dom base.rules base.textScale (withPointer base.dom base.state pointer) | none
+  let .ok new := Rendering.CSS.computeFor base.treeScope base.dom base.rules base.textScale (withPointer base.dom base.state pointer) | none
   let scene ← WebRepaint.recolor base.dom old new base.scene
   return {base with scene,state := withPointer base.dom base.state pointer,styles := Thunk.pure (.ok new)}
 
@@ -2365,7 +2400,7 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
     -- The document and rules of the layout: its media environment, and in liberal mode its skips.
     let dom := laid.dom
     let sheet := laid.rules
-    let styles ← Rendering.CSS.computeAll dom sheet
+    let styles ← Rendering.CSS.computeFor laid.treeScope dom sheet
     let content := WebPrint.contentHeight boxes
     let pages := WebPrint.paginate (WebPrint.pieces dom sheet styles boxes) content height
     let number := fun (n : Nat) => JSON.Json.number (toString n)

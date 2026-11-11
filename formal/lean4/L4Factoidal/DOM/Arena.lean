@@ -30,10 +30,12 @@ elements), `createTextNode`, `createComment`, `createCDATASection`,
 `createProcessingInstruction`, `createDocumentFragment`, `createDocumentType`;
 `setAttribute`; the
 template contents fragment of an HTML `template` element (its host is the
-element, so the host-including inclusive ancestor rule applies).
+element, so the host-including inclusive ancestor rule applies). Shadow roots are
+DocumentFragments with a `ShadowInit` and a host; their algorithms (attach, slots, the
+flat tree, retargeting) are `DOM.Shadow`.
 
 Not implemented, tracked in https://github.com/danbri/factoidal/issues/1216
-(the DOM features after the first implementation): shadow trees and slots, live
+(the DOM features after the first implementation): live
 ranges, `NodeIterator`, mutation observers, events, custom elements, the
 namespace methods (`createElementNS`, `setAttributeNS`), `Attr` nodes, the
 adopting steps of `template` across documents, and the insertion, removing and
@@ -76,6 +78,19 @@ def Attr.qname (a : Attr) : String :=
 
 abbrev NodeId := Nat
 
+/-- The state of a shadow root (DOM §4.8 "Interface ShadowRoot"): its mode ("closed"
+when `closed`), delegates focus, slot assignment ("manual" when `manual`), clonable,
+serializable and declarative. A DocumentFragment with one is a shadow root; its `host`
+is its host. -/
+structure ShadowInit where
+  closed : Bool := false
+  delegatesFocus : Bool := false
+  manual : Bool := false
+  clonable : Bool := false
+  serializable : Bool := false
+  declarative : Bool := false
+deriving BEq, DecidableEq, Inhabited, Repr
+
 /-- One node of the arena. Fields that a node type does not have keep their
 default. `lname` is the local name of an element, the name of a doctype and
 the target of a processing instruction. -/
@@ -106,6 +121,14 @@ structure Node where
   /-- The checkedness of an `input` once its dirty checkedness flag is set (HTML §4.10.5);
   `none` while the flag is false (`DOM.Forms.checkedness`). -/
   checkedness : Option Bool := none
+  /-- The shadow root of an element that is a shadow host (DOM §4.9). -/
+  shadow : Option NodeId := none
+  /-- On a DocumentFragment: it is a shadow root, with this state (`DOM.Shadow`). -/
+  shadowInit : Option ShadowInit := none
+  /-- A `slot`'s manually assigned nodes (DOM §4.2.2.1), in order. -/
+  manual : Array NodeId := #[]
+  /-- A slottable's manual slot assignment (DOM §4.2.2.1). -/
+  manualSlot : Option NodeId := none
 deriving Inhabited, Repr
 
 structure Dom where
@@ -212,8 +235,26 @@ def root (d : Dom) (n : NodeId) : NodeId := Id.run do
     | none => return cur
   return cur
 
-/-- The shadow-including root (DOM §4.8). With no shadow trees it is the root. -/
-def shadowIncludingRoot (d : Dom) (n : NodeId) : NodeId := d.root n
+/-- `n` is a shadow root: a DocumentFragment with a shadow root's state (DOM §4.8). -/
+def isShadowRoot (d : Dom) (n : NodeId) : Bool :=
+  (d.get n).type == .fragment && (d.get n).shadowInit.isSome
+
+/-- The walk of `shadowIncludingRoot`: from the root of `cur`, while it is a shadow root,
+to the root of its host, at most `fuel` times. -/
+def shadowRootWalk (d : Dom) : Nat → NodeId → NodeId
+  | 0, cur => d.root cur
+  | f + 1, cur =>
+    let r := d.root cur
+    if d.isShadowRoot r then
+      match (d.get r).host with
+      | some h => d.shadowRootWalk f h
+      | none => r
+    else r
+
+/-- The shadow-including root (DOM §4.8): the root, and from a root that is a shadow
+root, the shadow-including root of its host. With no shadow root in the arena it is the
+root (`DOM.Shadow.shadowIncludingRoot_eq_root`). -/
+def shadowIncludingRoot (d : Dom) (n : NodeId) : NodeId := d.shadowRootWalk (d.size + 1) n
 
 /-- The descendants of `n` in tree order (DOM §4.2.1), `n` first when
 `inclusive`. Template contents are not children, so they are not visited. -/
@@ -709,13 +750,34 @@ def cloneSingle (d : Dom) (src : NodeId) (doc : Option NodeId) : Dom × NodeId :
   let (d, id) := d.create n
   if x.type == .document then (d.setNode id fun y => { y with doc := id }, id) else (d, id)
 
+/-- The shadow root of `s` when it is clonable (DOM §4.4 "clone a node" step 5), with
+its state. -/
+def clonableShadow (d : Dom) (s : NodeId) : Option (NodeId × ShadowInit) :=
+  match (d.get s).shadow with
+  | some sr => match (d.get sr).shadowInit with
+    | some i => if i.clonable then some (sr, i) else none
+    | none => none
+  | none => none
+
+/-- DOM §4.4 "clone a node" step 5 for source `s` and its copy `c`: when `s` is a shadow
+host whose shadow root is clonable, `c` gets a shadow root with the same state, and the
+children of `s`'s shadow root are to be cloned into it (the work items answered). -/
+def cloneShadowOf (d : Dom) (s c : NodeId) : Dom × List (NodeId × NodeId) :=
+  match d.clonableShadow s with
+  | some (sr, i) =>
+    let (d, csr) := d.push { type := .fragment, doc := (d.get c).doc, host := some c, shadowInit := some i }
+    (d.setNode c fun e => { e with shadow := some csr }, (d.get sr).kids.toList.map (·, csr))
+  | none => (d, [])
+
 /-- `cloneNode(deep)` (DOM §4.4, "clone a node"), with the cloning steps of an
-HTML `template` element: a deep clone also clones the template contents. A loop
-over a work list of (source, copy parent) pairs. -/
+HTML `template` element: a deep clone also clones the template contents. A clonable
+shadow root is cloned with its whole tree, deep or not (step 5). A loop over a work list
+of (source, copy parent) pairs. -/
 def cloneNode (d : Dom) (src : NodeId) (deep : Bool) (doc : Option NodeId := none) : Dom × NodeId := Id.run do
   let (d0, top) := d.cloneSingle src doc
+  let (d0, shadowWork) := d0.cloneShadowOf src top
   let mut d := d0
-  if !deep then return (d, top)
+  if !deep && shadowWork.isEmpty then return (d, top)
   let docOf (d : Dom) (copy : NodeId) : NodeId :=
     let c := d.get copy
     if c.type == .document then copy else c.doc
@@ -725,14 +787,15 @@ def cloneNode (d : Dom) (src : NodeId) (deep : Bool) (doc : Option NodeId := non
     | some sc, some cc => (d.get sc).kids.toList.map (·, cc)
     | _, _ => []
   let mut work : List (NodeId × NodeId) :=
-    (d.get src).kids.toList.map (·, top) ++ srcContent d src top
+    (if deep then (d.get src).kids.toList.map (·, top) ++ srcContent d src top else []) ++ shadowWork
   for _ in [0:2 * d.size + 2] do
     match work with
     | [] => break
     | (s, cp) :: rest =>
       let (d1, c) := d.cloneSingle s (some (docOf d cp))
-      d := d1.linkChild cp c none
-      work := (d.get s).kids.toList.map (·, c) ++ srcContent d s c ++ rest
+      let (d1, sw) := (d1.linkChild cp c none).cloneShadowOf s c
+      d := d1
+      work := (d.get s).kids.toList.map (·, c) ++ srcContent d s c ++ sw ++ rest
   return (d, top)
 
 /-- Attribute lists equal as sets of (namespace, local name, value) (DOM §4.4
@@ -782,7 +845,8 @@ def graft (d src : Dom) : Dom × NodeId :=
   let k := d.size
   let move := fun (x : Node) => { x with
     doc := x.doc + k, parent := x.parent.map (· + k), kids := x.kids.map (· + k),
-    host := x.host.map (· + k), content := x.content.map (· + k) }
+    host := x.host.map (· + k), content := x.content.map (· + k),
+    shadow := x.shadow.map (· + k), manual := x.manual.map (· + k), manualSlot := x.manualSlot.map (· + k) }
   ({ nodes := d.nodes ++ src.nodes.map move }, k)
 
 theorem graft_size (d src : Dom) : (d.graft src).1.size = d.size + src.size := by
@@ -809,6 +873,9 @@ def wellFormed (d : Dom) : Bool := Id.run do
     | none => pure ()
     match x.content with
     | some c => if c ≥ n || (d.get c).host != some i then return false
+    | none => pure ()
+    match x.shadow with
+    | some c => if c ≥ n || (d.get c).host != some i || (d.get c).shadowInit.isNone then return false
     | none => pure ()
   return true
 

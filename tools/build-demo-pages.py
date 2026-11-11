@@ -49,7 +49,7 @@ START = ['foafnaut:graph', 'spinal-tap-sparql.html', 'shader-gallery.html', 'sho
          'showcase-dataviz.html', 'showcase-scripts.html']
 GROUPS = [
     ('Pages with scripts', ['search.html', 'foaf-explorer.html', 'foaf-explorer-verified.html', 'canvas-chart.html', 'timers-and-clicks.html', 'webgpu-triangle.html',
-                            'webgl-triangle.html', 'wasm-mandelbrot.html', 'showcase-dataviz-script.html', GAMES_TEST]),
+                            'webgl-triangle.html', 'wasm-mandelbrot.html', 'showcase-dataviz-script.html', 'shadow-and-frames.html', GAMES_TEST]),
     ('SVG and graphics', ['showcase-lettering.html', 'showcase-textpath.html', 'showcase-tables-svg.html', 'svg-gallery.html',
                           'svg-text-labels.html', 'solving-showcase.html', 'foaf-graph.html', 'svg-affine.html', 'svg-linear-paths.html']),
     ('Text, type and layout', ['showcase-emoji.html', 'typography-lab.xml', 'showcase-tables.html', 'showcase-images.html',
@@ -76,6 +76,7 @@ BLURBS = {
     'webgl-triangle.html': 'WebGL 1 and 2 triangles, checked by the browser.',
     'wasm-mandelbrot.html': 'A tiny WebAssembly module, run by the built-in WebAssembly engine, draws the Mandelbrot set.',
     'showcase-dataviz-script.html': 'The data visualisation, drawn by a script.',
+    'shadow-and-frames.html': 'Web components with shadow roots and slots, and a sandboxed frame that talks by postMessage.',
     'showcase-lettering.html': 'Lettering along curves.',
     'svg-gallery.html': 'A gallery of SVG drawings.',
     'svg-text-labels.html': 'SVG text in several fonts and scripts.',

@@ -168,6 +168,12 @@ structure Held where
   leanBase : Option LeanJS.Session := none
   /-- The session on the Lean engine. -/
   leanSession : Option (Nat × LeanJS.Session × Marks) := none
+  /-- The sessions of the current page's sandboxed frames (`HTML.FrameSessions`), by
+  `iframe` element, on the interpreter and on the Lean engine; and the arena size up to
+  which the page was searched for frames. -/
+  frames : Array (Nat × Page.Session) := #[]
+  leanFrames : Array (Nat × LeanJS.Session) := #[]
+  frameScan : Nat := 0
   /-- The answers of the sync requests of the action being redone (`Net.Xhr`). -/
   syncCache : Array Net.PageFetch.Answer := #[]
   /-- The action that waits for the answer to a sync request (`netSync`), and its page and
@@ -195,15 +201,34 @@ def entropy {M : Type → Type} [Monad M] [WebWasm.Machine M] (id : Nat) : M Byt
   return if b.isEmpty then b else b ++ (toString id).toUTF8
 
 /-- Entropy for the workers a turn of session `id` makes (`LeanJSWorkers.Agents.entropy`):
-32 fresh bytes of the machine's generator, drawn once for the turn, then the worker's number
-`id * 65536 + w`, so no two workers share their seed material and none is the page's. Empty
-when the machine has none (`Id`). -/
-def workerEntropy {M : Type → Type} [Monad M] [WebWasm.Machine M] (id : Nat) : M (Nat → ByteArray) := do
-  let b ← WebWasm.Machine.randomBytes 32
-  return fun w => if b.isEmpty then b else b ++ (toString (id * 65536 + w)).toUTF8
+32 fresh bytes `b` of the machine's generator, drawn once for the turn (`turnBytes`), then the
+worker's number `id * 65536 + w`, so no two workers share their seed material and none is the
+page's. Empty when the machine has none (`Id`). -/
+def workerEntropyOf (id : Nat) (b : ByteArray) : Nat → ByteArray :=
+  fun w => if b.isEmpty then b else b ++ (toString (id * 65536 + w)).toUTF8
+
+/-- The 32 fresh bytes of a turn (`WebWasm.Machine.randomBytes`), from which its workers' and
+its new frames' entropy is made (`workerEntropyOf`, `frameEntropyOf`): one draw a turn. -/
+def turnBytes {M : Type → Type} [Monad M] [WebWasm.Machine M] : M ByteArray :=
+  WebWasm.Machine.randomBytes 32
+
+def workerEntropy {M : Type → Type} [Monad M] [WebWasm.Machine M] (id : Nat) : M (Nat → ByteArray) :=
+  return workerEntropyOf id (← turnBytes)
 
 /-- The `layout` request of a `start` (`Held.layoutRequest`). -/
 def layoutOf (request : JSON.Json) : JSON.Json := (request.field? "layout").getD (.object [])
+
+/-- Entropy for the script sessions of the sandboxed frames that a turn of session `id`
+starts (`HTML.FrameSessions`): the turn's fresh bytes `b` (`turnBytes`), then `frame:`, `id`
+and the `iframe` element `el`; the suffix starts with a letter, so it is never a worker's
+(`workerEntropyOf`). A frame's HMAC_DRBG (`Hosts.WebApi`) so never starts from its page's
+seed or another frame's: with the page's entropy it would repeat the page's random values,
+generated keys and ECDSA nonces (record docs/designissues/2026-11-09-crypto-boundary-security.md,
+finding F1). `parent` is the page's entropy: a frame gets none when its page has none, nor
+when the machine has none (`Id`). -/
+def frameEntropyOf (id : Nat) (parent b : ByteArray) : Nat → ByteArray :=
+  fun el => if parent.isEmpty || b.isEmpty then ByteArray.empty
+    else b ++ ("frame:" ++ toString id ++ ":" ++ toString el).toUTF8
 
 def actions : List String := ["info", "load", "start", "click", "pointer", "resize", "advance", "settle", "turn", "close",
   "aotModule", "resume", "host", "frame", "fetched", "net", "syncAnswer"]
@@ -630,6 +655,102 @@ def frameDocument (request : JSON.Json) : Except String (String × Bool × Array
   let (scripts, _) ← scriptSources dom request
   return (src, DOM.isXhtmlPath url, scripts, enc)
 
+
+/-! ### Sandboxed frames: script sessions of their own (`HTML.FrameSessions`)
+
+A frame whose document has an opaque origin and may run scripts (`Hosts.Dom.sessionFrames`:
+`sandbox` with `allow-scripts` and without `allow-same-origin`, and a `srcdoc`) gets a
+session of its own: its own arena, heap and event loop, with smaller budgets
+(`frameLimits`). After each turn of the page, `pumpFrames` makes the sessions of new such
+frames, then hands messages between the sessions (`FrameSessions.exchange`, at most
+`frameRounds` rounds), each frame's session running its due tasks at the page's clock. A
+page with no `iframe` element pays one look at the nodes made in the turn. Not on the AOT
+path (the Hub). -/
+
+/-- The budgets of a frame's session: an eighth of the page's instructions for one task,
+at most 32 MiB of memory, at most 4096 commands and 256 console lines, so a frame cannot
+starve its page. -/
+def frameLimits (lim : Page.Limits) (fEnt : Nat → ByteArray) (el : Nat) : Page.Limits :=
+  { lim with entropy := fEnt el, fuel := lim.fuel / 8, pages := min lim.pages 512, commands := min lim.commands 4096, logs := 256, frames := false }
+
+/-- Tasks a frame's session may run in one round; rounds of messages in one pump; frames
+with sessions in one page. -/
+def frameTasks : Nat := 1000
+def maxFrameSessions : Nat := 16
+
+/-- What the pump needs of a session type. -/
+structure FrameOps (σ : Type) where
+  host : σ → Page.Host
+  setHost : σ → Page.Host → σ
+  deliver : σ → HTML.FrameSessions.Message → σ
+  advanceTo : σ → Nat → σ
+  /-- A frame's session for the `iframe` element `el` (its own entropy: `frameLimits`). -/
+  start : Nat → DOM.Dom → Array (Nat × String) → HTML.Frames.Origin × HTML.Frames.Origin → Option σ
+  /-- A frame's navigation ends with a document: `loadFrame` of the engine. -/
+  load : σ → Nat → String → Array (Nat × String) → σ
+
+/-- One session's part of an exchange: the messages for it delivered, its due tasks run at
+`clock`, and the messages it posted taken from its outbox. -/
+def frameRun {σ : Type} (ops : FrameOps σ) (clock : Nat) (s : σ) (ms : Array HTML.FrameSessions.Message) :
+    σ × Array HTML.FrameSessions.Message :=
+  let s := ms.foldl ops.deliver s
+  let s := ops.advanceTo s clock
+  let h := ops.host s
+  (ops.setHost s { h with outbox := #[] }, h.outbox)
+
+/-- Whether the nodes made since the arena had `scanned` nodes hold an `iframe` element. -/
+def newIframe (d : DOM.Dom) (scanned : Nat) : Bool := Id.run do
+  for i in [scanned:d.size] do
+    if DOM.Dom.isHtmlElement (d.get i) "iframe" then return true
+  return false
+
+/-- The entropy of the frames a turn of the interpreter's session `id` may start: fresh bytes
+are drawn only when the turn made an `iframe` element, so a page with none draws nothing. -/
+def frameEntropyIf {M : Type → Type} [Monad M] [WebWasm.Machine M] (id : Nat) (parent : ByteArray) (d : DOM.Dom) (scanned : Nat) :
+    M (Nat → ByteArray) := do
+  if newIframe d scanned then return frameEntropyOf id parent (← turnBytes) else return fun _ => ByteArray.empty
+
+/-- After a turn of the page: sessions for its new sandboxed frames, then the messages. -/
+def pumpFrames {σ : Type} (ops : FrameOps σ) (parent : σ) (frames : Array (Nat × σ)) (scanned : Nat) :
+    σ × Array (Nat × σ) × Nat := Id.run do
+  let h := ops.host parent
+  let d := h.dom.dom
+  let mut frames := frames
+  if newIframe d scanned then
+    for (el, src, f) in Dom.sessionFrames h.dom do
+      if !frames.any (·.1 == el) && frames.size < maxFrameSessions then
+        let dom := DOM.parseHtmlDocument src
+        let scripts := ((scriptSources dom (.object [])).toOption.map (·.1)).getD #[]
+        if let some c := ops.start el dom scripts (f.origin, Dom.pageOrigin h.dom) then
+          frames := frames.push (el, c)
+  if frames.isEmpty then return (parent, frames, d.size)
+  let clock := h.loop.clock
+  let mut m : HTML.FrameSessions.SessionMap σ := { parent, frames }
+  let mut pending : Array HTML.FrameSessions.Message := #[]
+  for _ in [0:frameRounds] do
+    let (m', out) := HTML.FrameSessions.exchange (frameRun ops clock) m pending
+    m := m'
+    pending := out
+    if pending.isEmpty then break
+  return (m.parent, m.frames, d.size)
+
+def pageFrameOps (m : Page.Module') (lim : Page.Limits) (fEnt : Nat → ByteArray) : FrameOps Page.Session :=
+  { host := (·.host), setHost := fun s h => { s with host := h },
+    deliver := fun s msg => (s.deliverP msg).runLocal,
+    advanceTo := fun s c => (s.advance c frameTasks).1,
+    start := fun el dom scripts o =>
+      (Page.start m dom "about:srcdoc" scripts (frameLimits lim fEnt el) #[] {} {} (some o)).toOption,
+    load := fun s el src scripts => s.loadFrame el src scripts }
+
+def leanFrameOps (base : LeanJS.Session) (lim : Page.Limits) (fEnt : Nat → ByteArray) : FrameOps LeanJS.Session :=
+  { host := (·.host), setHost := LeanJS.Session.setHost,
+    deliver := fun s msg =>
+      let e := LeanJS.engine
+      e.checkpoint (e.dispatchWith s Page.windowId "message" (Page.messageInit msg)).1,
+    advanceTo := fun s c => (LeanJS.engine.advance s c frameTasks).1,
+    start := fun el dom scripts o => some (LeanJS.start base dom "about:srcdoc" scripts (frameLimits lim fEnt el) {} {} (some o)),
+    load := fun s el src scripts => LeanJS.loadFrame s el src scripts }
+
 /-- A page whose scripts name `XMLHttpRequest`: a later action may make a sync request, so
 each action keeps the session before it (`Net.Xhr.State.mayBlock`). Other pages pay nothing. -/
 def mentionsXhr (scripts : Array (Nat × String)) : Bool :=
@@ -692,11 +813,16 @@ def netGive (h : Page.Host) (request : JSON.Json) : Page.Host := Id.run do
     if let some c := cb then loop := loop.queueTask .networking c
   return { h with web := { h.web with net }, loop }
 
-/-- The answer of a turn of the Lean engine; the session and its workers are kept. A page
-with workers adds `workers` (how many run) and `fetches` (the scripts they wait for). -/
-def leanTurn (held : Held) (id : Nat) (before : Before) (a : LeanJSWorkers.Agents) (marks : Marks) (full : Bool) (ns : Nat) :
-    Held × Except String String :=
+/-- The answer of a turn of the Lean engine; the session, its workers and its sandboxed
+frames' sessions are kept. A page with workers adds `workers` (how many run) and `fetches`
+(the scripts they wait for). `fEnt` is the entropy of frames that get a session in this turn
+(`frameEntropy`). -/
+def leanTurn (held : Held) (id : Nat) (before : Before) (a : LeanJSWorkers.Agents) (marks : Marks) (full : Bool) (ns : Nat)
+    (fEnt : Nat → ByteArray) : Held × Except String String :=
   let (s, loads) := srcdocLoads (·.host) (fun s el src scripts => LeanJS.loadFrame s el src scripts) a.page
+  let (s, frames, scan) := match held.leanBase with
+    | some base => pumpFrames (leanFrameOps base s.limits fEnt) s held.leanFrames held.frameScan
+    | none => (s, held.leanFrames, held.frameScan)
   let workers : List (String × JSON.Json) :=
     if a.w.list.isEmpty && a.w.loads.isEmpty then [] else
     [("workers", num a.w.list.size)] ++ (if a.w.loads.isEmpty then [] else [("fetches", .array a.w.fetches)])
@@ -704,7 +830,7 @@ def leanTurn (held : Held) (id : Nat) (before : Before) (a : LeanJSWorkers.Agent
   let view := if a.waits then { view with quiet := false } else view
   let (answer, marks) := turnAnswerOf id before view marks full ns
     ([("engine",.string "bubblepop")] ++ frameFields s.host loads ++ workers ++ netFields s.host)
-  ({ held with leanSession := some (id, drainedLean s, marks), leanWorkers := a.w }, .ok answer)
+  ({ held with leanSession := some (id, drainedLean s, marks), leanWorkers := a.w, leanFrames := frames, frameScan := scan }, .ok answer)
 
 /-- `start` on the Lean engine: its realm is made at the first page (the prelude runs
 once), and each page starts from it with its own arena. -/
@@ -734,7 +860,8 @@ def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (h
       let (vw, vh) := (viewport request).getD (800, 600)
       let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh, canvasEnv := canvas }
       let rate := max 1 ((natField request "instructionsPerMs").getD 100000)
-      let wEnt ← workerEntropy id
+      let b ← turnBytes
+      let wEnt := workerEntropyOf id b
       let (a, ns) ← WebWasm.timed fun _ =>
         let s := LeanJS.start base dom url scripts { lim with mayBlock := network && mentionsXhr scripts } reads { instructionsPerMs := rate }
         let s := missing.foldl LeanJS.Session.fail s
@@ -743,8 +870,9 @@ def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (h
       match a.page.host.web.net.syncWanted with
       | some w => return ({ held with leanBase := some base, pendingSync := some ("start", html, request) }, netSyncAnswer id w)
       | none =>
-        return leanTurn { held with leanBase := some base, session := none, leanSession := none, nextSession := id + 1, leanWorkers := {}, layoutRequest := layoutOf request, syncCache := #[], pendingSync := none }
-          id {} a {} true (ns0 + ns)
+        let held := { held with leanBase := some base, session := none, leanSession := none, nextSession := id + 1, leanWorkers := {}, layoutRequest := layoutOf request, syncCache := #[], pendingSync := none }
+        return leanTurn { held with frames := #[], leanFrames := #[], frameScan := 0 }
+          id {} a {} true (ns0 + ns) (frameEntropyOf id lim.entropy b)
 
 /-- A later action on the Lean engine's session (the actions of `act`). -/
 def actLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action : String) (request : JSON.Json) (id : Nat) (s : LeanJS.Session) (marks : Marks) :
@@ -763,13 +891,14 @@ def actLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (act
   let snap := if keepIt then some s else none
   let s0 := s.setHost { s.host with web := setSync s.host.web keepIt held.syncCache }
   -- each worker's entropy is fresh from the machine's generator, as each page's is
-  let wEnt ← workerEntropy id
-  let a : LeanJSWorkers.Agents := { page := s0, w := held.leanWorkers, base := held.leanBase, entropy := wEnt }
+  let b ← turnBytes
+  let a : LeanJSWorkers.Agents := { page := s0, w := held.leanWorkers, base := held.leanBase, entropy := workerEntropyOf id b }
+  let fEnt := frameEntropyOf id s.limits.entropy b
   let run := fun (f : LeanJSWorkers.Agents → LeanJSWorkers.Agents) => do
     let (a', ns) ← WebWasm.timed fun _ => f a
     match a'.page.host.web.net.syncWanted, snap with
     | some w, some old => return ({ held with leanSession := some (id, old, marks), pendingSync := some (action, "", request) }, netSyncAnswer id w)
-    | _, _ => return leanTurn { held with syncCache := #[], pendingSync := none } id before a' marks full ns
+    | _, _ => return leanTurn { held with syncCache := #[], pendingSync := none } id before a' marks full ns fEnt
   let keep := fun (msg : String) => pure (f := M) ({ held with leanSession := some (id, s, marks) }, Except.error msg)
   match action with
   | "click" =>
@@ -833,7 +962,7 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
     match held.turn, held.aot with
     | some t, some aot => hostCall held aot t request
     | _, _ => return (held, .error "scriptSession: no turn waits for the host")
-  | "close" => return ({ held with session := none, turn := none, leanSession := none, leanWorkers := {} }, .ok "{\"closed\":true}")
+  | "close" => return ({ held with session := none, turn := none, leanSession := none, leanWorkers := {}, frames := #[], leanFrames := #[], frameScan := 0 }, .ok "{\"closed\":true}")
   | _ =>
   if held.turn.isSome then return (held, .error "scriptSession: a turn waits for the host")
   match action with
@@ -883,9 +1012,11 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
         | none =>
         let held := { held with syncCache := #[], pendingSync := none }
         let (s, loads) := srcdocLoads (·.host) (fun s el src scripts => s.loadFrame el src scripts) s
+        let fEnt ← frameEntropyIf id s.limits.entropy s.host.dom.dom 0
+        let (s, frames, scan) := pumpFrames (pageFrameOps m s.limits fEnt) s #[] 0
         let (answer, marks) := turnAnswer id {} s {} true ns (frameFields s.host loads ++ netFields s.host)
         let s := drained s
-        return ({ held with session := some (id, s, marks), leanSession := none, nextSession := id + 1, layoutRequest := layoutOf request }, .ok answer)
+        return ({ held with session := some (id, s, marks), leanSession := none, nextSession := id + 1, layoutRequest := layoutOf request, frames, leanFrames := #[], frameScan := scan }, .ok answer)
   | _ =>
     match held.leanSession with
     | some (id, s, marks) =>
@@ -912,8 +1043,13 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
           | some w, some old => return ({ held with session := some (id, old, marks), pendingSync := some (action, "", request) }, netSyncAnswer id w)
           | _, _ =>
           let (s', loads) := srcdocLoads (·.host) (fun s el src scripts => s.loadFrame el src scripts) s'
+          let (s', frames, scan) ← match held.module with
+            | some m => do
+              let fEnt ← frameEntropyIf id s'.limits.entropy s'.host.dom.dom held.frameScan
+              pure (pumpFrames (pageFrameOps m s'.limits fEnt) s' held.frames held.frameScan)
+            | none => pure (s', held.frames, held.frameScan)
           let (answer, marks) := turnAnswer id before s' marks full ns (frameFields s'.host loads ++ netFields s'.host)
-          return ({ held with session := some (id, drained s', marks), syncCache := #[], pendingSync := none }, Except.ok answer)
+          return ({ held with session := some (id, drained s', marks), frames, frameScan := scan, syncCache := #[], pendingSync := none }, Except.ok answer)
       match action with
       | "click" =>
         match natField request "node" with

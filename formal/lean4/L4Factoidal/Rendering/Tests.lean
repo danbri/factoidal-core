@@ -357,4 +357,32 @@ private def fills (r : Except String (Scene × Array Box)) : List (Nat × Nat ×
 #guard (fills (runState "<a id='a' href='u'>AA</a>" css (some "a"))).contains (255,0,0)
 #guard !(fills (runState "<a id='a' href='u'>AA</a>" css)).contains (255,0,0)
 
+-- Shadow trees (CSS Scoping 1): the layout is of the flat tree; each rule matches in its
+-- own tree; `:host` and `::slotted()` reach across; the document's normal declarations win.
+private def shadowStyles (html css shadowCss : String) : Except String (Dom × Array Computed) := do
+  let tree := DOM.parseHtmlDocument html
+  let sr := ((List.range tree.size).find? (tree.isShadowRoot ·)).getD 0
+  let rules := (← CSS.parse css) ++ (← CSS.parse shadowCss).map fun r => {r with scope := some sr}
+  return (tree, ← CSS.computeAllIn (CSS.TreeScope.of tree) tree.flat rules)
+private def shadowColor (html css shadowCss id : String) : Option Float := do
+  let (tree, styles) ← (shadowStyles html css shadowCss).toOption
+  let k ← (tree.treeOrder 0).find? (fun k => (tree.get k).attrs.any (fun a => a.lname == "id" && a.value == id)) <|>
+    ((List.range tree.size).find? fun k => (tree.get k).attrs.any (fun a => a.lname == "id" && a.value == id))
+  return (styles[k]?.map (·.color.r)).getD (-1)
+private def shadowPage := "<div id='h'><template shadowrootmode='open'><p id='in'>s</p><slot></slot></template><b id='lt'>x</b></div><p id='out'>o</p>"
+-- a document rule does not reach into the shadow tree; a shadow rule does not leave it
+#guard shadowColor shadowPage "p{color:red}" "" "in" == some 0
+#guard shadowColor shadowPage "p{color:red}" "" "out" == some 1
+#guard shadowColor shadowPage "" "p{color:red}" "in" == some 1
+#guard shadowColor shadowPage "" "p{color:red}" "out" == some 0
+-- :host and ::slotted
+#guard shadowColor shadowPage "" ":host{color:red}" "h" == some 1
+#guard shadowColor shadowPage "" "::slotted(b){color:red}" "lt" == some 1
+#guard shadowColor shadowPage "" "::slotted(i){color:red}" "lt" == some 0
+-- the document's normal declaration wins over the shadow tree's; its important one loses
+#guard shadowColor shadowPage "#h{color:blue}" ":host{color:red}" "h" == some 0
+#guard shadowColor shadowPage "#h{color:blue}" ":host{color:red!important}" "h" == some 1
+-- a slotted element inherits along the flat tree: from the shadow tree's div
+#guard shadowColor "<div id='h'><template shadowrootmode='open'><div style='color:red'><slot></slot></div></template><b id='lt'>x</b></div>" "" "" "lt" == some 1
+
 end L4Factoidal.Rendering.Tests
