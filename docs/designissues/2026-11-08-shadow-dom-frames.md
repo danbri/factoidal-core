@@ -165,8 +165,10 @@ Open:
   the number of its parent frame's origin. Harmless while frames in frame sessions get no
   context; to fix before they do (a per-session counter).
 - Same-origin frames share the page's realm (section 5), as before; only the sandboxed
-  ones are separate sessions. The AOT path (the Hub) makes no frame sessions: a sandboxed
-  frame's scripts do not run there at all, which is safe and incomplete.
+  ones are separate sessions. BubblePopJS, the Hub's default, makes frame sessions there
+  too (checked headless on the Wasm build, 2026-11-11: the demo page's sandboxed frame
+  posts to the page with origin "null"); the AOT path of QuickJS-NG makes none, so a
+  sandboxed frame's scripts do not run there at all, which is safe and incomplete.
 - The structured clone across sessions is JSON (section 5): cyclic data, Maps, Dates and
   ArrayBuffers do not survive; a failure to clone throws in the sender, as it should.
 

@@ -376,6 +376,7 @@
    "title": "Shadow DOM and sandboxed frames",
    "handwritten": true,
    "needs": "an engine with DOM.Shadow and HTML.Frames (shadowframes)",
+   "appRefused": "does not execute scripts",
    "shows": "two card components with shadow roots (one from template shadowrootmode, one from attachShadow), named and default slots, :host and ::slotted rules, slotchange; a sandbox=\"allow-scripts\" srcdoc frame whose scripts run in a session of their own and talk to the page with postMessage",
    "doesNotShow": "the frame's own document: iframes are not drawn yet"
   },
