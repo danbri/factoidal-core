@@ -264,7 +264,9 @@ def serialize (h : HeapOf H) (v : Value) (transfer : Array Nat) (limit : Nat := 
       | .key k => st := { st with out := putStr st.out k }
       | .val v =>
         match v with
-        | .undef => st := { st with out := putNat st.out tUndef }
+        -- `hole` (a binding not yet initialised) and `fl` (a float register) are the
+        -- interpreter's own and read as undefined, as `Value.toUndef` gives them
+        | .undef | .hole | .fl => st := { st with out := putNat st.out tUndef }
         | .null => st := { st with out := putNat st.out tNull }
         | .bool b => st := { st with out := putNat st.out (if b then tTrue else tFalse) }
         | .num x => st := { st with out := putNat (putNat st.out tNum) x.toBits.toNat }
@@ -443,7 +445,7 @@ def deserialize (h : HeapOf H) (b : ByteArray) : Option (Value × HeapOf H) := I
       st := place st' (.obj id)
     else if tag == tNumObj || tag == tDate then
       let some (x, j) := num st | return none
-      let dateProps : Std.HashMap String PropV := ({} : Std.HashMap String PropV).insert dateKey (.data (.bool true) true false false)
+      let dateProps : PropMap PropV := ({} : PropMap PropV).insert dateKey (.data (.bool true) true false false)
       let o : Obj := if tag == tDate then
           { proto := .obj r.dateProto, kind := .prim (.num (Float.ofBits x.toUInt64)), props := dateProps, keys := #[dateKey] }
         else { proto := .obj r.numberProto, kind := .prim (.num (Float.ofBits x.toUInt64)) }
@@ -461,7 +463,7 @@ def deserialize (h : HeapOf H) (b : ByteArray) : Option (Value × HeapOf H) := I
       let some (src, j) := readStr b st.at_ | return none
       let some (fl, j) := readStr b j | return none
       let .ok re := Re.compile src fl | return none
-      let props : Std.HashMap String PropV := ({} : Std.HashMap String PropV).insert "lastIndex" (.data (.num 0) true false false)
+      let props : PropMap PropV := ({} : PropMap PropV).insert "lastIndex" (.data (.num 0) true false false)
       let o : Obj := { proto := .obj r.regexpProto, kind := .regexp re src fl, props, keys := #["lastIndex"] }
       let (st', id) := newObj { st with at_ := j } o
       st := place st' (.obj id)

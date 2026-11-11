@@ -98,6 +98,22 @@ Deno.test({name:"Dedicated workers: a page without workers has no worker fields;
   engine.scriptSession("",{action:"close"});
 }});
 
+Deno.test({name:"Dedicated workers: each worker's Math.random has its own seed (cryptosec F2)",ignore:!exists(library),fn:async()=>{
+  const engine=await loadHTML(library);
+  // two workers of one page, and a worker of a second page; each posts its first draws
+  const page=`<!doctype html><script>for(const n of [1,2])new Worker('r.js').onmessage=e=>console.log('R '+e.data);</script>`;
+  const files={"/r.js":"postMessage([Math.random(),Math.random(),Math.random()].join())"};
+  const a=run(engine,page,files).logs.filter(l=>l.startsWith("R ")),b=run(engine,page,files).logs.filter(l=>l.startsWith("R "));
+  // the realm snapshot's own sequence: what every worker drew before the fix
+  const snap=(engine.scriptSession(`<script>console.log('R '+[Math.random(),Math.random(),Math.random()].join())</script>`,
+    {action:"start",url:`${origin}/s.html`,resources:[],engine:"bubblepop"}) as Turn).logs;
+  engine.scriptSession("",{action:"close"});
+  assert.equal(a.length,2);assert.equal(b.length,2);
+  const all=[...a,...b];
+  assert.equal(new Set(all).size,4,`workers drew the same sequence: ${JSON.stringify(all)}`);
+  for(const x of all)assert.ok(!snap.includes(x),"a worker drew the realm snapshot's sequence");
+}});
+
 Deno.test({name:"Dedicated workers: start and round-trip time (BubblePopJS, native)",ignore:!exists(library),fn:async()=>{
   const engine=await loadHTML(library);
   // warm: the realm is decoded at the first page
