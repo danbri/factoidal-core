@@ -25,6 +25,7 @@ const HELP = `foafnaut [--latest|--bleeding-edge] [PAGE | --url URL | --html FIL
   --which           print the app that would run
   --version         print the commit and build time of that app (the app answers)
   --help            this text
+  --dev-help        options and tools for developing and testing the browser
 
 App options, passed to the app as they are:
   --perf-summary    print frame and input latency figures when the window closes
@@ -44,6 +45,53 @@ is in ~/Library/Logs/foafnaut/trace.jsonl. The command stays open until the wind
 closes; --detach returns at once.
 
 EXPERIMENTAL UNDER-REVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.
+`;
+const DEV_HELP = `foafnaut --dev-help: tools for developing and testing the browser
+
+More app options (passed to the app as they are)
+  --offscreen            no window: draw into a GPU texture (for tests and captures)
+  --shot FILE            write a PNG of the page (with --offscreen)
+  --print-pdf FILE       print the page to a PDF file
+  --no-scripts           run no page scripts
+  --strict               refuse pages with features the browser skips (the default)
+  --no-state             no saved state: no history, bookmarks or session
+  --state-dir DIR        keep the saved state in DIR
+  --restore-session      reopen the tabs of the last run
+  --no-splash            no splash at start (off already offscreen and in checks)
+  --single-frame         draw the page as one layer (no partial frames)
+  --gpu-frames-in-flight N  GPU frames queued at most (default: 1 for heavy work, 3 for light)
+  --trace-input          log every input event and edge drag to stderr
+  --check-engine         run the engine on the main thread and check its render plan (CPU)
+  --quickjs-wasm FILE    run page scripts on QuickJS-NG in BubblePopWASM from FILE
+                         (BubblePopJS, the built-in JavaScript engine, is the default)
+  --*-sweep              scripted checks used by the tests (scroll, resize, find, ...);
+                         see labs/demos/foafnaut/sweeps.sh
+
+Inside the browser
+  Option-Command-J       the console: page script output, refusals, skipped features
+  about:foafnaut         version, commit, build time and the specifications implemented,
+                         written by the engine; facts from the desktop program are marked
+  foafnaut:console, foafnaut:sparql, foafnaut:wasm   developer pages
+  Command-F              find in page
+
+Through a proxy (developer proxy: tools/devproxy/README.md, in the source repository)
+  The app uses HTTP_PROXY, HTTPS_PROXY and DENO_CERT from its environment, so it can run
+  through a local proxy with no change. tools/devproxy/devproxy.mjs records real pages once
+  to WARC and replays them offline, and can simplify pages as it serves them:
+    full             no change
+    no-scripts       scripts and on* attributes removed
+    text-css-links   structure, text, links and stylesheets kept; scripts, frames, media,
+                     images, canvas and svg removed
+  Run it with tools/devproxy/foafnaut-through-proxy.sh (--record NAME, --replay NAME, or
+  devproxy.mjs --passthrough --default-service LEVEL). It listens on 127.0.0.1 only, with a
+  private CA for this process only. A test tool, not a sanitiser and not a security
+  boundary. Page scripts' XMLHttpRequest and fetch() may not go through the proxy yet.
+
+Not yet: a debugging protocol (Chrome DevTools Protocol, WebDriver BiDi), an MCP server,
+breakpoints, console input. Plan: https://github.com/danbri/factoidal-core/issues/372
+
+Logs: ~/Library/Logs/foafnaut/trace.jsonl. Source and issues:
+https://github.com/danbri/factoidal-core (labs/demos/foafnaut/).
 `;
 const RELEASES = 'https://api.github.com/repos/danbri/factoidal-builds/releases?per_page=60';
 const APP = 'foafnaut.app';
@@ -139,6 +187,7 @@ export async function main(argv, channel = 'current') {
   for (let i = 0; i < options.length; i++) {
     const arg = options[i];
     if (arg === '--help' || arg === '-h') { process.stdout.write(HELP); return; }
+    if (arg === '--dev-help') { process.stdout.write(DEV_HELP); return; }
     else if (arg === '--latest') channel = 'latest';
     else if (arg === '--bleeding-edge') channel = 'bleeding-edge';
     else if (arg === '--which') which = true;
