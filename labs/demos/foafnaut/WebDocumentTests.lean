@@ -215,7 +215,9 @@ private def counted (command : Nat) (more : List (String × JSON.Json)) : List (
 #guard historyField (counted 33 [("scroll",.number "100"),("view",.number "500"),("scrollLimit",.number "2000"),("scale",.number "2")]) "scrollTo" == some (.number "500")
 #guard historyField (counted 38 [("scroll",.number "100"),("view",.number "500"),("scrollLimit",.number "2000"),("scale",.number "2")]) "scrollTo" == some (.number "0")
 #guard historyField (counted 39 []) "action" == some (.string "stop") && historyField (counted 20 []) "action" == some (.string "reopenTab")
-#guard (historyField (counted 32 []) "refused").isSome && (historyField (counted 33 []) "refused").isNone
+-- Find in page is implemented (WebSelection.findMatches): no command is refused.
+#guard (historyField (counted 32 []) "refused").isNone && historyField (counted 32 []) "action" == some (.string "find")
+#guard historyField (counted 41 []) "action" == some (.string "about") && historyField (counted 45 []) "action" == some (.string "savePage")
 #guard historyField [("op",.string "pageKey"),("key",.number "49"),("modifiers",.number "1")] "command" == some (.number "34")
 #guard historyField [("op",.string "pageKey"),("key",.number "0"),("modifiers",.number "0")] "command" == some .null
 #guard menu 1 250 == some "{\"action\":\"zoomIn\",\"textScalePercent\":275}"

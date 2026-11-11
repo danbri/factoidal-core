@@ -320,6 +320,11 @@ char *ng_save_file_panel(const char *name) {
     return copyPath(panel.URL);
   }
 }
+// The person's Reduce motion setting (Accessibility > Display): the splash only fades.
+int ng_reduce_motion(void) {
+  if (!pthread_main_np()) return 0;
+  return NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceMotion ? 1 : 0;
+}
 // Lean says which history moves exist. The menu only shows the answer.
 static BOOL canGoBack=NO,canGoForward=NO;
 void ng_set_history(int back,int forward) { canGoBack=back!=0;canGoForward=forward!=0; }

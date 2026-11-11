@@ -2,6 +2,7 @@ import L4Factoidal.Rendering.ClipTheorems
 import WebRender
 import WebRoute
 import WebSelection
+import L4Factoidal.Rendering.Smil
 
 /-! The browser's own face: tabs, the address bar and its buttons, drawn into the
 same scene as the page, so one WebGPU pass draws the window. All of it is pixel
@@ -321,6 +322,7 @@ def pointer (s : Shell) (control : Option String) (onPage : Bool) : Pointer :=
   match control with
   | none => if onPage then .hand else .arrow
   | some "address" => .text
+  | some "find" => .text
   | some "chrome" => .arrow
   | some "back" => if s.canBack then .hand else .arrow
   | some "forward" => if s.canForward then .hand else .arrow
@@ -606,6 +608,62 @@ private def domainNodes (s : Shell) (t : Theme) (width : Nat) (p : Nat) : List R
   -- It shows only in the second half of the fold, after the controls have faded out, so
   -- the two texts never lie over each other half drawn.
   text (mix t.base t.ink (2*p-100)) label (lerp x0 x1 p) (lerp y0 y1 p) size
+
+/-! ### The splash (start of the app)
+
+The name and release over the first page while it loads, in the chrome's lettering: the
+letters grow until they are too big to read while they fade out, over `splashMs`. With
+reduced motion they only fade, over `splashReducedMs`. The values at a time are SMIL's
+animation function (`Smil.valueAt`, values with keyTimes, linear), from the time since the
+splash began, which the host sends; after its duration the splash has no nodes. -/
+def splashMs : Nat := 600
+def splashReducedMs : Nat := 200
+
+def splashDuration (reduce : Bool) : Nat := if reduce then splashReducedMs else splashMs
+
+/-- The growth (1 at the start) and the opacity at `ms`, or none once the splash is over.
+Growth speeds up as it goes, as something coming at the viewer; the letters hold their
+opacity for the first fifth. -/
+def splashState (ms : Nat) (reduce : Bool) : Option (Float × Float) := do
+  let dur := splashDuration reduce
+  if ms ≥ dur then none
+  let f := Float.ofNat ms/Float.ofNat dur
+  let grow ← if reduce then some #[1] else
+    Rendering.Smil.valueAt #[#[1],#[1.5],#[3],#[12]] (some #[0,0.4,0.75,1]) false f
+  let opacity ← Rendering.Smil.valueAt #[#[1],#[1],#[0]] (some #[0,0.2,1]) false f
+  return ((grow[0]?).getD 1,(opacity[0]?).getD 0)
+
+/-- The ink of the splash: the blue of the about page's heading. -/
+def splashColor : Rendering.Color := hex 24 64 120
+
+private def faded (o : Float) : Rendering.Node → Rendering.Node
+  | .paint item => .paint {item with primitive := {item.primitive with style := {item.primitive.style with fillOpacity := o}}}
+  | node => node
+
+/-- The splash at `ms` over the view of `rows` rows from page row `top`, `width` wide: the
+label in the lettering, centred, about seven tenths of the width at the start. -/
+def splashNodes (label : String) (ms width top rows : Nat) (reduce : Bool) : List Rendering.Node :=
+  match splashState ms reduce with
+  | none => []
+  | some (grow,o) =>
+    let columns := max 1 (label.length*6)
+    let base := Float.ofNat (max 1 (min (width*7/10/columns) (rows/14)))
+    let size := base*grow
+    let w := Float.ofNat (columns-1)*size
+    let h := 7*size
+    let x := Float.ofNat width/2-w/2
+    let y := Float.ofNat top+Float.ofNat rows/2-h/2
+    [.group none ⟨size,0,0,size,x,y⟩ ((text splashColor label 0 0 1).map (faded o))]
+
+#guard (splashState 0 false).map (·.1) == some 1 && (splashState 0 false).map (·.2) == some 1
+#guard (splashState splashMs false).isNone && (splashState splashReducedMs true).isNone
+#guard (splashNodes "Foafnaut 0.36.0" splashMs 800 0 500 false).isEmpty
+#guard (splashNodes "Foafnaut 0.36.0" 0 800 0 500 false).length == 1
+-- Reduced motion: no growth, and over sooner.
+#guard (splashState 150 true).map (·.1) == some 1 && (splashNodes "F" 250 800 0 500 true).isEmpty
+-- It grows and fades as it goes.
+#guard match splashState 300 false, splashState 500 false with
+  | some (g1,o1), some (g2,o2) => g1 < g2 && o2 < o1 | _, _ => false
 
 /-- The chrome as scene nodes. It is drawn over the page. With `collapse` above 0 it is
 folding: the controls slide up and fade into the chrome's face over the first half of the

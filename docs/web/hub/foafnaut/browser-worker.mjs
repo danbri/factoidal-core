@@ -1003,6 +1003,8 @@ function command(id,text=''){
   if(answer.action==='stop'&&loading){serial++;loading=false;request();}
   if(answer.action==='reopenTab'){const tab=closedTabs.pop();if(tab){keep();tabs.push(tab);showTab(tabs.length-1);}}
   if(answer.refused)post({type:'error',error:answer.refused});
+  // Find in page (Command-F, G) is in the desktop app so far; the Hub says so.
+  if(['find','findNext','findPrevious'].includes(answer.action))post({type:'error',error:'Find in page is in the desktop app only, not yet on the Hub'});
   if(answer.action==='settings')navigate(settingsURL);
   if(answer.action==='console')openConsole();
   if(answer.action==='viewSource')viewSource();

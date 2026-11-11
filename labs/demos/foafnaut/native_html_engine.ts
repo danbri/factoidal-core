@@ -21,7 +21,9 @@ in the window. `keepFrom`..`keepTo` are the scrolls that this band shows with no
 export type WebFontFaces={faces:{family:string;sources:string[]}[];rules:number};
 export type HTMLLayerPlace = {top:number;view:number;bandTop:number;bandHeight:number;keepFrom:number;keepTo:number;composite:string;hoverRules?:boolean;scrollLimit?:number;
   /** WebPaint: an SVG animation runs or will begin by the clock (draw the next frame); the page has animations (send its clicks). */
-  animating?:boolean;animations?:boolean};
+  animating?:boolean;animations?:boolean;
+  /** The splash (WebShell.splashNodes) is in this frame: ask for the next one. */
+  splash?:boolean};
 /** Lean's answer to a pointer press: the chrome control or the link pressed, and the rectangles the composite darkens. */
 export type PressAnswer = {control:string|null;sourceNode?:number|null;href?:string;rects:number[][]};
 /** A skip of liberal mode (WebAccept.Diagnostic.json): what Lean did not draw or run, and why. */

@@ -36,9 +36,9 @@ async function main() {
     return;
   }
   if(args.includes("--help")){
-    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--shortcut-sweep] [--print-pdf FILE] [--scroll-sweep] [--watch-sweep SECONDS] [--single-frame] [--offscreen] [--check-pixels] [--perf-summary] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts] [--strict | --be-liberal-in-what-we-accept]\nCommand-Q quits; Command-R and R reload; Command-T, Command-W and Shift-Command-T open, close and reopen tabs; Command-1 to 9, Control-Tab and Shift-Command-[ ] change tab; Space, Page Up, Page Down, Home, End and arrows scroll; Escape stops loading; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints; Option-Command-J opens the console tab (foafnaut:console). By default the browser draws a page without what the built-in engine may skip (module scripts, media conditions it can not read, stylesheets not fetched, scripts when they are off, inline SVG it can not draw) and lists each skip in the console; --strict refuses such a page. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
+    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--shortcut-sweep] [--print-pdf FILE] [--scroll-sweep] [--watch-sweep SECONDS] [--single-frame] [--offscreen] [--check-pixels] [--perf-summary] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts] [--strict | --be-liberal-in-what-we-accept] [--no-splash | --splash] [--find-sweep]\nCommand-Q quits; Command-R and R reload; Command-T, Command-W and Shift-Command-T open, close and reopen tabs; Command-1 to 9, Control-Tab and Shift-Command-[ ] change tab; Space, Page Up, Page Down, Home, End and arrows scroll; Escape stops loading; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints; Command-F finds in the page, Command-G and Shift-Command-G go to the next and previous match, Escape closes find; Command-O opens a file and Command-S saves the page as fetched; Option-Command-J opens the console tab (foafnaut:console). A splash with the release shows over the first page in a window; --no-splash leaves it out (it is always off screen off, and in sweeps and checks). By default the browser draws a page without what the built-in engine may skip (module scripts, media conditions it can not read, stylesheets not fetched, scripts when they are off, inline SVG it can not draw) and lists each skip in the console; --strict refuses such a page. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
   }
-  let scrollSweep=false,watchSeconds=0,framesInFlight=1;
+  let scrollSweep=false,watchSeconds=0,framesInFlight=1,splashArg:"on"|"off"|undefined;
   let shotFile:string|undefined;
   let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false;
   while(args.length){const arg=args.shift();
@@ -59,6 +59,11 @@ async function main() {
     else if(arg==="--offscreen")offscreen=true;
     // Browser state in a local LWS server (native_state.ts): on in an interactive window, off in sweeps and checks.
     else if(arg==="--no-state")stateOff=true;
+    // The splash at start (WebShell.splashNodes): on in an interactive window; off with
+    // --no-splash, off screen, with --check-pixels, in sweeps, checks and prints.
+    // --splash forces it on, for the test that it ends.
+    else if(arg==="--no-splash")splashArg="off";
+    else if(arg==="--splash")splashArg="on";
     else if(arg==="--state-dir"){stateDir=args.shift();if(!stateDir)throw new Error("--state-dir needs a folder");}
     else if(arg==="--restore-session")restoreSession=true;
     // Sweeps read back every frame. This flag gives them the interactive rule (check when idle), to measure input latency without the check cost.
@@ -359,6 +364,8 @@ async function main() {
   // animation frame and the next page script turn wait until gpuHoldUntil. Input does not wait.
   const gpuGuard=createGpuGuard();
   let animationDue=false,gpuHoldUntil=0,quitAt:number|undefined;
+  // The splash while it runs; undefined when there is none or it has ended.
+  let splash:{label:string;reduce:boolean;start?:number;frames:number}|undefined;
   const gpuSlowedNote="SLOWED: HEAVY PAGE";
   const trace=(type:string,fields:Record<string,unknown>)=>console.log(JSON.stringify({type,t:Math.round(performance.now()),...fields}));
   const ms=(start:number,end:number)=>Math.round((end-start)*10)/10;
@@ -717,7 +724,8 @@ async function main() {
     // so that other pages keep one state key whatever the time.
     const clock=animation.get(page);
     const animated=clock&&(clock.has||clock.clicks.length)?{animationTime:clock.time,animationClicks:clock.clicks}:{};
-    return page.request(width,height,{...view0,...animated,live:page===checked,...(everyFrame?{}:{checks:false})});
+    const splashing=splash?{splash:{label:splash.label,reduce:splash.reduce,ms:Math.round(performance.now()-(splash.start??=performance.now()))}}:{};
+    return page.request(width,height,{...view0,...animated,...splashing,live:page===checked,...(everyFrame?{}:{checks:false})});
   };
   let presented:PresentedState<typeof document>|undefined;
   const recordPresented=(record:RequestRecord,at:number)=>{
@@ -1096,6 +1104,13 @@ async function main() {
     }
     // A new window starts in the address bar with the address selected (issue 1268).
     focusAddress();
+    // The splash: drawn by Lean over the first page while it loads, the release from the build
+    // record. Its clock starts at the first frame; the page loads and draws as without it.
+    if(splashArg==="on"||(splashArg===undefined&&!offscreen&&!checkAll&&!sweep&&!commands&&!pasted&&!printPDF&&!check&&!shotFile&&!watchSeconds)){
+      const info=await buildInfo(),version=info.version??await sourceVersion();
+      splash={label:`Foafnaut${version?" "+version:""}`,reduce:native.reduceMotion(),frames:0};
+      trace("native-html-splash",{state:"on",reduce:splash.reduce});
+    }
     // Saved settings (theme, text zoom), and with --restore-session the tabs of the last run.
     browserState?.read().then(saved=>{
       if(saved.settings){theme=saved.settings.theme;view.textScalePercent=saved.settings.textZoom;dirty=true;
@@ -1223,7 +1238,15 @@ async function main() {
         if(nextDocument===document&&!keeps(nextLayers.layers,scroll)&&!bandComing())dirty=true;
         clock.has=!!nextLayers.layers.animations;clock.running=!!nextLayers.layers.animating;
         if(clock.running){animationDue=true;animationFrames++;}
-      } else {current=undefined;settle(awaitingBand,result.presentedAt);awaitingBand=[];}
+        // The splash: the next frame while Lean draws it; when a frame comes without it, it has ended.
+        if(splash&&request.options.splash){
+          splash.frames++;
+          if(nextLayers.layers.splash)animationDue=true;
+          else{trace("native-html-splash",{state:"done",frames:splash.frames,ms:Math.round(performance.now()-(splash.start??0))});splash=undefined;}
+        }
+      } else {current=undefined;settle(awaitingBand,result.presentedAt);awaitingBand=[];
+        // One frame with no layers (--single-frame) has no splash answer: the splash ends.
+        if(splash&&request.options.splash){splash=undefined;dirty=true;}}
       if(nextDocument!==document)prefetched=undefined;
       checked=nextDocument;
       if(nextDocument!==document)view.selection=undefined;

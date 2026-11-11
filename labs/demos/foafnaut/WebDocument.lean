@@ -793,10 +793,9 @@ private def inputOp {M : Type → Type} [Monad M] [WebWasm.Machine M] (op : Stri
       | some i => [("tab",JSON.Json.number (toString i))] | none => []
     let scrollTo := match WebHistory.scrollTarget command (nat "scroll") (nat "view") (nat "scrollLimit") (80*max 1 (nat "scale")) with
       | some n => [("scrollTo",JSON.Json.number (toString n))] | none => []
-    let refused : List (String × JSON.Json) := []
     let fields := [("action",JSON.Json.string action)] ++
       (if WebShell.addressCommands.contains action then [("target",JSON.Json.string target)] else []) ++
-      [("textScalePercent",.number (toString (WebSelection.commandPercent command percent (zoomUnit request))))] ++ tab ++ scrollTo ++ refused
+      [("textScalePercent",.number (toString (WebSelection.commandPercent command percent (zoomUnit request))))] ++ tab ++ scrollTo
     if (request.field? "history").isNone then return some (JSON.Json.object fields).toString
     let (next,url) := WebHistory.apply command (← history request)
     return some (JSON.Json.object (fields ++ historyFields next url)).toString
@@ -1265,7 +1264,7 @@ def layersJSON (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List R
     (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face)
     (width height : Nat) (live : Bool) (form : NativeSVG.DataForm) (checks tree : Bool) (hoverRules : Bool := false)
     (canvases : List Rendering.Layout.Box := []) (animating : Bool := false) (animations : Bool := false)
-    (retainOn : Bool := true) :
+    (retainOn : Bool := true) (splashing : Bool := false) :
     Except String (String × Array ByteArray) := do
   let top := WebShell.height shell width
   -- A chrome that may fold: the band covers the view under the strip, the most it shows,
@@ -1279,6 +1278,7 @@ def layersJSON (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List R
   let place := JSON.Json.object ([("top",number top),("view",number view),("bandTop",number b.top),
     ("bandHeight",number b.height),("keepFrom",number b.keepFrom),("keepTo",number (b.keepTo view)),
     ("composite",.string compositeShader),("hoverRules",.bool hoverRules),("animating",.bool animating),("animations",.bool animations),
+    ("splash",.bool splashing),
     ("scrollLimit",number (scrollLimit (WebPrint.contentHeight boxes) view))] ++
     (if canvases.isEmpty then [] else [("canvases",canvasRects canvases b width),("canvasBlit",.string canvasBlitShader)]))
   return ("{\"layers\":" ++ place.toString ++ ",\"page\":" ++ pageText ++ ",\"chrome\":" ++ chromeText ++ "}",
@@ -2421,9 +2421,17 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
     return ((JSON.Json.object [("text",.string (match chosen with
       | some value => WebSelection.text items value
       | none => ""))]).toString,#[])
-  let marks := WebSelection.findHighlight items found current ++ match chosen with
+  -- The splash at the start of the app (WebShell.splashNodes): `splash` is `{label, ms,
+  -- reduce}`, over the view below the chrome at the scroll of the shell.
+  let splash := match request.field? "splash" with
+    | some sp@(.object _) =>
+      let ms := match sp.field? "ms" with | some (.number m) => m.toNat?.getD 0 | _ => 0
+      WebShell.splashNodes (str sp "label") ms width ((shell.map (·.scroll)).getD 0) (height-min height top)
+        (sp.field? "reduce" == some (.bool true))
+    | _ => []
+  let marks := WebSelection.findHighlight items found current ++ (match chosen with
     | some value => WebSelection.highlight items value
-    | none => []
+    | none => []) ++ splash
   let live := request.field? "live" == some (.bool true)
   let binary := request.field? "binary" == some (.bool true)
   let form : NativeSVG.DataForm :=
@@ -2443,7 +2451,7 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
     if request.field? "layers" == some (.bool true) then
       return withDiagnostics request laid (← layersJSON value scene marks boxes face width height live form checks tree laid.hoverRules
         (canvasBoxes laid.dom boxes) animating (!laid.paint.animations.isEmpty)
-        (request.field? "retained" != some (.bool false)))
+        (request.field? "retained" != some (.bool false)) (!splash.isEmpty))
   let scrolled := Float.ofNat ((shell.map (·.scroll)).getD 0)
   let near := nearNodes (scrolled-512) (scrolled+Float.ofNat height+512) scene.tree
   let page := {scene with tree := near ++ marks}
