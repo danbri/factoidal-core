@@ -21,6 +21,8 @@ State at the last handoff, what is in flight, and what to do next:
 This skill changes slowly. The handoff record goes stale first: check it against
 `git log origin/main` and the coordination log (below).
 
+Agents: read [AGENT-BRIEF.md](AGENT-BRIEF.md) first; it is the standard brief.
+
 Every command here was read from the scripts at commit `6f08a9824` (2026-11-09). When a
 command and a script disagree, the script is correct. Fix this file.
 
