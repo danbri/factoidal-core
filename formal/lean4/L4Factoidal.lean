@@ -998,6 +998,7 @@ import L4Factoidal.LWS.DatasetViewTests
 import L4Factoidal.LWS.PaginationLinksTests
 import L4Factoidal.LWS.Authorization
 import L4Factoidal.LWS.AuthorizationTests
+import L4Factoidal.LWS.RootAclInstall
 import L4Factoidal.LWS.Notifications
 import L4Factoidal.LWS.NotificationsTests
 import L4Factoidal.LWS.Move

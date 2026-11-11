@@ -85,6 +85,10 @@ export async function openInPageLwsStorage (options = {}) {
     }
     return answer.snapshot
   }
+  // A snapshot with no root ACL resource, reopened with `rootAcl` (or
+  // `owner`), gets that root ACL at open (L4Factoidal/LWS/RootAclInstall.lean);
+  // the engine says `changed`, and the caller is given the new snapshot.
+  if (opened !== null && typeof opened === 'object' && opened.changed === true && onSnapshot !== null) onSnapshot(snapshot())
 
   /** A fetch to this storage: the same arguments as `fetch`, a real Response back. */
   async function podFetch (input, init) {

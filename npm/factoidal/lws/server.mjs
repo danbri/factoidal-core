@@ -472,9 +472,22 @@ export async function openLwsStorage (options = {}) {
     // files: the engine is told none is present.
     filesMode = opened !== null && typeof opened === 'object' &&
       opened.load !== undefined && opened.load !== null
+    // An existing storage with no root ACL resource, opened with
+    // authorization and a root ACL (`rootAcl`, or the owner's), gets that
+    // root ACL here, before any request is answered: the engine decides
+    // (L4Factoidal/LWS/RootAclInstall.lean) and says `changed`; this host
+    // persists it and prints the engine's `rootAclNotice`. Requests that
+    // reach the socket meanwhile wait for this open (createLwsServer).
+    let started = opened
     if (filesMode) {
       if (dir === null) throw new LwsHostError('a storage kept in files needs a storage directory (dir)')
-      loadFiles(engine, handle, opened, dir)
+      started = loadFiles(engine, handle, opened, dir)
+      persistFilesIfChanged(engine, handle, started, dir)
+    } else if (dir !== null) {
+      persistIfChanged(engine, 'lwsSnapshot', handle, started, dir)
+    }
+    if (started !== null && typeof started === 'object' && typeof started.rootAclNotice === 'string') {
+      notices.push(started.rootAclNotice)
     }
     // What a server prints at start, after the experimental code notice:
     // a take-over of a stale lock, and whether the storage on disk is
