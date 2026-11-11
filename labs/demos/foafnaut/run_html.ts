@@ -21,19 +21,25 @@ import {requestRenderPlan} from "./render_plan.ts";
 import {pngOf,texturePixels} from "./png_write.ts";
 import {startCompileWorker,type CompileClient} from "./native_html_compile.ts";
 import type {UIEvent} from "./ui_engine.ts";
-import {aboutHTML,sourceVersion,versionLine,type BuildInfo} from "./about_page.ts";
 
 /** What this program was built from: the record build-executables.sh compiles into it. */
+type BuildInfo={commit?:string;commitFull?:string;dirty?:boolean;builtAt?:string;version?:string;release?:boolean};
 async function buildInfo():Promise<BuildInfo> {
   try{return JSON.parse(await Deno.readTextFile(new URL("./.build/native-html/build-info.json",import.meta.url)));}
   catch{return {};} // run from source with no app build
 }
 async function main() {
   const args=[...Deno.args];
-  // What this program was built from: the record build-executables.sh compiled into it.
+  // --version: the engine's own answer (its build facts are compiled into it), then this
+  // program's build record, and the engine's line when the two disagree.
   if(args.includes("--version")){
     const info=await buildInfo();
-    console.log(versionLine(info,info.commit?undefined:await sourceVersion()));
+    const beside=Deno.execPath().slice(0,Deno.execPath().lastIndexOf("/")+1)+"libweb-render.dylib";
+    let library:string|undefined;try{if(Deno.statSync(beside).isFile)library=beside;}catch{/* Wasm */}
+    const answer=(await loadHTML(library)).engineBuild(info.commit?{version:info.version,commit:info.commit}:{});
+    console.log(answer.line);
+    console.log(info.commit?`program build record: release ${info.version??"unknown"}, commit ${info.commit}${info.dirty?" (with uncommitted changes)":""}, built ${info.builtAt}`:"program build record: none (run from source)");
+    if(answer.mismatch)console.log(answer.mismatch);
     return;
   }
   if(args.includes("--help")){
@@ -173,7 +179,7 @@ async function main() {
   // Every engine call that can take more than about 2 ms runs in one worker, in order. `lean` is that
   // engine (promises), or the main-thread engine when the worker can not start (said once, loudly) or in --check-engine.
   let worker:CompileClient|undefined,mainFont=false;
-  type Lean=Pick<typeof engine,"xmlStylesheet"|"xslt"|"inspect"|"compile"|"selectedText"|"findInPage"|"graphStart"|"graphEvent"|"graphPage"|"sourcePage"|"wasmPage"|"sparqlPage"|"printLayout"|"encodingSetting"|"encodingChoices">;
+  type Lean=Pick<typeof engine,"xmlStylesheet"|"xslt"|"inspect"|"compile"|"selectedText"|"findInPage"|"aboutPage"|"graphStart"|"graphEvent"|"graphPage"|"sourcePage"|"wasmPage"|"sparqlPage"|"printLayout"|"encodingSetting"|"encodingChoices">;
   let lean:Lean=engine;
   // The engine that runs Lean's renders: the native library in the worker, or Wasm (in the
   // worker, or on the main thread, which has only the Wasm engine). Said at start and in the summary.
@@ -382,7 +388,7 @@ async function main() {
   const gpuGuard=createGpuGuard();
   let animationDue=false,gpuHoldUntil=0,quitAt:number|undefined;
   // The splash while it runs; undefined when there is none or it has ended.
-  let splash:{label:string;reduce:boolean;start?:number;frames:number}|undefined;
+  let splash:{reduce:boolean;start?:number;frames:number}|undefined;
   const gpuSlowedNote="SLOWED: HEAVY PAGE";
   const trace=(type:string,fields:Record<string,unknown>)=>console.log(JSON.stringify({type,t:Math.round(performance.now()),...fields}));
   const ms=(start:number,end:number)=>Math.round((end-start)*10)/10;
@@ -594,17 +600,20 @@ async function main() {
   // `:sparql-step` goes to the address Lean gives as the next step.
   const sparqlURL="foafnaut:sparql";let sparqlNext=sparqlURL;
   const isSparql=(target:string)=>target===sparqlURL||target.startsWith(sparqlURL+"/");
-  // about:foafnaut: which build this is, from the record compiled into the program.
+  // about:foafnaut: the engine that renders pages writes it (WebAbout), from its own build
+  // facts. This program only reports what it knows, as data the page labels as reported.
   const aboutURL="foafnaut:about";
   const aboutPage=async()=>{
     const info=await buildInfo(),library=await engineInfo;
-    return aboutHTML(info,[
+    const rows:[string,string][]=[
+      ["Program build record",info.commit?`release ${info.version??"unknown"} (${info.release?"release build":"development build"}), commit ${info.commit}${info.dirty?" (with uncommitted changes)":""}, built ${info.builtAt}`:"none (run from source)"],
       ["Rendering engine",engineRan.startsWith("native")?"native library":"WebAssembly"],
-      ...(library.sha256?[["Engine sha256",library.sha256] as [string,string]]:[]),
+      ...(library.sha256?[["Engine library sha256",library.sha256] as [string,string]]:[]),
       ["Page scripts",planFor(scriptSetting)?.name??"none"],
       ["Liberal mode",liberal?"on":"off"],
       ["Platform",`${Deno.build.os} ${Deno.build.arch}`],
-      ["Runtime",`Deno ${Deno.version.deno}, V8 ${Deno.version.v8}`]],info.commit?undefined:await sourceVersion());
+      ["Runtime",`Deno ${Deno.version.deno}, V8 ${Deno.version.v8}`]];
+    return await lean.aboutPage({rows,...(info.commit?{version:info.version,commit:info.commit}:{})});
   };
   const sparqlPage=async(target:string)=>{
     let answer:{source:string;next?:string};
@@ -743,7 +752,7 @@ async function main() {
     const clock=animation.get(page);
     const animated=clock&&(clock.has||clock.clicks.length)?{animationTime:clock.time,animationClicks:clock.clicks}:{};
     // The splash clock starts when its first frame is shown, so it is seen from the start.
-    const splashing=splash?{splash:{label:splash.label,reduce:splash.reduce,ms:splash.start===undefined?0:Math.round(performance.now()-splash.start)}}:{};
+    const splashing=splash?{splash:{reduce:splash.reduce,ms:splash.start===undefined?0:Math.round(performance.now()-splash.start)}}:{};
     return page.request(width,height,{...view0,...animated,...splashing,live:page===checked,...(everyFrame?{}:{checks:false})});
   };
   let presented:PresentedState<typeof document>|undefined;
@@ -1123,11 +1132,10 @@ async function main() {
     }
     // A new window starts in the address bar with the address selected (issue 1268).
     focusAddress();
-    // The splash: drawn by Lean over the first page while it loads, the release from the build
-    // record. Its clock starts at the first frame; the page loads and draws as without it.
+    // The splash: drawn by the engine over the first page while it loads, with the engine's own
+    // release. Its clock starts at its first shown frame; the page loads and draws as without it.
     if(splashArg==="on"||(splashArg===undefined&&!offscreen&&!checkAll&&!sweep&&!commands&&!pasted&&!printPDF&&!check&&!shotFile&&!watchSeconds)){
-      const info=await buildInfo(),version=info.version??await sourceVersion();
-      splash={label:`Foafnaut${version?" "+version:""}`,reduce:native.reduceMotion(),frames:0};
+      splash={reduce:native.reduceMotion(),frames:0};
       trace("native-html-splash",{state:"on",reduce:splash.reduce});
     }
     // Saved settings (theme, text zoom), and with --restore-session the tabs of the last run.

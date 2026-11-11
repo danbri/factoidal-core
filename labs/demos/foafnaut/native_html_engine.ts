@@ -6,6 +6,8 @@ import createModule from "./.build/native-html/runtime/web-render.mjs";
 
 /** What a tab or scroll command needs: tab count and active tab; scroll, view height, scroll limit and screen scale. */
 /** The answer of findInPage: matches, the current one from 0, and its rectangles [x,y,w,h] in page rows. */
+/** What the desktop program reports to about:foafnaut: rows to show, and its build record. */
+export type AboutHost={rows?:[string,string][];version?:string;commit?:string};
 export type FindAnswer={count:number;current:number;rects:number[][]};
 export type CommandState={tabs?:number;active?:number;scroll?:number;view?:number;scrollLimit?:number;scale?:number;zoomUnit?:number};
 export type HTMLArtifact = {
@@ -505,6 +507,12 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     // the current match (from 0) and its rectangles in page rows.
     findInPage:(source:string,width:number,height:number,options:Record<string,unknown>)=>
       documentCall(source,{...options,op:"findInPage"},width,height) as FindAnswer,
+    // about:foafnaut, written by the engine (WebAbout) from its own build facts; `host` is
+    // what this program reports, which the page shows as reported and does not check.
+    aboutPage:(host:AboutHost)=>(documentCall("",{op:"aboutPage",host}) as {source:string}).source,
+    // The engine's own build facts (WebBuild), its --version line, and a line when `host`'s record disagrees.
+    engineBuild:(host:AboutHost={})=>documentCall("",{op:"engineBuild",host}) as
+      {version:string;commit:string;builtAt:string;dirty:boolean;release:boolean;line:string;mismatch?:string},
     // A key (macOS key code and modifier bits) or typed text in the find field (WebShell.findEdit).
     findEdit:(query:string,edit:{text?:string;key?:number;modifiers?:number})=>
       documentCall("",{op:"findEdit",query,...edit}) as {query:string;step:"none"|"next"|"previous"|"close"},

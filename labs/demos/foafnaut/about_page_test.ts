@@ -1,40 +1,34 @@
-// about:foafnaut and --version (issue 416): the release number and commit of the build
-// record, and the specifications list. No engine and no window.
+// about:foafnaut and --version (issue 416), as the engine writes them (WebAbout.lean): the
+// engine's own build facts, the host's report in its own section, escaped, and a line when
+// the host's record disagrees. Needs the built engine (test.sh runs it with native_html_test.ts).
 import {strict as assert} from "node:assert";
-import {aboutHTML,releaseURL,SPECS,sourceVersion,versionLine} from "./about_page.ts";
+import {loadHTML} from "./native_html_engine.ts";
 
-const record={commit:"abc123def",commitFull:"abc123def4567890abc123def4567890abc12345",dirty:false,builtAt:"2026-11-11T18:00:00Z",version:"0.36.0",release:true};
+const engine=await loadHTML();
+const facts=engine.engineBuild();
 
-Deno.test("about:foafnaut shows the release number, the kind of build and the commit",()=>{
-  const page=aboutHTML(record,[["Platform","darwin aarch64"]]);
-  assert.match(page,/<h1>Foafnaut 0\.36\.0<\/h1>/);
-  assert.match(page,/0\.36\.0 \(release build\)/);
-  assert.match(page,/abc123def/);
-  assert.match(page,/2026-11-11T18:00:00Z \(/,"build time in UTC and local time");
-  assert(page.includes(releaseURL(record)!),"link to the release on factoidal-builds");
-  assert.deepEqual(releaseURL(record),"https://github.com/danbri/factoidal-builds/releases/tag/build-abc123def456-foafnaut-darwin-arm64");
-  assert.match(aboutHTML({...record,release:false,dirty:true},[]),/0\.36\.0 \(development build\).*with uncommitted changes/s);
+Deno.test("the engine knows its own release, commit and build time",()=>{
+  assert.match(facts.version,/^\d+\.\d+\.\d+/);
+  assert.match(facts.commit,/^[0-9a-f]{40}$/);
+  assert.match(facts.builtAt,/^\d{4}-\d\d-\d\dT/);
+  assert.match(facts.line,new RegExp(`^foafnaut ${facts.version.replaceAll(".","\\.")} \\((release|development) build\\), commit ${facts.commit}`));
+  assert.equal(facts.mismatch,undefined,"no host record: nothing to disagree with");
+  assert.equal(engine.engineBuild({commit:facts.commit.slice(0,9),version:facts.version}).mismatch,undefined);
+  assert.match(engine.engineBuild({commit:"0000000",version:facts.version}).mismatch??"",/does not match this engine/);
 });
 
-Deno.test("about:foafnaut lists the specifications A to Z, implemented in part, each linked",()=>{
-  const page=aboutHTML(record,[]);
+Deno.test("about:foafnaut: the engine's facts, the host's report escaped and labelled, the specifications",()=>{
+  const page=engine.aboutPage({rows:[["Runtime","<script>x</script>"]],commit:facts.commit.slice(0,9),version:facts.version});
+  assert(page.includes(`<h1>Foafnaut ${facts.version}</h1>`));
+  assert(page.includes(facts.commit));
+  assert(page.includes("Reported by the desktop program"));
+  assert(page.includes("&lt;script&gt;x&lt;/script&gt;")&&!page.includes("<script>x"),"host text is escaped");
+  assert(!page.includes("does not match"));
+  assert.match(engine.aboutPage({commit:"0000000"}),/does not match this engine/);
   assert.match(page,/Implemented in part/);
   const names=[...page.matchAll(/<li><a href="(https:[^"]+)">([^<]+)<\/a>/g)].map(m=>m[2]);
-  assert.deepEqual(names.length,SPECS.length);
-  assert.deepEqual(names,[...names].sort((a,b)=>a.localeCompare(b,"en",{sensitivity:"base"})));
   for(const name of ["CSS","DOM","HTML","JSON-LD","OWL","RDF","SHACL","SPARQL","SVG","Turtle","URL","WebAssembly","WebGPU","WGSL","Encoding"])
     assert(names.includes(name),name);
-  // WHATWG standards say so.
   for(const name of ["DOM","HTML","URL","Encoding"])assert.match(page,new RegExp(`>${name}</a> <span class="body">\\(WHATWG\\)`));
-  assert.deepEqual(new Set(names).size,names.length,"no name twice");
   assert(!/honest|Lean/.test(page),"user-facing text says the built-in engine");
-});
-
-Deno.test("--version says the release, the kind of build and the commit",async()=>{
-  assert.deepEqual(versionLine(record),"foafnaut 0.36.0 (release build), commit abc123def, built 2026-11-11T18:00:00Z");
-  // The build check in build-executables.sh matches "foafnaut VERSION ...commit COMMIT".
-  assert.match(versionLine({...record,release:false}),/^foafnaut 0\.36\.0 .*commit abc123def/);
-  const version=await sourceVersion();
-  assert.match(version??"",/^\d+\.\d+\.\d+/,"run from source: the package's version");
-  assert.deepEqual(versionLine({},version),`foafnaut ${version} (run from source, no build record)`);
 });

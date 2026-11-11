@@ -8,6 +8,7 @@ import WebHistory
 import WebShell
 import WebGesture
 import WebPrint
+import WebAbout
 import WebGraph
 import WebEventLoop
 import WebWasm
@@ -870,6 +871,25 @@ private def inputOp {M : Type → Type} [Monad M] [WebWasm.Machine M] (op : Stri
         | _, _ => false
       | _, _, _ => false
     return some (JSON.Json.object [("cursor",.string (WebShell.pointer shell control onPage).name)]).toString
+  -- about:foafnaut (WebAbout): the engine writes the page from its own build facts; `host`
+  -- is what the desktop program reports ({rows: [[label, value]...], version, commit}),
+  -- shown as such. `engineBuild`: the facts, the --version line, and the line that says
+  -- when the host's record disagrees.
+  if op == "aboutPage" || op == "engineBuild" then
+    let h := (request.field? "host").getD .null
+    let text := fun (j : JSON.Json) (key : String) => match j.field? key with
+      | some (.string v) => some v | _ => none
+    let rows : List (String × String) := match h.field? "rows" with
+      | some (.array items) => (items.take 32).filterMap fun item => match item with
+        | .array [.string k,.string v] => some (k,v) | _ => none
+      | _ => []
+    let host : WebAbout.Host := {rows,version := text h "version",commit := text h "commit"}
+    let e := WebAbout.engine
+    if op == "aboutPage" then
+      return some (JSON.Json.object [("source",.string (WebAbout.page e host))]).toString
+    return some (JSON.Json.object ([("version",.string e.version),("commit",.string e.commit),("builtAt",.string e.builtAt),
+      ("dirty",.bool e.dirty),("release",.bool e.release),("line",.string (WebAbout.versionLine e))] ++
+      (match WebAbout.mismatch e host with | some m => [("mismatch",.string m)] | none => []))).toString
   -- A key or typed text in the find field (WebShell.findEdit): the text after it and the step.
   if op == "findEdit" then
     let typed := match request.field? "text" with | some (.string t) => some t | _ => none
@@ -2421,12 +2441,12 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
     return ((JSON.Json.object [("text",.string (match chosen with
       | some value => WebSelection.text items value
       | none => ""))]).toString,#[])
-  -- The splash at the start of the app (WebShell.splashNodes): `splash` is `{label, ms,
-  -- reduce}`, over the view below the chrome at the scroll of the shell.
+  -- The splash at the start of the app (WebShell.splashNodes): `splash` is `{ms, reduce}`;
+  -- its words are the engine's own release (WebBuild), over the view below the chrome.
   let splash := match request.field? "splash" with
     | some sp@(.object _) =>
       let ms := match sp.field? "ms" with | some (.number m) => m.toNat?.getD 0 | _ => 0
-      WebShell.splashNodes (str sp "label") ms width ((shell.map (·.scroll)).getD 0) (height-min height top)
+      WebShell.splashNodes ("Foafnaut " ++ WebBuild.version) ms width ((shell.map (·.scroll)).getD 0) (height-min height top)
         (sp.field? "reduce" == some (.bool true))
     | _ => []
   let marks := WebSelection.findHighlight items found current ++ (match chosen with
