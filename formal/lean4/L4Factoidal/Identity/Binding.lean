@@ -33,6 +33,14 @@ Only bound identifiers become ACL agents. Theorems:
 * `agentIri_xmpp_injective`, `agentIri_didKey_injective`,
   `oidc_sub_is_profile`: a grant to one account or key is never a grant
   to another; an OIDC login binds only the profile's own IRI.
+* Email (`Ident.email`, a plain canonical address, never a mailto: URI):
+  `normalize_idem` and `canonEmail_idem` (canonicalizing twice changes
+  nothing; the domain is lower-cased, googlemail.com is gmail.com, and only
+  at gmail.com do case, dots and a `+tag` of the local part not matter);
+  `email_needs_authority` (an issuer the owner has not listed for the
+  address's domain vouches for nothing); `email_pin_holds` (once an
+  address is pinned to an issuer and subject, another subject gets
+  nothing: a reassigned address does not inherit access).
 * `replay_diffPS`, `replay_log`: the profile changelog stores line diffs
   (common prefix and suffix kept); applying the diff of `a` to `b` to `a`
   gives `b`, so replaying the log rebuilds each version.
@@ -49,6 +57,8 @@ inductive Ident where
   | didKey (did : String)
   | xmpp (bareJid : String)
   | oidc (iss sub : String)
+  /-- A canonical email address (`canonEmail`), the string, not a mailto: IRI. -/
+  | email (addr : String)
 deriving DecidableEq, Repr
 
 /-- Evidence checked outside the profile. -/
@@ -56,54 +66,77 @@ inductive Evidence where
   | keyProof (did : String)
   | xmppReply (bareJid profile : String)
   | oidcToken (iss sub profile : String)
+  /-- An ID token from `iss` with `email_verified`, for `email` (already
+  canonical), subject `sub`, made for the challenge that names `profile`. -/
+  | oidcEmail (iss email sub profile : String)
 deriving DecidableEq, Repr
 
+/-- The owner's trust settings for email evidence. `authority` lists
+(issuer, domain): which issuer may vouch for addresses in which domain
+(Google's issuer for gmail.com, a company's issuer for its own domain).
+`pins` lists (email, issuer, sub) recorded at first use. -/
+structure Trust where
+  authority : List (String × String) := []
+  pins : List (String × String × String) := []
+deriving Repr
+
+/-- The domain of a canonical address: what follows its last `@`. -/
+def domainOf (addr : String) : String := (addr.splitOn "@").getLast!
+
+/-- The issuer may vouch for this address, and the address is either not
+pinned, or pinned to this very issuer and subject. -/
+def emailOk (t : Trust) (iss addr sub : String) : Bool :=
+  t.authority.contains (iss, domainOf addr) &&
+  t.pins.all (fun pin => pin.1 != addr || (pin.2.1 == iss && pin.2.2 == sub))
+
 /-- Does this evidence support this identifier, for the profile `p`? -/
-def supports (p : String) : Evidence → Ident → Bool
+def supports (t : Trust) (p : String) : Evidence → Ident → Bool
   | .keyProof d, .didKey d' => d == d'
   | .xmppReply j q, .xmpp j' => j == j' && q == p
   | .oidcToken i s q, .oidc i' s' => i == i' && s == s' && q == p && s == p
+  | .oidcEmail i e s q, .email e' => e == e' && q == p && emailOk t i e s
   | _, _ => false
 
 /-- The profile document speaks for itself; every other identifier needs
 evidence. -/
-def evidenced (p : String) (evs : List Evidence) (i : Ident) : Bool :=
-  i == .profile p || evs.any (fun e => supports p e i)
+def evidenced (t : Trust) (p : String) (evs : List Evidence) (i : Ident) : Bool :=
+  i == .profile p || evs.any (fun e => supports t p e i)
 
 /-- The identifiers an ACL may name for this person. -/
-def bound (p : String) (claims : List Ident) (evs : List Evidence) : List Ident :=
-  claims.filter (evidenced p evs)
+def bound (t : Trust) (p : String) (claims : List Ident) (evs : List Evidence) : List Ident :=
+  claims.filter (evidenced t p evs)
 
-theorem bound_sound {p claims evs i} (h : i ∈ bound p claims evs) :
-    i ∈ claims ∧ (i = .profile p ∨ ∃ e ∈ evs, supports p e i = true) := by
+theorem bound_sound {t p claims evs i} (h : i ∈ bound t p claims evs) :
+    i ∈ claims ∧ (i = .profile p ∨ ∃ e ∈ evs, supports t p e i = true) := by
   simp only [bound, List.mem_filter, evidenced, Bool.or_eq_true, beq_iff_eq,
     List.any_eq_true] at h
   exact ⟨h.1, h.2⟩
 
-theorem bound_complete {p claims evs i e} (hc : i ∈ claims) (he : e ∈ evs)
-    (hs : supports p e i = true) : i ∈ bound p claims evs := by
+theorem bound_complete {t p claims evs i e} (hc : i ∈ claims) (he : e ∈ evs)
+    (hs : supports t p e i = true) : i ∈ bound t p claims evs := by
   simp only [bound, List.mem_filter, evidenced, Bool.or_eq_true, beq_iff_eq,
     List.any_eq_true]
   exact ⟨hc, Or.inr ⟨e, he, hs⟩⟩
 
-theorem unclaimed_never_bound {p claims evs i} (h : i ∉ claims) :
-    i ∉ bound p claims evs := fun hb => h (bound_sound hb).1
+theorem unclaimed_never_bound {t p claims evs i} (h : i ∉ claims) :
+    i ∉ bound t p claims evs := fun hb => h (bound_sound hb).1
 
-theorem other_profile_evidence_useless {p q j i s i'} (h : q ≠ p) :
-    supports p (.xmppReply j q) i' = false ∧
-    supports p (.oidcToken i s q) i' = false := by
+theorem other_profile_evidence_useless {t p q j i s e i'} (h : q ≠ p) :
+    supports t p (.xmppReply j q) i' = false ∧
+    supports t p (.oidcToken i s q) i' = false ∧
+    supports t p (.oidcEmail i e s q) i' = false := by
   cases i' <;> simp [supports, h]
 
-theorem bound_mono_evidence {p claims evs evs' i} (hsub : ∀ e ∈ evs, e ∈ evs')
-    (h : i ∈ bound p claims evs) : i ∈ bound p claims evs' := by
+theorem bound_mono_evidence {t p claims evs evs' i} (hsub : ∀ e ∈ evs, e ∈ evs')
+    (h : i ∈ bound t p claims evs) : i ∈ bound t p claims evs' := by
   rcases bound_sound h with ⟨hc, hp | ⟨e, he, hs⟩⟩
   · subst hp
     simp [bound, evidenced, hc]
   · exact bound_complete hc (hsub e he) hs
 
-theorem bound_antitone_claims {p claims claims' evs i}
-    (hsub : ∀ c ∈ claims', c ∈ claims) (h : i ∈ bound p claims' evs) :
-    i ∈ bound p claims evs := by
+theorem bound_antitone_claims {t p claims claims' evs i}
+    (hsub : ∀ c ∈ claims', c ∈ claims) (h : i ∈ bound t p claims' evs) :
+    i ∈ bound t p claims evs := by
   simp only [bound, List.mem_filter] at h ⊢
   exact ⟨hsub i h.1, h.2⟩
 
@@ -143,10 +176,226 @@ theorem closure_mentioned (p : String) (links : List (Ident × Ident)) :
         · simp at hx; exact Or.inl hx.symm
         · simp at hx
 
-theorem oidc_sub_is_profile {p e iss sub} (h : supports p e (.oidc iss sub) = true) :
+theorem oidc_sub_is_profile {t p e iss sub} (h : supports t p e (.oidc iss sub) = true) :
     sub = p := by
   cases e <;> simp [supports] at h
   exact h.1.1.2 ▸ h.2
+
+/-! ## Email addresses -/
+
+theorem toLower_idem (c : Char) : c.toLower.toLower = c.toLower := by
+  unfold Char.toLower
+  split <;> rename_i h
+  · simp at *
+    intro h1
+    have hv := c.valid
+    rcases h with ⟨h2, h3⟩
+    simp only [UInt32.le_iff_toNat_le, UInt32.lt_iff_toNat_lt, UInt32.toNat_add] at *
+    simp at *
+    omega
+  · simp
+
+/-- Lower-casing changes only A–Z, so it never makes or removes `@`, `+` or `.`. -/
+theorem toLower_eq_self_of_not_upper (c : Char) (h : ¬ ('A' ≤ c ∧ c ≤ 'Z')) : c.toLower = c := by
+  unfold Char.toLower
+  split <;> rename_i h'
+  · exfalso; apply h; simp only [Char.le_def] at *; exact ⟨h'.1, h'.2⟩
+  · rfl
+
+theorem toLower_eq_punct {c d : Char} (hd : ¬ ('A' ≤ d ∧ d ≤ 'Z')) (hd2 : ¬ ('a' ≤ d ∧ d ≤ 'z'))
+    (h : c.toLower = d) : c = d := by
+  revert h; unfold Char.toLower; split <;> rename_i h'
+  · intro h1; exfalso; apply hd2; subst h1
+    simp only [Char.le_def] at *
+    simp only [UInt32.le_iff_toNat_le, UInt32.toNat_add] at *
+    simp at *; omega
+  · exact id
+
+theorem lower_ne {c d : Char} (hd : ¬ ('A' ≤ d ∧ d ≤ 'Z')) (hd2 : ¬ ('a' ≤ d ∧ d ≤ 'z'))
+    (hc : c ≠ d) : c.toLower ≠ d := fun h => hc (toLower_eq_punct hd hd2 h)
+
+theorem map_lower_idem (l : List Char) : (l.map Char.toLower).map Char.toLower = l.map Char.toLower := by
+  simp [List.map_map, Function.comp_def, toLower_idem]
+
+theorem lower_ne_at {c : Char} (h : c ≠ '@') : c.toLower ≠ '@' := lower_ne (by decide) (by decide) h
+theorem lower_ne_plus {c : Char} (h : c ≠ '+') : c.toLower ≠ '+' := lower_ne (by decide) (by decide) h
+theorem lower_ne_dot {c : Char} (h : c ≠ '.') : c.toLower ≠ '.' := lower_ne (by decide) (by decide) h
+
+/-! ## Splitting at the last `@` -/
+
+def splitLast : List Char → Option (List Char × List Char)
+  | [] => none
+  | c :: cs =>
+    match splitLast cs with
+    | some (l, d) => some (c :: l, d)
+    | none => if c = '@' then some ([], cs) else none
+
+theorem splitLast_none : ∀ {d : List Char}, '@' ∉ d → splitLast d = none
+  | [], _ => rfl
+  | c :: cs, h => by
+    have hc : c ≠ '@' := fun e => h (e ▸ List.mem_cons_self)
+    have hcs : '@' ∉ cs := fun m => h (List.mem_cons_of_mem _ m)
+    simp [splitLast, splitLast_none hcs, hc]
+
+theorem splitLast_join {d : List Char} (hd : '@' ∉ d) :
+    ∀ l : List Char, splitLast (l ++ '@' :: d) = some (l, d)
+  | [] => by simp [splitLast, splitLast_none hd]
+  | c :: l => by simp [splitLast, splitLast_join hd l]
+
+theorem splitLast_noat : ∀ {s l d : List Char}, splitLast s = some (l, d) → '@' ∉ d
+  | [], _, _, h => by simp [splitLast] at h
+  | c :: cs, l, d, h => by
+    simp only [splitLast] at h
+    split at h
+    · rename_i l' d' heq; simp at h; rw [← h.2]; exact splitLast_noat heq
+    · rename_i heq
+      split at h
+      · simp at h; rw [← h.2]; intro m
+        -- cs has no '@', else splitLast cs would be some
+        exact absurd heq (by
+          intro hn
+          have : ∀ {t : List Char}, '@' ∈ t → splitLast t ≠ none := by
+            intro t
+            induction t with
+            | nil => intro m; simp at m
+            | cons x xs ih =>
+              intro m
+              simp only [splitLast]
+              cases hx : splitLast xs with
+              | some p => simp
+              | none =>
+                rcases List.mem_cons.mp m with e | m'
+                · simp [← e]
+                · exact absurd hx (ih m')
+          exact this m hn)
+      · simp at h
+
+/-! ## The canonical form -/
+
+def gmail : List Char := "gmail.com".toList
+def googlemail : List Char := "googlemail.com".toList
+
+/-- The domain: lower case; googlemail.com is gmail.com. -/
+def normDomain (d : List Char) : List Char :=
+  if d.map Char.toLower = googlemail then gmail else d.map Char.toLower
+
+/-- The local part: exact, except at gmail.com, Google's rule: case, dots and
+a `+tag` do not matter. -/
+def normLocal (d l : List Char) : List Char :=
+  if d = gmail then ((l.takeWhile (· ≠ '+')).filter (· ≠ '.')).map Char.toLower else l
+
+def normalize (s : List Char) : Option (List Char) :=
+  match splitLast s with
+  | none => none
+  | some (l, d) => let d' := normDomain d; some (normLocal d' l ++ '@' :: d')
+
+theorem normDomain_idem (d : List Char) : normDomain (normDomain d) = normDomain d := by
+  unfold normDomain
+  by_cases h : d.map Char.toLower = googlemail
+  · simp only [h, if_true]; decide
+  · simp only [h, if_false, map_lower_idem]
+
+theorem normDomain_noat {d : List Char} (h : '@' ∉ d) : '@' ∉ normDomain d := by
+  unfold normDomain
+  split
+  · decide
+  · intro m
+    obtain ⟨c, hc, he⟩ := List.mem_map.mp m
+    exact lower_ne_at (fun e => h (e ▸ hc)) he
+
+theorem takeWhile_self {p : Char → Bool} : ∀ {l : List Char}, (∀ x ∈ l, p x = true) → l.takeWhile p = l
+  | [], _ => rfl
+  | x :: xs, h => by
+    simp [List.takeWhile, h x List.mem_cons_self, takeWhile_self (fun y hy => h y (List.mem_cons_of_mem _ hy))]
+
+theorem mem_takeWhile {p : Char → Bool} : ∀ {l : List Char} {x}, x ∈ l.takeWhile p → p x = true
+  | [], _, h => by simp at h
+  | y :: ys, x, h => by
+    simp only [List.takeWhile] at h
+    split at h
+    · rename_i hy
+      rcases List.mem_cons.mp h with e | m
+      · subst e; exact hy
+      · exact mem_takeWhile m
+    · simp at h
+
+theorem normLocal_idem (d l : List Char) : normLocal d (normLocal d l) = normLocal d l := by
+  unfold normLocal
+  split
+  · rename_i hg
+    generalize hm : ((l.takeWhile (· ≠ '+')).filter (· ≠ '.')) = m
+    have hall : ∀ y ∈ m, y ≠ '+' ∧ y ≠ '.' := by
+      intro y hy; rw [← hm] at hy
+      obtain ⟨hy1, hy2⟩ := List.mem_filter.mp hy
+      exact ⟨by simpa using mem_takeWhile hy1, by simpa using hy2⟩
+    have hlow : ∀ x ∈ m.map Char.toLower, x ≠ '+' ∧ x ≠ '.' := by
+      intro x hx
+      obtain ⟨y, hy, rfl⟩ := List.mem_map.mp hx
+      exact ⟨lower_ne_plus (hall y hy).1, lower_ne_dot (hall y hy).2⟩
+    rw [takeWhile_self (fun x hx => by simpa using (hlow x hx).1)]
+    rw [List.filter_eq_self.mpr (fun x hx => by simpa using (hlow x hx).2)]
+    exact map_lower_idem m
+  · rfl
+
+/-- **Normalizing twice changes nothing.** -/
+theorem normalize_idem {s n : List Char} (h : normalize s = some n) : normalize n = some n := by
+  unfold normalize at h
+  split at h
+  · simp at h
+  · rename_i l d hs
+    simp only [Option.some.injEq] at h
+    subst h
+    have hd := normDomain_noat (splitLast_noat hs)
+    unfold normalize
+    rw [splitLast_join hd]
+    simp only [normDomain_idem, normLocal_idem]
+
+/-- The canonical form of an address, as a string, or none. -/
+def canonEmail (a : String) : Option String := (normalize a.toList).map String.ofList
+
+theorem canonEmail_idem {a c : String} (h : canonEmail a = some c) : canonEmail c = some c := by
+  unfold canonEmail at h ⊢
+  cases hn : normalize a.toList with
+  | none => simp [hn] at h
+  | some n =>
+    simp only [hn, Option.map_some, Option.some.injEq] at h
+    subst h
+    simp [String.toList_ofList, normalize_idem hn]
+
+/-- **Only the domain's issuer can vouch for an address.** Email evidence
+from an issuer that the owner has not listed for that address's domain
+supports nothing, however well signed. -/
+theorem email_needs_authority {t p i e s q i'} (h : (i, domainOf e) ∉ t.authority) :
+    supports t p (.oidcEmail i e s q) i' = false := by
+  cases i' <;> simp [supports, emailOk, List.contains_iff_mem, h]
+
+/-- **A pinned address stays with its first subject.** Once (address,
+issuer, subject) is pinned, a token for the same address with another
+issuer or subject supports nothing: a reassigned or recycled address does
+not inherit access. -/
+theorem email_pin_holds {t p i e s q i' i0 s0} (hp : (e, i0, s0) ∈ t.pins) (hd : i ≠ i0 ∨ s ≠ s0) :
+    supports t p (.oidcEmail i e s q) i' = false := by
+  cases i' <;> simp only [supports, Bool.false_eq_true] <;> try rfl
+  rename_i e'
+  simp only [emailOk, Bool.and_eq_false_iff, List.all_eq_false]
+  right; right
+  refine ⟨_, hp, ?_⟩
+  intro h
+  simp only [bne_self_eq_false, Bool.false_or, Bool.and_eq_true, beq_iff_eq] at h
+  rcases hd with hd | hd
+  · exact hd h.1.symm
+  · exact hd h.2.symm
+
+#guard canonEmail "John.Doe+lunch@GoogleMail.com" == some "johndoe@gmail.com"
+#guard canonEmail "John.Doe+lunch@Example.COM" == some "John.Doe+lunch@example.com"
+#guard canonEmail "no-at-sign" == none
+#guard supports { authority := [("https://accounts.google.com", "gmail.com")] } "p"
+  (.oidcEmail "https://accounts.google.com" "johndoe@gmail.com" "1234" "p") (.email "johndoe@gmail.com")
+#guard !supports { authority := [("https://accounts.google.com", "gmail.com")] } "p"
+  (.oidcEmail "https://evil.example" "johndoe@gmail.com" "1234" "p") (.email "johndoe@gmail.com")
+def pinned : Trust := { authority := [("https://accounts.google.com", "gmail.com")], pins := [("johndoe@gmail.com", "https://accounts.google.com", "1234")] }
+#guard !supports pinned "p"
+  (.oidcEmail "https://accounts.google.com" "johndoe@gmail.com" "9999" "p") (.email "johndoe@gmail.com")
 
 /-! ## WAC agent IRIs -/
 
@@ -159,6 +408,7 @@ def agentIri : Ident → String
   | .didKey d => d
   | .xmpp j => "xmpp:" ++ j
   | .oidc _ s => s
+  | .email a => "mailto:" ++ a
 
 /-- The kind of IRI each agent must be, checked by the host before an
 identifier enters `claims` (SHACL `sh:pattern`). -/
@@ -167,6 +417,7 @@ def wellFormed : Ident → Prop
   | .didKey d => d.startsWith "did:key:"
   | .xmpp j => ¬ j.startsWith "xmpp:" ∧ j ≠ ""
   | .oidc _ s => s.startsWith "https:" ∨ s.startsWith "http:"
+  | .email a => canonEmail a = some a
 
 /-- An OIDC subject is the person's CID document, so `supports` binds an
 OIDC token only when its `sub` is the profile IRI (`oidc_sub_is_profile`):
@@ -268,7 +519,7 @@ theorem replay_log : ∀ (v : List String) (vs : List (List String)),
 
 /-! ## Checks -/
 
-#guard bound "https://pod/me#i"
+#guard bound {} "https://pod/me#i"
     [.profile "https://pod/me#i", .didKey "did:key:zA", .xmpp "me@x", .xmpp "eve@x"]
     [.keyProof "did:key:zA", .xmppReply "me@x" "https://pod/me#i",
      .xmppReply "eve@x" "https://pod/eve#i"]
