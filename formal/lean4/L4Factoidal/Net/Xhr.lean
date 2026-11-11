@@ -468,7 +468,7 @@ def allHeaders (x : Xhr) : String :=
   | some r =>
     if x.state < 2 then "" else
     let hs := r.headers.map fun (n, v) => (lower n, v)
-    let sorted := (hs.toArray.qsort (fun a b => a.1 < b.1)).toList
+    let sorted := hs.mergeSort fun a b => decide (a.1 ≤ b.1)
     String.join (sorted.map fun (n, v) => n ++ ": " ++ v ++ "\r\n")
 
 /-- One field of a `web_api` call as a string. -/

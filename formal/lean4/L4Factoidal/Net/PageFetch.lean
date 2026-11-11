@@ -164,7 +164,7 @@ def safeHeader (name value : String) : Bool :=
 /-- The author's unsafe header names, lowercased and sorted, each once (Fetch §4.8 step 6). -/
 def unsafeHeaderNames (hs : List (String × String)) : List String :=
   let names := (hs.filter fun (n, v) => !safeHeader n v).map (lower ·.1)
-  (names.eraseDups.toArray.qsort (· < ·)).toList
+  names.eraseDups.mergeSort fun a b => decide (a ≤ b)
 
 /-! ## Requests and answers -/
 
