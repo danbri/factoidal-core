@@ -207,3 +207,30 @@ chrome): the text and links are there, in one column, and much of the design is 
 * Every one of these pages carries the "Partial page" note.
 
 The Hub loads only pages of its own site, so these sites do not open there.
+
+## Interactive console (issue 372, stage 1)
+
+The console accepts one line of JavaScript (2048 characters) on desktop and Hub.
+Enter evaluates it in the source page's existing script session; copy, paste,
+selection and undo use the address editor. Results and errors appear above older
+entries. Evaluation applies DOM changes and runs a microtask checkpoint.
+It never evaluates page code in the host JavaScript engine.
+
+The engine's `scriptSession` action `evaluate` takes `session` and `expression`
+(at most 64 KiB) and returns a normal turn plus `evaluation: {text, exception}`.
+Wrong or stale session IDs are rejected without replacing the live session.
+A static page starts a realm on its first console submission. A scripted page
+whose scripts did not start is not restarted by console input.
+
+This first console uses indirect eval on BubblePopJS: use `var` for bindings
+shared between submissions. Objects have a plain preview, without property
+inspection; its preview does not invoke getters or `toString`. QuickJS keeps its
+existing completion-string conversion and page-mode exception reporting: a console
+exception can dispatch an error event to the page. Multiline paste is rejected explicitly.
+Only one script session is held by the engine; older tabs can therefore be stale.
+Command recall, live log streaming, CDP, MCP and breakpoints remain on
+[issue 372](https://github.com/danbri/factoidal-core/issues/372).
+
+Checks: `console_repl_test.ts`, `--console-sweep`, and `hub_console_check.mjs`
+(keyboard input, promise jobs, exceptions, and a DOM change rendered on the source
+tab, on BubblePopJS and QuickJS AOT). The console adds no listening port.

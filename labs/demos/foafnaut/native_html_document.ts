@@ -327,6 +327,18 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
     liberal:!!accept.liberal,
     /** A render answered with the skips: later renders do not ask for them. */
     diagnosticsSeen:()=>{delete options.diagnostics;},
+    /** A console may start a realm for a static page. Never replay a scripted page. */
+    beginConsole:async()=>{
+      if(script)return;
+      if(scripted)throw new Error("This page's scripts did not start. Reload it with scripts enabled.");
+      const turn=await scriptHost?.start(document.source,document.url,[],document.encoding,
+        {...mode,...(resources.length?{resources}:{}),...(webFonts.length?{webFonts}:{})});
+      if(!turn)throw new Error("Page scripts are disabled.");
+      script={session:turn.session,turn};
+      Object.assign(page,{script});
+      noteTurn(page,turn);
+      if(turn.commands)options.commands=turn.commands;
+    },
     /** A later turn of the page's script session: its commands, when the DOM changed. */
     applyTurn:(turn:ScriptTurn)=>{noteTurn(page,turn);if(script)script.turn=turn;if(turn.changed&&turn.commands)options.commands=turn.commands;return turn.changed;},
     // What compile needs, as plain data, so the engine in a worker can run it.

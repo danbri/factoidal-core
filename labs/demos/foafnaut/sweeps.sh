@@ -37,6 +37,7 @@ SWEEPS=(
   "back|--back-sweep"
   "graph|--graph-sweep"
   "edit|--edit-sweep"
+  "console|--console-sweep --html $LAB/pages/index.html"
   "press|--press-sweep"
   "swipe|--swipe-sweep"
   "paste|--paste-sweep $INDEX"
