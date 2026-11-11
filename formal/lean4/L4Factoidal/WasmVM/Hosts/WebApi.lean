@@ -231,6 +231,36 @@ def randomBytes (s : State) (n : Nat) : Except Int (ByteArray × State) :=
   let (out, d) := d.generate h n
   .ok (out, { s with rng := some d, draws := s.draws + 1 })
 
+/-- The seed of a session's `Math.random`: the first 8 bytes (little-endian) of
+SHA-256("foafnaut Math.random" ‖ 0 ‖ entropy), and never 0 (xorshift's fixed point). Both
+engines' `Math.random` is xorshift, not a cryptographic generator, and its outputs give
+its state away: the hash keeps them from telling anything of the session's entropy, which
+also seeds the HMAC_DRBG. `none` without entropy (the engine keeps its own seed).
+
+Used by BubblePopJS's dedicated workers (`Hosts.LeanJSWorkers.start`), each with its own
+entropy; without it every worker had the realm snapshot's constant seed (cryptosec
+finding F2, record 2026-11-09-crypto-boundary-security.md on wip/cryptosec, which defines
+the same function for pages). -/
+def mathRandomSeed (entropy : ByteArray) : Option UInt64 :=
+  if entropy.size < minEntropy then none else
+  let d := Crypto.WebHacl.hashFast .sha256 ("foafnaut Math.random".toUTF8 ++ ByteArray.mk #[0] ++ entropy)
+  let x := (List.range 8).foldl (fun (acc : UInt64) i => acc ||| ((d.get! i).toUInt64 <<< (8 * i).toUInt64)) 0
+  some (if x == 0 then 1 else x)
+
+/-- Kind: safety property of the seed.
+Says: a seed `mathRandomSeed` gives is never 0, xorshift's fixed point, so `Math.random`
+never sticks at one value.
+Does not say: anything about the quality or secrecy of the seed, or of xorshift. -/
+theorem mathRandomSeed_ne_zero {e : ByteArray} {x : UInt64} (h : mathRandomSeed e = some x) : x ≠ 0 := by
+  unfold mathRandomSeed at h
+  split at h
+  · cases h
+  · simp only [Option.some.injEq] at h
+    subst h
+    split
+    · decide
+    · rename_i hx; simpa using hx
+
 /-- No path draws from an unseeded generator: every successful draw had at least 256
 bits of the embedder's entropy. -/
 theorem randomBytes_seeded {s s' : State} {n : Nat} {out : ByteArray}

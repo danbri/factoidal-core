@@ -189,6 +189,12 @@ def start (base page : Session) (w : Worker) (src : String) (scripts : Array (St
     (entropy : ByteArray) : Worker × Option String :=
   let limits := { page.limits with entropy := ByteArray.empty, commands := 0, logs := maxLogs }
   let s : Session := { base with limits, steps := 0, jobs := 0, tasks := 0, errors := #[], lastFrame := none }
+  -- Math.random: a seed from this worker's own entropy, not the realm snapshot's constant
+  -- (`WebApi.mathRandomSeed`; cryptosec finding F2). No entropy: the snapshot's seed, and
+  -- no crypto generator either (`WebApi.randomBytes` fails closed).
+  let s := match Hosts.WebApi.mathRandomSeed entropy with
+    | some x => { s with heap := { s.heap with rng := x } }
+    | none => s
   let s := (s.setHost (workerHost page entropy)).setBudget workerBudget
   let s := s.setWk { scripts }
   let s := (s.api? "worker" #[.str (JS.Str.ofHost w.url), .str (JS.Str.ofHost w.name)]).1
