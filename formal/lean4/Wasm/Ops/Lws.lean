@@ -78,6 +78,7 @@ import L4Factoidal.LWS.Handler
 import L4Factoidal.HTTP.LocalGuard
 import L4Factoidal.LWS.DirLock
 import L4Factoidal.LWS.RootAclInstall
+import L4Factoidal.LWS.NoLockout
 import L4Factoidal.JOSE.Base64Url
 import L4Factoidal.Crypto.P256Native
 import L4Factoidal.Crypto.RsaNative
@@ -233,6 +234,11 @@ structure OpenConfig where
   /-- Did LWS write the snapshot document (`lwsWrittenDoc`)? A Solid handle
   refuses such a storage (`solidRefusesLws`). -/
   snapshotLws : Bool := false
+  /-- A handle opened for the operator (`"operator": true`): the offline
+  recovery of `factoidal lws-acl-reset` (`lwsAclReset`,
+  `L4Factoidal.LWS.NoLockout.reset`). It opens only an existing storage and
+  answers no request. -/
+  operator : Bool := false
 deriving Inhabited
 
 /-- The other state of a storage, besides its resources: what the snapshot
@@ -342,6 +348,7 @@ def openConfigOfJson (text : String) : Except String OpenConfig :=
           | some (.number s) => (s.toNat?).getD 0
           | _ => 0
         let insecure := j.field? "insecureNoAuth" == some (.bool true)
+        let operator := j.field? "operator" == some (.bool true)
         -- A component principal (issue 1238): an in-process storage with no
         -- listener; the host names the agent, WAC decides.
         let principal := j.getString? "principal"
@@ -466,7 +473,8 @@ def openConfigOfJson (text : String) : Except String OpenConfig :=
               now, rootAcl, snapshot, authz,
               notifications, moves, typeIndex, accessGrants, entropy, notif, signingKey,
               searchResults, searchResultsTtl, searchResultsMax, results, storageKey, merkle,
-              files, redirectsMax, guard, snapshotLws := (snapDoc.map lwsWrittenDoc).getD false }
+              files, redirectsMax, guard, snapshotLws := (snapDoc.map lwsWrittenDoc).getD false,
+              operator }
 
 /-- The JWS verifiers over the vendored HACL* primitives (P-256 ECDSA,
 RSA PKCS#1 v1.5, Ed25519): `skills/crypto-policy`. -/
@@ -507,6 +515,8 @@ structure OpenStorage where
   reads : List (String × BodyStub) := []
   /-- The `Host` and `Origin` guard (`OpenConfig.guard`). -/
   guard : Option L4Factoidal.HTTP.LocalGuard.LocalGuard := none
+  /-- Opened for the operator (`OpenConfig.operator`): `lwsAclReset` only. -/
+  operator : Bool := false
 
 /-- The signer of a storage: Ed25519 (RFC 8032) through the vendored HACL*
 code, under the verification method its storage description publishes. -/
@@ -554,7 +564,7 @@ def buildStorage (oc : OpenConfig) (ms : MemState) : OpenStorage :=
   let run := ((seeded "lws-activity-run:").map (fun d =>
     L4Factoidal.Crypto.bytesToHex (d.extract 0 8))).getD ""
   let notif := { (oc.notif.getD {}) with run }
-  { guard := oc.guard,
+  { guard := oc.guard, operator := oc.operator,
     cfg := { oc.cfg with notifications := oc.notifications, notificationKeyX := keyX,
                           moves := oc.moves, typeIndex := oc.typeIndex,
                           accessGrants := oc.accessGrants,
@@ -620,6 +630,11 @@ structure Loading where
 
 private initialize lwsLoading : IO.Ref (Std.HashMap String Loading) ← IO.mkRef ∅
 
+/-- The refusal of an operator open of a directory that holds no storage:
+the operator command never makes a storage. -/
+def operatorNoStorage : String :=
+  "lws-acl-reset: refused: this directory holds no LWS storage; nothing was written"
+
 /-- The control files a start of a storage kept in files reads. -/
 def controlFiles : List String := [Files.metaPath, Files.journalPath, Files.snapshotPath]
 
@@ -640,6 +655,7 @@ def lwsOpen (configJson : String) : IO String := do
       else
         match oc.snapshot with
         | none =>
+            if oc.operator then pure (errJson operatorNoStorage) else
             -- A new storage: the root ACL, when given, is part of it.
             lwsTable.modify (·.insert h (buildStorage oc (initialStorage oc.now oc.rootAcl)))
             pure (okWith [("handle", .string h), ("root", .string rootPath)])
@@ -737,6 +753,7 @@ def lwsLoad (h docJson : String) (blob : ByteArray) : IO (String × ByteArray) :
               (got Files.journalPath) (got Files.snapshotPath) with
           | .error e => fail e
           | .ok .fresh =>
+              if oc.operator then fail operatorNoStorage else
               finishLoad h oc seed (initialStorage oc.now oc.rootAcl) {} none false
           | .ok (.migrate doc) =>
               -- Migration from the snapshot of the default mode: read it as
@@ -793,11 +810,11 @@ def lwsPersist (h optsJson : String) : IO (String × ByteArray) := do
   -- branch is alive during the call).
   match ← lwsTable.modifyGet (fun t => (t[h]?, t.erase h)) with
   | none => pure (noBytes (unknownLwsHandle h))
-  | some ⟨cfg, mem, authz, notif, signingKey, results, storageKey, moved, files, hydrated, reads, guard⟩ =>
+  | some ⟨cfg, mem, authz, notif, signingKey, results, storageKey, moved, files, hydrated, reads, guard, operator⟩ =>
       match files with
       | none =>
           lwsTable.modify (·.insert h
-            ⟨cfg, mem, authz, notif, signingKey, results, storageKey, moved, none, hydrated, reads, guard⟩)
+            ⟨cfg, mem, authz, notif, signingKey, results, storageKey, moved, none, hydrated, reads, guard, operator⟩)
           pure (noBytes (errJson "lwsPersist: this storage is not kept in files (\"storage\": \"files\")"))
       | some fs =>
           let side := sideMembersOf cfg.baseIri notif signingKey authz results moved
@@ -809,7 +826,7 @@ def lwsPersist (h optsJson : String) : IO (String × ByteArray) := do
               pure (noBytes (errJson s!"{e}; the storage is closed"))
           | .ok (fs', pl, mem') =>
               lwsTable.modify (·.insert h
-                ⟨cfg, mem', authz, notif, signingKey, results, storageKey, moved, some fs', hydrated, reads, guard⟩)
+                ⟨cfg, mem', authz, notif, signingKey, results, storageKey, moved, some fs', hydrated, reads, guard, operator⟩)
               pure (planAnswer [] pl)
 
 /-- A delivery request as the host receives it: POST `body` to `url` with
@@ -850,6 +867,8 @@ def lwsStepWith (h requestJson : String) (blob : Option ByteArray) :
   match (← lwsTable.get)[h]? with
   | none => pure (noBytes (unknownLwsHandle h))
   | some open_ =>
+      if open_.operator then
+        pure (noBytes (errJson "an operator handle (\"operator\": true) answers no request")) else
       match parseJson requestJson with
       | .error e => pure (noBytes (errJson s!"request: {toString e}"))
       | .ok j =>
@@ -975,6 +994,35 @@ def lwsEgress (h docJson : String) : IO String := do
               match Notifications.egressOf open_.cfg url addresses with
               | .ok (host, a) => pure (okWith [("host", .string host), ("address", .string a)])
               | .error w => pure (okWith [("refused", .string w)])
+
+/-- `lwsAclReset(handle, {acl})`: the offline operator recovery
+(`factoidal lws-acl-reset`). Only on a handle opened with `"operator": true`
+(which answers no request and opened an existing storage under the
+storage directory lock the host took first, `lwsDirLock`). Lean decides
+(`L4Factoidal.LWS.NoLockout.reset`): `acl` becomes the root ACL resource
+`/.acl`, written through the store the handle runs, so its journal records the
+write and the host persists it on `changed`; no other resource changes
+(`reset_other_paths`); an `acl` that gives no agent `acl:Control` on the root is
+refused (`reset_refuses`). Answers `changed: true` and `notice`, the words the
+host prints on standard error. -/
+def lwsAclReset (h docJson : String) : IO String := do
+  match (← lwsTable.get)[h]? with
+  | none => pure (unknownLwsHandle h)
+  | some open_ =>
+      if !open_.operator then
+        pure (errJson "lwsAclReset: only a handle opened for the operator (\"operator\": true) is reset")
+      else match parseJson docJson with
+      | .error e => pure (errJson s!"lwsAclReset: {toString e}")
+      | .ok j =>
+          match j.getString? "acl" with
+          | none => pure (errJson "lwsAclReset: member \"acl\" (the Turtle of the new root ACL) is required")
+          | some body =>
+              match NoLockout.reset (IndexedStore LwsBackend lwsBackendLaws)
+                  L4Factoidal.Solid.Server.aclGraphOf open_.cfg.baseIri body open_.mem with
+              | .error e => pure (errJson e)
+              | .ok mem' =>
+                  lwsTable.modify (·.insert h { open_ with mem := mem' })
+                  pure (okWith [("changed", .bool true), ("notice", .string NoLockout.resetNotice)])
 
 /-- `lwsStep(handle, requestJson)` through the string entry: the content
 travels in the document (`body` or `bodyBase64`). -/
@@ -1159,7 +1207,8 @@ def lwsStorageKeyNew (requestJson : String) : String :=
 /-- The op names this module serves. -/
 def lwsOpNames : List String :=
   ["lwsOpen", "lwsStep", "lwsClose", "lwsSnapshot", "lwsFetched", "lwsDelivered", "lwsFlush",
-   "lwsEgress", "lwsLoad", "lwsPersist", "lwsRead", "lwsDirLock", "lwsAtRestNotice", "lwsStorageKeyNew"]
+   "lwsEgress", "lwsLoad", "lwsPersist", "lwsRead", "lwsDirLock", "lwsAtRestNotice", "lwsStorageKeyNew",
+   "lwsAclReset"]
 
 /-- What an op of this file does with a storage handle (owner requirement
 for 0.21.0: only LWS code reads or changes the data of an LWS storage;
@@ -1178,6 +1227,11 @@ inductive LwsOpRole where
   | deliver
   /-- Installs the keys of an authorization server; reads no resource. -/
   | issuerKeys
+  /-- Replaces the root ACL resource of a handle opened for the operator,
+  which answers no request (`lwsAclReset`, `NoLockout.reset`): only `/.acl`
+  changes, and only to a root ACL that gives some agent `acl:Control` on the
+  root. -/
+  | operator
   /-- Forgets the handle. -/
   | close
   /-- Takes no handle and reads no storage. -/
@@ -1191,6 +1245,7 @@ def lwsOpRole : String → Option LwsOpRole
   | "lwsDelivered" | "lwsFlush" | "lwsEgress" => some .deliver
   | "lwsFetched" => some .issuerKeys
   | "lwsClose" => some .close
+  | "lwsAclReset" => some .operator
   | "lwsDirLock" | "lwsAtRestNotice" | "lwsStorageKeyNew" => some .noStorage
   | _ => none
 

@@ -98,7 +98,7 @@ import { readSnapshot, persistIfChanged, storageKeyText, storageModeText, loadFi
 
 /** The ops this host needs from the engine. */
 export const LWS_OPS = ['lwsOpen', 'lwsStep', 'lwsClose', 'lwsSnapshot', 'lwsFetched', 'lwsDelivered', 'lwsEgress',
-  'lwsLoad', 'lwsPersist', 'lwsRead', 'lwsDirLock', 'lwsAtRestNotice']
+  'lwsLoad', 'lwsPersist', 'lwsRead', 'lwsDirLock', 'lwsAtRestNotice', 'lwsAclReset']
 
 /** How long this host waits for the answer to one delivery request before
  *  it reports "no answer" (status 0) to the engine. */
@@ -349,6 +349,10 @@ export async function openLwsStorage (options = {}) {
   // HTTP: createLwsServer refuses it.
   if (typeof options.principal === 'string') config.principal = options.principal
   if (typeof options.rootAcl === 'string') config.rootAcl = options.rootAcl
+  // The offline operator recovery (`factoidal lws-acl-reset`): a handle that
+  // opens only an existing storage, answers no request, and accepts
+  // `resetRootAcl` (L4Factoidal/LWS/NoLockout.lean, `reset`).
+  if (options.operator === true) config.operator = true
   // Notifications are on unless the caller turns them off; the engine
   // decides everything else about them.
   if (options.notifications === false) config.notifications = false
@@ -667,6 +671,24 @@ export async function openLwsStorage (options = {}) {
       }
       if (typeof envelope.wake === 'number') scheduleFlush(envelope.wake)
       return answer
+    },
+    /**
+     * The offline operator recovery: replace the root ACL resource (/.acl)
+     * with `acl` (Turtle). Only on a storage opened with `operator: true`,
+     * which holds the storage directory lock and answers no request. The
+     * engine decides (`lwsAclReset`, L4Factoidal/LWS/NoLockout.lean `reset`):
+     * only /.acl changes, through the journaled store, and an `acl` that gives
+     * no agent acl:Control on the storage root is refused (thrown with the
+     * engine's message in `envelope`). Returns the engine's notice.
+     */
+    resetRootAcl (acl) {
+      const told = engine.call('lwsAclReset', [handle, JSON.stringify({ acl })])
+      if (told === null || typeof told !== 'object' || told.ok === false) {
+        throw Object.assign(new Error(told && told.error ? told.error : 'lwsAclReset: no answer'),
+          { envelope: told })
+      }
+      persist(told)
+      return told.notice
     },
     /** Resolves when no delivery request is in flight. */
     async settled () {

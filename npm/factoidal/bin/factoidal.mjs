@@ -98,7 +98,7 @@ const REVIEW_WARNING = 'EXPERIMENTAL UNDER-REVIEWED CODE - USE WITH CARE - DO NO
 
 /** The commands that serve, speak a protocol, or handle keys and tokens. */
 const WARNED_COMMANDS = new Set(['serve', 'lws-serve', 'solid-serve', 'solid-client', 'lws-client',
-  'authz-serve', 'authz-keys', 'xmpp-serve', 'webdav-serve', 'webdav-user', 'xmpp-http-proxy', 'lws-keygen'])
+  'authz-serve', 'authz-keys', 'xmpp-serve', 'webdav-serve', 'webdav-user', 'xmpp-http-proxy', 'lws-keygen', 'lws-acl-reset'])
 
 const USAGE = `factoidal - the Factoidal persisted store, from Node or Deno
 
@@ -123,6 +123,9 @@ commands:
   lws-keygen                  print a new storage key for encryption at rest
                               (FACTOIDAL_LWS_KEY of lws-serve, solid-serve and
                               webdav-serve local mounts)
+  lws-acl-reset DIR FILE --operator
+                              offline operator recovery: replace the root ACL
+                              (/.acl) of a stopped LWS storage with FILE
   solid-client OP URL         run one Solid client operation
   lws-client OP URL           run one Linked Web Storage client operation
   authz-serve DIR             serve an OAuth 2.0 authorization server for LWS
@@ -1130,6 +1133,37 @@ The random bytes come from the host (WebCrypto getRandomValues); the engine
 makes the key text and the key id (formal/lean4/L4Factoidal/LWS/DirLock.lean,
 newStorageKey).`,
 
+  'lws-acl-reset': `factoidal lws-acl-reset - offline operator recovery of the root ACL of an LWS storage
+
+usage: factoidal lws-acl-reset DIR FILE --operator [--base IRI] [--storage files|snapshot]
+
+Replaces the root ACL resource (/.acl) of the LWS storage in DIR with the
+Turtle in FILE. It is the last resort when no agent can change /.acl through
+the protocol any more (lws-serve refuses a request that would leave no agent
+with acl:Control on the storage root, with 409; a storage can still lose its
+controller, for example when the only control key is lost). First try the
+recovery agent: an agent with acl:Control on the root can PUT /.acl.
+
+--operator is required: it confirms that you operate this storage and that
+the server is stopped. The command takes the storage directory lock
+(DIR/lws.lock) and refuses while a server holds it; it opens only an existing
+storage, through the same storage library as lws-serve (the engine reads and
+writes every file), answers no request, and changes no resource but /.acl.
+The write goes through the storage journal, and the command prints a notice
+on standard error.
+
+FILE must give some agent acl:Control on the storage root: an Authorization
+with acl:accessTo (or acl:default) the root container, acl:mode acl:Control,
+and an acl:agent, an acl:agentGroup with members, or an acl:agentClass.
+Otherwise the command refuses and nothing is written. Relative IRIs (<./>)
+are read against the root ACL's own IRI; when FILE names the root with an
+absolute IRI, give --base with the storage's base IRI (the one lws-serve
+serves, for example http://127.0.0.1:3000/).
+
+The decision is in Lean (formal/lean4/L4Factoidal/LWS/NoLockout.lean,
+reset; theorems reset_has_control, reset_other_paths, reset_refuses) and the
+lock in L4Factoidal/LWS/DirLock.lean.`,
+
   'webdav-user': `factoidal webdav-user - add or replace a user in a webdav-serve users file
 
 usage: factoidal webdav-user FILE NAME [--iterations N]
@@ -1322,7 +1356,8 @@ const VALUE_OPTIONS = {
   'webdav-user': new Set(['iterations']),
   'xmpp-http-proxy': new Set(['port', 'host', 'xmpp', 'xmpp-password-file', 'target', 'xmpp-host', 'xmpp-port',
     'xmpp-resource', 'xmpp-ca', 'timeout']),
-  'lws-keygen': new Set([])
+  'lws-keygen': new Set([]),
+  'lws-acl-reset': new Set(['base', 'storage'])
 }
 
 // ------------------------------------------------------------- commands
@@ -2534,6 +2569,68 @@ async function commandAuthzServe (positional, options) {
   return untilInterrupted(running, quiet)
 }
 
+// lws-acl-reset: the offline operator recovery of the root ACL of an LWS
+// storage. The storage library opens the storage under the directory lock
+// (`operator: true`: an existing storage only, no request answered), and the
+// engine decides the reset (L4Factoidal/LWS/NoLockout.lean, `reset`). This
+// host reads FILE and prints what the engine says.
+async function commandLwsAclReset (positional, options) {
+  if (positional.length !== 2) throw new UsageError('lws-acl-reset needs DIR and FILE')
+  if (options.operator !== true) {
+    throw new UsageError('lws-acl-reset replaces the root ACL of a storage offline; give --operator ' +
+      'to confirm that you operate this storage and that its server is stopped')
+  }
+  const [dir, file] = positional
+  const { statSync } = await import('node:fs')
+  let isDir = false
+  try { isDir = statSync(dir).isDirectory() } catch (_error) { isDir = false }
+  if (!isDir) {
+    err(`factoidal lws-acl-reset: ${dir} is not a directory; nothing was written`)
+    return EXIT_FAILURE
+  }
+  const acl = new TextDecoder('utf-8', { fatal: true }).decode(readWhole(file))
+  const { openLwsStorage, LwsHostError } = await import('../lws/server.mjs')
+  let storage
+  try {
+    storage = await openLwsStorage({
+      dir,
+      operator: true,
+      lockCommand: 'lws-acl-reset',
+      ...(typeof options.base === 'string' ? { baseIri: options.base } : {}),
+      ...(typeof options.storage === 'string' ? { storage: options.storage } : {})
+    })
+  } catch (error) {
+    if (error instanceof LwsHostError && error.unknownOp) return notWired('lws-acl-reset', error.message)
+    if (error !== null && typeof error === 'object' && (error.envelope !== undefined || error.stateFile === true)) {
+      err(`factoidal lws-acl-reset: ${error.envelope !== undefined ? error.envelope.error : error.message}`)
+      return EXIT_FAILURE
+    }
+    throw error
+  }
+  try {
+    for (const n of storage.notices || []) err(`lws-acl-reset: ${n}`)
+    let notice
+    try {
+      notice = storage.resetRootAcl(acl)
+    } catch (error) {
+      const message = error && error.message ? String(error.message) : String(error)
+      if (message.indexOf('unknown op') >= 0) return notWired('lws-acl-reset', message)
+      if (error !== null && typeof error === 'object' && error.envelope !== undefined && error.envelope !== null) {
+        err(`factoidal ${error.envelope.error}`)
+        if (typeof options.base !== 'string') {
+          err('lws-acl-reset: if FILE names the storage root with an absolute IRI, give --base with the storage\'s base IRI')
+        }
+        return EXIT_FAILURE
+      }
+      throw error
+    }
+    err(notice)
+    return EXIT_OK
+  } finally {
+    storage.close()
+  }
+}
+
 // lws-keygen (https://github.com/danbri/factoidal/issues/1135): 32 random
 // bytes from the host's random source go to the engine (`lwsStorageKeyNew`),
 // which gives the key text and its key id. The key goes to standard output
@@ -3320,7 +3417,8 @@ const COMMANDS = {
   'webdav-serve': commandWebdavServe,
   'webdav-user': commandWebdavUser,
   'xmpp-http-proxy': commandXmppHttpProxy,
-  'lws-keygen': commandLwsKeygen
+  'lws-keygen': commandLwsKeygen,
+  'lws-acl-reset': commandLwsAclReset
 }
 
 // ----------------------------------------------------------------- main

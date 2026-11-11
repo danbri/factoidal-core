@@ -101,6 +101,21 @@ const running = await listen({
   and its theorems are in `formal/lean4/L4Factoidal/LWS/RootAclInstall.lean`
   (listed in `formal/lean4/L4Factoidal/LWS/README.md`); with authorization
   off nothing is installed.
+* No lockout: with authorization on, a request that would leave the root ACL
+  (`/.acl`) with no agent that has `acl:Control` on the storage root (a PUT
+  or PATCH that drops the last one, a DELETE of `/.acl`, a move, an access
+  grant) is refused with 409 and changes nothing. A write that keeps a
+  Control agent, or swaps one for another, is accepted. Theorems
+  `step_keeps_root_control` and `lockout_iff`
+  (`formal/lean4/L4Factoidal/LWS/NoLockout.lean`, `NoLockoutTheorems.lean`).
+* The offline operator recovery: `factoidal lws-acl-reset DIR FILE --operator`
+  replaces only `/.acl` of a stopped storage with FILE, under the storage
+  directory lock, through this storage library (`openLwsStorage({ dir,
+  operator: true })` and `resetRootAcl(acl)`; the op `lwsAclReset`). It
+  refuses while a server holds the lock, in a directory with no storage, and
+  for a FILE that gives no agent `acl:Control` on the root (theorems
+  `reset_has_control`, `reset_other_paths`, `reset_refuses`). Relative IRIs
+  (`<./>`) need no `--base`.
 
 ## Pagination and client links
 

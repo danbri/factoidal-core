@@ -1562,6 +1562,14 @@ id = "wasm:lwsStorageKeyNew"
 reason = "makes the text and key id of a storage key from 32 random bytes the host gives; reads no RDF data (https://github.com/danbri/factoidal/issues/1135)"
 
 [[nonstage]]
+id = "wasm:lwsAclReset"
+reason = "the offline operator reset of the root ACL of an LWS handle opened with operator: true (LWS/NoLockout.lean reset): writes the given Turtle as /.acl and parses it only to decide, with Solid.Server.allowed, that some agent keeps acl:Control on the root; reads no other resource and produces no RDF data"
+
+[[nonstage]]
+id = "cli:lws-acl-reset"
+reason = "host command: takes the storage directory lock (wasm:lwsDirLock), opens the storage through openLwsStorage with operator: true, and passes FILE to wasm:lwsAclReset; prints the engine's notice"
+
+[[nonstage]]
 id = "cli:lws-keygen"
 reason = "host command: draws 32 random bytes and prints the key wasm:lwsStorageKeyNew gives; reads no RDF data"
 

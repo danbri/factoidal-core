@@ -1002,6 +1002,7 @@ import L4Factoidal.LWS.PaginationLinksTests
 import L4Factoidal.LWS.Authorization
 import L4Factoidal.LWS.AuthorizationTests
 import L4Factoidal.LWS.RootAclInstall
+import L4Factoidal.LWS.NoLockout
 import L4Factoidal.LWS.Notifications
 import L4Factoidal.LWS.NotificationsTests
 import L4Factoidal.LWS.Move
@@ -1032,6 +1033,7 @@ import L4Factoidal.HTTP.LocalGuard
 import L4Factoidal.LWS.Cors
 import L4Factoidal.LWS.Handler
 import L4Factoidal.LWS.AccessTheorems
+import L4Factoidal.LWS.NoLockoutTheorems
 import L4Factoidal.LWS.Client.Wire
 import L4Factoidal.LWS.Client.Report
 import L4Factoidal.LWS.Client.Machine

@@ -42,6 +42,8 @@ own binding, those rows are the difference.
 | `PaginationLinksTests.lean` | `#guard`s of both through `step`, positive and negative. |
 | `Authorization.lean` | storage-server authorization of the 2026-10-19 draft: Bearer tokens, RFC 9728 metadata, Web Access Control (https://github.com/danbri/factoidal/issues/886). |
 | `RootAclInstall.lean` | the first root ACL of an EXISTING storage (a storage made with `insecureNoAuth` has no `/.acl`). At open, with authorization on and a root ACL given (`rootAcl`, or `Authorization.ownerRootAcl` of `owner`), a storage with no `/.acl` gets the given one, before any request is answered; the op layer (`Wasm/Ops/Lws.lean`, `installRootAcl`) runs it in `lwsOpen` (a snapshot) and at the end of `lwsLoad` (a storage kept in files), and answers `changed` and `rootAclNotice`. Theorems below. |
+| `NoLockout.lean` | no request leaves a storage without an agent that has `acl:Control` on its root: `RootControl` (WAC's `Solid.Server.allowed`, mode `control`, on the root, for some requester), the decision `hasRootControl` (equal to it), the guard `lockout`, and the offline operator reset `reset` (`factoidal lws-acl-reset`). Theorems below. |
+| `NoLockoutTheorems.lean` | the guard in `Handler.step` (`Handler.lockoutGuard`): `step_keeps_root_control`, `decided_served_guarded`. |
 | `Notifications.lean` | notifications: the core draft's "Notifications" section and the webhook notification suite (`lws10-notifications-webhook`), both at w3c/lws-protocol 9a08ff65 — discovery, subscriptions (subscribe-time and delivery-time authorization), the changes of a step (`changesOf`, theorem `classify_sound`), routing (theorem `routed_authorized`), Activity Streams 2.0 envelopes, RFC 9421 signatures, retry and deactivation, and `serverStep`, which the wasm handle runs (https://github.com/danbri/factoidal/issues/890). |
 | `NotificationsTests.lean` | `#guard`s through `serverStep`, positive and negative, and `lwsGuardNotificationsDelivered` for the registry row `lws-core-16`. |
 | `Move.lean` | moving resources (LWS §Moving Resources, https://github.com/danbri/factoidal/issues/914): the `up` link of a linkset changed by JSON Patch or PUT, the refusals (409: destination missing or not a container, a cycle, the storage root, a name already taken, another storage), `move` as one function from store to store, and the theorems `move_tree` (the store stays a containment tree; with `tree_acyclic`, `parentOf_unique`, `tree_parent`), `move_unmoved`, `move_moved`, `move_vacated`. |
@@ -82,6 +84,49 @@ says `changed`. The socket of `lws-serve` is bound before the open (the port
 names `baseIri`), but every request waits for the open, which includes the
 install; and before the install, authorization is already on and fails
 closed. `L4Factoidal/Solid` (`solid-serve`) is not changed.
+
+## No lockout of the root ACL (`NoLockout.lean`, `NoLockoutTheorems.lean`)
+
+With authorization on, a request that changes the root ACL (the texts of the
+ACL resources WAC reads for the root, `rootTexts`: `/.acl`) and leaves no
+agent with `acl:Control` on the root is refused with 409, and changes
+nothing. `RootControl S parseAcl b st` is `∃ who, Solid.Server.allowed S
+parseAcl b st rootPath who .control = true`: the WAC decision every request
+is checked with, not a second reader. 409, not 403: the requester was
+allowed the request; it is refused for the state it would leave, and a 403
+of this server carries `error="insufficient_scope"`, which tells a client to
+get another token.
+
+| theorem | statement |
+|---|---|
+| `hasRootControl_iff` | `hasRootControl S parseAcl b st = true ↔ RootControl S parseAcl b st`: the decision (WAC asked for `candidates` of the root ACL graph: the public, any authenticated agent, each `acl:agent` and `vcard:hasMember`) is the meaning. From `hasRootControl_sound`, `hasRootControl_complete` and `decideAccess_candidates`. |
+| `allowed_of_texts` | `rootTexts S st = rootTexts S st' → allowed S parseAcl b st rootPath who m = allowed S parseAcl b st' rootPath who m`: WAC on the root reads only `rootTexts`. |
+| `lockout_iff` | `lockout S parseAcl b before after = true ↔ rootTexts S before ≠ rootTexts S after ∧ ¬ RootControl S parseAcl b after`: exactly the lockouts are refused. |
+| `accepted_keeps_control` | `lockout S parseAcl b before after = false → RootControl S parseAcl b before → RootControl S parseAcl b after`. |
+| `guard_refused_unchanged` | `lockout … = true → guard S parseAcl b t before resp after = (refusal t, before)`: a refused request changes nothing. |
+| `guard_keeps_control` | `RootControl S parseAcl b before → RootControl S parseAcl b (guard S parseAcl b t before resp after).2`. |
+| `decided_served_guarded` | with `s.authz.insecureNoAuth = false`, a `served` outcome of `Handler.decided` is either the refusal (`resp.status = 409 ∧ s' = { s with mem := mem } ∧ ch = false ∧ ds = []`) or `lockout IS aclGraphOf baseIri mem s'.mem = false`. |
+| `step_keeps_root_control` | `s.authz.insecureNoAuth = false → Handler.step V env s r x = .served resp s' ch ds → RootControl IS aclGraphOf env.cfg.baseIri (memOf s x) → RootControl IS aclGraphOf env.cfg.baseIri s'.mem`: for every request handled with authorization on, control of the root is kept. |
+| `reset_has_control` | `reset S parseAcl b body st = .ok st' → RootControl S parseAcl b st'`: the operator reset leaves a Control agent. |
+| `reset_writes` | `StoreLaws S → reset … = .ok st' → S.lookup st' rootAclPath = some (rootAclEntry body (S.now st))`. |
+| `reset_other_paths` | `StoreLaws S → reset … = .ok st' → p ≠ rootAclPath → S.lookup st' p = S.lookup st p`: only `/.acl` changes. |
+| `reset_refuses` | `¬ RootControl S parseAcl b (resetState S body st) → reset … = .error resetRefusal`. |
+
+The NoLockout theorems hold for every `Store σ` (with `StoreLaws` where
+stated); the handler theorems are about the store an LWS handle runs.
+`#guard`s at the end of `NoLockout.lean` check, on `MemStore`, that a write
+that removes the last Control agent is refused, a DELETE of `/.acl` is
+refused, a write that keeps one is accepted, a write that swaps the owner for
+another Control agent is accepted, public and group control count, control
+of another resource does not, and the reset accepts and refuses.
+
+The operator reset (`lwsAclReset`) runs only on a handle opened with
+`"operator": true`, which opens only an existing storage and answers no
+request; the host (`factoidal lws-acl-reset DIR FILE --operator`) takes the
+storage directory lock first (`DirLock.decide`; theorems
+`decide_alive_refuses`, `decide_otherHost_refuses`,
+`decide_sameInstance_refuses`). That the host takes the lock before it opens
+the storage, and reads the lock file honestly, is host code, not proved.
 
 ## What is pure and what is not
 

@@ -27,6 +27,11 @@ for the Merkle fields):
 
 Layers 3 to 6 each ask `Authorization.decide` before they read or change a
 resource.
+
+After layer 6, with authorization on, the no-lockout guard
+(`lockoutGuard`, `L4Factoidal.LWS.NoLockout`) refuses with 409 a request that
+would leave the root ACL resource with no agent that has `acl:Control` on the
+storage root; the refused request changes nothing.
 -/
 import L4Factoidal.LWS.MerkleHttp
 import L4Factoidal.LWS.Cors
@@ -37,6 +42,7 @@ import L4Factoidal.LWS.AccessGrants
 import L4Factoidal.LWS.Search
 import L4Factoidal.LWS.Move
 import L4Factoidal.HTTP.LocalGuard
+import L4Factoidal.LWS.NoLockout
 
 namespace L4Factoidal.LWS.Handler
 
@@ -126,6 +132,22 @@ def needOf (env : Env) (s : State) (r : Request) (mem : IxState LwsBackend) :
     Bodies.bodiesNeeded env.cfg (env.cfg.notifications && !s.notif.subs.isEmpty) r mem
   else []
 
+/-- The no-lockout guard (`L4Factoidal.LWS.NoLockout`) over the result of the
+storage operation, with authorization on: a request that changed the root ACL
+resource and left it with no agent that has `acl:Control` on the root is
+refused with 409, and the state is the state before it (the storage the
+request was stepped against, `mem`); nothing else changes. -/
+def lockoutGuard (cfg : Config) (a : Authorization.AuthzConfig) (r : Request)
+    (mem mem' : IxState LwsBackend) : Option Response :=
+  if !a.insecureNoAuth && NoLockout.lockout IS Solid.Server.aclGraphOf cfg.baseIri mem mem' then
+    some (Cors.decorate cfg r (NoLockout.refusal (splitTarget r.path).1))
+  else none
+
+/-- A storage operation that changed nothing passes the guard. -/
+theorem lockoutGuard_same (cfg : Config) (a : Authorization.AuthzConfig) (r : Request)
+    (mem : IxState LwsBackend) : lockoutGuard cfg a r mem mem = none := by
+  simp [lockoutGuard, NoLockout.lockout_self]
+
 /-- Layers 3 to 6: every one asks `Authorization.decide`. -/
 def decided (V : JOSE.Verifiers) (env : Env) (s : State) (r : Request) (x : Extra)
     (mem : IxState LwsBackend) : Outcome :=
@@ -146,6 +168,9 @@ def decided (V : JOSE.Verifiers) (env : Env) (s : State) (r : Request) (x : Extr
   match core V env cfg s.authz now r mem s.notif with
   | .inl (issuer, url) => .fetch issuer url
   | .inr (resp, mem', notif', access', ds) =>
+      match lockoutGuard cfg s.authz r mem mem' with
+      | some refused => .served refused { s with mem := mem } false []
+      | none =>
       let authz' := { s.authz with access := access' }
       let moved' := MoveRedirect.after IS cfg.redirectsMax plan? resp.status mem' s.moved
       let resp := Merkle.decorate LwsBase cfg mem'.base
