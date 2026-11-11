@@ -2739,6 +2739,393 @@
     return URLSearchParams;
   };
   lazy('URLSearchParams', makeURLSearchParams);
+
+  // ---- Blob, File (File API) and FormData (XHR Standard §5) ---------------------------------
+  // Byte holders: a Blob keeps a copy of its bytes and its type; FormData keeps its entries.
+  // The multipart/form-data body of a FormData is Lean's (web_api op 78, Net.Xhr.formDataBody).
+  const blobs = new WeakMap();
+  let BlobC, FileC, FormDataC;
+  const utf8 = str => new TextEncoder().encode(usv(str));
+  const blobType = t => { t = String(t); return /^[\x20-\x7e]*$/.test(t) ? t.toLowerCase() : ''; };
+  const blobBytes = b => blobs.get(b).bytes;
+  const makeBlob = () => {
+    if (BlobC) return BlobC;
+    class Blob {
+      constructor(parts = undefined, options = undefined) {
+        const d = dict(options, "Failed to construct 'Blob'");
+        const native = d.endings === 'native';
+        if (d.endings !== undefined && d.endings !== 'transparent' && !native) throw new TypeError("Failed to construct 'Blob': bad endings");
+        const chunks = [];
+        if (parts !== undefined && parts !== null) {
+          if (typeof parts !== 'object' || typeof parts[Symbol.iterator] !== 'function') throw new TypeError("Failed to construct 'Blob': The provided value cannot be converted to a sequence.");
+          for (const p of parts) {
+            if (p instanceof Blob) chunks.push(blobBytes(p));
+            else if (p instanceof ArrayBuffer || ArrayBuffer.isView(p) || isShared(p)) chunks.push(copyBytes(bufferSource(p, 'Blob')));
+            else { let t = usv(p); if (native) t = t.replace(/\r\n|\r/g, '\n'); chunks.push(utf8(t)); }
+          }
+        }
+        let size = 0; for (const c of chunks) size += c.length;
+        const bytes = new Uint8Array(size); let at = 0; for (const c of chunks) { bytes.set(c, at); at += c.length; }
+        blobs.set(this, { bytes, type: d.type === undefined ? '' : blobType(d.type) });
+      }
+      get size() { return brand(blobs, this, 'Blob.size').bytes.length; }
+      get type() { return brand(blobs, this, 'Blob.type').type; }
+      slice(start = undefined, end = undefined, contentType = undefined) {
+        const b = brand(blobs, this, 'Blob.slice').bytes, n = b.length;
+        const at = (v, dflt) => { if (v === undefined) return dflt; v = Math.trunc(Number(v)) || 0; return v < 0 ? Math.max(n + v, 0) : Math.min(v, n); };
+        const from = at(start, 0), to = at(end, n);
+        const r = Object.create(Blob.prototype);
+        blobs.set(r, { bytes: b.slice(from, Math.max(from, to)), type: contentType === undefined ? '' : blobType(contentType) });
+        return r;
+      }
+      text() { try { return Promise.resolve(new TextDecoder().decode(brand(blobs, this, 'Blob.text').bytes)); } catch (e) { return Promise.reject(e); } }
+      arrayBuffer() { try { return Promise.resolve(brand(blobs, this, 'Blob.arrayBuffer').bytes.slice().buffer); } catch (e) { return Promise.reject(e); } }
+      bytes() { try { return Promise.resolve(brand(blobs, this, 'Blob.bytes').bytes.slice()); } catch (e) { return Promise.reject(e); } }
+    }
+    setTag(Blob, 'Blob');
+    return BlobC = Blob;
+  };
+  lazy('Blob', makeBlob);
+  const makeFile = () => {
+    if (FileC) return FileC;
+    const Blob = makeBlob();
+    const files = new WeakMap();
+    class File extends Blob {
+      constructor(bits, name, options = undefined) {
+        if (arguments.length < 2) throw new TypeError("Failed to construct 'File': 2 arguments required");
+        super(bits, options);
+        const d = dict(options, "Failed to construct 'File'");
+        files.set(this, { name: usv(name), lastModified: d.lastModified === undefined ? Date.now() : Number(d.lastModified) });
+      }
+      get name() { return brand(files, this, 'File.name').name; }
+      get lastModified() { return brand(files, this, 'File.lastModified').lastModified; }
+    }
+    setTag(File, 'File');
+    return FileC = File;
+  };
+  lazy('File', makeFile);
+  const makeFormData = () => {
+    if (FormDataC) return FormDataC;
+    const Blob = makeBlob(), File = makeFile();
+    const forms = new WeakMap();
+    const E = (o, what) => brand(forms, o, 'FormData.' + what).entries;
+    // "create an entry": a Blob that is not a File becomes a File named "blob"; a File gets
+    // the given filename.
+    const entry = (name, value, filename, args, what) => {
+      name = usv(name);
+      if (value instanceof Blob) {
+        const isFile = value instanceof File;
+        if (args < 3 && isFile) return [name, value];
+        const fname = args >= 3 ? usv(filename) : 'blob';
+        return [name, new File([value], fname, { type: value.type, ...(isFile ? { lastModified: value.lastModified } : {}) })];
+      }
+      if (args >= 3) throw new TypeError(`Failed to execute '${what}' on 'FormData': parameter 2 is not of type 'Blob'.`);
+      return [name, usv(value)];
+    };
+    class FormData {
+      constructor(form = undefined, submitter = undefined) {
+        if (form !== undefined) throw new TypeError("Failed to construct 'FormData': forms are not supported in this build");
+        forms.set(this, { entries: [] });
+      }
+      append(name, value, filename = undefined) {
+        if (arguments.length < 2) throw new TypeError("Failed to execute 'append' on 'FormData': 2 arguments required");
+        E(this, 'append').push(entry(name, value, filename, arguments.length, 'append'));
+      }
+      set(name, value, filename = undefined) {
+        if (arguments.length < 2) throw new TypeError("Failed to execute 'set' on 'FormData': 2 arguments required");
+        const es = E(this, 'set'), e = entry(name, value, filename, arguments.length, 'set');
+        const i = es.findIndex(x => x[0] === e[0]);
+        if (i < 0) { es.push(e); return; }
+        es[i] = e;
+        for (let j = es.length - 1; j > i; j--) if (es[j][0] === e[0]) es.splice(j, 1);
+      }
+      delete(name) { name = usv(name); const es = E(this, 'delete'); for (let j = es.length - 1; j >= 0; j--) if (es[j][0] === name) es.splice(j, 1); }
+      get(name) { name = usv(name); const e = E(this, 'get').find(x => x[0] === name); return e ? e[1] : null; }
+      getAll(name) { name = usv(name); return E(this, 'getAll').filter(x => x[0] === name).map(x => x[1]); }
+      has(name) { name = usv(name); return E(this, 'has').some(x => x[0] === name); }
+      forEach(f, thisArg = undefined) {
+        if (typeof f !== 'function') throw new TypeError("Failed to execute 'forEach' on 'FormData': parameter 1 is not a function");
+        const es = E(this, 'forEach');
+        for (let i = 0; i < es.length; i++) f.call(thisArg, es[i][1], es[i][0], this);
+      }
+      *entries() { const es = E(this, 'entries'); for (let i = 0; i < es.length; i++) yield [es[i][0], es[i][1]]; }
+      *keys() { for (const [k] of this.entries()) yield k; }
+      *values() { for (const [, v] of this.entries()) yield v; }
+    }
+    Object.defineProperty(FormData.prototype, Symbol.iterator, { value: FormData.prototype.entries, writable: true, configurable: true });
+    setTag(FormData, 'FormData');
+    return FormDataC = FormData;
+  };
+  lazy('FormData', makeFormData);
+  // A request body (XHR §4.5.1 and Fetch "extract a body"): [bytes, Content-Type or ''].
+  // A FormData's multipart body and boundary are Lean's (op 78).
+  const extractBody = (body, what) => {
+    if (BlobC && body instanceof BlobC) return [blobBytes(body), blobs.get(body).type];
+    if (FormDataC && body instanceof FormDataC) {
+      const args = [];
+      for (const [name, v] of forms_entries(body)) {
+        if (typeof v === 'string') args.push(name, '0', '', '', utf8(v));
+        else args.push(name, '1', v.name, v.type, blobBytes(v));
+      }
+      const r = apiCall(78, args, 0, true);
+      if (!(r instanceof ArrayBuffer)) return apiError(r, what);
+      const bytes = new Uint8Array(r);
+      let i = 0; while (i + 1 < bytes.length && !(bytes[i] === 13 && bytes[i + 1] === 10)) i++;
+      const boundary = String.fromCharCode(...bytes.subarray(2, i)).replace(/--$/, '');
+      return [bytes, 'multipart/form-data; boundary=' + boundary];
+    }
+    if (typeof body === 'object' && (body instanceof ArrayBuffer || ArrayBuffer.isView(body) || isShared(body))) return [bufferSource(body, what), ''];
+    if (typeof body === 'object' && URLSearchParamsC && body instanceof URLSearchParamsC) return [String(body), 'application/x-www-form-urlencoded;charset=UTF-8'];
+    return [usv(body), 'text/plain;charset=UTF-8'];
+  };
+  const forms_entries = f => { const it = FormDataC.prototype.entries.call(f); return [...it]; };
+
+  // ---- XMLHttpRequest (XHR Standard) -------------------------------------------------------
+  // The object's state, what each method may do, the order of events and the text of a
+  // response are Lean's (formal/lean4/L4Factoidal/Net/Xhr.lean, web_api ops 60 to 79; the
+  // policy of what a page may reach is Net/PageFetch.lean). This class holds a handle,
+  // converts WebIDL arguments, fires the events Lean lists, and arms the timeout. Off
+  // (undefined) unless the embedder turned the network on: op 75 answers -2 then.
+  const xhrErr = (r, what) => {
+    switch (r) {
+      case -31: throw new DOMException(what, 'InvalidStateError');
+      case -32: throw new DOMException(what, 'SecurityError');
+      case -24: throw new DOMException(what, 'SyntaxError');
+      case -25: throw new DOMException(what, 'InvalidAccessError');
+      case -23: throw new DOMException(what + ': sync requests are not supported in this build', 'NotSupportedError');
+      case -33: throw new DOMException(what, 'NetworkError');
+      case -40: throw { name: '__syncWait' };   // the run is undone and redone with the answer
+      default: return apiError(r, what);
+    }
+  };
+  let ProgressEventC;
+  const makeProgressEvent = () => {
+    if (ProgressEventC) return ProgressEventC;
+    class ProgressEvent extends Event {
+      constructor(type, init = undefined) { super(type, init); const d = initOf(init); const s = state(this);
+        s.lengthComputable = !!d.lengthComputable; s.loaded = Number(d.loaded ?? 0); s.total = Number(d.total ?? 0); }
+    }
+    getters(ProgressEvent, ['lengthComputable', 'loaded', 'total']);
+    return ProgressEventC = ProgressEvent;
+  };
+  lazy('ProgressEvent', makeProgressEvent);
+  const makeXHR = () => {
+    if (apiCall(75, []) !== '1') return undefined;
+    const PE = makeProgressEvent();
+    const key = {};
+    const st = new WeakMap();
+    const S = (o, what) => brand(st, o, 'XMLHttpRequest' + (what ? '.' + what : ''));
+    const call = (op, args, what) => { const r = apiCall(op, args); return typeof r === 'number' ? xhrErr(r, what) : r; };
+    class XMLHttpRequestEventTarget extends EventTarget {
+      constructor(k) { if (k !== key) throw new TypeError('Illegal constructor'); super(); }
+    }
+    const upload = new WeakMap();
+    class XMLHttpRequestUpload extends XMLHttpRequestEventTarget {
+      constructor(k) { super(k); upload.set(this, { listened: false }); }
+      addEventListener(type, cb, opts) { upload.get(this).listened = true; return super.addEventListener(type, cb, opts); }
+    }
+    const handlerAttr = (C, name) => Object.defineProperty(C.prototype, 'on' + name, { configurable: true, enumerable: true,
+      get() { return handlerOf(this, name); },
+      set(f) { if (this instanceof XMLHttpRequestUpload) upload.get(this).listened = true; setHandler(this, name, f); } });
+    for (const name of ['loadstart', 'progress', 'abort', 'error', 'load', 'timeout', 'loadend']) handlerAttr(XMLHttpRequestEventTarget, name);
+    const fireOne = (x, s, line) => {
+      const [up, type, loaded, total, computable] = line.split('\u0000');
+      const target = up === '1' ? s.upload : x;
+      const ev = type === 'readystatechange' ? new Event(type)
+        : new PE(type, { lengthComputable: computable === '1', loaded: Number(loaded), total: Number(total) });
+      state(ev).trusted = true;
+      dispatch(target, ev);
+    };
+    const drain = (x, s) => {
+      for (;;) { const e = call(64, [s.h], 'XMLHttpRequest'); if (e === '') break; fireOne(x, s, e); }
+      if (s.timer && call(67, [s.h, 0]) === '4') { n.clearTimer(s.timer); s.timer = 0; }
+    };
+    class XMLHttpRequest extends XMLHttpRequestEventTarget {
+      constructor() {
+        super(key);
+        xhrState.set(this, st.set(this, { h: Number(call(60, [], 'XMLHttpRequest')), upload: new XMLHttpRequestUpload(key), timer: 0, ms: 0, cred: false, text: null, json: null, buf: null, doc: null }).get(this));
+      }
+      get upload() { return S(this).upload; }
+      get readyState() { return Number(call(67, [S(this).h, 0])); }
+      get status() { return Number(call(67, [S(this).h, 1])); }
+      get statusText() { return call(67, [S(this).h, 2]); }
+      get responseURL() { return call(67, [S(this).h, 3]); }
+      get responseType() { return call(67, [S(this).h, 6]); }
+      set responseType(v) { const s = S(this); call(71, [s.h, String(v)], "Failed to set 'responseType' on 'XMLHttpRequest'"); }
+      get timeout() { return S(this).ms; }
+      set timeout(v) { const s = S(this), ms = Number(v) >>> 0; call(72, [s.h, ms], "Failed to set 'timeout' on 'XMLHttpRequest'"); s.ms = ms; }
+      get withCredentials() { return S(this).cred; }
+      set withCredentials(v) { const s = S(this), b = !!v; call(73, [s.h, b ? 1 : 0], "Failed to set 'withCredentials' on 'XMLHttpRequest'"); s.cred = b; }
+      get responseText() {
+        const s = S(this), t = call(67, [s.h, 6]);
+        if (t !== '' && t !== 'text') throw new DOMException("responseText is only for responseType '' and 'text'", 'InvalidStateError');
+        if (s.text !== null) return s.text;
+        const v = call(67, [s.h, 4]);
+        if (call(67, [s.h, 0]) === '4') s.text = v;
+        return v;
+      }
+      get responseXML() {
+        const s = S(this), t = call(67, [s.h, 6]);
+        if (t !== '' && t !== 'document') throw new DOMException('responseXML is only for responseType document', 'InvalidStateError');
+        if (s.doc !== null) return s.doc.v;
+        const kind = call(67, [s.h, 7]);
+        let v = null;
+        if (kind !== '' && typeof DOMParser === 'function') {
+          try {
+            const d = new DOMParser().parseFromString(call(67, [s.h, 4]), kind === 'html' ? 'text/html' : 'application/xml');
+            v = kind === 'xml' && d.documentElement && d.documentElement.localName === 'parsererror' ? null : d;
+          } catch { v = null; }
+        }
+        s.doc = { v };
+        return v;
+      }
+      get response() {
+        const s = S(this), t = call(67, [s.h, 6]);
+        if (t === '' || t === 'text') return this.responseText;
+        if (call(67, [s.h, 0]) !== '4') return null;
+        if (t === 'json') { if (s.json === null) { try { s.json = { v: JSON.parse(call(67, [s.h, 4])) }; } catch { s.json = { v: null }; } } return s.json.v; }
+        if (t === 'document') return this.responseXML;
+        if (t === 'arraybuffer') { if (s.buf === null) { const b = apiCall(74, [s.h], 0, true); s.buf = b instanceof ArrayBuffer ? b : new ArrayBuffer(0); } return s.buf; }
+        if (t === 'blob') {
+          if (s.buf === null) { const b = apiCall(74, [s.h], 0, true); s.buf = new (makeBlob())([b instanceof ArrayBuffer ? b : new ArrayBuffer(0)], { type: call(67, [s.h, 8]) }); }
+          return s.buf;
+        }
+        return null;
+      }
+      open(method, url, async = true, user = null, password = null) {
+        if (arguments.length < 2) throw new TypeError("Failed to execute 'open' on 'XMLHttpRequest': 2 arguments required");
+        const s = S(this), isAsync = arguments.length < 3 ? true : !!async;
+        const base = document.baseURI ?? '';
+        call(61, [s.h, String(method), usv(url), base, isAsync ? 1 : 0], "Failed to execute 'open' on 'XMLHttpRequest'");
+        s.text = s.json = s.buf = s.doc = null;
+        if (s.timer) { n.clearTimer(s.timer); s.timer = 0; }
+        drain(this, s);
+      }
+      setRequestHeader(name, value) {
+        if (arguments.length < 2) throw new TypeError("Failed to execute 'setRequestHeader' on 'XMLHttpRequest': 2 arguments required");
+        call(62, [S(this).h, String(name), String(value)], "Failed to execute 'setRequestHeader' on 'XMLHttpRequest'");
+      }
+      send(body = null) {
+        const s = S(this), what = "Failed to execute 'send' on 'XMLHttpRequest'";
+        let has = 0, ct = '', bytes = '';
+        if (body !== null && body !== undefined) { has = 1; [bytes, ct] = extractBody(body, what); }
+        const x = this, cb = register(() => drain(x, s));
+        const up = upload.get(s.upload).listened;
+        s.text = s.json = s.buf = s.doc = null;
+        call(63, [s.h, cb, up ? 1 : 0, has, ct, bytes], what);
+        drain(this, s);
+        if (call(67, [s.h, 5]) === '1') chk(n.timer(register(() => { call(76, [s.h]); drain(x, s); }), 0, 0));
+        if (s.ms > 0 && call(67, [s.h, 0]) !== '4') s.timer = chk(n.timer(register(() => { s.timer = 0; call(66, [s.h]); drain(x, s); }), s.ms, 0));
+      }
+      abort() { const s = S(this); call(65, [s.h]); s.text = s.json = s.buf = s.doc = null; drain(this, s); }
+      getResponseHeader(name) {
+        if (arguments.length < 1) throw new TypeError("Failed to execute 'getResponseHeader' on 'XMLHttpRequest': 1 argument required");
+        const r = apiCall(68, [S(this).h, String(name)]);
+        return typeof r === 'number' ? (r === -1 ? null : xhrErr(r, 'getResponseHeader')) : r;
+      }
+      getAllResponseHeaders() { return call(69, [S(this).h], 'getAllResponseHeaders'); }
+      overrideMimeType(mime) {
+        if (arguments.length < 1) throw new TypeError("Failed to execute 'overrideMimeType' on 'XMLHttpRequest': 1 argument required");
+        call(70, [S(this).h, String(mime)], "Failed to execute 'overrideMimeType' on 'XMLHttpRequest'");
+      }
+    }
+    handlerAttr(XMLHttpRequest, 'readystatechange');
+    const readyStates = { UNSENT: 0, OPENED: 1, HEADERS_RECEIVED: 2, LOADING: 3, DONE: 4 };
+    consts(XMLHttpRequest, readyStates); consts(XMLHttpRequest.prototype, readyStates);
+    setTag(XMLHttpRequest, 'XMLHttpRequest'); setTag(XMLHttpRequestEventTarget, 'XMLHttpRequestEventTarget'); setTag(XMLHttpRequestUpload, 'XMLHttpRequestUpload');
+    define(globalThis, 'XMLHttpRequestEventTarget', XMLHttpRequestEventTarget);
+    define(globalThis, 'XMLHttpRequestUpload', XMLHttpRequestUpload);
+    return XMLHttpRequest;
+  };
+  const xhrState = new WeakMap();
+  lazy('XMLHttpRequest', makeXHR);
+
+  // ---- fetch (Fetch Standard, the first slice): one call of the XMLHttpRequest core ---------
+  // Lean decides every request (Net/PageFetch.lean, the object is Net/Xhr.lean's); this is the
+  // promise surface. `no-cors` opaque responses, streams and Request bodies are not here yet.
+  lazy('Headers', () => {
+    if (apiCall(75, []) !== '1') return undefined;
+    class Headers {
+      constructor(init = undefined) {
+        this._m = new Map();
+        if (init instanceof Headers) { for (const [k, v] of init) this.append(k, v); return; }
+        if (init !== undefined && init !== null) {
+          const pairs = Array.isArray(init) ? init : (typeof init[Symbol.iterator] === 'function' ? [...init] : Object.entries(init));
+          for (const [k, v] of pairs) this.append(k, v);
+        }
+      }
+      append(k, v) { k = String(k).toLowerCase(); v = String(v).trim(); this._m.set(k, this._m.has(k) ? this._m.get(k) + ', ' + v : v); }
+      get(k) { k = String(k).toLowerCase(); return this._m.has(k) ? this._m.get(k) : null; }
+      has(k) { return this._m.has(String(k).toLowerCase()); }
+      set(k, v) { this._m.set(String(k).toLowerCase(), String(v).trim()); }
+      delete(k) { this._m.delete(String(k).toLowerCase()); }
+      forEach(f, t) { for (const [k, v] of this) f.call(t, v, k, this); }
+      *entries() { for (const k of [...this._m.keys()].sort()) yield [k, this._m.get(k)]; }
+      *keys() { for (const [k] of this.entries()) yield k; }
+      *values() { for (const [, v] of this.entries()) yield v; }
+      [Symbol.iterator]() { return this.entries(); }
+    }
+    setTag(Headers, 'Headers');
+    return Headers;
+  });
+  lazy('Response', () => {
+    if (apiCall(75, []) !== '1') return undefined;
+    const H = () => globalThis.Headers;
+    class Response {
+      constructor(body = null, init = {}) {
+        const [raw, ct] = body === null || body === undefined ? [new Uint8Array(0), ''] : extractBody(body, 'Response');
+        const bytes = typeof raw === 'string' ? utf8(raw) : raw;
+        this._b = bytes; this._used = false;
+        this.status = init.status ?? 200; this.statusText = String(init.statusText ?? ''); this.headers = new (H())(init.headers);
+        if (ct && !this.headers.has('content-type')) this.headers.set('content-type', ct);
+        this.url = ''; this.redirected = false; this.type = 'default';
+      }
+      get ok() { return this.status >= 200 && this.status < 300; }
+      get bodyUsed() { return this._used; }
+      _take() { if (this._used) return Promise.reject(new TypeError('body already used')); this._used = true; return Promise.resolve(this._b); }
+      arrayBuffer() { return this._take().then(b => b.slice().buffer); }
+      text() { return this._take().then(b => new TextDecoder().decode(b)); }
+      json() { return this.text().then(JSON.parse); }
+      blob() { return this._take().then(b => new (makeBlob())([b], { type: this.headers.get('content-type') ?? '' })); }
+      clone() { if (this._used) throw new TypeError('body already used'); const r = new Response(this._b, this); r.url = this.url; r.type = this.type; r.redirected = this.redirected; return r; }
+    }
+    setTag(Response, 'Response');
+    return Response;
+  });
+  lazy('fetch', () => {
+    if (apiCall(75, []) !== '1') return undefined;
+    return function fetch(input, init = {}) {
+      return new Promise((resolve, reject) => {
+        const url = typeof input === 'object' && input !== null && 'url' in input ? String(input.url) : usv(input);
+        const method = init.method ?? (typeof input === 'object' && input !== null ? input.method : undefined) ?? 'GET';
+        const body = init.body === undefined ? null : init.body;
+        const x = new globalThis.XMLHttpRequest(), s = st_xhr(x);
+        const fail = e => reject(e);
+        const signal = init.signal;
+        if (signal && signal.aborted) { reject(signal.reason ?? new DOMException('aborted', 'AbortError')); return; }
+        if (signal) signal.addEventListener('abort', () => { try { x.abort(); } catch { /* done */ } reject(signal.reason ?? new DOMException('aborted', 'AbortError')); });
+        try { x.open(String(method), url, true); } catch (e) { reject(new TypeError(String(e && e.message || e))); return; }
+        apiCall(73, [s.h, init.credentials === 'include' ? 1 : 0]);
+        if (init.mode === 'same-origin') apiCall(77, [s.h, 1]);
+        x.responseType = 'arraybuffer';
+        const headers = new globalThis.Headers(init.headers);
+        for (const [k, v] of headers) x.setRequestHeader(k, v);
+        x.onload = () => {
+          const raw = x.response;
+          const r = new globalThis.Response(raw === null ? new Uint8Array(0) : new Uint8Array(raw), { status: 200 });
+          r.status = x.status; r.statusText = x.statusText; r.url = x.responseURL;
+          r.type = 'basic';
+          for (const line of x.getAllResponseHeaders().split('\r\n')) { const i = line.indexOf(': '); if (i > 0) r.headers.append(line.slice(0, i), line.slice(i + 2)); }
+          resolve(r);
+        };
+        x.onerror = () => fail(new TypeError('Failed to fetch'));
+        x.onabort = () => fail(new DOMException('aborted', 'AbortError'));
+        x.ontimeout = () => fail(new TypeError('Failed to fetch'));
+        x.send(body);
+      });
+    };
+  });
+  const st_xhr = x => xhrState.get(x);
   lazy('URL', () => {
     const parse = (url, base) => {
       const r = base === undefined ? apiCall(10, [usv(url)], 0, false) : apiCall(10, [usv(url), usv(base)], 1, false);
