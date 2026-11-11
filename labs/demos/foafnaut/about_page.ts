@@ -87,12 +87,12 @@ export function aboutHTML(info:BuildInfo,rows:[string,string][],fromSource?:stri
   const local=built&&!isNaN(built.getTime())?built.toLocaleString("en-GB",{dateStyle:"medium",timeStyle:"short"}):undefined;
   const link=releaseURL(info);
   const specs=[...SPECS].sort((a,b)=>a.name.localeCompare(b.name,"en",{sensitivity:"base"}));
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>About Foafnaut</title><style>body{margin:24px;font-size:15px;line-height:22px;color:#203040;background:white}h1{margin:0 0 12px;font-size:24px;line-height:32px;color:#184078}h2{margin:24px 0 8px;font-size:18px;line-height:26px;color:#184078}th{text-align:left;padding:4px 18px 4px 0;font-weight:normal;color:#5b6876;vertical-align:top}td{padding:4px 0}ul{margin:0;padding-left:20px}li{margin:2px 0}.body{color:#5b6876}</style></head><body>`+
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>About Foafnaut</title><style>body{margin:24px;font-size:15px;line-height:22px;color:#203040;background:white}h1{margin:0 0 12px;font-size:24px;line-height:32px;color:#184078}h2{margin:24px 0 8px;font-size:18px;line-height:26px;color:#184078}th{text-align:left;white-space:nowrap;padding:4px 18px 4px 0;font-weight:normal;color:#5b6876;vertical-align:top}td{padding:4px 0;overflow-wrap:anywhere}ul{margin:0;padding-left:20px}li{margin:2px 0}.body{color:#5b6876}</style></head><body>`+
     `<h1>Foafnaut ${esc(version??"")}</h1><table>`+
     row("Release",esc(version??"unknown")+" ("+esc(kind)+")")+
     row("Build commit",esc(info.commit??"unknown: run from source")+(info.dirty?" (with uncommitted changes)":""))+
     row("Built",info.builtAt?esc(info.builtAt)+(local?` (${esc(local)} local time)`:""):"unknown")+
-    (link?row("Release page",`<a href="${esc(link)}">${esc(link)}</a>`):"")+
+    (link?row("Release page",`<a href="${esc(link)}">build-${esc(info.commitFull!.slice(0,12))} on factoidal-builds</a>`):"")+
     rows.map(([k,v])=>row(k,esc(v))).join("")+
     `</table><h2>Specifications</h2><p>Implemented in part: the built-in engine has code for each of these, and none is complete.</p><ul>`+
     specs.map(s=>`<li><a href="${esc(s.url)}">${esc(s.name)}</a>${s.body?` <span class="body">(${esc(s.body)})</span>`:""}</li>`).join("")+

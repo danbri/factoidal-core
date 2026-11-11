@@ -724,7 +724,8 @@ async function main() {
     // so that other pages keep one state key whatever the time.
     const clock=animation.get(page);
     const animated=clock&&(clock.has||clock.clicks.length)?{animationTime:clock.time,animationClicks:clock.clicks}:{};
-    const splashing=splash?{splash:{label:splash.label,reduce:splash.reduce,ms:Math.round(performance.now()-(splash.start??=performance.now()))}}:{};
+    // The splash clock starts when its first frame is shown, so it is seen from the start.
+    const splashing=splash?{splash:{label:splash.label,reduce:splash.reduce,ms:splash.start===undefined?0:Math.round(performance.now()-splash.start)}}:{};
     return page.request(width,height,{...view0,...animated,...splashing,live:page===checked,...(everyFrame?{}:{checks:false})});
   };
   let presented:PresentedState<typeof document>|undefined;
@@ -1240,7 +1241,7 @@ async function main() {
         if(clock.running){animationDue=true;animationFrames++;}
         // The splash: the next frame while Lean draws it; when a frame comes without it, it has ended.
         if(splash&&request.options.splash){
-          splash.frames++;
+          splash.frames++;splash.start??=performance.now();
           if(nextLayers.layers.splash)animationDue=true;
           else{trace("native-html-splash",{state:"done",frames:splash.frames,ms:Math.round(performance.now()-(splash.start??0))});splash=undefined;}
         }
