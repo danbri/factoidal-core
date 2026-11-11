@@ -51,7 +51,9 @@ abbrev Shown := Key × Nat
 /-- A host session. -/
 structure Session where
   key : Key
-  /-- The hover and active state that the frame paints (0: none). -/
+  /-- What the frame paints on its layout (0: nothing): one number for the hover and
+  active state and the paint-only values (`Event.paintOnly`). The engine holds them apart;
+  a change of either is one render here, which is the cost the model states. -/
   paint : Nat
   scroll : Nat
   /-- The largest scroll of the page. -/
@@ -94,6 +96,10 @@ inductive Event where
   | prefetch (target : Nat)
   /-- A timer tick with no DOM change. -/
   | tick
+  /-- A change that is painted on the kept layout: a script's `transform` of an SVG
+  element, or a frame of an SVG animation (`WebPaint`). `state` is what the frame
+  paints; the layout key does not change (`WebPaint.slotKey`). -/
+  | paintOnly (state : Nat)
   deriving Repr, DecidableEq
 
 def clampScroll (limit scroll : Nat) (delta : Int) : Nat :=
@@ -110,6 +116,7 @@ def apply (s : Session) : Event → Session
   | .fontLoad => {s with key := {s.key with fonts := s.key.fonts+1}}
   | .prefetch _ => s
   | .tick => s
+  | .paintOnly st => {s with paint := st}
 
 inductive Decision where
   | shift

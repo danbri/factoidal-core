@@ -19,6 +19,7 @@ InvalidNodeTypeError, -14 IndexSizeError, -15 WrongDocumentError, -16 InvalidSta
 import L4Factoidal.WasmVM.Hosts.Dom
 import L4Factoidal.DOM.Reflect
 import L4Factoidal.Rendering.CssSupports
+import L4Factoidal.HTML.FormSubmission
 
 namespace L4Factoidal.WasmVM.Hosts.Dom
 open L4Factoidal.DOM L4Factoidal.DOM.Range
@@ -639,6 +640,69 @@ def domOpM (id op : Nat) (q : String) : Op String := do
         | .error e => throw e
       | none => throw (-2)
     | [] => throw (-2)
+  -- ==== encoding100: form submission and frame document URLs ====
+  | 170 =>
+    -- the form submission algorithm of form `id` (HTML.FormSubmission.plan): "submitter
+    -- U+0000 document encoding label" (submitter "" for `form.submit()`); a GET navigation
+    -- of a frame is queued for the embedder. "1" when a navigation was queued, "0" when the
+    -- submission navigates nowhere here.
+    let (sub, label) := match q.splitOn "\x00" with
+      | [a, b] => (a, b)
+      | _ => (q, "")
+    let form ← nodeArg d id
+    if !L4Factoidal.DOM.Forms.isHtml d form ["form"] then throw (-2)
+    let submitter := sub.toNat?.filter (· < d.size)
+    let st ← get
+    let doc := (d.get form).doc
+    -- the form's document must be the page's or a frame's (it has a browsing context)
+    let docEl := (st.frames.find? (·.2 == doc)).map (·.1)
+    if doc != 0 && docEl.isNone then return "0"
+    -- HTML §4.10.21.3 step 3: a sandboxed document's forms do not submit
+    if let some el := docEl then
+      if !(elementFrame st el).formsMaySubmit then return "0"
+    let docURL := if doc == 0 then st.url else ((st.docURLs.find? (·.1 == doc)).map (·.2)).getD "about:blank"
+    let frameLabel := match docEl with
+      | some el => ((st.frameEncodings.find? (·.1 == el)).map (·.2)).getD label
+      | none => label
+    let enc := (L4Factoidal.WHATWG.Encoding.getEncoding frameLabel).getD .utf_8
+    let baseTarget := (((d.treeOrder doc).find? fun k => L4Factoidal.DOM.Forms.isHtml d k ["base"] &&
+      (L4Factoidal.DOM.Forms.attr? d k "target").isSome).bind (L4Factoidal.DOM.Forms.attr? d · "target")).getD ""
+    match L4Factoidal.HTML.FormSubmission.plan d form submitter docURL enc baseTarget with
+    | none => return "0"
+    | some p =>
+      -- the rules for choosing a navigable: "" and `_self` the form's own frame; a name, the
+      -- first frame of that name. The page itself, `_parent`, `_top` and `_blank` would leave
+      -- or open a top-level document: not done here.
+      let tl := L4Factoidal.DOM.Dom.asciiLower p.target
+      let target := if tl == "" || tl == "_self" then docEl
+        else if tl.startsWith "_" then none
+        else (st.frames.find? fun (fr : Nat × Nat) => attrValue? d fr.1 "name" == some p.target).map (·.1)
+      match target with
+      | none => return "0"
+      | some el =>
+        let u := if st.hostLoads then p.url else ""
+        set { st with navigations := (st.navigations.filter fun (nv : Nat × String) => nv.1 != el).push (el, u) }
+        return "1"
+  | 171 =>
+    -- the URL of document `id`: the page's, or a frame document the page may reach
+    if id == 0 then return (← get).url
+    let st ← get
+    match st.frames.find? (·.2 == id) with
+    | some (el, _) =>
+      if !frameAccessible st el then throw (-2)
+      return ((st.docURLs.find? (·.1 == id)).map (·.2)).getD "about:blank"
+    | none => throw (-2)
+  | 172 =>
+    -- the encoding name of frame document `id` the page may reach (`characterSet`), as the
+    -- embedder's decode named it; UTF-8 when it did not say
+    let st ← get
+    match st.frames.find? (·.2 == id) with
+    | some (el, _) =>
+      if !frameAccessible st el then throw (-2)
+      let e := ((st.frameEncodings.find? (·.1 == el)).map (·.2)).bind L4Factoidal.WHATWG.Encoding.getEncoding
+      return (e.getD .utf_8).name
+    | none => throw (-2)
+  -- ==== end of encoding100 ====
   | _ => throw (-2)
 
 /-- Run op `op`: the state after it (unchanged when it throws) and the answer. -/

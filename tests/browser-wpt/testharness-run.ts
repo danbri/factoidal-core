@@ -122,7 +122,11 @@ export function testsOf(dir:string):{file:string;skip?:string}[] {
       const globals=meta.filter(([k])=>k==="global").map(([,v])=>v).join(",");
       if(globals&&!/(^|,)\s*(window|default)\b/.test(globals)&&n.endsWith(".any.js"))out.push({file,skip:"no window global"});
       else out.push({file});
-    } else if(n.endsWith(".worker.js"))out.push({file,skip:"worker"});
+      // workers: the dedicated worker variant (wptserve's default globals are window and
+      // dedicatedworker), on an engine with Worker (BubblePopJS)
+      if(n.endsWith(".any.js")&&(!globals||/(^|,)\s*(default|worker|dedicatedworker)\b/.test(globals)))
+        out.push(scriptEngine==="bubblepop"?{file:file.replace(/\.js$/,".worker.html")}:{file:file.replace(/\.js$/,".worker.html"),skip:"worker (BubblePopJS only)"});
+    } else if(n.endsWith(".worker.js"))out.push(scriptEngine==="bubblepop"?{file:file.replace(/\.js$/,".html")}:{file,skip:"worker"});
     else if(n.endsWith(".html")||n.endsWith(".xhtml")) {
       const text=Deno.readTextFileSync(wptFile(file));
       if(!text.includes("/resources/testharness.js"))continue;
@@ -156,6 +160,31 @@ export function wrapper(file:string):string {
     scripts.map(s=>`<script src="${escapeHTML(s)}"></script>\n`).join("")+dataShim(file)+
     `<div id=log></div>\n<script src="/${file}"></script>\n`;
 }
+// ==== workers: wptserve's dedicated worker variant of a .any.js test (tools/serve/serve.py
+// WorkersHandler and AnyWorkerHandler), and the engine's script fetches ====
+/** The `.any.worker.html` page: testharness.js takes the worker's results. */
+export function workerWrapper(file:string,query=""):string {
+  const meta=metaOf(Deno.readTextFileSync(wptFile(file)));
+  const long=meta.some(([k,v])=>k==="timeout"&&v==="long");
+  // x.any.js runs as x.any.worker.js; a x.worker.js test is its own worker script
+  const script=file.endsWith(".any.js")?file.replace(/\.js$/,".worker.js"):file;
+  return `<!doctype html>\n<meta charset=utf-8>\n${long?'<meta name="timeout" content="long">\n':""}`+
+    `<script src="/resources/testharness.js"></script>\n<script src="/resources/testharnessreport.js"></script>\n<div id=log></div>\n`+
+    `<script>\nfetch_tests_from_worker(new Worker("/${script}${query}"));\n</script>\n`;
+}
+/** The `.any.worker.js` script: the worker's globals, testharness.js, the META scripts, the test, done(). */
+export function workerScript(file:string):string {
+  const meta=metaOf(Deno.readTextFileSync(wptFile(file)));
+  const quote=(v:string)=>v.replace(/\\/g,"\\\\").replace(/"/g,'\\"');
+  const title=meta.find(([k])=>k==="title")?.[1];
+  return (title?`self.META_TITLE = "${quote(title)}";\n`:"")+
+    `self.GLOBAL = {\n  isWindow: function() { return false; },\n  isWorker: function() { return true; },\n  isShadowRealm: function() { return false; },\n};\n`+
+    `importScripts("/resources/testharness.js");\n`+
+    meta.filter(([k])=>k==="script").map(([,v])=>`importScripts("${quote(v)}")\n`).join("")+
+    `importScripts("/${file}");\ndone();\n`;
+}
+// ==== end workers ====
+
 // A test that loads its own JSON data with fetch("resources/x.json") (url/) gets that data
 // from a runner shim, since page scripts have no fetch: the shim answers only those files.
 function dataShim(file:string):string {
@@ -302,6 +331,18 @@ export function named(name:string):Named {
     `${secure?secureOrigin:origin}/${id}`;
   const variant=missingFeatures(path,engineFeatures);
   if(variant?.missing.length)return {file:id,kind:"engine",skip:`not supported by engine: ${variant.missing.join(", ")} (${variant.why})`};
+  // workers: without --wptserve, a dedicated worker variant on an engine with Worker
+  // (BubblePopJS) runs from the wrapper wptserve would generate (workerWrapper, workerScript)
+  if(variant&&!wptserveMode&&engineFeatures.Worker){
+    const has=(f:string)=>{try{return Deno.statSync(join(wpt,f)).isFile;}catch{return false;}};
+    let w=/^(.*)\.any\.worker\.html$/.exec(path);
+    if(w){const source=`${w[1]}.any.js`;
+      if(!has(source))return {file:id,kind:"missing",skip:`not in the checkout: ${source}`};
+      return {file:id,kind:"worker",url,html:workerWrapper(source,query)};}
+    w=/^(.*)\.worker\.html$/.exec(path);
+    if(w&&!/\.(shared|service)worker\.html$/.test(path)&&has(`${w[1]}.worker.js`))
+      return {file:id,kind:"worker",url,html:workerWrapper(`${w[1]}.worker.js`,query)};
+  }
   if(variant&&!wptserveMode)return {file:id,kind:"runner",skip:`${variant.why}: run with --wptserve`};
   const exists=(f:string)=>{try{return Deno.statSync(join(wpt,f)).isFile;}catch{return false;}};
   if(wptserveMode)return servedName(id,path,url,exists);
@@ -379,7 +420,11 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
         return {id:f.id,status:r.status,url:(r as Response&{finalURL?:string}).finalURL??f.url,contentType:r.headers.get("content-type")??"",source:await r.text()};}
       catch{return failed;}
     }
-    const source=await readText(f.url);
+    // workers: the .any.worker.js that wptserve generates, made here from the pinned .any.js
+    const u=new URL(f.url);
+    let source:string|undefined;
+    if(/\.any\.worker\.js$/.test(u.pathname)&&isWptHost(f.url)){try{source=workerScript(decodeURIComponent(u.pathname).slice(1).replace(/\.worker\.js$/,".js"));}catch{/* not in the checkout */}}
+    else source=await readText(f.url);
     return source===undefined?failed:{id:f.id,status:200,url:f.url,contentType:"text/javascript",source};
   };
   const decode=(bytes:Uint8Array,contentType:string)=>{
@@ -395,9 +440,12 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
   };
   // A frame's document: from wptserve; else as wptserve serves it (Test262's inner page, a
   // .any/.window wrapper, or a file of the copy decoded as a page is); undefined when absent.
+  // The encoding name of the frame document frameSource last decoded (the `frame` action's `encoding`).
+  let frameEncoding:string|undefined;
   const frameSource=async(url:string):Promise<string|undefined>=>{
+    frameEncoding=undefined;
     let u:URL;try{u=new URL(url);}catch{return undefined;}
-    if(http){try{const r=await http.fetch(url);if(!r.ok){await r.body?.cancel();return undefined;}return decode(new Uint8Array(await r.arrayBuffer()),r.headers.get("content-type")??"").html;}catch{return undefined;}}
+    if(http){try{const r=await http.fetch(url);if(!r.ok){await r.body?.cancel();return undefined;}const d=decode(new Uint8Array(await r.arrayBuffer()),r.headers.get("content-type")??"");frameEncoding=d.encoding;return d.html;}catch{return undefined;}}
     if(!isWptHost(url))return undefined;
     const path=decodeURIComponent(u.pathname).replace(/^\//,"");
     const m=/^(.*)\.test262-test(\.strict)?\.html$/.exec(path);
@@ -408,7 +456,7 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
       const file=wptFile(path),bytes=await Deno.readFile(file);
       let contentType="";
       try{contentType=/^content-type:\s*(.*)$/im.exec(await Deno.readTextFile(file+".headers"))?.[1]?.trim()??"";}catch{/* no headers file */}
-      const text=decode(bytes,contentType).html;
+      const d=decode(bytes,contentType),text=d.html;frameEncoding=d.encoding;
       return path.includes(".sub.")?substitute(text,u.search):text;
     }catch{return undefined;}
   };
@@ -424,6 +472,8 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
       ({html,encoding}=decode(new Uint8Array(await r.arrayBuffer()),r.headers.get("content-type")??""));
       url=(r as Response&{finalURL?:string}).finalURL??page.url;
     }
+    else if(file.endsWith(".any.worker.html")){html=workerWrapper(file.replace(/\.worker\.html$/,".js"));url=`${origin}/${file}`;}
+    else if(file.endsWith(".worker.html")&&exists(wptFile(file.replace(/\.html$/,".js")))){html=workerWrapper(file.replace(/\.html$/,".js"));url=`${origin}/${file}`;}
     else if(file.endsWith(".js")){html=wrapper(file);url=`${origin}/${pageOf(file)}`;}
     else {
       const bytes=await Deno.readFile(wptFile(file));
@@ -498,7 +548,7 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
       const session=turn.session;
       for(const nav of turn.navigations??[]){
         const source=await frameSource(nav.url);
-        take(turn=engine.scriptSession("",{action:"frame",session,node:nav.nodeId,url:nav.url,source:source??"",
+        take(turn=engine.scriptSession("",{action:"frame",session,node:nav.nodeId,url:nav.url,source:source??"",...(frameEncoding?{encoding:frameEncoding}:{}),
           ...(source===undefined?{failed:true}:{resources:await resourcesOf(source,nav.url)})}));
       }
       take(turn=engine.scriptSession("",{action:"settle",session,budgetMs:Math.max(1,70000-turn.clock)}));

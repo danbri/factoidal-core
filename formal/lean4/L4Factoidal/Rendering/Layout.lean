@@ -2,6 +2,7 @@ import L4Factoidal.Rendering.Style
 import L4Factoidal.Rendering.FontFace
 import L4Factoidal.Rendering.TableLayout
 import L4Factoidal.Unicode.ScriptDirection
+import L4Factoidal.Unicode.LineBreak
 
 /-! Block flow and inline word wrapping over the existing DOM arena. This
 profile excludes floats, positioning, flex/grid, margin collapse and inline box
@@ -42,6 +43,12 @@ structure FontProfile where
   shapedWordDir : Option (String → Nat → Bool → Except String FontProvider.Word) := none
   /-- Outlines scale to any size, so a fractional size is not refused. -/
   scalable : Bool := false
+  /-- Words of an element whose `font-family` value (`Computed.fontFamily`) names a
+  web font (CSS Fonts 4 §4): shaped with its faces first, in this profile's units and
+  metrics, as fallback runs are (`SfntProfile.wordWith`), with the bidi direction
+  when it is not the script's. `none`: the family list names no web font, and
+  `shapedWord` serves. -/
+  familyWord : String → Option (String → Nat → Option Bool → Except String FontProvider.Word) := fun _ => none
 
 def FontProfile.ofFace (face : FontProvider.Face) : FontProfile :=
   {family := face.family,unitsPerEm := face.unitsPerEm,advance := 0,
@@ -59,7 +66,13 @@ private def FontProfile.word (font : FontProfile) (style : Computed) (text : Str
     let size := if font.scalable then max 1 (min 512 style.fontSize.round.toUInt32.toNat) else style.fontSize.toUInt32.toNat
     if !font.scalable && (Float.ofNat size != style.fontSize || size == 0 || size > 512) then
       throw "unsupported shaped font size: integer pixels 1 to 512 required"
-    let word ← match rtl, font.shapedWordDir with
+    let word ← match font.familyWord style.fontFamily with
+      | some shapeIn =>
+        shapeIn text size (match rtl with
+          | some r => if r == Unicode.ScriptDirection.guessRtl text then none else some r
+          | none => none)
+      | none =>
+      match rtl, font.shapedWordDir with
       | some r, some shapeDir =>
         if r == Unicode.ScriptDirection.guessRtl text then shape text size else shapeDir text size r
       | _, _ => shape text size
@@ -81,6 +94,13 @@ private def spaceWidth (font : FontProfile) (style : Computed) : Except String F
 not equal one em (ordinary real fonts often differ). -/
 private def lineLeading (font : FontProfile) (style : Computed) : Float :=
   (style.lineHeight-(font.ascent+font.descent)*style.fontSize/font.unitsPerEm)/2
+
+/-- CSS Overflow 3 §3.1: `overflow: hidden` and `overflow: clip` clip the content of a
+box to its padding box (`paddingBox`); the box's own background and border are drawn
+whole (`decorations`). With `clip` false the content is drawn whole. Each primitive of
+clipped content carries the padding box (`ClipTheorems.clipContent_clips`). -/
+def clipContent (clip : Bool) (decorations content : Array Node) (paddingBox : ClipRect) : Array Node :=
+  if clip then decorations.push (.clipped none identity paddingBox content.toList) else decorations ++ content
 
 structure Box where
   source : Nat
@@ -295,6 +315,39 @@ inductive Inline where
   deriving Repr
 instance : Inhabited Inline := ⟨.closeAtomic⟩
 
+/-- A character of the scripts that break between letters with no space between words
+(UAX 14 classes ID, CJ, H2 and H3, and their punctuation): Han, kana, Hangul, CJK
+punctuation, fullwidth forms. -/
+def wideChar (c : Nat) : Bool :=
+  (0x2E80 ≤ c && c ≤ 0x9FFF) || (0xAC00 ≤ c && c ≤ 0xD7AF) || (0xF900 ≤ c && c ≤ 0xFAFF) ||
+  (0xFE30 ≤ c && c ≤ 0xFE4F) || (0xFF00 ≤ c && c ≤ 0xFFEF) || (0x20000 ≤ c && c ≤ 0x3FFFF)
+
+/-- A word cut where UAX 14 lets a line break inside it next to a `wideChar`, so that
+Chinese, Japanese and Korean text wraps between its characters as in a browser (CSS Text 3
+§5.1, `word-break: normal`), and a table cell's narrowest width is a character, not the
+sentence. Each piece with its offset in code points. A word with no `wideChar` is one
+piece, with no UAX 14 pass. -/
+def wordPieces (word : String) : List (Nat × String) :=
+  let cs := word.toList.toArray
+  if !cs.any (fun c => wideChar c.toNat) then [(0, word)] else Id.run do
+    let cuts := (Unicode.LineBreak.breaks cs).filter fun i =>
+      i < cs.size && (wideChar cs[i-1]!.toNat || wideChar cs[i]!.toNat)
+    let mut out : List (Nat × String) := []
+    let mut from_ := 0
+    for i in cuts do
+      out := (from_, String.ofList (cs.extract from_ i).toList) :: out
+      from_ := i
+    out := (from_, String.ofList (cs.extract from_ cs.size).toList) :: out
+    return out.reverse
+
+#guard wordPieces "word-break" == [(0, "word-break")]
+#guard wordPieces "مرحبا" == [(0, "مرحبا")]
+#guard (wordPieces "你好，世界").map (·.2) == ["你", "好，", "世", "界"]
+-- Small kana and the middle dot do not start a line (UAX 14 NS, CJ as NS).
+#guard (wordPieces "こんにちは世界・カタカナ・漢字").map (·.2) ==
+  ["こ", "ん", "に", "ち", "は", "世", "界・", "カ", "タ", "カ", "ナ・", "漢", "字"]
+#guard (wordPieces "Unicode漢字").map (·.1) == [0, 7, 8]
+
 private def textItems (id : Nat) (style : Computed) (text : String) : List Inline := Id.run do
   let mut result : List Inline := []
   let mut word := ""
@@ -306,7 +359,7 @@ private def textItems (id : Nat) (style : Computed) (text : String) : List Inlin
   for c in text.toList do
     if [' ','\n','\r','\t'].contains c || c.toNat == 12 then
       if !word.isEmpty then
-        result := .word id style word start :: result
+        for (off, piece) in wordPieces word do result := .word id style piece (start+off) :: result
         word := ""
       if style.preformatted then
         -- CSS Text 3 §4.1.1 `white-space: pre`: each space and tab stays, and each newline breaks.
@@ -326,7 +379,8 @@ private def textItems (id : Nat) (style : Computed) (text : String) : List Inlin
       spaced := false
       column := column+1
     index := index+1
-  if !word.isEmpty then result := .word id style word start :: result
+  if !word.isEmpty then
+    for (off, piece) in wordPieces word do result := .word id style piece (start+off) :: result
   return result.reverse
 
 /-- What an `img` with no picture shows: its `alt` text in brackets, nothing for
@@ -434,12 +488,33 @@ private def itemWidth (font : FontProfile) (rtl : Option Bool := none) : Inline 
   | .replaced _ _ w _ _ | .atomic _ w _ _ => pure w
   | _ => pure 0
 
+/-- A colour glyph as one rectangle filled with its image (`ColrRaster`), drawn at the
+pixel size nearest to its em at `scale`; `none` when it has no colour or no image.
+The image's pixels map onto the rectangle one to one when the size is whole. -/
+def colourNode (source : Nat) (glyph : FontProvider.Glyph) (x y scale : Float) (color : Color) : Option Node := do
+  let c ← glyph.colour
+  let em := scale*c.em
+  if !(em > 0) || !em.isFinite then none
+  let px := max 1 (min 512 em.round.toUInt32.toNat)
+  let image ← c.image px color
+  let f := em/Float.ofNat px
+  let toF := fun (v : Int) => if v < 0 then -(Float.ofNat v.natAbs) else Float.ofNat v.natAbs
+  let left := x+f*toF image.left
+  let top := y+scale*c.baseline+f*toF image.top
+  let w := f*Float.ofNat image.bitmap.width
+  let h := f*Float.ofNat image.bitmap.height
+  let map : Transform := ⟨1/f,0,0,1/f,-left/f,-top/f⟩
+  return .paint ⟨some source,{geometry := .rect left top w h,style := {fill := .image ⟨map,image.id,image.bitmap⟩}}⟩
+
 private def shapedNodes (word : FontProvider.Word) (run : GlyphRun) (s : Computed)
     (left baseline width : Float) : Array Node := Id.run do
   if !s.visible then return #[]
   let scale := run.fontSize/word.unitsPerEm
   let mut out := #[]
   for (glyph,position) in word.glyphs.zip run.glyphs do
+    if let some node := colourNode run.source glyph position.x position.y scale s.color then
+      out := out.push node
+      continue
     for geometry in glyph.geometry do
       out := out.push (.paint ⟨some run.source,{geometry,style := {fill := .solid s.color}, transform := ⟨scale,0,0,scale,position.x,position.y⟩}⟩)
   if s.underline && width > 0 then
@@ -1139,10 +1214,8 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         | _ => max 0 ((CSS.resolve 0 s.height).getD content.height)
       let borderWidth := width+padding.left+padding.right+border.left+border.right
       let borderHeight := height+padding.top+padding.bottom+border.top+border.bottom
-      let nodes := decorations id s outerX outerY borderWidth borderHeight ++ content.nodes
-      let nodes := if s.clipOverflow then
-        #[.clipped none identity ⟨outerX,outerY,borderWidth,borderHeight,identity⟩ nodes.toList]
-        else nodes
+      let nodes := clipContent s.clipOverflow (decorations id s outerX outerY borderWidth borderHeight) content.nodes
+        ⟨outerX+border.left,outerY+border.top,width+padding.left+padding.right,height+padding.top+padding.bottom,identity⟩
       let box : Box := ⟨id,outerX,outerY,borderWidth,borderHeight⟩
       return {content with nodes, boxes := #[box] ++ content.boxes, height := margin.top+borderHeight+margin.bottom}
 

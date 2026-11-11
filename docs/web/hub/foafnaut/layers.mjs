@@ -65,7 +65,7 @@ export async function createLayerSurface(canvas,{check=false,waitForGpu=false}={
   const format=navigator.gpu.getPreferredCanvasFormat();
   const plans=new Map(),pipelines=new Map();
   const stats={planRequests:0,pipelineBuilds:0,layerTextures:0,composites:0,scenes:0};
-  let failed=false,lost='',closed=false,configured='';
+  let failed=false,lost='',cause='',closed=false,configured='';
   device.lost.then(info=>{lost=info.message||info.reason;failed=true;});
   const grow=(slot,bytes,usage)=>{
     if(slot&&slot.capacity>=bytes)return slot;
@@ -114,6 +114,8 @@ export async function createLayerSurface(canvas,{check=false,waitForGpu=false}={
       return pixels;
     }catch(error){
       if(scoped)try{await device.popErrorScope();}catch{/* the first failure */}
+      // keep the first error: every later draw reports it (a validation error is thrown once)
+      if(!cause)cause=String(error?.message??error);
       failed=true;throw error;
     }
   }
@@ -130,9 +132,12 @@ export async function createLayerSurface(canvas,{check=false,waitForGpu=false}={
         slot.texture?.destroy();stats.layerTextures++;
         slot.texture=device.createTexture({size:[frame.width,frame.height],format:p.format,
           usage:GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_SRC});
-        slot.size=size;
+        slot.size=size;slot.drawn=undefined;
       }
     }
+    // Lean's damage (WebPaint.retainedAnswer): the texture holds the answer it names.
+    const damage=frame.damage;
+    if(!target&&!checking&&damage&&slot.drawn===damage.id){stats.scenesKept=(stats.scenesKept??0)+1;return undefined;}
     const tileWords=frame.tiles,uniformBytes=p.uniform.bytes,tileBytes=tileWords?Math.max(16,tileWords.length*4):0;
     const before=[slot.uniform?.buffer,slot.tiles?.buffer];
     slot.uniform=grow(slot.uniform,uniformBytes,bufferUsage(p.uniform.usage));
@@ -144,11 +149,33 @@ export async function createLayerSurface(canvas,{check=false,waitForGpu=false}={
       slot.bind=device.createBindGroup({layout:pipeline.getBindGroupLayout(p.bindGroup.layoutIndex),entries});slot.bindKey=want;slot.pipeline=pipeline;
     }
     stats.scenes++;
-    const pixels=await run(p,{pipeline,bindGroup:slot.bind},target??slot.texture,checking,()=>{
+    const write=()=>{
       device.queue.writeBuffer(slot.uniform.buffer,p.uniform.offset,frame.data instanceof Float32Array?frame.data:new Float32Array(frame.data));
       if(tileWords)device.queue.writeBuffer(slot.tiles.buffer,0,tileWords instanceof Uint32Array?tileWords:new Uint32Array(tileWords));
-    });
-    if(checking&&pixels)checkPixels(frame,pixels);
+    };
+    // A frame whose damage Lean knows and whose base is in the texture: only those rectangles.
+    const rects=!target&&!checking&&damage?.rects&&damage.base!==null&&slot.drawn===damage.base&&slot.texture?damage.rects:undefined;
+    let pixels;
+    if(rects){
+      stats.scenesPartial=(stats.scenesPartial??0)+1;
+      if(rects.length){
+        device.pushErrorScope('validation');let scoped=true;
+        try{
+          write();
+          const encoder=device.createCommandEncoder();
+          const pass=encoder.beginRenderPass({colorAttachments:[{view:slot.texture.createView(),loadOp:'load',storeOp:'store'}]});
+          pass.setPipeline(pipeline);pass.setBindGroup(p.bindGroup.index,slot.bind);
+          for(const [x,y,w,h] of rects){pass.setScissorRect(x,y,w,h);pass.draw(p.draw.vertexCount,p.draw.instanceCount,p.draw.firstVertex,p.draw.firstInstance);}
+          pass.end();device.queue.submit([encoder.finish()]);
+          const error=await device.popErrorScope();scoped=false;if(error)throw Error(error.message);
+        }catch(error){if(scoped)try{await device.popErrorScope();}catch{/* the first failure */}failed=true;throw error;}
+      }else write();
+    }else{
+      stats.scenesFull=(stats.scenesFull??0)+1;
+      pixels=await run(p,{pipeline,bindGroup:slot.bind},target??slot.texture,checking,write);
+      if(checking&&pixels)checkPixels(frame,pixels);
+    }
+    if(!target)slot.drawn=damage?.id;
     return pixels;
   }
   const chrome={},page={},single={};
@@ -173,22 +200,29 @@ export async function createLayerSurface(canvas,{check=false,waitForGpu=false}={
     }
     return context.getCurrentTexture();
   }
-  const ensure=()=>{if(closed||failed)throw Error('GPU layer surface is closed or failed'+(lost?': '+lost:''));};
-  const finish=async()=>{if(waitForGpu)await device.queue.onSubmittedWorkDone();};
+  const ensure=()=>{if(closed||failed)throw Error('GPU layer surface is '+(failed?'failed':'closed')+(lost?': device lost: '+lost:'')+(cause?': first error: '+cause:''));};
+  // At most one frame of GPU work in flight (the native host's gate, gpu_pacing.ts): a frame
+  // takes the done-promise of its work when it is submitted and the next GPU work waits for it.
+  // When the GPU keeps up, the promise has resolved by then and nothing waits. A page whose
+  // frames cost the GPU more than a turn can not queue frames on the GPU, nor hold it after
+  // the tab goes. In a browser this promise does not block the thread.
+  let inFlight;
+  const gate=async()=>{if(inFlight){const p=inFlight;await p;if(inFlight===p)inFlight=undefined;}};
+  const finish=async()=>{if(waitForGpu)await device.queue.onSubmittedWorkDone();else inFlight=device.queue.onSubmittedWorkDone().catch(()=>{});};
   return {
     format,
-    get stats(){return {...stats,failed,lost};},
+    get stats(){return {...stats,failed,lost,cause};},
     get layers(){return shown;},
     /** Draw both layers of one Lean render into their textures. */
     async drawLayers(answer){
-      ensure();
+      ensure();await gate();
       await drawScene(chrome,answer.chrome,check);
       await drawScene(page,answer.page,check);
       blitCanvases(answer);
       shown=answer;
     },
     /** Replay page GPU commands (Lean's host commands of page session `p`). */
-    async replayGpu(p,commands){ensure();await gpuOf().replay(p,commands);},
+    async replayGpu(p,commands){ensure();await gate();await gpuOf().replay(p,commands);},
     /** The page canvases again, into the page layer on screen; true when one was drawn
      * (the caller then composites). */
     refreshCanvases(){ensure();return blitCanvases(shown);},
@@ -196,7 +230,7 @@ export async function createLayerSurface(canvas,{check=false,waitForGpu=false}={
     /** A new chrome layer alone (Lean's chromeLayer answer: a fold of the chrome), `top`
      * rows high: the page layer stays, and the next composite shows it under this chrome. */
     async setChrome(scene,top){
-      ensure();
+      ensure();await gate();
       if(!shown)throw Error('setChrome before any layers were drawn');
       await drawScene(chrome,scene,check);
       shown={...shown,chrome:scene,layers:{...shown.layers,top}};
@@ -204,7 +238,7 @@ export async function createLayerSurface(canvas,{check=false,waitForGpu=false}={
     /** The layers on screen at this offset (Lean's composite WGSL), into the canvas or into
      * target. With readback, the pixels come back (RGBA). */
     async composite(width,height,offset,{target,readBack=check}={}){
-      ensure();
+      ensure();await gate();
       if(!shown)throw Error('composite before any layers were drawn');
       const p=await plan(width,height,[0,0,0,0]);
       const pipeline=await pipelineFor(p,shown.layers.composite);
@@ -224,7 +258,7 @@ export async function createLayerSurface(canvas,{check=false,waitForGpu=false}={
     },
     /** One single-frame Lean scene (the path with no layers), into the canvas or target. */
     async drawSingle(frame,{target,readBack=check}={}){
-      ensure();
+      ensure();await gate();
       const pixels=await drawScene(single,frame,readBack,()=>target??canvasTexture(frame.width,frame.height));
       await finish();
       return pixels;

@@ -1,11 +1,37 @@
 import L4Factoidal.Rendering.FontData
 import L4Factoidal.Rendering.Scene
+-- The `csimp` theorems of `Prim.FloatOfNat` make this module's `Float.ofNat`, `Float.ofInt` and
+-- `n.toFloat` calls the fast twins (no decimal parse of 2^53 at each call, Lean 4.33.1): keep
+-- this import.
+import L4Factoidal.Prim.FloatOfNat
 
 /-! Typed font-data consumption, separate from line breaking and CSS.
 Font outlines retain canonical line/quadratic/cubic segments. The shared
 backend compiler alone tessellates them; this adapter never drops controls
 or reshapes the font-library results. Vertical/RTL layout remains refused. -/
 namespace L4Factoidal.Rendering.FontProvider
+
+/-- A colour glyph drawn at one size (`ColrRaster`): its pixels, straight RGBA with rows
+from the top, where its top-left corner is in pixels from the glyph's origin on the
+baseline (y down), and an image id that no other bitmap of the scene has. -/
+structure ColourImage where
+  bitmap : Bitmap
+  left : Int
+  top : Int
+  id : Nat
+
+/-- A colour glyph (COLR): drawn as an image of its paint, not as `geometry`. -/
+structure Colour where
+  /-- The colour font's em in units of the word: its pixel size is the word's times this. -/
+  em : Float
+  /-- How far the baseline is below the glyph's top, in units of the word. -/
+  baseline : Float
+  /-- The image at a pixel size (pixels to the colour font's em) and a text colour, for
+  palette index 0xFFFF. Each image is drawn once and kept with the font. -/
+  image : Nat → Color → Option ColourImage
+
+instance : Repr Colour where
+  reprPrec c _ := s!"Colour (em {c.em}, baseline {c.baseline})"
 
 structure Glyph where
   index : Nat
@@ -16,6 +42,8 @@ structure Glyph where
   clusterStart : Nat
   clusterEnd : Nat
   geometry : List Geometry
+  /-- A colour glyph's paint; `geometry` is then its monochrome form, for SVG text. -/
+  colour : Option Colour := none
   deriving Repr
 
 structure Word where
@@ -100,7 +128,7 @@ def prepare (input : FontData.ShapedWord) (notdef : Bool := false) : Except Stri
       throw "font provider: invalid source cluster span"
     let some geometry := outlines.get? glyph.id | throw "font provider: missing glyph outline"
     glyphs := glyphs.push ⟨glyph.id,pen+glyph.xOffset,-glyph.yOffset,glyph.xAdvance,
-      glyph.clusterChar,glyph.clusterEndChar,geometry⟩
+      glyph.clusterChar,glyph.clusterEndChar,geometry,none⟩
     pen := pen+glyph.xAdvance
   if pen != input.advance then throw "font provider: inconsistent shaped advance"
   if !input.text.isEmpty && glyphs.isEmpty then throw "font provider: nonempty word has no glyphs"

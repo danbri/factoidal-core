@@ -42,24 +42,26 @@ def svg(path, title):
 # names goes under "Other pages", so no page is lost. The FOAF graph stays the first link:
 # the sweeps press links[0] of this page.
 SVG_TINY_SCORES = 'https://danbri.github.io/factoidal/web/hub/render-scores/#svg-tiny-pixels'
-BUILT_IN = {'foafnaut:graph': 'Interactive FOAF graph', 'foafnaut:wasm': 'WebAssembly, run by Lean (WasmVM)',
+GAMES_TEST = 'https://danbri.github.io/glitchcan-minigam/'
+BUILT_IN = {GAMES_TEST: 'Testing JavaScript games (on the web)', 'foafnaut:graph': 'Interactive FOAF graph', 'foafnaut:wasm': 'WebAssembly, run by the built-in engine (WasmVM)',
             SVG_TINY_SCORES: 'SVG Tiny 1.2 test suite results (on the web)'}
 START = ['foafnaut:graph', 'spinal-tap-sparql.html', 'shader-gallery.html', 'showcase.html',
          'showcase-dataviz.html', 'showcase-scripts.html']
 GROUPS = [
     ('Pages with scripts', ['search.html', 'foaf-explorer.html', 'foaf-explorer-verified.html', 'canvas-chart.html', 'timers-and-clicks.html', 'webgpu-triangle.html',
-                            'webgl-triangle.html', 'wasm-mandelbrot.html', 'showcase-dataviz-script.html', 'shadow-and-frames.html']),
+                            'webgl-triangle.html', 'wasm-mandelbrot.html', 'showcase-dataviz-script.html', 'shadow-and-frames.html', GAMES_TEST]),
     ('SVG and graphics', ['showcase-lettering.html', 'showcase-textpath.html', 'showcase-tables-svg.html', 'svg-gallery.html',
                           'svg-text-labels.html', 'solving-showcase.html', 'foaf-graph.html', 'svg-affine.html', 'svg-linear-paths.html']),
     ('Text, type and layout', ['showcase-emoji.html', 'typography-lab.xml', 'showcase-tables.html', 'showcase-images.html',
                                'showcase-image-formats.html', 'print-showcase.html', 'print-poster.html', 'markdown-sample.html']),
     ('XML, XSLT and data', ['foaf-people.xml', 'sparql-results.xml', 'feed.xml', 'sitemap.xml', 'lab-files.xml',
                             'engine-pipeline.xml', 'books-svg.xml', 'books-xslt4.xml', 'books-xslt1.xml']),
-    ('About the engine', ['status.html', 'js-status.html', 'architecture.html', 'settings.html', 'foafnaut:wasm', SVG_TINY_SCORES]),
+    ('About the engine', ['start.html', 'status.html', 'js-status.html', 'architecture.html', 'settings.html', 'foafnaut:wasm', SVG_TINY_SCORES]),
 ]
 # One line for each link. A page with none here uses the start of its manifest "shows".
 BLURBS = {
-    'foafnaut:graph': 'Drag and explore a network of people, laid out by Lean.',
+    GAMES_TEST: 'A collection of JavaScript games, as a test. It does not work yet: the games need module scripts.',
+    'foafnaut:graph': 'Drag and explore a network of people, laid out by the browser.',
     'spinal-tap-sparql.html': 'Ask Wikidata about the band through QLever, from the page.',
     'shader-gallery.html': 'WebGPU shaders to change and run, a ray marcher among them.',
     'showcase.html': 'What the engine draws well, and what it does not draw yet.',
@@ -70,9 +72,9 @@ BLURBS = {
     'foaf-explorer-verified.html': 'The same graph, each frame checked by WebAssembly proved in Lean to compute the overlap certificate.',
     'canvas-chart.html': 'An animated Canvas 2D chart.',
     'timers-and-clicks.html': 'Dots moved by timers, animation frames and buttons.',
-    'webgpu-triangle.html': 'A spinning triangle from navigator.gpu; Lean checks each call.',
-    'webgl-triangle.html': 'WebGL 1 and 2 triangles, checked by Lean.',
-    'wasm-mandelbrot.html': 'A tiny WebAssembly module, run by Lean, draws the Mandelbrot set.',
+    'webgpu-triangle.html': 'A spinning triangle from navigator.gpu; the browser checks each call.',
+    'webgl-triangle.html': 'WebGL 1 and 2 triangles, checked by the browser.',
+    'wasm-mandelbrot.html': 'A tiny WebAssembly module, run by the built-in WebAssembly engine, draws the Mandelbrot set.',
     'showcase-dataviz-script.html': 'The data visualisation, drawn by a script.',
     'shadow-and-frames.html': 'Web components with shadow roots and slots, and a sandboxed frame that talks by postMessage.',
     'showcase-lettering.html': 'Lettering along curves.',
@@ -81,7 +83,7 @@ BLURBS = {
     'solving-showcase.html': 'A proof search, drawn.',
     'foaf-graph.html': 'The FOAF graph as a static SVG picture.',
     'showcase-emoji.html': 'Emoji: sequences, skin tones, flags and keycaps.',
-    'typography-lab.xml': 'Kerning, ligatures and marks from the Lean shaper.',
+    'typography-lab.xml': 'Kerning, ligatures and marks from the built-in text shaper.',
     'showcase-tables.html': 'HTML tables: spans, borders, alignment.',
     'showcase-images.html': 'Images in text: baseline, alignment, sizes.',
     'showcase-image-formats.html': 'PNG, JPEG, GIF and SVG images.',
@@ -95,11 +97,12 @@ BLURBS = {
     'lab-files.xml': 'A table whose totals XSLT computes.',
     'engine-pipeline.xml': 'The engine\'s stages, drawn from an XML description.',
     'books-xslt4.xml': 'XSLT 4: maps, records and xsl:switch.',
+    'start.html': 'The page the app opens with: Foafnaut wordmarks, these pages on the web, and sites to try.',
     'status.html': 'Where the project is, and its measured scores.',
     'js-status.html': 'The two JavaScript engines and their test scores.',
     'architecture.html': 'How the engine is put together.',
     'settings.html': 'Text size, theme and the page script engine.',
-    'foafnaut:wasm': 'Run a WebAssembly module in Lean\'s own WebAssembly engine.',
+    'foafnaut:wasm': 'Run a WebAssembly module in the browser\'s built-in WebAssembly engine.',
     SVG_TINY_SCORES: 'How the engine draws the W3C SVG Tiny 1.2 tests.',
 }
 INDEX_STYLE = ('h2{margin:0;padding-top:22px;font-size:17px;line-height:24px;color:#184078}'
@@ -133,7 +136,7 @@ def index():
         body += '<h2>Other pages</h2>\n' + ''.join(item(page) for page in other)
     return (f'<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><title>Foafnaut</title>{ICON}'
             f'<style>{STYLE}{INDEX_STYLE}</style></head><body><main>\n<h1>Foafnaut</h1>\n'
-            '<p class="lead">A web browser written in Lean. Every page here is drawn by its own engine, '
+            '<p class="lead">A web browser with its own built-in engine: it draws every page here itself, '
             'with WebGPU.</p>\n'
             '<div class="start"><h2>Start here</h2>\n' + ''.join(item(page) for page in present(START)) + '</div>\n'
             + body + '</main></body></html>\n')
@@ -202,7 +205,7 @@ def feed():
            '     docs/web/hub/web-platform/foafnaut/notes/posts/*.md; do not edit it by hand. -->',
            '<feed xmlns="http://www.w3.org/2005/Atom">',
            ' <title>Foafnaut notes</title>',
-           ' <subtitle>What changed in the Lean browser engine, one entry for each step</subtitle>',
+           ' <subtitle>What changed in the Foafnaut browser engine, one entry for each step</subtitle>',
            f' <id>{FEED_URL}</id>',
            f' <link rel="self" href="{FEED_URL}"/>',
            f' <link rel="alternate" type="text/html" href="{NOTES_URL}"/>',

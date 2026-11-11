@@ -18,7 +18,7 @@ const library=new URL("./.build/web-render/engines/libweb-render.dylib",import.m
 const exists=(p:string)=>{try{return Deno.statSync(p).isFile;}catch{return false;}};
 const guest=[Deno.env.get("QUICKJS_WASM")??"",`${Deno.env.get("HOME")}/working/qjs-wasm/qjs-wasmvm.wasm`,
   decodeURIComponent(new URL("../../../docs/web/hub/wasm-guests/qjs-wasmvm.wasm",import.meta.url).pathname)].find(exists);
-const pages=["timers-and-clicks","foaf-explorer","foaf-explorer-verified","showcase-dataviz-script","webgpu-triangle","webgl-triangle","wasm-mandelbrot","canvas-chart","js-status","spinal-tap-sparql","shadow-and-frames"];
+const pages=["timers-and-clicks","foaf-explorer","foaf-explorer-verified","showcase-dataviz-script","webgpu-triangle","webgl-triangle","wasm-mandelbrot","canvas-chart","js-status","spinal-tap-sparql","shader-gallery","shadow-and-frames"];
 
 type Turn=ScriptTurn&{gpu?:unknown[];engine?:string;changes:number};
 /** A page's turns on one engine: start, six seconds of virtual time, a click, settle. */

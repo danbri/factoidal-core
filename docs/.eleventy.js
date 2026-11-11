@@ -56,7 +56,7 @@ module.exports = function(eleventyConfig) {
   // Fallback fonts (labs/demos/foafnaut/fallback_fonts.py); the Hub fetches each only for a page that needs it.
   for (const dir of ["noto-sans-armenian", "noto-sans-georgian", "noto-sans-ethiopic", "noto-sans-hebrew", "noto-sans-arabic",
     "noto-sans-devanagari", "noto-sans-bengali", "noto-sans-tamil", "noto-sans-thai", "noto-sans-math", "noto-sans-cjk",
-    "noto-emoji"]) {
+    "noto-color-emoji", "noto-emoji", "fruktur"]) {
     eleventyConfig.addPassthroughCopy({ [`../third_party/fonts/${dir}`]: `web/hub/foafnaut/fonts/${dir}` });
   }
   eleventyConfig.addPassthroughCopy({

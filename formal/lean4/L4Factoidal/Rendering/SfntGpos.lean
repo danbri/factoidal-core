@@ -424,15 +424,20 @@ def position (b : ByteArray) (dir : Array TableRecord) (text : String)
   -- itself; right to left (logical order, drawn reversed), it moves forward by
   -- the advances after its parent up to and including itself (HarfBuzz
   -- `propagate_attachment_offsets`).
+  -- The advances between a parent and its mark, from prefix sums (advances do not change
+  -- here): a sum for each mark made thousands of marks on one base quadratic.
+  let mut sums : Array Int := Array.mkEmpty (out.size + 1)
+  sums := sums.push 0
+  for g in out do sums := sums.push (sums.back! + g.advance)
   for k in [0:out.size] do
     let g := out[k]!
     if let some p := g.attachedTo then
       let parent := out[p]!
       if rtl then
-        let between := ((List.range (k - p)).map (p + 1 + ·)).foldl (fun acc q => acc + out[q]!.advance) (0 : Int)
+        let between := sums[k + 1]! - sums[p + 1]!
         out := out.set! k { g with xOffset := g.xOffset + parent.xOffset + between, yOffset := g.yOffset + parent.yOffset }
       else
-        let between := ((List.range (k - p)).map (p + ·)).foldl (fun acc q => acc + out[q]!.advance) (0 : Int)
+        let between := sums[k]! - sums[p]!
         out := out.set! k { g with xOffset := g.xOffset + parent.xOffset - between, yOffset := g.yOffset + parent.yOffset }
   return out
 

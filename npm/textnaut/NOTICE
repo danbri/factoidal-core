@@ -1,0 +1,65 @@
+@foafos/textnaut: notices
+============================
+
+The code in this package (the launcher, the Textnaut program and the TypeScript it imports) is
+Apache-2.0; see LICENSE. The package has no runtime npm dependencies.
+
+The package does not contain the engine. On first use of a page it downloads one pinned release
+asset, foafnaut-web.tar.gz from build-386f8fb43f73-foafnaut-web of github.com/danbri/factoidal-builds
+(sha256 in engine-pin.json), and keeps two files from it: web-render.mjs and web-render.wasm.
+Those two files are a build of the Factoidal engine (Apache-2.0) and carry the third-party
+components below. Screensavers and --help need no engine.
+
+Libraries of an installed foafnaut (~/.foafnaut), if you point Textnaut at one, are not part of
+this package and carry their own notices; the macOS library statically links GMP (LGPL), which the
+Wasm engine does not.
+
+Components compiled into web-render.wasm
+----------------------------------------
+
+Lean 4 runtime, Init and Std. Apache-2.0. https://github.com/leanprover/lean4
+  Copyright the Lean authors. Licensed under the Apache License, Version 2.0; the text is in
+  LICENSE. Our build patches natural-number literals for the 32-bit Wasm target.
+
+mimalloc (bundled with the Lean runtime). MIT. https://github.com/microsoft/mimalloc
+  Copyright (c) 2018-2021 Microsoft Corporation, Daan Leijen.
+
+Emscripten (the JavaScript glue, web-render.mjs, and its runtime). MIT. https://emscripten.org
+  Copyright (c) 2010-2014 Emscripten authors, see its AUTHORS file.
+
+musl libc (the C library of the Emscripten build). MIT. https://musl.libc.org
+  Copyright (c) 2005-2020 Rich Felker, et al.
+
+LLVM libc++ and libc++abi. Apache-2.0 with LLVM exceptions. https://libcxx.llvm.org
+  Copyright (c) the LLVM Project contributors.
+
+HACL* verified cryptographic primitives (used for crypto.subtle). Apache-2.0 or MIT.
+  https://github.com/hacl-star/hacl-star and https://github.com/cryspen/hacl-packages
+  Copyright (c) HACL* contributors (INRIA, Microsoft and others).
+
+Unicode 18.0.0 data tables (compiled in). Unicode License v3. https://www.unicode.org/license.txt
+  Copyright (c) 1991-2026 Unicode, Inc. Permission notice: Permission is hereby granted, free of
+  charge, to any person obtaining a copy of the Unicode data files and any associated
+  documentation to deal in the data files without restriction, provided that the above copyright
+  notice and this permission notice appear in associated documentation. The data files are
+  provided "AS IS", without warranty of any kind.
+
+WHATWG Encoding index tables (compiled in). BSD-3-Clause for code portions; the standard's text
+  is CC BY 4.0. https://encoding.spec.whatwg.org
+  Copyright (c) WHATWG (Apple, Google, Mozilla, Microsoft).
+
+MIT licence (mimalloc, Emscripten, musl)
+  Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+  associated documentation files (the "Software"), to deal in the Software without restriction,
+  including without limitation the rights to use, copy, modify, merge, publish, distribute,
+  sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions: the above copyright notice and this
+  permission notice shall be included in all copies or substantial portions of the Software. THE
+  SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+  LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+  NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+  DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+This list follows the licence audit of the Factoidal repository for the Wasm build; it is not
+legal advice and is not a guarantee that it is complete.

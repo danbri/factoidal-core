@@ -1,0 +1,69 @@
+file	bullet	commits	paths_checked
+changelog-0.35.0.md	1	0fd0eaf27	formal/lean4/L4Factoidal/LWS/Client/Machine.lean (inboxBase, urlQuery; in the import closure of Wasm/Dispatch.lean); formal/lean4/Wasm/Dispatch.lean (lwsClientStep); formal/lean4/Wasm/Ops/LwsClient.lean; npm/factoidal/lws/client.mjs (verifyNotification, createNotificationReceiver); skills/lws-solid/SKILL.md (0.26.0, 0.34.0); issue factoidal-core 379
+changelog-0.35.0.md	2	2fd76162d	npm/factoidal/bin/foafnaut.mjs (--version, help text); labs/demos/foafnaut/run_html.ts
+changelog-0.35.0.md	3	afb3e71d3	npm/factoidal/bin/foafnaut.mjs (pageArgs: fileURLToPath, file: with no //)
+browser-notes.md	1	226c14a0a 37cb04c67 b0e18c3bb	commit messages; formal/lean4/Wasm/Dispatch.lean closure (no JS module)
+browser-notes.md	2	226c14a0a	commit message (scriptFailed, hub_script_trap_check.mjs)
+browser-notes.md	3	996f6f5db 4aac18a75 6fb39939e c18bbcf3a 35126cd7d 50101a89b	tools/wasm32-nat-literals.py; docs/designissues/2026-11-09-wasm32-nat-literals.md; commit messages (254 sites)
+browser-notes.md	4	c406d7dd7	commit message
+browser-notes.md	5	650b02487 4bfc9e87e 481a83877 b050a5e8f d8a8473e4 ea23e2734 e8d2a3e6e	formal/lean4/L4Factoidal/JS/Resolve.lean, PropMap.lean, Interp.lean; commit messages
+browser-notes.md	6	167605f4c d99abc842 a6f655490	formal/lean4/L4Factoidal/JS/Compile.lean; commit message of 167605f4c
+browser-notes.md	7	3b2a6028d f178e43c1	formal/lean4/L4Factoidal/Prim/FloatOfNat.lean, JS/Number.lean; docs/designissues/2026-11-09-foafnaut-perf-exploration.md section 2 item 3
+browser-notes.md	8	16577fc02 ff0ebeeef 5d6d0d10e d8a8473e4	formal/lean4/L4Factoidal/JS/RegressionTests.lean; perf exploration record section 6.6; issue factoidal-core 378
+browser-notes.md	9	ff0ebeeef 195096766 e4c4ab02f	perf exploration record section 6.6
+browser-notes.md	10	0861f4b91	perf exploration record section 6.6 (corpus table, the F* bundle row)
+browser-notes.md	11	195096766	perf exploration record section 6.6 (single causes table)
+browser-notes.md	12	ef99ca4ef 5d6d0d10e e4c4ab02f	perf exploration record section 6.6 (corpus table); labs/demos/foafnaut/bubblepop_perf/realworld.py
+browser-notes.md	13	48d250e8d	commit title; tools/wasmvm/quickjs/prelude.js
+browser-notes.md	14	ef99ca4ef b46cfa7d5	docs/designissues/2026-11-09-bubblepopjs-plan.md; issue factoidal-core 378
+browser-notes.md	15	4ca577e02 5183eb29b 6e33e4139 518e81526 9b18837a4	docs/designissues/2026-11-07-wasmvm-engine.md section SIMD; formal/lean4/L4Factoidal/WasmVM/Simd.lean
+browser-notes.md	16	a92de1f11 1891c7962 41a1aaeab	wasmvm-engine record section GC; formal/lean4/L4Factoidal/WasmVM/Tests/Gc.lean
+browser-notes.md	17	6e33e4139 1891c7962	wasmvm-engine record sections 'Cost for code with no SIMD', 'Cost for code with no GC'
+browser-notes.md	18	b46cfa7d5	commit message; formal/lean4/L4Factoidal/WasmVM/Bench/Page.lean
+browser-notes.md	19	38c43196c f795179b3 ee7a8a5fa 55425314e 8a9f9bd70	formal/lean4/L4Factoidal/Rendering/SfntColr.lean, ColrRaster.lean, FontPolicy.lean; commit message of 38c43196c
+browser-notes.md	20	b28495de7 26fbc1f3a 5f5a7f115	formal/lean4/L4Factoidal/Unicode/EmojiData.lean, Rendering/SfntProfile.lean; issue factoidal 1276
+browser-notes.md	21	9beb30411	third_party/fonts/noto-color-emoji; commit message
+browser-notes.md	22	5496b52e3 087a8fef0	formal/lean4/L4Factoidal/PageCanvas/Text.lean; commit messages
+browser-notes.md	23	036aef425 da10691f3	commit message of 036aef425
+browser-notes.md	24	2cd710d4d 06b6c5080 4e54efad5 35e1c3fe9 f7d76a298 60fd47561 03f8ab37d 4b498b600	docs/designissues/2026-11-09-web-fonts-and-paint-only.md section 1; formal/lean4/L4Factoidal/Rendering/FontFaceRule.lean
+browser-notes.md	25	06b6c5080 c99fc31e4 b2db5f70b 175248f08 946df2096 e4075036c	formal/lean4/L4Factoidal/Rendering/SfntGpos.lean, SfntMarkTheorems.lean; issue factoidal-core 368
+browser-notes.md	26	88dbb9d49 4e54efad5	formal/lean4/L4Factoidal/Rendering/Smil.lean, FrameCost/Theorems.lean; commit titles
+browser-notes.md	27	e80946ba7	commit message
+browser-notes.md	28	747128b9a 0267db43e 57fe3531d	commit titles
+browser-notes.md	29	06b6c5080 6c209b397	formal/lean4/L4Factoidal/Rendering/ClipTheorems.lean, InkBound.lean
+browser-notes.md	30	fbec9b6da c359146bb 505a9d95a 036198f21	commit messages
+browser-notes.md	31	0288950d8 99ca5deb2 bd2dfef16 10972b4b9 36b800434 53f6e6450 58801b317 e4a72b3fe 70ece95f2 2a7945223	docs/designissues/2026-11-09-real-site-layout-speed.md section Numbers; formal/lean4/L4Factoidal/Rendering/CascadeTests.lean
+browser-notes.md	32	cb302ed81 6e1359c0d	formal/lean4/L4Factoidal/HTML/Frames.lean; docs/designissues/2026-11-09-iframe-documents.md
+browser-notes.md	33	d890eeefa 06e442560 125eda2b5 a396144ac f094a4a62	formal/lean4/L4Factoidal/HTML/FormSubmission.lean (not in the dispatch closure); commit messages
+browser-notes.md	34	7bbddfabb a29706cb1 98108d058	docs/designissues/2026-11-09-encoding-wpt.md sections Results and 'Which tree each number is from'
+browser-notes.md	35	91a454996 2a7945223 2aa065beb 11335d1d0	commit titles
+browser-notes.md	36	bd36763b1 489d5cd3a	commit messages
+browser-notes.md	37	6e562c880 0e78a4242	commit messages
+browser-notes.md	38	b56a5dc9c 2fd76162d b646940a4 8f839720d	commit messages
+browser-notes.md	39	2a8a0f7ed	commit message
+browser-notes.md	40	96c2d286a	commit message; issue factoidal-core 369
+browser-notes.md	41	03e8c7c6e	commit message
+browser-notes.md	42	db1ba735e 9b18837a4	commit message
+browser-notes.md	43	16ac45a21 f996ddd5e	commit messages
+browser-notes.md	44	59d9914ed	commit title
+browser-notes.md	45	087a8fef0 da2bec7de d170c71bb 128ede5da	commit messages
+browser-notes.md	46	96092f569 9b5c95b73 18eb15806 26ce1dcaa 48ac28730 53d4b3b42 3f42b10e4 79af6a61a 17fa3fb5b	labs/demos/foafnaut/textnaut/; issue factoidal-core 371
+browser-notes.md	47	8d3819f6c a22877c33	tools/devproxy/README.md; issue factoidal-core 375
+browser-notes.md	48	factoidal-builds 5011198 32d004f (not in the factoidal-core range)	/home/user/factoidal-builds/.github/workflows/wpt-score.yml; both commits are in origin/main of factoidal-builds
+browser-notes.md	49	69c130660 3b2a6028d b050a5e8f ef99ca4ef 650b02487	labs/demos/foafnaut/bubblepop_perf/; commit messages
+browser-notes.md	50	3b2a6028d f178e43c1	tools/lean-literal-parse-audit.py
+browser-notes.md	51	fea875008	commit title
+browser-notes.md	52	b9ab91498 27f42b7ac	commit messages
+browser-notes.md	53	da2bec7de	issue factoidal-core 374; commit message
+browser-notes.md	54	e4c4ab02f	perf exploration record section 6.6
+browser-notes.md	55	195096766	perf exploration record section 6.6 (single causes table, last line)
+browser-notes.md	56	167605f4c 37cb04c67 e4c4ab02f	commit messages; perf exploration record section 6.6
+browser-notes.md	57	e4c4ab02f	perf exploration record section 6.6 (last list item)
+browser-notes.md	58	518e81526 4ca577e02	issue factoidal-core 385; wasmvm-engine record section SIMD, Refused
+browser-notes.md	59	a92de1f11 1891c7962	issue factoidal-core 386; wasmvm-engine record section GC, 'Refused, and limits'
+browser-notes.md	60	5496b52e3 087a8fef0	commit message of 087a8fef0
+browser-notes.md	61	2cd710d4d	web fonts record section 1
+browser-notes.md	62	06e442560 a29706cb1	commit message; encoding-wpt record
+browser-notes.md	63	96c2d286a	issue factoidal-core 369
+browser-notes.md	64	4a1c56b32 e4a72b3fe	issue factoidal-core 390; text count on origin/main of labs/demos/foafnaut/*.lean (29 and 30); tools/lean-hygiene-audit.py run on a copy of origin/main (0 and 0)
+browser-notes.md	65	5d3751189 9d2613de1	docs/20261110-foafnaut-binaries-and-wasm-status.md section 0

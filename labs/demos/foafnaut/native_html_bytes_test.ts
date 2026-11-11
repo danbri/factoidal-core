@@ -23,7 +23,7 @@ const bytesOf=(part:unknown)=>{
   if(Array.isArray(part))return new Uint8Array(new Uint32Array(part).buffer);
   throw new Error("scene part is not an array");
 };
-const rest=(scene:Partial<HTMLArtifact>)=>{const {data:_d,tiles:_t,...other}=scene;return JSON.stringify(other);};
+const rest=(scene:Partial<HTMLArtifact>)=>{const {data:_d,tiles:_t,damage:_x,...other}=scene as Partial<HTMLArtifact>&{damage?:unknown};return JSON.stringify(other);};
 function sameScene(bytes:Partial<HTMLArtifact>,text:Partial<HTMLArtifact>,label:string){
   assert(bytes.data instanceof Float32Array&&bytes.tiles instanceof Uint32Array,`${label}: bytes answer has no sections`);
   assert.deepEqual(bytesOf(bytes.data),bytesOf(text.data),`${label}: storage bytes differ`);

@@ -894,8 +894,18 @@ def sigComponents (params : String) : List String :=
   let inner := String.ofList ((params.toList.drop 1).takeWhile (· != ')'))
   (inner.splitOn " ").filter (· != "") |>.map (fun c => String.ofList (c.toList.filter (· != '"')))
 
+/-- The `@query` derived component of a URL (RFC 9421 §2.2.7): the query
+with its leading `?`, and `?` alone when the URL has no query. The fragment
+is not part of it. -/
+def urlQuery (u : String) : String :=
+  let noFrag := u.toList.takeWhile (· != '#')
+  "?" ++ String.ofList ((noFrag.dropWhile (· != '?')).drop 1)
+
 /-- The signature base (RFC 9421 §2.5), rebuilt from the inbox URL as
-subscribed and the header fields received. -/
+subscribed and the header fields received. The derived components are
+`@method`, `@scheme`, `@authority`, `@path` and `@query`; a name that starts
+with `@` and is not one of these is refused, never read as a header field
+(https://github.com/danbri/factoidal-core/issues/379). -/
 def inboxBase (method inbox : String) (hs : List (String × String)) (params : String) :
     Option String := do
   let (sch, auth, path) ← Notifications.urlParts? inbox
@@ -905,7 +915,8 @@ def inboxBase (method inbox : String) (hs : List (String × String)) (params : S
     | "@scheme" => some sch
     | "@authority" => some auth
     | "@path" => some path
-    | name => (headerIn hs name).map trimS)
+    | "@query" => some (urlQuery inbox)
+    | name => if name.startsWith "@" then none else (headerIn hs name).map trimS)
   pure (String.join ((comps.zip vals).map (fun (c, v) => "\"" ++ c ++ "\": " ++ v ++ "\n")) ++
     "\"@signature-params\": " ++ params)
 

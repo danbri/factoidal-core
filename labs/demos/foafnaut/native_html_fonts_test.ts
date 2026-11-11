@@ -110,20 +110,27 @@ Deno.test("the writing-systems page draws at text zoom 600 on a 390 px phone (Wa
 Deno.test("the writing-systems page draws at text zoom 1200 on a 390 px phone (Wasm)",()=>scriptsAtPhoneZoom(undefined,1200));
 Deno.test({name:"the writing-systems page draws at text zoom 600 on a 390 px phone (native library)",ignore:noLibrary,fn:()=>scriptsAtPhoneZoom(library)});
 
-// Emoji (issue 1276): Noto Emoji, the outline emoji font of the Hub, after Noto Sans. Each
-// sequence is one glyph of that font through its ligatures, with any U+FE0F hidden at no
-// width: a ZWJ family, a ZWJ sequence with U+FE0F inside it (GSUB passes over the
-// selector), a skin tone, a flag, a tag sequence, and keycaps whose digit Noto Sans also
-// has (SfntProfile.runsOf gives the digit to the font that has it and U+FE0F).
-const emojiFont=fonts+"noto-emoji/NotoEmoji-Regular.ttf";
+// Emoji (issue 1276): the colour slices of Noto Color Emoji and Noto Emoji (outlines), after
+// Noto Sans, as the Hub's table orders them and fetches them for these sequences. Each sequence
+// is one glyph through the font's ligatures, with any U+FE0F hidden at no width: a ZWJ family, a
+// ZWJ sequence with U+FE0F inside it (GSUB passes over the selector), a skin tone, a flag, a tag
+// sequence, and keycaps whose digit Noto Sans also has (SfntProfile.runsOf keeps an emoji
+// cluster in one font). An emoji with emoji presentation draws as an image of its colour glyph
+// (ColrRaster): one rectangle whose pixels go in the scene's paint table; with U+FE0E it draws
+// from Noto Emoji as an outline.
 const emojiSequences=["\u{1F600}","❤️","♥️","\u{1F44D}\u{1F3FD}","\u{1F468}‍\u{1F469}‍\u{1F467}‍\u{1F466}",
-  "\u{1F3F3}️‍\u{1F308}","\u{1F1EC}\u{1F1E7}","\u{1F3F4}\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}","1️⃣","#️⃣"];
+  "\u{1F3F3}️‍\u{1F308}","\u{1F1EC}\u{1F1E7}","\u{1F3F4}\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}","1️⃣","#️⃣",
+  "\u{1F9D1}\u{1F3FD}‍\u{1F4BB}","\u{1F1EF}\u{1F1F5}","❤︎"];
 async function emoji(nativeEngine?:string){
   const engine=await loadHTML(nativeEngine,"bytes");
   await loadFontFile(engine,sans,"Noto Sans");
   const digits="<!doctype html><p>Call 1, 2 or # and * \u00a9 \u2122</p>";
   const plain=frame(engine,digits);
-  assert.equal((await loadFontFile(engine,emojiFont,"Noto Emoji","bytes",true)).fonts,2);
+  // @ts-ignore plain JavaScript module of the Hub
+  const {fontsFor}=await import("../../../docs/web/hub/foafnaut/font-coverage.mjs");
+  const wanted=await fontsFor(`<p>${emojiSequences.join(" ")}</p>`,async(path:string)=>JSON.parse(await Deno.readTextFile(fonts+path.replace("./fonts/",""))));
+  assert(wanted.some((f:{family:string})=>f.family==="Noto Emoji")&&wanted.length>6,`fonts ${wanted.map((f:{family:string})=>f.family)}`);
+  for(const font of wanted)await loadFontFile(engine,fontFilePath(font.path),font.family,"bytes",true);
   for(const text of emojiSequences){
     const scene:HTMLArtifact=engine.compile(`<!doctype html><p>${text}</p>`,600,120,{checks:false,url:"file:///emoji.html"});
     const run=(scene.webRender.glyphRuns as {text:string;glyphs:number[][]}[]).find(r=>r.text===text);
@@ -133,11 +140,51 @@ async function emoji(nativeEngine?:string){
     assert.equal(drawn.length,1,`${JSON.stringify(text)}: ${drawn.length} glyphs with width`);
     assert.notEqual(drawn[0][0],0,`${JSON.stringify(text)} is .notdef`);
   }
+  // Colour: a 64 px emoji is one rectangle filled with an image of some 70 by 68 pixels, whose
+  // pixels go in the paint table at the end of the tile lists; the same character with U+FE0E
+  // is an outline of Noto Emoji, with no image.
+  const big=(text:string)=>{
+    const scene:HTMLArtifact=engine.compile(`<!doctype html><p style="font-size:64px;line-height:80px">${text}</p>`,600,120,{checks:false,url:"file:///emoji.html"});
+    return {primitives:scene.primitiveCount,table:scene.tiles.length};
+  };
+  const empty=big("").table;
+  for(const text of ["\u{1F600}","❤️","\u{1F1EC}\u{1F1E7}","\u{1F44D}\u{1F3FD}"]){
+    const b=big(text);
+    assert(b.primitives===1&&b.table-empty>3000,`${JSON.stringify(text)} is not one colour image: ${JSON.stringify(b)}`);
+  }
+  assert(big("❤︎").table-empty<3000,"❤ with U+FE0E is not an outline");
   // Digits, # and * with no selector stay in Noto Sans: the page is as it was.
-  assert(same(plain,frame(engine,digits)),"plain digits and symbols changed with the emoji font");
+  assert(same(plain,frame(engine,digits)),"plain digits and symbols changed with the emoji fonts");
 }
-Deno.test("emoji and emoji sequences draw from Noto Emoji (Wasm)",()=>emoji());
-Deno.test({name:"emoji and emoji sequences draw from Noto Emoji (native library)",ignore:noLibrary,fn:()=>emoji(library)});
+// SVG text and canvas text (issue 1276): SVG text draws outlines, so an emoji there comes
+// from Noto Emoji (the Hub fetches it for a page with emoji and an SVG text element); canvas
+// fillText draws the colour glyph's image. Neither is blank.
+async function emojiInSvgAndCanvas(nativeEngine?:string){
+  const engine=await loadHTML(nativeEngine,"bytes");
+  await loadFontFile(engine,sans,"Noto Sans");
+  // @ts-ignore plain JavaScript module of the Hub
+  const {fontsFor}=await import("../../../docs/web/hub/foafnaut/font-coverage.mjs");
+  const svg=(text:string)=>`<!doctype html><svg width="200" height="60"><text x="10" y="45" font-size="32">${text}</text></svg>`;
+  const wanted=await fontsFor(svg("\u{1F600}"),async(path:string)=>JSON.parse(await Deno.readTextFile(fonts+path.replace("./fonts/",""))));
+  assert.deepEqual(wanted.map((f:{family:string})=>f.family),["Noto Color Emoji Smileys","Noto Emoji"]);
+  for(const font of wanted)await loadFontFile(engine,fontFilePath(font.path),font.family,"bytes",true);
+  const count=(html:string)=>engine.compile(html,300,80,{checks:false,url:"file:///svg.html"}).primitiveCount;
+  assert(count(svg("\u{1F600}"))>count(svg("")),"an emoji in SVG text draws nothing");
+  if(!nativeEngine)return;
+  const turn=engine.scriptSession(`<!doctype html><canvas id=c width=60 height=60></canvas><script>
+const c=document.getElementById('c').getContext('2d');c.font='40px sans-serif';c.fillText('\u{1F600}',5,45);
+const d=c.getImageData(27,25,1,1).data;console.log('emoji '+d[0]+' '+d[1]+' '+d[2]+' '+d[3]);</script>`,
+    {action:"start",url:"file:///c.html",resources:[],instructionsPerMs:1e12,full:true,engine:"bubblepop"}) as {logs:string[];errors:string[]};
+  engine.scriptSession("",{action:"close"});
+  const line=turn.logs.find(l=>l.startsWith("emoji "));
+  assert(line,`no pixel: ${JSON.stringify(turn)}`);
+  const [r,g,b,a]=line.split(" ").slice(1).map(Number);
+  assert(a===255&&r>200&&g>140&&b<120,`the canvas emoji is not the yellow face: ${line}`);
+}
+Deno.test("emoji in SVG text draw from Noto Emoji (Wasm)",()=>emojiInSvgAndCanvas());
+Deno.test({name:"emoji in SVG text draw from Noto Emoji, and canvas fillText draws colour emoji (native library)",ignore:noLibrary,fn:()=>emojiInSvgAndCanvas(library)});
+Deno.test("emoji and emoji sequences draw in colour from Noto Color Emoji (Wasm)",()=>emoji());
+Deno.test({name:"emoji and emoji sequences draw in colour from Noto Color Emoji (native library)",ignore:noLibrary,fn:()=>emoji(library)});
 
 // The native window's fallback fonts (native_html_fonts.ts): for each page, the fonts of the
 // Hub's table that its characters need go into the engine worker before the first layout,
@@ -186,6 +233,46 @@ async function nativeHostDraws(nativeEngine?:string){
 }
 Deno.test("the native host draws Arabic, Hebrew, Devanagari, Thai and Han with no .notdef (Wasm worker)",()=>nativeHostDraws());
 Deno.test({name:"the native host draws Arabic, Hebrew, Devanagari, Thai and Han with no .notdef (native library worker)",ignore:noLibrary,fn:()=>nativeHostDraws(library)});
+
+// Arabic joining on the writing page (pages/showcase-scripts.html): each word's glyphs are the
+// joined forms HarfBuzz chooses with the same font (hb-shape 15.0.0, NotoSansArabic-Regular.ttf,
+// left to right as drawn): .init, .medi and .fina forms, the rlig lam-alef, the dots as marks.
+// A change in GSUB coverage, joining or bidi shows here as other glyph ids.
+const arabicJoined:Record<string,number[]>={
+  "مرحبا":[9,316,16,27,31,79],     // uni0627.fina dotbelowar uni066E.medi uni062D.init uni0631.fina uni0645.init
+  "بالعالم":[77,72,9,48,72,9,316,19],
+  "سلام":[74,11,71,37],              // uni0645 uni0627.fina.rlig.2 uni0644.medi.rlig uni0633.init
+  "السعر":[31,48,36,72,8],
+  "دينار":[30,9,282,16,318,21,28],
+};
+// As the owner's window met it (2026-11-10, release 8d23d6626): a first page with a math
+// symbol, so Noto Sans Math is held before Noto Sans Arabic; then the writing page in a
+// window 819 points wide on a 2x display (1638 device pixels, text zoom 400, zoom unit 200).
+// Noto Sans Math has the Arabic letters but no Arabic joining forms: the letters came from it,
+// unjoined (SfntProfile.firstFont now takes a font whose GSUB names the script). And the
+// table was wider than the window, so the right-aligned Arabic and Hebrew lines were cut off
+// at its right edge: the Japanese sample was one unbreakable word (Layout.wordPieces now cuts
+// it between its characters). Chrome draws the row joined and inside its cell.
+async function arabicJoins(nativeEngine?:string){
+  const client=await startCompileWorker({path:sans,family:"Noto Sans"},nativeEngine);
+  try{
+    setFontHost(async source=>{await client.pageFonts(source);});
+    const compile=async(url:string,html:string,options:Record<string,unknown>)=>
+      await (await prepareHTML(client.engine as unknown as PageEngine,url,undefined,html)).compile(1638,1394,{checks:false,...options} as Record<string,unknown>) as unknown as HTMLArtifact;
+    await compile("file:///math.html","<!doctype html><p>A math symbol first: \u{1D538}</p>",{});
+    const file=new URL("./pages/showcase-scripts.html",import.meta.url);
+    const scene=await compile(file.href,await Deno.readTextFile(file),{textScalePercent:400,zoomUnit:200});
+    const runs=scene.webRender.glyphRuns as {text:string;glyphs:number[][]}[];
+    const drawn:Record<string,number[]>={};
+    for(const run of runs)if(run.text in arabicJoined)drawn[run.text]=run.glyphs.map(g=>g[0]);
+    assert.deepEqual(drawn,arabicJoined);
+    // Every glyph of the page lies inside the window: [id, x, y, advance, ...] in device pixels.
+    const outside=runs.flatMap(run=>run.glyphs.filter(g=>g[1]<0||g[1]+g[3]>1638+0.5).map(()=>run.text));
+    assert.deepEqual([...new Set(outside)],[]);
+  }finally{setFontHost(undefined);client.terminate();}
+}
+Deno.test("Arabic on the writing page draws HarfBuzz's joined forms (Wasm worker)",()=>arabicJoins());
+Deno.test({name:"Arabic on the writing page draws HarfBuzz's joined forms (native library worker)",ignore:noLibrary,fn:()=>arabicJoins(library)});
 
 // What each page costs: a Latin page reads nothing, not even the table module; a page with
 // a character Noto Sans has reads the table only; a script outside CJK loads its font with

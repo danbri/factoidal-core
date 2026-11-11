@@ -119,6 +119,15 @@ measurement, never by assertion.
 Standing priorities: `docs/claude-rules/current-state.md` § Standing
 priorities.
 
+## Browser and web platform work starts at the foafnaut skill (owner, 2026-11-10)
+
+Owner, verbatim: "Update CLAUDE.md to point to the Foafnaut skill as entry point for working on
+browsers and webplatform." Before any work on Foafnaut, Textnaut, BubblePopKit (rendering),
+BubblePopJS (JavaScript), BubblePopWASM (WebAssembly), the Hub browser page, HTML, DOM, CSS,
+fonts, or the Web Platform Tests, read [`skills/foafnaut/SKILL.md`](skills/foafnaut/SKILL.md)
+first: code map, build, test, measure, traps, how to land. Then the newest handoff record that
+it names. Current release: https://github.com/danbri/factoidal-core/issues/389 (release 0.35.0).
+
 ## Work goes on main (owner, 2026-11-05)
 
 Owner, verbatim: **"THE MAIN BRANCH IS OK FOR WORK IN PROGRESS! This whole project is in
@@ -1005,6 +1014,61 @@ JS."; "VerifiedJS: implement now, I will talk to them, we can always back out.";
   doesn't come with the inability for a node to occlude another". Cost of the
   earlier choice: on 2026-11-06 a refused drag was fixed by removing the check.
 
+### Foafnaut: what it is, its measure, BubblePopJS and Textnaut (owner, 2026-11-09)
+
+Owner, 2026-11-09, verbatim: "created a brand new browser, with builds including native OSX,
+and a wasm web-based version exposed in Factoidal hub. It is called FOAFNaut"; "our own new JS
+engine called BubblePopJS"; "Also a text terminal frontend, Textnaut. The goal is to be
+competitive as a real browser, measured against the official Web Platform Tests, and to be
+efficient, performant, fast, private, accessible, international, and secure."
+
+- The measure of the browser is the Web Platform Tests. The seven qualities have equal standing.
+- The whole statement, and where each part is in the tree: `skills/foafnaut/SKILL.md`, "What
+  Foafnaut is".
+- Speed work is measured: by operation against QuickJS-NG and V8 with no JIT for BubblePopJS,
+  by phase for the engine. A cloud session with no Mac can do both. First record:
+  `docs/designissues/2026-11-09-foafnaut-perf-exploration.md`.
+
+Owner, 2026-11-09, verbatim, the goal for BubblePopJS: "concrete plan to take BubblePopJS into
+the big league of SOTA engines, blazing fast with and without JIT. Efficient and light profiles
+for lower end hardware. Modern and freshly thought through design aesthetic. Fast, compliant, and
+taking every advantage from being Lean-based, with theorems typing the codebase together and
+underwriting daring heuristics, optimisations, and shortcuts." And: "Remember to test on commin
+real world js and wasm, including the patterns we'll increasingly see downstream from verified
+languages like Lean and Rocq."
+
+- The plan, with its key results and the decisions it asks for:
+  `docs/designissues/2026-11-09-bubblepopjs-plan.md`; tracking issue
+  https://github.com/danbri/factoidal-core/issues/378 (BubblePopJS plan and proposed key
+  results). It is a proposal until the owner approves its key results as an OKR batch.
+- A BubblePopJS speed or compliance claim is measured on real-world code
+  (`labs/demos/foafnaut/bubblepop_perf/realworld.py`, which includes output of verified-language
+  toolchains) before single operations.
+- Relayed by the owner the same day from the session that wrote stages A and B (`wip/bpperf`,
+  `wip/bpperf-vm`): "That session stops after landing A and B, so everything from "compile
+  functions with captured variables" onward is yours" (the cloud session of the plan).
+- Owner, 2026-11-09, verbatim: "To avoid clashing with daily work, commit only in branches for
+  tonight." This was for that night; "Work goes on main" above is the standing rule.
+
+### Theorems from any contributor; a theorem is not a design rule (owner, 2026-11-10)
+
+Owner, verbatim: "a proof is a proof is a proof and once any model - however useless in general -
+blunders into a proof then it contributes to a web of independently verified observations that
+can constrain and inform engineering work." And: "We must be careful to avoid cases where poorly
+considered theorems might be misinterpreted by humans or fallible AI as requiring or forbidding
+particular engineering directions or UI/UX/feature design choices. This needs careful
+documentation. By analogy early developer reception around RDFS often assumed that missing data
+was evidence of invalid content, rather than embracing RDF's open world web ethos."
+
+- Theorem-only tasks for new contributors and tools, with setup pointers:
+  https://github.com/danbri/factoidal-core/issues/388 (theorem tasks for new contributors).
+- A missing theorem is not a defect and not a prohibition. A hypothesis is not a requirement
+  on web pages. An invariant describes today's code; it is not a design rule. No theorem
+  decides a feature, a default or the user interface. The reading rules, the five kinds of
+  theorem and the doc comment form ("Says:", "Does not say:") are in
+  `docs/designissues/2026-11-10-theorems-as-contributions.md`. Those rules are a session's
+  proposal: add each real misreading to that record's section 5 with its date and cost.
+
 ### One owner per release (owner, 2026-10-28)
 
 Owner, 2026-10-28, verbatim: "Ok you are release manager for 0.20.0" and
@@ -1690,6 +1754,9 @@ session.
   selection per subagent. Core rule: for all coding tasks, judge an
   appropriate lower-power model and run it in a subagent; Fable-class
   sessions orchestrate, gate, and design — they don't type the code.
+- [`codex-claude-interop`](skills/codex-claude-interop/SKILL.md) — how Claude
+  sessions and Codex share work: the coordination log, files in `/tmp`, `codex exec` with
+  `< /dev/null`, the brief, and the actions only the owner can do.
 - [`subagent-prompting`](skills/subagent-prompting/SKILL.md) —
   worktree path discipline + post-condition checks.
 - [`workflow-gotchas-debugging`](skills/workflow-gotchas-debugging/SKILL.md)

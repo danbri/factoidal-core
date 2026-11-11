@@ -5,6 +5,19 @@
    "title": "Demo index"
   },
   {
+   "page": "start.html",
+   "title": "Foafnaut start page",
+   "handwritten": true,
+   "size": [
+    900,
+    1100
+   ],
+   "needs": "page scripts in the engine (scriptSession: BubblePopJS, or QuickJS-NG in WasmVM) for the carousel; Noto Sans Math for the Fraktur, double-struck and script letters",
+   "appRefused": "a host with no QuickJS guest module refuses a page with scripts (run_html.ts then opens index.html)",
+   "shows": "a carousel of seven Foafnaut wordmarks (gradient fills, layered strokes, textPath on an arc, radial gradients, mathematical letters), one use element whose href a timer changes, flipped by a scale transform each animation frame; links to the live and bundled demo pages and to web sites that draw now",
+   "doesNotShow": "SVG filters or SMIL animation: the engine has neither, so the glow is layered strokes and the script moves the wordmark"
+  },
+  {
    "page": "showcase.html",
    "title": "Showcase: what the engine can and can not draw",
    "handwritten": true,
@@ -315,7 +328,7 @@
   },
   {
    "page": "webgpu-triangle.html",
-   "title": "WebGPU triangle, checked by Lean",
+   "title": "WebGPU triangle, checked by the browser",
    "handwritten": true,
    "needs": "page scripts and the page GPU commands (gpu_command import, L4Factoidal.PageGpu) in the engine and the guest",
    "appRefused": "does not execute scripts",
@@ -324,7 +337,7 @@
   },
   {
    "page": "webgl-triangle.html",
-   "title": "WebGL 1 and 2, checked by Lean",
+   "title": "WebGL 1 and 2, checked by the browser",
    "handwritten": true,
    "needs": "page scripts and the page GPU commands with WebGL programs (gpu_command op 9, L4Factoidal.PageGpu.Glsl) in the engine and the guest",
    "appRefused": "does not execute scripts",
@@ -342,7 +355,7 @@
   },
   {
    "page": "canvas-chart.html",
-   "title": "A Canvas 2D chart, drawn by Lean",
+   "title": "A Canvas 2D chart, drawn by the built-in engine",
    "handwritten": true,
    "needs": "page scripts and Canvas 2D (gpu_command ops 200 and 201, L4Factoidal.PageCanvas) in the engine and the guest",
    "appRefused": "does not execute scripts",
@@ -355,7 +368,7 @@
    "handwritten": true,
    "needs": "page scripts in the engine (BubblePopJS or QuickJS-NG in WasmVM); fetch for live queries to QLever, else the inlined snapshot (tools/spinal-tap-snapshot.py, third_party/data/wikidata-spinal-tap)",
    "appRefused": "does not execute scripts",
-   "shows": "the band's name in Mathematical Fraktur letters (Noto Sans Math) with chrome, a black cut line and a flame edge, and a diaeresis drawn over the 𝔫; seven SPARQL queries with syntax highlighting; Wikidata results as amp-panel cards with dials that go to eleven, built in one DOM batch; a zoom from 1 to 40 between the two dots that fades into 𝔉𝔬𝔞𝔣𝔫𝔞𝔲𝔱; up to eleven combining marks a letter",
+   "shows": "the band's name in Mathematical Fraktur letters (Noto Sans Math) with chrome, a black cut line and a flame edge, and a diaeresis over the 𝔫 that is U+0308 in the text, placed by the shaper (issue 368); seven SPARQL queries with syntax highlighting; Wikidata results as amp-panel cards with dials that go to eleven, built in one DOM batch; a zoom from 1 to 40 between the two dots that fades into 𝔉𝔬𝔞𝔣𝔫𝔞𝔲𝔱; up to eleven combining marks a letter",
    "doesNotShow": "the band's own logo or any picture from Wikimedia Commons; U+0308 after a Fraktur letter (Foafnaut does not place marks from another font yet, so the dots are SVG); without fetch the results are the snapshot's, not live"
   },
   {
@@ -365,6 +378,15 @@
    "needs": "an engine with DOM.Shadow and HTML.Frames (shadowframes)",
    "shows": "two card components with shadow roots (one from template shadowrootmode, one from attachShadow), named and default slots, :host and ::slotted rules, slotchange; a sandbox=\"allow-scripts\" srcdoc frame whose scripts run in a session of their own and talk to the page with postMessage",
    "doesNotShow": "the frame's own document: iframes are not drawn yet"
+  },
+  {
+   "page": "shader-gallery.html",
+   "title": "Shader gallery: two triangles",
+   "handwritten": true,
+   "needs": "page scripts and the page GPU commands (gpu_command, L4Factoidal.PageGpu: WGSL, and GLSL ES 3.00 programs) in the engine and the guest; the binary pass header (op 71) where the engine has it",
+   "appRefused": "does not execute scripts",
+   "shows": "five fragment shaders written for the page (plasma, a domain-warped noise, three ray-marched spheres with soft shadows, a Mandelbrot zoom, an amp panel whose gain goes to 11) on a full-canvas quad of two triangles, each in WGSL for WebGPU and in GLSL ES 3.00 for WebGL 2, with iTime, iResolution, iMouse and iFrame; the source shown, with the built-in engine's refusal of a while loop, a helper function and a 10,000-step loop; fps and script time",
+   "doesNotShow": "textures, multiple passes or buffers between frames (Shadertoy's iChannel), typing into the source in Foafnaut (no text input for page scripts yet; other browsers can edit and run it); without the new engine the canvas stays blank"
   },
   {
    "page": "svg-text-labels.html",

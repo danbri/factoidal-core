@@ -1,6 +1,10 @@
 import L4Factoidal.Rendering.FontData
 import L4Factoidal.Rendering.FontPolicy
 import L4Factoidal.Rendering.SfntCff
+-- The `csimp` theorems of `Prim.FloatOfNat` make this module's `Float.ofNat`, `Float.ofInt` and
+-- `n.toFloat` calls the fast twins (no decimal parse of 2^53 at each call, Lean 4.33.1): keep
+-- this import.
+import L4Factoidal.Prim.FloatOfNat
 
 /-!
 # Glyph outlines from `glyf`, in Lean

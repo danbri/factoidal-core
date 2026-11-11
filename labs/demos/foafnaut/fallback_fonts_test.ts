@@ -17,7 +17,8 @@ Deno.test("each fallback font file is there, with its size and SHA-256 and an OF
     const sha=[...new Uint8Array(await crypto.subtle.digest("SHA-256",bytes))].map(b=>b.toString(16).padStart(2,"0")).join("");
     assert(sha===font.sha256,`${font.family}: SHA-256 ${sha}`);
     await Deno.stat(new URL("OFL.txt",fontURL(font.path)));
-    const adds=font.adds!==undefined?ranges(font.adds):ranges((await coverage(font.coverage))[font.family]);
+    // A flag slice is asked for by the regional indicator pairs of a page, not by characters.
+    const adds=font.adds!==undefined?ranges(font.adds):font.regional!==undefined?ranges(font.regional):ranges((await coverage(font.coverage))[font.family]);
     assert(adds.length>0,`${font.family} adds no character`);
     if(font.coverage)for(const [lo,hi] of adds)assert(inRanges(ranges(font.blocks),lo)&&inRanges(ranges(font.blocks),hi),`${font.family}: U+${lo.toString(16)} outside its blocks`);
   }
@@ -43,25 +44,48 @@ Deno.test("a page fetches only the fonts its characters need", async()=>{
   assert((await fontsFor("<p>caf\u00e9 \u2122 \u20ac</p>",()=>{throw new Error("coverage read");})).length===0,"Latin page");
 });
 
-// Emoji (issue 1276): Noto Emoji, monochrome outlines, at its default weight. A page with an
-// emoji fetches it alone; a page with none never does, and no other demo page has one.
-Deno.test("only a page with emoji fetches the emoji font", async()=>{
-  const emoji=fallbackFonts.find((f:{family:string})=>f.family==="Noto Emoji");
-  if(emoji===undefined)throw new Error("no Noto Emoji in the table");
-  assert(emoji===fallbackFonts[fallbackFonts.length-1],"Noto Emoji is the last fallback font");
-  assert(emoji.bytes<1000000,`Noto Emoji is ${emoji.bytes} bytes`);
-  const page=await families("showcase-emoji.html");
-  assert(JSON.stringify(page)===JSON.stringify(["Noto Emoji"]),"emoji page: "+page);
+// Emoji (issue 1276): Noto Color Emoji in slices, and Noto Emoji (monochrome outlines) last,
+// for text presentation. A page with an emoji fetches the slices of its emoji; a page with
+// none fetches no emoji font, and no other demo page has one.
+const emojiFonts=fallbackFonts.filter((f:{family:string})=>/Emoji/.test(f.family));
+const emojiFamilies=async(text:string)=>(await fontsFor(text,coverage)).map((f:{family:string})=>f.family).filter((f:string)=>/Emoji/.test(f));
+Deno.test("only a page with emoji fetches an emoji font, and only the slices it needs", async()=>{
+  const mono=fallbackFonts[fallbackFonts.length-1];
+  assert(mono.family==="Noto Emoji","Noto Emoji is the last fallback font");
+  assert(mono.bytes<1000000,`Noto Emoji is ${mono.bytes} bytes`);
+  const slices=emojiFonts.filter((f:{family:string})=>f.family.startsWith("Noto Color Emoji"));
+  assert(slices.length>=10,`${slices.length} colour slices`);
+  for(const f of slices)assert(f.bytes<1000000,`${f.family} is ${f.bytes} bytes`);
   for(const name of ["index.html","showcase.html","showcase-scripts.html","showcase-textpath.html"])
-    assert(!(await families(name)).includes("Noto Emoji"),`${name} fetches the emoji font`);
+    assert((await emojiFamilies(await Deno.readTextFile(new URL(name,pages)))).length===0,`${name} fetches an emoji font`);
   for await(const entry of Deno.readDir(pages)){
     if(!/\.(html|xml)$/.test(entry.name)||entry.name==="showcase-emoji.html")continue;
-    assert(!(await families(entry.name)).includes("Noto Emoji"),`${entry.name} fetches the emoji font`);
+    const got=await emojiFamilies(await Deno.readTextFile(new URL(entry.name,pages)));
+    assert(got.length===0,`${entry.name} fetches ${got}`);
   }
-  const wants=async(text:string)=>(await fontsFor(text,coverage)).some((f:{family:string})=>f.family==="Noto Emoji");
-  // Symbols that Noto Sans or Noto Sans Math has stay in those fonts: no emoji font for them.
-  assert(!(await wants("<p>\u00a9 \u00ae \u2122 \u2194 \u25b6 \u2665 \u2b50 # * 1</p>")),"text symbols fetch the emoji font");
-  // An emoji, a character only the emoji font has, or a presentation selector or keycap mark.
-  for(const text of ["\u{1F600}","\u2714","\u2665\uFE0F","1\uFE0F\u20E3","&#x1F44D;&#x1F3FD;","\u{1F1EC}\u{1F1E7}"])
-    assert(await wants(`<p>${text}</p>`),`no emoji font for ${JSON.stringify(text)}`);
+  const page=await families("showcase-emoji.html");
+  assert(page.includes("Noto Color Emoji Smileys")&&page.includes("Noto Emoji"),"emoji page: "+page);
+  // Symbols that Noto Sans or Noto Sans Math has, with text presentation, stay in those fonts.
+  assert((await emojiFamilies("<p>\u00a9 \u00ae \u2122 \u2194 \u25b6 \u2665 # * 1</p>")).length===0,"text symbols fetch an emoji font");
+  // One emoji fetches one slice; a sequence the slices of its characters.
+  const one=async(text:string,want:string[])=>{
+    const got=await emojiFamilies(`<p>${text}</p>`);
+    assert(JSON.stringify(got)===JSON.stringify(want.map(w=>w==="Noto Emoji"?w:"Noto Color Emoji "+w)),`${JSON.stringify(text)}: ${got}`);
+  };
+  await one("\u{1F600}",["Smileys"]);
+  await one("\u2b50",["Travel"]);                          // Emoji_Presentation=Yes, though a text font has it
+  await one("\u2665\uFE0F",["Activities"]);                 // a text symbol asked for as emoji
+  await one("\u2714",["Symbols"]);                         // only emoji fonts have it
+  await one("1\uFE0F\u20E3",["Symbols"]);
+  await one("&#x1F44D;&#x1F3FD;",["People"]);
+  await one("\u{1F468}\u200D\u{1F469}\u200D\u{1F467}",["People","People ZWJ"]);
+  await one("\u{1F1EC}\u{1F1E7} \u{1F1EF}\u{1F1F5}",["Flags F-K"]);
+  await one("&#x1F1FA;&#x1F1E6;",["Flags T-Z"]);
+  await one("\u{1F3F4}\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}",["Flags"]);
+  await one("\u2764\uFE0E",["Smileys","Noto Emoji"]);
+  // SVG text draws outlines: with an SVG text element the outline emoji font comes too.
+  assert(JSON.stringify(await emojiFamilies("<svg><text>\u{1F600}</text></svg>"))===JSON.stringify(["Noto Color Emoji Smileys","Noto Emoji"]),"SVG text emoji");
+  // A page of one smiley fetches a small part of the colour font.
+  const smileys=emojiFonts.find((f:{family:string})=>f.family==="Noto Color Emoji Smileys");
+  assert(smileys!==undefined&&smileys.bytes<200000,`the smileys slice is ${smileys?.bytes} bytes`);
 });

@@ -101,6 +101,13 @@ function chromeOnlyCounts(engine:HTMLEngine) {
   assert.notDeepEqual(Array.from(second.chrome.data),Array.from(first.chrome.data),"the chrome is drawn again");
   return work;
 }
+// The browser bar names the engine that runs the page's scripts (shell.script, WebShell).
+Deno.test("the browser bar draws the page script engine's name",async()=>{
+  const engine=await loadHTML();
+  const shell=(script:string)=>({tabs:[{title:"t"}],active:0,address:"https://x.test/",focused:false,canBack:false,canForward:false,loading:false,scale:1,theme:"next",pages:1,scroll:0,pressed:"",script});
+  const count=(script:string)=>engine.compileLayers("<!doctype html><p>x</p>",1000,600,{url:pageURL,shell:shell(script),checks:false}).chrome.primitiveCount;
+  assert(count("JS BUBBLEPOP")>count(""),"the name adds paint to the bar");
+});
 Deno.test("frame work: a chrome-only frame keeps the page layer, Wasm engine",async()=>{console.log(JSON.stringify(chromeOnlyCounts(await loadHTML())));});
 Deno.test({name:"frame work: a chrome-only frame keeps the page layer, native library",ignore:noLibrary,fn:async()=>{console.log(JSON.stringify(chromeOnlyCounts(await loadHTML(library))));}});
 Deno.test("frame work: hover repaints, Wasm engine",async()=>{console.log(JSON.stringify(hoverCounts(await loadHTML())));});

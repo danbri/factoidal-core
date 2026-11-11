@@ -1,12 +1,15 @@
 // Main-thread side of native_html_worker.ts. Calls answer promises, so the event loop
-// keeps pumping, and they run in the order sent. A worker that fails to start or dies
+// keeps pumping. Calls are FIFO within their priority lane. A worker that fails to start or dies
 // rejects its calls; the caller decides what to do and says so in the trace.
 import type {HTMLArtifact,HTMLLayers} from "./native_html_engine.ts";
-import type {RemoteCall,WorkerReply,WorkerRequest} from "./native_html_worker.ts";
+import {REMOTE_CALLS,type RemoteCall} from "./native_html_calls.ts";
+import type {WorkerReply,WorkerRequest} from "./native_html_worker.ts";
 import type {PageFonts} from "./native_html_fonts.ts";
 
 export type CompileClient={
   call(name:RemoteCall,...args:unknown[]):Promise<{value:unknown;workerMs:number}>;
+  /** Input runs before ordinary work; scriptSession calls always share this FIFO. */
+  inputCall(name:RemoteCall,...args:unknown[]):Promise<{value:unknown;workerMs:number}>;
   compile(source:string,width:number,height:number,options:Record<string,unknown>):Promise<{artifact:HTMLArtifact;workerMs:number}>;
   compileLayers(source:string,width:number,height:number,options:Record<string,unknown>):Promise<{layers:HTMLLayers;workerMs:number}>;
   /** A layers render at low priority (a scroll prefetch): it runs when no other call waits,
@@ -16,7 +19,7 @@ export type CompileClient={
   pageFonts(source:string):Promise<PageFonts&{workerMs:number}>;
   /** Drop the low-priority call that has not started, if there is one. */
   dropLow():void;
-  /** Ordinary calls sent and not yet answered. */
+  /** Ordinary and input calls sent and not yet answered. */
   readonly pending:number;
   /** The engine methods that run in the worker, as promise-returning functions. */
   engine:Record<RemoteCall,(...args:unknown[])=>Promise<unknown>>;
@@ -38,16 +41,16 @@ export async function startCompileWorker(font?:{path:string;family:string},nativ
   });
   const init=await send({op:"init",font,nativeEngine});
   if(!init.ok)throw new Error(init.error);
-  const call=async(name:RemoteCall,...args:unknown[])=>{
+  const invoke=async(input:boolean,name:RemoteCall,...args:unknown[])=>{
     ordinary++;
     let reply:WorkerReply;
-    try{reply=await send({op:"call",name,args});}finally{ordinary--;}
+    try{reply=await send({op:"call",name,args,input});}finally{ordinary--;}
     if(!reply.ok)throw new Error(reply.error);
     return {value:reply.value,workerMs:reply.ms};
   };
-  // The same names as REMOTE_CALLS in native_html_worker.ts (not imported: that module runs
-  // worker code at load). A merge dropped printLayout here once, and the window could not print.
-  const names:RemoteCall[]=["xmlStylesheet","xslt","inspect","fontRequests","graphStart","graphEvent","graphPage","sourcePage","wasmPage","sparqlPage","selectedText","compile","compileLayers","printLayout","imageInfo","imageLoad","imageDrop","frameWork","requestBytes","scriptInfo","scriptLoad","scriptSession","nodeAt","pointerAt","scriptPlan","scriptSetting","scriptChoices"];
+  const call=(name:RemoteCall,...args:unknown[])=>invoke(false,name,...args);
+  const inputCall=(name:RemoteCall,...args:unknown[])=>invoke(true,name,...args);
+  const names=REMOTE_CALLS;
   const engine=Object.fromEntries(names.map(name=>[name,async(...args:unknown[])=>(await call(name,...args)).value])) as CompileClient["engine"];
   return {
     get alive(){return alive;},
@@ -63,7 +66,7 @@ export async function startCompileWorker(font?:{path:string;family:string},nativ
       if(!reply.ok)throw new Error(reply.error);
       return {...reply.value as PageFonts,workerMs:reply.ms};
     },
-    call,engine,
+    call,inputCall,engine,
     async compile(source,width,height,options){
       const {value,workerMs}=await call("compile",source,width,height,options);
       return {artifact:value as HTMLArtifact,workerMs};

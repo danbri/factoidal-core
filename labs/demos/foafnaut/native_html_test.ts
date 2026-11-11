@@ -207,18 +207,20 @@ Deno.test("resource size, resource count, cancellation and URL schemes are bound
   const dir=await Deno.makeTempDir({prefix:"factoidal-native-html-limits-"});
   try{
     const path=dir+"/page.html",url=pathToFileURL(path).href;
-    await Deno.writeTextFile(path,"x".repeat(1048577));
-    await assert.rejects(()=>readSource(url),/exceeds 1 MiB/);
+    await Deno.writeTextFile(path,"x".repeat(2*1048576));
+    assert.equal((await readSource(url)).bytes,2*1048576,"a 2 MiB page is read");
+    await Deno.writeTextFile(path,"x".repeat(16*1048576+1));
+    await assert.rejects(()=>readSource(url),/exceeds 16 MiB/);
     await Deno.writeTextFile(path,html(Array.from({length:17},(_,n)=>`<link rel="stylesheet" href="${n}.css">`).join("")));
     await assert.rejects(()=>prepareHTML(engine,url),/16 external stylesheets/);
     const controller=new AbortController();controller.abort();
     await assert.rejects(()=>prepareHTML(engine,url,controller.signal),/abort/i);
     await Deno.writeFile(path,new Uint8Array([0x63,0x61,0x66,0xe9]));
     assert.equal((await readSource(url,undefined,engine.decodeDocument)).source,"café");
-    const css="/*"+"x".repeat(1048572)+"*/";
+    const css="/*"+"x".repeat(7*1048576)+"*/";
     await Deno.writeTextFile(path,html(Array.from({length:5},(_,n)=>`<link rel="stylesheet" href="${n}.css">`).join("")));
     for(let n=0;n<5;n++)await Deno.writeTextFile(dir+`/${n}.css`,css);
-    await assert.rejects(()=>prepareHTML(engine,url),/stylesheets exceed 4 MiB/);
+    await assert.rejects(()=>prepareHTML(engine,url),/stylesheets exceed 32 MiB/);
     assert.throws(()=>inputURL("javascript:alert(1)"),/file, HTTP and HTTPS/);
     assert.throws(()=>inputURL("https://name:secret@example.invalid/"),/Credentials/);
     assert.throws(()=>inputURL("file://remotehost/private/file.html"),/Remote file URL hosts/);
@@ -311,9 +313,11 @@ Deno.test("a low-priority layers call runs after ordinary calls, a newer one rep
     const [,oldAnswer,newerAnswer]=await Promise.all([ordinary,old,newer,after]);
     assert.equal(oldAnswer,undefined);
     assert(newerAnswer);
-    // The worker takes the low calls in after the first call ends. The second ordinary call
-    // was sent after the low call and still ran before it.
-    assert.deepEqual(order,["ordinary","old-dropped","ordinary2","newer"]);
+    // The replaced low call is answered undefined when the newer one arrives (the queue drops it
+    // at once), so its place in the order is not fixed. The second ordinary call was sent after
+    // the low call and still ran before it.
+    assert.deepEqual(order.filter(o=>o!=="old-dropped"),["ordinary","ordinary2","newer"]);
+    assert(order.includes("old-dropped"));
     assert.equal(client.pending,0);
     // The prefetched band is Lean's answer for that request, the same as an ordinary call.
     const direct=await client.compileLayers(third.source,640,400,third.options);

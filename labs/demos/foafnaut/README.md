@@ -4,6 +4,47 @@
 map, build, test, shared-machine rules) and the
 [handoff record](../../../docs/designissues/2026-11-09-foafnaut-handoff.md) (current state).
 
+## Names and parts
+
+| Name | What it is | State |
+|---|---|---|
+| **BubblePopKit** | The rendering engine, in the sense that WebKit is one: every build of it, native libraries and Wasm binaries | macOS and Wasm built and released; Linux builds exist, undertested |
+| **BubblePopJS** | Its JavaScript engine (engine id `bubblepop`) | The default page script engine |
+| **BubblePopWASM** | Its WebAssembly engine, which runs Wasm modules (WasmVM in the code) | Runs page Wasm and guests |
+
+A Wasm build of BubblePopKit is a build, not BubblePopWASM. QuickJS-NG stays in the builds, maintained for differential
+testing and as a selectable engine.
+
+BubblePopJS and BubblePopWASM are named engines that BubblePopKit uses, and they live in this repository. That follows
+other browsers, which keep the script engine as a separately named component:
+
+| Project | Engine | Script engine | WebAssembly |
+|---|---|---|---|
+| WebKit | WebCore | JavaScriptCore, a framework in the same project | inside JavaScriptCore |
+| Chromium | Blink | V8, a separate project | inside V8 |
+| Firefox | Gecko | SpiderMonkey, in the same tree | inside SpiderMonkey |
+| Ladybird | LibWeb | LibJS, in the same repository | LibWasm, a separate library |
+
+BubblePopWASM is closest to Ladybird's arrangement: a WebAssembly engine of its own, not part of the JavaScript engine.
+
+**Browsers built on BubblePopKit**
+
+| Browser | State |
+|---|---|
+| **Foafnaut**, the windowed browser | macOS app released. Linux builds exist but are undertested. Windows has no build yet and is the nearest next target. Android, iOS, iPadOS, ESP32 and a Raspberry Pi graphics backend are under investigation, and depend on large performance gains to be viable |
+| **Textnaut**, in a terminal | Prototype: [textnaut/README.md](textnaut/README.md) |
+| **WWW harness**, the web page that runs the Wasm build ([on the Hub](https://danbri.github.io/factoidal/web/hub/foafnaut/)) | Live |
+
+**Utilities**
+
+| Utility | What it is |
+|---|---|
+| [`tools/devproxy`](../../../tools/devproxy/README.md) | HTTP(S) development proxy: records and replays real pages |
+
+Code identifiers keep their older names (`web-render`, `WasmVM`, `LeanJS` and others) for now.
+
+## What is in this directory
+
 This directory holds two kinds of program:
 
 - The Foafnaut browser: the window program `run_html.ts` and the HTML, CSS, SVG and

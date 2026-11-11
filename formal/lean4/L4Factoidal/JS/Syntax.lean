@@ -1,3 +1,5 @@
+import Std.Data.HashMap
+
 /-!
 # L4Factoidal.JS.Syntax — abstract syntax of the ECMAScript core subset
 
@@ -57,6 +59,148 @@ two classes with the same private name share it. Record, section 5. -/
 def privKey (name : String) : String := String.singleton (Char.ofNat 0x10FFFE) ++ name
 def isPrivKey (k : String) : Bool := k.front == Char.ofNat 0x10FFFE
 
+/-- JavaScript values (§6.1); see `Value.lean`. -/
+inductive Value where
+  | undef
+  | null
+  | bool (b : Bool)
+  | num (n : Float)
+  | str (s : String)
+  | obj (id : Nat)
+  /-- A Symbol (§6.1.5): its number in `Heap.syms`. -/
+  | sym (id : Nat)
+  /-- A BigInt (§6.1.6.2). -/
+  | big (i : Int)
+  /-- Not a language value: the content of a binding that is not initialised yet (the
+  temporal dead zone). It never leaves an environment. -/
+  | hole
+  /-- Not a language value: a register of the register machine whose number is in the
+  parallel float registers (`Instr`, `vmLoop`), not boxed. It never leaves the registers. -/
+  | fl
+  deriving Inhabited
+
+
+/-- The instructions of the register machine (`JS/Compile.lean`, `vmLoop` in `Interp.lean`).
+Registers are numbered within the frame; a jump's target is an index into the instructions. -/
+inductive Instr where
+  | move (dst src : Nat)
+  | loadF (dst : Nat) (x : Float)
+  | loadV (dst : Nat) (v : Value)
+  | setHole (r : Nat)
+  /-- ReferenceError unless register `r` is initialised (the temporal dead zone). -/
+  | checkInit (r : Nat) (name : String)
+  | add (dst a b : Nat)
+  | sub (dst a b : Nat)
+  | mul (dst a b : Nat)
+  | div (dst a b : Nat)
+  | lt (dst a b : Nat)
+  | gt (dst a b : Nat)
+  | le (dst a b : Nat)
+  | ge (dst a b : Nat)
+  | seq (dst a b : Nat)
+  | sne (dst a b : Nat)
+  /-- Any other binary operator, the general way. -/
+  | binop (op : BinOp) (dst a b : Nat)
+  /-- `x++` (`up`) or `x--` of the value in `src`: `old` gets the numeric value, `nw` the new
+  one. A BigInt stays a BigInt. -/
+  | inc (nw old src : Nat) (up : Bool)
+  /-- `-a`, `+a`, `~a`, `typeof a`, `void a` (not `delete`). -/
+  | unop (op : UnOp) (dst a : Nat)
+  | not (dst a : Nat)
+  | jmp (t : Nat)
+  /-- Jump when register `a` is false (`jf`) or true (`jt`) after ToBoolean, or nullish. -/
+  | jf (a t : Nat)
+  | jt (a t : Nat)
+  | jnull (a t : Nat)
+  | jnotnull (a t : Nat)
+  /-- Jump when NOT (a < b), and so on: the test of a conditional, with no boolean made. -/
+  | jnlt (a b t : Nat)
+  | jngt (a b t : Nat)
+  | jnle (a b t : Nat)
+  | jnge (a b t : Nat)
+  /-- A step of the script's budget: the head of a loop. -/
+  | tick
+  /-- A global name; `site` numbers a slot of the global name cache (`HeapOf.globalCache`). -/
+  | getGlobal (dst : Nat) (name : String) (site : Nat)
+  | setGlobal (src : Nat) (name : String) (site : Nat)
+  /-- `dst = a + k`, `a - k`, `a * k`: a number constant as an operand. -/
+  | addK (dst a : Nat) (k : Float)
+  | subK (dst a : Nat) (k : Float)
+  | mulK (dst a : Nat) (k : Float)
+  /-- Jump when NOT (a < k), and so on. -/
+  | jnltK (a : Nat) (k : Float) (t : Nat)
+  | jngtK (a : Nat) (k : Float) (t : Nat)
+  | jnleK (a : Nat) (k : Float) (t : Nat)
+  | jngeK (a : Nat) (k : Float) (t : Nat)
+  /-- The name `typeof` sees: no error when it is not defined. -/
+  | typeofGlobal (dst : Nat) (name : String)
+  /-- A variable `hops` environments above the function's closure environment. -/
+  | getUp (dst hops idx : Nat) (name : String)
+  | setUp (src hops idx : Nat) (name : String)
+  | getMember (dst o : Nat) (key : String)
+  | setMember (o : Nat) (key : String) (src : Nat)
+  | getIndex (dst o i : Nat)
+  | setIndex (o i src : Nat)
+  /-- Call register `f` with this `thisR` (`noReg`: undefined); the `n` arguments are in
+  `base`, `base + 1`, ... `what` names the callee in an error. -/
+  | call (dst f thisR base n : Nat) (what : String)
+  | new (dst f base n : Nat) (what : String)
+  /-- Return register `a` (`noReg`: undefined). -/
+  | ret (a : Nat)
+  | arr (dst base n : Nat)
+  | obj (dst : Nat)
+  | defProp (o : Nat) (key : String) (src : Nat)
+  | throw (a : Nat)
+  deriving Inhabited
+
+/-- No register (a call with no `this`, a return with no value). -/
+def noReg : Nat := 65535
+
+/-- A function's code for the register machine. -/
+structure Code where
+  instrs : Array Instr := #[]
+  /-- Registers of a frame: the parameters come first. -/
+  nregs : Nat := 0
+  nparams : Nat := 0
+  /-- The parameters and `var`s: the registers a call clears. -/
+  nvars : Nat := 0
+  /-- The register that holds `this`, when the function uses it. -/
+  thisReg : Option Nat := none
+  strict : Bool := false
+  isArrow : Bool := false
+  name : String := ""
+  deriving Inhabited
+
+/-- What the name resolver (`JS/Resolve.lean`) found about a function. -/
+structure FunInfo where
+  /-- The names of the function's environment, in the order they are declared. -/
+  layout : Array String := #[]
+  /-- The number of parameters (when `plain`, the first `nParams` slots). -/
+  nParams : Nat := 0
+  /-- The parameters are plain distinct names with no initialisers or rest, and the
+  function does not use `arguments`: the arguments array becomes the slots. -/
+  plain : Bool := false
+  /-- Nothing made during a call can hold its environment afterwards (no closure, class,
+  generator, direct `eval`): the environment's slot is reused when the call returns. -/
+  frameLocal : Bool := false
+  /-- The function's code for the register machine, when it can be compiled. -/
+  code : Option Code := none
+  /-- Name to slot for a layout with many names (`FunInfo.indexOf`): every environment of the
+  function shares it, so a name that the layout does not have is found absent with one hash
+  and not with a comparison for each name. -/
+  index : Option (Std.HashMap String Nat) := none
+  deriving Inhabited
+
+/-- Layouts with more names than this get an index (the same limit as `envIndexed` for an
+environment that grows one name at a time). -/
+def FunInfo.indexedFrom : Nat := 24
+
+/-- The index of a layout: each name to its first slot; `none` for a short layout. -/
+def FunInfo.indexOf (layout : Array String) : Option (Std.HashMap String Nat) :=
+  if layout.size > FunInfo.indexedFrom then
+    some ((layout.zipIdx).foldl (fun m (x, i) => if m.contains x then m else m.insert x i) {})
+  else none
+
 mutual
 /-- Expressions. -/
 inductive Expr where
@@ -67,6 +211,12 @@ inductive Expr where
   | bool (b : Bool)
   | null
   | ident (name : String)
+  /-- A literal value (number, string, `true`, `false`, `null`) already boxed: the resolver
+  makes these, so evaluating a literal does not allocate. -/
+  | lit (v : Value)
+  /-- A name the resolver placed: `hops` environments up, slot `idx`. The evaluator checks
+  the name in that slot, and looks the name up the plain way when they differ. -/
+  | local (name : String) (hops idx : Nat)
   | this
   | array (elems : List Expr)
   | object (props : List PropDef)
@@ -142,7 +292,7 @@ constructor. `params` are patterns with initialisers; `rest` is `...p`. -/
 inductive FunDef where
   | mk (name : Option String) (params : List PatElem) (rest : Option Pat) (body : List Stmt)
       (vars : List String) (usesArgs : Bool) (strict : Bool) (kind : FunKind) (gen : Bool)
-      (async : Bool)
+      (async : Bool) (info : FunInfo)
 
 /-- A class (§15.7): name, heritage, constructor, members. A field is a member whose
 function returns the initial value. -/
@@ -161,6 +311,9 @@ inductive Case where
 inductive ForInit where
   | decl (kind : DeclKind) (decls : List Decl)
   | expr (e : Expr)
+  /-- `let` declarations whose loop has no closure: one environment serves every iteration
+  (nothing can observe a per-iteration copy, §14.7.4.4). Made by the resolver. -/
+  | letOnce (decls : List Decl)
 
 /-- One declarator: `p = e`. -/
 inductive Decl where
@@ -181,6 +334,10 @@ inductive Stmt where
   | forIn (kind : Option DeclKind) (target : Pat) (obj : Expr) (body : Stmt)
   | forOf (kind : Option DeclKind) (target : Pat) (obj : Expr) (body : Stmt)
   | block (body : List Stmt)
+  /-- A block whose environment no closure can hold: its slot is reused when it ends. -/
+  | blockF (body : List Stmt)
+  /-- A top-level loop with its code for the register machine, and the loop itself. -/
+  | compiled (c : Code) (s : Stmt)
   | throwS (e : Expr)
   | tryS (body : List Stmt) (param : Option Pat) (handler : Option (List Stmt))
       (finalizer : Option (List Stmt))
@@ -194,7 +351,7 @@ inductive Stmt where
 end
 
 instance : Inhabited Expr := ⟨.null⟩
-instance : Inhabited FunDef := ⟨.mk none [] none [] [] false false .normal false false⟩
+instance : Inhabited FunDef := ⟨.mk none [] none [] [] false false .normal false false {}⟩
 instance : Inhabited Stmt := ⟨.empty⟩
 instance : Inhabited PropDef := ⟨.init (.lit "") .null⟩
 instance : Inhabited PropKey := ⟨.lit ""⟩
@@ -210,13 +367,14 @@ def FunDef.rest : FunDef → Option Pat | .mk _ _ r .. => r
 def FunDef.body : FunDef → List Stmt | .mk _ _ _ b .. => b
 def FunDef.vars : FunDef → List String | .mk _ _ _ _ v .. => v
 def FunDef.usesArgs : FunDef → Bool | .mk _ _ _ _ _ u .. => u
-def FunDef.strict : FunDef → Bool | .mk _ _ _ _ _ _ s _ _ _ => s
-def FunDef.kind : FunDef → FunKind | .mk _ _ _ _ _ _ _ k _ _ => k
-def FunDef.gen : FunDef → Bool | .mk _ _ _ _ _ _ _ _ g _ => g
-def FunDef.async : FunDef → Bool | .mk _ _ _ _ _ _ _ _ _ a => a
+def FunDef.strict : FunDef → Bool | .mk _ _ _ _ _ _ s _ _ _ _ => s
+def FunDef.kind : FunDef → FunKind | .mk _ _ _ _ _ _ _ k _ _ _ => k
+def FunDef.gen : FunDef → Bool | .mk _ _ _ _ _ _ _ _ g _ _ => g
+def FunDef.async : FunDef → Bool | .mk _ _ _ _ _ _ _ _ _ a _ => a
+def FunDef.info : FunDef → FunInfo | .mk _ _ _ _ _ _ _ _ _ _ i => i
 def FunDef.arrow (f : FunDef) : Bool := f.kind == .arrow
 def FunDef.withName (f : FunDef) (n : String) : FunDef :=
-  match f with | .mk _ p r b v u s k g a => .mk (some n) p r b v u s k g a
+  match f with | .mk _ p r b v u s k g a i => .mk (some n) p r b v u s k g a i
 
 /-- The `length` of a function: parameters before the first initialiser or rest (§15.1.5). -/
 def FunDef.expectedArgs (f : FunDef) : Nat :=
@@ -269,7 +427,7 @@ def Expr.hasYieldF : Nat → Expr → Bool
   | n + 1, e =>
     match e with
     | .yieldE .. => true
-    | .num _ | .bigint _ | .str _ | .bool _ | .null | .ident _ | .this | .newTarget | .superMember _
+    | .num _ | .bigint _ | .str _ | .bool _ | .null | .ident _ | .local .. | .lit _ | .this | .newTarget | .superMember _
     | .func _ | .classE _ | .regex _ _ => false
     | .chain a | .optBase a | .optCallee a => Expr.hasYieldF n a
     | .array es | .template _ es | .superCall es | .tagged _ _ _ es => Expr.anyYield n es
@@ -311,12 +469,13 @@ def Stmt.hasYieldF : Nat → Stmt → Bool
     | .forS i t u b =>
       (match i with
         | some (.expr e) => Expr.hasYieldF n e
-        | some (.decl _ ds) => Decl.anyYield n ds
+        | some (.decl _ ds) | some (.letOnce ds) => Decl.anyYield n ds
         | none => false) ||
       (match t with | some e => Expr.hasYieldF n e | none => false) ||
       (match u with | some e => Expr.hasYieldF n e | none => false) || Stmt.hasYieldF n b
     | .forIn _ _ o b | .forOf _ _ o b => Expr.hasYieldF n o || Stmt.hasYieldF n b
-    | .block ss => Stmt.anyYield n ss
+    | .block ss | .blockF ss => Stmt.anyYield n ss
+    | .compiled _ s => Stmt.hasYieldF n s
     | .tryS b _ h f => Stmt.anyYield n b ||
         (match h with | some h => Stmt.anyYield n h | none => false) ||
         (match f with | some f => Stmt.anyYield n f | none => false)

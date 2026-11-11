@@ -9,11 +9,10 @@ that nests a flat body is the bridge for the refinement proofs
 (docs/designissues/2026-11-07-wasmvm-engine.md, "Proof plan"). Flat code keeps the
 decoder and the validator as loops, with no recursion on nesting depth.
 
-Scope now: WebAssembly 2.0 plus multi-memory, the reference types of 3.0 without
-GC types, exception handling (3.0 `try_table` and the legacy `try`/`catch`/`delegate`/
-`rethrow`), tail calls and typed function references. Constructors for SIMD, GC and
-memory64 come later; `ValType.v128` and `HeapType.idx` already exist so that the types
-do not change shape.
+Scope now: WebAssembly 2.0 plus multi-memory, the reference types of 3.0,
+exception handling (3.0 `try_table` and the legacy `try`/`catch`/`delegate`/
+`rethrow`), tail calls, typed function references, fixed-width SIMD (`Instr.simd`) and
+garbage collection (`TypeDef`, `Instr.gc`). Constructors for memory64 come later.
 -/
 namespace L4Factoidal.WasmVM
 
@@ -49,6 +48,48 @@ structure FuncType where
   params : Array ValType
   results : Array ValType
   deriving BEq, Repr, Inhabited, DecidableEq
+
+/-- The type of a struct field or an array element: a value type or a packed integer
+(garbage collection). -/
+inductive StorageType where
+  | val (t : ValType) | i8 | i16
+  deriving BEq, Repr, Inhabited, DecidableEq
+
+/-- The value type that a storage type has on the operand stack. -/
+def StorageType.unpack : StorageType → ValType
+  | .val t => t
+  | _ => .i32
+
+def StorageType.isPacked : StorageType → Bool
+  | .val _ => false
+  | _ => true
+
+structure FieldType where
+  «mutable» : Bool
+  type : StorageType
+  deriving BEq, Repr, Inhabited, DecidableEq
+
+inductive CompType where
+  | func (ft : FuncType)
+  | struct (fields : Array FieldType)
+  | array (elem : FieldType)
+  deriving BEq, Repr, Inhabited
+
+/-- A sub type: finality, the declared supertypes (type indices; at most one is valid)
+and the composite type. -/
+structure SubType where
+  final : Bool := true
+  supers : Array Nat := #[]
+  comp : CompType
+  deriving BEq, Repr, Inhabited
+
+/-- One type of the type section with its recursion group: the group holds the types
+`recStart` to `recStart + recSize - 1`. -/
+structure TypeDef where
+  sub : SubType
+  recStart : Nat
+  recSize : Nat := 1
+  deriving BEq, Repr, Inhabited
 
 structure Limits where
   min : Nat
@@ -195,7 +236,52 @@ inductive Instr where
   | returnCall (f : Nat) | returnCallIndirect (type : Nat) (table : Nat) | returnCallRef (type : Nat)
   -- Typed function references.
   | callRef (type : Nat) | refAsNonNull | brOnNull (l : Nat) | brOnNonNull (l : Nat)
+  /-- A fixed-width SIMD instruction: `code` is the opcode number after the 0xFD
+  prefix. The immediates that the opcode does not have are zero: the memarg, the lane
+  index, and 16 bytes as two little-endian halves (`v128.const`: the value;
+  `i8x16.shuffle`: the 16 lane indices). Shapes and results: `Simd.lean`. -/
+  | simd (code : Nat) (m : MemArg) (lane : Nat) (lo hi : UInt64)
+  /-- A garbage-collection instruction with index immediates only: `code` is the opcode
+  number after the 0xFB prefix (0 to 19 and 26 to 30); `x` and `y` are its immediates
+  in order, zero when it has none (`GcCode` names the numbers). -/
+  | gc (code x y : Nat)
+  /-- `ref.test` and `ref.cast` (0xFB 20 to 23). -/
+  | refTest (r : RefType) | refCast (r : RefType)
+  /-- `br_on_cast` and (`fail`) `br_on_cast_fail`: label, source type, target type. -/
+  | brOnCast (fail : Bool) (l : Nat) (r1 r2 : RefType)
+  | refEq
   deriving BEq, Repr, Inhabited
+
+/-! Opcode numbers after the 0xFB prefix. -/
+namespace GcCode
+def structNew : Nat := 0
+def structNewDefault : Nat := 1
+def structGet : Nat := 2
+def structGetS : Nat := 3
+def structGetU : Nat := 4
+def structSet : Nat := 5
+def arrayNew : Nat := 6
+def arrayNewDefault : Nat := 7
+def arrayNewFixed : Nat := 8
+def arrayNewData : Nat := 9
+def arrayNewElem : Nat := 10
+def arrayGet : Nat := 11
+def arrayGetS : Nat := 12
+def arrayGetU : Nat := 13
+def arraySet : Nat := 14
+def arrayLen : Nat := 15
+def arrayFill : Nat := 16
+def arrayCopy : Nat := 17
+def arrayInitData : Nat := 18
+def arrayInitElem : Nat := 19
+def refTest : Nat := 20
+def refCast : Nat := 22
+def anyConvertExtern : Nat := 26
+def externConvertAny : Nat := 27
+def refI31 : Nat := 28
+def i31GetS : Nat := 29
+def i31GetU : Nat := 30
+end GcCode
 
 /-- A constant expression or a function body: flat instructions ending in `end_`. -/
 abbrev Expr := Array Instr
@@ -262,7 +348,13 @@ structure Func where
   deriving BEq, Repr, Inhabited
 
 structure Module where
+  /-- The function type of each type index. For a type that is not a function type
+  (a struct or an array) the entry is a placeholder; `typeDefs` says which. -/
   types : Array FuncType := #[]
+  /-- The full definition of each type index (recursion group, finality, supertypes,
+  composite type). Empty for a module built with function types only: `defs` then
+  takes every entry of `types` as a final function type in its own group. -/
+  typeDefs : Array TypeDef := #[]
   imports : Array Import := #[]
   funcs : Array Func := #[]
   tables : Array Table := #[]
@@ -278,6 +370,10 @@ structure Module where
   deriving Inhabited
 
 namespace Module
+/-- The definition of each type index (see `typeDefs`). -/
+def defs (m : Module) : Array TypeDef :=
+  if m.typeDefs.size == m.types.size then m.typeDefs
+  else m.types.mapIdx fun i ft => { sub := { comp := .func ft }, recStart := i }
 def importedFuncTypes (m : Module) : Array Nat :=
   m.imports.filterMap fun i => match i.desc with | .func t => some t | _ => none
 def importedTables (m : Module) : Array TableType :=

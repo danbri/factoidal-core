@@ -2,11 +2,13 @@ import {loadHTML,type HTMLArtifact,type HTMLLayers,type HistoryAnswer,type Shell
 import {printImages,pdfPageCount,DEFAULT_PAPER} from "./native_print.ts";
 import {clampOffset,keeps} from "./layer_compositor.ts";
 import {prefetchTarget,trackMotion,stateKey,sameState,canSwap,keepReach,PREFETCH_MARGIN_ROWS,FRAME_MS,type Motion,type StateKey} from "./scroll_prefetch.ts";
-import {inputURL,loadFontFile,prepareHTML,refusalHTML,setFontHost,setPageDecoding,setScriptHost,type PageView} from "./native_html_document.ts";
+import {inputURL,loadFontFile,prepareHTML,readSource,refusalHTML,setFontHost,setPageDecoding,setScriptHost,type PageView} from "./native_html_document.ts";
 import {fallbackFontHost,loadFallbackFonts,mayNeedFallbackFonts,type FallbackFont,type PageFonts} from "./native_html_fonts.ts";
 import type {ScriptPlan,ScriptTurn} from "./native_html_engine.ts";
 import {addEntries,consoleRequest,noteDiagnostics} from "./native_console.ts";
+import {createGpuGuard} from "./gpu_pacing.ts";
 import {loadNativeWindow} from "./native_window.ts";
+import {POINTER_CANCEL,beginPress,movePress,pointerNode,pointerRequest,pressPointers,beforeFirstFrame,type NativePress,type PointerKind,type PresentedState} from "./native_press.ts";
 import {nativePreflight} from "./native_preflight.ts";
 import {cocoaSurfaceOptions} from "./cocoa_surface.ts";
 import {createHTMLWindowSession,type PresentTarget} from "./native_html_session.ts";
@@ -15,15 +17,28 @@ import {cleanupUI} from "./ui_cleanup.ts";
 import {createRouter} from "../../../docs/web/hub/foafnaut/link-route.mjs";
 import type {LinkRoute} from "./native_html_engine.ts";
 import {requestRenderPlan} from "./render_plan.ts";
+import {pngOf,texturePixels} from "./png_write.ts";
 import {startCompileWorker,type CompileClient} from "./native_html_compile.ts";
 import type {UIEvent} from "./ui_engine.ts";
 
+/** What this program was built from: the record build-executables.sh compiles into it. */
+async function buildInfo():Promise<{commit?:string;dirty?:boolean;builtAt?:string}> {
+  try{return JSON.parse(await Deno.readTextFile(new URL("./.build/native-html/build-info.json",import.meta.url)));}
+  catch{return {};} // run from source with no app build
+}
 async function main() {
   const args=[...Deno.args];
-  if(args.includes("--help")){
-    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--shortcut-sweep] [--print-pdf FILE] [--scroll-sweep] [--single-frame] [--offscreen] [--check-pixels] [--perf-summary] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts] [--strict | --be-liberal-in-what-we-accept]\nCommand-Q quits; Command-R and R reload; Command-T, Command-W and Shift-Command-T open, close and reopen tabs; Command-1 to 9, Control-Tab and Shift-Command-[ ] change tab; Space, Page Up, Page Down, Home, End and arrows scroll; Escape stops loading; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints; Option-Command-J opens the console tab (foafnaut:console). By default the browser draws a page without what the built-in engine may skip (module scripts, media conditions it can not read, stylesheets not fetched, scripts when they are off, inline SVG it can not draw) and lists each skip in the console; --strict refuses such a page. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
+  // What this program was built from: the record build-executables.sh compiled into it.
+  if(args.includes("--version")){
+    const info=await buildInfo();
+    console.log(info.commit?`foafnaut ${info.commit}${info.dirty?" (with uncommitted changes)":""}, built ${info.builtAt}`:"foafnaut: no build record (run from source, or an older build)");
+    return;
   }
-  let scrollSweep=false;
+  if(args.includes("--help")){
+    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--shortcut-sweep] [--print-pdf FILE] [--scroll-sweep] [--watch-sweep SECONDS] [--single-frame] [--offscreen] [--check-pixels] [--perf-summary] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts] [--strict | --be-liberal-in-what-we-accept]\nCommand-Q quits; Command-R and R reload; Command-T, Command-W and Shift-Command-T open, close and reopen tabs; Command-1 to 9, Control-Tab and Shift-Command-[ ] change tab; Space, Page Up, Page Down, Home, End and arrows scroll; Escape stops loading; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints; Option-Command-J opens the console tab (foafnaut:console). By default the browser draws a page without what the built-in engine may skip (module scripts, media conditions it can not read, stylesheets not fetched, scripts when they are off, inline SVG it can not draw) and lists each skip in the console; --strict refuses such a page. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
+  }
+  let scrollSweep=false,watchSeconds=0,framesInFlight=1;
+  let shotFile:string|undefined;
   let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false;
   while(args.length){const arg=args.shift();
     if(arg==="--html"||arg==="--url"){
@@ -34,6 +49,9 @@ async function main() {
     else if(arg==="--trace-input")traceInput=true;
     else if(arg==="--check-pixels")checkAll=true;
     else if(arg==="--perf-summary")perfSummary=true;
+    // Off screen: a PNG of the window after the 120th present of page canvases, a picture of
+    // what the native engine drew (the page's layers, its canvases and the chrome).
+    else if(arg==="--shot"){shotFile=args.shift();if(!shotFile)throw new Error("--shot needs a file path");}
     // No visible window (issue 1268): frames are drawn into a GPU texture of the window size, and
     // events go through the window library's queue as before, from a window that is never shown.
     // Sweeps then run with the screen locked, the display asleep, or on a machine with no display.
@@ -77,6 +95,11 @@ async function main() {
     else if(arg==="--print-pdf"){printPDF=args.shift();if(!printPDF)throw new Error("--print-pdf needs a file path");commands=["print"];}
     else if(arg==="--graph-sweep")commands=["graph",[2,800,565],[3,900,640],[3,1000,720],[4,1000,720]];
     // Twenty scroll steps of 120 backing pixels down the page: per-step frame time and input latency.
+    // Watch a page that moves by itself (an SVG animation, page script timers) for N seconds
+    // after its first frame, then exit: frame times of an animation with no input.
+    else if(arg==="--watch-sweep")watchSeconds=Number(args.shift())||5;
+    // GPU submissions that may be in flight (gpu_pacing.ts). 0 lifts the bound: for measurement only.
+    else if(arg==="--gpu-frames-in-flight")framesInFlight=Math.max(0,Math.floor(Number(args.shift())));
     else if(arg==="--scroll-sweep"){commands=Array.from({length:20},()=>[11,-120,0]);scrollSweep=true;}
     // Scroll to the end of the page, then check that the last row of the layout is in the
     // view, and hold the window still for a screenshot (issue 1270 report: long SVG pages).
@@ -114,7 +137,11 @@ async function main() {
     ?Deno.readFile(nativeEngine).then(async bytes=>({backend:"native",path:nativeEngine!,
       sha256:[...new Uint8Array(await crypto.subtle.digest("SHA-256",bytes))].map(b=>b.toString(16).padStart(2,"0")).join("")}))
     :Promise.resolve({backend:"wasm",path:null,sha256:null});
-  url??=new URL("./pages/index.html",import.meta.url).href;
+  // No page given: the start page (start.html; owner, 2026-11-09). A sweep, a check, a paste or a
+  // print with no page keeps the demo index: those runs press its links and check its URL.
+  const indexURL=new URL("./pages/index.html",import.meta.url).href;
+  const startDefault=url===undefined&&!(sweep||commands||pasted||printPDF||check);
+  url??=startDefault?new URL("./pages/start.html",import.meta.url).href:indexURL;
   // The main-thread engine answers only small calls that input needs at once (shellHit, hit,
   // pointerUp, command, history, shell text). Each is timed; one over 2 ms is traced.
   const slowCalls:Record<string,{count:number;maxMs:number}>={};
@@ -199,15 +226,29 @@ async function main() {
   type ScriptCall=(name:"scriptInfo"|"scriptLoad"|"scriptSession"|"nodeAt"|"pointerAt"|"scriptPlan"|"scriptSetting"|"scriptChoices",...args:unknown[])=>Promise<unknown>;
   const scriptCall:ScriptCall=async(name,...args)=>worker?await worker.engine[name](...args)
     :(engine as unknown as Record<string,(...a:unknown[])=>unknown>)[name](...args);
+  const scriptInput:ScriptCall=async(name,...args)=>worker?(await worker.inputCall(name,...args)).value:await scriptCall(name,...args);
   let session:Awaited<ReturnType<typeof createHTMLWindowSession>>|undefined;
   // Page GPU commands (docs/designissues/2026-11-08-page-gpu.md): Lean validated each one; the
   // window session replays them in order and presents the page canvases. Before the session
   // exists they wait here. Declared before the first page, whose scripts start before the window.
   const gpuTurns:{page:number;commands:unknown[]}[]=[];
+  // Presents of page canvases with no Lean frame (a turn's replay, blit and composite), and
+  // their times, for the exit summary.
+  const pageGpuMs:number[]=[];
+  const takeShot=async()=>{
+    const texture=session?.offscreenTexture,file=shotFile;
+    if(!texture||!file||!device)return;
+    shotFile=undefined;
+    await Deno.writeFile(file,await pngOf(texture.width,texture.height,await texturePixels(device,texture)));
+    console.log(JSON.stringify({type:"native-html-shot",file,width:texture.width,height:texture.height}));
+  };
   const gpuFlush=()=>{
     if(!session)return;
-    while(gpuTurns.length){const t=gpuTurns.shift()!;
-      session.pageGpu(t.page,t.commands).catch(error=>console.error("Native HTML: page GPU failed:",String(error)));}
+    while(gpuTurns.length){const t=gpuTurns.shift()!,start=performance.now();
+      session.pageGpu(t.page,t.commands).then(r=>{if(!r?.presented)return;const ms=Math.round((performance.now()-start)*10)/10;
+        pageGpuMs.push(ms);if(perfSummary)console.log(JSON.stringify({type:"native-html-page-canvas",t:Math.round(performance.now()),ms}));
+        if(shotFile&&pageGpuMs.length===120)takeShot();})
+        .catch(error=>console.error("Native HTML: page GPU failed:",String(error)));}
   };
   let scriptsOn=false,scriptOps:string[]=[];
   // The page script setting (WebRenderScript.plan): "" is Lean's default for this host (the
@@ -282,7 +323,13 @@ async function main() {
   // in the console tab. --strict, or the Settings choice, refuses such pages instead.
   if(cliLiberal&&cliStrict)throw new Error("Use one of --strict and --be-liberal-in-what-we-accept");
   let liberal=!cliStrict;
-  let document=await prepareHTML(lean,url,undefined,undefined,{liberal}),width=1280,height=800;
+  // The start page has a script. A host that can run no page script (the Wasm engine with no
+  // QuickJS guest module) refuses it; then the window opens the demo index, which has none.
+  let document=await prepareHTML(lean,url,undefined,undefined,{liberal}).catch(error=>{
+    if(!startDefault)throw error;
+    console.log(JSON.stringify({type:"native-html-start-fallback",url,to:indexURL,reason:String(error instanceof Error?error.message:error)}));
+    return prepareHTML(lean,indexURL,undefined,undefined,{liberal});
+  }),width=1280,height=800;
   // The first compile runs in the worker too: it warms the worker, and no frame is compiled on the main thread.
   let frame:HTMLArtifact=await document.compile(width,height);
   console.log(JSON.stringify({type:"native-html-loaded",url:document.url,primitives:frame.primitiveCount,links:frame.webRender.links.length,width,height}));
@@ -302,7 +349,12 @@ async function main() {
   let running=true,dirty=true,controller:AbortController|undefined;
   // Frame trace, one JSON line for each event: every number a tool needs to find
   // where the time goes. A pump stall means AppKit held the thread in its own loop.
-  let resizeAt:number|undefined,frameNumber=0,waiting=false,waitingSince=0;
+  let resizeAt:number|undefined,frameNumber=0,waiting=false,waitingSince=0,animationFrames=0;
+  // The heavy-page guard (gpu_pacing.ts): while the GPU time of frames stays high, the next
+  // animation frame and the next page script turn wait until gpuHoldUntil. Input does not wait.
+  const gpuGuard=createGpuGuard();
+  let animationDue=false,gpuHoldUntil=0,quitAt:number|undefined;
+  const gpuSlowedNote="SLOWED: HEAVY PAGE";
   const trace=(type:string,fields:Record<string,unknown>)=>console.log(JSON.stringify({type,t:Math.round(performance.now()),...fields}));
   const ms=(start:number,end:number)=>Math.round((end-start)*10)/10;
   let refusing=0;
@@ -322,32 +374,52 @@ async function main() {
   // coordinates (nodeAt), then dispatches pointer and mouse events, a click on release, at
   // most one move in a frame. A move waits while one is on its way. An engine without the
   // action gets a click on release.
-  let pointerBusy=false;
-  const scriptPointer=(kind:"down"|"move"|"up",x:number,y:number)=>{
-    if(!scriptsOn||!document.script||!scriptOps.includes("pointer"))return;
-    if(kind==="move"&&pointerBusy)return;
-    const page=document,session=document.script.session;pointerBusy=true;
-    (scriptCall("pointerAt",page.source,width,height,{...requestAt(page,scroll).options,x,y}) as Promise<{node:number|null}>)
-      .then(at=>typeof at.node==="number"?scriptCall("scriptSession","",{action:"pointer",session,kind,...at,button:0,
-        buttons:kind==="up"?0:1,pressure:kind==="up"?0:0.5,pointerType:"mouse"}) as Promise<ScriptTurn>:undefined)
-      .then(turn=>{if(turn)scriptTurn(page,turn,`pointer ${kind}`);})
-      .catch(error=>console.error("Native HTML: page script pointer failed:",String(error)))
-      .finally(()=>{pointerBusy=false;});
+  const queuePointer=pressPointers();
+  const scriptPointer=(kind:PointerKind,x:number,y:number,held:NativePress<typeof document>)=>{
+    const page=held.page;
+    if(!scriptsOn||!page.script||!scriptOps.includes("pointer"))return;
+    // WebHit returns this event's coordinates; the engine keeps the down target
+    // separately. Use what is shown for each event, not a frame frozen at press.
+    // Capture before queueing so a later present cannot change this event's request.
+    const session=page.script.session,hit=scriptHitRequest(page),options={...hit.options,x,y};
+    queuePointer(kind,async()=>{
+      const at=await scriptInput("pointerAt",page.source,hit.width,hit.height,options) as {node:number|null};
+      const node=pointerNode(held,kind,at.node);
+      if(node===undefined)return;
+      const ended=kind==="up"||kind==="cancel";
+      const turn=await scriptInput("scriptSession","",{action:"pointer",session,kind,...at,node,button:0,
+        buttons:ended?0:1,pressure:ended?0:0.5,pointerType:"mouse"}) as ScriptTurn;
+      scriptTurn(page,turn,`pointer ${kind}`);
+    }).catch(error=>console.error("Native HTML: page script pointer failed:",String(error)));
   };
   const scriptTurn=(page:typeof document,turn:ScriptTurn,cause:string)=>{
     for(const line of turn.logs)console.log(`page: ${line.replace(/^\u0001(\w+)\u0001/,"$1: ")}`);
     for(const line of turn.errors)console.error(`page error: ${line}`);
     trace("native-html-script",{cause,session:turn.session,clock:turn.clock,changed:turn.changed,commands:turn.commandCount,
       instructions:turn.instructions,jobs:turn.jobs,tasks:turn.tasks,leanMs:Math.round(turn.ns/1e5)/10,nextWake:turn.nextWake});
-    if(turn.gpu?.length){gpuTurns.push({page:turn.gpuPage!,commands:turn.gpu});gpuFlush();}
+    // A turn that draws a page canvas is activity: no idle check (a Lean frame drawn again
+    // with probes, which held up the next turns) while the page animates its canvas.
+    if(turn.gpu?.length){gpuTurns.push({page:turn.gpuPage!,commands:turn.gpu});gpuFlush();lastActivity=Math.max(lastActivity,performance.now());}
     if(page.applyTurn(turn)&&page===document)dirty=true;
+    if(turn.fetches?.length&&page.script)workerFetches(page,turn.fetches);
+  };
+  // Dedicated workers (BubblePopJS; docs/designissues/2026-11-09-dedicated-workers.md): the
+  // scripts a page's workers wait for, read as the page's own resources are (Lean checked the
+  // worker's URL is of the page's origin), then the turn goes on.
+  const workerFetches=async(page:typeof document,fetches:{id:number;url:string;kind:string}[])=>{
+    const session=page.script!.session;
+    const results=await Promise.all(fetches.map(f=>readSource(f.url).then(r=>({id:f.id,status:200,url:r.url,contentType:"",source:r.source}),
+      ()=>({id:f.id,status:0,url:f.url,contentType:"",source:""}))));
+    if(page.script?.session!==session)return;
+    (scriptCall("scriptSession","",{action:"fetched",session,results}) as Promise<ScriptTurn>)
+      .then(turn=>scriptTurn(page,turn,"worker scripts")).catch(error=>console.error("Native HTML: worker scripts failed:",String(error)));
   };
   // View state is held here and applied by Lean. Pointer positions are in the
   // coordinates of the presented frame, as link picking is.
   // Text zoom 200 (WebSelection.defaultPercent; it was 150) until the window's backing scale is
   // known; then zoom unit 100*scale and zoom 200*scale, which the settings page shows as 200%.
   const view:PageView={textScalePercent:200};
-  let press:number[]|undefined,lastCopied:string|undefined,loading=false;
+  let press:NativePress<typeof document>|undefined,lastCopied:string|undefined,loading=false;
   // The press on screen (issue 1268): Lean's `press` answer (a chrome control, or the link's
   // node for `:active`, and the rectangles that the composite darkens), the time its event was
   // queued, and whether a Lean frame that includes it was asked for and presented.
@@ -376,7 +448,7 @@ async function main() {
   };
   const shell=()=>({tabs:tabs.map((tab,index)=>{const page=index===active?document:tab.document;return {title:page.title??"",icon:iconOf(page)};}),active,...field,focused,
     canBack:history.canBack,canForward:history.canForward,loading,scale,theme,pages,scroll,pressed:pressed?.control??"",...(swipeHint?{swipe:swipeHint}:{}),
-    script:scriptMarker()});
+    script:[scriptMarker(),gpuGuard.slowed?gpuSlowedNote:""].filter(Boolean).join("  ")});
   // The chrome marker of the page's scripts: the engine of its session, else what the setting says.
   function scriptMarker(){
     if(!scriptsOn||!document?.scripted)return "";
@@ -445,8 +517,8 @@ async function main() {
       }
     }finally{graphRunning=false;}
   };
-  const graphInput=(kind:number,a:number,b:number)=>{
-    const page=document as Page,last=graphQueue[graphQueue.length-1];
+  const graphInput=(kind:number,a:number,b:number,page=document as Page)=>{
+    const last=graphQueue[graphQueue.length-1];
     if(last&&last.page===page&&last.kind===kind&&(kind===1||kind===3||kind===7)){
       if(kind===7)last.a+=a;else{last.a=a;last.b=b;}
     } else graphQueue.push({kind,a,b,page});
@@ -487,6 +559,22 @@ async function main() {
   // `:sparql-step` goes to the address Lean gives as the next step.
   const sparqlURL="foafnaut:sparql";let sparqlNext=sparqlURL;
   const isSparql=(target:string)=>target===sparqlURL||target.startsWith(sparqlURL+"/");
+  // about:foafnaut: which build this is, from the record compiled into the program.
+  const aboutURL="foafnaut:about";
+  const aboutPage=async()=>{
+    const info=await buildInfo();
+    const esc=(t:unknown)=>String(t).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]!));
+    const row=(k:string,v:unknown)=>`<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`;
+    return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>About Foafnaut</title><style>body{margin:24px;font-size:15px;line-height:22px;color:#203040;background:white}h1{margin:0 0 12px;font-size:24px;line-height:32px;color:#184078}th{text-align:left;padding:4px 18px 4px 0;font-weight:normal;color:#5b6876}td{padding:4px 0}</style></head><body><h1>Foafnaut</h1><table>`+
+      row("Build commit",(info.commit??"unknown: run from source")+(info.dirty?" (with uncommitted changes)":""))+
+      row("Built",info.builtAt??"unknown")+
+      row("Rendering engine",engineRan.startsWith("native")?"native library":"WebAssembly")+
+      row("Page scripts",planFor(scriptSetting)?.name??"none")+
+      row("Liberal mode",liberal?"on":"off")+
+      row("Platform",`${Deno.build.os} ${Deno.build.arch}`)+
+      row("Runtime",`Deno ${Deno.version.deno}, V8 ${Deno.version.v8}`)+
+      `</table></body></html>`;
+  };
   const sparqlPage=async(target:string)=>{
     let answer:{source:string;next?:string};
     try{answer=await lean.sparqlPage(target.slice(sparqlURL.length+1));}
@@ -573,11 +661,26 @@ async function main() {
   // Frame cost ratchet (L4Factoidal/FrameCost, section Ratchet): Lean frames and rows
   // scrolled after the first frame. --scroll-sweep fails when the frames pass the bound.
   const frameCost={leanFrames:0,scrollEvents:0,scrollRows:0,reach:0};
+  // SVG animation of each page (WebPaint, SMIL timing in Lean): its clock starts at the page's
+  // first frame; `time` is the clock of the last frame asked for, so a page whose animations
+  // have ended keeps one state. `has`: Lean said the page has animations; `running`: one runs
+  // or begins by the clock, so the next frame is asked for at once.
+  const animation=new WeakMap<object,{epoch:number;time:number;running:boolean;has:boolean;clicks:number[][]}>();
+  const animationOf=(page:object)=>{let a=animation.get(page);if(!a){a={epoch:performance.now(),time:0,running:false,has:false,clicks:[]};animation.set(page,a);}return a;};
   // The request that a frame of `page` at this scroll sends to Lean, and its state with no scroll.
   const requestAt=(page:typeof document,at:number)=>{
     const view0=shown();view0.shell={...view0.shell,scroll:at};
-    return page.request(width,height,{...view0,live:page===checked,...(everyFrame?{}:{checks:false})});
+    // SVG animation (WebPaint): the page clock and clicks, only for a page with animations,
+    // so that other pages keep one state key whatever the time.
+    const clock=animation.get(page);
+    const animated=clock&&(clock.has||clock.clicks.length)?{animationTime:clock.time,animationClicks:clock.clicks}:{};
+    return page.request(width,height,{...view0,...animated,live:page===checked,...(everyFrame?{}:{checks:false})});
   };
+  let presented:PresentedState<typeof document>|undefined;
+  const recordPresented=(record:RequestRecord,at:number)=>{
+    if(record.document===document)presented={document:record.document,width:record.width,height:record.height,scroll:at,options:record.request.options};
+  };
+  const scriptHitRequest=(page:typeof document)=>pointerRequest(page,presented,()=>({width,height,options:requestAt(page,page===document?scroll:0).options}));
   const stateNow=()=>stateKey(document,requestAt(document,scroll).options,width,height);
   // The prefetched band can be shown now in place of a Lean frame.
   const swapReady=()=>!!current&&!!prefetched&&canSwap(current.layers.layers,{key:prefetched.key,band:prefetched.layers.layers},stateNow(),scroll);
@@ -588,7 +691,7 @@ async function main() {
     return sameState(prefetching.key,stateNow());
   };
   // The layers on screen, and the page row of the band shown at the top of the view.
-  let current:{layers:HTMLLayers;document:typeof document;width:number;height:number}|undefined,shownOffset=0;
+  let current:({layers:HTMLLayers}&RequestRecord)|undefined,shownOffset=0;
   let shiftPending=false,shiftedByEvent=false;
   let checked:typeof document|undefined;
   // A selection is in window coordinates, so with one a scroll needs a Lean frame.
@@ -630,7 +733,8 @@ async function main() {
     const choices=ei>=0&&ej>ei?await lean.encodingChoices(encodingSetting,systemLocale):undefined;
     if(choices)source=source.slice(0,ei+eOpen.length)+choices+source.slice(ej);
     const size=textZoom();
-    const box=`<span class="box">${liberal?'<span class="tick"></span>':""}</span>`;
+    // A ticked box is filled (boxon), as WebRenderScript.choicesHTML does for the script rows.
+    const box=`<span class="box${liberal?" boxon":""}"></span>`;
     return source.replace("<!--foafnaut:liberal-->",`<p class="check"><a href="foafnaut:liberal/${liberal?"off":"on"}">${box} Be liberal in what we accept</a></p>`+
       "<p>On (the default): a page with a feature this browser does not support is drawn without it (a module script, a stylesheet that did not load, a media condition or inline SVG it can not read), and the console (Option-Command-J) lists what was skipped. Off: strict, such a page is refused.</p>")
       .replace("<!--foafnaut:text-size-->",size
@@ -859,7 +963,7 @@ async function main() {
     // is answered on screen before the new page is prepared and laid out.
     dirty=true;
     console.log(JSON.stringify({type:"native-html-loading",url:target}));
-    (STATE_PAGES.includes(target)?(browserState?browserState.page(target):Promise.reject(new Error("Browser state is off"))).then(source=>prepareHTML(lean,target,undefined,source)):target===settingsURL?settingsSource().then(source=>prepareHTML(lean,target,current.signal,source)):target===graphURL?graphPage():target===wasmURL||target.startsWith(wasmURL+"/")?wasmPage(target):isSparql(target)?sparqlPage(target):isConsole(target)?consolePage(target):prepareHTML(lean,target,current.signal,undefined,{liberal})).then(next=>{
+    (target===aboutURL?aboutPage().then(source=>prepareHTML(lean,target,undefined,source)):STATE_PAGES.includes(target)?(browserState?browserState.page(target):Promise.reject(new Error("Browser state is off"))).then(source=>prepareHTML(lean,target,undefined,source)):target===settingsURL?settingsSource().then(source=>prepareHTML(lean,target,current.signal,source)):target===graphURL?graphPage():target===wasmURL||target.startsWith(wasmURL+"/")?wasmPage(target):isSparql(target)?sparqlPage(target):isConsole(target)?consolePage(target):prepareHTML(lean,target,current.signal,undefined,{liberal})).then(next=>{
       if(current===controller&&!current.signal.aborted&&running){
         candidate=next;dirty=true;loading=false;
         if(push)remember(engine.historyPush(history.history,next.url),"push");
@@ -891,13 +995,16 @@ async function main() {
       pumpGapAfterFirstFrameMs:{count:pumpGapsLate.length,p50:percentile(pumpGapsLate,0.5),p95:percentile(pumpGapsLate,0.95),max:pumpGapsLate.length?Math.round(Math.max(...pumpGapsLate)*10)/10:null},
       slowCalls,
       pumpGapMs:{p50:percentile(pumpGaps,0.5),p95:percentile(pumpGaps,0.95),max:pumpGaps.length?Math.round(Math.max(...pumpGaps)*10)/10:null},
-      prefetch:prefetchStats,frameCost,queueMax,sessionStats:session?.stats,
+      prefetch:prefetchStats,frameCost,animationFrames,queueMax,sessionStats:session?.stats,
+      gpu:{framesInFlight,submitToDoneMsP50:percentile(session?.gpuTimes??[],0.5),submitToDoneMsP95:percentile(session?.gpuTimes??[],0.95),
+        maxInFlight:session?.stats.gpu.maxInFlight??0,gateWaits:session?.stats.gpu.waits??0,gateWaitMs:session?.stats.gpu.waitMs??0,blockedMs:session?.stats.gpu.blockedMs??0,submits:session?.stats.gpu.submits??0,guardSlowed:gpuGuard.slowed,guardChanges:gpuGuard.changes},
+      pageCanvasPresents:{count:pageGpuMs.length,p50Ms:percentile(pageGpuMs,0.5),p95Ms:percentile(pageGpuMs,0.95)},
       // Pointer press to the present that shows it: the composite darkening, and the Lean frame of a held press.
       press:{overlay:{count:pressOverlayMs.length,p50Ms:percentile(pressOverlayMs,0.5),maxMs:pressOverlayMs.length?Math.round(Math.max(...pressOverlayMs)*10)/10:null},
         frame:{count:pressFrameMs.length,p50Ms:percentile(pressFrameMs,0.5),maxMs:pressFrameMs.length?Math.round(Math.max(...pressFrameMs)*10)/10:null}}};
     trace(line.type,line);
     // Off screen, "presented" means drawn and submitted to the texture: no compositor, no display.
-    if(perfSummary)console.log(`engine: ${engineRan}\npresent: ${line.present}\n${offscreen?"offscreen ":""}input latency: ${line.inputLatency.count} events, p50 ${line.inputLatency.p50Ms} ms, p95 ${line.inputLatency.p95Ms} ms, max ${line.inputLatency.maxMs} ms\nframes: ${line.frames.presented} presented (${line.frames.checked} checked), totalMs p50 ${line.frames.totalMsP50}, p95 ${line.frames.totalMsP95}; pipeline builds ${session?.stats.pipelineBuilds}\nscroll presents with no Lean call: ${line.scrollPresents.count}, totalMs p50 ${line.scrollPresents.totalMsP50}, p95 ${line.scrollPresents.totalMsP95}, max ${line.scrollPresents.maxMs}\npress to present: darkening ${line.press.overlay.count}, p50 ${line.press.overlay.p50Ms} ms, max ${line.press.overlay.maxMs} ms; Lean frame ${line.press.frame.count}, p50 ${line.press.frame.p50Ms} ms, max ${line.press.frame.maxMs} ms\nscroll prefetch: ${prefetchStats.sent} sent, ${prefetchStats.ready} ready, ${prefetchStats.swaps} shown, ${prefetchStats.dropped} dropped, ${prefetchStats.stale} stale, ${prefetchStats.missed} missed\npump gap after first frame: p50 ${line.pumpGapAfterFirstFrameMs.p50} ms, p95 ${line.pumpGapAfterFirstFrameMs.p95} ms, max ${line.pumpGapAfterFirstFrameMs.max} ms\npump gap all: p50 ${line.pumpGapMs.p50} ms, p95 ${line.pumpGapMs.p95} ms, max ${line.pumpGapMs.max} ms`);
+    if(perfSummary)console.log(`engine: ${engineRan}\npresent: ${line.present}\n${offscreen?"offscreen ":""}input latency: ${line.inputLatency.count} events, p50 ${line.inputLatency.p50Ms} ms, p95 ${line.inputLatency.p95Ms} ms, max ${line.inputLatency.maxMs} ms\nframes: ${line.frames.presented} presented (${line.frames.checked} checked), totalMs p50 ${line.frames.totalMsP50}, p95 ${line.frames.totalMsP95}; pipeline builds ${session?.stats.pipelineBuilds}\nscroll presents with no Lean call: ${line.scrollPresents.count}, totalMs p50 ${line.scrollPresents.totalMsP50}, p95 ${line.scrollPresents.totalMsP95}, max ${line.scrollPresents.maxMs}\npress to present: darkening ${line.press.overlay.count}, p50 ${line.press.overlay.p50Ms} ms, max ${line.press.overlay.maxMs} ms; Lean frame ${line.press.frame.count}, p50 ${line.press.frame.p50Ms} ms, max ${line.press.frame.maxMs} ms\nscroll prefetch: ${prefetchStats.sent} sent, ${prefetchStats.ready} ready, ${prefetchStats.swaps} shown, ${prefetchStats.dropped} dropped, ${prefetchStats.stale} stale, ${prefetchStats.missed} missed\npump gap after first frame: p50 ${line.pumpGapAfterFirstFrameMs.p50} ms, p95 ${line.pumpGapAfterFirstFrameMs.p95} ms, max ${line.pumpGapAfterFirstFrameMs.max} ms\npump gap all: p50 ${line.pumpGapMs.p50} ms, p95 ${line.pumpGapMs.p95} ms, max ${line.pumpGapMs.max} ms\ngpu: ${line.gpu.framesInFlight||"unbounded"} in flight, submit to done p50 ${line.gpu.submitToDoneMsP50} ms, p95 ${line.gpu.submitToDoneMsP95} ms, max in flight ${line.gpu.maxInFlight}, ${line.gpu.submits} submits, gate waits ${line.gpu.gateWaits} (${line.gpu.gateWaitMs} ms), blocked in poll ${line.gpu.blockedMs} ms, guard ${line.gpu.guardSlowed?"slowed":"full rate"} (${line.gpu.guardChanges} changes)`);
   };
   try {
     device=await adapter.requestDevice();native=early??await nativePreflight(()=>loadNativeWindow());
@@ -938,7 +1045,17 @@ async function main() {
     device.addEventListener("uncapturederror",event=>{console.error("Native HTML GPU error:",(event as GPUUncapturedErrorEvent).error.message);running=false;Deno.exitCode=1;});
     device.lost.then(info=>{if(running){console.error("Native HTML GPU lost:",info.message);running=false;Deno.exitCode=1;}});
     // One session for the window's life. It keeps the pipeline and buffers (issue 1268).
-    session=await createHTMLWindowSession(device,target,native);
+    session=await createHTMLWindowSession(device,target,native,{framesInFlight,onGpuDone:gpuMs=>{
+      const changed=gpuGuard.record(gpuMs);
+      gpuHoldUntil=gpuGuard.slowed?performance.now()+gpuGuard.gapMs():0;
+      if(!changed)return;
+      const slowed=gpuGuard.slowed,fact={state:slowed?"slowed":"full-rate",gpuMs:Math.round(gpuMs),gapMs:Math.round(gpuGuard.gapMs()),url:document.url};
+      trace("native-html-gpu-guard",fact);
+      if(slowed)addEntries(document,[{source:"System",severity:"warning",feature:"animation",where:document.url,
+        message:`Each frame of this page takes the GPU about ${Math.round(gpuMs)} ms: animation runs at a lower rate so the computer stays usable. It returns to the full rate when frames are fast again.`,action:"animation slowed"}]);
+      // The chrome shows the note, or stops showing it.
+      dirty=true;
+    }});
     gpuFlush();
     // Lean's compile runs in a worker so this loop keeps pumping. If the worker
     // can not start or dies, compile runs here instead, and the trace says so.
@@ -948,8 +1065,9 @@ async function main() {
     const IDLE_CHECK_MS=500,QUEUE_WARN=1024;
     // Off screen the texture can always take a frame; a window can not while it is hidden or occluded.
     const canPresent=()=>offscreen||native!.canPresent();
-    const STAMPED=new Set([2,4,5,11]);
-    const KIND_NAMES:Record<number,string>={2:"pointer-down",4:"pointer-up",5:"key",11:"scroll"};
+    const STAMPED=new Set([2,4,5,11,POINTER_CANCEL]);
+    const readyInput=beforeFirstFrame<{event:UIEvent;at:number}>();
+    const KIND_NAMES:Record<number,string>={2:"pointer-down",4:"pointer-up",[POINTER_CANCEL]:"pointer-cancel",5:"key",11:"scroll"};
     // Events carry the time the window library queued them (see the event loop).
     const settle=(stamps:{kind:number;at:number}[],at:number)=>{
       for(const stamp of stamps){
@@ -965,6 +1083,8 @@ async function main() {
       // An interactive frame asks Lean for no CPU probe (checks:false, about a fifth of a
       // frame); the idle check below asks for the same frame with its probe and checks it.
       // A new page starts at the top, so its band does too.
+      const clock=animationOf(nextDocument);
+      if(clock.running)clock.time=Math.round(performance.now()-clock.epoch);
       const request=requestAt(nextDocument,nextDocument!==document?0:scroll);
       const sentWidth=width,sentHeight=height;
       // The press this frame includes (`active`, `shell.pressed`), if any.
@@ -992,6 +1112,7 @@ async function main() {
       }
       // Liberal mode: what Lean skipped goes to the page's console.
       noteDiagnostics(nextDocument,nextLayers??next);
+      const engineFact=frameNumber===0?{engine:await engineInfo}:{};
       const compiled=performance.now();
       // A newer page was chosen while this one compiled: drop this scene.
       if((candidate??document)!==nextDocument){awaiting=[...stamps,...awaiting];dirty=true;return;}
@@ -1000,7 +1121,11 @@ async function main() {
       const place=nextLayers?clampOffset(nextLayers.layers,scrollNow):undefined;
       // Lean draws the press in this frame: the composite does not darken it again.
       if(carried&&carried===pressed)session!.setPress(undefined);
+      // A tab chosen during the draw must not be replaced by this page. A page that a navigation
+      // prepares during the draw is not a reason to drop the frame: see the candidate check below.
+      const shownBefore=document;
       const result=nextLayers?await session!.drawLayers(nextLayers,sentWidth,sentHeight,place!.offset,everyFrame):await session!.draw(next,everyFrame);
+      if(document!==shownBefore){awaiting=[...stamps,...awaiting];dirty=true;return;}
       if(carried&&carried===pressed){
         if(result.presented){carried.framed=true;pressFrameMs.push(result.presentedAt-carried.at);
           trace("native-html-press",{state:"frame",control:carried.control??null,active:carried.active??null,fromQueuedMs:ms(carried.at,result.presentedAt)});}
@@ -1011,7 +1136,6 @@ async function main() {
       if(result.presented)lastRequest={request,width:sentWidth,height:sentHeight,document:nextDocument};
       const finished=performance.now();
       const stats=session!.stats;
-      const engineFact=frameNumber===0?{engine:await engineInfo}:{};
       trace("native-html-frame",{frame:++frameNumber,width:sentWidth,height:sentHeight,primitives:next.primitiveCount,wgslBytes:next.wgsl.length,dataFloats:next.data.length,
         layoutMs:ms(frameStart,compiled),sessionMs:Math.round(result.prepareMs*10)/10,drawMs:Math.round(result.drawMs*10)/10,totalMs:ms(frameStart,finished),
         resizeToFrameMs:resizeAt===undefined?null:ms(resizeAt,finished),presented:result.presented,compiledIn:where,workerMs:workerMs===undefined?null:Math.round(workerMs*10)/10,
@@ -1024,15 +1148,19 @@ async function main() {
       lastActivity=Math.max(lastActivity,finished);
       settle(stamps,result.presentedAt);
       if(nextLayers){
-        current={layers:nextLayers,document:nextDocument,width:sentWidth,height:sentHeight};shownOffset=place!.offset;
+        current={layers:nextLayers,request,document:nextDocument,width:sentWidth,height:sentHeight};shownOffset=place!.offset;
         // Scrolls taken while Lean worked: shown now if the band holds them, else after the next band.
         if(place!.exact){settle(awaitingShift,result.presentedAt);settle(awaitingBand,result.presentedAt);awaitingShift=[];awaitingBand=[];}
         if(nextDocument===document&&!keeps(nextLayers.layers,scroll)&&!bandComing())dirty=true;
+        clock.has=!!nextLayers.layers.animations;clock.running=!!nextLayers.layers.animating;
+        if(clock.running){animationDue=true;animationFrames++;}
       } else {current=undefined;settle(awaitingBand,result.presentedAt);awaitingBand=[];}
       if(nextDocument!==document)prefetched=undefined;
       checked=nextDocument;
       if(nextDocument!==document)view.selection=undefined;
       if(nextDocument!==document){scroll=0;if(!focused)field=showURL(nextDocument.url);}frame=next;document=nextDocument;
+      // Composite offsets are relative to the band; nodeAt takes document scroll.
+      recordPresented({request,width:sentWidth,height:sentHeight,document:nextDocument},nextLayers?nextLayers.layers.bandTop+shownOffset:(request.options.shell as {scroll:number}).scroll);
       // A page that a navigation prepared while this frame was drawn is still to come: keep it.
       if(candidate===nextDocument)candidate=undefined;else if(candidate)dirty=true;native!.setTitle(windowTitle(document));
       // A new page under a pointer that has not moved.
@@ -1050,7 +1178,9 @@ async function main() {
         if(dirty||shiftPending||shifting||lastRequest!==shownRequest||document!==shownRequest.document)return;
         const {offset}=clampOffset(layers.layers,scroll);
         result=await session!.drawLayers(layers,shownRequest.width,shownRequest.height,offset,true);
-        if(result.presented){current={layers,document,width:shownRequest.width,height:shownRequest.height};frame=layers.page;shownOffset=offset;}
+        if(result.presented)recordPresented({...shownRequest,request:{...shownRequest.request,options}},layers.layers.bandTop+offset);
+        if(dirty||shiftPending||shifting||lastRequest!==shownRequest||document!==shownRequest.document){dirty=true;return;}
+        if(result.presented){current={...shownRequest,request:{...shownRequest.request,options},layers};frame=layers.page;shownOffset=offset;}
       } else if(lastRequest&&lastRequest.request.options.checks===false&&worker?.alive){
         // The frame on screen was made with no probe: Lean makes it again with its probe.
         // The page must not have changed meanwhile; if it has, the next idle time checks.
@@ -1058,15 +1188,36 @@ async function main() {
         const {artifact}=await worker.compile(shownRequest.request.source,shownRequest.width,shownRequest.height,options);
         if(dirty||lastRequest!==shownRequest||document!==shownRequest.document)return;
         result=await session!.draw(artifact,true);
+        if(result.presented)recordPresented({...shownRequest,request:{...shownRequest.request,options}},(options.shell as {scroll:number}).scroll);
+        if(dirty||lastRequest!==shownRequest||document!==shownRequest.document){dirty=true;return;}
       } else result=await session!.checkLast();
       if(!result?.presented)return;
       checkedFrames++;
       trace("native-html-checked",{frame:frameNumber,why:"idle",idleMs:ms(lastActivity,idleStart),drawMs:Math.round(result.drawMs*10)/10,pixelHash:result.pixelHash});
+      // --shot on a page with no animated page canvas: the first idle-checked frame.
+      if(shotFile&&!pageGpuMs.length)await takeShot();
     };
     const handle=(event:UIEvent)=>{
         if(event.kind===6){running=false;return;}
-        // A release ends the press look, on the graph page too.
-        if(event.kind===4&&pressed)endPress();
+        // End input on its owning page, even after a tab change or address focus.
+        if(event.kind===4||event.kind===POINTER_CANCEL){
+          endPress();holding=undefined;
+          if(event.kind===POINTER_CANCEL){
+            const cancelled=press;press=undefined;
+            if(view.selection){view.selection=undefined;dirty=true;}
+            if(cancelled){
+              if((cancelled.page as Page).graph)graphInput(4,cancelled.points[2],cancelled.points[3],cancelled.page);
+              else scriptPointer("cancel",cancelled.points[2],cancelled.points[3],cancelled);
+            }
+            return;
+          }
+          if(press&&((press.page as Page).graph||press.page!==document)){
+            const released=press;press=undefined;movePress(released,event.a,event.b);
+            if((released.page as Page).graph)graphInput(4,event.a,event.b,released.page);
+            else scriptPointer("up",event.a,event.b,released);
+            return;
+          }
+        }
         if(event.kind===1){
           if(event.a<1||event.b<1)return;
           if(event.a>4096||event.b>4096)throw new Error("Native HTML window exceeds 4096 backing pixels; close or use a smaller window");
@@ -1078,7 +1229,10 @@ async function main() {
         if(event.kind===8&&event.a)dirty=true;
         if(event.kind===3)pointAt(event.a,event.b);
         const graph=(document as Page).graph;
-        if(graph&&!focused&&(event.kind===3||event.kind===4||event.kind===9||(event.kind===5&&!(event.b&2)))){graphInput(event.kind,event.a,event.b);return;}
+        if(graph&&!focused&&(event.kind===3||event.kind===9||(event.kind===5&&!(event.b&2)))){
+          if(event.kind===3&&press?.page===document)movePress(press,event.a,event.b);
+          graphInput(event.kind,event.a,event.b);return;
+        }
         if(event.kind===5&&focused&&!(event.b&2)){
           if(event.a===36)goTo(field.address);
           else if(event.a===53)leaveAddress();
@@ -1104,7 +1258,6 @@ async function main() {
         if(event.kind===10)windowCommand(event.a);
         if(event.kind===2){
           // Hit coordinates and boxes belong to the successfully presented frame.
-          if(!session?.frames)return;
           // One small Lean call: the control or the link pressed, and what the composite darkens.
           const answer=engine.press(shell(),event.a,event.b,width,pageRow(event.b),layered&&current?frame.webRender.links as unknown[]:[]);
           const control=answer.control;
@@ -1116,9 +1269,9 @@ async function main() {
             return;
           }
           if(focused)leaveAddress();
+          press=beginPress(document,event.a,event.b);
           if((document as Page).graph){graphInput(2,event.a,event.b);return;}
-          press=[event.a,event.b,event.a,event.b];
-          scriptPointer("down",event.a,event.b);
+          scriptPointer("down",event.a,event.b,press);
           if(typeof answer.sourceNode==="number")startPress({active:answer.sourceNode,rects:answer.rects});
           if(view.selection){view.selection=undefined;dirty=true;}
         }
@@ -1128,18 +1281,21 @@ async function main() {
           const node=engine.hit(frame,event.a,pageRow(event.b))?.sourceNode;
           if(node!==hoverNode){hoverNode=node;dirty=true;}
         }
-        if(event.kind===3&&press){press=[press[0],press[1],event.a,event.b];view.selection=press;dirty=true;scriptPointer("move",event.a,event.b);}
+        if(event.kind===3&&press&&press.page===document&&!(press.page as Page).graph){view.selection=movePress(press,event.a,event.b);dirty=true;scriptPointer("move",event.a,event.b,press);}
         if(event.kind===4&&press){
-          const released=press;press=undefined;
-          scriptPointer("up",released[2],released[3]);
+          const held=press,released=movePress(held,event.a,event.b);press=undefined;
+          scriptPointer("up",released[2],released[3],held);
           if(engine.pointerUp(released)!=="click")return;
+          // A click begins the SVG animations whose `begin` is a click on what it hits.
+          const clock=animation.get(document);
+          if(clock?.has&&current){clock.clicks=[...clock.clicks,[Math.round(performance.now()-clock.epoch),released[0],released[1]-current.layers.layers.top+scroll]].slice(-16);clock.running=true;dirty=true;}
           if(view.selection){view.selection=undefined;dirty=true;}
           // A page with scripts: Lean finds the node under the point, and the click is a task of
           // the page's event loop; Lean runs the listeners in QuickJS and changes its DOM.
           if(scriptsOn&&document.script&&!scriptOps.includes("pointer")){
-            const page=document,session=document.script.session;
-            scriptCall("nodeAt",page.source,width,height,{...requestAt(page,scroll).options,x:released[0],y:released[1]})
-              .then(node=>typeof node==="number"?scriptCall("scriptSession","",{action:"click",session,node}) as Promise<ScriptTurn>:undefined)
+            const page=held.page,session=page.script!.session,hit=scriptHitRequest(page);
+            scriptInput("nodeAt",page.source,hit.width,hit.height,{...hit.options,x:released[0],y:released[1]})
+              .then(node=>typeof node==="number"?scriptInput("scriptSession","",{action:"click",session,node}) as Promise<ScriptTurn>:undefined)
               .then(turn=>{if(turn)scriptTurn(page,turn,"click");})
               .catch(error=>console.error("Native HTML: page script click failed:",String(error)));
           }
@@ -1158,7 +1314,7 @@ async function main() {
       while((taken=native.next()))batch.push({event:taken,at:offset===null||!taken.time?arrived:Math.min(arrived,taken.time+offset)});
       if(batch.length){lastActivity=arrived;queueMax=Math.max(queueMax,batch.length);
         if(batch.length>QUEUE_WARN)trace("native-html-queue-high",{queued:batch.length});}
-      for(const {event,at} of batch){
+      for(const {event,at} of readyInput(batch,firstFrameAt!==undefined)){
         if(!running)break;
         shiftedByEvent=false;eventAt=at;
         handle(event);
@@ -1186,11 +1342,12 @@ async function main() {
       // No Lean call; it waits only for GPU work already asked for.
       if(pressPresent&&!shifting&&current&&canPresent()){
         pressPresent=false;
-        const start=performance.now(),p=pressed;
-        shifting=session!.shift(shownOffset,false).then(result=>{
+        const start=performance.now(),p=pressed,shown=current,offset=shownOffset;
+        shifting=session!.shift(offset,false).then(result=>{
           trace("native-html-press",{state:p?"down":"up",control:p?.control??null,active:p?.active??null,rects:p?.rects.length??0,
             presented:result.presented,totalMs:ms(start,performance.now()),...(p?{fromQueuedMs:ms(p.at,result.presentedAt)}:{})});
           if(!result.presented){pressPresent=true;return;}
+          recordPresented(shown,shown.layers.layers.bandTop+offset);
           if(p&&p===pressed)pressOverlayMs.push(result.presentedAt-p.at);
           lastActivity=Math.max(lastActivity,performance.now());
         }).catch(error=>{fatal=error;}).finally(()=>{shifting=undefined;});
@@ -1207,20 +1364,22 @@ async function main() {
         // Press rectangles are in the rows of the band on screen; another band needs a Lean frame.
         if(swap&&pressed&&session!.pressed){session!.setPress(undefined);dirty=true;}
         if(!swap&&!keeps(current.layers.layers,scroll)&&!bandComing())dirty=true;
-        const shownLayers=swap?swap.layers:current.layers;
+        const shown=swap?{...swap.record,layers:swap.layers}:current,shownLayers=shown.layers;
         const start=performance.now(),{offset,exact}=clampOffset(shownLayers.layers,scroll),at=scroll;
         shifting=(swap?session!.drawLayers(swap.layers,swap.record.width,swap.record.height,offset,everyFrame):session!.shift(offset,everyFrame)).then(result=>{
+          if(swap&&document!==swap.record.document){awaitingShift=[...stamps,...awaitingShift];dirty=true;return;}
           const finished=performance.now();
           trace("native-html-scroll",{frame:frameNumber,scroll:at,offset,exact,swap:!!swap,totalMs:ms(start,finished),drawMs:Math.round(result.drawMs*10)/10,
             presented:result.presented,checked:result.checked,pixelHash:result.checked?result.pixelHash:null,...(swap?{bandTop:swap.layers.layers.bandTop,target:swap.target}:{})});
           if(swap){
             // The textures hold the prefetched layers now, presented or not.
-            current={layers:swap.layers,document:swap.record.document,width:swap.record.width,height:swap.record.height};
+            current={...swap.record,layers:swap.layers};
             frame=swap.layers.page;lastRequest=swap.record;if(prefetched===swap)prefetched=undefined;
           }
           if(!result.presented){awaitingShift=[...stamps,...awaitingShift];shiftPending=true;return;}
           if(swap)prefetchStats.swaps++;
           shownOffset=offset;shifts.push(finished-start);lastActivity=Math.max(lastActivity,finished);if(result.checked)checkedFrames++;
+          recordPresented(shown,shownLayers.layers.bandTop+offset);
           // A scroll past the band is not fully shown: it waits for the next band.
           if(exact){settle(stamps,result.presentedAt);settle(awaitingBand,result.presentedAt);awaitingBand=[];}
           else awaitingBand=[...awaitingBand,...stamps];
@@ -1255,13 +1414,15 @@ async function main() {
           });
         }
       }
+      if(animationDue&&!rendering&&performance.now()>=gpuHoldUntil){animationDue=false;dirty=true;}
       if(dirty&&canPresent()&&!rendering){
         waiting=false;
         rendering=renderFrame().catch(error=>{fatal=error;}).finally(()=>{rendering=undefined;});
-      } else if(!everyFrame&&!dirty&&!rendering&&!shifting&&!shiftPending&&!pressed&&!pressPresent&&session?.frames&&!session.lastChecked&&canPresent()&&performance.now()-lastActivity>=IDLE_CHECK_MS){
+      } else if(!everyFrame&&!dirty&&!animationDue&&!rendering&&!shifting&&!shiftPending&&!pressed&&!pressPresent&&session?.frames&&!session.lastChecked&&canPresent()&&performance.now()-lastActivity>=IDLE_CHECK_MS){
         // Interactive frames are not read back. When input has been idle, the last frame is drawn again with the checks.
         rendering=idleCheck().catch(error=>{fatal=error;}).finally(()=>{rendering=undefined;});
       }
+      if(watchSeconds&&firstFrameAt!==undefined&&performance.now()-firstFrameAt>=watchSeconds*1000)running=false;
       // A repeatable measurement: step the window through fixed sizes, then exit.
       if(sweep&&!dirty&&!rendering&&!graphBusy()&&session?.frames){
         const size=sweep.shift();
@@ -1383,7 +1544,7 @@ async function main() {
       // one animation frame a turn. Frame pacing: no turn while a frame is pending (asked for
       // or being made), so each presented frame has at most one turn before it.
       const script=document.script;
-      if(scriptsOn&&script&&!scriptBusy&&!dirty&&!rendering&&script.turn.nextWake!==null){
+      if(scriptsOn&&script&&!scriptBusy&&!dirty&&!rendering&&script.turn.nextWake!==null&&performance.now()>=gpuHoldUntil){
         const elapsed=performance.now()-(scriptEpochs.get(script.session)??performance.now());
         if(elapsed>=script.turn.nextWake){
           const page=document;scriptBusy=true;
@@ -1393,12 +1554,17 @@ async function main() {
             .finally(()=>{scriptBusy=false;});
         }
       }
-      // Wake at least every 8 ms to pump; wake at once when a frame ends.
-      const nap=new Promise(resolve=>setTimeout(resolve,8));
+      // Wake at least every 8 ms to pump, sooner for the page's next timer or animation frame
+      // (a fixed 8 ms paced 16 ms frames at about 21 ms); wake at once when a frame ends.
+      const wakeIn=scriptsOn&&script&&script.turn.nextWake!==null
+        ?script.turn.nextWake-(performance.now()-(scriptEpochs.get(script.session)??performance.now())):8;
+      const nap=new Promise(resolve=>setTimeout(resolve,Math.max(1,Math.min(8,Math.ceil(wakeIn)))));
       await Promise.race([nap,...(rendering?[rendering]:[]),...(shifting?[shifting]:[])]);
     }
   } finally {
-    running=false;controller?.abort();
+    running=false;controller?.abort();quitAt=performance.now();
+    // Quit or close: no new GPU work from here on; a frame in progress ends with what it has.
+    const gpuIdle=session?.halt();
     // A frame in progress ends before its session is disposed.
     try{await rendering;await shifting;}catch(error){console.error("Native HTML frame ended with an error:",String(error));}
     worker?.terminate();
@@ -1413,6 +1579,9 @@ async function main() {
         Deno.exitCode=1;
       } else console.log(`frame cost: ${frameCost.leanFrames} Lean frames, ${prefetchStats.sent} prefetches over ${frameCost.scrollRows} rows (bound ${bound} each)`);
     }
+    try{await gpuIdle;}catch{/* a lost device has nothing in flight */}
+    const quitFact={ms:Math.round(performance.now()-quitAt),gpu:session?.stats.gpu??null};
+    trace("native-html-quit",quitFact);
     if(!cleanupUI({session,device,native}))Deno.exitCode=1;
   }
 }

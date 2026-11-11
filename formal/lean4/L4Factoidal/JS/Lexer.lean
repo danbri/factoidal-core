@@ -1,5 +1,6 @@
 import L4Factoidal.XPath4.Atomic
 import L4Factoidal.JS.Str
+import L4Factoidal.Prim.FloatOfNat
 
 /-!
 # L4Factoidal.JS.Lexer — ECMAScript tokens (§12)
@@ -80,6 +81,23 @@ def slice (cs : Array Char) (i j : Nat) : String :=
 def floatOfNat (n : Nat) : Float :=
   if n < 2 ^ 53 then Float.ofNat n
   else XPath4.floatOfParsed (.num false n 0)
+
+/-- `floatOfNat` for compiled code (`floatOfNat_eq_fast`). The test `n < 2 ^ 53` reads its
+literal from decimal text at each call (Lean 4.33.1 emits `lean_cstr_to_nat` for a `Nat`
+literal of 2^32 or more); a number below 2^32 is decided by a small literal first. -/
+def floatOfNatFast (n : Nat) : Float :=
+  if n ≤ 4294967295 then Prim.natToFloat n else floatOfNat n
+
+theorem floatOfNat_eq_fast (n : Nat) : floatOfNat n = floatOfNatFast n := by
+  unfold floatOfNatFast
+  split
+  · next h =>
+    have hb : n < 2 ^ 53 := by omega
+    simp [floatOfNat, hb, Prim.natToFloat_eq]
+  · rfl
+
+@[csimp] theorem floatOfNat_eq_floatOfNatFast : @floatOfNat = @floatOfNatFast :=
+  funext floatOfNat_eq_fast
 
 /-- `4 hex digits` at `i`. -/
 def hex4 (cs : Array Char) (i : Nat) : Option Nat := do
@@ -229,6 +247,10 @@ structure Token where
   escaped : Bool := false
   /-- The flags of a regular expression literal (`kind = regex`). -/
   flags : String := ""
+  /-- For a `)` and a `}`: a `/` after it starts a regular expression. The `)` ends the header
+  of an `if`, `while`, `for` or `with`; the `}` ends a block (`regexAllowed`). The opening
+  bracket of the pair has the same value (`openBefore`). -/
+  reAfter : Bool := false
   deriving Inhabited
 
 /-- An identifier with `\\u` escapes (§12.7.1): its value and the index after it. -/
@@ -362,18 +384,51 @@ def skipBlock (cs : Array Char) : Nat → Nat → Bool → Option (Nat × Bool)
     else if cs[i]! == '*' && cs[i+1]! == '/' then some (i + 2, nl)
     else skipBlock cs fuel (i + 1) (nl || isLineTerm cs[i]!)
 
+/-- Whether the token at index `k` comes after a `.` or a `?.`: it is a property name, also
+when it is a keyword (§13.3). -/
+def afterDot (acc : Array Token) (k : Nat) : Bool :=
+  k ≥ 1 &&
+    (let d := acc.getD (k - 1) default
+     d.kind == .punct && (d.text == "." || d.text == "?."))
+
 /-- Whether a `/` after these tokens starts a regular expression literal (§12, the goal
-symbols InputElementRegExp and InputElementDiv): not after a value (a name, a literal, a
-closing bracket, or the keywords `this`, `super`, `null`, `true`, `false`). A `}` is
-taken as the end of an expression (an object literal or a template part). -/
+symbols InputElementRegExp and InputElementDiv). This is the lexer's first choice, from the
+tokens alone; the grammar decides, and the parser asks for the other reading where the choice
+is wrong (`lexFrom`, `P.relexAt`). Not after a value: a name, a literal, `]`, a postfix `++` or
+`--` (after a prefix one a regular expression is not valid either), the keywords `this`,
+`super`, `null`, `true`, `false`, or a keyword that is a property name (`a.default / 2`).
+After a `)` or a `}`: by what it closes (`Token.reAfter`). -/
 def regexAllowed (acc : Array Token) : Bool :=
   match acc.back? with
   | none => true
   | some t => match t.kind with
     | .ident | .num | .big | .str | .tmpl | .regex => false
-    | .kw => !["this", "super", "null", "true", "false"].contains t.text
-    | .punct => !([")", "]", "}"].contains t.text)
+    | .kw => !(["this", "super", "null", "true", "false"].contains t.text) && !afterDot acc (acc.size - 1)
+    | .punct =>
+      if t.text == ")" || t.text == "}" then t.reAfter
+      else !(["]", "++", "--"].contains t.text)
     | .eof => true
+
+/-- Whether the `(` after these tokens opens the header of an `if`, `while`, `for` or `with`
+statement (also `for await (`): a `/` after its `)` starts a regular expression. Not for a
+method with such a name (`Symbol.for(x) / 2`). -/
+def headerParen (acc : Array Token) : Bool :=
+  match acc.back? with
+  | none => false
+  | some t =>
+    (t.kind == .kw && ["if", "while", "for", "with"].contains t.text && !afterDot acc (acc.size - 1)) ||
+    (t.kind == .ident && t.text == "await" && acc.size ≥ 2 &&
+      (acc.getD (acc.size - 2) default).kind == .kw && (acc.getD (acc.size - 2) default).text == "for")
+
+/-- Whether the `{` after these tokens opens a block (a statement block, a function body, the
+body of `switch`): at the start, after `)`, `;`, `{`, `}`, `=>`, or after `else`, `do`, `try`,
+`finally`. Any other `{` is taken as an object literal, and a `/` after its `}` as a division. -/
+def blockBrace (acc : Array Token) : Bool :=
+  match acc.back? with
+  | none => true
+  | some t =>
+    (t.kind == .punct && [")", ";", "{", "}", "=>"].contains t.text) ||
+    (t.kind == .kw && ["else", "do", "try", "finally"].contains t.text)
 
 /-- The body of a regular expression literal from `i` (after the `/`): up to the `/`
 that is not escaped and not in a class (§12.9.5). A line terminator ends it with an
@@ -391,59 +446,108 @@ def scanRegex (cs : Array Char) : Nat → Nat → Bool → Except String Nat
     else if c == '/' && !cls then .ok i
     else scanRegex cs fuel (i + 1) cls
 
-def lexGo (cs : Array Char) : Nat → Nat → Bool → Array Token → Except String (Array Token)
-  | 0, i, nl, acc => .ok (acc.push { kind := .eof, nl, pos := i })
-  | fuel + 1, i, nl, acc =>
+/-- The tokens from index `i`, after the tokens `acc`. `open_` has one entry for each bracket
+that is open, the innermost first: for a `(`, whether it opens a statement header
+(`headerParen`); for a `{`, whether it opens a block (`blockBrace`); for a `[`, `false`. The
+two brackets of a pair get the entry as `Token.reAfter`. -/
+def lexGo (cs : Array Char) : Nat → Nat → Bool → Array Token → List Bool → Except String (Array Token)
+  | 0, i, nl, acc, _ => .ok (acc.push { kind := .eof, nl, pos := i })
+  | fuel + 1, i, nl, acc, open_ =>
     if i ≥ cs.size then .ok (acc.push { kind := .eof, nl, pos := i }) else
     let c := cs[i]!
-    if isLineTerm c then lexGo cs fuel (i + 1) true acc
-    else if isWs c then lexGo cs fuel (i + 1) nl acc
+    if isLineTerm c then lexGo cs fuel (i + 1) true acc open_
+    else if isWs c then lexGo cs fuel (i + 1) nl acc open_
     else if c == '/' && charAt cs (i + 1) == '/' then
-      lexGo cs fuel (scanWhile cs (fun c => !isLineTerm c) cs.size (i + 2)) nl acc
+      lexGo cs fuel (scanWhile cs (fun c => !isLineTerm c) cs.size (i + 2)) nl acc open_
     else if c == '/' && charAt cs (i + 1) == '*' then
       match skipBlock cs cs.size (i + 2) false with
       | none => .error "SyntaxError: unterminated comment"
-      | some (j, nl') => lexGo cs fuel j (nl || nl') acc
+      | some (j, nl') => lexGo cs fuel j (nl || nl') acc open_
     else if isIdStart c || c == '\\' then
       match scanIdent cs cs.size i "" false with
       | .error e => .error e
       | .ok (s, j, esc) =>
         if s.isEmpty then .error "SyntaxError: invalid or unexpected token" else
         let kind := if keywords.contains s && !esc then TokKind.kw else .ident
-        lexGo cs fuel j false (acc.push { kind, text := s, nl, pos := i, escaped := esc })
+        lexGo cs fuel j false (acc.push { kind, text := s, nl, pos := i, escaped := esc }) open_
     else if c.isDigit && (scanBig cs i).isSome then
       match scanBig cs i with
-      | some (v, j) => lexGo cs fuel j false (acc.push { kind := .big, text := toString v, nl, pos := i })
+      | some (v, j) => lexGo cs fuel j false (acc.push { kind := .big, text := toString v, nl, pos := i }) open_
       | none => .error "SyntaxError: invalid BigInt literal"
     else if c.isDigit || (c == '.' && (charAt cs (i + 1)).isDigit) then
       match scanNum cs i with
       | .error e => .error e
-      | .ok (f, j) => lexGo cs fuel j false (acc.push { kind := .num, num := f, nl, pos := i })
+      | .ok (f, j) => lexGo cs fuel j false (acc.push { kind := .num, num := f, nl, pos := i }) open_
     else if c == '"' || c == '\'' then
       match scanStr cs c cs.size (i + 1) "" with
       | .error e => .error e
-      | .ok (s, j) => lexGo cs fuel j false (acc.push { kind := .str, text := s, nl, pos := i })
+      | .ok (s, j) => lexGo cs fuel j false (acc.push { kind := .str, text := s, nl, pos := i }) open_
     else if c == '`' then
       match scanTmpl cs cs.size (i + 1) "" "" {} with
       | .error e => .error e
-      | .ok (t, j) => lexGo cs fuel j false (acc.push { kind := .tmpl, tmpl := t, nl, pos := i })
-    else if c == '/' && regexAllowed acc then
-      match scanRegex cs cs.size (i + 1) false with
-      | .error e => .error e
-      | .ok j =>
+      | .ok (t, j) => lexGo cs fuel j false (acc.push { kind := .tmpl, tmpl := t, nl, pos := i }) open_
+    else
+      -- The end of a regular expression literal that starts here, where that is the first
+      -- choice. With no end on this line the choice was wrong or the literal has no end: a
+      -- division token goes to the parser, which asks for a regular expression where the
+      -- grammar wants one, and then gets the error (`lexFrom`).
+      let reEnd : Option Nat :=
+        if c == '/' && regexAllowed acc then
+          match scanRegex cs cs.size (i + 1) false with
+          | .ok j => some j
+          | .error _ => none
+        else none
+      match reEnd with
+      | some j =>
         let k := scanWhile cs isIdPart cs.size (j + 1)
         let body := String.ofList (cs.extract (i + 1) j).toList
         let flags := String.ofList (cs.extract (j + 1) k).toList
-        lexGo cs fuel k false (acc.push { kind := .regex, text := body, flags, nl, pos := i })
-    else
-      match matchPunct cs i with
-      | some p => lexGo cs fuel (i + p.length) false (acc.push { kind := .punct, text := p, nl, pos := i })
-      | none => .error s!"SyntaxError: unexpected character U+{String.ofList (Nat.toDigits 16 c.toNat)}"
+        lexGo cs fuel k false (acc.push { kind := .regex, text := body, flags, nl, pos := i }) open_
+      | none =>
+        match matchPunct cs i with
+        | none => .error s!"SyntaxError: unexpected character U+{String.ofList (Nat.toDigits 16 c.toNat)}"
+        | some p =>
+          if c == '(' || c == '{' || c == '[' then
+            let flag := if c == '(' then headerParen acc else if c == '{' then blockBrace acc else false
+            lexGo cs fuel (i + 1) false
+              (acc.push { kind := .punct, text := p, nl, pos := i, reAfter := flag }) (flag :: open_)
+          else if c == ')' || c == '}' || c == ']' then
+            lexGo cs fuel (i + 1) false
+              (acc.push { kind := .punct, text := p, nl, pos := i, reAfter := open_.headD false }) open_.tail
+          else lexGo cs fuel (i + p.length) false (acc.push { kind := .punct, text := p, nl, pos := i }) open_
+
+/-- The tokens of a character array, ending with one `eof` token. -/
+def lexChars (cs : Array Char) : Except String (Array Token) :=
+  lexGo cs (cs.size + 1) 0 false #[] []
 
 /-- The tokens of a source text, ending with one `eof` token. -/
 def lex (src : String) : Except String (Array Token) :=
-  let cs := src.toList.toArray
-  lexGo cs (cs.size + 1) 0 false #[]
+  lexChars src.toList.toArray
+
+/-- `lexGo`'s list of open brackets after the first `k` tokens. -/
+def openBefore (toks : Array Token) (k : Nat) : List Bool :=
+  toks.foldl (init := []) (start := 0) (stop := k) fun st t =>
+    if t.kind != .punct then st
+    else if t.text == "(" || t.text == "{" || t.text == "[" then t.reAfter :: st
+    else if t.text == ")" || t.text == "}" || t.text == "]" then st.tail
+    else st
+
+/-- The tokens from the `/` at position `i` to the end, with that `/` read as the start of a
+regular expression literal (`asRegex`) or as a division punctuator. For the parser, at a place
+where the grammar decides against the lexer's first choice (§12: the goal symbols
+InputElementRegExp and InputElementDiv). `nl`: a line terminator comes before the token.
+`open_`: the brackets open at `i` (`openBefore`). -/
+def lexFrom (cs : Array Char) (i : Nat) (asRegex : Bool) (nl : Bool) (open_ : List Bool) :
+    Except String (Array Token) :=
+  if asRegex then
+    match scanRegex cs cs.size (i + 1) false with
+    | .error e => .error e
+    | .ok _ => lexGo cs (cs.size + 1) i nl #[] open_
+  else
+    -- a value token before the `/` makes the lexer read a division; it is taken off the result
+    match lexGo cs (cs.size + 1) i nl #[{ kind := .num }] open_ with
+    | .error e => .error e
+    | .ok toks => .ok (toks.extract 1 toks.size)
 
 /-! The fast punctuator scan agrees with the definition: every punctuator alone, followed
 by each punctuator character, at the end of the input, and after another token. -/

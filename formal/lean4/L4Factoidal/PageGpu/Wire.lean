@@ -19,6 +19,12 @@ a header line of decimal numbers separated by spaces, then `\n`, then a payload:
 
 `bind` 0 is none (page ids start at 1). Formats 1..4 are `float32`..`float32x4`;
 topologies 0..3 are triangle-list, triangle-strip, line-list, point-list.
+
+Op `64 + k` is op `k` with a binary header (`binaryOp`): a little-endian u32 count n,
+then n little-endian u32 numbers, then `\n`, then the payload. The numbers are the same
+as in the text form (`decode_binary_pass` checks one pass in both forms); the binary
+form spares a page script the conversion of numbers to text, which costs a script
+engine in WasmVM more than anything else in a frame (record, section 10).
 -/
 import L4Factoidal.PageGpu.Model
 
@@ -41,6 +47,22 @@ def nums (header : ByteArray) : Except String (List Nat) := do
   parts.mapM fun p => match p.toNat? with
     | some n => pure n
     | none => throw "gpu: header number"
+
+/-- Ops at or above this carry a binary header. -/
+def binaryOp : Nat := 64
+
+/-- The little-endian u32 at byte `i` (0 past the end). -/
+def u32At (b : ByteArray) (i : Nat) : Nat :=
+  b[i]!.toNat + b[i+1]!.toNat * 256 + b[i+2]!.toNat * 65536 + b[i+3]!.toNat * 16777216
+
+/-- A binary header: the numbers and the payload after its `\n`. -/
+def binHeader (b : ByteArray) : Except String (List Nat × ByteArray) := do
+  if b.size < 4 then throw "gpu: header too short"
+  let n := u32At b 0
+  if 4 * n > maxHeader then throw "gpu: header too long"
+  let stop := 4 + 4 * n
+  if b.size < stop + 1 || b[stop]! != 10 then throw "gpu: header too short"
+  return ((List.range n).map (fun k => u32At b (4 + 4 * k)), b.extract (stop + 1) b.size)
 
 /-- A reader over the header numbers. -/
 abbrev R := StateT (List Nat) (Except String)
@@ -95,10 +117,8 @@ def draws (n : Nat) : R (List Draw) := do
 def text (b : ByteArray) : Except String String :=
   match String.fromUTF8? b with | some s => .ok s | none => .error "gpu: text is not UTF-8"
 
-/-- The command of one import call. -/
-def decode (op : Nat) (bytes : ByteArray) : Except String Command := do
-  let (header, payload) := splitLine bytes
-  let ns ← nums header
+/-- The command of op `op` with header numbers `ns` and the payload. -/
+def decodeWith (op : Nat) (ns : List Nat) (payload : ByteArray) : Except String Command := do
   let read := fun (r : R Command) => (r.run ns).map (·.1)
   match op with
   | 1 => read do return Command.configure (← next) (← next) (← next) (← next)
@@ -129,6 +149,20 @@ def decode (op : Nat) (bytes : ByteArray) : Except String Command := do
     let fs ← text (payload.extract (k + 1) payload.size)
     read do return Command.createProgram (← next) vs fs
   | _ => throw "gpu: unknown command"
+
+/-- The command of one import call: a text header (ops below `binaryOp`) or a binary one. -/
+def decode (op : Nat) (bytes : ByteArray) : Except String Command :=
+  if op ≥ binaryOp then do
+    let (ns, payload) ← binHeader bytes
+    decodeWith (op - binaryOp) ns payload
+  else do
+    let (header, payload) := splitLine bytes
+    decodeWith op (← nums header) payload
+
+/-- The binary header of `ns` (each below 2^32), as a page script writes it, with the `\n`. -/
+def binaryHeader (ns : List Nat) : ByteArray :=
+  let u32 := fun (n : Nat) => ByteArray.mk #[(n % 256).toUInt8, (n / 256 % 256).toUInt8, (n / 65536 % 256).toUInt8, (n / 16777216 % 256).toUInt8]
+  ns.foldl (fun acc n => acc ++ u32 n) (u32 ns.length) ++ ByteArray.mk #[10]
 
 /-! ## JSON of host commands -/
 

@@ -1,3 +1,4 @@
+import L4Factoidal.Rendering.ClipTheorems
 import WebRender
 import WebRoute
 import WebSelection
@@ -53,6 +54,8 @@ structure Shell where
   scale : Nat := 1
   theme : String := "next"
   pages : Nat := 0
+  /-- Which engine runs this page's scripts ("JS BUBBLEPOP", "JS QUICKJS-NG", "JS OFF"), or "". -/
+  script : String := ""
   /-- How far the page has moved up, in backing pixels. -/
   scroll : Nat := 0
   /-- The control the pointer is pressed on (`:active`), or "". -/
@@ -524,6 +527,9 @@ private def controlNodes (s : Shell) (t : Theme) (width : Nat) : List Rendering.
     let x := width-(label.length*charWidth s)-16*u
     let y := (row-7*dot s)/2+u
     out := out ++ bitmapNodes t.coin (icon "coin") 7 (x-10*dot s) y (dot s) ++ text t.coin label x y (dot s)
+    -- The script engine of this page, left of the page count.
+    if !s.script.isEmpty then
+      out := out ++ text t.coin s.script (x-10*dot s-(s.script.length+2)*charWidth s) y (dot s)
   return out
 
 /-- Colour `c` faded `p` percent of the way to `to`: the chrome has no alpha, and over
@@ -579,15 +585,34 @@ def nodes (s : Shell) (width : Nat) : List Rendering.Node :=
   [paint t.base 0 0 width (height s width),.group none slide (controlNodes {s with collapse := 0} (fade t (2*p)) width)] ++
     domainNodes s t width p ++ edgeNodes s t width ++ swipeNodes s t width
 
-/-- Put a page rendered below the chrome and the chrome into one scene. -/
+/-- The page's part of the window: rows from the chrome's bottom to the window's. -/
+def pageClip (s : Shell) (width height' : Nat) : Rendering.ClipRect :=
+  ⟨0,Float.ofNat (height s width),Float.ofNat width,Float.ofNat height'-Float.ofNat (height s width),Rendering.identity⟩
+
+/-- Put a page rendered below the chrome and the chrome into one scene. The page is clipped to its part of the window
+(`pageClip`), so no page ink reaches the chrome (`compose_page_clipped`). -/
 def compose (s : Shell) (page : Rendering.Scene) (width height' : Nat) : Rendering.Scene :=
   let top := Float.ofNat (height s width)-Float.ofNat s.scroll
   let shift : Rendering.Transform := ⟨1,0,0,1,0,top⟩
   {page with
     height := height'
     mapping := {page.mapping with viewportHeight := Float.ofNat height'}
-    tree := [.group none shift page.tree] ++ nodes s width
+    tree := [.clipped none Rendering.identity (pageClip s width height') [.group none shift page.tree]] ++ nodes s width
     links := Rendering.moveLinks (· + top) page.links}
+
+/-- Security: every primitive of the page in a composed frame carries the page's part
+of the window as a clip, so its ink can not paint the chrome. -/
+theorem compose_page_clipped (s : Shell) (page : Rendering.Scene) (width height' : Nat)
+    (parent : Rendering.Transform) (groups : List (Option String)) (item : Rendering.PaintItem)
+    (node : Rendering.Node) (head : (compose s page width height').tree.head? = some node)
+    (h : item ∈ node.lower parent groups) :
+    (pageClip s width height').lowerUnder parent ∈ item.primitive.clips := by
+  have e : node = .clipped none Rendering.identity (pageClip s width height')
+      [.group none ⟨1,0,0,1,0,Float.ofNat (height s width)-Float.ofNat s.scroll⟩ page.tree] := by
+    simp only [compose, List.cons_append, List.head?_cons, Option.some.injEq] at head
+    exact head.symm
+  subst e
+  exact Rendering.lower_clipped _ _ _ _ _ _ _ h
 
 /-- The page under the chrome keeps every link of the page, moved down by the chrome less
 the scroll and nothing else (`LinkTheorems.moveLinks_getElem`; issue 1268). -/
@@ -651,6 +676,20 @@ def wordEnd (value : String) (i : Nat) : Nat :=
   let word := ((after.drop gap).takeWhile wordChar).length
   min value.length (i+gap+word)
 
+/-- Left and Right move, and Delete removes, one extended grapheme cluster (UAX #29): an
+emoji sequence (ZWJ, skin tone, flag, keycap) or a letter with its marks is one step. -/
+def graphemeBefore (value : String) (i : Nat) : Nat :=
+  let breaks := L4Factoidal.Unicode.Segmentation.graphemeBreaks value.toList.toArray
+  breaks.foldl (fun best b => if b < i then max best b else best) 0
+def graphemeAfter (value : String) (i : Nat) : Nat :=
+  let breaks := L4Factoidal.Unicode.Segmentation.graphemeBreaks value.toList.toArray
+  breaks.foldl (fun best b => if b > i then min best b else best) value.length
+
+-- A family (three people joined by ZWJ) is one step; plain letters are one each.
+private def family : String := String.ofList ([0x61,0x1F468,0x200D,0x1F469,0x200D,0x1F467,0x62].map Char.ofNat)
+#guard graphemeBefore family 6 == 1 && graphemeAfter family 1 == 6 && graphemeAfter family 6 == 7
+#guard graphemeBefore "abc" 2 == 1 && graphemeAfter "abc" 2 == 3 && graphemeBefore "abc" 0 == 0
+
 /-- Modifier bits of a key event: 1 Shift, 2 Command, 4 Option, 8 Control. -/
 def shiftBit : Nat := 1
 def commandBit : Nat := 2
@@ -672,17 +711,17 @@ def Shell.key (s : Shell) (code : Nat) (modifiers : Nat := 0) : Shell :=
   | 51 =>
     if s.lo < s.hi then replaceRange s s.lo s.hi "" false
     else if s.cursor == 0 then s
-    else replaceRange s (if line then 0 else if word then wordStart s.address s.cursor else s.cursor-1) s.cursor "" false
+    else replaceRange s (if line then 0 else if word then wordStart s.address s.cursor else graphemeBefore s.address s.cursor) s.cursor "" false
   | 117 =>
     if s.lo < s.hi then replaceRange s s.lo s.hi "" false
     else if s.cursor >= size then s
-    else replaceRange s s.cursor (if line then size else if word then wordEnd s.address s.cursor else s.cursor+1) "" false
+    else replaceRange s s.cursor (if line then size else if word then wordEnd s.address s.cursor else graphemeAfter s.address s.cursor) "" false
   | 123 =>
     if !extend && s.lo < s.hi && !word && !line then moveTo s s.lo false
-    else moveTo s (if line then 0 else if word then wordStart s.address s.cursor else s.cursor-1) extend
+    else moveTo s (if line then 0 else if word then wordStart s.address s.cursor else graphemeBefore s.address s.cursor) extend
   | 124 =>
     if !extend && s.lo < s.hi && !word && !line then moveTo s s.hi false
-    else moveTo s (if line then size else if word then wordEnd s.address s.cursor else s.cursor+1) extend
+    else moveTo s (if line then size else if word then wordEnd s.address s.cursor else graphemeAfter s.address s.cursor) extend
   | 115 | 126 => moveTo s 0 extend
   | 119 | 125 => moveTo s size extend
   | _ => s
@@ -826,7 +865,7 @@ def submit (input : String) : Go :=
 `:command` as `foafnaut:command/argument`, and a search or `:open URL` to the system. -/
 def routeAddress (site : WebRoute.Site) (base input : String) : WebRoute.Route :=
   let value := input.trimAscii.toString
-  if (value.toList.take 9).map Char.toLower == WebRoute.foafnautPrefix then WebRoute.route site base value else
+  if (value.toList.take 9).map Char.toLower == WebRoute.foafnautPrefix || value.toList.map Char.toLower == "about:foafnaut".toList then WebRoute.routeAddress site base value else
   match submit value with
   | .page url => WebRoute.route site base url
   | .command name argument => WebRoute.commandRoute site name argument
@@ -910,7 +949,7 @@ def Shell.ofJson (j : JSON.Json) : Shell :=
     -- No anchor is no selection.
     anchor := min (nat j "anchor" cursor) address.length,undo := step "undo",redo := step "redo",typing := flag j "typing",
     focused := flag j "focused",canBack := flag j "canBack",canForward := flag j "canForward",
-    loading := flag j "loading",scale := max 1 (nat j "scale" 1),theme := str j "theme" "next",pages := nat j "pages",
+    loading := flag j "loading",scale := max 1 (nat j "scale" 1),theme := str j "theme" "next",pages := nat j "pages",script := str j "script" "",
     scroll := nat j "scroll", pressed := str j "pressed",
     collapse := min 100 (nat j "collapse"), collapsible := flag j "collapsible",
     swipe := match j.field? "swipe" with

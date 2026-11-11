@@ -33,10 +33,18 @@ if [ -x "$LAB/.build/web-render/web-render-native" ]; then
 else
   echo 'NOT RUN: check-demo-pages.py needs web-render-native, which this build does not have yet'
 fi
+# Colour emoji drawn by Lean (ColrRaster) against an independent COLR renderer's pixels
+# (fixtures/emoji-reference, emoji_reference.py), through web-render-native --colour-glyph.
+if [ -x "$LAB/.build/web-render/web-render-native" ]; then
+  deno test --no-check --no-config --no-npm --node-modules-dir=none \
+    --allow-read --allow-run --allow-write "$LAB/emoji_pixels_test.ts"
+else
+  echo 'NOT RUN: emoji_pixels_test.ts needs web-render-native'
+fi
 # The native HTML tests need the web-render engine, which Builds makes after this
 # step in its engines job and before it in its macOS job, and more permissions.
 TESTS=()
-for test in "$LAB/"*_test.ts; do case "$test" in "$LAB/native_html_test.ts"|"$LAB/native_html_bytes_test.ts"|"$LAB/native_html_fonts_test.ts"|"$LAB/native_html_wasm_test.ts"|"$LAB/native_html_sparql_test.ts"|"$LAB/native_window_queue_test.ts"|"$LAB/showcase_gaps_test.ts"|"$LAB/print_gaps_test.ts"|"$LAB/svg_text_test.ts"|"$LAB/browser_state_test.ts"|"$LAB/html_images_test.ts"|"$LAB/frame_work_test.ts"|"$LAB/link_route_test.ts"|"$LAB/native_html_scripts_test.ts"|"$LAB/gesture_test.ts"|"$LAB/frame_cost_test.ts"|"$LAB/scroll_prefetch_test.ts"|"$LAB/native_html_pointer_test.ts"|"$LAB/page_gpu_test.ts"|"$LAB/bubblepop_pages_test.ts"|"$LAB/dom_breadth_test.ts"|"$LAB/canvas2d_test.ts"|"$LAB/long_words_test.ts"|"$LAB/native_liberal_test.ts"|"$LAB/device_pixels_test.ts") ;; *) TESTS+=("$test");; esac; done
+for test in "$LAB/"*_test.ts; do case "$test" in "$LAB/native_html_test.ts"|"$LAB/native_html_bytes_test.ts"|"$LAB/native_html_fonts_test.ts"|"$LAB/native_html_wasm_test.ts"|"$LAB/native_html_sparql_test.ts"|"$LAB/native_window_queue_test.ts"|"$LAB/showcase_gaps_test.ts"|"$LAB/print_gaps_test.ts"|"$LAB/svg_text_test.ts"|"$LAB/browser_state_test.ts"|"$LAB/html_images_test.ts"|"$LAB/frame_work_test.ts"|"$LAB/link_route_test.ts"|"$LAB/native_html_scripts_test.ts"|"$LAB/gesture_test.ts"|"$LAB/frame_cost_test.ts"|"$LAB/scroll_prefetch_test.ts"|"$LAB/native_html_pointer_test.ts"|"$LAB/page_gpu_test.ts"|"$LAB/bubblepop_pages_test.ts"|"$LAB/dom_breadth_test.ts"|"$LAB/canvas2d_test.ts"|"$LAB/long_words_test.ts"|"$LAB/native_liberal_test.ts"|"$LAB/device_pixels_test.ts"|"$LAB/showoff_test.ts"|"$LAB/emoji_pixels_test.ts"|"$LAB/bubblepop_cost_test.ts"|"$LAB/shader_gallery_test.ts"|"$LAB/partial_frame_test.ts"|"$LAB/workers_test.ts"|"$LAB/many_images_test.ts"|"$LAB/script_reads_holds_test.ts") ;; *) TESTS+=("$test");; esac; done
 deno check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
   "$LAB/run_ui.ts" "$LAB/run_lean.ts" "$LAB/run_svg.ts" "$LAB/run_foaf_svg.ts" "${TESTS[@]}"
 deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --allow-read "${TESTS[@]}"
@@ -89,6 +97,11 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
   # HTML img drawn by Lean: sizes, alt text, same-origin fetch; Wasm and native.
   deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
     --allow-read --allow-ffi "$LAB/html_images_test.ts"
+  # Many images, call after call on one engine: no image of an earlier call, none missing,
+  # a key's new bytes drawn; native and Wasm boxes the same (issue 390). And a script
+  # session's layout reads see the images held at the read, not at start.
+  deno test --no-check --no-config --no-npm --node-modules-dir=none \
+    --allow-read --allow-ffi --allow-env --allow-write "$LAB/many_images_test.ts" "$LAB/script_reads_holds_test.ts"
   # Frame cost ratchet, counted by the hosts: a colour-only hover lays out 0 times and a
   # geometry hover once; render request bytes do not grow with image size. Wasm and native.
   deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
@@ -97,6 +110,14 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
   # shapes in linear time. Wasm and native.
   deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
     --allow-read --allow-ffi "$LAB/long_words_test.ts"
+  # Web fonts (@font-face), marks across fonts, paint-only SVG transforms and animation
+  # (FrameCost.paint_never_layouts, counted by the engine), hostile text. Wasm and native.
+  deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
+    --allow-read --allow-ffi --allow-run=hb-shape "$LAB/showoff_test.ts"
+  # Partial compile (NativeSVG.compileRetained): one moved shape recompiles one primitive,
+  # no change compiles nothing, and the bytes equal the plain compile. Native engine.
+  deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
+    --allow-read --allow-ffi --allow-env "$LAB/partial_frame_test.ts"
   # The Hub's fallback fonts: files, sizes, SHA-256, and which fonts each demo page fetches.
   deno test --no-check --no-config --allow-read "$LAB/fallback_fonts_test.ts"
   # SVG text, tspan and textPath drawn with the held font (issue 1270), Wasm and native.
@@ -127,6 +148,9 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
   # QuickJS-NG, with no guest module; the demo pages, compared with QuickJS-NG when the guest exists.
   SCRIPT_ENGINE=bubblepop deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
     --allow-read --allow-ffi --allow-env "$LAB/native_html_scripts_test.ts" "$LAB/native_html_pointer_test.ts"
+  # The cost ratchet: element-by-element work (push, a[i] = v, charCodeAt) is linear.
+  deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-ffi \
+    --allow-read --allow-ffi --allow-env "$LAB/bubblepop_cost_test.ts"
   if [ -f "$LAB/.build/web-render/engines/libweb-render.dylib" ]; then
     SCRIPT_ENGINE=bubblepop deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
       --allow-read --allow-ffi --allow-env "$LAB/page_gpu_test.ts"
@@ -135,6 +159,10 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
     # DOM breadth (Range, Selection, traversal, markup, reflection, computed style) on both engines.
     deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
       --allow-read --allow-ffi --allow-env "$LAB/dom_breadth_test.ts"
+    # Dedicated workers on BubblePopJS: messages, clone, importScripts, scope, timers, errors,
+    # each worker's own Math.random seed, and start and round-trip times.
+    deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-ffi \
+      --allow-read --allow-ffi --allow-env "$LAB/workers_test.ts"
   fi
   # Page scripts run by Lean (WebScripts.lean): QuickJS-NG in WasmVM on the Lean DOM, clicks and
   # timers through the Lean event loop, Wasm and native. Only when the guest module exists
@@ -150,13 +178,19 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
     # Canvas 2D drawn by Lean: Chrome's pixels for small scenes, host commands, answers, frame cost (both engines).
     QUICKJS_WASM="$QJS_GUEST" deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-ffi \
       --allow-read --allow-ffi --allow-env "$LAB/canvas2d_test.ts"
+    # The shader gallery on both script engines: every shader draws each frame with no layout,
+    # Lean's reasons reach the page, and the QuickJS-NG instructions of a frame stay under the ratchet.
+    for engine in quickjs bubblepop; do
+      QUICKJS_WASM="$QJS_GUEST" SCRIPT_ENGINE=$engine deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-ffi \
+        --allow-read --allow-ffi --allow-env "$LAB/shader_gallery_test.ts"
+    done
     # The window replays the page GPU commands (2026-11-08: the start turn's commands, which make
     # the canvas and buffers, were dropped, so every later turn failed and the canvas stayed
     # blank). Each triangle page runs off screen for 8 s (25 s on Wasm); any page GPU or page error fails.
     if [ "$(uname -s)" = Darwin ] && [ -f "$LAB/.build/native/libnative-window.dylib" ]; then
       GPU_ENGINE=() GPU_SECONDS=25
       if [ -f "$LAB/.build/web-render/engines/libweb-render.dylib" ]; then GPU_ENGINE=(--native-engine "$LAB/.build/web-render/engines/libweb-render.dylib"); GPU_SECONDS=8; fi
-      for gpu_page in webgpu-triangle webgl-triangle canvas-chart; do
+      for gpu_page in webgpu-triangle webgl-triangle canvas-chart shader-gallery; do
         GPU_LOG=$(mktemp -t foafnaut-page-gpu)
         GPU_RC=0
         QUICKJS_WASM="$QJS_GUEST" perl -e 'alarm shift; exec @ARGV' "$GPU_SECONDS" deno run --no-check --no-config --no-npm --node-modules-dir=none \

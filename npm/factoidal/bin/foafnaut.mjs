@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HELP = `foafnaut [--latest|--bleeding-edge] [PAGE | --url URL | --html FILE] [APP_OPTIONS] [-- APP_ARGS]
 
@@ -23,6 +23,7 @@ const HELP = `foafnaut [--latest|--bleeding-edge] [PAGE | --url URL | --html FIL
   --install-latest  install the newest published build and stop
   --list            list installed versions
   --which           print the app that would run
+  --version         print the commit and build time of that app (the app answers)
   --help            this text
 
 App options, passed to the app as they are:
@@ -117,7 +118,9 @@ const APP_VALUES = ['--native-engine', '--font'];
 function pageArgs(page) {
   if (page === undefined) return [];
   if (/^https?:\/\//i.test(page)) return ['--url', page];
-  if (/^file:/i.test(page)) page = new URL(page).pathname;
+  // file:///abs/path is a URL; file:name.html has no // and is relative to here.
+  if (/^file:\/\//i.test(page)) page = fileURLToPath(page);
+  else if (/^file:/i.test(page)) page = decodeURIComponent(page.slice(5));
   const path = resolve(page);
   if (!existsSync(path)) fail(`no such file: ${page}`);
   return ['--html', path];
@@ -127,7 +130,7 @@ export async function main(argv, channel = 'current') {
   const split = argv.indexOf('--');
   const options = split < 0 ? argv : argv.slice(0, split);
   const extra = split < 0 ? [] : argv.slice(split + 1);
-  let page, which = false, verbose = false, detach = false;
+  let page, which = false, verbose = false, detach = false, version = false;
   const app_ = [];
   const setPage = (value) => { if (page !== undefined) fail('give one page'); if (value === undefined) fail('a page option needs a value'); page = value; };
   // Each of these picks the app or the action. Two of them have no one meaning.
@@ -139,6 +142,7 @@ export async function main(argv, channel = 'current') {
     else if (arg === '--latest') channel = 'latest';
     else if (arg === '--bleeding-edge') channel = 'bleeding-edge';
     else if (arg === '--which') which = true;
+    else if (arg === '--version') version = true;
     else if (arg === '--verbose' || arg === '-v') verbose = true;
     else if (arg === '--detach') detach = true;
     else if (arg === '--install-latest') { await installLatest(); return; }
@@ -183,6 +187,13 @@ export async function main(argv, channel = 'current') {
     } catch { console.error('foafnaut: bleeding edge has no BUILD-INFO.json; its commit is not known'); }
   }
   if (which) { console.log(app); return; }
+  // The app answers for itself. `open` shows no output, so run its program directly.
+  if (version) {
+    const run = spawnSync(join(dirname(app), 'native-webgpu-html-darwin-arm64'), ['--version'], { encoding: 'utf8' });
+    if (run.status === 0) process.stdout.write(run.stdout);
+    else console.log(`foafnaut: this build is too old to answer --version (${app})`);
+    process.exit(0);
+  }
   const args = ['-n', ...(detach ? [] : ['-W']), app, '--args', ...pageArgs(page), ...(verbose ? ['--trace-input'] : []), ...app_, ...extra];
   const log = join(homedir(), 'Library', 'Logs', 'foafnaut', 'trace.jsonl');
   if (verbose) console.error(`foafnaut: app ${app}\nfoafnaut: open ${args.join(' ')}\nfoafnaut: trace ${log}`);

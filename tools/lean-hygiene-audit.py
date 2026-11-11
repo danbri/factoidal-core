@@ -208,6 +208,13 @@ def main() -> int:
               f"{BASELINE_FILE.relative_to(ROOT)} to {len(partials)} in this "
               "commit, so the gain cannot be given back silently.")
 
+    # The browser engine's lab modules (labs/demos/foafnaut) are not counted here. Lean
+    # counts them: labs/demos/foafnaut/LabHygiene.lean (theorem lab_ratchet), compiled by
+    # build-web-render.sh, holds the only baseline (issue 390;
+    # docs/designissues/2026-11-11-lean-hygiene-ratchet.md).
+    print("  lab modules          counted by Lean: labs/demos/foafnaut/LabHygiene.lean "
+          "(lab_ratchet, run by build-web-render.sh)")
+
     if args.build_log is not None:
         seen, bad = scan_build_log(args.build_log)
         print(f"  {'#print axioms':20s} {seen} outputs read from "

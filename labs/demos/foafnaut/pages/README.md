@@ -1,6 +1,8 @@
 # foafnaut2525 demo pages
 
-Test pages for the Lean engine, and the start page of `foafnaut`. `manifest.json`
+Test pages for the Lean engine, the demo index (`index.html`) and the start page of
+`foafnaut` (`start.html`, handwritten; the window opens it when no page is given, and opens
+`index.html` for sweeps, checks, and a host that can run no page script). `manifest.json`
 lists each page and what the engine must do with it.
 
 - `tools/build-demo-pages.py` writes the `.html` files from `source/`, the status note

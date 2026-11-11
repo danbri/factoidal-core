@@ -383,12 +383,16 @@ theorem decided_served (V : JOSE.Verifiers) (env : Env) (s : State) (r : Request
       · split at h
         · simp at h
         · rename_i resp0 mem0 ns0 acc0 ds0 hc
-          simp only [Outcome.served.injEq] at h
-          obtain ⟨h1, h2, _, h4⟩ := h
           rcases access_decided V IS _ _ env.signer _ r _ _ _
               (fun hn => search_decided V LwsBackend lwsBackendLaws _ _ env.signer _ r _ _ hn)
               hc with ⟨d1, d2, d3, d4, d5⟩ | hp
-          · subst d2 d3 d4 d5 h1 h2 h4
+          · -- Refused by the access policy: the storage is unchanged, so the
+            -- no-lockout guard lets the refusal through.
+            subst d2 d3 d4 d5
+            rw [lockoutGuard_same] at h
+            simp only [Outcome.served.injEq] at h
+            obtain ⟨h1, h2, _, h4⟩ := h
+            subst h1 h2 h4
             exact .inr ⟨resp0, d1, rfl, rfl, rfl, rfl, rfl, _, rfl⟩
           · exact .inl hp
 

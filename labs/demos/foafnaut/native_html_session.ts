@@ -11,6 +11,7 @@ import {SurfaceLifecycle} from "./surface_lifecycle.ts";
 import {unpad,checkPixels} from "./gpu_transport.ts";
 import type {HTMLArtifact,HTMLLayers} from "./native_html_engine.ts";
 import {createLayerRenderer,READBACK_COMMANDS} from "./layer_compositor.ts";
+import {createGpuGate} from "./gpu_pacing.ts";
 
 // The plan commands that read the frame back to the CPU (layer_compositor.ts). The host
 // leaves them out for a frame that is not checked, and runs them in full under
@@ -29,7 +30,11 @@ type Growing={buffer:GPUBuffer;capacity:number};
  * submitted to that texture; the pixel checks read the same texture. */
 export type PresentTarget=Deno.UnsafeWindowSurface|{offscreen:true};
 
-export async function createHTMLWindowSession(device:GPUDevice,target:PresentTarget,native:Native) {
+/** framesInFlight: GPU submissions of this session that may be in flight at once (gpu_pacing.ts);
+ * 0 is no bound, for measurement. onGpuDone gets the GPU time of each piece of GPU work. */
+export type SessionOptions={framesInFlight?:number;onGpuDone?:(gpuMs:number)=>void};
+
+export async function createHTMLWindowSession(device:GPUDevice,target:PresentTarget,native:Native,options:SessionOptions={}) {
   // The Lean svg-offscreen plan always answers rgba8unorm, which a macOS window
   // surface does not support; the surface and pipeline use its preferred format.
   // Off screen the texture has the same format, so every draw is the same.
@@ -91,9 +96,22 @@ export async function createHTMLWindowSession(device:GPUDevice,target:PresentTar
   // present is Lean's composite of them at an offset. A scroll in the band presents again.
   const layered=createLayerRenderer(device,format);
   let lastLayers:{layers:HTMLLayers;width:number;height:number;offset:number}|undefined;
-  // GPU work of this session runs one call at a time, in the order asked.
+  // GPU work of this session runs one call at a time, in the order asked. Each call first
+  // waits until the GPU has finished the work of the call before (the gate), so a page whose
+  // frames cost the GPU more than the host's turn can not queue frames on the GPU. After a
+  // halt (quit, window close) a call asks the GPU for nothing and presents nothing.
+  const gate=createGpuGate(device.queue,options.framesInFlight??1,options.onGpuDone);
+  let halted=false;
+  const notPresented=():DrawResult=>({presented:false,checked:false,pixelHash:lastHash,steps:lastSteps,prepareMs:0,drawMs:0,presentedAt:0});
   let queue:Promise<unknown>=Promise.resolve();
-  const inOrder=<T>(work:()=>Promise<T>):Promise<T>=>{const next=queue.then(work,work);queue=next.catch(()=>{});return next;};
+  const inOrder=<T>(work:()=>Promise<T>):Promise<T|DrawResult>=>{
+    const run=async()=>{
+      await gate.before();
+      if(halted)return notPresented();
+      try{return await work();}finally{gate.after();}
+    };
+    const next=queue.then(run,run);queue=next.catch(()=>{});return next;
+  };
   async function present(width:number,height:number,offset:number,check:boolean,start:number,drawn:Record<string,number>):Promise<DrawResult> {
     const plan=await layered.plan(width,height,[0,0,0,0]);
     configure(plan,width,height);
@@ -113,7 +131,7 @@ export async function createHTMLWindowSession(device:GPUDevice,target:PresentTar
   /** Page GPU commands of a turn (L4Factoidal.PageGpu): replay them; with page canvases on
    * screen, blit them into the page layer and present the composite again (no Lean call). */
   function pageGpu(p:number,commands:unknown[]):Promise<DrawResult|undefined> {
-    return inOrder(async()=>{
+    return inOrder<DrawResult|undefined>(async()=>{
       if(disposed)return undefined;
       await layered.replayGpu(p,commands);
       if(!lastLayers||!layered.refreshCanvases())return undefined;
@@ -191,11 +209,11 @@ export async function createHTMLWindowSession(device:GPUDevice,target:PresentTar
   }
   return {
     /** Draw one Lean scene. check=true also reads the window back, checks Lean's probe pixels and hashes. */
-    draw:(frame:HTMLArtifact,check:boolean)=>inOrder(()=>{lastLayers=undefined;return render(frame,check);}),
+    draw:(frame:HTMLArtifact,check:boolean):Promise<DrawResult>=>inOrder(()=>{lastLayers=undefined;return render(frame,check);}),
     /** Draw the two layers of one Lean render and present their composite at `offset`. */
-    drawLayers:(layers:HTMLLayers,width:number,height:number,offset:number,check:boolean)=>inOrder(()=>renderLayers(layers,width,height,offset,check)),
+    drawLayers:(layers:HTMLLayers,width:number,height:number,offset:number,check:boolean):Promise<DrawResult>=>inOrder(()=>renderLayers(layers,width,height,offset,check)),
     /** Present the layers already drawn at another offset: no Lean call and no scene draw. */
-    shift:(offset:number,check:boolean)=>inOrder(async()=>{
+    shift:(offset:number,check:boolean):Promise<DrawResult>=>inOrder(async()=>{
       if(disposed)throw new Error("Native HTML session already disposed");
       if(!lastLayers)throw new Error("shift before any layers were drawn");
       lastLayers.offset=offset;
@@ -208,14 +226,21 @@ export async function createHTMLWindowSession(device:GPUDevice,target:PresentTar
     get pressed(){return layered.pressed;},
     /** Draw the last presented scene again with the readback checks. Used after input has been idle. */
     checkLast():Promise<DrawResult|undefined> {
-      return inOrder(()=>lastLayers?renderLayers(lastLayers.layers,lastLayers.width,lastLayers.height,lastLayers.offset,true)
+      return inOrder<DrawResult|undefined>(()=>lastLayers?renderLayers(lastLayers.layers,lastLayers.width,lastLayers.height,lastLayers.offset,true)
         :last?render(last,true):Promise.resolve(undefined));
     },
     get lastChecked(){return lastChecked;},
+    /** Off screen: the texture the last frame was presented to (it has COPY_SRC), for --shot. */
+    get offscreenTexture(){return offscreenTexture;},
     get frames(){return lifecycle?.framesPresented??0;},
     get steps(){return lastSteps;},
     get pixelHash(){return lastHash;},
-    get stats(){return {...stats,layers:{...layered.stats}};},
+    get stats(){return {...stats,layers:{...layered.stats},gpu:gate.stats};},
+    /** Submit to done of recent GPU work, ms (about the GPU time, with the gate on). */
+    get gpuTimes(){return gate.recent;},
+    /** Quit or close: from now on no call asks the GPU for work. Resolves when the GPU has
+     * finished what it was given (at most the frames in flight). */
+    halt():Promise<unknown> {halted=true;return gate.idle();},
     dispose(){
       if(disposed)return;disposed=true;
       if(lifecycle)context?.unconfigure();

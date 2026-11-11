@@ -15,6 +15,9 @@
 // -10 NotSupportedError.
 (function (n0) {
   'use strict';
+  // The globals of the language itself, before any page object (section workers keeps
+  // them in a worker's global scope).
+  const esGlobals = new Set(Object.getOwnPropertyNames(globalThis));
   // The natives, with every change of the tree also queued as a mutation record (DOM §4.3)
   // for MutationObserver. The change itself is Lean's; this only reports it.
   const n = Object.create(n0); // the natives are not enumerable: inherit them
@@ -381,6 +384,9 @@
   // ---- reporting an exception (HTML "report an exception") -------------------------
   let reporting = false;
   let windowOfScript = () => window, frameLoad = () => {};
+  // A worker's global scope sends an error that no listener canceled to its Worker object
+  // (section workers); a window logs it.
+  let uncaughtHook = null;
   const report = e => {
     const message = e instanceof Error ? `${e.name}: ${e.message}` : 'Uncaught ' + String(e);
     if (reporting) { n.log('Uncaught (in error handler) ' + message); return; }
@@ -390,7 +396,7 @@
       const event = new ErrorEvent('error', { message, error: e, cancelable: true, filename: '', lineno: 0, colno: 0 });
       state(event).trusted = true;
       const notCanceled = dispatch(windowOfScript(), event);
-      if (notCanceled) n.log('Uncaught ' + message + (stack ? ' at ' + stack : ''));
+      if (notCanceled) { if (uncaughtHook) uncaughtHook(message, e); else n.log('Uncaught ' + message + (stack ? ' at ' + stack : '')); }
     } finally { reporting = false; }
   };
 
@@ -1044,15 +1050,28 @@
     if (formsSandboxed(form)) return; // nor one of a document with the sandboxed forms flag (step 3)
     const e = new SubmitEvent('submit', { bubbles: true, cancelable: true, submitter: submitter === form ? null : submitter });
     state(e).trusted = true;
-    dispatch(form, e);
+    if (dispatch(form, e)) planSubmission(form, submitter === form ? null : submitter);
   };
+  // ---- encoding100: the form submission algorithm after the submit event (HTML §4.10.21.3)
+  // is Lean's (node_query 170, HTML.FormSubmission): the entry list, the form's encoding,
+  // the URL and the target frame, whose navigation the embedder then answers. Here: which
+  // form, which submitter, and the page's encoding label. An engine without op 170 answers
+  // -2 and nothing navigates.
+  const planSubmission = (form, submitter) => {
+    if (!form.isConnected) return;
+    const enc = form.ownerDocument === document ? docEncoding() : '';
+    n.query(nodeId(form), 170, (submitter ? String(nodeId(submitter)) : '') + '\u0000' + enc);
+  };
+  // A document's URL (node_query 171): the page's, or a same-origin frame document's.
+  const docURL = doc => { const r = n.query(doc, 171, ''); return typeof r === 'string' ? r : 'about:blank'; };
+  // ---- end of encoding100 (forms) ----
   const resetForm = form => {
     const e = new Event('reset', { bubbles: true, cancelable: true });
     state(e).trusted = true;
     if (dispatch(form, e)) chk(n.treeOp(nodeId(form), 0, 9));
   };
   Object.defineProperties(named.HTMLFormElement.prototype, {
-    submit: { value() {}, writable: true, configurable: true },
+    submit: { value() { planSubmission(this, null); }, writable: true, configurable: true },
     requestSubmit: { value(submitter) { submitForm(this, submitter ?? this); }, writable: true, configurable: true },
     reset: { value() { resetForm(this); }, writable: true, configurable: true },
   });
@@ -1127,12 +1146,39 @@
   class GPUValidationError extends GPUError {}
   class GPUOutOfMemoryError extends GPUError {}
   let gpuNext = 1;
+  // A view over all of its buffer is sent as the buffer (n.gpu copies it); only a part is sliced.
   const gpuBytes = data => {
     if (data instanceof ArrayBuffer) return data;
-    if (ArrayBuffer.isView(data)) return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+    if (ArrayBuffer.isView(data)) return data.byteOffset === 0 && data.byteLength === data.buffer.byteLength ? data.buffer
+      : data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
     throw new TypeError('GPU data must be an ArrayBuffer or a typed array');
   };
-  const unorm = x => Math.max(0, Math.min(255, Math.round(Number(x) * 255) || 0));
+  // The frame path (shaders, 2026-11-09): a pass goes to Lean with a binary header (op + 64,
+  // PageGpu.Wire.binaryOp: a u32 count, then u32 numbers), so no number becomes text here;
+  // in a script engine in WasmVM that conversion cost more than the rest of a frame. A write
+  // sends its two numbers as text, which is cheaper than a typed array for two. Numbers are
+  // not clamped here: Lean refuses one that is not a whole number in range. Whether the
+  // engine reads binary headers is asked once, with a binary destroy of no object (an engine
+  // from before the binary op answers otherwise); if not, passes go with text headers.
+  let gpuBinary;
+  const gpuPass = (header, payload) => {
+    if (gpuBinary === undefined) {
+      const probe = n.gpu(72, new Uint32Array([1, 0]).buffer, '');
+      gpuBinary = typeof probe === 'string' && probe.startsWith('gpu: destroy');
+    }
+    if (gpuBinary) return n.gpu(71, header.buffer, payload ?? '');
+    return n.gpu(7, Array.prototype.join.call(header.subarray(1), ' '), payload ?? '');
+  };
+  // One pass's binary header: the count of numbers, then canvas, clear r g b a, the draws
+  // (each pipeline bind nVb vb* count instances first firstInstance), from the encoder's words.
+  const passHeader = (canvas, clear, count, words) => {
+    const h = new Uint32Array(7 + words.length);
+    h[0] = 6 + words.length; h[1] = canvas; h[2] = clear[0]; h[3] = clear[1]; h[4] = clear[2]; h[5] = clear[3]; h[6] = count;
+    h.set(words, 7);
+    return h;
+  };
+  // A colour channel 0..1 as 0..255 (NaN as 0); the comparisons convert x to a number.
+  const unorm = x => x >= 1 ? 255 : x > 0 ? Math.round(x * 255) : 0;
   class GPUDevice extends EventTarget {}
   const gpuDevice = (() => {
     const device = new GPUDevice();
@@ -1205,43 +1251,57 @@
         this.ok = send(6, [this.id, d.layout?.pipeline?.id ?? 0, e?.resource?.buffer?.id ?? e?.resource?.id ?? 0]);
       }
     }
+    // A pass keeps its draws as the words of its binary header (passHeader).
     class GPURenderPassEncoder {
-      constructor(target, clear) { this.target = target; this.clear = clear; this.draws = []; this.state = { vbufs: [] }; }
-      setPipeline(p) { this.state.pipeline = p; }
-      setBindGroup(index, g) { if (index === 0) this.state.bind = g; }
-      setVertexBuffer(slot, b) { this.state.vbufs[slot] = b; }
+      constructor(target, clear) { this.target = target; this.clear = clear; this.count = 0; this.words = []; this.pipeline = 0; this.bind = 0; this.vbufs = []; }
+      setPipeline(p) { this.pipeline = p ? p.id : 0; }
+      setBindGroup(index, g) { if (index === 0) this.bind = g ? g.id : 0; }
+      setVertexBuffer(slot, b) { this.vbufs[slot] = b ? b.id : 0; }
       setViewport() {} setScissorRect() {} setBlendConstant() {} setStencilReference() {}
       draw(count, instances = 1, first = 0, firstInstance = 0) {
-        const s = this.state;
-        this.draws.push([s.pipeline?.id ?? 0, s.bind?.id ?? 0, s.vbufs.length, ...s.vbufs.map(b => b?.id ?? 0), count, instances, first, firstInstance]);
+        const w = this.words, v = this.vbufs;
+        w.push(this.pipeline, this.bind, v.length);
+        for (let i = 0; i < v.length; i++) w.push(v[i] ?? 0);
+        w.push(+count, +instances, +first, +firstInstance);
+        this.count++;
       }
       end() {}
     }
+    // The last clear colour and its bytes: a page clears to the same colour frame after frame.
+    let lastR = 0, lastG = 0, lastB = 0, lastA = 0, lastClear = [0, 0, 0, 0];
     class GPUCommandEncoder {
       constructor() { this.passes = []; }
       beginRenderPass(d) {
         const a = (d.colorAttachments ?? [])[0] ?? {}, c = a.clearValue ?? { r: 0, g: 0, b: 0, a: 0 };
-        const rgba = Array.isArray(c) ? c : [c.r, c.g, c.b, c.a];
-        const pass = new GPURenderPassEncoder(a.view?.canvas ?? 0, rgba.map(unorm));
+        const list = Array.isArray(c), r = list ? c[0] : c.r, g = list ? c[1] : c.g, b = list ? c[2] : c.b, al = list ? c[3] : c.a;
+        if (r !== lastR || g !== lastG || b !== lastB || al !== lastA) {
+          lastR = r; lastG = g; lastB = b; lastA = al; lastClear = [unorm(r), unorm(g), unorm(b), unorm(al)];
+        }
+        const pass = new GPURenderPassEncoder(a.view?.canvas ?? 0, lastClear);
         this.passes.push(pass); return pass;
       }
       finish() { return { passes: this.passes }; }
     }
     const queue = Object.freeze({
       writeBuffer(buffer, offset, data, dataOffset = 0, size) {
-        let bytes = gpuBytes(data);
+        let bytes;
         if (dataOffset || size !== undefined) {
           const unit = ArrayBuffer.isView(data) && data.BYTES_PER_ELEMENT ? data.BYTES_PER_ELEMENT : 1;
-          const from = dataOffset * unit;
-          bytes = bytes.slice(from, size === undefined ? undefined : from + size * unit);
-        }
-        send(3, [buffer.id, offset], bytes);
+          const from = (ArrayBuffer.isView(data) ? data.byteOffset : 0) + dataOffset * unit;
+          const all = ArrayBuffer.isView(data) ? data.buffer : gpuBytes(data);
+          bytes = all.slice(from, size === undefined ? (ArrayBuffer.isView(data) ? data.byteOffset + data.byteLength : undefined) : from + size * unit);
+        } else bytes = gpuBytes(data);
+        const r = n.gpu(3, buffer.id + ' ' + +offset, bytes);
+        if (r) report(typeof r === 'number' ? 'gpu: import error ' + r : r);
       },
       submit(buffers) {
-        for (const cb of buffers ?? []) for (const p of cb.passes ?? []) {
-          const header = [p.target, ...p.clear, p.draws.length];
-          for (const d of p.draws) header.push(...d);
-          send(7, header);
+        if (!buffers) return;
+        for (let i = 0; i < buffers.length; i++) {
+          const passes = buffers[i].passes;
+          if (passes) for (let j = 0; j < passes.length; j++) {
+            const p = passes[j], r = gpuPass(passHeader(p.target, p.clear, p.count, p.words));
+            if (r) report(typeof r === 'number' ? 'gpu: import error ' + r : r);
+          }
         }
       },
       onSubmittedWorkDone() { return Promise.resolve(); },
@@ -1272,20 +1332,24 @@
   const canvasSize = (el, name, fallback) => { const v = parseInt(el.getAttribute(name), 10); return v > 0 ? v : fallback; };
   const gpuContexts = new Map();
   class GPUCanvasContext {
-    constructor(canvas) { this.canvas = canvas; this.id = 0; }
+    constructor(canvas) { this.canvas = canvas; this.id = 0; this.texture = null; }
     configure(d) {
       if (this.id) return;
       this.id = gpuNext++;
       if (d?.device !== gpuDevice) throw new TypeError('configure needs the device');
       const node = nodeId(this.canvas);
-      if (!(n.gpu(1, [this.id, node, canvasSize(this.canvas, 'width', 300), canvasSize(this.canvas, 'height', 150)].join(' '), '') === '')) {
+      const width = canvasSize(this.canvas, 'width', 300), height = canvasSize(this.canvas, 'height', 150);
+      if (!(n.gpu(1, [this.id, node, width, height].join(' '), '') === '')) {
         console.warn('WebGPU: the canvas could not be configured'); this.id = 0;
       }
+      // The canvas texture Lean made has the size of the canvas at configure; each frame's
+      // texture is that one (no attribute read in a frame).
+      const view = { canvas: this.id };
+      this.texture = { width, height, format: 'rgba8unorm', createView: () => view, destroy() {} };
     }
     unconfigure() {}
     getCurrentTexture() {
-      const canvas = this.id, width = canvasSize(this.canvas, 'width', 300), height = canvasSize(this.canvas, 'height', 150);
-      return { width, height, format: 'rgba8unorm', createView: () => ({ canvas }), destroy() {} };
+      return this.texture ?? { width: 0, height: 0, format: 'rgba8unorm', createView: () => ({ canvas: 0 }), destroy() {} };
     }
   }
   // ---- WebGL 1 and 2 on the same Lean-validated layer (record, sections 6 and 6b) ----------
@@ -1318,6 +1382,7 @@
     };
     let error = 0, canvasId = 0, arrayBuffer = null, program = null, clear = [0, 0, 0, 0], draws = [], flushQueued = false;
     const attribs = [];
+    let attribVersion = 0;
     const fail = (message, code = GL.INVALID_OPERATION) => { if (!error) error = code; console.warn('WebGL: ' + message); };
     const send = (op, header, payload) => { const m = gpuSend(op, header, payload); if (m && !m.startsWith('{')) { fail(m); return null; } return m; };
     const ensureCanvas = () => {
@@ -1326,16 +1391,16 @@
       if (send(1, [id, nodeId(canvas), canvasSize(canvas, 'width', 300), canvasSize(canvas, 'height', 150)]) !== null) canvasId = id;
       return canvasId;
     };
+    let drawCount = 0;
     const flush = () => {
       flushQueued = false;
-      if (!draws.length || !ensureCanvas()) { draws = []; return; }
-      const header = [canvasId, ...clear.map(unorm), draws.length];
-      for (const d of draws) header.push(...d);
-      draws = [];
-      send(7, header);
+      if (!drawCount || !ensureCanvas()) { draws = []; drawCount = 0; return; }
+      const header = passHeader(canvasId, [unorm(clear[0]), unorm(clear[1]), unorm(clear[2]), unorm(clear[3])], drawCount, draws);
+      draws = []; drawCount = 0;
+      const m = gpuPass(header);
+      if (m) fail(typeof m === 'number' ? 'gpu: import error ' + m : m);
     };
-    const pipelineFor = (p, layouts, mode) => {
-      const key = JSON.stringify([layouts, mode]);
+    const pipelineFor = (p, layouts, mode, key) => {
       let entry = p.pipelines.get(key);
       if (entry) return entry;
       const id = gpuNext++, header = [id, p.id, mode, layouts.length];
@@ -1349,12 +1414,19 @@
       p.pipelines.set(key, entry);
       return entry;
     };
-    const setUniform = (loc, values, ints) => {
-      if (!loc) return;
-      if (loc.program !== program) { fail('uniform location of another program'); return; }
-      const view = ints ? new Int32Array(program.uniformData, loc.offset, values.length) : new Float32Array(program.uniformData, loc.offset, values.length);
-      for (let i = 0; i < values.length; i++) view[i] = values[i];
+    // Uniform values go into the program's copy of its uniform buffer (views made at link),
+    // sent once before a draw that follows a change.
+    const up = loc => {
+      if (!loc) return null;
+      if (loc.program !== program) { fail('uniform location of another program'); return null; }
       program.uniformDirty = true;
+      return program;
+    };
+    const setUniform = (loc, values, ints) => {
+      const p = up(loc);
+      if (!p) return;
+      const view = ints ? p.i32 : p.f32, o = loc.offset >> 2;
+      for (let i = 0; i < values.length; i++) view[o + i] = values[i];
     };
     const ctx = {
       canvas, drawingBufferWidth: canvasSize(canvas, 'width', 300), drawingBufferHeight: canvasSize(canvas, 'height', 150),
@@ -1381,7 +1453,7 @@
         const bytes = typeof data === 'number' ? new ArrayBuffer(data) : gpuBytes(data);
         const b = arrayBuffer, size = bytes.byteLength;
         if (b.gpu && b.size !== size) { send(8, [b.gpu]); b.gpu = 0; }
-        if (!b.gpu) { const id = gpuNext++; if (send(2, [id, size, 32 | 8]) === null) return; b.gpu = id; b.size = size; }
+        if (!b.gpu) { const id = gpuNext++; if (send(2, [id, size, 32 | 8]) === null) return; b.gpu = id; b.size = size; attribVersion++; }
         if (size) send(3, [b.gpu, 0], bytes);
       },
       bufferSubData(target, offset, data) {
@@ -1403,26 +1475,43 @@
         const answer = gpuSend(9, [p.id], vs.source + '\u0000' + fs.source);
         if (!answer.startsWith('{')) { p.log = answer; p.linked = false; console.warn('WebGL: ' + answer); return; }
         p.info = JSON.parse(answer); p.linked = true; p.log = '';
+        p.attrList = Object.entries(p.info.attributes);
         if (p.info.uniformSize) {
           const id = gpuNext++;
           if (send(2, [id, p.info.uniformSize, 64 | 8]) !== null) p.uniformBuffer = id;
           p.uniformData = new ArrayBuffer(p.info.uniformSize); p.uniformDirty = true;
+          p.f32 = new Float32Array(p.uniformData); p.i32 = new Int32Array(p.uniformData);
+          // gl_FragCoord counts y from the bottom: Lean's translation reads the drawing
+          // buffer's height from this uniform (PageGpu.Glsl, gl_FragHeight).
+          const h = p.info.uniforms.gl_FragHeight;
+          p.fragHeight = h ? h[0] >> 2 : -1;
         }
       },
       getProgramParameter(p, q) { return q === GL.LINK_STATUS ? !!p.linked : null; },
       getProgramInfoLog: p => p.log ?? '',
       useProgram(p) { program = p; },
       getAttribLocation(p, name) { const l = p.info?.attributes[name]; return l === undefined ? -1 : l; },
-      getUniformLocation(p, name) { const u = p.info?.uniforms[name]; return u ? new WebGLUniformLocation(p, u[0], u[1]) : null; },
-      enableVertexAttribArray(i) { (attribs[i] ??= {}).enabled = true; },
-      disableVertexAttribArray(i) { (attribs[i] ??= {}).enabled = false; },
+      getUniformLocation(p, name) {
+        const u = String(name).startsWith('gl_') ? undefined : p.info?.uniforms[name];
+        return u ? new WebGLUniformLocation(p, u[0], u[1]) : null;
+      },
+      // attribVersion moves only when an attribute changes, so a draw with the attributes of
+      // the draw before reuses its pipeline and buffers (pages set them again each frame).
+      enableVertexAttribArray(i) { const a = attribs[i] ??= {}; if (a.enabled !== true) { a.enabled = true; attribVersion++; } },
+      disableVertexAttribArray(i) { const a = attribs[i] ??= {}; if (a.enabled !== false) { a.enabled = false; attribVersion++; } },
       vertexAttribPointer(i, size, type, normalized, stride, offset) {
         if (type !== GL.FLOAT || size < 1 || size > 4) { fail('only FLOAT attributes of 1 to 4 components', GL.INVALID_ENUM); return; }
-        Object.assign(attribs[i] ??= {}, { buffer: arrayBuffer, size, stride: stride || size * 4, offset });
+        const a = attribs[i] ??= {}, st = stride || size * 4;
+        if (a.buffer !== arrayBuffer || a.size !== size || a.stride !== st || a.offset !== offset) {
+          a.buffer = arrayBuffer; a.size = size; a.stride = st; a.offset = offset; attribVersion++;
+        }
       },
-      uniform1f(l, x) { setUniform(l, [x]); }, uniform2f(l, x, y) { setUniform(l, [x, y]); },
-      uniform3f(l, x, y, z) { setUniform(l, [x, y, z]); }, uniform4f(l, x, y, z, w) { setUniform(l, [x, y, z, w]); },
-      uniform1i(l, x) { setUniform(l, [x], true); }, uniform2i(l, x, y) { setUniform(l, [x, y], true); },
+      uniform1f(l, x) { const p = up(l); if (p) p.f32[l.offset >> 2] = x; },
+      uniform2f(l, x, y) { const p = up(l); if (p) { const o = l.offset >> 2; p.f32[o] = x; p.f32[o + 1] = y; } },
+      uniform3f(l, x, y, z) { const p = up(l); if (p) { const o = l.offset >> 2; p.f32[o] = x; p.f32[o + 1] = y; p.f32[o + 2] = z; } },
+      uniform4f(l, x, y, z, w) { const p = up(l); if (p) { const o = l.offset >> 2; p.f32[o] = x; p.f32[o + 1] = y; p.f32[o + 2] = z; p.f32[o + 3] = w; } },
+      uniform1i(l, x) { const p = up(l); if (p) p.i32[l.offset >> 2] = x; },
+      uniform2i(l, x, y) { const p = up(l); if (p) { const o = l.offset >> 2; p.i32[o] = x; p.i32[o + 1] = y; } },
       uniform1fv(l, v) { setUniform(l, v); }, uniform2fv(l, v) { setUniform(l, v); }, uniform3fv(l, v) { setUniform(l, v); },
       uniform4fv(l, v) { setUniform(l, v); },
       uniformMatrix4fv(l, transpose, v) { setUniform(l, v); }, uniformMatrix2fv(l, transpose, v) { setUniform(l, v); },
@@ -1434,16 +1523,33 @@
       drawArrays(mode, first, count) {
         const p = program;
         if (!p?.linked) { fail('drawArrays with no linked program'); return; }
-        const layouts = [], vbufs = [];
-        for (const [name, location] of Object.entries(p.info.attributes)) {
-          const a = attribs[location];
-          if (!a?.enabled || !a.buffer?.gpu) { fail(`attribute ${name} has no buffer`); return; }
-          layouts.push({ stride: a.stride, format: a.size, offset: a.offset, location }); vbufs.push(a.buffer.gpu);
+        let pipeline, vbufs;
+        if (p.drawVersion === attribVersion && p.drawMode === mode) { pipeline = p.drawPipeline; vbufs = p.drawVbufs; }
+        else {
+          const layouts = [], list = p.attrList, glMode = glModes[mode] ?? 99;
+          vbufs = [];
+          let key = '' + glMode;
+          for (let i = 0; i < list.length; i++) {
+            const location = list[i][1], a = attribs[location];
+            if (!a?.enabled || !a.buffer?.gpu) { fail(`attribute ${list[i][0]} has no buffer`); return; }
+            layouts.push({ stride: a.stride, format: a.size, offset: a.offset, location }); vbufs.push(a.buffer.gpu);
+            key += ' ' + a.stride + ' ' + a.size + ' ' + a.offset + ' ' + location;
+          }
+          pipeline = pipelineFor(p, layouts, glMode, key);
+          if (!pipeline) return;
+          p.drawVersion = attribVersion; p.drawMode = mode; p.drawPipeline = pipeline; p.drawVbufs = vbufs;
         }
-        const pipeline = pipelineFor(p, layouts, glModes[mode] ?? 99);
-        if (!pipeline) return;
-        if (p.uniformBuffer && p.uniformDirty) { send(3, [p.uniformBuffer, 0], p.uniformData.slice(0)); p.uniformDirty = false; }
-        draws.push([pipeline.id, pipeline.bind, vbufs.length, ...vbufs, count, 1, first, 0]);
+        if (p.fragHeight >= 0 && p.f32[p.fragHeight] !== ctx.drawingBufferHeight) { p.f32[p.fragHeight] = ctx.drawingBufferHeight; p.uniformDirty = true; }
+        if (p.uniformBuffer && p.uniformDirty) {
+          // n.gpu copies the bytes at once, so the program's own buffer is sent as it is.
+          const m = n.gpu(3, p.uniformBuffer + ' 0', p.uniformData);
+          if (m) fail(typeof m === 'number' ? 'gpu: import error ' + m : m);
+          p.uniformDirty = false;
+        }
+        draws.push(pipeline.id, pipeline.bind, vbufs.length);
+        for (let i = 0; i < vbufs.length; i++) draws.push(vbufs[i]);
+        draws.push(+count, 1, +first, 0);
+        drawCount++;
         if (!flushQueued) { flushQueued = true; Promise.resolve().then(flush); }
       },
     };
@@ -1980,12 +2086,12 @@
   let readyState = 'loading';
   class Document extends Node {
     constructor() { return wrap(chk(n.create(8, ''))); }
-    get URL() { return this === document ? location.href : 'about:blank'; }
+    get URL() { return this === document ? location.href : docURL(nodeId(this)); }
     get documentURI() { return this.URL; }
     get compatMode() { return 'CSS1Compat'; }
-    get characterSet() { return this === document ? docEncoding() : 'UTF-8'; }
+    get characterSet() { if (this === document) return docEncoding(); const r = n.query(nodeId(this), 172, ''); return typeof r === 'string' ? r : 'UTF-8'; }
     get charset() { return this.characterSet; }
-    get inputEncoding() { return 'UTF-8'; }
+    get inputEncoding() { return this.characterSet; }
     get contentType() { return str(nodeId(this), 9); }
     get readyState() { return readyState; }
     get defaultView() { return this === document ? window : (info(nodeId(this), 12) >= 0 ? frameWindow(nodeId(this)) : null); }
@@ -2423,13 +2529,27 @@
     let w = frameWindows.get(doc);
     if (w) return w;
     const own = { document: () => wrap(doc), window: () => w, self: () => w, frames: () => w, globalThis: () => w,
-      parent: () => window, top: () => window, frameElement: () => wrap(info(doc, 12)), length: () => 0 };
+      parent: () => window, top: () => window, frameElement: () => wrap(info(doc, 12)), length: () => 0,
+      location: () => frameLocation(doc) };
     w = new Proxy(window, {
       get(t, p) { return Object.prototype.hasOwnProperty.call(own, p) ? own[p]() : Reflect.get(t, p, t); },
       has(t, p) { return Object.prototype.hasOwnProperty.call(own, p) || Reflect.has(t, p); },
     });
     frameWindows.set(doc, w);
     return w;
+  };
+  // encoding100: a same-origin frame's Location: its document's URL (node_query 171) and
+  // that URL's parts as the URL class (Lean's URL parser) gives them. Read only here.
+  const frameLocations = new Map();
+  const frameLocation = doc => {
+    let l = frameLocations.get(doc);
+    if (l) return l;
+    const parts = () => { try { return new URL(docURL(doc)); } catch { return null; } };
+    l = { get href() { return docURL(doc); }, toString() { return docURL(doc); } };
+    for (const k of ['protocol', 'host', 'hostname', 'port', 'pathname', 'search', 'hash', 'origin'])
+      Object.defineProperty(l, k, { get() { const u = parts(); return u ? u[k] : ''; }, enumerable: true });
+    frameLocations.set(doc, l);
+    return l;
   };
   let href = 'about:blank';
   const location = {
@@ -3839,21 +3959,54 @@
   Object.defineProperty(CSSns, Symbol.toStringTag, { value: 'CSS', configurable: true });
   def('CSS', CSSns);
   // ---- document.fonts (CSS Font Loading 3 §2): the fonts a page uses are held before its
-  // scripts run, and a page can not add font faces here, so the set is empty and loaded ----
+  // scripts run, and a page can not add font faces here ----
+  // showoff: the faces are those of the page's @font-face rules, from Lean (node_query op 23,
+  // asked on first use): family, descriptors and status, "loaded" when the engine holds the
+  // face for this page (the host fetched it because the page's text uses it), else
+  // "unloaded". So nothing is loading and `ready` is resolved. load() and check() match the
+  // families of a CSS font shorthand (§2.5, without weight and style, which this engine's
+  // text does not have). An engine without op 23 answers no faces.
   const fontKey = {};
+  let fontFaces;
+  const facesNow = () => {
+    if (fontFaces) return fontFaces;
+    let list = [];
+    try { const s = n.query(0, 23, ''); if (typeof s === 'string' && s !== '') list = JSON.parse(s); } catch { list = []; }
+    return fontFaces = list.map(f => {
+      const face = { family: f.family, style: f.style, weight: f.weight, stretch: 'normal', unicodeRange: f.unicodeRange,
+        variant: 'normal', featureSettings: 'normal', display: 'auto', status: f.status };
+      let loaded;
+      Object.defineProperty(face, 'loaded', { get: () => loaded ??= (f.status === 'loaded' ? Promise.resolve(face)
+        : Promise.reject(new DOMException('The font face was not loaded', 'NetworkError'))), enumerable: true });
+      face.load = () => face.loaded;
+      return Object.freeze(face);
+    });
+  };
+  const faceRanges = face => face.unicodeRange.split(',').map(r => r.trim().replace(/^U\+/i, '').split('-').map(h => parseInt(h, 16)))
+    .map(([lo, hi]) => [lo, hi ?? lo]);
+  const matchingFaces = (font, text) => {
+    const m = /(?:^|\s)[\d.]+(?:px|pt|pc|em|rem|ex|ch|%|vw|vh|vmin|vmax|in|cm|mm|q)(?:\/\S+)?\s+(.+)$/i.exec(String(font).trim());
+    if (!m) throw new DOMException(`'${font}' is not a valid font`, 'SyntaxError');
+    const names = m[1].split(',').map(x => x.trim().replace(/^(['"])(.*)\1$/, '$2').toLowerCase());
+    const chars = [...String(text)].map(c => c.codePointAt(0));
+    return facesNow().filter(face => names.includes(face.family.toLowerCase()) &&
+      chars.some(c => faceRanges(face).some(([lo, hi]) => lo <= c && c <= hi)));
+  };
   class FontFaceSet extends EventTarget {
     constructor(key) { if (key !== fontKey) throw new TypeError('Illegal constructor'); super(); }
     get status() { return 'loaded'; }
-    get size() { return 0; }
+    get size() { return facesNow().length; }
     get ready() { return fontsReady; }
-    check(font, text = ' ') { if (arguments.length < 1) throw new TypeError('check: 1 argument required'); return true; }
-    load(font, text = ' ') { if (arguments.length < 1) throw new TypeError('load: 1 argument required'); return Promise.resolve([]); }
-    has() { return false; }
+    check(font, text = ' ') { if (arguments.length < 1) throw new TypeError('check: 1 argument required');
+      return matchingFaces(font, text).every(f => f.status === 'loaded'); }
+    load(font, text = ' ') { if (arguments.length < 1) throw new TypeError('load: 1 argument required');
+      try { return Promise.resolve(matchingFaces(font, text).filter(f => f.status === 'loaded')); } catch (e) { return Promise.reject(e); } }
+    has(face) { return facesNow().includes(face); }
     add() { return this; }
     delete() { return false; }
     clear() {}
-    forEach() {}
-    *entries() {} *keys() {} *values() {}
+    forEach(f, self) { for (const face of facesNow()) f.call(self, face, face, this); }
+    *entries() { for (const f of facesNow()) yield [f, f]; } *keys() { yield* facesNow(); } *values() { yield* facesNow(); }
   }
   define(FontFaceSet.prototype, Symbol.iterator, FontFaceSet.prototype.values);
   Object.defineProperty(FontFaceSet.prototype, Symbol.toStringTag, { value: 'FontFaceSet', configurable: true });
@@ -3872,6 +4025,176 @@
     def(k, v);
   }
   // ==== end dombreadth ====
+
+  // ==== workers: Dedicated Workers (HTML §10; docs/designissues/2026-11-09-dedicated-workers.md) ====
+  // BubblePopJS only: the structured clone (n.serialize, n.deserialize) walks the heap in
+  // Lean (L4Factoidal.JS.Clone), so on an engine without it `Worker` stays undefined.
+  // Lean (Hosts.LeanJSWorkers) keeps each worker's realm, event loop and budget, and
+  // decides when its tasks run; this is the WebIDL glue: Worker, the worker global scope,
+  // importScripts, and the message and error events, one task per event (WORKER_EVENT).
+  const WORKER_EVENT = 0x7FFFFFF0;
+  const workersOn = typeof n0.serialize === 'function' && typeof n0.worker === 'function';
+  let inWorker = false;
+  const workerSlots = new WeakMap(), workerObjects = new Map();
+  const cloneOut = (message, options, what) => {
+    let transfer = [];
+    if (Array.isArray(options)) transfer = options;
+    else if (options !== undefined && options !== null) {
+      if (typeof options !== 'object' && typeof options !== 'function') throw new TypeError(`Failed to execute 'postMessage' on '${what}': The provided value is not of type 'StructuredSerializeOptions'.`);
+      if (options.transfer !== undefined) {
+        if (options.transfer === null || typeof options.transfer[Symbol.iterator] !== 'function') throw new TypeError(`Failed to execute 'postMessage' on '${what}': The provided value cannot be converted to a sequence.`);
+        transfer = Array.from(options.transfer);
+      }
+    }
+    try { return n0.serialize(message, transfer); }
+    catch (e) {
+      const m = String(e && e.message !== undefined ? e.message : e);
+      if (m.startsWith('DataCloneError: ')) throw new DOMException(`Failed to execute 'postMessage' on '${what}': ${m.slice(16)}`, 'DataCloneError');
+      throw e;
+    }
+  };
+  const handlerProp = (proto, names) => {
+    for (const name of names) Object.defineProperty(proto, 'on' + name, { get() { return handlerOf(this, name); },
+      set(f) { setHandler(this, name, f); }, configurable: true, enumerable: true });
+  };
+  // One event for this realm (Lean queued the task with it, in order).
+  const workerEvent = () => {
+    const head = n.worker(3);
+    if (typeof head !== 'string' || head === '') return;
+    const { w, k, h } = JSON.parse(head);
+    const target = inWorker ? globalThis : workerObjects.get(w);
+    if (!target || (!inWorker && workerSlots.get(target).terminated)) return;
+    if (k === 'message') {
+      let data, ok = true;
+      try { data = n0.deserialize(n.worker(4)); } catch { ok = false; }
+      const e = new MessageEvent(ok ? 'message' : 'messageerror', { data: ok ? data : null, origin: '' });
+      state(e).trusted = true;
+      dispatch(target, e);
+    } else if (k === 'error') {
+      const d = JSON.parse(h);
+      const init = { message: d.message, filename: d.file, lineno: d.line, colno: d.col, cancelable: true };
+      const e = new ErrorEvent('error', init);
+      state(e).trusted = true;
+      // HTML §10.2.5: not canceled at the Worker object, it is an error of this global too.
+      if (dispatch(target, e)) {
+        const g = new ErrorEvent('error', init);
+        state(g).trusted = true;
+        if (dispatch(window, g)) { if (uncaughtHook) uncaughtHook(d.message, null); else n.log('Uncaught (in worker) ' + d.message); }
+      }
+    } else if (k === 'loaderror') {
+      const e = new Event('error');
+      state(e).trusted = true;
+      dispatch(target, e);
+    }
+  };
+  if (workersOn) callbacks.set(WORKER_EVENT, workerEvent);
+  const scriptBase = () => inWorker ? href : (globalThis.document?.baseURI || href);
+  const originOf = u => { try { return new URL(u).origin; } catch { return 'null'; } };
+  class Worker extends EventTarget {
+    constructor(scriptURL, options = undefined) {
+      if (arguments.length < 1) throw new TypeError("Failed to construct 'Worker': 1 argument required, but only 0 present.");
+      super();
+      const o = options == null ? {} : options;
+      if (typeof o !== 'object' && typeof o !== 'function') throw new TypeError("Failed to construct 'Worker': The provided value is not of type 'WorkerOptions'.");
+      const type = o.type === undefined ? 'classic' : String(o.type);
+      if (type !== 'classic' && type !== 'module') throw new TypeError(`Failed to construct 'Worker': The provided value '${type}' is not a valid enum value of type WorkerType.`);
+      const name = o.name === undefined ? '' : String(o.name);
+      const url = resolveURL(String(scriptURL), scriptBase());
+      if (url === null) throw new DOMException(`Failed to construct 'Worker': The URL '${scriptURL}' is invalid.`, 'SyntaxError');
+      if (type === 'module') throw new DOMException("Failed to construct 'Worker': module workers are not supported here.", 'NotSupportedError');
+      const scheme = /^[a-z][a-z0-9+.-]*:/i.exec(url)?.[0] ?? '';
+      if (scheme !== 'data:' && scheme !== 'blob:' && originOf(url) !== originOf(href))
+        throw new DOMException(`Failed to construct 'Worker': Script at '${url}' cannot be accessed from origin '${originOf(href)}'.`, 'SecurityError');
+      const id = n.worker(0, url, name);
+      workerSlots.set(this, { id, terminated: false });
+      workerObjects.set(id, this);
+    }
+    postMessage(message, options = undefined) {
+      const s = workerSlots.get(this);
+      if (!s) throw new TypeError("Illegal invocation");
+      if (arguments.length < 1) throw new TypeError("Failed to execute 'postMessage' on 'Worker': 1 argument required, but only 0 present.");
+      const bytes = cloneOut(message, options, 'Worker');
+      if (!s.terminated) n.worker(1, s.id, bytes);
+    }
+    terminate() {
+      const s = workerSlots.get(this);
+      if (!s) throw new TypeError("Illegal invocation");
+      if (!s.terminated) { s.terminated = true; n.worker(2, s.id); }
+    }
+  }
+  handlerProp(Worker.prototype, ['message', 'messageerror', 'error']);
+  Object.defineProperty(Worker.prototype, Symbol.toStringTag, { value: 'Worker', configurable: true });
+  if (workersOn) def('Worker', Worker);
+  // The globals a dedicated worker's scope keeps (HTML §10.2.1 and the [Exposed=Worker]
+  // interfaces this engine has), besides the language's own (`esGlobals`).
+  const workerGlobals = new Set(['self', 'console', 'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval',
+    'queueMicrotask', 'reportError', 'structuredClone', 'atob', 'btoa', 'WebAssembly', 'DOMException', 'EventTarget', 'Event',
+    'CustomEvent', 'MessageEvent', 'ErrorEvent', 'PromiseRejectionEvent', 'ProgressEvent', 'AbortController', 'AbortSignal',
+    'TextEncoder', 'TextDecoder', 'TextEncoderStream', 'TextDecoderStream', 'URL', 'URLSearchParams', 'crypto', 'Crypto',
+    'SubtleCrypto', 'CryptoKey', 'performance', 'Performance', 'PerformanceEntry', 'PerformanceMark', 'PerformanceMeasure',
+    'Blob', 'File', 'FileReader', 'FormData', 'Headers', 'Request', 'Response', 'fetch', 'ReadableStream', 'WritableStream',
+    'TransformStream', 'MessageChannel', 'MessagePort', 'BroadcastChannel', 'webkitURL']);
+  // HTML §10.2.1: WorkerGlobalScope, DedicatedWorkerGlobalScope, WorkerLocation, WorkerNavigator.
+  const makeWorkerScope = (url, name) => {
+    inWorker = true;
+    href = url;
+    const nav = globalThis.navigator;
+    class WorkerGlobalScope extends EventTarget { constructor() { throw new TypeError('Illegal constructor'); } }
+    class DedicatedWorkerGlobalScope extends WorkerGlobalScope { constructor() { throw new TypeError('Illegal constructor'); } }
+    const parts = new WeakMap();
+    class WorkerLocation { constructor() { throw new TypeError('Illegal constructor'); } toString() { return parts.get(this).href; } }
+    for (const k of ['href', 'origin', 'protocol', 'host', 'hostname', 'port', 'pathname', 'search', 'hash'])
+      Object.defineProperty(WorkerLocation.prototype, k, { get() { return parts.get(this)[k]; }, configurable: true, enumerable: true });
+    class WorkerNavigator { constructor() { throw new TypeError('Illegal constructor'); } }
+    for (const k of ['userAgent', 'language', 'languages', 'platform', 'onLine', 'hardwareConcurrency'])
+      Object.defineProperty(WorkerNavigator.prototype, k, { get() { return nav[k]; }, configurable: true, enumerable: true });
+    for (const [k, v] of [['appCodeName', 'Mozilla'], ['appName', 'Netscape'], ['product', 'Gecko']])
+      Object.defineProperty(WorkerNavigator.prototype, k, { get() { return v; }, configurable: true, enumerable: true });
+    Object.defineProperty(WorkerNavigator.prototype, 'appVersion', { get() { return String(nav.userAgent).replace(/^Mozilla\//, ''); }, configurable: true, enumerable: true });
+    const u = new URL(url);
+    const loc = Object.create(WorkerLocation.prototype);
+    parts.set(loc, { href: u.href, origin: u.origin, protocol: u.protocol, host: u.host, hostname: u.hostname, port: u.port,
+      pathname: u.pathname, search: u.search, hash: u.hash });
+    const wnav = Object.create(WorkerNavigator.prototype);
+    for (const k of Object.getOwnPropertyNames(globalThis))
+      if (!esGlobals.has(k) && !workerGlobals.has(k)) { try { delete globalThis[k]; } catch {} }
+    Object.setPrototypeOf(globalThis, DedicatedWorkerGlobalScope.prototype);
+    const WP = WorkerGlobalScope.prototype, DP = DedicatedWorkerGlobalScope.prototype;
+    const getter = (o, k, f) => Object.defineProperty(o, k, { get: f, configurable: true, enumerable: true });
+    getter(WP, 'self', function () { return globalThis; });
+    getter(WP, 'location', () => loc);
+    getter(WP, 'navigator', () => wnav);
+    getter(WP, 'origin', () => u.origin);
+    getter(WP, 'isSecureContext', () => u.protocol === 'https:' || u.hostname === 'localhost' || u.hostname === '127.0.0.1');
+    getter(WP, 'crossOriginIsolated', () => false);
+    define(WP, 'importScripts', function importScripts(...urls) {
+      const abs = urls.map(x => {
+        const r = resolveURL(String(x), href);
+        if (r === null) throw new DOMException(`Failed to execute 'importScripts' on 'WorkerGlobalScope': The URL '${x}' is invalid.`, 'SyntaxError');
+        return r;
+      });
+      for (const a of abs) {
+        const src = n.worker(12, a);
+        // -1: the embedder fetches it now; Lean undoes this run and runs it again then.
+        if (src === -1) throw new DOMException(`importScripts: '${a}' is being fetched.`, 'NetworkError');
+        if (typeof src !== 'string') throw new DOMException(`Failed to execute 'importScripts' on 'WorkerGlobalScope': The script at '${a}' failed to load.`, 'NetworkError');
+        n0.runScript(src);
+      }
+    });
+    getter(DP, 'name', () => name);
+    define(DP, 'postMessage', function postMessage(message, options = undefined) {
+      if (arguments.length < 1) throw new TypeError("Failed to execute 'postMessage' on 'DedicatedWorkerGlobalScope': 1 argument required, but only 0 present.");
+      n.worker(1, 0, cloneOut(message, options, 'DedicatedWorkerGlobalScope'));
+    });
+    define(DP, 'close', function close() { n.worker(10); });
+    handlerProp(WP, ['error', 'languagechange', 'offline', 'online', 'rejectionhandled', 'unhandledrejection']);
+    handlerProp(DP, ['message', 'messageerror']);
+    Object.defineProperty(WP, Symbol.toStringTag, { value: 'WorkerGlobalScope', configurable: true });
+    Object.defineProperty(DP, Symbol.toStringTag, { value: 'DedicatedWorkerGlobalScope', configurable: true });
+    for (const [k, v] of Object.entries({ WorkerGlobalScope, DedicatedWorkerGlobalScope, WorkerLocation, WorkerNavigator })) def(k, v);
+    uncaughtHook = (message, e) => n.worker(11, message, href, 0, 0);
+  };
+  // ==== end workers ====
 
   // Content event handler attributes (HTML §8.1.8.1): onclick="..." and <body onload>.
   // The event handler content attributes of the elements of a subtree (a page's, or a clone's:
@@ -3925,5 +4248,7 @@
     script(id) { currentScript = id < 0 ? null : wrap(id); const d = id < 0 ? 0 : info(id, 7); scriptDocument = d > 0 ? wrap(d) : null; },
     url(u) { href = String(u); },
     release(id) { callbacks.delete(id); },
+    // Section workers: this realm becomes a dedicated worker's global scope.
+    worker(url, name) { makeWorkerScope(String(url), String(name)); },
   };
 })

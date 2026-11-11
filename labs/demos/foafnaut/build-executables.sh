@@ -58,8 +58,15 @@ mv "$OUT/native-webgpu-svg-darwin-arm64.tmp" "$OUT/native-webgpu-svg-darwin-arm6
 if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
   mkdir -p "$LAB/.build/native-html/runtime"
   cp "$LAB/.build/web-render/engines/web-render."{mjs,wasm} "$LAB/.build/native-html/runtime/"
+  # The build record: made here from git, never typed. It is compiled into the program, and
+  # about:foafnaut and --version only read it; the start check below compares it with git.
+  BUILD_COMMIT=$(git -C "$LAB" rev-parse --short HEAD 2>/dev/null || echo unknown)
+  BUILD_DIRTY=false
+  [ -n "$(git -C "$LAB" status --porcelain --untracked-files=no 2>/dev/null)" ] && BUILD_DIRTY=true
+  printf '{"commit":"%s","dirty":%s,"builtAt":"%s"}\n' "$BUILD_COMMIT" "$BUILD_DIRTY" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$LAB/.build/native-html/build-info.json"
   deno compile --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
     --allow-read --allow-net --allow-ffi --allow-env=HOME \
+    --include "$LAB/.build/native-html/build-info.json" \
     --include "$LAB/.build/native-html/runtime/web-render.wasm" \
     --include "$LAB/../../../third_party/fonts" \
     --include "$LAB/../../../docs/web/hub/foafnaut/font-coverage.mjs" --include "$LAB/../../../docs/web/hub/foafnaut/fallback-fonts.mjs" \
@@ -138,6 +145,7 @@ cp "$LAB/"{policy-demo.html,policy-demo.mjs,policy_engine.mjs,foafnaut_transport
 cp "$LAB/.build/engines/"{foafnaut-engine,layout-policy-engine}.{mjs,wasm} "$OUT/web/.build/engines/"
 cp "$LAB/foaf/fixtures/people.ttl" "$OUT/web/foaf/fixtures/"
 for doc in README.md SVG_README.md; do [ ! -f "$LAB/$doc" ] || cp "$LAB/$doc" "$OUT/$doc"; done
+cp "$LAB/../../../third_party/notices/GMP-NOTICE.txt" "$OUT/"
 cp "$LAB/.build/source-SHA256SUMS" "$LAB/.build/tool-versions.txt" "$LAB/.build/runtime-object-witness.txt" "$OUT/"
 (
   cd "$REPO"
@@ -182,11 +190,14 @@ if [ -x "$OUT/native-webgpu-html-darwin-arm64" ]; then
   if [ "$START_RC" != 0 ]; then echo "compiled foafnaut did not start (rc $START_RC):" >&2; grep -v '^{' "$OUT/start-check.log" | head -20 >&2; exit 1; fi
   rm -f "$OUT/start-check.log"
   echo 'Compiled foafnaut started off screen and passed the graph sweep'
+  # The version the program reports is the commit of this build, or the build fails.
+  REPORTED=$("$OUT/native-webgpu-html-darwin-arm64" --version)
+  case "$REPORTED" in
+    "foafnaut $BUILD_COMMIT"*) echo "Compiled foafnaut reports its build: $REPORTED" ;;
+    *) echo "compiled foafnaut reports '$REPORTED', but this build is $BUILD_COMMIT" >&2; exit 1 ;;
+  esac
 fi
 # What this build was made from, read by the foafnaut launcher (--bleeding-edge says the
 # commit and the age, so an old local build is not taken for main).
-BUILD_COMMIT=$(git -C "$LAB" rev-parse --short HEAD 2>/dev/null || echo unknown)
-BUILD_DIRTY=false
-[ -n "$(git -C "$LAB" status --porcelain --untracked-files=no 2>/dev/null)" ] && BUILD_DIRTY=true
-printf '{"commit":"%s","dirty":%s,"builtAt":"%s"}\n' "$BUILD_COMMIT" "$BUILD_DIRTY" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$OUT/BUILD-INFO.json"
+if [ -f "$LAB/.build/native-html/build-info.json" ]; then cp "$LAB/.build/native-html/build-info.json" "$OUT/BUILD-INFO.json"; fi
 echo "Foafnaut native release directory: $OUT"

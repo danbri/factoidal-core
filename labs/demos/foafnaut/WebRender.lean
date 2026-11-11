@@ -8,6 +8,10 @@ import L4Factoidal.Rendering.Links
 /-! HTML source → existing Lean DOM → computed CSS → layout → common scene.
 The bitmap font is an explicit temporary profile, not font-backed shaping. -/
 namespace WebRender
+
+/-- The largest HTML document or stylesheet the engine reads, in bytes. Real home pages pass
+1 MiB (owner, 2026-11-09: BBC refused as over 1 MB). The host's `MAX_SOURCE_BYTES` is the same. -/
+def maxSourceBytes : Nat := 16*1048576
 open L4Factoidal
 
 private def quote (s : String) : String := "\"" ++ JSON.escapeString s ++ "\""
@@ -99,7 +103,9 @@ def documentNamespaceTree (dom : DOM.Dom) : Except String (Nat × XML.NamespaceN
         else
           let children ← node.kids.toList.mapM (fun child =>
             match values.get? child with | some tree => .ok tree | none => .error "HTML namespace child missing")
-          let attrs := (node.attrs.toList.filter (fun a => a.ns != some DOM.xmlnsNS)).map fun a =>
+          -- An attribute in `NativeSVG.glyphNS` names an entry of the glyph table of
+          -- lowered SVG text; page content (markup or script) cannot give one.
+          let attrs := (node.attrs.toList.filter (fun a => a.ns != some DOM.xmlnsNS && a.ns != some NativeSVG.glyphNS)).map fun a =>
             ({name := ⟨a.ns,a.lname⟩,value := a.value} : XML.NamespaceAttribute)
           values := values.insert id (.element ⟨node.ns,node.lname⟩ attrs children)
       else if node.type == .text || node.type == .cdata then
@@ -220,46 +226,73 @@ def picturesOf (store : NativeImage.Store) (keys : List (Nat × String)) : Rende
   fun id => found.get? id
 
 /-! Each layout decoded the page's images again (`imageStoreOf`): 44 ms of a relayout of
-gov.uk (realperf). `imageStoreKept` is `imageStoreOf`;
-its implementation keeps the last two stores by their keys and supplied bytes. -/
-initialize imageStoresKept : IO.Ref (Array ((List String × List (String × ByteArray)) × NativeImage.Store)) ← IO.mkRef #[]
+gov.uk (realperf). The engine keeps the last two stores by their keys and supplied bytes
+(`StoresKept`, in `WebDocument.Engine`; issue 390): a layout looks a store up there, and
+gives back the store it made, which the engine keeps. -/
+abbrev StoresKept := Array ((List String × List (String × ByteArray)) × NativeImage.Store)
 
-private unsafe def imageStoreKeptImpl (keys : List String) (images : List (String × ByteArray)) : NativeImage.Store :=
-  unsafeBaseIO do
-    if let some (_,store) := (← imageStoresKept.get).find? (fun ((k,i),_) => k == keys && i == images) then return store
-    let store := NativeSVG.imageStoreOf keys images
-    imageStoresKept.modify fun kept => (if kept.size ≥ 2 then kept.extract 1 kept.size else kept).push ((keys,images),store)
-    return store
+/-- The store of `keys` and `images`: the kept one, or a new one, which is also given back
+to be kept. -/
+def storeIn (kept : StoresKept) (keys : List String) (images : List (String × ByteArray)) :
+    NativeImage.Store × Option ((List String × List (String × ByteArray)) × NativeImage.Store) :=
+  match kept.find? (fun ((k,i),_) => k == keys && i == images) with
+  | some (_,store) => (store,none)
+  | none => let store := NativeSVG.imageStoreOf keys images; (store,some ((keys,images),store))
 
-@[implemented_by imageStoreKeptImpl, noinline]
-def imageStoreKept (keys : List String) (images : List (String × ByteArray)) : NativeImage.Store :=
-  NativeSVG.imageStoreOf keys images
+/-- `kept` with `made` last, at most two. -/
+def keepStore (kept : StoresKept) (made : (List String × List (String × ByteArray)) × NativeImage.Store) : StoresKept :=
+  (if kept.size ≥ 2 then kept.extract 1 kept.size else kept).push made
+
+/-- A table is valid when each store is `imageStoreOf` of any keys and images that its own
+compare equal to (`==`, as `storeIn` compares them). -/
+def StoresValid (kept : StoresKept) : Prop :=
+  ∀ e ∈ kept, ∀ keys images, (e.1.1 == keys && e.1.2 == images) = true → e.2 = NativeSVG.imageStoreOf keys images
+
+/-- Refinement: from a valid table, `storeIn` gives `imageStoreOf`. -/
+theorem storeIn_eq (kept : StoresKept) (valid : StoresValid kept) (keys : List String) (images : List (String × ByteArray)) :
+    (storeIn kept keys images).1 = NativeSVG.imageStoreOf keys images := by
+  unfold storeIn
+  split
+  · next _ k store h =>
+    obtain ⟨k1,k2⟩ := k
+    have sat := Array.find?_some h
+    exact valid _ (Array.mem_of_find?_eq_some h) keys images sat
+  · rfl
 
 /-- The embedding of SVG roots and the pictures of `img` elements, from one image
 store: each image decodes once, and the ids of bitmaps do not collide. One
 source-bound index per render, shared by all embedded SVG roots. SVG text is lowered
 to glyph paths first, with `fonts`, the fonts that draw HTML text
-(`NativeSVGText.lowerDocument`); each element keeps its source path. -/
-def makeReplaced (dom : DOM.Dom) (documentURL : Option String := none)
+(`NativeSVGText.lowerDocumentGlyphs`); each element keeps its source path, and the
+glyph outlines go to the reader as numbers in a table. -/
+def makeReplacedIn (kept : StoresKept) (words : NativeSVGText.Words) (dom : DOM.Dom) (documentURL : Option String := none)
     (images : List (String × ByteArray) := []) (fonts : Array Rendering.SfntProfile.Font := #[]) :
-    Except String (Rendering.Layout.Embedding × Rendering.Layout.Pictures) := do
+    Except String (Rendering.Layout.Embedding × Rendering.Layout.Pictures ×
+      Option ((List String × List (String × ByteArray)) × NativeImage.Store) × NativeSVGText.Words) := do
   let imgs := htmlImageKeys dom documentURL
   if !(dom.nodes.any (fun node => node.type == .element && node.ns == some DOM.svgNS)) then
-    return (embedding dom,picturesOf (imageStoreKept (imgs.map (·.2)) images) imgs)
+    let (store,made) := storeIn kept (imgs.map (·.2)) images
+    return (embedding dom,picturesOf store imgs,made,{})
   if documentURL.isNone && dom.nodes.any (fun node => DOM.Dom.isHtmlElement node "base" && Rendering.CSS.hasAttribute node "href") then
     throw "unsupported HTML base href without explicit document URL/base transport"
   let (root,tree) ← documentNamespaceTree dom
-  let (tree,_) := NativeSVGText.lowerDocument fonts tree
+  let (tree,_,glyphs,madeWords) := NativeSVGText.lowerDocumentGlyphsIn words fonts tree
   let context ← NativeSVG.ReferenceContext.create tree documentURL
   -- Each image decodes once for the document, not once for each SVG root.
-  let store := imageStoreKept (NativeSVG.imageKeys tree documentURL ++ imgs.map (·.2)) images
+  let (store,made) := storeIn kept (NativeSVG.imageKeys tree documentURL ++ imgs.map (·.2)) images
   -- A viewport of fractional CSS pixels (a percentage width with `height:auto`) keeps its
   -- exact size: the viewBox maps onto it, and the backing raster is the next whole pixel.
   return (fun id style width height => do
     let path ← sourcePath dom root (dom.size+1) id []
     let inherited : NativeSVG.Style := {currentColor := WebRenderSVG.toColor style.color, visible := style.visible}
-    let scene ← NativeSVG.parseRootInContextSized context path width height inherited embeddedAttributes (some store)
-    return placeSVG scene id style width height,picturesOf store imgs)
+    let scene ← NativeSVG.parseRootInContextSized context path width height inherited embeddedAttributes (some store) glyphs
+    return placeSVG scene id style width height,picturesOf store imgs,made,madeWords)
+
+/-- `makeReplacedIn` with no kept store. -/
+def makeReplaced (dom : DOM.Dom) (documentURL : Option String := none)
+    (images : List (String × ByteArray) := []) (fonts : Array Rendering.SfntProfile.Font := #[]) :
+    Except String (Rendering.Layout.Embedding × Rendering.Layout.Pictures) :=
+  (fun (e,p,_) => (e,p)) <$> makeReplacedIn #[] {} dom documentURL images fonts
 
 /-- The SVG embedding of `makeReplaced`. -/
 def makeEmbedding (dom : DOM.Dom) (documentURL : Option String := none)
@@ -268,7 +301,7 @@ def makeEmbedding (dom : DOM.Dom) (documentURL : Option String := none)
   Prod.fst <$> makeReplaced dom documentURL images fonts
 
 def render (html : String) (width height : Nat) : Except String (Rendering.Scene × Array Rendering.Layout.Box) := do
-  if html.length > 1048576 then throw "unsupported HTML input exceeding 1048576 characters"
+  if html.length > maxSourceBytes then throw s!"unsupported HTML input exceeding {maxSourceBytes} characters"
   let dom := DOM.parseHtmlDocument html
   let (embedding,pictures) ← makeReplaced dom
   renderDOM dom width height embedding pictures
@@ -278,7 +311,7 @@ private def runJSON (r : Rendering.GlyphRun) : String :=
   "{\"source\":" ++ toString r.source ++ ",\"font\":" ++ quote r.font ++ ",\"size\":" ++ toString r.fontSize ++
   ",\"text\":" ++ quote r.text ++ ",\"glyphs\":" ++ array (r.glyphs.toList.map fun g =>
     array [toString g.index,toString g.x,toString g.y,toString g.advance,toString g.clusterStart,toString g.clusterEnd]) ++ "}"
-private def layoutJSON (s : Rendering.Scene) (boxes : Array Rendering.Layout.Box)
+def layoutJSON (s : Rendering.Scene) (boxes : Array Rendering.Layout.Box)
     (font : Option Rendering.FontProvider.Face) : String :=
   let header := match font with
     | none => "{\"profile\":\"lean-block-inline-ascii-bitmap-v1\",\"fontScope\":\"ASCII bitmap; no real font shaping\""

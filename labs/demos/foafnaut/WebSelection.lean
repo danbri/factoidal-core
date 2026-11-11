@@ -38,16 +38,24 @@ taken from the end, so that cells are in logical order
 def cells (runs : Array GlyphRun) : Array Cell := Id.run do
   let mut out := #[]
   for (run,index) in runs.zipIdx do
-    let chars := run.text.toList
+    let chars := run.text.toList.toArray
     let base := run.glyphs.foldl (fun low g => min low g.clusterStart)
       ((run.glyphs[0]?).map (·.clusterStart) |>.getD 0)
     let rtl := match run.glyphs[0]?, run.glyphs.back? with
       | some a, some b => a.clusterStart > b.clusterStart
       | _, _ => false
+    -- The first glyph of a cluster holds its text and the others none: a base and its marks
+    -- are copied once, and a cluster's text is read once (it was read for each of its glyphs).
+    let mut last : Option Nat := none
     for g in (if rtl then run.glyphs.reverse else run.glyphs) do
-      let text := String.ofList ((chars.drop (g.clusterStart-base)).take (g.clusterEnd-g.clusterStart))
+      let text := if last == some g.clusterStart then "" else
+        String.ofList (chars.extract (g.clusterStart-base) (g.clusterEnd-base)).toList
+      last := some g.clusterStart
       out := out.push {run:=index,source:=run.source,x:=g.x,y:=g.y,width:=g.advance,height:=run.fontSize,text,rtl}
   return out
+
+-- A base and its mark are one cluster: the text is copied once.
+#guard (cells #[⟨0,"f",16,"n\u0308a",#[⟨1,0,0,8,0,2⟩,⟨2,4,0,0,0,2⟩,⟨3,8,0,8,2,3⟩]⟩]).toList.map (·.text) == ["n\u0308","","a"]
 
 /-- A glyph is before a point when its line is above the point, or when the
 point is on its line and past the middle of the glyph in the glyph's direction:

@@ -32,6 +32,155 @@ namespace L4Factoidal.WasmVM.Hosts.LeanJS
 open L4Factoidal.WasmVM
 open L4Factoidal.WasmVM.Hosts.Page (Host Reads ScriptClock Arena)
 
+/-- Steps for one script, task or event (the engine stops a run past it). A step is a call
+or a loop iteration; 5 M of them take about as long natively as the 4 G instructions of
+`Page.Limits.fuel` take QuickJS in WasmVM (half a minute to a minute, for a script that
+loops until the budget ends). -/
+def runBudget : Nat := 5000000
+
+/-! ## Dedicated workers: what a realm asks of them (`Hosts.LeanJSWorkers`) -/
+
+/-- An ask of a realm's scripts about workers, in the order made. A page creates, posts to
+and terminates its workers; a worker posts to its page (`post 0`), closes itself, and
+reports an error it did not handle. -/
+inductive WorkerOp where
+  | create (id : Nat) (url name : String)
+  | post (id : Nat) (data : ByteArray)
+  | terminate (id : Nat)
+  | close
+  /-- An uncaught error of a worker: message, file, line, column. -/
+  | error (message file : String) (line col : Nat)
+  deriving Inhabited
+
+/-- An event for a realm: from worker `worker` (or the page, 0), of kind `message`,
+`messageerror`, `error` (with the error's JSON) or `loaderror`. -/
+structure WorkerEvent where
+  worker : Nat
+  kind : String
+  header : String := ""
+  data : ByteArray := ByteArray.empty
+  deriving Inhabited
+
+/-- The worker part of a BubblePopJS host. Empty, and never read, on a page that makes no
+worker. -/
+structure WorkerHost where
+  ops : Array WorkerOp := #[]
+  /-- Events for this realm, first in first out: each is the data of one task that the
+  loop runs (`LeanJSWorkers.eventHandle`). -/
+  inbox : Array WorkerEvent := #[]
+  head : Nat := 0
+  /-- The event being dispatched (native `worker` 3 took it). -/
+  current : WorkerEvent := default
+  nextId : Nat := 1
+  /-- A worker: the script sources the embedder fetched, by URL (`none`: the fetch failed). -/
+  scripts : Array (String × Option String) := #[]
+  /-- A worker: the URL an `importScripts` of this run needs and has not got. The run is
+  undone and waits for it (`LeanJSWorkers`). -/
+  missing : Option String := none
+  deriving Inhabited
+
+/-! The inbox is a queue: `push` at the end, `take` from `head` (and emptied when all of it
+is taken). `push_pending`, `take_pending`: the events not yet taken are a list that `push`
+appends to and `take` takes the first of, so a realm's events run in the order they came
+(the model `EventLoop.Agents`, `channel_prefix`). -/
+
+/-- The events not yet taken, in order. -/
+def WorkerHost.pending (wh : WorkerHost) : List WorkerEvent := wh.inbox.toList.drop wh.head
+
+def WorkerHost.push (wh : WorkerHost) (ev : WorkerEvent) : WorkerHost := { wh with inbox := wh.inbox.push ev }
+
+def WorkerHost.take (wh : WorkerHost) : WorkerHost × Option WorkerEvent :=
+  match wh.inbox[wh.head]? with
+  | none => (wh, none)
+  | some ev =>
+    (if wh.head + 1 ≥ wh.inbox.size then { wh with inbox := #[], head := 0, current := ev }
+     else { wh with head := wh.head + 1, current := ev }, some ev)
+
+theorem WorkerHost.push_pending (wh : WorkerHost) (ev : WorkerEvent) (h : wh.head ≤ wh.inbox.size) :
+    (wh.push ev).pending = wh.pending ++ [ev] := by
+  have h' : wh.head ≤ wh.inbox.toList.length := by simpa using h
+  simp [WorkerHost.pending, WorkerHost.push, List.drop_append_of_le_length h']
+
+theorem WorkerHost.take_pending (wh : WorkerHost) :
+    wh.take.2 = wh.pending.head? ∧ wh.take.1.pending = wh.pending.tail := by
+  unfold WorkerHost.take WorkerHost.pending
+  split
+  · rename_i hn
+    have : wh.inbox.size ≤ wh.head := by
+      rcases Nat.lt_or_ge wh.head wh.inbox.size with h | h
+      · simp [Array.getElem?_eq_getElem h] at hn
+      · exact h
+    have h' : wh.inbox.toList.length ≤ wh.head := by simpa using this
+    simp [List.drop_eq_nil_of_le h']
+  · rename_i ev hs
+    have hlt : wh.head < wh.inbox.size := by
+      rcases Nat.lt_or_ge wh.head wh.inbox.size with h | h
+      · exact h
+      · simp [Array.getElem?_eq_none h] at hs
+    have hev : wh.inbox[wh.head] = ev := by simpa [Array.getElem?_eq_getElem hlt] using hs
+    have hd : wh.inbox.toList.drop wh.head = ev :: wh.inbox.toList.drop (wh.head + 1) := by
+      rw [List.drop_eq_getElem_cons (by simpa using hlt)]; simp [hev]
+    split
+    · rename_i hge
+      refine ⟨by simp [hd], ?_⟩
+      have h' : wh.inbox.toList.length ≤ wh.head + 1 := by simpa using hge
+      simp [hd, List.drop_eq_nil_of_le h']
+    · exact ⟨by simp [hd], by simp [hd]⟩
+
+/-- `push` and `take` keep `head` within the inbox (the hypothesis of `push_pending`). -/
+theorem WorkerHost.push_head (wh : WorkerHost) (ev : WorkerEvent) (h : wh.head ≤ wh.inbox.size) :
+    (wh.push ev).head ≤ (wh.push ev).inbox.size := by
+  simp [WorkerHost.push]; omega
+
+theorem WorkerHost.take_head (wh : WorkerHost) (h : wh.head ≤ wh.inbox.size) :
+    wh.take.1.head ≤ wh.take.1.inbox.size := by
+  unfold WorkerHost.take
+  split
+  · exact h
+  · split
+    · simp
+    · simp; omega
+
+/-- Native `worker` (number 29): `worker(op, a, b, c)`.
+
+- page: 0 `create(url, name)` answers the worker's number; 1 `post(id, bytes)`;
+  2 `terminate(id)`;
+- both: 3 `take()` answers the next event's head (JSON: `w` worker, `k` kind, `h` header)
+  or ""; 4 answers its bytes;
+- worker: 1 `post(0, bytes)` to the page; 10 `close()`; 11 `error(message, file, line,
+  col)`; 12 `importScript(url)` answers the source, -1 when the embedder has not fetched
+  it yet (the run is undone: `missing`), -2 when the fetch failed. -/
+def serveWorker (wh : WorkerHost) (args : Array JS.HostArg) : WorkerHost × JS.HostAns :=
+  let a := fun (i : Nat) => args.getD i (.val .undef)
+  let nat := fun (i : Nat) => match a i with | .val (.num x) => x.toUInt64.toNat | _ => 0
+  let text := fun (i : Nat) => match a i with
+    | .val (.str s) => JS.Str.toHost s
+    | .bytes b => (String.fromUTF8? b).getD ""
+    | _ => ""
+  let bytes := fun (i : Nat) => match a i with | .bytes b => b | _ => ByteArray.empty
+  match nat 0 with
+  | 0 =>
+    let id := wh.nextId
+    ({ wh with nextId := id + 1, ops := wh.ops.push (.create id (text 1) (text 2)) }, .val (.num (Float.ofNat id)))
+  | 1 => ({ wh with ops := wh.ops.push (.post (nat 1) (bytes 2)) }, .val .undef)
+  | 2 => ({ wh with ops := wh.ops.push (.terminate (nat 1)) }, .val .undef)
+  | 3 =>
+    match wh.take with
+    | (wh, none) => (wh, .val (.str (JS.Str.ofHost "")))
+    | (wh, some ev) =>
+      let j := JSON.Json.object [("w", .number (toString ev.worker)), ("k", .string ev.kind), ("h", .string ev.header)]
+      (wh, .val (.str (JS.Str.ofHost j.toString)))
+  | 4 => (wh, .bytes wh.current.data)
+  | 10 => ({ wh with ops := wh.ops.push .close }, .val .undef)
+  | 11 => ({ wh with ops := wh.ops.push (.error (text 1) (text 2) (nat 3) (nat 4)) }, .val .undef)
+  | 12 =>
+    let url := text 1
+    match wh.scripts.find? (·.1 == url) with
+    | some (_, some src) => (wh, .val (.str (JS.Str.ofHost src)))
+    | some (_, none) => (wh, .val (.num (-2)))
+    | none => ({ wh with missing := wh.missing <|> some url }, .val (.num (-1)))
+  | _ => (wh, .err "worker: no such op")
+
 /-- The page's host as the engine holds it: the page host and the steps run in the
 session before the current run. -/
 structure LHost where
@@ -39,15 +188,14 @@ structure LHost where
   base : Nat := 0
   /-- The page's WebAssembly instructions when the run started: those since are script time. -/
   wasm0 : Nat := 0
+  /-- Dedicated workers (`Hosts.LeanJSWorkers`). -/
+  wk : WorkerHost := {}
+  /-- The step budget of a run (`runBudget`; a worker's is smaller). -/
+  budget : Nat := runBudget
   deriving Inhabited
 
 abbrev JHeap := JS.HeapOf LHost
 
-/-- Steps for one script, task or event (the engine stops a run past it). A step is a call
-or a loop iteration; 5 M of them take about as long natively as the 4 G instructions of
-`Page.Limits.fuel` take QuickJS in WasmVM (half a minute to a minute, for a script that
-loops until the budget ends). -/
-def runBudget : Nat := 5000000
 
 /-- The natives of `n` (prelude.js), in the order of `qjs_wasmvm_entry.c`: name and length.
 Native `k` is `JS.Native.host k`. -/
@@ -56,7 +204,7 @@ def natives : Array (String × Nat) :=
     ("removeAttr", 2), ("setText", 2), ("create", 2), ("insert", 3), ("remove", 2), ("replace", 3),
     ("clone", 2), ("treeOp", 3), ("listen", 4), ("unlisten", 1), ("plan", 3), ("timer", 3),
     ("clearTimer", 1), ("frame", 1), ("cancelFrame", 1), ("log", 1), ("gpu", 3), ("api", 3), ("wasm", 6), ("detach", 1),
-    ("wasmGlue", 0), ("gpuBytes", 3)]
+    ("wasmGlue", 0), ("gpuBytes", 3), ("worker", 4)]
 
 /-! ## The natives: each is an import of `foafnaut_dom`, served by `Hosts.Page` -/
 
@@ -251,15 +399,22 @@ def serveNative (h : Host) (k : Nat) (args : Array JS.HostArg) : Host × JS.Host
 the session before this run and the steps of this run (`runBudget` less the steps left),
 as `Page.Session.run` counts the instructions of a run at each host call. -/
 def hostCall (lh : LHost) (k : Nat) (args : Array JS.HostArg) (left : Nat) : LHost × JS.HostAns :=
+  if k == 29 then
+    let ⟨page, base, wasm0, wk, budget⟩ := lh
+    let (wk, ans) := serveWorker wk args
+    (⟨page, base, wasm0, wk, budget⟩, ans)
+  else
   let base := lh.base
   let wasm0 := lh.wasm0
-  let steps := base + (runBudget - left) + (lh.page.wasm.steps - wasm0)
+  let wk := lh.wk
+  let budget := lh.budget
+  let steps := base + (budget - left) + (lh.page.wasm.steps - wasm0)
   -- `lh` is not used again: the page host is then the only reference to the DOM state, and
   -- a change of the arena is in place (`Hosts.Dom.change`)
   let h := lh.page
   let h := { h with time := h.time.atRun h.loop.clock steps }
   let (h, ans) := serveNative h k args
-  ({ page := h, base, wasm0 }, ans)
+  ({ page := h, base, wasm0, wk, budget }, ans)
 
 /-! ## The session -/
 
@@ -287,6 +442,28 @@ def Session.setHost (s : Session) (h : Host) : Session :=
   let lh := heap.host.getD default
   ⟨{ heap with host := some { lh with page := h } }, api, limits, steps, jobs, tasks, errors, lastFrame⟩
 
+/-- The worker part of the host (`Hosts.LeanJSWorkers`). -/
+def Session.wk (s : Session) : WorkerHost := (s.heap.host.map (·.wk)).getD {}
+
+/-- Set the worker part of the host (the heap taken apart, as `setHost`). -/
+def Session.setWk (s : Session) (wk : WorkerHost) : Session :=
+  let ⟨heap, api, limits, steps, jobs, tasks, errors, lastFrame⟩ := s
+  let lh := heap.host.getD default
+  ⟨{ heap with host := some { lh with wk } }, api, limits, steps, jobs, tasks, errors, lastFrame⟩
+
+/-- Whether the realm has made no ask of workers and holds no event from them: the case of
+every page that makes no worker, checked once per microtask checkpoint. -/
+def Session.wkIdle (s : Session) : Bool :=
+  match s.heap.host with
+  | some lh => lh.wk.ops.isEmpty && lh.wk.nextId == 1
+  | none => true
+
+/-- The step budget of each run of this session (`runBudget` for a page). -/
+def Session.setBudget (s : Session) (budget : Nat) : Session :=
+  let ⟨heap, api, limits, steps, jobs, tasks, errors, lastFrame⟩ := s
+  let lh := heap.host.getD default
+  ⟨{ heap with host := some { lh with budget } }, api, limits, steps, jobs, tasks, errors, lastFrame⟩
+
 def Session.fail (s : Session) (what : String) : Session :=
   { s with errors := if s.errors.size < 256 then s.errors.push what else s.errors }
 
@@ -298,11 +475,12 @@ def Session.run (s : Session) (f : JHeap → (JS.Outcome × JS.Value) × JHeap) 
   let page := lh.page
   let page := { page with time := page.time.atRun page.loop.clock steps }
   let wasm0 := page.wasm.steps
-  let heap := { heap with steps := runBudget, host := some { lh with page, base := steps, wasm0 } }
+  let budget := lh.budget
+  let heap := { heap with steps := budget.toUInt64, host := some { lh with page, base := steps, wasm0 } }
   let ((o, v), heap) := f heap
   let lh := heap.host.getD default
   -- The page's WebAssembly ran in this run's natives: its instructions are script time too.
-  let steps := steps + (runBudget - heap.steps) + (lh.page.wasm.steps - wasm0)
+  let steps := steps + (budget - heap.steps.toNat) + (lh.page.wasm.steps - wasm0)
   let page := lh.page
   let time := page.time.atRun page.loop.clock steps
   let page := { page with time, loop := { page.loop with clock := time.sync page.loop.clock } }
@@ -374,8 +552,12 @@ each page starts from it with its own arena, so the prelude runs once (as
 kept as data at build time (`snapshotData`), without lexing, parsing or running the
 prelude. -/
 def prepareSource (lim : Page.Limits := {}) : Except String Session := do
-  let heap := { freshRealm lim with steps := runBudget }
+  let heap := { freshRealm lim with steps := runBudget.toUInt64 }
   let (nobj, heap) := JS.hostObject heap natives
+  -- the structured clone and classic scripts for dedicated workers (`JS.Clone`): built-ins
+  -- of the engine, not of the host, since they walk the heap
+  let heap := JS.addNatives heap nobj #[("serialize", .x .cloneSerialize, 2), ("deserialize", .x .cloneDeserialize, 1),
+    ("runScript", .x .classicScript, 1)]
   let ((o, f), heap) := JS.evalValue heap prelude
   if let some m := failure o then throw s!"prelude: {m}"
   let ((o, api), heap) := JS.callFunction heap f .undef #[nobj]
@@ -387,8 +569,10 @@ def preludeMark : String := toString (hash prelude)
 
 /-- The realm of `prepareSource` as data (`JS.Snapshot.encode`), with the prelude's object
 and `preludeMark`. `lake exe bubblepop-realm` writes it into `LeanJSRealmData.lean` at
-build time (build-web-render.sh). -/
-def snapshotData : Except String String := do
+build time (build-web-render.sh). A function of `Unit`, not a constant: a constant is computed
+when the module is initialized, which ran the whole prelude at the first call into every
+engine, for every page (about 300 ms of the Hub's first frame), and threw the result away. -/
+def snapshotData (_ : Unit) : Except String String := do
   let s ← prepareSource
   JS.Snapshot.encode (freshRealm {}) s.heap #[s.api, .str preludeMark]
 
@@ -400,7 +584,7 @@ def prepareWith (data : String) (lim : Page.Limits := {}) : Except String Sessio
   match extra with
   | #[api, .str mark] =>
     if mark != preludeMark then throw "snapshot: made from another prelude"
-    return { heap := { heap with steps := runBudget, jobs := #[], jobHead := 0 }, api, limits := lim }
+    return { heap := { heap with steps := runBudget.toUInt64, jobs := #[], jobHead := 0 }, api, limits := lim }
   | _ => throw "snapshot: no prelude object"
 
 /-- The deepest nesting of JavaScript calls (`Heap.maxDepth`; deeper is a `RangeError`, as in
@@ -428,7 +612,7 @@ def start (base : Session) (dom : Arena) (url : String) (scripts : Array (Nat ×
     let d1 := Hosts.Dom.connectFrames domHost #[0]
     { d1 with navigations := d1.navigations.filter (!·.2.isEmpty) } else domHost
   let s := { base with
-    heap := { base.heap with maxDepth := callDepth },
+    heap := { base.heap with maxDepth := callDepth.toUInt32 },
     limits := lim, steps := 0, jobs := 0, tasks := 0, errors := #[], lastFrame := none }
   let mut s := s.setHost { dom := domHost, reads, time, web := { entropy := lim.entropy, docEncoding := lim.encoding } }
   s := (s.api? "start" #[]).1

@@ -1,3 +1,5 @@
+import Std.Data.HashMap
+import Std.Data.HashSet
 import L4Factoidal.JS.Syntax
 import L4Factoidal.JS.Number
 
@@ -27,8 +29,13 @@ namespace L4Factoidal.JS
 structure PState where
   toks : Array Token
   pos : Nat := 0
+  /-- The characters that `toks` came from. `Token.pos` is an index in it (`P.relexAt`). -/
+  src : Array Char := #[]
   /-- `var` and function names of the current function body. -/
   vars : Array String := #[]
+  /-- The names in `vars`, for the test in `P.addVar` (a function of a generated program has
+  thousands of `var` names). -/
+  varSet : Std.HashSet String := {}
   usesArgs : Bool := false
   strict : Bool := false
   inFun : Bool := false
@@ -45,6 +52,16 @@ structure PState where
   deriving Inhabited
 
 abbrev P := EStateM String PState
+
+/-- Equal identifier texts become one `String` object: names compare by pointer first. -/
+def internToks (toks : Array Token) : Array Token :=
+  (toks.foldl (init := ((Array.emptyWithCapacity toks.size, {}) : Array Token × Std.HashMap String String))
+    fun (out, m) t =>
+      if t.kind == .ident then
+        match m.get? t.text with
+        | some s => (out.push { t with text := s }, m)
+        | none => (out.push t, m.insert t.text t.text)
+      else (out.push t, m)).1
 
 namespace P
 
@@ -69,6 +86,20 @@ def fail {α} (msg : String) : P α := do
 
 def expectP (p : String) : P Unit := do
   if ← atP p then advance else fail s!"expected '{p}'"
+
+/-- Lex again from the current token with the other reading of its `/`. The token is a `/` or
+`/=` punctuator (`asRegex`: read it as the start of a regular expression literal) or a regular
+expression literal (read its `/` as a division). §12: the syntactic grammar chooses the lexical
+goal symbol, InputElementRegExp or InputElementDiv. The lexer makes a first choice from the
+tokens before the `/` (`regexAllowed`); the parser calls this at the two places where the
+grammar decides against it: a `/` where a primary expression starts, and a regular expression
+literal after an operand. The tokens before the current one stay as they are. -/
+def relexAt (asRegex : Bool) : P Unit := do
+  let s ← get
+  let t := s.toks.getD s.pos default
+  match lexFrom s.src t.pos asRegex t.nl (openBefore s.toks s.pos) with
+  | .error e => throw e
+  | .ok tail => set { s with toks := s.toks.extract 0 s.pos ++ internToks tail }
 
 def eatP (p : String) : P Bool := do
   if ← atP p then advance; pure true else pure false
@@ -97,8 +128,13 @@ def bindingName : P String := do
   else if t.kind == .kw && (t.text == "let" || t.text == "yield") then advance; pure t.text
   else fail "expected an identifier"
 
+/-- Add a `var` or function name of the current function body, once. `vars` only grows at its
+end while a body is parsed, so the names added after a point are `vars` from the size it had
+there (`parseBlock`, `switch`). -/
 def addVar (n : String) : P Unit :=
-  modify fun s => if s.vars.contains n then s else { s with vars := s.vars.push n }
+  modify fun s =>
+    if s.varSet.contains n then s
+    else { s with vars := s.vars.push n, varSet := s.varSet.insert n }
 
 end P
 
@@ -345,7 +381,7 @@ def parseStmt : Nat → P Stmt
         let cs ← parseCases n false []
         modify fun s => { s with breakables := st.breakables }
         let after := (← get).vars
-        checkDecls (cs.flatMap fun c => match c with | .mk _ b => b) (after.toList.filter (!st.vars.contains ·))
+        checkDecls (cs.flatMap fun c => match c with | .mk _ b => b) (after.extract st.vars.size after.size).toList
         return .switchS d cs
       | "debugger" => advance; semi; return .empty
       | "class" =>
@@ -442,7 +478,7 @@ def parseBlock : Nat → P (List Stmt)
     let before := (← get).vars
     let ss ← parseStmts n #[]
     let after := (← get).vars
-    checkDecls ss (after.toList.filter (!before.contains ·))
+    checkDecls ss (after.extract before.size after.size).toList
     expectP "}"
     return ss
 
@@ -496,7 +532,7 @@ def parseFor : Nat → P Stmt
         | some (.decl .var [Decl.mk (.id x) (some _)]) =>
           if isOf || (← get).strict then fail "for-in/of declarations may not have initializers"
           pure (some DeclKind.var, Pat.id x)
-        | some (.decl _ _) => fail "invalid for-in/of declaration"
+        | some (.decl _ _) | some (.letOnce _) => fail "invalid for-in/of declaration"
         | some (.expr e) =>
           match exprToPat 64 e with
           | some p => pure (none, p)
@@ -592,18 +628,18 @@ def parseBody : Nat → Option String → List PatElem → Option Pat → FunKin
     let simple := rest.isNone && params.all (fun p => match p with | .mk (.id _) none => true | _ => false)
     if (strict || kind == .arrow || kind == .method || !simple) && names.eraseDups.length != names.length then
       fail "duplicate parameter name not allowed in this context"
-    set { outer with vars := #[], usesArgs := false, strict, inFun := true, loops := 0,
+    set { outer with vars := #[], varSet := {}, usesArgs := false, strict, inFun := true, loops := 0,
                      breakables := 0, labels := [],
                      inGen := gen == 1 || gen == 3, inAsync := gen == 2 || gen == 3 }
     let body ← parseBlock n
     let inner ← get
     let usesArgs := inner.usesArgs
     let arrow := kind == .arrow
-    set { inner with vars := outer.vars, strict := outer.strict, inFun := outer.inFun,
+    set { inner with vars := outer.vars, varSet := outer.varSet, strict := outer.strict, inFun := outer.inFun,
                      loops := outer.loops, breakables := outer.breakables, labels := outer.labels,
                      inGen := outer.inGen, inAsync := outer.inAsync, usesArgs := outer.usesArgs || (arrow && usesArgs) }
     return FunDef.mk name params rest body inner.vars.toList (usesArgs && !arrow) strict kind
-      (gen == 1 || gen == 3) (gen == 2 || gen == 3)
+      (gen == 1 || gen == 3) (gen == 2 || gen == 3) {}
 
 /-- An arrow function after its parameters and `=>`. -/
 def parseArrowBody : Nat → List PatElem → Option Pat → Nat → P Expr
@@ -611,11 +647,11 @@ def parseArrowBody : Nat → List PatElem → Option Pat → Nat → P Expr
   | n + 1, params, rest, coro => do
     if ← atP "{" then return .func (← parseBody n none params rest .arrow coro)
     let outer ← get
-    set { outer with vars := #[], inFun := true, inAsync := coro == 2, inGen := false }
+    set { outer with vars := #[], varSet := {}, inFun := true, inAsync := coro == 2, inGen := false }
     let e ← parseAssign n false
     let inner ← get
-    set { inner with vars := outer.vars, inFun := outer.inFun, inAsync := outer.inAsync, inGen := outer.inGen }
-    return .func (FunDef.mk none params rest [.ret (some e)] inner.vars.toList false outer.strict .arrow false (coro == 2))
+    set { inner with vars := outer.vars, varSet := outer.varSet, inFun := outer.inFun, inAsync := outer.inAsync, inGen := outer.inGen }
+    return .func (FunDef.mk none params rest [.ret (some e)] inner.vars.toList false outer.strict .arrow false (coro == 2) {})
 
 def parseExpr : Nat → Bool → P Expr
   | 0, _ => fail "parser fuel exhausted"
@@ -715,6 +751,8 @@ def parseBin : Nat → Nat → Bool → P Expr
 def parseBinRest : Nat → Nat → Bool → Expr → P Expr
   | 0, _, _, _ => fail "parser fuel exhausted"
   | n + 1, minPrec, noIn, lhs => do
+    -- after an operand a `/` is a division: the lexer's first choice was a regular expression
+    if (← peek).kind == .regex then relexAt false
     match binPrec (← peek) noIn with
     | none => return lhs
     | some (prec, op) =>
@@ -927,7 +965,13 @@ def parsePrimary : Nat → P Expr
         return e
       | "[" => advance; return .array (← parseArray n [])
       | "{" => advance; return .object (← parseObject n [])
-      | "/" | "/=" => fail "regular expression literals are not supported"
+      | "/" | "/=" =>
+        -- where a primary expression starts a `/` is the start of a regular expression literal:
+        -- the lexer's first choice was a division
+        relexAt true
+        let r ← peek
+        if r.kind == .regex then advance; return .regex r.text r.flags
+        fail "unexpected token"
       | "#" =>
         -- `#x in o` (§13.10.1)
         advance
@@ -1081,14 +1125,15 @@ def parseSubs : Nat → List String → List Expr → P (List Expr)
   | 0, _, _ => fail "parser fuel exhausted"
   | _ + 1, [], acc => return acc.reverse
   | n + 1, src :: rest, acc => do
-    match lex src with
+    let cs := src.toList.toArray
+    match lexChars cs with
     | .error e => throw e
     | .ok toks =>
       let outer ← get
-      set { outer with toks, pos := 0 }
+      set { outer with toks, pos := 0, src := cs }
       let e ← parseExpr n false
       if (← peek).kind != .eof then fail "unexpected token in template substitution"
-      modify fun s => { s with toks := outer.toks, pos := outer.pos }
+      modify fun s => { s with toks := outer.toks, pos := outer.pos, src := outer.src }
       parseSubs n rest (e :: acc)
 
 /-- A class body after the name (§15.7). Class code is strict. -/
@@ -1147,27 +1192,30 @@ def parseMembers : Nat → Bool → Option FunDef → List Member → P (Option 
       if accessor then fail "expected '('"
       -- a field: its initialiser is the body of a method that returns it
       let outer ← get
-      set { outer with vars := #[], inFun := true }
+      set { outer with vars := #[], varSet := {}, inFun := true }
       let init ← if ← atP "=" then advance; pure (some (← parseAssign n false)) else pure none
-      set { (← get) with vars := outer.vars, inFun := outer.inFun }
+      set { (← get) with vars := outer.vars, varSet := outer.varSet, inFun := outer.inFun }
       semi
-      let f := FunDef.mk none [] none [.ret init] [] false true .method false false
+      let f := FunDef.mk none [] none [.ret init] [] false true .method false false {}
       parseMembers n derived ctor (.mk static .field k f :: acc)
 
 end
 
 /-- Fuel for a token count: each token is passed by a bounded number of calls
-on any path from the root. -/
+on any path from the root. `parseScript` gives the character count plus one, which no reading
+of the source has more tokens than (`P.relexAt` can change the count). -/
 def parseFuel (tokens : Nat) : Nat := 64 * tokens + 1024
 
 /-- Parse a script (§16.1). `strict` forces strict mode code. -/
 def parseScript (src : String) (strict : Bool := false) : Except String Script :=
-  match lex src with
+  let cs := src.toList.toArray
+  match lexChars cs with
   | .error e => .error e
   | .ok toks =>
+    let toks := internToks toks
     let strict := strict || hasUseStrict toks 0
-    let st : PState := { toks, strict }
-    match (parseStmts (parseFuel toks.size) #[]).run st with
+    let st : PState := { toks, strict, src := cs }
+    match (parseStmts (parseFuel (cs.size + 1)) #[]).run st with
     | .ok body st' =>
       if (st'.toks.getD st'.pos default).kind != .eof then
         .error s!"SyntaxError: unexpected '{(st'.toks.getD st'.pos default).text}'"

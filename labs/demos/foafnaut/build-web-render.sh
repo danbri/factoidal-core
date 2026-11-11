@@ -38,18 +38,32 @@ fi
 # needs (lakefile.lean), so a newer prelude rebuilds LeanJS, and the realm, in this lake build.
 PRELUDE="$ROOT/tools/wasmvm/quickjs/prelude.js"
 lake build bubblepop-realm
-# QuickJS-NG is the default script engine of the Wasm build, so it carries no realm data:
-# BubblePopJS makes its realm from the prelude at its first page there.
-if [ "$MODE" = --wasm ]; then REALM_SOURCE=--empty; else REALM_SOURCE="$PRELUDE"; fi
+# BubblePopJS is the default on the Hub too, so the Wasm build carries the realm as data
+# (+598 KB, +140 KB gzipped, 2026-11-09 figures): the first page does not lex and run prelude.js.
+REALM_SOURCE="$PRELUDE"
 .lake/build/bin/bubblepop-realm L4Factoidal/WasmVM/Hosts/LeanJSRealmData.lean "$REALM_SOURCE"
-CORE=(L4Factoidal.Codec.Inflate L4Factoidal.DOM.OfXml L4Factoidal.Rendering.Layout L4Factoidal.Rendering.SfntProfile L4Factoidal.Rendering.Links L4Factoidal.XML.NamespaceView L4Factoidal.Tdb2.Format L4Factoidal.Rendering.FloatFormat L4Factoidal.Syntax.IriResolve L4Factoidal.Rendering.RdfView L4Factoidal.Rendering.FontRequests L4Factoidal.Unicode.BidiData L4Factoidal.Unicode.Bidi L4Factoidal.XSLT.Transform L4Factoidal.XSLT4.Transform L4Factoidal.UI.PolicyProtocol L4Factoidal.UI.Presentation L4Factoidal.UI.Geometry L4Factoidal.UI.LayoutPolicy L4Factoidal.Syntax.Turtle L4Factoidal.JSON.Parser L4Factoidal.JSON.Serialize L4Factoidal.WasmVM.Api L4Factoidal.WasmVM.Bench.Engine L4Factoidal.WasmVM.Tests.Proposals L4Factoidal.WasmVM.Wasi L4Factoidal.WasmVM.Hosts.Page L4Factoidal.WasmVM.Hosts.PageAot L4Factoidal.WHATWG.Encoding.Sniff L4Factoidal.WasmVM.Hosts.LeanJS L4Factoidal.WasmVM.Hosts.LeanJSRealm L4Factoidal.EventLoop.Model L4Factoidal.EventLoop.Dispatch L4Factoidal.SPARQL.Query L4Factoidal.SPARQL.Parser L4Factoidal.SPARQL.StorePlan L4Factoidal.Planner.Kinds.Memory L4Factoidal.Planner.FromQuery L4Factoidal.RDF.Pretty L4Factoidal.FrameCost.Band L4Factoidal.FrameCost.Lru L4Factoidal.Rendering.ComputedValues)
-lake build "${CORE[@]}" L4Factoidal.Rendering.Tests L4Factoidal.Rendering.CascadeTests L4Factoidal.Rendering.TableLayoutTests L4Factoidal.Rendering.ReplacedTests L4Factoidal.Rendering.RdfViewTests L4Factoidal.Rendering.FontLayoutTests L4Factoidal.Rendering.FontFaceTests L4Factoidal.Rendering.FontProviderTests L4Factoidal.Rendering.FontDataTests L4Factoidal.WasmVM.Tests.LeanJSRealm
+CORE=(L4Factoidal.Codec.Inflate L4Factoidal.DOM.OfXml L4Factoidal.Rendering.Layout L4Factoidal.Rendering.SfntProfile L4Factoidal.Rendering.Links L4Factoidal.XML.NamespaceView L4Factoidal.Tdb2.Format L4Factoidal.Rendering.FloatFormat L4Factoidal.Syntax.IriResolve L4Factoidal.Rendering.RdfView L4Factoidal.Rendering.FontRequests L4Factoidal.Unicode.BidiData L4Factoidal.Unicode.Bidi L4Factoidal.XSLT.Transform L4Factoidal.XSLT4.Transform L4Factoidal.UI.PolicyProtocol L4Factoidal.UI.Presentation L4Factoidal.UI.Geometry L4Factoidal.UI.LayoutPolicy L4Factoidal.Syntax.Turtle L4Factoidal.JSON.Parser L4Factoidal.JSON.Serialize L4Factoidal.WasmVM.Api L4Factoidal.WasmVM.Bench.Engine L4Factoidal.WasmVM.Tests.Proposals L4Factoidal.WasmVM.Wasi L4Factoidal.WasmVM.Hosts.Page L4Factoidal.WasmVM.Hosts.PageAot L4Factoidal.WHATWG.Encoding.Sniff L4Factoidal.WasmVM.Hosts.LeanJS L4Factoidal.WasmVM.Hosts.LeanJSRealm L4Factoidal.WasmVM.Hosts.LeanJSWorkers L4Factoidal.EventLoop.Model L4Factoidal.EventLoop.Dispatch L4Factoidal.SPARQL.Query L4Factoidal.SPARQL.Parser L4Factoidal.SPARQL.StorePlan L4Factoidal.Planner.Kinds.Memory L4Factoidal.Planner.FromQuery L4Factoidal.RDF.Pretty L4Factoidal.FrameCost.Band L4Factoidal.FrameCost.Lru L4Factoidal.Rendering.ComputedValues L4Factoidal.Rendering.FontFaceRule L4Factoidal.Rendering.Smil L4Factoidal.Rendering.ClipTheorems L4Factoidal.Rendering.InkBound)
+lake build "${CORE[@]}" L4Factoidal.Rendering.Tests L4Factoidal.Rendering.CascadeTests L4Factoidal.Rendering.TableLayoutTests L4Factoidal.Rendering.ReplacedTests L4Factoidal.Rendering.RdfViewTests L4Factoidal.Rendering.FontLayoutTests L4Factoidal.Rendering.FontFaceTests L4Factoidal.Rendering.FontProviderTests L4Factoidal.Rendering.FontDataTests L4Factoidal.Rendering.FontFaceRuleTests L4Factoidal.Rendering.SfntMarkTheorems L4Factoidal.Rendering.SmilTests L4Factoidal.Rendering.InkBoundTests L4Factoidal.WasmVM.Tests.LeanJSRealm L4Factoidal.WasmVM.Tests.LeanJSWorkers
 export LEAN_PATH="$BUILD/olean:$PROJECT/.lake/build/lib/lean"
-LAB_MODULES=(Graphics GraphicsPrepared Font SVGPathData SVGCurves SVGPath SVGReferences SVGCSS SVGDash SVGDashUnits SVGStroke ImagePNG ImageJPEG ImageGIF ImageData SVG SVGRaster SVGText SVGForgiving WebRenderSVG WebRender WebHit WebRenderRDF WebRenderFont WebRenderFontRequests WebRenderScript WebSelection WebHistory WebRoute WebGesture WebShell WebPrint Geometry SceneSVG FoafGraph FoafNaut WebGraph WebXslt WebWasmSample WebWasm WebEventLoop WebScripts WebState WebSparql WebRepaint WebAccept WebConsole WebDocument RenderPlan)
+LAB_MODULES=(Graphics GraphicsPrepared Font SVGPathData SVGCurves SVGPath SVGReferences SVGCSS SVGDash SVGDashUnits SVGStroke ImagePNG ImageJPEG ImageGIF ImageData SVG SVGRaster SVGText SVGForgiving WebRenderSVG WebRender WebHit WebRenderRDF WebRenderFont WebRenderFontRequests WebRenderScript WebSelection WebHistory WebRoute WebGesture WebShell WebPrint Geometry SceneSVG FoafGraph FoafNaut WebGraph WebXslt WebWasmSample WebWasm WebEventLoop WebScripts WebState WebSparql WebRepaint WebAccept WebConsole WebPaint WebDocument RenderPlan)
 for module in "${LAB_MODULES[@]}"; do
   printf 'LEAN %s %s\n' "$module" "$(date -u)"
   lean -R "$LAB" -o "$BUILD/olean/$module.olean" -c "$BUILD/ir/$module.c" "$LAB/$module.lean"
 done
+# Lean hygiene ratchet (issue 390; docs/designissues/2026-11-11-lean-hygiene-ratchet.md).
+# LabHygiene.lean counts the unsafe, implemented_by, partial def, extern and opaque
+# declarations Lean recorded for these modules and the L4Factoidal modules they import;
+# its theorem lab_ratchet fails to compile when a count is above its baseline. It must
+# import every module above; its counts become the build record's hygiene field.
+# Not linked: no runtime code.
+rm -f "$BUILD/hygiene.json"
+for module in "${LAB_MODULES[@]}"; do
+  grep -qx "import $module" "$LAB/LabHygiene.lean" 2>/dev/null || { echo "LabHygiene.lean does not import $module: the hygiene ratchet would not see it; build refused" >&2; exit 1; }
+done
+printf 'LEAN LabHygiene %s\n' "$(date -u)"
+lean -R "$LAB" "$LAB/LabHygiene.lean" | tee "$BUILD/hygiene.log"
+sed -n 's/^HYGIENE_JSON //p' "$BUILD/hygiene.log" > "$BUILD/hygiene.json"
+[ -s "$BUILD/hygiene.json" ] || { echo 'LabHygiene.lean printed no HYGIENE_JSON line; build refused' >&2; exit 1; }
 for check in WebRenderTests WebRenderFontRequestsTests WebRenderScriptTests WebDocumentTests; do
   lean -R "$LAB" "$LAB/$check.lean"
 done
@@ -73,7 +87,7 @@ def visit(module):
     seen.add(module); source=project/Path(*module.split('.')).with_suffix('.lean')
     for imported in re.findall(r'^import\s+(\S+)',source.read_text(),re.M): visit(imported)
     order.append(str(project/'.lake/build/ir'/Path(*module.split('.')).with_suffix('.c')))
-for module in ['L4Factoidal.Codec.Inflate','L4Factoidal.DOM.OfXml','L4Factoidal.Rendering.Layout','L4Factoidal.Rendering.SfntProfile','L4Factoidal.Rendering.Links','L4Factoidal.XML.NamespaceView','L4Factoidal.Tdb2.Format','L4Factoidal.Rendering.FloatFormat','L4Factoidal.Syntax.IriResolve','L4Factoidal.Rendering.RdfView','L4Factoidal.Rendering.FontRequests','L4Factoidal.Unicode.BidiData','L4Factoidal.Unicode.Bidi','L4Factoidal.XSLT.Transform','L4Factoidal.XSLT4.Transform','L4Factoidal.UI.PolicyProtocol','L4Factoidal.UI.Presentation','L4Factoidal.UI.Geometry','L4Factoidal.UI.LayoutPolicy','L4Factoidal.Syntax.Turtle','L4Factoidal.JSON.Parser','L4Factoidal.JSON.Serialize','L4Factoidal.WasmVM.Api','L4Factoidal.WasmVM.Bench.Engine','L4Factoidal.WasmVM.Tests.Proposals','L4Factoidal.WasmVM.Wasi','L4Factoidal.WasmVM.Hosts.Page','L4Factoidal.WasmVM.Hosts.PageAot','L4Factoidal.WHATWG.Encoding.Sniff','L4Factoidal.WasmVM.Hosts.LeanJS','L4Factoidal.WasmVM.Hosts.LeanJSRealm','L4Factoidal.EventLoop.Model','L4Factoidal.EventLoop.Dispatch','L4Factoidal.SPARQL.Query','L4Factoidal.SPARQL.Parser','L4Factoidal.SPARQL.StorePlan','L4Factoidal.Planner.Kinds.Memory','L4Factoidal.Planner.FromQuery','L4Factoidal.RDF.Pretty','L4Factoidal.FrameCost.Band','L4Factoidal.FrameCost.Lru','L4Factoidal.Rendering.ComputedValues']: visit(module)
+for module in ['L4Factoidal.Codec.Inflate','L4Factoidal.DOM.OfXml','L4Factoidal.Rendering.Layout','L4Factoidal.Rendering.SfntProfile','L4Factoidal.Rendering.Links','L4Factoidal.XML.NamespaceView','L4Factoidal.Tdb2.Format','L4Factoidal.Rendering.FloatFormat','L4Factoidal.Syntax.IriResolve','L4Factoidal.Rendering.RdfView','L4Factoidal.Rendering.FontRequests','L4Factoidal.Unicode.BidiData','L4Factoidal.Unicode.Bidi','L4Factoidal.XSLT.Transform','L4Factoidal.XSLT4.Transform','L4Factoidal.UI.PolicyProtocol','L4Factoidal.UI.Presentation','L4Factoidal.UI.Geometry','L4Factoidal.UI.LayoutPolicy','L4Factoidal.Syntax.Turtle','L4Factoidal.JSON.Parser','L4Factoidal.JSON.Serialize','L4Factoidal.WasmVM.Api','L4Factoidal.WasmVM.Bench.Engine','L4Factoidal.WasmVM.Tests.Proposals','L4Factoidal.WasmVM.Wasi','L4Factoidal.WasmVM.Hosts.Page','L4Factoidal.WasmVM.Hosts.PageAot','L4Factoidal.WHATWG.Encoding.Sniff','L4Factoidal.WasmVM.Hosts.LeanJS','L4Factoidal.WasmVM.Hosts.LeanJSRealm','L4Factoidal.WasmVM.Hosts.LeanJSWorkers','L4Factoidal.EventLoop.Model','L4Factoidal.EventLoop.Dispatch','L4Factoidal.SPARQL.Query','L4Factoidal.SPARQL.Parser','L4Factoidal.SPARQL.StorePlan','L4Factoidal.Planner.Kinds.Memory','L4Factoidal.Planner.FromQuery','L4Factoidal.RDF.Pretty','L4Factoidal.FrameCost.Band','L4Factoidal.FrameCost.Lru','L4Factoidal.Rendering.ComputedValues','L4Factoidal.Rendering.FontFaceRule','L4Factoidal.Rendering.Smil','L4Factoidal.Rendering.ClipTheorems','L4Factoidal.Rendering.InkBound']: visit(module)
 Path(sys.argv[2]).write_text('\n'.join(order)+'\n')
 PY
 SOURCES=()
@@ -91,6 +105,14 @@ done
 for module in "${LAB_MODULES[@]}"; do SOURCES+=("$BUILD/ir/$module.c"); done
 if [ "$MODE" = --source-only ]; then echo 'WEB_RENDER_SOURCE_RC=0'; exit 0; fi
 TOOLCHAIN=$(lean --print-prefix)
+# Fails the build if GNU MP reached a linked binary (issue 393).
+assert_no_gmp(){
+  if nm "$1" 2>/dev/null | grep -q '__gmp'; then
+    echo "GNU MP symbols in $1 ($(nm "$1" 2>/dev/null | grep -c '__gmp')), expected none" >&2
+    exit 1
+  fi
+  echo "NO_GMP $(basename "$1"): nm shows no __gmp symbol"
+}
 if [ "$MODE" = --native ]; then
   OBJECTS=()
   for source in "${SOURCES[@]}" "$BUILD/ir/WebRenderCLI.c"; do
@@ -113,13 +135,23 @@ if [ "$MODE" = --native ]; then
     "${CC:-cc}" -O3 -DNDEBUG -I "$HACL/include" -I "$TOOLCHAIN/include" -c "$source" -o "$object"
     OBJECTS+=("$object")
   done
-  leanc -O3 -o "$BUILD/web-render-native" "${OBJECTS[@]}"
+  LEANLIB="$TOOLCHAIN/lib/lean"
+  # Native macOS builds link Lean's runtime without GNU MP (issue 393): see
+  # build-leanrt-no-gmp.sh. Linux still links through leanc with GMP (not yet changed).
+  if [ "$(uname -s)" = Darwin ]; then
+    LEANRT=$("$LAB/build-leanrt-no-gmp.sh" "$TOOLCHAIN" "$LAB/.build/leanrt-no-gmp" | tail -1)
+    "${CC:-cc}" -O3 -o "$BUILD/web-render-native" "${OBJECTS[@]}" \
+      "$LEANLIB/libInit.a" "$LEANLIB/libStd.a" "$LEANLIB/libleancpp.a" "$LEANRT" \
+      -L"$TOOLCHAIN/lib" -luv -lc++ -Wl,-dead_strip 2>&1 | { grep -v "was built for newer .macOS. version" >&2 || true; }
+    assert_no_gmp "$BUILD/web-render-native"
+  else
+    leanc -O3 -o "$BUILD/web-render-native" "${OBJECTS[@]}"
+  fi
   echo "WEB_RENDER_NATIVE=$BUILD/web-render-native"
   # The same objects and the Wasm C shim, as a library the desktop app opens through FFI.
   # Native output is the same bytes as Wasm output (native_html_test.ts checks this).
   LIBRARY_OBJECTS=()
   for object in "${OBJECTS[@]}"; do [ "$(basename "$object")" = WebRenderCLI.o ] || LIBRARY_OBJECTS+=("$object"); done
-  LEANLIB="$TOOLCHAIN/lib/lean"
   case "$(uname -s)" in
     Darwin) LIBRARY="$BUILD/engines/libweb-render.dylib"; SHARED=(-dynamiclib -Wl,-dead_strip -lc++);;
     *) LIBRARY="";;
@@ -129,8 +161,9 @@ if [ "$MODE" = --native ]; then
   "${CC:-cc}" -O3 -DNDEBUG -I "$TOOLCHAIN/include" -c "$LAB/web_render_shim.c" -o "$BUILD/obj-native/web_render_shim.o"
   # Static Lean runtime from the same toolchain: the library needs no Lean at run time.
   "${CC:-cc}" -O2 -o "$LIBRARY" "${LIBRARY_OBJECTS[@]}" "$BUILD/obj-native/web_render_shim.o" \
-    "$LEANLIB/libInit.a" "$LEANLIB/libStd.a" "$LEANLIB/libleancpp.a" "$LEANLIB/libleanrt.a" \
-    -L"$TOOLCHAIN/lib" -lgmp -luv "${SHARED[@]}" 2>&1 | { grep -v "was built for newer .macOS. version" >&2 || true; }
+    "$LEANLIB/libInit.a" "$LEANLIB/libStd.a" "$LEANLIB/libleancpp.a" "$LEANRT" \
+    -L"$TOOLCHAIN/lib" -luv "${SHARED[@]}" 2>&1 | { grep -v "was built for newer .macOS. version" >&2 || true; }
+  assert_no_gmp "$LIBRARY"
   echo "WEB_RENDER_LIBRARY=$LIBRARY"
   fi
 else
@@ -194,7 +227,9 @@ else
     emcc "${FLAGS[@]}" -I "$HACL/include" -c "$source" -o "$object"
     OBJECTS+=("$object")
   done
-  em++ -O2 -DNDEBUG -fwasm-exceptions --no-entry "${OBJECTS[@]}" "${CORE_OBJECTS[@]}" "$RUNTIME/rt-obj/"*.o \
+  # Link at -O3 (wasm-opt -O3): 3.8 % less over gzip (6.20 -> 5.97 MB) for everyone who loads the Hub,
+  # the same time to first frame and a few percent less stack per call (2026-11-09).
+  em++ -O3 -DNDEBUG -fwasm-exceptions --no-entry "${OBJECTS[@]}" "${CORE_OBJECTS[@]}" "$RUNTIME/rt-obj/"*.o \
     -o "$BUILD/engines/web-render.mjs" -sMODULARIZE=1 -sEXPORT_ES6=1 -sINVOKE_RUN=0 \
     -sEXPORTED_FUNCTIONS=_web_render_call,_web_render_rdf_call,_web_render_font_call,_web_render_font_requests_call,_web_document_call,_web_document_call_bin,_web_document_font_call_bin,_web_document_image_call_bin,_web_document_decode_call_bin,_web_document_decode2_call_bin,_web_render_hit,_web_render_free,_malloc,_free -sEXPORTED_RUNTIME_METHODS=ccall,UTF8ToString,HEAPU8,stackSave,stackRestore \
     -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=4MB -sENVIRONMENT=node,web,worker -sASSERTIONS=1

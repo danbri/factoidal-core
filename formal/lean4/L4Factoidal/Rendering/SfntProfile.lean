@@ -1,6 +1,13 @@
 import L4Factoidal.Rendering.Layout
 import L4Factoidal.Rendering.SfntShape
 import L4Factoidal.Rendering.SfntOutline
+import L4Factoidal.Rendering.InkBound
+-- The `csimp` theorems of `Prim.FloatOfNat` make this module's `Float.ofNat`, `Float.ofInt` and
+-- `n.toFloat` calls the fast twins (no decimal parse of 2^53 at each call, Lean 4.33.1): keep
+-- this import.
+import L4Factoidal.Prim.FloatOfNat
+import L4Factoidal.Rendering.ColrRaster
+import L4Factoidal.Unicode.EmojiData
 
 /-! A font profile from the bytes of a font file. Lean reads the file, shapes
 each word and takes the outlines, so no font library and no host runs.
@@ -20,6 +27,12 @@ structure Font where
   family : String
   sha256 : String
   faceIndex : Nat := 0
+  /-- CSS Fonts 4 §4.6 `unicode-range` of a web font: the font draws only these
+  characters (inclusive ranges). Empty: every character it has. -/
+  ranges : List (Nat × Nat) := []
+  /-- The colour glyphs (COLR and CPAL), when the font has them and the policy lets
+  Lean draw them (issue 1276). -/
+  colour : Option ColrRaster.Colour := none
 
 /-- One glyph, with its position in font units and its first source character. -/
 private structure Placed where
@@ -28,6 +41,11 @@ private structure Placed where
   xOffset : Int
   yOffset : Int
   cluster : Nat
+  /-- GPOS attached the glyph to another (a mark to its base). -/
+  attached : Bool := false
+  /-- The combining class of the glyph's own character (its cluster may start at the base). -/
+  mark : Nat := 0
+  deriving Inhabited
 
 private def ofInt (v : Int) : Float :=
   if v < 0 then -(Float.ofNat v.natAbs) else Float.ofNat v.natAbs
@@ -60,12 +78,33 @@ def decodeBase64 (text : String) : Option ByteArray := Id.run do
       bits := bits%2^held
   return some out
 
-/-- The font policy decides first, as it does for the native adapter. -/
+/-- A number for a font from the first six hexadecimal digits of its SHA-256. -/
+private def shaKey (sha256 : String) : Nat :=
+  (sha256.toList.take 6).foldl (fun n c =>
+    n*16 + (if c.isDigit then c.toNat-48 else if 'a' ≤ c && c ≤ 'f' then c.toNat-87 else 0)) 0
+
+/-- The font policy decides first, as it does for the native adapter. A COLR table
+that the policy allows and that passes its checks (`SfntColr.read`) gives the font
+colour glyphs; one that fails them leaves the font without colour, and its outlines
+still draw. A font with no COLR table pays nothing for this. -/
 def Font.read (bytes : ByteArray) (family sha256 : String) (faceIndex : Nat := 0) : Except String Font := do
   let dir ← FontPolicy.readDirectory bytes faceIndex
-  unless (FontPolicy.decide FontPolicy.Policy.standard ⟨family,"",sha256⟩ dir).fontUsed do
+  let decision := FontPolicy.decide FontPolicy.Policy.standard ⟨family,"",sha256⟩ dir
+  unless decision.fontUsed do
     throw "font.file.refused"
-  return ⟨bytes,dir,← SfntMetrics.Face.read bytes dir,← SfntOutline.cffFont bytes dir,family,sha256,faceIndex⟩
+  let face ← SfntMetrics.Face.read bytes dir
+  let cff ← SfntOutline.cffFont bytes dir
+  let colour := if !decision.used.contains .colour then none else
+    match SfntColr.read bytes dir face.numGlyphs with
+    | .ok (some t) => some (ColrRaster.Colour.make t ⟨bytes,dir,cff⟩ face.unitsPerEm (shaKey sha256))
+    | _ => none
+  return {bytes,dir,face,cff,family,sha256,faceIndex,colour}
+
+/-- The colour paint of glyph `g`, when it is a colour glyph of the font. -/
+def Font.colourOf (f : Font) (g : Nat) : Option FontProvider.Colour := do
+  let c ← f.colour
+  let k ← c.table.baseIndex f.bytes g
+  return {em := Float.ofNat f.face.unitsPerEm, baseline := ofInt f.face.ascender, image := c.image k}
 
 private def shaped (f : Font) (text : String) (rtl : Option Bool) :
     Except String (String × Bool × Array Placed) := do
@@ -74,7 +113,8 @@ private def shaped (f : Font) (text : String) (rtl : Option Bool) :
   let mut out := #[]
   for (g,byte) in s.glyphs.zip s.clusterBytes do
     let some cluster := chars.get? byte | throw "font profile: cluster inside a character"
-    out := out.push ⟨g.id,g.advance.toNat,g.xOffset,g.yOffset,cluster⟩
+    out := out.push ⟨g.id,g.advance.toNat,g.xOffset,g.yOffset,cluster,g.attachedTo.isSome,
+      SfntFallback.recategorize g.codepoint (SfntFallback.modifiedCcc g.codepoint)⟩
   return (s.script,s.rtl,out)
 
 /-- One glyph for each character, in visual order for right-to-left text. -/
@@ -84,14 +124,45 @@ private def nominal (f : Font) (text : String) (rtl : Option Bool) : Except Stri
   let backward := rtl.getD (Unicode.ScriptDirection.guessRtl text)
   return ("",backward,if backward then glyphs.reverse else glyphs)
 
+/-- The box of an outline's points, in font units (y up); `none` for no point. -/
+def outlineBox (o : FontData.Outline) : Option InkBound.Box := Id.run do
+  let mut box : Option InkBound.Box := none
+  let add := fun (b : Option InkBound.Box) (x y : Int) => match b with
+    | none => some (⟨x,y,x,y⟩ : InkBound.Box)
+    | some b => some ⟨min b.x0 x,min b.y0 y,max b.x1 x,max b.y1 y⟩
+  for c in o.commands do
+    match c with
+    | .move x y | .line x y => box := add box x y
+    | .quadratic a b x y => box := add (add box a b) x y
+    | .cubic a b c d x y => box := add (add (add box a b) c d) x y
+    | .close => pure ()
+  return box
+
+/-- The glyph id of a glyph whose ink does not fit its cluster box (`InkBound.place`):
+it has no outline, so it draws nothing. No font has this many glyphs. -/
+def inkless : Nat := 0x110000
+
 /-- The word as the font provider takes it, shaped in direction `rtl` (`none`:
 the script's). Only the outlines and the shaper touch font data; `prepare`
-checks the record, as for the native adapter. -/
+checks the record, as for the native adapter.
+
+Hostile text (issue 1268, "Zalgo"): the text is shaped in Stream-Safe Text Format
+(`InkBound.streamSafe`: a joiner after each 30 marks, so a cluster has at most 30
+marks; its clusters count in the characters of `text`), and each glyph's ink is kept
+in its cluster's box widened by 31 em (`InkBound.place`; ink already inside, which is
+all ordinary text, is not moved, `InkBound.place_keep`). -/
 def Font.word (f : Font) (text : String) (pixelSize : Nat) (rtl : Option Bool := none) :
     Except String FontProvider.Word := do
-  let (script,backward,placed) ← match shaped f text rtl with
+  let chars := text.toList
+  let safe := InkBound.streamSafe chars
+  let (shapeText,source) := if safe.length == chars.length then (text,none)
+    else (String.ofList safe,some (InkBound.sourceIndex chars))
+  let ((script,backward,placed) : String × Bool × Array Placed) ← match shaped f shapeText rtl with
     | .ok value => pure value
-    | .error _ => nominal f text rtl
+    | .error _ => nominal f shapeText rtl
+  let placed : Array Placed := match source with
+    | none => placed
+    | some index => placed.map fun (g : Placed) => {g with cluster := index.getD g.cluster g.cluster}
   let length := text.length
   -- A TreeMap gives each cluster once, in order, with no recursive sort.
   let clusters : Std.TreeMap Nat Unit := placed.foldl (fun seen g => seen.insert g.cluster ()) {}
@@ -105,17 +176,77 @@ def Font.word (f : Font) (text : String) (pixelSize : Nat) (rtl : Option Bool :=
   for g in placed do
     unless outlines.contains g.id do
       outlines := outlines.insert g.id ⟨g.id,← SfntOutline.outline f.bytes f.dir g.id f.cff⟩
-  let glyphs := placed.map fun g =>
+  let face := f.face
+  -- Each cluster's advance box: the pens of its glyphs.
+  let mut pen : Int := 0
+  let mut pens : Array Int := #[]
+  let mut spans : Std.TreeMap Nat (Int × Int) := {}
+  for g in placed do
+    pens := pens.push pen
+    spans := spans.insert g.cluster (match spans.get? g.cluster with
+      | some (a,b) => (min a pen,max b (pen+g.advance))
+      | none => (pen,pen+g.advance))
+    pen := pen+g.advance
+  let boxes : Std.TreeMap Nat (Option InkBound.Box) := outlines.foldl (fun m id o => m.insert id (outlineBox o)) {}
+  -- A mark that the font's GPOS did not attach (no anchor for this base: Noto Sans Math has
+  -- U+0308 but no mark anchor on its Fraktur letters) is placed on the ink of the base before
+  -- it as HarfBuzz places marks in a font with no GPOS (`SfntFallback.positionMark`), in
+  -- place of drawing it after the base. A font with no GPOS was placed so by the shaper.
+  -- (Issue https://github.com/danbri/factoidal-core/issues/368.)
+  let hasGpos := f.dir.any (·.tag == "GPOS")
+  let mut placed := placed
+  if hasGpos && !backward then
+    let gap : Int := (f.face.unitsPerEm / 16 : Nat)
+    let mut baseIdx : Option Nat := none
+    let mut cluster : Option SfntFallback.Extents := none
+    let mut lastCc := 255
+    for k in [0:placed.size] do
+      let g := placed[k]!
+      let cc := g.mark
+      if cc == 0 || g.advance != 0 then
+        -- A joiner has no ink: the marks after it (Stream-Safe) stay on the base before it.
+        if ((boxes.get? g.id).join).isSome then
+          baseIdx := some k
+          cluster := none
+          lastCc := 255
+        continue
+      if g.attached then continue
+      let some bi := baseIdx | continue
+      let b := placed[bi]!
+      let (some (some bInk),some (some mInk)) := (boxes.get? b.id,boxes.get? g.id) | continue
+      if lastCc != cc || cluster.isNone then
+        lastCc := cc
+        cluster := some ⟨bInk.x0,bInk.y1+b.yOffset,bInk.x1-bInk.x0,-(bInk.y1-bInk.y0)⟩
+      let some c := cluster | continue
+      let (c',x,y) := SfntFallback.positionMark c ⟨mInk.x0,mInk.y1,mInk.x1-mInk.x0,-(mInk.y1-mInk.y0)⟩ cc gap
+      cluster := some c'
+      -- From the base's origin (its pen plus offset) to the mark's pen.
+      let penB := pens.getD bi 0
+      let penM := pens.getD k 0
+      placed := placed.set! k {g with xOffset := penB+b.xOffset+x-penM, yOffset := y, attached := true}
+  let mut bounded : Array Placed := #[]
+  for (g,p) in placed.zip pens do
+    let (a,b) := (spans.get? g.cluster).getD (p,p+g.advance)
+    let box := InkBound.clusterBox face.unitsPerEm face.ascender face.descender a (b-a)
+    match (boxes.get? g.id).getD none with
+    | none => bounded := bounded.push g
+    | some ink =>
+      match InkBound.place box (ink.shift p 0) g.xOffset g.yOffset with
+      | some (x,y) => bounded := bounded.push {g with xOffset := x, yOffset := y}
+      | none => bounded := bounded.push {g with id := inkless}
+  if bounded.any (·.id == inkless) then outlines := outlines.insert inkless ⟨inkless,#[]⟩
+  let glyphs := bounded.map fun g =>
     ({id := g.id,clusterByte := 0,clusterChar := g.cluster,clusterEndChar := finish g.cluster,
       xAdvance := Float.ofNat g.advance,yAdvance := 0,xOffset := ofInt g.xOffset,yOffset := ofInt g.yOffset} : FontData.ShapedGlyph)
-  let face := f.face
-  FontProvider.prepare {
+  let word ← FontProvider.prepare {
     text,fontSha256 := f.sha256,fontPath := "",faceIndex := f.faceIndex,family := f.family,style := "",
     metrics := ⟨Float.ofNat face.unitsPerEm,ofInt face.ascender,ofInt face.descender,ofInt face.lineGap⟩,
     direction := if backward then "rtl" else "ltr",script,language := "",
     harfbuzzVersion := "none (Lean shaper)",freeTypeVersion := "none (Lean outlines)",
     pixelSize,glyphs,outlines := outlines.toList.toArray.map Prod.snd,bitmaps := #[],
     advance := glyphs.foldl (fun total g => total+g.xAdvance) 0} (notdef := true)
+  if f.colour.isNone then return word
+  return {word with glyphs := word.glyphs.map fun g => {g with colour := f.colourOf g.index}}
 
 /-! ### Fallback fonts
 
@@ -127,6 +258,7 @@ primary font, so layout sees one font, as before. -/
 
 /-- The font's cmap has a glyph other than .notdef for the character. -/
 def Font.has (f : Font) (c : Char) : Bool :=
+  (f.ranges.isEmpty || f.ranges.any fun (lo,hi) => lo ≤ c.toNat && c.toNat ≤ hi) &&
   match f.face.glyphCp f.bytes c.toNat with
   | .ok g => g != 0
   | .error _ => false
@@ -143,34 +275,152 @@ def staysWithBase (c : Nat) : Bool :=
 emoji presentation selector U+FE0F and the combining enclosing keycap U+20E3. -/
 def asksForEmoji (c : Nat) : Bool := c == 0xFE0F || c == 0x20E3
 
+/-! #### Emoji (UTS #51)
+
+An emoji and the characters that make a sequence of it (U+FE0F, a skin tone, ZWJ and
+the next emoji, a second regional indicator, tags, U+20E3) are one grapheme cluster
+(UAX #29), and the font has the sequence as one glyph only when it draws all of it.
+So a cluster with an emoji goes to one font whole: the first font that has all its
+characters (default ignorables aside), of the kind its presentation asks for. Emoji
+presentation (U+FE0F, a sequence, or an emoji whose Emoji_Presentation is Yes) takes
+a colour font first, then an outline emoji font (one that maps U+FE0F), then any; text
+presentation (U+FE0E, or Emoji_Presentation No) takes a font without colour first.
+When several fonts of that kind have all the characters, as slices of one colour font
+do for a flag, the one that shapes the cluster into a ligature wins, with the fewest glyphs
+(`shapeScore`). -/
+
+/-- The emoji properties of UTS #51 (`EmojiData` bits). -/
+def emojiProps : Unicode.RangeTable := Unicode.RangeTable.ofText Unicode.EmojiData.emojiText
+
+private def bitsOf (c : Nat) : UInt8 := emojiProps.get c.toUInt32
+private def regional (c : Nat) : Bool := 0x1F1E6 ≤ c && c ≤ 0x1F1FF
+private def tag (c : Nat) : Bool := 0xE0020 ≤ c && c ≤ 0xE007F
+
+/-- A character that can start or join an emoji: Emoji or Extended_Pictographic. -/
+def emojiish (c : Nat) : Bool :=
+  c ≥ 0x23 && (bitsOf c != 0 || Unicode.Segmentation.extPictTable.get c.toUInt32 != 0)
+
+/-- UTS #51 §4: the presentation a cluster asks for: `some true` emoji, `some false`
+text, `none` when it has no emoji. -/
+def presentationOf (cluster : Array Nat) : Option Bool :=
+  if !cluster.any fun c => (bitsOf c &&& Unicode.EmojiData.emoji) != 0 ||
+      Unicode.Segmentation.extPictTable.get c.toUInt32 != 0 then none
+  else if cluster.contains 0xFE0E then some false
+  else if cluster.any (fun c => c == 0xFE0F || c == 0x20E3 || regional c || tag c ||
+      (bitsOf c &&& Unicode.EmojiData.modifier) != 0) || (cluster.size > 1 && cluster.contains 0x200D) then some true
+  else some ((bitsOf (cluster[0]?.getD 0) &&& Unicode.EmojiData.presentation) != 0)
+
+/-- How well font `f` suits a presentation: 0 best. -/
+private def rank (f : Font) (emoji : Bool) : Nat :=
+  if emoji then (if f.colour.isSome then 0 else if f.has (Char.ofNat 0xFE0F) then 1 else 2)
+  else if f.colour.isSome then 1 else 0
+
+/-- How well `f` draws the cluster `text`, lower first: 0 when shaping makes a glyph that is
+no character's own glyph (the font has the sequence as a ligature), else 1; then the glyphs
+with width. A font that has a flag's two regional indicators but not the flag can still
+give one glyph (Noto Color Emoji drops the second letter), so the count alone does not say. -/
+private def shapeScore (f : Font) (cluster : Array Char) (text : String) : Nat × Nat :=
+  match SfntShape.shape f.bytes f.dir f.face text with
+  | .ok s =>
+    let drawn := s.glyphs.filter (·.advance > 0)
+    let own := cluster.filterMap fun c => (f.face.glyphCp f.bytes c.toNat).toOption
+    ((if drawn.any (fun g => !own.contains g.id) then 0 else 1), drawn.size)
+  | .error _ => (1, text.length + 1)
+
+/-- The font for an emoji cluster, when one has all of it. -/
+def clusterFont (fonts : Array Font) (cluster : Array Char) (emoji : Bool) : Option Nat := Id.run do
+  let need := cluster.filter fun c => !SfntFallback.isDefaultIgnorable c.toNat
+  let cands := (List.range fonts.size).filterMap fun i =>
+    fonts[i]?.bind fun f => if need.all f.has then some (i,f) else none
+  let some best := (cands.map fun (_,f) => rank f emoji).min? | return none
+  let pool := cands.filter fun (_,f) => rank f emoji == best
+  match pool with
+  | [] => return none
+  | [(i,_)] => return some i
+  | (i,f) :: rest =>
+    if need.size < 2 then return some i
+    let text := String.ofList cluster.toList
+    let better := fun (a b : Nat × Nat) => a.1 < b.1 || (a.1 == b.1 && a.2 < b.2)
+    let first := (shapeScore f cluster text, i)
+    return (rest.foldl (fun (acc : (Nat × Nat) × Nat) (j,g) =>
+      let n := shapeScore g cluster text
+      if better n acc.1 then (n,j) else acc) first).2
+
+/-- A character of a script whose letters join (Arabic, Syriac, N'Ko, ...). -/
+def joiningChar (c : Char) : Bool :=
+  0x600 ≤ c.toNat && SfntArabic.joiningScripts.contains (Unicode.ScriptData.scriptOf c.toNat)
+
+/-- The font's GSUB names the script of `c` by the script's own tag, not by a `DFLT`
+or `latn` fallback: the font has the joining forms of that script. -/
+def Font.namesScriptOf (f : Font) (c : Char) : Bool :=
+  match f.dir.find? (·.tag == "GSUB") with
+  | none => false
+  | some r =>
+    let own := (SfntKern.scriptTags c.toString).filter fun t => t != "DFLT" && t != "dflt" && t != "latn"
+    match SfntSubst.chooseScript f.bytes r.offset own with
+    | .ok (some _) => true
+    | _ => false
+
+/-- The first font with `p`. For a character of a joining script, the first font with
+`p` whose GSUB names the script comes before it: a font held earlier that only has the
+letters (Noto Sans Math has the Arabic letters, with no joining forms) would draw them
+unjoined. With no such font, the first font with `p`. -/
+private def firstFont (fonts : Array Font) (c : Char) (p : Font → Bool) : Option Nat :=
+  match fonts.findIdx? p with
+  | none => none
+  | some i =>
+    if !joiningChar c || (fonts[i]?.map (·.namesScriptOf c)).getD false then some i
+    else some ((fonts.findIdx? fun f => p f && f.namesScriptOf c).getD i)
+
+/-- The font of character `k` alone (the rules before emoji clusters): see `runsOf`. -/
+private def charFont (fonts : Array Font) (chars : Array Char) (k : Nat) (last : Option Nat) : Nat :=
+  let c := chars[k]!
+  let keep := match last with
+    | some i => staysWithBase c.toNat && (fonts[i]?.map fun (f : Font) => f.has c).getD false
+    | none => false
+  let emoji := match chars[k + 1]? with
+    -- A base followed by a combining mark (canonical combining class not 0) takes
+    -- the first font that has both, when one does, so that the font places the mark.
+    | some n => if (asksForEmoji n.toNat || Unicode.Normalization.ccc n.toNat != 0) &&
+        !staysWithBase c.toNat && Unicode.Normalization.ccc c.toNat == 0 then
+        firstFont fonts c fun (f : Font) => f.has c && f.has n else none
+    | none => none
+  if keep then last.getD 0 else
+  match emoji with
+  | some i => i
+  | none => (firstFont fonts c fun (f : Font) => f.has c).getD (last.getD 0)
+
 /-- A word in runs: the index of a font in `fonts`, and the characters it draws.
 Each character goes to the first font that has it. A character in `staysWithBase`
 keeps the font of the run before it when that font has it. A character followed by
-U+FE0F or U+20E3 (`asksForEmoji`) goes to the first font that has both, when one
-does: the digit of a keycap and a symbol with emoji presentation (U+2665 U+FE0F)
+U+FE0F or U+20E3 (`asksForEmoji`), or by a combining mark, goes to the first font
+that has both, when one does: the digit of a keycap and a symbol with emoji presentation (U+2665 U+FE0F)
 come from the emoji font with their selector, not from the text font, so the
 font's sequences can form. A character that no font has stays in the run before
-it (the first font at the start), and shows as that font's .notdef glyph. -/
+it (the first font at the start), and shows as that font's .notdef glyph. A word
+with emoji goes by grapheme clusters, and each emoji cluster to one font whole
+(`clusterFont`, `presentationOf`). -/
 def runsOf (fonts : Array Font) (text : String) : Array (Nat × String) := Id.run do
   let mut runs : Array (Nat × String) := #[]
   let chars := text.toList.toArray
-  for k in [0:chars.size] do
-    let c := chars[k]!
-    let last := runs.back?.map (·.1)
-    let keep := match last with
-      | some i => staysWithBase c.toNat && (fonts[i]?.map fun (f : Font) => f.has c).getD false
-      | none => false
-    let emoji := match chars[k + 1]? with
-      | some n => if asksForEmoji n.toNat && !staysWithBase c.toNat then
-          fonts.findIdx? fun (f : Font) => f.has c && f.has n else none
-      | none => none
-    let pick := if keep then last.getD 0 else
-      match emoji with
-      | some i => i
-      | none => (fonts.findIdx? fun (f : Font) => f.has c).getD (last.getD 0)
-    runs := match runs.back? with
-      | some (i,s) => if i == pick then runs.pop.push (i,s.push c) else runs.push (pick,c.toString)
-      | none => runs.push (pick,c.toString)
+  let add := fun (runs : Array (Nat × String)) (pick : Nat) (c : Char) =>
+    match runs.back? with
+    | some (i,s) => if i == pick then runs.pop.push (i,s.push c) else runs.push (pick,c.toString)
+    | none => runs.push (pick,c.toString)
+  -- Below U+2000 an emoji (a digit, #, *, ©, ®) makes a sequence only with U+FE0F or
+  -- U+20E3 after it, so text with nothing from U+2000 that is an emoji pays one comparison
+  -- a character.
+  if !chars.any (fun c => c.toNat ≥ 0x2000 && emojiish c.toNat) then
+    for k in [0:chars.size] do
+      runs := add runs (charFont fonts chars k (runs.back?.map (·.1))) chars[k]!
+    return runs
+  let breaks := Unicode.Segmentation.graphemeBreaks chars
+  for b in [1:breaks.size] do
+    let (lo,hi) := (breaks[b-1]!,breaks[b]!)
+    let cluster := chars.extract lo hi
+    let whole := (presentationOf (cluster.map Char.toNat)).bind (clusterFont fonts cluster)
+    for k in [lo:hi] do
+      runs := add runs ((whole.getD (charFont fonts chars k (runs.back?.map (·.1))))) chars[k]!
   return runs
 
 private def scalePoint (k : Float) (p : Point) : Point := ⟨k*p.x,k*p.y⟩
@@ -192,22 +442,77 @@ def scaleGeometry (k : Float) : Geometry → Geometry
     | .path start segments closed => .path (scalePoint k start) (segments.map (scaleSegment k)) closed
     | other => other)
 
-/-- The word drawn with `fonts`, the first being the primary font. A word that the
-primary font draws alone is `Font.word` of that font, unchanged. Otherwise each run
-is shaped by its own font, and its glyphs are put in the primary font's units: the
-outlines and advances are scaled by the ratio of the units per em, and each glyph
-moves down by the difference of the ascents, so that the baselines are one line.
-The word keeps the primary font's name, units and metrics, which layout checks.
-Each run is shaped in direction `rtl` (`none`: its own script's), and the runs
-are drawn right to left when the word is (`rtl`, or with none, its script's). -/
-def wordIn (fonts : Array Font) (text : String) (pixelSize : Nat) (rtl : Option Bool := none) :
+/-- The ink box of glyph geometry in its y-down units, `(left, top, right, bottom)`:
+the bounds of the points and control points of its outlines, as a TrueType `glyf`
+box holds them. `none` for a glyph with no ink. -/
+def inkBox (geometry : List Geometry) : Option (Float × Float × Float × Float) := Id.run do
+  let mut box : Option (Float × Float × Float × Float) := none
+  let add := fun (b : Option (Float × Float × Float × Float)) (p : Point) =>
+    match b with
+    | none => some (p.x,p.y,p.x,p.y)
+    | some (l,t,r,d) => some (min l p.x,min t p.y,max r p.x,max d p.y)
+  for g in geometry do
+    match g with
+    | .path contours =>
+      for c in contours do
+        if let .path first segments _ := c then
+          box := add box first
+          for seg in segments do
+            match seg with
+            | .line p | .arc _ _ _ _ _ p => box := add box p
+            | .quadratic a p => box := add (add box a) p
+            | .cubic a b p => box := add (add (add box a) b) p
+    | .rect x y w h => box := add (add box ⟨x,y⟩) ⟨x+w,y+h⟩
+    | .circle cx cy r => box := add (add box ⟨cx-r,cy-r⟩) ⟨cx+r,cy+r⟩
+    | .ellipse cx cy rx ry => box := add (add box ⟨cx-rx,cy-ry⟩) ⟨cx+rx,cy+ry⟩
+    | .line a b c d => box := add (add box ⟨a,b⟩) ⟨c,d⟩
+    | .polygon points => for p in points do box := add box p
+  return box
+
+/-- The HarfBuzz combining class of a mark for fallback positioning
+(`SfntFallback.recategorize` of the modified class); 0 for a base. -/
+def markClass (c : Nat) : Nat :=
+  SfntFallback.recategorize c (SfntFallback.modifiedCcc c)
+
+private def toInt (v : Float) : Int :=
+  if v < 0 then -((-v).round.toUInt64.toNat : Int) else (v.round.toUInt64.toNat : Int)
+
+/-- Where a mark goes on a base (HarfBuzz `position_around_base`,
+`SfntFallback.positionMark`), in the word's y-down units with the baseline at `baseline`:
+`cluster` is the base's box (its ink, issue 368) and the mark goes by its own ink. The
+answer is the shift of the mark glyph, and the cluster box for a next mark of the same
+class. A gap of 1/16 em (`gap`) parts mark and base, as in HarfBuzz. -/
+def placeMark (cluster : SfntFallback.Extents) (mark : Float × Float × Float × Float) (markOrigin baseOrigin baseline : Float)
+    (cc : Nat) (gap : Int) : SfntFallback.Extents × Float × Float :=
+  let (l,t,r,b) := mark
+  let ext : SfntFallback.Extents := ⟨toInt (l-markOrigin),toInt (baseline-t),toInt (r-l),-(toInt (b-t))⟩
+  let (cluster',x,y) := SfntFallback.positionMark cluster ext cc gap
+  let toFloat := fun (i : Int) => if i < 0 then -(Float.ofNat i.natAbs) else Float.ofNat i.toNat
+  (cluster',baseOrigin+toFloat x-markOrigin,-(toFloat y))
+
+/-- The word drawn with `fonts`, in the units and metrics of `primary` (which need not
+be one of them). A word that `primary`, first in `fonts`, draws alone is `Font.word`
+of that font, unchanged. Otherwise each run (`runsOf`) is shaped by its own font, and
+its glyphs are put in the primary font's units: the outlines and advances are scaled by
+the ratio of the units per em, and each glyph moves down by the difference of the
+ascents, so that the baselines are one line. The word keeps the primary font's name,
+units and metrics, which layout checks. Each run is shaped in direction `rtl` (`none`:
+its own script's), and the runs are drawn right to left when the word is (`rtl`, or
+with none, its script's).
+
+Combining marks across fonts: a run of a left-to-right word that starts with marks
+(`markClass` not 0), after a run of another font, has its marks placed on the last
+glyph of that run (`placeMark`), with no advance: a base of one font and a mark of
+another stay one cluster on the screen. -/
+def wordWith (primary : Font) (fonts : Array Font) (text : String) (pixelSize : Nat) (rtl : Option Bool := none) :
     Except String FontProvider.Word := do
-  let some primary := fonts[0]? | throw "font profile: no font"
+  if fonts.isEmpty then throw "font profile: no font"
   let runs := runsOf fonts text
-  if runs.all (·.1 == 0) then return ← primary.word text pixelSize rtl
+  if runs.all (·.1 == 0) && (fonts[0]?.map (·.sha256)) == some primary.sha256 then return ← primary.word text pixelSize rtl
   let face := primary.face
   let units := Float.ofNat face.unitsPerEm
   let ascent := ofInt face.ascender
+  let gap : Int := (face.unitsPerEm / 16 : Nat)
   let mut glyphs : Array FontProvider.Glyph := #[]
   let mut pen : Float := 0
   -- The first character of each run, in logical order.
@@ -218,6 +523,12 @@ def wordIn (fonts : Array Font) (text : String) (pixelSize : Nat) (rtl : Option 
     at_ := at_+part.length
   let backward := rtl.getD (Unicode.ScriptDirection.guessRtl text)
   let order := if backward then (List.range runs.size).reverse else List.range runs.size
+  -- The last base glyph placed: its origin, advance and ink box, for marks of a next run.
+  let mut base : Option (Float × Float × Option (Float × Float × Float × Float)) := none
+  -- The index in `glyphs` of that base: a mark placed on it joins its cluster, so that
+  -- selection and copy take base and mark as one.
+  let mut baseGlyph : Option Nat := none
+  let mut lastFont : Option Nat := none
   for r in order do
     let (i,part) := runs[r]!
     let start := starts[r]!
@@ -225,15 +536,64 @@ def wordIn (fonts : Array Font) (text : String) (pixelSize : Nat) (rtl : Option 
     let w ← f.word part pixelSize rtl
     let k := units/w.unitsPerEm
     let down := ascent-k*w.ascent
+    -- Leading marks of this run, when they follow a base of another font.
+    let leading := (part.toList.takeWhile fun c => markClass c.toNat != 0).length
+    let attach := !backward && leading > 0 && lastFont.isSome && lastFont != some i
+    let mut cluster : Option SfntFallback.Extents := none
+    let mut lastCc := 255
+    let mut skipped : Float := 0
+    let mut runBase := base
+    let mut runBaseGlyph := baseGlyph
+    let chars := part.toList.toArray
     for g in w.glyphs do
-      let placed : FontProvider.Glyph := ⟨g.index,pen+k*g.x,k*g.y+down,k*g.advance,
-        start+g.clusterStart,start+g.clusterEnd,g.geometry.map (scaleGeometry k)⟩
-      glyphs := glyphs.push placed
-    pen := pen+k*w.advance
+      let geometry := g.geometry.map (scaleGeometry k)
+      let colour := g.colour.map fun c => {c with em := k*c.em, baseline := k*c.baseline}
+      let x := pen+k*g.x-skipped
+      let y := k*g.y+down
+      if attach && g.clusterStart < leading then
+        -- One cluster: the mark takes its base's start, and the base's end grows to the mark's.
+        let (cs,ce) := match baseGlyph.bind (glyphs[·]?) with
+          | some bg => (bg.clusterStart,max bg.clusterEnd (start+g.clusterEnd))
+          | none => (start+g.clusterStart,start+g.clusterEnd)
+        if let some bi := baseGlyph then
+          glyphs := glyphs.modify bi fun bg => {bg with clusterEnd := ce}
+        match base with
+        | some (origin,_,some (l,top,r,bottom)) =>
+          let cc := markClass (chars.getD g.clusterStart ' ').toNat
+          if lastCc != cc then
+            lastCc := cc
+            -- The base's ink across and up and down (issue 368): a mark of another font is
+            -- centred on the ink it is drawn over.
+            cluster := some ⟨toInt (l-origin),toInt (ascent-top),toInt (r-l),-(toInt (bottom-top))⟩
+          match inkBox geometry,cluster with
+          | some (ml,mt,mr,mb),some c =>
+            let (c',dx,dy) := placeMark c (ml+x,mt+y,mr+x,mb+y) x origin ascent cc gap
+            cluster := some c'
+            glyphs := glyphs.push ⟨g.index,x+dx,y+dy,0,cs,ce,geometry,colour⟩
+          | _,_ => glyphs := glyphs.push ⟨g.index,x,y,0,cs,ce,geometry,colour⟩
+        | _ => glyphs := glyphs.push ⟨g.index,x,y,0,cs,ce,geometry,colour⟩
+        skipped := skipped+k*g.advance
+      else
+        let placed : FontProvider.Glyph := ⟨g.index,x,y,k*g.advance,start+g.clusterStart,start+g.clusterEnd,geometry,colour⟩
+        glyphs := glyphs.push placed
+        if markClass (chars.getD g.clusterStart ' ').toNat == 0 then
+          runBase := some (x,k*g.advance,(inkBox geometry).map fun (l,t,r,b) => (l+x,t+y,r+x,b+y))
+          runBaseGlyph := some (glyphs.size-1)
+    pen := pen+k*w.advance-skipped
+    base := runBase
+    baseGlyph := runBaseGlyph
+    lastFont := some i
   -- FontProvider.Word in field order: text, font, face, family, style, size, units,
   -- ascent, descent, line gap, glyphs, advance.
   return ⟨text,primary.sha256,primary.faceIndex,primary.family,"",pixelSize,units,
     ascent,-ofInt face.descender,ofInt face.lineGap,glyphs,pen⟩
+
+/-- The word drawn with `fonts`, the first being the primary font (`wordWith`). -/
+def wordIn (fonts : Array Font) (text : String) (pixelSize : Nat) (rtl : Option Bool := none) :
+    Except String FontProvider.Word := do
+  let some primary := fonts[0]? | throw "font profile: no font"
+  wordWith primary fonts text pixelSize rtl
+
 
 /-- Elements whose text is never drawn as text: script and style data, the
 inert content of `template`, `noscript` (scripts run here, so its content is not
@@ -261,7 +621,9 @@ def wordsOf (dom : DOM.Dom) (limit : Nat := 8192) : Array String := Id.run do
     let node := dom.get id
     if node.type == .text && !inUnrendered dom id then
       for word in node.data.splitToList Char.isWhitespace do
-        if !word.isEmpty && seen.size < limit then seen := seen.insert word ()
+        -- As layout cuts it (`Layout.wordPieces`).
+        for (_, piece) in Layout.wordPieces word do
+          if !piece.isEmpty && seen.size < limit then seen := seen.insert piece ()
   return (seen.toList.map Prod.fst).toArray
 
 private def curveSteps (distance tolerance : Float) : Nat :=
@@ -358,7 +720,8 @@ def fontsKey (fonts : Array Font) : String :=
 `shape` (text, pixels, direction), which must give what `shapeFresh fonts` gives.
 The profile is named by the first font of `fonts`; the others draw what it lacks. -/
 def profile (fonts : Array Font) (memo : Memo)
-    (shape : String → Nat → Option Bool → Except String FontProvider.Word := shapeFresh fonts) :
+    (shape : String → Nat → Option Bool → Except String FontProvider.Word := shapeFresh fonts)
+    (webFonts : String → Array Font := fun _ => #[]) :
     Except String Layout.FontProfile := do
   let some f := fonts[0]? | throw "font profile: no font"
   let space ← match memo.get? " " with
@@ -374,6 +737,13 @@ def profile (fonts : Array Font) (memo : Memo)
     family := f.family,unitsPerEm := space.unitsPerEm,advance := 0,ascent := space.ascent,
     descent := space.descent,outline := fun _ => [],admits := fun _ => false,cssFamilies := [f.family],
     fontSha256 := some f.sha256,faceIndex := f.faceIndex,scalable := true,
-    shapedWord := some shapedWord,shapedWordDir := some shapedWordDir}
+    shapedWord := some shapedWord,shapedWordDir := some shapedWordDir,
+    -- Web fonts first, then the held fonts; the units and metrics stay the primary
+    -- font's. Words of web fonts are not in the memo.
+    familyWord := fun family =>
+      let web := webFonts family
+      if web.isEmpty then none else some fun text px rtl => do
+        let word ← wordWith f (web ++ fonts) text px rtl
+        return {(if px < flatBelow then flatWord word else word) with pixelSize := px}}
 
 end L4Factoidal.Rendering.SfntProfile

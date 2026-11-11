@@ -17,6 +17,7 @@ import Std.Data.HashSet
 import L4Factoidal.WasmVM.Syntax
 import L4Factoidal.WasmVM.Numerics
 import L4Factoidal.WasmVM.Exec.Code
+import L4Factoidal.WasmVM.Simd
 
 namespace L4Factoidal.WasmVM
 
@@ -49,23 +50,76 @@ structure Ctx where
   reps : Array Nat := #[]
   /-- Type index of each tag, imports first. -/
   tags : Array Nat := #[]
+  /-- The full definition of each type (`Module.defs`). -/
+  defs : Array TypeDef := #[]
   deriving Inhabited
 
 namespace Ctx
+
+def comp? (c : Ctx) (i : Nat) : Option CompType := c.defs[i]?.map (·.sub.comp)
+
+/-- The function type of type index `i`; none when `i` is a struct or an array type
+(the entry of `types` is then a placeholder). -/
+def funcT? (c : Ctx) (i : Nat) : Option FuncType :=
+  match c.comp? i with
+  | some (.func ft) => some ft
+  | some _ => none
+  | none => c.types[i]?
+
+def structT? (c : Ctx) (i : Nat) : Option (Array FieldType) :=
+  match c.comp? i with
+  | some (.struct fs) => some fs
+  | _ => none
+
+def arrayT? (c : Ctx) (i : Nat) : Option FieldType :=
+  match c.comp? i with
+  | some (.array f) => some f
+  | _ => none
+
+def isStructIdx (c : Ctx) (i : Nat) : Bool := (c.structT? i).isSome
+def isArrayIdx (c : Ctx) (i : Nat) : Bool := (c.arrayT? i).isSome
+def isFuncIdx (c : Ctx) (i : Nat) : Bool := !(c.isStructIdx i || c.isArrayIdx i)
+
+/-- A type with no declared subtype: a call through it compares type ids for equality. -/
+def isFinal (c : Ctx) (i : Nat) : Bool := (c.defs[i]?.map (·.sub.final)).getD true
+
+/-- Declared subtyping of defined types: `i` is equivalent to `j`, or the supertype
+chain of `i` reaches a type equivalent to `j`. A declared supertype has a smaller
+index, so `i + 1` steps are enough. -/
+def subIdx (c : Ctx) (j : Nat) : Nat → Nat → Bool
+  | 0, _ => false
+  | fuel + 1, i =>
+    if c.reps[i]? == c.reps[j]? && (c.reps[i]?).isSome then true else
+    match (c.defs[i]?).bind (·.sub.supers[0]?) with
+    | some s => if s < i then subIdx c j fuel s else false
+    | none => false
 
 def heapSub (c : Ctx) : HeapType → HeapType → Bool
   | a, b =>
     if a == b then true else
     match a, b with
-    | .idx i, .idx j => c.reps[i]? == c.reps[j]? && (c.reps[i]?).isSome
-    | .idx _, .func => true
-    | .nofunc, .func | .nofunc, .idx _ => true
+    | .idx i, .idx j => c.subIdx j (i + 1) i
+    | .idx i, .func => c.isFuncIdx i
+    | .idx i, .struct => c.isStructIdx i
+    | .idx i, .array => c.isArrayIdx i
+    | .idx i, .eq | .idx i, .any => !c.isFuncIdx i
+    | .nofunc, .func => true
+    | .nofunc, .idx j => c.isFuncIdx j
+    | .none, .idx j => !c.isFuncIdx j
     | .noextern, .extern => true
     | .noexn, .exn => true
     | .none, .any | .none, .eq | .none, .i31 | .none, .struct | .none, .array => true
     | .eq, .any | .i31, .any | .struct, .any | .array, .any => true
     | .i31, .eq | .struct, .eq | .array, .eq => true
     | _, _ => false
+
+/-- The top type of the hierarchy of a heap type. -/
+def top (c : Ctx) : HeapType → HeapType
+  | .func | .nofunc => .func
+  | .extern | .noextern => .extern
+  | .exn | .noexn => .exn
+  | .idx i => if c.isFuncIdx i then .func else .any
+  | _ => .any
 
 def refSub (c : Ctx) (a b : RefType) : Bool :=
   (b.nullable || !a.nullable) && c.heapSub a.heap b.heap
@@ -87,12 +141,27 @@ def resultSub (c : Ctx) (ts us : Array ValType) : Bool :=
 
 /-- The payload types of tag `x`. -/
 def tagParams (c : Ctx) (x : Nat) : Option (Array ValType) :=
-  c.tags[x]? >>= fun ti => c.types[ti]? |>.map (·.params)
+  c.tags[x]? >>= fun ti => c.funcT? ti |>.map (·.params)
 
 def blockSig (c : Ctx) : BlockType → Option (Array ValType × Array ValType)
   | .empty => some (#[], #[])
   | .val t => if c.valOk t then some (#[], #[t]) else none
-  | .idx i => c.types[i]?.map fun ft => (ft.params, ft.results)
+  | .idx i => (c.funcT? i).map fun ft => (ft.params, ft.results)
+
+def storageSub (c : Ctx) : StorageType → StorageType → Bool
+  | .val a, .val b => c.valSub a b
+  | a, b => a == b
+
+/-- Field subtyping: a mutable field needs equivalent types, a constant one a subtype. -/
+def fieldSub (c : Ctx) (a b : FieldType) : Bool :=
+  a.mutable == b.mutable && c.storageSub a.type b.type && (!a.mutable || c.storageSub b.type a.type)
+
+/-- Whether composite type `a` may be declared a subtype of `b`. -/
+def compSub (c : Ctx) : CompType → CompType → Bool
+  | .func f, .func g => c.resultSub g.params f.params && c.resultSub f.results g.results
+  | .struct fs, .struct gs => gs.size ≤ fs.size && (gs.zipIdx.all fun (g, i) => c.fieldSub fs[i]! g)
+  | .array a, .array b => c.fieldSub a b
+  | _, _ => false
 
 end Ctx
 
@@ -230,6 +299,199 @@ structure FnCtx where
 def target (nLocals : Nat) (f : Ctrl) : BrTarget :=
   { pc := f.label, keep := f.labelTypes.size, height := nLocals + f.base }
 
+/-- Whether a v128 is among `ts`. -/
+def hasV128 (ts : Array ValType) : Bool := ts.any (· == .v128)
+
+/-- Emit `br t`, which moves values of types `ts`. When a v128 is among them, a
+`hiMove` goes first: it moves their high halves (record, "SIMD"). -/
+def emitBr (s : VState) (ts : Array ValType) (t : BrTarget) : VState :=
+  let s := if hasV128 ts then s.emit (.hiMove 0 t.keep t.height) else s
+  s.emit (.br t)
+
+/-- Emit `return_` of values of types `ts` (with a `hiMove` first, as `emitBr`). -/
+def emitReturn (s : VState) (ts : Array ValType) : VState :=
+  let s := if hasV128 ts then s.emit (.hiMove 0 ts.size 0) else s
+  s.emit (.return_ ts.size)
+
+/-- Emit a tail call op whose callee takes `ps`, with `skip` slots above the
+arguments (the table index or the function reference). -/
+def emitTail (s : VState) (ps : Array ValType) (skip : Nat) (o : Op) : VState :=
+  let s := if hasV128 ps then s.emit (.hiMove skip ps.size 0) else s
+  s.emit o
+
+/-- Validate and compile a SIMD instruction (`Simd.lean` has the shapes). -/
+def stepSimd (c : Ctx) (nL : Nat) (s : VState) (k : Nat) (m : MemArg) (lane : Nat) (lo hi : UInt64) :
+    V VState := do
+  let some sh := simdShape k | .error "unknown SIMD instruction"
+  let memOk := fun (w : Nat) => (show V Unit from do
+    if m.mem ≥ c.mems.size then .error "unknown memory"
+    if m.offset ≥ 4294967296 then .error "offset out of range"
+    if 2 ^ m.align > w then .error "alignment must not be larger than natural")
+  let laneOk := fun (n : Nat) => (show V Unit from
+    if lane < n then .ok () else .error "invalid lane index")
+  match sh with
+  | .load w =>
+    memOk w
+    let s ← s.pop c .i32
+    .ok ((s.push nL (some .v128)).emit (.simd k m.mem m.offset 0))
+  | .store =>
+    memOk 16
+    let s ← s.pop c .v128
+    let s ← s.pop c .i32
+    .ok (s.emit (.simd k m.mem m.offset 0))
+  | .const => .ok ((s.push nL (some .v128)).emit (.simdImm k lo hi))
+  | .shuffle =>
+    if !((List.range 16).all fun i => (V128.mk lo hi).lane 8 i < 32) then .error "invalid lane index"
+    let s ← s.popAll c #[.v128, .v128]
+    .ok ((s.push nL (some .v128)).emit (.simdImm k lo hi))
+  | .un =>
+    let s ← s.pop c .v128
+    .ok ((s.push nL (some .v128)).emit (.simd k 0 0 0))
+  | .bin =>
+    let s ← s.popAll c #[.v128, .v128]
+    .ok ((s.push nL (some .v128)).emit (.simd k 0 0 0))
+  | .tern =>
+    let s ← s.popAll c #[.v128, .v128, .v128]
+    .ok ((s.push nL (some .v128)).emit (.simd k 0 0 0))
+  | .test =>
+    let s ← s.pop c .v128
+    .ok ((s.push nL (some .i32)).emit (.simd k 0 0 0))
+  | .shift =>
+    let s ← s.popAll c #[.v128, .i32]
+    .ok ((s.push nL (some .v128)).emit (.simd k 0 0 0))
+  | .splat t =>
+    let s ← s.pop c t
+    .ok ((s.push nL (some .v128)).emit (.simd k 0 0 0))
+  | .extract t n =>
+    laneOk n
+    let s ← s.pop c .v128
+    .ok ((s.push nL (some t)).emit (.simd k 0 0 lane))
+  | .replace t n =>
+    laneOk n
+    let s ← s.popAll c #[.v128, t]
+    .ok ((s.push nL (some .v128)).emit (.simd k 0 0 lane))
+  | .loadLane w =>
+    memOk w
+    laneOk (16 / w)
+    let s ← s.popAll c #[.i32, .v128]
+    .ok ((s.push nL (some .v128)).emit (.simd k m.mem m.offset lane))
+  | .storeLane w =>
+    memOk w
+    laneOk (16 / w)
+    let s ← s.popAll c #[.i32, .v128]
+    .ok (s.emit (.simd k m.mem m.offset lane))
+
+/-- Whether a field of this type has a default value. -/
+def StorageType.defaultable : StorageType → Bool
+  | .val (.ref r) => r.nullable
+  | _ => true
+
+/-- Bytes of one array element in a data segment; none for a reference type. -/
+def StorageType.dataWidth : StorageType → Option Nat
+  | .i8 => some 1 | .i16 => some 2
+  | .val .i32 | .val .f32 => some 4
+  | .val .i64 | .val .f64 => some 8
+  | _ => none
+
+/-- Validate and compile a garbage-collection instruction with index immediates
+(`Instr.gc`; the numbers are `GcCode`). What each op's fields hold: `Run.gcStep`. -/
+def stepGc (c : Ctx) (nL : Nat) (s : VState) (k x y : Nat) : V VState := do
+  let refN := fun (h : HeapType) => ValType.ref ⟨true, h⟩
+  let dataOk := fun (d : Nat) => (show V Unit from
+    match c.dataCount with
+    | none => .error "data count section required"
+    | some n => if d ≥ n then .error "unknown data segment" else .ok ())
+  if k ≤ 5 then
+    let some fs := c.structT? x | .error "unknown type: not a struct type"
+    if k == 0 then
+      let s ← s.popAll c (fs.map (·.type.unpack))
+      .ok ((s.push nL (some (.ref ⟨false, .idx x⟩))).emit (.gc k x fs.size 0))
+    else if k == 1 then
+      if !fs.all (·.type.defaultable) then .error "type mismatch: field is not defaultable"
+      .ok ((s.push nL (some (.ref ⟨false, .idx x⟩))).emit (.gc k x 0 0))
+    else
+      let some f := fs[y]? | .error "unknown field"
+      if k == 5 then
+        if !f.mutable then .error "field is immutable"
+        let s ← s.pop c f.type.unpack
+        let s ← s.pop c (refN (.idx x))
+        .ok (s.emit (.gc k y (packCode f.type) 0))
+      else
+        if f.type.isPacked != (k != 2) then .error "field is packed: struct.get_s or struct.get_u needed for it only"
+        let s ← s.pop c (refN (.idx x))
+        .ok ((s.push nL (some f.type.unpack)).emit (.gc k y (packCode f.type) 0))
+  else if k == 15 then
+    let s ← s.pop c (refN .array)
+    .ok ((s.push nL (some .i32)).emit (.gc k 0 0 0))
+  else if k ≤ 19 then
+    let some f := c.arrayT? x | .error "unknown type: not an array type"
+    let t := f.type.unpack
+    let p := packCode f.type
+    let rx := refN (.idx x)
+    let new := some (ValType.ref ⟨false, .idx x⟩)
+    if k == 6 then
+      let s ← s.popAll c #[t, .i32]
+      .ok ((s.push nL new).emit (.gc k x p 0))
+    else if k == 7 then
+      if !f.type.defaultable then .error "type mismatch: element is not defaultable"
+      let s ← s.pop c .i32
+      .ok ((s.push nL new).emit (.gc k x (if t.isRef then 1 else 0) 0))
+    else if k == 8 then
+      let s ← s.popAll c (Array.replicate y t)
+      .ok ((s.push nL new).emit (.gc k x y p))
+    else if k == 9 then
+      let some w := f.type.dataWidth | .error "array type is not numeric or vector"
+      dataOk y
+      let s ← s.popAll c #[.i32, .i32]
+      .ok ((s.push nL new).emit (.gc k x y w))
+    else if k == 10 then
+      let some et := c.elems[y]? | .error "unknown elem segment"
+      if !c.valSub (.ref et) t then .error "type mismatch: element segment type"
+      let s ← s.popAll c #[.i32, .i32]
+      .ok ((s.push nL new).emit (.gc k x y 0))
+    else if k ≤ 13 then
+      if f.type.isPacked != (k != 11) then .error "element is packed: array.get_s or array.get_u needed for it only"
+      let s ← s.popAll c #[rx, .i32]
+      .ok ((s.push nL (some t)).emit (.gc k 0 p 0))
+    else
+      -- The ops from here on write the array.
+      if !f.mutable then .error "array is immutable"
+      if k == 14 then
+        let s ← s.popAll c #[rx, .i32, t]
+        .ok (s.emit (.gc k 0 p 0))
+      else if k == 16 then
+        let s ← s.popAll c #[rx, .i32, t, .i32]
+        .ok (s.emit (.gc k 0 p 0))
+      else if k == 17 then
+        let some g := c.arrayT? y | .error "unknown type: not an array type"
+        if !c.storageSub g.type f.type then .error "array types do not match"
+        let s ← s.popAll c #[rx, .i32, refN (.idx y), .i32, .i32]
+        .ok (s.emit (.gc k 0 0 0))
+      else if k == 18 then
+        let some w := f.type.dataWidth | .error "array type is not numeric or vector"
+        dataOk y
+        let s ← s.popAll c #[rx, .i32, .i32, .i32]
+        .ok (s.emit (.gc k 0 y w))
+      else
+        let some et := c.elems[y]? | .error "unknown elem segment"
+        if !c.valSub (.ref et) t then .error "type mismatch: element segment type"
+        let s ← s.popAll c #[rx, .i32, .i32, .i32]
+        .ok (s.emit (.gc k 0 y 0))
+  else if k == 26 || k == 27 then
+    let (src, dst) := if k == 26 then (HeapType.extern, HeapType.any) else (HeapType.any, HeapType.extern)
+    let (s, a) ← s.popRef
+    let nullable ← match a with
+      | some (.ref r) => if c.heapSub r.heap src then pure r.nullable else .error "type mismatch"
+      | _ => pure false
+    .ok ((s.push nL (some (.ref ⟨nullable, dst⟩))).emit (.gc k 0 0 0))
+  else if k == 28 then
+    let s ← s.pop c .i32
+    .ok ((s.push nL (some (.ref ⟨false, .i31⟩))).emit (.gc k 0 0 0))
+  else if k == 29 || k == 30 then
+    let s ← s.pop c (refN .i31)
+    .ok ((s.push nL (some .i32)).emit (.gc k 0 0 0))
+  else .error "unknown GC instruction"
+
 /-- Check `ts` against the top of the stack without popping it. -/
 def checkTop (c : Ctx) (s : VState) (ts : Array ValType) : V Unit := do
   let s' ← s.popAll c ts
@@ -268,7 +530,7 @@ def step (c : Ctx) (fc : FnCtx) (s : VState) (i : Instr) : V VState := do
     let s := match f.closeEntry with | some i => s.setStop i | none => s
     -- A legacy catch clause: move the results down over the exception slot.
     let s := if f.kind == .catch_ then
-        { (s.emit (.br { pc := f.label, keep := f.results.size, height := nL + f.base })) with
+        { (emitBr s f.results { pc := f.label, keep := f.results.size, height := nL + f.base }) with
           vals := s.vals.pop }
       else s
     let s ← if f.kind == .if_ then
@@ -277,12 +539,12 @@ def step (c : Ctx) (fc : FnCtx) (s : VState) (i : Instr) : V VState := do
       else .ok s
     let s := if f.kind == .loop then s else s.place f.label
     if f.kind == .func then
-      .ok ((s.emit (.return_ f.results.size)).pushAll nL f.results)
+      .ok ((emitReturn s f.results).pushAll nL f.results)
     else .ok (s.pushAll nL f.results)
   | .br l =>
     let some f := s.label? l | .error "unknown label"
     let s ← s.popAll c f.labelTypes
-    .ok ((s.emit (.br (target nL f))).setUnreachable)
+    .ok ((emitBr s f.labelTypes (target nL f)).setUnreachable)
   | .brIf l =>
     let some f := s.label? l | .error "unknown label"
     let s ← s.pop c .i32
@@ -291,8 +553,13 @@ def step (c : Ctx) (fc : FnCtx) (s : VState) (i : Instr) : V VState := do
     let s := s.pushAll nL ts
     let t := target nL f
     -- When the kept values already sit at the label's height, nothing moves.
-    let o := if s.vals.size == f.base + ts.size then Op.jumpIf t.pc else Op.brIf t
-    .ok (s.emit o)
+    if s.vals.size == f.base + ts.size then .ok (s.emit (.jumpIf t.pc))
+    else if hasV128 ts then
+      -- Values with a v128 move: skip a `hiMove` and a `br` when the condition is 0.
+      let (s, skip) := s.newLabel
+      let s := emitBr (s.emit (.jumpUnless skip)) ts t
+      .ok (s.place skip)
+    else .ok (s.emit (.brIf t))
   | .brTable ls d =>
     let some fd := s.label? d | .error "unknown label"
     let s ← s.pop c .i32
@@ -304,22 +571,23 @@ def step (c : Ctx) (fc : FnCtx) (s : VState) (i : Instr) : V VState := do
       checkTop c s f.labelTypes
       ts := ts.push (target nL f)
     let s ← s.popAll c fd.labelTypes
-    .ok ((s.emit (.brTable ts (target nL fd))).setUnreachable)
+    let o := if hasV128 fd.labelTypes then Op.vBrTable ts (target nL fd) else Op.brTable ts (target nL fd)
+    .ok ((s.emit o).setUnreachable)
   | .return_ =>
     let s ← s.popAll c fc.results
-    .ok ((s.emit (.return_ fc.results.size)).setUnreachable)
+    .ok ((emitReturn s fc.results).setUnreachable)
   | .call f =>
     let some ti := c.funcs[f]? | .error "unknown function"
-    let some ft := c.types[ti]? | .error "unknown type"
+    let some ft := c.funcT? ti | .error "unknown type"
     let s ← s.popAll c ft.params
     .ok ((s.pushAll nL ft.results).emit (.call f))
   | .callIndirect ti x =>
     let some tt := c.tables[x]? | .error "unknown table"
     if !c.refSub tt.elem ⟨true, .func⟩ then .error "type mismatch: call_indirect table is not funcref"
-    let some ft := c.types[ti]? | .error "unknown type"
+    let some ft := c.funcT? ti | .error "unknown type"
     let s ← s.pop c .i32
     let s ← s.popAll c ft.params
-    .ok ((s.pushAll nL ft.results).emit (.callIndirect ti x))
+    .ok ((s.pushAll nL ft.results).emit (if c.isFinal ti then .callIndirect ti x else .gc GcOp.callIndirectSub ti x 0))
   | .drop =>
     let (s, _) ← s.popAny
     .ok (s.emit .drop)
@@ -334,7 +602,7 @@ def step (c : Ctx) (fc : FnCtx) (s : VState) (i : Instr) : V VState := do
       | some a, none | none, some a =>
         if a.isNum || a == .v128 then .ok (some a) else .error "type mismatch: select needs a type"
       | none, none => .ok none
-    .ok ((s.push nL t).emit .select)
+    .ok ((s.push nL t).emit (if t == some .v128 then .vSelect else .select))
   | .select (some ts) =>
     if ts.size != 1 then .error "invalid result arity"
     let t := ts[0]!
@@ -342,29 +610,29 @@ def step (c : Ctx) (fc : FnCtx) (s : VState) (i : Instr) : V VState := do
     let s ← s.pop c .i32
     let s ← s.pop c t
     let s ← s.pop c t
-    .ok ((s.push nL (some t)).emit .select)
+    .ok ((s.push nL (some t)).emit (if t == .v128 then .vSelect else .select))
   | .localGet x =>
     let some t := fc.locals[x]? | .error "unknown local"
     if s.inits.size > 0 && !s.inits[x]! then .error "uninitialized local"
-    .ok ((s.push nL (some t)).emit (.localGet x))
+    .ok ((s.push nL (some t)).emit (if t == .v128 then .vLocalGet x else .localGet x))
   | .localSet x =>
     let some t := fc.locals[x]? | .error "unknown local"
     let s ← s.pop c t
     let s := if s.inits.size > 0 then { s with inits := s.inits.set! x true } else s
-    .ok (s.emit (.localSet x))
+    .ok (s.emit (if t == .v128 then .vLocalSet x else .localSet x))
   | .localTee x =>
     let some t := fc.locals[x]? | .error "unknown local"
     let s ← s.pop c t
     let s := if s.inits.size > 0 then { s with inits := s.inits.set! x true } else s
-    .ok ((s.push nL (some t)).emit (.localTee x))
+    .ok ((s.push nL (some t)).emit (if t == .v128 then .vLocalTee x else .localTee x))
   | .globalGet x =>
     let some g := c.globals[x]? | .error "unknown global"
-    .ok ((s.push nL (some g.type)).emit (.globalGet x))
+    .ok ((s.push nL (some g.type)).emit (if g.type == .v128 then .vGlobalGet x else .globalGet x))
   | .globalSet x =>
     let some g := c.globals[x]? | .error "unknown global"
     if !g.mutable then .error "global is immutable"
     let s ← s.pop c g.type
-    .ok (s.emit (.globalSet x))
+    .ok (s.emit (if g.type == .v128 then .vGlobalSet x else .globalSet x))
   | .tableGet x =>
     let some t := c.tables[x]? | .error "unknown table"
     let s ← s.pop c .i32
@@ -517,7 +785,7 @@ def step (c : Ctx) (fc : FnCtx) (s : VState) (i : Instr) : V VState := do
       else
         match f.tryEntry with
         | some e =>
-          pure ({ (s.emit (.br { pc := f.label, keep := f.results.size, height := nL + f.base })) with
+          pure ({ (emitBr s f.results { pc := f.label, keep := f.results.size, height := nL + f.base }) with
                   vals := s.vals.pop }, e)
         | none => .error "catch without try"
     let base := s.vals.size
@@ -548,30 +816,31 @@ def step (c : Ctx) (fc : FnCtx) (s : VState) (i : Instr) : V VState := do
   -- Tail calls.
   | .returnCall f =>
     let some ti := c.funcs[f]? | .error "unknown function"
-    let some ft := c.types[ti]? | .error "unknown type"
+    let some ft := c.funcT? ti | .error "unknown type"
     if !c.resultSub ft.results fc.results then .error "type mismatch: tail call results"
     let s ← s.popAll c ft.params
-    .ok (((s.emit (.returnCall f)).emit (.return_ fc.results.size)).setUnreachable)
+    .ok (((emitTail s ft.params 0 (.returnCall f)).emit (.return_ fc.results.size)).setUnreachable)
   | .returnCallIndirect ti x =>
     let some tt := c.tables[x]? | .error "unknown table"
     if !c.refSub tt.elem ⟨true, .func⟩ then .error "type mismatch: call_indirect table is not funcref"
-    let some ft := c.types[ti]? | .error "unknown type"
+    let some ft := c.funcT? ti | .error "unknown type"
     if !c.resultSub ft.results fc.results then .error "type mismatch: tail call results"
     let s ← s.pop c .i32
     let s ← s.popAll c ft.params
-    .ok (((s.emit (.returnCallIndirect ti x)).emit (.return_ fc.results.size)).setUnreachable)
+    let o := if c.isFinal ti then Op.returnCallIndirect ti x else .gc GcOp.returnCallIndirectSub ti x 0
+    .ok (((emitTail s ft.params 1 o).emit (.return_ fc.results.size)).setUnreachable)
   -- Typed function references.
   | .callRef ti =>
-    let some ft := c.types[ti]? | .error "unknown type"
+    let some ft := c.funcT? ti | .error "unknown type"
     let s ← s.pop c (.ref ⟨true, .idx ti⟩)
     let s ← s.popAll c ft.params
     .ok ((s.pushAll nL ft.results).emit .callRef)
   | .returnCallRef ti =>
-    let some ft := c.types[ti]? | .error "unknown type"
+    let some ft := c.funcT? ti | .error "unknown type"
     if !c.resultSub ft.results fc.results then .error "type mismatch: tail call results"
     let s ← s.pop c (.ref ⟨true, .idx ti⟩)
     let s ← s.popAll c ft.params
-    .ok (((s.emit .returnCallRef).emit (.return_ fc.results.size)).setUnreachable)
+    .ok (((emitTail s ft.params 1 .returnCallRef).emit (.return_ fc.results.size)).setUnreachable)
   | .refAsNonNull =>
     let (s, a) ← s.popRef
     let t := a.map fun | .ref r => .ref { r with nullable := false } | t => t
@@ -599,6 +868,34 @@ def step (c : Ctx) (fc : FnCtx) (s : VState) (i : Instr) : V VState := do
     let s ← s.popAll c rest
     let s := s.pushAll nL rest
     .ok (s.emit (.brOnNonNull (target nL f)))
+  | .simd k m lane lo hi => stepSimd c nL s k m lane lo hi
+  -- Garbage collection.
+  | .gc k x y => stepGc c nL s k x y
+  | .refTest r | .refCast r =>
+    if !c.heapOk r.heap then .error "unknown type"
+    let s ← s.pop c (.ref ⟨true, c.top r.heap⟩)
+    let isTest := match i with | .refTest _ => true | _ => false
+    let o := Op.gc (if isTest then GcCode.refTest else GcCode.refCast) (heapCode r.heap) (if r.nullable then 1 else 0) 0
+    .ok ((s.push nL (some (if isTest then .i32 else .ref r))).emit o)
+  | .brOnCast fail l r1 r2 =>
+    let some f := s.label? l | .error "unknown label"
+    if !c.heapOk r1.heap || !c.heapOk r2.heap then .error "unknown type"
+    if !c.refSub r2 r1 then .error "type mismatch: br_on_cast target is not a subtype"
+    let diff : RefType := ⟨r1.nullable && !r2.nullable, r1.heap⟩
+    let (onBr, onFall) := if fail then (diff, r2) else (r2, diff)
+    let ts := f.labelTypes
+    if ts.isEmpty then .error "type mismatch: br_on_cast label has no values"
+    if !c.valSub (.ref onBr) ts.back! then .error "type mismatch: br_on_cast label"
+    let s ← s.pop c (.ref r1)
+    let rest := ts.pop
+    let s ← s.popAll c rest
+    let s := s.pushAll nL rest
+    let s := s.push nL (some (.ref onBr))
+    let s := s.emit (.gcBr (target nL f) ((if fail then 1 else 0) + (if r2.nullable then 2 else 0)) (heapCode r2.heap))
+    .ok ({ s with vals := s.vals.pop }.push nL (some (.ref onFall)))
+  | .refEq =>
+    let s ← s.popAll c #[.ref ⟨true, .eq⟩, .ref ⟨true, .eq⟩]
+    .ok ((s.push nL (some .i32)).emit (.gc GcOp.refEq 0 0 0))
 
 /-- Replace label ids by pcs. -/
 def resolveT (labels : Array Nat) (t : BrTarget) : BrTarget := { t with pc := labels[t.pc]! }
@@ -610,8 +907,10 @@ def resolve (labels : Array Nat) : Op → Op
   | .jumpIf l => .jumpIf labels[l]!
   | .jumpUnless l => .jumpUnless labels[l]!
   | .brTable ts d => .brTable (ts.map (resolveT labels)) (resolveT labels d)
+  | .vBrTable ts d => .vBrTable (ts.map (resolveT labels)) (resolveT labels d)
   | .brOnNull t => .brOnNull (resolveT labels t)
   | .brOnNonNull t => .brOnNonNull (resolveT labels t)
+  | .gcBr t f h => .gcBr (resolveT labels t) f h
   | o => o
 
 /-- Replace label ids by pcs in the handler table. -/
@@ -631,7 +930,7 @@ termination_by body.size - i
 
 /-- Validate and compile one function body. -/
 def compileFunc (c : Ctx) (fIdx : Nat) (f : Func) : Except ValidationError CompiledFunc := do
-  let some ft := c.types[f.type]? | .error { msg := "unknown type", func := some fIdx }
+  let some ft := c.funcT? f.type | .error { msg := "unknown type", func := some fIdx }
   for t in f.locals do
     if !c.valOk t then .error { msg := "unknown type", func := some fIdx }
   let locals := ft.params ++ f.locals
@@ -643,6 +942,8 @@ def compileFunc (c : Ctx) (fIdx : Nat) (f : Func) : Except ValidationError Compi
   let (s0, l) := s0.newLabel
   let s0 := { s0 with ctrls := #[{ kind := .func, params := #[], results := ft.results,
                                      height := 0, label := l }] }
+  -- The high halves of the declared locals start at zero, when one is a v128.
+  let s0 := if hasV128 f.locals then s0.emit (.hiZero ft.params.size f.locals.size) else s0
   match bodyLoop c fc f.body 0 s0 with
   | .error (i, e) => .error { msg := e, func := some fIdx, at_ := i }
   | .ok s =>
@@ -663,6 +964,7 @@ def constType (c : Ctx) (nGlobals : Nat) (e : Expr) : V ValType := do
     | .i64Const _ => st := st.push .i64
     | .f32Const _ => st := st.push .f32
     | .f64Const _ => st := st.push .f64
+    | .simd k .. => if k == 0x0c then st := st.push .v128 else .error "constant expression required"
     | .refNull h => if !c.heapOk h then .error "unknown type"
                     st := st.push (.ref ⟨true, h⟩)
     | .refFunc f =>
@@ -686,9 +988,48 @@ def constType (c : Ctx) (nGlobals : Nat) (e : Expr) : V ValType := do
   if st.size != 1 then .error "type mismatch"
   .ok st[0]!
 
+/-- Whether a constant expression has a garbage-collection instruction. Such an
+expression is typed by the pass over function bodies and run by the interpreter
+(`constCode`); every other one goes through `constType` and `evalConst`, as before. -/
+def hasGc (e : Expr) : Bool :=
+  e.any fun i => match i with | .gc .. => true | _ => false
+
+/-- The garbage-collection instructions that are constant: `struct.new`,
+`struct.new_default`, `array.new`, `array.new_default`, `array.new_fixed`,
+`any.convert_extern`, `extern.convert_any`, `ref.i31`. -/
+def constGc (k : Nat) : Bool :=
+  k == 0 || k == 1 || k == 6 || k == 7 || k == 8 || k == 26 || k == 27 || k == 28
+
+/-- Compile a constant expression of type `t` that has a garbage-collection
+instruction, as a function body with no parameter and one result. -/
+def constCode (c : Ctx) (nGlobals : Nat) (e : Expr) (t : ValType) : V CompiledFunc := do
+  for i in e do
+    match i with
+    | .i32Const _ | .i64Const _ | .f32Const _ | .f64Const _ | .refNull _ | .refFunc _ | .end_ => pure ()
+    | .simd k .. => if k != 0x0c then .error "constant expression required"
+    | .globalGet x =>
+      if x ≥ nGlobals then .error "unknown global"
+      let some g := c.globals[x]? | .error "unknown global"
+      if g.mutable then .error "constant expression required"
+    | .num op =>
+      if !(op == .i32_add || op == .i32_sub || op == .i32_mul || op == .i64_add || op == .i64_sub
+          || op == .i64_mul) then .error "constant expression required"
+    | .gc k _ _ => if !constGc k then .error "constant expression required"
+    | _ => .error "constant expression required"
+  let fc : FnCtx := { locals := #[], results := #[t] }
+  let s0 : VState := {}
+  let (s0, l) := s0.newLabel
+  let s0 := { s0 with ctrls := #[{ kind := .func, params := #[], results := #[t], height := 0, label := l }] }
+  match bodyLoop c fc e 0 s0 with
+  | .error (_, m) => .error m
+  | .ok s => .ok { type := 0, nParams := 0, localInit := #[], maxHeight := s.maxH, code := s.ops.map (resolve s.labels) }
+
 def checkConst (c : Ctx) (nGlobals : Nat) (e : Expr) (t : ValType) : V Unit := do
-  let t' ← constType c nGlobals e
-  if !c.valSub t' t then .error "type mismatch"
+  if hasGc e then
+    let _ ← constCode c nGlobals e t
+  else
+    let t' ← constType c nGlobals e
+    if !c.valSub t' t then .error "type mismatch"
 
 /-! ### Modules -/
 
@@ -718,32 +1059,56 @@ def funcRefs (m : Module) : Std.HashSet Nat := Id.run do
     if let .func f := x.desc then r := r.insert f
   return r
 
-/-- The index that stands for "this type" inside a type's own definition. -/
+/-- The index that stands for "the first type of this recursion group" inside the
+group's canonical form; type `k` of the group is `selfIdx + k`. -/
 def selfIdx : Nat := 0xFFFFFFFFFFFF
 
-/-- Replace each type index by its representative; the type being defined (index
-`self`, a one-type recursion group) by `selfIdx`. -/
-def repHeap (reps : Array Nat) (self : Nat) : HeapType → HeapType
-  | .idx i => .idx (if i == self then selfIdx else reps[i]?.getD i)
+/-! ### Canonical recursion groups
+
+Two types are equivalent when their recursion groups are equal after each type index
+is replaced: an index inside the group by its position (`selfIdx + k`), an earlier
+index by the canonical name of that type (`names`), and the two types have the same
+position. The validator's names are the least equivalent type index of the module
+(`typeReps`); the store's names are its type ids (`Exec/Instantiate.lean`). -/
+
+def canonIdx (names : Array Nat) (start : Nat) (i : Nat) : Nat :=
+  if i ≥ start then selfIdx + (i - start) else names[i]?.getD i
+
+def canonHeapIn (names : Array Nat) (start : Nat) : HeapType → HeapType
+  | .idx i => .idx (canonIdx names start i)
   | h => h
 
-def repVal (reps : Array Nat) (self : Nat) : ValType → ValType
-  | .ref r => .ref { r with heap := repHeap reps self r.heap }
+def canonValIn (names : Array Nat) (start : Nat) : ValType → ValType
+  | .ref r => .ref { r with heap := canonHeapIn names start r.heap }
   | t => t
 
-/-- Type equivalence without recursion groups: a type may name only earlier types, so
-two types are equivalent when they are equal after earlier indices are replaced by
-their representatives and a reference to the type itself by `selfIdx`. -/
-def typeReps (types : Array FuncType) : Array Nat := Id.run do
+def canonFieldIn (names : Array Nat) (start : Nat) (f : FieldType) : FieldType :=
+  match f.type with
+  | .val t => { f with type := .val (canonValIn names start t) }
+  | _ => f
+
+def canonCompIn (names : Array Nat) (start : Nat) : CompType → CompType
+  | .func ft => .func ⟨ft.params.map (canonValIn names start), ft.results.map (canonValIn names start)⟩
+  | .struct fs => .struct (fs.map (canonFieldIn names start))
+  | .array f => .array (canonFieldIn names start f)
+
+def canonSubIn (names : Array Nat) (start : Nat) (t : SubType) : SubType :=
+  { final := t.final, supers := t.supers.map (canonIdx names start), comp := canonCompIn names start t.comp }
+
+/-- For each type index, the least index of an equivalent type. -/
+def typeReps (defs : Array TypeDef) : Array Nat := Id.run do
   let mut reps : Array Nat := #[]
-  let mut seen : Array FuncType := #[]
-  for ft in types do
-    let self := reps.size
-    let k : FuncType := ⟨ft.params.map (repVal reps self), ft.results.map (repVal reps self)⟩
-    match seen.findIdx? (· == k) with
-    | some j => reps := reps.push j
-    | none => reps := reps.push seen.size
-    seen := seen.push k
+  -- The canonical form of each distinct group, with the index of its first type.
+  let mut seen : Array (Array SubType × Nat) := #[]
+  for x in [0:defs.size] do
+    let d := defs[x]!
+    if d.recStart == x then
+      let key := (defs.extract x (x + d.recSize)).map fun t => canonSubIn reps x t.sub
+      match seen.find? (·.1 == key) with
+      | some (_, first) => reps := reps ++ (Array.range d.recSize).map (first + ·)
+      | none =>
+        reps := reps ++ (Array.range d.recSize).map (x + ·)
+        seen := seen.push (key, x)
   return reps
 
 def mkCtx (m : Module) : Ctx :=
@@ -755,8 +1120,41 @@ def mkCtx (m : Module) : Ctx :=
     elems := m.elems.map (·.type)
     dataCount := m.dataCount
     refs := funcRefs m
-    reps := typeReps m.types
-    tags := m.importedTags ++ m.tags }
+    reps := typeReps m.defs
+    tags := m.importedTags ++ m.tags
+    defs := m.defs }
+
+/-- The message for a field of type v128 (record, "GC", "Refused"). -/
+def v128FieldMsg : String := "unsupported: v128 field in a struct or array type"
+
+/-- Validate the type definitions: every type index is in range (a type may name the
+types of its own recursion group and earlier ones), and a declared supertype is an
+earlier type that is not final and that the composite type matches. -/
+def checkTypes (c : Ctx) : V Unit := do
+  for x in [0:c.defs.size] do
+    let d := c.defs[x]!
+    let lim := d.recStart + d.recSize
+    let okV := fun (t : ValType) => match t with
+      | .ref ⟨_, .idx i⟩ => i < lim
+      | _ => true
+    let okF := fun (f : FieldType) => match f.type with
+      | .val t => okV t
+      | _ => true
+    let noV := fun (f : FieldType) => f.type != .val .v128
+    match d.sub.comp with
+    | .func ft => if !(ft.params.all okV && ft.results.all okV) then .error "unknown type"
+    | .struct fs =>
+      if !fs.all okF then .error "unknown type"
+      if !fs.all noV then .error v128FieldMsg
+    | .array f =>
+      if !okF f then .error "unknown type"
+      if !noV f then .error v128FieldMsg
+    if d.sub.supers.size > 1 then .error "sub type has more than one supertype"
+    if let some y := d.sub.supers[0]? then
+      if y ≥ x then .error "unknown type"
+      let sd := c.defs[y]!
+      if sd.sub.final then .error "sub type: the supertype is final"
+      if !c.compSub d.sub.comp sd.sub.comp then .error "sub type does not match its supertype"
 
 /-- Compile functions `lo` to `hi` (module-local indices), in order. -/
 def compileRange (c : Ctx) (m : Module) (nImp lo hi : Nat) : Except ValidationError (Array CompiledFunc) :=
@@ -793,22 +1191,18 @@ def validateWith (parallel : Bool) (m : Module) : Except ValidationError ValidMo
   let lift := fun (x : V Unit) => match x with
     | .ok () => (Except.ok () : Except ValidationError Unit)
     | .error e => .error { msg := e }
-  let mut tyIx := 0
-  for ft in m.types do
-    let earlier := fun (t : ValType) => match t with
-      | .ref ⟨_, .idx i⟩ => i ≤ tyIx
-      | _ => true
-    if !(ft.params.all earlier && ft.results.all earlier) then err "unknown type"
-    tyIx := tyIx + 1
+  lift (checkTypes c)
   for i in m.imports do
     match i.desc with
-    | .func t => if t ≥ m.types.size then err "unknown type"
+    | .func t => if (c.funcT? t).isNone then err "unknown type"
     | .table t => if !limitsOk t.limits 4294967295 then err "size minimum must not be greater than maximum"
     | .mem t => if !limitsOk t.limits 65536 then err "memory size must be at most 65536 pages (4GiB)"
     | .global g => if !c.valOk g.type then err "unknown type"
-    | .tag t => match m.types[t]? with
+    | .tag t => match c.funcT? t with
       | none => err "unknown type"
-      | some ft => if !ft.results.isEmpty then err "non-empty tag result type"
+      | some ft =>
+        if !ft.results.isEmpty then err "non-empty tag result type"
+        if hasV128 ft.params then err "unsupported: v128 in a tag type"
   let nImpFuncs := m.importedFuncTypes.size
   let nImpGlobals := m.importedGlobals.size
   for t in m.tables do
@@ -818,9 +1212,11 @@ def validateWith (parallel : Bool) (m : Module) : Except ValidationError ValidMo
     | some e => lift (checkConst c nImpGlobals e (.ref t.type.elem))
     | none => if !t.type.elem.nullable then err "type mismatch"
   for t in m.tags do
-    match m.types[t]? with
+    match c.funcT? t with
     | none => err "unknown type"
-    | some ft => if !ft.results.isEmpty then err "non-empty tag result type"
+    | some ft =>
+      if !ft.results.isEmpty then err "non-empty tag result type"
+      if hasV128 ft.params then err "unsupported: v128 in a tag type"
   for mt in m.mems do
     if !limitsOk mt.limits 65536 then err "memory size must be at most 65536 pages (4GiB)"
   let mut gi := nImpGlobals
@@ -841,7 +1237,7 @@ def validateWith (parallel : Bool) (m : Module) : Except ValidationError ValidMo
   if let some s := m.start then
     match c.funcs[s]? with
     | none => err "unknown function"
-    | some ti => if c.types[ti]? != some ⟨#[], #[]⟩ then err "start function"
+    | some ti => if c.funcT? ti != some ⟨#[], #[]⟩ then err "start function"
   for el in m.elems do
     if !c.heapOk el.type.heap then err "unknown type"
     for e in el.init do lift (checkConst c c.globals.size e (.ref el.type))

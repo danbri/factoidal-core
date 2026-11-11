@@ -771,3 +771,132 @@ the engine still runs the next page's scripts (the shadow stack is put back with
 after two traps until a reload). Scripts never move to QuickJS-NG on a failure. The page's
 heap inside the Lean runtime may leak what the trapped turn had allocated.
 
+## 18. The speed work of 2026-11-09 (stage A)
+
+**The set.** `labs/demos/foafnaut/bubblepop_perf/`: original programs (`fib`, property read and
+write, method calls, array push and index, string concat and char access, closures, object
+allocation, JSON, regexp, a mixed program), `run.py` (process CPU time minus start-up, rounds
+interleaved across engines, so a drifting machine hits them alike) and `scaling.py` (each of 28
+operations at N and 4N; a ratio far above 4 is a super-linear cost).
+
+**Where the time went (sampled, `fib(36)`, before).** About 44% in allocation and its
+bookkeeping (on macOS each allocation also pays a thread-local lookup, about 15% of the
+total alone), 15% in `evalExpr`, about 10% in environment lookup (`findEnv`, hashing names). The
+heap's hot fields being split from the cold ones gave no measurable gain on its own.
+
+**What changed.** Environment records are slot arrays with shared names;
+`JS/Resolve.lean` places each name as (hops, slot), checked at run time against the name in the
+slot, so a wrong hint is a plain lookup and not a wrong value (`verifyLocals` compares every
+read and write with the plain lookup; on, the Test262 subset and the benchmarks pass). A
+script with direct `eval` or `with` is left unresolved, and generator and async bodies are not resolved.
+Calls with plain parameters use the arguments array as the slots; environments that no
+closure can hold (calls, blocks, `for (let ...)` loops) are reused or not copied. `Obj.props`
+is `PropMap`: a pointer-first key scan up to 8 keys, a hash map above. `Obj.putOwn` no longer
+holds a second reference to the table while inserting (it copied the table on every
+property write). Fast paths: leaf reads, plain own and inherited data properties, `a[i] = v`,
+`i++`, `s += x` appending in place.
+
+**Quadratic costs removed (`scaling.py`).** `indexOf` decoded the whole string per call (a loop
+of `indexOf` over 80,000 characters: 196 s, 112 ms now), Map and Set copied their entry array
+per insert, `delete` rewrote the key list per delete, `exec` decoded the string per call,
+`s += x` copied the string. `shift` is still linear in the array per call.
+
+**Numbers** (native `leanjs` CLI built with `leanc -O3`, this Mac, CPU ms minus start-up, 3
+interleaved rounds, the machine busy with other builds; comparators native on the same machine,
+`jsc --useJIT=false` and `node --jitless` being the comparable no-JIT class):
+
+| | before | after | QuickJS-NG | JSC no JIT | V8 jitless |
+|---|---|---|---|---|---|
+| fib(26) | 377 | 122 | 17 | 11 | 15 |
+| property read/write | 835 | 431 | 32 | 21 | 16 |
+| method calls | 1318 | 621 | 57 | 47 | 34 |
+| array push/index | 1256 | 683 | 44 | 31 | 35 |
+| string | 259 | 155 | 12 | 9 | 6 |
+| closures | 1092 | 552 | 32 | 33 | 20 |
+| allocation | 983 | 572 | 50 | 30 | 17 |
+| JSON | 196 | 186 | 41 | 7 | 11 |
+| regexp | 11665 | 32 | 5 | 2 | 1 |
+| mixed | 121 | 69 | 8 | 7 | 1 |
+
+So BubblePopJS is 2 to 3 times faster than this morning on interpretive work, and 7 to 17 times
+slower than QuickJS-NG (a boxing, allocating AST interpreter against a bytecode VM with unboxed
+numbers); regexp is 370 times faster and about 6 times QuickJS. Not state of the art.
+
+**Language.** `await` and `yield` in `while`, `do` and `for` tests, for-of iterables, and the
+branches of `?:`, `&&`, `||`, `??` now work; operands before a yield evaluate first (Test262
+subset 5,627 → 5,629 of 6,297, no file that passed fails).
+
+**What is proved and what is tested.** The resolver hints are checked at run time (the plain
+lookup is the fallback), and tested by `verifyLocals`, not proved correct. `PropMap` is
+tested against its association-list reading by `#guard`s. The cost test
+`bubblepop_cost_test.ts` covers property writes, new keys, calls, a closure per iteration and exec
+on one string.
+
+**The Foafnaut Wasm build carries the realm as data** since BubblePopJS is its default.
+
+## 19. A register machine for hot functions (2026-11-09, stage B)
+
+`JS/Compile.lean` compiles a function with plain parameters whose variables no closure can
+hold (`FunInfo.frameLocal`), and any top-level loop with no closure, to register code run by
+`vmLoop` (`JS/Interp.lean`). Registers hold values, and a number stays unboxed in the parallel
+float registers (`Value.fl` marks it; it never leaves the registers). A call from compiled code
+to compiled code stays in the loop: no native frame, environment, `Ctx` or arguments array, so
+JavaScript recursion between compiled functions is limited by `vmMaxDepth` (20,000), not by the
+host's stack. Global names go through a cache of slots checked by the name in the slot
+(`PropMap`'s big mode now keeps stable slots). Everything other than plain number
+arithmetic and plain property access goes through the evaluator's helpers, so the semantics
+of the slow paths are the same code. Anything the compiler does not handle (`try`, `switch`,
+for-in/of, closures, spread, classes with `super`, ...) leaves the function in the evaluator:
+765 of 1,135 functions of `prelude.js` and 209 of 322 of
+`testharness.js` compile (`leanjs compile-stats FILE`).
+
+**Numbers** (same method as section 18; columns in order: machine, stage A, QuickJS-NG, JSC no
+JIT, V8 jitless, this morning):
+
+| | machine | stage A | QuickJS-NG | JSC no JIT | V8 jitless | before |
+|---|---|---|---|---|---|---|
+| fib(26) | 79 | 129 | 17 | 10 | 14 | 370 |
+| property read/write | 312 | 443 | 34 | 20 | 18 | 838 |
+| method calls | 430 | 651 | 57 | 44 | 26 | 1319 |
+| array push/index | 546 | 713 | 45 | 30 | 25 | 1186 |
+| string | 152 | 158 | 12 | 7 | 3 | 263 |
+| closures | 369 | 547 | 34 | 31 | 20 | 1093 |
+| allocation | 499 | 586 | 55 | 27 | 16 | 1017 |
+| JSON | 197 | 196 | 43 | 6 | 12 | 183 |
+| regexp | 31 | 30 | 5 | 2 | 4 | 11489 |
+| mixed | 66 | 68 | 7 | 6 | 5 | 109 |
+
+**Not proved.** The compiler and the machine are tested, not proved: the Test262 subset gives
+the same result on every file with the machine on (useVm) as with the evaluator alone,
+`JS/Tests.lean` has guards for the semantics of compiled code (the temporal dead zone,
+`this`, re-entry from natives and getters, exceptions, deep recursion), and the benchmark
+programs give the same output.
+
+## 20. What it costs to start a page on the Hub (2026-11-09)
+
+`labs/demos/foafnaut/hub_boot_breakdown.mjs` splits navigation-to-first-frame in headless Chrome (800x900 at 1x, median of three runs each, machine load 3-10, local files served gzip: real networks add download, which this does not measure; 5.96 MB gzip of engine). The first number is `main` before these changes (with the QuickJS guest still loaded eagerly for pages with scripts), the second this work plus bpwasm's lazy guest.
+
+| | Default page | Scripted page (BubblePopJS) |
+|---|---|---|
+| Worker start to engine compiled (streaming) | 68-75 | 67-79 |
+| Lean init (first call) | 505-530 -> 170-187 | 510-540 -> 175-187 |
+| Fonts and home page | 25 -> 33 | 25 -> 36 |
+| First layout | 285 -> 210 | 70 -> 50 |
+| First draw | 110 -> 110 | 70 -> 69 |
+| **Navigation to first frame** | **1,060 -> 676** | **870 -> 490** |
+| Script start turn | | 68 -> 255 (the realm build moved here from Lean init; below) |
+| **Navigation to the frame the script changed** | | **1,320 -> 753** |
+| A returning visit (compiled-code cache) to first frame | 376 | 387 (scripted frame) |
+
+Causes found with a CPU profile of the Wasm build linked with `--profiling-funcs`:
+
+- `LeanJS.snapshotData` was a constant, so the first call into any engine ran the prelude in BubblePopJS and encoded it, for every page: about 300 of 520 ms. It is now a function of `Unit` (only `bubblepop-realm` calls it). Two `#guard` fixtures were built at start too. `XPath4.sigs` is a `Thunk`. So the start turn of a page on BubblePopJS now holds the realm's cost: it goes from 68 to about 255 ms, but the first frame the script changed comes earlier: 1,320 to 1,140 ms from the engine changes alone, and 1,140 to 753 ms with the worker's changes (about 344 ms of that is bpwasm's lazy QuickJS guest, the rest the shorter wait after the frame).
+- The big literals that `tools/wasm32-nat-literals.py` makes persistent (bpwasm) cut the first layout: `Float.ofScientific` parsed `lean_cstr_to_nat("9007199254740992")` on every call on wasm32.
+- `SfntKern.coverage` is a binary search: the sorted table was scanned linearly, about 20 % of a first layout.
+- The first frame of a page computed six expected-colour probes (`Scene.checks`) that only `?check=` reads: 80 ms. The worker sends `checks:false` otherwise.
+- The page's scripts started 120 ms after their frame was asked for; they start one frame after it is drawn.
+- `PageCanvas.sortBy`, a polymorphic function with `for` over ranges, was compiled with the generic `Std.Legacy.Range.forIn'.loop`: about five Wasm frames per element, depth proportional to the input, so `canvas-chart.html` overflowed the Hub worker's stack (a RangeError, the script stopped). It is written with self tail calls. `WasmVM/Api.lean` (`maxHostCalls`) and `Wasi.lean` still have a loop of that form; they are not on the BubblePopJS path.
+
+Stack. A Web Worker's Wasm stack is about 480 KB in headless Chrome (main thread about twice that), measured by `docs/web/hub/wasm-stack.njk` (`/web/hub/wasm-stack/`). A Node `worker_threads` bisect of the stack limit, with a page recursing to the limit (`callDepth` 100), needs 425-690 KB by shape on this build: its numbers are upper estimates for Chrome, where all shapes end in the `RangeError` (not a trap); 281 KB of the Node figure is the engine's own start. The limit stays 100. The number for an iPhone comes from the probe page.
+
+`-O3` at the Wasm link is 3.8 % smaller over gzip (6.20 to 5.96 MB) with no change at first frame beyond noise. The numbers above were measured before the realm went into the Wasm build as data (section 18): that change moves the 255 ms start turn, and this table has not been measured again with it.

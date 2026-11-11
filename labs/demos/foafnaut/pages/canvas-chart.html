@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>A Canvas 2D chart, drawn by Lean</title>
+<html lang="en"><head><meta charset="utf-8"><title>A Canvas 2D chart, drawn by the built-in engine</title>
 <style>
 body{margin:0;padding:16px;font-size:15px;line-height:22px;color:#22303c;background:#f4f2ec}
 h1{margin:0;font-size:26px;line-height:34px;color:#2f5d50}
@@ -10,7 +10,7 @@ canvas{display:block;width:480px;height:300px;margin-top:10px;border:1px solid #
 code{color:#7a3e12}
 </style></head><body><main>
 <p><a href="index.html">Demo index</a></p>
-<h1>A Canvas 2D chart, drawn by Lean</h1>
+<h1>A Canvas 2D chart, drawn by the built-in engine</h1>
 <p>Bars, a line and text labels drawn with <code>canvas.getContext('2d')</code> and animated with
 <code>requestAnimationFrame</code>. The page's calls go to Lean once a frame as one display list; Lean
 parses the colours and the font, builds the paths, shapes the labels and rasterises every pixel.</p>
@@ -97,7 +97,7 @@ function draw(t) {
 function frame(t) {
   draw(t);
   frames++;
-  if (frames === 1 || frames % 30 === 0) status.textContent = `Lean drew ${frames} frames.`;
+  if (frames === 1 || frames % 30 === 0) status.textContent = `Drew ${frames} frames.`;
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);

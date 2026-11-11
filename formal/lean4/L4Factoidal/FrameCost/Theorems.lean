@@ -351,6 +351,30 @@ theorem hover_never_layouts (s : Session) (e : Nat) (w : Warm s) (none : s.key.p
   simp only [↓reduceIte] at this
   omega
 
+/-- A paint-only change (an SVG `transform` set by a script, a frame of an SVG
+animation) costs no layout from a warm session: the key does not change, the kept
+layout is painted with the new values, and one band is drawn (`WebPaint`). The engine
+counts these frames (`frameWork.paintOnly`) and `frame_work_test.ts` checks that a
+`transform` animation lays out once. -/
+theorem paint_never_layouts (s : Session) (v : Nat) (w : Warm s) :
+    (step s (.paintOnly v)).2.2.layouts = 0 := by
+  have := step_layouts_le s (.paintOnly v) w
+  have key : (step s (.paintOnly v)).1.key = s.key := by
+    rw [step_other s _ (by intro ⟨_,h⟩; cases h),commit_key]; rfl
+  rw [key] at this
+  simp only [↓reduceIte] at this
+  omega
+
+/-- The same over a run of paint-only changes: an animation of any length lays out
+nothing after its first frame. -/
+theorem run_paints_never_layout (s : Session) (vs : List Nat) (h : Coherent s) (w : Warm s) :
+    (run s (vs.map Event.paintOnly)).2.layouts = 0 := by
+  induction vs generalizing s with
+  | nil => rfl
+  | cons v vs ih =>
+    simp only [List.map_cons,run,Cost.add_layouts]
+    rw [paint_never_layouts s v w,ih _ (step_coherent _ _ h) (step_warm _ _ h w)]
+
 /-- The other case, said as such: a pointer state with a style that changes geometry
 (`geometry = true`) is in the key, and costs one layout unless a layout of that key is
 kept (`layout_once_per_distinct_key` bounds a hover on and off by one). -/

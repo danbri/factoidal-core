@@ -37,7 +37,12 @@ export function clampOffset(place:HTMLLayers["layers"],scroll:number):{offset:nu
 export function keeps(place:HTMLLayers["layers"],scroll:number):boolean {return scroll>=place.keepFrom&&scroll<=place.keepTo;}
 
 type Growing={buffer:GPUBuffer;capacity:number};
-type Slot={uniform?:Growing;tiles?:Growing;bind?:GPUBindGroup;bindKey:string;texture?:GPUTexture;size:string};
+/** What Lean says changed since the answer `base` (`WebPaint.retainedAnswer`): `rects` in the
+ * scene's pixels. A host whose texture holds answer `base` can draw those pixels alone. */
+type Damage={id:number;base:number|null;rects:number[][]|null};
+type Slot={uniform?:Growing;tiles?:Growing;bind?:GPUBindGroup;bindKey:string;texture?:GPUTexture;size:string;
+  /** The Lean answer `damage.id` drawn in `texture`. */
+  drawn?:number};
 export type PassResult={steps:Record<string,number>;pixels?:Uint8Array;hash:string};
 
 // The composite uniform: one word-of-four for the place and the rectangle count, then the
@@ -49,7 +54,7 @@ const LAYER_USAGE=()=>GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.TEXTURE_
 export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,limits:DeviceFacts=device.limits) {
   const plans=new Map<string,RenderPlan>();
   const pipelines=new Map<string,GPURenderPipeline>();
-  const stats={planRequests:0,pipelineBuilds:0,layerTextures:0,bindGroups:0};
+  const stats={planRequests:0,pipelineBuilds:0,layerTextures:0,bindGroups:0,scenesFull:0,scenesPartial:0,scenesKept:0};
   const grow=(slot:Growing|undefined,bytes:number,usage:number):Growing=>{
     if(slot&&slot.capacity>=bytes)return slot;
     slot?.buffer.destroy();
@@ -106,6 +111,25 @@ export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,lim
       throw error;
     }
   }
+  // Lean's rectangles only, over the pixels already in the texture (the scene shader's pixel
+  // does not read what is there). No readback: an interactive frame.
+  async function drawDamage(p:RenderPlan,resources:{pipeline:GPURenderPipeline;bindGroup:GPUBindGroup},target:GPUTexture,rects:number[][],write:()=>void):Promise<PassResult> {
+    device.pushErrorScope("validation");let scoped=true;
+    try{
+      write();
+      const encoder=device.createCommandEncoder();
+      const pass=encoder.beginRenderPass({colorAttachments:[{view:target.createView(),loadOp:"load",storeOp:"store"}]});
+      pass.setPipeline(resources.pipeline);pass.setBindGroup(p.bindGroup.index,resources.bindGroup);
+      for(const [x,y,w,h] of rects){pass.setScissorRect(x,y,w,h);pass.draw(p.draw.vertexCount,p.draw.instanceCount,p.draw.firstVertex,p.draw.firstInstance);}
+      pass.end();
+      device.queue.submit([encoder.finish()]);
+      const error=await device.popErrorScope();scoped=false;if(error)throw new Error(error.message);
+      return {steps:{},hash:""};
+    }catch(error){
+      if(scoped)try{await device.popErrorScope();}catch{/* original failure */}
+      throw error;
+    }
+  }
   /** Draw one Lean scene into the slot's texture (made at the scene's size), or into `target`. */
   async function drawScene(slot:Slot,frame:HTMLArtifact,check:boolean,target?:GPUTexture):Promise<PassResult> {
     const p=await plan(frame.width,frame.height,frame.data);
@@ -114,9 +138,12 @@ export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,lim
       const size=`${frame.width}x${frame.height}`;
       if(!slot.texture||slot.size!==size){
         slot.texture?.destroy();stats.layerTextures++;
-        slot.texture=device.createTexture({size:[frame.width,frame.height],format:p.format,usage:LAYER_USAGE()});slot.size=size;
+        slot.texture=device.createTexture({size:[frame.width,frame.height],format:p.format,usage:LAYER_USAGE()});slot.size=size;slot.drawn=undefined;
       }
     }
+    const damage=(frame as unknown as {damage?:Damage}).damage;
+    // The same answer already in the slot's texture: nothing to do.
+    if(!target&&!check&&damage&&slot.drawn===damage.id){stats.scenesKept++;return {steps:{},hash:""};}
     const tileWords=frame.tiles;
     const uniformBytes=p.uniform.bytes,tileBytes=tileWords?Math.max(16,tileWords.length*4):0;
     const before=[slot.uniform?.buffer,slot.tiles?.buffer];
@@ -128,10 +155,19 @@ export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,lim
       if(tileWords)entries.push({binding:p.bindGroup.binding+1,resource:{buffer:slot.tiles!.buffer,offset:0,size:tileBytes}});
       slot.bind=device.createBindGroup({layout:pipeline.getBindGroupLayout(p.bindGroup.layoutIndex),entries});slot.bindKey=want;stats.bindGroups++;
     }
-    const result=await run(p,{pipeline,bindGroup:slot.bind},target??slot.texture!,check,()=>{
+    const write=()=>{
       device.queue.writeBuffer(slot.uniform!.buffer,p.uniform.offset,(frame.data instanceof Float32Array?frame.data:new Float32Array(frame.data)) as Float32Array<ArrayBuffer>);
       if(tileWords)device.queue.writeBuffer(slot.tiles!.buffer,0,new Uint32Array(tileWords));
-    });
+    };
+    // The texture holds answer `damage.base` (scene shader pixels do not read the target): draw
+    // only what changed. Off the frame path (`check`, or another target), the whole scene.
+    const rects=!target&&!check&&damage?.rects&&damage.base!==null&&slot.drawn===damage.base&&slot.texture?damage.rects:undefined;
+    let result:PassResult;
+    if(rects){
+      stats.scenesPartial++;
+      result=rects.length?await drawDamage(p,{pipeline,bindGroup:slot.bind},slot.texture!,rects,write):(write(),{steps:{},hash:""});
+    }else{stats.scenesFull++;result=await run(p,{pipeline,bindGroup:slot.bind},target??slot.texture!,check,write);}
+    if(!target)slot.drawn=damage?.id;
     if(check&&result.pixels)checkPixels(frame as unknown as Parameters<typeof checkPixels>[0],result.pixels);
     return result;
   }

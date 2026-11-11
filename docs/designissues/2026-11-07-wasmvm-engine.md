@@ -200,8 +200,9 @@ randomness from `IO.getRandomBytes` reached the module. The constant-byte stub i
 - **Operand stack**: one `ByteArray` for the whole run, 8 little-endian bytes per
   slot (`Slots` in `Exec/Code.lean`), read and written as one 8-byte access at a
   `USize` slot index (see "Speed pass"). i32 and f32 are zero-extended, f64 and i64 use
-  the whole slot, a reference is an address with all-ones for null. v128 (SIMD,
-  later) takes two slots. A `FloatArray` read through `Float.ofBits` measured faster
+  the whole slot, a reference is an address with all-ones for null. A v128 value
+  has one slot index: its low half is in this stack and its high half is in a second
+  slot array (see "SIMD"). A `FloatArray` read through `Float.ofBits` measured faster
   but is wrong: see "Measurements".
 - **Locals** are slots of the operand stack at the frame base (`fp + i`).
 - **Registers**: `run` takes the stack, `sp`, `fp`, `pc` (`USize`), the code, the
@@ -212,6 +213,7 @@ randomness from `IO.getRandomBytes` reached the module. The constant-byte stub i
 - **Memory**: the `LinearMemory` interface (see "Linear memory"); backend A is a
   `ByteArray`. One bounds check per access (`ea + width ≤ size`), in the loop; the
   backend gets the proof.
+- **References and GC objects**: see "GC" (the bits of a reference, the object array).
 - **Tables**: `Array UInt64` of references. **Globals**: one store-wide `FloatArray`.
 - **Uniqueness.** In-place update needs reference count 1. The loop holds the operand
   stack, the frames and the store as separate arguments, never inside a value that is
@@ -293,8 +295,8 @@ Stage 1: Wasm 1.0 (MVP) plus multi-value, sign extension, non-trapping float-to-
 bulk memory, reference types and multi-memory. Stage 2 (2026-11-08): exception handling
 (3.0 `try_table`, `throw`, `throw_ref`, `exnref`, tags; and the legacy `try`, `catch`,
 `catch_all`, `delegate`, `rethrow` that Emscripten emits), tail calls and typed function
-references. Later, with room left in `Syntax` (`ValType.v128`, `HeapType` with type
-indices, `Op` constructors): SIMD, GC, memory64, threads.
+references. Stage 3 (2026-11-10): fixed-width SIMD (see "SIMD") and garbage collection
+with no collector (see "GC"). Later: memory64, threads, relaxed SIMD, a collector.
 
 Floating point, where the host C library can differ: `Float.sqrt`/`Float32.sqrt`
 (correctly rounded by IEEE 754 in every C library we use), `floor`/`ceil`/`trunc`
@@ -315,7 +317,13 @@ sessions' builds running on the machine (load average about 2.5). Commands run i
 ### Spec tests
 
 `lake exe wasmvm-spectest` over `third_party/wasm-spec/test/core-json` (259 files,
-65353 commands). 2026-11-08, after exceptions, tail calls and typed function
+65353 commands). 2026-11-10, after garbage collection: **pass 61698, fail 0, not run
+3655** (the `gc` directory: pass 793, fail 0, not run 5; see "GC"). 2026-11-10, after
+fixed-width SIMD: **pass 60858, fail 0, not run
+4495.** The `simd` directory went from pass 122, not run 25868 to pass 25479, fail 0,
+not run 511 (all 511 are text-format modules); no other part changed. See "SIMD".
+
+2026-11-08, after exceptions, tail calls and typed function
 references: **pass 35501, fail 0, not run 29852.** By part:
 
 | Part | pass | not run | why not run |
@@ -811,6 +819,232 @@ with a call-depth limit of 4 and 64 operand slots, give the right sums (93 ms fo
 the typing of `ref.func` as `(ref $t)`. Non-null reference types and non-defaultable
 locals were already validated. A reference is a slot (`nullRef` is all ones), so
 `br_on_null` and `br_on_non_null` are a compare and a `brMove`.
+
+## SIMD
+
+Fixed-width SIMD (the v128 type; the 236 instructions with binary prefix 0xFD), added
+2026-11-10. Relaxed SIMD (opcode numbers 0x100 and up) is not done: the decoder says
+`unsupported`.
+
+### Representation
+
+- **Syntax.** One constructor, `Instr.simd code memarg lane lo hi`. `code` is the opcode
+  number after the prefix. The other fields are the immediates (zero when the opcode
+  has none): the memarg, the lane index, and 16 bytes as two 64-bit halves (the value
+  of `v128.const`, the 16 lane indices of `i8x16.shuffle`). `simdShape` in `Simd.lean`
+  gives, for each opcode number, its immediates and its stack signature. The decoder,
+  the validator and the AOT encoder read that one table.
+- **Values.** The operand stack keeps one slot index for each value. Heights, branch
+  keep counts and local indices did not change. A v128 value at slot `i` has its low 64
+  bits in slot `i` of the operand stack and its high 64 bits in slot `i` of the hi
+  stack. The hi stack is the field `hi` of `ExcStore` (the `exc` field of the store).
+  It is not an argument of `run` and not a new field of `StoreOf`: each of those costs
+  time in the hot loop ("Cold ops"). A slot past the end of the hi stack reads as 0. A
+  write grows it. A v128 global has its high half in `ExcStore.ghi`, at the global's
+  address.
+- **Ops.** Every SIMD instruction is one of two ops, `Op.simd` and `Op.simdImm` (the
+  two with 16 bytes). Both run in `cold`. `run` has no new case.
+- **Moves.** The ops of the hot loop move low halves only. The validator knows the
+  type of each value that an instruction moves. When the type is v128 it emits an op
+  that also moves the high half. These ops run in `cold`:
+  - `vLocalGet`, `vLocalSet`, `vLocalTee`, `vSelect`, `vGlobalGet`, `vGlobalSet`.
+  - `hiMove skip n height`, put before a `br`, a `return_` or a tail call that moves
+    v128 values. It moves the high halves; the op after it moves the low halves. A
+    `br_if` that moves a v128 becomes `jumpUnless L; hiMove; br; L:`.
+  - `vBrTable`, because each target of `br_table` has its own height.
+  - `hiZero x n`, the first op of a function that declares a v128 local. It sets the
+    high halves of the declared locals to zero.
+  - `brOnNull` and `brOnNonNull` (already cold) move the high halves when the hi stack
+    is not empty.
+  A call needs no move: the arguments are in place, as for other values. The end of a
+  block needs no move: the results are in place.
+- **Numerics.** `V128` in `Simd.lean` is two `UInt64`. Each result is computed lane by
+  lane. Float lanes go through `NumOp.evalUn` and `NumOp.evalBin` of `Numerics.lean`,
+  so NaN and signed-zero results are those of the scalar instructions. Signed integer
+  lanes use `Int`. No instruction of this set can trap except on a memory access.
+- **API.** `Value.v128 lo hi`. `invoke` writes the high halves of v128 arguments;
+  results read both halves.
+- **In-place writes.** `StoreOf.modHi` takes the store and its `exc` field apart
+  before it changes the hi stack, so the hi stack has one reference and a write does
+  not copy it. `Tests/Simd.lean` (`noCopy`) fails if it does.
+
+### Refused
+
+- A tag whose type has a v128 parameter: validation error `unsupported: v128 in a tag
+  type`. An exception keeps its payload as one 64-bit word for each value.
+- A host function whose type has a v128: link error `unsupported: v128 in the type of
+  a host function`. Arguments and results of host calls are one word each.
+- Relaxed SIMD: decode error `unsupported`.
+
+There is no failing test for these three: the spec suite has no case for the first two
+in the binary format, and the 79 relaxed-SIMD commands count as not run.
+
+### Tests
+
+Command, in `formal/lean4`: `lake exe wasmvm-spectest` (2 s). To run one file:
+`lake exe wasmvm-spectest simd_lane`.
+
+| Part | before: pass, fail, not run | after: pass, fail, not run |
+|---|---|---|
+| `simd` directory (59 files) | 122, 0, 25868 | 25479, 0, 511 |
+| all 259 files | 35501, 0, 29852 | 60858, 0, 4495 |
+
+The 511 commands of `simd` that are not run are text-format modules (the engine reads
+the binary format only). The runner builds v128 arguments and compares v128 results
+from the JSON form (`lane_type` and one string for each lane; a float lane can be
+`nan:canonical` or `nan:arithmetic`).
+
+`Tests/Simd.lean` runs after the spec tests. `moves`: 15 cases, one for each op of the
+list above; each case leaves a different high half in the slot that the value moves to.
+With `hiMoveDown` and `hiZero` switched off, 12 of the 15 fail (checked 2026-11-10).
+`noCopy`: 20 000 iterations of `i8x16.add` on a local at slot 2 (18 ms) and at slot
+40 000 (21 ms).
+
+### Cost for code with no SIMD
+
+`lake exe wasmvm-bench engine 10000000`, Linux x86-64 cloud VM with 4 virtual CPUs,
+2026-11-10, six runs of each binary in turn (million instructions per second):
+
+| Function | before (median; range) | after (median; range) |
+|---|---|---|
+| sum | 227; 213 to 233 | 223; 206 to 231 |
+| memsum | 171; 157 to 176 | 166; 151 to 173 |
+| fib | 115; 78 to 131 | 122; 85 to 134 |
+
+The differences are smaller than the range of one binary. The C of the specialised
+`run` loop has the same 27 990 lines before and after; the lines that differ are the
+order of assignments to join-point arguments and the names of shared constants.
+
+## GC
+
+The garbage-collection proposal of WebAssembly 3.0, added 2026-11-10: recursion
+groups, sub types, struct and array types, the instructions with binary prefix 0xFB,
+`ref.eq`, and the heap types of the `any` hierarchy. There is no collector in this
+stage: an object stays in the store until the store is dropped.
+
+### Representation
+
+- **Types in a module.** `Module.types : Array FuncType` did not change: the
+  refinement proofs read it. `Module.typeDefs : Array TypeDef` is beside it, one entry
+  for each type index: the sub type (finality, declared supertypes, composite type)
+  and the first index and size of its recursion group. For a struct or an array type
+  the entry of `types` is a placeholder; the validator reads function types through
+  `Ctx.funcT?`, which gives none for such an index, so every use of one as a function
+  type is an "unknown type" error. A module built with function types only can leave
+  `typeDefs` empty: `Module.defs` then takes each entry of `types` as a final function
+  type alone in its group.
+- **Type equivalence.** Two types are equivalent when their recursion groups are
+  equal after each type index is replaced (an index inside the group by its position,
+  an earlier index by the canonical name of that type) and the two types have the same
+  position (`canonSubIn` in `Valid.lean`). The validator's canonical name is the least
+  equivalent index of the module (`typeReps`). The store's canonical name is the type
+  id.
+- **Type ids in the store.** A type id is an index of `StoreOf.typeTable`, as before.
+  `StoreOf.typeId` still gives the id of a final function type that is alone in its
+  group and has no supertype (the only kind of type before this proposal), by
+  comparison of function types. Every other group gets its ids from `internGroup`
+  (`Exec/Instantiate.lean`): the group is found by its canonical form in
+  `GcStore.groups`, or it takes the next ids, one for each type. At those ids
+  `typeTable` holds a placeholder that no function type equals, and `GcStore.types`
+  holds the id of the declared supertype and the composite type. A module with no GC
+  type gets the ids that it got before (`Tests/Gc.lean`, `plain`).
+- **Subtyping at run time.** `StoreOf.isSubId a b`: `a` is `b`, or the supertype chain
+  of `a` reaches `b`. Used by `ref.test`, `ref.cast`, `br_on_cast`, the import check
+  of functions and globals, and `call_indirect` through a type that is not final.
+  `call_indirect` through a final type stays the hot op with its comparison of ids for
+  equality (a final type has no subtype). For a type that is not final the validator
+  emits the cold op `gc callIndirectSub`. Tags must have equivalent types: the store
+  keeps the type id of each tag (`GcStore.tagIds`).
+- **References.** A reference is one 64-bit slot, as before. All ones is null in every
+  hierarchy. In the `any` hierarchy: bit 63 set is an i31 value (bits 0 to 30); bit 62
+  set is a host value (an external reference made internal); with both clear the slot
+  is the address of an object. In the `extern` hierarchy: a slot with bits 62 and 63
+  clear is the embedder's number, and the other forms are values of the `any` hierarchy
+  made external. So `any.convert_extern` and `extern.convert_any` are one function
+  (`refConvert`): null and i31 values stay, and bit 62 flips for the others. A
+  function reference is a function address and an exception reference an exception
+  address; validation keeps the hierarchies apart, so `ref.test` on a function
+  reference reads the type id of the function, and on a reference of the `any`
+  hierarchy it reads the tag bits and then the type id of the object. `ref.eq`
+  compares the two slots.
+- **Objects.** `GcStore.objs : Array Obj`, in the field `gc` of `ExcStore` (the `exc`
+  field of the store; not a new field of `StoreOf` and not an argument of `run`). An
+  `Obj` is its type id and its fields or elements, one 64-bit slot each (`Slots`). An
+  i8 or i16 field holds its 8 or 16 bits; `get_s` extends the sign when it reads. The
+  length of an array is the number of its slots. `StoreOf.modObj` takes the store,
+  `exc`, `gc` and the object apart before a write, so a write does not copy the object
+  (`Tests/Gc.lean`, `noCopy`).
+- **Ops.** Two new ops, both in `cold`: `Op.gc code a b c` (the instruction's number
+  after the prefix, and up to three numbers that `Run.gcStep` documents) and
+  `Op.gcBr target flags heap` (`br_on_cast`, `br_on_cast_fail`). `run` has no new
+  case. A heap type in an op is a number (`heapCode`).
+- **Constant expressions.** A constant expression with a GC instruction (`struct.new`,
+  `array.new_fixed`, `ref.i31`, ...) allocates. The validator types it with the pass
+  over function bodies, and `instantiate` runs its compiled form with `run`
+  (`constCode`, `evalConstS`). An expression with no GC instruction goes through
+  `constType` and `evalConst`, as before.
+- **API.** `Value.anyRef bits` is a reference of the `any` hierarchy (`none` for
+  null). `Value.ofBits` cannot tell a function address from an object address for a
+  result whose type is a type index: it gives `funcRef` with the slot bits; the store
+  says which (`StoreOf.gcType?`).
+
+### Refused, and limits
+
+- A struct field or an array element of type v128: validation error `unsupported: v128
+  field in a struct or array type`. An object slot is one 64-bit word.
+- An array of more than 2^26 elements (`Run.maxArrayLen`): trap `array larger than the
+  engine limit`.
+- No collector: `GcStore.objs` only grows. A long run that allocates in a loop uses
+  memory in proportion to the number of allocations.
+- An object slot is 8 bytes for every storage type, so an array of i8 uses 8 bytes for
+  each element.
+- A host function has no declared type id: an import of a host function compares
+  function types, and a `call_indirect` to one through a type that is not a plain
+  final function type traps.
+
+`Tests/Gc.lean` (`refusals`) checks the first two with their texts.
+
+### Tests
+
+Command, in `formal/lean4`: `lake exe wasmvm-spectest` (to run one file:
+`lake exe wasmvm-spectest array_copy`).
+
+| Part | before: pass, fail, not run | after: pass, fail, not run |
+|---|---|---|
+| `gc` directory (17 files) | 14, 0, 784 | 793, 0, 5 |
+| `exceptions` | 98, 0, 12 | 108, 0, 2 |
+| `type-equivalence`, `type-rec`, `type-canon` | 15, 0, 46 | 61, 0, 0 |
+| `bulk-memory`, `ref_null` | 7514, 0, 5 | 7519, 0, 0 |
+| all 259 files | 60858, 0, 4495 | 61698, 0, 3655 |
+
+No directory has a lower pass count. The 5 commands of `gc` that are not run: 4 need a
+v128 array (`array_new_data`, `array_init_data`: the module and one assertion each),
+1 is a text-format module (`struct`). The runner counts a validation error that starts
+with `unsupported: ` as not run, as it does for the decoder. The runner builds
+reference arguments and compares reference results from the JSON forms (`anyref` with
+a number is a host value; `eqref`, `i31ref`, `structref`, `arrayref` with no value mean
+any reference of that kind).
+
+`Tests/Gc.lean` runs after the spec tests. `noCopy`: 20 000 `array.set` on an array of
+8 elements (3 ms) and of 200 000 elements (8 ms). `plain`: the type ids of a module
+with function types only are those of `StoreOf.typeId`, with and without `typeDefs`.
+
+`lake exe wasmvm-bench aot ../../third_party/wasm-spec/test/core-json` (the AOT
+encoder writes recursion groups and the GC instructions): 4730 files decode and
+round-trip, 0 failures (before: 4519).
+
+### Cost for code with no GC
+
+`lake exe wasmvm-bench engine 10000000`, Linux x86-64 cloud VM with 4 virtual CPUs,
+2026-11-10, six runs of each binary in turn (million instructions per second):
+
+| Function | before (median; range) | after (median; range) |
+|---|---|---|
+| sum | 222; 216 to 237 | 240; 210 to 262 |
+| memsum | 155; 145 to 165 | 164; 151 to 168 |
+| fib | 130; 116 to 134 | 132; 123 to 135 |
+
+The differences are smaller than the range of one binary.
 
 ## Cold ops: new cases outside `run`
 
@@ -1340,7 +1574,7 @@ engine's steps keep the counts, but the theorems do not yet say so.
    compares through `Step_pure.relop`), then `Run.step_refines` with the abstraction to
    `Spec.config`.
 3. Proposals in the order of the planned uses: SIMD (HarfBuzz builds use it when
-   enabled; ours is built without it, "HarfBuzz in the VM"), memory64, GC. Exceptions, tail calls and `call_ref` are done (stage 2).
+   enabled; ours is built without it, "HarfBuzz in the VM"), memory64, a collector for the GC heap ("GC"). Exceptions, tail calls and `call_ref` are done (stage 2).
    Why `l4factoidal.wasm`'s `l4_init` takes 18 s (its host now has real randomness:
    "WASI Preview 1").
 4. Parallel compile by chunks of equal byte size; decode without the per-section

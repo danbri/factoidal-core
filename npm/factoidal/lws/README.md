@@ -91,6 +91,31 @@ const running = await listen({
   the keys inline instead.
 * `insecureNoAuth: true` serves every request with no authorization. It is
   for development only, and must be asked for.
+* A root ACL (`rootAcl`, or the owner's from `owner`) is written into a
+  NEW storage. An EXISTING storage with no root ACL resource (`/.acl`), for
+  example one made with `insecureNoAuth`, gets it at open, before any
+  request is answered; an existing `/.acl` is kept and never replaced. The
+  start notices say which (`lws-serve` prints them on standard error). So a
+  storage made with no authorization moves to authorization with no moment
+  of open access: `lws-serve DIR --authz AS --root-acl FILE`. The decision
+  and its theorems are in `formal/lean4/L4Factoidal/LWS/RootAclInstall.lean`
+  (listed in `formal/lean4/L4Factoidal/LWS/README.md`); with authorization
+  off nothing is installed.
+* No lockout: with authorization on, a request that would leave the root ACL
+  (`/.acl`) with no agent that has `acl:Control` on the storage root (a PUT
+  or PATCH that drops the last one, a DELETE of `/.acl`, a move, an access
+  grant) is refused with 409 and changes nothing. A write that keeps a
+  Control agent, or swaps one for another, is accepted. Theorems
+  `step_keeps_root_control` and `lockout_iff`
+  (`formal/lean4/L4Factoidal/LWS/NoLockout.lean`, `NoLockoutTheorems.lean`).
+* The offline operator recovery: `factoidal lws-acl-reset DIR FILE --operator`
+  replaces only `/.acl` of a stopped storage with FILE, under the storage
+  directory lock, through this storage library (`openLwsStorage({ dir,
+  operator: true })` and `resetRootAcl(acl)`; the op `lwsAclReset`). It
+  refuses while a server holds the lock, in a directory with no storage, and
+  for a FILE that gives no agent `acl:Control` on the root (theorems
+  `reset_has_control`, `reset_other_paths`, `reset_refuses`). Relative IRIs
+  (`<./>`) need no `--base`.
 
 ## Pagination and client links
 
