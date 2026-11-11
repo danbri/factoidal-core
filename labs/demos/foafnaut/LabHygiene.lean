@@ -158,11 +158,11 @@ that removes declarations; raising one needs the owner. `modules` is a floor, no
 ceiling. Measured by `#hygiene_counts` on main 4078eafa2 (2026-11-10), then lowered by the
 engine-state rework (issue 390, PR 413): the engine's state is a value passed through the C
 ABI, so the lab keeps 3 `unsafe` and 3 `@[implemented_by]` (`shapeKept`, `pageWork`,
-`pageArtifact`), and its opaque constants are its 4 remaining `initialize` cells and those 3
-`implemented_by` fronts. Its 1 `partial def` is the `deriving Repr` of
-`NativeSVG.DisplayNode`. -/
+`pageArtifact`); it has 4 `initialize` cells left. Its opaque count, 5, is measured by
+`#hygiene_counts` on wip/390-state after main 26323aaf5 (2026-11-11). Its 1 `partial def`
+is the `deriving Repr` of `NativeSVG.DisplayNode`. -/
 def baseline : Counts :=
-  ⟨⟨50, 3, 3, 1, 0, 7⟩, ⟨369, 0, 0, 153, 22, 1⟩⟩
+  ⟨⟨50, 3, 3, 1, 0, 5⟩, ⟨369, 0, 0, 153, 22, 1⟩⟩
 
 /-- Fails to compile when a count rises above `baseline`, or when either part read fewer
 modules than the baseline says (an empty walk does not pass). -/
