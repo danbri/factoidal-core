@@ -33,9 +33,9 @@ Only bound identifiers become ACL agents. Theorems:
 * `agentIri_xmpp_injective`, `agentIri_didKey_injective`,
   `oidc_sub_is_profile`: a grant to one account or key is never a grant
   to another; an OIDC login binds only the profile's own IRI.
-* `replay_diff`: the profile changelog stores line diffs; applying the diff
-  of `a` to `b` to `a` gives `b`, so replaying the log rebuilds each
-  version.
+* `replay_diffPS`, `replay_log`: the profile changelog stores line diffs
+  (common prefix and suffix kept); applying the diff of `a` to `b` to `a`
+  gives `b`, so replaying the log rebuilds each version.
 
 No `sorry`, no `axiom`, no `partial`.
 -/
@@ -215,9 +215,8 @@ theorem commonPrefix_le_left : ∀ (a b : List String), commonPrefix a b ≤ a.l
     · simp [commonPrefix, h, commonPrefix_le_left xs ys]
     · simp [commonPrefix, h]
 
-/-- The diff from `a` to `b`: common prefix kept, the rest of `a` dropped,
-the rest of `b` inserted. (The host also trims a common suffix; the
-replay theorem for that form is the same argument on reversed lists.) -/
+/-- The diff from `a` to `b` with the common prefix kept, the rest of `a`
+dropped, the rest of `b` inserted. -/
 def diff (a b : List String) : Diff :=
   let n := commonPrefix a b
   { pre := n, del := a.length - n, ins := b.drop n }
@@ -229,20 +228,41 @@ theorem replay_diff (a b : List String) : apply (diff a b) a = b := by
     apply List.drop_eq_nil_of_le; omega
   rw [hdrop, List.append_nil, commonPrefix_take, List.take_append_drop]
 
+/-- The host's diff (`lineDiff` in Foafos `profile.mjs`): the common prefix,
+then the common suffix of what is left, both kept. -/
+def diffPS (a b : List String) : Diff :=
+  let n := commonPrefix a b
+  let s := commonPrefix (a.drop n).reverse (b.drop n).reverse
+  { pre := n, del := (a.drop n).length - s, ins := (b.drop n).take ((b.drop n).length - s) }
+
+theorem tail_eq (a' b' : List String) :
+    a'.drop (a'.length - commonPrefix a'.reverse b'.reverse) =
+    b'.drop (b'.length - commonPrefix a'.reverse b'.reverse) := by
+  have h := commonPrefix_take a'.reverse b'.reverse
+  rw [List.take_reverse, List.take_reverse] at h
+  simpa using congrArg List.reverse h
+
+theorem replay_diffPS (a b : List String) : apply (diffPS a b) a = b := by
+  simp only [apply, diffPS]
+  generalize hn : commonPrefix a b = n
+  have hpre := commonPrefix_take a b
+  rw [hn] at hpre
+  rw [← List.drop_drop, tail_eq, hpre, List.append_assoc, List.take_append_drop, List.take_append_drop]
+
 /-- Replaying a log of diffs from the first version gives the last. -/
 def replay : List String → List Diff → List String
   | a, [] => a
   | a, d :: ds => replay (apply d a) ds
 
 def log : List (List String) → List Diff
-  | a :: b :: rest => diff a b :: log (b :: rest)
+  | a :: b :: rest => diffPS a b :: log (b :: rest)
   | _ => []
 
 theorem replay_log : ∀ (v : List String) (vs : List (List String)),
     replay v (log (v :: vs)) = (v :: vs).getLast (by simp)
   | v, [] => by simp [replay, log]
   | v, w :: ws => by
-    simp only [log, replay, replay_diff]
+    simp only [log, replay, replay_diffPS]
     rw [replay_log w ws]
     simp
 
@@ -260,5 +280,6 @@ theorem replay_log : ∀ (v : List String) (vs : List (List String)),
     (.didKey "did:key:zE")
 
 #guard apply (diff ["a", "b", "c"] ["a", "x", "c"]) ["a", "b", "c"] == ["a", "x", "c"]
+#guard diffPS ["a", "b", "c"] ["a", "x", "c"] == { pre := 1, del := 1, ins := ["x"] }
 
 end L4Factoidal.Identity.Binding
