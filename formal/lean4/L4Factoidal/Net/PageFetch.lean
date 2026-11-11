@@ -338,7 +338,7 @@ def preflightOk (t : Transfer) (a : Answer) : Bool :=
 /-- The wire form of the request, with `Origin` (Fetch §4.3 "append a request `Origin`
 header"): every cross-origin request and every same-origin one that is not `GET` or `HEAD`. -/
 def Transfer.mainWire (t : Transfer) : Wire :=
-  let h := t.headers.filter fun (n, _) => !forbiddenRequestHeader n
+  let h := t.headers.filter fun (n, v) => !forbiddenRequestHeader n && !forbiddenOverride n v
   let h := if !t.same || !(t.method == "GET" || t.method == "HEAD") then h ++ [("Origin", t.originValue)] else h
   { id := t.id, method := t.method, url := t.url, headers := h, body := t.body }
 
@@ -775,6 +775,16 @@ private def pg : Page := Page.ofUrl "https://a.example/x"
 #guard !(URL.parseUrl "http://b.example/").any (mayConnect pg)
 #guard forbiddenRequestHeader "Cookie" && forbiddenRequestHeader "Sec-Foo" && !forbiddenRequestHeader "X-Foo"
 #guard forbiddenOverride "X-HTTP-Method-Override" "get, trace" && !forbiddenOverride "X-HTTP-Method-Override" "PUT"
+-- special addresses however the URL writes them: the URL parser normalizes IPv4 forms
+#guard ["http://[::1]/", "http://0.0.0.0/", "http://127.1/", "http://0x7f.0.0.1/", "http://[::ffff:127.0.0.1]/",
+  "http://localhost./", "http://a.localhost/", "http://169.254.169.254/", "http://10.0.0.1/", "http://[fe80::1]/"].all
+  fun s => (URL.parseUrl s).any privateHost
+#guard !(URL.parseUrl "http://93.184.215.14/").any privateHost
+-- a method-override field naming a forbidden method never reaches the wire
+private def overridden : Transfer :=
+  { id := 1, page := pg, method := "POST", url := "https://a.example/y", body := none,
+    headers := [("X-HTTP-Method-Override", "TRACE"), ("X-A", "1")] }
+#guard overridden.mainWire.headers == [("X-A", "1"), ("Origin", "https://a.example")]
 #guard safeHeader "Content-Type" "text/plain;charset=UTF-8" && !safeHeader "Content-Type" "application/json"
 #guard unsafeHeaderNames [("X-B", "1"), ("x-a", "2"), ("Accept", "*/*")] == ["x-a", "x-b"]
 

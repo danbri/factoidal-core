@@ -2,15 +2,17 @@
 L4Factoidal.Net.Xhr — XMLHttpRequest (https://xhr.spec.whatwg.org/) as a state machine on
 `Net.PageFetch`, for page scripts on both JavaScript engines
 (https://github.com/danbri/factoidal-core/issues/374; the record of the design is in
-`docs/designissues/2026-11-10-page-network.md` when it lands).
+`docs/designissues/2026-11-11-page-network.md`).
 
 The state of each object, what a method may do, the order of its events and the text of
 its answer are here. `tools/wasmvm/quickjs/prelude.js` holds a class whose methods call
 `web_api` ops 60 to 79 (`Hosts.WebApi`), and fires the events this file lists.
 
-Sync requests are not yet done (`send` answers NotSupportedError). Cookies are never sent
-or stored (`Net.PageFetch`). Only `""`, `"text"`, `"json"` and `"arraybuffer"` response
-types have a value; the others answer `null`.
+Sync requests are made by undo and redo (`syncWanted`, `syncAnswers`): an embedder that
+cannot undo a run (`syncOk` false: the AOT path, or a later action of a page whose scripts
+never name `XMLHttpRequest`, `mayBlock`) gets NotSupportedError. Cookies are never sent
+or stored (`Net.PageFetch`). The response types `""`, `"text"`, `"json"`, `"arraybuffer"`,
+`"blob"` and `"document"` have a value.
 
 Each event is one `next` call of the page's task, so a script that runs in the middle of a
 sequence sees the state of that point. `Ev.setState`, `.guardDone` and `.startFetch` are
