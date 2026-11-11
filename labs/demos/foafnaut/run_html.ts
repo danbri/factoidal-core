@@ -1162,6 +1162,8 @@ async function main() {
       if(!result?.presented)return;
       checkedFrames++;
       trace("native-html-checked",{frame:frameNumber,why:"idle",idleMs:ms(lastActivity,idleStart),drawMs:Math.round(result.drawMs*10)/10,pixelHash:result.pixelHash});
+      // --shot on a page with no animated page canvas: the first idle-checked frame.
+      if(shotFile&&!pageGpuMs.length)await takeShot();
     };
     const handle=(event:UIEvent)=>{
         if(event.kind===6){running=false;return;}

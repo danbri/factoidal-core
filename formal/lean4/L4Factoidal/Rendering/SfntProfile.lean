@@ -346,6 +346,32 @@ def clusterFont (fonts : Array Font) (cluster : Array Char) (emoji : Bool) : Opt
       let n := shapeScore g cluster text
       if better n acc.1 then (n,j) else acc) first).2
 
+/-- A character of a script whose letters join (Arabic, Syriac, N'Ko, ...). -/
+def joiningChar (c : Char) : Bool :=
+  0x600 ≤ c.toNat && SfntArabic.joiningScripts.contains (Unicode.ScriptData.scriptOf c.toNat)
+
+/-- The font's GSUB names the script of `c` by the script's own tag, not by a `DFLT`
+or `latn` fallback: the font has the joining forms of that script. -/
+def Font.namesScriptOf (f : Font) (c : Char) : Bool :=
+  match f.dir.find? (·.tag == "GSUB") with
+  | none => false
+  | some r =>
+    let own := (SfntKern.scriptTags c.toString).filter fun t => t != "DFLT" && t != "dflt" && t != "latn"
+    match SfntSubst.chooseScript f.bytes r.offset own with
+    | .ok (some _) => true
+    | _ => false
+
+/-- The first font with `p`. For a character of a joining script, the first font with
+`p` whose GSUB names the script comes before it: a font held earlier that only has the
+letters (Noto Sans Math has the Arabic letters, with no joining forms) would draw them
+unjoined. With no such font, the first font with `p`. -/
+private def firstFont (fonts : Array Font) (c : Char) (p : Font → Bool) : Option Nat :=
+  match fonts.findIdx? p with
+  | none => none
+  | some i =>
+    if !joiningChar c || (fonts[i]?.map (·.namesScriptOf c)).getD false then some i
+    else some ((fonts.findIdx? fun f => p f && f.namesScriptOf c).getD i)
+
 /-- The font of character `k` alone (the rules before emoji clusters): see `runsOf`. -/
 private def charFont (fonts : Array Font) (chars : Array Char) (k : Nat) (last : Option Nat) : Nat :=
   let c := chars[k]!
@@ -357,12 +383,12 @@ private def charFont (fonts : Array Font) (chars : Array Char) (k : Nat) (last :
     -- the first font that has both, when one does, so that the font places the mark.
     | some n => if (asksForEmoji n.toNat || Unicode.Normalization.ccc n.toNat != 0) &&
         !staysWithBase c.toNat && Unicode.Normalization.ccc c.toNat == 0 then
-        fonts.findIdx? fun (f : Font) => f.has c && f.has n else none
+        firstFont fonts c fun (f : Font) => f.has c && f.has n else none
     | none => none
   if keep then last.getD 0 else
   match emoji with
   | some i => i
-  | none => (fonts.findIdx? fun (f : Font) => f.has c).getD (last.getD 0)
+  | none => (firstFont fonts c fun (f : Font) => f.has c).getD (last.getD 0)
 
 /-- A word in runs: the index of a font in `fonts`, and the characters it draws.
 Each character goes to the first font that has it. A character in `staysWithBase`
@@ -595,7 +621,9 @@ def wordsOf (dom : DOM.Dom) (limit : Nat := 8192) : Array String := Id.run do
     let node := dom.get id
     if node.type == .text && !inUnrendered dom id then
       for word in node.data.splitToList Char.isWhitespace do
-        if !word.isEmpty && seen.size < limit then seen := seen.insert word ()
+        -- As layout cuts it (`Layout.wordPieces`).
+        for (_, piece) in Layout.wordPieces word do
+          if !piece.isEmpty && seen.size < limit then seen := seen.insert piece ()
   return (seen.toList.map Prod.fst).toArray
 
 private def curveSteps (distance tolerance : Float) : Nat :=
