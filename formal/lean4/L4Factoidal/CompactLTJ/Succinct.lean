@@ -104,6 +104,7 @@ def degreeAt (bits : List Bool) (node : Nat) : Option Nat := do
 /-- Child numbers are BFS-order node indices, beginning at 0 for the root.
 The first child of node i is 1 + the number of ones before its segment. -/
 def firstChildAt (bits : List Bool) (node : Nat) : Option Nat := do
+  let _ ← select0 node bits
   let start ←
     if node == 0 then some 0
     else (select0 (node - 1) bits).map (· + 1)
@@ -115,9 +116,7 @@ theorem degreeAt_empty (node : Nat) :
 
 theorem firstChildAt_empty (node : Nat) :
     firstChildAt [] node = none := by
-  cases node with
-  | zero => rfl
-  | succ n => simp [firstChildAt, select0]
+  simp [firstChildAt, select0]
 
 /-! A root with two leaf children has degrees [2,0,0] and LOUDS
 bits 11000; the children are nodes 1 and 2. -/
