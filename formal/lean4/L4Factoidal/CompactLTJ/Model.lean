@@ -213,7 +213,7 @@ private def outgoing : Atom :=
 
 #guard candidateDomain sampleData [outgoing] 0 [] == [2, 3]
 #guard (solve sampleData [outgoing] [0] []).length == 2
-#guard solve example [] [] [] == [[]]
+#guard solve sampleData [] [] [] == [[]]
 #guard intersectMany [1,2,3] [[2,3,4],[3,5]] == [3]
 
 end L4Factoidal.CompactLTJ
