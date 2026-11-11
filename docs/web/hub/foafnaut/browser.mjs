@@ -408,7 +408,8 @@ addEventListener('keydown',event=>{
   // or Control is an edit, not a table key. Some keys (Command-T, Command-W and Command-N in
   // most browsers) never reach a page.
   const primary=mac?event.metaKey:event.ctrlKey;
-  const entry=primary||!focused?keyTable.find(row=>row.modifier===modifierName(event)&&row.key===keyName(event)):undefined;
+  // Control-Tab still changes tabs while the address or console editor has focus.
+  const entry=primary||!focused||(event.ctrlKey&&event.key==='Tab')?keyTable.find(row=>row.modifier===modifierName(event)&&row.key===keyName(event)):undefined;
   if(entry&&entry.command!==14){event.preventDefault();send({type:'command',command:entry.command});return;}
   if(focused&&edits[event.key]){event.preventDefault();send({type:'key',key:edits[event.key],modifiers:modifiers(event)});return;}
   if((event.metaKey||event.ctrlKey)&&event.key==='u'){event.preventDefault();send({type:'command',command:13});return;}

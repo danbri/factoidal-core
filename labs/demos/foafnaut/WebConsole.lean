@@ -59,6 +59,22 @@ def entryHTML (e : JSON.Json) : String :=
 
 private def count (es : List JSON.Json) (p : JSON.Json → Bool) : Nat := (es.filter p).length
 
+/-- The host sends the editor state; all text, including the selection, is escaped here. -/
+def inputHTML (input : JSON.Json) : String :=
+  let chars := (str input "address").toList
+  let pos := fun key => min chars.length (((input.field? key).bind fun j => match j with
+    | .number n => n.toNat? | _ => none).getD 0)
+  let cursor := pos "cursor"
+  let anchor := pos "anchor"
+  let lo := min cursor anchor
+  let hi := max cursor anchor
+  let part := fun a b => escape (String.ofList ((chars.take b).drop a))
+  "<p class=\"prompt\">&gt; " ++ part 0 lo ++
+    (if lo == hi then "<span class=\"caret\">|</span>" else
+      "<span class=\"selection\">" ++ part lo hi ++ "</span>") ++ part hi chars.length ++ "</p>" ++
+    "<p class=\"dim\">JavaScript for this page. Enter runs; copy, paste and undo work here. " ++
+    "One line, up to 2048 characters. Use var for bindings shared between inputs. Newest entries first.</p>"
+
 /-- The console page: `(source, title)`. -/
 def page (request : JSON.Json) : String × String := Id.run do
   let entries := match request.field? "entries" with | some (.array es) => es | _ => []
@@ -76,7 +92,9 @@ def page (request : JSON.Json) : String × String := Id.run do
     "h1{margin:0 0 6px;font-size:20px;line-height:28px;color:#184078}p{margin:0;padding-top:2px}" ++
     ".dim{color:#5a6270}.entry{margin:6px 0 0;padding:4px 8px;border:1px solid #c8ccd4;background:#ffffff}" ++
     ".error{border:2px solid #b02020;background:#fff0f0}.warning{border:2px solid #b08a1e;background:#fff8dc}" ++
-    ".tag{font-weight:bold;color:#184078}.tabs{padding-top:8px}a{color:#1a4fa0}</style></head><body><main>"
+    ".tag{font-weight:bold;color:#184078}.tabs{padding-top:8px}a{color:#1a4fa0}" ++
+    ".prompt{white-space:pre-wrap;font-family:monospace;background:white;border:1px solid #184078;padding:8px;margin-top:8px}" ++
+    ".selection{background:#b8d8ff}.caret{color:#184078}</style></head><body><main>"
   let summary := s!"<p class=\"dim\">{entries.length} entries: {system} from System, {entries.length-system} from the page; {errors} errors." ++
     (if shown.length < entries.length then s!" The last {shown.length} are shown." else "") ++ "</p>"
   let others := tabs.zipIdx.filterMap fun (t,i) =>
@@ -84,8 +102,10 @@ def page (request : JSON.Json) : String × String := Id.run do
     else some ("<a href=\"foafnaut:console/" ++ toString (i+1) ++ "\">" ++ toString (i+1) ++ ": " ++
       escape (let t' := str t "title"; if t'.isEmpty then str t "url" else t') ++ "</a>")
   let body := "<h1>Console</h1><p>Tab " ++ escape tab ++ ": " ++ escape (if pageTitle.isEmpty then "(no title)" else pageTitle) ++
-    "</p><p class=\"dim\">" ++ escape (str request "url") ++ "</p>" ++ summary ++
-    (if shown.isEmpty then "<p>Nothing was logged for this page.</p>" else String.join (shown.map entryHTML)) ++
+    "</p><p class=\"dim\">" ++ escape (str request "url") ++ "</p>" ++
+    (match request.field? "input" with | some input => inputHTML input | none => "") ++ summary ++
+    (if shown.isEmpty then "<p>Nothing was logged for this page.</p>" else
+      String.join ((if (request.field? "input").isSome then shown.reverse else shown).map entryHTML)) ++
     (if others.isEmpty then "" else "<p class=\"tabs\">The console of another tab: " ++ " ".intercalate others ++ "</p>") ++
     "<p class=\"dim\">System entries say what this browser skipped or refused on the page, and fetches that failed. " ++
     "Page entries are what the page's scripts wrote. Reload this tab to see new entries.</p></main></body></html>"

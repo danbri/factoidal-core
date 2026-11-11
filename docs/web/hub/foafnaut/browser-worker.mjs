@@ -24,8 +24,8 @@ function addEntries(page,list){
   if(!page)return;
   page.console??=[];page.consoleKeys??=new Set();
   for(const entry of list){
-    if(page.console.length>=MAX_CONSOLE)return;
     if(entry.source==='System'){const key=JSON.stringify([entry.feature,entry.where,entry.message]);if(page.consoleKeys.has(key))continue;page.consoleKeys.add(key);}
+    if(page.console.length>=MAX_CONSOLE)page.console.shift();
     page.console.push(entry);
   }
 }
@@ -888,6 +888,7 @@ const isSparql=url=>url===sparqlURL||url.startsWith(sparqlURL+'/');
 function show(next,remember=true){
   if(remember&&doc&&!next.title?.startsWith('Page refused'))browserState?.visit(next.url,next.title??'',doc.url).catch(()=>{});
   doc=next;if(!focused)field=showURL(next.url);scroll=0;loading=false;folded=0;
+  setFocus(focused);
   if(remember){history=push(history.history,next.url);pages++;}
   post({type:'location',url:next.url,home:next.url===homeURL,push:remember});
   request();
@@ -909,17 +910,44 @@ function visit(address){
 // foafnaut:console: the console of a tab, as Lean writes it (op consolePage). `/N` is tab N; with
 // no number, the page shown when it was asked for, or the page that a console tab shows.
 let consoleFrom;
-function consolePage(url){
+const consoleFields=new WeakMap(),consoleBusy=new WeakSet();
+function consoleField(source){let f=consoleFields.get(source);if(!f){f=showURL('');consoleFields.set(source,f);}return f;}
+function consolePage(url,chosen){
   const pageOf=i=>i===active?doc:tabs[i]?.doc;
   const n=Number(url.slice(consoleURL.length+1));
-  let source=Number.isInteger(n)&&n>0&&pageOf(n-1)?pageOf(n-1):consoleFrom??doc;consoleFrom=undefined;
+  let source=chosen??(Number.isInteger(n)&&n>0&&pageOf(n-1)?pageOf(n-1):consoleFrom??doc);consoleFrom=undefined;
   source=source?.consoleSource??source;
   const index=Math.max(0,tabs.findIndex((_,i)=>pageOf(i)===source||pageOf(i)?.consoleSource===source));
   let answer;
-  try{answer=call('',{op:'consolePage',tab:index+1,title:source?.title??'',url:source?.url??'',entries:source?.console??[],
+  try{answer=call('',{op:'consolePage',tab:index+1,title:source?.title??'',url:source?.url??'',entries:source?.console??[],input:consoleField(source),
     tabs:tabs.map((_,i)=>({url:pageOf(i)?.url??'',title:pageOf(i)?.title??''}))});}
   catch{return {...sparqlNeedsEngine(url),source:'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Needs a newer engine</title></head><body><h1>The console needs a newer engine</h1><p>The engine this page loaded does not have the console op.</p></body></html>'};}
   return {url,title:answer.title,source:answer.source,sources:[{kind:'Generated page',url,source:answer.source}],consoleSource:source};
+}
+function refreshConsole(source){if(doc.consoleSource===source&&!loading){doc=consolePage(doc.url,source);request();}}
+function consoleEdit(source,answer){
+  const {clipboard,...next}=answer;consoleFields.set(source,next);
+  if(clipboard)post({type:'clipboard',text:clipboard});
+  refreshConsole(source);
+}
+async function consoleSubmit(source){
+  const expression=consoleField(source).address;
+  if(!expression.trim()||consoleBusy.has(source))return;
+  consoleBusy.add(source);consoleFields.set(source,showURL(''));
+  addEntries(source,[{source:'page',severity:'input',message:'> '+expression}]);refreshConsole(source);
+  try{
+    if(!await hasScripts()||!scriptOps.includes('evaluate'))throw Error('Console evaluation needs an enabled, newer script engine.');
+    if(!source.script){
+      if(source.scripted)throw Error("This page's scripts did not start. Reload it with scripts enabled.");
+      await startScripts(source,[]);
+    }
+    if(!source.script)throw Error('Page scripts are disabled.');
+    const turn=scriptCall('',{op:'scriptSession',action:'evaluate',session:source.script.session,expression});
+    scriptTurn(source,turn);
+    if(!turn.evaluation)throw Error('The script engine returned no evaluation result.');
+    addEntries(source,[{source:'page',severity:turn.evaluation.exception?'error':'result',message:turn.evaluation.text}]);
+  }catch(error){addEntries(source,[{source:'page',severity:'error',message:String(error.message??error)}]);}
+  finally{consoleBusy.delete(source);refreshConsole(source);}
 }
 function openConsole(){const source=doc;newTab();setFocus(false);consoleFrom=source;navigate(consoleURL);}
 const pageFor=url=>url===consoleURL||url.startsWith(consoleURL+'/')?consolePage(url):url===graphURL?graphPage():statePages.includes(url)?statePage(url):url===wasmURL||url.startsWith(wasmURL+'/')?wasmPage(url):isSparql(url)?sparqlPage(url):prepare(url);
@@ -976,9 +1004,16 @@ function menuPress(data,how){
   if(answer.menu)openMenu();
 }
 function command(id,text=''){
-  const answer=call('',{op:'command',command:id,textScalePercent:percent,zoomUnit:zoomUnit(),history:history.history,focused,
+  const source=!focused?doc.consoleSource:undefined;
+  const answer=call('',{op:'command',command:id,textScalePercent:percent,zoomUnit:zoomUnit(),history:history.history,focused:focused||!!source,
     tabs:tabs.length,active,scroll:Math.round(scroll),view:height,scrollLimit:Math.floor(scrollLimit()),scale});
-  if(answer.target==='address'){if(!focused)focusAddress();edit(answer.action,text);return;}
+  if(answer.target==='address'){
+    if(source){
+      if(/[\r\n]/.test(text)){addEntries(source,[{source:'page',severity:'error',message:'Paste one line of JavaScript at a time.'}]);refreshConsole(source);return;}
+      consoleEdit(source,call('',{op:'shellEdit',shell:{...consoleField(source),focused:true},action:answer.action,text}));return;
+    }
+    if(!focused)focusAddress();edit(answer.action,text);return;
+  }
   if(['back','forward','reload'].includes(answer.action)){if(answer.url)navigate(answer.url,false);history=answer;request();}
   zoomTo(answer.textScalePercent);
   if(answer.action==='focusAddress')focusAddress();
@@ -1034,12 +1069,12 @@ async function graphPage(){
   return page;
 }
 function keep(){tabs[active]={doc,history,scroll};}
-function showTab(index){serial++;loading=false;setFocus(false);active=index;({doc,history,scroll}=tabs[index]);field=showURL(doc.url);request();startPendingScripts(doc);}
+function showTab(index){serial++;loading=false;active=index;({doc,history,scroll}=tabs[index]);setFocus(false);field=showURL(doc.url);request();startPendingScripts(doc);}
 function newTab(){if(!home)return;keep();tabs.push({doc:home,history:push({entries:[],index:0},homeURL),scroll:0});showTab(tabs.length-1);focusAddress();}
 // Closed tabs, the last one last, for Shift-Command-T (reopenTab).
 const closedTabs=[];
 function closeTab(index){if(tabs.length===1)return;keep();closedTabs.push(tabs[index]);if(closedTabs.length>25)closedTabs.shift();tabs.splice(index,1);showTab(Math.min(active>index?active-1:active,tabs.length-1));}
-function setFocus(value){if(focused!==value){focused=value;post({type:'focus',focused});}}
+function setFocus(value){focused=value;post({type:'focus',focused:focused||!!doc?.consoleSource});}
 // Lean selects the whole address when the bar takes the focus; typing then replaces it.
 function focusAddress(){
   folded=0;
@@ -1656,6 +1691,15 @@ function apply(data){
     if(doc.animation?.has&&current){const a=doc.animation;a.clicks=[...a.clicks,[Math.round(performance.now()-a.epoch),data.x,data.y-current.answer.layers.top+scroll]].slice(-16);a.running=true;request();}
     const target=hit(data.x,data.y);
     if(target?.href)follow(router.route({...site,href:target.href,base:doc.baseURL||doc.url}));
+  }
+  const consoleSource=!focused?doc.consoleSource:undefined;
+  if(consoleSource&&data.type==='text'){
+    consoleEdit(consoleSource,call('',{op:'shellText',shell:{...consoleField(consoleSource),focused:true},text:data.text}));return;
+  }
+  if(consoleSource&&data.type==='key'){
+    if(data.key===36)void consoleSubmit(consoleSource);
+    else consoleEdit(consoleSource,call('',{op:'shellKey',shell:{...consoleField(consoleSource),focused:true},key:data.key,modifiers:data.modifiers??0}));
+    return;
   }
   if(data.type==='text'&&focused){const {clipboard:_,...next}=call('',{op:'shellText',shell:shell(),text:data.text});field=next;request();}
   if(data.type==='key'&&focused){

@@ -19,6 +19,7 @@ const hubDir=fileURLToPath(new URL('../../../docs/web/hub/foafnaut/',import.meta
 const pagesDir=fileURLToPath(new URL('./pages/',import.meta.url));
 const sample=fileURLToPath(new URL('./fixtures/liberal/sample.html',import.meta.url));
 const runtimeDir=opt('--runtime',fileURLToPath(new URL('./.build/web-render/engines/',import.meta.url)));
+const guestPath=process.env.QUICKJS_WASM??path.join(process.env.HOME??'', 'working/qjs-wasm/qjs-wasmvm.wasm');
 const LIVE='https://danbri.github.io';
 const CHROME=process.env.CHROME??'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 if(!fs.existsSync(CHROME)){console.log('NOT RUN: hub_console_check.mjs needs Chrome (set CHROME)');process.exit(0);}
@@ -27,14 +28,29 @@ const types={'.html':'text/html','.xml':'application/xml','.xsl':'application/xm
   '.wasm':'application/wasm','.ttl':'text/turtle','.css':'text/css','.svg':'image/svg+xml','.png':'image/png','.jpg':'image/jpeg','.json':'application/json'};
 const typeOf=f=>types[path.extname(f)]??'application/octet-stream';
 const cache=new Map();
+const replFixture='<!doctype html><html><head><title>Console REPL check</title></head><body><a id="probe" href="https://example.test/before">Probe</a><script>var boots=1; var count=41;</script></body></html>';
 async function get(p){
   const hub='/factoidal/web/hub/foafnaut/',pages=hub+'pages/',rt='/factoidal/web/hub/html-webgpu/runtime/';
   const local=(dir,rest)=>{const f=path.join(dir,decodeURIComponent(rest));return f.startsWith(dir)&&fs.existsSync(f)&&fs.statSync(f).isFile()?f:undefined;};
   let f;
+  if(p==='/factoidal/web/hub/wasm-guests/qjs-wasmvm.wasm'&&fs.existsSync(guestPath))return {status:200,type:'application/wasm',body:fs.readFileSync(guestPath)};
+  if(p===pages+'console-repl-check.html')return {status:200,type:'text/html',body:Buffer.from(replFixture)};
+  // Observe the real editor/console state in this test server only. Production modules
+  // expose no evaluation hook: input below still goes through Chrome's keyboard events.
+  if(p===hub+'browser-worker.mjs'){
+    const body=fs.readFileSync(path.join(hubDir,'browser-worker.mjs'),'utf8').replace('function refreshConsole(source){',
+      "function refreshConsole(source){post({type:'repl-check',entries:source.console,input:consoleField(source)});");
+    return {status:200,type:'text/javascript',body:Buffer.from(body)};
+  }
+  if(p===hub+'browser.mjs'){
+    const body=fs.readFileSync(path.join(hubDir,'browser.mjs'),'utf8').replace('worker.onmessage=({data})=>{',
+      "worker.onmessage=({data})=>{if(data.type==='repl-check'){window.__repl=data;return;}");
+    return {status:200,type:'text/javascript',body:Buffer.from(body)};
+  }
   if(p===pages+'liberal-sample.html')return {status:200,type:'text/html',body:fs.readFileSync(sample)};
   if(p.startsWith(pages)&&p.endsWith('.css')&&!fs.existsSync(path.join(pagesDir,p.slice(pages.length))))return {status:404,type:'text/plain',body:Buffer.from('not here')};
   if(p.startsWith(pages)&&(f=local(pagesDir,p.slice(pages.length))))return {status:200,type:typeOf(f),body:fs.readFileSync(f)};
-  if(p.startsWith(hub)&&p.endsWith('.mjs')&&(f=local(hubDir,p.slice(hub.length))))return {status:200,type:typeOf(f),body:fs.readFileSync(f)};
+  if(p.startsWith(hub)&&(f=local(hubDir,p.slice(hub.length))))return {status:200,type:typeOf(f),body:fs.readFileSync(f)};
   if(p.startsWith(rt)&&(f=local(runtimeDir,p.slice(rt.length))))return {status:200,type:typeOf(f),body:fs.readFileSync(f)};
   if(!cache.has(p))cache.set(p,fetch(LIVE+p).then(async r=>({status:r.status,type:r.headers.get('content-type')??'application/octet-stream',body:Buffer.from(await r.arrayBuffer())})));
   return cache.get(p);
@@ -109,6 +125,44 @@ try{
     st=await until(st=>at('foafnaut:console')(st),20000);
     if(!at('foafnaut:console')(st??{})||!/[1-9]\d* System/.test(st.title))fail('the note did not open a console with a System entry:',st?.title);
     else console.log(JSON.stringify({step:'note link',title:st.title}));
+  }
+  // 5. Real text input and Enter, on the page's existing script session. The same
+  // checks run with BubblePopJS and the Hub's QuickJS AOT path.
+  const waitValue=async(expression,test,limit=30000)=>{
+    const end=Date.now()+limit;let value;
+    while(Date.now()<end){value=await evaluate(expression);if(test(value))return value;await sleep(100);}
+    throw Error('Timed out: '+expression+'; last value '+JSON.stringify(value));
+  };
+  const key=async(key,code,windowsVirtualKeyCode,modifiers=0)=>{
+    for(const type of ['keyDown','keyUp'])await s('Input.dispatchKeyEvent',{type,key,code,windowsVirtualKeyCode,modifiers});
+  };
+  for(const engine of ['bubblepop','quickjs']){
+    await go('foafnaut:scripts/'+engine);await sleep(300);
+    const fixture=base+'pages/console-repl-check.html';await go(fixture);
+    await until(at(fixture),30000);await sleep(1500);
+    await evaluate('window.__repl=null');
+    await key('j','KeyJ',74,mac?1|4:1|2);
+    await until(at('foafnaut:console'),20000);
+    const input=async(expression,expected,severity='result')=>{
+      const count=await evaluate('window.__repl?.entries?.length??0');
+      await s('Input.insertText',{text:expression});
+      await waitValue('window.__repl?.input?.address??null',x=>x===expression);
+      await key('Enter','Enter',13);
+      const state=await waitValue('window.__repl??null',x=>x?.entries?.length>count&&x.entries.at(-1)?.message===expected);
+      if(state.entries.at(-1).severity!==severity)throw Error('Unexpected console result '+JSON.stringify(state.entries.at(-1)));
+    };
+    await input('count += 1; count','42');
+    await input('boots','1');
+    await input("Promise.resolve().then(function(){count=43}); 'queued'",'queued');
+    await input('count','43');
+    await input("throw 'expected failure'",'expected failure','error');
+    await input("document.getElementById('probe').setAttribute('href','https://example.test/after'); count",'43');
+    // Return to the source tab: the link comes from the mutated DOM's real layout.
+    const tab=await evaluate('window.foafnautFrame?.active??null');
+    await key('Tab','Tab',9,2|8); // Control-Shift-Tab: previous Foafnaut tab.
+    st=await until(x=>x.frame?.links?.some(l=>l[1]==='https://example.test/after'),20000);
+    if(!st?.frame?.links?.some(l=>l[1]==='https://example.test/after'))throw Error('Console mutation not rendered on source tab '+tab);
+    console.log(JSON.stringify({step:'console REPL',engine,evaluations:6,mutation:true}));
   }
 }catch(error){fail(String(error?.stack??error));}
 finally{chrome.kill('SIGKILL');server.close();fs.rmSync(profile,{recursive:true,force:true});}

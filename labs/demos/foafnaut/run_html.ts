@@ -5,7 +5,7 @@ import {prefetchTarget,trackMotion,stateKey,sameState,canSwap,keepReach,PREFETCH
 import {inputURL,loadFontFile,prepareHTML,refusalHTML,setFontHost,setPageDecoding,setScriptHost,type PageView} from "./native_html_document.ts";
 import {fallbackFontHost,loadFallbackFonts,mayNeedFallbackFonts,type FallbackFont,type PageFonts} from "./native_html_fonts.ts";
 import type {ScriptPlan,ScriptTurn} from "./native_html_engine.ts";
-import {addEntries,consoleRequest,noteDiagnostics} from "./native_console.ts";
+import {addEntries,consoleOf,consoleRequest,noteDiagnostics} from "./native_console.ts";
 import {loadNativeWindow} from "./native_window.ts";
 import {POINTER_CANCEL,beginPress,movePress,pointerNode,pointerRequest,pressPointers,beforeFirstFrame,type NativePress,type PointerKind,type PresentedState} from "./native_press.ts";
 import {nativePreflight} from "./native_preflight.ts";
@@ -34,7 +34,7 @@ async function main() {
     return;
   }
   if(args.includes("--help")){
-    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--shortcut-sweep] [--print-pdf FILE] [--scroll-sweep] [--watch-sweep SECONDS] [--single-frame] [--offscreen] [--check-pixels] [--perf-summary] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts] [--strict | --be-liberal-in-what-we-accept]\nCommand-Q quits; Command-R and R reload; Command-T, Command-W and Shift-Command-T open, close and reopen tabs; Command-1 to 9, Control-Tab and Shift-Command-[ ] change tab; Space, Page Up, Page Down, Home, End and arrows scroll; Escape stops loading; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints; Option-Command-J opens the console tab (foafnaut:console). By default the browser draws a page without what the built-in engine may skip (module scripts, media conditions it can not read, stylesheets not fetched, scripts when they are off, inline SVG it can not draw) and lists each skip in the console; --strict refuses such a page. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
+    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--console-sweep] [--shortcut-sweep] [--print-pdf FILE] [--scroll-sweep] [--watch-sweep SECONDS] [--single-frame] [--offscreen] [--check-pixels] [--perf-summary] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts] [--strict | --be-liberal-in-what-we-accept]\nCommand-Q quits; Command-R and R reload; Command-T, Command-W and Shift-Command-T open, close and reopen tabs; Command-1 to 9, Control-Tab and Shift-Command-[ ] change tab; Space, Page Up, Page Down, Home, End and arrows scroll; Escape stops loading; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints; Option-Command-J opens the console tab (foafnaut:console). By default the browser draws a page without what the built-in engine may skip (module scripts, media conditions it can not read, stylesheets not fetched, scripts when they are off, inline SVG it can not draw) and lists each skip in the console; --strict refuses such a page. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
   }
   let scrollSweep=false,watchSeconds=0;
   let shotFile:string|undefined;
@@ -93,6 +93,8 @@ async function main() {
     // Print to a PDF with no panel, then check its page count (issue 1268).
     else if(arg==="--print-pdf"){printPDF=args.shift();if(!printPDF)throw new Error("--print-pdf needs a file path");commands=["print"];}
     else if(arg==="--graph-sweep")commands=["graph",[2,800,565],[3,900,640],[3,1000,720],[4,1000,720]];
+    else if(arg==="--console-sweep")commands=["console",...Array.from("var replCheck=41;replCheck+1",c=>[9,c.codePointAt(0)!,0]),[5,36,0],"console-result:42",
+      ...Array.from("document.body.textContent='console changed'",c=>[9,c.codePointAt(0)!,0]),[5,36,0],"console-result:console changed","1","page-text:console changed"];
     // Twenty scroll steps of 120 backing pixels down the page: per-step frame time and input latency.
     // Watch a page that moves by itself (an SVG animation, page script timers) for N seconds
     // after its first frame, then exit: frame times of an animation with no input.
@@ -570,17 +572,20 @@ async function main() {
   // from the entries this host kept (native_console.ts). `foafnaut:console/N` is the console of tab
   // N; with no number, of the page shown when it was asked for (or that a console tab showed).
   const consoleURL="foafnaut:console",consoleSources=new WeakMap<object,typeof document>();
+  const consoleFields=new WeakMap<object,Field>(),consoleBusy=new WeakSet<object>();
+  const consoleField=(source:object)=>{let f=consoleFields.get(source);if(!f){f=showURL("");consoleFields.set(source,f);}return f;};
+  const consoleSource=()=>consoleSources.get(candidate??document);
   let consoleFrom:typeof document|undefined;
   const isConsole=(target:string)=>target===consoleURL||target.startsWith(consoleURL+"/");
   const tabPage=(index:number)=>index===active?document:tabs[index]?.document;
-  const consolePage=async(target:string)=>{
+  const consolePage=async(target:string,chosen?:typeof document)=>{
     const number=Number(target.slice(consoleURL.length+1));
-    let source=Number.isInteger(number)&&number>0&&tabPage(number-1)?tabPage(number-1)!:consoleFrom??document;
+    let source=chosen??(Number.isInteger(number)&&number>0&&tabPage(number-1)?tabPage(number-1)!:consoleFrom??document);
     consoleFrom=undefined;
     source=consoleSources.get(source)??source;
     const index=Math.max(0,tabs.findIndex((_,i)=>consoleSources.get(tabPage(i)!)===source||tabPage(i)===source));
     let answer:{source:string};
-    try{answer=engine.consolePage(consoleRequest(source,index,tabs.map((_,i)=>tabPage(i)!)));}
+    try{answer=engine.consolePage({...consoleRequest(source,index,tabs.map((_,i)=>tabPage(i)!)),input:consoleField(source)});}
     catch(error){
       if(!/unknown document operation/.test(String(error)))throw error;
       answer={source:'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Needs a newer engine</title></head><body>'+
@@ -589,6 +594,36 @@ async function main() {
     const page=await prepareHTML(lean,target,undefined,answer.source);
     consoleSources.set(page,source);
     return page;
+  };
+  let consoleRevision=0,consoleRenders=0;
+  const refreshConsole=async(source:typeof document)=>{
+    if(consoleSource()!==source||loading)return;
+    const revision=++consoleRevision,index=active,target=(candidate??document).url;
+    consoleRenders++;
+    try{
+      const next=await consolePage(target,source);
+      if(revision===consoleRevision&&active===index&&consoleSource()===source&&!loading){candidate=next;dirty=true;}
+    }finally{consoleRenders--;}
+  };
+  const consoleEdit=(source:typeof document,next:ShellEdit&{clipboard?:string|null})=>{
+    const {clipboard,...f}=next;consoleFields.set(source,f);
+    if(clipboard)native?.writeClipboard(clipboard);
+    refreshConsole(source).catch(error=>console.error("Console render failed:",String(error)));
+  };
+  const consoleSubmit=async(source:typeof document)=>{
+    const expression=consoleField(source).address;
+    if(!expression.trim()||consoleBusy.has(source))return;
+    consoleBusy.add(source);consoleFields.set(source,showURL(""));
+    addEntries(source,[{source:"page",severity:"input",message:"> "+expression}]);
+    try{
+      if(!scriptsOn||!scriptOps.includes("evaluate"))throw new Error("Console evaluation needs an enabled, newer script engine.");
+      await source.beginConsole();
+      const turn=await scriptInput("scriptSession","",{action:"evaluate",session:source.script!.session,expression}) as ScriptTurn;
+      scriptTurn(source,turn,"console");
+      if(!turn.evaluation)throw new Error("The script engine returned no evaluation result.");
+      addEntries(source,[{source:"page",severity:turn.evaluation.exception?"error":"result",message:turn.evaluation.text}]);
+    }catch(error){addEntries(source,[{source:"page",severity:"error",message:String(error instanceof Error?error.message:error)}]);}
+    finally{consoleBusy.delete(source);await refreshConsole(source);}
   };
   // Option-Command-J and View > Console: the console of the page shown, in a new tab.
   const openConsole=()=>{const source=document;newTab();leaveAddress();consoleFrom=source;navigate(consoleURL);};
@@ -870,11 +905,17 @@ async function main() {
     trace("native-html-history",{action,index:answer.history.index,size:answer.history.entries.length,url:answer.url});
   };
   const windowCommand=(id:number)=>{
-    const answer=engine.command(id,view.textScalePercent??100,history.history,focused,
+    const source=!focused?consoleSource():undefined;
+    const answer=engine.command(id,view.textScalePercent??100,history.history,focused||!!source,
       {tabs:tabs.length,active,scroll:Math.round(scroll),view:height,scrollLimit:Math.floor(scrollLimit()),scale,zoomUnit:view.zoomUnit??100});
     // Lean says when an edit command acts on the address bar: when it has the focus, and paste
     // always. The host only reads and writes the clipboard (issue 1268).
     if(answer.target==="address"){
+      if(source){
+        const text=answer.action==="paste"?native!.readClipboard():"";
+        if(/[\r\n]/.test(text)){addEntries(source,[{source:"page",severity:"error",message:"Paste one line of JavaScript at a time."}]);void refreshConsole(source);return;}
+        consoleEdit(source,engine.shellEdit({...consoleField(source),focused:true},answer.action,text));return;
+      }
       if(!focused)focusAddress();
       const result=engine.shellEdit(shell(),answer.action,answer.action==="paste"?native!.readClipboard():"");
       edit(result);
@@ -1206,6 +1247,15 @@ async function main() {
           else edit(engine.shellKey(shell(),event.a,event.b));
           return;
         }
+        const consoleTarget=!focused?consoleSource():undefined;
+        if(consoleTarget&&event.kind===5&&!(event.b&2)&&!(event.a===48&&(event.b&8))){
+          if(event.a===36)void consoleSubmit(consoleTarget);
+          else consoleEdit(consoleTarget,engine.shellKey({...consoleField(consoleTarget),focused:true},event.a,event.b));
+          return;
+        }
+        if(consoleTarget&&event.kind===9){
+          consoleEdit(consoleTarget,engine.shellText({...consoleField(consoleTarget),focused:true},String.fromCodePoint(event.a)));return;
+        }
         if(event.kind===9&&focused){
           edit(engine.shellText(shell(),String.fromCodePoint(event.a)));
           return;
@@ -1397,11 +1447,20 @@ async function main() {
       // A scroll step with layers waits only for the composite of the step before, 16 ms apart:
       // a Lean frame for a new band runs meanwhile, as when a person scrolls.
       const scrollStep=layered&&Array.isArray(commands?.[0])&&(commands![0] as number[])[0]===11;
-      const settled=!dirty&&!rendering&&!graphBusy()&&!loading&&!shiftPending&&!shifting;
+      const settled=!dirty&&!rendering&&!graphBusy()&&!loading&&!shiftPending&&!shifting&&!consoleRenders&&!(consoleSource()&&consoleBusy.has(consoleSource()!));
       if(commands&&session?.frames&&performance.now()>=stepAt&&(settled||(scrollStep&&!loading&&!shiftPending&&!shifting&&performance.now()-lastStep>=16))){
         lastStep=performance.now();
         const step=commands.shift();
         if(step==="graph")shellCommand("graph","");
+        else if(step==="console")openConsole();
+        else if(typeof step==="string"&&step.startsWith("console-result:")){
+          const source=consoleSource(),expected=step.slice(15),ok=!!source&&consoleOf(source).some(e=>e.severity==="result"&&e.message===expected);
+          trace("native-html-test-console",{step,ok});if(!ok){console.error("Console result missing:",expected,source?consoleOf(source):[]);Deno.exitCode=1;}
+        }
+        else if(typeof step==="string"&&step.startsWith("page-text:")){
+          const req=document.request(width,height,view),text=engine.selectedText(req.source,width,height,{...req.options,selection:"all"}),ok=text.includes(step.slice(10));
+          trace("native-html-test-console",{step,ok});if(!ok){console.error("Console DOM change missing:",text);Deno.exitCode=1;}
+        }
         else if(typeof step==="string"&&step.startsWith("link")){
           // A press and release on a link of the page: link is the first, link1 the second.
           const link=frame.webRender.links[Number(step.slice(4))] as number[],x=Math.round(link[2]+link[4]/2),y=Math.round(windowRow(link[3]+link[5]/2));

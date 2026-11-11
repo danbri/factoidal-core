@@ -27,12 +27,12 @@ export function addEntries(page:object,list:ConsoleEntry[]){
   let keys=seen.get(page);
   if(!keys){keys=new Set();seen.set(page,keys);}
   for(const entry of list){
-    if(kept.length>=MAX_CONSOLE_ENTRIES)return;
     if(entry.source==="System"){
       const key=JSON.stringify([entry.feature,entry.where,entry.message]);
       if(keys.has(key))continue;
       keys.add(key);
     }
+    if(kept.length>=MAX_CONSOLE_ENTRIES)kept.shift();
     kept.push(entry);
   }
 }

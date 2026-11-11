@@ -36,6 +36,9 @@ argument for `start`:
   `Page.Session.pointer`, with a click on release; at most one move in a frame. A host
   that finds no `pointer` in `info` sends `click`.
 - `resize` (`width`, `height`): the viewport in CSS pixels; `resize` at the window.
+- `evaluate` (`expression`): evaluate in the current session, then a microtask checkpoint.
+  `evaluation` carries `text` and `exception`. BubblePopJS uses indirect eval; its
+  lexical declarations do not persist between inputs. Object previews do not invoke getters.
 - `frame` (`node`, `url`, and `bytesBase64` with `contentType`, or `source`, with
   `resources`; or `failed`): the embedder's answer to a frame navigation of a turn's
   `navigations` (a host that sets `navigations:true` in `start` loads frames' URLs; without
@@ -114,9 +117,11 @@ def Before.ofLean (s : LeanJS.Session) : Before :=
 
 /-- A turn on the AOT path, waiting for the host. `fresh`: the program, before the
 host has made the page's instance; `paused`: stopped at an ask. -/
+abbrev Result := Except String (Page.Session × List (String × JSON.Json))
+
 inductive Stage where
-  | fresh (prog : Page.Prog (Except String Page.Session))
-  | paused (p : PageAot.Paused (Except String Page.Session))
+  | fresh (prog : Page.Prog Result)
+  | paused (p : PageAot.Paused Result)
 
 structure Turn where
   id : Nat
@@ -176,7 +181,7 @@ private unsafe def entropyImpl (id : Nat) : ByteArray :=
     | .error _ => return ByteArray.empty)
 @[implemented_by entropyImpl, noinline] private opaque entropy (id : Nat) : ByteArray
 
-def actions : List String := ["info", "load", "start", "click", "pointer", "resize", "advance", "settle", "turn", "close",
+def actions : List String := ["info", "load", "start", "click", "pointer", "resize", "evaluate", "advance", "settle", "turn", "close",
   "aotModule", "resume", "host", "frame"]
 
 /-- An answer object with `nextSession` first: the value `keep` answered, so the
@@ -418,8 +423,6 @@ def askJson (fuel : Nat) : Page.Ask → JSON.Json
   | .read p n => .object [("do",.string "read"),("ptr",num p),("len",num n)]
   | .write p b => .object [("do",.string "write"),("ptr",num p),("bytes",.string (base64 b))]
 
-abbrev Result := Except String Page.Session
-
 /-- Go on until an ask for the host or the end. A write that fits the memory is taken at
 once (the host makes it before the next ask, in order); one that does not is an error to
 the program, as the interpreter's `writeMem` gives. -/
@@ -451,8 +454,8 @@ def answerTurn (held : Held) (t : Turn) (r : Option Result) (ns : Nat) : Held ×
     ({ held with turn := some { t with pending := #[] } },
      .ok (JSON.Json.object [("session",num t.id),("aot",ask),writes]).toString)
   | some (.error e) => ({ held with turn := none, session := none }, .error s!"scriptSession: {e}")
-  | some (.ok s) =>
-    let (answer, marks) := turnAnswer t.id t.before s t.marks t.full t.ns [writes,("memSize",num t.memSize)]
+  | some (.ok (s, extra)) =>
+    let (answer, marks) := turnAnswer t.id t.before s t.marks t.full t.ns (extra ++ [writes,("memSize",num t.memSize)])
     ({ held with turn := none, session := some (t.id, drained s, marks), memSize := t.memSize }, .ok answer)
 
 /-- Begin an AOT turn with a program. -/
@@ -596,11 +599,12 @@ def frameDocument (request : JSON.Json) : Except String (String × Bool × Array
   return (src, DOM.isXhtmlPath url, scripts, enc)
 
 /-- The answer of a turn of the Lean engine; the session is kept. -/
-def leanTurn (held : Held) (id : Nat) (before : Before) (s : LeanJS.Session) (marks : Marks) (full : Bool) (ns : Nat) :
+def leanTurn (held : Held) (id : Nat) (before : Before) (s : LeanJS.Session) (marks : Marks) (full : Bool) (ns : Nat)
+    (extra : List (String × JSON.Json) := []) :
     Held × Except String String :=
   let (s, loads) := srcdocLoads (·.host) (fun s el src scripts => LeanJS.loadFrame s el src scripts) s
   let (answer, marks) := turnAnswerOf id before (View.ofLean s) marks full ns
-    ([("engine",.string "bubblepop")] ++ frameFields s.host loads)
+    (extra ++ [("engine",.string "bubblepop")] ++ frameFields s.host loads)
   ({ held with leanSession := some (id, drainedLean s, marks) }, .ok answer)
 
 /-- `start` on the Lean engine: its realm is made at the first page (the prelude runs
@@ -635,6 +639,15 @@ def startLean (held : Held) (html : String) (request : JSON.Json) (measure : JSO
       leanTurn { held with leanBase := some base, session := none, leanSession := none, nextSession := id + 1 }
         id {} s {} true (ns0 + ns)
 
+/-- Console previews never run page getters or `toString` methods. -/
+def preview : JS.Value → String
+  | .undef => "undefined" | .null => "null" | .bool b => if b then "true" else "false"
+  | .num n => JS.numToString n | .str s => s | .big n => toString n ++ "n"
+  | .obj _ => "[object]" | .sym _ => "[symbol]" | .hole | .fl => "[internal value]"
+
+def evaluation (text : String) (exception : Bool) : List (String × JSON.Json) :=
+  [("evaluation", .object [("text", .string text), ("exception", .bool exception)])]
+
 /-- A later action on the Lean engine's session (the actions of `act`). -/
 def actLean (held : Held) (action : String) (request : JSON.Json) (id : Nat) (s : LeanJS.Session) (marks : Marks) :
     Held × Except String String :=
@@ -646,6 +659,12 @@ def actLean (held : Held) (action : String) (request : JSON.Json) (id : Nat) (s 
     leanTurn held id before s' marks full ns
   let keep := fun (msg : String) => ({ held with leanSession := some (id, s, marks) }, Except.error msg)
   match action with
+  | "evaluate" =>
+    let ((s', extra), ns) := WebWasm.timed fun _ =>
+      let (s', outcome, value) := s.run (JS.evalValue · (str request "expression"))
+      let failure := LeanJS.failure outcome
+      (s'.runJobs, evaluation (failure.getD (preview value)) failure.isSome)
+    leanTurn held id before s' marks full ns extra
   | "click" =>
     match natField request "node" with
     | some node => run (e.click · node)
@@ -674,6 +693,9 @@ of its scripts (`WebDocument.measure`), with the `layout` request of `start`. -/
 def act (held : Held) (action html : String) (request : JSON.Json)
     (measure : JSON.Json → Option Page.Measure := fun _ => none) (canvas : PageCanvas.Env := {}) :
     Held × Except String String :=
+  if action == "evaluate" && (match request.field? "expression" with
+      | some (.string s) => s.utf8ByteSize > 65536
+      | _ => true) then (held, .error "scriptSession: evaluate needs an expression of at most 64 KiB") else
   let held := setCanvas held canvas
   let full := request.field? "full" == some (.bool true)
   match action with
@@ -717,7 +739,8 @@ def act (held : Held) (action html : String) (request : JSON.Json)
         let prog := PageAot.startProg aot dom url scripts { commands, logs, gpuPage := held.nextSession, entropy := entropy held.nextSession, encoding := str request "encoding" } #[] missing
           reads { instructionsPerMs := rate }
         let id := held.nextSession
-        beginTurn { held with session := none, leanSession := none, nextSession := id + 1 } id {} {} true true prog
+        beginTurn { held with session := none, leanSession := none, nextSession := id + 1 } id {} {} true true
+          ((·.map fun s => (s, [])) <$> prog)
     | none, none => (held, .error "scriptSession: no guest module; load it first")
     | some m, _ =>
       let url := str request "url"
@@ -754,15 +777,20 @@ def act (held : Held) (action html : String) (request : JSON.Json)
       let before := Before.of s
       -- One program for both machines: the interpreter runs it here, the host's engine
       -- runs it ask by ask on the AOT path.
-      let run := fun (f : Page.Session → Page.Prog Page.Session) =>
+      let runWith := fun (f : Page.Session → Page.Prog (Page.Session × List (String × JSON.Json))) =>
         if held.aot.isSome && held.module.isNone then
           beginTurn held id before marks full false (Except.ok <$> f s)
         else
-          let (s', ns) := WebWasm.timed fun _ => (f s).runLocal
+          let ((s', extra), ns) := WebWasm.timed fun _ => (f s).runLocal
           let (s', loads) := srcdocLoads (·.host) (fun s el src scripts => s.loadFrame el src scripts) s'
-          let (answer, marks) := turnAnswer id before s' marks full ns (frameFields s'.host loads)
+          let (answer, marks) := turnAnswer id before s' marks full ns (extra ++ frameFields s'.host loads)
           ({ held with session := some (id, drained s', marks) }, Except.ok answer)
+      let run := fun (f : Page.Session → Page.Prog Page.Session) => runWith fun s => do
+        return (← f s, [])
       match action with
+      | "evaluate" => runWith fun s => do
+          let (s, status, text) ← s.evalP (str request "expression")
+          return (← s.runJobsP, evaluation (if status == 2 && text.isEmpty then "evaluation failed" else text) (status != 0))
       | "click" =>
         match natField request "node" with
         | some node => run (·.clickP node)
@@ -807,7 +835,11 @@ def op (name html : String) (request : JSON.Json) (measure : JSON.Json → Optio
       ("engines",.array [.string "quickjs", .string "bubblepop"])]).toString
   let (held, answer) := act (take request) action html request measure (canvas ())
   let n := keep held request
-  return some (← answer.map (withNext n))
+  -- Keep the state on refused requests too. If only the success branch uses `n`,
+  -- compilation can drop `keep` on an error, leaving the cell emptied by `take`.
+  return some (withNext n (match answer with
+    | .ok text => text
+    | .error message => (JSON.Json.object [("error",.string message)]).toString))
 
 /-- The ops that answer bytes (`web_document_call_bin`): `aotModule`, the host module of
 the guest loaded with `guest:quickjs-aot`, as section 0, with `moduleHead` as the head.
