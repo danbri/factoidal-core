@@ -40,11 +40,12 @@ hands out (it counts from 1). -/
 def eventHandle : Nat := 0x7FFFFFF0
 def wakeHandle : Nat := 0x7FFFFFF1
 
-/-- Budgets. A worker's run (a script, task or event) has an eighth of a page's steps; all
-workers together have one page run's steps in one pump, then wait for the page's next
-turn; a worker whose runs stop at the budget `maxHalts` times, or whose heap passes
+/-- Budgets. A worker's run (a script, task or event) has a page run's steps, so a worker
+can run any script a page can (a run stopped at the budget is lost, and a WPT test that
+runs its subtests in one script at a worker's start needs a page's steps); all workers
+together have one page run's steps in one pump, then wait for the page's next turn; a worker whose runs stop at the budget `maxHalts` times, or whose heap passes
 `maxObjects`, is stopped with an error at its Worker object. -/
-def workerBudget : Nat := LeanJS.runBudget / 8
+def workerBudget : Nat := LeanJS.runBudget
 def pumpSteps : Nat := LeanJS.runBudget
 def workerTasks : Nat := 1000
 def maxWorkers : Nat := 16

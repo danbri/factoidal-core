@@ -74,15 +74,12 @@ theorem natOf_natBytes (n : Nat) (rest : List UInt8) : natOf (natBytes n ++ rest
 
 /-- `natBytes` on a byte array (the fast path; `putNat_agrees` checks it against the
 specification). -/
-def putNat (b : ByteArray) (n : Nat) : ByteArray := Id.run do
-  let mut b := b
-  let mut n := n
-  -- 64 bits of a step budget a host can count fit in 10 bytes; 2^700 needs 100.
-  for _ in [0:n.log2 / 7 + 1] do
-    if n < 128 then return b.push n.toUInt8
-    b := b.push (n % 128 + 128).toUInt8
-    n := n / 128
-  return b.push n.toUInt8
+def putNat (b : ByteArray) (n : Nat) : ByteArray :=
+  -- recursion, not a `for` with an early `return`: that form kept the array shared, and
+  -- each push copied the whole output (a message of n objects cost O(n²); 2026-11-11)
+  if n < 128 then b.push n.toUInt8 else putNat (b.push (n % 128 + 128).toUInt8) (n / 128)
+termination_by n
+decreasing_by omega
 
 #guard [0, 1, 127, 128, 300, 16383, 16384, 2 ^ 32, 2 ^ 64 - 1, 2 ^ 64 + 5].all fun n =>
   (putNat ByteArray.empty n).toList == natBytes n
@@ -171,6 +168,11 @@ structure SState where
   /-- The memory: an object's number in the copy. -/
   memory : Std.HashMap Nat Nat := {}
   count : Nat := 0
+
+/-- Write to the output, taken out of the state first so it grows in place. -/
+@[inline] def SState.emit (st : SState) (f : ByteArray → ByteArray) : SState :=
+  let ⟨out, memory, count⟩ := st
+  ⟨f out, memory, count⟩
 
 def putStr (b : ByteArray) (s : String) : ByteArray :=
   let u := s.toUTF8
@@ -261,27 +263,33 @@ def serialize (h : HeapOf H) (v : Value) (transfer : Array Nat) (limit : Nat := 
     | some w =>
       stack := stack.pop
       match w with
-      | .key k => st := { st with out := putStr st.out k }
+      | .key k => st := st.emit fun o => putStr o k
       | .val v =>
         match v with
         -- `hole` (a binding not yet initialised) and `fl` (a float register) are the
         -- interpreter's own and read as undefined, as `Value.toUndef` gives them
-        | .undef | .hole | .fl => st := { st with out := putNat st.out tUndef }
-        | .null => st := { st with out := putNat st.out tNull }
-        | .bool b => st := { st with out := putNat st.out (if b then tTrue else tFalse) }
-        | .num x => st := { st with out := putNat (putNat st.out tNum) x.toBits.toNat }
-        | .str s => st := { st with out := putStr (putNat st.out tStr) s }
-        | .big i => st := { st with out := putNat (putNat st.out tBig) (zig i) }
+        | .undef | .hole | .fl => st := st.emit fun o => putNat o tUndef
+        | .null => st := st.emit fun o => putNat o tNull
+        | .bool b => st := st.emit fun o => putNat o (if b then tTrue else tFalse)
+        | .num x => st := st.emit fun o => putNat (putNat o tNum) x.toBits.toNat
+        | .str s => st := st.emit fun o => putStr (putNat o tStr) s
+        | .big i => st := st.emit fun o => putNat (putNat o tBig) (zig i)
         | .sym _ => return .error "Symbol could not be cloned"
         | .obj id =>
           match st.memory.get? id with
-          | some k => st := { st with out := putNat (putNat st.out tBack) k }
+          | some k => st := st.emit fun o => putNat (putNat o tBack) k
           | none =>
-            let memory := st.memory.insert id st.count
-            match serializeObj h id (h.obj id) st.out with
+            -- the output and the memory are taken out of the state first (the state then
+            -- holds empty ones), so both grow in place
+            let out0 := st.out
+            let memory0 := st.memory
+            let count := st.count
+            st := {}
+            let memory := memory0.insert id count
+            match serializeObj h id (h.obj id) out0 with
             | .error e => return .error e
             | .ok (out, more) =>
-              st := { out, memory, count := st.count + 1 }
+              st := { out, memory, count := count + 1 }
               -- the fields in order: the last pushed first
               stack := stack ++ more.reverse
   return .error "the value is too large to clone"
@@ -315,7 +323,19 @@ structure DState (H : Type) where
   at_ : Nat := 0
   result : Option Value := none
 
-def alloc (h : HeapOf H) (o : Obj) : Nat × HeapOf H := (h.objs.size, { h with objs := h.objs.push o })
+/- Cost: every change of the heap's object array below takes the array out of the heap
+first (`modObj`, `alloc`, `newObj`, `place`), as `JS.modifyObj` does, so it is changed in
+place: a message of n objects into a heap of m objects costs O(n), not O(n·m). -/
+def alloc (h : HeapOf H) (o : Obj) : Nat × HeapOf H :=
+  let objs := h.objs
+  let h := { h with objs := #[] }
+  (objs.size, { h with objs := objs.push o })
+
+/-- `f` on object `obj`, in place when nothing else holds the heap. -/
+@[inline] def modObj (h : HeapOf H) (obj : Nat) (f : Obj → Obj) : HeapOf H :=
+  let objs := h.objs
+  let h := { h with objs := #[] }
+  { h with objs := objs.modify obj f }
 
 /-- A non-enumerable, non-writable, configurable own data property. -/
 def ownData (o : Obj) (k : String) (v : Value) : Obj :=
@@ -324,58 +344,55 @@ def ownData (o : Obj) (k : String) (v : Value) : Obj :=
 /-- Give a decoded value to the container on top, and pop the containers it completes.
 `none`: the value is the whole result. -/
 def place (st : DState H) (v : Value) : DState H := Id.run do
-  let mut st := st
+  -- taken apart, so that the heap and the frames are changed in place
+  let ⟨heap0, memory, frames0, at_, result⟩ := st
+  let mut heap := heap0
+  let mut frames := frames0
   let mut v := v
-  for _ in [0:st.frames.size + 1] do
-    match st.frames.back? with
-    | none => return { st with result := some v }
+  for _ in [0:frames.size + 1] do
+    match frames.back? with
+    | none => return ⟨heap, memory, frames, at_, some v⟩
     | some f =>
-      let frames := st.frames.pop
+      frames := frames.pop
       match f with
       | .elems obj i len n =>
-        let heap := { st.heap with objs := st.heap.objs.modify obj fun o =>
+        heap := modObj heap obj fun o =>
           match o.kind with
           | .array es => { o with kind := .array (es.set! i v) }
-          | _ => o }
-        if i + 1 < len then return { st with heap, frames := frames.push (.elems obj (i + 1) len n) }
-        else if n > 0 then return { st with heap, frames := frames.push (.props obj n none) }
-        else
-          st := { st with heap, frames }
-          v := .obj obj
+          | _ => o
+        if i + 1 < len then return ⟨heap, memory, frames.push (.elems obj (i + 1) len n), at_, result⟩
+        else if n > 0 then return ⟨heap, memory, frames.push (.props obj n none), at_, result⟩
+        else v := .obj obj
       | .props obj left none =>
         -- a key always comes first (`readKey`); a value here is a bad stream
-        return { st with frames := frames.push (.props obj left none) }
+        return ⟨heap, memory, frames.push (.props obj left none), at_, result⟩
       | .props obj left (some k) =>
-        let heap := { st.heap with objs := st.heap.objs.modify obj fun o =>
+        heap := modObj heap obj fun o =>
           match o.kind, arrayIndex? k with
           | .array es, some i =>
             if i < es.size then { o with kind := .array (es.set! i v) }
             else { o with props := o.props.insert k (.data v true true true), keys := o.keys.push k }
           | _, _ => { o with props := o.props.insert k (.data v true true true),
-                             keys := if o.props.contains k then o.keys else o.keys.push k } }
-        if left ≤ 1 then
-          st := { st with heap, frames }
-          v := .obj obj
-        else return { st with heap, frames := frames.push (.props obj (left - 1) none) }
+                             keys := if o.props.contains k then o.keys else o.keys.push k }
+        if left ≤ 1 then v := .obj obj
+        else return ⟨heap, memory, frames.push (.props obj (left - 1) none), at_, result⟩
       | .coll obj map left key =>
         match map, key with
-        | true, none => return { st with frames := frames.push (.coll obj map left (some v)) }
+        | true, none => return ⟨heap, memory, frames.push (.coll obj map left (some v)), at_, result⟩
         | _, _ =>
           let k := key.getD v
-          let heap := { st.heap with objs := st.heap.objs.modify obj fun o =>
+          heap := modObj heap obj fun o =>
             match o.kind with
             | .coll c es idx =>
               match idx.get? (VKey.of k) with
               | some i => { o with kind := .coll c (es.set! i (some (k, v))) idx }
               | none => { o with kind := .coll c (es.push (some (k, v))) (idx.insert (VKey.of k) es.size) }
-            | _ => o }
-          if left ≤ 1 then
-            st := { st with heap, frames }
-            v := .obj obj
-          else return { st with heap, frames := frames.push (.coll obj map (left - 1) none) }
+            | _ => o
+          if left ≤ 1 then v := .obj obj
+          else return ⟨heap, memory, frames.push (.coll obj map (left - 1) none), at_, result⟩
       | .view obj =>
         let buf := match v with | .obj b => b | _ => 0
-        let heap := { st.heap with objs := st.heap.objs.modify obj fun o =>
+        heap := modObj heap obj fun o =>
           match o.kind with
           | .typed ty _ off len => { o with kind := .typed ty buf off len }
           | .dataView _ off len =>
@@ -385,10 +402,9 @@ def place (st : DState H) (v : Value) : DState H := Id.run do
             let o := ownData o "byteLength" (.num (Float.ofNat len))
             let o := ownData o "byteOffset" (.num (Float.ofNat off))
             ownData o "buffer" (.obj buf)
-          | _ => o }
-        st := { st with heap, frames }
+          | _ => o
         v := .obj obj
-  return st
+  return ⟨heap, memory, frames, at_, result⟩
 
 def readStr (b : ByteArray) (i : Nat) : Option (String × Nat) := do
   let (n, j) ← readNat b i
@@ -399,27 +415,29 @@ def readStr (b : ByteArray) (i : Nat) : Option (String × Nat) := do
 /-- A new object in the copy: allocated and remembered (its number is its place in
 `memory`). -/
 def newObj (st : DState H) (o : Obj) : DState H × Nat :=
-  let (id, heap) := alloc st.heap o
-  ({ st with heap, memory := st.memory.push id }, id)
+  let ⟨heap, memory, frames, at_, result⟩ := st
+  let (id, heap) := alloc heap o
+  (⟨heap, memory.push id, frames, at_, result⟩, id)
 
 /-- An object or Map/Set with no entries is complete at once; else it waits. -/
 def openOr (st : DState H) (id : Nat) (left : Nat) (f : Frame) : DState H :=
   if left == 0 then place st (.obj id) else { st with frames := st.frames.push f }
 
 /-- StructuredDeserialize (§2.7.6): the value, in the heap `h` (whose realm gives the
-prototypes). `none`: the bytes are not a serialization (a `messageerror`). -/
-def deserialize (h : HeapOf H) (b : ByteArray) : Option (Value × HeapOf H) := Id.run do
+prototypes), and the heap. `none`: the bytes are not a serialization (a `messageerror`);
+the heap may then hold objects of the part read, which nothing refers to. -/
+def deserializeIn (h : HeapOf H) (b : ByteArray) : Option Value × HeapOf H := Id.run do
   let r := h.realm
   let mut st : DState H := { heap := h }
   for _ in [0:b.size + 1] do
-    if let some v := st.result then return some (v, st.heap)
+    if let some v := st.result then return (some v, st.heap)
     -- a property key comes before each value of an object
     if let some (.props obj left none) := st.frames.back? then
       match readStr b st.at_ with
-      | none => return none
+      | none => return (none, st.heap)
       | some (k, j) => st := { st with at_ := j, frames := st.frames.pop.push (.props obj left (some k)) }
       continue
-    let some (tag, j) := readNat b st.at_ | return none
+    let some (tag, j) := readNat b st.at_ | return (none, st.heap)
     st := { st with at_ := j }
     let num := fun (st : DState H) => readNat b st.at_
     if tag == tUndef then st := place st .undef
@@ -427,24 +445,24 @@ def deserialize (h : HeapOf H) (b : ByteArray) : Option (Value × HeapOf H) := I
     else if tag == tFalse then st := place st (.bool false)
     else if tag == tTrue then st := place st (.bool true)
     else if tag == tNum then
-      let some (x, j) := num st | return none
+      let some (x, j) := num st | return (none, st.heap)
       st := place { st with at_ := j } (.num (Float.ofBits x.toUInt64))
     else if tag == tStr then
-      let some (s, j) := readStr b st.at_ | return none
+      let some (s, j) := readStr b st.at_ | return (none, st.heap)
       st := place { st with at_ := j } (.str s)
     else if tag == tBig then
-      let some (x, j) := num st | return none
+      let some (x, j) := num st | return (none, st.heap)
       st := place { st with at_ := j } (.big (unzig x))
     else if tag == tBack then
-      let some (k, j) := num st | return none
-      let some id := st.memory[k]? | return none
+      let some (k, j) := num st | return (none, st.heap)
+      let some id := st.memory[k]? | return (none, st.heap)
       st := place { st with at_ := j } (.obj id)
     else if tag == tBoolObj then
-      let some (x, j) := num st | return none
+      let some (x, j) := num st | return (none, st.heap)
       let (st', id) := newObj { st with at_ := j } { proto := .obj r.booleanProto, kind := .prim (.bool (x != 0)) }
       st := place st' (.obj id)
     else if tag == tNumObj || tag == tDate then
-      let some (x, j) := num st | return none
+      let some (x, j) := num st | return (none, st.heap)
       let dateProps : PropMap PropV := ({} : PropMap PropV).insert dateKey (.data (.bool true) true false false)
       let o : Obj := if tag == tDate then
           { proto := .obj r.dateProto, kind := .prim (.num (Float.ofBits x.toUInt64)), props := dateProps, keys := #[dateKey] }
@@ -452,54 +470,54 @@ def deserialize (h : HeapOf H) (b : ByteArray) : Option (Value × HeapOf H) := I
       let (st', id) := newObj { st with at_ := j } o
       st := place st' (.obj id)
     else if tag == tStrObj then
-      let some (s, j) := readStr b st.at_ | return none
+      let some (s, j) := readStr b st.at_ | return (none, st.heap)
       let (st', id) := newObj { st with at_ := j } { proto := .obj r.stringProto, kind := .prim (.str s) }
       st := place st' (.obj id)
     else if tag == tBigObj then
-      let some (x, j) := num st | return none
+      let some (x, j) := num st | return (none, st.heap)
       let (st', id) := newObj { st with at_ := j } { proto := .obj r.bigintProto, kind := .prim (.big (unzig x)) }
       st := place st' (.obj id)
     else if tag == tRegExp then
-      let some (src, j) := readStr b st.at_ | return none
-      let some (fl, j) := readStr b j | return none
-      let .ok re := Re.compile src fl | return none
+      let some (src, j) := readStr b st.at_ | return (none, st.heap)
+      let some (fl, j) := readStr b j | return (none, st.heap)
+      let .ok re := Re.compile src fl | return (none, st.heap)
       let props : PropMap PropV := ({} : PropMap PropV).insert "lastIndex" (.data (.num 0) true false false)
       let o : Obj := { proto := .obj r.regexpProto, kind := .regexp re src fl, props, keys := #["lastIndex"] }
       let (st', id) := newObj { st with at_ := j } o
       st := place st' (.obj id)
     else if tag == tBuffer then
-      let some (n, j) := num st | return none
-      if j + n > b.size then return none
+      let some (n, j) := num st | return (none, st.heap)
+      if j + n > b.size then return (none, st.heap)
       let bytes := b.extract j (j + n)
-      let some (m, j) := readNat b (j + n) | return none
+      let some (m, j) := readNat b (j + n) | return (none, st.heap)
       let o : Obj := { proto := .obj r.bufferProto, kind := .buffer bytes }
       let o := if m == 0 then o else
         { o with props := o.props.insert maxKey (.data (.num (Float.ofNat (m - 1))) true false false), keys := #[maxKey] }
       let (st', id) := newObj { st with at_ := j } o
       st := place st' (.obj id)
     else if tag == tTyped then
-      let some (ty, j) := num st | return none
-      let some (off, j) := readNat b j | return none
-      let some (len, j) := readNat b j | return none
-      if ty ≥ typedNames.size then return none
+      let some (ty, j) := num st | return (none, st.heap)
+      let some (off, j) := readNat b j | return (none, st.heap)
+      let some (len, j) := readNat b j | return (none, st.heap)
+      if ty ≥ typedNames.size then return (none, st.heap)
       let (st', id) := newObj { st with at_ := j } { proto := .obj (r.typedProtos.getD ty r.objectProto), kind := .typed ty 0 off len }
       st := { st' with frames := st'.frames.push (.view id) }
     else if tag == tDataView then
-      let some (off, j) := num st | return none
-      let some (len, j) := readNat b j | return none
+      let some (off, j) := num st | return (none, st.heap)
+      let some (len, j) := readNat b j | return (none, st.heap)
       let (st', id) := newObj { st with at_ := j } { proto := .obj r.dataViewProto, kind := .dataView 0 off len }
       st := { st' with frames := st'.frames.push (.view id) }
     else if tag == tMap || tag == tSet then
-      let some (n, j) := num st | return none
+      let some (n, j) := num st | return (none, st.heap)
       let proto := protoOf st.heap (if tag == tMap then "Map" else "Set")
       let o : Obj := { proto, kind := .coll (if tag == tMap then 0 else 1) #[] {} }
       let (st', id) := newObj { st with at_ := j } o
       st := openOr st' id n (.coll id (tag == tMap) n none)
     else if tag == tError then
-      let some (k, j) := num st | return none
-      let some (has, j) := readNat b j | return none
+      let some (k, j) := num st | return (none, st.heap)
+      let some (has, j) := readNat b j | return (none, st.heap)
       let read := if has == 0 then some (none, j) else (readStr b j).map fun (m, j) => (some m, j)
-      let some (msg, j) := read | return none
+      let some (msg, j) := read | return (none, st.heap)
       let o : Obj := { proto := .obj (r.errorProtos.getD k r.objectProto), kind := .error }
       let o := match msg with
         | some m => { o with props := o.props.insert "message" (.data (.str m) true false true), keys := #["message"] }
@@ -507,19 +525,25 @@ def deserialize (h : HeapOf H) (b : ByteArray) : Option (Value × HeapOf H) := I
       let (st', id) := newObj { st with at_ := j } o
       st := place st' (.obj id)
     else if tag == tArray then
-      let some (len, j) := num st | return none
-      let some (n, j) := readNat b j | return none
-      if len > b.size then return none
+      let some (len, j) := num st | return (none, st.heap)
+      let some (n, j) := readNat b j | return (none, st.heap)
+      if len > b.size then return (none, st.heap)
       let (st', id) := newObj { st with at_ := j } { proto := .obj r.arrayProto, kind := .array (Array.replicate len .undef) }
       st := if len > 0 then { st' with frames := st'.frames.push (.elems id 0 len n) }
         else openOr st' id n (.props id n none)
     else if tag == tObject then
-      let some (n, j) := num st | return none
+      let some (n, j) := num st | return (none, st.heap)
       let (st', id) := newObj { st with at_ := j } { proto := .obj r.objectProto }
       st := openOr st' id n (.props id n none)
-    else return none
+    else return (none, st.heap)
   match st.result with
-  | some v => return some (v, st.heap)
-  | none => return none
+  | some v => return (some v, st.heap)
+  | none => return (none, st.heap)
+
+/-- `deserializeIn` as an option: the value and the heap, or `none`. -/
+def deserialize (h : HeapOf H) (b : ByteArray) : Option (Value × HeapOf H) :=
+  match deserializeIn h b with
+  | (some v, h) => some (v, h)
+  | (none, _) => none
 
 end L4Factoidal.JS.Clone

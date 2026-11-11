@@ -6860,8 +6860,12 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
         | .obj b => do pure (bufferBytes (← getObj b))
         | _ => pure ByteArray.empty
       charge (bytes.size / 64)
-      match Clone.deserialize (← get) bytes with
-      | some (v, h) => set h; pure v
+      -- the heap is taken out of the state, so its object array is changed in place
+      let h ← modifyGet fun h => (h, { h with objs := #[] })
+      let (v, h) := Clone.deserializeIn h bytes
+      set h
+      match v with
+      | some v => pure v
       | none => throwErr .type "DataCloneError: the message could not be deserialized"
     | (.x .classicScript) =>
       -- GlobalDeclarationInstantiation (§16.1.7) and the statements, as `runScriptM` (which

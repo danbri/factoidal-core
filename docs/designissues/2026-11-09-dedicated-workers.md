@@ -105,9 +105,13 @@ possible (a worker's run takes and returns only its own value).
 
 ### Budgets
 
-Each worker run has an eighth of a page run's steps (`workerBudget`); all workers together
-get one page run's steps per pump (`pumpSteps`), then wait for the page's next turn, so a
-worker cannot starve its page. A worker whose runs stop at the budget three times, or
+Each worker run has a page run's steps (`workerBudget`); all workers together get one
+page run's steps per pump (`pumpSteps`), then wait for the page's next turn, so a worker
+cannot starve its page; one worker run delays the page at most as long as one of the
+page's own runs can. (Until 2026-11-11 a worker run had an eighth of that: a run that
+stops at the budget is lost, not resumed, so a test that runs thousands of subtests in its
+start script, such as encoding/api-invalid-label.any.worker.html, stopped before `done()`
+and timed out.) A worker whose runs stop at the budget three times, or
 whose heap passes 4 M objects, is stopped and an error goes to its Worker object. At most
 16 workers per page; a worker's console lines join the page's (`[worker N] ...`).
 
