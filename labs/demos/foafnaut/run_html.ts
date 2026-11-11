@@ -7,6 +7,7 @@ import {fallbackFontHost,loadFallbackFonts,mayNeedFallbackFonts,type FallbackFon
 import type {ScriptPlan,ScriptTurn} from "./native_html_engine.ts";
 import {addEntries,consoleRequest,noteDiagnostics} from "./native_console.ts";
 import {createGpuGuard} from "./gpu_pacing.ts";
+import {netAnswer} from "./native_net.ts";
 import {loadNativeWindow} from "./native_window.ts";
 import {POINTER_CANCEL,beginPress,movePress,pointerNode,pointerRequest,pressPointers,beforeFirstFrame,type NativePress,type PointerKind,type PresentedState} from "./native_press.ts";
 import {nativePreflight} from "./native_preflight.ts";
@@ -286,21 +287,9 @@ async function main() {
   // The real time at which each session's virtual clock was 0.
   const scriptEpochs=new Map<number,number>();
   const netQueue:{session:number;wire:NonNullable<ScriptTurn["netRequests"]>[number]}[]=[];
-  // Page requests (XMLHttpRequest): the host only moves bytes. The engine chose them (origin,
-  // CORS, redirects, what a page may reach: Net.PageFetch), so the fetch does what it says:
-  // redirect "manual" (each hop goes back to the engine), no cookies, a body of at most 64 MiB.
-  const netFetch=async(w:NonNullable<ScriptTurn["netRequests"]>[number])=>{
-    const failed={id:w.id,status:0};
-    try{
-      const body=w.bodyBase64!==undefined?Uint8Array.from(atob(w.bodyBase64),c=>c.charCodeAt(0)):undefined;
-      const r=await fetch(w.url,{method:w.method,headers:w.headers,body,redirect:"manual",signal:AbortSignal.timeout(300000)});
-      const reader=r.body?.getReader();let total=0;const parts:Uint8Array[]=[];
-      for(;reader;){const {done,value}=await reader.read();if(done)break;total+=value.length;if(total>67108864){await reader.cancel();return failed;}parts.push(value);}
-      const bytes=new Uint8Array(total);let at=0;for(const p of parts){bytes.set(p,at);at+=p.length;}
-      let s="";for(let i=0;i<bytes.length;i+=32768)s+=String.fromCharCode(...bytes.subarray(i,i+32768));
-      return {id:w.id,status:r.status,statusText:r.statusText,headers:[...r.headers],bodyBase64:btoa(s)};
-    }catch{return failed;}
-  };
+  // Page requests (XMLHttpRequest, fetch): the host only moves bytes (native_net.ts). The
+  // engine chose them (origin, CORS, redirects, the address of a name: Net.PageFetch).
+  const netFetch=(w:NonNullable<ScriptTurn["netRequests"]>[number])=>netAnswer(w);
   // The guest module: --quickjs-wasm FILE, else a local build (tools/wasmvm/build-quickjs.sh),
   // else the one tools/fetch-builds.sh --set foafnaut-web installs.
   const installed=decodeURIComponent(new URL("../../../docs/web/hub/wasm-guests/qjs-wasmvm.wasm",import.meta.url).pathname);
