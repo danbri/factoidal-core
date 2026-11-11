@@ -415,6 +415,7 @@ import L4Factoidal.CID.Fetch
 import L4Factoidal.CID.Tests
 import L4Factoidal.Identity.Binding
 import L4Factoidal.Authz.CredentialMatch
+import L4Factoidal.Authz.Acp
 import L4Factoidal.Geo.Types
 import L4Factoidal.Geo.Order
 import L4Factoidal.Geo.BBox

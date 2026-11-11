@@ -171,13 +171,18 @@ def main (args : List String) : IO UInt32 := do
       let some n := count.toNat? | throw (IO.userError "invalid count")
       let html ← IO.FS.readFile path
       let request ← IO.FS.readFile options
+      let mut e : WebDocument.Engine := {}
       if let some file := fontRequest then
-        IO.println (WebDocument.compile "" (← IO.FS.readFile file) 1 1)
+        let (e',loaded) ← WebDocument.compile e "" (← IO.FS.readFile file) 1 1
+        e := e'
+        IO.println loaded
       let start ← IO.monoNanosNow
       let mut bytes := 0
       for i in [0:n] do
         -- The space differs on each pass, so a pass can not be shared with another.
-        bytes := bytes+(WebDocument.compile (html ++ String.ofList (List.replicate (i%2) ' ')) request w.toUInt32 h.toUInt32).utf8ByteSize
+        let (e',answer) ← WebDocument.compile e (html ++ String.ofList (List.replicate (i%2) ' ')) request w.toUInt32 h.toUInt32
+        e := e'
+        bytes := bytes+answer.utf8ByteSize
       IO.println s!"{n} frames, {((← IO.monoNanosNow)-start)/1000000/(max n 1)} ms each, {bytes} bytes"
       return 0
     -- The packed bytes answer (`WebDocument.compileBin`) written to OUT, after a font file
@@ -188,8 +193,10 @@ def main (args : List String) : IO UInt32 := do
       let some w := width.toNat? | throw (IO.userError "invalid width")
       let some h := height.toNat? | throw (IO.userError "invalid height")
       let some n := count.toNat? | throw (IO.userError "invalid count")
+      let mut e : WebDocument.Engine := {}
       if font != "-" then
-        let loaded := WebDocument.fontLoadBin (← IO.FS.readBinFile font) "Noto Sans" "cli" 0
+        let (e',loaded) := WebDocument.fontLoadBin e (← IO.FS.readBinFile font) "Noto Sans" "cli" 0
+        e := e'
         if loaded.startsWith "{\"error\"" then IO.println loaded; return 1
       let html ← IO.FS.readFile path
       let .ok (request,_) := JSON.parseJsonText (← IO.FS.readFile options) | throw (IO.userError "invalid options JSON")
@@ -197,13 +204,15 @@ def main (args : List String) : IO UInt32 := do
         | .object fields => (JSON.Json.object (fields ++ [("repeat",.number (toString i))])).toString
         | other => other.toString
       let start ← IO.monoNanosNow
-      let first ← IO.lazyPure fun _ => WebDocument.compileBin html (numbered 0) w.toUInt32 h.toUInt32
+      let (e',first) ← WebDocument.compileBin e html (numbered 0) w.toUInt32 h.toUInt32
+      e := e'
       let firstNs := (← IO.monoNanosNow)-start
       IO.FS.writeBinFile out first
       let mut times : Array String := #[]
       for i in [0:n] do
         let at_ ← IO.monoNanosNow
-        let bytes ← IO.lazyPure fun _ => WebDocument.compileBin html (numbered (i+1)) w.toUInt32 h.toUInt32
+        let (e',bytes) ← WebDocument.compileBin e html (numbered (i+1)) w.toUInt32 h.toUInt32
+        e := e'
         if bytes.size == 0 then return 1
         times := times.push (toString (((← IO.monoNanosNow)-at_)/1000))
       IO.println ("{\"bytes\":" ++ toString first.size ++ ",\"firstUs\":" ++ toString (firstNs/1000) ++
@@ -222,28 +231,32 @@ def main (args : List String) : IO UInt32 := do
               | .object shell => (key,.object (shell.map fun (k,v) => if k == "scroll" then (k,.number (toString scroll)) else (k,v)))
               | other => (key,other))).toString
         | other => other.toString
-      IO.println (WebDocument.compile "" (← IO.FS.readFile font) 1 1)
-      let first := WebDocument.compile html (at_ 0) w.toUInt32 h.toUInt32
+      let (e,loaded) ← WebDocument.compile {} "" (← IO.FS.readFile font) 1 1
+      IO.println loaded
+      let (e,first) ← WebDocument.compile e html (at_ 0) w.toUInt32 h.toUInt32
       if first.startsWith "{\"error\"" then IO.println first; return 1
       let start ← IO.monoNanosNow
       let mut bytes := 0
+      let mut e := e
       for i in [0:n] do
-        bytes := bytes+(WebDocument.compile html (at_ (40*(i+1))) w.toUInt32 h.toUInt32).utf8ByteSize
+        let (e',answer) ← WebDocument.compile e html (at_ (40*(i+1))) w.toUInt32 h.toUInt32
+        e := e'
+        bytes := bytes+answer.utf8ByteSize
       IO.println s!"{n} scroll frames, {((← IO.monoNanosNow)-start)/1000/(max n 1)} us each, {bytes} bytes"
       return 0
     -- One frame with a font loaded first: the output bytes, for a before/after check.
     if let ["--document",options,font] := flags then
       let some w := width.toNat? | throw (IO.userError "invalid width")
       let some h := height.toNat? | throw (IO.userError "invalid height")
-      let loaded := WebDocument.compile "" (← IO.FS.readFile font) 1 1
+      let (e,loaded) ← WebDocument.compile {} "" (← IO.FS.readFile font) 1 1
       if loaded.startsWith "{\"error\"" then IO.println loaded; return 1
-      IO.println (WebDocument.compile (← IO.FS.readFile path) (← IO.FS.readFile options) w.toUInt32 h.toUInt32)
+      IO.println (← WebDocument.compile e (← IO.FS.readFile path) (← IO.FS.readFile options) w.toUInt32 h.toUInt32).2
       return 0
     if let ["--document",options] := flags then
       let some w := width.toNat? | throw (IO.userError "invalid width")
       let some h := height.toNat? | throw (IO.userError "invalid height")
       if w > 4096 || h > 4096 then throw (IO.userError "viewport exceeds4096")
-      IO.println (WebDocument.compile (← IO.FS.readFile path) (← IO.FS.readFile options) w.toUInt32 h.toUInt32)
+      IO.println (← WebDocument.compile {} (← IO.FS.readFile path) (← IO.FS.readFile options) w.toUInt32 h.toUInt32).2
       return 0
     let fontPath := match flags with
       | ["--font-data",path] | ["--font-data",path,"--pixels"] | ["--pixels","--font-data",path] => some path

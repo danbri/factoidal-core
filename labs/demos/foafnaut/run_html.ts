@@ -2,7 +2,7 @@ import {loadHTML,type HTMLArtifact,type HTMLLayers,type HistoryAnswer,type Shell
 import {printImages,pdfPageCount,DEFAULT_PAPER} from "./native_print.ts";
 import {clampOffset,keeps} from "./layer_compositor.ts";
 import {prefetchTarget,trackMotion,stateKey,sameState,canSwap,keepReach,PREFETCH_MARGIN_ROWS,FRAME_MS,type Motion,type StateKey} from "./scroll_prefetch.ts";
-import {inputURL,loadFontFile,prepareHTML,refusalHTML,setFontHost,setPageDecoding,setScriptHost,type PageView} from "./native_html_document.ts";
+import {inputURL,loadFontFile,prepareHTML,readSource,refusalHTML,setFontHost,setPageDecoding,setScriptHost,type PageView} from "./native_html_document.ts";
 import {fallbackFontHost,loadFallbackFonts,mayNeedFallbackFonts,type FallbackFont,type PageFonts} from "./native_html_fonts.ts";
 import type {ScriptPlan,ScriptTurn} from "./native_html_engine.ts";
 import {addEntries,consoleRequest,noteDiagnostics} from "./native_console.ts";
@@ -419,6 +419,18 @@ async function main() {
     // with probes, which held up the next turns) while the page animates its canvas.
     if(turn.gpu?.length){gpuTurns.push({page:turn.gpuPage!,commands:turn.gpu});gpuFlush();lastActivity=Math.max(lastActivity,performance.now());}
     if(page.applyTurn(turn)&&page===document)dirty=true;
+    if(turn.fetches?.length&&page.script)workerFetches(page,turn.fetches);
+  };
+  // Dedicated workers (BubblePopJS; docs/designissues/2026-11-09-dedicated-workers.md): the
+  // scripts a page's workers wait for, read as the page's own resources are (Lean checked the
+  // worker's URL is of the page's origin), then the turn goes on.
+  const workerFetches=async(page:typeof document,fetches:{id:number;url:string;kind:string}[])=>{
+    const session=page.script!.session;
+    const results=await Promise.all(fetches.map(f=>readSource(f.url).then(r=>({id:f.id,status:200,url:r.url,contentType:"",source:r.source}),
+      ()=>({id:f.id,status:0,url:f.url,contentType:"",source:""}))));
+    if(page.script?.session!==session)return;
+    (scriptCall("scriptSession","",{action:"fetched",session,results}) as Promise<ScriptTurn>)
+      .then(turn=>scriptTurn(page,turn,"worker scripts")).catch(error=>console.error("Native HTML: worker scripts failed:",String(error)));
   };
   // View state is held here and applied by Lean. Pointer positions are in the
   // coordinates of the presented frame, as link picking is.

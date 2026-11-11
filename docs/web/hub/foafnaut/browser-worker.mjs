@@ -729,6 +729,18 @@ function scriptTurn(page,turn){
   // The start turn comes before the page is shown: its commands make the objects.
   if(turn.gpu?.length)gpuTake(turn.gpuPage,turn.gpu);
   if(turn.changed&&turn.commands){page.commands=turn.commands;if(page===doc)request();}
+  if(turn.fetches?.length&&page.script)workerFetches(page,turn.fetches);
+}
+// Dedicated workers (BubblePopJS; docs/designissues/2026-11-09-dedicated-workers.md): the
+// scripts a page's workers wait for, read as the page's own scripts are (Lean checked the
+// worker's URL is of the page's origin), then the turn goes on.
+async function workerFetches(page,fetches){
+  const session=page.script.session;
+  const results=await Promise.all(fetches.map(f=>fetchText(f.url).then(r=>({id:f.id,status:200,url:r.url,contentType:'',source:r.source}),
+    ()=>({id:f.id,status:0,url:f.url,contentType:'',source:''}))));
+  if(page.script?.session!==session)return;
+  try{scriptTurn(page,scriptCall('',{op:'scriptSession',action:'fetched',session,results}));}
+  catch(error){console.warn('foafnaut: worker scripts:',String(error.message??error));}
 }
 // Page GPU commands (docs/designissues/2026-11-08-page-gpu.md): Lean validated each one
 // (L4Factoidal.PageGpu) and gives them in the turn; the layer surface replays them and draws

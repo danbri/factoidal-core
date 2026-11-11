@@ -15,6 +15,9 @@
 // -10 NotSupportedError.
 (function (n0) {
   'use strict';
+  // The globals of the language itself, before any page object (section workers keeps
+  // them in a worker's global scope).
+  const esGlobals = new Set(Object.getOwnPropertyNames(globalThis));
   // The natives, with every change of the tree also queued as a mutation record (DOM §4.3)
   // for MutationObserver. The change itself is Lean's; this only reports it.
   const n = Object.create(n0); // the natives are not enumerable: inherit them
@@ -374,6 +377,9 @@
   // ---- reporting an exception (HTML "report an exception") -------------------------
   let reporting = false;
   let windowOfScript = () => window, frameLoad = () => {};
+  // A worker's global scope sends an error that no listener canceled to its Worker object
+  // (section workers); a window logs it.
+  let uncaughtHook = null;
   const report = e => {
     const message = e instanceof Error ? `${e.name}: ${e.message}` : 'Uncaught ' + String(e);
     if (reporting) { n.log('Uncaught (in error handler) ' + message); return; }
@@ -383,7 +389,7 @@
       const event = new ErrorEvent('error', { message, error: e, cancelable: true, filename: '', lineno: 0, colno: 0 });
       state(event).trusted = true;
       const notCanceled = dispatch(windowOfScript(), event);
-      if (notCanceled) n.log('Uncaught ' + message + (stack ? ' at ' + stack : ''));
+      if (notCanceled) { if (uncaughtHook) uncaughtHook(message, e); else n.log('Uncaught ' + message + (stack ? ' at ' + stack : '')); }
     } finally { reporting = false; }
   };
 
@@ -4172,6 +4178,176 @@
   }
   // ==== end dombreadth ====
 
+  // ==== workers: Dedicated Workers (HTML §10; docs/designissues/2026-11-09-dedicated-workers.md) ====
+  // BubblePopJS only: the structured clone (n.serialize, n.deserialize) walks the heap in
+  // Lean (L4Factoidal.JS.Clone), so on an engine without it `Worker` stays undefined.
+  // Lean (Hosts.LeanJSWorkers) keeps each worker's realm, event loop and budget, and
+  // decides when its tasks run; this is the WebIDL glue: Worker, the worker global scope,
+  // importScripts, and the message and error events, one task per event (WORKER_EVENT).
+  const WORKER_EVENT = 0x7FFFFFF0;
+  const workersOn = typeof n0.serialize === 'function' && typeof n0.worker === 'function';
+  let inWorker = false;
+  const workerSlots = new WeakMap(), workerObjects = new Map();
+  const cloneOut = (message, options, what) => {
+    let transfer = [];
+    if (Array.isArray(options)) transfer = options;
+    else if (options !== undefined && options !== null) {
+      if (typeof options !== 'object' && typeof options !== 'function') throw new TypeError(`Failed to execute 'postMessage' on '${what}': The provided value is not of type 'StructuredSerializeOptions'.`);
+      if (options.transfer !== undefined) {
+        if (options.transfer === null || typeof options.transfer[Symbol.iterator] !== 'function') throw new TypeError(`Failed to execute 'postMessage' on '${what}': The provided value cannot be converted to a sequence.`);
+        transfer = Array.from(options.transfer);
+      }
+    }
+    try { return n0.serialize(message, transfer); }
+    catch (e) {
+      const m = String(e && e.message !== undefined ? e.message : e);
+      if (m.startsWith('DataCloneError: ')) throw new DOMException(`Failed to execute 'postMessage' on '${what}': ${m.slice(16)}`, 'DataCloneError');
+      throw e;
+    }
+  };
+  const handlerProp = (proto, names) => {
+    for (const name of names) Object.defineProperty(proto, 'on' + name, { get() { return handlerOf(this, name); },
+      set(f) { setHandler(this, name, f); }, configurable: true, enumerable: true });
+  };
+  // One event for this realm (Lean queued the task with it, in order).
+  const workerEvent = () => {
+    const head = n.worker(3);
+    if (typeof head !== 'string' || head === '') return;
+    const { w, k, h } = JSON.parse(head);
+    const target = inWorker ? globalThis : workerObjects.get(w);
+    if (!target || (!inWorker && workerSlots.get(target).terminated)) return;
+    if (k === 'message') {
+      let data, ok = true;
+      try { data = n0.deserialize(n.worker(4)); } catch { ok = false; }
+      const e = new MessageEvent(ok ? 'message' : 'messageerror', { data: ok ? data : null, origin: '' });
+      state(e).trusted = true;
+      dispatch(target, e);
+    } else if (k === 'error') {
+      const d = JSON.parse(h);
+      const init = { message: d.message, filename: d.file, lineno: d.line, colno: d.col, cancelable: true };
+      const e = new ErrorEvent('error', init);
+      state(e).trusted = true;
+      // HTML §10.2.5: not canceled at the Worker object, it is an error of this global too.
+      if (dispatch(target, e)) {
+        const g = new ErrorEvent('error', init);
+        state(g).trusted = true;
+        if (dispatch(window, g)) { if (uncaughtHook) uncaughtHook(d.message, null); else n.log('Uncaught (in worker) ' + d.message); }
+      }
+    } else if (k === 'loaderror') {
+      const e = new Event('error');
+      state(e).trusted = true;
+      dispatch(target, e);
+    }
+  };
+  if (workersOn) callbacks.set(WORKER_EVENT, workerEvent);
+  const scriptBase = () => inWorker ? href : (globalThis.document?.baseURI || href);
+  const originOf = u => { try { return new URL(u).origin; } catch { return 'null'; } };
+  class Worker extends EventTarget {
+    constructor(scriptURL, options = undefined) {
+      if (arguments.length < 1) throw new TypeError("Failed to construct 'Worker': 1 argument required, but only 0 present.");
+      super();
+      const o = options == null ? {} : options;
+      if (typeof o !== 'object' && typeof o !== 'function') throw new TypeError("Failed to construct 'Worker': The provided value is not of type 'WorkerOptions'.");
+      const type = o.type === undefined ? 'classic' : String(o.type);
+      if (type !== 'classic' && type !== 'module') throw new TypeError(`Failed to construct 'Worker': The provided value '${type}' is not a valid enum value of type WorkerType.`);
+      const name = o.name === undefined ? '' : String(o.name);
+      const url = resolveURL(String(scriptURL), scriptBase());
+      if (url === null) throw new DOMException(`Failed to construct 'Worker': The URL '${scriptURL}' is invalid.`, 'SyntaxError');
+      if (type === 'module') throw new DOMException("Failed to construct 'Worker': module workers are not supported here.", 'NotSupportedError');
+      const scheme = /^[a-z][a-z0-9+.-]*:/i.exec(url)?.[0] ?? '';
+      if (scheme !== 'data:' && scheme !== 'blob:' && originOf(url) !== originOf(href))
+        throw new DOMException(`Failed to construct 'Worker': Script at '${url}' cannot be accessed from origin '${originOf(href)}'.`, 'SecurityError');
+      const id = n.worker(0, url, name);
+      workerSlots.set(this, { id, terminated: false });
+      workerObjects.set(id, this);
+    }
+    postMessage(message, options = undefined) {
+      const s = workerSlots.get(this);
+      if (!s) throw new TypeError("Illegal invocation");
+      if (arguments.length < 1) throw new TypeError("Failed to execute 'postMessage' on 'Worker': 1 argument required, but only 0 present.");
+      const bytes = cloneOut(message, options, 'Worker');
+      if (!s.terminated) n.worker(1, s.id, bytes);
+    }
+    terminate() {
+      const s = workerSlots.get(this);
+      if (!s) throw new TypeError("Illegal invocation");
+      if (!s.terminated) { s.terminated = true; n.worker(2, s.id); }
+    }
+  }
+  handlerProp(Worker.prototype, ['message', 'messageerror', 'error']);
+  Object.defineProperty(Worker.prototype, Symbol.toStringTag, { value: 'Worker', configurable: true });
+  if (workersOn) def('Worker', Worker);
+  // The globals a dedicated worker's scope keeps (HTML §10.2.1 and the [Exposed=Worker]
+  // interfaces this engine has), besides the language's own (`esGlobals`).
+  const workerGlobals = new Set(['self', 'console', 'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval',
+    'queueMicrotask', 'reportError', 'structuredClone', 'atob', 'btoa', 'WebAssembly', 'DOMException', 'EventTarget', 'Event',
+    'CustomEvent', 'MessageEvent', 'ErrorEvent', 'PromiseRejectionEvent', 'ProgressEvent', 'AbortController', 'AbortSignal',
+    'TextEncoder', 'TextDecoder', 'TextEncoderStream', 'TextDecoderStream', 'URL', 'URLSearchParams', 'crypto', 'Crypto',
+    'SubtleCrypto', 'CryptoKey', 'performance', 'Performance', 'PerformanceEntry', 'PerformanceMark', 'PerformanceMeasure',
+    'Blob', 'File', 'FileReader', 'FormData', 'Headers', 'Request', 'Response', 'fetch', 'ReadableStream', 'WritableStream',
+    'TransformStream', 'MessageChannel', 'MessagePort', 'BroadcastChannel', 'webkitURL']);
+  // HTML §10.2.1: WorkerGlobalScope, DedicatedWorkerGlobalScope, WorkerLocation, WorkerNavigator.
+  const makeWorkerScope = (url, name) => {
+    inWorker = true;
+    href = url;
+    const nav = globalThis.navigator;
+    class WorkerGlobalScope extends EventTarget { constructor() { throw new TypeError('Illegal constructor'); } }
+    class DedicatedWorkerGlobalScope extends WorkerGlobalScope { constructor() { throw new TypeError('Illegal constructor'); } }
+    const parts = new WeakMap();
+    class WorkerLocation { constructor() { throw new TypeError('Illegal constructor'); } toString() { return parts.get(this).href; } }
+    for (const k of ['href', 'origin', 'protocol', 'host', 'hostname', 'port', 'pathname', 'search', 'hash'])
+      Object.defineProperty(WorkerLocation.prototype, k, { get() { return parts.get(this)[k]; }, configurable: true, enumerable: true });
+    class WorkerNavigator { constructor() { throw new TypeError('Illegal constructor'); } }
+    for (const k of ['userAgent', 'language', 'languages', 'platform', 'onLine', 'hardwareConcurrency'])
+      Object.defineProperty(WorkerNavigator.prototype, k, { get() { return nav[k]; }, configurable: true, enumerable: true });
+    for (const [k, v] of [['appCodeName', 'Mozilla'], ['appName', 'Netscape'], ['product', 'Gecko']])
+      Object.defineProperty(WorkerNavigator.prototype, k, { get() { return v; }, configurable: true, enumerable: true });
+    Object.defineProperty(WorkerNavigator.prototype, 'appVersion', { get() { return String(nav.userAgent).replace(/^Mozilla\//, ''); }, configurable: true, enumerable: true });
+    const u = new URL(url);
+    const loc = Object.create(WorkerLocation.prototype);
+    parts.set(loc, { href: u.href, origin: u.origin, protocol: u.protocol, host: u.host, hostname: u.hostname, port: u.port,
+      pathname: u.pathname, search: u.search, hash: u.hash });
+    const wnav = Object.create(WorkerNavigator.prototype);
+    for (const k of Object.getOwnPropertyNames(globalThis))
+      if (!esGlobals.has(k) && !workerGlobals.has(k)) { try { delete globalThis[k]; } catch {} }
+    Object.setPrototypeOf(globalThis, DedicatedWorkerGlobalScope.prototype);
+    const WP = WorkerGlobalScope.prototype, DP = DedicatedWorkerGlobalScope.prototype;
+    const getter = (o, k, f) => Object.defineProperty(o, k, { get: f, configurable: true, enumerable: true });
+    getter(WP, 'self', function () { return globalThis; });
+    getter(WP, 'location', () => loc);
+    getter(WP, 'navigator', () => wnav);
+    getter(WP, 'origin', () => u.origin);
+    getter(WP, 'isSecureContext', () => u.protocol === 'https:' || u.hostname === 'localhost' || u.hostname === '127.0.0.1');
+    getter(WP, 'crossOriginIsolated', () => false);
+    define(WP, 'importScripts', function importScripts(...urls) {
+      const abs = urls.map(x => {
+        const r = resolveURL(String(x), href);
+        if (r === null) throw new DOMException(`Failed to execute 'importScripts' on 'WorkerGlobalScope': The URL '${x}' is invalid.`, 'SyntaxError');
+        return r;
+      });
+      for (const a of abs) {
+        const src = n.worker(12, a);
+        // -1: the embedder fetches it now; Lean undoes this run and runs it again then.
+        if (src === -1) throw new DOMException(`importScripts: '${a}' is being fetched.`, 'NetworkError');
+        if (typeof src !== 'string') throw new DOMException(`Failed to execute 'importScripts' on 'WorkerGlobalScope': The script at '${a}' failed to load.`, 'NetworkError');
+        n0.runScript(src);
+      }
+    });
+    getter(DP, 'name', () => name);
+    define(DP, 'postMessage', function postMessage(message, options = undefined) {
+      if (arguments.length < 1) throw new TypeError("Failed to execute 'postMessage' on 'DedicatedWorkerGlobalScope': 1 argument required, but only 0 present.");
+      n.worker(1, 0, cloneOut(message, options, 'DedicatedWorkerGlobalScope'));
+    });
+    define(DP, 'close', function close() { n.worker(10); });
+    handlerProp(WP, ['error', 'languagechange', 'offline', 'online', 'rejectionhandled', 'unhandledrejection']);
+    handlerProp(DP, ['message', 'messageerror']);
+    Object.defineProperty(WP, Symbol.toStringTag, { value: 'WorkerGlobalScope', configurable: true });
+    Object.defineProperty(DP, Symbol.toStringTag, { value: 'DedicatedWorkerGlobalScope', configurable: true });
+    for (const [k, v] of Object.entries({ WorkerGlobalScope, DedicatedWorkerGlobalScope, WorkerLocation, WorkerNavigator })) def(k, v);
+    uncaughtHook = (message, e) => n.worker(11, message, href, 0, 0);
+  };
+  // ==== end workers ====
+
   // Content event handler attributes (HTML §8.1.8.1): onclick="..." and <body onload>.
   // The event handler content attributes of the elements of a subtree (a page's, or a clone's:
   // a clone's attributes are set by Lean, not through setAttribute).
@@ -4221,5 +4397,7 @@
     script(id) { currentScript = id < 0 ? null : wrap(id); const d = id < 0 ? 0 : info(id, 7); scriptDocument = d > 0 ? wrap(d) : null; },
     url(u) { href = String(u); },
     release(id) { callbacks.delete(id); },
+    // Section workers: this realm becomes a dedicated worker's global scope.
+    worker(url, name) { makeWorkerScope(String(url), String(name)); },
   };
 })

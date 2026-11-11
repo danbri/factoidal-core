@@ -18,7 +18,8 @@ for module in WebState WebStateCLI; do
   lean -R "$LAB" -o "$BUILD/olean/$module.olean" -c "$BUILD/$module.c" "$LAB/$module.lean"
 done
 OBJECTS=()
-for module in Encoding/Hex JSON/Value JSON/Serialize JSON/Parser; do
+# WebState imports WHATWG.Encoding.Sniff (its decode of a stored page), which imports Core and Data.
+for module in Encoding/Hex JSON/Value JSON/Serialize JSON/Parser WHATWG/Encoding/Data WHATWG/Encoding/Core WHATWG/Encoding/Sniff; do
   object="$BUILD/obj/$(echo "$module" | tr / _).o"
   leanc -O2 -c "$CORE/ir/L4Factoidal/$module.c" -o "$object"
   OBJECTS+=("$object")
