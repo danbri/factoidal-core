@@ -47,6 +47,11 @@ argument for `start`:
 - `net` (`results`: `[{id, status, statusText, url, headers, bodyBase64}]`, optional
   `elapsedMs`): the host's answers to a turn's `netRequests` (a host that sets
   `network:true` in `start` makes page requests; without it `XMLHttpRequest` is not defined).
+  A request with `resolve:true` asks only for the addresses of its URL's host name: its
+  answer is `{id, addresses}` and nothing goes to the server. A request with `address` and
+  `port` goes to that address only; the host does not resolve the name again (DNS
+  rebinding, `Net.PageFetch.emit`). `pageAddress` in `start`: the address the host loaded
+  the page from, when it knows it (a local one lets the page reach local addresses).
   `elapsedMs` moves the virtual clock before the answers apply (a test host's waiting time).
 - `syncAnswer` (`answer`, the form of one `results` entry): a sync `XMLHttpRequest` was reached.
   A turn with `netSync` (one request) carries nothing else and changes nothing: the host
@@ -616,11 +621,18 @@ def frameDocument (request : JSON.Json) : Except String (String × Bool × Array
   let (scripts, _) ← scriptSources dom request
   return (src, DOM.isXhtmlPath url, scripts, enc)
 
+/-- A page whose scripts name `XMLHttpRequest`: a later action may make a sync request, so
+each action keeps the session before it (`Net.Xhr.State.mayBlock`). Other pages pay nothing. -/
+def mentionsXhr (scripts : Array (Nat × String)) : Bool :=
+  scripts.any fun (_, src) => (src.splitOn "XMLHttpRequest").length > 1
+
 /-- One request to the host, as JSON. -/
 def wireJson (w : Net.PageFetch.Wire) : JSON.Json :=
   .object ([("id", num w.id), ("method", .string w.method), ("url", .string w.url),
       ("headers", .array (w.headers.map fun (n, v) => .array [.string n, .string v]))] ++
-      (match w.body with | some b => [("bodyBase64", .string (WHATWG.Base64.encode b))] | none => []))
+      (match w.body with | some b => [("bodyBase64", .string (WHATWG.Base64.encode b))] | none => []) ++
+      (if w.resolve then [("resolve", .bool true)] else []) ++
+      (if w.address.isEmpty then [] else [("address", .string w.address), ("port", num w.port)]))
 
 /-- The answer that undoes this run and asks the host for one sync request. -/
 def netSyncAnswer (id : Nat) (w : Net.PageFetch.Wire) : Except String String :=
@@ -648,8 +660,12 @@ def netAnswer (x : JSON.Json) : Nat × Net.PageFetch.Answer :=
   let body := match x.field? "bodyBase64" with
     | some (.string b) => (Rendering.SfntProfile.decodeBase64 b).getD ByteArray.empty
     | _ => ByteArray.empty
+  let addresses : List String := match x.field? "addresses" with
+    | some (.array xs) => xs.filterMap fun | .string a => some a | _ => none
+    | _ => []
   let answer : Net.PageFetch.Answer :=
-    { status := (natField x "status").getD 0, statusText := str x "statusText", headers := hs, body := body, url := str x "url" }
+    { status := (natField x "status").getD 0, statusText := str x "statusText", headers := hs, body := body, url := str x "url",
+      addresses }
   ((natField x "id").getD 0, answer)
 
 /-- Apply the host's answers: each answered request's callback is a task on the networking
@@ -686,7 +702,7 @@ def startLean (held : Held) (html : String) (request : JSON.Json) (measure : JSO
   let hostLoads := request.field? "navigations" == some (.bool true)
   let network := request.field? "network" == some (.bool true)
   let hostCors := request.field? "hostCors" == some (.bool true)
-  let lim : Page.Limits := { commands, logs, gpuPage := id, entropy := entropy id, encoding := str request "encoding", frames := true, hostLoads := hostLoads, network := network, hostCors := hostCors, syncOk := true, syncAnswers := held.syncCache }
+  let lim : Page.Limits := { commands, logs, gpuPage := id, entropy := entropy id, encoding := str request "encoding", frames := true, hostLoads := hostLoads, network := network, hostCors := hostCors, pageAddress := str request "pageAddress", syncOk := true, syncAnswers := held.syncCache }
   let made := show Except String (Array (Nat × String) × Array String × DOM.Dom) from do
     let dom ← parse html url
     let (scripts, missing) ← scriptSources dom request
@@ -704,7 +720,7 @@ def startLean (held : Held) (html : String) (request : JSON.Json) (measure : JSO
       let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh, canvasEnv := canvas }
       let rate := max 1 ((natField request "instructionsPerMs").getD 100000)
       let (s, ns) := WebWasm.timed fun _ =>
-        let s := LeanJS.start base dom url scripts lim reads { instructionsPerMs := rate }
+        let s := LeanJS.start base dom url scripts { lim with mayBlock := network && mentionsXhr scripts } reads { instructionsPerMs := rate }
         missing.foldl LeanJS.Session.fail s
       match s.host.web.net.syncWanted with
       | some w => ({ held with leanBase := some base, pendingSync := some ("start", html, request) }, netSyncAnswer id w)
@@ -718,9 +734,10 @@ def actLean (held : Held) (action : String) (request : JSON.Json) (id : Nat) (s 
   let e := LeanJS.engine
   let before := Before.ofLean s
   -- Undo needs the session as it was. It is kept only for a page that has made an XHR before
-  -- this action (and a start, whose undo is the base realm): holding it would copy the page's
-  -- heap array at the action's first write, and other pages must not pay that.
-  let keepIt := s.host.web.net.xhrs.size > 0
+  -- this action or whose scripts name XMLHttpRequest (`mentionsXhr`), and a start, whose undo
+  -- is the base realm: holding it would copy the page's heap array at the action's first
+  -- write, and other pages must not pay that.
+  let keepIt := s.host.web.net.xhrs.size > 0 || s.host.web.net.mayBlock
   let snap := if keepIt then some s else none
   let s0 := s.setHost { s.host with web := setSync s.host.web keepIt held.syncCache }
   let run := fun (f : LeanJS.Session → LeanJS.Session) =>
@@ -804,7 +821,7 @@ def act (held : Held) (action html : String) (request : JSON.Json)
         let (vw, vh) := (viewport request).getD (800, 600)
         let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh, canvasEnv := canvas }
         let rate := max 1 ((natField request "instructionsPerMs").getD 100000)
-        let prog := PageAot.startProg aot dom url scripts { commands, logs, gpuPage := held.nextSession, entropy := entropy held.nextSession, encoding := str request "encoding", network := request.field? "network" == some (.bool true), hostCors := request.field? "hostCors" == some (.bool true) } #[] missing
+        let prog := PageAot.startProg aot dom url scripts { commands, logs, gpuPage := held.nextSession, entropy := entropy held.nextSession, encoding := str request "encoding", network := request.field? "network" == some (.bool true), hostCors := request.field? "hostCors" == some (.bool true), pageAddress := str request "pageAddress" } #[] missing
           reads { instructionsPerMs := rate }
         let id := held.nextSession
         beginTurn { held with session := none, leanSession := none, nextSession := id + 1 } id {} {} true true prog
@@ -820,7 +837,7 @@ def act (held : Held) (action html : String) (request : JSON.Json)
         let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh, canvasEnv := canvas }
         let rate := max 1 ((natField request "instructionsPerMs").getD 100000)
         let hostLoads := request.field? "navigations" == some (.bool true)
-        let s ← Page.start m dom url scripts { commands, logs, gpuPage := held.nextSession, entropy := entropy held.nextSession, encoding := str request "encoding", network := request.field? "network" == some (.bool true), hostCors := request.field? "hostCors" == some (.bool true), syncOk := true, syncAnswers := held.syncCache, frames := true, hostLoads } #[] reads { instructionsPerMs := rate }
+        let s ← Page.start m dom url scripts { commands, logs, gpuPage := held.nextSession, entropy := entropy held.nextSession, encoding := str request "encoding", network := request.field? "network" == some (.bool true), hostCors := request.field? "hostCors" == some (.bool true), pageAddress := str request "pageAddress", syncOk := true, syncAnswers := held.syncCache, frames := true, hostLoads, mayBlock := request.field? "network" == some (.bool true) && mentionsXhr scripts } #[] reads { instructionsPerMs := rate }
         return missing.foldl Page.Session.fail s
       match started with
       | (.error e, _) => (held, .error s!"scriptSession: {e}")
@@ -852,7 +869,7 @@ def act (held : Held) (action html : String) (request : JSON.Json)
         if held.aot.isSome && held.module.isNone then
           beginTurn held id before marks full false (Except.ok <$> f s)
         else
-          let keepIt := s.host.web.net.xhrs.size > 0
+          let keepIt := s.host.web.net.xhrs.size > 0 || s.host.web.net.mayBlock
           let snap : Option Page.Session := if keepIt then some s else none
           let s0 : Page.Session := { s with host := { s.host with web := setSync s.host.web keepIt held.syncCache } }
           let (s', ns) := WebWasm.timed fun _ => (f s0).runLocal

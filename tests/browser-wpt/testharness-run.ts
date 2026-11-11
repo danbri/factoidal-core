@@ -474,13 +474,16 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
       }
     // navigations:true: this runner loads frames' URLs (scriptSession action `frame`).
     let turn=start(html,{action:"start",url,resources,commandLimit:200000,logLimit:100000,instructionsPerMs:scriptRate,...(encoding?{encoding}:{}),
-      navigations:true,...(http?{network:true}:{}),...(scriptEngine==="bubblepop"?{engine:"bubblepop"}:{})});
+      navigations:true,...(http?{network:true,pageAddress:"127.0.0.1"}:{}),...(scriptEngine==="bubblepop"?{engine:"bubblepop"}:{})});
     // The engine's page requests in flight (each from one turn): http.fetch to wptserve.
     type NetWire={id:number;method:string;url:string;headers:[string,string][];bodyBase64?:string};
     const inflight=new Map<number,Promise<{id:number;answer:Record<string,unknown>}>>();
     const b64=(u:Uint8Array)=>{let s="";for(let i=0;i<u.length;i+=32768)s+=String.fromCharCode(...u.subarray(i,i+32768));return btoa(s);};
+    // pageAddress: wptserve serves every WPT page from 127.0.0.1, so the page is local and the
+    // engine asks for no name resolution (Net.PageFetch); a resolve-only wire gets no address.
     const netFetch=async(w:NetWire):Promise<{id:number;answer:Record<string,unknown>}>=>{
       const failed={id:w.id,answer:{id:w.id,status:0}};
+      if((w as {resolve?:boolean}).resolve)return {id:w.id,answer:{id:w.id,addresses:[]}};
       if(!http)return failed;
       try{
         const headers=new Headers();for(const [n,v] of w.headers)headers.append(n,v);

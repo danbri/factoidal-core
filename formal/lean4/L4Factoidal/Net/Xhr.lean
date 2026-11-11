@@ -66,6 +66,8 @@ structure Xhr where
   response : Option Response := none
   /-- `send` could not start (policy): the error steps wait for the page's next task. -/
   deferFail : Bool := false
+  /-- A response made here (a `data:` URL): it is given at the page's next task. -/
+  deferred : Option Response := none
   transfer : Option Nat := none
   /-- The page's callback that runs the events of this object when the host answers. -/
   cb : Nat := 0
@@ -95,6 +97,9 @@ structure State where
   /-- A sync request this run needs the host for: the run is thrown away, the host answers
   it, and the run happens again with one more answer (`WebScripts`, action `syncAnswer`). -/
   syncWanted : Option Wire := none
+  /-- The page's scripts name `XMLHttpRequest`, so a later action may make a sync request:
+  the embedder keeps the session before each action to undo it (only such pages pay). -/
+  mayBlock : Bool := false
   deriving Inhabited
 
 /-- A page's objects (each handle is its index plus one). -/
@@ -138,7 +143,7 @@ def requestError (s : State) (h : Nat) (x : Xhr) (e : String) : State :=
   let upEvents : Array Ev :=
     if up && x.uploadListener then #[.fire true e 0 0 false, .fire true "loadend" 0 0 false] else #[]
   let evs : Array Ev := #[rsc] ++ upEvents ++ #[.fire false e 0 0 false, .fire false "loadend" 0 0 false]
-  s.set h { x with state := 4, sendFlag := false, response := none, deferFail := false, uploadComplete := true,
+  s.set h { x with state := 4, sendFlag := false, response := none, deferFail := false, deferred := none, uploadComplete := true,
                    events := x.events ++ evs }
 
 /-- `open(method, url, async, ...)`. -/
@@ -156,7 +161,7 @@ def openX (s : State) (h : Nat) (method url base : String) (async : Bool) : Stat
     let (s, x) := stopFetch s x
     let x' := { x with method := normalizeMethod method, url := u'.serialize true, async, headers := #[], body := none,
                        sendFlag := false, uploadListener := false, uploadComplete := false, response := none,
-                       deferFail := false, events := #[] }
+                       deferFail := false, deferred := none, events := #[] }
     let x' := if x.state != 1 then { x' with state := 1, events := #[rsc] } else x'
     (s.set h x', .ok "")
 
@@ -169,7 +174,7 @@ def setHeaderX (s : State) (h : Nat) (name value : String) : State × Except Int
   if value.any (fun (c : Char) => c.toNat > 255) then (s, .error errType) else
   let value := trimWs value
   if !isToken name || value.any (fun (c : Char) => c == '\x00' || c == '\n' || c == '\r') then (s, .error errSyntax) else
-  if forbiddenRequestHeader name then (s, .ok "") else
+  if forbiddenRequestHeader name || forbiddenOverride name value then (s, .ok "") else
   let n := lower name
   let found := x.headers.findIdx? fun (k, _) => lower k == n
   let hs := match found with
@@ -201,7 +206,7 @@ run, with the same clock, random numbers and order). -/
 def syncFetch (s : State) (t0 : Transfer) : State × SyncOutcome := Id.run do
   let mut s := s
   let mut step := plan t0
-  for _ in [0:2 * maxRedirects + 8] do
+  for _ in [0:4 * maxRedirects + 8] do
     match step with
     | .fail _ => return (s, .failed)
     | .deliver _ r => return (s, .done r)
@@ -281,7 +286,8 @@ def beginFetch (s : State) (h : Nat) (x : Xhr) : State :=
   let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred, sameOriginOnly := x.sameOnly }
   match plan t with
   | .send t' w => (s.set h { x with transfer := some id }) |> fun s => { s with live := s.live.push (id, h, t'), outbox := s.outbox.push w }
-  | .fail _ | .deliver .. => s.set h { x with deferFail := true }
+  | .deliver _ r => s.set h { x with deferred := some r }
+  | .fail _ => s.set h { x with deferFail := true }
 
 /-- The next event to fire for object `h`, running the steps before it. -/
 def next (s : State) (h : Nat) : State × Option (Bool × String × Nat × Nat × Bool) := Id.run do
@@ -403,6 +409,56 @@ def docKind (x : Xhr) : String :=
     else if e == "text/xml" || e == "application/xml" || e.endsWith "+xml" then "xml"
     else ""
 
+/-- The final MIME type (XHR §3.6.6, for a `blob` response's type): the override, else the
+response's `Content-Type`, else `""`. -/
+def finalMime (x : Xhr) : String :=
+  match x.mimeOverride, x.response.bind fun r => headerGet r.headers "content-type" with
+  | some m, _ => m
+  | none, some c => c
+  | none, none => ""
+
+/-! ## `multipart/form-data` (HTML §4.10.21.8, the encoding of a `FormData` body) -/
+
+/-- Line breaks normalized to CRLF (HTML "convert to a list of name-value pairs"). -/
+def crlf (s : String) : String :=
+  ((s.replace "\r\n" "\n").replace "\r" "\n").replace "\n" "\r\n"
+
+/-- A name or filename in a `Content-Disposition` field: LF, CR and `"` percent-encoded. -/
+def escapeField (s : String) : String :=
+  ((s.replace "\n" "%0A").replace "\r" "%0D").replace "\"" "%22"
+
+/-- One entry: a name, and a string value or a file (filename, type, bytes). -/
+inductive FormValue where
+  | text (v : String)
+  | file (name type : String) (bytes : ByteArray)
+
+/-- The bytes of one value as the body carries them. -/
+def FormValue.bytes : FormValue → ByteArray
+  | .text v => (crlf v).toUTF8
+  | .file _ _ b => b
+
+/-- The first boundary of the form `----FoafnautFormBoundary<k>` that occurs in no value (a
+boundary must not occur in the parts, RFC 2046 §5.1.1). -/
+def boundaryFor (vs : List FormValue) : String := Id.run do
+  let texts := vs.map fun v => PageFetch.isoString v.bytes
+  for k in [0:vs.length + 2] do
+    let b := s!"----FoafnautFormBoundary{k}"
+    if texts.all fun t => (t.splitOn b).length == 1 then return b
+  return s!"----FoafnautFormBoundary{vs.length + 2}"
+
+/-- The `multipart/form-data` body of a form data set, with the boundary from `boundaryFor`. -/
+def formDataBody (entries : List (String × FormValue)) : ByteArray := Id.run do
+  let b := boundaryFor (entries.map (·.2))
+  let mut out := ByteArray.empty
+  for (name, v) in entries do
+    let head := s!"--{b}\r\nContent-Disposition: form-data; name=\"{escapeField (crlf name)}\"" ++
+      (match v with
+       | .text _ => ""
+       | .file fname type _ => s!"; filename=\"{escapeField fname}\"\r\nContent-Type: {if type.isEmpty then "application/octet-stream" else type}") ++
+      "\r\n\r\n"
+    out := out ++ head.toUTF8 ++ v.bytes ++ "\r\n".toUTF8
+  return out ++ s!"--{b}--\r\n".toUTF8
+
 /-- `getAllResponseHeaders()`: names lowercased and sorted, one `name: value` CRLF each. -/
 def allHeaders (x : Xhr) : String :=
   match x.response with
@@ -467,9 +523,10 @@ def op (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int Byt
         | 2 => (x.response.map fun r => if x.state ≥ 2 then r.statusText else "").getD ""
         | 3 => (x.response.map fun r => if x.state ≥ 2 then r.url else "").getD ""
         | 4 => responseText x
-        | 5 => if x.deferFail then "1" else "0"
+        | 5 => if x.deferFail || x.deferred.isSome then "1" else "0"
         | 6 => x.responseType
         | 7 => docKind x
+        | 8 => finalMime x
         | _ => ""
       (s, okStr body)
   | 68 =>
@@ -521,15 +578,36 @@ def op (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int Byt
       if x.state > 1 || x.sendFlag then (s, .error errInvalidState)
       else (s.set (natAt fs 0) { x with cred := natAt fs 1 != 0 }, okStr "")
   | 75 => (s, okStr "1")
+  | 78 =>
+    -- the multipart/form-data body of a FormData: five fields an entry (name, "1" for a
+    -- file, filename, type, bytes)
+    let n := fs.size / 5
+    let entries := (List.range n).map fun i =>
+      let name := strAt fs (5 * i)
+      let v : FormValue := if strAt fs (5 * i + 1) == "1"
+        then .file (strAt fs (5 * i + 2)) (strAt fs (5 * i + 3)) (fs.getD (5 * i + 4) ByteArray.empty)
+        else .text (strAt fs (5 * i + 4))
+      (name, v)
+    let body := formDataBody entries
+    if body.size > maxBody then (s, .error (-5)) else (s, .ok body)
   | 77 =>
     -- mode same-origin (`fetch`)
     match s.get? (natAt fs 0) with
     | none => (s, .error errType)
     | some x => (s.set (natAt fs 0) { x with sameOnly := natAt fs 1 != 0 }, okStr "")
   | 76 =>
-    -- the deferred error of a `send` that the policy refused (the page's next task)
-    match s.get? (natAt fs 0) with
-    | some x => if x.deferFail then (requestError s (natAt fs 0) x "error", okStr "") else (s, okStr "")
+    -- the deferred error of a `send` that the policy refused, or the response made here (a
+    -- `data:` URL), at the page's next task
+    let h := natAt fs 0
+    match s.get? h with
+    | some x =>
+      match x.deferred with
+      | some r =>
+        if !x.sendFlag || x.state != 1 then (s.set h { x with deferred := none }, okStr "") else
+        if r.body.size > maxBody || s.held + r.body.size > maxHeld then (requestError s h x "error", okStr "") else
+        ((s.set h { x with deferred := none, response := some r, uploadComplete := true, events := x.events ++ responseEvents x r })
+          |> fun s => { s with held := s.held + r.body.size }, okStr "")
+      | none => if x.deferFail then (requestError s h x "error", okStr "") else (s, okStr "")
     | none => (s, .error errType)
   | 74 =>
     -- the body as bytes (responseType "arraybuffer")
@@ -542,6 +620,13 @@ def op (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int Byt
   | _ => (s, .error (-2))
 
 /-! ## Checks (`#guard` is a test) -/
+
+#guard PageFetch.isoString (formDataBody [("a", .text "x\ny"), ("f\"", .file "n.txt" "" "hi".toUTF8)]) ==
+  "------FoafnautFormBoundary0\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nx\r\ny\r\n" ++
+  "------FoafnautFormBoundary0\r\nContent-Disposition: form-data; name=\"f%22\"; filename=\"n.txt\"\r\nContent-Type: application/octet-stream\r\n\r\nhi\r\n" ++
+  "------FoafnautFormBoundary0--\r\n"
+#guard boundaryFor [.text "----FoafnautFormBoundary0"] == "----FoafnautFormBoundary1"
+#guard PageFetch.isoString (formDataBody []) == "------FoafnautFormBoundary0--\r\n"
 
 private def st : State := { enabled := true, page := Page.ofUrl "http://a.example/x" }
 
@@ -559,10 +644,16 @@ private def sent : State :=
 #guard (sent.get? 1).any (·.state == 1)
 #guard (run1 sent 64 ["1"]).2 == "0\x00loadstart\x000\x000\x000"
 
-private def started : State := (run1 (run1 sent 64 ["1"]).1 64 ["1"]).1
+-- the page is not local: the name is resolved first, then the request goes to that address
+private def started0 : State := (run1 (run1 sent 64 ["1"]).1 64 ["1"]).1
 
-#guard started.outbox.size == 1
-#guard (started.outbox[0]?).any fun w => w.url == "http://a.example/d/y" && w.method == "GET" && w.headers == [("Accept", "*/*")]
+#guard started0.outbox.size == 1 && (started0.outbox[0]?).any (·.resolve)
+
+private def started : State := (give started0 1 { addresses := ["93.184.215.14"] }).1
+
+#guard started.outbox.size == 2
+#guard (started.outbox[1]?).any fun w => w.url == "http://a.example/d/y" && w.method == "GET" &&
+  w.headers == [("Accept", "*/*")] && w.address == "93.184.215.14" && w.port == 80 && !w.resolve
 #guard (run1 started 67 ["1", "0"]).2 == "1"
 #guard started.waiting
 
@@ -589,6 +680,7 @@ private def refused : State :=
   let s := (run1 s 61 ["1", "GET", "http://b.example/", "", "1"]).1
   let s := (run1 s 63 ["1", "9", "0", "0", "", ""]).1
   let s := (run1 (run1 s 64 ["1"]).1 64 ["1"]).1
+  let s := (give s 1 { addresses := ["93.184.215.14"] }).1
   (give s 1 ({ status := 200, body := "secret".toUTF8 } : Answer)).1
 
 #guard drain refused == ["readystatechange", "error", "loadend"]
