@@ -1,5 +1,6 @@
 import L4Factoidal.CompactLTJ.Model
 import L4Factoidal.CompactLTJ.Succinct
+import L4Factoidal.CompactLTJ.Adaptive
 import L4Factoidal.CompactLTJ.SparqlBridge
 
 /-! SPDX-License-Identifier: Apache-2.0
