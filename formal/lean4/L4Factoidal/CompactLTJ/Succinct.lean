@@ -1,4 +1,6 @@
-/-!
+import Std
+
+/-
 Copyright 2026 Factoidal contributors. SPDX-License-Identifier: Apache-2.0
 
 Fresh LOUDS-style unary-degree topology and rank/select reference operations.
@@ -8,7 +10,6 @@ These definitions are intentionally simple List-based specifications. Fast
 packed UInt64 rank/select implementations should be proved equivalent to
 these definitions before being used by the CompactLTJ cursor.
 -/
-import Std
 
 namespace L4Factoidal.CompactLTJ.Succinct
 
