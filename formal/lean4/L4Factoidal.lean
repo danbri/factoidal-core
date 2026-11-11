@@ -413,6 +413,7 @@ import L4Factoidal.CID.Retrieve
 import L4Factoidal.CID.Validate
 import L4Factoidal.CID.Fetch
 import L4Factoidal.CID.Tests
+import L4Factoidal.Identity.Binding
 import L4Factoidal.Geo.Types
 import L4Factoidal.Geo.Order
 import L4Factoidal.Geo.BBox
