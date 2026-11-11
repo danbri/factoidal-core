@@ -5,6 +5,10 @@ import type {NetWire} from "./native_net.ts";
 import createModule from "./.build/native-html/runtime/web-render.mjs";
 
 /** What a tab or scroll command needs: tab count and active tab; scroll, view height, scroll limit and screen scale. */
+/** The answer of findInPage: matches, the current one from 0, and its rectangles [x,y,w,h] in page rows. */
+/** What the desktop program reports to about:foafnaut: rows to show, and its build record. */
+export type AboutHost={rows?:[string,string][];version?:string;commit?:string};
+export type FindAnswer={count:number;current:number;rects:number[][]};
 export type CommandState={tabs?:number;active?:number;scroll?:number;view?:number;scrollLimit?:number;scale?:number;zoomUnit?:number};
 export type HTMLArtifact = {
   abi:string; width:number; height:number; data:number[]|Float32Array; wgsl:string; tiles:number[]|Uint32Array;
@@ -20,7 +24,9 @@ in the window. `keepFrom`..`keepTo` are the scrolls that this band shows with no
 export type WebFontFaces={faces:{family:string;sources:string[]}[];rules:number};
 export type HTMLLayerPlace = {top:number;view:number;bandTop:number;bandHeight:number;keepFrom:number;keepTo:number;composite:string;hoverRules?:boolean;scrollLimit?:number;
   /** WebPaint: an SVG animation runs or will begin by the clock (draw the next frame); the page has animations (send its clicks). */
-  animating?:boolean;animations?:boolean};
+  animating?:boolean;animations?:boolean;
+  /** The splash (WebShell.splashNodes) is in this frame: ask for the next one. */
+  splash?:boolean};
 /** Lean's answer to a pointer press: the chrome control or the link pressed, and the rectangles the composite darkens. */
 export type PressAnswer = {control:string|null;sourceNode?:number|null;href?:string;rects:number[][]};
 /** A skip of liberal mode (WebAccept.Diagnostic.json): what Lean did not draw or run, and why. */
@@ -497,6 +503,19 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     pointerUp:(selection:number[])=>(documentCall("",{op:"pointerUp",selection}) as {action:string}).action,
     selectedText:(source:string,width:number,height:number,options:Record<string,unknown>)=>
       (documentCall(source,{...options,op:"selectedText"},width,height) as {text:string}).text,
+    // Find in page (WebSelection.findMatches): `options.find` is {query, current}. The count,
+    // the current match (from 0) and its rectangles in page rows.
+    findInPage:(source:string,width:number,height:number,options:Record<string,unknown>)=>
+      documentCall(source,{...options,op:"findInPage"},width,height) as FindAnswer,
+    // about:foafnaut, written by the engine (WebAbout) from its own build facts; `host` is
+    // what this program reports, which the page shows as reported and does not check.
+    aboutPage:(host:AboutHost)=>(documentCall("",{op:"aboutPage",host}) as {source:string}).source,
+    // The engine's own build facts (WebBuild), its --version line, and a line when `host`'s record disagrees.
+    engineBuild:(host:AboutHost={})=>documentCall("",{op:"engineBuild",host}) as
+      {version:string;commit:string;builtAt:string;dirty:boolean;release:boolean;line:string;mismatch?:string},
+    // A key (macOS key code and modifier bits) or typed text in the find field (WebShell.findEdit).
+    findEdit:(query:string,edit:{text?:string;key?:number;modifiers?:number})=>
+      documentCall("",{op:"findEdit",query,...edit}) as {query:string;step:"none"|"next"|"previous"|"close"},
     hit(artifact:HTMLArtifact,x:number,y:number):{href:string;sourceNode:number}|null {
       if(!Number.isFinite(x)||!Number.isFinite(y))return null;
       return call("web_render_hit",["string","number","number","number","number"],

@@ -135,6 +135,30 @@ private def textOf (selection : JSON.Json) (html : String := "<p>Hello big world
 #guard textOf (.array [.number "0",.number "0",.number "0",.number "0"]) == some ""
 #guard (textOf (.array [.number "0",.number "0"])).isNone
 #guard (WebDocument.run "<p>A</p>" (json [("selection",.string "all")]) 200 100).toOption.isSome
+-- Find in page (Command-F): matches of the laid-out text, case folded, across inline elements.
+private def findOf (query : String) (current : Nat := 0)
+    (html : String := "<p>Hel<b>lo</b> wor<i>ld</i></p><p>HELLO again, hello</p>") : Option (Nat × Nat × Nat) := do
+  let output ← (WebDocument.run html (json [("op",.string "findInPage"),
+    ("find",json [("query",.string query),("current",.number (toString current))])]) 400 300).toOption
+  let (value,_) ← (JSON.parseJsonText output).toOption
+  let count ← match value.field? "count" with | some (.number n) => n.toNat? | _ => none
+  let at_ ← match value.field? "current" with | some (.number n) => n.toNat? | _ => none
+  let rects := match value.field? "rects" with | some (.array r) => r.length | _ => 0
+  some (count,at_,rects)
+#guard findOf "hello" == some (3,0,1)
+#guard findOf "Hello" 4 == some (3,1,1)
+#guard findOf "lo wor" == some (1,0,1)
+#guard findOf "LO   WORLD" == some (1,0,1)
+#guard findOf "zzz" == some (0,0,0)
+#guard findOf "" == some (0,0,0)
+-- A frame with find draws its marks: more primitives than the same frame without.
+private def findPrimitives (find : Bool) : Option Nat := do
+  let output ← (WebDocument.run "<p>one two one</p>" (json ([("binary",.bool false)] ++
+    (if find then [("find",json [("query",.string "one")])] else []))) 300 100).toOption
+  let (value,_) ← (JSON.parseJsonText output).toOption
+  match value.field? "primitiveCount" with | some (.number n) => n.toNat? | _ => none
+#guard match findPrimitives true, findPrimitives false with
+  | some a, some b => a == b+2 | _, _ => false
 private def primitives (request : JSON.Json) : Option JSON.Json := do
   let output ← (WebDocument.run "<p>A</p>" request 200 100).toOption
   let (value,_) ← (JSON.parseJsonText output).toOption
@@ -191,7 +215,9 @@ private def counted (command : Nat) (more : List (String × JSON.Json)) : List (
 #guard historyField (counted 33 [("scroll",.number "100"),("view",.number "500"),("scrollLimit",.number "2000"),("scale",.number "2")]) "scrollTo" == some (.number "500")
 #guard historyField (counted 38 [("scroll",.number "100"),("view",.number "500"),("scrollLimit",.number "2000"),("scale",.number "2")]) "scrollTo" == some (.number "0")
 #guard historyField (counted 39 []) "action" == some (.string "stop") && historyField (counted 20 []) "action" == some (.string "reopenTab")
-#guard (historyField (counted 32 []) "refused").isSome && (historyField (counted 33 []) "refused").isNone
+-- Find in page is implemented (WebSelection.findMatches): no command is refused.
+#guard (historyField (counted 32 []) "refused").isNone && historyField (counted 32 []) "action" == some (.string "find")
+#guard historyField (counted 41 []) "action" == some (.string "about") && historyField (counted 45 []) "action" == some (.string "savePage")
 #guard historyField [("op",.string "pageKey"),("key",.number "49"),("modifiers",.number "1")] "command" == some (.number "34")
 #guard historyField [("op",.string "pageKey"),("key",.number "0"),("modifiers",.number "0")] "command" == some .null
 #guard menu 1 250 == some "{\"action\":\"zoomIn\",\"textScalePercent\":275}"

@@ -63,7 +63,13 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
   BUILD_COMMIT=$(git -C "$LAB" rev-parse --short HEAD 2>/dev/null || echo unknown)
   BUILD_DIRTY=false
   [ -n "$(git -C "$LAB" status --porcelain --untracked-files=no 2>/dev/null)" ] && BUILD_DIRTY=true
-  printf '{"commit":"%s","dirty":%s,"builtAt":"%s"}\n' "$BUILD_COMMIT" "$BUILD_DIRTY" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$LAB/.build/native-html/build-info.json"
+  # The release number is the package's version at this commit (issue 416); a release build
+  # is a clean commit tagged v<version>, anything else a development build.
+  BUILD_COMMIT_FULL=$(git -C "$LAB" rev-parse HEAD 2>/dev/null || echo unknown)
+  BUILD_VERSION=$(sed -n 's/^  "version": "\([^"]*\)".*/\1/p' "$LAB/../../../npm/factoidal/package.json" | head -1)
+  BUILD_RELEASE=false
+  if [ "$BUILD_DIRTY" = false ] && [ -n "$BUILD_VERSION" ] && git -C "$LAB" tag --points-at HEAD 2>/dev/null | grep -qx "v$BUILD_VERSION"; then BUILD_RELEASE=true; fi
+  printf '{"commit":"%s","commitFull":"%s","dirty":%s,"builtAt":"%s","version":"%s","release":%s}\n' "$BUILD_COMMIT" "$BUILD_COMMIT_FULL" "$BUILD_DIRTY" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BUILD_VERSION" "$BUILD_RELEASE" > "$LAB/.build/native-html/build-info.json"
   deno compile --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
     --allow-read --allow-net --allow-ffi --allow-env=HOME \
     --include "$LAB/.build/native-html/build-info.json" \
@@ -190,10 +196,12 @@ if [ -x "$OUT/native-webgpu-html-darwin-arm64" ]; then
   if [ "$START_RC" != 0 ]; then echo "compiled foafnaut did not start (rc $START_RC):" >&2; grep -v '^{' "$OUT/start-check.log" | head -20 >&2; exit 1; fi
   rm -f "$OUT/start-check.log"
   echo 'Compiled foafnaut started off screen and passed the graph sweep'
-  # The version the program reports is the commit of this build, or the build fails.
+  # The engine answers --version with its own release and commit (WebBuild), then the program's
+  # record follows; they must both be this build's, or the build fails.
   REPORTED=$("$OUT/native-webgpu-html-darwin-arm64" --version)
   case "$REPORTED" in
-    "foafnaut $BUILD_COMMIT"*) echo "Compiled foafnaut reports its build: $REPORTED" ;;
+    *"does not match"*) echo "compiled foafnaut: its engine and its build record disagree: $REPORTED" >&2; exit 1 ;;
+    "foafnaut $BUILD_VERSION "*"commit $BUILD_COMMIT"*) echo "Compiled foafnaut reports its build: $REPORTED" ;;
     *) echo "compiled foafnaut reports '$REPORTED', but this build is $BUILD_COMMIT" >&2; exit 1 ;;
   esac
 fi

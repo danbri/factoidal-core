@@ -63,6 +63,8 @@ import WebRepaint
 import WebAccept
 import WebConsole
 import WebPaint
+import WebBuild
+import WebAbout
 import WebDocument
 import RenderPlan
 

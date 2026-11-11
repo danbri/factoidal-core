@@ -57,6 +57,14 @@ def stopCommand : Nat := 39
 /-- The console tab (`foafnaut:console`): Option-Command-J, as Safari and Chrome on macOS;
 Control-Alt-J elsewhere (Control-Shift-J belongs to the host browser on the Hub). -/
 def consoleCommand : Nat := 40
+/-- About Foafnaut (the app menu): `about:foafnaut` in a new tab (issue 416). -/
+def aboutCommand : Nat := 41
+/-- Find Next and Find Previous: Command-G and Shift-Command-G, as the common browsers. -/
+def findNextCommand : Nat := 42
+def findPreviousCommand : Nat := 43
+/-- File > Open File… (Command-O) and Save Page As… (Command-S), on a host with files. -/
+def openFileCommand : Nat := 44
+def savePageCommand : Nat := 45
 
 /-- Keys that the common desktop browsers (Safari, Chrome, Firefox, Edge) share, for
 one platform: `primary` is Command on macOS and Control elsewhere. -/
@@ -66,7 +74,8 @@ private def shared (p primary : String) : List (String × String × String × Na
    (p,"shift+"++primary,"r",reloadCommand),
    (p,primary,"x",15),(p,primary,"v",14),(p,primary,"z",16),(p,"shift+"++primary,"z",17),
    (p,primary,"p",18),(p,primary,"l",9),(p,primary,"t",newTabCommand),(p,primary,"w",closeTabCommand),
-   (p,"shift+"++primary,"t",reopenTabCommand),(p,primary,"f",findCommand)] ++
+   (p,"shift+"++primary,"t",reopenTabCommand),(p,primary,"f",findCommand),
+   (p,primary,"g",findNextCommand),(p,"shift+"++primary,"g",findPreviousCommand)] ++
   ((List.range 8).map fun i => (p,primary,toString (i+1),selectTabCommand (i+1))) ++
   [(p,primary,"9",lastTabCommand),
    (p,"control","Tab",nextTabCommand),(p,"shift+control","Tab",previousTabCommand),
@@ -87,7 +96,8 @@ def keyTable : List (String × String × String × Nat) :=
    -- Safari and Chrome: Shift-Command-[ and ] change tab; Command-Up and Down go to the ends.
    ("mac","shift+command","{",previousTabCommand),("mac","shift+command","}",nextTabCommand),
    ("mac","command","ArrowUp",topCommand),("mac","command","ArrowDown",bottomCommand),
-   ("mac","command",".",stopCommand),("mac","alt+command","j",consoleCommand)] ++ shared "mac" "command" ++
+   ("mac","command",".",stopCommand),("mac","alt+command","j",consoleCommand),
+   ("mac","command","o",openFileCommand),("mac","command","s",savePageCommand)] ++ shared "mac" "command" ++
   [("other","alt","ArrowLeft",backCommand),("other","alt","ArrowRight",forwardCommand),
    ("other","control","y",17),("other","","F5",reloadCommand),("other","control","F5",reloadCommand),
    ("other","control","PageDown",nextTabCommand),("other","control","PageUp",previousTabCommand),
@@ -180,6 +190,8 @@ private def toGraph : History := (({} : History).push "file:///pages/index.html"
 #guard keyCommand "mac" "control" "Tab" == some nextTabCommand && keyCommand "other" "shift+control" "Tab" == some previousTabCommand
 #guard keyCommand "mac" "shift+command" "}" == some nextTabCommand && keyCommand "other" "control" "PageUp" == some previousTabCommand
 #guard keyCommand "mac" "command" "f" == some findCommand && keyCommand "other" "control" "f" == some findCommand
+#guard keyCommand "mac" "command" "g" == some findNextCommand && keyCommand "mac" "shift+command" "g" == some findPreviousCommand
+#guard keyCommand "mac" "command" "o" == some openFileCommand && keyCommand "other" "control" "o" == none
 #guard keyCommand "mac" "" "Space" == some pageDownCommand && keyCommand "other" "shift" "Space" == some pageUpCommand
 #guard keyCommand "mac" "" "Home" == some topCommand && keyCommand "mac" "command" "ArrowDown" == some bottomCommand
 #guard keyCommand "other" "" "Escape" == some stopCommand && keyCommand "mac" "command" "." == some stopCommand

@@ -6,7 +6,7 @@ import {addEntries,noteDiagnostics,noteTurn} from "./native_console.ts";
 /** The view state of a page. Lean applies it; the host only keeps the values. */
 // zoomUnit: the backing pixels for each point, in percent (WebDocument.zoomUnit): Lean lays the page
 // out in points (CSS px) and draws it at the backing scale.
-export type PageView={textScalePercent?:number;zoomUnit?:number;selection?:"all"|number[];shell?:unknown;live?:boolean};
+export type PageView={textScalePercent?:number;zoomUnit?:number;selection?:"all"|number[];shell?:unknown;live?:boolean;find?:{query:string;current:number}};
 const MAX_RESOURCES=16, MAX_RESOURCE_BYTES=2*MAX_SOURCE_BYTES;
 export function inputURL(input:string,file=false) {
   const url=file?pathToFileURL(resolve(input)):new URL(input);
@@ -29,7 +29,7 @@ export type PageDecoder=(bytes:Uint8Array,contentType:string,fallback?:string,lo
 system's language; the host sets them, Lean decides with them (WebDocument.decodeBinWith). */
 let pageDecoding={fallback:"",locale:""};
 export function setPageDecoding(next:{fallback?:string;locale?:string}){pageDecoding={...pageDecoding,...next};}
-export async function readSource(url:string,signal?:AbortSignal,decode?:PageDecoder):Promise<{url:string;source:string;bytes:number;encoding?:string}> {
+export async function readSource(url:string,signal?:AbortSignal,decode?:PageDecoder):Promise<{url:string;source:string;bytes:number;encoding?:string;raw:Uint8Array}> {
   const parsed=new URL(inputURL(url));
   const abort=()=>signal?.throwIfAborted();abort();
   let bytes:Uint8Array,finalURL=url,contentType="";
@@ -59,7 +59,7 @@ export async function readSource(url:string,signal?:AbortSignal,decode?:PageDeco
   const decoded=decode?await decode(bytes,contentType):undefined;
   const source=decoded?decoded.source:new TextDecoder("utf-8").decode(bytes);
   sourceBound(source);
-  return {url:finalURL,source,bytes:bytes.length,...(decoded?{encoding:decoded.encoding}:{})};
+  return {url:finalURL,source,bytes:bytes.length,raw:bytes,...(decoded?{encoding:decoded.encoding}:{})};
 }
 /** Limits on image bytes: each image, and all images of a page (Lean takes at most
 8 MiB of Base64 text for a page, which is 6 MiB of bytes). */
@@ -208,12 +208,13 @@ export function setScriptHost(host:ScriptHost|undefined){scriptHost=host;}
 let fontHost:((source:string)=>Promise<unknown>)|undefined;
 export function setFontHost(host:typeof fontHost){fontHost=host;}
 /** The engine, or the same calls in a worker, which answer promises. prepareHTML awaits every call. */
-export type PageEngine=((Pick<HTMLEngine,"xmlStylesheet"|"xslt"|"inspect"|"compile"|"selectedText">&ImageHolder)|ImageHolder&{
+export type PageEngine=((Pick<HTMLEngine,"xmlStylesheet"|"xslt"|"inspect"|"compile"|"selectedText"|"findInPage">&ImageHolder)|ImageHolder&{
   xmlStylesheet(...a:Parameters<HTMLEngine["xmlStylesheet"]>):Promise<ReturnType<HTMLEngine["xmlStylesheet"]>>;
   xslt(...a:Parameters<HTMLEngine["xslt"]>):Promise<ReturnType<HTMLEngine["xslt"]>>;
   inspect(...a:Parameters<HTMLEngine["inspect"]>):Promise<ReturnType<HTMLEngine["inspect"]>>;
   compile(...a:Parameters<HTMLEngine["compile"]>):Promise<ReturnType<HTMLEngine["compile"]>>;
   selectedText(...a:Parameters<HTMLEngine["selectedText"]>):Promise<ReturnType<HTMLEngine["selectedText"]>>;
+  findInPage(...a:Parameters<HTMLEngine["findInPage"]>):Promise<ReturnType<HTMLEngine["findInPage"]>>;
 })&{decodeDocument?:PageDecoder};
 /** How a page is accepted. `liberal`: liberal mode (WebAccept.lean, --be-liberal-in-what-we-accept
 and the Settings checkbox): Lean skips what it may skip and says so, and this host passes on
@@ -221,7 +222,7 @@ the fetches that failed instead of refusing the page. */
 export type AcceptOptions={liberal?:boolean};
 export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSignal,inline?:string,accept:AcceptOptions={}) {
   const decode:PageDecoder|undefined=typeof engine.decodeDocument==="function"?(b,c)=>engine.decodeDocument!(b,c,pageDecoding.fallback,pageDecoding.locale):undefined;
-  const document:{url:string;source:string;bytes:number;encoding?:string}=inline===undefined?await readSource(url,signal,decode):{url,source:inline,bytes:inline.length},resources:HTMLResource[]=[];
+  const document:{url:string;source:string;bytes:number;encoding?:string;raw?:Uint8Array}=inline===undefined?await readSource(url,signal,decode):{url,source:inline,bytes:inline.length},resources:HTMLResource[]=[];
   // The page's console (native_console.ts): System entries now, script lines later.
   const page={};
   const fetchFailed=(feature:string,where:string,message:string,action:string)=>
@@ -321,6 +322,8 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
   signal?.throwIfAborted();
   return Object.assign(page,{
     url:document.url,baseURL:inspection.baseURL,title:inspection.title,source:document.source,sources,script,iconBase64,
+    /** The page's bytes as fetched (File > Save Page As); a page made here, its source as UTF-8. */
+    sourceBytes:()=>document.raw??new TextEncoder().encode(sources[0].source),
     /** Whether the page has classic scripts (they run, or the setting says why not). */
     scripted,
     /** The mode the page was prepared in: a change of the setting loads it again. */
@@ -337,6 +340,7 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
       return frame;
     },
     selectedText:(width:number,height:number,view:PageView={})=>engine.selectedText(document.source,width,height,{...options,...view}),
+    findInPage:(width:number,height:number,view:PageView={})=>engine.findInPage(document.source,width,height,{...options,...view}),
   });
 }
 

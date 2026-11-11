@@ -8,6 +8,7 @@ import WebHistory
 import WebShell
 import WebGesture
 import WebPrint
+import WebAbout
 import WebGraph
 import WebEventLoop
 import WebWasm
@@ -820,11 +821,9 @@ private def inputOp {M : Type → Type} [Monad M] [WebWasm.Machine M] (op : Stri
       | some i => [("tab",JSON.Json.number (toString i))] | none => []
     let scrollTo := match WebHistory.scrollTarget command (nat "scroll") (nat "view") (nat "scrollLimit") (80*max 1 (nat "scale")) with
       | some n => [("scrollTo",JSON.Json.number (toString n))] | none => []
-    let refused := if command == WebHistory.findCommand
-      then [("refused",JSON.Json.string "find in page is not implemented: https://github.com/danbri/factoidal/issues/1280")] else []
     let fields := [("action",JSON.Json.string action)] ++
       (if WebShell.addressCommands.contains action then [("target",JSON.Json.string target)] else []) ++
-      [("textScalePercent",.number (toString (WebSelection.commandPercent command percent (zoomUnit request))))] ++ tab ++ scrollTo ++ refused
+      [("textScalePercent",.number (toString (WebSelection.commandPercent command percent (zoomUnit request))))] ++ tab ++ scrollTo
     if (request.field? "history").isNone then return some (JSON.Json.object fields).toString
     let (next,url) := WebHistory.apply command (← history request)
     return some (JSON.Json.object (fields ++ historyFields next url)).toString
@@ -899,6 +898,32 @@ private def inputOp {M : Type → Type} [Monad M] [WebWasm.Machine M] (op : Stri
         | _, _ => false
       | _, _, _ => false
     return some (JSON.Json.object [("cursor",.string (WebShell.pointer shell control onPage).name)]).toString
+  -- about:foafnaut (WebAbout): the engine writes the page from its own build facts; `host`
+  -- is what the desktop program reports ({rows: [[label, value]...], version, commit}),
+  -- shown as such. `engineBuild`: the facts, the --version line, and the line that says
+  -- when the host's record disagrees.
+  if op == "aboutPage" || op == "engineBuild" then
+    let h := (request.field? "host").getD .null
+    let text := fun (j : JSON.Json) (key : String) => match j.field? key with
+      | some (.string v) => some v | _ => none
+    let rows : List (String × String) := match h.field? "rows" with
+      | some (.array items) => (items.take 32).filterMap fun item => match item with
+        | .array [.string k,.string v] => some (k,v) | _ => none
+      | _ => []
+    let host : WebAbout.Host := {rows,version := text h "version",commit := text h "commit"}
+    let e := WebAbout.engine
+    if op == "aboutPage" then
+      return some (JSON.Json.object [("source",.string (WebAbout.page e host))]).toString
+    return some (JSON.Json.object ([("version",.string e.version),("commit",.string e.commit),("builtAt",.string e.builtAt),
+      ("dirty",.bool e.dirty),("release",.bool e.release),("line",.string (WebAbout.versionLine e))] ++
+      (match WebAbout.mismatch e host with | some m => [("mismatch",.string m)] | none => []))).toString
+  -- A key or typed text in the find field (WebShell.findEdit): the text after it and the step.
+  if op == "findEdit" then
+    let typed := match request.field? "text" with | some (.string t) => some t | _ => none
+    let code := match request.field? "key" with | some (.number c) => c.toNat?.getD 0 | _ => 0
+    let modifiers := match request.field? "modifiers" with | some (.number m) => m.toNat?.getD 0 | _ => 0
+    let (query,step) := WebShell.findEdit (str request "query") typed code modifiers
+    return some (JSON.Json.object [("query",.string query),("step",.string step.name)]).toString
   if op == "shellText" then
     return some (WebShell.Shell.ofJson ((request.field? "shell").getD .null) |>.typed (str request "text")).editJson.toString
   if op == "shellKey" then
@@ -1286,7 +1311,7 @@ def layersJSON (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List R
     (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face)
     (width height : Nat) (live : Bool) (form : NativeSVG.DataForm) (checks tree : Bool) (hoverRules : Bool := false)
     (canvases : List Rendering.Layout.Box := []) (animating : Bool := false) (animations : Bool := false)
-    (retainOn : Bool := true) :
+    (retainOn : Bool := true) (splashing : Bool := false) :
     Except String (String × Array ByteArray) := do
   let top := WebShell.height shell width
   -- A chrome that may fold: the band covers the view under the strip, the most it shows,
@@ -1300,6 +1325,7 @@ def layersJSON (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List R
   let place := JSON.Json.object ([("top",number top),("view",number view),("bandTop",number b.top),
     ("bandHeight",number b.height),("keepFrom",number b.keepFrom),("keepTo",number (b.keepTo view)),
     ("composite",.string compositeShader),("hoverRules",.bool hoverRules),("animating",.bool animating),("animations",.bool animations),
+    ("splash",.bool splashing),
     ("scrollLimit",number (scrollLimit (WebPrint.contentHeight boxes) view))] ++
     (if canvases.isEmpty then [] else [("canvases",canvasRects canvases b width),("canvasBlit",.string canvasBlitShader)]))
   return ("{\"layers\":" ++ place.toString ++ ",\"page\":" ++ pageText ++ ",\"chrome\":" ++ chromeText ++ "}",
@@ -2334,7 +2360,7 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
     | .ok none => pure ()
     | .error x => throw x
   let op := str request "op" "render"
-  if op != "render" && op != "selectedText" && op != "printLayout" && op != "nodeAt" then
+  if op != "render" && op != "selectedText" && op != "findInPage" && op != "printLayout" && op != "nodeAt" then
     let dom ← stepState fun e => match prepareDOMIn e.kept html request with
       | .ok (dom,made) => ({e with kept := e.kept.add made},.ok dom)
       | .error x => (e,.error x)
@@ -2419,15 +2445,48 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
     let ratio := if (request.field? "graphModel").isSome then 1 else Float.ofNat (zoomUnit request) / 100
     return ((WebHit.nodeAtAnswer laid.dom scene boxes (Float.ofNat (natField request "x"))
       (Float.ofNat (natField request "y")) (Float.ofNat top) (Float.ofNat ((shell.map (·.scroll)).getD 0)) ratio).toString,#[])
-  -- The glyph cells only for a selection: a frame with none does not read them.
-  let items := if op == "selectedText" || chosen.isSome then WebSelection.cells scene.glyphRuns else #[]
+  -- Find in page: `find` is `{query, current}` (current from 0). The matches are found
+  -- in the glyph cells of the whole page, in page rows.
+  let finding : Option (String × Nat) := match request.field? "find" with
+    | some f@(.object _) => match f.field? "query" with
+      | some (.string q) => if q.isEmpty then none else some (q,match f.field? "current" with
+        | some (.number c) => c.toNat?.getD 0 | _ => 0)
+      | _ => none
+    | _ => none
+  -- The glyph cells only for a selection or find: a frame with neither does not read them.
+  let items := if op == "selectedText" || op == "findInPage" || chosen.isSome || finding.isSome
+    then WebSelection.cells scene.glyphRuns else #[]
+  let found := match finding with
+    | some (q,_) => WebSelection.findMatches items q
+    | none => #[]
+  let current := match finding with
+    | some (_,c) => if found.isEmpty then 0 else c % found.size
+    | none => 0
+  -- The count, the current match (from 0, wrapped) and its rectangles in page rows, so the
+  -- host can scroll it into view.
+  if op == "findInPage" then
+    let number := fun (f : Float) => JSON.Json.number (toString f.round)
+    let rects := match found[current]? with
+      | some (low,high) => (WebSelection.rangeRects items low high).toList.map fun (x,y,w,h) =>
+        JSON.Json.array [number x,number y,number w,number h]
+      | none => []
+    return ((JSON.Json.object [("count",.number (toString found.size)),("current",.number (toString current)),
+      ("rects",.array rects)]).toString,#[])
   if op == "selectedText" then
     return ((JSON.Json.object [("text",.string (match chosen with
       | some value => WebSelection.text items value
       | none => ""))]).toString,#[])
-  let marks := match chosen with
+  -- The splash at the start of the app (WebShell.splashNodes): `splash` is `{ms, reduce}`;
+  -- its words are the engine's own release (WebBuild), over the view below the chrome.
+  let splash := match request.field? "splash" with
+    | some sp@(.object _) =>
+      let ms := match sp.field? "ms" with | some (.number m) => m.toNat?.getD 0 | _ => 0
+      WebShell.splashNodes ("Foafnaut " ++ WebBuild.version) ms width ((shell.map (·.scroll)).getD 0) (height-min height top)
+        (sp.field? "reduce" == some (.bool true))
+    | _ => []
+  let marks := WebSelection.findHighlight items found current ++ (match chosen with
     | some value => WebSelection.highlight items value
-    | none => []
+    | none => []) ++ splash
   let live := request.field? "live" == some (.bool true)
   let binary := request.field? "binary" == some (.bool true)
   let form : NativeSVG.DataForm :=
@@ -2447,7 +2506,7 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
     if request.field? "layers" == some (.bool true) then
       return withDiagnostics request laid (← layersJSON value scene marks boxes face width height live form checks tree laid.hoverRules
         (canvasBoxes laid.dom boxes) animating (!laid.paint.animations.isEmpty)
-        (request.field? "retained" != some (.bool false)))
+        (request.field? "retained" != some (.bool false)) (!splash.isEmpty))
   let scrolled := Float.ofNat ((shell.map (·.scroll)).getD 0)
   let near := nearNodes (scrolled-512) (scrolled+Float.ofNat height+512) scene.tree
   let page := {scene with tree := near ++ marks}

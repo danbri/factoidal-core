@@ -1,4 +1,5 @@
 import L4Factoidal.Rendering.Scene
+import L4Factoidal.Text.CaseMap
 
 /-! Text selection, zoom steps and window commands of the browser. The host
 sends pointer positions and command numbers. It holds no selection logic. -/
@@ -92,9 +93,8 @@ def text (items : Array Cell) (selection : Selection) : String := Id.run do
     previous := some c
   return out
 
-/-- One rectangle for each selected line: x, y, width, height. -/
-def lineRects (items : Array Cell) (selection : Selection) : Array (Float × Float × Float × Float) := Id.run do
-  let (low,high) := range items selection
+/-- One rectangle for each line of the glyphs `low .. high`: x, y, width, height. -/
+def rangeRects (items : Array Cell) (low high : Nat) : Array (Float × Float × Float × Float) := Id.run do
   let mut out : Array (Float × Float × Float × Float) := #[]
   let mut line : Option Cell := none
   for c in (items.extract low high) do
@@ -115,6 +115,11 @@ def lineRects (items : Array Cell) (selection : Selection) : Array (Float × Flo
       line := some c
   return out
 
+/-- One rectangle for each selected line: x, y, width, height. -/
+def lineRects (items : Array Cell) (selection : Selection) : Array (Float × Float × Float × Float) :=
+  let (low,high) := range items selection
+  rangeRects items low high
+
 /-- The active selection colours of the common desktop browsers (the CSS `::selection`
 default, CSS Pseudo-Elements 4 §3.1): white text on blue. The address bar uses both. -/
 def selectionBackground : Color := ⟨0,99/255,225/255⟩
@@ -125,6 +130,98 @@ glyphs keep their colour: https://github.com/danbri/factoidal/issues/1281 -/
 def highlight (items : Array Cell) (selection : Selection) : List Node :=
   (lineRects items selection).toList.map fun (x,y,w,h) =>
     .paint ⟨none,{geometry := .rect x y w h,style := {fill := .solid selectionBackground,fillOpacity := 0.35}}⟩
+
+/-! ### Find in page (Command-F)
+
+The find text of a page is the text of its laid-out glyphs in reading order, with a space
+where `text` puts a space or a new line: between lines, between blocks, and between runs of
+one line with a gap between them. Runs with no gap (`a<b>b</b>`) join, so a query matches
+across inline elements. Every character is case folded (Unicode simple case folding,
+CaseFolding.txt statuses C and S, one character for one), and white space is one space. -/
+
+/-- A character as find compares it. -/
+def foldChar (c : Char) : Char := Char.ofNat (L4Factoidal.Text.CaseMap.caseFoldCp c.toNat)
+
+/-- White space for find: space, tab, line breaks and no-break space. -/
+def findSpace (c : Char) : Bool := c == ' ' || c == '\t' || c == '\n' || c == '\r' || c.toNat == 0xA0
+
+/-- One space, unless the text is empty or already ends with one. -/
+private def pushSpace (out : Array (Char × Nat)) (cell : Nat) : Array (Char × Nat) :=
+  if out.isEmpty || (out.back?.map (·.1)) == some ' ' then out else out.push (' ',cell)
+
+/-- The find text: each character folded, with the index of the glyph cell it came from. -/
+def findText (items : Array Cell) : Array (Char × Nat) := Id.run do
+  let mut out : Array (Char × Nat) := #[]
+  let mut previous : Option Cell := none
+  for (c,i) in items.zipIdx do
+    if let some p := previous then
+      if !sameLine p c || (p.run != c.run && (c.x > p.x+p.width+0.5 || p.x > c.x+c.width+0.5)) then
+        out := pushSpace out i
+    for ch in c.text.toList do
+      out := if findSpace ch then pushSpace out i else out.push (foldChar ch,i)
+    previous := some c
+  return out
+
+/-- A query as find compares it: folded, white space as one space, none at either end. -/
+def findQuery (query : String) : Array Char := Id.run do
+  let mut out : Array Char := #[]
+  for ch in query.toList do
+    if findSpace ch then
+      if !out.isEmpty && out.back? != some ' ' then out := out.push ' '
+    else out := out.push (foldChar ch)
+  return if out.back? == some ' ' then out.pop else out
+
+/-- Most matches that find reports on one page. -/
+def maxMatches : Nat := 1000
+
+/-- The matches of `query` on the page, left to right and not overlapping, at most
+`maxMatches`: each is the glyph range `(low, high)`, `high` not included. An empty query
+matches nothing. -/
+def findMatches (items : Array Cell) (query : String) : Array (Nat × Nat) := Id.run do
+  let q := findQuery query
+  if q.isEmpty then return #[]
+  let t := findText items
+  let mut out : Array (Nat × Nat) := #[]
+  let mut free := 0
+  for i in [0:t.size] do
+    if out.size >= maxMatches then break
+    if i < free || i+q.size > t.size then continue
+    let mut same := true
+    for k in [0:q.size] do
+      if (t[i+k]?.map (·.1)) != q[k]? then
+        same := false
+        break
+    if same then
+      out := out.push ((t[i]?.map (·.2)).getD 0,((t[i+q.size-1]?.map (·.2)).getD 0)+1)
+      free := i+q.size
+  return out
+
+/-- The colours of find (as Safari and Chrome): yellow for every match, orange for the current one. -/
+def findColor : Color := ⟨1,1,0⟩
+def findCurrentColor : Color := ⟨1,150/255,50/255⟩
+
+/-- Marks of the matches over the text, drawn after the page: the current match (`current`,
+from 0) in its own colour. The glyphs keep their colour, as with the selection. -/
+def findHighlight (items : Array Cell) (found : Array (Nat × Nat)) (current : Nat) : List Node :=
+  found.toList.zipIdx.flatMap fun ((low,high),k) =>
+    (rangeRects items low high).toList.map fun (x,y,w,h) =>
+      .paint ⟨none,{geometry := .rect x y w h,style := {fill := .solid (if k == current then findCurrentColor else findColor),fillOpacity := 0.45}}⟩
+
+/-- Test cells: one run for each word, on one line, each word `gap` after the one before. -/
+private def cellsOf (words : List (Float × String)) : Array Cell :=
+  (words.zipIdx.foldl (fun (out : Array Cell × Float) ((gap,word),run) =>
+    word.toList.foldl (fun (a : Array Cell × Float) ch =>
+      (a.1.push {run,source := 0,x := a.2,y := 0,width := 8,height := 16,text := ch.toString},a.2+8)) (out.1,out.2+gap)) (#[],0)).1
+
+-- Case folding, a match across two runs with no gap (an inline element), and a word gap as a space.
+#guard findMatches (cellsOf [(0,"Hel"),(0,"lo"),(8,"World")]) "LLOWO" == #[]
+#guard findMatches (cellsOf [(0,"Hel"),(0,"lo"),(8,"World")]) "hello world" == #[(0,10)]
+#guard findMatches (cellsOf [(0,"Hel"),(0,"lo"),(8,"World")]) "elLo" == #[(1,5)]
+#guard findMatches (cellsOf [(0,"abc"),(8,"ABC")]) "ABC" == #[(0,3),(3,6)]
+#guard findMatches (cellsOf [(0,"aaaa")]) "aa" == #[(0,2),(2,4)]
+#guard findMatches (cellsOf [(0,"one"),(8,"two")]) "" == #[]
+#guard findMatches (cellsOf [(0,"a"),(12,"b")]) " A   b " == #[(0,2)]
+#guard foldChar 'Σ' == 'σ' && foldChar 'É' == 'é'
 
 /-- A pointer that moves less than this many backing pixels is a click. -/
 def clickSlop : Float := 4
@@ -178,6 +275,11 @@ def commandName : Nat → String
   | 38 => "lineUp"
   | 39 => "stop"
   | 40 => "console"
+  | 41 => "about"
+  | 42 => "findNext"
+  | 43 => "findPrevious"
+  | 44 => "openFile"
+  | 45 => "savePage"
   | _ => "none"
 
 /-! ### Text size as the reader sees it

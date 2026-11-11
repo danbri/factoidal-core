@@ -45,7 +45,19 @@ REALM_SOURCE="$PRELUDE"
 CORE=(L4Factoidal.Codec.Inflate L4Factoidal.DOM.OfXml L4Factoidal.Rendering.Layout L4Factoidal.Rendering.SfntProfile L4Factoidal.Rendering.Links L4Factoidal.XML.NamespaceView L4Factoidal.Tdb2.Format L4Factoidal.Rendering.FloatFormat L4Factoidal.Syntax.IriResolve L4Factoidal.Rendering.RdfView L4Factoidal.Rendering.FontRequests L4Factoidal.Unicode.BidiData L4Factoidal.Unicode.Bidi L4Factoidal.XSLT.Transform L4Factoidal.XSLT4.Transform L4Factoidal.UI.PolicyProtocol L4Factoidal.UI.Presentation L4Factoidal.UI.Geometry L4Factoidal.UI.LayoutPolicy L4Factoidal.Syntax.Turtle L4Factoidal.JSON.Parser L4Factoidal.JSON.Serialize L4Factoidal.WasmVM.Api L4Factoidal.WasmVM.Bench.Engine L4Factoidal.WasmVM.Tests.Proposals L4Factoidal.WasmVM.Wasi L4Factoidal.WasmVM.Hosts.Page L4Factoidal.WasmVM.Hosts.PageAot L4Factoidal.WHATWG.Encoding.Sniff L4Factoidal.WasmVM.Hosts.LeanJS L4Factoidal.WasmVM.Hosts.LeanJSRealm L4Factoidal.WasmVM.Hosts.LeanJSWorkers L4Factoidal.EventLoop.Model L4Factoidal.EventLoop.Dispatch L4Factoidal.SPARQL.Query L4Factoidal.SPARQL.Parser L4Factoidal.SPARQL.StorePlan L4Factoidal.Planner.Kinds.Memory L4Factoidal.Planner.FromQuery L4Factoidal.RDF.Pretty L4Factoidal.FrameCost.Band L4Factoidal.FrameCost.Lru L4Factoidal.Rendering.ComputedValues L4Factoidal.Rendering.FontFaceRule L4Factoidal.Rendering.Smil L4Factoidal.Rendering.ClipTheorems L4Factoidal.Rendering.InkBound)
 lake build "${CORE[@]}" L4Factoidal.Rendering.Tests L4Factoidal.Rendering.CascadeTests L4Factoidal.Rendering.TableLayoutTests L4Factoidal.Rendering.ReplacedTests L4Factoidal.Rendering.RdfViewTests L4Factoidal.Rendering.FontLayoutTests L4Factoidal.Rendering.FontFaceTests L4Factoidal.Rendering.FontProviderTests L4Factoidal.Rendering.FontDataTests L4Factoidal.Rendering.FontFaceRuleTests L4Factoidal.Rendering.SfntMarkTheorems L4Factoidal.Rendering.SmilTests L4Factoidal.Rendering.InkBoundTests L4Factoidal.WasmVM.Tests.LeanJSRealm L4Factoidal.WasmVM.Tests.LeanJSWorkers
 export LEAN_PATH="$BUILD/olean:$PROJECT/.lake/build/lib/lean"
-LAB_MODULES=(Graphics GraphicsPrepared Font SVGPathData SVGCurves SVGPath SVGReferences SVGCSS SVGDash SVGDashUnits SVGStroke ImagePNG ImageJPEG ImageGIF ImageData SVG SVGRaster SVGText SVGForgiving WebRenderSVG WebRender WebHit WebRenderRDF WebRenderFont WebRenderFontRequests WebRenderScript WebSelection WebHistory WebRoute WebGesture WebShell WebPrint Geometry SceneSVG FoafGraph FoafNaut WebGraph WebXslt WebWasmSample WebWasm WebEventLoop WebScripts WebState WebSparql WebRepaint WebAccept WebConsole WebPaint WebDocument RenderPlan)
+LAB_MODULES=(Graphics GraphicsPrepared Font SVGPathData SVGCurves SVGPath SVGReferences SVGCSS SVGDash SVGDashUnits SVGStroke ImagePNG ImageJPEG ImageGIF ImageData SVG SVGRaster SVGText SVGForgiving WebRenderSVG WebRender WebHit WebRenderRDF WebRenderFont WebRenderFontRequests WebRenderScript WebSelection WebHistory WebRoute WebGesture WebShell WebPrint Geometry SceneSVG FoafGraph FoafNaut WebGraph WebXslt WebWasmSample WebWasm WebEventLoop WebScripts WebState WebSparql WebRepaint WebAccept WebConsole WebPaint WebBuild WebAbout WebDocument RenderPlan)
+# The engine's own build facts (WebBuild.lean reads this file with include_str when it
+# compiles): the release number of npm/factoidal/package.json, the full commit, the build
+# time, uncommitted changes, and whether the commit is the tagged release. Made here from
+# git, never typed. After the hygiene ratchet below runs, its counts are added and the
+# modules from WebBuild on are compiled again, so the engine states them too.
+ENGINE_VERSION=$(sed -n 's/^  "version": "\([^"]*\)".*/\1/p' "$ROOT/npm/factoidal/package.json" | head -1)
+ENGINE_COMMIT=$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)
+ENGINE_DIRTY=false
+[ -n "$(git -C "$ROOT" status --porcelain --untracked-files=no 2>/dev/null)" ] && ENGINE_DIRTY=true
+ENGINE_RELEASE=false
+if [ "$ENGINE_DIRTY" = false ] && [ -n "$ENGINE_VERSION" ] && git -C "$ROOT" tag --points-at HEAD 2>/dev/null | grep -qx "v$ENGINE_VERSION"; then ENGINE_RELEASE=true; fi
+printf 'version=%s\ncommit=%s\nbuiltAt=%s\ndirty=%s\nrelease=%s\n' "$ENGINE_VERSION" "$ENGINE_COMMIT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$ENGINE_DIRTY" "$ENGINE_RELEASE" > "$BUILD/engine-build.txt"
 for module in "${LAB_MODULES[@]}"; do
   printf 'LEAN %s %s\n' "$module" "$(date -u)"
   lean -R "$LAB" -o "$BUILD/olean/$module.olean" -c "$BUILD/ir/$module.c" "$LAB/$module.lean"
@@ -64,6 +76,21 @@ printf 'LEAN LabHygiene %s\n' "$(date -u)"
 lean -R "$LAB" "$LAB/LabHygiene.lean" | tee "$BUILD/hygiene.log"
 sed -n 's/^HYGIENE_JSON //p' "$BUILD/hygiene.log" > "$BUILD/hygiene.json"
 [ -s "$BUILD/hygiene.json" ] || { echo 'LabHygiene.lean printed no HYGIENE_JSON line; build refused' >&2; exit 1; }
+# The ratchet's counts into the engine's build facts, then WebBuild and the modules after it again.
+python3 - "$BUILD/hygiene.json" >> "$BUILD/engine-build.txt" <<'PY'
+import json,sys
+counts=json.load(open(sys.argv[1]))
+for part,key in (("lab","hygieneLab"),("formal","hygieneFormal")):
+    c=counts[part]
+    print(f"{key}={c['modules']} modules: {c['unsafe']} unsafe, {c['implemented_by']} implemented_by, {c['partial_def']} partial def, {c['extern']} extern, {c['opaque']} opaque")
+PY
+AFTER=0
+for module in "${LAB_MODULES[@]}"; do
+  [ "$module" = WebBuild ] && AFTER=1
+  [ "$AFTER" = 1 ] || continue
+  printf 'LEAN %s %s (with hygiene counts)\n' "$module" "$(date -u)"
+  lean -R "$LAB" -o "$BUILD/olean/$module.olean" -c "$BUILD/ir/$module.c" "$LAB/$module.lean"
+done
 for check in WebRenderTests WebRenderFontRequestsTests WebRenderScriptTests WebDocumentTests; do
   lean -R "$LAB" "$LAB/$check.lean"
 done

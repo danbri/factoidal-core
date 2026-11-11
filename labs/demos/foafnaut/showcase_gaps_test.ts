@@ -172,8 +172,11 @@ Deno.test("issue 1268: Lean's key table answers the cross-browser keys",()=>{
   assert.equal(engine.command(36,100,undefined,false,{scroll:0,view:500,scrollLimit:1200,scale:1}).scrollTo,1200);
 });
 
-Deno.test("expected failure, issue 1280: find in page is refused",()=>{
-  assert.match(engine.command(32,100).refused??"",/issues\/1280/,stillGap("1280"));
+// Issue 1280, closed: find in page (WebSelection.findMatches, the find field in WebShell).
+Deno.test("issue 1280: find in page is a command the built-in engine answers, with matches",()=>{
+  assert.equal(engine.command(32,100).refused,undefined);
+  assert.equal(engine.command(32,100).action,"find");
+  assert.equal(engine.findInPage("<p>one <b>tw</b>o one</p>",400,200,{find:{query:"ONE",current:0}}).count,2);
 });
 
 Deno.test("expected failure, issue 1282: an ICO icon link gives no icon",()=>{

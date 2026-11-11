@@ -43,6 +43,32 @@ Deno.test("published Lean owns session history and the key table",()=>{
   assert.equal(engine.keyCommand("other","alt","ArrowRight"),7);
   assert.equal(engine.keyCommand("other","command","ArrowRight"),null);
 });
+Deno.test("find in page: the built-in engine finds, counts and draws matches across inline elements",async()=>{
+  const document=await prepareHTML(engine,new URL("./fixtures/find/find.html",import.meta.url).href);
+  const at=(query:string,current=0)=>document.findInPage(800,600,{find:{query,current}}) as ReturnType<typeof engine.findInPage>;
+  assert.equal(at("quick").count,3,"case folded: quick, QUICK and quick<em>ly</em>");
+  assert.equal(at("lazy").count,1,"la<i>zy</i>: across an inline element");
+  assert.equal(at("LO   WN").count,0);
+  assert.equal(at("brown fox").count,1,"a word gap is a space");
+  assert.equal(at("zzz").count,0);assert.deepEqual(at("zzz").rects,[]);
+  const second=at("quick",1),first=at("quick",0);
+  assert.equal(second.current,1);assert.equal(at("quick",4).current,1,"the current match wraps");
+  assert.equal(first.rects.length,1);assert(second.rects[0][1]>first.rects[0][1],"the second match is lower on the page");
+  const plain=document.compile(800,600),marked=document.compile(800,600,{find:{query:"quick",current:0}});
+  assert.equal(marked.primitiveCount,plain.primitiveCount+3,"one mark for each match");
+  // The find field's text: Lean edits it; Return, Shift-Return and Escape step and close.
+  assert.deepEqual(engine.findEdit("qu",{text:"ick"}),{query:"quick",step:"none"});
+  assert.deepEqual(engine.findEdit("quick",{key:51}),{query:"quic",step:"none"});
+  assert.equal(engine.findEdit("q",{key:36}).step,"next");
+  assert.equal(engine.findEdit("q",{key:36,modifiers:1}).step,"previous");
+  assert.equal(engine.findEdit("q",{key:53}).step,"close");
+  // The menu commands of find, About and the File menu (WebSelection.commandName), and their keys.
+  assert.deepEqual([32,41,42,43,44,45].map(id=>engine.command(id,100).action),["find","about","findNext","findPrevious","openFile","savePage"]);
+  assert.equal(engine.command(32,100).refused,undefined,"find is implemented");
+  assert.equal(engine.keyCommand("mac","command","g"),42);
+  assert.equal(engine.keyCommand("mac","shift+command","g"),43);
+});
+
 Deno.test("published Lean owns zoom, selection and copied text",async()=>{
   const dir=await Deno.makeTempDir({prefix:"factoidal-native-select-"});
   try{

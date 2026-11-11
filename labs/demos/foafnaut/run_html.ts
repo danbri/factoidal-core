@@ -23,22 +23,29 @@ import {startCompileWorker,type CompileClient} from "./native_html_compile.ts";
 import type {UIEvent} from "./ui_engine.ts";
 
 /** What this program was built from: the record build-executables.sh compiles into it. */
-async function buildInfo():Promise<{commit?:string;dirty?:boolean;builtAt?:string}> {
+type BuildInfo={commit?:string;commitFull?:string;dirty?:boolean;builtAt?:string;version?:string;release?:boolean};
+async function buildInfo():Promise<BuildInfo> {
   try{return JSON.parse(await Deno.readTextFile(new URL("./.build/native-html/build-info.json",import.meta.url)));}
   catch{return {};} // run from source with no app build
 }
 async function main() {
   const args=[...Deno.args];
-  // What this program was built from: the record build-executables.sh compiled into it.
+  // --version: the engine's own answer (its build facts are compiled into it), then this
+  // program's build record, and the engine's line when the two disagree.
   if(args.includes("--version")){
     const info=await buildInfo();
-    console.log(info.commit?`foafnaut ${info.commit}${info.dirty?" (with uncommitted changes)":""}, built ${info.builtAt}`:"foafnaut: no build record (run from source, or an older build)");
+    const beside=Deno.execPath().slice(0,Deno.execPath().lastIndexOf("/")+1)+"libweb-render.dylib";
+    let library:string|undefined;try{if(Deno.statSync(beside).isFile)library=beside;}catch{/* Wasm */}
+    const answer=(await loadHTML(library)).engineBuild(info.commit?{version:info.version,commit:info.commit}:{});
+    console.log(answer.line);
+    console.log(info.commit?`program build record: release ${info.version??"unknown"}, commit ${info.commit}${info.dirty?" (with uncommitted changes)":""}, built ${info.builtAt}`:"program build record: none (run from source)");
+    if(answer.mismatch)console.log(answer.mismatch);
     return;
   }
   if(args.includes("--help")){
-    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--shortcut-sweep] [--print-pdf FILE] [--scroll-sweep] [--watch-sweep SECONDS] [--single-frame] [--offscreen] [--check-pixels] [--perf-summary] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts] [--strict | --be-liberal-in-what-we-accept]\nCommand-Q quits; Command-R and R reload; Command-T, Command-W and Shift-Command-T open, close and reopen tabs; Command-1 to 9, Control-Tab and Shift-Command-[ ] change tab; Space, Page Up, Page Down, Home, End and arrows scroll; Escape stops loading; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints; Option-Command-J opens the console tab (foafnaut:console). By default the browser draws a page without what the built-in engine may skip (module scripts, media conditions it can not read, stylesheets not fetched, scripts when they are off, inline SVG it can not draw) and lists each skip in the console; --strict refuses such a page. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
+    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--shortcut-sweep] [--print-pdf FILE] [--scroll-sweep] [--watch-sweep SECONDS] [--single-frame] [--offscreen] [--check-pixels] [--perf-summary] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts] [--strict | --be-liberal-in-what-we-accept] [--no-splash | --splash] [--find-sweep]\nCommand-Q quits; Command-R and R reload; Command-T, Command-W and Shift-Command-T open, close and reopen tabs; Command-1 to 9, Control-Tab and Shift-Command-[ ] change tab; Space, Page Up, Page Down, Home, End and arrows scroll; Escape stops loading; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints; Command-F finds in the page, Command-G and Shift-Command-G go to the next and previous match, Escape closes find; Command-O opens a file and Command-S saves the page as fetched; Option-Command-J opens the console tab (foafnaut:console). A splash with the release shows over the first page in a window; --no-splash leaves it out (it is always off screen off, and in sweeps and checks). By default the browser draws a page without what the built-in engine may skip (module scripts, media conditions it can not read, stylesheets not fetched, scripts when they are off, inline SVG it can not draw) and lists each skip in the console; --strict refuses such a page. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
   }
-  let scrollSweep=false,watchSeconds=0,framesInFlight=1;
+  let scrollSweep=false,watchSeconds=0,framesInFlight=1,splashArg:"on"|"off"|undefined;
   let shotFile:string|undefined;
   let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false;
   while(args.length){const arg=args.shift();
@@ -59,6 +66,11 @@ async function main() {
     else if(arg==="--offscreen")offscreen=true;
     // Browser state in a local LWS server (native_state.ts): on in an interactive window, off in sweeps and checks.
     else if(arg==="--no-state")stateOff=true;
+    // The splash at start (WebShell.splashNodes): on in an interactive window; off with
+    // --no-splash, off screen, with --check-pixels, in sweeps, checks and prints.
+    // --splash forces it on, for the test that it ends.
+    else if(arg==="--no-splash")splashArg="off";
+    else if(arg==="--splash")splashArg="on";
     else if(arg==="--state-dir"){stateDir=args.shift();if(!stateDir)throw new Error("--state-dir needs a folder");}
     else if(arg==="--restore-session")restoreSession=true;
     // Sweeps read back every frame. This flag gives them the interactive rule (check when idle), to measure input latency without the check cost.
@@ -94,6 +106,10 @@ async function main() {
       "w","tabs=2:1","T","tabs=3:2","1",[5,119,0],"scroll=end",[5,115,0],"scroll=0",[5,121,0],[5,126,2],"scroll=0","r","tabs=3:0"];
     // Print to a PDF with no panel, then check its page count (issue 1268).
     else if(arg==="--print-pdf"){printPDF=args.shift();if(!printPDF)throw new Error("--print-pdf needs a file path");commands=["print"];}
+    // Find in page and About through the real menu (Command-F, G, Shift-Command-G, the About
+    // item's command): "find=N:C" checks N matches with match C current, "find=closed" a closed field.
+    else if(arg==="--find-sweep")commands=["f",[9,113,0],[9,117,0],[9,105,0],[9,99,0],[9,107,0],"find=3:1","g","find=3:2","G","find=3:1","G","find=3:3",
+      [5,51,0],[5,51,0],[5,51,0],[5,51,0],[5,51,0],"find=0:0",[9,76,0],[9,65,0],[9,90,0],[9,89,0],"find=1:1",[5,53,0],"find=closed",[10,41,0],"url:foafnaut:about","tabs=2:1"];
     else if(arg==="--graph-sweep")commands=["graph",[2,800,565],[3,900,640],[3,1000,720],[4,1000,720]];
     // Twenty scroll steps of 120 backing pixels down the page: per-step frame time and input latency.
     // Watch a page that moves by itself (an SVG animation, page script timers) for N seconds
@@ -163,7 +179,7 @@ async function main() {
   // Every engine call that can take more than about 2 ms runs in one worker, in order. `lean` is that
   // engine (promises), or the main-thread engine when the worker can not start (said once, loudly) or in --check-engine.
   let worker:CompileClient|undefined,mainFont=false;
-  type Lean=Pick<typeof engine,"xmlStylesheet"|"xslt"|"inspect"|"compile"|"selectedText"|"graphStart"|"graphEvent"|"graphPage"|"sourcePage"|"wasmPage"|"sparqlPage"|"printLayout"|"encodingSetting"|"encodingChoices">;
+  type Lean=Pick<typeof engine,"xmlStylesheet"|"xslt"|"inspect"|"compile"|"selectedText"|"findInPage"|"aboutPage"|"graphStart"|"graphEvent"|"graphPage"|"sourcePage"|"wasmPage"|"sparqlPage"|"printLayout"|"encodingSetting"|"encodingChoices">;
   let lean:Lean=engine;
   // The engine that runs Lean's renders: the native library in the worker, or Wasm (in the
   // worker, or on the main thread, which has only the Wasm engine). Said at start and in the summary.
@@ -371,6 +387,8 @@ async function main() {
   // animation frame and the next page script turn wait until gpuHoldUntil. Input does not wait.
   const gpuGuard=createGpuGuard();
   let animationDue=false,gpuHoldUntil=0,quitAt:number|undefined;
+  // The splash while it runs; undefined when there is none or it has ended.
+  let splash:{reduce:boolean;start?:number;frames:number}|undefined;
   const gpuSlowedNote="SLOWED: HEAVY PAGE";
   const trace=(type:string,fields:Record<string,unknown>)=>console.log(JSON.stringify({type,t:Math.round(performance.now()),...fields}));
   const ms=(start:number,end:number)=>Math.round((end-start)*10)/10;
@@ -455,6 +473,10 @@ async function main() {
   type Field=Omit<ShellEdit,"clipboard">;
   const showURL=(url:string):Field=>({address:url,cursor:url.length,anchor:url.length,undo:null,redo:null,typing:false});
   let field=showURL(document.url),focused=false,theme="next",pages=1,scale=1,active=0,scroll=0,swipeHint=0;
+  // Find in page (Command-F): the host keeps the text, the field's focus and the current match;
+  // Lean edits the text (findEdit), finds the matches in the laid-out page (findInPage) and
+  // draws them and the field. `asked` drops answers that a newer question replaced.
+  const find={open:false,focused:false,query:"",current:0,count:0,asked:0};
   const tabs:{document:typeof document;history:typeof history;scroll:number}[]=[{document,history,scroll:0}];
   // The tab icon of a page: Lean prepares it once from the bytes the page fetched (HTML §4.6.7.8).
   const icons=new WeakMap<object,unknown>();
@@ -466,7 +488,8 @@ async function main() {
   };
   const shell=()=>({tabs:tabs.map((tab,index)=>{const page=index===active?document:tab.document;return {title:page.title??"",icon:iconOf(page)};}),active,...field,focused,
     canBack:history.canBack,canForward:history.canForward,loading,scale,theme,pages,scroll,pressed:pressed?.control??"",...(swipeHint?{swipe:swipeHint}:{}),
-    script:[scriptMarker(),gpuGuard.slowed?gpuSlowedNote:""].filter(Boolean).join("  ")});
+    script:[scriptMarker(),gpuGuard.slowed?gpuSlowedNote:""].filter(Boolean).join("  "),
+    ...(find.open?{findOpen:true,find:find.query,findFocused:find.focused,findCount:find.count,findCurrent:find.count?find.current+1:0}:{})});
   // The chrome marker of the page's scripts: the engine of its session, else what the setting says.
   function scriptMarker(){
     if(!scriptsOn||!document?.scripted)return "";
@@ -475,7 +498,7 @@ async function main() {
   }
   // The URLs of the session history of every tab: Lean matches `:visited` against them.
   const visited=()=>[...new Set([...tabs.flatMap((tab,index)=>(index===active?history:tab.history).history.entries)])].slice(-100);
-  const shown=()=>({...view,shell:shell(),visited:visited(),
+  const shown=()=>({...view,shell:shell(),visited:visited(),...(find.open&&find.query?{find:{query:find.query,current:find.current}}:{}),
     ...(pressed?.active!==undefined?{active:pressed.active}:{}),...(hoverNode!==undefined?{hover:hoverNode}:{})});
   const showTab=(index:number)=>{
     controller?.abort();candidate=undefined;loading=false;focused=false;active=index;
@@ -577,21 +600,20 @@ async function main() {
   // `:sparql-step` goes to the address Lean gives as the next step.
   const sparqlURL="foafnaut:sparql";let sparqlNext=sparqlURL;
   const isSparql=(target:string)=>target===sparqlURL||target.startsWith(sparqlURL+"/");
-  // about:foafnaut: which build this is, from the record compiled into the program.
+  // about:foafnaut: the engine that renders pages writes it (WebAbout), from its own build
+  // facts. This program only reports what it knows, as data the page labels as reported.
   const aboutURL="foafnaut:about";
   const aboutPage=async()=>{
-    const info=await buildInfo();
-    const esc=(t:unknown)=>String(t).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]!));
-    const row=(k:string,v:unknown)=>`<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`;
-    return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>About Foafnaut</title><style>body{margin:24px;font-size:15px;line-height:22px;color:#203040;background:white}h1{margin:0 0 12px;font-size:24px;line-height:32px;color:#184078}th{text-align:left;padding:4px 18px 4px 0;font-weight:normal;color:#5b6876}td{padding:4px 0}</style></head><body><h1>Foafnaut</h1><table>`+
-      row("Build commit",(info.commit??"unknown: run from source")+(info.dirty?" (with uncommitted changes)":""))+
-      row("Built",info.builtAt??"unknown")+
-      row("Rendering engine",engineRan.startsWith("native")?"native library":"WebAssembly")+
-      row("Page scripts",planFor(scriptSetting)?.name??"none")+
-      row("Liberal mode",liberal?"on":"off")+
-      row("Platform",`${Deno.build.os} ${Deno.build.arch}`)+
-      row("Runtime",`Deno ${Deno.version.deno}, V8 ${Deno.version.v8}`)+
-      `</table></body></html>`;
+    const info=await buildInfo(),library=await engineInfo;
+    const rows:[string,string][]=[
+      ["Program build record",info.commit?`release ${info.version??"unknown"} (${info.release?"release build":"development build"}), commit ${info.commit}${info.dirty?" (with uncommitted changes)":""}, built ${info.builtAt}`:"none (run from source)"],
+      ["Rendering engine",engineRan.startsWith("native")?"native library":"WebAssembly"],
+      ...(library.sha256?[["Engine library sha256",library.sha256] as [string,string]]:[]),
+      ["Page scripts",planFor(scriptSetting)?.name??"none"],
+      ["Liberal mode",liberal?"on":"off"],
+      ["Platform",`${Deno.build.os} ${Deno.build.arch}`],
+      ["Runtime",`Deno ${Deno.version.deno}, V8 ${Deno.version.v8}`]];
+    return await lean.aboutPage({rows,...(info.commit?{version:info.version,commit:info.commit}:{})});
   };
   const sparqlPage=async(target:string)=>{
     let answer:{source:string;next?:string};
@@ -649,7 +671,44 @@ async function main() {
     if(kind!==pointerShown){pointerShown=kind;native.setCursor(kind);}
   };
   // Lean selects the whole address when the bar takes the focus; typing then replaces it.
-  const focusAddress=()=>{const {clipboard:_,...next}=engine.shellEdit(shell(),"focus",document.url);field=next;focused=true;dirty=true;};
+  const focusAddress=()=>{find.focused=false;const {clipboard:_,...next}=engine.shellEdit(shell(),"focus",document.url);field=next;focused=true;dirty=true;};
+  // Find: Lean answers the matches of the page shown, the current one and its rectangles in
+  // page rows; the host scrolls the current match into the view when it is outside it.
+  const runFind=(reveal=true)=>{
+    const page=document,asked=++find.asked;dirty=true;
+    const ask=(page as {findInPage?:typeof document.findInPage}).findInPage;
+    if(!find.open||!find.query||!ask){find.count=0;find.current=0;return;}
+    Promise.resolve(ask(width,height,{...shown(),find:{query:find.query,current:find.current}})).then(answer=>{
+      if(asked!==find.asked||page!==document)return;
+      find.count=answer.count;find.current=answer.current;dirty=true;
+      trace("native-html-find",{characters:find.query.length,count:answer.count,current:answer.current});
+      const rect=answer.rects[0],top=current?.layers.layers.top??0,rows=Math.max(1,height-top);
+      if(reveal&&rect&&(rect[1]<scroll||rect[1]+rect[3]>scroll+rows))scrollBy(Math.round(rect[1]-rows/3)-scroll);
+    }).catch(error=>console.error("Native HTML find failed:",String(error)));
+  };
+  const openFind=()=>{
+    if(focused){focused=false;field=showURL(document.url);}
+    closeMenu();
+    const was=find.open;find.open=true;find.focused=true;dirty=true;
+    if(!was&&find.query)runFind();
+  };
+  const closeFind=()=>{find.open=false;find.focused=false;find.count=0;find.current=0;find.asked++;dirty=true;};
+  // Command-G and Shift-Command-G: the next or previous match, wrapping; with no text, open find.
+  const stepFind=(by:number)=>{
+    if(!find.query){openFind();return;}
+    find.open=true;
+    if(find.count)find.current=(find.current+by+find.count)%find.count;
+    runFind();
+  };
+  // A key or typed text in the find field: Lean edits the text and says the step.
+  const findInput=(edit:{text?:string;key?:number;modifiers?:number})=>{
+    const answer=engine.findEdit(find.query,edit);
+    if(answer.query!==find.query){find.query=answer.query;find.current=0;runFind();}
+    if(answer.step==="next")stepFind(1);
+    else if(answer.step==="previous")stepFind(-1);
+    else if(answer.step==="close")closeFind();
+    dirty=true;
+  };
   const leaveAddress=()=>{focused=false;field=showURL(document.url);dirty=true;};
   const scrollLimit=()=>{
     // Lean's limit for the layers on screen (WebDocument.scrollLimit): the view then ends at the last page row.
@@ -692,7 +751,9 @@ async function main() {
     // so that other pages keep one state key whatever the time.
     const clock=animation.get(page);
     const animated=clock&&(clock.has||clock.clicks.length)?{animationTime:clock.time,animationClicks:clock.clicks}:{};
-    return page.request(width,height,{...view0,...animated,live:page===checked,...(everyFrame?{}:{checks:false})});
+    // The splash clock starts when its first frame is shown, so it is seen from the start.
+    const splashing=splash?{splash:{reduce:splash.reduce,ms:splash.start===undefined?0:Math.round(performance.now()-splash.start)}}:{};
+    return page.request(width,height,{...view0,...animated,...splashing,live:page===checked,...(everyFrame?{}:{checks:false})});
   };
   let presented:PresentedState<typeof document>|undefined;
   const recordPresented=(record:RequestRecord,at:number)=>{
@@ -859,6 +920,7 @@ async function main() {
     else if(name==="home")navigate(home.url);
     else if(name==="source")viewSource().catch(error=>refuse(document.url,error));
     else if(name==="address")focusAddress();
+    else if(name==="find")openFind();
     // The address menu (WebShell): the Mac pasteboard needs no user gesture, so the buttons act
     // on the press. Copy writes the text Lean chose; Paste and go reads the pasteboard and Lean
     // routes it as a typed address.
@@ -936,6 +998,12 @@ async function main() {
     if(answer.action==="closeTab")closeTab(active);
     if(answer.action==="settings")navigate(settingsURL);
     if(answer.action==="console")openConsole();
+    if(answer.action==="find")openFind();
+    if(answer.action==="findNext")stepFind(1);
+    if(answer.action==="findPrevious")stepFind(-1);
+    if(answer.action==="about"){newTab();leaveAddress();navigate(aboutURL);}
+    if(answer.action==="openFile")openFile();
+    if(answer.action==="savePage")savePage().catch(error=>console.error("Native HTML save failed:",String(error)));
     if(answer.action==="print")printDocument().catch(error=>console.error("Native HTML print failed:",String(error)));
     if(answer.action==="viewSource")viewSource().catch(error=>refuse(document.url,error));
     if(answer.action==="selectAll"){view.selection="all";dirty=true;}
@@ -945,6 +1013,25 @@ async function main() {
         if(text){native!.writeClipboard(text);lastCopied=text;trace("native-html-copy",{characters:text.length});}
       }).catch(error=>console.error("Native HTML copy failed:",String(error)));
     }
+  };
+  // File > Open File… (Command-O): the system panel; the file's URL goes the way of a typed
+  // address (Lean's route). Off screen there is no panel.
+  const openFile=()=>{
+    if(offscreen||!native){trace("native-html-open-file",{opened:false,why:"offscreen"});return;}
+    const path=native.openFilePanel();
+    trace("native-html-open-file",{opened:!!path});
+    if(path)goTo(new URL("file://"+path.split("/").map(encodeURIComponent).join("/")).href);
+  };
+  // File > Save Page As… (Command-S): the page's bytes as fetched, to the file the person names.
+  const savePage=async(path?:string)=>{
+    const bytes=(document as {sourceBytes?:()=>Uint8Array}).sourceBytes?.();
+    if(!bytes){refuse(document.url,"this page has no source to save");return false;}
+    const name=decodeURIComponent(new URL(document.url).pathname.split("/").pop()||"")||"page.html";
+    const target=path??(offscreen||!native?undefined:native.saveFilePanel(name));
+    if(!target){trace("native-html-save",{saved:false});return false;}
+    await Deno.writeFile(target,bytes);
+    trace("native-html-save",{saved:true,bytes:bytes.length});
+    return true;
   };
   // Printing (issue 1268). Lean lays the page out for the paper of the page setup with the
   // print media type and says where the pages break; it draws each page; the GPU renders it;
@@ -1045,6 +1132,12 @@ async function main() {
     }
     // A new window starts in the address bar with the address selected (issue 1268).
     focusAddress();
+    // The splash: drawn by the engine over the first page while it loads, with the engine's own
+    // release. Its clock starts at its first shown frame; the page loads and draws as without it.
+    if(splashArg==="on"||(splashArg===undefined&&!offscreen&&!checkAll&&!sweep&&!commands&&!pasted&&!printPDF&&!check&&!shotFile&&!watchSeconds)){
+      splash={reduce:native.reduceMotion(),frames:0};
+      trace("native-html-splash",{state:"on",reduce:splash.reduce});
+    }
     // Saved settings (theme, text zoom), and with --restore-session the tabs of the last run.
     browserState?.read().then(saved=>{
       if(saved.settings){theme=saved.settings.theme;view.textScalePercent=saved.settings.textZoom;dirty=true;
@@ -1172,11 +1265,22 @@ async function main() {
         if(nextDocument===document&&!keeps(nextLayers.layers,scroll)&&!bandComing())dirty=true;
         clock.has=!!nextLayers.layers.animations;clock.running=!!nextLayers.layers.animating;
         if(clock.running){animationDue=true;animationFrames++;}
-      } else {current=undefined;settle(awaitingBand,result.presentedAt);awaitingBand=[];}
+        // The splash: the next frame while Lean draws it; when a frame comes without it, it has ended.
+        if(splash&&request.options.splash){
+          splash.frames++;splash.start??=performance.now();
+          if(nextLayers.layers.splash)animationDue=true;
+          else{trace("native-html-splash",{state:"done",frames:splash.frames,ms:Math.round(performance.now()-(splash.start??0))});splash=undefined;}
+        }
+      } else {current=undefined;settle(awaitingBand,result.presentedAt);awaitingBand=[];
+        // One frame with no layers (--single-frame) has no splash answer: the splash ends.
+        if(splash&&request.options.splash){splash=undefined;dirty=true;}}
       if(nextDocument!==document)prefetched=undefined;
       checked=nextDocument;
       if(nextDocument!==document)view.selection=undefined;
-      if(nextDocument!==document){scroll=0;if(!focused)field=showURL(nextDocument.url);}frame=next;document=nextDocument;
+      const newPage=nextDocument!==document;
+      if(newPage){scroll=0;if(!focused)field=showURL(nextDocument.url);}frame=next;document=nextDocument;
+      // Find stays open on a new page and looks again there, from its first match.
+      if(newPage&&find.open&&find.query){find.current=0;runFind(false);}
       // Composite offsets are relative to the band; nodeAt takes document scroll.
       recordPresented({request,width:sentWidth,height:sentHeight,document:nextDocument},nextLayers?nextLayers.layers.bandTop+shownOffset:(request.options.shell as {scroll:number}).scroll);
       // A page that a navigation prepared while this frame was drawn is still to come: keep it.
@@ -1246,6 +1350,11 @@ async function main() {
         }
         if(event.kind===8&&event.a)dirty=true;
         if(event.kind===3)pointAt(event.a,event.b);
+        // The find field has the focus: keys without Command and typed text edit it (Lean).
+        if(event.kind===5&&find.focused&&!(event.b&2)){findInput({key:event.a,modifiers:event.b});return;}
+        if(event.kind===9&&find.focused){findInput({text:String.fromCodePoint(event.a)});return;}
+        // Escape closes find when the field is open but the focus is on the page.
+        if(event.kind===5&&event.a===53&&find.open&&!focused&&!(event.b&2)){closeFind();return;}
         const graph=(document as Page).graph;
         if(graph&&!focused&&(event.kind===3||event.kind===9||(event.kind===5&&!(event.b&2)))){
           if(event.kind===3&&press?.page===document)movePress(press,event.a,event.b);
@@ -1287,6 +1396,7 @@ async function main() {
             return;
           }
           if(focused)leaveAddress();
+          if(find.focused){find.focused=false;dirty=true;}
           press=beginPress(document,event.a,event.b);
           if((document as Page).graph){graphInput(2,event.a,event.b);return;}
           scriptPointer("down",event.a,event.b,press);
@@ -1549,12 +1659,22 @@ async function main() {
           trace("native-html-test-edit",{step,ok,address:field.address,anchor:field.anchor,cursor:field.cursor,focused});
           if(!ok){console.error(`Native HTML edit sweep: ${step} failed; address ${JSON.stringify(field.address)}, selection ${JSON.stringify(selected)}, focused ${focused}`);Deno.exitCode=1;}
         }
+        else if(typeof step==="string"&&step.startsWith("find=")){
+          // The answer of find comes from the worker: wait up to 10 s for it.
+          const ok=step==="find=closed"?!find.open:find.open&&step===`find=${find.count}:${find.count?find.current+1:0}`;
+          if(!ok&&(urlWaitSince??=performance.now())>performance.now()-10000){commands.unshift(step);stepAt=performance.now()+50;}
+          else{
+            urlWaitSince=undefined;
+            trace("native-html-test-find",{step,ok,open:find.open,count:find.count,current:find.current});
+            if(!ok){console.error(`Native HTML find sweep: ${step} failed; open ${find.open}, ${find.count} matches, current ${find.current+1}`);Deno.exitCode=1;}
+          }
+        }
         else if(typeof step==="string"&&/^(tabs|scroll)=/.test(step)){
           const ok=step.startsWith("tabs=")?step===`tabs=${tabs.length}:${active}`:scroll===(step==="scroll=0"?0:Math.floor(scrollLimit()));
           trace("native-html-test-shortcut",{step,ok,tabs:tabs.length,active,scroll,limit:scrollLimit()});
           if(!ok){console.error(`Native HTML shortcut sweep: ${step} failed; ${tabs.length} tabs, tab ${active} shown, scroll ${scroll} of ${scrollLimit()}`);Deno.exitCode=1;}
         }
-        else if(typeof step==="string")trace("native-html-test-key",{key:step,handled:native.testKey(step,"+_ZT{}".includes(step))});
+        else if(typeof step==="string")trace("native-html-test-key",{key:step,handled:native.testKey(step,"+_ZTG{}".includes(step))});
         else if(step)native.testEvent(step[0],step[1],step[2]);else{if(native.readClipboard()===lastCopied)native.writeClipboard(savedClipboard);running=false;}
       }
       // Page script timers and animation frames: the virtual clock of the page's event loop

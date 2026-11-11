@@ -2,6 +2,7 @@ import L4Factoidal.Rendering.ClipTheorems
 import WebRender
 import WebRoute
 import WebSelection
+import L4Factoidal.Rendering.Smil
 
 /-! The browser's own face: tabs, the address bar and its buttons, drawn into the
 same scene as the page, so one WebGPU pass draws the window. All of it is pixel
@@ -73,6 +74,15 @@ structure Shell where
   (`menuControls`). `edit "menu"` opens it on a focused bar (`opensMenu` says when); an
   edit, a key, typed text or the bar losing the focus closes it. -/
   menu : Bool := false
+  /-- Find in page (Command-F): the find field is shown in the navigation row. -/
+  findOpen : Bool := false
+  /-- The text looked for. -/
+  find : String := ""
+  /-- The find field has the keyboard focus (the address bar then has not). -/
+  findFocused : Bool := false
+  /-- Matches on the page (`WebSelection.findMatches`), and the current one from 1 (0: none). -/
+  findCount : Nat := 0
+  findCurrent : Nat := 0
   deriving Repr, BEq
 
 private structure Theme where
@@ -255,7 +265,11 @@ private def boxes (s : Shell) (width : Nat) : List Box := Id.run do
     return kept ++ [⟨"address",left,by_,copyX-min copyX (left+4*u),button⟩,
       ⟨"copyAddress",copyX,by_,copy,button⟩,⟨"pasteGo",pasteX,by_,paste,button⟩]
   let tail := if narrow s width then 2*button+8*u+pad else 2*button+8*u+pad
-  out := out ++ [⟨"address",x,by_,width-x-tail,button⟩]
+  -- The find field takes up to 240 logical pixels of the bar's right, at most half of it.
+  let room := width-min width (x+tail)
+  let findW := if s.findOpen then min (240*u) (room/2) else 0
+  out := out ++ [⟨"address",x,by_,room-findW,button⟩]
+  if s.findOpen then out := out ++ [⟨"find",x+room-findW+2*u,by_,findW-min findW (2*u),button⟩]
   out := out ++ [⟨if narrow s width then "tabs" else "source",width-pad-2*button-2*u,by_,button,button⟩]
   out := out ++ [⟨"settings",width-pad-button,by_,button,button⟩]
   return out
@@ -308,6 +322,7 @@ def pointer (s : Shell) (control : Option String) (onPage : Bool) : Pointer :=
   match control with
   | none => if onPage then .hand else .arrow
   | some "address" => .text
+  | some "find" => .text
   | some "chrome" => .arrow
   | some "back" => if s.canBack then .hand else .arrow
   | some "forward" => if s.canForward then .hand else .arrow
@@ -454,6 +469,27 @@ private def addressNodes (s : Shell) (t : Theme) (box : Box) : List Rendering.No
   let cursor := if s.focused && hi == lo then [paint t.accent (textX+column s.cursor*charWidth s) (textY-u) (5*size) (7*size+2*u)] else []
   bevel s t t.well false box.x box.y box.w box.h ++ prompt ++ marked ++ cursor ++ body
 
+/-- What the find field shows after the text: the current match and the count, or none. -/
+def findLabel (s : Shell) : String :=
+  if s.find.isEmpty then "" else if s.findCount == 0 then "none" else s!"{s.findCurrent}/{s.findCount}"
+
+/-- The find field (Command-F): a well like the address bar, with the text looked for, a caret
+when it has the focus, and the current match and the count at its right. -/
+private def findNodes (s : Shell) (t : Theme) (box : Box) : List Rendering.Node :=
+  let u := unit s
+  let size := dot s
+  let textX := box.x+22*u
+  let textY := box.y+(box.h-7*size)/2
+  let label := findLabel s
+  let labelW := label.length*charWidth s
+  let room := box.w-min box.w (30*u+labelW)
+  let shown := fitEnd s s.find room
+  let body := if s.find.isEmpty && !s.findFocused then text t.dark (fit s "find" room) textX textY size
+    else text t.wellInk shown textX textY size
+  let cursor := if s.findFocused then [paint t.accent (textX+shown.length*charWidth s) (textY-u) (5*size) (7*size+2*u)] else []
+  bevel s t t.well false box.x box.y box.w box.h ++ text t.accent "?" (box.x+8*u) textY size ++ body ++ cursor ++
+    text t.dark label (box.x+box.w-min (box.x+box.w) (8*u+labelW)) textY size
+
 /-- The bar under the chrome: a thin accent line, or a level bar while loading. -/
 private def edgeNodes (s : Shell) (t : Theme) (width : Nat) : List Rendering.Node := Id.run do
   let y := height s width-edge s
@@ -505,6 +541,7 @@ private def controlNodes (s : Shell) (t : Theme) (width : Nat) : List Rendering.
         iconAt s t.ink "close" (sink box.name box)
     | ["newTab"] => out := out ++ face box ++ iconAt s t.ink "newTab" (sink box.name box)
     | ["address"] => out := out ++ addressNodes s t box
+    | ["find"] => out := out ++ findNodes s t box
     | ["copyAddress"] | ["pasteGo"] =>
       let size := menuSize s width
       let label := menuLabel box.name
@@ -571,6 +608,62 @@ private def domainNodes (s : Shell) (t : Theme) (width : Nat) (p : Nat) : List R
   -- It shows only in the second half of the fold, after the controls have faded out, so
   -- the two texts never lie over each other half drawn.
   text (mix t.base t.ink (2*p-100)) label (lerp x0 x1 p) (lerp y0 y1 p) size
+
+/-! ### The splash (start of the app)
+
+The name and release over the first page while it loads, in the chrome's lettering: the
+letters grow until they are too big to read while they fade out, over `splashMs`. With
+reduced motion they only fade, over `splashReducedMs`. The values at a time are SMIL's
+animation function (`Smil.valueAt`, values with keyTimes, linear), from the time since the
+splash began, which the host sends; after its duration the splash has no nodes. -/
+def splashMs : Nat := 600
+def splashReducedMs : Nat := 200
+
+def splashDuration (reduce : Bool) : Nat := if reduce then splashReducedMs else splashMs
+
+/-- The growth (1 at the start) and the opacity at `ms`, or none once the splash is over.
+Growth speeds up as it goes, as something coming at the viewer; the letters hold their
+opacity for the first fifth. -/
+def splashState (ms : Nat) (reduce : Bool) : Option (Float × Float) := do
+  let dur := splashDuration reduce
+  if ms ≥ dur then none
+  let f := Float.ofNat ms/Float.ofNat dur
+  let grow ← if reduce then some #[1] else
+    Rendering.Smil.valueAt #[#[1],#[1.5],#[3],#[12]] (some #[0,0.4,0.75,1]) false f
+  let opacity ← Rendering.Smil.valueAt #[#[1],#[1],#[0]] (some #[0,0.2,1]) false f
+  return ((grow[0]?).getD 1,(opacity[0]?).getD 0)
+
+/-- The ink of the splash: the blue of the about page's heading. -/
+def splashColor : Rendering.Color := hex 24 64 120
+
+private def faded (o : Float) : Rendering.Node → Rendering.Node
+  | .paint item => .paint {item with primitive := {item.primitive with style := {item.primitive.style with fillOpacity := o}}}
+  | node => node
+
+/-- The splash at `ms` over the view of `rows` rows from page row `top`, `width` wide: the
+label in the lettering, centred, about seven tenths of the width at the start. -/
+def splashNodes (label : String) (ms width top rows : Nat) (reduce : Bool) : List Rendering.Node :=
+  match splashState ms reduce with
+  | none => []
+  | some (grow,o) =>
+    let columns := max 1 (label.length*6)
+    let base := Float.ofNat (max 1 (min (width*7/10/columns) (rows/14)))
+    let size := base*grow
+    let w := Float.ofNat (columns-1)*size
+    let h := 7*size
+    let x := Float.ofNat width/2-w/2
+    let y := Float.ofNat top+Float.ofNat rows/2-h/2
+    [.group none ⟨size,0,0,size,x,y⟩ ((text splashColor label 0 0 1).map (faded o))]
+
+#guard (splashState 0 false).map (·.1) == some 1 && (splashState 0 false).map (·.2) == some 1
+#guard (splashState splashMs false).isNone && (splashState splashReducedMs true).isNone
+#guard (splashNodes "Foafnaut 0.36.0" splashMs 800 0 500 false).isEmpty
+#guard (splashNodes "Foafnaut 0.36.0" 0 800 0 500 false).length == 1
+-- Reduced motion: no growth, and over sooner.
+#guard (splashState 150 true).map (·.1) == some 1 && (splashNodes "F" 250 800 0 500 true).isEmpty
+-- It grows and fades as it goes.
+#guard match splashState 300 false, splashState 500 false with
+  | some (g1,o1), some (g2,o2) => g1 < g2 && o2 < o1 | _, _ => false
 
 /-- The chrome as scene nodes. It is drawn over the page. With `collapse` above 0 it is
 folding: the controls slide up and fade into the chrome's face over the first half of the
@@ -917,6 +1010,42 @@ def sourcePage (kind url source : String) : String :=
   escapeText (kind ++ " of " ++ url) ++ "</h1>" ++ cut ++
   String.join ((shown.splitOn "\n").map sourceLine) ++ "</body></html>"
 
+/-! ### Editing the find text -/
+
+/-- The longest text find takes. -/
+def maxFind : Nat := 256
+
+/-- What a key or typed text in the find field asks: the text after it, and a step. -/
+inductive FindStep where
+  | none
+  | next
+  | previous
+  | close
+  deriving Repr, BEq, DecidableEq
+
+def FindStep.name : FindStep → String
+  | .none => "none" | .next => "next" | .previous => "previous" | .close => "close"
+
+/-- Typed text is added at the end (line breaks and control characters dropped, at most
+`maxFind` characters); Delete (key 51) removes the last grapheme; Return and Enter (36, 76)
+go to the next match, with Shift the one before; Escape (53) closes find. The field has no
+caret to move: other keys change nothing. -/
+def findEdit (query : String) (typed : Option String) (code modifiers : Nat) : String × FindStep :=
+  match typed with
+  | some value => ((String.ofList ((query ++ clean value).toList.take maxFind)),.none)
+  | none =>
+    if code == 51 then (String.ofList (query.toList.take (graphemeBefore query query.length)),.none)
+    else if code == 36 || code == 76 then (query,if has modifiers shiftBit then .previous else .next)
+    else if code == 53 then (query,.close)
+    else (query,.none)
+
+#guard findEdit "ab" (some "c") 0 0 == ("abc",.none)
+#guard findEdit "ab" none 51 0 == ("a",.none)
+#guard findEdit "" none 51 0 == ("",.none)
+#guard findEdit "ab" none 36 0 == ("ab",.next) && findEdit "ab" none 36 1 == ("ab",.previous)
+#guard findEdit "ab" none 53 0 == ("ab",.close)
+#guard (findEdit (String.ofList (List.replicate 300 'x')) (some "y") 0 0).1.length == maxFind
+
 /-! ### The value the host keeps -/
 
 private def str (j : JSON.Json) (key : String) (fallback := "") : String :=
@@ -954,7 +1083,9 @@ def Shell.ofJson (j : JSON.Json) : Shell :=
     collapse := min 100 (nat j "collapse"), collapsible := flag j "collapsible",
     swipe := match j.field? "swipe" with
       | some (.number value) => max (-100) (min 100 (value.toInt?.getD 0)) | _ => 0,
-    menu := flag j "menu" }
+    menu := flag j "menu",
+    findOpen := flag j "findOpen",find := String.ofList ((str j "find").toList.take maxFind),findFocused := flag j "findFocused",
+    findCount := nat j "findCount",findCurrent := nat j "findCurrent" }
 
 private def Snapshot.json (v : Snapshot) : JSON.Json :=
   .object [("address",.string v.address),("cursor",.number (toString v.cursor)),("anchor",.number (toString v.anchor))]
