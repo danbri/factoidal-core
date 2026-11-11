@@ -1,4 +1,5 @@
 // Byte/JSON transport for the published Lean HTML engine. No host markup parser.
+import type {NetWire} from "./native_net.ts";
 // This ignored runtime is installed only after checking the Builds manifest.
 // @ts-ignore generated release module
 import createModule from "./.build/native-html/runtime/web-render.mjs";
@@ -80,6 +81,11 @@ list, given only when `changed`: a host lays the page out again only then. */
 export type ScriptPlan={engine:string;name:string;run:boolean;marker:string;notice:string};
 export type ScriptTurn = {session:number;clock:number;changed:boolean;commandCount:number;commands?:unknown[];
   navigations?:{nodeId:number;url:string}[];frameLoads?:number;
+  /** Requests the page asked for (XMLHttpRequest): the policy is the engine's; the host only makes them. */
+  netRequests?:NetWire[];
+  netCancels?:number[];
+  /** A sync request: the turn changed nothing; answer it with action `syncAnswer` and the turn comes again. */
+  netSync?:NetWire;
   logs:string[];errors:string[];timers:number;nextTimer:number|null;frames:number;nextWake:number|null;quiet:boolean;
   instructions:number;jobs:number;tasks:number;ns:number;
   /** Lean-validated page GPU commands of this turn (L4Factoidal.PageGpu) and their page session. */

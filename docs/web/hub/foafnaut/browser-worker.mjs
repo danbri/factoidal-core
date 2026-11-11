@@ -688,10 +688,56 @@ function scriptCall(source,request){
   if(!runtimeFunction('stackRestore')&&scriptTraps>=2)throw Error('page scripts are off after two engine failures; reload the page');
   scriptStackTop??=runtimeFunction('stackSave')?.();
   const t0=performance.now();let answer;
-  try{answer=drive(call(source,request));}catch(error){scriptStats.error=String(error.message??error);throw error;}
+  try{answer=syncAnswers(drive(call(source,request)));}catch(error){scriptStats.error=String(error.message??error);throw error;}
   scriptStats.turns++;scriptStats.lastMs=Math.round((performance.now()-t0)*100)/100;scriptStats.ms+=scriptStats.lastMs;
   scriptStats.instructions=answer?.instructions;
   return answer;
+}
+// Page requests (XMLHttpRequest, fetch). The engine decides each one (L4Factoidal/Net/PageFetch.lean:
+// what a page may reach, the scheme rules, a final URL outside the policy is withheld); this host
+// only moves bytes. Here the browser that runs the Hub makes the request for the Hub's own origin
+// and enforces its own CORS (`hostCors`): it follows redirects and preflights itself. Never a
+// cookie or other credential (credentials "omit"), no cache, no referrer; a body of at most
+// 64 MiB. DNS is that browser's (no pinned address on the Hub).
+const NET_MAX=67108864;
+const b64=bytes=>{let s='';for(let i=0;i<bytes.length;i+=32768)s+=String.fromCharCode(...bytes.subarray(i,i+32768));return btoa(s);};
+const wireBody=w=>w.bodyBase64!==undefined?Uint8Array.from(atob(w.bodyBase64),c=>c.charCodeAt(0)):undefined;
+async function netAnswer(w){
+  if(w.resolve)return {id:w.id,addresses:[]};
+  try{
+    const r=await fetch(w.url,{method:w.method,headers:w.headers,body:wireBody(w),credentials:'omit',redirect:'follow',mode:'cors',
+      cache:'no-store',referrerPolicy:'no-referrer',signal:AbortSignal.timeout(300000)});
+    const bytes=new Uint8Array(await r.arrayBuffer());
+    if(bytes.length>NET_MAX)return {id:w.id,status:0};
+    return {id:w.id,status:r.status,statusText:r.statusText,headers:[...r.headers],bodyBase64:b64(bytes),url:r.url};
+  }catch{return {id:w.id,status:0};}
+}
+// A sync request of a turn (netSync): the engine undid the run; it runs again with the answer.
+// A worker may make a sync request, so the call stays synchronous, as the engine's calls are.
+function netAnswerSync(w){
+  if(w.resolve)return {id:w.id,addresses:[]};
+  try{
+    const x=new XMLHttpRequest();
+    x.open(w.method,w.url,false);x.withCredentials=false;x.responseType='arraybuffer';
+    for(const [n,v] of w.headers)try{x.setRequestHeader(n,v);}catch{/* a name the browser forbids */}
+    x.send(wireBody(w)??null);
+    const bytes=new Uint8Array(x.response??new ArrayBuffer(0));
+    if(bytes.length>NET_MAX)return {id:w.id,status:0};
+    const headers=x.getAllResponseHeaders().trim().split(/\r\n/).filter(Boolean).map(l=>{const i=l.indexOf(':');return [l.slice(0,i).trim(),l.slice(i+1).trim()];});
+    return {id:w.id,status:x.status,statusText:x.statusText,headers,bodyBase64:b64(bytes),url:x.responseURL};
+  }catch{return {id:w.id,status:0};}
+}
+function syncAnswers(turn){
+  for(let i=0;turn?.netSync&&i<4096;i++)
+    turn=drive(call('',{op:'scriptSession',action:'syncAnswer',session:turn.session,answer:netAnswerSync(turn.netSync)}));
+  return turn;
+}
+function netRequests(page,turn){
+  for(const w of turn.netRequests??[])netAnswer(w).then(answer=>{
+    if(page.script?.session!==turn.session)return;
+    try{scriptTurn(page,scriptCall('',{op:'scriptSession',action:'net',session:turn.session,results:[answer]}));}
+    catch(error){scriptFailed(page,error,'page request');}
+  });
 }
 // Page script timings for ?stats=1 and the measurements (window.foafnautFrame.scripts).
 const scriptStats={path:'none',turns:0,ms:0,lastMs:0,hostCalls:0,instructions:0};
@@ -714,7 +760,8 @@ async function startScripts(page,scripts){
   if(!plan.run){if(plan.notice)console.warn('foafnaut:',plan.notice);if(page===doc)request();return;}
   // The first page of a session starts before the history exists: no shell then.
   const turn=scriptCall(page.source,{op:'scriptSession',action:'start',url:page.url,resources,width,height,zoomUnit:zoomUnit(),...(history?{shell:shell()}:{}),layout,
-    ...(plan.engine==='bubblepop'?{engine:'bubblepop'}:{}),...(page.encoding?{encoding:page.encoding}:{})});
+    ...(plan.engine==='bubblepop'?{engine:'bubblepop'}:{}),...(page.encoding?{encoding:page.encoding}:{}),
+    ...(scriptOps.includes('net')?{network:true,hostCors:true}:{})});
   scriptStats.startMs=scriptStats.lastMs;scriptStats.engine=plan.engine;
   page.script={session:turn.session,turn,epoch:performance.now()-turn.clock,engine:plan.engine};
   scriptTurn(page,turn);
@@ -726,6 +773,7 @@ function scriptTurn(page,turn){
   for(const line of turn.errors)console.warn('page error:',line);
   addEntries(page,[...turn.logs.map(message=>({source:'page',severity:'log',message})),...turn.errors.map(message=>({source:'page',severity:'error',message}))]);
   if(page.script)page.script.turn=turn;
+  netRequests(page,turn);
   // The start turn comes before the page is shown: its commands make the objects.
   if(turn.gpu?.length)gpuTake(turn.gpuPage,turn.gpu);
   if(turn.changed&&turn.commands){page.commands=turn.commands;if(page===doc)request();}

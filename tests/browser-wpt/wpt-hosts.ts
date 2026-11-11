@@ -77,9 +77,15 @@ export function wptFetcher(s: WptServe) {
   const fetchWpt = async (url: string, init: RequestInit = {}, hops = 0): Promise<Response> => {
     const r = wptRoute(url, s);
     if ("refused" in r) throw new TypeError(`WPT test mode refused ${url}: ${r.refused}`);
-    const response = r.scheme === "https" ? await httpsGet(url, r.port, s.caPEM, init)
+    // A page's XMLHttpRequest (noFollow): the raw client keeps the status line's reason phrase
+    // and sends any method and body, as a browser's request does; Deno's fetch does neither here.
+    const noFollow = (init as { noFollow?: boolean }).noFollow === true;
+    const response = noFollow ? await httpRaw(url, r.port, s.caPEM, init, r.scheme === "https")
+      : r.scheme === "https" ? await httpsGet(url, r.port, s.caPEM, init)
       : await fetch(url, { ...init, redirect: "manual", client: clientFor(r.port, r.scheme) } as RequestInit);
     const location = response.headers.get("location");
+    // An XMLHttpRequest of a page (the engine follows redirects itself: Net.PageFetch).
+    if ((init as { noFollow?: boolean }).noFollow) return Object.defineProperty(response, "finalURL", { value: url });
     if (response.status >= 300 && response.status < 400 && location) {
       await response.body?.cancel();
       if (hops >= 20) throw new TypeError(`too many redirects: ${url}`);
@@ -95,19 +101,26 @@ const MAX_RESPONSE_BYTES = 64 * 1048576;
  * certificate check against WPT's CA) and in the Host header. HTTP/1.1, one request a
  * connection; the body by Content-Length, chunked coding, or to the end. */
 async function httpsGet(url: string, port: number, caPEM: string | undefined, init: RequestInit): Promise<Response> {
-  const u = new URL(url), method = (init.method ?? "GET").toUpperCase();
+  const method = (init.method ?? "GET").toUpperCase();
   if (method !== "GET" && method !== "HEAD") throw new TypeError(`WPT test mode HTTPS: ${method} not supported`);
-  if (!caPEM) throw new TypeError("WPT test mode HTTPS: no WPT CA (tools/certs/cacert.pem)");
+  return await httpRaw(url, port, caPEM, init, true);
+}
+async function httpRaw(url: string, port: number, caPEM: string | undefined, init: RequestInit, secure: boolean): Promise<Response> {
+  const u = new URL(url), method = (init.method ?? "GET").toUpperCase();
+  if (secure && !caPEM) throw new TypeError("WPT test mode HTTPS: no WPT CA (tools/certs/cacert.pem)");
   const signal = init.signal ?? AbortSignal.timeout(30000);
   const tcp = await Deno.connect({ hostname: "127.0.0.1", port });
-  const conn = await Deno.startTls(tcp, { hostname: u.hostname, caCerts: [caPEM] });
+  const conn: Deno.Conn = secure ? await Deno.startTls(tcp, { hostname: u.hostname, caCerts: [caPEM as string] }) : tcp;
   const abort = () => { try { conn.close(); } catch { /* closed */ } };
   signal.addEventListener("abort", abort, { once: true });
   try {
     const extra = new Headers(init.headers);
     let head = `${method} ${u.pathname}${u.search} HTTP/1.1\r\nHost: ${u.host}\r\nConnection: close\r\nAccept-Encoding: identity\r\n`;
     extra.forEach((v, k) => { if (!/^(host|connection|content-length|transfer-encoding)$/i.test(k)) head += `${k}: ${v}\r\n`; });
+    const reqBody = init.body as Uint8Array | undefined;
+    if (reqBody) head += `Content-Length: ${reqBody.length}\r\n`;
     await conn.write(new TextEncoder().encode(head + "\r\n"));
+    if (reqBody) await conn.write(reqBody);
     const chunks: Uint8Array[] = [];
     let length = 0;
     const buf = new Uint8Array(65536);
@@ -125,7 +138,8 @@ async function httpsGet(url: string, port: number, caPEM: string | undefined, in
     const end = indexOf(all, [13, 10, 13, 10]);
     if (end < 0) throw new TypeError("WPT test mode HTTPS: no response head");
     const lines = new TextDecoder("latin1").decode(all.subarray(0, end)).split("\r\n");
-    const status = Number(/^HTTP\/1\.[01] (\d{3})/.exec(lines[0])?.[1] ?? NaN);
+    const statusLine = /^HTTP\/1\.[01] (\d{3})(?: (.*))?$/.exec(lines[0]);
+    const status = Number(statusLine?.[1] ?? NaN);
     if (!(status >= 200 && status <= 599)) throw new TypeError(`WPT test mode HTTPS: bad status line ${lines[0]}`);
     const headers = new Headers();
     for (const l of lines.slice(1)) { const i = l.indexOf(":"); if (i > 0) headers.append(l.slice(0, i).trim(), l.slice(i + 1).trim()); }
@@ -134,7 +148,7 @@ async function httpsGet(url: string, port: number, caPEM: string | undefined, in
     else if (headers.has("content-length")) body = body.subarray(0, Number(headers.get("content-length")));
     headers.delete("transfer-encoding");
     const nullBody = method === "HEAD" || status === 204 || status === 304;
-    return new Response(nullBody ? null : body, { status, headers });
+    return new Response(nullBody ? null : body, { status, statusText: statusLine?.[2] ?? "", headers });
   } finally {
     signal.removeEventListener("abort", abort);
     abort();

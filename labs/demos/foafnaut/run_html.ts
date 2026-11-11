@@ -7,6 +7,7 @@ import {fallbackFontHost,loadFallbackFonts,mayNeedFallbackFonts,type FallbackFon
 import type {ScriptPlan,ScriptTurn} from "./native_html_engine.ts";
 import {addEntries,consoleRequest,noteDiagnostics} from "./native_console.ts";
 import {createGpuGuard} from "./gpu_pacing.ts";
+import {netAnswer} from "./native_net.ts";
 import {loadNativeWindow} from "./native_window.ts";
 import {POINTER_CANCEL,beginPress,movePress,pointerNode,pointerRequest,pressPointers,beforeFirstFrame,type NativePress,type PointerKind,type PresentedState} from "./native_press.ts";
 import {nativePreflight} from "./native_preflight.ts";
@@ -234,9 +235,19 @@ async function main() {
   // the renders (the worker), once. The engine must answer scriptSession info first: an older
   // engine has no such op, and then a page with scripts is refused as before (issue 1274).
   type ScriptCall=(name:"scriptInfo"|"scriptLoad"|"scriptSession"|"nodeAt"|"pointerAt"|"scriptPlan"|"scriptSetting"|"scriptChoices",...args:unknown[])=>Promise<unknown>;
-  const scriptCall:ScriptCall=async(name,...args)=>worker?await worker.engine[name](...args)
+  const scriptCallRaw:ScriptCall=async(name,...args)=>worker?await worker.engine[name](...args)
     :(engine as unknown as Record<string,(...a:unknown[])=>unknown>)[name](...args);
-  const scriptInput:ScriptCall=async(name,...args)=>worker?(await worker.inputCall(name,...args)).value:await scriptCall(name,...args);
+  // A sync XMLHttpRequest of a turn (netSync): the run was undone; the host answers and the
+  // same action runs again (Net.Xhr), so no call here ever blocks the worker on the network.
+  const syncAnswers=async(t:unknown)=>{
+    for(let i=0;(t as ScriptTurn|undefined)?.netSync&&i<4096;i++){
+      const a=await netFetch((t as ScriptTurn).netSync!);
+      t=await scriptCallRaw("scriptSession","",{action:"syncAnswer",session:(t as ScriptTurn).session,answer:a});
+    }
+    return t;
+  };
+  const scriptCall:ScriptCall=async(name,...args)=>syncAnswers(await scriptCallRaw(name,...args));
+  const scriptInput:ScriptCall=async(name,...args)=>worker?syncAnswers((await worker.inputCall(name,...args)).value):await scriptCall(name,...args);
   let session:Awaited<ReturnType<typeof createHTMLWindowSession>>|undefined;
   // Page GPU commands (docs/designissues/2026-11-08-page-gpu.md): Lean validated each one; the
   // window session replays them in order and presents the page canvases. Before the session
@@ -285,6 +296,10 @@ async function main() {
   const planFor=(setting:string)=>plans.get(setting)??plans.get("");
   // The real time at which each session's virtual clock was 0.
   const scriptEpochs=new Map<number,number>();
+  const netQueue:{session:number;wire:NonNullable<ScriptTurn["netRequests"]>[number]}[]=[];
+  // Page requests (XMLHttpRequest, fetch): the host only moves bytes (native_net.ts). The
+  // engine chose them (origin, CORS, redirects, the address of a name: Net.PageFetch).
+  const netFetch=(w:NonNullable<ScriptTurn["netRequests"]>[number])=>netAnswer(w);
   // The guest module: --quickjs-wasm FILE, else a local build (tools/wasmvm/build-quickjs.sh),
   // else the one tools/fetch-builds.sh --set foafnaut-web installs.
   const installed=decodeURIComponent(new URL("../../../docs/web/hub/wasm-guests/qjs-wasmvm.wasm",import.meta.url).pathname);
@@ -313,7 +328,9 @@ async function main() {
           catch{return {width:1280,height:800,textScalePercent:150,zoomUnit:100};}})();
         const turn=await scriptCall("scriptSession",source,{action:"start",url:pageURL,resources,width:at.width,height:at.height,zoomUnit:at.zoomUnit,
           ...(at.shell?{shell:at.shell}:{}),layout:{url:pageURL,textScalePercent:at.textScalePercent,zoomUnit:at.zoomUnit,...mode},
-          ...(plan.engine==="bubblepop"?{engine:"bubblepop"}:{}),...(encoding?{encoding}:{})}) as ScriptTurn;
+          ...(plan.engine==="bubblepop"?{engine:"bubblepop"}:{}),...(encoding?{encoding}:{}),
+          ...(scriptOps.includes("net")?{network:true}:{})}) as ScriptTurn;
+        netQueue.push(...(turn.netRequests??[]).map(wire=>({session:turn.session,wire})));
         scriptEpochs.set(turn.session,performance.now()-turn.clock);sessionEngines.set(turn.session,plan.engine);
         // The start turn makes the page's GPU objects (canvas, buffers, pipelines); the later turns use them.
         if(turn.gpu?.length){gpuTurns.push({page:turn.gpuPage!,commands:turn.gpu});gpuFlush();}
@@ -405,6 +422,7 @@ async function main() {
     }).catch(error=>console.error("Native HTML: page script pointer failed:",String(error)));
   };
   const scriptTurn=(page:typeof document,turn:ScriptTurn,cause:string)=>{
+    netQueue.push(...(turn.netRequests??[]).map(wire=>({session:turn.session,wire})));
     for(const line of turn.logs)console.log(`page: ${line.replace(/^\u0001(\w+)\u0001/,"$1: ")}`);
     for(const line of turn.errors)console.error(`page error: ${line}`);
     trace("native-html-script",{cause,session:turn.session,clock:turn.clock,changed:turn.changed,commands:turn.commandCount,
@@ -1666,6 +1684,11 @@ async function main() {
             .finally(()=>{scriptBusy=false;});
         }
       }
+      // Page requests of any turn (the start turn's too): made here, answered by action `net`.
+      for(const {session,wire} of netQueue.splice(0))
+        netFetch(wire).then(answer=>scriptCall("scriptSession","",{action:"net",session,results:[answer]}) as Promise<ScriptTurn>)
+          .then(turn=>{if(document.script?.session===session)scriptTurn(document,turn,"net");})
+          .catch(error=>console.error("Native HTML: page request failed:",String(error)));
       // Wake at least every 8 ms to pump, sooner for the page's next timer or animation frame
       // (a fixed 8 ms paced 16 ms frames at about 21 ms); wake at once when a frame ends.
       const wakeIn=scriptsOn&&script&&script.turn.nextWake!==null
