@@ -1,5 +1,6 @@
 import L4Factoidal.EventLoop.Timers
 import L4Factoidal.EventLoop.Model
+import L4Factoidal.EventLoop.Agents
 import L4Factoidal.EventLoop.Dispatch
 import L4Factoidal.EventLoop.Theorems
 import L4Factoidal.EventLoop.Tests
