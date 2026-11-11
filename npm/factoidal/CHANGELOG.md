@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.35.1 (2026-11-11)
+
+- Foafnaut (macOS): a heavy page no longer freezes the app. The host keeps one frame of GPU work in flight for heavy frames (three for light ones); after three frames over 250 ms it slows the page's animation and shows "SLOWED: HEAVY PAGE". Quitting or closing the window stops GPU work, so the app quits within seconds (before, up to 209 s on the Spinal Tap page at 2x). `--gpu-frames-in-flight N` sets the limit.
+- Foafnaut: Arabic letters join again on a page that loaded Noto Sans Math first; a font whose GSUB covers the script is preferred. Chinese, Japanese and Korean text breaks between characters, so long runs wrap instead of pushing right-to-left lines out of their cells.
+- BubblePopJS: conversions between byte arrays and the engine's values are faster (Pako about 14% faster on the native engine), with proofs that the fast forms give the same results.
+- XMPP: xmpp-serve logs each connection by its address tag, never the address (--quiet stops it).
+
 ## 0.35.0 (2026-11-10)
 
 - Foafnaut: partial frames. A frame compiles again only the primitives that changed, keeps a damage rectangle, and redraws only that part of a layer. On the Spinal Tap page, one animated frame went from 351 ms to 3.9 ms of GPU and JS time at 1x (1225 ms to 4.0 ms at 2x); engine time per frame 28.5 ms to 10.9 ms. `retained:false` still gives the full path, and tests check that both give the same bytes.
