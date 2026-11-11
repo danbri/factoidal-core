@@ -33,7 +33,7 @@ def idOf : List RDF.Term → RDF.Term → Nat
 
 theorem idOf_cons_self (t : RDF.Term) (xs : List RDF.Term)
     (h : t = t.joinKey) : idOf (t :: xs) t = 0 := by
-  simp [idOf, h]
+  simp only [idOf, ← h, ↓reduceIte]
 
 def variableNames (b : SPARQL.Bgp) : List SPARQL.VarName :=
   (b.flatMap (fun a =>
