@@ -287,6 +287,39 @@ int ng_open_url(const char *text) {
     return [[NSWorkspace sharedWorkspace] openURL:url] ? 1 : 0;
   }
 }
+// File > Open File… and Save Page As…: the system panels. Each answers a path owned by the
+// caller until ng_free, or NULL when the person cancels. Only the host reads or writes it.
+static char *copyPath(NSURL *url) {
+  const char *path=url.fileSystemRepresentation;
+  if (!path) return NULL;
+  size_t length=strlen(path);
+  char *copy=malloc(length+1);
+  if (copy) memcpy(copy,path,length+1);
+  return copy;
+}
+char *ng_open_file_panel(void) {
+  if (!pthread_main_np()) return NULL;
+  @autoreleasepool {
+    NSOpenPanel *panel=[NSOpenPanel openPanel];
+    panel.canChooseFiles=YES;panel.canChooseDirectories=NO;panel.allowsMultipleSelection=NO;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    panel.allowedFileTypes=@[@"html",@"htm",@"svg",@"xhtml"];
+#pragma clang diagnostic pop
+    if ([panel runModal]!=NSModalResponseOK || !panel.URL) return NULL;
+    return copyPath(panel.URL);
+  }
+}
+char *ng_save_file_panel(const char *name) {
+  if (!pthread_main_np()) return NULL;
+  @autoreleasepool {
+    NSSavePanel *panel=[NSSavePanel savePanel];
+    NSString *value=name ? [NSString stringWithUTF8String:name] : nil;
+    if (value.length) panel.nameFieldStringValue=value;
+    if ([panel runModal]!=NSModalResponseOK || !panel.URL) return NULL;
+    return copyPath(panel.URL);
+  }
+}
 // Lean says which history moves exist. The menu only shows the answer.
 static BOOL canGoBack=NO,canGoForward=NO;
 void ng_set_history(int back,int forward) { canGoBack=back!=0;canGoForward=forward!=0; }
@@ -296,8 +329,7 @@ void ng_set_history(int back,int forward) { canGoBack=back!=0;canGoForward=forwa
 @implementation NGMenuTarget
 - (void)command:(NSMenuItem *)item { enqueue(10,(int32_t)item.tag,0); }
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
-  // Find (32) has no implementation yet: https://github.com/danbri/factoidal/issues/1280
-  return item.tag==6 ? canGoBack : item.tag==7 ? canGoForward : item.tag!=32;
+  return item.tag==6 ? canGoBack : item.tag==7 ? canGoForward : YES;
 }
 @end
 static NGMenuTarget *menuTarget;
@@ -324,6 +356,9 @@ static void installMenu(void) {
   NSMenu *bar=[[NSMenu alloc] init];
   NSMenuItem *appItem=[bar addItemWithTitle:name action:nil keyEquivalent:@""];
   NSMenu *appMenu=[[NSMenu alloc] initWithTitle:name];
+  // About Foafnaut (issue 416): opens about:foafnaut in a new tab.
+  commandItem(appMenu,@"About Foafnaut",@"",41);
+  [appMenu addItem:[NSMenuItem separatorItem]];
   [appMenu addItemWithTitle:[@"Hide " stringByAppendingString:name] action:@selector(hide:) keyEquivalent:@"h"];
   [appMenu addItem:[NSMenuItem separatorItem]];
   [appMenu addItemWithTitle:[@"Quit " stringByAppendingString:name] action:@selector(terminate:) keyEquivalent:@"q"];
@@ -332,10 +367,15 @@ static void installMenu(void) {
   NSMenuItem *fileItem=[bar addItemWithTitle:@"File" action:nil keyEquivalent:@""];
   NSMenu *fileMenu=[[NSMenu alloc] initWithTitle:@"File"];
   commandItem(fileMenu,@"New Tab",@"t",10);
+  commandItem(fileMenu,@"Open File\u2026",@"o",44);
   commandItem(fileMenu,@"Open Location",@"l",9);
+  [fileMenu addItem:[NSMenuItem separatorItem]];
   commandItem(fileMenu,@"Close Tab",@"w",11);
+  [fileMenu addItemWithTitle:@"Close Window" action:@selector(performClose:) keyEquivalent:@"W"];
   commandItem(fileMenu,@"Reopen Closed Tab",@"T",20);
   commandItem(fileMenu,@"Settings",@",",12);
+  [fileMenu addItem:[NSMenuItem separatorItem]];
+  commandItem(fileMenu,@"Save Page As\u2026",@"s",45);
   [fileMenu addItem:[NSMenuItem separatorItem]];
   // Page Setup is the system panel; it changes the paper that Print lays out for.
   [fileMenu addItemWithTitle:@"Page Setup\u2026" action:@selector(runPageLayout:) keyEquivalent:@"P"];
@@ -353,6 +393,8 @@ static void installMenu(void) {
   commandItem(editMenu,@"Select All",@"a",5);
   [editMenu addItem:[NSMenuItem separatorItem]];
   commandItem(editMenu,@"Find\u2026",@"f",32);
+  commandItem(editMenu,@"Find Next",@"g",42);
+  commandItem(editMenu,@"Find Previous",@"G",43);
   editItem.submenu=editMenu;
   NSMenuItem *viewItem=[bar addItemWithTitle:@"View" action:nil keyEquivalent:@""];
   NSMenu *viewMenu=[[NSMenu alloc] initWithTitle:@"View"];
@@ -379,7 +421,6 @@ static void installMenu(void) {
   NSMenuItem *windowItem=[bar addItemWithTitle:@"Window" action:nil keyEquivalent:@""];
   NSMenu *windowMenu=[[NSMenu alloc] initWithTitle:@"Window"];
   [windowMenu addItemWithTitle:@"Minimize" action:@selector(performMiniaturize:) keyEquivalent:@"m"];
-  [windowMenu addItemWithTitle:@"Close Window" action:@selector(performClose:) keyEquivalent:@"W"];
   [windowMenu addItem:[NSMenuItem separatorItem]];
   commandItem(windowMenu,@"Show Previous Tab",@"{",31);
   commandItem(windowMenu,@"Show Next Tab",@"}",30);

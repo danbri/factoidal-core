@@ -44,6 +44,7 @@ SWEEPS=(
   "shortcut|--shortcut-sweep --html $LAB/pages/showcase.html"
   "link-scroll|--link-scroll-sweep --follow-links --html $LAB/pages/showcase.html"
   "scroll-end|--scroll-end-sweep --html $LAB/pages/showcase-dataviz.html"
+  "find|--find-sweep --html $LAB/fixtures/find/find.html"
 )
 SOURCE=$(cat "$LAB/run_html.ts")
 FAILED=0 NOTRUN=0 START=$(date +%s)

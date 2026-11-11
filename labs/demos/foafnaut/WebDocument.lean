@@ -793,8 +793,7 @@ private def inputOp {M : Type → Type} [Monad M] [WebWasm.Machine M] (op : Stri
       | some i => [("tab",JSON.Json.number (toString i))] | none => []
     let scrollTo := match WebHistory.scrollTarget command (nat "scroll") (nat "view") (nat "scrollLimit") (80*max 1 (nat "scale")) with
       | some n => [("scrollTo",JSON.Json.number (toString n))] | none => []
-    let refused := if command == WebHistory.findCommand
-      then [("refused",JSON.Json.string "find in page is not implemented: https://github.com/danbri/factoidal/issues/1280")] else []
+    let refused : List (String × JSON.Json) := []
     let fields := [("action",JSON.Json.string action)] ++
       (if WebShell.addressCommands.contains action then [("target",JSON.Json.string target)] else []) ++
       [("textScalePercent",.number (toString (WebSelection.commandPercent command percent (zoomUnit request))))] ++ tab ++ scrollTo ++ refused
@@ -872,6 +871,13 @@ private def inputOp {M : Type → Type} [Monad M] [WebWasm.Machine M] (op : Stri
         | _, _ => false
       | _, _, _ => false
     return some (JSON.Json.object [("cursor",.string (WebShell.pointer shell control onPage).name)]).toString
+  -- A key or typed text in the find field (WebShell.findEdit): the text after it and the step.
+  if op == "findEdit" then
+    let typed := match request.field? "text" with | some (.string t) => some t | _ => none
+    let code := match request.field? "key" with | some (.number c) => c.toNat?.getD 0 | _ => 0
+    let modifiers := match request.field? "modifiers" with | some (.number m) => m.toNat?.getD 0 | _ => 0
+    let (query,step) := WebShell.findEdit (str request "query") typed code modifiers
+    return some (JSON.Json.object [("query",.string query),("step",.string step.name)]).toString
   if op == "shellText" then
     return some (WebShell.Shell.ofJson ((request.field? "shell").getD .null) |>.typed (str request "text")).editJson.toString
   if op == "shellKey" then
@@ -2299,7 +2305,7 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
     | .ok none => pure ()
     | .error x => throw x
   let op := str request "op" "render"
-  if op != "render" && op != "selectedText" && op != "printLayout" && op != "nodeAt" then
+  if op != "render" && op != "selectedText" && op != "findInPage" && op != "printLayout" && op != "nodeAt" then
     let dom ← stepState fun e => match prepareDOMIn e.kept html request with
       | .ok (dom,made) => ({e with kept := e.kept.add made},.ok dom)
       | .error x => (e,.error x)
@@ -2384,13 +2390,38 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
     let ratio := if (request.field? "graphModel").isSome then 1 else Float.ofNat (zoomUnit request) / 100
     return ((WebHit.nodeAtAnswer laid.dom scene boxes (Float.ofNat (natField request "x"))
       (Float.ofNat (natField request "y")) (Float.ofNat top) (Float.ofNat ((shell.map (·.scroll)).getD 0)) ratio).toString,#[])
-  -- The glyph cells only for a selection: a frame with none does not read them.
-  let items := if op == "selectedText" || chosen.isSome then WebSelection.cells scene.glyphRuns else #[]
+  -- Find in page: `find` is `{query, current}` (current from 0). The matches are found
+  -- in the glyph cells of the whole page, in page rows.
+  let finding : Option (String × Nat) := match request.field? "find" with
+    | some f@(.object _) => match f.field? "query" with
+      | some (.string q) => if q.isEmpty then none else some (q,match f.field? "current" with
+        | some (.number c) => c.toNat?.getD 0 | _ => 0)
+      | _ => none
+    | _ => none
+  -- The glyph cells only for a selection or find: a frame with neither does not read them.
+  let items := if op == "selectedText" || op == "findInPage" || chosen.isSome || finding.isSome
+    then WebSelection.cells scene.glyphRuns else #[]
+  let found := match finding with
+    | some (q,_) => WebSelection.findMatches items q
+    | none => #[]
+  let current := match finding with
+    | some (_,c) => if found.isEmpty then 0 else c % found.size
+    | none => 0
+  -- The count, the current match (from 0, wrapped) and its rectangles in page rows, so the
+  -- host can scroll it into view.
+  if op == "findInPage" then
+    let number := fun (f : Float) => JSON.Json.number (toString f.round)
+    let rects := match found[current]? with
+      | some (low,high) => (WebSelection.rangeRects items low high).toList.map fun (x,y,w,h) =>
+        JSON.Json.array [number x,number y,number w,number h]
+      | none => []
+    return ((JSON.Json.object [("count",.number (toString found.size)),("current",.number (toString current)),
+      ("rects",.array rects)]).toString,#[])
   if op == "selectedText" then
     return ((JSON.Json.object [("text",.string (match chosen with
       | some value => WebSelection.text items value
       | none => ""))]).toString,#[])
-  let marks := match chosen with
+  let marks := WebSelection.findHighlight items found current ++ match chosen with
     | some value => WebSelection.highlight items value
     | none => []
   let live := request.field? "live" == some (.bool true)

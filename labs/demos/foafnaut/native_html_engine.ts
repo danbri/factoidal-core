@@ -4,6 +4,8 @@
 import createModule from "./.build/native-html/runtime/web-render.mjs";
 
 /** What a tab or scroll command needs: tab count and active tab; scroll, view height, scroll limit and screen scale. */
+/** The answer of findInPage: matches, the current one from 0, and its rectangles [x,y,w,h] in page rows. */
+export type FindAnswer={count:number;current:number;rects:number[][]};
 export type CommandState={tabs?:number;active?:number;scroll?:number;view?:number;scrollLimit?:number;scale?:number;zoomUnit?:number};
 export type HTMLArtifact = {
   abi:string; width:number; height:number; data:number[]|Float32Array; wgsl:string; tiles:number[]|Uint32Array;
@@ -491,6 +493,13 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     pointerUp:(selection:number[])=>(documentCall("",{op:"pointerUp",selection}) as {action:string}).action,
     selectedText:(source:string,width:number,height:number,options:Record<string,unknown>)=>
       (documentCall(source,{...options,op:"selectedText"},width,height) as {text:string}).text,
+    // Find in page (WebSelection.findMatches): `options.find` is {query, current}. The count,
+    // the current match (from 0) and its rectangles in page rows.
+    findInPage:(source:string,width:number,height:number,options:Record<string,unknown>)=>
+      documentCall(source,{...options,op:"findInPage"},width,height) as FindAnswer,
+    // A key (macOS key code and modifier bits) or typed text in the find field (WebShell.findEdit).
+    findEdit:(query:string,edit:{text?:string;key?:number;modifiers?:number})=>
+      documentCall("",{op:"findEdit",query,...edit}) as {query:string;step:"none"|"next"|"previous"|"close"},
     hit(artifact:HTMLArtifact,x:number,y:number):{href:string;sourceNode:number}|null {
       if(!Number.isFinite(x)||!Number.isFinite(y))return null;
       return call("web_render_hit",["string","number","number","number","number"],

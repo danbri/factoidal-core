@@ -39,6 +39,8 @@ export function loadNativeWindow() {
     ng_print_paper: { parameters: ["buffer"], result: "void", optional: true },
     ng_print: { parameters: ["buffer","u32","u32","u32","f64","f64","buffer","buffer"], result: "i32", optional: true },
     ng_create_offscreen: { parameters: ["u32","u32","f64"], result: "pointer", optional: true },
+    ng_open_file_panel: { parameters: [], result: "pointer", optional: true },
+    ng_save_file_panel: { parameters: ["buffer"], result: "pointer", optional: true },
   } as const);
   const symbols = library.symbols;
   const isMainThread = () => symbols.ng_is_main_thread() === 1;
@@ -53,6 +55,20 @@ export function loadNativeWindow() {
     readClipboard() {
       const pointer=symbols.ng_clipboard_copy();
       if(!pointer)throw new Error("Clipboard text unavailable or exceeds the 1 MiB transport limit");
+      try { return new Deno.UnsafePointerView(pointer).getCString(); }
+      finally { symbols.ng_free(pointer); }
+    },
+    // File > Open File… and Save Page As…: the path the person chose, or null when cancelled
+    // (or with an older window library, which has no panels).
+    openFilePanel():string|null {
+      const pointer=symbols.ng_open_file_panel?.();
+      if(!pointer)return null;
+      try { return new Deno.UnsafePointerView(pointer).getCString(); }
+      finally { symbols.ng_free(pointer); }
+    },
+    saveFilePanel(name:string):string|null {
+      const pointer=symbols.ng_save_file_panel?.(new TextEncoder().encode(name.replaceAll("\0","")+"\0"));
+      if(!pointer)return null;
       try { return new Deno.UnsafePointerView(pointer).getCString(); }
       finally { symbols.ng_free(pointer); }
     },
