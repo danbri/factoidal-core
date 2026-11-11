@@ -205,14 +205,14 @@ theorem solve_empty_bgp (db : List Triple) (b : Binding) :
   simp [solve, satisfies]
 
 /-! A few deliberately small executable regression checks. -/
-private def example : List Triple :=
+private def sampleData : List Triple :=
   [⟨1, 9, 2⟩, ⟨1, 9, 3⟩, ⟨2, 9, 3⟩]
 
 private def outgoing : Atom :=
   ⟨.fixed 1, .fixed 9, .variable 0⟩
 
-#guard candidateDomain example [outgoing] 0 [] == [2, 3]
-#guard (solve example [outgoing] [0] []).length == 2
+#guard candidateDomain sampleData [outgoing] 0 [] == [2, 3]
+#guard (solve sampleData [outgoing] [0] []).length == 2
 #guard solve example [] [] [] == [[]]
 #guard intersectMany [1,2,3] [[2,3,4],[3,5]] == [3]
 
