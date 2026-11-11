@@ -1002,6 +1002,7 @@ import L4Factoidal.LWS.PaginationLinksTests
 import L4Factoidal.LWS.Authorization
 import L4Factoidal.LWS.AuthorizationTests
 import L4Factoidal.LWS.RootAclInstall
+import L4Factoidal.LWS.PodKinds
 import L4Factoidal.LWS.NoLockout
 import L4Factoidal.LWS.Notifications
 import L4Factoidal.LWS.NotificationsTests
@@ -1050,6 +1051,8 @@ import L4Factoidal.WebDAV.Backend
 import L4Factoidal.WebDAV.Server
 import L4Factoidal.WebDAV.State
 import L4Factoidal.Net.LoginLimit
+import L4Factoidal.Net.PageFetch
+import L4Factoidal.Net.Xhr
 import L4Factoidal.Net.ProxyProtocol
 import L4Factoidal.WebDAV.Login
 import L4Factoidal.WebDAV.Local
