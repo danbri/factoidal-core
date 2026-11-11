@@ -2734,6 +2734,146 @@
   };
   lazy('URLSearchParams', makeURLSearchParams);
 
+  // ---- Blob, File (File API) and FormData (XHR Standard §5) ---------------------------------
+  // Byte holders: a Blob keeps a copy of its bytes and its type; FormData keeps its entries.
+  // The multipart/form-data body of a FormData is Lean's (web_api op 78, Net.Xhr.formDataBody).
+  const blobs = new WeakMap();
+  let BlobC, FileC, FormDataC;
+  const utf8 = str => new TextEncoder().encode(usv(str));
+  const blobType = t => { t = String(t); return /^[\x20-\x7e]*$/.test(t) ? t.toLowerCase() : ''; };
+  const blobBytes = b => blobs.get(b).bytes;
+  const makeBlob = () => {
+    if (BlobC) return BlobC;
+    class Blob {
+      constructor(parts = undefined, options = undefined) {
+        const d = dict(options, "Failed to construct 'Blob'");
+        const native = d.endings === 'native';
+        if (d.endings !== undefined && d.endings !== 'transparent' && !native) throw new TypeError("Failed to construct 'Blob': bad endings");
+        const chunks = [];
+        if (parts !== undefined && parts !== null) {
+          if (typeof parts !== 'object' || typeof parts[Symbol.iterator] !== 'function') throw new TypeError("Failed to construct 'Blob': The provided value cannot be converted to a sequence.");
+          for (const p of parts) {
+            if (p instanceof Blob) chunks.push(blobBytes(p));
+            else if (p instanceof ArrayBuffer || ArrayBuffer.isView(p) || isShared(p)) chunks.push(copyBytes(bufferSource(p, 'Blob')));
+            else { let t = usv(p); if (native) t = t.replace(/\r\n|\r/g, '\n'); chunks.push(utf8(t)); }
+          }
+        }
+        let size = 0; for (const c of chunks) size += c.length;
+        const bytes = new Uint8Array(size); let at = 0; for (const c of chunks) { bytes.set(c, at); at += c.length; }
+        blobs.set(this, { bytes, type: d.type === undefined ? '' : blobType(d.type) });
+      }
+      get size() { return brand(blobs, this, 'Blob.size').bytes.length; }
+      get type() { return brand(blobs, this, 'Blob.type').type; }
+      slice(start = undefined, end = undefined, contentType = undefined) {
+        const b = brand(blobs, this, 'Blob.slice').bytes, n = b.length;
+        const at = (v, dflt) => { if (v === undefined) return dflt; v = Math.trunc(Number(v)) || 0; return v < 0 ? Math.max(n + v, 0) : Math.min(v, n); };
+        const from = at(start, 0), to = at(end, n);
+        const r = Object.create(Blob.prototype);
+        blobs.set(r, { bytes: b.slice(from, Math.max(from, to)), type: contentType === undefined ? '' : blobType(contentType) });
+        return r;
+      }
+      text() { try { return Promise.resolve(new TextDecoder().decode(brand(blobs, this, 'Blob.text').bytes)); } catch (e) { return Promise.reject(e); } }
+      arrayBuffer() { try { return Promise.resolve(brand(blobs, this, 'Blob.arrayBuffer').bytes.slice().buffer); } catch (e) { return Promise.reject(e); } }
+      bytes() { try { return Promise.resolve(brand(blobs, this, 'Blob.bytes').bytes.slice()); } catch (e) { return Promise.reject(e); } }
+    }
+    setTag(Blob, 'Blob');
+    return BlobC = Blob;
+  };
+  lazy('Blob', makeBlob);
+  const makeFile = () => {
+    if (FileC) return FileC;
+    const Blob = makeBlob();
+    const files = new WeakMap();
+    class File extends Blob {
+      constructor(bits, name, options = undefined) {
+        if (arguments.length < 2) throw new TypeError("Failed to construct 'File': 2 arguments required");
+        super(bits, options);
+        const d = dict(options, "Failed to construct 'File'");
+        files.set(this, { name: usv(name), lastModified: d.lastModified === undefined ? Date.now() : Number(d.lastModified) });
+      }
+      get name() { return brand(files, this, 'File.name').name; }
+      get lastModified() { return brand(files, this, 'File.lastModified').lastModified; }
+    }
+    setTag(File, 'File');
+    return FileC = File;
+  };
+  lazy('File', makeFile);
+  const makeFormData = () => {
+    if (FormDataC) return FormDataC;
+    const Blob = makeBlob(), File = makeFile();
+    const forms = new WeakMap();
+    const E = (o, what) => brand(forms, o, 'FormData.' + what).entries;
+    // "create an entry": a Blob that is not a File becomes a File named "blob"; a File gets
+    // the given filename.
+    const entry = (name, value, filename, args, what) => {
+      name = usv(name);
+      if (value instanceof Blob) {
+        const isFile = value instanceof File;
+        if (args < 3 && isFile) return [name, value];
+        const fname = args >= 3 ? usv(filename) : 'blob';
+        return [name, new File([value], fname, { type: value.type, ...(isFile ? { lastModified: value.lastModified } : {}) })];
+      }
+      if (args >= 3) throw new TypeError(`Failed to execute '${what}' on 'FormData': parameter 2 is not of type 'Blob'.`);
+      return [name, usv(value)];
+    };
+    class FormData {
+      constructor(form = undefined, submitter = undefined) {
+        if (form !== undefined) throw new TypeError("Failed to construct 'FormData': forms are not supported in this build");
+        forms.set(this, { entries: [] });
+      }
+      append(name, value, filename = undefined) {
+        if (arguments.length < 2) throw new TypeError("Failed to execute 'append' on 'FormData': 2 arguments required");
+        E(this, 'append').push(entry(name, value, filename, arguments.length, 'append'));
+      }
+      set(name, value, filename = undefined) {
+        if (arguments.length < 2) throw new TypeError("Failed to execute 'set' on 'FormData': 2 arguments required");
+        const es = E(this, 'set'), e = entry(name, value, filename, arguments.length, 'set');
+        const i = es.findIndex(x => x[0] === e[0]);
+        if (i < 0) { es.push(e); return; }
+        es[i] = e;
+        for (let j = es.length - 1; j > i; j--) if (es[j][0] === e[0]) es.splice(j, 1);
+      }
+      delete(name) { name = usv(name); const es = E(this, 'delete'); for (let j = es.length - 1; j >= 0; j--) if (es[j][0] === name) es.splice(j, 1); }
+      get(name) { name = usv(name); const e = E(this, 'get').find(x => x[0] === name); return e ? e[1] : null; }
+      getAll(name) { name = usv(name); return E(this, 'getAll').filter(x => x[0] === name).map(x => x[1]); }
+      has(name) { name = usv(name); return E(this, 'has').some(x => x[0] === name); }
+      forEach(f, thisArg = undefined) {
+        if (typeof f !== 'function') throw new TypeError("Failed to execute 'forEach' on 'FormData': parameter 1 is not a function");
+        const es = E(this, 'forEach');
+        for (let i = 0; i < es.length; i++) f.call(thisArg, es[i][1], es[i][0], this);
+      }
+      *entries() { const es = E(this, 'entries'); for (let i = 0; i < es.length; i++) yield [es[i][0], es[i][1]]; }
+      *keys() { for (const [k] of this.entries()) yield k; }
+      *values() { for (const [, v] of this.entries()) yield v; }
+    }
+    Object.defineProperty(FormData.prototype, Symbol.iterator, { value: FormData.prototype.entries, writable: true, configurable: true });
+    setTag(FormData, 'FormData');
+    return FormDataC = FormData;
+  };
+  lazy('FormData', makeFormData);
+  // A request body (XHR §4.5.1 and Fetch "extract a body"): [bytes, Content-Type or ''].
+  // A FormData's multipart body and boundary are Lean's (op 78).
+  const extractBody = (body, what) => {
+    if (BlobC && body instanceof BlobC) return [blobBytes(body), blobs.get(body).type];
+    if (FormDataC && body instanceof FormDataC) {
+      const args = [];
+      for (const [name, v] of forms_entries(body)) {
+        if (typeof v === 'string') args.push(name, '0', '', '', utf8(v));
+        else args.push(name, '1', v.name, v.type, blobBytes(v));
+      }
+      const r = apiCall(78, args, 0, true);
+      if (!(r instanceof ArrayBuffer)) return apiError(r, what);
+      const bytes = new Uint8Array(r);
+      let i = 0; while (i + 1 < bytes.length && !(bytes[i] === 13 && bytes[i + 1] === 10)) i++;
+      const boundary = String.fromCharCode(...bytes.subarray(2, i)).replace(/--$/, '');
+      return [bytes, 'multipart/form-data; boundary=' + boundary];
+    }
+    if (typeof body === 'object' && (body instanceof ArrayBuffer || ArrayBuffer.isView(body) || isShared(body))) return [bufferSource(body, what), ''];
+    if (typeof body === 'object' && URLSearchParamsC && body instanceof URLSearchParamsC) return [String(body), 'application/x-www-form-urlencoded;charset=UTF-8'];
+    return [usv(body), 'text/plain;charset=UTF-8'];
+  };
+  const forms_entries = f => { const it = FormDataC.prototype.entries.call(f); return [...it]; };
+
   // ---- XMLHttpRequest (XHR Standard) -------------------------------------------------------
   // The object's state, what each method may do, the order of events and the text of a
   // response are Lean's (formal/lean4/L4Factoidal/Net/Xhr.lean, web_api ops 60 to 79; the
@@ -2840,6 +2980,10 @@
         if (t === 'json') { if (s.json === null) { try { s.json = { v: JSON.parse(call(67, [s.h, 4])) }; } catch { s.json = { v: null }; } } return s.json.v; }
         if (t === 'document') return this.responseXML;
         if (t === 'arraybuffer') { if (s.buf === null) { const b = apiCall(74, [s.h], 0, true); s.buf = b instanceof ArrayBuffer ? b : new ArrayBuffer(0); } return s.buf; }
+        if (t === 'blob') {
+          if (s.buf === null) { const b = apiCall(74, [s.h], 0, true); s.buf = new (makeBlob())([b instanceof ArrayBuffer ? b : new ArrayBuffer(0)], { type: call(67, [s.h, 8]) }); }
+          return s.buf;
+        }
         return null;
       }
       open(method, url, async = true, user = null, password = null) {
@@ -2858,12 +3002,7 @@
       send(body = null) {
         const s = S(this), what = "Failed to execute 'send' on 'XMLHttpRequest'";
         let has = 0, ct = '', bytes = '';
-        if (body !== null && body !== undefined) {
-          has = 1;
-          if (typeof body === 'object' && (body instanceof ArrayBuffer || ArrayBuffer.isView(body))) bytes = bufferSource(body, what);
-          else if (typeof body === 'object' && URLSearchParamsC && body instanceof URLSearchParamsC) { bytes = String(body); ct = 'application/x-www-form-urlencoded;charset=UTF-8'; }
-          else { bytes = usv(body); ct = 'text/plain;charset=UTF-8'; }
-        }
+        if (body !== null && body !== undefined) { has = 1; [bytes, ct] = extractBody(body, what); }
         const x = this, cb = register(() => drain(x, s));
         const up = upload.get(s.upload).listened;
         s.text = s.json = s.buf = s.doc = null;
@@ -2928,10 +3067,11 @@
     const H = () => globalThis.Headers;
     class Response {
       constructor(body = null, init = {}) {
-        const bytes = body === null || body === undefined ? new Uint8Array(0)
-          : typeof body === 'string' ? new TextEncoder().encode(body) : bufferSource(body, 'Response');
+        const [raw, ct] = body === null || body === undefined ? [new Uint8Array(0), ''] : extractBody(body, 'Response');
+        const bytes = typeof raw === 'string' ? utf8(raw) : raw;
         this._b = bytes; this._used = false;
         this.status = init.status ?? 200; this.statusText = String(init.statusText ?? ''); this.headers = new (H())(init.headers);
+        if (ct && !this.headers.has('content-type')) this.headers.set('content-type', ct);
         this.url = ''; this.redirected = false; this.type = 'default';
       }
       get ok() { return this.status >= 200 && this.status < 300; }
@@ -2940,6 +3080,7 @@
       arrayBuffer() { return this._take().then(b => b.slice().buffer); }
       text() { return this._take().then(b => new TextDecoder().decode(b)); }
       json() { return this.text().then(JSON.parse); }
+      blob() { return this._take().then(b => new (makeBlob())([b], { type: this.headers.get('content-type') ?? '' })); }
       clone() { if (this._used) throw new TypeError('body already used'); const r = new Response(this._b, this); r.url = this.url; r.type = this.type; r.redirected = this.redirected; return r; }
     }
     setTag(Response, 'Response');

@@ -22,17 +22,25 @@ def startPage (src : String) (network : Bool := true) (url : String := "http://a
   let dom := DOM.parseHtmlDocument ("<!doctype html><script>" ++ src ++ "</script>")
   return LeanJS.start base dom url (scriptsOf dom) { network } {} { instructionsPerMs := 1000000000000 }
 
-/-- Give every waiting request of the page's outbox its answer, then run the loop. -/
+/-- A public address the test resolver gives every name (`Wire.resolve`). -/
+def publicAddr : String := "93.184.215.14"
+
+/-- Give every waiting request of the page's outbox its answer, then run the loop. A
+resolve-only request (the page is not local) is answered with `publicAddr` (or with what
+`a` gives when it lists addresses), and the request it was for is answered next. -/
 def answerAll (s : LeanJS.Session) (a : Wire → Answer) : LeanJS.Session := Id.run do
   let e := LeanJS.engine
   let mut net := s.host.web.net
-  let wires := net.outbox
-  net := { net with outbox := #[] }
   let mut loop := s.host.loop
-  for w in wires do
-    let (n', cb) := Net.Xhr.give net w.id (a w)
-    net := n'
-    if let some c := cb then loop := loop.queueTask .networking c
+  for _ in [0:8] do
+    let wires := net.outbox
+    if wires.isEmpty then break
+    net := { net with outbox := #[] }
+    for w in wires do
+      let ans := if w.resolve then (let r := a w; if r.addresses.isEmpty then { addresses := [publicAddr] } else r) else a w
+      let (n', cb) := Net.Xhr.give net w.id ans
+      net := n'
+      if let some c := cb then loop := loop.queueTask .networking c
   let s := s.setHost { s.host with web := { s.host.web with net }, loop }
   return (e.settle s 1000).1
 
@@ -108,12 +116,38 @@ def syncFlow : Except String (Option String × List String) := do
   let src := "const x = new XMLHttpRequest(); x.open('GET','/s', false); x.onload=()=>console.log('load',x.status,x.responseText); x.send(); console.log('after',x.readyState);"
   let dom := DOM.parseHtmlDocument ("<!doctype html><script>" ++ src ++ "</script>")
   let s0 := LeanJS.start base dom "http://a.test/p.html" (scriptsOf dom) { network := true, syncOk := true } {} { instructionsPerMs := 1000000000000 }
-  let wanted := s0.host.web.net.syncWanted.map (·.url)
+  let wanted := s0.host.web.net.syncWanted.map fun w => (w.url, w.resolve)
+  let r : Answer := { addresses := [publicAddr] }
+  let s1 := LeanJS.start base dom "http://a.test/p.html" (scriptsOf dom) { network := true, syncOk := true, syncAnswers := #[r] } {} { instructionsPerMs := 1000000000000 }
+  let wanted2 := s1.host.web.net.syncWanted.map fun w => (w.url, w.address)
   let a : Answer := { status := 200, statusText := "OK", body := "sync".toUTF8 }
-  let s1 := LeanJS.start base dom "http://a.test/p.html" (scriptsOf dom) { network := true, syncOk := true, syncAnswers := #[a] } {} { instructionsPerMs := 1000000000000 }
-  return (wanted, logOf s1)
+  let s2 := LeanJS.start base dom "http://a.test/p.html" (scriptsOf dom) { network := true, syncOk := true, syncAnswers := #[r, a] } {} { instructionsPerMs := 1000000000000 }
+  return (wanted.map (fun (u, b) => s!"{u} {b}"), [(wanted2.map fun (u, ad) => s!"{u} {ad}").getD ""] ++ logOf s2)
 
-#guard syncFlow == .ok (some "http://a.test/s", ["load 200 sync", "after 4"])
+-- the page is not local: the name is resolved first (one sync answer), then the request goes to
+-- the pinned address (the second)
+#guard syncFlow == .ok (some "http://a.test/s true", ["http://a.test/s 93.184.215.14", "load 200 sync", "after 4"])
+
+-- DNS rebinding: a public name that resolves to a loopback address is refused; the page
+-- sees a network error and the request never goes out.
+def rebind : Except String (List String × Nat) := do
+  let s ← startPage ("const x = new XMLHttpRequest();x.open('GET','http://b.test/x');x.onerror=()=>console.log('err',x.status);x.onload=()=>console.log('LOADED');x.send();")
+  let mut sent := 0
+  let s := answerAll s fun w => if w.resolve then { addresses := ["93.184.215.14", "127.0.0.1"] } else { status := 200, body := "secret".toUTF8 }
+  sent := s.host.web.net.outbox.size
+  return (logOf s, sent)
+
+#guard rebind == .ok (["err 0"], 0)
+
+-- A page the host loaded from a local address (`pageAddress`) resolves nothing.
+def localPage : Except String (Bool × Bool) := do
+  let base ← LeanJS.prepareSource
+  let dom := DOM.parseHtmlDocument "<!doctype html><script>const x = new XMLHttpRequest();x.open('GET','/d');x.send();</script>"
+  let s := LeanJS.start base dom "http://a.test/p.html" (scriptsOf dom) { network := true, pageAddress := "127.0.0.1" } {} { instructionsPerMs := 1000000000000 }
+  let w := s.host.web.net.outbox[0]?
+  return ((w.map (·.resolve)).getD true, (w.map (·.address.isEmpty)).getD false)
+
+#guard localPage == .ok (false, true)
 
 -- fetch: same core, the promise resolves with the body.
 def fetchFlow : Except String (List String) := do

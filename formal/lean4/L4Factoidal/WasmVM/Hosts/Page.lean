@@ -205,10 +205,15 @@ structure Limits where
   network : Bool := false
   /-- The browser that runs the Hub enforces CORS (`Net.PageFetch.Page.hostCors`). -/
   hostCors : Bool := false
+  /-- The address the embedder loaded the page from, when it knows it: a special-purpose one
+  makes the page local (`Net.PageFetch.Page.ofUrl`). -/
+  pageAddress : String := ""
   /-- Sync requests: the run is redone with these answers (`Net.Xhr.syncAnswers`). -/
   syncAnswers : Array L4Factoidal.Net.PageFetch.Answer := #[]
   /-- The embedder can undo and redo a run (not the AOT path). -/
   syncOk : Bool := false
+  /-- The page's scripts may make a sync request in a later action (`Net.Xhr.State.mayBlock`). -/
+  mayBlock : Bool := false
   deriving Inhabited
 
 /-- The exports of the module, by function address. -/
@@ -1117,7 +1122,7 @@ def Session.startP (s : Session) (url : String) (scripts : Array (Nat × String)
   -- (HTML §4.8.5); a page with none pays one look at its nodes. Their initial about:blank
   -- documents are there before any script runs, and that load is not an event scripts see.
   let d0 := { s.host.dom with url }
-  let web := { s.host.web with net := { enabled := s.limits.network, page := L4Factoidal.Net.PageFetch.Page.ofUrl url s.limits.hostCors, syncOk := s.limits.syncOk, syncAnswers := s.limits.syncAnswers } }
+  let web := { s.host.web with net := { enabled := s.limits.network, page := L4Factoidal.Net.PageFetch.Page.ofUrl url s.limits.hostCors s.limits.pageAddress, syncOk := s.limits.syncOk, syncAnswers := s.limits.syncAnswers, mayBlock := s.limits.mayBlock } }
   let s := { s with host := { s.host with web } }
   let d0 := if d0.framing && d0.dom.nodes.any (L4Factoidal.DOM.Dom.isHtmlElement · "iframe") then
     let d1 := Hosts.Dom.connectFrames d0 #[0]
