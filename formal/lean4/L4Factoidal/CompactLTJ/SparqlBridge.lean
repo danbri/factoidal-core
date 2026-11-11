@@ -1,4 +1,7 @@
-/-!
+import L4Factoidal.CompactLTJ.Model
+import L4Factoidal.SPARQL.Algebra
+
+/-
 Copyright 2026 Factoidal contributors. SPDX-License-Identifier: Apache-2.0
 
 Restricted SPARQL-to-integer-domain bridge for the experimental multiway
@@ -10,8 +13,6 @@ The independent result is available for differential checks against the
 existing Lean SPARQL reference. SPARQL multiset and solution ordering
 refinement is not yet proved: do not dispatch production Leana queries here.
 -/
-import L4Factoidal.CompactLTJ.Model
-import L4Factoidal.SPARQL.Algebra
 
 namespace L4Factoidal.CompactLTJ.SparqlBridge
 
