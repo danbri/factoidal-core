@@ -36,12 +36,12 @@ theorem rank0_empty (n : Nat) : rank0 [] n = 0 := by
 theorem rank1_cons_succ (bit : Bool) (bits : List Bool) (n : Nat) :
     rank1 (bit :: bits) (n + 1) =
       (if bit then 1 else 0) + rank1 bits n := by
-  cases bit <;> simp [rank1, List.take]
+  cases bit <;> simp [rank1, List.take, Nat.add_comm]
 
 theorem rank0_cons_succ (bit : Bool) (bits : List Bool) (n : Nat) :
     rank0 (bit :: bits) (n + 1) =
       (if bit then 0 else 1) + rank0 bits n := by
-  cases bit <;> simp [rank0, List.take]
+  cases bit <;> simp [rank0, List.take, Nat.add_comm]
 
 /-- Locate the k-th true bit (zero-based), or none if too few exist. -/
 def select1 (k : Nat) : List Bool → Option Nat
@@ -115,7 +115,9 @@ theorem degreeAt_empty (node : Nat) :
 
 theorem firstChildAt_empty (node : Nat) :
     firstChildAt [] node = none := by
-  simp [firstChildAt, select0]
+  cases node with
+  | zero => rfl
+  | succ n => simp [firstChildAt, select0]
 
 /-! A root with two leaf children has degrees [2,0,0] and LOUDS
 bits 11000; the children are nodes 1 and 2. -/
