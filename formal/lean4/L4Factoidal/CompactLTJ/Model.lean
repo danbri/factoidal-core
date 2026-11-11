@@ -75,7 +75,7 @@ def localDomain (db : List Triple) (a : Atom) (v : Variable)
 /-- Actual set intersection, intentionally expressed with lists so that its
 correctness proof does not depend on a physical index. -/
 def intersect (xs ys : List TermId) : List TermId :=
-  xs.filter (fun x => x ∈ ys)
+  xs.filter (fun x => decide (x ∈ ys))
 
 theorem mem_intersect_iff (xs ys : List TermId) (x : TermId) :
     x ∈ intersect xs ys ↔ x ∈ xs ∧ x ∈ ys := by
