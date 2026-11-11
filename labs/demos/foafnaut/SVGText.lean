@@ -594,32 +594,49 @@ def glyphAdmitted (contours : List NativeSVGPath.Contour) : Bool :=
 
 /-- Words that SVG text has shaped, by the fonts' SHA-256 values, the text and the pixel
 size: a layout at another width, or the same labels again, does not shape them again.
-Emptied above `keptWordsLimit` entries. -/
-initialize keptWordsRef : IO.Ref (Std.HashMap (List String × String × Nat) L4Factoidal.Rendering.FontProvider.Word) ← IO.mkRef {}
+The engine keeps the table (`WebDocument.Kept.words`; issue 390): lowering looks words up
+there and in what it made so far, and gives back what it made. Emptied above
+`keptWordsLimit` entries. -/
+abbrev Words := Std.HashMap (List String × String × Nat) L4Factoidal.Rendering.FontProvider.Word
 def keptWordsLimit : Nat := 8192
 
-set_option compiler.extract_closed false in
-private unsafe def wordKeptImpl (fonts : Array Font) (text : String) (px : Nat) :
-    Except String L4Factoidal.Rendering.FontProvider.Word :=
-  unsafeBaseIO do
-    let key := (fonts.toList.map (·.sha256),text,px)
-    if let some word := (← keptWordsRef.get).get? key then return .ok word
-    let made := L4Factoidal.Rendering.SfntProfile.wordIn fonts text px
-    if let .ok word := made then
-      keptWordsRef.modify fun m => (if m.size > keptWordsLimit then {} else m).insert key word
-    return made
+/-- `SfntProfile.wordIn fonts text px`: the word of `kept` or `made` under its key, or a new
+one, which goes into `made`. -/
+def wordIn (kept made : Words) (fonts : Array Font) (text : String) (px : Nat) :
+    Except String L4Factoidal.Rendering.FontProvider.Word × Words :=
+  let key := (fonts.toList.map (·.sha256),text,px)
+  match kept[key]? with
+  | some word => (.ok word,made)
+  | none => match made[key]? with
+    | some word => (.ok word,made)
+    | none =>
+      let r := L4Factoidal.Rendering.SfntProfile.wordIn fonts text px
+      match r with
+      | .ok word => (r,made.insert key word)
+      | .error _ => (r,made)
 
-/-- `SfntProfile.wordIn`; the engine gives a word shaped before with the same fonts again. -/
-@[implemented_by wordKeptImpl]
-def wordKept (fonts : Array Font) (text : String) (px : Nat) : Except String L4Factoidal.Rendering.FontProvider.Word :=
-  L4Factoidal.Rendering.SfntProfile.wordIn fonts text px
+/-- A table is valid for `fonts` when each word under their SHA-256 values is theirs. -/
+def WordsValid (fonts : Array Font) (words : Words) : Prop :=
+  ∀ text px word, words[(fonts.toList.map (·.sha256),text,px)]? = some word →
+    L4Factoidal.Rendering.SfntProfile.wordIn fonts text px = .ok word
 
-theorem wordKept_eq (fonts : Array Font) (text : String) (px : Nat) :
-    wordKept fonts text px = L4Factoidal.Rendering.SfntProfile.wordIn fonts text px := rfl
+/-- Refinement: from tables valid for `fonts`, `wordIn` gives `SfntProfile.wordIn`. -/
+theorem wordIn_eq (kept made : Words) (fonts : Array Font) (vk : WordsValid fonts kept) (vm : WordsValid fonts made)
+    (text : String) (px : Nat) :
+    (wordIn kept made fonts text px).1 = L4Factoidal.Rendering.SfntProfile.wordIn fonts text px := by
+  unfold wordIn
+  dsimp only
+  split
+  · next w h => exact (vk text px w h).symm
+  · split
+    · next w h => exact (vm text px w h).symm
+    · split <;> rfl
 
 /-- Shape each run with the held fonts. A run that does not shape is logged and not
     drawn; the rest of the text is. -/
-def shapeRuns (fonts : Array Font) (runs : Array Run) : Array GlyphCell × Array Nat × List String := Id.run do
+def shapeRuns (fonts : Array Font) (kept made : Words) (runs : Array Run) :
+    Array GlyphCell × Array Nat × List String × Words := Id.run do
+  let mut made := made
   let mut cells : Array GlyphCell := #[]
   let mut starts : Array Nat := #[]
   let mut log : List String := []
@@ -632,7 +649,9 @@ def shapeRuns (fonts : Array Font) (runs : Array Run) : Array GlyphCell × Array
       let px := min 512 (max 1 run.size.round.toUInt32.toNat)
       -- SVG text draws outlines: colour glyphs (COLR) have none, so their fonts are left
       -- out and an emoji comes from an outline font, Noto Emoji when held (issue 1276).
-      match wordKept ((familyOrder fonts run.family).filter (·.colour.isNone)) run.text px with
+      let (r,m) := wordIn kept made ((familyOrder fonts run.family).filter (·.colour.isNone)) run.text px
+      made := m
+      match r with
       | .error e => log := log ++ [s!"text run not shaped: {e}"]
       | .ok word =>
         let scale := run.size/word.unitsPerEm
@@ -646,7 +665,7 @@ def shapeRuns (fonts : Array Font) (runs : Array Run) : Array GlyphCell × Array
           last := some g.clusterStart
           pen := pen+g.advance
     start := start+n
-  return (cells,starts,log)
+  return (cells,starts,log,made)
 
 /-- Move the glyphs of a text chunk by its anchor (SVG 1.1 §10.9.1). -/
 def anchorChunk (spots : Array Spot) (chunk : Array Nat) (width : Float) (anchor : String) : Array Spot × Float :=
@@ -665,9 +684,9 @@ def listAt (outer inner : List Float) (c idx : Nat) : Option Float :=
     `numeric`, each glyph that `glyphAdmitted` accepts goes to the end of `table` and its
     path names it (`NativeSVG.glyphAttribute`) in place of path data text. -/
 def lowerSfntWith (fonts : Array Font) (lookup : String → Option NamespaceNode) (numeric : Bool)
-    (table : NativeSVG.GlyphTable) (state : TextState)
+    (kept : Words) (made : Words) (table : NativeSVG.GlyphTable) (state : TextState)
     (attrs : List NamespaceAttribute) (children : List NamespaceNode) :
-    NamespaceNode × List String × NativeSVG.GlyphTable := Id.run do
+    NamespaceNode × List String × NativeSVG.GlyphTable × Words := Id.run do
   let mut table := table
   let attrs := expandStyle (renameId attrs)
   let children := children.map (expandStyleTree maxDepth)
@@ -679,7 +698,7 @@ def lowerSfntWith (fonts : Array Font) (lookup : String → Option NamespaceNode
   if runs.any (fun r => (r.onPath.map (·.method)) == some "stretch") then
     log := log ++ ["textPath: method stretch drawn as align"]
   let chars := (runs.toList.flatMap (·.text.toList)).toArray
-  let (cells,starts,shapeLog) := shapeRuns fonts runs
+  let (cells,starts,shapeLog,made) := shapeRuns fonts kept made runs
   log := log ++ shapeLog
   let xs := numberList attrs "x"
   let ys := numberList attrs "y"
@@ -821,12 +840,12 @@ def lowerSfntWith (fonts : Array Font) (lookup : String → Option NamespaceNode
   let marked := match box with
     | none => groups.toList
     | some box => groups.toList.map (markGlyphs box)
-  return (svgElement "g" (ids ++ outer) marked,log,table)
+  return (svgElement "g" (ids ++ outer) marked,log,table,made)
 
 /-- `lowerSfntWith` with path data text for each glyph. -/
 def lowerSfnt (fonts : Array Font) (lookup : String → Option NamespaceNode) (state : TextState)
     (attrs : List NamespaceAttribute) (children : List NamespaceNode) : NamespaceNode × List String :=
-  let (node,log,_) := lowerSfntWith fonts lookup false #[] state attrs children
+  let (node,log,_) := lowerSfntWith fonts lookup false {} {} #[] state attrs children
   (node,log)
 
 /-! ### Text in an HTML document -/
@@ -853,28 +872,28 @@ def idIndex (root : NamespaceNode) : Std.HashMap String NamespaceNode := Id.run 
     and lose their text properties, after these are read into the state. With no
     font held, a `text` draws nothing and is logged. The depth is that of the tree,
     at most `fuel`. -/
-def lowerTreeWith (fonts : Array Font) (lookup : String → Option NamespaceNode) (numeric : Bool) :
-    Nat → TextState → NativeSVG.GlyphTable → NamespaceNode → NamespaceNode × List String × NativeSVG.GlyphTable
-  | 0,_,table,node => (node,[],table)
-  | _,_,table,node@(.other _) => (node,[],table)
-  | fuel+1,state,table,.element name attrs children =>
+def lowerTreeWith (fonts : Array Font) (lookup : String → Option NamespaceNode) (numeric : Bool) (kept : Words) :
+    Nat → TextState → NativeSVG.GlyphTable × Words → NamespaceNode → NamespaceNode × List String × NativeSVG.GlyphTable × Words
+  | 0,_,(table,made),node => (node,[],table,made)
+  | _,_,(table,made),node@(.other _) => (node,[],table,made)
+  | fuel+1,state,(table,made),.element name attrs children =>
     if name.namespace_ == some svgURI && name.localPart == "text" then
       if fonts.isEmpty then
         (svgElement "g" (attrs.filter (fun a => a.name.namespace_.isNone && a.name.localPart == "id")) [],
-          ["text: no font is held"],table)
-      else lowerSfntWith fonts lookup numeric table state attrs children
+          ["text: no font is held"],table,made)
+      else lowerSfntWith fonts lookup numeric kept made table state attrs children
     else
       let svg := name.namespace_ == some svgURI
       let inner := if svg then state.read (expandStyle attrs) else state
-      let (kids,log,table) := children.foldl (fun (acc : Array NamespaceNode × Array String × NativeSVG.GlyphTable) child =>
-        let (node,more,table) := lowerTreeWith fonts lookup numeric fuel inner acc.2.2 child
-        (acc.1.push node,acc.2.1 ++ more.toArray,table)) (#[],#[],table)
-      (.element name (if svg then stripTextProperties attrs else attrs) kids.toList,log.toList,table)
+      let (kids,log,table,made) := children.foldl (fun (acc : Array NamespaceNode × Array String × NativeSVG.GlyphTable × Words) child =>
+        let (node,more,table,made) := lowerTreeWith fonts lookup numeric kept fuel inner (acc.2.2.1,acc.2.2.2) child
+        (acc.1.push node,acc.2.1 ++ more.toArray,table,made)) (#[],#[],table,made)
+      (.element name (if svg then stripTextProperties attrs else attrs) kids.toList,log.toList,table,made)
 
 /-- `lowerTreeWith` with path data text for each glyph. -/
 def lowerTree (fonts : Array Font) (lookup : String → Option NamespaceNode) (fuel : Nat) (state : TextState)
     (node : NamespaceNode) : NamespaceNode × List String :=
-  let (node,log,_) := lowerTreeWith fonts lookup false fuel state #[] node
+  let (node,log,_) := lowerTreeWith fonts lookup false {} fuel state (#[],{}) node
   (node,log)
 
 /-- Depth limit of `lowerDocument`: deeper content stays as it is. -/
@@ -885,11 +904,18 @@ def lowerDocument (fonts : Array Font) (root : NamespaceNode) : NamespaceNode ×
   let index := idIndex root
   lowerTree fonts index.get? maxTreeDepth {} root
 
+/-- `lowerDocumentGlyphs` with the words of `kept`; it also gives back the words it shaped
+that `kept` lacks. -/
+def lowerDocumentGlyphsIn (kept : Words) (fonts : Array Font) (root : NamespaceNode) :
+    NamespaceNode × List String × NativeSVG.GlyphTable × Words :=
+  let index := idIndex root
+  lowerTreeWith fonts index.get? true kept maxTreeDepth {} (#[],{}) root
+
 /-- `lowerDocument` with glyph outlines as numbers: the glyph paths name entries of the
     table, which the reader takes (`NativeSVG.parseRootInContextSized`, argument `glyphs`). -/
 def lowerDocumentGlyphs (fonts : Array Font) (root : NamespaceNode) :
     NamespaceNode × List String × NativeSVG.GlyphTable :=
-  let index := idIndex root
-  lowerTreeWith fonts index.get? true maxTreeDepth {} #[] root
+  let (node,log,table,_) := lowerDocumentGlyphsIn {} fonts root
+  (node,log,table)
 
 end NativeSVGText

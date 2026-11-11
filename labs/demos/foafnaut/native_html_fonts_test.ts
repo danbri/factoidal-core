@@ -234,6 +234,46 @@ async function nativeHostDraws(nativeEngine?:string){
 Deno.test("the native host draws Arabic, Hebrew, Devanagari, Thai and Han with no .notdef (Wasm worker)",()=>nativeHostDraws());
 Deno.test({name:"the native host draws Arabic, Hebrew, Devanagari, Thai and Han with no .notdef (native library worker)",ignore:noLibrary,fn:()=>nativeHostDraws(library)});
 
+// Arabic joining on the writing page (pages/showcase-scripts.html): each word's glyphs are the
+// joined forms HarfBuzz chooses with the same font (hb-shape 15.0.0, NotoSansArabic-Regular.ttf,
+// left to right as drawn): .init, .medi and .fina forms, the rlig lam-alef, the dots as marks.
+// A change in GSUB coverage, joining or bidi shows here as other glyph ids.
+const arabicJoined:Record<string,number[]>={
+  "مرحبا":[9,316,16,27,31,79],     // uni0627.fina dotbelowar uni066E.medi uni062D.init uni0631.fina uni0645.init
+  "بالعالم":[77,72,9,48,72,9,316,19],
+  "سلام":[74,11,71,37],              // uni0645 uni0627.fina.rlig.2 uni0644.medi.rlig uni0633.init
+  "السعر":[31,48,36,72,8],
+  "دينار":[30,9,282,16,318,21,28],
+};
+// As the owner's window met it (2026-11-10, release 8d23d6626): a first page with a math
+// symbol, so Noto Sans Math is held before Noto Sans Arabic; then the writing page in a
+// window 819 points wide on a 2x display (1638 device pixels, text zoom 400, zoom unit 200).
+// Noto Sans Math has the Arabic letters but no Arabic joining forms: the letters came from it,
+// unjoined (SfntProfile.firstFont now takes a font whose GSUB names the script). And the
+// table was wider than the window, so the right-aligned Arabic and Hebrew lines were cut off
+// at its right edge: the Japanese sample was one unbreakable word (Layout.wordPieces now cuts
+// it between its characters). Chrome draws the row joined and inside its cell.
+async function arabicJoins(nativeEngine?:string){
+  const client=await startCompileWorker({path:sans,family:"Noto Sans"},nativeEngine);
+  try{
+    setFontHost(async source=>{await client.pageFonts(source);});
+    const compile=async(url:string,html:string,options:Record<string,unknown>)=>
+      await (await prepareHTML(client.engine as unknown as PageEngine,url,undefined,html)).compile(1638,1394,{checks:false,...options} as Record<string,unknown>) as unknown as HTMLArtifact;
+    await compile("file:///math.html","<!doctype html><p>A math symbol first: \u{1D538}</p>",{});
+    const file=new URL("./pages/showcase-scripts.html",import.meta.url);
+    const scene=await compile(file.href,await Deno.readTextFile(file),{textScalePercent:400,zoomUnit:200});
+    const runs=scene.webRender.glyphRuns as {text:string;glyphs:number[][]}[];
+    const drawn:Record<string,number[]>={};
+    for(const run of runs)if(run.text in arabicJoined)drawn[run.text]=run.glyphs.map(g=>g[0]);
+    assert.deepEqual(drawn,arabicJoined);
+    // Every glyph of the page lies inside the window: [id, x, y, advance, ...] in device pixels.
+    const outside=runs.flatMap(run=>run.glyphs.filter(g=>g[1]<0||g[1]+g[3]>1638+0.5).map(()=>run.text));
+    assert.deepEqual([...new Set(outside)],[]);
+  }finally{setFontHost(undefined);client.terminate();}
+}
+Deno.test("Arabic on the writing page draws HarfBuzz's joined forms (Wasm worker)",()=>arabicJoins());
+Deno.test({name:"Arabic on the writing page draws HarfBuzz's joined forms (native library worker)",ignore:noLibrary,fn:()=>arabicJoins(library)});
+
 // What each page costs: a Latin page reads nothing, not even the table module; a page with
 // a character Noto Sans has reads the table only; a script outside CJK loads its font with
 // no coverage file; Han reads the coverage file once; held fonts are not asked for again.

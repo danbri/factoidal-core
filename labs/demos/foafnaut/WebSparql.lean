@@ -5,6 +5,7 @@ import L4Factoidal.Planner.Kinds.Memory
 import L4Factoidal.Planner.FromQuery
 import L4Factoidal.Syntax.Turtle
 import L4Factoidal.RDF.Pretty
+import WebWasm
 import L4Factoidal.JSON.Parser
 import L4Factoidal.JSON.Serialize
 
@@ -58,20 +59,10 @@ open L4Factoidal.SPARQL
 open L4Factoidal.SPARQL.StorePlan
 open L4Factoidal.SPARQL.StoreBackend
 
-/-! ## Time -/
+/-! ## Time
 
-private unsafe def timedImpl {α : Type} (f : Unit → α) : α × Nat :=
-  let timing : IO (α × Nat) := do
-    let t0 ← IO.monoNanosNow
-    let r ← IO.lazyPure f
-    let t1 ← IO.monoNanosNow
-    pure (r, t1 - t0)
-  match unsafeIO timing with
-  | .ok r => r
-  | .error _ => (f (), 0)
-
-/-- `f ()` and the nanoseconds it took on the host clock. The logical model has time 0. -/
-@[implemented_by timedImpl] def timed {α : Type} (f : Unit → α) : α × Nat := (f (), 0)
+`WebWasm.timed`: the host clock in `BaseIO`, 0 in `Id` (issue 390). -/
+open WebWasm (Machine timed)
 
 /-! ## The built-in dataset -/
 
@@ -209,11 +200,11 @@ def evalPattern (c : Ctx) (p : QueryPattern) : SolutionSeq :=
 def push (ops : Array Op) (op : Op) : Array Op × Nat := (ops.push op, ops.size)
 
 /-- An operator whose rows are the rows of its own sub-pattern. -/
-def patternOp (c : Ctx) (p : QueryPattern) (op : Op) (ops : Array Op) : Array Op × Nat :=
+def patternOp {M : Type → Type} [Monad M] [WebWasm.Machine M] (c : Ctx) (p : QueryPattern) (op : Op) (ops : Array Op) : M (Array Op × Nat) := do
   if c.run then
-    let (rows, ns) := timed fun _ => evalPattern c p
-    push ops { op with actual := some rows.length, ns := ns, sample := rows.take sampleSize }
-  else push ops op
+    let (rows, ns) ← timed fun _ => evalPattern c p
+    return push ops { op with actual := some rows.length, ns := ns, sample := rows.take sampleSize }
+  else return push ops op
 
 /-- The hash key a join of `l` and `r` uses, as `hashJoin` chooses it. -/
 def keyWhy (c : Ctx) (what : String) (l r : QueryPattern) : String :=
@@ -251,16 +242,16 @@ def levelStep (gb : GraphBackend) (b : Bgp) (frontier : List (Binding × Bgp)) :
   (out.reverse, ch, est)
 
 /-- The store planner's run of `b`, depth by depth. -/
-def traceBgp (gb : GraphBackend) (b : Bgp) : List Level :=
-  let (_, levels) := (List.range b.length).foldl (fun (frontier, acc) _ =>
-    let ((next, ch, est), ns) := timed fun _ => levelStep gb b frontier
-    (next, { chosen := ch, est := est, rows := next.map Prod.fst, ns := ns } :: acc))
+def traceBgp {M : Type → Type} [Monad M] [WebWasm.Machine M] (gb : GraphBackend) (b : Bgp) : M (List Level) := do
+  let (_, levels) ← (List.range b.length).foldlM (fun (frontier, acc) _ => do
+    let ((next, ch, est), ns) ← timed fun _ => levelStep gb b frontier
+    return (next, { chosen := ch, est := est, rows := next.map Prod.fst, ns := ns } :: acc))
     ([(Binding.empty, b)], [])
-  levels.reverse
+  return levels.reverse
 
 /-- The rows of the store planner's run: the rows of its last depth. -/
 def traceRows (gb : GraphBackend) (b : Bgp) : SolutionSeq :=
-  match (traceBgp gb b).getLast? with
+  match (Id.run (traceBgp gb b)).getLast? with
   | some l => l.rows
   | none => [Binding.empty]
 
@@ -287,11 +278,11 @@ def levelLabel (b : Bgp) (l : Level) : String :=
   | [] => "no row"
 
 /-- The steps of a BGP, each the input of the next, then the BGP itself. -/
-def bgpOps (c : Ctx) (p : QueryPattern) (b : Bgp) (ops : Array Op) : Array Op × Nat :=
+def bgpOps {M : Type → Type} [Monad M] [WebWasm.Machine M] (c : Ctx) (p : QueryPattern) (b : Bgp) (ops : Array Op) : M (Array Op × Nat) := do
   let gb := GraphBackend.list c.g
   let label := s!"BGP, {b.length} pattern" ++ (if b.length == 1 then "" else "s")
-  if !c.run || b.isEmpty then patternOp c p { kind := "bgp", label := label } ops else
-  let levels := traceBgp gb b
+  if !c.run || b.isEmpty then return ← patternOp c p { kind := "bgp", label := label } ops
+  let levels ← traceBgp gb b
   let (ops, last, _, _) := levels.foldl (fun (ops, prev, d, inRows) l =>
     let op : Op := { kind := if d == 0 then "scan" else "probe", label := levelLabel b l,
                      why := levelWhy gb b d l inRows, children := prev.toList,
@@ -305,48 +296,48 @@ def bgpOps (c : Ctx) (p : QueryPattern) (b : Bgp) (ops : Array Op) : Array Op ×
 
 /-! ### The query pattern -/
 
-def leafOp (c : Ctx) (p : QueryPattern) (kind label why : String) (ops : Array Op) : Array Op × Nat :=
+def leafOp {M : Type → Type} [Monad M] [WebWasm.Machine M] (c : Ctx) (p : QueryPattern) (kind label why : String) (ops : Array Op) : M (Array Op × Nat) :=
   patternOp c p { kind := kind, label := label, why := why } ops
 
 /-- The operators of a query pattern, children first. `n` bounds the depth walked. -/
-def walk (c : Ctx) : Nat → QueryPattern → Array Op → Array Op × Nat
+def walk {M : Type → Type} [Monad M] [WebWasm.Machine M] (c : Ctx) : Nat → QueryPattern → Array Op → M (Array Op × Nat)
   | 0, p, ops => leafOp c p "pattern" "pattern nested too deep to show" "" ops
-  | n + 1, p, ops =>
+  | n + 1, p, ops => do
     match p with
     | .bgp b => bgpOps c p b ops
     | .join l r =>
-      let (ops, a) := walk c n l ops
-      let (ops, b) := walk c n r ops
+      let (ops, a) ← walk c n l ops
+      let (ops, b) ← walk c n r ops
       patternOp c p { kind := "join", label := "Join", why := keyWhy c "Join" l r, children := [a, b] } ops
     | .leftJoin l r e =>
-      let (ops, a) := walk c n l ops
-      let (ops, b) := walk c n r ops
+      let (ops, a) ← walk c n l ops
+      let (ops, b) ← walk c n r ops
       let cond := match e with | .boolLit true => "" | _ => " FILTER " ++ exprShort 6 e
       patternOp c p
         { kind := "leftjoin", label := "LeftJoin (OPTIONAL)" ++ cond,
           why := keyWhy c "OPTIONAL keeps each left row, extended where the right side matches" l r, children := [a, b] } ops
     | .filter e q =>
-      let (ops, a) := walk c n q ops
+      let (ops, a) ← walk c n q ops
       patternOp c p
         { kind := "filter", label := "Filter " ++ exprShort 6 e,
           why := "Keeps the rows whose condition has the effective boolean value true (SPARQL 1.1 section 17.2.2).", children := [a] } ops
     | .union l r =>
-      let (ops, a) := walk c n l ops
-      let (ops, b) := walk c n r ops
+      let (ops, a) ← walk c n l ops
+      let (ops, b) ← walk c n r ops
       patternOp c p { kind := "union", label := "Union", why := "The rows of the left side, then the rows of the right side.", children := [a, b] } ops
     | .minus l r =>
-      let (ops, a) := walk c n l ops
-      let (ops, b) := walk c n r ops
+      let (ops, a) ← walk c n l ops
+      let (ops, b) ← walk c n r ops
       patternOp c p { kind := "minus", label := "Minus", why := keyWhy c "Minus" l r, children := [a, b] } ops
     | .graph g q =>
-      let (ops, a) := walk c n q ops
+      let (ops, a) ← walk c n q ops
       patternOp c p { kind := "graph", label := "Graph " ++ ptShort g, children := [a] } ops
     | .lateral l r =>
-      let (ops, a) := walk c n l ops
-      let (ops, b) := walk c n r ops
+      let (ops, a) ← walk c n l ops
+      let (ops, b) ← walk c n r ops
       patternOp c p { kind := "join", label := "Lateral", why := "The right side runs once for each left row.", children := [a, b] } ops
     | .bind e v q =>
-      let (ops, a) := walk c n q ops
+      let (ops, a) ← walk c n q ops
       patternOp c p { kind := "extend", label := s!"Extend ?{v} := {exprShort 6 e}", children := [a] } ops
     | .values vs rows => leafOp c p "values" s!"Values {varsText vs}, {rows.length} rows" "Inline data." ops
     | .service i _ _ => leafOp c p "service" ("Service " ++ termShort (.iri i)) "No endpoint is registered on this page, so a SERVICE call fails." ops
@@ -516,7 +507,7 @@ def datasetOf (request : JSON.Json) : Except String Graph := do
 
 def maxQueryChars : Nat := 8192
 
-def explain (text : String) (g : Graph) (run : Bool := true) : Except String Explained := do
+def explainIn {M : Type → Type} [Monad M] [WebWasm.Machine M] (text : String) (g : Graph) (run : Bool := true) : ExceptT String M Explained := do
   if text.length > maxQueryChars then throw s!"the query has more than {maxQueryChars} characters"
   let q ← match parseSparql text (some foafBase) with
     | .ok q => pure q
@@ -524,7 +515,7 @@ def explain (text : String) (g : Graph) (run : Bool := true) : Except String Exp
   let ds : Dataset := { default := g, named := [] }
   let c : Ctx := { env := { dataset := some ds, base := some foafBase }, ds := ds, g := g, run := run }
   let pattern := q.pattern.rewriteBnodes
-  let ((vars, rows, answer), ns) := timed fun _ =>
+  let ((vars, rows, answer), ns) ← timed fun _ =>
     if !run then (([] : List VarName), ([] : SolutionSeq), "not run") else
     match q.form with
     | .select _ =>
@@ -533,13 +524,17 @@ def explain (text : String) (g : Graph) (run : Bool := true) : Except String Exp
     | .ask => ([], [], if evalAsk c.env ds q then "true" else "false")
     | .construct _ => ([], [], s!"{(evalConstruct c.env ds q).length} triples")
     | .describe _ => ([], [], s!"{(evalDescribe c.env ds q).length} triples")
-  let (ops, root) := walk c walkDepth pattern #[]
+  let (ops, root) ← walk c walkDepth pattern #[]
   let isSelect := match q.form with | .select _ => true | _ => false
   let (ops, _) := if isSelect then modifierOps c q root (if run then some rows else none) ops else (ops, root)
   let bgpIdx := (List.range ops.size).filter (fun i => (ops[i]?.map (·.kind)).getD "" == "bgp")
   let caps := (bgpIdx.zip (bgpsOf walkDepth pattern)).map (fun (i, b) => capPlan c i b)
   return { query := q, pattern := pattern, ops := ops, caps := caps,
            wholeQuery := (Planner.Requirement.ofQuery? q).isSome, vars := vars, rows := rows, answer := answer, ns := ns }
+
+/-- `explainIn` in the logical model: every time is 0. -/
+def explain (text : String) (g : Graph) (run : Bool := true) : Except String Explained :=
+  Id.run (explainIn text g run).run
 
 /-! ## JSON -/
 
@@ -848,12 +843,12 @@ def intro : String :=
   "Every number below comes from the engine's own functions, run now.</p>"
 
 /-- The page for `argument`, the part of the address after `foafnaut:sparql/`. -/
-def page (argument : String) (g : Graph) : String × String × String :=
+def page {M : Type → Type} [Monad M] [WebWasm.Machine M] (argument : String) (g : Graph) : M (String × String × String) := do
   let query := (param argument "q").getD (if argument.isEmpty || argument.contains '=' then defaultQuery else decode argument)
   let step := (param argument "step").bind String.toNat?
-  match explain query g with
+  match ← (explainIn query g).run with
   | .error e =>
-    (pageHead "SPARQL planner" ++ intro ++ exampleLinks ++ "<h2>Query</h2>" ++ queryBox query ++
+    return (pageHead "SPARQL planner" ++ intro ++ exampleLinks ++ "<h2>Query</h2>" ++ queryBox query ++
       s!"<p class=\"bad\">{escape e}</p></body></html>", "SPARQL planner", pageURL query none)
   | .ok ex =>
     let n := ex.ops.size
@@ -876,7 +871,7 @@ def page (argument : String) (g : Graph) : String × String × String :=
       "<h2>Capability planner</h2>" ++ capTable ex.ops ex.caps ex.wholeQuery ++
       "<p class=\"dim\">Data: a synthetic FOAF sample of " ++ toString g.length ++ " triples (people, names, ages, mailboxes, foaf:knows). " ++
       "Times include the operator's inputs. Not shown: per-operator times of the modifiers, and SERVICE (no endpoint is registered).</p>"
-    (pageHead "SPARQL planner" ++ body ++ "</body></html>", "SPARQL planner", nextURL query step n)
+    return (pageHead "SPARQL planner" ++ body ++ "</body></html>", "SPARQL planner", nextURL query step n)
 
 def info : String :=
   (JSON.Json.object [("engine", .string "Factoidal SPARQL"),
@@ -888,16 +883,16 @@ def str (j : JSON.Json) (key : String) : String :=
   match j.field? key with | some (.string s) => s | _ => ""
 
 /-- The ops of this module, or `none` for another op. -/
-def op (name : String) (request : JSON.Json) : Except String (Option String) := do
+def op {M : Type → Type} [Monad M] [WebWasm.Machine M] (name : String) (request : JSON.Json) : ExceptT String M (Option String) := do
   if name == "sparqlInfo" then return some info
   if name == "sparqlExplain" then
     let g ← datasetOf request
     let run := match request.field? "run" with | some (.bool false) => false | _ => true
-    let e ← explain (str request "query") g run
+    let e ← explainIn (str request "query") g run
     return some (explainJSON e)
   if name == "sparqlPage" then
     let g ← datasetOf request
-    let (source, title, next) := page (str request "argument") g
+    let (source, title, next) ← page (str request "argument") g
     return some (JSON.Json.object [("source", .string source), ("title", .string title), ("next", .string next)]).toString
   return none
 

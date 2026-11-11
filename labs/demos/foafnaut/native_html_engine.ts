@@ -80,7 +80,10 @@ export type ScriptTurn = {session:number;clock:number;changed:boolean;commandCou
   logs:string[];errors:string[];timers:number;nextTimer:number|null;frames:number;nextWake:number|null;quiet:boolean;
   instructions:number;jobs:number;tasks:number;ns:number;
   /** Lean-validated page GPU commands of this turn (L4Factoidal.PageGpu) and their page session. */
-  gpu?:unknown[];gpuPage?:number};
+  gpu?:unknown[];gpuPage?:number;
+  /** BubblePopJS dedicated workers: how many the page has, and the scripts they wait for
+   * (answered with the action `fetched`; docs/designissues/2026-11-09-dedicated-workers.md). */
+  workers?:number;fetches?:{id:number;url:string;kind:string}[]};
 type Module = {ccall(name:string,result:string|null,types:string[],values:unknown[]):number;
   UTF8ToString(pointer:number):string;HEAPU8:Uint8Array;_malloc?(size:number):number;_free?(pointer:number):void};
 const encoder = new TextEncoder();

@@ -374,6 +374,7 @@ def lwsSolidOpNames : List String :=
   , "lwsDirLock"
   , "lwsAtRestNotice"
   , "lwsStorageKeyNew"
+  , "lwsAclReset"
   , "solidOpen"
   , "solidStep"
   , "solidClose"
@@ -748,6 +749,8 @@ def callIOUncoded (op : String) (argsJson : String) : IO String :=
   | "lwsDelivered"     => withArgs (arityIO2 op Ops.lwsDelivered)
   | "lwsFlush"         => withArgs (arityIO2 op Ops.lwsFlush)
   | "lwsEgress"        => withArgs (arityIO2 op Ops.lwsEgress)
+  -- The offline operator recovery of the root ACL (`factoidal lws-acl-reset`).
+  | "lwsAclReset"      => withArgs (arityIO2 op Ops.lwsAclReset)
   -- One writing process per storage directory and the encryption-at-rest
   -- notice (https://github.com/danbri/factoidal/issues/1135): pure.
   | "lwsDirLock"       => withArgs (fun args =>

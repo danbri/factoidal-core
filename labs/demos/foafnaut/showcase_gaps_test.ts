@@ -95,8 +95,14 @@ Deno.test("issue 1273: text-align right moves the text to the right",()=>{
 });
 
 Deno.test("expected failure, issue 1274: Hebrew, Arabic, Devanagari, Thai and CJK draw as .notdef",()=>{
+  // CJK and Hangul break between characters (UAX #14), so 你好 and 안녕 are one run per character.
+  const textIds=(text:string)=>{
+    const parts=runs(`<p>${text}</p>`).filter(r=>r.text!==""&&text.includes(r.text));
+    assert.equal(parts.map(r=>r.text).join("").length,text.length,`no glyph runs for ${text}`);
+    return parts.flatMap(ids);
+  };
   for(const text of ["שלום","مرحبا","नमस्ते","สวัสดี","你好","안녕"])
-    assert.ok(ids(run(`<p>${text}</p>`,text)).every(id=>id===0),stillGap("1274")+` (${text})`);
+    assert.ok(textIds(text).every(id=>id===0),stillGap("1274")+` (${text})`);
   // Latin, Greek and Cyrillic are in the font.
   for(const text of ["Ångström","Καλημέρα","Привет"])
     assert.ok(ids(run(`<p>${text}</p>`,text)).every(id=>id!==0),text);

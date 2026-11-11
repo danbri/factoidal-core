@@ -72,6 +72,35 @@ for(const bubble of [true,false])Deno.test({
   fn:async()=>exercise(await loadHTML(),bubble),
 });
 
+for(const native of [true,false])Deno.test({
+  name:`console-created workers retain their state and deliver messages (${native?"native":"Wasm"})`,
+  ignore:!exists(native?library:wasm),
+  fn:async()=>{
+    const engine=await loadHTML(native?library:undefined);
+    const {session}=engine.scriptSession("<!doctype html><p>Workers</p>",
+      {action:"start",url:"https://example.test/console",resources:[],engine:"bubblepop",instructionsPerMs:1e12});
+    const run=(expression:string)=>engine.scriptSession("",{action:"evaluate",session,expression});
+    const made=run("var cw=new Worker('console-worker.js'); cw.onmessage=function(e){console.log('reply '+e.data)}; 'created'");
+    assert.deepEqual(made.evaluation,{text:"created",exception:false});
+    assert.equal(made.workers,1);
+    assert.equal(made.fetches?.length,1);
+    assert.equal(made.fetches?.[0].url,"https://example.test/console-worker.js");
+    const fetch=made.fetches![0];
+    engine.scriptSession("",{action:"fetched",session,results:[{id:fetch.id,status:200,url:fetch.url,
+      contentType:"text/javascript",source:"onmessage=function(e){postMessage(e.data+1)}"}]});
+    assert.throws(()=>run(" ".repeat(65537)),/at most 64 KiB/);
+    const sent=run("cw.postMessage(41); 'sent'");
+    assert.deepEqual(sent.evaluation,{text:"sent",exception:false});
+    const delivered=engine.scriptSession("",{action:"turn",session});
+    assert.deepEqual([...sent.logs,...delivered.logs],["reply 42"]);
+    assert.equal(delivered.workers,1);
+    const stopped=run("cw.terminate(); 'stopped'");
+    assert.deepEqual(stopped.evaluation,{text:"stopped",exception:false});
+    assert.equal(stopped.workers??0,0);
+    engine.scriptSession("",{action:"close"});
+  },
+});
+
 // The AOT transport uses a real guest WebAssembly instance. Only its imports, memory
 // copies and named export calls happen here; evaluation and page semantics stay in Lean.
 Deno.test({name:"console evaluation survives the QuickJS AOT ask/resume transport",ignore:!exists(library)||!exists(guest),fn:async()=>{

@@ -8,7 +8,7 @@
   "license": "Apache-2.0",
   "author": "Dan Brickley <danbri@danbri.org>",
   "repository": { "type": "git", "url": "git+https://github.com/danbri/factoidal.git", "directory": "npm/textnaut" },
-  "bin": { "textnaut": "./bin/textnaut.mjs" },
+  "bin": { "textnaut": "bin/textnaut.mjs" },
   "type": "module",
   "files": [
     "bin/",
