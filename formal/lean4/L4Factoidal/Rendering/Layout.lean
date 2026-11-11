@@ -2,6 +2,7 @@ import L4Factoidal.Rendering.Style
 import L4Factoidal.Rendering.FontFace
 import L4Factoidal.Rendering.TableLayout
 import L4Factoidal.Unicode.ScriptDirection
+import L4Factoidal.Unicode.LineBreak
 
 /-! Block flow and inline word wrapping over the existing DOM arena. This
 profile excludes floats, positioning, flex/grid, margin collapse and inline box
@@ -314,6 +315,39 @@ inductive Inline where
   deriving Repr
 instance : Inhabited Inline := ⟨.closeAtomic⟩
 
+/-- A character of the scripts that break between letters with no space between words
+(UAX 14 classes ID, CJ, H2 and H3, and their punctuation): Han, kana, Hangul, CJK
+punctuation, fullwidth forms. -/
+def wideChar (c : Nat) : Bool :=
+  (0x2E80 ≤ c && c ≤ 0x9FFF) || (0xAC00 ≤ c && c ≤ 0xD7AF) || (0xF900 ≤ c && c ≤ 0xFAFF) ||
+  (0xFE30 ≤ c && c ≤ 0xFE4F) || (0xFF00 ≤ c && c ≤ 0xFFEF) || (0x20000 ≤ c && c ≤ 0x3FFFF)
+
+/-- A word cut where UAX 14 lets a line break inside it next to a `wideChar`, so that
+Chinese, Japanese and Korean text wraps between its characters as in a browser (CSS Text 3
+§5.1, `word-break: normal`), and a table cell's narrowest width is a character, not the
+sentence. Each piece with its offset in code points. A word with no `wideChar` is one
+piece, with no UAX 14 pass. -/
+def wordPieces (word : String) : List (Nat × String) :=
+  let cs := word.toList.toArray
+  if !cs.any (fun c => wideChar c.toNat) then [(0, word)] else Id.run do
+    let cuts := (Unicode.LineBreak.breaks cs).filter fun i =>
+      i < cs.size && (wideChar cs[i-1]!.toNat || wideChar cs[i]!.toNat)
+    let mut out : List (Nat × String) := []
+    let mut from_ := 0
+    for i in cuts do
+      out := (from_, String.ofList (cs.extract from_ i).toList) :: out
+      from_ := i
+    out := (from_, String.ofList (cs.extract from_ cs.size).toList) :: out
+    return out.reverse
+
+#guard wordPieces "word-break" == [(0, "word-break")]
+#guard wordPieces "مرحبا" == [(0, "مرحبا")]
+#guard (wordPieces "你好，世界").map (·.2) == ["你", "好，", "世", "界"]
+-- Small kana and the middle dot do not start a line (UAX 14 NS, CJ as NS).
+#guard (wordPieces "こんにちは世界・カタカナ・漢字").map (·.2) ==
+  ["こ", "ん", "に", "ち", "は", "世", "界・", "カ", "タ", "カ", "ナ・", "漢", "字"]
+#guard (wordPieces "Unicode漢字").map (·.1) == [0, 7, 8]
+
 private def textItems (id : Nat) (style : Computed) (text : String) : List Inline := Id.run do
   let mut result : List Inline := []
   let mut word := ""
@@ -325,7 +359,7 @@ private def textItems (id : Nat) (style : Computed) (text : String) : List Inlin
   for c in text.toList do
     if [' ','\n','\r','\t'].contains c || c.toNat == 12 then
       if !word.isEmpty then
-        result := .word id style word start :: result
+        for (off, piece) in wordPieces word do result := .word id style piece (start+off) :: result
         word := ""
       if style.preformatted then
         -- CSS Text 3 §4.1.1 `white-space: pre`: each space and tab stays, and each newline breaks.
@@ -345,7 +379,8 @@ private def textItems (id : Nat) (style : Computed) (text : String) : List Inlin
       spaced := false
       column := column+1
     index := index+1
-  if !word.isEmpty then result := .word id style word start :: result
+  if !word.isEmpty then
+    for (off, piece) in wordPieces word do result := .word id style piece (start+off) :: result
   return result.reverse
 
 /-- What an `img` with no picture shows: its `alt` text in brackets, nothing for

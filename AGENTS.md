@@ -4,6 +4,9 @@ Read [`CLAUDE.md`](CLAUDE.md) and the relevant `skills/<topic>/SKILL.md` before
 working in that area. These instructions apply to every coding agent, not only
 Claude.
 
+Codex and Claude sessions share work through the coordination log and files in `/tmp`:
+see [`skills/codex-claude-interop/SKILL.md`](skills/codex-claude-interop/SKILL.md).
+
 ## Lean 4 working directory
 
 `formal/lean4/` is a self-contained Lake project. Every `lake build`, `lake

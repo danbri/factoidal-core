@@ -1754,6 +1754,9 @@ session.
   selection per subagent. Core rule: for all coding tasks, judge an
   appropriate lower-power model and run it in a subagent; Fable-class
   sessions orchestrate, gate, and design — they don't type the code.
+- [`codex-claude-interop`](skills/codex-claude-interop/SKILL.md) — how Claude
+  sessions and Codex share work: the coordination log, files in `/tmp`, `codex exec` with
+  `< /dev/null`, the brief, and the actions only the owner can do.
 - [`subagent-prompting`](skills/subagent-prompting/SKILL.md) —
   worktree path discipline + post-condition checks.
 - [`workflow-gotchas-debugging`](skills/workflow-gotchas-debugging/SKILL.md)

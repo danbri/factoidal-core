@@ -6,6 +6,7 @@ import {inputURL,loadFontFile,prepareHTML,refusalHTML,setFontHost,setPageDecodin
 import {fallbackFontHost,loadFallbackFonts,mayNeedFallbackFonts,type FallbackFont,type PageFonts} from "./native_html_fonts.ts";
 import type {ScriptPlan,ScriptTurn} from "./native_html_engine.ts";
 import {addEntries,consoleRequest,noteDiagnostics} from "./native_console.ts";
+import {createGpuGuard} from "./gpu_pacing.ts";
 import {loadNativeWindow} from "./native_window.ts";
 import {POINTER_CANCEL,beginPress,movePress,pointerNode,pointerRequest,pressPointers,beforeFirstFrame,type NativePress,type PointerKind,type PresentedState} from "./native_press.ts";
 import {nativePreflight} from "./native_preflight.ts";
@@ -36,7 +37,7 @@ async function main() {
   if(args.includes("--help")){
     console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--shortcut-sweep] [--print-pdf FILE] [--scroll-sweep] [--watch-sweep SECONDS] [--single-frame] [--offscreen] [--check-pixels] [--perf-summary] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts] [--strict | --be-liberal-in-what-we-accept]\nCommand-Q quits; Command-R and R reload; Command-T, Command-W and Shift-Command-T open, close and reopen tabs; Command-1 to 9, Control-Tab and Shift-Command-[ ] change tab; Space, Page Up, Page Down, Home, End and arrows scroll; Escape stops loading; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints; Option-Command-J opens the console tab (foafnaut:console). By default the browser draws a page without what the built-in engine may skip (module scripts, media conditions it can not read, stylesheets not fetched, scripts when they are off, inline SVG it can not draw) and lists each skip in the console; --strict refuses such a page. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
   }
-  let scrollSweep=false,watchSeconds=0;
+  let scrollSweep=false,watchSeconds=0,framesInFlight=1;
   let shotFile:string|undefined;
   let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false;
   while(args.length){const arg=args.shift();
@@ -97,6 +98,8 @@ async function main() {
     // Watch a page that moves by itself (an SVG animation, page script timers) for N seconds
     // after its first frame, then exit: frame times of an animation with no input.
     else if(arg==="--watch-sweep")watchSeconds=Number(args.shift())||5;
+    // GPU submissions that may be in flight (gpu_pacing.ts). 0 lifts the bound: for measurement only.
+    else if(arg==="--gpu-frames-in-flight")framesInFlight=Math.max(0,Math.floor(Number(args.shift())));
     else if(arg==="--scroll-sweep"){commands=Array.from({length:20},()=>[11,-120,0]);scrollSweep=true;}
     // Scroll to the end of the page, then check that the last row of the layout is in the
     // view, and hold the window still for a screenshot (issue 1270 report: long SVG pages).
@@ -347,6 +350,11 @@ async function main() {
   // Frame trace, one JSON line for each event: every number a tool needs to find
   // where the time goes. A pump stall means AppKit held the thread in its own loop.
   let resizeAt:number|undefined,frameNumber=0,waiting=false,waitingSince=0,animationFrames=0;
+  // The heavy-page guard (gpu_pacing.ts): while the GPU time of frames stays high, the next
+  // animation frame and the next page script turn wait until gpuHoldUntil. Input does not wait.
+  const gpuGuard=createGpuGuard();
+  let animationDue=false,gpuHoldUntil=0,quitAt:number|undefined;
+  const gpuSlowedNote="SLOWED: HEAVY PAGE";
   const trace=(type:string,fields:Record<string,unknown>)=>console.log(JSON.stringify({type,t:Math.round(performance.now()),...fields}));
   const ms=(start:number,end:number)=>Math.round((end-start)*10)/10;
   let refusing=0;
@@ -428,7 +436,7 @@ async function main() {
   };
   const shell=()=>({tabs:tabs.map((tab,index)=>{const page=index===active?document:tab.document;return {title:page.title??"",icon:iconOf(page)};}),active,...field,focused,
     canBack:history.canBack,canForward:history.canForward,loading,scale,theme,pages,scroll,pressed:pressed?.control??"",...(swipeHint?{swipe:swipeHint}:{}),
-    script:scriptMarker()});
+    script:[scriptMarker(),gpuGuard.slowed?gpuSlowedNote:""].filter(Boolean).join("  ")});
   // The chrome marker of the page's scripts: the engine of its session, else what the setting says.
   function scriptMarker(){
     if(!scriptsOn||!document?.scripted)return "";
@@ -976,13 +984,15 @@ async function main() {
       slowCalls,
       pumpGapMs:{p50:percentile(pumpGaps,0.5),p95:percentile(pumpGaps,0.95),max:pumpGaps.length?Math.round(Math.max(...pumpGaps)*10)/10:null},
       prefetch:prefetchStats,frameCost,animationFrames,queueMax,sessionStats:session?.stats,
+      gpu:{framesInFlight,submitToDoneMsP50:percentile(session?.gpuTimes??[],0.5),submitToDoneMsP95:percentile(session?.gpuTimes??[],0.95),
+        maxInFlight:session?.stats.gpu.maxInFlight??0,gateWaits:session?.stats.gpu.waits??0,gateWaitMs:session?.stats.gpu.waitMs??0,blockedMs:session?.stats.gpu.blockedMs??0,submits:session?.stats.gpu.submits??0,guardSlowed:gpuGuard.slowed,guardChanges:gpuGuard.changes},
       pageCanvasPresents:{count:pageGpuMs.length,p50Ms:percentile(pageGpuMs,0.5),p95Ms:percentile(pageGpuMs,0.95)},
       // Pointer press to the present that shows it: the composite darkening, and the Lean frame of a held press.
       press:{overlay:{count:pressOverlayMs.length,p50Ms:percentile(pressOverlayMs,0.5),maxMs:pressOverlayMs.length?Math.round(Math.max(...pressOverlayMs)*10)/10:null},
         frame:{count:pressFrameMs.length,p50Ms:percentile(pressFrameMs,0.5),maxMs:pressFrameMs.length?Math.round(Math.max(...pressFrameMs)*10)/10:null}}};
     trace(line.type,line);
     // Off screen, "presented" means drawn and submitted to the texture: no compositor, no display.
-    if(perfSummary)console.log(`engine: ${engineRan}\npresent: ${line.present}\n${offscreen?"offscreen ":""}input latency: ${line.inputLatency.count} events, p50 ${line.inputLatency.p50Ms} ms, p95 ${line.inputLatency.p95Ms} ms, max ${line.inputLatency.maxMs} ms\nframes: ${line.frames.presented} presented (${line.frames.checked} checked), totalMs p50 ${line.frames.totalMsP50}, p95 ${line.frames.totalMsP95}; pipeline builds ${session?.stats.pipelineBuilds}\nscroll presents with no Lean call: ${line.scrollPresents.count}, totalMs p50 ${line.scrollPresents.totalMsP50}, p95 ${line.scrollPresents.totalMsP95}, max ${line.scrollPresents.maxMs}\npress to present: darkening ${line.press.overlay.count}, p50 ${line.press.overlay.p50Ms} ms, max ${line.press.overlay.maxMs} ms; Lean frame ${line.press.frame.count}, p50 ${line.press.frame.p50Ms} ms, max ${line.press.frame.maxMs} ms\nscroll prefetch: ${prefetchStats.sent} sent, ${prefetchStats.ready} ready, ${prefetchStats.swaps} shown, ${prefetchStats.dropped} dropped, ${prefetchStats.stale} stale, ${prefetchStats.missed} missed\npump gap after first frame: p50 ${line.pumpGapAfterFirstFrameMs.p50} ms, p95 ${line.pumpGapAfterFirstFrameMs.p95} ms, max ${line.pumpGapAfterFirstFrameMs.max} ms\npump gap all: p50 ${line.pumpGapMs.p50} ms, p95 ${line.pumpGapMs.p95} ms, max ${line.pumpGapMs.max} ms`);
+    if(perfSummary)console.log(`engine: ${engineRan}\npresent: ${line.present}\n${offscreen?"offscreen ":""}input latency: ${line.inputLatency.count} events, p50 ${line.inputLatency.p50Ms} ms, p95 ${line.inputLatency.p95Ms} ms, max ${line.inputLatency.maxMs} ms\nframes: ${line.frames.presented} presented (${line.frames.checked} checked), totalMs p50 ${line.frames.totalMsP50}, p95 ${line.frames.totalMsP95}; pipeline builds ${session?.stats.pipelineBuilds}\nscroll presents with no Lean call: ${line.scrollPresents.count}, totalMs p50 ${line.scrollPresents.totalMsP50}, p95 ${line.scrollPresents.totalMsP95}, max ${line.scrollPresents.maxMs}\npress to present: darkening ${line.press.overlay.count}, p50 ${line.press.overlay.p50Ms} ms, max ${line.press.overlay.maxMs} ms; Lean frame ${line.press.frame.count}, p50 ${line.press.frame.p50Ms} ms, max ${line.press.frame.maxMs} ms\nscroll prefetch: ${prefetchStats.sent} sent, ${prefetchStats.ready} ready, ${prefetchStats.swaps} shown, ${prefetchStats.dropped} dropped, ${prefetchStats.stale} stale, ${prefetchStats.missed} missed\npump gap after first frame: p50 ${line.pumpGapAfterFirstFrameMs.p50} ms, p95 ${line.pumpGapAfterFirstFrameMs.p95} ms, max ${line.pumpGapAfterFirstFrameMs.max} ms\npump gap all: p50 ${line.pumpGapMs.p50} ms, p95 ${line.pumpGapMs.p95} ms, max ${line.pumpGapMs.max} ms\ngpu: ${line.gpu.framesInFlight||"unbounded"} in flight, submit to done p50 ${line.gpu.submitToDoneMsP50} ms, p95 ${line.gpu.submitToDoneMsP95} ms, max in flight ${line.gpu.maxInFlight}, ${line.gpu.submits} submits, gate waits ${line.gpu.gateWaits} (${line.gpu.gateWaitMs} ms), blocked in poll ${line.gpu.blockedMs} ms, guard ${line.gpu.guardSlowed?"slowed":"full rate"} (${line.gpu.guardChanges} changes)`);
   };
   try {
     device=await adapter.requestDevice();native=early??await nativePreflight(()=>loadNativeWindow());
@@ -1023,7 +1033,17 @@ async function main() {
     device.addEventListener("uncapturederror",event=>{console.error("Native HTML GPU error:",(event as GPUUncapturedErrorEvent).error.message);running=false;Deno.exitCode=1;});
     device.lost.then(info=>{if(running){console.error("Native HTML GPU lost:",info.message);running=false;Deno.exitCode=1;}});
     // One session for the window's life. It keeps the pipeline and buffers (issue 1268).
-    session=await createHTMLWindowSession(device,target,native);
+    session=await createHTMLWindowSession(device,target,native,{framesInFlight,onGpuDone:gpuMs=>{
+      const changed=gpuGuard.record(gpuMs);
+      gpuHoldUntil=gpuGuard.slowed?performance.now()+gpuGuard.gapMs():0;
+      if(!changed)return;
+      const slowed=gpuGuard.slowed,fact={state:slowed?"slowed":"full-rate",gpuMs:Math.round(gpuMs),gapMs:Math.round(gpuGuard.gapMs()),url:document.url};
+      trace("native-html-gpu-guard",fact);
+      if(slowed)addEntries(document,[{source:"System",severity:"warning",feature:"animation",where:document.url,
+        message:`Each frame of this page takes the GPU about ${Math.round(gpuMs)} ms: animation runs at a lower rate so the computer stays usable. It returns to the full rate when frames are fast again.`,action:"animation slowed"}]);
+      // The chrome shows the note, or stops showing it.
+      dirty=true;
+    }});
     gpuFlush();
     // Lean's compile runs in a worker so this loop keeps pumping. If the worker
     // can not start or dies, compile runs here instead, and the trace says so.
@@ -1121,7 +1141,7 @@ async function main() {
         if(place!.exact){settle(awaitingShift,result.presentedAt);settle(awaitingBand,result.presentedAt);awaitingShift=[];awaitingBand=[];}
         if(nextDocument===document&&!keeps(nextLayers.layers,scroll)&&!bandComing())dirty=true;
         clock.has=!!nextLayers.layers.animations;clock.running=!!nextLayers.layers.animating;
-        if(clock.running){dirty=true;animationFrames++;}
+        if(clock.running){animationDue=true;animationFrames++;}
       } else {current=undefined;settle(awaitingBand,result.presentedAt);awaitingBand=[];}
       if(nextDocument!==document)prefetched=undefined;
       checked=nextDocument;
@@ -1162,6 +1182,8 @@ async function main() {
       if(!result?.presented)return;
       checkedFrames++;
       trace("native-html-checked",{frame:frameNumber,why:"idle",idleMs:ms(lastActivity,idleStart),drawMs:Math.round(result.drawMs*10)/10,pixelHash:result.pixelHash});
+      // --shot on a page with no animated page canvas: the first idle-checked frame.
+      if(shotFile&&!pageGpuMs.length)await takeShot();
     };
     const handle=(event:UIEvent)=>{
         if(event.kind===6){running=false;return;}
@@ -1380,10 +1402,11 @@ async function main() {
           });
         }
       }
+      if(animationDue&&!rendering&&performance.now()>=gpuHoldUntil){animationDue=false;dirty=true;}
       if(dirty&&canPresent()&&!rendering){
         waiting=false;
         rendering=renderFrame().catch(error=>{fatal=error;}).finally(()=>{rendering=undefined;});
-      } else if(!everyFrame&&!dirty&&!rendering&&!shifting&&!shiftPending&&!pressed&&!pressPresent&&session?.frames&&!session.lastChecked&&canPresent()&&performance.now()-lastActivity>=IDLE_CHECK_MS){
+      } else if(!everyFrame&&!dirty&&!animationDue&&!rendering&&!shifting&&!shiftPending&&!pressed&&!pressPresent&&session?.frames&&!session.lastChecked&&canPresent()&&performance.now()-lastActivity>=IDLE_CHECK_MS){
         // Interactive frames are not read back. When input has been idle, the last frame is drawn again with the checks.
         rendering=idleCheck().catch(error=>{fatal=error;}).finally(()=>{rendering=undefined;});
       }
@@ -1509,7 +1532,7 @@ async function main() {
       // one animation frame a turn. Frame pacing: no turn while a frame is pending (asked for
       // or being made), so each presented frame has at most one turn before it.
       const script=document.script;
-      if(scriptsOn&&script&&!scriptBusy&&!dirty&&!rendering&&script.turn.nextWake!==null){
+      if(scriptsOn&&script&&!scriptBusy&&!dirty&&!rendering&&script.turn.nextWake!==null&&performance.now()>=gpuHoldUntil){
         const elapsed=performance.now()-(scriptEpochs.get(script.session)??performance.now());
         if(elapsed>=script.turn.nextWake){
           const page=document;scriptBusy=true;
@@ -1527,7 +1550,9 @@ async function main() {
       await Promise.race([nap,...(rendering?[rendering]:[]),...(shifting?[shifting]:[])]);
     }
   } finally {
-    running=false;controller?.abort();
+    running=false;controller?.abort();quitAt=performance.now();
+    // Quit or close: no new GPU work from here on; a frame in progress ends with what it has.
+    const gpuIdle=session?.halt();
     // A frame in progress ends before its session is disposed.
     try{await rendering;await shifting;}catch(error){console.error("Native HTML frame ended with an error:",String(error));}
     worker?.terminate();
@@ -1542,6 +1567,9 @@ async function main() {
         Deno.exitCode=1;
       } else console.log(`frame cost: ${frameCost.leanFrames} Lean frames, ${prefetchStats.sent} prefetches over ${frameCost.scrollRows} rows (bound ${bound} each)`);
     }
+    try{await gpuIdle;}catch{/* a lost device has nothing in flight */}
+    const quitFact={ms:Math.round(performance.now()-quitAt),gpu:session?.stats.gpu??null};
+    trace("native-html-quit",quitFact);
     if(!cleanupUI({session,device,native}))Deno.exitCode=1;
   }
 }

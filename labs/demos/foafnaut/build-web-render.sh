@@ -50,6 +50,20 @@ for module in "${LAB_MODULES[@]}"; do
   printf 'LEAN %s %s\n' "$module" "$(date -u)"
   lean -R "$LAB" -o "$BUILD/olean/$module.olean" -c "$BUILD/ir/$module.c" "$LAB/$module.lean"
 done
+# Lean hygiene ratchet (issue 390; docs/designissues/2026-11-11-lean-hygiene-ratchet.md).
+# LabHygiene.lean counts the unsafe, implemented_by, partial def, extern and opaque
+# declarations Lean recorded for these modules and the L4Factoidal modules they import;
+# its theorem lab_ratchet fails to compile when a count is above its baseline. It must
+# import every module above; its counts become the build record's hygiene field.
+# Not linked: no runtime code.
+rm -f "$BUILD/hygiene.json"
+for module in "${LAB_MODULES[@]}"; do
+  grep -qx "import $module" "$LAB/LabHygiene.lean" 2>/dev/null || { echo "LabHygiene.lean does not import $module: the hygiene ratchet would not see it; build refused" >&2; exit 1; }
+done
+printf 'LEAN LabHygiene %s\n' "$(date -u)"
+lean -R "$LAB" "$LAB/LabHygiene.lean" | tee "$BUILD/hygiene.log"
+sed -n 's/^HYGIENE_JSON //p' "$BUILD/hygiene.log" > "$BUILD/hygiene.json"
+[ -s "$BUILD/hygiene.json" ] || { echo 'LabHygiene.lean printed no HYGIENE_JSON line; build refused' >&2; exit 1; }
 for check in WebRenderTests WebRenderFontRequestsTests WebRenderScriptTests WebDocumentTests; do
   lean -R "$LAB" "$LAB/$check.lean"
 done

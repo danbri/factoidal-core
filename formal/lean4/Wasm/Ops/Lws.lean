@@ -77,6 +77,7 @@ import L4Factoidal.LWS.Cors
 import L4Factoidal.LWS.Handler
 import L4Factoidal.HTTP.LocalGuard
 import L4Factoidal.LWS.DirLock
+import L4Factoidal.LWS.RootAclInstall
 import L4Factoidal.JOSE.Base64Url
 import L4Factoidal.Crypto.P256Native
 import L4Factoidal.Crypto.RsaNative
@@ -568,6 +569,26 @@ def buildStorage (oc : OpenConfig) (ms : MemState) : OpenStorage :=
     authz := oc.authz, notif, signingKey, results := oc.results.getD {},
     storageKey := oc.storageKey, moved := oc.moved }
 
+/-- The root ACL of an EXISTING storage (`L4Factoidal.LWS.RootAclInstall`):
+with authorization on and a root ACL given (`rootAcl`, or the owner's), a
+storage with no root ACL resource gets the given one as `/.acl`, before it
+answers any request; an existing root ACL is kept; no other resource
+changes. The write goes through the store a handle runs, so its journal
+records it and a storage kept in files writes it with the next persist. -/
+def installRootAcl (oc : OpenConfig) (o : OpenStorage) : OpenStorage × RootAclInstall.Outcome :=
+  let (mem, out) := RootAclInstall.install (IndexedStore LwsBackend lwsBackendLaws)
+    oc.authz.insecureNoAuth oc.rootAcl o.mem
+  ({ o with mem }, out)
+
+/-- The members of the open (or the end of the load) that tell the host
+what `installRootAcl` did: `changed` (persist now) after an install, and
+`rootAclNotice`, the words to print on standard error. -/
+def rootAclMembers (out : RootAclInstall.Outcome) : List (String × Json) :=
+  (if out == .installed then [("changed", .bool true)] else []) ++
+  (match RootAclInstall.notice out with
+   | some t => [("rootAclNotice", .string t)]
+   | none => [])
+
 /-- The other state of a storage as document members: the notification
 state with the signing key, the access state, and the search results and the
 redirect table when there are any. The snapshot (`lwsSnapshot`) and the
@@ -617,9 +638,16 @@ def lwsOpen (configJson : String) : IO String := do
         pure (okWith [("handle", .string h), ("root", .string rootPath),
                       ("load", .object [("read", readJson controlFiles)])])
       else
-        lwsTable.modify (·.insert h
-          (buildStorage oc (oc.snapshot.getD (initialStorage oc.now oc.rootAcl))))
-        pure (okWith [("handle", .string h), ("root", .string rootPath)])
+        match oc.snapshot with
+        | none =>
+            -- A new storage: the root ACL, when given, is part of it.
+            lwsTable.modify (·.insert h (buildStorage oc (initialStorage oc.now oc.rootAcl)))
+            pure (okWith [("handle", .string h), ("root", .string rootPath)])
+        | some ms =>
+            -- An existing storage: the root ACL is installed only when it has none.
+            let (o, out) := installRootAcl oc (buildStorage oc ms)
+            lwsTable.modify (·.insert h o)
+            pure (okWith ([("handle", .string h), ("root", .string rootPath)] ++ rootAclMembers out))
 
 /-- The files of a `lwsLoad` document: `files: [{path, present, length}]`,
 the bytes one after the other in the byte region. -/
@@ -669,9 +697,16 @@ def finishLoad (h : String) (oc : OpenConfig) (seed : ByteArray) (ms : MemState)
       lwsLoading.modify (·.erase h)
       pure (errJson e, ByteArray.empty)
   | .ok (fs, pl, ms') =>
-      lwsTable.modify (·.insert h { buildStorage oc ms' with files := some fs })
+      -- An existing storage (from files or migrated from a snapshot) gets
+      -- the root ACL only when it has none (`installRootAcl`); a new one
+      -- has it from `initialStorage`.
+      let isNew := c?.isNone && !hadSnapshot
+      let (o, out) := if isNew then ({ buildStorage oc ms' with files := some fs }, RootAclInstall.Outcome.none)
+        else installRootAcl oc { buildStorage oc ms' with files := some fs }
+      lwsTable.modify (·.insert h o)
       lwsLoading.modify (·.erase h)
-      pure (planAnswer [("ready", .bool true), ("handle", .string h), ("root", .string rootPath)] pl)
+      pure (planAnswer ([("ready", .bool true), ("handle", .string h), ("root", .string rootPath)] ++
+        rootAclMembers out) pl)
 
 /-- `lwsLoad(handle, {files, seed})` with the bytes of the files in the byte
 region: the files `lwsOpen` or the previous `lwsLoad` named. Answers the next

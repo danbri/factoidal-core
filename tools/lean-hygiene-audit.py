@@ -57,9 +57,6 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 LEAN_ROOT = ROOT / "formal" / "lean4"
 SCAN_DIRS = ["L4Factoidal", "Harness", "Wasm"]
 BASELINE_FILE = ROOT / "tools" / "lean-partial-def-baseline.txt"
-LAB_ROOT = ROOT / "labs" / "demos" / "foafnaut"
-# Counts on main at 41a1aaeab (2026-11-10), by the patterns of CHECKS.
-LAB_BASELINE = {"unsafe": 3, "@[implemented_by]": 3}
 
 # The three axioms Lean's own standard library uses. Anything else in a
 # `#print axioms` line is a user axiom, a `sorryAx`, or the
@@ -211,35 +208,12 @@ def main() -> int:
               f"{BASELINE_FILE.relative_to(ROOT)} to {len(partials)} in this "
               "commit, so the gain cannot be given back silently.")
 
-    # The browser engine's lab modules (labs/demos/foafnaut). They keep state between calls of
-    # the engine's C ABI in IO.Ref cells read through `unsafe` definitions behind
-    # `@[implemented_by]`: https://github.com/danbri/factoidal-core/issues/390. Until that is
-    # replaced, the two counts have a baseline that must not go up; the other three are 0.
-    lab_files = sorted(p for p in LAB_ROOT.glob("*.lean")) if LAB_ROOT.exists() else []
-    if not lab_files:
-        failed = True
-        print(f"  lab modules          NOTHING READ under {LAB_ROOT.relative_to(ROOT)}")
-    else:
-        lab = {name: [] for name, _ in CHECKS}
-        for f in lab_files:
-            code = strip_comments_and_strings(f.read_text(errors="replace"))
-            for name, rx in CHECKS:
-                for m in rx.finditer(code):
-                    ln = code.count("\n", 0, m.start()) + 1
-                    lab[name].append(f"{f.relative_to(ROOT)}:{ln}")
-        print(f"  lab modules: {len(lab_files)} .lean files under "
-              f"{LAB_ROOT.relative_to(ROOT)} (issue 390)")
-        for name, _ in CHECKS:
-            hits, limit = lab[name], LAB_BASELINE.get(name, 0)
-            word = f"baseline {limit}, must not increase" if limit else "must be 0"
-            print(f"    {name:18s} {len(hits)} ({word})")
-            if len(hits) > limit:
-                failed = True
-                for h in hits[:40]:
-                    print(f"      {h}")
-            elif len(hits) < limit:
-                print(f"      IMPROVED by {limit - len(hits)}. Lower LAB_BASELINE in "
-                      "tools/lean-hygiene-audit.py in this commit.")
+    # The browser engine's lab modules (labs/demos/foafnaut) are not counted here. Lean
+    # counts them: labs/demos/foafnaut/LabHygiene.lean (theorem lab_ratchet), compiled by
+    # build-web-render.sh, holds the only baseline (issue 390;
+    # docs/designissues/2026-11-11-lean-hygiene-ratchet.md).
+    print("  lab modules          counted by Lean: labs/demos/foafnaut/LabHygiene.lean "
+          "(lab_ratchet, run by build-web-render.sh)")
 
     if args.build_log is not None:
         seen, bad = scan_build_log(args.build_log)
