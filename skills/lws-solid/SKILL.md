@@ -911,6 +911,32 @@ import { listen } from '@factoidal/core/lws'
 import { listen as solidListen } from '@factoidal/core/solid/server'
 ```
 
+### Root ACL: installed at open, no lockout, operator reset (2026-11-11)
+
+Design record: [`docs/designissues/2026-11-11-lws-root-acl-safety.md`](../../docs/designissues/2026-11-11-lws-root-acl-safety.md).
+
+* **Install at open** (`L4Factoidal/LWS/RootAclInstall.lean`, op `lwsOpen`/`lwsLoad`): with
+  authorization on and a root ACL given (`--root-acl FILE` or `--owner`), an EXISTING storage with no
+  `/.acl` gets it before any request is answered; an existing `/.acl` is never replaced; with
+  `--insecure-no-auth` nothing is installed. `lws-serve` prints a "root ACL:" notice on stderr.
+  Theorems `install_only_when_absent`, `install_keeps_existing`, `install_off_unchanged`,
+  `install_no_acl_given_unchanged`, `install_has_root_acl`, `install_writes_given`,
+  `install_other_paths`; fail closed: `allowed_without_acl`. Test `test/lws-root-acl-install.test.mjs`.
+  The listening socket is bound before the open; requests wait for it (not measured by a test).
+* **No lockout** (`LWS/NoLockout.lean`, `NoLockoutTheorems.lean`, `Handler.decided`): with
+  authorization on, a request that leaves the root ACL with no agent that has `acl:Control` on the root
+  gets 409 Conflict (problem+json) and changes nothing. "Has Control" is WAC `allowed` itself
+  (`hasRootControl_iff`). Theorems `step_keeps_root_control`, `decided_served_guarded`, `lockout_iff`,
+  `accepted_keeps_control`, `guard_refused_unchanged`. Test `test/lws-no-lockout.test.mjs`.
+  Not tested: PATCH (only JSON Patch, 415), moves and access grants that change `/.acl`.
+* **Operator reset**: `factoidal lws-acl-reset DIR FILE --operator [--base IRI] [--storage files|snapshot]`.
+  Offline: refused while a server holds the directory lock (`DirLock.decide` theorems). Opens with
+  `operator: true` (answers no request), op `lwsAclReset` replaces only `/.acl` through the journaled
+  store, refuses an ACL with no Control agent. Theorems `reset_has_control`, `reset_writes`,
+  `reset_other_paths`, `reset_refuses`. Not proved: that the host takes the lock first (host code).
+* A recovery agent with `acl:Control` of the root only is the user-side half; glitchcan-minigam
+  `foafos-stack lws-setup` writes one (https://github.com/danbri/glitchcan-minigam/blob/master/docs/foafos-lws-acl-safety-20261111.md).
+
 ## Third-party conformance: Touchstone
 
 `bash tools/lws-touchstone.sh [--config open|auth|both]` builds Touchstone
@@ -1225,6 +1251,10 @@ the cache counted in derivations, the refusals at start) and `node --test tests/
 an `openssl req -x509` certificate).
 
 ### WebDAV over XMPP (https://github.com/danbri/factoidal/issues/1107)
+
+Proof status (2026-11-11): the waiting limits are theorems (`plan_pending_per_sender`,
+`tick_pending_per_sender`, `tick_no_late`); the bare-JID allow list (`HttpOverXmpp.allowed`) has
+`#guard`s and tests but no theorem that a sender not on the list is refused with no change.
 
 ```
 factoidal webdav-serve CONFIGDIR --xmpp bob@example.org --xmpp-password-file bob.password \
