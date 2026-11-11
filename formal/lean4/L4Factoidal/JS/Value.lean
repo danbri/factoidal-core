@@ -85,6 +85,14 @@ inductive NativeX where
   /-- AggregateError (§20.5.7), `Promise.any` (§27.2.4.3) and the function that records one
   rejected element of it. -/
   | aggregateErrorCtor | promiseAny | promiseAnyReject
+  /-- StructuredSerializeWithTransfer and StructuredDeserialize (HTML §2.7, `JS.Clone`): a
+  host's `n.serialize(value, transfer)` (an ArrayBuffer of bytes) and `n.deserialize(buffer)`,
+  for messages between the realms of a page and its dedicated workers. -/
+  | cloneSerialize | cloneDeserialize
+  /-- `n.runScript(source)`: run a classic script in the realm's global scope (the steps of
+  `runScriptM`), for `importScripts` (HTML §10.3.4.2 "import scripts into worker global
+  scope"); its exceptions reach the caller. -/
+  | classicScript
   deriving BEq, Repr, Inhabited
 
 /-- The built-in functions (§19 to §28 for the subset). -/

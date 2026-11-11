@@ -1,6 +1,7 @@
 import L4Factoidal.WasmVM.Hosts.Page
 import L4Factoidal.WasmVM.Hosts.PageAot
 import L4Factoidal.WasmVM.Hosts.LeanJSRealm
+import L4Factoidal.WasmVM.Hosts.LeanJSWorkers
 import L4Factoidal.DOM.OfXml
 import L4Factoidal.WHATWG.Encoding.Sniff
 import WebRenderScript
@@ -43,6 +44,11 @@ argument for `start`:
   document joins the arena (`Command.frameDocument`), its scripts run in the page's realm
   with `document` the frame's, and its `load` event follows (`frameLoads` counts the
   `srcdoc` loads of a turn).
+- `fetched` (`results`: `[{id, status, url, contentType, source}]`): BubblePopJS's
+  dedicated workers (`Hosts.LeanJSWorkers`). A turn whose workers wait for scripts lists
+  them in `fetches` (`[{id, url, kind}]`, kind `worker` or `script`; and `settle` stops
+  there); the embedder fetches them and answers with this action (status 0, a status not
+  2xx, or a type that is not JavaScript: a network error), which then runs what is due.
 
 `start` also takes `width` and `height` (the viewport in CSS pixels: `innerWidth`,
 `innerHeight`), `layout` (the render request whose `layoutFields` lay the page out for
@@ -147,6 +153,8 @@ structure Held where
   leanBase : Option LeanJS.Session := none
   /-- The session on the Lean engine. -/
   leanSession : Option (Nat × LeanJS.Session × Marks) := none
+  /-- The dedicated workers of that session's page (`Hosts.LeanJSWorkers`). -/
+  leanWorkers : LeanJSWorkers.Workers := {}
 
 instance : Inhabited Held := ⟨{}⟩
 
@@ -177,7 +185,7 @@ private unsafe def entropyImpl (id : Nat) : ByteArray :=
 @[implemented_by entropyImpl, noinline] private opaque entropy (id : Nat) : ByteArray
 
 def actions : List String := ["info", "load", "start", "click", "pointer", "resize", "advance", "settle", "turn", "close",
-  "aotModule", "resume", "host", "frame"]
+  "aotModule", "resume", "host", "frame", "fetched"]
 
 /-- An answer object with `nextSession` first: the value `keep` answered, so the
 compiled code keeps the call. -/
@@ -595,13 +603,19 @@ def frameDocument (request : JSON.Json) : Except String (String × Bool × Array
   let (scripts, _) ← scriptSources dom request
   return (src, DOM.isXhtmlPath url, scripts, enc)
 
-/-- The answer of a turn of the Lean engine; the session is kept. -/
-def leanTurn (held : Held) (id : Nat) (before : Before) (s : LeanJS.Session) (marks : Marks) (full : Bool) (ns : Nat) :
+/-- The answer of a turn of the Lean engine; the session and its workers are kept. A page
+with workers adds `workers` (how many run) and `fetches` (the scripts they wait for). -/
+def leanTurn (held : Held) (id : Nat) (before : Before) (a : LeanJSWorkers.Agents) (marks : Marks) (full : Bool) (ns : Nat) :
     Held × Except String String :=
-  let (s, loads) := srcdocLoads (·.host) (fun s el src scripts => LeanJS.loadFrame s el src scripts) s
-  let (answer, marks) := turnAnswerOf id before (View.ofLean s) marks full ns
-    ([("engine",.string "bubblepop")] ++ frameFields s.host loads)
-  ({ held with leanSession := some (id, drainedLean s, marks) }, .ok answer)
+  let (s, loads) := srcdocLoads (·.host) (fun s el src scripts => LeanJS.loadFrame s el src scripts) a.page
+  let workers : List (String × JSON.Json) :=
+    if a.w.list.isEmpty && a.w.loads.isEmpty then [] else
+    [("workers", num a.w.list.size)] ++ (if a.w.loads.isEmpty then [] else [("fetches", .array a.w.fetches)])
+  let view := View.ofLean s
+  let view := if a.waits then { view with quiet := false } else view
+  let (answer, marks) := turnAnswerOf id before view marks full ns
+    ([("engine",.string "bubblepop")] ++ frameFields s.host loads ++ workers)
+  ({ held with leanSession := some (id, drainedLean s, marks), leanWorkers := a.w }, .ok answer)
 
 /-- `start` on the Lean engine: its realm is made at the first page (the prelude runs
 once), and each page starts from it with its own arena. -/
@@ -629,21 +643,28 @@ def startLean (held : Held) (html : String) (request : JSON.Json) (measure : JSO
       let (vw, vh) := (viewport request).getD (800, 600)
       let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh, canvasEnv := canvas }
       let rate := max 1 ((natField request "instructionsPerMs").getD 100000)
-      let (s, ns) := WebWasm.timed fun _ =>
+      let (a, ns) := WebWasm.timed fun _ =>
         let s := LeanJS.start base dom url scripts lim reads { instructionsPerMs := rate }
-        missing.foldl LeanJS.Session.fail s
-      leanTurn { held with leanBase := some base, session := none, leanSession := none, nextSession := id + 1 }
-        id {} s {} true (ns0 + ns)
+        let s := missing.foldl LeanJS.Session.fail s
+        -- workers the page's scripts made: their scripts are asked for
+        LeanJSWorkers.pump { page := s, base := some base, entropy := fun w => entropy (id * 65536 + w) }
+      leanTurn { held with leanBase := some base, session := none, leanSession := none, nextSession := id + 1, leanWorkers := {} }
+        id {} a {} true (ns0 + ns)
 
 /-- A later action on the Lean engine's session (the actions of `act`). -/
 def actLean (held : Held) (action : String) (request : JSON.Json) (id : Nat) (s : LeanJS.Session) (marks : Marks) :
     Held × Except String String :=
   let full := request.field? "full" == some (.bool true)
-  let e := LeanJS.engine
+  -- the page with its workers (`Hosts.LeanJSWorkers`): the page engine's steps, and the
+  -- workers' after each checkpoint
+  let e := LeanJSWorkers.engine
   let before := Before.ofLean s
-  let run := fun (f : LeanJS.Session → LeanJS.Session) =>
-    let (s', ns) := WebWasm.timed fun _ => f s
-    leanTurn held id before s' marks full ns
+  -- each worker's entropy is fresh from the operating system, as each page's is
+  let a : LeanJSWorkers.Agents := { page := s, w := held.leanWorkers, base := held.leanBase,
+                                    entropy := fun w => entropy (id * 65536 + w) }
+  let run := fun (f : LeanJSWorkers.Agents → LeanJSWorkers.Agents) =>
+    let (a', ns) := WebWasm.timed fun _ => f a
+    leanTurn held id before a' marks full ns
   let keep := fun (msg : String) => ({ held with leanSession := some (id, s, marks) }, Except.error msg)
   match action with
   | "click" =>
@@ -659,14 +680,23 @@ def actLean (held : Held) (action : String) (request : JSON.Json) (id : Nat) (s 
     | some (w, h) => run fun s => let s := e.resize s w h; (e.advance s (e.loop s).clock).1
     | none => keep "scriptSession: resize needs width and height"
   | "advance" => run fun s => e.flushMove (e.advance s ((e.loop s).clock + ((natField request "ms").getD 0))).1
-  | "settle" => run fun s => (e.settle (e.flushMove s) ((natField request "budgetMs").getD 30000)).1
+  | "settle" => run fun s => (e.settle (e.flushMove s) ((natField request "budgetMs").getD 30000) 100000 LeanJSWorkers.Agents.waits).1
   | "turn" => run fun s => let s := e.flushMove s; (e.advance s (e.loop s).clock).1
   | "frame" =>
     match natField request "node", frameDocument request with
     | some node, .ok (src, xml, scripts, enc) =>
-      run fun s => LeanJS.loadFrame (s.setHost { s.host with dom := s.host.dom.noteFrameEncoding node enc }) node src scripts xml
+      -- a frame's scripts run in the page's realm; workers they make are asked for at once
+      run fun a => let s := a.page
+        LeanJSWorkers.pump { a with page := LeanJS.loadFrame (s.setHost { s.host with dom := s.host.dom.noteFrameEncoding node enc }) node src scripts xml }
     | _, .error e => keep s!"scriptSession: frame: {e}"
     | none, _ => keep "scriptSession: frame needs node"
+  | "fetched" =>
+    let got := match request.field? "results" with
+      | some (.array xs) => xs.toArray.filterMap fun x =>
+        held.leanWorkers.result ((natField x "id").getD 0) ((natField x "status").getD 0) (str x "url")
+          (str x "contentType") (str x "source")
+      | _ => #[]
+    run fun s => let s := LeanJSWorkers.give s got; (e.advance s (e.loop s).clock).1
   | _ => keep "scriptSession: unknown action"
 
 /-- One action on what the engine holds. `measure` lays out an arena for the layout reads
@@ -692,7 +722,7 @@ def act (held : Held) (action html : String) (request : JSON.Json)
     match held.turn, held.aot with
     | some t, some aot => hostCall held aot t request
     | _, _ => (held, .error "scriptSession: no turn waits for the host")
-  | "close" => ({ held with session := none, turn := none, leanSession := none }, .ok "{\"closed\":true}")
+  | "close" => ({ held with session := none, turn := none, leanSession := none, leanWorkers := {} }, .ok "{\"closed\":true}")
   | _ =>
   if held.turn.isSome then (held, .error "scriptSession: a turn waits for the host") else
   match action with
