@@ -3096,7 +3096,8 @@
       open(method, url, async = true, user = null, password = null) {
         if (arguments.length < 2) throw new TypeError("Failed to execute 'open' on 'XMLHttpRequest': 2 arguments required");
         const s = S(this), isAsync = arguments.length < 3 ? true : !!async;
-        const base = document.baseURI ?? '';
+        // a worker's API base URL is its script's URL (HTML §10.2.4)
+        const base = scriptBase();
         call(61, [s.h, String(method), usv(url), base, isAsync ? 1 : 0], "Failed to execute 'open' on 'XMLHttpRequest'");
         s.text = s.json = s.buf = s.doc = null;
         if (s.timer) { n.clearTimer(s.timer); s.timer = 0; }
@@ -3133,6 +3134,8 @@
     handlerAttr(XMLHttpRequest, 'readystatechange');
     const readyStates = { UNSENT: 0, OPENED: 1, HEADERS_RECEIVED: 2, LOADING: 3, DONE: 4 };
     consts(XMLHttpRequest, readyStates); consts(XMLHttpRequest.prototype, readyStates);
+    // responseXML is [Exposed=Window] (XHR §4.6.5)
+    if (inWorker) delete XMLHttpRequest.prototype.responseXML;
     setTag(XMLHttpRequest, 'XMLHttpRequest'); setTag(XMLHttpRequestEventTarget, 'XMLHttpRequestEventTarget'); setTag(XMLHttpRequestUpload, 'XMLHttpRequestUpload');
     define(globalThis, 'XMLHttpRequestEventTarget', XMLHttpRequestEventTarget);
     define(globalThis, 'XMLHttpRequestUpload', XMLHttpRequestUpload);
@@ -4521,7 +4524,8 @@
     'CustomEvent', 'MessageEvent', 'ErrorEvent', 'PromiseRejectionEvent', 'ProgressEvent', 'AbortController', 'AbortSignal',
     'TextEncoder', 'TextDecoder', 'TextEncoderStream', 'TextDecoderStream', 'URL', 'URLSearchParams', 'crypto', 'Crypto',
     'SubtleCrypto', 'CryptoKey', 'performance', 'Performance', 'PerformanceEntry', 'PerformanceMark', 'PerformanceMeasure',
-    'Blob', 'File', 'FileReader', 'FormData', 'Headers', 'Request', 'Response', 'fetch', 'ReadableStream', 'WritableStream',
+    'Blob', 'File', 'FileReader', 'FormData', 'Headers', 'Request', 'Response', 'fetch', 'XMLHttpRequest',
+    'XMLHttpRequestEventTarget', 'XMLHttpRequestUpload', 'ReadableStream', 'WritableStream',
     'TransformStream', 'MessageChannel', 'MessagePort', 'BroadcastChannel', 'webkitURL']);
   // HTML §10.2.1: WorkerGlobalScope, DedicatedWorkerGlobalScope, WorkerLocation, WorkerNavigator.
   const makeWorkerScope = (url, name) => {

@@ -107,6 +107,15 @@ def mayConnect (p : Page) (u : URL.Url) : Bool :=
 def sameOrigin (p : Page) (u : URL.Url) : Bool :=
   p.origin != "null" && u.origin == p.origin
 
+/-- The policy of a dedicated worker's requests (HTML §10.2.4 "run a worker": the worker's
+settings object takes its origin and policy container from its owner). A worker's script URL
+is same-origin with its owner (or `blob:`, whose origin is the owner's), so its requests have
+the owner's origin; a `data:` worker has an opaque origin (`"null"`: nothing is same-origin
+to it). Local, secure and `hostCors` are always the owner's: a worker never reaches what its
+owner may not. -/
+def Page.forWorker (owner : Page) (workerUrl : String) : Page :=
+  if workerUrl.startsWith "data:" then { owner with origin := "null" } else owner
+
 /-! ## Header name lists (Fetch §2.2.2) -/
 
 /-- A forbidden request-header name (lowercase): the page may not set it. -/
@@ -758,6 +767,39 @@ theorem responseOf_no_set_cookie (t : Transfer) (a : Answer) (n : String × Stri
   · have := (List.mem_filter.mp (List.mem_filter.mp hn).1).2
     simpa using this
 
+/-- Kind: policy lemma (workers). Says: a dedicated worker's request policy is its owner's
+in everything but the origin: the same local, secure (mixed content) and `hostCors`
+settings, so `mayConnect` answers the same for a worker as for its owner. Does not say:
+anything of the origin (`forWorker_origin`), or that the host gives the worker this policy
+(that is `LeanJSWorkers.workerHost_net_page`). -/
+theorem forWorker_policy (owner : Page) (url : String) :
+    (owner.forWorker url).isLocal = owner.isLocal ∧ (owner.forWorker url).secure = owner.secure ∧
+      (owner.forWorker url).hostCors = owner.hostCors := by
+  unfold Page.forWorker; split <;> simp
+
+/-- Kind: policy lemma (workers). Says: `mayConnect` of a worker's policy is its owner's,
+for every URL. Does not say: that the worker's requests are the same as the owner's
+(CORS depends on the origin). -/
+theorem forWorker_mayConnect (owner : Page) (url : String) (u : URL.Url) :
+    mayConnect (owner.forWorker url) u = mayConnect owner u := by
+  unfold Page.forWorker; split <;> rfl
+
+/-- Kind: policy lemma (workers). Says: a worker's requests carry its owner's origin, unless
+the worker's script is a `data:` URL, whose origin is opaque (`"null"`). Never another
+origin. Does not say: that the worker's URL is same-origin with the owner (the `Worker`
+constructor checks that). -/
+theorem forWorker_origin (owner : Page) (url : String) :
+    (owner.forWorker url).origin = owner.origin ∨ (owner.forWorker url).origin = "null" := by
+  unfold Page.forWorker; split
+  · exact Or.inr rfl
+  · exact Or.inl rfl
+
+/-- Kind: policy lemma (workers). Says: a worker whose script URL is not `data:` has exactly
+its owner's policy. Does not say: anything of `blob:` URLs beyond that they are not `data:`. -/
+theorem forWorker_not_data (owner : Page) (url : String) (h : url.startsWith "data:" = false) :
+    owner.forWorker url = owner := by
+  simp [Page.forWorker, h]
+
 /-! ## Checks (`#guard` is a test) -/
 
 private def pg : Page := Page.ofUrl "https://a.example/x"
@@ -848,5 +890,12 @@ private def named : Transfer := { base with page := { pg with secure := false },
 -- a redirect is checked again: same-origin to a local address is refused
 #guard match onAnswer { base with url := "https://a.example/y" } ({ status := 302, headers := [("Location", "http://127.0.0.1/")] } : Answer) with
   | .fail _ => true | _ => false
+
+-- a worker's requests: the owner's origin, or "null" for a data: worker
+#guard (pg.forWorker "https://a.example/w.js").origin == "https://a.example"
+#guard (pg.forWorker "data:text/javascript,1").origin == "null" && (pg.forWorker "data:,").secure
+-- a data: worker's cross-origin request carries Origin: null, its owner's the owner's origin
+#guard (planWire { base with page := pg.forWorker "data:," }).any fun w => w.headers == [("Origin", "null")]
+#guard (planWire { base with page := pg.forWorker "https://a.example/w.js" }).any fun w => w.headers == [("Origin", "https://a.example")]
 
 end L4Factoidal.Net.PageFetch
