@@ -109,6 +109,15 @@ for it unchanged (they are stated for any list of handlers: `stepWith`).
 
 ## Gaps found (each was run against the JS, 2026-11-12)
 
+All four are fixed in the shell (danbri/glitchcan-minigam PR 1028, the same
+day): the approval names a hash over the program's and the manifest's
+hashes; a handler's output moves the count only after its write succeeds;
+app writes and handler outputs measure, write and count under one lock per
+pod; a change to the approvals clears the handler cache and each run checks
+the record as it stands. Each gap is a regression test there
+(`packages/foafos/test/pods.test.js`, "agi gap 1..4 (fixed)"), failing on
+the code before the fix.
+
 1. **The approval does not cover the manifest.** The approval names the hash
    of the `.wasm` only, but the manifest decides what the program reads (its
    pattern) and where it writes (`outputDir`, `output`), and the shell shows
