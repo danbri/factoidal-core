@@ -106,12 +106,14 @@ static void resizeEvent(void) {
 
 // The pointer Lean chose: 0 arrow, 1 pointing hand, 2 I-beam. The host sends it only when it changes.
 static int cursorKind;
+static int hoverEdges, resizeEdges; // window edges under the pointer, and of a resize drag
 static NSCursor *shownCursor(void) {
   return cursorKind==1 ? NSCursor.pointingHandCursor : cursorKind==2 ? NSCursor.IBeamCursor : NSCursor.arrowCursor;
 }
 void ng_set_cursor(int kind) {
   if (!pthread_main_np() || kind<0 || kind>2 || kind==cursorKind) return;
-  cursorKind=kind;[shownCursor() set];
+  cursorKind=kind;
+  if (!hoverEdges && !resizeEdges) [shownCursor() set];
 }
 
 @interface NGView : NSView
@@ -129,7 +131,8 @@ void ng_set_cursor(int kind) {
 - (void)mouseDown:(NSEvent *)event { [self sendPointer:event type:2]; }
 - (void)mouseMoved:(NSEvent *)event {
   // AppKit sets its own pointer at a window edge; back in the view, show Lean's again.
-  if (NSCursor.currentCursor!=shownCursor()) [shownCursor() set];
+  // Over a resize zone the pump shows the zone's pointer (hoverEdgeCursor).
+  if (!hoverEdges && NSCursor.currentCursor!=shownCursor()) [shownCursor() set];
   [self sendPointer:event type:3];
 }
 - (void)mouseDragged:(NSEvent *)event { [self sendPointer:event type:3]; }
@@ -548,21 +551,63 @@ int ng_offscreen(void) { return offscreenScale>0; }
 // Window edge drag, done here so JS keeps running. In [NSApp sendEvent:] AppKit
 // tracks a resize in its own loop until the mouse is up, and this host only runs
 // JS between pumps, so Lean could not lay out the page during the drag.
-static int resizeEdges; // 1 left, 2 right, 4 bottom
+// The zones are AppKit's (issue 424): a band 5 points either side of each edge, and
+// 12 points along each edge from a corner, where both directions resize. The top
+// band is the top of the title bar, as in other Mac windows; the title bar's buttons
+// keep their clicks and the rest of it still drags the window.
+enum { EdgeLeft=1, EdgeRight=2, EdgeBottom=4, EdgeTop=8 };
+static const CGFloat edgeBand=5, cornerSpan=12;
 static NSPoint resizeMouse;
 static NSRect resizeFrame;
+static NSPoint screenPoint(NSEvent *event) {
+  return event.window ? [event.window convertPointToScreen:event.locationInWindow] : event.locationInWindow;
+}
+static int resizeEdgesAt(NSPoint p) {
+  if (!window || !(window.styleMask&NSWindowStyleMaskResizable) || (window.styleMask&NSWindowStyleMaskFullScreen) ||
+      window.miniaturized) return 0;
+  NSRect f=window.frame, inner=NSInsetRect(f,edgeBand,edgeBand);
+  if (!NSPointInRect(p,NSInsetRect(f,-edgeBand,-edgeBand)) || NSPointInRect(p,inner)) return 0;
+  for (NSWindowButton kind=NSWindowCloseButton; kind<=NSWindowZoomButton; kind++) {
+    NSButton *button=[window standardWindowButton:kind];
+    if (!button || button.hiddenOrHasHiddenAncestor) continue;
+    NSRect r=[window convertRectToScreen:[button convertRect:button.bounds toView:nil]];
+    if (NSPointInRect(p,r)) return 0;
+  }
+  int edges=(p.x<NSMinX(inner)?EdgeLeft:p.x>=NSMaxX(inner)?EdgeRight:0)|
+    (p.y<NSMinY(inner)?EdgeBottom:p.y>=NSMaxY(inner)?EdgeTop:0);
+  if (!(edges&(EdgeTop|EdgeBottom)))
+    edges|=p.y<NSMinY(f)+cornerSpan?EdgeBottom:p.y>=NSMaxY(f)-cornerSpan?EdgeTop:0;
+  if (!(edges&(EdgeLeft|EdgeRight)))
+    edges|=p.x<NSMinX(f)+cornerSpan?EdgeLeft:p.x>=NSMaxX(f)-cornerSpan?EdgeRight:0;
+  return edges;
+}
+// The pointer for a zone: the system's frame resize pointers on macOS 15, else the
+// public two-way pointers (macOS before 15 has no public diagonal one).
+static NSCursor *resizeCursor(int edges) {
+  int h=edges&(EdgeLeft|EdgeRight), v=edges&(EdgeTop|EdgeBottom);
+  if (@available(macOS 15.0, *)) {
+    NSCursorFrameResizePosition position=
+      h==EdgeLeft&&v==EdgeTop ? NSCursorFrameResizePositionTopLeft :
+      h==EdgeRight&&v==EdgeTop ? NSCursorFrameResizePositionTopRight :
+      h==EdgeLeft&&v==EdgeBottom ? NSCursorFrameResizePositionBottomLeft :
+      h==EdgeRight&&v==EdgeBottom ? NSCursorFrameResizePositionBottomRight :
+      h==EdgeLeft ? NSCursorFrameResizePositionLeft : h==EdgeRight ? NSCursorFrameResizePositionRight :
+      v==EdgeTop ? NSCursorFrameResizePositionTop : NSCursorFrameResizePositionBottom;
+    return [NSCursor frameResizeCursorFromPosition:position inDirections:NSCursorFrameResizeDirectionsAll];
+  }
+  return v&&!h ? NSCursor.resizeUpDownCursor : h&&!v ? NSCursor.resizeLeftRightCursor : NSCursor.crosshairCursor;
+}
 static int beginEdgeResize(NSEvent *event) {
   if (event.type!=NSEventTypeLeftMouseDown) return 0;
-  NSPoint p=[NSEvent mouseLocation];
+  NSPoint p=screenPoint(event);
   NSRect f=window.frame;
   if (traceInput) fprintf(stderr,"native mouse down at %.1f,%.1f; window %.1f,%.1f %.1fx%.1f; event window %s\n",
     p.x,p.y,f.origin.x,f.origin.y,f.size.width,f.size.height,event.window==window?"ours":"other");
   if (event.window!=window) return 0;
-  CGFloat m=5;
-  if (p.y>NSMaxY(f)-m || p.x<NSMinX(f)-m || p.x>NSMaxX(f)+m || p.y<NSMinY(f)-m) return 0;
-  int edges=(p.x<NSMinX(f)+m?1:0)|(p.x>NSMaxX(f)-m?2:0)|(p.y<NSMinY(f)+m?4:0);
+  int edges=resizeEdgesAt(p);
   if (!edges) return 0;
   resizeEdges=edges; resizeMouse=p; resizeFrame=f;
+  [resizeCursor(edges) set];
   if (traceInput) fprintf(stderr,"native edge resize begins, edges %d\n",edges);
   return 1;
 }
@@ -570,22 +615,59 @@ static int continueEdgeResize(NSEvent *event) {
   if (!resizeEdges) return 0;
   if (event.type==NSEventTypeLeftMouseUp) { resizeEdges=0; return 1; }
   if (event.type!=NSEventTypeLeftMouseDragged) return 0;
-  NSPoint p=[NSEvent mouseLocation];
+  NSPoint p=screenPoint(event);
   CGFloat dx=p.x-resizeMouse.x, dy=p.y-resizeMouse.y;
   NSRect f=resizeFrame;
   NSSize least=[window frameRectForContentRect:NSMakeRect(0,0,window.contentMinSize.width,window.contentMinSize.height)].size;
   NSSize most=[window frameRectForContentRect:NSMakeRect(0,0,window.contentMaxSize.width,window.contentMaxSize.height)].size;
-  if (resizeEdges&2) f.size.width=MIN(MAX(resizeFrame.size.width+dx,least.width),most.width);
-  if (resizeEdges&1) {
+  CGFloat mostTop=window.screen ? NSMaxY(window.screen.visibleFrame) : CGFLOAT_MAX;
+  if (resizeEdges&EdgeRight) f.size.width=MIN(MAX(resizeFrame.size.width+dx,least.width),most.width);
+  if (resizeEdges&EdgeLeft) {
     f.size.width=MIN(MAX(resizeFrame.size.width-dx,least.width),most.width);
     f.origin.x=NSMaxX(resizeFrame)-f.size.width;
   }
-  if (resizeEdges&4) {
+  if (resizeEdges&EdgeBottom) {
     f.size.height=MIN(MAX(resizeFrame.size.height-dy,least.height),most.height);
     f.origin.y=NSMaxY(resizeFrame)-f.size.height;
   }
-  [window setFrame:f display:NO];
+  if (resizeEdges&EdgeTop) {
+    // The bottom stays; the title bar does not go under the menu bar.
+    CGFloat room=MAX(mostTop-NSMinY(resizeFrame),resizeFrame.size.height);
+    f.size.height=MIN(MIN(MAX(resizeFrame.size.height+dy,least.height),most.height),room);
+  }
+  [resizeCursor(resizeEdges) set];
+  if (!NSEqualRects(f,window.frame)) [window setFrame:f display:NO];
   return 1;
+}
+// Over a zone, show its pointer; leaving it, show Lean's again. The view leaves the
+// pointer alone while hoverEdges is set.
+static void hoverEdgeCursor(NSEvent *event) {
+  if (event.type!=NSEventTypeMouseMoved || resizeEdges) return;
+  int edges=event.window==window||!event.window ? resizeEdgesAt(screenPoint(event)) : 0;
+  if (edges) [resizeCursor(edges) set];
+  else if (hoverEdges) [shownCursor() set];
+  hoverEdges=edges;
+}
+// Tests: post a left-button mouse event at a screen point (kind 2 down, 3 dragged,
+// 4 up, 5 moved) for the next pump, and read the window frame and resize state:
+// x, y, width, height in screen points, the hovered edges and the dragged edges.
+void ng_test_mouse(uint32_t kind,double x,double y) {
+  if (!pthread_main_np() || !window || kind<2 || kind>5) return;
+  @autoreleasepool {
+    NSEventType type=kind==2?NSEventTypeLeftMouseDown:kind==3?NSEventTypeLeftMouseDragged:
+      kind==4?NSEventTypeLeftMouseUp:NSEventTypeMouseMoved;
+    NSPoint local=[window convertPointFromScreen:NSMakePoint(x,y)];
+    NSEvent *event=[NSEvent mouseEventWithType:type location:local modifierFlags:0 timestamp:NSProcessInfo.processInfo.systemUptime
+      windowNumber:window.windowNumber context:nil eventNumber:0 clickCount:kind==5?0:1 pressure:kind==2||kind==3?1:0];
+    [NSApp postEvent:event atStart:NO];
+  }
+}
+void ng_test_window_frame(double *out) {
+  out[0]=out[1]=out[2]=out[3]=out[4]=out[5]=0;
+  if (!pthread_main_np() || !window) return;
+  NSRect f=window.frame;
+  out[0]=f.origin.x;out[1]=f.origin.y;out[2]=f.size.width;out[3]=f.size.height;
+  out[4]=hoverEdges;out[5]=resizeEdges;
 }
 void ng_pump(void) {
   if (!pthread_main_np()) return;
@@ -603,6 +685,7 @@ void ng_pump(void) {
       }
       if (continueEdgeResize(event) || beginEdgeResize(event)) continue;
       [NSApp sendEvent:event];
+      hoverEdgeCursor(event);
     }
     [NSApp updateWindows];
     [CATransaction flush];
