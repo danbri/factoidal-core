@@ -563,14 +563,14 @@ def op (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int Byt
     match s.get? (natAt fs 0) with
     | none => (s, .error errType)
     | some x =>
-      if x.state == 3 || x.state == 4 then (s, .error errInvalidState) else
       let t := strAt fs 1
-      -- outside a window, "document" is ignored (XHR §4.6.4 step 1)
+      -- a value outside the enum is ignored (WebIDL), and outside a window so is
+      -- "document" (XHR §4.6.4 step 1), before the state checks
+      if !["", "arraybuffer", "blob", "document", "json", "text"].contains t then (s, okStr "") else
       if !s.window && t == "document" then (s, okStr "") else
+      if x.state == 3 || x.state == 4 then (s, .error errInvalidState) else
       if s.window && !x.async && x.state != 0 then (s, .error errAccess) else
-      if ["", "arraybuffer", "blob", "document", "json", "text"].contains t then
-        (s.set (natAt fs 0) { x with responseType := t }, okStr "")
-      else (s, okStr "")
+      (s.set (natAt fs 0) { x with responseType := t }, okStr "")
   | 72 =>
     -- timeout
     match s.get? (natAt fs 0) with
