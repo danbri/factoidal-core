@@ -157,8 +157,23 @@ window-only, XHR §4.6). Every decision is Lean's, as for the page
   numbers and order), so the `k`-th sync request takes the `k`-th answer.
 - `settle` stops while a worker's request is at the host (`Agents.waits`).
 
-Not done: a sync request's `timeout` in a worker (the run sees the answer at once, on the
-virtual clock); QuickJS-NG (no `Worker` there).
+Measured 2026-11-12 (native engine, BubblePopJS, WPT fea36e49 through wptserve; the
+`.any.worker.html` variants of every `.any.js` in `xhr/` and `fetch/` whose globals include
+a dedicated worker: 260 pages): 51 of 2,512 subtests before, 1,547 of 2,829 after (`xhr/`
+49/268 -> 347/411, the same as its window variants; `fetch/` 2/2,244 -> 1,200/2,418). Window
+variants of the same files: 1,441/2,905 -> 1,445/2,905, no subtest lost.
+
+Not done or open:
+
+- A sync request's `timeout` in a worker (the run sees the answer at once, on the virtual
+  clock).
+- `xhr/xhr-timeout-longtask.any.worker.html` times out (its window variant passes): a busy
+  loop on `performance.now()` in a worker; not a request issue.
+- No proof that the realm's scripts cannot change a worker's policy after it is made: no
+  op of `Net.Xhr.op` writes `State.page` (by reading of the code; a theorem `op_page` is
+  the follow-up).
+- QuickJS-NG: no `Worker` there, so nothing to do until it has one.
+- The Wasm engine (Hub) runs the same Lean; not built or run for this change.
 
 ### Pages without workers pay nothing
 
