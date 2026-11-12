@@ -106,8 +106,9 @@ scan () {
 # The Solid client names the engine's interpretation KINDS as quoted words
 # ('containment', 'wacAllow', ...). Those are the wasm ABI's vocabulary for
 # which reading the engine should perform, not a reading done here, so exact
-# quoted kind names are removed before the scan.
-protocol_allow="s/'(storage|containment|auxiliaries|profile|wacAllow|read|create|replace|patch|delete|discoverStorage|readProfile)'//g"
+# quoted kind names are removed before the scan. 'acl' is the field name of
+# the lwsAclReset op's argument (the ACL text goes to the engine unread).
+protocol_allow="s/'(storage|containment|auxiliaries|profile|wacAllow|read|create|replace|patch|delete|discoverStorage|readProfile|acl)'//g"
 # The two manifest file names a store host may open by name.
 store_allow="s/'manifest\.sbm[12]'//g"
 

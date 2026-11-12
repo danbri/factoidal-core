@@ -674,15 +674,15 @@ export async function openLwsStorage (options = {}) {
     },
     /**
      * The offline operator recovery: replace the root ACL resource (/.acl)
-     * with `acl` (Turtle). Only on a storage opened with `operator: true`,
+     * with `turtle` (the new ACL text). Only on a storage opened with `operator: true`,
      * which holds the storage directory lock and answers no request. The
      * engine decides (`lwsAclReset`, L4Factoidal/LWS/NoLockout.lean `reset`):
-     * only /.acl changes, through the journaled store, and an `acl` that gives
+     * only /.acl changes, through the journaled store, and a `turtle` that gives
      * no agent acl:Control on the storage root is refused (thrown with the
      * engine's message in `envelope`). Returns the engine's notice.
      */
-    resetRootAcl (acl) {
-      const told = engine.call('lwsAclReset', [handle, JSON.stringify({ acl })])
+    resetRootAcl (turtle) {
+      const told = engine.call('lwsAclReset', [handle, JSON.stringify({ 'acl': turtle })])
       if (told === null || typeof told !== 'object' || told.ok === false) {
         throw Object.assign(new Error(told && told.error ? told.error : 'lwsAclReset: no answer'),
           { envelope: told })
