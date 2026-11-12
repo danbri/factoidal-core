@@ -109,7 +109,11 @@ ranges are the same; a field whose bytes overlap them can change or
 disappear. `stripChecked` closes the gap: for every input, no location is
 found in its output, and it is idempotent. When `disjoint` holds it is equal
 to `strip`; when it does not, it can drop the whole EXIF segment, so the
-camera fields of that segment are lost (it fails closed).
+camera fields of that segment are lost (it fails closed). Since 2026-11-12
+the shell's `withoutLocation` does what `stripChecked` does: it reads the
+block again after emptying and drops the EXIF segment if a GPS IFD with
+entries or a position is still found (danbri/glitchcan-minigam PR 1027, with
+`overlapTiff` as a regression test).
 
 ## What is not proved, and the assumptions
 
@@ -119,8 +123,8 @@ camera fields of that segment are lost (it fails closed).
   of segments. That writing the stripped segments back to bytes and parsing
   them again gives the same list (with the XMP segments removed) is assumed.
 * **Real files satisfy `disjoint`.** Assumed from the TIFF/EXIF layout, not
-  checked on a corpus here. The JS does not check it; it could (the check is
-  `disjoint`), or it could do what `stripChecked` does.
+  checked on a corpus here. The JS does not need it: it does what
+  `stripChecked` does, which has no condition.
 * **Value decoding.** The JS cleans text (`clean`), parses dates
   (`exifDate`) and divides rationals; the model keeps the raw window bytes
   and number pairs. Those steps are functions of the same bytes, so the
