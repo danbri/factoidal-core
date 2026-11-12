@@ -1005,6 +1005,7 @@ import L4Factoidal.LWS.RootAclInstall
 import L4Factoidal.LWS.PodKinds
 import L4Factoidal.LWS.PodSearch
 import L4Factoidal.LWS.PodArchives
+import L4Factoidal.LWS.PodMetadata
 import L4Factoidal.LWS.NoLockout
 import L4Factoidal.LWS.Notifications
 import L4Factoidal.LWS.NotificationsTests
