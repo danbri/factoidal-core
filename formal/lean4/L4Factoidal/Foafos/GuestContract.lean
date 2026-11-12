@@ -102,6 +102,16 @@ both "nothing after ending" and "exactly one reply" on the trace of gap 1).
 
 ## Gaps and contradictions found in the contract text
 
+All eleven below are fixed in the contract text (glitchcan-minigam
+`docs/foafos-lite-contract.md`, PR 1039, revised 2026-11-12, with a
+"Revisions from the Lean model" section): requests that cross `ending` are
+answered `offline`; `hello` is named as what level 0 has already sent; only
+the first, timely `welcome` counts and one above the asked level is ignored;
+path segments match `[A-Za-z0-9._~-]+` and are not `.` or `..`; level 1 is
+stated as the app's promise; rids are unique; each `call` gets one
+`tool-result`; `welcome.lifecycle` starts the order; the smaller points are
+settled; and `foafosHosts` lets an app name the hosts it trusts.
+
 1. **`ending` and "exactly one reply" conflict.** The host promises that
    after `ending` nothing else comes, and that it answers every level-2 or
    level-3 request with exactly one reply. A `store` that crosses `ending`
