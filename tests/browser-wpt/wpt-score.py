@@ -463,6 +463,14 @@ def cmd_serve(a):
     certificates, WebSockets on 8888/8889 (no WebTransport, no DNS server). No
     system change: the host names resolve only in the runner (wpt-hosts.ts)."""
     root = os.path.abspath(a.wpt_root)
+    # wptserve makes each Test262 page (.test262-test.html) from the test's YAML front
+    # matter with PyYAML, which WPT's vendored libraries do not include. Without it every
+    # Test262 iframe answers 500 and all 53,794 Test262 names time out (2026-11-12).
+    try:
+        import yaml  # noqa: F401
+    except ImportError:
+        sys.exit("wpt-score.py serve: PyYAML is missing, so wptserve answers 500 for every Test262 page. "
+                 "Install it (python3 -m pip install --target DIR pyyaml) and run with PYTHONPATH=DIR.")
     config = {"browser_host": "web-platform.test", "alternate_hosts": {"alt": "not-web-platform.test"},
               "server_host": "127.0.0.1", "bind_address": True, "check_subdomains": False,
               # Fixed ports (wpt-hosts.ts maps exactly these): WPT's defaults where it has them.

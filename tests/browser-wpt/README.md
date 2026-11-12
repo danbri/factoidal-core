@@ -188,7 +188,11 @@ The runner loads every test from a local wptserve, as a browser run does:
   not-web-platform.test, port 8001) behave as they do for a browser.
 - **The server.** `wpt-score.py serve --wpt-root DIR` runs WPT's
   `tools/serve` with WPT's vendored libraries, so it needs no virtualenv and no
-  network. It binds to 127.0.0.1 only, with HTTP on 8000-8003, HTTPS on
+  network. The one library it needs besides them is PyYAML, for the Test262 pages
+  (without it wptserve answers 500 for each, and every Test262 name times out).
+  `serve` refuses to start
+  without it: `python3 -m pip install --target DIR pyyaml` and run with
+  `PYTHONPATH=DIR`. It binds to 127.0.0.1 only, with HTTP on 8000-8003, HTTPS on
   8443-8446 (WPT's pregenerated certificates), HTTP/2 on 9000 and WebSockets on
   8888/8889. There is no WebTransport and no DNS server. `wpt-score.py run`
   starts one server for all its processes. The runner starts its own when none
