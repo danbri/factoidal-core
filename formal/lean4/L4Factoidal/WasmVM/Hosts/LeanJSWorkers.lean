@@ -28,6 +28,7 @@ URLs to fetch (a turn's `fetches`), and the action `fetched` gives them.
 -/
 import L4Factoidal.WasmVM.Hosts.LeanJS
 import L4Factoidal.WHATWG.URL.Parser
+import L4Factoidal.Net.Xhr
 
 namespace L4Factoidal.WasmVM.Hosts.LeanJSWorkers
 open L4Factoidal.WasmVM
@@ -59,6 +60,9 @@ inductive Phase where
   | running
   /-- A task waits for this script; it runs again when it comes. -/
   | blocked (url : String)
+  /-- A task made a sync `XMLHttpRequest`: it was undone and runs again when the answer
+  (`Worker.syncWait`) comes. -/
+  | syncing
   | closed
   deriving BEq, Inhabited
 
@@ -74,6 +78,11 @@ structure Worker where
   /-- Steps run in total, also of runs undone. -/
   steps : Nat := 0
   halts : Nat := 0
+  /-- Sync requests (XHR §4.5.2 step 12, allowed in workers): the answers given so far to
+  the run being redone (`Net.Xhr.State.syncAnswers`), and the page request whose answer the
+  worker waits for. A worker that is starting waits with `phase` still `starting`. -/
+  syncCache : Array Net.PageFetch.Answer := #[]
+  syncWait : Option Nat := none
   deriving Inhabited
 
 structure Workers where
@@ -89,6 +98,10 @@ structure Workers where
   /-- The page timer armed for the workers' next timer (`wakeHandle`). -/
   wake : Option Nat := none
   steps : Nat := 0
+  /-- Workers' requests in flight at the host: the id the host knows (taken from the page's
+  own numbering, so it is never a page request's), the worker, and the worker's own id of
+  the transfer (`forwardNet`, `giveNet`). -/
+  routes : Array (Nat × Nat × Nat) := #[]
   deriving Inhabited
 
 /-- A page on BubblePopJS with its workers, and the realm a worker starts from (the page
@@ -173,21 +186,52 @@ def importHints (src base : String) : Array String := Id.run do
       | [] => break
   return out
 
-/-- The host of a new worker: an empty arena, the page's clock and clock rate, and its own
+/-- The network state of a new worker (`Net.Xhr`): on when its owner's is, with the
+owner's policy for the worker's URL (`PageFetch.Page.forWorker`: the owner's origin, or
+opaque for a `data:` worker; always the owner's local, secure and `hostCors` rules); sync
+requests by undo and redo of the worker's run (`syncCache`: the answers so far). -/
+def workerNet (owner : Net.Xhr.State) (url : String) (syncCache : Array Net.PageFetch.Answer) : Net.Xhr.State :=
+  { enabled := owner.enabled, page := owner.page.forWorker url, syncOk := true, syncAnswers := syncCache, window := false }
+
+/-- The host of a new worker: an empty arena, the page's clock and clock rate, its own
 fresh entropy (`Agents.entropy`), so a worker's random values and keys owe nothing to the
-page's seed. -/
-def workerHost (page : Session) (entropy : ByteArray) : Page.Host :=
+page's seed, and its network state (`workerNet`). -/
+def workerHost (page : Session) (entropy : ByteArray) (url : String := "") (syncCache : Array Net.PageFetch.Answer := #[]) : Page.Host :=
   let ph := page.host
   { dom := { dom := Page.emptyDocument, commandLimit := 0, logLimit := maxLogs },
     loop := { clock := ph.loop.clock },
     time := { instructionsPerMs := ph.time.instructionsPerMs },
-    web := { entropy, docEncoding := "UTF-8" } }
+    web := { entropy, docEncoding := "UTF-8", net := workerNet ph.web.net url syncCache } }
+
+/-- Kind: definitional lemma (workers' requests). Says: a worker's requests are decided
+under its owner's policy for the worker's URL (`PageFetch.Page.forWorker`): with
+`forWorker_origin`, the owner's origin or opaque, never another; with `forWorker_policy`,
+the owner's local, mixed-content and `hostCors` rules. Does not say: that the realm's
+scripts cannot change it (no op of `Net.Xhr.op` writes `page`, by reading of the code; not
+proved here). -/
+theorem workerHost_net_page (page : Session) (e : ByteArray) (url : String) (c : Array Net.PageFetch.Answer) :
+    (workerHost page e url c).web.net.page = page.host.web.net.page.forWorker url := rfl
+
+/-- Kind: definitional lemma. Says: a worker has network access exactly when its owner page
+has (the embedder's `network:true`). Does not say: anything of the page's frames. -/
+theorem workerHost_net_enabled (page : Session) (e : ByteArray) (url : String) (c : Array Net.PageFetch.Answer) :
+    (workerHost page e url c).web.net.enabled = page.host.web.net.enabled := rfl
+
+/-- Set the answers of a worker's sync requests before a run (`Net.Xhr.syncFetch` takes
+them in order). -/
+def withSync (s : Session) (cache : Array Net.PageFetch.Answer) : Session :=
+  let h := s.host
+  if !h.web.net.enabled then s else
+  s.setHost { h with web := { h.web with net := { h.web.net with syncOk := true, syncAnswers := cache, syncUsed := 0, syncWanted := none } } }
+
+/-- The sync request a run of the worker needs (it is then undone). -/
+def syncWanted (s : Session) : Option Net.PageFetch.Wire := s.host.web.net.syncWanted
 
 /-- Start a worker whose script has come: a copy of the base realm, made a worker's global
 scope, its script run, its microtask checkpoint, then the messages that waited. When the
 start needs a script not yet fetched, nothing is kept and the worker still waits. -/
 def start (base page : Session) (w : Worker) (src : String) (scripts : Array (String × Option String))
-    (entropy : ByteArray) : Worker × Option String :=
+    (entropy : ByteArray) : Worker × Option String × Option Net.PageFetch.Wire :=
   let limits := { page.limits with entropy := ByteArray.empty, commands := 0, logs := maxLogs }
   let s : Session := { base with limits, steps := 0, jobs := 0, tasks := 0, errors := #[], lastFrame := none }
   -- Math.random: a seed from this worker's own entropy, not the realm snapshot's constant
@@ -196,37 +240,44 @@ def start (base page : Session) (w : Worker) (src : String) (scripts : Array (St
   let s := match Hosts.WebApi.mathRandomSeed entropy with
     | some x => { s with heap := { s.heap with rng := x } }
     | none => s
-  let s := (s.setHost (workerHost page entropy)).setBudget workerBudget
+  let s := (s.setHost (workerHost page entropy w.url w.syncCache)).setBudget workerBudget
   let s := s.setWk { scripts }
   let s := (s.api? "worker" #[.str (JS.Str.ofHost w.url), .str (JS.Str.ofHost w.name)]).1
   let s := s.eval src
   let s := wEngine.checkpoint s
-  match s.wk.missing with
-  | some u => ({ w with steps := w.steps + s.steps }, some u)
-  | none =>
+  match s.wk.missing, syncWanted s with
+  | some u, _ => ({ w with steps := w.steps + s.steps }, some u, none)
+  | none, some wire => ({ w with steps := w.steps + s.steps }, none, some wire)
+  | none, none =>
     let s := w.waiting.foldl (fun s d => deliver s { worker := 0, kind := "message", data := d }) s
-    ({ w with s, phase := .running, waiting := #[], steps := w.steps + s.steps }, none)
+    ({ w with s, phase := .running, waiting := #[], steps := w.steps + s.steps, syncCache := #[] }, none, none)
 
 def closesIn (ops : Array WorkerOp) : Bool := ops.any fun | .close => true | _ => false
 
 /-- Run a worker's tasks that are due at `clock`, at most `workerTasks` and about `budget`
 steps. A task that needs a script not yet fetched is undone (the state before it is kept)
-and the worker waits for it; `close()` ends the runs after its task. The steps used. -/
-def runTo (w : Worker) (clock budget : Nat) : Worker × Nat := Id.run do
+and the worker waits for it; a task that makes a sync request the host has not answered is
+undone the same way and waits for the answer (`syncing`; its wire is the second result);
+`close()` ends the runs after its task. The steps used. -/
+def runTo (w : Worker) (clock budget : Nat) : Worker × Nat × Option Net.PageFetch.Wire := Id.run do
   let e := wEngine
   let mut s := w.s
   let mut used := 0
   let mut halts := w.halts
+  let mut cache := w.syncCache
   for _ in [0:workerTasks] do
     if used ≥ budget then break
     let (l, r) := (e.loop s).step
     match r with
     | some run =>
       let s0 := s
-      let s1 := e.runTask (e.setLoop s l) run
+      let s1 := e.runTask (e.setLoop (withSync s cache) l) run
       used := used + (s1.steps - s0.steps)
       if let some u := s1.wk.missing then
-        return ({ w with s := s0, phase := .blocked u, steps := w.steps + used, halts }, used)
+        return ({ w with s := s0, phase := .blocked u, steps := w.steps + used, halts, syncCache := cache }, used, none)
+      if let some wire := syncWanted s1 then
+        return ({ w with s := s0, phase := .syncing, steps := w.steps + used, halts, syncCache := cache }, used, some wire)
+      cache := #[]
       if s1.errors.size > s0.errors.size && ((s1.errors.back?.getD "").startsWith "halted") then halts := halts + 1
       s := s1
       if closesIn s.wk.ops then break
@@ -234,7 +285,7 @@ def runTo (w : Worker) (clock budget : Nat) : Worker × Nat := Id.run do
       let (l, fired) := (e.loop s).advanceTo clock
       s := e.setLoop s l
       if fired.isEmpty then break
-  return ({ w with s, steps := w.steps + used, halts }, used)
+  return ({ w with s, steps := w.steps + used, halts, syncCache := cache }, used, none)
 
 /-- The worker's next wake on the page's clock: now when a task waits, else its first
 timer. -/
@@ -272,7 +323,7 @@ def pageAsks (a : Agents) : Agents := Id.run do
         let x := w.list[i]!
         let x := match x.phase with
           | .starting => { x with waiting := x.waiting.push data }
-          | .running | .blocked _ => { x with s := deliver x.s { worker := 0, kind := "message", data } }
+          | .running | .blocked _ | .syncing => { x with s := deliver x.s { worker := 0, kind := "message", data } }
           | .closed => x
         w := { w with list := w.list.set! i x }
       | none => pure ()
@@ -330,8 +381,103 @@ def arm (a : Agents) : Agents := Id.run do
     let l := { l with active := id :: l.active, nextTimer := id + 1 }
     return { a with page := e.setLoop a.page (l.arm id wakeHandle (t - clock) false 0), w := { a.w with wake := some id } }
 
+/-! ## Workers' requests (`Net.Xhr` in a worker)
+
+A worker's `XMLHttpRequest` and `fetch` are decided in the worker's own `Net.Xhr.State`,
+under its owner's policy (`workerNet`). The host knows only the page: a worker's requests
+join the page's `netRequests` with an id from the page's numbering (`routes` maps it back),
+and the host's answers to them go to the worker (`giveNet`). Nothing of a request changes
+on the way but its id (`routeWire_same`). -/
+
+def netOf (s : Session) : Net.Xhr.State := s.host.web.net
+
+def setNet (s : Session) (n : Net.Xhr.State) : Session :=
+  let h := s.host
+  s.setHost { h with web := { h.web with net := n } }
+
+/-- A worker's request as the host is told it: the worker's wire with the page-wide id. -/
+def routeWire (wire : Net.PageFetch.Wire) (g : Nat) : Net.PageFetch.Wire := { wire with id := g }
+
+/-- Kind: lemma on `routeWire`. Says: forwarding a worker's request to the host changes its
+id and nothing else: method, URL, header fields, body, resolve flag and pinned address are
+the worker's (so `PageFetch.plan_wire_forbidden`, `onAnswer_reach` and the other theorems on
+the worker's transfers hold of what the host is told). Does not say: anything of the host. -/
+theorem routeWire_same (wire : Net.PageFetch.Wire) (g : Nat) :
+    (routeWire wire g).method = wire.method ∧ (routeWire wire g).url = wire.url ∧
+      (routeWire wire g).headers = wire.headers ∧ (routeWire wire g).body = wire.body ∧
+      (routeWire wire g).resolve = wire.resolve ∧ (routeWire wire g).address = wire.address ∧
+      (routeWire wire g).port = wire.port ∧ (routeWire wire g).id = g :=
+  ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+/-- Hand a worker's new requests and cancels to the page (for the host), and its sync
+request (`sync`, from a run that was undone), which the worker then waits for. -/
+def forwardNet (page : Session) (w : Workers) (x : Worker) (sync : Option Net.PageFetch.Wire) :
+    Session × Workers × Worker := Id.run do
+  let xn := netOf x.s
+  if xn.outbox.isEmpty && xn.cancels.isEmpty && sync.isNone then return (page, w, x)
+  let mut pn := netOf page
+  let mut routes := w.routes
+  for wire in xn.outbox do
+    match routes.find? (fun r => r.2.1 == x.id && r.2.2 == wire.id) with
+    | some (g, _, _) => pn := { pn with outbox := pn.outbox.push (routeWire wire g) }
+    | none =>
+      let g := pn.nextTransfer
+      pn := { pn with nextTransfer := g + 1, outbox := pn.outbox.push (routeWire wire g) }
+      routes := routes.push (g, x.id, wire.id)
+  for c in xn.cancels do
+    match routes.find? (fun r => r.2.1 == x.id && r.2.2 == c) with
+    | some (g, _, _) =>
+      pn := { pn with cancels := pn.cancels.push g }
+      routes := routes.filter (·.1 != g)
+    | none => pure ()
+  let mut x := if xn.outbox.isEmpty && xn.cancels.isEmpty then x else { x with s := setNet x.s { xn with outbox := #[], cancels := #[] } }
+  if let some wire := sync then
+    let g := pn.nextTransfer
+    pn := { pn with nextTransfer := g + 1, outbox := pn.outbox.push (routeWire wire g) }
+    x := { x with syncWait := some g }
+  return (setNet page pn, { w with routes }, x)
+
+/-- The host's answers to workers' requests go to them: an async one to the worker's
+`Net.Xhr.give` (its callback a task on the worker's networking source), a sync one to the
+worker's answers so far (the undone task then runs again). The answers that are the page's
+are given back. -/
+def giveNet (a : Agents) (answers : Array (Nat × Net.PageFetch.Answer)) : Agents × Array (Nat × Net.PageFetch.Answer) := Id.run do
+  if a.w.routes.isEmpty && !a.w.list.any (·.syncWait.isSome) then return (a, answers)
+  let mut w := a.w
+  let mut rest : Array (Nat × Net.PageFetch.Answer) := #[]
+  for (g, ans) in answers do
+    match w.list.findIdx? (·.syncWait == some g) with
+    | some i =>
+      let x := w.list[i]!
+      let phase := if x.phase == .syncing then .running else x.phase
+      w := { w with list := w.list.set! i { x with syncCache := x.syncCache.push ans, syncWait := none, phase } }
+    | none =>
+    match w.routes.find? (·.1 == g) with
+    | none => rest := rest.push (g, ans)
+    | some (_, wid, l) =>
+      match w.list.findIdx? (·.id == wid) with
+      | none => w := { w with routes := w.routes.filter (·.1 != g) }
+      | some i =>
+        let x := w.list[i]!
+        let (net, cb) := Net.Xhr.give (netOf x.s) l ans
+        let s := setNet x.s net
+        let s := match cb with
+          | some c => wEngine.setLoop s ((wEngine.loop s).queueTask .networking c)
+          | none => s
+        let routes := if net.live.any (·.1 == l) then w.routes else w.routes.filter (·.1 != g)
+        w := { w with list := w.list.set! i { x with s }, routes }
+  return ({ a with w }, rest)
+
+/-- Requests of workers that are gone: the host may stop them, and their answers are dropped. -/
+def dropRoutes (page : Session) (w : Workers) : Session × Workers :=
+  if w.routes.isEmpty then (page, w) else
+  let (keep, gone) := w.routes.partition fun r => w.list.any (·.id == r.2.1)
+  if gone.isEmpty then (page, w) else
+  let pn := netOf page
+  (setNet page { pn with cancels := pn.cancels ++ gone.map (·.1) }, { w with routes := keep })
+
 /-- Start the workers whose scripts have come, and run each worker's due tasks at the
-page's clock (`pumpSteps` for all of them), then hand their asks to the page. -/
+page's clock (`pumpSteps` for all of them), then hand their asks and requests to the page. -/
 def runWorkers (a : Agents) : Agents := Id.run do
   let some base := a.base | return a
   let clock := (LeanJS.engine.loop a.page).clock
@@ -340,16 +486,19 @@ def runWorkers (a : Agents) : Agents := Id.run do
   let mut budget := pumpSteps
   for i in [0:w.list.size] do
     let mut x := w.list[i]!
+    let mut sync : Option Net.PageFetch.Wire := none
     match x.phase with
     | .starting =>
+      if x.syncWait.isSome then pure () else
       match w.script? x.url with
       | some (some src) =>
         let hints := (importHints src x.url).filter fun u => (w.script? u).isNone
         if !hints.isEmpty then
           w := hints.foldl Workers.request w
         else
-          let (x', need) := start base page x src w.scripts (a.entropy x.id)
+          let (x', need, wire) := start base page x src w.scripts (a.entropy x.id)
           x := x'
+          sync := wire
           if let some u := need then w := w.request u
       | some none =>
         page := deliver page { worker := x.id, kind := "loaderror" }
@@ -363,12 +512,17 @@ def runWorkers (a : Agents) : Agents := Id.run do
     if x.phase == .running && budget > 0 then
       -- the scripts fetched so far, for importScripts
       if x.s.wk.scripts.size != w.scripts.size then x := { x with s := x.s.setWk { x.s.wk with scripts := w.scripts, missing := none } }
-      let (x', used) := runTo x clock budget
+      let (x', used, wire) := runTo x clock budget
       x := x'
+      sync := wire
       budget := budget - min budget used
       if let .blocked u := x.phase then w := w.request u
     let (page', x') := workerAsks page x
     page := page'
+    x := x'
+    let (page', w', x') := forwardNet page w x sync
+    page := page'
+    w := w'
     x := x'
     if x.phase != .closed then
       if x.halts ≥ maxHalts || x.s.heap.objs.size > maxObjects then
@@ -376,8 +530,10 @@ def runWorkers (a : Agents) : Agents := Id.run do
         page := deliver page { worker := x.id, kind := "error", header }
         x := x.stop
     w := { w with list := w.list.set! i x }
-  -- closed workers leave the list (their events already queued at the page stay)
-  return { a with page, w := { w with list := w.list.filter (·.phase != .closed), steps := w.steps + (pumpSteps - budget) } }
+  -- closed workers leave the list (their events already queued at the page stay), and
+  -- their requests are stopped
+  let (page', w') := dropRoutes page { w with list := w.list.filter (·.phase != .closed), steps := w.steps + (pumpSteps - budget) }
+  return { a with page := page', w := w' }
 
 /-- After each microtask checkpoint of the page. A page with no worker pays one check. -/
 def pump (a : Agents) : Agents :=
@@ -403,7 +559,8 @@ def engine : PageEvents.Engine Agents :=
     setLastFrame := fun a f => { a with page := p.setLastFrame a.page f } }
 
 /-- Whether a worker waits for the embedder: `settle` stops then. -/
-def Agents.waits (a : Agents) : Bool := !a.w.loads.isEmpty
+def Agents.waits (a : Agents) : Bool :=
+  !a.w.loads.isEmpty || !a.w.routes.isEmpty || a.w.list.any (·.syncWait.isSome)
 
 /-- Workers that run (for a turn's answer). -/
 def Agents.running (a : Agents) : Nat := a.w.list.size

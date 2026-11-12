@@ -50,6 +50,17 @@ Network is off unless the embedder starts a page session with `network:true`; th
   and local-address rules apply to the first URL and to the final URL it reports. DNS is
   that browser's: no pin there.
 
+## Dedicated workers (2026-11-12)
+
+A worker's `XMLHttpRequest` and `fetch` (BubblePopJS; QuickJS-NG has no `Worker`) are
+decided by the same code, in the worker's own `Net.Xhr.State`, under its owner's policy
+(`Page.forWorker`): the owner's origin (opaque for a `data:` worker), and always the owner's
+local-address, mixed-content and `hostCors` rules, so a worker reaches nothing its page may
+not. The host sees a worker's requests as the page's (`netRequests`, with ids from the
+page's numbering) and changes nothing else of them (`LeanJSWorkers.routeWire_same`). Sync
+requests in a worker are allowed (the worker's run is undone and redone; the page does not
+wait). Design: `docs/designissues/2026-11-09-dedicated-workers.md`, "Requests".
+
 ## Security review, 2026-11-11
 
 Checked: the Lean decision code above and the three hosts. Fixed on `wip/xhr`:

@@ -59,6 +59,8 @@ argument for `start`:
   rebinding, `Net.PageFetch.emit`). `pageAddress` in `start`: the address the host loaded
   the page from, when it knows it (a local one lets the page reach local addresses).
   `elapsedMs` moves the virtual clock before the answers apply (a test host's waiting time).
+  On BubblePopJS a dedicated worker's requests are in `netRequests` too, as the page's (ids
+  from the page's numbering), and their answers go to the worker (`LeanJSWorkers.giveNet`).
 - `syncAnswer` (`answer`, the form of one `results` entry): a sync `XMLHttpRequest` was reached.
   A turn with `netSync` (one request) carries nothing else and changes nothing: the host
   makes the request and answers here, and the action runs again from its start with the
@@ -798,20 +800,24 @@ def netAnswer (x : JSON.Json) : Nat × Net.PageFetch.Answer :=
       addresses }
   ((natField x "id").getD 0, answer)
 
+/-- The answers of action `net`. -/
+def netResults (request : JSON.Json) : Array (Nat × Net.PageFetch.Answer) :=
+  match request.field? "results" with
+  | some (.array xs) => xs.toArray.map netAnswer
+  | _ => #[]
+
 /-- Apply the host's answers: each answered request's callback is a task on the networking
 source of the event loop (`Net.Xhr.give`). -/
-def netGive (h : Page.Host) (request : JSON.Json) : Page.Host := Id.run do
-  let results : List JSON.Json := match request.field? "results" with
-    | some (.array xs) => xs
-    | _ => []
+def netGiveAll (h : Page.Host) (answers : Array (Nat × Net.PageFetch.Answer)) : Page.Host := Id.run do
   let mut net := h.web.net
   let mut loop := h.loop
-  for r in results do
-    let (id, a) := netAnswer r
+  for (id, a) in answers do
     let (net', cb) := Net.Xhr.give net id a
     net := net'
     if let some c := cb then loop := loop.queueTask .networking c
   return { h with web := { h.web with net }, loop }
+
+def netGive (h : Page.Host) (request : JSON.Json) : Page.Host := netGiveAll h (netResults request)
 
 /-- The answer of a turn of the Lean engine; the session, its workers and its sandboxed
 frames' sessions are kept. A page with workers adds `workers` (how many run) and `fetches`
@@ -935,7 +941,11 @@ def actLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (act
     let ms := (natField request "elapsedMs").getD 0
     run fun a =>
       let a := if ms == 0 then a else (e.advance a ((e.loop a).clock + ms)).1
-      let a := { a with page := a.page.setHost (netGive a.page.host request) }
+      -- the answers to workers' requests go to them (`LeanJSWorkers.giveNet`), the rest to the page
+      let all := netResults request
+      let (a, rest) := LeanJSWorkers.giveNet a all
+      let a := if rest.size == all.size then a else LeanJSWorkers.pump a
+      let a := { a with page := a.page.setHost (netGiveAll a.page.host rest) }
       (e.advance a (e.loop a).clock).1
   | _ => keep "scriptSession: unknown action"
 

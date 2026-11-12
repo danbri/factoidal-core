@@ -72,4 +72,52 @@ def run : Except String (List String × List (List String) × Nat) := do
   | .ok (logs, idle, n, loads) => logs == ["function"] && idle && n == 0 && loads == 0
   | .error _ => false
 
+/-! ### Requests in a worker (`Net.Xhr` under the owner's policy)
+
+A worker's async `XMLHttpRequest`, a sync one (its start undone and run again with the
+answer) and `fetch`: each reaches the embedder as one of the page's requests, the
+cross-origin one with the page's origin, and their answers come back to the worker. -/
+
+def netPage : String := "<!doctype html><script>const w = new Worker('nw.js'); w.onmessage = e => console.log(e.data);</script>"
+
+def netWorker : String :=
+  "const x = new XMLHttpRequest(); x.open('GET', 'd.txt');" ++
+  "x.onload = () => postMessage('async ' + x.status + ' ' + x.responseText); x.send();" ++
+  "const y = new XMLHttpRequest(); y.open('GET', 'http://b.test/s', false); y.send();" ++
+  "postMessage('sync ' + y.status + ' ' + y.responseText);" ++
+  "fetch('e.txt').then(r => r.text()).then(t => postMessage('fetch ' + t));" ++
+  "console.log(typeof XMLHttpRequest, 'responseXML' in y, typeof document);"
+
+def netAnswer (w : Net.PageFetch.Wire) : Net.PageFetch.Answer :=
+  if w.url == "http://b.test/s" then
+    { status := 200, headers := [("access-control-allow-origin", "http://a.test")], body := "S".toUTF8, url := w.url }
+  else { status := 200, headers := [("content-type", "text/plain")], body := (if w.url.endsWith "d.txt" then "D" else "E").toUTF8, url := w.url }
+
+/-- The page's console, and each request the embedder was told (URL, `Origin` field). -/
+def runNet : Except String (List String × List (String × Option String) × Nat) := do
+  let base ← LeanJS.prepareSource
+  let dom := DOM.parseHtmlDocument netPage
+  let s := LeanJS.start base dom "http://a.test/p.html" (scriptsOf dom) { network := true, pageAddress := "127.0.0.1" } {}
+    { instructionsPerMs := 1000000000000 }
+  let e := LeanJSWorkers.engine
+  let mut a : LeanJSWorkers.Agents := LeanJSWorkers.pump { page := s, base := some base }
+  let mut seen : List (String × Option String) := []
+  for _ in [0:8] do
+    if !a.w.loads.isEmpty then
+      a := LeanJSWorkers.give a (a.w.loads.map fun u => (u, if u.endsWith "/nw.js" then some netWorker else none))
+    let net := a.page.host.web.net
+    if net.outbox.isEmpty then break
+    a := { a with page := LeanJSWorkers.setNet a.page { net with outbox := #[] } }
+    seen := seen ++ net.outbox.toList.map fun w => (w.url, Net.PageFetch.headerGet w.headers "origin")
+    let (a', _) := LeanJSWorkers.giveNet a (net.outbox.map fun w => (w.id, netAnswer w))
+    a := (e.settle (LeanJSWorkers.pump a') 1000 100000 LeanJSWorkers.Agents.waits).1
+  return (a.page.logs.toList, seen, a.w.routes.size)
+
+#guard match runNet with
+  | .ok (logs, seen, routes) =>
+    logs == ["[worker 1] function false undefined", "sync 200 S", "async 200 D", "fetch E"] &&
+    seen == [("http://b.test/s", some "http://a.test"), ("http://a.test/d.txt", none), ("http://a.test/e.txt", none)] &&
+    routes == 0
+  | .error _ => false
+
 end L4Factoidal.WasmVM.Tests.LeanJSWorkers

@@ -102,6 +102,10 @@ structure State where
   /-- The page's scripts name `XMLHttpRequest`, so a later action may make a sync request:
   the embedder keeps the session before each action to undo it (only such pages pay). -/
   mayBlock : Bool := false
+  /-- The objects belong to a `Window` (false: a worker's, `LeanJSWorkers.workerNet`). XHR
+  forbids some uses of sync requests in a window only (`timeout`, `responseType`) and takes
+  no `"document"` response type outside one. -/
+  window : Bool := true
   deriving Inhabited
 
 /-- A page's objects (each handle is its index plus one). -/
@@ -158,7 +162,7 @@ def openX (s : State) (h : Nat) (method url base : String) (async : Bool) : Stat
   match URL.parseUrl url (if base.isEmpty then none else some base) with
   | none => (s, .error errSyntax)
   | some u =>
-    if !async && (x.timeout != 0 || x.responseType != "") then (s, .error errAccess) else
+    if s.window && !async && (x.timeout != 0 || x.responseType != "") then (s, .error errAccess) else
     let u' := { u with username := "", password := "" }
     let (s, x) := stopFetch s x
     let x' := { x with method := normalizeMethod method, url := u'.serialize true, async, headers := #[], body := none,
@@ -560,8 +564,10 @@ def op (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int Byt
     | none => (s, .error errType)
     | some x =>
       if x.state == 3 || x.state == 4 then (s, .error errInvalidState) else
-      if !x.async && x.state != 0 then (s, .error errAccess) else
       let t := strAt fs 1
+      -- outside a window, "document" is ignored (XHR §4.6.4 step 1)
+      if !s.window && t == "document" then (s, okStr "") else
+      if s.window && !x.async && x.state != 0 then (s, .error errAccess) else
       if ["", "arraybuffer", "blob", "document", "json", "text"].contains t then
         (s.set (natAt fs 0) { x with responseType := t }, okStr "")
       else (s, okStr "")
@@ -570,7 +576,7 @@ def op (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int Byt
     match s.get? (natAt fs 0) with
     | none => (s, .error errType)
     | some x =>
-      if !x.async && x.state != 0 then (s, .error errAccess)
+      if s.window && !x.async && x.state != 0 then (s, .error errAccess)
       else (s.set (natAt fs 0) { x with timeout := natAt fs 1 }, okStr "")
   | 73 =>
     -- withCredentials: only the CORS check changes (no credentials exist to send)

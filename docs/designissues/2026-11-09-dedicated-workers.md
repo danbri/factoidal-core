@@ -127,6 +127,39 @@ values) and runs again when the script comes. So that a test's start does not ru
 imported script, the string literals of `importScripts(...)` in a worker's script are
 fetched with it (a hint; what runs is decided by `importScripts`).
 
+### Requests: XMLHttpRequest and fetch in a worker (2026-11-12)
+
+A worker of a page whose embedder turned the network on (`network:true`) has
+`XMLHttpRequest`, `fetch`, `Headers`, `Response`, `FormData` and `Blob` (the classes of the
+window, from the same prelude; `responseXML` and the response type `"document"` are
+window-only, XHR §4.6). Every decision is Lean's, as for the page
+(`docs/designissues/2026-11-11-page-network.md`):
+
+- Each worker has its own `Net.Xhr.State` (`LeanJSWorkers.workerNet`), whose policy is its
+  owner's for the worker's URL (`PageFetch.Page.forWorker`): the owner's origin (a `data:`
+  worker: opaque, `"null"`), and always the owner's local-address, mixed-content and
+  `hostCors` rules. Theorems: `forWorker_origin` (the owner's origin or `"null"`, never
+  another), `forWorker_policy`, `forWorker_mayConnect`, `forWorker_not_data`,
+  `workerHost_net_page`, `workerHost_net_enabled`. CORS, preflights, redirects, forbidden
+  fields and methods, the DNS pin and `data:` URLs are `PageFetch`'s, unchanged.
+- The host knows only the page. A worker's requests join the page's `netRequests` with an
+  id from the page's own numbering (`Workers.routes` maps it back), so no host changed;
+  `forwardNet` changes a request's id and nothing else (`routeWire_same`). The host's
+  answers (action `net`) to them go to the worker (`giveNet`): its `Net.Xhr.give`, and the
+  object's callback a task on the worker's networking source. Requests of a worker that is
+  terminated or closes go to the host's `netCancels` (`dropRoutes`).
+- Sync requests (allowed in workers, XHR §4.5.2) use the undo of the worker's own run, as
+  `importScripts` does: the run that needs an answer is undone (the worker's state before
+  the task is kept), the request goes to the host as an ordinary page request, and the task
+  runs again with the answers so far (`Worker.syncCache`; phase `syncing`, or `starting`
+  with `syncWait` for a worker's top-level script). The page is not undone and does not
+  wait: only that worker does. The redone run is the same run (the same clock, random
+  numbers and order), so the `k`-th sync request takes the `k`-th answer.
+- `settle` stops while a worker's request is at the host (`Agents.waits`).
+
+Not done: a sync request's `timeout` in a worker (the run sees the answer at once, on the
+virtual clock); QuickJS-NG (no `Worker` there).
+
 ### Pages without workers pay nothing
 
 Nothing new on the start path: no new work at page start, first frame, scroll or input.

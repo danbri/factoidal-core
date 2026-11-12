@@ -1,7 +1,8 @@
 // Dedicated workers on BubblePopJS (record docs/designissues/2026-11-09-dedicated-workers.md):
 // new Worker, postMessage both ways with the structured clone (Lean, JS/Clone.lean) and
 // transfer, importScripts through the embedder's fetches, the worker global scope with no
-// DOM, timers in the worker, errors, terminate and close. On QuickJS-NG `Worker` is
+// DOM, timers in the worker, errors, terminate and close; XMLHttpRequest and fetch in a
+// worker under the page's origin and policy. On QuickJS-NG `Worker` is
 // undefined (no Lean structured clone there). Also times `new Worker` start and a
 // postMessage round trip.
 // Needs the native library (build-web-render.sh --native).
@@ -112,6 +113,80 @@ Deno.test({name:"Dedicated workers: each worker's Math.random has its own seed (
   const all=[...a,...b];
   assert.equal(new Set(all).size,4,`workers drew the same sequence: ${JSON.stringify(all)}`);
   for(const x of all)assert.ok(!snap.includes(x),"a worker drew the realm snapshot's sequence");
+}});
+
+// A worker's XMLHttpRequest and fetch (network:true): its requests reach the host as the
+// page's netRequests, under the page's origin and policy (Net.PageFetch, Page.forWorker);
+// the answers go back to the worker; a sync request undoes and redoes the worker's run only.
+type Wire={id:number;method:string;url:string;headers:[string,string][];resolve?:boolean;address?:string};
+type NetTurn=Turn&{netRequests?:Wire[];netSync?:Wire};
+function runNet(engine:HTMLEngine,page:string,files:Record<string,string>,answer:(w:Wire)=>Record<string,unknown>,start:Record<string,unknown>={}){
+  let turn=engine.scriptSession(page,{action:"start",url:`${origin}/p.html`,resources:[],instructionsPerMs:1e12,engine:"bubblepop",network:true,...start}) as NetTurn;
+  const logs=[...turn.logs],errors=[...turn.errors],wires:Wire[]=[];let syncTurns=0;
+  const take=(t:NetTurn)=>{logs.push(...t.logs);errors.push(...t.errors);if(t.netSync)syncTurns++;wires.push(...(t.netRequests??[]));return t;};
+  let queue:Wire[]=[...(turn.netRequests??[])];wires.push(...queue);
+  for(let round=0;round<40;round++){
+    if(turn.fetches?.length){
+      const results=turn.fetches.map(f=>{const p=new URL(f.url).pathname;
+        return p in files?{id:f.id,status:200,url:f.url,contentType:"text/javascript",source:files[p]}:{id:f.id,status:404,url:f.url,contentType:"text/html",source:""};});
+      turn=take(engine.scriptSession("",{action:"fetched",session:turn.session,results}) as NetTurn);queue.push(...(turn.netRequests??[]));
+    }
+    if(queue.length){
+      const results=queue.map(w=>({id:w.id,...answer(w)}));queue=[];
+      turn=take(engine.scriptSession("",{action:"net",session:turn.session,results}) as NetTurn);queue.push(...(turn.netRequests??[]));
+    }
+    turn=take(engine.scriptSession("",{action:"settle",session:turn.session,budgetMs:30000}) as NetTurn);queue.push(...(turn.netRequests??[]));
+    if(!turn.fetches?.length&&!queue.length)break;
+  }
+  engine.scriptSession("",{action:"close"});
+  return {logs,errors,wires,syncTurns};
+}
+const b64=(s:string)=>btoa(s);
+
+Deno.test({name:"Dedicated workers: XMLHttpRequest and fetch with the page's origin and policy (BubblePopJS)",ignore:!exists(library),fn:async()=>{
+  const engine=await loadHTML(library);
+  const page=`<!doctype html><script>new Worker('n.js').onmessage=e=>console.log('W '+e.data);</script>`;
+  const worker=`
+  const x=new XMLHttpRequest();x.open('GET','d.txt');x.onload=()=>postMessage('async '+x.status+' '+x.responseText);x.send();
+  const y=new XMLHttpRequest();y.open('GET','http://b.test/s',false);y.send();postMessage('sync '+y.status+' '+y.responseText);
+  fetch('http://c.test/no-cors').then(()=>postMessage('LEAK'),e=>postMessage('cors '+e.name));
+  fetch('e.txt').then(r=>r.text()).then(t=>postMessage('fetch '+t));
+  const z=new XMLHttpRequest();z.open('GET','http://127.0.0.1:9/x');z.onerror=()=>postMessage('local refused '+z.status);z.send();
+  postMessage([typeof XMLHttpRequest,typeof fetch,'responseXML' in y].join());`;
+  const answer=(w:Wire)=>{
+    if(w.resolve)return {addresses:["93.184.215.14"]};
+    const u=new URL(w.url);
+    if(u.host==="b.test")return {status:200,headers:[["access-control-allow-origin",origin]],bodyBase64:b64("S"),url:w.url};
+    if(u.host==="c.test")return {status:200,headers:[],bodyBase64:b64("secret"),url:w.url};
+    return {status:200,headers:[["content-type","text/plain"]],bodyBase64:b64(u.pathname.endsWith("d.txt")?"D":"E"),url:w.url};
+  };
+  const {logs,errors,wires,syncTurns}=runNet(engine,page,{"/n.js":worker},answer);
+  assert.deepEqual(errors,[]);
+  const got=logs.filter(l=>l.startsWith("W ")).map(l=>l.slice(2)).sort();
+  assert.deepEqual(got,["async 200 D","cors TypeError","fetch E","function,function,false","local refused 0","sync 200 S"].sort(),JSON.stringify(logs));
+  // no request to the local address left the engine; the cross-origin ones carry the page's origin
+  const sent=wires.filter(w=>!w.resolve);
+  assert.ok(!sent.some(w=>w.url.includes("127.0.0.1")),"a local target reached the host");
+  for(const w of sent.filter(w=>!w.url.startsWith(origin)))
+    assert.deepEqual(w.headers.filter(([n])=>n.toLowerCase()==="origin"),[["Origin",origin]],JSON.stringify(w));
+  // the page is public: every name was resolved first and each request pinned to the address
+  for(const w of sent)assert.equal(w.address,"93.184.215.14",JSON.stringify(w));
+  // the worker's sync request did not undo the page (no netSync turn)
+  assert.equal(syncTurns,0);
+}});
+
+Deno.test({name:"Dedicated workers: no network for the page, none for its workers",ignore:!exists(library),fn:async()=>{
+  const engine=await loadHTML(library);
+  let turn=engine.scriptSession(`<script>new Worker('n.js').onmessage=e=>console.log('W '+e.data);</script>`,
+    {action:"start",url:`${origin}/p.html`,resources:[],instructionsPerMs:1e12,engine:"bubblepop"}) as NetTurn;
+  const results=turn.fetches!.map(f=>({id:f.id,status:200,url:f.url,contentType:"text/javascript",source:"postMessage([typeof XMLHttpRequest,typeof fetch].join())"}));
+  turn=engine.scriptSession("",{action:"fetched",session:turn.session,results}) as NetTurn;
+  const logs=[...turn.logs];
+  turn=engine.scriptSession("",{action:"settle",session:turn.session,budgetMs:1000}) as NetTurn;
+  logs.push(...turn.logs);
+  engine.scriptSession("",{action:"close"});
+  assert.deepEqual(logs,["W undefined,undefined"]);
+  assert.equal(turn.netRequests,undefined);
 }});
 
 Deno.test({name:"Dedicated workers: start and round-trip time (BubblePopJS, native)",ignore:!exists(library),fn:async()=>{
