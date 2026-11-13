@@ -12,6 +12,8 @@ import L4Factoidal.JS.EnvIndexTheorems
 import L4Factoidal.JS.Tests
 import L4Factoidal.JS.RegressionTests
 import L4Factoidal.JS.CloneTests
+import L4Factoidal.JS.Modules
+import L4Factoidal.JS.ModuleTests
 
 /-! A JavaScript engine written in Lean: parser, evaluator, built-ins.
 Record: `docs/designissues/2026-11-08-lean-js-engine.md`. -/
