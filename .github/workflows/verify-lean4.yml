@@ -126,6 +126,18 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: python3 tools/lean-hygiene-audit.py --build-log "$RUNNER_TEMP/lake-build.log"
 
+      # Report only (issue 427, https://github.com/danbri/factoidal-core/issues/427):
+      # which modules can reach I/O through an escape hatch. The self-test plants one
+      # hatch of each kind in fixture modules and fails if the scanner misses one.
+      # The scan reads the olean files the build above wrote; it fails no gate yet.
+      - name: Safety scan (report only)
+        working-directory: ${{ github.workspace }}
+        continue-on-error: true
+        run: |
+          python3 tools/safety-scan/safety-scan.py --self-test
+          python3 tools/safety-scan/safety-scan.py --json "$RUNNER_TEMP/safety-scan.json" --md "$RUNNER_TEMP/safety-scan.md"
+          cat "$RUNNER_TEMP/safety-scan.md" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Build QT4 runner and native dispatch for regressions
         working-directory: formal/lean4
         run: lake build l4qt4 l4wasm-cli
@@ -178,6 +190,8 @@ jobs:
             ${{ runner.temp }}/owl-public-boundary.json
             ${{ runner.temp }}/lean-tail-recursion.json
             ${{ runner.temp }}/lean-csimp-reach.json
+            ${{ runner.temp }}/safety-scan.json
+            ${{ runner.temp }}/safety-scan.md
           if-no-files-found: warn
           retention-days: 30
 

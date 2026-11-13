@@ -1,0 +1,7 @@
+{"SafetyFixture.Clean": "io-free",
+ "SafetyFixture.Trace": "reaches-hatch",
+ "SafetyFixture.Ext": "reaches-hatch",
+ "SafetyFixture.Via": "reaches-hatch",
+ "SafetyFixture.Impl": "reaches-hatch",
+ "SafetyFixture.Init": "effect-typed",
+ "SafetyFixture.Main": "effect-typed"}
