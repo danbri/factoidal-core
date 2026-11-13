@@ -80,3 +80,34 @@ pass, 0 fail, 3,655 not run. Records: `docs/designissues/2026-11-09-foafnaut-per
 - Commits from other sessions on `main` carry assistant attribution trailers (for example
   `226c14a0a`, `996f6f5db`), against iron rule 13. The owner has not decided what to do.
 - Owner's order for WasmVM after GC: a speed pass. Not started.
+
+## Added 2026-11-13: items that were only in the chat of the cloud session
+
+The record above was short of these. Each was said to the owner but not written here.
+
+- **Release role.** The cloud session released the release manager role for 0.35.0 on 2026-11-10:
+  https://github.com/danbri/factoidal-core/issues/389#issuecomment-6768338953 (handover comment).
+- **WasmVM speed pass.** Owner order, 2026-11-10: "Simd then gc then speed". SIMD and GC are on main
+  (https://github.com/danbri/factoidal-core/pull/384, https://github.com/danbri/factoidal-core/pull/387).
+  The speed pass is not started. No measurements exist for it.
+- **BubblePopJS small defects, prepared and not applied.**
+  `docs/releases/0.35.0/0003-bubblepop-lastindexof-and-radix.py` is an edit script for
+  `lastIndexOf` with `fromIndex` and `Number.prototype.toString(radix)`. It was written against the
+  tree of 2026-11-10 and was not built or tested. Also open: `s += v` on a global in the VM loop, and
+  typed array element access with no string key.
+- **Wrong text to correct.** https://github.com/danbri/factoidal-core/issues/390 (unsafe in lab
+  modules) says 30; the audit baseline is 29. A comment on
+  https://github.com/danbri/factoidal-core/issues/378 (BubblePopJS plan) says "07:00 UTC" for a time
+  that was wrong.
+- **Owner decisions still open.** (1) A full daily WPT run by a job matrix, one job for each WPT
+  directory. (2) Commits `226c14a0a` and `996f6f5db` on main carry attribution trailers from other
+  sessions, against iron rule 13. (3) Whether the CPU graphics path stays on by default.
+- **Deferred by the owner.** https://github.com/danbri/factoidal/issues/1291 ("consider at some
+  point"). The Spinal Tap GPU failure needs the next Hub deploy before it can be checked.
+- **WPT.** Daily scores: branch `wpt-scores` of `danbri/factoidal-builds`. Ranked causes for `css`
+  and `html`: https://github.com/danbri/factoidal-core/issues/429. The treemap of 2026-11-13 is a
+  private page of the owner, not in the repository; its data came from the artifact
+  `wpt-score-pinned-bubblepop` of https://github.com/danbri/factoidal-builds/actions/runs/43199421148
+  and the wpt.fyi summaries at WPT commit `fea36e49ddda`.
+- **Linux WPT runs.** Branch `claude/foafnaut-perf-bottlenecks-7hpt38`, commit `3c255e209`, makes
+  `libweb-render.so` on Linux. Not yet checked by a run.
