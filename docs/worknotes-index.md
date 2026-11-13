@@ -15,6 +15,7 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-11-13 | [Foafnaut safety map: which code can reach I/O](designissues/2026-11-13-foafnaut-safety-map.md) | https://github.com/danbri/factoidal-core/issues/427 | current — io-free / reaches-hatch / effect-typed per module from the compiled environment (`tools/safety-scan/`), self-test with planted hatches, first prototype numbers, trusted base, relation to the hygiene checks |
 | 2026-11-10 | [Theorems as contributions](designissues/2026-11-10-theorems-as-contributions.md) | https://github.com/danbri/factoidal-core/issues/388 | proposed — five kinds of theorem, ten reading rules (what a theorem does not say), how to state one, setup for new contributors and tools |
 | 2026-11-09 | [BubblePopJS plan](designissues/2026-11-09-bubblepopjs-plan.md) | branch `claude/foafnaut-perf-bottlenecks-7hpt38` | proposed — data layout (value words, flat heap, shapes, inline caches), tiers with and without a JIT, theorems, profiles, key results and stages; a Lean model measures the layout against QuickJS-NG |
 | 2026-11-09 | [Foafnaut performance exploration](designissues/2026-11-09-foafnaut-perf-exploration.md) | branch `claude/foafnaut-perf-bottlenecks-7hpt38` | current — BubblePopJS (`main`, stage A, stage B) by operation and on real-world libraries against QuickJS-NG and V8, defects found by differential runs, the native engine's start, first compile and frame by phase on Linux, conversions to `Float` repaired with proved twins |

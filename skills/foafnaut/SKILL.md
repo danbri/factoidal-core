@@ -467,6 +467,11 @@ Several sessions work on the owner's laptop at once.
   [CPU backend](../../docs/designissues/2026-11-08-cpu-render-backend.md),
   [cost theorems](../../docs/designissues/2026-11-08-cost-theorems.md),
   [page GPU](../../docs/designissues/2026-11-08-page-gpu.md).
+- [Safety map of 2026-11-13](../../docs/designissues/2026-11-13-foafnaut-safety-map.md): which
+  modules can reach I/O (`io-free`, `reaches-hatch`, `effect-typed`), from the compiled
+  environment. Run `python3 tools/safety-scan/safety-scan.py --self-test`, then the scan,
+  before and after a change that adds an `@[extern]`, `unsafe`, `@[implemented_by]`,
+  `initialize` or `dbgTrace`. Tracking: https://github.com/danbri/factoidal-core/issues/427.
 - Records dated before 2026-11-08 describe earlier stages. Most carry a dated note that says what changed.
 - Status for readers: `docs/web/hub/foafnaut2525-status.md`, dated. Notes:
   `docs/web/hub/web-platform/foafnaut/notes/posts/` (do not rewrite old notes).
