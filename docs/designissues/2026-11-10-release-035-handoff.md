@@ -83,6 +83,12 @@ pass, 0 fail, 3,655 not run. Records: `docs/designissues/2026-11-09-foafnaut-per
 
 ## Added 2026-11-13: items that were only in the chat of the cloud session
 
+**The release part of this record is history.** The release shipped after the handover: npm has
+`@factoidal/core` 0.35.1 (2026-11-11; 0.35.0 is not on npm) and 0.36.0 (2026-11-12, `latest`). Main is at
+version 0.36.0 (`2fd7fc4d3`). The section "Release 0.35.0: state of each step" above describes
+2026-11-10 and is not current. https://github.com/danbri/factoidal-core/issues/389 (release 0.35.0)
+was still open on 2026-11-13.
+
 The record above was short of these. Each was said to the owner but not written here.
 
 - **Release role.** The cloud session released the release manager role for 0.35.0 on 2026-11-10:
