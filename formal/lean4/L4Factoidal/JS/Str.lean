@@ -365,4 +365,82 @@ def samples : List String :=
 #guard isWellFormed "a😀" && !isWellFormed (ofUnits [0xD800]) && isWellFormed (ofUnits [0xDBFC, 0xDC00])
 #guard ["abc", "日本", "a😀b", String.singleton (Char.ofNat 0x10F000) ++ "é"].all fun w => toHost (ofHost w) == w
 
+/-! ## JSON text with lone surrogate escapes (§25.5.1 JSON.parse)
+
+ECMAScript's JSON.parse reads a JSON text as code units, so `"\uD800"` is a string of one lone
+surrogate. RFC 8259's strict parser (`L4Factoidal.JSON.Parser`) refuses a lone surrogate escape.
+`jsonLoneEscapes` writes each surrogate escape that is not part of a pair as its character in
+this representation (`loneChar`, a raw character the strict parser takes as it is), and a pair
+split between an escape and a raw lone character as the pair. Every other character and escape
+is unchanged, so a text the strict parser takes gives the same value. -/
+
+/-- A hexadecimal digit's value. -/
+def hexDigit? (c : Char) : Option Nat :=
+  if '0' ≤ c && c ≤ '9' then some (c.toNat - 48)
+  else if 'a' ≤ c && c ≤ 'f' then some (c.toNat - 87)
+  else if 'A' ≤ c && c ≤ 'F' then some (c.toNat - 55)
+  else none
+
+/-- Four hexadecimal digits' value. -/
+def hex4? (a b c d : Char) : Option Nat := do
+  pure ((← hexDigit? a) * 4096 + (← hexDigit? b) * 256 + (← hexDigit? c) * 16 + (← hexDigit? d))
+
+/-- A high and a low surrogate as this representation holds them (`decodeUnits`). -/
+def pairText (h l : Nat) : String := String.ofList (decodeUnits [h, l])
+
+/-- The unit of a `\uXXXX` escape at `i`, if one starts there. -/
+def escUnitAt? (cs : Array Char) (i : Nat) : Option Nat :=
+  if cs[i]? == some '\\' && cs[i + 1]? == some 'u' then
+    match cs[i + 2]?, cs[i + 3]?, cs[i + 4]?, cs[i + 5]? with
+    | some a, some b, some c, some d => hex4? a b c d
+    | _, _, _, _ => none
+  else none
+
+/-- The loop of `jsonLoneEscapes`: tail-recursive, one step per character or escape; `fuel`
+(the text's length and one) always suffices, as each step reads at least one character. -/
+def jsonLoneGo (cs : Array Char) (i : Nat) (acc : String) : Nat → String
+  | 0 => acc
+  | fuel + 1 =>
+    match cs[i]? with
+    | none => acc
+    | some c =>
+      match escUnitAt? cs i with
+      | some u =>
+        if isHigh u then
+          match escUnitAt? cs (i + 6) with
+          | some l =>
+            if isLow l then jsonLoneGo cs (i + 12) (acc ++ pairText u l) fuel
+            else jsonLoneGo cs (i + 6) (acc.push (loneChar u)) fuel
+          | none =>
+            match cs[i + 6]? with
+            | some x =>
+              if isLoneChar x && isLow (charUnit x) then jsonLoneGo cs (i + 7) (acc ++ pairText u (charUnit x)) fuel
+              else jsonLoneGo cs (i + 6) (acc.push (loneChar u)) fuel
+            | none => jsonLoneGo cs (i + 6) (acc.push (loneChar u)) fuel
+        else if isLow u then jsonLoneGo cs (i + 6) (acc.push (loneChar u)) fuel
+        else jsonLoneGo cs (i + 6) (acc ++ String.ofList ((cs.extract i (i + 6)).toList)) fuel
+      | none =>
+        if c == '\\' then
+          match cs[i + 1]? with
+          | some d => jsonLoneGo cs (i + 2) ((acc.push c).push d) fuel
+          | none => acc.push c
+        else if isLoneChar c && isHigh (charUnit c) then
+          match escUnitAt? cs (i + 1) with
+          | some l =>
+            if isLow l then jsonLoneGo cs (i + 7) (acc ++ pairText (charUnit c) l) fuel
+            else jsonLoneGo cs (i + 1) (acc.push c) fuel
+          | none => jsonLoneGo cs (i + 1) (acc.push c) fuel
+        else jsonLoneGo cs (i + 1) (acc.push c) fuel
+
+/-- A JSON text whose lone surrogate escapes are written as characters (see above). -/
+def jsonLoneEscapes (s : String) : String :=
+  let cs := s.toList.toArray
+  jsonLoneGo cs 0 "" (cs.size + 1)
+
+#guard jsonLoneEscapes "[\"\\uD800\"]" == "[\"" ++ ofUnits [0xD800] ++ "\"]"
+#guard jsonLoneEscapes "\"\\uD83D\\uDE00\\u0022\\\\uD800\"" == "\"😀\\u0022\\\\uD800\""
+#guard jsonLoneEscapes "\\uDBFC\\uDC00" == ofUnits [0xDBFC, 0xDC00]
+#guard jsonLoneEscapes ("\\uD83D" ++ ofUnits [0xDE00]) == "😀"
+#guard jsonLoneEscapes "\\uD800\\uD801\\uDFFE" == ofUnits [0xD800, 0xD801, 0xDFFE]
+
 end L4Factoidal.JS.Str

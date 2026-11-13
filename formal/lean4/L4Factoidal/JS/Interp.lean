@@ -5869,9 +5869,14 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
       pure (.obj (← alloc { proto := .null, kind := .proxy a0 a1, extensible := true }))
     | .jsonParse =>
       let s ← toStr n a0
-      match L4Factoidal.JSON.parseJson? s with
-      | some j => jsonToValue 100000 j
-      | none => throwErr .syntax s!"Unexpected token in JSON at position 0"
+      match L4Factoidal.JSON.parseJsonText s with
+      | .ok (j, _) => jsonToValue 100000 j
+      | .error e =>
+        -- §25.5.1 reads code units: a lone surrogate escape (`"\uD800"`, which RFC 8259's
+        -- strict parser refuses) is a string of that unit. Asked only when the strict parse fails.
+        match L4Factoidal.JSON.parseJsonText (Str.jsonLoneEscapes s) with
+        | .ok (j, _) => jsonToValue 100000 j
+        | .error _ => throwErr .syntax s!"Unexpected token in JSON at position {e.pos}"
     | .bufferCtor =>
       needNew "ArrayBuffer"
       let len := toIntegerOrInf (← toNum n a0)

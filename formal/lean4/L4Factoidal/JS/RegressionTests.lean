@@ -224,5 +224,17 @@ two strings in turn (the cache changes hands) and indices out of range. -/
 #guard out "var s = 'a\\u00e9\\ud83d\\ude00\\ud800z', r = []; for (var i = -1; i <= s.length; i++) r.push(s.charCodeAt(i)); print(r.join())" == ["NaN,97,233,55357,56832,55296,122,NaN"]
 #guard out "var s = '\\u00e9\\ud83d\\ude00', t = 'x\\u0101', r = ''; for (var i = 0; i < 3; i++) r += s.charAt(i).length + ':' + s.charCodeAt(i) + '/' + t.charCodeAt(i % 2) + ' '; print(r, s.charAt(1) + s.charAt(2) === '\\ud83d\\ude00', s.charAt(9) === '')" == ["1:233/120 1:55357/257 1:56832/120  true true"]
 #guard out "var b = '\x00\x61\x73\x6d\x80\xff'.repeat(40), n = 0; for (var i = 0; i < b.length; i++) n += b.charCodeAt(i); print(b.length, n)" == ["240 28160"]
+/-! ## JSON.parse and lone surrogate escapes
+
+§25.5.1: JSON.parse reads code units, so `"\uD800"` parses to a string of one lone surrogate.
+Before 2026-11-13 BubblePopJS used RFC 8259's strict parser alone and threw "Unexpected token in
+JSON at position 0" for every text with one such escape (WPT `url/resources/urltestdata-javascript-only.json`,
+about 9,000 subtests of `url/`). -/
+
+#guard out "var v = JSON.parse('[\"\\\\uD800\", \"a\\\\uDFFFb\"]'); print(v[0].length, v[0].charCodeAt(0), v[1].length, v[1].charCodeAt(1))" == ["1 55296 3 57343"]
+#guard out "var v = JSON.parse('\"\\\\uD83D\\\\uDE00\"'); print(v.length, v.codePointAt(0))" == ["2 128512"]
+#guard out "var v = JSON.parse('{\"\\\\uD800k\": \"\\\\uDBFC\\\\uDC00\"}'); var k = Object.keys(v)[0]; print(k.length, k.charCodeAt(0), v[k].length, v[k].charCodeAt(1))" == ["2 55296 2 56320"]
+#guard out "try { JSON.parse('[1,'); } catch (e) { print(e.name) }" == ["SyntaxError"]
+#guard out "try { JSON.parse('\"\\\\uZZZZ\"'); } catch (e) { print(e.name) }" == ["SyntaxError"]
 
 end L4Factoidal.JS.Tests
