@@ -35,10 +35,11 @@ try{
  const scriptTypes=await both("<script type=' text/ecmascript '>classic()</script><script type='application/json'>{}</script>",{op:'inspect'});
  assert.equal(scriptTypes.scripts.length,1);assert.equal(scriptTypes.scripts[0].kind,'classic');assert.equal(scriptTypes.scripts[0].source,'classic()');
  for(const op of ['inspect','render']){
-  const moduleRefusal=await both("<script type=' module '>export{}</script>",{op});
-  assert.match(moduleRefusal.error,/unsupported JavaScript module script/);
+  const modulePage=await both("<script type=' module '>export{}</script>",{op});
+  assert(!modulePage.error,modulePage.error);
+  if(op==='inspect')assert.equal(modulePage.scripts.length,0,'module scripts are fetched by the script session, not the host');
  }
- report.checks.push('Lean normalizes classic script MIME types, keeps data blocks inert and refuses modules');
+ report.checks.push('Lean normalizes classic script MIME types, keeps data blocks inert and leaves module scripts to the script session');
  const html="<!doctype html><base href='./assets/'><style>body{font-family:Arial;font-size:20px;line-height:35px;background:white;color:black}p{font-size:12px}</style><link rel=stylesheet href='../css/main.css'><style>p{font-size:21px}</style><p id=message>stale</p><span style='font-size:28px'>office</span><script src='./scripts/app.js'></script>";
  const inspected=await both(html,{op:'inspect',url:'https://example.test/a/page.html'});
  assert.equal(inspected.baseURL,'https://example.test/a/assets/');

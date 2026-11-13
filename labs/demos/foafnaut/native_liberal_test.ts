@@ -17,10 +17,9 @@ const page=(name:string)=>new URL(`./pages/${name}`,import.meta.url).href;
 
 const cases:{name:string;refusal:RegExp;features:string[]}[]=[
   {name:"media.html",refusal:/unsupported stylesheet media condition/,features:["stylesheet media condition"]},
-  {name:"module.html",refusal:/unsupported JavaScript module script|Page scripts need/,features:["module script"]},
   {name:"missing-css.html",refusal:/No such file|not found|os error 2/i,features:["external stylesheet"]},
   {name:"svg.html",refusal:/unsupported/,features:["inline SVG"]},
-  {name:"sample.html",refusal:/./,features:["stylesheet media condition","external stylesheet","module script"]},
+  {name:"sample.html",refusal:/./,features:["stylesheet media condition","external stylesheet"]},
 ];
 
 async function runs(engine:HTMLEngine){

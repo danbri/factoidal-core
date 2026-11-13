@@ -176,12 +176,15 @@ def scriptRecords (dom : DOM.Dom) : List JSON.Json := Id.run do
   for id in dom.treeOrder 0 do
     let node := dom.get id
     if isScriptElement node then
-      scripts := .object [
+      scripts := .object ([
         ("nodeId",.number (toString id)),
         ("source",.string ((dom.textContent id).getD "")),
         ("src",.string (scriptSrc node)),
         ("kind",.string (scriptKind node)),
-        ("type",.string (attrValue node "type"))] :: scripts
+        ("type",.string (attrValue node "type"))] ++
+        -- a classic script with `nomodule` is not run where module scripts are (HTML §4.12.1)
+        (if node.attrs.any (fun a => a.ns.isNone && a.lname == "nomodule") then [("nomodule",.bool true)] else []))
+        :: scripts
   return scripts.reverse
 
 /-- Only connected element handles are projected. Text is computed by Lean's

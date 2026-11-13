@@ -496,11 +496,6 @@ def fontFaces (dom : DOM.Dom) (request : JSON.Json) (env : Rendering.MediaQuery.
     Except String (Array Rendering.FontFaceRule.Face) :=
   (WebAccept.accept (WebAccept.mode request) fun m => sheetsIn m dom request env).map (facesOf env ·.1)
 
-private def scriptWhere (script : JSON.Json) : String :=
-  let src := str script "src"
-  let id := match script.field? "nodeId" with | some (.number n) => n | _ => "?"
-  s!"<script> node {id}" ++ (if src.isEmpty then "" else " src=\"" ++ src ++ "\"")
-
 /-- The rules of the `style` elements of each connected shadow tree (CSS Scoping 1 §3.1),
 each rule with that shadow root as its scope. A text the engine keeps (`sheetIn`) is not read
 again; a new one is read on each layout and not kept (the engine's `Made` holds one sheet,
@@ -530,21 +525,18 @@ def flatView (kept : Kept) (dom : DOM.Dom) (env : Rendering.MediaQuery.Env) (rul
 
 /-- Script MIME classification has one owner: the Lean scripting snapshot.
 All callers use its normalized kind, including whitespace/case and legacy
-classic JavaScript MIME types. A module script is a skip point (not run, as in a
-browser with no module scripts); so are the classic scripts when `scripting` is off. -/
+classic JavaScript MIME types. The host fetches the `src` of the classic scripts; module
+scripts and their imports are fetched by the script session (`LeanJSModules`, CORS mode).
+With `scripting` off, every page script, classic or module, is a skip point. -/
 private def classicScriptsIn (m : WebAccept.Mode) (scripting : Bool) (scripts : List JSON.Json) :
     Except String (List JSON.Json × List WebAccept.Diagnostic) := do
-  let mut ds : List WebAccept.Diagnostic := []
-  for script in scripts do
-    if str script "kind" == "module" then
-      let (_,d) ← WebAccept.skip m .moduleScript (scriptWhere script) "unsupported JavaScript module script" ()
-      ds := ds ++ d
   let classic := scripts.filter (fun script => str script "kind" == "classic")
-  if !scripting && !classic.isEmpty then
-    let (_,d) ← WebAccept.skip m .scriptsOff s!"{classic.length} classic scripts"
+  let modules := scripts.filter (fun script => str script "kind" == "module")
+  if !scripting && !(classic.isEmpty && modules.isEmpty) then
+    let (_,d) ← WebAccept.skip m .scriptsOff s!"{classic.length + modules.length} page scripts"
       "page scripts are off in this browser; this page is refused" ()
-    return ([],ds ++ d)
-  return (classic,ds)
+    return ([],d)
+  return (classic,[])
 
 /-- The classic scripts of a request, in its mode. -/
 private def classicScripts (request : JSON.Json) (scripts : List JSON.Json) : Except String (List JSON.Json) :=
