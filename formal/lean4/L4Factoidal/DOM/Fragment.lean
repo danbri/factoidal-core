@@ -162,8 +162,16 @@ def serialize (d : Dom) (n : NodeId) (outer : Bool) : String :=
 algorithm"): its children, with the shadow roots that are serializable when
 `serializableShadowRoots`, and those in `shadowRoots`. -/
 def getHTML (d : Dom) (n : NodeId) (serializableShadowRoots : Bool) (shadowRoots : List NodeId) : String :=
-  serializeNodesWith d (serialKids d n) fun sr =>
+  let accept := fun sr =>
     shadowRoots.contains sr || (serializableShadowRoots && ((d.get sr).shadowInit.map (·.serializable)).getD false)
+  -- §13.3 step 3: a shadow host's own shadow root comes first, before its children.
+  let own := match (d.get n).shadow with
+    | some sr =>
+      match (d.get sr).shadowInit with
+      | some init => if accept sr then shadowTemplateOpen init ++ serializeNodesWith d (d.get sr).kids accept ++ "</template>" else ""
+      | none => ""
+    | none => ""
+  own ++ serializeNodesWith d (serialKids d n) accept
 
 #guard (let d := parseHtmlDocument "<p id=a title='x&quot;y'>a&amp;b<br>c<!--k--></p>"
   serialize d (((d.getElementById 0 "a")).getD 0) true) == "<p id=\"a\" title=\"x&quot;y\">a&amp;b<br>c<!--k--></p>"
@@ -180,7 +188,8 @@ private def dsdParse (src : String) : Dom × NodeId :=
   ("<div><template shadowrootmode=\"open\" shadowrootserializable=\"\"><b>x</b></template>a</div>", "<div>a</div>", "<div>a</div>")
 #guard (let (d, f) := dsdParse "<div><template shadowrootmode=closed shadowrootclonable><i></i></template></div>"
   let sr := ((d.get ((d.get f).kids[0]!)).shadow).getD 0
-  (getHTML d f true [], getHTML d f false [sr], (d.get sr).doc)) ==
-  ("<div></div>", "<div><template shadowrootmode=\"closed\" shadowrootclonable=\"\"><i></i></template></div>", 0)
+  (getHTML d f true [], getHTML d f false [sr], (d.get sr).doc, getHTML d ((d.get f).kids[0]!) false [sr])) ==
+  ("<div></div>", "<div><template shadowrootmode=\"closed\" shadowrootclonable=\"\"><i></i></template></div>", 0,
+   "<template shadowrootmode=\"closed\" shadowrootclonable=\"\"><i></i></template>")
 
 end L4Factoidal.DOM.Fragment

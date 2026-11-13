@@ -96,6 +96,12 @@
     return xs.length >= count ? xs : new Array(count).fill(0);
   };
   const layoutOf = el => query(nodeId(el), 17, 8);
+  // WebIDL: two required `double` arguments (TypeError when missing or not finite).
+  const pointArgs = (args, what) => {
+    if (args.length < 2) throw new TypeError(`Failed to execute '${what}' on 'Document': 2 arguments required, but only ${args.length} present.`);
+    if (!Number.isFinite(Number(args[0])) || !Number.isFinite(Number(args[1]))) throw new TypeError(`Failed to execute '${what}' on 'Document': The provided double value is non-finite.`);
+  };
+  const inViewport = (x, y) => { const [w, h] = viewport(); return x >= 0 && y >= 0 && x < w && y < h; };
   const pointHits = (x, y) => {
     const px = Math.floor(Number(x)), py = Math.floor(Number(y)), [w, h] = viewport();
     if (!(px >= 0 && py >= 0 && px < w && py < h && px < 65536 && py < 65536)) return [];
@@ -603,8 +609,11 @@
     constructor() { throw new TypeError('Illegal constructor'); }
     get nodeType() { return info(nodeId(this), 0); }
     get nodeName() { return str(nodeId(this), 1); }
-    // the node document's URL (DOM §4.4; no `base` element here): a frame's document has its own
-    get baseURI() { const id = nodeId(this); return (info(id, 0) === 9 ? this : wrap(info(id, 7))).URL; }
+    // A node of a frame's document loaded from a URL has that URL as base (node_query 171
+    // answers for a frame document this page may reach); an about:blank or about:srcdoc
+    // frame document, and a document a script made, take the page's (HTML §2.4.1 fallback
+    // base URL), as before.
+    get baseURI() { const id = nodeId(this), d = info(id, 0) === 9 ? id : info(id, 7); if (d > 0) { const r = n.query(d, 171, ''); if (typeof r === 'string' && !r.startsWith('about:')) return r; } return document.URL; }
     get isConnected() { if (shadowEngine()) return info(nodeId(this), 25) === 1; let k = nodeId(this); for (let i = 0; i < 1 << 20; i++) { const p = info(k, 1); if (p < 0) return k === 0; k = p; } return false; }
     get ownerDocument() { const id = nodeId(this); return info(id, 0) === 9 ? null : wrap(info(id, 7)); }
     getRootNode(options = {}) { if (shadowEngine()) return wrap(info(nodeId(this), options?.composed ? 24 : 28)); let k = nodeId(this); for (;;) { const p = info(k, 1); if (p < 0) return wrap(k); k = p; } }
@@ -2169,8 +2178,8 @@
     }
     // CSSOM View §5.1: the hit test is Lean's (node_query 35 on the layout of the page;
     // the point as x × 65536 + y in whole CSS pixels). Off the viewport, none.
-    elementFromPoint(x, y) { return pointHits(x, y)[0] ?? null; }
-    elementsFromPoint(x, y) { return pointHits(x, y); }
+    elementFromPoint(x, y) { pointArgs(arguments, 'elementFromPoint'); return pointHits(x, y)[0] ?? null; }
+    elementsFromPoint(x, y) { pointArgs(arguments, 'elementsFromPoint'); const r = pointHits(x, y); return r.length || !this.documentElement ? r : (inViewport(x, y) ? [this.documentElement] : []); }
     get implementation() { let i = implementations.get(this); if (!i) { i = Object.create(DOMImplementation.prototype); implDoc.set(i, nodeId(this)); implementations.set(this, i); } return i; }
   }
   // DOMImplementation (DOM §4.5.1): documents and doctypes made in the arena by Lean.
@@ -2486,8 +2495,15 @@
     set onslotchange(f) { setHandler(this, 'slotchange', f); }
   }
   if (shadowEngine()) {
-    const inner = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
-    if (inner) Object.defineProperty(ShadowRoot.prototype, 'innerHTML', inner);
+    // ShadowRoot.innerHTML (DOM Parsing): the shadow root's children, and in the setter
+    // markup parsed with the host as context (Element.prototype.innerHTML is defined later).
+    Object.defineProperty(ShadowRoot.prototype, 'innerHTML', {
+      get() { return chk(n.query(nodeId(this), 15, '0')); },
+      set(v) {
+        const id = nodeId(this), host = info(id, 21);
+        const f = fragmentOf(info(id, 7), str(host, 2), str(host, 0), v === null ? '' : String(v));
+        chk(n.setText(id, '')); chk(n.insert(id, f, -1));
+      }, configurable: true, enumerable: true });
     // ShadowRoot.setHTMLUnsafe and getHTML (HTML §8.4): the host is the context element.
     define(ShadowRoot.prototype, 'getHTML', function getHTML(options = undefined) { return getHTMLOf(this, options); });
     define(ShadowRoot.prototype, 'setHTMLUnsafe', function setHTMLUnsafe(html) {
