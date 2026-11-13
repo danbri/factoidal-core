@@ -93,6 +93,9 @@ inductive NativeX where
   `runScriptM`), for `importScripts` (HTML §10.3.4.2 "import scripts into worker global
   scope"); its exceptions reach the caller. -/
   | classicScript
+  /-- `get Error.prototype.stack` (`false`) and `set Error.prototype.stack` (`true`): the
+  accessor of the Error Stack Accessor proposal (test262 feature `error-stack-accessor`). -/
+  | errorStack (setter : Bool)
   deriving BEq, Repr, Inhabited
 
 /-- The built-in functions (§19 to §28 for the subset). -/

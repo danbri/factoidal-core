@@ -194,4 +194,25 @@ evaluator: 0.13 s). These scripts check that a second holder of the string keeps
 #guard out "function p(n) { var s = '', u; for (var i = 0; i < n; i++) { u = s; s += 1.5; s += true; s += null; } return u + '>' + s } print(p(2))" == ["1.5truenull>1.5truenull1.5truenull"]
 #guard out "function q(o) { var s = 'k'; for (var i = 0; i < 3; i++) { o.v = s; s += i } return o.v + ' ' + s } print(q({}))" == ["k01 k012"]
 
+/-! ## Numeric separators and `Error.prototype.stack`
+
+Found 2026-11-13 by the WPT `wasm/core` pages: every one of them failed on BubblePopJS. The
+generated tests write numbers as `2_147_483_647` (ES2021 numeric separators, §12.9.3), which the
+lexer refused, and the harness reads `new Error().stack.toString()`, which threw because errors
+had no `stack`. `stack` is the accessor of the Error Stack Accessor proposal on
+`Error.prototype`; its string lists call frames, and this engine records none, so it is empty
+(QuickJS-NG and V8 print a frame list there; the scripts below print only what all agree on).
+The last two scripts follow the proposal and its test262 tests (`built-ins/Error/prototype/stack`),
+where V8 and QuickJS-NG differ: an own `stack` made by the setter is enumerable, and the setter
+refuses a value that is not a string and refuses `Error.prototype` itself. -/
+
+#guard out "print(1_000_000, 0x7f_ff, 0b1_0, 0o7_7, 1.5_5, 1e1_0, 10_0n)" == ["1000000 32767 2 63 1.55 10000000000 100"]
+#guard out "print(-2_147_483_648 | 0, 0x1_0.toString(16))" == ["-2147483648 10"]
+#guard out "var r = []; for (var t of ['1__0', '1_', '0_1', '1_.5', '1._5', '1_e5', '0x_1', '1_n']) { try { eval(t); r.push('ok') } catch (e) { r.push(e.name) } } print(r.join())" == ["SyntaxError,SyntaxError,SyntaxError,SyntaxError,SyntaxError,SyntaxError,SyntaxError,SyntaxError"]
+#guard out "print(Number('1_0'), parseInt('1_0'))" == ["NaN 1"]
+#guard out "print(typeof new Error('m').stack, typeof new TypeError().stack.toString(), Object.prototype.hasOwnProperty.call(new Error(), 'stack'))" == ["string string false"]
+#guard out "var d = Object.getOwnPropertyDescriptor(Error.prototype, 'stack'); print(d.get.name, d.set.name, d.set.length, d.enumerable, d.configurable, d.get.call({}))" == ["get stack set stack 1 false true undefined"]
+#guard out "var e = new Error('x'); e.stack = 's'; var d = Object.getOwnPropertyDescriptor(e, 'stack'); print(e.stack, d.writable, d.enumerable)" == ["s true true"]
+#guard out "try { Error.prototype.stack = '' } catch (e) { print(e.name) } try { new Error().stack = 1 } catch (e) { print(e.name) }" == ["TypeError", "TypeError"]
+
 end L4Factoidal.JS.Tests

@@ -7120,6 +7120,53 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       let a := Str.units s
       let b := Str.units t
       pure (.num (if a == b then 0 else if decide (a < b) then -1 else 1))
+    | (.x (.errorStack false)) =>
+      -- get Error.prototype.stack (Error Stack Accessor proposal): a string for an object
+      -- with [[ErrorData]]. The string lists the call frames, as in SpiderMonkey, JSC and
+      -- QuickJS (not the V8 form, which starts with the message). This engine keeps no record
+      -- of call sites, so the list is empty: "" (a script that tests `e.stack` sees none).
+      match thisV with
+      | .obj oid =>
+        match (← getObj oid).kind with
+        | .error => pure (.str "")
+        | _ => pure .undef
+      | _ => throwErr .type "Error.prototype.stack getter called on a non-object"
+    | (.x (.errorStack true)) =>
+      -- set Error.prototype.stack (v): SetterThatIgnoresPrototypeProperties(this,
+      -- %Error.prototype%, "stack", v).
+      let oid ← match thisV with
+        | .obj oid => pure oid
+        | _ => throwErr .type "Error.prototype.stack setter called on a non-object"
+      match a0 with
+      | .str _ => pure ()
+      | _ => throwErr .type "Error.prototype.stack setter: the value is not a string"
+      if oid == r.errorProtos.getD 0 r.objectProto then
+        throwErr .type "Cannot set Error.prototype.stack on Error.prototype"
+      match ← ownDesc n oid "stack" with
+      | some _ => putV n thisV "stack" a0 true
+      | none =>
+        let o ← getObj oid
+        match o.kind with
+        | .proxy t hnd =>
+          match ← proxyTrap n hnd "defineProperty" with
+          | some f =>
+            let d ← newObject
+            defineOwn d "value" (.data a0 true true true)
+            defineOwn d "writable" (.data (.bool true) true true true)
+            defineOwn d "enumerable" (.data (.bool true) true true true)
+            defineOwn d "configurable" (.data (.bool true) true true true)
+            if !toBool (← callV n f hnd #[t, .str "stack", .obj d]) then
+              throwErr .type "'defineProperty' on proxy: trap returned falsish for property 'stack'"
+          | none =>
+            match t with
+            | .obj tid =>
+              if !(← getObj tid).extensible then throwErr .type "Cannot define property stack, object is not extensible"
+              defineOwn tid "stack" (.data a0 true true true)
+            | _ => throwErr .type "Cannot perform 'defineProperty' on a proxy that has been revoked"
+        | _ =>
+          if !o.extensible then throwErr .type "Cannot define property stack, object is not extensible"
+          defineOwn oid "stack" (.data a0 true true true)
+      pure .undef
     | (.x .aggregateErrorCtor) =>
       let proto ← match newTarget with
         | some nt => do
@@ -7403,6 +7450,10 @@ def initRealm : M Unit := do
     setHidden p "name" (.str (errorNames[i]!))
     setHidden p "message" (.str "")
   method errorProto "toString" .errorToString 0
+  -- Error.prototype.stack (Error Stack Accessor proposal): an accessor, so an error costs
+  -- nothing for it until a script reads it.
+  defineOwn errorProto "stack" (.acc (← mkNative (.x (.errorStack false)) "get stack" 0)
+    (← mkNative (.x (.errorStack true)) "set stack" 1) false true)
   -- AggregateError (§20.5.7)
   let aggProto ← alloc { proto := .obj errorProto }
   modify fun h => { h with realm := { h.realm with aggregateErrorProto := aggProto } }

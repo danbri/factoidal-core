@@ -11,7 +11,7 @@ insertion, and the restricted productions). Every scanner here is a tail call
 with fuel equal to the input length, so the emitted C is a loop.
 
 Not lexed (a `SyntaxError` names them): regular expression literals, template
-literals, BigInt literals, numeric separators, Unicode escapes in identifiers.
+literals, BigInt literals, Unicode escapes in identifiers.
 Numeric literals are rounded correctly: the decimal digits go to
 `XPath4.floatOfParsed`, an exact rational rounding to binary64.
 -/
@@ -339,6 +339,95 @@ def scanNum (cs : Array Char) (i : Nat) : Except String (Float × Nat) :=
         else "SyntaxError: identifier starts immediately after numeric literal")
     else .ok (f, j)
 
+/-! ### Numeric separators (§12.9.3, `NumericLiteralSeparator`)
+
+A literal with a `_` is read by removing the separators and scanning what is left with
+`scanBig` and `scanNum`. Each separator in the part that was read must stand between two
+digits of the literal's radix, and a decimal literal that starts with `0` and a digit (or a
+separator) takes none (`0_1` and the legacy octal `01_1` are errors). A literal with no `_`
+never comes here. -/
+
+/-- The end of the characters a numeric literal at `i` can span: letters, digits, `_`,
+`.`, and a sign after `e` or `E`. The literal itself may end sooner. -/
+def numSpanEnd (cs : Array Char) : Nat → Nat → Nat
+  | 0, i => i
+  | fuel + 1, i =>
+    let c := charAt cs i
+    let prev := if i == 0 then '\x00' else charAt cs (i - 1)
+    if i < cs.size && (c.isAlphanum || c == '_' || c == '.' ||
+        ((c == '+' || c == '-') && (prev == 'e' || prev == 'E'))) then numSpanEnd cs fuel (i + 1)
+    else i
+
+/-- Some character of `cs[i..e]` is `_`. -/
+def hasSep (cs : Array Char) (e : Nat) : Nat → Nat → Bool
+  | 0, _ => false
+  | fuel + 1, i => if i < e then (charAt cs i == '_' || hasSep cs e fuel (i + 1)) else false
+
+/-- `cs[i..e]` without its `_` characters, after `acc`. -/
+def stripSeps (cs : Array Char) (e : Nat) : Nat → Nat → Array Char → Array Char
+  | 0, _, acc => acc
+  | fuel + 1, i, acc =>
+    if i < e then stripSeps cs e fuel (i + 1) (if charAt cs i == '_' then acc else acc.push (charAt cs i))
+    else acc
+
+/-- The index in `cs` just after `k` characters that are not `_`, from `i`. -/
+def afterKept (cs : Array Char) : Nat → Nat → Nat → Nat
+  | 0, i, _ => i
+  | _ + 1, i, 0 => i
+  | fuel + 1, i, k + 1 =>
+    if charAt cs i == '_' then afterKept cs fuel (i + 1) (k + 1) else afterKept cs fuel (i + 1) k
+
+/-- Every `_` of `cs[i..e]` has a digit (by `dig`) on each side. -/
+def sepsPlaced (cs : Array Char) (dig : Char → Bool) (e : Nat) : Nat → Nat → Bool
+  | 0, _ => true
+  | fuel + 1, i =>
+    if i < e then
+      (charAt cs i != '_' || (i > 0 && dig (charAt cs (i - 1)) && dig (charAt cs (i + 1)))) &&
+        sepsPlaced cs dig e fuel (i + 1)
+    else true
+
+/-- A numeric literal at `i` that has a `_` in its span: `none` when it has none (the
+plain scanners read it); else a BigInt value (`.inl`) or a Number (`.inr`), and the index
+after it. -/
+def scanSepNum (cs : Array Char) (i : Nat) : Option (Except String ((Nat ⊕ Float) × Nat)) :=
+  let e := numSpanEnd cs cs.size i
+  if !hasSep cs e (e - i) i then none else
+  let t := stripSeps cs e (e - i) i #[]
+  let c0 := charAt cs i
+  let c1 := charAt cs (i + 1)
+  let dig : Char → Bool :=
+    if c0 == '0' && (c1 == 'x' || c1 == 'X') then fun c => (hexVal c).isSome
+    else if c0 == '0' && (c1 == 'o' || c1 == 'O') then fun c => '0' ≤ c && c ≤ '7'
+    else if c0 == '0' && (c1 == 'b' || c1 == 'B') then fun c => c == '0' || c == '1'
+    else Char.isDigit
+  let decimalZero := c0 == '0' && (c1.isDigit || c1 == '_')
+  let read : Except String ((Nat ⊕ Float) × Nat) :=
+    if c0.isDigit then
+      match scanBig t 0 with
+      | some (v, j) => .ok (.inl v, j)
+      | none => (scanNum t 0).map fun (f, j) => (.inr f, j)
+    else (scanNum t 0).map fun (f, j) => (.inr f, j)
+  some <| match read with
+    | .error m => .error m
+    | .ok (v, j) =>
+      let stop := afterKept cs (e - i + 1) i j
+      if decimalZero || !sepsPlaced cs dig stop (stop - i) i then
+        .error "SyntaxError: numeric separators are only allowed between digits"
+      else
+        let c := charAt cs stop
+        if stop < cs.size && (isIdStart c || c.isDigit) then
+          .error "SyntaxError: identifier starts immediately after numeric literal"
+        else .ok (v, stop)
+
+#guard (match scanSepNum "1_000".toList.toArray 0 with | some (.ok (.inr f, 5)) => f == 1000 | _ => false)
+#guard (match scanSepNum "0x7f_ff;".toList.toArray 0 with | some (.ok (.inr f, 7)) => f == 32767 | _ => false)
+#guard (match scanSepNum "1_0n".toList.toArray 0 with | some (.ok (.inl 10, 4)) => true | _ => false)
+#guard (match scanSepNum "1.0_5e1_0".toList.toArray 0 with | some (.ok (.inr f, 9)) => f == 1.05e10 | _ => false)
+#guard (match scanSepNum "0x1_0.a_b".toList.toArray 0 with | some (.ok (.inr f, 5)) => f == 16 | _ => false)
+#guard (scanSepNum "12".toList.toArray 0).isNone
+#guard ["1__0", "1_", "0_1", "01_1", "1_.0", "1._0", "1_e5", "1e_5", "0x_1", "1_n"].all fun t =>
+  match scanSepNum t.toList.toArray 0 with | some (.error _) => true | _ => false
+
 /-- The punctuator at `i`, by the definition: the first of `punctuators` (longest first)
 whose characters are there. The lexer uses `matchPunct`, which agrees with it (the checks
 after `lex`). -/
@@ -470,6 +559,12 @@ def lexGo (cs : Array Char) : Nat → Nat → Bool → Array Token → List Bool
         if s.isEmpty then .error "SyntaxError: invalid or unexpected token" else
         let kind := if keywords.contains s && !esc then TokKind.kw else .ident
         lexGo cs fuel j false (acc.push { kind, text := s, nl, pos := i, escaped := esc }) open_
+    else if (c.isDigit || (c == '.' && (charAt cs (i + 1)).isDigit)) && (scanSepNum cs i).isSome then
+      match scanSepNum cs i with
+      | some (.ok (.inl v, j)) => lexGo cs fuel j false (acc.push { kind := .big, text := toString v, nl, pos := i }) open_
+      | some (.ok (.inr f, j)) => lexGo cs fuel j false (acc.push { kind := .num, num := f, nl, pos := i }) open_
+      | some (.error e) => .error e
+      | none => .error "SyntaxError: invalid numeric literal"
     else if c.isDigit && (scanBig cs i).isSome then
       match scanBig cs i with
       | some (v, j) => lexGo cs fuel j false (acc.push { kind := .big, text := toString v, nl, pos := i }) open_
