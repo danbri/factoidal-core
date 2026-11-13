@@ -54,8 +54,14 @@ reports only part of WPT (Ladybird on wpt.fyi: 35,966 of 94,406 names) is left o
 - No scheduled sampled job. The old daily sample (`wpt-score.yml`) was disabled and its schedule removed
   on 2026-11-13. Sampling remains only as a manual smoke check, never recorded as a score.
 
-Workflow names, the results branch and file paths: see the README of the results branch in
-`danbri/factoidal-builds` (filled in below once the workflows land).
+Where it lives (`danbri/factoidal-builds`):
+
+- `release-tests.yml` ("Release tests"): the release, browser-release and scheduled full runs, and the
+  other suites. `foafnaut-linux.yml` ("Foafnaut Linux engine"): the Linux engine build.
+- `wpt-score.yml`: the old sampled job, disabled, schedule deleted (8adb27c); manual smoke runs only,
+  never recorded.
+- `build.yml` concurrency is one group per ref (7ab6de8): branch dispatches no longer evict each other,
+  and the hourly poll can't evict them.
 
 ## 4. Records
 
@@ -66,6 +72,9 @@ Workflow names, the results branch and file paths: see the README of the results
 - `rivals.csv`: WPT commit, browser, version, wpt.fyi run id, passed, share, names reported, partial.
 - `runs/<run_id>/meta.json`: everything above plus build-info, runner and tool versions, list hashes,
   why that build was chosen, the per-directory table, and a link to the full result JSON.
+- Location: branch `wpt-scores` of `danbri/factoidal-builds` holds `runs.csv`, `rivals.csv`,
+  `differential.csv` (QuickJS, kept apart from scores) and `runs/<run_id>/meta.json`. The full WPT
+  result of each run is the asset `<run_id>.wpt-full.json.gz` of the release `test-results`.
 - Dashboard: the WPT Pass Map artifact is refreshed from these records and shows valid full runs only.
 
 ## 5. Running WPT locally
@@ -94,6 +103,6 @@ Workflow names, the results branch and file paths: see the README of the results
 ## 7. Cloud builds
 
 - `build.yml` takes `core_ref` (branch, tag or commit) to build a branch. A build takes about 1.5 h.
-- Builds of different refs must not cancel each other. The concurrency group is per ref (fixed
-  2026-11-13): before that, a new dispatch or the hourly poll cancelled the one pending build. Check the
+- Builds of different refs don't cancel each other: the concurrency group is per ref (7ab6de8). Before
+  that, a new dispatch or the hourly poll cancelled the one pending build. Check the
   queue before dispatching, batch changes into few builds, and never cancel another agent's run.
