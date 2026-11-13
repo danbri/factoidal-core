@@ -21,6 +21,7 @@
   // The natives, with every change of the tree also queued as a mutation record (DOM §4.3)
   // for MutationObserver. The change itself is Lean's; this only reports it.
   const n = Object.create(n0); // the natives are not enumerable: inherit them
+  let domVersion = 0, versioned = false;
   const WINDOW = 0x0FFFFFFF;
   let nextTarget = 0x10000000;
   const define = (o, name, value) => Object.defineProperty(o, name, { value, writable: true, configurable: true });
@@ -533,7 +534,11 @@
   const positions = { DOCUMENT_POSITION_DISCONNECTED: 1, DOCUMENT_POSITION_PRECEDING: 2, DOCUMENT_POSITION_FOLLOWING: 4,
     DOCUMENT_POSITION_CONTAINS: 8, DOCUMENT_POSITION_CONTAINED_BY: 16, DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC: 32 };
   const listCache = new WeakMap();
-  const liveList = (ids, proto) => {
+  // A live list's nodes are found again only after the tree may have changed (domVersion,
+  // below): a loop over list[i] and list.length is then linear, not quadratic.
+  const liveList = (find, proto) => {
+    let seen = -1, found;
+    const ids = () => { if (!versioned) return find(); if (seen !== domVersion) { found = find(); seen = domVersion; } return found; };
     const target = Object.create(proto ?? NodeList.prototype);
     return new Proxy(target, {
       get(t, p, recv) {
@@ -2426,6 +2431,20 @@
     childList(p, moved, [child], prev, next);
     return r;
   };
+  // domVersion changes on every call that may change a tree: each native except the reads
+  // below (and node_query except its read ops), and each entry from the host (Lean parses,
+  // loads frames and runs timers between entries). Live lists compare it (liveList).
+  const nativeReads = new Set(['byId', 'info', 'str', 'kids', 'attr', 'plan', 'log', 'listen', 'unlisten', 'timer',
+    'clearTimer', 'frame', 'cancelFrame', 'gpu', 'gpuBytes']);
+  const queryReads = new Set([0, 1, 5, 6, 7, 8, 9, 16, 17, 18, 19]);
+  for (const k of Object.getOwnPropertyNames(n0)) {
+    const f = n[k];
+    if (typeof f !== 'function' || nativeReads.has(k)) continue;
+    define(n, k, k === 'query'
+      ? function (id, op, q) { if (!queryReads.has(op)) domVersion++; return f.call(this, id, op, q); }
+      : function (...args) { domVersion++; return f.apply(this, args); });
+    if (k === 'insert') versioned = true; // the natives are visible to wrap: live lists may keep their nodes
+  }
   class MutationObserver {
     constructor(callback) {
       if (typeof callback !== 'function') throw new TypeError("parameter 1 is not of type 'MutationCallback'");
@@ -4639,7 +4658,7 @@
     setHandler(t, name, onBody && name === 'error' ? function (m, s, l, c, e) { return f.call(this, m); } : f);
   };
 
-  return {
+  const entries = {
     // Lean runs a timer (target -1) or an animation frame callback (target -2, `arg` the time).
     call(id, target, arg) {
       const f = callbacks.get(id);
@@ -4675,4 +4694,9 @@
     // Section workers: this realm becomes a dedicated worker's global scope.
     worker(url, name) { makeWorkerScope(String(url), String(name)); },
   };
+  for (const k of Object.keys(entries)) {
+    const f = entries[k];
+    entries[k] = function (...args) { domVersion++; return f.apply(this, args); };
+  }
+  return entries;
 })

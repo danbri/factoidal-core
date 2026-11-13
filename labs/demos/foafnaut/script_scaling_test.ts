@@ -1,13 +1,17 @@
 // Cost test: page-script work on many nodes (as WPT's legacy-encoding decode pages have, 7 000
 // to 17 000 spans). The script reads the spans with querySelectorAll, reads two data-*
-// attributes through dataset, keys a Map by numbers, and makes and aborts AbortControllers
-// (testharness.js does that for each test). Two checks:
-// - linear: the guest instructions at 4N stay under 6 times those at N (linear gives 4);
+// attributes through dataset, keys a Map by numbers, walks a live getElementsByTagName list
+// by index, and makes and aborts AbortControllers (testharness.js does that for each test).
+// Two checks:
+// - linear: the guest instructions at 4N stay under 6 times those at N (linear gives 4). A live
+//   list that finds its nodes again at each list[i] and list.length is quadratic: on both
+//   engines that loop ran out of steps at 1 000 elements before liveList kept its nodes
+//   until the tree may change;
 // - per node, on QuickJS-NG in WasmVM: the instructions one more node costs stay under
-//   180 000. Before tools/wasmvm/quickjs/patches/0001-map-hash-mix.patch and the prelude's
-//   dataset and AbortController changes a node cost about 297 000 (number keys of a Map shared
-//   a few hash buckets: about 65 000 instructions for each Map set at 7 000 keys, 1 800 after);
-//   after them about 134 000.
+//   250 000 (now about 191 000). Without tools/wasmvm/quickjs/patches/0001-map-hash-mix.patch
+//   and the prelude's dataset and AbortController changes, the same page less the live-list
+//   loop cost about 297 000 a node, against 134 000 with them (number keys of a Map shared a
+//   few hash buckets: about 65 000 instructions for each Map set at 7 000 keys, 1 800 after).
 // Also: dataset is one object for each element ([SameObject]).
 // Both script engines: QuickJS-NG in WasmVM (needs the guest: QUICKJS_WASM, else
 // ~/working/qjs-wasm/qjs-wasmvm.wasm) and, with SCRIPT_ENGINE=bubblepop, BubblePopJS.
@@ -34,6 +38,8 @@ for (let i = 0; i < nodes.length; i++) {
   seen.set(i, nodes[i]);
 }
 for (let i = 0; i < nodes.length; i++) if (seen.get(i) !== nodes[i]) same = false;
+const live = document.getElementsByTagName('span');
+for (let i = 0; i < live.length; i++) if (live[i] !== nodes[i]) same = false;
 for (let i = 0; i < nodes.length; i += 10) { const c = new AbortController(); c.abort('done'); }
 console.log('n=' + nodes.length + ' same=' + same + ' sum=' + sum);
 </script>`;
@@ -56,7 +62,7 @@ Deno.test({name:`page-script work on N nodes is linear in N (${lean?"BubblePopJS
   assert(ratio<6,`work at 4N is ${ratio.toFixed(2)} times the work at N: a path is no longer linear`);
   const perNode=(large.instructions-small.instructions)/4500;
   console.log(`instructions for each further node: ${Math.round(perNode)}`);
-  if(!lean)assert(perNode<180000,`each further node costs ${Math.round(perNode)} guest instructions (limit 180 000)`);
+  if(!lean)assert(perNode<250000,`each further node costs ${Math.round(perNode)} guest instructions (limit 250 000)`);
   assert.match(small.log,/^n=1500 same=true sum=\d+$/);
   assert.match(large.log,/^n=6000 same=true sum=\d+$/);
 }});
