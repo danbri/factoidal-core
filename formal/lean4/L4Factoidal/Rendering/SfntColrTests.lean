@@ -136,4 +136,22 @@ private def drawn (paint : List UInt8) (px : Nat) : Option ColrRaster.Raster := 
   | some r => (List.range 16).all fun i => r.rgba.get! (4*i+3) == 0
   | none => false
 
+/-! A colour image: the box at once, the pixels only when read (`Bitmap.lazy`), so a
+glyph outside every band drawn is never drawn. -/
+private def colourOf (paint : List UInt8) : Option ColrRaster.Colour := do
+  let (b, dir) := font (colr1 paint)
+  let t ← (SfntColr.read b dir 10).toOption.join
+  return ColrRaster.Colour.make t ⟨b, dir, none⟩ 100 1
+
+#guard match (colourOf (solid 0)).bind (·.image 0 10 ⟨0, 0, 0⟩) with
+  | some i => i.bitmap.rgba.size == 0 && i.bitmap.lazy.isSome && i.bitmap.width == 10 && i.bitmap.height == 10 &&
+      i.left == 0 && i.top == -10 && i.bitmap.pixels.size == 400 && i.bitmap.pixels.get! 0 == 255
+  | none => false
+-- The same box as the drawing, which is what the rectangle is laid out from.
+#guard match drawn (solid 0) 7, (colourOf (solid 0)).bind (·.image 0 7 ⟨0, 0, 0⟩) with
+  | some r, some i => r.width == i.bitmap.width && r.height == i.bitmap.height && r.left == i.left && r.top == i.top
+  | _, _ => false
+-- An eager bitmap reads as before.
+#guard ({width := 1, height := 1, rgba := ⟨#[1, 2, 3, 4]⟩} : Bitmap).pixels.size == 4
+
 end L4Factoidal.Rendering.SfntColrTests
