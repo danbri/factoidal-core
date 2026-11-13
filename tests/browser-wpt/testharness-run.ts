@@ -489,7 +489,7 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
       ({html,encoding}=decode(bytes,contentType));url=`${origin}/${pageOf(file)}`;
     }
     const t0=performance.now();
-    type Facts={scripts:{nodeId:number;src:string;url:string;kind?:string}[]};
+    type Facts={scripts:{nodeId:number;src:string;url:string;kind?:string}[];stylesheets?:{nodeId:number;url:string}[]};
     let facts=engine.inspect(html,{url}) as unknown as Facts;
     const sources=new Map<string,string|undefined>();
     for(const s of facts.scripts)if(s.src&&!sources.has(s.url))sources.set(s.url,await readText(s.url));
@@ -513,6 +513,16 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
       const source=sources.has(s.url)?sources.get(s.url):await readText(s.url);
       if(source!==undefined)resources.push({nodeId:s.nodeId,source});/* else not served: the page reports it */
     }
+    // The page's stylesheet links, fetched as a browser host fetches them (native_html_document.ts),
+    // for the layout reads of its scripts (the session's `layout` request): with a sheet missing,
+    // a strict layout refuses the page and every read answers zero. At most 64 (the engine's bound).
+    const sheetResources:{nodeId:number;source:string;url:string}[]=[],sheetFailures:{nodeId:number;reason:string}[]=[];
+    for(const sh of (facts.stylesheets??[]).slice(0,64)){
+      const source=await readText(sh.url);
+      if(source===undefined)sheetFailures.push({nodeId:sh.nodeId,reason:"not fetched"});
+      else sheetResources.push({nodeId:sh.nodeId,source,url:sh.url});
+    }
+    const layout=sheetResources.length||sheetFailures.length?{layout:{url,resources:sheetResources,resourceFailures:sheetFailures}}:{};
     // The images of a canvas test (<img src>), held by the engine by their URL, as a host
     // holds the images it fetched: Canvas 2D draws them (docs/designissues/2026-11-08-canvas-2d.md).
     // The font of the canvas text tests (an @font-face the engine does not load for
@@ -527,7 +537,7 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
         if(bytes)try{engine.imageLoad(bytes,key,key);}catch{/* refused */}
       }
     // navigations:true: this runner loads frames' URLs (scriptSession action `frame`).
-    let turn=start(html,{action:"start",url,resources,commandLimit:200000,logLimit:100000,instructionsPerMs:scriptRate,...(encoding?{encoding}:{}),
+    let turn=start(html,{action:"start",url,resources,...layout,commandLimit:200000,logLimit:100000,instructionsPerMs:scriptRate,...(encoding?{encoding}:{}),
       navigations:true,...(http?{network:true,pageAddress:"127.0.0.1"}:{}),...(scriptEngine==="bubblepop"?{engine:"bubblepop"}:{})});
     // The engine's page requests in flight (each from one turn): http.fetch to wptserve.
     type NetWire={id:number;method:string;url:string;headers:[string,string][];bodyBase64?:string};
