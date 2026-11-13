@@ -2543,10 +2543,12 @@
       let g = inFrame.get(f);
       if (g) return g;
       const enter = run => { const before = scriptDocument; scriptDocument = wrap(doc); try { return run(); } finally { scriptDocument = before; } };
-      g = new Proxy(f, {
-        apply(target, self, args) { return enter(() => Reflect.apply(target, self, args)); },
-        construct(target, args, nt) { return enter(() => Reflect.construct(target, args, nt === g ? target : nt)); },
-      });
+      // A plain function, not a Proxy of f: BubblePopJS does not call a Proxy of a function.
+      g = function (...args) { return enter(() => new.target ? Reflect.construct(f, args, new.target === g ? f : new.target) : f.apply(this, args)); };
+      Object.setPrototypeOf(g, f);
+      if (Object.prototype.hasOwnProperty.call(f, 'prototype')) g.prototype = f.prototype;
+      Object.defineProperty(g, 'name', { value: f.name, configurable: true });
+      Object.defineProperty(g, 'length', { value: f.length, configurable: true });
       inFrame.set(f, g);
       return g;
     };
