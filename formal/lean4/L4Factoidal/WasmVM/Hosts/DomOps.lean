@@ -644,8 +644,8 @@ def domOpM (id op : Nat) (q : String) : Op String := do
   | 170 =>
     -- the form submission algorithm of form `id` (HTML.FormSubmission.plan): "submitter
     -- U+0000 document encoding label" (submitter "" for `form.submit()`); a GET navigation
-    -- of a frame is queued for the embedder. "1" when a navigation was queued, "0" when the
-    -- submission navigates nowhere here.
+    -- of a frame is queued for the embedder. "1" when a frame navigation was queued, "2" when
+    -- the page itself is to navigate, "0" when the submission navigates nowhere here.
     -- after them, when the page's script host fired the `formdata` event: "1" U+0000 and the
     -- entry list it passes back (`FormSubmission.entriesOfWire`)
     let (sub, label, given) := match q.splitOn "\x00" with
@@ -685,9 +685,13 @@ def domOpM (id op : Nat) (q : String) : Op String := do
       let some pu := L4Factoidal.WHATWG.URL.parseUrl p.url | return "0"
       if !L4Factoidal.HTML.FormSubmission.navigationAllowed page docScheme pu (p.method == "POST") then return "0"
       -- the rules for choosing a navigable: "" and `_self` the form's own frame; a name, the
-      -- first frame of that name. The page itself, `_parent`, `_top` and `_blank` would leave
-      -- or open a top-level document: not done here.
+      -- first frame of that name. The page itself ("" or `_self` in it, `_top` and `_parent`
+      -- from it) is navigated by the embedder (`pageNavigation`). `_blank`, and `_top` or
+      -- `_parent` from a frame, are not done here.
       let tl := L4Factoidal.DOM.Dom.asciiLower p.target
+      if doc == 0 && (tl == "" || tl == "_self" || tl == "_top" || tl == "_parent") then
+        set { st with pageNavigation := some (p.url, p.method, p.contentType, p.body) }
+        return "2"
       let target := if tl == "" || tl == "_self" then docEl
         else if tl.startsWith "_" then none
         else (st.frames.find? fun (fr : Nat × Nat) => attrValue? d fr.1 "name" == some p.target).map (·.1)

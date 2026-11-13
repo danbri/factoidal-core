@@ -337,6 +337,7 @@ async function main() {
           ...(plan.engine==="bubblepop"?{engine:"bubblepop"}:{}),...(encoding?{encoding}:{}),
           ...(scriptOps.includes("net")?{network:true}:{})}) as ScriptTurn;
         netQueue.push(...(turn.netRequests??[]).map(wire=>({session:turn.session,wire})));
+        followNavigation(turn);
         scriptEpochs.set(turn.session,performance.now()-turn.clock);sessionEngines.set(turn.session,plan.engine);
         // The start turn makes the page's GPU objects (canvas, buffers, pipelines); the later turns use them.
         if(turn.gpu?.length){gpuTurns.push({page:turn.gpuPage!,commands:turn.gpu});gpuFlush();}
@@ -427,7 +428,17 @@ async function main() {
       scriptTurn(page,turn,`pointer ${kind}`);
     }).catch(error=>console.error("Native HTML: page script pointer failed:",String(error)));
   };
+  // A form's navigation of the page itself (turn field `navigate`; Lean chose the URL, the
+  // method and the body, and checked where it may go): followed once per session.
+  const followed=new Set<number>();
+  const followNavigation=(turn:ScriptTurn)=>{
+    if(!turn.navigate||followed.has(turn.session))return;
+    followed.add(turn.session);
+    const {url,...request}=turn.navigate;
+    setTimeout(()=>navigate(url,true,request.method==="POST"?request:undefined),0);
+  };
   const scriptTurn=(page:typeof document,turn:ScriptTurn,cause:string)=>{
+    if(page===document)followNavigation(turn);
     netQueue.push(...(turn.netRequests??[]).map(wire=>({session:turn.session,wire})));
     for(const line of turn.logs)console.log(`page: ${line.replace(/^\u0001(\w+)\u0001/,"$1: ")}`);
     for(const line of turn.errors)console.error(`page error: ${line}`);
@@ -1061,14 +1072,14 @@ async function main() {
   const saveSession=()=>browserState?.session(tabs.map((tab,index)=>{const page=index===active?document:tab.document;
     return {url:page.url,title:page.title??"",scroll:index===active?scroll:tab.scroll};}),active);
   // The settings page with the page script rows that Lean makes for the current setting.
-  const navigate=(target:string,push=true)=>{
+  const navigate=(target:string,push=true,request?:{method:string;contentType?:string;bodyBase64?:string})=>{
     const from=document.url;
     controller?.abort();candidate=undefined;controller=new AbortController();const current=controller;loading=true;
     // The loading state is drawn now (a chrome-only frame: the page layer is kept), so a click
     // is answered on screen before the new page is prepared and laid out.
     dirty=true;
     console.log(JSON.stringify({type:"native-html-loading",url:target}));
-    (target===aboutURL?aboutPage().then(source=>prepareHTML(lean,target,undefined,source)):STATE_PAGES.includes(target)?(browserState?browserState.page(target):Promise.reject(new Error("Browser state is off"))).then(source=>prepareHTML(lean,target,undefined,source)):target===settingsURL?settingsSource().then(source=>prepareHTML(lean,target,current.signal,source)):target===graphURL?graphPage():target===wasmURL||target.startsWith(wasmURL+"/")?wasmPage(target):isSparql(target)?sparqlPage(target):isConsole(target)?consolePage(target):prepareHTML(lean,target,current.signal,undefined,{liberal})).then(next=>{
+    (target===aboutURL?aboutPage().then(source=>prepareHTML(lean,target,undefined,source)):STATE_PAGES.includes(target)?(browserState?browserState.page(target):Promise.reject(new Error("Browser state is off"))).then(source=>prepareHTML(lean,target,undefined,source)):target===settingsURL?settingsSource().then(source=>prepareHTML(lean,target,current.signal,source)):target===graphURL?graphPage():target===wasmURL||target.startsWith(wasmURL+"/")?wasmPage(target):isSparql(target)?sparqlPage(target):isConsole(target)?consolePage(target):prepareHTML(lean,target,current.signal,undefined,{liberal,...(request?{request}:{})})).then(next=>{
       if(current===controller&&!current.signal.aborted&&running){
         candidate=next;dirty=true;loading=false;
         if(push)remember(engine.historyPush(history.history,next.url),"push");

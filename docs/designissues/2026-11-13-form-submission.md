@@ -59,10 +59,12 @@ Tested (`FormSubmissionTests.lean`, `#guard`): the three bodies, the encodings, 
 
 ## Open items
 
-1. **Top-level form navigation** (target "", `_self` in the page, `_top`, `_parent`, `_blank`): `plan`
-   answers, but DomOps navigates frames only; the desktop host (`run_html.ts`) does not follow a page's own
-   navigation yet. This is what GOV.UK services, log-ins and checkouts need. It needs a turn field the
-   browser host follows (with the same `navigationAllowed`), and a host load with a request body.
+1. **Top-level form navigation**: a form in the page with target "", `_self`, `_top` or `_parent` sets
+   `Dom.State.pageNavigation` (after `navigationAllowed`); the turn carries `navigate` {url, method,
+   contentType, bodyBase64}; `run_html.ts` follows it once per session (`readSource` sends the POST). Not
+   done: `_blank`; `_top`/`_parent` from a frame; the Hub worker; history keeps only the URL, so Back
+   and reload of a POST result load it with GET; the host's `fetch` follows redirects itself (Lean does
+   not see them, as for any top-level page load today).
 2. **DNS for a form's request**: names are not pinned for frame loads (the embedder resolves). A page
    request (`Net.PageFetch`) pins the address; a form navigation should too.
 3. **Frame `src` navigations** go to the embedder with no Lean check (as before this change). They should

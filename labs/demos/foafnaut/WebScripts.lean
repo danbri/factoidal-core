@@ -632,7 +632,12 @@ def hostNavigations (h : Page.Host) : JSON.Json :=
 for the embedder, and `frameLoads`, the `srcdoc` documents Lean loaded in the turn. -/
 def frameFields (h : Page.Host) (loads : Nat) : List (String × JSON.Json) :=
   let waiting := h.dom.navigations.any fun (_, u) => !u.isEmpty && u != "about:srcdoc"
-  (if waiting then [("navigations", hostNavigations h)] else []) ++ (if loads == 0 then [] else [("frameLoads", num loads)])
+  (if waiting then [("navigations", hostNavigations h)] else []) ++ (if loads == 0 then [] else [("frameLoads", num loads)]) ++
+  -- a form's navigation of the page itself (`Dom.State.pageNavigation`), for the embedder to follow
+  match h.dom.pageNavigation with
+  | some (u, m, ct, body) => [("navigate", .object ([("url", .string u), ("method", .string m)] ++
+      if m == "POST" then [("contentType", .string ct), ("bodyBase64", .string (WHATWG.Base64.encode body))] else []))]
+  | none => []
 
 /-- The document of a `frame` action (the embedder's answer to a navigation): `bytesBase64`
 with `contentType` (decoded by Lean: HTML §13.2.3 sniffing with the transport charset, then

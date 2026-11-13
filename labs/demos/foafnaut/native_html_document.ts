@@ -29,7 +29,9 @@ export type PageDecoder=(bytes:Uint8Array,contentType:string,fallback?:string,lo
 system's language; the host sets them, Lean decides with them (WebDocument.decodeBinWith). */
 let pageDecoding={fallback:"",locale:""};
 export function setPageDecoding(next:{fallback?:string;locale?:string}){pageDecoding={...pageDecoding,...next};}
-export async function readSource(url:string,signal?:AbortSignal,decode?:PageDecoder):Promise<{url:string;source:string;bytes:number;encoding?:string;raw:Uint8Array}> {
+/** A form's POST of the page (the turn field `navigate`, HTML.FormSubmission.plan): sent as Lean gave it. */
+export type PageRequest={method:string;contentType?:string;bodyBase64?:string};
+export async function readSource(url:string,signal?:AbortSignal,decode?:PageDecoder,request?:PageRequest):Promise<{url:string;source:string;bytes:number;encoding?:string;raw:Uint8Array}> {
   const parsed=new URL(inputURL(url));
   const abort=()=>signal?.throwIfAborted();abort();
   let bytes:Uint8Array,finalURL=url,contentType="";
@@ -37,7 +39,9 @@ export async function readSource(url:string,signal?:AbortSignal,decode?:PageDeco
     if((await Deno.stat(parsed)).size>MAX_SOURCE_BYTES)throw new Error("Native HTML resource exceeds 16 MiB");
     bytes=await Deno.readFile(parsed);abort();
   } else {
-    const response=await fetch(parsed,{signal:AbortSignal.any([AbortSignal.timeout(10000),...(signal?[signal]:[])])});
+    const post=request?.method==="POST"?{method:"POST",headers:{"content-type":request.contentType??""},
+      body:Uint8Array.from(atob(request.bodyBase64??""),c=>c.charCodeAt(0))}:{};
+    const response=await fetch(parsed,{...post,signal:AbortSignal.any([AbortSignal.timeout(10000),...(signal?[signal]:[])])});
     finalURL=inputURL(response.url);contentType=response.headers.get("content-type")??"";
     if(!response.ok){await response.body?.cancel();throw new Error(`HTTP ${response.status}: ${url}`);}
     const reader=response.body?.getReader();
@@ -219,10 +223,10 @@ export type PageEngine=((Pick<HTMLEngine,"xmlStylesheet"|"xslt"|"inspect"|"compi
 /** How a page is accepted. `liberal`: liberal mode (WebAccept.lean, --be-liberal-in-what-we-accept
 and the Settings checkbox): Lean skips what it may skip and says so, and this host passes on
 the fetches that failed instead of refusing the page. */
-export type AcceptOptions={liberal?:boolean};
+export type AcceptOptions={liberal?:boolean;request?:PageRequest};
 export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSignal,inline?:string,accept:AcceptOptions={}) {
   const decode:PageDecoder|undefined=typeof engine.decodeDocument==="function"?(b,c)=>engine.decodeDocument!(b,c,pageDecoding.fallback,pageDecoding.locale):undefined;
-  const document:{url:string;source:string;bytes:number;encoding?:string;raw?:Uint8Array}=inline===undefined?await readSource(url,signal,decode):{url,source:inline,bytes:inline.length},resources:HTMLResource[]=[];
+  const document:{url:string;source:string;bytes:number;encoding?:string;raw?:Uint8Array}=inline===undefined?await readSource(url,signal,decode,accept.request):{url,source:inline,bytes:inline.length},resources:HTMLResource[]=[];
   // The page's console (native_console.ts): System entries now, script lines later.
   const page={};
   const fetchFailed=(feature:string,where:string,message:string,action:string)=>

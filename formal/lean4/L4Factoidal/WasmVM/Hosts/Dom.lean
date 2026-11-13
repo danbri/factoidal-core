@@ -200,6 +200,10 @@ structure State where
   /-- The address the embedder loaded the page from ("" when it did not say), for the rule of
   where a form may send (`HTML.FormSubmission.navigationAllowed`, as `Net.PageFetch.Page.ofUrl`). -/
   pageAddress : String := ""
+  /-- A navigation of the page itself that a form asked for (`HTML.FormSubmission.plan` with
+  the page's own navigable as target): URL, method, content type and body ("GET" with no
+  body for a GET). The embedder follows it (turn field `navigate`); the last one wins. -/
+  pageNavigation : Option (String × String × String × ByteArray) := none
   deriving Inhabited
 
 /-- Bounds, as in `WebRenderScript`. -/
