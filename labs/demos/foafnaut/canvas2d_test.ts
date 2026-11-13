@@ -24,7 +24,7 @@ const reference=JSON.parse(await Deno.readTextFile(new URL("./canvas2d-reference
 const scenes=await Deno.readTextFile(new URL("./canvas2d-scenes.js",import.meta.url));
 
 function start(kind:string,html:string,url:string):Turn{
-  return engine.scriptSession(html,{action:"start",url,resources:[],instructionsPerMs:1e12,full:true,...(kind==="bubblepop"?{engine:"bubblepop"}:{})}) as Turn;
+  return engine.scriptSession(html,{action:"start",url,resources:[],instructionsPerMs:1e12,full:true,engine:kind==="bubblepop"?"bubblepop":"quickjs"}) as Turn;
 }
 const advance=(t:Turn,ms:number)=>engine.scriptSession("",{action:"advance",session:t.session,ms}) as Turn;
 const hexBytes=(h:string)=>Uint8Array.from(h.match(/../g)!.map(x=>parseInt(x,16)));

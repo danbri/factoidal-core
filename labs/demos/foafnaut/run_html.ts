@@ -280,7 +280,7 @@ async function main() {
   let scriptsOn=false,scriptOps:string[]=[];
   // The page script setting (WebRenderScript.plan): "" is Lean's default for this host (the
   // Lean engine where the engine has it). Lean says what a setting means; an engine from
-  // before the op (probed once) runs QuickJS-NG, as before.
+  // before the op (probed once) gets no page scripts, with a notice (no silent QuickJS-NG).
   let scriptSetting="",scriptEngines:string[]=[],quickjsLoaded=false,planOp=true;
   // Pages that declare no encoding: the setting ("" detect) and the system's language. The
   // language is Deno's navigator.language (from LANG / LC_ALL); Lean maps it by HTML
@@ -293,7 +293,7 @@ async function main() {
   const plans=new Map<string,ScriptPlan>();
   const askPlan=async(setting:string,unavailable=""):Promise<ScriptPlan>=>{
     if(planOp)try{return await scriptCall("scriptPlan",{setting,scripts:1,host:scriptHostKind(),...(unavailable?{unavailable}:{})}) as ScriptPlan;}catch{planOp=false;}
-    return {engine:"quickjs",name:"QuickJS-NG",run:!unavailable,marker:"",notice:unavailable};
+    return {engine:"none",name:"None",run:false,marker:"JS OFF",notice:"Page scripts are off: this engine is too old to choose a script engine (no scriptPlan)."};
   };
   // The host name Lean's default engine is asked for: "native", for the native library and for
   // the engine's WebAssembly build alike (BubblePopJS is the default on both).
@@ -315,15 +315,21 @@ async function main() {
     try{
       const t0=performance.now();
       const info=(await scriptCall("scriptInfo")) as {ops?:string[];engines?:string[]};
-      scriptOps=info.ops??[];scriptEngines=info.engines??["quickjs"];
+      scriptOps=info.ops??[];scriptEngines=info.engines??["quickjs"]; // an engine older than the engines list had QuickJS-NG only
       let loaded:unknown;
-      try{loaded=await scriptCall("scriptLoad",await Deno.readFile(quickjsPath));quickjsLoaded=true;}
-      catch(error){if(!scriptEngines.includes("bubblepop"))throw error;
-        console.log(JSON.stringify({type:"native-html-scripts",engine:"quickjs",state:"off",module:quickjsPath,reason:String(error instanceof Error?error.message:error)}));}
+      // QUICKJS-EXCEPTION: the QuickJS-NG guest is read only when the setting names it
+      // (foafnaut:scripts/quickjs, for differential runs); BubblePopJS needs no guest.
+      const loadGuest=async()=>{
+        if(quickjsLoaded)return;
+        try{loaded=await scriptCall("scriptLoad",await Deno.readFile(quickjsPath));quickjsLoaded=true;}
+        catch(error){console.log(JSON.stringify({type:"native-html-scripts",engine:"quickjs",state:"off",module:quickjsPath,reason:String(error instanceof Error?error.message:error)}));}
+      };
+      if(!scriptEngines.includes("bubblepop"))await loadGuest();
       scriptsOn=true;
       setScriptHost({start:async(source,pageURL,resources,encoding,mode={})=>{
         // The setting: Lean's plan says which engine runs the page, or why none does.
         let plan=await askPlan(scriptSetting);
+        if(plan.run&&plan.engine==="quickjs")await loadGuest();
         if(plan.run&&!scriptEngines.includes(plan.engine))plan=await askPlan(scriptSetting,`this engine has no ${plan.name}`);
         else if(plan.run&&plan.engine==="quickjs"&&!quickjsLoaded)plan=await askPlan(scriptSetting,`no guest module (${quickjsPath})`);
         if(!plan.run){if(plan.notice)throw new Error(plan.notice);return undefined;}
@@ -334,7 +340,7 @@ async function main() {
           catch{return {width:1280,height:800,textScalePercent:150,zoomUnit:100};}})();
         const turn=await scriptCall("scriptSession",source,{action:"start",url:pageURL,resources,width:at.width,height:at.height,zoomUnit:at.zoomUnit,
           ...(at.shell?{shell:at.shell}:{}),layout:{url:pageURL,textScalePercent:at.textScalePercent,zoomUnit:at.zoomUnit,...mode},
-          ...(plan.engine==="bubblepop"?{engine:"bubblepop"}:{}),...(encoding?{encoding}:{}),
+          engine:plan.engine,...(encoding?{encoding}:{}),
           ...(scriptOps.includes("net")?{network:true}:{})}) as ScriptTurn;
         netQueue.push(...(turn.netRequests??[]).map(wire=>({session:turn.session,wire})));
         scriptEpochs.set(turn.session,performance.now()-turn.clock);sessionEngines.set(turn.session,plan.engine);

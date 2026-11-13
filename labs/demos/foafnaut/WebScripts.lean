@@ -12,23 +12,26 @@ import WebShell
 # WebScripts: page scripts run by Lean in the Foafnaut engine
 
 The `scriptSession` operation (record: docs/designissues/2026-11-08-page-scripts.md).
-QuickJS-NG, compiled to WebAssembly, runs in WasmVM inside this engine, on the page's
-DOM arena (`WasmVM.Hosts.Page`). The HTML event loop model (`L4Factoidal.EventLoop`)
+Page scripts run in BubblePopJS, the JavaScript engine written in Lean, by default; QuickJS-NG,
+compiled to WebAssembly, runs in WasmVM inside this engine only when `start` names it
+(`engine:"quickjs"`), for differential tests. Both run on the page's DOM arena
+(`WasmVM.Hosts.Page`). The HTML event loop model (`L4Factoidal.EventLoop`)
 decides every next callback: timers, animation frames, the listener order of each
 event. The host only moves time and passes clicks; it runs no page script.
 
-The guest module is not in the repository and not in the engine. A host gives its bytes
+The QuickJS-NG guest module is not in the repository and not in the engine. A host gives its bytes
 once: through the font byte call with the family `guest:quickjs`
 (`web_document_font_call_bin`, so no new export), or as Base64 (`action:"load"`).
 
 Request `{"op":"scriptSession","action":A,...}`, with the page HTML as the call's HTML
 argument for `start`:
 
-- `info`: `{"ops":[...],"module":bool,"bytes":n}`. A host asks this first; an engine
-  without this op answers "unknown document operation" (issue 1274).
+- `info`: `{"ops":[...],"module":bool,"bytes":n,"engines":[...],"default":"bubblepop"}`. A host
+  asks this first; an engine without this op answers "unknown document operation" (issue 1274).
 - `load`: `moduleBase64`, the guest module.
 - `start`: `url`, `resources` (`[{nodeId, source}]` for `src` scripts, as for
-  stylesheets), optional `commandLimit` and `logLimit`. Runs the classic scripts in document order,
+  stylesheets), optional `engine` (`bubblepop`, the default, or `quickjs`; any other value is
+  refused), `commandLimit` and `logLimit`. Runs the classic scripts in document order,
   `DOMContentLoaded`, then the `load` event.
 - `click` (`node`), `advance` (`ms`: move the virtual clock), `settle` (`budgetMs`: run
   until no task, timer or frame waits), `turn` (run what is due now), `close`.
@@ -89,11 +92,12 @@ the ask and calls `resume` with the reply, and passes each import call of the gu
 `host`. The host decides nothing: it copies bytes and calls the functions Lean names.
 
 **BubblePopJS** (docs/designissues/2026-11-08-lean-js-engine.md, section 11), the
-JavaScript engine written in Lean. With `engine:"bubblepop"` in `start`, the page's
-scripts run in it (`Hosts.LeanJS`): no guest module, the same prelude, the same imports served by
+JavaScript engine written in Lean and the default. With no `engine` in `start`, or
+`engine:"bubblepop"`, the page's scripts run in it (`Hosts.LeanJS`): no guest module, the same prelude, the same imports served by
 `Hosts.Page` on the same arena, the same typed commands, and the same event code
 (`Hosts.PageEvents`). Every later action of that session runs on it; the answers have the
-same fields, and `engine:"bubblepop"`. `info` lists the engines (`engines`).
+same fields, and `engine:"bubblepop"`. `info` lists the engines (`engines`, the default first). QuickJS-NG
+runs only with `engine:"quickjs"`, and needs the guest module (`load`, or the AOT path).
 
 The cost contract: `changed` is true exactly when the turn recorded a DOM change. A
 host renders again only then; the render request carries the command list, which is part
@@ -977,7 +981,10 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
   if held.turn.isSome then return (held, .error "scriptSession: a turn waits for the host")
   match action with
   | "start" =>
-    if str request "engine" == "bubblepop" then startLean held html request measure canvas else
+    -- BubblePopJS unless QuickJS-NG is asked for by name (`WebRenderScript.defaultEngine`).
+    let engine := str request "engine"
+    if engine == "" || engine == "bubblepop" then startLean held html request measure canvas else
+    if engine != "quickjs" then return (held, .error s!"scriptSession: unknown engine {engine}") else
     match held.module, held.aot with
     | none, some aot =>
       -- The AOT path: Lean asks the host for a fresh instance, then runs the program.
@@ -1107,8 +1114,8 @@ def op {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (name htm
   if action == "info" then
     let (loaded, bytes, aot) := (held.module.isSome || held.aot.isSome, held.moduleBytes, held.aot.isSome)
     return (held, .ok <| some (JSON.Json.object [("ops",.array (actions.map .string)),("module",.bool loaded),
-      ("bytes",num bytes),("engine",.string "QuickJS-NG in WasmVM"),("aot",.bool true),("aotLoaded",.bool aot),
-      ("engines",.array [.string "quickjs", .string "bubblepop"])]).toString)
+      ("bytes",num bytes),("engine",.string "BubblePopJS"),("default",.string "bubblepop"),("aot",.bool true),("aotLoaded",.bool aot),
+      ("engines",.array [.string "bubblepop", .string "quickjs"])]).toString)
   let (held, action, html, request) :=
     if action == "syncAnswer" then
       match held.pendingSync with

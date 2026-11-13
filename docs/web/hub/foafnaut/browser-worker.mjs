@@ -527,12 +527,14 @@ async function pageImageBytes(wanted){
 let engineScripts,scriptOps=[],scriptEngines=[],quickjsLoaded=false;
 // The page script setting (WebRenderScript.plan): "" is Lean's default, BubblePopJS, as in the
 // app (the host name Lean's default is asked for: `scriptHost`). A saved setting is kept.
-// Lean says what a setting means; an engine from before the op (probed once) runs QuickJS-NG.
+// Lean says what a setting means. An engine from before the op (probed once) gets no page
+// scripts, with a notice: BubblePopJS is the default everywhere, and this host does not fall
+// back to QuickJS-NG on its own.
 let scriptSetting='',planOp=true;
 const scriptHost='native';
 function planFor(setting,scripts,unavailable=''){
   if(planOp)try{return call('',{op:'scriptPlan',setting,scripts,host:scriptHost,...(unavailable?{unavailable}:{})});}catch{planOp=false;}
-  return {engine:'quickjs',name:'QuickJS-NG',run:scripts>0&&!unavailable,marker:'',notice:unavailable};
+  return {engine:'none',name:'None',run:false,marker:scripts>0?'JS OFF':'',notice:scripts>0?'Page scripts are off: this engine is too old to choose a script engine (no scriptPlan).':''};
 }
 // The chrome marker of the page's scripts: the engine that runs them, else what the setting says.
 function scriptMarker(){
@@ -760,7 +762,7 @@ async function startScripts(page,scripts){
   if(!plan.run){if(plan.notice)console.warn('foafnaut:',plan.notice);if(page===doc)request();return;}
   // The first page of a session starts before the history exists: no shell then.
   const turn=scriptCall(page.source,{op:'scriptSession',action:'start',url:page.url,resources,width,height,zoomUnit:zoomUnit(),...(history?{shell:shell()}:{}),layout,
-    ...(plan.engine==='bubblepop'?{engine:'bubblepop'}:{}),...(page.encoding?{encoding:page.encoding}:{}),
+    engine:plan.engine,...(page.encoding?{encoding:page.encoding}:{}),
     ...(scriptOps.includes('net')?{network:true,hostCors:true}:{})});
   scriptStats.startMs=scriptStats.lastMs;scriptStats.engine=plan.engine;
   page.script={session:turn.session,turn,epoch:performance.now()-turn.clock,engine:plan.engine};

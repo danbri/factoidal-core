@@ -62,7 +62,7 @@ if(html){await Deno.writeTextFile(html,page);console.log("wrote "+html);Deno.exi
 if(!exists(library)){console.log("NOT RUN: no native library at "+library);Deno.exit(0);}
 type Turn={session:number;ns:number;errors:string[];logs:string[]};
 function run(engine:HTMLEngine,lean:boolean){
-  const extra=lean?{engine:"bubblepop"}:{};
+  const extra={engine:lean?"bubblepop":"quickjs"};
   const t=engine.scriptSession(page,{action:"start",url:"file:///foaf-check-bench.html",resources:[],instructionsPerMs:1e12,...extra}) as unknown as Turn;
   if(t.errors.length)throw new Error(t.errors.join("; "));
   const out:Record<string,number>={};const logs:string[]=[...t.logs];

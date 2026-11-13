@@ -210,11 +210,12 @@ def engines : List (String × String) := [("bubblepop","BubblePopJS"),("quickjs"
 def engineMarker (setting : String) : String :=
   if setting == "bubblepop" then "JS BUBBLEPOP" else if setting == "quickjs" then "JS QUICKJS-NG" else "JS " ++ setting.toUpper
 
-/-- The default engine of a host. A native host (the window, `run_html.ts`) runs
-BubblePopJS: Lean compiles it to native code, so it runs without a second interpreter. The
-Hub runs QuickJS-NG: there the guest is translated to the browser's WebAssembly
-(`WasmVM.Aot`), and runs faster than BubblePopJS compiled to WebAssembly. -/
-def defaultEngine (host : String) : String := if host == "hub" || host == "wasm" then "quickjs" else "bubblepop"
+/-- The default engine of a host: BubblePopJS on every host (the window, the Hub, the Wasm
+build). It is the engine whose security, speed and conformance the project works on.
+QuickJS-NG runs only when it is asked for by name (`foafnaut:scripts/quickjs`, a `quickjs`
+setting), for differential tests and for the guest API. The `host` argument stays so that a
+host can be given its own default again without changing callers. -/
+def defaultEngine (_host : String) : String := "bubblepop"
 
 def engineName (setting : String) : String := ((engines.find? (·.1 == setting)).map (·.2)).getD setting
 

@@ -41,7 +41,7 @@ console.log('RESULT '+out.join(' | '));
 
 function run(engine:HTMLEngine,lean:boolean){
   const turn=engine.scriptSession(page,{action:"start",url:"http://example.test/p.html",resources:[],instructionsPerMs:1e12,
-    ...(lean?{engine:"bubblepop"}:{})}) as {logs:string[];errors:string[]};
+    engine:lean?"bubblepop":"quickjs"}) as {logs:string[];errors:string[]};
   engine.scriptSession("",{action:"close"});
   return turn;
 }

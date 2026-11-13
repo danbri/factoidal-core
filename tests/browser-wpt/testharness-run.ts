@@ -394,7 +394,7 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
       `serviceWorker:typeof navigator!=="undefined"&&!!navigator.serviceWorker,ShadowRealm:typeof ShadowRealm!=="undefined",fetch:typeof fetch!=="undefined",`+
       `XMLHttpRequest:typeof XMLHttpRequest!=="undefined",postMessage:typeof postMessage!=="undefined"}))</script>`+
       `<script type=module>console.log("__probe_module")</script>`,{action:"start",url:`${origin}/probe.html`,resources:[],
-      ...(scriptEngine==="bubblepop"?{engine:"bubblepop"}:{})});
+      engine:scriptEngine==="bubblepop"?"bubblepop":"quickjs"});
     const logs=[...probe.logs,...engine.scriptSession("",{action:"settle",session:probe.session,budgetMs:1000}).logs];
     engine.scriptSession("",{action:"close"});
     const line=logs.find(l=>l.startsWith("__probe {"));
@@ -528,7 +528,7 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
       }
     // navigations:true: this runner loads frames' URLs (scriptSession action `frame`).
     let turn=start(html,{action:"start",url,resources,commandLimit:200000,logLimit:100000,instructionsPerMs:scriptRate,...(encoding?{encoding}:{}),
-      navigations:true,...(http?{network:true,pageAddress:"127.0.0.1"}:{}),...(scriptEngine==="bubblepop"?{engine:"bubblepop"}:{})});
+      navigations:true,...(http?{network:true,pageAddress:"127.0.0.1"}:{}),engine:scriptEngine==="bubblepop"?"bubblepop":"quickjs"});
     // The engine's page requests in flight (each from one turn): http.fetch to wptserve.
     type NetWire={id:number;method:string;url:string;headers:[string,string][];bodyBase64?:string};
     const inflight=new Map<number,Promise<{id:number;answer:Record<string,unknown>}>>();

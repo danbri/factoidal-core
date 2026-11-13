@@ -24,7 +24,7 @@ type Turn=ScriptTurn&{gpu?:unknown[];engine?:string;changes:number};
 /** A page's turns on one engine: start, six seconds of virtual time, a click, settle. */
 function run(engine:HTMLEngine,name:string,source:string,lean:boolean){
   const url=`file:///${name}.html`;
-  const extra=lean?{engine:"bubblepop"}:{};
+  const extra={engine:lean?"bubblepop":"quickjs"};
   const turns:Turn[]=[];
   let turn=engine.scriptSession(source,{action:"start",url,resources:[],instructionsPerMs:1e12,full:true,...extra}) as Turn;turns.push(turn);
   const session=turn.session;

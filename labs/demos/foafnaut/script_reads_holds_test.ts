@@ -24,7 +24,7 @@ setTimeout(()=>{const r=document.getElementById('i').getBoundingClientRect();con
 </script>`;
   const layout={url:"http://example.test/p.html",heldImages:[{key,sha256:sha}]};
   const start={action:"start",url:"http://example.test/p.html",resources:[],instructionsPerMs:1e12,layout,width:400,height:300,
-    ...(bubblepop?{engine:"bubblepop"}:{})};
+    engine:bubblepop?"bubblepop":"quickjs"};
   let turn=engine.scriptSession(page,start) as Turn;
   const logs=[...turn.logs];
   // Held after the session started: the read below must see it.

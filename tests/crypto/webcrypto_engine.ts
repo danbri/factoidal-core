@@ -24,7 +24,7 @@ function run(script:string):{logs:string[];ms:number} {
   const html=`<!doctype html><meta charset=utf-8><body><script>${script}</script>`;
   const t0=performance.now();
   let turn=engine.scriptSession(html,{action:"start",url:"https://web-platform.test/crypto.html",commandLimit:200000,logLimit:100000,
-    instructionsPerMs:1e12,...(bubblepop?{engine:"bubblepop"}:{})});
+    instructionsPerMs:1e12,engine:bubblepop?"bubblepop":"quickjs"});
   const logs=[...turn.logs];
   turn=engine.scriptSession("",{action:"settle",session:turn.session,budgetMs:600000});
   logs.push(...turn.logs);

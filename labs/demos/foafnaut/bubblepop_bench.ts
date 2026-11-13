@@ -28,7 +28,7 @@ const harness=[await Deno.readTextFile(new URL("resources/testharness.js",wpt)),
   await Deno.readTextFile(new URL("../../../tests/browser-wpt/testharnessreport.js",import.meta.url))];
 
 function bench(engine:HTMLEngine,lean:boolean){
-  const extra=lean?{engine:"bubblepop"}:{};
+  const extra={engine:lean?"bubblepop":"quickjs"};
   const start=(source:string,url:string,resources:unknown[]=[])=>
     engine.scriptSession(source,{action:"start",url,resources,instructionsPerMs:1e12,...extra}) as unknown as Turn;
   const first=start(empty,"file:///start.html");

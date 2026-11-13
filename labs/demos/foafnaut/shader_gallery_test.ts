@@ -15,7 +15,7 @@ type Gpu={k:string;[k:string]:unknown};
 type Turn={session:number;changed:boolean;gpu?:Gpu[];logs:string[];errors:string[];instructions:number;ns:number};
 const engine=await loadHTML(library);
 if(!lean)engine.scriptLoad(await Deno.readFile(guest));
-const start=(html:string,url:string)=>engine.scriptSession(html,{action:"start",url,resources:[],...(lean?{engine:"bubblepop"}:{})}) as unknown as Turn;
+const start=(html:string,url:string)=>engine.scriptSession(html,{action:"start",url,resources:[],engine:lean?"bubblepop":"quickjs"}) as unknown as Turn;
 const advance=(t:Turn,ms=16)=>engine.scriptSession("",{action:"advance",session:t.session,ms}) as unknown as Turn;
 const page=await Deno.readTextFile(new URL("./pages/shader-gallery.html",import.meta.url));
 // The ratchet: QuickJS-NG instructions of one frame's turn (a uniform write and a pass, or a

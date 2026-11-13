@@ -81,7 +81,7 @@ Deno.test({name:"console levels reach the console tab (BubblePopJS, and QuickJS-
   const guest=Deno.env.get("QUICKJS_WASM");
   const runs:[string,Record<string,unknown>][]=[];
   if(engines.includes("bubblepop"))runs.push(["bubblepop",{engine:"bubblepop"}]);
-  if(guest){engine.scriptLoad(await Deno.readFile(guest));runs.push(["quickjs",{}]);}
+  if(guest){engine.scriptLoad(await Deno.readFile(guest));runs.push(["quickjs",{engine:"quickjs"}]);}
   for(const [name,extra] of runs){
     const turn=engine.scriptSession(levelsPage,{action:"start",url:"file:///levels.html",resources:[],...extra}) as {logs:string[];errors:string[]};
     engine.scriptSession("",{action:"close"});
