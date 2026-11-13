@@ -184,7 +184,9 @@ member. NotSupportedError when the operation has no such algorithm. -/
 def registered : List String :=
   ["AES-CTR", "AES-CBC", "AES-GCM", "AES-KW", "HMAC", "SHA-1", "SHA-256", "SHA-384", "SHA-512", "HKDF",
    "PBKDF2", "ECDSA", "ECDH", "RSASSA-PKCS1-v1_5", "RSA-PSS", "RSA-OAEP", "Ed25519", "X25519",
-   "ChaCha20-Poly1305"]
+   "ChaCha20-Poly1305", "AES-OCB", "Ed448", "X448", "ML-DSA-44", "ML-DSA-65", "ML-DSA-87",
+   "ML-KEM-512", "ML-KEM-768", "ML-KEM-1024", "MLKEM768-P256", "MLKEM768-X25519", "MLKEM1024-P384",
+   "KMAC128", "KMAC256"]
 
 def normalizeSpec (op name : String) : Res (String × List String) :=
   match (registered.find? (WebCrypto.asciiUpper · == WebCrypto.asciiUpper name)) with
@@ -206,10 +208,28 @@ def normalizeSpec (op name : String) : Res (String × List String) :=
     | "deriveBits", "PBKDF2" => r ["hash:h!", "iterations:l!", "salt:b!"]
     | "deriveBits", "ECDH" | "deriveBits", "X25519" => r ["public:k!"]
     | "encrypt", "ChaCha20-Poly1305" | "decrypt", "ChaCha20-Poly1305" => r ["additionalData:b", "iv:b!", "tagLength:o"]
+    -- Algorithms this engine has no keys for (`refusedSpec?`): registered for generateKey,
+    -- importKey and "get key length" only, so those operations make their checks of the
+    -- arguments in the specification's order before they refuse (`generateRefusedErr`,
+    -- `importRefusedErr`, `keyLength`). Every other operation refuses them at once.
+    | "generateKey", "AES-CTR" | "generateKey", "AES-CBC" | "generateKey", "AES-GCM" | "generateKey", "AES-KW"
+    | "generateKey", "AES-OCB" | "get key length", "AES-CTR" | "get key length", "AES-CBC"
+    | "get key length", "AES-GCM" | "get key length", "AES-KW" | "get key length", "AES-OCB" => r ["length:l!"]
+    | "generateKey", "RSASSA-PKCS1-v1_5" | "generateKey", "RSA-PSS" | "generateKey", "RSA-OAEP" =>
+      r ["modulusLength:l!", "publicExponent:b!", "hash:h!"]
+    | "generateKey", "KMAC128" | "generateKey", "KMAC256" => r ["length:l"]
+    | "generateKey", "Ed448" | "generateKey", "X448" | "generateKey", "ML-DSA-44" | "generateKey", "ML-DSA-65"
+    | "generateKey", "ML-DSA-87" | "generateKey", "ML-KEM-512" | "generateKey", "ML-KEM-768"
+    | "generateKey", "ML-KEM-1024" | "generateKey", "MLKEM768-P256" | "generateKey", "MLKEM768-X25519"
+    | "generateKey", "MLKEM1024-P384" => r []
+    | "importKey", "AES-CTR" | "importKey", "AES-CBC" | "importKey", "AES-GCM" | "importKey", "AES-KW"
+    | "importKey", "AES-OCB" | "importKey", "Ed448" | "importKey", "X448" => r []
+    | "importKey", "RSASSA-PKCS1-v1_5" | "importKey", "RSA-PSS" | "importKey", "RSA-OAEP" => r ["hash:h!"]
     | _, _ => .error .notSupported
 
 def algOf? (name : String) : Option Alg :=
   [Alg.hmac, .hkdf, .pbkdf2, .ecdsa, .ecdh, .ed25519, .x25519, .chacha].find? (·.name == name)
+
 
 /-! ## The store -/
 
@@ -605,11 +625,137 @@ def importSecret (alg : Alg) (format : String) (data : ByteArray) (j : Args) (p 
     return { type := .secret, algo := { alg }, material := raw }
   | _ => throw .notSupported
 
+/-! ## Registered algorithms without keys here
+
+AES (no portable AES in HACL*), RSA (future work), Ed448 and X448, ML-DSA, ML-KEM and the
+hybrid KEMs, and KMAC. Each is refused with NotSupportedError, as before 2026-11-13; what
+changed is the order: generateKey and importKey first make the checks of their arguments that
+come before key generation or key import in the specification (usages: SyntaxError; parameters:
+OperationError; key data: DataError), as an engine with the algorithm does. The functions below
+return an `Err`, not a `Res`: they can make no key, by their type. No key bytes are read or
+made on these paths. -/
+
+/-- The usages of a registered algorithm without keys here: `pub` of a secret key (or of a
+pair's public key), `priv` of a pair's private key. -/
+structure RefusedSpec where
+  pub : List Usage
+  priv : List Usage
+  pair : Bool
+
+def refusedSpec? : String → Option RefusedSpec
+  | "AES-CTR" | "AES-CBC" | "AES-GCM" | "AES-OCB" => some ⟨[.encrypt, .decrypt, .wrapKey, .unwrapKey], [], false⟩
+  | "AES-KW" => some ⟨[.wrapKey, .unwrapKey], [], false⟩
+  | "KMAC128" | "KMAC256" => some ⟨[.sign, .verify], [], false⟩
+  | "RSASSA-PKCS1-v1_5" | "RSA-PSS" | "Ed448" | "ML-DSA-44" | "ML-DSA-65" | "ML-DSA-87" =>
+    some ⟨[.verify], [.sign], true⟩
+  | "RSA-OAEP" => some ⟨[.encrypt, .wrapKey], [.decrypt, .unwrapKey], true⟩
+  | "X448" => some ⟨[], [.deriveKey, .deriveBits], true⟩
+  | "ML-KEM-512" | "ML-KEM-768" | "ML-KEM-1024" | "MLKEM768-P256" | "MLKEM768-X25519" | "MLKEM1024-P384" =>
+    some ⟨[.encapsulateBits, .encapsulateKey], [.decapsulateBits, .decapsulateKey], true⟩
+  | _ => none
+
+/-- AES key lengths in bits (§27-§30 "generate key" step 2, "get key length" step 1). -/
+def aesLengthOk (n : Nat) : Bool := n == 128 || n == 192 || n == 256
+
+/-- A generateKey parameter an engine with the algorithm would refuse with OperationError:
+an AES length other than 128, 192 or 256; an RSA public exponent other than 3 or 65537 (the
+exponents engines generate with; others are a generation failure). -/
+def refusedBadParams (name : String) (p : Args) : Bool :=
+  if name.startsWith "AES-" then !aesLengthOk ((p.nat? "length").getD 0)
+  else if name.startsWith "RSA" then
+    let e := ((p.get? "publicExponent").getD .empty).toList.dropWhile (· == 0)
+    !(e == [1, 0, 1] || e == [3])
+  else false
+
+/-- generateKey of an algorithm without keys here: usages (SyntaxError), parameters
+(OperationError), a key that would have no usage (SyntaxError), then NotSupportedError. -/
+def generateRefusedErr (name : String) (p : Args) (us : List Usage) : Err :=
+  match refusedSpec? name with
+  | none => .notSupported
+  | some r =>
+    if !us.all ((r.pub ++ r.priv).contains ·) then .syntax
+    else if refusedBadParams name p then .operation
+    else if r.pair && us.all (fun u => !r.priv.contains u) then .syntax
+    else if !r.pair && us.isEmpty then .syntax
+    else .notSupported
+
+/-- The SPKI and PKCS #8 OID and key size of Ed448 and X448 (RFC 8410). -/
+def okp448? : String → Option (List UInt8 × Nat)
+  | "Ed448" => some ([0x2b, 0x65, 0x71], 57)
+  | "X448" => some ([0x2b, 0x65, 0x6f], 56)
+  | _ => none
+
+/-- importKey of an algorithm without keys here: the checks of the algorithm's "import key"
+steps that need no key operation (usages, then the format's encoding and sizes, then the JWK
+members), then a secret or private key with no usage (SyntaxError), then NotSupportedError. -/
+def importRefusedErr (name : String) (format : String) (data : ByteArray) (j : Args) (extractable : Bool)
+    (us : List Usage) : Err :=
+  let checks : Res Bool := do
+    let some r := refusedSpec? name | throw .notSupported
+    if !r.pair then
+      -- AES (§27-§30 "import key"): raw or jwk, 128, 192 or 256 bits.
+      checkUsages r.pub us
+      match format with
+      | "raw" | "raw-secret" => if !aesLengthOk (data.size * 8) then throw .data
+      | "jwk" =>
+        if j.str? "kty" != some "oct" then throw .data
+        let some k := (j.str? "k").bind unb64? | throw .data
+        if !aesLengthOk (k.size * 8) then throw .data
+        jwkCommon j us extractable "enc"
+      | _ => throw .notSupported
+      return true
+    match okp448? name with
+    | some (oid, size) =>
+      match format with
+      | "spki" =>
+        checkUsages r.pub us
+        let some (o, params, key) := readSpki data.toList | throw .data
+        if o != oid || params.isSome || key.length != size then throw .data
+        return false
+      | "pkcs8" =>
+        checkUsages r.priv us
+        let some (o, params, pk) := readPkcs8 data.toList | throw .data
+        if o != oid || params.isSome then throw .data
+        let some (sk, []) := expect 0x04 pk | throw .data
+        if sk.length != size then throw .data
+        return true
+      | "raw" | "raw-public" =>
+        checkUsages r.pub us
+        if data.size != size then throw .data
+        return false
+      | "jwk" =>
+        let hasD := j.has "d"
+        checkUsages (if hasD then r.priv else r.pub) us
+        if j.str? "kty" != some "OKP" then throw .data
+        if j.str? "crv" != some name then throw .data
+        if name == "Ed448" then
+          if let some a := j.str? "alg" then
+            if a != "Ed448" && a != "EdDSA" then throw .data
+        jwkCommon j us extractable (if name == "Ed448" then "sig" else "enc")
+        let some x := (j.str? "x").bind unb64? | throw .data
+        if x.size != size then throw .data
+        if hasD then
+          let some d := (j.str? "d").bind unb64? | throw .data
+          if d.size != size then throw .data
+        return hasD
+      | _ => throw .notSupported
+    | none =>
+      -- RSA (§20-§22 "import key" step 2 of each format): the usages of the key the format holds.
+      if !name.startsWith "RSA" then throw .notSupported
+      match format with
+      | "spki" => checkUsages r.pub us; return false
+      | "pkcs8" => checkUsages r.priv us; return true
+      | "jwk" => let hasD := j.has "d"; checkUsages (if hasD then r.priv else r.pub) us; return hasD
+      | _ => throw .notSupported
+  match checks with
+  | .error e => e
+  | .ok needsUsage => if needsUsage && us.isEmpty then .syntax else .notSupported
+
 /-- The algorithm's import steps. -/
 def importMade (algName : String) (p : Args) (format : String) (data : ByteArray) (j : Args)
     (extractable : Bool) (us : List Usage) : Res Made :=
   match algOf? algName with
-  | none => .error .notSupported
+  | none => .error (importRefusedErr algName format data j extractable us)
   | some alg =>
     match alg with
     | .ecdsa | .ecdh => importEc alg format data j ((p.str? "namedCurve").getD "") us extractable
@@ -713,7 +859,7 @@ def firstValidScalar (r : ByteArray) : Option ByteArray :=
 
 def generateKey (algName : String) (p : Args) (extractable : Bool) (us : List Usage) (rand : Rand) :
     Res Made2 := do
-  let some alg := algOf? algName | throw .notSupported
+  let some alg := algOf? algName | throw (generateRefusedErr algName p us)
   match alg with
   | .hmac =>
     checkUsages (allowedUsages .hmac .secret) us
@@ -738,7 +884,11 @@ def generateKey (algName : String) (p : Args) (extractable : Bool) (us : List Us
     checkUsages ((allowedUsages alg .publicKey) ++ (allowedUsages alg .privateKey)) us
     let curve := (p.str? "namedCurve").getD ""
     if alg == .ecdsa || alg == .ecdh then
-      if curve == "P-384" || curve == "P-521" || curve != "P-256" then throw .notSupported
+      if curve != "P-256" && curve != "P-384" && curve != "P-521" then throw .notSupported
+      -- §23.7 and §24.4: a private key with no usage is a SyntaxError; checked before P-384
+      -- and P-521 are refused (no keys for them here), as an engine with them would.
+      if us.all (fun u => !(allowedUsages alg .privateKey).contains u) then throw .syntax
+      if curve != "P-256" then throw .notSupported
     let (sk, pub) ← match alg with
       | .ecdsa | .ecdh => do
         let some sk := firstValidScalar rand | throw .operation
@@ -849,6 +999,14 @@ def keyLength (algName : String) (t : Args) : Res (Option Nat) := do
     | none => return some (h.block * 8)
   | some .hkdf | some .pbkdf2 => return none
   | some .chacha => return some 256
+  | none =>
+    -- AES (§27-§30 "get key length"): its length, which must be 128, 192 or 256. The key's
+    -- import is then refused (`importRefusedErr`), after the derivation's own checks.
+    if algName.startsWith "AES-" && (refusedSpec? algName).isSome then
+      let some l := t.nat? "length" | throw .typeError
+      if !aesLengthOk l then throw .operation
+      return some l
+    throw .notSupported
   | _ => throw .notSupported
 
 /-- ChaCha20-Poly1305 (modern algorithms draft, "encrypt" and "decrypt"). -/
@@ -985,6 +1143,27 @@ theorem importKey_usages {n : String} {p : Args} {f : String} {d : ByteArray} {j
 #guard !ed25519IsSmallOrder (ByteArray.mk (List.replicate 32 (9 : UInt8)).toArray)
 #guard (normalizeSpec "deriveBits" "pbkdf2").toOption.map (·.1) == some "PBKDF2"
 #guard (normalizeSpec "encrypt" "AES-GCM").isOk == false
+#guard (normalizeSpec "generateKey" "aes-gcm").toOption == some ("AES-GCM", ["length:l!"])
+#guard (normalizeSpec "sign" "ML-DSA-44").isOk == false
+#guard generateRefusedErr "AES-GCM" #[("length", "128".toUTF8)] [.sign] == .syntax
+#guard generateRefusedErr "AES-GCM" #[("length", "64".toUTF8)] [] == .operation
+#guard generateRefusedErr "AES-GCM" #[("length", "128".toUTF8)] [] == .syntax
+#guard generateRefusedErr "AES-GCM" #[("length", "256".toUTF8)] [.encrypt] == .notSupported
+#guard generateRefusedErr "RSA-OAEP" #[("publicExponent", ByteArray.mk #[1, 0, 0])] [.decrypt] == .operation
+#guard generateRefusedErr "RSA-OAEP" #[("publicExponent", ByteArray.mk #[1, 0, 1])] [.encrypt] == .syntax
+#guard generateRefusedErr "ML-KEM-768" #[] [.decapsulateKey] == .notSupported
+#guard generateRefusedErr "ML-KEM-768" #[] [.sign] == .syntax
+#guard generateRefusedErr "HMAC" #[] [.sign] == .notSupported
+#guard importRefusedErr "AES-CBC" "raw" (ByteArray.mk (Array.replicate 16 0)) #[] false [.sign] == .syntax
+#guard importRefusedErr "AES-CBC" "raw" (ByteArray.mk (Array.replicate 15 0)) #[] false [.encrypt] == .data
+#guard importRefusedErr "AES-CBC" "raw" (ByteArray.mk (Array.replicate 16 0)) #[] false [] == .syntax
+#guard importRefusedErr "AES-CBC" "raw" (ByteArray.mk (Array.replicate 32 0)) #[] false [.encrypt] == .notSupported
+#guard importRefusedErr "Ed448" "raw" (ByteArray.mk (Array.replicate 57 0)) #[] false [.sign] == .syntax
+#guard importRefusedErr "Ed448" "raw" (ByteArray.mk (Array.replicate 56 0)) #[] false [.verify] == .data
+#guard importRefusedErr "Ed448" "raw" (ByteArray.mk (Array.replicate 57 0)) #[] false [.verify] == .notSupported
+#guard importRefusedErr "RSA-PSS" "pkcs8" .empty #[] false [] == .syntax
+#guard (keyLength "AES-KW" #[("length", "192".toUTF8)]).toOption == some (some 192)
+#guard (keyLength "AES-KW" #[("length", "100".toUTF8)]).isOk == false
 #guard Usage.ofName? "decapsulateKey" == some .decapsulateKey
 #guard truncateBits (ByteArray.mk #[0xff, 0xff]) 12 == ByteArray.mk #[0xff, 0xf0]
 #guard Err.all.map Err.code == [-20, -23, -24, -25, -26, -22, -27]

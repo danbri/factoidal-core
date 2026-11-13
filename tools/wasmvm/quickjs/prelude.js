@@ -3523,8 +3523,8 @@
         return start(() => {
           const us = usagesOf(keyUsages), a = normalize('deriveBits', algorithm), k = keyOf(baseKey);
           const t = normalize('importKey', derivedKeyType, 't:');
-          normalize('get key length', derivedKeyType, 't:');
-          const args = ['deriveKey', 'baseKey', String(k.handle), 'extractable', extractable ? '1' : '0', ...usagePairs(us), ...a.pairs, ...t.pairs];
+          const g = normalize('get key length', derivedKeyType, 'g:');
+          const args = ['deriveKey', 'baseKey', String(k.handle), 'extractable', extractable ? '1' : '0', ...usagePairs(us), ...a.pairs, ...t.pairs, ...g.pairs];
           return later(() => keyAnswer(call(args, 'deriveKey')), [baseKey, ...a.keys]);
         });
       },

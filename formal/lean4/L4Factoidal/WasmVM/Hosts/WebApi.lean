@@ -449,7 +449,9 @@ def subtle (s : State) (fs : Array ByteArray) : State × Except Int ByteArray :=
         let us ← usagesOf a
         let k ← keyOf s.keys a "baseKey"
         keyFor k algName .deriveKey
-        let len ← keyLength tName t
+        -- "get key length" reads its own dictionary (prefix `g:`; AES's `length`).
+        let g := sub a "g:"
+        let len ← keyLength tName (if g.isEmpty then t else g)
         -- §14.3.7: deriveBits with the key's own algorithm (its usage check is deriveKey).
         let k' := { k with usages := k.usages ++ [.deriveBits] }
         let bits ← deriveBits algName p k' len s.keys
