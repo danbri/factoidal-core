@@ -2557,7 +2557,12 @@
       get(t, p) {
         if (Object.prototype.hasOwnProperty.call(own, p)) return own[p]();
         const v = Reflect.get(t, p, t);
-        return typeof v === 'function' && typeof p === 'string' ? asFrame(v) : v;
+        // Only a page's own global functions (enumerable: a function declaration or an
+        // assignment). The platform's constructors and methods are not enumerable and keep
+        // their identity, so `frame.contentWindow.TypeError === TypeError` as before.
+        if (typeof v !== 'function' || typeof p !== 'string') return v;
+        const d = Object.getOwnPropertyDescriptor(t, p);
+        return d && d.enumerable ? asFrame(v) : v;
       },
       has(t, p) { return Object.prototype.hasOwnProperty.call(own, p) || Reflect.has(t, p); },
     });
