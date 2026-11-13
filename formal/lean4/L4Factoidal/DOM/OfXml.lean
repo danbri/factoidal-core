@@ -21,6 +21,7 @@ stack frame per level of nesting.
 import L4Factoidal.DOM.Arena
 import L4Factoidal.XML.NamespaceView
 import L4Factoidal.HTML.Entities
+import Std.Data.HashSet
 
 namespace L4Factoidal.DOM
 
@@ -63,6 +64,25 @@ def xhtmlEntityDtd : Thunk String := Thunk.mk fun _ =>
   HTML.entityMap.get.fold (fun acc name value =>
     acc ++ "<!ENTITY " ++ name ++ " \"" ++ String.join (value.toList.map one) ++ "\">\n") ""
 
+/-- The declarations of `xhtmlEntityDtd` that `src` can use: one for each distinct name that
+`src` writes as `&name;` and that the table has. A declaration nothing references changes
+no parse, so the document reads the same as with the whole DTD; the cost follows the
+document's references, not the table's 2,125 names (a DOMParser call parsed all of them). -/
+def xhtmlEntityDtdFor (src : String) : String :=
+  let one (c : Char) : String :=
+    if c == '&' || c == '<' then s!"&#38;#{c.toNat};" else s!"&#{c.toNat};"
+  let names := ((src.splitOn "&").drop 1).filterMap fun part =>
+    match part.splitOn ";" with
+    | name :: _ :: _ => if name.isEmpty || name.length > 40 then none else some name
+    | _ => none
+  (names.foldl (fun (seen, acc) name =>
+    if seen.contains name then (seen, acc) else
+    match HTML.namedRef? name with
+    | some value => (seen.insert name, acc ++ "<!ENTITY " ++ name ++ " \"" ++ String.join (value.toList.map one) ++ "\">\n")
+    | none => (seen.insert name, acc)) (({} : Std.HashSet String), "")).2
+
+#guard xhtmlEntityDtdFor "a &nbsp; &nbsp; &bogus; &lt; b" == "<!ENTITY nbsp \"&#160;\">\n<!ENTITY lt \"&#38;#60;\">\n"
+
 /-- A quoted literal at the start of `cs` (after white space): its text and the rest. -/
 private def quoted (cs : List Char) : Option (String × List Char) :=
   match cs.dropWhile Char.isWhitespace with
@@ -91,11 +111,11 @@ def doctypePublicSystem (src : String) : Option (String × String) :=
 
 /-- The resolver of a user agent for the XML syntax of HTML: when the document type
 declaration has one of `xhtmlEntityPublicIds`, its system identifier is answered with
-`xhtmlEntityDtd`; nothing else is read. -/
+the part of `xhtmlEntityDtd` the document uses (`xhtmlEntityDtdFor`); nothing else is read. -/
 def xhtmlResolver (src : String) : Resolver :=
   match doctypePublicSystem src with
   | some (pub, sys) =>
-    if xhtmlEntityPublicIds.contains pub then fun id => if id == sys then some xhtmlEntityDtd.get else none
+    if xhtmlEntityPublicIds.contains pub then fun id => if id == sys then some (xhtmlEntityDtdFor src) else none
     else fun _ => none
   | none => fun _ => none
 
