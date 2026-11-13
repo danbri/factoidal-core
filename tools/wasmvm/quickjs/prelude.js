@@ -2479,6 +2479,13 @@
   if (shadowEngine()) {
     const inner = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
     if (inner) Object.defineProperty(ShadowRoot.prototype, 'innerHTML', inner);
+    // ShadowRoot.setHTMLUnsafe and getHTML (HTML §8.4): the host is the context element.
+    define(ShadowRoot.prototype, 'getHTML', function getHTML(options = undefined) { return getHTMLOf(this, options); });
+    define(ShadowRoot.prototype, 'setHTMLUnsafe', function setHTMLUnsafe(html) {
+      const id = nodeId(this), host = info(id, 21);
+      const f = fragmentOf(info(id, 7), str(host, 2), str(host, 0), String(html), true);
+      chk(n.setText(id, '')); chk(n.insert(id, f, -1));
+    });
     define(Element.prototype, 'attachShadow', function attachShadow(init) {
       if (arguments.length < 1) throw new TypeError("Failed to execute 'attachShadow' on 'Element': 1 argument required, but only 0 present.");
       if (init === null || (typeof init !== 'object' && typeof init !== 'function')) throw new TypeError("Failed to execute 'attachShadow' on 'Element': parameter 1 is not of type 'ShadowRootInit'.");
@@ -3953,17 +3960,29 @@
   // ---- markup (DOM Parsing and Serialization; HTML §13.3, §13.4) --------------------------
   // The fragment Lean's parser makes of `markup` for a context element (namespace, local
   // name), in document `doc`; its content event handler attributes become handlers.
-  const fragmentOf = (doc, ns, name, markup) => {
-    const f = chk(n.create(13 + 16 * doc, (ns ?? '') + '\u0000' + name + '\u0000' + markup));
+  // `declarative`: the fragment parsing steps with declarative shadow roots allowed
+  // (setHTMLUnsafe; createKind 14), else without (innerHTML; 13).
+  const fragmentOf = (doc, ns, name, markup, declarative = false) => {
+    const f = chk(n.create((declarative ? 14 : 13) + 16 * doc, (ns ?? '') + '\u0000' + name + '\u0000' + markup));
     scanHandlers(f, false);
     return f;
   };
   const contextOf = (ctx, doc) => (info(ctx, 0) !== 1 || (info(ctx, 8) === 1 && str(ctx, 0) === 'html'))
     ? [HTML_NS, 'body'] : [str(ctx, 2), str(ctx, 0)];
-  const setInner = (el, v) => {
-    const id = nodeId(el), f = fragmentOf(info(id, 7), str(id, 2), str(id, 0), v === null ? '' : String(v));
+  const setInner = (el, v, declarative = false) => {
+    const id = nodeId(el), f = fragmentOf(info(id, 7), str(id, 2), str(id, 0), v === null ? '' : String(v), declarative);
     const target = info(id, 8) === 1 && str(id, 0) === 'template' ? info(id, 9) : id;
     chk(n.setText(target, '')); chk(n.insert(target, f, -1));
+  };
+  // getHTML(options) (HTML §8.4): GetHTMLOptions read in WebIDL order; the serialization is
+  // Lean's (node_query 15 with "g": DOM.Fragment.getHTML).
+  const getHTMLOf = (node, options) => {
+    if (options !== undefined && options !== null && typeof options !== 'object' && typeof options !== 'function')
+      throw new TypeError("Failed to execute 'getHTML': The provided value is not of type 'GetHTMLOptions'.");
+    const o = options ?? {};
+    const ssr = !!o.serializableShadowRoots, roots = o.shadowRoots === undefined ? [] : [...o.shadowRoots];
+    const ids = roots.map(r => { if (!(r instanceof globalThis.ShadowRoot)) throw new TypeError("Failed to execute 'getHTML': Failed to read the 'shadowRoots' property from 'GetHTMLOptions': Failed to convert value to 'ShadowRoot'."); return nodeId(r); });
+    return chk(n.query(nodeId(node), 15, 'g' + (ssr ? '1' : '0') + ids.map(i => ' ' + i).join('')));
   };
   const noModification = () => new DOMException('The node has no parent element to change.', 'NoModificationAllowedError');
   Object.defineProperties(Element.prototype, {
@@ -3989,8 +4008,8 @@
       else if (pos === 'beforeend') chk(n.insert(id, f, -1));
       else chk(n.insert(ctx, f, info(id, 5)));
     }, writable: true, configurable: true },
-    setHTMLUnsafe: { value(html) { setInner(this, String(html)); }, writable: true, configurable: true },
-    getHTML: { value() { return this.innerHTML; }, writable: true, configurable: true },
+    setHTMLUnsafe: { value(html) { setInner(this, String(html), true); }, writable: true, configurable: true },
+    getHTML: { value(options = undefined) { return getHTMLOf(this, options); }, writable: true, configurable: true },
   });
   define(Document, 'parseHTMLUnsafe', html => wrap(chk(n.create(11, String(html)))));
   // ---- CharacterData changes that move live ranges (DOM §4.10, §4.11) ------------------------

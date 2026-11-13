@@ -843,6 +843,8 @@ def createKind (d : Dom) (kind : Nat) (data : String) : Res Nat :=
   | 11, _ => ok (d.graft (parseHtmlDocument data (shadow := false)))
   | 12, ct :: rest => ok (d.graft (xmlDocument ct ("\x00".intercalate rest)))
   | 13, ns :: name :: rest => ok (L4Factoidal.DOM.Fragment.parseInto d doc ns name ("\x00".intercalate rest))
+  -- 14: the same with declarative shadow roots (`setHTMLUnsafe`).
+  | 14, ns :: name :: rest => ok (L4Factoidal.DOM.Fragment.parseInto d doc ns name ("\x00".intercalate rest) (shadow := true))
   | _, _ => (d, .error .invalidCharacter)
 
 def createNode (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : State × HostResult :=
@@ -1171,7 +1173,12 @@ def nodeQueryOf (d : Dom) (n op : Nat) (q : String) : Except Int String :=
         | none => .error (-1)) else .error (-2)
     | none => .error (-2)
   | 14 => .ok (if Forms.isHtml d n ["button"] then Forms.buttonType d n else Forms.inputType d n)
-  | 15 => .ok (L4Factoidal.DOM.Fragment.serialize d n (q == "1"))
+  -- `q` "g" then 1 or 0 (serializableShadowRoots) and the shadow roots' numbers: `getHTML`.
+  | 15 => if q.startsWith "g" then
+      match (q.drop 1).toString.splitOn " " with
+      | flag :: ids => .ok (L4Factoidal.DOM.Fragment.getHTML d n (flag == "1") (ids.filterMap String.toNat?))
+      | [] => .ok (L4Factoidal.DOM.Fragment.getHTML d n false [])
+    else .ok (L4Factoidal.DOM.Fragment.serialize d n (q == "1"))
   | 30 => if !d.isSlot n then .error (-2) else
     .ok (" ".intercalate ((if q == "1" then d.findFlattenedSlottables n else d.findSlottables n).toList.map toString))
   | 5 => match d.getElementById n q with
