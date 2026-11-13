@@ -50,9 +50,10 @@ verifiers: a verifier never answers `true` on input it cannot check.
 The three Ed25519 operations go through `L4Factoidal.Crypto.Ed25519`, the
 `@[extern]` binding of vendored HACL* (`formal/lean4/ffi/hacl_ed25519.c`,
 trust statement in that module's header). Nothing in this file computes a
-signature. SHA-256 is the pure Lean `Crypto.hashHex`, which
-`skills/crypto-policy/SKILL.md` permits for hashes over public data; the
-FIPS 180-4 vectors are build-time `#guard`s in `Crypto/SHA2Tests.lean`.
+signature. SHA-256 is the pure Lean `Crypto.hashHex` over the document being
+signed or verified, which may be private: an open risk in
+`skills/lean-risk-flags/SKILL.md` until it is HACL*'s (crypto-policy
+item 1, 2026-11-13). The FIPS 180-4 vectors are build-time `#guard`s in `Crypto/SHA2Tests.lean`.
 The signing and verifying primitives are PASSED to the
 `VC/DataIntegrity.lean` functions as arguments, exactly as that module
 requires.

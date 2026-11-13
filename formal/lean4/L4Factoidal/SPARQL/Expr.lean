@@ -36,8 +36,9 @@ WHAT THIS FILE IMPLEMENTS (SPARQL 1.1 Query, W3C Rec. 21 March 2013):
 ALSO IMPLEMENTED, each as a total function of explicit inputs:
   * §17.4.4.7–11 hash builtins MD5 / SHA1 / SHA256 / SHA384 / SHA512 —
     pure Lean digests (`Crypto/MD5.lean`, `Crypto/SHA1.lean`,
-    `Crypto/SHA2.lean`; see `skills/crypto-policy/SKILL.md`, tier 1:
-    hashes over public data), lowercase hex, where the F* tree assumes
+    `Crypto/SHA2.lean`), lowercase hex. Their inputs are graph data
+    of unknown sensitivity: an open risk in `skills/lean-risk-flags`
+    until they run on HACL* (`skills/crypto-policy` item 1), where the F* tree assumes
     them (`assume val hash_*`);
   * §17.4.5.7/8 TIMEZONE and TZ (`dtTimezone`, `dtTz`, ports of the F*
     `dt_timezone`/`dt_tz`);

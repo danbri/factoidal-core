@@ -649,6 +649,8 @@ the crypto-policy skill's "Lean 4 tree amendment" (owner-approved
 2026-08-22: a pure Lean hash over PUBLIC data is permitted, carrying
 FIPS/RFC test vectors as build-time `#guard`s; signatures/MACs/
 key-agreement stay HACL*-FFI-only, never hand-written Lean).
+Superseded 2026-11-13: "public data" is not something the engine can
+know; see crypto-policy item 1 and `skills/lean-risk-flags`.
 
 | Lean 4 | Ports (F\*) | Notes |
 |---|---|---|
@@ -2145,7 +2147,7 @@ GRAPH ?g, nested EXISTS, nested NOT EXISTS, EXISTS under OPTIONAL, and
 the no-dataset error). Sabotage: lowering the nested body with
 `emptyEnv` fails `Nested positive exists` and the nested-EXISTS guard;
 restored.
-| `assume val hash_md5` | `Crypto/MD5.lean` `md5`, `md5Hex` | pure Lean, RFC 1321 vectors as `#guard`s; crypto-policy tier 1 (public data) |
+| `assume val hash_md5` | `Crypto/MD5.lean` `md5`, `md5Hex` | pure Lean, RFC 1321 vectors as `#guard`s; the specification. Run-time use on graph data is an open risk (`skills/lean-risk-flags`, 2026-11-13) |
 | `assume val hash_sha1` | `Crypto/SHA1.lean` `sha1`, `sha1Hex` | pure Lean, FIPS 180-4 vectors; reuses `pad256` |
 | `assume val hash_sha256/384/512` | `Crypto.hashHex` (existing) | the hash-agile dispatcher, as the SHA2 module header requires |
 | `eval_xsd_cast` | `SPARQL/Expr.lean` `evalXsdCast` + `castInteger` … `castString` | see the deviation below |

@@ -22,11 +22,11 @@ public.
 
 ## Crypto policy
 
-`skills/crypto-policy/SKILL.md`, Lean 4 tree amendment: hashes over
-PUBLIC data may be pure Lean; anything touching a SECRET must be
-HACL*. Block bytes on disk are public, so the pure implementation was
-and remains admissible there — this binding is a speed choice, not a
-policy correction. Nothing here weakens the rule that we never write
+`skills/crypto-policy/SKILL.md` item 1 (as corrected 2026-11-13): pure
+Lean is the specification; data of unknown sensitivity is hashed at run
+time by HACL*. Block bytes on disk are a pod's contents and may be
+private, so this binding is the right run-time path there for that
+reason as well as for speed (an earlier note here called them public). Nothing here weakens the rule that we never write
 our own primitive: the C is HACL*'s, vendored unmodified.
 
 ## Trust statement

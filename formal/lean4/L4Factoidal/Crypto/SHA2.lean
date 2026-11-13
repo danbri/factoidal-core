@@ -6,9 +6,16 @@ amendment", owner-approved 2026-08-22): a pure Lean implementation of
 a HASH FUNCTION OVER PUBLIC DATA is permitted — RDFC-1.0
 canonicalisation hashing (`RDF.Canonical.fst`'s `hash_sha256`/
 `hash_sha384` assume vals), VC Data Integrity's `hash_sha256_hex`, and
-the SPARQL §17.4.4 SHA256/SHA384/SHA512 builtins are all hashes of
-PUBLIC data, never secrets or MACs, so there is no side channel to
-protect and no constant-time requirement. This module is NOT approved
+the SPARQL §17.4.4 SHA256/SHA384/SHA512 builtins.
+
+Corrected 2026-11-13 (owner; crypto-policy item 1): those inputs are NOT
+known to be public. They are graph or user data of unknown sensitivity
+(a private pod's triples, a document being signed), and an RDF or
+SPARQL engine cannot tell. So this module is the SPECIFICATION (FIPS
+180-4 vectors as `#guard`s, which are tests), and the run-time path on
+such data should be HACL*'s `sha256Hacl` and its siblings; until it is,
+the pure path is listed as an open risk in
+`skills/lean-risk-flags/SKILL.md`. This module is NOT approved
 for, and MUST NOT be used for, any signature, key-derivation,
 password, or MAC computation — those go through HACL* via `@[extern]`
 FFI only (the Lean tree's crypto extern family; see crypto-policy

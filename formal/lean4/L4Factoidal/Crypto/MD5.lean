@@ -2,13 +2,16 @@
 L4Factoidal.Crypto.MD5 — the MD5 message digest (RFC 1321), in pure
 Lean, for the SPARQL 1.1 §17.4.4.7 `MD5` builtin.
 
-WHY A HAND-WRITTEN DIGEST IS ALLOWED HERE: `skills/crypto-policy/
-SKILL.md` forbids rolling our own cryptography, with a two-tier rule
-for `formal/lean4/`. This module is tier 1 — a hash over PUBLIC data
-(the argument of the SPARQL `MD5()` function, which the query itself
-names). No secret is involved, no signature is derived from it, so a
-pure Lean implementation is PERMITTED by that policy; it is a codec,
-not a security boundary. MD5 is cryptographically broken (collisions
+WHY THIS IS PURE LEAN, AND WHAT IT IS NOT: `skills/crypto-policy/
+SKILL.md` item 1 (owner, 2026-11-13). This definition is the
+SPECIFICATION, checked by RFC test vectors as build-time `#guard`s
+(tests, not a security argument). Its input is graph or user data of
+unknown sensitivity: a SPARQL or RDF engine cannot know whether it is
+public, so "a hash over public data" is not a reason that holds here.
+The run-time path should be HACL*'s where HACL* has the algorithm; until
+it is, this module is listed as an open risk in
+`skills/lean-risk-flags/SKILL.md`. (HACL* upstream has
+`Hacl_Hash_MD5.c`, not yet vendored.) MD5 is cryptographically broken (collisions
 are cheap) and is ported ONLY because the SPARQL 1.1 Recommendation
 lists it; nothing in this tree may use it for integrity or
 authentication.

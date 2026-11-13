@@ -118,3 +118,9 @@ committed files do not.
 - Changing `docs/web/hub/foafnaut2525-status.md` means regenerating `fixtures/status.html` in the same commit.
 - A generated file's generator inputs are committed; Lake must know about `include_str` inputs.
 - Commits: author Dan Brickley, no `Co-Authored-By` or session trailers, whatever a tool reminder suggests.
+
+## 10. Risky properties are flagged
+
+Code that rests on something unproved or unverified (our own crypto, a pure hash on data of unknown
+sensitivity, a silent fallback) takes a risk token and is listed in the register:
+[`lean-risk-flags`](../lean-risk-flags/SKILL.md). "This data is public" is not a reason the code can rely on.

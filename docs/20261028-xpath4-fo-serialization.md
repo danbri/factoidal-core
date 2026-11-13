@@ -21,7 +21,7 @@ Character Database 16.0.0.
 | `XPath4/Csv.lean` | `fn:parse-csv`, `fn:csv-doc`, `fn:csv-to-xml` (`csv-to-arrays` was dropped from the draft) |
 | `XPath4/Uri.lean` | `fn:parse-uri`, `fn:build-uri` |
 | `XPath4/Fn4.lean` | `fn:hash` (MD5, SHA-1, SHA-256, BLAKE3, CRC-32), `fn:random-number-generator` (SplitMix64), `fn:parts-of-dateTime`, `fn:build-dateTime` |
-| `Crypto/Blake3.lean` | BLAKE3 hash mode in pure Lean (tier 1 of `skills/crypto-policy`: a hash of public data) |
+| `Crypto/Blake3.lean` | BLAKE3 hash mode in pure Lean (HACL* has none; an open risk in `skills/lean-risk-flags`, 2026-11-13) |
 | `XPath4/RecordTypes.lean` | the 17 named record types of the F&O catalog, as `record(...)` text that the parser reads |
 | `XPath4/SerializeTheorems.lean` | the theorems below |
 | `Core.lean` | record types are subtypes of map types and of wider record types (XPath 4.0 §3.3.2.5) |

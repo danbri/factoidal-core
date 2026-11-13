@@ -125,15 +125,42 @@ important too). We'll need HACL* everywhere etc."
 Two-tier rule for `formal/lean4/` (analysis:
 `docs/designissues/2026-08-22-lean4-external-dependencies.md`):
 
-1. **Hashes over public data** (RDFC-1.0 bnode hashing, the SPARQL
-   §17.4.4 MD5/SHA builtins, VC `sha256_hex` of canonical N-Quads):
-   a pure Lean implementation is PERMITTED — no secret is involved
-   and there is no side channel to protect — provided it carries the
-   FIPS 180-4 / RFC test vectors as build-time `#guard`s. This keeps
-   the canonicalisation algorithm total and axiom-free end to end.
-   Binding HACL*'s `Hacl_Hash_SHA2.c` via Lean FFI as well (for
-   speed, and for bit-parity with the F* tree) is encouraged, never
-   required. DONE for SHA-256 on 2026-09-02:
+1. **Hashes: pure Lean is the SPECIFICATION; what runs on data of
+   unknown sensitivity is HACL\*.** (Owner, 2026-11-13. This replaces
+   the 2026-08-22 wording, which allowed pure Lean for "hashes over
+   public data".)
+
+   *Why the old wording was wrong:* this code cannot know whether data
+   is public. The input of SPARQL `MD5(?x)` or `SHA256(?x)`, of XPath
+   `fn:hash`, of RDFC-1.0 bnode hashing and of a VC document hash is
+   whatever the graph holds, which may be a person's private pod.
+   Nothing in an RDF or SPARQL engine records the rights or the
+   sensitivity of its inputs, so the code cannot follow a rule that
+   depends on them.
+
+   *The test instead:* is the input non-secret **by the definition of
+   the protocol**, in every deployment? That holds for the WebSocket
+   `Sec-WebSocket-Accept` value (RFC 6455 sends the key in clear) and
+   for the RSA public operation and signature verification over a
+   public key. There, a pure Lean hash or operation is permitted.
+   Everywhere else, that is any hash whose argument is user or graph
+   data, the run-time path must be HACL\*'s where HACL\* has the
+   algorithm (SHA-1, SHA-2, BLAKE2; MD5 upstream, not yet vendored).
+   Where it has none (BLAKE3), the pure Lean code is a flagged risk
+   under [`lean-risk-flags`](../lean-risk-flags/SKILL.md) until its
+   constant-time property is shown, not assumed. Test vectors as
+   `#guard`s are tests. They are not a security argument.
+
+   Open on 2026-11-13: the SPARQL MD5 and SHA builtins, `fn:hash`,
+   RDFC-1.0 and VC hashing still run the pure Lean code. The follow-up
+   is to move them to HACL\*, keeping pure Lean as the specification and
+   comparing the two by differential test. SPARQL and XPath require MD5,
+   SHA-1 and BLAKE3. MD5 and SHA-1 are broken for collision resistance:
+   label them as such; do not justify them.
+
+   The pure Lean hashes stay what every build-time `#guard` and theorem
+   evaluates. HACL*'s `Hacl_Hash_SHA2.c` through Lean FFI as the
+   run-time path: DONE for SHA-256 on 2026-09-02:
    `formal/lean4/L4Factoidal/Crypto/SHA2Native.lean` declares
    `@[extern "l4_hacl_sha256"] opaque sha256Hacl`, realised in
    `ffi/hacl_ed25519.c`. It is ADDITIONAL to the pure Lean `sha256`,

@@ -2,16 +2,21 @@
 L4Factoidal.Crypto.SHA1 — SHA-1 (FIPS 180-4 §6.1), in pure Lean, for
 the SPARQL 1.1 §17.4.4.8 `SHA1` builtin.
 
-WHY A HAND-WRITTEN DIGEST IS ALLOWED HERE: `skills/crypto-policy/
-SKILL.md`'s two-tier rule for `formal/lean4/`, tier 1 — a hash over
-PUBLIC data (the argument of the SPARQL `SHA1()` function). No secret
-is involved and no signature derives from it, so a pure Lean
-implementation is PERMITTED by that policy; it is a codec, not a
-security boundary. SHA-1 is deprecated for collision resistance and
+WHY THIS IS PURE LEAN, AND WHAT IT IS NOT: `skills/crypto-policy/
+SKILL.md` item 1 (owner, 2026-11-13). This definition is the
+SPECIFICATION, checked by RFC test vectors as build-time `#guard`s
+(tests, not a security argument). Its input is graph or user data of
+unknown sensitivity: a SPARQL or RDF engine cannot know whether it is
+public, so "a hash over public data" is not a reason that holds here.
+The run-time path should be HACL*'s where HACL* has the algorithm; until
+it is, this module is listed as an open risk in
+`skills/lean-risk-flags/SKILL.md`. (HACL*'s `Hacl_Hash_SHA1.c` is
+vendored.) SHA-1 is deprecated for collision resistance and
 is ported ONLY because the SPARQL 1.1 Recommendation lists it; nothing
 in this tree may use it for integrity or authentication.
 
-Second use, same tier (2026-11-02): RFC 6455 section 4.2.2's
+Second use (2026-11-02), where pure Lean IS permitted, because the
+protocol makes the input non-secret in every deployment: RFC 6455 section 4.2.2's
 `Sec-WebSocket-Accept` (`HTTP/WebSocket.lean`), a hash of the client's
 public nonce and a fixed GUID. RFC 6455 sections 1.3 and 10.3: it shows
 only that the server read the handshake; it is not integrity or

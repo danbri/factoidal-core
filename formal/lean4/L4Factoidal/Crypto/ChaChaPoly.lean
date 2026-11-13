@@ -14,8 +14,8 @@ primitive.
 ## Crypto policy
 
 `skills/crypto-policy/SKILL.md`: this project never writes a primitive.
-An AEAD protects SECRETS, so the pure-Lean route the policy allows for
-digests over PUBLIC data is not available here even in principle — a
+An AEAD protects SECRETS, so pure Lean is not available here even in
+principle — a
 pure Lean ChaCha20 or Poly1305 would leak through the interpreter's
 timing and through `Nat` allocation. There is exactly one implementation
 and it is HACL*'s.

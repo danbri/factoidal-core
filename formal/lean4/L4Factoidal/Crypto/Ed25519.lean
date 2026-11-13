@@ -14,10 +14,10 @@ F* tree realises over the same vendored HACL* C
 (`experimental_ocaml_glue/hacl_stubs.c`). The fourth `assume val` there,
 `hash_sha256_hex`, is not bound HERE: SHA-256's specification is pure
 Lean (`Crypto/SHA2.lean`, FIPS 180-4 vectors as `#guard`s) under the
-crypto-policy skill's two-tier rule — hashes over public data may be
-pure Lean; anything touching a secret must be HACL*. `Crypto/
-SHA2Native.lean` adds a HACL*-backed SHA-256 ALONGSIDE it, for hosts
-that must hash tens of megabytes of public block bytes; the pure
+crypto-policy skill's item 1 (corrected 2026-11-13): pure Lean is the
+specification, and data of unknown sensitivity is hashed at run time by
+HACL*. `Crypto/SHA2Native.lean` adds a HACL*-backed SHA-256 ALONGSIDE
+it, for hosts that hash tens of megabytes of block bytes; the pure
 function stays the specification and stays what every `#guard` and
 every theorem evaluates.
 

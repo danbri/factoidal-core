@@ -3,10 +3,17 @@ L4Factoidal.Crypto.Blake3 — the BLAKE3 hash (the default `hash` mode,
 32-byte output), in pure Lean, for `fn:hash($value, "BLAKE3")` of F&O 4.0
 §5.3.18.
 
-WHY A HAND-WRITTEN DIGEST IS ALLOWED HERE: tier 1 of
-`skills/crypto-policy/SKILL.md`, as for `Crypto.MD5` — a hash over PUBLIC
-data (the argument of `fn:hash`, which the expression itself names). No
-secret, no key, no signature: a codec, not a security boundary. The keyed
+WHY THIS IS PURE LEAN, AND WHAT IT IS NOT: `skills/crypto-policy/
+SKILL.md` item 1 (owner, 2026-11-13). This definition is the
+SPECIFICATION, checked by RFC test vectors as build-time `#guard`s
+(tests, not a security argument). Its input is graph or user data of
+unknown sensitivity: a SPARQL or RDF engine cannot know whether it is
+public, so "a hash over public data" is not a reason that holds here.
+The run-time path should be HACL*'s where HACL* has the algorithm; until
+it is, this module is listed as an open risk in
+`skills/lean-risk-flags/SKILL.md`. HACL* has
+no BLAKE3, so this is also the run-time path: a flagged risk until its
+constant-time property is shown for the compiled code. The keyed
 and key-derivation modes and extended output are not implemented.
 
 Spec: the BLAKE3 paper (O'Connor, Aumasson, Neves, Wilcox-O'Hearn,
