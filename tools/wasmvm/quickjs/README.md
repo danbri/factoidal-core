@@ -1,9 +1,12 @@
 # QuickJS-NG in the Lean WasmVM engine
 
-On the Hub, page scripts run in QuickJS-NG, compiled to WebAssembly and run by the Lean
-WasmVM engine (`formal/lean4/L4Factoidal/WasmVM/`). In the desktop app the default engine is
-BubblePopJS (`formal/lean4/L4Factoidal/JS/`), and QuickJS-NG in WasmVM is an option in
-settings; `WebRenderScript.defaultEngine` decides. No host JavaScript engine runs a page
+Page scripts run in BubblePopJS (`formal/lean4/L4Factoidal/JS/`) everywhere: the desktop
+app, the Hub, Textnaut and every build (`WebRenderScript.defaultEngine`). QuickJS-NG, compiled
+to WebAssembly and run by the Lean WasmVM engine (`formal/lean4/L4Factoidal/WasmVM/`), is an
+exception: it runs only when asked for by name (the `quickjs` setting, `engine:"quickjs"`),
+for differential tests against BubblePopJS and for the guest API. Each place that chooses it
+carries a `QUICKJS-EXCEPTION` comment (`tools/quickjs-exception-check.py`;
+`docs/designissues/2026-11-13-bubblepopjs-everywhere.md`). No host JavaScript engine runs a page
 script. DOM effects go through typed host imports that Lean serves on its DOM arena.
 Issue: https://github.com/danbri/factoidal/issues/1244 (WasmVM engine). Record:
 `docs/designissues/2026-11-07-wasmvm-engine.md`, section "QuickJS in WasmVM".

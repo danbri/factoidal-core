@@ -25,6 +25,9 @@ BUILD = LAB + '/.build/web-render'
 HOST = ['index.html', 'app.mjs', 'engine.mjs', 'engine-core.mjs', 'engine-worker.mjs', 'style.css', 'server.mjs',
         'navigation.mjs', 'resource-client.mjs', 'resource-broker.mjs', 'document-client.mjs']
 FIXTURES = ['default.html', 'mvp.html', 'boxes.html', 'flow.html', 'links.html', 'graph.nt', 'scripted.html']
+# QUICKJS-EXCEPTION: the older lab web-render development bundle (labs/demos/foafnaut/web-render)
+# has no BubblePopJS path; its page scripts run in the pinned QuickJS WASI reactor. It is not
+# Foafnaut, which runs BubblePopJS; see docs/designissues/2026-11-13-bubblepopjs-everywhere.md.
 SCRIPT = ['session.mjs', 'worker.mjs', 'quickjs.mjs', 'guest.mjs', 'lean-dom.mjs', 'NOTICE']
 ENGINES = ['web-render.mjs', 'web-render.wasm', 'render-plan.mjs', 'render-plan.wasm']
 

@@ -8,14 +8,14 @@
 // frame time and fps these allow.
 // Run: deno run --allow-read --allow-write --allow-ffi --allow-env shader_gallery_bench.ts
 //   [--engine DYLIB] [--guest WASM] [--frames N] [--sizes 800x600,1600x1000] [--shaders a,b] [--apis webgpu,webgl2]
-//   [--json FILE] [--png DIR]   (SCRIPT_ENGINE=bubblepop: BubblePopJS; else QuickJS-NG in WasmVM)
+//   [--json FILE] [--png DIR]   (BubblePopJS; QUICKJS-EXCEPTION: SCRIPT_ENGINE=quickjs for QuickJS-NG in WasmVM, to compare)
 // --png DIR writes the last frame of each run (the page canvas, read back here, not by the page).
 import {loadHTML} from "./native_html_engine.ts";
 import {pngOf,texturePixels} from "./png_write.ts";
 // @ts-ignore plain module
 import {createPageGpu} from "../../../docs/web/hub/foafnaut/page-gpu.mjs";
 const arg=(name:string,fallback:string)=>{const i=Deno.args.indexOf(name);return i>=0?Deno.args[i+1]:fallback;};
-const lean=Deno.env.get("SCRIPT_ENGINE")==="bubblepop";
+const lean=Deno.env.get("SCRIPT_ENGINE")!=="quickjs";
 const library=arg("--engine",new URL("./.build/web-render/engines/libweb-render.dylib",import.meta.url).pathname);
 const guest=arg("--guest",`${Deno.env.get("HOME")}/working/qjs-wasm/qjs-wasmvm.wasm`);
 const frames=Number(arg("--frames","60"));

@@ -3,6 +3,8 @@
 // This launcher only chooses and starts an installed macOS app. All page work is
 // in that app. Layout: $FOAFNAUT_HOME (default ~/.foafnaut), versions/<commit>/,
 // current -> versions/<commit>, config.json {"bleedingEdge":"/path/to/App.app"}.
+// QUICKJS-EXCEPTION: --quickjs-wasm passes an explicit QuickJS-NG guest through to the window,
+// for the named "quickjs" script setting only; BubblePopJS is the default.
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -62,8 +64,9 @@ More app options (passed to the app as they are)
   --gpu-frames-in-flight N  GPU frames queued at most (default: 1 for heavy work, 3 for light)
   --trace-input          log every input event and edge drag to stderr
   --check-engine         run the engine on the main thread and check its render plan (CPU)
-  --quickjs-wasm FILE    run page scripts on QuickJS-NG in BubblePopWASM from FILE
-                         (BubblePopJS, the built-in JavaScript engine, is the default)
+  --quickjs-wasm FILE    the QuickJS-NG guest for the "quickjs" script setting, used only when
+                         that setting is chosen (BubblePopJS, the built-in JavaScript engine,
+                         is the default)
   --*-sweep              scripted checks used by the tests (scroll, resize, find, ...);
                          see labs/demos/foafnaut/sweeps.sh
 

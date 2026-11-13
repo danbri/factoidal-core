@@ -4,7 +4,8 @@
 // docs/designissues/2026-11-09-hacl-web-crypto.md, "Vectors" and "Performance".
 //
 //   deno run -A tests/crypto/webcrypto_engine.ts [--native-engine DYLIB | --wasm]
-//     [--quickjs-wasm FILE] [--script-engine quickjs|bubblepop] [--bench] [--vectors]
+//     [--script-engine bubblepop|quickjs] [--quickjs-wasm FILE] [--bench] [--vectors]
+// BubblePopJS by default. QUICKJS-EXCEPTION: --script-engine quickjs runs QuickJS-NG in WasmVM, to compare.
 //
 // Each page runs in its own script session; its console lines carry the results. A timing
 // is the wall time of one session (start and settle) less that of a page that does the same
@@ -17,7 +18,7 @@ const here=dirname(fileURLToPath(import.meta.url)),root=resolve(here,"../..");
 const {loadHTML}=await import("../../labs/demos/foafnaut/native_html_engine.ts");
 const wasm=args.includes("--wasm");
 const engine=await loadHTML(wasm?undefined:opt("--native-engine",join(root,"labs/demos/foafnaut/.build/web-render/engines/libweb-render.dylib")));
-const bubblepop=opt("--script-engine","quickjs")==="bubblepop";
+const bubblepop=opt("--script-engine","bubblepop")!=="quickjs";
 if(!bubblepop)engine.scriptLoad(await Deno.readFile(opt("--quickjs-wasm",join(Deno.env.get("HOME")??"","working/qjs-wasm/qjs-wasmvm.wasm"))));
 
 function run(script:string):{logs:string[];ms:number} {

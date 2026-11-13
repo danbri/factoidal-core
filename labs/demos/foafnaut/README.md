@@ -12,8 +12,9 @@ map, build, test, shared-machine rules) and the
 | **BubblePopJS** | Its JavaScript engine (engine id `bubblepop`) | The default page script engine |
 | **BubblePopWASM** | Its WebAssembly engine, which runs Wasm modules (WasmVM in the code) | Runs page Wasm and guests |
 
-A Wasm build of BubblePopKit is a build, not BubblePopWASM. QuickJS-NG stays in the builds, maintained for differential
-testing and as a selectable engine.
+A Wasm build of BubblePopKit is a build, not BubblePopWASM. BubblePopJS is the page script engine everywhere (app, Hub,
+Textnaut, every build). QuickJS-NG stays in the builds only as an exception, chosen by name, for differential testing and
+the guest API; each such choice is marked `QUICKJS-EXCEPTION` (docs/designissues/2026-11-13-bubblepopjs-everywhere.md).
 
 BubblePopJS and BubblePopWASM are named engines that BubblePopKit uses, and they live in this repository. That follows
 other browsers, which keep the script engine as a separately named component:

@@ -203,7 +203,9 @@ the host keeps the value in its browser state (`WebState.Settings.scripts`) and 
 what it means (ops `scriptSetting`, `scriptPlan`, `scriptChoices`). VerifiedJS is not a
 choice: it cannot run the script fixtures (issue 1252). -/
 
-/-- The engines and their names, in the order of the settings page. -/
+/-- The engines and their names, in the order of the settings page. QUICKJS-EXCEPTION:
+QuickJS-NG stays a named choice for differential runs against BubblePopJS and for the guest
+API (docs/designissues/2026-11-13-bubblepopjs-everywhere.md); it is never a default. -/
 def engines : List (String × String) := [("bubblepop","BubblePopJS"),("quickjs","QuickJS-NG"),("none","None")]
 
 /-- The chrome marker of an engine that runs a page's scripts. -/

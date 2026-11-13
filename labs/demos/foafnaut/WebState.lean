@@ -361,7 +361,8 @@ structure Settings where
   /-- The classic chrome, always full (owner, 2026-11-08: on by default). Off, the chrome
   folds to the domain as the page scrolls down. -/
   classicUI : Bool := true
-  /-- The page script engine (`WebRenderScript.engines`: "bubblepop", "quickjs", "none"); ""
+  /-- The page script engine (`WebRenderScript.engines`: "bubblepop", "quickjs", "none"; QUICKJS-EXCEPTION:
+  a saved "quickjs" is kept, as the user chose it by name); ""
   for the host's default (`WebRenderScript.defaultEngine`). -/
   scripts : String := ""
   /-- Liberal mode (`WebAccept`, the Settings checkbox "Be liberal in what we accept"): on

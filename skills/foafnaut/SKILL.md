@@ -155,8 +155,12 @@ Engine in the library, under `formal/lean4/L4Factoidal/`:
   `WebApi.lean`, and `LeanJS.lean` + `LeanJSRealm.lean` for BubblePopJS.
 
 Page scripts run in the engine. No host JavaScript engine runs a page script.
-`WebRenderScript.defaultEngine` gives BubblePopJS on the desktop and QuickJS-NG in WasmVM
-on the Hub. The QuickJS-NG guest is `tools/wasmvm/build-quickjs.sh` with
+`WebRenderScript.defaultEngine` gives BubblePopJS on every host (desktop, Hub, Wasm build,
+Textnaut). QuickJS-NG in WasmVM runs only when named (`engine:"quickjs"`, the `quickjs`
+setting, `SCRIPT_ENGINE=quickjs`, `--script-engine quickjs`), for differential tests; every
+such choice carries a `QUICKJS-EXCEPTION` comment, and `tools/quickjs-exception-check.py` (in
+`test.sh` and CI) fails without it. Record: `docs/designissues/2026-11-13-bubblepopjs-everywhere.md`.
+The QuickJS-NG guest is `tools/wasmvm/build-quickjs.sh` with
 `tools/wasmvm/quickjs/prelude.js`. BubblePopJS uses the same prelude.
 
 Hub host, `docs/web/hub/foafnaut/`:
@@ -216,8 +220,8 @@ it, so build it first:
 mkdir -p .build/native && xcrun clang -dynamiclib -fobjc-arc -O2 -Wall -Wextra -Werror -framework Cocoa -framework QuartzCore -Wl,-install_name,@rpath/libnative-window.dylib native_window.m -o .build/native/libnative-window.dylib
 ```
 
-The local QuickJS guest. A stale guest makes page-script tests fail ("no canvas command",
-`getContext` missing):
+The local QuickJS guest, for the differential runs only (BubblePopJS needs none). A stale
+guest makes those runs fail ("no canvas command", `getContext` missing):
 
 ```sh
 EMCC=$(command -v emcc) bash tools/wasmvm/build-quickjs.sh ~/working/qjs-wasm   # from the repository root
@@ -354,8 +358,8 @@ Several sessions work on the owner's laptop at once.
   Append only. One line, under 500 bytes. Format: `YYYY-MM-DD HH:MM UTC, session, TYPE: text`,
   TYPE one of CLAIM, RELEASE, DONE, NOTE, ASK. Read the CLAIM lines before you touch a
   shared resource (a file another session changes, a build tree, the bleeding-edge app).
-- One Lean build at a time, through `leanlock.sh <dir> <command>`. At 2026-11-09 it is at
-  `/private/tmp/claude-501/-Users-danbri-working-sandbox-october-tpac-depmap/c7798ecd-041f-428f-92ea-0a6389b033c2/scratchpad/wasmvm/leanlock.sh`.
+- One Lean build at a time, through `leanlock.sh <dir> <command>`. At 2026-11-13 it is at
+  `~/working/foafnaut-tools/leanlock.sh`.
   That path is temporary and can vanish. The script: each waiter writes a ticket in
   `/tmp/foafnaut-lean-build.queue` named by its arrival time (`0-` first for
   `LEANLOCK_PRIORITY=1`); only the oldest live ticket may take the lock, and only when no

@@ -5,6 +5,7 @@
 // it with the System entries Lean gave and the note that links to foafnaut:console; on the
 // demo pages, which strict mode accepts, liberal mode draws the same frame with no entries.
 // Run on the Wasm engine and, when it is built, the native library. --allow-read --allow-ffi --allow-env.
+// QUICKJS-EXCEPTION: console levels on QuickJS-NG too when QUICKJS_WASM is set (differential).
 import {strict as assert} from "node:assert";
 import {loadHTML,type HTMLEngine} from "./native_html_engine.ts";
 import {prepareHTML} from "./native_html_document.ts";

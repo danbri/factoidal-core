@@ -8,6 +8,7 @@
 // - a WPT page start: dom/nodes/Node-appendChild.html with testharness.js;
 // - a frame of timers-and-clicks.html: an advance turn of 16 ms, mean and largest over 3 s.
 //   deno run --allow-read --allow-ffi --allow-env bubblepop_bench.ts [--wasm] [--runs N]
+// QUICKJS-EXCEPTION: QuickJS-NG timed beside BubblePopJS for comparison.
 import {loadHTML,type HTMLEngine} from "./native_html_engine.ts";
 
 const library=new URL("./.build/web-render/engines/libweb-render.dylib",import.meta.url).pathname;

@@ -8,6 +8,7 @@
 // page instead, to open in a browser (it logs `performance.now()` times to the console).
 // Record: docs/designissues/2026-11-09-verified-foaf-layout.md, "Performance".
 //   deno run --allow-read --allow-write --allow-ffi --allow-env check_bench.ts [--library DYLIB] [--reps N] [--html FILE]
+// QUICKJS-EXCEPTION: QuickJS-NG timed beside BubblePopJS for comparison.
 import {loadHTML,type HTMLEngine} from "../native_html_engine.ts";
 
 const arg=(k:string)=>{const i=Deno.args.indexOf(k);return i>=0?Deno.args[i+1]:undefined;};

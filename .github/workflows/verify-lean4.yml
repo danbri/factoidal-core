@@ -156,6 +156,11 @@ jobs:
           python3 tools/test_lean_tail_recursion_audit.py
           python3 tools/test_lean_csimp_reach.py
 
+      - name: QuickJS-NG is chosen only with a QUICKJS-EXCEPTION marker (BubblePopJS everywhere)
+        run: |
+          python3 tools/quickjs-exception-check.py --self-test
+          python3 tools/quickjs-exception-check.py
+
       - name: WasmVM spec layer is the port of the vendored SpecTec output
         run: python3 tools/wasmvm/test_port_spec.py
 

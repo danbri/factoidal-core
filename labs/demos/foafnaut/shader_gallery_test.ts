@@ -1,5 +1,5 @@
 // The shader gallery (pages/shader-gallery.html) in the native engine, on the script engine of
-// SCRIPT_ENGINE (bubblepop: BubblePopJS; else QuickJS-NG in WasmVM): every shader on WebGPU and on
+// SCRIPT_ENGINE (BubblePopJS by default; QUICKJS-EXCEPTION: quickjs for QuickJS-NG in WasmVM, differential): every shader on WebGPU and on
 // WebGL 2 draws a pass each frame with no page error and no DOM change; the WebGL programs reach
 // the host as Lean's WGSL with GL's gl_FragCoord (gl_FragHeight), mod and atan2; a shader outside
 // the subset is refused with Lean's reason; and the cost of a frame's turn stays under its ratchet
@@ -8,7 +8,7 @@
 import {strict as assert} from "node:assert";
 import {loadHTML} from "./native_html_engine.ts";
 const arg=(name:string,fallback:string)=>{const i=Deno.args.indexOf(name);return i>=0?Deno.args[i+1]:fallback;};
-const lean=Deno.env.get("SCRIPT_ENGINE")==="bubblepop";
+const lean=Deno.env.get("SCRIPT_ENGINE")!=="quickjs";
 const library=arg("--engine",new URL("./.build/web-render/engines/libweb-render.dylib",import.meta.url).pathname);
 const guest=arg("--guest",Deno.env.get("QUICKJS_WASM")??`${Deno.env.get("HOME")}/working/qjs-wasm/qjs-wasmvm.wasm`);
 type Gpu={k:string;[k:string]:unknown};

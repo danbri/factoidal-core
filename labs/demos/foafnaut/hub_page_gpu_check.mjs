@@ -7,6 +7,7 @@
 //   node labs/demos/foafnaut/hub_page_gpu_check.mjs [--runtime DIR] [--guest FILE] [--shot FILE] [--page webgl-triangle.html|canvas-chart.html]
 // --runtime: an engine with gpu_command (build-web-render.sh --wasm); --guest: a QuickJS guest
 // built from this prelude (tools/wasmvm/build-quickjs.sh).
+// QUICKJS-EXCEPTION: --script-setting quickjs pins QuickJS-NG, to compare; the default is BubblePopJS.
 import http from 'node:http';import zlib from 'node:zlib';import fs from 'node:fs';import path from 'node:path';
 import {spawn} from 'node:child_process';import {fileURLToPath} from 'node:url';
 const opt=(name,fallback)=>{const i=process.argv.indexOf(name);return i>0?process.argv[i+1]:fallback;};

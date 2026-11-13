@@ -815,6 +815,6 @@ is shown only if it passes the check.
   and the 12 Hz check rate are design choices, not proved properties.
 
 The graph stays in Lean. A version written as a page script would run in
-QuickJS inside WasmVM, which is far slower on the Hub. It would also be outside
+BubblePopJS, which is slower than the compiled Lean graph code. It would also be outside
 these proofs, unless the page's script handed its positions to this same Lean
 check before each frame.

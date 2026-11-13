@@ -11,6 +11,7 @@
 // BubblePopJS in the Foafnaut Wasm build (build-web-render.sh --wasm, as the Hub runs it) and asks for
 // the same turns as in the native library: the same Lean, compiled twice.
 // Run: deno test --allow-read --allow-ffi --allow-env bubblepop_pages_test.ts
+// QUICKJS-EXCEPTION: the demo pages compared turn by turn with QuickJS-NG (differential).
 import {strict as assert} from "node:assert";
 import {loadHTML,type HTMLEngine,type ScriptTurn} from "./native_html_engine.ts";
 

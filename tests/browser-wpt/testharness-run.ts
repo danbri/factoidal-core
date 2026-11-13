@@ -51,7 +51,8 @@
 // engine build. With --baseline, the run fails when a subtest that passed there fails.
 // --script-engine bubblepop (the default since 2026-11-13) runs the pages' scripts on BubblePopJS, the JavaScript engine
 // written in Lean (engine:"bubblepop" in the start request, WasmVM/Hosts/LeanJS.lean): the engine Foafnaut uses, so the one
-// WPT scores are quoted for. --script-engine quickjs runs QuickJS-NG in WasmVM instead, kept for differential testing.
+// WPT scores are quoted for. QUICKJS-EXCEPTION: --script-engine quickjs runs QuickJS-NG in WasmVM instead, kept for
+// differential testing.
 // QuickJS's guest (--quickjs-wasm) has tools/wasmvm/quickjs/prelude.js compiled in, so it must be built from the same
 // commit as the engine (tools/wasmvm/build-quickjs.sh); an older guest silently lacks newer page APIs. On 2026-11-13 a
 // whole-WPT run on the default guest of 11-09 reported ~800k subtests failing that pass on BubblePopJS.

@@ -12,9 +12,10 @@
 // (QUICKJS_WASM, else ~/working/qjs-wasm/qjs-wasmvm.wasm). Run with --allow-read --allow-ffi --allow-env.
 import {strict as assert} from "node:assert";
 import {loadHTML,type HTMLEngine,type ScriptTurn} from "./native_html_engine.ts";
-// SCRIPT_ENGINE=bubblepop runs the same turns on BubblePopJS (the JavaScript engine written in Lean) (WasmVM/Hosts/LeanJS.lean):
-// the start requests carry engine:"bubblepop", and no guest module is needed.
-const lean=Deno.env.get("SCRIPT_ENGINE")==="bubblepop";
+// The turns run on BubblePopJS (the JavaScript engine written in Lean, WasmVM/Hosts/LeanJS.lean), with
+// no guest module. QUICKJS-EXCEPTION: SCRIPT_ENGINE=quickjs runs the same turns on QuickJS-NG in WasmVM
+// (needs the guest module), a differential test against BubblePopJS.
+const lean=Deno.env.get("SCRIPT_ENGINE")!=="quickjs";
 const withEngine=(request:Record<string,unknown>)=>({...request,engine:lean?"bubblepop":"quickjs"});
 
 const library=new URL("./.build/web-render/engines/libweb-render.dylib",import.meta.url).pathname;

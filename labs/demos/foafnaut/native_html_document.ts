@@ -193,8 +193,8 @@ export function refusalHTML(url:string,message:string) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page refused</title></head><body><h1>This page can not be shown</h1><p>${text(url)}</p><p>${text(message)}</p></body></html>`;
 }
 /** Page scripts (WebScripts.lean): the engine that holds the script session. A host sets
-one when its engine answers `scriptSession` info (with BubblePopJS, or the QuickJS
-guest module loaded); with none, a page with scripts is refused, as before. `start`
+one when its engine answers `scriptSession` info (BubblePopJS, the default; QuickJS-NG
+only when named); with none, a page with scripts is refused, as before. `start`
 answers no turn when the setting says the scripts do not run (`scriptPlan`), and throws
 when they are refused. */
 /** `mode`: request fields of the page's renders that its scripts' layout reads need too (the
@@ -245,7 +245,7 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
   noteDiagnostics(page,inspection,false);
   const scripted=inspection.scripts.some(script=>script.kind!=="data");
   if(scripted&&!scriptHost)
-    throw new Error("Page scripts need the QuickJS guest module (--quickjs-wasm FILE) and an engine with scriptSession; this page is refused");
+    throw new Error("Page scripts need an engine with scriptSession (BubblePopJS); this page is refused");
   if(inspection.stylesheets.length>MAX_RESOURCES&&!accept.liberal)throw new Error("Native HTML exceeds 16 external stylesheets");
   // In liberal mode a stylesheet that is not read goes to Lean as a failure, with the reason;
   // Lean draws the page without it and says so (WebAccept.Skip.stylesheetMissing).

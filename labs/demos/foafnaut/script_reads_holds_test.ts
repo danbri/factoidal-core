@@ -4,6 +4,7 @@
 // size. The read must be the image's own size, as the frame draws it.
 // Needs the native library (build-web-render.sh --native); the Wasm engine too when it
 // has scriptSession. Run: deno test --allow-read --allow-ffi --allow-env script_reads_holds_test.ts
+// QUICKJS-EXCEPTION: held-image reads on QuickJS-NG too (differential).
 import {strict as assert} from "node:assert";
 import {loadHTML,type HTMLEngine} from "./native_html_engine.ts";
 import {pngOf} from "./png_write.ts";

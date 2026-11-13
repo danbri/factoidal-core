@@ -5,6 +5,7 @@
 // WasmVM; both must log the same lines, and the commands must replay (the engine checks).
 // Needs the native library (build-web-render.sh --native).
 // Run: deno test --allow-read --allow-ffi --allow-env dom_breadth_test.ts
+// QUICKJS-EXCEPTION: the same DOM checks on QuickJS-NG (differential).
 import {strict as assert} from "node:assert";
 import {loadHTML,type HTMLEngine} from "./native_html_engine.ts";
 

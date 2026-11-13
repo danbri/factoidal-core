@@ -22,6 +22,10 @@ python3 "$LAB/../../../tools/status-to-html.py" "$LAB/../../../docs/web/hub/foaf
   "$LAB/web-render/fixtures/status.html" --check
 # The demo pages match their sources, and each one does what its manifest says.
 python3 "$LAB/../../../tools/build-demo-pages.py" --check
+# BubblePopJS is the page script engine everywhere: every code file that chooses QuickJS-NG says
+# why (QUICKJS-EXCEPTION; docs/designissues/2026-11-13-bubblepopjs-everywhere.md).
+python3 "$LAB/../../../tools/quickjs-exception-check.py" --self-test
+python3 "$LAB/../../../tools/quickjs-exception-check.py"
 # The verified FOAF overlap check: the bytes in the page and in FoafCheckBytes.lean are the
 # assembler output of wasm/foaf-check.wat (docs/designissues/2026-11-09-verified-foaf-layout.md).
 rc=0; bash "$LAB/wasm/build.sh" --check || rc=$?
@@ -151,8 +155,8 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
   # The SPARQL planner page (WebSparql.lean): plans, rows and the drawn page, Wasm and native.
   deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
     --allow-read --allow-ffi "$LAB/native_html_sparql_test.ts"
-  # Page scripts on BubblePopJS (the JavaScript engine written in Lean) (WasmVM/Hosts/LeanJS.lean): the same turns as on
-  # QuickJS-NG, with no guest module; the demo pages, compared with QuickJS-NG when the guest exists.
+  # Page scripts on BubblePopJS (the JavaScript engine written in Lean, WasmVM/Hosts/LeanJS.lean), the default
+  # everywhere, with no guest module; the demo pages, compared with QuickJS-NG when the guest exists.
   SCRIPT_ENGINE=bubblepop deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
     --allow-read --allow-ffi --allow-env "$LAB/native_html_scripts_test.ts" "$LAB/native_html_pointer_test.ts"
   # The cost ratchet: element-by-element work (push, a[i] = v, charCodeAt) is linear.
@@ -171,16 +175,17 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
     deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-ffi \
       --allow-read --allow-ffi --allow-env "$LAB/workers_test.ts"
   fi
-  # Page scripts run by Lean (WebScripts.lean): QuickJS-NG in WasmVM on the Lean DOM, clicks and
-  # timers through the Lean event loop, Wasm and native. Only when the guest module exists
+  # QUICKJS-EXCEPTION: differential runs against BubblePopJS. The same page-script tests on
+  # QuickJS-NG in WasmVM (SCRIPT_ENGINE=quickjs), on the Lean DOM, clicks and timers through the
+  # Lean event loop, Wasm and native. Only when the guest module exists
   # (tools/wasmvm/build-quickjs.sh, or fetch-builds --set foafnaut-web): it is not committed.
   QJS_GUEST=${QUICKJS_WASM:-$HOME/working/qjs-wasm/qjs-wasmvm.wasm}
   [ -f "$QJS_GUEST" ] || QJS_GUEST="$LAB/../../../docs/web/hub/wasm-guests/qjs-wasmvm.wasm"
   if [ -f "$QJS_GUEST" ]; then
-    QUICKJS_WASM="$QJS_GUEST" deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
+    QUICKJS_WASM="$QJS_GUEST" SCRIPT_ENGINE=quickjs deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
       --allow-read --allow-ffi --allow-env "$LAB/native_html_scripts_test.ts"
     # Pointer events, layout reads and the page GPU subset run in page scripts too.
-    QUICKJS_WASM="$QJS_GUEST" deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
+    QUICKJS_WASM="$QJS_GUEST" SCRIPT_ENGINE=quickjs deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
       --allow-read --allow-ffi --allow-env "$LAB/native_html_pointer_test.ts" "$LAB/page_gpu_test.ts"
     # Canvas 2D drawn by Lean: Chrome's pixels for small scenes, host commands, answers, frame cost (both engines).
     QUICKJS_WASM="$QJS_GUEST" deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-ffi \

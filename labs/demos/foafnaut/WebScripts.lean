@@ -982,6 +982,7 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
   match action with
   | "start" =>
     -- BubblePopJS unless QuickJS-NG is asked for by name (`WebRenderScript.defaultEngine`).
+    -- QUICKJS-EXCEPTION: `engine:"quickjs"` for differential runs and the guest API.
     let engine := str request "engine"
     if engine == "" || engine == "bubblepop" then startLean held html request measure canvas else
     if engine != "quickjs" then return (held, .error s!"scriptSession: unknown engine {engine}") else

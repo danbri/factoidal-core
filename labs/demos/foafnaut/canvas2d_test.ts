@@ -8,6 +8,7 @@
 // 4. cost: a frame of 1,000 commands, and a frame of the chart demo (pages/canvas-chart.html).
 // Needs the native library (build-web-render.sh --native).
 // Run: deno run --allow-read --allow-ffi --allow-env canvas2d_test.ts
+// QUICKJS-EXCEPTION: the same scenes on QuickJS-NG when its guest exists (differential).
 import {strict as assert} from "node:assert";
 import {loadHTML,type HTMLEngine,type ScriptTurn} from "./native_html_engine.ts";
 import {scenePage} from "./canvas2d_reference.mjs";

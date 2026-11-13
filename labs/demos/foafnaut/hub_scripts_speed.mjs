@@ -18,6 +18,7 @@
 //
 //   node labs/demos/foafnaut/hub_scripts_speed.mjs [--runtime DIR] [--guest FILE] [--seconds N] [--modes aot,wasmvm,bubblepop]
 // CHROME=/path/to/chrome overrides the browser. NOT RUN with no browser.
+// QUICKJS-EXCEPTION: the aot and wasmvm modes pin QuickJS-NG to compare its speed with BubblePopJS.
 import http from 'node:http';import zlib from 'node:zlib';import fs from 'node:fs';import path from 'node:path';
 import {spawn} from 'node:child_process';import {fileURLToPath} from 'node:url';
 const args=process.argv.slice(2),opt=(n,d)=>{const i=args.indexOf(n);return i<0?d:args[i+1];};

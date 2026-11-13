@@ -556,6 +556,8 @@ async function hasScripts(){
   if(engineScripts!==undefined)return engineScripts;
   engineScripts=false;
   try{scriptInfo=call('',{op:'scriptSession',action:'info'});scriptOps=scriptInfo.ops??[];if(!scriptOps.includes('start'))return false;}catch{return false;}
+  // QUICKJS-EXCEPTION: an engine older than the engines list had QuickJS-NG only; it runs only
+  // when the setting names it (the plan of such an engine is scripts off, planFor).
   scriptEngines=scriptInfo.engines??['quickjs'];
   engineScripts=true;
   // An engine with scriptSession takes the five arguments of the bytes call.

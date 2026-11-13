@@ -50,6 +50,7 @@ private def made := dom.size
   | .error _ => true | _ => false
 
 -- The page script setting: BubblePopJS by default on every host; QuickJS-NG only by name.
+-- QUICKJS-EXCEPTION: the guards below check that the named QuickJS-NG choice still works.
 #guard WebRenderScript.defaultEngine "native" == "bubblepop" && WebRenderScript.defaultEngine "hub" == "bubblepop" && WebRenderScript.defaultEngine "wasm" == "bubblepop"
 #guard WebRenderScript.setting? "QuickJS-NG" == some "quickjs" && WebRenderScript.setting? "BubblePopJS" == some "bubblepop"
 #guard WebRenderScript.setting? "lean" == none && WebRenderScript.setting? "verifiedjs" == none && WebRenderScript.setting? "x" == none
