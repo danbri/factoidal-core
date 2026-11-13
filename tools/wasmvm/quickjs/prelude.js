@@ -597,7 +597,8 @@
     constructor() { throw new TypeError('Illegal constructor'); }
     get nodeType() { return info(nodeId(this), 0); }
     get nodeName() { return str(nodeId(this), 1); }
-    get baseURI() { return document.URL; }
+    // the node document's URL (DOM §4.4; no `base` element here): a frame's document has its own
+    get baseURI() { const id = nodeId(this); return (info(id, 0) === 9 ? this : wrap(info(id, 7))).URL; }
     get isConnected() { if (shadowEngine()) return info(nodeId(this), 25) === 1; let k = nodeId(this); for (let i = 0; i < 1 << 20; i++) { const p = info(k, 1); if (p < 0) return k === 0; k = p; } return false; }
     get ownerDocument() { const id = nodeId(this); return info(id, 0) === 9 ? null : wrap(info(id, 7)); }
     getRootNode(options = {}) { if (shadowEngine()) return wrap(info(nodeId(this), options?.composed ? 24 : 28)); let k = nodeId(this); for (;;) { const p = info(k, 1); if (p < 0) return wrap(k); k = p; } }
