@@ -49,9 +49,20 @@ structure PState where
   breakables : Nat := 0
   /-- Labels in scope, with whether each labels a loop. -/
   labels : List (String × Bool) := []
+  /-- Module code (§16.2): `import.meta` is valid. -/
+  module : Bool := false
+  /-- The module's code names `import.meta`. -/
+  usesMeta : Bool := false
   deriving Inhabited
 
 abbrev P := EStateM String PState
+
+/-- The name `import.meta` is read through in module code (`JS/Modules.lean`): not an identifier
+of the language, so no source text can name it. -/
+def metaName : String := "%meta"
+
+/-- The name `import(...)` calls (`JS/Modules.lean`); not an identifier of the language. -/
+def dynImportName : String := "%import"
 
 /-- Equal identifier texts become one `String` object: names compare by pointer first. -/
 def internToks (toks : Array Token) : Array Token :=
@@ -388,7 +399,13 @@ def parseStmt : Nat → P Stmt
         advance
         let name ← bindingName
         return .classDecl name (← parseClass n (some name))
-      | "import" | "export" => fail "modules are not supported"
+      | "import" =>
+        -- `import(...)` and `import.meta` start an expression statement; a declaration
+        -- is only valid at the top level of a module (`parseModule`)
+        let t2 ← peekAt 1
+        if isP t2 "(" || isP t2 "." then parseExprStmt n
+        else fail "import declarations may only appear at top level of a module"
+      | "export" => fail "export declarations may only appear at top level of a module"
       | "with" =>
         if (← get).strict then fail "strict mode code may not include a with statement"
         advance; expectP "("
@@ -954,7 +971,27 @@ def parsePrimary : Nat → P Expr
           expectP "]"
           return .superIndex k
         fail "'super' keyword unexpected here"
-      | "import" => fail "modules are not supported"
+      | "import" =>
+        advance
+        if ← atP "." then
+          advance
+          let mt ← peek
+          if mt.kind == .ident && mt.text == "meta" && !mt.escaped && (← get).module then
+            advance
+            modify fun s => { s with usesMeta := true }
+            return .ident metaName
+          fail "'import.meta' may only be used in module code"
+        if ← atP "(" then
+          -- ImportCall (§13.3.10): a specifier and, optionally, an options argument
+          advance
+          let spec ← parseAssign n false
+          if ← eatP "," then
+            if !(← atP ")") then
+              let _ ← parseAssign n false
+              let _ ← eatP ","
+          expectP ")"
+          return .call (.ident dynImportName) [spec]
+        fail "unexpected 'import'"
       | _ => fail "unexpected keyword"
     | .punct =>
       match t.text with
@@ -1225,6 +1262,279 @@ def parseScript (src : String) (strict : Bool := false) : Except String Script :
         if lex.eraseDups.length != lex.length || lex.any (fun x => st'.vars.contains x || funs.contains x) then
           .error "SyntaxError: identifier has already been declared"
         else .ok { body, vars := st'.vars.toList, strict }
+    | .error e _ => .error e
+
+/-! ## Modules (§16.2)
+
+`parseModule` reads a module: its import and export declarations become records (ParseModule,
+§16.2.1.6.1), and its statements stay, with the `export` keywords taken off. The linker and the
+evaluator are `JS/Modules.lean`. Module code is strict; `import.meta` reads `metaName`. -/
+
+/-- What an import binds (§16.2.1.6, ImportEntry `[[ImportName]]`): one export, or the
+module's namespace (`import * as x`). -/
+inductive ImportName where
+  | named (s : String)
+  | ns
+  deriving BEq, Repr, Inhabited, DecidableEq
+
+/-- `import {name as localName} from "spec"`. -/
+structure ImportEntry where
+  spec : String
+  name : ImportName
+  localName : String
+  deriving Repr, Inhabited, BEq
+
+/-- The binding of an anonymous default export (`export default 1`, `export default
+function () {}`): not an identifier, so module code cannot name it (§16.2.3.7 "*default*"). -/
+def defaultLocal : String := "*default*"
+
+/-- A parsed module (the Source Text Module Record's static fields, §16.2.1.6). -/
+structure ModuleSyntax where
+  /-- The statements: import declarations removed, export keywords taken off. -/
+  body : List Stmt
+  /-- The `var` and top-level function names. -/
+  vars : List String
+  /-- `[[RequestedModules]]`: the specifiers in source order, each once. -/
+  requests : Array String := #[]
+  imports : Array ImportEntry := #[]
+  /-- `[[LocalExportEntries]]`: export name and local binding name. -/
+  localExports : Array (String × String) := #[]
+  /-- `[[IndirectExportEntries]]`: export name, specifier and import name (`.ns` for
+  `export * as x from`). -/
+  indirect : Array (String × String × ImportName) := #[]
+  /-- `[[StarExportEntries]]`: `export * from "spec"`. -/
+  stars : Array String := #[]
+  usesMeta : Bool := false
+  deriving Inhabited
+
+namespace ModuleParse
+open P
+
+structure Acc where
+  body : Array Stmt := #[]
+  requests : Array String := #[]
+  imports : Array ImportEntry := #[]
+  localExports : Array (String × String) := #[]
+  indirect : Array (String × String × ImportName) := #[]
+  stars : Array String := #[]
+  deriving Inhabited
+
+def Acc.request (a : Acc) (s : String) : Acc :=
+  if a.requests.contains s then a else { a with requests := a.requests.push s }
+
+/-- An identifier that is not a keyword, with no escapes: `from`, `as`. -/
+def contextual (t : Token) (w : String) : Bool := t.kind == .ident && t.text == w && !t.escaped
+
+/-- A ModuleExportName (§16.2.2): an identifier name or a string literal. -/
+def exportName : P String := do
+  let t ← peek
+  if t.kind == .ident || t.kind == .kw || t.kind == .str then advance; pure t.text
+  else fail "expected an export name"
+
+/-- `with { type: "json" }` after a specifier (import attributes). Only no attributes are
+supported: a JSON or CSS module is refused, as an unknown `type` must be. -/
+def attributes : P Unit := do
+  if !(← atK "with") then return
+  fail "import attributes are not supported (JSON and CSS modules)"
+
+/-- `from "specifier"`. -/
+def fromClause : P String := do
+  if !contextual (← peek) "from" then fail "expected 'from'"
+  advance
+  let s ← peek
+  if s.kind != .str then fail "expected a module specifier"
+  advance
+  attributes
+  pure s.text
+
+/-- `{ a, b as c, "d" as e }` of an import, after the `{`. -/
+def importSpecs : Nat → Array (ImportName × String) → P (Array (ImportName × String))
+  | 0, _ => fail "parser fuel exhausted"
+  | n + 1, acc => do
+    if ← eatP "}" then return acc
+    let acc ← if contextual (← peekAt 1) "as" then do
+        let name ← exportName
+        advance
+        pure (acc.push (.named name, ← bindingName))
+      else do
+        let x ← bindingName
+        pure (acc.push (.named x, x))
+    if ← eatP "," then importSpecs n acc else do expectP "}"; pure acc
+
+/-- `{ a, b as c }` of an export, after the `{`: the name in the module (or in the other module,
+with `from`), the export name, and whether the first is an identifier (only then may it be a
+local name). -/
+def exportSpecs : Nat → Array (String × String × Bool) → P (Array (String × String × Bool))
+  | 0, _ => fail "parser fuel exhausted"
+  | n + 1, acc => do
+    if ← eatP "}" then return acc
+    let t ← peek
+    let loc ← exportName
+    let ident := t.kind == .ident && !t.escaped &&
+      !["implements", "interface", "package", "private", "protected", "public", "static", "yield", "let", "await",
+        "eval", "arguments"].contains t.text
+    let exported ← if contextual (← peek) "as" then do advance; exportName else pure loc
+    let acc := acc.push (loc, exported, ident)
+    if ← eatP "," then exportSpecs n acc else do expectP "}"; pure acc
+
+/-- The name of an anonymous function or class in `export default` (NamedEvaluation with
+"default", §16.2.3.7). -/
+def namedDefault (e : Expr) : Expr :=
+  match e with
+  | .func f => if f.name.isNone then .func (f.withName "default") else e
+  | .classE (.mk none h c ms) => .classE (.mk (some "default") h c ms)
+  | _ => e
+
+/-- An import declaration, after `import` (§16.2.2). -/
+def importDecl (n : Nat) (a : Acc) : P Acc := do
+  let t ← peek
+  if t.kind == .str then
+    advance
+    attributes
+    semi
+    return a.request t.text
+  let mut entries : Array (ImportName × String) := #[]
+  let mut more := true
+  if !(isP t "*" || isP t "{") then
+    entries := entries.push (.named "default", ← bindingName)
+    more ← eatP ","
+  if more then
+    if ← eatP "*" then
+      if !contextual (← peek) "as" then fail "expected 'as'"
+      advance
+      entries := entries.push (.ns, ← bindingName)
+    else if ← eatP "{" then
+      entries ← importSpecs n entries
+    else fail "expected '*' or '{'"
+  let spec ← fromClause
+  semi
+  let a := a.request spec
+  return { a with imports := a.imports ++ entries.map fun (nm, l) => { spec, name := nm, localName := l } }
+
+/-- An export declaration, after `export` (§16.2.3). -/
+def exportDecl (n : Nat) (a : Acc) : P Acc := do
+  let t ← peek
+  if isP t "*" then
+    advance
+    if contextual (← peek) "as" then
+      advance
+      let name ← exportName
+      let spec ← fromClause
+      semi
+      let a := a.request spec
+      return { a with indirect := a.indirect.push (name, spec, .ns) }
+    let spec ← fromClause
+    semi
+    let a := a.request spec
+    return { a with stars := a.stars.push spec }
+  if isP t "{" then
+    advance
+    let specs ← exportSpecs n #[]
+    if contextual (← peek) "from" then
+      let spec ← fromClause
+      semi
+      let a := a.request spec
+      return { a with indirect := a.indirect ++ specs.map fun (l, e, _) => (e, spec, .named l) }
+    semi
+    if specs.any (fun (_, _, ok) => !ok) then fail "an exported local name must be an identifier"
+    return { a with localExports := a.localExports ++ specs.map fun (l, e, _) => (e, l) }
+  if isK t "default" then
+    advance
+    let t ← peek
+    let t2 ← peekAt 1
+    if isK t "function" || (contextual t "async" && isK t2 "function" && !t2.nl) then
+      let isAsync := !isK t "function"
+      if isAsync then advance
+      advance
+      let gen ← eatP "*"
+      let mode := (if isAsync then 2 else 0) + (if gen then 1 else 0)
+      if (← peek).kind == .ident then
+        let name ← bindingName
+        addVar name
+        let f ← parseFunction n (some name) .normal mode
+        return { a with body := a.body.push (.funDecl name f), localExports := a.localExports.push ("default", name) }
+      addVar defaultLocal
+      let f ← parseFunction n (some "default") .normal mode
+      return { a with body := a.body.push (.funDecl defaultLocal f),
+                      localExports := a.localExports.push ("default", defaultLocal) }
+    if isK t "class" then
+      advance
+      if (← peek).kind == .ident then
+        let name ← bindingName
+        let c ← parseClass n (some name)
+        return { a with body := a.body.push (.classDecl name c), localExports := a.localExports.push ("default", name) }
+      let c ← parseClass n (some "default")
+      return { a with body := a.body.push (.classDecl defaultLocal c),
+                      localExports := a.localExports.push ("default", defaultLocal) }
+    let e ← parseAssign n false
+    semi
+    return { a with body := a.body.push (.decl .constK [.mk (.id defaultLocal) (some (namedDefault e))]),
+                    localExports := a.localExports.push ("default", defaultLocal) }
+  let t2 ← peekAt 1
+  let declares := isK t "var" || isK t "const" || isK t "function" || isK t "class" ||
+    (contextual t "let") || (contextual t "async" && isK t2 "function" && !t2.nl)
+  if !declares then fail "unexpected token after 'export'"
+  let s ← parseStmt n
+  let names := match s with
+    | .decl _ ds => ds.flatMap Decl.names
+    | .funDecl x _ | .classDecl x _ => [x]
+    | _ => []
+  return { a with body := a.body.push s, localExports := a.localExports ++ (names.map fun x => (x, x)).toArray }
+
+/-- The module items to the end of the input. -/
+def items : Nat → Acc → P Acc
+  | 0, _ => fail "parser fuel exhausted"
+  | n + 1, a => do
+    let t ← peek
+    if t.kind == .eof then return a
+    let t2 ← peekAt 1
+    if isK t "import" && !(isP t2 "(" || isP t2 ".") then
+      advance
+      items n (← importDecl n a)
+    else if isK t "export" then
+      advance
+      items n (← exportDecl n a)
+    else
+      let s ← parseStmt n
+      items n { a with body := a.body.push s }
+
+/-- The early errors of a module (§16.2.1.1), and the local exports of imported names made
+indirect (ParseModule step 10). -/
+def finish (a : Acc) (vars : List String) (usesMeta : Bool) : Except String ModuleSyntax := do
+  let body := a.body.toList
+  let lex := lexNames body
+  let funs := body.flatMap fun s => match s with | .funDecl x _ => [x] | _ => []
+  let imported := a.imports.toList.map (·.localName)
+  let declared := lex ++ imported
+  if declared.eraseDups.length != declared.length || declared.any (fun x => vars.contains x || funs.contains x) then
+    throw "SyntaxError: identifier has already been declared"
+  let names := a.localExports.toList.map (·.1) ++ a.indirect.toList.map (·.1)
+  if names.eraseDups.length != names.length then throw "SyntaxError: duplicate export name"
+  for (e, l) in a.localExports do
+    if !(lex.contains l || vars.contains l || imported.contains l) then
+      throw s!"SyntaxError: export '{e}' is not defined in the module"
+  -- an exported import of one name is an indirect export; of a namespace, a local one
+  let mut locals : Array (String × String) := #[]
+  let mut indirect := a.indirect
+  for (e, l) in a.localExports do
+    match a.imports.find? (·.localName == l) with
+    | some { spec, name := .named nm, .. } => indirect := indirect.push (e, spec, .named nm)
+    | _ => locals := locals.push (e, l)
+  return { body, vars, requests := a.requests, imports := a.imports, localExports := locals, indirect,
+           stars := a.stars, usesMeta }
+
+end ModuleParse
+
+/-- Parse a module (§16.2.1.6.1 ParseModule). Module code is strict. -/
+def parseModule (src : String) : Except String ModuleSyntax :=
+  let cs := src.toList.toArray
+  match lexChars cs with
+  | .error e => .error e
+  | .ok toks =>
+    let toks := internToks toks
+    let st : PState := { toks, strict := true, src := cs, module := true }
+    match (ModuleParse.items (parseFuel (cs.size + 1)) {}).run st with
+    | .ok a st' => ModuleParse.finish a st'.vars.toList st'.usesMeta
     | .error e _ => .error e
 
 end L4Factoidal.JS
