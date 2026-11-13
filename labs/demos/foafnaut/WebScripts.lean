@@ -374,7 +374,7 @@ def scriptSources (dom : DOM.Dom) (request : JSON.Json) : Except String (Array (
       match resources.find? (fun x => natField x "nodeId" == some id) with
       | some x =>
         let source := str x "source"
-        if source.utf8ByteSize > 4194304 then throw "scriptSession: a script exceeds 4 MiB"
+        if source.utf8ByteSize > WebRender.maxSourceBytes then throw "scriptSession: a script exceeds 16 MiB"
         out := out.push (id, source)
       | none => missing := missing.push s!"script {src} was not supplied"
   return (out, missing)

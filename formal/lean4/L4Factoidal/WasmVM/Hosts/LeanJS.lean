@@ -501,9 +501,20 @@ def Session.api? (s : Session) (name : String) (args : Array JS.Value) : Session
   | some m => (s.fail m, v)
   | none => (s, v)
 
-/-- The microtask checkpoint. -/
+/-- How many runs' budgets a microtask checkpoint has. A checkpoint runs every job that is
+queued, and the jobs that those queue, in one run (HTML's "perform a microtask checkpoint"):
+a page that chains its work through promises does all of it there. The WPT `wasm/core` pages
+chain 10,000 to 15,000 tests that way; the largest took 13 M steps (2026-11-13), past one run's
+5 M, so the harness never finished. A job that loops for ever, or a chain that never ends,
+still stops: after `checkpointRuns` budgets. -/
+def checkpointRuns : Nat := 8
+
+/-- The microtask checkpoint, with `checkpointRuns` budgets. -/
 def Session.runJobs (s : Session) : Session :=
+  let budget := (s.heap.host.getD default).budget
+  let s := s.setBudget (checkpointRuns * budget)
   let (s, o, v) := s.run fun h => let ((o, n), h) := JS.checkpoint h; ((o, .num (Float.ofNat n)), h)
+  let s := s.setBudget budget
   let n := match v with | .num x => x.toUInt64.toNat | _ => 0
   let s := { s with jobs := s.jobs + n }
   match failure o with
