@@ -121,11 +121,23 @@ def cmd_run(a):
     server = None
     if a.wptserve:
         # One wptserve for every runner process; each one finds it up and uses it.
+        # Refuse if something already answers on its port: a second run would otherwise
+        # pass the readiness check below against the first run's server, its own server
+        # would fail to bind unnoticed, and when the first run ended every remaining test
+        # would fail "fetch failed" (2026-11-13: 21,411 tests of a full run lost so).
+        import socket
+        try:
+            socket.create_connection(("127.0.0.1", 8000), timeout=1).close()
+            sys.exit("port 8000 is in use (another wptserve or WPT run?): stop it first; "
+                     "two runs cannot share one machine's WPT ports")
+        except OSError:
+            pass
         server = subprocess.Popen([sys.executable, os.path.abspath(__file__), "serve", "--wpt-root", a.wpt_root, "--state", a.dir],
                                   stdout=subprocess.DEVNULL, stderr=open(os.path.join(a.dir, "wptserve.log"), "a"))
         a.extra = ["--wptserve"] + a.extra
-        import socket
         for _ in range(120):
+            if server.poll() is not None:
+                sys.exit("wptserve exited at start (see wptserve.log in --dir)")
             try:
                 socket.create_connection(("127.0.0.1", 8000), timeout=1).close()
                 break
@@ -184,6 +196,15 @@ def cmd_run(a):
                 slot[0], slot[1], slot[2] = start(i), time.time(), len(done_in(jsonl))
                 alive += 1
         total = sum(len(done_in(os.path.join(a.dir, f"part{i}.jsonl"))) for i in range(a.jobs))
+        if server and server.poll() is not None:
+            # Without its server every remaining test would be recorded "fetch failed".
+            for slot in procs:
+                if slot[0].poll() is None:
+                    os.killpg(slot[0].pid, signal.SIGKILL)
+            print("wptserve exited (see wptserve.log in --dir): the run stops; lines written in its last "
+                  "seconds may say \"fetch failed\" and need running again", file=sys.stderr)
+            server = None
+            break
         if alive == 0:
             break
         if time.time() - t0 > a.max_hours * 3600:
