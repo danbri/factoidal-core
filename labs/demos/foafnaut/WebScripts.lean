@@ -357,17 +357,24 @@ def parse (html url : String) : Except String DOM.Dom :=
   else .ok (DOM.parseHtmlDocument html)
 
 /-- The classic scripts in document order, with the sources a host supplied for `src`
-scripts. A `src` script with no source is skipped and reported. -/
-def scriptSources (dom : DOM.Dom) (request : JSON.Json) : Except String (Array (Nat × String) × Array String) := do
+scripts. A `src` script with no source is skipped and reported. `modules`: the engine runs
+module scripts (BubblePopJS, `LeanJSModules`), so they are not reported, and a classic script
+with `nomodule` is not run; the third answer says whether the page has a module script. -/
+def scriptSources (dom : DOM.Dom) (request : JSON.Json) (modules : Bool := false) :
+    Except String (Array (Nat × String) × Array String × Bool) := do
   let resources := match request.field? "resources" with | some (.array rs) => rs | _ => []
   if resources.length > 64 then throw "scriptSession: more than 64 script resources"
   let mut out := #[]
   let mut missing := #[]
+  let mut hasModule := false
   for r in WebRenderScript.scriptRecords dom do
     let kind := str r "kind"
     let some id := natField r "nodeId" | throw "scriptSession: script nodeId"
-    if kind == "module" then missing := missing.push s!"module script {id} is not run"
+    if kind == "module" then
+      hasModule := true
+      if !modules then missing := missing.push s!"module script {id} is not run"
     if kind != "classic" then continue
+    if modules && r.field? "nomodule" == some (.bool true) then continue
     let src := str r "src"
     if src.isEmpty then out := out.push (id, str r "source")
     else
@@ -377,7 +384,7 @@ def scriptSources (dom : DOM.Dom) (request : JSON.Json) : Except String (Array (
         if source.utf8ByteSize > 4194304 then throw "scriptSession: a script exceeds 4 MiB"
         out := out.push (id, source)
       | none => missing := missing.push s!"script {src} was not supplied"
-  return (out, missing)
+  return (out, missing, hasModule)
 
 /-- The pointer data of a `pointer` request as the JSON init of its events: the
 coordinates of the `nodeAt` answer (`clientX`, `clientY`, `pageX`, `pageY`, `offsetX`,
@@ -850,26 +857,34 @@ def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (h
   let network := request.field? "network" == some (.bool true)
   let hostCors := request.field? "hostCors" == some (.bool true)
   let lim : Page.Limits := { commands, logs, gpuPage := id, entropy := ← entropy id, encoding := str request "encoding", frames := true, hostLoads, network, hostCors, pageAddress := str request "pageAddress", syncOk := true, syncAnswers := held.syncCache }
-  let made := show Except String (Array (Nat × String) × Array String × DOM.Dom) from do
+  let made := show Except String (Array (Nat × String) × Array String × Bool × DOM.Dom) from do
     let dom ← parse html url
-    let (scripts, missing) ← scriptSources dom request
-    return (scripts, missing, dom)
+    let (scripts, missing, hasModule) ← scriptSources dom request (modules := true)
+    return (scripts, missing, hasModule, dom)
   match made with
   | .error e => return (held, .error s!"scriptSession: {e}")
-  | .ok (scripts, missing, dom) =>
+  | .ok (scripts, missing, hasModule, dom) =>
     let (base, ns0) ← WebWasm.timed fun _ => match held.leanBase with
       | some b => Except.ok b
       | none => LeanJS.prepare
     match base with
     | .error e => return (held, .error s!"scriptSession: BubblePopJS: {e}")
     | .ok base =>
+      -- module scripts: their graphs are fetched first (each request a `netSync` and the start
+      -- made again), so no script runs before they are all there. A page with none pays nothing.
+      let page := Net.PageFetch.Page.ofUrl url hostCors (str request "pageAddress")
+      let loaded := if hasModule then LeanJSModules.load dom url page held.syncCache else .ok {}
+      if let .error w := loaded then
+        return ({ held with leanBase := some base, pendingSync := some ("start", html, request) }, netSyncAnswer id w)
+      let mods := match loaded with | .ok m => m | .error _ => {}
+      let lim := { lim with syncAnswers := held.syncCache.extract mods.used held.syncCache.size }
       let (vw, vh) := (viewport request).getD (800, 600)
       let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh, canvasEnv := canvas }
       let rate := max 1 ((natField request "instructionsPerMs").getD 100000)
       let b ← turnBytes
       let wEnt := workerEntropyOf id b
       let (a, ns) ← WebWasm.timed fun _ =>
-        let s := LeanJS.start base dom url scripts { lim with mayBlock := network && mentionsXhr scripts } reads { instructionsPerMs := rate }
+        let s := LeanJS.start base dom url scripts { lim with mayBlock := network && mentionsXhr scripts } reads { instructionsPerMs := rate } (mods := mods)
         let s := missing.foldl LeanJS.Session.fail s
         -- workers the page's scripts made: their scripts are asked for
         LeanJSWorkers.pump { page := s, base := some base, entropy := wEnt }
@@ -986,7 +1001,7 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
       let logs := min 1048576 ((natField request "logLimit").getD 1024)
       let made := show Except String (Array (Nat × String) × Array String × DOM.Dom) from do
         let dom ← parse html url
-        let (scripts, missing) ← scriptSources dom request
+        let (scripts, missing, _) ← scriptSources dom request
         return (scripts, missing, dom)
       match made with
       | .error e => return (held, .error s!"scriptSession: {e}")
@@ -1006,7 +1021,7 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
       let ent ← entropy held.nextSession
       let started ← WebWasm.timed fun _ => show Except String Page.Session from do
         let dom ← parse html url
-        let (scripts, missing) ← scriptSources dom request
+        let (scripts, missing, _) ← scriptSources dom request
         let (vw, vh) := (viewport request).getD (800, 600)
         let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh, canvasEnv := canvas }
         let rate := max 1 ((natField request "instructionsPerMs").getD 100000)

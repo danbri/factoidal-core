@@ -358,6 +358,12 @@ def runGraphM (n : Nat) (g : ModGraph) (root : Nat) (lives : ModLives) : M (ModL
       | .error a => throw a
   pure (lives, none)
 
+/-- A new error object of kind `k` (a module script's error to rethrow). -/
+def newError (h : HeapOf H) (k : ErrKind) (msg : String) : Value × HeapOf H :=
+  match (mkError k msg : M Value).run h with
+  | .ok v h' => (v, h')
+  | .error _ h' => (.undef, h')
+
 /-- Run module script `root` of graph `g` on the heap: the outcome and the live modules after. -/
 def runModuleGraph (h : HeapOf H) (g : ModGraph) (root : Nat) (lives : ModLives) :
     (Outcome × ModLives) × HeapOf H :=

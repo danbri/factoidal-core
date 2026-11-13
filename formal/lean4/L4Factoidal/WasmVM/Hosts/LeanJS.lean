@@ -27,6 +27,7 @@ import L4Factoidal.WasmVM.Hosts.PageEvents
 import L4Factoidal.WasmVM.Aot.Window
 import L4Factoidal.JS.Interp
 import L4Factoidal.JS.Snapshot
+import L4Factoidal.WasmVM.Hosts.LeanJSModules
 
 namespace L4Factoidal.WasmVM.Hosts.LeanJS
 open L4Factoidal.WasmVM
@@ -486,6 +487,23 @@ def Session.run (s : Session) (f : JHeap → (JS.Outcome × JS.Value) × JHeap) 
   let page := { page with time, loop := { page.loop with clock := time.sync page.loop.clock } }
   (⟨{ heap with host := some { lh with page } }, api, limits, steps, jobs, tasks, errors, lastFrame⟩, o, v)
 
+/-- One run of the engine with any answer (as `run`). -/
+def Session.runG {α : Type} (s : Session) (f : JHeap → α × JHeap) : Session × α :=
+  let ⟨heap, api, limits, steps, jobs, tasks, errors, lastFrame⟩ := s
+  let lh := heap.host.getD default
+  let page := lh.page
+  let page := { page with time := page.time.atRun page.loop.clock steps }
+  let wasm0 := page.wasm.steps
+  let budget := lh.budget
+  let heap := { heap with steps := budget.toUInt64, host := some { lh with page, base := steps, wasm0 } }
+  let (a, heap) := f heap
+  let lh := heap.host.getD default
+  let steps := steps + (budget - heap.steps.toNat) + (lh.page.wasm.steps - wasm0)
+  let page := lh.page
+  let time := page.time.atRun page.loop.clock steps
+  let page := { page with time, loop := { page.loop with clock := time.sync page.loop.clock } }
+  (⟨{ heap with host := some { lh with page } }, api, limits, steps, jobs, tasks, errors, lastFrame⟩, a)
+
 /-- The text of an outcome that is not normal. -/
 def failure : JS.Outcome → Option String
   | .ok => none
@@ -534,6 +552,32 @@ def engine : PageEvents.Engine Session :=
   { host := Session.host, setHost := Session.setHost, dispatchOnly := Session.dispatchOnly,
     callbackOnly := Session.callbackOnly, release := Session.release, runJobs := Session.runJobs,
     lastFrame := Session.lastFrame, setLastFrame := fun s f => { s with lastFrame := f } }
+
+/-! ## Module scripts (`LeanJSModules`, `JS.Modules`) -/
+
+/-- Report a new error at the window: a SyntaxError (`isSyntax`) or a TypeError with `msg`
+(HTML "report an exception" of a module script's error to rethrow). -/
+def Session.reportNew (s : Session) (isSyntax : Bool) (msg : String) : Session :=
+  let msg := if msg.startsWith "SyntaxError: " then (msg.drop 13).toString else msg
+  let (s, v) := s.runG fun h => JS.newError h (if isSyntax then .syntax else .type) msg
+  (s.api? "report" #[v]).1.fail ((if isSyntax then "SyntaxError: " else "TypeError: ") ++ msg)
+
+/-- Run one module script (HTML "execute the script element" for a module script): fire
+`error` for a failed fetch, report its error to rethrow, or link and evaluate its graph and
+report what it threw; a microtask checkpoint after it, then `load` for an external one. -/
+def Session.runModule (s : Session) (g : JS.ModGraph) (lives : JS.ModLives) (node : Nat)
+    (oc : LeanJSModules.Outcome) : Session × JS.ModLives :=
+  match oc with
+  | .fetchError => ((s.dispatchOnly node "error").1, lives)
+  | .rethrow isSyntax msg => (s.reportNew isSyntax msg, lives)
+  | .run root external =>
+    let (s, (o, lv)) := s.runG fun h => JS.runModuleGraph h g root lives
+    let s := match o with
+      | .ok => s
+      | .threw v m => (s.api? "report" #[v]).1.fail m
+      | o => s.fail ((failure o).getD "")
+    let s := engine.checkpoint s
+    ((if external then (s.dispatchOnly node "load").1 else s), lv)
 
 /-! ## Starting a page -/
 
@@ -599,12 +643,14 @@ def callDepth : Nat := if System.Platform.numBits == 32 then 100 else 400
 
 /-- Start a page on the prepared realm (as `Page.start` and `Page.Session.startP`): the
 content event handler attributes, the URL, the classic scripts in document order (each with
-the current script set and a microtask checkpoint after it), `DOMContentLoaded`, the
+the current script set and a microtask checkpoint after it), the module scripts of `mods`
+(`Session.runModule`), `DOMContentLoaded`, the
 window's `load` event as a task, and the tasks due at time 0. `origins`: a sandboxed
 frame's own session (`HTML.FrameSessions`), with its own origin and its parent's. -/
 def start (base : Session) (dom : Arena) (url : String) (scripts : Array (Nat × String)) (lim : Page.Limits := {})
     (reads : Reads := {}) (time : ScriptClock := {})
-    (origins : Option (L4Factoidal.HTML.Frames.Origin × L4Factoidal.HTML.Frames.Origin) := none) : Session := Id.run do
+    (origins : Option (L4Factoidal.HTML.Frames.Origin × L4Factoidal.HTML.Frames.Origin) := none)
+    (mods : LeanJSModules.Loaded := {}) : Session := Id.run do
   let gpu := L4Factoidal.PageGpu.State.empty lim.gpuPage
   let domHost : Page.DomHost := { dom := dom, commandLimit := lim.commands, logLimit := lim.logs, framing := lim.frames, gpu := gpu, url, selfOrigin := origins.map (·.1), parentOrigin := origins.map (·.2), hostLoads := lim.hostLoads }
   -- the page's own iframes get browsing contexts before its scripts run (as `Page.Session.startP`)
@@ -622,6 +668,13 @@ def start (base : Session) (dom : Arena) (url : String) (scripts : Array (Nat ×
     s := s.eval src
     s := engine.checkpoint s
   s := (s.api? "script" #[.num (-1)]).1
+  -- module scripts, deferred: after the classic scripts, in document order, before
+  -- `DOMContentLoaded` (`document.currentScript` is null for them)
+  let mut lives : JS.ModLives := #[]
+  for (node, oc) in mods.scripts do
+    let (s', lv) := s.runModule mods.graph lives node oc
+    s := s'
+    lives := lv
   s := (engine.dispatch s 0 "DOMContentLoaded").1
   if Hosts.Dom.framesLoading s.host.dom then
     s := s.setHost { s.host with dom := { s.host.dom with loadWaits := true } }
