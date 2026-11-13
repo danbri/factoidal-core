@@ -49,8 +49,11 @@
 // engines/libweb-render.dylib. wasm: the engine's Wasm build. bench: the same session
 // through `lake exe wasmvm-bench page` (formal/lean4), for work on the guest without an
 // engine build. With --baseline, the run fails when a subtest that passed there fails.
-// --script-engine bubblepop runs the pages' scripts on BubblePopJS (the JavaScript engine written in Lean) (engine:"bubblepop" in
-// the start request, WasmVM/Hosts/LeanJS.lean) in place of QuickJS-NG in WasmVM.
+// --script-engine picks the engine that runs the pages' scripts. The default is the browser's own default
+// for that build (WebRenderScript.defaultEngine): BubblePopJS (engine:"bubblepop" in the start request,
+// WasmVM/Hosts/LeanJS.lean) for --engine native, QuickJS-NG in WasmVM for --engine wasm and bench.
+// --script-engine quickjs runs QuickJS-NG natively too; its guest (--quickjs-wasm) carries its own copy of
+// prelude.js, so a guest built before prelude.js last changed measures an older page API: the run warns.
 import {dirname,join,resolve} from "node:path";
 import {fileURLToPath as fromFileUrl} from "node:url";
 import {wptDomains,wptFetcher,wptPorts,wptRoute,wptSubdomains,type WptServe} from "./wpt-hosts.ts";
@@ -64,7 +67,7 @@ const roots=[...new Set([wpt,...["wpt-scripting","wpt-encoding","wpt-url","wpt-w
 const exists=(p:string)=>{try{Deno.statSync(p);return true;}catch{return false;}};
 const wptFile=(path:string)=>join(roots.find(r=>exists(join(r,path)))??wpt,path);
 const engineKind=opt("--engine","native");
-const scriptEngine=opt("--script-engine","quickjs");
+const scriptEngine=opt("--script-engine",engineKind==="native"?"bubblepop":"quickjs");
 const quickjs=opt("--quickjs-wasm",join(Deno.env.get("HOME")??"","working/qjs-wasm/qjs-wasmvm.wasm"));
 export const directories=["html/webappapis/timers","html/webappapis/microtask-queuing","dom/events","dom/nodes",
   "html/webappapis/scripting/event-loops"];
@@ -374,6 +377,11 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
   const info={...engine.scriptInfo(),scriptEngine};
   if(scriptEngine==="bubblepop"&&!(info.engines??[]).includes("bubblepop"))throw new Error("this engine has no BubblePopJS");
   const guest=scriptEngine==="bubblepop"?undefined:await Deno.readFile(quickjs);
+  // The guest carries the prelude it was built with (tools/wasmvm/build-quickjs.sh).
+  if(guest)try{
+    const built=(await Deno.stat(quickjs)).mtime,prelude=(await Deno.stat(join(root,"tools/wasmvm/quickjs/prelude.js"))).mtime;
+    if(built&&prelude&&built.getTime()>0&&built<prelude)/* a release's guest has no build time (epoch): not judged */console.error(`warning: ${quickjs} is older than tools/wasmvm/quickjs/prelude.js: QuickJS-NG runs an older page API (rebuild it with tools/wasmvm/build-quickjs.sh)`);
+  }catch{/* no prelude in this checkout */}
   if(guest)engine.scriptLoad(guest);
   // A page the engine refuses (a script over its size bound) can leave the session without
   // its guest; load it again then, so one refused page does not fail every later one.

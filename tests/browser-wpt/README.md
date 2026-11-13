@@ -143,8 +143,9 @@ python3 tests/browser-wpt/wpt-score.py sample --chrome $SCRATCH/chrome.json \
 #    resources/ and support/, and what the pages load from elsewhere (about 380 MB).
 python3 tests/browser-wpt/wpt-score.py tree --wpt-root $SCRATCH/wpt --list $SCRATCH/sample.list
 # 4. Run (3 processes under nice; a test stalled for 300 s is recorded and skipped).
-#    One wptserve serves all three; it stops at the end. Add `-- --script-engine bubblepop`
-#    for BubblePopJS.
+#    One wptserve serves all three; it stops at the end. Page scripts run on the browser's
+#    default engine (BubblePopJS natively); add `-- --script-engine quickjs` for QuickJS-NG
+#    in WasmVM, whose guest must be built from the current prelude.js (the runner warns).
 python3 tests/browser-wpt/wpt-score.py run --list $SCRATCH/sample.list --dir $SCRATCH/run \
   --wpt-root $SCRATCH/wpt --native-engine labs/demos/foafnaut/.build/web-render/engines/libweb-render.dylib
 # 5. Optionally run whole directories (a list of all their names) into another --dir,
