@@ -568,14 +568,14 @@
   define(HTMLCollection.prototype, Symbol.iterator, Array.prototype.values);
   const liveCollection = ids => liveList(ids, HTMLCollection.prototype);
   const staticList = xs => {
-    const o = Object.create(NodeList.prototype);
-    xs.forEach((x, i) => Object.defineProperty(o, i, { value: x, enumerable: true }));
+    const o = Object.create(NodeList.prototype), d = { value: undefined, enumerable: true };
+    for (let i = 0; i < xs.length; i++) { d.value = xs[i]; Object.defineProperty(o, i, d); }
     Object.defineProperty(o, 'length', { value: xs.length });
     return o;
   };
   const collection = xs => {
-    const o = Object.create(HTMLCollection.prototype);
-    xs.forEach((x, i) => Object.defineProperty(o, i, { value: x, enumerable: true }));
+    const o = Object.create(HTMLCollection.prototype), d = { value: undefined, enumerable: true };
+    for (let i = 0; i < xs.length; i++) { d.value = xs[i]; Object.defineProperty(o, i, d); }
     Object.defineProperty(o, 'length', { value: xs.length });
     return o;
   };
@@ -930,14 +930,31 @@
       default: throw new DOMException('bad position', 'SyntaxError');
     }
   };
+  // A dataset property name as its attribute name: each ASCII upper-case letter becomes '-'
+  // and its lower case. The names a page uses are few, so the answers are kept (at most 256).
+  const datasets = new WeakMap(), dataNames = new Map();
+  const dataAttr = p => {
+    let a = dataNames.get(p);
+    if (a === undefined) {
+      a = 'data-' + (/[A-Z]/.test(p) ? p.replace(/[A-Z]/g, c => '-' + c.toLowerCase()) : p);
+      if (dataNames.size < 256) dataNames.set(p, a);
+    }
+    return a;
+  };
   class HTMLElement extends Element {
     // title, lang, dir, hidden and the other reflected attributes: DOM.Reflect (dombreadth section).
+    // One DOMStringMap for each element ([SameObject], HTML §3.2.6.6).
     get dataset() {
-      const el = this;
-      return new Proxy({}, {
-        get: (t, p) => typeof p === 'string' ? el.getAttribute('data-' + p.replace(/[A-Z]/g, c => '-' + c.toLowerCase())) ?? undefined : undefined,
-        set: (t, p, v) => { el.setAttribute('data-' + String(p).replace(/[A-Z]/g, c => '-' + c.toLowerCase()), String(v)); return true; },
-      });
+      let d = datasets.get(this);
+      if (d === undefined) {
+        const el = this;
+        d = new Proxy({}, {
+          get: (t, p) => typeof p === 'string' ? el.getAttribute(dataAttr(p)) ?? undefined : undefined,
+          set: (t, p, v) => { el.setAttribute(dataAttr(String(p)), String(v)); return true; },
+        });
+        datasets.set(this, d);
+      }
+      return d;
     }
     get style() { let s = styles.get(this); if (!s) styles.set(this, s = styleOf(this)); return s; }
     click() {
@@ -2250,15 +2267,29 @@
   }
   addHandlers(AbortSignal.prototype);
   const abortKey = {};
+  const abortReason = reason => reason === undefined ? new DOMException('signal is aborted without reason', 'AbortError') : reason;
   const signalAbort = (s, reason) => {
     if (s._aborted) return;
-    s._aborted = true; s._reason = reason === undefined ? new DOMException('signal is aborted without reason', 'AbortError') : reason;
-    dispatch(s, new Event('abort'));
+    s._aborted = true; s._reason = abortReason(reason);
+    // A signal's event path is the signal alone (it has no parent, DOM §2.7), so with no
+    // listener on it (onabort is one) the dispatch runs nothing: skip making the event.
+    if (byTarget.get(idOf(s))?.length) dispatch(s, new Event('abort'));
   };
+  // The controller makes its signal when a script first asks for it ([SameObject]): until
+  // then nothing can observe the signal, and abort() only records the reason. testharness.js
+  // makes and aborts one controller for every test.
   class AbortController {
-    constructor() { this._signal = new AbortSignal(abortKey); }
-    get signal() { return this._signal; }
-    abort(reason) { signalAbort(this._signal, reason); }
+    constructor() { this._signal = null; this._aborted = false; this._reason = undefined; }
+    get signal() {
+      let s = this._signal;
+      if (s === null) { s = this._signal = new AbortSignal(abortKey); if (this._aborted) { s._aborted = true; s._reason = this._reason; } }
+      return s;
+    }
+    abort(reason) {
+      if (this._signal !== null) { signalAbort(this._signal, reason); return; }
+      if (this._aborted) return;
+      this._aborted = true; this._reason = abortReason(reason);
+    }
   }
 
   // ---- MutationObserver (DOM §4.3), on the tree changes the natives make ----------------

@@ -49,6 +49,15 @@ if [ "$got" != "$QJS_SHA256" ]; then
   echo "quickjs-ng $QJS_TAG tarball has sha256 $got, expected $QJS_SHA256" >&2; exit 1
 fi
 [ -d "$SRC" ] || tar xzf "$TAR" -C "$WORK/src"
+# Our patches (quickjs/patches/*.patch, in name order) go on a fresh copy of the pinned
+# source each build, so $SRC stays as released and a changed patch always takes effect.
+# 0001-map-hash-mix: Map, Set, WeakMap and WeakSet hash numbers and pointers so that
+# node numbers and objects spread over the buckets (each get and set was linear in the
+# size of the map for small integer keys: quadratic over a page's nodes).
+PSRC=$WORK/src/quickjs-${QJS_TAG#v}-foafnaut
+rm -rf "$PSRC"; cp -R "$SRC" "$PSRC"
+for p in "$HERE"/quickjs/patches/*.patch; do patch -s -p1 -d "$PSRC" < "$p"; done
+SRC=$PSRC
 
 # The JavaScript prelude (quickjs/prelude.js) goes into the module as QuickJS-NG bytecode:
 # a native build of the same pinned sources compiles it (quickjs/prelude_bytecode.c), so

@@ -1,0 +1,42 @@
+--- a/quickjs.c
++++ b/quickjs.c
+@@ -53443,6 +53443,21 @@
+ }
+ 
+ /* XXX: better hash ? */
++/* Foafnaut: mix all 64 bits before the bucket mask takes the low ones. A small
++   integer as a double has its low word zero and its few significant bits at the
++   top of the high word, and a pointer has its low bits zero (alignment), so the
++   multiply alone put most such keys in a few buckets: a Map keyed by node
++   numbers then cost time linear in its size for each get and set. */
++static inline uint32_t map_hash_mix(uint64_t x)
++{
++    x ^= x >> 33;
++    x *= 0xff51afd7ed558ccdULL;
++    x ^= x >> 33;
++    x *= 0xc4ceb9fe1a85ec53ULL;
++    x ^= x >> 33;
++    return (uint32_t)x;
++}
++
+ static uint32_t map_hash_key(JSContext *ctx, JSValueConst key)
+ {
+     uint32_t tag = JS_VALUE_GET_NORM_TAG(key);
+@@ -53463,7 +53478,7 @@
+         break;
+     case JS_TAG_OBJECT:
+     case JS_TAG_SYMBOL:
+-        h = (uintptr_t)JS_VALUE_GET_PTR(key) * 3163;
++        h = map_hash_mix((uintptr_t)JS_VALUE_GET_PTR(key));
+         break;
+     case JS_TAG_INT:
+         d = JS_VALUE_GET_INT(key);
+@@ -53482,7 +53497,7 @@
+             d = NAN;
+     hash_float64:
+         u.d = d;
+-        h = (u.u32[0] ^ u.u32[1]) * 3163;
++        h = map_hash_mix(u.u64);
+         tag = JS_TAG_FLOAT64;
+         break;
+     default:
