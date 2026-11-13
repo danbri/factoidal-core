@@ -12,7 +12,7 @@
 // third_party/testing/wpt-scripting-PROVENANCE.md). `.any.js` and `.window.js` files
 // get the window wrapper that wptserve gives them.
 //
-//   deno run -A tests/browser-wpt/testharness-run.ts [--engine native|wasm|bench] [--script-engine quickjs|bubblepop] [--exclude a,b] [--wpt-root DIR]
+//   deno run -A tests/browser-wpt/testharness-run.ts [--engine native|wasm|bench] [--script-engine bubblepop|quickjs] [--exclude a,b] [--wpt-root DIR]
 //     [--native-engine DYLIB] [--quickjs-wasm FILE] [--dirs a,b] [--only SUBSTRING]
 //     [--out FILE] [--baseline FILE] [--bench EXE] [--instructions-per-ms N]
 //     [--encoding-fallback detect|locale|LABEL] [--locale TAG]
@@ -49,8 +49,12 @@
 // engines/libweb-render.dylib. wasm: the engine's Wasm build. bench: the same session
 // through `lake exe wasmvm-bench page` (formal/lean4), for work on the guest without an
 // engine build. With --baseline, the run fails when a subtest that passed there fails.
-// --script-engine bubblepop runs the pages' scripts on BubblePopJS (the JavaScript engine written in Lean) (engine:"bubblepop" in
-// the start request, WasmVM/Hosts/LeanJS.lean) in place of QuickJS-NG in WasmVM.
+// --script-engine bubblepop (the default since 2026-11-13) runs the pages' scripts on BubblePopJS, the JavaScript engine
+// written in Lean (engine:"bubblepop" in the start request, WasmVM/Hosts/LeanJS.lean): the engine Foafnaut uses, so the one
+// WPT scores are quoted for. --script-engine quickjs runs QuickJS-NG in WasmVM instead, kept for differential testing.
+// QuickJS's guest (--quickjs-wasm) has tools/wasmvm/quickjs/prelude.js compiled in, so it must be built from the same
+// commit as the engine (tools/wasmvm/build-quickjs.sh); an older guest silently lacks newer page APIs. On 2026-11-13 a
+// whole-WPT run on the default guest of 11-09 reported ~800k subtests failing that pass on BubblePopJS.
 import {dirname,join,resolve} from "node:path";
 import {fileURLToPath as fromFileUrl} from "node:url";
 import {wptDomains,wptFetcher,wptPorts,wptRoute,wptSubdomains,type WptServe} from "./wpt-hosts.ts";
@@ -64,7 +68,7 @@ const roots=[...new Set([wpt,...["wpt-scripting","wpt-encoding","wpt-url","wpt-w
 const exists=(p:string)=>{try{Deno.statSync(p);return true;}catch{return false;}};
 const wptFile=(path:string)=>join(roots.find(r=>exists(join(r,path)))??wpt,path);
 const engineKind=opt("--engine","native");
-const scriptEngine=opt("--script-engine","quickjs");
+const scriptEngine=opt("--script-engine","bubblepop");
 const quickjs=opt("--quickjs-wasm",join(Deno.env.get("HOME")??"","working/qjs-wasm/qjs-wasmvm.wasm"));
 export const directories=["html/webappapis/timers","html/webappapis/microtask-queuing","dom/events","dom/nodes",
   "html/webappapis/scripting/event-loops"];
@@ -373,6 +377,9 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
   const engine=await loadHTML(engineKind==="wasm"?undefined:opt("--native-engine",join(root,"labs/demos/foafnaut/.build/web-render/engines/libweb-render.dylib")));
   const info={...engine.scriptInfo(),scriptEngine};
   if(scriptEngine==="bubblepop"&&!(info.engines??[]).includes("bubblepop"))throw new Error("this engine has no BubblePopJS");
+  if(scriptEngine!=="bubblepop"&&!args.includes("--quickjs-wasm"))
+    console.error(`warning: QuickJS guest ${quickjs} (modified ${(await Deno.stat(quickjs)).mtime?.toISOString()}); `+
+      "its prelude must come from the same commit as the engine, or pass --quickjs-wasm FILE built from it");
   const guest=scriptEngine==="bubblepop"?undefined:await Deno.readFile(quickjs);
   if(guest)engine.scriptLoad(guest);
   // A page the engine refuses (a script over its size bound) can leave the session without
