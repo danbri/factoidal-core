@@ -209,6 +209,9 @@ inventory. Tiny admission is not visual conformance; the complete baseline
 currently has no admitted scenes. Use the latest saved per-backend report,
 not a focused integration-test count, when describing browser maturity.
 
+- The browser's WPT score is measured by full runs, never samples: see
+  [`wpt-runs`](../wpt-runs/SKILL.md) for the scale, validity rules, cloud schedule and
+  records. The first full record is `tests/browser-wpt/wpt-full-20261113.json`.
 - [Browser WPT probes](../../tests/browser-wpt/README.md) run pinned original
   HTML parser/tokenizer fixtures, the actual QuickJS guest and native
   HTML/embedded-SVG image comparisons. Read the

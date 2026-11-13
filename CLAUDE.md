@@ -1683,6 +1683,10 @@ session.
   something unproved or unverified (our own crypto, a pure hash on data of
   unknown sensitivity, a silent fallback) takes a risk token, runs only
   behind `--dangerously-enable-…`, and is listed in the register of open risks.
+- [`wpt-runs`](skills/wpt-runs/SKILL.md) — how the WPT score is measured and
+  reported: full measured runs only, BubblePopJS, share with and without
+  `encoding/`, validity rules, cloud runs on every release and four times a
+  day, `runs.csv` and per-run metadata, one WPT run per machine.
 - [`node-crypto-haclstar-vc-wasm-build`](skills/node-crypto-haclstar-vc-wasm-build/SKILL.md)
   — the concrete build: VC Data-Integrity crypto running off-native
   (Node + browser) via HACL\*'s official wasm (#286). Three realisation

@@ -46,8 +46,10 @@ standards conformance.
 - Work in your own worktree on a `wip/` branch. Push it after each passing step. Open a PR; don't merge or push to main
   unless the brief says so.
 - One Lean build at a time: use the build lock (`leanlock.sh`, path in the task brief).
-- The cloud build queue (`danbri/factoidal-builds`, `build.yml`) holds one pending run, and a new dispatch cancels it.
-  Dispatch only when the brief allows it, and log it.
+- Cloud builds (`danbri/factoidal-builds`, `build.yml`, `core_ref=<branch>`) take about 1.5 h. Check the queue first,
+  batch changes into few builds, never cancel another agent's run, and log each dispatch.
+- WPT: follow [`wpt-runs`](../wpt-runs/SKILL.md). Full measured runs only, BubblePopJS, one WPT run per machine (the
+  runner refuses a taken port 8000; wait, never kill). Report subtests before and after, plus a regression check.
 - Coordination log: `/tmp/foafnaut-coordination.log`. One line per claim, result or release, with a prefix naming you.
 - Never kill or signal processes you didn't start. Never touch other agents' worktrees.
 - Disk is tight: keep scratch small, delete copies you don't need, and stop and report below 4 GiB free.

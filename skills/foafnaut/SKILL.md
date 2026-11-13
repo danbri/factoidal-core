@@ -41,9 +41,10 @@ efficient, performant, fast, private, accessible, international, and secure."
 
 Rules from it:
 
-- The measure of the browser is the Web Platform Tests (`tests/browser-wpt/`,
-  `tests/browser-wpt/wpt-score.py`; batch 2 KR 1.1). A score needs its suite, denominator
-  and date.
+- The measure of the browser is the Web Platform Tests (`tests/browser-wpt/`; batch 2 KR 1.1),
+  measured by full runs as [`wpt-runs`](../wpt-runs/SKILL.md) sets out: every name run, never a
+  sample, on BubblePopJS, quoted with and without `encoding/`. A score needs its suite,
+  denominator, engine commit, WPT commit and date.
 - Seven qualities have equal standing with standards: efficient, performant, fast, private,
   accessible, international, secure. A change that helps one and harms another says so.
 - Factoidal's first product line (the W3C data standards in `@factoidal/core`) continues. The

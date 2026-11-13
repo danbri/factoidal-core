@@ -117,6 +117,12 @@ first frame is drawn, so animated tests can not match yet. Results are in
 `wpt-score.py` measures Foafnaut's score over all of WPT the way wpt.fyi and
 Apple's EU browser-engine rule count it: subtests passed divided by the most
 subtests any browser runs on wpt.fyi (Chrome's count at the pinned WPT commit).
+**The score is a full measured run, not this sample** (2026-11-13; see
+[`skills/wpt-runs`](../../skills/wpt-runs/SKILL.md)): run every name in Chrome's list with
+`wpt-score.py run`, score it with `wpt-full.py`, and quote the share with and without
+`encoding/`. The stratified sample below is kept for quick manual checks only; its estimates are
+not scores. First full record: `wpt-full-20261113.json`.
+
 It uses `testharness-run.ts --wpt-root DIR --list FILE`, which runs tests by
 their wpt.fyi names from any WPT checkout. Since 2026-11-09 it runs them through
 WPT's own server, `wptserve` (see "Running through wptserve" below); the older
