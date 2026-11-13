@@ -52,8 +52,8 @@ fi
 # Our patches (quickjs/patches/*.patch, in name order) go on a fresh copy of the pinned
 # source each build, so $SRC stays as released and a changed patch always takes effect.
 # 0001-map-hash-mix: Map, Set, WeakMap and WeakSet hash numbers and pointers so that
-# node numbers and objects spread over the buckets (each get and set was linear in the
-# size of the map for small integer keys: quadratic over a page's nodes).
+# node numbers and objects spread over the buckets (with small integer keys most fell in a
+# few buckets, and each get and set walked a long chain).
 PSRC=$WORK/src/quickjs-${QJS_TAG#v}-foafnaut
 rm -rf "$PSRC"; cp -R "$SRC" "$PSRC"
 for p in "$HERE"/quickjs/patches/*.patch; do patch -s -p1 -d "$PSRC" < "$p"; done

@@ -1,14 +1,15 @@
 --- a/quickjs.c
 +++ b/quickjs.c
-@@ -53443,6 +53443,21 @@
+@@ -53443,6 +53443,22 @@
  }
  
  /* XXX: better hash ? */
 +/* Foafnaut: mix all 64 bits before the bucket mask takes the low ones. A small
 +   integer as a double has its low word zero and its few significant bits at the
 +   top of the high word, and a pointer has its low bits zero (alignment), so the
-+   multiply alone put most such keys in a few buckets: a Map keyed by node
-+   numbers then cost time linear in its size for each get and set. */
++   multiply alone put such keys in few buckets: in a Map of 7 000 node
++   numbers each set walked a chain of hundreds (about 65 000 Wasm instructions
++   in WasmVM, 1 800 with this mix). */
 +static inline uint32_t map_hash_mix(uint64_t x)
 +{
 +    x ^= x >> 33;
@@ -22,7 +23,7 @@
  static uint32_t map_hash_key(JSContext *ctx, JSValueConst key)
  {
      uint32_t tag = JS_VALUE_GET_NORM_TAG(key);
-@@ -53463,7 +53478,7 @@
+@@ -53463,7 +53479,7 @@
          break;
      case JS_TAG_OBJECT:
      case JS_TAG_SYMBOL:
@@ -31,7 +32,7 @@
          break;
      case JS_TAG_INT:
          d = JS_VALUE_GET_INT(key);
-@@ -53482,7 +53497,7 @@
+@@ -53482,7 +53498,7 @@
              d = NAN;
      hash_float64:
          u.d = d;

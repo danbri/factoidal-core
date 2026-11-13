@@ -190,6 +190,10 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
     for engine in quickjs bubblepop; do
       QUICKJS_WASM="$QJS_GUEST" SCRIPT_ENGINE=$engine deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-ffi \
         --allow-read --allow-ffi --allow-env "$LAB/shader_gallery_test.ts"
+      # Cost test: script work on thousands of nodes is linear, and a node's guest instructions
+      # stay under the limit (a guest built before the Map hash patch fails it: rebuild it).
+      QUICKJS_WASM="$QJS_GUEST" SCRIPT_ENGINE=$engine deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-ffi \
+        --allow-read --allow-ffi --allow-env "$LAB/script_scaling_test.ts"
     done
     # The window replays the page GPU commands (2026-11-08: the start turn's commands, which make
     # the canvas and buffers, were dropped, so every later turn failed and the canvas stayed
