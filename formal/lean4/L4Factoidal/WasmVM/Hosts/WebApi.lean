@@ -454,7 +454,12 @@ def subtle (s : State) (fs : Array ByteArray) : State × Except Int ByteArray :=
         let len ← keyLength tName (if g.isEmpty then t else g)
         -- §14.3.7: deriveBits with the key's own algorithm (its usage check is deriveKey).
         let k' := { k with usages := k.usages ++ [.deriveBits] }
-        let bits ← deriveBits algName p k' len s.keys
+        -- A derived key this engine has no keys for (AES): the derivation's errors, then the
+        -- import's refusal, with no bits derived (`deriveBitsCheck`).
+        let bits ← if (algOf? tName).isNone then do
+            deriveBitsCheck algName p k' len s.keys
+            pure (ByteArray.mk (Array.replicate ((len.getD 0 + 7) / 8) 0))
+          else deriveBits algName p k' len s.keys
         let nk ← importKey tName t "raw" bits #[] ext us
         addKey s.keys nk) with
     | .ok (st, f) => ({ s with keys := st }, .ok (pack f))

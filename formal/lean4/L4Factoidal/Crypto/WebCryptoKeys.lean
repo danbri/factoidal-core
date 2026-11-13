@@ -988,6 +988,32 @@ def deriveBits (algName : String) (p : Args) (k : Key) (length : Option Nat) (st
     | some len => if len > secret.size * 8 then throw .operation else return truncateBits secret len
   | _ => throw .invalidAccess
 
+/-- The errors `deriveBits` would give, without deriving: for a `deriveKey` whose derived
+key's algorithm has no keys here (`refusedSpec?`), so that its refusal comes after the same
+errors in the same order but no bits are computed only to be dropped (PBKDF2 at 100,000
+iterations takes milliseconds). A derivation that would fail only inside the primitive (an
+ECDH point HACL* refuses) is not seen here: the refusal answers instead. -/
+def deriveBitsCheck (algName : String) (p : Args) (k : Key) (length : Option Nat) (store : KeyStore) : Res Unit := do
+  keyFor k algName .deriveBits
+  match k.algo.alg with
+  | .hkdf =>
+    let some h := (p.str? "hash").bind HashAlg.ofName? | throw .notSupported
+    let some len := length | throw .operation
+    if len % 8 != 0 || len / 8 > 255 * h.size then throw .operation
+  | .pbkdf2 =>
+    let some _ := (p.str? "hash").bind HashAlg.ofName? | throw .notSupported
+    let some len := length | throw .operation
+    if len % 8 != 0 then throw .operation
+    if (p.nat? "iterations").getD 0 == 0 then throw .operation
+  | .ecdh | .x25519 =>
+    if k.type != .privateKey then throw .invalidAccess
+    let pk ← keyOf store p "public"
+    if pk.type != .publicKey || pk.algo.alg != k.algo.alg then throw .invalidAccess
+    if k.algo.alg == .ecdh && pk.algo.curve != k.algo.curve then throw .invalidAccess
+    if let some len := length then
+      if len > 256 then throw .operation
+  | _ => throw .invalidAccess
+
 /-- "get key length" (§14.3.7 step 9) of a derived key's algorithm: `none` for null. -/
 def keyLength (algName : String) (t : Args) : Res (Option Nat) := do
   match algOf? algName with
