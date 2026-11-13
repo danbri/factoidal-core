@@ -96,6 +96,12 @@
     return xs.length >= count ? xs : new Array(count).fill(0);
   };
   const layoutOf = el => query(nodeId(el), 17, 8);
+  const pointHits = (x, y) => {
+    const px = Math.floor(Number(x)), py = Math.floor(Number(y)), [w, h] = viewport();
+    if (!(px >= 0 && py >= 0 && px < w && py < h && px < 65536 && py < 65536)) return [];
+    const s = n.query(px * 65536 + py, 35, '');
+    return typeof s === 'string' && s !== '' ? s.split(' ').map(k => wrap(Number(k))) : [];
+  };
   const viewport = () => { const v = query(0, 19, 2); return v[0] > 0 ? v : [800, 600]; };
   class DOMRectReadOnly {
     constructor(x = 0, y = 0, width = 0, height = 0) { Object.assign(this, { x: +x, y: +y, width: +width, height: +height }); }
@@ -2161,7 +2167,10 @@
       if (info(id, 0) !== 11 && info(id, 1) >= 0) node.parentNode.removeChild(node);
       chk(n.treeOp(id, nodeId(this), 3)); return node;
     }
-    elementFromPoint() { return null; }
+    // CSSOM View §5.1: the hit test is Lean's (node_query 35 on the layout of the page;
+    // the point as x × 65536 + y in whole CSS pixels). Off the viewport, none.
+    elementFromPoint(x, y) { return pointHits(x, y)[0] ?? null; }
+    elementsFromPoint(x, y) { return pointHits(x, y); }
     get implementation() { let i = implementations.get(this); if (!i) { i = Object.create(DOMImplementation.prototype); implDoc.set(i, nodeId(this)); implementations.set(this, i); } return i; }
   }
   // DOMImplementation (DOM §4.5.1): documents and doctypes made in the arena by Lean.

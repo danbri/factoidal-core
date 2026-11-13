@@ -1931,7 +1931,7 @@ from this engine's layout of its arena as it stands (`WasmVM.Hosts.Page.Reads`):
 when a read first asks, once until the DOM or the viewport changes, as a browser forces
 a layout. The layout is that of a render with the session's `layout` request. -/
 
-/-- The answer of a layout read: op 17 "x y w h left top width height" (the border box
+/-- The answer of a layout read (op 35, the hit test, is below): op 17 "x y w h left top width height" (the border box
 in the page, then the client box: inside the borders; zero for an SVG element inside an
 `svg`, which has no CSS box, CSSOM View §6); op 18 an SVG element's bounding box in its
 user space, "x y w h" (`WebHit.boundsOf`). -/
@@ -1955,6 +1955,30 @@ def readAnswer (l : Laid) (node op : Nat) : Option String :=
   | 18 => match (WebHit.boundsOf l.dom l.scene node).2 with
     | some (x0,y0,x1,y1) => some (line [x0,y0,x1-x0,y1-y0])
     | none => some "0 0 0 0"
+  -- 35: `elementFromPoint` and `elementsFromPoint` (CSSOM View §5.1). `node` carries the
+  -- point, x × 65536 + y in whole CSS pixels of the page. The answer is the target of a
+  -- pointer there (`WebHit.target`: the smallest box that holds the point, and inside an
+  -- `svg` the shape whose `pointer-events` takes it) and its ancestor elements, topmost
+  -- first, as node numbers; "" when no box holds the point.
+  | 35 =>
+    let px := (node / 65536).toFloat
+    let py := (node % 65536).toFloat
+    match WebHit.target l.dom l.scene l.boxes px py with
+    | some (hit,_) =>
+      let chain := Id.run do
+        let mut acc : Array Nat := #[hit]
+        let mut cur := hit
+        for _ in [0:l.dom.size] do
+          match (l.dom.get cur).parent with
+          | some p =>
+            if (l.dom.get p).type == .element then
+              acc := acc.push p
+              cur := p
+            else break
+          | none => break
+        return acc
+      some (" ".intercalate (chain.toList.map toString))
+    | none => some ""
   -- 21: the used width and height of the node's content box (CSSOM §9.1 resolved values
   -- of `width` and `height`), "" when the node has no box
   | 21 => match box, l.styles.get with
