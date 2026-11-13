@@ -195,5 +195,6 @@ tests/dom/node_modules/
 
 # Lean HTML renderer runtime installed by Builds for the public hub.
 /docs/web/hub/html-webgpu/runtime/
+/docs/web/hub/svg-webgpu/runtime/
 # WasmVM guest modules (QuickJS-NG for page scripts) installed by Builds (foafnaut-web set).
 /docs/web/hub/wasm-guests/

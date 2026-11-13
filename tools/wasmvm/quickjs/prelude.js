@@ -597,7 +597,8 @@
     constructor() { throw new TypeError('Illegal constructor'); }
     get nodeType() { return info(nodeId(this), 0); }
     get nodeName() { return str(nodeId(this), 1); }
-    get baseURI() { return document.URL; }
+    // the node document's URL (DOM §4.4; no `base` element here): a frame's document has its own
+    get baseURI() { const id = nodeId(this); return (info(id, 0) === 9 ? this : wrap(info(id, 7))).URL; }
     get isConnected() { if (shadowEngine()) return info(nodeId(this), 25) === 1; let k = nodeId(this); for (let i = 0; i < 1 << 20; i++) { const p = info(k, 1); if (p < 0) return k === 0; k = p; } return false; }
     get ownerDocument() { const id = nodeId(this); return info(id, 0) === 9 ? null : wrap(info(id, 7)); }
     getRootNode(options = {}) { if (shadowEngine()) return wrap(info(nodeId(this), options?.composed ? 24 : 28)); let k = nodeId(this); for (;;) { const p = info(k, 1); if (p < 0) return wrap(k); k = p; } }
@@ -2533,8 +2534,36 @@
     const own = { document: () => wrap(doc), window: () => w, self: () => w, frames: () => w, globalThis: () => w,
       parent: () => window, top: () => window, frameElement: () => wrap(info(doc, 12)), length: () => 0,
       location: () => frameLocation(doc) };
+    // Frames share this realm. A function reached through a frame's window runs with that
+    // frame's document as `document` for the length of the call (as the frame's own scripts
+    // do: n.script below), so `iframe.contentWindow.f()` resolves URLs against the frame's
+    // document. Callbacks that f leaves behind run later with the top document: one realm
+    // can not tell which frame a function belongs to.
+    const inFrame = new WeakMap();
+    const asFrame = f => {
+      let g = inFrame.get(f);
+      if (g) return g;
+      const enter = run => { const before = scriptDocument; scriptDocument = wrap(doc); try { return run(); } finally { scriptDocument = before; } };
+      // A plain function, not a Proxy of f: BubblePopJS does not call a Proxy of a function.
+      g = function (...args) { return enter(() => new.target ? Reflect.construct(f, args, new.target === g ? f : new.target) : f.apply(this, args)); };
+      Object.setPrototypeOf(g, f);
+      if (Object.prototype.hasOwnProperty.call(f, 'prototype')) g.prototype = f.prototype;
+      Object.defineProperty(g, 'name', { value: f.name, configurable: true });
+      Object.defineProperty(g, 'length', { value: f.length, configurable: true });
+      inFrame.set(f, g);
+      return g;
+    };
     w = new Proxy(window, {
-      get(t, p) { return Object.prototype.hasOwnProperty.call(own, p) ? own[p]() : Reflect.get(t, p, t); },
+      get(t, p) {
+        if (Object.prototype.hasOwnProperty.call(own, p)) return own[p]();
+        const v = Reflect.get(t, p, t);
+        // Only a page's own global functions (enumerable: a function declaration or an
+        // assignment). The platform's constructors and methods are not enumerable and keep
+        // their identity, so `frame.contentWindow.TypeError === TypeError` as before.
+        if (typeof v !== 'function' || typeof p !== 'string') return v;
+        const d = Object.getOwnPropertyDescriptor(t, p);
+        return d && d.enumerable ? asFrame(v) : v;
+      },
       has(t, p) { return Object.prototype.hasOwnProperty.call(own, p) || Reflect.has(t, p); },
     });
     frameWindows.set(doc, w);
