@@ -181,8 +181,22 @@ if [ "$MODE" = --native ]; then
   for object in "${OBJECTS[@]}"; do [ "$(basename "$object")" = WebRenderCLI.o ] || LIBRARY_OBJECTS+=("$object"); done
   case "$(uname -s)" in
     Darwin) LIBRARY="$BUILD/engines/libweb-render.dylib"; SHARED=(-dynamiclib -Wl,-dead_strip -lc++);;
+    Linux) LIBRARY="$BUILD/engines/libweb-render.so";;
     *) LIBRARY="";;
   esac
+  # Linux makes the library for the WPT runner (tests/browser-wpt/testharness-run.ts
+  # --native-engine). It links Lean's shared runtime: libleanrt.a holds mimalloc with
+  # local-exec thread-local storage, which a shared library can not link (Lean 4.33.1).
+  # So this library needs the same Lean toolchain at run time.
+  if [ "$(uname -s)" = Linux ]; then
+  mkdir -p "$BUILD/engines"
+  "${CC:-cc}" -O3 -DNDEBUG -fPIC -I "$TOOLCHAIN/include" -c "$LAB/web_render_shim.c" -o "$BUILD/obj-native/web_render_shim.o"
+  leanc -shared -O3 -o "$LIBRARY" "${LIBRARY_OBJECTS[@]}" "$BUILD/obj-native/web_render_shim.o" \
+    -L"$LEANLIB" -lInit_shared -lleanshared_2 -lleanshared_1 -lleanshared \
+    -Wl,-rpath,"$LEANLIB" -Wl,--no-undefined
+  echo "WEB_RENDER_LIBRARY=$LIBRARY"
+  LIBRARY=""
+  fi
   # The desktop app is macOS only, so other hosts make no library.
   if [ -n "$LIBRARY" ]; then
   "${CC:-cc}" -O3 -DNDEBUG -I "$TOOLCHAIN/include" -c "$LAB/web_render_shim.c" -o "$BUILD/obj-native/web_render_shim.o"
