@@ -47,7 +47,11 @@ def xhtmlEntityPublicIds : List String :=
    "-//W3C//DTD XHTML 1.0 Strict//EN", "-//W3C//DTD XHTML 1.0 Frameset//EN",
    "-//W3C//DTD XHTML Basic 1.0//EN", "-//W3C//DTD XHTML 1.1 plus MathML 2.0//EN",
    "-//W3C//DTD XHTML 1.1 plus MathML 2.0 plus SVG 1.1//EN", "-//W3C//DTD MathML 2.0//EN",
-   "-//WAPFORUM//DTD XHTML Mobile 1.0//EN"]
+   "-//WAPFORUM//DTD XHTML Mobile 1.0//EN",
+   -- Not in the list this session read from HTML §14.2. WPT tests them
+   -- (html/the-xhtml-syntax/parsing-xhtml-documents/xhtml-mathml-dtd-entity-11.htm and -12.htm)
+   -- and Chrome, Firefox and Safari pass those tests (wpt.fyi, WPT fea36e49ddda).
+   "-//WAPFORUM//DTD XHTML Mobile 1.1//EN", "-//WAPFORUM//DTD XHTML Mobile 1.2//EN"]
 
 /-- One `<!ENTITY name "...">` declaration for each HTML named character reference that
 ends with a semicolon: the content of the DTD that HTML §14.2 names. `&` and `<` in a
