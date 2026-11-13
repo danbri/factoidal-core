@@ -64,29 +64,44 @@ loop). `lake build L4Factoidal.JS.RegressionTests L4Factoidal.JS.Theorems` and
 
 ## 3. Measured
 
-Baseline: `~/working/wpt-full-run/run-bp` and `run-bp-retry` (the retry wins), engine main
-`78d9a6d05`, BubblePopJS. Passes are capped at Chrome's count per test.
+Both runs on the owner's Mac on 2026-11-13, one after the other, same WPT checkout
+(`~/working/wpt-full-run/wpt`), `wpt-score.py run --jobs 3 -- --script-engine bubblepop`, all 524
+`/wasm/` names of `full.list`. Before: engine main `78d9a6d05` (the engine of the full run; this
+run reproduces its `wasm/` numbers exactly). After: the cloud build of this branch, `07f2aea4e`
+(danbri/factoidal-builds run 43472815646, artifact `foafnaut-darwin-arm64`; not published,
+since the commit is not on main). Passes are capped at Chrome's count per test.
 
-| | Chrome | before | estimate (old engine, shimmed tests) |
+| | Chrome | before | after |
 |---|---:|---:|---:|
-| wasm/core | 188,396 | 257 | 153,824 of the 157,115 subtests measured |
-| wasm/jsapi | 2,529 | 1,882 | unchanged (not affected) |
-| wasm/webapi | 1,066 | 514 | unchanged |
-| wasm/serialization | 76 | 6 | unchanged |
-| wasm/proposals | 123 | 1 | unchanged |
+| wasm/core | 188,396 | 257 | 185,117 |
+| wasm/jsapi | 2,529 | 1,882 | 1,882 |
+| wasm/webapi | 1,066 | 514 | 514 |
+| wasm/serialization | 76 | 6 | 6 |
+| wasm/proposals | 123 | 1 | 18 |
+| create_multiple_memory | 1 | 1 | 1 |
+| **wasm/ total** | **192,191** | **2,661 (1.4%)** | **187,538 (97.6%)** |
 
-The estimate was measured without an engine build: the same engine ran a copy of the
-`wasm/` tests in which `async_index.js` first defines an `Error.prototype.stack` getter and the
-generated scripts have their separators removed. It does not include repairs 3 and 4 (the two
-4.9 MiB pages, the seven pages without done, `br_table`), which need the new engine. Section 5
-holds the measurement of this branch's own engine when it exists.
+Time: 21.7 s wall before, 42.1 s after (the pages now run their tests: 31 s of page time before,
+88 s after). The largest page, `simd_f32x4_pmin_pmax` (4.9 MiB of script, 15,521 subtests),
+takes 5.0 s.
+
+Regression check, the same two engines on 300 names of `full.list` outside `wasm/` (every 120th
+name, no Test262, service or shared worker variants): 10,239 of 14,291 subtests before, 10,240
+after; 121.7 s and 121.8 s wall, 169.1 s and 171.1 s of page time (within run-to-run noise).
+A page with no WebAssembly and no long non-ASCII string loops does the same work as before:
+the accessor costs nothing until read, and the lexer looks for a `_` only within a number.
+
+Ten `wasm/core` pages (the seven of section 1 and the two `pmin_pmax` pages among them) report
+every subtest, all passing, but no harness result ("CRASH" in the runner): a run after the last
+test still stops at its 5 M steps. Which run (most likely testharness.js's completion over 10,000
+tests in an event or timer task) has not been determined. The scores count their subtests.
 
 ## 4. Not done
 
-- The remaining `wasm/core` failures in the estimate (about 3,300 subtests and the cascades
-  behind them): `memory64` (WasmVM has 32-bit addresses only: "unsupported: 64-bit address
-  type"), some `assert_invalid` modules that WasmVM's validator accepts (242), relaxed SIMD
-  answers, and `names.wast` (480): an export whose name starts with U+10FFFE collides with
+- The remaining 3,279 `wasm/core` subtests, about 2,600 of them in `memory64/` (WasmVM has
+  32-bit addresses only: "unsupported: 64-bit address type"; `validate` answers false for those
+  valid modules, and the tests that use them fail after), some relaxed SIMD answers, and
+  `names.wast` (480): an export whose name starts with U+10FFFE collides with
   BubblePopJS's encoding of private names (`isPrivKey`), so the exports object cannot hold it.
   That last one is a defect of the engine's property keys, not of WebAssembly.
 - `wasm/jsapi` proposals: JSPI (`WebAssembly.Suspending`), `WebAssembly.Function`, shared
@@ -95,6 +110,10 @@ holds the measurement of this branch's own engine when it exists.
   direction the rules give, and was not attempted here.
 - `stack` lists no frames: the engine keeps no record of call sites.
 
-## 5. Engine measurement
+## 5. Checks
 
-Not yet run: building the engine needs at least 4 GiB free (2.7 GiB on 2026-11-13).
+Local (this branch, `lake build` inside the build lock): `L4Factoidal.JS` (with `Tests`,
+`RegressionTests`, `Theorems`) and `L4Factoidal.WasmVM.Hosts.LeanJS`. Cloud build 43472815646:
+every job passed, including the Linux tail-recursion gate, the engine build (with
+`lab_ratchet`) and `test.sh --skip-build` in CI form (its `NOT RUN` lines are the usual CI ones).
+Not run: the local `labs/demos/foafnaut/test.sh` and `sweeps.sh` (no local engine build: disk).
