@@ -215,4 +215,14 @@ refuses a value that is not a string and refuses `Error.prototype` itself. -/
 #guard out "var e = new Error('x'); e.stack = 's'; var d = Object.getOwnPropertyDescriptor(e, 'stack'); print(e.stack, d.writable, d.enumerable)" == ["s true true"]
 #guard out "try { Error.prototype.stack = '' } catch (e) { print(e.name) } try { new Error().stack = 1 } catch (e) { print(e.name) }" == ["TypeError", "TypeError"]
 
+/-! ## `charAt` and `charCodeAt` on a string that is not ASCII
+
+They index the units that `cachedChars` keeps for the last string (2026-11-13), so a loop over
+such a string is linear. These check the answers on supplementary characters, lone surrogates,
+two strings in turn (the cache changes hands) and indices out of range. -/
+
+#guard out "var s = 'a\\u00e9\\ud83d\\ude00\\ud800z', r = []; for (var i = -1; i <= s.length; i++) r.push(s.charCodeAt(i)); print(r.join())" == ["NaN,97,233,55357,56832,55296,122,NaN"]
+#guard out "var s = '\\u00e9\\ud83d\\ude00', t = 'x\\u0101', r = ''; for (var i = 0; i < 3; i++) r += s.charAt(i).length + ':' + s.charCodeAt(i) + '/' + t.charCodeAt(i % 2) + ' '; print(r, s.charAt(1) + s.charAt(2) === '\\ud83d\\ude00', s.charAt(9) === '')" == ["1:233/120 1:55357/257 1:56832/120  true true"]
+#guard out "var b = '\x00\x61\x73\x6d\x80\xff'.repeat(40), n = 0; for (var i = 0; i < b.length; i++) n += b.charCodeAt(i); print(b.length, n)" == ["240 28160"]
+
 end L4Factoidal.JS.Tests

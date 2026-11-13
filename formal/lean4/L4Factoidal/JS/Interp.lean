@@ -184,6 +184,20 @@ def sizeCost (v : Value) : M Nat := do
     | _ => pure 0
   | _ => pure 0
 
+/-- `charAt` and `charCodeAt` on a string that is not ASCII, when it is the string whose units
+`cachedChars` holds: they index those units, and the only walk is the comparison with the cached
+string (memory speed, a step for each 4096 bytes). A loop over a string's units (the WPT
+`wasm/core` harness turns each module's bytes into an ArrayBuffer this way) is then linear, where
+it was a walk of the string per unit (a 20 KB module took the 5 M steps of a run). -/
+def cachedReceiverCost (id : Native) (thisV : Value) : M (Option Nat) := do
+  match thisV with
+  | .str s =>
+    if !(id == .stringCharAt || id == .stringCharCodeAt) then return none
+    match (← get).reCache with
+    | some (t, _) => pure (if t == s then some (s.utf8ByteSize / 4096) else none)
+    | none => pure none
+  | _ => pure none
+
 /-- The built-ins that do not walk their receiver: String methods on an ASCII string index it
 in constant time (`Str.unitAt?`) or copy only their result (and take steps for that); an
 Array's `push`, `pop` and `at`. -/
@@ -1267,7 +1281,7 @@ def getV : Nat → Value → String → M Value
       | some (.data x ..) => pure x
       | some (.acc g _ _ _) => if g.isObj then callV n g v #[] else pure .undef
     | .str s =>
-      if key == "length" then pure (.num (Float.ofNat (Str.jsLength s)))
+      if key == "length" then pure (.num (Float.ofNat ((← get).strLength s)))
       else match arrayIndex? key with
         | some i => match Str.unitStrAt? s i with
           | some c => pure (.str c)
@@ -3661,7 +3675,10 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
     -- String methods that index an ASCII receiver in constant time (`charAt`, `charCodeAt`,
     -- `at`, `codePointAt`) or copy only their result (`slice`, `substring`, `substr`, which
     -- take steps for the result) do not walk it, and take no steps for it.
-    let recvCost ← if indexesReceiver id thisV then pure 0 else sizeCost thisV
+    let recvCost ← if indexesReceiver id thisV then pure 0 else
+      match ← cachedReceiverCost id thisV with
+      | some c => pure c
+      | none => sizeCost thisV
     let argsCost ← if (← subjectCached id args) then pure 0
       else args.foldlM (fun acc a => do pure (acc + (← sizeCost a))) 0
     charge (recvCost + args.size / 64 + argsCost)
@@ -6199,12 +6216,16 @@ def stringOrMath : Nat → Native → Value → Array Value → M Value
       match id with
       | .stringCharAt =>
         let i := toIntegerOrInf (← toNum n a0)
-        pure (.str (if i < 0 then "" else (Str.unitStrAt? s i.toUInt64.toNat).getD ""))
+        if i < 0 then pure (.str "") else
+        if Str.isAscii s then pure (.str ((Str.unitStrAt? s i.toUInt64.toNat).getD "")) else
+        -- not ASCII: the units of `cachedChars` (`cachedReceiverCost`)
+        pure (.str (((← cachedChars s)[i.toUInt64.toNat]?.map String.singleton).getD ""))
       | .stringCharCodeAt =>
         let i := toIntegerOrInf (← toNum n a0)
-        pure (.num (if i < 0 then nan else match Str.unitAt? s i.toUInt64.toNat with
-          | some u => Float.ofNat u
-          | none => nan))
+        if i < 0 then pure (.num nan) else
+        let u ← if Str.isAscii s then pure (Str.unitAt? s i.toUInt64.toNat)
+          else do pure ((← cachedChars s)[i.toUInt64.toNat]?.map Str.charUnit)
+        pure (.num (match u with | some u => Float.ofNat u | none => nan))
       | _ =>
         -- the unit count only: `charsOf` is made by the methods that walk the string
         let len := Str.jsLength s

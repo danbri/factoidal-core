@@ -698,6 +698,16 @@ def HeapOf.fastGet (h : HeapOf H) (id : Nat) (key : String) : Nat → Value
       | .obj p => h.fastGet p key fuel
       | _ => .hole
 
+/-- A string's `length` (§6.1.4, `Str.jsLength`). A string that is not ASCII is walked to count
+its units, unless it is the string whose units `reCache` holds (a loop such as
+`for (i = 0; i < s.length; i++) s.charCodeAt(i)`): then the count is that array's size, and the
+walk is one comparison of the two strings. -/
+def HeapOf.strLength (h : HeapOf H) (s : String) : Nat :=
+  if Str.isAscii s then s.length else
+  match h.reCache with
+  | some (t, cs) => if t == s then cs.size else Str.jsLength s
+  | none => Str.jsLength s
+
 /-- `fastGet` from a value: an object, or a string's prototype. -/
 @[inline] def HeapOf.fastGetV (h : HeapOf H) (v : Value) (key : String) : Value :=
   match v with
@@ -709,7 +719,7 @@ def HeapOf.fastGet (h : HeapOf H) (id : Nat) (key : String) : Nat → Value
       | _ => h.fastGet id key 1000
     else h.fastGet id key 1000
   | .str s =>
-    if key == "length" then .num (Float.ofNat (Str.jsLength s))
+    if key == "length" then .num (Float.ofNat (h.strLength s))
     else if key.front.isDigit then .hole
     else h.fastGet h.realm.stringProto key 1000
   | _ => .hole

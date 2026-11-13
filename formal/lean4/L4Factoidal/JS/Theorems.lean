@@ -10,6 +10,9 @@ import L4Factoidal.JS.Interp
   normally; `continue` and a normal body go on; `return` leaves.
 - `sameValue_*`: SameValue is reflexive on the values that are not numbers, and
   tells `+0` from `-0`.
+- `unitAt?_notAscii`: on a string that is not ASCII, `charCodeAt`'s unit is the entry of
+  `Str.unitChars` (the array that `cachedChars` keeps), so indexing the cached array gives the
+  answer of `Str.unitAt?`.
 
 The evaluator is a Lean function, so it is deterministic by construction: the same
 script and heap give the same outcome and heap. Each function of the parser and of
@@ -66,5 +69,29 @@ theorem sameValue_bool (b : Bool) : sameValue (.bool b) (.bool b) = true := by
 
 theorem toBool_obj (i : Nat) : toBool (.obj i) = true := rfl
 theorem toBool_undef : toBool .undef = false := rfl
+
+/-- Kind: an equation of definitions (the fast path is the definition's own branch).
+Says: for a string that is not ASCII, `Str.unitAt? s i` is entry `i` of `Str.unitChars s` read
+as a unit, which is what `charCodeAt` computes from `cachedChars` when the cache holds `s`.
+Does not say: that the cache holds `s` (the evaluator compares the strings before it uses it), or
+anything about `charAt`, whose answer `#guard`s in `RegressionTests` check. -/
+theorem unitAt?_notAscii (s : String) (i : Nat) (h : Str.isAscii s = false) :
+    Str.unitAt? s i = (Str.unitChars s)[i]?.map Str.charUnit := by
+  simp [Str.unitAt?, h]
+
+/-- Kind: an equation of definitions.
+Says: for an ASCII string, and for any string when the heap holds no cached string or a different
+one, `strLength` is `Str.jsLength` (the cached path is the only other case).
+Does not say: that the cached array's size is `Str.jsLength` of its string (checked by `#guard`s
+in `RegressionTests`, not proved). -/
+theorem strLength_uncached {H : Type} (h : HeapOf H) (s : String)
+    (hc : h.reCache = none ∨ ∃ t cs, h.reCache = some (t, cs) ∧ t ≠ s) :
+    h.strLength s = Str.jsLength s := by
+  unfold HeapOf.strLength
+  split
+  · rename_i ha; simp [Str.jsLength, ha]
+  · rcases hc with hc | ⟨t, cs, hc, hne⟩
+    · simp [hc]
+    · simp [hc, hne]
 
 end L4Factoidal.JS

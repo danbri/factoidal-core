@@ -361,7 +361,7 @@ def numSpanEnd (cs : Array Char) : Nat → Nat → Nat
 /-- Some character of `cs[i..e]` is `_`. -/
 def hasSep (cs : Array Char) (e : Nat) : Nat → Nat → Bool
   | 0, _ => false
-  | fuel + 1, i => if i < e then (charAt cs i == '_' || hasSep cs e fuel (i + 1)) else false
+  | fuel + 1, i => if i < e then (if charAt cs i == '_' then true else hasSep cs e fuel (i + 1)) else false
 
 /-- `cs[i..e]` without its `_` characters, after `acc`. -/
 def stripSeps (cs : Array Char) (e : Nat) : Nat → Nat → Array Char → Array Char
@@ -382,8 +382,9 @@ def sepsPlaced (cs : Array Char) (dig : Char → Bool) (e : Nat) : Nat → Nat �
   | 0, _ => true
   | fuel + 1, i =>
     if i < e then
-      (charAt cs i != '_' || (i > 0 && dig (charAt cs (i - 1)) && dig (charAt cs (i + 1)))) &&
+      if charAt cs i != '_' || (i > 0 && dig (charAt cs (i - 1)) && dig (charAt cs (i + 1))) then
         sepsPlaced cs dig e fuel (i + 1)
+      else false
     else true
 
 /-- A numeric literal at `i` that has a `_` in its span: `none` when it has none (the

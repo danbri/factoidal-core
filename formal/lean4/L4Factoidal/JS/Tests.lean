@@ -89,7 +89,8 @@ def outWith (steps : Nat) (src : String) : List String :=
   | (.halted w, _) => ["halted " ++ w]
 
 -- a String method that walks its receiver takes steps for it: here a non-ASCII string,
--- indexed by walking it, so the loop stops at the budget
+-- compared with the cached string at each call (`cachedReceiverCost`), so the loop stops at
+-- the budget
 #guard outWith 200000 "var s = '\u00e9'.repeat(100000), t = 0; for (var i = 0; i < s.length; i++) t += s.charCodeAt(i); print(t)" ==
   ["halted step budget exhausted"]
 #guard outWith 2000000 "var s = 'ab'.repeat(1000), t = 0; for (var i = 0; i < s.length; i++) t += s.charCodeAt(i); print(t)" == ["195000"]
