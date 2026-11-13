@@ -12,13 +12,15 @@ name and local name; attributes keep their namespace name (namespace declaration
 are not attributes in the namespace view). A CDATA section becomes a Text node
 with its character data: this arena's consumers (style sheets, layout) read the
 data of Text nodes, and DOM §4.13 makes CDATASection a kind of Text. The
-document type declaration is not kept.
+document type declaration is not kept. For the public identifiers of HTML §14.2 the
+HTML entity names are declared (`xhtmlResolver`).
 
 The tree is built with an explicit work list, one loop step per node, never one
 stack frame per level of nesting.
 -/
 import L4Factoidal.DOM.Arena
 import L4Factoidal.XML.NamespaceView
+import L4Factoidal.HTML.Entities
 
 namespace L4Factoidal.DOM
 
@@ -38,11 +40,66 @@ private def xmlNode (parent : NodeId) : NamespaceNode → DOM.Node
   -- The namespace view gives every element as `.element`.
   | .other (.element ..) => { type := .comment, parent := some parent }
 
+/-- The public identifiers for which an XML parser of a user agent uses the HTML entity
+declarations in place of the external subset (HTML §14.2 "Parsing XML documents"). -/
+def xhtmlEntityPublicIds : List String :=
+  ["-//W3C//DTD XHTML 1.0 Transitional//EN", "-//W3C//DTD XHTML 1.1//EN",
+   "-//W3C//DTD XHTML 1.0 Strict//EN", "-//W3C//DTD XHTML 1.0 Frameset//EN",
+   "-//W3C//DTD XHTML Basic 1.0//EN", "-//W3C//DTD XHTML 1.1 plus MathML 2.0//EN",
+   "-//W3C//DTD XHTML 1.1 plus MathML 2.0 plus SVG 1.1//EN", "-//W3C//DTD MathML 2.0//EN",
+   "-//WAPFORUM//DTD XHTML Mobile 1.0//EN"]
+
+/-- One `<!ENTITY name "...">` declaration for each HTML named character reference that
+ends with a semicolon: the content of the DTD that HTML §14.2 names. `&` and `<` in a
+value are written as a reference to a character reference (`&#38;#60;`), as that DTD
+writes them, so that the replacement text is well-formed. -/
+def xhtmlEntityDtd : Thunk String := Thunk.mk fun _ =>
+  let one (c : Char) : String :=
+    if c == '&' || c == '<' then s!"&#38;#{c.toNat};" else s!"&#{c.toNat};"
+  HTML.entityMap.get.fold (fun acc name value =>
+    acc ++ "<!ENTITY " ++ name ++ " \"" ++ String.join (value.toList.map one) ++ "\">\n") ""
+
+/-- A quoted literal at the start of `cs` (after white space): its text and the rest. -/
+private def quoted (cs : List Char) : Option (String × List Char) :=
+  match cs.dropWhile Char.isWhitespace with
+  | q :: rest =>
+    if q == '"' || q == '\'' then
+      let lit := rest.takeWhile (· != q)
+      some (String.ofList lit, rest.drop (lit.length + 1))
+    else none
+  | [] => none
+
+/-- The public and system identifiers of the document type declaration of `src`, when it
+has the form `<!DOCTYPE name PUBLIC "public" "system"`. The scan reads the text between
+the first `<!DOCTYPE` and the first `>` or `[` after it; the XML parser decides
+well-formedness, not this function. -/
+def doctypePublicSystem (src : String) : Option (String × String) :=
+  match src.splitOn "<!DOCTYPE" with
+  | _ :: after :: _ =>
+    let head := after.toList.takeWhile (fun c => c != '>' && c != '[')
+    match (String.ofList head).splitOn "PUBLIC" with
+    | _ :: rest :: _ =>
+      match quoted rest.toList with
+      | some (pub, more) => (quoted more).map fun (sys, _) => (pub, sys)
+      | none => none
+    | _ => none
+  | _ => none
+
+/-- The resolver of a user agent for the XML syntax of HTML: when the document type
+declaration has one of `xhtmlEntityPublicIds`, its system identifier is answered with
+`xhtmlEntityDtd`; nothing else is read. -/
+def xhtmlResolver (src : String) : Resolver :=
+  match doctypePublicSystem src with
+  | some (pub, sys) =>
+    if xhtmlEntityPublicIds.contains pub then fun id => if id == sys then some xhtmlEntityDtd.get else none
+    else fun _ => none
+  | none => fun _ => none
+
 /-- Parse a document in the XML syntax of HTML into a DOM arena; node 0 is the Document.
 Every node of the tree comes from at least one character of the source, so the loop
 bound `src.length + 2` is never reached by a parsed tree. -/
 def parseXmlDocument (src : String) : Except String Dom := do
-  let root ← parseNamespaceView src
+  let root ← parseNamespaceViewWith (xhtmlResolver src) src
   let mut d : Dom := { nodes := #[{ type := .document, htmlDoc := false }] }
   let mut work : List (NodeId × NamespaceNode) := [(0, root)]
   for _ in [0:src.length + 2] do
@@ -62,5 +119,16 @@ def isXhtmlPath (url : String) : Bool :=
   let path := ((url.splitOn "#").headD "").splitOn "?" |>.headD ""
   let lower := path.toLower
   lower.endsWith ".xht" || lower.endsWith ".xhtml"
+
+/-- The text of the first Text node of a parsed document, for the checks below. -/
+private def firstText (src : String) : Option String :=
+  (parseXmlDocument src).toOption.bind fun d => (d.nodes.find? (·.type == .text)).map (·.data)
+
+-- HTML §14.2: with a listed public identifier the HTML entity names are declared.
+#guard firstText "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Transitional//EN\" \"foo\"><html><body>&nbsp;</body></html>" == some "\u00a0"
+#guard firstText "<!DOCTYPE html PUBLIC \"-//W3C//DTD MathML 2.0//EN\" \"foo\"><html><body>&nvlt;</body></html>" == some "<\u20d2"
+-- Without one, a reference to an undeclared entity is not well-formed.
+#guard (parseXmlDocument "<!DOCTYPE html><html><body>&nbsp;</body></html>").toOption.isNone
+#guard doctypePublicSystem "<!DOCTYPE html PUBLIC '-//W3C//DTD XHTML 1.1//EN' \"x y\">" == some ("-//W3C//DTD XHTML 1.1//EN", "x y")
 
 end L4Factoidal.DOM

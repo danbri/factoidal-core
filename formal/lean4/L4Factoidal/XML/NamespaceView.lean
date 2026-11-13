@@ -64,6 +64,15 @@ def parseNamespaceView (src : String) : Except String NamespaceNode := do
   | some root => pure root
   | none => throw "XML namespace resolution failed"
 
+/-- `parseNamespaceView` with a `Resolver` for the external subset and external entities
+(`parseXMLWith`). With the resolver that reads nothing this is `parseNamespaceView`. -/
+def parseNamespaceViewWith (resolve : Resolver) (src : String) : Except String NamespaceNode := do
+  let d ← (parseXMLWith resolve src).mapError (fun e => s!"XML: {e.message} at {e.position}")
+  if !d.namespaceWellFormed then throw "XML namespace well-formedness violation"
+  match namespaceView ((d.decl.map (·.version)).getD "1.0") initialScope d.root with
+  | some root => pure root
+  | none => throw "XML namespace resolution failed"
+
 private def foreignName (n : ExpandedName) : String :=
   "{" ++ n.namespace_.getD "" ++ "}" ++ n.localPart
 

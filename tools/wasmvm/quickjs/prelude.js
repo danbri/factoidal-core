@@ -2533,8 +2533,29 @@
     const own = { document: () => wrap(doc), window: () => w, self: () => w, frames: () => w, globalThis: () => w,
       parent: () => window, top: () => window, frameElement: () => wrap(info(doc, 12)), length: () => 0,
       location: () => frameLocation(doc) };
+    // Frames share this realm. A function reached through a frame's window runs with that
+    // frame's document as `document` for the length of the call (as the frame's own scripts
+    // do: n.script below), so `iframe.contentWindow.f()` resolves URLs against the frame's
+    // document. Callbacks that f leaves behind run later with the top document: one realm
+    // can not tell which frame a function belongs to.
+    const inFrame = new WeakMap();
+    const asFrame = f => {
+      let g = inFrame.get(f);
+      if (g) return g;
+      const enter = run => { const before = scriptDocument; scriptDocument = wrap(doc); try { return run(); } finally { scriptDocument = before; } };
+      g = new Proxy(f, {
+        apply(target, self, args) { return enter(() => Reflect.apply(target, self, args)); },
+        construct(target, args, nt) { return enter(() => Reflect.construct(target, args, nt === g ? target : nt)); },
+      });
+      inFrame.set(f, g);
+      return g;
+    };
     w = new Proxy(window, {
-      get(t, p) { return Object.prototype.hasOwnProperty.call(own, p) ? own[p]() : Reflect.get(t, p, t); },
+      get(t, p) {
+        if (Object.prototype.hasOwnProperty.call(own, p)) return own[p]();
+        const v = Reflect.get(t, p, t);
+        return typeof v === 'function' && typeof p === 'string' ? asFrame(v) : v;
+      },
       has(t, p) { return Object.prototype.hasOwnProperty.call(own, p) || Reflect.has(t, p); },
     });
     frameWindows.set(doc, w);
