@@ -450,10 +450,13 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
   // .any/.window wrapper, or a file of the copy decoded as a page is); undefined when absent.
   // The encoding name of the frame document frameSource last decoded (the `frame` action's `encoding`).
   let frameEncoding:string|undefined;
-  const frameSource=async(url:string):Promise<string|undefined>=>{
+  // A form's POST (method, contentType, bodyBase64 from the engine) is sent as it is.
+  const frameSource=async(url:string,post?:{contentType?:string;bodyBase64?:string}):Promise<string|undefined>=>{
     frameEncoding=undefined;
     let u:URL;try{u=new URL(url);}catch{return undefined;}
-    if(http){try{const r=await http.fetch(url);if(!r.ok){await r.body?.cancel();return undefined;}const d=decode(new Uint8Array(await r.arrayBuffer()),r.headers.get("content-type")??"");frameEncoding=d.encoding;return d.html;}catch{return undefined;}}
+    if(post&&!http)return undefined;
+    if(http){try{const r=await http.fetch(url,post?{method:"POST",headers:{"content-type":post.contentType??""},
+      body:Uint8Array.from(atob(post.bodyBase64??""),c=>c.charCodeAt(0))}:undefined);if(!r.ok){await r.body?.cancel();return undefined;}const d=decode(new Uint8Array(await r.arrayBuffer()),r.headers.get("content-type")??"");frameEncoding=d.encoding;return d.html;}catch{return undefined;}}
     if(!isWptHost(url))return undefined;
     const path=decodeURIComponent(u.pathname).replace(/^\//,"");
     const m=/^(.*)\.test262-test(\.strict)?\.html$/.exec(path);
@@ -589,7 +592,7 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
       for(let round=0;round<256&&turn.clock<70000&&((turn.navigations?.length??0)>0||(turn.frameLoads??0)>0);round++){
         const session=turn.session;
         for(const nav of turn.navigations??[]){
-          const source=await frameSource(nav.url);
+          const source=await frameSource(nav.url,nav.method==="POST"?nav:undefined);
           take(turn=await ss({action:"frame",session,node:nav.nodeId,url:nav.url,source:source??"",...(frameEncoding?{encoding:frameEncoding}:{}),
             ...(source===undefined?{failed:true}:{resources:await resourcesOf(source,nav.url)})}));
         }

@@ -22,10 +22,25 @@ What is here, as values:
     application/x-www-form-urlencoded percent-encode set and spaceAsPlus. A code point the
     encoding cannot encode becomes the numeric character reference `&#N;`, percent-encoded
     (`%26%23N%3B`), as the URL Standard says.
-  * `plan`: the form submission algorithm's decisions for a GET form: the action URL
-    (submitter's `formaction`, else the form's `action`, else the document's URL), the
-    method, the target name, and the URL with its query replaced ("mutate action URL").
-    POST and `dialog` submit nothing here (no request bodies yet): `plan` answers `none`.
+  * `plan`: the form submission algorithm's decisions: the action URL (submitter's
+    `formaction`, else the form's `action`, else the document's URL), the method, the
+    enctype, the target name, and what is sent. GET replaces the URL's query ("mutate
+    action URL"); POST to an http(s) URL is "submit as entity body" (§4.10.21.3): the body
+    is the entry list in the enctype (`application/x-www-form-urlencoded`,
+    `multipart/form-data` (§4.10.21.8, `multipartBody`) or `text/plain` (§4.10.21.9,
+    `textPlainBody`)), each in the form's encoding. `dialog` and the `javascript:` and
+    `mailto:` schemes navigate nowhere here: `plan` answers `none`.
+  * `navigationAllowed`: where a submission may go (the outbound rule of a navigation the
+    page starts): http(s) only where a page's own request may connect
+    (`Net.PageFetch.mayConnect`: no local address from a page that is not local, no `http`
+    from an `https` page); `data:` only for GET; `file:` only from a `file:` page.
+  * `entriesOfWire`: an entry list the page's script host passes back after the `formdata`
+    event (§4.10.21.4 step 6): the script may add or change entries; the decisions above are
+    still taken here.
+
+Theorems on where a submission goes: `navigationAllowed_post` (a POST goes only where a page
+request may connect) and `navigationAllowed_local` (a page that is not local never sends a
+form to a local address).
 
 Theorems (cheap, at the byte layer that every encoding shares): `decode_encodeBytes`
 (percent-decoding a serialized component gives back exactly the encoder's bytes, so the
@@ -44,6 +59,7 @@ import L4Factoidal.DOM.Forms
 import L4Factoidal.WHATWG.URL.Parser
 import L4Factoidal.WHATWG.Encoding.Core
 import L4Factoidal.WHATWG.Encoding.Theorems
+import L4Factoidal.Net.PageFetch
 
 namespace L4Factoidal.HTML.FormSubmission
 open L4Factoidal.DOM L4Factoidal.DOM.Forms
@@ -91,13 +107,26 @@ def selectedOptions (d : Dom) (sel : NodeId) : Array NodeId :=
     | some o => #[o]
     | none => #[]
 
+/-- An entry's value (XHR "entry"): a string, or a file (its name, its type and its bytes). -/
+inductive Value where
+  | text (v : String)
+  | file (name type : String) (bytes : ByteArray)
+  deriving BEq, Inhabited
+
+/-- A value as a string, where a file stands for its name (§4.10.21.7 step 3.2 and
+§4.10.21.9 step 3.1). -/
+def Value.asText : Value → String
+  | .text v => v
+  | .file n _ _ => n
+
 /-- The entry list of `form` (§4.10.21.4) with `submitter` (none for `form.submit()`),
 and the name of the encoding for a hidden `_charset_` control. Only the controls in the
 form's subtree have it as their form owner here (`DOM.Forms.formOwner`: the `form`
-attribute is not read). -/
-def entryList (d : Dom) (form : NodeId) (submitter : Option NodeId) (charsetName : String) :
-    Array (String × String) := Id.run do
-  let mut out : Array (String × String) := #[]
+attribute is not read). A file control gives an empty file named "" of type
+`application/octet-stream` (no file is ever selected here, step 5.11.1). -/
+def entries (d : Dom) (form : NodeId) (submitter : Option NodeId) (charsetName : String) :
+    Array (String × Value) := Id.run do
+  let mut out : Array (String × Value) := #[]
   for k in d.treeOrder form false do
     if !isHtml d k ["button", "input", "select", "textarea"] then continue
     if formOwner d k != some form then continue
@@ -112,24 +141,29 @@ def entryList (d : Dom) (form : NodeId) (submitter : Option NodeId) (charsetName
     if isInput && t == "image" then
       let n := (attr? d k "name").getD ""
       let pfx := if n.isEmpty then "" else n ++ "."
-      out := out.push (pfx ++ "x", "0") |>.push (pfx ++ "y", "0")
+      out := out.push (pfx ++ "x", .text "0") |>.push (pfx ++ "y", .text "0")
       continue
     let name := (attr? d k "name").getD ""
     if name.isEmpty then continue
     if isHtml d k ["select"] then
       for o in selectedOptions d k do
-        if !optionDisabled d o then out := out.push (name, optionValue d o)
+        if !optionDisabled d o then out := out.push (name, .text (optionValue d o))
     else if isInput && (t == "checkbox" || t == "radio") then
-      out := out.push (name, (attr? d k "value").getD "on")
+      out := out.push (name, .text ((attr? d k "value").getD "on"))
     else if isInput && t == "file" then
-      out := out.push (name, "")
+      out := out.push (name, .file "" "application/octet-stream" ByteArray.empty)
     else if isInput && t == "hidden" && Dom.asciiLower name == "_charset_" then
-      out := out.push (name, charsetName)
+      out := out.push (name, .text charsetName)
     else if isHtml d k ["textarea"] then
-      out := out.push (name, (d.textContent k).getD "")
+      out := out.push (name, .text ((d.textContent k).getD ""))
     else
-      out := out.push (name, (attr? d k "value").getD "")
+      out := out.push (name, .text ((attr? d k "value").getD ""))
   return out
+
+/-- The entry list as names and strings (a file stands for its name). -/
+def entryList (d : Dom) (form : NodeId) (submitter : Option NodeId) (charsetName : String) :
+    Array (String × String) :=
+  (entries d form submitter charsetName).map fun (n, v) => (n, v.asText)
 
 /-- §4.10.21.6: every CR not followed by LF, and every LF not preceded by CR, becomes
 CR LF. -/
@@ -171,15 +205,117 @@ def component (enc : Encoding) (s : String) : String :=
 def serialize (enc : Encoding) (tuples : List (String × String)) : String :=
   "&".intercalate (tuples.map fun (n, v) => component enc n ++ "=" ++ component enc v)
 
+/-! ## Request bodies (§4.10.21.7 to §4.10.21.9) -/
+
+/-- A string in the form's encoding, an unencodable code point as its numeric character
+reference (Encoding "encode", mode html). -/
+def encodeText (enc : Encoding) (s : String) : ByteArray :=
+  (Encoding.encode (s.toList.toArray.map (·.val)) (Encoding.getOutputEncoding enc)).getD s.toUTF8
+
+/-- A field name or filename in a `Content-Disposition` header (§4.10.21.8): LF, CR and `"`
+become `%0A`, `%0D` and `%22`. -/
+def escapeField (s : String) : String :=
+  String.join (s.toList.map fun c =>
+    if c == '\n' then "%0A" else if c == '\r' then "%0D" else if c == '"' then "%22" else c.toString)
+
+/-- The ISO-8859-1 reading of bytes (each byte one code point), to search them as text. -/
+def isoText (b : ByteArray) : String := String.ofList (b.toList.map fun x => Char.ofNat x.toNat)
+
+/-- The first boundary of the form `----FoafnautFormBoundary<k>` that occurs in no part
+(RFC 2046 §5.1.1: a boundary must not occur in the parts). -/
+def boundaryFor (parts : List ByteArray) : String := Id.run do
+  let texts := parts.map isoText
+  for k in [0:parts.length + 2] do
+    let b := s!"----FoafnautFormBoundary{k}"
+    if texts.all fun t => (t.splitOn b).length == 1 then return b
+  return s!"----FoafnautFormBoundary{parts.length + 2}"
+
+/-- The multipart/form-data encoding algorithm (§4.10.21.8, RFC 7578) in encoding `enc`:
+names and string values with their line breaks normalized, names, string values and
+filenames in `enc`, a file's type or `application/octet-stream`. The boundary and the
+body. -/
+def multipartBody (enc : Encoding) (es : List (String × Value)) : String × ByteArray := Id.run do
+  let parts := es.map fun (n, v) =>
+    let head := "Content-Disposition: form-data; name=\"" ++ escapeField (normalizeLineBreaks n) ++ "\"" ++
+      match v with
+      | .text _ => ""
+      | .file fname type _ =>
+        "; filename=\"" ++ escapeField fname ++ "\"\r\nContent-Type: " ++
+          (if type.isEmpty then "application/octet-stream" else type)
+    let content := match v with
+      | .text t => encodeText enc (normalizeLineBreaks t)
+      | .file _ _ b => b
+    (encodeText enc head, content)
+  let b := boundaryFor (parts.flatMap fun (h, c) => [h, c])
+  let mut out := ByteArray.empty
+  for (h, c) in parts do
+    out := out ++ ("--" ++ b ++ "\r\n").toUTF8 ++ h ++ "\r\n\r\n".toUTF8 ++ c ++ "\r\n".toUTF8
+  return (b, out ++ ("--" ++ b ++ "--\r\n").toUTF8)
+
+/-- The text/plain encoding algorithm (§4.10.21.9): each pair as `name=value` and CR LF, a
+file as its name, in encoding `enc`. -/
+def textPlainBody (enc : Encoding) (es : List (String × Value)) : ByteArray :=
+  encodeText enc (String.join (es.map fun (n, v) =>
+    normalizeLineBreaks n ++ "=" ++ normalizeLineBreaks v.asText ++ "\r\n"))
+
+/-! ## Where a submission may go -/
+
+/-- The outbound rule of a form submission, a navigation the page starts. `page`: what the
+engine knows of the page (`Net.PageFetch.Page.ofUrl`, never what the page says of itself);
+`pageScheme`: the scheme of the form's document. An http(s) URL only where a request of
+the page may connect (`Net.PageFetch.mayConnect`); a `data:` URL only with GET (it is
+answered from the URL, nothing is sent); a `file:` URL only from a `file:` document. -/
+def navigationAllowed (page : Net.PageFetch.Page) (pageScheme : String) (u : URL.Url) (post : Bool) : Bool :=
+  if u.scheme == "http" || u.scheme == "https" then Net.PageFetch.mayConnect page u
+  else if u.scheme == "data" then !post
+  else u.scheme == "file" && pageScheme == "file" && !post
+
+/-- Theorem (security, safety property). Says: a POST submission is allowed only to a URL
+that a request of the page may connect to (`Net.PageFetch.mayConnect`), so the rules for a
+page's requests (local addresses, mixed content) hold for every request body a form sends.
+Does not say: anything about what the embedder does with the request, nor about GET to
+`data:` or `file:` URLs. -/
+theorem navigationAllowed_post (page : Net.PageFetch.Page) (s : String) (u : URL.Url)
+    (h : navigationAllowed page s u true = true) : Net.PageFetch.mayConnect page u = true := by
+  unfold navigationAllowed at h
+  by_cases hs : (u.scheme == "http" || u.scheme == "https") = true
+  · simpa [hs] using h
+  · simp only [hs, if_false, Bool.false_eq_true] at h
+    split at h <;> simp_all
+
+/-- Theorem (security, safety property). Says: a page that is not local never sends a form
+(GET or POST) to a local http(s) address (`localhost`, a `.localhost` name or a
+special-purpose IP literal, `Net.PageFetch.privateHost`). Does not say: anything about a
+name that resolves to a local address (the request's DNS pin is the embedder's, as for a
+page request), nor about `data:` or `file:` URLs, which go to no host. -/
+theorem navigationAllowed_local (page : Net.PageFetch.Page) (s : String) (u : URL.Url) (post : Bool)
+    (hl : page.isLocal = false) (hs : (u.scheme == "http" || u.scheme == "https") = true)
+    (h : navigationAllowed page s u post = true) : Net.PageFetch.privateHost u = false := by
+  unfold navigationAllowed at h
+  simp only [hs, if_true] at h
+  cases hp : Net.PageFetch.privateHost u
+  · rfl
+  · have := Net.PageFetch.mayConnect_local_needs_local_page page u h hp
+    simp_all
+
 /-! ## The submission (§4.10.21.3) -/
 
-/-- What a GET submission does: navigate the navigable that `target` names (resolved by
-the host: "" and `_self` the form's own, `_blank`, `_parent`, `_top`, or a frame name) to
-`url`. -/
+/-- The enctype of a submission (§4.10.19.6): the submitter's `formenctype`, else the
+form's `enctype`; `application/x-www-form-urlencoded` when missing or invalid. -/
+inductive Enctype where
+  | urlencoded | multipart | textPlain
+  deriving BEq, Repr, Inhabited, DecidableEq
+
+/-- What a submission does: navigate the navigable that `target` names (resolved by the
+host: "" and `_self` the form's own, `_blank`, `_parent`, `_top`, or a frame name) to
+`url`, with GET, or with POST and a body of type `contentType`. -/
 structure Plan where
   target : String
   url : String
-  deriving Repr, BEq, Inhabited
+  method : String := "GET"
+  contentType : String := ""
+  body : ByteArray := ByteArray.empty
+  deriving BEq, Inhabited
 
 /-- A submit button's override of a form attribute (`formaction`, `formmethod`,
 `formtarget`): only a submitter that is a submit button has them. -/
@@ -197,27 +333,109 @@ def method (d : Dom) (form : NodeId) (submitter : Option NodeId) : String :=
   let m := Dom.asciiLower ((submitterAttr d submitter "formmethod" <|> attr? d form "method").getD "get")
   if m == "post" || m == "dialog" then m else "get"
 
+def enctype (d : Dom) (form : NodeId) (submitter : Option NodeId) : Enctype :=
+  let e := Dom.asciiLower ((submitterAttr d submitter "formenctype" <|> attr? d form "enctype").getD "")
+  if e == "multipart/form-data" then .multipart
+  else if e == "text/plain" then .textPlain
+  else .urlencoded
+
 /-- The target of the submission (§4.10.21.3 step 18, "get an element's target"): the
 submitter's `formtarget`, else the form's `target`, else `baseTarget` (the first `base`
 element's `target` in the document). -/
 def target (d : Dom) (form : NodeId) (submitter : Option NodeId) (baseTarget : String) : String :=
   (submitterAttr d submitter "formtarget" <|> attr? d form "target").getD baseTarget
 
+/-- The form's encoding for a submission: `accept-charset`, else the document's
+(`pickEncoding`). -/
+def formEncoding (d : Dom) (form : NodeId) (docEncoding : Encoding) : Encoding :=
+  pickEncoding (attr? d form "accept-charset") docEncoding
+
 /-- The form submission algorithm for `form` with `submitter`, in a document with URL
-`docURL` (its base URL) and encoding `docEncoding`: for a GET form whose action is an
-http(s) or data URL, the navigation it makes ("mutate action URL": the query becomes the
-serialized entry list in the form's encoding). `none` when it navigates nowhere here: the
-action does not parse, POST and `dialog` (not done), `javascript:` and `mailto:` URLs. -/
+`docURL` (its base URL) and encoding `docEncoding`, with the entry list `given` when the
+page's script host passed one back after the `formdata` event (else the form's own,
+`entries`): the navigation it makes. GET to an http(s), data or file URL: "mutate action
+URL" (the query becomes the serialized entry list in the form's encoding). POST to an
+http(s) URL: "submit as entity body" in the enctype; POST to a data URL: "get action URL"
+(nothing is sent). `none` when it navigates nowhere here: the action does not parse,
+`dialog`, `javascript:` and `mailto:` URLs. Where it may go is `navigationAllowed`, asked by
+the caller, which knows the page. -/
 def plan (d : Dom) (form : NodeId) (submitter : Option NodeId) (docURL : String) (docEncoding : Encoding)
-    (baseTarget : String := "") : Option Plan := do
+    (baseTarget : String := "") (given : Option (Array (String × Value)) := none) : Option Plan := do
   let action := (submitterAttr d submitter "formaction" <|> attr? d form "action").getD ""
   let action := if action.isEmpty then docURL else action
   let parsed ← URL.parseUrl action (if docURL.isEmpty then none else some docURL)
-  if method d form submitter != "get" then none
+  let m := method d form submitter
+  if m == "dialog" then none
   if !["http", "https", "data", "file"].contains parsed.scheme then none
-  let enc := pickEncoding (attr? d form "accept-charset") docEncoding
-  let query := serialize enc (pairs (entryList d form submitter enc.name))
-  some { target := target d form submitter baseTarget, url := { parsed with query := some query }.href }
+  let enc := formEncoding d form docEncoding
+  let es := (given.getD (entries d form submitter enc.name)).toList
+  let tgt := target d form submitter baseTarget
+  if m == "get" then
+    let query := serialize enc (pairs (es.toArray.map fun (n, v) => (n, v.asText)))
+    return { target := tgt, url := { parsed with query := some query }.href }
+  if parsed.scheme == "data" then return { target := tgt, url := parsed.href }
+  if parsed.scheme != "http" && parsed.scheme != "https" then none
+  match enctype d form submitter with
+  | .urlencoded =>
+    let body := serialize enc (pairs (es.toArray.map fun (n, v) => (n, v.asText)))
+    return { target := tgt, url := parsed.href, method := "POST",
+             contentType := "application/x-www-form-urlencoded", body := body.toUTF8 }
+  | .multipart =>
+    let (b, body) := multipartBody enc es
+    return { target := tgt, url := parsed.href, method := "POST",
+             contentType := "multipart/form-data; boundary=" ++ b, body }
+  | .textPlain =>
+    return { target := tgt, url := parsed.href, method := "POST",
+             contentType := "text/plain", body := textPlainBody enc es }
+
+/-! ## An entry list from the page's script host
+
+After the `formdata` event the script's `FormData` holds the entry list. The host passes it
+back as text: fields separated by U+0000, each with `\` written `\\` and U+0000 written `\0`.
+An entry is `s`, name, value; or `f`, name, filename, type, bytes (one code point below 256
+a byte). -/
+
+/-- Escape one field for the wire. -/
+def escapeWire (s : String) : String :=
+  String.join (s.toList.map fun c => if c == '\\' then "\\\\" else if c.toNat == 0 then "\\0" else c.toString)
+
+/-- An entry list as wire text, for the page's script host (the `formdata` event's
+`FormData`, and `new FormData(form)`). -/
+def entriesToWire (es : Array (String × Value)) : String :=
+  "\x00".intercalate (es.toList.flatMap fun (n, v) => match v with
+    | .text t => ["s", escapeWire n, escapeWire t]
+    | .file fname type b => ["f", escapeWire n, escapeWire fname, escapeWire type, escapeWire (isoText b)])
+
+/-- Undo the escapes of one field. -/
+def unescapeField (s : String) : String := Id.run do
+  let mut out := ""
+  let mut esc := false
+  for c in s.toList do
+    if esc then
+      out := out.push (if c == '0' then Char.ofNat 0 else c)
+      esc := false
+    else if c == '\\' then esc := true
+    else out := out.push c
+  return out
+
+/-- Bytes from a field of code points below 256; `none` when one is not. -/
+def bytesOfField (s : String) : Option ByteArray :=
+  s.toList.foldlM (fun (b : ByteArray) c => if c.toNat < 256 then some (b.push c.toNat.toUInt8) else none) ByteArray.empty
+
+/-- The entry list of the wire text; `none` when it is malformed. -/
+def entriesOfWire (wire : String) : Option (Array (String × Value)) := do
+  if wire.isEmpty then return #[]
+  let rec go (fuel : Nat) (fs : List String) (acc : Array (String × Value)) : Option (Array (String × Value)) :=
+    match fuel, fs with
+    | _, [] => some acc
+    | 0, _ => none
+    | fuel + 1, "s" :: n :: v :: rest => go fuel rest (acc.push (unescapeField n, .text (unescapeField v)))
+    | fuel + 1, "f" :: n :: fname :: type :: bytes :: rest => do
+      let b ← bytesOfField (unescapeField bytes)
+      go fuel rest (acc.push (unescapeField n, .file (unescapeField fname) (unescapeField type) b))
+    | _, _ => none
+  let fs := wire.splitOn "\x00"
+  go fs.length fs #[]
 
 /-! ## The byte layer, at the level of the specification
 

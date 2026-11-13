@@ -618,10 +618,15 @@ def srcdocLoads {σ : Type} (host : σ → Page.Host) (load : σ → Nat → Str
       n := n + 1
   return (s, n)
 
-/-- The frame navigations the embedder is to answer (action `frame`): an `iframe` and a URL. -/
+/-- The frame navigations the embedder is to answer (action `frame`): an `iframe` and a URL;
+for a form's POST (`HTML.FormSubmission.plan`) also `method` "POST", `contentType` and
+`bodyBase64`, which the embedder sends as they are. -/
 def hostNavigations (h : Page.Host) : JSON.Json :=
   .array ((h.dom.navigations.filter fun (_, u) => !u.isEmpty && u != "about:srcdoc").toList.map fun (el, u) =>
-    .object [("nodeId", num el), ("url", .string u)])
+    .object ([("nodeId", num el), ("url", .string u)] ++
+      match h.dom.navRequests.find? (·.1 == el) with
+      | some (_, ct, body) => [("method", .string "POST"), ("contentType", .string ct), ("bodyBase64", .string (WHATWG.Base64.encode body))]
+      | none => []))
 
 /-- The frame fields of a turn answer, only when there is something to say: `navigations`
 for the embedder, and `frameLoads`, the `srcdoc` documents Lean loaded in the turn. -/

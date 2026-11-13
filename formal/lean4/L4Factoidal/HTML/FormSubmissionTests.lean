@@ -54,8 +54,52 @@ def planOf (src url : String) : Option Plan :=
   some { target := "frame-0",
          url := "http://web-platform.test/common/blank.html?input-0=%B0%EC%2C%C6%F3%26%2344032%3B" }
 
--- POST does not navigate here; a missing action is the document's URL.
-#guard planOf "<form method=post><input name=a value=b></form>" "http://x.test/p" == none
+-- POST is "submit as entity body"; a missing action is the document's URL.
+def postOf (src url : String) : Option (String × String × String × String) :=
+  (planOf src url).map fun p => (p.method, p.url, p.contentType, String.fromUTF8! p.body)
+#guard postOf "<form method=post><input name=a value='b c&'></form>" "http://x.test/p?q" ==
+  some ("POST", "http://x.test/p?q", "application/x-www-form-urlencoded", "a=b+c%26")
+#guard postOf "<form method=post enctype=text/plain><input name=a value=b><textarea name=t>x
+y</textarea></form>" "http://x.test/p" ==
+  some ("POST", "http://x.test/p", "text/plain", "a=b\r\nt=x\r\ny\r\n")
+#guard postOf "<form method=post enctype=multipart/form-data><input name='a\"b' value=v><input type=file name=f></form>" "http://x.test/p" ==
+  some ("POST", "http://x.test/p", "multipart/form-data; boundary=----FoafnautFormBoundary0",
+    "------FoafnautFormBoundary0\r\nContent-Disposition: form-data; name=\"a%22b\"\r\n\r\nv\r\n\
+     ------FoafnautFormBoundary0\r\nContent-Disposition: form-data; name=\"f\"; filename=\"\"\r\n\
+     Content-Type: application/octet-stream\r\n\r\n\r\n------FoafnautFormBoundary0--\r\n")
+-- a submit button's formmethod and formenctype win
+def buttonPlan (src : String) : Option Plan :=
+  let d := L4Factoidal.DOM.parseHtmlDocument src
+  let b := (d.treeOrder 0).find? fun k => L4Factoidal.DOM.Forms.isHtml d k ["button"]
+  plan d (formIn d) b "http://x.test/" .utf_8
+#guard (buttonPlan "<form enctype=text/plain><input name=a value=b><button formmethod=post formenctype=application/x-www-form-urlencoded>").map
+  (fun p => (p.method, p.contentType)) == some ("POST", "application/x-www-form-urlencoded")
+-- the body is in the form's encoding, an unencodable code point its character reference
+#guard (planOf "<form method=post accept-charset=shift_jis enctype=text/plain><input name=a value='あ가'></form>" "http://x.test/").map (·.body.toList) ==
+  some ("a=".toUTF8.toList ++ [0x82, 0xA0] ++ "&#44032;\r\n".toUTF8.toList)
+-- dialog navigates nowhere; POST to data: sends nothing
+#guard planOf "<form method=dialog><input name=a></form>" "http://x.test/" == none
+#guard (planOf "<form method=post action='data:,x'><input name=a value=b></form>" "http://x.test/").map (fun p => (p.method, p.url)) == some ("GET", "data:,x")
+-- the entry list the script host passes back after the formdata event
+#guard (entriesOfWire "s\x00a\\0b\x00c\\\\d\x00f\x00n\x00f.txt\x00text/plain\x00\x01\xff").map (·.size) == some 2
+#guard (entriesOfWire "s\x00a\\0b\x00c\\\\d").map (·.map fun (n, v) => (n, v.asText)) == some #[("a\x00b", "c\\d")]
+#guard entriesOfWire "s\x00a" == none
+#guard let es : Array (String × Value) := #[("a\\\x00", .text "\\0x"), ("f", .file "n" "t" (ByteArray.mk #[0, 92, 255]))]
+  entriesOfWire (entriesToWire es) == some es
+#guard entriesOfWire "f\x00n\x00f\x00t\x00\u0100" == none
+-- where a submission may go
+def pg (u : String) (addr : String := "") := L4Factoidal.Net.PageFetch.Page.ofUrl u false addr
+def ok (p : L4Factoidal.Net.PageFetch.Page) (pageScheme u : String) (post : Bool) : Bool :=
+  match L4Factoidal.WHATWG.URL.parseUrl u with
+  | some x => navigationAllowed p pageScheme x post
+  | none => false
+#guard ok (pg "https://a.test/") "https" "https://b.test/x" true
+#guard !ok (pg "https://a.test/") "https" "http://b.test/x" true
+#guard !ok (pg "http://a.test/") "http" "http://127.0.0.1/admin" true
+#guard !ok (pg "http://a.test/") "http" "http://router.localhost/" false
+#guard ok (pg "http://web-platform.test:8000/" "127.0.0.1") "http" "http://127.0.0.1:8000/x" true
+#guard ok (pg "http://a.test/") "http" "data:,x" false && !ok (pg "http://a.test/") "http" "data:,x" true
+#guard !ok (pg "http://a.test/") "http" "file:///etc/passwd" false
 #guard (planOf "<form><input name=a value='b c'><input type=checkbox name=k>\
   <input type=checkbox name=c checked><input name=d disabled value=x><button name=s value=v></button></form>"
   "http://x.test/p?q#f").map (·.url) == some "http://x.test/p?a=b+c&c=on#f"

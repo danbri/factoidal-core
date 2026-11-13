@@ -193,6 +193,13 @@ structure State where
   loaded, as the embedder's decode named it (`document.characterSet`, `DomOps` op 172, and a
   form's document encoding). -/
   frameEncodings : Array (Nat × String) := #[]
+  /-- The request of a frame navigation that is a form's POST (`HTML.FormSubmission.plan`):
+  an `iframe`, the content type and the body. A frame navigation not listed is a GET. The
+  entry goes when the navigation is answered (`attachDocument`) or replaced. -/
+  navRequests : Array (Nat × String × ByteArray) := #[]
+  /-- The address the embedder loaded the page from ("" when it did not say), for the rule of
+  where a form may send (`HTML.FormSubmission.navigationAllowed`, as `Net.PageFetch.Page.ofUrl`). -/
+  pageAddress : String := ""
   deriving Inhabited
 
 /-- Bounds, as in `WebRenderScript`. -/
@@ -533,7 +540,8 @@ def setAttribute (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) :
       | (s, r) =>
         -- HTML §4.8.5: setting `src` of an iframe with a browsing context navigates it.
         if Dom.isHtmlElement (s.dom.get n) "iframe" && Dom.asciiLower name == "src" && s.frames.any (·.1 == n) then
-          ({ s with navigations := s.navigations.push (n, if s.hostLoads && !v.trimAscii.toString.isEmpty then frameURL s v else "") }, r)
+          ({ s with navigations := s.navigations.push (n, if s.hostLoads && !v.trimAscii.toString.isEmpty then frameURL s v else ""),
+                    navRequests := s.navRequests.filter (·.1 != n) }, r)
         else (s, r)
 
 def createElement (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : State × HostResult :=
@@ -959,7 +967,7 @@ document node, or none when the command was refused. -/
 def attachDocument (s : State) (el : Nat) (source : String) (xml : Bool := false) : State × Option Nat :=
   -- (encoding100) the URL this navigation went to, when it was one ("" is about:blank)
   let navURL := ((s.navigations.find? (·.1 == el)).map (·.2)).filter fun u => !u.isEmpty && u != "about:srcdoc"
-  let s := { s with navigations := s.navigations.filter (·.1 != el) }
+  let s := { s with navigations := s.navigations.filter (·.1 != el), navRequests := s.navRequests.filter (·.1 != el) }
   if !isNode s.dom el then (s, none) else
   let (d, root) := s.dom.graft (frameArena source xml)
   match addCommand s (.frameDocument el source xml root) d with

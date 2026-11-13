@@ -646,9 +646,17 @@ def domOpM (id op : Nat) (q : String) : Op String := do
     -- U+0000 document encoding label" (submitter "" for `form.submit()`); a GET navigation
     -- of a frame is queued for the embedder. "1" when a navigation was queued, "0" when the
     -- submission navigates nowhere here.
-    let (sub, label) := match q.splitOn "\x00" with
-      | [a, b] => (a, b)
-      | _ => (q, "")
+    -- after them, when the page's script host fired the `formdata` event: "1" U+0000 and the
+    -- entry list it passes back (`FormSubmission.entriesOfWire`)
+    let (sub, label, given) := match q.splitOn "\x00" with
+      | [a, b] => (a, b, none)
+      | a :: b :: "1" :: rest => (a, b, some ("\x00".intercalate rest))
+      | _ => (q, "", none)
+    let given ← match given with
+      | none => pure none
+      | some w => match L4Factoidal.HTML.FormSubmission.entriesOfWire w with
+        | some es => pure (some es)
+        | none => throw (-2)
     let form ← nodeArg d id
     if !L4Factoidal.DOM.Forms.isHtml d form ["form"] then throw (-2)
     let submitter := sub.toNat?.filter (· < d.size)
@@ -667,9 +675,15 @@ def domOpM (id op : Nat) (q : String) : Op String := do
     let enc := (L4Factoidal.WHATWG.Encoding.getEncoding frameLabel).getD .utf_8
     let baseTarget := (((d.treeOrder doc).find? fun k => L4Factoidal.DOM.Forms.isHtml d k ["base"] &&
       (L4Factoidal.DOM.Forms.attr? d k "target").isSome).bind (L4Factoidal.DOM.Forms.attr? d · "target")).getD ""
-    match L4Factoidal.HTML.FormSubmission.plan d form submitter docURL enc baseTarget with
+    match L4Factoidal.HTML.FormSubmission.plan d form submitter docURL enc baseTarget given with
     | none => return "0"
     | some p =>
+      -- where it may go: the page's rule (`FormSubmission.navigationAllowed`), judged on the
+      -- page's URL and the address the embedder loaded it from, never on the frame's
+      let page := L4Factoidal.Net.PageFetch.Page.ofUrl st.url false st.pageAddress
+      let docScheme := ((L4Factoidal.WHATWG.URL.parseUrl docURL).map (·.scheme)).getD ""
+      let some pu := L4Factoidal.WHATWG.URL.parseUrl p.url | return "0"
+      if !L4Factoidal.HTML.FormSubmission.navigationAllowed page docScheme pu (p.method == "POST") then return "0"
       -- the rules for choosing a navigable: "" and `_self` the form's own frame; a name, the
       -- first frame of that name. The page itself, `_parent`, `_top` and `_blank` would leave
       -- or open a top-level document: not done here.
@@ -681,7 +695,9 @@ def domOpM (id op : Nat) (q : String) : Op String := do
       | none => return "0"
       | some el =>
         let u := if st.hostLoads then p.url else ""
-        set { st with navigations := (st.navigations.filter fun (nv : Nat × String) => nv.1 != el).push (el, u) }
+        let reqs := st.navRequests.filter (·.1 != el)
+        set { st with navigations := (st.navigations.filter fun (nv : Nat × String) => nv.1 != el).push (el, u),
+                      navRequests := if p.method == "POST" && !u.isEmpty then reqs.push (el, p.contentType, p.body) else reqs }
         return "1"
   | 171 =>
     -- the URL of document `id`: the page's, or a frame document the page may reach
@@ -702,6 +718,24 @@ def domOpM (id op : Nat) (q : String) : Op String := do
       let e := ((st.frameEncodings.find? (·.1 == el)).map (·.2)).bind L4Factoidal.WHATWG.Encoding.getEncoding
       return (e.getD .utf_8).name
     | none => throw (-2)
+  | 173 =>
+    -- the entry list of form `id` (HTML §4.10.21.4) for the page's script host, which fires
+    -- the `formdata` event with it and passes it back to op 170 ("submitter U+0000 document
+    -- encoding label", as op 170): `FormSubmission.entriesToWire`
+    let (sub, label) := match q.splitOn "\x00" with
+      | a :: b :: _ => (a, b)
+      | _ => (q, "")
+    let form ← nodeArg d id
+    if !L4Factoidal.DOM.Forms.isHtml d form ["form"] then throw (-2)
+    let st ← get
+    let docEl := (st.frames.find? (·.2 == (d.get form).doc)).map (·.1)
+    let frameLabel := match docEl with
+      | some el => ((st.frameEncodings.find? (·.1 == el)).map (·.2)).getD label
+      | none => label
+    let enc := L4Factoidal.HTML.FormSubmission.formEncoding d form
+      ((L4Factoidal.WHATWG.Encoding.getEncoding frameLabel).getD .utf_8)
+    return L4Factoidal.HTML.FormSubmission.entriesToWire
+      (L4Factoidal.HTML.FormSubmission.entries d form (sub.toNat?.filter (· < d.size)) enc.name)
   -- ==== end of encoding100 ====
   | _ => throw (-2)
 

@@ -1057,10 +1057,54 @@
   // the URL and the target frame, whose navigation the embedder then answers. Here: which
   // form, which submitter, and the page's encoding label. An engine without op 170 answers
   // -2 and nothing navigates.
+  // The entry list (HTML §4.10.21.4) is Lean's (node_query 173, the same wire as 170: fields
+  // split by U+0000, `\` and U+0000 escaped; `s` name value, `f` name filename type bytes).
+  // Here: the `formdata` event with a FormData of it (step 6), whose entries, which the
+  // event's listeners may change, go back to op 170. A form already building its entry
+  // list gives none (the "constructing entry list" flag, step 1).
+  class FormDataEvent extends Event {
+    constructor(type, init = undefined) {
+      if (arguments.length < 1) throw new TypeError("Failed to construct 'FormDataEvent': 1 argument required");
+      const i = initOf(init);
+      if (!(FormData && i.formData instanceof FormData)) throw new TypeError("Failed to construct 'FormDataEvent': member formData is required");
+      super(type, init); state(this).formData = i.formData;
+    }
+    get formData() { return state(this).formData; }
+  }
+  const wireEsc = v => v.replace(/\\/g, '\\\\').replace(/\u0000/g, '\\0');
+  const wireUnesc = v => v.replace(/\\([\s\S])/g, (_, c) => c === '0' ? '\u0000' : c);
+  const latin1 = b => { let t = ''; for (let i = 0; i < b.length; i += 8192) t += String.fromCharCode(...b.subarray(i, i + 8192)); return t; };
+  const bytesOfLatin1 = t => { const b = new Uint8Array(t.length); for (let i = 0; i < t.length; i++) b[i] = t.charCodeAt(i); return b; };
+  const constructing = new WeakSet();
+  const submitQuery = (form, submitter) =>
+    (submitter ? String(nodeId(submitter)) : '') + '\u0000' + (form.ownerDocument === document ? docEncoding() : '');
+  const formEntryList = (form, submitter) => {
+    if (constructing.has(form)) return null;
+    const w = n.query(nodeId(form), 173, submitQuery(form, submitter));
+    if (typeof w !== 'string') return null;
+    const f = w === '' ? [] : w.split('\u0000').map(wireUnesc), out = [];
+    for (let i = 0; i < f.length;) {
+      if (f[i] === 's') { out.push([f[i + 1], f[i + 2]]); i += 3; }
+      else { out.push([f[i + 1], new File([bytesOfLatin1(f[i + 4])], f[i + 2], { type: f[i + 3] })]); i += 5; }
+    }
+    const fd = new FormData();
+    for (const [k, v] of out) fd.append(k, v);
+    constructing.add(form);
+    try { const e = new FormDataEvent('formdata', { bubbles: true, formData: fd }); state(e).trusted = true; dispatch(form, e); }
+    finally { constructing.delete(form); }
+    return fd;
+  };
   const planSubmission = (form, submitter) => {
     if (!form.isConnected) return;
-    const enc = form.ownerDocument === document ? docEncoding() : '';
-    n.query(nodeId(form), 170, (submitter ? String(nodeId(submitter)) : '') + '\u0000' + enc);
+    const fd = formEntryList(form, submitter);
+    if (fd === null) return;
+    const wire = [];
+    for (const [k, v] of fd) {
+      if (typeof v === 'string') wire.push('s', wireEsc(k), wireEsc(v));
+      else wire.push('f', wireEsc(k), wireEsc(v.name), wireEsc(v.type), wireEsc(latin1(blobBytes(v))));
+    }
+    if (!form.isConnected) return; // a listener disconnected it (§4.10.21.3 step 6.3)
+    n.query(nodeId(form), 170, submitQuery(form, submitter) + '\u0000' + '1' + (wire.length ? '\u0000' + wire.join('\u0000') : ''));
   };
   // A document's URL (node_query 171): the page's, or a same-origin frame document's.
   const docURL = doc => { const r = n.query(doc, 171, ''); return typeof r === 'string' ? r : 'about:blank'; };
@@ -2925,8 +2969,18 @@
     };
     class FormData {
       constructor(form = undefined, submitter = undefined) {
-        if (form !== undefined) throw new TypeError("Failed to construct 'FormData': forms are not supported in this build");
         forms.set(this, { entries: [] });
+        if (form === undefined) return;
+        if (!(form instanceof named.HTMLFormElement)) throw new TypeError("Failed to construct 'FormData': parameter 1 is not of type 'HTMLFormElement'.");
+        if (submitter !== undefined && submitter !== null) {
+          const t = submitter instanceof named.HTMLButtonElement || submitter instanceof named.HTMLInputElement ? submitter.type : '';
+          if (!(t === 'submit' || (t === 'image' && submitter instanceof named.HTMLInputElement)))
+            throw new TypeError("Failed to construct 'FormData': The specified element is not a submit button.");
+          if (submitter.form !== form) throw new DOMException("Failed to construct 'FormData': The specified element is not owned by this form element.", 'NotFoundError');
+        }
+        const fd = formEntryList(form, submitter ?? null);
+        if (fd === null) throw new DOMException("Failed to construct 'FormData': the form's entry list is being constructed.", 'InvalidStateError');
+        forms.get(this).entries = forms.get(fd).entries;
       }
       append(name, value, filename = undefined) {
         if (arguments.length < 2) throw new TypeError("Failed to execute 'append' on 'FormData': 2 arguments required");
@@ -3899,7 +3953,7 @@
     WheelEvent, PointerEvent, DOMRect, DOMRectReadOnly, CompositionEvent, InputEvent, DragEvent, HashChangeEvent, MessageEvent, StorageEvent, DeviceMotionEvent,
     DeviceOrientationEvent, BeforeUnloadEvent, TextEvent,
     PromiseRejectionEvent, Node, Element, HTMLElement, HTMLUnknownElement, SVGElement, CharacterData, Text, CDATASection, Comment,
-    ProcessingInstruction, DocumentType, DocumentFragment, Document, HTMLDocument, XMLDocument, DOMImplementation, NodeList, HTMLCollection, NamedNodeMap, Attr, DOMParser, SubmitEvent,
+    ProcessingInstruction, DocumentType, DocumentFragment, Document, HTMLDocument, XMLDocument, DOMImplementation, NodeList, HTMLCollection, NamedNodeMap, Attr, DOMParser, SubmitEvent, FormDataEvent,
     DOMTokenList, DOMException, AbortController, AbortSignal, Window, MutationObserver, MutationRecord, ...named })) def(k, v);
   if (shadowEngine()) def('ShadowRoot', ShadowRoot);
 

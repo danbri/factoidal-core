@@ -1272,13 +1272,13 @@ def start (m : Module') (dom : Arena) (url : String) (scripts : Array (Nat × St
   let (dom, framed) := graftFrames dom frames
   let s : Session ← match m.base with
     | some b =>
-      let domHost : DomHost := { dom, commandLimit := lim.commands, logLimit := lim.logs, frames := framed, framing := lim.frames, hostLoads := lim.hostLoads, selfOrigin := origins.map (·.1), parentOrigin := origins.map (·.2) }
+      let domHost : DomHost := { dom, commandLimit := lim.commands, logLimit := lim.logs, frames := framed, framing := lim.frames, hostLoads := lim.hostLoads, selfOrigin := origins.map (·.1), parentOrigin := origins.map (·.2), pageAddress := lim.pageAddress }
       let host : Host := { dom := domHost, reads, time, web := { entropy := lim.entropy, docEncoding := lim.encoding } }
       pure { b with host, limits := lim, steps := 0 }
     | none => do
       let s ← instantiatePage m dom lim
       let web : Hosts.WebApi.State := { entropy := lim.entropy, docEncoding := lim.encoding }
-      let dh := { s.host.dom with frames := framed, framing := lim.frames, hostLoads := lim.hostLoads, selfOrigin := origins.map (·.1), parentOrigin := origins.map (·.2) }
+      let dh := { s.host.dom with frames := framed, framing := lim.frames, hostLoads := lim.hostLoads, selfOrigin := origins.map (·.1), parentOrigin := origins.map (·.2), pageAddress := lim.pageAddress }
       pure { s with host := { s.host with dom := dh, reads, time, web } }
   let s := { s with host := { s.host with dom := { s.host.dom with gpu := L4Factoidal.PageGpu.State.empty lim.gpuPage } } }
   return (s.startP url scripts framed).runLocal
