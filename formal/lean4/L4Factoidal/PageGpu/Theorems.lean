@@ -424,6 +424,8 @@ theorem step_ok {s s' : State} {c : Command} {out : List HostCmd}
   simp only [step, bind, Except.bind] at h
   split at h
   · cases h
+  split at h
+  · cases h
   · rename_i p hp
     obtain ⟨ch, o⟩ := p
     split at h
@@ -440,6 +442,16 @@ theorem step_ok {s s' : State} {c : Command} {out : List HostCmd}
           simp only [Bool.not_eq_true', Bool.not_eq_false] at hall
           rw [List.all_eq_true] at hall
           exact ⟨ch, s'', hp, hall, by simp only at hw; omega, ha, rfl⟩
+
+/-- Kind: refusal. Says: once the host's watchdog has lost a page's GPU device, every command
+of the page is refused: no more of its work reaches the GPU. Does not say: that work already
+submitted stops (the host cannot cancel it; each frame's work is bounded, `run_frameWork`). -/
+theorem step_lost {s : State} (h : s.lost = true) (c : Command) :
+    ∃ e, step s c = .error e := by
+  simp only [step, h, bind, Except.bind]
+  exact ⟨_, rfl⟩
+
+theorem lose_lost (s : State) : s.lose.lost = true := rfl
 
 theorem step_safe {s s' : State} {c : Command} {out : List HostCmd}
     (h : step s c = .ok (s', out)) : ∀ x ∈ out, x.safe s = true := by
@@ -776,6 +788,9 @@ theorem deliver_mapInv {s s' : State} {t : Nat} {data : ByteArray} (hi : MapInv 
       omega
     · cases h
   · cases h
+
+theorem lose_mapInv (s : State) : MapInv s.lose := by
+  simp [MapInv, State.mappedBytes, State.lose, maxMapped]
 
 theorem fail_mapInv {s : State} {t : Nat} (hi : MapInv s) : MapInv (fail s t) := by
   simp only [MapInv, State.mappedBytes, fail] at *

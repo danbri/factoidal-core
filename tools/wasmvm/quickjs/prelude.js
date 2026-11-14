@@ -1441,6 +1441,8 @@
     const scopes = [];
     let lostResolve;
     const report = message => {
+      // the browser's watchdog lost this page's GPU device (Lean refuses every command after)
+      if (lostResolve && String(message).includes('GPU device was lost')) { lostResolve({ reason: 'unknown', message: String(message) }); lostResolve = undefined; }
       const error = new GPUValidationError(message);
       for (let i = scopes.length - 1; i >= 0; i--) if (scopes[i].filter === 'validation') { scopes[i].error ??= error; return; }
       console.warn('WebGPU: ' + message);
