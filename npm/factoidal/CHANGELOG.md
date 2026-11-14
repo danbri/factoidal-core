@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.37.0 (2026-11-14)
+
+- Foafnaut: Web Platform Tests on the Linux engine, full measured runs: 85.06% on the morning of 2026-11-14, 91.76% (2,082,990 of 2,270,129 subtests) at commit 53326e401; 66 crashed tests and 4,876 harness timeouts in that run. Test262 on BubblePopJS: 42,515 of 53,833 (79.0%).
+- Foafnaut: CSS Grid placement, track sizing, alignment and absolutely positioned grid items as pure modules with bound theorems; a page's own web fonts are its fonts when the host holds none, which most grid tests need (css-grid 9,115 to 11,121 subtests).
+- Foafnaut: CSS animations and transitions on the effect stack: replaced animations, `commitStyles()`, animated values in the layout of pages with `::before`/`::after`, one cascade for a layout and an element's matches made once a measure.
+- Foafnaut: the cascade works out structural pseudo-classes and `:has()` once per document: the first layout of a page with 2,000 rules and 3,000 elements went from 845 ms to about 340 ms on the macOS engine.
+- Foafnaut: real pages start sooner: scripts, images and the icon are read while the style sheets are, and the engine's first call is made while the page is fetched (Hacker News load 3.4 s to 1.9 s, measured on an M1).
+- BubblePopJS: the RegExp `Symbol.match`, `replace`, `search`, `split` and `matchAll` protocol, ArraySpeciesCreate and TypedArraySpeciesCreate, typed array `[[DefineOwnProperty]]`, regular expression literals checked at parse time.
+- Foafnaut: reflected IDL attributes such as `el.title` read and write through one host call (5.4 to 3.9 µs a read).
+- Foafnaut: client storage has a budget: 32 MiB per storage key over IndexedDB, the file system and the Cache API, with theorems for the bound; storage buckets, Cookie Store `maxAge` and change events.
+- Foafnaut: networking fixes for workers and service workers (a worker script fetch asked while frames are answered is now answered), the WebSocket close code, ORB for classic scripts, and network theorems for credentials across redirects.
+- Foafnaut: `getComputedStyle(el).paddingLeft` and `.borderRightWidth` answer their values again: two internal operation numbers had collided with the computed-style range; theorems now keep the ranges apart.
+- Build: the engine build refuses a Lean module that imports parts of `Std` the WebAssembly engine does not link.
+
 ## 0.36.0 (2026-11-12)
 
 - Foafnaut: dedicated Web Workers on BubblePopJS. `new Worker`, `postMessage` both ways through a structured clone, transfer of ArrayBuffers, `importScripts`; WPT `.any.worker.html` and `.worker.html` variants run (11,749/11,866 subtests on 78 pages). A worker start takes about 1.2 ms and a `postMessage` round trip about 0.2 ms. Each worker seeds `Math.random` from its own entropy.
