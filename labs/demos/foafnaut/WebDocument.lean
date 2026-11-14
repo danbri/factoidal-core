@@ -582,6 +582,24 @@ def fontFaces (dom : DOM.Dom) (request : JSON.Json) (env : Rendering.MediaQuery.
     Except String (Array Rendering.FontFaceRule.Face) :=
   (WebAccept.accept (WebAccept.mode request) fun m => sheetsIn m dom request env).map (facesOf env ·.1)
 
+/-- The faces of a page that a host fetches, one answer a face: those its rules name
+(`declared`, `FontFaceRule.declaredFaces`) and those its text uses now (`used`). `used` is
+asked only when some face is not named by a rule: it needs the computed style of every
+element, a cascade of the whole page (0.5 to 1.6 s of the load of a large page), and when
+every face is named its answer changes nothing. A page that `used` would refuse is then not
+refused here; its layout says why. -/
+def facesFetched (declared : Array Bool) (used : Unit → Except String (Array Bool)) : Except String (Array Bool) :=
+  if declared.all id then pure declared else
+    (used ()).map fun u => u.mapIdx fun i x => x || declared.getD i false
+
+/-- Kind: cost. Says: when the page's rules name every one of its faces, the faces to
+fetch are answered without asking which the text uses: no cascade is made for the
+`fontFaces` question. Does not say: how many faces a page has (the reader bounds them). -/
+theorem facesFetched_declared (declared : Array Bool) (used : Unit → Except String (Array Bool))
+    (h : declared.all id = true) : facesFetched declared used = pure declared := by
+  unfold facesFetched
+  rw [if_pos h]
+
 /-- The rules of the `style` elements of each connected shadow tree (CSS Scoping 1 §3.1),
 each rule with that shadow root as its scope. A text the engine keeps (`sheetIn`) is not read
 again; a new one is read on each layout and not kept (the engine's `Made` holds one sheet,
@@ -2854,11 +2872,13 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
     -- URLs to fetch in order: the host fetches only these.
     if op == "fontFaces" then
       let faces ← fontFaces dom request
-      let styles ← Rendering.CSS.computeAll dom rules textScale
       let held := (((← get).holds.font).map (fun h => h.fonts.toList.map (·.family))).getD []
-      -- a face the text uses now, or one the page's rules name (text a script adds later)
+      -- a face the text uses now, or one the page's rules name (text a script adds later).
+      -- When the rules name every face, all are fetched and the text is not asked
+      -- (`facesFetched`: that question is a cascade of the whole page).
       let declared := Rendering.FontFaceRule.declaredFaces faces rules
-      let used := (Rendering.FontFaceRule.usedFaces faces held dom styles).mapIdx fun i u => u || declared.getD i false
+      let used ← facesFetched declared fun _ =>
+        (Rendering.CSS.computeAll dom rules textScale).map (Rendering.FontFaceRule.usedFaces faces held dom ·)
       let list := (List.range faces.size).filterMap fun i =>
         if used[i]! then some (JSON.Json.object [("family",.string faces[i]!.family),
           ("sources",.array (faces[i]!.sources.map .string))]) else none

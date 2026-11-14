@@ -500,6 +500,12 @@ private def sheetA := importedSheet "https://e.test/p/a.css" "@import 'sub/b.css
 #guard WebDocument.wrapImport {url := "b.css", layer := some "base", supports := some "display: grid"} "p{}" ==
   "@supports (display: grid) {\n@layer base {\np{}\n}\n}"
 #guard WebDocument.wrapImport {url := "b.css"} "p{}" == "p{}"
+-- the faces a host fetches: with every face named by a rule the text is not asked (no cascade)
+#guard (WebDocument.facesFetched #[true,true] fun _ => throw "asked").toOption == some #[true,true]
+#guard (WebDocument.facesFetched #[] fun _ => throw "asked").toOption == some #[]
+#guard (WebDocument.facesFetched #[true,false] fun _ => pure #[false,true]).toOption == some #[true,true]
+#guard (WebDocument.facesFetched #[false,false] fun _ => pure #[false,true]).toOption == some #[false,true]
+#guard (WebDocument.facesFetched #[false] fun _ => throw "refused").toOption == none
 #guard (WebDocument.importedSheets (json [("imported",.string "bad")])).toOption.isNone
 
 -- The store made ahead of a page's first layout (2026-11-14: a page's scripts start before its
