@@ -556,12 +556,41 @@ def filterNeutral (item : List Tok) : Option (List Tok) :=
     else none
   | _ => none
 
+/-- The arguments of a `drop-shadow()` with the blur radius (the third length) not below
+0 (Filter Effects 1 §2.1: a negative blur is invalid). One pass. -/
+def dropShadowBlur (rest : List Tok) : List Tok := Id.run do
+  let mut seen : Nat := 0
+  let mut out : Array Tok := #[]
+  for t in rest do
+    match t with
+    | .dim n u =>
+      seen := seen + 1
+      out := out.push (if seen == 3 then .dim (max 0 n) u else t)
+    | _ => out := out.push t
+  return out.toList
+
+/-- Each `drop-shadow()` of a filter list that names no colour, with `currentcolor` as its
+colour (Filter Effects 1 §2.1: the colour left out is the value of `color`). -/
+def dropShadowColors (v : List Tok) : List Tok :=
+  if !v.contains (.op "drop-shadow") then v else
+  joinItems ((items v).map fun item =>
+    match item with
+    | .op "drop-shadow" :: rest =>
+      let colour := rest.any fun t => match t with
+        | .color _ _ _ _ => true
+        | .ident "currentcolor" => true
+        | .op _ => true
+        | _ => false
+      if colour then item else .op "drop-shadow" :: .ident "currentcolor" :: rest
+    | _ => item)
+
 /-- The numbers of a filter function in the range the function takes (Filter Effects 1
 §2: no negative amount or radius; `grayscale`, `invert`, `opacity` and `sepia` at most 1). -/
 def filterClamp (item : List Tok) : List Tok :=
   match item with
   | .op name :: rest =>
-    if name == "hue-rotate" || name == "drop-shadow" then item
+    if name == "hue-rotate" then item
+    else if name == "drop-shadow" then .op name :: dropShadowBlur rest
     else
       let top : Option Int := if ["grayscale", "invert", "opacity", "sepia"].contains name then some one else none
       .op name :: rest.map fun t => match t with
@@ -2347,6 +2376,14 @@ private def corner2 (a b : String) (p : Int) : String :=
 #guard [-300000000, half, 800000000, 1100000000].map (corner2 "superellipse(3)" "superellipse(-2)") ==
   ["square", "superellipse(0.16)", "superellipse(-0.9)", "superellipse(-2.99)"]
 #guard corner2 "round" "round" half == "round" && corner2 "superellipse(infinity)" "superellipse(-infinity)" half == "bevel"
+-- drop-shadow: the blur is not below 0; a colour left out is currentcolor
+-- (css/filter-effects/animation/filter-interpolation-004.html)
+#guard at_ .filterList "drop-shadow(rgb(0, 0, 255) 0px 0px)" "drop-shadow(rgb(0, 128, 0) 20px 10px 30px)" (-one) ==
+  "drop-shadow(rgb(0, 0, 255) -20px -10px 0px)"
+#guard at_ .filterList "drop-shadow(rgb(0, 0, 255) 0px 0px)" "drop-shadow(rgb(0, 128, 0) 20px 10px 30px)" half ==
+  "drop-shadow(rgb(0, 64, 128) 10px 5px 15px)"
+#guard toText (dropShadowColors (parse "blur(2px) drop-shadow(0px 0px)")) == "blur(2px) drop-shadow(currentcolor 0px 0px)"
+#guard toText (dropShadowColors (parse "drop-shadow(rgb(0, 128, 0) 20px 10px 30px)")) == "drop-shadow(rgb(0, 128, 0) 20px 10px 30px)"
 -- a side that is 0 is a number or a length as the other value's side is
 -- (css/css-backgrounds/animations/border-image-outset-composition.html)
 #guard at_ .sides "100px 100" "0px 0px" (-250000000) == "125px 125" && at_ .sides "100px 100" "0 0" (-250000000) == "125px 125"

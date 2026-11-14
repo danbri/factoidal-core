@@ -218,6 +218,12 @@ def kindOf (property : String) : Value.Kind :=
   else if property == "content-visibility" then .avoid "hidden"
   else .generic
 
+/-- The list properties whose components are not below 0 (CSS Backgrounds 3 §3.9
+`background-size`, CSS Masking 1 `mask-size`, SVG 2 `stroke-dasharray`): an animated value
+past an end is clamped. -/
+def nonNegativeList (property : String) : Bool :=
+  ["background-size", "mask-size", "-webkit-mask-size", "stroke-dasharray"].contains property
+
 /-- The properties whose computed value is a line width (CSS Backgrounds 3 §4.3, CSS UI 4
 §5.2, CSS Gaps 1 §3): an animated value of one is snapped as a declared one is
 (`Value.snapWidths`). -/
@@ -229,6 +235,8 @@ def lineWidth (property : String) : Bool :=
 itself (CSS Color 4 §4.5) and is the used colour of `color`, so a value with it
 interpolates with a colour as that colour does. `color` itself has no `currentcolor`. -/
 def withCurrentColor (ac : Access) (e : Nat) (property : String) (v : Value) : Value :=
+  -- a `drop-shadow()` that names no colour has `currentcolor`
+  let v := if property == "filter" || property == "backdrop-filter" then Value.dropShadowColors v else v
   if property == "color" || !v.contains (.ident "currentcolor") then v
   else match (ac.base e "color").map Value.parse with
     | some [c] => v.map fun t => if t == .ident "currentcolor" then c else t
@@ -237,8 +245,12 @@ def withCurrentColor (ac : Access) (e : Nat) (property : String) (v : Value) : V
 /-- Kind: zero cost and identity. Says: a value with no `currentcolor` is itself, whatever
 the element's colour (it is not read). -/
 theorem withCurrentColor_plain (ac : Access) (e : Nat) (property : String) (v : Value)
-    (h : v.contains (.ident "currentcolor") = false) : withCurrentColor ac e property v = v := by
+    (h : v.contains (.ident "currentcolor") = false) (hf : property ≠ "filter") (hb : property ≠ "backdrop-filter") :
+    withCurrentColor ac e property v = v := by
+  have e1 : (property == "filter") = false := beq_eq_false_iff_ne.mpr hf
+  have e2 : (property == "backdrop-filter") = false := beq_eq_false_iff_ne.mpr hb
   unfold withCurrentColor
+  simp only [e1, e2, Bool.or_self, Bool.false_eq_true, if_false]
   rw [h]
   simp
 
@@ -494,7 +506,8 @@ def overridesWhere (s : State) (ac : Access) (keep : Nat → Bool) : List Overri
       -- a transform's matrices keep six significant digits (their small entries matter)
       { node := k.1, property := k.2, transition := t,
         value := if kindOf k.2 == .transformList then Value.toTextPrecise v
-          else if lineWidth k.2 then Value.toText (Value.snapWidths v) else Value.toText v }
+          else if lineWidth k.2 then Value.toText (Value.snapWidths v)
+          else if nonNegativeList k.2 then Value.toText (v.map Value.clampTok0) else Value.toText v }
 
 /-- The effect stack of every element (`overridesWhere`). -/
 def overrides (s : State) (ac : Access) : List Override := overridesWhere s ac fun _ => true
