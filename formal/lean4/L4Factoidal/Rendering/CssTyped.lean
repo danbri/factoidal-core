@@ -235,6 +235,21 @@ def reifyBySyntax (syn text : String) : String :=
     | _, _ => "[" ++ unparsedOf text ++ "]"
   | _ => "[" ++ unparsedOf text ++ "]"
 
+/-- Whether a value is one a property registered with `syn` takes as its specified value
+(§2.3): a CSS-wide keyword, a value with `var()`, or a value of the syntax. -/
+def syntaxAccepts (syn text : String) : Bool :=
+  let cvs := CV.parse text
+  let top := stripWs cvs
+  if top.isEmpty then false
+  else if (wideKeyword top).isSome || hasFn "var" 32 cvs then true
+  else match CssRegister.syntaxGrammar syn with
+    | some (some g) => (matchAll (env none) g top).isSome
+    | some none => !badCustomValue top
+    | none => false
+
+#guard syntaxAccepts "<length>" "10px" && !syntaxAccepts "<length>" "red" && syntaxAccepts "<length>" "inherit"
+#guard syntaxAccepts "<color> | none" "none" && syntaxAccepts "*" "if(){}" && !syntaxAccepts "<angle>" "10px"
+
 #guard reifyBySyntax "<length>" "10px" == "[{\"t\":\"u\",\"v\":10,\"u\":\"px\"}]" ||
   (reifyBySyntax "<length>" "10px").startsWith "[{\"t\":\"u\""
 #guard (reifyBySyntax "<length>+" "10px 20px").splitOn "\"t\":\"u\"" |>.length |> (· == 3)
@@ -467,6 +482,7 @@ def typedOp (q : String) : String :=
   | ["reifyall", text] => reifyAll text
   | ["reifyp", property, text] => reifyFor property text
   | ["reifys", syn, text] => reifyBySyntax syn text
+  | ["matchs", syn, text] => if syntaxAccepts syn text then "1" else "0"
   | ["isshorthand", property] => if refusesTyped (propertyName property) then "1" else "0"
   | ["css", wire] => ((parseWire wire).map numericCss).getD ""
   | ["unit", name] => if (calcUnit name).isSome then "1" else "0"

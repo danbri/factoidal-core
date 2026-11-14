@@ -9120,7 +9120,9 @@
   // an unparsed value is not a value of a shorthand; a unit value below the property's range
   // is kept as calc() when its positive counterpart is in range.
   const valueTexts = (name, values) => {
-    const ok = t => styleOp('val', name, t).charAt(0) === '1';
+    // a registered custom property takes the values of its syntax (CSS Properties and Values API 1 §2.3)
+    const syn = name.startsWith('--') ? registeredSyntax(name) : '';
+    const ok = t => syn !== '' ? typedOp('matchs', syn, t) === '1' : styleOp('val', name, t).charAt(0) === '1';
     const shorthand = typedOp('isshorthand', name) === '1';
     return values.map(v => {
       if (typeof v === 'string') { if (!ok(v)) throw new TypeError(`'${v}' is not a value of '${name}'`); return v; }
