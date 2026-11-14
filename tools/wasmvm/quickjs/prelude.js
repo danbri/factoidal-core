@@ -4558,7 +4558,7 @@
   const animIds = new WeakMap(), animObjs = new Map(), animState = new WeakMap();
   const eid = e => { const id = effectIds.get(e); if (id === undefined) throw new TypeError('Illegal invocation'); return id; };
   const aid = a => { const id = animIds.get(a); if (id === undefined) throw new TypeError('Illegal invocation'); return id; };
-  let making = false, adoptEffect = -1, adoptAnim = -1;
+  let making = false, adoptEffect = -1, adoptAnim = -1, adoptSnap = null;
   class AnimationEffect {
     constructor() { if (!making) throw new TypeError('Illegal constructor'); }
     getTiming() { return timingOut(aop(eid(this), 62, 'timing')); }
@@ -4649,8 +4649,8 @@
   // gets its acts, and the events queued are dispatched. A frame is asked for only while
   // such an animation or event exists.
   const watched = new Set();
-  let animEvents = [], animFrame = false;
-  const askAnimFrame = () => { if (animFrame) return; animFrame = true; n.frame(register(onAnimFrame)); };
+  let animEvents = [], animFrame = false, animCallback = 0;
+  const askAnimFrame = () => { if (animFrame) return; animFrame = true; if (!animCallback) animCallback = register(onAnimFrame); n.frame(animCallback); };
   const onAnimFrame = () => {
     animFrame = false;
     op(0, 67, '');
@@ -4700,7 +4700,7 @@
       let id, eff = null, tl;
       if (adoptAnim >= 0) {
         id = adoptAnim; adoptAnim = -1;
-        const s = aop(id, 65, '');
+        const s = adoptSnap; adoptSnap = null;
         eff = effectOf(s.effect); tl = s.timeline ? theTimeline() : null;
         animIds.set(this, id); animObjs.set(id, this);
         const st = { effect: eff, timeline: tl, ready: Promise.resolve(this), readyRes: null, readyRej: null };
@@ -4774,20 +4774,21 @@
     set(f) { setHandler(this, name, f); }, configurable: true, enumerable: true });
   class CSSAnimation extends Animation {
     constructor() { if (adoptAnim < 0) throw new TypeError('Illegal constructor'); super(); }
-    get animationName() { return aop(aid(this), 65, '').name; }
+    get animationName() { return snap(this).name; }
   }
   class CSSTransition extends Animation {
     constructor() { if (adoptAnim < 0) throw new TypeError('Illegal constructor'); super(); }
-    get transitionProperty() { return aop(aid(this), 65, '').name; }
+    get transitionProperty() { return snap(this).name; }
   }
   // The object of an animation Lean made for a CSS animation or transition (the same
   // object each time).
   const animOf = id => {
     const have = animObjs.get(id);
     if (have) return have;
-    const kind = aop(id, 65, '').kind;
-    adoptAnim = id;
-    try { return kind === 'animation' ? new CSSAnimation() : kind === 'transition' ? new CSSTransition() : new Animation(); } finally { adoptAnim = -1; }
+    // the state with the acts of the style change that made it (given once)
+    const s = aop(id, 65, ''), kind = s.kind;
+    adoptAnim = id; adoptSnap = s;
+    try { return kind === 'animation' ? new CSSAnimation() : kind === 'transition' ? new CSSTransition() : new Animation(); } finally { adoptAnim = -1; adoptSnap = null; }
   };
   const animationsOf = (id, subtree) => JSON.parse(op(id, 66, subtree ? 'subtree' : '')).map(animOf);
   define(Element.prototype, 'animate', function animate(keyframes, options = undefined) {
