@@ -196,6 +196,7 @@ cascade of that document: 31 to 41 ms there), and fixed:
 | the first read after the sheet changed and 18 animations exist | 1,397 ms | 320 ms |
 | a read after a write of another element's `style` attribute | 3 to 5 ms | 2 to 3 ms |
 | the same after the page made a node in no tree (`createElement`, as the tests' URL comparison does) | a whole cascade | 1 to 3 ms |
+| a read in a frame where only the time moved (18 animations) | about 320 ms (a whole style change) | 51 ms |
 
 - The declarations text of an element (`Computed.declarationText`) held the animated values of the
   style it was read from, so the style without them never compared equal to the kept style with them:
@@ -206,6 +207,8 @@ cascade of that document: 31 to 41 ms there), and fixed:
 - When the rules that match an element are the same and neither its font, colour nor flow changed,
   the longhands compared are those its two `style` attributes declare differently
   (`Computed.styleAttributeDiff`).
+- A frame in which nothing was written and no script changed an animation makes no style change:
+  the effect stacks at the new time and the animated elements styled again (`Host.measureNow`).
 - A write that changes nothing in a document's tree (a new node, a clone, a change of a node that is in
   no tree: `Page.detachedWrite`) keeps the kept styles; `CSS.restyleWith` takes an arena that grew.
 
