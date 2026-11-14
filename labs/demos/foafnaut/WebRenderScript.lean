@@ -147,7 +147,10 @@ replays the cumulative list over the original parsed document in each request.
 Node IDs remain those of the arena; no host HTML source editing occurs. -/
 def applyCommands (dom : DOM.Dom) (commands : JSON.Json) : Except String DOM.Dom := do
   let .array commands := commands | throw "script commands: expected array"
-  if commands.length > 4096 then throw "script commands: maximum 4096 commands in history"
+  -- The bound of the session that made the list (`Hosts.Dom.maxCommands`): a list within the
+  -- session's budget is never refused here.
+  if commands.length > L4Factoidal.WasmVM.Hosts.Dom.maxCommands then
+    throw s!"script commands: maximum {L4Factoidal.WasmVM.Hosts.Dom.maxCommands} commands in history"
   let mut current := dom
   for command in commands do
     current ← applyCommand current command
@@ -232,11 +235,16 @@ def engines : List (String × String) := [("bubblepop","BubblePopJS"),("quickjs"
 def engineMarker (setting : String) : String :=
   if setting == "bubblepop" then "JS BUBBLEPOP" else if setting == "quickjs" then "JS QUICKJS-NG" else "JS " ++ setting.toUpper
 
-/-- The default engine of a host. A native host (the window, `run_html.ts`) runs
-BubblePopJS: Lean compiles it to native code, so it runs without a second interpreter. The
-Hub runs QuickJS-NG: there the guest is translated to the browser's WebAssembly
-(`WasmVM.Aot`), and runs faster than BubblePopJS compiled to WebAssembly. -/
-def defaultEngine (host : String) : String := if host == "hub" || host == "wasm" then "quickjs" else "bubblepop"
+/-- The default engine of a host: BubblePopJS, whatever the host says it is (the window, the
+Hub, the engine's WebAssembly build, a test runner). QuickJS-NG runs a page only when the
+setting names it. (Until 2026-11-14 the names "hub" and "wasm" gave QuickJS-NG; every host
+asked as "native", so no host took that branch.) -/
+def defaultEngine (_host : String) : String := "bubblepop"
+
+/-- Kind: policy theorem (script engine default). Says: no host name changes the default
+engine: it is BubblePopJS for every host. Does not say: that a host asks Lean for the default
+(`plan`), nor that a saved setting is not "quickjs". -/
+theorem defaultEngine_eq (host : String) : defaultEngine host = "bubblepop" := rfl
 
 def engineName (setting : String) : String := ((engines.find? (·.1 == setting)).map (·.2)).getD setting
 

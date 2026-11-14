@@ -198,7 +198,7 @@ structure Limits where
   /-- Memory pages of 64 KiB: 2048 is 128 MiB (QuickJS's own heap limit is 64 MiB). -/
   pages : Nat := 2048
   /-- Commands a page may make (`Hosts.Dom.State.commandLimit`). -/
-  commands : Nat := 4096
+  commands : Nat := Hosts.Dom.maxCommands
   /-- The page number of this session's GPU objects (`L4Factoidal.PageGpu.Gid.page`). -/
   gpuPage : Nat := 0
   /-- Console lines a page may write (`Hosts.Dom.State.logLimit`). -/

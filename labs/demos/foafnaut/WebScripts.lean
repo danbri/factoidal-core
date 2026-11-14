@@ -901,7 +901,7 @@ once), and each page starts from it with its own arena. -/
 def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (html : String) (request : JSON.Json) (measure : JSON.Json → Option Page.Measure)
     (canvas : PageCanvas.Env := {}) : M (Held × Except String String) := do
   let url := str request "url"
-  let commands := min 1048576 ((natField request "commandLimit").getD 4096)
+  let commands := min 1048576 ((natField request "commandLimit").getD L4Factoidal.WasmVM.Hosts.Dom.maxCommands)
   let logs := min 1048576 ((natField request "logLimit").getD 1024)
   let id := held.nextSession
   let hostLoads := request.field? "navigations" == some (.bool true)
@@ -1067,7 +1067,7 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
     | none, some aot =>
       -- The AOT path: Lean asks the host for a fresh instance, then runs the program.
       let url := str request "url"
-      let commands := min 1048576 ((natField request "commandLimit").getD 4096)
+      let commands := min 1048576 ((natField request "commandLimit").getD L4Factoidal.WasmVM.Hosts.Dom.maxCommands)
       let logs := min 1048576 ((natField request "logLimit").getD 1024)
       let made := show Except String (Array (Nat × String) × Array String × DOM.Dom) from do
         let dom ← parse html url
@@ -1086,7 +1086,7 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
     | none, none => return (held, .error "scriptSession: no guest module; load it first")
     | some m, _ =>
       let url := str request "url"
-      let commands := min 1048576 ((natField request "commandLimit").getD 4096)
+      let commands := min 1048576 ((natField request "commandLimit").getD L4Factoidal.WasmVM.Hosts.Dom.maxCommands)
       let logs := min 1048576 ((natField request "logLimit").getD 1024)
       let ent ← entropy held.nextSession
       let started ← WebWasm.timed fun _ => show Except String Page.Session from do

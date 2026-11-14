@@ -156,8 +156,8 @@ Engine in the library, under `formal/lean4/L4Factoidal/`:
   `WebApi.lean`, and `LeanJS.lean` + `LeanJSRealm.lean` for BubblePopJS.
 
 Page scripts run in the engine. No host JavaScript engine runs a page script.
-`WebRenderScript.defaultEngine` gives BubblePopJS on the desktop and QuickJS-NG in WasmVM
-on the Hub. The QuickJS-NG guest is `tools/wasmvm/build-quickjs.sh` with
+`WebRenderScript.defaultEngine` gives BubblePopJS for every host (`defaultEngine_eq`); QuickJS-NG
+in WasmVM runs a page only when the setting names it. The QuickJS-NG guest is `tools/wasmvm/build-quickjs.sh` with
 `tools/wasmvm/quickjs/prelude.js`. BubblePopJS uses the same prelude.
 
 Hub host, `docs/web/hub/foafnaut/`:
