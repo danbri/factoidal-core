@@ -295,10 +295,12 @@ def namespacesOf (d : Doc) (it : Item) : List Item :=
     lie. -/
 def normalize (xs : List Item) : List Item :=
   let sorted := xs.toArray.qsort (fun a b => keyCmp a.loc.key b.loc.key == .lt) |>.toList
-  sorted.foldl (fun acc x =>
-    match acc.reverse.head? with
-    | some y => if y.loc == x.loc then acc else acc ++ [x]
-    | none   => [x]) []
+  -- The kept items are held newest first, so each step reads and adds at the head:
+  -- one pass over the sorted list, not one walk of the result per item.
+  (sorted.foldl (fun acc x =>
+    match acc with
+    | y :: _ => if y.loc == x.loc then acc else x :: acc
+    | []     => [x]) []).reverse
 
 /-- The ancestors of an item, nearest first (reverse document order,
     which is the axis's own order). -/

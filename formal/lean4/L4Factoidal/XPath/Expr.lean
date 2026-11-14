@@ -31,6 +31,7 @@ exactly the same positions and element names elsewhere. Getting this
 wrong turns `count(*)` into a parse error and `a*b` into a name test.
 -/
 import L4Factoidal.XPath.Number
+import L4Factoidal.XML.Document
 
 namespace L4Factoidal.XPath.Full
 
@@ -133,15 +134,26 @@ inductive Tok where
   | op     (s : String)
 deriving Repr, DecidableEq, Inhabited
 
+/-- A character outside ASCII that may start a name: XML `[4] NameStartChar`, which
+    XPath's `[4] NCName` (Namespaces in XML) is built from. A name test such as
+    `dØdd` is one name; a character that is not a name character (U+2019, U+3000)
+    is not read as one, so the expression is refused. -/
+private def isNameStartHigh (c : Char) : Bool :=
+  c.toNat ≥ 0x80 && L4Factoidal.XML.isNameStartCharNonAscii c.toNat
+
+/-- A character outside ASCII that may continue a name: XML `[4a] NameChar`. -/
+private def isNameChHigh (c : Char) : Bool :=
+  c.toNat ≥ 0x80 && L4Factoidal.XML.isNameCharNonAscii c.toNat
+
 private def isNameStart (c : Char) : Bool :=
-  c.isAlpha || c == '_'
+  c.isAlpha || c == '_' || isNameStartHigh c
 
 private def isNameCh (c : Char) : Bool :=
-  c.isAlphanum || c == '_' || c == '-' || c == '.' || c == ':'
+  c.isAlphanum || c == '_' || c == '-' || c == '.' || c == ':' || isNameChHigh c
 
 /-- Name characters EXCLUDING the colon: `[4] NCName`. -/
 private def isNameCh0 (c : Char) : Bool :=
-  c.isAlphanum || c == '_' || c == '-' || c == '.'
+  c.isAlphanum || c == '_' || c == '-' || c == '.' || isNameChHigh c
 
 private def isDigitC (c : Char) : Bool := '0' ≤ c && c ≤ '9'
 

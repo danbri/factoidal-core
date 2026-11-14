@@ -18,6 +18,7 @@ InvalidNodeTypeError, -14 IndexSizeError, -15 WrongDocumentError, -16 InvalidSta
 -/
 import L4Factoidal.WasmVM.Hosts.Dom
 import L4Factoidal.DOM.Reflect
+import L4Factoidal.DOM.XPath.Evaluate
 import L4Factoidal.Rendering.CssSupports
 import L4Factoidal.Rendering.CssValues.Declaration
 import L4Factoidal.Rendering.ComputedGeneric
@@ -522,6 +523,21 @@ def domOpM (id op : Nat) (q : String) : Op String := do
       return ""
     | _ => throw (-2)
   | 120 => let n ← nodeArg d id; return toString (← splitText n (num xs 0).toNat)
+  -- ==== xmlweb (ops 121 to 129): DOM XPath (DOM §8; `DOM.XPathDom`), read-only ====
+  -- 121: the namespace prefixes that expression `q` uses, in the order written and
+  -- separated by U+0001, or "!SyntaxError" when `q` is not an XPath 1.0 expression
+  | 121 => return L4Factoidal.DOM.XPathDom.prefixesAnswer q
+  -- 122: `document.evaluate` with context node `id`: `q` is the expression, the result
+  -- type, the context attribute (or nothing) and the resolver's bindings, separated by
+  -- U+0001 (`DOM.XPathDom.answer`); the answer is the result type and the value or the
+  -- nodes, or "!" and the name of the exception
+  | 122 =>
+    let n ← nodeArg d id
+    return L4Factoidal.DOM.XPathDom.answer d n q
+  -- 123: the number of changes of the arena so far (`State.changes`): an XPathResult
+  -- iterator is invalid once it differs from the number at its evaluation
+  | 123 => return toString (← get).changes
+  -- ==== end of xmlweb ====
   | 130 =>
     let n ← nodeArg d id
     let s ← get

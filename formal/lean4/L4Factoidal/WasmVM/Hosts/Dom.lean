@@ -872,8 +872,18 @@ def createKind (d : Dom) (kind : Nat) (data : String) : Res Nat :=
   | 14, ns :: name :: rest => ok (L4Factoidal.DOM.Fragment.parseInto d doc ns name ("\x00".intercalate rest) (shadow := true))
   | _, _ => (d, .error .invalidCharacter)
 
+/-- (xmlweb) The most bytes of a source that `DOMParser` and `XMLHttpRequest.responseXML`
+give a parser (`create_node` kinds 11 and 12): a document a page loads this way is a
+resource of its own, not a string a script wrote, so it has the bound of a document
+(16 MiB) and not `maxString`. Every other kind keeps `maxString`. -/
+def maxDocument : Nat := 16777216
+
+/-- The most bytes `create_node` reads for a kind. -/
+def createBound (kind : Nat) : Nat :=
+  if kind % 16 == 11 || kind % 16 == 12 then maxDocument else maxString
+
 def createNode (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : State × HostResult :=
-  match readStr mem st (arg args 1) (arg args 2) maxString with
+  match readStr mem st (arg args 1) (arg args 2) (createBound (arg args 0)) with
   | .error e => (s, codeOrTrap e)
   | .ok data =>
     let kind := arg args 0
