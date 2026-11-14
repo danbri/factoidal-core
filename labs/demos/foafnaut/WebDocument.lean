@@ -1780,7 +1780,10 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
   modify (·.merge {store := madeStore,words := madeWords})
   -- A window shorter than the chrome still lays out, on one row.
   let state := withPointer dom (← elementState dom url request) pointer
-  let draw := fun (d : DOM.Dom) (e : Rendering.Layout.Embedding) => Rendering.Layout.render d rules font e width rows textScale state pictures treeScope
+  -- The layout with the styles it was made with (`Layout.renderWithStyles`): the one cascade
+  -- of a layout also answers the SVG refusals below and `Laid.styles` (each cascaded the
+  -- document again before).
+  let draw := fun (d : DOM.Dom) (e : Rendering.Layout.Embedding) => Rendering.Layout.renderWithStyles d rules font e width rows textScale state pictures treeScope
   -- Inline SVG is a skip point, checked so that liberal mode lays the page out once
   -- (2026-11-09: BBC News took three layouts). In the layout: the embedding draws a refused
   -- `svg` as nothing (`quiet`). After it: each `svg` root that was laid out is read again at
@@ -1793,10 +1796,9 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
     | .strict => pure (draw dom embedding,embedding,([] : List WebAccept.Diagnostic),dom)
     | .liberal => do
       let roots := svgRoots dom
-      let styles ← if roots.isEmpty then pure #[] else Rendering.CSS.computeFor treeScope dom rules textScale state
       let result := draw dom quiet
       let refused := match result with
-        | .ok (_,boxes) => svgRefusals embedding styles boxes roots dom.size
+        | .ok ((_,boxes),styles) => if roots.isEmpty then [] else svgRefusals embedding styles boxes roots dom.size
         | .error _ => []
       let dRefused : List WebAccept.Diagnostic := match refused with
         | [] => []
@@ -1804,8 +1806,8 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
       pure (result,quiet,dRefused,dom)
   -- Nesting deeper than layout reads is a skip point: liberal mode draws the page with the
   -- content below some depth taken out, the first of these depths that lays out.
-  let (scene,boxes,dom,d4) ← match first with
-    | .ok (scene,boxes) => pure (scene,boxes,dom,([] : List WebAccept.Diagnostic))
+  let (scene,boxes,styles,dom,d4) ← match first with
+    | .ok ((scene,boxes),styles) => pure (scene,boxes,styles,dom,([] : List WebAccept.Diagnostic))
     | .error e =>
       match m with
       | .strict => throw e
@@ -1813,8 +1815,8 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
         if e == depthRefusal then
           let tries := [48,40,32,24,16].map (pruneDeep dom)
           match tries.findSome? (fun (d,cut) => match draw d used with | .ok r => some (r,d,cut) | .error _ => none) with
-          | some ((scene,boxes),d,cut) =>
-            pure (scene,boxes,d,[{skip := .nestingDepth, «where» := s!"{cut} elements", refusal := e}])
+          | some (((scene,boxes),styles),d,cut) =>
+            pure (scene,boxes,styles,d,[{skip := .nestingDepth, «where» := s!"{cut} elements", refusal := e}])
           | none => throw e
         else
           -- A layout refusal of inline SVG (an SVG box that layout can not size, as BBC News's
@@ -1822,7 +1824,7 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
           let (bare,n) := stripSvg dom
           if n == 0 then throw e else
           match draw bare used with
-          | .ok (scene,boxes) => pure (scene,boxes,bare,[{skip := .svgContent, «where» := s!"{n} inline svg elements", refusal := e}])
+          | .ok ((scene,boxes),styles) => pure (scene,boxes,styles,bare,[{skip := .svgContent, «where» := s!"{n} inline svg elements", refusal := e}])
           | .error _ => throw e
   let hoverRules := rules.any fun rule => rule.selectors.any fun sel =>
     sel.parts.any (·.pseudo.contains .hover) || sel.slotted.any (·.pseudo.contains .hover)
@@ -1832,7 +1834,7 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
     |> fun l => {l with textScale := textScale}
     |> fun l => {l with state := state}
     |> fun l => {l with treeScope := treeScope}
-    |> fun l => {l with styles := Thunk.mk fun _ => Rendering.CSS.computeFor treeScope dom rules textScale state}
+    |> fun l => {l with styles := Thunk.pure (.ok styles)}
     |> fun l => {l with paint := paint},d1 ++ d2 ++ d0 ++ d3 ++ d4)
 
 /-- `layOut` after the parse: the layout of the arena `dom`, `width` by `rows` CSS pixels,
