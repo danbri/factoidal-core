@@ -263,9 +263,15 @@
       s.tiltX = (d.tiltX ?? 0) | 0; s.tiltY = (d.tiltY ?? 0) | 0; s.twist = (d.twist ?? 0) | 0;
       s.altitudeAngle = Number(d.altitudeAngle ?? Math.PI / 2); s.azimuthAngle = Number(d.azimuthAngle ?? 0);
       s.pointerType = String(d.pointerType ?? ''); s.isPrimary = !!d.isPrimary;
+      // PointerEventInit's coalescedEvents and predictedEvents (Pointer Events 3 §4.1.2)
+      for (const [k, f] of [['coalescedEvents', 'coalesced'], ['predictedEvents', 'predicted']]) {
+        const list = d[k] === undefined ? [] : Array.from(d[k]);
+        if (list.some(x => !(x instanceof PointerEvent))) throw new TypeError(`member ${k} is not a sequence of PointerEvent`);
+        s[f] = list;
+      }
     }
-    getCoalescedEvents() { return []; }
-    getPredictedEvents() { return []; }
+    getCoalescedEvents() { return [...(state(this).coalesced ?? [])]; }
+    getPredictedEvents() { return [...(state(this).predicted ?? [])]; }
   }
   getters(PointerEvent, ['pointerId', 'width', 'height', 'pressure', 'tangentialPressure', 'tiltX', 'tiltY', 'twist',
     'altitudeAngle', 'azimuthAngle', 'pointerType', 'isPrimary']);
