@@ -773,6 +773,12 @@ def finalAllowed (t : Transfer) (a : Answer) : Bool :=
     | some u => mayConnect t.page u
     | none => false
 
+/-- A redirect to `next` that names a user or password is a network error (Fetch §4.4 steps 7
+and 8): when it leaves the page's origin, or once the response tainting is "cors" (the hop that
+answered is not of the page's origin). -/
+def redirectCredentialsRefused (t : Transfer) (next : URL.Url) : Bool :=
+  next.includesCredentials && (next.origin != t.page.origin || (!t.noCors && !t.same))
+
 /-- The host's answer: refuse it, deliver it, or send the next hop. -/
 def onAnswer (t : Transfer) (a : Answer) : Step :=
   match t.phase with
@@ -804,11 +810,25 @@ def onAnswer (t : Transfer) (a : Answer) : Step :=
         match URL.parseUrl loc (some t.url) with
         | none => .fail "bad redirect"
         | some next =>
-          if next.includesCredentials && next.origin != t.page.origin then .fail "redirect with credentials" else
+          -- Fetch §4.4 steps 7 and 8: a URL with credentials is a network error once the response
+          -- tainting is "cors" (this hop is not of the page's origin), or when it is of another origin
+          if redirectCredentialsRefused t next then .fail "redirect with credentials" else
           plan (afterRedirect (t.hopReferrer a) a.status next)
     else .deliver t (responseOf t a)
 
 /-! ## Theorems -/
+
+/-- Kind: security theorem (Fetch §4.4 step 7). Says: once a "cors" request has left the page's
+origin, a redirect to a URL with a user or password is refused, whatever its origin. -/
+theorem redirectCredentials_cross (t : Transfer) (next : URL.Url) (hc : next.includesCredentials = true)
+    (hm : t.noCors = false) (hs : t.same = false) : redirectCredentialsRefused t next = true := by
+  simp [redirectCredentialsRefused, hc, hm, hs]
+
+/-- Kind: security theorem (Fetch §4.4 step 8). Says: a redirect to a URL with a user or password
+of another origin than the page's is refused. -/
+theorem redirectCredentials_other (t : Transfer) (next : URL.Url) (hc : next.includesCredentials = true)
+    (ho : (next.origin != t.page.origin) = true) : redirectCredentialsRefused t next = true := by
+  simp [redirectCredentialsRefused, hc, ho]
 
 /-- Kind: policy lemma. Says: a page whose origin is not local cannot make a target that the
 URL names as local pass `mayConnect`. Does not say: anything about a name that resolves to a
