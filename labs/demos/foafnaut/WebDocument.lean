@@ -15,6 +15,7 @@ import WebWasm
 import WebState
 import WebSparql
 import WebScripts
+import L4Factoidal.Net.Subresource
 import L4Factoidal.Rendering.SfntProfile
 import L4Factoidal.FrameCost.Band
 import L4Factoidal.FrameCost.Lru
@@ -2419,6 +2420,8 @@ structure Engine where
   paintWork : Nat := 0
   /-- Parsed trees, read sheets and image stores of the last layouts (`Kept`). -/
   kept : Kept := {}
+  /-- The document's subresource requests in progress (`subresource`, Net.Subresource). -/
+  subs : Net.Subresource.Table := {}
 
 instance : Inhabited Engine := ⟨{}⟩
 
@@ -2515,12 +2518,52 @@ abbrev DocM (M : Type → Type) := ExceptT String (StateT Engine M)
 kept layout (`Engine.frame`); `runUncached` passes `layOut`, so that tests compare the two. With
 `bytes`, a render answer names its storage floats and tile words as sections
 (`DataForm.sections`) and gives their bytes; other answers have no section. -/
+/-- An answer of op `subresource`: the request for the host to make, done, or failed. -/
+def subresourceJson : Net.Subresource.Out → JSON.Json
+  | .wire id w => .object [("id", WebScripts.num id), ("wire", WebScripts.wireJson w)]
+  | .done id st ty u hidden body =>
+    .object [("id", WebScripts.num id), ("done", .object ([("status", WebScripts.num st), ("type", .string ty),
+      ("url", .string u), ("opaque", .bool hidden)] ++
+      (match body with | some b => [("bodyBase64", .string (WHATWG.Base64.encode b))] | none => [])))]
+  | .fail id why => .object [("id", WebScripts.num id), ("fail", .string why)]
+
+/-- Op `subresource` (Net.Subresource): a document's element request, one step a call.
+`start`: `kind` (its destination), `url`, `documentURL`, `referrerPolicy` (the element's
+`referrerpolicy` or the document's; "" for the default), `crossorigin` ("", "anonymous",
+"use-credentials"), `hostCors` and `address` as for `scriptSession start`. `answer`: `id` and
+the host's `answer` to the wire (as action `net` gives one; the body may be left out: the
+host keeps the bytes). `cancel`: `id`. The referrer is the document's URL. -/
+def subresourceOp (tab : Net.Subresource.Table) (request : JSON.Json) : Net.Subresource.Table × String :=
+  match str request "action" with
+  | "start" =>
+    let doc := str request "documentURL"
+    let page := Net.PageFetch.Page.ofUrl doc (request.field? "hostCors" == some (.bool true)) (str request "address")
+    let policy := (Net.ReferrerPolicy.Policy.ofToken (str request "referrerPolicy")).getD .default
+    let cors := match str request "crossorigin" with
+      | "" => none
+      | "use-credentials" => some true
+      | _ => some false
+    let (tab, o) := Net.Subresource.start tab page (str request "kind") (str request "url") doc policy cors
+    (tab, (subresourceJson o).toString)
+  | "answer" =>
+    let id := match request.field? "id" with | some (.number n) => n.toNat?.getD 0 | _ => 0
+    let (_, a) := WebScripts.netAnswer ((request.field? "answer").getD .null)
+    let (tab, o) := Net.Subresource.answer tab id a
+    (tab, (subresourceJson o).toString)
+  | "cancel" =>
+    let id := match request.field? "id" with | some (.number n) => n.toNat?.getD 0 | _ => 0
+    (Net.Subresource.cancel tab id, "{}")
+  | _ => (tab, "{\"error\":\"subresource: unknown action\"}")
+
 def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : LayoutKey → DocM M Laid) (bytes : Bool) (html : String)
     (request : JSON.Json) (width height : Nat) : DocM M (String × Array ByteArray) := do
   let .object fields := request | throw "document request must be an object"
   if (fields.map Prod.fst).eraseDups.length != fields.length then throw "duplicate document request field"
   if str request "op" == "fontLoad" then
     return (← stepState fun e => let (h,r) := loadFont e.holds request; ({e with holds := h},r),#[])
+  -- A document's subresource requests go through the engine's network rules, step by step.
+  if str request "op" == "subresource" then
+    return (← stepState fun e => let (subs, r) := subresourceOp e.subs request; ({e with subs}, .ok r),#[])
   if str request "op" == "imageLoad" then
     return (← stepState fun e => let (h,r) := loadImage e.holds request; ({e with holds := h},r),#[])
   -- The ops of held images and frame work: a host asks this before it calls them (issue 1274).
