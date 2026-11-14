@@ -83,7 +83,7 @@ def pendingOf (value : String) : Option (String × String) :=
 element `id`: the canonical specified value of the winning declaration. `also` is the
 flow-relative name of `p` in the element's flow, when it has one (CSS Logical 1 §4.1): its
 declarations are declarations of `p`. -/
-def cascaded (v : View) (id : Nat) (p : String) (also : Option String := none) : Option String := Id.run do
+def cascadedAll (v : View) (id : Nat) (p : String) (also : Option String := none) : List (List Nat × String) := Id.run do
   let n := v.dom.get id
   -- `all` sets every property but `direction`, `unicode-bidi` and the custom properties
   -- (CSS Cascade 4 §3.2), to a CSS-wide keyword
@@ -92,17 +92,17 @@ def cascaded (v : View) (id : Nat) (p : String) (also : Option String := none) :
   let names := match also with
     | some q => names ++ coveringNames q
     | none => names
-  let mut best : Option (List Nat × String) := none
+  let mut best : List (List Nat × String) := []
   let mut order : Nat := 0
-  let consider := fun (best : Option (List Nat × String)) (key : List Nat) (d : Declaration) =>
-    if names.contains d.property && (best.map (fun b => keyLE b.1 key)).getD true then
+  let consider := fun (best : List (List Nat × String)) (key : List Nat) (d : Declaration) =>
+    if names.contains d.property then
       let value := if d.property == "all" then CssValues.specified "all" d.value
         else (CssValues.expand d.property d.value).bind fun ls =>
           ((ls.lookup p).orElse fun _ => also.bind fun q => ls.lookup q).orElse fun _ =>
             -- a shorthand kept whole for its `var()`: its longhands are known after substitution
             (ls.lookup d.property).bind fun raw => if d.property != p then some (pendingShorthand d.property raw) else none
       match value with
-      | some value => some (key, value)
+      | some value => (key, value) :: best
       | none => best
     else best
   for (origin, rule, matched) in v.matchesOf id do
@@ -115,13 +115,67 @@ def cascaded (v : View) (id : Nat) (p : String) (also : Option String := none) :
       order := order + 1
   for d in CssValues.Block.parseOnly names (attrValue n "style") do
     let key := inlineKey d.important order
-    if (best.map (fun b => keyLE b.1 key)).getD true then
-      if d.name == p || d.name == "all" || some d.name == also then best := some (key, d.value)
-      else if CssValues.hasSubstitution (CssValues.CV.parse d.value) then
-        -- a covering shorthand kept whole for its `var()`
-        best := some (key, pendingShorthand d.name d.value)
+    if d.name == p || d.name == "all" || some d.name == also then best := (key, d.value) :: best
+    else if CssValues.hasSubstitution (CssValues.CV.parse d.value) then
+      -- a covering shorthand kept whole for its `var()`
+      best := (key, pendingShorthand d.name d.value) :: best
     order := order + 1
-  return best.map (·.2)
+  return best
+
+/-- The winning value among cascaded declarations (key, value), with `revert-layer` and
+`revert` rolled back (CSS Cascade 5 §7.3.2, §7.3.1): `revert-layer` gives the best
+declaration of an earlier layer (the first four entries of the key: importance, origin and
+context, attachment, layer); `revert` the best one of an earlier origin (the first two).
+`none`: no declaration is left. At most one step for each declaration. -/
+def bestOf (cands : List (List Nat × String)) : Option (List Nat × String) :=
+  cands.foldl (fun (b : Option (List Nat × String)) c =>
+    match b with
+    | some b' => if keyLE b'.1 c.1 then some c else some b'
+    | none => some c) none
+
+/-- `winning` with `fuel` steps of rolling back (a tail call). -/
+def winningF : Nat → List (List Nat × String) → Option String
+  | 0, _ => none
+  | fuel + 1, left =>
+    match bestOf left with
+    | none => none
+    | some (key, value) =>
+      if CssValues.lower value == "revert-layer" then winningF fuel (left.filter fun c => !keyLE (key.take 4) (c.1.take 4))
+      else if CssValues.lower value == "revert" then winningF fuel (left.filter fun c => !keyLE (key.take 2) (c.1.take 2))
+      else some value
+
+def winning (cands : List (List Nat × String)) : Option String := winningF (cands.length + 1) cands
+
+/-- Kind: policy. Says: the cascaded value is never `revert` or `revert-layer`: those roll
+back to another declaration, or to none. -/
+theorem winningF_not_revert (fuel : Nat) (cands : List (List Nat × String)) (v : String)
+    (h : winningF fuel cands = some v) :
+    CssValues.lower v ≠ "revert-layer" ∧ CssValues.lower v ≠ "revert" := by
+  induction fuel generalizing cands with
+  | zero => simp [winningF] at h
+  | succ n ih =>
+    unfold winningF at h
+    split at h
+    · simp at h
+    · rename_i key value _
+      split at h
+      · exact ih _ h
+      · split at h
+        · exact ih _ h
+        · rename_i h1 h2
+          simp at h
+          subst h
+          exact ⟨fun e => h1 (by simp [e]), fun e => h2 (by simp [e])⟩
+
+/-- The cascaded value of property `p` on element `id` (see `cascadedAll`), with
+`revert-layer` and `revert` rolled back. -/
+def cascaded (v : View) (id : Nat) (p : String) (also : Option String := none) : Option String :=
+  winning (cascadedAll v id p also)
+
+#guard winning [([0, 2, 0, 1, 0], "red"), ([0, 2, 0, 3, 0], "revert-layer"), ([0, 2, 0, 2, 0], "blue")] == some "blue"
+#guard winning [([0, 2, 0, 1, 0], "red"), ([0, 2, 0, 1, 1], "revert-layer")] == none
+#guard winning [([0, 0, 0, 0, 0], "ua"), ([0, 2, 0, 1, 0], "red"), ([0, 2, 0, 9, 0], "revert")] == some "ua"
+#guard winning [([0, 2, 0, 1, 0], "red"), ([0, 2, 0, 1, 1], "green")] == some "green"
 
 /-- The parent element of a node. -/
 def parentElement (dom : DOM.Dom) (id : Nat) : Option Nat :=
@@ -447,5 +501,13 @@ private def computedAt (html css prop : String) : String :=
 #guard computedAt "<div id=t></div>" "#t { position: absolute; float: left; display: none }" "float" == "none"
 -- custom properties: a cycle and a missing reference are the guaranteed-invalid value
 #guard computedAt "<div><div id=t></div></div>" "div { --c: inherited } #t { --c: var(--zz) }" "--c" == ""
+-- revert-layer rolls back to the layer before; with no earlier layer, to the default
+#guard computedAt "<div id=t class=r></div>"
+  "@layer a { #t { color: red } } @layer b { #t { color: blue } } @layer c { #t.r { color: revert-layer } }" "color" ==
+  "rgb(0, 0, 255)"
+#guard computedAt "<div id=t class=r></div>" "@layer a { #t { all: initial } } @layer b { #t { vertical-align: 12px } }
+  @layer c { #t.r { all: revert-layer } }" "vertical-align" == "12px"
+#guard computedAt "<div><p id=t>x</p></div>" "div { margin-left: 3px } @layer a { #t { margin-left: revert-layer } }"
+  "margin-left" == "0px"
 
 end L4Factoidal.Rendering.ComputedGeneric
