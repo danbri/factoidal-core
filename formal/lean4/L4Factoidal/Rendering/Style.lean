@@ -504,6 +504,12 @@ def declarationsOf (ds : List SheetReader.Decl) : List Declaration :=
     -- `background` is also its colour, `background-color`, which this profile reads (`apply`,
     -- `tableDeclaration`); the shorthand stays for getComputedStyle's other longhands
     if key == "background" then (⟨"background-color",d.value,d.important⟩ : Declaration) :: whole :: acc else
+    -- a side's border shorthand as that side's width, style and colour (CSS Backgrounds 3 §4.4)
+    if ["border-top", "border-right", "border-bottom", "border-left"].contains key && !CssVars.mentions d.value then
+      match CssValues.expand key d.value with
+      | some ls => (ls.map fun (n, v) => (⟨n, v, d.important⟩ : Declaration)) ++ acc
+      | none => acc
+    else
     -- a side shorthand that mentions `var()` is kept whole: its sides are known only
     -- after substitution (`computedFrom`)
     if (key == "margin" || key == "padding" || key == "inset" || CssValues.Logical.mentions key) &&
@@ -1014,6 +1020,32 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     if d.value == "none" then return {s with underline := false}
     throw "unsupported CSS text decoration"
   | "border-style" => return {s with borderStyle := ← borderStyle d.value}
+  -- One side's border. This profile has one style and one colour for the four sides: a
+  -- side's style that is the first style an element gets also leaves the sides with no
+  -- style of their own without a border (their width is 0); a side's style of none
+  -- removes that side's border.
+  | "border-top-width" => return {s with borderWidth := {s.borderWidth with top := ← edgePixel d.value}}
+  | "border-right-width" => return {s with borderWidth := {s.borderWidth with right := ← edgePixel d.value}}
+  | "border-bottom-width" => return {s with borderWidth := {s.borderWidth with bottom := ← edgePixel d.value}}
+  | "border-left-width" => return {s with borderWidth := {s.borderWidth with left := ← edgePixel d.value}}
+  | "border-top-style" | "border-right-style" | "border-bottom-style" | "border-left-style" =>
+    let st ← borderStyle d.value
+    let side := ((d.property.drop 7).takeWhile (· != '-')).toString
+    let only : Edges := match side with
+      | "top" => {top := s.borderWidth.top}
+      | "right" => {right := s.borderWidth.right}
+      | "bottom" => {bottom := s.borderWidth.bottom}
+      | _ => {left := s.borderWidth.left}
+    let without : Edges := match side with
+      | "top" => {s.borderWidth with top := 0}
+      | "right" => {s.borderWidth with right := 0}
+      | "bottom" => {s.borderWidth with bottom := 0}
+      | _ => {s.borderWidth with left := 0}
+    if st == .none then return {s with borderWidth := without}
+    else if s.borderStyle == .none then return {s with borderStyle := st, borderWidth := only}
+    else return {s with borderStyle := st}
+  | "border-top-color" | "border-right-color" | "border-bottom-color" | "border-left-color" =>
+    return {s with borderColor := some (← color d.value)}
   | "border-width" => return {s with borderWidth := ← edgeValues d.value}
   | "border-color" => return {s with borderColor := some (← color d.value)}
   | "border" =>
@@ -1184,6 +1216,12 @@ def tableDeclaration (s : Computed) (d : Declaration) : Option Declaration :=
       let style := if ["none", "hidden", "solid", "inset", "outset"].contains style then style else "solid"
       let colour := ((ds.lookup "border-top-color").bind colorHex).filter (· != "transparent")
       value (" ".intercalate ([width, style] ++ colour.toList))
+  | "border-top-style" | "border-right-style" | "border-bottom-style" | "border-left-style" =>
+    match (CssValues.specified d.property d.value) with
+    | some w => value (if ["none", "hidden", "inset", "outset"].contains w then w else "solid")
+    | none => none
+  | "border-top-color" | "border-right-color" | "border-bottom-color" | "border-left-color" =>
+    (colorHex d.value).bind fun h => if h == "transparent" then none else value h
   | "border-style" =>
     match (words d.value.toLower).head? with
     | some w => if (CssValues.specified "border-top-style" w).isSome then value (if ["none", "hidden", "inset", "outset"].contains w then w else "solid") else none
