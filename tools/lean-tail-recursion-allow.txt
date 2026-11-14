@@ -2345,3 +2345,7 @@ L4Factoidal_Rendering_CssSheet_preludeText_go  # (c) the nesting of an at-rule p
 L4Factoidal_XForms_Engine_evalE*  # (b) XPath 1.0 expression walk; fuel 256 decreases at each call; depth is the nesting of one expression (form text)
 L4Factoidal_XForms_Engine_flatten*  # (b) the host document flattened to an element table; fuel 512; depth is the element nesting of the form document
 L4Factoidal_XForms_Engine_modKids*  # (b) node replacement at an address; depth is the length of the child-index path, the element nesting of one instance document
+# --- Client storage (ClientStorage/IdbKey): 2026-11-14. Lists and array spines are folds or tail calls; what recurses is the nesting of arrays in an IndexedDB key, read to at most Key.maxDepth = 64 (a deeper key is refused with DataError).
+L4Factoidal_ClientStorage_Idb_Key_read  # (c) one call per level of nested array keys; the fuel is Key.maxDepth = 64 (Key.ofToks)
+L4Factoidal_ClientStorage_Idb_Key_cmp  # (c) the head of an array item; the spine is a tail call; keys come from Key.read, nested at most 64 deep
+L4Factoidal_ClientStorage_Idb_Key_write  # (c) the head of an array item; the spine is a tail call; nested at most 64 deep

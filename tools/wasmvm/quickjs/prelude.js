@@ -6267,6 +6267,829 @@
     return out;
   });
 
+  // ==== IndexedDB (Indexed Database API 3.0) ===================================================
+  // Everything a page can observe is Lean's (ClientStorage/Idb*.lean, web_api op 200): the
+  // databases of the storage key (the engine's origin, never an argument), the order of a
+  // method's exceptions, key order and key ranges, key paths (evaluated on the stored record,
+  // so on the clone), which transaction runs, when it commits, what an abort undoes, cursors,
+  // and the events of open and delete requests. In memory for the session; nothing is written
+  // to disk. This block is the WebIDL surface: it converts arguments, writes a value as the
+  // tokens of its structured serialisation and reads them back, holds the objects, and
+  // dispatches the event each `pump` hands it (the listener order is Lean's too: `plan`).
+  const makeIdb = () => {
+    const td = new TextDecoder(), text = b => td.decode(b);
+    const ascii = b => { let s = ''; for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); return s; };
+    const unpack = ab => {
+      const u = new Uint8Array(ab), u32 = i => (u[i] | u[i + 1] << 8 | u[i + 2] << 16 | u[i + 3] << 24) >>> 0;
+      const out = [];
+      for (let i = 0, at = 4, k = u32(0); i < k; i++) { const len = u32(at); out.push(u.subarray(at + 4, at + 4 + len)); at += 4 + len; }
+      return out;
+    };
+    // One command: the answer's fields after `ok`; `!Name` is thrown as that exception.
+    const call = (args, what = 'IndexedDB') => {
+      const r = apiCall(200, args, 0, true);
+      if (typeof r === 'number') throw new DOMException(`${what}: storage is not available.`, r === -5 ? 'QuotaExceededError' : 'UnknownError');
+      const f = unpack(r), head = text(f[0]);
+      if (head === 'ok') return f.slice(1);
+      if (head[0] !== '!') return f;
+      const name = head.slice(1);
+      if (name === 'TypeError') throw new TypeError(`Failed to execute '${what}'`);
+      throw new DOMException(`Failed to execute '${what}': ${name}`, name);
+    };
+    const num = b => Number(ascii(b));
+    const dv = new DataView(new ArrayBuffer(8));
+    const h8 = x => (x + 0x100000000).toString(16).slice(1);
+    const hex64 = x => { dv.setFloat64(0, x); return h8(dv.getUint32(0)) + h8(dv.getUint32(4)); };
+    const unhex64 = h => { dv.setUint32(0, parseInt(h.slice(0, 8), 16)); dv.setUint32(4, parseInt(h.slice(8, 16), 16)); return dv.getFloat64(0); };
+    const btok = u8 => { const out = new Uint8Array(u8.length + 1); out[0] = 98; out.set(u8, 1); return out; };
+    const bytesOfSource = v => ArrayBuffer.isView(v) ? new Uint8Array(v.buffer, v.byteOffset, v.byteLength) : new Uint8Array(v);
+    const need = (k, have, what) => { if (have < k) throw new TypeError(`Failed to execute '${what}': ${k} argument${k > 1 ? 's' : ''} required, but only ${have} present.`); };
+
+    // ---- keys: "convert a value to a key" (§7.4) as tokens; Lean decides what a key is ------
+    const keyToks = (v, out, seen) => {
+      if (typeof v === 'number') { out.push('n' + hex64(v)); return true; }
+      if (typeof v === 'string') { out.push('s' + stEnc(v)); return true; }
+      if (v instanceof Date) { out.push('d' + hex64(Date.prototype.getTime.call(v))); return true; }
+      if (v instanceof ArrayBuffer || ArrayBuffer.isView(v)) {
+        if ((v instanceof ArrayBuffer ? v : v.buffer).detached) return false;
+        out.push(btok(bytesOfSource(v)));
+        return true;
+      }
+      if (Array.isArray(v)) {
+        const len = v.length;
+        if (seen.has(v)) return false;
+        seen.add(v);
+        out.push('A' + len);
+        for (let i = 0; i < len; i++) {
+          if (!Object.prototype.hasOwnProperty.call(v, i)) return false;
+          if (!keyToks(v[i], out, seen)) return false;
+        }
+        return true;
+      }
+      return false;
+    };
+    // A counted key argument: its tokens, or the one token `x` for a value that is not a key.
+    const keyArg = v => { const out = []; const okk = keyToks(v, out, new Set()); return okk ? [String(out.length), ...out] : ['1', 'x']; };
+    const readKey = (f, st) => {
+      const t = f[st.i++], tag = t[0];
+      if (tag === 110) return unhex64(ascii(t.subarray(1)));
+      if (tag === 100) return new Date(unhex64(ascii(t.subarray(1))));
+      if (tag === 115) return stDec(text(t.subarray(1)));
+      if (tag === 98) return t.slice(1).buffer;
+      const k = num(t.subarray(1)), a = [];
+      for (let i = 0; i < k; i++) a.push(readKey(f, st));
+      return a;
+    };
+    // A counted run of key tokens at f[st.i].
+    const countedKey = (f, st) => { const k = num(f[st.i++]); if (k === 0) return undefined; return readKey(f, st); };
+
+    // ---- values: StructuredSerializeForStorage as tokens, and back --------------------------
+    const dataClone = what => new DOMException(`Failed to store a value: ${what} could not be cloned.`, 'DataCloneError');
+    const ser = (v, out, mem) => {
+      switch (typeof v) {
+        case 'undefined': out.push('u'); return;
+        case 'boolean': out.push(v ? 't' : 'f'); return;
+        case 'number': out.push('n' + hex64(v)); return;
+        case 'bigint': out.push('i' + v.toString()); return;
+        case 'string': out.push('s' + stEnc(v)); return;
+        case 'symbol': throw dataClone('A Symbol');
+      }
+      if (v === null) { out.push('z'); return; }
+      if (mem.has(v)) { out.push('@' + mem.get(v)); return; }
+      if (typeof v === 'function') throw dataClone('A function');
+      mem.set(v, mem.size);
+      for (const P of [Boolean, Number, BigInt, String]) {
+        let x, isP = true;
+        try { x = P.prototype.valueOf.call(v); } catch { isP = false; }
+        if (isP) { out.push('B'); ser(x, out, mem); return; }
+      }
+      if (v instanceof Date) { out.push('d' + hex64(Date.prototype.getTime.call(v))); return; }
+      if (v instanceof RegExp) { out.push('r' + v.flags + '/' + stEnc(v.source)); return; }
+      if (isShared(v)) throw dataClone('A SharedArrayBuffer');
+      if (v instanceof ArrayBuffer) { if (v.detached) throw dataClone('A detached ArrayBuffer'); out.push(btok(new Uint8Array(v))); return; }
+      if (ArrayBuffer.isView(v)) {
+        if (v.buffer.detached) throw dataClone('A detached view');
+        if (isShared(v.buffer)) throw dataClone('A SharedArrayBuffer');
+        const kind = typeof DataView === 'function' && v instanceof DataView ? 'DataView' : typedArrays.find(T => v instanceof T).name;
+        out.push('V' + kind + ',' + v.byteOffset + ',' + v.byteLength);
+        ser(v.buffer, out, mem);
+        return;
+      }
+      if (v instanceof Map) {
+        const entries = [...Map.prototype.entries.call(v)];
+        out.push('M' + entries.length);
+        for (const [k, x] of entries) { ser(k, out, mem); ser(x, out, mem); }
+        return;
+      }
+      if (v instanceof Set) {
+        const items = [...Set.prototype.values.call(v)];
+        out.push('S' + items.length);
+        for (const x of items) ser(x, out, mem);
+        return;
+      }
+      if (v instanceof DOMException) { out.push('X'); ser(String(v.message), out, mem); ser(String(v.name), out, mem); return; }
+      if (BlobC && v instanceof BlobC) {
+        const b = blobs.get(v);
+        if (FileC && v instanceof FileC) { out.push('F' + stEnc(b.type), 's' + stEnc(v.name), 'n' + hex64(v.lastModified), btok(b.bytes)); return; }
+        out.push('L' + stEnc(b.type), btok(b.bytes));
+        return;
+      }
+      if (isPlatform(v) || kinds.has(v)) throw dataClone(Object.prototype.toString.call(v));
+      if (v instanceof Error) {
+        const name = errorNames.includes(v.name) ? v.name : 'Error';
+        const d = Object.getOwnPropertyDescriptor(v, 'message'), sd = Object.getOwnPropertyDescriptor(v, 'stack');
+        out.push('E' + name);
+        ser(d && 'value' in d ? String(d.value) : undefined, out, mem);
+        ser(sd && 'value' in sd && typeof sd.value === 'string' ? sd.value : undefined, out, mem);
+        ser(has(v, 'cause') ? v.cause : undefined, out, mem);
+        return;
+      }
+      const isArray = Array.isArray(v);
+      if (!isArray) {
+        const tag = Object.prototype.toString.call(v);
+        if (tag === '[object Arguments]' || slotted.some(C => typeof C === 'function' && v instanceof C)) throw dataClone(tag);
+      }
+      const len = isArray ? v.length : 0, at = out.length;
+      out.push('');
+      let count = 0, dense = isArray;
+      for (const k of Object.keys(v)) {
+        if (!has(v, k)) continue;
+        const x = v[k];
+        if (dense && k !== String(count)) dense = false;
+        out.push('k' + stEnc(k));
+        ser(x, out, mem);
+        count++;
+      }
+      if (isArray && dense && count === len) {
+        // a dense array: its values alone (the key tokens, one before each value, are dropped)
+        const body = out.splice(at + 1), kept = [];
+        for (let i = 0, depth = 0; i < body.length; i++) {
+          const t = body[i];
+          if (depth === 0 && typeof t === 'string' && t[0] === 'k') { depth = 1; continue; }
+          kept.push(t);
+          depth += kidsOf(t) - 1;
+        }
+        out[at] = 'A' + len;
+        for (const t of kept) out.push(t);
+      } else out[at] = isArray ? 'a' + len + ',' + count : 'o' + count;
+    };
+    // The subtrees that follow a token (as ClientStorage.Idb.kids).
+    const kidsOf = t => {
+      if (typeof t !== 'string') return 0;
+      const c = t[0], k = () => Number(t.slice(1).split(',')[0]);
+      if (c === 'A' || c === 'S') return k();
+      if (c === 'o' || c === 'M') return 2 * k();
+      if (c === 'a') return 2 * Number(t.slice(1).split(',')[1]);
+      if (c === 'V' || c === 'B' || c === 'L') return 1;
+      if (c === 'X') return 2;
+      if (c === 'E' || c === 'F') return 3;
+      return 0;
+    };
+    const serialize = v => { const out = []; ser(v, out, new Map()); return out; };
+    const put = (o, k, v) => Object.defineProperty(o, k, { value: v, writable: true, enumerable: true, configurable: true });
+    const de = (f, st) => {
+      const t = f[st.i++], c = String.fromCharCode(t[0]), body = () => text(t.subarray(1));
+      const keep = o => { st.objs.push(o); return o; };
+      const pairs = (o, k) => { for (let i = 0; i < k; i++) { const key = stDec(text(f[st.i++].subarray(1))); put(o, key, de(f, st)); } return o; };
+      switch (c) {
+        case 'u': return undefined;
+        case 'z': return null;
+        case 't': return true;
+        case 'f': return false;
+        case 'n': return unhex64(ascii(t.subarray(1)));
+        case 'i': return BigInt(body());
+        case 's': return stDec(body());
+        case '@': return st.objs[Number(body())];
+        case 'd': return keep(new Date(unhex64(ascii(t.subarray(1)))));
+        case 'r': { const b = body(), k = b.indexOf('/'); return keep(new RegExp(stDec(b.slice(k + 1)), b.slice(0, k))); }
+        case 'b': return keep(t.slice(1).buffer);
+        case 'B': { const slot = st.objs.length; st.objs.push(null); return st.objs[slot] = Object(de(f, st)); }
+        case 'V': {
+          const [kind, off, len] = body().split(','), slot = st.objs.length;
+          st.objs.push(null);
+          const buf = de(f, st), C = globalThis[kind];
+          return st.objs[slot] = kind === 'DataView' ? new DataView(buf, +off, +len) : new C(buf, +off, len / C.BYTES_PER_ELEMENT);
+        }
+        case 'A': { const k = Number(body()), a = keep([]); for (let i = 0; i < k; i++) put(a, i, de(f, st)); return a; }
+        case 'a': { const [len, k] = body().split(','); return pairs(keep(new Array(+len)), +k); }
+        case 'o': return pairs(keep({}), Number(body()));
+        case 'M': { const k = Number(body()), m = keep(new Map()); for (let i = 0; i < k; i++) { const key = de(f, st); m.set(key, de(f, st)); } return m; }
+        case 'S': { const k = Number(body()), s = keep(new Set()); for (let i = 0; i < k; i++) s.add(de(f, st)); return s; }
+        case 'X': { const slot = st.objs.length; st.objs.push(null); const m = de(f, st); return st.objs[slot] = new DOMException(m, de(f, st)); }
+        case 'E': {
+          const slot = st.objs.length;
+          st.objs.push(null);
+          const m = de(f, st), stack = de(f, st), cause = de(f, st), C = globalThis[body()] ?? Error;
+          const e = m === undefined ? new C() : new C(m);
+          if (stack !== undefined) define(e, 'stack', stack);
+          if (cause !== undefined) define(e, 'cause', cause);
+          return st.objs[slot] = e;
+        }
+        case 'L': { const slot = st.objs.length; st.objs.push(null); const bytes = new Uint8Array(f[st.i++].slice(1)); return st.objs[slot] = new (makeBlob())([bytes], { type: stDec(body()) }); }
+        case 'F': {
+          const slot = st.objs.length;
+          st.objs.push(null);
+          const name = stDec(text(f[st.i++].subarray(1))), modified = unhex64(ascii(f[st.i++].subarray(1))), bytes = new Uint8Array(f[st.i++].slice(1));
+          return st.objs[slot] = new (makeFile())([bytes], name, { type: stDec(body()), lastModified: modified });
+        }
+      }
+      throw new DOMException('A stored value could not be read.', 'DataError');
+    };
+    const deserialize = (f, from, to) => de(to === undefined ? f : f.slice(0, to), { i: from, objs: [] });
+
+    // ---- the objects ------------------------------------------------------------------------
+    const kinds = new WeakMap();           // every IndexedDB object: its state
+    const st = (o, C, what) => { const s = kinds.get(o); if (!s || s.kind !== C) throw new TypeError('Illegal invocation: ' + what); return s; };
+    const reqs = new Map(), txs = new Map(), conns = new Map(), cursors = new Map();
+    const handlerAttr = (C, name) => Object.defineProperty(C.prototype, 'on' + name, { configurable: true, enumerable: true,
+      get() { return handlerOf(this, name); }, set(f) { setHandler(this, name, f); } });
+    const idl = (C, tag) => {
+      setTag(C, tag);
+      for (const k of Object.getOwnPropertyNames(C.prototype)) {
+        if (k === 'constructor') continue;
+        Object.defineProperty(C.prototype, k, { ...Object.getOwnPropertyDescriptor(C.prototype, k), enumerable: true });
+      }
+      return C;
+    };
+    let making = false;
+    const make = (C, state) => { making = true; let o; try { o = new C(); } finally { making = false; } kinds.set(o, { kind: C.name, ...state }); return o; };
+    const guard = () => { if (!making) throw new TypeError('Illegal constructor'); };
+
+    class DOMStringList {
+      constructor() { guard(); }
+      get length() { return st(this, 'DOMStringList', 'length').items.length; }
+      item(index) { need(1, arguments.length, 'DOMStringList.item'); const v = st(this, 'DOMStringList', 'item').items[index >>> 0]; return v === undefined ? null : v; }
+      contains(string) { need(1, arguments.length, 'DOMStringList.contains'); return st(this, 'DOMStringList', 'contains').items.includes(String(string)); }
+      [Symbol.iterator]() { return st(this, 'DOMStringList', 'iterator').items[Symbol.iterator](); }
+    }
+    idl(DOMStringList, 'DOMStringList');
+    const stringList = items => {
+      const o = make(DOMStringList, { items });
+      items.forEach((v, i) => Object.defineProperty(o, i, { value: v, enumerable: true, configurable: true }));
+      return o;
+    };
+    const names = f => stringList(f.map(b => stDec(text(b))));
+
+    class IDBRequest extends EventTarget {
+      constructor() { guard(); super(); }
+      get result() { const s = st(this, 'IDBRequest', 'result'); if (!s.done) throw new DOMException('The request has not finished.', 'InvalidStateError'); return s.result; }
+      get error() { const s = st(this, 'IDBRequest', 'error'); if (!s.done) throw new DOMException('The request has not finished.', 'InvalidStateError'); return s.error; }
+      get source() { return st(this, 'IDBRequest', 'source').source; }
+      get transaction() { return st(this, 'IDBRequest', 'transaction').tx; }
+      get readyState() { return st(this, 'IDBRequest', 'readyState').done ? 'done' : 'pending'; }
+    }
+    idl(IDBRequest, 'IDBRequest'); handlerAttr(IDBRequest, 'success'); handlerAttr(IDBRequest, 'error');
+    class IDBOpenDBRequest extends IDBRequest { constructor() { super(); } }
+    idl(IDBOpenDBRequest, 'IDBOpenDBRequest'); handlerAttr(IDBOpenDBRequest, 'blocked'); handlerAttr(IDBOpenDBRequest, 'upgradeneeded');
+    const newReq = (C, id, source, tx) => {
+      const r = make(C, { kind: 'IDBRequest', id, source, tx, done: false, result: undefined, error: null });
+      reqs.set(id, r);
+      return r;
+    };
+
+    class IDBVersionChangeEvent extends Event {
+      constructor(type, init = undefined) {
+        need(1, arguments.length, "IDBVersionChangeEvent' constructor");
+        super(type, init);
+        const d = dict(init, 'IDBVersionChangeEvent');
+        const u = (v, nullable) => { if (v === undefined) return nullable ? null : 0; if (v === null && nullable) return null; const x = Number(v); if (!Number.isFinite(x) || x < 0 || x > 9007199254740991) throw new TypeError('IDBVersionChangeEvent: a version is out of range'); return Math.trunc(x); };
+        kinds.set(this, { kind: 'IDBVersionChangeEvent', oldVersion: u(d.oldVersion, false), newVersion: u(d.newVersion, true) });
+      }
+      get oldVersion() { return st(this, 'IDBVersionChangeEvent', 'oldVersion').oldVersion; }
+      get newVersion() { return st(this, 'IDBVersionChangeEvent', 'newVersion').newVersion; }
+    }
+    idl(IDBVersionChangeEvent, 'IDBVersionChangeEvent');
+
+    // ---- events: the path request, transaction, connection; the order is Lean's `plan` -----
+    const idbDispatch = (path, event) => {
+      const s = state(event), target = path[path.length - 1];
+      s.trusted = true; s.dispatching = true; s.target = target; s.path = path.slice().reverse();
+      const args = ['plan', s.bubbles ? '1' : '0', String(path.length), ...path.map(t => String(idOf(t)))];
+      for (const t of path) {
+        const p = chk(n.plan(idOf(t), s.type, 0));
+        for (let i = 1 + p[0]; i + 3 < p.length; i += 4) args.push(String(p[i + 1]), (p[i + 2] & 8) ? '1' : '0', String(p[i]));
+      }
+      const plan = call(args).map(num);
+      let threw = false, stopAt = null;
+      for (let i = 0; i + 3 < plan.length; i += 4) {
+        const cb = plan[i], node = plan[i + 1], phase = plan[i + 2] & 7, capture = (plan[i + 2] & 8) !== 0, depth = plan[i + 3];
+        if (s.stopImmediate) break;
+        if (s.stop && (stopAt === null || stopAt.depth !== depth || stopAt.capture !== capture)) break;
+        const r = records.get(cb);
+        if (!r || r.removed) continue;
+        if (r.once) removeRecord(r);
+        s.currentTarget = wrapTarget(node); s.phase = phase; s.passive = !!r.passive;
+        const saved = globalEvent;
+        globalEvent = event;
+        try {
+          const f = r.callback;
+          if (typeof f === 'function') f.call(s.currentTarget, event);
+          else { const h = f.handleEvent; if (typeof h !== 'function') throw new TypeError('handleEvent is not a function'); h.call(f, event); }
+        } catch (e) { threw = true; report(e); }
+        finally { globalEvent = saved; s.passive = false; }
+        if (s.stop && stopAt === null) stopAt = { depth, capture };
+      }
+      s.phase = 0; s.currentTarget = null; s.dispatching = false; s.stop = false; s.stopImmediate = false;
+      return threw;
+    };
+    const pathOf = (req, tx) => tx ? [kinds.get(tx).db, tx, req] : [req];
+
+    // ---- the pump: one event a task -----------------------------------------------------------
+    let pumping = false;
+    const kick = () => { if (pumping) return; pumping = true; timer(0, pumpOnce, 0, []); };
+    const pumpOnce = () => {
+      pumping = false;
+      const f = call(['pump']), kind = text(f[0]);
+      if (kind === 'idle') return;
+      kick();
+      deliver(kind, f);
+    };
+    const exception = name => new DOMException(`IndexedDB: ${name}`, name);
+    const finishTx = (tx, f, from) => {
+      const s = kinds.get(tx);
+      s.finished = true; s.names = names(f.slice(from));
+      txs.delete(s.id);
+      for (const c of s.cursors) { const co = cursors.get(c); if (co) reqs.delete(kinds.get(kinds.get(co).request).id); cursors.delete(c); }
+      const d = kinds.get(s.db);
+      if (d.upgrade === tx) d.upgrade = null;
+    };
+    const deliver = (kind, f) => {
+      if (kind === 'req') {
+        const r = reqs.get(num(f[1])), tx = txs.get(num(f[2]));
+        if (!r) return;
+        const s = kinds.get(r), isOk = text(f[3]) === 'ok';
+        s.done = true;
+        if (!s.cursor) reqs.delete(s.id);
+        if (isOk) {
+          const p = text(f[4]), at = { i: 5 };
+          s.error = null;
+          if (p === 'u') s.result = undefined;
+          else if (p === 'z') { s.result = null; if (s.cursor) { const c = kinds.get(s.cursor); c.key = c.primaryKey = c.value = undefined; c.got = false; } }
+          else if (p === 'k') s.result = readKey(f, at);
+          else if (p === 'v') s.result = deserialize(f, 5);
+          else if (p === 'n') s.result = num(f[5]);
+          else if (p === 'c') {
+            const cur = cursors.get(num(f[5])), c = kinds.get(cur);
+            at.i = 6;
+            c.key = countedKey(f, at); c.primaryKey = countedKey(f, at);
+            c.value = c.keyOnly ? undefined : deserialize(f, at.i);
+            c.got = true;
+            s.result = cur;
+          } else if (p === 'l') {
+            const what = num(f[5]), count = num(f[6]), out = [];
+            at.i = 7;
+            const value = () => { const k = num(f[at.i++]); const v = deserialize(f, at.i, at.i + k); at.i += k; return v; };
+            for (let i = 0; i < count; i++) {
+              if (what === 0) out.push(value());
+              else if (what === 1) out.push(countedKey(f, at));
+              else { const key = countedKey(f, at), primaryKey = countedKey(f, at); out.push(make(IDBRecord, { key, primaryKey, value: value() })); }
+            }
+            s.result = out;
+          }
+          const threw = idbDispatch(pathOf(r, tx), new Event('success'));
+          if (tx) call(['done', String(kinds.get(tx).id), threw ? '1' : '0', '']);
+        } else {
+          const name = text(f[4]);
+          s.result = undefined; s.error = exception(name);
+          const e = new Event('error', { bubbles: true, cancelable: true });
+          const threw = idbDispatch(pathOf(r, tx), e);
+          if (tx) {
+            const t = kinds.get(tx), aborts = threw || !state(e).canceled;
+            // the transaction's error: the request's, or AbortError when a listener threw; not for
+            // the requests that an abort already under way fails
+            if (aborts && !t.error && !t.aborting && name !== 'AbortError') { t.aborting = true; t.error = threw ? exception('AbortError') : s.error; }
+            call(['done', String(t.id), threw ? '1' : '0', aborts && !threw ? name : '']);
+          }
+        }
+        kick();
+        return;
+      }
+      if (kind === 'tx') {
+        const tx = txs.get(num(f[1]));
+        if (!tx) return;
+        const s = kinds.get(tx), done = text(f[2]) === 'complete';
+        finishTx(tx, f, done ? 3 : 4);
+        if (!done) {
+          const name = text(f[3]);
+          if (!s.error && name) s.error = exception(name);
+          if (s.mode === 'versionchange') { const d = kinds.get(s.db); d.closed = true; d.names = s.names; }
+        }
+        idbDispatch([s.db, tx], new Event(done ? 'complete' : 'abort', { bubbles: !done }));
+        return;
+      }
+      if (kind === 'versionchange') {
+        const db = conns.get(num(f[1]));
+        if (!db || kinds.get(db).closed) return;
+        const next = text(f[3]);
+        idbDispatch([db], new IDBVersionChangeEvent('versionchange', { oldVersion: num(f[2]), newVersion: next === 'null' ? null : Number(next) }));
+        kick();
+        return;
+      }
+      if (kind === 'open') {
+        const r = reqs.get(num(f[1]));
+        if (!r) return;
+        const s = kinds.get(r), what = text(f[2]);
+        if (what === 'blocked') {
+          const next = text(f[4]);
+          idbDispatch([r], new IDBVersionChangeEvent('blocked', { oldVersion: num(f[3]), newVersion: next === 'null' ? null : Number(next) }));
+          return;
+        }
+        if (what === 'upgradeneeded') {
+          const db = make(IDBDatabase, { id: num(f[3]), name: s.name, version: num(f[6]), closed: false, upgrade: null, names: stringList([]) });
+          conns.set(num(f[3]), db);
+          const tx = newTx(num(f[4]), db, 'versionchange');
+          kinds.get(db).upgrade = tx;
+          s.result = db; s.tx = tx; s.done = true; s.error = null;
+          const threw = idbDispatch([r], new IDBVersionChangeEvent('upgradeneeded', { oldVersion: num(f[5]), newVersion: num(f[6]) }));
+          if (threw) kinds.get(tx).error = exception('AbortError');
+          call(['done', String(num(f[4])), threw ? '1' : '0', '']);
+          kick();
+          return;
+        }
+        reqs.delete(s.id);
+        s.done = true; s.tx = null;
+        if (what === 'success') {
+          if (!s.result) { s.result = make(IDBDatabase, { id: num(f[3]), name: s.name, version: num(f[4]), closed: false, upgrade: null, names: stringList([]) }); conns.set(num(f[3]), s.result); }
+          s.error = null;
+          idbDispatch([r], new Event('success'));
+        } else if (what === 'deleted') {
+          s.result = undefined; s.error = null;
+          idbDispatch([r], new IDBVersionChangeEvent('success', { oldVersion: num(f[3]), newVersion: null }));
+        } else {
+          if (s.result) { const d = kinds.get(s.result); d.closed = true; d.version = num(f[5]); conns.delete(d.id); }
+          s.result = undefined; s.error = exception(text(f[3]));
+          idbDispatch([r], new Event('error', { bubbles: true, cancelable: true }));
+        }
+      }
+    };
+
+    // ---- IDBKeyRange --------------------------------------------------------------------------
+    class IDBKeyRange {
+      constructor() { guard(); }
+      get lower() { return st(this, 'IDBKeyRange', 'lower').lower; }
+      get upper() { return st(this, 'IDBKeyRange', 'upper').upper; }
+      get lowerOpen() { return st(this, 'IDBKeyRange', 'lowerOpen').lowerOpen; }
+      get upperOpen() { return st(this, 'IDBKeyRange', 'upperOpen').upperOpen; }
+      includes(key) {
+        need(1, arguments.length, 'IDBKeyRange.includes');
+        const s = st(this, 'IDBKeyRange', 'includes');
+        return text(call(['includes', ...s.args, ...keyArg(key)], 'IDBKeyRange.includes')[0]) === '1';
+      }
+      static only(value) { need(1, arguments.length, 'IDBKeyRange.only'); const k = keyArg(value); return range(k, k, false, false, 'only'); }
+      static lowerBound(lower, open = false) { need(1, arguments.length, 'IDBKeyRange.lowerBound'); return range(keyArg(lower), ['0'], !!open, true, 'lowerBound'); }
+      static upperBound(upper, open = false) { need(1, arguments.length, 'IDBKeyRange.upperBound'); return range(['0'], keyArg(upper), true, !!open, 'upperBound'); }
+      static bound(lower, upper, lowerOpen = false, upperOpen = false) {
+        need(2, arguments.length, 'IDBKeyRange.bound');
+        const lo = keyArg(lower), hi = keyArg(upper);
+        return range(lo, hi, !!lowerOpen, !!upperOpen, 'bound');
+      }
+    }
+    idl(IDBKeyRange, 'IDBKeyRange');
+    for (const k of ['only', 'lowerBound', 'upperBound', 'bound']) Object.defineProperty(IDBKeyRange, k, { ...Object.getOwnPropertyDescriptor(IDBKeyRange, k), enumerable: true });
+    const range = (lo, hi, lowerOpen, upperOpen, what) => {
+      const args = [String((lowerOpen ? 1 : 0) | (upperOpen ? 2 : 0)), ...lo, ...hi];
+      call(['range', ...args], 'IDBKeyRange.' + what);
+      // the bounds as values of their own: read back from the tokens
+      const value = k => k[0] === '0' ? undefined : readKey(k.slice(1).map(t => typeof t === 'string' ? utf8raw(t) : t), { i: 0 });
+      return make(IDBKeyRange, { args, lower: value(lo), upper: value(hi), lowerOpen, upperOpen });
+    };
+    const te = new TextEncoder(), utf8raw = s => te.encode(s);
+    // A query argument: a key range, a key, or nothing (flag 4: nothing where one is required).
+    const rangeArg = (v, required) => {
+      if (v === undefined || v === null) return [required ? '4' : '0', '0', '0'];
+      const s = typeof v === 'object' ? kinds.get(v) : undefined;
+      if (s && s.kind === 'IDBKeyRange') return s.args;
+      const k = keyArg(v);
+      return ['0', ...k, ...k];
+    };
+    const directions = ['next', 'nextunique', 'prev', 'prevunique'];
+    const dirArg = (d, what) => { const i = directions.indexOf(String(d)); if (i < 0) throw new TypeError(`Failed to execute '${what}': '${d}' is not a valid IDBCursorDirection.`); return i; };
+    const u32Arg = (v, what) => { const x = Number(v); if (!Number.isFinite(x) || Math.trunc(x) < 0 || Math.trunc(x) > 4294967295) throw new TypeError(`Failed to execute '${what}': value is outside the range of unsigned long.`); return Math.trunc(x); };
+
+    // ---- sources: object stores and indexes ---------------------------------------------------
+    const keyPathValue = kp => kp === 'n' ? null : kp[0] === 's' ? kp.slice(1) : (kp.length === 1 ? [] : kp.slice(1).split('\n'));
+    const keyPathArg = (v, what) => {
+      if (v === undefined || v === null) return 'n';
+      if (typeof v === 'object' && typeof v[Symbol.iterator] === 'function') return 'a' + [...v].map(x => stEnc(String(x))).join('\n');
+      return 's' + stEnc(String(v));
+    };
+    // The source's ids for a command: transaction, store, index ('' for a store).
+    const src = s => s.kind === 'IDBIndex' ? [String(kinds.get(s.store).txId), String(s.storeId), String(s.id)] : [String(s.txId), String(s.id), ''];
+    const txOf = s => s.kind === 'IDBIndex' ? kinds.get(s.store).tx : s.tx;
+    const request = (self, s, op, args, what) => {
+      const f = call(['req', ...src(s), op, ...args], what), tx = txOf(s);
+      kick();
+      return newReq(IDBRequest, num(f[0]), self, tx);
+    };
+    const cursorRequest = (self, s, op, query, direction, what) => {
+      const d = dirArg(direction, what);
+      const f = call(['req', ...src(s), op, String(d), ...rangeArg(query, false)], what), tx = txOf(s);
+      const r = newReq(IDBRequest, num(f[0]), self, tx);
+      const keyOnly = op === 'openKeyCursor';
+      const cur = make(keyOnly ? IDBCursor : IDBCursorWithValue, { kind: 'IDBCursor', id: num(f[1]), source: self, direction: directions[d], keyOnly, request: r, tx, got: false,
+        key: undefined, primaryKey: undefined, value: undefined });
+      cursors.set(num(f[1]), cur);
+      kinds.get(tx).cursors.push(num(f[1]));
+      kinds.get(r).cursor = cur;
+      kick();
+      return r;
+    };
+    // getAll(query, count) or getAll({ query, count, direction }).
+    const allArgs = (a, what) => {
+      let query = a[0], count = a[1], direction = 'next';
+      const s = query !== null && typeof query === 'object' ? kinds.get(query) : undefined;
+      if (query !== null && typeof query === 'object' && !(s && s.kind === 'IDBKeyRange') && !(query instanceof Date) && !Array.isArray(query) &&
+          !(query instanceof ArrayBuffer) && !ArrayBuffer.isView(query)) {
+        const o = query;
+        query = o.query; count = o.count; direction = o.direction === undefined ? 'next' : o.direction;
+      }
+      const c = count === undefined ? 0 : u32Arg(count, what), d = dirArg(direction, what);
+      return [String(c), String(d), ...rangeArg(query, false)];
+    };
+    const queryMethods = (C, kind) => {
+      const S = (o, what) => st(o, kind, what);
+      Object.assign(C.prototype, {
+        get(query) { const s = S(this, 'get'); need(1, arguments.length, kind + '.get'); return request(this, s, 'get', rangeArg(query, true), kind + '.get'); },
+        getKey(query) { const s = S(this, 'getKey'); need(1, arguments.length, kind + '.getKey'); return request(this, s, 'getKey', rangeArg(query, true), kind + '.getKey'); },
+        getAll(queryOrOptions = undefined, count = undefined) { const s = S(this, 'getAll'); return request(this, s, 'getAll', allArgs([queryOrOptions, count], kind + '.getAll'), kind + '.getAll'); },
+        getAllKeys(queryOrOptions = undefined, count = undefined) { const s = S(this, 'getAllKeys'); return request(this, s, 'getAllKeys', allArgs([queryOrOptions, count], kind + '.getAllKeys'), kind + '.getAllKeys'); },
+        getAllRecords(options = undefined) { const s = S(this, 'getAllRecords'); return request(this, s, 'getAllRecords', allArgs([options === undefined || options === null ? {} : options, undefined], kind + '.getAllRecords'), kind + '.getAllRecords'); },
+        count(query = undefined) { const s = S(this, 'count'); return request(this, s, 'count', rangeArg(query, false), kind + '.count'); },
+        openCursor(query = undefined, direction = 'next') { const s = S(this, 'openCursor'); return cursorRequest(this, s, 'openCursor', query, direction, kind + '.openCursor'); },
+        openKeyCursor(query = undefined, direction = 'next') { const s = S(this, 'openKeyCursor'); return cursorRequest(this, s, 'openKeyCursor', query, direction, kind + '.openKeyCursor'); },
+      });
+    };
+    const storeInfo = s => {
+      let f;
+      try { f = call(['storeinfo', String(s.txId), String(s.id), '', stEnc(s.dbName)]); } catch (_) { return null; }
+      return { name: stDec(text(f[0])), keyPath: text(f[1]), autoIncrement: text(f[2]) === '1', indexNames: f.slice(3) };
+    };
+    const indexInfo = s => {
+      const o = kinds.get(s.store);
+      let f;
+      try { f = call(['indexinfo', String(o.txId), String(s.storeId), String(s.id), stEnc(o.dbName)]); } catch (_) { return null; }
+      return { name: stDec(text(f[0])), keyPath: text(f[1]), unique: text(f[2]) === '1', multiEntry: text(f[3]) === '1' };
+    };
+    // A value to store: checked, then cloned with the transaction inactive (§6.2 "add or put").
+    const cloneInactive = (txId, value) => {
+      call(['active', String(txId), '0']);
+      try { return serialize(value); } catch (e) { call(['active', String(txId), '1']); throw e; }
+    };
+    const store = (self, op, value, key, hasKey) => {
+      const s = st(self, 'IDBObjectStore', op);
+      call(['putcheck', String(s.txId), String(s.id), hasKey ? '1' : '0'], 'IDBObjectStore.' + op);
+      const k = hasKey ? keyArg(key) : ['0'];
+      if (k[1] === 'x') throw new DOMException(`Failed to execute 'IDBObjectStore.${op}': the parameter is not a valid key.`, 'DataError');
+      const toks = cloneInactive(s.txId, value);
+      return request(self, s, op, [...k, ...toks], 'IDBObjectStore.' + op);
+    };
+    class IDBObjectStore {
+      constructor() { guard(); }
+      get name() { const s = st(this, 'IDBObjectStore', 'name'); const i = storeInfo(s); return i ? (s.name = i.name) : s.name; }
+      set name(v) { const s = st(this, 'IDBObjectStore', 'name'); const name = String(v); call(['renameStore', String(s.txId), String(s.id), stEnc(name)], 'IDBObjectStore.name'); s.name = name; }
+      get keyPath() { const s = st(this, 'IDBObjectStore', 'keyPath'); return s.keyPath; }
+      get indexNames() { const s = st(this, 'IDBObjectStore', 'indexNames'); const i = storeInfo(s); return i ? names(i.indexNames) : stringList([]); }
+      get transaction() { return st(this, 'IDBObjectStore', 'transaction').tx; }
+      get autoIncrement() { return st(this, 'IDBObjectStore', 'autoIncrement').autoIncrement; }
+      put(value, key = undefined) { need(1, arguments.length, 'IDBObjectStore.put'); return store(this, 'put', value, key, key !== undefined); }
+      add(value, key = undefined) { need(1, arguments.length, 'IDBObjectStore.add'); return store(this, 'add', value, key, key !== undefined); }
+      delete(query) { const s = st(this, 'IDBObjectStore', 'delete'); need(1, arguments.length, 'IDBObjectStore.delete'); return request(this, s, 'delete', rangeArg(query, true), 'IDBObjectStore.delete'); }
+      clear() { const s = st(this, 'IDBObjectStore', 'clear'); return request(this, s, 'clear', [], 'IDBObjectStore.clear'); }
+      index(name) {
+        const s = st(this, 'IDBObjectStore', 'index');
+        need(1, arguments.length, 'IDBObjectStore.index');
+        const nm = String(name), f = call(['index', String(s.txId), String(s.id), stEnc(nm)], 'IDBObjectStore.index'), id = num(f[0]);
+        return s.indexes.get(id) ?? newIndex(this, s, id);
+      }
+      createIndex(name, keyPath, options = undefined) {
+        const s = st(this, 'IDBObjectStore', 'createIndex');
+        need(2, arguments.length, 'IDBObjectStore.createIndex');
+        const d = dict(options, 'IDBObjectStore.createIndex'), nm = String(name), kp = keyPathArg(keyPath);
+        const f = call(['createIndex', String(s.txId), String(s.id), stEnc(nm), kp, d.unique ? '1' : '0', d.multiEntry ? '1' : '0'], 'IDBObjectStore.createIndex');
+        kick();
+        return newIndex(this, s, num(f[0]));
+      }
+      deleteIndex(name) {
+        const s = st(this, 'IDBObjectStore', 'deleteIndex');
+        need(1, arguments.length, 'IDBObjectStore.deleteIndex');
+        call(['deleteIndex', String(s.txId), String(s.id), stEnc(String(name))], 'IDBObjectStore.deleteIndex');
+      }
+    }
+    queryMethods(IDBObjectStore, 'IDBObjectStore');
+    idl(IDBObjectStore, 'IDBObjectStore');
+    const newStore = (tx, id) => {
+      const t = kinds.get(tx), s = { id, tx, txId: t.id, dbName: kinds.get(t.db).name, indexes: new Map(), name: '', keyPath: null, autoIncrement: false };
+      const i = storeInfo(s);
+      if (i) { const kp = keyPathValue(i.keyPath); s.name = i.name; s.keyPath = kp === null ? null : Array.isArray(kp) ? kp.map(stDec) : stDec(kp); s.autoIncrement = i.autoIncrement; }
+      const o = make(IDBObjectStore, s);
+      t.stores.set(id, o);
+      return o;
+    };
+    class IDBIndex {
+      constructor() { guard(); }
+      get name() { const s = st(this, 'IDBIndex', 'name'); const i = indexInfo(s); return i ? (s.name = i.name) : s.name; }
+      set name(v) { const s = st(this, 'IDBIndex', 'name'); const name = String(v); call(['renameIndex', String(kinds.get(s.store).txId), String(s.storeId), String(s.id), stEnc(name)], 'IDBIndex.name'); s.name = name; }
+      get objectStore() { return st(this, 'IDBIndex', 'objectStore').store; }
+      get keyPath() { return st(this, 'IDBIndex', 'keyPath').keyPath; }
+      get multiEntry() { return st(this, 'IDBIndex', 'multiEntry').multiEntry; }
+      get unique() { return st(this, 'IDBIndex', 'unique').unique; }
+    }
+    queryMethods(IDBIndex, 'IDBIndex');
+    idl(IDBIndex, 'IDBIndex');
+    const newIndex = (storeObj, s, id) => {
+      const x = { id, store: storeObj, storeId: s.id, name: '', keyPath: null, unique: false, multiEntry: false };
+      const i = indexInfo(x);
+      if (i) { x.name = i.name; const kp = keyPathValue(i.keyPath); x.keyPath = Array.isArray(kp) ? kp.map(stDec) : stDec(kp); x.unique = i.unique; x.multiEntry = i.multiEntry; }
+      const o = make(IDBIndex, x);
+      s.indexes.set(id, o);
+      return o;
+    };
+
+    // ---- cursors ------------------------------------------------------------------------------
+    const cur = (o, what) => { const s = kinds.get(o); if (!s || s.kind !== 'IDBCursor') throw new TypeError('Illegal invocation: IDBCursor.' + what); return s; };
+    const curCall = (s, op, args, what) => call(['cur', String(kinds.get(s.tx).id), String(s.id), op, String(kinds.get(s.request).id), ...args], 'IDBCursor.' + what);
+    const again = s => { const r = kinds.get(s.request); r.done = false; s.got = false; kick(); };
+    class IDBCursor {
+      constructor() { guard(); }
+      get source() { return cur(this, 'source').source; }
+      get direction() { return cur(this, 'direction').direction; }
+      get key() { return cur(this, 'key').key; }
+      get primaryKey() { return cur(this, 'primaryKey').primaryKey; }
+      get request() { return cur(this, 'request').request; }
+      advance(count) {
+        const s = cur(this, 'advance');
+        need(1, arguments.length, 'IDBCursor.advance');
+        const c = u32Arg(count, 'IDBCursor.advance');
+        if (c === 0) throw new TypeError("Failed to execute 'IDBCursor.advance': a count argument with value 0 (zero) was supplied, must be greater than 0.");
+        curCall(s, 'advance', [String(c)], 'advance');
+        again(s);
+      }
+      continue(key = undefined) {
+        const s = cur(this, 'continue');
+        curCall(s, 'continue', key === undefined ? ['0'] : keyArg(key), 'continue');
+        again(s);
+      }
+      continuePrimaryKey(key, primaryKey) {
+        const s = cur(this, 'continuePrimaryKey');
+        need(2, arguments.length, 'IDBCursor.continuePrimaryKey');
+        curCall(s, 'continuePrimaryKey', [...keyArg(key), ...keyArg(primaryKey)], 'continuePrimaryKey');
+        again(s);
+      }
+      update(value) {
+        const s = cur(this, 'update');
+        need(1, arguments.length, 'IDBCursor.update');
+        curCall(s, 'updatecheck', [], 'update');
+        const toks = cloneInactive(kinds.get(s.tx).id, value);
+        const f = call(['cur', String(kinds.get(s.tx).id), String(s.id), 'update', '0', ...toks], 'IDBCursor.update');
+        kick();
+        return newReq(IDBRequest, num(f[0]), this, s.tx);
+      }
+      delete() {
+        const s = cur(this, 'delete');
+        const f = curCall(s, 'delete', [], 'delete');
+        kick();
+        return newReq(IDBRequest, num(f[0]), this, s.tx);
+      }
+    }
+    idl(IDBCursor, 'IDBCursor');
+    class IDBCursorWithValue extends IDBCursor {
+      constructor() { super(); }
+      get value() { return cur(this, 'value').value; }
+    }
+    idl(IDBCursorWithValue, 'IDBCursorWithValue');
+    class IDBRecord {
+      constructor() { guard(); }
+      get key() { return st(this, 'IDBRecord', 'key').key; }
+      get primaryKey() { return st(this, 'IDBRecord', 'primaryKey').primaryKey; }
+      get value() { return st(this, 'IDBRecord', 'value').value; }
+    }
+    idl(IDBRecord, 'IDBRecord');
+
+    // ---- transactions and connections ---------------------------------------------------------
+    class IDBTransaction extends EventTarget {
+      constructor() { guard(); super(); }
+      get objectStoreNames() {
+        const s = st(this, 'IDBTransaction', 'objectStoreNames');
+        if (s.finished) return s.names;
+        return names(call(['txinfo', String(s.id)]));
+      }
+      get mode() { return st(this, 'IDBTransaction', 'mode').mode; }
+      get durability() { return st(this, 'IDBTransaction', 'durability').durability; }
+      get db() { return st(this, 'IDBTransaction', 'db').db; }
+      get error() { return st(this, 'IDBTransaction', 'error').error; }
+      objectStore(name) {
+        const s = st(this, 'IDBTransaction', 'objectStore');
+        need(1, arguments.length, 'IDBTransaction.objectStore');
+        const nm = String(name);
+        if (s.finished) throw new DOMException("Failed to execute 'IDBTransaction.objectStore': the transaction has finished.", 'InvalidStateError');
+        const id = num(call(['objectStore', String(s.id), stEnc(nm)], 'IDBTransaction.objectStore')[0]);
+        return s.stores.get(id) ?? newStore(this, id);
+      }
+      commit() { const s = st(this, 'IDBTransaction', 'commit'); if (s.finished) throw new DOMException("Failed to execute 'IDBTransaction.commit': the transaction has finished.", 'InvalidStateError'); call(['commit', String(s.id)], 'IDBTransaction.commit'); kick(); }
+      abort() { const s = st(this, 'IDBTransaction', 'abort'); if (s.finished) throw new DOMException("Failed to execute 'IDBTransaction.abort': the transaction has finished.", 'InvalidStateError'); call(['abort', String(s.id)], 'IDBTransaction.abort'); s.aborting = true; kick(); }
+    }
+    idl(IDBTransaction, 'IDBTransaction');
+    for (const k of ['abort', 'complete', 'error']) handlerAttr(IDBTransaction, k);
+    const newTx = (id, db, mode, durability = 'default') => {
+      const tx = make(IDBTransaction, { id, db, mode, durability, error: null, finished: false, names: null, stores: new Map(), cursors: [] });
+      txs.set(id, tx);
+      return tx;
+    };
+    class IDBDatabase extends EventTarget {
+      constructor() { guard(); super(); }
+      get name() { return st(this, 'IDBDatabase', 'name').name; }
+      get version() { const s = st(this, 'IDBDatabase', 'version'); if (!s.closed) { try { s.version = num(call(['dbinfo', String(s.id)])[1]); } catch (_) {} } return s.version; }
+      get objectStoreNames() { const s = st(this, 'IDBDatabase', 'objectStoreNames'); if (!s.closed) { try { s.names = names(call(['dbinfo', String(s.id)]).slice(2)); } catch (_) {} } return s.names; }
+      transaction(storeNames, mode = 'readonly', options = undefined) {
+        const s = st(this, 'IDBDatabase', 'transaction');
+        need(1, arguments.length, 'IDBDatabase.transaction');
+        const list = typeof storeNames === 'object' && storeNames !== null && typeof storeNames[Symbol.iterator] === 'function' ? [...storeNames].map(String) : [String(storeNames)];
+        const m = String(mode), d = dict(options, 'IDBDatabase.transaction');
+        if (!['readonly', 'readwrite', 'versionchange'].includes(m)) throw new TypeError(`Failed to execute 'IDBDatabase.transaction': '${m}' is not a valid IDBTransactionMode.`);
+        const durability = d.durability === undefined ? 'default' : String(d.durability);
+        if (!['default', 'strict', 'relaxed'].includes(durability)) throw new TypeError(`Failed to execute 'IDBDatabase.transaction': '${durability}' is not a valid IDBTransactionDurability.`);
+        if (s.closed) throw new DOMException("Failed to execute 'IDBDatabase.transaction': the connection is closing.", 'InvalidStateError');
+        const id = num(call(['transaction', String(s.id), m, ...list.map(stEnc)], 'IDBDatabase.transaction')[0]);
+        const tx = newTx(id, this, m, durability);
+        // the transaction is active until control returns to the event loop
+        timer(0, () => { call(['deactivate', String(id)]); kick(); }, 0, []);
+        return tx;
+      }
+      close() { const s = st(this, 'IDBDatabase', 'close'); if (s.closed) return; try { s.version = num(call(['dbinfo', String(s.id)])[1]); s.names = names(call(['dbinfo', String(s.id)]).slice(2)); } catch (_) {} s.closed = true; call(['close', String(s.id)]); conns.delete(s.id); kick(); }
+      createObjectStore(name, options = undefined) {
+        const s = st(this, 'IDBDatabase', 'createObjectStore');
+        need(1, arguments.length, 'IDBDatabase.createObjectStore');
+        const d = dict(options, 'IDBDatabase.createObjectStore'), nm = String(name), kp = keyPathArg(d.keyPath);
+        const f = call(['createStore', String(s.id), stEnc(nm), kp, d.autoIncrement ? '1' : '0'], 'IDBDatabase.createObjectStore');
+        return newStore(s.upgrade, num(f[0]));
+      }
+      deleteObjectStore(name) {
+        const s = st(this, 'IDBDatabase', 'deleteObjectStore');
+        need(1, arguments.length, 'IDBDatabase.deleteObjectStore');
+        call(['deleteStore', String(s.id), stEnc(String(name))], 'IDBDatabase.deleteObjectStore');
+      }
+    }
+    idl(IDBDatabase, 'IDBDatabase');
+    for (const k of ['abort', 'close', 'error', 'versionchange']) handlerAttr(IDBDatabase, k);
+
+    // ---- the factory --------------------------------------------------------------------------
+    class IDBFactory {
+      constructor() { guard(); }
+      open(name, version = undefined) {
+        st(this, 'IDBFactory', 'open');
+        need(1, arguments.length, 'IDBFactory.open');
+        const nm = String(name);
+        let v = '';
+        if (version !== undefined) {
+          const x = Number(version);
+          if (!Number.isFinite(x) || Math.trunc(x) < 1 || Math.trunc(x) > 9007199254740991) throw new TypeError("Failed to execute 'IDBFactory.open': the version is out of range.");
+          v = String(Math.trunc(x));
+        }
+        const f = call(['open', stEnc(nm), v], 'IDBFactory.open');
+        const r = newReq(IDBOpenDBRequest, num(f[0]), null, null);
+        kinds.get(r).name = nm;
+        kick();
+        return r;
+      }
+      deleteDatabase(name) {
+        st(this, 'IDBFactory', 'deleteDatabase');
+        need(1, arguments.length, 'IDBFactory.deleteDatabase');
+        const f = call(['deleteDatabase', stEnc(String(name)), ''], 'IDBFactory.deleteDatabase');
+        const r = newReq(IDBOpenDBRequest, num(f[0]), null, null);
+        kick();
+        return r;
+      }
+      databases() {
+        try { st(this, 'IDBFactory', 'databases'); } catch (e) { return Promise.reject(e); }
+        return new Promise(resolve => {
+          timer(0, () => {
+            const f = call(['databases']), out = [];
+            for (let i = 1; i + 1 < f.length; i += 2) out.push({ name: stDec(text(f[i])), version: num(f[i + 1]) });
+            resolve(out);
+          }, 0, []);
+        });
+      }
+      cmp(first, second) {
+        st(this, 'IDBFactory', 'cmp');
+        need(2, arguments.length, 'IDBFactory.cmp');
+        const a = keyArg(first), b = keyArg(second);
+        return Number(text(call(['cmp', ...a, ...b], 'IDBFactory.cmp')[0]));
+      }
+    }
+    idl(IDBFactory, 'IDBFactory');
+    return { factory: make(IDBFactory, {}), classes: { IDBFactory, IDBRequest, IDBOpenDBRequest, IDBVersionChangeEvent, IDBKeyRange, IDBObjectStore,
+      IDBIndex, IDBCursor, IDBCursorWithValue, IDBRecord, IDBTransaction, IDBDatabase, DOMStringList } };
+  };
+  let idbMade;
+  const idb = () => {
+    if (idbMade !== undefined) return idbMade;
+    return idbMade = apiCall(200, ['databases'], 0, true) === -2 ? null : makeIdb();
+  };
+  lazy('indexedDB', () => idb()?.factory);
+  for (const name of ['IDBFactory', 'IDBRequest', 'IDBOpenDBRequest', 'IDBVersionChangeEvent', 'IDBKeyRange', 'IDBObjectStore', 'IDBIndex', 'IDBCursor',
+    'IDBCursorWithValue', 'IDBRecord', 'IDBTransaction', 'IDBDatabase', 'DOMStringList']) lazy(name, () => idb()?.classes[name]);
+  // ==== end IndexedDB ============================================================================
+
   // ---- User Timing: performance.mark, measure ---------------------------------------------
   // performance.now and timeOrigin are QuickJS-NG's, on the WASI clock, which is Lean's script
   // clock (Hosts.Page.ScriptClock). The entries are this list.

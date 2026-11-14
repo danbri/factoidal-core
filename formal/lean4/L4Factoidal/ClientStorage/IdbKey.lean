@@ -15,6 +15,8 @@ key has at the `web_api` boundary.
   model of doubles). No floating-point arithmetic is done on keys.
 * A string is its UTF-16 code units, because §2.4 compares strings by code unit (so U+10000
   sorts before U+FFFF).
+* An array key is read to a nesting of at most `Key.maxDepth` (64) arrays; a deeper one is
+  not a key (`DataError`). This bounds the recursion of comparison.
 * `Key.cmp` is "compare two keys" of §2.4. The theorems below say it is a total order and
   that the types sort Array > Binary > String > Date > Number.
 
@@ -96,12 +98,16 @@ def cmpNats : List Nat → List Nat → Ordering
   | [], [] => .eq
   | [], _ :: _ => .lt
   | _ :: _, [] => .gt
-  | a :: as, b :: bs => (cmpNat a b).then (cmpNats as bs)
+  | a :: as, b :: bs => match cmpNat a b with | .eq => cmpNats as bs | o => o
+
+theorem cmpNats_cons (a b : Nat) (as bs : List Nat) :
+    cmpNats (a :: as) (b :: bs) = (cmpNat a b).then (cmpNats as bs) := by
+  cases h : cmpNat a b <;> simp [cmpNats, h, Ordering.then]
 
 theorem cmpNats_refl (a : List Nat) : cmpNats a a = .eq := by
   induction a with
   | nil => rfl
-  | cons x xs ih => simp [cmpNats, cmpNat_refl, ih, Ordering.then]
+  | cons x xs ih => rw [cmpNats_cons, cmpNat_refl, ih]; rfl
 
 theorem cmpNats_eq : ∀ {a b : List Nat}, cmpNats a b = .eq → a = b := by
   intro a
@@ -112,7 +118,7 @@ theorem cmpNats_eq : ∀ {a b : List Nat}, cmpNats a b = .eq → a = b := by
     cases b with
     | nil => simp [cmpNats] at h
     | cons y ys =>
-      simp only [cmpNats, then_eq] at h
+      rw [cmpNats_cons, then_eq] at h
       rw [cmpNat_eq h.1, ih h.2]
 
 theorem cmpNats_swap : ∀ (a b : List Nat), cmpNats b a = (cmpNats a b).swap := by
@@ -123,7 +129,7 @@ theorem cmpNats_swap : ∀ (a b : List Nat), cmpNats b a = (cmpNats a b).swap :=
     intro b
     cases b with
     | nil => rfl
-    | cons y ys => simp only [cmpNats, then_swap, ← cmpNat_swap, ← ih]
+    | cons y ys => rw [cmpNats_cons, cmpNats_cons, then_swap, ← cmpNat_swap, ← ih]
 
 theorem cmpNats_trans : ∀ {a b c : List Nat}, cmpNats a b = .lt → cmpNats b c = .lt → cmpNats a c = .lt := by
   intro a
@@ -137,7 +143,7 @@ theorem cmpNats_trans : ∀ {a b c : List Nat}, cmpNats a b = .lt → cmpNats b 
       cases c with
       | nil => simp [cmpNats] at h2
       | cons z zs =>
-        simp only [cmpNats, then_lt] at h1 h2 ⊢
+        rw [cmpNats_cons, then_lt] at h1 h2 ⊢
         rcases h1 with h1 | ⟨e1, h1⟩ <;> rcases h2 with h2 | ⟨e2, h2⟩
         · exact .inl (cmpNat_trans h1 h2)
         · rw [← cmpNat_eq e2]; exact .inl h1
@@ -172,27 +178,43 @@ def Key.cmp : Key → Key → Ordering
   | .nil, .nil => .eq
   | .nil, .cons _ _ => .lt
   | .cons _ _, .nil => .gt
-  | .cons a as, .cons b bs => (Key.cmp a b).then (Key.cmp as bs)
+  | .cons a as, .cons b bs => match Key.cmp a b with | .eq => Key.cmp as bs | o => o
   | a, b => cmpNat a.rank b.rank
 
+theorem Key.cmp_cons (a as b bs : Key) :
+    (Key.cons a as).cmp (.cons b bs) = (a.cmp b).then (as.cmp bs) := by
+  cases h : a.cmp b <;> simp [Key.cmp, h, Ordering.then]
+
 /-- The array key of a list of keys. -/
-def Key.ofList : List Key → Key
-  | [] => .nil
-  | k :: ks => .cons k (Key.ofList ks)
+def Key.ofList (l : List Key) : Key := l.foldr (fun k acc => .cons k acc) .nil
+
+def Key.itemsAux : Key → List Key → List Key
+  | .cons h t, acc => Key.itemsAux t (h :: acc)
+  | _, acc => acc.reverse
 
 /-- The items of an array key (`[]` for a key that is not an array). -/
-def Key.items : Key → List Key
-  | .cons h t => h :: t.items
-  | _ => []
+def Key.items (k : Key) : List Key := Key.itemsAux k []
+
+/-- The number of items of an array key. -/
+def Key.len : Key → Nat → Nat
+  | .cons _ t, n => Key.len t (n + 1)
+  | _, n => n
 
 def Key.isArray : Key → Bool
   | .nil | .cons _ _ => true
   | _ => false
 
-theorem Key.items_ofList (l : List Key) : (Key.ofList l).items = l := by
+theorem Key.itemsAux_ofList (l : List Key) : ∀ acc, Key.itemsAux (Key.ofList l) acc = acc.reverse ++ l := by
   induction l with
-  | nil => rfl
-  | cons k ks ih => simp [Key.ofList, Key.items, ih]
+  | nil => intro acc; simp [Key.ofList, Key.itemsAux]
+  | cons k ks ih =>
+    intro acc
+    have h : Key.ofList (k :: ks) = .cons k (Key.ofList ks) := rfl
+    rw [h, Key.itemsAux, ih]
+    simp
+
+theorem Key.items_ofList (l : List Key) : (Key.ofList l).items = l := by
+  simp [Key.items, Key.itemsAux_ofList]
 
 /-- Kind: order law (reflexivity). Says: a key compares equal to itself. -/
 theorem Key.cmp_refl (a : Key) : a.cmp a = .eq := by
@@ -202,7 +224,7 @@ theorem Key.cmp_refl (a : Key) : a.cmp a = .eq := by
   | string u => simp [Key.cmp, cmpNats_refl]
   | binary u => simp [Key.cmp, cmpNats_refl]
   | nil => simp [Key.cmp]
-  | cons h t ih1 ih2 => simp [Key.cmp, ih1, ih2, Ordering.then]
+  | cons h t ih1 ih2 => rw [Key.cmp_cons, ih1, ih2]; rfl
 
 /-- Kind: order law (antisymmetry). Says: two keys that compare equal are the same key, so
 a store never holds two records whose keys compare equal. Does not say: that two JavaScript
@@ -226,7 +248,7 @@ theorem Key.eq_of_cmp : ∀ (a b : Key), a.cmp b = .eq → a = b := by
     | nil => rfl
     | _ => simp [Key.cmp, Key.rank, cmpNat] at h
   | cons x xs ih1 ih2 => intro b h; cases b with
-    | cons y ys => simp only [Key.cmp, then_eq] at h; rw [ih1 y h.1, ih2 ys h.2]
+    | cons y ys => rw [Key.cmp_cons, then_eq] at h; rw [ih1 y h.1, ih2 ys h.2]
     | _ => simp [Key.cmp, Key.rank, cmpNat] at h
 
 /-- Kind: order law (totality: the two directions agree). Says: comparing in the other
@@ -248,7 +270,7 @@ theorem Key.cmp_swap : ∀ (a b : Key), b.cmp a = (a.cmp b).swap := by
     | _ => simp [Key.cmp, Key.rank, cmpNat]
   | nil => intro b; cases b <;> simp [Key.cmp, Key.rank, cmpNat]
   | cons x xs ih1 ih2 => intro b; cases b with
-    | cons y ys => simp only [Key.cmp, then_swap, ← ih1, ← ih2]
+    | cons y ys => rw [Key.cmp_cons, Key.cmp_cons, then_swap, ← ih1, ← ih2]
     | _ => simp [Key.cmp, Key.rank, cmpNat]
 
 /-- Kind: order law (transitivity). Says: `a < b` and `b < c` give `a < c`. With
@@ -267,14 +289,18 @@ theorem Key.cmp_trans : ∀ (a b c : Key), a.cmp b = .lt → b.cmp c = .lt → a
   | nil => intro b c h1 h2; cases b <;> cases c <;> simp [Key.cmp, Key.rank, cmpNat] at h1 h2 ⊢
   | cons x xs ih1 ih2 =>
     intro b c h1 h2
-    cases b <;> cases c <;> simp [Key.cmp, Key.rank, cmpNat] at h1 h2 ⊢
-    rename_i y ys z zs
-    rw [then_lt] at h1 h2 ⊢
-    rcases h1 with h1 | ⟨e1, h1⟩ <;> rcases h2 with h2 | ⟨e2, h2⟩
-    · exact .inl (ih1 y z h1 h2)
-    · rw [← Key.eq_of_cmp y z e2]; exact .inl h1
-    · rw [Key.eq_of_cmp x y e1]; exact .inl h2
-    · rw [Key.eq_of_cmp x y e1, e2]; exact .inr ⟨rfl, ih2 ys zs h1 h2⟩
+    cases b with
+    | cons y ys =>
+      cases c with
+      | cons z zs =>
+        rw [Key.cmp_cons, then_lt] at h1 h2 ⊢
+        rcases h1 with h1 | ⟨e1, h1⟩ <;> rcases h2 with h2 | ⟨e2, h2⟩
+        · exact .inl (ih1 y z h1 h2)
+        · rw [← Key.eq_of_cmp y z e2]; exact .inl h1
+        · rw [Key.eq_of_cmp x y e1]; exact .inl h2
+        · rw [Key.eq_of_cmp x y e1, e2]; exact .inr ⟨rfl, ih2 ys zs h1 h2⟩
+      | _ => simp [Key.cmp, Key.rank, cmpNat] at h2
+    | _ => simp [Key.cmp, Key.rank, cmpNat] at h1
 
 /-- Kind: conformance to the specification's type order (§2.4: "Array is greater than
 Binary is greater than String is greater than Date is greater than Number"). Says: a key
@@ -369,39 +395,40 @@ lone surrogate) or U+0001 itself crosses as U+0001 and four hex digits (prelude 
 
 def hexOfChar (c : Char) : Nat := (hexVal c.toNat.toUInt8).getD 0
 
+def unitsOf.go : List Char → List Nat → List Nat
+  | [], acc => acc.reverse
+  | c :: cs, acc =>
+    if c.toNat == 1 then
+      match cs with
+      | a :: b :: x :: y :: rest => unitsOf.go rest ((((hexOfChar a * 16 + hexOfChar b) * 16 + hexOfChar x) * 16 + hexOfChar y) :: acc)
+      | _ => acc.reverse
+    else if c.toNat < 65536 then unitsOf.go cs (c.toNat :: acc)
+    else unitsOf.go cs ((56320 + (c.toNat - 65536) % 1024) :: (55296 + (c.toNat - 65536) / 1024) :: acc)
+
 /-- The UTF-16 code units of a boundary string. -/
-def unitsOf (s : String) : List Nat :=
-  let rec go : List Char → List Nat
-    | [] => []
-    | c :: cs =>
-      if c.toNat == 1 then
-        match cs with
-        | a :: b :: x :: y :: rest => (((hexOfChar a * 16 + hexOfChar b) * 16 + hexOfChar x) * 16 + hexOfChar y) :: go rest
-        | _ => []
-      else if c.toNat < 65536 then c.toNat :: go cs
-      else (55296 + (c.toNat - 65536) / 1024) :: (56320 + (c.toNat - 65536) % 1024) :: go cs
-  go s.toList
+def unitsOf (s : String) : List Nat := unitsOf.go s.toList []
 
 def escUnit (u : Nat) : List Char :=
   Char.ofNat 1 :: [u / 4096 % 16, u / 256 % 16, u / 16 % 16, u % 16].map fun d => Char.ofNat (hexDigit d).toNat
 
-/-- `pending`: a high surrogate that waits for its low surrogate. -/
-def stringOf.go : Option Nat → List Nat → List Char
-  | none, [] => []
-  | some h, [] => escUnit h
-  | none, u :: rest =>
-    if 55296 ≤ u && u < 56320 then go (some u) rest
-    else if (56320 ≤ u && u < 57344) || u == 1 then escUnit u ++ go none rest
-    else Char.ofNat u :: go none rest
-  | some h, u :: rest =>
-    if 56320 ≤ u && u < 57344 then Char.ofNat (65536 + (h - 55296) * 1024 + (u - 56320)) :: go none rest
-    else if 55296 ≤ u && u < 56320 then escUnit h ++ go (some u) rest
-    else if u == 1 then escUnit h ++ escUnit u ++ go none rest
-    else escUnit h ++ Char.ofNat u :: go none rest
+/-- `pending`: a high surrogate that waits for its low surrogate. The characters are
+collected in reverse. -/
+def stringOf.go : Option Nat → List Nat → List Char → List Char
+  | none, [], acc => acc.reverse
+  | some h, [], acc => ((escUnit h).reverse ++ acc).reverse
+  | none, u :: rest, acc =>
+    if 55296 ≤ u && u < 56320 then go (some u) rest acc
+    else if (56320 ≤ u && u < 57344) || u == 1 then go none rest ((escUnit u).reverse ++ acc)
+    else go none rest (Char.ofNat u :: acc)
+  | some h, u :: rest, acc =>
+    if 56320 ≤ u && u < 57344 then go none rest (Char.ofNat (65536 + (h - 55296) * 1024 + (u - 56320)) :: acc)
+    else if 55296 ≤ u && u < 56320 then go (some u) rest ((escUnit h).reverse ++ acc)
+    else if u == 1 then go none rest ((escUnit u).reverse ++ (escUnit h).reverse ++ acc)
+    else go none rest (Char.ofNat u :: (escUnit h).reverse ++ acc)
 
 /-- The boundary string of UTF-16 code units (surrogate pairs joined; a lone surrogate or
 U+0001 escaped). -/
-def stringOf (us : List Nat) : String := String.ofList (stringOf.go none us)
+def stringOf (us : List Nat) : String := String.ofList (stringOf.go none us [])
 
 /-! ## Keys at the boundary: tokens
 
@@ -462,9 +489,14 @@ def Key.read : Nat → Array Tok → Nat → Option (Key × Nat)
               | none => none) (some ([], i + 1))).map fun (items, pos) => (Key.ofList items.reverse, pos)
       | _ => none
 
+/-- The deepest nesting of arrays in a key that is read: a key nested deeper is not a key
+here (`DataError`). The recursion of `Key.read`, `Key.cmp` and `Key.write` is the nesting
+of a key, so it is at most this. -/
+def Key.maxDepth : Nat := 64
+
 /-- The key that is the whole of `ts`. -/
 def Key.ofToks (ts : Array Tok) : Option Key :=
-  match Key.read (ts.size + 1) ts 0 with
+  match Key.read Key.maxDepth ts 0 with
   | some (k, n) => if n == ts.size then some k else none
   | none => none
 
@@ -477,7 +509,7 @@ def Key.write (items : Bool) : Key → Array Tok → Array Tok
   | .binary b, acc => acc.push ("b".toUTF8 ++ ByteArray.mk (b.map (·.toUInt8)).toArray)
   | .nil, acc => if items then acc else acc.push (tok 'A' "0")
   | .cons h t, acc =>
-    let acc := if items then acc else acc.push (tok 'A' (toString (Key.cons h t).items.length))
+    let acc := if items then acc else acc.push (tok 'A' (toString (Key.len t 1)))
     Key.write true t (Key.write false h acc)
 
 def Key.toToks (k : Key) : Array Tok := Key.write false k #[]
