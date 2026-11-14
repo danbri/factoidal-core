@@ -6105,16 +6105,36 @@
         return ascii(call(args, 'supports')[1]) === '1';
       } catch (e) { return false; }
     };
+    // The KEM operations of the modern algorithms draft. No KEM algorithm is registered in
+    // Lean, so "normalize an algorithm" refuses every call with NotSupportedError.
+    const noKem = (op, algorithm) => { normalize(op, algorithm); throw new DOMException(`${op}: no key encapsulation algorithm is supported`, 'NotSupportedError'); };
+    subtleMethods.encapsulateKey = function encapsulateKey(encapsulationAlgorithm, encapsulationKey, sharedKeyAlgorithm, extractable, keyUsages) {
+      return start(() => { if (arguments.length < 5) throw new TypeError('encapsulateKey: 5 arguments required'); return noKem('encapsulateKey', encapsulationAlgorithm); });
+    };
+    subtleMethods.encapsulateBits = function encapsulateBits(encapsulationAlgorithm, encapsulationKey) {
+      return start(() => { if (arguments.length < 2) throw new TypeError('encapsulateBits: 2 arguments required'); return noKem('encapsulateBits', encapsulationAlgorithm); });
+    };
+    subtleMethods.decapsulateKey = function decapsulateKey(decapsulationAlgorithm, decapsulationKey, ciphertext, sharedKeyAlgorithm, extractable, keyUsages) {
+      return start(() => { if (arguments.length < 6) throw new TypeError('decapsulateKey: 6 arguments required'); return noKem('decapsulateKey', decapsulationAlgorithm); });
+    };
+    subtleMethods.decapsulateBits = function decapsulateBits(decapsulationAlgorithm, decapsulationKey, ciphertext) {
+      return start(() => { if (arguments.length < 3) throw new TypeError('decapsulateBits: 3 arguments required'); return noKem('decapsulateBits', decapsulationAlgorithm); });
+    };
     class SubtleCrypto { constructor() { throw new TypeError('Illegal constructor'); } }
     if (subtleOn) for (const [k, f] of Object.entries(subtleMethods)) define(SubtleCrypto.prototype, k, f);
     if (subtleOn) define(SubtleCrypto, 'supports', supports);
     setTag(SubtleCrypto, 'SubtleCrypto');
     const subtle = Object.create(SubtleCrypto.prototype);
-    class Crypto { constructor() { throw new TypeError('Illegal constructor'); } get subtle() { return subtleOn ? subtle : undefined; } }
+    const cryptoObjects = new WeakSet();
+    class Crypto {
+      constructor() { throw new TypeError('Illegal constructor'); }
+      get subtle() { if (!cryptoObjects.has(this)) throw new TypeError("'subtle' getter called on an object that is not a Crypto"); return subtleOn ? subtle : undefined; }
+    }
     if (random) {
       define(Crypto.prototype, 'getRandomValues', function getRandomValues(array) {
+        if (arguments.length < 1) throw new TypeError("Failed to execute 'getRandomValues' on 'Crypto': 1 argument required");
         if (!(intArrays.some(C => array instanceof C))) throw new DOMException("Failed to execute 'getRandomValues' on 'Crypto': The provided ArrayBufferView is of type that is not an integer array.", 'TypeMismatchError');
-        if (array.byteLength > 65536) throw new DOMException(`Failed to execute 'getRandomValues' on 'Crypto': The ArrayBufferView's byte length (${array.byteLength}) exceeds the number of bytes of entropy available via this API (65536).`, 'QuotaExceededError');
+        if (array.byteLength > 65536) throw new (makeQuotaError())(`Failed to execute 'getRandomValues' on 'Crypto': The ArrayBufferView's byte length (${array.byteLength}) exceeds the number of bytes of entropy available via this API (65536).`);
         new Uint8Array(array.buffer, array.byteOffset, array.byteLength).set(new Uint8Array(api(30, [String(array.byteLength)], 0, true, 'getRandomValues')));
         return array;
       });
@@ -6124,8 +6144,24 @@
     // to the same key in Lean, so the page's dropping one does not wipe the other's.
     cloneCryptoKey = key => { keyOf(key); return keyAnswer(call(['cloneKey', 'key', String(keyOf(key).handle)], 'structuredClone')); };
     setTag(Crypto, 'Crypto');
+    // WebIDL: an interface's attributes and operations are enumerable (these three classes are
+    // made on first use, after the pass at the end of the prelude that does it for the rest).
+    for (const C of [Crypto, SubtleCrypto, CryptoKey]) {
+      for (const k of Object.getOwnPropertyNames(C.prototype)) {
+        if (k === 'constructor') continue;
+        const d = Object.getOwnPropertyDescriptor(C.prototype, k);
+        if (d.configurable && !d.enumerable) { d.enumerable = true; Object.defineProperty(C.prototype, k, d); }
+      }
+      for (const k of Object.getOwnPropertyNames(C)) {
+        if (k === 'prototype' || k === 'length' || k === 'name') continue;
+        const d = Object.getOwnPropertyDescriptor(C, k);
+        if (d.configurable && !d.enumerable) { d.enumerable = true; Object.defineProperty(C, k, d); }
+      }
+    }
     define(globalThis, 'Crypto', Crypto); define(globalThis, 'SubtleCrypto', SubtleCrypto); define(globalThis, 'CryptoKey', CryptoKey);
-    return Object.create(Crypto.prototype);
+    const cryptoObject = Object.create(Crypto.prototype);
+    cryptoObjects.add(cryptoObject);
+    return cryptoObject;
   });
   // ==== end haclweb ====
   for (const k of ['Crypto', 'SubtleCrypto', 'CryptoKey'])
