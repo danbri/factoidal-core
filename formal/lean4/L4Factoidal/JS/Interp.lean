@@ -802,7 +802,10 @@ where
   go (from_ : Nat) : Nat → Array Nat → List Nat
     | 0, acc => acc.toList
     | f + 1, acc => match indexOfFrom s pat from_ with
-      | some p => go (p + (if pat.isEmpty then 1 else Str.jsLength pat)) f (acc.push p)
+      | some p =>
+        -- an empty pattern matches at every index up to the length, once each
+        if p > Str.jsLength s || p < from_ then acc.toList
+        else go (p + (if pat.isEmpty then 1 else Str.jsLength pat)) f (acc.push p)
       | none => acc.toList
 
 /-! ## Lifting `yield` and `await` out of expressions
@@ -1373,6 +1376,112 @@ def hostNowNs : M Float := do
   match ← callHost hostClockId #[] with
   | .num x => pure x
   | _ => pure 0
+
+/-- AdvanceStringIndex (§22.2.7.3): past a surrogate pair at once when `unicode`. -/
+def advanceIndex (s : String) (i : Nat) (unicode : Bool) : Nat :=
+  if !unicode then i + 1 else
+  match Str.unitAt? s i, Str.unitAt? s (i + 1) with
+  | some a, some b => if 0xD800 ≤ a && a ≤ 0xDBFF && 0xDC00 ≤ b && b ≤ 0xDFFF then i + 2 else i + 1
+  | _, _ => i + 1
+
+/-- The group names a replacement template asks for (`$<name>`), in order. -/
+def templateNames (tmpl : String) : List String := Id.run do
+  let t := tmpl.toList.toArray
+  let mut out : List String := []
+  let mut i := 0
+  for _ in [0:t.size + 1] do
+    if i + 1 ≥ t.size then break
+    if t[i]! == '$' && t[i+1]! == '$' then i := i + 2; continue
+    if t[i]! == '$' && t[i+1]! == '<' then
+      match (t.extract (i + 2) t.size).findIdx? (· == '>') with
+      | some k => out := out ++ [String.ofList (t.extract (i + 2) (i + 2 + k)).toList]; i := i + 3 + k
+      | none => i := i + 2
+    else i := i + 1
+  out
+
+/-- GetSubstitution (§22.1.3.19.1) with the captures as strings (`none` for undefined) and the
+named groups' values (`none` when the match has no `groups`). Indices are UTF-16 units. -/
+def getSubstitutionG (tmpl matched str : String) (position : Nat) (caps : Array (Option String))
+    (named : Option (List (String × String))) : String := Id.run do
+  let t := tmpl.toList.toArray
+  let len := Str.jsLength str
+  let tail := position + Str.jsLength matched
+  let m := caps.size
+  let cap (k : Nat) : String := (caps.getD (k - 1) none).getD ""
+  let mut out := ""
+  let mut i := 0
+  for _ in [0:t.size + 1] do
+    if i ≥ t.size then break
+    let c := t[i]!
+    if c != '$' || i + 1 ≥ t.size then
+      out := out.push c; i := i + 1; continue
+    let d := t[i+1]!
+    if d == '$' then out := out.push '$'; i := i + 2
+    else if d == '&' then out := out ++ matched; i := i + 2
+    else if d == '`' then out := out ++ Str.sliceUnits str 0 (min position len); i := i + 2
+    else if d == '\'' then out := out ++ (if tail ≥ len then "" else Str.sliceUnits str tail len); i := i + 2
+    else if d.isDigit then
+      let n1 := d.toNat - 48
+      let n2 := if i + 2 < t.size && t[i+2]!.isDigit then n1 * 10 + (t[i+2]!.toNat - 48) else 0
+      if i + 2 < t.size && t[i+2]!.isDigit && 1 ≤ n2 && n2 ≤ m then
+        out := out ++ cap n2; i := i + 3
+      else if 1 ≤ n1 && n1 ≤ m then
+        out := out ++ cap n1; i := i + 2
+      else
+        out := out.push '$'; i := i + 1
+    else if d == '<' then
+      match named with
+      | none => out := out ++ "$<"; i := i + 2
+      | some tbl =>
+        match (t.extract (i + 2) t.size).findIdx? (· == '>') with
+        | none => out := out ++ "$<"; i := i + 2
+        | some k =>
+          let nm := String.ofList (t.extract (i + 2) (i + 2 + k)).toList
+          out := out ++ ((tbl.lookup nm).getD ""); i := i + 3 + k
+    else
+      out := out.push '$'; i := i + 1
+  out
+
+#guard getSubstitutionG "[$1|$2|$&|$`|$'|$$|$0|$10|$<x>]" "bc" "abcd" 1 #[some "b", none] none == "[b||bc|a|d|$|$0|b0|$<x>]"
+#guard getSubstitutionG "$<x>-$<y" "b" "abc" 1 #[] (some [("x", "X")]) == "X-$<y"
+#guard templateNames "$<a>$$<b>$<c>" == ["a", "c"]
+#guard advanceIndex "a😀" 1 true == 3 && advanceIndex "a😀" 1 false == 2
+
+/-- Where %RegExp.prototype% keeps %RegExpStringIteratorPrototype% (§22.2.9.2), and where a RegExp
+String Iterator keeps its string: private-name keys, which no script can name. A RegExp String
+Iterator is a `Kind.iter` of mode 20 + 1 (global) + 2 (full Unicode) over its matcher. -/
+def rsiProtoKey : String := privKey " regexpStringIteratorPrototype"
+def rsiStringKey : String := privKey " iteratedString"
+
+/-- A RegExp whose methods may take the built-in fast paths: %RegExp.prototype% is its
+prototype, `lastIndex` its only own property, and `exec` and `flags` there are the built-ins
+(and, for `split`, `constructor` is %RegExp% with no own `@@species`). Anything else takes the
+general steps, which call what the script put there. -/
+def regexpPristine (rx : Value) (split : Bool) : M Bool := do
+  let .obj id := rx | return false
+  let o ← getObj id
+  let .regexp .. := o.kind | return false
+  let r ← realm
+  let .obj p := o.proto | return false
+  if p != r.regexpProto || o.props.size > 1 then return false
+  let po ← getObj p
+  let isNative (v : Value) (nt : Native) : M Bool := do
+    match v with
+    | .obj f => pure (match (← getObj f).kind with | .native x => x == nt | _ => false)
+    | _ => pure false
+  let execOk ← match po.props.get? "exec" with
+    | some (.data v ..) => isNative v .regexpExec
+    | _ => pure false
+  let flagsOk ← match po.props.get? "flags" with
+    | some (.acc g ..) => isNative g (.regexpGetter 1)
+    | _ => pure false
+  if !(execOk && flagsOk) then return false
+  if !split then return true
+  match po.props.get? "constructor" with
+  | some (.data (.obj c) ..) =>
+    let co ← getObj c
+    pure ((match co.kind with | .native .regexpCtor => true | _ => false) && (co.props.get? (symKey 7)).isNone)
+  | _ => pure false
 
 /-- GetSubstitution (§22.1.3.19.1): `$$`, `$&`, `` $` ``, `$'`, `$n`, `$nn`, `$<name>`. -/
 def substitution (rep : String) (matched : String) (pos : Nat) (cs : Array Char)
@@ -4844,6 +4953,21 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
           defineOwn o "value" (.data v true true true)
           defineOwn o "done" (.data (.bool done) true true true)
           pure (.obj o)
+        if mode ≥ 20 then
+          -- %RegExpStringIteratorPrototype%.next (§22.2.9.2.1)
+          if let .undef := target then return ← result .undef true
+          let s := match (← getObj id).props.get? rsiStringKey with
+            | some (.data (.str s) ..) => s
+            | _ => ""
+          let m ← regExpExecG n target s
+          let finish : M Unit := modifyObj id fun o => { o with kind := .iter .undef idx mode }
+          if let .null := m then finish; return ← result .undef true
+          if mode % 2 == 0 then finish; return ← result m false
+          if (← toStr n (← getV n m "0")).isEmpty then
+            let x := toIntegerOrInf (← toNum n (← getV n target "lastIndex"))
+            let li := if x ≤ 0 then 0 else if x ≥ 9007199254740991.0 then 9007199254740991 else x.toUInt64.toNat
+            putV n target "lastIndex" (.num (Float.ofNat (advanceIndex s li ((mode / 2) % 2 == 1)))) true
+          return ← result m false
         match target with
         | .undef => result .undef true
         | .str s =>
@@ -5437,7 +5561,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       pure (.str (if id_ == .stringTrimStart then String.ofList (cs.dropWhile isStrWs)
         else String.ofList (cs.reverse.dropWhile isStrWs).reverse))
     | .stringReplace | .stringReplaceAll =>
-      if ← isRegExpV a0 then return ← extraNative n id_ thisV args newTarget
+      if let some v ← stringSymDispatch n id_ thisV args then return v
       let s ← toStr n (← thisPrim thisV)
       let pat ← toStr n a0
       let fnRepl ← isCallable a1
@@ -5454,7 +5578,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       for p in positions do
         out := out ++ substr s last p
         let r ← if fnRepl then toStr n (← callV n a1 .undef #[.str pat, .num (Float.ofNat p), .str s])
-          else pure ((replStr.replace "$&" pat).replace "$$" "$")
+          else pure (if replStr.contains '$' then getSubstitutionG replStr pat s p #[] none else replStr)
         checkStrLen (out.utf8ByteSize + r.utf8ByteSize)
         out := out ++ r
         last := p + Str.jsLength pat
@@ -5569,9 +5693,20 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
           | .ok (.done v) => setG [] 3; result v true
       | _ => throwErr .type "next method called on incompatible receiver"
     | .stringSplit =>
-      if ← isRegExpV a0 then extraNative n id thisV args newTarget else stringOrMath n id thisV args
-    | .regexpCtor | .regexpExec | .regexpTest | .regexpToString | .regexpGetter _ | .stringMatch
-    | .stringMatchAll | .stringSearch | .proxyCtor | .jsonParse | .bufferCtor | .bufferSlice
+      if let some v ← stringSymDispatch n id thisV args then return v
+      stringOrMath n id thisV args
+    | .stringMatch | .stringSearch =>
+      if let some v ← stringSymDispatch n id thisV args then return v
+      extraNative n id thisV args newTarget
+    | .stringMatchAll =>
+      if let some v ← stringSymDispatch n id thisV args then return v
+      let s ← toStr n thisV
+      let rx ← match a0 with
+        | .undef => newRegExp "(?:)" "g"
+        | _ => do newRegExp (← toStr n a0) "g"
+      regexpSymbol n 4 rx #[.str s]
+    | .regexpCtor | .regexpExec | .regexpTest | .regexpToString | .regexpGetter _
+    | .proxyCtor | .jsonParse | .bufferCtor | .bufferSlice
     | .bufferIsView | .typedCtor _ | .typedSet | .typedSubarray | .typedFill | .dateCtor
     | .dataViewCtor | .dataViewGet _ | .dataViewSet _
     | .dateGetTime | .perfNow | .host _ | .uriFn _ =>
@@ -6604,6 +6739,40 @@ def regexExec : Nat → Value → String → M (Option (Array (Option (Nat × Na
       pure (some caps)
 termination_by structural n _ _ => n
 
+/-- RegExpExec (§22.2.7.1): the object's `exec` when it is callable (its result must be an
+object or null), else the built-in exec on a RegExp. -/
+def regExpExecG : Nat → Value → String → M Value
+  | 0, _, _ => throw (.halt "fuel")
+  | n + 1, rx, s => do
+    let exec ← getV n rx "exec"
+    let builtin ← match exec with
+      | .obj e => do pure (match (← getObj e).kind with | .native .regexpExec => true | _ => false)
+      | _ => pure false
+    if !builtin && (← isCallable exec) then
+      let r ← callV n exec rx #[.str s]
+      match r with
+      | .obj _ | .null => return r
+      | _ => throwErr .type "The result of a RegExp exec method must be an object or null"
+    if !(← isRegExpV rx) then throwErr .type "RegExp exec method called on an incompatible receiver"
+    match ← regexExec n rx s with
+    | none => pure .null
+    | some caps => matchArray n (← regexpOf rx).1 s caps
+termination_by structural n _ _ => n
+
+/-- SpeciesConstructor (§7.3.22). -/
+def speciesCtor : Nat → Value → Value → M Value
+  | 0, _, _ => throw (.halt "fuel")
+  | n + 1, o, dflt => do
+    let c ← getV n o "constructor"
+    match c with
+    | .undef => pure dflt
+    | .obj _ =>
+      match ← getV n c (symKey 7) with
+      | .undef | .null => pure dflt
+      | sp => if ← isConstructor sp then pure sp else throwErr .type "object.constructor[Symbol.species] is not a constructor"
+    | _ => throwErr .type "object.constructor is not an object"
+termination_by structural n _ _ => n
+
 /-- The array of a match (§22.2.7.2 steps 20 to 34): the strings, `index`, `input`,
 `groups`. -/
 def matchArray : Nat → Re.Compiled → String → Array (Option (Nat × Nat)) → M Value
@@ -6625,6 +6794,193 @@ def matchArray : Nat → Re.Compiled → String → Array (Option (Nat × Nat)) 
       pure (.obj o)
     defineOwn aid "groups" (.data groups true true true)
     pure arr
+termination_by structural n _ _ _ => n
+
+/-- String.prototype `match`, `replace`, `replaceAll`, `search` and `split` with a search
+value that is an object: its `@@match`, `@@replace`, `@@search` or `@@split` method
+decides (§22.1.3.13, .19, .20, .21, .23); `none` when it has none. `replaceAll` first asks a
+RegExp for the `g` flag. -/
+def stringSymDispatch : Nat → Native → Value → Array Value → M (Option Value)
+  | 0, _, _, _ => throw (.halt "fuel")
+  | n + 1, id, thisV, args => do
+    let a0 := argD args 0
+    match thisV with
+    | .undef | .null => throwErr .type "String.prototype method called on null or undefined"
+    | _ => pure ()
+    -- only an object's method is asked (a primitive's prototype is not: ES2025)
+    if !a0.isObj then return none
+    let sym := match id with
+      | .stringMatch => 8 | .stringMatchAll => 9 | .stringSearch => 11 | .stringSplit => 12 | _ => 10
+    if id == .stringReplaceAll || id == .stringMatchAll then
+      let isRx ← match ← getV n a0 (symKey 8) with
+        | .undef => isRegExpV a0
+        | m => pure (toBool m)
+      if isRx then
+        let fl ← getV n a0 "flags"
+        match fl with
+        | .undef | .null => throwErr .type "RegExp flags are undefined or null"
+        | _ => pure ()
+        if !(← toStr n fl).contains 'g' then throwErr .type s!"{if id == .stringMatchAll then "matchAll" else "replaceAll"} must be called with a global RegExp"
+    match ← getV n a0 (symKey sym) with
+    | .undef | .null => pure none
+    | m =>
+      if !(← isCallable m) then throwErr .type "The search value's Symbol method is not a function"
+      let rest := if sym == 8 || sym == 9 || sym == 11 then #[] else #[argD args 1]
+      pure (some (← callV n m a0 (#[thisV] ++ rest)))
+termination_by structural n _ _ _ => n
+
+/-- RegExp.prototype `[Symbol.match]` (k = 0), `[Symbol.replace]` (1), `[Symbol.search]` (2)
+and `[Symbol.split]` (3) (§22.2.6.8, .11, .12, .14): the general steps, which read `flags`,
+`lastIndex` and `exec` through the object and take the results apart with `[[Get]]`; a RegExp
+that `regexpPristine` accepts takes the built-in fast path instead. -/
+def regexpSymbol : Nat → Nat → Value → Array Value → M Value
+  | 0, _, _, _ => throw (.halt "fuel")
+  | n + 1, k, rx, args => do
+    if !rx.isObj then throwErr .type "RegExp.prototype method called on a non-object"
+    let s ← toStr n (argD args 0)
+    let len := Str.jsLength s
+    let toLen : Value → M Nat := fun v => do
+      let x := toIntegerOrInf (← toNum n v)
+      pure (if x ≤ 0 then 0 else if x ≥ 9007199254740991.0 then 9007199254740991 else x.toUInt64.toNat)
+    let advance : Bool → M Unit := fun fullU => do
+      let li ← toLen (← getV n rx "lastIndex")
+      putV n rx "lastIndex" (.num (Float.ofNat (advanceIndex s li fullU))) true
+    match k with
+    | 0 =>
+      if ← regexpPristine rx false then return ← extraNative n .stringMatch (.str s) #[rx] none
+      let flags ← toStr n (← getV n rx "flags")
+      if !flags.contains 'g' then return ← regExpExecG n rx s
+      let fullU := flags.contains 'u' || flags.contains 'v'
+      putV n rx "lastIndex" (.num 0) true
+      let mut out : Array Value := #[]
+      for _ in [0:10000000] do
+        let r ← regExpExecG n rx s
+        if let .null := r then
+          return ← (if out.isEmpty then pure .null else newArray out)
+        let ms ← toStr n (← getV n r "0")
+        out := out.push (.str ms)
+        if ms.isEmpty then advance fullU
+      throwErr .range "too many matches"
+    | 1 =>
+      let rv := argD args 1
+      if ← regexpPristine rx false then return ← extraNative n .stringReplace (.str s) #[rx, rv] none
+      let functional ← isCallable rv
+      let tmpl ← if functional then pure "" else toStr n rv
+      let flags ← toStr n (← getV n rx "flags")
+      let global := flags.contains 'g'
+      let fullU := flags.contains 'u' || flags.contains 'v'
+      if global then putV n rx "lastIndex" (.num 0) true
+      let mut results : Array Value := #[]
+      for _ in [0:10000000] do
+        let r ← regExpExecG n rx s
+        if let .null := r then break
+        results := results.push r
+        if !global then break
+        let ms ← toStr n (← getV n r "0")
+        if ms.isEmpty then advance fullU
+      let mut acc := ""
+      let mut next := 0
+      for r in results do
+        let nCaps := (← toLen (← getV n r "length")) - 1
+        let matched ← toStr n (← getV n r "0")
+        let posF := toIntegerOrInf (← toNum n (← getV n r "index"))
+        let pos := if posF ≤ 0 then 0 else if posF ≥ Float.ofNat len then len else posF.toUInt64.toNat
+        let mut caps : Array Value := #[]
+        for i in [1:nCaps + 1] do
+          let c ← getV n r (toString i)
+          let cv ← match c with
+            | .undef => pure Value.undef
+            | v => do pure (Value.str (← toStr n v))
+          caps := caps.push cv
+        let groups ← getV n r "groups"
+        let rep ← if functional then do
+            let extra : Array Value := match groups with | .undef => #[] | g => #[g]
+            toStr n (← callV n rv .undef (#[.str matched] ++ caps ++ #[.num (Float.ofNat pos), .str s] ++ extra))
+          else do
+            let named ← match groups with
+              | .undef => pure none
+              | g => do
+                let gid ← toObj n g
+                let mut tbl : List (String × String) := []
+                for nm in templateNames tmpl do
+                  let v ← getV n (.obj gid) nm
+                  let t ← match v with
+                    | .undef => pure ""
+                    | v => toStr n v
+                  tbl := tbl ++ [(nm, t)]
+                pure (some tbl)
+            let capS := caps.map fun c => match c with | .str t => some t | _ => none
+            pure (getSubstitutionG tmpl matched s pos capS named)
+        if pos ≥ next then
+          checkStrLen (acc.utf8ByteSize + rep.utf8ByteSize)
+          acc := acc ++ Str.sliceUnits s next pos ++ rep
+          next := pos + Str.jsLength matched
+      pure (.str (if next ≥ len then acc else acc ++ Str.sliceUnits s next len))
+    | 2 =>
+      if ← regexpPristine rx false then return ← extraNative n .stringSearch (.str s) #[rx] none
+      let prev ← getV n rx "lastIndex"
+      if !sameValue prev (.num 0) then putV n rx "lastIndex" (.num 0) true
+      let r ← regExpExecG n rx s
+      let cur ← getV n rx "lastIndex"
+      if !sameValue cur prev then putV n rx "lastIndex" prev true
+      match r with
+      | .null => pure (.num (-1))
+      | _ => getV n r "index"
+    | 3 =>
+      let lim0 := argD args 1
+      if ← regexpPristine rx true then return ← extraNative n .stringSplit (.str s) #[rx, lim0] none
+      let dflt ← mkNative .regexpCtor "RegExp" 2
+      let c ← speciesCtor n rx dflt
+      let flags ← toStr n (← getV n rx "flags")
+      let unicodeM := flags.contains 'u' || flags.contains 'v'
+      let newFlags := if flags.contains 'y' then flags else flags ++ "y"
+      let splitter ← construct n c #[rx, .str newFlags] c
+      let lim ← match lim0 with
+        | .undef => pure 4294967295
+        | l => do pure (toUint32 (← toNum n l))
+      if lim == 0 then return ← newArray #[]
+      if len == 0 then
+        let z ← regExpExecG n splitter s
+        return ← newArray (match z with | .null => #[.str s] | _ => #[])
+      let mut out : Array Value := #[]
+      let mut p := 0
+      let mut q := 0
+      for _ in [0:10000000] do
+        if q ≥ len then break
+        putV n splitter "lastIndex" (.num (Float.ofNat q)) true
+        let z ← regExpExecG n splitter s
+        match z with
+        | .null => q := advanceIndex s q unicodeM
+        | _ =>
+          let e := min (← toLen (← getV n splitter "lastIndex")) len
+          if e == p then q := advanceIndex s q unicodeM
+          else
+            out := out.push (.str (Str.sliceUnits s p q))
+            if out.size == lim then return ← newArray out
+            p := e
+            let nc := (← toLen (← getV n z "length")) - 1
+            for i in [1:nc + 1] do
+              out := out.push (← getV n z (toString i))
+              if out.size == lim then return ← newArray out
+            q := p
+      out := out.push (.str (Str.sliceUnits s p len))
+      newArray out
+    | _ =>
+      -- @@matchAll (§22.2.6.9): a RegExp String Iterator over a copy made by the species
+      let dflt ← mkNative .regexpCtor "RegExp" 2
+      let c ← speciesCtor n rx dflt
+      let flags ← toStr n (← getV n rx "flags")
+      let matcher ← construct n c #[rx, .str flags] c
+      let li ← toLen (← getV n rx "lastIndex")
+      putV n matcher "lastIndex" (.num (Float.ofNat li)) true
+      let mode := 20 + (if flags.contains 'g' then 1 else 0) + (if flags.contains 'u' || flags.contains 'v' then 2 else 0)
+      let r ← realm
+      let proto := match (← getObj r.regexpProto).props.get? rsiProtoKey with
+        | some (.data p ..) => p
+        | _ => .obj r.arrayIterProto
+      let it ← alloc { proto, kind := .iter matcher 0 mode }
+      defineOwn it rsiStringKey (.data (.str s) false false false)
+      pure (.obj it)
 termination_by structural n _ _ _ => n
 
 /-- RegExp, the String methods with a RegExp, Proxy, JSON.parse, ArrayBuffer, the typed
@@ -6663,6 +7019,14 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
         | .regexp _ src f => pure (.str ("/" ++ src ++ "/" ++ f))
         | _ => pure (.str ("/" ++ (← toStr n (← getV n thisV "source")) ++ "/" ++ (← toStr n (← getV n thisV "flags"))))
       | _ => throwErr .type "RegExp.prototype.toString called on a non-object"
+    | .regexpGetter 1 =>
+      -- get RegExp.prototype.flags (§22.2.6.4): each flag's property, read through the object
+      if !thisV.isObj then throwErr .type "RegExp.prototype.flags getter called on a non-object"
+      let mut out := ""
+      for (c, nm) in [('d', "hasIndices"), ('g', "global"), ('i', "ignoreCase"), ('m', "multiline"),
+          ('s', "dotAll"), ('u', "unicode"), ('v', "unicodeSets"), ('y', "sticky")] do
+        if toBool (← getV n thisV nm) then out := out.push c
+      pure (.str out)
     | .regexpGetter which =>
       match thisV with
       | .obj oid => match (← getObj oid).kind with
@@ -6673,7 +7037,7 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
             | 1 => .str (String.ofList ("dgimsuvy".toList.filter fun c => f.contains c))
             | 2 => .bool re.flags.global | 3 => .bool re.flags.icase
             | 4 => .bool re.flags.multiline | 5 => .bool re.flags.sticky | 6 => .bool re.flags.unicode
-            | _ => .bool re.flags.dotAll)
+            | 7 => .bool re.flags.dotAll | 8 => .bool (f.contains 'd') | _ => .bool (f.contains 'v'))
         | _ => pure (if which == 0 then .str "(?:)" else if which == 1 then .str "" else .undef)
       | _ => throwErr .type "RegExp getter called on a non-object"
     | .stringMatch | .stringMatchAll | .stringSearch =>
@@ -7770,6 +8134,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       | .error (.throw e) => let _ ← callV n (← getV n cap "reject") .undef #[e]
       | .error a => throw a
       getV n cap "promise"
+    | (.x (.regexpSym k)) => regexpSymbol n k thisV args
     | (.x .regexpEscape) =>
       match a0 with
       | .str s => pure (.str (regexpEscapeStr s.toList))
@@ -9715,8 +10080,15 @@ def initRealm : M Unit := do
   method regexpProto "exec" .regexpExec 1
   method regexpProto "test" .regexpTest 1
   method regexpProto "toString" .regexpToString 0
+  for (k, sym, nm, l) in [(0, 8, "[Symbol.match]", 1), (1, 10, "[Symbol.replace]", 2),
+      (2, 11, "[Symbol.search]", 1), (3, 12, "[Symbol.split]", 2), (4, 9, "[Symbol.matchAll]", 1)] do
+    defineOwn regexpProto (symKey sym) (.data (← mkNative (.x (.regexpSym k)) nm l) true false true)
+  let rsip ← alloc { proto := .obj (← realm).iterProto }
+  defineOwn rsip "next" (.data (← mkNative .iterNext "next" 0) true false true)
+  defineOwn rsip (symKey symToStringTag) (.data (.str "RegExp String Iterator") false false true)
+  defineOwn regexpProto rsiProtoKey (.data (.obj rsip) false false false)
   for (nm, k) in [("source", 0), ("flags", 1), ("global", 2), ("ignoreCase", 3), ("multiline", 4),
-      ("sticky", 5), ("unicode", 6), ("dotAll", 7)] do
+      ("sticky", 5), ("unicode", 6), ("dotAll", 7), ("hasIndices", 8), ("unicodeSets", 9)] do
     let getter ← mkNative (.regexpGetter k) ("get " ++ nm) 0
     defineOwn regexpProto nm (.acc getter .undef false true)
   let sp := (← realm).stringProto

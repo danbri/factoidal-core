@@ -588,4 +588,15 @@ theorem checkStrLen_passes {H : Type} (h : HeapOf H) (bytes : Nat) (hb : bytes �
   have : ¬ bytes > maxStringBytes := Nat.not_lt.mpr hb
   simp [this, EStateM.run, pure, EStateM.pure]
 
+/-- AdvanceStringIndex always moves forward, by one or two units: the global match, replace,
+split and RegExp String Iterator loops that step past an empty match make progress. -/
+theorem advanceIndex_gt (s : String) (i : Nat) (u : Bool) :
+    i < advanceIndex s i u ∧ advanceIndex s i u ≤ i + 2 := by
+  unfold advanceIndex
+  split
+  · omega
+  · split
+    · split <;> omega
+    · omega
+
 end L4Factoidal.JS
