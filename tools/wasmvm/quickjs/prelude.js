@@ -561,6 +561,10 @@
     'beforeunload', 'hashchange', 'languagechange', 'message', 'messageerror', 'offline', 'online', 'pagehide', 'pageshow',
     'popstate', 'rejectionhandled', 'storage', 'unhandledrejection', 'unload', 'pagereveal', 'pageswap']);
   const windowReflecting = el => el instanceof HTMLElement && (el.localName === 'body' || el.localName === 'frameset');
+  // The window a body or frameset element's window-reflecting handlers belong to (HTML
+  // §8.1.8.1): its own document's. For a same-origin frame's document that is the frame's
+  // window target, not the page's window (whose handlers a frame's `<body onload>` replaced).
+  const bodyWindow = el => { const d = info(nodeId(el), 7); return d > 0 ? frameTarget(d) : window; };
   const addHandlers = proto => {
     for (const name of handlerNames)
       Object.defineProperty(proto, 'on' + name, { get() { return handlerOf(this, name); },
@@ -817,7 +821,7 @@
       chk(n.removeAttr(nodeId(this), String(name)));
       // Removing an event handler content attribute deactivates the handler (HTML §8.1.8.1).
       if (a && k.startsWith('on') && handlerNames.includes(k.slice(2)) && (this instanceof HTMLElement || this instanceof SVGElement || this instanceof MathMLElement))
-        setHandler(windowReflecting(this) && bodyWindowHandlers.has(k.slice(2)) ? window : this, k.slice(2), null);
+        setHandler(windowReflecting(this) && bodyWindowHandlers.has(k.slice(2)) ? bodyWindow(this) : this, k.slice(2), null);
     }
     removeAttributeNS(ns, name) { const a = attrNode(this, nsArg(ns) || null, String(name)); if (a) detachAttr(a); chk(n.removeAttr(nodeId(this), nsArg(ns) + '\u0000' + String(name))); }
     toggleAttribute(name, force) {
@@ -1248,8 +1252,8 @@
   };
   for (const C of [named.HTMLBodyElement, named.HTMLFrameSetElement])
     for (const name of bodyWindowHandlers) {
-      Object.defineProperty(C.prototype, 'on' + name, { get() { return handlerOf(window, name); },
-        set(f) { setHandler(window, name, f); }, configurable: true, enumerable: true });
+      Object.defineProperty(C.prototype, 'on' + name, { get() { return handlerOf(bodyWindow(this), name); },
+        set(f) { setHandler(bodyWindow(this), name, f); }, configurable: true, enumerable: true });
     }
   reflectURL(named.HTMLIFrameElement, ['src']); reflectString(named.HTMLIFrameElement, ['srcdoc', 'name', 'width', 'height', 'allow']);
   reflectURL(named.HTMLImageElement, ['src']); reflectString(named.HTMLImageElement, ['alt']);
@@ -4976,6 +4980,31 @@
     if (typeof r === 'string') return r;
     return r === null || r === -1 ? null : storageErr(r, what);
   };
+  // HTML §12.2.1 "broadcast": a change is told to every other Document of the origin that
+  // holds the area. In this realm those are the page's window and its same-origin frames'
+  // windows, but for the window of the script that made the change. A page with no frame
+  // target (frameTargets is empty) pays one size check: the old value is read only for them.
+  const storageMutate = (kind, key, value, op, args, what) => {
+    if (frameTargets.size === 0) { storageCall(kind, op, args, what); return; }
+    const read = k => { const v = apiCall(82, [kind, k]); return typeof v === 'string' ? stDec(v) : null; };
+    const had = key === null ? Number(apiCall(80, [kind])) > 0 : read(stEnc(key));
+    storageCall(kind, op, args, what);
+    const now = key === null ? null : value;
+    if (key === null ? !had : had === now) return;
+    const own = windowOfScript(), from = scriptDocument !== null && scriptDocument !== document ? docURL(nodeId(scriptDocument)) : href;
+    const tell = (target, doc) => {
+      if (target === own) return;
+      setTimeout(() => {
+        const e = new globalThis.StorageEvent('storage', { key, oldValue: key === null ? null : had, newValue: now, url: from, storageArea: storageAreas[kind] });
+        state(e).trusted = true;
+        const before = scriptDocument;
+        scriptDocument = doc > 0 ? wrap(doc) : null;
+        try { dispatch(target, e); } finally { scriptDocument = before; }
+      }, 0);
+    };
+    tell(window, 0);
+    for (const [doc, target] of frameTargets) if (info(doc, 12) >= 0) tell(target, doc);
+  };
   const storageNeed = (n, have, what) => { if (have < n) throw new TypeError(`Failed to execute '${what}' on 'Storage': ${n} argument${n > 1 ? 's' : ''} required, but only ${have} present.`); };
   const makeStorage = () => {
     if (StorageC) return StorageC;
@@ -4996,13 +5025,13 @@
       setItem(key, value) {
         storageNeed(2, arguments.length, 'setItem');
         const kind = K(this, 'setItem'), k = stEnc(key), v = stEnc(value);
-        storageCall(kind, 83, [k, v], 'setItem');
+        storageMutate(kind, String(key), String(value), 83, [k, v], 'setItem');
       }
       removeItem(key) {
         storageNeed(1, arguments.length, 'removeItem');
-        storageCall(K(this, 'removeItem'), 84, [stEnc(key)], 'removeItem');
+        storageMutate(K(this, 'removeItem'), String(key), null, 84, [stEnc(key)], 'removeItem');
       }
-      clear() { storageCall(K(this, 'clear'), 85, [], 'clear'); }
+      clear() { storageMutate(K(this, 'clear'), null, null, 85, [], 'clear'); }
     }
     for (const k of ['length', 'key', 'getItem', 'setItem', 'removeItem', 'clear'])
       Object.defineProperty(Storage.prototype, k, { ...Object.getOwnPropertyDescriptor(Storage.prototype, k), enumerable: true });
@@ -5022,18 +5051,18 @@
     const proxy = new Proxy(target, {
       get(t, p, r) { return named(t, p) ? item(p) : Reflect.get(t, p, r); },
       set(t, p, v, r) {
-        if (typeof p === 'string' && r === proxy) { const k = stEnc(p), x = stEnc(v); storageCall(kind, 83, [k, x], 'setItem'); return true; }
+        if (typeof p === 'string' && r === proxy) { const k = stEnc(p), x = stEnc(v); storageMutate(kind, p, String(v), 83, [k, x], 'setItem'); return true; }
         return Reflect.set(t, p, v, r);
       },
       defineProperty(t, p, desc) {
         if (typeof p !== 'string') return Reflect.defineProperty(t, p, desc);
         if (!('value' in desc) && !('writable' in desc)) return false;
         const k = stEnc(p), x = stEnc(desc.value);
-        storageCall(kind, 83, [k, x], 'setItem');
+        storageMutate(kind, p, String(desc.value), 83, [k, x], 'setItem');
         return true;
       },
       deleteProperty(t, p) {
-        if (named(t, p) && item(p) !== undefined) { storageCall(kind, 84, [stEnc(p)], 'removeItem'); return true; }
+        if (named(t, p) && item(p) !== undefined) { storageMutate(kind, p, null, 84, [stEnc(p)], 'removeItem'); return true; }
         return Reflect.deleteProperty(t, p);
       },
       has(t, p) { return Reflect.has(t, p) || (typeof p === 'string' && item(p) !== undefined); },
@@ -7332,7 +7361,7 @@
   const contentHandler = (el, name, source) => {
     if (!handlerNames.includes(name) || !(el instanceof HTMLElement || el instanceof SVGElement || el instanceof MathMLElement)) return;
     const onBody = windowReflecting(el) && bodyWindowHandlers.has(name);
-    const t = onBody ? window : el;
+    const t = onBody ? bodyWindow(el) : el;
     // HTML "getting the current value of the event handler": the window's onerror handler has
     // the parameters event, source, lineno, colno and error. A source that does not compile
     // sets the handler to null (replacing an earlier one) and the error is reported.
