@@ -635,7 +635,7 @@ def animOp (h : Host) (node op : Nat) (q : String) : Host × Except Int String :
   let dom := h.dom.dom
   let bump := fun (h : Host) (anim : L4Factoidal.Rendering.Animation.State) =>
     -- a change of what a layout reads that writes nothing of the document (`Reads.wrote`, neutral)
-    { h with anim, reads := { h.reads.wrote none true with animEpoch := h.reads.animEpoch + 1 } }
+    { h with anim, reads := { (h.reads.wrote none true) with animEpoch := h.reads.animEpoch + 1 } }
   let api := L4Factoidal.Rendering.Animation.Api.createEffect
   match op with
   | 60 =>
