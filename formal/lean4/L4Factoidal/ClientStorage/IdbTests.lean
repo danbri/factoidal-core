@@ -61,6 +61,9 @@ private def aborted : List (List String) :=
 -- a handle of a finished transaction: its store deleted (or never committed) is InvalidStateError first, else not active
 #guard (answers s2 [["req", "4", "1", "", "get"] ++ only one, ["req", "4", "9", "", "get"] ++ only one, ["req", "99", "1", "", "get"] ++ only one]).2 ==
   ["!TransactionInactiveError", "!InvalidStateError", "!TransactionInactiveError"]
+-- schema methods on a handle of a finished transaction: an upgrade's live store is not active; a gone store or another mode is InvalidStateError
+#guard (answers s2 [["createIndex", "3", "1", "by_title", "stitle", "1", "0"], ["createIndex", "3", "9", "x", "sx", "0", "0"],
+  ["createIndex", "4", "1", "x", "sx", "0", "0"]]).2 == ["!TransactionInactiveError", "!InvalidStateError", "!InvalidStateError"]
 #guard (answers s2 [["transaction", "2", "readwrite", "nope"]]).2.getLast? == some "!NotFoundError"
 #guard (answers s2 [["transaction", "2", "readwrite"]]).2.getLast? == some "!InvalidAccessError"
 #guard (answers s2 [["createStore", "2", "x", "n", "0"]]).2.getLast? == some "!InvalidStateError"

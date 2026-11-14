@@ -9362,7 +9362,8 @@
     };
     class IDBObjectStore {
       constructor() { guard(); }
-      get name() { const s = st(this, 'IDBObjectStore', 'name'); const i = storeInfo(s); return i ? (s.name = i.name) : s.name; }
+      // the store's name as this handle knows it: read while its transaction lives, kept after
+      get name() { const s = st(this, 'IDBObjectStore', 'name'); if (kinds.get(s.tx).finished) return s.name; const i = storeInfo(s); return i ? (s.name = i.name) : s.name; }
       set name(v) { const s = st(this, 'IDBObjectStore', 'name'); const name = String(v); call(['renameStore', String(s.txId), String(s.id), stEnc(name)], 'IDBObjectStore.name'); s.name = name; }
       get keyPath() { const s = st(this, 'IDBObjectStore', 'keyPath'); return s.keyPath; }
       get indexNames() { const s = st(this, 'IDBObjectStore', 'indexNames'); const i = storeInfo(s); return i ? names(i.indexNames) : stringList([]); }
@@ -9404,7 +9405,7 @@
     };
     class IDBIndex {
       constructor() { guard(); }
-      get name() { const s = st(this, 'IDBIndex', 'name'); const i = indexInfo(s); return i ? (s.name = i.name) : s.name; }
+      get name() { const s = st(this, 'IDBIndex', 'name'); if (kinds.get(kinds.get(s.store).tx).finished) return s.name; const i = indexInfo(s); return i ? (s.name = i.name) : s.name; }
       set name(v) { const s = st(this, 'IDBIndex', 'name'); const name = String(v); call(['renameIndex', String(kinds.get(s.store).txId), String(s.storeId), String(s.id), stEnc(name)], 'IDBIndex.name'); s.name = name; }
       get objectStore() { return st(this, 'IDBIndex', 'objectStore').store; }
       get keyPath() { return st(this, 'IDBIndex', 'keyPath').keyPath; }

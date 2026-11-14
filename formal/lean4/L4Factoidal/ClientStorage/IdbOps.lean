@@ -130,7 +130,7 @@ structure Live where
   /-- Finished transactions and their databases: a store or index handle of one of them is
   "deleted" (`InvalidStateError`) when its store or index is not in the database, else its
   transaction is not active (`TransactionInactiveError`). -/
-  ended : List (Nat × String) := []
+  ended : List (Nat × String × Bool) := []
   deriving Inhabited
 
 /-- Everything IndexedDB keeps for one storage key: the databases (what a backend would
@@ -235,7 +235,7 @@ def Live.abort (l : Live) (dbs : List (String × Db)) (id : Nat) (err : String) 
     let names := storeNames (if t.mode == .vc then (get dbs t.db).getD {} else t.view dbs)
     let l := t.queue.foldl (fun l r => l.push [S "req", N r.id, N t.id, S "err", S "AbortError"]) l
     let l := l.push ([S "tx", N t.id, S "abort", S err] ++ names)
-    let l := { l with txns := l.txns.filter (·.id != id), ended := (id, t.db) :: l.ended }
+    let l := { l with txns := l.txns.filter (·.id != id), ended := (id, t.db, t.mode == Mode.vc) :: l.ended }
     match t.openReq with
     | some rq =>
       let l := { l with conns := l.conns.filter (·.id != t.conn), opens := l.opens.filter (·.id != rq) }
@@ -325,7 +325,7 @@ def reqGuard (dbs : List (String × Db)) (l : Live) (tx store : Nat) (index : Op
   | none =>
     -- §4.4 and the methods' first steps: "has been deleted" precedes "not active"
     match l.ended.find? (·.1 == tx) with
-    | some (_, name) =>
+    | some (_, name, _) =>
       match get ((get dbs name).getD {}).stores store with
       | none => .error "InvalidStateError"
       | some s =>
@@ -345,7 +345,7 @@ def reqGuard (dbs : List (String × Db)) (l : Live) (tx store : Nat) (index : Op
 handle of a finished transaction whose store is not in its database (deleted, or created
 by a transaction that aborted) answers `InvalidStateError`, before any "not active" check. -/
 theorem reqGuard_ended_deleted (dbs : List (String × Db)) (l : Live) (tx store : Nat) (index : Option Nat) (write : Bool)
-    (name : String) (ht : l.txn? tx = none) (he : l.ended.find? (·.1 == tx) = some (tx, name))
+    (name : String) (ht : l.txn? tx = none) (vc : Bool) (he : l.ended.find? (·.1 == tx) = some (tx, name, vc))
     (hs : get ((get dbs name).getD {}).stores store = none) :
     reqGuard dbs l tx store index write = .error "InvalidStateError" := by
   simp [reqGuard, ht, he, hs]
@@ -353,7 +353,7 @@ theorem reqGuard_ended_deleted (dbs : List (String × Db)) (l : Live) (tx store 
 /-- Kind: order of exceptions. Says: a handle of a finished transaction whose store is still
 in its database answers `TransactionInactiveError` (when no index is named). -/
 theorem reqGuard_ended_inactive (dbs : List (String × Db)) (l : Live) (tx store : Nat) (write : Bool)
-    (name : String) (s : Store) (ht : l.txn? tx = none) (he : l.ended.find? (·.1 == tx) = some (tx, name))
+    (name : String) (s : Store) (ht : l.txn? tx = none) (vc : Bool) (he : l.ended.find? (·.1 == tx) = some (tx, name, vc))
     (hs : get ((get dbs name).getD {}).stores store = some s) :
     reqGuard dbs l tx store none write = .error "TransactionInactiveError" := by
   simp [reqGuard, ht, he, hs]
@@ -494,14 +494,29 @@ def upgradeGuard (l : Live) (conn : Nat) : Except String Txn :=
   | some t => if t.state != .active || t.commitAsked then .error "TransactionInactiveError" else .ok t
 
 /-- The version-change transaction and the store that a schema method of a store needs. -/
-def schemaGuard (l : Live) (tx store : Nat) : Except String (Txn × Store) :=
+def schemaGuard (dbs : List (String × Db)) (l : Live) (tx store : Nat) : Except String (Txn × Store) :=
   match l.txn? tx with
-  | none => .error "InvalidStateError"
+  | none =>
+    -- a finished transaction: not an upgrade, or its store gone (deleted, or created by an
+    -- upgrade that aborted): InvalidStateError; else it is not active
+    match l.ended.find? (·.1 == tx) with
+    | some (_, name, true) =>
+      if (get ((get dbs name).getD {}).stores store).isSome then .error "TransactionInactiveError" else .error "InvalidStateError"
+    | _ => .error "InvalidStateError"
   | some t =>
     if t.mode != .vc then .error "InvalidStateError" else
     match get t.work.stores store with
     | none => .error "InvalidStateError"
     | some s => if t.state != .active || t.commitAsked then .error "TransactionInactiveError" else .ok (t, s)
+
+/-- Kind: order of exceptions (createIndex, deleteIndex, rename). Says: a store handle of a
+finished upgrade transaction whose store is in the database answers
+`TransactionInactiveError`, the check that precedes the index name checks. -/
+theorem schemaGuard_ended_upgrade (dbs : List (String × Db)) (l : Live) (tx store : Nat) (name : String) (s : Store)
+    (ht : l.txn? tx = none) (he : l.ended.find? (·.1 == tx) = some (tx, name, true))
+    (hs : get ((get dbs name).getD {}).stores store = some s) :
+    schemaGuard dbs l tx store = .error "TransactionInactiveError" := by
+  simp [schemaGuard, ht, he, hs]
 
 def setStoreOf (t : Txn) (id : Nat) (s : Store) : Txn := { t with work := { t.work with stores := set t.work.stores id s } }
 
@@ -655,7 +670,7 @@ def sync (dbs : List (String × Db)) (l : Live) (a : Array Tok) : Live × List T
         | some ix => (l, ok [S ix.name, S (keyPathStr ix.keyPath), S (if ix.unique then "1" else "0"), S (if ix.multiEntry then "1" else "0")])
         | none => (l, fail "gone")
   | "renameStore" =>
-    match schemaGuard l (natAt a 1) (natAt a 2) with
+    match schemaGuard dbs l (natAt a 1) (natAt a 2) with
     | .error e => (l, fail e)
     | .ok (t, s) =>
       let name := strAt a 3
@@ -663,7 +678,7 @@ def sync (dbs : List (String × Db)) (l : Live) (a : Array Tok) : Live × List T
       else if (t.work.storeNamed name).isSome then (l, fail "ConstraintError")
       else (l.setTxn (setStoreOf t (natAt a 2) { s with name }), ok)
   | "createIndex" =>
-    match schemaGuard l (natAt a 1) (natAt a 2) with
+    match schemaGuard dbs l (natAt a 1) (natAt a 2) with
     | .error e => (l, fail e)
     | .ok (t, s) =>
       let name := strAt a 3
@@ -678,13 +693,13 @@ def sync (dbs : List (String × Db)) (l : Live) (a : Array Tok) : Live × List T
         let t := setStoreOf { t with doom } (natAt a 2) { s with indexes := s.indexes ++ [ix], nextIndex := s.nextIndex + 1 }
         (l.setTxn t, ok [N ix.id])
   | "deleteIndex" =>
-    match schemaGuard l (natAt a 1) (natAt a 2) with
+    match schemaGuard dbs l (natAt a 1) (natAt a 2) with
     | .error e => (l, fail e)
     | .ok (t, s) =>
       if !s.indexes.any (·.name == strAt a 3) then (l, fail "NotFoundError")
       else (l.setTxn (setStoreOf t (natAt a 2) { s with indexes := s.indexes.filter (·.name != strAt a 3) }), ok)
   | "renameIndex" =>
-    match schemaGuard l (natAt a 1) (natAt a 2) with
+    match schemaGuard dbs l (natAt a 1) (natAt a 2) with
     | .error e => (l, fail e)
     | .ok (t, s) =>
       let name := strAt a 4
@@ -777,7 +792,7 @@ def txStep (dbs : List (String × Db)) (quota : Nat) (l : Live) : Option (Live �
       if use after > quota && use after > use dbs then
         some ((l.setTxn t).abort dbs t.id "QuotaExceededError", none, .none)
       else
-        let l := { l with txns := l.txns.filter (·.id != t.id), ended := (t.id, t.db) :: l.ended }
+        let l := { l with txns := l.txns.filter (·.id != t.id), ended := (t.id, t.db, t.mode == Mode.vc) :: l.ended }
         let l := (l.push ([S "tx", N t.id, S "complete"] ++ storeNames t.work)).reap t.conn
         match t.openReq with
         | some rq =>
