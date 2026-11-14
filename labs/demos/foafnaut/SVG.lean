@@ -1410,11 +1410,19 @@ def imageKeys (root : NamespaceNode) (base : Option String := none) : List Strin
   (imageKeysAt 64 base root).eraseDups
 
 /-- As `imageStore`, for the keys `keys` (SVG `image` and HTML `img` references). -/
-def imageStoreOf (keys : List String) (supplied : List (String × ByteArray) := []) : NativeImage.Store :=
-  (keys.eraseDups.foldl (fun (state : NativeImage.Store × Nat) key =>
-    if key.toLower.startsWith "data:" then state.1.addData state.2 key
+def imageStoreOf (keys : List String) (supplied : List (String × ByteArray) := [])
+    (vector : NativeImage.VectorReader := fun _ => none) : NativeImage.Store :=
+  let keys := keys.eraseDups
+  -- The factor at which the document's images fit its pixel budget (`NativeImage.factorFor`),
+  -- from the sizes that the files' headers give: 1 when they fit as they are.
+  let sizes := keys.filterMap fun key =>
+    if key.toLower.startsWith "data:" then (NativeImage.dataBytes key).toOption.bind NativeImage.naturalSize
+    else (supplied.find? (·.1 == key)).bind fun (_,bytes) => NativeImage.naturalSize bytes
+  let k := NativeImage.factorFor sizes
+  (keys.foldl (fun (state : NativeImage.Store × Nat) key =>
+    if key.toLower.startsWith "data:" then state.1.addData state.2 key k vector
     else match supplied.find? (·.1 == key) with
-      | some (_,bytes) => state.1.addBytes state.2 key bytes
+      | some (_,bytes) => state.1.addBytes state.2 key bytes k vector
       | none => (state.1.insert key (.error s!"image resource not supplied: {key}"),state.2))
     (({} : NativeImage.Store),0)).1
 

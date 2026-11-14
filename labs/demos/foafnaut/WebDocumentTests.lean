@@ -427,6 +427,38 @@ private def imgDrawn := WebDocument.compileText imgPage ("{\"op\":\"render\",\"u
 #guard contains (WebDocument.compileText imgPage "{\"op\":\"render\",\"url\":\"https://e.test/p/\"}" 40 40) "\"text\":\"[Gone]\""
 #guard contains (WebDocument.compileText imgPage ("{\"op\":\"render\",\"url\":\"https://e.test/p/\",\"images\":[{\"key\":\"https://e.test/p/a.png\",\"base64\":\"aGk=\"}]}") 40 40) "\"text\":\"[Gone]\""
 
+-- An SVG file as the image of an `img` (2026-11-14; before, its alt text): the document is drawn
+-- on the CPU into a bitmap of twice its size, with alpha, and laid out by the size of its root.
+private def svgFile := "<svg xmlns='http://www.w3.org/2000/svg' width='20' height='10' viewBox='0 0 20 10'><rect width='10' height='10' fill='#ff0000'/></svg>"
+private def svgFileBase64 := "PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHdpZHRoPScyMCcgaGVpZ2h0PScxMCcgdmlld0JveD0nMCAwIDIwIDEwJz48cmVjdCB3aWR0aD0nMTAnIGhlaWdodD0nMTAnIGZpbGw9JyNmZjAwMDAnLz48L3N2Zz4="
+private def svgImgPage := "<body style='margin:0'><img src='a.svg' alt='Logo' style='display:block'></body>"
+private def svgImgDrawn := WebDocument.compileText svgImgPage ("{\"op\":\"render\",\"url\":\"https://e.test/p/\",\"images\":[{\"key\":\"https://e.test/p/a.svg\",\"base64\":\"" ++ svgFileBase64 ++ "\"}]}") 40 40
+#guard !contains svgImgDrawn "\"error\"" && !contains svgImgDrawn "[Logo]"
+#guard contains (WebDocument.compileText svgImgPage "{\"op\":\"render\",\"url\":\"https://e.test/p/\"}" 40 40) "\"text\":\"[Logo]\""
+private def svgPicture := (WebRender.vectorPicture svgFile.toUTF8).bind (·.toOption)
+#guard svgPicture.map (fun (b,w,h) => (b.width,b.height,b.rgba.size,w,h)) == some (40,20,40*20*4,20,10)
+-- the left half is the red rectangle, opaque; the right half is not painted: alpha 0
+#guard svgPicture.map (fun (b,_,_) => (b.rgba.extract ((10*40+10)*4) ((10*40+10)*4+4)).toList) == some [255,0,0,255]
+#guard svgPicture.map (fun (b,_,_) => (b.rgba.extract ((10*40+30)*4) ((10*40+30)*4+4)).toList) == some [0,0,0,0]
+#guard (WebRender.vectorPicture "not an image".toUTF8).isNone
+#guard (WebRender.vectorPicture "<svg xmlns='http://www.w3.org/2000/svg'><rect".toUTF8).any (·.toOption.isNone)
+-- unpainted: white on white, black on black; red at half cover: (255,128,128) on white, (128,0,0) on black
+#guard (WebRender.alphaFrom (ByteArray.mk #[255,255,255,255, 255,128,128,255]) (ByteArray.mk #[0,0,0,255, 128,0,0,255])).toList == [0,0,0,0, 255,0,0,127]
+-- the size of an SVG image: width and height; one and the viewBox ratio; the viewBox; 300 by 150
+private def sizeOfRoot (attrs : List (String × String)) : Nat × Nat :=
+  NativeSVGForgiving.imageSize (attrs.map fun (k,v) => NativeSVGText.mkAttr k v)
+#guard sizeOfRoot [("width","18"),("height","18")] == (18,18)
+#guard sizeOfRoot [("width","100px"),("viewBox","0 0 50 25")] == (100,50)
+#guard sizeOfRoot [("height","10"),("viewBox","0 0 50 25")] == (20,10)
+#guard sizeOfRoot [("viewBox","0 0 486 169")] == (486,169)
+#guard sizeOfRoot [("width","100%"),("height","100%"),("viewBox","0 0 24 24")] == (24,24)
+#guard sizeOfRoot [] == (300,150)
+#guard NativeSVGForgiving.imageRaster 18 18 == (36,36)
+#guard NativeSVGForgiving.imageRaster 486 169 == (486,169)
+-- 2000 by 1000 is past the budget whole and halved; a third (rounded up) fits
+#guard NativeSVGForgiving.imageRaster 2000 1000 == (667,334)
+#guard 667*334 ≤ NativeSVGForgiving.maxImagePixels && 1000*500 > NativeSVGForgiving.maxImagePixels
+
 -- The tab icon (HTML §4.6.7.8): a scalable icon first, then the smallest at least 32
 -- device pixels, the last of equal ones; ICO is skipped (issue 1282); with no icon link,
 -- an apple-touch-icon; with none, no icon and no `/favicon.ico`.
