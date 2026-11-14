@@ -145,8 +145,17 @@ content type, and every element a script created in it was in no namespace: an `
 made by a script never loaded. -/
 def parseXmlDocument (src : String) : Except String Dom := do
   let d ← parseXmlTree src
-  let xhtml := (d.get 0).kids.any fun k => (d.get k).type == .element && (d.get k).ns == some htmlNS
-  return if xhtml then d.setNode 0 fun n => { n with contentType := "application/xhtml+xml" } else d
+  let rootNs := ((d.get 0).kids.find? fun k => (d.get k).type == .element).bind fun k => (d.get k).ns
+  -- an SVG document (root `svg` element, read from an `.svg` path) is `image/svg+xml` (SVG 2
+  -- Appendix P), as the page's `document.contentType` tells its scripts; another XML
+  -- document is `application/xml`
+  let contentType := if rootNs == some htmlNS then "application/xhtml+xml"
+    else if rootNs == some svgNS then "image/svg+xml" else "application/xml"
+  return d.setNode 0 fun n => { n with contentType := contentType }
+
+#guard ((parseXmlDocument "<svg xmlns='http://www.w3.org/2000/svg'/>").toOption.map fun d => (d.get 0).contentType) == some "image/svg+xml"
+#guard ((parseXmlDocument "<html xmlns='http://www.w3.org/1999/xhtml'/>").toOption.map fun d => (d.get 0).contentType) == some "application/xhtml+xml"
+#guard ((parseXmlDocument "<r/>").toOption.map fun d => (d.get 0).contentType) == some "application/xml"
 
 /-- A URL whose document the XML parser reads: its path ends in `.xht` or `.xhtml` (any
 case), the file name extensions that the `application/xhtml+xml` registration lists
