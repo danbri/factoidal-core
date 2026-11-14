@@ -36,6 +36,8 @@ Not shown: that the compiled comparison takes the same time for every input (it 
 every character; the branch on each is data-dependent). The lock bounds what that leaks.
 -/
 
+import L4Factoidal.Risk
+
 namespace L4Factoidal.WebDriver.Gate
 
 /-! ## Starting the endpoint -/
@@ -45,8 +47,10 @@ def isLoopback (address : String) : Bool := address == "127.0.0.1" || address ==
 
 /-- What the host asks to start an endpoint with. -/
 structure Launch where
-  /-- The user's flag. Off unless the user set it. -/
-  enabled : Bool := false
+  /-- The user's flag: the risk accepted by name (`Risk.webdriverEndpoint`; the test
+  runner's `--dangerously-enable-webdriver-endpoint` is the only caller of
+  `Risk.dangerouslyAccept` for it). Off unless the user set it. -/
+  enabled : Option (Risk.Accepted .webdriverEndpoint) := none
   /-- The address to bind. -/
   address : String := "127.0.0.1"
   /-- Bytes of the machine's generator; empty when it has none. -/
@@ -69,7 +73,7 @@ inductive StartRefusal where
 
 /-- Whether the endpoint starts, and with which secret. -/
 def start (l : Launch) : Except StartRefusal String :=
-  if !l.enabled then .error .off
+  if l.enabled.isNone then .error .off
   else if !isLoopback l.address then .error .notLoopback
   else if l.entropy.size < secretBytes then .error .noEntropy
   else .ok (secretOf l.entropy)
@@ -132,7 +136,7 @@ def admit (cfg : Config) (g : State) (r : Request) : State × Except Refusal (Li
 
 /-- Off by default. Says: without the user's flag no endpoint starts, whatever the address
 and the entropy. Does not say: who may set the flag (the host's command line). -/
-theorem start_off (l : Launch) (h : l.enabled = false) : start l = .error .off := by
+theorem start_off (l : Launch) (h : l.enabled = none) : start l = .error .off := by
   simp [start, h]
 
 /-- Default launch. Says: a launch nobody configured is refused. Does not say: more than
@@ -310,9 +314,9 @@ private def ok (path : String) (host : String := "127.0.0.1:4444") (origin : Opt
 #guard !ok "/00112233445566778899aabbccddeeff/session" "127.0.0.1:4444" (some "https://evil.example")
 #guard !ok "/00112233445566778899aabbccddeeff/session" "127.0.0.1:4444" none 16
 #guard (admit cfg {} { path := "/00112233445566778899aabbccddeeff/session/abc/element?x=1", host := "127.0.0.1:4444" }).2.toOption == some ["session", "abc", "element"]
-#guard (start { enabled := true, entropy := ByteArray.mk (Array.range 16 |>.map (·.toUInt8)) }).toOption == some "000102030405060708090a0b0c0d0e0f"
-#guard (start { enabled := true, address := "0.0.0.0", entropy := ByteArray.mk (Array.range 16 |>.map (·.toUInt8)) }).toOption == none
-#guard (start { enabled := true }).toOption == none
+#guard (start { enabled := some (Risk.dangerouslyAccept .webdriverEndpoint), entropy := ByteArray.mk (Array.range 16 |>.map (·.toUInt8)) }).toOption == some "000102030405060708090a0b0c0d0e0f"
+#guard (start { enabled := some (Risk.dangerouslyAccept .webdriverEndpoint), address := "0.0.0.0", entropy := ByteArray.mk (Array.range 16 |>.map (·.toUInt8)) }).toOption == none
+#guard (start { enabled := some (Risk.dangerouslyAccept .webdriverEndpoint) }).toOption == none
 #guard sameText "abc" "abc" && !sameText "abc" "abd" && !sameText "abc" "ab" && !sameText "" "a"
 
 end L4Factoidal.WebDriver.Gate

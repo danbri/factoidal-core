@@ -1282,6 +1282,7 @@ import L4Factoidal.WebDriver.Keys
 import L4Factoidal.WebDriver.Errors
 import L4Factoidal.WebDriver.Actions
 import L4Factoidal.WebDriver.Input
+import L4Factoidal.Risk
 import L4Factoidal.WebDriver.Gate
 import L4Factoidal.WebDriver.Protocol
 import L4Factoidal.WebDriver.HostKeys

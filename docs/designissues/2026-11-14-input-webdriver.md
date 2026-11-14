@@ -115,7 +115,7 @@ every page it shows and act as its user.
 
 | Threat | Defence | Where |
 |---|---|---|
-| A user who did not ask for it | Off by default: no endpoint without the user's flag | `Gate.start`, `start_off`, `start_default` |
+| A user who did not ask for it | Off by default: no endpoint without the user's flag; the flag is a risk token (`Risk.Accepted .webdriverEndpoint`, made only by `Risk.dangerouslyAccept`), so code that starts an endpoint without naming the risk does not compile. Only the test runner's `--dangerously-enable-webdriver-endpoint` will make one | `Gate.start`, `start_off`, `start_default`, `L4Factoidal/Risk.lean` |
 | Another machine | Bound to a loopback address only | `Gate.start`, `start_not_loopback`; the listener binds the address it asked about (host plumbing) |
 | Another process or user of this machine | A secret of 128 bits from the machine's generator, made at start, first segment of every request path; no generator, no endpoint | `Gate.start`, `start_no_entropy`, `start_secret_length`; `Gate.admit`, `admit_no_secret` |
 | Guessing or timing the secret | The comparison reads every character; the endpoint locks after 16 refusals until it is started again | `sameText_iff`, `admit_locked`, `admit_failures_mono`, `admit_refused_counts` |
@@ -138,6 +138,23 @@ Open (security):
 - No TLS: loopback only.
 - A WebDriver client is trusted with everything once it holds the secret. There is no
   per-origin permission inside a session.
+
+## One key path for every host
+
+The test driver's keys (`actions`), the window's keys and typed text, and the Hub's keys take
+one path: `WebDriver.HostKeys` turns what a host has (a macOS virtual key code with modifier
+bits, a DOM key value, or committed text) into WebDriver key actions, and the session action
+`key` runs them through `Actions.perform` and `PageEvents.dispatchLow`, the code `actions`
+runs. Committed text is typed as Element Send Keys types a string (`text_is_send_keys`), and a
+host's press releases what it pressed, last first (`press_balanced`). A key in a focused
+`input` (text, search, url, tel, password) or `textarea` edits the control's value
+(`Editing.TextKeys`: `beforeinput` at the control, then the command through `textEdit`, op
+179, which fires `input`); Enter edits nothing in an `input` (`textKeyCommandIn_single`). The
+turn's `keyDefault` tells the window whether to scroll for the key: only when its `keydown` was
+not canceled and the key went to no text control or editing host. Space goes as its key
+(U+E00D), so the window drops its committed text. The window sends no key releases, so a press
+is whole. Open: the Hub does not send keys yet (it would send `{action:"key", key, modifiers}`);
+keys in an `email` input (no selection there in the page's glue).
 
 ## wdspec in the full run
 
