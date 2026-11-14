@@ -40,15 +40,18 @@ def kinds (s : State) : List String := s.out.toList.map fun c => ((L4Factoidal.P
 #guard (api (graph "gpu" "relu").1 #["read".toUTF8, "0".toUTF8, "2".toUTF8]).2 == ByteArray.mk #[2]
 #guard let (s, _) := call (graph "gpu" "relu").1 ["readGpu", "0", "2", "77"]
   (kinds s).getLast? == some "read" && (s.page.pending.map (·.1)) == [77]
--- softmax and leakyRelu have kernels; elu is outside the tolerance (CPU reference)
+-- softmax and leakyRelu have kernels; elu now too (WebNN.Approx); triangular has none (CPU reference)
 #guard ((run gpuPage [["context", "gpu"], ["builder", "0"], ["input", "0", "a", "float32", "2,3"],
   ["op", "0", "softmax", "", "input", "0.0", "axis", "1"], ["op", "0", "leakyRelu", "", "input", "0.1"],
   ["build", "0", "out", "0.2"]]).1.builders[0]?.bind (·.gpu)).isSome
 #guard ((run gpuPage [["context", "gpu"], ["builder", "0"], ["input", "0", "a", "float32", "2,3"],
-  ["op", "0", "elu", "", "input", "0.0"], ["build", "0", "out", "0.1"]]).1.builders[0]?.bind (·.gpu)).isNone
--- tanh is outside the tolerance on the GPU: the graph runs on the CPU reference
-#guard ((graph "gpu" "tanh").1.builders[0]?.bind (·.gpu)).isNone
-#guard ((graph "gpu" "tanh").1.tensors[2]?.map (·.onGpu)) == some false
+  ["op", "0", "elu", "", "input", "0.0"], ["build", "0", "out", "0.1"]]).1.builders[0]?.bind (·.gpu)).isSome
+#guard ((run gpuPage [["context", "gpu"], ["builder", "0"], ["input", "0", "a", "float32", "2,3"],
+  ["op", "0", "triangular", "", "input", "0.0"], ["build", "0", "out", "0.1"]]).1.builders[0]?.bind (·.gpu)).isNone
+-- tanh has a kernel (WebNN.Approx.tanh): on the GPU; triangular has none: the CPU reference
+#guard ((graph "gpu" "tanh").1.builders[0]?.bind (·.gpu)).isSome
+#guard ((graph "gpu" "triangular").1.builders[0]?.bind (·.gpu)).isNone
+#guard ((graph "gpu" "triangular").1.tensors[2]?.map (·.onGpu)) == some false
 -- a context without deviceType "gpu", or an embedder without GPU replay: the CPU reference
 #guard ((graph "" "relu").1.builders[0]?.bind (·.gpu)).isNone
 #guard ((graph "gpu" "relu" { gpuPage with page := L4Factoidal.PageGpu.State.empty 3 false }).1.builders[0]?.bind (·.gpu)).isNone
@@ -62,7 +65,7 @@ def exported : State × List String := run gpuPage [["context", "gpu"], ["tensor
 #guard (exported.1.tensors[0]?.map (·.exported)) == some false
 #guard ((run gpuPage [["context", ""], ["tensor", "0", "float32", "4", "xrw"]]).2.getD 1 "").startsWith "!DNotSupportedError"
 -- the CPU reference answers readTensor with its bytes (byte 0)
-#guard ((api (graph "gpu" "tanh").1 #["read".toUTF8, "0".toUTF8, "2".toUTF8]).2.get! 0) == 0
+#guard ((api (graph "gpu" "triangular").1 #["read".toUTF8, "0".toUTF8, "2".toUTF8]).2.get! 0) == 0
 end Tests
 #print axioms L4Factoidal.WebNN.Gpu.emitC_eval
 #print axioms L4Factoidal.WebNN.GpuRun.emit_inv

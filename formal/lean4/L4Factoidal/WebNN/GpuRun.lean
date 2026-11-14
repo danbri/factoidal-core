@@ -14,9 +14,8 @@ against its work budget, and a refusal anywhere makes the graph run on the CPU r
 (at `build`) or the dispatch fail with an `OperationError` (at `dispatch`). The theorems of
 `PageGpu` (subset, clamped indices, dispatch bounds, quotas, readback) hold for all of it.
 
-Operators on the GPU path (float32): `gpuOps`. `log`, `tanh`, `sqrt`, `elu`, `gelu`, `gemm`,
-`averagePool2d` and `batchNormalization` stay on the CPU reference: measured outside the
-WebNN tolerances on a GPU (section 2.6 of the record), though their kernels exist.
+Operators on the GPU path (float32): `gpuOps`, every operator with a kernel; each passes the
+WebNN conformance vectors of WPT on a measured GPU (section 2.9 of the record).
 -/
 import L4Factoidal.WebNN.Graph
 import L4Factoidal.WebNN.Gpu
@@ -69,7 +68,9 @@ def gpuOps : List String :=
    "transpose", "expand", "slice", "tile", "reverse", "reshape", "identity", "matmul",
    "reduceSum", "reduceMean", "reduceL1", "reduceSumSquare", "reduceProduct", "reduceMax", "reduceMin",
    "conv2d", "maxPool2d",
-   "leakyRelu", "linear", "hardSigmoid", "hardSwish", "sign", "roundEven", "clamp", "prelu", "softmax", "concat", "erf"]
+   "leakyRelu", "linear", "hardSigmoid", "hardSwish", "sign", "roundEven", "clamp", "prelu", "softmax", "concat",
+   "erf", "log", "tanh", "sqrt", "elu", "gelu", "softplus", "gemm", "averagePool2d", "l2Pool2d", "batchNormalization",
+   "reduceL2", "reduceLogSum", "reduceLogSumExp"]
 
 /-- How a node runs on the GPU: a kernel with its input operands in binding order, or a copy
 of one operand into the output. -/
@@ -90,8 +91,18 @@ def kernelFor (n : Node) (descs : Array Desc) (all : Bool := false) : Except Str
   let one := fun (k : String) => match c.id? k with | some i => pure i | none => throw s!"no {k}"
   let o := out.shape
   match n.op with
-  | "add" | "sub" | "mul" | "div" | "max" | "min" | "pow" =>
+  | "pow" => pure (.kernel (← Gpu.powKernel (d "a") (d "b") o) [← one "a", ← one "b"])
+  | "add" | "sub" | "mul" | "div" | "max" | "min" =>
     pure (.kernel (← Gpu.binaryKernel n.op (d "a") (d "b") o) [← one "a", ← one "b"])
+  | "gemm" =>
+    let cc := c.id? "c"
+    let m ← Gpu.gemmKernel (d "a") (d "b") (cc.map fun i => (descs[i]?.getD default).shape)
+      (c.num "alpha" 1.0) (c.num "beta" 1.0) (c.bool "aTranspose") (c.bool "bTranspose") o
+    pure (.kernel m ([← one "a", ← one "b"] ++ cc.toList))
+  | "batchNormalization" =>
+    let sc := c.id? "scale"; let bi := c.id? "bias"
+    let m ← Gpu.batchNormKernel (d "input") (c.nat "axis" 1) (c.num "epsilon" 1e-5) sc.isSome bi.isSome
+    pure (.kernel m ([← one "input", ← one "mean", ← one "variance"] ++ sc.toList ++ bi.toList))
   | "reshape" | "identity" => pure (.copy (← one "input"))
   | "transpose" =>
     let s := d "input"
@@ -120,17 +131,16 @@ def kernelFor (n : Node) (descs : Array Desc) (all : Bool := false) : Except Str
     let ids := c.ids "inputs"
     pure (.kernel (← Gpu.concatKernel (ids.map fun i => (descs[i]?.getD default).shape) (c.nat "axis") o) ids)
   | "conv2d" =>
-    if c.str "inputLayout" "nchw" != "nchw" || !["", "oihw"].contains (c.str "filterLayout" "") then
-      throw "conv2d: NCHW input and OIHW filter only on the GPU path"
     let bias := c.id? "bias"
     let m ← Gpu.conv2dKernel (d "input") (d "filter") o (c.nats "strides" [1, 1]) (c.nats "dilations" [1, 1])
-      (c.nats "padding" [0, 0, 0, 0]) (c.nat "groups" 1) bias.isSome
+      (c.nats "padding" [0, 0, 0, 0]) (c.nat "groups" 1) bias.isSome (c.str "inputLayout" "nchw") (c.str "filterLayout" "")
     pure (.kernel m ([← one "input", ← one "filter"] ++ bias.toList))
-  | "maxPool2d" =>
-    if c.str "layout" "nchw" != "nchw" then throw "maxPool2d: NCHW only on the GPU path"
+  | "maxPool2d" | "averagePool2d" | "l2Pool2d" =>
     let s := d "input"
-    let m ← Gpu.poolKernel n.op s o (c.nats "windowDimensions" [s.getD 2 1, s.getD 3 1]) (c.nats "strides" [1, 1])
-      (c.nats "dilations" [1, 1]) (c.nats "padding" [0, 0, 0, 0])
+    let layout := c.str "layout" "nchw"
+    let (hh, ww) := if layout == "nhwc" then (s.getD 1 1, s.getD 2 1) else (s.getD 2 1, s.getD 3 1)
+    let m ← Gpu.poolKernel n.op s o (c.nats "windowDimensions" [hh, ww]) (c.nats "strides" [1, 1])
+      (c.nats "dilations" [1, 1]) (c.nats "padding" [0, 0, 0, 0]) layout
     pure (.kernel m [← one "input"])
   | name =>
     if name.startsWith "reduce" then

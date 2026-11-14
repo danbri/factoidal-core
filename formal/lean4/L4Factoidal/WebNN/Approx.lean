@@ -57,6 +57,12 @@ class Arith (m : Type → Type) (α : Type) where
   share : α → m α
   /-- `n` iterations over the values `vs`, the body given the iteration's number. -/
   loop : Nat → List α → (α → List α → m (List α)) → m (List α)
+  /-- The format's range: the largest finite value, the smallest normal value, and the
+  arguments beyond which `e^x` overflows or is below half the smallest subnormal. -/
+  maxFinite : Float
+  minNormal : Float
+  expHi : Float
+  expLo : Float
 
 open Arith
 
@@ -83,7 +89,9 @@ def ln2lo : Float := 1.4286068203094172e-6
 
 /-- `e^x`. -/
 def exp (x : α) : m α := do
-  let x ← share (sel (m := m) (lt (m := m) x (L (-104.0))) (L (-104.0)) (sel (m := m) (lt (m := m) (L 89.0) x) (L 89.0) x))
+  let lo := Arith.expLo m α
+  let hi := Arith.expHi m α
+  let x ← share (sel (m := m) (lt (m := m) x (L lo)) (L lo) (sel (m := m) (lt (m := m) (L hi) x) (L hi) x))
   let n ← share (floor (m := m) (fma (m := m) x (L log2e) (L 0.5)))
   let r ← share (fma (m := m) n (L (-ln2lo)) (fma (m := m) n (L (-ln2hi)) x))
   pure (ldexp (m := m) (horner (m := m) r (invFact 8)) n)
@@ -118,8 +126,8 @@ def log (x : α) : m α := do
   let v := fma (m := m) e (L ln2hi) (fma (m := m) e (L ln2lo) ath)
   let zero := sub (m := m) (L 0.0) (infOf (m := m) mm)
   pure (sel (m := m) (lt (m := m) x (L 0.0)) (nanOf (m := m) mm)
-    (sel (m := m) (lt (m := m) x (L 1.17549435e-38)) (sel (m := m) (lt (m := m) (L 0.0) x) v zero)
-      (sel (m := m) (lt (m := m) (L 3.40282347e38) x) x v)))
+    (sel (m := m) (lt (m := m) x (L (Arith.minNormal m α))) (sel (m := m) (lt (m := m) (L 0.0) x) v zero)
+      (sel (m := m) (lt (m := m) (L (Arith.maxFinite m α)) x) x v)))
 
 /-- `ln(1 + y)` for `y ≥ 0`, accurate near 0. -/
 def log1p (y : α) : m α := do
@@ -148,6 +156,25 @@ def softplus (x : α) : m α := do
   let x ← share x
   let l ← log1p (← exp x)
   pure (sel (m := m) (lt (m := m) (L 40.0) x) x l)
+
+/-- `x^y`: for an integral `|y| < 2²⁴`, binary powering over its 25 bits (exact for exact
+products; `1/xⁿ` for negative `y`); otherwise `e^(y · ln x)` (NaN for negative `x`). -/
+def pow (x y : α) : m α := do
+  let x ← share x
+  let y ← share y
+  let ay ← share (abs (m := m) y)
+  let r ← loop (m := m) 25 [L 1.0, x, ay] fun _ vs => do
+    let acc := vs.headD (L 1.0)
+    let b := vs.getD 1 (L 1.0)
+    let n := vs.getD 2 (L 0.0)
+    let h ← share (floor (m := m) (mul (m := m) n (L 0.5)))
+    let bit := sub (m := m) n (mul (m := m) h (L 2.0))
+    pure [sel (m := m) (lt (m := m) (L 0.5) bit) (mul (m := m) acc b) acc, mul (m := m) b b, h]
+  let ip ← share (r.headD (L 1.0))
+  let ipow := sel (m := m) (lt (m := m) y (L 0.0)) (div (m := m) (L 1.0) ip) ip
+  let l ← log x
+  let e ← share (← exp (mul (m := m) y l))
+  pure (sel (m := m) (lt (m := m) (floor (m := m) y) y) e (sel (m := m) (lt (m := m) ay (L 16777216.0)) ipow e))
 
 def sqrtPi : Float := 1.7724538509055159
 
@@ -240,6 +267,10 @@ instance : Arith Id Float where
   frexpE := fun x => Float.ofInt (Float.frExp x).2
   share := pure
   loop := fun n vs body => (List.range n).foldlM (fun acc k => body (Float.ofNat k) acc) vs
+  maxFinite := 1.7976931348623157e308
+  minNormal := 2.2250738585072014e-308
+  expHi := 710.0
+  expLo := -746.0
 
 /-! ## The binary32 instance: a model of the GPU's evaluation, for measurement -/
 
@@ -261,6 +292,10 @@ instance : Arith Id Float32 where
   frexpE := fun x => (Float.ofInt (Float32.frExp x).2).toFloat32
   share := pure
   loop := fun n vs body => (List.range n).foldlM (fun acc k => body (Float.ofNat k).toFloat32 acc) vs
+  maxFinite := 3.40282347e38
+  minNormal := 1.17549435e-38
+  expHi := 89.0
+  expLo := -104.0
 
 /-! ## The WGSL instance: the GPU kernels -/
 
@@ -326,6 +361,10 @@ instance : Arith Gen Wgsl.Expr where
     let (inner, k) ← get
     set (outer.push (.forS t .u32 0 n false (inner.foldr .cons .nil)), k)
     pure (names.map .name)
+  maxFinite := 3.40282347e38
+  minNormal := 1.17549435e-38
+  expHi := 89.0
+  expLo := -104.0
 
 /-- The statements and the value of a function of the form at `x`, as WGSL. -/
 def gen (f : Wgsl.Expr → Gen Wgsl.Expr) (x : Wgsl.Expr) (start : Nat := 0) : List Wgsl.Stmt × Wgsl.Expr :=

@@ -39,6 +39,7 @@ def expm1 (x : Float) : Float := Id.run (Approx.expm1 x)
 def softplus (x : Float) : Float := Id.run (Approx.softplus x)
 def sigmoid (x : Float) : Float := Id.run (Approx.sigmoid x)
 def gelu (x : Float) : Float := Id.run (Approx.gelu x)
+def powF (x y : Float) : Float := Id.run (Approx.pow x y)
 
 def signF (x : Float) : Float := if x > 0.0 then 1.0 else if x < 0.0 then -1.0 else x
 
@@ -89,7 +90,7 @@ def binaryF (name : String) : Float → Float → Float :=
   | "div" => (· / ·)
   | "max" => fun a b => if a.isNaN || b.isNaN then a + b else if a > b then a else b
   | "min" => fun a b => if a.isNaN || b.isNaN then a + b else if a < b then a else b
-  | "pow" => Float.pow
+  | "pow" => powF
   | "prelu" => fun x s => if x ≥ 0.0 then x else s * x
   | _ => fun a _ => a
 
@@ -306,7 +307,13 @@ def reduce (t : Tensor) (name : String) (axes : List Nat) (out : Shape) : Tensor
       | "reduceL1" => foldGroupsF a groups n 0.0 fun acc x => acc + x.abs
       | "reduceL2" => mapFA (foldGroupsF a groups n 0.0 fun acc x => acc + x * x) Float.sqrt
       | "reduceLogSum" => mapFA (foldGroupsF a groups n 0.0 (· + ·)) logF
-      | "reduceLogSumExp" => mapFA (foldGroupsF a groups n 0.0 fun acc x => acc + expF x) logF
+      -- `max + log(Σ e^(x − max))`: no overflow (as the GPU kernel, one definition)
+      | "reduceLogSumExp" =>
+        let mx := foldGroupsF a groups n (-inf) fun acc x => if x > acc || x.isNaN then x else acc
+        let e := Nat.fold a.size (fun k _ (acc : FloatArray) => acc.push (expF (a.get! k - mx.get! (groups[k]!))))
+          (FloatArray.emptyWithCapacity a.size)
+        let sums := foldGroupsF e groups n 0.0 (· + ·)
+        Nat.fold n (fun k _ (acc : FloatArray) => acc.push (logF (sums.get! k) + mx.get! k)) (FloatArray.emptyWithCapacity n)
       | "reduceMax" => foldGroupsF a groups n (-inf) fun acc x => if x > acc || x.isNaN then x else acc
       | "reduceMean" => mapFA (foldGroupsF a groups n 0.0 (· + ·)) (· / count)
       | "reduceMin" => foldGroupsF a groups n inf fun acc x => if x < acc || x.isNaN then x else acc
