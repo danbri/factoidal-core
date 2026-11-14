@@ -804,7 +804,11 @@ function scriptTurn(page,turn){
   if(turn.gpu?.length)gpuTake(turn.gpuPage,turn.gpu);
   if(turn.changed&&turn.commands){page.commands=turn.commands;if(page===doc)request();}
   // The values of the page's running animations (page-load.mjs takeAnimated): a new frame when they changed.
-  if(takeAnimated(page,turn)&&page===doc)request();
+  // As the engine's own animation clock does (the layered path, with Lean's damage rectangles):
+  // a frame of the whole page without layers costs a full redraw and a new render plan each time,
+  // and at the rate of script turns it made the Spinal Tap page slower each frame until the GPU
+  // device was lost.
+  if(takeAnimated(page,turn)&&page===doc){bandWanted=true;request();}
   if(turn.fetches?.length&&page.script)workerFetches(page,turn.fetches);
 }
 // Dedicated workers (BubblePopJS; docs/designissues/2026-11-09-dedicated-workers.md): the
