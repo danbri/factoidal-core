@@ -372,15 +372,20 @@ with no animated value, `prev` the answers of the style change before (the befor
 style of CSS Transitions 1 §3). Measure ops: 20 the computed style, 24 an element's
 cascaded animation and transition longhands, 25 the text of the sheets, 27 the computed
 value of "property U+0000 value" on an element, 28 the elements that declare an
-animation or a transition, 29 the computed value of the longhand named. -/
+animation or a transition, 29 the computed value of the longhand named, 26 the longhands
+the element's rules and `style` attribute declare (U+0000 between them). -/
 def animationAccess (dom : Arena) (base : Answers) (prev : Option Answers) : L4Factoidal.Rendering.Animation.Access :=
   { connected := fun n => n < dom.size && dom.connected n
     base := fun n p => base n 29 p
     prev := fun n p => prev.bind fun f => f n 29 p
     changed := fun n => match prev with
       | some f =>
-        ((stylePairs (base n 20 "")).zip (stylePairs (f n 20 ""))).filterMap fun ((k, v), (k', v')) =>
+        -- the layout profile's properties that differ (op 20 lists them in one order), and
+        -- the properties declared for the element then or now (op 26) that differ
+        let profile := ((stylePairs (base n 20 "")).zip (stylePairs (f n 20 ""))).filterMap fun ((k, v), (k', v')) =>
           if k == k' && v != v' then some k else none
+        let declared := ((((base n 26 "").getD "").splitOn "\x00") ++ (((f n 26 "").getD "").splitOn "\x00")).eraseDups
+        (profile ++ declared.filter fun p => p != "" && base n 29 p != f n 29 p).eraseDups
       | none => []
     compute := fun n p v => base n 27 (p ++ "\x00" ++ v)
     decls := fun n => L4Factoidal.Rendering.Animation.Css.ofCascadedText ((base n 24 "").getD "")

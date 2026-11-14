@@ -2033,7 +2033,8 @@ For the animation engine (`Page.animationAccess`), with no layout: 24 the cascad
 animation and transition longhands of a node; 25 the text of the document's sheets; 27
 the computed text of "property U+0000 value" in the node's style; 28 the elements whose
 rules or `style` attribute declare an animation or a transition, as node numbers; 29 the
-computed text of the longhand named. -/
+computed text of the longhand named; 26 the longhands declared for the node outside the
+layout profile. -/
 def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts.Page.Measure := fun dom width height overrides =>
   let request := withAnimated (layoutRequest request) overrides
   let held := heldNamed h ((namedImages request).toOption.getD [])
@@ -2089,6 +2090,9 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
             (Rendering.CSS.attrValue (dom.get node) "style")))
       else some ""
     else if op == 25 then some sheetText.get
+    -- 26: the longhands declared for the node that are not of the layout profile: none
+    -- (the profile computes every property it reads)
+    else if op == 26 then some ""
     else if op == 27 then
       match styled.get, q.splitOn "\x00" with
       | .ok styles, [property, value] =>

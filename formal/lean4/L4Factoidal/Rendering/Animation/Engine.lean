@@ -113,7 +113,9 @@ structure Access where
   /-- The same at the last style change, with the animations of then (the before-change
   style); none also for an element that had no style then. -/
   prev : Nat → String → Option String
-  /-- The longhands of an element whose computed text differs between `prev` and `base`. -/
+  /-- Longhands of an element whose computed text may differ between `prev` and `base`:
+  every one that differs is here when it is a property of the layout profile or one the
+  element's rules or `style` attribute declare, then or now. -/
   changed : Nat → List String
   /-- The computed text of a specified value of a longhand in the element's context. -/
   compute : Nat → String → String → Option String
@@ -325,7 +327,10 @@ def updateTransitions (s : State) (ac : Access) (e : Nat) : State := Id.run do
   -- CSS Transitions 1 §3: the before-change and after-change styles both hold the values
   -- of animations, so a property an animation gave a value starts no transition
   let animatedBefore := (s.lastAnimated.filter (·.1 == e)).map (·.2)
-  for property in ac.changed e do
+  -- the properties to look at: those the element's transitions name, and those whose value
+  -- is known to differ (`transition-property: all` covers every property)
+  let named := specs.filterMap fun t => if t.property == "all" || t.property == "none" then none else some t.property
+  for property in (named ++ ac.changed e).eraseDups do
     if !animatable property || stillRunning.contains property || animatedBefore.contains property then continue
     let some sp := Css.transitionFor specs property | continue
     let some before := ac.prev e property | continue
