@@ -1172,6 +1172,52 @@ colour that depends on `currentcolor` when `o.current` is not given. System colo
 their light-scheme values; `light-dark()` follows `o.dark`. -/
 def resolve (o : Opts) (cv : CV) : Option Color := resolveF 32 o cv
 
+/-- The specified value of a colour function of the non-legacy syntax (`lab()`, `lch()`,
+`oklab()`, `oklch()`, `color()`) with math functions among its components: the canonical
+text of the colour with each such component replaced by its simplified calculation, which a
+specified value keeps unresolved and unclamped (CSS Color 4 §4.6, CSS Values 4 §10.13).
+`spec` is the canonical text of the colour; `none` when nothing is to be replaced. -/
+def keepCalc (cv : CV) (spec : String) : Option String :=
+  match cv with
+  | .fn name args =>
+    let n := lower name
+    let isMath := fun (x : CV) => match x with
+      | .fn f _ => mathFunctions.contains (lower f)
+      | _ => false
+    if !(["lab", "lch", "oklab", "oklch", "color"].contains n) || !(args.any isMath) then none
+    else
+      let words := stripWs args
+      -- the components as written, the colour space of color() left out, then the alpha
+      let words := if n == "color" then words.drop 1 else words
+      let comps := words.takeWhile fun x => match x with
+        | .tok (.delim '/') => false
+        | _ => true
+      let alpha := (words.drop (comps.length + 1)).head?
+      let calcText := fun (x : CV) =>
+        if isMath x then (Calc.parse x).map fun c => Calc.text (Calc.simp none (Calc.depth 64 c + 4) c) else none
+      -- the canonical text: name and space, three components, an optional alpha
+      let inner := ((spec.drop (n.length + 1)).dropEnd 1).toString
+      let (head, rest) := if n == "color" then
+          match inner.splitOn " " with
+          | sp :: more => (n ++ "(" ++ sp ++ " ", " ".intercalate more)
+          | [] => (n ++ "(", inner)
+        else (n ++ "(", inner)
+      let (main, alphaText) := match rest.splitOn " / " with
+        | [m, a] => (m, some a)
+        | _ => (rest, none)
+      let outComps := main.splitOn " "
+      if outComps.length != 3 || comps.length != 3 then none
+      else
+        let comps' := (outComps.zip comps).map fun (t, x) => (calcText x).getD t
+        let alpha' := match alpha.bind calcText, alphaText with
+          | some a, _ => some a
+          | none, some a => some a
+          | none, none => none
+        some (head ++ " ".intercalate comps' ++ (match alpha' with
+          | some a => " / " ++ a
+          | none => "") ++ ")")
+  | _ => none
+
 /-- The canonical text of the colour that component value `cv` is (one component value: an
 ident, a hash token or a function), or `none` when it is not a valid `<color>`. In the
 computed form a colour that cannot be resolved (it depends on `currentcolor` and
@@ -1180,6 +1226,7 @@ def parse (o : Opts) (cv : CV) : Option String :=
   match specF 32 o cv with
   | none => none
   | some spec =>
+    let spec := if o.computed then spec else (keepCalc cv spec).getD spec
     if o.computed then
       match cv with
       | .tok (.ident s) =>
