@@ -7497,6 +7497,81 @@
   }
   // ==== end forms =========================================================================
 
+  // ==== innertext: innerText and outerText (HTML §3.2.7) ==================================
+  // The getter walks the element's rendered subtree with Lean's computed styles and gives
+  // Lean the items of the "rendered text collection steps" (text runs with their white-space
+  // behaviour, br, the tab and line feed of table cells and rows, required line breaks); the
+  // text (white space collapsed, line breaks merged) is Lean's: HTML.InnerText, node_query 190.
+  {
+    const cv = (el, name) => computedValue(el, name);
+    const parentOf = e => { const p = e.parentNode; return p instanceof ShadowRoot ? p.host : p; };
+    const rendered = el => { if (!el.isConnected) return false; for (let e = el; e instanceof Element; e = parentOf(e)) if (cv(e, 'display') === 'none') return false; return true; };
+    const blocks = new Set(['block', 'flow-root', 'flex', 'grid', 'table', 'list-item', 'table-caption']);
+    const wsLetter = el => { const w = cv(el, 'white-space'); return w === 'pre' || w === 'pre-wrap' || w === 'break-spaces' ? 'p' : w === 'pre-line' ? 'l' : 'c'; };
+    const transformed = (el, text) => {
+      const t = cv(el, 'text-transform');
+      return t === 'uppercase' ? text.toUpperCase() : t === 'lowercase' ? text.toLowerCase()
+        : t === 'capitalize' ? text.replace(/(^|[\t\n\f\r ])([^\t\n\f\r ])/g, (m, a, b) => a + b.toUpperCase()) : text;
+    };
+    const visibleEl = el => { const v = cv(el, 'visibility'); return v !== 'hidden' && v !== 'collapse'; };
+    // the items of the children of `el` (its own text runs are written when it is visible)
+    const children = (el, out, visible) => {
+      let letter = null;
+      for (const c of el.childNodes) {
+        if (c.nodeType === 3) { if (visible) { letter ??= wsLetter(el); out.push(letter + transformed(el, c.data).replace(/\u0000/g, '�')); } }
+        else if (c.nodeType === 1) collect(c, out);
+      }
+    };
+    const collect = (el, out) => {
+      const display = cv(el, 'display');
+      if (display === 'none') return;
+      const visible = visibleEl(el), html = htmlEl(nodeId(el)), name = el.localName;
+      if (html && name === 'br') { if (visible) out.push('b'); return; }
+      const block = blocks.has(display), p = html && name === 'p';
+      if (visible) { if (p) out.push('n2'); if (block) out.push('n1'); }
+      children(el, out, visible);
+      if (!visible) return;
+      if (display === 'table-cell' && el.nextElementSibling !== null) out.push('t\t');
+      if (display === 'table-row' && (el.nextElementSibling !== null || (el.parentNode instanceof Element && cv(el.parentNode, 'display').startsWith('table-') && el.parentNode.nextElementSibling !== null))) out.push('t\n');
+      if (p) out.push('n2');
+      if (block) out.push('n1');
+    };
+    const textOf = el => {
+      if (!rendered(el)) return el.textContent;
+      const out = [];
+      children(el, out, visibleEl(el));
+      const r = n.query(0, 190, out.join('\u0000'));
+      // an engine without op 190, or more text than one question holds: the text content
+      return typeof r === 'string' ? r : el.textContent;
+    };
+    // The fragment of the setters: the lines of the text, a `br` between two of them.
+    const fragmentOf = (el, v) => {
+      const doc = el.ownerDocument, f = doc.createDocumentFragment();
+      v.split(/\r\n|\r|\n/).forEach((line, i) => {
+        if (i > 0) f.appendChild(doc.createElement('br'));
+        if (line !== '') f.appendChild(doc.createTextNode(line));
+      });
+      return f;
+    };
+    Object.defineProperty(HTMLElement.prototype, 'innerText', { get() { return textOf(this); }, set(v) {
+      const f = fragmentOf(this, v === null ? '' : String(v));
+      this.textContent = '';
+      if (f.firstChild) this.appendChild(f);
+    }, configurable: true, enumerable: true });
+    Object.defineProperty(HTMLElement.prototype, 'outerText', { get() { return textOf(this); }, set(v) {
+      const parent = this.parentNode;
+      if (parent === null) throw new DOMException('The element has no parent.', 'NoModificationAllowedError');
+      const next = this.nextSibling, prev = this.previousSibling;
+      const f = fragmentOf(this, String(v));
+      if (!f.firstChild) f.appendChild(this.ownerDocument.createTextNode(''));
+      parent.replaceChild(f, this);
+      // adjacent Text nodes are merged, as the setter's steps 7 and 8 say
+      if (next !== null && next.nodeType === 3 && next.previousSibling !== null && next.previousSibling.nodeType === 3) { next.previousSibling.data += next.data; next.remove(); }
+      if (prev !== null && prev.nodeType === 3 && prev.nextSibling !== null && prev.nextSibling.nodeType === 3) { const m = prev.nextSibling; prev.data += m.data; m.remove(); }
+    }, configurable: true, enumerable: true });
+  }
+  // ==== end innertext =====================================================================
+
   // ==== focus: the focused element (HTML §6.6) ============================================
   // Which node `focus()` focuses is Lean's (DOM.Focus, node_query 189: the element when it is
   // a focusable area, else the first focusable area of a shadow tree that delegates focus).
