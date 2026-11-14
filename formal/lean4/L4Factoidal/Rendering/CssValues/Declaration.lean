@@ -83,14 +83,23 @@ def Block.find (b : Block) (name : String) : Option Decl := b.find? (·.name == 
 
 def Block.remove (b : Block) (name : String) : Block := b.filter (·.name != name)
 
+/-- The properties that `all` sets (CSS Cascade 4 §3.2): every one but `direction`,
+`unicode-bidi` and the custom properties. -/
+def allSets (name : String) : Bool :=
+  name != "all" && name != "direction" && name != "unicode-bidi" && !isCustom name
+
 /-- Set a declaration where the property already is, else at the end (CSSOM §6.6.1 "set a
-CSS declaration"). -/
+CSS declaration"). A declaration of `all` stands for every property it sets: those
+declarations are taken out and it goes at the end. -/
 def Block.put (b : Block) (d : Decl) : Block :=
-  if b.any (·.name == d.name) then b.map fun x => if x.name == d.name then d else x
+  if d.name == "all" then (b.filter fun x => x.name != "all" && !allSets x.name) ++ [d]
+  else if b.any (·.name == d.name) then b.map fun x => if x.name == d.name then d else x
   else b ++ [d]
 
 /-- Set a declaration at the end, removing an earlier one of the property (parsing). -/
-def Block.putLast (b : Block) (d : Decl) : Block := b.remove d.name ++ [d]
+def Block.putLast (b : Block) (d : Decl) : Block :=
+  if d.name == "all" then (b.filter fun x => x.name != "all" && !allSets x.name) ++ [d]
+  else b.remove d.name ++ [d]
 
 /-! ### Descriptors -/
 
@@ -168,6 +177,20 @@ def expandIn (ctx name value : String) : Option (List (String × String)) :=
   if ctx == "" then expand name value
   else (descriptorValue ctx name value).map fun v => [(lower name, v)]
 
+/-- The block before the declarations `ds` that a declaration of `name` stands for are put:
+a shorthand kept whole for its `var()` and its longhands replace each other (a later
+`background: green` takes out an earlier `background: var(--x)`, and the other way). -/
+def Block.clearFor (b : Block) (name : String) (ds : List (String × String)) : Block :=
+  let p := propertyName name
+  match ds with
+  | [(n, _)] =>
+    if n == p then
+      match lookup p with
+      | some row => if row.longhands.isEmpty then b else b.filter fun x => !row.longhands.contains x.name
+      | none => b
+    else b.remove p
+  | _ => b.remove p
+
 /-- A style block reads properties only: no descriptor is taken in one. -/
 theorem descriptorValue_style (name value : String) : descriptorValue "" name value = none := by
   simp [descriptorValue]
@@ -188,7 +211,7 @@ def Block.parse (text : String) (ctx : String := "") : Block :=
     | some (name, value, important) =>
       match expandIn ctx name value with
       | none => b
-      | some ds => ds.foldl (fun b (n, v) => b.putLast { name := n, value := v, important := important }) b) []
+      | some ds => ds.foldl (fun b (n, v) => b.putLast { name := n, value := v, important := important }) (b.clearFor name ds)) []
 
 /-- The declarations of a block text whose property name (lower case) is in `names`: the
 others are not parsed. For a reader that wants one property (`ComputedGeneric.cascaded`),
@@ -216,19 +239,25 @@ def declNames (text : String) : List String :=
 /-- The longhand declarations of shorthand `row`, when all are in the block with one
 important flag. -/
 def Block.longhandsOf (b : Block) (row : Property) : Option (List Decl) :=
-  let ds := row.longhands.filterMap b.find
+  -- a longhand not declared is the `all` declaration's value when there is one
+  let viaAll := fun (l : String) => (b.find "all").bind fun d => if allSets l then some { d with name := l } else none
+  let ds := row.longhands.filterMap fun l => (b.find l).orElse fun _ => viaAll l
   match ds with
   | [] => none
   | d :: rest =>
     if ds.length == row.longhands.length && rest.all (·.important == d.important) then some ds else none
 
-/-- `getPropertyValue` (CSSOM §6.6.1): the value of a longhand, or of a shorthand when all
-its longhands are set and can be written as one value; "" otherwise. -/
-def Block.get (b : Block) (property : String) : String :=
-  let p := propertyName property
-  match b.find p with
-  | some d => d.value
-  | none =>
+/-- A shorthand's value from its longhands' declarations: a CSS-wide keyword that all of
+them have is the shorthand's value; else `recombine`. -/
+def recombineDecls (row : Property) (ds : List Decl) : String :=
+  match ds with
+  | d :: rest =>
+    if cssWide.contains d.value && rest.all (·.value == d.value) then d.value
+    else recombine row fun l => ((ds.find? (·.name == l)).map (·.value)).getD ""
+  | [] => ""
+
+/-- The value of shorthand `p` from its longhands, when they can be written as one. -/
+def Block.getShorthand (b : Block) (p : String) : String :=
     match lookup p with
     | none => ""
     | some row =>
@@ -236,7 +265,20 @@ def Block.get (b : Block) (property : String) : String :=
       else
         match b.longhandsOf row with
         | none => ""
-        | some ds => recombine row fun l => ((ds.find? (·.name == l)).map (·.value)).getD ""
+        | some ds => recombineDecls row ds
+
+/-- `getPropertyValue` (CSSOM §6.6.1): the value of a longhand, or of a shorthand when all
+its longhands are set and can be written as one value; "" otherwise. -/
+def Block.get (b : Block) (property : String) : String :=
+  let p := propertyName property
+  match b.find p with
+  | some d =>
+    -- `all` is its value only while no property it sets is declared after it
+    if p == "all" && b.any (fun x => allSets x.name) then "" else d.value
+  | none =>
+    match (if allSets p then b.find "all" else none) with
+    | some d => if (lookup p).any (·.longhands.isEmpty) then d.value else b.getShorthand p
+    | none => b.getShorthand p
 
 /-- `getPropertyPriority`: "important" or "". -/
 def Block.priority (b : Block) (property : String) : String :=
@@ -269,7 +311,7 @@ def Block.set (b : Block) (property value priority : String) (ctx : String := ""
     match expandIn ctx property value with
     | none => b
     | some ds =>
-      ds.foldl (fun b (n, v) => b.put { name := n, value := v, important := lower priority == "important" }) b
+      ds.foldl (fun b (n, v) => b.put { name := n, value := v, important := lower priority == "important" }) (b.clearFor property ds)
 
 /-- The property names of the block in order (`item`, `length`). -/
 def Block.names (b : Block) : List String := b.map (·.name)
@@ -305,7 +347,7 @@ def Block.textLoop : Nat → Block → List String → List String
         match Block.longhandsOf b row with
         | none => none
         | some ds =>
-          let v := recombine row fun l => ((ds.find? (·.name == l)).map (·.value)).getD ""
+          let v := recombineDecls row ds
           if v == "" then none else some (row, v)
       match viaShorthand with
       | some (row, v) =>
@@ -361,6 +403,17 @@ def styleOp (q : String) : String :=
 /-! ### Tests and theorems -/
 
 #guard (Block.parse "color: RED; margin: 1px 2px").text == "color: red; margin: 1px 2px;"
+-- a CSS-wide keyword on a shorthand; a shorthand's var() form and its longhands replace each other
+#guard styleOp "get\x00background-position: inherit\x00background-position" == "inherit"
+#guard styleOp "txt\x00background: var(--prop); background: green" == "background: green;"
+#guard styleOp "txt\x00margin: 1px; margin: var(--m)" == "margin: var(--m);"
+-- all (cssstyledeclaration-all-shorthand.html)
+#guard (Block.parse "all: revert").get "all" == "revert" && (Block.parse "all: revert; width: 50px").get "all" == ""
+#guard (Block.parse "width: 50px; all: revert").get "width" == "revert" && (Block.parse "width: 50px; all: revert").get "all" == "revert"
+#guard (Block.parse "all: revert; width: 50px; all: unset").get "width" == "unset"
+#guard (Block.parse "width: 50px; all: revert; width: 100px").get "width" == "100px"
+#guard (Block.parse "direction: rtl; all: unset").get "direction" == "rtl"
+#guard ((Block.parse "").set "all" "revert" "").get "color" == "revert"
 -- unicode-range (urange-parsing.html)
 #guard ["u/**/+/**/a/**/?", "u+abc", "U+AbC", "u+a", "u+a????", "u/**/+0a/**/?", "u+00000a", "u+1e9a", "u/**/+0/**/?",
   "u+000000", "u+0?????", "u+1e3", "u+1e-20", "u/**/+0/**/-0a", "u+000000-0aaaaa", "u+0-1"].map
@@ -436,9 +489,10 @@ def styleOp (q : String) : String :=
 
 /-- Kind: structure. Says: after `put`, the block answers the declaration that was put for
 its property. Does not say: where in the block it is (in place when the property was
-there, else at the end). -/
-theorem Block.find_put (b : Block) (d : Decl) : (b.put d).find d.name = some d := by
+there, else at the end; `all` at the end). -/
+theorem Block.find_put (b : Block) (d : Decl) (hd : d.name ≠ "all") : (b.put d).find d.name = some d := by
   unfold Block.put Block.find
+  rw [if_neg (by simpa using hd)]
   split
   · rename_i h
     induction b with
@@ -458,6 +512,19 @@ theorem Block.find_put (b : Block) (d : Decl) : (b.put d).find d.name = some d :
       intro x hx
       simpa using h x hx
     simp [this]
+
+/-- Kind: structure. Says: after `put` of an `all` declaration, the block answers it for
+`all` (an earlier `all` is gone). -/
+theorem Block.find_put_all (b : Block) (d : Decl) (hd : d.name = "all") : (b.put d).find "all" = some d := by
+  unfold Block.put Block.find
+  rw [if_pos (by simp [hd]), List.find?_append]
+  have : List.find? (fun x => x.name == "all") (b.filter fun x => x.name != "all" && !allSets x.name) = none := by
+    rw [List.find?_eq_none]
+    intro x hx
+    have := (List.mem_filter.mp hx).2
+    simp only [Bool.and_eq_true, bne_iff_ne, ne_eq, Bool.not_eq_true'] at this
+    simpa using this.1
+  simp [this, hd]
 
 /-- Kind: structure. Says: after `remove`, the block has no declaration of that property.
 Does not say: anything about a shorthand whose longhands remain (`removeProperty` removes
@@ -489,12 +556,14 @@ theorem find_map_put (b : Block) (d : Decl) (name : String) (h : name ≠ d.name
     · simp only [hx, Bool.false_eq_true, ↓reduceIte]
       rw [ih]
 
-/-- Kind: structure. Says: `put` does not change what the block answers for another
-property. Does not say: that the order of the other declarations is kept (it is, but
-the statement is about `find`). -/
-theorem Block.find_put_other (b : Block) (d : Decl) (name : String) (h : name ≠ d.name) :
+/-- Kind: structure. Says: `put` of a declaration other than `all` does not change what the
+block answers for another property. Does not say: that the order of the other declarations
+is kept (it is, but the statement is about `find`). -/
+theorem Block.find_put_other (b : Block) (d : Decl) (name : String) (h : name ≠ d.name)
+    (hd : d.name ≠ "all") :
     (b.put d).find name = b.find name := by
   unfold Block.put Block.find
+  rw [if_neg (by simpa using hd)]
   split
   · exact find_map_put b d name h
   · rw [List.find?_append]
