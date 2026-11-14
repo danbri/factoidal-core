@@ -6246,11 +6246,11 @@ def defineOwnProp : Nat → Nat → String → Desc → M Bool
         | .array es, some i =>
           if w && e && c then defineOwn id k (.data v true true true)
           else
-            -- leave the fast form: keep the elements as ordinary properties
+            -- leave the fast form: keep the elements, and the length, as ordinary properties
             let o' := (List.range es.size).foldl (fun o j => { o with
                 props := o.props.insert (toString j) (.data es[j]! true true true),
                 keys := o.keys.push (toString j) }) { o with kind := .ordinary }
-            modifyObj id fun _ => o'
+            modifyObj id fun _ => o'.putOwn "length" (.data (.num (Float.ofNat es.size)) true false false)
             defineOwn id k (.data v w e c)
             let _ := i
         | _, _ => defineOwn id k (.data v w e c)
