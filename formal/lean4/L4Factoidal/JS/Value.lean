@@ -705,6 +705,21 @@ def Desc.allowedOn (d : Desc) (cur : PropV) : Bool :=
       !(d.get.isSome || d.set.isSome) &&
       (w || (d.writable != some true && (match d.value with | some x => sameValue x v | none => true)))
 
+/-- A Proxy's [[DefineOwnProperty]] after its trap answered true (§10.5.6 steps 10 to 16):
+does the answer agree with the target? `ext`: the target is extensible; `td`: the target's own
+property now. A property the target lacks needs an extensible target and may not be asked to
+be non-configurable; one it has must be compatible with the descriptor
+(IsCompatiblePropertyDescriptor, which is `Desc.allowedOn` on an existing property), may not be
+asked to be non-configurable while it is configurable, and a non-configurable writable data
+property may not be asked to become read-only. -/
+def proxyDefineOk (ext : Bool) (d : Desc) (td : Option PropV) : Bool :=
+  let cfgFalse := d.configurable == some false
+  match td with
+  | none => ext && !cfgFalse
+  | some p =>
+    d.allowedOn p && !(cfgFalse && p.configurable) &&
+      !(match p with | .data _ w _ c => !c && w && d.writable == some false | _ => false)
+
 /-- OrdinarySetPrototypeOf (§10.1.2.1) steps 2 to 8, and SetImmutablePrototype (§10.4.7.2):
 may the prototype of the object `o`, now `cur`, become `v`? `chain`: the objects on `v`'s
 prototype chain as step 8 walks it (it stops at null and at a Proxy). The same value is always
