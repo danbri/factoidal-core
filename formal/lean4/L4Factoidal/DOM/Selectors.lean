@@ -288,6 +288,18 @@ def plainPseudoClasses : List String :=
    "seeking", "buffering", "stalled", "muted", "volume-locked", "host", "has-slotted",
    "active-view-transition"]
 
+/-- Whether pseudo-element `n` may follow pseudo-element `pe` in a compound (CSS
+Pseudo-Elements 4 §4, CSS Multicol 2 §2.1, CSS Shadow Parts, CSS Forms): `::marker` and
+`::column` after `::before`/`::after`, `::scroll-marker` after `::column`, a pseudo-element
+that is not itself a tree root after `::part()` and `::slotted()`, a `-webkit-` one after a
+`-webkit-` one. No other pair. -/
+def pseudoElementAfter (pe n : String) : Bool :=
+  if pe == "before" || pe == "after" then n == "marker" || n == "column"
+  else if pe == "column" then n == "scroll-marker"
+  else if pe == "part" || pe == "slotted" then
+    !["part", "slotted", "column", "view-transition"].contains n && !viewTransitionPseudoElements.contains n
+  else pe.startsWith "-webkit-" && n.startsWith "-webkit-"
+
 /-- A compound has a pseudo-element. -/
 def hasPseudoElement (c : List Simple) : Bool :=
   c.any fun s => match s with
@@ -297,6 +309,20 @@ def hasPseudoElement (c : List Simple) : Bool :=
 /-- A complex selector has a pseudo-element in one of its compounds. -/
 def Complex.hasPseudoElement : Complex → Bool
   | .mk parts => parts.any fun p => Selectors.hasPseudoElement p.2
+
+/-- A compound has a `:has()`. -/
+def compoundHasHas (c : List Simple) : Bool :=
+  c.any fun s => match s with
+    | .has _ => true
+    | _ => false
+
+/-- A complex selector has a `:has()` in a compound, or in an `:is()`, `:where()` or
+`:not()` of one: `:has()` may not be nested in `:has()` (Selectors 4 §4.5). -/
+def Complex.mentionsHas : Complex → Bool
+  | .mk parts => parts.any fun p => compoundHasHas p.2 || p.2.any fun s => match s with
+    | .is sels | .not sels => sels.any fun c => match c with
+      | .mk ps => ps.any fun q => compoundHasHas q.2
+    | _ => false
 
 /-- The names of `::part()`: one or more identifiers separated by white space. -/
 def partNames (t : String) : Bool :=
@@ -486,6 +512,7 @@ def compound : Nat → PM (List Simple)
           bump
           let n := lowerAscii (← ident)
           if pe == "view-transition" || viewTransitionPseudoElements.contains pe then fail
+          if !pe.isEmpty && !pseudoElementAfter pe n then fail
           if (← peek) == some '(' then
             bump
             if n == "part" then
@@ -537,7 +564,7 @@ def compound : Nat → PM (List Simple)
               if structuralPseudoClasses.contains n then fail
             else if viewTransitionPseudoElements.contains pe then
               if n != "only-child" then fail
-            else if pe == "view-transition" then fail
+            else if pe == "view-transition" || pe == "column" then fail
             else if !(userActionPseudoClasses.contains n ||
                 (pe.startsWith "-webkit-scrollbar" || pe == "-webkit-resizer") && scrollbarPseudoClasses.contains n) then fail
           if (← peek) == some '(' then
@@ -559,7 +586,7 @@ def compound : Nat → PM (List Simple)
               let l ← relativeList fuel
               let _ ← skipWs
               expectClose
-              if l.any (·.hasPseudoElement) then fail
+              if l.any (·.hasPseudoElement) || l.any (·.mentionsHas) then fail
               out := out.push (.has l)
             | "dir" =>
               let t := lowerAscii (← ident)
@@ -607,6 +634,7 @@ def compound : Nat → PM (List Simple)
                 out := out.push (.nth kind a b none)
             | _ => fail
           else if legacyPseudoElements.contains n then
+            if !pe.isEmpty && !pseudoElementAfter pe n then fail
             pe := n
             out := out.push .never
           else if plainPseudoClasses.contains n || (!pe.isEmpty && scrollbarPseudoClasses.contains n) then
