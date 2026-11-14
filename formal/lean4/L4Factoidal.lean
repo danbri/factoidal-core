@@ -1064,6 +1064,7 @@ import L4Factoidal.Net.PageFetch
 import L4Factoidal.Net.Xhr
 import L4Factoidal.DOM.SvgValues
 import L4Factoidal.Net.Storage
+import L4Factoidal.ClientStorage.Core
 import L4Factoidal.Net.Cookies
 import L4Factoidal.PageGl.Table
 import L4Factoidal.PageGl.Idl
