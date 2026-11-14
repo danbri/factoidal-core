@@ -130,13 +130,25 @@ def deliver (s : Session) (ev : WorkerEvent) : Session :=
   let s := s.setWk (s.wk.push ev)
   wEngine.setLoop s ((wEngine.loop s).queueTask .postedMessage eventHandle)
 
+/-- A JavaScript MIME type (MIME Sniffing §4.6), by its essence. -/
+def jsMime (contentType : String) : Bool :=
+  let essence := (((contentType.splitOn ";").headD "").trimAscii.toString).toLower
+  ["application/ecmascript", "application/javascript", "application/x-ecmascript", "application/x-javascript",
+   "text/ecmascript", "text/javascript", "text/javascript1.0", "text/javascript1.1", "text/javascript1.2",
+   "text/javascript1.3", "text/javascript1.4", "text/javascript1.5", "text/jscript", "text/livescript",
+   "text/x-ecmascript", "text/x-javascript"].contains essence
+
 def Workers.request (w : Workers) (url : String) : Workers :=
   if w.loads.contains url || w.scripts.any (·.1 == url) then w else
   -- a `data:` script is answered here (Fetch "scheme fetch", `PageFetch.dataResponse`): no
   -- request leaves the engine, and a URL that does not decode, or bytes that are not UTF-8
-  -- (worker scripts are UTF-8), is a network error
+  -- (worker scripts are UTF-8), is a network error; an imported script's type must be
+  -- JavaScript (HTML "fetch a classic worker-imported script", whatever the scheme), a
+  -- worker's own `data:` script may have any type (HTML checks the type for HTTP(S) only)
   if url.startsWith "data:" then
-    { w with scripts := w.scripts.push (url, (Net.PageFetch.dataResponse url).bind fun r => String.fromUTF8? r.2) }
+    let src := (Net.PageFetch.dataResponse url).bind fun r =>
+      if w.mains.contains url || jsMime r.1 then String.fromUTF8? r.2 else none
+    { w with scripts := w.scripts.push (url, src) }
   else
   { w with loads := w.loads.push url, asked := if w.asked.contains url then w.asked else w.asked.push url }
 
@@ -149,19 +161,15 @@ theorem request_data (w : Workers) (url : String) (h : url.startsWith "data:" = 
   · rfl
   · simp [h]
 
+#guard (({} : Workers).request "data:text/javascript,1").scripts.toList == [("data:text/javascript,1", some "1")]
+#guard (({} : Workers).request "data:text/csv,1").scripts.toList == [("data:text/csv,1", none)]
+#guard (({ mains := #["data:text/plain,1"] } : Workers).request "data:text/plain,1").scripts.toList == [("data:text/plain,1", some "1")]
+
 /-- The fetches a turn asks of the embedder: `{id, url, kind}`. -/
 def Workers.fetches (w : Workers) : List JSON.Json :=
   w.loads.toList.map fun u =>
     .object [("id", .number (toString (((w.asked.findIdx? (· == u)).getD 0) + 1))), ("url", .string u),
       ("kind", .string (if w.mains.contains u then "worker" else "script"))]
-
-/-- A JavaScript MIME type (MIME Sniffing §4.6), by its essence. -/
-def jsMime (contentType : String) : Bool :=
-  let essence := (((contentType.splitOn ";").headD "").trimAscii.toString).toLower
-  ["application/ecmascript", "application/javascript", "application/x-ecmascript", "application/x-javascript",
-   "text/ecmascript", "text/javascript", "text/javascript1.0", "text/javascript1.1", "text/javascript1.2",
-   "text/javascript1.3", "text/javascript1.4", "text/javascript1.5", "text/jscript", "text/livescript",
-   "text/x-ecmascript", "text/x-javascript"].contains essence
 
 /-- `X-Content-Type-Options: nosniff` (Fetch §2.2.6 "determine nosniff"): the first value of
 the field is `nosniff`, ASCII case-insensitively. -/
