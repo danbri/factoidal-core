@@ -93,7 +93,7 @@ def nameStart (c : Char) : Bool := c.isAlpha || c == '_' || c.toNat ≥ 0x80
 def nameChar (c : Char) : Bool := nameStart c || c.isDigit || c == '-'
 
 /-- The input after CSS Syntax §3.3 preprocessing (CR LF, CR, FF are LF; U+0000 is U+FFFD). -/
-def preprocess (s : String) : Array Char := Id.run do
+def preprocessRaw (s : String) : Array Char := Id.run do
   let cs := s.toList.toArray
   let mut out := #[]
   let mut i := 0
@@ -107,6 +107,58 @@ def preprocess (s : String) : Array Char := Id.run do
     else out := out.push c
     i := i + 1
   return out
+
+/-- The characters of a selector without its comments (CSS Syntax §4.3.2: a comment is no
+token). Inside a string a comment is text. A comment between two name characters
+separates two tokens: inside `[...]` it is white space (`[foo=bar/**/i]` has the flag
+`i`); elsewhere it is a character no selector has, so the two names stay two tokens and
+the selector is not read as one name. -/
+def stripComments (cs : Array Char) : Array Char := Id.run do
+  let mut out := #[]
+  let mut i := 0
+  let mut quote : Option Char := none
+  let mut depth : Nat := 0
+  for _ in [0:cs.size] do
+    if i ≥ cs.size then break
+    let c := cs[i]!
+    match quote with
+    | some q =>
+      out := out.push c
+      if c == '\\' then
+        if let some d := cs[i+1]? then
+          out := out.push d
+          i := i + 1
+      else if c == q then quote := none
+      i := i + 1
+    | none =>
+      if c == '/' && cs[i+1]? == some '*' then
+        -- skip to the end of the comment (or of the text)
+        let mut j := i + 2
+        for _ in [0:cs.size] do
+          if j + 1 ≥ cs.size || (cs[j]! == '*' && cs[j+1]! == '/') then break
+          j := j + 1
+        let after := cs[j+2]?
+        let before := out.back?
+        if (before.map nameChar).getD false && (after.map nameChar).getD false then
+          out := out.push (if depth > 0 then ' ' else '`')
+        i := j + 2
+      else
+        if c == '"' || c == '\'' then quote := some c
+        else if c == '[' then depth := depth + 1
+        else if c == ']' then depth := depth - 1
+        else if c == '\\' then
+          out := out.push c
+          i := i + 1
+          if let some d := cs[i]? then
+            out := out.push d
+            i := i + 1
+          continue
+        out := out.push c
+        i := i + 1
+  return out
+
+/-- The input of the selector parser: preprocessed (CSS Syntax §3.3) and without comments. -/
+def preprocess (s : String) : Array Char := stripComments (preprocessRaw s)
 
 structure P where
   cs : Array Char

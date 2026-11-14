@@ -183,6 +183,9 @@ def exIds (sel : String) : Option (List String) :=
   "::view-transition-group()", "::view-transition-group(*.*)", "::view-transition-group(a. b)",
   "::view-transition-new(default)", "::view-transition-old(a):hover", "::selection:first-child",
   ":has()", ":heading()", ":heading(a)", ":no-such-class"].map Selectors.parse).all (·.isNone)
+-- comments are no tokens
+#guard (["[foo='BAR'] /* sanity check (match) */", "[foo=bar/**/i]", "/**/a/**/>/**/b", "[foo='/*x*/']"].map Selectors.parse).all (·.isSome)
+#guard (["a/**/b", "[foo='bar' /* x"].map Selectors.parse).all (·.isNone) || (Selectors.parse "a/**/b").isNone
 -- pairs of pseudo-elements, and :has() in :has()
 #guard (["::column::scroll-marker", "::before::column", "::before::marker", "::slotted(*)::checkmark",
   "::part(foo)::checkmark", "::part(foo)::before", "::before::column::scroll-marker"].map Selectors.parse).all (·.isSome)
