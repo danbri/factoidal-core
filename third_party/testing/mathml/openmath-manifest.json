@@ -1,0 +1,103 @@
+{
+ "provenance": "OpenMath cases: a Content MathML input and the OpenMath object (XML encoding of the OpenMath Standard 2.0 revision 3, 2019-07-01, section 3.1) its strict form corresponds to under MathML 3.0 Second Edition sections 4.1.3 and 4.6, and objects from the examples of section 3.1.2 of the OpenMath Standard that Expr has no counterpart for. Authored here; see README.md.",
+ "spec": "https://openmath.org/standard/om20-2019-07-01/omstd20.html",
+ "tests": [
+  {
+   "name": "application-sin",
+   "spec": "OpenMath 2.0 §3.1.2 application example (sin x); MathML3 §4.4.7.1 sin is transc1:sin",
+   "input": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><sin/><ci>x</ci></apply></math>",
+   "openmath": "<OMOBJ xmlns=\"http://www.openmath.org/OpenMath\" version=\"2.0\"><OMA><OMS cd=\"transc1\" name=\"sin\"/><OMV name=\"x\"/></OMA></OMOBJ>"
+  },
+  {
+   "name": "unary-minus",
+   "spec": "MathML3 §4.4.2.6; OpenMath arith1:unary_minus",
+   "input": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><minus/><cn>3</cn></apply></math>",
+   "openmath": "<OMOBJ xmlns=\"http://www.openmath.org/OpenMath\" version=\"2.0\"><OMA><OMS cd=\"arith1\" name=\"unary_minus\"/><OMI>3</OMI></OMA></OMOBJ>"
+  },
+  {
+   "name": "root",
+   "spec": "MathML3 §4.4.2.11; OpenMath arith1:root",
+   "input": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><root/><ci>x</ci></apply></math>",
+   "openmath": "<OMOBJ xmlns=\"http://www.openmath.org/OpenMath\" version=\"2.0\"><OMA><OMS cd=\"arith1\" name=\"root\"/><OMV name=\"x\"/><OMI>2</OMI></OMA></OMOBJ>"
+  },
+  {
+   "name": "rational",
+   "spec": "MathML3 §4.2.1.3 Rewrite: cn sep; OpenMath nums1:rational",
+   "input": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><cn type=\"rational\">22<sep/>7</cn></math>",
+   "openmath": "<OMOBJ xmlns=\"http://www.openmath.org/OpenMath\" version=\"2.0\"><OMA><OMS cd=\"nums1\" name=\"rational\"/><OMI>22</OMI><OMI>7</OMI></OMA></OMOBJ>"
+  },
+  {
+   "name": "max-set",
+   "spec": "MathML3 §4.3.4.4.2; OpenMath minmax1:max over set1:set",
+   "input": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><max/><cn>2</cn><cn>3</cn><cn>5</cn></apply></math>",
+   "openmath": "<OMOBJ xmlns=\"http://www.openmath.org/OpenMath\" version=\"2.0\"><OMA><OMS cd=\"minmax1\" name=\"max\"/><OMA><OMS cd=\"set1\" name=\"set\"/><OMI>2</OMI><OMI>3</OMI><OMI>5</OMI></OMA></OMA></OMOBJ>"
+  },
+  {
+   "name": "relation-nary",
+   "spec": "MathML3 §4.3.4.3.2; OpenMath fns2:predicate_on_list, relation1:lt, list1:list",
+   "input": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><lt/><ci>a</ci><ci>b</ci><ci>c</ci></apply></math>",
+   "openmath": "<OMOBJ xmlns=\"http://www.openmath.org/OpenMath\" version=\"2.0\"><OMA><OMS cd=\"fns2\" name=\"predicate_on_list\"/><OMS cd=\"relation1\" name=\"lt\"/><OMA><OMS cd=\"list1\" name=\"list\"/><OMV name=\"a\"/><OMV name=\"b\"/><OMV name=\"c\"/></OMA></OMA></OMOBJ>"
+  },
+  {
+   "name": "matrix",
+   "spec": "MathML3 §4.4.9.2; OpenMath linalg2:matrix and linalg2:matrixrow",
+   "input": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><matrix><matrixrow><cn>1</cn><cn>2</cn></matrixrow><matrixrow><cn>3</cn><cn>4</cn></matrixrow></matrix></math>",
+   "openmath": "<OMOBJ xmlns=\"http://www.openmath.org/OpenMath\" version=\"2.0\"><OMA><OMS cd=\"linalg2\" name=\"matrix\"/><OMA><OMS cd=\"linalg2\" name=\"matrixrow\"/><OMI>1</OMI><OMI>2</OMI></OMA><OMA><OMS cd=\"linalg2\" name=\"matrixrow\"/><OMI>3</OMI><OMI>4</OMI></OMA></OMA></OMOBJ>"
+  },
+  {
+   "name": "determinant",
+   "spec": "MathML3 §4.4.9.4 determinant is linalg1:determinant",
+   "input": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><determinant/><ci>A</ci></apply></math>",
+   "openmath": "<OMOBJ xmlns=\"http://www.openmath.org/OpenMath\" version=\"2.0\"><OMA><OMS cd=\"linalg1\" name=\"determinant\"/><OMV name=\"A\"/></OMA></OMOBJ>"
+  },
+  {
+   "name": "true",
+   "spec": "MathML3 §4.4.10.10; OpenMath logic1:true",
+   "input": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><true/></math>",
+   "openmath": "<OMOBJ xmlns=\"http://www.openmath.org/OpenMath\" version=\"2.0\"><OMS cd=\"logic1\" name=\"true\"/></OMOBJ>"
+  },
+  {
+   "name": "negative-integer",
+   "spec": "OpenMath 2.0 §3.1.2 integers; MathML3 §4.2.1.2 strict cn integer",
+   "input": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><plus/><cn>-17</cn><ci>x</ci></apply></math>",
+   "openmath": "<OMOBJ xmlns=\"http://www.openmath.org/OpenMath\" version=\"2.0\"><OMA><OMS cd=\"arith1\" name=\"plus\"/><OMI>-17</OMI><OMV name=\"x\"/></OMA></OMOBJ>"
+  },
+  {
+   "name": "identifier-head",
+   "spec": "MathML3 §4.2.5.1 strict apply with a ci head; OpenMath application of a variable",
+   "input": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><ci>f</ci><cn>1</cn></apply></math>",
+   "openmath": "<OMOBJ xmlns=\"http://www.openmath.org/OpenMath\" version=\"2.0\"><OMA><OMV name=\"f\"/><OMI>1</OMI></OMA></OMOBJ>"
+  },
+  {
+   "name": "strict-input",
+   "spec": "MathML3 §4.1.3: strict content and OpenMath correspond element for element",
+   "input": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><csymbol cd=\"integer1\">remainder</csymbol><cn type=\"integer\">7</cn><cn type=\"integer\">3</cn></apply></math>",
+   "openmath": "<OMOBJ xmlns=\"http://www.openmath.org/OpenMath\" version=\"2.0\"><OMA><OMS cd=\"integer1\" name=\"remainder\"/><OMI>7</OMI><OMI>3</OMI></OMA></OMOBJ>"
+  },
+  {
+   "name": "binding-lambda",
+   "spec": "OpenMath 2.0 §3.1.2 binding example (lambda x. sin x); no Expr counterpart",
+   "openmath": "<OMOBJ xmlns=\"http://www.openmath.org/OpenMath\" version=\"2.0\"><OMBIND><OMS cd=\"fns1\" name=\"lambda\"/><OMBVAR><OMV name=\"x\"/></OMBVAR><OMA><OMS cd=\"transc1\" name=\"sin\"/><OMV name=\"x\"/></OMA></OMBIND></OMOBJ>"
+  },
+  {
+   "name": "attribution-type",
+   "spec": "OpenMath 2.0 §3.1.2 attribution example (the type of a variable); no Expr counterpart",
+   "openmath": "<OMOBJ xmlns=\"http://www.openmath.org/OpenMath\" version=\"2.0\"><OMATTR><OMATP><OMS cd=\"ecc\" name=\"type\"/><OMS cd=\"ecc\" name=\"real\"/></OMATP><OMV name=\"x\"/></OMATTR></OMOBJ>"
+  },
+  {
+   "name": "float-dec",
+   "spec": "OpenMath 2.0 §3.1.2 float example, decimal form; no Expr counterpart",
+   "openmath": "<OMOBJ xmlns=\"http://www.openmath.org/OpenMath\" version=\"2.0\"><OMF dec=\"1.0e-10\"/></OMOBJ>"
+  },
+  {
+   "name": "float-hex",
+   "spec": "OpenMath 2.0 §3.1.2 float example, hexadecimal form; no Expr counterpart",
+   "openmath": "<OMOBJ xmlns=\"http://www.openmath.org/OpenMath\" version=\"2.0\"><OMF hex=\"3DDB7CDFD9D7BDBB\"/></OMOBJ>"
+  },
+  {
+   "name": "string",
+   "spec": "OpenMath 2.0 §3.1.2 strings; no Expr counterpart",
+   "openmath": "<OMOBJ xmlns=\"http://www.openmath.org/OpenMath\" version=\"2.0\"><OMSTR>a &lt; b &amp; c</OMSTR></OMOBJ>"
+  }
+ ]
+}

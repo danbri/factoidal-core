@@ -34,6 +34,7 @@ F* module's own header:
       type. There is no `app "matrix"` node to serialize.
 -/
 import L4Factoidal.MathML.Core
+import L4Factoidal.MathML.Symbols
 
 namespace L4Factoidal.MathML
 
@@ -202,7 +203,11 @@ def knownContentOp (fn : String) : Bool :=
 
 def contentOp (fn : String) : String :=
   if knownContentOp fn then "<" ++ fn ++ "/>"
-  else "<csymbol>" ++ escapeXmlFull fn ++ "</csymbol>"
+  else match symbolOf fn with
+    -- A key of the symbol table is written as that symbol, so `FromXml.lean` reads the key back.
+    | some (cd, name) =>
+        "<csymbol cd=\"" ++ escapeXmlFull cd ++ "\">" ++ escapeXmlFull name ++ "</csymbol>"
+    | none => "<csymbol>" ++ escapeXmlFull fn ++ "</csymbol>"
 
 mutual
 

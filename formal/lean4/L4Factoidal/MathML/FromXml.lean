@@ -24,6 +24,7 @@ A `<cn>` this module cannot read yields `none`, which the evaluator
 reports as an undefined value rather than a zero.
 -/
 import L4Factoidal.MathML.Core
+import L4Factoidal.MathML.Symbols
 import L4Factoidal.XML.NamespaceView
 
 namespace L4Factoidal.MathML
@@ -148,14 +149,37 @@ partial def exprOf (n : Node) : Option Expr :=
       else if ln == "vector" then
         ((elementChildren n).mapM exprOf).map Expr.vec
       else if ln == "ci" then some (.sym (trim (textOf n)))
+      -- MathML 3 section 4.2.3.1: a strict `csymbol` names a symbol of a content dictionary. Not
+      -- applied, it is a truth value or `app "csymbol" [sym key]` (see `MathML/Strict.lean`); a
+      -- symbol outside the table of `Symbols.lean` is not read.
+      else if ln == "csymbol" then
+        (match attrOf "cd" n with
+         | some cd =>
+             let name := trim (textOf n)
+             if cd == "logic1" && name == "true" then some (.bool true)
+             else if cd == "logic1" && name == "false" then some (.bool false)
+             else (keyOf cd name).map (fun k => Expr.app "csymbol" [.sym k])
+         | none => none)
       else if ln == "true" then some (.bool true)
       else if ln == "false" then some (.bool false)
       else if ln == "apply" then
         (match elementChildren n with
          | op :: rest =>
-             let fn := match op with
-               | .element t _ _ => localName t
-               | _              => ""
+             -- The head: an operator element gives its name as the key; a `csymbol` with `cd` gives
+             -- the key of that symbol; a `ci`, or a `csymbol` with no `cd`, gives its text as an
+             -- identifier, and is refused when that text is a key of the table (it would be read
+             -- as the operator).
+             let ident (t : String) : Option String := if (symbolOf t).isNone then some t else none
+             let fn? : Option String := match op with
+               | .element t _ _ =>
+                   let l := localName t
+                   if l == "csymbol" then
+                     (match attrOf "cd" op with
+                      | some cd => keyOf cd (trim (textOf op))
+                      | none    => ident (trim (textOf op)))
+                   else if l == "ci" then ident (trim (textOf op))
+                   else some l
+               | _ => some ""
              -- `<degree>` wraps `root`'s index; it is passed as the
              -- FIRST argument, which is the shape `Core.eval` reads.
              let args := rest.map (fun c =>
@@ -167,9 +191,9 @@ partial def exprOf (n : Node) : Option Expr :=
                      | none   => none
                    else exprOf c
                | _ => none)
-             match args.mapM id with
-             | some as => some (.app fn as)
-             | none    => none
+             match fn?, args.mapM id with
+             | some fn, some as => some (.app fn as)
+             | _, _             => none
          | [] => none)
       else none
   | _ => none

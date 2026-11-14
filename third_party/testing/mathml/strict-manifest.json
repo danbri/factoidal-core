@@ -1,0 +1,163 @@
+{
+ "provenance": "Strict Content MathML transformation cases. Each input and its expected strict form is an example of the rewrite rule named in the case's spec field, from MathML 3.0 Second Edition (W3C Recommendation 2014-04-10) chapter 4 and section 4.6, with the matching place in MathML 4.0 (W3C Working Draft 2026-11-12) appendix F where there is one. Where the specification's example uses placeholders, numbers or bound identifiers are used so the case also has a value. Authored here; see README.md.",
+ "spec": "https://www.w3.org/TR/MathML3/chapter4.html#contm.strict",
+ "tests": [
+  {
+   "name": "minus-unary",
+   "spec": "MathML3 §4.4.2.6 minus with one argument is arith1:unary_minus; MathML4 F.8.1",
+   "input": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><minus/><cn>3</cn></apply></math>",
+   "expectedStrict": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><csymbol cd=\"arith1\">unary_minus</csymbol><cn type=\"integer\">3</cn></apply></math>"
+  },
+  {
+   "name": "minus-binary",
+   "spec": "MathML3 §4.4.2.6 minus with two arguments is arith1:minus; MathML4 F.8.1",
+   "input": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><minus/><ci>x</ci><ci>y</ci></apply></math>",
+   "expectedStrict": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><csymbol cd=\"arith1\">minus</csymbol><ci>x</ci><ci>y</ci></apply></math>",
+   "env": {
+    "x": "7",
+    "y": "2"
+   }
+  },
+  {
+   "name": "root-default-degree",
+   "spec": "MathML3 §4.4.2.11 root: no degree means 2, given second; MathML4 F.2.5",
+   "input": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><root/><ci>x</ci></apply></math>",
+   "expectedStrict": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><csymbol cd=\"arith1\">root</csymbol><ci>x</ci><cn type=\"integer\">2</cn></apply></math>",
+   "env": {
+    "x": "49"
+   }
+  },
+  {
+   "name": "root-with-degree",
+   "spec": "MathML3 §4.4.2.11 root: the degree is the second argument of arith1:root; MathML4 F.2.5",
+   "input": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><root/><degree><ci>n</ci></degree><ci>a</ci></apply></math>",
+   "expectedStrict": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><csymbol cd=\"arith1\">root</csymbol><ci>a</ci><ci>n</ci></apply></math>",
+   "env": {
+    "a": "27",
+    "n": "3"
+   }
+  },
+  {
+   "name": "relation-nary",
+   "spec": "MathML3 §4.3.4.3.2 Rewrite: n-ary relations; MathML4 F.6.2 (both print cd=\"reln1\" in this example; the syntax table of lt and OpenMath name the dictionary relation1)",
+   "input": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><lt/><ci>a</ci><ci>b</ci><ci>c</ci><ci>d</ci></apply></math>",
+   "expectedStrict": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><csymbol cd=\"fns2\">predicate_on_list</csymbol><csymbol cd=\"relation1\">lt</csymbol><apply><csymbol cd=\"list1\">list</csymbol><ci>a</ci><ci>b</ci><ci>c</ci><ci>d</ci></apply></apply></math>",
+   "env": {
+    "a": "1",
+    "b": "2",
+    "c": "3",
+    "d": "4"
+   }
+  },
+  {
+   "name": "relation-nary-false",
+   "spec": "MathML3 §4.3.4.3.2 Rewrite: n-ary relations; MathML4 F.6.2",
+   "input": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><leq/><cn>1</cn><cn>3</cn><cn>2</cn></apply></math>",
+   "expectedStrict": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><csymbol cd=\"fns2\">predicate_on_list</csymbol><csymbol cd=\"relation1\">leq</csymbol><apply><csymbol cd=\"list1\">list</csymbol><cn type=\"integer\">1</cn><cn type=\"integer\">3</cn><cn type=\"integer\">2</cn></apply></apply></math>"
+  },
+  {
+   "name": "relation-binary",
+   "spec": "MathML3 §4.3.4.5 binary relations map by Rewrite: element",
+   "input": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><lt/><ci>a</ci><ci>b</ci></apply></math>",
+   "expectedStrict": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><csymbol cd=\"relation1\">lt</csymbol><ci>a</ci><ci>b</ci></apply></math>",
+   "env": {
+    "a": "1",
+    "b": "2"
+   }
+  },
+  {
+   "name": "max-nary-set",
+   "spec": "MathML3 §4.3.4.4.2 Rewrite: n-ary unary set; MathML4 F.5.1",
+   "input": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><max/><cn>2</cn><cn>3</cn><cn>5</cn></apply></math>",
+   "expectedStrict": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><csymbol cd=\"minmax1\">max</csymbol><apply><csymbol cd=\"set1\">set</csymbol><cn type=\"integer\">2</cn><cn type=\"integer\">3</cn><cn type=\"integer\">5</cn></apply></apply></math>"
+  },
+  {
+   "name": "min-nary-set",
+   "spec": "MathML3 §4.3.4.4.2 Rewrite: n-ary unary set; MathML4 F.5.1",
+   "input": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><min/><ci>a</ci><ci>b</ci></apply></math>",
+   "expectedStrict": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><csymbol cd=\"minmax1\">min</csymbol><apply><csymbol cd=\"set1\">set</csymbol><ci>a</ci><ci>b</ci></apply></apply></math>",
+   "env": {
+    "a": "4",
+    "b": "-1"
+   }
+  },
+  {
+   "name": "max-single",
+   "spec": "MathML3 §4.3.4.4.2 Rewrite: n-ary unary single; MathML4 F.5.1",
+   "input": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><max/><ci>a</ci></apply></math>",
+   "expectedStrict": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><csymbol cd=\"minmax1\">max</csymbol><ci>a</ci></apply></math>",
+   "env": {
+    "a": "6"
+   }
+  },
+  {
+   "name": "cn-rational",
+   "spec": "MathML3 §4.2.1.3 Rewrite: cn sep, type rational is nums1:rational; MathML4 F.7.1",
+   "input": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><cn type=\"rational\">22<sep/>7</cn></math>",
+   "expectedStrict": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><csymbol cd=\"nums1\">rational</csymbol><cn type=\"integer\">22</cn><cn type=\"integer\">7</cn></apply></math>"
+  },
+  {
+   "name": "vector",
+   "spec": "MathML3 §4.4.9.1 vector is linalg2:vector; MathML4 F.4.2",
+   "input": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><vector><apply><plus/><ci>x</ci><ci>y</ci></apply><cn>3</cn><cn>7</cn></vector></math>",
+   "expectedStrict": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><csymbol cd=\"linalg2\">vector</csymbol><apply><csymbol cd=\"arith1\">plus</csymbol><ci>x</ci><ci>y</ci></apply><cn type=\"integer\">3</cn><cn type=\"integer\">7</cn></apply></math>",
+   "env": {
+    "x": "1",
+    "y": "1"
+   }
+  },
+  {
+   "name": "matrix",
+   "spec": "MathML3 §4.4.9.2 matrix and §4.4.9.3 matrixrow are linalg2:matrix and linalg2:matrixrow; MathML4 F.4.2",
+   "input": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><matrix><matrixrow><cn>1</cn><cn>2</cn></matrixrow><matrixrow><cn>3</cn><cn>4</cn></matrixrow></matrix></math>",
+   "expectedStrict": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><csymbol cd=\"linalg2\">matrix</csymbol><apply><csymbol cd=\"linalg2\">matrixrow</csymbol><cn type=\"integer\">1</cn><cn type=\"integer\">2</cn></apply><apply><csymbol cd=\"linalg2\">matrixrow</csymbol><cn type=\"integer\">3</cn><cn type=\"integer\">4</cn></apply></apply></math>"
+  },
+  {
+   "name": "selector-vector",
+   "spec": "MathML3 §4.4.9.6 selector and §4.6 step 8: linalg1:vector_selector, the index first",
+   "input": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><selector/><vector><cn>5</cn><cn>6</cn></vector><cn>2</cn></apply></math>",
+   "expectedStrict": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><csymbol cd=\"linalg1\">vector_selector</csymbol><cn type=\"integer\">2</cn><apply><csymbol cd=\"linalg2\">vector</csymbol><cn type=\"integer\">5</cn><cn type=\"integer\">6</cn></apply></apply></math>"
+  },
+  {
+   "name": "selector-matrix",
+   "spec": "MathML3 §4.4.9.6 selector and §4.6 step 8: linalg1:matrix_selector, the indices first",
+   "input": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><selector/><matrix><matrixrow><cn>1</cn><cn>2</cn></matrixrow><matrixrow><cn>3</cn><cn>4</cn></matrixrow></matrix><cn>2</cn><cn>1</cn></apply></math>",
+   "expectedStrict": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><csymbol cd=\"linalg1\">matrix_selector</csymbol><cn type=\"integer\">2</cn><cn type=\"integer\">1</cn><apply><csymbol cd=\"linalg2\">matrix</csymbol><apply><csymbol cd=\"linalg2\">matrixrow</csymbol><cn type=\"integer\">1</cn><cn type=\"integer\">2</cn></apply><apply><csymbol cd=\"linalg2\">matrixrow</csymbol><cn type=\"integer\">3</cn><cn type=\"integer\">4</cn></apply></apply></apply></math>"
+  },
+  {
+   "name": "plus-nary",
+   "spec": "MathML3 §4.3.4.1 n-ary arithmetic operators map by Rewrite: element to arith1:plus",
+   "input": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><plus/><ci>x</ci><ci>y</ci><ci>z</ci></apply></math>",
+   "expectedStrict": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><csymbol cd=\"arith1\">plus</csymbol><ci>x</ci><ci>y</ci><ci>z</ci></apply></math>",
+   "env": {
+    "x": "1",
+    "y": "2",
+    "z": "3"
+   }
+  },
+  {
+   "name": "rem",
+   "spec": "MathML3 §4.4.2.9 rem is integer1:remainder (Rewrite: element)",
+   "input": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><rem/><cn>7</cn><cn>3</cn></apply></math>",
+   "expectedStrict": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><csymbol cd=\"integer1\">remainder</csymbol><cn type=\"integer\">7</cn><cn type=\"integer\">3</cn></apply></math>"
+  },
+  {
+   "name": "true",
+   "spec": "MathML3 §4.4.10.10 true is the symbol logic1:true",
+   "input": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><true/></math>",
+   "expectedStrict": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><csymbol cd=\"logic1\">true</csymbol></math>"
+  },
+  {
+   "name": "nested",
+   "spec": "MathML3 §4.6: the rules apply at every depth (minus, root, cn sep)",
+   "input": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><minus/><apply><root/><cn type=\"rational\">1<sep/>4</cn></apply></apply></math>",
+   "expectedStrict": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><csymbol cd=\"arith1\">unary_minus</csymbol><apply><csymbol cd=\"arith1\">root</csymbol><apply><csymbol cd=\"nums1\">rational</csymbol><cn type=\"integer\">1</cn><cn type=\"integer\">4</cn></apply><cn type=\"integer\">2</cn></apply></apply></math>"
+  },
+  {
+   "name": "already-strict",
+   "spec": "MathML3 §4.6: strict input is left alone",
+   "input": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><csymbol cd=\"arith1\">root</csymbol><apply><csymbol cd=\"arith1\">plus</csymbol><cn type=\"integer\">7</cn><cn type=\"integer\">9</cn></apply><cn type=\"integer\">2</cn></apply></math>",
+   "expectedStrict": "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><apply><csymbol cd=\"arith1\">root</csymbol><apply><csymbol cd=\"arith1\">plus</csymbol><cn type=\"integer\">7</cn><cn type=\"integer\">9</cn></apply><cn type=\"integer\">2</cn></apply></math>"
+  }
+ ]
+}

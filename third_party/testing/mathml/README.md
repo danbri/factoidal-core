@@ -90,3 +90,32 @@ The scalar corpus declares the MathML namespace explicitly (namespace audit,
 2026-10-21). Earlier scalar examples omitted it. Expected numeric values and
 case counts are unchanged. The matrix corpus is a separate F* target and has
 not been migrated by the Lean namespace work.
+
+## Strict Content and OpenMath cases (2026-11-14)
+
+Two more manifests, scored by the Lean runner `formal/lean4/Harness/MathMLRun.lean`
+(`lake exe l4mathml`) only:
+
+- `strict-manifest.json` — a Content MathML `input` and `expectedStrict`, the Strict Content
+  MathML it becomes under the Strict Content MathML Transformation: MathML 3.0 Second Edition
+  (W3C Recommendation 2014-04-10) section 4.6 and the rewrite rules of chapter 4 it names
+  (https://www.w3.org/TR/MathML3/chapter4.html#contm.strict), and MathML 4.0 (W3C Working Draft
+  2026-11-12, https://www.w3.org/TR/2026/WD-mathml4-20261112/) appendix F, which has the same
+  rules for these constructs. A case passes when `toStrict` of the input is the expression the
+  expected markup reads as, that expression is strict, the strict writer's markup reads back as
+  it, and the strict form has the value of the input (`env` as in the evaluation manifests).
+- `openmath-manifest.json` — a Content MathML `input` and `openmath`, its OpenMath object in the
+  XML encoding of the OpenMath Standard 2.0 revision 3 (2019-07-01), section 3.1
+  (https://openmath.org/standard/om20-2019-07-01/omstd20.html). A case passes when the object of
+  the input is that object, the object reads back as the strict form of the input, and the object
+  survives writing and parsing. A case with no `input` is an OpenMath object with no counterpart
+  in the expression type (binder, attribution, float, string): it passes when it survives writing
+  and parsing and is refused as an expression.
+
+Provenance: authored here, not vendored. Each case is the example of the rule its `spec` field
+names (a section of MathML 3 chapter 4, with the MathML 4 appendix F place where there is one, or
+section 3.1.2 of the OpenMath Standard). Where the specification's example uses placeholders,
+numbers or bound identifiers are put in so the case has a value. One deviation is recorded in the
+case itself: both MathML specifications print `cd="reln1"` in the n-ary relation example, and the
+cases use `relation1`, the dictionary the operator's own syntax table and OpenMath name. No
+content dictionary file and no part of another test suite is copied.
