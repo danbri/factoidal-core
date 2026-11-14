@@ -5827,13 +5827,35 @@
     try { b = bState(o, what); } catch (e) { return Promise.reject(e); }
     if (b.used || (b.stream && b.stream.locked)) return Promise.reject(new TypeError(`Failed to execute '${what}': the body was already read`));
     if (b.signal && b.signal.aborted) return Promise.reject(b.signal.reason);
+    // a body made from a ReadableStream: its chunks, each a Uint8Array, in order
+    if (b.userStream) { b.used = true; return streamBytes(b.stream, what); }
     if (b.bytes !== null) b.used = true;
     return Promise.resolve(b.bytes === null ? new Uint8Array(0) : b.bytes);
   };
   // The body's MIME type, serialized ('' for none): Fetch "extract a MIME type", Lean's.
   const bodyMime = b => { const ct = hGet(headerState.get(b.headers), 'content-type'); if (ct === null) return ''; const r = apiCall(86, [ct]); return typeof r === 'string' ? r : ''; };
+  // Every chunk of a stream body, joined (Fetch §5.2 "fully read"): a chunk that is not a
+  // Uint8Array is a TypeError.
+  const streamBytes = async (stream, what) => {
+    const reader = stream.getReader(), parts = [];
+    let total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!(value instanceof Uint8Array)) { try { reader.cancel(); } catch { /* gone */ } throw new TypeError(`Failed to execute '${what}': a chunk of the body is not a Uint8Array`); }
+      parts.push(value); total += value.byteLength;
+    }
+    const out = new Uint8Array(total);
+    let at = 0; for (const p of parts) { out.set(p, at); at += p.byteLength; }
+    return out;
+  };
+  const isStreamBody = body => typeof body === 'object' && body !== null && typeof body.getReader === 'function' && typeof ReadableStream === 'function' && body instanceof ReadableStream;
   const bodyInit = (body, what) => {
-    if (typeof body === 'object' && body !== null && typeof body.getReader === 'function') throw new TypeError(`${what}: a stream body is not supported in this build`);
+    // a ReadableStream body (Fetch §5.2 "extract a body": no type; a locked or read stream is a TypeError)
+    if (isStreamBody(body)) {
+      if (body.locked) throw new TypeError(`${what}: the stream body is locked`);
+      return [new Uint8Array(0), '', body];
+    }
     const [raw, ct] = extractBody(body, what);
     return [typeof raw === 'string' ? utf8(raw) : copyBytes(raw), ct];
   };
@@ -5989,9 +6011,13 @@
         const hasInit = body !== undefined && body !== null;
         if ((hasInit || (inBody && inBody.bytes !== null)) && (st.method === 'GET' || st.method === 'HEAD')) throw new TypeError(`${what}: a request with the method ${st.method} can not have a body`);
         let bytes = null;
+        let reqStream = null;
         if (hasInit) {
-          const [b, ct] = bodyInit(body, what);
+          const [b, ct, stream] = bodyInit(body, what);
+          // Fetch §5.4 step 36: a stream body needs duplex "half"
+          if (stream && duplex !== 'half') throw new TypeError(`${what}: a request with a stream body needs the duplex member "half"`);
           bytes = b;
+          if (stream) reqStream = stream;
           if (ct !== '' && hGet(hs, 'content-type') === null) hAppend(hs, 'Content-Type', ct, what);
         } else if (inBody && inBody.bytes !== null) {
           if (inBody.used || (inBody.stream && inBody.stream.locked)) throw new TypeError(`${what}: the body of the request was already read`);
@@ -5999,7 +6025,7 @@
           inBody.used = true;
         }
         requests.set(this, st);
-        bodies.set(this, { bytes, used: false, stream: undefined, headers: st.headers });
+        bodies.set(this, reqStream ? { bytes, used: false, stream: reqStream, userStream: true, headers: st.headers } : { bytes, used: false, stream: undefined, headers: st.headers });
       }
       get method() { return R(this, 'method').method; }
       get url() { return R(this, 'url').url; }
@@ -6058,17 +6084,18 @@
       if (!/^[\t \x21-\x7e\x80-\xff]*$/.test(statusText)) throw new TypeError(`${what}: the status text is not a reason phrase`);
       const hs = { list: [], guard: 'response' };
       if (d.headers !== undefined) hFill(hs, d.headers, what);
-      let bytes = null;
+      let bytes = null, streamBody = null;
       if (body !== undefined && body !== null) {
         if ([101, 103, 204, 205, 304].includes(status)) throw new TypeError(`${what}: a response with the status ${status} can not have a body`);
-        const [b, ct] = body;
+        const [b, ct, stream] = body;
         bytes = b;
+        if (stream) streamBody = stream;
         if (ct !== '' && hGet(hs, 'content-type') === null) hAppend(hs, 'Content-Type', ct, what);
       }
       const headers = Object.create(makeHeaders().prototype);
       headerState.set(headers, hs);
       responses.set(r, { status, statusText, headers, url: '', type: 'default', redirected: false });
-      bodies.set(r, { bytes, used: false, stream: undefined, headers });
+      bodies.set(r, streamBody ? { bytes, used: false, stream: streamBody, userStream: true, headers } : { bytes, used: false, stream: undefined, headers });
     };
     class Response {
       constructor(body = null, init_ = undefined) {
@@ -6103,6 +6130,13 @@
         const st = R(this, 'clone'), b = bodies.get(this);
         if (b.used || (b.stream && b.stream.locked)) throw new TypeError("Failed to execute 'clone' on 'Response': the body was already read");
         const hs = headerState.get(st.headers);
+        if (b.userStream) {
+          const [one, two] = b.stream.tee();
+          b.stream = one;
+          const c = responseOf({ status: st.status, statusText: st.statusText, url: st.url, type: st.type, redirected: st.redirected }, hs.list, hs.guard, b.bytes, b.signal);
+          Object.assign(bodies.get(c), { stream: two, userStream: true });
+          return c;
+        }
         return responseOf({ status: st.status, statusText: st.statusText, url: st.url, type: st.type, redirected: st.redirected }, hs.list, hs.guard, b.bytes, b.signal);
       }
     }
@@ -6430,6 +6464,11 @@
         x.onabort = () => fail(new DOMException('The request was aborted.', 'AbortError'));
         x.ontimeout = () => fail(new TypeError('Failed to fetch'));
         const b = bodies.get(request);
+        if (b.userStream) {
+          b.used = true;
+          streamBytes(b.stream, 'fetch').then(bytes => { if (!settled) x.send(bytes); }, e => fail(new TypeError(String(e && e.message || e))));
+          return;
+        }
         if (b.bytes !== null) b.used = true;
         x.send(b.bytes);
       });
