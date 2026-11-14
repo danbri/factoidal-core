@@ -7348,10 +7348,13 @@
         if (r === null) return null;
         const f = output.createDocumentFragment();
         if (r.method === 'html' || r.method === 'text') {
-          const t = document.createElement('template');
-          t.innerHTML = r.text;
-          if (r.method === 'text') f.appendChild(output.createTextNode(t.content.textContent));
-          else while (t.content.firstChild) f.appendChild(output.adoptNode(t.content.firstChild));
+          // the HTML fragment parser with a body context, as createContextualFragment runs
+          // it: a script of the result runs when the fragment is inserted
+          const range = document.createRange();
+          range.selectNodeContents(document.body || document.documentElement || document);
+          const parsed = range.createContextualFragment(r.text);
+          if (r.method === 'text') f.appendChild(output.createTextNode(parsed.textContent));
+          else while (parsed.firstChild) f.appendChild(output === document ? parsed.firstChild : output.adoptNode(parsed.firstChild));
         } else {
           const root = xmlNodesOf(r.text);
           if (root === null) return null;
