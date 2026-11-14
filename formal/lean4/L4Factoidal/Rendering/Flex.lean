@@ -498,3 +498,179 @@ theorem resolve_exact_sizes (room : Int) (items : List Item) (h : (resolve room 
 -- nothing can flex
 #guard (resolve 1000 [{base := 100, shrink := 0}, {base := 200}]).sizes == [100, 200]
 #guard (resolve 100 []).sizes == []
+
+/-! ### Main-axis placement (§9.5) -/
+
+/-- `justify-content` (and `align-content`) as distribution along an axis whose start is
+the side items are placed from. The glue maps `flex-start`, `flex-end`, `start`, `end`,
+`left` and `right` to `start` or `end_` for the axis direction. -/
+inductive Justify where
+  | start | end_ | center | spaceBetween | spaceAround | spaceEvenly
+  deriving Repr, BEq, DecidableEq
+
+/-- CSS Box Alignment 3 §4.5 for `n` items and `free` space left on the line: the offset
+of the first item from the line's start, and the space added between adjacent items. The
+`space-*` values with no free space or (for `space-between`) one item fall back to `start`
+(`space-between`) or to safe centring, which is `start` when the items overflow. -/
+def justify (j : Justify) (free : Int) (n : Nat) : Int × Int :=
+  if n = 0 then (0, 0) else
+  match j with
+  | .start => (0, 0)
+  | .end_ => (free, 0)
+  | .center => (free / 2, 0)
+  | .spaceBetween => if free ≤ 0 ∨ n = 1 then (0, 0) else (0, free / ((n : Int) - 1))
+  | .spaceAround => if free ≤ 0 then (0, 0) else (free / (n : Int) / 2, free / (n : Int))
+  | .spaceEvenly => if free ≤ 0 then (0, 0) else (free / ((n : Int) + 1), free / ((n : Int) + 1))
+
+/-- Lemma. Says: content distribution never moves adjacent items towards each other. -/
+theorem justify_between_nonneg (j : Justify) (free : Int) (n : Nat) : 0 ≤ (justify j free n).2 := by
+  unfold justify
+  split
+  · simp
+  · rename_i hn
+    cases j <;> simp only
+    all_goals try omega
+    · split
+      · simp
+      · rename_i h; exact Int.ediv_nonneg (by omega) (by omega)
+    · split
+      · simp
+      · rename_i h; exact Int.ediv_nonneg (by omega) (by omega)
+    · split
+      · simp
+      · rename_i h; exact Int.ediv_nonneg (by omega) (by omega)
+
+/-- Containment. Says: with free space that is not negative, the first item does not
+start before the line's start, and the offset plus the spaces between `n` items is no
+more than the free space: the last item ends inside the line. Does not say: anything
+for negative free space (then `end_` and `center` overflow the start, as specified). -/
+theorem justify_fits (j : Justify) (free : Int) (n : Nat) (h : 0 ≤ free) :
+    0 ≤ (justify j free n).1 ∧ (justify j free n).1 + (justify j free n).2 * ((n : Int) - 1) ≤ free := by
+  unfold justify
+  split
+  · simp; exact h
+  · rename_i hn
+    have hn1 : (1 : Int) ≤ n := by omega
+    cases j <;> simp only
+    · omega
+    · omega
+    · have := Int.ediv_nonneg h (by omega : (0 : Int) ≤ 2)
+      have := Int.ediv_le_self 2 h
+      omega
+    · split
+      · omega
+      · rename_i hc
+        have hd : (0 : Int) < (n : Int) - 1 := by omega
+        have := Int.ediv_mul_le free (Int.ne_of_gt hd)
+        dsimp only
+        omega
+    · split
+      · omega
+      · have hb := Int.ediv_nonneg h (by omega : (0 : Int) ≤ (n : Int))
+        have hm := Int.ediv_mul_le free (by omega : (n : Int) ≠ 0)
+        have h2 := Int.ediv_le_self 2 hb
+        have h3 := Int.ediv_nonneg hb (by omega : (0 : Int) ≤ 2)
+        have he : free / (n : Int) * ((n : Int) - 1) = free / (n : Int) * (n : Int) - free / (n : Int) := by
+          rw [Int.mul_sub, Int.mul_one]
+        rw [he]
+        omega
+    · split
+      · omega
+      · have hb := Int.ediv_nonneg h (by omega : (0 : Int) ≤ (n : Int) + 1)
+        have hm := Int.ediv_mul_le free (by omega : (n : Int) + 1 ≠ 0)
+        have he : free / ((n : Int) + 1) * ((n : Int) - 1) = free / ((n : Int) + 1) * ((n : Int) + 1) - 2 * (free / ((n : Int) + 1)) := by
+          rw [Int.mul_sub, Int.mul_add, Int.mul_one]; omega
+        rw [he]
+        omega
+
+/-- The loop of `place`. -/
+def placeLoop (between : Int) (pos : Int) (acc : Array (Int × Int)) : List Int → Array (Int × Int)
+  | [] => acc
+  | w :: rest => placeLoop between (pos + w + between) (acc.push (pos, w)) rest
+
+/-- Boxes of the sizes `outers` placed one after another from `start`, `between` apart:
+each as `(position, size)`. -/
+def place (start between : Int) (outers : List Int) : List (Int × Int) :=
+  (placeLoop between start #[] outers).toList
+
+theorem placeLoop_pairwise (between : Int) (hb : 0 ≤ between) (outers : List Int) :
+    ∀ (pos : Int) (acc : Array (Int × Int)), (∀ w ∈ outers, 0 ≤ w) →
+      acc.toList.Pairwise (fun a b => a.1 + a.2 ≤ b.1) → (∀ a ∈ acc.toList, a.1 + a.2 ≤ pos) →
+      (placeLoop between pos acc outers).toList.Pairwise (fun a b => a.1 + a.2 ≤ b.1) := by
+  induction outers with
+  | nil => intro pos acc _ hp _; simpa [placeLoop] using hp
+  | cons w rest ih =>
+    intro pos acc hw hp hle
+    have hw0 : 0 ≤ w := hw w List.mem_cons_self
+    unfold placeLoop
+    apply ih
+    · intro x hx; exact hw x (List.mem_cons_of_mem w hx)
+    · rw [Array.toList_push, List.pairwise_append]
+      refine ⟨hp, by simp, ?_⟩
+      intro a ha b hb'
+      simp only [List.mem_singleton] at hb'
+      subst hb'
+      exact hle a ha
+    · intro a ha
+      rw [Array.toList_push, List.mem_append] at ha
+      rcases ha with ha | ha
+      · have := hle a ha; omega
+      · simp only [List.mem_singleton] at ha; subst ha; simp only; omega
+
+/-- No overlap. Says: boxes with sizes that are not negative, placed with a space
+between them that is not negative, do not overlap: each ends at or before the start of
+every later one. Does not say: anything for boxes with negative outer sizes (negative
+margins larger than the box), which may overlap by design. -/
+theorem place_pairwise (start between : Int) (outers : List Int) (hb : 0 ≤ between)
+    (hw : ∀ w ∈ outers, 0 ≤ w) :
+    (place start between outers).Pairwise (fun a b => a.1 + a.2 ≤ b.1) := by
+  unfold place
+  exact placeLoop_pairwise between hb outers start #[] hw (by simp) (by simp)
+
+theorem placeLoop_snd (between : Int) (outers : List Int) : ∀ (pos : Int) (acc : Array (Int × Int)),
+    (placeLoop between pos acc outers).toList.map Prod.snd = acc.toList.map Prod.snd ++ outers := by
+  induction outers with
+  | nil => intro pos acc; simp [placeLoop]
+  | cons w rest ih => intro pos acc; simp [placeLoop, ih]
+
+/-- Lemma. Says: `place` keeps the sizes, in order: one position per box. -/
+theorem place_snd (start between : Int) (outers : List Int) :
+    (place start between outers).map Prod.snd = outers := by
+  simp [place, placeLoop_snd]
+
+/-! ### Cross-axis alignment of an item in its line (§9.6) -/
+
+/-- `align-self` values as the algorithm reads them. `baseline` is `start` until
+baselines are known to the caller. -/
+inductive Align where
+  | start | end_ | center | stretch | baseline
+  deriving Repr, BEq, DecidableEq
+
+/-- The offset of an item's margin box of cross size `outer` from the start of a line
+of cross size `line`. -/
+def alignOffset (a : Align) (line outer : Int) : Int :=
+  match a with
+  | .start | .stretch | .baseline => 0
+  | .end_ => line - outer
+  | .center => (line - outer) / 2
+
+/-- Containment. Says: an item no larger than its line lies inside the line. -/
+theorem alignOffset_within (a : Align) (line outer : Int) (h : outer ≤ line) :
+    0 ≤ alignOffset a line outer ∧ alignOffset a line outer + outer ≤ line := by
+  unfold alignOffset
+  cases a <;> simp only
+  all_goals first
+    | omega
+    | (have h1 := Int.ediv_nonneg (by omega : 0 ≤ line - outer) (by omega : (0 : Int) ≤ 2)
+       have h2 := Int.ediv_le_self 2 (by omega : 0 ≤ line - outer)
+       omega)
+
+#guard justify .spaceBetween 90 4 == (0, 30)
+#guard justify .spaceAround 80 4 == (10, 20)
+#guard justify .spaceEvenly 100 4 == (20, 20)
+#guard justify .center (-10) 2 == (-5, 0)
+#guard justify .spaceAround (-10) 2 == (0, 0)
+#guard place 5 10 [20, 30, 0] == [(5, 20), (35, 30), (75, 0)]
+#guard alignOffset .center 100 40 == 30 && alignOffset .end_ 100 40 == 60
+
+end L4Factoidal.Rendering.Flex
