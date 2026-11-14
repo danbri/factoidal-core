@@ -1,0 +1,3 @@
+body{margin:0;font:14px/1.4 sans-serif}
+.box{display:flex;flex-wrap:wrap;gap:4px;padding:8px}
+.cell{width:240px;padding:4px;border:1px solid #ccc}

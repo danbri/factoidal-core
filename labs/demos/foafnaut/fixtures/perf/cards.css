@@ -1,0 +1,35 @@
+:root{--gap:16px;--radius:10px}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.45 system-ui,sans-serif;color:#1d1d1f}
+.shell{display:grid;grid-template-columns:220px minmax(0,1fr);grid-template-rows:auto 1fr;grid-template-areas:"top top" "filters grid";min-height:100vh}
+.top{grid-area:top;display:flex;align-items:center;gap:24px;padding:12px 24px;border-bottom:1px solid #e3e3e3}
+.tabs{display:flex;gap:8px;flex:1}
+.tab{padding:6px 12px;border-radius:999px;text-decoration:none;color:inherit}
+.tab.active{background:#1d1d1f;color:#fff}
+.filters{grid-area:filters;display:flex;flex-direction:column;gap:8px;padding:16px}
+.grid{grid-area:grid;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:var(--gap);padding:var(--gap);align-content:start}
+.card{display:flex;flex-direction:column;border:1px solid #e3e3e3;border-radius:var(--radius);overflow:hidden;background:#fff}
+.card.featured{grid-column:span 2;flex-direction:row}
+.card.featured .thumb{width:45%;aspect-ratio:auto}
+.thumb{aspect-ratio:16/9;background:hsl(210 40% 80%)}
+.hue0{background:hsl(0 45% 78%)}
+.hue1{background:hsl(30 45% 78%)}
+.hue2{background:hsl(60 45% 78%)}
+.hue3{background:hsl(90 45% 78%)}
+.hue4{background:hsl(120 45% 78%)}
+.hue5{background:hsl(150 45% 78%)}
+.hue6{background:hsl(180 45% 78%)}
+.hue7{background:hsl(210 45% 78%)}
+.hue8{background:hsl(240 45% 78%)}
+.hue9{background:hsl(270 45% 78%)}
+.hue10{background:hsl(300 45% 78%)}
+.hue11{background:hsl(330 45% 78%)}
+.card-title{margin:12px 12px 4px;font-size:17px}
+.card-text{margin:0 12px;flex:1;color:#555}
+.meta{display:flex;flex-wrap:wrap;gap:6px;padding:8px 12px}
+.tag{font-size:12px;padding:2px 8px;border-radius:999px;background:#f0f0f3}
+.actions{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 12px 12px;margin-top:auto}
+.button{flex:1;text-align:center;padding:6px 10px;border:1px solid #c9c9cf;border-radius:8px;background:#fff;font:inherit;text-decoration:none;color:inherit}
+.button.primary{background:#0a63d8;border-color:#0a63d8;color:#fff}
+.card:hover{box-shadow:0 2px 8px rgb(0 0 0/.12)}
+@media (max-width:700px){.shell{grid-template-columns:1fr;grid-template-areas:"top" "grid"}.filters{display:none}.card.featured{grid-column:auto;flex-direction:column}}

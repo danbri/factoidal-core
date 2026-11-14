@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>DOM loop fixture</title><link rel="stylesheet" href="domloop.css"></head><body><div id="root"></div><script>
+const root = document.getElementById("root");
+let calls = 0;
+const frag = document.createDocumentFragment();
+for (let i = 0; i < 2000; i++) {
+  const el = document.createElement(i % 3 ? "span" : "div");
+  el.className = "n k" + (i % 10);
+  el.setAttribute("data-i", String(i));
+  el.textContent = "item " + i;
+  frag.appendChild(el);
+  calls += 5;
+}
+root.appendChild(frag); calls++;
+const hits = root.querySelectorAll(".k3, .k7"); calls++;
+for (const el of hits) { el.classList.add("hit"); calls++; }
+let len = 0;
+for (let el = root.firstElementChild; el; el = el.nextElementSibling) { len += el.getAttribute("data-i").length; calls += 2; }
+const all = root.children;
+for (let i = all.length - 1; i >= 0; i -= 2) { all[i].remove(); calls++; }
+console.log("perf-fixture-done " + JSON.stringify({ domCalls: calls, left: root.children.length, len }));
+</script></body></html>
