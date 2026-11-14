@@ -121,6 +121,35 @@ earlier queued request for the same name waits (no overtaking); `ifAvailable` is
 once and never queued; `steal` drops the held locks of its name and is granted alone. `query()` answers the
 held and pending lists of the caller's key only.
 
+### File pickers
+
+`showOpenFilePicker`, `showSaveFilePicker` and `showDirectoryPicker` (File System Access) check their options
+in Lean (`ClientStorage/Picker.lean`, `web_api` op 201 command `picker`): every accepted MIME type parses by
+`WHATWG.MimeType.parse` and has no parameters, every suffix is a valid suffix (starts with `.`, does not end
+with `.`, at most 16 code points of ASCII alphanumerics, `+`, `.`), `excludeAcceptAllOption` needs an accepted
+type, `startIn` is a well-known directory or a handle, `id` is a valid path id. A malformed call is a
+`TypeError`; a well-formed one is refused with `SecurityError` (no transient activation is modelled). No host
+file or directory is ever handed to a page (`answer_never_ok`).
+
+### Storage buckets
+
+`navigator.storageBuckets` (`ClientStorage/Buckets.lean`, `web_api` op 205): the buckets of a storage key,
+names checked (`validName`), listed in code point order (`op_sorted`), each with a generation so that an object
+of a deleted bucket answers `UnknownError` even after its name is reused (`delete_unknown`). `persisted()` is
+false; `durability()` and `expires()` answer what was given. A bucket's own `indexedDB`, `caches` and
+`getDirectory()` are not provided yet (`NotSupportedError`): the storage key would gain the bucket name, so the
+partition theorems would carry over unchanged.
+
+### Cookie Store
+
+`cookieStore` (`ClientStorage/CookieStore.lean`, `web_api` op 204; windows in secure contexts) reads and
+writes the one jar of `document.cookie` (`Net.Cookies`) through that module's own steps: `admit`, `store`
+(proved to be `document.cookie`'s storage step: `setFromScript_store`), `visibleCookies`. The host is the
+session's page origin, never an argument. The checks of "set a cookie" (names, values, prefixes, domain,
+path, sizes) and of the `url` option are Lean's. A write answers the changes the document sees (`changes`),
+fired as a `CookieChangeEvent`. Not modelled: `SameSite`, `Partitioned`, domain cookies (the jar is host-only),
+change events for writes by `document.cookie` or HTTP.
+
 ## Proved, tested only, open
 
 Proved (Lean 4.33.1, no `sorry`, axioms only `propext`, `Classical.choice`, `Quot.sound`; each theorem's doc
@@ -146,6 +175,14 @@ comment has its "Says" and "Does not say"):
 - Web Locks: `op_excl` (every command keeps mutual exclusion: any two held locks are of different names or
   both shared), `settle_excl`, `settleStep_no_overtake`, `ifAvailable_no_wait`, `steal_alone`,
   `Locks.opFor_noninterference`.
+
+- File pickers: `answer_refuses`, `answer_never_ok`, `valid_security`, `invalid_type`, `validSuffix_spec`,
+  `validId_length`.
+- Storage buckets: `validName_spec`, `open_mem`, `delete_not_mem`, `delete_unknown`, `insert_sorted`,
+  `op_sorted`, `Buckets.opFor_noninterference`.
+- Cookie Store: `setFromScript_store`, `store_keeps`, `set_keeps_host` (a set never adds a cookie for another
+  host), `read_host` (a read answers only the page's host's cookies, never `HttpOnly`), `changes_sub`,
+  `set_refuses_eq`.
 
 Tested only (`#guard`):
 
@@ -200,7 +237,8 @@ No timing was measured: the engine was not built locally (cloud check only).
 
 ## Not done in this change
 
-The Cookie Store API (op 204) and storage buckets are not started.
+A bucket's own storage (IndexedDB, CacheStorage, file system) is not routed to the bucket. The Cache API is
+not started.
 
 ## Questions for the owner
 
