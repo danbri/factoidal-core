@@ -17135,6 +17135,10 @@
       watching = true;
       lightDismiss();
       const sweep = () => { for (const k of [...showing]) { if (!showing.has(k)) continue; const o = wrap(k); if (!o.isConnected) hidePop(o, false, null); else if (kindOf(o) !== shownKind.get(k)) hidePop(o, true, null); } };
+      // the `popover` IDL setter writes the attribute through Lean's reflection (no setAttr
+      // call): the change steps run after it too
+      const d = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'popover');
+      if (d && d.set) Object.defineProperty(HTMLElement.prototype, 'popover', { ...d, set(v) { d.set.call(this, v); if (showing.size) sweep(); } });
       for (const k of ['remove', 'replace', 'setText', 'setAttr', 'removeAttr']) {
         const f = n[k];
         n[k] = (...a) => { const r = f.apply(n, a); if (showing.size) sweep(); return r; };
