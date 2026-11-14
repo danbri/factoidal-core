@@ -2056,7 +2056,8 @@ animation and transition longhands of a node; 25 the text of the document's shee
 the computed text of "property U+0000 value" in the node's style; 28 the elements whose
 rules or `style` attribute declare an animation or a transition, as node numbers; 29 the
 computed text of the property named; 26 the declarations of the node's rules and `style`
-attribute as one text, or with "names" the longhands they declare. -/
+attribute as one text, or with "names" the longhands they declare, with "rules" the
+rules' declarations alone, with "style" the longhands of the `style` attribute. -/
 def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts.Page.Measure := fun dom width height overrides carry =>
   let request := withAnimated (layoutRequest request) overrides
   let held := heldNamed h ((namedImages request).toOption.getD [])
@@ -2182,8 +2183,11 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
       match styled.get with
       | .ok view =>
         if element node && dom.connected node then
-          -- with "names": the declared longhands; else the declarations as one text
+          -- with "names": the declared longhands; "rules": the declarations of the rules alone;
+          -- "style": the longhands of the `style` attribute; else the declarations as one text
           some (if q == "names" then "\x00".intercalate (Rendering.Animation.Computed.declaredNames view node)
+            else if q == "rules" then Rendering.Animation.Computed.ruleDeclarationText view node
+            else if q == "style" then Rendering.Animation.Computed.styleAttributeText view node
             else Rendering.Animation.Computed.declarationText view node)
         else some ""
       | .error _ => some ""

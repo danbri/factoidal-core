@@ -90,7 +90,9 @@ def computeIn (index : Std.HashMap String Nat) (v : ComputedGeneric.View) (id : 
     | _, _ => none
 
 /-- The longhands (and custom properties) that the rules matching element `id` and its
-`style` attribute declare, each once. -/
+`style` attribute declare, each once. The animated values of the view are not
+declarations of the element (`CSS.withAnimated` gives them origins 2 and 3): they are left
+out. -/
 def declaredNames (v : ComputedGeneric.View) (id : Nat) : List String := Id.run do
   let mut out : Array String := #[]
   let add := fun (out : Array String) (name : String) =>
@@ -98,7 +100,8 @@ def declaredNames (v : ComputedGeneric.View) (id : Nat) : List String := Id.run 
     if CssValues.isCustom p then (if out.contains p then out else out.push p)
     else if (CssValues.lookup p).isNone then out
     else (Css.longhandsOf p).foldl (fun o l => if o.contains l then o else o.push l) out
-  for (_, rule, _) in v.matchesOf id do
+  for (origin, rule, _) in v.matchesOf id do
+    if origin ≥ 2 then continue
     for d in rule.declarations do out := add out d.property
   for d in CssValues.Block.parse (CSS.attrValue (v.dom.get id) "style") do out := add out d.name
   return out.toList
@@ -108,14 +111,60 @@ rules that match it, in order, and its `style` attribute. Two style changes with
 text give the element the same declared values, so only a change of this text makes the
 engine compare the element's values outside the layout profile (a page whose every
 element has a transition pays this text, not a cascade, for each element). -/
-def declarationText (v : ComputedGeneric.View) (id : Nat) : String := Id.run do
+def ruleDeclarationText (v : ComputedGeneric.View) (id : Nat) : String := Id.run do
   let mut out := ""
   for (origin, rule, _) in v.matchesOf id do
+    -- an animated value is not a declaration of the element: with them in the text, the
+    -- style with animated values would never compare equal to the style without
+    if origin ≥ 2 then continue
     out := out ++ toString origin ++ "{"
     for d in rule.declarations do
       out := out ++ d.property ++ ":" ++ d.value ++ (if d.important then "!;" else ";")
     out := out ++ "}"
-  return out ++ CSS.attrValue (v.dom.get id) "style"
+  return out
+
+/-- `ruleDeclarationText` with the `style` attribute after it. -/
+def declarationText (v : ComputedGeneric.View) (id : Nat) : String :=
+  ruleDeclarationText v id ++ CSS.attrValue (v.dom.get id) "style"
+
+/-- The declarations of the element's `style` attribute as longhands with their values
+(and importance), in `Css.cascadedText` form. -/
+def styleAttributeText (v : ComputedGeneric.View) (id : Nat) : String :=
+  Css.cascadedText ((CssValues.Block.parse (CSS.attrValue (v.dom.get id) "style")).map fun d =>
+    (d.name, if d.important then d.value ++ "!" else d.value))
+
+/-- The longhands that two `style` attributes (`styleAttributeText`) declare differently:
+in one and not the other, or with another value (the first value of a name, as `lookup`
+reads it). -/
+def styleAttributeDiff (before after : String) : List String :=
+  let a := Css.ofCascadedText before
+  let b := Css.ofCascadedText after
+  ((a.map (·.1)) ++ (b.map (·.1))).eraseDups.filter fun k => a.lookup k != b.lookup k
+
+/-- A longhand whose change can change the computed value of another property of the
+element: the font (font-relative lengths), the colour (`currentcolor`), the line height,
+the flow, the zoom, a custom property (`var()`). A change of one of these in a `style`
+attribute is not a change of that one property alone. -/
+def reachesOthers (name : String) : Bool :=
+  CssValues.isCustom name || name.startsWith "font" || name == "color" || name == "line-height" ||
+    name == "direction" || name == "writing-mode" || name == "text-orientation" || name == "zoom" ||
+    name == "color-scheme"
+
+-- two attributes that differ in one declaration; the same; one more declaration
+#guard styleAttributeDiff (Css.cascadedText [("rotate", "10deg"), ("width", "3px")]) (Css.cascadedText [("rotate", "20deg"), ("width", "3px")]) == ["rotate"]
+#guard styleAttributeDiff (Css.cascadedText [("rotate", "10deg")]) (Css.cascadedText [("rotate", "10deg")]) == []
+#guard styleAttributeDiff (Css.cascadedText [("rotate", "10deg")]) (Css.cascadedText [("rotate", "10deg"), ("opacity", "0")]) == ["opacity"]
+#guard styleAttributeDiff (Css.cascadedText [("rotate", "10deg"), ("opacity", "0")]) "" == ["rotate", "opacity"]
+#guard reachesOthers "font-size" && reachesOthers "--x" && !reachesOthers "rotate"
+
+/-- Kind: soundness of the narrowing. Says: a longhand that the two attributes declare
+alike (with one value, or not at all) is never in their difference. Does not say: that
+the computed value of such a longhand is the same in the two styles (another declaration
+may reach it: `reachesOthers`). -/
+theorem styleAttributeDiff_same (before after k : String)
+    (h : (Css.ofCascadedText before).lookup k = (Css.ofCascadedText after).lookup k) :
+    k ∉ styleAttributeDiff before after := by
+  simp [styleAttributeDiff, h]
 
 /-! ## Tests: styles again for part of the tree (`CSS.restyleWith`)
 
