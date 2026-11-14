@@ -200,6 +200,11 @@ private def paddingOf (html css : String) : Option (List Float) :=
 #guard (styleAt pageT ".a { font-size: 30px; font-family: Foo } p { font-size: 10px; font-family: Bar } #t { font: inherit }").map
   (fun s => (s.fontSize, s.fontFamily)) == some (30, "Foo")
 #guard (styleAt "<div><h1 id=t>x</h1></div>" "h1 { font-size: inherit }").map (·.fontSize) == some 16
+-- the `font` shorthand sets the size, the family and the line height
+#guard (styleAt pageT "#t { font: xx-small serif }").map (fun s => (s.fontSize, s.fontFamily)) == some (9, "serif")
+#guard (styleAt pageT "#t { font: italic bold 12px/30px Georgia, serif }").map (fun s => (s.fontSize, s.lineHeight)) ==
+  some (12, 30)
+#guard (styleAt pageT ".a { font: 20px/2 Foo } #t { font-size: 10px }").map (fun s => (s.fontSize, s.lineHeight)) == some (10, 20)
 #guard (styleAt "<div><h1 id=t>x</h1></div>" "h1 { display: inherit }").map (fun s => reprStr s.display) ==
   (styleAt "<div><p id=t>x</p></div>" "").map (fun s => reprStr s.display)
 -- a page with no custom property has no map

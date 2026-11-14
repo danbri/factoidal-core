@@ -438,6 +438,15 @@ def expandSides (property value : String) (important : Bool) : List Declaration 
     | _, _ => []
   (names.zip each).map fun (name, v) => ⟨name,v,important⟩
 
+/-- The longhands of a `font` shorthand that this profile has (size, family, line height),
+each with its canonical specified value; none when the value is not a `font` value or is a
+system font. -/
+def fontLonghands (value : String) (important : Bool) : List Declaration :=
+  match CssValues.expand "font" value with
+  | some ls => ["font-size", "font-family", "line-height"].filterMap fun n =>
+      (ls.lookup n).map fun v => (⟨n, v, important⟩ : Declaration)
+  | none => []
+
 /-- The declarations of this profile for declarations as written (`SheetReader.Decl`):
 side shorthands as their longhands (`expandSides`), `background` as the colour, the layout
 shorthands (`flex`, `flex-flow`, `gap`, `place-*`) as their longhands, so the cascade
@@ -457,6 +466,12 @@ def declarationsOf (ds : List SheetReader.Decl) : List Declaration :=
         ["inherit","initial","unset","revert","revert-layer"].contains (trim d.value).toLower then
       -- a CSS-wide keyword on the shorthand is that keyword on each longhand the profile has
       ["font-size","font-family","line-height"].map (fun name => (⟨name,d.value,d.important⟩ : Declaration)) ++ acc
+    else if key == "font" && !CssVars.mentions d.value then
+      -- the `font` shorthand (CSS Fonts 4 §2.8) as the longhands this profile has; a system
+      -- font (`caption` ...) is kept whole and not read
+      match fontLonghands d.value d.important with
+      | [] => whole :: acc
+      | ls => ls ++ acc
     else match layoutShorthand key d.value with
       | some longhands => longhands.map (fun (k,v) => (⟨k,v,d.important⟩ : Declaration)) ++ acc
       | none => whole :: acc) []

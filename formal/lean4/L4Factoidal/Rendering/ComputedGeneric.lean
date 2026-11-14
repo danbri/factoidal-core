@@ -190,6 +190,11 @@ def computedLonghand (v : View) : Nat → Nat → String → String
       | some pid => computedLonghand v fuel pid p
       | none => initial ()
     let default := fun (_ : Unit) => if inherited then fromParent () else initial ()
+    match (if p == "font-size" then v.styles[id]? else none) with
+    -- the computed font size is the layout profile's: an absolute length for every form
+    -- (keywords, `larger`, `em`, percentages, the `font` shorthand)
+    | some style => ComputedValues.px style.fontSize
+    | none =>
     match cascaded v id p also with
     | none => default ()
     | some value =>
@@ -200,10 +205,14 @@ def computedLonghand (v : View) : Nat → Nat → String → String
         let cvs := CssValues.CV.parse value
         if CssValues.hasFn "var" 32 cvs then
           match substitute (fun name => computedLonghand v fuel id name) 16 cvs with
-          | none => default ()
+          -- a custom property invalid at computed-value time has the guaranteed-invalid
+          -- value (CSS Variables 1 §3.1), not its parent's
+          | none => if custom then "" else default ()
           | some cvs' =>
             let text := CssValues.rawText cvs'
-            if custom then text
+            -- a value past the length limit is invalid (`CssVars.maxValueBytes`)
+            if text.utf8ByteSize > CssVars.maxValueBytes then (if custom then "" else default ())
+            else if custom then text
             else
               match CssValues.specified p text with
               | some s =>
