@@ -210,10 +210,35 @@ def pseudoNames : List String :=
    "file-selector-button", "target-text", "spelling-error", "grammar-error", "details-content", "checkmark",
    "picker-icon", "scroll-marker", "column"]
 
+/-- Whether property `p` applies to pseudo-element `pe` (CSS Pseudo-Elements 4 §2.3, §2.5,
+§3.1, §4.2): `::first-line` and `::placeholder` take the font, colour, background and text
+decoration properties and the like; `::first-letter` those and the box properties;
+`::marker` the font and colour and a few more; the highlight pseudo-elements a handful of
+paint properties. A declaration of another property there is ignored. -/
+def appliesToPseudo (pe p : String) : Bool :=
+  let pre := fun (xs : List String) => xs.any fun x => p.startsWith x
+  let lineProps := CssValues.isCustom p || pre ["font", "background", "text-decoration", "text-emphasis", "animation", "transition"] ||
+    ["color", "opacity", "word-spacing", "letter-spacing", "text-justify", "text-shadow", "text-transform",
+     "text-underline-position", "text-underline-offset", "vertical-align", "line-height", "ruby-position", "all"].contains p
+  match pe with
+  | "first-line" | "placeholder" => lineProps
+  | "first-letter" => lineProps || pre ["margin", "padding", "border", "box-shadow", "float", "inset", "corner"]
+  | "marker" => CssValues.isCustom p || pre ["font", "animation", "transition"] ||
+      ["color", "white-space", "white-space-collapse", "text-wrap-mode", "text-combine-upright", "unicode-bidi",
+       "direction", "content", "line-height", "all"].contains p
+  | "selection" | "target-text" | "spelling-error" | "grammar-error" =>
+    CssValues.isCustom p || pre ["text-decoration"] ||
+      ["color", "background-color", "text-shadow", "stroke-color", "fill-color", "stroke-width", "all"].contains p
+  | _ => true
+
+#guard appliesToPseudo "first-line" "font-size" && !appliesToPseudo "first-line" "margin-left"
+#guard appliesToPseudo "first-letter" "margin-left" && !appliesToPseudo "marker" "background-color"
+
 /-- The cascaded value of property `p` on pseudo-element `pe` of element `id` (CSS
 Pseudo-Elements 4 §3): the declarations of the rules whose selectors name `pe` and match the
 element, in the order of the cascade (`winning`). -/
 def cascadedPseudo (v : View) (id : Nat) (pe : String) (p : String) : Option String :=
+  if !appliesToPseudo pe p then none else
   let names := "all" :: coveringNames p
   let cands := (v.rules.zipIdx).foldl (fun acc (rule, order) =>
     match rule.selectors.find? (fun sel => match sel.complex with
