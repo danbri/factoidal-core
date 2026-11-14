@@ -14985,6 +14985,9 @@
 
     // ---- popovers ----
     const showing = new Set(), modal = new Set();
+    // the popover state each showing popover was shown with, and those being hidden (their
+    // "popover showing or hiding" flag: a hide inside a hide fires no events)
+    const shownKind = new Map(), hidingNow = new Set();
     let watching = false;
     const kindOf = el => (el instanceof HTMLElement ? el.popover : null);
     // "Check popover validity" (HTML §6.12.1)
@@ -15003,32 +15006,45 @@
       if (!showing.has(id)) return;
       // the auto popovers shown after this one close first
       if (kindOf(el) !== 'manual') { const order = [...showing]; for (let i = order.length - 1; i > order.indexOf(id); i--) { const o = wrap(order[i]); if (showing.has(order[i]) && kindOf(o) !== 'manual') hidePop(o, fire, null); } }
-      if (fire) { fireToggle(el, 'beforetoggle', 'open', 'closed', false, source); if (!showing.has(id)) return; }
-      showing.delete(id); setState(id, 1, false);
+      if (hidingNow.has(id)) fire = false;
+      if (fire) {
+        hidingNow.add(id);
+        try { fireToggle(el, 'beforetoggle', 'open', 'closed', false, source); } finally { hidingNow.delete(id); }
+        if (!showing.has(id)) return;
+      }
+      showing.delete(id); shownKind.delete(id); setState(id, 1, false);
       if (fire) queueToggle(el, 'open', 'closed', source);
     };
-    // a showing popover that leaves the document or loses its attribute hides, with no events
+    // a showing popover that leaves the document hides with no events (the popover removing
+    // steps); one whose `popover` attribute changes state, or goes, hides with events (the
+    // attribute change steps, HTML §6.12)
     const watch = () => {
       if (watching) return;
       watching = true;
-      const sweep = () => { for (const k of [...showing]) { const o = wrap(k); if (!o.isConnected || kindOf(o) === null) hidePop(o, false, null); } };
+      const sweep = () => { for (const k of [...showing]) { if (!showing.has(k)) continue; const o = wrap(k); if (!o.isConnected) hidePop(o, false, null); else if (kindOf(o) !== shownKind.get(k)) hidePop(o, true, null); } };
       for (const k of ['remove', 'replace', 'setText', 'setAttr', 'removeAttr']) {
         const f = n[k];
         n[k] = (...a) => { const r = f.apply(n, a); if (showing.size) sweep(); return r; };
       }
     };
-    const showPop = (el, source) => {
-      if (!valid(el, false, true)) return;
+    // "show popover": a type changed by an event handler stops it (InvalidStateError when the
+    // caller throws: showPopover; not for an invoker button)
+    const showPop = (el, source, throws = true) => {
+      if (!valid(el, false, throws)) return;
+      const kind0 = kindOf(el);
+      const typeChanged = () => { if (kindOf(el) === kind0) return false; if (throws) throw new DOMException('The popover type changed while it was being shown.', 'InvalidStateError'); return true; };
       if (!fireToggle(el, 'beforetoggle', 'closed', 'open', true, source)) return;
-      if (!valid(el, false, true)) return;
+      if (!valid(el, false, throws)) return;
+      if (typeChanged()) return;
       const id = nodeId(el);
       if (kindOf(el) !== 'manual') {
         // an auto popover closes the other auto popovers, except those it is inside (by the tree, or by its invoker)
         for (const k of [...showing]) { const o = wrap(k); if (showing.has(k) && kindOf(o) !== 'manual' && !o.contains(el) && !(source && o.contains(source))) hidePop(o, true, null); }
-        if (!valid(el, false, true)) return;
+        if (typeChanged()) return;
+        if (!valid(el, false, throws)) return;
       }
       watch();
-      showing.add(id); setState(id, 1, true);
+      showing.add(id); shownKind.set(id, kindOf(el)); setState(id, 1, true);
       queueToggle(el, 'closed', 'open', source);
     };
     const sourceOf = options => (options !== null && typeof options === 'object' && options.source !== undefined && options.source !== null ? options.source : null);
@@ -15103,8 +15119,8 @@
         state(e).trusted = true;
         if (!dispatch(target, e) || command.startsWith('--')) return;
         const id = nodeId(target), isPop = kindOf(target) !== null;
-        if (command === 'toggle-popover' && isPop) { if (showing.has(id)) hidePop(target, true, el); else showPop(target, el); }
-        else if (command === 'show-popover' && isPop) { if (!showing.has(id)) showPop(target, el); }
+        if (command === 'toggle-popover' && isPop) { if (showing.has(id)) hidePop(target, true, el); else showPop(target, el, false); }
+        else if (command === 'show-popover' && isPop) { if (!showing.has(id)) showPop(target, el, false); }
         else if (command === 'hide-popover' && isPop) { if (showing.has(id)) hidePop(target, true, el); }
         else if (target instanceof D) {
           if (command === 'show-modal') { if (!target.hasAttribute('open')) openDialog(target, true, el); }
@@ -15118,7 +15134,7 @@
       const action = el.popoverTargetAction, id = nodeId(pop);
       if (action === 'show' && showing.has(id)) return;
       if (action === 'hide' && !showing.has(id)) return;
-      if (showing.has(id)) hidePop(pop, true, el); else showPop(pop, el);
+      if (showing.has(id)) hidePop(pop, true, el); else showPop(pop, el, false);
     };
   }
   // ==== end popover =======================================================================
