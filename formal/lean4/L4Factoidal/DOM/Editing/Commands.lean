@@ -133,6 +133,74 @@ theorem exec_unsupported (command value : String) (e : Ed) (h : isSupported (low
     (execCommand command value).run e = (false, e) := by
   simp [execCommand, h, StateT.run, pure, StateT.pure]
 
+/-- The `inputType` of the `input` event of a command (the editing draft's table, as
+browsers fill it: Input Events §4.1.3); "" for a command with none. -/
+def inputTypeOf (command : String) : String :=
+  match command with
+  | "backcolor" | "hilitecolor" => "formatBackColor"
+  | "bold" => "formatBold"
+  | "createlink" => "insertLink"
+  | "delete" => "deleteContentBackward"
+  | "fontname" => "formatFontName"
+  | "forecolor" => "formatFontColor"
+  | "forwarddelete" => "deleteContentForward"
+  | "indent" => "formatIndent"
+  | "inserthorizontalrule" => "insertHorizontalRule"
+  | "insertlinebreak" => "insertLineBreak"
+  | "insertorderedlist" => "insertOrderedList"
+  | "insertparagraph" => "insertParagraph"
+  | "inserttext" => "insertText"
+  | "insertunorderedlist" => "insertUnorderedList"
+  | "italic" => "formatItalic"
+  | "justifycenter" => "formatJustifyCenter"
+  | "justifyfull" => "formatJustifyFull"
+  | "justifyleft" => "formatJustifyLeft"
+  | "justifyright" => "formatJustifyRight"
+  | "outdent" => "formatOutdent"
+  | "removeformat" => "formatRemove"
+  | "strikethrough" => "formatStrikeThrough"
+  | "subscript" => "formatSubscript"
+  | "superscript" => "formatSuperscript"
+  | "underline" => "formatUnderline"
+  | _ => ""
+
+/-- The `data` of the `input` event of a command: the text, link or font name given, the
+colour as its resolved value (a CSS-wide keyword in lowercase), else none. -/
+def inputDataOf (command value : String) : Option String :=
+  match command with
+  | "inserttext" | "createlink" | "fontname" => some value
+  | "backcolor" | "hilitecolor" | "forecolor" =>
+    let l := lower (trimStr value)
+    if ["currentcolor", "inherit", "initial", "reset", "revert", "unset"].contains l then some l
+    else match colorCommandValue value with
+      | some v => (match parseColor v with
+        | some c => some c.text
+        | none => some value)
+      | none => some value
+  | _ => none
+
+/-- "Affected editing host": the innermost editing host that is an inclusive ancestor of
+the active range's start node and end node. -/
+def affectedHost (e : Ed) : Option NodeId :=
+  if !hasActive e then none
+  else
+    let r := activeOf e
+    (chain e.dom r.start.node).toList.reverse.find? fun a => isEditingHost e a && e.dom.isInclusiveAncestor a r.stop.node
+
+/-- `execCommand` with the `input` event it asks for: whether the action was taken, and
+for a command that is not a miscellaneous command, the editing host the event is fired
+at with its `inputType` and `data`. -/
+def execCommandWithEvent (command value : String) : M (Bool × Option (NodeId × String × Option String)) := do
+  let c := lower command
+  let host ← rd affectedHost
+  let ok ← execCommand command value
+  if !ok || miscCommands.contains c then return (ok, none)
+  -- the host after the action when the one before it is gone from the document
+  let host ← match host with
+    | some h => if (← rd fun e => detached e.dom h) then rd affectedHost else pure (some h)
+    | none => rd affectedHost
+  return (ok, host.map fun h => (h, inputTypeOf c, inputDataOf c value))
+
 def queryEnabled (command : String) : M Bool := do
   let command := lower command
   if !isSupported command then return false

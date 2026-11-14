@@ -823,7 +823,9 @@ def inlineAction (command value : String) : M (Option Bool) := do
   | "backcolor" | "forecolor" | "hilitecolor" =>
     match colorCommandValue value with
     | some v => setSelectionValue command (some v); return some true
-    | none => return some false
+    -- a value that is not a colour changes nothing; browsers (and the WPT expectations)
+    -- answer true where the draft answers false
+    | none => return some true
   | "bold" =>
     let on ← inlineQueryState "bold"
     setSelectionValue "bold" (some (if on then "normal" else "bold")); return some true

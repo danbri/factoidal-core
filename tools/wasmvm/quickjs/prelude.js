@@ -965,7 +965,7 @@
         dispatch(this, e);
       } finally { clicking.delete(this); }
     }
-    focus() {}
+    focus() { n.query(nodeId(this), 177, 'f'); }
     blur() {}
     get offsetWidth() { return Math.round(layoutOf(this)[2]); }
     get offsetHeight() { return Math.round(layoutOf(this)[3]); }
@@ -4254,7 +4254,15 @@
     execCommand(commandId, showUI = false, value = '') {
       needArgs(arguments, 1, 'execCommand');
       if (this !== document) return false;
-      return selChanging(() => editQuery(175, String(commandId) + '\u0000' + String(value)) === '1')();
+      const r = selChanging(() => editQuery(175, String(commandId) + '\u0000' + String(value)))().split('\u0000');
+      if (r[0] !== '1') return false;
+      if (r.length > 2) {
+        // the `input` event of the command (the draft's step 7; no `beforeinput`, as browsers)
+        const e = new InputEvent('input', { bubbles: true, cancelable: false, inputType: r[2], data: r.length > 3 ? r.slice(3).join('\u0000') : null });
+        state(e).trusted = true;
+        dispatch(wrap(Number(r[1])), e);
+      }
+      return true;
     },
     queryCommandEnabled(commandId) { needArgs(arguments, 1, 'queryCommandEnabled'); return this === document && editQuery(176, 'e\u0000' + String(commandId)) === '1'; },
     queryCommandIndeterm(commandId) { needArgs(arguments, 1, 'queryCommandIndeterm'); return this === document && editQuery(176, 'i\u0000' + String(commandId)) === '1'; },
@@ -4266,6 +4274,8 @@
     get() { return this === document ? editQuery(177, 'd') : 'off'; },
     set(v) { v = String(v).toLowerCase(); if (this === document && (v === 'on' || v === 'off')) n.query(0, 177, v === 'on' ? 'd1' : 'd0'); },
     configurable: true, enumerable: true });
+  if (!('dataTransfer' in InputEvent.prototype)) Object.defineProperty(InputEvent.prototype, 'dataTransfer', { get() { return null; }, configurable: true, enumerable: true });
+  if (!('getTargetRanges' in InputEvent.prototype)) define(InputEvent.prototype, 'getTargetRanges', function getTargetRanges() { return []; });
   if (!('contentEditable' in HTMLElement.prototype)) Object.defineProperty(HTMLElement.prototype, 'contentEditable', {
     get() { const r = n.query(nodeId(this), 177, 'c'); return typeof r === 'string' ? r : 'inherit'; },
     set(v) {

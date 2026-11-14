@@ -166,8 +166,11 @@ def selectionListState (e : Ed) : String :=
     let hasUl := nodes.any fun n => inList "ul" n || has "ul" n
     if hasOl && hasUl then "mixed" else if hasOl then "mixed ol" else if hasUl then "mixed ul" else "none"
 
+/-- The "formattable block names". The draft lists address, dd, div, dt, h1 to h6, p and
+pre; browsers (and the WPT expectations) also take the sectioning and grouping blocks. -/
 def formattableBlockNames : List String :=
-  ["address", "dd", "div", "dt", "h1", "h2", "h3", "h4", "h5", "h6", "p", "pre"]
+  ["address", "dd", "div", "dt", "h1", "h2", "h3", "h4", "h5", "h6", "p", "pre",
+   "article", "aside", "blockquote", "dl", "footer", "header", "hgroup", "main", "nav", "section"]
 
 /-- The block type `formatBlock` reports for a node: the name of its nearest formattable
 block ancestor in its editing host, or "". -/

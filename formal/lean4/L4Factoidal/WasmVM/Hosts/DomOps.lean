@@ -722,7 +722,11 @@ left.
 "v" (value), U+0000, the command; "1" or "0", or the value.
 
 177 on node `id`: `q` "c" the `contentEditable` state of the element; "i" `isContentEditable`
-("1" or "0"); "d" the design mode ("on" or "off"); "d1" and "d0" set it. -/
+("1" or "0"); "d" the design mode ("on" or "off"); "d1" and "d0" set it; "f" `focus()` of
+an editing host (the selection moves into it).
+
+The answer of 175 for a command that fires `input` is "1", U+0000, the editing host, U+0000,
+the `inputType`, and U+0000 and the `data` when there is one. -/
 
 /-- The ops of `editOp`. -/
 def editOps : List Nat := [175, 176, 177]
@@ -797,7 +801,14 @@ def editOpM (sheet : String) (id op : Nat) (q : String) : Op String := do
   match op with
   | 175 =>
     match q.splitOn "\x00" with
-    | command :: rest => return b (← editRun sheet (L4Factoidal.DOM.Editing.execCommand command ("\x00".intercalate rest)))
+    | command :: rest =>
+      let (ok, ev) ← editRun sheet (L4Factoidal.DOM.Editing.execCommandWithEvent command ("\x00".intercalate rest))
+      match ev with
+      | some (host, inputType, data) =>
+        return b ok ++ "\x00" ++ toString host ++ "\x00" ++ inputType ++ (match data with
+          | some v => "\x00" ++ v
+          | none => "")
+      | none => return b ok
     | [] => return "0"
   | 176 =>
     match q.splitOn "\x00" with
@@ -821,6 +832,21 @@ def editOpM (sheet : String) (id op : Nat) (q : String) : Op String := do
     | "d" => return if s.edit.design then "on" else "off"
     | "d1" => set { s with edit := { s.edit with design := true } }; return ""
     | "d0" => set { s with edit := { s.edit with design := false } }; return ""
+    | "f" =>
+      -- `focus()` of an editing host: the selection moves into it (a caret at its start)
+      -- unless it is in it already
+      if id ≥ d.size || !L4Factoidal.DOM.Editing.isEditingHost ed id then return ""
+      let inside := match s.selection.bind fun k => (s.live.ranges[k]?).join with
+        | some r => d.isInclusiveAncestor id r.start.node
+        | none => false
+      if inside then return ""
+      let r : Rng := ⟨⟨id, 0⟩, ⟨id, 0⟩⟩
+      match s.selection with
+      | some k => setRange k r
+      | none =>
+        let rid ← newRange r
+        setSelection (some rid) 1
+      return ""
     | _ => throw (-2)
   | _ => throw (-2)
 
