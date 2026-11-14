@@ -140,6 +140,19 @@ def putCheck (q : Req) (status : String) (respHeaders : Headers) : Option String
 /-- `put` on the entries of one cache: the matching entries replaced by the new one, at the end. -/
 def putEntries (es : List Entry) (e : Entry) : List Entry := es.filter (fun x => !hits e.req {} x) ++ [e]
 
+/-- "Batch cache operations" (§5.4.10) step for `addAll`: two of the entries to put whose
+requests match each other (the earlier one's response headers deciding `Vary`): the batch is
+refused with `InvalidStateError`. -/
+def batchDup (es : List Entry) : Bool :=
+  (List.range es.length).any fun j => (es.take j).any fun e => hits (es.getD j default).req {} e
+
+/-- The entries of a `batchcheck` command: `n`, then for each a request (three fields) and its
+response's headers. -/
+def batchAt (a : Array Tok) : List Entry :=
+  (List.range (natAt a 1)).map fun i =>
+    let p0 := 2 + 4 * i
+    { req := reqAt a p0, respHeaders := headersOf (strAt a (p0 + 3)) }
+
 /-- One command on the shelf of a storage key.
 - `open n` (answers the cache's id), `has n`, `delete n` (the name: a `Cache` object of it
   keeps its entries), `names`;
@@ -189,6 +202,7 @@ def op (s : Shelf) (a : Array Tok) : Shelf × List Tok :=
       let o := optsAt a 5
       let gone := es.filter (hits q o)
       (setCache s id (es.filter fun x => !hits q o x), ok [S (if gone.isEmpty then "0" else "1")])
+  | "batchcheck" => (s, if batchDup (batchAt a) then fail "InvalidStateError" else ok)
   | _ => (s, fail "NotSupportedError")
 
 /-- One command for the context whose storage key is `k`, on the in-memory shed. -/
@@ -214,6 +228,15 @@ theorem put_matches (es : List Entry) (q : Req) (rh : Headers) (blob : ByteArray
     { req := q, respHeaders := rh, blob } ∈ query (putEntries es { req := q, respHeaders := rh, blob }) (some q) o := by
   simp only [query, putEntries, List.mem_filter, List.mem_append, List.mem_singleton, true_or, or_true, true_and]
   exact matches_self q o rh blob hm hv
+
+/-- Kind: validity rule. Says: a batch with the same `GET` request twice (and no `Vary: *`
+on the first response) is a duplicate. -/
+theorem batchDup_twice (q : Req) (rh : Headers) (hm : q.method = "GET") (hv : (varyNames rh).contains "*" = false) :
+    batchDup [{ req := q, respHeaders := rh }, { req := q, respHeaders := rh }] = true := by
+  have h := matches_self q {} rh ByteArray.empty hm hv
+  simp only [batchDup, List.any_eq_true, List.mem_range]
+  refine ⟨1, by simp, ?_⟩
+  simpa using h
 
 /-- Kind: validity rule. Says: `put` refuses a request that is not `GET`. -/
 theorem putCheck_method (q : Req) (st : String) (rh : Headers) (hu : q.url.startsWith "http:" = true)
@@ -256,6 +279,11 @@ private def mt (u : String) (m := "GET") (qh := "") (is im iv : String := "0") :
   mt "https://e.com/v" (qh := "cookies:is-for-cookie"), mt "https://e.com/v", mt "https://e.com/v" (qh := "cookies:no"),
   mt "https://e.com/v" (iv := "1")] ==
   ["ok 1", "ok", "ok https://e.com/v GET cookies:is-for-cookie x", "ok", "ok", "ok https://e.com/v GET cookies:is-for-cookie x"]
+-- addAll: duplicates (also by fragment) refused; distinct URLs fine
+#guard run [["batchcheck", "2", "https://e.com/a", "GET", "", "", "https://e.com/a#x", "GET", "", ""],
+  ["batchcheck", "2", "https://e.com/a", "GET", "", "", "https://e.com/b", "GET", "", ""],
+  ["batchcheck", "2", "https://e.com/v", "GET", "x:1", "vary:x", "https://e.com/v", "GET", "x:2", ""]] ==
+  ["!InvalidStateError", "ok", "ok"]
 -- delete one entry; a deleted name keeps its cache for the objects that hold it; a new one of that name is empty
 #guard run [["open", "c"], put "https://e.com/a" "1", ["remove", "1", "https://e.com/a", "GET", "", "0", "0", "0"],
   ["remove", "1", "https://e.com/a", "GET", "", "0", "0", "0"], put "https://e.com/a" "1", ["delete", "c"],

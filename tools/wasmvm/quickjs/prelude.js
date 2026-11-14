@@ -10578,7 +10578,7 @@
           const id = idOf(this, 'Cache.matchAll');
           const has = request !== undefined;
           const q = has ? reqFields(reqOf(request, 'Cache.matchAll')) : ['', '', ''];
-          return Object.freeze(entries(call(['matchAll', id, has ? '1' : '0', ...q, ...optFields(options)], 'Cache.matchAll')).map(e => responseFrom(e[3])));
+          return entries(call(['matchAll', id, has ? '1' : '0', ...q, ...optFields(options)], 'Cache.matchAll')).map(e => responseFrom(e[3]));
         });
       }
       add(request) {
@@ -10601,7 +10601,16 @@
           if (rs.type === 'error' || rs.status < 200 || rs.status > 299 || rs.status === 206) throw new TypeError("Failed to execute 'addAll' on 'Cache': the response is not ok.");
           if ((hGet(headerState.get(rs.headers), 'vary') ?? '').split(',').some(v => v.trim() === '*')) throw new TypeError("Failed to execute 'addAll' on 'Cache': the response varies on '*'.");
           return res;
-        }))).then(rs => { for (let i = 0; i < reqs.length; i++) putOne(this, reqs[i], rs[i], 'Cache.addAll'); });
+        }))).then(rs => {
+          // two of the requests that match each other (given the responses' Vary): InvalidStateError (Lean's batch check)
+          const fields = [];
+          for (let i = 0; i < reqs.length; i++) {
+            const st = responses.get(rs[i]);
+            fields.push(...reqFields(reqs[i]), linesOf(st.type === 'opaque' ? [] : headerState.get(st.headers).list));
+          }
+          call(['batchcheck', String(reqs.length), ...fields], 'Cache.addAll');
+          for (let i = 0; i < reqs.length; i++) putOne(this, reqs[i], rs[i], 'Cache.addAll');
+        });
       }
       put(request, response) {
         const n = arguments.length;
@@ -10622,7 +10631,7 @@
           const id = idOf(this, 'Cache.keys');
           const has = request !== undefined;
           const q = has ? reqFields(reqOf(request, 'Cache.keys')) : ['', '', ''];
-          return Object.freeze(entries(call(['keys', id, has ? '1' : '0', ...q, ...optFields(options)], 'Cache.keys')).map(e => requestFrom(...e)));
+          return entries(call(['keys', id, has ? '1' : '0', ...q, ...optFields(options)], 'Cache.keys')).map(e => requestFrom(...e));
         });
       }
     }
