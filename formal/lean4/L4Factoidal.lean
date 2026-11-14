@@ -758,6 +758,7 @@ import L4Factoidal.MathML.StrictTests
 import L4Factoidal.MathML.Symbols
 import L4Factoidal.MathML.OpenMath
 import L4Factoidal.MathML.OpenMathTests
+import L4Factoidal.MathML.OpenMathStrict
 import L4Factoidal.MathML.CoreVocabulary
 import L4Factoidal.MathML.Intent
 import L4Factoidal.MathML.FromJson
