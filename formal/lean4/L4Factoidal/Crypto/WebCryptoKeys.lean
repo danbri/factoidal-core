@@ -1171,6 +1171,29 @@ theorem importKey_usages {n : String} {p : Args} {f : String} {d : ByteArray} {j
 #guard (normalizeSpec "encrypt" "AES-GCM").isOk == false
 #guard (normalizeSpec "generateKey" "aes-gcm").toOption == some ("AES-GCM", ["length:l!"])
 #guard (normalizeSpec "sign" "ML-DSA-44").isOk == false
+/-- Kind: security invariant (refused algorithms, by type and by case). Says: for a name that
+is not an algorithm this engine implements (`algOf?` answers `none`: AES, RSA, Ed448, X448,
+ML-DSA, ML-KEM, KMAC and every unknown name), `generateKey` answers an error and nothing
+else: no key is made and no random bytes are asked for. `generateRefusedErr` has type `Err`,
+not `Res`, so it cannot be a key. Does not say: which error (the order of the checks is
+tested by `#guard`s and WPT), nor anything of the implemented algorithms. -/
+theorem generateKey_refused (algName : String) (p : Args) (extractable : Bool) (us : List Usage) (rand : Rand)
+    (h : algOf? algName = none) :
+    generateKey algName p extractable us rand = .error (generateRefusedErr algName p us) := by
+  unfold generateKey
+  rw [h]
+  rfl
+
+/-- Kind: security invariant (refused algorithms). Says: for a name that is not an algorithm
+this engine implements, the import steps answer an error and nothing else: no key is made
+from the key data, whatever the format and the data. Does not say: which error. -/
+theorem importMade_refused (algName : String) (p : Args) (format : String) (data : ByteArray) (j : Args)
+    (extractable : Bool) (us : List Usage) (h : algOf? algName = none) :
+    importMade algName p format data j extractable us =
+      .error (importRefusedErr algName format data j extractable us) := by
+  unfold importMade
+  rw [h]
+
 #guard generateRefusedErr "AES-GCM" #[("length", "128".toUTF8)] [.sign] == .syntax
 #guard generateRefusedErr "AES-GCM" #[("length", "64".toUTF8)] [] == .operation
 #guard generateRefusedErr "AES-GCM" #[("length", "128".toUTF8)] [] == .syntax

@@ -5,6 +5,7 @@ import L4Factoidal.JS.Resolve
 import L4Factoidal.JS.Date
 import L4Factoidal.JS.NumFmt
 import L4Factoidal.JSON.Parser
+import L4Factoidal.JS.JsonText
 
 /-!
 # L4Factoidal.JS.Interp — the evaluator
@@ -5983,14 +5984,12 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
       pure (.obj (← alloc { proto := .null, kind := .proxy a0 a1, extensible := true }))
     | .jsonParse =>
       let s ← toStr n a0
-      match L4Factoidal.JSON.parseJsonText s with
+      -- §25.5.1 reads code units: a lone surrogate escape (`"\uD800"`, which RFC 8259's
+      -- strict parser refuses) is a string of that unit (`jsonParseText`: the strict parse
+      -- first, the escaped reading only when it fails; `jsonParseText_strict`).
+      match jsonParseText s with
       | .ok (j, _) => jsonToValue 100000 j
-      | .error e =>
-        -- §25.5.1 reads code units: a lone surrogate escape (`"\uD800"`, which RFC 8259's
-        -- strict parser refuses) is a string of that unit. Asked only when the strict parse fails.
-        match L4Factoidal.JSON.parseJsonText (Str.jsonLoneEscapes s) with
-        | .ok (j, _) => jsonToValue 100000 j
-        | .error _ => throwErr .syntax s!"Unexpected token in JSON at position {e.pos}"
+      | .error e => throwErr .syntax s!"Unexpected token in JSON at position {e.pos}"
     | .bufferCtor =>
       needNew "ArrayBuffer"
       let len := toIntegerOrInf (← toNum n a0)

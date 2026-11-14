@@ -767,6 +767,34 @@ theorem responseOf_no_set_cookie (t : Transfer) (a : Answer) (n : String × Stri
   · have := (List.mem_filter.mp (List.mem_filter.mp hn).1).2
     simpa using this
 
+/-- Kind: security theorem (CORS check, Fetch §4.9 steps 3 and 4). Says: for a request made
+with credentials (`withCredentials`, fetch `credentials: "include"`), an answer whose
+`Access-Control-Allow-Origin` is the wildcard `*` fails the check: a response is never shared
+with a credentialed request on a wildcard. Does not say: that the engine sends credentials
+(it sends none: no cookies, no HTTP authentication), nor anything of the preflight's method
+and header lists (`preflightOk` refuses their wildcards with credentials in its own text).
+The hypothesis `t.originValue ≠ "*"` holds for every origin (a serialized origin or
+`"null"`). -/
+theorem corsOk_credentials_wildcard (t : Transfer) (a : Answer) (hc : t.credentials = true)
+    (hw : (headerGet a.headers "access-control-allow-origin").map trimWs = some "*")
+    (ho : t.originValue ≠ "*") : corsOk t a = false := by
+  unfold corsOk
+  cases h : headerGet a.headers "access-control-allow-origin" with
+  | none => rfl
+  | some v =>
+    rw [h] at hw
+    simp only [Option.map_some, Option.some.injEq] at hw
+    have hne : ("*" == t.originValue) = false := by
+      simpa using Ne.symm ho
+    simp [hc, hw, hne]
+
+/-- Kind: security theorem (CORS check). Says: an answer with no `Access-Control-Allow-Origin`
+field never passes the check, with or without credentials. Does not say: anything of
+same-origin requests (the check is not asked for them, `onAnswer`). -/
+theorem corsOk_needs_header (t : Transfer) (a : Answer)
+    (h : headerGet a.headers "access-control-allow-origin" = none) : corsOk t a = false := by
+  simp [corsOk, h]
+
 /-- Kind: policy lemma (workers). Says: a dedicated worker's request policy is its owner's
 in everything but the origin: the same local, secure (mixed content) and `hostCors`
 settings, so `mayConnect` answers the same for a worker as for its owner. Does not say:
