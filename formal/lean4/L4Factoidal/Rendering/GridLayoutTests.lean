@@ -170,4 +170,10 @@ private def tracks (html extra id : String) : Option (String × String) := do
 -- an item with no line box: its baseline is its border box's bottom edge
 #guard box "<div id=c><div id=a></div><div id=b>B</div></div>" "#c{display:grid;grid-template-columns:50px 50px;align-items:baseline} #a{height:20px}" "b" == some (50,13,50,7)
 
+
+-- A percentage row gap of a container with no definite height: 0 for the height (14 px),
+-- then 20% of it between the rows; the container keeps its height.
+#guard box four "#c{display:grid;grid-template-columns:50px 50px;row-gap:20%}" "c" == some (0,0,200,14)
+#guard box four "#c{display:grid;grid-template-columns:50px 50px;row-gap:20%}" "d" == some (0,9.796875,50,7)
+
 end L4Factoidal.Rendering.GridLayoutTests

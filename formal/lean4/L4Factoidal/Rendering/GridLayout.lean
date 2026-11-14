@@ -327,9 +327,15 @@ def gridLayout (kids : Children) (s : Computed) (items0 : Array Item) (box : Con
     (plan.rowAxis.tracks.any (·.hasPercent) || g.autoRows.any (·.hasPercent))
   let rowFns := if percentRows then gridTrackFns plan.rowAxis g.autoRows plan.rowLead plan.rows (some (gridUnits contentH))
     else rowFns
-  let rowSizes := if box.height.isNone && (percentRows || gridUnits contentH != gridExtent firstRows rowCollapsed rowGap) then
-      gridSizes rowFns rowCollapsed rowGap rowItems (.definite (gridUnits contentH)) stretchRows
+  -- A percentage `row-gap` of a container with no definite height is 0 for that height,
+  -- then resolved against it (CSS Box Alignment 3 §8.3); the container keeps its height.
+  let usedRowGap := if box.height.isNone then gridUnits (max 0 ((CSS.resolve contentH s.align.rowGap).getD 0))
+    else rowGap
+  let rowSizes := if box.height.isNone && (percentRows || usedRowGap != rowGap ||
+        gridUnits contentH != gridExtent firstRows rowCollapsed rowGap) then
+      gridSizes rowFns rowCollapsed usedRowGap rowItems (.definite (gridUnits contentH)) stretchRows
     else firstRows
+  let rowGap := usedRowGap
   let rowFree : Int := Int.ofNat (gridUnits contentH) - Int.ofNat (gridExtent rowSizes rowCollapsed rowGap)
   let rowSpread := Grid.contentOffsetsInt (gridDistribution s.align.alignContent false) rowFree (gridLive rowSizes rowCollapsed)
   let rowStarts := gridStarts rowSizes rowCollapsed rowGap rowSpread.1 rowSpread.2
