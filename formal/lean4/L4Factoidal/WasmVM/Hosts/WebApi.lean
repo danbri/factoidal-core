@@ -35,6 +35,7 @@ import L4Factoidal.WHATWG.Base64
 import L4Factoidal.Crypto.WebCrypto
 import L4Factoidal.Crypto.WebCryptoKeys
 import L4Factoidal.Net.Xhr
+import L4Factoidal.Net.Storage
 import L4Factoidal.JSON.Parser
 import L4Factoidal.JSON.Serialize
 import Std.Data.HashMap
@@ -62,6 +63,8 @@ structure State where
   /-- The page's network objects (`Net.Xhr`, ops 60 to 79): off unless the embedder
   said `network:true` (ops then answer -2, and `XMLHttpRequest` is not defined). -/
   net : L4Factoidal.Net.Xhr.State := {}
+  /-- The page's Web Storage areas (`Net.Storage`, ops 80 to 85): in memory, by origin. -/
+  storage : L4Factoidal.Net.Storage.Store := {}
   rng : Option Crypto.WebCrypto.Drbg := none
   /-- Generate calls of the generator so far (SP 800-90A's reseed counter). -/
   draws : Nat := 0
@@ -580,6 +583,10 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
     if 60 ≤ code && code < 80 then
       let (net, r) := L4Factoidal.Net.Xhr.op s.net code fs
       ({ s with net }, r)
+    -- Web Storage: the area is named by the session's page origin, never by an argument.
+    else if 80 ≤ code && code < 86 then
+      let (storage, r) := L4Factoidal.Net.Storage.op s.storage s.net.page.origin code fs
+      ({ s with storage }, r)
     else pure' (.error (-2))
 
 section

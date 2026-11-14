@@ -3317,6 +3317,151 @@
     };
   });
   const st_xhr = x => xhrState.get(x);
+
+  // ---- Web Storage (HTML §12.2): localStorage, sessionStorage, StorageEvent ----------------
+  // The areas, their partition by origin and the quota are Lean's (Net/Storage.lean, web_api
+  // ops 80 to 85): the origin is the engine's, never an argument, and an opaque origin gets
+  // SecurityError. In memory for the session; nothing is written to disk. This is the WebIDL
+  // surface: a legacy platform object's named properties (WebIDL §3.9), as a Proxy.
+  // A string that is not well-formed (a lone surrogate) or holds U+0001 crosses the boundary
+  // escaped (U+0001 and four hex digits a code unit), so distinct keys stay distinct there.
+  const stEnc = x => {
+    const s = String(x);
+    if (s.indexOf('\u0001') < 0 && typeof s.isWellFormed === 'function' && s.isWellFormed()) return s;
+    let out = '';
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charCodeAt(i);
+      out += c === 1 || (c >= 0xD800 && c <= 0xDFFF) ? '\u0001' + (c + 0x10000).toString(16).slice(1) : s[i];
+    }
+    return out;
+  };
+  const stDec = s => {
+    if (s.indexOf('\u0001') < 0) return s;
+    const u = [];
+    for (let i = 0; i < s.length; i++) {
+      if (s.charCodeAt(i) === 1) { u.push(parseInt(s.slice(i + 1, i + 5), 16)); i += 4; } else u.push(s.charCodeAt(i));
+    }
+    let out = '';
+    for (let i = 0; i < u.length; i += 1024) out += String.fromCharCode(...u.slice(i, i + 1024));
+    return out;
+  };
+  let StorageC;
+  const storageKind = new WeakMap(), storageAreas = [undefined, undefined];
+  const storageErr = (r, what) => {
+    if (r === -27) throw new DOMException(`Failed to execute '${what}' on 'Storage': the quota has been exceeded.`, 'QuotaExceededError');
+    if (r === -32) throw new DOMException('Storage is not available to this origin.', 'SecurityError');
+    throw new TypeError(`Failed to execute '${what}' on 'Storage'`);
+  };
+  // One op on an area: a string, or null for "no such item".
+  const storageCall = (kind, op, args, what) => {
+    const r = apiCall(op, [kind, ...args]);
+    if (typeof r === 'string') return r;
+    return r === null || r === -1 ? null : storageErr(r, what);
+  };
+  const storageNeed = (n, have, what) => { if (have < n) throw new TypeError(`Failed to execute '${what}' on 'Storage': ${n} argument${n > 1 ? 's' : ''} required, but only ${have} present.`); };
+  const makeStorage = () => {
+    if (StorageC) return StorageC;
+    const K = (o, what) => { const k = storageKind.get(o); if (k === undefined) throw new TypeError('Illegal invocation: Storage.' + what); return k; };
+    class Storage {
+      constructor() { throw new TypeError('Illegal constructor'); }
+      get length() { return Number(storageCall(K(this, 'length'), 80, [], 'length')); }
+      key(index) {
+        storageNeed(1, arguments.length, 'key');
+        const k = storageCall(K(this, 'key'), 81, [index >>> 0], 'key');
+        return k === null ? null : stDec(k);
+      }
+      getItem(key) {
+        storageNeed(1, arguments.length, 'getItem');
+        const v = storageCall(K(this, 'getItem'), 82, [stEnc(key)], 'getItem');
+        return v === null ? null : stDec(v);
+      }
+      setItem(key, value) {
+        storageNeed(2, arguments.length, 'setItem');
+        const kind = K(this, 'setItem'), k = stEnc(key), v = stEnc(value);
+        storageCall(kind, 83, [k, v], 'setItem');
+      }
+      removeItem(key) {
+        storageNeed(1, arguments.length, 'removeItem');
+        storageCall(K(this, 'removeItem'), 84, [stEnc(key)], 'removeItem');
+      }
+      clear() { storageCall(K(this, 'clear'), 85, [], 'clear'); }
+    }
+    for (const k of ['length', 'key', 'getItem', 'setItem', 'removeItem', 'clear'])
+      Object.defineProperty(Storage.prototype, k, { ...Object.getOwnPropertyDescriptor(Storage.prototype, k), enumerable: true });
+    setTag(Storage, 'Storage');
+    return StorageC = Storage;
+  };
+  // The area object of a kind (0 local, 1 session), made once; undefined on an engine
+  // without the ops, SecurityError for an opaque origin.
+  const storageArea = kind => {
+    if (storageAreas[kind]) return storageAreas[kind];
+    const probe = apiCall(80, [kind]);
+    if (probe === -2) return undefined;
+    if (typeof probe !== 'string') storageErr(probe, 'length');
+    const Storage = makeStorage(), target = Object.create(Storage.prototype);
+    const item = p => { const v = apiCall(82, [kind, stEnc(p)]); return typeof v === 'string' ? stDec(v) : undefined; };
+    const named = (t, p) => typeof p === 'string' && !(p in t);
+    const proxy = new Proxy(target, {
+      get(t, p, r) { return named(t, p) ? item(p) : Reflect.get(t, p, r); },
+      set(t, p, v, r) {
+        if (typeof p === 'string' && r === proxy) { const k = stEnc(p), x = stEnc(v); storageCall(kind, 83, [k, x], 'setItem'); return true; }
+        return Reflect.set(t, p, v, r);
+      },
+      defineProperty(t, p, desc) {
+        if (typeof p !== 'string') return Reflect.defineProperty(t, p, desc);
+        if (!('value' in desc) && !('writable' in desc)) return false;
+        const k = stEnc(p), x = stEnc(desc.value);
+        storageCall(kind, 83, [k, x], 'setItem');
+        return true;
+      },
+      deleteProperty(t, p) {
+        if (named(t, p) && item(p) !== undefined) { storageCall(kind, 84, [stEnc(p)], 'removeItem'); return true; }
+        return Reflect.deleteProperty(t, p);
+      },
+      has(t, p) { return Reflect.has(t, p) || (typeof p === 'string' && item(p) !== undefined); },
+      ownKeys(t) {
+        const n = Number(storageCall(kind, 80, [], 'length')), keys = [];
+        for (let i = 0; i < n; i++) { const k = storageCall(kind, 81, [i], 'key'); if (k !== null) { const d = stDec(k); if (!(d in t)) keys.push(d); } }
+        return [...keys, ...Reflect.ownKeys(t)];
+      },
+      getOwnPropertyDescriptor(t, p) {
+        if (named(t, p)) { const v = item(p); if (v !== undefined) return { value: v, writable: true, enumerable: true, configurable: true }; }
+        return Reflect.getOwnPropertyDescriptor(t, p);
+      },
+    });
+    storageKind.set(proxy, kind);
+    return storageAreas[kind] = proxy;
+  };
+  lazy('Storage', () => (apiCall(80, [0]) === -2 ? undefined : makeStorage()));
+  lazy('localStorage', () => storageArea(0));
+  lazy('sessionStorage', () => storageArea(1));
+  lazy('StorageEvent', () => {
+    const nullable = v => v === undefined || v === null ? null : String(v);
+    const area = v => {
+      if (v === undefined || v === null) return null;
+      if (!storageKind.has(v)) throw new TypeError("Failed to construct 'StorageEvent': member storageArea is not of type 'Storage'.");
+      return v;
+    };
+    class StorageEvent extends Event {
+      constructor(type, init = undefined) {
+        super(type, init);
+        const s = state(this), d = initOf(init);
+        s.key = nullable(d.key); s.oldValue = nullable(d.oldValue); s.newValue = nullable(d.newValue);
+        s.url = d.url === undefined ? '' : usv(d.url); s.storageArea = area(d.storageArea);
+      }
+      initStorageEvent(type, bubbles = false, cancelable = false, key = null, oldValue = null, newValue = null, url = '', storageArea = null) {
+        if (arguments.length < 1) throw new TypeError("Failed to execute 'initStorageEvent' on 'StorageEvent': 1 argument required, but only 0 present.");
+        const s = state(this);
+        if (s.dispatching) return;
+        const a = area(storageArea);
+        this.initEvent(type, bubbles, cancelable);
+        s.key = nullable(key); s.oldValue = nullable(oldValue); s.newValue = nullable(newValue); s.url = usv(url); s.storageArea = a;
+      }
+    }
+    getters(StorageEvent, ['key', 'oldValue', 'newValue', 'url', 'storageArea']);
+    setTag(StorageEvent, 'StorageEvent');
+    return StorageEvent;
+  });
   lazy('URL', () => {
     const parse = (url, base) => {
       const r = base === undefined ? apiCall(10, [usv(url)], 0, false) : apiCall(10, [usv(url), usv(base)], 1, false);
