@@ -109,6 +109,72 @@ private def sameRules (env : MediaQuery.Env) (source : String) : Bool :=
 -- with the rule of the `@media screen` block inside `@media all` (read since 2026-11-14)
 #guard ((parseIn {width := some 800} mediaSheet).toOption.map List.length) == some 7
 
+/-! The sheet reader in the cascade (`SheetReader`): `@supports`, `@layer`, nesting, and
+custom properties with `var()` (`CssVars`), on the computed style of the element `t`. -/
+private def styleAt (html css : String) : Option Computed :=
+  let dom := DOM.parseHtmlDocument html
+  match CSS.parse css, dom.getElementById 0 "t" with
+  | .ok rules, some id => ((computeAll dom rules).toOption.bind (·[id]?))
+  | _, _ => none
+private def redOf (html css : String) : Option Float := (styleAt html css).map (·.color.r)
+/-- The width in px; -1 for `auto`, -2 for another unit. -/
+private def widthOf (html css : String) : Option Float := (styleAt html css).map fun s =>
+  match s.width with
+  | .px v => v
+  | .auto => -1
+  | _ => -2
+private def marginOf (html css : String) : Option (List Float) :=
+  (styleAt html css).map fun s => [s.margin.top, s.margin.right, s.margin.bottom, s.margin.left]
+private def pageT := "<div class=a><p id=t class=b>x</p></div>"
+-- @supports: read when the condition holds; nested in @media
+#guard widthOf pageT "@supports (display: grid) { p { width: 10px } }" == some 10
+#guard widthOf pageT "@supports (display: no-such) { p { width: 10px } }" == some (-1)
+#guard widthOf pageT "@media screen { @supports (width: 1px) { p { width: 10px } } }" == some 10
+#guard widthOf pageT "@media print { @supports (width: 1px) { p { width: 10px } } }" == some (-1)
+-- nesting
+#guard widthOf pageT ".a { .b { width: 10px } }" == some 10
+#guard widthOf pageT ".a { & > p { width: 10px } }" == some 10
+#guard widthOf pageT "p { &.b { width: 10px } &.c { width: 20px } }" == some 10
+#guard widthOf pageT ".a { width: 5px; p { width: 10px } }" == some 10
+#guard widthOf pageT ".a { @media screen { p { width: 10px } } }" == some 10
+-- layers (CSS Cascade 5 §6.4): a later layer wins over an earlier one whatever the
+-- specificity; unlayered rules win over layers; important declarations in the reverse
+#guard widthOf pageT "@layer one { #t { width: 10px } } @layer two { p { width: 20px } }" == some 20
+#guard widthOf pageT "@layer two, one; @layer one { #t { width: 10px } } @layer two { p { width: 20px } }" == some 10
+#guard widthOf pageT "p { width: 30px } @layer one { #t { width: 10px } }" == some 30
+#guard widthOf pageT "@layer one { p { width: 10px !important } } @layer two { #t { width: 20px !important } }" == some 10
+#guard widthOf pageT "#t { width: 30px !important } @layer one { p { width: 10px !important } }" == some 10
+#guard widthOf "<p id=t style='width: 40px'>x</p>" "@layer one { p { width: 10px } } #t { width: 30px }" == some 40
+#guard widthOf "<p id=t style='width: 40px !important'>x</p>" "@layer one { p { width: 10px !important } }" == some 40
+#guard widthOf pageT "@layer a { @layer b { #t { width: 10px } } p { width: 20px } }" == some 20
+-- custom properties: inherited, own over inherited, fallbacks, invalid at computed-value time
+#guard widthOf pageT ":root { --w: 10px } p { width: var(--w) }" == some 10
+#guard widthOf pageT ".a { --w: 10px } p { width: var(--w) }" == some 10
+#guard widthOf pageT ":root { --w: 10px } p { --w: 20px; width: var(--w) }" == some 20
+#guard widthOf pageT "p { width: var(--none, 30px) }" == some 30
+#guard widthOf pageT "p { width: 5px } #t { width: var(--none) }" == some (-1)
+#guard widthOf pageT ":root { --a: var(--b); --b: 10px } p { width: var(--a) }" == some 10
+#guard widthOf pageT ":root { --a: var(--b); --b: var(--a) } p { width: var(--a, 7px) }" == some 7
+#guard widthOf pageT ":root { --w: 10px } p { width: calc(var(--w) * 2) }" == some 20
+#guard widthOf "<p id=t style='--w: 12px; width: var(--w)'>x</p>" "" == some 12
+#guard widthOf "<div style='--w: 12px'><p id=t style='width: var(--w)'>x</p></div>" "" == some 12
+#guard redOf pageT ":root { --c: #ff0000 } p { color: var(--c) }" == some 1
+#guard redOf pageT ":root { --c: 255, 0, 0 } p { color: rgb(var(--c)) }" == some 1
+-- margin with var(): the sides after substitution; a later longhand still wins
+#guard marginOf pageT ":root { --m: 1px 2px } p { margin: var(--m) }" == some [1, 2, 1, 2]
+#guard marginOf pageT ":root { --m: 1px } p { margin: var(--m) 4px; margin-top: 9px }" == some [9, 4, 1, 4]
+#guard marginOf pageT ":root { --m: 1px } p { margin-top: 9px; margin: var(--m) }" == some [1, 1, 1, 1]
+-- invalid at computed-value time: as if not declared (this profile starts a `p` with the
+-- user agent's margins, which are not declarations, so they stand where CSS says 0)
+#guard marginOf pageT "p { margin: 3px } #t { margin: var(--none) }" == some [8, 0, 8, 0]
+#guard marginOf pageT "p { margin: calc(1px + 2px) 0 }" == some [3, 0, 3, 0]
+-- a page with no custom property has no map
+#guard (styleAt pageT "p { width: 10px }").map (·.vars.isEmpty) == some true
+#guard (styleAt pageT ":root { --a: 1 } p { width: 10px }").map (·.vars.toList) == some [("--a", "1")]
+-- declarations with strings and URLs
+#guard widthOf pageT "p { background-image: url(data:image/png;base64,AA==); width: 10px }" == some 10
+#guard widthOf "<p id=t style='background-image: url(data:image/png;base64,AA==); width: 10px'>x</p>" "" == some 10
+
 /-! Pages with shadow trees: the scoped buckets (`ScopedIndex`) against the plain loop
 (`matchedRulesIn`, the premise of `CSS.computeAllIn_eq_linear`), on every node, and the
 styles of `computeAllIn` against `computeAllInLinear`. -/
