@@ -610,7 +610,7 @@
   // changes go through the natives that tell custom elements.
   let htmlConstructing = false, ceActive = false;
   // A script element that a script made (section dynscripts): told when it is created.
-  let noteFreshScript = () => {};
+  let noteFreshScript = () => {}, noteFrameMade = () => {};
   let noteImg = () => {};   // section images: an img element made by script
   // A parser-inserted script element with no src and no child text bailed out of "prepare
   // the script element" before it was started (HTML §4.12.1.1 step 7): text added later runs it.
@@ -3984,6 +3984,7 @@
       const id = chk(n.create(3 + 16 * nodeId(this), name));
       if (name.length === 6 && name.toLowerCase() === 'script') noteFreshScript(id);
       else if (name.length === 3 && name.toLowerCase() === 'img') noteImg(id);
+      else if ((name.length === 6 || name.length === 5) && /^i?frame$/i.test(name)) noteFrameMade();
       else if (ttMeta !== null && name.length === 4 && name.toLowerCase() === 'meta') ttMeta();
       return made(id, options);
     });
@@ -13339,6 +13340,28 @@
   const frameTarget = doc => { let t = frameTargets.get(doc); if (!t) { t = new EventTarget(); frameTargets.set(doc, t); } return t; };
   windowOfScript = () => scriptDocument ? frameTarget(nodeId(scriptDocument)) : window;
   frameLoad = el => { const d = info(el, 11), t = d >= 0 ? frameTargets.get(d) : undefined; if (t) { const e = new Event('load'); state(e).trusted = true; dispatch(t, e); } };
+  // HTML §4.8.5 "process the iframe attributes": a frame that a script inserts with no URL to
+  // load runs the iframe load event steps at once (its initial about:blank), not in a task:
+  // Lean takes that load from the waiting navigations (node_info 30). Only after a script
+  // made a frame element.
+  {
+    let wrapped = false;
+    const framesIn = id => {
+      const t = info(id, 0);
+      if (t !== 1 && t !== 11) return [];
+      const el = wrap(id), own = t === 1 && (el instanceof named.HTMLIFrameElement || el instanceof named.HTMLFrameElement) ? [id] : [];
+      return info(id, 6) > 0 ? own.concat([...el.querySelectorAll('iframe,frame')].map(nodeId)) : own;
+    };
+    const loadNow = ks => { for (const k of ks) if (info(k, 30) === 1) { frameLoad(k); fire(wrap(k), 'load'); } };
+    noteFrameMade = () => {
+      if (wrapped) return;
+      wrapped = true;
+      for (const op of ['insert', 'replace']) {
+        const f = n[op];
+        n[op] = (p, node, child) => { const ks = framesIn(node), r = f.call(n, p, node, child); if (ks.length) loadNow(ks); return r; };
+      }
+    };
+  }
   for (const k of ['addEventListener', 'removeEventListener'])
     define(Window.prototype, k, function (...a) {
       // a frame's window (`frame.contentWindow.addEventListener`): that frame's target
