@@ -21,6 +21,7 @@ import L4Factoidal.DOM.Reflect
 import L4Factoidal.DOM.XPath.Evaluate
 import L4Factoidal.DOM.XPath.Xslt
 import L4Factoidal.DOM.XmlSerialize
+import L4Factoidal.DOM.XPath.Theorems
 import L4Factoidal.Rendering.CssSupports
 import L4Factoidal.Rendering.CssValues.Declaration
 import L4Factoidal.Rendering.ComputedGeneric
