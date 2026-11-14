@@ -205,6 +205,10 @@ structure State where
   loaded, as the embedder's decode named it (`document.characterSet`, `DomOps` op 172, and a
   form's document encoding). -/
   frameEncodings : Array (Nat × String) := #[]
+  /-- The `Referrer-Policy` response field of each frame's document, by frame element, as
+  the embedder gave it (`noteFramePolicy`): the policy of that document's requests
+  (`HTML.ReferrerSource.answer`, `DomOps` op 210). -/
+  framePolicies : Array (Nat × String) := #[]
   /-- The editing state of the page's document between commands (`DOM.Editing`): the CSS
   styling flag, the default paragraph separator, design mode, and the state and value
   overrides of the active range. -/
@@ -997,6 +1001,13 @@ def framesLoading (s : State) : Bool :=
 def State.noteFrameEncoding (s : State) (el : Nat) (enc : String) : State :=
   let rest := s.frameEncodings.filter fun (e : Nat × String) => e.1 != el
   { s with frameEncodings := if enc.isEmpty then rest else rest.push (el, enc) }
+
+/-- The embedder loaded the document of `iframe` `el` from a response whose `Referrer-Policy`
+field is `policy` ("" when it had none, or the embedder did not say: the frame's earlier
+one is forgotten). -/
+def State.noteFramePolicy (s : State) (el : Nat) (policy : String) : State :=
+  let rest := s.framePolicies.filter fun (e : Nat × String) => e.1 != el
+  { s with framePolicies := if policy.isEmpty then rest else rest.push (el, policy) }
 
 open L4Factoidal.HTML.Frames in
 /-- (encoding100) Frame `el` navigated to URL `u` and its document is `doc`: the document's

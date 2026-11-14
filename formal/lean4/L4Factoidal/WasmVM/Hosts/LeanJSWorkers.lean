@@ -95,6 +95,9 @@ structure Workers where
   mains : Array String := #[]
   /-- What it fetched (`none`: the fetch failed). -/
   scripts : Array (String × Option String) := #[]
+  /-- The `Referrer-Policy` response field of each script fetched, by URL, as the embedder
+  gave it ("" for none): a worker's requests have its own script's policy (`workerNet`). -/
+  policies : Array (String × String) := #[]
   /-- The page timer armed for the workers' next timer (`wakeHandle`). -/
   wake : Option Nat := none
   steps : Nat := 0
@@ -212,25 +215,36 @@ def importHints (src base : String) : Array String := Id.run do
       | [] => break
   return out
 
+/-- The referrer policy of a worker's requests (HTML §10.2.4 "run a worker": the policy
+container of the worker's script response): the `Referrer-Policy` field of its script's
+response when the embedder fetched it (`some`; "" is no field: the default policy), else
+its owner's (a `blob:` or `data:` script, which has no response of its own). -/
+def workerPolicy (owner : Net.Xhr.State) (policy : Option String) : Net.ReferrerPolicy.Policy :=
+  match policy with
+  | some v => Net.Xhr.policyOfHeader v
+  | none => owner.policy
+
 /-- The network state of a new worker (`Net.Xhr`): on when its owner's is, with the
 owner's policy for the worker's URL (`PageFetch.Page.forWorker`: the owner's origin, or
 opaque for a `data:` worker; always the owner's local, secure and `hostCors` rules); sync
 requests by undo and redo of the worker's run (`syncCache`: the answers so far). -/
-def workerNet (owner : Net.Xhr.State) (url : String) (syncCache : Array Net.PageFetch.Answer) : Net.Xhr.State :=
+def workerNet (owner : Net.Xhr.State) (url : String) (syncCache : Array Net.PageFetch.Answer)
+    (policy : Option String := none) : Net.Xhr.State :=
   { enabled := owner.enabled, page := owner.page.forWorker url, syncOk := true, syncAnswers := syncCache, window := false,
-    blobs := owner.blobs }
+    blobs := owner.blobs, client := url, policy := workerPolicy owner policy }
 
 /-- The host of a new worker: an empty arena, the page's clock and clock rate, its own
 fresh entropy (`Agents.entropy`), so a worker's random values and keys owe nothing to the
 page's seed, its network state (`workerNet`), and what the page's canvases draw with (fonts,
 the SVG path parser; `OffscreenCanvas` is exposed in workers), as the page had it then. -/
-def workerHost (page : Session) (entropy : ByteArray) (url : String := "") (syncCache : Array Net.PageFetch.Answer := #[]) : Page.Host :=
+def workerHost (page : Session) (entropy : ByteArray) (url : String := "") (syncCache : Array Net.PageFetch.Answer := #[])
+    (policy : Option String := none) : Page.Host :=
   let ph := page.host
   { dom := { dom := Page.emptyDocument, commandLimit := 0, logLimit := maxLogs },
     loop := { clock := ph.loop.clock },
     time := { instructionsPerMs := ph.time.instructionsPerMs },
     reads := { canvasEnv := ph.reads.canvasEnv },
-    web := { entropy, docEncoding := "UTF-8", net := workerNet ph.web.net url syncCache } }
+    web := { entropy, docEncoding := "UTF-8", net := workerNet ph.web.net url syncCache policy } }
 
 /-- Kind: definitional lemma (worker canvases). Says: a worker's canvases draw with the fonts
 and path parser the page's had when the worker started; nothing else of the page's reads (no
@@ -266,7 +280,7 @@ def syncWanted (s : Session) : Option Net.PageFetch.Wire := s.host.web.net.syncW
 scope, its script run, its microtask checkpoint, then the messages that waited. When the
 start needs a script not yet fetched, nothing is kept and the worker still waits. -/
 def start (base page : Session) (w : Worker) (src : String) (scripts : Array (String × Option String))
-    (entropy : ByteArray) : Worker × Option String × Option Net.PageFetch.Wire :=
+    (entropy : ByteArray) (policy : Option String := none) : Worker × Option String × Option Net.PageFetch.Wire :=
   let limits := { page.limits with entropy := ByteArray.empty, commands := 0, logs := maxLogs }
   let s : Session := { base with limits, steps := 0, jobs := 0, tasks := 0, errors := #[], lastFrame := none }
   -- Math.random: a seed from this worker's own entropy, not the realm snapshot's constant
@@ -275,7 +289,7 @@ def start (base page : Session) (w : Worker) (src : String) (scripts : Array (St
   let s := match Hosts.WebApi.mathRandomSeed entropy with
     | some x => { s with heap := { s.heap with rng := x } }
     | none => s
-  let s := (s.setHost (workerHost page entropy w.url w.syncCache)).setBudget workerBudget
+  let s := (s.setHost (workerHost page entropy w.url w.syncCache policy)).setBudget workerBudget
   let s := s.setWk { scripts }
   let s := (s.api? "worker" #[.str (JS.Str.ofHost w.url), .str (JS.Str.ofHost w.name)]).1
   let s := s.eval src
@@ -532,6 +546,7 @@ def runWorkers (a : Agents) : Agents := Id.run do
           w := hints.foldl Workers.request w
         else
           let (x', need, wire) := start base page x src w.scripts (a.entropy x.id)
+            ((w.policies.find? fun (e : String × String) => e.1 == x.url).map (·.2))
           x := x'
           sync := wire
           if let some u := need then w := w.request u
@@ -573,6 +588,11 @@ def runWorkers (a : Agents) : Agents := Id.run do
 /-- After each microtask checkpoint of the page. A page with no worker pays one check. -/
 def pump (a : Agents) : Agents :=
   if a.page.wkIdle && a.w.list.isEmpty then a else arm (runWorkers (pageAsks a))
+
+/-- The `Referrer-Policy` fields of scripts the embedder fetched, by URL (before `give`,
+which starts the workers whose scripts came). -/
+def notePolicies (a : Agents) (ps : Array (String × String)) : Agents :=
+  { a with w := { a.w with policies := a.w.policies ++ ps } }
 
 /-- The embedder's scripts (action `scripts`): `none` for a fetch that failed. -/
 def give (a : Agents) (got : Array (String × Option String)) : Agents :=

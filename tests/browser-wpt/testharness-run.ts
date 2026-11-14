@@ -437,13 +437,15 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
     try{return await Deno.readFile(path);}catch{return undefined;}
   };
   /** The host's answer to one script fetch of a worker: status 0 is a network error. */
-  const hostFetch=async(f:{id:number;url:string}):Promise<{id:number;status:number;url:string;contentType:string;contentTypeOptions?:string;source:string}>=>{
+  const hostFetch=async(f:{id:number;url:string}):Promise<{id:number;status:number;url:string;contentType:string;contentTypeOptions?:string;referrerPolicy?:string;source:string}>=>{
     const failed={id:f.id,status:0,url:f.url,contentType:"",source:""};
     if(http&&new URL(f.url).pathname!=="/resources/testharnessreport.js"){
       try{const r=await http.fetch(f.url);
         // The type and X-Content-Type-Options as the server sent them: Lean decides (nosniff, LeanJSWorkers.scriptAccepted).
         return {id:f.id,status:r.status,url:(r as Response&{finalURL?:string}).finalURL??f.url,contentType:r.headers.get("content-type")??"",
-          contentTypeOptions:r.headers.get("x-content-type-options")??"",source:await r.text()};}
+          contentTypeOptions:r.headers.get("x-content-type-options")??"",
+          // the script's Referrer-Policy: a worker's requests have its own script's policy (Lean: LeanJSWorkers.workerPolicy)
+          referrerPolicy:r.headers.get("referrer-policy")??"",source:await r.text()};}
       catch{return failed;}
     }
     // workers: the .any.worker.js that wptserve generates, made here from the pinned .any.js
@@ -470,10 +472,12 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
   let frameEncoding:string|undefined;
   // the URL the last frame document came from (after redirects), when wptserve served it
   let frameFinal:string|undefined;
+  // the Referrer-Policy field of the last frame document's response ("" for none)
+  let framePolicy="";
   const frameSource=async(url:string):Promise<string|undefined>=>{
-    frameEncoding=undefined;frameFinal=undefined;
+    frameEncoding=undefined;frameFinal=undefined;framePolicy="";
     let u:URL;try{u=new URL(url);}catch{return undefined;}
-    if(http){try{const r=await http.fetch(url);if(!r.ok){await r.body?.cancel();return undefined;}frameFinal=(r as Response&{finalURL?:string}).finalURL;const d=decode(new Uint8Array(await r.arrayBuffer()),r.headers.get("content-type")??"");frameEncoding=d.encoding;return d.html;}catch{return undefined;}}
+    if(http){try{const r=await http.fetch(url);if(!r.ok){await r.body?.cancel();return undefined;}frameFinal=(r as Response&{finalURL?:string}).finalURL;framePolicy=r.headers.get("referrer-policy")??"";const d=decode(new Uint8Array(await r.arrayBuffer()),r.headers.get("content-type")??"");frameEncoding=d.encoding;return d.html;}catch{return undefined;}}
     if(!isWptHost(url))return undefined;
     const path=decodeURIComponent(u.pathname).replace(/^\//,"");
     const m=/^(.*)\.test262-test(\.strict)?\.html$/.exec(path);
@@ -492,6 +496,8 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
     // A page's bytes become text in Lean (decodeDocument: the BOM, the charset of its .headers
     // file as wptserve sends it, the meta prescan); an engine without the op reads UTF-8.
     let html:string,encoding:string|undefined,url:string;
+    // the Referrer-Policy field of the page's response: Lean reads it (Net.Xhr.policyOfHeader)
+    let pagePolicy="";
     if(page&&page.html!==undefined){html=page.html;url=page.url;}
     else if(page&&http){
       // The page as wptserve serves it: its wrappers, substitutions, headers and redirects.
@@ -499,6 +505,7 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
       if(!r.ok){await r.body?.cancel();return {file,harness:"ERROR",message:`wptserve: HTTP ${r.status} for ${page.url}`,subtests:[]};}
       ({html,encoding}=decode(new Uint8Array(await r.arrayBuffer()),r.headers.get("content-type")??""));
       url=(r as Response&{finalURL?:string}).finalURL??page.url;
+      pagePolicy=r.headers.get("referrer-policy")??"";
     }
     else if(file.endsWith(".any.worker.html")){html=workerWrapper(file.replace(/\.worker\.html$/,".js"));url=`${origin}/${file}`;}
     else if(file.endsWith(".worker.html")&&exists(wptFile(file.replace(/\.html$/,".js")))){html=workerWrapper(file.replace(/\.html$/,".js"));url=`${origin}/${file}`;}
@@ -586,7 +593,7 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
       }
     // navigations:true: this runner loads frames' URLs (scriptSession action `frame`).
     let turn=start(html,{action:"start",url,resources,...layout,commandLimit:200000,logLimit:100000,instructionsPerMs:scriptRate,...(encoding?{encoding}:{}),
-      navigations:true,...(http?{network:true,pageAddress:"127.0.0.1"}:{}),...(scriptEngine==="bubblepop"?{engine:"bubblepop"}:{})});
+      navigations:true,...(http?{network:true,pageAddress:"127.0.0.1"}:{}),...(pagePolicy?{referrerPolicy:pagePolicy}:{}),...(scriptEngine==="bubblepop"?{engine:"bubblepop"}:{})});
     // The engine's page requests in flight (each from one turn): http.fetch to wptserve.
     type NetWire={id:number;method:string;url:string;headers:[string,string][];bodyBase64?:string};
     const inflight=new Map<number,Promise<{id:number;answer:Record<string,unknown>}>>();
@@ -686,7 +693,7 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
           // frame's origin from it (a redirect to another origin is a document of that origin).
           const from=frameFinal&&frameFinal!==nav.url?frameFinal:undefined;
           take(turn=await ss({action:"frame",session,node:nav.nodeId,url:nav.url,source:source??"",...(frameEncoding?{encoding:frameEncoding}:{}),
-            ...(from?{responseUrl:from}:{}),
+            ...(from?{responseUrl:from}:{}),...(framePolicy?{referrerPolicy:framePolicy}:{}),
             ...(source===undefined?{failed:true}:{resources:await resourcesOf(source,from??nav.url)})}));
         }
         await settleTo(Math.max(1,70000-turn.clock));

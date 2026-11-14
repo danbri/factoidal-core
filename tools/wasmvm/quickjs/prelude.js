@@ -4717,6 +4717,7 @@
         const x = this, cb = register(() => drain(x, s));
         const up = upload.get(s.upload).listened;
         s.text = s.json = s.buf = s.doc = null;
+        referrerClient(s.h);
         call(63, [s.h, cb, up ? 1 : 0, has, ct, bytes], what);
         drain(this, s);
         if (call(67, [s.h, 5]) === '1') chk(n.timer(register(() => { call(76, [s.h]); drain(x, s); }), 0, 0));
@@ -4746,6 +4747,20 @@
   };
   const xhrState = new WeakMap();
   lazy('XMLHttpRequest', makeXHR);
+
+  // The document that makes a request (Referrer Policy §8.3 steps 1 to 3): Lean names the URL
+  // it gives as the referrer and its referrer policy (node_query 210, HTML.ReferrerSource: its
+  // meta, its response's Referrer-Policy, a srcdoc document's container) and keeps them for
+  // the request (web_api 98, Net.Xhr.setClient: a URL of the page's own origin, else none).
+  // A worker has no document: its client is its script, which the session holds.
+  const referrerClient = h => {
+    if (inWorker) return;
+    const d = scriptDocument !== null && scriptDocument !== document ? nodeId(scriptDocument) : 0;
+    const r = n.query(d, 210, '');
+    if (typeof r !== 'string') return;
+    const i = r.indexOf('\u0000');
+    if (i > 0) apiCall(98, [h, 'about:client', '', r.slice(0, i), r.slice(i + 1)]);
+  };
 
   // ---- fetch (Fetch Standard): Headers, Request, Response, and fetch over the XMLHttpRequest core
   // Lean decides every request (Net/PageFetch.lean, the object is Net/Xhr.lean's); this is the
@@ -5181,6 +5196,9 @@
         if (st.mode === 'same-origin') apiCall(77, [s.h, 1]);
         // redirect mode "error": Lean refuses the redirect (web_api op 79); "manual" is followed
         if (st.redirect === 'error') apiCall(79, [s.h, 1]);
+        // the request's referrer and referrer policy: Lean takes a referrer only of the page's
+        // own origin and makes the Referer of each hop (web_api 98, Net.PageFetch.referrerOf)
+        apiCall(98, [s.h, st.referrer, st.referrerPolicy, '', '']);
         x.responseType = 'arraybuffer';
         for (const e of headerState.get(st.headers).list) x.setRequestHeader(e[0], e[1]);
         x.onload = () => {

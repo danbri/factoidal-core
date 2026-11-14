@@ -764,7 +764,7 @@ def start (base : Session) (dom : Arena) (url : String) (scripts : Array (Nat ×
   let s := match Hosts.WebApi.mathRandomSeed lim.entropy with
     | some x => { s with heap := { s.heap with rng := x } }
     | none => s
-  let mut s := s.setHost { dom := domHost, reads, time, web := { entropy := lim.entropy, docEncoding := lim.encoding, net := { enabled := lim.network, page := L4Factoidal.Net.PageFetch.Page.ofUrl url lim.hostCors lim.pageAddress, syncOk := lim.syncOk, syncAnswers := lim.syncAnswers, mayBlock := lim.mayBlock } } }
+  let mut s := s.setHost { dom := domHost, reads, time, web := { entropy := lim.entropy, docEncoding := lim.encoding, net := { enabled := lim.network, page := L4Factoidal.Net.PageFetch.Page.ofUrl url lim.hostCors lim.pageAddress, client := url, policy := L4Factoidal.Net.Xhr.policyOfHeader lim.referrerPolicy, syncOk := lim.syncOk, syncAnswers := lim.syncAnswers, mayBlock := lim.mayBlock } } }
   s := (s.api? "start" #[]).1
   s := (s.api? "url" #[.str (JS.Str.ofHost url)]).1
   for (node, src) in scripts do

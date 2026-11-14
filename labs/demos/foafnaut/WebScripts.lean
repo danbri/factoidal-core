@@ -68,6 +68,11 @@ argument for `start`:
   document joins the arena (`Command.frameDocument`), its scripts run in the page's realm
   with `document` the frame's, and its `load` event follows (`frameLoads` counts the
   `srcdoc` loads of a turn).
+- `referrerPolicy` in `start`, in `frame` and in each `fetched` result: the `Referrer-Policy`
+  field of the response the document or worker script came with (several fields joined
+  with commas; absent or "" for none). The requests of that document or worker carry a
+  `Referer` under it (`Net.PageFetch.referrerOf`); a host that does not send it gets the
+  default policy.
 - `fetched` (`results`: `[{id, status, url, contentType, source}]`): BubblePopJS's
   dedicated workers (`Hosts.LeanJSWorkers`). A turn whose workers wait for scripts lists
   them in `fetches` (`[{id, url, kind}]`, kind `worker` or `script`; and `settle` stops
@@ -983,7 +988,7 @@ def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (h
   let hostLoads := request.field? "navigations" == some (.bool true)
   let network := request.field? "network" == some (.bool true)
   let hostCors := request.field? "hostCors" == some (.bool true)
-  let lim : Page.Limits := { commands, logs, gpuPage := id, entropy := ← entropy id, encoding := str request "encoding", frames := true, hostLoads, network, hostCors, pageAddress := str request "pageAddress", syncOk := true, syncAnswers := held.syncCache }
+  let lim : Page.Limits := { commands, logs, gpuPage := id, entropy := ← entropy id, encoding := str request "encoding", frames := true, hostLoads, network, hostCors, pageAddress := str request "pageAddress", referrerPolicy := str request "referrerPolicy", syncOk := true, syncAnswers := held.syncCache }
   let made := show Except String (Array (Nat × String) × Array String × Bool × DOM.Dom) from do
     let dom ← parse html url
     let (scripts, missing, hasModule) ← scriptSources dom request (modules := true)
@@ -1091,7 +1096,7 @@ def actLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (act
       -- a same-origin frame's scripts run in the page's realm; workers they make are asked
       -- for at once
       let (a', ns) ← WebWasm.timed fun _ => let s := a.page
-        LeanJSWorkers.pump { a with page := LeanJS.loadFrame (s.setHost { s.host with dom := s.host.dom.noteFrameEncoding node enc }) node src scripts xml responseUrl }
+        LeanJSWorkers.pump { a with page := LeanJS.loadFrame (s.setHost { s.host with dom := (s.host.dom.noteFrameEncoding node enc).noteFramePolicy node (str request "referrerPolicy") }) node src scripts xml responseUrl }
       match a'.page.host.web.net.syncWanted, snap with
       | some w, some old => return ({ held with leanSession := some (id, old, marks), pendingSync := some (action, "", request) }, netSyncAnswer id w)
       | _, _ =>
@@ -1107,7 +1112,14 @@ def actLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (act
         held.leanWorkers.result ((natField x "id").getD 0) ((natField x "status").getD 0) (str x "url")
           (str x "contentType") (str x "source") (str x "contentTypeOptions")
       | _ => #[]
-    run fun s => let s := LeanJSWorkers.give s got; (e.advance s (e.loop s).clock).1
+    -- each script's `Referrer-Policy` response field (`referrerPolicy`, "" for none), by the
+    -- URL it was asked for: a worker's requests have its script's policy
+    let pols := match request.field? "results" with
+      | some (.array xs) => xs.toArray.filterMap fun x =>
+        (held.leanWorkers.result ((natField x "id").getD 0) ((natField x "status").getD 0) (str x "url")
+          (str x "contentType") (str x "source") (str x "contentTypeOptions")).map fun r => (r.1, str x "referrerPolicy")
+      | _ => #[]
+    run fun s => let s := LeanJSWorkers.give (LeanJSWorkers.notePolicies s pols) got; (e.advance s (e.loop s).clock).1
   | "net" =>
     let ms := (natField request "elapsedMs").getD 0
     run fun a =>
