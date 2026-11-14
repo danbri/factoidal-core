@@ -13769,8 +13769,12 @@
           continue;
         }
         Object.defineProperty(P.prototype, idl, {
+          // the hot path of every reflected read: one host call and no helper calls
           get() {
-            const id = nodeId(this), r = op(id, 160, k === 'u' ? row + '\u0000' + (info(id, 7) === 0 ? href : 'about:blank') : row);
+            const id = ids.get(this);
+            if (id === undefined || id >= WINDOW) throw new TypeError("parameter is not of type 'Node'");
+            let r = n.query(id, 160, k === 'u' ? row + '\u0000' + (info(id, 7) === 0 ? href : 'about:blank') : row);
+            if (typeof r === 'number') r = failD(r);
             switch (k) {
               case 'b': return r === '1';
               case 'i': case 'I': case 'U': case 'P': case 'F': case 'C': return Number(r);
@@ -13783,7 +13787,13 @@
             // one host call: Lean decides and sets the content attribute (with no observer or
             // custom element to tell, and no URL, whose iframe src navigates); else the decision,
             // then setAttribute
-            if (!observed.size && !ceActive && k !== 'u') { op(nodeId(this), 167, row + '\u0000' + reflectConv[k](v)); return; }
+            if (!observed.size && !ceActive && k !== 'u') {
+              const id = ids.get(this);
+              if (id === undefined || id >= WINDOW) throw new TypeError("parameter is not of type 'Node'");
+              const r = n.query(id, 167, row + '\u0000' + reflectConv[k](v));
+              if (typeof r === 'number') failD(r);
+              return;
+            }
             const a = op(nodeId(this), 161, row + '\u0000' + reflectConv[k](v));
             if (a === 'r') this.removeAttribute(content);
             else if (a !== '') this.setAttribute(content, a.slice(1));
