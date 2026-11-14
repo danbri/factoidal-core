@@ -2602,6 +2602,8 @@ def selectorsUseHas (sels : List DOM.Selectors.Complex) : Bool := Id.run do
         for s in simples do
           match s with
           | .has _ => return true
+          -- a `:has()` compound worked out against a document (`resolveHas`): as `:has()`
+          | .anchors _ => return true
           | .nth _ _ _ (some inner) => more := inner ++ more
           | .not inner => more := inner ++ more
           | .is inner => more := inner ++ more
