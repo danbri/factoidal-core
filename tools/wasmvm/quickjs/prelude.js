@@ -3456,7 +3456,9 @@
     // LockManager (section Web Locks API).
     get locks() { return locksApi()?.manager; },
     // Web Neural Network API (section webnn): a secure context's navigator has it.
-    get ml() { return webnnOn() ? webnn().ml : undefined; } }));
+    get ml() { return webnnOn() ? webnn().ml : undefined; },
+    // StorageBucketManager (section Storage Buckets API).
+    get storageBuckets() { return bucketsApi()?.manager; } }));
   def('GPUBufferUsage', GPUBufferUsage); def('GPUTextureUsage', GPUTextureUsage); def('GPUShaderStage', GPUShaderStage);
   def('GPUColorWrite', GPUColorWrite); def('GPUValidationError', GPUValidationError); def('GPUOutOfMemoryError', GPUOutOfMemoryError);
   def('GPUCanvasContext', GPUCanvasContext); def('GPUDevice', GPUDevice);
@@ -7928,6 +7930,99 @@
   lazy('LockManager', () => locksApi()?.classes.LockManager);
   // ==== end Web Locks API ========================================================================
 
+  // ==== Storage Buckets API ======================================================================
+  // The buckets of the storage key are Lean's (ClientStorage/Buckets.lean, web_api op 205): which
+  // names are valid, keys() in code point order, a bucket's generation (an object of a deleted
+  // bucket answers UnknownError), durability and expires. persisted() is false: nothing persists.
+  // A bucket's own IndexedDB, CacheStorage and file system are not provided yet (NotSupportedError).
+  const makeBuckets = () => {
+    const td = new TextDecoder(), text = b => td.decode(b);
+    const unpack = ab => {
+      const u = new Uint8Array(ab), u32 = i => (u[i] | u[i + 1] << 8 | u[i + 2] << 16 | u[i + 3] << 24) >>> 0;
+      const out = [];
+      for (let i = 0, at = 4, k = u32(0); i < k; i++) { const len = u32(at); out.push(u.subarray(at + 4, at + 4 + len)); at += 4 + len; }
+      return out;
+    };
+    const call = (args, what) => {
+      const r = apiCall(205, args, 0, true);
+      if (typeof r === 'number') throw new DOMException(`${what}: storage buckets are not available.`, 'UnknownError');
+      const f = unpack(r), head = text(f[0]);
+      if (head === 'ok') return f.slice(1).map(text);
+      const name = head.slice(1);
+      if (name === 'TypeError') throw new TypeError(`Failed to execute '${what}': the name or an option is not valid.`);
+      throw new DOMException(`Failed to execute '${what}': ${name}`, name);
+    };
+    const later = f => { try { return Promise.resolve(f()); } catch (e) { return Promise.reject(e); } };
+    const kinds = new WeakMap();
+    let making = false;
+    const make = (C, state) => { making = true; let o; try { o = new C(); } finally { making = false; } kinds.set(o, state); return o; };
+    const idl = (C, tag) => {
+      setTag(C, tag);
+      for (const k of Object.getOwnPropertyNames(C.prototype)) {
+        if (k === 'constructor') continue;
+        Object.defineProperty(C.prototype, k, { ...Object.getOwnPropertyDescriptor(C.prototype, k), enumerable: true });
+      }
+      return C;
+    };
+    const st = (o, what) => { const s = kinds.get(o); if (!s) throw new TypeError('Illegal invocation: ' + what); return s; };
+    const need = (k, have, what) => { if (have < k) throw new TypeError(`Failed to execute '${what}': ${k} argument${k > 1 ? 's' : ''} required, but only ${have} present.`); };
+    const stamp = (v, what) => { const x = Number(v); if (!Number.isFinite(x)) throw new TypeError(`Failed to execute '${what}': the time is not finite.`); return String(x); };
+    const onBucket = (o, cmd, what, more = []) => { const s = st(o, what); return call([cmd, s.name, String(s.gen), ...more], what); };
+    const unsupported = what => new DOMException(`${what} is not provided for a storage bucket yet.`, 'NotSupportedError');
+    class StorageBucket {
+      constructor() { if (!making) throw new TypeError('Illegal constructor'); }
+      get name() { return st(this, 'StorageBucket.name').name; }
+      persisted() { return later(() => onBucket(this, 'persisted', 'StorageBucket.persisted')[0] === '1'); }
+      estimate() { return later(() => { const f = onBucket(this, 'estimate', 'StorageBucket.estimate'); return { usage: Number(f[0]), quota: Number(f[1]) }; }); }
+      setExpires(expires) {
+        return later(() => { need(1, arguments.length, 'StorageBucket.setExpires'); onBucket(this, 'setExpires', 'StorageBucket.setExpires', [stamp(expires, 'StorageBucket.setExpires')]); });
+      }
+      expires() { return later(() => { const v = onBucket(this, 'expires', 'StorageBucket.expires')[0]; return v === '' ? null : Number(v); }); }
+      durability() { return later(() => onBucket(this, 'durability', 'StorageBucket.durability')[0]); }
+      get indexedDB() { st(this, 'StorageBucket.indexedDB'); throw unsupported('indexedDB'); }
+      get caches() { st(this, 'StorageBucket.caches'); throw unsupported('caches'); }
+      getDirectory() { return later(() => { st(this, 'StorageBucket.getDirectory'); throw unsupported('getDirectory()'); }); }
+    }
+    // persist() is exposed in windows only; it is not granted (nothing persists).
+    if (typeof document !== 'undefined')
+      StorageBucket.prototype.persist = function persist() { return later(() => { onBucket(this, 'persisted', 'StorageBucket.persist'); return false; }); };
+    idl(StorageBucket, 'StorageBucket');
+    class StorageBucketManager {
+      constructor() { if (!making) throw new TypeError('Illegal constructor'); }
+      open(name, options = undefined) {
+        return later(() => {
+          st(this, 'StorageBucketManager.open');
+          need(1, arguments.length, 'StorageBucketManager.open');
+          if (options !== undefined && options !== null && typeof options !== 'object' && typeof options !== 'function')
+            throw new TypeError("Failed to execute 'StorageBucketManager.open': the options are not a dictionary.");
+          const o = options ?? {}, nm = String(name);
+          const d = o.durability === undefined ? '' : String(o.durability);
+          const e = o.expires === undefined ? '' : stamp(o.expires, 'StorageBucketManager.open');
+          const f = call(['open', nm, d, e], 'StorageBucketManager.open');
+          return make(StorageBucket, { name: nm, gen: Number(f[0]) });
+        });
+      }
+      keys() { return later(() => { st(this, 'StorageBucketManager.keys'); return call(['keys'], 'StorageBucketManager.keys'); }); }
+      delete(name) {
+        return later(() => {
+          st(this, 'StorageBucketManager.delete');
+          need(1, arguments.length, 'StorageBucketManager.delete');
+          call(['delete', String(name)], 'StorageBucketManager.delete');
+        });
+      }
+    }
+    idl(StorageBucketManager, 'StorageBucketManager');
+    return { manager: make(StorageBucketManager, {}), classes: { StorageBucket, StorageBucketManager } };
+  };
+  let bucketsMade;
+  const bucketsApi = () => {
+    if (bucketsMade !== undefined) return bucketsMade;
+    return bucketsMade = !apiOn() || apiCall(205, ['keys'], 0, true) === -2 ? null : makeBuckets();
+  };
+  lazy('StorageBucket', () => bucketsApi()?.classes.StorageBucket);
+  lazy('StorageBucketManager', () => bucketsApi()?.classes.StorageBucketManager);
+  // ==== end Storage Buckets API ==================================================================
+
   // ---- User Timing: performance.mark, measure ---------------------------------------------
   // performance.now and timeOrigin are QuickJS-NG's, on the WASI clock, which is Lean's script
   // clock (Hosts.Page.ScriptClock). The entries are this list.
@@ -9946,7 +10041,8 @@
     'indexedDB', 'IDBFactory', 'IDBRequest', 'IDBOpenDBRequest', 'IDBVersionChangeEvent', 'IDBKeyRange', 'IDBObjectStore', 'IDBIndex', 'IDBCursor',
     'IDBCursorWithValue', 'IDBRecord', 'IDBTransaction', 'IDBDatabase', 'DOMStringList', 'QuotaExceededError', 'FileSystemHandle',
     'FileSystemFileHandle', 'FileSystemDirectoryHandle', 'FileSystemWritableFileStream', 'FileSystemSyncAccessHandle', 'StorageManager', 'Lock', 'LockManager',
-    'ML', 'MLContext', 'MLGraph', 'MLOperand', 'MLTensor', 'MLGraphBuilder']);
+    'ML', 'MLContext', 'MLGraph', 'MLOperand', 'MLTensor', 'MLGraphBuilder',
+    'StorageBucket', 'StorageBucketManager']);
   // HTML §10.2.1: WorkerGlobalScope, DedicatedWorkerGlobalScope, WorkerLocation, WorkerNavigator.
   const makeWorkerScope = (url, name) => {
     inWorker = true;
@@ -9959,7 +10055,7 @@
     for (const k of ['href', 'origin', 'protocol', 'host', 'hostname', 'port', 'pathname', 'search', 'hash'])
       Object.defineProperty(WorkerLocation.prototype, k, { get() { return parts.get(this)[k]; }, configurable: true, enumerable: true });
     class WorkerNavigator { constructor() { throw new TypeError('Illegal constructor'); } }
-    for (const k of ['userAgent', 'language', 'languages', 'platform', 'onLine', 'hardwareConcurrency', 'storage', 'locks', 'ml'])
+    for (const k of ['userAgent', 'language', 'languages', 'platform', 'onLine', 'hardwareConcurrency', 'storage', 'locks', 'ml', 'storageBuckets'])
       Object.defineProperty(WorkerNavigator.prototype, k, { get() { return nav[k]; }, configurable: true, enumerable: true });
     for (const [k, v] of [['appCodeName', 'Mozilla'], ['appName', 'Netscape'], ['product', 'Gecko']])
       Object.defineProperty(WorkerNavigator.prototype, k, { get() { return v; }, configurable: true, enumerable: true });

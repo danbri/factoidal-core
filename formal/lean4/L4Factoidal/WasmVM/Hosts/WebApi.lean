@@ -44,6 +44,7 @@ import L4Factoidal.Net.Storage
 import L4Factoidal.ClientStorage.IdbOps
 import L4Factoidal.ClientStorage.Manager
 import L4Factoidal.ClientStorage.Locks
+import L4Factoidal.ClientStorage.Buckets
 import L4Factoidal.Net.FetchRules
 import L4Factoidal.Net.Cookies
 import L4Factoidal.DOM.SvgValues
@@ -87,6 +88,8 @@ structure State where
   opfs : L4Factoidal.ClientStorage.Shed L4Factoidal.ClientStorage.Fs.Shelf := {}
   /-- The lock manager of each storage key (`ClientStorage.Locks`, op 203). -/
   locks : L4Factoidal.ClientStorage.Shed L4Factoidal.ClientStorage.Locks.Shelf := {}
+  /-- The storage buckets of each storage key (`ClientStorage.Buckets`, op 205). -/
+  buckets : L4Factoidal.ClientStorage.Shed L4Factoidal.ClientStorage.Buckets.Shelf := {}
   /-- The cookies scripts set and read (`Net.Cookies`, ops 96 and 97): in memory, each its
   host's; none is sent or received on the network. -/
   cookies : L4Factoidal.Net.Cookies.Jar := {}
@@ -701,6 +704,10 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
     else if code == 203 then
       let (locks, out) := L4Factoidal.ClientStorage.Locks.opFor s.locks { origin := s.net.page.origin } fs
       ({ s with locks }, .ok (pack out))
+    -- Storage Buckets (205): the buckets of the same storage key.
+    else if code == 205 then
+      let (buckets, out) := L4Factoidal.ClientStorage.Buckets.opFor s.buckets { origin := s.net.page.origin } fs
+      ({ s with buckets }, .ok (pack out))
     -- Blob URLs (File API §8.3): 90 `createObjectURL(type, bytes)`, 91 `revokeObjectURL(url)`.
     -- The store is the network state's and names each URL's origin (the session's page
     -- origin, never an argument); the UUID is drawn here.
