@@ -299,6 +299,79 @@ def simpleRefs : Nat → G → Bool
     | .block _ g' => (propsOf fuel g').isEmpty
     | _ => true
 
+/-- Whether a grammar has a part that carries a value outside a named property: a keyword,
+a type, a function or a block that no `<'property'>` or tagged part holds. Such a part says
+nothing of the longhands, so a reading by named parts would lose it. The recursion is on
+the nesting of the grammar (table data). -/
+def loose : Nat → G → Bool
+  | 0, _ => true
+  | fuel + 1, g =>
+    match g with
+    | .prop _ | .tag _ _ | .lit _ => false
+    | .seq gs | .oneOf gs | .anyOf gs | .allOf gs => gs.any (loose fuel)
+    | .rep g' _ _ _ | .req g' => loose fuel g'
+    | _ => true
+
+/-- The longhands of a keyword of a shorthand that is not one of its parts: the legacy
+keywords of `white-space` (CSS Text 4 §3.1). -/
+def keywordLonghands (shorthand keyword : String) : Option (List (String × String)) :=
+  let ws := fun (c w : String) =>
+    some [("white-space-collapse", c), ("text-wrap-mode", w), ("white-space-trim", "none")]
+  match shorthand, keyword with
+  | "white-space", "normal" => ws "collapse" "wrap"
+  | "white-space", "pre" => ws "preserve" "nowrap"
+  | "white-space", "pre-wrap" => ws "preserve" "wrap"
+  | "white-space", "pre-line" => ws "preserve-breaks" "wrap"
+  | _, _ => none
+
+/-- A keyword alternative of a shorthand's grammar that the reading by parts keeps: the
+shorthand's initial value (every longhand initial), `flex: none` (`missingDefault`), or a
+keyword of `keywordLonghands`. -/
+def bareKeyword (row : Property) (k : String) : Bool :=
+  let k := (k.splitOn "=").headD k
+  k == lower row.initial || (row.name == "flex" && k == "none") || (keywordLonghands row.name k).isSome
+
+/-- The alternatives of a shorthand's grammar that the reading by parts holds: each names
+its parts (`loose` is false) or is a keyword of `bareKeyword`. A value of another
+alternative (`grid-template` areas, `grid: auto-flow ...`, `corner: round ...`) is kept
+whole. -/
+def tightAlternatives (row : Property) (g : G) : Option G :=
+  let keep := fun (a : G) => match a with
+    | .kw k => bareKeyword row k
+    | a => !loose 24 a
+  match g with
+  | .oneOf alts => match alts.filter keep with
+    | [] => none
+    | kept => some (.oneOf kept)
+  | g => if keep g then some g else none
+
+/-- Kind: shape. Says: a legacy `white-space` keyword sets exactly the three longhands of
+`white-space`, in their order, and `white-space-trim` to `none`. Does not say: that the
+values are the ones CSS Text 4 gives (the guards of `Declaration` test that). -/
+theorem keywordLonghands_whiteSpace (k : String) (ds : List (String × String))
+    (h : keywordLonghands "white-space" k = some ds) :
+    ds.map Prod.fst = ["white-space-collapse", "text-wrap-mode", "white-space-trim"] ∧
+      ds.lookup "white-space-trim" = some "none" := by
+  unfold keywordLonghands at h
+  split at h <;> simp_all <;> subst h <;> decide
+
+/-- Kind: subset. Says: the reading by parts keeps only alternatives of the table's grammar,
+each one it can read (`loose` false, or a keyword of `bareKeyword`). -/
+theorem tightAlternatives_oneOf (row : Property) (alts kept : List G)
+    (h : tightAlternatives row (.oneOf alts) = some (.oneOf kept)) :
+    ∀ a ∈ kept, a ∈ alts ∧ (match a with | .kw k => bareKeyword row k | a => !loose 24 a) = true := by
+  intro a ha
+  unfold tightAlternatives at h
+  simp only at h
+  cases hf : alts.filter (fun a => match a with | .kw k => bareKeyword row k | a => !loose 24 a) with
+  | nil => rw [hf] at h; simp at h
+  | cons x xs =>
+    rw [hf] at h
+    simp only [Option.some.injEq, G.oneOf.injEq] at h
+    subst h
+    rw [← hf] at ha
+    exact List.mem_filter.mp ha
+
 /-- The grammar of a shorthand with its parts named, where the table's grammar does not
 name them: the grid placement shorthands (CSS Grid 2 §8.4). -/
 def namedGrammar (name : String) : Option G :=
@@ -315,7 +388,7 @@ def namedGrammar (name : String) : Option G :=
 /-- The grammar by which a shorthand is read part by part, when it has one: every property
 it names is a longhand of the shorthand or a shorthand of some of them, at most once. -/
 def partsGrammar (row : Property) : Option G :=
-  match (namedGrammar row.name).orElse (fun _ => propG row.name) with
+  match ((namedGrammar row.name).orElse (fun _ => propG row.name)).bind (tightAlternatives row) with
   | none => none
   | some g =>
     let names := propsOf 24 g
@@ -451,13 +524,22 @@ def expandF : Nat → String → String → Option (List (String × String))
                   | _ => none
                 | _ => none
               | some (.byGrammar g) =>
-                match (matchAll (env none) g top).map tagged with
-                | none => none
-                | some found =>
-                  -- a part that is a shorthand gives its own longhands
-                  let direct := found.flatMap fun (n, t) =>
-                    if row.longhands.contains n then [(n, t)] else (expandF fuel n t).getD []
-                  some (row.longhands.map fun l => (l, (direct.lookup l).getD (missingDefault p canonical direct l)))
+                match keywordLonghands p (lower canonical) with
+                | some ds => some ds
+                | none =>
+                  match (matchAll (env none) g top).map tagged with
+                  -- a value of an alternative that does not name its parts is kept whole
+                  | none => some [(p, canonical)]
+                  | some found =>
+                    -- a part that is a shorthand gives its own longhands
+                    let parts := found.map fun (n, t) =>
+                      if row.longhands.contains n then some [(n, t)] else expandF fuel n t
+                    let direct := parts.flatMap (·.getD [])
+                    if parts.any (·.isNone) || direct.any (fun (n, _) => !row.longhands.contains n) then
+                      -- a part kept whole (`column-rule: repeat(...)` in `rule`): so is the shorthand
+                      some [(p, canonical)]
+                    else
+                      some (row.longhands.map fun l => (l, (direct.lookup l).getD (missingDefault p canonical direct l)))
               | some .font =>
                 match (matchAll (env none) fontGrammar top).map tagged with
                 | none =>
@@ -564,7 +646,18 @@ def recombineF : Nat → Property → (String → String) → String
               (unparse value isDefault leaveOut (row.name != "flex") 24 g).findSome? fun pieces =>
                 let text := joinPieces pieces
                 if text != "" && expandF 4 row.name text == some want then some text else none
-            ((attempt (row.name != "flex")).orElse fun _ => attempt false).getD ""
+            -- the `corner` shorthands (CSS Borders 4 §5.4) with every shape `round` are their radii
+            let radii := (propsOf 24 g).find? fun n => n.startsWith "border-" && n.endsWith "radius"
+            let roundOnly := row.name.startsWith "corner" && row.longhands.all fun l =>
+              !(l.startsWith "corner-" && l.endsWith "-shape") || get l == "round"
+            let sameRadius := match radii.bind lookup with
+              | some sub => match sub.longhands.map get with
+                | v :: rest => if v != "" && rest.all (· == v) && !v.contains ' ' then some v else none
+                | [] => none
+              | none => none
+            match sameRadius, roundOnly with
+            | some r, true => r
+            | _, _ => ((attempt (row.name != "flex")).orElse fun _ => attempt false).getD ""
           | some .font =>
             let resetOk := row.longhands.all fun l => fontWritten.contains l || get l == initialSpecified l
             let variant := get "font-variant-caps"
