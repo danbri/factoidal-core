@@ -248,9 +248,12 @@ statement (inactive after the checkpoint, whatever its depth) is open.
   request handlers with `__defineSetter__`.
 - `Number.prototype.valueOf` and the other Number methods refused nothing that held a number, a Date included,
   so a Date was cloned into IndexedDB as a Number object. They now refuse a Date (thisNumberValue).
+- `Array.fromAsync` (async iterators; sync iterators through %AsyncFromSyncIteratorPrototype%; array-likes;
+  `mapfn` results awaited): each await is a promise reaction whose handler is a bound native step carrying the
+  loop's state (the promise, the array, the iterator or array-like, the index). The `fs/` test helpers use it.
 - Found and left to the engine's owners: an Array given an index accessor stops being an Array; `JSON.stringify`
   of a cycle throws `RangeError` (wants `TypeError`); `String()` of an array that contains itself overflows the
-  native stack; `Array.fromAsync` is missing; a transferred `ArrayBuffer` is not detached by `postMessage`.
+  native stack; a transferred `ArrayBuffer` is not detached by `postMessage`.
 
 ## Performance
 
@@ -293,16 +296,18 @@ A bucket's own storage (IndexedDB, CacheStorage, file system, locks) is not rout
 Cloud branch checks (Linux, the Chrome subtests of each directory; window and dedicated worker variants; shared
 and service worker variants are skipped by the engine):
 
-| Directory | Before (85.06% run) | Check 43574264951 (core) | Check 43581496432 (merged fee2bfe2d) | Chrome |
-| --- | ---: | ---: | ---: | ---: |
-| IndexedDB | 32 | 1,782 | 2,755 | 5,849 |
-| fs | 9 | 82 | 113 | 1,121 |
-| file-system-access | 32 | 36 | 117 | 163 |
-| storage (StorageManager) | 34 | 79 | 86 | 103 |
-| storage/buckets | 34 | 34 | 175 | 379 |
-| web-locks | 35 | 207 | 212 | 488 |
-| cookiestore | 45 | 45 | 215 | 636 |
-| service-workers/cache-storage | 0 | 0 | 216 | 615 |
+| Directory | Before (85.06% run) | Check 43574264951 (core) | Check 43581496432 (merged fee2bfe2d) | Check 43587790347 (merged 402eec368) | Chrome |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| IndexedDB | 32 | 1,782 | 2,755 | 5,097 | 5,849 |
+| fs | 9 | 82 | 113 | 852 | 1,121 |
+| file-system-access | 32 | 36 | 117 | 129 | 163 |
+| storage (StorageManager) | 34 | 79 | 86 | 87 | 103 |
+| storage/buckets | 34 | 34 | 175 | 310 | 379 |
+| web-locks | 35 | 207 | 212 | 369 | 488 |
+| cookiestore | 45 | 45 | 215 | 229 | 636 |
+| service-workers/cache-storage | 0 | 0 | 216 | 556 | 615 |
+
+The last column's main has shared and service workers (another agent's work), so their variants run too.
 
 The checks also ran `sample:40` (about 2,300 names across WPT) with no loss traced to this work. Timing: no
 local engine was built (cloud checks only); a page that touches none of these globals runs no code of theirs (the
