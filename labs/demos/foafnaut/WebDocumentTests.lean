@@ -452,6 +452,26 @@ private def svgPicture := (WebRender.vectorPicture svgFile.toUTF8).bind (·.toOp
 #guard svgPicture.map (fun (b,_,_) => (b.rgba.extract ((10*40+10)*4) ((10*40+10)*4+4)).toList) == some [255,0,0,255]
 #guard svgPicture.map (fun (b,_,_) => (b.rgba.extract ((10*40+30)*4) ((10*40+30)*4+4)).toList) == some [0,0,0,0]
 #guard (WebRender.vectorPicture "not an image".toUTF8).isNone
+-- The store made ahead of a page's first layout (2026-11-14: a page's scripts start before its
+-- first frame, and each layout their reads asked for decoded every image again) is the one
+-- the layout's own lookup finds: no second store is made. With SVG content and text beside it.
+private def aheadDom := DOM.parseHtmlDocument "<body><img src='a.svg'><svg xmlns='http://www.w3.org/2000/svg' width='4' height='4'><text>t</text><image href='b.png'/></svg></body>"
+private def aheadImages : List (String × ByteArray) := [("https://e.test/a.svg",svgFile.toUTF8)]
+private def aheadMade := WebRender.storeAhead #[] aheadDom (some "https://e.test/") aheadImages
+#guard aheadMade.isSome
+#guard (WebRender.storeKeys aheadDom (some "https://e.test/")).toOption == some ["https://e.test/b.png","https://e.test/a.svg"]
+#guard match aheadMade with
+  | some made => match WebRender.makeReplacedIn (WebRender.keepStore #[] made) {} aheadDom (some "https://e.test/") aheadImages with
+    | .ok (_,_,again,_) => again.isNone
+    | .error _ => false
+  | none => false
+#guard (WebRender.storeAhead #[] (DOM.parseHtmlDocument "<p>no image</p>") none []).isNone
+-- from a script session's start request: made once, then kept
+private def aheadStart : JSON.Json := json [("action",.string "start"),("layout",json [("url",.string "https://e.test/p/"),
+  ("images",.array [json [("key",.string "https://e.test/p/a.svg"),("base64",.string svgFileBase64)]])])]
+#guard (WebDocument.storeAheadOf {} {} svgImgPage aheadStart).isSome
+#guard (WebDocument.storeAheadOf {} (WebDocument.keepStoreAhead {} {} svgImgPage aheadStart) svgImgPage aheadStart).isNone
+#guard (WebDocument.storeAheadOf {} {} "<p>no image</p>" aheadStart).isNone
 #guard (WebRender.vectorPicture "<svg xmlns='http://www.w3.org/2000/svg'><rect".toUTF8).any (·.toOption.isNone)
 -- unpainted: white on white, black on black; red at half cover: (255,128,128) on white, (128,0,0) on black
 #guard (WebRender.alphaFrom (ByteArray.mk #[255,255,255,255, 255,128,128,255]) (ByteArray.mk #[0,0,0,255, 128,0,0,255])).toList == [0,0,0,0, 255,0,0,127]

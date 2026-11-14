@@ -2075,6 +2075,40 @@ def withAnimated (request : JSON.Json) (overrides : List Rendering.Animation.Ove
   | .object fields => .object (fields.filter (·.1 != "animated") ++ [("animated", field)])
   | j => j
 
+/-- The image store of the page whose script session starts with `request`, made ahead of
+its first layout (`WebRender.storeAhead`, for the tree and the images of the session's
+`layout` request, as `layOutDOMIn` reads them): none when the engine keeps it already, when
+the page has no image, and when the page or the request can not be read (the layout says
+why). -/
+def storeAheadOf (h : Holds) (kept : Kept) (html : String) (request : JSON.Json) :
+    Option ((List String × List (String × ByteArray)) × NativeImage.Store) :=
+  let layout := layoutRequest ((request.field? "layout").getD (.object []))
+  match (parseIn kept html (DOM.isXmlPath (str layout "url"))).1, suppliedImages layout with
+  | .ok dom, .ok supplied =>
+    let url := baseURL dom (str layout "url")
+    let images := supplied ++ heldBytes h (heldNamed h ((namedImages layout).toOption.getD []))
+    WebRender.storeAhead kept.stores dom (if url.isEmpty then none else some url) images
+  | _, _ => none
+
+/-- `kept` with the store of `storeAheadOf`: the layouts that the scripts' reads ask for
+before the first frame then find the store and decode no image. -/
+def keepStoreAhead (h : Holds) (kept : Kept) (html : String) (request : JSON.Json) : Kept :=
+  match storeAheadOf h kept html request with
+  | some store => {kept with stores := WebRender.keepStore kept.stores store}
+  | none => kept
+
+/-- Kind: property. Says: making the store ahead changes nothing of what the engine keeps
+but its image stores: the parsed trees, the read sheets and the words of SVG text are the
+same. Does not say: that the store is found by the next layout (`WebRender.storeAhead`
+makes it for the keys and images the layout asks for, `WebRender.storeAhead_made`; that the
+two lists compare equal is tested, not proved). -/
+theorem keepStoreAhead_rest (h : Holds) (kept : Kept) (html : String) (request : JSON.Json) :
+    (keepStoreAhead h kept html request).parsed = kept.parsed ∧
+    (keepStoreAhead h kept html request).sheets = kept.sheets ∧
+    (keepStoreAhead h kept html request).words = kept.words := by
+  unfold keepStoreAhead
+  split <;> exact ⟨rfl,rfl,rfl⟩
+
 /-- The layout reads of a script session (`Page.Measure`) with the render request
 `request` (its `layoutFields`): the arena laid out `width` by `rows` (`layOutDOM`)
 when a read first asks, then the answers from that one layout. `overrides` are the
@@ -2658,6 +2692,9 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
   -- session is taken out of the state for the call, so that it is not shared.
   if str request "op" == "scriptSession" then
     let holds := (← get).holds
+    -- Before the scripts' first layout read: the store of the page's images (`keepStoreAhead`).
+    if str request "action" == "start" then
+      modify fun e => {e with kept := keepStoreAhead holds e.kept html request}
     let held ← modifyGet fun e => (e.scripts,{e with scripts := {}})
     let kept := (← get).kept
     let (held,answer) ← WebScripts.opSections held "scriptSession" html request (fun r => some (measure holds r kept))

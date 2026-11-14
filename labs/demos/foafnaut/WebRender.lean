@@ -335,6 +335,49 @@ theorem storeIn_eq (kept : StoresKept) (valid : StoresValid kept) (keys : List S
     exact valid _ (Array.mem_of_find?_eq_some h) keys images sat
   · rfl
 
+/-- The keys of a document's image store, in the order `makeReplacedIn` asks for them: the
+images of its SVG content, then the `img` elements'. -/
+def storeKeys (dom : DOM.Dom) (documentURL : Option String) : Except String (List String) := do
+  let imgs := (htmlImageKeys dom documentURL).map (·.2)
+  if !(dom.nodes.any (fun node => node.type == .element && node.ns == some DOM.svgNS)) then return imgs
+  let (_,tree) ← documentNamespaceTree dom
+  return NativeSVG.imageKeys tree documentURL ++ imgs
+
+/-- The store of a document's images made ahead of its first layout, to be kept
+(`keepStore`): none when the table has it, or when the document's SVG content can not be
+read (the layout then says so). A page's scripts start before its first frame, and each
+layout that a script read asked for decoded every image again, since no layout had kept a
+store yet: on a page with large images and SVG image files the first turn of its scripts
+took 150 s in place of 8 (lean-lang.org, 2026-11-14). The work is the first frame's, done
+once and earlier; a page with no image makes an empty store. -/
+def storeAhead (kept : StoresKept) (dom : DOM.Dom) (documentURL : Option String)
+    (images : List (String × ByteArray)) : Option ((List String × List (String × ByteArray)) × NativeImage.Store) :=
+  match storeKeys dom documentURL with
+  | .ok keys => if keys.isEmpty then none else (storeIn kept keys images).2
+  | .error _ => none
+
+/-- Kind: refinement. Says: a store made ahead is `pageStore` of the document's own keys
+(`storeKeys`) and of the images given, under those keys and images: what a layout that asks
+`storeIn` for the same keys and images would make itself. Does not say: that the next layout
+asks with lists that compare equal to these (it asks with `storeKeys`' expression and the
+request's images; that the kept store is then found is tested, not proved: `==` on byte
+arrays has no lawfulness instance here). -/
+theorem storeAhead_made (kept : StoresKept) (dom : DOM.Dom) (documentURL : Option String)
+    (images : List (String × ByteArray)) (made : (List String × List (String × ByteArray)) × NativeImage.Store)
+    (h : storeAhead kept dom documentURL images = some made) :
+    ∃ keys, storeKeys dom documentURL = .ok keys ∧ made = ((keys,images),pageStore keys images) := by
+  unfold storeAhead at h
+  split at h
+  · rename_i keys hk
+    split at h
+    · simp at h
+    · refine ⟨keys, hk, ?_⟩
+      unfold storeIn at h
+      split at h
+      · simp at h
+      · simpa using h.symm
+  · simp at h
+
 /-- The embedding of SVG roots and the pictures of `img` elements, from one image
 store: each image decodes once, and the ids of bitmaps do not collide. One
 source-bound index per render, shared by all embedded SVG roots. SVG text is lowered
@@ -351,11 +394,13 @@ def makeReplacedIn (kept : StoresKept) (words : NativeSVGText.Words) (dom : DOM.
     return (embedding dom,picturesOf store imgs,made,{})
   if documentURL.isNone && dom.nodes.any (fun node => DOM.Dom.isHtmlElement node "base" && Rendering.CSS.hasAttribute node "href") then
     throw "unsupported HTML base href without explicit document URL/base transport"
-  let (root,tree) ← documentNamespaceTree dom
-  let (tree,_,glyphs,madeWords) := NativeSVGText.lowerDocumentGlyphsIn words fonts tree
+  let (root,source) ← documentNamespaceTree dom
+  let (tree,_,glyphs,madeWords) := NativeSVGText.lowerDocumentGlyphsIn words fonts source
   let context ← NativeSVG.ReferenceContext.create tree documentURL
-  -- Each image decodes once for the document, not once for each SVG root.
-  let (store,made) := storeIn kept (NativeSVG.imageKeys tree documentURL ++ imgs.map (·.2)) images
+  -- Each image decodes once for the document, not once for each SVG root. The keys are
+  -- those of the tree as it was read (`storeKeys`: text lowered to glyphs names no image),
+  -- so a store made ahead of the layout (`storeAhead`) is the one found here.
+  let (store,made) := storeIn kept (NativeSVG.imageKeys source documentURL ++ imgs.map (·.2)) images
   -- A viewport of fractional CSS pixels (a percentage width with `height:auto`) keeps its
   -- exact size: the viewBox maps onto it, and the backing raster is the next whole pixel.
   return (fun id style width height => do
