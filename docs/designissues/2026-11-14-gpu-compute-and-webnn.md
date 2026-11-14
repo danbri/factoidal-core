@@ -16,7 +16,7 @@ WebGPU, page WebGL and WebNN execution. Part 1 is built; part 2 is the design of
 | WebGPU | In Lean (`PageGpu.Command`) | Checked |
 |---|---|---|
 | `createShaderModule` with `@compute @workgroup_size(x, y, z)` | `createShader` (`Wgsl.compile`) | x·y·z ≤ 256, z ≤ 64 (`wgOk`); body cost ≤ 1,000,000 |
-| `var<storage, read>`, `var<storage, read_write>`, fixed types or `array<T>` | module bindings 0..3 of group 0 | names and types of the subset, bindings distinct (`bindingsOk`) |
+| `var<storage, read>`, `var<storage, read_write>`, fixed types or `array<T>` | module bindings 0..7 of group 0 | names and types of the subset, bindings distinct (`bindingsOk`) |
 | `arrayLength(&a)` | the call `arrayLength(a)`, printed with `&` | one name only |
 | `for (var i = A; i < min(e, C); i++)` | `Stmt.forCap` | C − A ≤ 65,536, counter never assigned |
 | `createComputePipeline(Async)` | `createComputePipeline id shader entry` | entry is a compute entry point; layout derived by Lean (`Module.bindingNeeds`) |

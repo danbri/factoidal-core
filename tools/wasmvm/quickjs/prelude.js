@@ -1795,7 +1795,7 @@
     Object.assign(device, {
       queue, features: new Set(), limits: Object.freeze({ maxBufferSize: 16777216, maxVertexBuffers: 8, maxVertexAttributes: 16,
         maxTextureDimension2D: 2048, maxBindGroups: 1, maxUniformBufferBindingSize: 65536,
-        maxStorageBufferBindingSize: 16777216, maxStorageBuffersPerShaderStage: 4, maxBindingsPerBindGroup: 4,
+        maxStorageBufferBindingSize: 16777216, maxStorageBuffersPerShaderStage: 8, maxBindingsPerBindGroup: 8,
         maxComputeInvocationsPerWorkgroup: 256, maxComputeWorkgroupSizeX: 256, maxComputeWorkgroupSizeY: 256,
         maxComputeWorkgroupSizeZ: 64, maxComputeWorkgroupsPerDimension: 65535 }),
       lost: new Promise(r => { lostResolve = r; }), onuncapturederror: null, label: '',
