@@ -133,3 +133,62 @@ Open:
 
 See the hand-back in the night report; the numbers are added to this record when the cloud
 rounds finish.
+
+## 5. Streams, compression, early errors, prototypes (third agent)
+
+What was added, on top of the second agent's branch (Reflect.set receiver, heap guard, the
+lexer fixes, `WHATWG/Streams.lean`):
+
+- **Property descriptors**: `Object.defineProperty` reads the descriptor once in
+  ToPropertyDescriptor's order and asks `Desc.allowedOn` (ValidateAndApplyPropertyDescriptor,
+  §10.1.6.3) whether a property that is not configurable may take it.
+- **Intrinsics**: %GeneratorFunction%, %AsyncGeneratorFunction%, %AsyncFunction% and their
+  prototypes (`Realm.closureProto`); `Object.getPrototypeOf(function* () {}).prototype` was
+  undefined, and with it the usual way to reach %AsyncIteratorPrototype%.
+- **[[SetPrototypeOf]]**: cycles, objects that are not extensible and the immutable
+  Object.prototype refuse a new prototype (`protoChangeAllowed`); Object.prototype.__proto__ is
+  the Annex B accessor (idlharness reads its setter).
+- **Typed arrays**: ValidateTypedArray in every %TypedArray%.prototype method (`typedOob`), and
+  the generic ones are functions of their own instead of Array.prototype's.
+- **Streams Standard** in the prelude (lazy globals: a page that names no stream class makes
+  none), over `n.streams` (the queue-with-sizes and the BYOB fill plan in Lean).
+- **Encoding streams and the Compression Standard**: TextEncoderStream, TextDecoderStream,
+  CompressionStream, DecompressionStream; formats, compression and what received bytes are in
+  `WHATWG/Compression.lean` (web_api ops 50 to 52).
+- **Early errors** in the parser: function declarations redeclared in a block or a switch;
+  class element names; `super` and `new.target` placement; private names with a space after
+  `#`; `new import(...)`; accessor parameter counts; shorthand properties that are reserved
+  words; function declarations as loop bodies. Test262 negative syntax tests outside RegExp that
+  the parser accepted: 655 before, 255 after; the 23,928 positive Test262 files of language/,
+  annexB/language and the Function, Object, Reflect and Proxy built-ins parse as before (none
+  newly refused).
+
+Proved (`JS/Theorems.lean`, `WHATWG/Compression.lean`, `WHATWG/Streams.lean`):
+`allowedOn_configurable`, `allowedOn_empty`, `allowedOn_stays_unconfigurable`,
+`allowedOn_frozen`, `allowedOn_accessor`; `orFn_ne_zero`, `closureProto_ne_zero`,
+`closureProto_plain`, `closureProto_gen`, `closureProto_asyncGen`, `closureProto_async`;
+`protoChange_same`, `protoChange_fixed`, `protoChange_no_cycle`; `blockFunsOk_strict`,
+`blockFunsOk_distinct`, `blockFunsOk_special`; `classElementOk_special_ctor`,
+`classElementOk_static_prototype`, `classElementOk_field_ctor`, `classElementOk_computed`,
+`superCallIn_derived`, `superPropIn_normal`, `accessorParamsOk_getter`,
+`accessorParamsOk_setter`; `typedOob_false`, `typedOob_detached`; `ofName_name`,
+`ofName_brotli`, `zlibHeaderOk_fcheck`, `decompress_raw_done`, `decompress_raw_extra`,
+`op_refuses`; the queue and fill-plan theorems of `Streams.lean`.
+
+Tested only: the stream classes' promise plumbing (WPT streams tests on BubblePopJS alone:
+1,114 of 1,145 reported subtests), the JS glue of the encoding and compression streams (under
+node, with zlib standing in for the Lean operations), the round trips and WPT corrupt-input
+cases of `Compression.lean` (`#guard`), the parser rules (`#guard` and Test262 files).
+
+Open:
+
+- memory64 and table64 in the WasmVM (about 2,300 subtests of wasm/core): the decoder refuses
+  the 64-bit address type; the executor, the validator and the refinement proofs all assume
+  32-bit addresses.
+- A Proxy's setPrototypeOf trap is not called; the immutable prototype of the Window's
+  prototype chain (Web IDL) is not set (the worker scope changes the global's prototype).
+- Request and Response with a stream body are refused; DecompressionStream decodes the buffered
+  input again for each chunk (up to 1 MiB, then once at close); CompressionStream writes stored
+  blocks, so its output is larger than its input.
+- Regular expression early errors (361 Test262 tests) wait for a validator that tells an
+  invalid pattern from one `JS.Re` cannot compile yet.
