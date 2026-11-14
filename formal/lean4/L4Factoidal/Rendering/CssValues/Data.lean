@@ -833,7 +833,7 @@ def syntaxes : Array (String × String) := #[
   ("dasharray", "[ [ <length-percentage [0,∞]> | <number [0,∞]> ]+ ]#"),
   ("discretionary-lig-values", "[ discretionary-ligatures | no-discretionary-ligatures ]"),
   ("display-box", "contents | none"),
-  ("display-inside", "flow | flow-root | table | flex | grid | ruby | grid-lanes"),
+  ("display-inside", "flow | flow-root | table | flex | grid | ruby | grid-lanes | math"),
   ("display-internal", "table-row-group | table-header-group | table-footer-group | table-row | table-cell | table-column-group | table-column | table-caption | ruby-base | ruby-text | ruby-base-container | ruby-text-container"),
   ("display-legacy", "inline-block | inline-list-item | inline-table | inline-flex | inline-grid | inline-grid-lanes"),
   ("display-listitem", "<display-outside>? && [ flow | flow-root ]? && list-item"),

@@ -2354,3 +2354,5 @@ L4Factoidal_XPath4_atomInBodyF  # (c) the nesting of a simple type definition, f
 L4Factoidal_XPath4_castToBodyF  # (c) the nesting of a simple type definition, fuel 16; the tokens of a list value are a loop (castTokens)
 L4Factoidal_XPath4_generalizedF  # (c) the nesting of a simple type definition, fuel 16
 L4Factoidal_XPath4_pureLeavesF  # (c) the nesting of a simple type definition, fuel 16; the members are a loop (leavesAll)
+# --- MathML Core layout (Rendering/Math): 2026-11-14. The children of an element are loops; what recurses is the nesting of elements.
+L4Factoidal_Rendering_Math_layoutNode*  # (c) the nesting of MathML elements: one level of the shared rendering fuel for each element (64, from Layout.render, as layoutTask and inlineItems); the children of an element and the cells of a table are loops
