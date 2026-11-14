@@ -11869,8 +11869,11 @@
       for (let i = 0, at = 4, k = u32(0); i < k; i++) { const len = u32(at); out.push(u.subarray(at + 4, at + 4 + len)); at += 4 + len; }
       return out;
     };
+    let observing = 0, draining = false, nextObserver = 1;   // FileSystemObserver (below)
     const call = (op, args, what) => {
       const r = apiCall(op, args, 0, true);
+      // while a FileSystemObserver observes, Lean logs the changes a command makes: hand them over later
+      if (observing > 0 && op === 201) scheduleDrain();
       if (typeof r === 'number') throw new DOMException(`${what}: storage is not available.`, r === -5 ? 'QuotaExceededError' : 'UnknownError');
       const f = unpack(r), head = text(f[0]);
       if (head === 'ok') return f.slice(1);
@@ -12194,10 +12197,78 @@
       showSaveFilePicker: function showSaveFilePicker(options = undefined) { return pickerCall('save', 'showSaveFilePicker', options); },
       showDirectoryPicker: function showDirectoryPicker(options = undefined) { return pickerCall('directory', 'showDirectoryPicker', options); },
     };
+    // ---- FileSystemObserver (WICG, tentative): what is observed and the records are Lean's ------
+    const observers = new Map();   // id -> { obj, callback, roots: Map kind:path -> handle }
+    const scheduleDrain = () => { if (draining) return; draining = true; timer(0, drainNow, 0, []); };
+    class FileSystemChangeRecord {
+      constructor() { guard(); }
+      get root() { return kinds.get(this).root; }
+      get changedHandle() { return kinds.get(this).changedHandle; }
+      get relativePathComponents() { return kinds.get(this).rel; }
+      get type() { return kinds.get(this).type; }
+      get relativePathMovedFrom() { return kinds.get(this).from; }
+    }
+    const drainNow = () => {
+      draining = false;
+      if (observing === 0) return;
+      const f = call(201, ['drain'], 'FileSystemObserver').map(text), byObs = new Map();
+      for (let i = 0; i < f.length;) {
+        const id = Number(f[i++]), type = f[i++], dir = f[i++] === 'd', n = Number(f[i++]), rel = f.slice(i, i + n); i += n;
+        let from = null;
+        if (f[i++] === '1') { const m = Number(f[i++]); from = f.slice(i, i + m); i += m; }
+        const rootPath = f[i++], rootDir = f[i++] === 'd';
+        const o = observers.get(id);
+        if (!o) continue;
+        const root = o.roots.get((rootDir ? 'd:' : 'f:') + rootPath);
+        const full = rootDir ? (rel.length ? join(rootPath, rel.join('/')) : rootPath) : rootPath;
+        const changed = type === 'disappeared' ? null : (rel.length === 0 && root ? root : handle(full, full.split('/').pop(), dir));
+        const rec = make(FileSystemChangeRecord, { root, changedHandle: changed, rel: Object.freeze(rel.map(stDec)), type, from: from ? Object.freeze(from.map(stDec)) : null });
+        if (!byObs.has(id)) byObs.set(id, []);
+        byObs.get(id).push(rec);
+      }
+      for (const [id, recs] of byObs) { const o = observers.get(id); if (o) { try { o.callback.call(undefined, recs, o.obj); } catch (e) { report(e); } } }
+    };
+    class FileSystemObserver {
+      constructor(callback) {
+        if (arguments.length < 1) throw new TypeError("Failed to construct 'FileSystemObserver': 1 argument required, but only 0 present.");
+        if (typeof callback !== 'function') throw new TypeError("Failed to construct 'FileSystemObserver': parameter 1 is not of type 'FileSystemObserverCallback'.");
+        const id = nextObserver++;
+        observers.set(id, { obj: this, callback, roots: new Map() });
+        kinds.set(this, { observer: id });
+      }
+      observe(handle_, options = undefined) {
+        return later(() => {
+          const me = kinds.get(this);
+          if (!me || me.observer === undefined) throw new TypeError('Illegal invocation: FileSystemObserver.observe');
+          const h = st(handle_, 'FileSystemObserver.observe'), d = dict(options, 'FileSystemObserver.observe');
+          const o = observers.get(me.observer);
+          call(201, ['observe', String(me.observer), h.path, h.dir ? 'd' : 'f', d.recursive ? '1' : '0'], 'FileSystemObserver.observe');
+          const key = (h.dir ? 'd:' : 'f:') + h.path;
+          if (!o.roots.has(key)) { o.roots.set(key, handle_); observing++; }
+        });
+      }
+      unobserve(handle_) {
+        const me = kinds.get(this);
+        if (!me || me.observer === undefined) throw new TypeError('Illegal invocation: FileSystemObserver.unobserve');
+        const h = kinds.get(handle_);
+        if (!h || h.path === undefined) return;
+        const o = observers.get(me.observer), key = (h.dir ? 'd:' : 'f:') + h.path;
+        call(201, ['unobserve', String(me.observer), h.path], 'FileSystemObserver.unobserve');
+        if (o.roots.delete(key)) observing--;
+      }
+      disconnect() {
+        const me = kinds.get(this);
+        if (!me || me.observer === undefined) throw new TypeError('Illegal invocation: FileSystemObserver.disconnect');
+        const o = observers.get(me.observer);
+        call(201, ['disconnect', String(me.observer)], 'FileSystemObserver.disconnect');
+        observing -= o.roots.size; o.roots.clear();
+      }
+    }
+    idl(FileSystemObserver, 'FileSystemObserver'); idl(FileSystemChangeRecord, 'FileSystemChangeRecord');
     // for IndexedDB's serialisation of a handle (a path and a kind of this storage key's file system)
     const handleState = o => { if (!(o instanceof FileSystemHandle)) return null; const s = kinds.get(o); return s && s.path !== undefined ? s : null; };
     const handleOf = (path, name, dir) => handle(path, name, dir);
-    return { manager: make(StorageManager, {}), pickers, handleState, handleOf, classes: { FileSystemHandle, FileSystemFileHandle, FileSystemDirectoryHandle, FileSystemWritableFileStream,
+    return { manager: make(StorageManager, {}), pickers, handleState, handleOf, classes: { FileSystemObserver, FileSystemChangeRecord, FileSystemHandle, FileSystemFileHandle, FileSystemDirectoryHandle, FileSystemWritableFileStream,
       FileSystemSyncAccessHandle, StorageManager } };
   };
   let fsMade;
@@ -12207,6 +12278,8 @@
   };
   for (const name of ['FileSystemHandle', 'FileSystemFileHandle', 'FileSystemDirectoryHandle', 'FileSystemWritableFileStream',
     'StorageManager']) lazy(name, () => fsApi()?.classes[name]);
+  // FileSystemObserver: windows and dedicated and shared workers (not service workers)
+  for (const name of ['FileSystemObserver', 'FileSystemChangeRecord']) lazy(name, () => swScope ? undefined : fsApi()?.classes[name]);
   // FileSystemSyncAccessHandle is [Exposed=DedicatedWorker]
   lazy('FileSystemSyncAccessHandle', () => inWorker ? fsApi()?.classes.FileSystemSyncAccessHandle : undefined);
   // The pickers are exposed in windows only (a worker's scope drops names not in workerGlobals).
@@ -15664,7 +15737,7 @@
     'IDBCursorWithValue', 'IDBRecord', 'IDBTransaction', 'IDBDatabase', 'DOMStringList', 'QuotaExceededError', 'FileSystemHandle',
     'FileSystemFileHandle', 'FileSystemDirectoryHandle', 'FileSystemWritableFileStream', 'FileSystemSyncAccessHandle', 'StorageManager', 'Lock', 'LockManager',
     'ML', 'MLContext', 'MLGraph', 'MLOperand', 'MLTensor', 'MLGraphBuilder',
-    'StorageBucket', 'StorageBucketManager', 'caches', 'Cache', 'CacheStorage']);
+    'StorageBucket', 'StorageBucketManager', 'caches', 'Cache', 'CacheStorage', 'FileSystemObserver', 'FileSystemChangeRecord']);
   // The Cookie Store is [Exposed=(ServiceWorker,Window)]: a service worker's scope keeps it.
   const serviceStorageGlobals = new Set(['cookieStore', 'CookieStore', 'CookieChangeEvent', 'CookieStoreManager']);
   // The [SecureContext] interfaces of client-side storage: dropped from a worker that is not a secure context.
