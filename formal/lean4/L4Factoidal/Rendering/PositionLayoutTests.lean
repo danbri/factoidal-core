@@ -645,4 +645,12 @@ private def alignedCss := "#c{position:relative;width:40px;height:40px} #k{posit
 #guard box aligned (alignedCss ++ "#c{writing-mode:vertical-rl;direction:rtl} #k{writing-mode:horizontal-tb;direction:ltr;justify-self:start}") "k" == some (0,20,40,20)
 #guard box aligned (alignedCss ++ "#c{writing-mode:vertical-rl;direction:rtl} #k{writing-mode:horizontal-tb;direction:ltr;justify-self:self-start}") "k" == some (0,0,40,20)
 
+
+-- The rendered legend of a fieldset shrinks to fit its contents (HTML §15.5.13); a second
+-- legend, a floated one and a legend elsewhere are plain blocks.
+#guard (box "<fieldset id=f><legend id=l>LL</legend>text</fieldset>" "fieldset{margin:0;padding:0;border:0} legend{padding:0}" "l").map (·.2.2.1) == some 12
+#guard (box "<fieldset id=f><legend>A</legend><legend id=l>LL</legend></fieldset>" "fieldset{margin:0;padding:0;border:0} legend{padding:0}" "l").map (·.2.2.1) == some 200
+#guard (box "<div><legend id=l>LL</legend></div>" "legend{padding:0}" "l").map (·.2.2.1) == some 200
+#guard (box "<fieldset id=f><legend id=l>LL</legend>text</fieldset>" "fieldset{margin:0;padding:0;border:0} legend{padding:0;width:50px}" "l").map (·.2.2.1) == some 50
+
 end L4Factoidal.Rendering.PositionLayoutTests
