@@ -640,4 +640,9 @@ private def parses (src : String) : Bool := syn src == "ok"
 #guard out "var o = { [Symbol.replace](s, r) { return 'R:' + s + r }, [Symbol.split]() { return 'S' } }; print('abc'.replace(o, 1), 'x'.split(o)); var re = /b/g; re.exec = function (s) { return this.n++ ? null : { 0: 'b', index: 1, length: 1 } }; re.n = 0; print('abc'.replace(re, '[$&$`]'), RegExp.prototype[Symbol.split].call(/-/, 'a-b-c', 2).join())" == ["R:abc1 S", "a[ba]c a,b"]
 #guard out "var it = 'a1b22'.matchAll(/\\d+/g); print(Object.prototype.toString.call(it), [...it].map(m => m[0] + '@' + m.index).join()); print('aaa'.replaceAll('a', '$$'), ''.replaceAll('', 'x'), 'ab'.replaceAll('', '_'), /x/dgimsuy.flags)" == ["[object RegExp String Iterator] 1@1,22@3", "$$$ x _a_b_ dgimsuy"]
 
+/-! ## ArraySpeciesCreate -/
+
+#guard out "class MyA extends Array {} var m = new MyA(); m.push(1, 2, 3); print(m.map(x => x) instanceof MyA, m.filter(x => x > 1).length, m.slice(1) instanceof MyA, [1].map(x => x) instanceof MyA); var a = [1, 2]; a.constructor = { [Symbol.species]: function (n) { this.args = n } }; var r = a.map(x => x * 2); print(r.args, r[1], Array[Symbol.species] === Array, Object.getOwnPropertyDescriptor(Map, Symbol.species).get.name); a.constructor = 1; try { a.concat() } catch (e) { print(e.name) }" == ["true 2 true false", "2 4 true get [Symbol.species]", "TypeError"]
+#guard out "var arr = [, 1, 2]; var got = 'unset'; Object.defineProperty(arr, '0', { get() { return 'g' }, configurable: true }); arr.reduce((p, c, i) => { if (i === 1) got = p }); print(got, Array.isArray(arr), arr.length, arr[0])" == ["g true 3 g"]
+
 end L4Factoidal.JS.Tests

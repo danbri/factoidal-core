@@ -1447,6 +1447,18 @@ def getSubstitutionG (tmpl matched str : String) (position : Nat) (caps : Array 
 #guard templateNames "$<a>$$<b>$<c>" == ["a", "c"]
 #guard advanceIndex "a😀" 1 true == 3 && advanceIndex "a😀" 1 false == 2
 
+/-- IsArray (§7.2.2): a Proxy answers for its target; a revoked one throws. -/
+def isArrayDeep : Nat → Value → M Bool
+  | 0, _ => pure false
+  | k + 1, .obj id => do
+    let o ← getObj id
+    match o.kind with
+    | .proxy t hnd =>
+      if let .null := hnd then throwErr .type "Cannot perform 'IsArray' on a proxy that has been revoked"
+      isArrayDeep k t
+    | _ => pure o.isArray
+  | _ + 1, _ => pure false
+
 /-- Where %RegExp.prototype% keeps %RegExpStringIteratorPrototype% (§22.2.9.2), and where a RegExp
 String Iterator keeps its string: private-name keys, which no script can name. A RegExp String
 Iterator is a `Kind.iter` of mode 20 + 1 (global) + 2 (full Unicode) over its matcher. -/
@@ -4617,19 +4629,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
           newArray (Array.replicate x.toUInt64.toNat .hole)
         | v => newArray #[v]
       else newArray args
-    | .arrayIsArray =>
-      -- IsArray (§7.2.2): a Proxy answers for its target; a revoked one throws
-      let rec isArr : Nat → Value → M Bool
-        | 0, _ => pure false
-        | k + 1, .obj id => do
-          let o ← getObj id
-          match o.kind with
-          | .proxy t hnd =>
-            if let .null := hnd then throwErr .type "Cannot perform 'IsArray' on a proxy that has been revoked"
-            isArr k t
-          | _ => pure o.isArray
-        | _ + 1, _ => pure false
-      pure (.bool (← isArr 100000 a0))
+    | .arrayIsArray => pure (.bool (← isArrayDeep 100000 a0))
     | .arrayPush =>
       match thisV with
       | .obj id =>
@@ -4676,7 +4676,10 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       let e := match a1 with | .undef => es.size | _ => 0
       let e ← if e == 0 && !(match a1 with | .undef => true | _ => false) then
           do pure (relIndex (← toNum n a1) es.size) else pure es.size
-      newArray (if s < e then es.extract s e else #[])
+      let part := if s < e then es.extract s e else #[]
+      match ← speciesFrom n thisV part.size with
+      | none => newArray part
+      | some a => speciesFill n a part (some part.size)
     | .arraySplice =>
       match thisV with
       | .obj id => match (← getObj id).kind with
@@ -4686,9 +4689,16 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
             let d := toIntegerOrInf (← toNum n a1)
             pure (if d < 0 then 0 else (min d.toUInt64.toNat (es.size - s)))
           let removed := es.extract s (s + dc)
+          let sp ← speciesFrom n thisV removed.size
+          -- the species constructor may have changed the array: take its elements again
+          let es ← match (← getObj id).kind with | .array es => pure es | _ => pure es
           let es' := es.extract 0 s ++ args.extract 2 args.size ++ es.extract (s + dc) es.size
-          modifyObj id fun o => { o with kind := .array es' }
-          newArray removed
+          modifyObj id fun o => match o.kind with
+            | .array _ => { o with kind := .array es' }
+            | _ => o
+          match sp with
+          | none => newArray removed
+          | some a => speciesFill n a removed (some removed.size)
         | _ => newArray #[]
       | _ => newArray #[]
     | .arrayJoin | .arrayToString =>
@@ -4756,7 +4766,9 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
           | .array more => acc := acc ++ more
           | _ => if (← getObj aid).isArray then acc := acc ++ (← elemsOf n a) else acc := acc.push a
         | _ => acc := acc.push a
-      newArray acc
+      match ← speciesFrom n thisV 0 with
+      | none => newArray acc
+      | some a => speciesFill n a acc (some acc.size)
     | .arrayReverse =>
       match thisV with
       | .obj id => match (← getObj id).kind with
@@ -4786,7 +4798,12 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       if id == .arrayMap && len > 4294967295 then throwErr .range "Invalid array length"
       -- the indices visited stop at 10^7, as the element copy did before (an array-like
       -- whose length is 2^53 - 1 would not end)
-      iterArray n id a0 a1 (.obj oid) (min len 10000000) 0 #[]
+      let sp ← if id == .arrayMap || id == .arrayFilter then
+          speciesFrom n (.obj oid) (if id == .arrayMap then len else 0) else pure none
+      let res ← iterArray n id a0 a1 (.obj oid) (min len 10000000) 0 #[]
+      match sp with
+      | none => pure res
+      | some a => speciesFill n a (← rawElems res) none
     | .arrayReduce =>
       -- §23.1.3.24: the first present element is the start when there is no initial value
       let oid ← toObj n thisV
@@ -5503,7 +5520,10 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
         | .undef => 1
         | .num d => if d.isNaN || d < 1 then 0 else (if d > 1000 then 1000 else d.toUInt64.toNat)
         | _ => 1
-      newArray (← flattenArr depth es (depth + 1))
+      let flat ← flattenArr depth es (depth + 1)
+      match ← speciesFrom n thisV 0 with
+      | none => newArray flat
+      | some a => speciesFill n a flat none
     | .stringAt =>
       -- §22.1.3.1: one code unit, found in constant time for ASCII (`Str.unitStrAt?`)
       let s ← toStr n (← thisPrim thisV)
@@ -6430,6 +6450,56 @@ def genericPush : Nat → Value → Array Value → M Value
     pure (.num (Float.ofNat (l + args.size)))
 termination_by structural n _ _ => n
 
+/-- ArraySpeciesCreate (§10.4.2.3): the new object from the species constructor of an Array,
+or `none` when the result is a plain Array (not an Array, no `constructor`, or the realm's
+Array with its built-in `@@species` getter: the fast path, which reads two properties). -/
+def speciesFrom : Nat → Value → Nat → M (Option Value)
+  | 0, _, _ => throw (.halt "fuel")
+  | n + 1, orig, len => do
+    if !(← isArrayDeep 100000 orig) then return none
+    let c ← getV n orig "constructor"
+    let c ← match c with
+      | .obj cid =>
+        let co ← getObj cid
+        let builtinSpecies ← match co.kind, co.props.get? (symKey 7) with
+          | .native .arrayCtor, some (.acc (.obj g) ..) => do
+            pure (match (← getObj g).kind with | .native (.x .speciesGetter) => true | _ => false)
+          | _, _ => pure false
+        if builtinSpecies then return none
+        match ← getV n c (symKey 7) with
+        | .null => pure Value.undef
+        | v => pure v
+      | v => pure v
+    match c with
+    | .undef => pure none
+    | _ =>
+      if !(← isConstructor c) then throwErr .type "object.constructor[Symbol.species] is not a constructor"
+      some <$> construct n c #[.num (Float.ofNat len)] c
+termination_by structural n _ _ => n
+
+/-- Fill the object a species constructor made: CreateDataPropertyOrThrow for each present
+element, then `length` when the method sets it (slice, splice, concat). -/
+def speciesFill : Nat → Value → Array Value → Option Nat → M Value
+  | 0, _, _, _ => throw (.halt "fuel")
+  | n + 1, a, vals, setLen => do
+    let .obj aid := a | throwErr .type "The species constructor did not make an object"
+    for i in [0:vals.size] do
+      let v := vals[i]!
+      if v.isHole then continue
+      if !(← defineOwnProp n aid (toString i) { value := some v, writable := some true, enumerable := some true, configurable := some true }) then
+        throwErr .type s!"Cannot define property {i} of the species result"
+    if let some l := setLen then putV n a "length" (.num (Float.ofNat l)) true
+    pure a
+termination_by structural n _ _ _ => n
+
+/-- The elements of an array value as they are (absent ones included); empty otherwise. -/
+def rawElems (v : Value) : M (Array Value) := do
+  match v with
+  | .obj id => match (← getObj id).kind with
+    | .array es => pure es
+    | _ => pure #[]
+  | _ => pure #[]
+
 /-- The elements of an array, or of an array-like object (`length` and indices). -/
 def elemsOf : Nat → Value → M (Array Value)
   | 0, _ => throw (.halt "fuel")
@@ -6616,8 +6686,20 @@ def defineOwnProp : Nat → Nat → String → Desc → M Bool
     let gt := desc.get
     let st := desc.set
     let vl := desc.value
+    -- leave the fast form: keep the present elements, and the length, as ordinary properties;
+    -- the object stays an Array (`markArray`)
+    let demote : M Unit := do
+      let o ← getObj id
+      if let .array es := o.kind then
+        let o' := (List.range es.size).foldl (fun o j => if Value.isHole es[j]! then o else { o with
+            props := o.props.insert (toString j) (.data es[j]! true true true),
+            keys := o.keys.push (toString j) }) ({ o with kind := .ordinary } : Obj).markArray
+        modifyObj id fun _ => o'.putOwn "length" (.data (.num (Float.ofNat es.size)) true false false)
     if gt.isSome || st.isSome then
       let (og, os) := match old with | some (.acc g s _ _) => (g, s) | _ => (.undef, .undef)
+      -- an accessor on an Array's index needs the general form (the fast form holds values only)
+      if (arrayIndex? k).isSome then
+        if let .array _ := o0.kind then demote
       defineOwn id k (.acc (gt.getD og) (st.getD os) e c)
     else if let (some (.acc g s _ _), true) := (old, vl.isNone && desc.writable.isNone) then
       -- a descriptor with neither kind's fields keeps the accessor
@@ -6633,14 +6715,9 @@ def defineOwnProp : Nat → Nat → String → Desc → M Bool
         | .array es, some i =>
           if w && e && c then defineOwn id k (.data v true true true)
           else
-            -- leave the fast form: keep the elements, and the length, as ordinary properties;
-            -- the object stays an Array (`markArray`)
-            let o' := (List.range es.size).foldl (fun o j => if Value.isHole es[j]! then o else { o with
-                props := o.props.insert (toString j) (.data es[j]! true true true),
-                keys := o.keys.push (toString j) }) ({ o with kind := .ordinary } : Obj).markArray
-            modifyObj id fun _ => o'.putOwn "length" (.data (.num (Float.ofNat es.size)) true false false)
+            demote
             defineOwn id k (.data v w e c)
-            let _ := i
+            let _ := (i, es)
         | _, _ => defineOwn id k (.data v w e c)
     return true
 termination_by structural n _ _ _ => n
@@ -8135,6 +8212,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       | .error a => throw a
       getV n cap "promise"
     | (.x (.regexpSym k)) => regexpSymbol n k thisV args
+    | (.x .speciesGetter) => pure thisV
     | (.x .regexpEscape) =>
       match a0 with
       | .str s => pure (.str (regexpEscapeStr s.toList))
@@ -9680,6 +9758,19 @@ def initFunctionKinds (g genProto asyncGenProto : Nat) : M Unit := do
     defineOwn fp "constructor" (.data c false false true)
   modify fun h => { h with realm := { h.realm with genFnProto := genFnProto, asyncGenFnProto := asyncGenFnProto, asyncFnProto := asyncFnProto } }
 
+/-- `get [Symbol.species]` on the constructors that have one besides Array (§22.2.5.2,
+§24.1.2.3, §24.2.3.2, §25.1.5.3, §27.2.4.8, §23.2.2.4), for `initRealm`. -/
+def initSpecies : M Unit := do
+  let r ← realm
+  let g := r.globalObj
+  let mut ctors : Array Nat := if r.typedArrayCtor != 0 then #[r.typedArrayCtor] else #[]
+  for nm in ["RegExp", "Promise", "Map", "Set", "ArrayBuffer"] do
+    if let some (.data (.obj c) ..) := (← getObj g).props.get? nm then ctors := ctors.push c
+  for c in ctors do
+    if ((← getObj c).props.get? (symKey 7)).isNone then
+      let gt ← mkNative (.x .speciesGetter) "get [Symbol.species]" 0
+      defineOwn c (symKey 7) (.acc gt .undef false true)
+
 /-- SuppressedError and DisposableStack (explicit resource management), for `initRealm`. -/
 def initDisposal (g errorProto : Nat) : M Unit := do
   let mk : M Nat := alloc { proto := .obj (← realm).objectProto }
@@ -9780,6 +9871,9 @@ def initRealm : M Unit := do
   let arrayC ← ctorWith "Array" .arrayCtor 1 arrayProto
   setHidden g "Array" arrayC
   if let .obj ac := arrayC then method ac "isArray" .arrayIsArray 1
+  if let .obj ac := arrayC then
+    let g ← mkNative (.x .speciesGetter) "get [Symbol.species]" 0
+    defineOwn ac (symKey 7) (.acc g .undef false true)
   for (nm, f, l) in [("push", Native.arrayPush, 1), ("pop", .arrayPop, 0), ("shift", .arrayShift, 0),
       ("unshift", .arrayUnshift, 1), ("slice", .arraySlice, 2), ("splice", .arraySplice, 2),
       ("join", .arrayJoin, 1), ("toString", .arrayToString, 0), ("indexOf", .arrayIndexOf, 1),
@@ -10209,6 +10303,7 @@ def initRealm : M Unit := do
   let sp := (← realm).stringProto
   method sp "isWellFormed" (.x .stringIsWellFormed) 0
   method sp "toWellFormed" (.x .stringToWellFormed) 0
+  initSpecies
 
 /-- A fresh realm. -/
 def freshHeapOf (host : Option H) (hostCall : H → Nat → Array HostArg → Nat → H × HostAns) : HeapOf H :=
