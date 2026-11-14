@@ -175,7 +175,10 @@ comment has its "Says" and "Does not say"):
 - Cursor: `walk_eq_filter` (a cursor run from no position visits exactly the records in its range, each once,
   in key order), `walkRev_eq_filter` (descending for `prev`).
 - Exception order of finished transactions' handles: `reqGuard_ended_deleted`, `reqGuard_ended_inactive`,
-  `schemaGuard_ended_upgrade`, `upgradeGuard_aborting` (an aborted upgrade "runs" until its abort event) ("has been deleted" before "not active"; "not active" before the name checks).
+  `schemaGuard_ended_upgrade`, `upgradeGuard_aborting` (an aborted upgrade "runs" until its abort event).
+- Indexes made while requests are queued: `settleIndexes_none` (no such index: the transaction is untouched).
+- Values: `toSparse_other` (only a dense array is rewritten when a key is injected into it).
+- File system: `guidOf_length` (`getUniqueId` answers 36 characters). ("has been deleted" before "not active"; "not active" before the name checks).
 - Transactions: `run_effect`, `op_dbs` (every command but `pump` leaves the databases as they were: what an
   aborted transaction did was never in them), `effect_none`, `commit_visible` (a later transaction reads what
   was committed), `commit_other_store`, `effect_other_db`, `commit_last_wins` (commit order).
@@ -251,9 +254,10 @@ statement (inactive after the checkpoint, whatever its depth) is open.
 - `Array.fromAsync` (async iterators; sync iterators through %AsyncFromSyncIteratorPrototype%; array-likes;
   `mapfn` results awaited): each await is a promise reaction whose handler is a bound native step carrying the
   loop's state (the promise, the array, the iterator or array-like, the index). The `fs/` test helpers use it.
+- `Array.prototype.join` of an array met again while it is being joined (an array that holds itself) throws
+  `RangeError` instead of recursing through native frames until the process's stack overflows.
 - Found and left to the engine's owners: an Array given an index accessor stops being an Array; `JSON.stringify`
-  of a cycle throws `RangeError` (wants `TypeError`); `String()` of an array that contains itself overflows the
-  native stack; a transferred `ArrayBuffer` is not detached by `postMessage`.
+  of a cycle throws `RangeError` (wants `TypeError`); a transferred `ArrayBuffer` is not detached by `postMessage`.
 
 ## Performance
 
