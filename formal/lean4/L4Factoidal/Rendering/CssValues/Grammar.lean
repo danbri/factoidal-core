@@ -481,9 +481,15 @@ def leaf (env : Env) (m : G → List CV → Res) (name : String) (lo hi : Option
   | "position" => positionLeaf env.ctx false ts
   | "bg-position" => positionLeaf env.ctx true ts
   | _ =>
-    match env.syntaxG name with
-    | some g => m g ts
-    | none => []
+    if name.startsWith "ident=" then
+      -- one identifier, case-sensitively (a component of a registered property's syntax)
+      oneCV (fun cv => match cv with
+        | .tok (.ident s) => if s == (name.drop 6).toString then some (.tok (.ident s)) else none
+        | _ => none) ts
+    else
+      match env.syntaxG name with
+      | some g => m g ts
+      | none => []
 
 /-- The matches of grammar `g` at the start of `ts`. -/
 def matchG (env : Env) : Nat → G → List CV → Res

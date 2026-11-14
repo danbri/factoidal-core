@@ -2327,3 +2327,11 @@ L4Factoidal_JS_exportedNamesF  # (c) GetExportedNames: depth is the chain of `ex
 L4Factoidal_JS_postOrder  # (c) the evaluation order of a module graph: depth is the import chain, at most fuel = modules + 1; a visited module is not entered again
 L4Factoidal_JS_namespaceOf  # (c) a namespace object and the namespaces it re-exports (`export * as`): depth is that chain, at most the number of modules, since a namespace made once is reused
 L4Factoidal_WasmVM_Hosts_LeanJSModules_visit*  # (c) fetching a module graph (visit, visitKids): depth is the import chain, at most fuel 4096 (deeper is "module graph too deep"); a URL in the module map is not visited again; a module's requests are a self tail call
+L4Factoidal_Rendering_CssRegister_hasFontRelative  # (c) the nesting of one value, at most maxNesting + 2 = 66
+L4Factoidal_Rendering_CssValues_propsOf  # (c) the nesting of a grammar of the property table, fuel 24
+L4Factoidal_Rendering_CssValues_simpleRefs  # (c) the nesting of a grammar of the property table, fuel 24
+L4Factoidal_Rendering_CssValues_unparse  # (c) the nesting of a grammar of the property table, fuel 24
+L4Factoidal_Rendering_CssValues_expandF  # (c) fuel 4: a shorthand whose parts are shorthands
+L4Factoidal_Rendering_CssValues_recombineF  # (c) fuel 4: a shorthand whose parts are shorthands
+L4Factoidal_Rendering_CssValues_filterComputed  # (c) the nesting of one value, fuel 8
+L4Factoidal_Rendering_CSS_complexSpecificity  # (c) the nesting of a selector, at most DOM.Selectors.maxNesting = 32
