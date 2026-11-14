@@ -177,13 +177,56 @@ def scaleCanon (v : String) : String :=
   | [x, y] => if x == y then x else x ++ " " ++ y
   | _ => serialize nums
 
+/-- A colour of a gradient written in a legacy form (named, hex, `rgb()`, `hsl()`, `hwb()`,
+a system colour): its default interpolation space is sRGB (CSS Images 4 §3.1, CSS Color 4
+§12.1); any other colour makes the default Oklab. -/
+def modernColorFns : List String := ["lab", "lch", "oklab", "oklch", "color", "color-mix", "light-dark"]
+
+/-- A gradient's arguments without its colour interpolation method when that is the default
+one (`in oklab`, or `in srgb` when every colour is legacy) with no hue method: the
+canonical form leaves it out. -/
+def dropDefaultInterpolation (args : List CV) : List CV :=
+  let groups := splitCommas args
+  match groups with
+  | first :: rest =>
+    let ws := stripWs first
+    let isIn := fun (cv : CV) => match cv with
+      | .tok (.ident k) => lower k == "in"
+      | _ => false
+    match ws.reverse with
+    | .tok (.ident sp) :: inTok :: before =>
+      if !isIn inTok then args
+      else
+        let modern := rest.any fun g => g.any fun cv => match cv with
+          | .fn f _ => modernColorFns.contains (lower f)
+          | _ => false
+        let default := if modern then "oklab" else "srgb"
+        if lower sp != default then args
+        else
+          let first' := before.reverse
+          let groups' := if first'.isEmpty then rest else first' :: rest
+          (groups'.map stripWs).foldl (fun acc g => if acc.isEmpty then g else acc ++ [.tok .comma, .tok .ws] ++ g) []
+    | _ => args
+  | [] => args
+
+/-- The value with the default interpolation method of each top-level gradient left out. -/
+def gradientCanon (v : String) : String :=
+  if (v.splitOn "gradient(").length ≤ 1 || (v.splitOn " in ").length ≤ 1 && (v.splitOn "(in ").length ≤ 1 then v
+  else
+    let cvs := CV.parse v
+    let out := cvs.map fun cv => match cv with
+      | .fn name args =>
+        if (lower name).endsWith "gradient" then .fn name (dropDefaultInterpolation args) else cv
+      | cv => cv
+    serialize out
+
 /-- The canonical forms that the order of the grammar alone does not give, by property. -/
 def canonical (p v : String) : String :=
   match p with
   | "display" => displayCanon v
   | "scale" => if v == "none" then v else scaleCanon v
   | "rotate" => rotateCanon v
-  | _ => v
+  | _ => gradientCanon v
 
 /-- `canonical`, and for a shape property the shape's canonical form (`shapeValue`):
 `none` when a `path()` in it is not path data, so the value is not one of the property's. -/
@@ -977,6 +1020,12 @@ def initialComputed (ctx : ComputeCtx) (row : Property) : String :=
 #guard specified "color" "rgb(calc(infinity), 0, 0)" == some "rgb(255, 0, 0)"
 #guard specified "color" "rgba(0, 0, 0, calc(NaN))" == some "rgba(0, 0, 0, 0)"
 #guard specified "color" "hsl(calc(infinity) 100% 50%)" == some "rgb(255, 0, 0)"
+-- the default interpolation method of a gradient is left out (gradient-interpolation-method-valid.html)
+#guard specified "background-image" "linear-gradient(in oklab, color(srgb 1 0 0), blue)" == some "linear-gradient(color(srgb 1 0 0), blue)"
+#guard specified "background-image" "linear-gradient(30deg in srgb, red, blue)" == some "linear-gradient(30deg, red, blue)"
+#guard specified "background-image" "linear-gradient(in srgb, red, 50%, blue)" == some "linear-gradient(red, 50%, blue)"
+#guard specified "background-image" "linear-gradient(in oklab, red, blue)" == some "linear-gradient(in oklab, red, blue)"
+#guard specified "background-image" "linear-gradient(in oklch longer hue, red, blue)" == some "linear-gradient(in oklch longer hue, red, blue)"
 #guard specified "flex" "0 1 1" == none
 #guard specified "flex" "0 1" == some "0 1" && (specified "flex" "0 auto").isSome && (specified "flex" "1 0 0").isSome
 #guard specified "color" "RED" == some "red"
