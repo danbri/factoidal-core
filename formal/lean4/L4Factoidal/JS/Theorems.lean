@@ -416,6 +416,18 @@ theorem accessorParamsOk_getter (c : Nat) (r : Bool) (h : accessorParamsOk true 
 theorem accessorParamsOk_setter (c : Nat) (r : Bool) (h : accessorParamsOk false c r = true) : c = 1 ∧ r = false := by
   simp [accessorParamsOk] at h; exact ⟨h.2, h.1⟩
 
+/-! ## ValidateTypedArray (`typedOob`, §10.4.5.11, §23.2.4.4) -/
+
+/-- Kind: a refusal. Says: a view that is in bounds is on a live buffer and its bytes fit in it. -/
+theorem typedOob_false (d : Bool) (off len e size : Nat) (h : typedOob d off len e size = false) :
+    d = false ∧ off + len * e ≤ size := by
+  simp [typedOob] at h
+  exact ⟨h.1, h.2⟩
+
+/-- Kind: a refusal. Says: a detached buffer is always out of bounds. -/
+theorem typedOob_detached (off len e size : Nat) : typedOob true off len e size = true := by
+  simp [typedOob]
+
 /-! ## The size of the heap (`HeapOf.full`, `maxObjs`)
 
 The heap has no collector: an object, once made, stays. A page that makes objects for ever (a

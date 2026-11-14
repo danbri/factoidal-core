@@ -1167,11 +1167,22 @@ def setProtoOf (id : Nat) (v : Value) : M Bool := do
 /-- IsDetachedBuffer (§25.1.3.4). -/
 def isDetached (o : Obj) : Bool := hiddenFlag o bufDetachedKey
 
+/-- IsTypedArrayOutOfBounds (§10.4.5.11) of a view with a fixed length: the buffer is
+detached, or the view's bytes run past its end. -/
+def typedOob (detached : Bool) (off len elem size : Nat) : Bool :=
+  detached || off + len * elem > size
+
 /-- The element count of a typed array as its buffer now is (§10.4.5.12
 TypedArrayLength): 0 when the buffer is detached or too small for the view. -/
 def liveLen (ty buf off len : Nat) : M Nat := do
   let bo ← getObj buf
-  pure (if isDetached bo || off + len * elemSize ty > (bufferBytes bo).size then 0 else len)
+  pure (if typedOob (isDetached bo) off len (elemSize ty) (bufferBytes bo).size then 0 else len)
+
+/-- ValidateTypedArray's test (§23.2.4.4): is the view inside its buffer, and the buffer not
+detached? -/
+def typedInBounds (ty buf off len : Nat) : M Bool := do
+  let bo ← getObj buf
+  pure !(typedOob (isDetached bo) off len (elemSize ty) (bufferBytes bo).size)
 
 /-- The hidden slots of an iterator helper (§27.1.2.1): the underlying iterator and its
 `next`, the kind (`Native.iterLazy`, 5 the wrapper of `Iterator.from`), the callback or
@@ -6576,6 +6587,7 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
       | .typedSet =>
         let at_ := toIntegerOrInf (← toNum n a1)
         if at_ < 0 then throwErr .range "offset is out of bounds"
+        if !(← typedInBounds ty b off len) then throwErr .type "set: the typed array is detached or out of bounds"
         let at_ := at_.toUInt64.toNat
         let len ← liveLen ty b off len
         let xs ← elemsOf n a0
@@ -6583,6 +6595,8 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
         for i in [0:xs.size] do typedWriteV ty b off (at_ + i) (← typedConv n ty xs[i]!)
         pure .undef
       | .typedSubarray =>
+        -- the new view on the same buffer: TypedArraySpeciesCreate refuses a detached one
+        if isDetached (← getObj b) then throwErr .type "subarray: the buffer is detached"
         let len ← liveLen ty b off len
         let a := relIndex (toIntegerOrInf (← toNum n a0)) len
         let e ← match a1 with
@@ -6590,7 +6604,9 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
           | v => do pure (relIndex (toIntegerOrInf (← toNum n v)) len)
         newTyped ty b (off + a * elemSize ty) (if e > a then e - a else 0)
       | _ =>
-        -- §23.2.3.9 %TypedArray%.prototype.fill: value, then the indices, then detachment
+        -- §23.2.3.9 %TypedArray%.prototype.fill: ValidateTypedArray, the value, then the
+        -- indices, then detachment
+        if !(← typedInBounds ty b off len) then throwErr .type "fill: the typed array is detached or out of bounds"
         let x ← typedConv n ty a0
         let len0 ← liveLen ty b off len
         let a ← match a1 with | .undef => pure 0 | v => do pure (relIndex (toIntegerOrInf (← toNum n v)) len0)
@@ -6867,6 +6883,12 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
         | .typed ty b off len => pure (ty, b, off, len)
         | _ => throwErr .type s!"{what}: this is not a typed array"
       | _ => throwErr .type s!"{what}: this is not a typed array"
+    -- ValidateTypedArray (§23.2.4.4): a typed array whose view is inside a live buffer
+    let validTyped (what : String) : M (Nat × Nat × Nat × Nat) := do
+      let (ty, b, off, len) ← thisTyped what
+      if !(← typedInBounds ty b off len) then
+        throwErr .type s!"{what}: the typed array is detached or out of bounds"
+      pure (ty, b, off, len)
     -- a new typed array of type `ty` holding these (already converted) values
     let fresh (ty : Nat) (xs : Array Value) : M Value := do
       let buf ← newBuffer (ByteArray.mk (Array.replicate (xs.size * elemSize ty) 0))
@@ -7018,8 +7040,19 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       | 2 => pure (.num (Float.ofNat (if gone then 0 else off)))
       | 3 => pure (.num (Float.ofNat live))
       | _ => pure (.str ((typedNames[ty]?.map (·.1)).getD ""))
+    | (.x (.typedGeneric k)) =>
+      -- the %TypedArray%.prototype methods whose steps are Array.prototype's after
+      -- ValidateTypedArray: that function, kept hidden on %TypedArray%.prototype
+      let nm := typedGenericNames.getD k ("", 0)
+      let _ ← validTyped s!"%TypedArray%.prototype.{nm.1}"
+      let tp ← match (← getObj r.typedArrayCtor).getOwn "prototype" with
+        | some (.data (.obj p) ..) => pure p
+        | _ => throwErr .type "no %TypedArray%.prototype"
+      match (← getObj tp).getOwn (typedGenericKey nm.1) with
+      | some (.data f ..) => callV n f thisV args
+      | _ => throwErr .type s!"%TypedArray%.prototype.{nm.1} is missing"
     | (.x (.typedMethod which)) =>
-      let (ty, b, off, len) ← thisTyped "TypedArray method"
+      let (ty, b, off, len) ← validTyped "TypedArray method"
       let xs ← valuesOf ty b off len
       let size := xs.size
       let writeAll (vs : Array Value) : M Unit := do
@@ -8258,6 +8291,15 @@ def getter (target : Nat) (name : String) (id : Native) : M Unit := do
 
 /-- The methods of %TypedArray%.prototype that answer typed arrays or need the element
 type (`Native.typedMethod`): name, number, length. -/
+/-- The %TypedArray%.prototype methods that validate the typed array and then take the steps
+of the Array.prototype method of the same name (`NativeX.typedGeneric`): name, length. -/
+def typedGenericNames : Array (String × Nat) :=
+  #[("forEach", 1), ("join", 1), ("indexOf", 1), ("includes", 1), ("every", 1), ("some", 1), ("reduce", 1),
+    ("find", 1), ("findIndex", 1), ("values", 0), ("keys", 0), ("entries", 0)]
+
+/-- Where %TypedArray%.prototype keeps the Array.prototype function a generic method uses. -/
+def typedGenericKey (nm : String) : String := privKey ("%Array." ++ nm)
+
 def typedMethodNames : List (String × Nat × Nat) :=
   [("copyWithin", 0, 2), ("reverse", 1, 0), ("slice", 2, 2), ("sort", 3, 1), ("at", 4, 1),
    ("lastIndexOf", 5, 1), ("filter", 6, 1), ("map", 7, 1), ("toReversed", 8, 0), ("toSorted", 9, 1),
@@ -8676,10 +8718,15 @@ def initRealm : M Unit := do
   method bufferProto "slice" .bufferSlice 2
   let typedProto ← mk
   let ap := (← realm).arrayProto
-  for nm in ["forEach", "map", "join", "indexOf", "includes", "every", "some", "reduce", "find", "findIndex"] do
-    if let some (.data f ..) := (← getObj ap).getOwn nm then setHidden typedProto nm f
-  for k in [symKey symIterator, "values", "keys", "entries"] do
-    if let some (.data f ..) := (← getObj ap).getOwn k then setHidden typedProto k f
+  -- methods with Array.prototype's steps after ValidateTypedArray, as functions of their own
+  -- (§23.2.3); @@iterator is the same function as values (§23.2.3.37)
+  for i in [0:typedGenericNames.size] do
+    let (nm, l) := typedGenericNames[i]!
+    if let some (.data f ..) := (← getObj ap).getOwn nm then
+      setHidden typedProto (typedGenericKey nm) f
+      method typedProto nm (.x (.typedGeneric i)) l
+  if let some p := (← getObj typedProto).getOwn "values" then
+    defineOwn typedProto (symKey symIterator) p
   method typedProto "set" .typedSet 1
   method typedProto "subarray" .typedSubarray 2
   method typedProto "fill" .typedFill 1
