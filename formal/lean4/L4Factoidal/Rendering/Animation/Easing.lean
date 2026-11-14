@@ -406,6 +406,54 @@ theorem evalPoints_ends (a b : Int) :
   · simp [evalPoints, evalPointsGo, ne, h]
     omega
 
+/-- The straight line of one `linear()` segment from point `a` to point `b` at input `x`
+(the expression `evalPointsGo` evaluates for points of different inputs). -/
+def segment (a b : Int × Int) (x : Int) : Int :=
+  a.2 + roundDiv ((x - a.1) * (b.2 - a.2)) (b.1 - a.1)
+
+/-- Kind: unfolding. Says: a `linear()` function of two points of increasing input is its
+one segment, at every input (also outside the two inputs, where the line continues). -/
+theorem evalPoints_two (a b : Int × Int) (h : a.1 < b.1) (x : Int) :
+    evalPoints [a, b] x = segment a b x := by
+  have ne : (a.1 == b.1) = false := beq_eq_false_iff_ne.mpr (by omega)
+  simp [evalPoints, evalPointsGo, segment, ne]
+
+/-- Kind: monotonicity. Says: on a segment whose output does not fall, the output
+progress does not fall as the input grows (all inputs, exactly, rounding included).
+Does not say: this of a whole point list (its segments may fall). -/
+theorem segment_mono (a b : Int × Int) (h : a.1 < b.1) (ho : a.2 ≤ b.2) {x y : Int} (hxy : x ≤ y) :
+    segment a b x ≤ segment a b y := by
+  unfold segment
+  have hm : (x - a.1) * (b.2 - a.2) ≤ (y - a.1) * (b.2 - a.2) :=
+    Int.mul_le_mul_of_nonneg_right (by omega) (by omega)
+  have hr := Fix.roundDiv_mono hm (show 0 < b.1 - a.1 by omega)
+  omega
+
+/-- Kind: bound. Says: between the inputs of its two points, a segment whose output does
+not fall stays between the two outputs. Does not say: this outside the two inputs. -/
+theorem segment_between (a b : Int × Int) (h : a.1 < b.1) (ho : a.2 ≤ b.2) {x : Int}
+    (h0 : a.1 ≤ x) (h1 : x ≤ b.1) : a.2 ≤ segment a b x ∧ segment a b x ≤ b.2 := by
+  unfold segment
+  have hd : 0 < b.1 - a.1 := by omega
+  constructor
+  · have hn := Fix.roundDiv_nonneg
+      (Int.mul_nonneg (show 0 ≤ x - a.1 by omega) (show 0 ≤ b.2 - a.2 by omega)) hd
+    omega
+  · have hm : (x - a.1) * (b.2 - a.2) ≤ (b.2 - a.2) * (b.1 - a.1) := by
+      rw [Int.mul_comm (b.2 - a.2)]
+      exact Int.mul_le_mul_of_nonneg_right (by omega) (by omega)
+    have hr := Fix.roundDiv_mono hm hd
+    rw [Fix.roundDiv_mul _ _ hd] at hr
+    omega
+
+/-- Kind: monotonicity. Says: `linear(a, b)` with `a ≤ b` (two points, inputs 0 and 1)
+does not decrease, at every input. -/
+theorem evalPoints_two_mono (a b : Int) (ho : a ≤ b) {x y : Int} (hxy : x ≤ y) :
+    evalPoints [(0, a), (one, b)] x ≤ evalPoints [(0, a), (one, b)] y := by
+  have h : ((0 : Int), a).1 < (one, b).1 := by show (0 : Int) < one; decide
+  rw [evalPoints_two _ _ h, evalPoints_two _ _ h]
+  exact segment_mono _ _ h ho hxy
+
 /-- Kind: monotonicity. Says: the step before clamping does not decrease as the input
 grows, for one before flag and at least one step. Does not say: more. -/
 theorem stepRaw_mono (n : Nat) (pos : StepPos) (before : Bool) (hn : 0 < n) {p q : Int} (h : p ≤ q) :
