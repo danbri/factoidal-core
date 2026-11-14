@@ -79,6 +79,31 @@ def resolvedAt (v : ComputedGeneric.View) (id : Nat) (k : Nat)
   else if name == some "transform-origin" || name == some "perspective-origin" then Value.resolvedOriginText text (box ())
   else text
 
+/-- The computed `font-size` of a keyword or a font-relative value against the parent's
+font size in px (CSS Fonts 4 §3.5: the absolute sizes over a medium of 16px, `larger` and
+`smaller` by 1.2, a percentage and `em` of the parent's size): an absolute length, as the
+layout profile computes the element's own. None for any other value (the property table
+computes it). -/
+def fontSizeIn (parentPx : Float) (value : String) : Option String :=
+  let px := fun (x : Float) => some (Value.toText [.dim (Value.ofFloat x) "px"])
+  match Value.parse value.toLower with
+  | [.ident "xx-small"] => px 9
+  | [.ident "x-small"] => px 10
+  | [.ident "small"] => px 13
+  | [.ident "medium"] => px 16
+  | [.ident "large"] => px 18
+  | [.ident "x-large"] => px 24
+  | [.ident "xx-large"] => px 32
+  | [.ident "xxx-large"] => px 48
+  | [.ident "larger"] => px (parentPx * 1.2)
+  | [.ident "smaller"] => px (parentPx / 1.2)
+  | [.dim n "%"] => px (parentPx * Value.toFloat n / 100)
+  | [.dim n "em"] => px (parentPx * Value.toFloat n)
+  | _ => none
+
+#guard fontSizeIn 20 "large" == some "18px" && fontSizeIn 20 "LARGER" == some "24px" && fontSizeIn 20 "150%" == some "30px"
+#guard fontSizeIn 20 "2em" == some "40px" && fontSizeIn 20 "12px" == none && fontSizeIn 20 "calc(1em + 2px)" == none
+
 /-- The computed value of `property: value` in the context of element `id`; none when the
 value is not one the property takes, or holds a `var()` (not resolved here). `inherit` is
 the parent's computed value, `initial` the initial one, `unset` and `revert` one of the
@@ -98,10 +123,16 @@ def computeIn (index : Std.HashMap String Nat) (v : ComputedGeneric.View) (id : 
         match ComputedGeneric.parentElement v.dom id with
         | some pid => valueOf index v pid p
         | none => initial ()
+      -- `font-size` is of the parent's font size (the element's own is the value being made)
+      let parentPx := fun (_ : Unit) =>
+        match (ComputedGeneric.parentElement v.dom id).bind (v.styles[·]?) with
+        | some st => st.fontSize
+        | none => 16
       if s == "inherit" then inherit ()
       else if s == "initial" then initial ()
       else if s == "unset" || s == "revert" || s == "revert-layer" then (if row.inherited then inherit () else initial ())
       else if CssValues.hasSubstitution (CssValues.CV.parse s) then none
+      else if p == "font-size" then (fontSizeIn (parentPx ()) s).orElse fun _ => some (CssValues.computed ctx p s)
       else some (CssValues.computed ctx p s)
     | _, _ => none
 
