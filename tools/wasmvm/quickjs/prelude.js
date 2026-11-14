@@ -10662,8 +10662,10 @@
     if (fsMade !== undefined) return fsMade;
     return fsMade = !apiOn() || apiCall(202, ['persisted'], 0, true) === -2 ? null : makeFs();
   };
-  for (const name of ['FileSystemHandle', 'FileSystemFileHandle', 'FileSystemDirectoryHandle', 'FileSystemWritableFileStream', 'FileSystemSyncAccessHandle',
+  for (const name of ['FileSystemHandle', 'FileSystemFileHandle', 'FileSystemDirectoryHandle', 'FileSystemWritableFileStream',
     'StorageManager']) lazy(name, () => fsApi()?.classes[name]);
+  // FileSystemSyncAccessHandle is [Exposed=DedicatedWorker]
+  lazy('FileSystemSyncAccessHandle', () => inWorker ? fsApi()?.classes.FileSystemSyncAccessHandle : undefined);
   // The pickers are exposed in windows only (a worker's scope drops names not in workerGlobals).
   for (const name of ['showOpenFilePicker', 'showSaveFilePicker', 'showDirectoryPicker']) lazy(name, () => fsApi()?.pickers[name]);
   // ==== end File System API ======================================================================
