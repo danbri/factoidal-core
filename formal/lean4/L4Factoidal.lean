@@ -1059,6 +1059,8 @@ import L4Factoidal.Net.LoginLimit
 import L4Factoidal.Net.PageFetch
 import L4Factoidal.Net.Xhr
 import L4Factoidal.Net.Storage
+import L4Factoidal.Net.ReferrerPolicy
+import L4Factoidal.Net.Csp
 import L4Factoidal.Net.BlobUrls
 import L4Factoidal.Net.FetchRules
 import L4Factoidal.Net.ProxyProtocol
