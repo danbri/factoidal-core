@@ -494,6 +494,28 @@ def missingDefault (shorthand canonical : String) (found : List (String × Strin
     (found.lookup ("column-" ++ (l.drop 4).toString)).getD (initialSpecified l)
   else initialSpecified l
 
+/-- The gap rule shorthands of CSS Gaps 1 §4.3 whose value may be a list of rules and
+`repeat()`s: each longhand is then the list of that part of each rule. -/
+def gapRuleShorthands : List String := ["column-rule", "row-rule", "-webkit-column-rule"]
+
+/-- A value with a top-level comma or a `repeat()`. -/
+def isRuleList (top : List CV) : Bool :=
+  top.any fun cv => match cv with
+    | .tok .comma => true
+    | .fn n _ => lower n == "repeat"
+    | _ => false
+
+/-- The `repeat()` of a rule list item: its count and its rules. -/
+def repeatParts (item : List CV) : Option (List CV × List (List CV)) :=
+  match item with
+  | [.fn n args] =>
+    if lower n == "repeat" then
+      match splitCommas args with
+      | cnt :: rules => some (stripWs cnt, rules.map stripWs)
+      | [] => none
+    else none
+  | _ => none
+
 /-- `expand`, with `fuel` for a shorthand whose parts are shorthands. -/
 def expandF : Nat → String → String → Option (List (String × String))
   | 0, _, _ => none
@@ -513,6 +535,20 @@ def expandF : Nat → String → String → Option (List (String × String))
           | some k => some (row.longhands.map fun l => (l, k))
           | none =>
             if hasSubstitution cvs then some [(p, canonical)]
+            else if gapRuleShorthands.contains p && isRuleList top then
+              -- a list of rules (CSS Gaps 1 §4.3): each rule read alone, each longhand the
+              -- list of its part, `repeat()` kept around the parts it repeats
+              let one := fun (item : List CV) =>
+                (expandF fuel p (serialize item)).bind fun ls =>
+                  if ls.length == 3 && ls.all (fun (n, _) => row.longhands.contains n) then some (ls.map (·.2)) else none
+              let parts : Option (List (List String)) := ((splitCommas top).map stripWs).mapM fun item =>
+                match repeatParts item with
+                | some (cnt, rules) => do
+                  let ts ← rules.mapM one
+                  some ((List.range 3).map fun k =>
+                    "repeat(" ++ serialize cnt ++ ", " ++ ", ".intercalate (ts.map fun t => t.getD k "") ++ ")")
+                | none => one item
+              parts.map fun ps => row.longhands.zipIdx.map fun (l, k) => (l, ", ".intercalate (ps.map fun t => t.getD k ""))
             else
               match shapeOf row with
               | none => some [(p, canonical)]
@@ -621,6 +657,27 @@ def recombineF : Nat → Property → (String → String) → String
   | fuel + 1, row, get =>
     let vs := row.longhands.map get
     if vs.any (· == "") then ""
+    else if gapRuleShorthands.contains row.name && vs.any (fun v => isRuleList (stripWs (CV.parse v))) then
+      -- a list of rules: each item put together from the same item of each longhand
+      let lists := vs.map fun v => (splitCommas (stripWs (CV.parse v))).map stripWs
+      let n := (lists.headD []).length
+      if !lists.all (·.length == n) then ""
+      else
+        let single := fun (item : List (List CV)) =>
+          recombineF fuel row fun l => match row.longhands.idxOf? l with
+            | some k => serialize (item.getD k [])
+            | none => ""
+        let items := (List.range n).map fun i =>
+          let item := lists.map fun xs => xs.getD i []
+          match item.map repeatParts with
+          | [some (c1, r1), some (c2, r2), some (c3, r3)] =>
+            if serialize c1 == serialize c2 && serialize c2 == serialize c3 && r1.length == r2.length && r2.length == r3.length then
+              let inner := (List.range r1.length).map fun j => single [r1.getD j [], r2.getD j [], r3.getD j []]
+              if inner.any (· == "") then "" else "repeat(" ++ serialize c1 ++ ", " ++ ", ".intercalate inner ++ ")"
+            else ""
+          | [none, none, none] => single item
+          | _ => ""
+        if items.any (· == "") then "" else ", ".intercalate items
     else
       match vs with
       | [] => ""
@@ -886,6 +943,14 @@ def initialComputed (ctx : ComputeCtx) (row : Property) : String :=
 
 /-! ### Tests -/
 
+-- rule lists (CSS Gaps 1 §4.3)
+#guard expand "column-rule" "repeat(auto, 5px solid yellow, 10px dotted blue)" == some [("column-rule-width", "repeat(auto, 5px, 10px)"),
+  ("column-rule-style", "repeat(auto, solid, dotted)"), ("column-rule-color", "repeat(auto, yellow, blue)")]
+#guard expand "column-rule" "thick, dashed, hotpink" == some [("column-rule-width", "thick, medium, medium"),
+  ("column-rule-style", "none, dashed, none"), ("column-rule-color", "currentcolor, currentcolor, hotpink")]
+#guard (lookup "column-rule").map (fun r => recombine r fun l => match l with
+  | "column-rule-width" => "5px, repeat(4, 6px, 5px)" | "column-rule-style" => "double, repeat(4, none, solid)"
+  | _ => "salmon, repeat(4, currentcolor, red)") == some "5px double salmon, repeat(4, 6px, 5px solid red)"
 #guard specified "flex" "0 1 1" == none
 #guard specified "flex" "0 1" == some "0 1" && (specified "flex" "0 auto").isSome && (specified "flex" "1 0 0").isSome
 #guard specified "color" "RED" == some "red"

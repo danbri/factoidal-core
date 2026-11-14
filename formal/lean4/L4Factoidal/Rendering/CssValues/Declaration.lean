@@ -308,6 +308,10 @@ def styleOp (q : String) : String :=
 #guard (Block.parse "grid-template: \"a\" \"b\"").get "grid-template" == "\"a\" \"b\""
 #guard (Block.parse "grid: auto-flow / 10px").get "grid" == "auto-flow / 10px"
 #guard (Block.parse "rule: repeat(auto, 5px solid green)").get "rule" == "repeat(auto, 5px solid green)"
+#guard (Block.parse "rule: thick, dashed, hotpink").get "row-rule-color" == "currentcolor, currentcolor, hotpink"
+#guard (Block.parse "column-rule: repeat(4, blue, 5px red)").get "column-rule" == "repeat(4, blue, 5px red)"
+#guard (Block.parse "row-rule: currentcolor none medium, repeat(auto, 5px solid red)").get "row-rule" ==
+  "medium, repeat(auto, 5px solid red)"
 #guard (Block.parse "corner: round").get "corner" == "0px"
 #guard (Block.parse "corner: round 3px").get "corner" == "3px"
 #guard (Block.parse "font: 16px serif; font-kerning: none").get "font" == ""
