@@ -453,6 +453,10 @@ def declarationsOf (ds : List SheetReader.Decl) : List Declaration :=
       match expandSides key d.value d.important with
       | [] => if key == "margin" || key == "padding" then acc else whole :: acc
       | sides => sides ++ acc
+    else if key == "font" && d.value.utf8ByteSize ≤ 14 &&
+        ["inherit","initial","unset","revert","revert-layer"].contains (trim d.value).toLower then
+      -- a CSS-wide keyword on the shorthand is that keyword on each longhand the profile has
+      ["font-size","font-family","line-height"].map (fun name => (⟨name,d.value,d.important⟩ : Declaration)) ++ acc
     else match layoutShorthand key d.value with
       | some longhands => longhands.map (fun (k,v) => (⟨k,v,d.important⟩ : Declaration)) ++ acc
       | none => whole :: acc) []
@@ -1121,6 +1125,100 @@ private def applyOrKeep (s : Computed) (d : Declaration) : Computed :=
     match tableDeclaration s d with
     | some d' => (apply s d').toOption.getD s
     | none => s
+
+/-! ### CSS-wide keywords (CSS Cascade 4 §7.3) -/
+
+/-- Style `s` with property `property` of this profile as `source` has it; none for a
+property the profile does not have. The font size carries the line height with it, as a
+declared font size does; `font` is the size, the family and the line height; `border` the
+widths, the style and the colour. -/
+def copyProperty (property : String) (source s : Computed) : Option Computed :=
+  let lineHeightOf := fun (size : Float) (factor : Option Float) (height : Float) => (factor.map (size * ·)).getD height
+  match property with
+  | "display" => some {s with display := source.display}
+  | "width" => some {s with width := source.width}
+  | "height" => some {s with height := source.height}
+  | "margin-top" => some {s with margin := {s.margin with top := source.margin.top}}
+  | "margin-right" => some {s with margin := {s.margin with right := source.margin.right}, autoMarginRight := source.autoMarginRight}
+  | "margin-bottom" => some {s with margin := {s.margin with bottom := source.margin.bottom}}
+  | "margin-left" => some {s with margin := {s.margin with left := source.margin.left}, autoMarginLeft := source.autoMarginLeft}
+  | "padding-top" => some {s with padding := {s.padding with top := source.padding.top}}
+  | "padding-right" => some {s with padding := {s.padding with right := source.padding.right}}
+  | "padding-bottom" => some {s with padding := {s.padding with bottom := source.padding.bottom}}
+  | "padding-left" => some {s with padding := {s.padding with left := source.padding.left}}
+  | "color" => some {s with color := source.color}
+  | "background" | "background-color" => some {s with background := source.background}
+  | "font-size" =>
+    some {s with fontSize := source.fontSize, lineHeight := lineHeightOf source.fontSize s.lineHeightFactor s.lineHeight}
+  | "font-family" => some {s with fontFamily := source.fontFamily}
+  | "line-height" =>
+    some {s with lineHeightFactor := source.lineHeightFactor,
+                 lineHeight := lineHeightOf s.fontSize source.lineHeightFactor source.lineHeight}
+  | "font" =>
+    some {s with fontSize := source.fontSize, fontFamily := source.fontFamily, lineHeightFactor := source.lineHeightFactor,
+                 lineHeight := lineHeightOf source.fontSize source.lineHeightFactor source.lineHeight}
+  | "visibility" => some {s with visible := source.visible}
+  | "overflow" => some {s with clipOverflow := source.clipOverflow}
+  | "text-decoration" | "text-decoration-line" => some {s with underline := source.underline}
+  | "border-width" => some {s with borderWidth := source.borderWidth}
+  | "border-style" => some {s with borderStyle := source.borderStyle}
+  | "border-color" => some {s with borderColor := source.borderColor}
+  | "border" => some {s with borderWidth := source.borderWidth, borderStyle := source.borderStyle, borderColor := source.borderColor}
+  | "border-spacing" => some {s with borderSpacingX := source.borderSpacingX, borderSpacingY := source.borderSpacingY}
+  | "border-collapse" => some {s with borderCollapse := source.borderCollapse}
+  | "caption-side" => some {s with captionBottom := source.captionBottom}
+  | "table-layout" => some {s with tableFixed := source.tableFixed}
+  | "vertical-align" => some {s with verticalAlign := source.verticalAlign}
+  | "min-width" => some {s with minWidth := source.minWidth}
+  | "max-width" => some {s with maxWidth := source.maxWidth}
+  | "min-height" => some {s with minHeight := source.minHeight}
+  | "max-height" => some {s with maxHeight := source.maxHeight}
+  | "object-fit" => some {s with objectFit := source.objectFit}
+  | "text-align" => some {s with textAlign := source.textAlign}
+  | "direction" => some {s with direction := source.direction}
+  | "unicode-bidi" => some {s with unicodeBidi := source.unicodeBidi}
+  | _ => none
+
+/-- The properties of this profile that are inherited (CSS 2 and the modules that define
+them). -/
+def inheritedProperties : List String :=
+  ["color","font","font-size","font-family","line-height","visibility","border-spacing","border-collapse",
+   "caption-side","text-align","direction"]
+
+/-- The style a CSS-wide keyword takes the property from (CSS Cascade 4 §7.3): `inherit`
+the parent's; `initial` the initial values (the fields of an empty `Computed`); `unset`
+one or the other as the property is inherited or not; `revert` and `revert-layer` the
+element's start, `start`: what the user agent gives the element before author rules
+(this profile holds those as the start of `computedFrom`, not as declarations, and has no
+user origin). None for any other value. -/
+def wideSource (parent start : Computed) (d : Declaration) : Option Computed :=
+  if d.value.utf8ByteSize > 14 then none
+  else match (trim d.value).toLower with
+    | "inherit" => some parent
+    | "initial" => some {}
+    | "unset" => some (if inheritedProperties.contains d.property then parent else {})
+    | "revert" | "revert-layer" => some start
+    | _ => none
+
+/-- A winning declaration applied to the style so far: a CSS-wide keyword copies the
+property from the style it names (`wideSource`); any other value is read by the profile
+(`applyOrKeep`). A keyword on a property the profile does not have changes nothing. -/
+private def applyWinner (parent start s : Computed) (d : Declaration) : Computed :=
+  match wideSource parent start d with
+  | some source => (copyProperty d.property source s).getD s
+  | none => applyOrKeep s d
+
+/-- `inherit` gives the parent's value. -/
+theorem copyProperty_color (source s : Computed) :
+    (copyProperty "color" source s).map (·.color) = some source.color := rfl
+
+theorem copyProperty_width (source s : Computed) :
+    (copyProperty "width" source s).map (·.width) = some source.width := rfl
+
+/-- A value longer than every CSS-wide keyword is read by the profile, not copied. -/
+theorem wideSource_long (parent start : Computed) (d : Declaration) (h : d.value.utf8ByteSize > 14) :
+    wideSource parent start d = none := by
+  simp [wideSource, h]
 
 /-- The declarations of `rules` and of `style` attributes that this profile can not
 read, each once, in source order, as "property: value (reason)". Such a declaration is
@@ -1945,13 +2043,13 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
       | none => initial.direction == .rtl
     chosen := physicalWinners {rtl} chosen
   -- Font size precedes line-height and inheritance-sensitive dependent values.
-  if let some (_,(_,d)) := chosen.find? (·.1 == "font-size") then result := applyOrKeep result d
+  if let some (_,(_,d)) := chosen.find? (·.1 == "font-size") then result := applyWinner parent initial result d
   for (key,(priority,d)) in chosen do
     if key != "font-size" then
       -- Inline SVG paint declarations stay with the existing SVG producer.
       -- External HTML paint rules are refused until that cascade is unified.
       if n.ns == some DOM.svgNS && priority[2]? == some 1 && !htmlProperties.contains key then pure ()
-      else result := applyOrKeep result d
+      else result := applyWinner parent initial result d
   -- A root or body never clips here: the window scrolls instead.
   if ["html","body"].contains n.lname then result := {result with clipOverflow := false}
   -- The children of a flex or grid container are its items: blockified.
