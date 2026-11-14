@@ -4418,24 +4418,24 @@
       return [g('a', 'm11', 1), g('b', 'm12', 0), g('c', 'm21', 0), g('d', 'm22', 1), g('e', 'm41', 0), g('f', 'm42', 0)];
     };
     const domMatrix = v => new globalThis.DOMMatrix(v);
+    const setT = (o, name, args) => {
+      const s = brandOf(transforms, o, 'SVGTransform');
+      if (s.readonly) noMod('SVGTransform');
+      s.name = name; s.args = args; s.matrix = undefined;
+      if (s.owner) s.owner.commit();
+    };
     class SVGTransform {
       constructor(k) { if (k !== key) illegal(); }
       get type() { return TRANSFORMS.indexOf(brandOf(transforms, this, 'SVGTransform.type').name); }
       get matrix() { const s = brandOf(transforms, this, 'SVGTransform.matrix'); return s.matrix ?? (s.matrix = domMatrix(matrixFor(s.name, s.args))); }
       get angle() { const s = brandOf(transforms, this, 'SVGTransform.angle'); return s.name === 'rotate' || s.name === 'skewX' || s.name === 'skewY' ? Math.fround(s.args[0]) : 0; }
-      setMatrix(matrix = undefined) { this._set('matrix', matrix2D(matrix, 'SVGTransform.setMatrix'), 0); }
-      setTranslate(tx, ty) { need(2, arguments.length, "Failed to execute 'setTranslate' on 'SVGTransform'"); this._set('translate', [float(tx, 'setTranslate'), float(ty, 'setTranslate')]); }
-      setScale(sx, sy) { need(2, arguments.length, "Failed to execute 'setScale' on 'SVGTransform'"); this._set('scale', [float(sx, 'setScale'), float(sy, 'setScale')]); }
-      setRotate(angle, cx, cy) { need(3, arguments.length, "Failed to execute 'setRotate' on 'SVGTransform'"); this._set('rotate', [float(angle, 'setRotate'), float(cx, 'setRotate'), float(cy, 'setRotate')]); }
-      setSkewX(angle) { need(1, arguments.length, "Failed to execute 'setSkewX' on 'SVGTransform'"); this._set('skewX', [float(angle, 'setSkewX')]); }
-      setSkewY(angle) { need(1, arguments.length, "Failed to execute 'setSkewY' on 'SVGTransform'"); this._set('skewY', [float(angle, 'setSkewY')]); }
+      setMatrix(matrix = undefined) { setT(this, 'matrix', matrix2D(matrix, 'SVGTransform.setMatrix')); }
+      setTranslate(tx, ty) { need(2, arguments.length, "Failed to execute 'setTranslate' on 'SVGTransform'"); setT(this, 'translate', [float(tx, 'setTranslate'), float(ty, 'setTranslate')]); }
+      setScale(sx, sy) { need(2, arguments.length, "Failed to execute 'setScale' on 'SVGTransform'"); setT(this, 'scale', [float(sx, 'setScale'), float(sy, 'setScale')]); }
+      setRotate(angle, cx, cy) { need(3, arguments.length, "Failed to execute 'setRotate' on 'SVGTransform'"); setT(this, 'rotate', [float(angle, 'setRotate'), float(cx, 'setRotate'), float(cy, 'setRotate')]); }
+      setSkewX(angle) { need(1, arguments.length, "Failed to execute 'setSkewX' on 'SVGTransform'"); setT(this, 'skewX', [float(angle, 'setSkewX')]); }
+      setSkewY(angle) { need(1, arguments.length, "Failed to execute 'setSkewY' on 'SVGTransform'"); setT(this, 'skewY', [float(angle, 'setSkewY')]); }
     }
-    Object.defineProperty(SVGTransform.prototype, '_set', { enumerable: false, value(name, args) {
-      const s = brandOf(transforms, this, 'SVGTransform');
-      if (s.readonly) noMod('SVGTransform');
-      s.name = name; s.args = args; s.matrix = undefined;
-      if (s.owner) s.owner.commit();
-    } });
     const newTransform = (name, args, owner, readonly) => mk(SVGTransform, transforms, { name, args, matrix: undefined, owner: owner ?? null, readonly: !!readonly });
     const transformText = s => {
       const a = s.matrix ? [s.matrix.a, s.matrix.b, s.matrix.c, s.matrix.d, s.matrix.e, s.matrix.f] : s.args;
@@ -4698,6 +4698,16 @@
       const table = {};
       for (const group of svgConsts[name].split('|')) group.split(' ').forEach((k, i) => { table[k] = i; });
       consts(classes[name], table); consts(classes[name].prototype, table);
+    }
+    // WebIDL §3.7: the attributes and operations of an interface are enumerable.
+    for (const name in classes) {
+      if (name === 'SVGElement') continue;
+      const P = classes[name].prototype;
+      for (const k of Object.getOwnPropertyNames(P)) {
+        if (k === 'constructor') continue;
+        const d = Object.getOwnPropertyDescriptor(P, k);
+        if (d.configurable && !d.enumerable) Object.defineProperty(P, k, { ...d, enumerable: true });
+      }
     }
     return { classes, byTag };
   };
