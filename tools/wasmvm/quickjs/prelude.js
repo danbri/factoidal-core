@@ -1554,13 +1554,75 @@
     }
     get statusMessage() { const m = glEventText.get(this); if (m === undefined) throw new TypeError('Illegal invocation'); return m; }
   }
-  // The rendering context interfaces. Their constants, attributes and operations are Lean's
-  // table of the WebGL IDL (PageGl.Idl, web_api op 100), which the validator reads too: the
-  // interface object is made from it on first use (`lazy`, below). An operation checks its
-  // receiver and argument count (Web IDL) and hands the call to the context's implementation.
-  const glState = new WeakMap(); // page context -> { impl, version }
+  // The rendering context interfaces. Their constants, attributes, operations and overload
+  // signatures are Lean's table of the WebGL IDL (PageGl.Idl, web_api op 100), which the
+  // validator reads too: the interface object is made from it on first use (`lazyGroup`,
+  // below). An operation checks its receiver and argument count, converts its arguments by
+  // the signatures (Web IDL), and hands the call to Lean's state machine (PageGl.State, op
+  // 102) when Lean models the command, and to the drawing path below when it draws.
+  const glState = new WeakMap(); // page context -> its state
+  const glObjIds = new WeakMap(); // WebGL object -> { st, id }: the context that made it and Lean's number
   const glInterfaces = [];
   const glInterface = version => glInterfaces[version] ??= makeGlInterface(version);
+  const glClassNamed = name => glClasses.find(C => C.name === name);
+  // One overload: its argument types. A type: its letter (tools/webgl-idl-table.py), an
+  // interface name after `O`, optional (`~`), nullable (`?`).
+  const glOverloads = sig => sig.split('|').map(o => o === '' ? [] : o.split(',').map(t => {
+    const opt = t[0] === '~'; if (opt) t = t.slice(1);
+    const nullable = t.endsWith('?'); if (nullable) t = t.slice(0, -1);
+    return { t: t[0], cls: t.length > 1 ? glClassNamed(t.slice(1)) : null, opt, nullable };
+  }));
+  const glScalar = t => 'uilfbs'.includes(t);
+  const glImageSource = v => {
+    for (const name of ['ImageData', 'ImageBitmap', 'HTMLImageElement', 'HTMLCanvasElement', 'HTMLVideoElement', 'OffscreenCanvas', 'VideoFrame']) {
+      const d = Object.getOwnPropertyDescriptor(globalThis, name), C = d && d.value;
+      if (typeof C === 'function' && v instanceof C) return true;
+    }
+    return false;
+  };
+  const glTyped = { F: Float32Array, I: Int32Array, U: Uint32Array };
+  // Does a value go with an argument type? A scalar type takes any value, except an object
+  // or null where another overload has an object type for that argument.
+  const glFits = (ty, v, others, i) => {
+    const none = v === null || v === undefined, object = !none && (typeof v === 'object' || typeof v === 'function');
+    if (glScalar(ty.t)) return !((object || none) && others.some(o => o[i] && !glScalar(o[i].t) && o[i].t !== 'a'));
+    if (ty.t === 'a') return true;
+    if (none) return ty.nullable;
+    if (ty.t === 'O') return v instanceof ty.cls;
+    if (ty.t === 'B') return v instanceof ArrayBuffer || ArrayBuffer.isView(v) || (typeof SharedArrayBuffer === 'function' && v instanceof SharedArrayBuffer);
+    if (ty.t === 'V') return ArrayBuffer.isView(v);
+    if (ty.t === 'T') return glImageSource(v);
+    return object; // a typed array or a sequence
+  };
+  // The argument as a field of Lean's command (PageGl.Api.argOf).
+  const glField = (ty, v, st) => {
+    switch (ty.t) {
+      case 'u': return 'i' + (Number(v) >>> 0);
+      case 'i': return 'i' + (Number(v) | 0);
+      case 'l': { const x = Math.trunc(Number(v)); return 'i' + (x === x && x !== Infinity && x !== -Infinity ? x : 0); }
+      case 'f': return 'f' + Number(v);
+      case 'b': return 'i' + (v ? 1 : 0);
+      case 's': return 's' + String(v);
+      case 'O': { if (v === null || v === undefined) return 'o0'; const reg = glObjIds.get(v); return reg && reg.st === st ? 'o' + reg.id : 'o-'; }
+      case 'B': case 'V': return v === null || v === undefined ? 'u' : 'b' + v.byteLength + ' ' + (v.BYTES_PER_ELEMENT || 1);
+      case 'F': case 'I': case 'U': case 'Q':
+        if (ArrayBuffer.isView(v)) return 'b' + v.byteLength + ' ' + (v.BYTES_PER_ELEMENT || 1);
+        return 'l' + Array.from(v, x => { const y = Math.trunc(Number(x)); return y === y && y !== Infinity && y !== -Infinity ? y : 0; }).join(',');
+      default: return 'u';
+    }
+  };
+  // The overload a call takes (Web IDL §3.6, by argument count and then by which arguments
+  // are objects), and its arguments as fields. No overload: a TypeError.
+  const glConvert = (name, k, overloads, args, st) => {
+    const longest = overloads.reduce((m, o) => Math.max(m, o.length), 0), count = Math.min(args.length, longest);
+    const byCount = overloads.filter(o => o.length >= count && o.filter(t => !t.opt).length <= count);
+    for (const o of byCount) {
+      let ok = true;
+      for (let i = 0; i < count && ok; i++) ok = glFits(o[i], args[i], byCount.filter(x => x !== o), i);
+      if (ok) { const fields = []; for (let i = 0; i < count; i++) fields.push(glField(o[i], args[i], st)); return fields; }
+    }
+    throw new TypeError(`Failed to execute '${k}' on '${name}': the arguments match no overload.`);
+  };
   const makeGlInterface = version => {
     const name = version === 2 ? 'WebGL2RenderingContext' : 'WebGLRenderingContext';
     const text = apiOn() ? apiCall(100, [String(version)]) : null;
@@ -1572,8 +1634,9 @@
     Object.defineProperty(C, 'prototype', { writable: false });
     hidden(P, Symbol.toStringTag, name);
     const stateOf = o => { const st = glState.get(o); if (!st) throw new TypeError('Illegal invocation'); return st; };
+    const modelled = new Set();
     for (const line of text.split('\n')) {
-      const [kind, k, v] = line.split(' ');
+      const [kind, k, v, sig] = line.split(' ');
       if (kind === 'c') {
         const d = { value: Number(v), writable: false, enumerable: true, configurable: false };
         Object.defineProperty(C, k, d); Object.defineProperty(P, k, d);
@@ -1584,26 +1647,64 @@
         if (v === '0') { set = function (x) { stateOf(this).setAttr(k, x); }; hidden(set, 'name', 'set ' + k); }
         Object.defineProperty(P, k, { get, set, enumerable: true, configurable: true });
       } else if (kind === 'o') {
-        const len = Number(v);
+        const len = Number(v), overloads = glOverloads(sig ?? '');
         const f = function (...args) {
           const st = stateOf(this);
           if (args.length < len) throw new TypeError(`Failed to execute '${k}' on '${name}': ${len} argument${len === 1 ? '' : 's'} required, but only ${args.length} present.`);
-          return st.call(k, args);
+          return st.call(k, args, glConvert(name, k, overloads, args, st), modelled.has(k));
         };
         hidden(f, 'name', k); hidden(f, 'length', len);
         Object.defineProperty(P, k, { value: f, writable: true, enumerable: true, configurable: true });
-      }
+      } else if (kind === 'm') modelled.add(k);
     }
     return C;
   };
-  // The page's context object for an implementation (the object `glImplFor` answers).
-  const glContextFor = (canvas, version) => {
+  // The page's context object: Lean's state machine in front of the drawing path (`glImplFor`).
+  const glContextFor = (canvas, version, attributes) => {
     const C = glInterface(version);
     if (!C) return null;
-    const impl = glImplFor(canvas, version), page = glNew(C);
+    const a = attributes !== null && typeof attributes === 'object' ? attributes : {};
+    const flag = (k, dflt) => (a[k] === undefined ? dflt : !!a[k]) ? '1' : '0';
+    const id = apiCall(101, [String(version), flag('alpha', true), flag('depth', true), flag('stencil', false)]);
+    if (typeof id !== 'string') return null;
+    const impl = glImplFor(canvas, version), page = glNew(C), objects = new Map();
     let drawingSpace = 'srgb', unpackSpace = 'srgb';
-    glState.set(page, { impl, version,
-      call(k, args) { const f = impl[k]; return typeof f === 'function' ? f.apply(impl, args) : undefined; },
+    // An error the drawing path found is recorded in Lean's flag (the first error wins there).
+    const drawError = keep => { const e = impl.getError(); if (e && keep) apiCall(102, [id, '$raise', 'i' + e]); };
+    const st = { impl, version,
+      call(k, args, fields, modelled) {
+        if (k === 'getError') { drawError(true); return Number(String(apiCall(102, [id, 'getError'])).slice(1)) || 0; }
+        const draw = impl[k];
+        if (!modelled) {
+          if (typeof draw !== 'function') return undefined;
+          const r = draw.apply(impl, args); drawError(true); return r;
+        }
+        const r = apiCall(102, [id, k].concat(fields));
+        if (typeof r !== 'string' || r === '!') return k.startsWith('is') ? false : k.startsWith('get') || k.startsWith('create') ? null : undefined;
+        switch (r[0]) {
+          case 'z': return null;
+          case 'i': return Number(r.slice(1));
+          case 't': return true;
+          case 'F': return false;
+          case 'o': {
+            const n = Number(r.slice(1));
+            if (!k.startsWith('create')) return objects.get(n) ?? null;
+            // A new object: the drawing path's when it makes that kind, else a plain one.
+            const made = typeof draw === 'function' ? draw.apply(impl, args) : glNew(glClassNamed(k === 'createVertexArray' ? 'WebGLVertexArrayObject' : 'WebGL' + k.slice(6)));
+            drawError(false);
+            glObjIds.set(made, { st, id: n }); objects.set(n, made);
+            return made;
+          }
+          default: {
+            // Accepted by Lean ('u'), or the drawing path's to answer ('d'): the drawing path runs;
+            // what it refuses of an accepted command is its own limit, not a GL error.
+            if (typeof draw !== 'function') return k.startsWith('get') ? null : undefined;
+            const out = draw.apply(impl, args); drawError(false);
+            if (k.startsWith('delete') && args[0]) { const reg = glObjIds.get(args[0]); if (reg) objects.delete(reg.id); }
+            return out;
+          }
+        }
+      },
       attr(k) {
         if (k === 'drawingBufferFormat') return 0x8058; // RGBA8
         if (k === 'drawingBufferColorSpace') return drawingSpace;
@@ -1615,7 +1716,8 @@
         x = String(x);
         if (x !== 'srgb' && x !== 'display-p3') return;
         if (k === 'drawingBufferColorSpace') drawingSpace = x; else if (k === 'unpackColorSpace') unpackSpace = x;
-      } });
+      } };
+    glState.set(page, st);
     return page;
   };
   const glImplFor = (canvas, version) => {
@@ -2262,8 +2364,8 @@
       let context = null;
       if (kind === '2d') context = c2d().context(this);
       else if (kind === 'webgpu') context = new GPUCanvasContext(this);
-      else if (kind === 'webgl2') context = glContextFor(this, 2);
-      else if (kind === 'webgl' || kind === 'experimental-webgl') context = glContextFor(this, 1);
+      else if (kind === 'webgl2') context = glContextFor(this, 2, arguments[1]);
+      else if (kind === 'webgl' || kind === 'experimental-webgl') context = glContextFor(this, 1, arguments[1]);
       if (context) gpuContexts.set(id, { kind, context });
       return context;
     }, writable: true, configurable: true },
