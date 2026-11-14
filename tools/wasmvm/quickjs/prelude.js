@@ -12566,6 +12566,9 @@
     'FileSystemFileHandle', 'FileSystemDirectoryHandle', 'FileSystemWritableFileStream', 'FileSystemSyncAccessHandle', 'StorageManager', 'Lock', 'LockManager',
     'ML', 'MLContext', 'MLGraph', 'MLOperand', 'MLTensor', 'MLGraphBuilder',
     'StorageBucket', 'StorageBucketManager', 'caches', 'Cache', 'CacheStorage']);
+  // The [SecureContext] interfaces of client-side storage: dropped from a worker that is not a secure context.
+  const secureOnlyGlobals = new Set(['FileSystemHandle', 'FileSystemFileHandle', 'FileSystemDirectoryHandle', 'FileSystemWritableFileStream',
+    'FileSystemSyncAccessHandle', 'StorageManager', 'Lock', 'LockManager', 'StorageBucket', 'StorageBucketManager', 'caches', 'Cache', 'CacheStorage']);
   // HTML §10.2.1: WorkerGlobalScope, DedicatedWorkerGlobalScope, WorkerLocation, WorkerNavigator.
   const makeWorkerScope = (url, name) => {
     inWorker = true;
@@ -12582,7 +12585,10 @@
     for (const k of ['href', 'origin', 'protocol', 'host', 'hostname', 'port', 'pathname', 'search', 'hash'])
       Object.defineProperty(WorkerLocation.prototype, k, { get() { return parts.get(this)[k]; }, configurable: true, enumerable: true });
     class WorkerNavigator { constructor() { throw new TypeError('Illegal constructor'); } }
-    for (const k of ['userAgent', 'language', 'languages', 'platform', 'onLine', 'hardwareConcurrency', 'storage', 'locks', 'ml', 'storageBuckets'])
+    // [SecureContext] members and interfaces are not exposed in a worker that is not a secure context.
+    const secureWorker = (() => { try { const v = new URL(url); return v.protocol === 'https:' || v.hostname === 'localhost' || v.hostname === '127.0.0.1'; } catch { return false; } })();
+    for (const k of ['userAgent', 'language', 'languages', 'platform', 'onLine', 'hardwareConcurrency', 'ml',
+      ...(secureWorker ? ['storage', 'locks', 'storageBuckets'] : [])])
       Object.defineProperty(WorkerNavigator.prototype, k, { get() { return nav[k]; }, configurable: true, enumerable: true });
     for (const [k, v] of [['appCodeName', 'Mozilla'], ['appName', 'Netscape'], ['product', 'Gecko']])
       Object.defineProperty(WorkerNavigator.prototype, k, { get() { return v; }, configurable: true, enumerable: true });
@@ -12593,7 +12599,7 @@
       pathname: u.pathname, search: u.search, hash: u.hash });
     const wnav = Object.create(WorkerNavigator.prototype);
     for (const k of Object.getOwnPropertyNames(globalThis))
-      if (!esGlobals.has(k) && !workerGlobals.has(k)) { try { delete globalThis[k]; } catch {} }
+      if ((!esGlobals.has(k) && !workerGlobals.has(k)) || (!secureWorker && secureOnlyGlobals.has(k))) { try { delete globalThis[k]; } catch {} }
     Object.setPrototypeOf(globalThis, isShared ? SharedWorkerGlobalScope.prototype : DedicatedWorkerGlobalScope.prototype);
     const WP = WorkerGlobalScope.prototype, DP = isShared ? SharedWorkerGlobalScope.prototype : DedicatedWorkerGlobalScope.prototype;
     const getter = (o, k, f) => Object.defineProperty(o, k, { get: f, configurable: true, enumerable: true });
