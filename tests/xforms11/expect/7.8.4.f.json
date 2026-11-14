@@ -6,12 +6,12 @@
   {
    "expect": "all-shown",
    "kind": "group",
-   "contains": ": PASS"
+   "contains": "PASS"
   },
   {
    "expect": "none-shown",
    "kind": "group",
-   "contains": ": FAIL"
+   "contains": "FAIL"
   }
  ]
 }

@@ -1,0 +1,19 @@
+{
+ "case": "8.1.9.b",
+ "file": "Chapt08/8.1/8.1.9/8.1.9.b.xhtml",
+ "quote": "You must see two submit controls on this page, one labeled \"Regular Submit\" and the other labeled \"Minimal Submit\". They may look different.",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "Regular Submit",
+   "kind": "submit",
+   "relevant": true
+  },
+  {
+   "expect": "control",
+   "label": "Minimal Submit",
+   "kind": "submit",
+   "relevant": true
+  }
+ ]
+}

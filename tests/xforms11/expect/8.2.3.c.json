@@ -1,0 +1,15 @@
+{
+ "case": "8.2.3.c",
+ "file": "Chapt08/8.2/8.2.3/8.2.3.c.xhtml",
+ "quote": "When you activate the Dispacth Hint Message trigger you must see the message \"Instance Hint Message\".",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Dispatch Hint Message"
+  },
+  {
+   "expect": "message",
+   "contains": "Instance Hint Message"
+  }
+ ]
+}
