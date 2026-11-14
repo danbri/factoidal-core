@@ -944,6 +944,14 @@ profile's answer, or the declaration's computed value where that is the answer
 def resolvedLonghand (v : View) (id : Nat) (name : String) : String :=
   let name := physicalNameOf v id name
   let also := alsoOf v id name
+  if name == "line-height" then
+    -- CSSOM §9: the resolved line height is the used one, `normal` or a length; the
+    -- profile keeps a number as a factor it shows as `normal`, so the table answers
+    let c := computedOf v id name
+    match CssValues.stripWs (CssValues.CV.parse c) with
+    | [.tok (.num x _)] => CssValues.fmtRat (x * (numCtx v id).fontSize) ++ "px"
+    | _ => c
+  else
   match (ComputedValues.values (v.styles[id]?.getD {})).lookup name with
   | some value =>
     -- with flow-relative declarations in play, a border side (the profile has one border
@@ -1115,6 +1123,11 @@ private def resolvedAt (html css prop : String) : String :=
 #guard resolvedAt "<div id=t></div>" "#t { position: relative; bottom: 3px }" "top" == "-3px"
 #guard resolvedAt "<div id=t></div>" "#t { position: relative }" "left" == "0px"
 #guard resolvedAt "<div id=t></div>" "#t { position: static }" "left" == "auto"
+-- the resolved line height is a length or normal (font-computed.html)
+#guard resolvedAt "<div id=t></div>" "#t { font-size: 32px; line-height: 1.2 }" "line-height" == "38.4px"
+#guard resolvedAt "<div id=t></div>" "#t { font-size: 32px; line-height: calc(120% + 1.2em) }" "line-height" == "76.8px"
+#guard resolvedAt "<div id=t></div>" "#t { font-size: 32px }" "line-height" == "normal"
+#guard resolvedAt "<div style='line-height: 2'><p id=t style='font-size: 10px'></p></div>" "" "line-height" == "20px"
 -- percentage insets in pixels of the containing block, with every box 200 × 100 pixels
 private def resolvedBoxed (html css prop : String) : String :=
   let dom := DOM.parseHtmlDocument html

@@ -1148,11 +1148,20 @@ def computedForm (p v : String) : String :=
       | item => serialize item)
   else v
 
+/-- A `line-height` percentage is of the element's font size (CSS Inline 3 §3.3), as an `em`
+is: each percentage written as a hundredth as many `em`, so that its computed value is a
+length. A loop over the tokens. -/
+def lineHeightEm (value : String) : String :=
+  String.join ((tokenize value).map fun t => match t with
+    | .pct x => (Tok.dim (x / 100) false "em").css
+    | t => t.css)
+
 /-- The computed value of a canonical specified value (not a CSS-wide keyword: the cascade
 resolves those): lengths absolute, colours resolved, `calc()` computed. A value the
 grammar does not read in computed form stays as specified. -/
 def computed (ctx : ComputeCtx) (property value : String) : String :=
   let p := propertyName property
+  let value := if p == "line-height" && value.contains '%' then lineHeightEm value else value
   if isCustom p then value
   else
     match lookup p with
@@ -1193,6 +1202,10 @@ def initialComputed (ctx : ComputeCtx) (row : Property) : String :=
 #guard specified "color" "lab(none 20 calc(0.5))" == some "lab(none 20 calc(0.5))"
 #guard specified "color" "rgb(calc(255) 0 0)" == some "rgb(255, 0, 0)"
 #guard computed {} "color" "lab(calc(50 * 3) 0 0)" == "lab(100 0 0)"
+-- line-height percentages are of the font size (font-computed.html)
+#guard computed { num := { fontSize := 32 } } "line-height" "calc(120% + 1.2em)" == "76.8px"
+#guard computed { num := { fontSize := 32 } } "line-height" "150%" == "48px"
+#guard computed { num := { fontSize := 32 } } "line-height" "1.2" == "1.2"
 -- infinities and NaN in colour channels (color-valid-rgb.html, color-computed-lab.html)
 #guard specified "color" "rgb(calc(infinity), 0, 0)" == some "rgb(255, 0, 0)"
 #guard specified "color" "rgba(0, 0, 0, calc(NaN))" == some "rgba(0, 0, 0, 0)"
