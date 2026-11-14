@@ -190,9 +190,18 @@ of an async function in the test's helper), not at `supports` itself.
 Timings: the change adds nothing to a page that does not touch `crypto` (the section is made on first
 use of the global); `supports` is one Lean call per query.
 
+Against the full run of main 2b464c0a8 (which already holds the first merge, 610d4b48d), the
+combined branch (glue, RSA and SHA-3, PKCS #8 theorems, secure contexts, `crypto` as an accessor)
+measured: import_export +1,680, encrypt_decrypt +360, sign_verify +356, modern-algos +272,
+wrapKey_unwrapKey +130, top level +13, secure-contexts +6 (check 43585629355). In all, WebCryptoAPI
+goes from 48,427 (main d799500c7) to about 51,440 of 70,798.
+
 ## 8. Cloud checks
 
 - 43574231128: `wip/webcrypto` at 171497bb7 on main 2db04faba, `/WebCryptoAPI/,sample:40`.
 - 43574286463: `wip/webcrypto-hacl` at b2417453c, `/WebCryptoAPI/`.
 - 43577423637: `wip/webcrypto-glue2` (brand check of `getRandomValues` and `randomUUID`;
   `QuotaExceededError` exposed in workers).
+- 43577958280: `wip/webcrypto-land` (glue, RSA and SHA-3, extern 27), `/WebCryptoAPI/,sample:40`.
+- 43578477604, 43581516145, 43585629355: `wip/webcrypto-pkcs8` (the above, PKCS #8 exactness,
+  secure contexts; the last also `crypto` as an accessor), `/WebCryptoAPI/,/secure-contexts/,sample:40`.
