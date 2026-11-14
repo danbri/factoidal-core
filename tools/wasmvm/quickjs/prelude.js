@@ -12541,7 +12541,18 @@
     brand.add(store);
     // document.cookie = text: Lean's `docset` (op 97's write) answers the changes to fire
     cookieStoreWrite = text => { try { fireChanges(call(['docset', text], 'document.cookie')); return true; } catch { return false; } };
-    return { store, classes: { CookieStore, CookieChangeEvent } };
+    // CookieStoreManager: the change subscriptions of a service worker registration; no service
+    // worker registration exists here, so no object of it is ever made
+    class CookieStoreManager {
+      constructor() { throw new TypeError('Illegal constructor'); }
+      subscribe(subscriptions) { return Promise.reject(new TypeError('Illegal invocation: CookieStoreManager.subscribe')); }
+      getSubscriptions() { return Promise.reject(new TypeError('Illegal invocation: CookieStoreManager.getSubscriptions')); }
+      unsubscribe(subscriptions) { return Promise.reject(new TypeError('Illegal invocation: CookieStoreManager.unsubscribe')); }
+    }
+    setTag(CookieStoreManager, 'CookieStoreManager');
+    for (const k of ['subscribe', 'getSubscriptions', 'unsubscribe'])
+      Object.defineProperty(CookieStoreManager.prototype, k, { ...Object.getOwnPropertyDescriptor(CookieStoreManager.prototype, k), enumerable: true });
+    return { store, classes: { CookieStore, CookieChangeEvent, CookieStoreManager } };
   };
   let cookieStoreMade;
   let cookieStoreWrite = null;
@@ -12552,9 +12563,17 @@
     return cookieStoreMade = !secure || !apiOn() || apiCall(204, ['get', href, '0', '0', '', ''], 0, true) === -2 ? null : makeCookieStore();
   };
   // Window and secure contexts only (a worker's scope drops names not in workerGlobals).
-  lazy('cookieStore', () => cookieStoreApi()?.store);
+  // window.cookieStore is an attribute ([SameObject]): once it is known to exist it stays an accessor.
+  Object.defineProperty(globalThis, 'cookieStore', { configurable: true, enumerable: true,
+    get() {
+      const api = cookieStoreApi();
+      if (!api) { delete globalThis.cookieStore; return undefined; }
+      Object.defineProperty(globalThis, 'cookieStore', { configurable: true, enumerable: true, get: function cookieStore() { return api.store; } });
+      return api.store;
+    } });
   lazy('CookieStore', () => cookieStoreApi()?.classes.CookieStore);
   lazy('CookieChangeEvent', () => cookieStoreApi()?.classes.CookieChangeEvent);
+  lazy('CookieStoreManager', () => cookieStoreApi()?.classes.CookieStoreManager);
   // ==== end Cookie Store API =====================================================================
 
   // ==== Cache API (CacheStorage, Cache) ==========================================================
