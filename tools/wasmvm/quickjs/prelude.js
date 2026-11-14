@@ -3401,7 +3401,9 @@
   def('navigator', Object.freeze({ userAgent: 'Foafnaut', language: 'en', languages: ['en'], platform: '', onLine: true,
     cookieEnabled: false, hardwareConcurrency: 1, gpu,
     // StorageManager (section File System API); undefined on an engine without the ops.
-    get storage() { return fsApi()?.manager; } }));
+    get storage() { return fsApi()?.manager; },
+    // LockManager (section Web Locks API).
+    get locks() { return locksApi()?.manager; } }));
   def('GPUBufferUsage', GPUBufferUsage); def('GPUTextureUsage', GPUTextureUsage); def('GPUShaderStage', GPUShaderStage);
   def('GPUColorWrite', GPUColorWrite); def('GPUValidationError', GPUValidationError); def('GPUOutOfMemoryError', GPUOutOfMemoryError);
   def('GPUCanvasContext', GPUCanvasContext); def('GPUDevice', GPUDevice);
@@ -7390,6 +7392,118 @@
     'StorageManager']) lazy(name, () => fsApi()?.classes[name]);
   // ==== end File System API ======================================================================
 
+  // ==== Web Locks API ============================================================================
+  // The lock manager of the storage key is Lean's (ClientStorage/Locks.lean, web_api op 203):
+  // which request is granted and when, the queue, ifAvailable, steal, abort, and what query
+  // lists. This block converts arguments, runs a granted request's callback and tells Lean when
+  // its promise has settled. Locks are per session: a page and its workers do not share them yet.
+  const makeLocks = () => {
+    const td = new TextDecoder(), text = b => td.decode(b);
+    const unpack = ab => {
+      const u = new Uint8Array(ab), u32 = i => (u[i] | u[i + 1] << 8 | u[i + 2] << 16 | u[i + 3] << 24) >>> 0;
+      const out = [];
+      for (let i = 0, at = 4, k = u32(0); i < k; i++) { const len = u32(at); out.push(u.subarray(at + 4, at + 4 + len)); at += 4 + len; }
+      return out;
+    };
+    const call = (args, what) => {
+      const r = apiCall(203, args, 0, true);
+      if (typeof r === 'number') throw new DOMException(`${what}: locks are not available.`, 'UnknownError');
+      const f = unpack(r), head = text(f[0]);
+      if (head === 'ok') return f.slice(1);
+      throw new DOMException(`Failed to execute '${what}': ${head.slice(1)}`, head.slice(1));
+    };
+    const kinds = new WeakMap();
+    let making = false;
+    const guard = () => { if (!making) throw new TypeError('Illegal constructor'); };
+    const make = (C, state) => { making = true; let o; try { o = new C(); } finally { making = false; } kinds.set(o, state); return o; };
+    const idl = (C, tag) => {
+      setTag(C, tag);
+      for (const k of Object.getOwnPropertyNames(C.prototype)) {
+        if (k === 'constructor') continue;
+        Object.defineProperty(C.prototype, k, { ...Object.getOwnPropertyDescriptor(C.prototype, k), enumerable: true });
+      }
+      return C;
+    };
+    const clientId = 'client-' + Math.floor(Math.random() * 0x100000000).toString(16);
+    const held = new Map(), pending = new Map();
+    class Lock {
+      constructor() { guard(); }
+      get name() { const s = kinds.get(this); if (!s) throw new TypeError('Illegal invocation: Lock.name'); return s.name; }
+      get mode() { const s = kinds.get(this); if (!s) throw new TypeError('Illegal invocation: Lock.mode'); return s.mode; }
+    }
+    idl(Lock, 'Lock');
+    // A granted request: its callback runs with the lock, which is held until the callback's
+    // promise settles; Lean is then told, and answers the requests that are granted next.
+    const run = e => {
+      held.set(e.id, e);
+      let p;
+      try { p = Promise.resolve(e.callback(make(Lock, { name: e.name, mode: e.mode }))); } catch (err) { p = Promise.reject(err); }
+      p.then(v => { release(e); e.resolve(v); }, err => { release(e); e.reject(err); });
+    };
+    const release = e => { if (!held.has(e.id)) return; held.delete(e.id); grant(call(['release', String(e.id)], 'LockManager.request')); };
+    const grant = ids => {
+      for (const b of ids) {
+        const e = pending.get(Number(text(b)));
+        if (!e) continue;
+        pending.delete(e.id);
+        if (e.signal) e.signal.removeEventListener('abort', e.onabort);
+        queueMicrotask(() => run(e));
+      }
+    };
+    class LockManager {
+      constructor() { guard(); }
+      request(name, ...rest) {
+        return new Promise((resolve, reject) => {
+          if (!kinds.has(this)) throw new TypeError('Illegal invocation: LockManager.request');
+          if (arguments.length < 2) throw new TypeError("Failed to execute 'LockManager.request': 2 arguments required.");
+          const callback = rest.length > 1 ? rest[1] : rest[0], d = rest.length > 1 ? dict(rest[0], 'LockManager.request') : {};
+          if (typeof callback !== 'function') throw new TypeError("Failed to execute 'LockManager.request': the callback is not a function.");
+          const nm = String(name), mode = d.mode === undefined ? 'exclusive' : String(d.mode);
+          if (mode !== 'exclusive' && mode !== 'shared') throw new TypeError(`Failed to execute 'LockManager.request': '${mode}' is not a valid LockMode.`);
+          const signal = d.signal === undefined || d.signal === null ? null : d.signal;
+          if (signal !== null && !(signal instanceof AbortSignal)) throw new TypeError("Failed to execute 'LockManager.request': the signal is not an AbortSignal.");
+          const flags = (d.ifAvailable ? 1 : 0) | (d.steal ? 2 : 0) | (signal ? 4 : 0);
+          const args = [stEnc(nm), mode === 'shared' ? 's' : 'x', String(flags), clientId];
+          call(['check', ...args], 'LockManager.request');
+          if (signal && signal.aborted) { reject(signal.reason); return; }
+          const f = call(['request', ...args], 'LockManager.request'), id = Number(text(f[0])), state = text(f[1]);
+          const e = { id, name: nm, mode, callback, resolve, reject, signal, onabort: null };
+          if (state === 'none') {
+            // ifAvailable and the lock is taken: the callback runs with null
+            queueMicrotask(() => { try { resolve(callback(null)); } catch (err) { reject(err); } });
+            return;
+          }
+          // the holders a steal released: their request promises reject
+          for (const b of f.slice(2)) { const h = held.get(Number(text(b))); if (h) { held.delete(h.id); h.reject(new DOMException('The lock was stolen by another request.', 'AbortError')); } }
+          if (state === '1') { queueMicrotask(() => run(e)); return; }
+          pending.set(id, e);
+          if (signal) {
+            e.onabort = () => { if (!pending.has(id)) return; pending.delete(id); reject(signal.reason); grant(call(['abort', String(id)], 'LockManager.request')); };
+            signal.addEventListener('abort', e.onabort);
+          }
+        });
+      }
+      query() {
+        return new Promise(resolve => {
+          if (!kinds.has(this)) throw new TypeError('Illegal invocation: LockManager.query');
+          const f = call(['query'], 'LockManager.query').map(text), bar = f.indexOf('|');
+          const rows = xs => { const out = []; for (let i = 0; i + 2 < xs.length; i += 3) out.push({ name: stDec(xs[i]), mode: xs[i + 1], clientId: xs[i + 2] }); return out; };
+          resolve({ held: rows(f.slice(0, bar)), pending: rows(f.slice(bar + 1)) });
+        });
+      }
+    }
+    idl(LockManager, 'LockManager');
+    return { manager: make(LockManager, {}), classes: { Lock, LockManager } };
+  };
+  let locksMade;
+  const locksApi = () => {
+    if (locksMade !== undefined) return locksMade;
+    return locksMade = !apiOn() || apiCall(203, ['query'], 0, true) === -2 ? null : makeLocks();
+  };
+  lazy('Lock', () => locksApi()?.classes.Lock);
+  lazy('LockManager', () => locksApi()?.classes.LockManager);
+  // ==== end Web Locks API ========================================================================
+
   // ---- User Timing: performance.mark, measure ---------------------------------------------
   // performance.now and timeOrigin are QuickJS-NG's, on the WASI clock, which is Lean's script
   // clock (Hosts.Page.ScriptClock). The entries are this list.
@@ -9342,7 +9456,7 @@
     // client-side storage (sections IndexedDB and File System API)
     'indexedDB', 'IDBFactory', 'IDBRequest', 'IDBOpenDBRequest', 'IDBVersionChangeEvent', 'IDBKeyRange', 'IDBObjectStore', 'IDBIndex', 'IDBCursor',
     'IDBCursorWithValue', 'IDBRecord', 'IDBTransaction', 'IDBDatabase', 'DOMStringList', 'QuotaExceededError', 'FileSystemHandle',
-    'FileSystemFileHandle', 'FileSystemDirectoryHandle', 'FileSystemWritableFileStream', 'FileSystemSyncAccessHandle', 'StorageManager']);
+    'FileSystemFileHandle', 'FileSystemDirectoryHandle', 'FileSystemWritableFileStream', 'FileSystemSyncAccessHandle', 'StorageManager', 'Lock', 'LockManager']);
   // HTML §10.2.1: WorkerGlobalScope, DedicatedWorkerGlobalScope, WorkerLocation, WorkerNavigator.
   const makeWorkerScope = (url, name) => {
     inWorker = true;
@@ -9355,7 +9469,7 @@
     for (const k of ['href', 'origin', 'protocol', 'host', 'hostname', 'port', 'pathname', 'search', 'hash'])
       Object.defineProperty(WorkerLocation.prototype, k, { get() { return parts.get(this)[k]; }, configurable: true, enumerable: true });
     class WorkerNavigator { constructor() { throw new TypeError('Illegal constructor'); } }
-    for (const k of ['userAgent', 'language', 'languages', 'platform', 'onLine', 'hardwareConcurrency', 'storage'])
+    for (const k of ['userAgent', 'language', 'languages', 'platform', 'onLine', 'hardwareConcurrency', 'storage', 'locks'])
       Object.defineProperty(WorkerNavigator.prototype, k, { get() { return nav[k]; }, configurable: true, enumerable: true });
     for (const [k, v] of [['appCodeName', 'Mozilla'], ['appName', 'Netscape'], ['product', 'Gecko']])
       Object.defineProperty(WorkerNavigator.prototype, k, { get() { return v; }, configurable: true, enumerable: true });

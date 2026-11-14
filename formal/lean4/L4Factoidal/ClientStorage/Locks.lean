@@ -144,6 +144,10 @@ def op (s : Shelf) (a : Array Tok) : Shelf × List Tok :=
   let row (r : Req) : List Tok := [S r.name, S (if r.exclusive then "exclusive" else "shared"), S r.client]
   match strAt a 0 with
   | "request" => request s a
+  | "check" =>
+    -- the refusals of `request` alone (the page side reads the signal between the two)
+    let r := request s a
+    (s, if (r.2.head?.map fun t => (String.fromUTF8? t).getD "") == some "ok" then ok else r.2)
   | "release" =>
     let (s', granted) := settle { s with held := s.held.filter (·.id != natAt a 1) }
     (s', ok (granted.map N))
@@ -187,6 +191,7 @@ theorem op_excl (s : Shelf) (a : Array Tok) (h : Excl s.held) : Excl (op s a).1.
     left
     simp at this
     exact fun e => this e.symm
+  · exact h
   · exact settle_excl _ (excl_filter _ _ h)
   · exact settle_excl _ h
   · exact h
@@ -240,6 +245,7 @@ private def answers (cmds : List (List String)) : List String :=
 -- abort of a waiting request lets the ones behind it through
 #guard answers [["request", "a", "s", "0", "c"], ["request", "a", "x", "0", "c"], ["request", "a", "s", "0", "c"], ["abort", "2"]] == ["ok 1 1", "ok 2 0", "ok 3 0", "ok 3"]
 -- refusals
+#guard answers [["check", "-a", "x", "0", "c"], ["check", "a", "x", "0", "c"], ["query"]] == ["!NotSupportedError", "ok", "ok |"]
 #guard answers [["request", "-a", "x", "0", "c"], ["request", "a", "x", "3", "c"], ["request", "a", "s", "2", "c"], ["request", "a", "x", "5", "c"], ["request", "a", "x", "6", "c"]] ==
   ["!NotSupportedError", "!NotSupportedError", "!NotSupportedError", "!NotSupportedError", "!NotSupportedError"]
 
