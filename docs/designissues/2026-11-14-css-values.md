@@ -116,3 +116,121 @@ Open:
 - `getComputedStyle(el).getPropertyValue('--x')`: the measure call has no string argument.
 - Sheets of `link` elements have no rules in CSSOM; nested group rule edits rewrite the parent rule.
 - A proof that `matchG` accepts exactly the language of the grammar.
+
+## Second part: the cascade on real style sheets (from 05:00 UTC)
+
+Eight live pages drawn by the engine showed little effect of their style sheets. Reading
+one test sheet and the sheets of seven of those pages (1.36 MB, 9,119 style rules) through
+the cascade's reader showed why, on the cascade's side:
+
+| Cause | What it was |
+|---|---|
+| Sheet size | `parseRaw` read the first 131,072 characters, and a document's sheets are joined into one text first (`WebDocument.sheetSource`): everything past 128 KB of all sheets together was not read. |
+| Block at-rules | Only a top-level `@media` was entered. `@supports`, `@layer`, `@media` in `@media` and `@container` blocks were skipped whole. |
+| Nesting | A nested rule was read as a declaration named `&`. |
+| Declarations | Split at every `;` and `:`: `url(data:image/png;base64,...)` ended the declaration; `margin: calc(1px + 2px)` was split at its spaces. |
+| Custom properties | `var()` was never substituted in the layout cascade: `color: var(--x)` was dropped. 1,806 of the 9,119 rules use custom properties or `var()`. |
+| Flow-relative properties | `margin-inline-start`, `inline-size`, `padding-block` ... were unknown to the layout profile (227 distinct declarations in the seven pages). |
+| Selectors | `:has()`, valid pseudo-elements (`::selection`, `::marker`, `::placeholder`, `::-webkit-...`), `:read-only`, `:dir()` made `DOM.Selectors` refuse the selector, and one refused selector drops its rule. |
+
+What remains after this work is the layout profile itself (positioning, flex, grid,
+per-side borders, font weight, floats, negative margins, `white-space`): agents `pages`
+and `layout`.
+
+### Design
+
+- `Rendering/SheetReader.lean`: one reader of sheet text for the cascade. `scan` (a tail
+  call per character) cuts the text into pieces at the `{`, `}` and `;` outside strings and
+  blocks; `read` goes over the pieces with the open rules on a list and gives `Leaf`s: a
+  style rule with its selector list (nesting resolved by `nest`), its declarations, the
+  query lists of every `@media` around it, and its cascade layer with the layer's place in
+  the layer order (`rankOf`); or another at-rule as written (`@font-face`, `@keyframes`,
+  `@import` ...). `@supports` blocks are entered when the condition holds, evaluated by
+  `Rendering/SupportsCondition.lean`: the evaluator behind `CSS.supports`, moved below
+  `Style` so that sheets and scripts get one answer. `@container`, `@scope`,
+  `@starting-style` and `@document` blocks are skipped. `imports` gives the `@import` rules
+  of a sheet for a host to fetch (not fetched yet).
+- Cascade keys: `CSS.ruleKey` and `CSS.inlineKey` (importance; origin and context;
+  element-attached; layer position; specificity; order), compared by `CSS.lexLE`, used by
+  `computedFrom` and by `ComputedGeneric.cascaded`.
+- `Rendering/CssVars.lean`: `Computed.vars` holds the element's custom properties
+  (inherited; a persistent map, shared with the parent when the element declares none).
+  `resolve` adds the element's own winning declarations, references between them resolved
+  in passes, cycles left without a value. `substitute` replaces `var()` in the text of a
+  winning declaration before the profile reads it. `margin`, `padding`, `inset` and the
+  axis shorthands that mention `var()` are kept whole and stand for each of their sides in
+  the cascade (`sidesOf`, `expandSides`).
+- `Rendering/CssValues/Logical.lean`: the flow-relative sides as physical sides for every
+  writing mode and direction, and the property names of the logical property groups. The
+  layout cascade maps winning flow-relative declarations to physical ones by the element's
+  direction (`physicalWinners`); `getComputedStyle` answers a flow-relative name as the
+  physical property of the element's flow, and cascades the two names as one property.
+- `DOM/Selectors.lean`: `:has()` with relative selectors (the combinator kept on the first
+  compound; `matchFrom` checks the leftmost compound against the anchor), pseudo-elements
+  that are valid and match no element, with what may follow them, input states read from
+  attributes, `:heading`, `:dir()`.
+
+### Decisions that change behaviour
+
+- `@supports` rules in sheets are now evaluated, by the parser's answer (as
+  `CSS.supports`): a sheet's `@supports (display: grid)` block applies though grid layout
+  is not done yet. This is what CSS Conditional says and what an author expects of a
+  browser that parses the value; until layout has the feature, the block's rules reach a
+  layout that ignores them.
+- A sheet of up to 8 MiB is read (all sheets of a document together). Cost below.
+- At the top level a `;` no longer ends a selector: `a; b { }` is one invalid rule, as CSS
+  Syntax says (it was the rule `b`).
+- A pseudo-element ends its complex selector and is refused in `:not()` and `:has()`
+  (`::before.a`, `::before div`, `:not(::before)` were accepted by `querySelector`).
+
+### Performance (native, Apple M1, one core)
+
+| | before | after |
+|---|---|---|
+| Sheet of 127 KB, 721 rules | 18 ms, 60 rules read (the rest had combinators the old reader refused) | 24 ms, 721 rules read |
+| Sheet of 1.28 MB, 7,201 rules | 18 ms, 62 rules read (the first 131,072 characters) | 230 ms, 7,201 rules read: reader 89 ms, selectors 83 ms, declarations and flags the rest |
+
+A sheet is read once per text (the engine keeps the last eight). In the cascade a page
+with no custom property, no `var()` and no flow-relative property pays one test of two
+Bool fields per matched rule, and for each `style` attribute declaration a search for
+`(` and a length test. `:has()` costs the elements in the relation of its argument for
+each element tested; rules are still put in buckets by their rightmost compound.
+
+### Proved, tested, open (second part)
+
+Proved:
+
+- The cascade order: `lexLE_refl`, `lexLE_total`, `lexLE_trans`, `lexLE_antisymm` (a total
+  order on keys); `ruleKey_order` (declarations met at different places never tie, so the
+  winner does not depend on the order of comparison); `inlineKey_wins`.
+- Layers: `layerPosition_normal_unlayered`, `layerPosition_important_unlayered`,
+  `layerPosition_normal_later`, `layerPosition_important_later`; `rankOf_unlayered`,
+  `rankOf_pos`; `keyLT_irrefl`, `keyLT_asymm`.
+- Reader: `scan_length` (every character of a sheet is in exactly one piece), `nest_top`,
+  `parseInBlocks_eq` (filtering by media conditions before or after reading the rules
+  gives the same rules), `ruleHolds_iff`.
+- Variables: `CssVars.value_plain`, `Vars.apply_plain`, `substituted_plain` (a declaration
+  without `var()` is not changed), `resolve_nil` (an element that declares none has its
+  parent's).
+- Flow-relative: `side_logicalOf`, `logicalOf_side`, `side_injective` (a bijection of
+  sides in each of the ten flows), `block_inline_perpendicular`, `blockStart_vertical`,
+  `side_initial`, `physicalWinners_plain`, `physicalNameOf_plain`.
+
+Tested only (`#guard`): the reader on 30 sheets (nesting, layers, `@supports`, strings,
+escapes, sheets that stop early); 55 cascade cases; `var()` substitution and resolution
+(26); the name mapping for every flow-relative name in all ten flows, and back; 52
+selector cases.
+
+Open:
+
+- `@import` is not fetched: the host must call `SheetReader.imports` and splice.
+- `@container` and `@scope` are not evaluated (their rules never apply).
+- A property that is invalid at computed-value time falls to the profile's built-in user
+  agent value, not to `initial`.
+- The layout cascade maps flow-relative properties by direction only (it lays out
+  horizontal lines); `getComputedStyle` maps by the writing mode too.
+- `:has()` on a selector with no class, id or type in its rightmost compound is tried on
+  every element with all its descendants: quadratic on such a selector.
+- `:dir()` does not follow the directionality of form control values or slots.
+- No proof that `SheetReader.read` gives the rules of the CSS Syntax grammar; that
+  `substitute` terminates is by fuel, and its result is tested, not proved.
