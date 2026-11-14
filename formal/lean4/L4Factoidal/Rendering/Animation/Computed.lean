@@ -48,17 +48,33 @@ def boxOf (v : ComputedGeneric.View) (id : Nat) : Option (Float × Float) :=
   | some w, some h => some (w, h)
   | _, _ => none
 
+/-- The width and the height of a border box from a layout answer "x y w h …" (measure op
+17); none for an answer that does not read or a box of no size. -/
+def sizeOfBox (answer : String) : Option (Float × Float) :=
+  match (answer.splitOn " ").filter (· != "") with
+  | _ :: _ :: w :: h :: _ =>
+    match Fix.parse w, Fix.parse h with
+    | some w, some h => if w > 0 || h > 0 then some (Value.toFloat w, Value.toFloat h) else none
+    | _, _ => none
+  | _ => none
+
+#guard (sizeOfBox "8 58 50 50 0 0 50 50").map (fun (w, h) => (w == 50, h == 50)) == some (true, true)
+#guard (sizeOfBox "0 0 0 0 0 0 0 0").isNone && (sizeOfBox "").isNone && (sizeOfBox "1 2 x 4").isNone
+
 /-- The answer of `getComputedStyle` for the `k`-th name: `ComputedGeneric.valueAt`, and
 the resolved values of the transform properties (CSSOM §9.1, CSS Transforms 1 §15):
 `transform` as one `matrix()` or `matrix3d()` (`Value.resolvedTransform`), the percentages
 of `transform-origin` and `perspective-origin` as lengths of the element's box. The box is
-read only when the value has a percentage. The engine itself reads `valueOf`: the list of
+read only when the value has a percentage: from the computed sizes when they are lengths,
+else from the layout (`laidBox`: the caller's, made only then). The engine itself reads `valueOf`: the list of
 functions and the percentages, which is what interpolates. -/
-def resolvedAt (v : ComputedGeneric.View) (id : Nat) (k : Nat) : String :=
+def resolvedAt (v : ComputedGeneric.View) (id : Nat) (k : Nat)
+    (laidBox : Unit → Option (Float × Float) := fun _ => none) : String :=
   let text := ComputedGeneric.valueAt v id k
   if k ≥ ComputedGeneric.computedBase then text else
   let name := ComputedGeneric.nameLists.get.1[k]?
-  let box := fun (_ : Unit) => if text.contains '%' then boxOf v id else none
+  -- the box of the computed sizes when they are lengths (no layout); else the laid out one
+  let box := fun (_ : Unit) => if text.contains '%' then (boxOf v id).orElse laidBox else none
   if name == some "transform" then Value.resolvedTransformText text (box ())
   else if name == some "transform-origin" || name == some "perspective-origin" then Value.resolvedOriginText text (box ())
   else text
