@@ -183,4 +183,8 @@ private def tracks (html extra id : String) : Option (String × String) := do
 #guard box "<div id=c><div id=a>A<div id=q>Q</div></div><div id=b>B</div><div id=p>P</div></div>" "#c{display:grid;position:relative;grid-template-columns:50px 100px;grid-template-rows:10px 20px;padding:5px} #p{position:absolute} #c{justify-content:center} #p{grid-column:2 / 3;grid-row:2 / 3}" "p" == some (75,15,6,7)
 #guard box "<div id=c><div id=a>A<div id=q>Q</div></div><div id=b>B</div><div id=p>P</div></div>" "#c{display:grid;position:relative;grid-template-columns:50px 100px;grid-template-rows:10px 20px;padding:5px} #p{position:absolute}" "p" == some (0,0,6,7)
 
+
+-- A subgrid stretches in its subgridded axes whatever its own alignment says.
+#guard box "<div id=c><div id=s><div id=i>I</div></div></div>" "#c{display:grid;grid-template-columns:100px;grid-template-rows:40px} #s{display:grid;grid-template:subgrid / subgrid;align-self:start;justify-self:end}" "s" == some (0,0,100,40)
+
 end L4Factoidal.Rendering.GridLayoutTests

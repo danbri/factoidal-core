@@ -27,9 +27,9 @@ once and is then framed at its final height; an item that is such a container is
 out a second time only when its final height differs from its natural height. A
 document with no grid container never reaches this module.
 
-Not here yet: baseline alignment (read as start), subgrid
-(laid out as a nested grid), positioned children, percentage tracks resolved a second
-time against a content-sized container, `aspect-ratio`. -/
+Not here yet: `last baseline` (read as `start`), baseline alignment in columns, subgrid
+tracks (a subgrid is laid out as a nested grid that stretches in its subgridded axes),
+`aspect-ratio`. -/
 namespace L4Factoidal.Rendering.Layout
 open DOM CSS
 
@@ -276,7 +276,9 @@ def gridLayout (kids : Children) (s : Computed) (items0 : Array Item) (box : Con
     let extent := Grid.spanExtent colStarts colSizes a.col a.colSpan
     let areaW := gridPx extent.2
     let areaX := if rtl then box.width-LU.toPx extent.1-areaW else LU.toPx extent.1
-    let justify := gridSelfAlign is.align.justifySelf s.align.justifyItems rtl (is.direction != s.direction)
+    -- a subgrid always stretches in its subgridded axes (§9 of CSS Grid 2, subgrid box alignment)
+    let justify : Grid.SelfAlign := if is.grid.templateColumns.subgrid && is.display.isGrid then .stretch
+      else gridSelfAlign is.align.justifySelf s.align.justifyItems rtl (is.direction != s.direction)
     let width ← gridItemWidth kids item is areaW (justify == .stretch)
     let outerW := width+m.left+m.right
     let dx := match autoCrossOffset is.autoMarginLeft is.autoMarginRight (areaW-outerW) with
@@ -299,7 +301,7 @@ def gridLayout (kids : Children) (s : Computed) (items0 : Array Item) (box : Con
     let outerH := gridUnits (natural+m.top+m.bottom)
     rowItems := rowItems.push {start := a.row, span := a.rowSpan, minimum := outerH, minContent := outerH, maxContent := outerH}
     laid := laid.push (r,x,width,natural,areaW)
-    if a.rowSpan == 1 && gridBaselineSelf is.align.alignSelf s.align.alignItems then
+    if a.rowSpan == 1 && gridBaselineSelf is.align.alignSelf s.align.alignItems && !(is.grid.templateRows.subgrid && is.display.isGrid) then
       -- no line box: the baseline is synthesized from the border box's bottom edge
       baselined := baselined.push (i, a.row, gridUnits ((r.baseline.map (·-box.y)).getD (m.top+natural)))
   -- §11.6: a baseline-aligned item asks of its row its height and its shift.
@@ -355,7 +357,8 @@ def gridLayout (kids : Children) (s : Computed) (items0 : Array Item) (box : Con
     let extent := Grid.spanExtent rowStarts rowSizes a.row a.rowSpan
     let areaH := gridPx extent.2
     let padV := is.borderEdges.top+is.borderEdges.bottom+is.padding.top+is.padding.bottom
-    let align := gridSelfAlign is.align.alignSelf s.align.alignItems false
+    let rowSubgrid := is.grid.templateRows.subgrid && is.display.isGrid
+    let align : Grid.SelfAlign := if rowSubgrid then .stretch else gridSelfAlign is.align.alignSelf s.align.alignItems false
     let minH := (CSS.resolve areaH is.minHeight).getD 0
     let maxH := CSS.resolve areaH is.maxHeight
     let height := match CSS.resolve areaH is.height with
@@ -366,7 +369,7 @@ def gridLayout (kids : Children) (s : Computed) (items0 : Array Item) (box : Con
         else natural
     let outerH := height+m.top+m.bottom
     let shift := shifts.getD i 0
-    let dy := if shift > 0 || (a.rowSpan == 1 && gridBaselineSelf is.align.alignSelf s.align.alignItems) then gridPx shift
+    let dy := if shift > 0 || (a.rowSpan == 1 && !rowSubgrid && gridBaselineSelf is.align.alignSelf s.align.alignItems) then gridPx shift
       else match autoCrossOffset is.autoMarginTop is.autoMarginBottom (areaH-outerH) with
       | some d => d
       | none => LU.toPx (Grid.selfOffset align (gridUnits areaH) (gridUnits outerH))
