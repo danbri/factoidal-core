@@ -9046,12 +9046,16 @@
       if (mem.has(v)) { out.push('@' + mem.get(v)); return; }
       if (typeof v === 'function') throw dataClone('A function');
       mem.set(v, mem.size);
+      // a Date first (it has a [[DateValue]], never a primitive wrapper's slot): the engine's
+      // Number.prototype.valueOf does not refuse a Date
+      let dateValue, isDate = true;
+      try { dateValue = Date.prototype.getTime.call(v); } catch { isDate = false; }
+      if (isDate) { out.push('d' + hex64(dateValue)); return; }
       for (const P of [Boolean, Number, BigInt, String]) {
         let x, isP = true;
         try { x = P.prototype.valueOf.call(v); } catch { isP = false; }
         if (isP) { out.push('B'); ser(x, out, mem); return; }
       }
-      if (v instanceof Date) { out.push('d' + hex64(Date.prototype.getTime.call(v))); return; }
       if (v instanceof RegExp) { out.push('r' + v.flags + '/' + stEnc(v.source)); return; }
       if (isShared(v)) throw dataClone('A SharedArrayBuffer');
       if (v instanceof ArrayBuffer) { if (v.detached) throw dataClone('A detached ArrayBuffer'); out.push(btok(new Uint8Array(v))); return; }

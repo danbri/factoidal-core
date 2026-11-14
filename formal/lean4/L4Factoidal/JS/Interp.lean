@@ -4664,6 +4664,8 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       | some _ => pure (.obj (← alloc { proto := .obj r.numberProto, kind := .prim (.num x) }))
       | none => pure (.num x)
     | .numberValueOf | .numberToString | .numberToFixed =>
+      -- thisNumberValue (§21.1.3): a Number or a Number object; a Date's time value is not one
+      if (← thisDate? thisV).isSome then throwErr .type "Number.prototype method requires that 'this' be a Number"
       let x ← match ← thisPrim thisV with
         | .num x => pure x
         | _ => throwErr .type "Number.prototype method requires that 'this' be a Number"
@@ -8097,6 +8099,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       | some v => pure v
       | none => finish
     | (.x .numberToExponential) | (.x .numberToPrecision) =>
+      if (← thisDate? thisV).isSome then throwErr .type "Number.prototype method requires that 'this' be a Number"
       let x ← match ← thisPrim thisV with
         | .num x => pure x
         | _ => throwErr .type "Number.prototype method requires that 'this' be a Number"
