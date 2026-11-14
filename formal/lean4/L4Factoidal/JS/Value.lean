@@ -125,6 +125,8 @@ inductive NativeX where
   /-- CreateDynamicFunction (§20.2.1.1.1) for %GeneratorFunction% (1), %AsyncFunction% (2) and
   %AsyncGeneratorFunction% (3); `Function` itself is `Native.functionCtor`. -/
   | dynFunction (kind : Nat)
+  /-- `Object.prototype.__proto__` (Annex B.2.2.1): the getter (false) and the setter (true). -/
+  | protoAccessor (set : Bool)
   /-- The Streams Standard's decisions (`WHATWG.Streams`), for the page's stream classes: a
   host's `n.streams(op, ...)`. 0 a new queue-with-sizes; 1 `(q, value, size)`
   EnqueueValueWithSize (RangeError for a size that is not a finite, non-negative number);
@@ -700,6 +702,16 @@ def Desc.allowedOn (d : Desc) (cur : PropV) : Bool :=
     | .data v w _ _ =>
       !(d.get.isSome || d.set.isSome) &&
       (w || (d.writable != some true && (match d.value with | some x => sameValue x v | none => true)))
+
+/-- OrdinarySetPrototypeOf (§10.1.2.1) steps 2 to 8, and SetImmutablePrototype (§10.4.7.2):
+may the prototype of the object `o`, now `cur`, become `v`? `chain`: the objects on `v`'s
+prototype chain as step 8 walks it (it stops at null and at a Proxy). The same value is always
+accepted; otherwise an immutable prototype exotic object refuses, an object that is not
+extensible refuses, and a change that would make a cycle refuses. -/
+def protoChangeAllowed (o : Nat) (cur v : Value) (extensible immutable : Bool) (chain : List Nat) : Bool :=
+  if sameValue v cur then true
+  else if immutable || !extensible then false
+  else !chain.contains o
 
 /-- SameValueZero (§7.2.11). -/
 def sameValueZero : Value → Value → Bool

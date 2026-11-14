@@ -337,6 +337,34 @@ theorem closureProto_asyncGen (r : Realm) (h : r.asyncGenFnProto ≠ 0) :
 theorem closureProto_async (r : Realm) (h : r.asyncFnProto ≠ 0) : r.closureProto false true = r.asyncFnProto := by
   simp [Realm.closureProto, Realm.closureProtoRaw, Realm.orFn, h]
 
+/-! ## Changing a prototype (`protoChangeAllowed`, §10.1.2.1, §10.4.7.2)
+
+Before 2026-11-14 `Object.setPrototypeOf` and `Reflect.setPrototypeOf` set any prototype: on a
+frozen object, on Object.prototype, and into a cycle. -/
+
+/-- Kind: a specification. Says: setting the prototype an object already has is accepted. -/
+theorem protoChange_same (o : Nat) (cur v : Value) (e i : Bool) (ch : List Nat) (h : sameValue v cur = true) :
+    protoChangeAllowed o cur v e i ch = true := by
+  simp [protoChangeAllowed, h]
+
+/-- Kind: a refusal (object integrity). Says: an immutable prototype exotic object, or an object
+that is not extensible, keeps its prototype: an accepted change is no change. -/
+theorem protoChange_fixed (o : Nat) (cur v : Value) (e i : Bool) (ch : List Nat) (hf : i = true ∨ e = false)
+    (h : protoChangeAllowed o cur v e i ch = true) : sameValue v cur = true := by
+  cases hs : sameValue v cur with
+  | true => rfl
+  | false =>
+    rcases hf with hi | he
+    · simp [protoChangeAllowed, hs, hi] at h
+    · simp [protoChangeAllowed, hs, he] at h
+
+/-- Kind: a refusal (no cycles). Says: an accepted change to a new prototype never puts the
+object on its own prototype chain (as far as the walk sees it). -/
+theorem protoChange_no_cycle (o : Nat) (cur v : Value) (e i : Bool) (ch : List Nat)
+    (h : protoChangeAllowed o cur v e i ch = true) (hs : sameValue v cur = false) : o ∉ ch := by
+  intro hm
+  simp_all [protoChangeAllowed]
+
 /-! ## The size of the heap (`HeapOf.full`, `maxObjs`)
 
 The heap has no collector: an object, once made, stays. A page that makes objects for ever (a

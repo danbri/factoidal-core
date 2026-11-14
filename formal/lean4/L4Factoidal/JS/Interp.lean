@@ -1131,10 +1131,38 @@ def hiddenNum (o : Obj) (k : String) : Option Nat :=
   | some (.data (.num x) ..) => some x.toUInt64.toNat
   | _ => none
 
+/-- The hidden slot of an immutable prototype exotic object (§10.4.7): Object.prototype. -/
+def immutableProtoKey : String := privKey "%ImmutablePrototype"
+
 def hiddenFlag (o : Obj) (k : String) : Bool :=
   match o.props.get? k with
   | some (.data (.bool b) ..) => b
   | _ => false
+
+/-- [[SetPrototypeOf]] (§10.1.2, §10.4.7.2) of an object, or of a Proxy's target (the trap is
+not called): `protoChangeAllowed` decides, over the chain of `v` as OrdinarySetPrototypeOf
+walks it. -/
+def setProtoOf (id : Nat) (v : Value) : M Bool := do
+  let id ← match (← getObj id).kind with
+    | .proxy (.obj t) _ => pure t
+    | _ => pure id
+  let o ← getObj id
+  let mut chain : List Nat := []
+  let mut p := v
+  for _ in [0:(← get).objs.size + 1] do
+    match p with
+    | .obj pid =>
+      let po ← getObj pid
+      match po.kind with
+      | .proxy .. => break
+      | _ =>
+        chain := pid :: chain
+        if pid == id then break
+        p := po.proto
+    | _ => break
+  if !protoChangeAllowed id o.proto v o.extensible (hiddenFlag o immutableProtoKey) chain then return false
+  modifyObj id (fun o => { o with proto := v })
+  return true
 
 /-- IsDetachedBuffer (§25.1.3.4). -/
 def isDetached (o : Obj) : Bool := hiddenFlag o bufDetachedKey
@@ -4132,9 +4160,18 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       | .proxy (.obj t) _ => pure (← getObj t).proto
       | _ => pure o.proto
     | .objectSetPrototypeOf =>
-      match a0, a1 with
-      | .obj id, .obj _ | .obj id, .null => modifyObj id (fun o => { o with proto := a1 }); pure a0
-      | _, _ => pure a0
+      -- §20.1.2.23
+      match a0 with
+      | .undef | .null => throwErr .type "Object.setPrototypeOf called on null or undefined"
+      | _ =>
+        match a1 with
+        | .obj _ | .null =>
+          match a0 with
+          | .obj id =>
+            if ← setProtoOf id a1 then pure a0
+            else throwErr .type "Object.setPrototypeOf: the prototype of this object cannot be changed"
+          | _ => pure a0
+        | _ => throwErr .type "Object prototype may only be an Object or null" 
     | .objectCreate =>
       match a0 with
       | .obj _ | .null =>
@@ -4913,7 +4950,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       | 1 => needObj; callNative n .objectGetPrototypeOf .undef args none
       | 2 => needObj
              match a0, a1 with
-             | .obj id, .obj _ | .obj id, .null => modifyObj id (fun o => { o with proto := a1 }); pure (.bool true)
+             | .obj id, .obj _ | .obj id, .null => pure (.bool (← setProtoOf id a1))
              | _, _ => throwErr .type "Object prototype may only be an Object or null"
       | 3 => needObj; let k ← toKey n a1; pure (.bool (← hasProp n (← toObj n a0) k))
       | 4 => needObj; if args.size > 2 then getRecv n (← toObj n a0) (← toKey n a1) (argD args 2) else getV n a0 (← toKey n a1)
@@ -7973,6 +8010,21 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
           pure (.num (if p.ready then -(p.toCopy.toFloat) - 1 else p.toCopy.toFloat))
         | _ => throwErr .type "streams: unknown operation"
       | _ => throwErr .type "streams: unknown operation"
+    | (.x (.protoAccessor false)) =>
+      -- get Object.prototype.__proto__ (B.2.2.1.1)
+      let id ← toObj n thisV
+      callNative n .objectGetPrototypeOf .undef #[.obj id] none
+    | (.x (.protoAccessor true)) =>
+      -- set Object.prototype.__proto__ (B.2.2.1.2)
+      match thisV with
+      | .undef | .null => throwErr .type "Object.prototype.__proto__ called on null or undefined"
+      | .obj id =>
+        match a0 with
+        | .obj _ | .null =>
+          if ← setProtoOf id a0 then pure .undef
+          else throwErr .type "Object.prototype.__proto__: the prototype of this object cannot be changed"
+        | _ => pure .undef
+      | _ => pure .undef
     | (.x (.dynFunction k)) =>
       -- CreateDynamicFunction (§20.2.1.1.1) for the generator, async and async generator kinds
       let strs ← args.toList.mapM (toStr n)
@@ -8262,6 +8314,11 @@ def initRealm : M Unit := do
     method oc "keys" .objectKeys 1
     method oc "getPrototypeOf" .objectGetPrototypeOf 1
     method oc "setPrototypeOf" .objectSetPrototypeOf 2
+  -- Object.prototype.__proto__ (B.2.2.1); Object.prototype is an immutable prototype exotic
+  -- object (§20.1.3)
+  defineOwn objectProto "__proto__" (.acc (← mkNative (.x (.protoAccessor false)) "get __proto__" 0)
+    (← mkNative (.x (.protoAccessor true)) "set __proto__" 1) false true)
+  setHidden objectProto immutableProtoKey (.bool true)
     method oc "create" .objectCreate 2
     method oc "defineProperty" .objectDefineProperty 3
     method oc "getOwnPropertyNames" .objectGetOwnPropertyNames 1

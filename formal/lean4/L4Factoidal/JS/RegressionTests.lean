@@ -534,4 +534,9 @@ a new property on an object that is not extensible is a TypeError. Test262
 #guard out "var GF = Object.getPrototypeOf(function* () {}).constructor; var g = new GF('a', 'yield a; yield a * 2'); print([...g(3)].join(), Object.getPrototypeOf(g) === GF.prototype, typeof g.prototype, g.name); var AF = Object.getPrototypeOf(async function () {}).constructor; AF('return 7')().then(v => print('af', v))" == ["3,6 true object anonymous", "af 7"]
 #guard out "var AIP = Object.getPrototypeOf(Object.getPrototypeOf(async function* () {}).prototype); print(typeof AIP[Symbol.asyncIterator])" == ["function"]
 
+/-! ## [[SetPrototypeOf]] and Object.prototype.__proto__ (§10.1.2, §10.4.7, B.2.2.1) -/
+
+#guard out "var r = []; function t(f) { try { r.push(String(f())) } catch (e) { r.push(e.name) } } var a = {}, b = Object.create(a); t(() => Object.setPrototypeOf(a, b) === a); t(() => Reflect.setPrototypeOf(a, b)); t(() => Reflect.setPrototypeOf(Object.freeze({}), {})); t(() => Reflect.setPrototypeOf(Object.prototype, {})); t(() => Reflect.setPrototypeOf(Object.prototype, null)); t(() => Object.setPrototypeOf(1, null)); t(() => Object.setPrototypeOf(undefined, null)); t(() => Object.setPrototypeOf({}, 1)); var f = Object.preventExtensions({}); t(() => Object.setPrototypeOf(f, Object.prototype) === f); print(r.join())" == ["TypeError,false,false,false,true,1,TypeError,TypeError,true"]
+#guard out "var d = Object.getOwnPropertyDescriptor(Object.prototype, '__proto__'); var o = {}, p = { x: 1 }; o.__proto__ = p; var q = Object.create(null); q.__proto__ = p; print(typeof d.get, typeof d.set, d.enumerable, d.configurable, o.x, Object.getPrototypeOf(o) === p, o.__proto__ === p, Object.keys(o).length, Object.keys(q).join(), (1).__proto__ === Number.prototype, d.set.name)" == ["function function false true 1 true true 0 __proto__ true set __proto__"]
+
 end L4Factoidal.JS.Tests
