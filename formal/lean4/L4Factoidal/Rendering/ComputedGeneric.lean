@@ -373,7 +373,7 @@ def computedOf (v : View) (id : Nat) (property : String) : String :=
 declaration's computed value, which may be one the profile does not model (`display: grid`,
 a colour with alpha). The other profile properties are resolved values from layout. -/
 def declaredWins : List String :=
-  ["display", "color", "background-color", "visibility", "text-decoration-line",
+  ["display", "color", "background-color", "visibility", "text-decoration-line", "overflow",
    "border-top-style", "border-right-style", "border-bottom-style", "border-left-style",
    "border-top-color", "border-right-color", "border-bottom-color", "border-left-color",
    "border-collapse", "caption-side", "vertical-align", "table-layout", "object-fit",
@@ -552,6 +552,9 @@ private def computedAt (html css prop : String) : String :=
 #guard (let d := DOM.parseHtmlDocument "<p>x</p>"
   let d := d.setNode 0 fun e => { e with attrs := e.attrs.push { lname := "\x01property --x", value := "<length>\x000\x0011px" } }
   (registrationsOfDocument d).map (·.1)) == ["--x"]
+-- overflow: clip is not the profile's hidden; the legacy -webkit-box
+#guard computedAt "<div id=t></div>" "#t { overflow: clip }" "overflow" == "clip"
+#guard computedAt "<div id=t></div>" "#t { display: -webkit-box }" "display" == "-webkit-box"
 -- revert-layer rolls back to the layer before; with no earlier layer, to the default
 #guard computedAt "<div id=t class=r></div>"
   "@layer a { #t { color: red } } @layer b { #t { color: blue } } @layer c { #t.r { color: revert-layer } }" "color" ==

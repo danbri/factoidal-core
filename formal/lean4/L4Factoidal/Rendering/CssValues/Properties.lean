@@ -951,6 +951,8 @@ def initialComputed (ctx : ComputeCtx) (row : Property) : String :=
 #guard (lookup "column-rule").map (fun r => recombine r fun l => match l with
   | "column-rule-width" => "5px, repeat(4, 6px, 5px)" | "column-rule-style" => "double, repeat(4, none, solid)"
   | _ => "salmon, repeat(4, currentcolor, red)") == some "5px double salmon, repeat(4, 6px, 5px solid red)"
+#guard specified "will-change" "auto, transform" == none && specified "will-change" "transform, none" == none
+#guard specified "will-change" "transform, opacity" == some "transform, opacity" && specified "will-change" "auto" == some "auto"
 #guard specified "flex" "0 1 1" == none
 #guard specified "flex" "0 1" == some "0 1" && (specified "flex" "0 auto").isSome && (specified "flex" "1 0 0").isSome
 #guard specified "color" "RED" == some "red"

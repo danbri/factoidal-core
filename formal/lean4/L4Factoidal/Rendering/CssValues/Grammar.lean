@@ -470,6 +470,13 @@ def leaf (env : Env) (m : G → List CV → Res) (name : String) (lo hi : Option
   | "custom-ident" => oneCV (fun cv => match cv with
       | .tok (.ident s) => if cssWide.contains (lower s) || lower s == "default" then none else some (.tok (.ident s))
       | _ => none) ts
+  -- a `<custom-ident>` of `will-change` (CSS Will Change 1 §2): also not `will-change`,
+  -- `none`, `all` or `auto`
+  | "will-change-ident" => oneCV (fun cv => match cv with
+      | .tok (.ident s) =>
+        if cssWide.contains (lower s) || ["default", "will-change", "none", "all", "auto"].contains (lower s) then none
+        else some (.tok (.ident s))
+      | _ => none) ts
   | "dashed-ident" | "custom-property-name" => oneCV (fun cv => match cv with
       | .tok (.ident s) => if s.length > 2 && (s.toList.take 2) == ['-', '-'] then some (.tok (.ident s)) else none
       | _ => none) ts
