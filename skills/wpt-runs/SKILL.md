@@ -63,6 +63,20 @@ reports only part of WPT (Ladybird on wpt.fyi: 35,966 of 94,406 names) is left o
   `arm64=true`). So a main commit that changes the engine has a full-run row about an hour
   after the push, with no macOS runner. The same step starts `build.yml` for main when the hourly poll
   missed the commit.
+- **Main on macOS, the engine alone**: `foafnaut-macos.yml` ("Foafnaut macOS engine") builds
+  `libweb-render.dylib` for each main commit whose Linux engine was published (one build at a time, the
+  newest commit wins; also every three hours) and publishes `build-<sha12>-foafnaut-engine-darwin-arm64`
+  (the tarball holds `foafnaut/libweb-render.dylib`; static Lean runtime). Its gate is the engine build
+  and one WPT page, none of `build.yml`'s other gates, so a main commit has a macOS engine for drawing
+  pages and for a macOS WPT run also while `build.yml` publishes no `foafnaut-darwin-arm64` set. The
+  macOS full run takes the full set when the commit has one, else this one.
+- **What changed since the previous run**: every valid full run is compared with the previous valid one
+  of the same platform and WPT commit: subtests and points, the directories that fell and rose, where
+  subtests were lost, the tests that lost most, and the core commits between the two. It is in the job
+  summary, in `meta.json` (`since_previous`), in `runs/<run_id>/changes.md` on `wpt-scores`, and, with
+  every changed test, in `<run_id>.wpt-changes.json.gz` on the release `test-results`. A fall of more
+  than 0.2 points is marked DROP. Two result files by hand:
+  `release-tests/release-tests.py wpt-changes --prev A.wpt-full.json.gz --cur B.wpt-full.json.gz --out DIR`.
 - The other Factoidal conformance suites that have runners run on the same triggers, in parallel.
 - No scheduled sampled job. The old daily sample (`wpt-score.yml`) was disabled and its schedule removed
   on 2026-11-13. Sampling remains only as a manual smoke check, never recorded as a score.
@@ -136,18 +150,21 @@ gh run view --repo danbri/factoidal-builds RUN_ID          # the summary is on t
 gh run download --repo danbri/factoidal-builds RUN_ID -n branch-wpt-results -D out/
 ```
 
-- `core_ref`: any branch, tag or commit. Push the branch first.
+- `core_ref`: any branch, tag or commit (a short commit id too). Push the branch first.
 - `names`: a comma list of WPT path prefixes (`/dom/abort/`, `/css/css-color/parsing/`), and/or
   `sample:N` (every Nth name of the full list: a regression check; `sample:20` is about 4,700 names).
   Give the directories your change affects and a sample for regressions in one run.
 - `shards` (optional): runners for the tests. Default: one for each 3,000 names, at most 8 (12 when you
-  ask). The account runs 20 Linux jobs at a time, shared by all branch checks and the full runs of
-  main, so a large sample waits in the queue and holds others up: prefer the directories you changed
-  and `sample:40`.
+  ask). The account runs 40 Linux jobs at a time (39 were seen running at once on 2026-11-14), shared by
+  all branch checks and the full runs of main (13 jobs each), so a large sample waits in the queue and
+  holds others up: prefer the directories you changed and `sample:40`.
 - `wpt_commit` (optional): default is the WPT commit of the newest valid full run, so the baseline is
   at the same commit.
-- The baseline is the newest valid full run in `runs.csv` (same names). When main has moved since
-  that run, part of a difference can be main's, not the branch's.
+- The baseline is the valid full run of the newest scored main commit that your ref contains (same
+  names), so the difference is what your ref adds to that commit: your work, and any main commits
+  after it that have no score yet. The plan's summary says when that is not main's newest
+  scored commit (your ref is older than it: rebase to compare with the newest), and when your ref
+  contains no scored commit (then part of a difference is main's).
 
 What comes back:
 
@@ -159,6 +176,10 @@ What comes back:
   subtest with its status and failure message, as the local runner writes).
 - Artifact `build-log`: the whole build log. When the branch does not compile, the run fails in the
   build job and the first errors are in the job summary.
+- The build job's summary also gives `build.yml`'s tail-recursion gate
+  (`tools/lean-tail-recursion-audit.py --gate`), which the engine build does not run: the declarations
+  that are neither tail-recursive nor in `tools/lean-tail-recursion-allow.txt`. It does not fail the
+  check, but with such a declaration on main `build.yml` publishes no release: fix it before merging.
 
 Limits: the build is `build-web-render.sh --native` (the summary gives the minutes of each part; the
 Lake build directory comes from `build.yml`'s newest Linux cache and the C objects of unchanged modules
