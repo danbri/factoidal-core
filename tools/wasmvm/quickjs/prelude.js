@@ -12907,13 +12907,14 @@
             o = dictOf(name, 'CookieStore.set');
             if (o.name === undefined || o.value === undefined) throw new TypeError("Failed to execute 'CookieStore.set': name and value are required.");
             o = { name: String(o.name), value: String(o.value), domain: o.domain, path: o.path, expires: o.expires,
-              sameSite: o.sameSite, partitioned: o.partitioned };
+              maxAge: o.maxAge, sameSite: o.sameSite, partitioned: o.partitioned };
           }
           if (o.sameSite !== undefined && !['strict', 'lax', 'none'].includes(String(o.sameSite)))
             throw new TypeError("Failed to execute 'CookieStore.set': sameSite is not a CookieSameSite.");
           const has = v => v !== undefined && v !== null;
           fireChanges(call(['set', o.name, o.value, has(o.domain) ? '1' : '0', has(o.domain) ? String(o.domain) : '',
-            has(o.path) ? '1' : '0', has(o.path) ? String(o.path) : '', cookieTime(o.expires, 'CookieStore.set')], 'CookieStore.set'));
+            has(o.path) ? '1' : '0', has(o.path) ? String(o.path) : '', cookieTime(o.expires, 'CookieStore.set'),
+            has(o.maxAge) ? 'm' + String(Math.trunc(Number(o.maxAge)) || 0) : ''], 'CookieStore.set'));
         });
       }
       delete(name) {

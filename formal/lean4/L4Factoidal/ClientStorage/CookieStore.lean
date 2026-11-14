@@ -158,10 +158,10 @@ def read (jar : Jar) (site : Site) (now : Nat) (docUrl : String) (name : Option 
 
 /-- What a change of the jar from `before` to `after` shows a document (cookie-store §6,
 "process cookie changes"): the cookies it reads after that it did not read before with that
-value (`changed`), and those it read before of a name, host and path it no longer reads
+value and attributes (`changed`), and those it read before of a name, host and path it no longer reads
 (`deleted`). Rewriting a cookie with its own value is no change. -/
 def changes (before after : List Cookie) : List Cookie × List Cookie :=
-  (after.filter fun c => !before.any fun b => sameKey b c && b.value == c.value,
+  (after.filter fun c => !before.any fun b => { b with created := 0 } == { c with created := 0 },
    before.filter fun b => !after.any (sameKey b ·))
 
 /-- The answer of a write: `ok`, then `+ name value` for each changed cookie and `- name` for
@@ -196,7 +196,12 @@ def op (jar : Jar) (origin : String) (secure : Bool) (a : Array Tok) : Jar × Li
       | none => (jar, typeError)
       | some cs => (jar, S "ok" :: cs.flatMap fun c => [S c.name, S c.value])
     | "set" =>
-      let expires := if strAt a 9 == "" then none else some (secondsOf (strAt a 9))
+      -- expires in milliseconds (field 9) or maxAge in seconds (field 10: `m` and the integer); both: TypeError
+      let maxAge : Option Int := if (strAt a 10).startsWith "m" then (String.ofList ((strAt a 10).toList.drop 1)).toInt? else none
+      if strAt a 9 != "" && maxAge.isSome then (jar, typeError) else
+      let expires := match maxAge with
+        | some m => some (if m ≤ 0 then 0 else now + m.toNat)
+        | none => if strAt a 9 == "" then none else some (secondsOf (strAt a 9))
       match set jar site now (strAt a 3) (strAt a 4) (opt a 5 6) (opt a 7 8) expires with
       | none => (jar, typeError)
       | some j => (j, written jar j site now)
@@ -341,6 +346,11 @@ private def getC (n : String) (url : String := "") : List String := ["get", U, "
 #guard (let (j, _) := op {} "https://web-platform.test:8443" true (T (setC "n" "v"));
         [(op j "https://web-platform.test:8443" true (T ["get", "sw:https://web-platform.test:8443/sw.js", "1700000000000", "1", "n", "https://web-platform.test:8443/cookiestore/x"])).2.length,
          (op j "https://web-platform.test:8443" true (T ["get", "sw:https://web-platform.test:8443/sw.js", "1700000000000", "1", "n", "https://example.com/"])).2.length]) == [3, 1]
+-- maxAge: seconds from now; zero or less ends the cookie; with expires too, TypeError
+#guard run [setC "m" "v" ++ ["m60"], getC "m", setC "m" "v" ++ ["m-60"], getC "m", setC "m" "v" (exp := some "2000000000000") ++ ["m60"]] ==
+  ["ok + m v", "ok m v", "ok - m", "ok", "!TypeError"]
+-- an attribute change alone (here the expiry) is a change
+#guard run [setC "x" "v", setC "x" "v" (exp := some "2000000000000")] == ["ok + x v", "ok + x v"]
 -- url option: the document's URL (a fragment aside), else TypeError
 #guard run [setC "n" "v", getC "n" (U ++ "#foo"), getC "n" "https://web-platform.test:8443/different/path",
   getC "n" "https://www.example.com/cookiestore/t.html"] ==
