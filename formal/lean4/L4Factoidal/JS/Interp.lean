@@ -7718,7 +7718,8 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       defineOwn h helperInner (.data .undef true false false)
       defineOwn h zipModeKey (.data (.num (Float.ofNat mode)) true false false)
       defineOwn h zipPadKey (.data (← newArray pads) true false false)
-      defineOwn h zipKeysKey (.data (if keyed then (← newArray keys) else .undef) true false false)
+      let keysArr ← if keyed then newArray keys else pure .undef
+      defineOwn h zipKeysKey (.data keysArr true false false)
       defineOwn h zipOpenKey (.data (.num (Float.ofNat count)) true false false)
       pure (.obj h)
     | (.x .iteratorConcat) =>
