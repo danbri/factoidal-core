@@ -111,8 +111,9 @@ structure State where
   is the end value (CSS Transitions 1 §3: a completed transition is no longer in the
   style), not the value the kept style had while the transition still ran; without this
   a transition that ended between two style changes would start again from its last
-  sampled value. At most one entry a transition, so at most `maxAnimations`. -/
-  ended : List (Nat × String × String) := []
+  sampled value. By element (a longhand and its end value, at most one entry a transition,
+  so at most `maxAnimations` in all): a read and a removal are of one element's entries. -/
+  ended : Std.HashMap Nat (List (String × String)) := {}
   deriving Inhabited
 
 /-- What the engine reads of the page at a style change. -/
@@ -453,7 +454,7 @@ def updateTransitions (s : State) (ac : Access) (e : Nat) : State := Id.run do
     let some sp := Css.transitionFor specs property | continue
     -- the before-change value: the end value of a transition of the longhand that ran to
     -- its end since the element's last style change, else the kept style's value
-    let ended := (s.ended.find? fun (el, p, _) => el == e && p == property).map (·.2.2)
+    let ended := (s.ended.getD e []).lookup property
     let some before := ended.orElse (fun _ => ac.prev e property) | continue
     let some after := ac.base e property | continue
     if before == after then continue
@@ -538,7 +539,7 @@ def styleChange (s : State) (ac : Access) : State := Id.run do
     s := updateAnimations s ac e
     s := updateTransitions s ac e
   -- every element's before-change style is now this style
-  return { s with ended := [] }
+  return { s with ended := {} }
 
 /-- A style change in which only the styles of the elements that `keep` holds of can
 have changed, and the sheets are as they were: the CSS animations and the transitions of
@@ -551,7 +552,7 @@ def styleChangeOn (s : State) (ac : Access) (keep : Nat → Bool) (elements : Li
   let changed := (elements ++ owners).eraseDups
   if changed.isEmpty then s else
   let s := changed.foldl (fun s e => updateTransitions (updateAnimations s ac e) ac e) s
-  { s with ended := s.ended.filter fun (el, _, _) => !changed.contains el }
+  { s with ended := changed.foldl (fun m e => m.erase e) s.ended }
 
 /-- Kind: correctness (the empty case). Says: a style change that names no element and
 finds no live CSS animation or transition leaves the state as it is. Does not say: that a
@@ -656,7 +657,8 @@ def tick (s : State) (connected : Nat → Bool := fun _ => true) : State := Id.r
       let a' := if over then { a' with dead := true, phase := .idle } else a'
       if a' != a || !evs.isEmpty then
         let ended := match over, a'.origin, a'.owner with
-          | true, .cssTransition property, some e => (e, property, a'.toText) :: s.ended.filter (fun (el, p, _) => !(el == e && p == property))
+          | true, .cssTransition property, some e =>
+            s.ended.insert e ((property, a'.toText) :: (s.ended.getD e []).filter (·.1 != property))
           | _, _, _ => s.ended
         s := { s with anims := s.anims.set! i a', events := s.events ++ evs.toArray, ended,
                       liveCss := if a'.dead then s.liveCss.erase i else s.liveCss }
@@ -745,8 +747,8 @@ private def acRun (before : String) : Access := acOf [(7, [("width", "20px")])]
   "" [(7, [("width", before)])]
 private def sRun : State := tick { tick (styleChange {} (acRun "10px")) with now := Fix.ofInt 2000 }
 #guard (styleChange {} (acRun "10px")).liveCss.length == 1
-#guard sRun.liveCss == [] && sRun.ended == [(7, "width", "20px")]
-#guard (styleChange sRun (acRun "19.9px")).anims.size == 1 && (styleChange sRun (acRun "19.9px")).ended == []
+#guard sRun.liveCss == [] && sRun.ended.getD 7 [] == [("width", "20px")]
+#guard (styleChange sRun (acRun "19.9px")).anims.size == 1 && (styleChange sRun (acRun "19.9px")).ended.isEmpty
 -- (with no transition ended, the same two styles start one)
 #guard (styleChange {} (acRun "19.9px")).anims.size == 1 && (styleChange {} (acRun "19.9px")).liveCss.length == 1
 
