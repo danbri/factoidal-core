@@ -887,6 +887,14 @@
     return new Proxy(o, { get(t, p, r) { if (typeof p === 'string' && /^[0-9]+$/.test(p)) return get()[Number(p)]; return Reflect.get(t, p, r); } });
   };
   const tokenLists = new WeakMap();
+  // setAttribute after the Trusted Types check: toggleAttribute appends its empty attribute
+  // with no such check (DOM §4.9 toggleAttribute; Trusted Types hooks only the set methods).
+  const setAttrPlain = (el, k, v) => {
+    chk(n.setAttr(nodeId(el), k, v));
+    // An event handler content attribute: a name that starts with "on", in any case.
+    if (k.length >= 2 && (k.charCodeAt(0) | 32) === 111 && (k.charCodeAt(1) | 32) === 110)
+      contentHandler(el, k.toLowerCase().slice(2), v);
+  };
 
   class Element extends Node {
     // CSSOM View §6 and §7, from Lean's layout of the current DOM (laid out when a script
@@ -922,11 +930,8 @@
     hasAttributes() { return this.getAttributeNames().length > 0; }
     setAttribute(name, value) {
       if (arguments.length < 2) throw new TypeError('setAttribute: 2 arguments required');
-      const k = String(name), v = ttAttr === null ? String(value) : ttAttr(this, null, k, value);
-      chk(n.setAttr(nodeId(this), k, v));
-      // An event handler content attribute: a name that starts with "on", in any case.
-      if (k.length >= 2 && (k.charCodeAt(0) | 32) === 111 && (k.charCodeAt(1) | 32) === 110)
-        contentHandler(this, k.toLowerCase().slice(2), v);
+      const k = String(name);
+      setAttrPlain(this, k, ttAttr === null ? String(value) : ttAttr(this, null, k, value));
     }
     setAttributeNS(ns, name, value) {
       if (arguments.length < 3) throw new TypeError('setAttributeNS: 3 arguments required');
@@ -947,7 +952,7 @@
       chk(n.query(0, 3, name));
       const has = this.hasAttribute(name);
       if (has && force !== true) { this.removeAttribute(name); return false; }
-      if (!has && (force === undefined || force === true)) { this.setAttribute(name, ''); return true; }
+      if (!has && (force === undefined || force === true)) { setAttrPlain(this, name, ''); return true; }
       return has;
     }
     getAttributeNode(name) { name = lowerIfHtml(this, String(name)); return attrNodes(this).find(a => a.name === name) ?? null; }
@@ -3225,6 +3230,8 @@
   ids.set(window, WINDOW);
   const document = wrap(0);
   const frameWindows = new Map(), frameCells = new Map(), frameOfWindow = new WeakMap();
+  // Names that a write through a frame's window put on the realm's global (see `set` below).
+  const frameMadeGlobals = new Set();
   // `postMessage` to the window of a frame's document (assigned where the frames' targets are).
   let postFrame = () => {};
   // The parent window of a frame's document in this realm: the window of the document that
@@ -3264,9 +3271,11 @@
       inFrame.set(f, g);
       return g;
     };
-    // What a script sets on this window (`frame.contentWindow.x = v`) is this window's: it
-    // does not replace the page's global of that name (frames share the realm, not their
-    // windows' properties). A frame's own scripts' globals are the realm's and are read below.
+    // What a script sets on this window (`frame.contentWindow.x = v`) must be seen by the
+    // frame's own scripts, which run in the shared realm and read `window.x` or `x` from its
+    // global. So the write goes to the global, unless the global already has a property of
+    // that name that the page made itself: that one stays the page's, and the value is kept
+    // on this window alone (`vars`). Frames share the realm, not their windows' properties.
     const vars = Object.create(null);
     const isOwn = p => Object.prototype.hasOwnProperty.call(own, p), isVar = p => Object.prototype.hasOwnProperty.call(vars, p);
     w = new Proxy(window, {
@@ -3288,9 +3297,18 @@
         if (isOwn(p)) { if (p === 'location') wrap(info(cell.doc, 12)).setAttribute('src', String(v)); return true; }
         // an event handler attribute of the window (`onload`, `onmessage`) is the frame's target's
         if (typeof p === 'string' && p.startsWith('on') && handlerNames.includes(p.slice(2))) { setHandler(frameTarget(cell.doc), p.slice(2), v); return true; }
+        if (typeof p === 'string' && (frameMadeGlobals.has(p) || !Object.prototype.hasOwnProperty.call(t, p))) {
+          delete vars[p];
+          frameMadeGlobals.add(p);
+          return Reflect.set(t, p, v, t);
+        }
         vars[p] = v; return true;
       },
-      deleteProperty(t, p) { if (isVar(p)) { delete vars[p]; return true; } return !isOwn(p); },
+      deleteProperty(t, p) {
+        if (isVar(p)) { delete vars[p]; return true; }
+        if (frameMadeGlobals.has(p)) { frameMadeGlobals.delete(p); return Reflect.deleteProperty(t, p); }
+        return !isOwn(p);
+      },
     });
     frameWindows.set(doc0, w); frameCells.set(doc0, cell); frameOfWindow.set(w, cell);
     return w;
