@@ -12253,11 +12253,13 @@
   define(CSSStyleDeclaration.prototype, Symbol.iterator, function* () { for (let i = 0; i < this.length; i++) yield this[i]; });
   // ---- the CSS namespace (CSS Conditional 3 §8.1, CSSOM §2.1): Lean's answers -------------
   const CSSns = {};
-  define(CSSns, 'supports', function (a, b) {
+  // the operations of a namespace object are enumerable (WebIDL §3.13)
+  const defineNs = (name, value) => Object.defineProperty(CSSns, name, { value, writable: true, enumerable: true, configurable: true });
+  defineNs('supports', function (a, b) {
     if (arguments.length < 1) throw new TypeError('CSS.supports: 1 argument required');
     return op(0, 165, arguments.length >= 2 ? '1\u0000' + String(a) + '\u0000' + String(b) : '0\u0000' + String(a)) === '1';
   });
-  define(CSSns, 'escape', function (ident) {
+  defineNs('escape', function (ident) {
     if (arguments.length < 1) throw new TypeError('CSS.escape: 1 argument required');
     return op(0, 166, String(ident));
   });
@@ -12266,7 +12268,7 @@
   // accepted one joins the document's registered property set in Lean, which computed
   // values read. The names registered are kept here so that a second registration is refused.
   const registeredProperties = new Set();
-  define(CSSns, 'registerProperty', function (definition) {
+  defineNs('registerProperty', function (definition) {
     if (arguments.length < 1) throw new TypeError('CSS.registerProperty: 1 argument required');
     if (definition === null || (typeof definition !== 'object' && typeof definition !== 'function')) throw new TypeError('CSS.registerProperty: the definition is not an object');
     if (definition.name === undefined) throw new TypeError("CSS.registerProperty: 'name' is required");
@@ -12397,17 +12399,26 @@
     if (i >= xs.length) throw sheetErr('IndexSizeError');
     changed(holder, sheetOp('delete', holder.st.text(), String(i)));
   };
+  // CSSRuleList and StyleSheetList (CSSOM §6.2.2, §6.1.2): length and item() are on the
+  // prototype and read the list's items through this map (list object or target → items)
+  const listItems = new WeakMap();
+  const itemsOf = l => { const f = listItems.get(l); if (!f) throw new TypeError('Illegal invocation'); return f(); };
+  for (const C of [CSSRuleList, StyleSheetList]) {
+    Object.defineProperty(C.prototype, 'length', { get() { return itemsOf(this).length; }, configurable: true, enumerable: true });
+    Object.defineProperty(C.prototype, 'item', { value: function item(index) { const xs = itemsOf(this); if (arguments.length < 1) throw new TypeError('item: 1 argument required'); return xs[index >>> 0] ?? null; },
+      writable: true, configurable: true, enumerable: true });
+  }
   const ruleListOf = holder => {
     let l = ruleLists.get(holder);
     if (!l) {
-      l = new Proxy(Object.create(CSSRuleList.prototype), {
+      const target = Object.create(CSSRuleList.prototype);
+      listItems.set(target, () => rulesOf(holder));
+      l = new Proxy(target, {
         get(t, p) {
-          if (p === 'length') return rulesOf(holder).length;
-          if (p === 'item') return i => rulesOf(holder)[i >>> 0] ?? null;
           if (typeof p === 'string' && /^(0|[1-9][0-9]*)$/.test(p)) return rulesOf(holder)[Number(p)];
           return Reflect.get(t, p);
         },
-        has(t, p) { return (typeof p === 'string' && /^(0|[1-9][0-9]*)$/.test(p)) ? Number(p) < rulesOf(holder).length : p === 'length' || p === 'item' || Reflect.has(t, p); },
+        has(t, p) { return (typeof p === 'string' && /^(0|[1-9][0-9]*)$/.test(p)) ? Number(p) < rulesOf(holder).length : Reflect.has(t, p); },
         ownKeys(t) { return rulesOf(holder).map((x, i) => String(i)).concat(Reflect.ownKeys(t)); },
         getOwnPropertyDescriptor(t, p) {
           if (typeof p === 'string' && /^(0|[1-9][0-9]*)$/.test(p) && Number(p) < rulesOf(holder).length)
@@ -12415,6 +12426,7 @@
           return Reflect.getOwnPropertyDescriptor(t, p);
         },
       });
+      listItems.set(l, () => rulesOf(holder));
       ruleLists.set(holder, l);
     }
     return l;
@@ -12559,15 +12571,16 @@
     let l = sheetLists.get(this);
     if (!l) {
       const doc = this;
-      l = new Proxy(Object.create(StyleSheetList.prototype), {
+      const target = Object.create(StyleSheetList.prototype);
+      listItems.set(target, () => sheetsOfDocument(doc));
+      l = new Proxy(target, {
         get(t, p) {
-          if (p === 'length') return sheetsOfDocument(doc).length;
-          if (p === 'item') return i => sheetsOfDocument(doc)[i >>> 0] ?? null;
           if (typeof p === 'string' && /^(0|[1-9][0-9]*)$/.test(p)) return sheetsOfDocument(doc)[Number(p)];
           return Reflect.get(t, p);
         },
-        has(t, p) { return (typeof p === 'string' && /^(0|[1-9][0-9]*)$/.test(p)) ? Number(p) < sheetsOfDocument(doc).length : p === 'length' || p === 'item' || Reflect.has(t, p); },
+        has(t, p) { return (typeof p === 'string' && /^(0|[1-9][0-9]*)$/.test(p)) ? Number(p) < sheetsOfDocument(doc).length : Reflect.has(t, p); },
       });
+      listItems.set(l, () => sheetsOfDocument(doc));
       sheetLists.set(this, l);
     }
     return l;
@@ -12585,8 +12598,9 @@
   const typedOp = (...parts) => { const r = n.query(0, 154, parts.join('\u0000')); return typeof r === 'string' ? r : ''; };
   const typedKey = {}, typedState = new WeakMap();
   const tstateOf = v => { const s = typedState.get(v); if (!s) throw new TypeError('Illegal invocation'); return s; };
+  // interface objects with no constructor of their own have length 0 (WebIDL §3.7.1)
   class CSSStyleValue {
-    constructor(key) { if (key !== typedKey) illegal(); }
+    constructor(...key) { if (key[0] !== typedKey) illegal(); }
     toString() { return tstateOf(this).text ?? ''; }
     static parse(property, cssText) {
       if (arguments.length < 2) throw new TypeError('CSSStyleValue.parse: 2 arguments required');
@@ -12775,9 +12789,10 @@
   define(CSSUnparsedValue.prototype, Symbol.iterator, CSSUnparsedValue.prototype.values);
   // Transform values: the components as objects; their text is the transform function's.
   class CSSTransformComponent {
-    constructor(key) { if (key !== typedKey) illegal(); }
+    constructor(...key) { if (key[0] !== typedKey) illegal(); }
     get is2D() { return tstateOf(this).is2D; }
     set is2D(v) { tstateOf(this).is2D = !!v; }
+    toString() { return ''; }
   }
   const lengthArg = x => { const v = numberish(x); return v; };
   class CSSTranslate extends CSSTransformComponent {
@@ -12876,7 +12891,7 @@
     return syn !== '' ? JSON.parse(typedOp('reifys', syn, text)).map(reified) : [reified(JSON.parse(typedOp('reifyp', name, text)))];
   };
   class StylePropertyMapReadOnly {
-    constructor(key) { if (key !== typedKey) illegal(); }
+    constructor(...key) { if (key[0] !== typedKey) illegal(); }
     get(property) {
       if (arguments.length < 1) throw new TypeError('get: 1 argument required');
       const name = knownProperty(property), text = mstate(this).read(name);
@@ -12896,7 +12911,7 @@
     *entries() { for (const name of mstate(this).names().slice().sort()) yield [name, this.getAll(name)]; }
     *keys() { for (const [k] of this.entries()) yield k; }
     *values() { for (const [, v] of this.entries()) yield v; }
-    forEach(f, self) { for (const [k, v] of this.entries()) f.call(self, v, k, this); }
+    forEach(f, ...self) { for (const [k, v] of this.entries()) f.call(self[0], v, k, this); }
   }
   define(StylePropertyMapReadOnly.prototype, Symbol.iterator, StylePropertyMapReadOnly.prototype.entries);
   // The CSS text of each value given to set() or append(). A typed value must be one the
@@ -12982,7 +12997,7 @@
     lvw: 'lvw', lvh: 'lvh', lvi: 'lvi', lvb: 'lvb', lvmin: 'lvmin', lvmax: 'lvmax', dvw: 'dvw', dvh: 'dvh', dvi: 'dvi', dvb: 'dvb', dvmin: 'dvmin', dvmax: 'dvmax',
     cqw: 'cqw', cqh: 'cqh', cqi: 'cqi', cqb: 'cqb', cqmin: 'cqmin', cqmax: 'cqmax', cm: 'cm', mm: 'mm', Q: 'q', in: 'in', pt: 'pt', pc: 'pc', px: 'px',
     deg: 'deg', grad: 'grad', rad: 'rad', turn: 'turn', s: 's', ms: 'ms', Hz: 'hz', kHz: 'khz', dpi: 'dpi', dpcm: 'dpcm', dppx: 'dppx', fr: 'fr' }))
-    define(CSSns, k, function (value) { if (arguments.length < 1) throw new TypeError(`CSS.${k}: 1 argument required`); return new CSSUnitValue(value, unit); });
+    defineNs(k, function (value) { if (arguments.length < 1) throw new TypeError(`CSS.${k}: 1 argument required`); return new CSSUnitValue(value, unit); });
   for (const [k, v] of Object.entries({ CSSStyleValue, CSSImageValue, CSSKeywordValue, CSSNumericValue, CSSUnitValue, CSSMathValue, CSSNumericArray,
     CSSMathSum: mathClasses.sum, CSSMathProduct: mathClasses.product, CSSMathMin: mathClasses.min, CSSMathMax: mathClasses.max,
     CSSMathNegate: mathClasses.negate, CSSMathInvert: mathClasses.invert, CSSMathClamp, CSSVariableReferenceValue, CSSUnparsedValue,
