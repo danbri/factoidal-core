@@ -197,15 +197,25 @@ inductive Shape where
   | sides
   /-- One or two values: the second defaults to the first. -/
   | pair
+  /-- One value for every longhand. -/
+  | same
   /-- `a || b || c`: each part sets a group of longhands; a part left out is initial. -/
   | anyOrder (groups : List (List String))
   /-- `font` (CSS Fonts 4 §2.8): style, variant, weight and width in any order, then the
   size, an optional `/ line-height`, and the family; every other longhand is reset. -/
   | font
-  deriving Repr, Inhabited
+  /-- The shorthand's grammar names its parts as `<'property'>` (longhands, or shorthands of
+  some of its longhands), each at most once: the parts are read off the match, and the value
+  is written back by walking the grammar (`unparse`) and checked by expanding it again. -/
+  | byGrammar (g : G)
+  deriving Inhabited
 
 def sidesShorthands : List String :=
-  ["margin", "padding", "border-width", "border-style", "border-color", "inset", "scroll-margin", "scroll-padding"]
+  ["margin", "padding", "border-width", "border-style", "border-color", "inset", "scroll-margin", "scroll-padding",
+   "corner-shape"]
+
+def sameShorthands : List String :=
+  ["column-rule-inset-start", "column-rule-inset-end", "row-rule-inset-start", "row-rule-inset-end"]
 
 def pairShorthands : List String :=
   ["gap", "place-content", "place-items", "place-self", "overflow", "overscroll-behavior",
@@ -213,7 +223,10 @@ def pairShorthands : List String :=
    "border-block-width", "border-block-style", "border-block-color",
    "border-inline-width", "border-inline-style", "border-inline-color",
    "scroll-margin-block", "scroll-margin-inline", "scroll-padding-block", "scroll-padding-inline",
-   "contain-intrinsic-size", "grid-gap", "size", "min-size", "max-size"]
+   "contain-intrinsic-size", "grid-gap", "size", "min-size", "max-size",
+   "column-rule-inset-cap", "column-rule-inset-junction", "row-rule-inset-cap", "row-rule-inset-junction",
+   "corner-top-shape", "corner-bottom-shape", "corner-left-shape", "corner-right-shape",
+   "corner-block-start-shape", "corner-block-end-shape", "corner-inline-start-shape", "corner-inline-end-shape"]
 
 def anyOrderShorthands : List String :=
   ["border-top", "border-right", "border-bottom", "border-left",
@@ -224,16 +237,77 @@ def anyOrderShorthands : List String :=
 def thirds (n : Nat) (xs : List String) : List (List String) :=
   [xs.take n, (xs.drop n).take n, xs.drop (2 * n)]
 
+/-- The properties a grammar names (`<'property'>` and tagged parts). The recursion is on
+the nesting of the grammar (table data). -/
+def propsOf : Nat → G → List String
+  | 0, _ => []
+  | fuel + 1, g =>
+    match g with
+    | .prop n => [n]
+    | .tag n _ => [n]
+    | .seq gs => gs.flatMap (propsOf fuel)
+    | .oneOf gs => gs.flatMap (propsOf fuel)
+    | .anyOf gs => gs.flatMap (propsOf fuel)
+    | .allOf gs => gs.flatMap (propsOf fuel)
+    | .rep g' _ _ _ => propsOf fuel g'
+    | .req g' => propsOf fuel g'
+    | .fn _ g' => propsOf fuel g'
+    | .block _ g' => propsOf fuel g'
+    | _ => []
+
+/-- Whether every multiplier over a named property is `?`: each part occurs at most once. -/
+def simpleRefs : Nat → G → Bool
+  | 0, _ => false
+  | fuel + 1, g =>
+    match g with
+    | .seq gs => gs.all (simpleRefs fuel)
+    | .oneOf gs => gs.all (simpleRefs fuel)
+    | .anyOf gs => gs.all (simpleRefs fuel)
+    | .allOf gs => gs.all (simpleRefs fuel)
+    | .rep g' lo hi comma => (propsOf fuel g').isEmpty || (lo == 0 && hi == some 1 && !comma && simpleRefs fuel g')
+    | .req g' => simpleRefs fuel g'
+    | .fn _ g' => (propsOf fuel g').isEmpty
+    | .block _ g' => (propsOf fuel g').isEmpty
+    | _ => true
+
+/-- The grammar of a shorthand with its parts named, where the table's grammar does not
+name them: the grid placement shorthands (CSS Grid 2 §8.4). -/
+def namedGrammar (name : String) : Option G :=
+  let line := G.ref "grid-line" none none
+  let slash := fun (l : String) => G.rep (.seq [.lit '/', .tag l line]) 0 (some 1) false
+  match name with
+  | "grid-row" => some (.seq [.tag "grid-row-start" line, slash "grid-row-end"])
+  | "grid-column" => some (.seq [.tag "grid-column-start" line, slash "grid-column-end"])
+  | "grid-area" => some (.seq [.tag "grid-row-start" line,
+      .rep (.seq [.lit '/', .tag "grid-column-start" line,
+        .rep (.seq [.lit '/', .tag "grid-row-end" line, slash "grid-column-end"]) 0 (some 1) false]) 0 (some 1) false])
+  | _ => none
+
+/-- The grammar by which a shorthand is read part by part, when it has one: every property
+it names is a longhand of the shorthand or a shorthand of some of them, at most once. -/
+def partsGrammar (row : Property) : Option G :=
+  match (namedGrammar row.name).orElse (fun _ => propG row.name) with
+  | none => none
+  | some g =>
+    let names := propsOf 24 g
+    let ok := !names.isEmpty && simpleRefs 24 g && names.all fun n =>
+      row.longhands.contains n ||
+        (match lookup n with
+          | some sub => !sub.longhands.isEmpty && sub.longhands.all row.longhands.contains
+          | none => false)
+    if ok then some g else none
+
 /-- The shape of a shorthand that has a generic one. -/
 def shapeOf (row : Property) : Option Shape :=
   let n := row.longhands.length
   if sidesShorthands.contains row.name && n == 4 then some .sides
   else if pairShorthands.contains row.name && n == 2 then some .pair
+  else if sameShorthands.contains row.name && n ≥ 1 then some .same
   else if anyOrderShorthands.contains row.name && n ≥ 2 then some (.anyOrder (row.longhands.map fun l => [l]))
   else if row.name == "font" then some .font
   else if (row.name == "border" || row.name == "border-block" || row.name == "border-inline") && n % 3 == 0 && n ≥ 3 then
     some (.anyOrder (thirds (n / 3) row.longhands))
-  else none
+  else (partsGrammar row).map Shape.byGrammar
 
 /-- The values of the tagged matches, in order: property name and canonical text. -/
 def tagged (out : List CV) : List (String × String) :=
@@ -273,112 +347,210 @@ def fontGrammar : G :=
 def fontWritten : List String :=
   ["font-style", "font-variant-caps", "font-weight", "font-stretch", "font-size", "line-height", "font-family"]
 
+/-- A longhand that a shorthand's value leaves out: its value. Initial, except where the
+shorthand says otherwise: `flex` (CSS Flexbox 1 §7.1.1), the grid placement shorthands (CSS
+Grid 2 §8.4: a missing end line repeats a custom identifier start line), and the `rule`
+shorthands of CSS Gaps, which set the row and the column longhands alike. -/
+def missingDefault (shorthand canonical : String) (found : List (String × String)) (l : String) : String :=
+  let identLine := fun (v : String) =>
+    match stripWs (CV.parse v) with
+    | [.tok (.ident s)] => lower s != "auto" && lower s != "span"
+    | _ => false
+  let fromLine := fun (other : String) => match found.lookup other with
+    | some v => if identLine v then v else "auto"
+    | none => "auto"
+  if shorthand == "flex" then
+    if canonical == "none" then (if l == "flex-basis" then "auto" else "0")
+    else if l == "flex-basis" then "0%" else "1"
+  else if l == "grid-row-end" then fromLine "grid-row-start"
+  else if l == "grid-column-start" && shorthand == "grid-area" then fromLine "grid-row-start"
+  else if l == "grid-column-end" then
+    (match found.lookup "grid-column-start" with
+     | some v => if identLine v then v else "auto"
+     | none => if shorthand == "grid-area" then fromLine "grid-row-start" else "auto")
+  else if l.startsWith "row-rule" && (lookup shorthand).any (fun r => r.longhands.any (·.startsWith "column-rule")) then
+    (found.lookup ("column-" ++ (l.drop 4).toString)).getD (initialSpecified l)
+  else initialSpecified l
+
+/-- `expand`, with `fuel` for a shorthand whose parts are shorthands. -/
+def expandF : Nat → String → String → Option (List (String × String))
+  | 0, _, _ => none
+  | fuel + 1, property, value =>
+    let p := propertyName property
+    match specified p value with
+    | none => none
+    | some canonical =>
+      match lookup p with
+      | none => some [(p, canonical)]
+      | some row =>
+        if row.longhands.isEmpty then some [(p, canonical)]
+        else
+          let cvs := CV.parse value
+          let top := stripWs cvs
+          match wideKeyword top with
+          | some k => some (row.longhands.map fun l => (l, k))
+          | none =>
+            if hasSubstitution cvs then some [(p, canonical)]
+            else
+              match shapeOf row with
+              | none => some [(p, canonical)]
+              | some .sides =>
+                let first := row.longhands.headD p
+                match (matchAll (env none) (.rep (.prop first) 1 (some 4) false) top).map tagged with
+                | some [a] => some (row.longhands.map fun l => (l, a.2))
+                | some [a, b] => some (row.longhands.zip [a.2, b.2, a.2, b.2])
+                | some [a, b, c] => some (row.longhands.zip [a.2, b.2, c.2, b.2])
+                | some [a, b, c, d] => some (row.longhands.zip [a.2, b.2, c.2, d.2])
+                | _ => none
+              | some .same =>
+                match (matchAll (env none) (.prop (row.longhands.headD p)) top).map tagged with
+                | some [a] => some (row.longhands.map fun l => (l, a.2))
+                | _ => none
+              | some .pair =>
+                match row.longhands with
+                | [l1, l2] =>
+                  match (matchAll (env none) (.seq [.prop l1, .rep (.prop l2) 0 (some 1) false]) top).map tagged with
+                  | some [a] => some [(l1, a.2), (l2, a.2)]
+                  | some [a, b] => some [(l1, a.2), (l2, b.2)]
+                  | _ => none
+                | _ => none
+              | some (.byGrammar g) =>
+                match (matchAll (env none) g top).map tagged with
+                | none => none
+                | some found =>
+                  -- a part that is a shorthand gives its own longhands
+                  let direct := found.flatMap fun (n, t) =>
+                    if row.longhands.contains n then [(n, t)] else (expandF fuel n t).getD []
+                  some (row.longhands.map fun l => (l, (direct.lookup l).getD (missingDefault p canonical direct l)))
+              | some .font =>
+                match (matchAll (env none) fontGrammar top).map tagged with
+                | none =>
+                  -- a system font (`caption`, `menu` ...) is kept whole
+                  some [(p, canonical)]
+                | some found =>
+                  some (row.longhands.map fun l => (l, (found.lookup l).getD (initialSpecified l)))
+              | some (.anyOrder groups) =>
+                let heads := groups.filterMap (·.head?)
+                match (matchAll (env none) (.anyOf (heads.map G.prop)) top).map tagged with
+                | none => none
+                | some found =>
+                  some (groups.flatMap fun group =>
+                    let head := group.headD ""
+                    let v := match found.lookup head with
+                      | some v => v
+                      | none => initialSpecified head
+                    group.map fun l => (l, v))
+
 /-- The longhand declarations that `property: value` stands for, each with its canonical
 value: one for a longhand; for a shorthand its longhands, or the shorthand itself when it
 has no generic shape here (it is then kept whole) or holds a substitution function. `none`:
 not a valid declaration. -/
-def expand (property value : String) : Option (List (String × String)) :=
-  let p := propertyName property
-  match specified p value with
-  | none => none
-  | some canonical =>
-    match lookup p with
-    | none => some [(p, canonical)]
-    | some row =>
-      if row.longhands.isEmpty then some [(p, canonical)]
-      else
-        let cvs := CV.parse value
-        let top := stripWs cvs
-        match wideKeyword top with
-        | some k => some (row.longhands.map fun l => (l, k))
-        | none =>
-          if hasSubstitution cvs then some [(p, canonical)]
-          else
-            match shapeOf row with
-            | none => some [(p, canonical)]
-            | some .sides =>
-              let first := row.longhands.headD p
-              match (matchAll (env none) (.rep (.prop first) 1 (some 4) false) top).map tagged with
-              | some [a] => some (row.longhands.map fun l => (l, a.2))
-              | some [a, b] => some (row.longhands.zip [a.2, b.2, a.2, b.2])
-              | some [a, b, c] => some (row.longhands.zip [a.2, b.2, c.2, b.2])
-              | some [a, b, c, d] => some (row.longhands.zip [a.2, b.2, c.2, d.2])
-              | _ => none
-            | some .pair =>
-              match row.longhands with
-              | [l1, l2] =>
-                match (matchAll (env none) (.seq [.prop l1, .rep (.prop l2) 0 (some 1) false]) top).map tagged with
-                | some [a] => some [(l1, a.2), (l2, a.2)]
-                | some [a, b] => some [(l1, a.2), (l2, b.2)]
-                | _ => none
-              | _ => none
-            | some .font =>
-              match (matchAll (env none) fontGrammar top).map tagged with
-              | none =>
-                -- a system font (`caption`, `menu` ...) is kept whole
-                some [(p, canonical)]
-              | some found =>
-                some (row.longhands.map fun l => (l, (found.lookup l).getD (initialSpecified l)))
-            | some (.anyOrder groups) =>
-              let heads := groups.filterMap (·.head?)
-              match (matchAll (env none) (.anyOf (heads.map G.prop)) top).map tagged with
+def expand (property value : String) : Option (List (String × String)) := expandF 4 property value
+
+/-- The value of a shorthand written by walking its grammar: each named part gives its
+value, an optional part whose properties are all initial is left out (`leaveOut`), `||` shows
+the parts that are not initial (the first if none is). `none`: the grammar has a form
+this does not write. -/
+def unparse (value : String → String) (isInitial : String → Bool) (leaveOut : Bool) : Nat → G → Option (List String)
+  | 0, _ => none
+  | fuel + 1, g =>
+    let skip := fun (g' : G) => leaveOut && (let ps := propsOf fuel g'; !ps.isEmpty && ps.all isInitial)
+    match g with
+    | .prop n => let v := value n; if v == "" then none else some [v]
+    | .tag n _ => let v := value n; if v == "" then none else some [v]
+    | .kw k =>
+      match k.splitOn "=" with
+      | [a] => some [a]
+      | [_, b] => some (if b == "" then [] else [b])
+      | _ => none
+    | .lit c => some [String.singleton c]
+    | .seq gs => (gs.mapM (unparse value isInitial leaveOut fuel)).map List.flatten
+    | .rep g' lo _ _ => if lo == 0 && skip g' then some [] else unparse value isInitial leaveOut fuel g'
+    | .anyOf gs =>
+      let shown := gs.filter fun g' => !skip g'
+      let shown := if shown.isEmpty then gs.take 1 else shown
+      (shown.mapM (unparse value isInitial leaveOut fuel)).map List.flatten
+    | .allOf gs => (gs.mapM (unparse value isInitial leaveOut fuel)).map List.flatten
+    | .oneOf gs => gs.findSome? fun g' => if (propsOf fuel g').isEmpty then none else unparse value isInitial leaveOut fuel g'
+    | .req g' => unparse value isInitial leaveOut fuel g'
+    | _ => none
+
+/-- The pieces of an unparsed value as text: one space between pieces, none before a comma. -/
+def joinPieces (pieces : List String) : String := (" ".intercalate pieces).replace " ," ","
+
+/-- `recombine`, with `fuel` for a shorthand whose parts are shorthands. -/
+def recombineF : Nat → Property → (String → String) → String
+  | 0, _, _ => ""
+  | fuel + 1, row, get =>
+    let vs := row.longhands.map get
+    if vs.any (· == "") then ""
+    else
+      match vs with
+      | [] => ""
+      | v :: rest =>
+        if cssWide.contains v then (if rest.all (· == v) then v else "")
+        else if vs.any cssWide.contains then ""
+        else
+          match shapeOf row with
+          | none => ""
+          | some .sides =>
+            match vs with
+            | [t, r, b, l] =>
+              if l == r then (if b == t then (if r == t then t else t ++ " " ++ r) else t ++ " " ++ r ++ " " ++ b)
+              else t ++ " " ++ r ++ " " ++ b ++ " " ++ l
+            | _ => ""
+          | some .same => if rest.all (· == v) then v else ""
+          | some .pair =>
+            match vs with
+            | [a, b] => if a == b then a else a ++ " " ++ b
+            | _ => ""
+          | some (.byGrammar g) =>
+            let value := fun (n : String) =>
+              if row.longhands.contains n then get n
+              else match lookup n with
+                | some sub => recombineF fuel sub get
+                | none => ""
+            let isInitial := fun (n : String) =>
+              if row.longhands.contains n then get n == initialSpecified n
+              else match lookup n with
+                | some sub => sub.longhands.all fun l => get l == initialSpecified l
+                | none => false
+            let want := row.longhands.map fun l => (l, get l)
+            let attempt := fun (leaveOut : Bool) =>
+              match unparse value isInitial leaveOut 24 g with
+              | some pieces =>
+                let text := joinPieces pieces
+                if text != "" && expandF 4 row.name text == some want then some text else none
               | none => none
-              | some found =>
-                some (groups.flatMap fun group =>
-                  let head := group.headD ""
-                  let v := match found.lookup head with
-                    | some v => v
-                    | none => initialSpecified head
-                  group.map fun l => (l, v))
+            ((attempt (row.name != "flex")).orElse fun _ => attempt false).getD ""
+          | some .font =>
+            let resetOk := row.longhands.all fun l => fontWritten.contains l || get l == initialSpecified l
+            let variant := get "font-variant-caps"
+            let stretch := get "font-stretch"
+            let keywordOnly := (variant == "normal" || variant == "small-caps") &&
+              !(stretch.toList.any fun c => c.isDigit)
+            if !resetOk || !keywordOnly then ""
+            else
+              let opt := fun (l : String) => let v := get l; if v == "normal" then [] else [v]
+              let lineHeight := get "line-height"
+              " ".intercalate (opt "font-style" ++ opt "font-variant-caps" ++ opt "font-weight" ++ opt "font-stretch" ++
+                [get "font-size"] ++ (if lineHeight == "normal" then [] else ["/", lineHeight]) ++ [get "font-family"])
+          | some (.anyOrder groups) =>
+            let parts := groups.map fun group =>
+              let head := group.headD ""
+              let v := get head
+              let uniform := group.all fun l => get l == v
+              let initial := initialSpecified head
+              (v, uniform, v == initial)
+            if parts.any (fun (_, uniform, _) => !uniform) then ""
+            else
+              match parts.filter (fun (_, _, isInitial) => !isInitial) with
+              | [] => (parts.head?.map (·.1)).getD ""
+              | shown => " ".intercalate (shown.map (·.1))
 
 /-- The value of a shorthand of a generic shape from the values of its longhands (`get`
 answers "" for one that is not set): "" when it can not be written as one value. -/
-def recombine (row : Property) (get : String → String) : String :=
-  let vs := row.longhands.map get
-  if vs.any (· == "") then ""
-  else
-    match vs with
-    | [] => ""
-    | v :: rest =>
-      if cssWide.contains v then (if rest.all (· == v) then v else "")
-      else if vs.any cssWide.contains then ""
-      else
-        match shapeOf row with
-        | none => ""
-        | some .sides =>
-          match vs with
-          | [t, r, b, l] =>
-            if l == r then (if b == t then (if r == t then t else t ++ " " ++ r) else t ++ " " ++ r ++ " " ++ b)
-            else t ++ " " ++ r ++ " " ++ b ++ " " ++ l
-          | _ => ""
-        | some .pair =>
-          match vs with
-          | [a, b] => if a == b then a else a ++ " " ++ b
-          | _ => ""
-        | some .font =>
-          let resetOk := row.longhands.all fun l => fontWritten.contains l || get l == initialSpecified l
-          let variant := get "font-variant-caps"
-          let stretch := get "font-stretch"
-          let keywordOnly := (variant == "normal" || variant == "small-caps") &&
-            !(stretch.toList.any fun c => c.isDigit)
-          if !resetOk || !keywordOnly then ""
-          else
-            let opt := fun (l : String) => let v := get l; if v == "normal" then [] else [v]
-            let lineHeight := get "line-height"
-            " ".intercalate (opt "font-style" ++ opt "font-variant-caps" ++ opt "font-weight" ++ opt "font-stretch" ++
-              [get "font-size"] ++ (if lineHeight == "normal" then [] else ["/", lineHeight]) ++ [get "font-family"])
-        | some (.anyOrder groups) =>
-          let parts := groups.map fun group =>
-            let head := group.headD ""
-            let v := get head
-            let uniform := group.all fun l => get l == v
-            let initial := initialSpecified head
-            (v, uniform, v == initial)
-          if parts.any (fun (_, uniform, _) => !uniform) then ""
-          else
-            match parts.filter (fun (_, _, isInitial) => !isInitial) with
-            | [] => (parts.head?.map (·.1)).getD ""
-            | shown => " ".intercalate (shown.map (·.1))
+def recombine (row : Property) (get : String → String) : String := recombineF 4 row get
 
 /-- The four values of a sides shorthand as the shorthand writes them. -/
 def collapse4 (t r b l : String) : List String :=
@@ -505,6 +677,24 @@ def initialComputed (ctx : ComputeCtx) (row : Property) : String :=
         ("font-size", "12px"), ("line-height", "2"), ("font-family", "FB Armada, serif")]
 #guard (expand "font" "12px").isNone
 #guard (expand "font" "caption") == some [("font", "caption")]
+#guard expand "flex" "1" == some [("flex-grow", "1"), ("flex-shrink", "1"), ("flex-basis", "0%")]
+#guard expand "flex" "none" == some [("flex-grow", "0"), ("flex-shrink", "0"), ("flex-basis", "auto")]
+#guard expand "flex" "auto" == some [("flex-grow", "1"), ("flex-shrink", "1"), ("flex-basis", "auto")]
+#guard expand "grid-row" "2 / span 3" == some [("grid-row-start", "2"), ("grid-row-end", "span 3")]
+#guard expand "grid-row" "foo" == some [("grid-row-start", "foo"), ("grid-row-end", "foo")]
+#guard expand "grid-row" "2" == some [("grid-row-start", "2"), ("grid-row-end", "auto")]
+#guard expand "grid-area" "a / b" == some [("grid-row-start", "a"), ("grid-column-start", "b"), ("grid-row-end", "a"), ("grid-column-end", "b")]
+#guard expand "rule-inset" "10px 20px / 30px" == some [("column-rule-inset-cap-start", "10px"), ("column-rule-inset-cap-end", "20px"),
+  ("column-rule-inset-junction-start", "30px"), ("column-rule-inset-junction-end", "30px"),
+  ("row-rule-inset-cap-start", "10px"), ("row-rule-inset-cap-end", "20px"),
+  ("row-rule-inset-junction-start", "30px"), ("row-rule-inset-junction-end", "30px")]
+#guard expand "corner-shape" "bevel scoop" == some [("corner-top-left-shape", "bevel"), ("corner-top-right-shape", "scoop"),
+  ("corner-bottom-right-shape", "bevel"), ("corner-bottom-left-shape", "scoop")]
+#guard expand "container" "foo / inline-size" == some [("container-name", "foo"), ("container-type", "inline-size")]
+#guard (lookup "flex").map (fun row => recombine row fun l => if l == "flex-basis" then "0%" else "1") == some "1 1 0%"
+#guard (lookup "grid-row").map (fun row => recombine row fun l => if l == "grid-row-start" then "2" else "auto") == some "2"
+#guard (lookup "grid-row").map (fun row => recombine row fun l => if l == "grid-row-start" then "2" else "span 3") == some "2 / span 3"
+#guard (lookup "container").map (fun row => recombine row fun l => if l == "container-name" then "foo" else "normal") == some "foo"
 #guard computed {} "width" "2em" == "32px"
 #guard computed {} "color" "red" == "rgb(255, 0, 0)"
 #guard computed { currentColor := some "rgb(0, 128, 0)" } "border-top-color" "currentcolor" == "rgb(0, 128, 0)"
