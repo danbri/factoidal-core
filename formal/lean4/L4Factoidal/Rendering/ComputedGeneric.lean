@@ -596,6 +596,17 @@ def substitute (get : String → String) (fns : List (String × FnDef)) : Nat �
         | .block o body => (substitute get fns fuel body).map fun body' => out ++ [.block o body']
         | cv => some (joinTokens out [cv])) (some [])
 
+/-- Kind: bound. Says: substitution refuses (the value is invalid at computed-value time)
+when its fuel, the nesting of functions and references it follows, is spent. -/
+theorem substitute_zero (get : String → String) (fns : List (String × FnDef)) (cvs : List CssValues.CV) :
+    substitute get fns 0 cvs = none := by
+  simp [substitute]
+
+/-- Kind: bound. Says: an if() condition nested past its fuel is no condition. -/
+theorem ifCondition_zero (get : String → String) (subst : List CssValues.CV → Option (List CssValues.CV))
+    (cvs : List CssValues.CV) : ifCondition get subst 0 cvs = none := by
+  simp [ifCondition]
+
 def mentionsCurrentColor (value : String) : Bool :=
   ((CssValues.lower value).splitOn "currentcolor").length > 1
 
@@ -612,7 +623,22 @@ def computedLonghand (v : View) : Nat → Nat → String → String
         match ((v.dom.get id).attrs.find? fun a => a.ns.isNone && a.lname == an) with
         | some a => a.value
         | none => "\x00"
-      else computedLonghand v fuel id name
+      else if (v.registered.get.lookup name).isSome then computedLonghand v fuel id name
+      else
+        -- an unregistered custom property: the value the cascade resolved for the element
+        -- (`Computed.vars`: each custom property once, cycles and over-long values already
+        -- invalid), unless it holds a function only computed values substitute (if(),
+        -- attr(), env(), a custom function); without the map, the property's own value
+        match v.styles[id]? with
+        | some st =>
+          match st.vars.get? name with
+          | some text =>
+            let cvs := CssValues.CV.parse text
+            if CssValues.hasFn "if" 32 cvs || CssValues.hasFn "attr" 32 cvs || CssValues.hasFn "env" 32 cvs ||
+                hasDashedFn 32 cvs then computedLonghand v fuel id name
+            else text
+          | none => if st.vars.isEmpty then computedLonghand v fuel id name else ""
+        | none => computedLonghand v fuel id name
     -- the element's flow, looked up only for a property of a logical property group
     let flow := fun (_ : Unit) =>
       CssValues.Logical.Flow.of (computedLonghand v fuel id "writing-mode") (computedLonghand v fuel id "direction")
@@ -1009,6 +1035,12 @@ private def resolvedAt (html css prop : String) : String :=
 -- the background shorthand by its longhands
 #guard computedAt "<div id=t></div>" "#t { background: url(a.png) no-repeat red }" "background-repeat" == "no-repeat"
 #guard computedAt "<div id=t></div>" "#t { background: red }" "background-color" == "rgb(255, 0, 0)"
+-- cycles of custom properties are invalid, and a long chain is read once (variable-cycles.html)
+#guard computedAt "<div id=t></div>" "#t { --a: var(--b); --b: var(--a); --s: valid }" "--a" == ""
+#guard computedAt "<div id=t></div>" "#t { --a: var(--b); --b: var(--a); --s: valid }" "--s" == "valid"
+#guard computedAt "<div id=t></div>"
+  "#t { --v0: x; --v1: var(--v0) var(--v0); --v2: var(--v1) var(--v1); --v3: var(--v2) var(--v2); --v4: var(--v3) var(--v3); --v5: var(--v4) var(--v4); --v6: var(--v5) var(--v5); --v7: var(--v6) var(--v6); --v8: var(--v7) var(--v7); --v9: var(--v8) var(--v8); --v10: var(--v9) var(--v9); --v11: var(--v10) var(--v10); --v12: var(--v11) var(--v11); --v13: var(--v12) var(--v12); --v14: var(--v13) var(--v13); --v15: var(--v14) var(--v14); --v16: var(--v15) var(--v15); --v17: var(--v16) var(--v16); --v18: var(--v17) var(--v17); --v19: var(--v18) var(--v18); --v20: var(--v19) var(--v19); --v21: var(--v20) var(--v20) }"
+  "--v3" == "x x x x x x x x"
 -- env()
 #guard computedAt "<div id=t></div>" "#t { --a: env(unknown-env-name, 10px); }" "--a" == "10px"
 #guard computedAt "<div id=t></div>" "#t { --a: env(safe-area-inset-top); }" "--a" == "0px"

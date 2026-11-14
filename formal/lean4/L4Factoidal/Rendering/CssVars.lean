@@ -120,6 +120,11 @@ def substitute (get : String → Found) : Nat → String → Found
             afterName := isNameChar c
     return .value out
 
+/-- Kind: bound. Says: a reference nested past the fuel of fallbacks is missing (the
+declaration is invalid at computed-value time). -/
+theorem substitute_zero (get : String → Found) (value : String) : substitute get 0 value = .missing := by
+  simp [substitute]
+
 /-- The most nested fallbacks that are followed. -/
 def maxFallbacks : Nat := 32
 
