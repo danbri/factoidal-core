@@ -10,7 +10,8 @@ tokens mean to JavaScript is that side's. This module reads only what a key path
 
   `u` undefined, `z` null, `t` `f` booleans, `n`/`d` + 16 hex digits (number, date),
   `i` BigInt, `s` string, `r` RegExp, `b` + bytes (ArrayBuffer), `@` + index (a reference
-  to an object written earlier), `k` + name (a property key);
+  to an object written earlier), `k` + name (a property key), `H` + kind, path and name (a
+  `FileSystemHandle` of the same storage key's file system);
   with children: `A` + n (dense array: n values), `a` + len,n (array: n key and value
   pairs), `o` + n (object: n pairs), `M` + n (Map: n pairs of values), `S` + n (Set),
   `V` + kind,offset,length (view: its buffer), `B` + type (boxed primitive: the primitive),
