@@ -1481,6 +1481,26 @@ def replacedHints (n : DOM.Node) (s : Computed) : Computed := Id.run do
       s := {s with borderWidth := ⟨b,b,b,b⟩, borderStyle := .solid}
   return s
 
+/-- HTML §15.4.3: an `img` in a `picture` takes its `width` and `height` hints from the
+`source` element its image comes from (here: the first earlier `source` sibling with a
+`srcset` and no `media` or `type`), when that source has them. -/
+def sourceDimensionHints (dom : Dom) (id : Nat) (s : Computed) : Computed := Id.run do
+  let n := dom.get id
+  if n.lname != "img" then return s
+  let some p := n.parent | return s
+  if (dom.get p).lname != "picture" then return s
+  let before := (dom.get p).kids.toList.takeWhile (· != id)
+  match before.find? (fun k => let c := dom.get k
+      c.type == .element && c.lname == "source" && hasAttribute c "srcset" && !hasAttribute c "media" && !hasAttribute c "type") with
+  | none => return s
+  | some k =>
+    let src := dom.get k
+    let mut s := s
+    if let some w := dimensionAttribute (attrValue src "width") then s := {s with width := w}
+    if let some h := dimensionAttribute (attrValue src "height") then
+      if let .px _ := h then s := {s with height := h}
+    return s
+
 /-- HTML §15.3.3: the margins of `body` from its `marginheight`, `topmargin`, `marginwidth`
 and `leftmargin` attributes (pixel lengths; `marginheight` before `topmargin`, `marginwidth`
 before `leftmargin`); `rightmargin` and `bottommargin` are not read in standards mode. -/
@@ -2184,7 +2204,8 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     if n.lname == "bdo" then initial := {initial with unicodeBidi := .isolateOverride}
     else if ["rtl","ltr","auto"].contains dirAttr || n.lname == "bdi" then
       initial := {initial with unicodeBidi := .isolate}
-  if n.ns == some DOM.htmlNS || n.ns.isNone then initial := bodyMarginHints n (replacedHints n (tableHints dom id initial parent))
+  if n.ns == some DOM.htmlNS || n.ns.isNone then
+    initial := bodyMarginHints n (sourceDimensionHints dom id (replacedHints n (tableHints dom id initial parent)))
   -- SVG presentation attributes have lower priority than author CSS.
   -- These properties affect HTML layout/inheritance, so compute them here.
   if svgViewport then
