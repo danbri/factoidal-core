@@ -1967,6 +1967,95 @@ theorem spkiOf_of_readSpki {b oid key : List UInt8} {params : Option (List UInt8
           · simp [hr2] at h
     · simp [hre] at h
 
+/-- Kind: parser exactness (AlgorithmIdentifier). Says: an input `readAlgId` accepts is
+exactly the OID's TLV followed by the parameter bytes it answers (nothing when it answers none).
+Does not say: that the parameters are one well-formed TLV beyond what `readTlv` checks. -/
+theorem algId_of_readAlgId {aid oid : List UInt8} {params : Option (List UInt8)}
+    (h : readAlgId aid = some (oid, params)) : aid = tlv 0x06 oid ++ params.getD [] := by
+  unfold readAlgId at h
+  cases h5 : expect 0x06 aid with
+  | none => simp [h5] at h
+  | some x5 =>
+    obtain ⟨o, ra⟩ := x5
+    simp only [h5, Option.bind_eq_bind, Option.bind_some] at h
+    have e5 := (tlv_of_expect h5).1
+    by_cases hra : ra.isEmpty = true
+    · have : ra = [] := by simpa using hra
+      subst this
+      simp only [List.isEmpty_nil, if_true, Option.pure_def, Option.some.injEq, Prod.mk.injEq] at h
+      obtain ⟨rfl, rfl⟩ := h
+      simpa using e5
+    · simp only [hra, Bool.false_eq_true, if_false] at h
+      split at h
+      · simp only [Option.pure_def, Option.some.injEq, Prod.mk.injEq] at h
+        obtain ⟨rfl, rfl⟩ := h
+        simpa using e5
+      · cases h
+
+/-- Kind: parser exactness (PKCS #8). Says: an input `readPkcs8` accepts is one SEQUENCE with
+nothing after it, whose contents are, in this order and with no byte skipped: the version
+INTEGER 0 or 1, the AlgorithmIdentifier of the OID and parameters it answers, the privateKey
+OCTET STRING of the octets it answers, and then a tail (RFC 5958's optional attributes and
+public key, which the reader does not interpret). So import reads the key from the one place
+the format puts it. Does not say: that the tail is well-formed DER, nor anything of the key
+octets (the algorithm's import steps and HACL* check those). -/
+theorem pkcs8_of_readPkcs8 {b oid pk : List UInt8} {params : Option (List UInt8)}
+    (h : readPkcs8 b = some (oid, params, pk)) :
+    ∃ v tail : List UInt8, (v = [0] ∨ v = [1]) ∧
+      b = tlv 0x30 (tlv 0x02 v ++ tlv 0x30 (tlv 0x06 oid ++ params.getD []) ++ tlv 0x04 pk ++ tail) := by
+  unfold readPkcs8 at h
+  cases h1 : expect 0x30 b with
+  | none => simp [h1] at h
+  | some x1 =>
+    obtain ⟨sq, rest⟩ := x1
+    simp only [h1, Option.bind_eq_bind, Option.bind_some] at h
+    by_cases hre : rest.isEmpty = true
+    · have hrest : rest = [] := by simpa using hre
+      subst hrest
+      simp only [List.isEmpty_nil, Bool.not_true, Bool.false_eq_true, if_false] at h
+      cases h2 : expect 0x02 sq with
+      | none => simp [h2] at h
+      | some x2 =>
+        obtain ⟨ver, r⟩ := x2
+        simp only [h2, Option.bind_some] at h
+        split at h
+        · simp at h
+        · rename_i hv
+          have hv' : ver = [0] ∨ ver = [1] := by
+            by_cases a : ver = [0]
+            · exact Or.inl a
+            · right
+              by_cases b : ver = [1]
+              · exact b
+              · exact absurd (by simp [a, b]) hv
+          try simp only [Option.pure_def, Option.bind_eq_bind, Option.bind_some] at h
+          cases h3 : expect 0x30 r with
+          | none => simp [h3] at h
+          | some x3 =>
+            obtain ⟨aid, r2⟩ := x3
+            simp only [h3, Option.bind_some] at h
+            cases h4 : expect 0x04 r2 with
+            | none => simp [h4] at h
+            | some x4 =>
+              obtain ⟨pk', tail⟩ := x4
+              simp only [h4, Option.bind_some] at h
+              cases h5 : readAlgId aid with
+              | none => simp [h5] at h
+              | some x5 =>
+                obtain ⟨oid', params'⟩ := x5
+                simp only [h5, Option.bind_some, Option.pure_def, Option.some.injEq,
+                  Prod.mk.injEq] at h
+                obtain ⟨rfl, rfl, rfl⟩ := h
+                refine ⟨ver, tail, hv', ?_⟩
+                have e1 := (tlv_of_expect h1).1
+                have e2 := (tlv_of_expect h2).1
+                have e3 := (tlv_of_expect h3).1
+                have e4 := (tlv_of_expect h4).1
+                have ea := algId_of_readAlgId h5
+                rw [e1, e2, e3, e4, ea]
+                simp
+    · simp [hre] at h
+
 /-- Kind: round trip (DER INTEGER, the RSA key parts). Says: reading the INTEGER contents
 `uintContents` writes for a big-endian number gives the number back without leading zero
 octets, for every byte string: a leading 0x00 is written exactly when the top bit is set, and
@@ -2032,6 +2121,11 @@ theorem unb64_b64 (b : ByteArray) : unb64? (b64 b) = some b := by
 #guard (spkiOf oidEd25519 [] (List.replicate 32 0)).length == 44
 #guard readSpki (spkiOf oidEd25519 [] (List.replicate 32 5)) == some (oidEd25519, none, List.replicate 32 5)
 #guard (readPkcs8 (pkcs8Of oidX25519 [] (tlv 0x04 (List.replicate 32 1)))).map (·.2.2) == some (tlv 0x04 (List.replicate 32 1))
+-- PKCS #8: a version other than 0 or 1, or bytes after the outer SEQUENCE, are refused.
+#guard readPkcs8 (tlv 0x30 (tlv 0x02 [2] ++ tlv 0x30 (tlv 0x06 oidX25519) ++ tlv 0x04 [1])) == none
+#guard readPkcs8 (tlv 0x30 (tlv 0x02 [0] ++ tlv 0x30 (tlv 0x06 oidX25519) ++ tlv 0x04 [1]) ++ [0]) == none
+#guard readPkcs8 (tlv 0x30 (tlv 0x02 [1] ++ tlv 0x30 (tlv 0x06 oidX25519) ++ tlv 0x04 [1] ++ tlv 0xa0 [])) ==
+  some (oidX25519, none, [1])
 -- The WPT fixture's P-256 SPKI header (WebCryptoAPI/util/ec_key_fixtures.js).
 #guard (spkiOf oidEcPublicKey (tlv 0x06 oidP256) (4 :: List.replicate 64 0)).take 27 ==
   [48, 89, 48, 19, 6, 7, 42, 134, 72, 206, 61, 2, 1, 6, 8, 42, 134, 72, 206, 61, 3, 1, 7, 3, 66, 0, 4]
