@@ -174,6 +174,9 @@ theorem scriptAccepted_nosniff (status : Nat) (contentType options : String)
 #guard scriptAccepted 200 "text/javascript" "nosniff" && !scriptAccepted 200 "" "nosniff" && scriptAccepted 200 "" ""
 #guard !scriptAccepted 200 "text/plain" "" && !scriptAccepted 404 "text/javascript" ""
 
+/-- The origin of a URL, serialized ("null" for none). -/
+def originOfUrl (u : String) : String := ((WHATWG.URL.parseUrl u).map (·.origin)).getD "null"
+
 /-- An embedder's answer to a fetch (`{id, status, url, contentType, source}`, and
 `contentTypeOptions`, the response's `X-Content-Type-Options` field): the URL it was asked
 for and the script, or `none` for a network error (status 0, a status that is not ok, or a
@@ -184,7 +187,11 @@ def Workers.result (w : Workers) (id status : Nat) (url contentType source : Str
   let asked := if id ≥ 1 then w.asked[id - 1]? else none
   match asked <|> (if url.isEmpty then none else some url) with
   | none => none
-  | some u => some (u, if scriptAccepted status contentType options then some source else none)
+  | some u =>
+    -- a worker's own script is fetched in mode "same-origin" (HTML §10.2.4 "fetch a classic
+    -- worker script"): a redirect to another origin is a network error
+    let crossed := w.mains.contains u && !url.isEmpty && originOfUrl url != originOfUrl u
+    some (u, if !crossed && scriptAccepted status contentType options then some source else none)
 
 /-- The script source fetched for `url`: `some none` when the fetch failed. -/
 def Workers.script? (w : Workers) (url : String) : Option (Option String) :=

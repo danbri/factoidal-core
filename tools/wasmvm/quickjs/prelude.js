@@ -6488,7 +6488,9 @@
           const url = x.responseURL, tainting = apiCall(67, [s.h, 9]), type = ['cors', 'opaque', 'opaqueredirect'].includes(tainting) ? tainting : 'basic';
           if (type === 'opaque' || type === 'opaqueredirect') { resolve(responseOf({ status: 0, statusText: '', url: type === 'opaque' ? '' : url, type, redirected: false }, [], 'immutable', null, signal)); return; }
           resolve(responseOf({ status: x.status, statusText: x.statusText, url, type,
-            redirected: url !== '' && url !== st.url.split('#')[0] }, list, 'immutable', raw === null ? new Uint8Array(0) : new Uint8Array(raw), signal));
+            redirected: url !== '' && url !== st.url.split('#')[0] }, list, 'immutable',
+            // Fetch §2.2.6: a null body status, or a HEAD request's response, has a null body
+            [101, 103, 204, 205, 304].includes(x.status) || st.method === 'HEAD' ? null : raw === null ? new Uint8Array(0) : new Uint8Array(raw), signal));
         };
         x.onerror = () => fail(new TypeError('Failed to fetch'));
         x.onabort = () => fail(new DOMException('The request was aborted.', 'AbortError'));
