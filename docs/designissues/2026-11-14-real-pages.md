@@ -360,6 +360,16 @@ What the host did that it need not have done:
 - The `fontFaces` question computed the style of every element to find the faces the
   text uses, also when the page's rules name every face and the answer does not depend
   on it: 0.46 s on gov.uk, 1.6 s on lean-lang.org (`WebDocument.facesFetched`).
+- After the page was inspected its images, its icon and its scripts waited for its sheets,
+  one group after the other; they are asked for at once now (Hacker News: 3.4 s to 1.9 s
+  before its scripts start, of which its own response is 0.8 s).
+- The first call of the main-thread engine takes 0.4 to 0.6 s. It was the history entry
+  made after the page was ready; it is made while the page is fetched now.
+
+Tried and dropped: warming the worker with an empty page in place of the unshown first
+compile of the page. The engine keeps most of a first layout's work for the next one (the
+second layout of a page costs a half to a third of its first), so the unshown compile is
+not paid twice, and the first frame came no sooner.
 
 What is left, by page: MDN is the scripts' start turn (25 to 37 s for 1.42 million
 instructions: every layout read after a write is a cascade of the page) and 4.2 to 4.8 s
@@ -411,5 +421,4 @@ Open:
 - SVG images as vectors (see above); the picture drawn on the CPU costs about 19 µs a
   pixel.
 - A store per image; JPEG and PNG over 1,048,576 pixels; WebP and AVIF.
-- The main-thread engine's first call costs 0.4 to 0.5 s in the window.
 - The engine could use a page's web fonts with no page font held (the runner's case).
