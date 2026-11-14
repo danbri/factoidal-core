@@ -517,7 +517,9 @@ def giveNet (a : Agents) (answers : Array (Nat × Net.PageFetch.Answer)) : Agent
         let s := match cb with
           | some c => wEngine.setLoop s ((wEngine.loop s).queueTask .networking c)
           | none => s
-        let routes := if net.live.any (·.1 == l) then w.routes else w.routes.filter (·.1 != g)
+        -- a request in flight, or a WebSocket connection that is not closed, keeps its route
+        let routes := if net.live.any (·.1 == l) || net.sockets.any (fun k => k.id == l && k.readyState != 3) then w.routes
+          else w.routes.filter (·.1 != g)
         w := { w with list := w.list.set! i { x with s }, routes }
   return ({ a with w }, rest)
 
