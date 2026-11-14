@@ -36,6 +36,7 @@ import L4Factoidal.HTML.TextSelection
 import L4Factoidal.DOM.FormValidity
 import L4Factoidal.DOM.Focus
 import L4Factoidal.HTML.InnerText
+import L4Factoidal.HTML.Sanitizer
 
 namespace L4Factoidal.WasmVM.Hosts.Dom
 open L4Factoidal.DOM L4Factoidal.DOM.Range
@@ -396,6 +397,29 @@ def askText : Traversal.Ask → String
       | .nextSibling => 4 | .previousNode => 5 | .nextNode => 6
     s!"f {n} {m} {w.root} {w.whatToShow} {w.current} {w.node} {w.at_}"
 
+/-- Sanitize the children of `root` (HTML §8.6.4) with the prepared configuration `c`: the
+steps that `HTML.Sanitizer.plan` decides on the parsed tree, each run as a typed command
+(`exec`), so it is recorded and the layout replay sees the same tree. A step names its
+node; the node's parent is read when the step runs, because an element that was replaced
+with its children has moved them. -/
+def sanitizeM (root : Nat) (safe : Bool) (c : L4Factoidal.HTML.Sanitizer.Config) : Op Unit := do
+  let steps := L4Factoidal.HTML.Sanitizer.plan (← dom) root c safe
+  for st in steps do
+    let d ← dom
+    match st with
+    | .remove n =>
+      match (d.get n).parent with
+      | some p => exec (.removeChild p n)
+      | none => pure ()
+    | .unwrap n =>
+      match (d.get n).parent with
+      | some p =>
+        for k in (d.get n).kids do
+          exec (.insertBefore p k (some n))
+        exec (.removeChild p n)
+      | none => pure ()
+    | .dropAttr n ns l => exec (.removeAttributeNS n (ns.getD "") l)
+
 /-- Op `op` of `node_query` from 100, on the node or range number `id`, with argument `q`.
 
 Ranges: 100 a new range of document `id` (its number); 101 the range: "startNode
@@ -445,7 +469,9 @@ elements); 186 form owner, form elements, options, selected options, labels, lab
 and selectedness (`DOM.FormControls.answer`); 187 the range and selection of `setRangeText`
 (`HTML.TextSelection.answer`); 188 an input's typed value and constraint validation
 (`DOM.FormValidity.answer`); 189 the node that `focus()` focuses (`DOM.Focus.answer`); 191
-the text of `innerText` for collected items (`HTML.InnerText.answer`). -/
+the text of `innerText` for collected items (`HTML.InnerText.answer`); 192 the methods of a
+Sanitizer (`HTML.Sanitizer.answer`). One op changes the tree: 193 sanitizes the children of
+node `id` (`sanitizeM`). -/
 def domOpM (id op : Nat) (q : String) : Op String := do
   let xs := nums q
   let d ← dom
@@ -828,6 +854,19 @@ def domOpM (id op : Nat) (q : String) : Op String := do
     return L4Factoidal.DOM.Focus.answer d n q
   -- 191: the text of `innerText` for the collected items `q` (`HTML.InnerText.answer`)
   | 191 => return L4Factoidal.HTML.InnerText.answer q
+  -- 192: the methods of a Sanitizer and the preparation of a configuration
+  -- (`HTML.Sanitizer.answer`): `q` is the method, U+0000, the configuration, U+0000, an argument
+  | 192 => return L4Factoidal.HTML.Sanitizer.answer q
+  -- 193: sanitize the children of node `id` (the fragment or document that `setHTML`,
+  -- `parseHTML` or a method with a `sanitizer` option parsed): `q` is "1" for the safe
+  -- methods, U+0000, the prepared configuration
+  | 193 =>
+    let n ← nodeArg d id
+    match q.splitOn "\x00" with
+    | [safe, w] =>
+      sanitizeM n (safe == "1") (L4Factoidal.HTML.Sanitizer.parseConfig w)
+      return ""
+    | _ => throw (-2)
   -- ==== end of domhtml ====
   | _ => throw (-2)
 
