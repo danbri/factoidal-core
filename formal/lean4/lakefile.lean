@@ -793,6 +793,13 @@ lean_exe «l4xsd11» where root := `Harness.Xsd11Run
 -- per-test-set and total pass / fail / unsupported counts.
 lean_exe «l4xslt4» where root := `Harness.Xslt4Run
 
+-- W3C XForms 1.1 Test Suite (third_party/testing/xforms11) over
+-- L4Factoidal.XForms.Model (Harness/XFormsRun.lean), with the classification
+-- and sidecar expectations of tests/xforms11. Prints per chapter and total
+-- pass / fail / unsupported counts for the model, view model and submission
+-- groups; the cases that need a human reader are counted, not scored.
+lean_exe «l4xforms» where root := `Harness.XFormsRun
+
 -- ShExC differential: every schemas/*.shex read by ShEx/Compact and
 -- compared with the ShExJ twin the same directory ships
 -- (Harness/ShExCRun.lean).

@@ -8,7 +8,7 @@
    "values": [
     "Node-A"
    ],
-   "label": "Node Values"
+   "kind": "output"
   }
  ]
 }

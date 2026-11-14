@@ -1,0 +1,16 @@
+{
+ "case": "B.8.a",
+ "file": "Appendix/B/B.8/b.8.a.xhtml",
+ "quote": "You must see the strings \"Jane Doe\", \"John Doe\", and \"Joe Sixpack\" :",
+ "steps": [
+  {
+   "expect": "values",
+   "values": [
+    "Jane Doe",
+    "John Doe",
+    "Joe Sixpack"
+   ],
+   "kind": "output"
+  }
+ ]
+}

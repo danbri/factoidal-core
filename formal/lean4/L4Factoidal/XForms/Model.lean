@@ -340,6 +340,8 @@ structure Model where
   work : List Work := []
   flags : Flags := {}
   halted : Bool := false
+  /-- The control that has the focus. -/
+  focus : Option Nat := none
   now : String := "1970-01-01T00:00:00Z"
   tz : Int := 0
 deriving Inhabited
@@ -609,7 +611,11 @@ def Model.ctlOf (m : Model) (el : El) (iter : List (Nat × Nat)) (cx : Cx)
     | some l =>
       match ← m.nodes l cxB with
       | some ns => pure ((ns.head?.map (·.stringValue)).getD "")
-      | none => pure (normalizeSpaceStr l.text)
+      | none =>
+        -- §8.2.1: a `src` link gives the label text when it can be read
+        match (l.attr "src").bind (fun u => (m.resources.find? (·.1 == u)).map (·.2)) with
+        | some t => pure (normalizeSpaceStr t)
+        | none => pure (normalizeSpaceStr l.text)
   let relevant := rel && (match ns? with
     | none => true
     | some [] => false
@@ -762,9 +768,10 @@ def Model.doInsert (m : Model) (el : El) (iter : List (Nat × Nat))
     | some (.tree _ node) =>
       let size := ns.length
       if size == 0 then
+        -- no node-set: the clone becomes the first child of the context node
         if (el.attr "context").isNone then pure m
         else pure ((m.editDoc ctxNode.loc.doc
-          (modKids ctxNode.loc.path (fun kids => kids ++ [node]))).afterEdit "xforms-insert" ctxNode.loc.doc)
+          (modKids ctxNode.loc.path (fun kids => node :: kids))).afterEdit "xforms-insert" ctxNode.loc.doc)
       else
         let atIdx ← match el.attr "at" with
           | none => pure size
@@ -951,7 +958,12 @@ def Model.default (m : Model) (name : String) (target : Nat) (iter : List (Nat �
     let detail := ((info.find? (·.1 == "error-message")).map (·.2.toStr)).getD
       (((info.find? (·.1 == "resource-uri")).map (·.2.toStr)).getD "")
     { (m.emit (.fatal name detail)) with halted := true, work := [] }
-  else if name == "xforms-focus" then m.emit (.focus ((tel.attr "id").getD tel.tag))
+  else if name == "xforms-focus" then
+    -- §4.3.7: focus moves; the control that had it gets DOMFocusOut, the new one DOMFocusIn
+    let m' := { (m.emit (.focus ((tel.attr "id").getD tel.tag))) with focus := some target }
+    if m.focus == some target then m'
+    else m'.push ((m.focus.map (fun o => Work.dispatch "DOMFocusOut" o [] [])).toList ++
+                  [Work.dispatch "DOMFocusIn" target iter []])
   else if name == "xforms-help" || name == "xforms-hint" then
     let child := if name == "xforms-help" then "help" else "hint"
     (match (m.form.kidsNamed tel child).head? with
