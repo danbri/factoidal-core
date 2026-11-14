@@ -190,6 +190,9 @@ def exIds (sel : String) : Option (List String) :=
 -- the pseudo-element a selector names, and its element
 #guard ((Selectors.parse "#a::before").map fun l => l.map (·.pseudoElement)) == some [some "before"]
 #guard ((Selectors.parse "div > p:first-child::marker").map fun l => l.map (·.pseudoElement)) == some [some "marker"]
+-- forgiving selector lists of :is() and :where()
+#guard ([":is(:unknown-pseudo(1, .b, .c))", ":is(.a, ::before, .b)", ":where()", ":is(:foo, div)"].map Selectors.parse).all (·.isSome)
+#guard exIds ":is(:unknown-pseudo(1, .b, .c), #b)" == some ["b"]
 -- comments are no tokens
 #guard (["[foo='BAR'] /* sanity check (match) */", "[foo=bar/**/i]", "/**/a/**/>/**/b", "[foo='/*x*/']"].map Selectors.parse).all (·.isSome)
 #guard (["a/**/b", "[foo='bar' /* x"].map Selectors.parse).all (·.isNone) || (Selectors.parse "a/**/b").isNone

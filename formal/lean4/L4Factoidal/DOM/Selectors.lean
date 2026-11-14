@@ -487,6 +487,48 @@ def relativeList : Nat → PM (List Complex)
       | _ => break
     return out.toList
 
+/-- A forgiving selector list (Selectors 4 §4.2.1, the argument of `:is()` and `:where()`):
+each comma-separated item that is not a valid complex selector is left out (a comma inside
+brackets or a string separates nothing). -/
+def forgivingList : Nat → PM (List Complex)
+  | 0 => fail
+  | fuel + 1 => do
+    let mut out := #[]
+    for _ in [0:(← get).cs.size + 1] do
+      let _ ← skipWs
+      if (← peek) == some ')' then break
+      let start ← get
+      let item ← tryCatch (do
+          let c ← complex fuel
+          let _ ← skipWs
+          match ← peek with
+          | some ',' | some ')' => pure (some c)
+          | _ => fail) (fun _ => pure none)
+      match item with
+      | some c => out := out.push c
+      | none =>
+        -- skip the item: to the next ',' or ')' outside brackets and strings
+        set start
+        let mut depth := 0
+        let mut quote : Option Char := none
+        for _ in [0:(← get).cs.size + 1] do
+          match ← peek with
+          | none => break
+          | some ch =>
+            if (ch == ',' || ch == ')') && depth == 0 && quote.isNone then break
+            match quote with
+            | some q =>
+              if ch == q then quote := none
+            | none =>
+              if ch == '"' || ch == '\'' then quote := some ch
+              else if ch == '(' || ch == '[' then depth := depth + 1
+              else if (ch == ')' || ch == ']') && depth > 0 then depth := depth - 1
+            bump
+      match ← peek with
+      | some ',' => bump
+      | _ => break
+    return out.toList
+
 def complex : Nat → PM Complex
   | 0 => fail
   | fuel + 1 => do
@@ -641,7 +683,12 @@ def compound : Nat → PM (List Simple)
               expectClose
               if l.any (·.hasPseudoElement) then fail
               out := out.push (.not l)
-            | "is" | "where" | "matches" | "-webkit-any" =>
+            | "is" | "where" =>
+              let l ← forgivingList fuel
+              let _ ← skipWs
+              expectClose
+              out := out.push (.is l)
+            | "matches" | "-webkit-any" =>
               let l ← selectorList fuel
               let _ ← skipWs
               expectClose
