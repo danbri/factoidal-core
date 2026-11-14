@@ -2219,6 +2219,12 @@ L4Factoidal_JS_arrayLikeLength  # (c) LengthOfArrayLike: [[Get]] of length and T
 L4Factoidal_JS_defineOwnProp  # (c) [[DefineOwnProperty]]: a defineProperty trap is a call and a Proxy passes the request to its target, one level per proxy, as L4Factoidal_JS_ownDesc
 L4Factoidal_JS_ownDesc  # (c) GetOwnProperty: a `getOwnPropertyDescriptor` trap and the descriptor's getters, as L4Factoidal_JS_get*
 L4Factoidal_JS_regexExec  # (c) RegExpBuiltinExec: lastIndex read and written through [[Get]]/[[Set]], as L4Factoidal_JS_get* and L4Factoidal_JS_put*; the match itself is L4Factoidal_JS_Re_matchNode
+L4Factoidal_JS_regExpExecG  # (c) RegExpExec (§22.2.7.1): the `exec` property read and called, as L4Factoidal_JS_get* and L4Factoidal_JS_call*; the built-in exec is L4Factoidal_JS_regexExec
+L4Factoidal_JS_regexpSymbol  # (b)(c) RegExp.prototype[@@match/@@replace/@@search/@@split/@@matchAll]: a loop over matches whose iterations are bounded by the string's length (each step advances lastIndex); exec, getters and the replacer are calls, as L4Factoidal_JS_call*
+L4Factoidal_JS_stringSymDispatch  # (c) String.prototype.match/replace/search/split/matchAll: one read of the argument's symbol method and one call, as L4Factoidal_JS_get* and L4Factoidal_JS_call*
+L4Factoidal_JS_speciesCtor  # (c) SpeciesConstructor (§7.3.22): reads of `constructor` and @@species, as L4Factoidal_JS_get*
+L4Factoidal_JS_speciesFrom  # (c) ArraySpeciesCreate (§10.4.2.3): reads of `constructor` and @@species, then [[Construct]], as L4Factoidal_JS_get* and L4Factoidal_JS_construct
+L4Factoidal_JS_speciesFill  # (b)(c) CreateDataPropertyOrThrow per element of a bounded array (a for loop, not recursion); a proxy trap is a call, as L4Factoidal_JS_call*
 L4Factoidal_JS_extraNative  # (c) RegExp, Proxy, typed array, JSON.parse and host built-ins: ToString/ToNumber of arguments and replacer calls, as L4Factoidal_JS_to* and L4Factoidal_JS_call*
 L4Factoidal_JS_jsonToValue  # (b) JSON.parse: depth is the nesting of the JSON text (its parser bounds it); fuel 100000
 L4Factoidal_JS_iter*  # (c) the iteration protocol (GetIterator, IteratorStep, IteratorClose, collecting to an array): next/return are calls, as L4Factoidal_JS_call*; collecting is a self tail call
