@@ -268,9 +268,26 @@ separated by U+0000. The value of the `i`-th is `valueAt` at the count of the ta
 names plus `i`. -/
 def customNamesText (v : View) (id : Nat) : String := "\x00".intercalate (customNames v id)
 
+/-- From this index on, `valueAt` answers the computed value of name `k - computedBase` by
+the property table alone, for every property (the layout profile's too). -/
+def computedBase : Nat := 100000
+
 /-- The computed value of the `k`-th name (`longhandNames` then `otherNames`) on element
 `id`, with `profileValue` the layout profile's answer for a profile property. -/
 def valueAt (v : View) (id : Nat) (k : Nat) : String :=
+  if k ≥ computedBase then
+    -- the computed value, not the resolved one: percentages and `auto` stay (Typed OM's
+    -- computedStyleMap, CSS Typed OM 1 §4.2)
+    let (longhands, others) := nameLists.get
+    let j := k - computedBase
+    let name := if j < longhands.size then longhands[j]? else others[j - longhands.size]?
+    match name with
+    | some name => computedOf v id name
+    | none =>
+      match (customNames v id)[j - longhands.size - others.size]? with
+      | some name => computedLonghand v depthBound id name
+      | none => ""
+  else
   let profile := if k < profileCount then ComputedValues.values (v.styles[id]?.getD {}) else []
   match profile[k]? with
   | some (name, value) =>

@@ -9071,13 +9071,13 @@
       if (arguments.length < 1) throw new TypeError('get: 1 argument required');
       const name = knownProperty(property), text = mstate(this).read(name);
       if (text === '') return undefined;
-      return reified(listValued(name) ? JSON.parse(typedOp('reifyall', text))[0] : JSON.parse(typedOp('reify', text)));
+      return reified(listValued(name) ? JSON.parse(typedOp('reifyall', text))[0] : JSON.parse(typedOp('reifyp', name, text)));
     }
     getAll(property) {
       if (arguments.length < 1) throw new TypeError('getAll: 1 argument required');
       const name = knownProperty(property), text = mstate(this).read(name);
       if (text === '') return [];
-      return listValued(name) ? JSON.parse(typedOp('reifyall', text)).map(reified) : [reified(JSON.parse(typedOp('reify', text)))];
+      return listValued(name) ? JSON.parse(typedOp('reifyall', text)).map(reified) : [reified(JSON.parse(typedOp('reifyp', name, text)))];
     }
     has(property) { if (arguments.length < 1) throw new TypeError('has: 1 argument required'); return mstate(this).read(knownProperty(property)) !== ''; }
     get size() { return mstate(this).names().length; }
@@ -9087,35 +9087,50 @@
     forEach(f, self) { for (const [k, v] of this.entries()) f.call(self, v, k, this); }
   }
   define(StylePropertyMapReadOnly.prototype, Symbol.iterator, StylePropertyMapReadOnly.prototype.entries);
-  // The CSS text of the values given to set() or append(), and the text to check them by: a
-  // number is checked as calc(n), so a unitless zero is not taken for a length.
-  const valueTexts = (name, values) => values.map(v => {
-    if (typeof v === 'string') return { text: v, check: v };
-    if (!(v instanceof CSSStyleValue)) throw new TypeError(`The value given for '${name}' is not a string or a CSSStyleValue`);
-    const text = v.toString();
-    if (v instanceof CSSUnitValue) return { text, check: tstateOf(v).unit === 'number' ? `calc(${text})` : text, unit: true };
-    return { text, check: text };
-  });
+  // The CSS text of each value given to set() or append(). A typed value must be one the
+  // property takes as that type (Typed OM §4.1.2): a number is also checked as calc(n), so a
+  // unitless zero is not taken for a length; a typed value other than a CSS-wide keyword or
+  // an unparsed value is not a value of a shorthand; a unit value below the property's range
+  // is kept as calc() when its positive counterpart is in range.
+  const valueTexts = (name, values) => {
+    const ok = t => styleOp('val', name, t).charAt(0) === '1';
+    const shorthand = typedOp('isshorthand', name) === '1';
+    return values.map(v => {
+      if (typeof v === 'string') { if (!ok(v)) throw new TypeError(`'${v}' is not a value of '${name}'`); return v; }
+      if (!(v instanceof CSSStyleValue)) throw new TypeError(`The value given for '${name}' is not a string or a CSSStyleValue`);
+      const text = v.toString();
+      const typed = v instanceof CSSNumericValue || v instanceof CSSTransformValue || v instanceof CSSImageValue ||
+        (v instanceof CSSKeywordValue && !['initial', 'inherit', 'unset', 'revert', 'revert-layer'].includes(text.toLowerCase()));
+      if (shorthand && typed) throw new TypeError(`'${name}' is a shorthand: it takes no typed value`);
+      if (v instanceof CSSUnitValue) {
+        const st = tstateOf(v), number = st.unit === 'number';
+        const fits = t => ok(t) && (!number || ok(`calc(${t})`));
+        if (fits(text)) return text;
+        const positive = new CSSUnitValue(Math.abs(st.value), st.unit).toString();
+        if (st.value < 0 && st.unit !== 'fr' && fits(positive) && ok(`calc(${text})`)) return `calc(${text})`;
+        throw new TypeError(`'${text}' is not a value of '${name}'`);
+      }
+      if (!ok(text)) throw new TypeError(`'${text}' is not a value of '${name}'`);
+      return text;
+    });
+  };
   class StylePropertyMap extends StylePropertyMapReadOnly {
     set(property, ...values) {
       if (arguments.length < 2) throw new TypeError('set: 2 arguments required');
       const name = knownProperty(property), st = mstate(this), xs = valueTexts(name, values);
-      if (xs.length > 1 && !listValued(name)) throw new TypeError(`'${name}' takes one value`);
-      const ok = t => styleOp('val', name, t).charAt(0) === '1';
-      let text = xs.map(x => x.text).join(', ');
-      if (!ok(xs.map(x => x.check).join(', '))) {
-        // a unit value outside the range of the property is kept as a calc() (Typed OM §4.1.2)
-        const wrapped = xs.map(x => x.unit ? `calc(${x.text})` : x.text).join(', ');
-        if (!xs.some(x => x.unit) || !ok(wrapped)) throw new TypeError(`The value is not one '${name}' takes`);
-        text = wrapped;
-      }
+      if (xs.length > 1 && (!listValued(name) || values.some(v => v instanceof CSSUnparsedValue || (typeof v === 'string' && /var\(/i.test(v)))))
+        throw new TypeError(`'${name}' takes one value`);
+      const text = xs.join(', ');
+      if (styleOp('val', name, text).charAt(0) !== '1') throw new TypeError(`The value is not one '${name}' takes`);
       st.set(name, text);
     }
     append(property, ...values) {
       if (arguments.length < 2) throw new TypeError('append: 2 arguments required');
-      const name = knownProperty(property), st = mstate(this), xs = valueTexts(name, values);
+      const name = knownProperty(property), st = mstate(this);
       if (!listValued(name)) throw new TypeError(`'${name}' is not a list-valued property`);
-      const old = st.read(name), text = (old === '' ? [] : [old]).concat(xs.map(x => x.text)).join(', ');
+      if (values.some(v => v instanceof CSSUnparsedValue || (typeof v === 'string' && /var\(/i.test(v)))) throw new TypeError('A value with var() can not be appended');
+      const xs = valueTexts(name, values);
+      const old = st.read(name), text = (old === '' ? [] : [old]).concat(xs).join(', ');
       if (styleOp('val', name, text).charAt(0) !== '1') throw new TypeError(`The value is not one '${name}' takes`);
       st.set(name, text);
     }
@@ -9135,7 +9150,17 @@
   Object.defineProperty(ruleClasses.StyleRule.prototype, 'styleMap', { get() { let m = styleMaps.get(this); if (!m) styleMaps.set(this, m = declaredMap(this.style)); return m; }, configurable: true, enumerable: true });
   define(Element.prototype, 'computedStyleMap', function () {
     const el = this, m = Object.create(StylePropertyMapReadOnly.prototype);
-    mapState.set(m, { read: name => computedValue(el, name), names: () => namesFor(el) });
+    // the computed value of the property table (measure op 100200 + k), not the resolved
+    // value: a percentage stays a percentage
+    const read = name => {
+      if (name.startsWith('--')) return computedValue(el, name);
+      if (namesFor(el).length === 0) return '';
+      const k = computedIndex.get(name);
+      if (k === undefined) return '';
+      const r = n.query(nodeId(el), 100200 + k, '');
+      return typeof r === 'string' ? r : '';
+    };
+    mapState.set(m, { read, names: () => namesFor(el) });
     return m;
   });
   for (const [k, unit] of Object.entries({ number: 'number', percent: 'percent', em: 'em', rem: 'rem', ex: 'ex', rex: 'rex', cap: 'cap', rcap: 'rcap', ch: 'ch', rch: 'rch', ic: 'ic', ric: 'ric',
