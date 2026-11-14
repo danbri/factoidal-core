@@ -2306,6 +2306,19 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
           (Rendering.Animation.Css.mentions (Rendering.CSS.attrValue n "style") ||
             (!rules.isEmpty && !(Rendering.Animation.Css.cascaded (matchedOf id) "").isEmpty))
       some (" ".intercalate (ids.map toString))
+    else if op == 43 then
+      -- 43: the element is being rendered ("1") or has `display: none` on it or on an ancestor
+      -- ("0"), by the styles of this measure: the styles' own field, no text is made
+      match styled.get with
+      | .ok view => some (Id.run do
+          let mut k := node
+          for _ in [0:dom.size + 1] do
+            if (view.styles[k]?).any (·.display == .none) then return "0"
+            match (dom.get k).parent with
+            | some p => k := p
+            | none => return "1"
+          return "1")
+      | .error _ => some "1"
     else if op == 29 then
       match styled.get with
       | .ok view =>

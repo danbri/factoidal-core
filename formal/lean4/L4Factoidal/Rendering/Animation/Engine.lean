@@ -147,6 +147,9 @@ structure Access where
   sheet : Unit → String
   /-- The longhands of a property name: those of a shorthand, or the name itself. -/
   longhands : String → List String := fun p => [p]
+  /-- The element is being rendered: its style without animated values has no
+  `display: none` on it or on an ancestor. -/
+  rendered : Nat → Bool := fun _ => true
 
 namespace State
 
@@ -341,7 +344,15 @@ a name with a `@keyframes` rule and no animation yet starts one (playing, paused
 left the document, is cancelled; one that stays takes the current timing and keyframes
 and follows `animation-play-state`. -/
 def updateAnimations (s : State) (ac : Access) (e : Nat) : State := Id.run do
-  let specs := if ac.connected e then Css.animations (ac.decls e) else []
+  let declared := if ac.connected e then Css.animations (ac.decls e) else []
+  -- CSS Animations 1 §3: `display: none` ends the animations of the element and its
+  -- descendants (they start anew when it is rendered again), unless one of the element's
+  -- animations gives `display` a value: that animation shows its element (CSS Display 4 §2.9).
+  -- The rendered state is read only for an element that declares an animation.
+  let shows := fun (spec : Css.AnimationSpec) => match s.rules.reverse.lookup spec.name with
+    | some ks => ks.any fun k => k.props.any (·.1 == "display")
+    | none => false
+  let specs := if declared.isEmpty || declared.any shows || ac.rendered e then declared else []
   let mut s := s
   let mut free := owned s e isCssAnimation
   for spec in specs do
@@ -441,9 +452,16 @@ allows discrete values) and the duration and delay give it time; a running trans
 whose end value is no longer the property's value is cancelled, and replaced from the
 current value when the new value interpolates with it. -/
 def updateTransitions (s : State) (ac : Access) (e : Nat) (scripted : List String := []) : State := Id.run do
-  let connected := ac.connected e
+  let declared := if ac.connected e then Css.transitions (ac.decls e) else []
+  -- CSS Transitions 1 §3: an element that is not rendered (`display: none` on it or on an
+  -- ancestor) has no transitions: the running ones are cancelled and none starts, unless a
+  -- transition of the element is of `display` itself (it keeps the element shown while it
+  -- runs: CSS Display 4 §2.9). The rendered state is read only for an element with a
+  -- transition declaration or a running transition.
+  let ofDisplay := declared.any fun t => t.property == "display" || (t.property == "all" && t.allowDiscrete)
+  let connected := ac.connected e && (ofDisplay || ac.rendered e)
   -- a transition of a shorthand is one of each of its longhands (CSS Transitions 1 §2.1)
-  let specs := (if connected then Css.transitions (ac.decls e) else []).flatMap fun t =>
+  let specs := (if connected then declared else []).flatMap fun t =>
     if t.property == "all" || t.property == "none" then [t]
     else (ac.longhands t.property).map fun l => { t with property := l }
   let mut s := s
@@ -964,6 +982,12 @@ private def taken (s : State) : State :=
   { s with events := #[], anims := s.anims.map fun a => { a with player := { a.player with out := [] } } }
 #guard overrides sE2 acE == [] && !needsFrame (taken sE2)
 #guard needsFrame { sE2 with events := #[] } && sE2.anims.any fun a => !a.player.out.isEmpty
+-- an element that is not rendered (`display: none` on it or above it): no transition starts,
+-- and a running one is cancelled with a `transitioncancel` event at the next frame
+private def acHidden : Access := { acE with rendered := fun _ => false }
+#guard (styleChange {} acHidden).anims.size == 0
+#guard (styleChange { sE1 with events := #[] } acHidden).anims.all (·.dead)
+#guard (tick (styleChange { sE1 with events := #[] } acHidden)).events.toList.map (·.type) == ["transitioncancel"]
 -- a CSS animation: start at the first frame; its element leaves the document: cancel
 private def sA0 : State := tick (styleChange {} acA)
 #guard sA0.events.toList.map (fun e => (e.type, e.name, e.elapsed)) == [("animationstart", "a1", Fix.ofInt 50000)]

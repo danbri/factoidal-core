@@ -599,7 +599,9 @@ def animationAccess (dom : Arena) (base : Answers) (prev : Option Answers) (cand
       | some cs => cs
       | none => (((base 0 28 "").getD "").splitOn " ").filterMap String.toNat?
     sheet := fun _ => (base 0 25 "").getD ""
-    longhands := L4Factoidal.Rendering.Animation.Css.longhandsOf }
+    longhands := L4Factoidal.Rendering.Animation.Css.longhandsOf
+    -- measure op 43: "0" for an element with `display: none` on it or on an ancestor
+    rendered := fun n => base n 43 "" != some "0" }
 
 /-- Ask for an animation frame for the page's animations, once (`Animation.frameHandle`:
 the page's script objects answer it with op 67). It is the first callback of its frame:
