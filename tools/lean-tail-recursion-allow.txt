@@ -2329,6 +2329,7 @@ L4Factoidal_Rendering_CssValues_Color_resolveF  # (c) fuel 32: the nesting of co
 L4Factoidal_Rendering_ComputedGeneric_computedLonghand  # (b) the ancestors of an element and the chain of var() links, at most depthBound = 256 frames
 L4Factoidal_Rendering_ComputedGeneric_substitute  # (c) the nesting of var() fallbacks and functions of one value, fuel 16
 L4Factoidal_Rendering_ComputedGeneric_ifCondition  # (c) the nesting of one if() condition (parentheses, not, and/or), fuel 16
+L4Factoidal_Rendering_ComputedGeneric_hasDashedFn  # (c) the nesting of the functions of one value, fuel 32
 L4Factoidal_Rendering_CssSheet_ruleOf  # (c) the nesting of group rules, at most nesting = 64; the rules of a block are a filterMap
 L4Factoidal_Rendering_CssSheet_selectorTokensText  # (c) the nesting of :is()/:not() arguments, at most maxNesting = 64; the tokens of a selector are a fold
 L4Factoidal_Rendering_CssTyped_numType  # (c) the nesting of a typed numeric value read by ofWire, at most maxNesting + 2 = 66

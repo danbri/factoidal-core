@@ -2190,6 +2190,7 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
              viewportW := width, viewportH := height,
              -- the rules of the page, for the styles of pseudo-elements
              rules := rules,
+             functions := Thunk.mk fun _ => Rendering.ComputedGeneric.functionsOf sheetText.get,
              -- the `@property` registrations of the page's sheets, read when a custom property is asked
              registered := Thunk.mk fun _ =>
                Rendering.ComputedGeneric.registrationsOfDocument dom ++ Rendering.ComputedGeneric.registrationsOf sheetText.get }

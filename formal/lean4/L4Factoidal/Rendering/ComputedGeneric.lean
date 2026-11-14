@@ -24,6 +24,16 @@ namespace L4Factoidal.Rendering.ComputedGeneric
 open L4Factoidal.Rendering.CSS
 open L4Factoidal.Rendering
 
+/-- A custom function (`@function`, CSS Mixins 1 §2): its parameters (name, syntax text or
+"" for none, default value), its return syntax ("" for none), its local custom properties
+in order, and its `result`. -/
+structure FnDef where
+  params : List (String × String × Option String) := []
+  returns : String := ""
+  locals : List (String × String) := []
+  result : Option String := none
+  deriving Inhabited
+
 /-- What the answers are made from: the document, the rules that match an element, the
 layout profile's styles, and the viewport in px. -/
 structure View where
@@ -37,6 +47,8 @@ structure View where
   registered : Thunk (List (String × CssRegister.PropertyRule)) := Thunk.pure []
   /-- The rules of the page, for the styles of pseudo-elements (`computedPseudo`). -/
   rules : List CSS.Rule := []
+  /-- The page's custom functions (`@function`), read when a value calls one. -/
+  functions : Thunk (List (String × FnDef)) := Thunk.pure []
 
 /-- The properties registered by scripts (`CSS.registerProperty`), as the document node
 keeps them (`Hosts.Dom.Command.registerProperty`: attributes whose name starts with U+0001
@@ -382,10 +394,100 @@ def ifCondition (get : String → String) (subst : List CssValues.CV → Option 
       | [k, x] => if isKw "not" k then (ifCondition get subst fuel [x]).map (!·) else none
       | _ => none
 
+
+/-- The syntax text of a parameter or return type: `<length>`, `type(<length> | auto)`, `*`. -/
+def typeText (cvs : List CssValues.CV) : String :=
+  match CssValues.stripWs cvs with
+  | [.fn n args] => if CssValues.lower n == "type" then CssValues.rawText args else CssValues.rawText cvs
+  | ts => CssValues.rawText ts
+
+/-- An `@function` rule from its prelude and the declarations of its block, when the prelude
+is `--name(<parameters>) [returns <type>]`. -/
+def fnDefOf (prelude : String) (decls : List SheetReader.Decl) : Option (String × FnDef) :=
+  match CssValues.stripWs (CssValues.CV.parse prelude) with
+  | .fn name args :: rest =>
+    if !CssValues.isCustom name then none
+    else
+      let params := (CssValues.splitCommas args).filterMap fun g =>
+        match CssValues.stripWs g with
+        | .tok (.ident p) :: more =>
+          let (ty, dflt) := match splitAt .colon more with
+            | [t] => (typeText t, none)
+            | t :: d => (typeText t, some (CssValues.rawText (CssValues.stripWs (d.foldl (· ++ ·) []))))
+            | [] => ("", none)
+          some (p, ty, dflt)
+        | _ => none
+      let returns := match rest with
+        | .tok (.ident r) :: ty => if CssValues.lower r == "returns" then typeText ty else ""
+        | _ => ""
+      let locals := decls.filterMap fun d => if CssValues.isCustom d.name then some (d.name, d.value) else none
+      let result := (decls.filter (·.name == "result")).getLast?.map (·.value)
+      some (name, { params, returns, locals, result })
+  | _ => none
+
+/-- The value of a typed parameter or result: its computed value by the syntax, `none` when
+it is not a value of it; an untyped one as it is. -/
+def typedValue (ty value : String) : Option String :=
+  if ty == "" || ty.trimAscii.toString == "*" then some value
+  else CssRegister.computedValue {} ty value
+
+/-- A value with a custom function call (`--name(...)`) in it. -/
+def hasDashedFn : Nat → List CssValues.CV → Bool
+  | 0, _ => false
+  | fuel + 1, cvs => cvs.any fun cv => match cv with
+    | .fn n args => CssValues.isCustom n || hasDashedFn fuel args
+    | .block _ b => hasDashedFn fuel b
+    | _ => false
+
+/-- The custom functions of a document's style sheets (`@function`, CSS Mixins 1 §2), the
+last of a name first. A sheet text with no `@function` is not read again. -/
+def functionsOf (source : String) : List (String × FnDef) :=
+  if (source.splitOn "@function").length ≤ 1 then []
+  else
+    ((CSS.sheetLeaves source).toList.filterMap fun leaf =>
+      if leaf.kind == "function" then fnDefOf leaf.prelude (SheetReader.splitDecls leaf.body) else none).reverse
+
+/-- The value of a call of custom function `f` with arguments `args` (CSS Mixins 1 §2.4):
+the arguments (substituted in the caller's scope) bound to the parameters, a missing one to
+its default (read in the function's scope so far) or to the guaranteed-invalid value; the
+locals in order; then the result. A typed parameter or result takes its computed value by
+its syntax, and a value not of it makes the call invalid (`none`). `subst g` substitutes
+with lookup `g`. -/
+def callFn (get : String → String) (f : FnDef) (args : List CssValues.CV)
+    (subst : (String → String) → List CssValues.CV → Option (List CssValues.CV)) : Option (List CssValues.CV) := do
+  let argGroups := ((CssValues.splitCommas args).map CssValues.stripWs).filter (fun a => !a.isEmpty)
+  let argVals ← argGroups.mapM fun a => (subst get a).map CssValues.rawText
+  if argVals.length > f.params.length then failure
+  let mut env : List (String × String) := []
+  for ((p, ty, dflt), i) in f.params.zipIdx do
+    let scope := env
+    let look := fun (n : String) => (scope.lookup n).getD (get n)
+    let raw : Option String := match argVals[i]? with
+      | some a => some a
+      | none => dflt.map fun d => ((subst look (CssValues.CV.parse d)).map CssValues.rawText).getD ""
+    match raw with
+    | some r =>
+      if r == "" then env := (p, "") :: env
+      else
+        let t ← typedValue ty r
+        env := (p, t) :: env
+    | none => env := (p, "") :: env
+  for (n, val) in f.locals do
+    let scope := env
+    let look := fun (x : String) => (scope.lookup x).getD (get x)
+    let t := ((subst look (CssValues.CV.parse val)).map fun ts => (CssValues.rawText ts).trimAscii.toString).getD ""
+    env := (n, t) :: env
+  let scope := env
+  let look := fun (x : String) => (scope.lookup x).getD (get x)
+  let r ← f.result
+  let ts ← subst look (CssValues.CV.parse r)
+  let t ← typedValue f.returns (CssValues.rawText ts).trimAscii.toString
+  return CssValues.CV.parse t
+
 /-- Replace each `var()` by the value of its custom property, or by its fallback (CSS
 Variables 1 §3). `none`: a variable with no value and no fallback, so the declaration is
 invalid at computed-value time. -/
-def substitute (get : String → String) : Nat → List CssValues.CV → Option (List CssValues.CV)
+def substitute (get : String → String) (fns : List (String × FnDef)) : Nat → List CssValues.CV → Option (List CssValues.CV)
   | 0, _ => none
   | fuel + 1, cvs =>
     cvs.foldl (fun (acc : Option (List CssValues.CV)) cv =>
@@ -408,7 +510,7 @@ def substitute (get : String → String) : Nat → List CssValues.CV → Option 
                   if rest.isEmpty then none
                   else
                     let value := (rest.foldl (fun a g => if a.isEmpty then g else a ++ [CssValues.CV.tok .colon] ++ g) [])
-                    match ifCondition get (substitute get fuel) 16 cond with
+                    match ifCondition get (substitute get fns fuel) 16 cond with
                     | some true => some (some (value.dropWhile (·.isWs)))
                     | some false => some none
                     | none => none
@@ -416,7 +518,7 @@ def substitute (get : String → String) : Nat → List CssValues.CV → Option 
             match pick with
             | none => none
             | some none => some out
-            | some (some v) => (substitute get fuel v).map (joinTokens out ·)
+            | some (some v) => (substitute get fns fuel v).map (joinTokens out ·)
           else if CssValues.lower name == "var" then
             let groups := CssValues.splitCommas args
             let nameText := match CssValues.stripWs (groups.headD []) with
@@ -428,10 +530,15 @@ def substitute (get : String → String) : Nat → List CssValues.CV → Option 
               match groups with
               | _ :: fb :: more =>
                 let fallback := more.foldl (fun acc g => acc ++ [CssValues.CV.tok .comma] ++ g) fb
-                (substitute get fuel fallback).map (joinTokens out ·)
+                (substitute get fns fuel fallback).map (joinTokens out ·)
               | _ => none
-          else (substitute get fuel args).map fun args' => out ++ [.fn name args']
-        | .block o body => (substitute get fuel body).map fun body' => out ++ [.block o body']
+          else if CssValues.isCustom name then
+            -- a custom function (CSS Mixins 1 §2.4)
+            match fns.lookup name with
+            | none => none
+            | some f => (callFn get f args (fun g cvs => substitute g fns fuel cvs)).map (joinTokens out ·)
+          else (substitute get fns fuel args).map fun args' => out ++ [.fn name args']
+        | .block o body => (substitute get fns fuel body).map fun body' => out ++ [.block o body']
         | cv => some (joinTokens out [cv])) (some [])
 
 def mentionsCurrentColor (value : String) : Bool :=
@@ -496,7 +603,7 @@ def computedLonghand (v : View) : Nat → Nat → String → String
       | some (shorthand, raw) =>
         -- substitute, then read the shorthand's longhand `p`; invalid at computed-value
         -- time is as if not declared
-        match substitute (fun name => computedLonghand v fuel id name) 16 (CssValues.CV.parse raw) with
+        match substitute (fun name => computedLonghand v fuel id name) v.functions.get 16 (CssValues.CV.parse raw) with
         | none => default ()
         | some cvs' =>
           match (CssValues.expand shorthand (CssValues.rawText cvs')).bind (·.lookup p) with
@@ -512,8 +619,8 @@ def computedLonghand (v : View) : Nat → Nat → String → String
       else if value == "unset" || value == "revert" || value == "revert-layer" then default ()
       else
         let cvs := CssValues.CV.parse value
-        if CssValues.hasFn "var" 32 cvs || CssValues.hasFn "if" 32 cvs then
-          match substitute (fun name => computedLonghand v fuel id name) 16 cvs with
+        if CssValues.hasFn "var" 32 cvs || CssValues.hasFn "if" 32 cvs || (!v.functions.get.isEmpty && hasDashedFn 32 cvs) then
+          match substitute (fun name => computedLonghand v fuel id name) v.functions.get 16 cvs with
           -- a custom property invalid at computed-value time has the guaranteed-invalid
           -- value (CSS Variables 1 §3.1), not its parent's
           | none => if custom then "" else default ()
@@ -758,7 +865,8 @@ private def computedAt (html css prop : String) : String :=
     match computeAll dom rules with
     | .ok styles =>
       computedOf { dom := dom, matchesOf := fun i => matchedRules dom i rules, styles := styles,
-                   viewportW := 800, viewportH := 600, registered := Thunk.mk fun _ => registrationsOf css } id prop
+                   viewportW := 800, viewportH := 600, registered := Thunk.mk fun _ => registrationsOf css,
+                   functions := Thunk.mk fun _ => functionsOf css } id prop
     | .error _ => "error"
   | _, _ => "error"
 
@@ -797,6 +905,12 @@ private def computedAt (html css prop : String) : String :=
 #guard computedAt "<div id=t></div>" "#t { --x: 3; --y: 3; --r: if(style(--x: 3) and style(--y: 3): yes) }" "--r" == "yes"
 #guard computedAt "<div id=t></div>" "#t { --r: if(supports(display: table-cell): yes; else: no) }" "--r" == "yes"
 #guard computedAt "<div id=t></div>" "#t { --r: if(style(--n: initial): yes; else: no) }" "--r" == "yes"
+-- custom functions (CSS Mixins 1), from dashed-function-eval.html
+#guard computedAt "<div id=t></div>" "@function --f() { result: 12px; } #t { --actual: --f(); }" "--actual" == "12px"
+#guard computedAt "<div id=t></div>" "@function --f(--x) { result: var(--x); } #t { --actual: --f(3px); }" "--actual" == "3px"
+#guard computedAt "<div id=t></div>" "@function --f(--x: 10px) { --y: var(--x); result: var(--y); } #t { --actual: --f(); }" "--actual" == "10px"
+#guard computedAt "<div id=t></div>" "@function --f() returns <length> { result: calc(1px + 1px); } #t { --actual: --f(); }" "--actual" == "2px"
+#guard computedAt "<div id=t></div>" "@function --f() returns <length> { result: red; } #t { --actual: --f(); }" "--actual" == ""
 -- the styles of pseudo-elements
 private def pseudoAt (html css pe prop : String) : String :=
   let dom := DOM.parseHtmlDocument html
