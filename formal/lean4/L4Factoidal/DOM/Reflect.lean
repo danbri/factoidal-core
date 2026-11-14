@@ -131,6 +131,7 @@ Element ariaValueMin aria-valuemin s?
 Element ariaValueNow aria-valuenow s?
 Element ariaValueText aria-valuetext s?
 HTMLElement popover . e - manual auto,hint,manual,=auto ?
+HTMLButtonElement,HTMLInputElement popoverTargetAction . e toggle toggle toggle,show,hide
 HTMLElement title . s
 HTMLElement lang . s
 HTMLElement dir . e - - ltr,rtl,auto

@@ -5507,6 +5507,63 @@
   });
   def('getSelection', getSelection);
   for (const C of new Set([HTMLElement, HTMLUnknownElement, ...Object.values(named)])) reflectInstall(C);
+  // ---- IDL attributes that reflect an element or elements (HTML §2.6.1) ----
+  // `ariaActiveDescendantElement`, `ariaLabelledByElements` and the other ARIA element
+  // attributes, `popoverTargetElement`, `commandForElement`. The page keeps the explicitly set
+  // elements; which element the getter answers is Lean's (DOM.ElementRef, node_query 184 and
+  // 185): an explicit element only when it is a descendant of a shadow-including ancestor,
+  // else the element of the same tree that the content attribute's ID names.
+  {
+    const explicitRefs = new WeakMap();
+    // the explicitly set value, unless the content attribute changed since by other means
+    const explicitOf = (el, content) => {
+      const m = explicitRefs.get(el), x = m && m.get(content);
+      if (!x) return undefined;
+      if (el.getAttribute(content) !== '') { m.delete(content); return undefined; }
+      return x;
+    };
+    const setExplicit = (el, content, value) => {
+      el.setAttribute(content, '');
+      let m = explicitRefs.get(el); if (!m) explicitRefs.set(el, m = new Map());
+      m.set(content, { value });
+    };
+    const clearExplicit = (el, content) => { const m = explicitRefs.get(el); if (m) m.delete(content); el.removeAttribute(content); };
+    const needElement = (v, idl) => { if (!(v instanceof Element)) throw new TypeError(`Failed to set the '${idl}' property: the value is not of type 'Element'.`); return v; };
+    const reflectElement = (C, idl, content) => Object.defineProperty(C.prototype, idl, {
+      get() {
+        const x = explicitOf(this, content);
+        const r = n.query(nodeId(this), 184, content + '\u0000' + (x ? nodeId(x.value) : ''));
+        return typeof r === 'string' && r !== '' ? wrap(Number(r)) : null;
+      },
+      set(v) { if (v === null || v === undefined) clearExplicit(this, content); else setExplicit(this, content, needElement(v, idl)); },
+      configurable: true, enumerable: true });
+    const reflectElements = (C, idl, content) => {
+      const cached = new WeakMap();
+      Object.defineProperty(C.prototype, idl, {
+        get() {
+          const x = explicitOf(this, content);
+          const r = n.query(nodeId(this), 185, content + '\u0000' + (x ? x.value.map(nodeId).join(' ') : '-'));
+          if (typeof r !== 'string' || r === '-') return null;
+          const ks = r === '' ? [] : r.split(' ').map(Number), old = cached.get(this);
+          if (old && old.ks.length === ks.length && old.ks.every((k, i) => k === ks[i])) return old.array;
+          const array = Object.freeze(ks.map(wrap));
+          cached.set(this, { ks, array });
+          return array;
+        },
+        set(v) {
+          if (v === null || v === undefined) { clearExplicit(this, content); return; }
+          if (typeof v !== 'object' && typeof v !== 'function') throw new TypeError(`Failed to set the '${idl}' property: the value is not a sequence.`);
+          setExplicit(this, content, [...v].map(e => needElement(e, idl)));
+        },
+        configurable: true, enumerable: true });
+    };
+    reflectElement(Element, 'ariaActiveDescendantElement', 'aria-activedescendant');
+    for (const [idl, content] of [['ariaControlsElements', 'aria-controls'], ['ariaDescribedByElements', 'aria-describedby'],
+      ['ariaDetailsElements', 'aria-details'], ['ariaErrorMessageElements', 'aria-errormessage'], ['ariaFlowToElements', 'aria-flowto'],
+      ['ariaLabelledByElements', 'aria-labelledby'], ['ariaOwnsElements', 'aria-owns']]) reflectElements(Element, idl, content);
+    for (const C of [named.HTMLButtonElement, named.HTMLInputElement]) reflectElement(C, 'popoverTargetElement', 'popovertarget');
+    reflectElement(named.HTMLButtonElement, 'commandForElement', 'commandfor');
+  }
   // Document.dir reflects the `dir` of the html element, and fgColor, linkColor, vlinkColor,
   // alinkColor and bgColor the `text`, `link`, `vlink`, `alink` and `bgcolor` of the body
   // element, [LegacyNullToEmptyString] (HTML §3.1.4 and §16.3).

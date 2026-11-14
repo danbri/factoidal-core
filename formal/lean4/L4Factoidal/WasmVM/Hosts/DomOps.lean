@@ -25,6 +25,7 @@ import L4Factoidal.Rendering.Style
 import L4Factoidal.DOM.Named
 import L4Factoidal.DOM.CustomElements
 import L4Factoidal.HTML.ScriptType
+import L4Factoidal.DOM.ElementRef
 
 namespace L4Factoidal.WasmVM.Hosts.Dom
 open L4Factoidal.DOM L4Factoidal.DOM.Range
@@ -427,7 +428,10 @@ DOM and HTML decisions (read-only): 180 the value of the Window's named property
 document `id` (`DOM.Named.answer`: "", "w" container, "e" element, or "c" elements); 181
 whether `q` is a valid custom element name ("1" or "0"); 182 the elements a tree change at
 node `id` reaches, in shadow-including tree order (`DOM.CustomElements`); 183 the kind of
-script element `id` (`HTML.ScriptType`: "classic", "module", "importmap" or "data"). -/
+script element `id` (`HTML.ScriptType`: "classic", "module", "importmap" or "data"); 184 the
+element and 185 the elements that a reflecting IDL attribute of element `id` answers
+(`DOM.ElementRef`: `q` is the content attribute, U+0000, the explicitly set element or
+elements). -/
 def domOpM (id op : Nat) (q : String) : Op String := do
   let xs := nums q
   let d ← dom
@@ -732,6 +736,15 @@ def domOpM (id op : Nat) (q : String) : Op String := do
     let x := d.get n
     let av := fun (nm : String) => (x.attrs.find? fun a => a.ns.isNone && a.lname == nm).map (·.value)
     return (L4Factoidal.HTML.ScriptType.kind (av "type") (if x.ns == some htmlNS then av "language" else none)).name
+  -- 184 and 185: an IDL attribute that reflects an element or a list of elements (HTML §2.6.1,
+  -- `DOM.ElementRef`): `q` is the content attribute's name, U+0000, and the explicitly set
+  -- element (184) or elements, "-" for none (185)
+  | 184 =>
+    let n ← nodeArg d id
+    return L4Factoidal.DOM.ElementRef.answerOne d n q
+  | 185 =>
+    let n ← nodeArg d id
+    return L4Factoidal.DOM.ElementRef.answerMany d n q
   -- ==== end of domhtml ====
   | _ => throw (-2)
 
