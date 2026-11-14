@@ -7540,7 +7540,7 @@
       if (!rendered(el)) return el.textContent;
       const out = [];
       children(el, out, visibleEl(el));
-      const r = n.query(0, 190, out.join('\u0000'));
+      const r = n.query(0, 191, out.join('\u0000'));
       // an engine without op 190, or more text than one question holds: the text content
       return typeof r === 'string' ? r : el.textContent;
     };
@@ -7817,10 +7817,14 @@
     const fresh = new Set();
     let wrappedForScripts = false;
     const runText = typeof n0.runScript === 'function' ? src => n0.runScript(src) : src => (0, eval)(src);
+    // The script runs with its element's node document as `document` (a frame's document
+    // for a script inserted there), as the engine does for the scripts of a parsed frame.
     const execute = (el, text) => {
-      const before = currentScript;
+      const before = currentScript, beforeDocument = scriptDocument;
+      const d = info(nodeId(el), 7);
       currentScript = el;
-      try { runText(text); } catch (e) { report(e); } finally { currentScript = before; }
+      scriptDocument = d > 0 ? wrap(d) : null;
+      try { runText(text); } catch (e) { report(e); } finally { currentScript = before; scriptDocument = beforeDocument; }
     };
     const fire = (el, type) => { const e = new Event(type); state(e).trusted = true; dispatch(el, e); };
     const prepare = id => {
