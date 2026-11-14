@@ -2045,6 +2045,15 @@ def callBody : Nat → FunDef → Nat → Value → Value → Value → Value �
           defineOwn a "callee" (.acc t t false false)
         else setHidden a "callee" fnObj
         declare fenv "arguments" { v := .obj a }
+      -- parameters with expressions (defaults, patterns): every parameter name is in its
+      -- temporal dead zone until its own parameter is bound (§10.2.11 steps 21 to 26), so a
+      -- default that names itself or a later parameter is a ReferenceError
+      if fd.params.any (fun pe => match pe with | .mk (.id _) none => false | _ => true) then
+        for pe in fd.params do
+          match pe with
+          | .mk p _ => for x in p.names do declare fenv x { v := .undef, init := false }
+        if let some rp := fd.rest then
+          for x in rp.names do declare fenv x { v := .undef, init := false }
       bindParams n ctx fd.params args 0
       if let some rp := fd.rest then
         bindPat n ctx rp (← newArray (args.extract fd.params.length args.size)) (.declare fenv true)
