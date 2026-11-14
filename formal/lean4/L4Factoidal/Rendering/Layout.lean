@@ -1002,15 +1002,18 @@ def firstBlock (dom : Dom) (styles : Array Computed) (id : Nat) : Option Nat := 
 /-- The top margin that the box of `id` shows to what is before it: its own, or the
 largest of its own and those of the first blocks nested at its top that adjoin it
 (CSS 2.1 §8.3.1; margins are not negative in this profile). `fuel` bounds the nesting. -/
-def leadMargin (dom : Dom) (styles : Array Computed) : Nat → Nat → Float
-  | 0, id => (styles[id]!).margin.top
-  | fuel+1, id =>
-    let s := styles[id]!
-    if collapsesTop dom s id then
-      match firstBlock dom styles id with
-      | some k => max s.margin.top (leadMargin dom styles fuel k)
-      | none => s.margin.top
-    else s.margin.top
+def leadMargin (dom : Dom) (styles : Array Computed) (fuel id : Nat) : Float := Id.run do
+  let mut best := (styles[id]!).margin.top
+  let mut cur := id
+  -- a loop down the first blocks: no stack depth in the nesting
+  for _ in [0:fuel] do
+    if !collapsesTop dom (styles[cur]!) cur then break
+    match firstBlock dom styles cur with
+    | some k =>
+      best := max best (styles[k]!).margin.top
+      cur := k
+    | none => break
+  return best
 
 /-- A replaced element, a table or a flex or grid container: a box whose contents depend
 on its height, or that sizes itself (`Children.heightSensitive`). -/
@@ -1644,6 +1647,8 @@ may leave `fixed` descendants pending: a few rounds. A document with no such box
 `block` alone. -/
 def layoutRoot (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedding : Embedding)
     (pictures : Pictures) (vw vh : Float) : Except String Result := do
+  -- CSS 2.1 §10.5: percentage heights against heights that the styles make definite.
+  let styles := percentHeights dom styles
   let mut laid ← block dom styles font embedding pictures 64 0 0 0 vw
   for _ in [0:4] do
     if laid.pending.isEmpty then break

@@ -93,6 +93,15 @@ private def flexAbsCss := "#f{display:flex;position:relative;height:50px} #p{pos
 #guard box page "#a{width:calc(100% - 30px)}" "a" == some (0,0,170,7)
 #guard box page "#a{width:calc(50% + 10px)}" "a" == some (0,0,110,7)
 
+-- CSS 2.1 §10.5: a percentage height is of a containing block with a definite height;
+-- of one whose height is its content's it is `auto`.
+#guard box page "#c{height:40px} #p{height:50%}" "p" == some (0,7,200,20)
+#guard box page "#c{height:40px} #p{height:50%}" "q" == some (0,27,200,7)
+#guard box page "#p{height:50%}" "p" == some (0,7,200,7)
+#guard box page "#c{height:40px} #p{height:calc(50% + 5px)}" "p" == some (0,7,200,25)
+#guard box page "#c{height:40px} #p{box-sizing:border-box;height:50%;padding:2px}" "p" == some (0,7,200,20)
+#guard box "<div id=o><div id=m><div id=i>I</div></div></div>" "#o{height:80px} #m{height:50%} #i{height:25%}" "i" == some (0,0,200,10)
+
 -- Margin collapse (CSS 2.1 §8.3.1): adjoining margins of siblings; the larger stands.
 private def stack := "<div id=a>A</div>\n<div id=b>B</div><div id=c><div id=d>D</div></div><div id=e>E</div>"
 #guard box stack "#a{margin-bottom:10px} #b{margin-top:4px}" "b" == some (0,17,200,7)

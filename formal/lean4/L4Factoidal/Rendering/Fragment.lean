@@ -161,6 +161,49 @@ def collectItems (dom : Dom) (styles : Array Computed) (container : Nat) : Array
   if text.any (fun t => !blankText (dom.get t).data) then out := out.push (.anonymous container text)
   return out
 
+/-- CSS 2.1 §10.5: the content height of the box of `id` when its `height` is definite
+from the styles alone: a length, or a percentage of a containing block (its parent
+element's box) whose height is definite in the same way. `none`: the height depends on
+content, or on a containing block known only in layout (an absolutely positioned box, the
+root). The limits `min-height` and `max-height` of the ancestors are not read. A loop up
+the ancestors; an element whose height is a length costs one step. -/
+def definiteHeight (dom : Dom) (styles : Array Computed) (id : Nat) : Option Float := Id.run do
+  -- the height of `id` is `scale` times the height that `cur`'s percentage is of, plus `offset`
+  let mut scale : Float := 1
+  let mut offset : Float := 0
+  let mut cur := id
+  for _ in [0:256] do
+    let s := styles[cur]!
+    match s.height with
+    | .px h => return some (scale*(max 0 h)+offset)
+    | .percent p => scale := scale*p
+    | .calc p v =>
+      offset := offset+scale*v
+      scale := scale*p
+    | _ => return none
+    if s.pos.isAbsolute then return none
+    match (dom.get cur).parent with
+    | some parent => if (dom.get parent).type == .element then cur := parent else return none
+    | none => return none
+  return none
+
+/-- The styles with each percentage `height` that `definiteHeight` resolves as that
+length (CSS 2.1 §10.5); a percentage of a height that depends on content stays, and is
+read as `auto`. Absolutely positioned boxes resolve theirs where they are placed. A
+document with no percentage height is returned as it is. -/
+def percentHeights (dom : Dom) (styles : Array Computed) : Array Computed := Id.run do
+  let mut out := styles
+  for id in [0:styles.size] do
+    let s := styles[id]!
+    let relative := match s.height with
+      | .percent _ | .calc _ _ => !s.pos.isAbsolute
+      | _ => false
+    if relative then
+      match definiteHeight dom styles id with
+      | some h => out := out.modify id fun c => {c with height := .px h}
+      | none => pure ()
+  return out
+
 /-- An inline-block whose contents are not all inline (CSS 2.1 §9.2.2, §10.1): it has a
 child that is a block-level box or a float, or it is positioned and has element children
 (it is then the containing block of its absolutely positioned descendants). Such a box is
