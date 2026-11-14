@@ -38,6 +38,7 @@ import L4Factoidal.Net.Xhr
 import L4Factoidal.Net.Storage
 import L4Factoidal.Net.FetchRules
 import L4Factoidal.Net.Cookies
+import L4Factoidal.Net.ServiceWorkerScope
 import L4Factoidal.DOM.SvgValues
 import L4Factoidal.JSON.Parser
 import L4Factoidal.JSON.Serialize
@@ -615,6 +616,8 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
       ({ s with cookies }, r)
     -- The values the SVG DOM reflects: a length, a number, a number list, a transform list.
     else if 92 ≤ code && code < 96 then pure' (L4Factoidal.DOM.SvgValues.op code fs)
+    -- Service workers: `register()`'s URL checks and registration matching (pure, no state).
+    else if code == 154 || code == 155 then pure' (L4Factoidal.Net.ServiceWorkerScope.op code fs)
     else pure' (.error (-2))
 
 section
