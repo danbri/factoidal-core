@@ -102,6 +102,15 @@ Where it lives (`danbri/factoidal-builds`):
 - `rivals.csv`: WPT commit, browser, version, wpt.fyi run id, passed, share, names reported, partial.
 - `runs/<run_id>/meta.json`: everything above plus build-info, runner and tool versions, list hashes,
   why that build was chosen, the per-directory table, and a link to the full result JSON.
+- `runs/<run_id>/incidents.json` and `incidents.md` (every full run since 2026-11-14 0907Z): the names
+  that ended in `CRASH` (with the reason when the result says it: the step budget, the script heap
+  limit, a script error before the harness completed, the test process killed with its signal and the
+  memory guard's kills), in `STALL` (no result in the runner's 300 s) and in `TIMEOUT` (the harness's
+  own), and the new and gone names of each against the previous valid full run. `meta.json` has the
+  crash and stall lists and the differences under `incidents`. By hand from a run's shard artifacts:
+  `gh run download RUN -p 'wpt-shard-*' -D DIR` then `release-tests.py wpt-incidents --shards-dir DIR
+  --prefix wpt-shard- --out OUT [--prev PREVIOUS/incidents.json]`. A branch check's report lists the
+  same for its names against the baseline run.
 - Location: branch `wpt-scores` of `danbri/factoidal-builds` holds `runs.csv`, `rivals.csv`,
   `differential.csv` (QuickJS, kept apart from scores) and `runs/<run_id>/meta.json`. The full WPT
   result of each run is the asset `<run_id>.wpt-full.json.gz` of the release `test-results`.
@@ -141,6 +150,11 @@ Where it lives (`danbri/factoidal-builds`):
   that, a new dispatch or the hourly poll cancelled the one pending build. Check the
   queue before dispatching, batch changes into few builds, and never cancel another agent's run.
 
+- Every engine build (`build.yml`'s Lean Wasm modules, Foafnaut engines and macOS bundle;
+  `foafnaut-linux.yml`, `foafnaut-macos.yml`, `branch-wpt.yml`) runs the AES binary gate
+  (`tools/aes-gate.py --binary`, `skills/aes-hardware-only`) on what it built: an AES S-box or T-table
+  in a library or Wasm module fails the build.
+
 ## 8. Checking a branch in the cloud
 
 `branch-wpt.yml` ("Branch WPT check") in `danbri/factoidal-builds` builds the Linux engine library
@@ -152,7 +166,7 @@ is a development check, not a score.
 gh workflow run branch-wpt.yml --repo danbri/factoidal-builds \
   -f core_ref=wip/my-branch -f names=/css/css-color/,/web-animations/,sample:40
 gh run list --repo danbri/factoidal-builds --workflow branch-wpt.yml --limit 3   # the run id
-gh run watch --repo danbri/factoidal-builds RUN_ID
+gh run watch --repo danbri/factoidal-builds RUN_ID --interval 300
 gh run view --repo danbri/factoidal-builds RUN_ID          # the summary is on the run's page
 gh run download --repo danbri/factoidal-builds RUN_ID -n branch-wpt-results -D out/
 ```
@@ -167,11 +181,38 @@ gh run download --repo danbri/factoidal-builds RUN_ID -n branch-wpt-results -D o
   holds others up: prefer the directories you changed and `sample:40`.
 - `wpt_commit` (optional): default is the WPT commit of the newest valid full run, so the baseline is
   at the same commit.
+- `dangerously_enable_webdriver_endpoint` (optional, default false): run the wdspec names
+  (`webdriver/tests/classic/`) against the engine's WebDriver endpoint. The runner gets
+  `--dangerously-enable-webdriver-endpoint`: the engine decides whether the endpoint starts (loopback
+  only, a secret in every request path), and `tests/browser-wpt/wdspec-run.py` drives it with pytest
+  from the WPT tree. Without it, and in the full runs of main, every wdspec name is SKIP.
 - The baseline is the valid full run of the newest scored main commit that your ref contains (same
   names), so the difference is what your ref adds to that commit: your work, and any main commits
   after it that have no score yet. The plan's summary says when that is not main's newest
   scored commit (your ref is older than it: rebase to compare with the newest), and when your ref
   contains no scored commit (then part of a difference is main's).
+
+**Watching runs: the API limit is shared.** Every `gh` call that reads runs (`gh run list/view/watch/
+download`, `gh workflow run`, `gh release`) counts against one limit of 5,000 requests an hour for the
+whole account, shared by every agent; `gh run watch` asks every 3 seconds by default. On 2026-11-14 it
+ran out at 09:04Z (14 agents polling in short loops) and every `gh` call answered HTTP 403 for half an
+hour. So:
+
+- one watcher per run, and no faster than every 5 minutes (`gh run watch RUN_ID --interval 300`, or a
+  loop with `sleep 300`); one `gh run list` covers several runs, where one `gh run view` each does not;
+- `gh api rate_limit` costs nothing: check it before a burst of calls (`--jq .resources.core`);
+- read results without the API where they are on a branch: `git fetch` and raw.githubusercontent.com
+  are not counted. Full runs: `runs.csv` and `runs/<run_id>/` on `wpt-scores`. Branch checks: every
+  check also writes its report to the branch `branch-checks` (`checks.csv`, one row a check;
+  `checks/<run id>/report.md` and `report.json`):
+
+```bash
+curl -s https://raw.githubusercontent.com/danbri/factoidal-builds/branch-checks/checks.csv | tail -5
+curl -s https://raw.githubusercontent.com/danbri/factoidal-builds/branch-checks/checks/RUN_ID/report.md
+```
+
+  (raw.githubusercontent.com may serve a copy up to about 5 minutes old; `git fetch origin
+  branch-checks` in a clone of factoidal-builds is current.)
 
 What comes back:
 
