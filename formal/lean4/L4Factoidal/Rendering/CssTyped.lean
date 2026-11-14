@@ -377,6 +377,19 @@ def calcAnswer (c : Option Calc) : String :=
   | some c => calcJson (calcFuel c) c
   | none => ""
 
+/-- The flow-relative axis shorthands that take one typed value for both sides, as their
+longhands do (`margin-block`, `padding-inline`, `inset-block`, `border-block-width` ...). -/
+def axisShorthand (p : String) : Bool :=
+  ["margin-", "padding-", "inset-", "border-"].any (fun pre => p.startsWith pre) &&
+    (["block", "inline"].any fun axis =>
+      ["", "-width", "-style", "-color"].any fun post =>
+        ["margin-", "padding-", "inset-", "border-"].any fun pre => p == pre ++ axis ++ post)
+
+/-- A shorthand that takes no typed value in `StylePropertyMap.set()` (only a string, a
+CSS-wide keyword or an unparsed value): every shorthand but the axis ones. -/
+def refusesTyped (p : String) : Bool :=
+  ((lookup p).map (!·.longhands.isEmpty)).getD false && !axisShorthand p
+
 /-- The operations of the page's typed values, as text: the fields of `q` are separated by
 U+0000, the first is the verb. "" is a TypeError (a SyntaxError for `parse`).
 
@@ -393,8 +406,7 @@ def typedOp (q : String) : String :=
   | ["reify", text] => reify text
   | ["reifyall", text] => reifyAll text
   | ["reifyp", property, text] => reifyFor property text
-  | ["isshorthand", property] =>
-    if ((lookup (propertyName property)).map (!·.longhands.isEmpty)).getD false then "1" else "0"
+  | ["isshorthand", property] => if refusesTyped (propertyName property) then "1" else "0"
   | ["css", wire] => ((parseWire wire).map numericCss).getD ""
   | ["unit", name] => if (calcUnit name).isSome then "1" else "0"
   | ["islist", property] => if listValued property then "1" else "0"
@@ -442,6 +454,8 @@ def typedOp (q : String) : String :=
 #guard reifyFor "width" "1px" == "{\"t\":\"u\",\"v\":1,\"u\":\"px\"}"
 #guard typedOp "isshorthand\x00margin" == "1"
 #guard typedOp "isshorthand\x00margin-top" == "0"
+#guard typedOp "isshorthand\x00margin-block" == "0" && typedOp "isshorthand\x00border-inline-color" == "0"
+#guard typedOp "isshorthand\x00scroll-margin" == "1" && typedOp "isshorthand\x00margin-blocks" == "0"
 #guard reifyAll "1s, 2s" == "[{\"t\":\"u\",\"v\":1,\"u\":\"s\"},{\"t\":\"u\",\"v\":2,\"u\":\"s\"}]"
 #guard typedOp "css\x00u(3.14 \"px\")" == "3.14px"
 #guard typedOp "css\x00u(-3.14 \"percent\")" == "-3.14%"
