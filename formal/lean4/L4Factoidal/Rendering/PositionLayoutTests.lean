@@ -287,6 +287,19 @@ private def inlineBlock := "<div id=o><span id=w><div id=d>AB</div></span></div>
 #guard box inlineBlock "#w{display:inline-block;width:50px} #d{width:20px;height:10px}" "w" == some (0,0,50,10)
 -- ...as wide as its content when it has no width.
 #guard box inlineBlock "#w{display:inline-block} #d{width:20px;height:10px}" "w" == some (0,0,20,10)
+-- vertical-align of an atomic box in its line (CSS 2.1 §10.8.1): the 30px box makes the
+-- line 30 high; the 10px box is at its top, its bottom, its middle (the baseline plus a
+-- quarter em, here 1.75), or with its bottom edge on the baseline.
+private def twoBoxes := "<div id=o><span id=a class=b></span><span id=t class=b></span></div>"
+private def twoCss := ".b{display:inline-block;width:10px} #a{height:30px} #t{height:10px;"
+#guard box twoBoxes (twoCss ++ "}") "t" == some (10,20,10,10)
+#guard box twoBoxes (twoCss ++ "vertical-align:top}") "t" == some (10,0,10,10)
+#guard box twoBoxes (twoCss ++ "vertical-align:bottom}") "t" == some (10,20,10,10)
+#guard box twoBoxes (twoCss ++ "vertical-align:middle}") "t" == some (10,23.25,10,10)
+#guard box twoBoxes (twoCss ++ "vertical-align:top} #a{vertical-align:top}") "o" == some (0,0,200,30)
+-- ...and of an inline-block with blocks inside, and an inline flex container.
+#guard box "<div id=o><span id=a class=b></span><span id=t class=b><div id=k></div></span></div>" (twoCss ++ "vertical-align:top} #k{height:10px}") "t" == some (10,0,10,10)
+#guard box twoBoxes (twoCss ++ "vertical-align:top;display:inline-flex}") "t" == some (10,0,10,10)
 -- A positioned inline-block is the containing block of its absolute descendants: the box
 -- is at the right of its padding box (10 wide), 4 from its left edge.
 private def badge := "<div id=o>ab <span id=w>W<b id=p>P</b></span></div>"

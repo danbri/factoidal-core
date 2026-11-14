@@ -353,7 +353,7 @@ inductive Inline where
   | replaced (source : Nat) (style : Computed) (width height : Float) (nodes : List Node)
   /-- An `inline-block` from `openAtomic` to `closeAtomic`, laid out (`atomize`): its
   margin box and its content at the origin. -/
-  | atomic (source : Nat) (width height : Float) (inner : Result)
+  | atomic (source : Nat) (style : Computed) (width height : Float) (inner : Result)
   /-- Bounds of an `inline-block` in the flat list that `inlineItems` gives. -/
   | openAtomic (source : Nat) (style : Computed)
   | closeAtomic
@@ -564,7 +564,7 @@ private def itemWidth (font : FontProfile) (rtl : Option Bool := none) : Inline 
     match ← font.word s text rtl with
     | none => return font.advance*s.fontSize/font.unitsPerEm*Float.ofNat text.length
     | some word => return word.advance*s.fontSize/font.unitsPerEm
-  | .replaced _ _ w _ _ | .atomic _ w _ _ => pure w
+  | .replaced _ _ w _ _ | .atomic _ _ w _ _ => pure w
   | _ => pure 0
 
 /-- A colour glyph as one rectangle filled with its image (`ColrRaster`), drawn at the
@@ -638,7 +638,9 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
       let leading := lineLeading font s
       ascent := max ascent (font.ascent*s.fontSize/font.unitsPerEm+leading)
       descent := max descent (font.descent*s.fontSize/font.unitsPerEm+leading)
-    | .replaced _ s _ h _ => match s.verticalAlign with
+    -- A replaced element and an atomic box (an inline-block, an inline flex or grid
+    -- container) sit on the line by `vertical-align`, with the bottom margin edge as baseline.
+    | .replaced _ s _ h _ | .atomic _ s _ h _ => match s.verticalAlign with
       | .baseline => ascent := max ascent h
       -- CSS 2.1 §10.8.1: the middle on the baseline plus half the x-height, here half an em.
       | .middle =>
@@ -646,7 +648,6 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
         descent := max descent (h/2-s.fontSize/4)
       | .top => tallTop := max tallTop h
       | .bottom => tallBottom := max tallBottom h
-    | .atomic _ _ h _ => ascent := max ascent h
     | .openAtomic _ _ | .closeAtomic | .bidiMark _ | .outOfFlow _ => pure ()
   -- A box aligned to the top or bottom of the line makes the line tall enough for it.
   if tallBottom > ascent+descent then ascent := tallBottom-descent
@@ -696,11 +697,14 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
       let m := s.margin
       out := {out with nodes := out.nodes.push (.group none (translate (x+offset) top) nodes),
                        boxes := out.boxes.push ⟨source,x+offset+m.left,top+m.top,width-m.left-m.right,height-m.top-m.bottom⟩}
-    | .atomic source width height inner =>
-      let top := y+ascent-height
+    | .atomic _ s _ height inner =>
+      let top := match s.verticalAlign with
+        | .baseline => y+ascent-height
+        | .middle => y+ascent-s.fontSize/4-height/2
+        | .top => y
+        | .bottom => y+ascent+descent-height
       let moved := shiftResult (x+offset) top inner
       -- `inner` holds the border box of the inline-block first, then its content boxes.
-      let _ := width
       out := {out with nodes := out.nodes ++ moved.nodes, runs := out.runs ++ moved.runs, boxes := out.boxes ++ moved.boxes,
                        pending := out.pending ++ moved.pending}
     | .outOfFlow source => out := {out with pending := out.pending.push {id := source, x := x+offset, y}}
@@ -958,7 +962,7 @@ private def atomicBox (font : FontProfile) (id : Nat) (s : Computed) (items : Ar
   let h := b.top+p.top+height+p.bottom+b.bottom
   let inner := shiftResult (m.left+b.left+p.left) (m.top+b.top+p.top) content
   let box : Box := ⟨id,m.left,m.top,w,h⟩
-  return .atomic id (m.left+w+m.right) (m.top+h+m.bottom)
+  return .atomic id s (m.left+w+m.right) (m.top+h+m.bottom)
     {inner with nodes := decorations id s m.left m.top w h ++ inner.nodes, boxes := #[box] ++ inner.boxes}
 
 /-- Each outermost `openAtomic .. closeAtomic` becomes one `atomic` item. An
@@ -1422,7 +1426,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
                 let (lo,hi) ← intrinsic dom styles font embedding pictures fuel (.box child)
                 pure (shrinkWidth cs.width lo hi width)
             let r ← layoutTask dom styles font embedding pictures fuel (.sized child (max 0 (outer-edges)) none) 0 0 width
-            inline := inline.push (.atomic child outer r.height r)
+            inline := inline.push (.atomic child cs outer r.height r)
           else
             inline := inline ++ (← inlineItems dom styles embedding pictures width fuel child)
       if !inline.isEmpty then
