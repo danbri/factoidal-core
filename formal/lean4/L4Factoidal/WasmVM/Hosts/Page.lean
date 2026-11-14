@@ -550,10 +550,14 @@ def animationAccess (dom : Arena) (base : Answers) (prev : Option Answers) (cand
     longhands := L4Factoidal.Rendering.Animation.Css.longhandsOf }
 
 /-- Ask for an animation frame for the page's animations, once (`Animation.frameHandle`:
-the page's script objects answer it with op 67). -/
+the page's script objects answer it with op 67). It is the first callback of its frame:
+"update animations and send events" comes before the animation frame callbacks of the
+page (HTML §8.1.7.3 "update the rendering"), so a callback of the page reads the
+animations as that frame's time has them. -/
 def Host.askAnimationFrame (h : Host) : Host :=
   if h.anim.frameAsked then h else
-  let (loop, _) := { h.loop with clock := h.time.sync h.loop.clock }.requestFrame L4Factoidal.Rendering.Animation.frameHandle
+  let (loop, id) := { h.loop with clock := h.time.sync h.loop.clock }.requestFrame L4Factoidal.Rendering.Animation.frameHandle
+  let loop := { loop with frames := loop.frames.filter (·.id == id) ++ loop.frames.filter (·.id != id) }
   { h with loop, anim := { h.anim with frameAsked := true } }
 
 /-- Node `n` is one of `roots` or has one as an ancestor. -/
