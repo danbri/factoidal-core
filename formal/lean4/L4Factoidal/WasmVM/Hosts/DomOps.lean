@@ -797,7 +797,11 @@ def domOpM (id op : Nat) (q : String) : Op String := do
     | some (el, _) =>
       if !frameAccessible st el then throw (-2)
       return ((st.docURLs.find? (·.1 == id)).map (·.2)).getD "about:blank"
-    | none => throw (-2)
+    | none =>
+      -- (xmlweb) a document that `DOMParser` made: the URL recorded at its parse
+      match st.docURLs.find? (·.1 == id) with
+      | some (_, u) => return u
+      | none => throw (-2)
   | 172 =>
     -- the encoding name of frame document `id` the page may reach (`characterSet`), as the
     -- embedder's decode named it; UTF-8 when it did not say
