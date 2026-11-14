@@ -20,6 +20,7 @@ the steps that are not events, in the place the standard has them.
 -/
 import L4Factoidal.Net.PageFetch
 import L4Factoidal.Net.BlobUrls
+import L4Factoidal.Net.Integrity
 import L4Factoidal.WHATWG.Encoding.Core
 
 namespace L4Factoidal.Net.Xhr
@@ -67,6 +68,9 @@ structure Xhr where
   noCors : Bool := false
   /-- Fetch redirect mode "manual" (`fetch`): `PageFetch.Transfer.redirectManual`. -/
   redirectManual : Bool := false
+  /-- The request's integrity metadata (`fetch`'s `integrity`): a response whose bytes do not
+  match is a network error (`Net.Integrity.okFor`). -/
+  integrity : String := ""
   /-- The request's referrer (`fetch`'s `referrer`): `none` is the client's URL, `some ""`
   no referrer, else a URL of the page's own origin (`setReferrer`). -/
   referrer : Option String := none
@@ -374,7 +378,9 @@ def beginFetch (s : State) (h : Nat) (x : Xhr) : State :=
   let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred, sameOriginOnly := x.sameOnly, redirectError := x.redirectError, blob := s.blobOf x.url, referrer := referrerFor s x, referrerPolicy := policyFor s x, noCors := x.noCors, redirectManual := x.redirectManual }
   match plan t with
   | .send t' w => (s.set h { x with transfer := some id }) |> fun s => { s with live := s.live.push (id, h, t'), outbox := s.outbox.push w }
-  | .deliver _ r => s.set h { x with deferred := some r }
+  | .deliver _ r =>
+    if Integrity.okFor x.integrity r.tainting r.body then s.set h { x with deferred := some r }
+    else s.set h { x with deferFail := true }
   | .fail _ => s.set h { x with deferFail := true }
 
 /-- The next event to fire for object `h`, running the steps before it. -/
@@ -452,6 +458,9 @@ def give (s : State) (id : Nat) (a : Answer) : State × Option Nat :=
     | .send t' w => ({ s with live := s.live.map (fun e => if e.1 == id then (id, h, t') else e), outbox := s.outbox.push w }, none)
     | .fail _ => (requestError s1 h { x with transfer := none } "error", some x.cb)
     | .deliver _ r =>
+      -- Subresource Integrity: bytes that do not match the request's metadata never reach the page
+      if !Integrity.okFor x.integrity r.tainting r.body then
+        (requestError s1 h { x with transfer := none } "error", some x.cb) else
       if r.body.size > maxBody || s.held + r.body.size > maxHeld then
         (requestError s1 h { x with transfer := none } "error", some x.cb)
       else
@@ -565,7 +574,7 @@ private def natAt (fs : Array ByteArray) (i : Nat) : Nat := (strAt fs i).toNat?.
 
 private def okStr (x : String) : Except Int ByteArray := .ok x.toUTF8
 
-/-- A `web_api` op on the network objects: ops 60 to 79 and 98 (answers -2 when the embedder
+/-- A `web_api` op on the network objects: ops 60 to 79, 98 and 99 (answers -2 when the embedder
 did not turn the network on, so `XMLHttpRequest` is then not defined). -/
 def op (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int ByteArray :=
   if !s.enabled then (s, .error (-2)) else
@@ -702,6 +711,11 @@ def op (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int Byt
       match s.get? h with
       | none => (s, .error errType)
       | some x => (s.set h { x with policy := ReferrerPolicy.Policy.ofToken (strAt fs 2) }, okStr "")
+  | 99 =>
+    -- the request's integrity metadata (`fetch`'s `integrity`)
+    match s.get? (natAt fs 0) with
+    | none => (s, .error errType)
+    | some x => (s.set (natAt fs 0) { x with integrity := strAt fs 1 }, okStr "")
   | 77 =>
     -- the mode (`fetch`): 1 "same-origin", 2 "no-cors", else "cors"
     match s.get? (natAt fs 0) with

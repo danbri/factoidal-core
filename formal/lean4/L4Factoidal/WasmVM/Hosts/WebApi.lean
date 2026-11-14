@@ -686,7 +686,7 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
     | .ok h => let (s, n) := dropKey s h; (s, ofStr (toString n))
     | .error e => (s, .error e)
   | code =>
-    if (60 ≤ code && code < 80) || code == 98 then
+    if (60 ≤ code && code < 80) || code == 98 || code == 99 then
       let (net, r) := L4Factoidal.Net.Xhr.op s.net code fs
       ({ s with net }, r)
     -- Web Storage: the area is named by the session's page origin, never by an argument.

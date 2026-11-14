@@ -5202,6 +5202,8 @@
         // the request's referrer and referrer policy: Lean takes a referrer only of the page's
         // own origin and makes the Referer of each hop (web_api 98, Net.PageFetch.referrerOf)
         apiCall(98, [s.h, st.referrer, st.referrerPolicy, '', '']);
+        // Subresource Integrity: Lean checks the response's bytes (web_api 99, Net.Integrity)
+        if (st.integrity !== '') apiCall(99, [s.h, st.integrity]);
         x.responseType = 'arraybuffer';
         for (const e of headerState.get(st.headers).list) x.setRequestHeader(e[0], e[1]);
         x.onload = () => {
