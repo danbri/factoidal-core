@@ -1614,7 +1614,14 @@
   const glModes = { 0: 3, 1: 2, 4: 0, 5: 1 };
   // The object interfaces of WebGL 1.0 §5.3 to §5.13 and WebGL 2.0 §3.1 to §3.5. None has a
   // constructor a page may call: the context makes them (`glNew`).
-  class WebGLObject { constructor() { throw new TypeError('Illegal constructor'); } }
+  // WebGLObject's `label` (WebGL 1.0 §5.3): a USVString the page names the object by.
+  const glLabels = new WeakMap();
+  class WebGLObject {
+    constructor() { throw new TypeError('Illegal constructor'); }
+    get label() { if (!(this instanceof WebGLObject)) throw new TypeError('Illegal invocation'); return glLabels.get(this) ?? ''; }
+    set label(v) { if (!(this instanceof WebGLObject)) throw new TypeError('Illegal invocation'); glLabels.set(this, String(v)); }
+  }
+  Object.defineProperty(WebGLObject.prototype, 'label', { enumerable: true });
   class WebGLBuffer extends WebGLObject {}
   class WebGLFramebuffer extends WebGLObject {}
   class WebGLProgram extends WebGLObject {}
@@ -1755,6 +1762,21 @@
         Object.defineProperty(P, k, { value: f, writable: true, enumerable: true, configurable: true });
       } else if (kind === 'm') modelled.add(k);
     }
+    // The drawing buffer's tone mapping (ColorWeb-CG "WebGL drawing buffer tone mapping"):
+    // `standard` or `extended`, kept on the context; with no argument the current mode.
+    const toneModes = new WeakMap();
+    const toneMapping = function drawingBufferToneMapping(map = undefined) {
+      stateOf(this);
+      if (map !== undefined) {
+        if (map !== null && typeof map !== 'object' && typeof map !== 'function') throw new TypeError(`Failed to execute 'drawingBufferToneMapping' on '${name}': The provided value is not of type 'CanvasToneMapping'.`);
+        const mode = map === null || map.mode === undefined ? 'standard' : String(map.mode);
+        if (mode !== 'standard' && mode !== 'extended') throw new TypeError(`Failed to execute 'drawingBufferToneMapping' on '${name}': The provided value '${mode}' is not a valid enum value of type CanvasToneMappingMode.`);
+        toneModes.set(this, mode);
+      }
+      return { mode: toneModes.get(this) ?? 'standard' };
+    };
+    hidden(toneMapping, 'length', 0);
+    Object.defineProperty(P, 'drawingBufferToneMapping', { value: toneMapping, writable: true, enumerable: true, configurable: true });
     return C;
   };
   // The page's context object: Lean's state machine in front of the drawing path (`glImplFor`).
