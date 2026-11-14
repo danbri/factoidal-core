@@ -221,4 +221,10 @@ private def tracks (html extra id : String) : Option (String × String) := do
 -- A line far outside the grid is clamped (§8.1): the item is placed, the grid stays bounded.
 #guard (box "<div id=c><div id=a>A</div></div>" "#c{display:grid;grid-template-columns:10px} #a{grid-column:1 / span 999999999;grid-row:-99999999}" "a").isSome
 
+
+-- self-start and self-end follow the item's own direction and writing mode.
+#guard box "<div id=c><div id=a>A</div></div>" "#c{display:grid;grid-template-columns:50px;grid-template-rows:30px} #a{width:10px;height:10px;justify-self:self-start;direction:rtl}" "a" == some (40,0,10,10)
+#guard box "<div id=c><div id=a>A</div></div>" "#c{display:grid;grid-template-columns:50px;grid-template-rows:30px} #a{width:10px;height:10px;justify-self:self-start;align-self:self-end;writing-mode:vertical-rl}" "a" == some (40,20,10,10)
+#guard box "<div id=c><div id=a>A</div></div>" "#c{display:grid;grid-template-columns:50px;grid-template-rows:30px} #a{width:10px;height:10px;align-self:self-start;writing-mode:vertical-lr;direction:rtl}" "a" == some (0,20,10,10)
+
 end L4Factoidal.Rendering.GridLayoutTests

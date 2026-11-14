@@ -75,6 +75,20 @@ def gridSelfAlign (own container : ItemAlign) (reverse : Bool) (flip : Bool := f
   | .right => if reverse then .start else .end_
   | .center => .center
 
+/-- The frame (logical axes) of a box with style `s`. -/
+def gridFrame (s : Computed) : Logical.Frame :=
+  Logical.Frame.of (s.pos.writingMode == .verticalRl) (s.pos.writingMode == .verticalLr) (s.direction == .rtl)
+
+/-- Where an item's own start sides are on the page (CSS Box Alignment 3 §4.1: `self-start`
+and `self-end` follow the item's writing mode and direction), from its frame: on the
+horizontal axis its start is the right side (`.1`), on the vertical axis the bottom (`.2`). -/
+def selfStartSides (f : Logical.Frame) : Bool × Bool :=
+  if f.vertical then (f.blockFlip, f.inlineFlip) else (f.inlineFlip, false)
+
+#guard selfStartSides (Logical.Frame.of false false true) == (true, false)
+#guard selfStartSides (Logical.Frame.of true false false) == (true, false)
+#guard selfStartSides (Logical.Frame.of false true true) == (false, true)
+
 /-- The item takes part in baseline alignment in its row (`align-self: baseline`, or
 `auto` with `align-items: baseline`). -/
 def gridBaselineSelf (own container : ItemAlign) : Bool :=
@@ -325,7 +339,7 @@ def gridLayoutH (kids : Children) (s : Computed) (items0 : Array Item) (box : Co
     let areaX := if rtl then box.width-LU.toPx extent.1-areaW else LU.toPx extent.1
     -- a subgrid always stretches in its subgridded axes (§9 of CSS Grid 2, subgrid box alignment)
     let justify : Grid.SelfAlign := if is.grid.templateColumns.subgrid && is.display.isGrid then .stretch
-      else gridSelfAlign is.align.justifySelf s.align.justifyItems rtl (is.direction != s.direction)
+      else gridSelfAlign is.align.justifySelf s.align.justifyItems rtl ((selfStartSides (gridFrame is)).1 != rtl)
     let width ← gridItemWidth kids item is areaW (justify == .stretch)
     let outerW := width+m.left+m.right
     let dx := match autoCrossOffset is.autoMarginLeft is.autoMarginRight (areaW-outerW) with
@@ -432,7 +446,8 @@ def gridLayoutH (kids : Children) (s : Computed) (items0 : Array Item) (box : Co
     let areaH := gridPx extent.2
     let padV := is.borderEdges.top+is.borderEdges.bottom+is.padding.top+is.padding.bottom
     let rowSubgrid := is.grid.templateRows.subgrid && is.display.isGrid
-    let align : Grid.SelfAlign := if rowSubgrid then .stretch else gridSelfAlign is.align.alignSelf s.align.alignItems false
+    let align : Grid.SelfAlign := if rowSubgrid then .stretch
+      else gridSelfAlign is.align.alignSelf s.align.alignItems false (selfStartSides (gridFrame is)).2
     let minH := (CSS.resolve areaH is.minHeight).getD 0
     let maxH := CSS.resolve areaH is.maxHeight
     let height := match CSS.resolve areaH is.height with
@@ -539,8 +554,6 @@ theorem gridTranspose_twice (g : GridStyle) :
 
 /-- A grid container's style and its items' styles as the physical layout reads them in a
 vertical writing mode. -/
-def gridFrame (s : Computed) : Logical.Frame :=
-  Logical.Frame.of (s.pos.writingMode == .verticalRl) (s.pos.writingMode == .verticalLr) (s.direction == .rtl)
 
 def gridVerticalView (kids : Children) (s : Computed) : Children × Computed :=
   let t := fun (c : Computed) => {c with grid := gridTranspose c.grid, align := alignTranspose c.align}
