@@ -5533,7 +5533,16 @@
     define(C.prototype, 'toString', function toString() { return this.href; });
   }
   // ==== end of basics ====
-  def('matchMedia', q => ({ matches: false, media: String(q), addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {} }));
+  // matchMedia (CSSOM View §4.2). Whether the query holds is Lean's (node_query 41:
+  // Rendering.MediaQuery.holds in the media environment of the page's layout, the one its
+  // style sheets are read in), asked at each read of `matches`, so it follows the window.
+  // A query Lean can not read, and an engine without the op, answer false. No change events yet.
+  def('matchMedia', q => {
+    const media = String(q);
+    const list = { media, onchange: null, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent() { return true; } };
+    Object.defineProperty(list, 'matches', { enumerable: true, configurable: true, get() { return n.query(0, 41, media) === '1'; } });
+    return list;
+  });
   def('postMessage', () => {});
   def('focus', () => {}); def('blur', () => {}); def('close', () => {}); def('stop', () => {}); def('scrollTo', () => {}); def('scrollBy', () => {});
   def('alert', () => {}); def('confirm', () => false); def('prompt', () => null);
