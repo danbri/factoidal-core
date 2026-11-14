@@ -320,7 +320,17 @@ def contextualFragment (rid : Nat) (src : String) : Op Nat := do
       if (d.get ex.doc).htmlDoc && ex.lname == "html" && ex.ns == some htmlNS then (htmlNS, "body")
       else (ex.ns.getD "", ex.lname)
     | none => (htmlNS, "body")
-  make (.createNode (13 + 16 * doc) (ns ++ "\x00" ++ name ++ "\x00" ++ src))
+  let kind := 13 + 16 * doc
+  let data := ns ++ "\x00" ++ name ++ "\x00" ++ src
+  -- (xmlweb) The fragment is not the arena's next node: the nodes of the parse come before
+  -- it (`DOM.Fragment.parseInto`). Its number is read from the parse, so that the command
+  -- records the node it makes; with the arena's size as the number, replaying the command
+  -- made another node and every call answered HierarchyRequestError.
+  match createKind d kind data with
+  | (_, .ok n) =>
+    exec (.createNode kind data n)
+    return n
+  | (_, .error _) => throw (-4)
 
 /-! ## The selection (Selection API, w3c/selection-api) -/
 
