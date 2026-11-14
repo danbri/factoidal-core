@@ -121,8 +121,11 @@ Open:
   containers: the EC and RSA imports call HACL\* to validate, which Lean cannot unfold, and
   the JWK path goes through prelude.js's object. They hold under the hypothesis that HACL\*
   accepts the key it made; stating that needs the key invariant as a predicate on the store.
-- A PKCS #8 exactness theorem like `spkiOf_of_readSpki` (PKCS #8 allows attributes after the
-  key, which the reader accepts and ignores, so the statement is not an equality).
+- PKCS #8 exactness is proved as far as the format allows (`pkcs8_of_readPkcs8`, with
+  `algId_of_readAlgId`): an accepted input is one SEQUENCE with nothing after it, holding the
+  version 0 or 1, the AlgorithmIdentifier and the privateKey OCTET STRING in that order with no
+  byte skipped, then a tail. The tail (RFC 5958 attributes and public key) is not shown to be
+  well-formed DER: the reader does not interpret it.
 - Constant time is HACL\*'s claim for its C (record 2026-11-09 §6); nothing here restates it.
 
 ## 5. Unverified or flagged lines (`skills/lean-risk-flags`)
@@ -142,12 +145,18 @@ Open:
 
 ## 6. Found and left
 
-- **Secure contexts.** `historical.any.html` (6 subtests) expects `crypto.subtle`, `SubtleCrypto`
-  and `CryptoKey` to be absent from a page that is not a secure context. The engine has no
-  secure-context decision for windows: the prelude has a getter for workers only, and it
-  calls `file:` insecure. The decision belongs in Lean (`Net.ReferrerPolicy.trustworthy` is the
-  start: https, wss and loopback hosts), with `file:` and the creator's context for `about:`
-  and `blob:` documents settled first, or local pages lose `crypto.subtle`.
+- **Secure contexts** (done on branch `wip/webcrypto-pkcs8`). `historical.any.html` expects
+  `crypto.subtle`, `SubtleCrypto` and `CryptoKey` to be absent from a page that is not a
+  secure context. `Net/SecureContext.lean` decides it (Secure Contexts §3.1 and §3.2, HTML's
+  "secure context" on the top-level creation URL): `https`, `wss` and `file` URLs; `http`,
+  `ws` and `ftp` on a loopback host (127.0.0.0/8, ::1, localhost names); `about:blank`,
+  `about:srcdoc` and `data:`; `blob:` of such an origin. web_api op 43 answers it; the prelude
+  asks once per realm when `crypto` is first used, and leaves out the `[SecureContext]`
+  members (`subtle`, `SubtleCrypto`, `CryptoKey`, `randomUUID`) when the answer is no.
+  `isSecureContext` (windows, which had none, and workers, which had a JavaScript test of the
+  protocol) answers from the same op. Proved: `urlTrustworthy_https`,
+  `urlTrustworthy_http_remote` (the refusal), `secureContext_unparsed`; 19 `#guard` cases.
+  Not modelled: the ancestor check for frames (a frame is judged by its own URL).
 - **RSA-PSS with SHA-1** (about 250 subtests on the branch with RSA): HACL\*'s `Hacl_RSAPSS` is
   SHA-2 only, so the key is refused at import. An EMSA-PSS encoding in Lean over HACL\*'s hash
   and private operation would serve it, as EMSA-PKCS1-v1_5 does; it is not written, because
