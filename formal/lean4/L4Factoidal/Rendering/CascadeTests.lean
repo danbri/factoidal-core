@@ -303,7 +303,7 @@ private def hinted (html css tag : String) (f : Computed → Bool) : Bool :=
       | none => false
     | .error _ => false
 
-private def isPx (v : Float) : Length → Bool
+private def isPx (v : Float) : CSS.Length → Bool
   | .px x => x == v
   | _ => false
 
