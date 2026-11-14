@@ -59,8 +59,12 @@ definite and content-sized containers with `min-height`/`max-height`; nested con
 atomic inline box; anonymous items for text; blockified items; absolutely positioned children with the static
 position of §4.1; intrinsic widths of a container (sum for a row, largest for a column).
 
-Not done: wrapping columns; baseline alignment (read as start); `visibility: collapse`; aspect ratio of
-replaced items; intrinsic widths of wrapping containers; vertical writing modes; fragmentation.
+Added in the second round (section 6): wrapping columns (`flexColumnWrap`), main-axis distribution with no
+lost remainder (`Flex.lead`, `Flex.spread`), the min-content width of a wrapping row.
+
+Not done: baseline alignment (read as start; it waits for a first-baseline field of `Result` that the grid
+work adds); `visibility: collapse`; aspect ratio of replaced items; intrinsic widths of wrapping columns;
+vertical writing modes; fragmentation.
 
 ## 3. Positioning, box sizing, lengths
 
@@ -77,9 +81,14 @@ replaced items; intrinsic widths of wrapping containers; vertical writing modes;
 - `Length` gains `calc (percent) (px)`: `calc(100% - 2rem)` and border-box percentages.
 - Blocks honour `min-height` and `max-height` (px).
 
-Not done: floats and `clear` (the values are read), margin collapse, `position: sticky` offsets (laid out as
-relative with no offset), fixed boxes that stay put on scroll (they are laid out once in the first viewport),
-percentage heights against a definite containing block, overflow scroll containers, multi-column.
+Added in the second round (section 6): margin collapse, floats and `clear`, percentage heights against a
+height that the styles make definite.
+
+Not done: `position: sticky` offsets (laid out as relative with no offset), fixed boxes that stay put on
+scroll (they are laid out once in the first viewport), percentage heights against a height known only in
+layout (a stretched flex item, the root), overflow scroll containers, multi-column, self-alignment of
+absolutely positioned boxes (CSS Align 3 §6.1.2), the sizing keywords (`min-content`, `max-content`,
+`fit-content`, `stretch`) as values of `width` and `height`.
 
 ## 4. Proved, tested, open
 
@@ -100,6 +109,14 @@ Proved (Lean theorems; axioms `propext`, `Classical.choice`, `Quot.sound` only):
 | `Flex.alignOffset_within` | an item no larger than its line lies inside it |
 | `Layout.offsetParent_sound`, `offsetAncestor_sound` | an offset parent is positioned, or the body, or a table cell or table |
 | `LinkTheorems.render_links`, `render_link_complete` | restated on `layoutRoot` (the root with its positioned boxes); proofs unchanged |
+| `Floats.leftEdge_ge`, `rightEdge_le`, `leftEdge_clears`, `rightEdge_clears` | the room beside floats is inside the container and beside every float that meets the range |
+| `Floats.clearY_ge`, `clearY_clears` | clearance never moves a box up; a cleared box is below every float of the sides it clears |
+| `Floats.place_disjoint` | a float placed by `place` shares no point with a float placed before it |
+| `Flex.lead_nonneg`, `lead_mono`, `lead_le` | distribution never pulls an item before the line's start or towards the item before it; the last item ends inside the line |
+| `Flex.lead_between_last` | with `space-between`, free space and two or more items, the last item ends exactly at the line's end, whatever the remainder of the division |
+| `Flex.spread_pairwise`, `spread_snd` | boxes placed by `spread` do not overlap; sizes are kept |
+| `Layout.percentHeights_size`, `percentHeights_get` | resolving percentage heights keeps one style per node |
+| `Layout.percentHeight_rest`, `percentHeight_px`, `percentHeight_auto`, `percentHeight_absolute` | the pass changes nothing of a style but its height; a length, `auto` and the style of an absolutely positioned box are left as they are |
 
 Tested only (`#guard` through `Layout.render`, original fixtures): `FlexLayoutTests.lean` (90 cases),
 `PositionLayoutTests.lean` (47 cases), and the readers' guards in `BoxAlign.lean`, `FlexStyle.lean`,
@@ -121,4 +138,138 @@ Open:
 
 ## 5. Measured
 
-To be filled from the cloud checks (run ids, subtests before and after per directory).
+**First round (flex, positioning; merged as main 5cfcaf872)** (run 43563338346, core 558b4eab0, baseline main 19fb349c1):
+
+| Directory | Chrome subtests | Baseline | This | Difference |
+|---|---:|---:|---:|---:|
+| css/css-flexbox | 4813 | 573 | 1093 | +520 |
+| css/css-grid | 16015 | 2846 | 3081 | +235 |
+| css/css-sizing | 6523 | 2077 | 2160 | +83 |
+| css/css-align | 5435 | 2928 | 2874 | -54 |
+| editing/other | 41 | 2 | 32 | +30 |
+| css/css-position | 1553 | 574 | 589 | +15 |
+| content-security-policy/embedded-enforcement | 13 | 0 | 7 | +7 |
+| html/syntax | 14 | 8 | 13 | +5 |
+| css/cssom-view | 2 | 1 | 0 | -1 |
+| css/CSS2 | 2566 | 1826 | 1826 | +0 |
+| css/css-box | 5 | 5 | 5 | +0 |
+| css/css-overflow | 4 | 0 | 0 | +0 |
+
+All names of the check: {"names": 2469, "run": 2469, "chrome": 48660, "passed": 21585, "baseline": 20734}. 39 tests worse, 196 better.
+
+Worse: `/css/CSS2/abspos/abspos-in-block-in-inline-in-relpos-inline-002.html` 1 -> 0; `/css/CSS2/positioning/inline-static-position-001.html` 1 -> 0; `/css/css-align/abspos/align-self-default-overflow-htb-ltr-htb.html` 2 -> 0; `/css/css-align/abspos/align-self-default-overflow-htb-ltr-vrl.html` 2 -> 0; `/css/css-align/abspos/align-self-default-overflow-htb-rtl-htb.html` 2 -> 0; `/css/css-align/abspos/align-self-default-overflow-htb-rtl-vrl.html` 2 -> 0; `/css/css-align/abspos/align-self-default-overflow-vrl-ltr-htb.html` 2 -> 0; `/css/css-align/abspos/align-self-default-overflow-vrl-ltr-vrl.html` 2 -> 0; `/css/css-align/abspos/align-self-default-overflow-vrl-rtl-htb.html` 2 -> 0; `/css/css-align/abspos/align-self-default-overflow-vrl-rtl-vrl.html` 2 -> 0; `/css/css-align/abspos/justify-self-default-overflow-htb-ltr-htb.html` 2 -> 0; `/css/css-align/abspos/justify-self-default-overflow-htb-ltr-vrl.html` 2 -> 0; `/css/css-align/abspos/justify-self-default-overflow-htb-rtl-htb.html` 2 -> 0; `/css/css-align/abspos/justify-self-default-overflow-htb-rtl-vrl.html` 2 -> 0; `/css/css-align/abspos/justify-self-default-overflow-vrl-ltr-htb.html` 2 -> 0; `/css/css-align/abspos/justify-self-default-overflow-vrl-ltr-vrl.html` 2 -> 0; `/css/css-align/abspos/justify-self-default-overflow-vrl-rtl-htb.html` 2 -> 0; `/css/css-align/abspos/justify-self-default-overflow-vrl-rtl-vrl.html` 2 -> 0; `/css/css-align/abspos/safe-align-self-vrl.html` 12 -> 0; `/css/css-align/abspos/safe-justify-self-htb.html` 6 -> 0; `/css/css-align/abspos/safe-justify-self-vlr.html` 6 -> 0; `/css/css-align/abspos/safe-justify-self-vrl.html` 6 -> 0; `/css/css-flexbox/align-self-014.html` 1 -> 0; `/css/css-flexbox/balance/balance-negative-margin-002.html` 2 -> 1; `/css/css-flexbox/flexbox-baseline-wrap-reverse-unequal-lines.html` 1 -> 0; `/css/css-flexbox/flexbox-ignores-first-letter.html` 12 -> 6; `/css/css-flexbox/getcomputedstyle/flexbox_computedstyle_flex-shorthand-invalid.html` 1 -> 0; `/css/css-flexbox/intrinsic-size/row-use-cases-001.html` 5 -> 2; `/css/css-flexbox/justify-content-rounding.html` 1 -> 0; `/css/css-flexbox/main-axis-margin-rounding.html` 1 -> 0; `/css/css-flexbox/percentage-size-quirks-004.html` 3 -> 1; `/css/css-grid/alignment/grid-align-baseline.html` 1 -> 0; `/css/css-grid/grid-lanes/grid-lanes-container-minimum-size-single-axis-scroll-container.html` 4 -> 2; `/css/css-position/position-absolute-in-inline-dynamic.html` 8 -> 1; `/css/css-position/position-absolute-in-inline-vertical-lr.html` 8 -> 0; `/css/css-sizing/abspos-intrinsic-height-inset-percentage-child.html` 4 -> 1; `/css/css-sizing/stretch/abspos-inline-containing-block.html` 2 -> 0; `/css/css-sizing/stretch/flex-basis-1.html` 4 -> 1; `/css/cssom-view/elementFromPoint-visibility-hidden-resizer.html` 1 -> 0.
+
+The 39 tests that got worse in the first round are of three kinds: tests of self-alignment of absolutely
+positioned boxes and of absolute boxes in inline containing blocks that passed while absolute boxes stayed in
+the flow (css-align/abspos, css-position/position-absolute-in-inline-*); tests whose rules use a child
+combinator, which the render cascade of that commit dropped, so items had no width (rounding tests,
+align-self-014); and features not done yet (first-letter, quirks-mode percentages, `stretch`).
+
+**Second round (margin collapse, floats, inline-blocks, wrapping columns, percentage heights)** (run 43578643617, core fe0f14576, baseline main d799500c7):
+
+| Directory | Chrome subtests | Baseline | This | Difference |
+|---|---:|---:|---:|---:|
+| css/css-flexbox | 4813 | 573 | 1457 | +884 |
+| html/semantics | 598 | 196 | 369 | +173 |
+| css/css-sizing | 6523 | 2077 | 2180 | +103 |
+| trusted-types | 166 | 0 | 93 | +93 |
+| css/css-align | 5435 | 2928 | 3013 | +85 |
+| css/cssom-view | 2696 | 694 | 743 | +49 |
+| content-security-policy/securitypolicyviolation | 34 | 2 | 34 | +32 |
+| css/css-position | 1553 | 576 | 595 | +19 |
+| html/rendering | 92 | 53 | 36 | -17 |
+| css/css-overflow | 1209 | 476 | 488 | +12 |
+| sanitizer-api | 271 | 18 | 28 | +10 |
+| webcodecs | 47 | 0 | 9 | +9 |
+| domxpath | 7 | 0 | 7 | +7 |
+| css/CSS2 | 2566 | 1826 | 1831 | +5 |
+| css/css-box | 982 | 375 | 375 | +0 |
+| css/css-display | 576 | 379 | 379 | +0 |
+| css/css-grid | 480 | 23 | 23 | +0 |
+
+All names of the check: {"names": 3967, "run": 3967, "chrome": 85186, "passed": 63330, "baseline": 61862}. 33 tests worse, 242 better.
+
+Worse: `/content-security-policy/reporting/report-frame-ancestors-no-parent-cookies.sub.html` 1 -> 0; `/css/CSS2/abspos/abspos-in-block-in-inline-in-relpos-inline-002.html` 1 -> 0; `/css/CSS2/linebox/vertical-align-top-bottom-001.html` 5 -> 0; `/css/CSS2/positioning/inline-static-position-001.html` 1 -> 0; `/css/css-align/abspos/align-self-default-overflow-vrl-ltr-htb.html` 2 -> 0; `/css/css-align/abspos/align-self-default-overflow-vrl-ltr-vrl.html` 2 -> 0; `/css/css-align/abspos/align-self-default-overflow-vrl-rtl-htb.html` 2 -> 0; `/css/css-align/abspos/align-self-default-overflow-vrl-rtl-vrl.html` 2 -> 0; `/css/css-align/abspos/justify-self-default-overflow-htb-rtl-htb.html` 2 -> 0; `/css/css-align/abspos/justify-self-default-overflow-htb-rtl-vrl.html` 2 -> 0; `/css/css-align/abspos/justify-self-default-overflow-vrl-rtl-htb.html` 2 -> 0; `/css/css-align/abspos/justify-self-default-overflow-vrl-rtl-vrl.html` 2 -> 0; `/css/css-flexbox/align-self-014.html` 1 -> 0; `/css/css-flexbox/balance/balance-negative-margin-002.html` 2 -> 1; `/css/css-flexbox/flexbox-baseline-wrap-reverse-unequal-lines.html` 1 -> 0; `/css/css-flexbox/flexbox-ignores-first-letter.html` 12 -> 6; `/css/css-flexbox/getcomputedstyle/flexbox_computedstyle_flex-shorthand-invalid.html` 1 -> 0; `/css/css-flexbox/intrinsic-size/row-use-cases-001.html` 5 -> 2; `/css/css-flexbox/justify-content-rounding.html` 1 -> 0; `/css/css-flexbox/main-axis-margin-rounding.html` 1 -> 0; `/css/css-flexbox/percentage-size-quirks-004.html` 3 -> 1; `/css/css-position/position-absolute-in-inline-dynamic.html` 8 -> 1; `/css/css-position/position-absolute-in-inline-vertical-lr.html` 8 -> 0; `/css/css-position/sticky/position-sticky-margins.html` 2 -> 1; `/css/css-sizing/abspos-intrinsic-height-inset-percentage-child.html` 4 -> 1; `/css/css-sizing/stretch/abspos-inline-containing-block.html` 2 -> 0; `/css/css-sizing/stretch/flex-basis-1.html` 4 -> 1; `/css/css-sizing/stretch/flex-line-003.html` 3 -> 0; `/css/css-sizing/stretch/flex-line-004.html` 1 -> 0; `/css/cssom-view/elementFromPoint-visibility-hidden-resizer.html` 1 -> 0; `/html/rendering/non-replaced-elements/the-fieldset-and-legend-elements/legend-display.html` 52 -> 36; `/html/rendering/replaced-elements/embedded-content/video-controls-stacking-hit-test.html` 1 -> 0; `/html/semantics/scripting-1/the-script-element/module/charset-01.html` 6 -> 0.
+
+The baseline of the second check is the full run of main d799500c7, which is before the first round was
+merged: the differences above are both rounds together (css-flexbox 573, then 1,093, then 1,457). Other
+directories of the table moved by main's own commits. New among the worse tests, each a pass that did not
+come from the feature: `legend-display` (a legend with `display: flex` and the like now has a box, and the
+test compares its width with a legend that is still laid out inline), `vertical-align-top-bottom-001`
+(inline-blocks with blocks inside are real boxes now and `vertical-align: top`/`bottom` is not read for
+them yet), `stretch/flex-line-003` and `-004` (`width: stretch` is not read, and a wrapping column no longer
+lays out as one column), `justify-content-rounding` (passes at whole px now; at 40.1px the container's edge
+is not on the 1/64 px grid that its items are on).
+
+Cost, measured in the interpreter on rows nested 8, 10, 12 and 14 deep where each nested container is
+shorter than a sibling: 204, 775, 2749, 12028 ms as first merged (each level laid the nested container out
+twice); 42, 63, 93, 138 ms with the stretched height known before layout.
+
+## 6. Second round: block flow, inline-blocks, wrapping columns
+
+**Margin collapse (CSS 2.1 §8.3.1).** In `flow`, the margin after a block and the margin before the next
+collapse to the larger (`previous`, `Result.marginBottom`). A block with no border, padding, clearance or
+formatting context of its own shows the top margin of its first block child and the bottom margin of its last
+(`collapsesTop`, `collapsesBottom`, `leadMargin`: a loop down the first blocks). White space between blocks
+does not separate margins; text does. The root, flex items and positioned boxes are not collapsed through.
+Margins are not negative in this profile.
+
+**Floats (CSS 2.1 §9.5).** `Rendering/Floats.lean` is the geometry on layout units, with no engine import:
+`band` (the room beside the floats for a range of y), `clearY`, `place` (the first of the flow's y and the
+bottom edges of the floats where the new float fits, against its side; below all when it fits nowhere). In
+`flow` a floated child is laid out at its given or shrink-to-fit width (`Task.sized`), placed, and recorded in
+`floats`; lines take the band (`inlineLayout`'s `band`), a box with a formatting context of its own (a table,
+a flex container, a box that clips) is laid out in the band, and a plain block is laid out under the floats
+with its lines beside them (`Task.flowed id floats`: the floats travel down and back up in `Result.floats`).
+A box laid out with no floats around it is the root of its formatting context: it is as high as its floats
+(§10.6.7). `clear` adds the clearance before a block or a float. Intrinsic widths count uncleared floats side
+by side, so a box that shrinks to fit around floated children is as wide as their row. A flow with no float
+computes none of this (`floats.isEmpty`).
+
+Simplifications to know: a plain block child of a flow with no float so far is laid out as a formatting
+context root, so floats inside it do not reach the paragraphs after it (they do when a float came before);
+a float inside an inline box is laid out inline; a line too narrow for its first word still takes it;
+`shape-outside` is not read.
+
+**Inline-blocks with blocks inside (CSS 2.1 §9.2.2).** An inline-block that has a block-level or floated
+child, or is positioned and has element children (`Layout.blockInside`), is one atomic box in its line whose
+contents are laid out by `layoutTask` (as an inline flex container is): blocks in it have their widths, its
+floats are contained, and it is the containing block of its absolutely positioned descendants. An inline-block
+with inline content only is laid out as before (`atomicBox`). Its bottom margin edge sits on the baseline
+in both cases, which is not CSS 2.1 §10.8.1 for a box with lines in it (open).
+
+**Percentage heights (CSS 2.1 §10.5).** `definiteHeight` walks up from a box with a percentage `height`
+while the ancestors' heights are percentages, to a length; `percentHeights` (in `layoutRoot`, so the theorems
+about `render` are untouched) turns each such percentage into px before layout. A percentage of a height that
+depends on content stays and is read as `auto`. The root's own percentage is not resolved (the page would
+lose its length: a fixed-height root does not yet scroll its overflow). Cost: one match per node, and a walk
+only from nodes that have a percentage height.
+
+**Wrapping columns (§9.3).** `flexColumnWrap`: items break into columns at the container's height or
+`max-height` (`Flex.breakLines`), each column resolves its flexible lengths (`Flex.resolve`), a column is as
+wide as its widest margin box, and `align-content` distributes the columns across the width (`stretch` shares
+the free width). `wrap-reverse` and a right-to-left container start from the right. An item that `stretch`
+makes wider than its content has its content laid out a second time.
+
+**Distribution with no lost remainder.** `Flex.justify` gave an offset and a gap, both rounded down, so the
+last item of `space-between` could end up to n−2 units before the line's end. `Flex.lead j free n k` is the
+space before item k as a share of the whole free space, and `Flex.spread` places a line with it:
+`lead_between_last` proves the last item ends exactly at the end.
+
+Tested only in this round: the wiring of all of the above in `Layout.lean` and `FlexLayout.lean`
+(`PositionLayoutTests.lean`: floats, clear, inline-blocks, percentage heights, margin collapse;
+`FlexLayoutTests.lean`: 20 cases of wrapping columns, wrapping-row min-content). The expected numbers are by
+hand from the specifications.
+
+**Cost of nested rows.** A row laid a nested container out once to measure it and again to stretch it to
+the line, so N nested rows, each shorter than a sibling, cost 2^N layouts. In a single-line container with a
+definite cross size the stretched height is known before the item's contents are laid out (§9.4 step 11), and
+an item whose contents depend on its height is now laid out once at that height. The re-layout of a stretched
+item is then a single pass, so nested auto-height rows are polynomial (timings in section 5). Still two
+passes: a stretched container in a multi-line row, and a column item whose flexed height differs from its
+content's; a cache of layouts by node and constraints is the general fix.
+
+Open after this round: the same list as section 4, and: negative margins in collapse; floats that leave a
+block which is not a formatting context root when no float preceded it; the baseline of an inline-block;
+a theorem that a flow with no float lays out as it did before floats (it is true by `floats.isEmpty`, and is
+tested by the fixtures of the first round, which did not change).
