@@ -56,20 +56,32 @@ def coverIndex : Thunk (Std.HashMap String (List String)) := Thunk.mk fun _ =>
 have it as a longhand, and the legacy names of those. -/
 def coveringNames (p : String) : List String := p :: (coverIndex.get[p]?).getD []
 
+/-- A rule that matches the element, or its `style` attribute, may declare a flow-relative
+property (`CssValues.Logical.mentions`). When none does, a physical property is cascaded
+alone and the element's flow is not looked up. -/
+def usesLogical (v : View) (id : Nat) : Bool :=
+  ((v.matchesOf id).any fun (_, rule, _) => rule.usesLogical) ||
+    (CssValues.declNames (attrValue (v.dom.get id) "style")).any CssValues.Logical.mentions
+
 /-- The cascaded value of property `p` (a name of the table, or a custom property) on
-element `id`: the canonical specified value of the winning declaration. -/
-def cascaded (v : View) (id : Nat) (p : String) : Option String := Id.run do
+element `id`: the canonical specified value of the winning declaration. `also` is the
+flow-relative name of `p` in the element's flow, when it has one (CSS Logical 1 §4.1): its
+declarations are declarations of `p`. -/
+def cascaded (v : View) (id : Nat) (p : String) (also : Option String := none) : Option String := Id.run do
   let n := v.dom.get id
   -- `all` sets every property but `direction`, `unicode-bidi` and the custom properties
   -- (CSS Cascade 4 §3.2), to a CSS-wide keyword
   let allApplies := !CssValues.isCustom p && p != "direction" && p != "unicode-bidi"
   let names := if allApplies then "all" :: coveringNames p else coveringNames p
+  let names := match also with
+    | some q => names ++ coveringNames q
+    | none => names
   let mut best : Option (List Nat × String) := none
   let mut order : Nat := 0
   let consider := fun (best : Option (List Nat × String)) (key : List Nat) (d : Declaration) =>
     if names.contains d.property && (best.map (fun b => keyLE b.1 key)).getD true then
       let value := if d.property == "all" then CssValues.specified "all" d.value
-        else (CssValues.expand d.property d.value).bind (·.lookup p)
+        else (CssValues.expand d.property d.value).bind fun ls => (ls.lookup p).orElse fun _ => also.bind fun q => ls.lookup q
       match value with
       | some value => some (key, value)
       | none => best
@@ -84,7 +96,7 @@ def cascaded (v : View) (id : Nat) (p : String) : Option String := Id.run do
       order := order + 1
   for d in CssValues.Block.parseOnly names (attrValue n "style") do
     let key := inlineKey d.important order
-    if (d.name == p || d.name == "all") && (best.map (fun b => keyLE b.1 key)).getD true then best := some (key, d.value)
+    if (d.name == p || d.name == "all" || some d.name == also) && (best.map (fun b => keyLE b.1 key)).getD true then best := some (key, d.value)
     order := order + 1
   return best.map (·.2)
 
@@ -143,6 +155,18 @@ the walk to the root and the chain of variables. -/
 def computedLonghand (v : View) : Nat → Nat → String → String
   | 0, _, _ => ""
   | fuel + 1, id, p =>
+    -- the element's flow, looked up only for a property of a logical property group
+    let flow := fun (_ : Unit) =>
+      CssValues.Logical.Flow.of (computedLonghand v fuel id "writing-mode") (computedLonghand v fuel id "direction")
+    let physicalName := if CssValues.Logical.mentions p && (CssValues.Logical.physical {} p).isSome
+      then CssValues.Logical.physical (flow ()) p else none
+    match physicalName with
+    | some name =>
+      -- a flow-relative property has the computed value of the physical property it is
+      computedLonghand v fuel id name
+    | none =>
+    let also := if (CssValues.Logical.logical {} p).isSome && usesLogical v id
+      then CssValues.Logical.logical (flow ()) p else none
     let custom := CssValues.isCustom p
     let row := CssValues.lookup p
     let inherited := custom || (row.map (·.inherited)).getD false
@@ -166,7 +190,7 @@ def computedLonghand (v : View) : Nat → Nat → String → String
       | some pid => computedLonghand v fuel pid p
       | none => initial ()
     let default := fun (_ : Unit) => if inherited then fromParent () else initial ()
-    match cascaded v id p with
+    match cascaded v id p also with
     | none => default ()
     | some value =>
       if value == "inherit" then fromParent ()
@@ -271,20 +295,48 @@ def customNamesText (v : View) (id : Nat) : String := "\x00".intercalate (custom
 the property table alone, for every property (the layout profile's too). -/
 def computedBase : Nat := 100000
 
+/-- The flow of element `id`: its computed `writing-mode` and `direction`. -/
+def flowOf (v : View) (id : Nat) : CssValues.Logical.Flow :=
+  CssValues.Logical.Flow.of (computedLonghand v depthBound id "writing-mode") (computedLonghand v depthBound id "direction")
+
+/-- The physical property that a flow-relative property is on element `id` (CSS Logical 1);
+any other name is itself. -/
+def physicalNameOf (v : View) (id : Nat) (name : String) : String :=
+  if CssValues.Logical.mentions name && (CssValues.Logical.physical {} name).isSome then
+    (CssValues.Logical.physical (flowOf v id) name).getD name
+  else name
+
+/-- The flow-relative name of physical property `name` on element `id`, when the property
+is in a logical property group and a declaration of the element may be flow-relative. -/
+def alsoOf (v : View) (id : Nat) (name : String) : Option String :=
+  if (CssValues.Logical.logical {} name).isSome && usesLogical v id then CssValues.Logical.logical (flowOf v id) name
+  else none
+
+/-- A name that is not flow-relative is its own physical name: no flow is looked up. -/
+theorem physicalNameOf_plain (v : View) (id : Nat) (name : String) (h : CssValues.Logical.mentions name = false) :
+    physicalNameOf v id name = name := by
+  simp [physicalNameOf, h]
+
 /-- The resolved value of a longhand (CSSOM §9.1): for a property of the layout profile, the
 profile's answer, or the declaration's computed value where that is the answer
 (`declaredWins`, `absoluteWins`); for any other, the computed value by the property table. -/
 def resolvedLonghand (v : View) (id : Nat) (name : String) : String :=
+  let name := physicalNameOf v id name
+  let also := alsoOf v id name
   match (ComputedValues.values (v.styles[id]?.getD {})).lookup name with
   | some value =>
-    if declaredWins.contains name then
-      match cascaded v id name with
+    -- with flow-relative declarations in play, a border side (the profile has one border
+    -- for all sides) and any side or size in a vertical writing mode (the profile lays out
+    -- horizontal lines) are answered by the property table
+    if also.isSome && (name.startsWith "border-" || (flowOf v id).vertical) then computedOf v id name
+    else if declaredWins.contains name then
+      match cascaded v id name also with
       | some declared => if CssValues.cssWide.contains declared then value else computedOf v id name
       | none => value
     else if absoluteWins.any (fun pre => name.startsWith pre) then
       -- a margin, padding or size limit the element declares as an absolute length (also
       -- through calc() and units the layout profile does not read): that length
-      match cascaded v id name with
+      match cascaded v id name also with
       | some declared =>
         if CssValues.cssWide.contains declared then value
         else
