@@ -369,18 +369,22 @@ def onFrame (s : Sock) (f : Frame) : Sock × List PageFetch.Wire :=
     (s, [sockWire s "WEBSOCKET-SEND" (some (ByteArray.mk (encodeClient k 10 f.payload).toArray))])
   | _ => (s, [])
 
-/-- Read every whole frame of the buffer (at most `fuel`). -/
-def drain (s : Sock) : Nat → Sock × List PageFetch.Wire
-  | 0 => (s, [])
+/-- Read every whole frame of the buffer (at most `fuel`), the wires in order (a loop: a piece of
+64 KiB can hold thousands of frames). -/
+def drainGo (s : Sock) (acc : Array PageFetch.Wire) : Nat → Sock × Array PageFetch.Wire
+  | 0 => (s, acc)
   | fuel + 1 =>
-    if s.readyState == 3 then (s, []) else
+    if s.readyState == 3 then (s, acc) else
     match parse s.buf with
-    | .more => (s, [])
-    | .bad _ _ => fail s
+    | .more => (s, acc)
+    | .bad _ _ => let (s, ws) := fail s; (s, acc ++ ws.toArray)
     | .frame f rest =>
       let (s, ws) := onFrame { s with buf := rest } f
-      let (s, ws') := drain s fuel
-      (s, ws ++ ws')
+      drainGo s (acc ++ ws.toArray) fuel
+
+def drain (s : Sock) (fuel : Nat) : Sock × List PageFetch.Wire :=
+  let (s, a) := drainGo s #[] fuel
+  (s, a.toList)
 
 /-- The host's answer for this connection. `sha1`: the engine's SHA-1. -/
 def onAnswer (sha1 : ByteArray → ByteArray) (s : Sock) (a : PageFetch.Answer) : Sock × List PageFetch.Wire :=
