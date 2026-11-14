@@ -59,6 +59,11 @@ two classes with the same private name share it. Record, section 5. -/
 def privKey (name : String) : String := String.singleton (Char.ofNat 0x10FFFE) ++ name
 def isPrivKey (k : String) : Bool := k.front == Char.ofNat 0x10FFFE
 
+/-- The names that the parser's reading of `for await` calls (`forAwaitStmt` in
+`JS/Parser.lean`, `NativeX.forAwait`): hidden properties of the global object. They start
+with U+10FFFE like a private name's key, so no identifier of source text is one of them. -/
+def forAwaitFn (k : Nat) : String := privKey ("forAwait" ++ toString k)
+
 /-- JavaScript values (§6.1); see `Value.lean`. -/
 inductive Value where
   | undef

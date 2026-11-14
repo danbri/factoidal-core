@@ -1096,6 +1096,13 @@ def helperRunning : String := privKey "%HelperRunning"
 /-- The hidden slot of a Date object (`[[DateValue]]` is its `.prim (.num t)`). -/
 def dateKey : String := privKey "%DateValue"
 
+/-- The hidden slots of an async-from-sync iterator (§27.1.6.3 `[[SyncIteratorRecord]]`): the
+sync iterator and its `next`; and the global object's hidden property that holds
+%AsyncFromSyncIteratorPrototype%. -/
+def syncIterKey : String := privKey "%SyncIterator"
+def syncNextKey : String := privKey "%SyncNext"
+def asyncFromSyncProtoKey : String := privKey "%AsyncFromSyncIteratorPrototype"
+
 /-- The time value of a Date object. -/
 def thisDate? (v : Value) : M (Option Float) := do
   match v with
@@ -7430,6 +7437,102 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
         | 35 | 37 => Date.timeString t
         | 38 => Date.utcString t
         | _ => Date.toStr t))
+    | (.x (.forAwait 0)) =>
+      -- GetIterator(obj, async) (§7.4.3): the @@asyncIterator method's iterator, or an
+      -- async-from-sync iterator over the @@iterator method's (§27.1.6.1).
+      let m ← match a0 with
+        | .undef | .null => throwErr .type "object is not async iterable"
+        | _ => getV n a0 (symKey 1)
+      match m with
+      | .undef | .null =>
+        let sync ← getIterator n a0
+        let nextM ← getV n sync "next"
+        let w ← alloc { proto := (← ownValue r.globalObj asyncFromSyncProtoKey) }
+        setHidden w syncIterKey sync
+        setHidden w syncNextKey nextM
+        pure (.obj w)
+      | _ =>
+        if !(← isCallable m) then throwErr .type "Symbol.asyncIterator is not a function"
+        let it ← callV n m a0 #[]
+        if !it.isObj then throwErr .type "Result of the Symbol.asyncIterator method is not an object"
+        pure it
+    | (.x (.forAwait 1)) =>
+      if !(← isCallable a0) then throwErr .type "iterator method is not a function"
+      callV n a0 a1 #[]
+    | (.x (.forAwait _)) =>
+      if !a0.isObj then throwErr .type "Iterator result is not an object"
+      pure .undef
+    | (.x (.asyncFromSync 3)) => iterResult n a0 false
+    | (.x (.asyncFromSync 4)) => iterResult n a0 true
+    | (.x (.asyncFromSync 5)) =>
+      -- the value was a rejected promise: IteratorClose(sync, ThrowCompletion(reason)); what
+      -- `return` throws is dropped (bound argument: the sync iterator)
+      let _ ← tryCatch (iterClose n a0) (fun a => match a with | .halt w => throw (.halt w) | _ => pure ())
+      throw (.throw a1)
+    | (.x (.asyncFromSync k)) =>
+      -- %AsyncFromSyncIteratorPrototype%.next, .return, .throw (§27.1.6.2): every abrupt
+      -- completion rejects the promise that is returned (IfAbruptRejectPromise)
+      let pid ← newPromise
+      let slots : Option (Value × Value) ← match thisV with
+        | .obj w =>
+          let o ← getObj w
+          match o.props.get? syncIterKey, o.props.get? syncNextKey with
+          | some (.data sync ..), some (.data nextM ..) => pure (some (sync, nextM))
+          | _, _ => pure none
+        | _ => pure none
+      match slots with
+      | none => rejectPromise n pid (← mkError .type "not an async-from-sync iterator")
+      | some (sync, nextM) =>
+        let given : Array Value := if args.size > 0 then #[a0] else #[]
+        let x ← tryCatch (do
+            let res : Option Value ← match k with
+              | 0 => do pure (some (← callV n nextM sync given))
+              | 1 => do
+                let m ← getV n sync "return"
+                match m with
+                | .undef | .null => resolvePromise n pid (← iterResult n a0 true); pure none
+                | _ =>
+                  if !(← isCallable m) then throwErr .type "return is not a function"
+                  pure (some (← callV n m sync given))
+              | _ => do
+                let m ← getV n sync "throw"
+                match m with
+                | .undef | .null =>
+                  -- no `throw`: the protocol is broken; close the sync iterator, then a TypeError
+                  iterClose n sync
+                  throwErr .type "The iterator does not provide a 'throw' method"
+                | _ =>
+                  if !(← isCallable m) then throwErr .type "throw is not a function"
+                  pure (some (← callV n m sync given))
+            match res with
+            | none => pure ()
+            | some res =>
+              -- AsyncFromSyncIteratorContinuation (§27.1.6.4); closeOnRejection is false for `return`
+              if !res.isObj then throwErr .type "Iterator result is not an object"
+              let done := toBool (← getV n res "done")
+              let value ← getV n res "value"
+              let close := !done && k != 1
+              let vw ← tryCatch (do pure (Except.ok (← promiseResolve n value))) (fun a => pure (Except.error a))
+              let vp ← match vw with
+                | .ok vp => pure vp
+                | .error (.throw e) =>
+                  if close then
+                    let _ ← tryCatch (iterClose n sync) (fun a => match a with | .halt w => throw (.halt w) | _ => pure ())
+                  throw (.throw e)
+                | .error a => throw a
+              let onF ← nativeFn (.x (.asyncFromSync (if done then 4 else 3)))
+              let onR ← if close then do
+                  let f ← nativeFn (.x (.asyncFromSync 5))
+                  pure (Value.obj (← alloc { proto := .obj r.functionProto, kind := .bound f .undef #[sync] }))
+                else pure Value.undef
+              performThen n vp onF onR (.obj pid)
+            pure none)
+          (fun a => pure (some a))
+        match x with
+        | some (.throw e) => rejectPromise n pid e
+        | some a => throw a
+        | none => pure ()
+      pure (.obj pid)
     | (.x .stringIsWellFormed) | (.x .stringToWellFormed) =>
       let tp ← thisPrim thisV
       match tp with
@@ -7746,6 +7849,15 @@ def initRealm : M Unit := do
     method oc "values" .objectValues 1
   let asyncIterProto ← mk
   setHidden asyncIterProto (symKey 1) (← mkNative .iterSelf "[Symbol.asyncIterator]" 0)
+  -- %AsyncFromSyncIteratorPrototype% (§27.1.6.2) and the functions the statements of
+  -- `for await` call (`forAwaitFn`): hidden properties of the global object
+  let asyncFromSyncProto ← alloc { proto := .obj asyncIterProto }
+  method asyncFromSyncProto "next" (.x (.asyncFromSync 0)) 1
+  method asyncFromSyncProto "return" (.x (.asyncFromSync 1)) 1
+  method asyncFromSyncProto "throw" (.x (.asyncFromSync 2)) 1
+  setHidden g asyncFromSyncProtoKey (.obj asyncFromSyncProto)
+  for k in [0:3] do
+    setHidden g (forAwaitFn k) (← mkNative (.x (.forAwait k)) "" 1)
   let asyncGenProto ← alloc { proto := .obj asyncIterProto }
   modify fun h => { h with realm := { h.realm with asyncGenProto := asyncGenProto } }
   method asyncGenProto "next" .agenNext 1

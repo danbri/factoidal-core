@@ -96,6 +96,13 @@ inductive NativeX where
   /-- `get Error.prototype.stack` (`false`) and `set Error.prototype.stack` (`true`): the
   accessor of the Error Stack Accessor proposal (test262 feature `error-stack-accessor`). -/
   | errorStack (setter : Bool)
+  /-- `for await` (§14.7.5.6, §14.7.5.7), called only by the statements the parser makes for
+  it (`forAwaitFn`): 0 GetIterator with the async hint (§7.4.3), 1 `Call(method, iterator)`,
+  2 the check that an iterator result is an Object. %AsyncFromSyncIteratorPrototype%
+  (§27.1.6.2): 0 `next`, 1 `return`, 2 `throw`; the reactions of
+  AsyncFromSyncIteratorContinuation (§27.1.6.4): 3 and 4 make the result object (not done,
+  done), 5 closes the sync iterator when its value was a rejected promise. -/
+  | forAwait (k : Nat) | asyncFromSync (k : Nat)
   deriving BEq, Repr, Inhabited
 
 /-- The built-in functions (§19 to §28 for the subset). -/

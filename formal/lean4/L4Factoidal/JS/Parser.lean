@@ -308,6 +308,104 @@ def hasUseStrict (toks : Array Token) (start : Nat) : Bool :=
         else go fuel (if isP n ";" then i + 2 else i + 1)
   go toks.size start
 
+/-- `for await (target of obj) body` (§14.7.5.6 and §14.7.5.7 with iteratorKind async) as
+statements of the language the evaluator already runs. `aw e` is `await e` in the form the
+enclosing function reads it (`inGen`: an async generator).
+
+```
+{ const I = %forAwait0(obj);            // GetIterator(obj, async)
+  const X = I.next; let S = false;      // S: the body is running (an abrupt end closes I)
+  try { while (true) {
+      S = false;
+      const T = await %forAwait1(X, I); // Call(next, iterator), awaited
+      %forAwait2(T);                    // TypeError unless an Object
+      if (T.done) break;
+      const V = T.value; S = true;
+      target = V;  body } }
+  catch (E) {                           // a throw: `return` is called and awaited, its
+    if (S) { S = false;                 // errors dropped (AsyncIteratorClose, step 5)
+      try { const M = I.return; if (M != null) await %forAwait1(M, I); } catch {} }
+    throw E; }
+  finally {                             // break, return, continue to an outer loop
+    if (S) { const M = I.return;
+      if (M != null) { const Q = await %forAwait1(M, I); %forAwait2(Q); } } } }
+```
+
+The names `I`, `X`, ... start with `%` and carry `uid` (the head's position): source text
+cannot name them, and each loop has its own. The iterator is not closed when `next` or
+reading `done` or `value` fails (S is false there), as §7.4.3 to §7.4.10 say. -/
+def forAwaitStmt (inGen : Bool) (uid : Nat) (kind : Option DeclKind) (pat : Pat) (obj : Expr)
+    (body : Stmt) : Stmt :=
+  let nm (c : String) : String := "%f" ++ c ++ toString uid
+  let i := nm "i"; let x := nm "x"; let st := nm "s"; let t := nm "t"; let v := nm "v"
+  let e := nm "e"; let m := nm "m"; let q := nm "q"
+  let aw (a : Expr) : Expr :=
+    if inGen then .yieldE false (some (.call (.ident "%await") [a])) else .yieldE false (some a)
+  let call1 (f : String) : Expr := .call (.ident (forAwaitFn 1)) [.ident f, .ident i]
+  let isObj (r : String) : Stmt := .expr (.call (.ident (forAwaitFn 2)) [.ident r])
+  let setS (b : Bool) : Stmt := .expr (.assign none (.ident st) (.bool b))
+  let const1 (name : String) (init : Expr) : Stmt := .decl .constK [Decl.mk (.id name) (some init)]
+  let bind : Stmt := match kind, pat with
+    | some k, p => .decl k [Decl.mk p (some (.ident v))]
+    | none, .id y => .expr (.assign none (.ident y) (.ident v))
+    | none, .target tg => .expr (.assign none tg (.ident v))
+    | none, p => .expr (.assignPat p (.ident v))
+  let getReturn : Stmt := const1 m (.member (.ident i) "return")
+  let hasReturn : Expr := .binary .ne (.ident m) .null
+  let closeQuiet : Stmt :=
+    .tryS [getReturn, .ifS hasReturn (.expr (aw (call1 m))) none] none (some []) none
+  let closeChecked : Stmt :=
+    .block [getReturn, .ifS hasReturn (.block [const1 q (aw (call1 m)), isObj q]) none]
+  .block [
+    const1 i (.call (.ident (forAwaitFn 0)) [obj]),
+    const1 x (.member (.ident i) "next"),
+    .decl .letK [Decl.mk (.id st) (some (.bool false))],
+    .tryS
+      [.whileS (.bool true) (.block [
+        setS false,
+        const1 t (aw (call1 x)),
+        isObj t,
+        .ifS (.member (.ident t) "done") (.brk none) none,
+        const1 v (.member (.ident t) "value"),
+        setS true,
+        bind,
+        body])]
+      (some (.id e))
+      (some [.ifS (.ident st) (.block [setS false, closeQuiet]) none, .throwS (.ident e)])
+      (some [.ifS (.ident st) closeChecked none])]
+
+/-- Is the statement at token `i`, after any further labels (`b: c:`), an iteration
+statement (§14.13.1: `continue label` needs a label of one)? -/
+def labelsLoop (toks : Array Token) : Nat → Nat → Bool
+  | _, 0 => false
+  | i, fuel + 1 =>
+    let t := toks.getD i default
+    if t.kind == .ident && P.isP (toks.getD (i + 1) default) ":" then labelsLoop toks (i + 2) fuel
+    else P.isK t "for" || P.isK t "while" || P.isK t "do"
+
+/-- The labels around a statement, innermost first, and the statement inside them (at most
+`fuel` labels; a loop, not a recursion on the stack). -/
+def unlabel : Nat → List String → Stmt → List String × Stmt
+  | 0, acc, s => (acc, s)
+  | n + 1, acc, s =>
+    match s with
+    | .labeled l inner => unlabel n (l :: acc) inner
+    | _ => (acc, s)
+
+/-- A label on the statements of a `for await` (`forAwaitStmt`) labels their loop too, so
+`continue label` and `break label` in the body reach it. Other statements are unchanged. -/
+def labelForAwait (l : String) (s : Stmt) : Stmt :=
+  let (inner, core) := unlabel 64 [] s
+  match core with
+  | .block [d, x, st, .tryS [w] p h f] =>
+    match d with
+    | .decl .constK [Decl.mk (.id name) _] =>
+      if name.startsWith "%fi" then
+        inner.foldl (fun acc l2 => .labeled l2 acc) (.block [d, x, st, .tryS [.labeled l w] p h f])
+      else s
+    | _ => s
+  | _ => s
+
 mutual
 
 def parseStmt : Nat → P Stmt
@@ -419,14 +517,13 @@ def parseStmt : Nat → P Stmt
         advance; advance
         let st ← get
         if st.labels.any (·.1 == t.text) then fail s!"label '{t.text}' has already been declared"
-        let nt ← peek
-        let isLoop := isK nt "for" || isK nt "while" || isK nt "do" ||
-          (nt.kind == .ident && st.labels.isEmpty && false)
+        -- the statement after this label and the labels that follow it (`a: b: for ...`)
+        let isLoop := labelsLoop st.toks st.pos st.toks.size
         if (← atK "function") then fail "labelled function declarations are not supported"
         set { st with labels := (t.text, isLoop) :: st.labels }
         let body ← parseSubStmt n
         modify fun s => { s with labels := st.labels }
-        return .labeled t.text body
+        return .labeled t.text (labelForAwait t.text body)
       if t.text == "let" && (t2.kind == .ident || isP t2 "[" || isP t2 "{" ||
           (t2.kind == .kw && (t2.text == "let" || t2.text == "yield"))) then
         advance
@@ -526,6 +623,11 @@ def parseDecls : Nat → DeclKind → Bool → List Decl → P (List Decl)
 def parseFor : Nat → P Stmt
   | 0 => fail "parser fuel exhausted"
   | n + 1 => do
+    -- `for await` (§14.7.5): in an async function only
+    let t0 ← peek
+    let isAwait ← if t0.kind == .ident && t0.text == "await" && !t0.escaped && (← get).inAsync then do
+        advance; pure true
+      else pure false
     expectP "("
     let t ← peek
     let t2 ← peekAt 1
@@ -538,7 +640,8 @@ def parseFor : Nat → P Stmt
     let init : Option ForInit ← match declKind with
       | some k => do advance; pure (some (ForInit.decl k (← parseDecls n k true [])))
       | none => if isP t ";" then pure none else pure (some (ForInit.expr (← parseExpr n true)))
-    let isOf := (← peek).kind == .ident && (← peek).text == "of"
+    let isOf := (← peek).kind == .ident && (← peek).text == "of" && !(← peek).escaped
+    if isAwait && !isOf then fail "expected 'of' in a for await statement"
     if isOf || (← atK "in") then
       advance
       let obj ← if isOf then parseAssign n false else parseExpr n false
@@ -555,6 +658,7 @@ def parseFor : Nat → P Stmt
           | some p => pure (none, p)
           | none => fail "invalid left-hand side in for-in/of"
         | none => fail "invalid for-in/of"
+      if isAwait then return forAwaitStmt (← get).inGen t.pos kind pat obj body
       return if isOf then .forOf kind pat obj body else .forIn kind pat obj body
     expectP ";"
     let test ← if ← atP ";" then pure none else pure (some (← parseExpr n false))

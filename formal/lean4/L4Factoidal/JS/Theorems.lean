@@ -13,6 +13,8 @@ import L4Factoidal.JS.Interp
 - `unitAt?_notAscii`: on a string that is not ASCII, `charCodeAt`'s unit is the entry of
   `Str.unitChars` (the array that `cachedChars` keeps), so indexing the cached array gives the
   answer of `Str.unitAt?`.
+- `isPrivKey_privKey`, `forAwaitFn_private`, `forAwaitStmt_hasYield`: the helpers of
+  `for await` are private-name keys, and its statements always go to the generator machine.
 
 The evaluator is a Lean function, so it is deterministic by construction: the same
 script and heap give the same outcome and heap. Each function of the parser and of
@@ -93,5 +95,33 @@ theorem strLength_uncached {H : Type} (h : HeapOf H) (s : String)
   · rcases hc with hc | ⟨t, cs, hc, hne⟩
     · simp [hc]
     · simp [hc, hne]
+
+/-! ## `for await` (`forAwaitStmt`, `forAwaitFn`) -/
+
+/-- Kind: a property of the key encoding.
+Says: the key of a private name is recognised as one (`isPrivKey`), whatever the name.
+Does not say: that no other string is recognised as one. -/
+theorem isPrivKey_privKey (name : String) : isPrivKey (privKey name) = true := by
+  simp [isPrivKey, privKey, String.front_eq, String.front?_eq, String.toList_append]
+
+/-- Kind: a property of the key encoding.
+Says: each name the statements of `for await` call is a private-name key, so the engine's
+listings of an object's keys leave it out (they filter `isPrivKey`), and no identifier of
+source text spells it (an identifier does not start with U+10FFFE).
+Does not say: that a computed property key cannot spell it. -/
+theorem forAwaitFn_private (k : Nat) : isPrivKey (forAwaitFn k) = true := isPrivKey_privKey _
+
+/-- Kind: an invariant of the parser's output.
+Says: the statements made for a `for await` hold an `await` (a `yield` of the generator
+machine) for every head and body, so `genRun` runs them and the plain evaluator, which
+refuses a `yield`, never does.
+Does not say: that the statements behave as §14.7.5.7 says (the `#guard`s of
+`RegressionTests` and Test262's `for-await-of` check that). -/
+theorem forAwaitStmt_hasYield (inGen : Bool) (uid : Nat) (kind : Option DeclKind) (pat : Pat)
+    (obj : Expr) (body : Stmt) : (forAwaitStmt inGen uid kind pat obj body).hasYield = true := by
+  have h : ∀ n, Stmt.hasYieldF (n + 16) (forAwaitStmt inGen uid kind pat obj body) = true := by
+    intro n
+    cases inGen <;> simp [forAwaitStmt, Stmt.hasYieldF, Stmt.anyYield, Decl.anyYield, Expr.hasYieldF]
+  exact h 99984
 
 end L4Factoidal.JS

@@ -284,5 +284,32 @@ function nothing changes: the last script. -/
 -- a declared name shadows a named property
 #guard out "Object.defineProperty(globalThis, '\\u{10FFFE}WindowNamedProperties', { value: function (name) { return 42; } }); var foo; print(typeof foo, foo); foo = 5; print(foo, globalThis.foo)" == ["undefined undefined", "5 5"]
 #guard out "print(typeof nothing, globalThis.nothing); try { nothing } catch (e) { print(e.name) }" == ["undefined undefined", "ReferenceError"]
+/-! ## `for await` (§14.7.5)
+
+The parser reads `for await (x of e) body` as statements the evaluator already runs
+(`forAwaitStmt`): GetIterator with the async hint, `next` called and awaited each turn, and
+AsyncIteratorClose on an abrupt end of the body. Before 2026-11-14 it was a SyntaxError, and
+the 1,140 Test262 pages of `language/statements/for-await-of` that are not negative tests never
+finished (they were counted as timeouts). -/
+
+-- an async generator, a sync iterable of promises (async-from-sync, §27.1.6), an array
+#guard out "async function* g() { yield 1; yield 2 } async function f() { var s = 0; for await (const x of g()) s += x; for await (var y of [Promise.resolve(3), 4]) s += y; return s } f().then(print)" == ["10"]
+-- `break` closes the iterator: `return` is called once, and awaited
+#guard out "var log = []; var it = { [Symbol.asyncIterator]() { return this }, next() { return Promise.resolve({ value: 1, done: false }) }, return() { log.push('ret'); return Promise.resolve({}) } }; async function f() { for await (const x of it) { log.push(x); break } log.push('after') } f().then(() => print(log.join()))" == ["1,ret,after"]
+-- a throw in the body closes the iterator, drops what `return` throws, and keeps the error
+#guard out "var it = { [Symbol.asyncIterator]() { return this }, next() { return { value: 1, done: false } }, return() { throw new Error('dropped') } }; async function f() { for await (const x of it) throw new TypeError('kept') } f().catch(e => print(e.name, e.message))" == ["TypeError kept"]
+-- the iterator is not closed when it ends, or when `next` rejects
+#guard out "var n = 0; var it = { [Symbol.asyncIterator]() { return this }, next() { return Promise.reject(7) }, return() { n++; return {} } }; async function f() { for await (const x of it) ; } f().catch(e => print(e, n))" == ["7 0"]
+-- a result that is not an Object is a TypeError; `continue` and a label; destructuring; assignment targets
+#guard out "var it = { [Symbol.asyncIterator]() { return this }, next() { return 1 } }; async function f() { for await (const x of it) ; } f().catch(e => print(e.name))" == ["TypeError"]
+#guard out "async function f() { var r = []; outer: for await (const [a, b] of [[1, 2], [3, 4], [5, 6]]) { for (const k of [0, 1]) { if (a == 3) continue outer; if (a == 5) break outer; r.push(a + b + k) } } var o = {}; for await (o.p of [8]) r.push(o.p); return r.join() } f().then(print)" == ["3,4,8"]
+-- two labels on one loop (`continue` to either continues it), on `for await` and on `for`
+#guard out "var log = []; async function f() { A: B: for await (const x of [1, 2, 3]) { for (const y of [7]) { log.push(x); if (x == 1) continue A; if (x == 2) continue B; break A } log.push('no') } } f().then(() => print(log.join()))" == ["1,2,3"]
+#guard out "var log = []; A: B: for (const x of [1, 2, 3]) { for (const y of [7]) { log.push(x); if (x == 1) continue A; if (x == 2) continue B; break A } log.push('no') } print(log.join()); try { eval('A: B: { continue A; }') } catch (e) { print(e.name) }" == ["1,2,3", "SyntaxError"]
+-- in an async generator; the loop variable is new for each turn
+#guard out "async function* g() { var fs = []; for await (let x of [1, 2]) { fs.push(() => x); yield x * 10 } yield fs.map(h => h()).join() } async function f() { var r = []; for await (const v of g()) r.push(v); return r.join('|') } f().then(print)" == ["10|20|1,2"]
+-- not a statement outside an async function; `of` is needed; the helpers are not names of the language
+#guard out "var r = []; for (var t of ['function f() { for await (x of y) ; }', 'async function f() { for await (x in y) ; }', 'async function f() { for await (;;) ; }']) { try { eval(t); r.push('ok') } catch (e) { r.push(e.name) } } print(r.join())" == ["SyntaxError,SyntaxError,SyntaxError"]
+#guard out "print(Object.getOwnPropertyNames(globalThis).filter(k => /forAwait|AsyncFromSync/.test(k)).length, Reflect.ownKeys(globalThis).filter(k => typeof k == 'string' && k.charCodeAt(0) > 0xD7FF).length)" == ["0 0"]
 
 end L4Factoidal.JS.Tests
