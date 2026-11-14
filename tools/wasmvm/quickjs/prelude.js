@@ -7187,6 +7187,27 @@
       const byob = arguments.length > 1;
       const r = nnRaw(byob ? ['read', c.id, t.id, sourceOf(outputData, 'readTensor')[1].length] : ['read', c.id, t.id], true);
       if (typeof r === 'number') throw new DOMException('WebNN is not available', 'NotSupportedError');
+      if (r[0] === 2) {
+        // The value is on the GPU path: Lean asks the host to read it back; the host's answer
+        // queues this callback, which takes the bytes and drops the staging buffer.
+        return new Promise((resolve, reject) => {
+          const cb = register(() => {
+            callbacks.delete(cb);
+            const bytes = n.gpuBytes(16, String(staging), '');
+            n.gpu(15, String(staging), ''); n.gpu(8, String(staging), '');
+            if (t.destroyed || c.destroyed) { reject(new DOMException('The tensor was destroyed before it was read.', 'InvalidStateError')); return; }
+            if (!(bytes instanceof ArrayBuffer)) { reject(new DOMException('readTensor: the GPU could not read the tensor back', 'OperationError')); return; }
+            // the GPU path holds float32 tensors only (WebNN.GpuRun.kernelFor)
+            const len = t.shape.reduce((a, b) => a * b, 1) * 4, data = new Uint8Array(bytes, 0, Math.min(len, bytes.byteLength));
+            if (!byob) { resolve(data.slice().buffer); return; }
+            const view = sourceOf(outputData, 'readTensor')[1];
+            if (view.length < data.length) { reject(new TypeError('readTensor: the output buffer is detached')); return; }
+            view.set(data); resolve();
+          });
+          let staging;
+          try { staging = +nn('readGpu', c.id, t.id, cb); } catch (e) { callbacks.delete(cb); reject(e); }
+        });
+      }
       if (r[0] !== 0) { let m = ''; for (let i = 1; i < r.length; i++) m += String.fromCharCode(r[i]); refuse(m); }
       // The bytes are those of this point in the context's timeline; the promise settles
       // later, and by then the tensor or the context may be destroyed, or the buffer detached.
@@ -7239,7 +7260,9 @@
       const c = Object.create(MLContext.prototype);
       let lose;
       const lost = new Promise(r => { lose = r; });
-      contexts.set(c, { id: +nn('context'), accelerated: isDevice ? true : accelerated, lost, lose, destroyed: false });
+      // deviceType 'gpu' (or a GPUDevice): the GPU path when the embedder replays GPU commands
+      // (Lean decides, WebNN.GpuRun.createContext); otherwise the CPU reference.
+      contexts.set(c, { id: +nn('context', isDevice ? 'gpu' : String(o.deviceType ?? '')), accelerated: isDevice ? true : accelerated, lost, lose, destroyed: false });
       return c;
     });
 

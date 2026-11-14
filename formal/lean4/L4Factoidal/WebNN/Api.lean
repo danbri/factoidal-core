@@ -11,7 +11,7 @@ DOMException name, `:` and a message is that DOMException. No other answer start
 A page that never touches `navigator.ml` never makes this call, and `State` is then the empty
 record it starts as.
 -/
-import L4Factoidal.WebNN.Graph
+import L4Factoidal.WebNN.GpuRun
 
 namespace L4Factoidal.WebNN
 
@@ -45,7 +45,8 @@ def api (s : State) (fs : Array ByteArray) : State × ByteArray :=
   match str fs 0 with
   | "table" => (s, tableText.toUTF8)
   | "limits" => (s, supportLimitsJson.toUTF8)
-  | "context" => text ((createContext s).map fun (s, i) => (s, toString i)) s
+  | "context" => text ((GpuRun.createContext s (str fs 1)).map fun (s, i) => (s, toString i)) s
+  | "gpu" => (s, (if GpuRun.ctxGpu s (nat fs 1) then "1" else "0").toUTF8)
   | "destroyContext" => (destroyContext s (nat fs 1), ByteArray.empty)
   | "lost" => (s, (if ctxLost s (nat fs 1) then "1" else "0").toUTF8)
   | "builder" => text ((newBuilder s (nat fs 1)).map fun (s, i) => (s, toString i)) s
@@ -56,8 +57,8 @@ def api (s : State) (fs : Array ByteArray) : State × ByteArray :=
   | "op" => text (call s (nat fs 1) (str fs 2) (str fs 3) (pairs fs 4)) s
   | "build" =>
     let bid := nat fs 1
-    text ((build s bid (pairs fs 2)).map fun s => (s, graphText s bid)) s
-  | "destroyGraph" => (destroyGraph s (nat fs 1), ByteArray.empty)
+    text ((build s bid (pairs fs 2)).map fun s => let s := GpuRun.buildGpu s bid; (s, graphText s bid)) s
+  | "destroyGraph" => (GpuRun.destroyGraph s (nat fs 1), ByteArray.empty)
   | "tensor" =>
     let flags := str fs 4
     let flag (c : Char) := flags.toList.contains c
@@ -67,16 +68,20 @@ def api (s : State) (fs : Array ByteArray) : State × ByteArray :=
   | "write" => unit (writeTensor s (nat fs 1) (nat fs 2) (str fs 3) (fs[4]?.getD ByteArray.empty)) s
   | "read" =>
     match readTensor s (nat fs 1) (nat fs 2) (if fs.size > 3 then some (nat fs 3) else none) with
-    | .ok b => (s, (ByteArray.mk #[0]) ++ b)
+    | .ok b =>
+      -- a value on the GPU path: byte 2, and the page asks `readGpu` with its callback
+      if (s.tensors[nat fs 2]?.map (·.onGpu)) == some true then (s, ByteArray.mk #[2]) else
+      (s, (ByteArray.mk #[0]) ++ b)
     | .error e => (s, (ByteArray.mk #[1]) ++ (refusal e).toUTF8)
-  | "destroyTensor" => (destroyTensor s (nat fs 1), ByteArray.empty)
+  | "readGpu" => text ((GpuRun.readGpu s (nat fs 1) (nat fs 2) (nat fs 3)).map fun (s, i) => (s, toString i)) s
+  | "destroyTensor" => (GpuRun.destroyTensor s (nat fs 1), ByteArray.empty)
   | "dispatch" =>
     let nIn := nat fs 3
     let named (start count : Nat) : List (String × Nat) :=
       (List.range count).map fun k => (str fs (start + 2 * k), nat fs (start + 2 * k + 1))
     let nOut := (fs.size - 4 - 2 * nIn) / 2
     if 4 + 2 * nIn > fs.size then (s, "!Tthe tensors could not be read".toUTF8)
-    else unit (dispatch s (nat fs 1) (nat fs 2) (named 4 nIn) (named (4 + 2 * nIn) nOut)) s
+    else unit (GpuRun.dispatch s (nat fs 1) (nat fs 2) (named 4 nIn) (named (4 + 2 * nIn) nOut)) s
   | c => (s, ("!T" ++ c ++ " is not a command").toUTF8)
 
 end L4Factoidal.WebNN
