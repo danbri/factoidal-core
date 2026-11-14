@@ -703,11 +703,17 @@
     DOCUMENT_POSITION_CONTAINS: 8, DOCUMENT_POSITION_CONTAINED_BY: 16, DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC: 32 };
   const listCache = new WeakMap();
   const liveList = (ids, proto) => {
-    const target = Object.create(proto ?? NodeList.prototype);
+    const target = Object.create(proto ?? NodeList.prototype), named = proto === HTMLCollection.prototype;
     return new Proxy(target, {
       get(t, p, recv) {
         if (typeof p === 'string' && /^(0|[1-9][0-9]*)$/.test(p)) { const k = ids()[Number(p)]; return k === undefined ? undefined : wrap(k); }
         if (p === 'length') return ids().length;
+        // HTMLCollection's named properties (DOM §4.2.10.2): the first element whose id is
+        // the name, or an HTML element whose name attribute is; only for a name the
+        // collection's prototype chain lacks
+        if (named && typeof p === 'string' && p !== '' && !(p in t)) {
+          for (const k of ids()) if (n.attr(k, 'id') === p || (htmlEl(k) && n.attr(k, 'name') === p)) return wrap(k);
+        }
         return Reflect.get(t, p, recv);
       },
       // Indexed properties have no setter (WebIDL §3.9): an assignment fails.
