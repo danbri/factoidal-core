@@ -978,6 +978,38 @@ def attachDocument (s : State) (el : Nat) (source : String) (xml : Bool := false
     (connectFrames s #[root], some root)
   | (s, _) => (s, none)
 
+/-- `document.open`, `write` and `close` on the document of a frame (HTML §8.4.3): the frame
+of element `el` gets the document that the HTML parser makes of `markup` (`attachDocument`: a
+new document node, recorded as `Command.frameDocument`). Only an element that holds a frame
+document this realm may reach (`frameAccessible`: the same origin) takes one; -2 otherwise.
+The answer is the new document node. -/
+def writeFrameDocument (s : State) (el : Nat) (markup : String) : State × Int :=
+  if !(s.frames.any (·.1 == el)) || !frameAccessible s el then (s, -2) else
+  match attachDocument s el markup with
+  | (s, some root) => (s, Int.ofNat root)
+  | (s, none) => (s, -5)
+
+/-- Kind: security invariant (frames). Says: a frame whose document this realm may not reach
+(another origin, or a sandbox without `allow-same-origin`) is never written by
+`document.write`: the state is unchanged and the answer is -2. Does not say: anything of
+frames of the same origin. -/
+theorem writeFrameDocument_needs_access (s : State) (el : Nat) (markup : String)
+    (h : frameAccessible s el = false) : writeFrameDocument s el markup = (s, -2) := by
+  simp [writeFrameDocument, h]
+
+/-- `create_node` kind 15: `data` is the number of a frame's element, U+0000, and the markup
+written since `document.open` (`writeFrameDocument`). -/
+def frameWrite (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : State × HostResult :=
+  match readStr mem st (arg args 1) (arg args 2) maxString with
+  | .error e => (s, codeOrTrap e)
+  | .ok data =>
+    match data.splitOn "\x00" with
+    | el :: rest =>
+      match el.toNat? with
+      | some e => let (s, r) := writeFrameDocument s e ("\x00".intercalate rest); (s, ret r)
+      | none => (s, ret (-2))
+    | [] => (s, ret (-2))
+
 /-- The nodes an insertion of `n` inserts: the children of a fragment, else `n`. -/
 def insertedBy (d : Dom) (n : Nat) : Array Nat :=
   if (d.get n).type == .fragment then (d.get n).kids else #[n]
@@ -1265,7 +1297,9 @@ def call (mem : Nat) (f : Import) (args : Array Value) (s : State) (st : StoreOf
   | .nodeInfo => let r := nodeInfo args s; (r.1, st, r.2)
   | .nodeString => let r := nodeString mem args s st; (s, r.1, r.2)
   | .nodeChildren => let r := nodeChildren mem args s st; (s, r.1, r.2)
-  | .createNode => let r := createNode mem args s st; (r.1, st, r.2)
+  | .createNode =>
+    if arg args 0 % 16 == 15 then (let r := frameWrite mem args s st; (r.1, st, r.2))
+    else (let r := createNode mem args s st; (r.1, st, r.2))
   | .insertBefore => let r := insertBefore args s; (r.1, st, r.2)
   | .removeChild => let r := removeChild args s; (r.1, st, r.2)
   | .replaceChild => let r := replaceChild args s; (r.1, st, r.2)

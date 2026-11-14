@@ -2559,13 +2559,24 @@
   const window = globalThis;
   ids.set(window, WINDOW);
   const document = wrap(0);
-  const frameWindows = new Map();
-  const frameWindow = doc => {
-    let w = frameWindows.get(doc);
+  const frameWindows = new Map(), frameCells = new Map();
+  // `postMessage` to the window of a frame's document (assigned where the frames' targets are).
+  let postFrame = () => {};
+  const frameWindow = doc0 => {
+    let w = frameWindows.get(doc0);
     if (w) return w;
-    const own = { document: () => wrap(doc), window: () => w, self: () => w, frames: () => w, globalThis: () => w,
-      parent: () => window, top: () => window, frameElement: () => wrap(info(doc, 12)), length: () => 0,
-      location: () => frameLocation(doc) };
+    // The frame's document now: `document.close()` gives the frame another document node
+    // (document.open, write, close below) and this window stays the frame's window.
+    const cell = { doc: doc0 };
+    // HTML §9.3.3: a message to this window goes to this frame's window target (where the
+    // frame's scripts listen), not to the page's.
+    const post = function postMessage(message, targetOrigin, transfer) {
+      if (arguments.length < 1) throw new TypeError("Failed to execute 'postMessage' on 'Window': 1 argument required, but only 0 present.");
+      postFrame(cell.doc, message, targetOrigin, transfer);
+    };
+    const own = { document: () => wrap(cell.doc), window: () => w, self: () => w, frames: () => w, globalThis: () => w,
+      parent: () => window, top: () => window, frameElement: () => wrap(info(cell.doc, 12)), length: () => 0,
+      location: () => frameLocation(cell.doc), postMessage: () => post };
     // Frames share this realm. A function reached through a frame's window runs with that
     // frame's document as `document` for the length of the call (as the frame's own scripts
     // do: n.script below), so `iframe.contentWindow.f()` resolves URLs against the frame's
@@ -2575,7 +2586,7 @@
     const asFrame = f => {
       let g = inFrame.get(f);
       if (g) return g;
-      const enter = run => { const before = scriptDocument; scriptDocument = wrap(doc); try { return run(); } finally { scriptDocument = before; } };
+      const enter = run => { const before = scriptDocument; scriptDocument = wrap(cell.doc); try { return run(); } finally { scriptDocument = before; } };
       // A plain function, not a Proxy of f: BubblePopJS does not call a Proxy of a function.
       g = function (...args) { return enter(() => new.target ? Reflect.construct(f, args, new.target === g ? f : new.target) : f.apply(this, args)); };
       Object.setPrototypeOf(g, f);
@@ -2598,7 +2609,7 @@
       },
       has(t, p) { return Object.prototype.hasOwnProperty.call(own, p) || Reflect.has(t, p); },
     });
-    frameWindows.set(doc, w);
+    frameWindows.set(doc0, w); frameCells.set(doc0, cell);
     return w;
   };
   // encoding100: a same-origin frame's Location: its document's URL (node_query 171) and
@@ -4370,6 +4381,42 @@
   frameLoad = el => { const d = info(el, 11), t = d >= 0 ? frameTargets.get(d) : undefined; if (t) { const e = new Event('load'); state(e).trusted = true; dispatch(t, e); } };
   for (const k of ['addEventListener', 'removeEventListener'])
     define(Window.prototype, k, function (...a) { return EventTarget.prototype[k].apply((this === window || this == null) && scriptDocument ? windowOfScript() : this, a); });
+  // The window's event handler attributes too: `onmessage = f` in a frame's script is that
+  // frame's window's handler, not the page's (it would replace the page's own).
+  for (const name of handlerNames) {
+    const of = t => ((t === window || t == null) && scriptDocument ? windowOfScript() : t);
+    Object.defineProperty(Window.prototype, 'on' + name, { get() { return handlerOf(of(this), name); },
+      set(f) { setHandler(of(this), name, f); }, configurable: true, enumerable: true });
+  }
+  // document.open, write, writeln and close on a frame's document (HTML §8.4.3, §8.4.4). The
+  // markup written since open() is parsed by Lean when the document is closed: the frame's
+  // element gets the document the HTML parser makes of it (create_node kind 15, Hosts.Dom
+  // frameWrite), and this Document object and the frame's window stay the frame's. Scripts in
+  // the markup written do not run, and the page's own document is not rewritten: both are
+  // refused or left out, not imitated.
+  const written = new WeakMap();
+  const writtenFrame = (d, what) => {
+    const id = nodeId(d), el = id === 0 ? -1 : info(id, 12);
+    if (el < 0) throw new DOMException(`Failed to execute '${what}' on 'Document': only a frame's document can be written in this build`, 'NotSupportedError');
+    return el;
+  };
+  define(Document.prototype, 'open', function open() { writtenFrame(this, 'open'); written.set(this, ''); return this; });
+  const docWrite = (d, text, what) => { writtenFrame(d, what); written.set(d, (written.get(d) ?? '') + text.map(String).join('')); };
+  define(Document.prototype, 'write', function write(...text) { docWrite(this, text, 'write'); });
+  define(Document.prototype, 'writeln', function writeln(...text) { docWrite(this, [...text, '\n'], 'writeln'); });
+  define(Document.prototype, 'close', function close() {
+    if (!written.has(this)) return;
+    const el = writtenFrame(this, 'close'), old = nodeId(this), markup = written.get(this);
+    written.delete(this);
+    const fresh = chk(n.create(15, el + '\u0000' + markup));
+    if (typeof fresh !== 'number' || fresh < 0) return;
+    wrappers.delete(old); ids.set(this, fresh); wrappers.set(fresh, this);
+    const cell = frameCells.get(old);
+    if (cell) { cell.doc = fresh; frameWindows.set(fresh, frameWindows.get(old)); frameCells.set(fresh, cell); }
+    const target = frameTargets.get(old);
+    if (target) frameTargets.set(fresh, target);
+    setTimeout(() => { const frame = wrap(el); if (frame && info(el, 11) === fresh) { frameLoad(el); fire(frame, 'load'); } }, 0);
+  });
   // ==== end frames =====================================================================
 
   // ==== shadowframes: frames, the sandbox and postMessage ===============================
@@ -4436,8 +4483,17 @@
     const data = globalThis.structuredClone(message);
     if (typeof r !== 'string' || !r.startsWith('1')) return;
     const origin = r.slice(2);
-    setTimeout(() => { const e = new MessageEvent('message', { data, origin, source: window, ports }); state(e).trusted = true; dispatch(window, e); }, 0);
+    setTimeout(() => {
+      const e = new MessageEvent('message', { data, origin, source: window, ports });
+      state(e).trusted = true;
+      if (doc <= 0) { dispatch(window, e); return; }
+      // To a frame's window: its listeners run with the frame's document as `document`.
+      const before = scriptDocument;
+      scriptDocument = wrap(doc);
+      try { dispatch(frameTarget(doc), e); } finally { scriptDocument = before; }
+    }, 0);
   };
+  postFrame = postTo;
   // A message to a session of its own (a sandboxed frame, or from one to its parent):
   // Lean checks the origin and queues it (node_query 34); the host hands it to the other
   // session as a string, so the data must survive JSON (HTML.FrameSessions).
