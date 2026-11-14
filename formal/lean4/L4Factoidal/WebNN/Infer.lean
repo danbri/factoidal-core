@@ -439,7 +439,7 @@ structure Window where
   dilations : List Nat
   deriving Inhabited
 
-private def window (c : Call) (zeroPadding : Bool := false) : R Window := do
+def windowOf (c : Call) (zeroPadding : Bool := false) : R Window := do
   let padding := if zeroPadding then [0, 0, 0, 0] else c.nats "padding" [0, 0, 0, 0]
   let strides := c.nats "strides" [1, 1]
   let dilations := c.nats "dilations" [1, 1]
@@ -535,7 +535,7 @@ def inferOp (name : String) (c : Call) : R (List Desc) := do
   | "conv2d" =>
     let filter := c.d "filter"
     sameType c "input" "filter"
-    let w ← window c
+    let w ← windowOf c
     let groups := c.nat "groups" 1
     need (groups > 0) "groups must be greater than 0"
     let layout := c.str "inputLayout" "nchw"
@@ -552,7 +552,7 @@ def inferOp (name : String) (c : Call) : R (List Desc) := do
   | "convTranspose2d" =>
     let filter := c.d "filter"
     sameType c "input" "filter"
-    let w ← window c
+    let w ← windowOf c
     let outPad := c.nats "outputPadding" [0, 0]
     need (outPad.length == 2) "the length of outputPadding must be 2"
     match c.nats? "outputSizes" with
@@ -707,7 +707,7 @@ def inferOp (name : String) (c : Call) : R (List Desc) := do
     let win := c.nats "windowDimensions" [ih, iw]
     need (win.length == 2) "the length of windowDimensions must be 2"
     need (win.all (· > 0)) "windowDimensions must be greater than 0"
-    let w ← window c
+    let w ← windowOf c
     match c.nats? "outputSizes" with
     | some sz => need (sz.length == 2) "the length of outputSizes must be 2"
     | none => pure ()
