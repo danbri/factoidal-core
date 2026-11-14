@@ -40,6 +40,26 @@ theorem clipLinkBox_source (dom : Dom) (clips : Std.TreeMap Nat Box) (fuel id : 
     | none => dsimp only; split <;> rfl
     | some p => dsimp only; rw [ih]; split <;> rfl
 
+theorem hitBox_source (dom : Dom) (clips : Std.TreeMap Nat Box) (b : Box) : (hitBox dom clips b).source = b.source := by
+  unfold hitBox
+  split
+  · exact clipLinkBox_source ..
+  · rfl
+
+/-- A box that a point can hit is a box of the layout, for the same node: clipping cuts
+boxes and takes boxes away, and makes none. -/
+theorem hitBoxes_source {dom : Dom} {styles : Array Computed} {boxes : Array Box} {c : Box}
+    (h : c ∈ hitBoxes dom styles boxes) : ∃ b ∈ boxes, c.source = b.source := by
+  unfold hitBoxes at h
+  simp only [] at h
+  split at h
+  · exact ⟨c, h, rfl⟩
+  · obtain ⟨b, hb, eq⟩ := Array.mem_filterMap.mp h
+    refine ⟨b, hb, ?_⟩
+    split at eq
+    · cases eq; exact hitBox_source ..
+    · cases eq
+
 /-- The regions are the boxes' regions, one per box at most. -/
 theorem mem_linkRegions {dom : Dom} {styles : Array Computed} {boxes : Array Box}
     {width height : Float} {r : LinkRegion} :

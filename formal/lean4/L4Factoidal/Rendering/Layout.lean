@@ -2277,6 +2277,24 @@ def linkClips (dom : Dom) (styles : Array Computed) (boxes : Array Box) : Std.Tr
   boxes.foldl (fun (out : Std.TreeMap Nat Box) box =>
     if (styles[box.source]!).clipOverflow && (dom.get box.source).type == .element then out.insert box.source box else out) {}
 
+/-- A box cut to the boxes of its ancestors that clip. The box of a clipping element is
+not cut by itself: the walk starts at its parent. -/
+def hitBox (dom : Dom) (clips : Std.TreeMap Nat Box) (b : Box) : Box :=
+  match (dom.get b.source).parent with
+  | some p => clipLinkBox dom clips (dom.size+1) p b
+  | none => b
+
+/-- The boxes that a point can hit: each cut to the boxes of its ancestors that clip their
+overflow, and left out when nothing of it is left, so that a point over clipped content
+is a point in what is drawn there (CSSOM View §5.1 `elementFromPoint`: the hit test is on
+what is painted). A page with no clipping box pays one pass to find that out. -/
+def hitBoxes (dom : Dom) (styles : Array Computed) (boxes : Array Box) : Array Box :=
+  let clips := linkClips dom styles boxes
+  if clips.isEmpty then boxes else
+  boxes.filterMap fun b =>
+    let c := hitBox dom clips b
+    if c.width > 0 && c.height > 0 then some c else none
+
 /-- The link region of one layout box: none when the box is in no anchor, is hidden, or
 is empty once clipped by its ancestors and by `[0,width) × [0,height)`. -/
 def linkRegionOf (dom : Dom) (styles : Array Computed) (clips : Std.TreeMap Nat Box)
