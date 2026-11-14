@@ -10,6 +10,7 @@ import L4Factoidal.Rendering.SheetReader
 import L4Factoidal.Rendering.CssVars
 import L4Factoidal.Rendering.FontSynthesis
 import L4Factoidal.DOM.Selectors
+import L4Factoidal.HTML.Dimension
 import Std.Data.TreeMap
 import Std.Data.HashMap
 
@@ -1384,14 +1385,24 @@ private def tableDisplay : String → Display
   | "td" | "th" => .tableCell | "col" => .tableColumn | "colgroup" => .tableColumnGroup
   | _ => .inline
 
-/-- A non-negative integer attribute value with an optional `%`, as HTML's rules
-for dimension values read it (HTML §2.3.4.4), in this profile's lengths. -/
-def dimensionAttribute (value : String) : Option Length :=
-  let v := trim value
-  let digits := v.toList.takeWhile Char.isDigit
-  if digits.isEmpty then none else
-  let n := Float.ofNat (String.ofList digits).toNat!
-  if (v.drop digits.length).toString.startsWith "%" then some (.percent (n/100)) else some (.px n)
+/-- A dimension value (`HTML.Dimension`) as a length of this profile: px, or a percentage
+as a fraction. -/
+def dimLength (d : HTML.Dimension.Dim) : Length :=
+  match d.kind with
+  | .percentage => .percent (d.toFloat / 100)
+  | .length => .px d.toFloat
+
+/-- An attribute that "maps to the dimension property" (HTML §15.2): the rules for parsing
+dimension values (§2.3.4.4), in this profile's lengths. -/
+def dimensionAttribute (value : String) : Option Length := (HTML.Dimension.parse value).map dimLength
+
+/-- An attribute that "maps to the dimension property (ignoring zero)": zero is no hint. -/
+def nonzeroDimensionAttribute (value : String) : Option Length :=
+  (HTML.Dimension.parseNonzero value).map dimLength
+
+/-- An attribute that "maps to the pixel length property": a non-negative integer, in px. -/
+def pixelLengthAttribute (value : String) : Option Float :=
+  (HTML.Dimension.parseNonNegative value).map Float.ofNat
 
 /-- The nearest table element above a cell, within three levels (row, row group). -/
 private def tableAncestor (dom : Dom) (id : Nat) : Option DOM.Node := Id.run do
@@ -1422,12 +1433,15 @@ private def tableHints (dom : Dom) (id : Nat) (s parent : Computed) : Computed :
   if tag == "td" || tag == "th" then
     let pad := ((tableAncestor dom id).bind fun t => (dimensionAttribute (attrValue t "cellpadding")).bind (resolve 0)).getD 1
     s := {s with padding := ⟨pad,pad,pad,pad⟩, verticalAlign := parent.verticalAlign}
-  if ["table","td","th","col"].contains tag then
-    if let some w := dimensionAttribute (attrValue n "width") then
-      if !(tag == "table" && (match w with | .px 0 => true | _ => false)) then s := {s with width := w}
-  if ["table","td","th","tr"].contains tag then
-    if let some h := dimensionAttribute (attrValue n "height") then
-      if let .px _ := h then s := {s with height := h}
+  -- HTML §15.3.10: `table` width, `td`/`th` width and height ignore zero; `col` width,
+  -- `table` and `tr` height map as they are.
+  let widthHint := if ["table","td","th"].contains tag then nonzeroDimensionAttribute (attrValue n "width")
+    else if tag == "col" then dimensionAttribute (attrValue n "width") else none
+  if let some w := widthHint then s := {s with width := w}
+  let heightHint := if ["td","th"].contains tag then nonzeroDimensionAttribute (attrValue n "height")
+    else if ["table","tr"].contains tag then dimensionAttribute (attrValue n "height") else none
+  if let some h := heightHint then
+    if let .px _ := h then s := {s with height := h}
   if ["table","tr","td","th"].contains tag then
     let bg := attrValue n "bgcolor"
     if !bg.isEmpty then if let .ok c := color bg then s := {s with background := some c}
@@ -1440,15 +1454,46 @@ private def tableHints (dom : Dom) (id : Nat) (s parent : Computed) : Computed :
     | _ => pure ()
   return s
 
-/-- HTML §15.4.3: the `width` and `height` attributes of `img`, `video` and `canvas`
-map to the `width` and `height` properties, below author CSS. -/
-private def replacedHints (n : DOM.Node) (s : Computed) : Computed := Id.run do
-  if !["img","video","canvas"].contains n.lname then return s
+/-- HTML §15.4.3 and §15.3.13, §15.5.15: the `width` and `height` attributes of `img`,
+`video`, `canvas`, `iframe`, `embed`, `object`, `marquee` and an image button map to the
+`width` and `height` properties; `hr` width too. `hspace` and `vspace` of `img`, `embed`,
+`object`, `marquee` and an image button map to the horizontal and vertical margins; the
+`border` of `img`, `object` and an image button to the border widths, with a solid border.
+All below author CSS. A percentage height is left out: this layout resolves it against a
+height of 0. -/
+def replacedHints (n : DOM.Node) (s : Computed) : Computed := Id.run do
+  let tag := n.lname
+  let imageInput := tag == "input" && (attrValue n "type").toLower == "image"
+  let sized := imageInput || ["img","video","canvas","iframe","embed","object","marquee"].contains tag
+  if !sized && tag != "hr" then return s
   let mut s := s
   if let some w := dimensionAttribute (attrValue n "width") then s := {s with width := w}
-  if let some h := dimensionAttribute (attrValue n "height") then
-    if let .px _ := h then s := {s with height := h}
+  if sized then
+    if let some h := dimensionAttribute (attrValue n "height") then
+      if let .px _ := h then s := {s with height := h}
+  if imageInput || ["img","embed","object","marquee"].contains tag then
+    if let some (.px h) := dimensionAttribute (attrValue n "hspace") then
+      s := {s with margin := {s.margin with left := h, right := h}}
+    if let some (.px v) := dimensionAttribute (attrValue n "vspace") then
+      s := {s with margin := {s.margin with top := v, bottom := v}}
+  if imageInput || tag == "img" || tag == "object" then
+    if let some b := pixelLengthAttribute (attrValue n "border") then
+      s := {s with borderWidth := ⟨b,b,b,b⟩, borderStyle := .solid}
   return s
+
+/-- HTML §15.3.3: the margins of `body` from its `marginheight`, `topmargin`,
+`bottommargin`, `marginwidth`, `leftmargin` and `rightmargin` attributes (pixel lengths;
+`marginheight` before `topmargin` and `bottommargin`, `marginwidth` before `leftmargin` and
+`rightmargin`). -/
+def bodyMarginHints (n : DOM.Node) (s : Computed) : Computed := Id.run do
+  if n.lname != "body" then return s
+  let first := fun (names : List String) => names.findSome? fun a => pixelLengthAttribute (attrValue n a)
+  let mut m := s.margin
+  if let some v := first ["marginheight", "topmargin"] then m := {m with top := v}
+  if let some v := first ["marginheight", "bottommargin"] then m := {m with bottom := v}
+  if let some v := first ["marginwidth", "leftmargin"] then m := {m with left := v}
+  if let some v := first ["marginwidth", "rightmargin"] then m := {m with right := v}
+  return {s with margin := m}
 
 /-- The order of cascade keys: lists of numbers, lexicographically; a list is not above
 one it starts. -/
@@ -2140,7 +2185,7 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     if n.lname == "bdo" then initial := {initial with unicodeBidi := .isolateOverride}
     else if ["rtl","ltr","auto"].contains dirAttr || n.lname == "bdi" then
       initial := {initial with unicodeBidi := .isolate}
-  if n.ns == some DOM.htmlNS || n.ns.isNone then initial := replacedHints n (tableHints dom id initial parent)
+  if n.ns == some DOM.htmlNS || n.ns.isNone then initial := bodyMarginHints n (replacedHints n (tableHints dom id initial parent))
   -- SVG presentation attributes have lower priority than author CSS.
   -- These properties affect HTML layout/inheritance, so compute them here.
   if svgViewport then

@@ -19,11 +19,15 @@ open L4Factoidal.Rendering.CSS
 
 def px (x : Float) : String := FloatFormat.format x ++ "px"
 
+/-- A percentage held as a fraction (`CSS.resolve` multiplies by it), as CSS writes it:
+`0.5` is `50%`. The product is rounded to a millionth, so `2.0025` gives `200.25`. -/
+def percent (v : Float) : String := FloatFormat.format ((v * 100 * 1000000).round / 1000000) ++ "%"
+
 def length : CSS.Length → String
   | .auto => "auto"
   | .px v => px v
   -- a percentage and the viewport units are kept as fractions (`CSS.length`)
-  | .percent v => FloatFormat.format (v * 100) ++ "%"
+  | .percent v => percent v
   | .vw v => FloatFormat.format (v * 100) ++ "vw"
   | .vh v => FloatFormat.format (v * 100) ++ "vh"
   | .calc p v => "calc(" ++ FloatFormat.format (p * 100) ++ "% + " ++ px v ++ ")"
@@ -108,5 +112,6 @@ def text (c : Computed) : String :=
 #guard (values {}).lookup "background-color" == some "rgba(0, 0, 0, 0)"
 #guard (values { width := .px 10 }).lookup "width" == some "10px"
 #guard (values { width := .percent 0.5 }).lookup "width" == some "50%"
+#guard (values { width := .percent (200.25 / 100) }).lookup "width" == some "200.25%"
 
 end L4Factoidal.Rendering.ComputedValues

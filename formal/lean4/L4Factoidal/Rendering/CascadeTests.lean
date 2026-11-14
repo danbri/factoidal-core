@@ -290,5 +290,34 @@ private def shadowInnerCss :=
 #guard (styleAt "<em id=t>x</em>" "em { font-style: normal }").map (·.oblique) == some false
 #guard (styleAt "<p id=t>x</p>" "p { font-style: oblique 10deg }").map (·.oblique) == some true
 #guard (styleAt "<p id=t>x</p>" "p { font-style: italic }").map (·.oblique) == some true
+/-! Presentational hints (HTML §15; html/rendering/dimension-attributes.html and
+pixel-length-attributes.html): the computed style of the first element named `tag`. -/
+private def hinted (html css tag : String) (f : Computed → Bool) : Bool :=
+  match CSS.parse css with
+  | .error _ => false
+  | .ok rules =>
+    let dom := DOM.parseHtmlDocument html
+    match computeAll dom rules 1 {} with
+    | .ok styles => match (List.range dom.size).find? (fun i => (dom.get i).lname == tag) with
+      | some i => (styles[i]?.map f).getD false
+      | none => false
+    | .error _ => false
+
+private def isPx (v : Float) : Length → Bool
+  | .px x => x == v
+  | _ => false
+
+#guard hinted "<img width='200.25' height='20.25e2'>" "" "img" fun s => isPx 200.25 s.width && isPx 20.25 s.height
+#guard hinted "<hr width='50%'>" "" "hr" fun s => match s.width with | .percent p => p == 0.5 | _ => false
+#guard hinted "<iframe width=300 height=100></iframe>" "" "iframe" fun s => isPx 300 s.width && isPx 100 s.height
+#guard hinted "<embed hspace=7 vspace='3.5'>" "" "embed" fun s => s.margin.left == 7 && s.margin.right == 7 && s.margin.top == 3.5
+#guard hinted "<img border=4>" "" "img" fun s => s.borderStyle == .solid && s.borderWidth.top == 4
+#guard hinted "<img border=4 width=+5>" "img{border-width:1px;width:9px}" "img" fun s => s.borderWidth.left == 1 && isPx 9 s.width
+#guard hinted "<table><tr><td width=0 height='0%'>x</table>" "" "td" fun s => match s.width, s.height with | .auto, .auto => true | _, _ => false
+#guard hinted "<table width=0 height=0><tr><td>x</table>" "" "table" fun s => (match s.width with | .auto => true | _ => false) && isPx 0 s.height
+#guard hinted "<body marginwidth=3 topmargin=4 marginheight=5>" "" "body" fun s => s.margin.left == 3 && s.margin.right == 3 && s.margin.top == 5 && s.margin.bottom == 5
+#guard hinted "<body leftmargin=-1 topmargin=2>" "" "body" fun s => s.margin.left == 8 && s.margin.top == 2
+#guard hinted "<input type=image width=40 hspace=2>" "" "input" fun s => isPx 40 s.width && s.margin.left == 2
+#guard hinted "<input width=40>" "" "input" fun s => match s.width with | .auto => true | _ => false
 
 end L4Factoidal.Rendering.CascadeTests
