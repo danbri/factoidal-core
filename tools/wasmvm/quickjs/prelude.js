@@ -4244,6 +4244,8 @@
         try { x.open(st.method, st.url, true); } catch (e) { fail(new TypeError(String(e && e.message || e))); return; }
         apiCall(73, [s.h, st.credentials === 'include' ? 1 : 0]);
         if (st.mode === 'same-origin') apiCall(77, [s.h, 1]);
+        // redirect mode "error": Lean refuses the redirect (web_api op 79); "manual" is followed
+        if (st.redirect === 'error') apiCall(79, [s.h, 1]);
         x.responseType = 'arraybuffer';
         for (const e of headerState.get(st.headers).list) x.setRequestHeader(e[0], e[1]);
         x.onload = () => {

@@ -289,6 +289,8 @@ structure Transfer where
   phase : Phase := .main
   /-- Fetch mode "same-origin": a request that leaves the page's origin is refused. -/
   sameOriginOnly : Bool := false
+  /-- Fetch redirect mode "error" (`fetch`): a redirect is a network error (Fetch §4.3 step 6). -/
+  redirectError : Bool := false
   /-- The host name (lowercase) and the address chosen for it (`Egress.choose`). -/
   pin : Option (String × String) := none
   /-- For a `blob:` URL: the type and bytes of the entry that the page's own origin made
@@ -588,6 +590,7 @@ def onAnswer (t : Transfer) (a : Answer) : Step :=
       match headerGet a.headers "location" with
       | none => .deliver t (responseOf t a)
       | some loc =>
+        if t.redirectError then .fail "redirect refused by redirect mode error" else
         if t.redirects ≥ maxRedirects then .fail "too many redirects" else
         match URL.parseUrl loc (some t.url) with
         | none => .fail "bad redirect"
@@ -727,8 +730,29 @@ theorem onAnswer_reach (t t' : Transfer) (a : Answer) (w : Wire) (h : onAnswer t
                 · simp at h
                 · split at h
                   · simp at h
-                  · exact (plan_send_allowed _ _ _ h).2.2.1
+                  · split at h
+                    · simp at h
+                    · exact (plan_send_allowed _ _ _ h).2.2.1
           · simp at h
+
+/-- Kind: policy theorem (redirect mode). Says: a transfer in redirect mode "error" whose
+request has been sent follows no redirect: no answer makes `onAnswer` send another request.
+Does not say: anything of the Hub (`hostCors`), where the browser that runs it follows
+redirects itself, nor of the preflight and resolve steps before the request. -/
+theorem onAnswer_redirect_error (t t' : Transfer) (a : Answer) (w : Wire)
+    (hp : t.phase = .main) (hr : t.redirectError = true) : onAnswer t a ≠ .send t' w := by
+  intro h
+  unfold onAnswer at h
+  simp only [hp, hr] at h
+  split at h
+  · simp at h
+  · split at h
+    · simp at h
+    · split at h
+      · simp at h
+      · split at h
+        · split at h <;> simp at h
+        · simp at h
 
 /-- Kind: policy theorem (DNS rebinding). Says: when the host's answer for a name lists any
 special-purpose address, `onAnswer` sends no request for it: the transfer fails. Does not say:
@@ -1016,6 +1040,9 @@ private def named : Transfer := { base with page := { pg with secure := false },
 #guard match plan { base with url := "data:,x" } with | .deliver _ r => r.status == 200 && r.body.toList == "x".toUTF8.toList | _ => false
 #guard match plan { base with url := "data:,x", redirects := 1 } with | .fail _ => true | _ => false
 #guard match plan { base with url := "data:,x", sameOriginOnly := true } with | .fail _ => true | _ => false
+-- redirect mode "error": a redirect is a network error; followed without it
+#guard match onAnswer { base with url := "https://a.example/y", redirectError := true } ({ status := 302, headers := [("Location", "/z")] } : Answer) with | .fail _ => true | _ => false
+#guard match onAnswer { base with url := "https://a.example/y" } ({ status := 302, headers := [("Location", "/z")] } : Answer) with | .send _ _ => true | _ => false
 -- a redirect is checked again: same-origin to a local address is refused
 #guard match onAnswer { base with url := "https://a.example/y" } ({ status := 302, headers := [("Location", "http://127.0.0.1/")] } : Answer) with
   | .fail _ => true | _ => false
