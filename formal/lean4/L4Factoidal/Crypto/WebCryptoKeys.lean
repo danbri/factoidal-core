@@ -2028,7 +2028,7 @@ theorem pkcs8_of_readPkcs8 {b oid pk : List UInt8} {params : Option (List UInt8)
               by_cases b : ver = [1]
               · exact b
               · exact absurd (by simp [a, b]) hv
-          try simp only [Option.pure_def, Option.bind_eq_bind, Option.bind_some] at h
+          try simp only [Option.pure_def] at h
           cases h3 : expect 0x30 r with
           | none => simp [h3] at h
           | some x3 =>
@@ -2043,8 +2043,7 @@ theorem pkcs8_of_readPkcs8 {b oid pk : List UInt8} {params : Option (List UInt8)
               | none => simp [h5] at h
               | some x5 =>
                 obtain ⟨oid', params'⟩ := x5
-                simp only [h5, Option.bind_some, Option.pure_def, Option.some.injEq,
-                  Prod.mk.injEq] at h
+                simp only [h5, Option.bind_some, Option.some.injEq, Prod.mk.injEq] at h
                 obtain ⟨rfl, rfl, rfl⟩ := h
                 refine ⟨ver, tail, hv', ?_⟩
                 have e1 := (tlv_of_expect h1).1

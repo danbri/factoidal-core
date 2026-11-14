@@ -1089,6 +1089,7 @@ import L4Factoidal.WebCodecs.Config
 import L4Factoidal.WebCodecs.Orient
 import L4Factoidal.WebCodecs.Api
 import L4Factoidal.Net.ReferrerPolicy
+import L4Factoidal.Net.SecureContext
 import L4Factoidal.Net.Csp
 import L4Factoidal.Net.BlobUrls
 import L4Factoidal.Net.FetchRules
