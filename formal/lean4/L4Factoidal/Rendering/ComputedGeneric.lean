@@ -434,8 +434,18 @@ def computedPseudoLonghand (v : View) (id : Nat) (pe : String) (p : String) : St
       | none => r.initial
     | none => ""
   let fromElement := fun (_ : Unit) => computedLonghand v depthBound id p
+  -- the user agent's ::marker styles (CSS Lists 3 §3.1.1)
+  let uaMarker : Option String := if pe != "marker" then none else match p with
+    | "unicode-bidi" => some "isolate"
+    | "font-variant-numeric" => some "tabular-nums"
+    | "text-transform" => some "none"
+    | "text-indent" => some "0px"
+    | _ => none
   match cascadedPseudo v id pe p with
-  | none => if inherited then fromElement () else initial ()
+  | none =>
+    match uaMarker with
+    | some ua => ua
+    | none => if inherited then fromElement () else initial ()
   | some value =>
     if value == "inherit" then fromElement ()
     else if value == "initial" then initial ()
@@ -659,6 +669,7 @@ private def pseudoAt (html css pe prop : String) : String :=
 #guard pseudoAt "<p id=t>x</p>" "#t::before { content: 'a' } p { color: blue }" "before" "color" == "rgb(0, 0, 255)"
 #guard pseudoAt "<p id=t>x</p>" "#t::marker { font-size: 20px } #t::before { font-size: 30px }" "marker" "font-size" == "20px"
 #guard pseudoAt "<p id=t>x</p>" "p::after { margin-left: 3px }" "before" "margin-left" == "0px"
+#guard pseudoAt "<ul><li id=t>x</li></ul>" "li { text-transform: lowercase }" "marker" "text-transform" == "none"
 -- revert-layer rolls back to the layer before; with no earlier layer, to the default
 #guard computedAt "<div id=t class=r></div>"
   "@layer a { #t { color: red } } @layer b { #t { color: blue } } @layer c { #t.r { color: revert-layer } }" "color" ==
