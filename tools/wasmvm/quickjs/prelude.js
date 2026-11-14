@@ -1662,7 +1662,9 @@
   const gpuAdapter = Object.freeze({ features: new Set(), limits: gpuDevice.limits, isFallbackAdapter: false,
     info: Object.freeze({ vendor: 'foafnaut', architecture: 'lean-validated', device: '', description: 'WebGPU subset validated by Lean' }),
     requestDevice: () => Promise.resolve(gpuDevice), requestAdapterInfo: () => Promise.resolve(gpuAdapter.info) });
-  const gpu = Object.freeze({ requestAdapter: () => Promise.resolve(gpuAdapter), getPreferredCanvasFormat: () => 'rgba8unorm',
+  // An adapter only when the embedder replays this page's GPU commands (Lean's op 17,
+  // PageGpu.State.replay); otherwise null, as for a browser with no GPU.
+  const gpu = Object.freeze({ requestAdapter: () => Promise.resolve(n.gpu(17, '', '') === '1' ? gpuAdapter : null), getPreferredCanvasFormat: () => 'rgba8unorm',
     wgslLanguageFeatures: new Set() });
   const canvasSize = (el, name, fallback) => { const v = parseInt(el.getAttribute(name), 10); return v > 0 ? v : fallback; };
   const gpuContexts = new Map();

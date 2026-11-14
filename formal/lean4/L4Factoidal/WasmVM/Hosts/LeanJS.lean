@@ -749,7 +749,7 @@ def start (base : Session) (dom : Arena) (url : String) (scripts : Array (Nat ×
     (reads : Reads := {}) (time : ScriptClock := {})
     (origins : Option (L4Factoidal.HTML.Frames.Origin × L4Factoidal.HTML.Frames.Origin) := none)
     (mods : LeanJSModules.Loaded := {}) : Session := Id.run do
-  let gpu := L4Factoidal.PageGpu.State.empty lim.gpuPage
+  let gpu := L4Factoidal.PageGpu.State.empty lim.gpuPage lim.gpuReplay
   let domHost : Page.DomHost := { dom := dom, commandLimit := lim.commands, logLimit := lim.logs, framing := lim.frames, gpu := gpu, url, selfOrigin := origins.map (·.1), parentOrigin := origins.map (·.2), hostLoads := lim.hostLoads }
   -- the page's own iframes get browsing contexts before its scripts run (as `Page.Session.startP`)
   let domHost := if domHost.framing && dom.nodes.any (L4Factoidal.DOM.Dom.isHtmlElement · "iframe") then

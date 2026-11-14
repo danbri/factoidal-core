@@ -778,7 +778,9 @@ async function startScripts(page,scripts){
   // The first page of a session starts before the history exists: no shell then.
   const turn=scriptCall(page.source,{op:'scriptSession',action:'start',url:page.url,resources,width,height,zoomUnit:zoomUnit(),...(history?{shell:shell()}:{}),layout,
     ...(plan.engine==='bubblepop'?{engine:'bubblepop'}:{}),...(page.encoding?{encoding:page.encoding}:{}),
-    ...(scriptOps.includes('net')?{network:true,hostCors:true}:{})});
+    ...(scriptOps.includes('net')?{network:true,hostCors:true}:{}),
+    // the layer surface replays page GPU commands on WebGPU (not in CPU mode)
+    ...(!cpuMode&&self.navigator?.gpu?{gpuReplay:true}:{})});
   scriptStats.startMs=scriptStats.lastMs;scriptStats.engine=plan.engine;
   page.script={session:turn.session,turn,epoch:performance.now()-turn.clock,engine:plan.engine};
   scriptTurn(page,turn);

@@ -309,6 +309,9 @@ async function main() {
   // The real time at which each session's virtual clock was 0.
   const scriptEpochs=new Map<number,number>();
   const netQueue:{session:number;wire:NonNullable<ScriptTurn["netRequests"]>[number]}[]=[];
+  // Page GPU commands are replayed once the window's GPU session exists: then pages started
+  // after it are told so (gpuReplay), and navigator.gpu has an adapter (PageGpu.State.replay).
+  let gpuReplay=false;
   // Page requests (XMLHttpRequest, fetch): the host only moves bytes (native_net.ts). The
   // engine chose them (origin, CORS, redirects, the address of a name: Net.PageFetch).
   const netFetch=(w:NonNullable<ScriptTurn["netRequests"]>[number])=>netAnswer(w);
@@ -362,7 +365,7 @@ async function main() {
         const turn=await scriptCall("scriptSession",source,{action:"start",url:pageURL,resources,width:at.width,height:at.height,zoomUnit:at.zoomUnit,
           ...(at.shell?{shell:at.shell}:{}),layout:{url:pageURL,textScalePercent:at.textScalePercent,zoomUnit:at.zoomUnit,...mode},
           ...(plan.engine==="bubblepop"?{engine:"bubblepop"}:{}),...(encoding?{encoding}:{}),
-          ...(scriptOps.includes("net")?{network:true}:{})}) as ScriptTurn;
+          ...(scriptOps.includes("net")?{network:true}:{}),...(gpuReplay?{gpuReplay:true}:{})}) as ScriptTurn;
         netQueue.push(...(turn.netRequests??[]).map(wire=>({session:turn.session,wire})));
         scriptEpochs.set(turn.session,performance.now()-turn.clock);sessionEngines.set(turn.session,plan.engine);
         // The start turn makes the page's GPU objects (canvas, buffers, pipelines); the later turns use them.
@@ -1222,6 +1225,7 @@ async function main() {
       // The chrome shows the note, or stops showing it.
       dirty=true;
     }});
+    gpuReplay=true;
     gpuFlush();
     // Lean's compile runs in a worker so this loop keeps pumping. If the worker
     // can not start or dies, compile runs here instead, and the trace says so.

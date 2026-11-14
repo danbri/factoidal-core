@@ -26,7 +26,7 @@ function run(engine:HTMLEngine,name:string,source:string,lean:boolean){
   const url=`file:///${name}.html`;
   const extra=lean?{engine:"bubblepop"}:{};
   const turns:Turn[]=[];
-  let turn=engine.scriptSession(source,{action:"start",url,resources:[],instructionsPerMs:1e12,full:true,...extra}) as Turn;turns.push(turn);
+  let turn=engine.scriptSession(source,{action:"start",url,resources:[],instructionsPerMs:1e12,full:true,gpuReplay:true,...extra}) as Turn;turns.push(turn);
   const session=turn.session;
   turn=engine.scriptSession("",{action:"advance",session,ms:6000,full:true}) as Turn;turns.push(turn);
   // The first button of the page, found by Lean's layout as a host finds a click target.

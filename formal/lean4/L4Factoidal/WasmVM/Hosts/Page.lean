@@ -305,6 +305,8 @@ structure Limits where
   commands : Nat := Hosts.Dom.maxCommands
   /-- The page number of this session's GPU objects (`L4Factoidal.PageGpu.Gid.page`). -/
   gpuPage : Nat := 0
+  /-- The embedder replays the page's GPU commands on a GPU (`PageGpu.State.replay`). -/
+  gpuReplay : Bool := false
   /-- Console lines a page may write (`Hosts.Dom.State.logLimit`). -/
   logs : Nat := 1024
   /-- Nested browsing contexts for `iframe` elements (`Hosts.Dom.State.framing`). -/
@@ -1763,7 +1765,7 @@ def start (m : Module') (dom : Arena) (url : String) (scripts : Array (Nat × St
       let web : Hosts.WebApi.State := { entropy := lim.entropy, docEncoding := lim.encoding }
       let dh := { s.host.dom with frames := framed, framing := lim.frames, hostLoads := lim.hostLoads, selfOrigin := origins.map (·.1), parentOrigin := origins.map (·.2) }
       pure { s with host := { s.host with dom := dh, reads, time, web } }
-  let s := { s with host := { s.host with dom := { s.host.dom with gpu := L4Factoidal.PageGpu.State.empty lim.gpuPage } } }
+  let s := { s with host := { s.host with dom := { s.host.dom with gpu := L4Factoidal.PageGpu.State.empty lim.gpuPage lim.gpuReplay } } }
   return (s.startP url scripts framed).runLocal
 
 /-! ## What a turn did -/
