@@ -23,6 +23,7 @@ import L4Factoidal.Rendering.CssValues.Declaration
 import L4Factoidal.Rendering.ComputedGeneric
 import L4Factoidal.Rendering.CssSheet
 import L4Factoidal.Rendering.CssTyped
+import L4Factoidal.Rendering.CssRegister
 import L4Factoidal.HTML.FormSubmission
 import L4Factoidal.DOM.Editing.Keys
 import L4Factoidal.DOM.Editing.TextControl
@@ -662,6 +663,9 @@ def domOpM (id op : Nat) (q : String) : Op String := do
   | 154 =>
     -- CSS Typed OM: reification, serialisation, numeric types and arithmetic (`CssTyped.typedOp`)
     return L4Factoidal.Rendering.CssTyped.typedOp q
+  | 155 =>
+    -- `CSS.registerProperty`: the checks of the name, the syntax and the initial value
+    return L4Factoidal.Rendering.CssRegister.registerOp q
   | 167 =>
     -- a reflected attribute's setter, applied: the decision of 161, then the content
     -- attribute set or removed as a command (the page has no MutationObserver and the row
