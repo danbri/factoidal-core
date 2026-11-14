@@ -1178,6 +1178,15 @@ def liveLen (ty buf off len : Nat) : M Nat := do
   let bo ← getObj buf
   pure (if typedOob (isDetached bo) off len (elemSize ty) (bufferBytes bo).size then 0 else len)
 
+/-- The %TypedArray%.prototype methods that validate the typed array and then take the steps
+of the Array.prototype method of the same name (`NativeX.typedGeneric`): name, length. -/
+def typedGenericNames : Array (String × Nat) :=
+  #[("forEach", 1), ("join", 1), ("indexOf", 1), ("includes", 1), ("every", 1), ("some", 1), ("reduce", 1),
+    ("find", 1), ("findIndex", 1), ("values", 0), ("keys", 0), ("entries", 0)]
+
+/-- Where %TypedArray%.prototype keeps the Array.prototype function a generic method uses. -/
+def typedGenericKey (nm : String) : String := privKey ("%Array." ++ nm)
+
 /-- ValidateTypedArray's test (§23.2.4.4): is the view inside its buffer, and the buffer not
 detached? -/
 def typedInBounds (ty buf off len : Nat) : M Bool := do
@@ -8466,15 +8475,6 @@ def getter (target : Nat) (name : String) (id : Native) : M Unit := do
 
 /-- The methods of %TypedArray%.prototype that answer typed arrays or need the element
 type (`Native.typedMethod`): name, number, length. -/
-/-- The %TypedArray%.prototype methods that validate the typed array and then take the steps
-of the Array.prototype method of the same name (`NativeX.typedGeneric`): name, length. -/
-def typedGenericNames : Array (String × Nat) :=
-  #[("forEach", 1), ("join", 1), ("indexOf", 1), ("includes", 1), ("every", 1), ("some", 1), ("reduce", 1),
-    ("find", 1), ("findIndex", 1), ("values", 0), ("keys", 0), ("entries", 0)]
-
-/-- Where %TypedArray%.prototype keeps the Array.prototype function a generic method uses. -/
-def typedGenericKey (nm : String) : String := privKey ("%Array." ++ nm)
-
 def typedMethodNames : List (String × Nat × Nat) :=
   [("copyWithin", 0, 2), ("reverse", 1, 0), ("slice", 2, 2), ("sort", 3, 1), ("at", 4, 1),
    ("lastIndexOf", 5, 1), ("filter", 6, 1), ("map", 7, 1), ("toReversed", 8, 0), ("toSorted", 9, 1),
@@ -8531,11 +8531,11 @@ def initRealm : M Unit := do
     method oc "keys" .objectKeys 1
     method oc "getPrototypeOf" .objectGetPrototypeOf 1
     method oc "setPrototypeOf" .objectSetPrototypeOf 2
-  -- Object.prototype.__proto__ (B.2.2.1); Object.prototype is an immutable prototype exotic
-  -- object (§20.1.3)
-  defineOwn objectProto "__proto__" (.acc (← mkNative (.x (.protoAccessor false)) "get __proto__" 0)
-    (← mkNative (.x (.protoAccessor true)) "set __proto__" 1) false true)
-  setHidden objectProto immutableProtoKey (.bool true)
+    -- Object.prototype.__proto__ (B.2.2.1); Object.prototype is an immutable prototype exotic
+    -- object (§20.1.3)
+    defineOwn objectProto "__proto__" (.acc (← mkNative (.x (.protoAccessor false)) "get __proto__" 0)
+      (← mkNative (.x (.protoAccessor true)) "set __proto__" 1) false true)
+    setHidden objectProto immutableProtoKey (.bool true)
     method oc "create" .objectCreate 2
     method oc "defineProperty" .objectDefineProperty 3
     method oc "getOwnPropertyNames" .objectGetOwnPropertyNames 1
