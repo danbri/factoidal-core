@@ -4213,6 +4213,37 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       let k ← toKey n a0
       let id ← toObj n thisV
       pure (.bool (match ← ownDesc n id k with | some p => p.enumerable | none => false))
+    -- Annex B.2.2.2 and B.2.2.3: __defineGetter__ (P, getter), __defineSetter__ (P, setter):
+    -- DefinePropertyOrThrow(O, key, { [[Get]] or [[Set]]: f, [[Enumerable]]: true, [[Configurable]]: true })
+    | .objectProtoDefineGetter | .objectProtoDefineSetter =>
+      let o ← toObj n thisV
+      if !(← isCallable a1) then
+        throwErr .type (if id matches .objectProtoDefineGetter then "Object.prototype.__defineGetter__: Expecting function"
+          else "Object.prototype.__defineSetter__: Expecting function")
+      let k ← toKey n a0
+      let d ← newObject
+      defineOwn d (if id matches .objectProtoDefineGetter then "get" else "set") (.data a1 true true true)
+      defineOwn d "enumerable" (.data (.bool true) true true true)
+      defineOwn d "configurable" (.data (.bool true) true true true)
+      defineFromDescriptor n o k (.obj d)
+      pure .undef
+    -- Annex B.2.2.4 and B.2.2.5: __lookupGetter__ (P), __lookupSetter__ (P): the getter or setter
+    -- of the first object on the prototype chain that has P as its own property
+    | .objectProtoLookupGetter | .objectProtoLookupSetter =>
+      let o ← toObj n thisV
+      let k ← toKey n a0
+      let wantGet := id matches .objectProtoLookupGetter
+      let mut cur := o
+      let mut res : Value := .undef
+      for _ in [0:10000] do
+        match ← ownDesc n cur k with
+        | some (.acc g s _ _) => res := (if wantGet then g else s); break
+        | some _ => break
+        | none =>
+          match (← getObj cur).proto with
+          | .obj q => cur := q
+          | _ => break
+      pure res
     | .objectProtoIsPrototypeOf =>
       match a0 with
       | .obj _ =>
@@ -8277,6 +8308,10 @@ def initRealm : M Unit := do
   method objectProto "valueOf" .objectProtoValueOf 0
   method objectProto "isPrototypeOf" .objectProtoIsPrototypeOf 1
   method objectProto "propertyIsEnumerable" .objectProtoPropertyIsEnumerable 1
+  method objectProto "__defineGetter__" .objectProtoDefineGetter 2
+  method objectProto "__defineSetter__" .objectProtoDefineSetter 2
+  method objectProto "__lookupGetter__" .objectProtoLookupGetter 1
+  method objectProto "__lookupSetter__" .objectProtoLookupSetter 1
   -- Function
   setHidden g "Function" (← ctorWith "Function" .functionCtor 1 functionProto)
   method functionProto "call" .functionProtoCall 1

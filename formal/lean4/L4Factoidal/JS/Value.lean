@@ -153,6 +153,7 @@ inductive Native where
   | objectGetOwnPropertyDescriptor | objectPreventExtensions | objectIsExtensible
   | objectProtoHasOwnProperty | objectProtoToString | objectProtoValueOf
   | objectProtoIsPrototypeOf | objectProtoPropertyIsEnumerable | objectProtoToLocaleString
+  | objectProtoDefineGetter | objectProtoDefineSetter | objectProtoLookupGetter | objectProtoLookupSetter
   | functionCtor | functionProtoCall | functionProtoApply | functionProtoBind
   | functionProtoToString | functionProto
   | arrayCtor | arrayIsArray | arrayPush | arrayPop | arrayShift | arrayUnshift | arraySlice
