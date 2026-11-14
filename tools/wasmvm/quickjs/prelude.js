@@ -2755,7 +2755,7 @@
         // their identity, so `frame.contentWindow.TypeError === TypeError` as before.
         if (typeof v !== 'function' || typeof p !== 'string') return v;
         const d = Object.getOwnPropertyDescriptor(t, p);
-        return d && d.enumerable ? asFrame(v) : v;
+        return d && d.enumerable && 'value' in d ? asFrame(v) : v;
       },
       has(t, p) { return isOwn(p) || isVar(p) || Reflect.has(t, p); },
       set(t, p, v) {
@@ -5697,9 +5697,12 @@
     });
   // The window's event handler attributes too: `onmessage = f` in a frame's script is that
   // frame's window's handler, not the page's (it would replace the page's own).
+  // They are own properties of the window: the members of a [Global] interface are on the
+  // global object itself (Web IDL §3.7.6), so `window.hasOwnProperty('onload')` holds.
   for (const name of handlerNames) {
     const of = t => ((t === window || t == null) && scriptDocument ? windowOfScript() : t);
-    Object.defineProperty(Window.prototype, 'on' + name, { get() { return handlerOf(of(this), name); },
+    delete Window.prototype['on' + name];
+    Object.defineProperty(globalThis, 'on' + name, { get() { return handlerOf(of(this), name); },
       set(f) { setHandler(of(this), name, f); }, configurable: true, enumerable: true });
   }
   // document.open, write, writeln and close on a frame's document (HTML §8.4.3, §8.4.4). The
