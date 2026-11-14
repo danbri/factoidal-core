@@ -901,6 +901,57 @@ def elementSiblings (d : Dom) (k : NodeId) : Array NodeId :=
   | some p => (d.get p).kids.filter fun c => (d.get c).type == .element
   | none => #[k]
 
+/-! ### Sibling positions without a sibling array
+
+The structural pseudo-classes ask where an element is among its element siblings. These read
+the parent's child list in place, from the element outwards, and stop at the first sibling
+that answers (`:first-child` looks back to the nearest element sibling only); none builds
+an array. `elementSiblings` stays as the definition they agree with (guards below). -/
+
+/-- The parent's children and the element's place among them. -/
+def kidPlace (d : Dom) (k : NodeId) : Option (Array NodeId × Nat) :=
+  match (d.get k).parent with
+  | some p => let kids := (d.get p).kids; (kids.findIdx? (· == k)).map fun i => (kids, i)
+  | none => none
+
+/-- An element child before place `j` satisfies `pred`, looking from the nearest (a loop:
+a tail call). -/
+def elemBefore (d : Dom) (kids : Array NodeId) (pred : NodeId → Bool) : Nat → Bool
+  | 0 => false
+  | j + 1 =>
+    let c := kids[j]!
+    if (d.get c).type == .element && pred c then true else elemBefore d kids pred j
+
+/-- An element child from place `j` on satisfies `pred` (a loop: a tail call). -/
+def elemAfter (d : Dom) (kids : Array NodeId) (pred : NodeId → Bool) (j : Nat) : Bool :=
+  if h : j < kids.size then
+    let c := kids[j]
+    if (d.get c).type == .element && pred c then true else elemAfter d kids pred (j + 1)
+  else false
+termination_by kids.size - j
+
+/-- The element children in places `j` to `hi` that satisfy `pred`, counted (a loop: a tail
+call). -/
+def elemCount (d : Dom) (kids : Array NodeId) (pred : NodeId → Bool) (j hi acc : Nat) : Nat :=
+  if j < hi then
+    let c := kids[j]!
+    elemCount d kids pred (j + 1) hi (if (d.get c).type == .element && pred c then acc + 1 else acc)
+  else acc
+termination_by hi - j
+
+/-- Whether element `k` is the first (`last` false) or last of its element siblings that
+satisfy `pred` (`pred` holds of `k`). -/
+def edgeSib (d : Dom) (k : NodeId) (pred : NodeId → Bool) (last : Bool) : Bool :=
+  match kidPlace d k with
+  | some (kids, i) => if last then !elemAfter d kids pred (i + 1) else !elemBefore d kids pred i
+  | none => false
+
+/-- The 1-based place of element `k` among its element siblings that satisfy `pred`,
+counted from the start, or from the end with `fromEnd`. -/
+def sibPos (d : Dom) (k : NodeId) (pred : NodeId → Bool) (fromEnd : Bool) : Option Nat :=
+  (kidPlace d k).map fun (kids, i) =>
+    if fromEnd then elemCount d kids pred (i + 1) kids.size 0 + 1 else elemCount d kids pred 0 i 0 + 1
+
 def nthOk (a b : Int) (pos : Nat) : Bool :=
   let p : Int := pos
   if a == 0 then p == b else
@@ -1177,20 +1228,19 @@ def matchSimple (d : Dom) (scope : Option NodeId) : Nat → NodeId → Simple �
             if ins then attrValueMatches op (lowerAscii a.value) (lowerAscii value) else attrValueMatches op a.value value)
     | .pseudo n =>
       let x := d.get k
-      -- the element siblings, read only by the structural pseudo-classes
-      let sibs := fun (_ : Unit) => elementSiblings d k
-      let sameType := fun (_ : Unit) => (sibs ()).filter fun c => (d.get c).lname == x.lname && (d.get c).ns == x.ns
+      -- an element sibling of the same type (`:first-of-type` and the like)
+      let sameKind := fun (c : NodeId) => (d.get c).lname == x.lname && (d.get c).ns == x.ns
       match n with
       | "root" => match x.parent with | some p => (d.get p).type == .document | none => false
       | "empty" => x.kids.all fun c =>
           let y := d.get c
           y.type != .element && !((y.type == .text || y.type == .cdata) && !y.data.isEmpty)
-      | "first-child" => x.parent.isSome && (sibs ())[0]? == some k
-      | "last-child" => x.parent.isSome && (sibs ()).back? == some k
-      | "only-child" => x.parent.isSome && (sibs ()).size == 1
-      | "first-of-type" => x.parent.isSome && (sameType ())[0]? == some k
-      | "last-of-type" => x.parent.isSome && (sameType ()).back? == some k
-      | "only-of-type" => x.parent.isSome && (sameType ()).size == 1
+      | "first-child" => edgeSib d k (fun _ => true) false
+      | "last-child" => edgeSib d k (fun _ => true) true
+      | "only-child" => edgeSib d k (fun _ => true) false && edgeSib d k (fun _ => true) true
+      | "first-of-type" => edgeSib d k sameKind false
+      | "last-of-type" => edgeSib d k sameKind true
+      | "only-of-type" => edgeSib d k sameKind false && edgeSib d k sameKind true
       | "scope" => match scope with | some s => s == k | none => x.parent.any fun p => (d.get p).type == .document
       | "link" | "any-link" => isHtml d k ["a", "area"] && (attrVal? d k "href").isSome
       | "checked" =>
@@ -1240,16 +1290,27 @@ def matchSimple (d : Dom) (scope : Option NodeId) : Nat → NodeId → Simple �
     | .nth kind a b of =>
       let x := d.get k
       if x.parent.isNone then false else
-      let sibs := elementSiblings d k
-      let pool := match kind, of with
-        | .child, some l | .lastChild, some l => sibs.filter fun c => matchList d scope fuel c l
-        | .ofType, _ | .lastOfType, _ => sibs.filter fun c => (d.get c).lname == x.lname && (d.get c).ns == x.ns
-        | _, _ => sibs
-      match pool.toList.findIdx? (· == k) with
-      | none => false
-      | some i =>
-        let pos := match kind with | .child | .ofType => i + 1 | _ => pool.size - i
-        nthOk a b pos
+      match of with
+      | some l =>
+        if (kind == .child || kind == .lastChild) then
+          -- `of S`: the element must match S, and its place is among the siblings that do
+          let sibs := elementSiblings d k
+          let pool := sibs.filter fun c => matchList d scope fuel c l
+          match pool.toList.findIdx? (· == k) with
+          | none => false
+          | some i => nthOk a b (if kind == .child then i + 1 else pool.size - i)
+        else
+          let same := fun (c : NodeId) => (d.get c).lname == x.lname && (d.get c).ns == x.ns
+          match sibPos d k same (kind == .lastOfType) with
+          | some pos => nthOk a b pos
+          | none => false
+      | none =>
+        -- the place counted in the parent's child list in place, no sibling array
+        let same := fun (c : NodeId) => (d.get c).lname == x.lname && (d.get c).ns == x.ns
+        let pred := if kind == .ofType || kind == .lastOfType then same else fun _ => true
+        match sibPos d k pred (kind == .lastChild || kind == .lastOfType) with
+        | some pos => nthOk a b pos
+        | none => false
     | .not l => !matchList d scope fuel k l
     | .is l => matchList d scope fuel k l
     | .has rels => rels.any fun rel => match rel with
