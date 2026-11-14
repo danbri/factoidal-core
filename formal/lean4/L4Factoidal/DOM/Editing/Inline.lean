@@ -783,4 +783,158 @@ def createLink (value : String) : M Unit := do
       if isEditable e a && isHtml d a ["a"] && hasAttr d a "href" then setAttr a "href" value
   setSelectionValue "createlink" (some value)
 
+/-! ## The inline commands as actions, and their state and value with overrides -/
+
+/-- The selection has a range whose boundary points are Text or Element nodes. -/
+def hasActive (e : Ed) : Bool :=
+  match (e.live.ranges[0]?).join with
+  | some r =>
+    let ok := fun (n : NodeId) => isText e.dom n || isEl e.dom n
+    ok r.start.node && ok r.stop.node
+  | none => false
+
+/-- The state of an inline command: its override, else the state of the selection. -/
+def inlineQueryState (command : String) : M Bool := do
+  match inlineActivatedValues command with
+  | none => return false
+  | some vals =>
+    if !(← rd hasActive) then return false
+    if let some v := ← getStateOverride command then return v
+    rd fun e => inlineState e command vals
+
+/-- The value of `fontName`, `fontSize`, `foreColor`, `hiliteColor` or `backColor`: its
+override, else the value of the selection. -/
+def inlineQueryValue (command : String) : M String := do
+  if !(← rd hasActive) then return ""
+  if let some v := ← getValueOverride command then
+    return if command == "fontsize" then (legacyFontSize v).getD "" else v
+  rd fun e =>
+    if command == "fontsize" then
+      let nodes := allEffectivelyContained e (activeOf e) (isFormattableNode e)
+      let ref := (nodes[0]?).getD (activeOf e).start.node
+      match effectiveCommandValue e ref "fontsize" with
+      | some px => (legacyFontSize px).getD ""
+      | none => ""
+    else standardValue e command
+
+/-- The action of an inline formatting command; `none` when `command` is not one. -/
+def inlineAction (command value : String) : M (Option Bool) := do
+  match command with
+  | "backcolor" | "forecolor" | "hilitecolor" =>
+    match colorCommandValue value with
+    | some v => setSelectionValue command (some v); return some true
+    | none => return some false
+  | "bold" =>
+    let on ← inlineQueryState "bold"
+    setSelectionValue "bold" (some (if on then "normal" else "bold")); return some true
+  | "italic" =>
+    let on ← inlineQueryState "italic"
+    setSelectionValue "italic" (some (if on then "normal" else "italic")); return some true
+  | "strikethrough" =>
+    let on ← inlineQueryState "strikethrough"
+    setSelectionValue "strikethrough" (if on then none else some "line-through"); return some true
+  | "underline" =>
+    let on ← inlineQueryState "underline"
+    setSelectionValue "underline" (if on then none else some "underline"); return some true
+  | "subscript" | "superscript" =>
+    let on ← inlineQueryState command
+    setSelectionValue command none
+    if !on then setSelectionValue command (some command)
+    return some true
+  | "createlink" => if value.isEmpty then return some false else createLink value; return some true
+  | "fontname" => setSelectionValue "fontname" (some value); return some true
+  | "fontsize" =>
+    match normalizeFontSize value with
+    | some v => setSelectionValue "fontsize" (some v); return some true
+    | none => return some false
+  | "removeformat" => removeFormat; return some true
+  | "unlink" => unlink; return some true
+  | _ => return none
+
+/-! ## Recording and restoring overrides, states and values -/
+
+/-- A recorded override: a state or a value. -/
+inductive Ov where
+  | state (b : Bool)
+  | value (s : String)
+  deriving BEq, Repr, Inhabited
+
+def stateCommands : List String := ["bold", "italic", "strikethrough", "subscript", "superscript", "underline"]
+def valueCommands : List String := ["fontname", "fontsize", "forecolor", "hilitecolor"]
+
+/-- "Record current overrides". -/
+def recordCurrentOverrides : M (List (String × Ov)) := do
+  let mut out : List (String × Ov) := []
+  if let some v := ← getValueOverride "createlink" then out := out ++ [("createlink", .value v)]
+  for c in stateCommands do
+    if let some b := ← getStateOverride c then out := out ++ [(c, .state b)]
+  for c in valueCommands do
+    if let some v := ← getValueOverride c then out := out ++ [(c, .value v)]
+  return out
+
+/-- The first formattable node effectively contained in the active range. -/
+def firstFormattable (e : Ed) : Option NodeId :=
+  (allEffectivelyContained e (activeOf e) (isFormattableNode e))[0]?
+
+/-- "Record current states and values". -/
+def recordCurrentStatesAndValues : M (List (String × Ov)) := do
+  let e ← get
+  let some node := firstFormattable e | return []
+  let mut out : List (String × Ov) := []
+  if let some v := effectiveCommandValue e node "createlink" then out := out ++ [("createlink", .value v)]
+  for c in stateCommands do
+    let on := match inlineActivatedValues c, effectiveCommandValue e node c with
+      | some vals, some v => vals.contains v
+      | _, _ => false
+    out := out ++ [(c, .state on)]
+  for c in valueCommands do
+    out := out ++ [(c, .value (← inlineQueryValue c))]
+  if let some v := effectiveCommandValue e node "fontsize" then out := out ++ [("fontsize", .value v)]
+  return out
+
+/-- "Restore states and values". -/
+def restoreStatesAndValues (overrides : List (String × Ov)) : M Unit := do
+  let e ← get
+  match firstFormattable e with
+  | some node0 =>
+    let mut node := node0
+    for (command, ov) in overrides do
+      match ov with
+      | .state b =>
+        if (← inlineQueryState command) != b then
+          let _ ← inlineAction command ""
+        else continue
+      | .value v =>
+        if command != "createlink" && command != "fontsize" then
+          if !equivalentValues command (some (← inlineQueryValue command)) (some v) then
+            let _ ← inlineAction command v
+          else continue
+        else if command == "createlink" then
+          let vo ← getValueOverride "createlink"
+          let e ← get
+          let differs := match vo with
+            | some x => x != v
+            | none => effectiveCommandValue e node "createlink" != some v
+          if differs then
+            let _ ← inlineAction "createlink" v
+          else continue
+        else
+          let vo ← getValueOverride "fontsize"
+          let e ← get
+          let differs := match vo with
+            | some x => x != v
+            | none => !looselyEquivalentValues command (effectiveCommandValue e node "fontsize") (some v)
+          if differs then
+            match legacyFontSize v with
+            | some l => let _ ← inlineAction "fontsize" l
+            | none => pure ()
+          else continue
+      let e ← get
+      node := (firstFormattable e).getD node
+  | none =>
+    for (command, ov) in overrides do
+      match ov with
+      | .state b => setStateOverride command b
+      | .value v => setValueOverride command v
+
 end L4Factoidal.DOM.Editing

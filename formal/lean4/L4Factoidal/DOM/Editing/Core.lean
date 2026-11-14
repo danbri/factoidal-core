@@ -23,6 +23,7 @@ its block, and extraneous when, in addition, inline content precedes it on its l
 -/
 import L4Factoidal.DOM.Editing.Style
 import L4Factoidal.DOM.Live
+import L4Factoidal.DOM.Fragment
 
 namespace L4Factoidal.DOM.Editing
 open L4Factoidal.DOM L4Factoidal.DOM.Range
@@ -42,6 +43,11 @@ inductive Prim where
   | replaceData (node offset count : Nat) (data : String)
   | splitText (node offset : Nat) (result : NodeId)
   | cloneNode (node : NodeId) (deep : Bool) (result : NodeId)
+  /-- A new, empty DocumentFragment. -/
+  | createFragment (result : NodeId)
+  /-- The DocumentFragment that the HTML fragment parsing algorithm makes of `src` for a
+  context element (`DOM.Fragment.parseInto`). -/
+  | parseFragment (ns name src : String) (result : NodeId)
   deriving BEq, Repr, Inhabited
 
 /-- The editing state. -/
@@ -248,6 +254,8 @@ def permitted (e : Ed) : Prim → Bool
   | .createElement _ _ => true
   | .createText _ _ => true
   | .cloneNode _ _ _ => true
+  | .createFragment _ => true
+  | .parseFragment _ _ _ _ => true
   | .insertBefore parent node child =>
     touchable e parent &&
       (match parentOf e.dom node with
@@ -267,6 +275,8 @@ def runPrim (d : Dom) (lv : Live.Live) (doc : NodeId) : Prim → Dom × Live.Liv
   | .createElement name _ => ((d.createElement doc name).1, lv)
   | .createText data _ => ((d.createTextNode doc data).1, lv)
   | .cloneNode node deep _ => ((d.cloneNode node deep).1, lv)
+  | .createFragment _ => ((d.createDocumentFragment doc).1, lv)
+  | .parseFragment ns name src _ => ((Fragment.parseInto d doc ns name src).1, lv)
   | .insertBefore parent node child => Live.preInsert d lv node parent child
   | .remove _ node => Live.remove d lv node
   | .setAttr node name value => ((d.setAttribute node name value).1, lv)
@@ -336,6 +346,17 @@ def splitText (n offset : Nat) : M NodeId := do
 def cloneNode (n : NodeId) (deep : Bool) : M NodeId := do
   let r ← rd fun e => e.dom.size
   prim (.cloneNode n deep r)
+  return r
+
+def createFragment : M NodeId := do
+  let r ← rd fun e => e.dom.size
+  prim (.createFragment r)
+  return r
+
+/-- The fragment of `src` parsed for a context element `ns`, `name`. -/
+def parseFragment (ns name src : String) : M NodeId := do
+  let r ← rd fun e => (Fragment.parseInto e.dom e.doc ns name src).2
+  prim (.parseFragment ns name src r)
   return r
 
 /-! ## The inline style of an element -/

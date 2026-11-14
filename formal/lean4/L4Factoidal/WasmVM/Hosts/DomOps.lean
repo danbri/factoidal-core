@@ -757,6 +757,8 @@ def primCommand (doc : Nat) : L4Factoidal.DOM.Editing.Prim → Command
   | .replaceData node offset count data => .replaceData node offset count data
   | .splitText node offset r => .splitText node offset r
   | .cloneNode node deep r => .cloneNode node deep r
+  | .createFragment r => .createNode (2 + 16 * doc) "" r
+  | .parseFragment ns name src r => .createNode (13 + 16 * doc) (ns ++ "\x00" ++ name ++ "\x00" ++ src) r
 
 /-- Run an editing program on the page: the arena, the selection's range and the
 document's editing flags go in; the program's changes are run as typed commands, and its
@@ -774,7 +776,7 @@ def editRun {α : Type} (sheet : String) (prog : L4Factoidal.DOM.Editing.M α) :
   let flags := ed.flags
   for p in log do
     match p with
-    | .createElement _ r | .createText _ r | .splitText _ _ r | .cloneNode _ _ r =>
+    | .createElement _ r | .createText _ r | .splitText _ _ r | .cloneNode _ _ r | .createFragment r =>
       if r != (← dom).size then throw (-5)
     | _ => pure ()
     exec (primCommand 0 p)

@@ -12,7 +12,7 @@ Proved: `exec_unsupported` (a command that is not supported changes nothing and 
 false), `enabled_needs_range` (a command that is not a miscellaneous command is not
 enabled with no active range).
 -/
-import L4Factoidal.DOM.Editing.Inline
+import L4Factoidal.DOM.Editing.Delete
 
 namespace L4Factoidal.DOM.Editing
 open L4Factoidal.DOM L4Factoidal.DOM.Range
@@ -23,17 +23,10 @@ def miscCommands : List String := ["defaultparagraphseparator", "selectall", "st
 /-- The supported commands. -/
 def supportedCommands : List String :=
   ["backcolor", "bold", "createlink", "fontname", "fontsize", "forecolor", "hilitecolor", "italic",
-   "removeformat", "strikethrough", "subscript", "superscript", "underline", "unlink"] ++ miscCommands
+   "removeformat", "strikethrough", "subscript", "superscript", "underline", "unlink"] ++ blockCommands ++
+    deleteCommands ++ miscCommands
 
 def isSupported (command : String) : Bool := supportedCommands.contains command
-
-/-- The selection has a range whose boundary points are Text or Element nodes. -/
-def hasActive (e : Ed) : Bool :=
-  match (e.live.ranges[0]?).join with
-  | some r =>
-    let ok := fun (n : NodeId) => isText e.dom n || isEl e.dom n
-    ok r.start.node && ok r.stop.node
-  | none => false
 
 /-- "Enabled": a miscellaneous command, or there is an active range whose start and end
 nodes are editable or editing hosts, inside one editing host. -/
@@ -59,24 +52,16 @@ def bodyOf (e : Ed) : Option NodeId :=
   | some html => ((kidsOf d html).find? fun c => isHtml d c ["body", "frameset"]).orElse fun _ => some html
   | none => none
 
-/-- The state of a command, with no override. -/
-def commandState (e : Ed) (command : String) : Bool :=
-  match command with
-  | "stylewithcss" => e.css
-  | _ =>
-    match inlineActivatedValues command with
-    | some vals => hasActive e && inlineState e command vals
-    | none => false
-
-/-- Has the command a state (so that a state override applies). -/
+/-- The commands with a state. -/
 def hasState (command : String) : Bool :=
-  command == "stylewithcss" || (inlineActivatedValues command).isSome
+  command == "stylewithcss" || (inlineActivatedValues command).isSome ||
+    command == "insertorderedlist" || command == "insertunorderedlist" || (justifyAlignment command).isSome
 
 def queryState (command : String) : M Bool := do
   if !isSupported command || !hasState command then return false
-  if (← rd hasActive) then
-    if let some v := ← getStateOverride command then return v
-  rd fun e => commandState e command
+  if command == "stylewithcss" then return (← rd (·.css))
+  if (inlineActivatedValues command).isSome then return (← inlineQueryState command)
+  rd fun e => hasActive e && blockState e command
 
 def queryIndeterm (command : String) : M Bool := do
   if !isSupported command then return false
@@ -92,59 +77,24 @@ def queryIndeterm (command : String) : M Bool := do
       if isStandardInlineValueCommand command then standardIndeterm e command
       else match inlineActivatedValues command with
         | some vals => inlineIndeterm e command vals
-        | none => false
+        | none => blockIndeterm e command
 
-/-- Has the command a value. -/
+/-- The commands with a value. -/
 def hasValue (command : String) : Bool :=
-  isStandardInlineValueCommand command || command == "fontsize" || command == "defaultparagraphseparator"
+  isStandardInlineValueCommand command || command == "fontsize" || command == "defaultparagraphseparator" ||
+    command == "formatblock" || (justifyAlignment command).isSome
 
 def queryValue (command : String) : M String := do
   if !isSupported command || !hasValue command then return ""
   if command == "defaultparagraphseparator" then return (← rd (·.sep))
-  if !(← rd hasActive) then return ""
-  if let some v := ← getValueOverride command then
-    return if command == "fontsize" then (legacyFontSize v).getD "" else v
-  rd fun e =>
-    if command == "fontsize" then
-      let nodes := allEffectivelyContained e (activeOf e) (isFormattableNode e)
-      let ref := (nodes[0]?).getD (activeOf e).start.node
-      match effectiveCommandValue e ref "fontsize" with
-      | some px => (legacyFontSize px).getD ""
-      | none => ""
-    else standardValue e command
+  if command == "formatblock" || (justifyAlignment command).isSome then
+    return (← rd fun e => if hasActive e then blockValue e command else "")
+  inlineQueryValue command
 
 /-- The action of a supported, enabled command: false when the value is not usable. -/
 def action (command value : String) : M Bool := do
+  if let some r := ← inlineAction command value then return r
   match command with
-  | "backcolor" | "forecolor" | "hilitecolor" =>
-    match colorCommandValue value with
-    | some v => setSelectionValue command (some v); return true
-    | none => return false
-  | "bold" =>
-    let on ← queryState "bold"
-    setSelectionValue "bold" (some (if on then "normal" else "bold")); return true
-  | "italic" =>
-    let on ← queryState "italic"
-    setSelectionValue "italic" (some (if on then "normal" else "italic")); return true
-  | "strikethrough" =>
-    let on ← queryState "strikethrough"
-    setSelectionValue "strikethrough" (if on then none else some "line-through"); return true
-  | "underline" =>
-    let on ← queryState "underline"
-    setSelectionValue "underline" (if on then none else some "underline"); return true
-  | "subscript" | "superscript" =>
-    let on ← queryState command
-    setSelectionValue command none
-    if !on then setSelectionValue command (some command)
-    return true
-  | "createlink" => if value.isEmpty then return false else createLink value; return true
-  | "fontname" => setSelectionValue "fontname" (some value); return true
-  | "fontsize" =>
-    match normalizeFontSize value with
-    | some v => setSelectionValue "fontsize" (some v); return true
-    | none => return false
-  | "removeformat" => removeFormat; return true
-  | "unlink" => unlink; return true
   | "defaultparagraphseparator" =>
     let v := lower value
     if v == "p" || v == "div" then modify (fun e => { e with sep := v }); return true else return false
@@ -158,7 +108,13 @@ def action (command value : String) : M Bool := do
     return true
   | "stylewithcss" => modify (fun e => { e with css := lower value != "false" }); return true
   | "usecss" => modify (fun e => { e with css := lower value == "false" }); return true
-  | _ => return false
+  | _ =>
+    match ← blockAction command value with
+    | some r => return r
+    | none =>
+      match ← deleteAction command value with
+      | some r => return r
+      | none => return false
 
 /-- `document.execCommand(command, showUI, value)`: the command name in any case. -/
 def execCommand (command value : String) : M Bool := do
