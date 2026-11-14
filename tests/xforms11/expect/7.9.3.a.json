@@ -1,0 +1,14 @@
+{
+ "case": "7.9.3.a",
+ "file": "Chapt07/7.9/7.9.3/7.9.3.a.xhtml",
+ "quote": "You must see the current system date and time. The format of the output is data for the year, month, day, hour, minute, and second. There may be optional timezone information at the end of the value.",
+ "now": "2026-11-14T05:00:00Z",
+ "note": "the host clock is scripted: now is 2026-11-14T05:00:00Z, timezone UTC",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "Current Time",
+   "prefix": "2026-11-14T05:00:00"
+  }
+ ]
+}

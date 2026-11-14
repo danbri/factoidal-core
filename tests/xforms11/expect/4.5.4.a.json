@@ -1,0 +1,17 @@
+{
+ "case": "4.5.4.a",
+ "file": "Chapt04/4.5/4.5.4/4.5.4.a.xhtml",
+ "quote": "You may see an xforms-link-exception message. Processing must halt after dispatching an xforms-link-exception with a resource-uri of the link that failed. Processor specific testing is required to listen for an xforms-link-exception and validate the resource-uri. You must not see 'Hello world!' beneath this paragraph.",
+ "steps": [
+  {
+   "expect": "exception",
+   "name": "xforms-link-exception"
+  },
+  {
+   "expect": "absent",
+   "values": [
+    "Hello world!"
+   ]
+  }
+ ]
+}

@@ -1,0 +1,13 @@
+{
+ "case": "7.8.2.b",
+ "file": "Chapt07/7.8/7.8.2/7.8.2.b.xhtml",
+ "quote": "You must see either the values \"basic\", \"full\", or an output beginning with \"basic\" or \"full\" for the Conformance Level output control. You must determine if the correct value is displayed for your implementation of XForms.",
+ "note": "the condition allows \"basic\" or \"full\"; this engine declares \"basic\"",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "Conformance Level",
+   "prefix": "basic"
+  }
+ ]
+}

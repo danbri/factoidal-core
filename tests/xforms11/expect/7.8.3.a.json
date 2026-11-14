@@ -1,0 +1,17 @@
+{
+ "case": "7.8.3.a",
+ "file": "Chapt07/7.8/7.8.3/7.8.3.a.xhtml",
+ "quote": "You must see the group label \"PASS\" for all Tests. If the function does not return the correct value you will see a group label with the word \"FAIL\" and the incorrect value.",
+ "steps": [
+  {
+   "expect": "all-shown",
+   "kind": "group",
+   "contains": ": PASS"
+  },
+  {
+   "expect": "none-shown",
+   "kind": "group",
+   "contains": ": FAIL"
+  }
+ ]
+}

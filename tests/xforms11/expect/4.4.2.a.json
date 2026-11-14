@@ -1,0 +1,23 @@
+{
+ "case": "4.4.2.a",
+ "file": "Chapt04/4.4/4.4.2/4.4.2.a.xhtml",
+ "quote": "Activate the Delete A Date trigger below to fire the xforms-delete event. You must see an xforms-delete message and the correct values must be output below. You must see the value \"1\" : You must see the value \"2006-12-25\" :",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Delete A Date"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-delete"
+  },
+  {
+   "expect": "values",
+   "values": [
+    "1",
+    "2006-12-25"
+   ],
+   "kind": "output"
+  }
+ ]
+}

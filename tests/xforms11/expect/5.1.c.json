@@ -1,0 +1,29 @@
+{
+ "case": "5.1.c",
+ "file": "Chapt05/5.1/5.1.c.xhtml",
+ "quote": "When you activate the Valid Values trigger you must see an \"xforms-valid\" output for all the data types. When you activate the Invalid Values trigger you must see an \"XFORMS-INVALID\" output for all the data types, except for xsd:string.",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Valid Values"
+  },
+  {
+   "expect": "each-value",
+   "kind": "output",
+   "contains": "xforms-valid",
+   "except": []
+  },
+  {
+   "do": "activate",
+   "label": "Invalid Values"
+  },
+  {
+   "expect": "each-value",
+   "kind": "output",
+   "contains": "XFORMS-INVALID",
+   "except": [
+    "string"
+   ]
+  }
+ ]
+}
