@@ -422,11 +422,13 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
     try{return await Deno.readFile(path);}catch{return undefined;}
   };
   /** The host's answer to one script fetch of a worker: status 0 is a network error. */
-  const hostFetch=async(f:{id:number;url:string}):Promise<{id:number;status:number;url:string;contentType:string;source:string}>=>{
+  const hostFetch=async(f:{id:number;url:string}):Promise<{id:number;status:number;url:string;contentType:string;contentTypeOptions?:string;source:string}>=>{
     const failed={id:f.id,status:0,url:f.url,contentType:"",source:""};
     if(http&&new URL(f.url).pathname!=="/resources/testharnessreport.js"){
       try{const r=await http.fetch(f.url);
-        return {id:f.id,status:r.status,url:(r as Response&{finalURL?:string}).finalURL??f.url,contentType:r.headers.get("content-type")??"",source:await r.text()};}
+        // The type and X-Content-Type-Options as the server sent them: Lean decides (nosniff, LeanJSWorkers.scriptAccepted).
+        return {id:f.id,status:r.status,url:(r as Response&{finalURL?:string}).finalURL??f.url,contentType:r.headers.get("content-type")??"",
+          contentTypeOptions:r.headers.get("x-content-type-options")??"",source:await r.text()};}
       catch{return failed;}
     }
     // workers: the .any.worker.js that wptserve generates, made here from the pinned .any.js

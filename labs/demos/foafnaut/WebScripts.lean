@@ -952,7 +952,7 @@ def actLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (act
     let got := match request.field? "results" with
       | some (.array xs) => xs.toArray.filterMap fun x =>
         held.leanWorkers.result ((natField x "id").getD 0) ((natField x "status").getD 0) (str x "url")
-          (str x "contentType") (str x "source")
+          (str x "contentType") (str x "source") (str x "contentTypeOptions")
       | _ => #[]
     run fun s => let s := LeanJSWorkers.give s got; (e.advance s (e.loop s).clock).1
   | "net" =>

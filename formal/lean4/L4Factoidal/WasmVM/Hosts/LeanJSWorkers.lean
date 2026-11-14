@@ -145,17 +145,43 @@ def jsMime (contentType : String) : Bool :=
    "text/javascript1.3", "text/javascript1.4", "text/javascript1.5", "text/jscript", "text/livescript",
    "text/x-ecmascript", "text/x-javascript"].contains essence
 
-/-- An embedder's answer to a fetch (`{id, status, url, contentType, source}`): the URL it
-was asked for and the script, or `none` for a network error (status 0, a status that is
-not ok, or a type that is not JavaScript: HTML's fetches of worker scripts and imported
-scripts are strict about it). -/
-def Workers.result (w : Workers) (id status : Nat) (url contentType source : String) : Option (String × Option String) :=
+/-- `X-Content-Type-Options: nosniff` (Fetch §2.2.6 "determine nosniff"): the first value of
+the field is `nosniff`, ASCII case-insensitively. -/
+def nosniffHeader (v : String) : Bool :=
+  (((v.splitOn ",").headD "").trimAscii.toString).toLower == "nosniff"
+
+/-- A fetched worker script or imported script runs: the status is ok, the declared type is a
+JavaScript MIME type (an embedder that tells no type is trusted to have checked it), and with
+`nosniff` (`options`, the `X-Content-Type-Options` field) the declared type must be there and
+be JavaScript (Fetch §2.2.6: a script-like destination). -/
+def scriptAccepted (status : Nat) (contentType options : String) : Bool :=
+  200 ≤ status && status < 300 && (contentType.isEmpty || jsMime contentType) &&
+    !(nosniffHeader options && !jsMime contentType)
+
+/-- Kind: security theorem (`nosniff`, worker scripts). Says: with `nosniff`, a worker script
+or imported script whose declared type is not a JavaScript MIME type (or is absent) is never
+accepted, whatever its status and body. Does not say: that every embedder passes the field
+(the WPT runner does; the desktop host passes neither the type nor the field yet). -/
+theorem scriptAccepted_nosniff (status : Nat) (contentType options : String)
+    (hn : nosniffHeader options = true) (hj : jsMime contentType = false) :
+    scriptAccepted status contentType options = false := by
+  simp [scriptAccepted, hn, hj]
+
+#guard nosniffHeader "nosniff" && nosniffHeader " NoSniff , x" && !nosniffHeader "" && !nosniffHeader "x, nosniff"
+#guard scriptAccepted 200 "text/javascript" "nosniff" && !scriptAccepted 200 "" "nosniff" && scriptAccepted 200 "" ""
+#guard !scriptAccepted 200 "text/plain" "" && !scriptAccepted 404 "text/javascript" ""
+
+/-- An embedder's answer to a fetch (`{id, status, url, contentType, source}`, and
+`contentTypeOptions`, the response's `X-Content-Type-Options` field): the URL it was asked
+for and the script, or `none` for a network error (status 0, a status that is not ok, or a
+type that is not JavaScript: HTML's fetches of worker scripts and imported scripts are
+strict about it; `scriptAccepted`). -/
+def Workers.result (w : Workers) (id status : Nat) (url contentType source : String) (options : String := "") :
+    Option (String × Option String) :=
   let asked := if id ≥ 1 then w.asked[id - 1]? else none
   match asked <|> (if url.isEmpty then none else some url) with
   | none => none
-  | some u =>
-    let ok := 200 ≤ status && status < 300 && (contentType.isEmpty || jsMime contentType)
-    some (u, if ok then some source else none)
+  | some u => some (u, if scriptAccepted status contentType options then some source else none)
 
 /-- The script source fetched for `url`: `some none` when the fetch failed. -/
 def Workers.script? (w : Workers) (url : String) : Option (Option String) :=
