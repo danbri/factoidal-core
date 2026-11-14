@@ -530,6 +530,23 @@ def fmtReference (v : Float) : String :=
   3.14159, -2.71828, 1234.5, 123456.789, 1e8+0.25, -1e9-0.75, 1e12+0.01, 9.99e12, 2e13, 1e15, -0.5, 7.1,
   0.0001, 1/0, 0/0].all (fun v => fmt v == fmtReference v)
 
+/-- The character cells of a piece of text, from `x0`,`top` to `x1`,`bottom` in the space
+that `place` gives, as two paths that paint nothing (`opacity` 0) and take pointer events.
+SVG 2 §15.6: text is hit on its character cells, not on the ink of its glyphs, and a point
+in a cell is over the fill and the stroke at once. The first path is the cell as a filled
+shape with no stroke; the second is a line along the middle of the cell whose stroke is as
+wide as the cell is high, so its stroke region is the cell. Each takes the text's own fill,
+stroke, visibility and `pointer-events` from its group, so `pointerAccepts` decides. -/
+def cellPaths (x0 top x1 bottom : Float) (place : List NamespaceAttribute) : List NamespaceNode :=
+  if !(x1 > x0 && bottom > top) then [] else
+  let hidden := mkAttr "opacity" "0"
+  let n := fmt
+  let middle := n ((top+bottom)/2)
+  [svgElement "path" ([mkAttr "d" ("M" ++ n x0 ++ " " ++ n top ++ "L" ++ n x1 ++ " " ++ n top ++ "L" ++ n x1 ++ " " ++ n bottom ++
+      "L" ++ n x0 ++ " " ++ n bottom ++ "Z"),mkAttr "stroke" "none",hidden] ++ place) [],
+   svgElement "path" ([mkAttr "d" ("M" ++ n x0 ++ " " ++ middle ++ "L" ++ n x1 ++ " " ++ middle),mkAttr "fill" "none",
+      mkAttr "stroke-width" (n (bottom-top)),mkAttr "stroke-dasharray" "none",mkAttr "stroke-linecap" "butt",hidden] ++ place) []]
+
 /-- Path data of a glyph in user units, about its origin. -/
 def glyphData (cell : GlyphCell) : String := Id.run do
   let k := cell.scale
@@ -811,6 +828,10 @@ def lowerSfntWith (fonts : Array Font) (lookup : String → Option NamespaceNode
   for ri in [:runs.size] do
     let run : Run := runs[ri]!
     let mut paths : Array NamespaceNode := #[]
+    -- The character cells of the run, for pointer events (`cellPaths`): glyphs that are
+    -- not turned and share a baseline are one cell (x0, top, x1, bottom, baseline).
+    let mut cellNodes : Array NamespaceNode := #[]
+    let mut segment : Option (Float × Float × Float × Float × Float) := none
     for i in [cursor:cells.size] do
       let cell := cells[i]!
       if cell.run != ri then break
@@ -833,7 +854,20 @@ def lowerSfntWith (fonts : Array Font) (lookup : String → Option NamespaceNode
       box := some (match box with
         | none => (spot.x,top,right,bottom)
         | some (x0,y0,x1,y1) => (min x0 spot.x,min y0 top,max x1 right,max y1 bottom))
-    groups := groups.push (svgElement "g" (groupPaint run.paint) paths.toList)
+      if spot.rotate == 0 then
+        match segment with
+        | some (cellLeft,cellTop,cellRight,cellBottom,baseline) =>
+          if baseline == spot.y then
+            segment := some (min cellLeft spot.x,min cellTop top,max cellRight right,max cellBottom bottom,baseline)
+          else
+            cellNodes := cellNodes ++ (cellPaths cellLeft cellTop cellRight cellBottom []).toArray
+            segment := some (spot.x,top,right,bottom,spot.y)
+        | none => segment := some (spot.x,top,right,bottom,spot.y)
+      else
+        cellNodes := cellNodes ++ (cellPaths 0 (-(cell.ascent*cell.scale)) (cell.advance*cell.scale) (cell.descent*cell.scale) [place]).toArray
+    if let some (cellLeft,cellTop,cellRight,cellBottom,_) := segment then
+      cellNodes := cellNodes ++ (cellPaths cellLeft cellTop cellRight cellBottom []).toArray
+    groups := groups.push (svgElement "g" (groupPaint run.paint) (paths ++ cellNodes).toList)
   let outer := groupPaint (paintOf attrs) ++ (attrs.filter (fun a => a.name.namespace_.isNone &&
     ["transform","stroke-width","fill-rule","stroke-dasharray","stroke-dashoffset"].contains a.name.localPart))
   let ids := attrs.filter (fun a => a.name.namespace_.isNone && a.name.localPart == "id")

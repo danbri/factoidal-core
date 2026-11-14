@@ -592,6 +592,12 @@ private def readSolidColor (paints : PaintContext) (entry : NativeSVGReferences.
     color:=renderingColor (← computedProperty "solid-color" (rgb 0 0 0) paintColor own)
     opacity:=← computedProperty "solid-opacity" 1 paintOpacity own}]}
 
+/-- CSS Color 4 §6.2 `transparent` as a paint: a one-stop gradient of opacity 0 in user
+    space (as `solidColor` is read). It draws nothing and, unlike `none`, it is a paint: a
+    shape painted with it takes pointer events under `painted` (SVG 2 §15.6). -/
+private def transparentPaint : Gradient :=
+  {shape:=.linear 0 0 1 0,boundingBoxUnits:=false,stops:=[{offset:=0,color:=renderingColor (rgb 0 0 0),opacity:=0}]}
+
 private def readPaint (lengths : LengthContext) (paints : PaintContext) (source : String) : Except String Paint := do
   let s := trim source
   if s.startsWith "url(" then
@@ -627,6 +633,7 @@ private def readPaint (lengths : LengthContext) (paints : PaintContext) (source 
     | none => pure fallbackPaint
   else if s.toLower == "none" then pure .none
   else if s.toLower == "currentcolor" then pure .current
+  else if s.toLower == "transparent" then pure (.gradient transparentPaint)
   else Paint.solid <$> color s
 private def inheritedNumber (lengths : LengthContext) (attrs : List NamespaceAttribute) (key : String) (old : Float) : Except String Float :=
   match attr attrs key with

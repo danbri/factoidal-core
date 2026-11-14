@@ -23,16 +23,17 @@ async function check(nativeEngine?:string){
   const svg=(body:string)=>`<svg width="400" height="200" viewBox="0 0 400 200">${body}</svg>`;
   const none=count(svg(""));
 
-  // One path for each glyph with ink; a space has none.
-  assert.equal(count(svg(`<text x="10" y="50" font-size="20">Lean</text>`))-none,4,"text");
-  assert.equal(count(svg(`<text x="10" y="50">Le<tspan dy="5" fill="red">an</tspan> it</text>`))-none,6,"tspan");
+  // One path for each glyph with ink (a space has none), and two paths that paint nothing for
+  // the character cells of each run on one baseline (pointer events: SVGText.lean, cellPaths).
+  assert.equal(count(svg(`<text x="10" y="50" font-size="20">Lean</text>`))-none,4+2,"text");
+  assert.equal(count(svg(`<text x="10" y="50">Le<tspan dy="5" fill="red">an</tspan> it</text>`))-none,6+3*2,"tspan");
   // Font properties on a container are read, and do not refuse the page.
-  assert.equal(count(svg(`<g font-family="Noto Sans" font-size="30" style="font-weight:400"><text x="10" y="50">ab</text></g>`))-none,2,"group");
+  assert.equal(count(svg(`<g font-family="Noto Sans" font-size="30" style="font-weight:400"><text x="10" y="50">ab</text></g>`))-none,2+2,"group");
   // A path 100 units long holds the middle of each glyph that fits; the rest is not drawn.
   const path=`<defs><path id="p" d="M10 100H110"/></defs>`;
-  assert.equal(count(svg(path+`<text font-size="20"><textPath href="#p">AB</textPath></text>`))-none,2,"textPath");
+  assert.equal(count(svg(path+`<text font-size="20"><textPath href="#p">AB</textPath></text>`))-none,2+2,"textPath");
   const long=count(svg(path+`<text font-size="20"><textPath href="#p">AAAAAAAAAAAAAAAAAAAA</textPath></text>`))-none;
-  assert(long>0&&long<20,`glyphs past the end of the path are drawn: ${long} of 20`);
+  assert(long>2&&long<20+2,`glyphs past the end of the path are drawn: ${long-2} of 20`);
   // A missing path draws nothing and refuses nothing.
   assert.equal(count(svg(`<text><textPath href="#none">AB</textPath></text>`)),none,"missing path");
 
