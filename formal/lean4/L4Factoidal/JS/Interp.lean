@@ -1132,6 +1132,13 @@ def hiddenNum (o : Obj) (k : String) : Option Nat :=
   | some (.data (.num x) ..) => some x.toUInt64.toNat
   | _ => none
 
+/-- The hidden slots of an `Iterator.zip` helper: the mode (0 shortest, 1 longest, 2 strict),
+the padding (an Array), the keys of `zipKeyed` (an Array, or undefined), the open count. -/
+def zipModeKey : String := privKey "%ZipMode"
+def zipPadKey : String := privKey "%ZipPadding"
+def zipKeysKey : String := privKey "%ZipKeys"
+def zipOpenKey : String := privKey "%ZipOpen"
+
 /-- The hidden slots of a DisposableStack: its resources (an Array of value, method pairs) and
 whether it is disposed. -/
 def dsStackKey : String := privKey "%DisposableResourceStack"
@@ -7608,6 +7615,112 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       match a0 with
       | .str s => pure (.str (regexpEscapeStr s.toList))
       | _ => throwErr .type "RegExp.escape requires a string"
+    | (.x (.iteratorZip keyed)) =>
+      -- §27.1.3.2.3 Iterator.zip, §27.1.3.2.4 Iterator.zipKeyed
+      let what := if keyed then "Iterator.zipKeyed" else "Iterator.zip"
+      if !a0.isObj then throwErr .type s!"{what}: the iterables are not an object"
+      match a1 with
+      | .undef | .obj _ => pure ()
+      | _ => throwErr .type s!"{what}: the options are not an object"
+      let modeV ← if a1.isObj then getV n a1 "mode" else pure .undef
+      let mode ← match modeV with
+        | .undef => pure 0
+        | .str "shortest" => pure 0
+        | .str "longest" => pure 1
+        | .str "strict" => pure 2
+        | _ => throwErr .type s!"{what}: mode is not shortest, longest or strict"
+      let padOpt ← if mode == 1 && a1.isObj then getV n a1 "padding" else pure .undef
+      if !(padOpt matches .undef) && !padOpt.isObj then throwErr .type s!"{what}: padding is not an object"
+      let mut slots : Array Value := #[]
+      let mut keys : Array Value := #[]
+      -- the open iterators so far, closed (last first) when reading the iterables fails
+      let closeAll (sl : Array Value) : M Unit := do
+        for j in [0:sl.size / 2] do
+          let i := sl.size / 2 - 1 - j
+          tryCatch (iterClose n sl[2 * i]!) fun _ => pure ()
+      -- GetIteratorFlattenable(value, reject-strings)
+      let flat (v : Value) : M (Value × Value) := do
+        if !v.isObj then throwErr .type s!"{what}: an iterable is not an object"
+        let m ← getV n v (symKey symIterator)
+        let iter ← match m with
+          | .undef | .null => pure v
+          | f => callV n f v #[]
+        if !iter.isObj then throwErr .type s!"{what}: an iterator is not an object"
+        pure (iter, ← getV n iter "next")
+      if keyed then
+        let oid := match a0 with | .obj o => o | _ => 0
+        for k in (← ownKeysOf n oid) do
+          let r ← tryCatch (do
+              match ← ownDesc n oid k with
+              | some d =>
+                if d.enumerable then
+                  let v ← getV n a0 k
+                  if (v matches .undef) then pure (Except.ok none)
+                  else pure (Except.ok (some (← flat v)))
+                else pure (Except.ok none)
+              | none => pure (Except.ok none)) fun e => pure (Except.error e)
+          match r with
+          | .error e => closeAll slots; throw e
+          | .ok none => pure ()
+          | .ok (some (iv, nx)) =>
+            slots := (slots.push iv).push nx
+            keys := keys.push (keyValue k)
+      else
+        let input ← getIterator n a0
+        for _ in [0:1000000000] do
+          let r ← tryCatch (do
+              match ← iterStep n input with
+              | none => pure (Except.ok none)
+              | some v =>
+                let x ← tryCatch (do pure (Except.ok (← flat v))) fun e => pure (Except.error e)
+                match x with
+                | .ok p => pure (Except.ok (some p))
+                | .error e =>
+                  tryCatch (iterClose n input) fun _ => pure ()
+                  throw e) fun e => pure (Except.error e)
+          match r with
+          | .error e => closeAll slots; throw e
+          | .ok none => break
+          | .ok (some (iv, nx)) => slots := (slots.push iv).push nx
+      let count := slots.size / 2
+      let mut pads : Array Value := Array.replicate count .undef
+      if mode == 1 && padOpt.isObj then
+        if keyed then
+          for i in [0:count] do
+            let pv ← tryCatch (do pure (Except.ok (← getV n padOpt (← toKey n keys[i]!)))) fun e => pure (Except.error e)
+            match pv with
+            | .ok v => pads := pads.set! i v
+            | .error e => closeAll slots; throw e
+        else
+          let r ← tryCatch (do
+              let pit ← getIterator n padOpt
+              let mut usePad := true
+              let mut out : Array Value := #[]
+              for _ in [0:count] do
+                if usePad then
+                  match ← iterStep n pit with
+                  | some v => out := out.push v
+                  | none =>
+                    usePad := false
+                    out := out.push .undef
+                else out := out.push .undef
+              if usePad then iterClose n pit
+              pure (Except.ok out)) fun e => pure (Except.error e)
+          match r with
+          | .ok out => pads := out
+          | .error e => closeAll slots; throw e
+      let h ← alloc { proto := .obj r.iterHelperProto }
+      defineOwn h helperIt (.data (← newArray slots) true false false)
+      defineOwn h helperNextKey (.data .undef true false false)
+      defineOwn h helperKind (.data (.num 7) true false false)
+      defineOwn h helperFn (.data .undef true false false)
+      defineOwn h helperCount (.data (.num 0) true false false)
+      defineOwn h helperInner (.data .undef true false false)
+      defineOwn h zipModeKey (.data (.num (Float.ofNat mode)) true false false)
+      defineOwn h zipPadKey (.data (← newArray pads) true false false)
+      defineOwn h zipKeysKey (.data (if keyed then (← newArray keys) else .undef) true false false)
+      defineOwn h zipOpenKey (.data (.num (Float.ofNat count)) true false false)
+      pure (.obj h)
     | (.x .iteratorConcat) =>
       -- §27.1.3.2.2 Iterator.concat: every argument an object with a callable @@iterator, checked
       -- first; the iterators are made one at a time as the result is read
@@ -7744,6 +7857,23 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
         | .undef | .null => return ← result .undef true
         | f => return ← callV n f it #[]
       if hiddenFlag o helperRunning then throwErr .type "Iterator helper is already running"
+      if id == (.x .helperReturn) && kind == 7 then
+        if !(hiddenFlag o helperDone) then
+          setF helperDone (.bool true)
+          let cur ← elemsOf n it
+          let m := cur.size / 2
+          let mut err : Option Value := none
+          for j in [0:m] do
+            let i := m - 1 - j
+            match cur[2 * i]! with
+            | .null => pure ()
+            | iv =>
+              let r ← tryCatch (do iterClose n iv; pure none) fun e => match e with
+                | .throw v => pure (some v)
+                | a => throw a
+              if err.isNone then err := r
+          if let some v := err then throw (.throw v)
+        return ← result .undef true
       if id == (.x .helperReturn) then
         if !(hiddenFlag o helperDone) then
           setF helperDone (.bool true)
@@ -7789,6 +7919,111 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
         setF helperRunning (.bool false)
         return ← match out with
           | some v => pure v
+          | none => result .undef true
+      if kind == 7 then
+        -- IteratorZip's closure (§27.1.3.2.3): one value of each iterator a step
+        let slots ← elemsOf n it
+        let m := slots.size / 2
+        let hf (k : String) : Value := match o.props.get? k with | some (.data v ..) => v | _ => .undef
+        let mode := match hf zipModeKey with | .num x => x.toUInt64.toNat | _ => 0
+        let pads ← match hf zipPadKey with | .undef => pure #[] | v => elemsOf n v
+        let keysV := hf zipKeysKey
+        let setSlot (i : Nat) (v : Value) : M Unit := do
+          if let .obj aid := it then modifyObj aid fun ob => match ob.kind with
+            | .array es => { ob with kind := .array (es.set! (2 * i) v) }
+            | _ => ob
+        -- IteratorCloseAll (§7.4.12): the open iterators but `skip`, last first; an error of the
+        -- first close is the answer unless one is already thrown
+        let closeOthers (skip : Nat) (thrown : Bool) : M Unit := do
+          let cur ← elemsOf n it
+          let mut err : Option Value := none
+          for j in [0:m] do
+            let i := m - 1 - j
+            if i != skip then
+              match cur[2 * i]! with
+              | .null => pure ()
+              | iv =>
+                let r ← tryCatch (do iterClose n iv; pure none) fun e => match e with
+                  | .throw v => pure (some v)
+                  | a => throw a
+                if err.isNone && !thrown then err := r
+          if let some v := err then throw (.throw v)
+        if m == 0 then
+          setF helperDone (.bool true)
+          return ← result .undef true
+        setF helperRunning (.bool true)
+        let out ← tryCatch (do
+          let mut results : Array Value := #[]
+          let mut finished := false
+          for i in [0:m] do
+            if finished then break
+            let cur ← elemsOf n it
+            match cur[2 * i]! with
+            | .null => results := results.push (pads.getD i .undef)
+            | iv =>
+              -- IteratorStepValue; an abrupt step closes the others
+              let step ← tryCatch (do
+                  let r ← callV n cur[2 * i + 1]! iv #[]
+                  if !r.isObj then throwErr .type "Iterator result is not an object"
+                  if toBool (← getV n r "done") then pure (Except.ok none)
+                  else pure (Except.ok (some (← getV n r "value")))) fun e => pure (Except.error e)
+              match step with
+              | .error e =>
+                setSlot i .null
+                closeOthers i true
+                throw e
+              | .ok (some v) => results := results.push v
+              | .ok none =>
+                setSlot i .null
+                if mode == 0 then
+                  closeOthers i false
+                  finished := true
+                else if mode == 2 then
+                  if i != 0 then
+                    closeOthers i true
+                    throwErr .type "Iterator.zip: the iterators are of different lengths (strict)"
+                  for k in [1:m] do
+                    let cur2 ← elemsOf n it
+                    let ik := cur2[2 * k]!
+                    let r2 ← tryCatch (do
+                        let r ← callV n cur2[2 * k + 1]! ik #[]
+                        if !r.isObj then throwErr .type "Iterator result is not an object"
+                        pure (Except.ok (toBool (← getV n r "done")))) fun e => pure (Except.error e)
+                    match r2 with
+                    | .error e =>
+                      setSlot k .null
+                      closeOthers k true
+                      throw e
+                    | .ok false =>
+                      closeOthers 1000000000 true
+                      throwErr .type "Iterator.zip: the iterators are of different lengths (strict)"
+                    | .ok true => setSlot k .null
+                  finished := true
+                else
+                  let openN := match hf zipOpenKey with | .num x => x.toUInt64.toNat | _ => m
+                  let o' ← getObj hid
+                  let openNow := match o'.props.get? zipOpenKey with | some (.data (.num x) ..) => x.toUInt64.toNat | _ => openN
+                  setF zipOpenKey (.num (Float.ofNat (openNow - 1)))
+                  if openNow ≤ 1 then finished := true
+                  else results := results.push (pads.getD i .undef)
+          if finished then
+            setF helperDone (.bool true)
+            pure none
+          else
+            match keysV with
+            | .undef => pure (some (← newArray results))
+            | kv =>
+              let ks ← elemsOf n kv
+              let ob ← alloc { proto := .null }
+              for i in [0:min ks.size results.size] do
+                defineOwn ob (← toKey n ks[i]!) (.data results[i]! true true true)
+              pure (some (.obj ob))) fun e => do
+            setF helperRunning (.bool false)
+            setF helperDone (.bool true)
+            throw e
+        setF helperRunning (.bool false)
+        return ← match out with
+          | some v => result v false
           | none => result .undef true
       let next := field helperNextKey
       let fn := field helperFn
@@ -9301,6 +9536,8 @@ def initRealm : M Unit := do
     defineOwn ic "prototype" (.data (.obj ip) false false false)
     method ic "from" (.x .iteratorFrom) 1
     method ic "concat" (.x .iteratorConcat) 0
+    method ic "zip" (.x (.iteratorZip false)) 1
+    method ic "zipKeyed" (.x (.iteratorZip true)) 1
   setHidden g "Iterator" iterC
   setHidden ip "constructor" iterC
   for (nm, k) in [("map", 0), ("filter", 1), ("take", 2), ("drop", 3), ("flatMap", 4)] do
