@@ -5,6 +5,7 @@ import L4Factoidal.JS.Number
 import L4Factoidal.JS.Regex
 import L4Factoidal.JS.Str
 import L4Factoidal.JS.PropMap
+import L4Factoidal.WHATWG.Streams
 
 /-!
 # L4Factoidal.JS.Value — values, objects, environments, the heap (§6, §9, §10)
@@ -121,6 +122,14 @@ inductive NativeX where
   component's compiled regular expression and group names), or throws the TypeError; op 1
   `(record, input, baseURL)` is `exec`: the match result or null. -/
   | urlPattern
+  /-- The Streams Standard's decisions (`WHATWG.Streams`), for the page's stream classes: a
+  host's `n.streams(op, ...)`. 0 a new queue-with-sizes; 1 `(q, value, size)`
+  EnqueueValueWithSize (RangeError for a size that is not a finite, non-negative number);
+  2 `(q)` DequeueValue; 3 PeekQueueValue; 4 ResetQueue; 5 the total size; 6 the count;
+  7 `(h)` the high water mark check of ExtractHighWaterMark (RangeError); 8 `(queueTotal,
+  byteLength, bytesFilled, elementSize, minimumFill)` the fill plan of a BYOB read: the bytes
+  to copy, as `-(bytes) - 1` when the read is then ready. -/
+  | streams
   /-- `Symbol.for` and `Symbol.keyFor` (§20.4.2.2, §20.4.2.6: the GlobalSymbolRegistry, a
   hidden object of the realm); `String.raw` (§22.1.2.4). -/
   | symbolFor | symbolKeyFor | stringRaw
@@ -357,6 +366,9 @@ inductive Kind where
   | prim (v : Value)
   | error
   | args
+  /-- The queue of a stream's controller (Streams Standard §8.1 queue-with-sizes), made and
+  used only by the built-in `NativeX.streams`; a page never holds one. -/
+  | queue (q : L4Factoidal.WHATWG.Streams.SizedQueue Value)
   deriving Inhabited
 
 structure Obj where
@@ -638,6 +650,34 @@ def strictEq : Value → Value → Bool
 def sameValue : Value → Value → Bool
   | .num a, .num b => (a.isNaN && b.isNaN) || (a == b && isNegZero a == isNegZero b)
   | a, b => strictEq a b
+
+/-- The fields of a Property Descriptor (§6.2.6) that are present. -/
+structure Desc where
+  value : Option Value := none
+  writable : Option Bool := none
+  get : Option Value := none
+  set : Option Value := none
+  enumerable : Option Bool := none
+  configurable : Option Bool := none
+
+/-- ValidateAndApplyPropertyDescriptor (§10.1.6.3), step 5: may the property `cur` be
+redefined with the descriptor `d`? A configurable property may always. One that is not may
+not become configurable, change its enumerability or its kind (data or accessor); an accessor
+keeps its functions, and a data property that is not writable keeps its value and stays not
+writable. A descriptor that asks for no change is always accepted. -/
+def Desc.allowedOn (d : Desc) (cur : PropV) : Bool :=
+  if cur.configurable then true
+  else if d.configurable == some true then false
+  else if (match d.enumerable with | some e => e != cur.enumerable | none => false) then false
+  else
+    match cur with
+    | .acc g s _ _ =>
+      !(d.value.isSome || d.writable.isSome) &&
+      (match d.get with | some x => sameValue x g | none => true) &&
+      (match d.set with | some x => sameValue x s | none => true)
+    | .data v w _ _ =>
+      !(d.get.isSome || d.set.isSome) &&
+      (w || (d.writable != some true && (match d.value with | some x => sameValue x v | none => true)))
 
 /-- SameValueZero (§7.2.11). -/
 def sameValueZero : Value → Value → Bool

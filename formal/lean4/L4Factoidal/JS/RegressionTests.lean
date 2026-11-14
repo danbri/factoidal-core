@@ -517,4 +517,15 @@ parse ("unterminated string literal"), and with it 2,810 tests. -/
 #guard out "var o = { a: \"x'y\" }; print(`${o.a.replace(/'/g, \"\\\\'\")}|${ 6 / 2 }|${ [1, 2].map(x => x / 2).join('/') }|${ '}' }|${ /[/}]/.test('}') }|${ o.a.length / 3 / 1 }`)" == ["x\\'y|3|0.5/1|}|true|1"]
 #guard out "var a = 8, g = 2; print(`${a / g}${a /g/ 1}`)" == ["44"]
 
+/-! ## Redefining a property that is not configurable (§10.1.6.3)
+
+A redefinition that changes nothing is accepted; one that would change a frozen value, the
+enumerability, the kind or the functions of an accessor is a TypeError (`Desc.allowedOn`);
+a new property on an object that is not extensible is a TypeError. Test262
+`built-ins/Object/defineProperty`, `defineProperties`, `create`, `freeze`, `seal` and
+`built-ins/Reflect`: 2,018 of 2,383 before, 2,243 after, none lost (local run). -/
+
+#guard out "class C {} var r = []; function t(f) { try { f(); r.push('ok') } catch (e) { r.push(e.name) } } t(() => Object.defineProperty(C, 'prototype', { writable: false })); var o = {}; Object.defineProperty(o, 'x', { value: 1, writable: false, configurable: false }); t(() => Object.defineProperty(o, 'x', { value: 1 })); t(() => Object.defineProperty(o, 'x', { value: 2 })); t(() => Object.defineProperty(o, 'x', { writable: true })); t(() => Object.defineProperty(o, 'x', { enumerable: true })); t(() => Object.defineProperty(o, 'x', { get() {} })); t(() => Object.defineProperty(o, 'x', {})); t(() => Object.defineProperty(o, 'x', { configurable: true })); print(r.join())" == ["ok,ok,TypeError,TypeError,TypeError,TypeError,ok,TypeError"]
+#guard out "var g = function () { return 1 }, o = {}, r = []; function t(f) { try { f(); r.push('ok') } catch (e) { r.push(e.name) } } Object.defineProperty(o, 'a', { get: g }); t(() => Object.defineProperty(o, 'a', { get: g })); t(() => Object.defineProperty(o, 'a', { get() {} })); t(() => Object.defineProperty(o, 'a', { value: 1 })); t(() => Object.defineProperty(o, 'a', { set: undefined })); var p = Object.preventExtensions({ k: 1 }); t(() => Object.defineProperty(p, 'n', { value: 1 })); t(() => Object.defineProperty(p, 'k', { value: 2 })); t(() => Object.defineProperty({}, 'z', { get: 1 })); t(() => Object.defineProperty({}, 'z', { get() {}, value: 1 })); var q = {}; Object.defineProperty(q, 'acc', { get: g, configurable: true }); Object.defineProperty(q, 'acc', { enumerable: true }); print(r.join(), p.k, typeof Object.getOwnPropertyDescriptor(q, 'acc').get, Object.keys(q).join())" == ["ok,TypeError,TypeError,ok,TypeError,ok,TypeError,TypeError 2 function acc"]
+
 end L4Factoidal.JS.Tests

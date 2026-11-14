@@ -244,6 +244,65 @@ theorem tick_step {H : Type} (h : HeapOf H) (h0 : h.steps ≠ 0) (hf : h.full = 
   simp [tick, h0, hf, EStateM.run, bind, EStateM.bind, get, getThe, MonadStateOf.get, EStateM.get,
     set, MonadStateOf.set, EStateM.set]
 
+/-! ## Redefining a property (`Desc.allowedOn`, §10.1.6.3)
+
+`Object.defineProperty` on a property that is not configurable: what may change. Before
+2026-11-14 the engine refused every redefinition of a property that was neither configurable
+nor writable, also one that changed nothing (`Object.defineProperty(C, 'prototype', {
+writable: false })` on a class), and let the enumerability of a writable one be asked for. -/
+
+/-- Kind: a specification. Says: a configurable property accepts every descriptor. -/
+theorem allowedOn_configurable (d : Desc) (cur : PropV) (h : cur.configurable = true) : d.allowedOn cur = true := by
+  simp [Desc.allowedOn, h]
+
+/-- Kind: a specification. Says: a descriptor with no fields is accepted on every property (it
+asks for no change). -/
+theorem allowedOn_empty (cur : PropV) : ({} : Desc).allowedOn cur = true := by
+  cases cur <;> simp [Desc.allowedOn]
+
+/-- Kind: a refusal (object integrity). Says: a property that is not configurable never
+becomes configurable. -/
+theorem allowedOn_stays_unconfigurable (d : Desc) (cur : PropV) (hc : cur.configurable = false)
+    (h : d.allowedOn cur = true) : d.configurable ≠ some true := by
+  intro hd
+  simp [Desc.allowedOn, hc, hd] at h
+
+/-- Kind: a refusal (object integrity: frozen data stays). Says: a data property that is
+neither configurable nor writable keeps its value: an accepted descriptor that names a value
+names the same value (SameValue), and does not make the property writable.
+Does not say: that `defineFromDescriptor` asks `allowedOn` for every exotic object (it does for
+ordinary objects and arrays; typed arrays and Proxies have their own paths). -/
+theorem allowedOn_frozen (d : Desc) (v : Value) (e : Bool) (h : d.allowedOn (.data v false e false) = true) :
+    d.writable ≠ some true ∧ ∀ x, d.value = some x → sameValue x v = true := by
+  constructor
+  · intro hw
+    simp [Desc.allowedOn, PropV.configurable, hw] at h
+  · intro x hx
+    cases hs : sameValue x v with
+    | true => rfl
+    | false => simp [Desc.allowedOn, PropV.configurable, hx, hs] at h
+
+/-- Kind: a refusal. Says: an accessor that is not configurable keeps its getter and setter
+and does not become a data property. -/
+theorem allowedOn_accessor (d : Desc) (g s : Value) (e : Bool) (h : d.allowedOn (.acc g s e false) = true) :
+    d.value = none ∧ d.writable = none ∧ (∀ x, d.get = some x → sameValue x g = true) ∧
+      (∀ x, d.set = some x → sameValue x s = true) := by
+  refine ⟨?_, ?_, ?_, ?_⟩
+  · cases hv : d.value with
+    | none => rfl
+    | some x => simp [Desc.allowedOn, PropV.configurable, hv] at h
+  · cases hv : d.writable with
+    | none => rfl
+    | some x => simp [Desc.allowedOn, PropV.configurable, hv] at h
+  · intro x hx
+    cases hs : sameValue x g with
+    | true => rfl
+    | false => simp [Desc.allowedOn, PropV.configurable, hx, hs] at h
+  · intro x hx
+    cases hs : sameValue x s with
+    | true => rfl
+    | false => simp [Desc.allowedOn, PropV.configurable, hx, hs] at h
+
 /-! ## The size of the heap (`HeapOf.full`, `maxObjs`)
 
 The heap has no collector: an object, once made, stays. A page that makes objects for ever (a

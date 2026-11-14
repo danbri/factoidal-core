@@ -6049,38 +6049,42 @@ def defineFromDescriptor : Nat → Nat → String → Value → M Unit
   | 0, _, _, _ => throw (.halt "fuel")
   | n + 1, id, k, d => do
     if !d.isObj then throwErr .type "Property description must be an object"
-    let has (f : String) : M Bool := do
+    -- ToPropertyDescriptor (§6.2.6.5): the fields that are present, read in its order
+    let field (f : String) : M (Option Value) := do
       match d with
-      | .obj did => pure ((← get).findProp did f 1000).isSome
-      | _ => pure false
-    let old := (← getObj id).getOwn k
-    if let some p := old then
-      if !p.configurable then
-        -- only a writable data property may change its value
-        match p with
-        | .data _ true e c =>
-          if ← has "value" then defineOwn id k (.data (← getV n d "value") true e c)
-          if ← has "writable" then
-            if !(toBool (← getV n d "writable")) then
-              let v := match (← getObj id).getOwn k with | some (.data v ..) => v | _ => .undef
-              defineOwn id k (.data v false e c)
-          return
-        | _ => throwErr .type s!"Cannot redefine property: {k}"
-    let e ← if ← has "enumerable" then do pure (toBool (← getV n d "enumerable"))
-      else pure (match old with | some p => p.enumerable | none => false)
-    let c ← if ← has "configurable" then do pure (toBool (← getV n d "configurable"))
-      else pure (match old with | some p => p.configurable | none => false)
-    if (← has "get") || (← has "set") then
-      let g ← getV n d "get"
-      let s ← getV n d "set"
-      if !(g.isObj || match g with | .undef => true | _ => false) then throwErr .type "Getter must be a function"
+      | .obj did => if ((← get).findProp did f 1000).isSome then pure (some (← getV n d f)) else pure none
+      | _ => pure none
+    let en ← field "enumerable"
+    let cf ← field "configurable"
+    let vl ← field "value"
+    let wr ← field "writable"
+    let gt ← field "get"
+    let st ← field "set"
+    if let some g := gt then
+      if !(← isCallable g) && !(match g with | .undef => true | _ => false) then throwErr .type "Getter must be a function"
+    if let some f := st then
+      if !(← isCallable f) && !(match f with | .undef => true | _ => false) then throwErr .type "Setter must be a function"
+    if (gt.isSome || st.isSome) && (vl.isSome || wr.isSome) then
+      throwErr .type "Invalid property descriptor. Cannot both specify accessors and a value or writable attribute"
+    let desc : Desc := { value := vl, writable := wr.map toBool, get := gt, set := st,
+                         enumerable := en.map toBool, configurable := cf.map toBool }
+    -- ValidateAndApplyPropertyDescriptor (§10.1.6.3): `Desc.allowedOn` decides
+    let o0 ← getObj id
+    let old := o0.getOwn k
+    match old with
+    | some p => if !desc.allowedOn p then throwErr .type s!"Cannot redefine property: {k}"
+    | none => if !o0.extensible then throwErr .type s!"Cannot define property {k}, object is not extensible"
+    let e := desc.enumerable.getD (match old with | some p => p.enumerable | none => false)
+    let c := desc.configurable.getD (match old with | some p => p.configurable | none => false)
+    if gt.isSome || st.isSome then
       let (og, os) := match old with | some (.acc g s _ _) => (g, s) | _ => (.undef, .undef)
-      defineOwn id k (.acc (if ← has "get" then g else og) (if ← has "set" then s else os) e c)
+      defineOwn id k (.acc (gt.getD og) (st.getD os) e c)
+    else if let (some (.acc g s _ _), true) := (old, vl.isNone && wr.isNone) then
+      -- a descriptor with neither kind's fields keeps the accessor
+      defineOwn id k (.acc g s e c)
     else
-      let w ← if ← has "writable" then do pure (toBool (← getV n d "writable"))
-        else pure (match old with | some (.data _ w _ _) => w | _ => false)
-      let v ← if ← has "value" then getV n d "value"
-        else pure (match old with | some (.data v ..) => v | _ => .undef)
+      let w := desc.writable.getD (match old with | some (.data _ w _ _) => w | _ => false)
+      let v := vl.getD (match old with | some (.data v ..) => v | _ => .undef)
       match (← getObj id).kind, k with
       | .array _, "length" => putV n (.obj id) k v true
       | _, _ =>
@@ -7911,6 +7915,53 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
         let v ← if computed then callV n a1 .undef #[key] else pure a1
         let _ ← callNative n .mapSet thisV #[a0, v] none
         pure v
+    | (.x .streams) =>
+      -- `n.streams(op, ...)` for the page's stream classes: the queue-with-sizes of a
+      -- controller and the fill plan of a BYOB read are `WHATWG.Streams`
+      let queueOf (v : Value) : M (Nat × L4Factoidal.WHATWG.Streams.SizedQueue Value) := do
+        match v with
+        | .obj id =>
+          match (← getObj id).kind with
+          | .queue q => pure (id, q)
+          | _ => throwErr .type "streams: not a queue"
+        | _ => throwErr .type "streams: not a queue"
+      let natArg (i : Nat) : M Nat := do
+        match argD args i with
+        | .num x => pure (if x.isFinite && x > 0 then x.toUInt64.toNat else 0)
+        | _ => pure 0
+      match a0 with
+      | .num op =>
+        match op.toUInt64.toNat with
+        | 0 => pure (.obj (← alloc { proto := .null, kind := .queue {} }))
+        | 1 =>
+          let (id, q) ← queueOf a1
+          let size ← match argD args 3 with
+            | .num s => pure s
+            | _ => throwErr .range "The chunk size is not a finite, non-negative number"
+          match q.enqueue (argD args 2) size with
+          | some q' => modifyObj id (fun o => { o with kind := .queue q' }); pure .undef
+          | none => throwErr .range "The chunk size is not a finite, non-negative number"
+        | 2 =>
+          let (id, q) ← queueOf a1
+          -- the queue leaves the object first, so that `dequeue` changes its array in place
+          modifyObj id (fun o => { o with kind := .ordinary })
+          match q.dequeue with
+          | some (v, q') => modifyObj id (fun o => { o with kind := .queue q' }); pure v
+          | none => modifyObj id (fun o => { o with kind := .queue q }); pure .undef
+        | 3 => let (_, q) ← queueOf a1; pure (q.peek.getD .undef)
+        | 4 => let (id, _) ← queueOf a1; modifyObj id (fun o => { o with kind := .queue .reset }); pure .undef
+        | 5 => let (_, q) ← queueOf a1; pure (.num q.total)
+        | 6 => let (_, q) ← queueOf a1; pure (.num q.count.toFloat)
+        | 7 =>
+          match a1 with
+          | .num h => if L4Factoidal.WHATWG.Streams.validHighWaterMark h then pure a1
+                      else throwErr .range "The high water mark is negative or not a number"
+          | _ => throwErr .range "The high water mark is negative or not a number"
+        | 8 =>
+          let p := L4Factoidal.WHATWG.Streams.fillPlan (← natArg 1) (← natArg 2) (← natArg 3) (← natArg 4) (← natArg 5)
+          pure (.num (if p.ready then -(p.toCopy.toFloat) - 1 else p.toCopy.toFloat))
+        | _ => throwErr .type "streams: unknown operation"
+      | _ => throwErr .type "streams: unknown operation"
     | (.x .urlPattern) =>
       -- `n.urlPattern(op, ...)` for the page's URLPattern class: the Standard's algorithms are
       -- `WHATWG.URLPattern.create` and `exec`; this converts the arguments and builds the answer.
