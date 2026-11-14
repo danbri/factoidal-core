@@ -169,15 +169,17 @@ def keyframesName (prelude : String) : Bool :=
 #guard ["foo", "--foo", "\"a b\"", "None2"].all keyframesName
 #guard !(["none", "DEFAULT", "inherit", "revert-layer", "12", "-12", "12foo", "foo.bar", "one two", "one, two", "\"\""].any keyframesName)
 
-/-- The tokens of a selector without a universal selector that is the whole compound before
-a pseudo-element (`*::before` is written `::before`, CSSOM §6.7.2: a lone universal selector
-with no namespace is left out when the compound has more). `boundary`: the previous token
-ends a compound. A loop over the tokens (a tail call). -/
+/-- The tokens of a selector without a universal selector with no namespace that starts a
+compound with more in it (`*.c` is written `.c`, `*::before` `::before`, CSSOM §6.7.2).
+`boundary`: the previous token ends a compound. A loop over the tokens (a tail call). -/
 def dropStar (acc : Array CV) (boundary : Bool) : List CV → Array CV
   | [] => acc
-  | .tok (.delim '*') :: .tok .colon :: .tok .colon :: rest =>
-    if boundary then dropStar ((acc.push (.tok .colon)).push (.tok .colon)) false rest
-    else dropStar (((acc.push (.tok (.delim '*'))).push (.tok .colon)).push (.tok .colon)) false rest
+  | .tok (.delim '*') :: next :: rest =>
+    let more := match next with
+      | .tok (.delim '.') | .tok (.hash _ _) | .block '[' _ | .tok .colon => true
+      | _ => false
+    if boundary && more then dropStar acc false (next :: rest)
+    else dropStar (acc.push (.tok (.delim '*'))) false (next :: rest)
   | cv :: rest =>
     let ends := match cv with
       | .tok .ws | .tok .comma => true
@@ -271,7 +273,8 @@ def declaresDefaultNs (preludes : List String) : Bool :=
 #guard selectorText ":nth-child(5n -3)" == some ":nth-child(5n-3)" && selectorText ":nth-child(-n+ 6)" == some ":nth-child(-n+6)"
 #guard selectorText "*::before" == some "::before"
 #guard selectorText "a > *::marker, *::after" == some "a > ::marker, ::after"
-#guard selectorText "*:hover" == some "*:hover"
+#guard selectorText "*:hover" == some ":hover" && selectorText "*.c" == some ".c" && selectorText "*#i" == some "#i"
+#guard selectorText "*[a]" == some "[a]" && selectorText "a *.c" == some "a .c" && selectorText "*" == some "*" && selectorText "* > p" == some "* > p" && selectorText "*,*.c" == some "*, .c"
 #guard selectorText "ns|*::before" == none || selectorText "ns|*::before" == some "ns|*::before"
 
 /-! ### Rules -/
