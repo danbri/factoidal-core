@@ -84,6 +84,10 @@ structure PositionStyle where
   /-- `transform-origin`: `(x, ofWidth, y, ofHeight)`, lengths and fractions of the border
   box; its centre by default. -/
   transformOrigin : Float × Float × Float × Float := (0,0.5,0,0.5)
+  /-- `overflow: auto` or `scroll` in an axis: a scroll container. Nothing scrolls yet, so
+  nothing is clipped away; the box is still the root of a block formatting context (CSS 2.1
+  §9.4.1): it holds its floats and its children's margins. -/
+  scrolls : Bool := false
   /-- The percentage parts of the margins (top, right, bottom, left), as fractions of the
   containing block's width (CSS 2.1 §8.3), until `Layout.percentEdges` adds them to
   `Computed.margin`. -/
@@ -100,13 +104,17 @@ def PositionStyle.same (a b : PositionStyle) : Bool :=
   a.writingMode == b.writingMode && a.listStyle == b.listStyle && a.listInside == b.listInside &&
   a.flowRoot == b.flowRoot && a.content == b.content && a.nowrap == b.nowrap && a.textTransform == b.textTransform &&
   sameSteps a.transform b.transform && a.transformOrigin == b.transformOrigin &&
-  a.marginOf == b.marginOf && a.paddingOf == b.paddingOf
+  a.marginOf == b.marginOf && a.paddingOf == b.paddingOf && a.scrolls == b.scrolls
 
 /-- Out of flow by positioning: `absolute` or `fixed`. -/
 def PositionStyle.isAbsolute (p : PositionStyle) : Bool := p.position == .absolute || p.position == .fixed
 
 /-- Establishes the containing block of its absolutely positioned descendants. -/
 def PositionStyle.isPositioned (p : PositionStyle) : Bool := p.position != .static
+
+/-- The box is the root of a block formatting context by `display: flow-root` or by being
+a scroll container. -/
+def PositionStyle.formattingRoot (p : PositionStyle) : Bool := p.flowRoot || p.scrolls
 
 /-- One side of four (0 top, 1 right, 2 bottom, 3 left) set to `v`. -/
 def setSide (t : Float × Float × Float × Float) (side : Nat) (v : Float) : Float × Float × Float × Float :=
@@ -133,7 +141,7 @@ def PositionStyle.containsAbsolutes (p : PositionStyle) : Bool := p.isPositioned
 
 def positionProperties : List String :=
   ["position", "top", "right", "bottom", "left", "z-index", "float", "clear", "box-sizing", "aspect-ratio",
-   "writing-mode", "list-style-type", "list-style-position", "white-space", "text-transform", "transform", "transform-origin"]
+   "writing-mode", "list-style-type", "list-style-position", "white-space", "text-transform", "transform", "transform-origin", "overflow-x", "overflow-y"]
 
 /-- The ratio `a / b` (width to height) as two whole numbers in lowest terms; `none` when
 it is degenerate (a term that is zero or negative: CSS Sizing 4 §5.1, it behaves as `auto`). -/
@@ -221,6 +229,10 @@ def PositionStyle.set (fontSize : Float) (p : PositionStyle) (property value : S
       | "lower-roman" | "upper-roman" | "lower-greek" => some {p with listStyle := .number}
       -- another counter style or a string: the marker of the kind of list stands
       | _ => some {p with listStyle := .auto}
+    | "overflow-x" | "overflow-y" =>
+      -- one axis that scrolls makes the box a scroll container; the other values of the
+      -- longhands are not read
+      if v == "auto" || v == "scroll" then some {p with scrolls := true} else none
     | "transform" =>
       if reset then some {p with transform := []} else
       (BoxTransform.read (CssValues.computed { num := { fontSize := tableRat fontSize } } name v)).map fun steps =>
@@ -307,6 +319,11 @@ def positionShorthand (property value : String) : Option (List (String × String
 #guard ((PositionStyle.set 10 {transform := [.translate 1 0 0 0]} "transform" "none").map (·.transform.length)) == some 0
 #guard ((PositionStyle.set 10 {} "transform" "bogus").map (·.transform.length)) == none
 #guard ((PositionStyle.set 10 {} "transform-origin" "left top").map (·.transformOrigin)) == some (0,0,0,0)
+#guard ((PositionStyle.set 10 {} "overflow-x" "auto").map (·.scrolls)) == some true
+#guard ((PositionStyle.set 10 {} "overflow-y" "hidden").map (·.scrolls)) == none
+#guard (({scrolls := true} : PositionStyle).formattingRoot) == true
+#guard (({flowRoot := true} : PositionStyle).formattingRoot) == true
+#guard (({} : PositionStyle).formattingRoot) == false
 #guard (({} : PositionStyle).containsAbsolutes) == false
 #guard (({transform := [.matrix 1 0 0 1 0 0]} : PositionStyle).containsAbsolutes) == true
 #guard ((PositionStyle.set 10 {} "white-space" "nowrap").map (·.nowrap)) == some true
