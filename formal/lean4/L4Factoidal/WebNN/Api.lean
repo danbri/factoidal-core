@@ -66,7 +66,7 @@ def api (s : State) (fs : Array ByteArray) : State × ByteArray :=
       fun (s, i) => (s, toString i)) s
   | "write" => unit (writeTensor s (nat fs 1) (nat fs 2) (str fs 3) (fs[4]?.getD ByteArray.empty)) s
   | "read" =>
-    match readTensor s (nat fs 1) (nat fs 2) (if fs.size > 4 then some (str fs 3, nat fs 4) else none) with
+    match readTensor s (nat fs 1) (nat fs 2) (if fs.size > 3 then some (nat fs 3) else none) with
     | .ok b => (s, (ByteArray.mk #[0]) ++ b)
     | .error e => (s, (ByteArray.mk #[1]) ++ (refusal e).toUTF8)
   | "destroyTensor" => (destroyTensor s (nat fs 1), ByteArray.empty)

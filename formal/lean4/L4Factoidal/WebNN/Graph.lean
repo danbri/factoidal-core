@@ -205,19 +205,22 @@ def addInput (s : State) (bid : Nat) (name dtype shape : String) : M (State × S
   let d ← descOf dtype shape
   pure (addOperand s bid b d (.input name))
 
-/-- "Validate buffer with descriptor", the view half: an `ArrayBuffer`, a `Uint8Array`, or
-the typed array of the data type (`kind` is the class name the page gives; float16 data is
-also taken from a `Uint16Array`, its storage encoding). -/
+/-- "Validate buffer with descriptor": the byte length must be the descriptor's. (The
+specification also restricts the view type; the WPT tests write int32 tensors from a
+`Uint32Array`, so the view type is not checked here. `kind` is kept for the message.) -/
+private def checkSource (d : Desc) (kind : String) (size : Nat) : M Unit := do
+  if size != d.byteLength then
+    throw (.type s!"the byte length {size} of the {kind} is not the descriptor's byte length {d.byteLength}")
+
+/-- "Validate buffer with descriptor", the view half, for constants: an `ArrayBuffer`, a
+`Uint8Array`, or the typed array of the data type (`kind` is the class name the page gives;
+float16 data is also taken from a `Uint16Array`, its storage encoding, which is what a
+script without `Float16Array` has). -/
 def viewOk (t : DType) (kind : String) : Bool :=
   kind == "ArrayBuffer" || kind == "Uint8Array" || kind == (match t with
     | .float32 => "Float32Array" | .float16 => "Float16Array" | .int32 => "Int32Array" | .uint32 => "Uint32Array"
     | .int64 => "BigInt64Array" | .uint64 => "BigUint64Array" | .int8 => "Int8Array" | .uint8 => "Uint8Array")
   || (t == .float16 && kind == "Uint16Array")
-
-private def checkSource (d : Desc) (kind : String) (size : Nat) : M Unit := do
-  if size != d.byteLength then
-    throw (.type s!"the buffer's byte length {size} is not the descriptor's byte length {d.byteLength}")
-  if !viewOk d.dtype kind then throw (.type s!"a {kind} does not hold {d.dtype.name} data")
 
 /-- `MLGraphBuilder.constant(descriptor, buffer)`: the buffer's length must be the
 descriptor's byte length, and its view type must fit the data type. -/
@@ -225,6 +228,7 @@ def addConstant (s : State) (bid : Nat) (dtype shape kind : String) (data : Byte
   let b ← buildable s bid
   let d ← descOf dtype shape
   checkSource d kind data.size
+  if !viewOk d.dtype kind then throw (.type s!"a {kind} does not hold {d.dtype.name} data")
   if s.held + data.size > maxHeld then throw (.dom "QuotaExceededError" "too many bytes of constants and tensors")
   pure (addOperand s bid b d (.const data) data.size)
 
@@ -234,6 +238,8 @@ def addScalar (s : State) (bid : Nat) (dtype value : String) : M (State × Strin
   let d ← descOf dtype ""
   match number? value with
   | some (.number big i x) =>
+    if !numberFits d.dtype (some (.number big i x)) then
+      throw (.type s!"a BigInt value cannot be used with the data type {d.dtype.name}")
     let buf := if d.dtype.isFloat then Buf.f (floats 1 (numberToFloat d.dtype big i x)) else Buf.i #[numberToInt d.dtype big i x]
     pure (addOperand s bid b d (.const (buf.toBytes d.dtype)) d.dtype.bytes)
   | _ => throw (.type "the value could not be read")
@@ -360,29 +366,32 @@ def createTensor (s : State) (c : Nat) (dtype shape : String) (readable writable
   pure ({ s with tensors := s.tensors.push { ctx := c, desc := d, readable, writable, constant, data := bytes },
                  held := s.held + bytes.size }, s.tensors.size)
 
-private def liveTensor (s : State) (c tid : Nat) : M TensorRec :=
+/-- A tensor of the context that is not destroyed. `destroyed` is what a destroyed one is
+refused with: reading and writing say InvalidStateError, dispatch a TypeError (as the WPT
+tests expect of each). -/
+private def liveTensor (s : State) (c tid : Nat) (destroyed : Err := .type "the tensor is destroyed") : M TensorRec :=
   match s.tensors[tid]? with
   | none => .error (.type "not a tensor")
   | some t =>
     if t.ctx != c then .error (.type "the tensor is of another context")
-    else if t.destroyed then .error (.type "the tensor is destroyed")
+    else if t.destroyed then .error destroyed
     else .ok t
 
 /-- `MLContext.writeTensor(tensor, data)`. -/
 def writeTensor (s : State) (c tid : Nat) (kind : String) (data : ByteArray) : M State := do
-  let t ← liveTensor s c tid
+  let t ← liveTensor s c tid (invalidState "the tensor is destroyed")
   if !t.writable then throw (.type "the tensor is not writable")
   checkSource t.desc kind data.size
   if ctxLost s c then throw (invalidState "the context is lost")
   pure { s with tensors := s.tensors.setIfInBounds tid { t with data } }
 
 /-- `MLContext.readTensor(tensor)` and `readTensor(tensor, outputData)`: the tensor's bytes;
-`into` is the view kind and byte length of the buffer the page will copy them into. -/
-def readTensor (s : State) (c tid : Nat) (into : Option (String × Nat)) : M ByteArray := do
-  let t ← liveTensor s c tid
+`into` is the byte length of the buffer the page will copy them into, which must hold them. -/
+def readTensor (s : State) (c tid : Nat) (into : Option Nat) : M ByteArray := do
+  let t ← liveTensor s c tid (invalidState "the tensor is destroyed")
   if !t.readable then throw (.type "the tensor is not readable")
   match into with
-  | some (kind, size) => checkSource t.desc kind size
+  | some size => if size < t.desc.byteLength then throw (.type "the output buffer is smaller than the tensor")
   | none => pure ()
   if ctxLost s c then throw (invalidState "the context is lost")
   pure t.data

@@ -6039,7 +6039,7 @@
 
     class MLTensor { constructor() { illegal(); } }
     for (const k of ['dataType', 'shape', 'readable', 'writable', 'constant']) attr(MLTensor, k, function () { return state(tensors, this, 'MLTensor')[k]; });
-    op(MLTensor, 'destroy', 0, function destroy() { nn('destroyTensor', state(tensors, this, 'MLTensor').id); });
+    op(MLTensor, 'destroy', 0, function destroy() { const t = state(tensors, this, 'MLTensor'); t.destroyed = true; nn('destroyTensor', t.id); });
     const makeTensor = (c, d, flags, source) => {
       const fields = ['tensor', c.id, d.dataType, d.shape.join(','), flags];
       if (source) fields.push(source[0], source[1]);
@@ -6091,12 +6091,19 @@
       const c = state(contexts, this, 'MLContext');
       need(arguments, 1, "'readTensor' on 'MLContext'");
       const t = tensorRef(tensor, 'readTensor');
-      const into = arguments.length > 1 ? sourceOf(outputData, 'readTensor') : null;
-      const r = nnRaw(into ? ['read', c.id, t.id, into[0], into[1].length] : ['read', c.id, t.id], true);
+      const byob = arguments.length > 1;
+      const r = nnRaw(byob ? ['read', c.id, t.id, sourceOf(outputData, 'readTensor')[1].length] : ['read', c.id, t.id], true);
       if (typeof r === 'number') throw new DOMException('WebNN is not available', 'NotSupportedError');
       if (r[0] !== 0) { let m = ''; for (let i = 1; i < r.length; i++) m += String.fromCharCode(r[i]); refuse(m); }
-      if (into) { into[1].set(r.subarray(1)); return undefined; }
-      return r.slice(1).buffer;
+      // The bytes are those of this point in the context's timeline; the promise settles
+      // later, and by then the tensor or the context may be destroyed, or the buffer detached.
+      return Promise.resolve().then(() => {
+        if (t.destroyed || c.destroyed) throw new DOMException('The tensor was destroyed before it was read.', 'InvalidStateError');
+        if (!byob) return r.slice(1).buffer;
+        const view = sourceOf(outputData, 'readTensor')[1];
+        if (view.length < r.length - 1) throw new TypeError('readTensor: the output buffer is detached');
+        view.set(r.subarray(1));
+      });
     });
     op(MLContext, 'writeTensor', 2, function writeTensor(tensor, inputData) {
       const c = state(contexts, this, 'MLContext');

@@ -493,7 +493,8 @@ def pool2dNchw (input : Tensor) (name : String) (win : List Nat) (w : Window) (o
                     let v := x.get! (((ni * c + ch) * h + (iy - pt)) * wd + (ix - pl))
                     cnt := cnt + 1
                     s := if isMax then (if v > s then v else s) else if isL2 then s + v * v else s + v
-            let v := if isMax then s else if isL2 then Float.sqrt s else s / Float.ofNat cnt
+            -- a window that lies wholly in the padding (ceil rounding) has no cell: 0
+            let v := if cnt == 0 then 0.0 else if isMax then s else if isL2 then Float.sqrt s else s / Float.ofNat cnt
             acc := acc.push (ty.normF v)
     pure acc
   let t : Tensor := ⟨ty, out, .f r⟩

@@ -134,7 +134,10 @@ def roundEvenF (x : Float) : Float :=
   let r := x.round
   if (r - x).abs == 0.5 then 2.0 * (x / 2.0).round else r
 
-/-- ConvertToInt: NaN is 0, the value is clamped to the type and rounded to nearest even. -/
+/-- An `MLNumber` cast to an integer type: NaN is 0, the value is clamped to the type, and a
+fraction is dropped (toward zero), as the WPT conformance vectors have it (`clamp` of int64
+with `minValue: 3.9` clamps at 3). The specification's ConvertToInt rounds to nearest even
+there: recorded as a difference in the design record. -/
 def numberToInt (t : DType) (big : Bool) (i : Int) (x : Float) : Int :=
   if big then t.satI i
   else if x.isNaN then 0
@@ -143,9 +146,14 @@ def numberToInt (t : DType) (big : Bool) (i : Int) (x : Float) : Int :=
     let hi := t.maxInt
     if x ≤ Float.ofInt lo then lo else if x ≥ Float.ofInt hi then hi
     else
-      let r := roundEvenF x
-      -- |r| < 2^64 here; above 2^63 the conversion goes through the unsigned type
-      if r ≥ 9.2e18 then Int.ofNat r.toUInt64.toNat else r.toInt64.toInt
+      -- |x| < 2^64 here; above 2^63 the conversion goes through the unsigned type
+      if x ≥ 9.2e18 then Int.ofNat x.toUInt64.toNat else x.toInt64.toInt
+
+/-- A bigint `MLNumber` is accepted only for the 64-bit integer types. -/
+def numberFits (t : DType) (a : Option Arg) : Bool :=
+  match a with
+  | some (.number true _ _) => t == .int64 || t == .uint64
+  | _ => true
 
 /-- ConvertToFloat: the nearest value of the type (infinite past the largest). -/
 def numberToFloat (t : DType) (big : Bool) (i : Int) (x : Float) : Float :=
@@ -450,6 +458,17 @@ def windowOf (c : Call) (zeroPadding : Bool := false) : R Window := do
   need (dilations.all (· > 0)) "dilations must be greater than 0"
   pure ⟨padding, strides, dilations⟩
 
+/-- A stride or a dilation larger than the padded input is refused (conv2d and pooling): no
+window could use it, and an absurd value must not reach a backend. -/
+def windowFits (w : Window) (ih iw : Nat) : R Unit := do
+  let ph := ih + w.padding.getD 0 0 + w.padding.getD 1 0
+  let pw := iw + w.padding.getD 2 0 + w.padding.getD 3 0
+  need (w.strides.getD 0 1 ≤ ph && w.strides.getD 1 1 ≤ pw) "a stride is larger than the padded input"
+  need (w.dilations.getD 0 1 ≤ ph && w.dilations.getD 1 1 ≤ pw) "a dilation is larger than the padded input"
+
+/-- The padded input of a convolution is itself a tensor within the limits. -/
+def validPadded (t : DType) (n ch ph pw : Nat) : Bool := (mkDesc t [n, ch, ph, pw]).toOption.isSome
+
 /-- Height, width and channels of a 4-D input in a layout, and the layout applied back. -/
 def nchwOf (layout : String) (s : Shape) : Nat × Nat × Nat × Nat :=
   if layout == "nhwc" then (s.getD 0 0, s.getD 3 0, s.getD 1 0, s.getD 2 0) else (s.getD 0 0, s.getD 1 0, s.getD 2 0, s.getD 3 0)
@@ -506,6 +525,8 @@ def inferOp (name : String) (c : Call) : R (List Desc) := do
     | some t => pure [← mkDesc t input.shape]
     | none => .error "the data type is not supported"
   | "clamp" =>
+    need (numberFits input.dtype (c.arg? "minValue") && numberFits input.dtype (c.arg? "maxValue"))
+      s!"a BigInt value cannot be used with the data type {input.dtype.name}"
     match c.arg? "minValue", c.arg? "maxValue" with
     | some (.number b1 i1 x1), some (.number b2 i2 x2) =>
       if input.dtype.isFloat then
@@ -545,6 +566,9 @@ def inferOp (name : String) (c : Call) : R (List Desc) := do
     need (oc % groups == 0) "the output channels must be a multiple of groups"
     sameType c "input" "bias"
     shapeIs c "bias" [oc]
+    windowFits w ih iw
+    need (validPadded input.dtype n ch (ih + w.padding.getD 0 0 + w.padding.getD 1 0) (iw + w.padding.getD 2 0 + w.padding.getD 3 0))
+      "the padded input is too large"
     match convOut ih fh (w.padding.getD 0 0) (w.padding.getD 1 0) (w.strides.getD 0 1) (w.dilations.getD 0 1),
           convOut iw fw (w.padding.getD 2 0) (w.padding.getD 3 0) (w.strides.getD 1 1) (w.dilations.getD 1 1) with
     | some oh, some ow => pure [← mkDesc input.dtype (layoutShape layout n oc oh ow)]
@@ -579,6 +603,8 @@ def inferOp (name : String) (c : Call) : R (List Desc) := do
           need (cw0 ≤ ow && ow < cw0 + w.strides.getD 1 1) "the output width is not in the range the padding, strides and dilations allow"
           pure (oh, ow)
         | none => pure (ch0 + outPad.getD 0 0, cw0 + outPad.getD 1 0)
+      need (w.strides.getD 0 1 ≤ oh && w.strides.getD 1 1 ≤ ow) "a stride is larger than the output size"
+      need (w.dilations.getD 0 1 ≤ oh && w.dilations.getD 1 1 ≤ ow) "a dilation is larger than the output size"
       pure [← mkDesc input.dtype (layoutShape layout n oc oh ow)]
     | _, _ => .error "the padding is greater than the output size"
   | "cumulativeSum" | "softmax" =>
@@ -651,7 +677,9 @@ def inferOp (name : String) (c : Call) : R (List Desc) := do
     | some acts => need (acts.length == gates - 1) s!"activations must have {gates - 1} items"
     | none => pure ()
     let state ← mkDesc input.dtype [nd, batch, hidden]
-    let seq ← if c.bool "returnSequence" then pure [← mkDesc input.dtype [steps, nd, batch, hidden]] else pure []
+    -- the full sequence is computed whether or not it is returned: it must be a valid tensor
+    let full ← mkDesc input.dtype [steps, nd, batch, hidden]
+    let seq := if c.bool "returnSequence" then [full] else []
     pure ((if name == "gru" then [state] else [state, state]) ++ seq)
   | "gruCell" | "lstmCell" =>
     let gates := if name == "gruCell" then 3 else 4
@@ -697,6 +725,7 @@ def inferOp (name : String) (c : Call) : R (List Desc) := do
   | "pad" =>
     let b := c.nats "beginningPadding" []; let e := c.nats "endingPadding" []
     need (b.length == input.rank && e.length == input.rank) "the lengths of the paddings must be the rank of the input"
+    need (numberFits input.dtype (c.arg? "value")) s!"a BigInt value cannot be used with the data type {input.dtype.name}"
     if c.str "mode" "constant" == "reflection" then
       need ((List.range input.rank).all fun i => b.getD i 0 < input.shape.getD i 0 && e.getD i 0 < input.shape.getD i 0)
         "a reflection padding must be smaller than the dimension it pads"
@@ -707,7 +736,9 @@ def inferOp (name : String) (c : Call) : R (List Desc) := do
     let win := c.nats "windowDimensions" [ih, iw]
     need (win.length == 2) "the length of windowDimensions must be 2"
     need (win.all (· > 0)) "windowDimensions must be greater than 0"
+    need (win.getD 0 1 * win.getD 1 1 ≤ maxDim) "the product of windowDimensions is too large"
     let w ← windowOf c
+    windowFits w ih iw
     match c.nats? "outputSizes" with
     | some sz => need (sz.length == 2) "the length of outputSizes must be 2"
     | none => pure ()
@@ -729,8 +760,9 @@ def inferOp (name : String) (c : Call) : R (List Desc) := do
   | "prelu" =>
     let slope := c.d "slope"
     sameType c "input" "slope"
-    need (Shape.broadcastsTo slope.shape input.shape) "the shape of slope is not broadcastable to the shape of the input"
-    same
+    match Shape.broadcast slope.shape input.shape with
+    | some s => pure [← mkDesc input.dtype s]
+    | none => .error "the shapes of slope and input are not broadcastable"
   | "reduceL1" | "reduceL2" | "reduceLogSum" | "reduceLogSumExp" | "reduceMax" | "reduceMean" | "reduceMin"
   | "reduceProduct" | "reduceSum" | "reduceSumSquare" =>
     let axes := c.nats "axes" (List.range input.rank)
@@ -787,6 +819,8 @@ def inferOp (name : String) (c : Call) : R (List Desc) := do
     let strides := c.nats "strides" (List.replicate input.rank 1)
     need (strides.length == input.rank) "the length of strides must be the rank of the input"
     need (strides.all (· > 0)) "a stride is 0"
+    need ((List.range input.rank).all fun i => strides.getD i 1 ≤ sizes.getD i 0)
+      "a stride is greater than the size to slice in the same dimension"
     need ((List.range input.rank).all fun i =>
       starts.getD i 0 < input.shape.getD i 0 && starts.getD i 0 + sizes.getD i 0 ≤ input.shape.getD i 0)
       "a slice is not within the input"

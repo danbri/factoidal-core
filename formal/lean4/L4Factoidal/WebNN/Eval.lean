@@ -197,7 +197,7 @@ def evalOp (name : String) (e : Env) (outs : List Desc) : List Tensor :=
     let w := (windowOf c).toOption.getD default
     let win := c.nats "windowDimensions" [x.shape.getD 2 1, x.shape.getD 3 1]
     [Tensor.fromNchw (Tensor.pool2dNchw x name win w (nchwShape layout out.shape)) layout]
-  | "prelu" => [Tensor.zip input (e.t "slope") input.shape (binaryF "prelu") (binaryI "prelu")]
+  | "prelu" => [Tensor.zip input (e.t "slope") out.shape (binaryF "prelu") (binaryI "prelu")]
   | "reduceL1" | "reduceL2" | "reduceLogSum" | "reduceLogSumExp" | "reduceMax" | "reduceMean" | "reduceMin"
   | "reduceProduct" | "reduceSum" | "reduceSumSquare" =>
     [input.reduce name (c.nats "axes" (List.range input.shape.length)) out.shape]
