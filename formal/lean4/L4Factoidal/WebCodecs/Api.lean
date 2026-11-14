@@ -28,6 +28,8 @@ record: docs/designissues/2026-11-14-webgl-webcodecs.md, section 4).
   * 130 `pcmDecode(codec, channels, chunk)`: `Audio.pcmDecode`: the decoded samples (bytes);
     131 `pcmFormat(codec, channels, chunk)`: their format and frames ("format frames"). -20 for
     a chunk that is not whole frames, or a codec that is not PCM.
+  * 132 `convertColors(from, to, bgr, bytes)`: `Gamut.convert`: RGBA pixels (BGRA when `bgr` is
+    "1") from one predefined colour space to another (bytes); -20 for a name that is not one.
 
 Arguments are fields of text: numbers in decimal, lists of numbers separated by spaces, "" for a
 member the page did not give. The rotation is the 8 bytes of the page's double, little-endian.
@@ -38,6 +40,7 @@ import L4Factoidal.WebCodecs.Convert
 import L4Factoidal.WebCodecs.Config
 import L4Factoidal.WebCodecs.Orient
 import L4Factoidal.WebCodecs.Audio
+import L4Factoidal.WebCodecs.Gamut
 
 namespace L4Factoidal.WebCodecs.Api
 
@@ -205,6 +208,11 @@ def pcmOf (fs : Array ByteArray) : Option (Audio.Format × Nat × ByteArray) := 
   let channels ← natArg fs 1
   Audio.pcmDecode c channels (fs[2]?.getD ByteArray.empty)
 
+def convertColorsOp (fs : Array ByteArray) : Option ByteArray := do
+  let a ← Gamut.Space.ofName? (strArg fs 0)
+  let b ← Gamut.Space.ofName? (strArg fs 1)
+  pure (Gamut.convert a b (strArg fs 2 == "1") (fs[3]?.getD ByteArray.empty))
+
 def op (code : Nat) (fs : Array ByteArray) : Except Int ByteArray :=
   let answer := fun (r : Option String) => match r with
     | some s => .ok s.toUTF8
@@ -228,6 +236,9 @@ def op (code : Nat) (fs : Array ByteArray) : Except Int ByteArray :=
     | some (_, _, b) => .ok b
     | none => .error (-20)
   | 131 => answer ((pcmOf fs).map fun (f, n, _) => s!"{f.name} {n}")
+  | 132 => match convertColorsOp fs with
+    | some b => .ok b
+    | none => .error (-20)
   | _ => .error (-2)
 
 /-! ## Tests -/
@@ -283,6 +294,8 @@ private def run (code : Nat) (xs : List String) (bin : List (Nat × ByteArray) :
 #guard run 131 ["pcm-s24", "2", "abcdef"] == "s32 1"
 #guard run 131 ["pcm-s24", "2", "abcde"] == "error -20"
 #guard run 131 ["opus", "1", ""] == "error -20"
-#guard run 132 [] == "error -2"
+#guard (op 132 #["srgb".toUTF8, "display-p3".toUTF8, "".toUTF8, ⟨#[255, 0, 0, 9]⟩]).toOption.map (·.toList) == some [234, 51, 35, 9]
+#guard run 132 ["srgb", "rec2020", "", ""] == "error -20"
+#guard run 133 [] == "error -2"
 
 end L4Factoidal.WebCodecs.Api

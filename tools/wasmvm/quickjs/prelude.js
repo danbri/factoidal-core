@@ -2001,9 +2001,24 @@
       const g = (x, y, d) => m[x] !== undefined ? +m[x] : m[y] !== undefined ? +m[y] : d;
       return [g('a', 'm11', 1), g('b', 'm12', 0), g('c', 'm21', 0), g('d', 'm22', 1), g('e', 'm41', 0), g('f', 'm42', 0)];
     };
+    // HTML's PredefinedColorSpace: a canvas keeps 8-bit sRGB; another space is converted by Lean
+    // where pixels enter or leave (WebCodecs.Gamut, through the media host).
+    const SPACES = ['srgb', 'display-p3', 'srgb-linear', 'display-p3-linear'];
+    const spaceOf = (v, what) => {
+      const x = String(v);
+      if (!SPACES.includes(x)) throw new TypeError("Failed to execute '" + what + "': The provided value '" + x + "' is not a valid enum value of type PredefinedColorSpace.");
+      return x;
+    };
+    const settingSpace = (settings, what) => {
+      if (settings === undefined || settings === null) return undefined;
+      if (typeof settings !== 'object' && typeof settings !== 'function') throw new TypeError("Failed to execute '" + what + "': The provided value is not of type 'ImageDataSettings'.");
+      return settings.colorSpace === undefined ? undefined : spaceOf(settings.colorSpace, what);
+    };
+    const toSpace = (bytes, from, to) => from === to ? bytes : new Uint8Array(media.convertColors(from, to, false, bytes));
     class ImageData {
       constructor(a, b, c, settings) {
         need(arguments.length, 2, 'ImageData');
+        const space = settingSpace(a instanceof Uint8ClampedArray ? settings : c, 'ImageData');
         let data, w, h;
         if (a instanceof Uint8ClampedArray) {
           data = a; w = b >>> 0; const len = data.length;
@@ -2024,7 +2039,7 @@
         Object.defineProperty(this, 'data', { value: data, enumerable: true });
         Object.defineProperty(this, 'width', { value: w, enumerable: true });
         Object.defineProperty(this, 'height', { value: h, enumerable: true });
-        Object.defineProperty(this, 'colorSpace', { value: 'srgb', enumerable: true });
+        Object.defineProperty(this, 'colorSpace', { value: space ?? 'srgb', enumerable: true });
         Object.defineProperty(this, 'pixelFormat', { value: 'rgba-unorm8', enumerable: true });
       }
     }
@@ -2223,28 +2238,29 @@
       const r = a.length === 2 ? [NaN, NaN, NaN, NaN, v[0], v[1], NaN, NaN] : a.length === 4 ? [NaN, NaN, NaN, NaN, ...v] : v;
       on(s.id); q.push(80, kind, kind === 3 ? str(src) : src, ...r);
     });
-    define(P, 'createImageData', function (a, b) {
-      self(this); need(arguments.length, 1, 'createImageData');
-      if (a instanceof ImageData) return new ImageData(a.width, a.height);
+    define(P, 'createImageData', function (a, b, settings) {
+      const s = self(this); need(arguments.length, 1, 'createImageData');
+      if (a instanceof ImageData) return new ImageData(a.width, a.height, { colorSpace: a.colorSpace });
       need(arguments.length, 2, 'createImageData');
       let w = Math.trunc(+a), h = Math.trunc(+b);
       if (!Number.isFinite(+a) || !Number.isFinite(+b)) throw new TypeError('createImageData sizes must be finite');
       if (w === 0 || h === 0) throw new DOMException('The source width or height is 0.', 'IndexSizeError');
-      return new ImageData(Math.abs(w), Math.abs(h));
+      return new ImageData(Math.abs(w), Math.abs(h), { colorSpace: settingSpace(settings, 'createImageData') ?? s.settings.colorSpace });
     });
-    define(P, 'getImageData', function (sx, sy, sw, sh) {
+    define(P, 'getImageData', function (sx, sy, sw, sh, settings) {
       const s = self(this); need(arguments.length, 4, 'getImageData');
+      const space = settingSpace(settings, 'getImageData') ?? s.settings.colorSpace;
       if (![sx, sy, sw, sh].every(v => Number.isFinite(+v))) throw new TypeError("Failed to execute 'getImageData': The provided value is non-finite.");
       sx = Math.trunc(+sx); sy = Math.trunc(+sy); sw = Math.trunc(+sw); sh = Math.trunc(+sh);
       if (sw === 0 || sh === 0) throw new DOMException('The source ' + (sw === 0 ? 'width' : 'height') + ' is 0.', 'IndexSizeError');
       if (sw < 0) { sx += sw; sw = -sw; }
       if (sh < 0) { sy += sh; sh = -sh; }
-      const img = new ImageData(sw, sh);
+      const img = new ImageData(sw, sh, { colorSpace: space });
       flush();
       // The pixels as bytes (op 202, an ArrayBuffer), copied into the data at once.
       const bytes = n.gpuBytes(202, '[]', pack([2, s.id, sx, sy, sw, sh], [], 0));
       if (!(bytes instanceof ArrayBuffer)) throw new DOMException('Canvas 2D: getImageData failed', 'InvalidStateError');
-      img.data.set(new Uint8Array(bytes));
+      img.data.set(toSpace(new Uint8Array(bytes), 'srgb', space));
       return img;
     });
     define(P, 'putImageData', function (img, dx, dy, x, y, w, h) {
@@ -2253,7 +2269,8 @@
       if (!(img instanceof ImageData)) throw new TypeError("Failed to execute 'putImageData': parameter 1 is not of type 'ImageData'.");
       const all = arguments.length === 3, v = all ? [dx, dy, 0, 0, img.width, img.height] : [dx, dy, x, y, w, h];
       if (!v.every(t => Number.isFinite(+t))) return;
-      const bytes = new Uint8Array(img.data.length); bytes.set(img.data);
+      let bytes = new Uint8Array(img.data.length); bytes.set(img.data);
+      bytes = toSpace(bytes, img.colorSpace, 'srgb');
       on(s.id); q.push(81, tail(bytes), img.width, img.height, ...v.map(t => Math.trunc(+t)));
     });
     const gradient = (kind, args, name, k) => {
@@ -2276,7 +2293,11 @@
       return r === 'null' ? null : made(CanvasPattern, 'pattern', id);
     });
     Object.defineProperty(P, 'canvas', { get() { return self(this).canvas; }, configurable: true, enumerable: true });
-    define(P, 'getContextAttributes', function () { self(this); return { alpha: true, colorSpace: 'srgb', desynchronized: false, willReadFrequently: false }; });
+    define(P, 'getContextAttributes', function () {
+      const t = self(this).settings;
+      return { alpha: t.alpha, colorSpace: t.colorSpace, colorType: t.colorType, desynchronized: t.desynchronized,
+        willReadFrequently: t.willReadFrequently, toneMapping: { mode: t.toneMapping.mode } };
+    });
     define(P, 'isContextLost', function () { self(this); return false; });
     define(P, 'drawFocusIfNeeded', function () { self(this); });
 
@@ -2298,9 +2319,22 @@
 
     class OffscreenCanvasRenderingContext2D { constructor() { throw new TypeError('Illegal constructor'); } }
     for (const k of Reflect.ownKeys(P)) if (k !== 'constructor') Object.defineProperty(OffscreenCanvasRenderingContext2D.prototype, k, Object.getOwnPropertyDescriptor(P, k));
-    const contextFor = (C, canvas, id, w, h, element) => {
+    // CanvasRenderingContext2DSettings (HTML §4.12.5.1), as getContextAttributes() answers them.
+    const settingsOf = o => {
+      if (o === undefined || o === null) o = {};
+      else if (typeof o !== 'object' && typeof o !== 'function') throw new TypeError("Failed to execute 'getContext': The provided value is not of type 'CanvasRenderingContext2DSettings'.");
+      const colorType = o.colorType === undefined ? 'unorm8' : String(o.colorType);
+      if (colorType !== 'unorm8' && colorType !== 'float16') throw new TypeError("Failed to execute 'getContext': The provided value '" + colorType + "' is not a valid enum value of type CanvasColorType.");
+      const tm = o.toneMapping === undefined || o.toneMapping === null ? {} : o.toneMapping;
+      const mode = tm.mode === undefined ? 'standard' : String(tm.mode);
+      if (mode !== 'standard' && mode !== 'extended') throw new TypeError("Failed to execute 'getContext': The provided value '" + mode + "' is not a valid enum value of type CanvasToneMappingMode.");
+      return { alpha: o.alpha === undefined ? true : !!o.alpha, colorSpace: o.colorSpace === undefined ? 'srgb' : spaceOf(o.colorSpace, 'getContext'),
+        colorType, desynchronized: !!o.desynchronized, willReadFrequently: !!o.willReadFrequently, toneMapping: { mode } };
+    };
+    const contextFor = (C, canvas, id, w, h, element, options) => {
+      const settings = settingsOf(options);
       const ctx = Object.create(C.prototype);
-      define(ctx, K, { kind: 'ctx', id, canvas });
+      define(ctx, K, { kind: 'ctx', id, canvas, settings });
       q.push(2, id, w, h, element ? 1 : 0); selected = id; later();
       return ctx;
     };
@@ -2313,13 +2347,13 @@
       set width(v) { const s = this[K]; s.w = Math.trunc(+v) >>> 0; if (s.ctx) { q.push(2, s.id, s.w, s.h, 0); selected = s.id; later(); } }
       get height() { return this[K].h; }
       set height(v) { const s = this[K]; s.h = Math.trunc(+v) >>> 0; if (s.ctx) { q.push(2, s.id, s.w, s.h, 0); selected = s.id; later(); } }
-      getContext(kind) {
+      getContext(kind, options) {
         need(arguments.length, 1, 'getContext');
         const s = this[K]; kind = String(kind);
         if (!['2d', 'webgl', 'webgl2', 'webgpu', 'bitmaprenderer'].includes(kind)) throw new TypeError("The provided value '" + (kind) + "' is not a valid enum value of type OffscreenRenderingContextType.");
         if (s.kind) return s.kind === kind ? s.ctx : null;
         if (kind !== '2d') return null;
-        s.kind = kind; s.ctx = contextFor(OffscreenCanvasRenderingContext2D, this, s.id, s.w, s.h, false);
+        s.kind = kind; s.ctx = contextFor(OffscreenCanvasRenderingContext2D, this, s.id, s.w, s.h, false, options);
         return s.ctx;
       }
       transferToImageBitmap() {
@@ -2346,7 +2380,8 @@
           if (sh < 0) { sy += sh; sh = -sh; }
         }
         if (img instanceof ImageData) {
-          const bytes = new Uint8Array(img.data.length); bytes.set(img.data);
+          let bytes = new Uint8Array(img.data.length); bytes.set(img.data);
+          bytes = toSpace(bytes, img.colorSpace, 'srgb');
           resolve(bitmapOf(4, tail(bytes), 0, 0, img.width, img.height, img.width, img.height));
           return;
         }
@@ -2400,7 +2435,7 @@
     };
     return { CanvasRenderingContext2D, OffscreenCanvasRenderingContext2D, OffscreenCanvas, Path2D, ImageData, pixelsOf,
       ImageBitmap, CanvasGradient, CanvasPattern, TextMetrics, DOMMatrix, DOMMatrixReadOnly, DOMPoint, DOMPointReadOnly, createImageBitmap,
-      context: canvas => contextFor(CanvasRenderingContext2D, canvas, nodeId(canvas), canvasSize(canvas, 'width', 300), canvasSize(canvas, 'height', 150), true),
+      context: (canvas, options) => contextFor(CanvasRenderingContext2D, canvas, nodeId(canvas), canvasSize(canvas, 'width', 300), canvasSize(canvas, 'height', 150), true, options),
       resized: canvas => { const id = nodeId(canvas); q.push(2, id, canvasSize(canvas, 'width', 300), canvasSize(canvas, 'height', 150), 1); selected = id; later(); },
       dataURL: (canvas, type) => { const id = nodeId(canvas); ensure(canvas, id); return ask([7, id, 0], [type === undefined ? 'image/png' : String(type)]); } };
 `;
@@ -2416,7 +2451,7 @@
       const id = nodeId(this), held = gpuContexts.get(id);
       if (held && held.kind !== 'blank') return held.kind === kind ? held.context : null;
       let context = null;
-      if (kind === '2d') context = c2d().context(this);
+      if (kind === '2d') context = c2d().context(this, arguments[1]);
       else if (kind === 'webgpu') context = new GPUCanvasContext(this);
       else if (kind === 'webgl2') context = glContextFor(this, 2, arguments[1]);
       else if (kind === 'webgl' || kind === 'experimental-webgl') context = glContextFor(this, 1, arguments[1]);
@@ -3687,7 +3722,7 @@
       const d = dict(options, 'VideoFrameCopyToOptions');
       const rect = rectArg(d.rect, 'rect'), layout = layoutArg(d.layout, 'layout');
       const format = d.format === undefined ? undefined : oneOf(d.format, FORMATS, 'VideoPixelFormat');
-      const space = d.colorSpace === undefined ? undefined : oneOf(d.colorSpace, ['srgb', 'display-p3'], 'PredefinedColorSpace');
+      const space = d.colorSpace === undefined ? undefined : oneOf(d.colorSpace, ['srgb', 'display-p3', 'srgb-linear', 'display-p3-linear'], 'PredefinedColorSpace');
       if (format !== undefined && format !== s.format && !RGB.includes(format)) throw dom('NotSupportedError', 'copyTo converts to RGBA, RGBX, BGRA and BGRX only');
       return { rect: rect === '' ? [s.vx, s.vy, s.vw, s.vh].join(' ') : rect, layout, format: format === undefined ? s.format : format, space };
     };
@@ -3804,13 +3839,15 @@
       if (typeof r === 'number') throw dom('InvalidStateError', 'the frame could not be drawn');
       return { w, h, dw: s.dw, dh: s.dh, bytes: new Uint8Array(r) };
     };
-    // The rectangle as packed pixels of an RGB format: Lean's conversion (WebCodecs.Convert.toRgb).
-    // It keeps the frame's primaries and transfer: a destination that is not sRGB is refused.
+    // The rectangle as packed pixels of an RGB format: Lean's conversion (WebCodecs.Convert.toRgb),
+    // as sRGB; another destination colour space is Lean's conversion from sRGB (WebCodecs.Gamut).
     const convertFrame = (s, o) => {
-      if (o.space !== undefined && o.space !== 'srgb') throw dom('NotSupportedError', 'copyTo converts to sRGB only');
       const r = apiCall(124, [s.format, String(s.cw), String(s.ch), o.rect, o.format, s.color.matrix === null ? '' : s.color.matrix, s.color.fullRange ? '1' : '', s.resource], 0, true);
       if (typeof r === 'number') throw dom('NotSupportedError', 'copyTo does not convert this frame');
-      return new Uint8Array(r);
+      if (o.space === undefined || o.space === 'srgb') return new Uint8Array(r);
+      const c = apiCall(132, ['srgb', o.space, o.format.startsWith('BGR') ? '1' : '', new Uint8Array(r)], 0, true);
+      if (typeof c === 'number') throw dom('NotSupportedError', 'copyTo does not convert to ' + o.space);
+      return new Uint8Array(c);
     };
 
     // ---- EncodedVideoChunk, EncodedAudioChunk (WebCodecs 8) ----
@@ -4062,6 +4099,11 @@
   const codecNames = ['VideoColorSpace', 'VideoFrame', 'EncodedVideoChunk', 'EncodedAudioChunk', 'AudioDecoder', 'VideoDecoder', 'AudioEncoder', 'VideoEncoder', 'AudioData'];
   lazyGroup(codecNames, codecs);
   codecsHost.pixelsOf = image => c2d().pixelsOf(image);
+  codecsHost.convertColors = (from, to, bgr, bytes) => {
+    const r = apiCall(132, [from, to, bgr ? '1' : '', bytes], 0, true);
+    if (typeof r === 'number') throw new TypeError('colour conversion from ' + from + ' to ' + to + ' failed');
+    return r;
+  };
   // ==== end webcodecs section ====
   const apiError = (r, what) => {
     switch (r) {
