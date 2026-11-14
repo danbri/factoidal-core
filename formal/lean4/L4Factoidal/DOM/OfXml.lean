@@ -137,12 +137,16 @@ def parseXmlDocument (src : String) : Except String Dom := do
         | .other _ => rest
   throw "XHTML: the tree has more nodes than its source has characters"
 
-/-- A URL whose path ends in `.xht` or `.xhtml` (any case): the file name extensions
-that the `application/xhtml+xml` registration lists (RFC 3236 §2). -/
+/-- A URL whose document the XML parser reads: its path ends in `.xht` or `.xhtml` (any
+case), the file name extensions that the `application/xhtml+xml` registration lists
+(RFC 3236 §2), or in `.xml`, the extension of `application/xml` and `text/xml` (RFC 7303
+§9.1). The host gives no Content-Type, so the path decides. -/
 def isXhtmlPath (url : String) : Bool :=
   let path := ((url.splitOn "#").headD "").splitOn "?" |>.headD ""
   let lower := path.toLower
-  lower.endsWith ".xht" || lower.endsWith ".xhtml"
+  lower.endsWith ".xht" || lower.endsWith ".xhtml" || lower.endsWith ".xml"
+
+#guard isXhtmlPath "http://h/common/dummy.xml" && isXhtmlPath "/a/B.XHTML?x=1#f" && !isXhtmlPath "/a.xml.html" && !isXhtmlPath "/a.svg"
 
 /-- A URL whose document is read in the XML syntax: `isXhtmlPath`, or a path that ends in
 `.svg` (any case), the file name extension of the `image/svg+xml` registration (SVG 2

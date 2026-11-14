@@ -483,6 +483,10 @@
   // `ceActive`: a custom element is defined (section customelements), so attribute and tree
   // changes go through the natives that tell custom elements.
   let htmlConstructing = false, ceActive = false;
+  // A script element that a script made (section dynscripts): told when it is created.
+  let noteFreshScript = () => {};
+  // Connected (DOM §4.2.2): the shadow-including root is a document (node_info 25).
+  const connectedId = id => { if (id < 0) return false; if (shadowEngine()) return info(id, 25) === 1; for (let k = id, i = 0; i < 1 << 20; i++) { const p = info(k, 1); if (p < 0) return k === 0; k = p; } return false; };
   class EventTarget {
     constructor() { if (htmlConstructing) return; const id = nextTarget++; ids.set(this, id); targets.set(id, this); }
     addEventListener(type, callback, options = {}) {
@@ -2746,7 +2750,6 @@
     // IsConstructor: a function, or a Proxy of one
     const isCtor = f => { if (f === null || (typeof f !== 'function' && typeof f !== 'object')) return false; try { Reflect.construct(String, [], f); return true; } catch { return false; } };
     const customOf = id => { const el = wrappers.get(id), st = el && ceState.get(el); return st && st.state === 'custom' ? el : undefined; };
-    const connectedId = id => { if (id < 0) return false; if (shadowEngine()) return info(id, 25) === 1; for (let k = id, i = 0; i < 1 << 20; i++) { const p = info(k, 1); if (p < 0) return k === 0; k = p; } return false; };
     // "Look up a custom element definition" (HTML §4.13.3) for the element numbered `id`.
     const lookup = id => {
       if (info(id, 0) !== 1 || info(id, 8) !== 1) return null;
@@ -3032,11 +3035,17 @@
       return wrap(id);
     };
     define(Document.prototype, 'createElement', function createElement(name, options = undefined) {
-      return made(chk(n.create(3 + 16 * nodeId(this), String(name))), options);
+      name = String(name);
+      const id = chk(n.create(3 + 16 * nodeId(this), name));
+      if (name.length === 6 && name.toLowerCase() === 'script') noteFreshScript(id);
+      return made(id, options);
     });
     define(Document.prototype, 'createElementNS', function createElementNS(ns, qname, options = undefined) {
       if (arguments.length < 2) throw new TypeError('createElementNS: 2 arguments required');
-      return made(chk(n.create(4 + 16 * nodeId(this), nsArg(ns) + '\u0000' + String(qname))), options);
+      qname = String(qname);
+      const id = chk(n.create(4 + 16 * nodeId(this), nsArg(ns) + '\u0000' + qname));
+      if (qname.endsWith('script')) noteFreshScript(id);
+      return made(id, options);
     });
   }
   // ==== end customelements ================================================================
@@ -5493,6 +5502,18 @@
   });
   def('getSelection', getSelection);
   for (const C of new Set([HTMLElement, HTMLUnknownElement, ...Object.values(named)])) reflectInstall(C);
+  // Document.dir reflects the `dir` of the html element, and fgColor, linkColor, vlinkColor,
+  // alinkColor and bgColor the `text`, `link`, `vlink`, `alink` and `bgcolor` of the body
+  // element, [LegacyNullToEmptyString] (HTML §3.1.4 and §16.3).
+  {
+    const htmlRoot = doc => { const e = doc.documentElement; return e && info(nodeId(e), 8) === 1 && e.localName === 'html' ? e : null; };
+    const bodyOf = doc => { const b = doc.body; return b && b.localName === 'body' ? b : null; };
+    Object.defineProperty(Document.prototype, 'dir', { get() { const e = htmlRoot(this); return e ? e.dir : ''; },
+      set(v) { const e = htmlRoot(this); if (e) e.dir = v; }, configurable: true, enumerable: true });
+    for (const [idl, content] of [['fgColor', 'text'], ['linkColor', 'link'], ['vlinkColor', 'vlink'], ['alinkColor', 'alink'], ['bgColor', 'bgcolor']])
+      Object.defineProperty(Document.prototype, idl, { get() { const b = bodyOf(this); return b ? b.getAttribute(content) ?? '' : ''; },
+        set(v) { const b = bodyOf(this); if (b) b.setAttribute(content, v === null ? '' : String(v)); }, configurable: true, enumerable: true });
+  }
   for (const [k, v] of Object.entries({ AbstractRange, Range, StaticRange, Selection, NodeFilter, NodeIterator, TreeWalker, CSSStyleDeclaration })) {
     if (k !== 'NodeFilter') Object.defineProperty(v.prototype, Symbol.toStringTag, { value: k, configurable: true });
     def(k, v);
@@ -5688,6 +5709,52 @@
     const t = onBody ? window : el;
     setHandler(t, name, onBody && name === 'error' ? function (m, s, l, c, e) { return f.call(this, m); } : f);
   };
+
+  // ==== dynscripts: scripts that a script inserts (HTML §4.12.1 "prepare the script element") ====
+  // A script element made by createElement runs when it is connected and has a source: an
+  // inline classic script at once; a `src` script when its text has arrived, then `load` (or
+  // `error`). Its kind is Lean's (HTML.ScriptType, node_query 183). The script elements of the
+  // document as the parser made it are run by the engine in document order and never come
+  // here; an element that innerHTML made does not run (its "already started" flag is set).
+  // The natives are wrapped when the first such element is made, and do nothing new while no
+  // made script element waits.
+  {
+    const fresh = new Set();
+    let wrappedForScripts = false;
+    const runText = typeof n0.runScript === 'function' ? src => n0.runScript(src) : src => (0, eval)(src);
+    const execute = (el, text) => {
+      const before = currentScript;
+      currentScript = el;
+      try { runText(text); } catch (e) { report(e); } finally { currentScript = before; }
+    };
+    const fire = (el, type) => { const e = new Event(type); state(e).trusted = true; dispatch(el, e); };
+    const prepare = id => {
+      if (info(id, 0) !== 1 || str(id, 0) !== 'script') { fresh.delete(id); return; }
+      if (!connectedId(id)) return;
+      const src = n0.attr(id, 'src'), el = wrap(id);
+      const text = typeof src === 'string' ? '' : el.textContent;
+      if (typeof src !== 'string' && text === '') return;
+      fresh.delete(id);
+      if (n.query(id, 183, '') !== 'classic') return;
+      if (typeof src !== 'string') { execute(el, text); return; }
+      const url = src === '' ? null : resolveURL(src);
+      const fetcher = url === null || url === undefined ? undefined : globalThis.fetch;
+      if (typeof fetcher !== 'function') { Promise.resolve().then(() => fire(el, 'error')); return; }
+      fetcher(url).then(r => { if (!r.ok) throw new TypeError('script load failed'); return r.text(); })
+        .then(code => { execute(el, code); fire(el, 'load'); }, () => fire(el, 'error'));
+    };
+    const after = r => { if (r === 0 && fresh.size) for (const id of [...fresh]) prepare(id); return r; };
+    noteFreshScript = id => {
+      fresh.add(id);
+      if (wrappedForScripts) return;
+      wrappedForScripts = true;
+      const insert0 = n.insert, replace0 = n.replace, setText0 = n.setText;
+      n.insert = (p, node, child) => (fresh.size ? after(insert0(p, node, child)) : insert0(p, node, child));
+      n.replace = (p, node, child) => (fresh.size ? after(replace0(p, node, child)) : replace0(p, node, child));
+      n.setText = (id2, value) => (fresh.size ? after(setText0(id2, value)) : setText0(id2, value));
+    };
+  }
+  // ==== end dynscripts ====================================================================
 
   // ---- Interface objects as Web IDL defines them (§3.7.1 to §3.7.3) ----
   // An interface's attributes, operations and constants are enumerable own properties of its

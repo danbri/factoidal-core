@@ -24,6 +24,7 @@ import L4Factoidal.DOM.Editing.Commands
 import L4Factoidal.Rendering.Style
 import L4Factoidal.DOM.Named
 import L4Factoidal.DOM.CustomElements
+import L4Factoidal.HTML.ScriptType
 
 namespace L4Factoidal.WasmVM.Hosts.Dom
 open L4Factoidal.DOM L4Factoidal.DOM.Range
@@ -425,7 +426,8 @@ Selection: 140 "range direction", or -1 when empty; 141 `addRange` (range `id`);
 DOM and HTML decisions (read-only): 180 the value of the Window's named property `q` for
 document `id` (`DOM.Named.answer`: "", "w" container, "e" element, or "c" elements); 181
 whether `q` is a valid custom element name ("1" or "0"); 182 the elements a tree change at
-node `id` reaches, in shadow-including tree order (`DOM.CustomElements`). -/
+node `id` reaches, in shadow-including tree order (`DOM.CustomElements`); 183 the kind of
+script element `id` (`HTML.ScriptType`: "classic", "module", "importmap" or "data"). -/
 def domOpM (id op : Nat) (q : String) : Op String := do
   let xs := nums q
   let d ← dom
@@ -723,6 +725,13 @@ def domOpM (id op : Nat) (q : String) : Op String := do
   | 182 =>
     let n ← nodeArg d id
     return L4Factoidal.DOM.CustomElements.reachWire d n
+  -- 183: the kind of script element `id` (HTML §4.12.1 steps 8 to 12, `HTML.ScriptType.kind`):
+  -- "classic", "module", "importmap" or "data"; the `language` of an SVG script has no say
+  | 183 =>
+    let n ← nodeArg d id
+    let x := d.get n
+    let av := fun (nm : String) => (x.attrs.find? fun a => a.ns.isNone && a.lname == nm).map (·.value)
+    return (L4Factoidal.HTML.ScriptType.kind (av "type") (if x.ns == some htmlNS then av "language" else none)).name
   -- ==== end of domhtml ====
   | _ => throw (-2)
 
