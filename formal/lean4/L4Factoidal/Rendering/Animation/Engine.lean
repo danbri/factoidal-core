@@ -366,10 +366,12 @@ def updateTransitions (s : State) (ac : Access) (e : Nat) : State := Id.run do
   -- CSS Transitions 1 §3: the before-change and after-change styles both hold the values
   -- of animations, so a property an animation gave a value starts no transition
   let animatedBefore := (s.lastAnimated.filter (·.1 == e)).map (·.2)
-  -- the properties to look at: those the element's transitions name, and those whose value
-  -- is known to differ (`transition-property: all` covers every property)
+  -- the properties to look at: those the element's transitions name, and, when one of them
+  -- is `all`, those whose value is known to differ (found only then: it compares the two
+  -- styles of the element)
   let named := specs.filterMap fun t => if t.property == "all" || t.property == "none" then none else some t.property
-  for property in (named ++ ac.changed e).eraseDups do
+  let others := if specs.any (·.property == "all") then ac.changed e else []
+  for property in (named ++ others).eraseDups do
     if !animatable property || stillRunning.contains property || animatedBefore.contains property then continue
     let some sp := Css.transitionFor specs property | continue
     let some before := ac.prev e property | continue

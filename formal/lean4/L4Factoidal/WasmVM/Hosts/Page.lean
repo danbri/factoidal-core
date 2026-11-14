@@ -475,6 +475,34 @@ def readOnlyImports : List String :=
 after any write, with the styles it had. -/
 def styleNeutralImports : List String := ["add_event_listener", "set_timer", "clear_timer"]
 
+/-- A write of `foafnaut_dom` that changes nothing in a document's tree: a new node, a
+clone, or a change of a node that is in no document's tree and stays in none (an
+insertion there of a node that is itself in none). The styles and the layout of every
+document are as they were. `a` gives the import's i32 arguments: the node, or the parent
+then the node. -/
+def detachedWrite (dom : Arena) (nm : String) (a : Nat → Nat) : Bool :=
+  let off := fun (n : Nat) => n < dom.size && !dom.connected n
+  if nm == "create_element" || nm == "clone_node" then true
+  -- kind 15 of `create_node` is a write of a frame
+  else if nm == "create_node" then a 0 % 16 != 15
+  else if nm == "set_attribute" || nm == "remove_attribute" || nm == "text_content_set" || nm == "remove_child" then
+    off (a 0)
+  else if nm == "append_child" || nm == "insert_before" || nm == "replace_child" then off (a 0) && off (a 1)
+  else false
+
+/-- Kind: safety of the partial restyle. Says: a write whose first node (the node written,
+or the parent written into) is in a document's tree is never taken as changing nothing
+there, whatever the import, except the three that only make a node. Does not say: that
+`Hosts.Dom.serve` changes only what the import's name says. -/
+theorem detachedWrite_connected (dom : Arena) (nm : String) (a : Nat → Nat)
+    (h : dom.connected (a 0) = true) (h1 : nm ≠ "create_element") (h2 : nm ≠ "clone_node")
+    (h3 : nm ≠ "create_node") : detachedWrite dom nm a = false := by
+  have e1 : (nm == "create_element") = false := beq_eq_false_iff_ne.mpr h1
+  have e2 : (nm == "clone_node") = false := beq_eq_false_iff_ne.mpr h2
+  have e3 : (nm == "create_node") = false := beq_eq_false_iff_ne.mpr h3
+  simp only [detachedWrite, e1, e2, e3, h]
+  simp
+
 /-- The name and value pairs of a `getComputedStyle` answer (measure op 20). -/
 def stylePairs (text : Option String) : List (String × String) :=
   match text with
@@ -487,8 +515,9 @@ style of CSS Transitions 1 §3). Measure ops: 20 the computed style, 24 an eleme
 cascaded animation and transition longhands, 25 the text of the sheets, 27 the computed
 value of "property U+0000 value" on an element, 28 the elements that declare an
 animation or a transition, 29 the computed value of the longhand named, 26 the
-declarations of the element's rules and `style` attribute as one text, and with "names"
-the longhands they declare (U+0000 between them). -/
+declarations of the element's rules and `style` attribute as one text, with "names"
+the longhands they declare (U+0000 between them), with "rules" the rules' part of the
+text, with "style" the longhands of the `style` attribute and their values. -/
 def animationAccess (dom : Arena) (base : Answers) (prev : Option Answers) (candidates : Option (List Nat) := none) :
     L4Factoidal.Rendering.Animation.Access :=
   { connected := fun n => n < dom.size && dom.connected n
@@ -502,7 +531,14 @@ def animationAccess (dom : Arena) (base : Answers) (prev : Option Answers) (cand
           if k == k' && v != v' then some k else none
         -- (only when the declarations the element's cascade reads changed: op 26 with no text)
         if base n 26 "" == f n 26 "" then profile else
-        let declared := ((((base n 26 "names").getD "").splitOn "\x00") ++ (((f n 26 "names").getD "").splitOn "\x00")).eraseDups
+        -- with the same rules and a font, colour and flow that stayed: the longhands that
+        -- the two `style` attributes declare differently, and no other
+        let narrowed := L4Factoidal.Rendering.Animation.Computed.styleAttributeDiff
+          ((f n 26 "style").getD "") ((base n 26 "style").getD "")
+        let narrow := base n 26 "rules" == f n 26 "rules" &&
+          !(profile ++ narrowed).any L4Factoidal.Rendering.Animation.Computed.reachesOthers
+        let declared := if narrow then narrowed
+          else ((((base n 26 "names").getD "").splitOn "\x00") ++ (((f n 26 "names").getD "").splitOn "\x00")).eraseDups
         (profile ++ declared.filter fun p => p != "" && base n 29 p != f n 29 p).eraseDups
       | none => []
     compute := fun n p v => base n 27 (p ++ "\x00" ++ v)
@@ -944,15 +980,16 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
     let (w, st, r) := Hosts.PageWasm.serve mem args w st
     ({ h with wasm := w }, st, r)
   | _ =>
-    -- a write of an element's `style` attribute is noted as that (`Reads.styleWrites`)
+    -- a write of an element's `style` attribute is noted as that (`Reads.styleWrites`); a
+    -- write that changes nothing in a document's tree (`detachedWrite`) changes no style
     let styleOf : Option Nat :=
-      if nm == "set_attribute" then
+      if nm == "set_attribute" || nm == "remove_attribute" then
         match Hosts.Dom.readStr mem st (a 1) (a 2) 8 with
         | .ok name => if name == "style" then some (a 0) else none
         | .error _ => none
       else none
     let reads := if readOnlyImports.contains nm then h.reads
-      else h.reads.wrote styleOf (styleNeutralImports.contains nm)
+      else h.reads.wrote styleOf (styleNeutralImports.contains nm || detachedWrite h.dom.dom nm a)
     -- the DOM state leaves the host for the call, so that a change of the arena is in place
     -- (`Hosts.Dom.change`)
     let ds := h.dom
