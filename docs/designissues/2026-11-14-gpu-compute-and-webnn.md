@@ -355,9 +355,10 @@ to run the same test on the Hub's GPU before an operator is enabled there.
   computes, `k / stride % dim`, is `Shape.unravel`'s for every `k` below the size.
   `out_fits`, `transposeMap_fits`, `expandMap_fits`, `tileMap_fits`: on a valid output index
   of an output of at most 4,194,240 elements (the kernels refuse larger), the maps'
-  coordinates fit in 32 bits, which discharges `Fits` for `emitC_eval` (`reverseMap_fits` too, from `valid_coord`); `transpose_coords`
-  puts them together for transpose. Not yet: the same for slice (it needs the
-  builder's bounds as hypotheses) and the flat-index sum (`flatIndex`) as one `Coord`.
+  coordinates fit in 32 bits, which discharges `Fits` for `emitC_eval` (`reverseMap_fits` too, from `valid_coord`; `sliceMap_fits` from the builder's slice bounds); `transpose_coords`
+  puts them together for transpose. Not yet: the flat-index sum (`flatIndex`) as one `Coord`
+  with its own bound, and the bound for slice discharged from the builder's checks in Lean
+  (today a hypothesis of `sliceMap_fits`).
 
 ### 2.8 Wall time
 

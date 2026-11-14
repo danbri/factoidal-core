@@ -255,6 +255,22 @@ theorem reverseMap_fits (s : Shape) (axes : List Nat) (o : List Nat) (hv : Shape
     · simp only [Coord.eval]; omega
   · exact out_fits s o hv hs a
 
+/-- Kind: bound (discharges `Fits`). Says: slice's map fits in 32 bits when the output
+coordinates and the strides do (`out_fits` gives the first on a valid output index) and every
+source coordinate it reads does (`hb`: the builder's checks give it, `Move.slice_in_bounds`
+puts each below the input's dimension). -/
+theorem sliceMap_fits (starts strides o : List Nat) (ho : ∀ a, o.getD a 0 < two32)
+    (hst : ∀ a, strides.getD a 1 < two32)
+    (hb : ∀ a, a < o.length → starts.getD a 0 + o.getD a 0 * strides.getD a 1 < two32) :
+    ∀ c ∈ sliceMap starts strides o.length, c.Fits o := by
+  intro c hc
+  simp only [sliceMap, List.mem_map, List.mem_range] at hc
+  obtain ⟨a, ha, rfl⟩ := hc
+  have h := hb a ha
+  refine ⟨?_, ⟨ho a, hst a, by simp only [Coord.eval]; omega⟩, ?_⟩
+  · simp only [Coord.Fits]; omega
+  · simp only [Coord.eval]; omega
+
 /-- Kind: equality (a whole kernel's index arithmetic). Says: for every valid output index
 of an output of at most `maxElements` (4,194,240) elements, each coordinate transpose's kernel prints
 computes, in WGSL's `u32` arithmetic, the coordinate of `Move.transposeIdx perm o`, the
