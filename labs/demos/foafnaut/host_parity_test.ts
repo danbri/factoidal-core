@@ -416,3 +416,24 @@ Deno.test("page-load: a window takes a page's images after its first frame",asyn
     assert.equal((options(shown).heldImages as unknown[]).length,1);
   }finally{setImagesAfterFirstFrame(false);await Deno.remove(dir,{recursive:true});}
 });
+// The loader reads sheets and scripts several at a time and keeps the document's order.
+Deno.test("page-load: work in order, a few at a time",async()=>{
+  const {inOrder}=await import("./native_html_document.ts");
+  let running=0,most=0;
+  const got=await inOrder([5,1,4,2,3,0],3,async(ms:number,index:number)=>{
+    running++;most=Math.max(most,running);
+    await new Promise(done=>setTimeout(done,ms*3));
+    running--;return `${index}:${ms}`;
+  });
+  assert.deepEqual(got,["0:5","1:1","2:4","3:2","4:3","5:0"]);
+  assert.equal(most,3);
+  assert.deepEqual(await inOrder([],6,async()=>1),[]);
+  // a failure is thrown after the work that had started has ended, and no more is started
+  let started=0,ended=0;
+  await assert.rejects(inOrder([1,2,3,4,5,6,7,8],2,async(n:number)=>{
+    started++;await new Promise(done=>setTimeout(done,2));ended++;
+    if(n===2)throw new Error("two");return n;
+  }),/two/);
+  assert.equal(started,ended);
+  assert(started<8,"work was started after a failure");
+});

@@ -178,6 +178,20 @@ export async function loadWebFonts(engine:WebFontEngine,url:string,source:string
   }
   return webFonts;
 }
+/** `work(item, index)` for each of `items`, at most `limit` at a time; the answers in the
+order of `items`. The first failure is thrown once every piece of work that had started has ended. */
+export async function inOrder<T,R>(items:readonly T[],limit:number,work:(item:T,index:number)=>Promise<R>):Promise<R[]> {
+  const out=new Array<R>(items.length);let next=0,failed=false,failure:unknown;
+  const run=async()=>{
+    while(!failed){
+      const index=next++;if(index>=items.length)return;
+      try{out[index]=await work(items[index],index);}catch(error){if(!failed){failed=true;failure=error;}}
+    }
+  };
+  await Promise.all(Array.from({length:Math.max(1,Math.min(limit,items.length))},run));
+  if(failed)throw failure;
+  return out;
+}
 /** Whether a page's images are waited for before its first frame (the default: tests and
 hosts that draw once), or arrive after it: a window sets `true`, shows the page with its
 images' alternative text, and draws again when they are in (`revision`, `imagesPending`
@@ -322,19 +336,23 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
     resourceBytes+=resource.bytes;
     return resource;
   };
-  for(const [index,descriptor] of inspection.stylesheets.entries()) {
+  // The sheets are read six at a time, as the images are, and kept in the order of the
+  // document (a page that links 31 sheets waited for them one after another: 3.1 s of its load).
+  type SheetRead={nodeId:number;url:string;source:string}|{failure:{nodeId:number;url:string;reason:string}};
+  const sheetsRead=await inOrder(inspection.stylesheets,6,async(descriptor,index):Promise<SheetRead>=>{
     signal?.throwIfAborted();
     try{
       if(index>=MAX_RESOURCES)throw new Error(`Native HTML exceeds ${MAX_RESOURCES} external stylesheets`);
       // The URL and owning node are selected and resolved by Lean.
       navigationURL(descriptor.url,inspection.baseURL,document.url);
       const resource=await readSheet(descriptor.url);
-      resources.push({nodeId:descriptor.nodeId,url:resource.url,source:resource.source});
+      return {nodeId:descriptor.nodeId,url:resource.url,source:resource.source};
     }catch(error){
       if(!accept.liberal||signal?.aborted)throw error;
-      resourceFailures.push({nodeId:descriptor.nodeId,url:descriptor.url,reason:String(error instanceof Error?error.message:error)});
+      return {failure:{nodeId:descriptor.nodeId,url:descriptor.url,reason:String(error instanceof Error?error.message:error)}};
     }
-  }
+  });
+  for(const read of sheetsRead)if("failure" in read)resourceFailures.push(read.failure);else resources.push(read);
   // The sheets that the page's sheets import (page-load.mjs loadImports): the engine names
   // them, with the fetched sheets in hand, and reads each in place of its @import rule. A page
   // whose sheets import nothing costs one inspect more only if it has a sheet at all.
@@ -384,19 +402,23 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
   await fonts;
   if(scripted&&scriptHost) {
     const supplied:{nodeId:number;source:string}[]=[];
-    for(const descriptor of inspection.scripts) {
-      if(descriptor.kind!=="classic"||!descriptor.src)continue;
+    // Six at a time, kept in the order of the document (the order they run in is Lean's).
+    const scriptsRead=await inOrder(inspection.scripts.filter(descriptor=>descriptor.kind==="classic"&&descriptor.src),6,async descriptor=>{
       signal?.throwIfAborted();
       try{
         navigationURL(descriptor.url,inspection.baseURL,document.url);
         const resource=await readSource(descriptor.url,signal);
-        sources.push({kind:"Script",url:resource.url,source:resource.source});
-        supplied.push({nodeId:descriptor.nodeId,source:resource.source});
+        return {nodeId:descriptor.nodeId,url:resource.url,source:resource.source};
       }catch(error){
         // Liberal mode: a script that is not fetched does not run, as in a browser after a failed fetch.
         if(!accept.liberal||signal?.aborted)throw error;
         fetchFailed("script",descriptor.url,`script not read: ${String(error instanceof Error?error.message:error)}`,"script not run");
+        return undefined;
       }
+    });
+    for(const read of scriptsRead)if(read){
+      sources.push({kind:"Script",url:read.url,source:read.source});
+      supplied.push({nodeId:read.nodeId,source:read.source});
     }
     // Liberal mode: when the script engine refuses to start (the setting names an engine this
     // host does not have), the page is drawn with its scripts not run, as Lean's scriptsOff skip.
