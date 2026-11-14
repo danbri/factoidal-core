@@ -13186,6 +13186,14 @@
     if (options.duration !== undefined) out.duration = typeof options.duration === 'string' ? 's:' + options.duration : 'n:' + String(Number(options.duration));
     for (const k of ['fill', 'direction', 'easing', 'composite']) if (options[k] !== undefined) out[k] = String(options[k]);
     if (options.pseudoElement !== undefined && options.pseudoElement !== null) out.pseudoElement = String(options.pseudoElement);
+    // a range offset as text (a keyword, a length, a typed value, or {rangeName, offset}); Lean decides
+    for (const k of ['rangeStart', 'rangeEnd']) {
+      const v = options[k];
+      if (v === undefined || v === null) continue;
+      out[k] = typeof v === 'object' && ('rangeName' in v || 'offset' in v)
+        ? (v.rangeName === undefined || v.rangeName === null ? '' : String(v.rangeName) + ' ') + (v.offset === undefined || v.offset === null ? '' : String(v.offset))
+        : String(v);
+    }
     return out;
   };
   const timingOut = t => { for (const k of ['iterations', 'duration', 'endTime', 'activeDuration', 'currentIteration']) if (k in t) t[k] = inf(t[k]); return t; };
