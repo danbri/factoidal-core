@@ -31,6 +31,7 @@ private def s1 : Shelf := (answers {} setup).1
 #guard (answers {} setup).2 ==
   ["ok 1", "open 1 upgradeneeded 2 3 0 1", "ok 1", "ok 1", "ok", "tx 3 complete books", "open 1 success 2 1", "idle"]
 #guard (answers s1 [["databases"], ["dbinfo", "2"]]).2 == ["ok 1 db 1", "ok db 1 books"]
+#guard (answers s1 [["dbnames", "db"], ["dbnames", "nope"]]).2 == ["ok books", "ok"]
 
 -- a read-write transaction: put with an out-of-line key, the commit, then a read
 private def book (t : String) : List String := ["o1", "ktitle", "s" ++ t]

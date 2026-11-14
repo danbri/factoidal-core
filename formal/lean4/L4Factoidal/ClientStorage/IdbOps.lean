@@ -586,6 +586,8 @@ def sync (dbs : List (String × Db)) (l : Live) (a : Array Tok) : Live × List T
         let id := l.next
         let t : Txn := { id, conn := c.id, db := c.db, mode := if strAt a 2 == "readwrite" then .rw else .ro, scope := ids.eraseDups }
         ({ l with next := id + 1, txns := l.txns ++ [t] }, ok [N id])
+  -- the store names of a database as committed (what an aborted upgrade reverts to)
+  | "dbnames" => (l, ok (storeNames ((get dbs (strAt a 1)).getD {})))
   | "txinfo" =>
     match l.txn? (natAt a 1) with
     | none => (l, fail "InvalidStateError")

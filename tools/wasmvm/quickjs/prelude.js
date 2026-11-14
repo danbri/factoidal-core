@@ -10182,7 +10182,8 @@
       get objectStoreNames() {
         const s = st(this, 'IDBTransaction', 'objectStoreNames');
         if (s.finished) return s.names;
-        return names(call(['txinfo', String(s.id)]));
+        // an aborted transaction is gone from Lean before its abort event: its names as abort() left them
+        try { return names(call(['txinfo', String(s.id)])); } catch (e) { if (s.names) return s.names; throw e; }
       }
       get mode() { return st(this, 'IDBTransaction', 'mode').mode; }
       get durability() { return st(this, 'IDBTransaction', 'durability').durability; }
@@ -10197,7 +10198,20 @@
         return s.stores.get(id) ?? newStore(this, id);
       }
       commit() { const s = st(this, 'IDBTransaction', 'commit'); if (s.finished) throw new DOMException("Failed to execute 'IDBTransaction.commit': the transaction has finished.", 'InvalidStateError'); call(['commit', String(s.id)], 'IDBTransaction.commit'); kick(); }
-      abort() { const s = st(this, 'IDBTransaction', 'abort'); if (s.finished) throw new DOMException("Failed to execute 'IDBTransaction.abort': the transaction has finished.", 'InvalidStateError'); call(['abort', String(s.id)], 'IDBTransaction.abort'); s.aborting = true; kick(); }
+      abort() {
+        const s = st(this, 'IDBTransaction', 'abort');
+        if (s.finished) throw new DOMException("Failed to execute 'IDBTransaction.abort': the transaction has finished.", 'InvalidStateError');
+        let scope = null;
+        if (s.mode !== 'versionchange') { try { scope = names(call(['txinfo', String(s.id)])); } catch (_) {} }
+        call(['abort', String(s.id)], 'IDBTransaction.abort');
+        s.aborting = true;
+        // the names as they are once the abort returns: an upgrade's are the database's as committed
+        if (s.mode === 'versionchange') {
+          const d = kinds.get(s.db);
+          try { const ns = names(call(['dbnames', stEnc(d.name)])); s.names = ns; d.names = ns; } catch (_) {}
+        } else if (scope) s.names = scope;
+        kick();
+      }
     }
     idl(IDBTransaction, 'IDBTransaction');
     for (const k of ['abort', 'complete', 'error']) handlerAttr(IDBTransaction, k);
