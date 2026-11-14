@@ -56,6 +56,8 @@ inductive NativeX where
   (0 `buffer`, 1 `byteLength`, 2 `byteOffset`, 3 `length`, 4 `@@toStringTag`) and the
   methods that answer a typed array or work on its bytes (`typedMethods`). -/
   | typedArrayCtor | typedFrom | typedOf | typedGetter (which : Nat) | typedMethod (which : Nat)
+  /-- A %TypedArray%.prototype method with Array.prototype's steps (`typedGenericNames`). -/
+  | typedGeneric (which : Nat)
   /-- Atomics (§25.4) on integer typed arrays, without waiting (`atomicsOps`). -/
   | atomics (op : Nat)
   /-- `String.prototype.isWellFormed` and `toWellFormed` (§22.1.3.10, §22.1.3.32). -/

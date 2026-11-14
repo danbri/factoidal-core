@@ -571,4 +571,8 @@ private def parses (src : String) : Bool := syn src == "ok"
 #guard !parses "({ get x(a) {} })" && !parses "({ set x() {} })" && !parses "({ set x(...a) {} })" && !parses "class C { get x(a = 1) {} }" && parses "({ get x() {}, set x([a]) {} })"
 #guard !parses "'use strict'; ({ public })" && !parses "function* g() { ({ yield }) }" && !parses "async function f() { ({ await }) }" && parses "var public = 1; ({ public })"
 
+/-! ## ValidateTypedArray and the %TypedArray%.prototype methods of their own (§23.2.3) -/
+
+#guard out "var r = []; function t(f) { try { r.push(String(f())) } catch (e) { r.push(e.name) } } var u = new Uint8Array([1, 2, 3]); var TP = Object.getPrototypeOf(Uint8Array.prototype); t(() => TP.forEach === Array.prototype.forEach); t(() => TP[Symbol.iterator] === TP.values); t(() => u.join('-')); t(() => [...u.keys()].join()); t(() => TP.forEach.call([1], x => x)); u.buffer.transfer(); t(() => u.join()); t(() => u.at(0)); t(() => u.fill(1)); t(() => u.set([])); t(() => u.subarray(0).length); t(() => TP.values.length); print(r.join())" == ["false,true,1-2-3,0,1,2,TypeError,TypeError,TypeError,TypeError,TypeError,TypeError,0"]
+
 end L4Factoidal.JS.Tests
