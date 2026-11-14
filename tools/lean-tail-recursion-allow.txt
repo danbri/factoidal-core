@@ -2421,3 +2421,5 @@ L4Factoidal_HTML_AccessibleRole_hostLabel*  # (b) a label's content through chil
 L4Factoidal_DOM_Selectors_forgivingList  # (c) DOM.Selectors parser: the argument of :is()/:where() in forgiving mode, with the fuel of complex (at most maxNesting = 32 levels), as relativeList
 L4Factoidal_WebNN_instDecidableEqCoord_decEq  # (b) derived DecidableEq: nesting of one source-coordinate expression (WebNN.Idx.Coord), built by the operator table's index maps, a few levels
 L4Factoidal_WebNN_GpuRun_Tests_run  # (c) #guard helper (WebNN/GpuTests.lean): one call per element of a literal list of API calls in a test, about a dozen
+L4Factoidal_Rendering_CSS_resolveHasIn  # (c) the nesting of :is()/:not()/:where()/of lists in one selector, fuel 16
+L4Factoidal_Rendering_CSS_mentionsHas  # (c) the nesting of :is()/:not()/:where()/of lists in one selector, fuel 16
