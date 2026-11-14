@@ -678,6 +678,12 @@ def start (base : Session) (dom : Arena) (url : String) (scripts : Array (Nat ×
   let s := { base with
     heap := { base.heap with maxDepth := callDepth.toUInt32 },
     limits := lim, steps := 0, jobs := 0, tasks := 0, errors := #[], lastFrame := none }
+  -- Math.random: a seed of this session's own, not the realm snapshot's constant
+  -- (`WebApi.mathRandomSeed`; as `LeanJSWorkers.start` does for a worker). With the constant
+  -- every page drew the same sequence, so two pages' "random" tokens were equal.
+  let s := match Hosts.WebApi.mathRandomSeed lim.entropy with
+    | some x => { s with heap := { s.heap with rng := x } }
+    | none => s
   let mut s := s.setHost { dom := domHost, reads, time, web := { entropy := lim.entropy, docEncoding := lim.encoding, net := { enabled := lim.network, page := L4Factoidal.Net.PageFetch.Page.ofUrl url lim.hostCors lim.pageAddress, syncOk := lim.syncOk, syncAnswers := lim.syncAnswers, mayBlock := lim.mayBlock } } }
   s := (s.api? "start" #[]).1
   s := (s.api? "url" #[.str (JS.Str.ofHost url)]).1

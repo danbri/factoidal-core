@@ -2668,7 +2668,7 @@
   const window = globalThis;
   ids.set(window, WINDOW);
   const document = wrap(0);
-  const frameWindows = new Map(), frameCells = new Map();
+  const frameWindows = new Map(), frameCells = new Map(), frameOfWindow = new WeakMap();
   // `postMessage` to the window of a frame's document (assigned where the frames' targets are).
   let postFrame = () => {};
   const frameWindow = doc0 => {
@@ -2705,9 +2705,16 @@
       inFrame.set(f, g);
       return g;
     };
+    // What a script sets on this window (`frame.contentWindow.x = v`) is this window's: it
+    // does not replace the page's global of that name (frames share the realm, not their
+    // windows' properties). A frame's own scripts' globals are the realm's and are read below.
+    const vars = Object.create(null);
+    const isOwn = p => Object.prototype.hasOwnProperty.call(own, p), isVar = p => Object.prototype.hasOwnProperty.call(vars, p);
     w = new Proxy(window, {
       get(t, p) {
-        if (Object.prototype.hasOwnProperty.call(own, p)) return own[p]();
+        if (isOwn(p)) return own[p]();
+        if (isVar(p)) return vars[p];
+        if (typeof p === 'string' && p.startsWith('on') && handlerNames.includes(p.slice(2))) return handlerOf(frameTarget(cell.doc), p.slice(2));
         const v = Reflect.get(t, p, t);
         // Only a page's own global functions (enumerable: a function declaration or an
         // assignment). The platform's constructors and methods are not enumerable and keep
@@ -2716,9 +2723,17 @@
         const d = Object.getOwnPropertyDescriptor(t, p);
         return d && d.enumerable ? asFrame(v) : v;
       },
-      has(t, p) { return Object.prototype.hasOwnProperty.call(own, p) || Reflect.has(t, p); },
+      has(t, p) { return isOwn(p) || isVar(p) || Reflect.has(t, p); },
+      set(t, p, v) {
+        // `frame.contentWindow.location = url` navigates the frame (as its `src` does)
+        if (isOwn(p)) { if (p === 'location') wrap(info(cell.doc, 12)).setAttribute('src', String(v)); return true; }
+        // an event handler attribute of the window (`onload`, `onmessage`) is the frame's target's
+        if (typeof p === 'string' && p.startsWith('on') && handlerNames.includes(p.slice(2))) { setHandler(frameTarget(cell.doc), p.slice(2), v); return true; }
+        vars[p] = v; return true;
+      },
+      deleteProperty(t, p) { if (isVar(p)) { delete vars[p]; return true; } return !isOwn(p); },
     });
-    frameWindows.set(doc0, w); frameCells.set(doc0, cell);
+    frameWindows.set(doc0, w); frameCells.set(doc0, cell); frameOfWindow.set(w, cell);
     return w;
   };
   // encoding100: a same-origin frame's Location: its document's URL (node_query 171) and
@@ -4208,7 +4223,7 @@
           const raw = x.response, list = [];
           for (const line of x.getAllResponseHeaders().split('\r\n')) { const i = line.indexOf(': '); if (i > 0) list.push([line.slice(0, i).toLowerCase(), line.slice(i + 2)]); }
           const url = x.responseURL, p = urlFields(url);
-          resolve(responseOf({ status: x.status, statusText: x.statusText, url, type: p !== null && p[1] !== pageOrigin() ? 'cors' : 'basic',
+          resolve(responseOf({ status: x.status, statusText: x.statusText, url, type: p !== null && p[1] !== pageOrigin() && p[2] !== 'data:' && p[2] !== 'blob:' ? 'cors' : 'basic',
             redirected: url !== '' && url !== st.url.split('#')[0] }, list, 'immutable', raw === null ? new Uint8Array(0) : new Uint8Array(raw)));
         };
         x.onerror = () => fail(new TypeError('Failed to fetch'));
@@ -5551,7 +5566,11 @@
   windowOfScript = () => scriptDocument ? frameTarget(nodeId(scriptDocument)) : window;
   frameLoad = el => { const d = info(el, 11), t = d >= 0 ? frameTargets.get(d) : undefined; if (t) { const e = new Event('load'); state(e).trusted = true; dispatch(t, e); } };
   for (const k of ['addEventListener', 'removeEventListener'])
-    define(Window.prototype, k, function (...a) { return EventTarget.prototype[k].apply((this === window || this == null) && scriptDocument ? windowOfScript() : this, a); });
+    define(Window.prototype, k, function (...a) {
+      // a frame's window (`frame.contentWindow.addEventListener`): that frame's target
+      const cell = this == null ? undefined : frameOfWindow.get(this);
+      return EventTarget.prototype[k].apply(cell ? frameTarget(cell.doc) : (this === window || this == null) && scriptDocument ? windowOfScript() : this, a);
+    });
   // The window's event handler attributes too: `onmessage = f` in a frame's script is that
   // frame's window's handler, not the page's (it would replace the page's own).
   for (const name of handlerNames) {
@@ -5654,8 +5673,11 @@
     const data = globalThis.structuredClone(message);
     if (typeof r !== 'string' || !r.startsWith('1')) return;
     const origin = r.slice(2);
+    // HTML §9.3.3 step 8.3: the source is the window of the script that posts. A frame's
+    // script (running with its document as `document`) posts as its frame's window.
+    const from = scriptDocument !== null && scriptDocument !== document && doc <= 0 ? frameWindow(nodeId(scriptDocument)) : window;
     setTimeout(() => {
-      const e = new MessageEvent('message', { data, origin, source: window, ports });
+      const e = new MessageEvent('message', { data, origin, source: from, ports });
       state(e).trusted = true;
       if (doc <= 0) { dispatch(window, e); return; }
       // To a frame's window: its listeners run with the frame's document as `document`.
