@@ -653,4 +653,16 @@ private def alignedCss := "#c{position:relative;width:40px;height:40px} #k{posit
 #guard (box "<div><legend id=l>LL</legend></div>" "legend{padding:0}" "l").map (·.2.2.1) == some 200
 #guard (box "<fieldset id=f><legend id=l>LL</legend>text</fieldset>" "fieldset{margin:0;padding:0;border:0} legend{padding:0;width:50px}" "l").map (·.2.2.1) == some 50
 
+
+-- `min-height` and `max-height` of a content keyword (CSS Sizing 3 §3.2): the limit is the
+-- height of the content. Two lines of text are 14 px.
+private def twoLines := "<div id=k>AA<br>BB</div>"
+#guard (box twoLines "#k{height:5px;min-height:min-content}" "k").map (·.2.2.2) == some 14
+#guard (box twoLines "#k{height:5px;min-height:fit-content}" "k").map (·.2.2.2) == some 14
+#guard (box twoLines "#k{height:50px;max-height:max-content}" "k").map (·.2.2.2) == some 14
+#guard (box twoLines "#k{height:50px;min-height:min-content}" "k").map (·.2.2.2) == some 50
+#guard (box twoLines "#k{height:5px;max-height:max-content}" "k").map (·.2.2.2) == some 5
+#guard (box twoLines "#k{min-height:min-content}" "k").map (·.2.2.2) == some 14
+#guard (box twoLines "#k{height:5px}" "k").map (·.2.2.2) == some 5
+
 end L4Factoidal.Rendering.PositionLayoutTests
