@@ -1457,6 +1457,17 @@ def getSubstitutionG (tmpl matched str : String) (position : Nat) (caps : Array 
 #guard templateNames "$<a>$$<b>$<c>" == ["a", "c"]
 #guard advanceIndex "a😀" 1 true == 3 && advanceIndex "a😀" 1 false == 2
 
+/-- CanonicalNumericIndexString (§7.1.21): the number a property key names when the key is that
+number's string ("-0" names -0). -/
+def canonicalNumericIndex (k : String) : Option Float :=
+  if k == "-0" then some (-0.0) else
+  if k.isEmpty || isSymKey k then none else
+  let x := strToNumber k
+  if numToString x == k then some x else none
+
+#guard canonicalNumericIndex "1" == some 1 && canonicalNumericIndex "1.5" == some 1.5
+#guard (canonicalNumericIndex "01").isNone && (canonicalNumericIndex "Infinity").isSome && (canonicalNumericIndex "x").isNone
+
 /-- IsArray (§7.2.2): a Proxy answers for its target; a revoked one throws. -/
 def isArrayDeep : Nat → Value → M Bool
   | 0, _ => pure false
@@ -6549,6 +6560,11 @@ def speciesFrom : Nat → Value → Nat → M (Option Value)
             pure (match (← getObj g).kind with | .native (.x .speciesGetter) => true | _ => false)
           | _, _ => pure false
         if builtinSpecies then return none
+        -- another realm's %Array% makes a plain Array of this realm (§10.4.2.3 step 4)
+        if let .native .arrayCtor := co.kind then
+          match co.props.get? "prototype" with
+          | some (.data (.obj p) ..) => if p != (← realm).arrayProto then return none
+          | _ => pure ()
         match ← getV n c (symKey 7) with
         | .null => pure Value.undef
         | v => pure v
@@ -6759,11 +6775,33 @@ def defineOwnProp : Nat → Nat → String → Desc → M Bool
         if !proxyDefineOk (← getObj tid).extensible desc td then
           throwErr .type s!"'defineProperty' on proxy: the trap's answer for '{k}' does not agree with the target"
         return true
+    -- a typed array's numeric keys (§10.4.5.3): only a valid index, as a writable,
+    -- enumerable, configurable data property; the value is written to the element
+    if let .typed ty b off len := (← getObj id).kind then
+      if let some x := canonicalNumericIndex k then
+        let live ← liveLen ty b off len
+        if !(isIntegral x && !isNegZero x && x ≥ 0 && x < Float.ofNat live) then return false
+        if desc.configurable == some false || desc.enumerable == some false || desc.get.isSome
+            || desc.set.isSome || desc.writable == some false then return false
+        if let some v := desc.value then
+          let cv ← typedConv n ty v
+          -- the conversion may have detached or shrunk the buffer
+          if x < Float.ofNat (← liveLen ty b off len) then typedWriteV ty b off x.toUInt64.toNat cv
+        return true
     let o0 ← getObj id
     let old := o0.getOwn k
     match old with
     | some p => if !desc.allowedOn p then return false
     | none => if !o0.extensible then return false
+    -- an Array in the general form keeps its length as a property: an index at or past it
+    -- needs a writable length (§10.4.2.1 step 3)
+    let generalArrayLen : Obj → Option (Float × Bool) := fun o =>
+      if !o.isArray then none else
+      match o.kind, o.props.get? "length" with
+      | .ordinary, some (.data (.num l) w _ _) => some (l, w)
+      | _, _ => none
+    if let (some i, some (l, false)) := (arrayIndex? k, generalArrayLen o0) then
+      if Float.ofNat i ≥ l then return false
     let e := desc.enumerable.getD (match old with | some p => p.enumerable | none => false)
     let c := desc.configurable.getD (match old with | some p => p.configurable | none => false)
     let gt := desc.get
@@ -6802,6 +6840,10 @@ def defineOwnProp : Nat → Nat → String → Desc → M Bool
             defineOwn id k (.data v w e c)
             let _ := (i, es)
         | _, _ => defineOwn id k (.data v w e c)
+    if let some i := arrayIndex? k then
+      if let some (l, w) := generalArrayLen (← getObj id) then
+        if Float.ofNat i ≥ l then
+          modifyObj id (·.putOwn "length" (.data (.num (Float.ofNat (i + 1))) w false false))
     return true
 termination_by structural n _ _ _ => n
 
@@ -7973,6 +8015,28 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
           pure (← mergeSort n cmp xs.toList).toArray
       let callback (f : Value) : M Unit := do
         if !(← isCallable f) then throwErr .type "callback is not a function"
+      -- TypedArraySpeciesCreate (§23.2.4.1): `none` when the species is this array's own
+      -- constructor (the fast path); else the new typed array, checked as TypedArrayCreate does
+      let speciesTA (count : Nat) : M (Option Value) := do
+        let c ← speciesCtor n thisV .undef
+        let own ← match c with
+          | .undef => pure true
+          | .obj cid => do pure (match (← getObj cid).kind with | .native (.typedCtor t) => t == ty | _ => false)
+          | _ => pure false
+        if own then return none
+        if !(← isConstructor c) then throwErr .type "object.constructor[Symbol.species] is not a constructor"
+        let a ← construct n c #[.num (Float.ofNat count)] c
+        let .obj aid := a | throwErr .type "The species constructor did not make a typed array"
+        let .typed ty2 b2 off2 len2 := (← getObj aid).kind
+          | throwErr .type "The species constructor did not make a typed array"
+        let live2 ← liveLen ty2 b2 off2 len2
+        if live2 == 0 && len2 > 0 then throwErr .type "The species constructor made a detached typed array"
+        if live2 < count then throwErr .type "The species constructor made a typed array that is too short"
+        if typedIsBig ty2 != typedIsBig ty then throwErr .type "The species constructor made a typed array of the other content type"
+        pure (some a)
+      let fill (a : Value) (vs : Array Value) : M Value := do
+        for i in [0:vs.size] do putV n a (toString i) vs[i]! true
+        pure a
       match which with
       | 0 =>
         -- copyWithin (§23.2.3.6): the elements move as the bytes would
@@ -7995,8 +8059,13 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
         let en ← match a1 with
           | .undef => pure size
           | v => do pure (relIndex (toIntegerOrInf (← toNum n v)) size)
+        let count := if en > st then en - st else 0
+        let sp ← speciesTA count
         let vs ← valuesOf ty b off len
-        fresh ty (vs.extract st (max st en))
+        let part := vs.extract st (max st en)
+        match sp with
+        | none => fresh ty part
+        | some a => fill a part
       | 3 => writeAll (← sorted a0); pure thisV
       | 4 =>
         let k := toIntegerOrInf (← toNum n a0)
@@ -8017,14 +8086,26 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
         callback a0
         let mut kept := #[]
         for i in [0:size] do
-          if toBool (← callV n a0 a1 #[xs[i]!, .num (Float.ofNat i), thisV]) then kept := kept.push xs[i]!
-        fresh ty kept
+          -- each element is read when its turn comes (a callback may change or shrink the array)
+          let v ← getV n thisV (toString i)
+          if toBool (← callV n a0 a1 #[v, .num (Float.ofNat i), thisV]) then kept := kept.push v
+        match ← speciesTA kept.size with
+        | none => fresh ty kept
+        | some a => fill a kept
       | 7 =>
         callback a0
-        let mut out := #[]
-        for i in [0:size] do
-          out := out.push (← typedConv n ty (← callV n a0 a1 #[xs[i]!, .num (Float.ofNat i), thisV]))
-        fresh ty out
+        match ← speciesTA size with
+        | some a =>
+          for i in [0:size] do
+            let v ← getV n thisV (toString i)
+            putV n a (toString i) (← callV n a0 a1 #[v, .num (Float.ofNat i), thisV]) true
+          pure a
+        | none =>
+          let mut out := #[]
+          for i in [0:size] do
+            let v ← getV n thisV (toString i)
+            out := out.push (← typedConv n ty (← callV n a0 a1 #[v, .num (Float.ofNat i), thisV]))
+          fresh ty out
       | 8 => fresh ty xs.reverse
       | 9 =>
         match a0 with
@@ -9046,8 +9127,11 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
         let i := if r ≥ 0 then r else Float.ofNat len + r
         if i ≥ Float.ofNat len || i < 0 then throwErr .range "Invalid index for Array.prototype.with"
         if len > 4294967295 then throwErr .range "Invalid array length"
-        let vs ← valuesUpTo len
-        newArray (vs.set! i.toUInt64.toNat a1)
+        -- §23.1.3.39: every index but the replaced one is read
+        let at_ := i.toUInt64.toNat
+        let mut vs := Array.emptyWithCapacity len
+        for j in [0:len] do vs := vs.push (← if j == at_ then pure a1 else getV n o (toString j))
+        newArray vs
     | (.x .objectHasOwn) =>
       let id ← toObj n a0
       let k ← toKey n a1
