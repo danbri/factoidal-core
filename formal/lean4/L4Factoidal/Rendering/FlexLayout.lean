@@ -215,6 +215,7 @@ def flexRow (kids : Children) (s : Computed) (items : Array Item) (box : Content
     first := first+count
   -- §9.4: each item at its main size; a line is as high as its highest item.
   let mut laid : Array (Result × Float × Bool) := #[]   -- content or whole box, natural border-box height, whole
+  let mut ascents : Array (Option Float) := #[]   -- of the items aligned by their baselines
   for i in [0:n] do
     let item := items[i]!
     let is := styles[i]!
@@ -243,14 +244,25 @@ def flexRow (kids : Children) (s : Computed) (items : Array Item) (box : Content
     let natural := if whole then r.height-m.top-m.bottom
       else fixed.getD (clampOpt minH maxH r.height+padV)
     laid := laid.push (r,natural,whole)
+    -- §8.3: an item aligned by its baseline, from its margin edge at the top to its first
+    -- baseline, or to the bottom of its border box when it has no line (§9.4 step 8).
+    ascents := ascents.push (if itemAlign s is == .baseline && !is.autoMarginTop && !is.autoMarginBottom && !axes.crossFlip
+      then some ((r.baseline.map (·-box.y)).getD (m.top+natural)) else none)
   let mut lineSizes : Array Float := #[]
+  -- The shared baseline of each line, from the line's top (`Flex.baselineExtent`).
+  let mut lineAscents : Array Float := #[]
   first := 0
   for count in lines do
     let mut highest : Float := 0
+    let mut aligned : List (Int × Int) := []
     for i in [first:first+count] do
       let m := (styles[i]!).margin
-      highest := max highest ((laid[i]!).2.1+m.top+m.bottom)
-    lineSizes := lineSizes.push highest
+      let outer := (laid[i]!).2.1+m.top+m.bottom
+      highest := max highest outer
+      if let some ascent := ascents.getD i none then aligned := (LU.ofPx ascent,LU.ofPx outer) :: aligned
+    let (ascent,extent) := Flex.baselineExtent aligned
+    lineSizes := lineSizes.push (max highest (LU.toPx extent))
+    lineAscents := lineAscents.push (LU.toPx ascent)
     first := first+count
   -- §9.4 step 8 and §9.6: the cross size of the container and the place of each line
   -- (`align-content`); a single line fills a definite cross size.
@@ -303,9 +315,13 @@ def flexRow (kids : Children) (s : Computed) (items : Array Item) (box : Content
     let offset := match autoCrossOffset is.autoMarginTop is.autoMarginBottom (lineCross-outerCross) with
       | some d => d
       | none =>
-        let d := LU.toPx (Flex.alignOffset align (LU.ofPx lineCross) (LU.ofPx outerCross))
-        -- with `wrap-reverse` the cross-start side of a line is its bottom
-        if reverseCross then lineCross-outerCross-d else d
+        match ascents.getD i none with
+        -- its baseline on the line's shared baseline
+        | some ascent => lineAscents.getD line 0-ascent
+        | none =>
+          let d := LU.toPx (Flex.alignOffset align (LU.ofPx lineCross) (LU.ofPx outerCross))
+          -- with `wrap-reverse` the cross-start side of a line is its bottom
+          if reverseCross then lineCross-outerCross-d else d
     let dy := lineTops.getD line 0+offset
     -- The measured fragment is the final one when the height is the same and nothing in it
     -- was left rough. A container that is itself only being measured does not lay the item
