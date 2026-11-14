@@ -168,6 +168,21 @@ def reify (text : String) : String :=
         | none => styleJson text
     | _ => styleJson text
 
+/-- Whether a property's value has no typed form of its own (§5.1: "a property with no
+reification rule"): a shorthand, or a longhand of one or two values (`{1,2}` at the top of
+its grammar: the corner radii, `scroll-snap-align` and the like). Such a value is a keyword
+only when it is a CSS-wide keyword, an unparsed value when it has `var()`, else its text. -/
+def opaqueProperty (property : String) : Bool :=
+  match lookup (propertyName property) with
+  | some row => !row.longhands.isEmpty || (trimText row.grammar).endsWith "{1,2}"
+  | none => false
+
+/-- The typed value of a value text of a property. -/
+def reifyFor (property text : String) : String :=
+  let cvs := CV.parse text
+  if opaqueProperty property && !hasFn "var" 32 cvs && (wideKeyword (stripWs cvs)).isNone then styleJson text
+  else reify text
+
 /-- The typed values of a list-valued property's text: one for each comma-separated item. -/
 def reifyAll (text : String) : String :=
   let cvs := CV.parse text
@@ -377,6 +392,9 @@ def typedOp (q : String) : String :=
   match q.splitOn "\x00" with
   | ["reify", text] => reify text
   | ["reifyall", text] => reifyAll text
+  | ["reifyp", property, text] => reifyFor property text
+  | ["isshorthand", property] =>
+    if ((lookup (propertyName property)).map (!·.longhands.isEmpty)).getD false then "1" else "0"
   | ["css", wire] => ((parseWire wire).map numericCss).getD ""
   | ["unit", name] => if (calcUnit name).isSome then "1" else "0"
   | ["islist", property] => if listValued property then "1" else "0"
@@ -418,6 +436,12 @@ def typedOp (q : String) : String :=
 #guard reify " var(--A)" == "{\"t\":\"unparsed\",\"a\":[\" \",{\"t\":\"var\",\"v\":\"--A\",\"f\":null}]}"
 #guard reify "var(--A, 1px)" == "{\"t\":\"unparsed\",\"a\":[{\"t\":\"var\",\"v\":\"--A\",\"f\":{\"t\":\"unparsed\",\"a\":[\" 1px\"]}}]}"
 #guard reify "url(\"a.png\")" == "{\"t\":\"image\",\"c\":\"url(\\\"a.png\\\")\"}"
+#guard reifyFor "margin" "1px" == "{\"t\":\"style\",\"c\":\"1px\"}"
+#guard reifyFor "margin" "inherit" == "{\"t\":\"kw\",\"v\":\"inherit\"}"
+#guard reifyFor "border-top-left-radius" "0px" == "{\"t\":\"style\",\"c\":\"0px\"}"
+#guard reifyFor "width" "1px" == "{\"t\":\"u\",\"v\":1,\"u\":\"px\"}"
+#guard typedOp "isshorthand\x00margin" == "1"
+#guard typedOp "isshorthand\x00margin-top" == "0"
 #guard reifyAll "1s, 2s" == "[{\"t\":\"u\",\"v\":1,\"u\":\"s\"},{\"t\":\"u\",\"v\":2,\"u\":\"s\"}]"
 #guard typedOp "css\x00u(3.14 \"px\")" == "3.14px"
 #guard typedOp "css\x00u(-3.14 \"percent\")" == "-3.14%"
