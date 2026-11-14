@@ -9008,8 +9008,11 @@
     const kinds = new WeakMap();           // every IndexedDB object: its state
     const st = (o, C, what) => { const s = kinds.get(o); if (!s || s.kind !== C) throw new TypeError('Illegal invocation: ' + what); return s; };
     const reqs = new Map(), txs = new Map(), conns = new Map(), cursors = new Map();
+    // An event handler IDL attribute of an IndexedDB interface: on another object (the
+    // prototype itself) its getter and setter throw TypeError (WebIDL "brand check").
     const handlerAttr = (C, name) => Object.defineProperty(C.prototype, 'on' + name, { configurable: true, enumerable: true,
-      get() { return handlerOf(this, name); }, set(f) { setHandler(this, name, f); } });
+      get() { if (!kinds.has(this)) throw new TypeError(`Illegal invocation: ${C.name}.on${name}`); return handlerOf(this, name); },
+      set(f) { if (!kinds.has(this)) throw new TypeError(`Illegal invocation: ${C.name}.on${name}`); setHandler(this, name, f); } });
     const idl = (C, tag) => {
       setTag(C, tag);
       for (const k of Object.getOwnPropertyNames(C.prototype)) {
@@ -9710,7 +9713,7 @@
     }
     idl(FileSystemFileHandle, 'FileSystemFileHandle');
     // createSyncAccessHandle is exposed in dedicated workers only.
-    if (typeof document === 'undefined')
+    if (inWorker)
       Object.defineProperty(FileSystemFileHandle.prototype, 'createSyncAccessHandle', { writable: true, enumerable: true, configurable: true,
         value: function createSyncAccessHandle(options = undefined) {
           return later(() => {
@@ -9887,7 +9890,7 @@
       }
     }
     // persist() is exposed in windows only.
-    if (typeof document !== 'undefined')
+    if (!inWorker)
       StorageManager.prototype.persist = function persist() { return later(() => { if (!kinds.has(this)) throw new TypeError('Illegal invocation: StorageManager.persist'); return text(call(202, ['persist'], 'StorageManager.persist')[0]) === '1'; }); };
     idl(StorageManager, 'StorageManager');
     // The file pickers (File System Access): the options as fields for Lean (ClientStorage/Picker.lean),
@@ -9993,7 +9996,8 @@
     };
     class LockManager {
       constructor() { guard(); }
-      request(name, ...rest) {
+      request(name, callbackOrOptions, ...more) {
+        const rest = [callbackOrOptions, ...more].slice(0, Math.max(0, arguments.length - 1));
         return new Promise((resolve, reject) => {
           if (!kinds.has(this)) throw new TypeError('Illegal invocation: LockManager.request');
           if (arguments.length < 2) throw new TypeError("Failed to execute 'LockManager.request': 2 arguments required.");
@@ -10099,7 +10103,7 @@
       getDirectory() { return later(() => { st(this, 'StorageBucket.getDirectory'); throw unsupported('getDirectory()'); }); }
     }
     // persist() is exposed in windows only; it is not granted (nothing persists).
-    if (typeof document !== 'undefined')
+    if (!inWorker)
       StorageBucket.prototype.persist = function persist() { return later(() => { onBucket(this, 'persisted', 'StorageBucket.persist'); return false; }); };
     idl(StorageBucket, 'StorageBucket');
     class StorageBucketManager {
