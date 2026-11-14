@@ -856,7 +856,7 @@ def op (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int Byt
     | (s, .error e) => (s, .error e)
   | 67 =>
     -- reads: 0 readyState, 1 status, 2 statusText, 3 responseURL, 4 text, 5 deferFail,
-    -- 9 the response's tainting (`Response.type` of `fetch`: basic, cors, opaque)
+    -- 9 the response's tainting (`Response.type` of `fetch`: basic, cors, opaque), 10 null body
     match s.get? (natAt fs 0) with
     | none => (s, .error errType)
     | some x =>
@@ -871,6 +871,9 @@ def op (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int Byt
         | 7 => docKind x
         | 8 => finalMime x
         | 9 => (x.response.map fun r => if x.state ≥ 2 then r.tainting else "").getD ""
+        -- 10: "1" when the response's body is null (`PageFetch.nullBody`: a null body status
+        -- or a HEAD request)
+        | 10 => if PageFetch.nullBody x.method (statusOf x) then "1" else "0"
         | _ => ""
       (s, okStr body)
   | 68 =>
@@ -1189,6 +1192,36 @@ theorem pinFor_name (s : State) (url : String) (p : String × String) (h : s.pin
     have hp := Array.find?_some h
     exact ⟨hm, u, hu, by simpa using hp⟩
   · simp at h
+
+/-- Kind: security theorem (DNS pins). Says: a name's pin is never replaced: once the session
+holds an address for a name, keeping another transfer's pin leaves that name's first pin as
+it was, so a pinned name never resolves to a different address within the session (a later
+answer of the name server cannot move the page to another host, DNS rebinding). -/
+theorem notePin_keeps (s : State) (t : Transfer) (n : String) (p : String × String)
+    (h : s.pins.find? (·.1 == n) = some p) : (s.notePin t).pins.find? (·.1 == n) = some p := by
+  unfold State.notePin
+  split
+  · rename_i q _
+    split
+    · exact h
+    · rw [← Array.find?_toList] at h ⊢
+      simp only [Array.toList_push, List.find?_append, h, Option.some_or]
+  · exact h
+
+/-- Kind: security theorem (DNS pins). Says: over any sequence of transfers the session keeps,
+the pin a request to a pinned URL starts with stays the same. -/
+theorem pinFor_stable (s : State) (ts : List Transfer) (url : String) (p : String × String)
+    (h : s.pinFor url = some p) : (ts.foldl State.notePin s).pinFor url = some p := by
+  induction ts generalizing s with
+  | nil => exact h
+  | cons t ts ih =>
+    apply ih
+    unfold State.pinFor at h ⊢
+    split at h
+    · rename_i u hu
+      simp only [hu]
+      exact notePin_keeps s t _ p h
+    · simp at h
 
 /-- Kind: privacy lemma. Says: a URL the page names as a referrer, or a frame document's URL
 named as the client, is kept only when it parses and is of the page's own origin, and then

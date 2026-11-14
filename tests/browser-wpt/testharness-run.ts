@@ -386,7 +386,7 @@ type Run=(file:string,page?:{html?:string;url:string},opts?:{keep?:boolean})=>Pr
 type ScriptTurnWithFetches={session:number;logs:string[];errors:string[];instructions:number;fetches?:{id:number;url:string;kind?:string}[]};
 /** `fetcher`: where the host reads pages from, in place of the local wptserve: the host parity check
 (labs/demos/foafnaut/host_parity_test.ts) runs its fixtures through this same path from a server of its own. */
-export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,"fetch">):Promise<{run:Run;info:Record<string,unknown>;engine?:unknown}> {
+export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,"fetch"|"socket">):Promise<{run:Run;info:Record<string,unknown>;engine?:unknown}> {
   const {loadHTML}=await import("../../labs/demos/foafnaut/native_html_engine.ts");
   const engine=await loadHTML(engineKind==="wasm"?undefined:opt("--native-engine",join(root,"labs/demos/foafnaut/.build/web-render/engines/libweb-render.dylib")));
   const info={...engine.scriptInfo(),scriptEngine};
@@ -741,23 +741,33 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
     await settleTo(70000);
     // Answer every script fetch asked for so far (a worker made after a page request was
     // answered asks in a later turn), until none is left.
+    // the page's bound on script fetches answered (workers' scripts, imports): 4096
+    let fetchesLeft=4096;
     const serveFetches=async()=>{
+      let did=false;
       for(let round=0;round<1000;round++){
         const pending=[...startFetches,...wanted].filter((f,i,all)=>!answered.has(f.id)&&all.findIndex(g=>g.id===f.id)===i);
-        if(!pending.length)return;
+        if(!pending.length||fetchesLeft<=0)return did;
+        did=true;fetchesLeft-=pending.length;
         for(const f of pending)answered.add(f.id);
         const results=await Promise.all(pending.map(hostFetch));
         take(engine.scriptSession("",{action:"fetched",session:turn.session,results}) as ScriptTurnWithFetches);
         await settleTo(Math.max(1,70000-turn.clock));
       }
+      return did;
     };
-    await serveFetches();
     // Frames and page requests (XMLHttpRequest: `network:true`): answer each navigation with
     // its document and each request from wptserve; the engine decides all (redirect "manual").
     // `elapsedMs` moves the virtual clock by the real time waited, so timers and `timeout` still fire.
+    // The page's bound: at most 256 rounds of frame answers in all (a page that navigates a
+    // frame for ever ends with what it reported, not a runner that never stops).
+    let framesLeft=256;
+    const finished=()=>logs.some(l=>l.startsWith("__wpt_done "));
     const answerFrames=async()=>{
-      for(let round=0;round<256&&turn.clock<70000&&((turn.navigations?.length??0)>0||(turn.frameLoads??0)>0);round++){
+      let did=false;
+      for(let round=0;framesLeft>0&&!finished()&&turn.clock<70000&&((turn.navigations?.length??0)>0||(turn.frameLoads??0)>0);round++){
         const session=turn.session;
+        did=true;framesLeft--;
         for(const nav of turn.navigations??[]){
           const source=await frameSource(nav.url);
           // responseUrl: where the document came from after redirects; the engine takes the
@@ -769,10 +779,14 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
         }
         await settleTo(Math.max(1,70000-turn.clock));
       }
+      return did;
     };
-    await answerFrames();
+    // Script fetches and frames ask for each other (a frame's script makes a worker, a worker's
+    // answer inserts a frame): answer both until neither asks (at most 64 rounds), so that the
+    // page never waits on a request nobody answers.
+    const pump=async()=>{for(let i=0;i<64;i++){const a=await serveFetches(),b=await answerFrames();if(!a&&!b)return;}};
+    await pump();
     let lastNet=performance.now();
-    const finished=()=>logs.some(l=>l.startsWith("__wpt_done "));
     for(let round=0;inflight.size&&round<5000&&turn.clock<70000;round++){
       // an open WebSocket may stay silent: then the page's time goes on in steps of 500 ms
       const tick=sockets.size?new Promise<null>(r=>setTimeout(()=>r(null),100)):undefined;
@@ -781,8 +795,7 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
         if(finished())break;
         take(turn=await ss({action:"advance",session:turn.session,ms:500}));
         await settleTo(Math.max(1,Math.min(1000,70000-turn.clock)));
-        await serveFetches();
-        await answerFrames();
+        await pump();
         continue;
       }
       const {id,answer}=got;
@@ -795,14 +808,18 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
       if(sock&&(answer as {status?:number}).status!==0)inflight.set(id,sockRead(id,sock.conn));
       else if(sock)sockets.delete(id);
       await settleTo(Math.max(1,70000-turn.clock));
-      await answerFrames();
+      await pump();
       if(finished()&&[...inflight.keys()].every(k=>sockets.has(k)))break;
     }
     for(const s of sockets.values()){try{s.conn.close();}catch{/* closed */}}
     sockets.clear();
     // keep: the page stays the session's page (a WebDriver navigation)
     if(!opts?.keep)engine.scriptSession("",{action:"close"});
-    return {...resultOf(file,logs),ms:Math.round(performance.now()-t0),instructions,clock:turn.clock,...(errors.length?{errors:errors.slice(0,5)}:{})};
+    const bound=framesLeft<=0?"256 rounds of frame answers":fetchesLeft<=0?"4096 script fetches":undefined;
+    const res=resultOf(file,logs);
+    // a page stopped at the runner's bound did not complete in its time: TIMEOUT, saying which bound
+    if(bound&&(res.harness==="CRASH"||res.harness==="NO_RESULT"))Object.assign(res,{harness:"TIMEOUT",message:`the page reached the runner's bound of ${bound}`});
+    return {...res,ms:Math.round(performance.now()-t0),instructions,clock:turn.clock,...(errors.length?{errors:errors.slice(0,5)}:{})};
   }};
 }
 

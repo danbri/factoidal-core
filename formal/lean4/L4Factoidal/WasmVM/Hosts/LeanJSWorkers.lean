@@ -193,6 +193,21 @@ def Workers.result (w : Workers) (id status : Nat) (url contentType source : Str
     let crossed := w.mains.contains u && !url.isEmpty && originOfUrl url != originOfUrl u
     some (u, if !crossed && scriptAccepted status contentType options then some source else none)
 
+/-- Kind: security theorem (HTML §10.2.4, a worker's script is fetched in mode
+"same-origin"). Says: a worker's own script whose answer came from another origin than the URL
+it was asked for (a redirect to another origin) gives no script: the worker is not started
+with another origin's code. -/
+theorem result_crossed (w : Workers) (id status : Nat) (url ct src opts u : String) (s : Option String)
+    (h : w.result id status url ct src opts = some (u, s)) (hm : w.mains.contains u = true)
+    (hu : url.isEmpty = false) (ho : (originOfUrl url != originOfUrl u) = true) : s = none := by
+  unfold Workers.result at h
+  split at h
+  · simp at h
+  · rename_i v _
+    simp only [Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl⟩ := h
+    simp [hm, hu, ho]
+
 /-- The script source fetched for `url`: `some none` when the fetch failed. -/
 def Workers.script? (w : Workers) (url : String) : Option (Option String) :=
   (w.scripts.find? (·.1 == url)).map (·.2)
