@@ -1655,6 +1655,21 @@ theorem containerMarginHints_blank (s : Computed) : containerMarginHints "" "" s
   have h : HTML.Dimension.parseNonNegative "" = none := by decide
   simp [containerMarginHints, pixelLengthAttribute, h]
 
+/-- The properties that presentational hints changed from `before` to `after`: those the
+cascade takes from no UA rule. -/
+def hintedProperties (before after : Computed) : List String :=
+  (if after.width.same before.width then [] else ["width"]) ++
+  (if after.height.same before.height then [] else ["height"]) ++
+  (if after.margin.top == before.margin.top then [] else ["margin-top"]) ++
+  (if after.margin.right == before.margin.right then [] else ["margin-right"]) ++
+  (if after.margin.bottom == before.margin.bottom then [] else ["margin-bottom"]) ++
+  (if after.margin.left == before.margin.left then [] else ["margin-left"])
+
+/-- A hint that sets no width leaves the UA's `width` rules in force. -/
+theorem hintedProperties_width (before after : Computed) (h : after.width.same before.width = true) :
+    "width" ∉ hintedProperties before after := by
+  simp [hintedProperties, h]
+
 /-- A valid `marginwidth` sets both horizontal margins. -/
 theorem containerMarginHints_width (mw mh : String) (s : Computed) (v : Float)
     (h : pixelLengthAttribute mw = some v) :
