@@ -7537,6 +7537,24 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
         if !(← isCallable f) then throwErr .type "Iterator.prototype[Symbol.dispose]: return is not callable"
         let _ ← callV n f thisV #[]
         pure .undef
+    | (.x .errorIsError) =>
+      match a0 with
+      | .obj id => pure (.bool (match (← getObj id).kind with | .error => true | _ => false))
+      | _ => pure (.bool false)
+    | (.x .promiseTry) =>
+      -- §27.2.4.8 Promise.try: NewPromiseCapability(this), then the callback's completion
+      if !thisV.isObj then throwErr .type "Promise.try called on a non-object"
+      let cap ← callNative n (.x .promiseWithResolvers) thisV #[] none
+      let x ← tryCatch (do pure (Except.ok (← callV n a0 .undef (args.extract 1 args.size)))) (fun e => pure (Except.error e))
+      match x with
+      | .ok v => let _ ← callV n (← getV n cap "resolve") .undef #[v]
+      | .error (.throw e) => let _ ← callV n (← getV n cap "reject") .undef #[e]
+      | .error a => throw a
+      getV n cap "promise"
+    | (.x .regexpEscape) =>
+      match a0 with
+      | .str s => pure (.str (regexpEscapeStr s.toList))
+      | _ => throwErr .type "RegExp.escape requires a string"
     | (.x .iteratorConcat) =>
       -- §27.1.3.2.2 Iterator.concat: every argument an object with a callable @@iterator, checked
       -- first; the iterators are made one at a time as the result is read
@@ -8856,6 +8874,7 @@ def initRealm : M Unit := do
   setHidden g "AggregateError" aggC
   setHidden aggProto "name" (.str "AggregateError")
   setHidden aggProto "message" (.str "")
+  if let .obj e0 ← ownValue g "Error" then method e0 "isError" (.x .errorIsError) 1
   -- SuppressedError and DisposableStack (explicit resource management)
   let supProto ← alloc { proto := .obj errorProto }
   modify fun h => { h with realm := { h.realm with suppressedErrorProto := supProto } }
@@ -9079,6 +9098,7 @@ def initRealm : M Unit := do
     method pc "allSettled" ((.x (.promiseCombinator 1))) 1
     method pc "any" (.x .promiseAny) 1
     method pc "withResolvers" (.x .promiseWithResolvers) 0
+    method pc "try" (.x .promiseTry) 1
   method promiseProto "then" .promiseThen 2
   method promiseProto "catch" .promiseCatch 1
   method promiseProto "finally" .promiseFinally 1
@@ -9115,7 +9135,9 @@ def initRealm : M Unit := do
   -- RegExp (§22.2)
   let regexpProto ← mk
   modify fun h => { h with realm := { h.realm with regexpProto } }
-  setHidden g "RegExp" (← ctorWith "RegExp" .regexpCtor 2 regexpProto)
+  let regexpC ← ctorWith "RegExp" .regexpCtor 2 regexpProto
+  setHidden g "RegExp" regexpC
+  if let .obj rc := regexpC then method rc "escape" (.x .regexpEscape) 1
   method regexpProto "exec" .regexpExec 1
   method regexpProto "test" .regexpTest 1
   method regexpProto "toString" .regexpToString 0
