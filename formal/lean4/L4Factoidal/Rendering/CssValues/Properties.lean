@@ -87,6 +87,10 @@ structure ComputeCtx where
   currentColor : Option String := none
   deriving Inhabited
 
+/-- The stand-in of an infinite colour channel: beyond every channel's range, and a multiple
+of 360 (a hue of it is 0). -/
+def infiniteChannel : Rat := 360 * 1000000000000
+
 /-- A colour component read through `numeric`, so a `calc()` may stand for it. -/
 def colorReader : Color.Reader := fun cv =>
   match Color.literalReader cv with
@@ -102,7 +106,14 @@ def colorReader : Color.Reader := fun cv =>
         | _ =>
           match numeric (some {}) { kind := .angle } cv with
           | some (.tok (.dim v _ _)) => some (.angle v)
-          | _ => none
+          | _ =>
+            -- `calc(infinity)` is the channel's upper bound, `calc(-infinity)` and
+            -- `calc(NaN)` its lower bound (CSS Values 4 §10.12): a number larger than any
+            -- channel's range, and a multiple of 360 so that a hue of either is 0
+            match (Calc.parse cv).map fun c => Calc.simp none (Calc.depth 64 c + 4) c with
+            | some (.kw "infinity") => some (.num infiniteChannel)
+            | some (.kw "-infinity") | some (.kw "nan") => some (.num (-infiniteChannel))
+            | _ => none
     | _ => none
 
 /-- The matcher's environment: specified values with `none`, computed values with a
@@ -962,6 +973,10 @@ def initialComputed (ctx : ComputeCtx) (row : Property) : String :=
 #guard specified "color" "lab(none 20 calc(0.5))" == some "lab(none 20 calc(0.5))"
 #guard specified "color" "rgb(calc(255) 0 0)" == some "rgb(255, 0, 0)"
 #guard computed {} "color" "lab(calc(50 * 3) 0 0)" == "lab(100 0 0)"
+-- infinities and NaN in colour channels (color-valid-rgb.html, color-computed-lab.html)
+#guard specified "color" "rgb(calc(infinity), 0, 0)" == some "rgb(255, 0, 0)"
+#guard specified "color" "rgba(0, 0, 0, calc(NaN))" == some "rgba(0, 0, 0, 0)"
+#guard specified "color" "hsl(calc(infinity) 100% 50%)" == some "rgb(255, 0, 0)"
 #guard specified "flex" "0 1 1" == none
 #guard specified "flex" "0 1" == some "0 1" && (specified "flex" "0 auto").isSome && (specified "flex" "1 0 0").isSome
 #guard specified "color" "RED" == some "red"
