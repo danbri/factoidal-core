@@ -2589,6 +2589,38 @@ def readsStyleAttribute (rules : List Rule) : Bool :=
     | some c => selectorsReadAttr "style" [c]
     | none => false
 
+/-- A selector of `sels` has `:has()`, also inside `:not()`, `:is()` and
+`:nth-child(… of …)`. A work list, bounded: past the bound the answer is yes. -/
+def selectorsUseHas (sels : List DOM.Selectors.Complex) : Bool := Id.run do
+  let mut pending := sels
+  for _ in [:4096] do
+    match pending with
+    | [] => return false
+    | .mk parts :: rest =>
+      let mut more := rest
+      for (_, simples) in parts do
+        for s in simples do
+          match s with
+          | .has _ => return true
+          | .nth _ _ _ (some inner) => more := inner ++ more
+          | .not inner => more := inner ++ more
+          | .is inner => more := inner ++ more
+          | _ => pure ()
+      pending := more
+  return true
+
+/-- No selector of the rules has `:has()`. The matching of an element then reads, of the
+other elements, only its ancestors, the earlier siblings of itself and of its ancestors,
+and (for `:nth-child(… of …)`) the siblings of those: an attribute of an element is read
+only for the elements of its parent's subtree. A write of an element's `class` can then
+change the rules that match in that subtree and nowhere else, so the styles after it are
+those of `restyleWith` from the parent (`Hosts.Page.Reads.wrote`). -/
+def attributesReachParentOnly (rules : List Rule) : Bool :=
+  !rules.any fun r => r.selectors.any fun s =>
+    match s.complex with
+    | some c => selectorsUseHas [c]
+    | none => false
+
 /-! ### Animated values in the cascade
 
 CSS Cascade 4 §6.1: animation declarations override the author's normal declarations
