@@ -1,10 +1,9 @@
 /-
-L4Factoidal.MathML.OpenMathTests — build-time checks for `MathML/OpenMath.lean`, `MathML/Symbols.lean`
-and `MathML/CoreVocabulary.lean`, and the axioms their theorems rest on. The OpenMath objects are the
+L4Factoidal.MathML.OpenMathTests — build-time checks for `MathML/OpenMath.lean` and
+`MathML/Symbols.lean`, and the axioms their theorems rest on. The OpenMath objects are the
 examples of section 3.1.2 of the OpenMath Standard 2.0 (revision 3, 2019-07-01).
 -/
 import L4Factoidal.MathML.OpenMath
-import L4Factoidal.MathML.CoreVocabulary
 import L4Factoidal.MathML.FromXml
 
 namespace L4Factoidal.MathML
@@ -89,7 +88,5 @@ private def survives (o : OMObj) : Bool := sameOM (parseOpenMath (writeOpenMath 
 #print axioms ofOM_toOM
 #print axioms ofOpenMath_toOpenMath
 #print axioms toOM_ofOM_image
-#print axioms presTree_core
-#print axioms presentationTree_core
 
 end L4Factoidal.MathML
