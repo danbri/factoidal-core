@@ -1918,8 +1918,8 @@
   // The section's code is text until a page first uses Canvas 2D: compiled then, so pages
   // without a 2D canvas carry no more JavaScript (QuickJS's collector walks every function's
   // code on each cycle). It sees the prelude only through these parameters.
-  const make2d = () => new Function('n', 'define', 'named', 'nodeId', 'canvasSize', 'gpuContexts', 'DOMException', 'EventTarget',
-    make2dSource)(n, define, named, nodeId, canvasSize, gpuContexts, DOMException, EventTarget);
+  const make2d = () => new Function('n', 'define', 'named', 'nodeId', 'canvasSize', 'gpuContexts', 'DOMException', 'EventTarget', 'media',
+    make2dSource)(n, define, named, nodeId, canvasSize, gpuContexts, DOMException, EventTarget, codecsHost);
   const make2dSource = `'use strict';
     const K = Symbol('canvas2d');
     let q = [], strs = [], strIx = new Map(), tails = [], tailLen = 0, queued = false, selected = -1;
@@ -2208,9 +2208,18 @@
     define(P, 'drawImage', function (img, ...a) {
       const s = self(this);
       if (a.length !== 2 && a.length !== 4 && a.length !== 8) throw new TypeError("Failed to execute 'drawImage': Valid arities are: [3, 5, 9], but " + (a.length + 1) + ' arguments provided.');
+      const v = a.map(Number);
+      if (media.isFrame && media.isFrame(img)) {
+        // A VideoFrame (WebCodecs §9.4): its pixels as Lean turned them (op 126), drawn at the
+        // frame's display size; a source rectangle is in display units.
+        const f = frameBitmap(img), kx = f.w / f.dw, ky = f.h / f.dh;
+        const r = a.length === 2 ? [NaN, NaN, NaN, NaN, v[0], v[1], f.dw, f.dh] : a.length === 4 ? [NaN, NaN, NaN, NaN, ...v]
+          : [v[0] * kx, v[1] * ky, v[2] * kx, v[3] * ky, v[4], v[5], v[6], v[7]];
+        on(s.id); q.push(80, 2, f.id, ...r); q.push(94, 4, f.id);
+        return;
+      }
       const [kind, src] = sourceOf(img, 'drawImage');
       if (kind === 3 && src === '') return;
-      const v = a.map(Number);
       const r = a.length === 2 ? [NaN, NaN, NaN, NaN, v[0], v[1], NaN, NaN] : a.length === 4 ? [NaN, NaN, NaN, NaN, ...v] : v;
       on(s.id); q.push(80, kind, kind === 3 ? str(src) : src, ...r);
     });
@@ -2341,13 +2350,55 @@
           resolve(bitmapOf(4, tail(bytes), 0, 0, img.width, img.height, img.width, img.height));
           return;
         }
+        if (media.isFrame && media.isFrame(img)) {
+          // A VideoFrame: drawn at its display size on a scratch bitmap, which the new bitmap copies.
+          const f = frameBitmap(img), id = nextOffscreen++;
+          q.push(2, id, f.dw, f.dh, 0); selected = id;
+          q.push(80, 2, f.id, NaN, NaN, NaN, NaN, 0, 0, f.dw, f.dh); q.push(94, 4, f.id);
+          const b = bitmapOf(1, id, sx, sy, sw, sh, Number.isNaN(sw) ? f.dw : sw, Number.isNaN(sh) ? f.dh : sh);
+          q.push(2, id, 0, 0, 0); selected = id; later();
+          resolve(b);
+          return;
+        }
         const [kind, src] = sourceOf(img, 'createImageBitmap');
         const size = nums(ask([11, kind, kind === 3 ? 0 : src], kind === 3 ? [src] : []));
         if (size.length < 2) throw new DOMException('The source image could not be decoded.', 'InvalidStateError');
         resolve(bitmapOf(kind, kind === 3 ? str(src) : src, sx, sy, sw, sh, Number.isNaN(sw) ? size[0] : sw, Number.isNaN(sh) ? size[1] : sh));
       } catch (e) { reject(e); }
     });
-    return { CanvasRenderingContext2D, OffscreenCanvasRenderingContext2D, OffscreenCanvas, Path2D, ImageData,
+    // A VideoFrame as a bitmap of Lean's (kind 4, from its oriented RGBA pixels: the media
+    // host's frameImage), with its oriented size and its display size. The caller releases it.
+    const frameBitmap = img => {
+      const f = media.frameImage(img), id = nextObj++;
+      q.push(93, id, 4, tail(f.bytes), 0, 0, f.w, f.h, f.w, f.h); later();
+      return { id, w: f.w, h: f.h, dw: f.dw, dh: f.dh };
+    };
+    // The pixels of a canvas image source as RGBA bytes (for a VideoFrame made from it): drawn on
+    // a scratch bitmap of its size and read back (op 202). null: not a source this reads.
+    const pixelsOf = img => {
+      let w, h;
+      if (img instanceof named.HTMLCanvasElement) { w = canvasSize(img, 'width', 300); h = canvasSize(img, 'height', 150); }
+      else if (img instanceof OffscreenCanvas) { w = img[K].w; h = img[K].h; }
+      else if (img instanceof ImageBitmap) {
+        if (img[K].closed) throw new DOMException('The ImageBitmap is closed.', 'InvalidStateError');
+        w = img[K].w; h = img[K].h;
+      } else if (img instanceof named.HTMLImageElement) {
+        const size = img.src === '' ? [] : nums(ask([11, 3, 0], [img.src]));
+        if (size.length < 2) throw new DOMException('The image is not decoded.', 'InvalidStateError');
+        [w, h] = size;
+      } else return null;
+      if (!(w > 0 && h > 0)) throw new DOMException('The image has no pixels.', 'InvalidStateError');
+      const [kind, src] = sourceOf(img, 'VideoFrame');
+      const id = nextOffscreen++;
+      q.push(2, id, w, h, 0); selected = id;
+      q.push(80, kind, kind === 3 ? str(src) : src, NaN, NaN, NaN, NaN, 0, 0, NaN, NaN);
+      flush();
+      const bytes = n.gpuBytes(202, '[]', pack([2, id, 0, 0, w, h], [], 0));
+      q.push(2, id, 0, 0, 0); selected = id; later();
+      if (!(bytes instanceof ArrayBuffer)) throw new DOMException('The image could not be read.', 'InvalidStateError');
+      return { w, h, bytes: new Uint8Array(bytes) };
+    };
+    return { CanvasRenderingContext2D, OffscreenCanvasRenderingContext2D, OffscreenCanvas, Path2D, ImageData, pixelsOf,
       ImageBitmap, CanvasGradient, CanvasPattern, TextMetrics, DOMMatrix, DOMMatrixReadOnly, DOMPoint, DOMPointReadOnly, createImageBitmap,
       context: canvas => contextFor(CanvasRenderingContext2D, canvas, nodeId(canvas), canvasSize(canvas, 'width', 300), canvasSize(canvas, 'height', 150), true),
       resized: canvas => { const id = nodeId(canvas); q.push(2, id, canvasSize(canvas, 'width', 300), canvasSize(canvas, 'height', 150), 1); selected = id; later(); },
@@ -3665,19 +3716,10 @@
           const timestamp = enforceSigned(d.timestamp, 'timestamp');
           const duration = d.duration === undefined ? null : enforce(d.duration, U64, 'duration');
           const layout = layoutArg(d.layout, 'layout');
-          const args = initArgs(d);
           const color = d.colorSpace === undefined ? undefined : colorInit(d.colorSpace);
           const transfer = transferList(d, 'VideoFrame');
           const data = bytesOf(image, 'data');
-          const lines = ask(120, [format, String(cw), String(ch), String(data.byteLength), layout].concat(args), 'the VideoFrameBufferInit is not valid for the data').split('\\n');
-          const resource = new Uint8Array(Number(lines[0]));
-          move(data, resource, lines.slice(3));
-          detach(transfer);
-          const c = lines[2].split(' ');
-          // RGBX and BGRX: the fourth byte is padding, kept opaque (Lean says which formats).
-          if (c[4] === '1') for (let i = 3; i < resource.length; i += 4) resource[i] = 255;
-          K.set(this, Object.assign(metaOf(lines[1]), { format, timestamp, duration, resource, closed: false,
-            color: color === undefined ? { primaries: c[0], transfer: c[1], matrix: c[2], fullRange: c[3] === '1' } : color }));
+          K.set(this, bufferFrame(format, cw, ch, data, layout, d, timestamp, duration, color, () => detach(transfer)));
           return;
         }
         const s = imageFrame(image, dict(init, 'VideoFrameInit'));
@@ -3721,8 +3763,43 @@
       clone() { const s = live(st(this), 'clone'); return frameOf(Object.assign({}, s)); }
       close() { const s = st(this); s.closed = true; s.resource = null; }
     }
-    // A frame from an image needs the image's pixels (the canvas section's): not connected yet.
-    const imageFrame = (image, d) => { throw dom('NotSupportedError', 'VideoFrame from an image is not supported yet'); };
+    // A frame's state from the page's bytes: Lean's layout (op 120) says the resource's size, the
+    // frame's values, the format's colour space and the rows to copy.
+    const bufferFrame = (format, cw, ch, data, layout, d, timestamp, duration, color, taken) => {
+      const lines = ask(120, [format, String(cw), String(ch), String(data.byteLength), layout].concat(initArgs(d)), 'the VideoFrameBufferInit is not valid for the data').split('\\n');
+      const resource = new Uint8Array(Number(lines[0]));
+      move(data, resource, lines.slice(3));
+      taken();
+      const c = lines[2].split(' ');
+      // RGBX and BGRX: the fourth byte is padding, kept opaque (Lean says which formats).
+      if (c[4] === '1') for (let i = 3; i < resource.length; i += 4) resource[i] = 255;
+      return Object.assign(metaOf(lines[1]), { format, timestamp, duration, resource, closed: false,
+        color: color === undefined ? { primaries: c[0], transfer: c[1], matrix: c[2], fullRange: c[3] === '1' } : color });
+    };
+    // A frame from a canvas image source (§9.4.2 "Initialize Frame From Other Frame"'s image
+    // case): its pixels as RGBA (the canvas section's, read through the host), RGBX when the
+    // init discards alpha. The timestamp is required for these sources.
+    const imageFrame = (image, d) => {
+      const px = host.pixelsOf ? host.pixelsOf(image) : null;
+      if (px === null) return null;
+      if (d.timestamp === undefined) throw bad('timestamp required to construct VideoFrame from this source');
+      const timestamp = enforceSigned(d.timestamp, 'timestamp');
+      const duration = d.duration === undefined ? null : enforce(d.duration, U64, 'duration');
+      const alpha = d.alpha === undefined ? 'keep' : oneOf(d.alpha, ['keep', 'discard'], 'AlphaOption');
+      return bufferFrame(alpha === 'discard' ? 'RGBX' : 'RGBA', px.w, px.h, px.bytes, '', d, timestamp, duration, undefined, () => {});
+    };
+    // What the canvas section needs of a frame: its visible rectangle as RGBA, oriented (Lean's
+    // conversion, op 124, then its orientation, op 126), with the oriented and the display size.
+    host.isFrame = x => x instanceof VideoFrame;
+    host.frameImage = f => {
+      const s = live(st(f), 'drawImage');
+      const rgba = convertFrame(s, { rect: [s.vx, s.vy, s.vw, s.vh].join(' '), format: 'RGBA', space: undefined });
+      const turned = s.rotation % 180 !== 0, w = turned ? s.vh : s.vw, h = turned ? s.vw : s.vh;
+      if (s.rotation === 0 && !s.flip) return { w, h, dw: s.dw, dh: s.dh, bytes: rgba };
+      const r = apiCall(126, [String(s.rotation), s.flip ? '1' : '', String(s.vw), String(s.vh), rgba], 0, true);
+      if (typeof r === 'number') throw dom('InvalidStateError', 'the frame could not be drawn');
+      return { w, h, dw: s.dw, dh: s.dh, bytes: new Uint8Array(r) };
+    };
     // The rectangle as packed pixels of an RGB format: Lean's conversion (WebCodecs.Convert.toRgb).
     // It keeps the frame's primaries and transfer: a destination that is not sRGB is refused.
     const convertFrame = (s, o) => {
@@ -3872,6 +3949,7 @@
 `;
   const codecNames = ['VideoColorSpace', 'VideoFrame', 'EncodedVideoChunk', 'EncodedAudioChunk', 'AudioDecoder', 'VideoDecoder', 'AudioEncoder', 'VideoEncoder'];
   lazyGroup(codecNames, codecs);
+  codecsHost.pixelsOf = image => c2d().pixelsOf(image);
   // ==== end webcodecs section ====
   const apiError = (r, what) => {
     switch (r) {
