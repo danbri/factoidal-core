@@ -2,6 +2,7 @@ import L4Factoidal.Rendering.Style
 import L4Factoidal.Rendering.FontFace
 import L4Factoidal.Rendering.TableLayout
 import L4Factoidal.Rendering.FlexLayout
+import L4Factoidal.Rendering.OffsetParent
 import L4Factoidal.Unicode.ScriptDirection
 import L4Factoidal.Unicode.LineBreak
 

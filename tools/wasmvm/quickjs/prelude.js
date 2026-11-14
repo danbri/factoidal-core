@@ -111,6 +111,9 @@
     return xs.length >= count ? xs : new Array(count).fill(0);
   };
   const layoutOf = el => query(nodeId(el), 17, 8);
+  // The same answer's last three numbers (CSSOM View offsetParent, decided by the engine):
+  // the offset parent's node (-1: none) and the border box's corner from its padding edge.
+  const offsetOf = el => { const b = layoutOf(el); return b.length >= 11 ? [b[8], b[9], b[10]] : [-1, b[0], b[1]]; };
   // WebIDL: two required `double` arguments (TypeError when missing or not finite).
   const pointArgs = (args, what) => {
     if (args.length < 2) throw new TypeError(`Failed to execute '${what}' on 'Document': 2 arguments required, but only ${args.length} present.`);
@@ -1026,9 +1029,9 @@
     blur() {}
     get offsetWidth() { return Math.round(layoutOf(this)[2]); }
     get offsetHeight() { return Math.round(layoutOf(this)[3]); }
-    get offsetLeft() { return Math.round(layoutOf(this)[0]); }
-    get offsetTop() { return Math.round(layoutOf(this)[1]); }
-    get offsetParent() { return this.isConnected && this.localName !== 'body' && this.localName !== 'html' ? document.body : null; }
+    get offsetLeft() { return Math.round(offsetOf(this)[1]); }
+    get offsetTop() { return Math.round(offsetOf(this)[2]); }
+    get offsetParent() { const p = offsetOf(this)[0]; return this.isConnected && p >= 0 ? wrap(p) : null; }
   }
   const clicking = new WeakSet();
   const styles = new WeakMap();
