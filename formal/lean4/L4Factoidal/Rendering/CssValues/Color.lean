@@ -1064,7 +1064,10 @@ def relSpec (spec : CV → Option String) (o : Opts) (n : String) (r : Rel) : Op
 /-- The origin colour in the target space, as the channel keywords see it (`rgb` channels
 are 0 to 255). -/
 def originChannels (target : Space) (c : Color) : Option Color :=
-  if target == .rgb then
+  -- an origin already in the target space keeps its channels as written: a powerless hue
+  -- is a value there, not a missing one (CSS Color 5 §4.2)
+  if target != .rgb && c.space == target then some c
+  else if target == .rgb then
     (toMixSpace .srgb c).map fun s =>
       { s with c1 := s.c1.map (· * 255), c2 := s.c2.map (· * 255), c3 := s.c3.map (· * 255) }
   else toMixSpace target c
@@ -1303,6 +1306,7 @@ def computedOf (s : String) : Option String :=
 #guard computedOf "hwb(from hwb(120deg 20% 50% / .5) h w none / alpha)"
   == some "hwb(120 20% none / 0.5)"
 #guard computedOf "lab(from lab(25 20 50) l a a / a)" == some "lab(25 20 20)"
+#guard computedOf "hsl(from hsl(180 0 50%) h s l)" == some "color(srgb 0.5 0.5 0.5)"
 #guard computedOf "hsl(from hwb(none 25% 25%) h s l)" == some "hsl(none 50% 50%)"
 #guard computedOf "light-dark(rgb(from rebeccapurple r g b), rgb(from rebeccapurple r g b))"
   == some "color(srgb 0.4 0.2 0.6)"
