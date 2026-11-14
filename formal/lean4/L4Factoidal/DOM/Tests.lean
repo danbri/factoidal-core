@@ -155,7 +155,8 @@ def exIds (sel : String) : Option (List String) :=
 #guard exIds "#a :has(~ span)" == some ["p1", "s1"]
 #guard exIds "div:has(h2, img)" == some ["a", "b"]
 #guard exIds "div:not(:has(img))" == some ["b"]
-#guard exIds "div:has(p:has(img))" == some ["a"]
+-- :has() is not valid in :has() (Selectors 4 §4.5)
+#guard exIds "div:has(p:has(img))" == none
 #guard exIds "div:has(.x img)" == some []
 #guard exIds "body:has(.x img) > #b" == some ["b"]
 #guard exIds "div:has(+ div h2)" == some ["a"]
@@ -182,6 +183,12 @@ def exIds (sel : String) : Option (List String) :=
   "::view-transition-group()", "::view-transition-group(*.*)", "::view-transition-group(a. b)",
   "::view-transition-new(default)", "::view-transition-old(a):hover", "::selection:first-child",
   ":has()", ":heading()", ":heading(a)", ":no-such-class"].map Selectors.parse).all (·.isNone)
+-- pairs of pseudo-elements, and :has() in :has()
+#guard (["::column::scroll-marker", "::before::column", "::before::marker", "::slotted(*)::checkmark",
+  "::part(foo)::checkmark", "::part(foo)::before", "::before::column::scroll-marker"].map Selectors.parse).all (·.isSome)
+#guard (["::column:hover", "::column::before", "::checkmark::checkmark", "::before::checkmark",
+  "::marker::checkmark", "::slotted(*)::checkmark::slotted(*)", "::first-letter::column", "::column::slotted(*)",
+  ".a:has(.b:has(.c))", ":has(:is(:has(a)))", ":has(> :not(:has(a)))"].map Selectors.parse).all (·.isNone)
 
 /-! ## Form state and activation (DOM.Forms) -/
 

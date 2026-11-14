@@ -128,6 +128,22 @@ def attrText (body : List CV) : String :=
 
 def selectorFunctions : List String := ["is", "not", "where", "has", "matches", "-webkit-any", "host", "host-context", "slotted"]
 
+/-- The tokens of a selector without a universal selector that is the whole compound before
+a pseudo-element (`*::before` is written `::before`, CSSOM §6.7.2: a lone universal selector
+with no namespace is left out when the compound has more). `boundary`: the previous token
+ends a compound. A loop over the tokens (a tail call). -/
+def dropStar (acc : Array CV) (boundary : Bool) : List CV → Array CV
+  | [] => acc
+  | .tok (.delim '*') :: .tok .colon :: .tok .colon :: rest =>
+    if boundary then dropStar ((acc.push (.tok .colon)).push (.tok .colon)) false rest
+    else dropStar (((acc.push (.tok (.delim '*'))).push (.tok .colon)).push (.tok .colon)) false rest
+  | cv :: rest =>
+    let ends := match cv with
+      | .tok .ws | .tok .comma => true
+      | .tok (.delim c) => c == '>' || c == '+' || c == '~'
+      | _ => false
+    dropStar (acc.push cv) ends rest
+
 /-- The canonical text of a selector (CSSOM §6.7.2 "serialize a group of selectors"), from
 its tokens: one space for the descendant combinator, ` > `, ` + `, ` ~ `, `, `. The loop
 over the tokens is a tail call; the arguments of `:is()` and its like are one level down
@@ -156,7 +172,7 @@ def selectorTokensText : Nat → List CV → String
         if c == '>' || c == '+' || c == '~' then (out ++ " " ++ String.singleton c ++ " ", false, true)
         else (out ++ (if pendingSpace then " " else "") ++ String.singleton c, false, false)
       | cv => (out ++ (if pendingSpace then " " else "") ++ piece cv, false, false)
-    ((trimWs cvs).foldl step ("", false, false)).1
+    ((dropStar #[] true (trimWs cvs)).toList.foldl step ("", false, false)).1
 
 /-- The canonical text of a selector text, when `DOM.Selectors` reads it; `none` is a
 SyntaxError. -/
@@ -165,6 +181,11 @@ def selectorText (s : String) : Option String :=
     let cvs := CV.parse s
     some (selectorTokensText (cvSize 64 cvs + 2) cvs)
   else none
+
+#guard selectorText "*::before" == some "::before"
+#guard selectorText "a > *::marker, *::after" == some "a > ::marker, ::after"
+#guard selectorText "*:hover" == some "*:hover"
+#guard selectorText "ns|*::before" == none || selectorText "ns|*::before" == some "ns|*::before"
 
 /-! ### Rules -/
 
