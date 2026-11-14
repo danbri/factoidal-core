@@ -611,6 +611,14 @@
   let htmlConstructing = false, ceActive = false;
   // A script element that a script made (section dynscripts): told when it is created.
   let noteFreshScript = () => {};
+  // A parser-inserted script element with no src and no child text bailed out of "prepare
+  // the script element" before it was started (HTML §4.12.1.1 step 7): text added later runs it.
+  const noteEmptyScripts = () => {
+    for (const el of document.getElementsByTagName('script')) {
+      const k = nodeId(el);
+      if (n0.attr(k, 'src') === null && kids(k).every(c => info(c, 0) !== 3 || (str(c, 3) ?? '') === '')) noteFreshScript(k);
+    }
+  };
   // Connected (DOM §4.2.2): the shadow-including root is a document (node_info 25).
   const connectedId = id => { if (id < 0) return false; if (shadowEngine()) return info(id, 25) === 1; for (let k = id, i = 0; i < 1 << 20; i++) { const p = info(k, 1); if (p < 0) return k === 0; k = p; } return false; };
   class EventTarget {
@@ -15143,7 +15151,8 @@
       if (!connectedId(id)) return;
       if (!scripting(id)) return;
       const src = n0.attr(id, 'src'), el = wrap(id);
-      const text = typeof src === 'string' ? '' : el.textContent;
+      // the child text content: the data of the element's Text children (HTML §4.12.1.1)
+      const text = typeof src === 'string' ? '' : kids(id).filter(k => info(k, 0) === 3).map(k => str(k, 3) ?? '').join('');
       if (typeof src !== 'string' && text === '') return;
       fresh.delete(id);
       if (n.query(id, 183, '') !== 'classic') return;
@@ -15947,7 +15956,7 @@
     report(e) { report(e); },
     // A page starts: the content event handler attributes of its elements. The host may
     // run the prelude once on an empty document and copy that state for each page.
-    start() { if (ttStart !== null) ttStart(); scanHandlers(0, false); flushViolations(); },
+    start() { if (ttStart !== null) ttStart(); scanHandlers(0, false); flushViolations(); noteEmptyScripts(); },
     script(id) { currentScript = id < 0 ? null : wrap(id); const d = id < 0 ? 0 : info(id, 7); scriptDocument = d > 0 ? wrap(d) : null; if (d > 0 && ttDoc !== null) ttDoc(d); },
     url(u) { href = String(u); },
     release(id) { callbacks.delete(id); },
