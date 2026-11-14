@@ -384,6 +384,8 @@ def complexSpecificity : Nat → DOM.Selectors.Complex → Nat × Nat × Nat
         | .not l => most l
         | .is l => most l
         | .has l => most l
+        -- only made after the specificity is taken (`resolveHas`)
+        | .anchors _ => (0, 0, 0)
         | .never => (0, 0, 1))) acc) (0, 0, 0)
 
 /-- The id, classes and type that the rightmost compound of a selector of `DOM.Selectors`
@@ -2610,12 +2612,52 @@ def pruneHas (dom : Dom) (rules : List Rule) : List Rule :=
       | none => true
     if sels.isEmpty then none else some { r with selectors := sels }
 
+/-- A complex selector with each compound that has a `:has()` matched once against every
+element of the document: the compound becomes its other simple selectors and the elements
+where it held (`Simple.anchors`), so that matching an element does not search a subtree
+again (selectors/invalidation/has-complexity.html: a `main:has(span) span` rule over many
+spans). One pass over the document for each such compound. -/
+def resolveHasIn (dom : Dom) (c : DOM.Selectors.Complex) : DOM.Selectors.Complex :=
+  match c with
+  | .mk parts => .mk (parts.map fun (comb, simples) =>
+      let isHas := fun (s : DOM.Selectors.Simple) => match s with
+        | .has _ => true
+        | _ => false
+      if !(simples.any isHas) then (comb, simples)
+      else
+        let ids := ((List.range dom.size).filter fun k =>
+          DOM.Selectors.matchCompound dom none DOM.Selectors.matchFuel k simples).toArray
+        (comb, simples.filter (!isHas ·) ++ [.anchors ids]))
+
+/-- The rules with their `:has()` compounds resolved against the document (`resolveHasIn`);
+rules with no `:has()` are as they were. -/
+def resolveHas (dom : Dom) (rules : List Rule) : List Rule :=
+  if !(rules.any fun r => r.selectors.any fun sel => (sel.complex.map (fun c => !(hasLists c).isEmpty)).getD false) then rules
+  else rules.map fun r =>
+    { r with selectors := r.selectors.map fun sel => match sel.complex with
+      | some c => if (hasLists c).isEmpty then sel else { sel with complex := some (resolveHasIn dom c) }
+      | none => sel }
+
+#guard (match DOM.Selectors.parse "main:has(span) .s" with
+  | some [c] =>
+    let d := DOM.parseHtmlDocument "<main><div><span></span></div><p class=s></p></main><p class=s></p>"
+    let c' := resolveHasIn d c
+    ((List.range d.size).filter fun k => DOM.Selectors.matchComplex d none DOM.Selectors.matchFuel k c') ==
+      ((List.range d.size).filter fun k => DOM.Selectors.matchComplex d none DOM.Selectors.matchFuel k c)
+  | _ => false)
+
+/-- A rule list with no `:has()` is left as it is. -/
+theorem resolveHas_plain (dom : Dom) (rules : List Rule)
+    (h : (rules.any fun r => r.selectors.any fun sel => (sel.complex.map (fun c => !(hasLists c).isEmpty)).getD false) = false) :
+    resolveHas dom rules = rules := by
+  simp [resolveHas, h]
+
 /-- `computeAll` for a page with no shadow tree; `computeAllIn` for one with shadow trees. -/
 def computeFor (treeScope : Option TreeScope) (dom : Dom) (rules : List Rule) (textScale : Float := 1)
     (state : ElementState := {}) : Except String (Array Computed) :=
   let rules := pruneHas dom rules
   match treeScope with
-  | none => computeAll dom rules textScale state
+  | none => computeAll dom (resolveHas dom rules) textScale state
   | some ts => computeAllIn ts dom rules textScale state
 
 /-- The buckets give the styles of the plain loop wherever they give its matches. -/
@@ -2637,9 +2679,10 @@ theorem computeAllIn_eq_linear (ts : TreeScope) (dom : Dom) (rules : List Rule) 
     (fun id => matchedRulesIn ts id rules state) from funext h]
 
 /-- With no shadow tree, nothing about the cascade differs (but for the selectors whose
-`:has()` nothing satisfies, `pruneHas`). -/
+`:has()` nothing satisfies, `pruneHas`, and the `:has()` compounds worked out once,
+`resolveHas`). -/
 theorem computeFor_none (dom : Dom) (rules : List Rule) (textScale : Float) (state : ElementState) :
-    computeFor none dom rules textScale state = computeAll dom (pruneHas dom rules) textScale state := rfl
+    computeFor none dom rules textScale state = computeAll dom (resolveHas dom (pruneHas dom rules)) textScale state := rfl
 
 /-- A page whose rules have no `:has()` is matched against its rules as they are. -/
 theorem pruneHas_plain (dom : Dom) (rules : List Rule)

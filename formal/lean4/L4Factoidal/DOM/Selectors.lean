@@ -71,6 +71,10 @@ inductive Simple where
   matched against the elements after the anchor in that relation -/
   | has (sels : List Complex)
   | lang (ranges : List String)
+  /-- the elements, in ascending order, where the `:has()` of a compound was found to hold:
+  what the cascade puts in its place once it has looked at the whole document
+  (`Rendering.CSS.resolveHas`), so that matching does not search again for each element -/
+  | anchors (ids : Array Nat)
   /-- a pseudo-element: never the subject -/
   | never
 
@@ -1168,6 +1172,7 @@ def matchSimple (d : Dom) (scope : Option NodeId) : Nat → NodeId → Simple �
       | .mk parts =>
         let comb := (parts.head?.map (·.1)).getD ' '
         (hasCandidates d k comb (parts.length == 1)).any fun e => matchFrom d scope (some k) fuel e parts.reverse
+    | .anchors ids => (ids.binSearch k (· < ·)).isSome
     | .lang ranges => match langOf d k with
       | some v => ranges.any fun r =>
           let r := lowerAscii r
