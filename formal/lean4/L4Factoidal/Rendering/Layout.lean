@@ -3,6 +3,7 @@ import L4Factoidal.Rendering.FontFace
 import L4Factoidal.Rendering.TableLayout
 import L4Factoidal.Rendering.FlexLayout
 import L4Factoidal.Rendering.OffsetParent
+import L4Factoidal.Rendering.AspectRatio
 import L4Factoidal.Unicode.ScriptDirection
 import L4Factoidal.Unicode.LineBreak
 
@@ -206,7 +207,7 @@ has one, which gives the ratio too; with none, 300 by 150. `available` is the wi
 the containing block. It is 0 while widths are measured, and then a percentage counts
 as auto (CSS Sizing 3 §5.2.1). A percentage height counts as auto: this profile has
 no definite containing block height. -/
-def replacedSize (s : Computed) (intrinsic : Option (Float × Float)) (available : Float) : Float × Float :=
+def replacedNatural (s : Computed) (intrinsic : Option (Float × Float)) (available : Float) : Float × Float :=
   let horizontal := fun (l : CSS.Length) => match l with
     | .px n => some n
     | .percent p => if available <= 0 then none else some (available*p)
@@ -231,6 +232,44 @@ def replacedSize (s : Computed) (intrinsic : Option (Float × Float)) (available
   | none,none => match intrinsic with
     | some (w,h) => constrainBoth w h minW maxW minH maxH
     | none => (clampW 300,clampH 150)
+
+/-- The used content width and height of a replaced element: `replacedNatural`, or with
+`aspect-ratio` (CSS Sizing 4 §5) the sizes that the preferred ratio gives (`Ratio`, on
+layout units): a given width or height gives the other, and with both auto the natural
+width is taken within the limits of both axes. `aspect-ratio: auto <ratio>` keeps the
+ratio of content that has one. An element with no `aspect-ratio` costs one test. -/
+def replacedSize (s : Computed) (intrinsic : Option (Float × Float)) (available : Float) : Float × Float :=
+  match s.pos.ratio with
+  | none => replacedNatural s intrinsic available
+  | some (rn,rd) =>
+    let natural := intrinsic.any fun (w,h) => w > 0 && h > 0
+    if rn == 0 || rd == 0 || (s.pos.ratioAuto && natural) then replacedNatural s intrinsic available else
+    let horizontal := fun (l : CSS.Length) => match l with
+      | .px n => some n
+      | .percent p => if available <= 0 then none else some (available*p)
+      | _ => none
+    let vertical := fun (l : CSS.Length) => match l with | .px n => some n | _ => none
+    let minW := LU.ofPx (max 0 ((horizontal s.minWidth).getD 0))
+    let maxW := (horizontal s.maxWidth).map fun m => LU.ofPx (max 0 m)
+    let minH := LU.ofPx (max 0 ((vertical s.minHeight).getD 0))
+    let maxH := (vertical s.maxHeight).map fun m => LU.ofPx (max 0 m)
+    let size : Int × Int := (match horizontal s.width,vertical s.height with
+      | some w,some h => (LU.clamp minW maxW (LU.ofPx (max 0 w)),LU.clamp minH maxH (LU.ofPx (max 0 h)))
+      | some w,none => Ratio.fromWidth rn rd (LU.ofPx (max 0 w)) minW maxW minH maxH
+      | none,some h => Ratio.fromHeight rn rd (LU.ofPx (max 0 h)) minW maxW minH maxH
+      | none,none => Ratio.autoSize rn rd (LU.ofPx (max 0 ((intrinsic.map Prod.fst).getD 300))) minW maxW minH maxH)
+    (LU.toPx size.1,LU.toPx size.2)
+
+/-- A replaced element with no decoded content here: a `canvas`, whose natural size is
+its `width` and `height` attributes, 300 by 150 without them (HTML §4.12.5.1). Its box is
+laid out as a picture's is, and is empty. -/
+def blankReplaced (n : DOM.Node) : Option (Float × Float) :=
+  if DOM.Dom.isHtmlElement n "canvas" then
+    let whole := fun (name : String) (fallback : Nat) =>
+      let digits := ((CSS.attrValue n name).toList.dropWhile fun c => c == ' ' || c == '\t' || c == '\n').takeWhile Char.isDigit
+      if digits.isEmpty || digits.length > 5 then fallback else digits.foldl (fun k c => k*10+(c.toNat-48)) 0
+    some (Float.ofNat (whole "width" 300),Float.ofNat (whole "height" 150))
+  else none
 
 /-- The intrinsic size of a picture: its pixels, one CSS pixel each. -/
 def Picture.size (p : Picture) : Float × Float :=
@@ -434,6 +473,11 @@ def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) (p
     if let some picture := pictures id then
       let (w,h) := replacedSize s (some picture.size) available
       let (ow,oh,nodes) := replacedBox id s w h (fun x y => pictureNodes id s picture x y w h)
+      return #[.replaced id s ow oh nodes]
+    -- A `canvas`: a replaced box of its natural size, with nothing drawn in it here.
+    if let some size := blankReplaced n then
+      let (w,h) := replacedSize s (some size) available
+      let (ow,oh,nodes) := replacedBox id s w h (fun _ _ => [])
       return #[.replaced id s ow oh nodes]
     -- An image that is missing, broken or refused stands as its description, and stays a link.
     if n.lname == "img" then return altItems id s n
@@ -1021,7 +1065,7 @@ private def sizesItself (dom : Dom) (styles : Array Computed) (pictures : Pictur
   let s := styles[id]!
   let n := dom.get id
   s.display.isFlex || s.display.isGrid || s.display.isTable || (pictures id).isSome ||
-    n.ns == some DOM.svgNS || n.lname == "hr" || s.pos.isPositioned
+    (blankReplaced n).isSome || n.ns == some DOM.svgNS || n.lname == "hr" || s.pos.isPositioned
 
 private def cellStyle (styles : Array Computed) : Table.Source → Computed
   | .element id => styles[id]!
@@ -1156,6 +1200,9 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
         return (a-margins,b-margins)
       if let some picture := pictures id then
         let w := (replacedSize s (some picture.size) 0).1+add
+        return (w,w)
+      if let some size := blankReplaced n then
+        let w := (replacedSize s (some size) 0).1+add
         return (w,w)
       if n.ns == some DOM.svgNS then
         let w := (← svgSize n s 0).1+add
@@ -1569,6 +1616,9 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       if let some picture := pictures id then
         let (w,h) := replacedSize sized (some picture.size) available
         return replaced w h (fun cx cy => pictureNodes id s picture cx cy w h) s
+      if let some size := blankReplaced n then
+        let (w,h) := replacedSize sized (some size) available
+        return replaced w h (fun _ _ => []) s
       if n.ns == some DOM.svgNS then
         let (sw,sh) ← svgSize n sized available
         let nodes ← embedding id s sw sh
@@ -1579,11 +1629,26 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       -- no definite basis here). An imposed height is the parent's and is not clamped again.
       let minHeight := match s.minHeight with | .px h => h | _ => 0
       let maxHeight := match s.maxHeight with | .px h => some h | _ => none
+      -- CSS Sizing 4 §5.1: with `aspect-ratio` and `height: auto` the height is that of the
+      -- width by the ratio (of the border box with `box-sizing: border-box`). It is the least
+      -- height (§5.2: the automatic minimum is the content) unless the box clips or has a
+      -- `min-height` of its own: then it is the height.
+      let ratioHeight : Option Float := match s.pos.ratio,s.height with
+        | some (rn,rd),.auto =>
+          if imposedHeight.isSome || rn == 0 || rd == 0 then none else
+          let across := if s.pos.borderBox then width+edgesX else width
+          let h := LU.toPx (Ratio.heightFor rn rd (LU.ofPx across))
+          some (max 0 (if s.pos.borderBox then h-edgesY else h))
+        | _,_ => none
+      let ratioFixed := ratioHeight.isSome && (s.clipOverflow || (match s.minHeight with | .auto => false | _ => true))
+      let minHeight := match ratioHeight with
+        | some h => if ratioFixed then minHeight else max minHeight h
+        | none => minHeight
       let definite : Option Float := match imposedHeight with
         | some h => some (max 0 (h-edgesY))
         | none => match s.height with
           | .px h => some (clampOpt minHeight maxHeight (max 0 h))
-          | _ => none
+          | _ => if ratioFixed then ratioHeight.map (clampOpt minHeight maxHeight) else none
       let content ← if s.display.isFlex then
           flexLayout children s (collectItems dom styles id)
             {x := innerX, y := innerY, width, height := definite, minHeight, maxHeight}

@@ -33,13 +33,18 @@ structure PositionStyle where
   clear : Clear := .none
   /-- `box-sizing: border-box`: `width`, `height` and their limits name the border box. -/
   borderBox : Bool := false
+  /-- `aspect-ratio` (CSS Sizing 4 §5.1): the preferred ratio, width to height, as two
+  positive whole numbers; `none` is `auto` (and a degenerate ratio, which behaves as it). -/
+  ratio : Option (Nat × Nat) := none
+  /-- `aspect-ratio: auto <ratio>`: a replaced element with a natural ratio keeps its own. -/
+  ratioAuto : Bool := false
   deriving Repr
 
 /-- Every field equal: the two lay out the same. -/
 def PositionStyle.same (a b : PositionStyle) : Bool :=
   a.position == b.position && a.top.same b.top && a.right.same b.right && a.bottom.same b.bottom &&
   a.left.same b.left && a.zIndex == b.zIndex && a.float == b.float && a.clear == b.clear &&
-  a.borderBox == b.borderBox
+  a.borderBox == b.borderBox && a.ratio == b.ratio && a.ratioAuto == b.ratioAuto
 
 /-- Out of flow by positioning: `absolute` or `fixed`. -/
 def PositionStyle.isAbsolute (p : PositionStyle) : Bool := p.position == .absolute || p.position == .fixed
@@ -48,7 +53,17 @@ def PositionStyle.isAbsolute (p : PositionStyle) : Bool := p.position == .absolu
 def PositionStyle.isPositioned (p : PositionStyle) : Bool := p.position != .static
 
 def positionProperties : List String :=
-  ["position", "top", "right", "bottom", "left", "z-index", "float", "clear", "box-sizing"]
+  ["position", "top", "right", "bottom", "left", "z-index", "float", "clear", "box-sizing", "aspect-ratio"]
+
+/-- The ratio `a / b` (width to height) as two whole numbers in lowest terms; `none` when
+it is degenerate (a term that is zero or negative: CSS Sizing 4 §5.1, it behaves as `auto`). -/
+def ratioOf (a b : Rat) : Option (Nat × Nat) :=
+  if a.num > 0 && b.num > 0 then
+    let n := a.num.toNat * b.den
+    let d := a.den * b.num.toNat
+    let g := Nat.gcd n d
+    some (n / g, d / g)
+  else none
 
 /-- `p` with the declaration `property: value` applied, when `property` is one of
 `positionProperties` and `value` is a value of it; else `none`. -/
@@ -105,6 +120,20 @@ def PositionStyle.set (fontSize : Float) (p : PositionStyle) (property value : S
       | "border-box" => some {p with borderBox := true}
       | "content-box" => some {p with borderBox := false}
       | _ => none
+    | "aspect-ratio" =>
+      -- `auto`, `<ratio>` or both (CSS Sizing 4 §5.1); a ratio is `a / b` or `a` (`a / 1`).
+      if reset || v == "auto" then some {p with ratio := none, ratioAuto := false} else
+      match tableComponents fontSize name value with
+      | some parts =>
+        let isAuto := fun (c : CssValues.CV) => match c with
+          | .tok (.ident "auto") => true
+          | _ => false
+        match parts.filter (fun c => !isAuto c) with
+        | [.tok (.num a _)] => some {p with ratio := ratioOf a 1, ratioAuto := parts.any isAuto}
+        | [.tok (.num a _), .tok (.delim '/'), .tok (.num b _)] =>
+          some {p with ratio := ratioOf a b, ratioAuto := parts.any isAuto}
+        | _ => none
+      | none => none
     | _ => none
 
 /-- The longhands of `inset` (CSS Positioned Layout 3 §3.1), by the property table. -/
@@ -120,6 +149,13 @@ def positionShorthand (property value : String) : Option (List (String × String
 #guard ((PositionStyle.set 10 {} "box-sizing" "border-box").map (·.borderBox)) == some true
 #guard ((PositionStyle.set 10 {} "float" "right").map (·.float)) == some .right
 #guard (PositionStyle.set 10 {} "width" "3px").isNone
+#guard ((PositionStyle.set 10 {} "aspect-ratio" "16 / 9").map (·.ratio)) == some (some (16, 9))
+#guard ((PositionStyle.set 10 {} "aspect-ratio" "2").map (·.ratio)) == some (some (2, 1))
+#guard ((PositionStyle.set 10 {} "aspect-ratio" "1.5").map (·.ratio)) == some (some (3, 2))
+#guard ((PositionStyle.set 10 {} "aspect-ratio" "auto 4/3").map fun p => (p.ratio, p.ratioAuto)) == some (some (4, 3), true)
+#guard ((PositionStyle.set 10 {ratio := some (2, 1)} "aspect-ratio" "auto").map (·.ratio)) == some none
+#guard ((PositionStyle.set 10 {} "aspect-ratio" "0 / 1").map (·.ratio)) == some none
+#guard (PositionStyle.set 10 {} "aspect-ratio" "bogus").isNone
 #guard positionShorthand "inset" "0 auto 3px" == some [("top", "0px"), ("right", "auto"), ("bottom", "3px"), ("left", "auto")]
 
 end L4Factoidal.Rendering.CSS
