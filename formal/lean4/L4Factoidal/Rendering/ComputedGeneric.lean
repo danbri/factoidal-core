@@ -980,6 +980,27 @@ def resolvedLonghand (v : View) (id : Nat) (name : String) : String :=
         else match CssValues.stripWs (CssValues.CV.parse o) with
           | [.tok (.dim x _ u)] => if CssValues.lower u == "px" then CssValues.fmtRat (-x) ++ "px" else value
           | _ => value
+      else if value == "auto" && (computedLonghand v depthBound id "position" == "absolute" ||
+          computedLonghand v depthBound id "position" == "fixed") then
+        -- an absolutely positioned box with one inset `auto` on an axis (CSS Position 3
+        -- §4.1): that inset is what is left of the containing block past the other inset
+        -- and the box's margin box
+        let o := insetPx v id opp (computedLonghand v depthBound id opp)
+        match CssValues.stripWs (CssValues.CV.parse o), insetBase v id with
+        | [.tok (.dim x _ u)], some (w, h) =>
+          if CssValues.lower u != "px" then value else
+          let vertical := name == "top" || name == "bottom"
+          let (pw, ph) := (v.paddingBox id).getD (0, 0)
+          let len := fun (n : String) => pxNumber (computedLonghand v depthBound id n)
+          -- a border with no style has no width
+          let border := fun (side : String) =>
+            let st := computedLonghand v depthBound id ("border-" ++ side ++ "-style")
+            if st == "none" || st == "hidden" then 0 else len ("border-" ++ side ++ "-width")
+          let outer := if vertical then
+              ph + border "top" + border "bottom" + len "margin-top" + len "margin-bottom"
+            else pw + border "left" + border "right" + len "margin-left" + len "margin-right"
+          ComputedValues.px ((if vertical then h else w) - Float.ofInt x.num / Float.ofNat x.den - outer)
+        | _, _ => value
       else value
     | none => value
 where
@@ -1111,6 +1132,11 @@ private def resolvedBoxed (html css prop : String) : String :=
 #guard resolvedBoxed "<div style='position: relative'><div><div id=t></div></div></div>" "#t { position: absolute; top: 100% }" "top" == "100px"
 #guard resolvedBoxed "<div><div id=t></div></div>" "#t { position: fixed; left: 10% }" "left" == "80px"
 #guard resolvedBoxed "<div><div id=t></div></div>" "#t { top: 10% }" "top" == "10%"
+-- the box itself is 200 × 100 here too: bottom = 100 - 1 - 100; left = 800 - 4 - (200 + 1 + 1)
+#guard resolvedBoxed "<div style='position: relative'><div id=t></div></div>" "#t { position: absolute; top: 1px }" "bottom" == "-1px"
+#guard resolvedBoxed "<div><div id=t></div></div>" "#t { position: absolute; right: 4px; margin: 1px }" "left" == "594px"
+#guard resolvedBoxed "<div><div id=t></div></div>" "#t { position: absolute; right: 4px; border: 2px solid }" "left" == "592px"
+#guard resolvedBoxed "<div><div id=t></div></div>" "#t { position: absolute }" "left" == "auto"
 #guard resolvedAt "<div><div id=t></div></div>" "#t { position: relative; top: 10% }" "top" == "10%"
 -- the background shorthand by its longhands
 #guard computedAt "<div id=t></div>" "#t { background: url(a.png) no-repeat red }" "background-repeat" == "no-repeat"
