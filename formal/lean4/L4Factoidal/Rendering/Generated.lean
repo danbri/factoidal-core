@@ -212,7 +212,7 @@ def styled (treeScope : Option TreeScope) (dom : Dom) (rules : List Rule) (textS
   if !used rules then return (dom, ← computeFor treeScope dom rules textScale state)
   -- as `computeFor` does (`CSS.forDocument`): `:has()` and the structural pseudo-classes
   -- worked out once for the document
-  let rules := if treeScope.isNone then forDocument dom rules else rules
+  let rules := forTree treeScope dom rules
   let tree := match treeScope with
     | some ts => ts.tree
     | none => dom

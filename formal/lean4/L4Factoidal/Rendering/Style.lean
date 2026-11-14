@@ -2838,12 +2838,21 @@ theorem resolveStructural_plain (dom : Dom) (rules : List Rule)
     resolveStructural dom rules = rules := by
   simp [resolveStructural, h]
 
+/-- `forDocument` for the tree the rules are matched on: the page's, or with shadow trees the
+tree of the scope (`TreeScope.tree`, where complex selectors are matched with no scope
+element, as `resolveHas` and `resolveStructural` match them); `:has()` that nothing in the
+page satisfies is dropped against the page as before. -/
+def forTree (treeScope : Option TreeScope) (dom : Dom) (rules : List Rule) : List Rule :=
+  match treeScope with
+  | none => forDocument dom rules
+  | some ts => resolveStructural ts.tree (resolveHas ts.tree (pruneHas dom rules))
+
 /-- `computeAll` for a page with no shadow tree; `computeAllIn` for one with shadow trees. -/
 def computeFor (treeScope : Option TreeScope) (dom : Dom) (rules : List Rule) (textScale : Float := 1)
     (state : ElementState := {}) : Except String (Array Computed) :=
   match treeScope with
   | none => computeAll dom (forDocument dom rules) textScale state
-  | some ts => computeAllIn ts dom (pruneHas dom rules) textScale state
+  | some ts => computeAllIn ts dom (forTree treeScope dom rules) textScale state
 
 /-- The buckets give the styles of the plain loop wherever they give its matches. -/
 theorem computeAll_eq_linear (dom : Dom) (rules : List Rule) (textScale : Float) (state : ElementState)
