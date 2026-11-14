@@ -1758,7 +1758,8 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
           -- an absolutely positioned child of a grid starts at its grid area (CSS Grid 2 §9.1)
           let content := match content.grid with
             | some f => {content with pending := content.pending.map fun p =>
-                if (dom.get p.id).parent == some id then gridStatic f cx cy cw ch (styles[p.id]!).grid p else p}
+                let child := (dom.get p.id).parent == some id && (styles[p.id]!).pos.position == .absolute
+                if child then gridStatic f cx cy cw ch (styles[p.id]!).grid p else p}
             | none => content
           place content cx cy cw ch false fun p => content.grid.map fun f => gridAbsBlock f cx cy cw ch (styles[p.id]!).grid
         else pure content
