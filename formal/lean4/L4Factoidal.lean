@@ -1259,6 +1259,8 @@ import L4Factoidal.WebDriver.Keys
 import L4Factoidal.WebDriver.Errors
 import L4Factoidal.WebDriver.Actions
 import L4Factoidal.WebDriver.Input
+import L4Factoidal.WebDriver.Gate
+import L4Factoidal.WebDriver.Protocol
 import L4Factoidal.Rendering.Tests
 import L4Factoidal.Rendering.CascadeTests
 import L4Factoidal.Rendering.ReplacedTests
