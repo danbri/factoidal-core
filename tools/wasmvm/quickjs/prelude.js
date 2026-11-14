@@ -8023,6 +8023,135 @@
   lazy('StorageBucketManager', () => bucketsApi()?.classes.StorageBucketManager);
   // ==== end Storage Buckets API ==================================================================
 
+  // ==== Cookie Store API =========================================================================
+  // cookieStore reads and writes the jar of document.cookie (Net/Cookies.lean) through Lean's
+  // ClientStorage/CookieStore.lean (web_api op 204): the checks of a name, value, domain and
+  // path, the url option, what is read, and the storage step. The host is the engine's (the
+  // session's page origin), never an argument; this passes the document's URL and the time.
+  // Change events are not fired yet.
+  const makeCookieStore = () => {
+    const td = new TextDecoder(), text = b => td.decode(b);
+    const unpack = ab => {
+      const u = new Uint8Array(ab), u32 = i => (u[i] | u[i + 1] << 8 | u[i + 2] << 16 | u[i + 3] << 24) >>> 0;
+      const out = [];
+      for (let i = 0, at = 4, k = u32(0); i < k; i++) { const len = u32(at); out.push(u.subarray(at + 4, at + 4 + len)); at += 4 + len; }
+      return out;
+    };
+    const call = (args, what) => {
+      const r = apiCall(204, [args[0], href, String(Math.trunc(Date.now())), ...args.slice(1)], 0, true);
+      if (typeof r === 'number') throw new DOMException(`${what}: cookies are not available.`, 'SecurityError');
+      const f = unpack(r).map(text);
+      if (f[0] === 'ok') return f.slice(1);
+      if (f[0] === '!TypeError') throw new TypeError(`Failed to execute '${what}': the cookie or an option is not valid.`);
+      throw new DOMException(`Failed to execute '${what}': ${f[0].slice(1)}`, f[0].slice(1));
+    };
+    const later = f => { try { return Promise.resolve(f()); } catch (e) { return Promise.reject(e); } };
+    const items = f => { const out = []; for (let i = 0; i + 1 < f.length; i += 2) out.push({ name: f[i], value: f[i + 1] }); return out; };
+    const dictOf = (v, what) => {
+      if (v === undefined || v === null) return {};
+      if (typeof v !== 'object' && typeof v !== 'function') throw new TypeError(`Failed to execute '${what}': the options are not a dictionary.`);
+      return v;
+    };
+    const urlArg = u => u === undefined ? '' : new URL(String(u), href).href;
+    let making = false;
+    const brand = new WeakSet();
+    // get/getAll: (name) or (options {name, url}); get with neither is a TypeError.
+    const query = (self, what, args, single) => later(() => {
+      if (!brand.has(self)) throw new TypeError('Illegal invocation: ' + what);
+      let name, url;
+      if (typeof args[0] === 'string' || (args.length > 0 && args[0] !== undefined && args[0] !== null && typeof args[0] !== 'object' && typeof args[0] !== 'function'))
+        name = String(args[0]);
+      else {
+        const o = dictOf(args[0], what);
+        if (o.name !== undefined) name = String(o.name);
+        if (o.url !== undefined) url = o.url;
+        if (single && name === undefined && url === undefined) throw new TypeError(`Failed to execute '${what}': a name or a url is required.`);
+      }
+      const f = call(['get', name === undefined ? '0' : '1', name ?? '', urlArg(url)], what);
+      const list = items(f);
+      return single ? (list[0] ?? null) : list;
+    });
+    const cookieTime = (v, what) => {
+      if (v === undefined || v === null) return '';
+      const x = v instanceof Date ? v.getTime() : Number(v);
+      if (!Number.isFinite(x)) throw new TypeError(`Failed to execute '${what}': expires is not a time.`);
+      return String(Math.trunc(x));
+    };
+    class CookieStore extends EventTarget {
+      constructor() { if (!making) throw new TypeError('Illegal constructor'); super(); }
+      get(...args) { return query(this, 'CookieStore.get', args, true); }
+      getAll(...args) { return query(this, 'CookieStore.getAll', args, false); }
+      set(name, value = undefined) {
+        const args = arguments.length;
+        return later(() => {
+          if (!brand.has(this)) throw new TypeError('Illegal invocation: CookieStore.set');
+          let o;
+          if (args >= 2 || typeof name !== 'object' || name === null) {
+            if (args < 2) throw new TypeError("Failed to execute 'CookieStore.set': 2 arguments required.");
+            o = { name: String(name), value: String(value) };
+          } else {
+            o = dictOf(name, 'CookieStore.set');
+            if (o.name === undefined || o.value === undefined) throw new TypeError("Failed to execute 'CookieStore.set': name and value are required.");
+            o = { name: String(o.name), value: String(o.value), domain: o.domain, path: o.path, expires: o.expires,
+              sameSite: o.sameSite, partitioned: o.partitioned };
+          }
+          if (o.sameSite !== undefined && !['strict', 'lax', 'none'].includes(String(o.sameSite)))
+            throw new TypeError("Failed to execute 'CookieStore.set': sameSite is not a CookieSameSite.");
+          const has = v => v !== undefined && v !== null;
+          call(['set', o.name, o.value, has(o.domain) ? '1' : '0', has(o.domain) ? String(o.domain) : '',
+            has(o.path) ? '1' : '0', has(o.path) ? String(o.path) : '', cookieTime(o.expires, 'CookieStore.set')], 'CookieStore.set');
+        });
+      }
+      delete(name) {
+        const args = arguments.length;
+        return later(() => {
+          if (!brand.has(this)) throw new TypeError('Illegal invocation: CookieStore.delete');
+          if (args < 1) throw new TypeError("Failed to execute 'CookieStore.delete': 1 argument required.");
+          const o = typeof name === 'object' && name !== null ? dictOf(name, 'CookieStore.delete') : { name: String(name) };
+          if (o.name === undefined) throw new TypeError("Failed to execute 'CookieStore.delete': name is required.");
+          const has = v => v !== undefined && v !== null;
+          call(['delete', String(o.name), has(o.domain) ? '1' : '0', has(o.domain) ? String(o.domain) : '',
+            has(o.path) ? '1' : '0', has(o.path) ? String(o.path) : ''], 'CookieStore.delete');
+        });
+      }
+    }
+    Object.defineProperty(CookieStore.prototype, 'onchange', { configurable: true, enumerable: true,
+      get() { return handlerOf(this, 'change'); }, set(f) { setHandler(this, 'change', f); } });
+    setTag(CookieStore, 'CookieStore');
+    for (const k of ['get', 'getAll', 'set', 'delete'])
+      Object.defineProperty(CookieStore.prototype, k, { ...Object.getOwnPropertyDescriptor(CookieStore.prototype, k), enumerable: true });
+    const changes = new WeakMap();
+    class CookieChangeEvent extends Event {
+      constructor(type, init = undefined) {
+        if (arguments.length < 1) throw new TypeError("Failed to construct 'CookieChangeEvent': 1 argument required.");
+        super(type, init);
+        const d = dictOf(init, "CookieChangeEvent' constructor");
+        const list = v => Object.freeze(v === undefined ? [] : Array.from(v, x => ({ ...x })));
+        changes.set(this, { changed: list(d.changed), deleted: list(d.deleted) });
+      }
+      get changed() { const s = changes.get(this); if (!s) throw new TypeError('Illegal invocation: CookieChangeEvent.changed'); return s.changed; }
+      get deleted() { const s = changes.get(this); if (!s) throw new TypeError('Illegal invocation: CookieChangeEvent.deleted'); return s.deleted; }
+    }
+    setTag(CookieChangeEvent, 'CookieChangeEvent');
+    for (const k of ['changed', 'deleted'])
+      Object.defineProperty(CookieChangeEvent.prototype, k, { ...Object.getOwnPropertyDescriptor(CookieChangeEvent.prototype, k), enumerable: true });
+    making = true; let store; try { store = new CookieStore(); } finally { making = false; }
+    brand.add(store);
+    return { store, classes: { CookieStore, CookieChangeEvent } };
+  };
+  let cookieStoreMade;
+  const cookieStoreApi = () => {
+    if (cookieStoreMade !== undefined) return cookieStoreMade;
+    let secure = false;
+    try { const u = new URL(href); secure = u.protocol === 'https:' || u.hostname === 'localhost' || u.hostname === '127.0.0.1'; } catch {}
+    return cookieStoreMade = !secure || !apiOn() || apiCall(204, ['get', href, '0', '0', '', ''], 0, true) === -2 ? null : makeCookieStore();
+  };
+  // Window and secure contexts only (a worker's scope drops names not in workerGlobals).
+  lazy('cookieStore', () => cookieStoreApi()?.store);
+  lazy('CookieStore', () => cookieStoreApi()?.classes.CookieStore);
+  lazy('CookieChangeEvent', () => cookieStoreApi()?.classes.CookieChangeEvent);
+  // ==== end Cookie Store API =====================================================================
+
   // ---- User Timing: performance.mark, measure ---------------------------------------------
   // performance.now and timeOrigin are QuickJS-NG's, on the WASI clock, which is Lean's script
   // clock (Hosts.Page.ScriptClock). The entries are this list.

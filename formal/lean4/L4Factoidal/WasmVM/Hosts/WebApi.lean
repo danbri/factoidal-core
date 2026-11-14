@@ -45,6 +45,7 @@ import L4Factoidal.ClientStorage.IdbOps
 import L4Factoidal.ClientStorage.Manager
 import L4Factoidal.ClientStorage.Locks
 import L4Factoidal.ClientStorage.Buckets
+import L4Factoidal.ClientStorage.CookieStore
 import L4Factoidal.Net.FetchRules
 import L4Factoidal.Net.Cookies
 import L4Factoidal.DOM.SvgValues
@@ -704,6 +705,11 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
     else if code == 203 then
       let (locks, out) := L4Factoidal.ClientStorage.Locks.opFor s.locks { origin := s.net.page.origin } fs
       ({ s with locks }, .ok (pack out))
+    -- The Cookie Store API (204): the jar of `document.cookie`; the host and the secure flag are
+    -- the session's page's, never arguments.
+    else if code == 204 then
+      let (cookies, out) := L4Factoidal.ClientStorage.CookieStore.op s.cookies s.net.page.origin s.net.page.secure fs
+      ({ s with cookies }, .ok (pack out))
     -- Storage Buckets (205): the buckets of the same storage key.
     else if code == 205 then
       let (buckets, out) := L4Factoidal.ClientStorage.Buckets.opFor s.buckets { origin := s.net.page.origin } fs
