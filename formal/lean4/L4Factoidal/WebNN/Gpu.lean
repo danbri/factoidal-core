@@ -21,6 +21,7 @@ This first group: element-wise binary operators with broadcasting and element-wi
 operators, for `float32`.
 -/
 import L4Factoidal.WebNN.Idx
+import L4Factoidal.WebNN.Approx
 import L4Factoidal.PageGpu.Wgsl
 
 namespace L4Factoidal.WebNN.Gpu
@@ -312,7 +313,7 @@ WebNN conformance tests allow 8, 1 and 16 (WGSL's own precision for them is loos
 tests'); they run on the CPU reference until a WGSL form within the tolerance is measured. -/
 def unaryExpr (name : String) (x : Wgsl.Expr) : Option Wgsl.Expr :=
   match name with
-  | "abs" | "ceil" | "cos" | "exp" | "floor" | "sin" | "tan" => some (call1 name x)
+  | "abs" | "ceil" | "cos" | "floor" | "sin" | "tan" => some (call1 name x)
   | "neg" => some (.unary "-" x)
   | "reciprocal" => some (.binary "/" (f "1.0") x)
   | "relu" => some (call2 "max" x (f "0.0"))
@@ -391,6 +392,7 @@ def binaryKernel (name : String) (sa sb out : Shape) : Except String Wgsl.Module
 
 /-- The kernel of an element-wise unary operator. -/
 def unaryKernel (name : String) (s : Shape) : Except String Wgsl.Module := do
+
   if Shape.size s > maxElements then throw "webnn gpu: output too large for one dispatch"
   let some v := unaryExpr name (.index (.name "x") (.name "k")) | throw s!"webnn gpu: no kernel for {name}"
   Wgsl.finish (kernel ["x"] s v)
@@ -402,17 +404,22 @@ def transposeKernel (perm : List Nat) (inShape : Shape) : Except String Wgsl.Mod
   if Shape.size out > maxElements then throw "webnn gpu: output too large for one dispatch"
   Wgsl.finish (kernel ["x"] out (.index (.name "x") (flatIndex (transposeMap perm) inShape)))
 
+def nm (s : String) : Wgsl.Expr := .name s
+def add (a b : Wgsl.Expr) : Wgsl.Expr := .binary "+" a b
+def mulE (a b : Wgsl.Expr) : Wgsl.Expr := .binary "*" a b
+def andE (a b : Wgsl.Expr) : Wgsl.Expr := .binary "&&" a b
+
 /-- A kernel whose output element `k` comes from variables `decls` updated by loops run one
 after another (each a `forCap` loop over `t` from `lo` below `count`). -/
 def loopsKernel (ins : List String) (outShape : Shape) (decls : List Wgsl.Stmt)
-    (loops : List (Nat × Nat × Wgsl.Stmts)) (fin : Wgsl.Expr) : Wgsl.Module :=
+    (loops : List (Nat × Nat × Wgsl.Stmts)) (fin : Wgsl.Expr) (post : List Wgsl.Stmt := []) : Wgsl.Module :=
   let loopsS := loops.map fun (lo, count, steps) => Wgsl.Stmt.forCap "t" .u32 lo (u count) count steps
   let m := kernel ins outShape fin
   let body := match m.fns with
     | [f] => match f.body with
       | .cons k (.cons (.ifS c inner e) .nil) =>
         let rec splice : Wgsl.Stmts → Wgsl.Stmts
-          | .cons (.assign l op v) .nil => stmts (decls ++ loopsS ++ [.assign l op v])
+          | .cons (.assign l op v) .nil => stmts (decls ++ loopsS ++ post ++ [.assign l op v])
           | .cons st rest => .cons st (splice rest)
           | .nil => .nil
         Wgsl.Stmts.cons k (.cons (.ifS c (splice inner) e) .nil)
@@ -425,6 +432,40 @@ def loopsKernel (ins : List String) (outShape : Shape) (decls : List Wgsl.Stmt)
 def loopKernel (ins : List String) (outShape : Shape) (count lo : Nat) (decls : List Wgsl.Stmt)
     (steps : Wgsl.Stmts) (fin : Wgsl.Expr) : Wgsl.Module :=
   loopsKernel ins outShape decls [(lo, count, steps)] fin
+
+/-- The functions of `WebNN.Approx` (one definition with the CPU reference), by operator name. -/
+def approxFn (name : String) (alpha : Float) : Option (Wgsl.Expr → Approx.Gen Wgsl.Expr) :=
+  match name with
+  | "exp" => some (Approx.exp (m := Approx.Gen))
+  | "log" => some (Approx.log (m := Approx.Gen))
+  | "tanh" => some (Approx.tanh (m := Approx.Gen))
+  | "sigmoid" => some (Approx.sigmoid (m := Approx.Gen))
+  | "softplus" => some (Approx.softplus (m := Approx.Gen))
+  | "erf" => some (Approx.erf (m := Approx.Gen))
+  | "gelu" => some (Approx.gelu (m := Approx.Gen))
+  | "elu" => some (Approx.elu (m := Approx.Gen) alpha)
+  | _ => none
+
+/-- The kernel of an element-wise operator of `WebNN.Approx`. -/
+def approxKernel (name : String) (s : Shape) (alpha : Float := 1.0) : Except String Wgsl.Module := do
+  if Shape.size s > maxElements then throw "webnn gpu: output too large for one dispatch"
+  let some fn := approxFn name alpha | throw s!"webnn gpu: no kernel for {name}"
+  let (ss, v) := Approx.gen fn (.index (.name "x") (.name "k"))
+  Wgsl.finish (loopsKernel ["x"] s ss [] v)
+
+/-- sqrt rounded correctly: WGSL's `sqrt` (whose precision WGSL leaves to the device: it
+was 2 ULP off here) and one correction with the exact residual `e = fma(−r, r, x)`:
+`r + e · (0.5/r)` (Markstein's step); 0, ∞ and NaN as they are. Measured against the
+correctly rounded square root on every positive binary32 (record, section 2.9). -/
+def sqrtKernel (s : Shape) : Except String Wgsl.Module := do
+  if Shape.size s > maxElements then throw "webnn gpu: output too large for one dispatch"
+  let x := Wgsl.Expr.index (nm "x") (nm "k")
+  let fma3 := fun (a b c : Wgsl.Expr) => Wgsl.Expr.call (.fn "fma") (.cons a (.cons b (.cons c .nil)))
+  let ss := [Wgsl.Stmt.letS "xs" none x, .letS "r" none (call1 "sqrt" (nm "xs")),
+    .letS "e" none (fma3 (.unary "-" (nm "r")) (nm "r") (nm "xs")),
+    .letS "r2" none (fma3 (nm "e") (.binary "/" (f "0.5") (nm "r")) (nm "r"))]
+  let special := Wgsl.Expr.binary "||" (.binary "==" (nm "xs") (f "0.0")) (.binary ">" (nm "r") (f "3.40282347e38"))
+  Wgsl.finish (loopsKernel ["x"] s ss [] (sel (nm "r2") (nm "r") special))
 
 /-- A kernel whose output element `k` is accumulated over `count` steps of a loop counter
 `t` (`for (var t = lo; t < min(count, count); t++)`, a `forCap` loop: its cost bound is
@@ -487,11 +528,6 @@ def reduceKernel (name : String) (s : Shape) (axes : List Nat) : Except String W
   let x := fun (t : Wgsl.Expr) => Wgsl.Expr.index (.name "x") (.binary "+" base (off t))
   let init := if fromFirst then x (u 0) else f (if name == "reduceProduct" then "1.0" else "0.0")
   Wgsl.finish (foldKernel ["x"] keptShape count (if fromFirst then 1 else 0) init (stepF (.name "acc") (x (.name "t"))) (finF (.name "acc")))
-
-def nm (s : String) : Wgsl.Expr := .name s
-def add (a b : Wgsl.Expr) : Wgsl.Expr := .binary "+" a b
-def mulE (a b : Wgsl.Expr) : Wgsl.Expr := .binary "*" a b
-def andE (a b : Wgsl.Expr) : Wgsl.Expr := .binary "&&" a b
 
 /-- The window loop of conv2d and pooling, as `Compute.conv2dNchw` / `pool2dNchw` index it:
 for loop step `t` over (`ic`,) `ky`, `kx`: `iy = y·sh + ky·dh`, `ix = x·sw + kx·dw`, and the
@@ -640,10 +676,13 @@ def softmaxKernel (s : Shape) (axis : Nat) : Except String Wgsl.Module := do
   let st := (strides s).getD axis 1
   let base := Wgsl.Expr.binary "-" (nm "k") (mulE (nm (coordName axis)) (u st))
   let xt := Wgsl.Expr.index (nm "x") (add base (mulE (nm "t") (u st)))
+  -- `exp` is `WebNN.Approx.exp`, as the CPU reference's softmax
+  let (inLoop, eT) := Approx.gen (Approx.exp (m := Approx.Gen)) (.binary "-" xt (nm "mx")) 0
+  let (after, eK) := Approx.gen (Approx.exp (m := Approx.Gen)) (.binary "-" (.index (nm "x") (nm "k")) (nm "mx")) 1000
   Wgsl.finish (loopsKernel ["x"] s [.varS "mx" none (some (.index (nm "x") base)), .varS "sum" none (some (f "0.0"))]
     [(1, dim, stmts [.assign (nm "mx") "" (call2 "max" (nm "mx") xt)]),
-     (0, dim, stmts [.assign (nm "sum") "" (add (nm "sum") (call1 "exp" (.binary "-" xt (nm "mx"))))])]
-    (.binary "/" (call1 "exp" (.binary "-" (.index (nm "x") (nm "k")) (nm "mx"))) (nm "sum")))
+     (0, dim, stmts (inLoop ++ [.assign (nm "sum") "" (add (nm "sum") eT)]))]
+    (.binary "/" eK (nm "sum")) after)
 
 /-- concat along `axis` (`Move.concat`): output element `k` reads the input whose part of the
 axis holds its coordinate there; up to 7 inputs (bindings 0..6, the output 7). -/
@@ -683,32 +722,6 @@ def batchNormKernel (s : Shape) (axis : Nat) (eps : Float) (scale bias : Bool) :
   let y := if bias then add y (.index (nm "bias") c) else y
   Wgsl.finish (kernel (["x", "mean", "variance"] ++ (if scale then ["scale"] else []) ++ (if bias then ["bias"] else [])) s y)
 
-/-- erf and gelu, transcribed from the CPU reference's own algorithm (`Compute.erfSmall`: the
-series of 90 positive terms; `Compute.erfcLarge`: the continued fraction of 60 levels; the
-branch at 2.5): both are computed for `a = |x|` (or `|x|/√2`) and the branch selects one. -/
-def erfKernel (name : String) (s : Shape) : Except String Wgsl.Module := do
-  if name != "erf" && name != "gelu" then throw s!"webnn gpu: no kernel for {name}"
-  if Shape.size s > maxElements then throw "webnn gpu: output too large for one dispatch"
-  let some sqrtPi := floatLit (Float.sqrt (4.0 * Float.atan 1.0)) | throw "pi"
-  let some sqrt2 := floatLit (Float.sqrt 2.0) | throw "sqrt2"
-  let x := Wgsl.Expr.index (nm "x") (nm "k")
-  let a := if name == "gelu" then Wgsl.Expr.binary "/" (call1 "abs" x) sqrt2 else call1 "abs" x
-  let ft := fun (e : Wgsl.Expr) => Wgsl.Expr.call (.ty (.scalar .f32)) (.cons e .nil)
-  let decls : List Wgsl.Stmt := [.letS "a" none a, .letS "x2" none (mulE (f "2.0") (mulE (nm "a") (nm "a"))),
-    .varS "term" none (some (nm "a")), .varS "ser" none (some (nm "a")), .varS "cf" none (some (nm "a"))]
-  let series := stmts [.assign (nm "term") "" (.binary "/" (mulE (nm "term") (nm "x2")) (ft (add (mulE (u 2) (nm "t")) (u 3)))),
-    .assign (nm "ser") "" (add (nm "ser") (nm "term"))]
-  let frac := stmts [.assign (nm "cf") "" (add (nm "a") (.binary "/" (.binary "/" (ft (.binary "-" (u 60) (nm "t"))) (f "2.0")) (nm "cf")))]
-  let ex := call1 "exp" (.unary "-" (mulE (nm "a") (nm "a")))
-  let small := mulE (mulE (.binary "/" (f "2.0") sqrtPi) ex) (nm "ser")
-  let large := .binary "/" ex (mulE sqrtPi (nm "cf"))
-  let lt := Wgsl.Expr.binary "<" (nm "a") (f "2.5")
-  let erfA := sel (.binary "-" (f "1.0") large) small lt
-  let erfcA := sel large (.binary "-" (f "1.0") small) lt
-  let v := if name == "erf" then sel erfA (.unary "-" erfA) (.binary "<" x (f "0.0"))
-    else sel (mulE (mulE (f "0.5") x) (add (f "1.0") erfA)) (mulE (mulE (f "0.5") x) erfcA) (.binary "<" x (f "0.0"))
-  Wgsl.finish (loopsKernel ["x"] s decls [(0, 90, series), (0, 60, frac)] v)
-
 /-- Workgroups to dispatch for `n` output elements. -/
 def groups (n : Nat) : Nat := (n + wg - 1) / wg
 
@@ -724,8 +737,11 @@ def printed : Except String Wgsl.Module → String
 #guard (printed (binaryKernel "mul" [2, 1, 4] [3, 1] [2, 3, 4])).startsWith "@group(0) @binding(0) var<storage, read> a: array<f32>;"
 #guard !(printed (binaryKernel "mul" [2, 1, 4] [3, 1] [2, 3, 4])).startsWith "error"
 #guard (printed (unaryKernel "tanh" [4])).startsWith "error"
-#guard (["abs", "ceil", "cos", "exp", "floor", "neg", "reciprocal", "relu", "sigmoid", "sin", "softsign", "tan"].all
+#guard (["abs", "ceil", "cos", "floor", "neg", "reciprocal", "relu", "sin", "softsign", "tan"].all
   fun n => !(printed (unaryKernel n [4, 5])).startsWith "error")
+#guard (["exp", "log", "tanh", "sigmoid", "softplus", "erf", "gelu", "elu"].all
+  fun n => !(printed (approxKernel n [4, 5])).startsWith "error")
+#guard !(printed (sqrtKernel [4, 5])).startsWith "error"
 #guard (["add", "sub", "mul", "div", "max", "min", "pow"].all fun n => !(printed (binaryKernel n [4, 5] [5] [4, 5])).startsWith "error")
 #guard (printed (unaryKernel "gelu" [4])).startsWith "error"
 #guard (printed (unaryKernel "relu" [65536, 65])).startsWith "error"

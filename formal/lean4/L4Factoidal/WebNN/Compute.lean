@@ -16,6 +16,7 @@ vectors (`Tests.lean` and the conformance tests).
 Buffers are flat; loops index them with multiplications, with no object per element.
 -/
 import L4Factoidal.WebNN.Move
+import L4Factoidal.WebNN.Approx
 
 namespace L4Factoidal.WebNN
 open Shape
@@ -25,45 +26,19 @@ open Shape
 def sqrt2 : Float := Float.sqrt 2.0
 def sqrtPi : Float := Float.sqrt (4.0 * Float.atan 1.0)
 
-/-- The complementary error function for `x ≥ 2.5`: its continued fraction, 60 levels. -/
-def erfcLarge (x : Float) : Float :=
-  let t := Nat.fold 60 (fun k _ t => x + (Float.ofNat (60 - k) / 2.0) / t) x
-  Float.exp (-(x * x)) / (sqrtPi * t)
+/-! The transcendental functions are `WebNN.Approx`'s, evaluated in binary64: one definition
+shared with the GPU kernels (record, section 2.9). -/
 
-/-- The error function for `0 ≤ x < 2.5`: the series with positive terms
-`2/√π · e^(-x²) · Σ 2ⁿ x^(2n+1) / (1·3·…·(2n+1))` (no cancellation), 90 terms. -/
-def erfSmall (x : Float) : Float :=
-  let x2 := 2.0 * x * x
-  let (s, _) := Nat.fold 90 (fun n _ (acc : Float × Float) =>
-    let term := acc.2 * x2 / Float.ofNat (2 * n + 3)
-    (acc.1 + term, term)) (x, x)
-  2.0 / sqrtPi * Float.exp (-(x * x)) * s
-
-def erf (x : Float) : Float :=
-  if x.isNaN then x
-  else
-    let a := x.abs
-    let r := if a < 2.5 then erfSmall a else 1.0 - erfcLarge a
-    if x < 0.0 then -r else r
-
-/-- `erfc(x) = 1 - erf(x)`, accurate where the result is small. -/
-def erfc (x : Float) : Float := if x ≥ 2.5 then erfcLarge x else 1.0 - erf x
-
-/-- `e^x - 1`, accurate near 0. -/
-def expm1 (x : Float) : Float :=
-  if x.abs < 1e-5 then x + x * x / 2.0 + x * x * x / 6.0 else Float.exp x - 1.0
-
-/-- `log(1 + e^x)`, accurate for large and for very negative `x`. -/
-def softplus (x : Float) : Float :=
-  if x > 40.0 then x
-  else
-    let e := Float.exp x
-    if e < 1e-5 then e - e * e / 2.0 else Float.log (1.0 + e)
-
-def sigmoid (x : Float) : Float := 1.0 / (1.0 + Float.exp (-x))
-
-def gelu (x : Float) : Float :=
-  if x < 0.0 then 0.5 * x * erfc (-x / sqrt2) else 0.5 * x * (1.0 + erf (x / sqrt2))
+def expF (x : Float) : Float := Id.run (Approx.exp x)
+def logF (x : Float) : Float := Id.run (Approx.log x)
+def tanhF (x : Float) : Float := Id.run (Approx.tanh x)
+def erf (x : Float) : Float := Id.run (Approx.erf x)
+/-- `erfc x`, with `erfc(−a) = 2 − erfc(a)`. -/
+def erfc (x : Float) : Float := if x < 0.0 then 2.0 - Id.run (Approx.erfcPos (-x)) else Id.run (Approx.erfcPos x)
+def expm1 (x : Float) : Float := Id.run (Approx.expm1 x)
+def softplus (x : Float) : Float := Id.run (Approx.softplus x)
+def sigmoid (x : Float) : Float := Id.run (Approx.sigmoid x)
+def gelu (x : Float) : Float := Id.run (Approx.gelu x)
 
 def signF (x : Float) : Float := if x > 0.0 then 1.0 else if x < 0.0 then -1.0 else x
 
@@ -75,9 +50,9 @@ def unaryF (name : String) (alpha beta : Float) : Float → Float :=
   | "ceil" => Float.ceil
   | "cos" => Float.cos
   | "erf" => erf
-  | "exp" => Float.exp
+  | "exp" => expF
   | "floor" => Float.floor
-  | "log" => Float.log
+  | "log" => logF
   | "neg" => fun x => -x
   | "reciprocal" => fun x => 1.0 / x
   | "roundEven" => roundEvenF
@@ -89,9 +64,9 @@ def unaryF (name : String) (alpha beta : Float) : Float → Float :=
   | "sigmoid" => sigmoid
   | "softplus" => softplus
   | "softsign" => fun x => x / (1.0 + x.abs)
-  | "tanh" => Float.tanh
+  | "tanh" => tanhF
   | "gelu" => gelu
-  | "elu" => fun x => if x ≥ 0.0 then x else alpha * expm1 x
+  | "elu" => fun x => Id.run (Approx.elu alpha x)
   | "hardSigmoid" => fun x => let y := alpha * x + beta; if y < 0.0 then 0.0 else if y > 1.0 then 1.0 else y
   | "hardSwish" => fun x => let y := x + 3.0; x * (if y < 0.0 then 0.0 else if y > 6.0 then 6.0 else y) / 6.0
   | "leakyRelu" => fun x => if x ≥ 0.0 then x else alpha * x
@@ -162,7 +137,7 @@ def activation (name : String) : Float → Float :=
   match name with
   | "relu" => fun x => if x > 0.0 then x else 0.0
   | "sigmoid" => sigmoid
-  | _ => Float.tanh
+  | _ => tanhF
 
 /-! ## Buffers -/
 
@@ -330,8 +305,8 @@ def reduce (t : Tensor) (name : String) (axes : List Nat) (out : Shape) : Tensor
     let r : FloatArray := match name with
       | "reduceL1" => foldGroupsF a groups n 0.0 fun acc x => acc + x.abs
       | "reduceL2" => mapFA (foldGroupsF a groups n 0.0 fun acc x => acc + x * x) Float.sqrt
-      | "reduceLogSum" => mapFA (foldGroupsF a groups n 0.0 (· + ·)) Float.log
-      | "reduceLogSumExp" => mapFA (foldGroupsF a groups n 0.0 fun acc x => acc + Float.exp x) Float.log
+      | "reduceLogSum" => mapFA (foldGroupsF a groups n 0.0 (· + ·)) logF
+      | "reduceLogSumExp" => mapFA (foldGroupsF a groups n 0.0 fun acc x => acc + expF x) logF
       | "reduceMax" => foldGroupsF a groups n (-inf) fun acc x => if x > acc || x.isNaN then x else acc
       | "reduceMean" => mapFA (foldGroupsF a groups n 0.0 (· + ·)) (· / count)
       | "reduceMin" => foldGroupsF a groups n inf fun acc x => if x < acc || x.isNaN then x else acc
@@ -373,7 +348,7 @@ def softmax (t : Tensor) (axis : Nat) : Tensor :=
   let n := t.shape.size / t.shape.getD axis 1
   let a := t.buf.toFloats
   let mx := foldGroupsF a groups n (-(1.0 / 0.0)) fun acc x => if x > acc then x else acc
-  let e := Nat.fold a.size (fun k _ (acc : FloatArray) => acc.push (Float.exp (a.get! k - mx.get! (groups[k]!))))
+  let e := Nat.fold a.size (fun k _ (acc : FloatArray) => acc.push (expF (a.get! k - mx.get! (groups[k]!))))
     (FloatArray.emptyWithCapacity a.size)
   let sums := foldGroupsF e groups n 0.0 (· + ·)
   let ty := t.dtype

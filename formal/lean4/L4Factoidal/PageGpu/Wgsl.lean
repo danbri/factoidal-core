@@ -202,7 +202,7 @@ def builtins : List String :=
    "clamp","mix","step","smoothstep","sqrt","inverseSqrt","pow","exp","exp2","log","log2",
    "floor","ceil","round","trunc","fract","sign","dot","cross","length","normalize",
    "distance","reflect","select","transpose","determinant","fma","saturate","radians",
-   "degrees","all","any"]
+   "degrees","all","any","ldexp","frexp"]
 
 def unaryOps : List String := ["-", "!"]
 def binaryOps : List String :=

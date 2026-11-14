@@ -78,8 +78,8 @@ inductive Run where
   | copy (src : Nat)
 
 /-- The GPU form of one node, or why there is none. -/
-def kernelFor (n : Node) (descs : Array Desc) : Except String Run := do
-  if !gpuOps.contains n.op then throw s!"{n.op} has no kernel on the GPU path"
+def kernelFor (n : Node) (descs : Array Desc) (all : Bool := false) : Except String Run := do
+  if !all && !gpuOps.contains n.op then throw s!"{n.op} has no kernel on the GPU path"
   let c : Call := ⟨n.args, descs⟩
   let some out := n.outDescs.head? | throw "no output"
   if n.outs.length != 1 then throw "one output only"
@@ -105,6 +105,7 @@ def kernelFor (n : Node) (descs : Array Desc) : Except String Run := do
     let s := d "input"
     pure (.kernel (← Gpu.moveKernel (reverseMap s (c.nats "axes" (List.range s.length)) o.length) s o) [← one "input"])
   | "matmul" => pure (.kernel (← Gpu.matmulKernel (d "a") (d "b") o) [← one "a", ← one "b"])
+  | "elu" => pure (.kernel (← Gpu.approxKernel "elu" (d "input") (c.num "alpha" 1.0)) [← one "input"])
   | "leakyRelu" | "linear" | "hardSigmoid" | "hardSwish" =>
     let (a0, b0) := if n.op == "hardSigmoid" then (0.2, 0.5) else if n.op == "leakyRelu" then (0.01, 0.0) else (1.0, 0.0)
     pure (.kernel (← Gpu.unaryABKernel n.op (d "input") (c.num "alpha" a0) (c.num "beta" b0)) [← one "input"])
@@ -114,7 +115,6 @@ def kernelFor (n : Node) (descs : Array Desc) : Except String Run := do
       | _ => none
     pure (.kernel (← Gpu.clampKernel (d "input") (bound "minValue") (bound "maxValue")) [← one "input"])
   | "prelu" => pure (.kernel (← Gpu.binaryKernel "prelu" (d "input") (d "slope") o) [← one "input", ← one "slope"])
-  | "erf" => pure (.kernel (← Gpu.erfKernel "erf" (d "input")) [← one "input"])
   | "softmax" => pure (.kernel (← Gpu.softmaxKernel (d "input") (c.nat "axis")) [← one "input"])
   | "concat" =>
     let ids := c.ids "inputs"
@@ -136,6 +136,9 @@ def kernelFor (n : Node) (descs : Array Desc) : Except String Run := do
     if name.startsWith "reduce" then
       let s := d "input"
       pure (.kernel (← Gpu.reduceKernel name s (c.nats "axes" (List.range s.length))) [← one "input"])
+    else if (Gpu.approxFn name 1.0).isSome then
+      pure (.kernel (← Gpu.approxKernel name (d "input")) [← one "input"])
+    else if name == "sqrt" then pure (.kernel (← Gpu.sqrtKernel (d "input")) [← one "input"])
     else
       pure (.kernel (← Gpu.unaryKernel name (d "input")) [← one "input"])
 
@@ -163,7 +166,7 @@ def plan (s : State) (b : Builder) : Except String (State × GpuPlan) := do
   for idx in List.range b.nodes.size do
     if !(b.needed[idx]?.getD false) then continue
     let n := b.nodes[idx]!
-    let r ← kernelFor n b.descs
+    let r ← kernelFor n b.descs s.allKernels
     for i in n.inputs ++ n.outs do
       if (bufs[i]?.join).isNone then
         let (s1, id) := fresh s

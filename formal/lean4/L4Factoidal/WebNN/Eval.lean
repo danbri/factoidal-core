@@ -50,7 +50,7 @@ private def rnn (e : Env) (lstm : Bool) (outs : List Desc) : List Tensor :=
   let gates := if lstm then 4 else 3
   let x := input.buf.toFloats
   let as := acts c (if lstm then ["sigmoid", "tanh", "tanh"] else ["sigmoid", "tanh"])
-  let f := as.getD 0 sigmoid; let g := as.getD 1 Float.tanh; let hAct := as.getD 2 Float.tanh
+  let f := as.getD 0 sigmoid; let g := as.getD 1 tanhF; let hAct := as.getD 2 tanhF
   let h0 := (e.t? "initialHiddenState").map (·.buf.toFloats)
   let c0 := (e.t? "initialCellState").map (·.buf.toFloats)
   let layout := c.str "layout" (if lstm then "iofg" else "zrn")
@@ -92,7 +92,7 @@ private def rnnCell (e : Env) (lstm : Bool) : List Tensor :=
   let ws := rnnWeights e 0 (if lstm then 4 else 3) hidden inSize
   let x := input.buf.toFloats
   let as := acts c (if lstm then ["sigmoid", "tanh", "tanh"] else ["sigmoid", "tanh"])
-  let f := as.getD 0 sigmoid; let g := as.getD 1 Float.tanh; let hAct := as.getD 2 Float.tanh
+  let f := as.getD 0 sigmoid; let g := as.getD 1 tanhF; let hAct := as.getD 2 tanhF
   let h0 := (e.t "hiddenState").buf.toFloats
   let c0 := (e.t "cellState").buf.toFloats
   let layout := c.str "layout" (if lstm then "iofg" else "zrn")

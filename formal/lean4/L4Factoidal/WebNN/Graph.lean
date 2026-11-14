@@ -114,6 +114,9 @@ structure State where
   room : Nat := 0
   /-- The next id of a GPU object WebNN makes (above the ids a page script uses). -/
   nextId : Nat := 1073741824
+  /-- Measurement only (no command of the API sets it): plan every operator that has a
+  kernel, also those not in `GpuRun.gpuOps`, to measure them against the WPT vectors. -/
+  allKernels : Bool := false
   deriving Inhabited
 
 /-- The most bytes of constants and tensors a session holds: 256 MiB. -/
