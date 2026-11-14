@@ -258,6 +258,59 @@ private def restylePage (style : String) : String :=
   | .ok rules => !CSS.readsStyleAttribute rules
   | .error _ => false)
 
+/-! ## Tests: a `class` written, styles again from the parent
+
+With no `:has()` in the rules (`CSS.attributesReachParentOnly`), the styles after a write
+of an element's `class` are the styles before with the subtree of its parent styled
+again: the rules that read the class match the element, its descendants, its siblings
+(`+`, `~`, `:nth-child(… of …)`) and their descendants. -/
+
+private def classWriteAgrees (before after sheet : String) : Bool :=
+  let d0 := DOM.parseHtmlDocument before
+  let d1 := DOM.parseHtmlDocument after
+  match CSS.parse sheet, firstWithId d1 "t" with
+  | .ok rules, some t =>
+    match CSS.computeAll d0 rules, CSS.computeAll d1 rules, (d1.get t).parent with
+    | .ok s0, .ok s1, some parent =>
+      let ix := CSS.RuleIndex.build rules
+      CSS.attributesReachParentOnly rules &&
+      (match CSS.restyleWith (fun id => ix.matched (CSS.readKeys d1) d1 id {}) d1 s0 [parent] with
+        | .ok s => s.toList.map ComputedValues.text == s1.toList.map ComputedValues.text
+        | .error _ => false)
+    | _, _, _ => false
+  | _, _ => false
+
+private def classPage (cls : String) : String :=
+  "<div><section><p class=\"first\">z</p><p id=\"t\" class=\"" ++ cls ++ "\">a <b>b <i>c</i></b></p><p>d <b>e</b></p><p>f</p></section><section><p>g</p></section></div>"
+
+private def classSheet : String :=
+  ".to { color: red; width: 20px } .to b { width: 5px } .to > b i { height: 3px } " ++
+  ".to + p { margin-left: 7px } .to ~ p b { width: 9px } p:not(.to) { padding-left: 2px } " ++
+  "p:nth-child(2 of .to) { margin-top: 4px } p:nth-last-child(1 of :not(.to)) { margin-bottom: 6px } " ++
+  ":is(.to, .other) i { color: blue } p.first:not(.x) { height: 11px } [class~=to] b { margin-right: 1px }"
+
+-- the class comes, goes, and changes
+#guard classWriteAgrees (classPage "") (classPage "to") classSheet
+#guard classWriteAgrees (classPage "to") (classPage "") classSheet
+#guard classWriteAgrees (classPage "other") (classPage "to other") classSheet
+-- the two documents do differ in the styles of the element, of a descendant and of a sibling
+#guard (match CSS.parse classSheet, CSS.parse classSheet with
+  | .ok rules, _ =>
+    (match CSS.computeAll (DOM.parseHtmlDocument (classPage "")) rules, CSS.computeAll (DOM.parseHtmlDocument (classPage "to")) rules with
+      | .ok a, .ok b => ((a.toList.zip b.toList).filter fun (x, y) => ComputedValues.text x != ComputedValues.text y).length ≥ 5
+      | _, _ => false)
+  | _, _ => false)
+-- a rule with `:has()` is seen, also inside `:not()` and `:is()`: the partial path is then not taken
+#guard (match CSS.parse "div:has(.to) { color: red }" with
+  | .ok rules => !CSS.attributesReachParentOnly rules
+  | .error _ => false)
+#guard (match CSS.parse "p { color: red } section:not(:has(> .to)) p { color: blue }" with
+  | .ok rules => !CSS.attributesReachParentOnly rules
+  | .error _ => false)
+#guard (match CSS.parse "p.to + p > b { color: red } :is(.a, .b) :not(.c) { color: blue } p:nth-child(2 of .to) { color: green }" with
+  | .ok rules => CSS.attributesReachParentOnly rules
+  | .error _ => false)
+
 /-! ## Cost test: the nodes styled again
 
 `restyleWith` must style the named subtrees and nothing else, whatever the size of the
