@@ -8964,7 +8964,7 @@
   // tokens of its structured serialisation and reads them back, holds the objects, and
   // dispatches the event each `pump` hands it (the listener order is Lean's too: `plan`).
   const makeIdb = () => {
-    const td = new TextDecoder(), text = b => td.decode(b);
+    const td = new TextDecoder('utf-8', { ignoreBOM: true }), text = b => td.decode(b);
     const ascii = b => { let s = ''; for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); return s; };
     const unpack = ab => {
       const u = new Uint8Array(ab), u32 = i => (u[i] | u[i + 1] << 8 | u[i + 2] << 16 | u[i + 3] << 24) >>> 0;
@@ -9797,7 +9797,7 @@
   // StorageManager (op 202): usage is the sum of what IndexedDB and the file system hold for
   // this key, the quota a constant of the engine; persist() and persisted() answer false.
   const makeFs = () => {
-    const td = new TextDecoder(), text = b => td.decode(b);
+    const td = new TextDecoder('utf-8', { ignoreBOM: true }), text = b => td.decode(b);
     const unpack = ab => {
       const u = new Uint8Array(ab), u32 = i => (u[i] | u[i + 1] << 8 | u[i + 2] << 16 | u[i + 3] << 24) >>> 0;
       const out = [];
@@ -10146,7 +10146,7 @@
   // lists. This block converts arguments, runs a granted request's callback and tells Lean when
   // its promise has settled. Locks are per session: a page and its workers do not share them yet.
   const makeLocks = () => {
-    const td = new TextDecoder(), text = b => td.decode(b);
+    const td = new TextDecoder('utf-8', { ignoreBOM: true }), text = b => td.decode(b);
     const unpack = ab => {
       const u = new Uint8Array(ab), u32 = i => (u[i] | u[i + 1] << 8 | u[i + 2] << 16 | u[i + 3] << 24) >>> 0;
       const out = [];
@@ -10259,7 +10259,7 @@
   // bucket answers UnknownError), durability and expires. persisted() is false: nothing persists.
   // A bucket's own IndexedDB, CacheStorage and file system are not provided yet (NotSupportedError).
   const makeBuckets = () => {
-    const td = new TextDecoder(), text = b => td.decode(b);
+    const td = new TextDecoder('utf-8', { ignoreBOM: true }), text = b => td.decode(b);
     const unpack = ab => {
       const u = new Uint8Array(ab), u32 = i => (u[i] | u[i + 1] << 8 | u[i + 2] << 16 | u[i + 3] << 24) >>> 0;
       const out = [];
@@ -10354,7 +10354,7 @@
   // A write answers the changes the document sees (Lean's `changes`); they are fired as one
   // CookieChangeEvent in a later task. Changes made by document.cookie or HTTP are not fired yet.
   const makeCookieStore = () => {
-    const td = new TextDecoder(), text = b => td.decode(b);
+    const td = new TextDecoder('utf-8', { ignoreBOM: true }), text = b => td.decode(b);
     const unpack = ab => {
       const u = new Uint8Array(ab), u32 = i => (u[i] | u[i + 1] << 8 | u[i + 2] << 16 | u[i + 3] << 24) >>> 0;
       const out = [];
@@ -10494,7 +10494,7 @@
   // replaces. An entry's response is kept in Lean as opaque bytes written here (its status, headers,
   // URL, type and body); matching never reads them. In memory only.
   const makeCaches = () => {
-    const td = new TextDecoder(), text = b => td.decode(b);
+    const td = new TextDecoder('utf-8', { ignoreBOM: true }), text = b => td.decode(b);
     const unpack = ab => {
       const u = new Uint8Array(ab), u32 = i => (u[i] | u[i + 1] << 8 | u[i + 2] << 16 | u[i + 3] << 24) >>> 0;
       const out = [];

@@ -25,6 +25,7 @@ L4Factoidal.ClientStorage.CookieStore — the Cookie Store API (WICG cookie-stor
   `/` for a `__Host-` name. A cookie of the store is always `Secure`.
 * `delete` removes the cookies of that name, host and path (default `/`), as setting an
   expired cookie does, with the same domain and path checks.
+* An empty `path` is the default path of the document's URL.
 * `get` and `getAll` with a `url`: in a window the URL (fragment excluded) must equal the
   document's URL, else `TypeError`; its path is the path cookies are matched against.
 * Not modelled: `SameSite` and `Partitioned` (the jar has no such fields: every cookie is
@@ -109,6 +110,8 @@ def set (jar : Jar) (site : Site) (now : Nat) (name value : String) (domain path
     (expires : Option Nat) : Option Jar :=
   let name := normalize name
   let value := normalize value
+  -- an empty path is the default path of the document's URL
+  let path := path.map fun p => if p.isEmpty then defaultPath site.path else p
   if !nameValueOk name value || !attrsOk site.host name domain path then none else
   match admit site now name value { expires, domain, path := some (path.getD "/"), secure := true } with
   | none => none
@@ -117,6 +120,7 @@ def set (jar : Jar) (site : Site) (now : Nat) (name value : String) (domain path
 /-- `cookieStore.delete`: the jar after it, or `none` for a `TypeError`. -/
 def delete (jar : Jar) (site : Site) (now : Nat) (name : String) (domain path : Option String) : Option Jar :=
   let name := normalize name
+  let path := path.map fun p => if p.isEmpty then defaultPath site.path else p
   if !attrsOk site.host name domain path then none else
   some (store jar now { name, value := "", host := site.host, path := path.getD "/", secure := true, expires := some 0 })
 
@@ -309,6 +313,8 @@ private def getC (n : String) (url : String := "") : List String := ["get", U, "
 #guard run [setC "n" "v" (path := some "cookiestore"), setC "n" "v" (path := some "/cookiestore/sub/"), getC "n",
   setC "n" "w" (path := some "/cookiestore/"), getC "n", setC "m" "v" (path := some "/cookiestore"), getC "m"] ==
   ["!TypeError", "ok", "ok", "ok + n w", "ok n w", "ok + m v", "ok m v"]
+-- an empty path is the document's default path (a __Host- name then fails)
+#guard run [setC "e" "v" (path := some ""), getC "e", setC "__Host-e" "v" (path := some "")] == ["ok + e v", "ok e v", "!TypeError"]
 -- __Host-: no domain, path "/" only; __Secure-: fine on a secure page
 #guard run [setC "__Host-c" "v" (dom := some "web-platform.test"), setC "__Host-c" "v" (path := some "/path"),
   setC "__Host-c" "v" (path := some "/"), getC "__Host-c", setC "__Secure-c" "v", getC "__Secure-c"] ==
