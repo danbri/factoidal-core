@@ -2209,6 +2209,9 @@ L4Factoidal_JS_Re_matchNode  # (b) the backtracking matcher (§22.2.2 continuati
 L4Factoidal_JS_proxyTrap  # (c) a Proxy handler's trap: one [[Get]] on the handler, as L4Factoidal_JS_get*
 L4Factoidal_JS_hasProp  # (c) HasProperty: a `has` trap is a call, as L4Factoidal_JS_call*; a proxy of a proxy adds one level per proxy
 L4Factoidal_JS_ownKeysOf  # (c) OwnPropertyKeys: an `ownKeys` trap is a call, as L4Factoidal_JS_call*; one level per proxy in a chain
+L4Factoidal_JS_elemAt  # (c) an Array iteration method's element: HasProperty and [[Get]] (traps, getters) are calls, as L4Factoidal_JS_hasProp and L4Factoidal_JS_get*
+L4Factoidal_JS_arrayLikeLength  # (c) LengthOfArrayLike: [[Get]] of length and ToNumber are calls, as L4Factoidal_JS_get* and L4Factoidal_JS_to*
+L4Factoidal_JS_defineOwnProp  # (c) [[DefineOwnProperty]]: a defineProperty trap is a call and a Proxy passes the request to its target, one level per proxy, as L4Factoidal_JS_ownDesc
 L4Factoidal_JS_ownDesc  # (c) GetOwnProperty: a `getOwnPropertyDescriptor` trap and the descriptor's getters, as L4Factoidal_JS_get*
 L4Factoidal_JS_regexExec  # (c) RegExpBuiltinExec: lastIndex read and written through [[Get]]/[[Set]], as L4Factoidal_JS_get* and L4Factoidal_JS_put*; the match itself is L4Factoidal_JS_Re_matchNode
 L4Factoidal_JS_extraNative  # (c) RegExp, Proxy, typed array, JSON.parse and host built-ins: ToString/ToNumber of arguments and replacer calls, as L4Factoidal_JS_to* and L4Factoidal_JS_call*
