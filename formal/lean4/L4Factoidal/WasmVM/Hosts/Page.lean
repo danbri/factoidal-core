@@ -841,7 +841,8 @@ def Host.tickTimeline (h : Host) : Host :=
 requests and answers are JSON): 60 a new effect on element `node` (a node that is not an
 element: no target); 61 a change of effect `node`; 62 a read of effect `node`; 63 a
 new animation; 64 a method or setter of animation `node`; 65 the state of animation
-`node` with its acts; 66 the animations of element `node` (`q` "subtree": and of its
+`node` with its acts (with `q` "commit": the values `commitStyles()` writes, or its
+error); 66 the animations of element `node` (`q` "subtree": and of its
 descendants; node 0 with "subtree": of the document), after a style change; 67 the
 frame's part ("update animations": the events of CSS animations and transitions, and
 whether another frame is needed; with `q` "ask": ask for a frame); 68 the timeline time in
@@ -852,7 +853,11 @@ def animOp (h : Host) (node op : Nat) (q : String) : Host × Except Int String :
   let dom := h.dom.dom
   let bump := fun (h : Host) (anim : L4Factoidal.Rendering.Animation.State) =>
     -- a change of what a layout reads that writes nothing of the document (`Reads.wrote`, neutral)
-    { h with anim, reads := { (h.reads.wrote none true) with animEpoch := h.reads.animEpoch + 1 } }
+    let h : Host := { h with anim, reads := { (h.reads.wrote none true) with animEpoch := h.reads.animEpoch + 1 } }
+    -- a change that leaves an animation to remove (Web Animations 1 §5.5: a finished one
+    -- that others cover) needs the frame that removes it and sends its `remove` event
+    if (L4Factoidal.Rendering.Animation.replaced anim (fun n => n < dom.size && dom.connected n)).isEmpty then h
+    else h.askAnimationFrame
   let api := L4Factoidal.Rendering.Animation.Api.createEffect
   match op with
   | 60 =>
@@ -870,6 +875,47 @@ def animOp (h : Host) (node op : Nat) (q : String) : Host × Except Int String :
     let (anim, r) := L4Factoidal.Rendering.Animation.Api.callAnim h.anim node q
     (bump h anim, .ok r)
   | 65 =>
+    if q == "commit" then
+      -- `commitStyles()` (§6.4.9): the values to write in the target's `style` attribute, or
+      -- the error. A target that has no `style` attribute (a pseudo-element, an element that
+      -- is neither HTML, SVG nor MathML) first; then, with the styles of the document as it
+      -- is, a target that is not rendered (not in the document, or `display: none` on it or
+      -- on an ancestor).
+      let err := L4Factoidal.Rendering.Animation.Api.err
+      match (h.anim.anims[node]?).bind (fun a => h.anim.effectOf a) with
+      | none => (h, .ok "[]")
+      | some e =>
+        match e.target with
+        | none => (h, .ok "[]")
+        | some t =>
+          let n := dom.get t
+          let styled := n.type == .element &&
+            (n.ns == some L4Factoidal.DOM.htmlNS || n.ns == some L4Factoidal.DOM.svgNS || n.ns == some L4Factoidal.DOM.mathmlNS)
+          if e.pseudo != "" || !styled then
+            (h, .ok (err "NoModificationAllowedError" "The target has no style attribute."))
+          else
+            let (h, _) := h.measured
+            match h.reads.measure with
+            | none => (h, .ok "[]")
+            | some m =>
+              let dom := h.dom.dom
+              -- the styles with no animated value: those kept by the measure just made, or the cascade
+              let carry := (h.reads.styleKept.bind (·.base)).map fun c => (c, ([] : List Nat))
+              let (base, _) := m dom h.reads.width h.reads.height [] carry
+              let hidden := !(t < dom.size && dom.connected t) || Id.run do
+                let mut k := t
+                for _ in [0:dom.size + 1] do
+                  if base k 29 "display" == some "none" then return true
+                  match (dom.get k).parent with
+                  | some p => k := p
+                  | none => return false
+                return false
+              if hidden then (h, .ok (err "InvalidStateError" "The target is not rendered."))
+              else
+                let ac := animationAccess dom base none (some [])
+                (h, .ok (L4Factoidal.Rendering.Animation.Api.commitAnswer
+                  (L4Factoidal.Rendering.Animation.commitValues h.anim ac node)))
+    else
     let (anim, r) := L4Factoidal.Rendering.Animation.Api.snapshot h.anim node
     ({ h with anim }, .ok r)
   | 66 =>

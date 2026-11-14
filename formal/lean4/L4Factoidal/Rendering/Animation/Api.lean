@@ -418,6 +418,7 @@ def snapshot (s : State) (id : Nat) : State × String :=
       ("effect", match a.effect with | some e => .number (toString e) | none => .null),
       ("timeline", .bool a.timeline), ("kind", .string kind), ("name", .string name),
       ("id", .string a.idText),
+      ("replaceState", .string (if a.replace == 1 then "removed" else if a.replace == 2 then "persisted" else "active")),
       ("owner", match a.owner with | some o => .number (toString o) | none => .null),
       -- Web Animations 2 §4.4.4 overall progress: the current time over the effect end, in [0, 1]
       ("overallProgress", match a.player.currentTime tl, s.effectOf a with
@@ -486,7 +487,14 @@ def callAnim (s : State) (id : Nat) (q : String) : State × String :=
     | some "finish" => done (a.player.finish tl eff)
     | some "cancel" => done (.ok (a.player.cancel tl eff))
     | some "reverse" => done (a.player.reverse tl eff)
-    | some "notify" => done (.ok (a.player.finishNotify tl eff))
+    | some "notify" =>
+      -- the finish notification steps; after the finish event, the `remove` event of an
+      -- animation that was removed while its notification waited (`Engine.removeReplaced`)
+      let p := a.player.finishNotify tl eff
+      if a.removeDue && p.finishedResolved then
+        let s := { s with anims := s.anims.modify id fun x => { x with removeDue := false } }
+        snapshot (s.setPlayer id (p.emit (removeEvent s a))) id
+      else done (.ok p)
     | some "currentTime" =>
       match timeOf j "v" with
       | .ok t => done (a.player.setCurrentTime tl eff t)
@@ -530,10 +538,18 @@ def callAnim (s : State) (id : Nat) (q : String) : State × String :=
       snapshot (s.setPlayer id (p.updateFinished (s.tl a) (s.effEnd a) false false)) id
     | some "id" =>
       snapshot { s with anims := s.anims.modify id fun x => { x with idText := (member j "v").getD "" } } id
+    | some "persist" =>
+      -- §6.4 persist(): the replace state is persisted (a removed animation is in the effect
+      -- stack again, and is never removed)
+      snapshot { s with anims := s.anims.modify id fun x => { x with replace := 2 } } id
     | some "refresh" =>
       -- after a change of the effect's timing: §4.4.14 with no seek
       snapshot (s.setPlayer id (a.player.updateFinished tl eff false false)) id
     | _ => (s, err "TypeError" "unknown animation operation")
+
+/-- The answer of `commitStyles()` (`Engine.commitValues`): `[[property, value], …]`. -/
+def commitAnswer (vals : List (String × String)) : String :=
+  (Json.array (vals.map fun (p, v) => .array [.string p, .string v])).toString
 
 /-- `getAnimations()` (§6.8, §6.9): the animations whose effect is current or in effect
 (§4.6.6 "relevant") and whose target `wanted` holds of, in composite order, by number. -/
@@ -618,5 +634,51 @@ private def acW : Access :=
 #guard listAnimations run.1 (· == 5) == "[0]"
 #guard listAnimations run.1 (· == 6) == "[]"
 #guard (JSON.parseJson? run.2).bind (·.getString? "playState") == some "paused"
+
+-- Replaced animations (web-animations/timing-model/timelines/update-and-send-events-replacement.html):
+-- two animations of one element and property that fill forwards; once both are finished the
+-- first is removed, with a `remove` event, and is in no list and no effect stack; a third
+-- animation of another property covers nothing; a persisted animation is not removed
+private def fillOf (s : State) (property value : String) (duration : String := "n:1") : State :=
+  let n := s.effects.size
+  let (s, _) := createEffect yes s (some 5)
+    ("{\"kf\":{\"list\":[{\"offset\":\"1\",\"p\":[[\"" ++ property ++ "\",\"" ++ value ++ "\"]]}]},\"opt\":{\"fill\":\"forwards\",\"duration\":\"" ++ duration ++ "\"}}")
+  let (s, _) := createAnim s ("{\"effect\":\"" ++ toString n ++ "\",\"timeline\":true}")
+  (callAnim s (s.anims.size - 1) "{\"m\":\"play\"}").1
+private def twoFilled : State := fillOf (fillOf {} "opacity" "1") "opacity" "0.5"
+-- at the first frame both start; nothing is finished, nothing is removed
+#guard replaced (tick twoFilled) == []
+-- 10 ms later both are finished: the first is covered by the second
+private def twoDone : State := tick { tick twoFilled with now := Fix.ofInt 10 }
+#guard twoDone.anims.toList.map (·.replace) == [1, 0]
+-- its `remove` event waits for its finish notification, and comes after the finish event
+private def hasRemove (a : AnimRec) : Bool :=
+  a.player.out.any fun act => match act with
+    | .event "remove" _ _ => true
+    | _ => false
+#guard (twoDone.anims[0]?).any fun a => a.removeDue && !hasRemove a
+#guard ((callAnim twoDone 0 "{\"m\":\"notify\"}").1.anims[0]?).any fun a => !a.removeDue
+-- (in the answer of the notification: the finish event, then the remove event, each once)
+#guard (match (callAnim twoDone 0 "{\"m\":\"notify\"}").2.splitOn "\"finish\"" with
+  | [_, rest] => (rest.splitOn "\"remove\"").length == 2
+  | _ => false)
+#guard listAnimations twoDone (· == 5) == "[1]"
+#guard overrides twoDone { acW with base := fun _ p => if p == "opacity" then some "0.1" else none } ==
+  [{ node := 5, property := "opacity", value := "0.5" }]
+-- a second frame removes nothing more and sends no second event
+#guard replaced twoDone == [] && (tick twoDone).anims.toList.map (·.replace) == [1, 0]
+-- the removed animation commits its own value (the animation above it left out)
+#guard commitValues twoDone { acW with base := fun _ p => if p == "opacity" then some "0.1" else none } 0 == [("opacity", "1")]
+#guard commitValues twoDone { acW with base := fun _ p => if p == "opacity" then some "0.1" else none } 1 == [("opacity", "0.5")]
+#guard (JSON.parseJson? (snapshot twoDone 0).2).bind (·.getString? "replaceState") == some "removed"
+-- an animation of another property covers nothing; a long animation above is not finished: no removal
+#guard (tick { tick (fillOf (fillOf {} "opacity" "1") "width" "9px") with now := Fix.ofInt 10 }).anims.toList.map (·.replace) == [0, 0]
+#guard (tick { tick (fillOf (fillOf {} "opacity" "1") "opacity" "0" "n:100000") with now := Fix.ofInt 10 }).anims.toList.map (·.replace) == [0, 0]
+-- persist(): the animation stays, whatever covers it
+private def persisted : State :=
+  let s := (callAnim (fillOf {} "opacity" "1") 0 "{\"m\":\"persist\"}").1
+  tick { tick (fillOf s "opacity" "0.5") with now := Fix.ofInt 10 }
+#guard persisted.anims.toList.map (·.replace) == [2, 0]
+#guard (JSON.parseJson? (snapshot persisted 0).2).bind (·.getString? "replaceState") == some "persisted"
 
 end L4Factoidal.Rendering.Animation.Api
