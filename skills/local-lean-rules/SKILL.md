@@ -1,6 +1,6 @@
 ---
 name: local-lean-rules
-description: Rules for every Lean change in this repository, so soundness and build discipline do not slide. The banned escape hatches, what `@[csimp]` does and does not guarantee, how to word what is proved, 32-bit Wasm traps, and searching upstream before calling something a Lean bug. Use before writing, reviewing or describing Lean code, before adding a fast path, and before saying a result is proved.
+description: Rules for every Lean change in this repository, so soundness and build discipline do not slide. The banned escape hatches, what `@[csimp]` does and does not guarantee, how to word what is proved, 32-bit Wasm traps, crashes and resource exhaustion as safety properties with proved bounds, and searching upstream before calling something a Lean bug. Use before writing, reviewing or describing Lean code, before adding a fast path, and before saying a result is proved.
 ---
 
 # Local Lean rules
@@ -124,3 +124,35 @@ committed files do not.
 Code that rests on something unproved or unverified (our own crypto, a pure hash on data of unknown
 sensitivity, a silent fallback) takes a risk token and is listed in the register:
 [`lean-risk-flags`](../lean-risk-flags/SKILL.md). "This data is public" is not a reason the code can rely on.
+
+## 11. Crashes and resource exhaustion are safety properties
+
+A crash of the engine, a hang, or a page that makes the engine take the machine's memory or processor
+without bound is a threat to the user's data and security, not a matter of polish. It loses state, any
+page can cause it on purpose, a locked-up machine is a denial of service on everything else the user is
+doing, and a crash is often the visible end of a fault that could do worse. Lean's proofs do not cover
+this for free: a total function can still overflow the stack, exhaust memory, or run for hours. So the
+bounds are stated and proved like any other property, with the aim that the engine runs in a regime
+where a crash is rare and a resource limit is a defined outcome.
+
+- **Every loop and recursion driven by page-controlled input has a stated bound** (a fuel, a depth, a
+  length, a step budget), and a theorem says what happens at the bound: a defined refusal (an error
+  value, or a truncated result with a diagnostic), never a trap. Section 5 covers the stack; this covers
+  time and memory as well.
+- **Resource contracts are theorems where they can be**: the size of an output bounded by a function of
+  the input's size; a work counter bounded; the commands, objects or bytes of one step bounded by the
+  session's limit; the check of a limit shown to come before the allocation it guards. Small bound
+  lemmas that several features share are worth more than one large one.
+- **Limits are per page and per session, and decided in Lean.** Reaching one ends that page's work with
+  a diagnostic and leaves the browser, its other pages and the machine usable. Prove that reaching the
+  limit gives the refusal. Do not raise a limit to make a failure go away without a proof or a
+  measurement for the new bound.
+- **Outside the proofs** (the C runtime, FFI, GPU, host code): bound it from the Lean side (sizes and
+  counts checked before the call), and flag what is left under [`lean-risk-flags`](../lean-risk-flags/SKILL.md).
+- **A crash, a kill at the memory limit, or a runner that locks up is a defect that comes before the
+  subtests around it**, in WPT runs and anywhere else. Find the cause, fix it, keep the reduced page as
+  a test, and state the bound that now holds. A `CRASH` in a full run is reported by name
+  ([`wpt-runs`](../wpt-runs/SKILL.md) section 6).
+- **In reports**, next to proved / tested only / open, say which bounds are proved, which hold only by
+  test or by a limit, and which inputs have none.
+

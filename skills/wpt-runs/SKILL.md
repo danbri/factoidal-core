@@ -126,6 +126,10 @@ Where it lives (`danbri/factoidal-builds`):
   progress is a measured difference.
 - In a hand-back, report subtests before and after on the names affected, the regression check, and
   timings.
+- A test that ends in `CRASH`, is killed at the memory limit, or locks up its runner is a defect that
+  comes before the subtests around it, not only lost subtests: name it in the report of the run, find the
+  cause, and fix it with a stated bound (`local-lean-rules` section 11). Compare the `CRASH` and
+  `TIMEOUT` counts of each full run with the run before.
 
 ## 7. Cloud builds
 

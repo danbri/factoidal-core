@@ -28,6 +28,9 @@ trust (HACL\*, for example). In particular:
   Lean answering instead.
 - **An unproved fast path** standing in for a proved specification, beyond what `local-lean-rules` §4
   already allows (a differential test, said so).
+- **Unbounded work on page-controlled input**: a loop, recursion or allocation with no proved bound, or a
+  bound held only by a test or a host limit. Crashes, hangs and resource exhaustion are safety
+  properties (`local-lean-rules` §11).
 
 Refusing is not a risk. `NotSupportedError` for AES on hosts without a verified AES is the safe default.
 

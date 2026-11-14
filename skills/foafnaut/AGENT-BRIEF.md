@@ -33,6 +33,9 @@ standards conformance.
 - Linux CI runs a tail-recursion gate (`tools/lean-tail-recursion-audit.py --gate`): prefer tail-recursive or structural
   code over allow-list entries.
 - Security decisions come with theorems where they are cheap, and the rest is listed as open in the design record.
+- Crashes, hangs and resource exhaustion are safety properties: work on page-controlled input has a proved bound and
+  a defined refusal at the bound, and a crash in a test run is fixed before the subtests around it
+  (`skills/local-lean-rules` section 11).
 - Say exactly what is proved, and what is only tested.
 
 ## Performance
