@@ -2241,6 +2241,8 @@ def renderStyled (dom : Dom) (computed : Array Computed) (font : FontProfile) (e
             minHeight := s.minHeight.atViewport vw vh, maxHeight := s.maxHeight.atViewport vw vh,
             align := (flexAtViewport vw vh s).align, flex := (flexAtViewport vw vh s).flex,
             pos := (flexAtViewport vw vh s).pos}
+  -- Percentage margins and padding, where the containing block's width is definite.
+  let styles := percentEdges dom styles vw
   -- `box-sizing: border-box`: the layout reads content-box sizes.
   let styles := styles.map contentBoxed
   let canvas := canvasBackground dom styles

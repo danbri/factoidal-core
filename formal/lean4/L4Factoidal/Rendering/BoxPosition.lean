@@ -84,6 +84,12 @@ structure PositionStyle where
   /-- `transform-origin`: `(x, ofWidth, y, ofHeight)`, lengths and fractions of the border
   box; its centre by default. -/
   transformOrigin : Float × Float × Float × Float := (0,0.5,0,0.5)
+  /-- The percentage parts of the margins (top, right, bottom, left), as fractions of the
+  containing block's width (CSS 2.1 §8.3), until `Layout.percentEdges` adds them to
+  `Computed.margin`. -/
+  marginOf : Float × Float × Float × Float := (0,0,0,0)
+  /-- The same for the padding (§8.4). -/
+  paddingOf : Float × Float × Float × Float := (0,0,0,0)
   deriving Repr
 
 /-- Every field equal: the two lay out the same. -/
@@ -93,13 +99,33 @@ def PositionStyle.same (a b : PositionStyle) : Bool :=
   a.borderBox == b.borderBox && a.ratio == b.ratio && a.ratioAuto == b.ratioAuto &&
   a.writingMode == b.writingMode && a.listStyle == b.listStyle && a.listInside == b.listInside &&
   a.flowRoot == b.flowRoot && a.content == b.content && a.nowrap == b.nowrap && a.textTransform == b.textTransform &&
-  sameSteps a.transform b.transform && a.transformOrigin == b.transformOrigin
+  sameSteps a.transform b.transform && a.transformOrigin == b.transformOrigin &&
+  a.marginOf == b.marginOf && a.paddingOf == b.paddingOf
 
 /-- Out of flow by positioning: `absolute` or `fixed`. -/
 def PositionStyle.isAbsolute (p : PositionStyle) : Bool := p.position == .absolute || p.position == .fixed
 
 /-- Establishes the containing block of its absolutely positioned descendants. -/
 def PositionStyle.isPositioned (p : PositionStyle) : Bool := p.position != .static
+
+/-- One side of four (0 top, 1 right, 2 bottom, 3 left) set to `v`. -/
+def setSide (t : Float × Float × Float × Float) (side : Nat) (v : Float) : Float × Float × Float × Float :=
+  match side with
+  | 0 => (v,t.2.1,t.2.2.1,t.2.2.2)
+  | 1 => (t.1,v,t.2.2.1,t.2.2.2)
+  | 2 => (t.1,t.2.1,v,t.2.2.2)
+  | _ => (t.1,t.2.1,t.2.2.1,v)
+
+/-- The percentage part of the margin of one side; the style itself when nothing changes. -/
+def PositionStyle.withMarginOf (p : PositionStyle) (side : Nat) (v : Float) : PositionStyle :=
+  if v == 0 && p.marginOf == (0,0,0,0) then p else {p with marginOf := setSide p.marginOf side v}
+
+/-- The percentage part of the padding of one side. -/
+def PositionStyle.withPaddingOf (p : PositionStyle) (side : Nat) (v : Float) : PositionStyle :=
+  if v == 0 && p.paddingOf == (0,0,0,0) then p else {p with paddingOf := setSide p.paddingOf side v}
+
+/-- A margin or padding of the box is a percentage (or has a percentage part). -/
+def PositionStyle.percentEdges (p : PositionStyle) : Bool := p.marginOf != (0,0,0,0) || p.paddingOf != (0,0,0,0)
 
 /-- A box that holds its absolutely positioned descendants: a positioned box, or a
 transformed one (CSS Transforms 1 §3: it is their containing block, so they move with it). -/

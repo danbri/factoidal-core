@@ -916,6 +916,19 @@ private def edgePixel (source : String) : Except String Float := do
   let value ← pixels source
   if value < 0 then throw "negative edges outside first CSS profile"
   return value
+/-- One margin: its length and its percentage part, a fraction of the containing block's
+width that the layout resolves (`Layout.percentEdges`). A margin may be negative. -/
+private def marginParts (source : String) : Except String (Float × Float) := do
+  match ← length source with
+  | .px n => return (n,0)
+  | .percent p => return (0,p)
+  | .calc p v => return (v,p)
+  | _ => throw "box edges require a length or a percentage"
+/-- One padding, as `marginParts`; never negative. -/
+private def paddingParts (source : String) : Except String (Float × Float) := do
+  let (px,of) ← marginParts source
+  if px < 0 || of < 0 then throw "negative edges outside first CSS profile"
+  return (px,of)
 /-- The four margins of a `margin` shorthand: a margin may be negative (CSS 2.1 §8.3). -/
 private def marginValues (s : String) : Except String Edges := do
   match ← (words s).mapM pixels with
@@ -970,17 +983,25 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
   | "margin" => return {s with margin := ← marginValues d.value}
   | "padding" => return {s with padding := ← edgeValues d.value}
   | "margin-top" =>
-    if (trim d.value).toLower == "auto" then return {s with margin := {s.margin with top := 0}, autoMarginTop := true}
-    return {s with margin := {s.margin with top := ← pixels d.value}, autoMarginTop := false}
+    if (trim d.value).toLower == "auto" then
+      return {s with margin := {s.margin with top := 0}, autoMarginTop := true, pos := s.pos.withMarginOf 0 0}
+    let (px,of) ← marginParts d.value
+    return {s with margin := {s.margin with top := px}, autoMarginTop := false, pos := s.pos.withMarginOf 0 of}
   | "margin-right" =>
-    if (trim d.value).toLower == "auto" then return {s with margin := {s.margin with right := 0}, autoMarginRight := true}
-    return {s with margin := {s.margin with right := ← pixels d.value}, autoMarginRight := false}
+    if (trim d.value).toLower == "auto" then
+      return {s with margin := {s.margin with right := 0}, autoMarginRight := true, pos := s.pos.withMarginOf 1 0}
+    let (px,of) ← marginParts d.value
+    return {s with margin := {s.margin with right := px}, autoMarginRight := false, pos := s.pos.withMarginOf 1 of}
   | "margin-bottom" =>
-    if (trim d.value).toLower == "auto" then return {s with margin := {s.margin with bottom := 0}, autoMarginBottom := true}
-    return {s with margin := {s.margin with bottom := ← pixels d.value}, autoMarginBottom := false}
+    if (trim d.value).toLower == "auto" then
+      return {s with margin := {s.margin with bottom := 0}, autoMarginBottom := true, pos := s.pos.withMarginOf 2 0}
+    let (px,of) ← marginParts d.value
+    return {s with margin := {s.margin with bottom := px}, autoMarginBottom := false, pos := s.pos.withMarginOf 2 of}
   | "margin-left" =>
-    if (trim d.value).toLower == "auto" then return {s with margin := {s.margin with left := 0}, autoMarginLeft := true}
-    return {s with margin := {s.margin with left := ← pixels d.value}, autoMarginLeft := false}
+    if (trim d.value).toLower == "auto" then
+      return {s with margin := {s.margin with left := 0}, autoMarginLeft := true, pos := s.pos.withMarginOf 3 0}
+    let (px,of) ← marginParts d.value
+    return {s with margin := {s.margin with left := px}, autoMarginLeft := false, pos := s.pos.withMarginOf 3 of}
   | "text-align" => match (trim d.value).toLower with
     | "start" => return {s with textAlign := .start}
     | "left" => return {s with textAlign := .left}
@@ -1000,10 +1021,18 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     | "isolate-override" => return {s with unicodeBidi := .isolateOverride}
     | "plaintext" => return {s with unicodeBidi := .plaintext}
     | _ => throw "unsupported CSS unicode-bidi"
-  | "padding-top" => return {s with padding := {s.padding with top := ← edgePixel d.value}}
-  | "padding-right" => return {s with padding := {s.padding with right := ← edgePixel d.value}}
-  | "padding-bottom" => return {s with padding := {s.padding with bottom := ← edgePixel d.value}}
-  | "padding-left" => return {s with padding := {s.padding with left := ← edgePixel d.value}}
+  | "padding-top" =>
+    let (px,of) ← paddingParts d.value
+    return {s with padding := {s.padding with top := px}, pos := s.pos.withPaddingOf 0 of}
+  | "padding-right" =>
+    let (px,of) ← paddingParts d.value
+    return {s with padding := {s.padding with right := px}, pos := s.pos.withPaddingOf 1 of}
+  | "padding-bottom" =>
+    let (px,of) ← paddingParts d.value
+    return {s with padding := {s.padding with bottom := px}, pos := s.pos.withPaddingOf 2 of}
+  | "padding-left" =>
+    let (px,of) ← paddingParts d.value
+    return {s with padding := {s.padding with left := px}, pos := s.pos.withPaddingOf 3 of}
   | "color" => return {s with color := ← color d.value}
   | "background" | "background-color" =>
     let bg ← if d.value == "transparent" then pure none else some <$> color d.value
