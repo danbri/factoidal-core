@@ -418,6 +418,42 @@ def setReads (held : Held) (env : PageCanvas.Env) (measure : Option Page.Measure
     session := held.session.map fun (id, s, m) => (id, { s with host := page s.host }, m),
     leanSession := held.leanSession.map fun (id, s, m) => (id, s.setHost (page s.host), m) }
 
+/-- The session's reads after the page it lays out changed with no write of its scripts: the
+kept layout is dropped and the version raised, so the next read lays the page out again
+and styles it whole (`Reads.styleVersion` stays behind the version: a cascade, never a
+stale style). -/
+def staleReads (held : Held) : Held :=
+  let page := fun (h : Page.Host) => { h with reads := { h.reads with kept := none, version := h.reads.version + 1 } }
+  { held with
+    session := held.session.map fun (id, s, m) => (id, { s with host := page s.host }, m),
+    leanSession := held.leanSession.map fun (id, s, m) => (id, s.setHost (page s.host), m) }
+
+/-- The held layout request after an action that carries `layout`: a host sends it when the
+page its session lays out changed after `start` (a style sheet or an image that it
+fetched late, for an element a script made; an imported sheet; another text size), so the
+layout that the page's scripts read is the one the page is drawn with. `start` sets the
+request itself. A `layout` that is the held one changes nothing and keeps the kept layout.
+Until 2026-11-14 the request was fixed at `start`: late sheets reached the renders and not
+the scripts' reads. -/
+def takeLayout (held : Held) (action : String) (request : JSON.Json) : Held :=
+  if action == "start" then held else
+  match request.field? "layout" with
+  | some layout => if layout == held.layoutRequest then held else staleReads { held with layoutRequest := layout }
+  | none => held
+
+/-- Kind: property. Says: `start` is not touched by `takeLayout` (it sets the layout request
+itself). -/
+theorem takeLayout_start (held : Held) (request : JSON.Json) : takeLayout held "start" request = held := by
+  simp [takeLayout]
+
+/-- Kind: property (zero cost). Says: an action with no `layout` field leaves the session
+as it was: its layout request, its kept layout and its version. A host that never sends
+the field pays nothing. -/
+theorem takeLayout_absent (held : Held) (action : String) (request : JSON.Json)
+    (h : request.field? "layout" = none) : takeLayout held action request = held := by
+  unfold takeLayout
+  split <;> simp [h]
+
 /-- The page's arena, parsed as `WebDocument.prepareDOM` parses it, so node numbers agree
 with a render's replay of the commands. -/
 def parse (html url : String) : Except String DOM.Dom :=
@@ -1212,6 +1248,8 @@ of its scripts (`WebDocument.measure`), with the `layout` request of `start`. -/
 def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action html : String) (request : JSON.Json)
     (measure : JSON.Json → Option Page.Measure := fun _ => none) (canvas : PageCanvas.Env := {}) :
     M (Held × Except String String) := do
+  -- a `layout` of the action replaces the held request before the reads are set (`takeLayout`)
+  let held := takeLayout held action request
   let held := setReads held canvas (measure held.layoutRequest)
   let full := request.field? "full" == some (.bool true)
   match action with

@@ -3,7 +3,7 @@ import {resolve} from "node:path";
 import {sourceBound,MAX_SOURCE_BYTES,type HTMLEngine,type HTMLResource,type ScriptTurn} from "./native_html_engine.ts";
 import {addEntries,noteDiagnostics,noteTurn} from "./native_console.ts";
 import {netAnswer,type NetWire} from "./native_net.ts";
-import {loadSubresource,newlyListed,takeAnimated} from "../../../docs/web/hub/foafnaut/page-load.mjs";
+import {loadSubresource,newlyListed,takeAnimated,loadImports} from "../../../docs/web/hub/foafnaut/page-load.mjs";
 
 /** The view state of a page. Lean applies it; the host only keeps the values. */
 // zoomUnit: the backing pixels for each point, in percent (WebDocument.zoomUnit): Lean lays the page
@@ -329,6 +329,26 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
       resourceFailures.push({nodeId:descriptor.nodeId,url:descriptor.url,reason:String(error instanceof Error?error.message:error)});
     }
   }
+  // The sheets that the page's sheets import (page-load.mjs loadImports): the engine names
+  // them, with the fetched sheets in hand, and reads each in place of its @import rule. A page
+  // whose sheets import nothing costs one inspect more only if it has a sheet at all.
+  const imported:{url:string;source:string}[]=[];
+  const importsNow=async()=>{
+    const hasSheet=resources.length>0||/<style/i.test(document.source);
+    if(!hasSheet&&!options?.commands)return;
+    const before=imported.length;
+    await loadImports((list:{url:string;source:string}[])=>engine.inspect(document.source,{url:document.url,...mode,resources,
+        ...(list.length?{imported:list}:{}),...(options?.commands?{commands:options.commands}:{})}),
+      async(sheetURL:string)=>{navigationURL(sheetURL,document.url,document.url);return readSheet(sheetURL);},imported,
+      (sheetURL:string,reason:string)=>fetchFailed("style sheet",sheetURL,`imported style sheet not read: ${reason}`,"page drawn without it"));
+    if(imported.length&&options)options.imported=imported;
+    return imported.length!==before;
+  };
+  let options:Record<string,unknown>|undefined;
+  try{await importsNow();}catch(error){
+    if(signal?.aborted)throw error;
+    console.error(`Native HTML: imported style sheets: ${String(error instanceof Error?error.message:error)}`);
+  }
   // Lean lists the images it wants and decides each transfer (any origin: Net.Subresource);
   // the host makes the requests, with size caps. One that fails or is refused is left out, and the page shows its alt text.
   // An engine that holds images gets each one once, and renders name them.
@@ -342,8 +362,8 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
     fetchFailed("tab icon",inspection.icon,`icon not read: ${String(error instanceof Error?error.message:error)}`,"tab shown with no icon");}
   const webFonts=await loadWebFonts(engine as WebFontEngine,document.url,document.source,resources,signal);
   // `diagnostics:true` asks Lean for the skips in the answer: the first frame only (noteDiagnostics).
-  const options:Record<string,unknown>={url:document.url,resources,...images,...mode,...(webFonts.length?{webFonts}:{}),...(resourceFailures.length?{resourceFailures}:{}),
-    ...(accept.liberal?{diagnostics:true}:{})};
+  options={url:document.url,resources,...images,...mode,...(webFonts.length?{webFonts}:{}),...(resourceFailures.length?{resourceFailures}:{}),
+    ...(imported.length?{imported}:{}),...(accept.liberal?{diagnostics:true}:{})};
   // Page scripts: Lean runs them (WebScripts). The host only fetches the bytes of `src`
   // scripts, as for stylesheets. The script session's commands are part of each render
   // request, so a render replays them over the parsed page.
@@ -372,7 +392,7 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
       // the page's scripts read is then the one the page is drawn with (its images' sizes, a
       // sheet that failed), and the engine keeps one layout for both, not two.
       {...mode,...(resources.length?{resources}:{}),...(webFonts.length?{webFonts}:{}),...images,
-        ...(resourceFailures.length?{resourceFailures}:{})})).catch(error=>{
+        ...(resourceFailures.length?{resourceFailures}:{}),...(imported.length?{imported}:{})})).catch(error=>{
       if(!accept.liberal||signal?.aborted)throw error;
       addEntries(page,[{source:"System",severity:"warning",feature:"page scripts",where:document.url,
         message:String(error instanceof Error?error.message:error),action:"scripts not run"}]);
@@ -416,6 +436,8 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
       }
       changed=true;
     }
+    // The sheets that the new sheets, or style elements the scripts made, import.
+    if(await importsNow())changed=true;
     // The engine takes 64 images of a page (WebDocument.maxDocumentImages).
     const wanted=fresh.images.slice(0,Math.max(0,64-imageCount));imageCount+=wanted.length;
     if(wanted.length) {
@@ -424,8 +446,11 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
       for(const key of ["images","heldImages"] as const)
         if(Array.isArray(more[key])){options[key]=[...((options[key] as unknown[]|undefined)??[]),...(more[key] as unknown[])];changed=true;}
     }
+    // The session's layout request was made at start: it must hear of what arrived since.
+    if(changed)lateChange=true;
     return changed;
   };
+  let lateChange=false;
   // The first frame has what the scripts' first turn asked for.
   if(script&&options.commands)try{await fetchListedAgain();}catch(error){
     if(signal?.aborted)throw error;
@@ -469,6 +494,16 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
     changed by the page's scripts ask for; `added` is called when some arrived (the host
     then draws the page again). */
     fetchAdded,
+    /** The layout fields of the page as it is now, once after a sheet, an imported sheet or an
+    image arrived that the script session's start did not have; else undefined. The host
+    sends them to the session as the `layout` of its next action (with the URL and the
+    view, as at start), so the scripts' layout reads are of the page that is drawn. */
+    takeLayoutChange:():Record<string,unknown>|undefined=>{
+      if(!lateChange||!script)return undefined;
+      lateChange=false;
+      const {url:_url,commands:_commands,diagnostics:_diagnostics,animated:_animated,...fields}=options!;
+      return fields;
+    },
     /** A later turn of the page's script session: its commands, when the DOM changed. */
     // The values of the page's running animations go with the commands into every request
     // (page-load.mjs takeAnimated): the frame is drawn again when either changed.

@@ -55,6 +55,32 @@ export function newlyListed(listed,inspection) {
   return {stylesheets,images};
 }
 
+/** The sheets that a page's sheets import (`@import`): the engine names them (`inspect`
+with the page's fetched sheets and the imported sheets so far gives `imports`, the URLs it
+lacks; it finds an import's own imports once that sheet is given), and the host fetches
+each with `fetchText(url)`, which answers `{url, source}` or throws. `inspect(imported)`
+asks the engine with the list so far. A sheet that is not read is asked for no more and
+reported to `failed(url, reason)`; the page is drawn without it. At most `rounds` rounds of
+asking (the engine follows imports 8 deep) and `limit` sheets. Answer: the list for the
+request field `imported`, `[{url, source}]` under the URLs the engine named. */
+export async function loadImports(inspect,fetchText,imported=[],failed=()=>{},limit=MAX_SHEETS,rounds=9) {
+  const tried=new Set(imported.map(sheet=>sheet.url));
+  for(let round=0;round<rounds;round++) {
+    const wanted=((await inspect(imported))?.imports??[]).map(entry=>entry.url).filter(url=>!tried.has(url));
+    if(!wanted.length)break;
+    for(const url of wanted) {
+      tried.add(url);
+      if(imported.length>=limit){failed(url,`more than ${limit} imported style sheets`);continue;}
+      try{imported.push({url,source:(await fetchText(url)).source});}
+      catch(error){
+        if(error?.name==='AbortError')throw error;
+        failed(url,reasonOf(error));
+      }
+    }
+  }
+  return imported;
+}
+
 /** One subresource of a page, of any origin (an image, a style sheet, a font, a script): the
 engine decides every step (`step`: its op `subresource`, Net.Subresource: the request to make,
 the address of a name, each redirect, CORS or no CORS, whether the answer is used), and the
@@ -88,13 +114,13 @@ each: a render, a hit test (`nodeAt`), the selection, find in page, a print layo
 `layout` request of the page's script session (WebDocument.layoutFields). A request that
 leaves one out is laid out again, as another page: its answer is not of the frame on screen.
 `page` is the host's record of the page: `url`, and what it fetched and was told
-(`resources`, `resourceFailures`, `images`, `heldImages`, `webFonts`, `commands`, `animated`,
+(`resources`, `resourceFailures`, `imported`, `images`, `heldImages`, `webFonts`, `commands`, `animated`,
 `liberal`, `scripting`). The view (text size, zoom unit, media) is the host's to add. */
 export function pageLayoutFields(page) {
   const out={url:page.url};
   if(page.liberal)out.liberal=true;
   if(page.scripting===false)out.scripting=false;
-  for(const key of ['resources','resourceFailures','images','heldImages','webFonts','commands','animated']) {
+  for(const key of ['resources','resourceFailures','imported','images','heldImages','webFonts','commands','animated']) {
     const value=page[key];
     if(Array.isArray(value)&&value.length)out[key]=value;
   }

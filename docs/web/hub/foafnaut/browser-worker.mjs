@@ -12,7 +12,7 @@ import {createBrowserState,indexedDbStore,memoryStore,stateAvailable} from './br
 import {createRouter} from './link-route.mjs';
 // The steps every host takes for a page (the sheets to fetch, the layout fields of each request,
 // the answer to a script fetch): one module for the Hub, the window, Textnaut and the WPT runner.
-import {loadStyleSheets,pageLayoutFields,fetchedAnswer,rawOverFetch,takeAnimated} from './page-load.mjs';
+import {loadStyleSheets,pageLayoutFields,fetchedAnswer,rawOverFetch,takeAnimated,loadImports} from './page-load.mjs';
 let browserState,stateReason='starting';
 const statePages=['foafnaut:bookmarks','foafnaut:history'];
 // Liberal mode (WebAccept.lean, the Settings checkbox "Be liberal in what we accept"), the
@@ -409,9 +409,16 @@ async function prepare(url){
   // failure with its reason; Lean draws the page without it and says so in the console.
   const sheets=await loadStyleSheets(facts.stylesheets,siteText);
   for(const r of sheets.resources)sources.push({kind:'Style sheet',url:r.url,source:r.source});
+  // The sheets those sheets import (page-load.mjs loadImports): named by Lean, read from this
+  // site as the linked ones are.
+  const imported=await loadImports(list=>call(page.source,{op:'inspect',url:page.url,...(liberal?{liberal:true}:{}),
+      ...(sheets.resources.length?{resources:sheets.resources}:{}),...(list.length?{imported:list}:{})}),siteText,[],
+    (sheetURL,reason)=>console.warn('foafnaut: imported style sheet not read:',sheetURL,reason));
+  for(const r of imported)sources.push({kind:'Style sheet',url:r.url,source:r.source});
   const webFonts=await pageWebFonts(page,sheets.resources);
   const next={url:page.url,title:facts.title,baseURL:facts.baseURL,source:page.source,sources,...images,liberal,...(webFonts.length?{webFonts}:{}),
-    ...(sheets.resources.length?{resources:sheets.resources}:{}),...(sheets.resourceFailures.length?{resourceFailures:sheets.resourceFailures}:{})};
+    ...(sheets.resources.length?{resources:sheets.resources}:{}),...(sheets.resourceFailures.length?{resourceFailures:sheets.resourceFailures}:{}),
+    ...(imported.length?{imported}:{})};
   if(Array.isArray(facts.diagnostics))addEntries(next,facts.diagnostics);
   if(facts.icon){const icon=await tabIcon(facts.icon);if(icon)next.icon=icon;}
   // The page is drawn first and its scripts start after that frame, as deferred scripts do:

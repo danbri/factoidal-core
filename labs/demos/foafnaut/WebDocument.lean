@@ -29,6 +29,7 @@ import WebAccept
 import WebConsole
 import WebPaint
 import L4Factoidal.Rendering.FontFaceRule
+import L4Factoidal.Rendering.ImportTree
 
 /-! Browser document transaction. Lean discovers resources, applies DOM commands,
 orders supplied CSS, collects font requests and renders the resulting arena.
@@ -442,12 +443,63 @@ private def suppliedURL (request : JSON.Json) (id : Nat) : Option String := do
   | some (.string u) => some u
   | _ => none
 
+/-! ### `@import` (CSS Cascade 5 §6.1)
+
+The engine names the sheets a page's sheets import (`inspect`, `imports`), a host fetches
+them and gives them back in every layout request (`imported`: `{url, source}` records), and
+`sheetsIn` reads each in place: before the sheet that imports it, under the import's layer,
+`supports()` condition and media (`wrapImport`), by the walk of `Rendering.ImportTree`
+(each URL once, 64 sheets, 8 deep). A page with no `imported` field does none of this. -/
+
+/-- The imported sheets a host supplies: at most 256, 4 MiB of text in all. -/
+def importedSheets (request : JSON.Json) : Except String (List (String × String)) := do
+  let .array items := (request.field? "imported").getD (.array []) | throw "imported must be an array"
+  if items.length > 256 then throw "imported style sheets exceed 256"
+  let mut out : List (String × String) := []
+  let mut bytes := 0
+  for item in items do
+    let some (.string url) := item.field? "url" | throw "imported style sheet url must be a string"
+    let some (.string source) := item.field? "source" | throw "imported style sheet source must be a string"
+    bytes := bytes+source.utf8ByteSize
+    if bytes > 4194304 then throw "imported style sheets exceed 4 MiB"
+    out := (url,source)::out
+  return out.reverse
+
+/-- The text of an imported sheet under the conditions of its `@import` rule: in an `@layer`
+block for `layer` or `layer(name)`, in an `@supports` block for `supports(...)`, in an
+`@media` block for a media query list. A rule with none of them leaves the text as it is. -/
+def wrapImport (i : Rendering.SheetReader.Import) (text : String) : String :=
+  let text := match i.layer with
+    | some name => "@layer " ++ name ++ " {\n" ++ text ++ "\n}"
+    | none => text
+  let text := match i.supports with
+    | some c =>
+      let low := c.toLower
+      let condition := if c.startsWith "(" || low.startsWith "not " || low.startsWith "selector(" then c else "(" ++ c ++ ")"
+      "@supports " ++ condition ++ " {\n" ++ text ++ "\n}"
+    | none => text
+  if i.media == "" then text else "@media " ++ i.media ++ " {\n" ++ text ++ "\n}"
+
+/-- Kind: property. Says: an `@import` with no layer, no `supports()` and no media gives the
+imported text as it is. Does not say: that the wrapped forms mean what CSS says (the sheet
+reader reads them: tested). -/
+theorem wrapImport_plain (i : Rendering.SheetReader.Import) (text : String)
+    (hl : i.layer = none) (hs : i.supports = none) (hm : i.media = "") : wrapImport i text = text := by
+  simp [wrapImport, hl, hs, hm]
+
+/-- The imports of a sheet's text, for `Rendering.ImportTree`. A text with no `@import` in
+it is not read for them. -/
+def importEdges (text : String) : List Rendering.ImportTree.Edge :=
+  if (text.toLower.splitOn "@import").length < 2 then [] else
+  (Rendering.SheetReader.imports text).map fun i => { url := i.url, wrap := wrapImport i }
+
 /-- The document's sheets in `env`, in tree order, each with the URL its own URLs resolve
 against (the document's base for a `style` element, the sheet's URL for a supplied one,
 CSS Values 4 §4.5.1), with the skip points of mode `m`: a `media` that can not be read, a
 stylesheet the host could not fetch, and sheets past 2 MiB. -/
 def sheetsIn (m : WebAccept.Mode) (dom : DOM.Dom) (request : JSON.Json) (env : Rendering.MediaQuery.Env) :
     Except String (List (String × String) × List WebAccept.Diagnostic) := do
+  let given ← importedSheets request
   -- Preserve the existing SVG/HTML stylesheet boundary validation. This copy
   -- removes only the external-fetch refusal; it is never used for layout.
   let validation := {dom with nodes := dom.nodes.map (fun n =>
@@ -483,6 +535,12 @@ def sheetsIn (m : WebAccept.Mode) (dom : DOM.Dom) (request : JSON.Json) (env : R
       continue
     bytes := bytes+source.utf8ByteSize
     let from_ := if inline then base else (suppliedURL request id).getD base
+    -- the sheets it imports that the host gave, before it, within the same bound of bytes
+    if !given.isEmpty then
+      for (u,t) in Rendering.ImportTree.sheetsOf importEdges Syntax.resolveIri (fun url => given.lookup url) from_ source do
+        if bytes+t.utf8ByteSize ≤ 2097152 then
+          bytes := bytes+t.utf8ByteSize
+          sheets := (u,t)::sheets
     sheets := (from_,source)::sheets
   return (sheets.reverse,ds)
 
@@ -595,13 +653,39 @@ def inspectIn (m : WebAccept.Mode) (dom : DOM.Dom) (url : String) (scripting : B
     ("baseURL",.string base),("title",.string (documentTitle dom)),
     ("icon",match iconURL dom base with | some url => .string url | none => .null)],ds ++ d)
 
+/-- The URLs of the sheets that the page's sheets import, at any depth through the sheets
+the request gives (`imported`), and that it does not give: what a host fetches next
+(`imports` of `inspect`). The page's sheets are its `style` elements and the linked sheets
+the request supplies. At most `ImportTree.maxSheets`. -/
+def importsLacking (dom : DOM.Dom) (url : String) (request : JSON.Json) : List String :=
+  match importedSheets request with
+  | .error _ => []
+  | .ok given =>
+    let base := baseURL dom url
+    let texts : List (String × String) := (dom.treeOrder 0).toList.filterMap fun id =>
+      let n := dom.get id
+      if DOM.Dom.isHtmlElement n "style" then some (base,(dom.textContent id).getD "")
+      else if stylesheet n && Rendering.CSS.hasAttribute n "href" then
+        match supplied request id with
+        | .ok (some text) => some ((suppliedURL request id).getD base,text)
+        | _ => none
+      else none
+    (texts.flatMap fun (from_,text) =>
+      Rendering.ImportTree.lackingOf importEdges Syntax.resolveIri (fun u => given.lookup u) from_ text).eraseDups.take
+        Rendering.ImportTree.maxSheets
+
 /-- What the host fetches for a page, in the mode of `request`. In liberal mode the answer
-has `diagnostics`, the skips (`WebAccept.Diagnostic.json`), when there are any. -/
+has `diagnostics`, the skips (`WebAccept.Diagnostic.json`), when there are any. With sheets
+that import others, `imports`: the URLs of the imported sheets the request does not give. -/
 def inspect (dom : DOM.Dom) (url : String) (request : JSON.Json := .object []) : Except String JSON.Json := do
   let (answer,ds) ← WebAccept.accept (WebAccept.mode request) fun m => inspectIn m dom url (scripting request)
-  match answer, ds with
-  | .object fields, _ :: _ => return .object (fields ++ [("diagnostics",WebAccept.diagnosticsJSON ds)])
-  | _, _ => return answer
+  let lacking := importsLacking dom url request
+  let more : List (String × JSON.Json) :=
+    (if lacking.isEmpty then [] else [("imports",.array (lacking.map fun u => .object [("url",.string u)]))]) ++
+    (if ds.isEmpty then [] else [("diagnostics",WebAccept.diagnosticsJSON ds)])
+  match answer with
+  | .object fields => return .object (fields ++ more)
+  | _ => return answer
 
 private def float (j : JSON.Json) : Except String Float :=
   match j with
@@ -1563,7 +1647,7 @@ values the page's scripts read. Until 2026-11-14 the field was not in this list,
 render's layout never saw it: content that fades in from `opacity: 0` stayed invisible. A
 page with no animation sends no such field and its key is as before. -/
 def layoutFields : List String := ["commands","resources","images","heldImages","url","fontData","textScalePercent","graphModel",
-  "visited","media","liberal","scripting","resourceFailures","zoomUnit","webFonts","animated"]
+  "visited","media","liberal","scripting","resourceFailures","zoomUnit","webFonts","animated","imported"]
 
 /-- The request with only `layoutFields`, in that order. -/
 def layoutRequest (request : JSON.Json) : JSON.Json :=
@@ -2385,6 +2469,12 @@ theorem model_put (memo : Lru LayoutKey Laid) (key : LayoutKey) (laid : Laid) :
 
 /-! The layout key leaves the scroll and the pointer out (`FrameCost.apply_scroll_key`,
 `FrameCost.apply_hover_key` state the same of the model's key). -/
+
+/-- Kind: property. Says: the animated values and the imported sheets are layout fields: two
+requests that differ in either are two layouts, and a kept layout of one is not used for
+the other. -/
+theorem animated_imported_layout_fields : "animated" ∈ layoutFields ∧ "imported" ∈ layoutFields := by
+  decide
 
 /-- Neither the shell, which holds the scroll, nor the hover and active nodes are
 fields of the layout request. -/
