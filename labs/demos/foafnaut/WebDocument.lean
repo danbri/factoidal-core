@@ -102,6 +102,24 @@ private def failure (request : JSON.Json) (id : Nat) : Option String :=
   | some (.array fs) => (fs.find? fun f => f.field? "nodeId" == some (.number (toString id))).map fun f =>
       str f "reason" "not fetched"
   | _ => none
+/-- A supplied resource whose node is no longer a connected style sheet link or script is
+left out (true) or refuses the request (false). It is left out when the request carries
+commands of the page's scripts: the host fetched the sheet for the tree as it was, and a
+script then removed the link, or changed its `rel`. With no commands the tree is the one
+the host was told of, and such a resource is the host's error. Before 2026-11-14 it refused
+the request in both cases, so a page whose script removed a linked sheet was not drawn. -/
+def staleResourceLeftOut (request : JSON.Json) : Bool :=
+  match request.field? "commands" with
+  | some (.array (_ :: _)) => true
+  | _ => false
+
+/-- Kind: property. Says: a request with no script commands keeps the refusal of a resource
+for a node that is no style sheet or script, as before. Does not say: anything of the
+resource's source (the other checks of `validateResources` hold in both cases). -/
+theorem staleResourceLeftOut_no_commands (request : JSON.Json) (h : request.field? "commands" = none) :
+    staleResourceLeftOut request = false := by
+  simp [staleResourceLeftOut, h]
+
 private def validateResources (dom : DOM.Dom) (request : JSON.Json) : Except String Unit := do
   let .array resources := (request.field? "resources").getD (.array []) | throw "document resources must be an array"
   if resources.length > 64 then throw "document resource limit exceeded"
@@ -115,6 +133,7 @@ private def validateResources (dom : DOM.Dom) (request : JSON.Json) : Except Str
     let some node := dom.nodes[id]? | throw "unknown resource nodeId"
     if ids.contains id then throw "duplicate resource nodeId"
     if !(dom.treeOrder 0).contains id || !(stylesheet node || WebRenderScript.isScriptElement node) then
+      if staleResourceLeftOut request then continue
       throw "resource is not a connected stylesheet or script"
     let some (.string source) := resource.field? "source" | throw "resource source must be a string"
     if source.utf8ByteSize > WebRender.maxSourceBytes then throw "resource exceeds 16 MiB"

@@ -113,6 +113,17 @@ private def requested : Option (List (String × Nat × String)) := do
 #guard requested == some [("Arial",20," "),("Arial",20,"November2026"),("Arial",20,"café"),("Arial",20,"edited"),("Arial",28,"office")]
 #guard (WebDocument.run dynamicHTML (dynamicOptions "fontRequests") 420 100).toOption.isSome
 #guard (WebDocument.run dynamicHTML (dynamicOptions "render") 420 100).toOption.isSome
+-- A style sheet link that a script removed after the host fetched its sheet (2026-11-14): the
+-- sheet is left out and the page is drawn; before, the request was refused. With no script
+-- commands, a resource for a node that is no style sheet link is still refused.
+private def dynamicLink := ((dynamicDOM.treeOrder 0).find? fun id => DOM.Dom.isHtmlElement (dynamicDOM.get id) "link").getD 0
+private def unlink : JSON.Json := json [("op",.string "removeChild"),
+  ("parent",.number (toString ((dynamicDOM.get dynamicLink).parent.getD 0))),("nodeId",.number (toString dynamicLink))]
+#guard (WebDocument.run dynamicHTML (withSheets dynamicDOM ["body{font-size:20px}"]
+  [("op",.string "render"),("commands",.array [unlink]),("fontData",.string "")]) 420 100).toOption.isSome
+#guard (WebDocument.run dynamicHTML (json [("op",.string "render"),("resources",.array [resource target "p{}"])]) 420 100).toOption.isNone
+#guard WebDocument.staleResourceLeftOut (json [("commands",.array [unlink])]) && !WebDocument.staleResourceLeftOut (json [("commands",.array [])]) &&
+  !WebDocument.staleResourceLeftOut (json [])
 #guard (WebDocument.run dynamicHTML (json [("op",.string "fontRequests"),("resources",.array [resource 1048576 "p{}"])]) 420 100).toOption.isNone
 #guard (WebDocument.run "<p>A</p>" (json [("resources",.string "bad")]) 420 100).toOption.isNone
 
