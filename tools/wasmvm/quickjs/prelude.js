@@ -11091,6 +11091,9 @@
       }
       if (v instanceof RegExp) { out.push('r' + v.flags + '/' + stEnc(v.source)); return; }
       if (isShared(v)) throw dataClone('A SharedArrayBuffer');
+      // a FileSystemHandle (File System Standard §2.2: serializable): its kind, path and name
+      const fh = fsMade ? fsMade.handleState(v) : null;
+      if (fh) { out.push('H' + (fh.dir ? 'd' : 'f') + '\u0000' + stEnc(fh.path) + '\u0000' + stEnc(fh.name)); return; }
       if (v instanceof ArrayBuffer) { if (v.detached) throw dataClone('A detached ArrayBuffer'); out.push(btok(new Uint8Array(v))); return; }
       if (ArrayBuffer.isView(v)) {
         if (v.buffer.detached) throw dataClone('A detached view');
@@ -11210,6 +11213,7 @@
           if (cause !== undefined) define(e, 'cause', cause);
           return st.objs[slot] = e;
         }
+        case 'H': { const [k, path, name] = body().slice(0).split('\u0000'); const api = fsApi(); return keep(api ? api.handleOf(stDec(path), stDec(name), k === 'd') : null); }
         case 'L': { const slot = st.objs.length; st.objs.push(null); const bytes = new Uint8Array(f[st.i++].slice(1)); return st.objs[slot] = new (makeBlob())([bytes], { type: stDec(body()) }); }
         case 'F': {
           const slot = st.objs.length;
@@ -12187,7 +12191,10 @@
       showSaveFilePicker: function showSaveFilePicker(options = undefined) { return pickerCall('save', 'showSaveFilePicker', options); },
       showDirectoryPicker: function showDirectoryPicker(options = undefined) { return pickerCall('directory', 'showDirectoryPicker', options); },
     };
-    return { manager: make(StorageManager, {}), pickers, classes: { FileSystemHandle, FileSystemFileHandle, FileSystemDirectoryHandle, FileSystemWritableFileStream,
+    // for IndexedDB's serialisation of a handle (a path and a kind of this storage key's file system)
+    const handleState = o => { if (!(o instanceof FileSystemHandle)) return null; const s = kinds.get(o); return s && s.path !== undefined ? s : null; };
+    const handleOf = (path, name, dir) => handle(path, name, dir);
+    return { manager: make(StorageManager, {}), pickers, handleState, handleOf, classes: { FileSystemHandle, FileSystemFileHandle, FileSystemDirectoryHandle, FileSystemWritableFileStream,
       FileSystemSyncAccessHandle, StorageManager } };
   };
   let fsMade;
