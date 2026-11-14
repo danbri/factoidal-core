@@ -36,6 +36,7 @@ import L4Factoidal.HTML.FrameSessions
 import L4Factoidal.JSON.Serialize
 import L4Factoidal.WebDriver.Input
 import L4Factoidal.WebDriver.Touch
+import L4Factoidal.WebDriver.Capture
 
 namespace L4Factoidal.WasmVM.Hosts.Page
 open L4Factoidal.WasmVM
@@ -153,6 +154,10 @@ structure PointerState where
   keyDefault : Option Bool := none
   /-- The touch points on the surface (`WebDriver.Touch`), from the touch pointers. -/
   touches : L4Factoidal.WebDriver.Touch.Surface := {}
+  /-- Pointer capture (`WebDriver.Capture`), and the pointers other than the mouse that are
+  down (the mouse, pointer 1, is always active). -/
+  capture : L4Factoidal.WebDriver.Capture.State := {}
+  active : List Nat := []
   deriving Inhabited, Repr
 
 /-- The layout reads of scripts: the engine's layout of an arena at a viewport (CSS
@@ -497,6 +502,29 @@ def mediaAnswer (h : Host) (q : String) : Except Int String :=
 /-- A placeholder for the DOM state while an import holds it. -/
 def emptyDomHost : DomHost := { dom := {} }
 
+/-- `setPointerCapture`, `releasePointerCapture` and `hasPointerCapture` (node_query op 220)
+on element `node`: "" when done, "NotFoundError" for a pointer that is not active,
+"InvalidStateError" for an element that is not connected; `hasPointerCapture` answers "1" or
+"0". A pointer that is not in the active buttons state is not captured (§10.1). -/
+def captureOp (h : Host) (node : Nat) (q : String) : Host × String :=
+  let p := h.pointer
+  match q.splitOn " " with
+  | [verb, n] =>
+    match n.toNat? with
+    | none => (h, "NotFoundError")
+    | some id =>
+      let active := id == 1 || p.active.contains id
+      if verb == "h" then (h, if p.capture.has id node then "1" else "0")
+      else if !active then (h, "NotFoundError")
+      else if verb == "s" then
+        if !(L4Factoidal.DOM.Dom.connected h.dom.dom node) then (h, "InvalidStateError")
+        else if (if id == 1 then p.pressed.isSome else true) then
+          ({ h with pointer := { p with capture := p.capture.set id node } }, "")
+        else (h, "")
+      else if verb == "r" then ({ h with pointer := { p with capture := p.capture.release id node } }, "")
+      else (h, "NotFoundError")
+  | _ => (h, "NotFoundError")
+
 /-- Serve one `foafnaut_dom` import, or `env.emscripten_notify_memory_growth`. -/
 def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st : StoreOf M) :
     Host × StoreOf M × HostResult :=
@@ -551,7 +579,15 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
         let (st, r) := Hosts.Dom.answerStr mem st (a 4) (a 5) answer
         ({ h with dom, reads }, st, r)
     else
-      if a 1 == 34 then
+      if a 1 == 220 then
+        -- pointer capture (Pointer Events 3 §10.1): `q` is "s ID", "r ID" or "h ID"
+        (match Hosts.Dom.readStr mem st (a 2) (a 3) Hosts.Dom.maxString with
+        | .error e => (h, st, Hosts.Dom.codeOrTrap e)
+        | .ok q =>
+          let (h, answer) := captureOp h (a 0) q
+          let (st, r) := Hosts.Dom.answerStr mem st (a 4) (a 5) (.ok answer)
+          (h, st, r))
+      else if a 1 == 34 then
         (match Hosts.Dom.readStr mem st (a 2) (a 3) Hosts.Dom.maxString with
         | .error e => (h, st, Hosts.Dom.codeOrTrap e)
         | .ok q =>

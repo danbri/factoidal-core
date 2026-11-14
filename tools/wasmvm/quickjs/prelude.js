@@ -9063,6 +9063,16 @@
     configurable: true, enumerable: true });
   // The page of a script session does not scroll (as window.scrollTo): nothing to bring into view.
   if (!('scrollIntoView' in Element.prototype)) define(Element.prototype, 'scrollIntoView', function scrollIntoView() {});
+  // Pointer capture (Pointer Events 3 §10.1): Lean keeps the capture and decides (node_query 220).
+  for (const [name, verb] of [['setPointerCapture', 's'], ['releasePointerCapture', 'r'], ['hasPointerCapture', 'h']])
+    define(Element.prototype, name, { [name](pointerId) {
+      if (arguments.length < 1) throw new TypeError(`${name}: 1 argument required`);
+      if (!(this instanceof Element)) throw new TypeError('Illegal invocation');
+      const r = n.query(nodeId(this), 220, verb + ' ' + (pointerId | 0));
+      if (verb === 'h') return r === '1';
+      if (r === 'NotFoundError') throw new DOMException('No active pointer with the given id is found.', 'NotFoundError');
+      if (r === 'InvalidStateError') throw new DOMException('The element is not connected.', 'InvalidStateError');
+    } }[name]);
   if (!('dataTransfer' in InputEvent.prototype)) Object.defineProperty(InputEvent.prototype, 'dataTransfer', { get() { return null; }, configurable: true, enumerable: true });
   // Input Events §4.1.2: the ranges the engine gave a beforeinput of an editing command
   // (node numbers and offsets), or the StaticRanges of a script's init.
@@ -11861,7 +11871,7 @@
       }
       // click, auxclick and contextmenu of pointer input are PointerEvents (Pointer Events 3 §4.2.12); a click with no pointer data is a MouseEvent
       const pointerClick = type === 'click' || type === 'auxclick' || type === 'contextmenu';
-      let C = type.startsWith('pointer') ? PointerEvent : pointerClick || type === 'dblclick' || type.startsWith('mouse') ? MouseEvent
+      let C = type.startsWith('pointer') || type === 'gotpointercapture' || type === 'lostpointercapture' ? PointerEvent : pointerClick || type === 'dblclick' || type.startsWith('mouse') ? MouseEvent
         : type === 'wheel' ? WheelEvent : type === 'message' ? MessageEvent : Event;
       const init = { bubbles: (flags & 1) !== 0, cancelable: (flags & 2) !== 0, composed: (flags & 4) !== 0, view: window };
       // The pointer's coordinates, buttons and pointer fields, as Lean gives them; the key of

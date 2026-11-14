@@ -354,6 +354,21 @@ def touchEvent (s : σ) (phase : Actions.Phase) (pointerId : Nat) (hit : Nat) (x
     | some (surface, q) => fire s surface "touchcancel" q
     | none => s
 
+/-- Process pending pointer capture (`Capture.process`): `lostpointercapture` and
+`gotpointercapture` at their elements. -/
+def processCapture (s : σ) (pointerId : Nat) (init : String) : σ :=
+  let (c, evs) := (e.host s).pointer.capture.process pointerId
+  let s := e.setPointer s { (e.host s).pointer with capture := c }
+  evs.foldl (fun s ev => (e.dispatchWith s ev.2 ev.1 init).1) s
+
+/-- The implicit release of pointer capture after `pointerup` or `pointercancel`
+(`Capture.implicit`); the pointer, unless it is the mouse, is no longer active. -/
+def releaseCapture (s : σ) (pointerId : Nat) (init : String) : σ :=
+  let (c, evs) := (e.host s).pointer.capture.implicit pointerId
+  let p := (e.host s).pointer
+  let s := e.setPointer s { p with capture := c, active := p.active.filter (· != pointerId) }
+  evs.foldl (fun s ev => (e.dispatchWith s ev.2 ev.1 init).1) s
+
 /-- A pointer event at a viewport point (Pointer Events 3, UI Events §5): first the
 boundary events of the element now under the pointer; then
 - a move: `pointermove`, and `mousemove` for a mouse or pen unless its press was canceled;
@@ -371,12 +386,20 @@ A touch pointer also fires its touch events (`touchEvent`) after its pointer eve
 def lowPointer (s : σ) (phase : Actions.Phase) (type : Actions.PointerType) (pointerId : Nat) (x y : Int)
     (button : Int) (buttons : Nat) (mods : Actions.Mods) (props : Actions.Props) : σ :=
   let s := (e.advance s (e.loop s).clock).1
-  let (s, hit) := e.hitAt s x y
-  let d := (e.host s).dom.dom
-  let p := (e.host s).pointer
+  let (s, under) := e.hitAt s x y
   let mouse := type != Actions.PointerType.touch
   let init := fun (detail : Nat) (related : Option Nat) =>
     Input.pointerInit type pointerId x y button buttons mods props detail related
+  -- pointer capture (§10.3): the pending capture is processed before the event, and a
+  -- captured pointer's events go to its capture target
+  let s := e.processCapture s pointerId (init 0 none)
+  let hit := (e.host s).pointer.capture.target pointerId under
+  -- a pointer other than the mouse is active from its press to its release
+  let s := if pointerId == 1 then s else match phase with
+    | .down => e.setPointer s { (e.host s).pointer with active := pointerId :: ((e.host s).pointer.active.filter (· != pointerId)) }
+    | _ => s
+  let d := (e.host s).dom.dom
+  let p := (e.host s).pointer
   let prev := p.over.map (chainOf d)
   let next := chainOf d hit
   let plan := Input.boundary "pointer" prev (some next) ++ (if mouse then Input.boundary "mouse" prev (some next) else [])
@@ -414,6 +437,8 @@ def lowPointer (s : σ) (phase : Actions.Phase) (type : Actions.PointerType) (po
         | none => 1
       let last := buttons == 0
       let s := (e.dispatchWith s hit (if last || !mouse then "pointerup" else "pointermove") (init count none)).1
+      -- implicit release of pointer capture after `pointerup` (§10.4)
+      let s := if last || !mouse then e.releaseCapture s pointerId (init 0 none) else s
       let s := if mouse then s else e.touchEvent s .up pointerId hit x y mods
       let s := if !mouse then s else
         Input.afterCancelable p.canceled (fun s => (e.dispatchWith s hit "mouseup" (init count none)).1) s
@@ -430,6 +455,7 @@ def lowPointer (s : σ) (phase : Actions.Phase) (type : Actions.PointerType) (po
         e.setPointer s { (e.host s).pointer with over := none }
     | .cancel =>
       let s := (e.dispatchWith s hit "pointercancel" (init 0 none)).1
+      let s := e.releaseCapture s pointerId (init 0 none)
       let s := if mouse then s else e.touchEvent s .cancel pointerId hit x y mods
       let s := e.firePlanned s (init 0) (Input.boundary "pointer" (some (chainOf (e.host s).dom.dom hit)) none)
       e.setPointer s { (e.host s).pointer with pressed := none, canceled := false, pending := none, over := none }
