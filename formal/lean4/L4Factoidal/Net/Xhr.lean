@@ -21,6 +21,7 @@ the steps that are not events, in the place the standard has them.
 import L4Factoidal.Net.PageFetch
 import L4Factoidal.Net.BlobUrls
 import L4Factoidal.Net.Integrity
+import L4Factoidal.Net.CspPolicy
 import L4Factoidal.WHATWG.Encoding.Core
 
 namespace L4Factoidal.Net.Xhr
@@ -105,6 +106,13 @@ structure State where
   /-- The client's referrer policy: its `Referrer-Policy` response field, when the embedder
   gave it (`policyOfHeader`). -/
   policy : ReferrerPolicy.Policy := .default
+  /-- The client's Content Security Policy (`cspOf`: its response's fields and its `meta`
+  elements, from the embedder). Every request of the session is checked against it
+  (`connect-src`), and the prelude asks for scripts, workers, inline blocks and `eval`
+  (ops 150 to 153). -/
+  csp : List CspPolicy.Policy := []
+  /-- Violations not yet reported (`report`): one record each, taken by op 150. -/
+  violations : Array String := #[]
   /-- The blob URLs of the session (`URL.createObjectURL`), each its origin's (`Net.BlobUrls`). -/
   blobs : L4Factoidal.Net.BlobUrls.Store := {}
   xhrs : Array Xhr := #[]
@@ -231,6 +239,66 @@ def mimeCharset (ct : String) : Option String :=
       else none
     | _ => none
 
+/-! ## Content Security Policy at the session (CSP §4.1 Fetch integration, §5 reporting) -/
+
+/-- The policies of a client: the `Content-Security-Policy` fields of its response (joined
+with commas), its `Content-Security-Policy-Report-Only` fields, and the `content` of its
+`meta http-equiv` elements (HTML §4.2.5.3: enforced, and without `report-uri`,
+`frame-ancestors` and `sandbox`, which a `meta` may not give). -/
+def cspOf (header reportOnly metas : String) : List CspPolicy.Policy :=
+  CspPolicy.parseList header ++ CspPolicy.parseList reportOnly true ++
+    (CspPolicy.parseList metas).map fun p =>
+      { p with directives := p.directives.filter fun d => !["report-uri", "frame-ancestors", "sandbox"].contains d.name }
+
+/-- A URL as CSP's source lists read it. -/
+def cspUrl (u : URL.Url) : Csp.Url := { scheme := u.scheme, host := u.hostname, port := u.port, path := u.pathname }
+
+/-- The page's origin as the URL `'self'` is matched against (an opaque origin matches no
+host). -/
+def cspSelf (p : Page) : Csp.Url :=
+  match URL.parseUrl p.origin with
+  | some o => if p.origin == "null" then { scheme := "", host := "" } else { scheme := o.scheme, host := o.hostname, port := o.port }
+  | none => { scheme := "", host := "" }
+
+/-- CSP §5.4 "strip URL for use in reports": an `http` or `https` URL without its fragment and
+credentials; of any other, the scheme. -/
+def reportUrl (u : URL.Url) : String :=
+  if u.scheme == "http" || u.scheme == "https" then ({ u with username := "", password := "" } : URL.Url).serialize true
+  else u.scheme
+
+/-- Queue the violations `vs` of directive `name` for `blocked` (a stripped URL, `inline` or
+`eval`) at node `node` (0: the document): the record is the effective directive, the blocked
+URI, the policy as written, `enforce` or `report`, the node, and a sample (U+0000 between). -/
+def report (s : State) (vs : List CspPolicy.Policy) (name blocked : String) (node : Nat := 0) (sample : String := "") : State :=
+  { s with violations := s.violations ++ (vs.map fun v =>
+      "\x00".intercalate [name, blocked, v.text, if v.reportOnly then "report" else "enforce", toString node, sample]).toArray }
+
+/-- A request of kind `name` (a directive name) to `url` under the session's policy: the
+state with its violations queued, and whether an enforced policy blocks it. A URL that does
+not parse is blocked when any policy governs the kind. -/
+def cspRequest (s : State) (name url : String) (redirected : Bool := false) (nonce : String := "")
+    (parserInserted : Bool := false) (node : Nat := 0) : State × Bool :=
+  if s.csp.isEmpty then (s, false) else
+  match URL.parseUrl url with
+  | none => (s, s.csp.any fun p => !p.reportOnly && (p.directiveFor name).isSome)
+  | some u =>
+    let vs := CspPolicy.violationsRequest s.csp name (cspSelf s.page) (cspUrl u) redirected nonce parserInserted
+    (report s vs name (reportUrl u) node, CspPolicy.enforced vs)
+
+/-- An inline script or style under the session's policy (`CspPolicy.violationsInline`, with
+HACL*'s SHA-2 for hash sources): the violations queued, and whether it is blocked. The sample
+is the first 40 characters of the text when the policy asks for one (`'report-sample'`). -/
+def cspInline (s : State) (script element : Bool) (nonce source : String) (node : Nat := 0) : State × Bool :=
+  if s.csp.isEmpty then (s, false) else
+  let vs := CspPolicy.violationsInline L4Factoidal.Crypto.WebHacl.hashFast s.csp script element nonce source.toUTF8
+  (report s vs (CspPolicy.inlineName script element) "inline" node, CspPolicy.enforced vs)
+
+/-- `eval`, `new Function` and string timers under the session's policy. -/
+def cspEval (s : State) : State × Bool :=
+  if s.csp.isEmpty then (s, false) else
+  let vs := CspPolicy.violationsEval s.csp
+  (report s vs "script-src" "eval", CspPolicy.enforced vs)
+
 /-! ## The referrer of a request (Fetch §2.2.5, §5.4 `Request` constructor steps 14 and 15) -/
 
 /-- A URL of the page's own origin, serialized; `none` for any other (and for a page of an
@@ -298,11 +366,18 @@ run, with the same clock, random numbers and order). -/
 def syncFetch (s : State) (t0 : Transfer) : State × SyncOutcome := Id.run do
   let mut s := s
   let mut step := plan t0
+  let mut hops := t0.redirects
   for _ in [0:4 * maxRedirects + 8] do
     match step with
     | .fail _ => return (s, .failed)
     | .deliver _ r => return (s, .done r)
     | .send t w =>
+      -- a redirect's target is checked against the policy as the first URL was (CSP §4.1.2)
+      if t.redirects != hops then
+        let (s', blocked) := cspRequest s "connect-src" t.url true
+        s := s'
+        hops := t.redirects
+        if blocked then return (s, .failed)
       match s.syncAnswers[s.syncUsed]? with
       -- the first request the run needs wins: a page that catches the throw and goes on
       -- does not change what the host is asked (`syncWanted` is set once in a run)
@@ -319,7 +394,8 @@ def syncSend (s : State) (h : Nat) (x : Xhr) : State × Except Int String :=
   let id := s.nextTransfer
   let s := { s with nextTransfer := id + 1 }
   let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred, sameOriginOnly := x.sameOnly, redirectError := x.redirectError, blob := s.blobOf x.url, referrer := referrerFor s x, referrerPolicy := policyFor s x, noCors := x.noCors, redirectManual := x.redirectManual }
-  let (s, out) := syncFetch s t
+  let (s, blocked) := cspRequest s "connect-src" x.url
+  let (s, out) := if blocked then (s, SyncOutcome.failed) else syncFetch s t
   match out with
   | .need => (s.set h { x with events := #[] }, .error errNeedHost)
   | .failed => (s.set h { x with state := 4, sendFlag := false, response := none, events := #[] }, .error errNetwork)
@@ -373,6 +449,9 @@ def sendX (s : State) (h : Nat) (body : Option ByteArray) (ctDefault : String) (
 /-- Start the fetch, unless a handler of `loadstart` stopped it. -/
 def beginFetch (s : State) (h : Nat) (x : Xhr) : State :=
   if x.state != 1 || !x.sendFlag then s else
+  -- Content Security Policy: `connect-src` governs `fetch` and `XMLHttpRequest` (CSP §6.1.3)
+  let (s, blocked) := cspRequest s "connect-src" x.url
+  if blocked then s.set h { x with deferFail := true } else
   let id := s.nextTransfer
   let s := { s with nextTransfer := id + 1 }
   let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred, sameOriginOnly := x.sameOnly, redirectError := x.redirectError, blob := s.blobOf x.url, referrer := referrerFor s x, referrerPolicy := policyFor s x, noCors := x.noCors, redirectManual := x.redirectManual }
@@ -455,7 +534,11 @@ def give (s : State) (id : Nat) (a : Answer) : State × Option Nat :=
     | some x =>
     let s1 := { s with live := s.live.filter (·.1 != id) }
     match onAnswer t a with
-    | .send t' w => ({ s with live := s.live.map (fun e => if e.1 == id then (id, h, t') else e), outbox := s.outbox.push w }, none)
+    | .send t' w =>
+      -- a redirect's target is checked against the policy as the first URL was (CSP §4.1.2)
+      let (s, blocked) := if t'.redirects != t.redirects then cspRequest s "connect-src" t'.url true else (s, false)
+      if blocked then (requestError { s with live := s.live.filter (·.1 != id) } h { x with transfer := none } "error", some x.cb) else
+      ({ s with live := s.live.map (fun e => if e.1 == id then (id, h, t') else e), outbox := s.outbox.push w }, none)
     | .fail _ => (requestError s1 h { x with transfer := none } "error", some x.cb)
     | .deliver _ r =>
       -- Subresource Integrity: bytes that do not match the request's metadata never reach the page
@@ -574,9 +657,34 @@ private def natAt (fs : Array ByteArray) (i : Nat) : Nat := (strAt fs i).toNat?.
 
 private def okStr (x : String) : Except Int ByteArray := .ok x.toUTF8
 
-/-- A `web_api` op on the network objects: ops 60 to 79, 98 and 99 (answers -2 when the embedder
+/-- The Content Security Policy ops (150 to 153), for the prelude's enforcement points. -/
+def cspOp (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int ByteArray :=
+  match code with
+  | 150 =>
+    -- the violations not yet reported, one a line (U+0001 between records), and the queue is
+    -- emptied: the prelude fires a `securitypolicyviolation` event for each
+    ({ s with violations := #[] }, okStr ("\x01".intercalate s.violations.toList))
+  | 151 =>
+    -- may a request of this kind go: the directive name, the URL, the element's nonce, "1"
+    -- for a parser-inserted script, the node the violation is reported at; "1" when blocked
+    let (s, blocked) := cspRequest s (strAt fs 0) (strAt fs 1) false (strAt fs 2) (strAt fs 3 == "1") (natAt fs 4)
+    (s, okStr (if blocked then "1" else "0"))
+  | 152 =>
+    -- may an inline script or style run or apply: "1" for a script, "1" for an element (a
+    -- `script` or `style` element; else an attribute), the nonce, the text, the node
+    let (s, blocked) := cspInline s (strAt fs 0 == "1") (strAt fs 1 == "1") (strAt fs 2) (strAt fs 3) (natAt fs 4)
+    (s, okStr (if blocked then "1" else "0"))
+  | 153 =>
+    -- may `eval` and its kin compile a string
+    let (s, blocked) := cspEval s
+    (s, okStr (if blocked then "1" else "0"))
+  | _ => (s, .error (-2))
+
+/-- A `web_api` op on the network objects: ops 60 to 79, 98, 99 and 150 to 153 (answers -2 when the embedder
 did not turn the network on, so `XMLHttpRequest` is then not defined). -/
 def op (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int ByteArray :=
+  -- the policy's questions are answered whether or not the embedder turned the network on
+  if 150 ≤ code && code ≤ 153 then cspOp s code fs else
   if !s.enabled then (s, .error (-2)) else
   match code with
   | 60 =>
@@ -881,6 +989,40 @@ private def drained (s : State) : State := Id.run do
 #guard (run1 (drained (modeRun "2")) 69 ["1"]).2 == ""
 #guard drain (modeRun "0") == ["readystatechange", "error", "loadend"]
 
+-- Content Security Policy: connect-src governs the requests of fetch and XMLHttpRequest
+-- (WPT content-security-policy/connect-src); a blocked one is a network error with one
+-- violation to report; a report-only policy reports and lets it go; a meta may not report
+private def stp (header : String) (ro : String := "") : State := { stc with csp := cspOf header ro "" }
+private def tryGet (s : State) (url : String) : State :=
+  let s := (run1 s 60 []).1
+  let s := (run1 s 61 ["1", "GET", url, "", "1"]).1
+  let s := (run1 s 63 ["1", "7", "0", "0", "", ""]).1
+  (run1 (run1 s 64 ["1"]).1 64 ["1"]).1
+#guard (tryGet (stp "connect-src 'self'") "http://a.example/y").outbox.size == 1
+#guard (tryGet (stp "connect-src 'self'") "http://b.example/y").outbox.size == 0
+#guard (tryGet (stp "connect-src 'self'") "http://b.example/y").violations.toList ==
+  ["connect-src\x00http://b.example/y\x00connect-src 'self'\x00enforce\x000\x00"]
+#guard (tryGet (stp "default-src 'none'") "http://a.example/y").outbox.size == 0
+#guard (tryGet (stp "img-src 'none'") "http://b.example/y").outbox.size == 1
+#guard (tryGet (stp "" "connect-src 'none'") "http://b.example/y#frag").outbox.size == 1
+#guard (tryGet (stp "" "connect-src 'none'") "http://b.example/y#frag").violations.toList ==
+  ["connect-src\x00http://b.example/y\x00connect-src 'none'\x00report\x000\x00"]
+#guard (run1 (tryGet (stp "connect-src 'self'") "http://b.example/y") 150 []).1.violations.isEmpty
+-- a redirect to a URL the policy forbids is a network error
+#guard drain (give (tryGet (stp "connect-src http://a.example") "http://a.example/y") 1
+    ({ status := 302, headers := [("Location", "http://b.example/z")] } : Answer)).1 == ["readystatechange", "error", "loadend"]
+-- the questions the prelude asks: a script element, an inline script, eval; and with the
+-- network off they are still answered
+#guard (run1 (stp "script-src 'self'") 151 ["script-src-elem", "http://b.example/a.js", "", "0", "7"]).2 == "1"
+#guard (run1 (stp "script-src 'self'") 151 ["script-src-elem", "http://a.example/a.js", "", "0", "7"]).2 == "0"
+#guard (run1 (stp "script-src 'nonce-n1'") 151 ["script-src-elem", "http://b.example/a.js", "n1", "0", "7"]).2 == "0"
+#guard (run1 (stp "script-src 'self'") 152 ["1", "1", "", "alert(1)", "9"]).2 == "1"
+#guard (run1 (stp "script-src 'unsafe-inline'") 152 ["1", "1", "", "alert(1)", "9"]).2 == "0"
+#guard (run1 (stp "script-src 'self'") 153 []).2 == "1" && (run1 (stp "script-src 'unsafe-eval'") 153 []).2 == "0"
+#guard (run1 { stp "script-src 'self'" with enabled := false } 153 []).2 == "1"
+#guard (run1 stc 152 ["1", "1", "", "alert(1)", "9"]).2 == "0"
+#guard (cspOf "" "" "script-src 'none'; report-uri /r; sandbox").map (·.directives.map (·.name)) == [["script-src"]]
+
 /-- Kind: privacy lemma. Says: a URL the page names as a referrer, or a frame document's URL
 named as the client, is kept only when it parses and is of the page's own origin, and then
 in its serialized form: `fetch(url, {referrer})` cannot make the engine send another
@@ -897,12 +1039,16 @@ theorem ownUrl_same (p : Page) (url r : String) (h : ownUrl p url = some r) :
     · simp at h
   · simp at h
 
-/-- Kind: invariant of `sendX` and `next`. Says: when the object is not enabled the op
-answers -2 and changes nothing, so a page in a host that did not turn the network on has
-no `XMLHttpRequest` and no request can be sent. Does not say: anything else of ops. -/
-theorem op_off (s : State) (c : Nat) (fs : Array ByteArray) (h : s.enabled = false) :
-    op s c fs = (s, .error (-2)) := by
-  simp [op, h]
+/-- Kind: policy theorem. Says: with the network off (the embedder did not say
+`network:true`), no op of the network objects does anything: each answers -2 and the state
+is unchanged, so no request can be made. The four Content Security Policy ops (150 to 153)
+are not network ops: they answer in every session and make no request (`cspOp` writes only
+`violations`). -/
+theorem op_off (s : State) (c : Nat) (fs : Array ByteArray) (h : s.enabled = false)
+    (hc : ¬(150 ≤ c ∧ c ≤ 153)) : op s c fs = (s, .error (-2)) := by
+  have : (decide (150 ≤ c) && decide (c ≤ 153)) = false := by
+    simpa using hc
+  simp [op, h, this]
 
 /-- Kind: security invariant (blob URLs). Says: the bytes a request of this page reads for a
 `blob:` URL are those of an entry that the page's own origin made: no page reads another
