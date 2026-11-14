@@ -39,6 +39,7 @@ import L4Factoidal.Crypto.WebCryptoKeys
 import L4Factoidal.Net.Xhr
 import L4Factoidal.Net.Storage
 import L4Factoidal.ClientStorage.IdbOps
+import L4Factoidal.ClientStorage.Manager
 import L4Factoidal.Net.FetchRules
 import L4Factoidal.Net.Cookies
 import L4Factoidal.DOM.SvgValues
@@ -76,6 +77,9 @@ structure State where
   /-- IndexedDB (`ClientStorage.Idb`, op 200): the databases and live state of each storage
   key, in memory. -/
   idb : L4Factoidal.ClientStorage.Shed L4Factoidal.ClientStorage.Idb.Shelf := {}
+  /-- The origin private file system of each storage key (`ClientStorage.Fs`, op 201), in
+  memory: no host file is read or written. -/
+  opfs : L4Factoidal.ClientStorage.Shed L4Factoidal.ClientStorage.Fs.Shelf := {}
   /-- The cookies scripts set and read (`Net.Cookies`, ops 96 and 97): in memory, each its
   host's; none is sent or received on the network. -/
   cookies : L4Factoidal.Net.Cookies.Jar := {}
@@ -677,6 +681,12 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
     else if code == 200 then
       let (idb, out) := L4Factoidal.ClientStorage.Idb.opFor s.idb { origin := s.net.page.origin } fs
       ({ s with idb }, .ok (pack out))
+    -- The File System API (201) and StorageManager (202), for the same storage key.
+    else if code == 201 then
+      let (opfs, out) := L4Factoidal.ClientStorage.Fs.opFor s.opfs { origin := s.net.page.origin } fs
+      ({ s with opfs }, .ok (pack out))
+    else if code == 202 then
+      (s, .ok (pack (L4Factoidal.ClientStorage.Manager.op s.idb s.opfs { origin := s.net.page.origin } fs)))
     -- Blob URLs (File API §8.3): 90 `createObjectURL(type, bytes)`, 91 `revokeObjectURL(url)`.
     -- The store is the network state's and names each URL's origin (the session's page
     -- origin, never an argument); the UUID is drawn here.

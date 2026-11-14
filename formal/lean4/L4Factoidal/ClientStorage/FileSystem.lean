@@ -213,10 +213,13 @@ def other (quota : Nat) (s : Shelf) (a : Array Tok) : Shelf × List Tok :=
     if !((t.lookup p).map (·.isDir)).getD false then (s, fail "NotFoundError")
     else (s, ok ((t.children p).flatMap fun c => [S c.1, S (if c.2 then "d" else "f")]))
   | "remove" =>
-    -- remove path recursive: the entry at `path` (the root: its contents)
-    let p := pathOf (strAt a 1)
-    let recursive := strAt a 2 == "1"
-    if p != [] && !validName (p.getLastD "") then (s, fail "TypeError")
+    -- remove dir name recursive: the entry `name` of `dir` (`removeEntry`); with the name
+    -- empty, the entry at `dir` itself (`remove()` of a handle; the root: its contents)
+    let name := strAt a 2
+    let p := if name == "" then pathOf (strAt a 1) else pathOf (strAt a 1) ++ [name]
+    let recursive := strAt a 3 == "1"
+    if name != "" && !validName name then (s, fail "TypeError")
+    else if name != "" && !((t.lookup p.dropLast).map (·.isDir)).getD false then (s, fail "NotFoundError")
     else
       match t.lookup p with
       | none => (s, fail "NotFoundError")
@@ -459,15 +462,18 @@ private def w1 : List (List String) := [["wopen", "dir/a.txt", "0", "0"], ["wwri
 #guard (answers s1 (w1 ++ [["wabort", "1"], ["stat", "dir/a.txt"]])).2.drop 5 == ["ok", "ok 2 "]
 #guard (answers s1 (w1 ++ [["wtrunc", "1", "2"], ["wclose", "1"], ["stat", "dir/a.txt"]])).2.drop 7 == ["ok 4 Je"]
 -- locks: siloed writables share; an exclusive one does not; a locked file is not removed; the quota
-#guard (answers s1 [["wopen", "b", "1", "0"], ["wopen", "b", "1", "0"], ["wopen", "b", "1", "1"], ["aopen", "b", "0"], ["remove", "b", "0"], ["remove", "", "1"],
+#guard (answers s1 [["wopen", "b", "1", "0"], ["wopen", "b", "1", "0"], ["wopen", "b", "1", "1"], ["aopen", "b", "0"], ["remove", "", "b", "0"], ["remove", "", "", "1"],
   ["wabort", "1"], ["wabort", "2"], ["wopen", "b", "1", "1"], ["wopen", "b", "1", "0"], ["wclose", "3"], ["aopen", "b", "0"], ["aopen", "b", "0"]]).2 ==
   ["ok 1", "ok 2", "!NoModificationAllowedError", "!NoModificationAllowedError", "!NoModificationAllowedError", "!NoModificationAllowedError",
    "ok", "ok", "ok 3", "!NoModificationAllowedError", "ok", "ok 4", "!NoModificationAllowedError"]
 #guard (answers s1 [["wopen", "b", "0", "0"], ["wwrite", "1", "", String.ofList (List.replicate 101 'x')], ["wwrite", "1", "", "y"]]).2 ==
   ["ok 1", "!QuotaExceededError", "!TypeError"]
 -- remove, move
-#guard (answers s1 [["remove", "dir", "0"], ["remove", "dir", "1"], ["list", ""], ["remove", "dir", "0"], ["remove", "", "1"], ["list", ""]]).2 ==
-  ["!InvalidModificationError", "ok", "ok b f", "!NotFoundError", "ok", "ok"]
+#guard (answers s1 [["remove", "", "dir", "0"], ["remove", "", "dir", "1"], ["list", ""], ["remove", "", "dir", "0"], ["remove", "", "", "1"], ["list", ""],
+  ["remove", "", "a/b", "0"], ["remove", "nope", "x", "0"]]).2 ==
+  ["!InvalidModificationError", "ok", "ok b f", "!NotFoundError", "ok", "ok", "!TypeError", "!NotFoundError"]
+#guard (answers s1 [["remove", "dir", "", "0"], ["remove", "dir/a.txt", "", "0"], ["remove", "dir", "", "0"], ["list", ""]]).2 ==
+  ["!InvalidModificationError", "ok", "ok", "ok b f"]
 #guard (answers s1 [["move", "dir/a.txt", "", "c.txt"], ["list", ""], ["list", "dir"], ["move", "dir", "", "d2"], ["list", ""], ["move", "b", "d2", "inner"], ["list", "d2"],
   ["move", "d2", "d2", "x"], ["move", "nope", "", "y"], ["move", "c.txt", "", "a/b"]]).2 ==
   ["ok", "ok dir d b f c.txt f", "ok", "ok", "ok b f c.txt f d2 d", "ok", "ok inner f", "!InvalidModificationError", "!NotFoundError", "!TypeError"]

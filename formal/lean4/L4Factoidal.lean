@@ -1071,6 +1071,8 @@ import L4Factoidal.ClientStorage.IdbValue
 import L4Factoidal.ClientStorage.IdbStore
 import L4Factoidal.ClientStorage.IdbOps
 import L4Factoidal.ClientStorage.IdbTests
+import L4Factoidal.ClientStorage.FileSystem
+import L4Factoidal.ClientStorage.Manager
 import L4Factoidal.Net.Cookies
 import L4Factoidal.PageGl.Table
 import L4Factoidal.PageGl.Idl
