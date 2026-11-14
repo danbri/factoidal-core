@@ -726,6 +726,38 @@ def domOpM (id op : Nat) (q : String) : Op String := do
         let u := if st.hostLoads then p.url else ""
         set { st with navigations := (st.navigations.filter fun (nv : Nat × String) => nv.1 != el).push (el, u) }
         return "1"
+  | 190 =>
+    -- HTML §4.6.4 "follow the hyperlink" of the `a` or `area` element `id`, as far as frames
+    -- go: `q` is its target ("" for none), U+0000, the URL (resolved by the caller). The
+    -- navigable is chosen as for a form (op 170): "" and `_self` the element's own frame; a
+    -- name, the first frame of that name. A navigation of that frame is queued for the
+    -- embedder: "1". "0" when the link would replace or leave the page's own document, which
+    -- is not done here. A document the page may not reach (another origin, a sandbox)
+    -- navigates only its own frame.
+    let (target, url) := match q.splitOn "\x00" with
+      | [a, b] => (a, b)
+      | _ => ("", q)
+    let link ← nodeArg d id
+    if !L4Factoidal.DOM.Forms.isHtml d link ["a", "area"] then throw (-2)
+    let st ← get
+    let doc := (d.get link).doc
+    let docEl := (st.frames.find? (·.2 == doc)).map (·.1)
+    if doc != 0 && docEl.isNone then return "0"
+    let tl := L4Factoidal.DOM.Dom.asciiLower target
+    let own := tl == "" || tl == "_self"
+    let foreign := match docEl with
+      | some fe => !frameAccessible st fe
+      | none => false
+    if foreign && !own then return "0"
+    let chosen := if own then docEl
+      else if tl.startsWith "_" then none
+      else (st.frames.find? fun (fr : Nat × Nat) => attrValue? d fr.1 "name" == some target).map (·.1)
+    match chosen with
+    | none => return "0"
+    | some el =>
+      let u := if st.hostLoads then url else ""
+      set { st with navigations := (st.navigations.filter fun (nv : Nat × String) => nv.1 != el).push (el, u) }
+      return "1"
   | 171 =>
     -- the URL of document `id`: the page's, or a frame document the page may reach
     if id == 0 then return (← get).url

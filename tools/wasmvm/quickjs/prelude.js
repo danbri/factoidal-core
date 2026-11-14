@@ -1218,7 +1218,15 @@
       // a button with `commandfor` or `popovertarget` (section popover)
       invokerActivation(el, t);
     } else if (name === 'a' || name === 'area') {
-      followHyperlink(el.href);
+      // A link in a frame's document, or one whose target names a frame, navigates that
+      // frame: Lean chooses it and queues the navigation (node_query 190). A link of the
+      // page's own document with no target is the fragment navigation below.
+      const url = el.href, target = n.attr(k, 'target');
+      if (/^(https?|data|blob|about):/i.test(url) && (typeof target === 'string' && target !== '' || info(k, 7) > 0)) {
+        const own = info(k, 7) > 0 ? docURL(info(k, 7)) : href;
+        if (url.split('#')[0] !== own.split('#')[0] || !url.includes('#')) { if (n.query(k, 190, (typeof target === 'string' ? target : '') + '\u0000' + url) === '1') return; }
+      }
+      followHyperlink(url);
     } else if (name === 'label') {
       const c = chk(n.query(k, 13, String(targetId)));
       if (c !== null) wrap(Number(c)).click();
