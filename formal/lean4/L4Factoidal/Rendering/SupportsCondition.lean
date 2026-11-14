@@ -60,6 +60,24 @@ def declaration (cs : List Char) : Option Bool :=
     else some (CssValues.supports p (":".intercalate (v :: more)))
   | _ => none
 
+/-- The `-webkit-` pseudo-elements this engine knows (the scrollbar parts and the form
+control parts that pages style). -/
+def knownWebkitPseudoElements : List String :=
+  ["-webkit-scrollbar", "-webkit-scrollbar-button", "-webkit-scrollbar-thumb", "-webkit-scrollbar-track",
+   "-webkit-scrollbar-track-piece", "-webkit-scrollbar-corner", "-webkit-resizer"]
+
+/-- `selector(<complex-selector>)` (CSS Conditional 4 §2): one complex selector (not a
+list) that `DOM.Selectors` reads, with no `-webkit-` pseudo-element it does not know (those
+are valid in a selector only for web compatibility, CSS Conditional 4 §5.1). -/
+def supportsSelector (text : String) : Bool :=
+  match L4Factoidal.DOM.Selectors.parse text with
+  | some [_] =>
+    let pieces := (text.toLower.splitOn "::-webkit-").drop 1
+    pieces.all fun piece =>
+      let name := "-webkit-" ++ String.ofList (piece.toList.takeWhile fun c => c.isAlphanum || c == '-' || c == '_')
+      knownWebkitPseudoElements.contains name
+  | _ => false
+
 /-- Evaluate a `<supports-condition>` (CSS Conditional 3 §2): `not`, `and`, `or` over
 parenthesized conditions, declarations and `selector()`. `none` is a syntax error. `fuel`
 bounds the nesting. -/
@@ -104,7 +122,7 @@ where
       match keyword "selector" cs with
       | some ('(' :: r) =>
         match inParens r with
-        | some (inner, rest) => some ((L4Factoidal.DOM.Selectors.parse (String.ofList inner)).isSome, rest)
+        | some (inner, rest) => some (supportsSelector (String.ofList inner), rest)
         | none => none
       | _ =>
         -- a function we do not know (general enclosed) is false
@@ -133,6 +151,9 @@ theorem ruleHolds_iff (text : String) :
 #guard ruleHolds "not (foo: bar)"
 #guard ruleHolds "selector(a > b)"
 #guard !ruleHolds "selector(a >> b)"
+#guard !ruleHolds "selector(div, div)"
+#guard !ruleHolds "selector(::-webkit-unknown-pseudo-element)"
+#guard ruleHolds "selector(::-webkit-scrollbar)" && ruleHolds "selector(::before)"
 #guard ruleHolds "(--x: 1)"
 #guard !ruleHolds ""
 
