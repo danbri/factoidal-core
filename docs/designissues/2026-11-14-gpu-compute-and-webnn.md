@@ -249,13 +249,15 @@ coordination log first.
   `sliceMap_eval`, `expandMap_eval`, `tileMap_eval`, `reverseMap_eval`; `remap_transposeMap`).
 - `WebNN/Gpu.lean`: kernels as `Wgsl.Module` values through `Wgsl.finish`: element-wise binary
   with broadcasting (add, sub, mul, div, max, min, pow), unary (abs, ceil, cos, exp, floor,
-  neg, reciprocal, relu, sigmoid, sin, softsign, tan), transpose. `emitC_eval`: the printed
+  neg, reciprocal, relu, sigmoid, sin, softsign, tan), transpose, matmul (batch broadcast by
+  `expandMap`, a `forCap` loop over K), reductions over chosen axes (sum, mean, L1, sum of
+  squares, product, max, min). `emitC_eval`: the printed
   `u32` index arithmetic computes `Coord.eval` whenever its values fit in 32 bits (with
   `evalU`, a Lean reading of WGSL's `u32` `+ - * / %`). `#guard`s: every kernel passes the
   subset check, the printed broadcast index, refusals (`gelu`, `tanh`, outputs over one dispatch).
 - Not yet: the `Fits` side condition discharged from the tensor quota for whole kernels; the
-  output unravel (`k / stride % dim`) proved equal to `Shape.unravel`; matmul, gemm, conv2d,
-  pooling and reductions (a `forCap` loop each); the backend choice in `Graph`/`Eval` (to be
+  output unravel (`k / stride % dim`) proved equal to `Shape.unravel`; gemm, conv2d and
+  pooling (a `forCap` loop each, as matmul); the backend choice in `Graph`/`Eval` (to be
   agreed with the webnn agent); running graphs through `PageGpu` commands.
 
 Differential test, 2026-11-14, this Mac (Apple M-series, Metal through Deno's WebGPU): Lean
@@ -275,6 +277,10 @@ tolerances of the WebNN conformance tests.
 | exp | 13 ULP | 32 ULP | within |
 | cos, sin | 6.4e-7 absolute | 2^-10 absolute | within |
 | tan | 1.2e-6 absolute | 2^-10 absolute | within |
+| matmul [2,8,64] × [64,16], batch broadcast | 61 ULP | 128 ULP (2K) | within |
+| reduceSum, reduceMean, reduceL1, reduceSumSquare over 16 | 2 ULP | 16, 18, 16, 32 ULP | within |
+| reduceProduct over 16 | 4 ULP | 16 ULP | within |
+| reduceMax, reduceMin | 0 ULP | 0 ULP | within |
 | sqrt | 2 ULP | 1 ULP | over: CPU reference |
 | tanh | 44 ULP | 16 ULP | over: CPU reference |
 | log | 75 ULP | 8 ULP | over: CPU reference |
