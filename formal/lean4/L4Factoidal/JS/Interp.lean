@@ -161,9 +161,18 @@ def charge (k : Nat) : M Unit := do
 /-- The longest string `repeat` and `padStart` make: 256 MiB of UTF-8. -/
 def maxStringBytes : Nat := 268435456
 
-/-- The UTF-16 units of `s` as characters, kept for the last string: repeated matches on one
-string (`exec` in a loop, `replace` with a global regexp) do not decode it each time. -/
+/-- Strings shorter than this many bytes are not kept by `cachedChars`: decoding one costs
+less than a step. -/
+def cachedCharsMin : Nat := 256
+
+/-- The UTF-16 units of `s` as characters, kept for the last string of `cachedCharsMin` bytes
+or more: repeated matches on one string (`exec` in a loop, `replace` with a global regexp) do
+not decode it each time. -/
 def cachedChars (s : String) : M (Array Char) := do
+  -- A short string is decoded each time and leaves the kept string in place: a tokeniser that
+  -- tests one character between two sticky matches on its long input (WPT's webidl2.js) does
+  -- not decode the input again for every token.
+  if s.utf8ByteSize < cachedCharsMin then return Str.unitChars s
   match (← get).reCache with
   | some (t, cs) => if t == s then return cs else pure ()
   | none => pure ()
@@ -199,14 +208,15 @@ def cachedReceiverCost (id : Native) (thisV : Value) : M (Option Nat) := do
   | _ => pure none
 
 /-- The built-ins that do not walk their receiver: String methods on an ASCII string index it
-in constant time (`Str.unitAt?`) or copy only their result (and take steps for that); an
-Array's `push`, `pop` and `at`. -/
+in constant time (`Str.unitAt?`) or copy only their result (and take steps for that), and
+`startsWith` and `endsWith` read only the units they compare (`unitsAt`; the search string's
+size is counted as an argument); an Array's `push`, `pop` and `at`. -/
 def indexesReceiver (id : Native) (thisV : Value) : Bool :=
   match thisV with
   | .str s =>
     Str.isAscii s && match id with
       | .stringCharAt | .stringCharCodeAt | .stringAt | .stringCodePointAt | .stringSlice
-      | .stringSubstring | .stringSubstr => true
+      | .stringSubstring | .stringSubstr | .stringStartsWith | .stringEndsWith => true
       | _ => false
   -- an Array's push, pop and at change or read one end in place (`updateObj`)
   | .obj _ => match id with
@@ -276,18 +286,26 @@ def newObject : M Nat := do alloc { proto := .obj (← realm).objectProto }
 def newArray (es : Array Value) : M Value := do
   pure (.obj (← alloc { proto := .obj (← realm).arrayProto, kind := .array es }))
 
+/-- Whether an object of this kind has a [[Construct]] method of its own (IsConstructor,
+§7.2.4, for the kinds that are not a Proxy). -/
+def Kind.constructs : Kind → Bool
+  | .closure f .. => f.kind != .arrow && f.kind != .method && !f.gen && !f.async
+  | .native nid => match nid with
+    | .objectCtor | .functionCtor | .arrayCtor | .stringCtor | .numberCtor | .booleanCtor
+    | .errorCtor _ | .symbolCtor | .promiseCtor | .mapCtor _ | .regexpCtor | .proxyCtor
+    | .bufferCtor | .typedCtor _ | .dateCtor | .dataViewCtor => true
+    | (.x .sharedCtor) | (.x .typedArrayCtor) | (.x .iteratorCtor) | (.x .aggregateErrorCtor) => true
+    | _ => false
+  | .bound .. => true
+  | _ => false
+
+/-- IsConstructor (§7.2.4). A Proxy is a constructor when its target is (ProxyCreate,
+§10.5.15 step 7b); a Proxy whose target is a Proxy is not followed (it answers false). -/
 def isConstructor (v : Value) : M Bool := do
   match v with
   | .obj id => match (← getObj id).kind with
-    | .closure f .. => pure (f.kind != .arrow && f.kind != .method && !f.gen && !f.async)
-    | .native nid => pure (match nid with
-        | .objectCtor | .functionCtor | .arrayCtor | .stringCtor | .numberCtor | .booleanCtor
-        | .errorCtor _ | .symbolCtor | .promiseCtor | .mapCtor _ | .regexpCtor | .proxyCtor
-        | .bufferCtor | .typedCtor _ | .dateCtor | .dataViewCtor => true
-        | (.x .sharedCtor) | (.x .typedArrayCtor) | (.x .iteratorCtor) | (.x .aggregateErrorCtor) => true
-        | _ => false)
-    | .bound .. => pure true
-    | _ => pure false
+    | .proxy (.obj t) _ => pure (← getObj t).kind.constructs
+    | k => pure k.constructs
   | _ => pure false
 
 @[inline] def isCallable (v : Value) : M Bool := do
@@ -400,6 +418,10 @@ def collClear (o : Obj) : Obj :=
   match o.kind with
   | .coll k es _ => { o with kind := .coll k (es.map fun _ => none) {} }
   | _ => o
+
+/-- The key of the global object's internal slot for the host's named properties
+(`namedGlobal`): a private-name key (`privKey`), so no reflection lists it. -/
+def namedGetterKey : String := privKey "WindowNamedProperties"
 
 /-- A property key as a value: a Symbol for a Symbol key, else the string. -/
 def keyValue (k : String) : Value :=
@@ -583,6 +605,52 @@ def lastIndexOfStr (s pat : String) : Option Nat :=
       if (cs[i]! == ps[0]!) && (List.range ps.size).all (fun k => cs[i + k]! == ps[k]!) then some i
       else if i == 0 then none else go fuel (i - 1)
   go (cs.size + 1) (cs.size - ps.size)
+
+/-- `lastIndexOf` from a position (§22.1.3.11 steps 9 to 12): the last unit index at or
+before `start` where `pat` occurs. `start` past the last possible index is that index. -/
+def lastIndexOfFrom (s pat : String) (start : Nat) : Option Nat :=
+  let cs := charsOf s; let ps := charsOf pat
+  if ps.size > cs.size then none else
+  let rec go : Nat → Nat → Option Nat
+    | 0, _ => none
+    | fuel + 1, i =>
+      if (ps.size == 0 || cs[i]! == ps[0]!) && (List.range ps.size).all (fun k => cs[i + k]! == ps[k]!)
+      then some i
+      else if i == 0 then none else go fuel (i - 1)
+  go (cs.size + 1) (min start (cs.size - ps.size))
+
+/-- A position argument as a unit index in `0 … len` (ToIntegerOrInfinity, then the clamp of
+`startsWith` step 7, `endsWith` step 7 and `includes` step 9). `undefined` is NaN, so 0. -/
+def clampPos (x : Float) (len : Nat) : Nat :=
+  if toIntegerOrInf x ≤ 0 then 0
+  else if toIntegerOrInf x ≥ len.toFloat then len
+  else min (toIntegerOrInf x).toUInt64.toNat len
+
+/-- Whether the code units of `p` are the units of `s` from unit `pos` (the comparison of
+`startsWith`, §22.1.3.24 steps 9 to 11, and of `endsWith`, §22.1.3.7 steps 10 to 12). On an
+ASCII `s` only the units compared are read. -/
+def unitsAt (s p : String) (pos : Nat) : Bool :=
+  pos + Str.jsLength p ≤ Str.jsLength s && substr s pos (pos + Str.jsLength p) == p
+
+/-- Bound (kind: safety of an index). Says: a position from `clampPos` is at most the
+length it was clamped to, whatever the number. Does not say: that it is the integer part of
+the number (that rests on `Float`, which Lean does not reason about). -/
+theorem clampPos_le (x : Float) (len : Nat) : clampPos x len ≤ len := by
+  unfold clampPos
+  split
+  · exact Nat.zero_le _
+  · split
+    · exact Nat.le_refl _
+    · exact Nat.min_le_right _ _
+
+/-- Bound (kind: safety of an index). Says: where `unitsAt` answers true, the search string
+lies inside the subject: `pos + |p| ≤ |s|` in code units. Does not say: that the units are
+equal (that is the second conjunct of the definition, by `Str.sliceUnits`). -/
+theorem unitsAt_bound (s p : String) (pos : Nat) (h : unitsAt s p pos = true) :
+    pos + Str.jsLength p ≤ Str.jsLength s := by
+  unfold unitsAt at h
+  simp only [Bool.and_eq_true, decide_eq_true_eq] at h
+  exact h.1
 
 def splitOn (s sep : String) : Array String :=
   if sep.isEmpty then (charsOf s).map String.singleton
@@ -1277,7 +1345,13 @@ def getV : Nat → Value → String → M Value
           | none => pure .undef
         | _ =>
           if isPrivKey key then throwErr .type s!"Cannot read private member #{(key.drop 1).toString} from an object whose class did not declare it"
-          pure .undef
+          -- a property the global object and its prototype chain do not have: the host's
+          -- named properties (`namedGlobal`), asked for on this miss only
+          if id == (← get).realm.globalObj && !isSymKey key then
+            match ← namedGlobal n key with
+            | some x => pure x
+            | none => pure .undef
+          else pure .undef
       | some (.data x ..) => pure x
       | some (.acc g _ _ _) => if g.isObj then callV n g v #[] else pure .undef
     | .str s =>
@@ -1909,6 +1983,17 @@ def construct : Nat → Value → Array Value → Value → M Value
           | _, _ => pure (.obj o)
       | .native nid => callNative n nid .undef args (some newTarget)
       | .bound t _ bargs => construct n t (bargs ++ args) (if strictEq newTarget f then t else newTarget)
+      | .proxy t hnd =>
+        -- [[Construct]] of a Proxy (§10.5.13): the `construct` trap with the target, the
+        -- arguments as an array and the new target, and its answer must be an object; with
+        -- no trap, the target constructs
+        match ← proxyTrap n hnd "construct" with
+        | some trap =>
+          let argArray ← newArray args
+          let r ← callV n trap hnd #[t, argArray, newTarget]
+          if !r.isObj then throwErr .type "proxy [[Construct]] must return an object"
+          pure r
+        | none => construct n t args newTarget
       | _ => throwErr .type "not a constructor"
     | _ => throwErr .type "not a constructor"
 termination_by structural n _ _ _ => n
@@ -2095,6 +2180,26 @@ caller evaluates the expression the full way, which also reports an uninitialise
   | .this => ctx.thisV
   | _ => .hole
 
+/-- The value of a name that has no binding and that the global object and its prototype
+chain do not have, from the host: the global object's internal slot `namedGetterKey` holds a
+function of the name (for a page, the named properties of the Window object, HTML §7.3.3,
+decided by `DOM.Named`), and `undefined` from it means "no such name". A realm whose global
+has no such slot (a script outside a page, a worker) answers `none` without a call, and a
+name that resolves never comes here: this is the path that otherwise throws a ReferenceError
+or answers `undefined`. -/
+def namedGlobal : Nat → String → M (Option Value)
+  | 0, _ => throw (.halt "fuel")
+  | n + 1, x => do
+    let h ← get
+    match h.findProp h.realm.globalObj namedGetterKey 1 with
+    | some (.data f ..) =>
+      if !f.isObj then return none
+      match ← callV n f .undef #[.str x] with
+      | .undef => pure none
+      | v => pure (some v)
+    | _ => pure none
+termination_by structural n _ => n
+
 def lookup : Nat → Ctx → String → M Value
   | 0, _, _ => throw (.halt "fuel")
   | n + 1, ctx, x => do
@@ -2113,7 +2218,10 @@ def lookup : Nat → Ctx → String → M Value
       match h.findProp g x 1000 with
       | some (.data v ..) => pure v
       | some _ => getV n (.obj g) x
-      | none => throwErr .reference s!"{x} is not defined"
+      | none =>
+        match ← namedGlobal n x with
+        | some v => pure v
+        | none => throwErr .reference s!"{x} is not defined"
 termination_by structural n _ _ => n
 
 /-- PutValue on an assignment target, after its parts are evaluated. -/
@@ -2291,7 +2399,9 @@ def evalExpr : Nat → Ctx → Expr → M Value
       | .typeof, .ident x =>
         let h ← get
         if (h.findEnv x 100000 ctx.env).isNone && (h.findProp h.realm.globalObj x 1000).isNone then
-          pure (.str "undefined")
+          match ← namedGlobal n x with
+          | some v => pure (.str (← typeOf v))
+          | none => pure (.str "undefined")
         else pure (.str (← typeOf (← lookup n ctx x)))
       | .delete, t =>
         match t with
@@ -5236,7 +5346,9 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
       vmStash regs fregs (bp + code.nregs)
       let h ← get
       let v ← if (h.findEnv x 100000 env).isNone && (h.findProp h.realm.globalObj x 1000).isNone then
-          pure (Value.str "undefined")
+          match ← namedGlobal n x with
+          | some nv => pure (Value.str (← typeOf nv))
+          | none => pure (Value.str "undefined")
         else pure (.str (← typeOf (← lookup n { env, thisV := .undef, strict := code.strict } x)))
       let (regs, fregs) ← vmTake
       match (v) with
@@ -5679,7 +5791,9 @@ def regexExec : Nat → Value → String → M (Option (Array (Option (Nat × Na
     -- loop of matches over a long string stops at the budget.
     match Re.exec re cs start with
     | none =>
-      charge ((cs.size - start) / 64 + 1)
+      -- a sticky match is tried at `start` only (`Re.exec`): the rest of the subject is not
+      -- walked, and takes no steps
+      charge (if re.flags.sticky then 1 else (cs.size - start) / 64 + 1)
       if g then putV n rv "lastIndex" (.num 0) true
       pure none
     | some caps =>
@@ -6242,18 +6356,21 @@ def stringOrMath : Nat → Native → Value → Array Value → M Value
           pure (.num (match indexOfFrom s p st with | some i => Float.ofNat i | none => -1))
         | .stringLastIndexOf =>
           let p ← toStr n a0
-          pure (.num (match lastIndexOfStr s p with | some i => Float.ofNat i | none => -1))
+          -- §22.1.3.11: a position that is NaN (so `undefined`) is +∞
+          let np ← toNum n a1
+          let start := if np.isNaN then len else clampPos np len
+          pure (.num (match lastIndexOfFrom s p start with | some i => Float.ofNat i | none => -1))
         | .stringIncludes =>
           let p ← toStr n a0
-          pure (.bool (indexOfFrom s p 0).isSome)
+          pure (.bool (indexOfFrom s p (clampPos (← toNum n a1) len)).isSome)
         | .stringStartsWith =>
           let p ← toStr n a0
-          pure (.bool (if Str.isBmp s && Str.isBmp p then s.startsWith p
-            else (charsOf p).toList.isPrefixOf (charsOf s).toList))
+          pure (.bool (unitsAt s p (clampPos (← toNum n a1) len)))
         | .stringEndsWith =>
           let p ← toStr n a0
-          pure (.bool (if Str.isBmp s && Str.isBmp p then s.endsWith p
-            else (charsOf p).toList.isSuffixOf (charsOf s).toList))
+          let e ← match a1 with | .undef => pure len | v => do pure (clampPos (← toNum n v) len)
+          let m := Str.jsLength p
+          pure (.bool (m ≤ e && unitsAt s p (e - m)))
         | .stringSlice =>
           let st := relIndex (← toNum n a0) len
           let en ← match a1 with | .undef => pure len | v => do pure (relIndex (← toNum n v) len)

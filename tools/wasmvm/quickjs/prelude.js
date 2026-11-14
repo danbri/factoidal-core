@@ -2661,6 +2661,32 @@
   // (Hosts.Page.Session.loadFrameP sets the current script).
   let scriptDocument = null;
   Object.defineProperty(globalThis, 'document', { get: () => scriptDocument ?? document, configurable: true, enumerable: true });
+  // ---- Named access on the Window object (HTML §7.3.3) ----
+  // A name with no binding, or a property the global and its prototype chain lack, is asked
+  // of Lean (DOM.Named, node_query 180) for the document of the running script: an element by
+  // its id, an embed, form, img or object by its name, a frame's window by its name, or a
+  // live collection when several elements have the name. The engine calls this function on
+  // such a miss only (JS.Interp `namedGlobal`), from the global's internal slot (a private
+  // name key, which no reflection lists); `undefined` means "not a named property".
+  {
+    let asking = false;
+    const namedIds = (doc, name) => { const r = n.query(doc, 180, name); return typeof r === 'string' && (r[0] === 'c' || r[0] === 'e') ? r.slice(1).split(' ').map(Number) : []; };
+    const namedProperty = name => {
+      if (asking || typeof name !== 'string' || name === '') return undefined;
+      asking = true;
+      try {
+        const doc = scriptDocument ? nodeId(scriptDocument) : 0;
+        const r = n.query(doc, 180, name);
+        if (typeof r !== 'string' || r === '') return undefined;
+        const kind = r[0], rest = r.slice(1);
+        if (kind === 'e') return wrap(Number(rest));
+        if (kind === 'w') return wrap(Number(rest)).contentWindow ?? undefined;
+        if (kind === 'c') return liveCollection(() => namedIds(doc, name));
+        return undefined;
+      } finally { asking = false; }
+    };
+    Object.defineProperty(globalThis, '\u{10FFFE}WindowNamedProperties', { value: namedProperty, writable: false, enumerable: false, configurable: false });
+  }
   def('location', location);
   def('navigator', Object.freeze({ userAgent: 'Foafnaut', language: 'en', languages: ['en'], platform: '', onLine: true,
     cookieEnabled: false, hardwareConcurrency: 1, gpu }));
@@ -4721,6 +4747,34 @@
     const t = onBody ? window : el;
     setHandler(t, name, onBody && name === 'error' ? function (m, s, l, c, e) { return f.call(this, m); } : f);
   };
+
+  // ---- Interface objects as Web IDL defines them (§3.7.1 to §3.7.3) ----
+  // An interface's attributes, operations and constants are enumerable own properties of its
+  // interface prototype object (of the interface object when static), and the prototype's
+  // class string is the interface's name. The classes above are JavaScript classes, whose
+  // members are not enumerable: one pass sets both for every interface on the global. It
+  // runs when the prelude runs (once for the engine, not for each page).
+  for (const name of Object.getOwnPropertyNames(globalThis)) {
+    if (esGlobals.has(name) || !/^[A-Z]/.test(name)) continue;
+    const gd = Object.getOwnPropertyDescriptor(globalThis, name);
+    const C = gd && gd.value;
+    if (typeof C !== 'function') continue;
+    const cd = Object.getOwnPropertyDescriptor(C, 'prototype');
+    const P = cd && cd.value;
+    if (P === null || typeof P !== 'object') continue;
+    if (C.name === name && !Object.prototype.hasOwnProperty.call(P, Symbol.toStringTag))
+      Object.defineProperty(P, Symbol.toStringTag, { value: name, writable: false, enumerable: false, configurable: true });
+    for (const k of Object.getOwnPropertyNames(P)) {
+      if (k === 'constructor') continue;
+      const pd = Object.getOwnPropertyDescriptor(P, k);
+      if (pd.configurable && !pd.enumerable) { pd.enumerable = true; Object.defineProperty(P, k, pd); }
+    }
+    for (const k of Object.getOwnPropertyNames(C)) {
+      if (k === 'prototype' || k === 'length' || k === 'name') continue;
+      const sd = Object.getOwnPropertyDescriptor(C, k);
+      if (sd.configurable && !sd.enumerable) { sd.enumerable = true; Object.defineProperty(C, k, sd); }
+    }
+  }
 
   return {
     // Lean runs a timer (target -1) or an animation frame callback (target -2, `arg` the time).

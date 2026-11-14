@@ -22,6 +22,7 @@ import L4Factoidal.Rendering.CssSupports
 import L4Factoidal.HTML.FormSubmission
 import L4Factoidal.DOM.Editing.Commands
 import L4Factoidal.Rendering.Style
+import L4Factoidal.DOM.Named
 
 namespace L4Factoidal.WasmVM.Hosts.Dom
 open L4Factoidal.DOM L4Factoidal.DOM.Range
@@ -418,7 +419,10 @@ Selection: 140 "range direction", or -1 when empty; 141 `addRange` (range `id`);
 `removeRange` (range `id`; -9 when it is not the selection's); 143 `removeAllRanges`; 144
 `collapse` ("node offset"); 145 `collapseToStart` ("1") and `collapseToEnd` ("0"); 146
 `extend` ("node offset"); 147 `setBaseAndExtent` ("an ao fn fo"); 148 `selectAllChildren`
-("node"); 149 `deleteFromDocument`; 150 `containsNode` ("node partial", "1" or "0"). -/
+("node"); 149 `deleteFromDocument`; 150 `containsNode` ("node partial", "1" or "0").
+
+DOM and HTML decisions (read-only): 180 the value of the Window's named property `q` for
+document `id` (`DOM.Named.answer`: "", "w" container, "e" element, or "c" elements). -/
 def domOpM (id op : Nat) (q : String) : Op String := do
   let xs := nums q
   let d ← dom
@@ -705,6 +709,11 @@ def domOpM (id op : Nat) (q : String) : Op String := do
       return (e.getD .utf_8).name
     | none => throw (-2)
   -- ==== end of encoding100 ====
+  -- ==== domhtml (ops 180 to 199): decisions of DOM and HTML features, read-only ====
+  -- 180: named access on the Window object (HTML §7.3.3, `DOM.Named.answer`): the value of
+  -- the named property `q` of the Window of document `id`
+  | 180 => return L4Factoidal.DOM.Named.answer d id q
+  -- ==== end of domhtml ====
   | _ => throw (-2)
 
 /-! ## Editing (W3C Editing APIs draft; the algorithms are `DOM.Editing`)

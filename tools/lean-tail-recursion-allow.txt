@@ -2170,6 +2170,7 @@ L4Factoidal_JS_instOf  # (c) instanceof: a bound function adds one level per bin
 L4Factoidal_JS_binop  # (c) the binary operators: ToPrimitive and ToNumber as L4Factoidal_JS_to*
 L4Factoidal_JS_assignName  # (c) PutValue for a name: a setter on the global object, as L4Factoidal_JS_put*
 L4Factoidal_JS_lookup  # (c) a name on the global object with a getter, as L4Factoidal_JS_get*
+L4Factoidal_JS_namedGlobal  # (c) the host's named properties of the global object (JS/Interp.lean): one call of the function in the global's internal slot, bounded as L4Factoidal_JS_call*; it is reached only from a name or property miss, and the page's function does not read a missing name while it runs (prelude.js `asking`)
 L4Factoidal_JS_defineFromDescriptor  # (c) ToPropertyDescriptor: getters of the descriptor object, as L4Factoidal_JS_get*
 L4Factoidal_JS_elemsOf  # (c) the elements of an array-like: getV per index (List.mapM over a bounded range), getters as L4Factoidal_JS_get*
 L4Factoidal_JS_genericPush  # (c) Array.prototype.push on an array-like: putV per argument, as L4Factoidal_JS_put*

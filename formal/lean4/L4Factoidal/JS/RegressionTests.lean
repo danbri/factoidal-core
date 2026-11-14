@@ -237,4 +237,52 @@ about 9,000 subtests of `url/`). -/
 #guard out "try { JSON.parse('[1,'); } catch (e) { print(e.name) }" == ["SyntaxError"]
 #guard out "try { JSON.parse('\"\\\\uZZZZ\"'); } catch (e) { print(e.name) }" == ["SyntaxError"]
 
+/-! ## Position arguments of `startsWith`, `endsWith`, `includes` and `lastIndexOf`
+
+§22.1.3.24, §22.1.3.7, §22.1.3.8, §22.1.3.11. Before 2026-11-14 the four methods ignored their
+second argument. WPT's `resources/webidl2.js` finds each punctuation token with
+`str.startsWith(punctuation, lastCharIndex)`, so no IDL file parsed ("Unrecognised tokens") and
+every `idlharness` test of WPT (39,327 Chrome subtests) failed at setup. -/
+
+#guard out "print('a[b'.startsWith('[', 1), 'abc'.startsWith('b'), 'abc'.startsWith('c', 9), 'abc'.startsWith('', 9))" == ["true false false true"]
+#guard out "print('abc'.endsWith('b', 2), 'abc'.endsWith('c', 2), 'abc'.endsWith('abc'), 'abc'.endsWith('', 0), 'abc'.endsWith('abcd'))" == ["true false true true false"]
+#guard out "print('abc'.includes('a', 1), 'abc'.includes('c', 2), 'abc'.includes('a'), 'abc'.includes('', 9))" == ["false true true true"]
+#guard out "print('canal'.lastIndexOf('a', 2), 'canal'.lastIndexOf('a'), 'canal'.lastIndexOf('a', 0), 'canal'.lastIndexOf('', 9), 'canal'.lastIndexOf('c', -5), 'canal'.lastIndexOf('x'))" == ["1 3 -1 5 0 -1"]
+#guard out "var s = 'x\\u00e9\\ud83d\\ude00z'; print(s.startsWith('\\ude00z', 3), s.startsWith('z', 4), s.endsWith('\\ud83d', 3), s.lastIndexOf('\\ude00', 9))" == ["true true true 3"]
+
+/-! ## A sticky match that fails, and a short string between two matches
+
+A sticky regular expression is tried at `lastIndex` only, so a failed match takes one step, not
+the steps of the rest of the subject; and a match on a short string (under `cachedCharsMin`
+bytes) leaves the decoded long subject in place. The tokeniser of `webidl2.js` does both for
+every token: `html.idl` (109 KB) took over 5 M steps and tens of seconds, and takes about 1 M
+steps now. The first script fails 20,000 sticky matches on a 64 KB subject inside a budget of
+200,000 steps (each failure took 1,000 steps before). -/
+
+#guard outWith 200000 "var s = 'a'.repeat(64000) + 'b', re = /b/y, n = 0; for (var i = 0; i < 20000; i++) { re.lastIndex = i; if (!re.test(s)) n++; } re.lastIndex = 64000; print(n, re.test(s), re.lastIndex)" == ["20000 true 64001"]
+#guard out "var s = 'a'.repeat(300) + 'b', re = /b/y, r = []; for (var i = 299; i < 302; i++) { re.lastIndex = i; r.push(/[ab]/.test(s.charAt(i)), re.test(s), re.lastIndex); } print(r.join())" == ["true,false,0,true,true,301,false,false,0"]
+
+/-! ## `new` on a Proxy
+
+§10.5.13: a Proxy whose target is a constructor is a constructor; `new` calls its `construct`
+trap, or constructs the target when the handler has none. Before 2026-11-14 `new` on any Proxy
+threw "is not a constructor", so the IsConstructor check of WPT's `idlharness.js`
+(`new (new Proxy(o, {construct: () => ({})}))`) failed for every interface. -/
+
+#guard out "function F() { this.b = 2; } var P = new Proxy(F, { construct: function (t, args, nt) { return { a: args.length, same: t === F }; } }); var p = new P(7, 8); print(p.a, p.same); var Q = new Proxy(F, {}); var q = new Q(); print(q.b, q instanceof F)" == ["2 true", "2 true"]
+#guard out "try { new (new Proxy({}, {})); } catch (e) { print(e.name) } try { new (new Proxy(function () {}, { construct: function () { return 1; } })); } catch (e) { print(e.name) }" == ["TypeError", "TypeError"]
+
+/-! ## A host's named properties of the global object
+
+`namedGlobal`: a name with no binding, and a property that the global object and its prototype
+chain do not have, are asked of the function in the global's internal slot (`namedGetterKey`,
+a private-name key that no reflection lists). A page's function answers with the named
+properties of the Window object (HTML §7.3.3). Here a script plays the host. With no such
+function nothing changes: the last script. -/
+
+#guard out "Object.defineProperty(globalThis, '\\u{10FFFE}WindowNamedProperties', { value: function (name) { return name === 'foo' ? 42 : undefined; } }); print(typeof foo, foo, globalThis.foo, typeof bar, globalThis.bar); try { bar } catch (e) { print(e.name) } print(Object.getOwnPropertyNames(globalThis).some(function (k) { return k.indexOf('WindowNamed') >= 0; }))" == ["number 42 42 undefined undefined", "ReferenceError", "false"]
+-- a declared name shadows a named property
+#guard out "Object.defineProperty(globalThis, '\\u{10FFFE}WindowNamedProperties', { value: function (name) { return 42; } }); var foo; print(typeof foo, foo); foo = 5; print(foo, globalThis.foo)" == ["undefined undefined", "5 5"]
+#guard out "print(typeof nothing, globalThis.nothing); try { nothing } catch (e) { print(e.name) }" == ["undefined undefined", "ReferenceError"]
+
 end L4Factoidal.JS.Tests
