@@ -9498,6 +9498,9 @@ def initRealm : M Unit := do
   method typedProto "set" .typedSet 1
   method typedProto "subarray" .typedSubarray 2
   method typedProto "fill" .typedFill 1
+  -- %TypedArray%.prototype.toString is the function object Array.prototype.toString (§23.2.3.32),
+  -- so a typed array converts to a string or a number through its elements (join)
+  if let some p := (← getObj ap).getOwn "toString" then defineOwn typedProto "toString" p
   let mut typedProtos := #[]
   for i in [0:typedNames.size] do
     let (nm, size) := typedNames[i]!

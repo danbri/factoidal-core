@@ -617,4 +617,8 @@ private def parses (src : String) : Bool := syn src == "ok"
 #guard out "var a = Object.freeze([1, 2]); var b = [3]; Object.defineProperty(b, '0', { writable: false }); print(Array.isArray(a), Array.isArray(b), JSON.stringify(a), JSON.stringify({ s: a }), [0].concat(a).length, Object.prototype.toString.call(a), Object.isFrozen(a), Object.keys(a).join(), Object.getOwnPropertyNames(a).join(), a.length)" == ["true true [1,2] {\"s\":[1,2]} 3 [object Array] true 0,1 0,1,length 2"]
 #guard out "print(Array.isArray(Object.freeze({ length: 0 })), JSON.stringify(Object.freeze({ a: [] })))" == ["false {\"a\":[]}"]
 
+-- %TypedArray%.prototype.toString is Array.prototype.toString (§23.2.3.32): ToNumber and
+-- ToString of a typed array read its elements.
+#guard out "var t = new Float32Array([1.5]); print(Object.getPrototypeOf(Uint8Array.prototype).toString === Array.prototype.toString, String(t), +t, Math.abs(new Float64Array([-2])), `${new Uint8Array([1, 2])}`)" == ["true 1.5 1.5 2 1,2"]
+
 end L4Factoidal.JS.Tests
