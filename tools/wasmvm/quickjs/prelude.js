@@ -83,6 +83,11 @@
     return o;
   };
   const isElement = x => x instanceof Element;
+  // An HTML element (DOM §4.9: an element in the HTML namespace), in a document of either
+  // type. node_info 8 answers 1 only in an HTML document (where names are lower-cased), so an
+  // element of an XML document is asked for its namespace.
+  const XHTML_NS = 'http://www.w3.org/1999/xhtml';
+  const htmlEl = k => info(k, 8) === 1 || (info(k, 0) === 1 && n.str(k, 2) === XHTML_NS);
   const str = (id, which) => { const s = n.str(id, which); return typeof s === 'number' ? (s === -1 ? null : fail(s)) : s; };
 
   // ---- what Lean's layout answers (node_query ops 16 to 19) ------------------------
@@ -1081,7 +1086,7 @@
   reflectURL(named.HTMLAnchorElement, ['href']); reflectString(named.HTMLAnchorElement, ['target', 'download', 'rel']);
   reflectURL(named.HTMLAreaElement, ['href']);
   Object.defineProperty(named.HTMLLabelElement.prototype, 'htmlFor', { get() { return this.getAttribute('for') ?? ''; }, set(v) { this.setAttribute('for', String(v)); }, configurable: true });
-  const formOf = el => { let k = info(nodeId(el), 1); while (k >= 0) { if (info(k, 0) === 1 && info(k, 8) === 1 && str(k, 0) === 'form') return wrap(k); k = info(k, 1); } return null; };
+  const formOf = el => { let k = info(nodeId(el), 1); while (k >= 0) { if (info(k, 0) === 1 && htmlEl(k) && str(k, 0) === 'form') return wrap(k); k = info(k, 1); } return null; };
   class SubmitEvent extends Event {
     constructor(type, init = undefined) { super(type, init); state(this).submitter = initOf(init).submitter ?? null; }
     get submitter() { return state(this).submitter; }
@@ -1121,7 +1126,7 @@
   const fire = (target, type, init) => { const e = new Event(type, init); state(e).trusted = true; return dispatch(target, e); };
   // DOM §2.9: legacy-pre-activation, legacy-canceled-activation and activation behaviours.
   const preActivation = k => {
-    if (!(info(k, 8) === 1 && str(k, 0) === 'input')) return null;
+    if (!(htmlEl(k) && str(k, 0) === 'input')) return null;
     const t = chk(n.query(k, 14, ''));
     if (t === 'checkbox') { const old = chk(n.treeOp(k, 0, 7)); chk(n.treeOp(k, old ? 0 : 1, 6)); return { old }; }
     if (t === 'radio') { const prev = chk(n.treeOp(k, 0, 8)), old = chk(n.treeOp(k, 0, 7)); chk(n.treeOp(k, 1, 6)); return { prev, old }; }
@@ -1134,7 +1139,7 @@
     else chk(n.treeOp(k, st.old, 6));
   };
   const activation = (k, targetId) => {
-    if (info(k, 8) !== 1) return;
+    if (!htmlEl(k)) return;
     const el = wrap(k), name = str(k, 0);
     if (name === 'input' || name === 'button') {
       const t = chk(n.query(k, 14, ''));
@@ -2261,7 +2266,7 @@
   protoOf = (id, t) => {
     switch (t) {
       case 1: {
-        if (info(id, 8) !== 1) return (str(id, 2) === 'http://www.w3.org/2000/svg' ? SVGElement : Element).prototype;
+        if (!htmlEl(id)) return (str(id, 2) === 'http://www.w3.org/2000/svg' ? SVGElement : Element).prototype;
         const l = str(id, 0), C = htmlClasses[l];
         return (C ?? (plainHTMLElements.has(l) || isCustomName(l) ? HTMLElement : HTMLUnknownElement)).prototype;
       }
@@ -2752,7 +2757,7 @@
     const customOf = id => { const el = wrappers.get(id), st = el && ceState.get(el); return st && st.state === 'custom' ? el : undefined; };
     // "Look up a custom element definition" (HTML §4.13.3) for the element numbered `id`.
     const lookup = id => {
-      if (info(id, 0) !== 1 || info(id, 8) !== 1) return null;
+      if (info(id, 0) !== 1 || !htmlEl(id)) return null;
       const l = str(id, 0), d = defsByName.get(l);
       if (d && d.localName === l) return d;
       let is = isValues.get(id);
@@ -4970,7 +4975,7 @@
     ? [HTML_NS, 'body'] : [str(ctx, 2), str(ctx, 0)];
   const setInner = (el, v, declarative = false) => {
     const id = nodeId(el), f = fragmentOf(info(id, 7), str(id, 2), str(id, 0), v === null ? '' : String(v), declarative);
-    const target = info(id, 8) === 1 && str(id, 0) === 'template' ? info(id, 9) : id;
+    const target = htmlEl(id) && str(id, 0) === 'template' ? info(id, 9) : id;
     chk(n.setText(target, '')); chk(n.insert(target, f, -1));
   };
   // getHTML(options) (HTML §8.4): GetHTMLOptions read in WebIDL order; the serialization is
@@ -5696,7 +5701,7 @@
   // a clone's attributes are set by Lean, not through setAttribute).
   const scanHandlers = (root, inclusive) => {
     for (const k of inclusive && info(root, 0) === 1 ? [root, ...elementsOf(root)] : elementsOf(root)) {
-      if (info(k, 8) !== 1) continue;
+      if (!htmlEl(k)) continue;
       const a = str(k, 6) ?? ''; const xs = a === '' ? [] : a.split('\u0000');
       for (let i = 0; i + 1 < xs.length; i += 2) if (/^on[a-z]+$/.test(xs[i])) contentHandler(wrap(k), xs[i].slice(2), xs[i + 1]);
     }
