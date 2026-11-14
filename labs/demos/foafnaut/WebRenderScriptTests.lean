@@ -26,8 +26,12 @@ private def command (id : Nat) (value : String) : JSON.Json :=
 #guard match (WebRenderScript.snapshot dom).field? "scripts" with
   | some (.array scripts) => scripts.length == 1
   | _ => false
-#guard match WebRenderScript.applyCommands dom (.array (List.replicate 4097 (command target "bad"))) with
+-- The bound is the session's (`Hosts.Dom.maxCommands`): one more command is refused, and a
+-- list a session can make (4097 was refused before the bounds were one) is replayed.
+#guard match WebRenderScript.applyCommands dom (.array (List.replicate (WasmVM.Hosts.Dom.maxCommands + 1) (command target "bad"))) with
   | .error _ => true | _ => false
+#guard match WebRenderScript.applyCommands dom (.array (List.replicate 4097 (command target "kept"))) with
+  | .ok result => result.textContent target == some "kept" | .error _ => false
 -- The commands of page scripts in the engine (WebScripts): a replay makes the same nodes.
 private def list := (dom.getElementById 0 "change").getD 0
 private def made := dom.size
