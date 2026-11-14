@@ -142,6 +142,8 @@ HTMLElement className class s
 HTMLElement autofocus . b
 HTMLElement hidden . b
 HTMLElement inert . b
+HTMLElement headingOffset . ul 0
+HTMLElement headingReset . b
 HTMLElement accessKey . s
 HTMLElement tabIndex . ti
 HTMLElement draggable . dg

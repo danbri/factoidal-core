@@ -28,6 +28,7 @@ node of the document. The parser and the matcher are total: each takes fuel (`pa
 -/
 import L4Factoidal.DOM.Arena
 import L4Factoidal.DOM.CustomElements
+import L4Factoidal.HTML.Dimension
 import L4Factoidal.Unicode.Bidi
 
 namespace L4Factoidal.DOM.Selectors
@@ -813,6 +814,98 @@ def langOf (d : Dom) (k : NodeId) : Option String := Id.run do
       cur := x.parent
   return none
 
+/-- The rank of an `h1`–`h6` element of HTML (1 to 6), 0 for any other node. -/
+def headingRank (x : Node) : Nat :=
+  if x.type != .element || x.ns != some htmlNS then 0 else
+  match x.lname with
+  | "h1" => 1 | "h2" => 2 | "h3" => 3 | "h4" => 4 | "h5" => 5 | "h6" => 6 | _ => 0
+
+/-- The heading offset of node `k` (whatwg/html PR 11086): the `headingoffset` values
+(non-negative integers; anything else counts 0) of the node and its ancestors, up to and
+including the nearest one with `headingreset`, at most 9. -/
+def headingOffset (d : Dom) (k : NodeId) : Nat := Id.run do
+  let mut offset := 0
+  let mut cur := some k
+  for _ in [0:d.size + 1] do
+    match cur with
+    | none => break
+    | some p =>
+      let y := d.get p
+      if y.type == .element then
+        let v := ((y.attrs.find? fun a => a.ns.isNone && a.lname == "headingoffset").bind fun a =>
+          L4Factoidal.HTML.Dimension.parseNonNegative a.value).getD 0
+        offset := min 9 (offset + v)
+        if y.attrs.any fun a => a.ns.isNone && a.lname == "headingreset" then break
+      cur := y.parent
+  return offset
+
+/-- The heading level of an `h1`–`h6` element (HTML "heading level"): its rank plus its
+heading offset, at most 9; `none` for other nodes. -/
+def headingLevel (d : Dom) (k : NodeId) : Option Nat :=
+  if headingRank (d.get k) == 0 then none else some (min 9 (headingRank (d.get k) + headingOffset d k))
+
+/-- Says: a heading level is between 1 and 9. -/
+theorem headingLevel_bounds (d : Dom) (k : NodeId) (n : Nat) (h : headingLevel d k = some n) :
+    1 ≤ n ∧ n ≤ 9 := by
+  unfold headingLevel at h
+  split at h
+  · cases h
+  · rename_i hr
+    cases h
+    simp only [beq_iff_eq] at hr
+    omega
+
+/-- Says: only the six heading elements have a level. -/
+theorem headingLevel_rank (d : Dom) (k : NodeId) (n : Nat) (h : headingLevel d k = some n) :
+    headingRank (d.get k) ≠ 0 := by
+  unfold headingLevel at h
+  split at h
+  · cases h
+  · rename_i hr; simpa using hr
+
+/-- The `contenteditable` state that an element and its ancestors give it (HTML §6.8.1): the
+nearest element with a valid `contenteditable` value decides; `false` decides no. -/
+def editableEl (d : Dom) (k : NodeId) : Bool := Id.run do
+  let mut cur := some k
+  for _ in [0:d.size + 1] do
+    match cur with
+    | none => return false
+    | some p =>
+      let y := d.get p
+      if y.type == .element && y.ns == some htmlNS then
+        match (y.attrs.find? fun a => a.ns.isNone && a.lname == "contenteditable").map (lowerAscii ·.value) with
+        | some "" | some "true" | some "plaintext-only" => return true
+        | some "false" => return false
+        | _ => pure ()
+      cur := y.parent
+  return false
+
+/-- The nearest `form` ancestor of a node (its form owner when it has no `form` attribute). -/
+def formAncestor (d : Dom) (k : NodeId) : Option NodeId := Id.run do
+  let mut cur := (d.get k).parent
+  for _ in [0:d.size + 1] do
+    match cur with
+    | none => return none
+    | some p => if isHtml d p ["form"] then return some p else cur := (d.get p).parent
+  return none
+
+def radioChecked (d : Dom) (k : NodeId) : Bool :=
+  ((d.get k).checkedness.getD (attrVal? d k "checked").isSome)
+
+/-- `:indeterminate` (HTML §4.16.3), as far as the tree tells: a radio button whose group
+(the same non-empty name, tree and form) has no checked button, and a `progress` element
+with no `value` attribute. (A checkbox's indeterminate flag is a script's, not here.) -/
+def indeterminate (d : Dom) (k : NodeId) : Bool :=
+  (isHtml d k ["progress"] && (attrVal? d k "value").isNone) ||
+  (isHtml d k ["input"] && lowerAscii ((attrVal? d k "type").getD "") == "radio" &&
+    (match attrVal? d k "name" with
+     | none | some "" => !radioChecked d k
+     | some nm =>
+       let root := d.root k
+       let form := formAncestor d k
+       !((d.treeOrder root).any fun j => isHtml d j ["input"] && lowerAscii ((attrVal? d j "type").getD "") == "radio" &&
+          attrVal? d j "name" == some nm && formAncestor d j == form && radioChecked d j)))
+
 /-- HTML §4.16.3 `:read-write`: an `input` that takes text and a `textarea`, neither
 `readonly` nor disabled, and an editing host or an element in one (`contenteditable`). -/
 def readWrite (d : Dom) (k : NodeId) : Bool :=
@@ -989,14 +1082,17 @@ def matchSimple (d : Dom) (scope : Option NodeId) : Nat → NodeId → Simple �
         (isHtml d k ["input"] && (attrVal? d k "checked").isSome &&
           ["checkbox", "radio"].contains (lowerAscii ((attrVal? d k "type").getD ""))) ||
         (isHtml d k ["option"] && (attrVal? d k "selected").isSome)
-      | "indeterminate" => isHtml d k ["progress"] && (attrVal? d k "value").isNone
+      | "indeterminate" => indeterminate d k
       | "open" => isHtml d k ["details", "dialog"] && (attrVal? d k "open").isSome
-      | "heading" => isHtml d k ["h1", "h2", "h3", "h4", "h5", "h6"]
+      -- `:heading` and `:heading(levels)` by the heading level (headingoffset, headingreset)
+      | "heading" => (headingLevel d k).isSome
       | "dir(ltr)" => !isRtl d k
       | "dir(rtl)" => isRtl d k
       | _ =>
         if n.startsWith "heading(" then
-          isHtml d k ((((n.drop 8).dropEnd 1).toString.splitOn ",").map fun l => "h" ++ toString l.toNat!)
+          match headingLevel d k with
+          | some l => (((n.drop 8).dropEnd 1).toString.splitOn ",").any fun t => t.toNat? == some l
+          | none => false
         else false
     | .nth kind a b of =>
       let x := d.get k

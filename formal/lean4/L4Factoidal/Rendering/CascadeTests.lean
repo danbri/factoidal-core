@@ -320,4 +320,26 @@ private def isPx (v : Float) : CSS.Length → Bool
 #guard hinted "<input type=image width=40 hspace=2>" "" "input" fun s => isPx 40 s.width && s.margin.left == 2
 #guard hinted "<input width=40>" "" "input" fun s => match s.width with | .auto => true | _ => false
 
+/-! Heading levels, `:heading` and `:indeterminate` of radio groups
+(html/semantics/sections/headingoffset-and-headingreset.html, selectors/pseudo-classes). -/
+private def levels (html : String) : List (Option Nat) :=
+  let d := DOM.parseHtmlDocument html
+  ((List.range d.size).filter fun i => L4Factoidal.DOM.Selectors.headingRank (d.get i) != 0).map (L4Factoidal.DOM.Selectors.headingLevel d)
+
+private def matching (html sel : String) (tags : List String) : List Bool :=
+  let d := DOM.parseHtmlDocument html
+  match L4Factoidal.DOM.Selectors.parse sel with
+  | some l => ((List.range d.size).filter fun i => tags.contains (d.get i).lname).map
+      fun i => L4Factoidal.DOM.Selectors.matchList d none L4Factoidal.DOM.Selectors.matchFuel i l
+  | none => []
+
+#guard levels "<div headingoffset=1><h1></h1><h3></h3><div headingoffset=2><h1></h1><div headingreset><h1></h1></div></div></div>" ==
+  [some 2, some 4, some 4, some 1]
+#guard levels "<div headingoffset=8><h1></h1><h6></h6></div><div headingoffset=-3><h2></h2></div><h1 headingoffset=3></h1>" ==
+  [some 9, some 9, some 2, some 4]
+#guard matching "<h1></h1><div headingoffset=1><h1></h1></div>" ":heading(2)" ["h1"] == [false, true]
+#guard matching "<h1></h1><h2></h2>" ":heading(1, 3)" ["h1", "h2"] == [true, false]
+#guard matching "<input type=radio name=a><input type=radio name=a><input type=radio name=b checked><input type=radio name=b><progress></progress><progress value=1></progress>"
+  ":indeterminate" ["input", "progress"] == [true, true, false, false, true, false]
+
 end L4Factoidal.Rendering.CascadeTests
