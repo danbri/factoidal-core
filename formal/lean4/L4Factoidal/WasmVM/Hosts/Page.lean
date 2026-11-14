@@ -569,8 +569,9 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
     if domQueryOps (a 1) then
       let (dom, st, r) := Hosts.Dom.serve mem nm args h.dom st
       ({ h with dom }, st, r)
-    else if a 1 ≥ 100 && a 1 < 200 then
-      -- ranges, selection, traversal, CharacterData (`Hosts.Dom.domOp`)
+    else if a 1 ≥ 100 && (a 1 < 200 || a 1 == 210) then
+      -- ranges, selection, traversal, CharacterData, a document's referrer source (210)
+      -- (`Hosts.Dom.domOp`)
       match Hosts.Dom.readStr mem st (a 2) (a 3) Hosts.Dom.maxString with
       | .error e => (h, st, Hosts.Dom.codeOrTrap e)
       | .ok q =>
