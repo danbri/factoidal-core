@@ -46,7 +46,9 @@ inductive Arg where
   | bytes (size : Nat) (elem : Nat)
   | list (xs : List Int)
   | none
-  deriving Repr, Inhabited
+  /-- The bytes of client pixels (or of an image source, read as RGBA by the page glue). -/
+  | data (b : ByteArray)
+  deriving Inhabited
 
 inductive Reply where
   /-- `undefined`. -/
@@ -59,7 +61,11 @@ inductive Reply where
   | obj (id : Nat)
   /-- The command generated an error and did nothing (the page sees `undefined` or `null`). -/
   | fail
-  deriving DecidableEq, Repr, Inhabited
+  /-- Done here; the drawing path does not run (a command on a framebuffer object). -/
+  | done
+  /-- `readPixels` of a framebuffer object: the bytes of the destination, packed. -/
+  | pixels (b : ByteArray)
+  deriving DecidableEq, Inhabited
 
 inductive Kind where
   | buffer | framebuffer | program | renderbuffer | shader | texture | query | sampler | sync
@@ -115,6 +121,16 @@ structure Stencil where
   writeMask : Nat := 0xFFFFFFFF
   deriving Repr, Inhabited
 
+/-- An image a framebuffer can read or write: level 0 of a texture or a renderbuffer's storage, its
+size and internal format, and its pixels as 8-bit RGBA rows (row 0 first, as GL numbers rows) when
+the format is RGBA with 8-bit components; other formats keep only their size. -/
+structure Image where
+  width : Nat
+  height : Nat
+  format : Nat
+  pixels : Option ByteArray := none
+  deriving Inhabited
+
 /-- The limits this engine gives a page (`getParameter`). -/
 def maxTextureSize : Nat := 2048
 def max3DTextureSize : Nat := 256
@@ -144,6 +160,14 @@ structure St where
   clearStencil : Int := 0
   unpackAlignment : Nat := 4
   packAlignment : Nat := 4
+  /-- `UNPACK_FLIP_Y_WEBGL`. -/
+  flipY : Bool := false
+  /-- `clearColor`, each a number as the page's text. -/
+  clearColor : Array String := #["0", "0", "0", "0"]
+  /-- Level 0 of a 2D texture, or a renderbuffer's storage, by object. -/
+  images : Std.HashMap Nat Image := {}
+  /-- The attachments of a framebuffer object: (attachment point, kind, object). -/
+  fbos : Std.HashMap Nat (List (Nat × Kind × Nat)) := {}
   deriving Inhabited
 
 /-- A context: the error flag and the state. -/
@@ -253,7 +277,8 @@ def unbind (s : St) (id : Nat) : St :=
   { s with objects := s.objects.erase id, arrayBuffer := z s.arrayBuffer, elementBuffer := z s.elementBuffer,
            tex2D := z s.tex2D, texCube := z s.texCube, tex3D := z s.tex3D, tex2DArray := z s.tex2DArray,
            framebuffer := z s.framebuffer, renderbuffer := z s.renderbuffer,
-           attribs := s.attribs.map fun a => if a.buffer == id then { a with buffer := 0 } else a }
+           attribs := s.attribs.map fun a => if a.buffer == id then { a with buffer := 0 } else a,
+           images := s.images.erase id, fbos := (s.fbos.erase id).map fun _ atts => atts.filter (·.2.2 != id) }
 
 /-- The format and type of client pixels are a pair this version takes (INVALID_ENUM for a value
 that is no format or type of the version, INVALID_OPERATION for a pair that does not go together),
@@ -318,7 +343,8 @@ def modelled : List String :=
    "vertexAttrib1f", "vertexAttrib2f", "vertexAttrib3f", "vertexAttrib4f", "vertexAttrib1fv", "vertexAttrib2fv",
    "vertexAttrib3fv", "vertexAttrib4fv", "vertexAttribI4i", "vertexAttribI4ui", "vertexAttribI4iv", "vertexAttribI4uiv",
    "getVertexAttrib", "getParameter", "texImage2D", "texImage3D", "compressedTexImage2D", "compressedTexSubImage2D",
-   "readPixels"]
+   "readPixels", "clearColor", "clear", "drawArrays", "drawElements", "checkFramebufferStatus", "framebufferTexture2D",
+   "framebufferRenderbuffer", "renderbufferStorage"]
 
 /-- The components a `vertexAttrib*v` call needs in its list. -/
 def vectorNeed (op : String) : Nat :=
@@ -329,6 +355,118 @@ def listLength (args : Array Arg) (i : Nat) : Nat :=
   | some (.list xs) => xs.length
   | some (.bytes size elem) => if elem == 0 then 0 else size / elem
   | _ => 0
+
+/-! ## Framebuffer objects -/
+
+/-- A number the page gave as text (`clearColor`), as an 8-bit unsigned normalized value: clamped
+to [0, 1] and rounded to nearest, exactly (decimal digits and an exponent; anything else is 0). -/
+def unorm8Raw (t : String) : Nat :=
+  let neg := t.startsWith "-"
+  let t := if neg || t.startsWith "+" then String.ofList (t.toList.drop 1) else t
+  let (m, e) := match t.splitOn "e" with
+    | [m, e] => (m, (if e.startsWith "+" then String.ofList (e.toList.drop 1) else e).toInt?.getD 0)
+    | _ => (t, 0)
+  let (ip, fp) := match m.splitOn "." with
+    | [a, b] => (a, b)
+    | _ => (m, "")
+  match (ip ++ fp).toNat? with
+  | none => 0
+  | some digits =>
+    if neg then 0 else
+    let exp : Int := e - fp.length
+    let (num, den) := if exp ≥ 0 then (digits * 10 ^ exp.toNat * 255, 1) else (digits * 255, 10 ^ (-exp).toNat)
+    (2 * num + den) / (2 * den)
+
+def unorm8 (t : String) : Nat := min 255 (unorm8Raw t)
+
+theorem unorm8_le (t : String) : unorm8 t ≤ 255 := Nat.min_le_left _ _
+
+/-- Formats an attachment point takes (OpenGL ES 2.0 §4.4.5, 3.0 §4.4.4; WebGL 1.0 §6.6). -/
+def colorRenderable (version fmt : Nat) : Bool :=
+  fmt == 0x1908 || fmt == 0x1907 || fmt == 0x8056 || fmt == 0x8D62 || fmt == 0x8057 ||
+  (version == 2 && (fmt == 0x8058 || fmt == 0x8051 || fmt == 0x8C43 || fmt == 0x8229 || fmt == 0x822B))
+def depthRenderable (version fmt : Nat) : Bool := fmt == 0x81A5 || (version == 2 && (fmt == 0x81A6 || fmt == 0x8CAC))
+def stencilRenderable (fmt : Nat) : Bool := fmt == 0x8D48
+def depthStencilRenderable (version fmt : Nat) : Bool := fmt == 0x84F9 || (version == 2 && (fmt == 0x88F0 || fmt == 0x8CAD))
+
+/-- An attachment's format is refused only when it is known to be of the other kind (a depth or
+stencil format at a color point, a color format at a depth or stencil point): formats of extensions
+and of WebGL 2 that are not listed here are the drawing path's to judge. -/
+def renderableAt (version point fmt : Nat) : Bool :=
+  let ds := depthRenderable version fmt || stencilRenderable fmt || depthStencilRenderable version fmt || fmt == 0x1902
+  if 0x8CE0 ≤ point && point ≤ 0x8CEF then !ds
+  else !colorRenderable version fmt
+
+def attachmentPoint (version p : Nat) : Bool :=
+  p == 0x8CE0 || p == 0x8D00 || p == 0x8D20 || p == 0x821A || (version == 2 && 0x8CE0 ≤ p && p ≤ 0x8CEF)
+
+def framebufferTarget (version t : Nat) : Bool := t == 0x8D40 || (version == 2 && (t == 0x8CA8 || t == 0x8CA9))
+
+/-- `checkFramebufferStatus` of the bound framebuffer (OpenGL ES 2.0 §4.4.5, WebGL 1.0 §6.6). The
+default framebuffer is complete (`status_default`). -/
+def status (s : St) : Nat :=
+  if s.framebuffer == 0 then 0x8CD5 else
+  let atts := (s.fbos[s.framebuffer]?).getD []
+  if atts.isEmpty then 0x8CD7 else
+  let imgs := atts.map fun (pt, _, id) => (pt, s.images[id]?)
+  if imgs.any (fun (pt, im) => match im with
+      | none => true
+      | some im => im.width == 0 || im.height == 0 || !renderableAt s.version pt im.format) then 0x8CD6
+  else
+  let sizes := imgs.filterMap fun (_, im) => im.map fun i => (i.width, i.height)
+  if s.version == 1 && sizes.any (· != sizes.headD (0, 0)) then 0x8CD9
+  else if s.version == 1 && atts.any (·.1 == 0x821A) && atts.any (fun a => a.1 == 0x8D00 || a.1 == 0x8D20) then 0x8CDD
+  else if s.version == 1 && atts.any (·.1 == 0x8D00) && atts.any (·.1 == 0x8D20) then 0x8CDD
+  else 0x8CD5
+
+theorem status_default (s : St) (h : s.framebuffer = 0) : status s = 0x8CD5 := by
+  simp [status, h]
+
+/-- The color attachment of the bound framebuffer object and its image. -/
+def colorImage (s : St) : Option (Nat × Image) := do
+  let atts ← s.fbos[s.framebuffer]?
+  let (_, _, id) ← atts.find? (·.1 == 0x8CE0)
+  let im ← s.images[id]?
+  pure (id, im)
+
+/-- Client pixels as the rows of an image: `w` pixels of 4 bytes a row, rows `stride` bytes apart
+in `src`, row order reversed when `flip`. Bytes past `src` are 0. -/
+def unpackRows (src : ByteArray) (w h stride : Nat) (flip : Bool) : ByteArray :=
+  ⟨Array.ofFn (n := w * h * 4) fun i =>
+    let r := i.val / (w * 4)
+    let r := if flip then h - 1 - r else r
+    src.get! (r * stride + i.val % (w * 4))⟩
+
+theorem unpackRows_size (src : ByteArray) (w h stride : Nat) (flip : Bool) :
+    (unpackRows src w h stride flip).size = w * h * 4 := by
+  simp [unpackRows, ByteArray.size]
+
+/-- `readPixels` of `w × h` pixels from (x, y) of an image: the destination's bytes, rows
+`rowStride w 4 align` apart and the last unpadded (`imageBytes`); a pixel outside the image is 0. -/
+def readRect (im : ByteArray) (iw ih : Nat) (x y : Int) (w h align : Nat) : ByteArray :=
+  let stride := rowStride w 4 align
+  ⟨Array.ofFn (n := imageBytes w h 4 align) fun i =>
+    let r := i.val / stride
+    let c := i.val % stride
+    if c ≥ w * 4 then 0 else
+    let sx := x + (c / 4 : Nat)
+    let sy := y + (r : Int)
+    if sx < 0 || sy < 0 || sx ≥ iw || sy ≥ ih then 0
+    else im.get! ((sy.toNat * iw + sx.toNat) * 4 + c % 4)⟩
+
+theorem readRect_size (im : ByteArray) (iw ih : Nat) (x y : Int) (w h align : Nat) :
+    (readRect im iw ih x y w h align).size = imageBytes w h 4 align := by
+  simp [readRect, ByteArray.size]
+
+/-- Bounds. Says: a pixel `readRect` reads from the image (inside it) lies inside its
+`iw × ih × 4` bytes. -/
+theorem readRect_src_lt (iw ih sx sy k : Nat) (hx : sx < iw) (hy : sy < ih) (hk : k < 4) :
+    (sy * iw + sx) * 4 + k < iw * ih * 4 := by
+  have : sy * iw + sx < iw * ih := by
+    have h1 : (sy + 1) * iw ≤ ih * iw := Nat.mul_le_mul_right iw hy
+    rw [Nat.succ_mul] at h1
+    rw [Nat.mul_comm iw ih]; omega
+  omega
 
 /-- `constants` are the values of the context's interface (`Idl`): `getParameter` of a number that is
 none of them is INVALID_ENUM. -/
@@ -405,6 +543,7 @@ def exec (s : St) (isConstant : Nat → Bool) (op : String) (args : Array Arg) :
     if p == 0x0CF5 || p == 0x0D05 then
       if !(v == 1 || v == 2 || v == 4 || v == 8) then throw .invalidValue
       return (if p == 0x0CF5 then { s with unpackAlignment := v.toNat } else { s with packAlignment := v.toNat }, .defer)
+    if p == 0x9240 then return ({ s with flipY := v != 0 }, .defer)
     return (s, .defer)
   | "vertexAttribPointer" | "vertexAttribIPointer" =>
     let integer := op == "vertexAttribIPointer"
@@ -469,10 +608,24 @@ def exec (s : St) (isConstant : Nat → Bool) (op : String) (args : Array Arg) :
       | none => throw .invalidEnum
     if level < 0 || level.toNat > maxLevel maxTextureSize || w < 0 || h < 0 || intAt args 5 != 0 then throw .invalidValue
     if w.toNat > maxTextureSize >>> level.toNat || h.toNat > maxTextureSize >>> level.toNat then throw .invalidValue
-    let _ ← checkPixels s w.toNat h.toNat (u32At args 6) (u32At args 7) (argAt args 8) s.unpackAlignment
+    -- An image source arrives as RGBA rows read by the page glue: packed (argument 10 is 1).
+    let source := intAt args 10 == 1
+    let align := if source then 1 else s.unpackAlignment
+    let _ ← checkPixels s w.toNat h.toNat (u32At args 6) (u32At args 7) (argAt args 8) align
     if s.version != 2 && u32At args 2 != u32At args 6 then throw .invalidOperation
     if tex == 0 then throw .invalidOperation
-    return (s, .unit)
+    if target != 0x0DE1 || level != 0 then return (s, .unit)
+    -- Level 0 of a 2D texture is kept: its size and format, and its pixels when they are RGBA bytes.
+    let rgba := u32At args 6 == 0x1908 && u32At args 7 == 0x1401
+    let pixels := if !rgba then none else
+      match argAt args 9 with
+      | some (.data b) => some (unpackRows b w.toNat h.toNat (rowStride w.toNat 4 align) s.flipY)
+      | _ => match argAt args 8 with
+        -- client pixels the page glue did not give (a large image): not known here
+        | some (.bytes _ _) => none
+        -- no pixels: the texture is zeros (WebGL 1.0 §5.14.8)
+        | _ => some (ByteArray.mk (Array.replicate (w.toNat * h.toNat * 4) 0))
+    return ({ s with images := s.images.insert tex { width := w.toNat, height := h.toNat, format := u32At args 2, pixels } }, .unit)
   | "texImage3D" =>
     let target := u32At args 0
     let level := intAt args 1
@@ -501,8 +654,72 @@ def exec (s : St) (isConstant : Nat → Bool) (op : String) (args : Array Arg) :
     | some (.bytes size elem) =>
       if elem != 1 then throw .invalidOperation
       if size < imageBytes w.toNat h.toNat 4 s.packAlignment then throw .invalidOperation
-      return (s, .defer)
+      if s.framebuffer == 0 then return (s, .defer)
+      -- A framebuffer object: complete, with a color attachment (WebGL 1.0 §6.25), read here.
+      if status s != 0x8CD5 then throw .invalidFramebufferOperation
+      match colorImage s with
+      | none => throw .invalidOperation
+      | some (_, im) =>
+        match im.pixels with
+        | some px => return (s, .pixels (readRect px im.width im.height (intAt args 0) (intAt args 1) w.toNat h.toNat s.packAlignment))
+        | none => return (s, .defer)
     | _ => throw .invalidValue
+  | "clearColor" =>
+    let t := fun (i : Nat) => match args[i]? with | some (.num x) => x | _ => "0"
+    return ({ s with clearColor := #[t 0, t 1, t 2, t 3] }, .defer)
+  | "clear" =>
+    let mask := u32At args 0
+    if mask &&& (0xFFFFFFFF ^^^ (0x4000 ||| 0x0100 ||| 0x0400)) != 0 then throw .invalidValue
+    if s.framebuffer == 0 then return (s, .defer)
+    if status s != 0x8CD5 then throw .invalidFramebufferOperation
+    -- The drawing path clears too (its own copy of the attachment); Lean keeps the pixels it can read.
+    if mask &&& 0x4000 == 0 then return (s, .defer)
+    match colorImage s with
+    | some (id, im) =>
+      match im.pixels with
+      | some px =>
+        let c := s.clearColor.map unorm8
+        let fill : ByteArray := ⟨Array.ofFn (n := px.size) fun i => UInt8.ofNat (c.getD (i.val % 4) 0)⟩
+        return ({ s with images := s.images.insert id { im with pixels := some fill } }, .defer)
+      | none => return (s, .defer)
+    | none => return (s, .defer)
+  | "drawArrays" | "drawElements" =>
+    if s.framebuffer == 0 then return (s, .defer)
+    if status s != 0x8CD5 then throw .invalidFramebufferOperation
+    -- Drawn by the drawing path: Lean no longer knows the color attachment's pixels.
+    match colorImage s with
+    | some (id, im) => return ({ s with images := s.images.insert id { im with pixels := none } }, .defer)
+    | none => return (s, .defer)
+  | "checkFramebufferStatus" =>
+    if !framebufferTarget s.version (u32At args 0) then throw .invalidEnum
+    return (s, .int (status s))
+  | "framebufferTexture2D" | "framebufferRenderbuffer" =>
+    let tex := op == "framebufferTexture2D"
+    if !framebufferTarget s.version (u32At args 0) then throw .invalidEnum
+    let point := u32At args 1
+    if !attachmentPoint s.version point then throw .invalidEnum
+    let t2 := u32At args 2
+    if tex && !(t2 == 0x0DE1 || (0x8515 ≤ t2 && t2 ≤ 0x851A)) then throw .invalidEnum
+    if !tex && t2 != 0x8D41 then throw .invalidEnum
+    if s.framebuffer == 0 then throw .invalidOperation
+    let id ← objAt s args 3 (if tex then .texture else .renderbuffer)
+    if tex && id != 0 && s.version == 1 && intAt args 4 != 0 then throw .invalidValue
+    if tex && id != 0 then
+      let o := (s.objects[id]?).getD { kind := .texture }
+      if o.target != 0 && o.target != (if t2 == 0x0DE1 then 0x0DE1 else 0x8513) then throw .invalidOperation
+    let atts := ((s.fbos[s.framebuffer]?).getD []).filter (·.1 != point)
+    let atts := if id == 0 then atts else (point, (if tex then Kind.texture else .renderbuffer), id) :: atts
+    return ({ s with fbos := s.fbos.insert s.framebuffer atts }, .defer)
+  | "renderbufferStorage" =>
+    if u32At args 0 != 0x8D41 then throw .invalidEnum
+    -- Which internal formats a renderbuffer takes is the drawing path's (extensions add some).
+    let fmt := u32At args 1
+    let w := intAt args 2
+    let h := intAt args 3
+    if w < 0 || h < 0 || w.toNat > maxTextureSize || h.toNat > maxTextureSize then throw .invalidValue
+    if s.renderbuffer == 0 then throw .invalidOperation
+    let pixels := if fmt == 0x8056 || fmt == 0x8D62 || fmt == 0x8057 || fmt == 0x8058 then some (ByteArray.mk (Array.replicate (w.toNat * h.toNat * 4) 0)) else none
+    return ({ s with images := s.images.insert s.renderbuffer { width := w.toNat, height := h.toNat, format := fmt, pixels } }, .defer)
   | _ => return (s, .defer)
 
 /-- One command of the page: the state `exec` answers, or the error recorded when the flag is clear. -/
@@ -688,5 +905,35 @@ private def tex2 (internal type : Int) : String × List Arg :=
 #guard replies 1 [("createBuffer", []), ("bindBuffer", [.int 0x8892, .obj 1]), ("deleteBuffer", [.obj 1]), ("getParameter", [.int 0x8894]),
     ("createTexture", []), ("bindBuffer", [.int 0x8892, .obj 2]), ("getError", [])] ==
   [.obj 1, .unit, .unit, .null, .obj 2, .fail, .int 0x0502]
+
+
+-- Framebuffer objects (framebuffer-without-color-attachment, videoFrame-*-webgl readTexturePixels):
+-- a 2 × 1 RGBA texture, attached, is complete and reads back as uploaded; no color attachment is
+-- INVALID_OPERATION for readPixels; an unattached framebuffer is incomplete.
+private def texFbo : List (String × List Arg) :=
+  [("createTexture", []), ("bindTexture", [.int 0x0DE1, .obj 1]),
+   ("texImage2D", [.int 0x0DE1, .int 0, .int 0x1908, .int 2, .int 1, .int 0, .int 0x1908, .int 0x1401, .bytes 8 1,
+     .data ⟨#[1, 2, 3, 4, 5, 6, 7, 8]⟩]),
+   ("createFramebuffer", []), ("bindFramebuffer", [.int 0x8D40, .obj 2])]
+#guard (replies 1 (texFbo ++ [("checkFramebufferStatus", [.int 0x8D40])])).getLast? == some (.int 0x8CD7)
+#guard (replies 1 (texFbo ++ [("framebufferTexture2D", [.int 0x8D40, .int 0x8CE0, .int 0x0DE1, .obj 1, .int 0]),
+    ("checkFramebufferStatus", [.int 0x8D40]), ("readPixels", [.int 0, .int 0, .int 2, .int 1, .int 0x1908, .int 0x1401, .bytes 8 1])])).drop 6 ==
+  [.int 0x8CD5, .pixels ⟨#[1, 2, 3, 4, 5, 6, 7, 8]⟩]
+-- Flipped and read from (1, 0): the second pixel only.
+#guard (replies 1 (texFbo ++ [("framebufferTexture2D", [.int 0x8D40, .int 0x8CE0, .int 0x0DE1, .obj 1, .int 0]),
+    ("readPixels", [.int 1, .int 0, .int 1, .int 1, .int 0x1908, .int 0x1401, .bytes 4 1])])).getLast? == some (.pixels ⟨#[5, 6, 7, 8]⟩)
+#guard (replies 1 [("createRenderbuffer", []), ("bindRenderbuffer", [.int 0x8D41, .obj 1]),
+    ("renderbufferStorage", [.int 0x8D41, .int 0x81A5, .int 4, .int 4]), ("createFramebuffer", []),
+    ("bindFramebuffer", [.int 0x8D40, .obj 2]), ("framebufferRenderbuffer", [.int 0x8D40, .int 0x8D00, .int 0x8D41, .obj 1]),
+    ("checkFramebufferStatus", [.int 0x8D40]), ("clear", [.int 0x0100]), ("getError", []),
+    ("readPixels", [.int 0, .int 0, .int 1, .int 1, .int 0x1908, .int 0x1401, .bytes 4 1]), ("getError", [])]).drop 6 ==
+  [.int 0x8CD5, .defer, .int 0, .fail, .int 0x0502]
+-- clear of an RGBA4 renderbuffer with clearColor(1, 0, 0.5, 1).
+#guard (replies 1 [("createRenderbuffer", []), ("bindRenderbuffer", [.int 0x8D41, .obj 1]),
+    ("renderbufferStorage", [.int 0x8D41, .int 0x8056, .int 1, .int 1]), ("createFramebuffer", []),
+    ("bindFramebuffer", [.int 0x8D40, .obj 2]), ("framebufferRenderbuffer", [.int 0x8D40, .int 0x8CE0, .int 0x8D41, .obj 1]),
+    ("clearColor", [.num "1", .num "0", .num "0.5", .num "1"]), ("clear", [.int 0x4000]),
+    ("readPixels", [.int 0, .int 0, .int 1, .int 1, .int 0x1908, .int 0x1401, .bytes 4 1])]).getLast? == some (.pixels ⟨#[255, 0, 128, 255]⟩)
+#guard unorm8 "0.30000001192092896" == 77 ∧ unorm8 "1e-7" == 0 ∧ unorm8 "-1" == 0 ∧ unorm8 "2" == 255
 
 end L4Factoidal.PageGl

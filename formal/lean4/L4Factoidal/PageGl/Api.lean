@@ -11,8 +11,10 @@ docs/designissues/2026-11-14-webgl-webcodecs.md, section 3).
     An argument is a field whose first character says what it is: `i` an integer, `f` a number
     kept as text, `s` a string, `o` an object's number (`o0` null, `o-` not an object of this
     context), `b` a buffer source (`b<bytes> <bytes of an element>`), `l` a list of integers,
-    `u` nothing. The answer: `u` undefined, `d` the drawing path answers, `z` null, `i` an integer,
-    `t` or `F` a boolean, `o` an object, `!` the command generated an error.
+    `u` nothing, `p` raw bytes (client pixels, or an image source's RGBA rows). The answer: `u`
+    undefined, `d` the drawing path answers, `z` null, `i` an integer, `t` or `F` a boolean, `o`
+    an object, `!` the command generated an error, `x` done here (the drawing path does not run),
+    `p` and the bytes `readPixels` writes.
 
 The arguments are the fields of the import's argument block (`WebApi.fields`): strings in UTF-8,
 numbers as decimal text. Answers are bytes; a negative number is an error of the import
@@ -39,6 +41,7 @@ structure State where
   deriving Inhabited
 
 def argOf (b : ByteArray) : Arg :=
+  if b.size > 0 && b.get! 0 == 0x70 then .data (b.extract 1 b.size) else
   let s := (String.fromUTF8? b).getD ""
   let rest := String.ofList (s.toList.drop 1)
   match s.toList.head? with
@@ -54,7 +57,7 @@ def argOf (b : ByteArray) : Arg :=
 
 def replyText : Reply → String
   | .unit => "u" | .defer => "d" | .null => "z" | .int i => s!"i{i}"
-  | .bool b => if b then "t" else "F" | .obj id => s!"o{id}" | .fail => "!"
+  | .bool b => if b then "t" else "F" | .obj id => s!"o{id}" | .fail => "!" | .done => "x" | .pixels _ => "p"
 
 /-- Is `p` the value of a constant of the context's interface? -/
 def isConstant (version : Nat) (p : Nat) : Bool := (Idl.ofVersion version).consts.any (·.2 == (p : Int))
@@ -80,7 +83,10 @@ def call (s : State) (fs : Array ByteArray) : State × Except Int ByteArray :=
         | none => (s, .ok "u".toUTF8)
       else
         let (c, r) := step c (isConstant c.st.version) op args
-        ({ s with contexts := s.contexts.insert id c }, .ok (replyText r).toUTF8)
+        let answer := match r with
+          | .pixels b => "p".toUTF8 ++ b
+          | r => (replyText r).toUTF8
+        ({ s with contexts := s.contexts.insert id c }, .ok answer)
 
 def op (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int ByteArray :=
   match code with

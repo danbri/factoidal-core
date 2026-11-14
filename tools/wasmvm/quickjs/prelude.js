@@ -1779,6 +1779,37 @@
     Object.defineProperty(P, 'drawingBufferToneMapping', { value: toneMapping, writable: true, enumerable: true, configurable: true });
     return C;
   };
+  // Pixels for Lean's textures (PageGl.State keeps level 0 of a 2D texture): client bytes as a
+  // `p` field; an image source (VideoFrame, ImageData, canvas, ImageBitmap, image) as its RGBA rows,
+  // packed, in the 9-argument form with a last field `i1` (source rows ignore UNPACK_ALIGNMENT).
+  const glBytesField = u8 => { const b = new Uint8Array(u8.byteLength + 1); b[0] = 0x70; b.set(u8, 1); return b; };
+  // Only small RGBA images (WPT-sized): a page uploading large textures pays nothing for this.
+  const GL_KEEP = 65536;
+  const glSourcePixels = v => {
+    try {
+      const w = v.displayWidth ?? v.naturalWidth ?? v.width, h = v.displayHeight ?? v.naturalHeight ?? v.height;
+      if (!(w * h <= GL_KEEP)) return null;
+      if (codecsHost.isFrame && codecsHost.isFrame(v)) { const f = codecsHost.frameImage(v); return { w: f.w, h: f.h, bytes: f.bytes }; }
+      const ID = globalThis.ImageData;
+      if (typeof ID === 'function' && v instanceof ID) return { w: v.width, h: v.height, bytes: new Uint8Array(v.data.buffer, v.data.byteOffset, v.data.byteLength) };
+      return codecsHost.pixelsOf ? codecsHost.pixelsOf(v) : null;
+    } catch (e) { return null; }
+  };
+  const glTexFields = (args, fields) => {
+    const src = args.length === 6 ? args[5] : args.length === 9 ? args[8] : undefined;
+    const rgba = args.length === 6 ? (args[3] >>> 0) === 0x1908 && (args[4] >>> 0) === 0x1401 : (args[6] >>> 0) === 0x1908 && (args[7] >>> 0) === 0x1401;
+    if (!rgba) return fields;
+    if (args.length >= 9 && ArrayBuffer.isView(args[8])) {
+      const v = args[8];
+      if (!(Number(args[3]) * Number(args[4]) <= GL_KEEP)) return fields;
+      return fields.slice(0, 9).concat([glBytesField(new Uint8Array(v.buffer, v.byteOffset, v.byteLength))]);
+    }
+    if (src === null || src === undefined || typeof src !== 'object' || ArrayBuffer.isView(src)) return fields;
+    const px = glSourcePixels(src);
+    if (!px) return fields;
+    const head = args.length === 6 ? [fields[0], fields[1], fields[2], 'i' + px.w, 'i' + px.h, 'i0', fields[3], fields[4]] : fields.slice(0, 8);
+    return head.concat(['b' + px.bytes.byteLength + ' 1', glBytesField(px.bytes), 'i1']);
+  };
   // The page's context object: Lean's state machine in front of the drawing path (`glImplFor`).
   const glContextFor = (canvas, version, attributes) => {
     const C = glInterface(version);
@@ -1799,7 +1830,19 @@
           if (typeof draw !== 'function') return undefined;
           const r = draw.apply(impl, args); drawError(true); return r;
         }
-        const r = apiCall(102, [id, k].concat(fields));
+        if (k === 'texImage2D') fields = glTexFields(args, fields);
+        let r = apiCall(102, [id, k].concat(fields), 0, k === 'readPixels');
+        if (r instanceof ArrayBuffer) {
+          // readPixels: the bytes of a framebuffer object's color image ('p'), or a reply as text.
+          const u8 = new Uint8Array(r);
+          if (u8[0] === 0x70) {
+            const v = args[6], dst = new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
+            dst.set(u8.subarray(1, 1 + Math.min(dst.length, u8.length - 1)));
+            return undefined;
+          }
+          r = String.fromCharCode.apply(null, u8);
+        }
+        if (r === 'x') return undefined;
         if (typeof r !== 'string' || r === '!') return k.startsWith('is') ? false : k.startsWith('get') || k.startsWith('create') ? null : undefined;
         switch (r[0]) {
           case 'z': return null;
