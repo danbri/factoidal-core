@@ -6547,7 +6547,8 @@
           resolve(responseOf({ status: x.status, statusText: x.statusText, url, type,
             redirected: url !== '' && url !== st.url.split('#')[0] }, list, 'immutable',
             // Fetch §2.2.6: a null body status, or a HEAD request's response, has a null body
-            [101, 103, 204, 205, 304].includes(x.status) || st.method === 'HEAD' ? null : raw === null ? new Uint8Array(0) : new Uint8Array(raw), signal));
+            // (Lean's: web_api 67 read 10, PageFetch.nullBody)
+            apiCall(67, [s.h, 10]) === '1' ? null : raw === null ? new Uint8Array(0) : new Uint8Array(raw), signal));
         };
         x.onerror = () => fail(new TypeError('Failed to fetch'));
         x.onabort = () => fail(new DOMException('The request was aborted.', 'AbortError'));

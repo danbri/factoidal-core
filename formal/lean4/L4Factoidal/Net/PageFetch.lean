@@ -713,6 +713,14 @@ def plan (t : Transfer) : Step :=
   else if t.url.startsWith "blob:" then blobStep t
   else planNet t
 
+/-- Fetch §2.2.3 "null body status": 101, 103, 204, 205 and 304. -/
+def nullBodyStatus (status : Nat) : Bool :=
+  status == 101 || status == 103 || status == 204 || status == 205 || status == 304
+
+/-- A response whose body is null (Fetch §4.3 "main fetch" step 21 and §2.2.6): one of a null
+body status, or the answer to a `HEAD` request. -/
+def nullBody (method : String) (status : Nat) : Bool := nullBodyStatus status || method == "HEAD"
+
 /-- A field a page never reads (Fetch §2.2.2 "forbidden response-header name"). -/
 def forbiddenResponseHeader (name : String) : Bool :=
   lower name == "set-cookie" || lower name == "set-cookie2"
@@ -829,6 +837,15 @@ of another origin than the page's is refused. -/
 theorem redirectCredentials_other (t : Transfer) (next : URL.Url) (hc : next.includesCredentials = true)
     (ho : (next.origin != t.page.origin) = true) : redirectCredentialsRefused t next = true := by
   simp [redirectCredentialsRefused, hc, ho]
+
+/-- Kind: correctness theorem (Fetch §2.2.3). Says: a response of a null body status, or the
+answer to a `HEAD` request, has a null body, and a `GET` answered 200 does not. -/
+theorem nullBody_cases (m : String) (st : Nat) :
+    (st ∈ [101, 103, 204, 205, 304] → nullBody m st = true) ∧
+    nullBody "HEAD" st = true ∧ nullBody "GET" 200 = false := by
+  refine ⟨fun h => ?_, by simp [nullBody], by decide⟩
+  simp only [List.mem_cons, List.mem_nil_iff, or_false] at h
+  rcases h with rfl | rfl | rfl | rfl | rfl <;> simp [nullBody, nullBodyStatus]
 
 /-- Kind: policy lemma. Says: a page whose origin is not local cannot make a target that the
 URL names as local pass `mayConnect`. Does not say: anything about a name that resolves to a

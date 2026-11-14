@@ -856,7 +856,7 @@ def op (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int Byt
     | (s, .error e) => (s, .error e)
   | 67 =>
     -- reads: 0 readyState, 1 status, 2 statusText, 3 responseURL, 4 text, 5 deferFail,
-    -- 9 the response's tainting (`Response.type` of `fetch`: basic, cors, opaque)
+    -- 9 the response's tainting (`Response.type` of `fetch`: basic, cors, opaque), 10 null body
     match s.get? (natAt fs 0) with
     | none => (s, .error errType)
     | some x =>
@@ -871,6 +871,9 @@ def op (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int Byt
         | 7 => docKind x
         | 8 => finalMime x
         | 9 => (x.response.map fun r => if x.state ≥ 2 then r.tainting else "").getD ""
+        -- 10: "1" when the response's body is null (`PageFetch.nullBody`: a null body status
+        -- or a HEAD request)
+        | 10 => if PageFetch.nullBody x.method (statusOf x) then "1" else "0"
         | _ => ""
       (s, okStr body)
   | 68 =>
