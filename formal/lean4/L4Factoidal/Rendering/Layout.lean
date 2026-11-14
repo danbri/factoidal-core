@@ -1264,12 +1264,13 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
             if !floats.isEmpty && cs.display == .block && !cs.clipOverflow then floats := r.floats
             content := {append content r with height := content.height-overlap+r.height}
             previous := r.marginBottom
-          else if cs.display.isInlineContainer then
-            -- An inline-level flex or grid container: one atomic box, as wide as its content
-            -- (shrink-to-fit, CSS 2.1 §10.3.9) unless its width is given.
+          else if cs.display.isInlineContainer || (cs.display == .inlineBlock && blockInside dom styles child) then
+            -- An inline-level flex or grid container, or an inline-block with blocks inside:
+            -- one atomic box, as wide as its content (shrink-to-fit, CSS 2.1 §10.3.9) unless
+            -- its width is given.
             let edges := cs.margin.left+cs.margin.right
             let outer ← match CSS.resolve width cs.width with
-              | some w => pure (w+horizontalEdges cs)
+              | some w => pure (clampOpt ((CSS.resolve width cs.minWidth).getD 0) (CSS.resolve width cs.maxWidth) w+horizontalEdges cs)
               | none => do
                 let (lo,hi) ← intrinsic dom styles font embedding pictures fuel (.box child)
                 pure (min hi (max lo width))

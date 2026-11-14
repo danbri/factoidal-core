@@ -114,4 +114,40 @@ private def stack := "<div id=a>A</div>\n<div id=b>B</div><div id=c><div id=d>D<
 -- The body's margin and its first child's collapse; the root's does not.
 #guard box "<h1 id=h>H</h1>" "body{margin:8px} #h{margin:20px 0;font-size:7px}" "h" == some (8,20,184,7)
 
+-- Floats (CSS 2.1 §9.5): out of flow, against the sides; lines go beside them, blocks under.
+private def floated := "<div id=c><div id=f>F</div><div id=g>G</div><div id=t>TT</div></div><div id=n>N</div>"
+private def floatCss := "#f{float:left;width:30px;height:20px} #g{float:right;width:40px;height:10px} "
+#guard box floated floatCss "f" == some (0,0,30,20)
+#guard box floated floatCss "g" == some (160,0,40,10)
+#guard box floated floatCss "t" == some (0,0,200,7)
+#guard at? floated floatCss "TT" == some (30,0)
+-- §10.6.7: a box that is the root of its formatting context is as high as its floats.
+#guard box floated floatCss "c" == some (0,0,200,20)
+#guard box floated floatCss "n" == some (0,20,200,7)
+-- A second float on the same side goes beside the first.
+#guard box floated "#f{float:left;width:30px;height:20px} #g{float:left;width:40px;height:10px}" "g" == some (30,0,40,10)
+-- With no room beside it, below.
+#guard box floated "#f{float:left;width:150px;height:20px} #g{float:left;width:100px;height:10px}" "g" == some (0,20,100,10)
+-- A float with no width is as wide as its content.
+#guard box floated "#f{float:left}" "f" == some (0,0,6,7)
+#guard box floated "#f{float:right}" "f" == some (194,0,6,7)
+-- §9.5.2 clear: below the floats of that side.
+#guard box floated (floatCss ++ "#t{clear:left}") "t" == some (0,20,200,7)
+#guard box floated (floatCss ++ "#t{clear:right}") "t" == some (0,10,200,7)
+#guard box floated (floatCss ++ "#t{clear:both}") "t" == some (0,20,200,7)
+-- A box with a formatting context of its own is beside the floats.
+#guard box floated (floatCss ++ "#t{overflow:hidden}") "t" == some (30,0,130,7)
+
+-- An inline-block with a block inside is a block container (CSS 2.1 §9.2.2).
+private def inlineBlock := "<div id=o><span id=w><div id=d>AB</div></span></div>"
+#guard box inlineBlock "#w{display:inline-block;width:50px} #d{width:20px;height:10px}" "d" == some (0,0,20,10)
+#guard box inlineBlock "#w{display:inline-block;width:50px} #d{width:20px;height:10px}" "w" == some (0,0,50,10)
+-- ...as wide as its content when it has no width.
+#guard box inlineBlock "#w{display:inline-block} #d{width:20px;height:10px}" "w" == some (0,0,20,10)
+-- A positioned inline-block is the containing block of its absolute descendants: the box
+-- is at the right of its padding box (10 wide), 4 from its left edge.
+private def badge := "<div id=o>ab <span id=w>W<b id=p>P</b></span></div>"
+private def badgeCss := "#w{display:inline-block;position:relative;padding:2px} #p{position:absolute;right:0;top:0}"
+#guard (do let w ← box badge badgeCss "w"; let p ← box badge badgeCss "p"; pure (p.1-w.1,p.2.1-w.2.1,w.2.2.1,p.2.2)) == some (4,0,10,6,7)
+
 end L4Factoidal.Rendering.PositionLayoutTests
