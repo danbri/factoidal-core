@@ -50,7 +50,7 @@ def api (s : State) (fs : Array ByteArray) : State × ByteArray :=
   | "lost" => (s, (if ctxLost s (nat fs 1) then "1" else "0").toUTF8)
   | "builder" => text ((newBuilder s (nat fs 1)).map fun (s, i) => (s, toString i)) s
   | "input" => text (addInput s (nat fs 1) (str fs 2) (str fs 3) (str fs 4)) s
-  | "constant" => text (addConstant s (nat fs 1) (str fs 2) (str fs 3) (fs[4]?.getD ByteArray.empty)) s
+  | "constant" => text (addConstant s (nat fs 1) (str fs 2) (str fs 3) (str fs 4) (fs[5]?.getD ByteArray.empty)) s
   | "scalar" => text (addScalar s (nat fs 1) (str fs 2) (str fs 3)) s
   | "constantTensor" => text (addConstTensor s (nat fs 1) (nat fs 2)) s
   | "op" => text (call s (nat fs 1) (str fs 2) (str fs 3) (pairs fs 4)) s
@@ -61,11 +61,12 @@ def api (s : State) (fs : Array ByteArray) : State × ByteArray :=
   | "tensor" =>
     let flags := str fs 4
     let flag (c : Char) := flags.toList.contains c
-    text ((createTensor s (nat fs 1) (str fs 2) (str fs 3) (flag 'r') (flag 'w') (flag 'c') fs[5]?).map
+    text ((createTensor s (nat fs 1) (str fs 2) (str fs 3) (flag 'r') (flag 'w') (flag 'c')
+      (fs[6]?.map fun b => (str fs 5, b))).map
       fun (s, i) => (s, toString i)) s
-  | "write" => unit (writeTensor s (nat fs 1) (nat fs 2) (fs[3]?.getD ByteArray.empty)) s
+  | "write" => unit (writeTensor s (nat fs 1) (nat fs 2) (str fs 3) (fs[4]?.getD ByteArray.empty)) s
   | "read" =>
-    match readTensor s (nat fs 1) (nat fs 2) with
+    match readTensor s (nat fs 1) (nat fs 2) (if fs.size > 4 then some (str fs 3, nat fs 4) else none) with
     | .ok b => (s, (ByteArray.mk #[0]) ++ b)
     | .error e => (s, (ByteArray.mk #[1]) ++ (refusal e).toUTF8)
   | "destroyTensor" => (destroyTensor s (nat fs 1), ByteArray.empty)

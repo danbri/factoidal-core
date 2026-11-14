@@ -7,6 +7,7 @@ import L4Factoidal.JS.NumFmt
 import L4Factoidal.JSON.Parser
 import L4Factoidal.JS.JsonText
 import L4Factoidal.WHATWG.URLPattern
+import L4Factoidal.Prim.Float16
 
 /-!
 # L4Factoidal.JS.Interp — the evaluator
@@ -493,6 +494,7 @@ def typedRead (ty : Nat) (bytes : ByteArray) (at_ : Nat) : Value :=
   | 7 => .num (Float32.ofBits (u 4).toUInt32).toFloat
   | 9 => let x := u 8; .big (if x ≥ 2 ^ 63 then (x : Int) - 2 ^ 64 else x)
   | 10 => .big (u 8)
+  | 11 => .num (L4Factoidal.Prim.Float16.toFloat (u 2).toUInt16)
   | _ => .num (Float.ofBits (u 8).toUInt64)
 
 /-- ToUint8Clamp (§7.1.12): round half to even, clamped to 0..255. -/
@@ -513,6 +515,7 @@ def typedBytes (ty : Nat) (x : Float) : ByteArray :=
   | 3 | 4 => int 2
   | 5 | 6 => int 4
   | 7 => le x.toFloat32.toBits.toNat 4
+  | 11 => le (L4Factoidal.Prim.Float16.ofFloat x).toNat 2
   | _ => le x.toBits.toNat 8
 
 /-- Direct reads for Uint8Array and Uint8ClampedArray. -/
@@ -5141,6 +5144,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
         | 4 => Float.cosh x | 5 => Float.tanh x | 6 => Float.asin x | 7 => Float.acos x
         | 8 => Float.asinh x | 9 => Float.acosh x | 10 => Float.atanh x
         | 11 => Float.exp x - 1 | 12 => Float.log (1 + x)
+        | 14 => L4Factoidal.Prim.Float16.round x
         | _ => x.toFloat32.toFloat))
     | .mathHypot =>
       let xs ← args.toList.mapM (toNum n)
@@ -6482,11 +6486,11 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
       let idx := toIntegerOrInf (← toNum n a0)
       if idx < 0 || idx > 9007199254740991 then throwErr .range "Offset is outside the bounds of the DataView"
       let idx := idx.toUInt64.toNat
-      let size := if ty ≥ 9 then 8 else elemSize ty
+      let size := elemSize ty
       let isSet := match id with | .dataViewSet _ => true | _ => false
       -- set: the value is converted before the offset is checked.
       let bits : Option ByteArray ← if !isSet then pure none else
-        if ty ≥ 9 then do
+        if typedIsBig ty then do
           let i ← match ← toPrim n a1 "number" with
             | .big i => pure i
             | .bool bb => pure (if bb then 1 else 0)
@@ -6514,7 +6518,7 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
         if at_ + size > bytes.size then throwErr .type "Cannot perform DataView get on a detached ArrayBuffer"
         let raw := bytes.extract at_ (at_ + size)
         let le := if little then raw else ByteArray.mk raw.data.reverse
-        if ty ≥ 9 then
+        if typedIsBig ty then
           let u := (List.range 8).foldl (fun a k => a + (le.get! k).toNat * 2 ^ (8 * k)) 0
           pure (.big (if ty == 9 && u ≥ 2 ^ 63 then (u : Int) - 2 ^ 64 else u))
         else pure (typedRead ty le 0)
@@ -8422,7 +8426,7 @@ def initRealm : M Unit := do
     setHidden nc "parseInt" (← ownValue g "parseInt")
   for (nm, op) in [("cbrt", 0), ("log2", 1), ("log10", 2), ("sinh", 3), ("cosh", 4), ("tanh", 5),
       ("asin", 6), ("acos", 7), ("asinh", 8), ("acosh", 9), ("atanh", 10), ("expm1", 11),
-      ("log1p", 12), ("fround", 13)] do
+      ("log1p", 12), ("fround", 13), ("f16round", 14)] do
     method math nm (.math1 op) 1
   method math "hypot" .mathHypot 2
   method math "imul" .mathImul 2
@@ -8599,7 +8603,7 @@ def initRealm : M Unit := do
   setHidden g "DataView" (← ctorWith "DataView" .dataViewCtor 1 dataViewProto)
   defineOwn dataViewProto (symKey symToStringTag) (.data (.str "DataView") false false true)
   for (nm, ty) in [("Int8", 0), ("Uint8", 1), ("Int16", 3), ("Uint16", 4), ("Int32", 5), ("Uint32", 6),
-      ("Float32", 7), ("Float64", 8), ("BigInt64", 9), ("BigUint64", 10)] do
+      ("Float32", 7), ("Float64", 8), ("BigInt64", 9), ("BigUint64", 10), ("Float16", 11)] do
     method dataViewProto ("get" ++ nm) (.dataViewGet ty) 1
     method dataViewProto ("set" ++ nm) (.dataViewSet ty) 2
   defineOwn bufferProto (symKey symToStringTag) (.data (.str "ArrayBuffer") false false true)

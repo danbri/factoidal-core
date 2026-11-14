@@ -3454,7 +3454,9 @@
     // StorageManager (section File System API); undefined on an engine without the ops.
     get storage() { return fsApi()?.manager; },
     // LockManager (section Web Locks API).
-    get locks() { return locksApi()?.manager; } }));
+    get locks() { return locksApi()?.manager; },
+    // Web Neural Network API (section webnn): a secure context's navigator has it.
+    get ml() { return webnnOn() ? webnn().ml : undefined; } }));
   def('GPUBufferUsage', GPUBufferUsage); def('GPUTextureUsage', GPUTextureUsage); def('GPUShaderStage', GPUShaderStage);
   def('GPUColorWrite', GPUColorWrite); def('GPUValidationError', GPUValidationError); def('GPUOutOfMemoryError', GPUOutOfMemoryError);
   def('GPUCanvasContext', GPUCanvasContext); def('GPUDevice', GPUDevice);
@@ -5907,6 +5909,308 @@
     setTag(URLPattern, 'URLPattern');
     return URLPattern;
   });
+  // ==== webnn ==== Web Neural Network API (https://www.w3.org/TR/webnn/): navigator.ml, ML,
+  // MLContext, MLGraphBuilder, MLOperand, MLGraph, MLTensor.
+  // Everything is decided and computed in Lean (L4Factoidal.WebNN, web_api op 140: one call
+  // with a command and its arguments): which operators exist and what their arguments are
+  // (the operator table, asked for once), whether a call is valid, the data types and shapes
+  // of operands, the graph, the tensors and the arithmetic. This section converts arguments
+  // (WebIDL), keeps the numbers that name Lean's objects, and makes the promises. Nothing here
+  // runs until a page reads navigator.ml or one of the interface names.
+  const webnn = (() => { let made; return () => made ??= makeWebnn(); })();
+  const webnnOn = () => /^https:|^http:\/\/(localhost|127\.0\.0\.1)[:\/]/.test(href) && apiOn() && apiCall(140, ['lost', '0']) !== -2;
+  const makeWebnn = () => {
+    const nnRaw = (fields, bytes) => apiCall(140, fields, 0, bytes);
+    const refuse = r => {
+      if (r[1] === 'T') throw new TypeError(r.slice(2));
+      const k = r.indexOf(':');
+      throw new DOMException(r.slice(k + 1), r.slice(2, k));
+    };
+    // One call: the answer text, or the refusal thrown (`!T…` TypeError, `!D<name>:…` DOMException).
+    const nn = (...fields) => {
+      const r = nnRaw(fields, false);
+      if (typeof r !== 'string') throw new DOMException('WebNN is not available', 'NotSupportedError');
+      if (r.charCodeAt(0) === 33) refuse(r);
+      return r;
+    };
+    const DTYPES = ['float32', 'float16', 'int32', 'uint32', 'int64', 'uint64', 'int8', 'uint8', 'bfloat16', 'float8e4m3'];
+    // ---- WebIDL conversions ----
+    const f64 = new Float64Array(1), w32 = new Uint32Array(f64.buffer);
+    const h8 = x => (x >>> 0).toString(16).padStart(8, '0');
+    // A double as the 16 hexadecimal digits of its bits (exact, and no number parsing in Lean).
+    const hex = x => { f64[0] = x; return h8(w32[1]) + h8(w32[0]); };
+    const ulong = (v, what, enforce = true) => {
+      let x = +v;
+      if (!enforce) { if (!Number.isFinite(x)) return 0; x = Math.trunc(x); return x - Math.floor(x / 4294967296) * 4294967296; }
+      if (!Number.isFinite(x)) throw new TypeError(`${what}: the value is not a finite number`);
+      x = Math.trunc(x);
+      if (x < 0 || x > 4294967295) throw new TypeError(`${what}: the value is outside the range of unsigned long`);
+      return x + 0;
+    };
+    const long = (v, what) => {
+      let x = +v;
+      if (!Number.isFinite(x)) throw new TypeError(`${what}: the value is not a finite number`);
+      x = Math.trunc(x);
+      if (x < -2147483648 || x > 2147483647) throw new TypeError(`${what}: the value is outside the range of long`);
+      return x + 0;
+    };
+    const double = (v, what) => { const x = +v; if (!Number.isFinite(x)) throw new TypeError(`${what}: the value is not a finite number`); return x; };
+    const float = (v, what) => { const x = Math.fround(double(v, what)); if (!Number.isFinite(x)) throw new TypeError(`${what}: the value is outside the range of float`); return x; };
+    const seq = (v, conv, what) => {
+      if (v === null || (typeof v !== 'object' && typeof v !== 'function') || typeof v[Symbol.iterator] !== 'function') throw new TypeError(`${what}: the value is not a sequence`);
+      const out = [];
+      for (const x of v) out.push(conv(x, what));
+      return out;
+    };
+    const enumOf = (v, values, what) => { const s = String(v); if (!values.includes(s)) throw new TypeError(`${what}: '${s}' is not a valid enum value`); return s; };
+    // MLNumber: (bigint or unrestricted double).
+    const mlnumber = v => {
+      if (typeof v === 'bigint') return 'b' + v.toString();
+      if (typeof v === 'object' && v !== null) { const p = v[Symbol.toPrimitive] ? v[Symbol.toPrimitive]('number') : v.valueOf(); if (typeof p === 'bigint') return 'b' + p.toString(); }
+      return 'd' + hex(+v);
+    };
+    const operands = new WeakMap(), builders = new WeakMap(), contexts = new WeakMap(), graphs = new WeakMap(), tensors = new WeakMap();
+    const operandRef = (v, what) => { const s = operands.get(v); if (!s) throw new TypeError(`${what}: the value is not of type 'MLOperand'`); return s.ref; };
+    // The text of one converted value, by the table's type code.
+    const conv = (code, extra, v, what) => {
+      switch (code) {
+        case 'o': return operandRef(v, what);
+        case 'O': return seq(v, operandRef, what).join(',');
+        case 'u': return String(ulong(v, what));
+        case 'w': return String(ulong(v, what, false));
+        case 'l': return String(long(v, what));
+        case 'U': return seq(v, ulong, what).join(',');
+        case 'W': return seq(v, x => ulong(x, what, false), what).join(',');
+        case 'x': return v !== null && typeof v === 'object' ? 's' + seq(v, ulong, what).join(',') : 'n' + ulong(v, what);
+        case 'd': return hex(double(v, what));
+        case 'F': return seq(v, float, what).map(hex).join(',');
+        case 'b': return v ? '1' : '0';
+        case 'e': return enumOf(v, extra, what);
+        case 'E': return seq(v, x => enumOf(x, extra, what), what).join(',');
+        case 'n': return mlnumber(v);
+        case 't': return enumOf(v, DTYPES, what);
+      }
+      throw new TypeError(what);
+    };
+    const dictOf = (v, what) => { if (v === undefined || v === null) return {}; if (typeof v !== 'object' && typeof v !== 'function') throw new TypeError(`${what}: the value is not an object`); return v; };
+    // MLOperandDescriptor (members in order: dataType, shape) and MLTensorDescriptor.
+    const descOf = (v, what, tensor) => {
+      const o = dictOf(v, what);
+      const dt = o.dataType;
+      if (dt === undefined) throw new TypeError(`${what}: required member dataType is undefined`);
+      const dataType = enumOf(dt, DTYPES, what);
+      const readable = tensor ? !!o.readable : false;
+      const sh = o.shape;
+      if (sh === undefined) throw new TypeError(`${what}: required member shape is undefined`);
+      const shape = seq(sh, ulong, what);
+      const writable = tensor ? !!o.writable : false;
+      return { dataType, shape, readable, writable };
+    };
+    // A buffer source as (kind, bytes): the kind is the view's class name, for Lean to check
+    // against the data type.
+    const sourceOf = (v, what) => {
+      if (v instanceof ArrayBuffer || isShared(v)) return ['ArrayBuffer', v.detached ? new Uint8Array(0) : new Uint8Array(v)];
+      if (ArrayBuffer.isView(v)) return [Object.prototype.toString.call(v).slice(8, -1), v.buffer.detached ? new Uint8Array(0) : new Uint8Array(v.buffer, v.byteOffset, v.byteLength)];
+      throw new TypeError(`${what}: the value is not of type '(ArrayBuffer or ArrayBufferView)'`);
+    };
+    const illegal = () => { throw new TypeError('Illegal constructor'); };
+    const state = (map, o, name) => { const s = map.get(o); if (!s) throw new TypeError(`Illegal invocation: not of type '${name}'`); return s; };
+    const need = (args, n, where) => { if (args.length < n) throw new TypeError(`Failed to execute ${where}: ${n} argument${n === 1 ? '' : 's'} required, but only ${args.length} present.`); };
+    // WebIDL: operations and attributes are enumerable; a promise-returning operation
+    // answers a rejected promise where it would throw.
+    const op = (C, name, length, f) => {
+      Object.defineProperty(f, 'name', { value: name, configurable: true });
+      Object.defineProperty(f, 'length', { value: length, configurable: true });
+      Object.defineProperty(C.prototype, name, { value: f, writable: true, enumerable: true, configurable: true });
+    };
+    const asyncOp = (C, name, length, f) => op(C, name, length, function (...args) { try { return Promise.resolve(f.apply(this, args)); } catch (e) { return Promise.reject(e); } });
+    const attr = (C, name, get) => Object.defineProperty(C.prototype, name, { get, enumerable: true, configurable: true });
+
+    class MLOperand { constructor() { illegal(); } }
+    attr(MLOperand, 'dataType', function () { return state(operands, this, 'MLOperand').dataType; });
+    attr(MLOperand, 'shape', function () { return state(operands, this, 'MLOperand').shape; });
+    const numbers = t => Object.freeze(t === '' ? [] : t.split(',').map(Number));
+    const makeOperand = (b, text) => {
+      const [i, dataType, shape] = text.split(':');
+      const o = Object.create(MLOperand.prototype);
+      operands.set(o, { ref: b.id + '.' + i, dataType, shape: numbers(shape) });
+      return o;
+    };
+
+    class MLTensor { constructor() { illegal(); } }
+    for (const k of ['dataType', 'shape', 'readable', 'writable', 'constant']) attr(MLTensor, k, function () { return state(tensors, this, 'MLTensor')[k]; });
+    op(MLTensor, 'destroy', 0, function destroy() { nn('destroyTensor', state(tensors, this, 'MLTensor').id); });
+    const makeTensor = (c, d, flags, source) => {
+      const fields = ['tensor', c.id, d.dataType, d.shape.join(','), flags];
+      if (source) fields.push(source[0], source[1]);
+      const id = +nn(...fields);
+      const t = Object.create(MLTensor.prototype);
+      tensors.set(t, { id, ctx: c, dataType: d.dataType, shape: Object.freeze(d.shape), readable: flags.includes('r'), writable: flags.includes('w'), constant: flags.includes('c') });
+      return t;
+    };
+
+    class MLGraph { constructor() { illegal(); } }
+    op(MLGraph, 'destroy', 0, function destroy() { nn('destroyGraph', state(graphs, this, 'MLGraph').id); });
+
+    class MLContext { constructor() { illegal(); } }
+    const tensorRef = (v, what) => { const s = tensors.get(v); if (!s) throw new TypeError(`${what}: the value is not of type 'MLTensor'`); return s; };
+    // record<USVString, T>: the own enumerable string keys, in order.
+    const record = (v, each, what) => {
+      if (v === null || (typeof v !== 'object' && typeof v !== 'function')) throw new TypeError(`${what}: the value is not an object`);
+      const out = [];
+      for (const k of Object.keys(v)) out.push(usv(k), each(v[k], what));
+      return out;
+    };
+    op(MLContext, 'dispatch', 3, function dispatch(graph, inputs, outputs) {
+      const c = state(contexts, this, 'MLContext');
+      need(arguments, 3, "'dispatch' on 'MLContext'");
+      const g = graphs.get(graph);
+      if (!g) throw new TypeError("Failed to execute 'dispatch' on 'MLContext': parameter 1 is not of type 'MLGraph'.");
+      const ins = record(inputs, (t, w) => tensorRef(t, w).id, 'dispatch: inputs');
+      const outs = record(outputs, (t, w) => tensorRef(t, w).id, 'dispatch: outputs');
+      nn('dispatch', c.id, g.id, ins.length / 2, ...ins, ...outs);
+    });
+    asyncOp(MLContext, 'createTensor', 1, function createTensor(descriptor) {
+      const c = state(contexts, this, 'MLContext');
+      need(arguments, 1, "'createTensor' on 'MLContext'");
+      const d = descOf(descriptor, 'createTensor', true);
+      return makeTensor(c, d, (d.readable ? 'r' : '') + (d.writable ? 'w' : ''));
+    });
+    asyncOp(MLContext, 'createExportableTensor', 2, function createExportableTensor(descriptor, gpuDevice) {
+      state(contexts, this, 'MLContext');
+      need(arguments, 2, "'createExportableTensor' on 'MLContext'");
+      throw new DOMException('Exportable tensors are not supported', 'NotSupportedError');
+    });
+    asyncOp(MLContext, 'createConstantTensor', 2, function createConstantTensor(descriptor, inputData) {
+      const c = state(contexts, this, 'MLContext');
+      need(arguments, 2, "'createConstantTensor' on 'MLContext'");
+      const d = descOf(descriptor, 'createConstantTensor', false);
+      return makeTensor(c, d, 'c', sourceOf(inputData, 'createConstantTensor'));
+    });
+    asyncOp(MLContext, 'readTensor', 1, function readTensor(tensor, outputData) {
+      const c = state(contexts, this, 'MLContext');
+      need(arguments, 1, "'readTensor' on 'MLContext'");
+      const t = tensorRef(tensor, 'readTensor');
+      const into = arguments.length > 1 ? sourceOf(outputData, 'readTensor') : null;
+      const r = nnRaw(into ? ['read', c.id, t.id, into[0], into[1].length] : ['read', c.id, t.id], true);
+      if (typeof r === 'number') throw new DOMException('WebNN is not available', 'NotSupportedError');
+      if (r[0] !== 0) { let m = ''; for (let i = 1; i < r.length; i++) m += String.fromCharCode(r[i]); refuse(m); }
+      if (into) { into[1].set(r.subarray(1)); return undefined; }
+      return r.slice(1).buffer;
+    });
+    op(MLContext, 'writeTensor', 2, function writeTensor(tensor, inputData) {
+      const c = state(contexts, this, 'MLContext');
+      need(arguments, 2, "'writeTensor' on 'MLContext'");
+      const t = tensorRef(tensor, 'writeTensor');
+      const src = sourceOf(inputData, 'writeTensor');
+      nn('write', c.id, t.id, src[0], src[1]);
+    });
+    op(MLContext, 'exportToGPU', 1, function exportToGPU(tensor) {
+      state(contexts, this, 'MLContext');
+      need(arguments, 1, "'exportToGPU' on 'MLContext'");
+      tensorRef(tensor, 'exportToGPU');
+      throw new TypeError('exportToGPU: the tensor is not exportable');
+    });
+    let limitsText;
+    op(MLContext, 'opSupportLimits', 0, function opSupportLimits() {
+      state(contexts, this, 'MLContext');
+      return JSON.parse(limitsText ??= nn('limits'));
+    });
+    op(MLContext, 'destroy', 0, function destroy() {
+      const c = state(contexts, this, 'MLContext');
+      if (c.destroyed) return;
+      c.destroyed = true;
+      nn('destroyContext', c.id);
+      c.lose({ message: 'The context was destroyed.' });
+    });
+    attr(MLContext, 'accelerated', function () { return state(contexts, this, 'MLContext').accelerated; });
+    attr(MLContext, 'lost', function () { return state(contexts, this, 'MLContext').lost; });
+
+    class ML { constructor() { illegal(); } }
+    asyncOp(ML, 'createContext', 0, function createContext(options = {}) {
+      if (!mlState.has(this)) throw new TypeError("Illegal invocation: not of type 'ML'");
+      // Overloads: (GPUDevice), or (optional MLContextOptions). Members in order.
+      const isDevice = typeof GPUDevice === 'function' && options instanceof GPUDevice;
+      const o = isDevice ? {} : dictOf(options, 'createContext');
+      const accelerated = o.accelerated === undefined ? true : !!o.accelerated;
+      if (o.deviceType !== undefined) enumOf(o.deviceType, ['cpu', 'gpu', 'npu'], 'createContext: deviceType');
+      if (o.powerPreference !== undefined) enumOf(o.powerPreference, ['default', 'high-performance', 'low-power'], 'createContext: powerPreference');
+      const c = Object.create(MLContext.prototype);
+      let lose;
+      const lost = new Promise(r => { lose = r; });
+      contexts.set(c, { id: +nn('context'), accelerated: isDevice ? true : accelerated, lost, lose, destroyed: false });
+      return c;
+    });
+
+    class MLGraphBuilder {
+      constructor(context) {
+        need(arguments, 1, "to construct 'MLGraphBuilder'");
+        const c = contexts.get(context);
+        if (!c) throw new TypeError("Failed to construct 'MLGraphBuilder': parameter 1 is not of type 'MLContext'.");
+        builders.set(this, { id: +nn('builder', c.id), ctx: c });
+      }
+    }
+    op(MLGraphBuilder, 'input', 2, function input(name, descriptor) {
+      const b = state(builders, this, 'MLGraphBuilder');
+      need(arguments, 2, "'input' on 'MLGraphBuilder'");
+      name = usv(name);
+      const d = descOf(descriptor, 'input', false);
+      return makeOperand(b, nn('input', b.id, name, d.dataType, d.shape.join(',')));
+    });
+    op(MLGraphBuilder, 'constant', 1, function constant(first, second) {
+      const b = state(builders, this, 'MLGraphBuilder');
+      need(arguments, 1, "'constant' on 'MLGraphBuilder'");
+      // Overloads: (MLTensor), (MLOperandDescriptor, AllowSharedBufferSource), (MLOperandDataType, MLNumber).
+      if (arguments.length === 1) return makeOperand(b, nn('constantTensor', b.id, tensorRef(first, 'constant').id));
+      if (first === undefined || first === null || typeof first === 'object' || typeof first === 'function') {
+        const d = descOf(first, 'constant', false);
+        const src = sourceOf(second, 'constant');
+        return makeOperand(b, nn('constant', b.id, d.dataType, d.shape.join(','), src[0], src[1]));
+      }
+      return makeOperand(b, nn('scalar', b.id, enumOf(first, DTYPES, 'constant'), mlnumber(second)));
+    });
+    asyncOp(MLGraphBuilder, 'build', 1, function build(outputs) {
+      const b = state(builders, this, 'MLGraphBuilder');
+      need(arguments, 1, "'build' on 'MLGraphBuilder'");
+      const outs = record(outputs, operandRef, 'build: outputs');
+      nn('build', b.id, ...outs);
+      const g = Object.create(MLGraph.prototype);
+      graphs.set(g, { id: b.id, ctx: b.ctx });
+      return g;
+    });
+    // The operators: one method for each line of Lean's table, `name|param:type,…|member:type,…|1 or s`.
+    const parts = t => t === '' ? [] : t.split(',').map(p => { const k = p.indexOf(':'), code = p.slice(k + 1); return [p.slice(0, k), code[0], code.length > 2 ? code.slice(2).split('/') : null]; });
+    for (const line of nn('table').split('\n')) {
+      const [name, ps, os, ret] = line.split('|');
+      const params = parts(ps), members = parts(os);
+      members.push(['label', 's', null]);
+      // dictionary members are converted in lexicographical order
+      members.sort((x, y) => x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : 0);
+      const required = params.length;
+      op(MLGraphBuilder, name, required, function (...args) {
+        const b = state(builders, this, 'MLGraphBuilder');
+        need(args, required, `'${name}' on 'MLGraphBuilder'`);
+        const fields = ['op', b.id, name, ''];
+        for (let i = 0; i < required; i++) fields.push(params[i][0], conv(params[i][1], params[i][2], args[i], `${name}: ${params[i][0]}`));
+        const o = dictOf(args[required], `${name}: options`);
+        for (const m of members) {
+          const v = o[m[0]];
+          if (v === undefined) continue;
+          if (m[1] === 's') fields[3] = usv(v);
+          else fields.push(m[0], conv(m[1], m[2], v, `${name}: ${m[0]}`));
+        }
+        const made = nn(...fields).split(';').map(t => makeOperand(b, t));
+        return ret === 's' ? made : made[0];
+      });
+    }
+    for (const [C, tag] of [[ML, 'ML'], [MLContext, 'MLContext'], [MLGraph, 'MLGraph'], [MLOperand, 'MLOperand'], [MLTensor, 'MLTensor'], [MLGraphBuilder, 'MLGraphBuilder']]) setTag(C, tag);
+    const mlState = new WeakSet();
+    const ml = Object.create(ML.prototype);
+    mlState.add(ml);
+    return { ml, ML, MLContext, MLGraph, MLOperand, MLTensor, MLGraphBuilder };
+  };
+  for (const name of ['ML', 'MLContext', 'MLGraph', 'MLOperand', 'MLTensor', 'MLGraphBuilder']) lazy(name, () => webnnOn() ? webnn()[name] : undefined);
+  // ==== end webnn ====
   // The webkitURL alias (URL §6.1).
   lazy('webkitURL', () => globalThis.URL);
 
@@ -9547,7 +9851,8 @@
     // client-side storage (sections IndexedDB and File System API)
     'indexedDB', 'IDBFactory', 'IDBRequest', 'IDBOpenDBRequest', 'IDBVersionChangeEvent', 'IDBKeyRange', 'IDBObjectStore', 'IDBIndex', 'IDBCursor',
     'IDBCursorWithValue', 'IDBRecord', 'IDBTransaction', 'IDBDatabase', 'DOMStringList', 'QuotaExceededError', 'FileSystemHandle',
-    'FileSystemFileHandle', 'FileSystemDirectoryHandle', 'FileSystemWritableFileStream', 'FileSystemSyncAccessHandle', 'StorageManager', 'Lock', 'LockManager']);
+    'FileSystemFileHandle', 'FileSystemDirectoryHandle', 'FileSystemWritableFileStream', 'FileSystemSyncAccessHandle', 'StorageManager', 'Lock', 'LockManager',
+    'ML', 'MLContext', 'MLGraph', 'MLOperand', 'MLTensor', 'MLGraphBuilder']);
   // HTML §10.2.1: WorkerGlobalScope, DedicatedWorkerGlobalScope, WorkerLocation, WorkerNavigator.
   const makeWorkerScope = (url, name) => {
     inWorker = true;
@@ -9560,7 +9865,7 @@
     for (const k of ['href', 'origin', 'protocol', 'host', 'hostname', 'port', 'pathname', 'search', 'hash'])
       Object.defineProperty(WorkerLocation.prototype, k, { get() { return parts.get(this)[k]; }, configurable: true, enumerable: true });
     class WorkerNavigator { constructor() { throw new TypeError('Illegal constructor'); } }
-    for (const k of ['userAgent', 'language', 'languages', 'platform', 'onLine', 'hardwareConcurrency', 'storage', 'locks'])
+    for (const k of ['userAgent', 'language', 'languages', 'platform', 'onLine', 'hardwareConcurrency', 'storage', 'locks', 'ml'])
       Object.defineProperty(WorkerNavigator.prototype, k, { get() { return nav[k]; }, configurable: true, enumerable: true });
     for (const [k, v] of [['appCodeName', 'Mozilla'], ['appName', 'Netscape'], ['product', 'Gecko']])
       Object.defineProperty(WorkerNavigator.prototype, k, { get() { return v; }, configurable: true, enumerable: true });

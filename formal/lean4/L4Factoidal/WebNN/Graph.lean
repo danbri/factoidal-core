@@ -205,13 +205,26 @@ def addInput (s : State) (bid : Nat) (name dtype shape : String) : M (State × S
   let d ← descOf dtype shape
   pure (addOperand s bid b d (.input name))
 
+/-- "Validate buffer with descriptor", the view half: an `ArrayBuffer`, a `Uint8Array`, or
+the typed array of the data type (`kind` is the class name the page gives; float16 data is
+also taken from a `Uint16Array`, its storage encoding). -/
+def viewOk (t : DType) (kind : String) : Bool :=
+  kind == "ArrayBuffer" || kind == "Uint8Array" || kind == (match t with
+    | .float32 => "Float32Array" | .float16 => "Float16Array" | .int32 => "Int32Array" | .uint32 => "Uint32Array"
+    | .int64 => "BigInt64Array" | .uint64 => "BigUint64Array" | .int8 => "Int8Array" | .uint8 => "Uint8Array")
+  || (t == .float16 && kind == "Uint16Array")
+
+private def checkSource (d : Desc) (kind : String) (size : Nat) : M Unit := do
+  if size != d.byteLength then
+    throw (.type s!"the buffer's byte length {size} is not the descriptor's byte length {d.byteLength}")
+  if !viewOk d.dtype kind then throw (.type s!"a {kind} does not hold {d.dtype.name} data")
+
 /-- `MLGraphBuilder.constant(descriptor, buffer)`: the buffer's length must be the
-descriptor's byte length. -/
-def addConstant (s : State) (bid : Nat) (dtype shape : String) (data : ByteArray) : M (State × String) := do
+descriptor's byte length, and its view type must fit the data type. -/
+def addConstant (s : State) (bid : Nat) (dtype shape kind : String) (data : ByteArray) : M (State × String) := do
   let b ← buildable s bid
   let d ← descOf dtype shape
-  if data.size != d.byteLength then
-    throw (.type s!"the buffer's byte length {data.size} is not the descriptor's byte length {d.byteLength}")
+  checkSource d kind data.size
   if s.held + data.size > maxHeld then throw (.dom "QuotaExceededError" "too many bytes of constants and tensors")
   pure (addOperand s bid b d (.const data) data.size)
 
@@ -334,13 +347,13 @@ def graphText (s : State) (bid : Nat) : String :=
 /-! ## Tensors -/
 
 def createTensor (s : State) (c : Nat) (dtype shape : String) (readable writable constant : Bool)
-    (data : Option ByteArray) : M (State × Nat) := do
+    (data : Option (String × ByteArray)) : M (State × Nat) := do
   if ctxLost s c then throw (invalidState "the context is lost")
   let d ← descOf dtype shape
   if s.tensors.size ≥ maxObjects then throw (.dom "QuotaExceededError" "too many tensors")
   let bytes ← match data with
-    | some b =>
-      if b.size != d.byteLength then throw (Err.type "the data's byte length is not the descriptor's byte length")
+    | some (kind, b) =>
+      checkSource d kind b.size
       pure b
     | none => pure (ByteArray.mk (Array.replicate d.byteLength 0))
   if s.held + bytes.size > maxHeld then throw (.dom "QuotaExceededError" "too many bytes of constants and tensors")
@@ -356,17 +369,21 @@ private def liveTensor (s : State) (c tid : Nat) : M TensorRec :=
     else .ok t
 
 /-- `MLContext.writeTensor(tensor, data)`. -/
-def writeTensor (s : State) (c tid : Nat) (data : ByteArray) : M State := do
+def writeTensor (s : State) (c tid : Nat) (kind : String) (data : ByteArray) : M State := do
   let t ← liveTensor s c tid
   if !t.writable then throw (.type "the tensor is not writable")
-  if data.size != t.desc.byteLength then throw (.type "the data's byte length is not the tensor's byte length")
+  checkSource t.desc kind data.size
   if ctxLost s c then throw (invalidState "the context is lost")
   pure { s with tensors := s.tensors.setIfInBounds tid { t with data } }
 
-/-- `MLContext.readTensor(tensor)`: the tensor's bytes. -/
-def readTensor (s : State) (c tid : Nat) : M ByteArray := do
+/-- `MLContext.readTensor(tensor)` and `readTensor(tensor, outputData)`: the tensor's bytes;
+`into` is the view kind and byte length of the buffer the page will copy them into. -/
+def readTensor (s : State) (c tid : Nat) (into : Option (String × Nat)) : M ByteArray := do
   let t ← liveTensor s c tid
   if !t.readable then throw (.type "the tensor is not readable")
+  match into with
+  | some (kind, size) => checkSource t.desc kind size
+  | none => pure ()
   if ctxLost s c then throw (invalidState "the context is lost")
   pure t.data
 

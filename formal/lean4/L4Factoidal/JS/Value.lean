@@ -204,7 +204,7 @@ inductive Native where
   | bufferCtor | bufferSlice | bufferIsView
   | typedCtor (ty : Nat) | typedSet | typedSubarray | typedFill
   /-- DataView (§25.3): the constructor, and `get`/`set` of element type `ty` (the
-  `typedNames` numbering, then 9 BigInt64 and 10 BigUint64). -/
+  `typedNames` numbering: 9 BigInt64, 10 BigUint64, 11 Float16). -/
   | dataViewCtor | dataViewGet (ty : Nat) | dataViewSet (ty : Nat)
   /-- `Date` as a constructor and `Date.prototype.getTime` (the host's clock). -/
   | dateCtor | dateGetTime
@@ -315,7 +315,7 @@ def VKey.of : Value → VKey
 def typedNames : Array (String × Nat) :=
   #[("Int8Array", 1), ("Uint8Array", 1), ("Uint8ClampedArray", 1), ("Int16Array", 2), ("Uint16Array", 2),
     ("Int32Array", 4), ("Uint32Array", 4), ("Float32Array", 4), ("Float64Array", 8),
-    ("BigInt64Array", 8), ("BigUint64Array", 8)]
+    ("BigInt64Array", 8), ("BigUint64Array", 8), ("Float16Array", 2)]
 
 /-- The element types whose values are BigInts (§23.2: `BigInt64Array`, `BigUint64Array`). -/
 def typedIsBig (ty : Nat) : Bool := ty == 9 || ty == 10

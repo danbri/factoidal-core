@@ -10,7 +10,10 @@ docs/designissues/2026-11-08-page-scripts.md, "Web APIs over Lean"). The algorit
   * `Crypto.WebCrypto`, `Crypto.WebCryptoKeys` and `Crypto.WebHacl`:
     `crypto.getRandomValues`, `randomUUID`, and `crypto.subtle` (digest, HMAC, HKDF,
     PBKDF2, ECDSA and ECDH on P-256, Ed25519, X25519, ChaCha20-Poly1305), with the
-    primitives HACL*'s (record docs/designissues/2026-11-09-hacl-web-crypto.md).
+    primitives HACL*'s (record docs/designissues/2026-11-09-hacl-web-crypto.md);
+  * the Web Neural Network API (`WebNN.Api`, op 140): `navigator.ml`, graph building with
+    shape inference, and the CPU reference backend (record
+    docs/designissues/2026-11-14-webnn.md).
 
 `web_api(op, flags, ptr, len, buf, cap)`. The `len` bytes at `ptr` are the arguments:
 a little-endian u32 count, then each argument as a u32 length and its bytes (strings in
@@ -46,6 +49,7 @@ import L4Factoidal.Net.Cookies
 import L4Factoidal.DOM.SvgValues
 import L4Factoidal.PageGl.Api
 import L4Factoidal.WebCodecs.Api
+import L4Factoidal.WebNN.Api
 import L4Factoidal.JSON.Parser
 import L4Factoidal.JSON.Serialize
 import Std.Data.HashMap
@@ -93,6 +97,9 @@ structure State where
   draws : Nat := 0
   /-- The CryptoKeys of the session. -/
   keys : Crypto.WebCryptoKeys.KeyStore := {}
+  /-- The Web Neural Network objects of the session (`WebNN.Graph`, op 140): contexts, graph
+  builders, graphs and tensors. Empty until a page uses `navigator.ml`. -/
+  nn : L4Factoidal.WebNN.State := {}
   deriving Inhabited
 
 /-! ## Arguments -/
@@ -722,6 +729,10 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
       ({ s with gl }, r)
     -- WebCodecs: frame layouts and copy plans, configuration checks (pure functions of the arguments).
     else if 120 ≤ code && code < 140 then pure' (L4Factoidal.WebCodecs.Api.op code fs)
+    -- The Web Neural Network API (`L4Factoidal.WebNN.api`): one command and its arguments.
+    else if code == 140 then
+      let (nn, out) := L4Factoidal.WebNN.api s.nn fs
+      ({ s with nn }, .ok out)
     else pure' (.error (-2))
 
 section
