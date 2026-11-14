@@ -663,6 +663,62 @@ def backgroundText (get : String → String) : String :=
       ", ".intercalate ((List.range n).map layer)
   | _ => ""
 
+/-- The grammar of one `mask` layer with its parts tagged (CSS Masking 1 §7.1). -/
+def maskLayerGrammar : G :=
+  let r := fun (n : String) => G.ref n none none
+  .anyOf [.tag "image" (r "mask-reference"),
+    .seq [.tag "position" (r "position"), .rep (.seq [.lit '/', .tag "size" (r "bg-size")]) 0 (some 1) false],
+    .tag "repeat" (r "repeat-style"), .tag "box1" (r "geometry-box"),
+    .tag "box2" (.oneOf [r "geometry-box", .kw "no-clip"]), .tag "composite" (r "compositing-operator"),
+    .tag "mode" (r "masking-mode")]
+
+/-- The longhands of `mask` (the layers read alone, a part left out initial, one box the
+origin and the clip) and the `mask-border` longhands it resets (CSS Masking 1 §7.1). -/
+def maskExpand (top : List CV) : Option (List (String × String)) := do
+  let layers := (splitCommas top).map stripWs
+  let parts ← layers.mapM fun layer => (matchAll (env none) maskLayerGrammar layer).map tagged
+  let get := fun (ps : List (String × String)) (k d : String) => (ps.lookup k).getD d
+  let join := fun (xs : List String) => ", ".intercalate xs
+  let origin := parts.map fun ps => match ps.lookup "box1", ps.lookup "box2" with
+    | some b, _ => b
+    | none, some b => if b == "no-clip" then "border-box" else b
+    | none, none => "border-box"
+  let clip := parts.map fun ps => match ps.lookup "box1", ps.lookup "box2" with
+    | _, some b => b
+    | some b, none => b
+    | none, none => "border-box"
+  some [("mask-image", join (parts.map (get · "image" "none"))), ("mask-position", join (parts.map (get · "position" "0% 0%"))),
+    ("mask-size", join (parts.map (get · "size" "auto"))), ("mask-repeat", join (parts.map (get · "repeat" "repeat"))),
+    ("mask-origin", join origin), ("mask-clip", join clip),
+    ("mask-composite", join (parts.map (get · "composite" "add"))), ("mask-mode", join (parts.map (get · "mode" "match-source"))),
+    ("mask-border-source", "none"), ("mask-border-slice", "0"), ("mask-border-width", "auto"), ("mask-border-outset", "0"),
+    ("mask-border-repeat", "stretch"), ("mask-border-mode", "alpha")]
+
+/-- The `mask` value of its longhands, layer by layer, leaving out initial parts. -/
+def maskText (get : String → String) : String :=
+  let ls := ["mask-image", "mask-position", "mask-size", "mask-repeat", "mask-origin", "mask-clip", "mask-composite",
+    "mask-mode"].map fun l => listItems (get l)
+  match ls with
+  | [imgs, poss, sizes, reps, origins, clips, comps, modes] =>
+    let n := imgs.length
+    if n == 0 || !([poss, sizes, reps, origins, clips, comps, modes].all (·.length == n)) then ""
+    else
+      let layer := fun (i : Nat) =>
+        let pick := fun (xs : List String) => xs.getD i ""
+        let pos := pick poss
+        let size := pick sizes
+        let posPart := if pos != "0% 0%" || size != "auto" then [pos ++ (if size != "auto" then " / " ++ size else "")] else []
+        let o := pick origins
+        let c := pick clips
+        let boxes := if c == "no-clip" then (if o == "border-box" then [] else [o]) ++ [c]
+          else if o == c then (if o == "border-box" then [] else [o]) else [o, c]
+        let ps := (if pick imgs != "none" then [pick imgs] else []) ++ posPart ++
+          (if pick reps != "repeat" then [pick reps] else []) ++ boxes ++
+          (if pick comps != "add" then [pick comps] else []) ++ (if pick modes != "match-source" then [pick modes] else [])
+        if ps.isEmpty then "none" else " ".intercalate ps
+      ", ".intercalate ((List.range n).map layer)
+  | _ => ""
+
 /-- `expand`, with `fuel` for a shorthand whose parts are shorthands. -/
 def expandF : Nat → String → String → Option (List (String × String))
   | 0, _, _ => none
@@ -683,6 +739,7 @@ def expandF : Nat → String → String → Option (List (String × String))
           | none =>
             if hasSubstitution cvs then some [(p, canonical)]
             else if p == "background" then (backgroundExpand top).orElse fun _ => some [(p, canonical)]
+            else if p == "mask" then (maskExpand top).orElse fun _ => some [(p, canonical)]
             else if p == "background-position" then
               match (listItems canonical).mapM positionXY with
               | some xys => some [("background-position-x", ", ".intercalate (xys.map (·.1))),
@@ -821,6 +878,7 @@ def recombineF : Nat → Property → (String → String) → String
     let vs := row.longhands.map get
     if vs.any (· == "") then ""
     else if row.name == "background" then backgroundText get
+    else if row.name == "mask" then maskText get
     else if row.name == "background-position" then
       let xs := listItems (get "background-position-x")
       let ys := listItems (get "background-position-y")
@@ -933,7 +991,7 @@ def recombineF : Nat → Property → (String → String) → String
 /-- A shorthand that `recombine` writes from its longhands: one of a generic shape, or
 `background` and `background-position` (written by layers). -/
 def recombinable (row : Property) : Bool :=
-  (shapeOf row).isSome || row.name == "background" || row.name == "background-position"
+  (shapeOf row).isSome || row.name == "background" || row.name == "background-position" || row.name == "mask"
 
 /-- The value of a shorthand of a generic shape from the values of its longhands (`get`
 answers "" for one that is not set): "" when it can not be written as one value. -/
@@ -1155,6 +1213,13 @@ def initialComputed (ctx : ComputeCtx) (row : Property) : String :=
   some "url(\"a\") 1px 2px / 3px 4px space round local padding-box content-box, url(\"a\") 1px 2px / 3px 4px space round local padding-box content-box rgb(5, 6, 7)"
 #guard (lookup "background").map (fun r => recombine r fun l => ((expand "background" "none").getD []).lookup l |>.getD "") == some "none"
 #guard (lookup "background").map (fun r => recombine r fun l => ((expand "background" "red").getD []).lookup l |>.getD "") == some "red"
+-- mask (mask-valid.sub.html)
+private def maskBack (v : String) : Option String :=
+  (lookup "mask").map fun r => recombine r fun l => ((expand "mask" v).getD []).lookup l |>.getD ""
+#guard maskBack "border-box" == some "none" && maskBack "content-box content-box" == some "content-box"
+#guard maskBack "border-box no-clip" == some "no-clip" && maskBack "border-box content-box" == some "border-box content-box"
+#guard maskBack "none alpha" == some "alpha" && maskBack "url(\"a\") add" == some "url(\"a\")"
+#guard (expand "mask" "none").map (·.lookup "mask-border-slice") == some (some "0")
 #guard positionXY "top left" == some ("left", "top") && positionXY "right 10px top 5px" == some ("right 10px", "top 5px")
 #guard (expand "list-style" "none").map (·.lookup "list-style-type") == some (some "none")
 #guard (expand "list-style" "square none").map (·.lookup "list-style-type") == some (some "square")
