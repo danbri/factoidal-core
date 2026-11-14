@@ -340,10 +340,51 @@ def vectorPicture : NativeImage.VectorReader := fun bytes =>
     if rgba.size != rw*rh*4 then throw "SVG image: the picture drawn has another size than asked"
     return ({width := rw, height := rh, rgba},w,h)
 
+/-- The size of an SVG document as an image, and of the picture `vectorPicture` draws of
+it, with nothing drawn: the document is read as XML and its root's attributes give both
+(`NativeSVGForgiving.imageSize`, `imageRaster`). None for bytes that are not an SVG
+document, or that `vectorPicture` refuses before it draws. -/
+def vectorSize : NativeImage.VectorSizer := fun bytes =>
+  if !looksLikeSVG bytes then none else
+  match String.fromUTF8? bytes with
+  | none => none
+  | some xml =>
+    if xml.length > NativeSVG.maxInputChars then none else
+    match XML.parseNamespaceView xml with
+    | .ok (.element _ attrs _) =>
+      let (w,h) := NativeSVGForgiving.imageSize attrs
+      let (rw,rh) := NativeSVGForgiving.imageRaster w h
+      some (w,h,rw,rh)
+    | _ => none
+
+/-- The first key of a list that asks `pageStore` for a store of sizes
+(`NativeImage.Store.addSize`): the keys after it are the images. It starts with U+0001,
+which no URL and no `data:` URI holds, so it is the key of no image. -/
+def sizesMark : String := "\x01sizes"
+
+/-- The mark in front of a list of keys, when a store of sizes is asked for. -/
+def marked (sizes : Bool) (keys : List String) : List String := if sizes then sizesMark :: keys else keys
+
 /-- The image store of a page: `NativeSVG.imageStoreOf` with SVG files read by
-`vectorPicture`. -/
+`vectorPicture`; for keys that start with `sizesMark`, the store of sizes of the keys after
+it (`NativeSVG.imageSizesOf`, SVG files sized by `vectorSize`), in which no pixel is
+decoded. The two are kept apart by their keys (`storeIn`). -/
 def pageStore (keys : List String) (images : List (String × ByteArray)) : NativeImage.Store :=
-  NativeSVG.imageStoreOf keys images vectorPicture
+  if keys.head? == some sizesMark then NativeSVG.imageSizesOf (keys.drop 1) images vectorSize
+  else NativeSVG.imageStoreOf keys images vectorPicture
+
+/-- Kind: property. Says: keys that do not start with the mark give the store of decoded
+pictures, as before the store of sizes was there. -/
+theorem pageStore_unmarked (keys : List String) (images : List (String × ByteArray))
+    (h : keys.head? ≠ some sizesMark) :
+    pageStore keys images = NativeSVG.imageStoreOf keys images vectorPicture := by
+  simp [pageStore, h]
+
+/-- Kind: cost. Says: marked keys give the store of sizes of those keys: `imageSizesOf`,
+which decodes no pixel and draws no SVG document. -/
+theorem pageStore_sizes (keys : List String) (images : List (String × ByteArray)) :
+    pageStore (marked true keys) images = NativeSVG.imageSizesOf keys images vectorSize := by
+  simp [pageStore, marked]
 
 /-- The picture of each `img` whose image decoded within the limits of the store. -/
 def picturesOf (store : NativeImage.Store) (keys : List (Nat × String)) : Rendering.Layout.Pictures :=
@@ -389,11 +430,11 @@ theorem storeIn_eq (kept : StoresKept) (valid : StoresValid kept) (keys : List S
 
 /-- The keys of a document's image store, in the order `makeReplacedIn` asks for them: the
 images of its SVG content, then the `img` elements'. -/
-def storeKeys (dom : DOM.Dom) (documentURL : Option String) : Except String (List String) := do
+def storeKeys (dom : DOM.Dom) (documentURL : Option String) (sizes : Bool := false) : Except String (List String) := do
   let imgs := (htmlImageKeys dom documentURL).map (·.2)
-  if !(dom.nodes.any (fun node => node.type == .element && node.ns == some DOM.svgNS)) then return imgs
+  if !(dom.nodes.any (fun node => node.type == .element && node.ns == some DOM.svgNS)) then return marked sizes imgs
   let (_,tree) ← documentNamespaceTree dom
-  return NativeSVG.imageKeys tree documentURL ++ imgs
+  return marked sizes (NativeSVG.imageKeys tree documentURL ++ imgs)
 
 /-- The store of a document's images made ahead of its first layout, to be kept
 (`keepStore`): none when the table has it, or when the document's SVG content can not be
@@ -403,9 +444,10 @@ store yet: on a page with large images and SVG image files the first turn of its
 took 150 s in place of 8 (lean-lang.org, 2026-11-14). The work is the first frame's, done
 once and earlier; a page with no image makes an empty store. -/
 def storeAhead (kept : StoresKept) (dom : DOM.Dom) (documentURL : Option String)
-    (images : List (String × ByteArray)) : Option ((List String × List (String × ByteArray)) × NativeImage.Store) :=
-  match storeKeys dom documentURL with
-  | .ok keys => if keys.isEmpty then none else (storeIn kept keys images).2
+    (images : List (String × ByteArray)) (sizes : Bool := false) :
+    Option ((List String × List (String × ByteArray)) × NativeImage.Store) :=
+  match storeKeys dom documentURL sizes with
+  | .ok keys => if keys.isEmpty || keys == [sizesMark] then none else (storeIn kept keys images).2
   | .error _ => none
 
 /-- Kind: refinement. Says: a store made ahead is `pageStore` of the document's own keys
@@ -415,9 +457,9 @@ asks with lists that compare equal to these (it asks with `storeKeys`' expressio
 request's images; that the kept store is then found is tested, not proved: `==` on byte
 arrays has no lawfulness instance here). -/
 theorem storeAhead_made (kept : StoresKept) (dom : DOM.Dom) (documentURL : Option String)
-    (images : List (String × ByteArray)) (made : (List String × List (String × ByteArray)) × NativeImage.Store)
-    (h : storeAhead kept dom documentURL images = some made) :
-    ∃ keys, storeKeys dom documentURL = .ok keys ∧ made = ((keys,images),pageStore keys images) := by
+    (images : List (String × ByteArray)) (sizes : Bool) (made : (List String × List (String × ByteArray)) × NativeImage.Store)
+    (h : storeAhead kept dom documentURL images sizes = some made) :
+    ∃ keys, storeKeys dom documentURL sizes = .ok keys ∧ made = ((keys,images),pageStore keys images) := by
   unfold storeAhead at h
   split at h
   · rename_i keys hk
@@ -435,14 +477,15 @@ store: each image decodes once, and the ids of bitmaps do not collide. One
 source-bound index per render, shared by all embedded SVG roots. SVG text is lowered
 to glyph paths first, with `fonts`, the fonts that draw HTML text
 (`NativeSVGText.lowerDocumentGlyphs`); each element keeps its source path, and the
-glyph outlines go to the reader as numbers in a table. -/
+glyph outlines go to the reader as numbers in a table. With `sizes` the store is the store
+of sizes (`pageStore` of marked keys): every image has its place and no pixel. -/
 def makeReplacedIn (kept : StoresKept) (words : NativeSVGText.Words) (dom : DOM.Dom) (documentURL : Option String := none)
-    (images : List (String × ByteArray) := []) (fonts : Array Rendering.SfntProfile.Font := #[]) :
+    (images : List (String × ByteArray) := []) (fonts : Array Rendering.SfntProfile.Font := #[]) (sizes : Bool := false) :
     Except String (Rendering.Layout.Embedding × Rendering.Layout.Pictures ×
       Option ((List String × List (String × ByteArray)) × NativeImage.Store) × NativeSVGText.Words) := do
   let imgs := htmlImageKeys dom documentURL
   if !(dom.nodes.any (fun node => node.type == .element && node.ns == some DOM.svgNS)) then
-    let (store,made) := storeIn kept (imgs.map (·.2)) images
+    let (store,made) := storeIn kept (marked sizes (imgs.map (·.2))) images
     return (embedding dom,picturesOf store imgs,made,{})
   if documentURL.isNone && dom.nodes.any (fun node => DOM.Dom.isHtmlElement node "base" && Rendering.CSS.hasAttribute node "href") then
     throw "unsupported HTML base href without explicit document URL/base transport"
@@ -452,7 +495,7 @@ def makeReplacedIn (kept : StoresKept) (words : NativeSVGText.Words) (dom : DOM.
   -- Each image decodes once for the document, not once for each SVG root. The keys are
   -- those of the tree as it was read (`storeKeys`: text lowered to glyphs names no image),
   -- so a store made ahead of the layout (`storeAhead`) is the one found here.
-  let (store,made) := storeIn kept (NativeSVG.imageKeys source documentURL ++ imgs.map (·.2)) images
+  let (store,made) := storeIn kept (marked sizes (NativeSVG.imageKeys source documentURL ++ imgs.map (·.2))) images
   -- A viewport of fractional CSS pixels (a percentage width with `height:auto`) keeps its
   -- exact size: the viewBox maps onto it, and the backing raster is the next whole pixel.
   return (fun id style width height => do

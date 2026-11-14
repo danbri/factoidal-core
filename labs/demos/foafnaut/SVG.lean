@@ -1427,6 +1427,23 @@ def imageStoreOf (keys : List String) (supplied : List (String × ByteArray) := 
       | none => (state.1.insert key (.error s!"image resource not supplied: {key}"),state.2))
     (({} : NativeImage.Store),0)).1
 
+/-- As `imageStoreOf`, a store of sizes (`NativeImage.Store.addSize`): each image's size
+and one transparent pixel, with no pixel decoded. The factor is the one `imageStoreOf`
+takes, so the two stores refuse the same images for the document's budget. -/
+def imageSizesOf (keys : List String) (supplied : List (String × ByteArray) := [])
+    (vector : NativeImage.VectorSizer := fun _ => none) : NativeImage.Store :=
+  let keys := keys.eraseDups
+  let sizes := keys.filterMap fun key =>
+    if key.toLower.startsWith "data:" then (NativeImage.dataBytes key).toOption.bind NativeImage.naturalSize
+    else (supplied.find? (·.1 == key)).bind fun (_,bytes) => NativeImage.naturalSize bytes
+  let k := NativeImage.factorFor sizes
+  (keys.foldl (fun (state : NativeImage.Store × Nat) key =>
+    if key.toLower.startsWith "data:" then state.1.addSizeData state.2 key k vector
+    else match supplied.find? (·.1 == key) with
+      | some (_,bytes) => state.1.addSize state.2 key bytes k vector
+      | none => (state.1.insert key (.error s!"image resource not supplied: {key}"),state.2))
+    (({} : NativeImage.Store),0)).1
+
 /-- Decode each image of a tree once. `supplied` holds the bytes that the host
     fetched, by key; a `data:` URI needs no host. A reference with no bytes, and an
     image past the budget of the document, stay in the store as a refusal. -/

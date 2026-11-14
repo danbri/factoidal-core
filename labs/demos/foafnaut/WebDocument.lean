@@ -1690,11 +1690,23 @@ values the page's scripts read. Until 2026-11-14 the field was not in this list,
 render's layout never saw it: content that fades in from `opacity: 0` stayed invisible. A
 page with no animation sends no such field and its key is as before. -/
 def layoutFields : List String := ["commands","resources","images","heldImages","url","fontData","textScalePercent","graphModel",
-  "visited","media","liberal","scripting","resourceFailures","zoomUnit","webFonts","animated","imported"]
+  "visited","media","liberal","scripting","resourceFailures","zoomUnit","webFonts","animated","imported","imagePixels"]
 
 /-- The request with only `layoutFields`, in that order. -/
 def layoutRequest (request : JSON.Json) : JSON.Json :=
   .object (layoutFields.filterMap fun key => (request.field? key).map (key,·))
+
+/-- A layout request asks for the images' sizes only (`imagePixels: false`): the layout
+takes the store of sizes (`WebRender.pageStore` of marked keys), in which every image has
+its place and no pixel is decoded. A window asks so for the frames of a page before it
+has shown one, and then asks again with the pixels; nothing moves between the two. -/
+def sizesOnly (request : JSON.Json) : Bool := request.field? "imagePixels" == some (.bool false)
+
+/-- The request with `imagePixels: false`. -/
+def withSizes (request : JSON.Json) : JSON.Json :=
+  match request with
+  | .object fields => .object (fields.filter (·.1 != "imagePixels") ++ [("imagePixels", .bool false)])
+  | j => j
 
 /-- Everything that a render reads before its layout ends. The held fonts are named by
 family and SHA-256, all of them in order: `layOut` reads the fonts that `fontLoad`
@@ -1901,13 +1913,13 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
   let documentURL := if url.isEmpty then none else some url
   let (embedding,pictures,dom,d0,madeStore,madeWords) ← match graph with
     | some g => pure (WebGraph.embedding g,Rendering.Layout.noPictures,dom,([] : List WebAccept.Diagnostic),none,({} : NativeSVGText.Words))
-    | none => match WebRender.makeReplacedIn kept.stores kept.words dom documentURL images svgFonts, m with
+    | none => match WebRender.makeReplacedIn kept.stores kept.words dom documentURL images svgFonts (sizesOnly request), m with
       | .ok (e,p,s,w), _ => pure (e,p,dom,[],s,w)
       | .error e, .strict => throw e
       | .error e, .liberal =>
         let (bare,n) := stripSvg dom
         if n == 0 then throw e else
-        match WebRender.makeReplacedIn kept.stores kept.words bare documentURL images svgFonts with
+        match WebRender.makeReplacedIn kept.stores kept.words bare documentURL images svgFonts (sizesOnly request) with
         | .ok (e',p,s,w) => pure (e',p,bare,[{skip := .svgContent, «where» := s!"{n} inline svg elements", refusal := e}],s,w)
         | .error _ => throw e
   modify (·.merge {store := madeStore,words := madeWords})
@@ -2224,7 +2236,8 @@ def withAnimated (request : JSON.Json) (overrides : List Rendering.Animation.Ove
 its first layout (`WebRender.storeAhead`, for the tree and the images of the session's
 `layout` request, as `layOutDOMIn` reads them): none when the engine keeps it already, when
 the page has no image, and when the page or the request can not be read (the layout says
-why). -/
+why). It is the store of sizes: a script's layout reads place the images and paint
+nothing (`measure` asks for sizes only), so the scripts start with no image decoded. -/
 def storeAheadOf (h : Holds) (kept : Kept) (html : String) (request : JSON.Json) :
     Option ((List String × List (String × ByteArray)) × NativeImage.Store) :=
   let layout := layoutRequest ((request.field? "layout").getD (.object []))
@@ -2232,7 +2245,7 @@ def storeAheadOf (h : Holds) (kept : Kept) (html : String) (request : JSON.Json)
   | .ok dom, .ok supplied =>
     let url := baseURL dom (str layout "url")
     let images := supplied ++ heldBytes h (heldNamed h ((namedImages layout).toOption.getD []))
-    WebRender.storeAhead kept.stores dom (if url.isEmpty then none else some url) images
+    WebRender.storeAhead kept.stores dom (if url.isEmpty then none else some url) images true
   | _, _ => none
 
 /-- `kept` with the store of `storeAheadOf`: the layouts that the scripts' reads ask for
@@ -2273,7 +2286,8 @@ computed text of the property named; 26 the declarations of the node's rules and
 attribute as one text, or with "names" the longhands they declare, with "rules" the
 rules' declarations alone, with "style" the longhands of the `style` attribute. -/
 def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts.Page.Measure := fun dom width height overrides carry =>
-  let request := withAnimated (layoutRequest request) overrides
+  -- a script reads where things are, never a pixel: its layouts take the store of sizes
+  let request := withSizes (withAnimated (layoutRequest request) overrides)
   let held := heldNamed h ((namedImages request).toOption.getD [])
   let laid : Thunk (Except String Laid) := Thunk.mk fun _ => layOutDOM h request none dom width height held (none,none) kept
   -- what the cascade reads: the flat tree, the rules, the tree scopes, the element state
@@ -2538,6 +2552,13 @@ theorem model_put (memo : Lru LayoutKey Laid) (key : LayoutKey) (laid : Laid) :
 requests that differ in either are two layouts, and a kept layout of one is not used for
 the other. -/
 theorem animated_imported_layout_fields : "animated" ∈ layoutFields ∧ "imported" ∈ layoutFields := by
+  decide
+
+/-- Kind: property. Says: whether a request asks for the images' sizes only is a layout
+field: the layout with the store of sizes and the layout with the decoded pictures are
+two kept layouts, and a frame that asks for pixels is never answered with the layout
+that has none. -/
+theorem imagePixels_layout_field : "imagePixels" ∈ layoutFields := by
   decide
 
 /-- Neither the shell, which holds the scroll, nor the hover and active nodes are
