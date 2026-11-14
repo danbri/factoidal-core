@@ -485,10 +485,12 @@ private def sizeOfRoot (attrs : List (String × String)) : Nat × Nat :=
 #guard sizeOfRoot [("width","100%"),("height","100%"),("viewBox","0 0 24 24")] == (24,24)
 #guard sizeOfRoot [] == (300,150)
 #guard NativeSVGForgiving.imageRaster 18 18 == (36,36)
-#guard NativeSVGForgiving.imageRaster 486 169 == (486,169)
--- 2000 by 1000 is past the budget whole and halved; a third (rounded up) fits
-#guard NativeSVGForgiving.imageRaster 2000 1000 == (667,334)
-#guard 667*334 ≤ NativeSVGForgiving.maxImagePixels && 1000*500 > NativeSVGForgiving.maxImagePixels
+#guard NativeSVGForgiving.imageRaster 128 128 == (256,256)
+#guard NativeSVGForgiving.imageRaster 200 200 == (200,200)
+#guard NativeSVGForgiving.imageRaster 486 169 == (243,85)
+-- 2000 by 1000 is past the budget whole and at a fifth; a sixth (rounded up) fits
+#guard NativeSVGForgiving.imageRaster 2000 1000 == (334,167)
+#guard 334*167 ≤ NativeSVGForgiving.maxImagePixels && 400*200 > NativeSVGForgiving.maxImagePixels
 
 -- The tab icon (HTML §4.6.7.8): a scalable icon first, then the smallest at least 32
 -- device pixels, the last of equal ones; ICO is skipped (issue 1282); with no icon link,

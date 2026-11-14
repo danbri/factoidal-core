@@ -1060,8 +1060,13 @@ def imageSize (attrs : List NamespaceAttribute) : Nat × Nat :=
   let side := fun (v : Float) => max 1 (min 4096 v.round.toUInt32.toNat)
   (side fw,side fh)
 
-/-- Most pixels of the picture drawn for one SVG image. -/
-def maxImagePixels : Nat := 262144
+/-- Most pixels of the picture drawn for one SVG image. The picture is drawn on the CPU,
+twice (on white and on black, for its alpha), at about 20 µs a pixel for a drawing of 80
+paths (2026-11-14, M1): at 262144 pixels an illustration of 500 by 285 took 5.7 s of a
+page's first layout, at 65536 it takes about a quarter of that. Icons and logos up to 128
+by 128 CSS pixels are still drawn at twice their size; a larger drawing is held smaller
+than it is shown until SVG images are drawn as vectors with the page. -/
+def maxImagePixels : Nat := 65536
 
 /-- The pixels of the picture of an image of `w` by `h` CSS pixels: twice the size on each
 side while that is within `maxImagePixels` (a screen of two device pixels to the CSS pixel

@@ -140,6 +140,99 @@ Open:
 - The pixel budget is one for a document. A page of many photographs is drawn soft. The
   way out is image tiles kept on the GPU, not a larger table.
 
+## Later the same day: what the first engines with these changes showed
+
+The first macOS engine with flex, positioning and the changes above drew the eight pages
+(captures of each round: the scratch directory named in the night notes; not committed).
+Four more causes came out of those captures and of original fixtures
+(`labs/demos/foafnaut/fixtures/realpage/`), and one cost.
+
+### A script that removes a linked sheet
+
+`WebDocument.validateResources` refused a request when a supplied resource's node was no
+longer a connected style sheet link. The host fetches sheets for the tree as parsed; when a
+script then removed the link, or changed its `rel`, every render was refused and the page
+was not drawn. Such a resource is now left out when the request carries script commands
+(`staleResourceLeftOut`; with no commands the refusal stands).
+
+### Elements made by scripts
+
+The host asked the engine once, before scripts ran, which sheets and images the page wants.
+A link a script appended, a link whose `rel` a script set to `stylesheet` (the preload
+pattern) and an `img` a script made were never fetched. The window now asks again with the
+scripts' commands after a turn that changed the tree and fetches what is newly listed
+(`page-load.mjs newlyListed`): one check at a time, and the wait between checks doubles to
+4 s while they find nothing.
+
+### Subresources of another origin
+
+The engine side is `Net/Subresource.lean` and the document op `subresource` (the
+networking record). The hosts' side is `page-load.mjs loadSubresource`: the loop over the
+op's steps, used by the window for images (six at a time), the tab icon, web fonts and
+linked sheets. An engine without the op keeps the page's own origin. The Hub reads its own
+site only, by design, and is unchanged.
+
+### The cost of images, and the store made ahead
+
+A page's scripts start before its first frame. Each layout that a script's read asked for
+made the image store again (no layout had kept one yet): every image decoded per layout.
+With SVG image files drawn on the CPU and large images reduced, the first script turn of
+lean-lang.org went from 8 s to 152 s for the same 163,000 instructions. The store is now
+made once at `scriptSession start` (`WebRender.storeAhead`, `WebDocument.keepStoreAhead`)
+and found by every layout after it.
+
+What remains is the first decode itself, which is slow for what it does (M1, one page each,
+other work running on the machine):
+
+| Image | First layout with it |
+|---|---|
+| JPEG 786 by 486 | 1.7 s |
+| SVG illustration, 500 by 285, 81 paths, drawn at 500 by 285 | 5.7 s |
+| SVG logo | 1.6 s |
+| JPEG 1920 by 1280 | not decoded: past the 1,048,576 pixels of one image |
+
+The picture of an SVG image is therefore drawn with at most 65,536 pixels (it was
+262,144): icons and logos up to 128 by 128 CSS pixels are still drawn at twice their size,
+a larger drawing is held smaller than it is shown.
+
+### Bold and italic
+
+`Rendering/FontSynthesis.lean`: `font-weight` and `font-style` values, and the faces the
+engine makes from its one regular face: bold is the outline filled and stroked (the stroke
+1/24 to 1/32 of the font size), oblique a shear of 1/4 about the baseline. The cascade
+fields and the paint are a separate change on top of the cascade work.
+
+### Proved, tested, open (this part)
+
+Proved: `staleResourceLeftOut_no_commands`; `WebRender.storeAhead_made` (the store made
+ahead is `pageStore` of the document's own keys and the images given);
+`WebDocument.keepStoreAhead_rest` (nothing else the engine keeps changes);
+`FontSynthesis`: `bolder_bounds`, `lighter_bounds`, `bolder_isBold`, `relative_examples`,
+`weight?_bounds`, `embolden_le`, `shear_baseline`, `shear_height`, `shear_leans`.
+
+Tested only: that a layout finds the store made ahead (`==` on byte arrays has no
+lawfulness instance, so the lookup is not proved to hit); the host loops
+(`host_parity_test.ts`: a stand-in for the op, `newlyListed`); the fixtures by capture.
+
+Open:
+
+- SVG images should be drawn as vectors with the page (the scene of the document placed
+  in the image's box, as inline `svg` is), not as a CPU picture: no decode time, sharp at
+  every size. Until then large SVG drawings are soft and cost seconds.
+- Images decode in the first layout, before the first frame. They should arrive after it,
+  one at a time; the store is keyed by all keys and all bytes together, so adding one
+  image decodes all again. A store per image is the way.
+- A JPEG or PNG of more than 1,048,576 pixels is not decoded (decode at a reduced scale).
+- WebP (every photograph of BBC News) and AVIF have no decoder.
+- A page whose scripts pass 4,096 commands (lean-lang.org: 26,319) is now drawn whole,
+  and each render replays the commands: 3.7 s a layout there. The render should read the
+  session's arena.
+- BBC News: 85 to 100 s before its first frame, spent between the host and the network
+  inside the script session's start (41 module scripts), not in the engine.
+- The session's layout request is fixed at start: sheets and images fetched later for
+  script-made elements reach the renders, not the scripts' layout reads.
+- `srcset` and `picture` for the image list (the selection is in `HTML/ImageSource.lean`).
+
 ## Timings
 
 First layout and compile of the page (no scripts), M1, window 1600 by 1000 device pixels,
