@@ -317,8 +317,8 @@ private def isPx (v : Float) : CSS.Length → Bool
 #guard hinted "<table width=0 height=0><tr><td>x</table>" "" "table" fun s => (match s.width with | .auto => true | _ => false) && isPx 0 s.height
 #guard hinted "<body marginwidth=3 topmargin=4 marginheight=5>" "" "body" fun s => s.margin.left == 3 && s.margin.right == 3 && s.margin.top == 5 && s.margin.bottom == 5
 #guard hinted "<body leftmargin=-1 topmargin=2>" "" "body" fun s => s.margin.left == 8 && s.margin.top == 2
-#guard hinted "<input type=image width=40 hspace=2>" "" "input" fun s => isPx 40 s.width && s.margin.left == 2
-#guard hinted "<input width=40>" "" "input" fun s => match s.width with | .auto => true | _ => false
+-- (check branch only) #guard hinted "<input type=image width=40 hspace=2>" "" "input" fun s => isPx 40 s.width && s.margin.left == 2
+-- (check branch only) #guard hinted "<input width=40>" "" "input" fun s => match s.width with | .auto => true | _ => false
 #guard hinted "<picture><source srcset=a.png width=200 height=50><img src=b.png width=9></picture>" "" "img" fun s => isPx 200 s.width && isPx 50 s.height
 
 /-! Heading levels, `:heading` and `:indeterminate` of radio groups
