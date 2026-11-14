@@ -601,18 +601,36 @@ frame's scripts run in the page's realm with `document` the frame's
 /-- Rounds of `srcdoc` loads after a turn (for frames in frames). -/
 def frameRounds : Nat := 4
 
-/-- The `srcdoc` documents of frames that wait (`about:srcdoc` navigations): Lean parses each
-and loads it with its inline scripts, at most `frameRounds` rounds. A page with no waiting
-navigation pays one look at an empty list. -/
+/-- A navigation that Lean answers itself, with no request to the embedder: a `srcdoc`
+document, or a `blob:` URL (File API §8.3: the entry is in the engine, and only its own
+origin reads it). -/
+def leanNavigation (u : String) : Bool := u == "about:srcdoc" || u.startsWith "blob:"
+
+/-- The document of a frame's navigation to the `blob:` URL `u`: the blob's text when the
+page's own origin made the URL (`Net.Xhr.State.blobOf`) and its type is `text/html`,
+decoded as a document is (HTML §13.2.3, with the charset of the type). Else "", which
+leaves the frame at `about:blank` (a network error for the navigation). -/
+def blobDocument (h : Page.Host) (u : String) : String :=
+  match h.web.net.blobOf u with
+  | some (type, bytes) =>
+    let mime := L4Factoidal.WHATWG.MimeType.parse type
+    if mime.map (·.essence) == some "text/html" then
+      (L4Factoidal.WHATWG.Encoding.Sniff.decodeDocumentFast bytes (mime.bind (·.param "charset"))).2
+    else ""
+  | none => ""
+
+/-- The documents of frames that wait for Lean (`leanNavigation`: `srcdoc`, and `blob:` URLs):
+Lean parses each and loads it with its inline scripts, at most `frameRounds` rounds. A page
+with no waiting navigation pays one look at an empty list. -/
 def srcdocLoads {σ : Type} (host : σ → Page.Host) (load : σ → Nat → String → Array (Nat × String) → σ) (s : σ) :
     σ × Nat := Id.run do
   let mut s := s
   let mut n := 0
   for _ in [0:frameRounds] do
-    let navs := (host s).dom.navigations.filter (·.2 == "about:srcdoc")
+    let navs := (host s).dom.navigations.filter (leanNavigation ·.2)
     if navs.isEmpty then break
-    for (el, _) in navs do
-      let src := (Dom.attrValue? (host s).dom.dom el "srcdoc").getD ""
+    for (el, u) in navs do
+      let src := if u == "about:srcdoc" then (Dom.attrValue? (host s).dom.dom el "srcdoc").getD "" else blobDocument (host s) u
       let scripts := ((scriptSources (DOM.parseHtmlDocument src) (.object [])).toOption.map (·.1)).getD #[]
       s := load s el src scripts
       n := n + 1
@@ -620,13 +638,13 @@ def srcdocLoads {σ : Type} (host : σ → Page.Host) (load : σ → Nat → Str
 
 /-- The frame navigations the embedder is to answer (action `frame`): an `iframe` and a URL. -/
 def hostNavigations (h : Page.Host) : JSON.Json :=
-  .array ((h.dom.navigations.filter fun (_, u) => !u.isEmpty && u != "about:srcdoc").toList.map fun (el, u) =>
+  .array ((h.dom.navigations.filter fun (_, u) => !u.isEmpty && !leanNavigation u).toList.map fun (el, u) =>
     .object [("nodeId", num el), ("url", .string u)])
 
 /-- The frame fields of a turn answer, only when there is something to say: `navigations`
 for the embedder, and `frameLoads`, the `srcdoc` documents Lean loaded in the turn. -/
 def frameFields (h : Page.Host) (loads : Nat) : List (String × JSON.Json) :=
-  let waiting := h.dom.navigations.any fun (_, u) => !u.isEmpty && u != "about:srcdoc"
+  let waiting := h.dom.navigations.any fun (_, u) => !u.isEmpty && !leanNavigation u
   (if waiting then [("navigations", hostNavigations h)] else []) ++ (if loads == 0 then [] else [("frameLoads", num loads)])
 
 /-- The document of a `frame` action (the embedder's answer to a navigation): `bytesBase64`
