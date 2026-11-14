@@ -192,6 +192,11 @@ def op (jar : Jar) (origin : String) (secure : Bool) (a : Array Tok) : Jar × Li
       match delete jar site now (strAt a 3) (opt a 4 5) (opt a 6 7) with
       | none => (jar, typeError)
       | some j => (j, written jar j site now)
+    -- `document.cookie = text` while the document's cookieStore exists: the write of op 97
+    -- (`setFromScript`), answered with the changes the document sees, for its change event
+    | "docset" =>
+      let j := setFromScript jar site now (strAt a 3)
+      (j, written jar j site now)
     | _ => (jar, [S "!NotSupportedError"])
 
 /-! ## Theorems -/
@@ -258,6 +263,13 @@ theorem changes_sub (before after : List Cookie) :
     (∀ c ∈ (changes before after).1, c ∈ after) ∧ (∀ c ∈ (changes before after).2, c ∈ before) :=
   ⟨fun _ h => (List.mem_filter.mp h).1, fun _ h => (List.mem_filter.mp h).1⟩
 
+/-- Kind: refinement. Says: `docset` writes the jar exactly as `document.cookie = text`
+(`Net.Cookies.op` 97) does; it only adds the answer of what changed. -/
+theorem docset_jar (jar : Jar) (origin : String) (secure : Bool) (a : Array Tok) (site : Site)
+    (hs : siteOf origin secure (pathOfUrl (strAt a 1)) = some site) (hc : strAt a 0 = "docset") :
+    (op jar origin secure a).1 = setFromScript jar site (secondsOf (strAt a 2)) (strAt a 3) := by
+  simp [op, hs, hc]
+
 /-- Kind: validity rule. Says: a name holding `=` is never set. -/
 theorem set_refuses_eq (jar : Jar) (site : Site) (now : Nat) (name value : String) (domain path : Option String)
     (expires : Option Nat) (h : (normalize name).toList.contains '=' = true) :
@@ -307,6 +319,9 @@ private def getC (n : String) (url : String := "") : List String := ["get", U, "
   ["ok + n v", "ok - n", "ok", "ok", "!TypeError"]
 -- change events: rewriting a value is a change, rewriting the same value is none
 #guard run [setC "n" "v", setC "n" "v", setC "n" "w", setC "a" "1" (exp := some "1000")] == ["ok + n v", "ok", "ok + n w", "ok"]
+-- document.cookie through docset: the jar of op 97 and the change it makes
+#guard run [["docset", U, "1700000000000", "dc=1; path=/"], getC "dc", ["docset", U, "1700000000000", "dc=1"], ["docset", U, "1700000000000", "dc=; max-age=0"]] ==
+  ["ok + dc 1", "ok dc 1", "ok + dc 1", "ok - dc"]
 -- url option: the document's URL (a fragment aside), else TypeError
 #guard run [setC "n" "v", getC "n" (U ++ "#foo"), getC "n" "https://web-platform.test:8443/different/path",
   getC "n" "https://www.example.com/cookiestore/t.html"] ==

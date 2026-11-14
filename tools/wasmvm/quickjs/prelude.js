@@ -5280,7 +5280,9 @@
   };
   Object.defineProperty(Document.prototype, 'cookie', { configurable: true, enumerable: true,
     get() { const r = apiCall(96, cookieArgs(this)); return typeof r === 'string' ? r : ''; },
-    set(v) { apiCall(97, [...cookieArgs(this), String(v)]); } });
+    // while the document's cookieStore exists, its write goes through the Cookie Store (the same
+    // write, plus the change event it makes)
+    set(v) { if (cookieStoreWrite !== null && this === document && cookieStoreWrite(String(v))) return; apiCall(97, [...cookieArgs(this), String(v)]); } });
 
   // ---- Request (Fetch §5.4) ------------------------------------------------------------------
   const requests = new WeakMap();
@@ -10289,9 +10291,12 @@
       Object.defineProperty(CookieChangeEvent.prototype, k, { ...Object.getOwnPropertyDescriptor(CookieChangeEvent.prototype, k), enumerable: true });
     making = true; let store; try { store = new CookieStore(); } finally { making = false; }
     brand.add(store);
+    // document.cookie = text: Lean's `docset` (op 97's write) answers the changes to fire
+    cookieStoreWrite = text => { try { fireChanges(call(['docset', text], 'document.cookie')); return true; } catch { return false; } };
     return { store, classes: { CookieStore, CookieChangeEvent } };
   };
   let cookieStoreMade;
+  let cookieStoreWrite = null;
   const cookieStoreApi = () => {
     if (cookieStoreMade !== undefined) return cookieStoreMade;
     let secure = false;
