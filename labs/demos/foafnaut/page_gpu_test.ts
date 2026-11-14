@@ -96,3 +96,40 @@ console.log("page_gpu_test: ok");
   console.log("webgl: 2 canvases,",got.filter(c=>c.k==="pass").length,"passes; programs linked");
 }
 console.log("page_gpu_test (webgl): ok");
+
+// Compute (docs/designissues/2026-11-14-gpu-compute-and-webnn.md): the force-graph page makes
+// compute pipelines and bind groups through Lean, dispatches every frame, has its dispatch of
+// 70,000 workgroups refused, and reads the nodes back: the test plays the host, answering the
+// readback (action gpuRead) with bytes of the size Lean asked for, and the page's promise
+// resolves with them in a later task.
+{
+  const fg=await Deno.readTextFile(new URL("./pages/webgpu-force-graph.html",import.meta.url));
+  const fgURL="file:///webgpu-force-graph.html";
+  let t=engine.scriptSession(fg,withEngine({action:"start",url:fgURL,resources:[]})) as unknown as Turn;
+  const got:Gpu[]=[...(t.gpu??[])];let fgCommands=t.commands;
+  let read:Gpu|undefined;
+  for(let i=0;i<200&&!read;i++){
+    t=engine.scriptSession("",{action:"advance",session:t.session,ms:20}) as unknown as Turn;
+    got.push(...(t.gpu??[]));if(t.commands)fgCommands=t.commands;
+    for(const e of t.errors)assert.fail("page error: "+e);
+    read=(t.gpu??[]).find(c=>c.k==="read");
+  }
+  const kinds=got.map(c=>c.k);
+  for(const k of ["cpipeline","cbind","cpass","copy","read","pipeline","pass"])assert(kinds.includes(k),`no ${k} command`);
+  const cp=got.find(c=>c.k==="cpipeline")!;
+  assert.deepEqual(cp.layout,[[0,"uniform"],[1,"read-only-storage"],[2,"storage"],[3,"read-only-storage"]]);
+  const shaders=got.filter(c=>c.k==="shader").map(c=>c.code as string);
+  assert(shaders.some(s=>s.includes("src[min(u32(i), (arrayLength(&src) - 1u))]")),"runtime-sized index clamped");
+  for(const c of got.filter(c=>c.k==="cpass"))for(const d of c.dispatches as {x:number}[])assert(d.x<=65535);
+  assert(read&&read.size===16000,"a readback of the 1,000 nodes");
+  const bytes=new Float32Array(4000);for(let i=0;i<1000;i++){bytes[4*i]=0.5;bytes[4*i+2]=0.01;}
+  const b64=btoa(String.fromCharCode(...new Uint8Array(bytes.buffer)));
+  t=engine.scriptSession("",{action:"gpuRead",session:t.session,results:[{ticket:read!.ticket,dataBase64:b64}]}) as unknown as Turn;
+  if(t.commands)fgCommands=t.commands;
+  for(let i=0;i<3;i++){t=engine.scriptSession("",{action:"advance",session:t.session,ms:20}) as unknown as Turn;if(t.commands)fgCommands=t.commands;}
+  const fgText=engine.selectedText(fg,800,1400,{url:fgURL,selection:"all",commands:fgCommands});
+  assert.match(fgText,/Refused a dispatch of 70,000 workgroups: gpu:/);
+  assert.match(fgText,/Read back at frame 60: extent 0\.50, mean speed 0\.0100/);
+  console.log("compute:",kinds.filter(k=>k==="cpass").length,"compute passes; readback answered");
+}
+console.log("page_gpu_test (compute): ok");
