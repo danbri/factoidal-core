@@ -232,7 +232,9 @@ def styled (treeScope : Option TreeScope) (dom : Dom) (rules : List Rule) (textS
   let plan := spots dom.size wants
   -- the rules of the page's own elements
   let own := Index.all treeScope rules
-  if plan.isEmpty then return (dom, ← computeAllWith (own.matched keys dom state) dom textScale)
+  -- (with the animated values of the element state after the rules of each element, as
+  -- `computeFor` has them: `CSS.withAnimated`; a generated box has none)
+  if plan.isEmpty then return (dom, ← computeAllWith (withAnimated state (own.matched keys dom state)) dom textScale)
   let owners := plan.toArray
   let derived := derive dom plan
   let beforeOf := Index.author treeScope before
@@ -243,7 +245,7 @@ def styled (treeScope : Option TreeScope) (dom : Dom) (rules : List Rule) (textS
     else match owners[(id - dom.size) / 2]? with
       | some s => (if s.before then beforeOf else afterOf).matched keys dom state s.owner
       | none => []
-  let styles ← computeAllWith matchesOf derived textScale
+  let styles ← computeAllWith (withAnimated state matchesOf) derived textScale
   return fill dom.size owners derived styles
 
 /-- **A sheet with no pseudo-element rule that has `content` changes nothing**: the tree
