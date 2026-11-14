@@ -93,7 +93,7 @@ gives the rules of `parseInBlocks` (the blocks read in place for one environment
 private def mediaSheet :=
   "p{color:red}@media (min-width: 600px){p{color:blue}.a{margin:1px}}@media print{p{color:green}}" ++
   "@media screen and (max-width: 400px){div{padding:2px}}@media (prefers-color-scheme: dark){a{color:#fff}}" ++
-  "@media (hover: hover){b{color:red}}@font-face{font-family:x}@media all{@media screen{i{color:red}}em{color:red}}" ++
+  "@media screen or print{b{color:red}}@font-face{font-family:x}@media all{@media screen{i{color:red}}em{color:red}}" ++
   "@media only screen{q{color:red}}@media not print{s{color:red}}"
 private def sameRules (env : MediaQuery.Env) (source : String) : Bool :=
   match parseIn env source, parseInBlocks env source with
