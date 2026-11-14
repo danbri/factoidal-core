@@ -313,6 +313,75 @@ def joinTokens (a b : List CssValues.CV) : List CssValues.CV :=
 
 #guard needsComment (.tok (.ident "foo")) (.tok (.ident "bar")) && !needsComment (.tok (.ident "a")) (.tok .comma)
 
+/-- The groups of `cvs` between top-level tokens `sep`. -/
+def splitAt (sep : CssValues.Tok) (cvs : List CssValues.CV) : List (List CssValues.CV) :=
+  let (groups, last) := cvs.foldl (fun (acc : List (List CssValues.CV) × List CssValues.CV) cv =>
+    match cv with
+    | .tok t => if t == sep then (acc.2.reverse :: acc.1, []) else (acc.1, cv :: acc.2)
+    | cv => (acc.1, cv :: acc.2)) ([], [])
+  (last.reverse :: groups).reverse
+
+/-- A condition of `if()` (CSS Values 5 §9.1): `style()`, `supports()` and `media()`
+queries, `not`, `and`, `or` and parentheses; `else` holds. A style query compares a custom
+property's computed value with a value (`var()` in it substituted by `subst`; `initial`
+is the guaranteed-invalid value), or asks that it has one. `none`: not a condition.
+The recursion is on the nesting of the condition. -/
+def ifCondition (get : String → String) (subst : List CssValues.CV → Option (List CssValues.CV)) :
+    Nat → List CssValues.CV → Option Bool
+  | 0, _ => none
+  | fuel + 1, cvs =>
+    let ts := CssValues.stripWs cvs
+    let isKw := fun (k : String) (cv : CssValues.CV) => match cv with
+      | .tok (.ident s) => CssValues.lower s == k
+      | _ => false
+    -- `a and b and c`, `a or b`: one operator at a level
+    let parts := fun (k : String) =>
+      let (groups, last) := ts.foldl (fun (acc : List (List CssValues.CV) × List CssValues.CV) cv =>
+        if isKw k cv then (acc.2.reverse :: acc.1, []) else (acc.1, cv :: acc.2)) ([], [])
+      (last.reverse :: groups).reverse
+    let ands := parts "and"
+    let ors := parts "or"
+    if ands.length > 1 then (ands.mapM (ifCondition get subst fuel)).map (·.all id)
+    else if ors.length > 1 then (ors.mapM (ifCondition get subst fuel)).map (·.any id)
+    else
+      match ts with
+      | [k] => if isKw "else" k then some true else
+        match k with
+        | .block '(' inner => ifCondition get subst fuel inner
+        | .fn name args =>
+          let n := CssValues.lower name
+          if n == "supports" then some (CssSupports.ruleHolds (CssValues.rawText args) || CssSupports.ruleHolds ("(" ++ CssValues.rawText args ++ ")"))
+          else if n == "media" then none
+          else if n == "style" then
+            let inner := CssValues.stripWs args
+            match inner with
+            | [.block '(' _] | _ :: _ :: _ =>
+              -- a style query: `--x: v`, `--x`, or a condition of them in parentheses
+              match inner with
+              | .tok (.ident x) :: .tok .colon :: v =>
+                if !CssValues.isCustom x then none
+                else
+                  let want := CssValues.stripWs v
+                  let cur := (get x).trimAscii.toString
+                  match want with
+                  | [.tok (.ident k)] =>
+                    if CssValues.lower k == "initial" then some (cur == "")
+                    else if CssValues.cssWide.contains (CssValues.lower k) then some false
+                    else some (cur == CssValues.rawText want)
+                  | _ =>
+                    match subst want with
+                    | some w => some (cur == (CssValues.rawText w).trimAscii.toString && cur != "")
+                    | none => some false
+              | _ => ifCondition get subst fuel (inner.map fun cv => match cv with
+                  | .block '(' b => CssValues.CV.fn "style" b
+                  | cv => cv)
+            | [.tok (.ident x)] => if CssValues.isCustom x then some ((get x) != "") else none
+            | _ => none
+          else none
+        | _ => none
+      | [k, x] => if isKw "not" k then (ifCondition get subst fuel [x]).map (!·) else none
+      | _ => none
+
 /-- Replace each `var()` by the value of its custom property, or by its fallback (CSS
 Variables 1 §3). `none`: a variable with no value and no fallback, so the declaration is
 invalid at computed-value time. -/
@@ -325,7 +394,30 @@ def substitute (get : String → String) : Nat → List CssValues.CV → Option 
       | some out =>
         match cv with
         | .fn name args =>
-          if CssValues.lower name == "var" then
+          if CssValues.lower name == "if" then
+            -- `if(<condition>: <value>; ...)`: the value of the first condition that holds,
+            -- else nothing (CSS Values 5 §9.1)
+            let branches := (splitAt .semicolon args).filter fun b => !(CssValues.stripWs b).isEmpty
+            let pick := branches.foldl (fun (acc : Option (Option (List CssValues.CV))) b =>
+              match acc with
+              | some (some _) => acc
+              | none => none
+              | some none =>
+                match splitAt .colon b with
+                | cond :: rest =>
+                  if rest.isEmpty then none
+                  else
+                    let value := (rest.foldl (fun a g => if a.isEmpty then g else a ++ [CssValues.CV.tok .colon] ++ g) [])
+                    match ifCondition get (substitute get fuel) 16 cond with
+                    | some true => some (some (value.dropWhile (·.isWs)))
+                    | some false => some none
+                    | none => none
+                | [] => none) (some none)
+            match pick with
+            | none => none
+            | some none => some out
+            | some (some v) => (substitute get fuel v).map (joinTokens out ·)
+          else if CssValues.lower name == "var" then
             let groups := CssValues.splitCommas args
             let nameText := match CssValues.stripWs (groups.headD []) with
               | [.tok (.ident s)] => s
@@ -420,7 +512,7 @@ def computedLonghand (v : View) : Nat → Nat → String → String
       else if value == "unset" || value == "revert" || value == "revert-layer" then default ()
       else
         let cvs := CssValues.CV.parse value
-        if CssValues.hasFn "var" 32 cvs then
+        if CssValues.hasFn "var" 32 cvs || CssValues.hasFn "if" 32 cvs then
           match substitute (fun name => computedLonghand v fuel id name) 16 cvs with
           -- a custom property invalid at computed-value time has the guaranteed-invalid
           -- value (CSS Variables 1 §3.1), not its parent's
@@ -698,6 +790,13 @@ private def computedAt (html css prop : String) : String :=
 -- tokens that would read as one are written with a comment between them
 #guard computedAt "<div id=t></div>" "#t { --a: foo; --b: bar; --r: var(--a)var(--b) }" "--r" == "foo/**/bar"
 #guard computedAt "<div id=t></div>" "#t { --a: foo; --b: ,bar; --r: var(--a)var(--b) }" "--r" == "foo,bar"
+-- if() (CSS Values 5 §9.1), from if-conditionals.html
+#guard computedAt "<div id=t></div>" "#t { --x: 3; --r: if(style(--x: 3): true_value) }" "--r" == "true_value"
+#guard computedAt "<div id=t></div>" "#t { --x: 3; --r: if(style(--x: 4): a; else: b) }" "--r" == "b"
+#guard computedAt "<div id=t></div>" "#t { --r: if(style(--x): a; else: b) }" "--r" == "b"
+#guard computedAt "<div id=t></div>" "#t { --x: 3; --y: 3; --r: if(style(--x: 3) and style(--y: 3): yes) }" "--r" == "yes"
+#guard computedAt "<div id=t></div>" "#t { --r: if(supports(display: table-cell): yes; else: no) }" "--r" == "yes"
+#guard computedAt "<div id=t></div>" "#t { --r: if(style(--n: initial): yes; else: no) }" "--r" == "yes"
 -- the styles of pseudo-elements
 private def pseudoAt (html css pe prop : String) : String :=
   let dom := DOM.parseHtmlDocument html
