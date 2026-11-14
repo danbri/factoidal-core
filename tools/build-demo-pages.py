@@ -48,7 +48,7 @@ BUILT_IN = {GAMES_TEST: 'Testing JavaScript games (on the web)', 'foafnaut:graph
 START = ['foafnaut:graph', 'spinal-tap-sparql.html', 'shader-gallery.html', 'showcase.html',
          'showcase-dataviz.html', 'showcase-scripts.html']
 GROUPS = [
-    ('Pages with scripts', ['search.html', 'foaf-explorer.html', 'foaf-explorer-verified.html', 'canvas-chart.html', 'timers-and-clicks.html', 'webgpu-triangle.html',
+    ('Pages with scripts', ['search.html', 'foaf-explorer.html', 'foaf-explorer-verified.html', 'canvas-chart.html', 'timers-and-clicks.html', 'webgpu-triangle.html', 'webgpu-force-graph.html',
                             'webgl-triangle.html', 'wasm-mandelbrot.html', 'showcase-dataviz-script.html', 'shadow-and-frames.html', GAMES_TEST]),
     ('SVG and graphics', ['showcase-lettering.html', 'showcase-textpath.html', 'showcase-tables-svg.html', 'svg-gallery.html',
                           'svg-text-labels.html', 'solving-showcase.html', 'foaf-graph.html', 'svg-affine.html', 'svg-linear-paths.html']),

@@ -336,6 +336,15 @@
    "doesNotShow": "readback, textures, compute, WebGL; without the new engine the canvas stays blank and the page says the script has not run"
   },
   {
+   "page": "webgpu-force-graph.html",
+   "title": "WebGPU compute: a force-directed graph of 1,000 nodes",
+   "handwritten": true,
+   "needs": "page scripts and the page GPU commands with compute (gpu_command import, L4Factoidal.PageGpu) in the engine and the guest",
+   "appRefused": "does not execute scripts",
+   "shows": "a graph of 1,000 nodes laid out by WebGPU compute shaders and drawn by a render pass; every few seconds a mapAsync readback reports the layout's extent and speed; Lean checks every command and shader first",
+   "doesNotShow": "without page scripts or the page GPU the canvas stays blank and the page says the script has not run"
+  },
+  {
    "page": "webgl-triangle.html",
    "title": "WebGL 1 and 2, checked by the browser",
    "handwritten": true,

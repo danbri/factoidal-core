@@ -2411,3 +2411,6 @@ L4Factoidal_WebDriver_Page_fromWire  # (c) the nesting of one script result, fue
 L4Factoidal_HTML_AccessibleRole_textAlternative*  # (b) the text alternative walks the element nesting of one document; fuel is the arena size and decreases at each element
 L4Factoidal_HTML_AccessibleRole_childrenText*  # (b) one call per child of one element, each into textAlternative with less fuel; depth is the element nesting of the document
 L4Factoidal_HTML_AccessibleRole_hostLabel*  # (b) a label's content through childrenText with less fuel; depth is the element nesting of the document
+# --- 2026-11-14 (afternoon): a forgiving selector list and the WebNN index expressions.
+L4Factoidal_DOM_Selectors_forgivingList  # (c) DOM.Selectors parser: the argument of :is()/:where() in forgiving mode, with the fuel of complex (at most maxNesting = 32 levels), as relativeList
+L4Factoidal_WebNN_instDecidableEqCoord_decEq  # (b) derived DecidableEq: nesting of one source-coordinate expression (WebNN.Idx.Coord), built by the operator table's index maps, a few levels
