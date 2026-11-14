@@ -6196,7 +6196,9 @@
   // Net.Xhr, web_api 156 to 161): the URL and the subprotocols, a blocked port, the
   // address rules of the page's requests, the handshake, the frames, close(). The host moves
   // the bytes of one connection. Events come as tasks of the networking source.
-  lazy('WebSocket', () => {
+  let WebSocketC;
+  const makeWebSocket = () => {
+    if (WebSocketC !== undefined) return WebSocketC;
     if (apiCall(75, []) !== '1') return undefined;
     const slots = new WeakMap();
     const S = o => { const s = slots.get(o); if (!s) throw new TypeError('Illegal invocation'); return s; };
@@ -6271,7 +6273,119 @@
     consts(WebSocket, states); consts(WebSocket.prototype, states);
     handlerProp(WebSocket.prototype, ['open', 'message', 'error', 'close']);
     setTag(WebSocket, 'WebSocket');
-    return WebSocket;
+    return WebSocketC = WebSocket;
+  };
+  lazy('WebSocket', makeWebSocket);
+  // ---- WebSocketError and WebSocketStream (WebSockets Standard §5, §6): a stream surface over
+  // the same connections (every decision Lean's, as for WebSocket): messages are chunks of a
+  // ReadableStream, a WritableStream sends, close() and errors carry a close code and reason.
+  const wsErrorSlots = new WeakMap();
+  let wsErrorInternal = false;
+  const makeWebSocketError = () => {
+    class WebSocketError extends DOMException {
+      constructor(message = '', init = undefined) {
+        const d = init === undefined || init === null ? {} : init;
+        if (typeof d !== 'object' && typeof d !== 'function') throw new TypeError("Failed to construct 'WebSocketError': The provided value is not of type 'WebSocketCloseInfo'.");
+        let code = d.closeCode === undefined ? null : Number(d.closeCode);
+        if (code !== null && (!Number.isFinite(code) || code < 0 || code > 65535)) throw new TypeError("Failed to construct 'WebSocketError': Value is outside the 'unsigned short' value range.");
+        if (code !== null) code = Math.trunc(code);
+        const reason = d.reason === undefined ? '' : usv(d.reason);
+        if (code === null && reason !== '') code = 1000;
+        if (!wsErrorInternal) {
+          const r = apiCall(163, [code === null ? '' : String(code), reason]);
+          if (typeof r === 'string' && r.startsWith('err')) {
+            const [, name, msg] = r.split('\u0000');
+            throw new DOMException(`Failed to construct 'WebSocketError': ${msg}`, name);
+          }
+        }
+        super(message, 'WebSocketError');
+        wsErrorSlots.set(this, { closeCode: code, reason });
+      }
+      get closeCode() { const s = wsErrorSlots.get(this); if (!s) throw new TypeError('Illegal invocation'); return s.closeCode; }
+      get reason() { const s = wsErrorSlots.get(this); if (!s) throw new TypeError('Illegal invocation'); return s.reason; }
+    }
+    setTag(WebSocketError, 'WebSocketError');
+    return WebSocketError;
+  };
+  let WebSocketErrorC;
+  const wsError = () => WebSocketErrorC ??= makeWebSocketError();
+  lazy('WebSocketError', () => apiCall(75, []) === '1' ? wsError() : undefined);
+  lazy('WebSocketStream', () => {
+    const WSC = makeWebSocket();
+    if (WSC === undefined) return undefined;
+    const slots = new WeakMap();
+    const S = o => { const s = slots.get(o); if (!s) throw new TypeError('Illegal invocation'); return s; };
+    const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); promise.catch(() => {}); return { promise, resolve, reject, settled: false }; };
+    // the code and reason a WebSocketError carries; anything else closes with none
+    const closeArgs = e => { const t = e !== null && typeof e === 'object' ? wsErrorSlots.get(e) : undefined; return t ? [t.closeCode ?? undefined, t.reason] : [undefined, '']; };
+    const failure = (code, reason) => { wsErrorInternal = true; try { return new (wsError())('', { closeCode: code, reason }); } finally { wsErrorInternal = false; } };
+    class WebSocketStream {
+      constructor(url, options = undefined) {
+        const what = "Failed to construct 'WebSocketStream'";
+        if (arguments.length < 1) throw new TypeError(`${what}: 1 argument required, but only 0 present.`);
+        const o = options === undefined || options === null ? {} : options;
+        if (typeof o !== 'object' && typeof o !== 'function') throw new TypeError(`${what}: The provided value is not of type 'WebSocketStreamOptions'.`);
+        let protocols = [];
+        if (o.protocols !== undefined) {
+          if (o.protocols === null || typeof o.protocols !== 'object' || typeof o.protocols[Symbol.iterator] !== 'function') throw new TypeError(`${what}: The provided value cannot be converted to a sequence.`);
+          protocols = Array.from(o.protocols, usv);
+        }
+        const signal = o.signal;
+        if (signal !== undefined && !(signal instanceof AbortSignal)) throw new TypeError(`${what}: member signal is not of type AbortSignal.`);
+        const ws = new WSC(url, protocols);
+        ws.binaryType = 'arraybuffer';
+        const s = { ws, url: ws.url, opened: deferred(), closed: deferred(), rc: null, writeClosing: null };
+        slots.set(this, s);
+        const finish = e => {
+          if (e.wasClean) {
+            s.closed.resolve({ closeCode: e.code, reason: e.reason });
+            try { s.rc?.close(); } catch { /* closed */ }
+            if (s.writeClosing) s.writeClosing.resolve();
+          } else {
+            const err = failure(e.code === 1005 ? 1006 : e.code, e.reason);
+            s.opened.reject(err); s.closed.reject(err);
+            try { s.rc?.error(err); } catch { /* closed */ }
+            if (s.writeClosing) s.writeClosing.reject(err);
+          }
+        };
+        ws.onopen = () => {
+          const readable = new ReadableStream({
+            start(c) { s.rc = c; },
+            cancel(reason) { const [code, why] = closeArgs(reason); try { ws.close(code, why); } catch { ws.close(); } },
+          });
+          const writable = new WritableStream({
+            write(chunk) {
+              if (typeof chunk === 'string' || chunk instanceof ArrayBuffer || ArrayBuffer.isView(chunk)) { ws.send(chunk); return; }
+              throw new TypeError("Failed to write to the WebSocketStream: the chunk is neither a string nor a BufferSource.");
+            },
+            close() { s.writeClosing = deferred(); ws.close(); return s.writeClosing.promise; },
+            abort(reason) { const [code, why] = closeArgs(reason); try { ws.close(code, why); } catch { ws.close(); } },
+          });
+          s.opened.resolve({ readable, writable, extensions: ws.extensions, protocol: ws.protocol });
+        };
+        ws.onmessage = e => { try { s.rc?.enqueue(typeof e.data === 'string' ? e.data : new Uint8Array(e.data)); } catch { /* closed */ } };
+        ws.onclose = finish;
+        if (signal !== undefined) {
+          const abort = () => { if (ws.readyState === 0) { const r = signal.reason; s.opened.reject(r); s.closed.reject(r); ws.close(); } };
+          if (signal.aborted) abort(); else signal.addEventListener('abort', abort, { once: true });
+        }
+      }
+      get url() { return S(this).url; }
+      get opened() { return S(this).opened.promise; }
+      get closed() { return S(this).closed.promise; }
+      close(closeInfo = undefined) {
+        const s = S(this);
+        if (closeInfo !== undefined && closeInfo !== null && typeof closeInfo !== 'object' && typeof closeInfo !== 'function')
+          throw new TypeError("Failed to execute 'close' on 'WebSocketStream': The provided value is not of type 'WebSocketCloseInfo'.");
+        const ci = closeInfo ?? {};
+        let code = ci.closeCode === undefined ? undefined : Number(ci.closeCode);
+        if (code !== undefined && (!Number.isFinite(code) || code < 0 || code > 65535)) throw new TypeError("Failed to execute 'close' on 'WebSocketStream': Value is outside the 'unsigned short' value range.");
+        const reason = ci.reason === undefined ? '' : usv(ci.reason);
+        s.ws.close(code, reason);
+      }
+    }
+    setTag(WebSocketStream, 'WebSocketStream');
+    return WebSocketStream;
   });
 
   lazy('fetch', () => {
@@ -15720,7 +15834,7 @@
     'SubtleCrypto', 'CryptoKey', 'performance', 'Performance', 'PerformanceEntry', 'PerformanceMark', 'PerformanceMeasure',
     'Blob', 'File', 'FileReader', 'FormData', 'Headers', 'Request', 'Response', 'fetch', 'XMLHttpRequest',
     'XMLHttpRequestEventTarget', 'XMLHttpRequestUpload', 'ReadableStream', 'ReadableStreamDefaultReader', 'ReadableStreamBYOBReader', 'ReadableStreamDefaultController', 'ReadableByteStreamController', 'ReadableStreamBYOBRequest', 'WritableStream', 'WritableStreamDefaultWriter',
-    'WritableStreamDefaultController', 'TransformStream', 'TransformStreamDefaultController', 'ByteLengthQueuingStrategy', 'CountQueuingStrategy', 'CompressionStream', 'DecompressionStream', 'Temporal', 'MessageChannel', 'MessagePort', 'BroadcastChannel', 'webkitURL', 'WebSocket', 'CloseEvent', 'EventSource',
+    'WritableStreamDefaultController', 'TransformStream', 'TransformStreamDefaultController', 'ByteLengthQueuingStrategy', 'CountQueuingStrategy', 'CompressionStream', 'DecompressionStream', 'Temporal', 'MessageChannel', 'MessagePort', 'BroadcastChannel', 'webkitURL', 'WebSocket', 'WebSocketStream', 'WebSocketError', 'CloseEvent', 'EventSource',
     // WebIDL §2.8.2: QuotaExceededError is [Exposed=*].
     'QuotaExceededError',
     // WebGL's interfaces are [Exposed=(Window,Worker)].

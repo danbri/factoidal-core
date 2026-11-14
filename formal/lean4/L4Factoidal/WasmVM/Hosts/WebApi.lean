@@ -804,6 +804,12 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
         ("retry", match p.retry with | some r => .number (toString r) | none => .null),
         ("events", .array (evs.map fun e => .array [.string e.type, .string e.data, .string e.lastEventId]))]
       pure' (ofStr j.toString)
+    -- A close code and reason (`WebSocketError`, Net.WebSocket.closeCheck): "" or the exception.
+    else if code == 163 then
+      let str := fun (i : Nat) => (strArg fs i).toOption.getD ""
+      match L4Factoidal.Net.WebSocket.closeCheck (str 0).toNat? (str 1) with
+      | some (n, m) => pure' (ofStr ("err\u0000" ++ n ++ "\u0000" ++ m))
+      | none => pure' (ofStr "")
     -- WebSocket (Net.WebSocket through Net.Xhr): the key and each masking key are fresh
     -- bytes of the engine's generator; only a page with the network on has connections.
     else if 156 ≤ code && code ≤ 161 then

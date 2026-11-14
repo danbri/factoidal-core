@@ -415,8 +415,12 @@ def send (s : Sock) (binary : Bool) (data : List UInt8) (key : List UInt8) : Opt
   else some ({ s with buffered := s.buffered + data.length, pool := s.pool ++ key },
     [sockWire s "WEBSOCKET-SEND" (some (ByteArray.mk (encodeClient key (if binary then 2 else 1) data).toArray))])
 
-/-- `close(code, reason)` (§3.2 steps 3 to 6), the arguments checked (`closeCheck`). -/
+/-- `close(code, reason)` (§3.2 steps 3 to 6), the arguments checked (`closeCheck`); a reason
+without a code is sent with 1000. -/
 def close (s : Sock) (code : Option Nat) (reason : String) (key : List UInt8) : Sock × List PageFetch.Wire :=
+  let code := match code with
+    | none => if reason.isEmpty then none else some 1000
+    | c => c
   if s.readyState ≥ 2 then (s, [])
   else if s.readyState == 0 then fail s
   else ({ s with readyState := 2, closeSent := true },
