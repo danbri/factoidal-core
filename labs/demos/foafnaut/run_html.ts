@@ -349,16 +349,24 @@ async function main() {
       const t0=performance.now();
       const info=(await scriptCall("scriptInfo")) as {ops?:string[];engines?:string[]};
       scriptOps=info.ops??[];scriptEngines=info.engines??["quickjs"];
-      let loaded:unknown;
-      try{loaded=await scriptCall("scriptLoad",await Deno.readFile(quickjsPath));quickjsLoaded=true;}
-      catch(error){if(!scriptEngines.includes("bubblepop"))throw error;
-        console.log(JSON.stringify({type:"native-html-scripts",engine:"quickjs",state:"off",module:quickjsPath,reason:String(error instanceof Error?error.message:error)}));}
+      // The QuickJS guest is read and given to the engine (which decodes and validates it:
+      // about a second) when a page is first to run on it, not at every start of the window:
+      // the built-in engine runs pages by default and needs no module. An engine with
+      // QuickJS only loads it now, as before.
+      let loaded:unknown,quickjsLoading:Promise<boolean>|undefined;
+      const ensureQuickjs=()=>quickjsLoading??=(async()=>{
+        try{loaded=await scriptCall("scriptLoad",await Deno.readFile(quickjsPath));quickjsLoaded=true;}
+        catch(error){if(!scriptEngines.includes("bubblepop"))throw error;
+          console.log(JSON.stringify({type:"native-html-scripts",engine:"quickjs",state:"off",module:quickjsPath,reason:String(error instanceof Error?error.message:error)}));}
+        return quickjsLoaded;
+      })();
+      if(!scriptEngines.includes("bubblepop"))await ensureQuickjs();
       scriptsOn=true;
       setScriptHost({start:async(source,pageURL,resources,encoding,mode={})=>{
         // The setting: Lean's plan says which engine runs the page, or why none does.
         let plan=await askPlan(scriptSetting);
         if(plan.run&&!scriptEngines.includes(plan.engine))plan=await askPlan(scriptSetting,`this engine has no ${plan.name}`);
-        else if(plan.run&&plan.engine==="quickjs"&&!quickjsLoaded)plan=await askPlan(scriptSetting,`no guest module (${quickjsPath})`);
+        else if(plan.run&&plan.engine==="quickjs"&&!(await ensureQuickjs()))plan=await askPlan(scriptSetting,`no guest module (${quickjsPath})`);
         if(!plan.run){if(plan.notice)throw new Error(plan.notice);return undefined;}
         // The viewport (innerWidth, innerHeight) and the render request that lays the page out
         // for its scripts' layout reads; an engine without them ignores the fields.
