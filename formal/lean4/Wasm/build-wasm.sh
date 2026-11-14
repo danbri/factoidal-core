@@ -452,7 +452,8 @@ for f in "$HACL_DIR/src/Hacl_Ed25519.c" "$HACL_DIR/src/Hacl_Curve25519_51.c" \
          "$HACL_DIR/src/Hacl_HKDF.c" "$HACL_DIR/src/Hacl_HMAC.c" \
          "$HACL_DIR/src/Hacl_Hash_SHA1.c" "$HACL_DIR/src/Hacl_Hash_Blake2s.c" \
          "$HACL_DIR/src/Hacl_Hash_Blake2b.c" "$HACL_DIR/src/Lib_Memzero0.c" \
-         "$HACL_DIR/src/Hacl_HPKE_Curve51_CP32_SHA256.c"; do
+         "$HACL_DIR/src/Hacl_HPKE_Curve51_CP32_SHA256.c" "$HACL_DIR/src/Hacl_RSAPSS.c" \
+         "$HACL_DIR/src/Hacl_Hash_SHA3.c"; do
   emcc $CFLAGS -I "$HACL_DIR/include" -c "$f" -o "$LIB_OBJ/$(basename "${f%.c}").o"
 done
 emcc $CFLAGS -I "$HACL_DIR/include" -c "$LEAN_DIR/ffi/hacl_ed25519.c" -o "$LIB_OBJ/l4_hacl_shim.o"
