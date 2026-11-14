@@ -255,6 +255,69 @@ def groupMap (s : Shape) (axes : List Nat) : Array Nat :=
     let g := groups[k]!
     acc.set! g (step (acc[g]!) (a[k]!))) (Array.replicate n init)
 
+theorem foldGroupsI_aux (a : Array Int) (init : Int) (step : Int → Int → Int) :
+    ∀ k, k ≤ a.size →
+    Nat.fold k (fun i _ (acc : Array Int) =>
+      let g := (Array.replicate a.size 0)[i]!
+      acc.set! g (step (acc[g]!) (a[i]!))) #[init] = #[(a.toList.take k).foldl step init] := by
+  intro k
+  induction k with
+  | zero => intro _; simp
+  | succ k ih =>
+    intro hk
+    have hk' : k < a.size := hk
+    rw [Nat.fold_succ, ih (Nat.le_of_lt hk')]
+    have hz : (Array.replicate a.size (0 : Nat))[k]! = 0 := by simp [hk']
+    simp only [hz]
+    rw [List.take_add_one]
+    simp [hk']
+
+/-- Kind: kernel equals specification (integer tensors). Says: the reduction kernel, run
+over all axes (every element in the one group), computes exactly the left fold of the
+elements in order: the kernel's loop, group table and in-place updates add nothing and lose
+nothing. Does not say: the same for float tensors (`FloatArray` has no lemmas in core Lean;
+the float kernel is the same code shape and is tested against the WPT vectors). -/
+theorem foldGroupsI_all (a : Array Int) (init : Int) (step : Int → Int → Int) :
+    foldGroupsI a (Array.replicate a.size 0) 1 init step = #[a.foldl step init] := by
+  unfold foldGroupsI
+  have h := foldGroupsI_aux a init step a.size (Nat.le_refl _)
+  rw [show Array.replicate 1 init = #[init] from rfl, h, List.take_of_length_le (by simp), Array.foldl_toList]
+
+theorem foldl_add_replicate (n : Nat) (c x : Int) : (List.replicate n c).foldl (· + ·) x = x + n * c := by
+  induction n generalizing x with
+  | zero => simp
+  | succ k ih =>
+    simp only [List.replicate_succ, List.foldl_cons, ih, Int.natCast_succ, Int.add_mul, Int.one_mul]
+    omega
+
+/-- Kind: value (reductions over all axes of a constant tensor). Says: reduceSum over all
+axes of an integer tensor of `n` elements that all equal `c` is `n · c` (before the final
+wrap to the data type), computed by the kernel itself. -/
+theorem reduceSum_const (n : Nat) (c : Int) :
+    foldGroupsI (Array.replicate n c) (Array.replicate n 0) 1 0 (· + ·) = #[n * c] := by
+  have h := foldGroupsI_all (Array.replicate n c) 0 (· + ·)
+  conv at h => lhs; rw [Array.size_replicate]
+  rw [h, ← Array.foldl_toList, Array.toList_replicate, foldl_add_replicate]
+  simp
+
+theorem foldl_max_replicate (n : Nat) (c x : Int) (h : x ≤ c) :
+    (List.replicate (n + 1) c).foldl (fun acc v => if v > acc then v else acc) x = c := by
+  induction n generalizing x with
+  | zero => simp only [List.replicate_succ, List.replicate_zero, List.foldl_cons, List.foldl_nil]; split <;> omega
+  | succ k ih =>
+    rw [List.replicate_succ, List.foldl_cons]
+    apply ih
+    split <;> omega
+
+/-- Kind: value. Says: reduceMax over all axes of a non-empty integer tensor whose elements
+all equal `c` is `c`, whatever the starting value below `c` (the kernel starts from the
+least value of the data type). -/
+theorem reduceMax_const (n : Nat) (c lo : Int) (h : lo ≤ c) :
+    foldGroupsI (Array.replicate (n + 1) c) (Array.replicate (n + 1) 0) 1 lo (fun acc v => if v > acc then v else acc) = #[c] := by
+  have hh := foldGroupsI_all (Array.replicate (n + 1) c) lo (fun acc v => if v > acc then v else acc)
+  conv at hh => lhs; rw [Array.size_replicate]
+  rw [hh, ← Array.foldl_toList, Array.toList_replicate, foldl_max_replicate n c lo h]
+
 /-- The reduction operators over `axes`; `out` is the output shape. -/
 def reduce (t : Tensor) (name : String) (axes : List Nat) (out : Shape) : Tensor :=
   let groups := groupMap t.shape axes

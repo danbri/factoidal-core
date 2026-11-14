@@ -6024,7 +6024,10 @@
       Object.defineProperty(C.prototype, name, { value: f, writable: true, enumerable: true, configurable: true });
     };
     const asyncOp = (C, name, length, f) => op(C, name, length, function (...args) { try { return Promise.resolve(f.apply(this, args)); } catch (e) { return Promise.reject(e); } });
-    const attr = (C, name, get) => Object.defineProperty(C.prototype, name, { get, enumerable: true, configurable: true });
+    const attr = (C, name, get) => {
+      Object.defineProperty(get, 'name', { value: 'get ' + name, configurable: true });
+      Object.defineProperty(C.prototype, name, { get, enumerable: true, configurable: true });
+    };
 
     class MLOperand { constructor() { illegal(); } }
     attr(MLOperand, 'dataType', function () { return state(operands, this, 'MLOperand').dataType; });
@@ -6131,7 +6134,8 @@
       c.lose({ message: 'The context was destroyed.' });
     });
     attr(MLContext, 'accelerated', function () { return state(contexts, this, 'MLContext').accelerated; });
-    attr(MLContext, 'lost', function () { return state(contexts, this, 'MLContext').lost; });
+    // A promise attribute answers a rejected promise where it would throw.
+    attr(MLContext, 'lost', function () { try { return state(contexts, this, 'MLContext').lost; } catch (e) { return Promise.reject(e); } });
 
     class ML { constructor() { illegal(); } }
     asyncOp(ML, 'createContext', 0, function createContext(options = {}) {

@@ -53,6 +53,28 @@ def mkDesc (t : DType) (s : Shape) : R Desc :=
   else if s.size * t.bytes > maxTensorBytes then .error "the byte length of the tensor is too large"
   else .ok ⟨t, s⟩
 
+/-- Kind: refusal (the limits hold for every operand). Says: a descriptor that `mkDesc`
+answers is exactly the data type and shape asked for, and is within every limit: each
+dimension from 1 to `maxDim`, rank at most `maxRank`, byte length at most `maxTensorBytes`.
+Every operand of every builder is made through `mkDesc` (inputs, constants and each
+operator's outputs), so no operand exceeds the limits. Does not say: that memory for it can
+be had (the session's byte budget `Graph.maxHeld` refuses separately). -/
+theorem mkDesc_ok (t : DType) (s : Shape) (d : Desc) (h : mkDesc t s = .ok d) :
+    d = ⟨t, s⟩ ∧ s.all validDim = true ∧ s.length ≤ maxRank ∧ Shape.size s * t.bytes ≤ maxTensorBytes := by
+  unfold mkDesc at h
+  split at h
+  · cases h
+  · split at h
+    · cases h
+    · split at h
+      · cases h
+      · split at h
+        · cases h
+        · rename_i h1 h2 _ h4
+          injection h with h
+          refine ⟨h.symm, ?_, Nat.le_of_not_lt h2, Nat.le_of_not_lt h4⟩
+          simpa using h1
+
 /-! ## Arguments -/
 
 /-- The WebIDL type of a parameter or dictionary member (what the page object converts). -/
