@@ -326,3 +326,25 @@ Deno.test("page-load: newly listed sheets and images",async()=>{
   const doc=await Deno.readTextFile(`${lab}native_html_document.ts`),win=await Deno.readTextFile(`${lab}run_html.ts`);
   assert(doc.includes("newlyListed(listed,again)")&&win.includes("page.fetchAdded?.("),"the window does not fetch what script-made elements ask for");
 });
+
+// Animated values: from a turn to every layout request, and a frame only when they changed.
+Deno.test("page-load: the animated values of a turn",async()=>{
+  const {takeAnimated,pageLayoutFields}=await import("../../../docs/web/hub/foafnaut/page-load.mjs");
+  const page:Record<string,unknown>={url:"http://a.test/"};
+  // no field (no animation, or an engine from before it): nothing changes, no frame
+  assert.equal(takeAnimated(page,{}),false);assert.equal(takeAnimated(page,{animated:[]}),false);
+  assert.deepEqual(pageLayoutFields(page),{url:"http://a.test/"});
+  const first=[[12,"opacity","0.25",false]];
+  assert.equal(takeAnimated(page,{animated:first}),true);
+  assert.deepEqual(pageLayoutFields(page),{url:"http://a.test/",animated:first});
+  // the same list again costs no frame; a moved value does; the end of the animation removes the field
+  assert.equal(takeAnimated(page,{animated:[[12,"opacity","0.25",false]]}),false);
+  assert.equal(takeAnimated(page,{animated:[[12,"opacity","0.5",false]]}),true);
+  assert.equal(takeAnimated(page,{}),false);
+  assert.deepEqual(pageLayoutFields(page).animated,[[12,"opacity","0.5",false]]);
+  assert.equal(takeAnimated(page,{animated:[]}),true);
+  assert.deepEqual(pageLayoutFields(page),{url:"http://a.test/"});
+  // every host takes it through the one function
+  const doc=await Deno.readTextFile(`${lab}native_html_document.ts`),hub=await Deno.readTextFile(`${root}docs/web/hub/foafnaut/browser-worker.mjs`);
+  assert(doc.includes("takeAnimated(options,turn)")&&hub.includes("takeAnimated(page,turn)"),"a host does not carry a turn's animated values to its requests");
+});

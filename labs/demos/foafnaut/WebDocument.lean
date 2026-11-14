@@ -1556,9 +1556,14 @@ def canvasEnv (h : Holds) : L4Factoidal.PageCanvas.Env :=
 the height of the chrome, which the key holds as `top`; `selection`, `live`, `binary`,
 `checks`, `tree`, `op` and the scroll act after layout. `hover` and `active` are not
 here: the pointer state is painted (`WebRepaint`), and is in the key, as `pointer`,
-only for a frame whose pointer styles change geometry. -/
+only for a frame whose pointer styles change geometry. `animated` is the values of the
+page's running animations and transitions (`elementState` reads it into the cascade): a
+host gives the list of its script session's last turn, so the frame it paints has the
+values the page's scripts read. Until 2026-11-14 the field was not in this list, and a
+render's layout never saw it: content that fades in from `opacity: 0` stayed invisible. A
+page with no animation sends no such field and its key is as before. -/
 def layoutFields : List String := ["commands","resources","images","heldImages","url","fontData","textScalePercent","graphModel",
-  "visited","media","liberal","scripting","resourceFailures","zoomUnit","webFonts"]
+  "visited","media","liberal","scripting","resourceFailures","zoomUnit","webFonts","animated"]
 
 /-- The request with only `layoutFields`, in that order. -/
 def layoutRequest (request : JSON.Json) : JSON.Json :=

@@ -88,17 +88,34 @@ each: a render, a hit test (`nodeAt`), the selection, find in page, a print layo
 `layout` request of the page's script session (WebDocument.layoutFields). A request that
 leaves one out is laid out again, as another page: its answer is not of the frame on screen.
 `page` is the host's record of the page: `url`, and what it fetched and was told
-(`resources`, `resourceFailures`, `images`, `heldImages`, `webFonts`, `commands`, `liberal`,
-`scripting`). The view (text size, zoom unit, media) is the host's to add. */
+(`resources`, `resourceFailures`, `images`, `heldImages`, `webFonts`, `commands`, `animated`,
+`liberal`, `scripting`). The view (text size, zoom unit, media) is the host's to add. */
 export function pageLayoutFields(page) {
   const out={url:page.url};
   if(page.liberal)out.liberal=true;
   if(page.scripting===false)out.scripting=false;
-  for(const key of ['resources','resourceFailures','images','heldImages','webFonts','commands']) {
+  for(const key of ['resources','resourceFailures','images','heldImages','webFonts','commands','animated']) {
     const value=page[key];
     if(Array.isArray(value)&&value.length)out[key]=value;
   }
   return out;
+}
+
+/** The animated values of a script turn, kept on the host's record of the page for its next
+requests. `turn.animated` is `[[node, longhand, computed text, isTransition], ...]`: the
+values of the page's running animations and transitions at the turn's time, by the nodes
+of the session's arena, which are the nodes of a render (a render replays the session's
+commands). The engine decides them and when another frame is due (`turn.nextWake`); a host
+only carries the list from the turn to its requests (`pageLayoutFields`). The answer is
+whether the list changed, so that the host draws again: a turn with no `animated` field
+(a page with no animation, an engine from before the field) and a turn whose list is the
+last one change nothing and cost no frame; an empty list removes the field. */
+export function takeAnimated(page,turn) {
+  if(!Array.isArray(turn?.animated))return false;
+  const next=turn.animated,last=page.animated??[];
+  if(next.length===last.length&&JSON.stringify(next)===JSON.stringify(last))return false;
+  if(next.length)page.animated=next;else delete page.animated;
+  return true;
 }
 
 /** The embedder's answer to one script fetch of a turn (`fetches`: a worker's script, an

@@ -3,7 +3,7 @@ import {resolve} from "node:path";
 import {sourceBound,MAX_SOURCE_BYTES,type HTMLEngine,type HTMLResource,type ScriptTurn} from "./native_html_engine.ts";
 import {addEntries,noteDiagnostics,noteTurn} from "./native_console.ts";
 import {netAnswer,type NetWire} from "./native_net.ts";
-import {loadSubresource,newlyListed} from "../../../docs/web/hub/foafnaut/page-load.mjs";
+import {loadSubresource,newlyListed,takeAnimated} from "../../../docs/web/hub/foafnaut/page-load.mjs";
 
 /** The view state of a page. Lean applies it; the host only keeps the values. */
 // zoomUnit: the backing pixels for each point, in percent (WebDocument.zoomUnit): Lean lays the page
@@ -382,6 +382,7 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
       noteTurn(page,turn);
       script={session:turn.session,turn};
       if(turn.commands?.length)options.commands=turn.commands;
+      takeAnimated(options,turn);
     }
   }
   // Elements that the page's scripts make or change ask for sheets and images too (a link
@@ -469,7 +470,10 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
     then draws the page again). */
     fetchAdded,
     /** A later turn of the page's script session: its commands, when the DOM changed. */
-    applyTurn:(turn:ScriptTurn)=>{noteTurn(page,turn);if(script)script.turn=turn;if(turn.changed&&turn.commands)options.commands=turn.commands;return turn.changed;},
+    // The values of the page's running animations go with the commands into every request
+    // (page-load.mjs takeAnimated): the frame is drawn again when either changed.
+    applyTurn:(turn:ScriptTurn)=>{noteTurn(page,turn);if(script)script.turn=turn;if(turn.changed&&turn.commands)options.commands=turn.commands;
+      const moved=takeAnimated(options,turn);return turn.changed||moved;},
     // What compile needs, as plain data, so the engine in a worker can run it.
     request:(_width:number,_height:number,view:PageView={})=>({source:document.source,options:{...options,...view} as Record<string,unknown>}),
     compile:(width:number,height:number,view:PageView={})=>{

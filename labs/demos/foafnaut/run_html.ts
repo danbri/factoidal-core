@@ -483,7 +483,7 @@ async function main() {
     if(page.applyTurn(turn)){
       if(page===document)dirty=true;
       // What elements made or changed by the turn ask for (a sheet, an image): fetched, then drawn.
-      page.fetchAdded?.(()=>{if(page===document)dirty=true;});
+      if(turn.changed)page.fetchAdded?.(()=>{if(page===document)dirty=true;});
     }
     if(turn.fetches?.length&&page.script)workerFetches(page,turn.fetches);
   };
