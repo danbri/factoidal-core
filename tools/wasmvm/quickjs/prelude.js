@@ -3872,15 +3872,34 @@
       if (verdict === 'invalid') throw bad(kind + ': the configuration is not valid');
       return verdict;
     };
-    const cloneConfig = config => { const out = {}; for (const k of Object.keys(config)) out[k] = config[k]; return out; };
+    // "Clone Configuration" (§7.1): the members of the kind's dictionary only (an unknown member is
+    // left out), a description as a copy of its bytes.
+    const MEMBERS = {
+      AudioDecoder: ['codec', 'sampleRate', 'numberOfChannels', 'description'],
+      VideoDecoder: ['codec', 'description', 'codedWidth', 'codedHeight', 'displayAspectWidth', 'displayAspectHeight', 'colorSpace',
+        'hardwareAcceleration', 'optimizeForLatency', 'rotation', 'flip'],
+      AudioEncoder: ['codec', 'sampleRate', 'numberOfChannels', 'bitrate', 'bitrateMode', 'opus', 'aac', 'flac'],
+      VideoEncoder: ['codec', 'width', 'height', 'displayWidth', 'displayHeight', 'bitrate', 'framerate', 'hardwareAcceleration', 'alpha',
+        'scalabilityMode', 'bitrateMode', 'latencyMode', 'contentHint', 'avc', 'hevc'],
+    };
+    const cloneConfig = (kind, config) => {
+      const out = {};
+      for (const k of MEMBERS[kind]) {
+        const v = config[k];
+        if (v === undefined) continue;
+        if (k === 'description' && v !== null) { const b = bytesOf(v, 'description'); out[k] = b.slice().buffer; }
+        else out[k] = v !== null && typeof v === 'object' ? Object.assign({}, v) : v;
+      }
+      return out;
+    };
     const codecInit = (init, what, outputType) => {
       const d = dict(init, what + 'Init');
       if (typeof d.output !== 'function' || typeof d.error !== 'function') throw bad(what + 'Init needs the output and error callbacks');
-      return { state: 'unconfigured', queue: 0, output: d.output, error: d.error, ondequeue: null, flushes: [] };
+      return { state: 'unconfigured', queue: 0, output: d.output, error: d.error, ondequeue: null, flushes: [], config: null, work: 0 };
     };
     const closeCodec = (s, error) => {
       // "Close codec" (WebCodecs 3.5 and its siblings): pending flushes are rejected; the error callback runs unless it is an abort.
-      s.state = 'closed';
+      s.state = 'closed'; s.queue = 0; s.work++;
       for (const f of s.flushes.splice(0)) f.reject(error);
       if (error.name !== 'AbortError') { try { s.error.call(undefined, error); } catch (e) { reportError(e); } }
     };
@@ -3900,18 +3919,23 @@
           const s = st(this), verdict = checkConfig(kind, config);
           if (s.state === 'closed') throw dom('InvalidStateError', kind + ': the codec is closed');
           s.state = 'configured';
+          s.config = verdict === 'supported' ? { codec: String(config.codec), sampleRate: Math.fround(Number(config.sampleRate)), channels: enforce(config.numberOfChannels, U32, 'numberOfChannels') } : null;
           // Not supported: the codec closes with a NotSupportedError, as a queued control message.
           if (verdict !== 'supported') queueMicrotask(() => { if (s.state !== 'closed') closeCodec(s, dom('NotSupportedError', kind + ': the configuration is not supported')); });
         }
         flush() {
           const s = st(this);
           if (s.state !== 'configured') return Promise.reject(dom('InvalidStateError', kind + ': the codec is not configured'));
-          return new Promise((resolve, reject) => { s.flushes.push({ resolve, reject }); });
+          return new Promise((resolve, reject) => {
+            const f = { resolve, reject }; s.flushes.push(f);
+            // A codec that runs: the flush resolves after the messages before it.
+            if (s.config) { const w = s.work; queueMicrotask(() => { if (s.work !== w) return; const i = s.flushes.indexOf(f); if (i >= 0) { s.flushes.splice(i, 1); resolve(); } }); }
+          });
         }
         reset() {
           const s = st(this);
           if (s.state === 'closed') throw dom('InvalidStateError', kind + ': the codec is closed');
-          s.state = 'unconfigured'; s.queue = 0;
+          s.state = 'unconfigured'; s.queue = 0; s.work++;
           for (const f of s.flushes.splice(0)) f.reject(dom('AbortError', kind + ': the codec was reset'));
         }
         close() {
@@ -3923,7 +3947,7 @@
           try {
             need(arguments.length, 1, 'isConfigSupported');
             const verdict = checkConfig(kind, config);
-            return Promise.resolve({ supported: verdict === 'supported', config: cloneConfig(config) });
+            return Promise.resolve({ supported: verdict === 'supported', config: cloneConfig(kind, config) });
           } catch (e) { return Promise.reject(e); }
         }
       };
@@ -3933,9 +3957,28 @@
         const s = st(this);
         if (!(input instanceof inputType())) throw bad(work + ': the argument is not of the expected interface');
         if (s.state !== 'configured') throw dom('InvalidStateError', kind + ': the codec is not configured');
-        // Reached only between configure() and the close that follows an unsupported configuration.
         s.queue++;
+        // Reached for a codec Lean runs (the PCM decoders); otherwise only between configure() and
+        // the close that follows an unsupported configuration.
+        if (s.config && kind === 'AudioDecoder') {
+          const c = K.get(input), w = s.work, self = this;
+          queueMicrotask(() => {
+            if (s.work !== w) return;
+            s.queue--;
+            dequeued(self, s);
+            const args = [s.config.codec, String(s.config.channels), c.data];
+            const head = apiCall(131, args, 0, false);
+            if (typeof head !== 'string') { closeCodec(s, dom('EncodingError', kind + ': the chunk is not whole frames of PCM samples')); return; }
+            const h = head.split(' ');
+            if (Number(h[1]) === 0) return;
+            const bytes = apiCall(130, args, 0, true);
+            const data = audioOf(h[0], Number(h[1]), s.config.channels, s.config.sampleRate, c.timestamp, new Uint8Array(bytes));
+            try { s.output.call(undefined, data); } catch (e) { reportError(e); }
+          });
+        }
       };
+      // "Schedule Dequeue Event": the event, once the queue has shrunk.
+      const dequeued = (codec, s) => { codec.dispatchEvent(new Event('dequeue')); };
       Object.defineProperty(run, 'name', { value: work, configurable: true });
       Object.defineProperty(run, 'length', { value: 1, configurable: true });
       Object.defineProperty(C.prototype, work, { value: run, writable: true, enumerable: true, configurable: true });
@@ -3946,12 +3989,77 @@
     const VideoDecoder = makeCodec('VideoDecoder', () => EncodedVideoChunk, 'decode', 'decodeQueueSize');
     const AudioEncoder = makeCodec('AudioEncoder', () => AudioData, 'encode', 'encodeQueueSize');
     const VideoEncoder = makeCodec('VideoEncoder', () => VideoFrame, 'encode', 'encodeQueueSize');
-    // AudioData arrives with the audio layout ops; the name is held so that encode can test its argument.
-    class AudioData { constructor() { throw dom('NotSupportedError', 'AudioData is not supported yet'); } }
+    // ---- AudioData (WebCodecs §9.2) ----
+    // Whether an init is valid, the duration, what a copy may take and the converted samples are
+    // Lean's (WebCodecs.Audio, ops 127 to 129): this reads the init (Web IDL) and keeps the bytes.
+    const SAMPLE = ['u8', 's16', 's32', 'f32', 'u8-planar', 's16-planar', 's32-planar', 'f32-planar'];
+    const rateBytes = r => new Uint8Array(new Float64Array([r]).buffer);
+    const audioOf = (format, frames, channels, rate, timestamp, resource) => {
+      const m = ask(127, [format, String(frames), String(channels), rateBytes(rate), String(resource.byteLength)], 'the AudioData is not valid').split(' ');
+      const a = Object.create(AudioData.prototype);
+      K.set(a, { format, frames, channels, rate, timestamp, duration: Number(m[1]), resource: resource.subarray(0, Number(m[0])), closed: false });
+      return a;
+    };
+    const audioLive = (s, what) => { if (s.closed) throw dom('InvalidStateError', what + ': the AudioData is closed'); return s; };
+    const audioPlan = (s, options) => {
+      const d = dict(options, 'AudioDataCopyToOptions');
+      if (d.planeIndex === undefined) throw bad('AudioDataCopyToOptions needs planeIndex');
+      const plane = enforce(d.planeIndex, U32, 'planeIndex');
+      const offset = d.frameOffset === undefined ? 0 : enforce(d.frameOffset, U32, 'frameOffset');
+      const count = d.frameCount === undefined ? '' : String(enforce(d.frameCount, U32, 'frameCount'));
+      const format = d.format === undefined ? '' : oneOf(d.format, SAMPLE, 'AudioSampleFormat');
+      return [s.format, String(s.frames), String(s.channels), format, String(plane), String(offset), count];
+    };
+    const planned = (r, what) => {
+      if (r === -21) throw new RangeError(what + ': the plane, frame offset or frame count is out of range');
+      if (typeof r === 'number') throw bad(what + ': the options are not valid');
+      return r;
+    };
+    class AudioData {
+      constructor(init) {
+        need(arguments.length, 1, 'AudioData');
+        const d = dict(init, 'AudioDataInit');
+        for (const k of ['format', 'sampleRate', 'numberOfFrames', 'numberOfChannels', 'timestamp', 'data'])
+          if (d[k] === undefined) throw bad('AudioDataInit needs ' + k);
+        const format = oneOf(d.format, SAMPLE, 'AudioSampleFormat');
+        const rate = Math.fround(Number(d.sampleRate));
+        if (rate !== rate || rate === Infinity || rate === -Infinity) throw bad('sampleRate is not a finite number');
+        const frames = enforce(d.numberOfFrames, U32, 'numberOfFrames'), channels = enforce(d.numberOfChannels, U32, 'numberOfChannels');
+        const timestamp = enforceSigned(d.timestamp, 'timestamp');
+        const transfer = transferList(d, 'AudioData');
+        const data = bytesOf(d.data, 'data');
+        const m = ask(127, [format, String(frames), String(channels), rateBytes(rate), String(data.byteLength)], 'the AudioDataInit is not valid for the data').split(' ');
+        const resource = data.slice(0, Number(m[0]));
+        detach(transfer);
+        K.set(this, { format, frames, channels, rate, timestamp, duration: Number(m[1]), resource, closed: false });
+      }
+      get format() { const s = st(this); return s.closed ? null : s.format; }
+      get sampleRate() { const s = st(this); return s.closed ? 0 : s.rate; }
+      get numberOfFrames() { const s = st(this); return s.closed ? 0 : s.frames; }
+      get numberOfChannels() { const s = st(this); return s.closed ? 0 : s.channels; }
+      get duration() { const s = st(this); return s.closed ? 0 : s.duration; }
+      get timestamp() { return st(this).timestamp; }
+      allocationSize(options) {
+        need(arguments.length, 1, 'allocationSize');
+        const s = audioLive(st(this), 'allocationSize');
+        return Number(planned(apiCall(128, audioPlan(s, options), 0, false), 'allocationSize').split(' ')[1]);
+      }
+      copyTo(destination, options) {
+        need(arguments.length, 2, 'copyTo');
+        const s = audioLive(st(this), 'copyTo');
+        const args = audioPlan(s, options), dst = bytesOf(destination, 'destination');
+        const size = Number(planned(apiCall(128, args, 0, false), 'copyTo').split(' ')[1]);
+        if (dst.byteLength < size) throw new RangeError('copyTo: the destination is smaller than the copy');
+        dst.set(new Uint8Array(planned(apiCall(129, args.concat([s.resource]), 0, true), 'copyTo')));
+      }
+      clone() { const s = audioLive(st(this), 'clone'); const a = Object.create(AudioData.prototype); K.set(a, Object.assign({}, s)); return a; }
+      close() { const s = st(this); s.closed = true; s.resource = null; }
+    }
+    members(AudioData);
     for (const C of [VideoColorSpace, VideoFrame, EncodedVideoChunk, EncodedAudioChunk]) members(C);
-    return { VideoColorSpace, VideoFrame, EncodedVideoChunk, EncodedAudioChunk, AudioDecoder, VideoDecoder, AudioEncoder, VideoEncoder };
+    return { VideoColorSpace, VideoFrame, EncodedVideoChunk, EncodedAudioChunk, AudioDecoder, VideoDecoder, AudioEncoder, VideoEncoder, AudioData };
 `;
-  const codecNames = ['VideoColorSpace', 'VideoFrame', 'EncodedVideoChunk', 'EncodedAudioChunk', 'AudioDecoder', 'VideoDecoder', 'AudioEncoder', 'VideoEncoder'];
+  const codecNames = ['VideoColorSpace', 'VideoFrame', 'EncodedVideoChunk', 'EncodedAudioChunk', 'AudioDecoder', 'VideoDecoder', 'AudioEncoder', 'VideoEncoder', 'AudioData'];
   lazyGroup(codecNames, codecs);
   codecsHost.pixelsOf = image => c2d().pixelsOf(image);
   // ==== end webcodecs section ====
