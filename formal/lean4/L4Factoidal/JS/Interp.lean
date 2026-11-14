@@ -339,6 +339,7 @@ def Kind.constructs : Kind → Bool
     | .errorCtor _ | .symbolCtor | .promiseCtor | .mapCtor _ | .regexpCtor | .proxyCtor
     | .bufferCtor | .typedCtor _ | .dateCtor | .dataViewCtor => true
     | (.x .sharedCtor) | (.x .typedArrayCtor) | (.x .iteratorCtor) | (.x .aggregateErrorCtor) => true
+    | (.x .suppressedErrorCtor) | (.x .disposableStackCtor) => true
     | (.x .weakRefCtor) | (.x .finRegCtor) | (.x (.dynFunction _)) => true
     | _ => false
   | .bound .. => true
@@ -1130,6 +1131,11 @@ def hiddenNum (o : Obj) (k : String) : Option Nat :=
   match o.props.get? k with
   | some (.data (.num x) ..) => some x.toUInt64.toNat
   | _ => none
+
+/-- The hidden slots of a DisposableStack: its resources (an Array of value, method pairs) and
+whether it is disposed. -/
+def dsStackKey : String := privKey "%DisposableResourceStack"
+def dsStateKey : String := privKey "%DisposableState"
 
 /-- The hidden slot of an immutable prototype exotic object (§10.4.7): Object.prototype. -/
 def immutableProtoKey : String := privKey "%ImmutablePrototype"
@@ -7061,6 +7067,15 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
         | .typed ty b off len => pure (ty, b, off, len)
         | _ => throwErr .type s!"{what}: this is not a typed array"
       | _ => throwErr .type s!"{what}: this is not a typed array"
+    -- a DisposableStack receiver: its object and whether it is disposed
+    let thisStack (what : String) : M (Nat × Bool) := do
+      match thisV with
+      | .obj sid =>
+        let o ← getObj sid
+        match o.getOwn dsStateKey with
+        | some (.data (.bool b) ..) => pure (sid, b)
+        | _ => throwErr .type s!"{what}: the receiver is not a DisposableStack"
+      | _ => throwErr .type s!"{what}: the receiver is not a DisposableStack"
     -- ValidateTypedArray (§23.2.4.4): a typed array whose view is inside a live buffer
     let validTyped (what : String) : M (Nat × Nat × Nat × Nat) := do
       let (ty, b, off, len) ← thisTyped what
@@ -7395,6 +7410,101 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       if strictEq nt (← getV n (.obj r.globalObj) "Iterator") then throwErr .type "Abstract class Iterator not directly constructable"
       let p ← getV n nt "prototype"
       pure (.obj (← alloc { proto := if p.isObj then p else .obj r.iterProto }))
+    | (.x .suppressedErrorCtor) =>
+      -- SuppressedError(error, suppressed, message)
+      let proto ← match newTarget with
+        | some nt => do
+          let p ← getV n nt "prototype"
+          pure (if p.isObj then p else .obj r.suppressedErrorProto)
+        | none => pure (.obj r.suppressedErrorProto)
+      let o ← alloc { proto, kind := .error }
+      match argD args 2 with
+      | .undef => pure ()
+      | v => setHidden o "message" (.str (← toStr n v))
+      setHidden o "error" a0
+      setHidden o "suppressed" a1
+      pure (.obj o)
+    | (.x .disposableStackCtor) =>
+      let some nt := newTarget | throwErr .type "Constructor DisposableStack requires 'new'"
+      let p ← getV n nt "prototype"
+      let o ← alloc { proto := if p.isObj then p else .obj r.disposableStackProto }
+      setHidden o dsStackKey (← newArray #[])
+      setHidden o dsStateKey (.bool false)
+      pure (.obj o)
+    | (.x .disposableStackDisposed) =>
+      let (_, st) ← thisStack "get DisposableStack.prototype.disposed"
+      pure (.bool st)
+    | (.x (.disposableStackMethod k)) =>
+      let what := s!"DisposableStack.prototype.{(#["dispose", "use", "adopt", "defer", "move"]).getD k ""}"
+      let (sid, disposed) ← thisStack what
+      let stackV := match (← getObj sid).getOwn dsStackKey with | some (.data v ..) => v | _ => .undef
+      let push (v m : Value) : M Unit := do
+        let es ← elemsOf n stackV
+        if let .obj aid := stackV then modifyObj aid fun o => { o with kind := .array ((es.push v).push m) }
+      if k != 0 && disposed then throwErr .reference s!"{what}: the DisposableStack is disposed"
+      match k with
+      | 0 =>
+        -- DisposeResources (§ explicit resource management): last in, first out; a later
+        -- error wraps the earlier one in a SuppressedError
+        if disposed then return .undef
+        setHidden sid dsStateKey (.bool true)
+        let es ← elemsOf n stackV
+        let mut err : Option Value := none
+        let mut i := es.size / 2
+        for _ in [0:es.size / 2] do
+          i := i - 1
+          let x ← tryCatch (do let _ ← callV n es[2 * i + 1]! es[2 * i]! #[]; pure none) fun e => match e with
+            | .throw v => pure (some v)
+            | a => throw a
+          if let some v := x then
+            match err with
+            | none => err := some v
+            | some old =>
+              let s ← alloc { proto := .obj r.suppressedErrorProto, kind := .error }
+              setHidden s "error" v
+              setHidden s "suppressed" old
+              err := some (.obj s)
+        if let .obj aid := stackV then modifyObj aid fun o => { o with kind := .array #[] }
+        match err with
+        | some v => throw (.throw v)
+        | none => pure .undef
+      | 1 =>
+        -- use(value): null and undefined hold nothing; an object needs a callable @@dispose
+        match a0 with
+        | .undef | .null => pure a0
+        | .obj _ =>
+          let m ← getV n a0 (symKey symDispose)
+          if !(← isCallable m) then throwErr .type "DisposableStack.prototype.use: the value has no callable [Symbol.dispose]"
+          push a0 m
+          pure a0
+        | _ => throwErr .type "DisposableStack.prototype.use: the value is not an object"
+      | 2 =>
+        if !(← isCallable a1) then throwErr .type "DisposableStack.prototype.adopt: onDispose is not callable"
+        let f ← alloc { proto := .obj r.functionProto, kind := .bound (← nativeFn (.x .adoptClosure)) .undef #[a0, a1] }
+        push .undef (.obj f)
+        pure a0
+      | 3 =>
+        if !(← isCallable a0) then throwErr .type "DisposableStack.prototype.defer: onDispose is not callable"
+        push .undef a0
+        pure .undef
+      | _ =>
+        -- move(): a new stack (of %DisposableStack.prototype%) takes the resources
+        let o ← alloc { proto := .obj r.disposableStackProto }
+        setHidden o dsStackKey stackV
+        setHidden o dsStateKey (.bool false)
+        setHidden sid dsStackKey (← newArray #[])
+        setHidden sid dsStateKey (.bool true)
+        pure (.obj o)
+    | (.x .adoptClosure) => callV n a1 .undef #[a0]
+    | (.x .iteratorDispose) =>
+      -- %IteratorPrototype%[@@dispose]: GetMethod(this, "return"), then call it
+      let ret ← getV n thisV "return"
+      match ret with
+      | .undef | .null => pure .undef
+      | f =>
+        if !(← isCallable f) then throwErr .type "Iterator.prototype[Symbol.dispose]: return is not callable"
+        let _ ← callV n f thisV #[]
+        pure .undef
     | (.x .iteratorConcat) =>
       -- §27.1.3.2.2 Iterator.concat: every argument an object with a callable @@iterator, checked
       -- first; the iterators are made one at a time as the result is read
@@ -8710,6 +8820,23 @@ def initRealm : M Unit := do
   setHidden g "AggregateError" aggC
   setHidden aggProto "name" (.str "AggregateError")
   setHidden aggProto "message" (.str "")
+  -- SuppressedError and DisposableStack (explicit resource management)
+  let supProto ← alloc { proto := .obj errorProto }
+  modify fun h => { h with realm := { h.realm with suppressedErrorProto := supProto } }
+  let supC ← ctorWith "SuppressedError" (.x .suppressedErrorCtor) 3 supProto
+  if let .obj cid := supC then
+    if let .obj e0 ← ownValue g "Error" then modifyObj cid fun o => { o with proto := .obj e0 }
+  setHidden g "SuppressedError" supC
+  setHidden supProto "name" (.str "SuppressedError")
+  setHidden supProto "message" (.str "")
+  let dsProto ← mk
+  modify fun h => { h with realm := { h.realm with disposableStackProto := dsProto } }
+  setHidden g "DisposableStack" (← ctorWith "DisposableStack" (.x .disposableStackCtor) 0 dsProto)
+  defineOwn dsProto "disposed" (.acc (← mkNative (.x .disposableStackDisposed) "get disposed" 0) .undef false true)
+  for (nm, k, l) in [("dispose", 0, 0), ("use", 1, 1), ("adopt", 2, 2), ("defer", 3, 1), ("move", 4, 0)] do
+    method dsProto nm (.x (.disposableStackMethod k)) l
+  if let some p := (← getObj dsProto).getOwn "dispose" then defineOwn dsProto (symKey symDispose) p
+  defineOwn dsProto (symKey symToStringTag) (.data (.str "DisposableStack") false false true)
   -- Math
   let math ← mk
   setHidden g "Math" (.obj math)
@@ -8843,6 +8970,7 @@ def initRealm : M Unit := do
   defineOwn symbolProto "description" (.acc (← mkNative .symbolDescription "get description" 0) .undef false true)
   defineOwn symbolProto (symKey symToStringTag) (.data (.str "Symbol") false false true)
   setHidden iterProto (symKey symIterator) (← mkNative .iterSelf "[Symbol.iterator]" 0)
+  setHidden iterProto (symKey symDispose) (← mkNative (.x .iteratorDispose) "[Symbol.dispose]" 0)
   method arrayIterProto "next" .iterNext 0
   let genProto ← alloc { proto := .obj iterProto }
   modify fun h => { h with realm := { h.realm with generatorProto := genProto } }

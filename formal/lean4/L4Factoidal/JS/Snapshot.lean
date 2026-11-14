@@ -102,7 +102,7 @@ def runtimeNatives : Array Native :=
     (.x .cloneSerialize), (.x .cloneDeserialize), (.x .classicScript),
     (.x (.asyncFromSync 3)), (.x (.asyncFromSync 4)), (.x (.asyncFromSync 5)),
     (.x (.promiseThenableFn false)), (.x (.promiseThenableFn true)), (.x .namedGetterSet), (.x .urlPattern), (.x .streams),
-    (.x .capabilityExecutor)]
+    (.x .capabilityExecutor), (.x .adoptClosure)]
 
 /-! ## Writing -/
 

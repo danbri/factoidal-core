@@ -71,6 +71,11 @@ inductive NativeX where
   | iteratorCtor | iteratorFrom | iterLazy (k : Nat) | iterEager (k : Nat) | helperNext | helperReturn
   /-- `Iterator.concat` (§27.1.3.2.2): a helper of kind 6. -/
   | iteratorConcat
+  /-- Explicit resource management: SuppressedError; DisposableStack, its methods (0 dispose,
+  1 use, 2 adopt, 3 defer, 4 move) and its `disposed` getter; %IteratorPrototype%[@@dispose];
+  the closure `adopt` keeps (bound to the value and the callback). -/
+  | suppressedErrorCtor | disposableStackCtor | disposableStackMethod (k : Nat) | disposableStackDisposed
+  | iteratorDispose | adoptClosure
   /-- `Promise.race` (0) and `Promise.allSettled` (1) (§27.2.4.5, §27.2.4.2), and the
   function that records one settled element of `allSettled` (0 fulfilled, 1 rejected). -/
   | promiseCombinator (k : Nat) | promiseSettleElement (rejected : Nat)
@@ -503,6 +508,9 @@ structure Realm where
   iterHelperProto : Nat := 0
   wrapIterProto : Nat := 0
   aggregateErrorProto : Nat := 0
+  /-- %SuppressedError.prototype% and %DisposableStack.prototype% (explicit resource management). -/
+  suppressedErrorProto : Nat := 0
+  disposableStackProto : Nat := 0
   /-- %GeneratorFunction.prototype%, %AsyncGeneratorFunction.prototype% and
   %AsyncFunction.prototype% (§27.3.3, §27.4.3, §27.7.3): the [[Prototype]] of generator,
   async generator and async functions (0 before the realm has them: Function.prototype). -/
@@ -538,12 +546,14 @@ def ErrKind.idx : ErrKind → Nat
 /-- The well-known symbols (§6.1.5.1), numbered by their place here. -/
 def wellKnown : Array String :=
   #["iterator", "asyncIterator", "hasInstance", "toPrimitive", "toStringTag", "unscopables",
-    "isConcatSpreadable", "species", "match", "matchAll", "replace", "search", "split"]
+    "isConcatSpreadable", "species", "match", "matchAll", "replace", "search", "split", "dispose", "asyncDispose"]
 
 def symIterator : Nat := 0
 def symHasInstance : Nat := 2
 def symToPrimitive : Nat := 3
 def symToStringTag : Nat := 4
+/-- Symbol.dispose (explicit resource management). -/
+def symDispose : Nat := 13
 
 /-- The property key of a Symbol: a string that starts with U+10FFFF. Source text
 can make such a string (`"\u{10FFFF}0"`), and it would then name the same
