@@ -6488,7 +6488,8 @@
   const webnn = (() => { let made; return () => made ??= makeWebnn(); })();
   const webnnOn = () => /^https:|^http:\/\/(localhost|127\.0\.0\.1)[:\/]/.test(href) && apiOn() && apiCall(140, ['lost', '0']) !== -2;
   const makeWebnn = () => {
-    const nnRaw = (fields, bytes) => apiCall(140, fields, 0, bytes);
+    // A byte answer comes from the host as an ArrayBuffer; it is read as bytes here.
+    const nnRaw = (fields, bytes) => { const r = apiCall(140, fields, 0, bytes); return r instanceof ArrayBuffer ? new Uint8Array(r) : r; };
     const refuse = r => {
       if (r[1] === 'T') throw new TypeError(r.slice(2));
       const k = r.indexOf(':');
@@ -6788,7 +6789,9 @@
     mlState.add(ml);
     return { ml, ML, MLContext, MLGraph, MLOperand, MLTensor, MLGraphBuilder };
   };
-  for (const name of ['ML', 'MLContext', 'MLGraph', 'MLOperand', 'MLTensor', 'MLGraphBuilder']) lazy(name, () => webnnOn() ? webnn()[name] : undefined);
+  // One group: reading any of the names defines all six as data properties (Web IDL), so none
+  // is left as an accessor once a page has used one.
+  lazyGroup(['ML', 'MLContext', 'MLGraph', 'MLOperand', 'MLTensor', 'MLGraphBuilder'], () => webnnOn() ? webnn() : undefined);
   // ==== end webnn ====
   // The webkitURL alias (URL §6.1).
   lazy('webkitURL', () => globalThis.URL);
@@ -12657,8 +12660,13 @@
     // [SecureContext] members and interfaces are not exposed in a worker that is not a secure context.
     const secureWorker = (() => { try { const v = new URL(url); return v.protocol === 'https:' || v.hostname === 'localhost' || v.hostname === '127.0.0.1'; } catch { return false; } })();
     for (const k of ['userAgent', 'language', 'languages', 'platform', 'onLine', 'hardwareConcurrency', 'ml',
-      ...(secureWorker ? ['storage', 'locks', 'storageBuckets'] : [])])
-      Object.defineProperty(WorkerNavigator.prototype, k, { get() { return nav[k]; }, configurable: true, enumerable: true });
+      ...(secureWorker ? ['storage', 'locks', 'storageBuckets'] : [])]) {
+      // Web IDL: an attribute getter called on an object that is not a WorkerNavigator throws;
+      // its name is "get <attribute>".
+      const get = function () { if (!(this instanceof WorkerNavigator)) throw new TypeError('Illegal invocation'); return nav[k]; };
+      Object.defineProperty(get, 'name', { value: 'get ' + k, configurable: true });
+      Object.defineProperty(WorkerNavigator.prototype, k, { get, configurable: true, enumerable: true });
+    }
     for (const [k, v] of [['appCodeName', 'Mozilla'], ['appName', 'Netscape'], ['product', 'Gecko']])
       Object.defineProperty(WorkerNavigator.prototype, k, { get() { return v; }, configurable: true, enumerable: true });
     Object.defineProperty(WorkerNavigator.prototype, 'appVersion', { get() { return String(nav.userAgent).replace(/^Mozilla\//, ''); }, configurable: true, enumerable: true });
