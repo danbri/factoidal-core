@@ -1782,10 +1782,10 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
   let state := withPointer dom (← elementState dom url request) pointer
   let draw := fun (d : DOM.Dom) (e : Rendering.Layout.Embedding) => Rendering.Layout.render d rules font e width rows textScale state pictures treeScope
   -- Inline SVG is a skip point, checked so that liberal mode lays the page out once
-  -- (2026-11-09: BBC News took three layouts). Before layout: an `svg` root with a percentage
-  -- height, which layout refuses (`Layout.checkSVGBox`), is taken out. In the layout: the
-  -- embedding draws a refused `svg` as nothing (`quiet`). After it: each `svg` root that was laid
-  -- out is read again at its box size, and the refusals become one diagnostic.
+  -- (2026-11-09: BBC News took three layouts). In the layout: the embedding draws a refused
+  -- `svg` as nothing (`quiet`). After it: each `svg` root that was laid out is read again at
+  -- its box size, and the refusals become one diagnostic. (An `svg` root with a percentage
+  -- height was taken out before the layout until 2026-11-14: layout now sizes it, CSS 2.1 §10.5.)
   let quiet : Rendering.Layout.Embedding := fun id s w h => match embedding id s w h with
     | .ok nodes => .ok nodes
     | .error _ => .ok []
@@ -1794,21 +1794,14 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
     | .liberal => do
       let roots := svgRoots dom
       let styles ← if roots.isEmpty then pure #[] else Rendering.CSS.computeFor treeScope dom rules textScale state
-      let tall := roots.filter fun id => match (styles[id]?).map (·.height) with
-        | some (.percent _) => true
-        | _ => false
-      let bare := tall.foldl DOM.Dom.remove dom
-      let dTall : List WebAccept.Diagnostic := if tall.isEmpty then [] else
-        [{skip := .svgContent, «where» := s!"{tall.length} inline svg elements with a percentage height",
-          refusal := "unsupported percentage SVG height without definite containing height"}]
-      let result := draw bare quiet
+      let result := draw dom quiet
       let refused := match result with
-        | .ok (_,boxes) => svgRefusals embedding styles boxes (roots.filter (!tall.contains ·)) bare.size
+        | .ok (_,boxes) => svgRefusals embedding styles boxes roots dom.size
         | .error _ => []
       let dRefused : List WebAccept.Diagnostic := match refused with
         | [] => []
         | e :: _ => [{skip := .svgContent, «where» := s!"{refused.length} inline svg elements", refusal := e}]
-      pure (result,quiet,dTall ++ dRefused,bare)
+      pure (result,quiet,dRefused,dom)
   -- Nesting deeper than layout reads is a skip point: liberal mode draws the page with the
   -- content below some depth taken out, the first of these depths that lays out.
   let (scene,boxes,dom,d4) ← match first with

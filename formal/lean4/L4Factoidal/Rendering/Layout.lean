@@ -111,18 +111,18 @@ def clipContent (clip : Bool) (decorations content : Array Node) (paddingBox : C
 -- formatting contexts (`Constraints`, `Item`, `Children`, `ContentBox`).
 abbrev Embedding := Nat → CSS.Computed → Float → Float → Except String (List Node)
 
-private def checkSVGBox (s : Computed) : Except String Unit := do
-  if let .percent _ := s.height then
-    throw "unsupported percentage SVG height without definite containing height"
-
 /-- Replaced SVG dimensions share the same calculation in inline and block
 flow. A positive viewBox supplies the intrinsic ratio when a dimension is auto.
 The ratio-only case uses the definite available containing width (CSS 2.2 10.3.2).
 Presentation lengths participate in the CSS cascade before this calculation. -/
 def svgSize (node : DOM.Node) (style : Computed) (available : Float) : Except String (Float × Float) := do
-  checkSVGBox style
   let width := CSS.resolve available style.width
-  let height := CSS.resolve 0 style.height
+  -- CSS 2.1 §10.5: a percentage height whose containing block has no definite height
+  -- computes to `auto` (the height then follows from the width and the `viewBox`). It was
+  -- refused, and with it every inline icon styled `height: 100%` (BBC News: 179).
+  let height := match style.height with
+    | .percent _ => none
+    | other => CSS.resolve 0 other
   if let (some w,some h) := (width,height) then return (max 0 w,max 0 h)
   let source := CSS.attrValue node "viewBox"
   let mut ratio : Option (Float × Float) := none

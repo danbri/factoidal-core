@@ -731,11 +731,13 @@ private def svgEmPage := "<!doctype html><title>S</title><p>Icon <svg width=\"2e
 #guard renderText svgEmPage [] != ""
 #guard renderText svgPage [] == ""
 #guard mentions (renderText svgPage [liberal,asks]) "\"feature\":\"inline SVG\"" == 1
--- An SVG box that layout can not size (a percentage height with no definite containing height):
--- strict refuses, liberal lays the page out with no inline svg.
+-- An SVG box with a percentage height and no definite containing height: the height is auto
+-- (CSS 2.1 §10.5; here 10 px, from the width and the viewBox). Strict mode draws the page, and
+-- liberal mode has no inline SVG diagnostic. (Until 2026-11-14 strict refused the page and
+-- liberal took the svg out.)
 private def svgBoxPage := "<!doctype html><title>B</title><div><svg width=\"10\" height=\"100%\" viewBox=\"0 0 10 10\"><rect width=\"10\" height=\"10\"/></svg></div><p>Words</p>"
-#guard renderText svgBoxPage [] == ""
-#guard mentions (renderText svgBoxPage [liberal,asks]) "\"feature\":\"inline SVG\"" == 1
+#guard renderText svgBoxPage [] != ""
+#guard mentions (renderText svgBoxPage [liberal,asks]) "\"feature\":\"inline SVG\"" == 0
 -- The console page lists the entries a host kept.
 #guard mentions (WebConsole.answer (json [("tab",.number "1"),("entries",.array [json [("source",.string "System"),
   ("severity",.string "warning"),("feature",.string "module script"),("message",.string "unsupported JavaScript module script")]])])) "module script" ≥ 1
