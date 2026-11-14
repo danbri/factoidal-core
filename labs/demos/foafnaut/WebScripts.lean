@@ -232,7 +232,7 @@ def frameEntropyOf (id : Nat) (parent b : ByteArray) : Nat → ByteArray :=
   fun el => if parent.isEmpty || b.isEmpty then ByteArray.empty
     else b ++ ("frame:" ++ toString id ++ ":" ++ toString el).toUTF8
 
-def actions : List String := ["info", "load", "start", "click", "pointer", "resize", "advance", "settle", "turn", "close",
+def actions : List String := ["info", "load", "start", "click", "pointer", "key", "resize", "advance", "settle", "turn", "close",
   "aotModule", "resume", "host", "frame", "fetched", "net", "syncAnswer"]
 
 /-- An answer object with `nextSession` first: the number of the next session. -/
@@ -403,6 +403,17 @@ def pointerInit (request : JSON.Json) : String :=
     (if fields.any (·.1 == "screenY") then [] else (fields.find? (·.1 == "clientY")).map (fun f => ("screenY",f.2)) |>.toList)
   (JSON.Json.object (fields ++ screen ++ [("pointerType",.string kind),("isPrimary",.bool true)] ++
     (if fields.any (·.1 == "pointerId") then [] else [("pointerId",num 1)]))).toString
+
+def boolField (request : JSON.Json) (k : String) : Bool := request.field? k == some (.bool true)
+
+/-- The key data of a `key` request as the JSON init of its keyboard events: `key`, `code`,
+the modifiers, `repeat` and the legacy `keyCode`. -/
+def keyInit (request : JSON.Json) : String :=
+  let bools := ["shiftKey","ctrlKey","altKey","metaKey","repeat"].map fun k => (k,JSON.Json.bool (boolField request k))
+  let code := match request.field? "keyCode" with
+    | some (.number n) => [("keyCode",JSON.Json.number n),("which",JSON.Json.number n)]
+    | _ => []
+  (JSON.Json.object ([("key",.string (str request "key")),("code",.string (str request "code"))] ++ bools ++ code)).toString
 
 /-- The page's viewport in CSS pixels: the window's `width`, and its `height` less the
 full chrome of `shell` (the rows that a render lays the page out in,
@@ -948,6 +959,13 @@ def actLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (act
     match pointerKind (str request "kind"), natField request "node" with
     | some kind, some node => run (e.pointer · kind node (pointerInit request))
     | _, _ => keep "scriptSession: pointer needs kind (down, move, up, cancel) and node"
+  | "key" =>
+    -- a key of the user (BubblePopJS sessions): `kind` "down" or "up", `key`, `code` and the modifiers
+    let key := str request "key"
+    if key.isEmpty then keep "scriptSession: key needs key"
+    else run (e.key · (str request "kind" == "up") (keyInit request)
+      { key, shift := boolField request "shiftKey", ctrl := boolField request "ctrlKey",
+        alt := boolField request "altKey", cmd := boolField request "metaKey" })
   | "resize" =>
     match viewport request with
     | some (w, h) => run fun s => let s := e.resize s w h; (e.advance s (e.loop s).clock).1

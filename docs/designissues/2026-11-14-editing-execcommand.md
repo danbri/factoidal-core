@@ -16,8 +16,10 @@ The W3C Editing APIs draft ("execCommand"), in `formal/lean4/L4Factoidal/DOM/Edi
 | `Inline.lean` | Effectively contained nodes, modifiable elements, effective and specified command values, record and restore values, clear / push down / force the value, set the selection's value, state and value overrides, the inline commands. |
 | `Block.lean` | Fix disallowed ancestors, normalize sublists, the selection's list state, alignment value, indent, outdent, toggle lists, justify the selection, `formatBlock`. |
 | `Delete.lean` | Canonical space sequences, canonicalize whitespace, equivalent points, delete the selection, the Range insert and extract algorithms, automatic linking, `delete`, `forwardDelete`, `insertHorizontalRule`, `insertHTML`, `insertImage`, `insertLineBreak`, `insertParagraph`, `insertText`. |
-| `Commands.lean` | `execCommand`, `queryCommandEnabled`, `-Indeterm`, `-State`, `-Supported`, `-Value`; the `input` event of a command. |
-| `Tests.lean` | 37 WPT cases as `#guard`, and property checks on nine inputs. |
+| `Commands.lean` | `execCommand`, `queryCommandEnabled`, `-Indeterm`, `-State`, `-Supported`, `-Value`; the `input` event of a command and the target range of its `beforeinput`. |
+| `Keys.lean` | What a key does in an editing host (`keyCommand`), caret positions and movement, `Selection.modify` (`modifyFocus`). |
+| `TextControl.lean` | Commands in a focused `input` or `textarea` (`textEdit`): the value and selection after a command. |
+| `Tests.lean` | WPT cases as `#guard` (commands, keys, `Selection.modify`), and property checks on nine inputs. |
 
 Commands: `backColor`, `bold`, `createLink`, `defaultParagraphSeparator`, `delete`,
 `fontName`, `fontSize`, `foreColor`, `formatBlock`, `forwardDelete`, `hiliteColor`,
@@ -46,8 +48,12 @@ an editing host moves the selection into it; a command fires a trusted `input` e
   the page's other live ranges and NodeIterators see the same changes. The selection's range
   becomes the active range the command left. The flags are kept in `State.edit`.
 - Styles: `Hosts.Page` asks the layout reads for the text of the page's sheets (measure op
-  40, no layout), `editOp` parses it once per command (`Rendering.CSS.parseIn`) and gives
-  the editing module the declarations each element gets from it (`editSheet`).
+  40, no layout) and keeps the rules parsed from it as a `Rendering.CSS.RuleIndex`
+  (`Host.editRules`): the sheets are parsed again only when their text changes. The editing
+  module gets the declarations each element has from the rules of its buckets (`editSheet`).
+- Other ops of `editOp`: 177 `contentEditable`, `isContentEditable`, `designMode`, `focus()`
+  of an editing host; 178 `Selection.modify`; 179 a command in a focused text control (the
+  page gives the control's value and selection and applies the answer).
 
 ## Measured
 
@@ -80,9 +86,38 @@ the draft's text the code follows them, with a comment at each place:
 - `formatBlock` takes the sectioning blocks (`article`, `blockquote`, `section`, ...).
 - A colour command with a value that is not a colour answers true and changes nothing.
 - No `beforeinput` for `execCommand`; `input` carries `inputType` and `data`.
+- A line break is U+000A where white-space keeps line feeds (`pre`, `pre-wrap`, `pre-line`),
+  with a `br` after a line feed that ends its block.
+- `insertParagraph` makes a line break in an editing host that is an inline box or that
+  can not have the paragraph element as a child; a paragraph is a block box (an inline
+  `div` is content of its line; a `span` that is a block, or a flex or grid item, splits).
+- Two blocks with different white-space join by the first line of the second only, kept
+  in a `span` with that block's white-space.
+- The canonical space sequence alternates from U+00A0 (Blink and WebKit), not from U+0020.
+- Text typed at the edge of a link stays outside it; typing does not make links.
+- `insertHTML` puts inline markup between the halves of the inline elements at the caret.
+- A selection inside a void element is before the element. Formatting commands are not
+  enabled in a `plaintext-only` editing host.
 
 "Collapsed line break" and "extraneous line break" are defined by layout in the draft. Here
 they are decided on the tree (`contentAfter`, `contentBefore` in `Core.lean`).
+
+## Keys and `test_driver`
+
+A key of the user in an editing host becomes an editing command (`DOM/Editing/Keys.lean`,
+`keyCommand`): Backspace, Delete, Enter, Shift+Enter, a character, Control or Meta with B,
+I, U; ArrowLeft, ArrowRight, Home and End move the caret. `Hosts.PageEvents.key` fires
+`keydown` at the editing host of the selection; when it is not canceled, `beforeinput`
+(cancelable, with the target range the command would delete: the command is run on a copy
+of the state, `Editing.targetRange`), then the command, then `input`; `keyup` on release.
+The script session takes it as action `key` (BubblePopJS sessions).
+
+The WPT runner serves its own `/resources/testdriver-vendor.js`
+(`tests/browser-wpt/testdriver-vendor.js`): `send_keys` and the key actions of
+`action_sequence` leave the page as console lines, as results do, and the runner gives the
+engine the keys. Pages that load `testdriver.js` settle in 16 ms slices of virtual time, so
+a request is seen before the test's own timeout; other pages settle in one call as before.
+Pointer actions and `click` are not done.
 
 ## Proved, tested, open
 
@@ -99,8 +134,14 @@ Proved (Lean theorems, no `sorry`, axioms only `propext`, `Classical.choice`, `Q
 - Inline style: `getDecl_setDecl`, `getDecl_removeDecl`, `setDecl_idem`.
 - `parseHex_toHex` (an opaque colour survives its hexadecimal form),
   `cssSizeToLegacy_legacySizeToCss`, `legacyOfPx_mono`.
-- `canonicalSpaceSequence_length` (n characters for n spaces) and `_chars` (only U+0020
-  and U+00A0). `alignmentValue_mem`.
+- `canonicalSpaceSequence_length` (n characters for n spaces), `_chars` (only U+0020 and
+  U+00A0) and `_no_pair` (no two adjacent U+0020). `alignmentValue_mem`.
+- `keyCommand_printable` (a single character with no Control, Meta or Alt inserts exactly
+  that character), `keyCommand_modified` (no text with Control or Meta), `keyCommand_named`.
+- `permitted_touchable` (the place of every permitted change is in no document or inside
+  an editing host); `leaveLinkEdge_inside` (a caret inside a link's text is not moved out).
+- Text controls: `textEdit_ok` (the selection stays inside the value),
+  `textEdit_delete_range`, `textEdit_insert`, `textEdit_singleLine`.
 
 Tested only:
 
@@ -120,9 +161,12 @@ Open:
   the host too.
 - The host's replay of the log is checked at run time (the arena sizes must agree, and each
   made node must get the number the pure run gave it); it is not proved equal.
-- Performance: a style read walks the element's ancestors and matches the sheet's rules at
-  each one, with no cache; a command on a large page with large sheets will be slow. A page
-  that does not call these methods pays nothing (no code runs outside ops 175 to 177).
-- Not done: `copy`, `cut`, `paste`, `undo`, `redo`; commands in `input` and `textarea`;
-  key events to editing commands (most of `editing/other`, `input-events`);
-  `beforeinput` and `getTargetRanges()`; `contenteditable=plaintext-only` rules.
+- Performance: a style read walks the element's ancestors and matches the rules of each
+  one's buckets; resolved styles are not cached between reads of one command, so a command
+  deep in a large tree is slower than it could be. A page that does not call these methods
+  pays nothing (no code runs outside ops 175 to 179 and the `key` action). Measured: the
+  120 `editing/run` tests took 925 s in all before the rule index was kept (run
+  43543234554; each editing op parsed the page's sheets).
+- Not done: `copy`, `cut`, `paste`, `undo`, `redo`; `execCommand` and the selection of a
+  frame's document; ArrowUp and ArrowDown, word and line deletion, `Selection.modify` by
+  line or sentence; pointer actions of `test_driver`.

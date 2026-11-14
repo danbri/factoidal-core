@@ -7,9 +7,9 @@ whitespace", "Deleting the selection", the equivalent points of a boundary point
 `insertHTML`, `insertImage`, `insertLineBreak`, `insertParagraph`, `insertText`. The Range
 algorithms "insert" and "extract" (DOM §5.5) are here as functions of the editing state.
 
-Proved: `canonicalSpaceSequence_length` (the sequence for `n` spaces has `n` characters)
-and `canonicalSpaceSequence_chars` (only U+0020 and U+00A0). That no two U+0020 are
-adjacent is tested on the first lengths, not proved.
+Proved: `canonicalSpaceSequence_length` (the sequence for `n` spaces has `n` characters),
+`canonicalSpaceSequence_chars` (only U+0020 and U+00A0) and `canonicalSpaceSequence_no_pair`
+(no two U+0020 are adjacent).
 Tested only (the WPT cases): the tree algorithms.
 -/
 import L4Factoidal.DOM.Editing.Block
@@ -21,105 +21,66 @@ open L4Factoidal.DOM L4Factoidal.DOM.Range
 
 def nbsp : Char := Char.ofNat 0xa0
 
-/-- The repeated pairs before the last two or three characters: `k` pairs. -/
-def spacePairs (nbStart : Bool) : Nat → List Char
-  | 0 => []
-  | k + 1 => (if nbStart then [nbsp, ' '] else [' ', nbsp]) ++ spacePairs nbStart k
-
-/-- The last characters of a sequence of length two or three. -/
-def spaceTail (three nbStart nbEnd : Bool) : List Char :=
-  if three then
-    match nbStart, nbEnd with
-    | false, false => [' ', nbsp, ' ']
-    | true, false => [nbsp, nbsp, ' ']
-    | false, true => [' ', nbsp, nbsp]
-    | true, true => [nbsp, ' ', nbsp]
-  else
-    match nbStart, nbEnd with
-    | false, false => [nbsp, ' ']
-    | true, false => [nbsp, ' ']
-    | false, true => [' ', nbsp]
-    | true, true => [nbsp, nbsp]
+/-- The character at index `i` of a canonical space sequence of length `n`. -/
+def spaceAt (n : Nat) (nbStart nbEnd : Bool) (i : Nat) : Char :=
+  if n == 1 then (if !nbStart && !nbEnd then ' ' else nbsp)
+  else if i % 2 == 0 || (nbEnd && i + 1 == n) then nbsp else ' '
 
 /-- "Canonical space sequence" of length `n`: spaces and no-break spaces that render as
-`n` spaces, with a no-break space where a space would collapse (at a line start when
-`nbStart`, at a line end when `nbEnd`). -/
+`n` spaces. One space is U+0020, unless it is at a line start (`nbStart`) or a line end
+(`nbEnd`), where it would collapse. A longer run alternates, U+00A0 first, and ends with
+U+00A0 at a line end. This is the sequence Blink and WebKit write
+(`editing/whitespaces/chrome-compat`); the draft's sequence starts with U+0020 when it is
+not at a line start. Both render the same. -/
 def canonicalSpaceSequence (n : Nat) (nbStart nbEnd : Bool) : List Char :=
-  if n == 0 then []
-  else if n == 1 then (if !nbStart && !nbEnd then [' '] else [nbsp])
-  else
-    -- n = 2 + 2k (tail of two) or 3 + 2k (tail of three)
-    let three := n % 2 == 1
-    let k := (n - (if three then 3 else 2)) / 2
-    spacePairs nbStart k ++ spaceTail three nbStart nbEnd
-
-theorem spacePairs_length (nbStart : Bool) (k : Nat) : (spacePairs nbStart k).length = 2 * k := by
-  induction k with
-  | zero => rfl
-  | succ k ih => cases nbStart <;> simp [spacePairs, ih] <;> omega
-
-theorem spaceTail_length (three nbStart nbEnd : Bool) :
-    (spaceTail three nbStart nbEnd).length = if three then 3 else 2 := by
-  cases three <;> cases nbStart <;> cases nbEnd <;> rfl
+  (List.range n).map (spaceAt n nbStart nbEnd)
 
 /-- Length. Says: the canonical space sequence for `n` has exactly `n` characters, so
 replacing a run of `n` spaces by it keeps every offset after the run. Does not say: that
 the sequence renders as `n` spaces in every font (it does by CSS white-space rules when no
-two U+0020 are adjacent and none is at a collapsing edge). -/
+two U+0020 are adjacent and none is at a collapsing edge: `canonicalSpaceSequence_no_pair`
+and the `#guard` below). -/
 theorem canonicalSpaceSequence_length (n : Nat) (nbStart nbEnd : Bool) :
     (canonicalSpaceSequence n nbStart nbEnd).length = n := by
-  unfold canonicalSpaceSequence
-  by_cases h0 : n = 0
-  · simp [h0]
-  · by_cases h1 : n = 1
-    · subst h1; cases nbStart <;> cases nbEnd <;> rfl
-    · have hb0 : (n == 0) = false := by simpa using h0
-      have hb1 : (n == 1) = false := by simpa using h1
-      simp only [hb0, hb1, Bool.false_eq_true, if_false, List.length_append, spacePairs_length, spaceTail_length]
-      by_cases h3 : n % 2 = 1
-      · have : (n % 2 == 1) = true := by simpa using h3
-        simp only [this, if_true]
-        omega
-      · have : (n % 2 == 1) = false := by simpa using h3
-        simp only [this, Bool.false_eq_true, if_false]
-        omega
+  simp [canonicalSpaceSequence]
 
 def isSpaceOrNbsp (c : Char) : Bool := c == ' ' || c == nbsp
 
-theorem spacePairs_all (nbStart : Bool) (k : Nat) : (spacePairs nbStart k).all isSpaceOrNbsp = true := by
-  induction k with
-  | zero => rfl
-  | succ k ih =>
-    cases nbStart
-    · have : spacePairs false (k + 1) = [' ', nbsp] ++ spacePairs false k := rfl
-      rw [this, List.all_append, ih]; decide
-    · have : spacePairs true (k + 1) = [nbsp, ' '] ++ spacePairs true k := rfl
-      rw [this, List.all_append, ih]; decide
-
-theorem spaceTail_all (three nbStart nbEnd : Bool) : (spaceTail three nbStart nbEnd).all isSpaceOrNbsp = true := by
-  cases three <;> cases nbStart <;> cases nbEnd <;> decide
+theorem spaceAt_chars (n : Nat) (nbStart nbEnd : Bool) (i : Nat) : isSpaceOrNbsp (spaceAt n nbStart nbEnd i) = true := by
+  unfold spaceAt
+  repeat' split
+  all_goals decide
 
 /-- Characters. Says: the canonical space sequence holds only U+0020 and U+00A0. Does
-not say: where each one is (tested by `#guard`). -/
+not say: where each one is (`canonicalSpaceSequence_no_pair`, and the `#guard` below). -/
 theorem canonicalSpaceSequence_chars (n : Nat) (nbStart nbEnd : Bool) :
     (canonicalSpaceSequence n nbStart nbEnd).all isSpaceOrNbsp = true := by
-  unfold canonicalSpaceSequence
-  split
-  · rfl
-  · split
-    · cases nbStart <;> cases nbEnd <;> decide
-    · rw [List.all_append, spacePairs_all, spaceTail_all]; rfl
+  simp [canonicalSpaceSequence, List.all_map, spaceAt_chars]
 
+/-- No collapse. Says: in a sequence of two or more, of two adjacent positions one holds
+U+00A0, so no two U+0020 are adjacent and the run can not collapse. Does not say: anything
+about the characters next to the run in the text. -/
+theorem canonicalSpaceSequence_no_pair (n : Nat) (nbStart nbEnd : Bool) (i : Nat) (h : 2 ≤ n) :
+    spaceAt n nbStart nbEnd i = nbsp ∨ spaceAt n nbStart nbEnd (i + 1) = nbsp := by
+  have h1 : (n == 1) = false := by simp; omega
+  unfold spaceAt
+  simp only [h1, Bool.false_eq_true, if_false]
+  by_cases he : i % 2 = 0
+  · left; simp [he]
+  · right
+    have : (i + 1) % 2 = 0 := by omega
+    simp [this]
+
+#guard canonicalSpaceSequence 1 false false == [' ']
+#guard canonicalSpaceSequence 1 true false == [nbsp]
 #guard canonicalSpaceSequence 2 false false == [nbsp, ' ']
-#guard canonicalSpaceSequence 3 false false == [' ', nbsp, ' ']
-#guard canonicalSpaceSequence 4 false false == [' ', nbsp, nbsp, ' ']
+#guard canonicalSpaceSequence 3 false false == [nbsp, ' ', nbsp]
+#guard canonicalSpaceSequence 4 false true == [nbsp, ' ', nbsp, nbsp]
 #guard canonicalSpaceSequence 5 true true == [nbsp, ' ', nbsp, ' ', nbsp]
-#guard canonicalSpaceSequence 6 false true == [' ', nbsp, ' ', nbsp, ' ', nbsp]
--- no two adjacent U+0020, and none at a non-breaking edge, for the first lengths
+-- no U+0020 at a non-breaking edge, for the first lengths
 #guard (List.range 12).all fun n => [false, true].all fun a => [false, true].all fun b =>
   let s := canonicalSpaceSequence n a b
-  (s.zip (s.drop 1)).all (fun (x, y) => !(x == ' ' && y == ' ')) &&
-    (!a || s.head? != some ' ') && (!b || s.getLast? != some ' ')
+  (!a || s.head? != some ' ') && (!b || s.getLast? != some ' ')
 
 /-! ## Characters of a Text node at UTF-16 offsets -/
 
@@ -292,6 +253,11 @@ def rangeInsertNode (node : NodeId) : M Unit := do
   let r ← getActive
   if r.collapsed then setActive { r with stop := ⟨parent, newOffset⟩ }
 
+/-- Set the data of a CharacterData node. -/
+def setData (n : NodeId) (data : String) : M Unit := do
+  let len ← rd fun e => nodeLength e.dom n
+  replaceData n 0 len data
+
 /-- "Extract" a range (DOM §5.5): the fragment. `fuel` bounds the recursion by the
 tree's depth. The caller sets any range of its own. -/
 def extractRange : Nat → Rng → M NodeId
@@ -303,7 +269,7 @@ def extractRange : Nat → Rng → M NodeId
     let (sn, so, en, eo) := (r.start.node, r.start.offset, r.stop.node, r.stop.offset)
     if sn == en && Dom.isCharacterData (d.get sn) then
       let c ← cloneNode sn false
-      replaceData c 0 (nodeLength d c) (substringUnits (d.get sn).data so (eo - so))
+      setData c (substringUnits (d.get sn).data so (eo - so))
       appendChild frag c
       replaceData sn so (eo - so) ""
       return frag
@@ -315,7 +281,7 @@ def extractRange : Nat → Rng → M NodeId
       if Dom.isCharacterData (d.get f) then
         let len := nodeLength d sn
         let c ← cloneNode sn false
-        replaceData c 0 (nodeLength d c) (substringUnits (d.get sn).data so (len - so))
+        setData c (substringUnits (d.get sn).data so (len - so))
         appendChild frag c
         replaceData sn so (len - so) ""
       else
@@ -328,7 +294,7 @@ def extractRange : Nat → Rng → M NodeId
       let d ← rd (·.dom)
       if Dom.isCharacterData (d.get l) then
         let c ← cloneNode en false
-        replaceData c 0 (nodeLength d c) (substringUnits (d.get en).data 0 eo)
+        setData c (substringUnits (d.get en).data 0 eo)
         appendChild frag c
         replaceData en 0 eo ""
       else
@@ -357,10 +323,58 @@ def collapseActive (toStart : Bool) : M Unit := do
   let r ← getActive
   if toStart then setActive ⟨r.start, r.start⟩ else setActive ⟨r.stop, r.stop⟩
 
+/-- Where the line that starts at child `from_` of block `eb` ends: before a `br`
+(`some br`), before a block node, at a line feed in a Text node whose white-space keeps
+line feeds (the node, with `true`), or at the end of the block. -/
+def lineEndFrom (e : Ed) (eb : NodeId) (from_ : Nat) : BP × Option NodeId × Bool := Id.run do
+  let d := e.dom
+  let keepsFeeds := fun (n : NodeId) => match parentOf d n with
+    | some p => ["pre", "pre-wrap", "pre-line", "break-spaces"].contains (whiteSpaceOf e p)
+    | none => false
+  for top in (kidsOf d eb).extract from_ (kidsOf d eb).size do
+    for n in d.treeOrder top true do
+      if isHtml d n ["br"] then
+        return (⟨(parentOf d n).getD eb, indexOf d n⟩, some n, false)
+      if isEl d n && isBlockNode e n then
+        return (⟨(parentOf d n).getD eb, indexOf d n⟩, none, false)
+      if isText d n && keepsFeeds n then
+        let (pre, post) := ((d.get n).data.toList.span (· != '\n'))
+        if !post.isEmpty then return (⟨n, utf16Length (String.ofList pre)⟩, some n, true)
+  return (⟨eb, nodeLength d eb⟩, none, false)
+
+/-- Move the line that starts at child `from_` of block `eb` into `dest` (before its child
+`before`, else at its end), inside a `span` with the white-space `ws` of `eb`; the line
+break that ended the line is removed, and so is what the move left empty in `eb`. -/
+def moveFirstLine (dest : NodeId) (before : Option NodeId) (eb : NodeId) (from_ : Nat) (ws : String) : M Unit := do
+  let e ← get
+  let d := e.dom
+  let (stop, breaker, isFeed) := lineEndFrom e eb from_
+  let frag ← extractRange (d.size + 1) ⟨⟨eb, from_⟩, stop⟩
+  let d ← rd (·.dom)
+  if hasKids d frag then
+    let span ← createElement "span"
+    setAttr span "style" ("white-space: " ++ ws)
+    appendChild span frag
+    insertBefore dest span before
+  match breaker with
+  | some b => if isFeed then replaceData b 0 1 "" else removeNode b
+  | none => pure ()
+  -- what the move left empty where the line was
+  for _ in [0:d.size + 1] do
+    let e ← get
+    let d := e.dom
+    match (kidsOf d eb)[from_]? with
+    | some c =>
+      let empty := (d.treeOrder c true).all fun m =>
+        (isText d m && (d.get m).data.isEmpty) || (isEl d m && isInlineNode e m && !isHtml d m ["br", "img"])
+      if empty && isEditable e c then removeNode c else break
+    | none => break
+
 /-- "Delete the selection". -/
 def deleteSelection (blockMerging : Bool := true) (stripWrappers : Bool := true) (backward : Bool := false) : M Unit := do
   if !(← rd hasActive) then return
   let r ← getActive
+  modify fun e => if e.target.isNone then { e with target := some r } else e
   canonicalizeWhitespace r.start.node r.start.offset
   let r ← getActive
   canonicalizeWhitespace r.stop.node r.stop.offset
@@ -478,6 +492,24 @@ def deleteSelection (blockMerging : Bool := true) (stripWrappers : Bool := true)
     if !isInlineNodeO e (firstChild d eb) then
       restoreStatesAndValues overrides
       return
+    if whiteSpaceOf e sb != whiteSpaceOf e eb then
+      -- a block inside the start block, with another white-space: its first line leaves it
+      -- in a span that keeps its white-space (browsers)
+      moveFirstLine sb (some ref) eb 0 (whiteSpaceOf e eb)
+      for _ in [0:d.size + 1] do
+        let e ← get
+        let d := e.dom
+        if hasKids d ebCur || ebCur == sb || !isEditable e ebCur then break
+        match parentOf d ebCur with
+        | some p => removeNode ebCur; ebCur := p
+        | none => break
+      let d ← rd (·.dom)
+      if !hasKids d sb then
+        let br ← createElement "br"
+        appendChild sb br
+      removeExtraneousLineBreaksAtTheEndOf sb
+      restoreStatesAndValues overrides
+      return
     let mut children : Array NodeId := #[(firstChild d eb).getD eb]
     for _ in [0:d.size + 1] do
       if !isHtml d children.back! ["br"] && isInlineNodeO e (d.nextSibling children.back!) then
@@ -510,6 +542,16 @@ def deleteSelection (blockMerging : Bool := true) (stripWrappers : Bool := true)
       | none => pure ()
     let e ← get
     let d := e.dom
+    if whiteSpaceOf e sb != whiteSpaceOf e eb then
+      -- the line after the start block, with another white-space, joins it in a span
+      moveFirstLine sb none eb (indexOf d ref + 1) (whiteSpaceOf e eb)
+      let d ← rd (·.dom)
+      if !hasKids d sb then
+        let br ← createElement "br"
+        appendChild sb br
+      removeExtraneousLineBreaksAtTheEndOf sb
+      restoreStatesAndValues overrides
+      return
     let mut nodesToMove : Array NodeId := #[]
     if let some ns := d.nextSibling ref then
       if !isBlockNode e ns then nodesToMove := nodesToMove.push ns
@@ -528,8 +570,13 @@ def deleteSelection (blockMerging : Bool := true) (stripWrappers : Bool := true)
       | none => pure ()
     let e ← get
     let d := e.dom
-    values := recordValues e (kidsOf d eb)
-    for c in kidsOf d eb do movePreservingRanges c sb none
+    if whiteSpaceOf e sb != whiteSpaceOf e eb then
+      -- blocks with different white-space: only the first line of the end block joins the
+      -- start block, in a span that keeps its white-space (browsers; the draft moves all)
+      moveFirstLine sb none eb 0 (whiteSpaceOf e eb)
+    else
+      values := recordValues e (kidsOf d eb)
+      for c in kidsOf d eb do movePreservingRanges c sb none
     for _ in [0:d.size + 1] do
       let d ← rd (·.dom)
       if hasKids d ebCur then break
@@ -937,40 +984,6 @@ def insertHorizontalRule : M Unit := do
   fixDisallowedAncestorsO (some hr)
   collapseAfter hr
 
-/-- The `insertHTML` command. -/
-def insertHTML (value : String) : M Unit := do
-  deleteSelection
-  let e ← get
-  if !startIsEditable e then return
-  let d := e.dom
-  let r := activeOf e
-  -- the context of the fragment parse: the start node, or its parent for a Text node
-  let ctx := if isEl d r.start.node then some r.start.node else d.parentElement r.start.node
-  let (ns, name) := match ctx with
-    | some c =>
-      let x := d.get c
-      if x.lname == "html" && x.ns == some htmlNS then (htmlNS, "body") else (x.ns.getD "", x.lname)
-    | none => (htmlNS, "body")
-  let frag ← parseFragment ns name value
-  let e ← get
-  let d := e.dom
-  let some last := lastChild d frag | return
-  let descendants := d.treeOrder frag false
-  let r := activeOf e
-  if isBlockNode e r.start.node then
-    for n in (kidsOf d r.start.node).filter fun n =>
-        isEditable e n && isCollapsedBlockProp e n && indexOf d n ≥ r.start.offset do
-      removeNode n
-  rangeInsertNode frag
-  let e ← get
-  let d := e.dom
-  let sn := (activeOf e).start.node
-  if isBlockNode e sn && !(kidsOf d sn).any (isVisible e) then
-    let br ← createElement "br"
-    appendChild sn br
-  collapseAfter last
-  for n in descendants do fixDisallowedAncestorsO (some n)
-
 /-- The `insertImage` command. -/
 def insertImage (value : String) : M Unit := do
   deleteSelection (stripWrappers := false)
@@ -988,11 +1001,21 @@ def insertImage (value : String) : M Unit := do
   rangeInsertNode img
   collapseAfter img
 
-/-- The `insertLineBreak` command. -/
-def insertLineBreak : M Unit := do
-  deleteSelection (stripWrappers := false)
+/-- Does the white-space of the content at the active range's start keep line feeds
+(`pre`, `pre-wrap`, `pre-line`, `break-spaces`). -/
+def keepsNewlines (e : Ed) : Bool :=
+  let n := (activeOf e).start.node
+  let el := if isEl e.dom n then some n else parentOf e.dom n
+  match el with
+  | some el => ["pre", "pre-wrap", "pre-line", "break-spaces"].contains (whiteSpaceOf e el)
+  | none => false
+
+/-- A line break at the (collapsed) active range. Where white-space keeps line feeds it
+is a U+000A character in the text, as browsers do (the draft always inserts a `br`); a
+line feed that ends its block gets a `br` after it, so that the new line shows. Else a
+`br`, and a second one when the first would be a collapsed line break. -/
+def lineBreakAtCaret : M Unit := do
   let e ← get
-  if !startIsEditable e then return
   let d := e.dom
   let sn := (activeOf e).start.node
   if isEl d sn && !isAllowedChild e (.name "br") sn then return
@@ -1000,6 +1023,38 @@ def insertLineBreak : M Unit := do
     match parentOf d sn with
     | some p => if !isAllowedChild e (.name "br") p then return
     | none => return
+  if keepsNewlines e then
+    let r := activeOf e
+    let mut node := r.start.node
+    let mut offset := r.start.offset
+    if offset ≥ 1 then
+      if let some k := (kidsOf d node)[offset - 1]? then
+        if isText d k then
+          node := k
+          offset := nodeLength d k
+    if let some k := (kidsOf d node)[offset]? then
+      if isText d k then
+        node := k
+        offset := 0
+    setActive ⟨⟨node, offset⟩, ⟨node, offset⟩⟩
+    let text ← if isText d node then do
+        replaceData node offset 0 "\n"
+        pure node
+      else do
+        let t ← createText "\n"
+        rangeInsertNode t
+        offset := 0
+        pure t
+    let caret : BP := ⟨text, offset + 1⟩
+    setActive ⟨caret, caret⟩
+    let e ← get
+    let d := e.dom
+    if caret.offset == nodeLength d text && !contentAfter e text then
+      let br ← createElement "br"
+      match parentOf d text with
+      | some p => insertBefore p br (d.nextSibling text)
+      | none => pure ()
+    return
   leaveTextEdge
   let br ← createElement "br"
   rangeInsertNode br
@@ -1008,6 +1063,12 @@ def insertLineBreak : M Unit := do
     let br2 ← createElement "br"
     rangeInsertNode br2
     collapseAfter br
+
+/-- The `insertLineBreak` command. -/
+def insertLineBreak : M Unit := do
+  deleteSelection (stripWrappers := false)
+  if !(← rd startIsEditable) then return
+  lineBreakAtCaret
 
 /-- Give an empty block its line: a `br`, inside shallow copies of `wrappers` (innermost
 first, without `id`). The node the `br` is in. The draft appends the `br` alone; browsers
@@ -1046,13 +1107,22 @@ def insertParagraph : M Unit := do
   setActive ⟨⟨node, offset⟩, ⟨node, offset⟩⟩
   let e ← get
   let d := e.dom
+  -- a single-line container that is a block, or an editable `span` laid out as a block
+  -- (browsers split by the box, where the draft goes by the element name alone)
+  let inlineBox := fun (c : NodeId) => ["inline", "inline-block", "inline-table"].contains (displayOf e c)
+  let flexItem := fun (c : NodeId) => match parentOf d c with
+    | some p => ["flex", "inline-flex", "grid", "inline-grid"].contains (displayOf e p)
+    | none => false
+  let splittable := fun (c : NodeId) =>
+    (isSingleLineContainer d c && !inlineBox c) ||
+      (isHtml d c ["span"] && isEditable e c && (displayOf e c == "block" || flexItem c))
   let mut container := node
   for _ in [0:d.size + 1] do
     match parentOf d container with
     | some p =>
-      if !isSingleLineContainer d container && isEditable e p && inSameEditingHost e node p then container := p else break
+      if !splittable container && isEditable e p && inSameEditingHost e node p then container := p else break
     | none => break
-  if isEditable e container && isSingleLineContainer d container && sameHostO e node (parentOf d container) &&
+  if isEditable e container && splittable container && sameHostO e node (parentOf d container) &&
       isHtml d container ["p", "div"] then
     let mut outer := container
     for _ in [0:d.size + 1] do
@@ -1060,10 +1130,23 @@ def insertParagraph : M Unit := do
       | some p => if !isHtml d outer ["dd", "dt", "li"] && isEditable e p then outer := p else break
       | none => break
     if isHtml d outer ["dd", "dt", "li"] then container := outer
-  if !isEditable e container || !inSameEditingHost e container node || !isSingleLineContainer d container then
+  if !isEditable e container || !inSameEditingHost e container node || !splittable container then
+    -- in an editing host that is an inline box, or that can not have the default
+    -- paragraph element as a child (a `span`, a `p`), no paragraph can be made: a line
+    -- break (browsers; the draft wraps the line in a new block inside the host)
+    match editingHostOf e node with
+    | some h =>
+      if isInlineNode e h || !isAllowedChild e (.name e.sep) h then
+        lineBreakAtCaret
+        return
+    | none => pure ()
     let tag := e.sep
     let nr := blockExtend e (activeOf e)
-    let mut nodeList := (containedNodes d nr fun n => isAllowedChildOfName e (.node n) "p").extract 0 1
+    -- the line to wrap: nodes a `p` may hold, and (as browsers) a single-line container
+    -- that is an inline box, which is content of the line, not a paragraph
+    let lineNode := fun (n : NodeId) =>
+      isAllowedChildOfName e (.node n) "p" || (isSingleLineContainer d n && inlineBox n && isEditable e n)
+    let mut nodeList := (containedNodes d nr lineNode).extract 0 1
     if nodeList.isEmpty then
       if !isAllowedChild e (.name tag) (activeOf e).start.node then return
       let c ← createElement tag
@@ -1074,7 +1157,7 @@ def insertParagraph : M Unit := do
       return
     for _ in [0:d.size + 1] do
       match d.nextSibling nodeList.back! with
-      | some ns => if isAllowedChildOfName e (.node ns) "p" then nodeList := nodeList.push ns else break
+      | some ns => if lineNode ns then nodeList := nodeList.push ns else break
       | none => break
     match ← wrap nodeList (fun _ _ => false) (do return some (← createElement tag)) with
     | some c => container := c
@@ -1170,6 +1253,40 @@ def insertParagraph : M Unit := do
     caret ← appendEmptyLine c2 (if c2 == newContainer then wrappers else [])
   setActive ⟨⟨caret, 0⟩, ⟨caret, 0⟩⟩
 
+/-- A caret at the very start or end of the content of a link (`a` with `href`): the
+point just outside the link, on that side. Text typed at the edge of a link does not
+join the link (browsers; `editing/other/typing-around-link-element-*`). -/
+def leaveLinkEdge (e : Ed) (bp : BP) : Option BP := Id.run do
+  let d := e.dom
+  let isLink := fun (n : NodeId) => isHtml d n ["a"] && hasAttr d n "href"
+  if !(chain d bp.node).any isLink then return none
+  let atEnd := bp.offset == nodeLength d bp.node
+  let atStart := bp.offset == 0
+  -- inside the content, or in an emptied link (its content was just replaced): stay
+  if atEnd == atStart then return none
+  let mut cur := bp.node
+  for _ in [0:d.size + 1] do
+    let some p := parentOf d cur | return none
+    if !isEditable e cur then return none
+    let i := indexOf d cur
+    if isLink cur then return some ⟨p, if atEnd then i + 1 else i⟩
+    if atEnd && i + 1 != (kidsOf d p).size then return none
+    if !atEnd && i != 0 then return none
+    cur := p
+  return none
+
+/-- Inside a link. Says: a caret that is neither at the start nor at the end of its node
+is never moved out of a link, so text typed inside a link's text joins the link. Does not
+say: what happens at the edges (the caret leaves the link when its node is the first or
+last content of the link; tested). -/
+theorem leaveLinkEdge_inside (e : Ed) (bp : BP) (h0 : bp.offset ≠ 0)
+    (h1 : bp.offset ≠ nodeLength e.dom bp.node) : leaveLinkEdge e bp = none := by
+  have a : (bp.offset == nodeLength e.dom bp.node) = false := by simpa using h1
+  have b : (bp.offset == 0) = false := by simpa using h0
+  unfold leaveLinkEdge
+  simp only [a, b]
+  split <;> rfl
+
 /-- Insert one character (not a newline) at the active range. -/
 def insertChar (c : Char) : M Unit := do
   let e ← get
@@ -1189,6 +1306,11 @@ def insertChar (c : Char) : M Unit := do
   let overrides ← recordCurrentOverrides
   setActive ⟨⟨node, offset⟩, ⟨node, offset⟩⟩
   canonicalizeWhitespace node offset
+  let e ← get
+  let r := activeOf e
+  match leaveLinkEdge e r.start with
+  | some out => setActive ⟨out, out⟩
+  | none => pure ()
   let e ← get
   let d := e.dom
   let r := activeOf e
@@ -1210,10 +1332,135 @@ def insertChar (c : Char) : M Unit := do
   canonicalizeWhitespace r.start.node r.start.offset false
   let r ← getActive
   canonicalizeWhitespace r.stop.node r.stop.offset false
-  if isWs c then
-    let r ← getActive
-    autolink r.start.node r.start.offset
+  -- The draft autolinks here (a URL or address before a typed space becomes a link);
+  -- browsers do not, and the WPT expectations are theirs. `autolink` is kept, unused.
   collapseActive false
+
+/-- Split the inline elements around the (collapsed) active range, up to its block: the
+caret ends between the halves (or before, or after, an element it was at the edge of).
+Markup that `insertHTML` inserts does not take the inline formatting of the insertion
+point (browsers; `editing/other/inserthtml-do-not-preserve-inline-styles.html`). -/
+def splitInlineAtCaret : M Unit := do
+  let bound ← rd fun e => e.dom.size + 1
+  for _ in [0:bound] do
+    let e ← get
+    let d := e.dom
+    let bp := (activeOf e).start
+    let node := bp.node
+    let some p := parentOf d node | break
+    let i := indexOf d node
+    if isText d node then
+      if bp.offset == 0 then setActive ⟨⟨p, i⟩, ⟨p, i⟩⟩
+      else if bp.offset == nodeLength d node then setActive ⟨⟨p, i + 1⟩, ⟨p, i + 1⟩⟩
+      else
+        let _ ← splitText node bp.offset
+        setActive ⟨⟨p, i + 1⟩, ⟨p, i + 1⟩⟩
+    else if isEl d node && isInlineNode e node && isEditable e node then
+      if bp.offset == 0 then setActive ⟨⟨p, i⟩, ⟨p, i⟩⟩
+      else if bp.offset == (kidsOf d node).size then setActive ⟨⟨p, i + 1⟩, ⟨p, i + 1⟩⟩
+      else
+        let clone ← cloneNode node false
+        removeAttr clone "id"
+        insertBefore p clone (d.nextSibling node)
+        for c in (kidsOf d node).extract bp.offset (kidsOf d node).size do appendChild clone c
+        setActive ⟨⟨p, i + 1⟩, ⟨p, i + 1⟩⟩
+    else break
+
+/-- Runs of whitespace as one space, none at the ends (a line of collapsed text). -/
+def collapseLine (s : String) : String :=
+  " ".intercalate ((String.ofList (s.toList.map fun c => if isWs c then ' ' else c)).splitOn " " |>.filter (!·.isEmpty))
+
+/-- The text of a fragment as lines, as it would show: no text of elements that are not
+rendered (`script`, `style`, `noscript`, ...), whitespace collapsed outside `pre`, a new
+line at each `br`, block boundary and (in `pre`) line feed. -/
+def plainLines (e : Ed) (frag : NodeId) : List String := Id.run do
+  let d := e.dom
+  let hidden := fun (n : NodeId) => (chain d n).any fun a =>
+    isHtml d a (hiddenTags ++ ["noscript", "noframes", "head"])
+  let inPre := fun (n : NodeId) => (chain d n).any fun a => isHtml d a ["pre", "listing", "xmp", "plaintext", "textarea"]
+  let blockOf := fun (n : NodeId) => (chain d n).toList.reverse.find? fun a => a != n && isEl d a && blockTags.contains (d.get a).lname
+  let mut lines : Array String := #[]
+  let mut cur : String := ""
+  let mut started := false
+  let mut curBlock : Option NodeId := none
+  for n in d.treeOrder frag false do
+    if hidden n then continue
+    if isHtml d n ["br"] then
+      lines := lines.push cur
+      cur := ""
+      started := true
+      continue
+    if isText d n then
+      let b := blockOf n
+      if started && b != curBlock && !cur.isEmpty then
+        lines := lines.push cur
+        cur := ""
+      curBlock := b
+      started := true
+      if inPre n then
+        match (d.get n).data.splitOn "\n" with
+        | first :: rest =>
+          cur := cur ++ first
+          for piece in rest do
+            lines := lines.push cur
+            cur := piece
+        | [] => pure ()
+      else cur := cur ++ (String.ofList ((d.get n).data.toList.map fun c => if isWs c then ' ' else c))
+  if !cur.isEmpty || !lines.isEmpty then lines := lines.push cur
+  -- collapse each line that has no run of two spaces to keep (text outside `pre` was
+  -- already mapped to spaces; a `pre` line is kept as it is)
+  return lines.toList
+
+/-- The `insertHTML` command. -/
+def insertHTML (value : String) : M Unit := do
+  deleteSelection
+  let e ← get
+  if !startIsEditable e then return
+  if inPlaintextHost e then
+    -- a `plaintext-only` editing host takes the text of the markup, line by line
+    let frag ← parseFragment htmlNS "div" value
+    let e ← get
+    let d := e.dom
+    let pre := (d.treeOrder frag false).any fun n => isHtml d n ["pre", "listing", "xmp", "plaintext", "textarea"]
+    let lines := (plainLines e frag).map fun l => if pre then l else collapseLine l
+    let mut first := true
+    for line in lines do
+      if !first then lineBreakAtCaret
+      first := false
+      for c in line.toList do insertChar c
+    return
+  let d := e.dom
+  let r := activeOf e
+  -- the context of the fragment parse: the start node, or its parent for a Text node
+  let ctx := if isEl d r.start.node then some r.start.node else d.parentElement r.start.node
+  let (ns, name) := match ctx with
+    | some c =>
+      let x := d.get c
+      if x.lname == "html" && x.ns == some htmlNS then (htmlNS, "body") else (x.ns.getD "", x.lname)
+    | none => (htmlNS, "body")
+  let frag ← parseFragment ns name value
+  -- inline markup (no block among it): it goes between the halves of the inline elements
+  -- at the caret; a block is placed by "fix disallowed ancestors", which keeps the values
+  if (← rd fun e => (kidsOf e.dom frag).any (isEl e.dom) &&
+      !(kidsOf e.dom frag).any (isProhibitedParagraphChild e.dom)) then splitInlineAtCaret
+  let e ← get
+  let d := e.dom
+  let some last := lastChild d frag | return
+  let descendants := d.treeOrder frag false
+  let r := activeOf e
+  if isBlockNode e r.start.node then
+    for n in (kidsOf d r.start.node).filter fun n =>
+        isEditable e n && isCollapsedBlockProp e n && indexOf d n ≥ r.start.offset do
+      removeNode n
+  rangeInsertNode frag
+  let e ← get
+  let d := e.dom
+  let sn := (activeOf e).start.node
+  if isBlockNode e sn && !(kidsOf d sn).any (isVisible e) then
+    let br ← createElement "br"
+    appendChild sn br
+  collapseAfter last
+  for n in descendants do fixDisallowedAncestorsO (some n)
 
 /-- The `insertText` command: each character in turn; a newline is `insertParagraph`. -/
 def insertText (value : String) : M Unit := do
