@@ -1060,6 +1060,51 @@ def expandRepeats (v : List Tok) : Option (List (List Tok)) :=
       | none => none
     | _ => some (acc ++ [item])) []
 
+/-- A comma list with one `repeat(auto, …)` (CSS Gaps 1 §3.2: a gap rule list has at most
+one): the items before it and after it (integer repeats as their items) and the items of
+the auto repeat. None for a list with no auto repeat, with two, or with an integer repeat
+of more than 64 items. -/
+def autoRepeatOf (v : List Tok) : Option (List (List Tok) × List (List Tok) × List (List Tok)) :=
+  let isAuto := fun (item : List Tok) => match item with
+    | .op "repeat" :: .ident "auto" :: .comma :: _ => true
+    | _ => false
+  let items := commaItems v
+  let lead := items.takeWhile fun it => !isAuto it
+  match items.drop lead.length with
+  | auto :: trail =>
+    if trail.any isAuto then none
+    else
+      let plain := fun (xs : List (List Tok)) => if xs.isEmpty then some [] else expandRepeats (joinCommas xs)
+      match plain lead, plain trail with
+      | some l, some t => some (l, commaItems ((auto.drop 3).dropLast), t)
+      | _, _ => none
+  | [] => none
+
+/-- Two comma lists of a gap rule property combined item by item with `f` (CSS Gaps 1
+§3.4): lists with no auto repeat are repeated to their least common multiple; lists that
+both have an auto repeat combine when as many items stand before it and after it in
+both, the items of the two auto repeats repeated to their least common multiple. None for
+any other pair. -/
+def combineGap (f : List Tok → List Tok → Option (List Tok)) (a b : List Tok) : Option (List Tok) :=
+  match autoRepeatOf a, autoRepeatOf b with
+  | some (la, ia, ta), some (lb, ib, tb) =>
+    if la.length != lb.length || ta.length != tb.length then none
+    else match repeated ia ib with
+      | some (ia, ib) =>
+        match zipItems f (fun _ => none) la lb, zipItems f (fun _ => none) ia ib, zipItems f (fun _ => none) ta tb with
+        | some l, some i, some t =>
+          some (joinCommas (l ++ [[Tok.op "repeat", .ident "auto", .comma] ++ joinCommas i ++ [.close]] ++ t))
+        | _, _, _ => none
+      | none => none
+  | none, none =>
+    match expandRepeats a, expandRepeats b with
+    | some xs, some ys =>
+      match repeated xs ys with
+      | some (xs, ys) => (zipItems f (fun _ => none) xs ys).map joinCommas
+      | none => none
+    | _, _ => none
+  | _, _ => none
+
 /-- `offset-rotate` as whether it follows the path and its angle in degrees. -/
 def offsetRotateOf (v : List Tok) : Option (Bool × Int) :=
   match v with
@@ -1778,13 +1823,7 @@ def lerpKind (k : Kind) (p : Int) (a b : Value) : Option Value :=
       if ha && hb then (lerpList p (clampShapeRadii ia) (clampShapeRadii ib)).map fun r =>
         ((items (clampShapeRadii r)).map insetText).flatten
       else (lerpList p (expandPaths a) (expandPaths b)).map fun r => collapsePaths (clampShapeRadii r)
-  | .gapList =>
-    match expandRepeats a, expandRepeats b with
-    | some xs, some ys =>
-      match repeated xs ys with
-      | some (xs, ys) => (zipItems (lerpList p) (fun _ => none) xs ys).map fun r => joinCommas (r.map fun it => it.map clampTok0)
-      | none => none
-    | _, _ => none
+  | .gapList => (combineGap (lerpList p) a b).map fun r => r.map clampTok0
   | .radius =>
     let pair := fun (v : List Tok) => match v with
       | [x] => [x, x]
@@ -1933,13 +1972,7 @@ def add (k : Kind) (underlying value : Value) : Value :=
     let (ib, hb) := insetForm value
     if ha && hb then ((addList ia ib).map fun r => ((items r).map insetText).flatten).getD value
     else ((addList (expandPaths underlying) (expandPaths value)).map collapsePaths).getD value
-  | .gapList =>
-    match expandRepeats underlying, expandRepeats value with
-    | some xs, some ys =>
-      match repeated xs ys with
-      | some (xs, ys) => ((zipItems addList (fun _ => none) xs ys).map joinCommas).getD value
-      | none => value
-    | _, _ => value
+  | .gapList => (combineGap addList underlying value).getD value
   | .radius =>
     let pair := fun (v : List Tok) => match v with
       | [x] => [x, x]
@@ -2376,6 +2409,17 @@ private def corner2 (a b : String) (p : Int) : String :=
 #guard [-300000000, half, 800000000, 1100000000].map (corner2 "superellipse(3)" "superellipse(-2)") ==
   ["square", "superellipse(0.16)", "superellipse(-0.9)", "superellipse(-2.99)"]
 #guard corner2 "round" "round" half == "round" && corner2 "superellipse(infinity)" "superellipse(-infinity)" half == "bevel"
+-- gap rule lists with an auto repeat (css/css-gaps/animation/rule-width-interpolation-repeaters.html)
+#guard at_ .gapList "repeat(auto, 20px, 20px)" "repeat(auto, 30px, 30px)" (-300000000) == "repeat(auto, 17px, 17px)"
+#guard at_ .gapList "repeat(auto, 20px)" "repeat(auto, 30px, 30px)" 300000000 == "repeat(auto, 23px, 23px)"
+#guard at_ .gapList "repeat(2, 20px), repeat(auto, 20px), 20px" "30px, 30px, repeat(auto, 30px), 30px" half ==
+  "25px, 25px, repeat(auto, 25px), 25px"
+-- as many items before the auto repeat in both, or the values do not combine
+#guard at_ .gapList "20px, repeat(auto, 20px)" "30px, 30px, repeat(auto, 30px)" 300000000 == "20px, repeat(auto, 20px)"
+#guard at_ .gapList "20px, repeat(auto, 20px)" "30px, repeat(auto, 30px), 30px" 600000000 == "30px, repeat(auto, 30px), 30px"
+#guard at_ .gapList "repeat(1, 20px)" "repeat(2, 30px, 30px)" 300000000 == "23px, 23px, 23px, 23px"
+#guard at_ .gapList "repeat(auto, rgb(0, 0, 0), rgb(0, 0, 0))" "repeat(auto, rgb(0, 0, 255), rgb(255, 0, 0))" 0 ==
+  "repeat(auto, rgb(0, 0, 0), rgb(0, 0, 0))"
 -- drop-shadow: the blur is not below 0; a colour left out is currentcolor
 -- (css/filter-effects/animation/filter-interpolation-004.html)
 #guard at_ .filterList "drop-shadow(rgb(0, 0, 255) 0px 0px)" "drop-shadow(rgb(0, 128, 0) 20px 10px 30px)" (-one) ==
