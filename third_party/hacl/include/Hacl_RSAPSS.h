@@ -23,8 +23,8 @@
  */
 
 
-#ifndef __Hacl_RSAPSS_H
-#define __Hacl_RSAPSS_H
+#ifndef Hacl_RSAPSS_H
+#define Hacl_RSAPSS_H
 
 #if defined(__cplusplus)
 extern "C" {
@@ -36,8 +36,6 @@ extern "C" {
 #include "krml/internal/target.h"
 
 #include "Hacl_Streaming_Types.h"
-#include "Hacl_Krmllib.h"
-#include "Hacl_Hash_SHA2.h"
 
 /**
 Sign a message `msg` and write the signature to `sgnt`.
@@ -225,5 +223,5 @@ Hacl_RSAPSS_mgf_hash(
 }
 #endif
 
-#define __Hacl_RSAPSS_H_DEFINED
-#endif
+#define Hacl_RSAPSS_H_DEFINED
+#endif /* Hacl_RSAPSS_H */

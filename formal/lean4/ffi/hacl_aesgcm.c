@@ -1,8 +1,8 @@
 /* hacl_aesgcm.c — Lean 4 <-> C binding for AES-128-GCM and AES-256-GCM
  * through HACL*'s EverCrypt_AEAD over the Vale verified x86-64 assembly
  * (third_party/hacl/src/EverCrypt_AEAD.c, third_party/hacl/vale/src/
- * aesgcm-x86_64-{linux,darwin}.S), cryspen/hacl-packages commit
- * 05c3d8fb321ed65e3db3a6a8b853019e86fb40a2, Apache-2.0 — see
+ * aesgcm-x86_64-{linux,darwin}.S), hacl-star/hacl-star commit
+ * f557259007db9933442dde10aa995c1b00bd3446, Apache-2.0 — see
  * third_party/hacl/PROVENANCE.md. Realises the `@[extern]` opaques of
  * L4Factoidal/Crypto/AesGcmNative.lean.
  * Issue: https://github.com/danbri/factoidal/issues/677.

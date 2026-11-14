@@ -35,8 +35,8 @@ What is trusted, and by whom:
     `Hacl_P256_ecdsa_verif_p256_sha2`, with `Hacl_Hash_SHA2.c` for the
     digest), extracted by KaRaMeL from F*/Low* code proved memory-safe
     and functionally correct against the specification by Project
-    Everest. Vendored unmodified from cryspen/hacl-packages commit
-    05c3d8fb321ed65e3db3a6a8b853019e86fb40a2 (2024-09-30), Apache-2.0 —
+    Everest. Vendored unmodified from hacl-star/hacl-star commit
+    f557259007db9933442dde10aa995c1b00bd3446 (2026-10-29), Apache-2.0 —
     `third_party/hacl/PROVENANCE.md`.
   * `formal/lean4/ffi/hacl_p256.c`: two length checks and one pointer
     offset, containing no arithmetic.

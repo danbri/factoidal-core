@@ -3269,8 +3269,8 @@ in that module's header; in short: Lean knows their types and nothing
 about their values; no theorem depends on them (`#print axioms` on
 every theorem of the library is unchanged: propext, Classical.choice,
 Quot.sound); what is trusted is HACL\*'s F\*/Low\*-verified Ed25519
-(vendored unmodified, Apache-2.0, cryspen/hacl-packages
-`05c3d8fb321ed65e3db3a6a8b853019e86fb40a2`), the 60-line
+(vendored unmodified, Apache-2.0, hacl-star/hacl-star
+`f557259007db9933442dde10aa995c1b00bd3446`), the 60-line
 length-checking shim, and Lean's FFI calling convention; what is
 measured is RFC 8032 §7.1 through the binding at run time. `VC.Multibase.fst`,
 `DID.Key.fst`: zero `assume val`s, confirmed by grep. No `sorry`, no

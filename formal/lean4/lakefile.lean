@@ -138,6 +138,12 @@ target Hacl_Hash_Blake2s.o pkg : FilePath :=
 target Hacl_Hash_Blake2b.o pkg : FilePath :=
   buildHaclO pkg "Hacl_Hash_Blake2b" (haclDir pkg / "src" / "Hacl_Hash_Blake2b.c")
 
+/-- LINK CLOSURE of `Hacl_HMAC.c`: since the hacl-star f557259007 re-pin that unit
+also covers HMAC-MD5 and HMAC-SHA-3 (`Hacl_Hash_SHA3.c` is above). No Lean code
+calls MD5. -/
+target Hacl_Hash_MD5.o pkg : FilePath :=
+  buildHaclO pkg "Hacl_Hash_MD5" (haclDir pkg / "src" / "Hacl_Hash_MD5.c")
+
 target Lib_Memzero0.o pkg : FilePath :=
   buildHaclO pkg "Lib_Memzero0" (haclDir pkg / "src" / "Lib_Memzero0.c")
 
@@ -220,6 +226,7 @@ extern_lib libl4hacl pkg := do
   let sha1 ← Hacl_Hash_SHA1.o.fetch
   let blake2s ← Hacl_Hash_Blake2s.o.fetch
   let blake2b ← Hacl_Hash_Blake2b.o.fetch
+  let md5 ← Hacl_Hash_MD5.o.fetch
   let memzero ← Lib_Memzero0.o.fetch
   let hpke ← Hacl_HPKE_Curve51_CP32_SHA256.o.fetch
   let aesShim ← hacl_aesgcm_shim.o.fetch
@@ -232,7 +239,7 @@ extern_lib libl4hacl pkg := do
   buildStaticLib (pkg.staticLibDir / name)
     (#[shim, ed, curve, sha2, p256Shim, rsaShim, p256, bn64, bn,
       cpShim, kdfShim, hpkeShim, webShim, rsapss, sha3,
-      aead, chacha, poly, hkdf, hmac, sha1, blake2s, blake2b, memzero, hpke,
+      aead, chacha, poly, hkdf, hmac, sha1, blake2s, blake2b, md5, memzero, hpke,
       aesShim] ++ vale)
 
 /-- Build the deliberately small POSIX `pread` host adapter used only by the

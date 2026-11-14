@@ -23,8 +23,8 @@
  */
 
 
-#ifndef __Hacl_Ed25519_H
-#define __Hacl_Ed25519_H
+#ifndef Hacl_Ed25519_H
+#define Hacl_Ed25519_H
 
 #if defined(__cplusplus)
 extern "C" {
@@ -34,10 +34,6 @@ extern "C" {
 #include "krml/internal/types.h"
 #include "krml/lowstar_endianness.h"
 #include "krml/internal/target.h"
-
-#include "Hacl_Streaming_Types.h"
-#include "Hacl_Krmllib.h"
-#include "Hacl_Hash_SHA2.h"
 
 /********************************************************************************
   Verified C library for EdDSA signing and verification on the edwards25519 curve.
@@ -115,5 +111,5 @@ Hacl_Ed25519_verify(uint8_t *public_key, uint32_t msg_len, uint8_t *msg, uint8_t
 }
 #endif
 
-#define __Hacl_Ed25519_H_DEFINED
-#endif
+#define Hacl_Ed25519_H_DEFINED
+#endif /* Hacl_Ed25519_H */

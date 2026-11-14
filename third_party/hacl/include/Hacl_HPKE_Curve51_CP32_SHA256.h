@@ -23,8 +23,8 @@
  */
 
 
-#ifndef __Hacl_HPKE_Curve51_CP32_SHA256_H
-#define __Hacl_HPKE_Curve51_CP32_SHA256_H
+#ifndef Hacl_HPKE_Curve51_CP32_SHA256_H
+#define Hacl_HPKE_Curve51_CP32_SHA256_H
 
 #if defined(__cplusplus)
 extern "C" {
@@ -36,9 +36,6 @@ extern "C" {
 #include "krml/internal/target.h"
 
 #include "Hacl_HPKE_Interface_Hacl_Impl_HPKE_Hacl_Meta_HPKE.h"
-#include "Hacl_HKDF.h"
-#include "Hacl_Curve25519_51.h"
-#include "Hacl_AEAD_Chacha20Poly1305.h"
 
 uint32_t
 Hacl_HPKE_Curve51_CP32_SHA256_setupBaseS(
@@ -90,5 +87,5 @@ Hacl_HPKE_Curve51_CP32_SHA256_openBase(
 }
 #endif
 
-#define __Hacl_HPKE_Curve51_CP32_SHA256_H_DEFINED
-#endif
+#define Hacl_HPKE_Curve51_CP32_SHA256_H_DEFINED
+#endif /* Hacl_HPKE_Curve51_CP32_SHA256_H */

@@ -23,8 +23,8 @@
  */
 
 
-#ifndef __Hacl_MAC_Poly1305_H
-#define __Hacl_MAC_Poly1305_H
+#ifndef Hacl_MAC_Poly1305_H
+#define Hacl_MAC_Poly1305_H
 
 #if defined(__cplusplus)
 extern "C" {
@@ -36,16 +36,8 @@ extern "C" {
 #include "krml/internal/target.h"
 
 #include "Hacl_Streaming_Types.h"
-#include "Hacl_Krmllib.h"
 
-typedef struct Hacl_MAC_Poly1305_state_t_s
-{
-  uint64_t *block_state;
-  uint8_t *buf;
-  uint64_t total_len;
-  uint8_t *p_key;
-}
-Hacl_MAC_Poly1305_state_t;
+typedef struct Hacl_MAC_Poly1305_state_t_s Hacl_MAC_Poly1305_state_t;
 
 Hacl_MAC_Poly1305_state_t *Hacl_MAC_Poly1305_malloc(uint8_t *key);
 
@@ -67,5 +59,5 @@ void Hacl_MAC_Poly1305_mac(uint8_t *output, uint8_t *input, uint32_t input_len, 
 }
 #endif
 
-#define __Hacl_MAC_Poly1305_H_DEFINED
-#endif
+#define Hacl_MAC_Poly1305_H_DEFINED
+#endif /* Hacl_MAC_Poly1305_H */

@@ -1,8 +1,8 @@
 /* Copyright (c) INRIA and Microsoft Corporation. All rights reserved.
-   Licensed under the Apache 2.0 License. */
+   Licensed under the Apache 2.0 and MIT Licenses. */
 
-#ifndef __LOWSTAR_ENDIANNESS_H
-#define __LOWSTAR_ENDIANNESS_H
+#ifndef KRML_HEADER_LOWSTAR_ENDIANNESS_H
+#define KRML_HEADER_LOWSTAR_ENDIANNESS_H
 
 #include <string.h>
 #include <inttypes.h>
@@ -12,7 +12,7 @@
 /******************************************************************************/
 
 /* ... for Linux */
-#if defined(__linux__) || defined(__CYGWIN__) || defined (__USE_SYSTEM_ENDIAN_H__) || defined(__GLIBC__)
+#if defined(__linux__) || defined(__CYGWIN__) || defined (__USE_SYSTEM_ENDIAN_H__) || defined(__GLIBC__) || defined(ESP_PLATFORM)
 #  include <endian.h>
 
 /* ... for OSX */
@@ -228,4 +228,4 @@ inline static void store64(uint8_t *b, uint64_t i) {
 #define load128_be0 load128_be
 #define store128_be0 store128_be
 
-#endif
+#endif /* KRML_HEADER_LOWSTAR_ENDIANNESS_H */

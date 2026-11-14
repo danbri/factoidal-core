@@ -39,8 +39,8 @@ What is trusted, and by whom:
     internal SHA-512), extracted by KaRaMeL from F*/Low* code proved
     memory-safe, functionally correct against the RFC specification, and
     secret-independent by Project Everest. Vendored unmodified from
-    cryspen/hacl-packages commit 05c3d8fb321ed65e3db3a6a8b853019e86fb40a2
-    (2024-09-30), Apache-2.0 — `third_party/hacl/PROVENANCE.md`.
+    hacl-star/hacl-star commit f557259007db9933442dde10aa995c1b00bd3446
+    (2026-10-29), Apache-2.0 — `third_party/hacl/PROVENANCE.md`.
   * `formal/lean4/ffi/hacl_ed25519.c`, 60 lines of length checks and
     `lean_sarray` plumbing, written here, reviewable by eye, containing
     no arithmetic.

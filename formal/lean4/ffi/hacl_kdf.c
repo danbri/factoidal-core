@@ -1,7 +1,7 @@
 /* hacl_kdf.c — Lean 4 <-> C binding for the vendored HACL* HMAC-SHA-256
  * (RFC 2104) and HKDF-SHA-256 (RFC 5869), and for X25519 (RFC 7748).
- * third_party/hacl/, Apache-2.0, hacl-packages commit
- * 05c3d8fb321ed65e3db3a6a8b853019e86fb40a2 — see
+ * third_party/hacl/, Apache-2.0, hacl-star commit
+ * f557259007db9933442dde10aa995c1b00bd3446 — see
  * third_party/hacl/PROVENANCE.md.  Realises the `@[extern]` opaques of
  * L4Factoidal/Crypto/Hkdf.lean and L4Factoidal/Crypto/X25519.lean.
  *

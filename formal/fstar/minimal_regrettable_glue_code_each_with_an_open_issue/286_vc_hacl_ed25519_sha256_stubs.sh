@@ -5,7 +5,7 @@
 # Crypto sourcing policy: skills/crypto-policy/SKILL.md — "Dont roll our own
 # crypto!", "pursue HACL*".  Routes the four crypto assume-vals of
 # VC.DataIntegrity.fst (eddsa-rdfc-2022 pipeline) to the vendored, F*/Low*-
-# verified HACL* extracted C (third_party/hacl/, commit 05c3d8fb, Apache-2.0),
+# verified HACL* extracted C (third_party/hacl/, commit f557259007, Apache-2.0),
 # via the hand-written realiser ocaml-output/fstar_hacl_crypto.ml + the CAMLprim
 # FFI experimental_ocaml_glue/hacl_stubs.c.
 #

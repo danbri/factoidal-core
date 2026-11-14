@@ -85,7 +85,7 @@ operations, the RSA Laboratories `oaep-vect.txt` and Wycheproof vectors).
 `rsaPrivateOp` is `opaque`: Lean knows its type and nothing about its value.
 What is trusted: HACL*'s bignum arithmetic
 (`Hacl_Bignum64_mod_exp_consttime`, `third_party/hacl/`, cryspen/
-hacl-packages commit 05c3d8fb321ed65e3db3a6a8b853019e86fb40a2, Apache-2.0)
+hacl-star commit f557259007db9933442dde10aa995c1b00bd3446, Apache-2.0)
 and the shim `ffi/hacl_rsa.c` (length checks, one right-alignment copy,
 the zeroisation of its copies of `d`). Not checked: that `(n, d)` is a real
 RSA key pair; that the caller's seed is random (the seed is a parameter;

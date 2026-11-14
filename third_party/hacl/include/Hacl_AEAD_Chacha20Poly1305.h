@@ -23,8 +23,8 @@
  */
 
 
-#ifndef __Hacl_AEAD_Chacha20Poly1305_H
-#define __Hacl_AEAD_Chacha20Poly1305_H
+#ifndef Hacl_AEAD_Chacha20Poly1305_H
+#define Hacl_AEAD_Chacha20Poly1305_H
 
 #if defined(__cplusplus)
 extern "C" {
@@ -34,8 +34,6 @@ extern "C" {
 #include "krml/internal/types.h"
 #include "krml/lowstar_endianness.h"
 #include "krml/internal/target.h"
-
-#include "Hacl_Chacha20.h"
 
 /**
 Encrypt a message `input` with key `key`.
@@ -100,5 +98,5 @@ Hacl_AEAD_Chacha20Poly1305_decrypt(
 }
 #endif
 
-#define __Hacl_AEAD_Chacha20Poly1305_H_DEFINED
-#endif
+#define Hacl_AEAD_Chacha20Poly1305_H_DEFINED
+#endif /* Hacl_AEAD_Chacha20Poly1305_H */

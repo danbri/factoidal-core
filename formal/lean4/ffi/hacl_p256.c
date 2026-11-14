@@ -1,6 +1,6 @@
 /* hacl_p256.c — Lean 4 <-> C binding for the vendored HACL* NIST P-256
  * ECDSA verification primitive (third_party/hacl/, Apache-2.0,
- * hacl-packages commit 05c3d8fb321ed65e3db3a6a8b853019e86fb40a2 — see
+ * hacl-star commit f557259007db9933442dde10aa995c1b00bd3446 — see
  * third_party/hacl/PROVENANCE.md).  Realises the `@[extern]` opaques of
  * L4Factoidal/Crypto/P256Native.lean.
  *

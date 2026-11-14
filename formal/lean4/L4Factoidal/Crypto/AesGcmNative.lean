@@ -18,7 +18,7 @@ x86-64 and a refusal on other CPU”". So:
 
   * x86-64 Linux and macOS executables link `EverCrypt_AEAD.c` and the Vale
     `aesgcm-x86_64-{linux,darwin}.S` of the pinned HACL* distribution
-    (cryspen/hacl-packages 05c3d8fb321ed65e3db3a6a8b853019e86fb40a2,
+    (hacl-star/hacl-star f557259007db9933442dde10aa995c1b00bd3446,
     `third_party/hacl/PROVENANCE.md`). At run time the CPU must have AES-NI,
     PCLMULQDQ, AVX, SSE and MOVBE (the five features EverCrypt tests); a CPU
     without them refuses.
