@@ -477,6 +477,9 @@ def Calc.simp (ctx : Option Ctx) : Nat → Calc → Calc
       | [.val v u, .inv (.val w u')] =>
         if u == u' && w != 0 then .val (n * v / w) "" else .prod ((if n == 1 then [] else [.val n ""]) ++ rest)
       | rest => .prod ((if n == 1 then [] else [.val n ""]) ++ rest)
+    | .fn "clamp" [.kw "none", x, .kw "none"] => Calc.simp ctx fuel x
+    | .fn "clamp" [.kw "none", x, hi] => Calc.simp ctx fuel (.fn "min" [x, hi])
+    | .fn "clamp" [lo, x, .kw "none"] => Calc.simp ctx fuel (.fn "max" [lo, x])
     | .fn name args =>
       let ys := args.map (Calc.simp ctx fuel)
       let strategy := match ys with
@@ -519,12 +522,14 @@ def Calc.css : Nat → Bool → Calc → String
         (acc.1 ++ piece, false)) ("", true)).1
       if nested then "(" ++ body ++ ")" else body
     | .prod xs =>
-      (xs.foldl (fun (acc : String × Bool) x =>
+      let body := (xs.foldl (fun (acc : String × Bool) x =>
         let first := acc.2
         let piece := match x with
           | .inv y => (if first then "1 / " else " / ") ++ Calc.css fuel true y
           | y => (if first then "" else " * ") ++ Calc.css fuel true y
         (acc.1 ++ piece, false)) ("", true)).1
+      -- a product inside a sum or a product is written in parentheses (§10.14)
+      if nested then "(" ++ body ++ ")" else body
     | .fn name args =>
       name ++ "(" ++ ", ".intercalate (args.map (Calc.css fuel false)) ++ ")"
 
@@ -680,6 +685,10 @@ private def lenPos : NumReq := { kind := .length, lo := some 0 }
 #guard spec { kind := .number } "log(8, 2)" == some "calc(3)"
 #guard spec { kind := .number } "exp(0)" == some "calc(1)"
 #guard spec { kind := .number } "calc(pi)" == some "calc(3.14159)"
+#guard spec len "clamp(none, 2px, 3em)" == some "min(2px, 3em)"
+#guard spec len "clamp(none, 33px, 30px)" == some "calc(30px)"
+#guard spec len "clamp(33px, 30px, none)" == some "calc(33px)"
+#guard spec len "calc(100px + (50px * sign(2em - 10px)))" == some "calc(100px + (50px * sign(2em - 10px)))"
 #guard spec { kind := .number } "calc(e)" == some "calc(2.71828)"
 #guard comp { kind := .length } "calc(1px * sin(30deg) * 2)" == some "1px"
 
