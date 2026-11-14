@@ -183,6 +183,88 @@ def parse (text : String) : Option Easing :=
 
 /-! ## Theorems -/
 
+/-- A square is not negative. -/
+theorem sq_nonneg (x : Int) : 0 ≤ x * x := by
+  rcases Int.le_total 0 x with h | h
+  · exact Int.mul_nonneg h h
+  · have n : 0 ≤ -x := by omega
+    have := Int.mul_nonneg n n
+    rwa [Int.neg_mul_neg] at this
+
+/-- The polynomial of `bezNum_mono` over any scale `S > 0`. The difference of the two
+sides is affine in `a` and in `b`, so `S²` times it is the sum over the four corners of
+the square [0, S]² of the corner's difference, each weighted by a product of distances to
+the opposite sides; each corner's difference is `S (t - s)` times a sum of squares or of
+products of non-negative numbers. -/
+theorem bez_mono (S a b s t : Int) (hS : 0 < S) (ha0 : 0 ≤ a) (ha1 : a ≤ S) (hb0 : 0 ≤ b) (hb1 : b ≤ S)
+    (hs : 0 ≤ s) (hst : s ≤ t) (ht : t ≤ S) :
+    3 * (S - s) * (S - s) * s * a + 3 * (S - s) * s * s * b + s * s * s * S ≤
+    3 * (S - t) * (S - t) * t * a + 3 * (S - t) * t * t * b + t * t * t * S := by
+  have d : 0 ≤ t - s := by omega
+  have u : 0 ≤ S - t := by omega
+  have v : 0 ≤ S - s := by omega
+  have t0 : 0 ≤ t := by omega
+  have a' : 0 ≤ S - a := by omega
+  have b' : 0 ≤ S - b := by omega
+  -- the corners (a, b) = (0, 0), (S, S), (S, 0), (0, S), each without its factor S
+  have c00 : 0 ≤ (t - s) * (t * t + t * s + s * s) :=
+    Int.mul_nonneg d (by
+      have h1 := Int.mul_nonneg t0 t0
+      have h2 := Int.mul_nonneg t0 hs
+      have h3 := Int.mul_nonneg hs hs
+      omega)
+  have c11 : 0 ≤ (t - s) * ((S - t) * (S - t) + (S - t) * (S - s) + (S - s) * (S - s)) :=
+    Int.mul_nonneg d (by
+      have h1 := Int.mul_nonneg u u
+      have h2 := Int.mul_nonneg u v
+      have h3 := Int.mul_nonneg v v
+      omega)
+  have c10 : 0 ≤ (t - s) * (3 * ((t + s - S) * (t + s - S)) + (t - s) * (t - s)) :=
+    Int.mul_nonneg d (by
+      have h1 := sq_nonneg (t + s - S)
+      have h2 := Int.mul_nonneg d d
+      omega)
+  have c01 : 0 ≤ (t - s) * (3 * ((S - t) * (t + s)) + (t - s) * (t + 2 * s)) :=
+    Int.mul_nonneg d (by
+      have h1 := Int.mul_nonneg u (by omega : 0 ≤ t + s)
+      have h2 := Int.mul_nonneg d (by omega : 0 ≤ t + 2 * s)
+      omega)
+  have w11 := Int.mul_nonneg (Int.mul_nonneg ha0 hb0) c11
+  have w10 := Int.mul_nonneg (Int.mul_nonneg ha0 b') c10
+  have w01 := Int.mul_nonneg (Int.mul_nonneg a' hb0) c01
+  have w00 := Int.mul_nonneg (Int.mul_nonneg a' b') c00
+  -- S·S times the difference of the two sides is S times the weighted sum of the corners
+  have key : S * S * ((3 * (S - t) * (S - t) * t * a + 3 * (S - t) * t * t * b + t * t * t * S) -
+        (3 * (S - s) * (S - s) * s * a + 3 * (S - s) * s * s * b + s * s * s * S)) =
+      S * (a * b * ((t - s) * ((S - t) * (S - t) + (S - t) * (S - s) + (S - s) * (S - s))) +
+           a * (S - b) * ((t - s) * (3 * ((t + s - S) * (t + s - S)) + (t - s) * (t - s))) +
+           (S - a) * b * ((t - s) * (3 * ((S - t) * (t + s)) + (t - s) * (t + 2 * s))) +
+           (S - a) * (S - b) * ((t - s) * (t * t + t * s + s * s))) := by
+    grind
+  have sum : 0 ≤ S * (a * b * ((t - s) * ((S - t) * (S - t) + (S - t) * (S - s) + (S - s) * (S - s))) +
+           a * (S - b) * ((t - s) * (3 * ((t + s - S) * (t + s - S)) + (t - s) * (t - s))) +
+           (S - a) * b * ((t - s) * (3 * ((S - t) * (t + s)) + (t - s) * (t + 2 * s))) +
+           (S - a) * (S - b) * ((t - s) * (t * t + t * s + s * s))) :=
+    Int.mul_nonneg (Int.le_of_lt hS) (by omega)
+  rw [← key] at sum
+  have pos : 0 < S * S := Int.mul_pos hS hS
+  have diff : 0 ≤ (3 * (S - t) * (S - t) * t * a + 3 * (S - t) * t * t * b + t * t * t * S) -
+        (3 * (S - s) * (S - s) * s * a + 3 * (S - s) * s * s * b + s * s * s * S) := by
+    first
+      | exact Int.nonneg_of_mul_nonneg_right sum pos
+      | exact Int.le_of_mul_le_mul_left (by simpa using sum) pos
+  omega
+
+/-- Kind: monotonicity. Says: the x of a cubic Bézier whose control values are in [0, 1]
+does not decrease as the parameter goes from 0 to 1 (exactly, as numerators over 10²⁷):
+what the bisection of `solveT` relies on, and why CSS Easing 1 §3 restricts x1 and x2 to
+[0, 1]. Does not say: that `solveT` finds the nearest parameter (tested), nor that the
+easing's output is monotone (it is not when y1 or y2 is outside [0, 1]). -/
+theorem bezNum_mono (a b s t : Int) (ha0 : 0 ≤ a) (ha1 : a ≤ scale) (hb0 : 0 ≤ b) (hb1 : b ≤ scale)
+    (hs : 0 ≤ s) (hst : s ≤ t) (ht : t ≤ scale) : bezNum a b s ≤ bezNum a b t := by
+  have hS : (0 : Int) < scale := by decide
+  exact bez_mono scale a b s t hS ha0 ha1 hb0 hb1 hs hst ht
+
 /-- Kind: identity. Says: `linear` gives its input, whatever the before flag. Does not
 say: anything about the other functions. -/
 theorem eval_linear (p : Int) (before : Bool) : eval .linear p before = p := rfl
