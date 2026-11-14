@@ -192,3 +192,18 @@ Open:
   blocks, so its output is larger than its input.
 - Regular expression early errors (361 Test262 tests) wait for a validator that tells an
   invalid pattern from one `JS.Re` cannot compile yet.
+
+Measured (branch checks against the full run of d799500c7):
+
+| Check | Directory | Before | After |
+|---|---|---:|---:|
+| 43574504956 (730b228cf, merged 80b518bb7) | third_party/test262 (all) | 36,341 | 36,610 |
+| 43575824292 (edee47c79, merged e37ca8b6b) | streams | 52 | 2,788 |
+| | compression | 8 | 484 |
+| | encoding/streams | 0 | 216 |
+| | fetch/api (119 names) | 501 | 600 |
+
+Performance: a page that names no stream class makes none (lazy globals); the prelude's parse
+is done once when the realm snapshot is made. The Array iteration methods read one element at a
+time (one object lookup per element more than the copy they took before); not timed, as no
+engine could be built locally tonight.
