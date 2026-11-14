@@ -2075,15 +2075,28 @@ def callBody : Nat → FunDef → Nat → Value → Value → Value → Value �
         bindParams n ctx fd.params args 0
         if let some rp := fd.rest then
           bindPat n ctx rp (← newArray (args.extract fd.params.length args.size)) (.declare fenv true)
-      if paramExprs && !fd.arrow && !fd.async then
-        -- while the parameters' expressions run, direct eval there sees `paramEnv`
-        let outer := (← get).paramEnv
-        modify fun h => { h with paramEnv := fenv }
-        tryCatch bindAll fun e => do
+      let bindChecked : M Unit :=
+        if paramExprs && !fd.arrow then do
+          -- while the parameters' expressions run, direct eval there sees `paramEnv`
+          let outer := (← get).paramEnv
+          modify fun h => { h with paramEnv := fenv }
+          tryCatch bindAll fun e => do
+            modify fun h => { h with paramEnv := outer }
+            throw e
           modify fun h => { h with paramEnv := outer }
-          throw e
-        modify fun h => { h with paramEnv := outer }
-      else bindAll
+        else bindAll
+      if fd.async && !fd.gen then
+        -- EvaluateAsyncFunctionBody (§15.8.4): an error while the parameters are bound rejects
+        -- the function's promise instead of throwing at the call
+        let r ← tryCatch (do bindChecked; pure none) fun e => match e with
+          | .throw v => pure (some v)
+          | a => throw a
+        if let some v := r then
+          let pid ← newPromise
+          rejectPromise n pid v
+          modify fun h => { h with depth := h.depth - 1 }
+          return .obj pid
+      else bindChecked
       for v in fd.vars do
         if !((← getBinding fenv v).isSome) then declare fenv v { v := .undef }
     if fd.kind == .ctor false then initFields n ctx fnObj thisV
