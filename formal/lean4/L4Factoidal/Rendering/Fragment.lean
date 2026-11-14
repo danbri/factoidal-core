@@ -221,7 +221,7 @@ theorem percentHeights_get (dom : Dom) (styles : Array Computed) (id : Nat) (hid
 /-- Kind: frame. Says: the pass changes nothing of a style but its `height`: two styles
 that differ at most there before it differ at most there after it. Does not say: what
 the new height is (a `Float`: tested). -/
-theorem percentHeight_rest (dom : Dom) (styles : Array Computed) (id : Nat) (h : Length) :
+theorem percentHeight_rest (dom : Dom) (styles : Array Computed) (id : Nat) (h : CSS.Length) :
     {percentHeight dom styles id with height := h} = {styles[id]! with height := h} := by
   unfold percentHeight
   split <;> rfl
