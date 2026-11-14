@@ -129,6 +129,9 @@ inductive NativeX where
   | dynFunction (kind : Nat)
   /-- `Object.prototype.__proto__` (Annex B.2.2.1): the getter (false) and the setter (true). -/
   | protoAccessor (set : Bool)
+  /-- `Promise.withResolvers` (§27.2.4.8), and the executor NewPromiseCapability passes to the
+  constructor (§27.2.1.5 GetCapabilitiesExecutor), bound to the record it fills. -/
+  | promiseWithResolvers | capabilityExecutor
   /-- The Streams Standard's decisions (`WHATWG.Streams`), for the page's stream classes: a
   host's `n.streams(op, ...)`. 0 a new queue-with-sizes; 1 `(q, value, size)`
   EnqueueValueWithSize (RangeError for a size that is not a finite, non-negative number);
