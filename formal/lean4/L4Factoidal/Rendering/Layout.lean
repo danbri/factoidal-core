@@ -783,8 +783,13 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
         pendingSpace := some (source,s)
         pendingK := k
     | .outOfFlow _ =>
-      -- No width and no break, and white space collapses across it.
-      line := line.push (cursorX,item)
+      -- No width and no break, and white space collapses across it: it stands after a
+      -- pending space, which the next word still places (once).
+      let gap ← if cursorX > 0 then match pendingSpace with
+        | some (_,s) => spaceWidth font s
+        | none => pure 0
+        else pure 0
+      line := line.push (cursorX+gap,item)
       lineIdx := lineIdx.push k
     | .bidiMark _ =>
       -- No width and no break: a space before it is placed first, to keep logical order.
