@@ -5,6 +5,7 @@ import SVGForgiving
 import Font
 import L4Factoidal.Rendering.Layout
 import L4Factoidal.Rendering.Links
+import L4Factoidal.HTML.ImageSource
 
 /-! HTML source → existing Lean DOM → computed CSS → layout → common scene.
 The bitmap font is an explicit temporary profile, not font-backed shaping. -/
@@ -221,15 +222,66 @@ def embedding (dom : DOM.Dom) (id : Nat) (style : Rendering.CSS.Computed) (width
   let scene ← NativeSVG.parseRoot root width.toUInt32.toNat height.toUInt32.toNat inherited
   return placeSVG scene id style width height
 
-/-- HTML §4.8.4.3: the `src` of each HTML `img`, by node, as a key of the image store
+/-! ### The image an `img` shows (HTML §4.8.4.3, `srcset`, `sizes`, `picture`)
+
+Before 2026-11-14 an `img` was its `src`: one with `srcset` alone, or whose `picture` has
+the sources, showed its alt text. The source is now chosen by `HTML.ImageSource`
+(`sourceSet`, `selectFrom`: the selection `img.currentSrc` answers with), in one nominal
+environment, so that the list a host fetches (`inspect`) and every layout name the same
+image whatever the window's size. Candidates in a format the engine does not decode are
+passed over, and the `src` stands when nothing else is left. -/
+
+/-- A URL whose path names an image format the engine has no decoder for: WebP, AVIF, JPEG
+XL, HEIF. -/
+def undecodablePath (url : String) : Bool :=
+  let path := ((((url.splitOn "#").headD "").splitOn "?").headD "").toLower
+  [".webp", ".avif", ".jxl", ".heic", ".heif"].any fun ending => path.endsWith ending
+
+/-- The environment an image source is chosen in: one device pixel to the CSS pixel, a
+viewport of 1280 by 800. -/
+def sourceEnv : HTML.ImageSource.Env := {viewportW := 1280, viewportH := 800, dpr := 1}
+
+/-- An `img` with no `srcset` that is no child of a `picture`: nothing is chosen. -/
+def plainImage (dom : DOM.Dom) (id : Nat) : Bool :=
+  let n := dom.get id
+  !Rendering.CSS.hasAttribute n "srcset" &&
+    !(n.parent.any fun p => DOM.Dom.isHtmlElement (dom.get p) "picture")
+
+/-- The `src` of an `img`, as written; none when it has none. -/
+def plainSource (dom : DOM.Dom) (id : Nat) : Option String :=
+  let src := (Rendering.CSS.attrValue (dom.get id) "src").trimAscii.toString
+  if src.isEmpty then none else some src
+
+/-- The source chosen among the candidates of the element's source set that the engine can
+decode; the `src` when there is none. -/
+def chosenSource (dom : DOM.Dom) (id : Nat) : Option String :=
+  let (set,size) := HTML.ImageSource.sourceSet dom id sourceEnv
+  match HTML.ImageSource.selectFrom sourceEnv.dpr size (set.filter fun s => !undecodablePath s.url) with
+  | some (source,_) =>
+    let url := source.url.trimAscii.toString
+    if url.isEmpty then plainSource dom id else some url
+  | none => plainSource dom id
+
+/-- The URL, as written, of the image an `img` shows. -/
+def imageSource (dom : DOM.Dom) (id : Nat) : Option String :=
+  if plainImage dom id then plainSource dom id else chosenSource dom id
+
+/-- Kind: property (zero cost, and no change). Says: an `img` with no `srcset` outside a
+`picture` shows its `src`, as before: no source set is made for it. Does not say: which
+candidate another `img` shows (that is `HTML.ImageSource.selectFrom`, with
+`selectFrom_mem`: one of the element's own sources). -/
+theorem imageSource_plain (dom : DOM.Dom) (id : Nat) (h : plainImage dom id = true) :
+    imageSource dom id = plainSource dom id := by
+  simp [imageSource, h]
+
+/-- The image of each HTML `img`, by node, as a key of the image store
 (`NativeSVG.imageKey`: a `data:` URI as it stands, another URL resolved). -/
 def htmlImageKeys (dom : DOM.Dom) (base : Option String) : List (Nat × String) := Id.run do
   let mut out : Array (Nat × String) := #[]
   for id in [0:dom.size] do
     let n := dom.get id
     if DOM.Dom.isHtmlElement n "img" then
-      let src := (Rendering.CSS.attrValue n "src").trimAscii.toString
-      if !src.isEmpty then out := out.push (id,NativeSVG.imageKey base src)
+      if let some src := imageSource dom id then out := out.push (id,NativeSVG.imageKey base src)
   return out.toList
 
 /-! ### An SVG document as the image of an `img` (2026-11-14)
