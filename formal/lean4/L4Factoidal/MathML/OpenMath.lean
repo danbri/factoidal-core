@@ -76,13 +76,16 @@ def bareSymbol : String → List Expr → Option (String × String)
 theorem bareSymbol_some {fn : String} {args : List Expr} {cd name : String}
     (h : bareSymbol fn args = some (cd, name)) :
     ∃ k, fn = "csymbol" ∧ args = [.sym k] ∧ symbolOf k = some (cd, name) := by
-  unfold bareSymbol at h
-  split at h
-  · rename_i k
-    by_cases hf : fn = "csymbol"
-    · exact ⟨k, hf, rfl, by simpa [hf] using h⟩
-    · simp [hf] at h
-  · simp at h
+  rcases args with _ | ⟨a, _ | ⟨b, t⟩⟩
+  · simp [bareSymbol] at h
+  · cases a with
+    | sym k =>
+        simp only [bareSymbol] at h
+        by_cases hf : fn = "csymbol"
+        · exact ⟨k, hf, rfl, by simpa [hf] using h⟩
+        · simp [hf] at h
+    | _ => simp [bareSymbol] at h
+  · simp [bareSymbol] at h
 
 mutual
 /-- A strict expression as an OpenMath object. On `rat`, `mat` and `vec` (not strict) it gives the
@@ -176,7 +179,7 @@ theorem ofOM_toOM : ∀ s, isStrict s = true → ofOM (toOM s) = some s := by
   cases e with
   | int n => simp [toOM, ofOM]
   | sym s => simp [toOM, ofOM]
-  | bool b => cases b <;> simp [toOM, ofOM, keyOf, symbolTable]
+  | bool b => cases b <;> simp [toOM, ofOM, keyOf_logic1_true, keyOf_logic1_false]
   | rat n d => simp [isStrict] at hs
   | mat rws => simp [isStrict] at hs
   | vec xs => simp [isStrict] at hs
@@ -223,13 +226,14 @@ def omXml : OMObj → String
   | .omstr s     => "<OMSTR>" ++ escapeXmlFull s ++ "</OMSTR>"
   | .omv name    => "<OMV name=\"" ++ escapeXmlFull name ++ "\"/>"
   | .oms cd name => "<OMS cd=\"" ++ escapeXmlFull cd ++ "\" name=\"" ++ escapeXmlFull name ++ "\"/>"
-  | .oma h args  => "<OMA>" ++ omXml h ++ omXmlList args ++ "</OMA>"
+  | .oma h args  => omXmlList args ("<OMA>" ++ omXml h) ++ "</OMA>"
   | .ombind b vs body =>
-      "<OMBIND>" ++ omXml b ++ "<OMBVAR>" ++ omXmlList vs ++ "</OMBVAR>" ++ omXml body ++ "</OMBIND>"
-  | .omattr ps o => "<OMATTR><OMATP>" ++ omXmlList ps ++ "</OMATP>" ++ omXml o ++ "</OMATTR>"
-def omXmlList : List OMObj → String
-  | []      => ""
-  | o :: os => omXml o ++ omXmlList os
+      omXmlList vs ("<OMBIND>" ++ omXml b ++ "<OMBVAR>") ++ "</OMBVAR>" ++ omXml body ++ "</OMBIND>"
+  | .omattr ps o => omXmlList ps "<OMATTR><OMATP>" ++ "</OMATP>" ++ omXml o ++ "</OMATTR>"
+/-- The objects of a list, appended to `acc` in order (a loop over the list). -/
+def omXmlList : List OMObj → String → String
+  | [], acc      => acc
+  | o :: os, acc => omXmlList os (acc ++ omXml o)
 end
 
 /-- An `OMOBJ` document. -/
@@ -316,6 +320,13 @@ def parseOpenMath (src : String) : Option OMObj :=
 MathML 3 section 4.1.3: the strict subset uses `cn`, `ci`, `csymbol`, `cs`, `apply`, `bind`, `bvar`,
 `semantics`. Written from the OpenMath object, element for element. -/
 
+/-- The opening tag of an annotation keyed by `k` (MathML 3 section 4.2.8). -/
+def annotationOpen : OMObj → String
+  | .oms cd name =>
+      "<annotation-xml cd=\"" ++ escapeXmlFull cd ++ "\" name=\"" ++ escapeXmlFull name ++
+        "\" encoding=\"MathML-Content\">"
+  | _ => "<annotation-xml encoding=\"MathML-Content\">"
+
 mutual
 def strictXml : OMObj → String
   | .omi n       => "<cn type=\"integer\">" ++ toString n ++ "</cn>"
@@ -324,24 +335,23 @@ def strictXml : OMObj → String
   | .omstr s     => "<cs>" ++ escapeXmlFull s ++ "</cs>"
   | .omv name    => "<ci>" ++ escapeXmlFull name ++ "</ci>"
   | .oms cd name => "<csymbol cd=\"" ++ escapeXmlFull cd ++ "\">" ++ escapeXmlFull name ++ "</csymbol>"
-  | .oma h args  => "<apply>" ++ strictXml h ++ strictXmlList args ++ "</apply>"
+  | .oma h args  => strictXmlList args ("<apply>" ++ strictXml h) ++ "</apply>"
   | .ombind b vs body =>
-      "<bind>" ++ strictXml b ++ strictBvars vs ++ strictXml body ++ "</bind>"
-  | .omattr ps o => "<semantics>" ++ strictXml o ++ strictAnnotations ps ++ "</semantics>"
-def strictXmlList : List OMObj → String
-  | []      => ""
-  | o :: os => strictXml o ++ strictXmlList os
-def strictBvars : List OMObj → String
-  | []      => ""
-  | o :: os => "<bvar>" ++ strictXml o ++ "</bvar>" ++ strictBvars os
-def strictAnnotations : List OMObj → String
-  | k :: v :: rest =>
-      "<annotation-xml" ++
-        (match k with
-         | .oms cd name => " cd=\"" ++ escapeXmlFull cd ++ "\" name=\"" ++ escapeXmlFull name ++ "\""
-         | _            => "") ++
-        " encoding=\"MathML-Content\">" ++ strictXml v ++ "</annotation-xml>" ++ strictAnnotations rest
-  | _ => ""
+      strictBvars vs ("<bind>" ++ strictXml b) ++ strictXml body ++ "</bind>"
+  | .omattr ps o => strictAnnotations ps none ("<semantics>" ++ strictXml o) ++ "</semantics>"
+/-- The objects of a list, appended to `acc` in order (a loop over the list). -/
+def strictXmlList : List OMObj → String → String
+  | [], acc      => acc
+  | o :: os, acc => strictXmlList os (acc ++ strictXml o)
+def strictBvars : List OMObj → String → String
+  | [], acc      => acc
+  | o :: os, acc => strictBvars os (acc ++ "<bvar>" ++ strictXml o ++ "</bvar>")
+/-- Keys and values alternate; `key` holds a key waiting for its value. A key left over is dropped. -/
+def strictAnnotations : List OMObj → Option OMObj → String → String
+  | [], _, acc            => acc
+  | o :: os, none, acc    => strictAnnotations os (some o) acc
+  | o :: os, some k, acc  =>
+      strictAnnotations os none (acc ++ annotationOpen k ++ strictXml o ++ "</annotation-xml>")
 end
 
 /-- Strict Content MathML markup of an expression (of its strict form). -/

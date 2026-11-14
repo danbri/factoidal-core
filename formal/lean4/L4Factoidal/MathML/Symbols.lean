@@ -68,7 +68,8 @@ theorem keyOf_of_symbolOf {key cd name : String} (h : symbolOf key = some (cd, n
       have hk : e.1 = key := by simpa using List.find?_some hf
       have hm := List.mem_of_find?_eq_some hf
       have := List.all_eq_true.mp table_keyOf e hm
-      rw [← hk, ← h] at *
+      subst hk
+      rw [h] at this
       simpa using this
 
 /-- Theorem (round trip of the table, other direction). Says: the key of a symbol names that symbol.
@@ -84,12 +85,13 @@ theorem symbolOf_of_keyOf {key cd name : String} (h : keyOf cd name = some key) 
       simp only [Bool.and_eq_true, beq_iff_eq] at hp
       have hm := List.mem_of_find?_eq_some hf
       have := List.all_eq_true.mp table_symbolOf e hm
-      rw [h] at this
-      have h2 : e.2 = (cd, name) := by
-        rcases e with ⟨k, c, n⟩
-        simp_all
-      rw [← h2]
+      subst h
+      have h2 : e.2 = (cd, name) := Prod.ext hp.1 hp.2
+      rw [h2] at this
       simpa using this
+
+theorem keyOf_logic1_true : keyOf "logic1" "true" = none := by decide
+theorem keyOf_logic1_false : keyOf "logic1" "false" = none := by decide
 
 -- The truth values are symbols of `logic1` that `Expr` holds as `bool`, not as keys.
 #guard keyOf "logic1" "true" == none

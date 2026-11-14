@@ -7,7 +7,7 @@ of MathML Core elements, copied below as `coreElements`.
 
 `Present.pres` builds a string. A statement about "every element name in the output" needs the
 output as a tree, so `presTree` builds the same output as a tree of `PNode`, branch for branch, and
-the theorem is a structural induction over that tree. `serialize (presTree e) = pres e` is checked by
+the theorem is a structural induction over that tree. `serializeList (presTree e) "" = pres e` is checked by
 `#guard` on an expression for each branch of `pres`; it is not proved (see the design record
 `docs/designissues/2026-10-28-mathml-finish.md`).
 
@@ -45,10 +45,11 @@ end
 mutual
 def serialize : PNode → String
   | .text raw     => raw
-  | .elem name cs => "<" ++ name ++ ">" ++ serializeList cs ++ "</" ++ name ++ ">"
-def serializeList : List PNode → String
-  | []      => ""
-  | n :: ns => serialize n ++ serializeList ns
+  | .elem name cs => serializeList cs ("<" ++ name ++ ">") ++ "</" ++ name ++ ">"
+/-- The nodes of a list, appended to `acc` in order (a loop over the list). -/
+def serializeList : List PNode → String → String
+  | [], acc      => acc
+  | n :: ns, acc => serializeList ns (acc ++ serialize n)
 end
 
 theorem namesOkList_append (a b : List PNode) :
@@ -254,8 +255,8 @@ theorem presTree_core : ∀ e, namesOkList (presTree e) = true := by
       repeat' split
       all_goals first
         | exact hfb
-        | (simp only [List.mem_cons, forall_eq_or_imp, List.not_mem_nil] at ih
-           simp [namesOk, namesOkList, namesOkList_append, coreElements, namesOk_fencedT, ih,
+        | (try simp only [List.mem_cons, forall_eq_or_imp, List.not_mem_nil] at ih
+           simp_all [namesOk, namesOkList, namesOkList_append, coreElements, namesOk_fencedT,
              namesOk_presJoinT])
 
 /-- Theorem 3, on the document. Says: every element name in the tree of the whole `math` document
@@ -266,7 +267,7 @@ theorem presentationTree_core (e : Expr) : namesOk (presentationTree e) = true :
 
 /-! ## The tree against the string writer (tests) -/
 
-private def sameAsPres (e : Expr) : Bool := serializeList (presTree e) == pres e
+private def sameAsPres (e : Expr) : Bool := serializeList (presTree e) "" == pres e
 
 #guard sameAsPres (.int (-3))
 #guard sameAsPres (.rat 1 2)
@@ -300,7 +301,7 @@ private def sameAsPres (e : Expr) : Bool := serializeList (presTree e) == pres e
 #guard sameAsPres (.app "f&g" [.int 1, .sym "y", .app "h" []])
 #guard toPresentationMathML (.app "plus" [.int 1, .sym "x"])
   == "<math xmlns=\"http://www.w3.org/1998/Math/MathML\">" ++
-     serializeList (presTree (.app "plus" [.int 1, .sym "x"])) ++ "</math>"
+     serializeList (presTree (.app "plus" [.int 1, .sym "x"])) "" ++ "</math>"
 #guard namesOk (presentationTree (.app "root" [.int 3, .mat [[.int 1]]]))
 #guard !namesOk (.elem "mfenced" [])
 

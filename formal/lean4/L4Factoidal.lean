@@ -755,6 +755,10 @@ import L4Factoidal.Math.SigmoidTests
 import L4Factoidal.MathML.Present
 import L4Factoidal.MathML.Strict
 import L4Factoidal.MathML.StrictTests
+import L4Factoidal.MathML.Symbols
+import L4Factoidal.MathML.OpenMath
+import L4Factoidal.MathML.CoreVocabulary
+import L4Factoidal.MathML.OpenMathTests
 import L4Factoidal.MathML.FromJson
 import L4Factoidal.Math.ToanCases
 import L4Factoidal.XForms.Bind

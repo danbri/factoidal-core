@@ -29,7 +29,8 @@ there are none here.
 `strict-manifest.json` gives a Content MathML input and the Strict Content MathML that MathML 3
 section 4.6 (MathML 4 appendix F) says it becomes. A case passes when `toStrict` of the input is the
 expression the expected markup reads as, the result is strict, the strict writer's output reads back
-as the same expression, and `evalStrict` of the strict form gives the value `eval` gives the input.
+as the same expression, and `evalStrict` gives the strict form the value it gives the input (and the
+value `eval` gives the input, when the input is in the form `eval` reads).
 
 `openmath-manifest.json` gives a Content MathML input and its OpenMath object in the XML encoding. A
 case passes when `toOpenMath` of the input is that object, the object reads back as the strict form
@@ -122,8 +123,11 @@ def strictCase (t : Json) : Option String :=
           else if !(match parseMathML (toStrictContentMathML e) with
                     | some r => exprEq r s
                     | none   => false) then some "the strict markup written does not read back"
-          else if evalStrict (envOf t) s != eval (envOf t) e then
-            some s!"value differs: strict {showValue (evalStrict (envOf t) s)}, input {showValue (eval (envOf t) e)}"
+          else if evalStrict (envOf t) s != evalStrict (envOf t) e then
+            some s!"value differs: strict {showValue (evalStrict (envOf t) s)}, input {showValue (evalStrict (envOf t) e)}"
+          -- An input in the evaluator's own form is also checked against `eval` itself.
+          else if exprEq (unstrict e) e && evalStrict (envOf t) s != eval (envOf t) e then
+            some s!"value differs from eval: strict {showValue (evalStrict (envOf t) s)}, eval {showValue (eval (envOf t) e)}"
           else none
       | none, _ => some "the input did not read"
       | _, none => some "the expected strict markup did not read"
