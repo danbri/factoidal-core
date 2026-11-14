@@ -110,6 +110,20 @@ with the existing theorems kept, plus what is listed):
 Not planned: `while` with a data-dependent bound and dynamic indexing of sampler arrays (outside the
 bounded subset by design).
 
+### 3.3a Framebuffer objects in Lean
+
+`PageGl.State` keeps the attachments of each framebuffer object, renderbuffer storage, and level 0 of
+each 2D texture: its size, internal format and, for an RGBA image of 8-bit components up to 65,536
+pixels, its pixels (client bytes repacked from `UNPACK_ALIGNMENT` rows, image sources as packed rows,
+`UNPACK_FLIP_Y_WEBGL` applied). `checkFramebufferStatus` answers missing, incomplete-attachment,
+dimension (WebGL 1) and unsupported depth-plus-stencil (WebGL 1) cases; a format is refused at an
+attachment point only when it is known to be of the other kind, so extension and WebGL 2 formats stay
+the drawing path's to judge. `clear` of a complete framebuffer object fills a kept color attachment
+with the clear colour (and the drawing path clears its own copy); `readPixels` of a framebuffer object
+answers the kept pixels, or INVALID_OPERATION without a color attachment, or
+INVALID_FRAMEBUFFER_OPERATION when incomplete; a draw into a framebuffer object makes its pixels the
+drawing path's again (Lean no longer answers for them).
+
 ### 3.4 Pixels: what the WPT runner can and cannot check
 
 The runner has no GPU, and the engine has no read-back from the host (record 2026-11-08 section 1: the
@@ -141,6 +155,20 @@ runs the WGSL AST: 5 to 8 WebGL subtests and 53 WebCodecs ones; a design of its 
 - A `VideoFrame` from a canvas, an `OffscreenCanvas`, an `ImageBitmap` or an image: the source is drawn
   on a scratch bitmap of its size in Lean's canvas and read back as RGBA (RGBX when `alpha` is
   `discard`); the timestamp is required for these sources (a `TypeError` without it).
+- `WebCodecs.Gamut` (op 132): colours between `srgb`, `display-p3`, `srgb-linear` and
+  `display-p3-linear` on 8-bit pixels. A canvas keeps 8-bit sRGB; `getImageData`, `putImageData`,
+  `ImageData`, `createImageData` and `createImageBitmap(ImageData)` convert where pixels enter or
+  leave, by the colour space of their settings (the context's by default), and `getContextAttributes`
+  answers the settings. `VideoFrame.copyTo` with a `colorSpace` converts the sRGB result. The transfer
+  function is a table of 256 linear values (16 bits) with its inverse by midpoints (round trip proved
+  for all 256 values); the two matrices are in units of 1/16384 with rows summing to 16384 (a grey is
+  the same grey both ways, proved for all 256 greys). A Display P3 colour outside sRGB is clipped where
+  it enters a canvas: the canvas does not keep wide-gamut pixels.
+- `ImageDecoder` (`WebCodecs.Image`, ops 133 and 134): a type is invalid (not `type/subtype`),
+  unsupported, or supported (`image/png`, `image/jpeg`, `image/gif`: the engine's decoders, reached
+  through a canvas bitmap of kind 5 that `PageCanvas.Env.decode` makes; the lab gives
+  `NativeImage.decode`). Still images only: one track, one frame; a JPEG's Exif orientation becomes
+  the frame's rotation and flip. `createImageBitmap(blob)` uses the same decoders.
 - Canvas 2D in dedicated workers: `OffscreenCanvas` and the objects of its context are
   `[Exposed=(Window,Worker)]`; a worker's host keeps its own canvas bitmaps in Lean (`PageCanvas`), so
   the worker scope keeps those names instead of deleting them.
@@ -233,6 +261,12 @@ Axioms: none beyond `propext`, `Classical.choice`, `Quot.sound`; no `sorry`, `na
 | `srcIndex_lt` | `WebCodecs.Audio` | every sample a copy reads lies wholly inside the data, planar or interleaved |
 | `narrow_widen` | `WebCodecs.Audio` | narrowing a widened integer sample gives it back (u8 ↔ s16 ↔ s32) |
 | `ulaw_range`, `alaw_range`, `ulaw_odd`, `alaw_odd` | `WebCodecs.Audio` | all 256 G.711 codes expand into 16 bits; the sign bit only negates (by `decide`) |
+| `encodeGamma_decode`, `encodeLinear_decode`, `encodeGamma_lt` | `WebCodecs.Gamut` | every 8-bit value decodes to linear light and encodes back to itself; an encoded value is a byte |
+| `gray_srgb_p3`, `gray_p3_srgb`, `toP3_rows`, `fromP3_rows`, `convert_same` | `WebCodecs.Gamut` | a grey is the same grey in sRGB and Display P3 both ways (all 256); matrix rows sum to 16384; the same space changes nothing |
+| `typeVerdict_supported` | `WebCodecs.Image` | a type is supported only when its essence, without case, is PNG, JPEG or GIF |
+| `exifOrientation_range`, `orientationOf_injective` | `WebCodecs.Image` | the Exif orientation of any bytes is 1 to 8; the eight are eight different transforms |
+| `status_default`, `unorm8_le`, `unpackRows_size`, `readRect_size`, `readRect_src_lt` | `PageGl.State` | the default framebuffer is complete; a clear colour is a byte; uploaded and read images have their sizes; every pixel read lies inside the image |
+| `workerHost_reads` | `WasmVM.Hosts.LeanJSWorkers` | a worker's canvases draw with the page's fonts and path parser, and nothing else of the page's reads |
 
 **Tested only** (`#guard`, from the WPT cases)
 
