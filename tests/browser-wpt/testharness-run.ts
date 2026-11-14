@@ -340,8 +340,9 @@ function servedName(id:string,path:string,url:string,exists:(f:string)=>boolean)
 /** A wpt.fyi test name (with or without its leading slash) as a page to run, or why not. */
 export function named(name:string):Named {
   const id=name.replace(/^\//,""),q=id.indexOf("?"),path=q>=0?id.slice(0,q):id,query=q>=0?id.slice(q):"";
-  const secure=/\.https\./.test(path)||path.includes("/https/");
-  // wptrunner's name flags: `.https.` loads over HTTPS, `.www.` from the www subdomain.
+  // wptrunner's name flags: `.https.` loads over HTTPS, `.www.` from the www subdomain; the
+  // manifest serves every service worker variant over HTTPS (force_https).
+  const secure=/\.https\./.test(path)||path.includes("/https/")||/\.any\.serviceworker(-module)?\.html$/.test(path);
   const url=wptserveMode?`${(secure?serveSecureOrigin:serveOrigin).replace("//web-platform",/\.www\./.test(path)?"//www.web-platform":"//web-platform")}/${id}`:
     `${secure?secureOrigin:origin}/${id}`;
   const variant=missingFeatures(path,engineFeatures);

@@ -3705,6 +3705,8 @@
   }
   // ==== end customelements ================================================================
   def('location', location);
+  // navigator.serviceWorker: the ServiceWorkerContainer of section workers, made on first use
+  let serviceWorkerOf = () => undefined;
   def('navigator', Object.freeze({ userAgent: 'Foafnaut', language: 'en', languages: ['en'], platform: '', onLine: true,
     cookieEnabled: false, hardwareConcurrency: 1, gpu,
     // StorageManager (section File System API); undefined on an engine without the ops.
@@ -3714,7 +3716,9 @@
     // Web Neural Network API (section webnn): a secure context's navigator has it.
     get ml() { return webnnOn() ? webnn().ml : undefined; },
     // StorageBucketManager (section Storage Buckets API).
-    get storageBuckets() { return bucketsApi()?.manager; } }));
+    get storageBuckets() { return bucketsApi()?.manager; },
+    // ServiceWorkerContainer (section workers).
+    get serviceWorker() { return serviceWorkerOf(); } }));
   def('GPUBufferUsage', GPUBufferUsage); def('GPUTextureUsage', GPUTextureUsage); def('GPUShaderStage', GPUShaderStage);
   def('GPUColorWrite', GPUColorWrite); def('GPUValidationError', GPUValidationError); def('GPUOutOfMemoryError', GPUOutOfMemoryError);
   def('GPUCanvasContext', GPUCanvasContext); def('GPUDevice', GPUDevice);
@@ -12842,6 +12846,8 @@
     if (typeof head !== 'string' || head === '') return;
     const { w, k, h } = JSON.parse(head);
     // a shared worker's events are its ports': the page's SharedWorker objects, the scope's connections
+    // a service worker's events are its registration's (page) or its scope's own (worker)
+    if (inWorker ? swScope : swById.has(w)) { if (inWorker) swScopeEvent(k, h); else swEvent(w, k, h); return; }
     const shared = inWorker ? (sharedScope ? sharedScope : null) : sharedById.get(w);
     if (shared) { sharedEvent(shared, k, h); return; }
     const target = inWorker ? globalThis : workerObjects.get(w);
@@ -12992,6 +12998,277 @@
   handlerProp(SharedWorker.prototype, ['error']);
   Object.defineProperty(SharedWorker.prototype, Symbol.toStringTag, { value: 'SharedWorker', configurable: true });
   if (workersOn && typeof MessagePort === 'function') def('SharedWorker', SharedWorker);
+  // ---- Service workers (Service Workers §3 and §4) on the same core: a registration's worker is
+  // kept by Lean as a dedicated one is (its own realm, loop and budget; only bytes cross). The
+  // URL decisions are Lean's (Net.ServiceWorkerScope, web_api 154: the script, the scope, the
+  // origins, the max scope; 155: matching a client URL). Registrations are this page session's,
+  // in memory; no worker receives `fetch` events and no page is controlled (`controller` null).
+  // Messages on a worker's channel: page to scope { sw: 'msg', data, client } and
+  // { sw: 'install' | 'activate' }; scope to page { sw: 'evaluated', ok }, { sw: 'installed', ok },
+  // { sw: 'activated' } and { sw: 'msg', data }.
+  const SERVICE = '\u0001service\u0001';
+  const swById = new Map(), swSlots = new WeakMap(), regSlots = new WeakMap(), regByScope = new Map();
+  let swContainerObj = null, swReady = null, swMaking = false;
+  const swSend = (id, m, transfer) => n.worker(1, id, cloneOut(m, transfer, 'ServiceWorker'));
+  const swPost = (target, e) => { state(e).trusted = true; dispatch(target, e); };
+  const swTask = f => chk(n.timer(register(f), 0, 0));
+  class ServiceWorker extends EventTarget {
+    constructor() { if (!swMaking) throw new TypeError('Illegal constructor'); super(); }
+    get scriptURL() { const s = swSlots.get(this); if (!s) throw new TypeError('Illegal invocation'); return s.script; }
+    get state() { const s = swSlots.get(this); if (!s) throw new TypeError('Illegal invocation'); return s.state; }
+    postMessage(message, options = undefined) {
+      const s = swSlots.get(this);
+      if (!s) throw new TypeError('Illegal invocation');
+      if (arguments.length < 1) throw new TypeError("Failed to execute 'postMessage' on 'ServiceWorker': 1 argument required, but only 0 present.");
+      const transfer = Array.isArray(options) ? options : options?.transfer;
+      if (s.state === 'redundant') return;
+      swSend(s.id, { sw: 'msg', data: message, client: href }, transfer === undefined ? undefined : { transfer });
+    }
+  }
+  handlerProp(ServiceWorker.prototype, ['statechange', 'error']);
+  Object.defineProperty(ServiceWorker.prototype, Symbol.toStringTag, { value: 'ServiceWorker', configurable: true });
+  const swState = (sw, st) => {
+    const s = swSlots.get(sw);
+    if (s.state === st) return;
+    s.state = st;
+    swPost(sw, new Event('statechange'));
+  };
+  class ServiceWorkerRegistration extends EventTarget {
+    constructor() { if (!swMaking) throw new TypeError('Illegal constructor'); super(); }
+    get scope() { return regOf(this).scope; }
+    get installing() { return regOf(this).installing; }
+    get waiting() { return regOf(this).waiting; }
+    get active() { return regOf(this).active; }
+    get updateViaCache() { return regOf(this).updateViaCache; }
+    get navigationPreload() { return undefined; }
+    update() { const r = regOf(this); return Promise.resolve(r.gone ? Promise.reject(new DOMException('Failed to update a ServiceWorker: The registration is not active.', 'InvalidStateError')) : this); }
+    unregister() {
+      const r = regOf(this);
+      if (r.gone) return Promise.resolve(false);
+      r.gone = true;
+      // in the worker's own scope: the page's registration hears nothing back (not modelled)
+      if (inWorker) return Promise.resolve(true);
+      if (regByScope.get(r.scope) === this) regByScope.delete(r.scope);
+      // Service Workers §8.21 "Clear Registration": no client is controlled, so at once
+      for (const k of ['installing', 'waiting', 'active']) {
+        const w = r[k];
+        if (!w) continue;
+        r[k] = null;
+        const s = swSlots.get(w);
+        n.worker(2, s.id);
+        swTask(() => swState(w, 'redundant'));
+      }
+      return Promise.resolve(true);
+    }
+  }
+  const regOf = o => { const r = regSlots.get(o); if (!r) throw new TypeError('Illegal invocation'); return r; };
+  handlerProp(ServiceWorkerRegistration.prototype, ['updatefound']);
+  Object.defineProperty(ServiceWorkerRegistration.prototype, Symbol.toStringTag, { value: 'ServiceWorkerRegistration', configurable: true });
+  const swErr = (name, message) => name === 'TypeError' ? new TypeError(message) : new DOMException(message, name);
+  // One task per event of a registration's worker (Lean queued it, in order).
+  const swEvent = (w, k, h) => {
+    const s = swById.get(w);
+    if (!s) return;
+    const reg = s.reg, r = regSlots.get(reg);
+    if (k === 'loaderror') {
+      if (s.pending) { s.pending.reject(new TypeError(`Failed to register a ServiceWorker for scope ('${r.scope}') with script ('${s.script}'): An unknown error occurred when fetching the script.`)); s.pending = null; }
+      swById.delete(w);
+      if (!r.installing && !r.waiting && !r.active && regByScope.get(r.scope) === reg) { r.gone = true; regByScope.delete(r.scope); }
+      return;
+    }
+    if (k === 'error') { try { n.log('Uncaught (in service worker) ' + JSON.parse(h).message); } catch { /* no message */ } return; }
+    if (k !== 'message') return;
+    let m = null;
+    try { m = n0.deserialize(n.worker(4)); } catch { swPost(swContainer(), new MessageEvent('messageerror', { data: null, origin: originOf(s.script), source: s.obj })); return; }
+    if (m === null || typeof m !== 'object') return;
+    if (m.sw === 'msg') { swPost(swContainer(), new MessageEvent('message', { data: m.data, origin: originOf(s.script), source: s.obj })); return; }
+    if (r.gone) return;
+    if (m.sw === 'evaluated') {
+      if (!m.ok) {
+        // §8.4 "Update" step: a script that throws while it is evaluated is not installed
+        if (s.pending) { s.pending.reject(new TypeError(`Failed to register a ServiceWorker for scope ('${r.scope}') with script ('${s.script}'): ServiceWorker script evaluation failed`)); s.pending = null; }
+        n.worker(2, w); swById.delete(w);
+        if (!r.installing && !r.waiting && !r.active && regByScope.get(r.scope) === reg) { r.gone = true; regByScope.delete(r.scope); }
+        return;
+      }
+      // §8.5 "Install": the installing worker, updatefound, then the job's promise
+      if (r.installing) { const old = r.installing; n.worker(2, swSlots.get(old).id); swState(old, 'redundant'); }
+      r.installing = s.obj;
+      swSlots.get(s.obj).state = 'installing';
+      swPost(reg, new Event('updatefound'));
+      if (s.pending) { s.pending.resolve(reg); s.pending = null; }
+      swSend(w, { sw: 'install' });
+    } else if (m.sw === 'installed') {
+      if (r.installing === s.obj) r.installing = null;
+      if (!m.ok) { n.worker(2, w); swState(s.obj, 'redundant'); return; }
+      r.waiting = s.obj;
+      swState(s.obj, 'installed');
+      // §8.6 "Activate": no client is controlled, so the waiting worker activates at once
+      if (r.active) { const old = r.active; n.worker(2, swSlots.get(old).id); swState(old, 'redundant'); }
+      r.waiting = null; r.active = s.obj;
+      swState(s.obj, 'activating');
+      swSend(w, { sw: 'activate' });
+    } else if (m.sw === 'activated') {
+      swState(s.obj, 'activated');
+      if (swReady && !swReady.done && apiCall(155, [href.split('#')[0], r.scope]) === r.scope) { swReady.done = true; swReady.resolve(reg); }
+    }
+  };
+  const swContainer = () => swContainerObj ??= (swMaking = true, (() => { try { return new ServiceWorkerContainer(); } finally { swMaking = false; } })());
+  class ServiceWorkerContainer extends EventTarget {
+    constructor() { if (!swMaking) throw new TypeError('Illegal constructor'); super(); }
+    get controller() { return null; }
+    get ready() {
+      if (!swReady) { let res; const p = new Promise(r => { res = r; }); swReady = { promise: p, resolve: res, done: false };
+        for (const [scope, reg] of regByScope) if (regSlots.get(reg).active && apiCall(155, [href.split('#')[0], scope]) === scope) { swReady.done = true; res(reg); break; } }
+      return swReady.promise;
+    }
+    startMessages() {}
+    register(scriptURL, options = undefined) {
+      try {
+        if (arguments.length < 1) throw new TypeError("Failed to execute 'register' on 'ServiceWorkerContainer': 1 argument required, but only 0 present.");
+        const o = options == null ? {} : options;
+        if (typeof o !== 'object' && typeof o !== 'function') throw new TypeError("Failed to execute 'register' on 'ServiceWorkerContainer': The provided value is not of type 'RegistrationOptions'.");
+        const type = o.type === undefined ? 'classic' : String(o.type);
+        if (type !== 'classic' && type !== 'module') throw new TypeError(`Failed to execute 'register' on 'ServiceWorkerContainer': The provided value '${type}' is not a valid enum value of type WorkerType.`);
+        const via = o.updateViaCache === undefined ? 'imports' : String(o.updateViaCache);
+        if (via !== 'imports' && via !== 'all' && via !== 'none') throw new TypeError(`Failed to execute 'register' on 'ServiceWorkerContainer': The provided value '${via}' is not a valid enum value of type ServiceWorkerUpdateViaCache.`);
+        const r = apiCall(154, [scriptBase(), href, String(scriptURL), o.scope === undefined ? '0' : '1', o.scope === undefined ? '' : String(o.scope)]);
+        const [tag, a, b] = typeof r === 'string' ? r.split('\u0000') : ['err', 'TypeError', 'Failed to register a ServiceWorker.'];
+        if (tag !== 'ok') return Promise.reject(swErr(a, `Failed to register a ServiceWorker: ${b}`));
+        const script = a, scope = b;
+        if (type === 'module') return Promise.reject(new DOMException("Failed to register a ServiceWorker: module service workers are not supported here.", 'NotSupportedError'));
+        if (cspBlocksRequest('worker-src', script, '', false, 0)) { flushViolations(); return Promise.reject(new DOMException(`Failed to register a ServiceWorker: the script '${script}' violates the document's Content Security Policy.`, 'SecurityError')); }
+        let reg = regByScope.get(scope);
+        if (reg) {
+          const rr = regSlots.get(reg), newest = rr.installing ?? rr.waiting ?? rr.active;
+          rr.updateViaCache = via;
+          // §8.3 "Register" step 5: the same script is already registered for this scope
+          if (newest && swSlots.get(newest).script === script) return Promise.resolve(reg);
+        } else {
+          swMaking = true; try { reg = new ServiceWorkerRegistration(); } finally { swMaking = false; }
+          regSlots.set(reg, { scope, installing: null, waiting: null, active: null, updateViaCache: via, gone: false });
+          regByScope.set(scope, reg);
+        }
+        let obj; swMaking = true; try { obj = new ServiceWorker(); } finally { swMaking = false; }
+        const id = n.worker(0, script, SERVICE + JSON.stringify({ scope, client: href, origin: originOf(href) }));
+        let pending; const p = new Promise((resolve, reject) => { pending = { resolve, reject }; });
+        swSlots.set(obj, { id, script, state: 'parsed' });
+        swById.set(id, { obj, reg, script, pending });
+        return p;
+      } catch (e) { return Promise.reject(e); }
+    }
+    getRegistration(clientURL = '') {
+      const url = resolveURL(String(clientURL), scriptBase());
+      if (url === null) return Promise.reject(new TypeError("Failed to execute 'getRegistration' on 'ServiceWorkerContainer': The provided documentURL is invalid."));
+      if (originOf(url) !== originOf(href)) return Promise.reject(new DOMException("Failed to execute 'getRegistration' on 'ServiceWorkerContainer': The origin of the provided documentURL does not match the current origin.", 'SecurityError'));
+      const m = apiCall(155, [url.split('#')[0], ...regByScope.keys()]);
+      return Promise.resolve(typeof m === 'string' && m !== '' ? regByScope.get(m) : undefined);
+    }
+    getRegistrations() { return Promise.resolve([...regByScope.values()]); }
+  }
+  handlerProp(ServiceWorkerContainer.prototype, ['controllerchange', 'message', 'messageerror']);
+  Object.defineProperty(ServiceWorkerContainer.prototype, Symbol.toStringTag, { value: 'ServiceWorkerContainer', configurable: true });
+  serviceWorkerOf = () => workersOn && !inWorker ? swContainer() : undefined;
+  if (workersOn) { def('ServiceWorker', ServiceWorker); def('ServiceWorkerRegistration', ServiceWorkerRegistration); def('ServiceWorkerContainer', ServiceWorkerContainer); }
+  // ---- a service worker's global scope (Service Workers §4): its events come from the page's
+  // registration (install, activate, message); `clients` knows the one page of this session.
+  let swScope = null;   // in a service worker's realm: { scope, client, origin, ... }
+  class ExtendableEvent extends Event {
+    constructor(type, init = undefined) { super(type, init); state(this).extend = []; }
+    waitUntil(f) {
+      const s = state(this);
+      if (!s.trusted) throw new DOMException("Failed to execute 'waitUntil' on 'ExtendableEvent': The event handler is already finished.", 'InvalidStateError');
+      if (!s.dispatching && s.extendDone) throw new DOMException("Failed to execute 'waitUntil' on 'ExtendableEvent': The event handler is already finished and no extend lifetime promises are outstanding.", 'InvalidStateError');
+      s.extend.push(Promise.resolve(f));
+    }
+  }
+  Object.defineProperty(ExtendableEvent.prototype, Symbol.toStringTag, { value: 'ExtendableEvent', configurable: true });
+  class InstallEvent extends ExtendableEvent {}
+  Object.defineProperty(InstallEvent.prototype, Symbol.toStringTag, { value: 'InstallEvent', configurable: true });
+  class ExtendableMessageEvent extends ExtendableEvent {
+    constructor(type, init = undefined) {
+      super(type, init); const s = state(this), d = initOf(init);
+      s.data = d.data === undefined ? null : d.data; s.origin = String(d.origin ?? ''); s.lastEventId = String(d.lastEventId ?? '');
+      s.source = d.source ?? null; s.ports = Object.freeze([...(d.ports ?? [])]);
+    }
+  }
+  getters(ExtendableMessageEvent, ['data', 'origin', 'lastEventId', 'source', 'ports']);
+  Object.defineProperty(ExtendableMessageEvent.prototype, Symbol.toStringTag, { value: 'ExtendableMessageEvent', configurable: true });
+  class FetchEvent extends ExtendableEvent {
+    constructor(type, init = undefined) {
+      if (arguments.length < 2) throw new TypeError(`Failed to construct 'FetchEvent': 2 arguments required, but only ${arguments.length} present.`);
+      super(type, init); const s = state(this), d = initOf(init);
+      if (d.request === undefined) throw new TypeError("Failed to construct 'FetchEvent': required member request is undefined.");
+      s.request = d.request; s.clientId = String(d.clientId ?? ''); s.resultingClientId = String(d.resultingClientId ?? '');
+      s.replacesClientId = String(d.replacesClientId ?? ''); s.handled = Promise.resolve(); s.preloadResponse = Promise.resolve(d.preloadResponse);
+    }
+    respondWith(r) { throw new DOMException("Failed to execute 'respondWith' on 'FetchEvent': The event is not being dispatched.", 'InvalidStateError'); }
+  }
+  getters(FetchEvent, ['request', 'clientId', 'resultingClientId', 'replacesClientId', 'handled', 'preloadResponse']);
+  Object.defineProperty(FetchEvent.prototype, Symbol.toStringTag, { value: 'FetchEvent', configurable: true });
+  const clientSlots = new WeakMap();
+  class Client { constructor() { throw new TypeError('Illegal constructor'); }
+    get url() { return clientSlots.get(this).url; }
+    get id() { return clientSlots.get(this).id; }
+    get type() { return 'window'; }
+    get frameType() { return 'top-level'; }
+    postMessage(message, options = undefined) {
+      if (!clientSlots.get(this)) throw new TypeError('Illegal invocation');
+      if (arguments.length < 1) throw new TypeError("Failed to execute 'postMessage' on 'Client': 1 argument required, but only 0 present.");
+      n.worker(1, 0, cloneOut({ sw: 'msg', data: message }, options, 'Client'));
+    }
+  }
+  class WindowClient extends Client {
+    get visibilityState() { return 'visible'; }
+    get focused() { return true; }
+    get ancestorOrigins() { return Object.freeze([]); }
+    focus() { return Promise.reject(new DOMException("Failed to execute 'focus' on 'WindowClient': Not allowed to focus a window.", 'InvalidAccessError')); }
+    navigate(url) { return Promise.reject(new TypeError("Failed to execute 'navigate' on 'WindowClient': This service worker is not the client's active service worker.")); }
+  }
+  Object.defineProperty(Client.prototype, Symbol.toStringTag, { value: 'Client', configurable: true });
+  Object.defineProperty(WindowClient.prototype, Symbol.toStringTag, { value: 'WindowClient', configurable: true });
+  const theClient = () => {
+    if (swScope.clientObj) return swScope.clientObj;
+    const c = Object.create(WindowClient.prototype);
+    clientSlots.set(c, { url: swScope.client, id: swScope.clientId });
+    return swScope.clientObj = c;
+  };
+  class Clients { constructor() { throw new TypeError('Illegal constructor'); }
+    get(id) { return Promise.resolve(String(id) === swScope.clientId ? theClient() : undefined); }
+    matchAll(options = undefined) {
+      // Service Workers §4.3.3: only controlled clients unless includeUncontrolled (none is controlled)
+      const o = options == null ? {} : options, type = o.type === undefined ? 'window' : String(o.type);
+      return Promise.resolve(o.includeUncontrolled && (type === 'window' || type === 'all') ? [theClient()] : []);
+    }
+    openWindow(url) { return Promise.reject(new DOMException("Failed to execute 'openWindow' on 'Clients': Not allowed to open a window.", 'InvalidAccessError')); }
+    claim() { return Promise.resolve(); }
+  }
+  Object.defineProperty(Clients.prototype, Symbol.toStringTag, { value: 'Clients', configurable: true });
+  // An extendable event at the scope, then its lifetime promises: the page hears `answer`.
+  const swExtend = (e, answer) => {
+    state(e).trusted = true;
+    dispatch(globalThis, e);
+    state(e).extendDone = true;
+    Promise.all(state(e).extend).then(() => answer(true), () => answer(false));
+  };
+  const swScopeEvent = (k, h) => {
+    if (k !== 'message') return;
+    let m = null;
+    try { m = n0.deserialize(n.worker(4)); }
+    catch { const e = new ExtendableMessageEvent('messageerror', { data: null, origin: swScope.origin, source: theClient() }); state(e).trusted = true; dispatch(globalThis, e); return; }
+    if (m === null || typeof m !== 'object') return;
+    if (m.sw === 'install') {
+      swScope.state = 'installing';
+      swExtend(new InstallEvent('install'), ok => { swScope.state = ok ? 'installed' : 'redundant'; n.worker(1, 0, n0.serialize({ sw: 'installed', ok }, [])); });
+    } else if (m.sw === 'activate') {
+      swScope.state = 'activating';
+      swExtend(new ExtendableEvent('activate'), () => { swScope.state = 'activated'; n.worker(1, 0, n0.serialize({ sw: 'activated' }, [])); });
+    } else if (m.sw === 'msg') {
+      const e = new ExtendableMessageEvent('message', { data: m.data, origin: swScope.origin, source: theClient() });
+      state(e).trusted = true;
+      dispatch(globalThis, e);
+    }
+  };
   // The globals a dedicated worker's scope keeps (HTML §10.2.1 and the [Exposed=Worker]
   // interfaces this engine has), besides the language's own (`esGlobals`).
   const workerGlobals = new Set(['self', 'console', 'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval',
@@ -13029,10 +13306,20 @@
     // a shared worker's scope (the SharedWorker constructor names it so): its connections
     const isShared = name.startsWith(SHARED);
     if (isShared) { name = name.slice(SHARED.length); sharedScope = { ports: [] }; }
+    // a service worker's scope (a registration names it so): its scope URL and its one client
+    const isService = name.startsWith(SERVICE);
+    if (isService) {
+      let info = {};
+      try { info = JSON.parse(name.slice(SERVICE.length)); } catch { /* none */ }
+      name = '';
+      let cid = ''; try { cid = crypto.randomUUID(); } catch { cid = String(Math.random()).slice(2); }
+      swScope = { scope: String(info.scope ?? ''), client: String(info.client ?? ''), origin: String(info.origin ?? ''), clientId: cid, state: 'parsed', clientObj: null };
+    }
     const nav = globalThis.navigator;
     class WorkerGlobalScope extends EventTarget { constructor() { throw new TypeError('Illegal constructor'); } }
     class DedicatedWorkerGlobalScope extends WorkerGlobalScope { constructor() { throw new TypeError('Illegal constructor'); } }
     class SharedWorkerGlobalScope extends WorkerGlobalScope { constructor() { throw new TypeError('Illegal constructor'); } }
+    class ServiceWorkerGlobalScope extends WorkerGlobalScope { constructor() { throw new TypeError('Illegal constructor'); } }
     const parts = new WeakMap();
     class WorkerLocation { constructor() { throw new TypeError('Illegal constructor'); } toString() { return parts.get(this).href; } }
     for (const k of ['href', 'origin', 'protocol', 'host', 'hostname', 'port', 'pathname', 'search', 'hash'])
@@ -13058,8 +13345,12 @@
     const wnav = Object.create(WorkerNavigator.prototype);
     for (const k of Object.getOwnPropertyNames(globalThis))
       if ((!esGlobals.has(k) && !workerGlobals.has(k)) || (!secureWorker && secureOnlyGlobals.has(k))) { try { delete globalThis[k]; } catch {} }
-    Object.setPrototypeOf(globalThis, isShared ? SharedWorkerGlobalScope.prototype : DedicatedWorkerGlobalScope.prototype);
-    const WP = WorkerGlobalScope.prototype, DP = isShared ? SharedWorkerGlobalScope.prototype : DedicatedWorkerGlobalScope.prototype;
+    // Service Workers §4.1: XMLHttpRequest is not exposed in a service worker
+    if (isService) try { delete globalThis.XMLHttpRequest; delete globalThis.XMLHttpRequestEventTarget; delete globalThis.XMLHttpRequestUpload; } catch {}
+    const SCOPE = isService ? ServiceWorkerGlobalScope : isShared ? SharedWorkerGlobalScope : DedicatedWorkerGlobalScope;
+    const SCOPE_NAME = isService ? 'ServiceWorkerGlobalScope' : isShared ? 'SharedWorkerGlobalScope' : 'DedicatedWorkerGlobalScope';
+    Object.setPrototypeOf(globalThis, SCOPE.prototype);
+    const WP = WorkerGlobalScope.prototype, DP = SCOPE.prototype;
     const getter = (o, k, f) => Object.defineProperty(o, k, { get: f, configurable: true, enumerable: true });
     getter(WP, 'self', function () { return globalThis; });
     getter(WP, 'location', () => loc);
@@ -13081,19 +13372,41 @@
         n0.runScript(src);
       }
     });
-    getter(DP, 'name', () => name);
-    if (!isShared) define(DP, 'postMessage', function postMessage(message, options = undefined) {
+    if (!isService) getter(DP, 'name', () => name);
+    if (!isShared && !isService) define(DP, 'postMessage', function postMessage(message, options = undefined) {
       if (arguments.length < 1) throw new TypeError("Failed to execute 'postMessage' on 'DedicatedWorkerGlobalScope': 1 argument required, but only 0 present.");
       n.worker(1, 0, cloneOut(message, options, 'DedicatedWorkerGlobalScope'));
     });
-    define(DP, 'close', function close() { n.worker(10); });
+    if (!isService) define(DP, 'close', function close() { n.worker(10); });
     handlerProp(WP, ['error', 'languagechange', 'offline', 'online', 'rejectionhandled', 'unhandledrejection']);
-    handlerProp(DP, isShared ? ['connect'] : ['message', 'messageerror']);
+    handlerProp(DP, isShared ? ['connect'] : isService ? ['install', 'activate', 'fetch', 'message', 'messageerror'] : ['message', 'messageerror']);
+    if (isService) {
+      const clients = Object.create(Clients.prototype);
+      let selfWorker = null, selfReg = null;
+      const me = () => { if (!selfWorker) { swMaking = true; try { selfWorker = new ServiceWorker(); } finally { swMaking = false; }
+        swSlots.set(selfWorker, { id: 0, script: url, get state() { return swScope.state; }, set state(v) {} }); } return selfWorker; };
+      const myReg = () => { if (!selfReg) { swMaking = true; try { selfReg = new ServiceWorkerRegistration(); } finally { swMaking = false; }
+        regSlots.set(selfReg, { scope: swScope.scope, updateViaCache: 'imports', gone: false,
+          get installing() { return swScope.state === 'installing' ? me() : null; },
+          get waiting() { return swScope.state === 'installed' ? me() : null; },
+          get active() { return swScope.state === 'activating' || swScope.state === 'activated' ? me() : null; },
+          set installing(v) {}, set waiting(v) {}, set active(v) {} }); } return selfReg; };
+      getter(DP, 'clients', () => clients);
+      getter(DP, 'registration', myReg);
+      getter(DP, 'serviceWorker', me);
+      define(DP, 'skipWaiting', function skipWaiting() { return Promise.resolve(); });
+      // the page learns that the script ran (and whether it threw) in the first task after it
+      let threw = false;
+      swScope.threw = () => { threw = true; };
+      chk(n.timer(register(() => n.worker(1, 0, n0.serialize({ sw: 'evaluated', ok: !threw }, [])) ), 0, 0));
+    }
     Object.defineProperty(WP, Symbol.toStringTag, { value: 'WorkerGlobalScope', configurable: true });
-    Object.defineProperty(DP, Symbol.toStringTag, { value: isShared ? 'SharedWorkerGlobalScope' : 'DedicatedWorkerGlobalScope', configurable: true });
+    Object.defineProperty(DP, Symbol.toStringTag, { value: SCOPE_NAME, configurable: true });
     // a scope exposes its own interface only (WebIDL [Exposed])
-    for (const [k, v] of Object.entries({ WorkerGlobalScope, ...(isShared ? { SharedWorkerGlobalScope } : { DedicatedWorkerGlobalScope }), WorkerLocation, WorkerNavigator })) def(k, v);
-    uncaughtHook = (message, e) => n.worker(11, message, href, 0, 0);
+    for (const [k, v] of Object.entries({ WorkerGlobalScope, [SCOPE_NAME]: SCOPE, WorkerLocation, WorkerNavigator })) def(k, v);
+    if (isService) for (const [k, v] of Object.entries({ Clients, Client, WindowClient, ExtendableEvent, ExtendableMessageEvent, InstallEvent,
+      FetchEvent, ServiceWorker, ServiceWorkerRegistration })) def(k, v);
+    uncaughtHook = (message, e) => { if (isService && swScope.state === 'parsed') swScope.threw(); n.worker(11, message, href, 0, 0); };
   };
   // ==== end workers ====
 
