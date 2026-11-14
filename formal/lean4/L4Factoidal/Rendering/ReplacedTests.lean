@@ -17,7 +17,22 @@ private def font : FontProfile :=
    outline := fun _ => [.rect 0 0 5 7],admits := fun n => n >= 32 && n <= 126}
 private def noSVG : Embedding := fun _ _ _ _ => .ok []
 /-- A 40 by 20 picture for every element with `src="a.png"`; nothing for others. -/
-private def picture : Picture := ⟨0,⟨40,20,ByteArray.mk (Array.replicate (40*20*4) 255)⟩⟩
+private def picture : Picture := ⟨0,⟨40,20,ByteArray.mk (Array.replicate (40*20*4) 255)⟩,none⟩
+/-- The same image held at half its size on each side (a host that keeps a large image
+reduced): 20 by 10 pixels that stand for 40 by 20. -/
+private def reducedPicture : Picture := ⟨0,⟨20,10,ByteArray.mk (Array.replicate (20*10*4) 255)⟩,some (40,20)⟩
+-- A picture held reduced has the size of its image, and is painted in the same rectangle with
+-- a map that reaches half as many pixels on each side.
+#guard reducedPicture.size == picture.size
+private def paintOf (p : Picture) : Option (Float × Float × Float × Float × Float × Float) :=
+  match pictureNodes 1 {} p 10 5 80 40 with
+  | [Node.paint ⟨_,painted⟩] =>
+    match painted.geometry, painted.style.fill with
+    | .rect x y w h, .image record => some (x,y,w,h,record.map.a,record.map.d)
+    | _, _ => none
+  | _ => none
+#guard paintOf picture == some (10,5,80,40,0.5,0.5)
+#guard paintOf reducedPicture == some (10,5,80,40,0.25,0.25)
 private def picturesOf (dom : Dom) : Pictures := fun id =>
   if CSS.attrValue (dom.get id) "src" == "a.png" then some picture else none
 private def css := "body{margin:0;font-size:7px;line-height:7px}"

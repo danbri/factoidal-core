@@ -988,15 +988,12 @@ private def externalFonts (root : NamespaceNode) (documentURL : Option String)
       if let some font := tree.bind (externalFont family fragment) then fonts := fonts ++ [font]
   return (fonts,missing)
 
-/-- Parse as a browser would: draw what the strict reader can draw. A document
-    that is not well-formed XML stays an error. Text with no SVG font is drawn with
-    the SFNT fonts `sfnt`, the first being the primary font (`NativeSVGText.lowerSfnt`). -/
-def parse (xml : String) (width height : Nat) (font : Option SVGFont := none)
+/-- `parse` from the root of a document that is read already. `repairs` bounds the
+    elements and attributes that are taken out before the reader gives up. -/
+def parseNode (root : NamespaceNode) (width height : Nat) (font : Option SVGFont := none)
     (images : List (String × ByteArray) := []) (documentURL : Option String := none)
-    (sfnt : Array NativeSVGText.Font := #[]) :
+    (sfnt : Array NativeSVGText.Font := #[]) (repairs : Nat := 1024) :
     Except String (NativeSVG.Scene × List String) := do
-  if xml.length > NativeSVG.maxInputChars then throw "SVG input exceeds 1048576 characters"
-  let root ← parseNamespaceView xml
   let (root,rootLog) := rootAttrs root
   let (root,imports) := importDocuments root documentURL images
   -- Fonts in the document come first; the host's font is the default.
@@ -1006,7 +1003,112 @@ def parse (xml : String) (width height : Nat) (font : Option SVGFont := none)
   let (some root,log) := normalise (fontsIn root ++ linkedFonts ++ font.toList) sfnt targets maxDepth {} false root | throw "root element is not read"
   let store := NativeSVG.imageStore root documentURL images
   let (some root,imageLog) := dropBrokenImages store maxDepth documentURL root | throw "root element is not read"
-  repair width height 1024 {root,dropped:=rootLog ++ imports.log ++ log ++ imageLog,parses:=0,documentURL,images:=store}
+  repair width height repairs {root,dropped:=rootLog ++ imports.log ++ log ++ imageLog,parses:=0,documentURL,images:=store}
+
+/-- Parse as a browser would: draw what the strict reader can draw. A document
+    that is not well-formed XML stays an error. Text with no SVG font is drawn with
+    the SFNT fonts `sfnt`, the first being the primary font (`NativeSVGText.lowerSfnt`). -/
+def parse (xml : String) (width height : Nat) (font : Option SVGFont := none)
+    (images : List (String × ByteArray) := []) (documentURL : Option String := none)
+    (sfnt : Array NativeSVGText.Font := #[]) :
+    Except String (NativeSVG.Scene × List String) := do
+  if xml.length > NativeSVG.maxInputChars then throw "SVG input exceeds 1048576 characters"
+  let root ← parseNamespaceView xml
+  parseNode root width height font images documentURL sfnt
+
+/-! ### An SVG document as the image of an `img` (2026-11-14)
+
+HTML §4.8.3 with SVG 2 §2.2.6 "secure static mode": the document is drawn with no script, no
+animation and no reference outside itself. `WebRender.vectorPicture` draws it on the CPU
+(`SVGRaster`) into a bitmap, so layout and paint treat it as any image. Here: the size of
+the image, the size of the picture drawn for it, and the root as the picture needs it. -/
+
+/-- A length of the root in CSS pixels: a positive number, with `px` or with no unit. A
+percentage or another unit gives none: the dimension then comes from the viewBox. -/
+def rootPixels (value : Option String) : Option Float :=
+  value.bind fun v =>
+    let t := v.trimAscii.toString
+    let t := if t.endsWith "px" then (t.dropEnd 2).toString else t
+    match NativeSVG.numberReference t with
+    | .ok n => if n > 0 then some n else none
+    | .error _ => none
+
+/-- The width and height of a `viewBox` when both are positive. -/
+def rootViewBox (value : Option String) : Option (Float × Float) :=
+  value.bind fun v =>
+    let fields := (((v.replace "," " ").replace "\n" " ").replace "\t" " ").splitOn " " |>.filter (· != "")
+    match fields.mapM (fun s => (NativeSVG.numberReference s).toOption) with
+    | some [_,_,w,h] => if w > 0 && h > 0 then some (w,h) else none
+    | _ => none
+
+/-- The size of an SVG image in CSS pixels, from the attributes of its root (CSS Images 3
+§5.1 and CSS 2.1 §10.3.2, §10.6.2 for a replaced element with an intrinsic ratio): the
+`width` and `height` when both are lengths; one of them and the ratio of the `viewBox`;
+with neither, the size of the `viewBox`; with nothing, 300 by 150. Whole pixels, each side
+from 1 to 4096. -/
+def imageSize (attrs : List NamespaceAttribute) : Nat × Nat :=
+  let w := rootPixels (plainAttr attrs "width")
+  let h := rootPixels (plainAttr attrs "height")
+  let (fw,fh) : Float × Float := match w,h,rootViewBox (plainAttr attrs "viewBox") with
+    | some w,some h,_ => (w,h)
+    | some w,none,some (bw,bh) => (w,w*bh/bw)
+    | none,some h,some (bw,bh) => (h*bw/bh,h)
+    | none,none,some (bw,bh) => (bw,bh)
+    | some w,none,none => (w,150)
+    | none,some h,none => (300,h)
+    | none,none,none => (300,150)
+  let side := fun (v : Float) => max 1 (min 4096 v.round.toUInt32.toNat)
+  (side fw,side fh)
+
+/-- Most pixels of the picture drawn for one SVG image. -/
+def maxImagePixels : Nat := 262144
+
+/-- The pixels of the picture of an image of `w` by `h` CSS pixels: twice the size on each
+side while that is within `maxImagePixels` (a screen of two device pixels to the CSS pixel
+then shows it sharp); else the size; else the size divided by the smallest whole number
+(2 to 64) that fits. -/
+def imageRaster (w h : Nat) : Nat × Nat :=
+  if (2*w)*(2*h) ≤ maxImagePixels then (2*w,2*h)
+  else if w*h ≤ maxImagePixels then (w,h)
+  else
+    let k := (((List.range 63).map (· + 2)).find? fun k => ((w+k-1)/k)*((h+k-1)/k) ≤ maxImagePixels).getD 64
+    ((w+k-1)/k,(h+k-1)/k)
+
+/-- The picture of an image of at most 4096 pixels a side (`imageSize`) has at most
+`maxImagePixels` pixels. -/
+theorem imageRaster_fits (w h : Nat) (hw : w ≤ 4096) (hh : h ≤ 4096) :
+    (imageRaster w h).1*(imageRaster w h).2 ≤ maxImagePixels := by
+  by_cases double : (2*w)*(2*h) ≤ maxImagePixels
+  · simp only [imageRaster, double, if_true]
+  · by_cases whole : w*h ≤ maxImagePixels
+    · simp only [imageRaster, double, whole, if_true, if_false]
+    · simp only [imageRaster, double, whole, if_false]
+      cases found : ((List.range 63).map (· + 2)).find? fun k => ((w+k-1)/k)*((h+k-1)/k) ≤ maxImagePixels with
+      | some k =>
+        have := List.find?_some found
+        simpa using this
+      | none =>
+        simp only [Option.getD_none]
+        have a : (w+64-1)/64 ≤ 64 := by omega
+        have b : (h+64-1)/64 ≤ 64 := by omega
+        calc (w+64-1)/64*((h+64-1)/64) ≤ 64*64 := Nat.mul_le_mul a b
+          _ ≤ maxImagePixels := by unfold maxImagePixels; omega
+
+/-- The root of an image of `w` by `h` as its picture is drawn: without `width` and
+`height` (the picture's size is given to the reader); with a `viewBox` of the image's size
+when it has none, so that the drawing fills the picture; and with `ground`, when given, as
+its `viewport-fill` (SVG Tiny 1.2 §11.11), the colour the picture is drawn on. -/
+def imageRoot (root : NamespaceNode) (w h : Nat) (ground : Option String) : NamespaceNode :=
+  match root with
+  | .element name attrs children =>
+    let plain := fun (a : NamespaceAttribute) (keys : List String) => a.name.namespace_.isNone && keys.contains a.name.localPart
+    let attrs := attrs.filter fun a => !plain a ["width","height"]
+    let attrs := if (plainAttr attrs "viewBox").isSome then attrs else attrs ++ [mkAttr "viewBox" s!"0 0 {w} {h}"]
+    let attrs := match ground with
+      | some fill => (attrs.filter fun a => !plain a ["viewport-fill","viewport-fill-opacity"]) ++ [mkAttr "viewport-fill" fill]
+      | none => attrs
+    .element name attrs children
+  | node => node
 
 /-- The references of a document that a host must fetch: not the `data:` ones. These
     are images, and other documents that a `use` names. `supplied` holds what the host

@@ -1,6 +1,7 @@
 import WebRenderSVG
 import SVGRaster
 import SVGText
+import SVGForgiving
 import Font
 import L4Factoidal.Rendering.Layout
 import L4Factoidal.Rendering.Links
@@ -231,11 +232,72 @@ def htmlImageKeys (dom : DOM.Dom) (base : Option String) : List (Nat × String) 
       if !src.isEmpty then out := out.push (id,NativeSVG.imageKey base src)
   return out.toList
 
+/-! ### An SVG document as the image of an `img` (2026-11-14)
+
+Before, an `img` whose file is SVG showed its `alt` text (the logo of Hacker News, six of
+the nine images of w3.org, eleven of lean-lang.org's nineteen): the image store read PNG,
+JPEG and GIF. `vectorPicture` reads an SVG document with the forgiving reader
+(`NativeSVGForgiving.parseNode`: what the strict reader can not draw is left out), with no
+image or document from outside it (secure static mode), and draws it on the CPU
+(`SVGRaster`) into a bitmap of `NativeSVGForgiving.imageRaster` pixels. The picture then
+goes the way of any image: the store's pixel budget, layout by the image's size
+(`imageSize`), one image primitive. A page with no SVG image file reads four bytes of each
+file that is not PNG, JPEG or GIF, and no more. -/
+
+/-- The bytes hold `<svg` in their first 4096 bytes (after an XML declaration, a doctype
+or comments): an SVG document, to try. -/
+def looksLikeSVG (bytes : ByteArray) : Bool := Id.run do
+  for i in [0:min bytes.size 4096] do
+    if i+3 < bytes.size && bytes.get! i == 60 && bytes.get! (i+1) == 115 && bytes.get! (i+2) == 118 && bytes.get! (i+3) == 103 then
+      return true
+  return false
+
+/-- The picture with its alpha, from the picture drawn on white and the one drawn on black
+(the scene shader draws on an opaque ground). A pixel of colour c and alpha a is
+a·c + (1-a) on white and a·c on black: the difference is 1-a in every channel (the largest
+of the three is taken), and c is the black one divided by a. Pixels are not premultiplied
+(`Rendering.Bitmap`). -/
+def alphaFrom (white black : ByteArray) : ByteArray := Id.run do
+  let mut out := ByteArray.emptyWithCapacity white.size
+  for p in [0:white.size/4] do
+    let i := p*4
+    let onWhite := fun (c : Nat) => (white.get! (i+c)).toNat
+    let onBlack := fun (c : Nat) => (black.get! (i+c)).toNat
+    let gap := max (onWhite 0 - onBlack 0) (max (onWhite 1 - onBlack 1) (onWhite 2 - onBlack 2))
+    let alpha := 255 - min 255 gap
+    let channel := fun (c : Nat) => if alpha == 0 then 0 else min 255 ((onBlack c*255 + alpha/2)/alpha)
+    out := (((out.push (channel 0).toUInt8).push (channel 1).toUInt8).push (channel 2).toUInt8).push alpha.toUInt8
+  return out
+
+/-- An SVG document as a picture: its bitmap and the size of the image in CSS pixels. None
+for bytes that are not an SVG document. -/
+def vectorPicture : NativeImage.VectorReader := fun bytes =>
+  if !looksLikeSVG bytes then none else some do
+    let some xml := String.fromUTF8? bytes | throw "SVG image is not UTF-8 text"
+    if xml.length > NativeSVG.maxInputChars then throw "SVG image exceeds 1048576 characters"
+    let root ← XML.parseNamespaceView xml
+    let .element _ attrs _ := root | throw "SVG image has no root element"
+    let (w,h) := NativeSVGForgiving.imageSize attrs
+    let (rw,rh) := NativeSVGForgiving.imageRaster w h
+    let draw : Option String → Except String ByteArray := fun ground => do
+      let (scene,_) ← NativeSVGForgiving.parseNode (NativeSVGForgiving.imageRoot root w h ground) rw rh none [] none #[] 64
+      pure scene.rgba
+    let white ← draw none
+    let rgba ← if (NativeSVGText.plainAttr attrs "viewport-fill").isSome then pure white
+      else do pure (alphaFrom white (← draw (some "#000000")))
+    if rgba.size != rw*rh*4 then throw "SVG image: the picture drawn has another size than asked"
+    return ({width := rw, height := rh, rgba},w,h)
+
+/-- The image store of a page: `NativeSVG.imageStoreOf` with SVG files read by
+`vectorPicture`. -/
+def pageStore (keys : List String) (images : List (String × ByteArray)) : NativeImage.Store :=
+  NativeSVG.imageStoreOf keys images vectorPicture
+
 /-- The picture of each `img` whose image decoded within the limits of the store. -/
 def picturesOf (store : NativeImage.Store) (keys : List (Nat × String)) : Rendering.Layout.Pictures :=
   let found := keys.foldl (fun (out : Std.TreeMap Nat Rendering.Layout.Picture) (id,key) =>
     match store.get? key with
-    | some (.ok (n,bitmap)) => out.insert id ⟨n,bitmap⟩
+    | some (.ok (n,bitmap)) => out.insert id ⟨n,bitmap,store.natural key⟩
     | _ => out) {}
   fun id => found.get? id
 
@@ -251,7 +313,7 @@ def storeIn (kept : StoresKept) (keys : List String) (images : List (String × B
     NativeImage.Store × Option ((List String × List (String × ByteArray)) × NativeImage.Store) :=
   match kept.find? (fun ((k,i),_) => k == keys && i == images) with
   | some (_,store) => (store,none)
-  | none => let store := NativeSVG.imageStoreOf keys images; (store,some ((keys,images),store))
+  | none => let store := pageStore keys images; (store,some ((keys,images),store))
 
 /-- `kept` with `made` last, at most two. -/
 def keepStore (kept : StoresKept) (made : (List String × List (String × ByteArray)) × NativeImage.Store) : StoresKept :=
@@ -260,11 +322,11 @@ def keepStore (kept : StoresKept) (made : (List String × List (String × ByteAr
 /-- A table is valid when each store is `imageStoreOf` of any keys and images that its own
 compare equal to (`==`, as `storeIn` compares them). -/
 def StoresValid (kept : StoresKept) : Prop :=
-  ∀ e ∈ kept, ∀ keys images, (e.1.1 == keys && e.1.2 == images) = true → e.2 = NativeSVG.imageStoreOf keys images
+  ∀ e ∈ kept, ∀ keys images, (e.1.1 == keys && e.1.2 == images) = true → e.2 = pageStore keys images
 
 /-- Refinement: from a valid table, `storeIn` gives `imageStoreOf`. -/
 theorem storeIn_eq (kept : StoresKept) (valid : StoresValid kept) (keys : List String) (images : List (String × ByteArray)) :
-    (storeIn kept keys images).1 = NativeSVG.imageStoreOf keys images := by
+    (storeIn kept keys images).1 = pageStore keys images := by
   unfold storeIn
   split
   · next _ k store h =>

@@ -176,6 +176,9 @@ private def decorations (id : Nat) (s : Computed) (x y w h : Float) : Array Node
 structure Picture where
   id : Nat
   bitmap : Bitmap
+  /-- The size of the image in CSS pixels, when `bitmap` holds fewer pixels than the image
+  has (a host that keeps a large image reduced); none: the size of `bitmap`. -/
+  natural : Option (Nat × Nat) := none
 /-- The picture of an element, by DOM node. `none` when it has none, or when its
 image is missing, broken or refused: an `img` then shows its `alt` text. -/
 abbrev Pictures := Nat → Option Picture
@@ -273,9 +276,17 @@ def blankReplaced (n : DOM.Node) : Option (Float × Float) :=
     some (Float.ofNat (whole "width" 300),Float.ofNat (whole "height" 150))
   else none
 
-/-- The intrinsic size of a picture: its pixels, one CSS pixel each. -/
+/-- The intrinsic size of a picture: its pixels, one CSS pixel each; for a picture held
+reduced, the size of the image it was made from (`natural`). -/
 def Picture.size (p : Picture) : Float × Float :=
-  (Float.ofNat p.bitmap.width,Float.ofNat p.bitmap.height)
+  match p.natural with
+  | some (w,h) => (Float.ofNat w,Float.ofNat h)
+  | none => (Float.ofNat p.bitmap.width,Float.ofNat p.bitmap.height)
+
+/-- A picture that is not held reduced has the size of its bitmap, as before. -/
+theorem Picture.size_whole (p : Picture) (h : p.natural = none) :
+    p.size = (Float.ofNat p.bitmap.width,Float.ofNat p.bitmap.height) := by
+  simp [Picture.size, h]
 
 /-- CSS Images 3 §5.5: the scale of content of `iw` by `ih` in a box of `w` by `h`. -/
 def fitScale (fit : ObjectFit) (iw ih w h : Float) : Float × Float :=
@@ -300,7 +311,12 @@ def pictureNodes (id : Nat) (s : Computed) (picture : Picture) (x y w h : Float)
   let right := min (x+w) (dx+iw*sx)
   let bottom := min (y+h) (dy+ih*sy)
   if right <= left || bottom <= top then [] else
-  let map : Transform := ⟨1/sx,0,0,1/sy,-dx/sx,-dy/sy⟩
+  -- `map` goes to pixels of the bitmap: for a picture held reduced, a pixel of the bitmap
+  -- covers `iw/width` by `ih/height` pixels of the image.
+  let (kx,ky) := match picture.natural with
+    | some _ => (Float.ofNat picture.bitmap.width/iw,Float.ofNat picture.bitmap.height/ih)
+    | none => (1,1)
+  let map : Transform := ⟨kx/sx,0,0,ky/sy,-dx*kx/sx,-dy*ky/sy⟩
   let paint : Paint := .image ⟨map,picture.id,picture.bitmap⟩
   [Node.paint ⟨some id,{geometry := .rect left top (right-left) (bottom-top),style := {fill := paint}}⟩]
 

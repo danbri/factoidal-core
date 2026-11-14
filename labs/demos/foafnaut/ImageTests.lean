@@ -136,6 +136,41 @@ private def everyChange (file : ByteArray) : Bool :=
 #guard (dataBytes "data:text/plain,hi").toOption.isNone
 #guard (dataBytes "data:image/png;base64,aGk=").toOption.map (·.size) == some 2
 #guard (decode "not an image".toUTF8).toOption.isNone
+-- Images held reduced (2026-11-14): the size from the file's header, with no decoding.
+#guard naturalSize rgbPng == some (2,1)
+#guard naturalSize jpegBaseline == some (16,16)
+#guard naturalSize jpegProgressive == some (16,16)
+#guard naturalSize "not an image".toUTF8 == none
+#guard naturalSize (jpegBaseline.extract 0 12) == none
+#guard (decodeJPEG jpegBaseline).toOption.map (fun b => (b.width,b.height)) == naturalSize jpegBaseline
+-- The factor of a document: 1 while its images fit the budget; the smallest that fits after.
+#guard factorFor [(100,100),(200,50)] == 1
+#guard factorFor [(1024,1024)] == 1
+-- one pixel past the budget: the large image is halved, the small one keeps its size
+#guard factorFor [(1024,1024),(10,10)] == 2
+#guard heldPixels [(1024,1024),(10,10)] 2 == 512*512 + 100
+#guard factorFor [(1024,1024),(1024,1024)] == 2
+#guard factorFor [(1687,330),(1200,675),(840,779),(871,209),(821,204),(600,400),(600,400),(600,400)] == 2
+#guard heldPixels [(1687,330),(1200,675),(840,779),(871,209),(821,204),(600,400),(600,400),(600,400)] 2 ≤ maxDocumentPixels
+#guard factorFor (List.replicate 64 (2000,2000)) == 16
+-- A small image keeps its size at every factor; a large one is divided, rounded up.
+#guard reducedSize 64 64 8 == (64,64)
+#guard reducedSize 1687 330 2 == (844,165)
+#guard reducedSize 100 100 1 == (100,100)
+-- `reduce`: the mean of each block; the bitmap itself at factor 1 and when it is small.
+private def grey (w h : Nat) (v : Nat → UInt8) : L4Factoidal.Rendering.Bitmap :=
+  {width := w, height := h, rgba := ByteArray.mk ((Array.range (w*h)).flatMap fun i => #[v i,v i,v i,255])}
+#guard (reduce (grey 100 100 fun _ => 7) 1).rgba.size == 100*100*4
+#guard (reduce (grey 8 8 fun _ => 7) 4).width == 8
+#guard (reduce (grey 100 100 fun i => if i % 2 == 0 then 10 else 30) 2).width == 50
+#guard (reduce (grey 100 100 fun i => if i % 2 == 0 then 10 else 30) 2).rgba.size == 50*50*4
+#guard (reduce (grey 100 100 fun i => if i % 2 == 0 then 10 else 30) 2).rgba.toList.take 4 == [20,20,20,255]
+#guard (reduce (grey 101 99 fun _ => 9) 2).width == 51 && (reduce (grey 101 99 fun _ => 9) 2).height == 50
+#guard (reduce (grey 101 99 fun _ => 9) 2).rgba.toList.drop (51*50*4-4) == [9,9,9,255]
+-- A store holds a reduced image under its key and the image's own size beside it.
+#guard match Store.addBytes ({} : Store) 0 "a" jpegBaseline 1 with
+  | (store,used) => used == 256 && store.natural "a" == none
+#guard smallPixels ≥ 16*16
 -- The budget of a document counts the images before this one.
 #guard match Store.addBytes ({} : Store) (maxDocumentPixels-1) "a" rgbPng with
   | (store,used) => used == maxDocumentPixels-1 && (store.get? "a").any (·.toOption.isNone)
