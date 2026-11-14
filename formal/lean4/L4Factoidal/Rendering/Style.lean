@@ -8,6 +8,7 @@ import L4Factoidal.Rendering.GridStyle
 import L4Factoidal.Rendering.CssValues.Logical
 import L4Factoidal.Rendering.SheetReader
 import L4Factoidal.Rendering.CssVars
+import L4Factoidal.Rendering.FontSynthesis
 import L4Factoidal.DOM.Selectors
 import Std.Data.TreeMap
 import Std.Data.HashMap
@@ -156,6 +157,15 @@ structure Computed where
   vars : CssVars.Vars := {}
   /-- The grid container and grid item values (`Rendering/GridStyle.lean`). -/
   grid : GridStyle := {}
+  /-- `font-weight` (inherited): 1 to 1000, 400 is `normal`. Text of 600 and up is drawn with
+  the bold face the engine makes (`Rendering/FontSynthesis.lean`: one regular face is held). -/
+  fontWeight : Nat := 400
+  /-- The parent's `font-weight`: what `bolder` and `lighter` are relative to (CSS Fonts 4
+  §2.2.1), kept beside the element's own weight, which a user agent default may have set. -/
+  inheritedWeight : Nat := 400
+  /-- `font-style: italic` or `oblique` (inherited): drawn with the oblique face the engine
+  makes. -/
+  oblique : Bool := false
   deriving Repr
 instance : Inhabited Computed := ⟨{}⟩
 
@@ -165,7 +175,7 @@ def htmlProperties : List String :=
   ["display","width","height","margin","padding",
    "margin-top","margin-right","margin-bottom","margin-left",
    "padding-top","padding-right","padding-bottom","padding-left",
-   "color","background","background-color","font-size","font-family",
+   "color","background","background-color","font-size","font-family","font-weight","font-style",
    "line-height","visibility","overflow","text-decoration","text-decoration-line",
    "border","border-width","border-style","border-color",
    "border-spacing","border-collapse","caption-side","vertical-align","table-layout",
@@ -451,7 +461,7 @@ each with its canonical specified value; none when the value is not a `font` val
 system font. -/
 def fontLonghands (value : String) (important : Bool) : List Declaration :=
   match CssValues.expand "font" value with
-  | some ls => ["font-size", "font-family", "line-height"].filterMap fun n =>
+  | some ls => ["font-size", "font-family", "line-height", "font-weight", "font-style"].filterMap fun n =>
       (ls.lookup n).map fun v => (⟨n, v, important⟩ : Declaration)
   | none => []
 
@@ -473,7 +483,7 @@ def declarationsOf (ds : List SheetReader.Decl) : List Declaration :=
     else if key == "font" && d.value.utf8ByteSize ≤ 14 &&
         ["inherit","initial","unset","revert","revert-layer"].contains (trim d.value).toLower then
       -- a CSS-wide keyword on the shorthand is that keyword on each longhand the profile has
-      ["font-size","font-family","line-height"].map (fun name => (⟨name,d.value,d.important⟩ : Declaration)) ++ acc
+      ["font-size","font-family","line-height","font-weight","font-style"].map (fun name => (⟨name,d.value,d.important⟩ : Declaration)) ++ acc
     else if key == "font" && !CssVars.mentions d.value then
       -- the `font` shorthand (CSS Fonts 4 §2.8) as the longhands this profile has; a system
       -- font (`caption` ...) is kept whole and not read
@@ -1006,6 +1016,15 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     | "none" => return {s with objectFit := .none}
     | "scale-down" => return {s with objectFit := .scaleDown}
     | _ => throw "unsupported CSS object-fit"
+  | "font-weight" =>
+    -- CSS Fonts 4 §2.2: a keyword or a number; `bolder` and `lighter` under the parent's weight.
+    match FontSynthesis.weight? s.inheritedWeight d.value with
+    | some weight => return {s with fontWeight := weight}
+    | none => throw "unsupported CSS font-weight"
+  | "font-style" =>
+    match FontSynthesis.oblique? d.value with
+    | some oblique => return {s with oblique}
+    | none => throw "unsupported CSS font-style"
   | "font-family" =>
     -- CSS Fonts 4 §2.1: a list of families, tried in order (`familyNames`).
     let some names := familyNames d.value | throw s!"unsupported font family syntax: {d.value}"
@@ -1186,12 +1205,15 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
   | "font-size" =>
     some {s with fontSize := source.fontSize, lineHeight := lineHeightOf source.fontSize s.lineHeightFactor s.lineHeight}
   | "font-family" => some {s with fontFamily := source.fontFamily}
+  | "font-weight" => some {s with fontWeight := source.fontWeight}
+  | "font-style" => some {s with oblique := source.oblique}
   | "line-height" =>
     some {s with lineHeightFactor := source.lineHeightFactor,
                  lineHeight := lineHeightOf s.fontSize source.lineHeightFactor source.lineHeight}
   | "font" =>
     some {s with fontSize := source.fontSize, fontFamily := source.fontFamily, lineHeightFactor := source.lineHeightFactor,
-                 lineHeight := lineHeightOf source.fontSize source.lineHeightFactor source.lineHeight}
+                 lineHeight := lineHeightOf source.fontSize source.lineHeightFactor source.lineHeight,
+                 fontWeight := source.fontWeight, oblique := source.oblique}
   | "visibility" => some {s with visible := source.visible}
   | "overflow" => some {s with clipOverflow := source.clipOverflow}
   | "text-decoration" | "text-decoration-line" => some {s with underline := source.underline}
@@ -1217,7 +1239,7 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
 /-- The properties of this profile that are inherited (CSS 2 and the modules that define
 them). -/
 def inheritedProperties : List String :=
-  ["color","font","font-size","font-family","line-height","visibility","border-spacing","border-collapse",
+  ["color","font","font-size","font-family","font-weight","font-style","line-height","visibility","border-spacing","border-collapse",
    "caption-side","text-align","direction"]
 
 /-- The style a CSS-wide keyword takes the property from (CSS Cascade 4 §7.3): `inherit`
@@ -2047,7 +2069,15 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
   let svgOverflow := attrValue n "overflow"
   let scale := headingScale n.lname
   let fontSize := if scale == 1 then parent.fontSize else (parent.fontSize*scale).round
+  -- HTML §15.3.4 and §15.3.6: headings and `th` are bold, `b` and `strong` bolder than their
+  -- parent, `i`, `em`, `cite`, `var`, `dfn` and `address` italic. Author CSS wins.
+  let html := n.ns == some DOM.htmlNS || n.ns.isNone
+  let fontWeight := if html && ["b","strong"].contains n.lname then FontSynthesis.bolder parent.fontWeight
+    else if html && FontSynthesis.boldTags.contains n.lname then FontSynthesis.boldWeight
+    else parent.fontWeight
   let mut initial : Computed := {
+    fontWeight, inheritedWeight := parent.fontWeight,
+    oblique := parent.oblique || (html && FontSynthesis.italicTags.contains n.lname),
     color := parent.color,
     clipOverflow := svgViewport && svgOverflow != "visible", fontSize, fontFamily := parent.fontFamily,
     lineHeight := parent.lineHeightFactor.map (fontSize*·) |>.getD parent.lineHeight,

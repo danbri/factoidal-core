@@ -520,13 +520,36 @@ def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) (p
       else if s.display == .inlineBlock then out.push .closeAtomic else out ++ (bidiClose s).map .bidiMark
 
 private def translate (x y : Float) : Transform := ⟨1,0,0,1,x,y⟩
+
+/-- The paint of a glyph of text in style `s`: its colour; for bold text (`font-weight` of
+600 and up) the outline is also stroked with the colour, which is the bold face the engine
+makes from the regular one it holds (`FontSynthesis.embolden`: the stroke's width for the
+font size; `scale` is px to the glyph's unit). Other text is painted as before. -/
+def glyphStyle (s : Computed) (fontSize scale : Float) : Rendering.Style :=
+  if FontSynthesis.isBold s.fontWeight && scale > 0 then
+    let width := Float.ofNat (FontSynthesis.embolden (fontSize*64).round.toUInt32.toNat)/64
+    {fill := .solid s.color, stroke := .solid s.color, strokeWidth := width/scale}
+  else {fill := .solid s.color}
+
+/-- The place of a glyph of text in style `s`: its outline scaled and moved to `(x,y)`, the
+top of its line; for slanted text (`font-style: italic` or `oblique`) also sheared about
+the baseline, `rise` px below `y`, which is the oblique face the engine makes
+(`FontSynthesis.shear`: a point moves along the line by a quarter of its height above the
+baseline). Upright text is placed as before. -/
+def glyphTransform (s : Computed) (scale x y rise : Float) : Transform :=
+  if s.oblique then
+    let slant := Float.ofInt FontSynthesis.slantNum/Float.ofInt FontSynthesis.slantDen
+    ⟨scale,0,-slant*scale,scale,x+slant*rise,y⟩
+  else ⟨scale,0,0,scale,x,y⟩
+
 private def glyphNodes (font : FontProfile) (run : GlyphRun) (s : Computed) : Array Node := Id.run do
   let mut out := #[]
   if !s.visible then return out
   let scale := run.fontSize/font.unitsPerEm
   for g in run.glyphs do
     for geometry in font.outline g.index do
-      let primitive : Primitive := {geometry,style := {fill := .solid s.color}, transform := ⟨scale,0,0,scale,g.x,g.y⟩}
+      let primitive : Primitive := {geometry,style := glyphStyle s run.fontSize scale,
+        transform := glyphTransform s scale g.x g.y (font.ascent*scale)}
       out := out.push (.paint ⟨some run.source,primitive⟩)
   if s.underline && !run.glyphs.isEmpty then
     let left := (run.glyphs[0]?).map (·.x) |>.getD 0
@@ -573,7 +596,8 @@ private def shapedNodes (word : FontProvider.Word) (run : GlyphRun) (s : Compute
       out := out.push node
       continue
     for geometry in glyph.geometry do
-      out := out.push (.paint ⟨some run.source,{geometry,style := {fill := .solid s.color}, transform := ⟨scale,0,0,scale,position.x,position.y⟩}⟩)
+      out := out.push (.paint ⟨some run.source,{geometry,style := glyphStyle s run.fontSize scale,
+        transform := glyphTransform s scale position.x position.y (baseline-position.y)}⟩)
   if s.underline && width > 0 then
     let thickness := max 1 (run.fontSize/14)
     out := out.push (.paint ⟨some run.source,{geometry := .rect left (baseline+thickness) width thickness, style := {fill := .solid (s.decorationColor.getD s.color)}}⟩)

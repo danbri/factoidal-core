@@ -406,4 +406,19 @@ private def shadowPage := "<div id='h'><template shadowrootmode='open'><p id='in
 -- a slotted element inherits along the flat tree: from the shadow tree's div
 #guard shadowColor "<div id='h'><template shadowrootmode='open'><div style='color:red'><slot></slot></div></template><b id='lt'>x</b></div>" "" "" "lt" == some 1
 
+-- The bold and the oblique face the engine makes (2026-11-14): bold text is filled and stroked
+-- with its colour (16 px text: a stroke of 39/64 px), other text is filled only; slanted
+-- text is sheared about its baseline by a quarter, upright text is not.
+#guard (Layout.glyphStyle ({fontWeight := 700} : Computed) 16 1).strokeWidth == 0.609375
+#guard (Layout.glyphStyle ({fontWeight := 700} : Computed) 16 0.5).strokeWidth == 1.21875
+#guard match (Layout.glyphStyle ({fontWeight := 700} : Computed) 16 1).stroke with | .solid _ => true | _ => false
+#guard match (Layout.glyphStyle ({} : Computed) 16 1).stroke with | .none => true | _ => false
+#guard match (Layout.glyphStyle ({fontWeight := 500} : Computed) 16 1).stroke with | .none => true | _ => false
+#guard (Layout.glyphTransform ({oblique := true} : Computed) 2 10 20 8).c == -0.5
+#guard (Layout.glyphTransform ({oblique := true} : Computed) 2 10 20 8).e == 12
+#guard (Layout.glyphTransform ({oblique := true} : Computed) 2 10 20 8).f == 20
+#guard (Layout.glyphTransform ({} : Computed) 2 10 20 8).c == 0 && (Layout.glyphTransform ({} : Computed) 2 10 20 8).e == 10
+-- a page with bold and italic text lays out as before (the same boxes), with more paint
+#guard (run "<div><b>ab</b> <i>cd</i></div>" css) matches .ok _
+
 end L4Factoidal.Rendering.Tests

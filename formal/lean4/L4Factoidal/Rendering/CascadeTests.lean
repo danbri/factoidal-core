@@ -269,4 +269,26 @@ private def shadowInnerCss :=
   let ix := RuleIndex.build rs
   (ix.universal.size, ix.byTag.size, ix.byClass.size, ix.byId.size)) == some ((RuleIndex.build []).universal.size, (RuleIndex.build []).byTag.size, 0, (RuleIndex.build []).byId.size)
 
+-- font-weight and font-style (2026-11-14; before, neither had a field and no text was bold or
+-- italic). The user agent's defaults: headings and th bold, b and strong bolder than their
+-- parent, i, em, cite, var, dfn and address italic; inherited; author rules win.
+#guard (styleAt "<p><b id=t>x</b></p>" "").map (·.fontWeight) == some 700
+#guard (styleAt "<h1 id=t>x</h1>" "").map (·.fontWeight) == some 700
+#guard (styleAt "<h1><b id=t>x</b></h1>" "").map (·.fontWeight) == some 900
+#guard (styleAt "<h1><span id=t>x</span></h1>" "").map (·.fontWeight) == some 700
+#guard (styleAt "<p id=t>x</p>" "").map (fun s => (s.fontWeight, s.oblique)) == some (400, false)
+#guard (styleAt "<h1 id=t>x</h1>" "h1 { font-weight: normal }").map (·.fontWeight) == some 400
+#guard (styleAt "<p id=t>x</p>" "p { font-weight: 600 }").map (·.fontWeight) == some 600
+#guard (styleAt "<p id=t>x</p>" "p { font-weight: heavy }").map (·.fontWeight) == some 400
+-- bolder and lighter are relative to the parent's weight, not to the element's default
+#guard (styleAt "<h1><b id=t>x</b></h1>" "b { font-weight: lighter }").map (·.fontWeight) == some 400
+#guard (styleAt "<h1><span id=t>x</span></h1>" "span { font-weight: bolder }").map (·.fontWeight) == some 900
+#guard (styleAt "<div style='font-weight:normal'><b id=t>x</b></div>" "b { font-weight: inherit }").map (·.fontWeight) == some 400
+#guard (styleAt "<h1 id=t>x</h1>" "h1 { font-weight: initial }").map (·.fontWeight) == some 400
+#guard (styleAt "<p><em id=t>x</em></p>" "").map (·.oblique) == some true
+#guard (styleAt "<em><span id=t>x</span></em>" "").map (·.oblique) == some true
+#guard (styleAt "<em id=t>x</em>" "em { font-style: normal }").map (·.oblique) == some false
+#guard (styleAt "<p id=t>x</p>" "p { font-style: oblique 10deg }").map (·.oblique) == some true
+#guard (styleAt "<p id=t>x</p>" "p { font-style: italic }").map (·.oblique) == some true
+
 end L4Factoidal.Rendering.CascadeTests
