@@ -22,9 +22,10 @@ def px (x : Float) : String := FloatFormat.format x ++ "px"
 def length : CSS.Length → String
   | .auto => "auto"
   | .px v => px v
-  | .percent v => FloatFormat.format v ++ "%"
-  | .vw v => FloatFormat.format v ++ "vw"
-  | .vh v => FloatFormat.format v ++ "vh"
+  -- a percentage and the viewport units are kept as fractions (`CSS.length`)
+  | .percent v => FloatFormat.format (v * 100) ++ "%"
+  | .vw v => FloatFormat.format (v * 100) ++ "vw"
+  | .vh v => FloatFormat.format (v * 100) ++ "vh"
   | .calc p v => "calc(" ++ FloatFormat.format (p * 100) ++ "% + " ++ px v ++ ")"
 
 /-- `none` for a maximum that is `auto` here (CSS 2.1 §10.4, §10.7). -/
@@ -102,5 +103,6 @@ def text (c : Computed) : String :=
 #guard (values { color := ⟨1, 0, 0⟩ }).lookup "color" == some "rgb(255, 0, 0)"
 #guard (values {}).lookup "background-color" == some "rgba(0, 0, 0, 0)"
 #guard (values { width := .px 10 }).lookup "width" == some "10px"
+#guard (values { width := .percent 0.5 }).lookup "width" == some "50%"
 
 end L4Factoidal.Rendering.ComputedValues
