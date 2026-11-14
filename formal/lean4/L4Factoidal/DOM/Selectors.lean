@@ -808,8 +808,83 @@ def attrsMatching (d : Dom) (k : NodeId) (ns : NsSel) (name : String) : List Att
   x.attrs.toList.filter fun a => a.lname == name &&
     match ns with | .any => true | .default | .none => a.ns.isNone
 
+/-! ### Matching without building strings
+
+Selector matching runs for each element and each candidate rule of a cascade, so the
+tests below read the bytes of the strings they compare and allocate nothing: a type or
+attribute name compared with ASCII letters taken in lower case, a class looked for among the
+words of the `class` attribute. Each agrees with the form that builds strings (`lowerAscii`,
+`wsSplit`); the guards after them compare the two. Lower-casing ASCII touches only the bytes
+0x41 to 0x5A, which never occur inside a multi-byte UTF-8 sequence, so a byte-wise
+comparison is a character-wise one. -/
+
+/-- Byte `i` of `s`'s UTF-8 encoding, 0 past its end. -/
+@[inline] def byteAt (s : String) (i : Nat) : UInt8 :=
+  if h : i < s.utf8ByteSize then s.getUTF8Byte ⟨i⟩ h else 0
+
+/-- An ASCII upper-case letter's byte in lower case; any other byte as it is. -/
+@[inline] def lowerByte (b : UInt8) : UInt8 := if 65 ≤ b && b ≤ 90 then b + 32 else b
+
+/-- Bytes `i` onwards of `c` and `d` agree, `d`'s taken in ASCII lower case (a loop over the
+bytes: a tail call). -/
+def eqLowerFrom (c d : String) (i : Nat) : Bool :=
+  if i < c.utf8ByteSize then byteAt c i == lowerByte (byteAt d i) && eqLowerFrom c d (i + 1) else true
+termination_by c.utf8ByteSize - i
+
+/-- `c == lowerAscii d`, with no string built. -/
+def eqLowerAscii (c d : String) : Bool :=
+  c.utf8ByteSize == d.utf8ByteSize && eqLowerFrom c d 0
+
+/-- An ASCII white space byte of the `class` attribute (HTML §2.3.4: space, tab, LF, FF, CR). -/
+@[inline] def wsByte (b : UInt8) : Bool := b == 32 || b == 9 || b == 10 || b == 12 || b == 13
+
+/-- The bytes of `v` are at byte `i` of `s` (a loop over `v`'s bytes: a tail call). -/
+def bytesAt (s v : String) (i j : Nat) : Bool :=
+  if j < v.utf8ByteSize then byteAt s (i + j) == byteAt v j && bytesAt s v i (j + 1) else true
+termination_by v.utf8ByteSize - j
+
+/-- The first white space byte of `s` at or after `j`, or its end (a loop: a tail call). -/
+def skipWord (s : String) (j : Nat) : Nat :=
+  if j < s.utf8ByteSize then (if wsByte (byteAt s j) then j else skipWord s (j + 1)) else j
+termination_by s.utf8ByteSize - j
+
+theorem skipWord_ge (s : String) (j : Nat) : skipWord s j ≥ j := by
+  unfold skipWord
+  split
+  · split
+    · omega
+    · have := skipWord_ge s (j + 1); omega
+  · omega
+termination_by s.utf8ByteSize - j
+
+/-- From byte `i` of `s` (at the start of a word or in the white space before one), whether a
+word of `s` is `v`: each word is compared where it starts, then skipped (a loop over the
+bytes: a tail call). -/
+def tokenFrom (s v : String) (i : Nat) : Bool :=
+  if i < s.utf8ByteSize then
+    if wsByte (byteAt s i) then tokenFrom s v (i + 1)
+    else
+      let e := i + v.utf8ByteSize
+      if e ≤ s.utf8ByteSize && bytesAt s v i 0 && (e == s.utf8ByteSize || wsByte (byteAt s e)) then true
+      else tokenFrom s v (skipWord s (i + 1))
+  else false
+termination_by s.utf8ByteSize - i
+decreasing_by
+  all_goals simp_wf
+  · omega
+  · have := skipWord_ge s (i + 1); omega
+
+/-- `(wsSplit s).contains v`, with no string built: a non-empty `v` is one of the words of
+`s`. -/
+def hasToken (s v : String) : Bool := v.utf8ByteSize != 0 && tokenFrom s v 0
+
 def wsSplit (s : String) : List String :=
   (s.map fun c => if c == '\t' || c == '\n' || c == '\x0C' || c == '\r' then ' ' else c).splitOn " " |>.filter (· != "")
+
+#guard ["", "a", "a b", " a\tb\n", "ab a", "aa", "a\x0Cb", "é a", "x y z a"].all fun s =>
+  ["a", "b", "ab", "", "é", "z"].all fun v => hasToken s v == (wsSplit s).contains v
+#guard ["div", "DIV", "Div", "dív", "DÍV", "", "a-b", "A_B"].all fun n =>
+  ["div", "dív", "", "a-b", "a_b"].all fun c => eqLowerAscii c n == (c == lowerAscii n)
 
 def attrValueMatches (op : AttrOp) (v want : String) : Bool :=
   match op with
@@ -1083,30 +1158,39 @@ def matchSimple (d : Dom) (scope : Option NodeId) : Nat → NodeId → Simple �
         | .none => x.ns.isNone
       nsOk && match name with
         | none => true
-        | some n => x.lname == (if htmlOf d k then lowerAscii n else n)
+        | some n => if htmlOf d k then eqLowerAscii x.lname n else x.lname == n
     | .id v => (d.get k).attrs.any fun a => a.ns.isNone && a.lname == "id" && a.value == v
     | .cls v => match attrVal? d k "class" with
-      | some c => (wsSplit c).contains v
+      | some c => hasToken c v
       | none => false
     | .attr ns name op value ci cs =>
-      let ins := ci || (!cs && htmlOf d k && caseInsensitiveAttrs.contains (lowerAscii name))
-      (attrsMatching d k ns name).any fun a =>
-        if ins then attrValueMatches op (lowerAscii a.value) (lowerAscii value) else attrValueMatches op a.value value
+      let x := d.get k
+      let html := htmlOf d k
+      -- the attributes `attrsMatching` gives, tested in place
+      x.attrs.any fun a =>
+        (if html then eqLowerAscii a.lname name else a.lname == name) &&
+        (match ns with | .any => true | .default | .none => a.ns.isNone) &&
+        (match op with
+          | .present => true
+          | _ =>
+            let ins := ci || (!cs && html && caseInsensitiveAttrs.any (eqLowerAscii · name))
+            if ins then attrValueMatches op (lowerAscii a.value) (lowerAscii value) else attrValueMatches op a.value value)
     | .pseudo n =>
       let x := d.get k
-      let sibs := elementSiblings d k
-      let sameType := sibs.filter fun c => (d.get c).lname == x.lname && (d.get c).ns == x.ns
+      -- the element siblings, read only by the structural pseudo-classes
+      let sibs := fun (_ : Unit) => elementSiblings d k
+      let sameType := fun (_ : Unit) => (sibs ()).filter fun c => (d.get c).lname == x.lname && (d.get c).ns == x.ns
       match n with
       | "root" => match x.parent with | some p => (d.get p).type == .document | none => false
       | "empty" => x.kids.all fun c =>
           let y := d.get c
           y.type != .element && !((y.type == .text || y.type == .cdata) && !y.data.isEmpty)
-      | "first-child" => x.parent.isSome && sibs[0]? == some k
-      | "last-child" => x.parent.isSome && sibs.back? == some k
-      | "only-child" => x.parent.isSome && sibs.size == 1
-      | "first-of-type" => x.parent.isSome && sameType[0]? == some k
-      | "last-of-type" => x.parent.isSome && sameType.back? == some k
-      | "only-of-type" => x.parent.isSome && sameType.size == 1
+      | "first-child" => x.parent.isSome && (sibs ())[0]? == some k
+      | "last-child" => x.parent.isSome && (sibs ()).back? == some k
+      | "only-child" => x.parent.isSome && (sibs ()).size == 1
+      | "first-of-type" => x.parent.isSome && (sameType ())[0]? == some k
+      | "last-of-type" => x.parent.isSome && (sameType ()).back? == some k
+      | "only-of-type" => x.parent.isSome && (sameType ()).size == 1
       | "scope" => match scope with | some s => s == k | none => x.parent.any fun p => (d.get p).type == .document
       | "link" | "any-link" => isHtml d k ["a", "area"] && (attrVal? d k "href").isSome
       | "checked" =>
