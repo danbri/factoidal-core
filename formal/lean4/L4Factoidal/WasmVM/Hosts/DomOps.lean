@@ -859,7 +859,7 @@ def domOpM (id op : Nat) (q : String) : Op String := do
       let u := if st.hostLoads then url else ""
       set { st with navigations := (st.navigations.filter fun (nv : Nat × String) => nv.1 != el).push (el, u) }
       return "1"
-  | 210 =>
+  | 173 =>
     -- the referrer source of document `id` (0: the page's) for a request one of its scripts
     -- makes (Referrer Policy §8.3 steps 1 to 3): the URL it names, U+0000, the token of its
     -- referrer policy (`HTML.ReferrerSource.answer`: the document's `meta name=referrer`,

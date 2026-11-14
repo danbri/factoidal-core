@@ -6,7 +6,7 @@ requests its scripts make (Referrer Policy §8.3 "determine request's referrer" 
 A request whose referrer is "client" names its document's URL, and its policy, when it has
 none of its own, is the document's. `Net.Xhr` holds both for the session's own document as
 the embedder gave them (`State.client`, `State.policy`); this file answers for any document
-of the realm, the page's or a same-origin frame's (`node_query` 210, `Hosts.DomOps`):
+of the realm, the page's or a same-origin frame's (`node_query` 173, `Hosts.DomOps`):
 
 * The URL: the document's own when it came from `http` or `https`. An `iframe srcdoc`
   document names its container's document (§8.3 step 3, repeated). Any other document
