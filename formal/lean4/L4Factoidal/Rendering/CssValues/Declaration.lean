@@ -105,6 +105,22 @@ def Block.parse (text : String) : Block :=
       | none => b
       | some ds => ds.foldl (fun b (n, v) => b.putLast { name := n, value := v, important := important }) b) []
 
+/-- The declarations of a block text whose property name (lower case) is in `names`: the
+others are not parsed. For a reader that wants one property (`ComputedGeneric.cascaded`),
+so that reading one computed value does not parse every declaration of the block. -/
+def Block.parseOnly (names : List String) (text : String) : Block :=
+  let cs := preprocess text.toList
+  let pieces := splitTop ';' (cs.length + 1) cs 0 none [] []
+  pieces.foldl (fun b piece =>
+    match declOf piece with
+    | none => b
+    | some (name, value, important) =>
+      if !names.contains (propertyName name) then b
+      else
+        match expand name value with
+        | none => b
+        | some ds => ds.foldl (fun b (n, v) => b.putLast { name := n, value := v, important := important }) b) []
+
 /-- The longhand declarations of shorthand `row`, when all are in the block with one
 important flag. -/
 def Block.longhandsOf (b : Block) (row : Property) : Option (List Decl) :=
@@ -247,6 +263,8 @@ def styleOp (q : String) : String :=
 #guard (Block.parse "margin: 1px; margin-left: 3px").get "margin" == "1px 1px 1px 3px"
 #guard (Block.parse "margin: 1px").get "margin-left" == "1px"
 #guard (Block.parse "margin: 1px").get "MARGIN" == "1px"
+#guard (Block.parseOnly ["margin-left", "margin"] "color: red; margin: 1px; margin-left: 2px; top: 0").get "margin-left" == "2px"
+#guard (Block.parseOnly ["margin-left", "margin"] "color: red; top: 0").length == 0
 #guard (Block.parse "margin-top: 1px").get "margin" == ""
 #guard (Block.parse "border: 1px solid red").text == "border: 1px solid red;"
 #guard (Block.parse "border: 1px solid red; border-top-color: blue").text ==

@@ -40,20 +40,24 @@ def keyLE : List Nat → List Nat → Bool
   | _ :: _, [] => false
   | a :: as, b :: bs => if a == b then keyLE as bs else a < b
 
-/-- Whether a declaration of `declared` can set property `p`: it is `p`, or a shorthand of
-it. -/
-def covers (declared p : String) : Bool :=
-  let d := CssValues.propertyName declared
-  d == p || ((CssValues.lookup d).map (·.longhands.contains p)).getD false
+/-- The property names whose declarations can set property `p`: `p`, the shorthands that
+have it as a longhand, and the legacy names of those. One pass over the table for a
+query, so that each declaration of the cascade is then one list lookup. -/
+def coveringNames (p : String) : List String :=
+  let direct := p :: CssValues.Data.properties.toList.filterMap fun (n, _, _, _, ls) =>
+    if ls == "" then none else if (ls.splitOn " ").contains p then some n else none
+  direct ++ CssValues.Data.aliases.toList.filterMap fun (alias, target) =>
+    if direct.contains target then some alias else none
 
 /-- The cascaded value of property `p` (a name of the table, or a custom property) on
 element `id`: the canonical specified value of the winning declaration. -/
 def cascaded (v : View) (id : Nat) (p : String) : Option String := Id.run do
   let n := v.dom.get id
+  let names := coveringNames p
   let mut best : Option (List Nat × String) := none
   let mut order : Nat := 0
   let consider := fun (best : Option (List Nat × String)) (key : List Nat) (d : Declaration) =>
-    if covers d.property p && (best.map (fun b => keyLE b.1 key)).getD true then
+    if names.contains d.property && (best.map (fun b => keyLE b.1 key)).getD true then
       match (CssValues.expand d.property d.value).bind (·.lookup p) with
       | some value => some (key, value)
       | none => best
@@ -68,7 +72,7 @@ def cascaded (v : View) (id : Nat) (p : String) : Option String := Id.run do
         let key := [if d.important then 1 else 0, origin * 2 + context, 0, specificity.1, specificity.2.1, specificity.2.2, order]
         best := consider best key d
       order := order + 1
-  for d in CssValues.Block.parse (attrValue n "style") do
+  for d in CssValues.Block.parseOnly names (attrValue n "style") do
     let key := [if d.important then 1 else 0, 2 + (if d.important then 0 else 1), 1, 0, 0, 0, order]
     if d.name == p && (best.map (fun b => keyLE b.1 key)).getD true then best := some (key, d.value)
     order := order + 1
