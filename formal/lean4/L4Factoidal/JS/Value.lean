@@ -122,6 +122,9 @@ inductive NativeX where
   component's compiled regular expression and group names), or throws the TypeError; op 1
   `(record, input, baseURL)` is `exec`: the match result or null. -/
   | urlPattern
+  /-- CreateDynamicFunction (§20.2.1.1.1) for %GeneratorFunction% (1), %AsyncFunction% (2) and
+  %AsyncGeneratorFunction% (3); `Function` itself is `Native.functionCtor`. -/
+  | dynFunction (kind : Nat)
   /-- The Streams Standard's decisions (`WHATWG.Streams`), for the page's stream classes: a
   host's `n.streams(op, ...)`. 0 a new queue-with-sizes; 1 `(q, value, size)`
   EnqueueValueWithSize (RangeError for a size that is not a finite, non-negative number);
@@ -491,7 +494,26 @@ structure Realm where
   iterHelperProto : Nat := 0
   wrapIterProto : Nat := 0
   aggregateErrorProto : Nat := 0
+  /-- %GeneratorFunction.prototype%, %AsyncGeneratorFunction.prototype% and
+  %AsyncFunction.prototype% (§27.3.3, §27.4.3, §27.7.3): the [[Prototype]] of generator,
+  async generator and async functions (0 before the realm has them: Function.prototype). -/
+  genFnProto : Nat := 0
+  asyncGenFnProto : Nat := 0
+  asyncFnProto : Nat := 0
   deriving Inhabited
+
+/-- The [[Prototype]] of a function object made from source (OrdinaryFunctionCreate's
+`functionPrototype`, §10.2.3, as InstantiateGeneratorFunctionObject and the others choose it):
+%GeneratorFunction.prototype%, %AsyncGeneratorFunction.prototype%, %AsyncFunction.prototype%,
+else %Function.prototype%; Function.prototype also while the realm does not have the others yet. -/
+def Realm.closureProtoRaw (r : Realm) (gen async : Bool) : Nat :=
+  if gen then (if async then r.asyncGenFnProto else r.genFnProto)
+  else if async then r.asyncFnProto else r.functionProto
+
+/-- An intrinsic's slot, or Function.prototype while the slot is still 0. -/
+def Realm.orFn (r : Realm) (p : Nat) : Nat := if p = 0 then r.functionProto else p
+
+def Realm.closureProto (r : Realm) (gen async : Bool) : Nat := r.orFn (r.closureProtoRaw gen async)
 
 /-- The error constructors, by their index in `Realm.errorProtos`. -/
 def errorNames : Array String :=

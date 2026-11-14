@@ -339,7 +339,7 @@ def Kind.constructs : Kind → Bool
     | .errorCtor _ | .symbolCtor | .promiseCtor | .mapCtor _ | .regexpCtor | .proxyCtor
     | .bufferCtor | .typedCtor _ | .dateCtor | .dataViewCtor => true
     | (.x .sharedCtor) | (.x .typedArrayCtor) | (.x .iteratorCtor) | (.x .aggregateErrorCtor) => true
-    | (.x .weakRefCtor) | (.x .finRegCtor) => true
+    | (.x .weakRefCtor) | (.x .finRegCtor) | (.x (.dynFunction _)) => true
     | _ => false
   | .bound .. => true
   | _ => false
@@ -370,6 +370,11 @@ def typeOf (v : Value) : M String := do
   | .big _ => pure "bigint"
   | .obj id => pure (typeOfKind (← getObj id).kind)
 
+/-- The source text CreateDynamicFunction (§20.2.1.1.1 steps 13 to 16) parses: `kw` is
+`function`, `function*`, `async function` or `async function*`. -/
+def dynFunctionSource (kw : String) (ps : List String) (body : String) : String :=
+  "(" ++ kw ++ " anonymous(" ++ ",".intercalate ps ++ "\n) {\n" ++ body ++ "\n})"
+
 /-- A function object for a native, with `name` and `length`. -/
 def mkNative (id : Native) (name : String) (len : Nat) : M Value := do
   let r ← realm
@@ -394,7 +399,9 @@ def makeClosure (ctx : Ctx) (f : FunDef) (nameHint : String := "") (home : Value
         let e ← newEnv ctx.env; pure e
     | none => pure ctx.env
   let home := if f.arrow then ctx.home else home
-  let id ← alloc { proto := .obj r.functionProto, kind := .closure f env ctx.thisV ctx.newTarget home #[] }
+  -- the [[Prototype]] of the function: %GeneratorFunction.prototype%, %AsyncGeneratorFunction.prototype%,
+  -- %AsyncFunction.prototype% or %Function.prototype% (§10.2.3 step 1, from the callers' choice)
+  let id ← alloc { proto := .obj (r.closureProto f.gen f.async), kind := .closure f env ctx.thisV ctx.newTarget home #[] }
   if env != ctx.env then
     if let some n := f.name then declare env n { v := .obj id, mutable := false }
   defineOwn id "length" (.data (.num (Float.ofNat f.expectedArgs)) false false true)
@@ -4244,7 +4251,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       let (ps, body) := match strs.reverse with
         | [] => ([], "")
         | b :: rest => (rest.reverse, b)
-      let src := "(function anonymous(" ++ ",".intercalate ps ++ "\n) {\n" ++ body ++ "\n})"
+      let src := dynFunctionSource "function" ps body
       match (parseScript src false).map Resolve.script with
       | .error e => throwErr .syntax ((e.drop 13).toString)
       | .ok { body := [.expr e], .. } =>
@@ -7966,6 +7973,18 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
           pure (.num (if p.ready then -(p.toCopy.toFloat) - 1 else p.toCopy.toFloat))
         | _ => throwErr .type "streams: unknown operation"
       | _ => throwErr .type "streams: unknown operation"
+    | (.x (.dynFunction k)) =>
+      -- CreateDynamicFunction (§20.2.1.1.1) for the generator, async and async generator kinds
+      let strs ← args.toList.mapM (toStr n)
+      let (ps, body) := match strs.reverse with
+        | [] => ([], "")
+        | b :: rest => (rest.reverse, b)
+      let kw := match k with | 1 => "function*" | 2 => "async function" | _ => "async function*"
+      match (parseScript (dynFunctionSource kw ps body) false).map Resolve.script with
+      | .error e => throwErr .syntax ((e.drop 13).toString)
+      | .ok { body := [.expr e], .. } =>
+        evalExpr n { env := 0, thisV := .obj r.globalObj, strict := false } e
+      | .ok _ => throwErr .syntax "invalid function body"
     | (.x .urlPattern) =>
       -- `n.urlPattern(op, ...)` for the page's URLPattern class: the Standard's algorithms are
       -- `WHATWG.URLPattern.create` and `exec`; this converts the arguments and builds the answer.
@@ -8508,6 +8527,26 @@ def initRealm : M Unit := do
   method asyncGenProto "return" .agenReturn 1
   method asyncGenProto "throw" .agenThrow 1
   defineOwn asyncGenProto (symKey symToStringTag) (.data (.str "AsyncGenerator") false false true)
+  -- %GeneratorFunction%, %AsyncGeneratorFunction%, %AsyncFunction% and their prototypes
+  -- (§27.3, §27.4, §27.7): not globals; reached as Object.getPrototypeOf(function* () {}) and
+  -- its constructor
+  let fnProtoId := (← realm).functionProto
+  let genFnProto ← alloc { proto := .obj fnProtoId }
+  let asyncGenFnProto ← alloc { proto := .obj fnProtoId }
+  let asyncFnProto ← alloc { proto := .obj fnProtoId }
+  let fnCtorV ← ownValue g "Function"
+  for (fp, inst, tag, k) in [(genFnProto, genProto, "GeneratorFunction", 1),
+      (asyncGenFnProto, asyncGenProto, "AsyncGeneratorFunction", 3), (asyncFnProto, 0, "AsyncFunction", 2)] do
+    if inst != 0 then
+      defineOwn fp "prototype" (.data (.obj inst) false false true)
+      defineOwn inst "constructor" (.data (.obj fp) false false true)
+    defineOwn fp (symKey symToStringTag) (.data (.str tag) false false true)
+    let c ← mkNative (.x (.dynFunction k)) tag 1
+    if let .obj cid := c then
+      modifyObj cid (fun o => { o with proto := match fnCtorV with | .obj f => .obj f | _ => .obj fnProtoId })
+      defineOwn cid "prototype" (.data (.obj fp) false false false)
+    defineOwn fp "constructor" (.data c false false true)
+  modify fun h => { h with realm := { h.realm with genFnProto := genFnProto, asyncGenFnProto := asyncGenFnProto, asyncFnProto := asyncFnProto } }
   let promiseProto ← mk
   let promiseC ← ctorWith "Promise" .promiseCtor 1 promiseProto
   setHidden g "Promise" promiseC

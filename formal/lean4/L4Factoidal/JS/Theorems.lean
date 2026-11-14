@@ -303,6 +303,40 @@ theorem allowedOn_accessor (d : Desc) (g s : Value) (e : Bool) (h : d.allowedOn 
     | true => rfl
     | false => simp [Desc.allowedOn, PropV.configurable, hx, hs] at h
 
+/-! ## The prototype of a function made from source (`Realm.closureProto`)
+
+Generator, async generator and async functions inherit from %GeneratorFunction.prototype%,
+%AsyncGeneratorFunction.prototype% and %AsyncFunction.prototype% (§27.3.3, §27.4.3, §27.7.3);
+before 2026-11-14 every function inherited from Function.prototype, so
+`Object.getPrototypeOf(function* () {}).prototype` was undefined. -/
+
+/-- Kind: totality. Says: a function never gets object 0 as its prototype (the slot of a realm
+that has not made the intrinsic yet), when Function.prototype is made. -/
+theorem orFn_ne_zero (r : Realm) (p : Nat) (h : r.functionProto ≠ 0) : r.orFn p ≠ 0 := by
+  unfold Realm.orFn
+  split <;> assumption
+
+theorem closureProto_ne_zero (r : Realm) (gen async : Bool) (h : r.functionProto ≠ 0) :
+    r.closureProto gen async ≠ 0 :=
+  orFn_ne_zero r _ h
+
+/-- Kind: a specification. Says: an ordinary function (neither generator nor async) inherits
+from Function.prototype. -/
+theorem closureProto_plain (r : Realm) : r.closureProto false false = r.functionProto := by
+  simp [Realm.closureProto, Realm.closureProtoRaw, Realm.orFn]
+
+/-- Kind: a specification. Says: once the realm has %GeneratorFunction.prototype%, a generator
+function inherits from it, and likewise for the async kinds. -/
+theorem closureProto_gen (r : Realm) (h : r.genFnProto ≠ 0) : r.closureProto true false = r.genFnProto := by
+  simp [Realm.closureProto, Realm.closureProtoRaw, Realm.orFn, h]
+
+theorem closureProto_asyncGen (r : Realm) (h : r.asyncGenFnProto ≠ 0) :
+    r.closureProto true true = r.asyncGenFnProto := by
+  simp [Realm.closureProto, Realm.closureProtoRaw, Realm.orFn, h]
+
+theorem closureProto_async (r : Realm) (h : r.asyncFnProto ≠ 0) : r.closureProto false true = r.asyncFnProto := by
+  simp [Realm.closureProto, Realm.closureProtoRaw, Realm.orFn, h]
+
 /-! ## The size of the heap (`HeapOf.full`, `maxObjs`)
 
 The heap has no collector: an object, once made, stays. A page that makes objects for ever (a
