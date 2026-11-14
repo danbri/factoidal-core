@@ -688,7 +688,9 @@
   // The window a body or frameset element's window-reflecting handlers belong to (HTML
   // §8.1.8.1): its own document's. For a same-origin frame's document that is the frame's
   // window target, not the page's window (whose handlers a frame's `<body onload>` replaced).
-  const bodyWindow = el => { const d = info(nodeId(el), 7); return d > 0 ? frameTarget(d) : window; };
+  // A document with no browsing context (createHTMLDocument, DOMParser, new Document) has no
+  // window: there the window-reflecting handlers are null and setting them does nothing.
+  const bodyWindow = el => { const d = info(nodeId(el), 7); return d <= 0 ? window : info(d, 12) >= 0 ? frameTarget(d) : null; };
   const addHandlers = proto => {
     for (const name of handlerNames)
       Object.defineProperty(proto, 'on' + name, { get() { return handlerOf(this, name); },
@@ -961,7 +963,7 @@
       chk(n.removeAttr(nodeId(this), String(name)));
       // Removing an event handler content attribute deactivates the handler (HTML §8.1.8.1).
       if (a && k.startsWith('on') && handlerNames.includes(k.slice(2)) && (this instanceof HTMLElement || this instanceof SVGElement || this instanceof MathMLElement))
-        setHandler(windowReflecting(this) && bodyWindowHandlers.has(k.slice(2)) ? bodyWindow(this) : this, k.slice(2), null);
+        { const t = windowReflecting(this) && bodyWindowHandlers.has(k.slice(2)) ? bodyWindow(this) : this; if (t) setHandler(t, k.slice(2), null); }
     }
     removeAttributeNS(ns, name) { const a = attrNode(this, nsArg(ns) || null, String(name)); if (a) detachAttr(a); chk(n.removeAttr(nodeId(this), nsArg(ns) + '\u0000' + String(name))); }
     toggleAttribute(name, force) {
@@ -1525,8 +1527,8 @@
   };
   for (const C of [named.HTMLBodyElement, named.HTMLFrameSetElement])
     for (const name of bodyWindowHandlers) {
-      Object.defineProperty(C.prototype, 'on' + name, { get() { return handlerOf(bodyWindow(this), name); },
-        set(f) { setHandler(bodyWindow(this), name, f); }, configurable: true, enumerable: true });
+      Object.defineProperty(C.prototype, 'on' + name, { get() { const w = bodyWindow(this); return w ? handlerOf(w, name) : null; },
+        set(f) { const w = bodyWindow(this); if (w) setHandler(w, name, f); }, configurable: true, enumerable: true });
     }
   reflectURL(named.HTMLIFrameElement, ['src']); reflectString(named.HTMLIFrameElement, ['srcdoc', 'name', 'width', 'height', 'allow']);
   reflectURL(named.HTMLImageElement, ['src']); reflectString(named.HTMLImageElement, ['alt']);
@@ -16369,6 +16371,7 @@
     // Content Security Policy: an event handler attribute is an inline script (script-src-attr)
     if (cspBlocksInline(true, false, '', source, nodeId(el))) return;
     const t = onBody ? bodyWindow(el) : el;
+    if (!t) return;
     // HTML "getting the current value of the event handler": the window's onerror handler has
     // the parameters event, source, lineno, colno and error. A source that does not compile
     // sets the handler to null (replacing an earlier one) and the error is reported.
