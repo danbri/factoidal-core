@@ -319,7 +319,13 @@ def contextualFragment (rid : Nat) (src : String) : Op Nat := do
       if (d.get ex.doc).htmlDoc && ex.lname == "html" && ex.ns == some htmlNS then (htmlNS, "body")
       else (ex.ns.getD "", ex.lname)
     | none => (htmlNS, "body")
-  make (.createNode (13 + 16 * doc) (ns ++ "\x00" ++ name ++ "\x00" ++ src))
+  -- The fragment is not the arena's next node (the parse's own nodes come first), so the
+  -- command records the number that the parse answers.
+  let kind := 13 + 16 * doc
+  let data := ns ++ "\x00" ++ name ++ "\x00" ++ src
+  match createKind d kind data with
+  | (_, .ok frag) => exec (.createNode kind data frag); return frag
+  | (_, .error e) => throw (domErr e)
 
 /-! ## The selection (Selection API, w3c/selection-api) -/
 

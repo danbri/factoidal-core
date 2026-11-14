@@ -6097,7 +6097,14 @@
     comparePoint(node, offset) { needArgs(arguments, 2, 'comparePoint'); return Number(op(rid(this), 107, point(node, offset))); }
     intersectsNode(node) { needArgs(arguments, 1, 'intersectsNode'); return op(rid(this), 109, String(nodeId(node))) === '1'; }
     toString() { return op(rid(this), 111); }
-    createContextualFragment(fragment) { needArgs(arguments, 1, 'createContextualFragment'); const f = Number(op(rid(this), 116, String(fragment))); scanHandlers(f, false); return wrap(f); }
+    createContextualFragment(fragment) {
+      needArgs(arguments, 1, 'createContextualFragment');
+      const f = Number(op(rid(this), 116, String(fragment)));
+      scanHandlers(f, false);
+      // its script elements are not "already started": they run when the fragment is inserted
+      for (const k of elementsOf(f)) if (str(k, 0) === 'script') noteFreshScript(k);
+      return wrap(f);
+    }
     // CSSOM View §6.1: the boxes of the range's common ancestor element in Lean's layout.
     getBoundingClientRect() { let k = Number(op(rid(this), 110)); if (info(k, 0) !== 1) k = info(k, 1); if (k < 0 || info(k, 0) !== 1) return new DOMRect(0, 0, 0, 0); return wrap(k).getBoundingClientRect(); }
     getClientRects() { const r = this.getBoundingClientRect(); return r.width === 0 && r.height === 0 ? [] : [r]; }
