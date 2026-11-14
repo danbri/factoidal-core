@@ -2394,3 +2394,8 @@ L4Factoidal_Rendering_CssValues_dropZeroLengths  # (c) the nesting of one value,
 L4Factoidal_Rendering_MediaQuery_calcValue  # (c) the nesting of parentheses in one calc() of a media query, fuel 8
 L4Factoidal_DOM_Selectors_relativeList  # (c) DOM.Selectors parser: the argument of :has(); recursion only into the arguments of :not()/:is()/:has()/:nth-child(of), at most maxNesting (32) levels
 L4Factoidal_Rendering_CssVars_substitute  # (c) the nesting of var() fallbacks, at most maxFallbacks = 32; the loop over the value is a for loop
+# --- WebDriver endpoint (WebDriver/Gate.lean, Page.lean, Protocol.lean): 2026-11-14. What recurses is a template of the fixed endpoint table, the fixed-size session secret, or the nesting of one script argument/result under a fuel.
+L4Factoidal_WebDriver_Protocol_matchPath  # (c) one template of the fixed endpoint table: at most 6 segments, and the request path is compared only up to the template's length
+L4Factoidal_WebDriver_Gate_mismatches  # (c) sameText calls it only when both texts have the length of the secret (2 * secretBytes = 32 characters)
+L4Factoidal_WebDriver_Page_toWire  # (c) the nesting of one script argument, fuel (the arrays and objects of a level are a mapM)
+L4Factoidal_WebDriver_Page_fromWire  # (c) the nesting of one script result, fuel 64 (the arrays and objects of a level are a map)
