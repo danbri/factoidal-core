@@ -109,6 +109,8 @@ def utOf : Nat → IType → UT
     | .anyNode | .xnode => UT.nodes
     | .jnodeT .. => UT.jnode
     | .atomic a => utOfAtomic a
+    -- a simple type of the in-scope schema: atomic values
+    | .schemaType _ => UT.atom
     | .elem _ | .elemT .. | .schemaElem _ => UT.elem
     | .attr _ | .attrT .. | .schemaAttr _ => UT.attr
     | .text => UT.text

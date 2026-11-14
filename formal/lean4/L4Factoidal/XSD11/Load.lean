@@ -273,7 +273,8 @@ def typeInfoOf (s : Schema) (q : XPath4.QN) : Option XPath4.SchemaTypeInfo :=
           | .list => "list"
           | .union => "union",
         cast := some (fun lex => atomsOf s (fun _ => none) t
-          (XSD.applyWhiteSpace .collapse lex)) }
+          (XSD.applyWhiteSpace .collapse lex)),
+        body := some sd.body }
     | .complex c =>
       { name, simple := false, base := s.typeQN c.base,
         variety := match c.content with
