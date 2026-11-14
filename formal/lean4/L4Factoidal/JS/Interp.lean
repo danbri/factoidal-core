@@ -8477,8 +8477,8 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       -- §27.2.4.8 Promise.withResolvers: NewPromiseCapability(this) (§27.2.1.5)
       if !(← isConstructor thisV) then throwErr .type "Promise.withResolvers: this is not a constructor"
       let cap ← alloc { proto := .null }
-      let exec ← alloc { proto := .obj r.functionProto,
-        kind := .bound (← nativeFn (.x .capabilityExecutor)) .undef #[.obj cap] }
+      let execFn ← nativeFn (.x .capabilityExecutor)
+      let exec ← alloc { proto := .obj r.functionProto, kind := .bound execFn .undef #[.obj cap] }
       let p ← construct n thisV #[.obj exec] thisV
       let field (k : String) : M Value := do
         match (← getObj cap).getOwn k with
