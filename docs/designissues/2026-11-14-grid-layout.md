@@ -111,6 +111,21 @@ theorem's doc comment states its kind, what it says and what it does not say):
 - A track size with no percentage has the same sizing functions for every container size
   (`TrackSize.toFn_of_not_hasPercent`): rows are sized a second time only when one has a
   percentage.
+- Logical axes (`Rendering/LogicalAxes.lean`, shared with block and flex layout): the
+  mapping from logical to physical rectangles and back are inverse in every writing mode
+  and direction (`toLogical_toPhysical`, `toPhysical_toLogical`); a rectangle inside the
+  container stays inside (`toPhysical_inside`); sizes are kept, exchanged in a vertical
+  frame (`toPhysical_size`). A vertical grid is laid out with its axes exchanged
+  (`gridTranspose_twice`: exchanging twice gives the values back).
+- Track sizing, more: stretched auto tracks and the gaps fill a definite space exactly
+  (`stretchCand_sum`, with `bonusSum_all`: the shares sum to the free space); the shares of
+  §12.5/§12.6 never exceed the space shared (`distribute_sum_le`) and, with no growth
+  limits, hand out all of it (`distribute_exact`); an auto-repeated track counts at least its
+  min (`fixedSize_ge_min`).
+- Alignment, more: a `safe` item never starts before its area (`gridSelfOffset_safe`).
+- Resource bounds (local-lean-rules §11): lines and spans are clamped to ±10000 lines
+  (`clamp_bounds`, `clampSpan_none`), so the implicit tracks before the explicit grid are at
+  most 10000 (`leading_le`) and no page can ask for an unbounded grid.
 - Determinism: every function here is a pure function of its arguments; the same grid
   gives the same layout.
 
@@ -120,8 +135,8 @@ the layout glue (`GridLayoutTests.lean`, original fixtures on a monospace test f
 
 Open:
 
-- The exact-sum theorem at the level of `sizeTracks` (it is proved for
-  `expandFlexible`, which `sizeTracks` calls for flexible tracks in a definite space),
+- The exact-sum theorem at the level of `sizeTracks` as a whole (it is proved for its
+  flexible step, `expandFlexible`, and its stretch step, `stretchCand_sum`),
   and the sum when a flexible track is frozen at its base size in an earlier round (it
   holds for the last round, `frRound_sum`).
 - That the dense cursor restarts at the start of the grid for every item (tested).
@@ -131,9 +146,10 @@ Open:
 
 ## Not done
 
-`last baseline` (read as `start`), baseline alignment in columns (`justify-self:
-baseline`), an inline-block's own baseline, subgrid (laid out as a nested grid), vertical
-writing modes, `aspect-ratio`, masonry (`grid-lanes`).
+Baseline alignment in columns (`justify-self: baseline`); subgrid tracks (a subgrid is
+laid out as a nested grid that stretches in its subgridded axes: the parent has no channel
+to hand it its tracks yet); items whose own writing mode is orthogonal to the grid's (the
+engine lays text out horizontally); masonry (`grid-lanes`).
 
 ## Measured
 
