@@ -1755,7 +1755,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let content ← if s.pos.isPositioned then
           let (cx,cy,cw,ch) := (outerX+border.left,outerY+border.top,width+padding.left+padding.right,
             height+padding.top+padding.bottom)
-          -- a child that names grid lines starts at its grid area
+          -- an absolutely positioned child of a grid starts at its grid area (CSS Grid 2 §9.1)
           let content := match content.grid with
             | some f => {content with pending := content.pending.map fun p =>
                 if (dom.get p.id).parent == some id then gridStatic f cx cy cw ch (styles[p.id]!).grid p else p}

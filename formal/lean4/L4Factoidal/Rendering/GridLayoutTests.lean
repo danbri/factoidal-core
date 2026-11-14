@@ -177,10 +177,10 @@ private def tracks (html extra id : String) : Option (String × String) := do
 #guard box four "#c{display:grid;grid-template-columns:50px 50px;row-gap:20%}" "d" == some (0,9.796875,50,7)
 
 
--- A child with no insets that names lines starts at its grid area (§9.2); with auto lines
--- it stays at the content box's start.
+-- A child with no insets starts at its grid area (§9.1); with auto lines, at the padding
+-- box's start.
 #guard box "<div id=c><div id=a>A<div id=q>Q</div></div><div id=b>B</div><div id=p>P</div></div>" "#c{display:grid;position:relative;grid-template-columns:50px 100px;grid-template-rows:10px 20px;padding:5px} #p{position:absolute} #p{grid-column:2 / 3;grid-row:2 / 3}" "p" == some (55,15,6,7)
 #guard box "<div id=c><div id=a>A<div id=q>Q</div></div><div id=b>B</div><div id=p>P</div></div>" "#c{display:grid;position:relative;grid-template-columns:50px 100px;grid-template-rows:10px 20px;padding:5px} #p{position:absolute} #c{justify-content:center} #p{grid-column:2 / 3;grid-row:2 / 3}" "p" == some (75,15,6,7)
-#guard box "<div id=c><div id=a>A<div id=q>Q</div></div><div id=b>B</div><div id=p>P</div></div>" "#c{display:grid;position:relative;grid-template-columns:50px 100px;grid-template-rows:10px 20px;padding:5px} #p{position:absolute}" "p" == some (5,5,6,7)
+#guard box "<div id=c><div id=a>A<div id=q>Q</div></div><div id=b>B</div><div id=p>P</div></div>" "#c{display:grid;position:relative;grid-template-columns:50px 100px;grid-template-rows:10px 20px;padding:5px} #p{position:absolute}" "p" == some (0,0,6,7)
 
 end L4Factoidal.Rendering.GridLayoutTests
