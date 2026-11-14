@@ -131,6 +131,30 @@ private def ratioCss := "#k{display:block;width:auto;height:auto;aspect-ratio:2;
 #guard box drawing (ratioCss ++ "min-width:20px;max-height:5px}") "k" == some (0,0,20,5)
 #guard box drawing (ratioCss ++ "max-width:10px;min-height:10px}") "k" == some (0,0,10,10)
 
+-- Sizing keywords (CSS Sizing 3 §3.2): widths taken from the contents ("AA BBB": the
+-- longest word is 18 wide, the whole line 36), or the width that fills the containing block.
+private def words := "<div id=w>AA BBB</div><div id=z>Z</div>"
+#guard box words "#w{width:min-content}" "w" == some (0,0,18,14)
+#guard box words "#w{width:max-content}" "w" == some (0,0,36,7)
+#guard box words "#w{width:fit-content}" "w" == some (0,0,36,7)
+#guard box words "#w{width:fit-content}" "w" (width := 30) == some (0,0,30,14)
+#guard box words "#w{width:fit-content}" "w" (width := 10) == some (0,0,18,14)
+#guard box words "#w{width:fit-content;margin:0 auto}" "w" == some (82,0,36,7)
+#guard box words "#w{width:stretch;margin:0 5px}" "w" == some (5,0,190,7)
+#guard box words "#w{width:-webkit-fill-available;padding:0 5px}" "w" == some (0,0,200,7)
+#guard box words "#w{width:10px;min-width:min-content}" "w" == some (0,0,18,14)
+#guard box words "#w{max-width:max-content}" "w" == some (0,0,36,7)
+#guard box words "#w{width:max-content;padding:0 2px;border:1px solid black}" "w" == some (0,0,42,9)
+-- On a float and on an absolutely positioned box.
+#guard box words "#w{float:left;width:min-content}" "w" == some (0,0,18,14)
+#guard box words "#w{float:left;width:max-content}" "w" (width := 20) == some (0,0,36,7)
+#guard box words "#w{position:absolute;left:0;right:0;width:max-content}" "w" == some (0,0,36,7)
+#guard box words "#w{position:absolute;left:0;right:0}" "w" == some (0,0,200,7)
+-- `height: stretch` fills a definite containing height; the other keywords are the content height.
+#guard box page "#c{height:40px} #p{height:stretch;border:1px solid black}" "p" == some (0,7,200,40)
+#guard box page "#p{height:stretch}" "p" == some (0,7,200,7)
+#guard box page "#c{height:40px} #p{height:min-content}" "p" == some (0,7,200,7)
+
 -- Margin collapse (CSS 2.1 §8.3.1): adjoining margins of siblings; the larger stands.
 private def stack := "<div id=a>A</div>\n<div id=b>B</div><div id=c><div id=d>D</div></div><div id=e>E</div>"
 #guard box stack "#a{margin-bottom:10px} #b{margin-top:4px}" "b" == some (0,17,200,7)

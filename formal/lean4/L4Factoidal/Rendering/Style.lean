@@ -660,6 +660,8 @@ def number (source : String) : Except String Float := do
 def length (s : String) : Except String Length := do
   let s := trim s
   if s == "auto" then return .auto
+  -- the sizing keywords of `width`, `height` and their limits (CSS Sizing 3 §3.2)
+  if let some keyword := sizeKeyword? s.toLower then return keyword
   if s.endsWith "px" then return .px (← number ((s.dropEnd 2).toString))
   if s.endsWith "%" then return .percent ((← number ((s.dropEnd 1).toString))/100)
   if s.endsWith "vw" then return .vw ((← number ((s.dropEnd 2).toString))/100)
@@ -671,6 +673,7 @@ def length (s : String) : Except String Length := do
 def resolve (basis : Float) : Length → Option Float
   | .auto | .vw _ | .vh _ => none | .px n => some n | .percent n => some (basis*n)
   | .calc p n => some (basis*p+n)
+  | .minContent | .maxContent | .fitContent | .stretch => none
 /-- CSS Values 4 §6.2: viewport units, computed once the viewport is known. -/
 def Length.atViewport (width height : Float) : Length → Length
   | .vw n => .px (n*width).floor
