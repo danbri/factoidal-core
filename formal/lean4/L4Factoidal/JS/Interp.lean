@@ -1508,6 +1508,12 @@ def getV : Nat → Value → String → M Value
   | n + 1, v, key => do
     match v with
     | .obj id =>
+      -- a typed array's integer index is its element, never a prototype's property
+      -- (§10.4.5.4 TypedArrayGetElement)
+      if key.front.isDigit then
+        if let .typed ty b off len := (← getObj id).kind then
+          if let some i := arrayIndex? key then
+            return (if i < (← liveLen ty b off len) then typedRead ty (bufferBytes (← getObj b)) (off + i * elemSize ty) else .undef)
       match (← get).findProp id key 1000 with
       | none =>
         match (← getObj id).kind with
@@ -2066,7 +2072,7 @@ def callBody : Nat → FunDef → Nat → Value → Value → Value → Value �
         bindParams n ctx fd.params args 0
         if let some rp := fd.rest then
           bindPat n ctx rp (← newArray (args.extract fd.params.length args.size)) (.declare fenv true)
-      if paramExprs && !fd.arrow then
+      if paramExprs && !fd.arrow && !fd.async then
         -- while the parameters' expressions run, direct eval there sees `paramEnv`
         let outer := (← get).paramEnv
         modify fun h => { h with paramEnv := fenv }
@@ -4615,7 +4621,11 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       let oid ← toObj n thisV
       let len ← arrayLikeLength n (.obj oid)
       if !(← isCallable a0) then throwErr .type "callback is not a function"
-      iterArray n id a0 a1 (.obj oid) len 0 #[]
+      -- map's ArraySpeciesCreate(O, len) is an ArrayCreate: a RangeError past 2^32 - 1
+      if id == .arrayMap && len > 4294967295 then throwErr .range "Invalid array length"
+      -- the indices visited stop at 10^7, as the element copy did before (an array-like
+      -- whose length is 2^53 - 1 would not end)
+      iterArray n id a0 a1 (.obj oid) (min len 10000000) 0 #[]
     | .arrayReduce =>
       -- §23.1.3.24: the first present element is the start when there is no initial value
       let oid ← toObj n thisV
