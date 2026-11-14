@@ -12628,8 +12628,9 @@
       for (let i = 0, at = 4, k = u32(0); i < k; i++) { const len = u32(at); out.push(u.subarray(at + 4, at + 4 + len)); at += 4 + len; }
       return out;
     };
-    const call = (args, what) => {
-      const r = apiCall(203, args, 0, true);
+    // `pre`: the fields that name a storage bucket's lock manager (`@b name generation`), or none
+    const call = (args, what, pre = []) => {
+      const r = apiCall(203, pre.length ? [...pre, ...args] : args, 0, true);
       if (typeof r === 'number') throw new DOMException(`${what}: locks are not available.`, 'UnknownError');
       const f = unpack(r), head = text(f[0]);
       if (head === 'ok') return f.slice(1);
@@ -12648,7 +12649,8 @@
       return C;
     };
     const clientId = 'client-' + Math.floor(Math.random() * 0x100000000).toString(16);
-    const held = new Map(), pending = new Map();
+    // each LockManager (the default one, a bucket's) keeps its own held and pending requests: `m`
+    const space = pre => ({ pre, held: new Map(), pending: new Map() });
     class Lock {
       constructor() { guard(); }
       get name() { const s = kinds.get(this); if (!s) throw new TypeError('Illegal invocation: Lock.name'); return s.name; }
@@ -12660,20 +12662,20 @@
     // A granted request is held from its grant (so a steal before its callback runs rejects it);
     // its callback runs in a microtask, unless its signal was aborted first or it was stolen.
     const run = e => {
-      if (held.get(e.id) !== e) return;
+      if (e.m.held.get(e.id) !== e) return;
       if (e.signal && e.signal.aborted) { release(e); e.reject(e.signal.reason); return; }
       let p;
       try { p = Promise.resolve(e.callback(make(Lock, { name: e.name, mode: e.mode }))); } catch (err) { p = Promise.reject(err); }
       p.then(v => { release(e); e.resolve(v); }, err => { release(e); e.reject(err); });
     };
-    const release = e => { if (!held.has(e.id)) return; held.delete(e.id); grant(call(['release', String(e.id)], 'LockManager.request')); };
-    const grant = ids => {
+    const release = e => { const m = e.m; if (!m.held.has(e.id)) return; m.held.delete(e.id); grant(m, call(['release', String(e.id)], 'LockManager.request', m.pre)); };
+    const grant = (m, ids) => {
       for (const b of ids) {
-        const e = pending.get(Number(text(b)));
+        const e = m.pending.get(Number(text(b)));
         if (!e) continue;
-        pending.delete(e.id);
+        m.pending.delete(e.id);
         if (e.signal) e.signal.removeEventListener('abort', e.onabort);
-        held.set(e.id, e);
+        m.held.set(e.id, e);
         queueMicrotask(() => run(e));
       }
     };
@@ -12692,21 +12694,22 @@
           if (signal !== null && !(signal instanceof AbortSignal)) throw new TypeError("Failed to execute 'LockManager.request': the signal is not an AbortSignal.");
           const flags = (d.ifAvailable ? 1 : 0) | (d.steal ? 2 : 0) | (signal ? 4 : 0);
           const args = [stEnc(nm), mode === 'shared' ? 's' : 'x', String(flags), clientId];
-          call(['check', ...args], 'LockManager.request');
+          const m = kinds.get(this);
+          call(['check', ...args], 'LockManager.request', m.pre);
           if (signal && signal.aborted) { reject(signal.reason); return; }
-          const f = call(['request', ...args], 'LockManager.request'), id = Number(text(f[0])), state = text(f[1]);
-          const e = { id, name: nm, mode, callback, resolve, reject, signal, onabort: null };
+          const f = call(['request', ...args], 'LockManager.request', m.pre), id = Number(text(f[0])), state = text(f[1]);
+          const e = { id, name: nm, mode, callback, resolve, reject, signal, onabort: null, m };
           if (state === 'none') {
             // ifAvailable and the lock is taken: the callback runs with null
             queueMicrotask(() => { try { resolve(callback(null)); } catch (err) { reject(err); } });
             return;
           }
           // the holders a steal released: their request promises reject
-          for (const b of f.slice(2)) { const h = held.get(Number(text(b))); if (h) { held.delete(h.id); h.reject(new DOMException('The lock was stolen by another request.', 'AbortError')); } }
-          if (state === '1') { held.set(id, e); queueMicrotask(() => run(e)); return; }
-          pending.set(id, e);
+          for (const b of f.slice(2)) { const h = m.held.get(Number(text(b))); if (h) { m.held.delete(h.id); h.reject(new DOMException('The lock was stolen by another request.', 'AbortError')); } }
+          if (state === '1') { m.held.set(id, e); queueMicrotask(() => run(e)); return; }
+          m.pending.set(id, e);
           if (signal) {
-            e.onabort = () => { if (!pending.has(id)) return; pending.delete(id); reject(signal.reason); grant(call(['abort', String(id)], 'LockManager.request')); };
+            e.onabort = () => { if (!m.pending.has(id)) return; m.pending.delete(id); reject(signal.reason); grant(m, call(['abort', String(id)], 'LockManager.request', m.pre)); };
             signal.addEventListener('abort', e.onabort);
           }
         });
@@ -12714,14 +12717,16 @@
       query() {
         return new Promise(resolve => {
           if (!kinds.has(this)) throw new TypeError('Illegal invocation: LockManager.query');
-          const f = call(['query'], 'LockManager.query').map(text), bar = f.indexOf('|');
+          const f = call(['query'], 'LockManager.query', kinds.get(this).pre).map(text), bar = f.indexOf('|');
           const rows = xs => { const out = []; for (let i = 0; i + 2 < xs.length; i += 3) out.push({ name: stDec(xs[i]), mode: xs[i + 1], clientId: xs[i + 2] }); return out; };
           resolve({ held: rows(f.slice(0, bar)), pending: rows(f.slice(bar + 1)) });
         });
       }
     }
     idl(LockManager, 'LockManager');
-    return { manager: make(LockManager, {}), classes: { Lock, LockManager } };
+    // a storage bucket's lock manager (StorageBucket.locks): its own locks, in Lean under the bucket's key
+    const managerFor = pre => make(LockManager, space(pre));
+    return { manager: make(LockManager, space([])), managerFor, classes: { Lock, LockManager } };
   };
   let locksMade;
   const locksApi = () => {
@@ -12782,7 +12787,17 @@
       expires() { return later(() => { const v = onBucket(this, 'expires', 'StorageBucket.expires')[0]; return v === '' ? null : Number(v); }); }
       durability() { return later(() => onBucket(this, 'durability', 'StorageBucket.durability')[0]); }
       get indexedDB() { st(this, 'StorageBucket.indexedDB'); throw unsupported('indexedDB'); }
-      get caches() { st(this, 'StorageBucket.caches'); throw unsupported('caches'); }
+      // the bucket's own CacheStorage and lock manager: Lean keeps them under the bucket's storage key
+      get caches() {
+        const s = st(this, 'StorageBucket.caches');
+        if (s.caches === undefined) { const api = cachesApi(); if (!api) throw unsupported('caches'); s.caches = api.storageFor(['@b', s.name, String(s.gen)]); }
+        return s.caches;
+      }
+      get locks() {
+        const s = st(this, 'StorageBucket.locks');
+        if (s.locks === undefined) { const api = locksApi(); if (!api) throw unsupported('locks'); s.locks = api.managerFor(['@b', s.name, String(s.gen)]); }
+        return s.locks;
+      }
       getDirectory() { return later(() => { st(this, 'StorageBucket.getDirectory'); throw unsupported('getDirectory()'); }); }
     }
     // persist() is exposed in windows only; it is not granted (nothing persists).
@@ -13007,8 +13022,9 @@
       for (let i = 0, at = 4, k = u32(0); i < k; i++) { const len = u32(at); out.push(u.subarray(at + 4, at + 4 + len)); at += 4 + len; }
       return out;
     };
-    const call = (args, what) => {
-      const r = apiCall(206, args, 0, true);
+    // `pre`: the fields naming a storage bucket's caches (`@b name generation`), or none
+    const call = (args, what, pre = []) => {
+      const r = apiCall(206, pre.length ? [...pre, ...args] : args, 0, true);
       if (typeof r === 'number') throw new DOMException(`${what}: the cache is not available.`, r === -5 ? 'QuotaExceededError' : 'SecurityError');
       const f = unpack(r), head = text(f[0]);
       if (head === 'ok') return f.slice(1);
@@ -13051,7 +13067,8 @@
     const entries = f => { const out = []; for (let i = 0; i + 3 < f.length; i += 4) out.push([text(f[i]), text(f[i + 1]), text(f[i + 2]), f[i + 3]]); return out; };
     const ids = new WeakMap();
     let making = false;
-    const idOf = (o, what) => { const id = ids.get(o); if (id === undefined) throw new TypeError('Illegal invocation: ' + what); return String(id); };
+    const idOf = (o, what) => { const id = ids.get(o); if (id === undefined) throw new TypeError('Illegal invocation: ' + what); return String(id.id); };
+    const preOf = o => ids.get(o).pre;
     const enumerate = C => {
       for (const k of Object.getOwnPropertyNames(C.prototype)) if (k !== 'constructor')
         Object.defineProperty(C.prototype, k, { ...Object.getOwnPropertyDescriptor(C.prototype, k), enumerable: true });
@@ -13066,7 +13083,7 @@
       const rs = responses.get(response);
       const visible = rs.type === 'opaque' ? [] : headerState.get(rs.headers).list;
       const blob = blobOf(r, response);
-      call(['put', id, ...reqFields(r), String(rs.status), linesOf(visible), blob], what);
+      call(['put', id, ...reqFields(r), String(rs.status), linesOf(visible), blob], what, preOf(cache));
       // put read the body through a reader (Service Workers §5.4.7): its stream stays locked
       if (b.bytes !== null) {
         try { const bs = response.body; if (bs && !bs.locked) bs.getReader(); } catch (_) {}
@@ -13079,7 +13096,7 @@
         return later(() => {
           const id = idOf(this, 'Cache.match');
           if (arguments.length < 1) throw new TypeError("Failed to execute 'match' on 'Cache': 1 argument required, but only 0 present.");
-          const f = call(['match', id, ...reqFields(reqOf(request, 'Cache.match')), ...optFields(options)], 'Cache.match');
+          const f = call(['match', id, ...reqFields(reqOf(request, 'Cache.match')), ...optFields(options)], 'Cache.match', preOf(this));
           return f.length ? responseFrom(f[3]) : undefined;
         });
       }
@@ -13088,7 +13105,7 @@
           const id = idOf(this, 'Cache.matchAll');
           const has = request !== undefined;
           const q = has ? reqFields(reqOf(request, 'Cache.matchAll')) : ['', '', ''];
-          return entries(call(['matchAll', id, has ? '1' : '0', ...q, ...optFields(options)], 'Cache.matchAll')).map(e => responseFrom(e[3]));
+          return entries(call(['matchAll', id, has ? '1' : '0', ...q, ...optFields(options)], 'Cache.matchAll', preOf(this))).map(e => responseFrom(e[3]));
         });
       }
       add(request) {
@@ -13118,7 +13135,7 @@
             const st = responses.get(rs[i]);
             fields.push(...reqFields(reqs[i]), linesOf(st.type === 'opaque' ? [] : headerState.get(st.headers).list));
           }
-          call(['batchcheck', String(reqs.length), ...fields], 'Cache.addAll');
+          call(['batchcheck', String(reqs.length), ...fields], 'Cache.addAll', preOf(this));
           for (let i = 0; i < reqs.length; i++) putOne(this, reqs[i], rs[i], 'Cache.addAll');
         });
       }
@@ -13133,7 +13150,7 @@
         return later(() => {
           const id = idOf(this, 'Cache.delete');
           if (arguments.length < 1) throw new TypeError("Failed to execute 'delete' on 'Cache': 1 argument required, but only 0 present.");
-          return text(call(['remove', id, ...reqFields(reqOf(request, 'Cache.delete')), ...optFields(options)], 'Cache.delete')[0]) === '1';
+          return text(call(['remove', id, ...reqFields(reqOf(request, 'Cache.delete')), ...optFields(options)], 'Cache.delete', preOf(this))[0]) === '1';
         });
       }
       keys(request = undefined, options = undefined) {
@@ -13141,36 +13158,38 @@
           const id = idOf(this, 'Cache.keys');
           const has = request !== undefined;
           const q = has ? reqFields(reqOf(request, 'Cache.keys')) : ['', '', ''];
-          return entries(call(['keys', id, has ? '1' : '0', ...q, ...optFields(options)], 'Cache.keys')).map(e => requestFrom(...e));
+          return entries(call(['keys', id, has ? '1' : '0', ...q, ...optFields(options)], 'Cache.keys', preOf(this))).map(e => requestFrom(...e));
         });
       }
     }
     setTag(Cache, 'Cache'); enumerate(Cache);
-    const cacheObj = id => { making = true; let c; try { c = new Cache(); } finally { making = false; } ids.set(c, id); return c; };
-    const brandS = new WeakSet();
-    const own = (o, what) => { if (!brandS.has(o)) throw new TypeError('Illegal invocation: ' + what); };
+    const cacheObj = (id, pre) => { making = true; let c; try { c = new Cache(); } finally { making = false; } ids.set(c, { id, pre }); return c; };
+    const brandS = new WeakMap();   // CacheStorage -> its bucket's fields (none: the default bucket)
+    const own = (o, what) => { if (!brandS.has(o)) throw new TypeError('Illegal invocation: ' + what); return brandS.get(o); };
     const needName = (n, what) => { if (n < 1) throw new TypeError(`Failed to execute '${what}' on 'CacheStorage': 1 argument required, but only 0 present.`); };
     class CacheStorage {
       constructor() { if (!making) throw new TypeError('Illegal constructor'); }
       match(request, options = undefined) {
         return later(() => {
-          own(this, 'CacheStorage.match');
+          const pre = own(this, 'CacheStorage.match');
           if (arguments.length < 1) throw new TypeError("Failed to execute 'match' on 'CacheStorage': 1 argument required, but only 0 present.");
           const o = options == null ? {} : options;
-          const f = call(['smatch', o.cacheName === undefined ? '' : nameOf(o.cacheName), ...reqFields(reqOf(request, 'CacheStorage.match')), ...optFields(o)], 'CacheStorage.match');
+          const f = call(['smatch', o.cacheName === undefined ? '' : nameOf(o.cacheName), ...reqFields(reqOf(request, 'CacheStorage.match')), ...optFields(o)], 'CacheStorage.match', pre);
           if (o.cacheName !== undefined && f.length === 0) return undefined;
           return f.length ? responseFrom(f[3]) : undefined;
         });
       }
-      has(cacheName) { const n = arguments.length; return later(() => { own(this, 'CacheStorage.has'); needName(n, 'has'); return text(call(['has', nameOf(cacheName)], 'CacheStorage.has')[0]) === '1'; }); }
-      open(cacheName) { const n = arguments.length; return later(() => { own(this, 'CacheStorage.open'); needName(n, 'open'); return cacheObj(Number(text(call(['open', nameOf(cacheName)], 'CacheStorage.open')[0]))); }); }
-      delete(cacheName) { const n = arguments.length; return later(() => { own(this, 'CacheStorage.delete'); needName(n, 'delete'); return text(call(['delete', nameOf(cacheName)], 'CacheStorage.delete')[0]) === '1'; }); }
-      keys() { return later(() => { own(this, 'CacheStorage.keys'); return call(['names'], 'CacheStorage.keys').map(b => JSON.parse(text(b))); }); }
+      has(cacheName) { const n = arguments.length; return later(() => { const pre = own(this, 'CacheStorage.has'); needName(n, 'has'); return text(call(['has', nameOf(cacheName)], 'CacheStorage.has', pre)[0]) === '1'; }); }
+      open(cacheName) { const n = arguments.length; return later(() => { const pre = own(this, 'CacheStorage.open'); needName(n, 'open'); return cacheObj(Number(text(call(['open', nameOf(cacheName)], 'CacheStorage.open', pre)[0])), pre); }); }
+      delete(cacheName) { const n = arguments.length; return later(() => { const pre = own(this, 'CacheStorage.delete'); needName(n, 'delete'); return text(call(['delete', nameOf(cacheName)], 'CacheStorage.delete', pre)[0]) === '1'; }); }
+      keys() { return later(() => { const pre = own(this, 'CacheStorage.keys'); return call(['names'], 'CacheStorage.keys', pre).map(b => JSON.parse(text(b))); }); }
     }
     setTag(CacheStorage, 'CacheStorage'); enumerate(CacheStorage);
     making = true; let storage; try { storage = new CacheStorage(); } finally { making = false; }
-    brandS.add(storage);
-    return { storage, classes: { Cache, CacheStorage } };
+    brandS.set(storage, []);
+    // a storage bucket's CacheStorage (StorageBucket.caches): its own caches, in Lean under the bucket's key
+    const storageFor = pre => { making = true; let c; try { c = new CacheStorage(); } finally { making = false; } brandS.set(c, pre); return c; };
+    return { storage, storageFor, classes: { Cache, CacheStorage } };
   };
   let cachesMade;
   const cachesApi = () => {

@@ -125,6 +125,31 @@ def op (s : Shelf) (a : Array Tok) : Shelf × List Tok :=
   | "estimate" => onBucket s a fun b => (s, ok [N 0, N (b.quota.getD defaultQuota)])
   | _ => (s, fail "NotSupportedError")
 
+/-- The storage key a command of another storage API addresses: the context's own (`origin`,
+the default bucket), or, after the fields `@b name generation`, that live bucket of the same
+origin; `none` (`InvalidStateError`) when that bucket was deleted. The rest of the fields
+follow. The origin is the caller's, never a field. -/
+def route (shed : Shed Shelf) (origin : String) (a : Array Tok) : Option (ClientStorage.Key × Array Tok) :=
+  if strAt a 0 == "@b" then
+    match live (shed.shelf { origin }) (strAt a 1) (natAt a 2) with
+    -- the generation too: a bucket made again under a deleted one's name starts empty
+    | some b => some ({ origin, bucket := b.name ++ "#" ++ toString b.gen }, a.extract 3 a.size)
+    | none => none
+  else some ({ origin }, a)
+
+/-- Kind: security theorem. Says: a routed command addresses a key of the caller's own origin:
+a bucket never names another origin's storage. -/
+theorem route_origin (shed : Shed Shelf) (origin : String) (a : Array Tok) (k : ClientStorage.Key) (rest : Array Tok)
+    (h : route shed origin a = some (k, rest)) : k.origin = origin := by
+  unfold route at h
+  split at h
+  · split at h
+    · simp only [Option.some.injEq, Prod.mk.injEq] at h
+      rw [← h.1]
+    · simp at h
+  · simp only [Option.some.injEq, Prod.mk.injEq] at h
+    rw [← h.1]
+
 /-- One command for the context whose storage key is `k`, on the in-memory shed. -/
 def opFor (shed : Shed Shelf) (k : ClientStorage.Key) (a : Array Tok) : Shed Shelf × List Tok :=
   shed.act k (fun s => op s a) (fail "SecurityError")
@@ -264,5 +289,12 @@ private def answers (cmds : List (List String)) : List String :=
   ["open", "b", "", ""], ["durability", "b", "1"], ["durability", "b", "2"], ["expires", "b", "2"], ["open", "Bad", "", ""], ["open", "c", "lazy", ""]] ==
   ["ok 1", "ok strict", "ok 1700000000000", "ok 0", "ok", "ok 42", "ok 0 " ++ toString defaultQuota, "ok", "!UnknownError",
    "ok 2", "!UnknownError", "ok relaxed", "ok ", "!TypeError", "!TypeError"]
+
+-- routing another API's command to a live bucket of the caller's origin; a deleted generation is refused
+#guard (let shed := (opFor {} { origin := "https://a.example" } (T ["open", "b", "", "", ""])).1;
+  ((route shed "https://a.example" (T ["@b", "b", "1", "query"])).map (·.1.bucket),
+   (route shed "https://a.example" (T ["@b", "b", "2", "query"])).isNone,
+   (route shed "https://a.example" (T ["query"])).map (·.1.bucket),
+   (route shed "https://a.example" (T ["@b", "b", "1", "query"])).map (·.2.size))) == (some "b#1", true, some "", some 1)
 
 end L4Factoidal.ClientStorage.Buckets

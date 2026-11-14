@@ -145,9 +145,11 @@ file or directory is ever handed to a page (`answer_never_ok`).
 `navigator.storageBuckets` (`ClientStorage/Buckets.lean`, `web_api` op 205): the buckets of a storage key,
 names checked (`validName`), listed in code point order (`op_sorted`), each with a generation so that an object
 of a deleted bucket answers `UnknownError` even after its name is reused (`delete_unknown`). `persisted()` is
-false; `durability()` and `expires()` answer what was given. A bucket's own `indexedDB`, `caches` and
-`getDirectory()` are not provided yet (`NotSupportedError`): the storage key would gain the bucket name, so the
-partition theorems would carry over unchanged.
+false; `durability()` and `expires()` answer what was given. A bucket's `caches` and `locks` are its own: the
+storage key has a bucket field, and a command prefixed `@b name generation` is routed by `Buckets.route` to the
+key of that live bucket of the caller's origin (`route_origin`: never another origin; a deleted generation is
+`InvalidStateError`), so the partition theorems carry over unchanged. A bucket's `indexedDB` and
+`getDirectory()` are not routed yet (`NotSupportedError`).
 
 ### Cookie Store
 
@@ -204,7 +206,7 @@ comment has its "Says" and "Does not say"):
 
 - File pickers: `answer_refuses`, `answer_never_ok`, `valid_security`, `invalid_type`, `validSuffix_spec`,
   `validId_length`.
-- Storage buckets: `validName_spec`, `open_mem`, `delete_not_mem`, `delete_unknown`, `insert_sorted`,
+- Storage buckets: `route_origin`, `quotaArg_range`, `validName_spec`, `open_mem`, `delete_not_mem`, `delete_unknown`, `insert_sorted`,
   `op_sorted`, `Buckets.opFor_noninterference`.
 - Cookie Store: `setFromScript_store`, `store_keeps`, `set_keeps_host` (a set never adds a cookie for another
   host), `read_host` (a read answers only the page's host's cookies, never `HttpOnly`), `changes_sub`,
@@ -292,7 +294,7 @@ No timing was measured: the engine was not built locally (cloud check only).
 
 - Storage shared between a page and its workers or frames of the same origin (each engine session keeps its own
   state): web-locks `workers`/`frames`, the Cache API's `common` test, IndexedDB across contexts.
-- A bucket's own IndexedDB, CacheStorage, file system and locks (`NotSupportedError`).
+- A bucket's own IndexedDB and file system (`NotSupportedError`); its caches and locks are routed.
 - Interface objects are lazy getters on the global until first read, so idlharness's "should not have a getter"
   checks fail for every storage interface (about two subtests per interface and global); making them data
   properties at start would cost every page.

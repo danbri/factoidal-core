@@ -42,6 +42,8 @@ open L4Factoidal.Net.Storage (get set get_set_same get_set_other)
 structure Key where
   origin : String
   site : String := ""
+  /-- The storage bucket (Storage Buckets): `""` the default bucket. -/
+  bucket : String := ""
   deriving DecidableEq, Repr, Inhabited
 
 /-- A key that has storage: its origin is not opaque (`Net.Storage.usable`). -/

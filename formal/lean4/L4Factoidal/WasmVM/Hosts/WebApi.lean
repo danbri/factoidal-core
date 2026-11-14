@@ -743,9 +743,13 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
     else if code == 202 then
       (s, .ok (pack (L4Factoidal.ClientStorage.Manager.op s.idb s.opfs s.caches { origin := s.net.page.origin } fs)))
     -- Web Locks (203): the lock manager of the same storage key.
+    -- (a storage bucket's lock manager: the fields start with `@b name generation`, Buckets.route)
     else if code == 203 then
-      let (locks, out) := L4Factoidal.ClientStorage.Locks.opFor s.locks { origin := s.net.page.origin } fs
-      ({ s with locks }, .ok (pack out))
+      match L4Factoidal.ClientStorage.Buckets.route s.buckets s.net.page.origin fs with
+      | none => (s, .ok (pack (L4Factoidal.ClientStorage.Buckets.fail "InvalidStateError")))
+      | some (k, fs) =>
+        let (locks, out) := L4Factoidal.ClientStorage.Locks.opFor s.locks k fs
+        ({ s with locks }, .ok (pack out))
     -- The Cookie Store API (204): the jar of `document.cookie`; the host and the secure flag are
     -- the session's page's, never arguments.
     else if code == 204 then
@@ -753,8 +757,11 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
       ({ s with net := { s.net with cookies } }, .ok (pack out))
     -- The Cache API (206): the caches of the same storage key.
     else if code == 206 then
-      let (caches, out) := L4Factoidal.ClientStorage.Caches.opFor s.caches { origin := s.net.page.origin } fs
-      ({ s with caches }, .ok (pack out))
+      match L4Factoidal.ClientStorage.Buckets.route s.buckets s.net.page.origin fs with
+      | none => (s, .ok (pack (L4Factoidal.ClientStorage.Buckets.fail "InvalidStateError")))
+      | some (k, fs) =>
+        let (caches, out) := L4Factoidal.ClientStorage.Caches.opFor s.caches k fs
+        ({ s with caches }, .ok (pack out))
     -- Storage Buckets (205): the buckets of the same storage key.
     else if code == 205 then
       let (buckets, out) := L4Factoidal.ClientStorage.Buckets.opFor s.buckets { origin := s.net.page.origin } fs
