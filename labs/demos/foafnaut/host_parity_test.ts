@@ -268,3 +268,44 @@ Deno.test("page-load: sheets, layout fields and script answers",async()=>{
   assert.deepEqual(await fetchedAnswer({id:5,url:"http://a.test/w.js"},()=>Promise.reject(new Error("refused"))),
     {id:5,status:0,url:"http://a.test/w.js",contentType:"",contentTypeOptions:"",source:""});
 });
+
+// A subresource transfer: the engine's steps are followed as they are; the body the engine accepted is the answer.
+Deno.test("page-load: a subresource transfer follows the engine's steps",async()=>{
+  const {loadSubresource}=await import("../../../docs/web/hub/foafnaut/page-load.mjs");
+  const asked:Record<string,unknown>[]=[],wires:Record<string,unknown>[]=[];
+  // A stand-in for the op `subresource`: resolve, the request, a redirect, then done.
+  const step=(request:Record<string,unknown>)=>{
+    asked.push(request);
+    const answer=request.answer as {status?:number}|undefined;
+    if(request.action==="cancel")return {};
+    if(request.action==="start")return {id:7,wire:{id:7,method:"",url:request.url,headers:[],resolve:true}};
+    if(asked.length===2)return {id:7,wire:{id:7,method:"GET",url:"https://b.test/a.png",headers:[],address:"192.0.2.1",port:443}};
+    if(answer?.status===302)return {id:7,wire:{id:7,method:"GET",url:"https://b.test/moved.png",headers:[],address:"192.0.2.2",port:443}};
+    if(answer?.status===200)return {id:7,done:{status:200,type:"image/png",url:"https://b.test/moved.png",opaque:true}};
+    return {id:7,fail:`status ${answer?.status}`};
+  };
+  const wire=(w:Record<string,unknown>)=>{
+    wires.push(w);
+    if(w.resolve)return Promise.resolve({id:7,addresses:["192.0.2.1"]});
+    if(w.url==="https://b.test/a.png")return Promise.resolve({id:7,status:302,headers:[["location","/moved.png"]],bodyBase64:"bm8="});
+    return Promise.resolve({id:7,status:200,headers:[["content-type","image/png"]],bodyBase64:"aGk="});
+  };
+  const got=await loadSubresource(step,wire,{url:"https://a.test/page",address:"198.51.100.4"},"image","https://b.test/a.png");
+  assert.deepEqual(got,{url:"https://b.test/moved.png",status:200,contentType:"image/png",opaque:true,base64:"aGk="});
+  // Each request the engine named was made, in order, unchanged; the engine never saw a body.
+  assert.deepEqual(wires.map(w=>[w.resolve??false,w.url,w.address??""]),[[true,"https://b.test/a.png",""],[false,"https://b.test/a.png","192.0.2.1"],[false,"https://b.test/moved.png","192.0.2.2"]]);
+  assert.deepEqual(asked[0],{action:"start",kind:"image",url:"https://b.test/a.png",documentURL:"https://a.test/page",referrerPolicy:"",crossorigin:"",address:"198.51.100.4"});
+  assert.deepEqual(asked.slice(1).map(r=>[r.action,r.id]),[["answer",7],["answer",7],["answer",7]]);
+  for(const request of asked)assert(!JSON.stringify(request).includes("bodyBase64"),"a body was sent to the engine's decision");
+  // A data: URL is answered by the engine, with its body; nothing is sent.
+  const before=wires.length;
+  assert.deepEqual(await loadSubresource(()=>({id:1,done:{status:200,type:"image/png",url:"data:image/png;base64,aGk=",opaque:false,bodyBase64:"aGk="}}),wire,{url:"https://a.test/page"},"image","data:image/png;base64,aGk="),
+    {url:"data:image/png;base64,aGk=",status:200,contentType:"image/png",opaque:false,base64:"aGk="});
+  // A refusal is thrown with the engine's reason, and nothing is sent.
+  await assert.rejects(()=>loadSubresource(()=>({id:2,fail:"refused by policy"}),wire,{url:"https://a.test/page"},"image","https://127.0.0.1/x"),/refused by policy/);
+  assert.equal(wires.length,before);
+  // The window reads images, the tab icon, web fonts and linked sheets through the engine's steps.
+  const doc=await Deno.readTextFile(`${lab}native_html_document.ts`);
+  assert(doc.includes("loadSubresource(step,"),"the window does not follow the engine's subresource steps");
+  for(const kind of ['"image"','"style"','"font"'])assert(doc.includes(`readSubresource(engine as SubresourceEngine,${kind},`)||doc.includes(`readSubresource(engine,${kind},`),`no ${kind} is read through readSubresource`);
+});

@@ -40,6 +40,34 @@ export async function loadStyleSheets(stylesheets,fetchText,limit=MAX_SHEETS) {
   return {resources,resourceFailures};
 }
 
+/** One subresource of a page, of any origin (an image, a style sheet, a font, a script): the
+engine decides every step (`step`: its op `subresource`, Net.Subresource: the request to make,
+the address of a name, each redirect, CORS or no CORS, whether the answer is used), and the
+host makes each request it is told to (`wire`: native_net.ts `netAnswer`; on the Hub, the
+page's own fetch). `page` is `{url, address?, hostCors?, referrerPolicy?}`: the document's
+URL, the address the host loaded it from when it knows it, whether the host's own network
+rules apply (the Hub), and the document's referrer policy. `crossorigin` is the element's
+attribute ("" for none). Answer: `{url, status, contentType, opaque, base64}`: the final
+URL, the type as sent, whether a script may never read the bytes, and the body of the answer
+the engine accepted (for a `data:` URL, the body the engine made). A refusal is a throw with
+the engine's reason. No URL is read here, and the engine's decision never gets a body. */
+export async function loadSubresource(step,wire,page,kind,url,signal,crossorigin='') {
+  let answer=await step({action:'start',kind,url,documentURL:page.url,referrerPolicy:page.referrerPolicy??'',crossorigin,
+    ...(page.hostCors?{hostCors:true}:{}),...(page.address?{address:page.address}:{})}),body='';
+  // 20 redirects at most, each a name to resolve and a request: under 64 steps.
+  for(let steps=0;steps<64;steps++) {
+    if(answer?.done)return {url:answer.done.url,status:answer.done.status,contentType:answer.done.type??'',
+      opaque:answer.done.opaque===true,base64:answer.done.bodyBase64??body};
+    if(!answer?.wire)throw new Error(String(answer?.fail??'subresource refused'));
+    if(signal?.aborted){await step({action:'cancel',id:answer.id});signal.throwIfAborted();}
+    const {bodyBase64,...head}=await wire(answer.wire);
+    body=bodyBase64??'';
+    answer=await step({action:'answer',id:answer.id,answer:head});
+  }
+  if(answer?.id!==undefined)await step({action:'cancel',id:answer.id});
+  throw new Error('subresource: too many steps');
+}
+
 /** The fields of a page that every request which lays the page out must carry, the same in
 each: a render, a hit test (`nodeAt`), the selection, find in page, a print layout, and the
 `layout` request of the page's script session (WebDocument.layoutFields). A request that
