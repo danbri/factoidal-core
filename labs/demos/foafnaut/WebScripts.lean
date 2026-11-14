@@ -274,7 +274,7 @@ def frameEntropyOf (id : Nat) (parent b : ByteArray) : Nat → ByteArray :=
   fun el => if parent.isEmpty || b.isEmpty then ByteArray.empty
     else b ++ ("frame:" ++ toString id ++ ":" ++ toString el).toUTF8
 
-def actions : List String := ["info", "load", "start", "click", "pointer", "key", "actions", "message", "webdriverStart", "webdriver", "resize", "advance", "settle", "turn", "close",
+def actions : List String := ["info", "load", "start", "click", "pointer", "key", "actions", "message", "webdriverStart", "webdriver", "computed", "resize", "advance", "settle", "turn", "close",
   "aotModule", "resume", "host", "frame", "fetched", "net", "syncAnswer", "cookies"]
 
 /-- An answer object with `nextSession` first: the number of the next session. -/
@@ -1093,6 +1093,23 @@ def actLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (act
     match inputSources request with
     | .error er => run fun a => { a with page := a.page.setTrusted { a.page.trusted with error := some er } }
     | .ok sources => run (performInput sources (boolField request "release"))
+  | "computed" =>
+    -- WebDriver "Get Computed Role" for test_driver: the role of the element the page names
+    -- (`refNode`; `HTML.AccessibleRole.computedRole`), answered to the page as the reply to its
+    -- request `id`, in the message that the `actions` replies use
+    let d := a.page.host.dom.dom
+    let value := match refNode d (str request "element"), str request "what" with
+      | some k, "role" => L4Factoidal.HTML.AccessibleRole.computedRole d k
+      | _, _ => ""
+    let found := (refNode d (str request "element")).isSome
+    let reply := (JSON.Json.object [("type", .string "testdriver-complete"),
+      ("id", .number (toString ((natField request "id").getD 0))),
+      ("status", .string (if found then "success" else "error")),
+      ("message", .string (if found then "" else "no such element")), ("value", .string value)]).toString
+    run fun a =>
+      let a := e.checkpoint (e.dispatchWith a Page.windowId "message"
+        (Page.messageInit { frame := 0, toParent := false, data := reply, origin := str request "origin" })).1
+      (e.advance a (e.loop a).clock).1
   | "message" =>
     -- a message of the embedder to the page: a `message` event at the window
     run fun a =>

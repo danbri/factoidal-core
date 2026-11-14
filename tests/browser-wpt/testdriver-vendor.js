@@ -11,7 +11,8 @@
 // request on. A console line does this in the WPT runner only; no browser host reads it.
 //
 // Done: click, send_keys, action_sequence (key, pointer, wheel and none sources),
-// delete_all_cookies (scriptSession action `cookies`: WebDriver's Delete All Cookies).
+// delete_all_cookies (scriptSession action `cookies`: WebDriver's Delete All Cookies),
+// get_computed_role (scriptSession action `computed`).
 // Not done (each rejects with "not implemented"): the other hooks of test_driver_internal.
 (function () {
   'use strict';
@@ -40,7 +41,7 @@
     if (!d || d.type !== 'testdriver-complete' || !pending.has(d.id)) return;
     const [resolve, reject] = pending.get(d.id);
     pending.delete(d.id);
-    if (d.status === 'success') resolve(); else reject(new Error(d.message));
+    if (d.status === 'success') resolve(d.value); else reject(new Error(d.message));
   });
   // Ask the runner; the promise settles when the page has seen every event of the request.
   const request = body => new Promise((resolve, reject) => {
@@ -61,6 +62,10 @@
   window.test_driver_internal.send_keys = function (element, keys) {
     if (element && typeof element.focus === 'function' && document.activeElement !== element) element.focus();
     return request({ text: String(keys) });
+  };
+  // "Get Computed Role" (WebDriver §12.4.9): the engine's computed role of the element.
+  window.test_driver_internal.get_computed_role = function (element) {
+    return attempt(() => request({ computed: 'role', element: refOf(element)[ELEMENT] }));
   };
   // "Perform Actions" (WebDriver §15.7): an element origin is named by its path.
   window.test_driver_internal.action_sequence = function (actions) {

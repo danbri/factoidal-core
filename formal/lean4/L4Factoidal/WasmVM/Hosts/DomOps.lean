@@ -49,6 +49,8 @@ import L4Factoidal.HTML.ReferrerSource
 import L4Factoidal.HTML.ProtocolHandler
 import L4Factoidal.HTML.SessionHistory
 import L4Factoidal.HTML.TableDom
+-- the computed role (WebScripts' `computed` action; an accessibility tree later)
+import L4Factoidal.HTML.AccessibleRole
 
 namespace L4Factoidal.WasmVM.Hosts.Dom
 open L4Factoidal.DOM L4Factoidal.DOM.Range

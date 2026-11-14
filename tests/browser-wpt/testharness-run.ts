@@ -698,7 +698,7 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
       for(;driverSeen<logs.length;driverSeen++){
         const line=logs[driverSeen];
         if(!line.startsWith("__wpt_driver "))continue;
-        let req:{id?:number;actions?:unknown;text?:string;cookies?:string};
+        let req:{id?:number;actions?:unknown;text?:string;cookies?:string;computed?:string;element?:string};
         try{req=JSON.parse(line.slice(13));}catch{continue;}
         if(typeof req.id!=="number")continue;
         // WebDriver "Delete All Cookies": the engine empties the page session's jar
@@ -706,6 +706,13 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
           take(turn=await ss({action:"cookies",session:turn.session}));
           take(turn=await ss({action:"message",session:turn.session,data:JSON.stringify({type:"testdriver-complete",id:req.id,status:"success"}),origin:new URL(url).origin}));
           did=true;continue;
+        }
+        // WebDriver "Get Computed Role": the engine computes the element's role (Lean) and
+        // answers the page itself with the reply message
+        if(typeof req.computed==="string"){
+          take(turn=await ss({action:"computed",session:turn.session,id:req.id,what:req.computed,element:String(req.element??""),origin:new URL(url).origin}));
+          did=true;
+          continue;
         }
         // The engine performs the actions (WebDriver's Perform Actions, in Lean) and says
         // whether WebDriver refuses them; the page is answered with a `message` event.
