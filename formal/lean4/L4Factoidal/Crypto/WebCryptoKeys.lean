@@ -1319,13 +1319,14 @@ InvalidAccessError, a constant, so it is not computed from any primitive's outpu
 not called on that path, by the value of the function. -/
 
 /-- Kind: security invariant (usages). Says: the check every key operation starts with
-answers InvalidAccessError when the key lacks the usage. -/
+answers InvalidAccessError when the key lacks the usage. Does not say: that every operation
+starts with this check; that is each operation's own theorem below. -/
 theorem keyFor_no_usage {k : Key} {a : String} {u : Usage} (h : k.usages.contains u = false) :
     keyFor k a u = .error .invalidAccess := by
   unfold keyFor; rw [h]; simp
 
 /-- Kind: security invariant (usages). Says: the same when the key is of another algorithm
-than the one the operation names. -/
+than the one the operation names. Does not say: anything of a key of the right algorithm. -/
 theorem keyFor_wrong_alg {k : Key} {a : String} {u : Usage} (h : k.algo.alg.name ≠ a) :
     keyFor k a u = .error .invalidAccess := by
   unfold keyFor; simp [h]
@@ -1338,16 +1339,25 @@ theorem sign_no_usage {a : String} {p : Args} {k : Key} {d r : ByteArray}
     (h : k.usages.contains .sign = false) : sign a p k d r = .error .invalidAccess := by
   unfold sign; rw [keyFor_no_usage h]; rfl
 
+/-- Kind: security invariant (usages). Says: `verify` with a key that lacks "verify" is the
+InvalidAccessError for all other arguments: no verification primitive ran. Does not say:
+anything of a key that has the usage. -/
 theorem verify_no_usage {a : String} {p : Args} {k : Key} {s d : ByteArray}
     (h : k.usages.contains .verify = false) : verify a p k s d = .error .invalidAccess := by
   unfold verify; rw [keyFor_no_usage h]; rfl
 
+/-- Kind: security invariant (usages). Says: `deriveBits` with a key that lacks "deriveBits"
+is the InvalidAccessError for all other arguments: no derivation ran. Does not say: anything
+of deriveKey, which the API runs as deriveBits after its own check of "deriveKey"
+(`Hosts.WebApi.subtle`). -/
 theorem deriveBits_no_usage {a : String} {p : Args} {k : Key} {l : Option Nat} {s : KeyStore}
     (h : k.usages.contains .deriveBits = false) : deriveBits a p k l s = .error .invalidAccess := by
   unfold deriveBits; rw [keyFor_no_usage h]; rfl
 
 /-- Kind: security invariant (usages). Says: encrypt needs "encrypt" and decrypt needs
-"decrypt": without it the answer is InvalidAccessError and no cipher ran. -/
+"decrypt": without it the answer is InvalidAccessError and no cipher ran. Does not say:
+anything of wrapKey and unwrapKey, which check "wrapKey" and "unwrapKey" themselves before
+they call this (`Hosts.WebApi.subtle`). -/
 theorem crypt_no_usage {e : Bool} {a : String} {p : Args} {k : Key} {d : ByteArray}
     (h : k.usages.contains (if e then .encrypt else .decrypt) = false) :
     crypt e a p k d = .error .invalidAccess := by
@@ -1355,7 +1365,7 @@ theorem crypt_no_usage {e : Bool} {a : String} {p : Args} {k : Key} {d : ByteArr
 
 /-- Kind: security invariant (usages). Says: an operation named for one algorithm never
 runs on another algorithm's key (sign; the same proof serves the other operations through
-`keyFor_wrong_alg`). -/
+`keyFor_wrong_alg`). Does not say: which algorithms a key can be made for. -/
 theorem sign_wrong_alg {a : String} {p : Args} {k : Key} {d r : ByteArray}
     (h : k.algo.alg.name ≠ a) : sign a p k d r = .error .invalidAccess := by
   unfold sign; rw [keyFor_wrong_alg h]; rfl
@@ -1377,7 +1387,8 @@ theorem wrapPlain_extractable {j : List (String × JwkVal) → ByteArray} {k : K
   | ok e => exact exportKey_extractable he
 
 /-- Kind: security invariant (key material). Says: for a non-extractable key, what wrapKey
-would encrypt does not depend on the key's bytes (it is the refusal). -/
+would encrypt does not depend on the key's bytes (it is the refusal). Does not say: that the
+ciphertext of an extractable key hides it; that is the wrapping cipher's strength. -/
 theorem wrapPlain_blind (j : List (String × JwkVal) → ByteArray) (k : Key) (f : String)
     (h : k.extractable = false) : wrapPlain j k f = wrapPlain j k.blind f := by
   unfold wrapPlain; rw [exportKey_blind k f h]
@@ -1416,15 +1427,22 @@ accepted input has a second reading), the round trips of the two containers, and
 accepted SPKI is exactly the canonical SPKI of its parts (no bytes skipped, none trailing).
 JWK members are base64url: `unb64_b64`. -/
 
+/-- Kind: round trip (DER). Says: `expect` reads back what `tlv` wrote with the same tag,
+and answers the rest untouched. Hypothesis: contents shorter than 2^16. Does not say: what a
+different tag gives (it is refused: see `expect`). -/
 theorem expect_tlv (tag : UInt8) (c rest : List UInt8) (h : c.length < 65536) :
     expect tag (tlv tag c ++ rest) = some (c, rest) := by
   unfold expect; rw [readTlv_tlv tag c rest h]; simp
 
+/-- Kind: round trip (DER). Says: `expect_tlv` with nothing after the TLV. Does not say:
+more than `expect_tlv`. -/
 theorem expect_tlv_nil (tag : UInt8) (c : List UInt8) (h : c.length < 65536) :
     expect tag (tlv tag c) = some (c, []) := by
   have := expect_tlv tag c [] h
   simpa using this
 
+/-- Kind: size bound. Says: a TLV is at least as long as its contents. Does not say: how
+much longer (2 to 4 octets). -/
 theorem length_le_tlv (tag : UInt8) (c : List UInt8) : c.length ≤ (tlv tag c).length := by
   unfold tlv; simp; omega
 
@@ -1503,7 +1521,8 @@ theorem tlv_of_readTlv {b : List UInt8} {t : UInt8} {c r : List UInt8} (h : read
   | [], h => simp [readTlv] at h
 
 /-- Kind: parser exactness. Says: `expect` accepts only the canonical encoding of the
-contents it answers, with the tag asked for, followed by the rest it answers. -/
+contents it answers, with the tag asked for, followed by the rest it answers. Does not say:
+anything of the contents' own structure. -/
 theorem tlv_of_expect {tag : UInt8} {b c r : List UInt8} (h : expect tag b = some (c, r)) :
     b = tlv tag c ++ r ∧ c.length < 65536 := by
   unfold expect at h
@@ -1543,7 +1562,8 @@ theorem readSpki_spkiOf (oid key : List UInt8) (h : (spkiOf oid [] key).length <
 
 /-- Kind: round trip (SPKI with algorithm parameters: the EC curve OID). Says: reading the
 SubjectPublicKeyInfo `spkiOf` writes with one parameter TLV gives the OID, that TLV and the
-key bytes back. Hypothesis: the whole encoding is shorter than 2^16 octets. -/
+key bytes back. Hypothesis: the whole encoding is shorter than 2^16 octets. Does not say:
+that the parameters name a curve this engine has, or that the key bytes are a valid point. -/
 theorem readSpki_spkiOf_params (oid key : List UInt8) (pt : UInt8) (pc : List UInt8)
     (h : (spkiOf oid (tlv pt pc) key).length < 65536) :
     readSpki (spkiOf oid (tlv pt pc) key) = some (oid, some (tlv pt pc), key) := by
@@ -1570,7 +1590,8 @@ theorem readSpki_spkiOf_params (oid key : List UInt8) (pt : UInt8) (pc : List UI
 
 /-- Kind: round trip (PKCS #8). Says: reading the PrivateKeyInfo `pkcs8Of` writes gives the
 OID and the private key octets back (no parameters). Hypothesis: the whole encoding is
-shorter than 2^16 octets. -/
+shorter than 2^16 octets. Does not say: the converse (PKCS #8 may carry attributes after the
+key, which the reader accepts and does not return), nor anything of the key octets. -/
 theorem readPkcs8_pkcs8Of (oid pk : List UInt8) (h : (pkcs8Of oid [] pk).length < 65536) :
     readPkcs8 (pkcs8Of oid [] pk) = some (oid, none, pk) := by
   unfold pkcs8Of at h ⊢
@@ -1662,7 +1683,8 @@ theorem spkiOf_of_readSpki {b oid key : List UInt8} {params : Option (List UInt8
 
 /-- Kind: round trip (JWK octets). Says: decoding the base64url text a JWK export writes
 for key bytes gives those bytes back (`k`, `x`, `y`, `d` and the RSA members). Rests on
-`JOSE.Base64Url.decode_encode`. -/
+`JOSE.Base64Url.decode_encode`. Does not say: that the whole JWK object survives the trip
+through the page (prelude.js builds and reads the object; tested, not proved). -/
 theorem unb64_b64 (b : ByteArray) : unb64? (b64 b) = some b := by
   unfold unb64? b64 JOSE.Base64Url.decode JOSE.Base64Url.encode
   simp [JOSE.Base64Url.decode_encode]

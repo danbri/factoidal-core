@@ -534,7 +534,8 @@ def subtleMethod (fs : Array ByteArray) : String := (fs[0]?.bind String.fromUTF8
 
 /-- Kind: API contract. Says: `subtle` with the method "exportKey" changes no state and
 answers exactly `exportOp` of the session's keys: the export rule in Lean is the whole of what
-the operation does. -/
+the operation does. Does not say: what prelude.js does with the answer (it shapes the
+ArrayBuffer or the JsonWebKey object from these fields). -/
 theorem subtle_exportKey (s : State) (fs : Array ByteArray) (h : subtleMethod fs = "exportKey") :
     subtle s fs = (s, errInt (exportOp s.keys (pairsOf fs))) := by
   unfold subtleMethod at h
