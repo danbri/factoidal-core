@@ -578,6 +578,16 @@
     const k = plan[0], step = sh ? 5 : 4;
     s.path = []; for (let i = 1; i <= k; i++) s.path.push(wrapTarget(plan[i]));
     s.pathIds = sh ? plan.slice(1, k + 1) : null;
+    // A trusted mousedown, mouseup or click does not reach a disabled form control or what is
+    // above it in the path (HTML §4.10.18.5, whatwg/html#5886): the listeners below it still
+    // hear it. Which control is disabled is Lean's (DOM.Forms.disabledControl, node_query 11).
+    let below = null;
+    if (s.trusted && (s.type === 'mousedown' || s.type === 'mouseup' || s.type === 'click')) {
+      for (let i = 1; i <= k; i++) {
+        const id = plan[i];
+        if (id >= 0 && id < WINDOW && info(id, 0) === 1 && n.query(id, 11, '') === '1') { below = new Set(plan.slice(1, i)); break; }
+      }
+    }
     let stopAt = null;
     for (let i = k + 1; i + step - 1 < plan.length; i += step) {
       const cb = plan[i], node = plan[i + 1], phase = plan[i + 2] & 7, capture = (plan[i + 2] & 8) !== 0, depth = plan[i + 3];
@@ -589,6 +599,7 @@
         if (stopAt === null) break;
         if (stopAt.depth !== depth || stopAt.capture !== capture) break;
       }
+      if (below !== null && !below.has(node)) continue;
       const r = records.get(cb);
       if (!r) continue;
       s.currentTarget = wrapTarget(node); s.phase = phase;
@@ -599,7 +610,7 @@
     // DOM §2.9 steps 6 and 10: the target is the one at the target; it is cleared when it is
     // in a shadow tree.
     if (sh) s.target = tid < WINDOW && info(info(tid, 28), 22) >= 0 ? null : target;
-    if (act !== null) { if (s.canceled) canceledActivation(act, actState); else activation(act, tid); }
+    if (act !== null) { if (s.canceled || (below !== null && !below.has(act))) canceledActivation(act, actState); else activation(act, tid); }
     return !s.canceled;
   };
   const wrapTarget = id => id === WINDOW ? window : (id >= 0x10000000 ? targets.get(id) ?? null : wrap(id));
