@@ -3231,88 +3231,440 @@
   const xhrState = new WeakMap();
   lazy('XMLHttpRequest', makeXHR);
 
-  // ---- fetch (Fetch Standard, the first slice): one call of the XMLHttpRequest core ---------
+  // ---- fetch (Fetch Standard): Headers, Request, Response, and fetch over the XMLHttpRequest core
   // Lean decides every request (Net/PageFetch.lean, the object is Net/Xhr.lean's); this is the
-  // promise surface. `no-cors` opaque responses, streams and Request bodies are not here yet.
-  lazy('Headers', () => {
-    if (apiCall(75, []) !== '1') return undefined;
+  // promise surface. `no-cors` opaque responses and stream bodies are not here yet.
+  // A `Headers` object's rules (what it keeps, by its guard), a `Request`'s method and the MIME
+  // type of a body are Lean's (Net/FetchRules.lean, WHATWG/MimeType.lean, web_api ops 86 to 89).
+  // These classes hold the objects, convert WebIDL arguments and ask there.
+  const headerState = new WeakMap();   // Headers -> { list: [[lowercase name, value]], guard }
+  const hState = (o, what) => brand(headerState, o, 'Headers.' + what);
+  const hNeed = (n, have, what) => { if (have < n) throw new TypeError(`Failed to execute '${what}' on 'Headers': ${n} argument${n > 1 ? 's' : ''} required, but only ${have} present.`); };
+  // "validate" (after "normalize") of Lean: the value to keep, or undefined for a field dropped.
+  const hValidate = (s, name, value, what) => {
+    const r = apiCall(87, [s.guard, name, value]);
+    if (typeof r !== 'string') throw new TypeError(`${what}: not a header name or value, or the headers are immutable`);
+    return r === '0' ? undefined : r.slice(1);
+  };
+  const hAppend = (s, name, value, what) => {
+    const n = String(name), v = hValidate(s, n, String(value), what);
+    if (v === undefined) return;
+    const lower = n.toLowerCase();
+    if (s.guard === 'request-no-cors') {
+      // §5.1 append step 4: the value combined with the one held must stay safelisted.
+      const held = hGet(s, lower);
+      if (held !== null && apiCall(87, ['request-no-cors-combined', n, held + ', ' + v]) === '0') return;
+    }
+    s.list.push([lower, v]);
+  };
+  const hName = (name, what) => {
+    const n = String(name);
+    if (apiCall(88, [n]) !== '') throw new TypeError(`${what}: not a header name`);
+    return n.toLowerCase();
+  };
+  const hFill = (s, init, what) => {
+    if (init === undefined) return;
+    if (init === null || (typeof init !== 'object' && typeof init !== 'function')) throw new TypeError(`${what}: the headers are not a sequence or a record`);
+    const it = init[Symbol.iterator];
+    if (it !== undefined && it !== null) {
+      if (typeof it !== 'function') throw new TypeError(`${what}: the headers are not iterable`);
+      for (const pair of init) {
+        if (pair === null || (typeof pair !== 'object' && typeof pair !== 'function') || typeof pair[Symbol.iterator] !== 'function') throw new TypeError(`${what}: a header is not a sequence`);
+        const p = [...pair];
+        if (p.length !== 2) throw new TypeError(`${what}: a header is a name and a value`);
+        hAppend(s, p[0], p[1], what);
+      }
+      return;
+    }
+    for (const k of Reflect.ownKeys(init)) {
+      const d = Reflect.getOwnPropertyDescriptor(init, k);
+      if (d === undefined || !d.enumerable) continue;
+      if (typeof k === 'symbol' || /[^\x00-\xff]/.test(k)) throw new TypeError(`${what}: a header name is not a ByteString`);
+      hAppend(s, k, init[k], what);
+    }
+  };
+  // "Sort and combine" (Fetch §2.2.2): names in order, the values of a name joined; each
+  // Set-Cookie on its own.
+  const hPairs = s => {
+    const names = [...new Set(s.list.map(e => e[0]))].sort(), out = [];
+    for (const n of names) {
+      if (n === 'set-cookie') { for (const e of s.list) if (e[0] === n) out.push([n, e[1]]); }
+      else out.push([n, s.list.filter(e => e[0] === n).map(e => e[1]).join(', ')]);
+    }
+    return out;
+  };
+  const hGet = (s, n) => { const vs = s.list.filter(e => e[0] === n).map(e => e[1]); return vs.length ? vs.join(', ') : null; };
+  let HeadersC, RequestC, ResponseC;
+  const makeHeaders = () => {
+    if (HeadersC) return HeadersC;
+    const iterState = new WeakMap();
+    const iterProto = Object.create(Object.getPrototypeOf(Object.getPrototypeOf([][Symbol.iterator]())));
+    Object.defineProperty(iterProto, 'next', { writable: true, enumerable: true, configurable: true, value: function next() {
+      const st = iterState.get(this);
+      if (!st) throw new TypeError('Illegal invocation: Headers Iterator.next');
+      const pairs = hPairs(st.s);
+      if (st.i >= pairs.length) return { value: undefined, done: true };
+      const p = pairs[st.i++];
+      return { value: st.kind === 0 ? p[0] : st.kind === 1 ? p[1] : [p[0], p[1]], done: false };
+    } });
+    Object.defineProperty(iterProto, Symbol.toStringTag, { value: 'Headers Iterator', configurable: true });
+    const iter = (o, kind, what) => { const it = Object.create(iterProto); iterState.set(it, { s: hState(o, what), kind, i: 0 }); return it; };
     class Headers {
       constructor(init = undefined) {
-        this._m = new Map();
-        if (init instanceof Headers) { for (const [k, v] of init) this.append(k, v); return; }
-        if (init !== undefined && init !== null) {
-          const pairs = Array.isArray(init) ? init : (typeof init[Symbol.iterator] === 'function' ? [...init] : Object.entries(init));
-          for (const [k, v] of pairs) this.append(k, v);
+        const s = { list: [], guard: 'none' };
+        headerState.set(this, s);
+        hFill(s, init, "Failed to construct 'Headers'");
+      }
+      append(name, value) { hNeed(2, arguments.length, 'append'); hAppend(hState(this, 'append'), name, value, "Failed to execute 'append' on 'Headers'"); }
+      delete(name) {
+        hNeed(1, arguments.length, 'delete');
+        const s = hState(this, 'delete'), n = String(name);
+        const r = apiCall(87, [s.guard === 'request-no-cors' ? 'request-no-cors-name' : s.guard, n, '']);
+        if (typeof r !== 'string') throw new TypeError("Failed to execute 'delete' on 'Headers': not a header name, or the headers are immutable");
+        if (r === '0') return;
+        const lower = n.toLowerCase();
+        s.list = s.list.filter(e => e[0] !== lower);
+      }
+      get(name) { hNeed(1, arguments.length, 'get'); const s = hState(this, 'get'); return hGet(s, hName(name, "Failed to execute 'get' on 'Headers'")); }
+      getSetCookie() { return hState(this, 'getSetCookie').list.filter(e => e[0] === 'set-cookie').map(e => e[1]); }
+      has(name) { hNeed(1, arguments.length, 'has'); const s = hState(this, 'has'), n = hName(name, "Failed to execute 'has' on 'Headers'"); return s.list.some(e => e[0] === n); }
+      set(name, value) {
+        hNeed(2, arguments.length, 'set');
+        const s = hState(this, 'set'), n = String(name), v = hValidate(s, n, String(value), "Failed to execute 'set' on 'Headers'");
+        if (v === undefined) return;
+        const lower = n.toLowerCase(), i = s.list.findIndex(e => e[0] === lower);
+        if (i < 0) { s.list.push([lower, v]); return; }
+        s.list[i] = [lower, v];
+        s.list = s.list.filter((e, j) => j <= i || e[0] !== lower);
+      }
+      forEach(callback, thisArg = undefined) {
+        hNeed(1, arguments.length, 'forEach');
+        const s = hState(this, 'forEach');
+        if (typeof callback !== 'function') throw new TypeError("Failed to execute 'forEach' on 'Headers': parameter 1 is not a function");
+        for (let i = 0; ; i++) { const pairs = hPairs(s); if (i >= pairs.length) break; callback.call(thisArg, pairs[i][1], pairs[i][0], this); }
+      }
+      keys() { return iter(this, 0, 'keys'); }
+      values() { return iter(this, 1, 'values'); }
+      entries() { return iter(this, 2, 'entries'); }
+    }
+    for (const k of ['append', 'delete', 'get', 'getSetCookie', 'has', 'set', 'forEach', 'keys', 'values', 'entries'])
+      Object.defineProperty(Headers.prototype, k, { value: Headers.prototype[k], writable: true, enumerable: true, configurable: true });
+    Object.defineProperty(Headers.prototype, Symbol.iterator, { value: Headers.prototype.entries, writable: true, configurable: true });
+    setTag(Headers, 'Headers');
+    return HeadersC = Headers;
+  };
+  // A Headers object over a list, with a guard (a Request's, a Response's).
+  const headersOf = (list, guard) => { const h = Object.create(makeHeaders().prototype); headerState.set(h, { list: list.map(e => [e[0], e[1]]), guard }); return h; };
+  lazy('Headers', () => (apiCall(88, ['a']) !== '' ? undefined : makeHeaders()));
+
+  // ---- Body (Fetch §5.3): the bytes of a Request or a Response -------------------------------
+  const bodies = new WeakMap();   // Request or Response -> { bytes (null: no body), used, stream, headers }
+  const bState = (o, what) => brand(bodies, o, what);
+  const bodyTake = (o, what) => {
+    let b;
+    try { b = bState(o, what); } catch (e) { return Promise.reject(e); }
+    if (b.used || (b.stream && b.stream.locked)) return Promise.reject(new TypeError(`Failed to execute '${what}': the body was already read`));
+    if (b.bytes !== null) b.used = true;
+    return Promise.resolve(b.bytes === null ? new Uint8Array(0) : b.bytes);
+  };
+  // The body's MIME type, serialized ('' for none): Fetch "extract a MIME type", Lean's.
+  const bodyMime = b => { const ct = hGet(headerState.get(b.headers), 'content-type'); if (ct === null) return ''; const r = apiCall(86, [ct]); return typeof r === 'string' ? r : ''; };
+  const bodyInit = (body, what) => {
+    if (typeof body === 'object' && body !== null && typeof body.getReader === 'function') throw new TypeError(`${what}: a stream body is not supported in this build`);
+    const [raw, ct] = extractBody(body, what);
+    return [typeof raw === 'string' ? utf8(raw) : copyBytes(raw), ct];
+  };
+  const bodyMixin = C => {
+    const name = C.name;
+    const methods = {
+      arrayBuffer() { return bodyTake(this, name + '.arrayBuffer').then(b => b.slice().buffer); },
+      blob() {
+        return bodyTake(this, name + '.blob').then(b => {
+          const blob = new (makeBlob())([b]);
+          blobs.get(blob).type = bodyMime(bodies.get(this));
+          return blob;
+        });
+      },
+      bytes() { return bodyTake(this, name + '.bytes').then(b => b.slice()); },
+      formData() {
+        return bodyTake(this, name + '.formData').then(b => {
+          const type = bodyMime(bodies.get(this));
+          if (!/^application\/x-www-form-urlencoded(;|$)/.test(type)) throw new TypeError(`Failed to execute 'formData' on '${name}': only application/x-www-form-urlencoded bodies are read in this build`);
+          const form = new (makeFormData())();
+          for (const [k, v] of new URLSearchParams(new TextDecoder().decode(b))) form.append(k, v);
+          return form;
+        });
+      },
+      json() { return bodyTake(this, name + '.json').then(b => JSON.parse(new TextDecoder().decode(b))); },
+      text() { return bodyTake(this, name + '.text').then(b => new TextDecoder().decode(b)); },
+    };
+    for (const k in methods) Object.defineProperty(C.prototype, k, { value: methods[k], writable: true, enumerable: true, configurable: true });
+    Object.defineProperty(C.prototype, 'bodyUsed', { enumerable: true, configurable: true, get() { return bState(this, name + '.bodyUsed').used; } });
+    Object.defineProperty(C.prototype, 'body', { enumerable: true, configurable: true, get() {
+      const b = bState(this, name + '.body');
+      if (b.bytes === null) return null;
+      if (b.stream === undefined) {
+        const RS = globalThis.ReadableStream;
+        b.stream = null;
+        if (typeof RS === 'function') {
+          try { b.stream = new RS({ pull(c) { b.used = true; c.enqueue(b.bytes.slice()); c.close(); } }, { highWaterMark: 0 }); } catch { b.stream = null; }
         }
       }
-      append(k, v) { k = String(k).toLowerCase(); v = String(v).trim(); this._m.set(k, this._m.has(k) ? this._m.get(k) + ', ' + v : v); }
-      get(k) { k = String(k).toLowerCase(); return this._m.has(k) ? this._m.get(k) : null; }
-      has(k) { return this._m.has(String(k).toLowerCase()); }
-      set(k, v) { this._m.set(String(k).toLowerCase(), String(v).trim()); }
-      delete(k) { this._m.delete(String(k).toLowerCase()); }
-      forEach(f, t) { for (const [k, v] of this) f.call(t, v, k, this); }
-      *entries() { for (const k of [...this._m.keys()].sort()) yield [k, this._m.get(k)]; }
-      *keys() { for (const [k] of this.entries()) yield k; }
-      *values() { for (const [, v] of this.entries()) yield v; }
-      [Symbol.iterator]() { return this.entries(); }
+      return b.stream;
+    } });
+  };
+  const urlFields = (url, base) => { const r = base === undefined ? apiCall(10, [url], 0, false) : apiCall(10, [url, base], 1, false); return typeof r === 'string' ? r.split('\0') : null; };
+  const pageOrigin = () => { const p = urlFields(scriptBase()); return p === null ? 'null' : p[1]; };
+  // A signal that aborts when `source` does (DOM §3.1 "create a dependent abort signal").
+  const followSignal = source => {
+    const s = new AbortSignal(abortKey);
+    if (source) {
+      if (source.aborted) signalAbort(s, source.reason);
+      else source.addEventListener('abort', () => signalAbort(s, source.reason));
     }
-    setTag(Headers, 'Headers');
-    return Headers;
-  });
-  lazy('Response', () => {
-    if (apiCall(75, []) !== '1') return undefined;
-    const H = () => globalThis.Headers;
-    class Response {
-      constructor(body = null, init = {}) {
-        const [raw, ct] = body === null || body === undefined ? [new Uint8Array(0), ''] : extractBody(body, 'Response');
-        const bytes = typeof raw === 'string' ? utf8(raw) : raw;
-        this._b = bytes; this._used = false;
-        this.status = init.status ?? 200; this.statusText = String(init.statusText ?? ''); this.headers = new (H())(init.headers);
-        if (ct && !this.headers.has('content-type')) this.headers.set('content-type', ct);
-        this.url = ''; this.redirected = false; this.type = 'default';
+    return s;
+  };
+
+  // ---- Request (Fetch §5.4) ------------------------------------------------------------------
+  const requests = new WeakMap();
+  const makeRequest = () => {
+    if (RequestC) return RequestC;
+    const what = "Failed to construct 'Request'";
+    const R = (o, attr) => brand(requests, o, 'Request.' + attr);
+    const enumOf = (v, allowed, member) => {
+      if (v === undefined) return undefined;
+      const s = String(v);
+      if (!allowed.includes(s)) throw new TypeError(`${what}: '${s}' is not a value of '${member}'`);
+      return s;
+    };
+    const policies = ['', 'no-referrer', 'no-referrer-when-downgrade', 'same-origin', 'origin', 'strict-origin', 'origin-when-cross-origin', 'strict-origin-when-cross-origin', 'unsafe-url'];
+    class Request {
+      constructor(input, init = undefined) {
+        if (arguments.length < 1) throw new TypeError(`${what}: 1 argument required, but only 0 present.`);
+        const d = dict(init, what);
+        // The dictionary's members, converted in their order (WebIDL §3.2.17).
+        const body = d.body;
+        const cache = enumOf(d.cache, ['default', 'no-store', 'reload', 'no-cache', 'force-cache', 'only-if-cached'], 'cache');
+        const credentials = enumOf(d.credentials, ['omit', 'same-origin', 'include'], 'credentials');
+        const duplex = enumOf(d.duplex, ['half'], 'duplex');
+        const headers = d.headers;
+        const integrity = d.integrity === undefined ? undefined : String(d.integrity);
+        const keepalive = d.keepalive === undefined ? undefined : !!d.keepalive;
+        const method = d.method === undefined ? undefined : String(d.method);
+        const mode = enumOf(d.mode, ['same-origin', 'no-cors', 'cors', 'navigate'], 'mode');
+        const priority = enumOf(d.priority, ['high', 'low', 'auto'], 'priority');
+        const redirect = enumOf(d.redirect, ['follow', 'error', 'manual'], 'redirect');
+        const referrer = d.referrer === undefined ? undefined : usv(d.referrer);
+        const referrerPolicy = enumOf(d.referrerPolicy, policies, 'referrerPolicy');
+        const signal = d.signal;
+        if (signal !== undefined && signal !== null && !(signal instanceof AbortSignal)) throw new TypeError(`${what}: member signal is not of type 'AbortSignal'`);
+        const win = d.window;
+        const given = [body, cache, credentials, duplex, headers, integrity, keepalive, method, mode, priority, redirect, referrer, referrerPolicy, signal, win].some(v => v !== undefined);
+        let st, source = null, inSignal = null;
+        if (requests.has(input)) {
+          source = input;
+          st = { ...requests.get(input) };
+          inSignal = st.signal;
+        } else {
+          const p = urlFields(usv(input), scriptBase());
+          if (p === null) throw new TypeError(`${what}: Invalid URL`);
+          if (p[3] !== '' || p[4] !== '') throw new TypeError(`${what}: the URL has credentials`);
+          st = { url: p[0], method: 'GET', mode: 'cors', credentials: 'same-origin', cache: 'default', redirect: 'follow', referrer: 'about:client',
+            referrerPolicy: '', integrity: '', keepalive: false, duplex: 'half', reload: false, history: false };
+        }
+        if (win !== undefined && win !== null) throw new TypeError(`${what}: member window must be null`);
+        if (given) {
+          if (st.mode === 'navigate') st.mode = 'same-origin';
+          st.reload = false; st.history = false; st.referrer = 'about:client'; st.referrerPolicy = '';
+        }
+        if (referrer !== undefined) {
+          if (referrer === '') st.referrer = '';
+          else {
+            const p = urlFields(referrer, scriptBase());
+            if (p === null) throw new TypeError(`${what}: the referrer is not a URL`);
+            st.referrer = p[0] === 'about:client' || p[1] !== pageOrigin() ? 'about:client' : p[0];
+          }
+        }
+        if (referrerPolicy !== undefined) st.referrerPolicy = referrerPolicy;
+        if (mode === 'navigate') throw new TypeError(`${what}: the mode 'navigate' is not allowed`);
+        if (mode !== undefined) st.mode = mode;
+        if (credentials !== undefined) st.credentials = credentials;
+        if (cache !== undefined) st.cache = cache;
+        if (st.cache === 'only-if-cached' && st.mode !== 'same-origin') throw new TypeError(`${what}: 'only-if-cached' needs the mode 'same-origin'`);
+        if (redirect !== undefined) st.redirect = redirect;
+        if (integrity !== undefined) st.integrity = integrity;
+        if (keepalive !== undefined) st.keepalive = keepalive;
+        if (method !== undefined) {
+          const m = apiCall(89, [method]);
+          if (typeof m !== 'string') throw new TypeError(`${what}: '${method}' is not a valid HTTP method`);
+          st.method = m;
+        }
+        st.signal = followSignal(signal !== undefined ? signal : inSignal);
+        if (st.mode === 'no-cors' && !['GET', 'HEAD', 'POST'].includes(st.method)) throw new TypeError(`${what}: '${st.method}' is not allowed in the mode 'no-cors'`);
+        const hs = { list: [], guard: st.mode === 'no-cors' ? 'request-no-cors' : 'request' };
+        if (given && headers !== undefined) hFill(hs, headers, what);
+        else if (source) for (const e of headerState.get(requests.get(source).headers).list) hAppend(hs, e[0], e[1], what);
+        st.headers = Object.create(makeHeaders().prototype);
+        headerState.set(st.headers, hs);
+        const inBody = source ? bodies.get(source) : null;
+        const hasInit = body !== undefined && body !== null;
+        if ((hasInit || (inBody && inBody.bytes !== null)) && (st.method === 'GET' || st.method === 'HEAD')) throw new TypeError(`${what}: a request with the method ${st.method} can not have a body`);
+        let bytes = null;
+        if (hasInit) {
+          const [b, ct] = bodyInit(body, what);
+          bytes = b;
+          if (ct !== '' && hGet(hs, 'content-type') === null) hAppend(hs, 'Content-Type', ct, what);
+        } else if (inBody && inBody.bytes !== null) {
+          if (inBody.used || (inBody.stream && inBody.stream.locked)) throw new TypeError(`${what}: the body of the request was already read`);
+          bytes = inBody.bytes;
+          inBody.used = true;
+        }
+        requests.set(this, st);
+        bodies.set(this, { bytes, used: false, stream: undefined, headers: st.headers });
       }
-      get ok() { return this.status >= 200 && this.status < 300; }
-      get bodyUsed() { return this._used; }
-      _take() { if (this._used) return Promise.reject(new TypeError('body already used')); this._used = true; return Promise.resolve(this._b); }
-      arrayBuffer() { return this._take().then(b => b.slice().buffer); }
-      text() { return this._take().then(b => new TextDecoder().decode(b)); }
-      json() { return this.text().then(JSON.parse); }
-      blob() { return this._take().then(b => new (makeBlob())([b], { type: this.headers.get('content-type') ?? '' })); }
-      clone() { if (this._used) throw new TypeError('body already used'); const r = new Response(this._b, this); r.url = this.url; r.type = this.type; r.redirected = this.redirected; return r; }
+      get method() { return R(this, 'method').method; }
+      get url() { return R(this, 'url').url; }
+      get headers() { return R(this, 'headers').headers; }
+      get destination() { R(this, 'destination'); return ''; }
+      get referrer() { return R(this, 'referrer').referrer; }
+      get referrerPolicy() { return R(this, 'referrerPolicy').referrerPolicy; }
+      get mode() { return R(this, 'mode').mode; }
+      get credentials() { return R(this, 'credentials').credentials; }
+      get cache() { return R(this, 'cache').cache; }
+      get redirect() { return R(this, 'redirect').redirect; }
+      get integrity() { return R(this, 'integrity').integrity; }
+      get keepalive() { return R(this, 'keepalive').keepalive; }
+      get isReloadNavigation() { return R(this, 'isReloadNavigation').reload; }
+      get isHistoryNavigation() { return R(this, 'isHistoryNavigation').history; }
+      get signal() { return R(this, 'signal').signal; }
+      get duplex() { return R(this, 'duplex').duplex; }
+      clone() {
+        const st = R(this, 'clone'), b = bodies.get(this);
+        if (b.used || (b.stream && b.stream.locked)) throw new TypeError("Failed to execute 'clone' on 'Request': the body was already read");
+        const r = Object.create(Request.prototype), hs = headerState.get(st.headers);
+        const headers = headersOf(hs.list, hs.guard);
+        requests.set(r, { ...st, headers, signal: followSignal(st.signal) });
+        bodies.set(r, { bytes: b.bytes, used: false, stream: undefined, headers });
+        return r;
+      }
     }
+    for (const k of ['method', 'url', 'headers', 'destination', 'referrer', 'referrerPolicy', 'mode', 'credentials', 'cache', 'redirect', 'integrity',
+      'keepalive', 'isReloadNavigation', 'isHistoryNavigation', 'signal', 'duplex', 'clone'])
+      Object.defineProperty(Request.prototype, k, { ...Object.getOwnPropertyDescriptor(Request.prototype, k), enumerable: true });
+    bodyMixin(Request);
+    setTag(Request, 'Request');
+    return RequestC = Request;
+  };
+  lazy('Request', () => (apiCall(88, ['a']) !== '' ? undefined : makeRequest()));
+
+  // ---- Response (Fetch §5.5) -----------------------------------------------------------------
+  const responses = new WeakMap();
+  // A response object from its parts: `guard` is its headers' guard.
+  const responseOf = (parts, list, guard, bytes) => {
+    const r = Object.create(makeResponse().prototype), headers = headersOf(list, guard);
+    responses.set(r, { ...parts, headers });
+    bodies.set(r, { bytes, used: false, stream: undefined, headers });
+    return r;
+  };
+  const makeResponse = () => {
+    if (ResponseC) return ResponseC;
+    const what = "Failed to construct 'Response'";
+    const R = (o, attr) => brand(responses, o, 'Response.' + attr);
+    // "Initialize a response" (§5.5): the status, the reason phrase, the fields, the body.
+    const init = (r, d, body, what) => {
+      const status = d.status === undefined ? 200 : (Math.trunc(Number(d.status)) || 0) & 0xFFFF;
+      if (status < 200 || status > 599) throw new RangeError(`${what}: the status ${status} is outside 200 to 599`);
+      const statusText = d.statusText === undefined ? '' : String(d.statusText);
+      if (!/^[\t \x21-\x7e\x80-\xff]*$/.test(statusText)) throw new TypeError(`${what}: the status text is not a reason phrase`);
+      const hs = { list: [], guard: 'response' };
+      if (d.headers !== undefined) hFill(hs, d.headers, what);
+      let bytes = null;
+      if (body !== undefined && body !== null) {
+        if ([101, 103, 204, 205, 304].includes(status)) throw new TypeError(`${what}: a response with the status ${status} can not have a body`);
+        const [b, ct] = body;
+        bytes = b;
+        if (ct !== '' && hGet(hs, 'content-type') === null) hAppend(hs, 'Content-Type', ct, what);
+      }
+      const headers = Object.create(makeHeaders().prototype);
+      headerState.set(headers, hs);
+      responses.set(r, { status, statusText, headers, url: '', type: 'default', redirected: false });
+      bodies.set(r, { bytes, used: false, stream: undefined, headers });
+    };
+    class Response {
+      constructor(body = null, init_ = undefined) {
+        const d = dict(init_, what);
+        init(this, d, body === undefined || body === null ? null : bodyInit(body, what), what);
+      }
+      static error() { return responseOf({ status: 0, statusText: '', url: '', type: 'error', redirected: false }, [], 'immutable', null); }
+      static redirect(url, status = 302) {
+        if (arguments.length < 1) throw new TypeError("Failed to execute 'redirect' on 'Response': 1 argument required, but only 0 present.");
+        const p = urlFields(usv(url), scriptBase());
+        if (p === null) throw new TypeError("Failed to execute 'redirect' on 'Response': Invalid URL");
+        const code = (Math.trunc(Number(status)) || 0) & 0xFFFF;
+        if (![301, 302, 303, 307, 308].includes(code)) throw new RangeError("Failed to execute 'redirect' on 'Response': the status is not a redirect status");
+        return responseOf({ status: code, statusText: '', url: '', type: 'default', redirected: false }, [['location', p[0]]], 'immutable', null);
+      }
+      static json(data, init_ = undefined) {
+        if (arguments.length < 1) throw new TypeError("Failed to execute 'json' on 'Response': 1 argument required, but only 0 present.");
+        const text = JSON.stringify(data);
+        if (text === undefined) throw new TypeError("Failed to execute 'json' on 'Response': the value is not serializable");
+        const r = Object.create(Response.prototype);
+        init(r, dict(init_, "Failed to execute 'json' on 'Response'"), [utf8(text), 'application/json'], "Failed to execute 'json' on 'Response'");
+        return r;
+      }
+      get type() { return R(this, 'type').type; }
+      get url() { return R(this, 'url').url; }
+      get redirected() { return R(this, 'redirected').redirected; }
+      get status() { return R(this, 'status').status; }
+      get ok() { const s = R(this, 'ok').status; return s >= 200 && s < 300; }
+      get statusText() { return R(this, 'statusText').statusText; }
+      get headers() { return R(this, 'headers').headers; }
+      clone() {
+        const st = R(this, 'clone'), b = bodies.get(this);
+        if (b.used || (b.stream && b.stream.locked)) throw new TypeError("Failed to execute 'clone' on 'Response': the body was already read");
+        const hs = headerState.get(st.headers);
+        return responseOf({ status: st.status, statusText: st.statusText, url: st.url, type: st.type, redirected: st.redirected }, hs.list, hs.guard, b.bytes);
+      }
+    }
+    for (const k of ['type', 'url', 'redirected', 'status', 'ok', 'statusText', 'headers', 'clone'])
+      Object.defineProperty(Response.prototype, k, { ...Object.getOwnPropertyDescriptor(Response.prototype, k), enumerable: true });
+    for (const k of ['error', 'redirect', 'json'])
+      Object.defineProperty(Response, k, { ...Object.getOwnPropertyDescriptor(Response, k), enumerable: true });
+    bodyMixin(Response);
     setTag(Response, 'Response');
-    return Response;
-  });
+    return ResponseC = Response;
+  };
+  lazy('Response', () => (apiCall(88, ['a']) !== '' ? undefined : makeResponse()));
   lazy('fetch', () => {
     if (apiCall(75, []) !== '1') return undefined;
-    return function fetch(input, init = {}) {
+    return function fetch(input, init = undefined) {
       return new Promise((resolve, reject) => {
-        const url = typeof input === 'object' && input !== null && 'url' in input ? String(input.url) : usv(input);
-        const method = init.method ?? (typeof input === 'object' && input !== null ? input.method : undefined) ?? 'GET';
-        const body = init.body === undefined ? null : init.body;
+        const request = new (makeRequest())(input, init), st = requests.get(request), signal = st.signal;
+        if (signal.aborted) { reject(signal.reason); return; }
         const x = new globalThis.XMLHttpRequest(), s = st_xhr(x);
-        const fail = e => reject(e);
-        const signal = init.signal;
-        if (signal && signal.aborted) { reject(signal.reason ?? new DOMException('aborted', 'AbortError')); return; }
-        if (signal) signal.addEventListener('abort', () => { try { x.abort(); } catch { /* done */ } reject(signal.reason ?? new DOMException('aborted', 'AbortError')); });
-        try { x.open(String(method), url, true); } catch (e) { reject(new TypeError(String(e && e.message || e))); return; }
-        apiCall(73, [s.h, init.credentials === 'include' ? 1 : 0]);
-        if (init.mode === 'same-origin') apiCall(77, [s.h, 1]);
+        let settled = false;
+        const fail = e => { if (!settled) { settled = true; reject(e); } };
+        signal.addEventListener('abort', () => { if (settled) return; try { x.abort(); } catch { /* done */ } fail(signal.reason); });
+        try { x.open(st.method, st.url, true); } catch (e) { fail(new TypeError(String(e && e.message || e))); return; }
+        apiCall(73, [s.h, st.credentials === 'include' ? 1 : 0]);
+        if (st.mode === 'same-origin') apiCall(77, [s.h, 1]);
         x.responseType = 'arraybuffer';
-        const headers = new globalThis.Headers(init.headers);
-        for (const [k, v] of headers) x.setRequestHeader(k, v);
+        for (const e of headerState.get(st.headers).list) x.setRequestHeader(e[0], e[1]);
         x.onload = () => {
-          const raw = x.response;
-          const r = new globalThis.Response(raw === null ? new Uint8Array(0) : new Uint8Array(raw), { status: 200 });
-          r.status = x.status; r.statusText = x.statusText; r.url = x.responseURL;
-          r.type = 'basic';
-          for (const line of x.getAllResponseHeaders().split('\r\n')) { const i = line.indexOf(': '); if (i > 0) r.headers.append(line.slice(0, i), line.slice(i + 2)); }
-          resolve(r);
+          if (settled) return;
+          settled = true;
+          const raw = x.response, list = [];
+          for (const line of x.getAllResponseHeaders().split('\r\n')) { const i = line.indexOf(': '); if (i > 0) list.push([line.slice(0, i).toLowerCase(), line.slice(i + 2)]); }
+          const url = x.responseURL, p = urlFields(url);
+          resolve(responseOf({ status: x.status, statusText: x.statusText, url, type: p !== null && p[1] !== pageOrigin() ? 'cors' : 'basic',
+            redirected: url !== '' && url !== st.url.split('#')[0] }, list, 'immutable', raw === null ? new Uint8Array(0) : new Uint8Array(raw)));
         };
         x.onerror = () => fail(new TypeError('Failed to fetch'));
-        x.onabort = () => fail(new DOMException('aborted', 'AbortError'));
+        x.onabort = () => fail(new DOMException('The request was aborted.', 'AbortError'));
         x.ontimeout = () => fail(new TypeError('Failed to fetch'));
-        x.send(body);
+        const b = bodies.get(request);
+        if (b.bytes !== null) b.used = true;
+        x.send(b.bytes);
       });
     };
   });
@@ -3347,8 +3699,35 @@
   };
   let StorageC;
   const storageKind = new WeakMap(), storageAreas = [undefined, undefined];
+  // WebIDL §2.8.2 QuotaExceededError: a DOMException that can say the quota and the amount asked for.
+  let QuotaErrorC;
+  const quotaErrors = new WeakMap();
+  const makeQuotaError = () => {
+    if (QuotaErrorC) return QuotaErrorC;
+    const amount = (v, member) => {
+      if (v === undefined || v === null) return null;
+      const x = Number(v);
+      if (!Number.isFinite(x)) throw new TypeError(`Failed to construct 'QuotaExceededError': member ${member} is not a finite number`);
+      if (x < 0) throw new RangeError(`Failed to construct 'QuotaExceededError': member ${member} is negative`);
+      return x;
+    };
+    class QuotaExceededError extends DOMException {
+      constructor(message = '', options = undefined) {
+        super(message, 'QuotaExceededError');
+        const d = dict(options, "Failed to construct 'QuotaExceededError'");
+        const quota = amount(d.quota, 'quota'), requested = amount(d.requested, 'requested');
+        if (quota !== null && requested !== null && requested < quota) throw new RangeError("Failed to construct 'QuotaExceededError': requested is less than quota");
+        quotaErrors.set(this, { quota, requested });
+      }
+      get quota() { return brand(quotaErrors, this, 'QuotaExceededError.quota').quota; }
+      get requested() { return brand(quotaErrors, this, 'QuotaExceededError.requested').requested; }
+    }
+    setTag(QuotaExceededError, 'QuotaExceededError');
+    return QuotaErrorC = QuotaExceededError;
+  };
+  lazy('QuotaExceededError', makeQuotaError);
   const storageErr = (r, what) => {
-    if (r === -27) throw new DOMException(`Failed to execute '${what}' on 'Storage': the quota has been exceeded.`, 'QuotaExceededError');
+    if (r === -27) throw new (makeQuotaError())(`Failed to execute '${what}' on 'Storage': the quota has been exceeded.`);
     if (r === -32) throw new DOMException('Storage is not available to this origin.', 'SecurityError');
     throw new TypeError(`Failed to execute '${what}' on 'Storage'`);
   };

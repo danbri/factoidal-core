@@ -36,6 +36,7 @@ import L4Factoidal.Crypto.WebCrypto
 import L4Factoidal.Crypto.WebCryptoKeys
 import L4Factoidal.Net.Xhr
 import L4Factoidal.Net.Storage
+import L4Factoidal.Net.FetchRules
 import L4Factoidal.JSON.Parser
 import L4Factoidal.JSON.Serialize
 import Std.Data.HashMap
@@ -587,6 +588,8 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
     else if 80 ≤ code && code < 86 then
       let (storage, r) := L4Factoidal.Net.Storage.op s.storage s.net.page.origin code fs
       ({ s with storage }, r)
+    -- The Fetch API's rules: MIME type of a body, `Headers` validation, a `Request`'s method.
+    else if 86 ≤ code && code < 90 then pure' (L4Factoidal.Net.FetchRules.op code fs)
     else pure' (.error (-2))
 
 section
