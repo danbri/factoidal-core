@@ -3347,11 +3347,14 @@
   const resolveURL = (input, base = href) => { const r = n.query(0, 12, base + '\u0000' + String(input)); return typeof r === 'string' ? r : null; };
   // Navigate to a fragment of this document (HTML §7.4.2.3.3): the URL changes and a
   // hashchange event is queued; any other navigation loads nothing here.
+  // set where the History object is made: a fragment navigation adds a session history entry
+  let sessionHistoryFragment = null;
   const followHyperlink = url => {
     if (url === null || url === undefined) return;
     const oldURL = href, strip = u => u.split('#')[0];
     if (strip(url) !== strip(oldURL) || !url.includes('#') || url === oldURL) return;
     href = url;
+    if (sessionHistoryFragment !== null) sessionHistoryFragment(url, oldURL);
     setTimeout(() => { const e = new HashChangeEvent('hashchange', { oldURL, newURL: url }); state(e).trusted = true; dispatch(window, e); }, 0);
   };
   let currentScript = null;
@@ -3778,7 +3781,78 @@
     // QuickJS-NG hands the glue's function (bytecode); BubblePopJS hands its source.
     get() { const g = n.wasmGlue(), W = (typeof g === 'function' ? g : (0, eval)(g))(n, define); def('WebAssembly', W); return W; },
     set(v) { def('WebAssembly', v); } });
-  def('history', Object.freeze({ length: 1, state: null, pushState() {}, replaceState() {}, back() {}, forward() {}, go() {} }));
+  // ---- History (HTML §7.4.2, §7.2.4): the session history of the page's document. Which
+  // entry is current, what a push removes, whether a URL may be written and where a
+  // traversal lands are Lean's (HTML.SessionHistory, node_query 197); the page keeps the
+  // serialized states (key 0 is null). A traversal never leaves the document.
+  class PopStateEvent extends Event {
+    constructor(type, init = undefined) { super(type, init); const d = initOf(init); state(this).state = d.state === undefined ? null : d.state; state(this).hasUAVisualTransition = !!d.hasUAVisualTransition; }
+  }
+  getters(PopStateEvent, ['state', 'hasUAVisualTransition']);
+  class PageTransitionEvent extends Event {
+    constructor(type, init = undefined) { super(type, init); state(this).persisted = !!initOf(init).persisted; }
+  }
+  getters(PageTransitionEvent, ['persisted']);
+  def('PopStateEvent', PopStateEvent); def('PageTransitionEvent', PageTransitionEvent);
+  const sessionHistory = (() => {
+    let wire = null, length = 1, current = 0, restoration = 'auto';
+    const states = [null];
+    const ensure = () => { if (wire === null) wire = String(n.query(0, 197, 'init\u0000' + href)); return wire; };
+    // "K" url U+0003 state key U+0003 fragment changed U+0003 length U+0003 history
+    const take = r => {
+      const f = r.slice(1).split('\u0003');
+      const old = href;
+      href = f[0]; current = Number(f[1]) || 0; length = Number(f[3]) || 1; wire = f.slice(4).join('\u0003');
+      return { old, changed: f[2] === '1' };
+    };
+    const fire = (old, changed) => {
+      const e = new PopStateEvent('popstate', { state: states[current] ?? null }); state(e).trusted = true; dispatch(window, e);
+      if (changed) { const h = new HashChangeEvent('hashchange', { oldURL: old, newURL: href }); state(h).trusted = true; dispatch(window, h); }
+    };
+    const brand = new WeakSet();
+    const check = (o, what) => { if (!brand.has(o)) throw new TypeError(`Illegal invocation: '${what}' on 'History'`); };
+    class History {
+      constructor() { throw new TypeError('Illegal constructor'); }
+      get length() { check(this, 'length'); return length; }
+      get state() { check(this, 'state'); return states[current] ?? null; }
+      get scrollRestoration() { check(this, 'scrollRestoration'); return restoration; }
+      set scrollRestoration(v) { check(this, 'scrollRestoration'); v = String(v); if (v === 'auto' || v === 'manual') restoration = v; }
+      go(delta = 0) {
+        check(this, 'go');
+        const d = Math.trunc(Number(delta)) | 0;
+        if (d === 0) return;
+        const w = ensure();
+        setTimeout(() => {
+          const r = n.query(0, 197, 'go\u0000' + w + '\u0000' + d);
+          if (typeof r !== 'string' || r[0] !== 'K' || w !== wire) return;
+          const { old, changed } = take(r);
+          fire(old, changed);
+        }, 0);
+      }
+      back() { check(this, 'back'); this.go(-1); }
+      forward() { check(this, 'forward'); this.go(1); }
+      pushState(data, unused, url = undefined) { check(this, 'pushState'); change(this, 'push', arguments, data, url); }
+      replaceState(data, unused, url = undefined) { check(this, 'replaceState'); change(this, 'replace', arguments, data, url); }
+    }
+    // "Shared history push/replace state steps" (HTML §7.4.4)
+    const change = (h, op, args, data, url) => {
+      const what = op === 'push' ? 'pushState' : 'replaceState';
+      if (args.length < 2) throw new TypeError(`Failed to execute '${what}' on 'History': 2 arguments required, but only ${args.length} present.`);
+      const serialized = globalThis.structuredClone(data);
+      const given = url !== undefined && url !== null;
+      const key = states.push(serialized) - 1;
+      const r = n.query(0, 197, op + '\u0000' + ensure() + '\u0000' + (given ? String(url) : '') + '\u0000' + (given ? '1' : '0') + '\u0000' + key);
+      if (r === 'S') { states.pop(); throw new DOMException(`Failed to execute '${what}' on 'History': A history state object with URL '${String(url)}' cannot be created in a document with origin '${location.origin}' and URL '${href}'.`, 'SecurityError'); }
+      if (typeof r === 'string' && r[0] === 'K') take(r);
+    };
+    const h = Object.create(History.prototype);
+    brand.add(h);
+    def('History', History);
+    // a fragment navigation (HTML §7.4.2.3.3) pushes an entry with no state
+    return { history: h, fragment: url => { const r = n.query(0, 197, 'fragment\u0000' + ensure() + '\u0000' + url); if (typeof r === 'string' && r[0] === 'K') take(r); } };
+  })();
+  def('history', sessionHistory.history);
+  sessionHistoryFragment = (url, oldURL) => { href = oldURL; sessionHistory.fragment(url); href = url; };
   def('screen', Object.freeze({ width: 800, height: 600, availWidth: 800, availHeight: 600, colorDepth: 24, pixelDepth: 24 }));
   for (const [k, i] of [['innerWidth', 0], ['innerHeight', 1], ['outerWidth', 0], ['outerHeight', 1]])
     Object.defineProperty(globalThis, k, { get: () => viewport()[i], set(v) {}, configurable: true, enumerable: true });
