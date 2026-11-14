@@ -260,6 +260,10 @@ structure State where
   session's start, `gpuReplay`). Without it, `navigator.gpu.requestAdapter()` answers null
   and WebNN runs on the CPU reference: no work waits for a GPU that is not there. -/
   replay : Bool := false
+  /-- The host's watchdog found a frame of this page's GPU work unfinished past its time
+  limit (`docs/web/hub/foafnaut/page-gpu.mjs`): the page's GPU device is lost. Every later
+  command is refused (`step_lost`); the browser and other pages go on. -/
+  lost : Bool := false
   deriving Inhabited
 
 def State.empty (page : Nat) (replay : Bool := false) : State := { page, replay }
@@ -551,12 +555,16 @@ def plan (s : State) : Command → Except String (Change × List HostCmd)
 /-- One page command: the new table and the host commands, or a refusal (the table is
 then unchanged). -/
 def step (s : State) (c : Command) : Except String (State × List HostCmd) := do
+  if s.lost then throw "gpu: the page's GPU device was lost: its work took longer than the browser allows"
   let (ch, out) ← plan s c
   if !out.all (·.safe s) then throw "gpu: command refused by the final check"
   if s.work + workOf out > maxFrameWork then
     throw "gpu: compute pass: the page's GPU work for this frame is used up; dispatch again in the next frame"
   let s' ← apply s ch
   return ({ s' with work := s.work + workOf out }, out)
+
+/-- The host's watchdog: the page's GPU device is lost; its readbacks are dropped. -/
+def State.lose (s : State) : State := { s with lost := true, pending := [], mapped := [] }
 
 /-- The host has taken the page's commands: a new frame's work budget. -/
 def State.newFrame (s : State) : State := { s with work := 0 }

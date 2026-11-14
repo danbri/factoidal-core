@@ -391,8 +391,11 @@ def gpuGive (h : Page.Host) (request : JSON.Json) : Page.Host := Id.run do
   let xs := match request.field? "results" with
     | some (.array xs) => xs
     | _ => []
-  let mut gpu := h.dom.gpu
-  let mut loop := h.loop
+  -- the host's watchdog: a frame of the page's GPU work did not finish in time (page-gpu.mjs)
+  let lost := xs.any fun x => x.field? "lost" == some (.bool true)
+  let mut gpu := if lost then h.dom.gpu.lose else h.dom.gpu
+  -- a lost page's waiting readbacks end: their callbacks run and find no bytes
+  let mut loop := if lost then h.dom.gpu.pending.foldl (fun l r => l.queueTask .other r.1) h.loop else h.loop
   for x in xs.take PageGpu.maxPending do
     let t := (natField x "ticket").getD 0
     if (PageGpu.pendingOf gpu t).isNone then continue

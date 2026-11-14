@@ -10,6 +10,12 @@
 // back to Lean (the host's `gpuRead` action) with the ticket Lean gave.
 
 const FORMAT='rgba8unorm';
+// The watchdog (docs/designissues/2026-11-14-gpu-compute-and-webnn.md, wall time): a replay's
+// GPU work that has not finished this long after it was submitted loses the page's GPU
+// device. Lean then refuses every later command of the page; the replay drops its objects;
+// the engine's own drawing and other pages go on. Work already on the GPU is not cancelled
+// (WebGPU has no way to); Lean bounds each frame's work in operations.
+export const WATCHDOG_MS=3000;
 const b64=bytes=>{let s='';for(let i=0;i<bytes.length;i+=32768)s+=String.fromCharCode.apply(null,bytes.subarray(i,i+32768));return btoa(s);};
 const BINDING={uniform:{type:'uniform'},'read-only-storage':{type:'read-only-storage'},storage:{type:'storage'}};
 // Lean's run-length form of a 2D canvas's pixels (PageCanvas.rle): a word n, then with the
@@ -26,9 +32,9 @@ export function unrle(b,w,h){
   return out;
 }
 
-export function createPageGpu(device){
-  let page=-1,blitCode='',blitPipeline,rect;
-  const objs=new Map(),canvases=new Map(),stats={commands:0,passes:0,pixels:0,errors:0,blits:0,computePasses:0,dispatches:0,reads:0};
+export function createPageGpu(device,{watchdogMs=WATCHDOG_MS}={}){
+  let page=-1,blitCode='',blitPipeline,rect,lostPage=-1,lostTold=false;
+  const objs=new Map(),canvases=new Map(),stats={commands:0,passes:0,pixels:0,errors:0,blits:0,computePasses:0,dispatches:0,reads:0,lost:0};
   // Readbacks of this replay: [ticket, the buffer], mapped after the replay's commands.
   let reads=[];
   const of=g=>objs.get(g[1]);
@@ -125,6 +131,8 @@ export function createPageGpu(device){
      * {ticket, dataBase64}, or {ticket, error:true} when the map failed. */
     async replay(p,commands){
       if(p!==page)reset(p);
+      // a lost page: nothing more of its work reaches the GPU; Lean is told once
+      if(p===lostPage){if(lostTold)return [];lostTold=true;return [{lost:true}];}
       reads=[];
       device.pushErrorScope('validation');
       for(const c of commands){
@@ -133,6 +141,14 @@ export function createPageGpu(device){
       }
       const error=await device.popErrorScope();
       if(error)warn('validation',error);
+      // the watchdog: the timer is cleared when the GPU has done this replay's work
+      if(commands.some(c=>c.k==='pass'||c.k==='cpass'||c.k==='copy')){
+        let done=false;
+        const timer=setTimeout(()=>{if(done||page!==p)return;
+          console.warn(`foafnaut: page GPU work of page ${p} did not finish in ${watchdogMs} ms: its GPU device is lost`);
+          stats.lost++;lostPage=p;lostTold=false;reset(p);},watchdogMs);
+        device.queue.onSubmittedWorkDone().then(()=>{done=true;clearTimeout(timer);},()=>{});
+      }
       const now=reads;reads=[];
       return Promise.all(now.map(async([ticket,buffer,size])=>{
         try{

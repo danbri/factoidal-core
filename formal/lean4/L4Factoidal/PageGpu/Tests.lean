@@ -289,6 +289,9 @@ def graphRun : State × List HostCmd := run (State.empty 1) graph
 #guard !ok (step graphRun.1 (.mapRead 2 7))
 -- A destroyed buffer of a bind group: its dispatches are refused.
 #guard !ok (step (step graphRun.1 (.destroy 3)).toOption.get!.1 (.computePass [{ pipeline := 6, bind := some 7, x := 1, y := 1, z := 1 }]))
+-- A page whose GPU device the host's watchdog lost: every command refused.
+#guard !ok (step graphRun.1.lose (.computePass [{ pipeline := 6, bind := some 7, x := 1, y := 1, z := 1 }]))
+#guard !ok (step graphRun.1.lose (.createBuffer 30 16 usageUniform))
 -- A new frame starts a new budget.
 #guard graphRun.1.newFrame.work == 0
 -- A render pipeline on a module with storage is refused (render binds one uniform at 0).
@@ -317,6 +320,7 @@ def graphRun : State × List HostCmd := run (State.empty 1) graph
 #print axioms run_frameWork
 #print axioms deliver_spec
 #print axioms run_mapInv
+#print axioms step_lost
 #print axioms program_inSubset
 #print axioms compile_inSubset
 #print axioms compile_cost
