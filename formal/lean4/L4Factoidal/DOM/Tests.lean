@@ -256,4 +256,21 @@ def nestedSlots : Dom := parseHtmlDocument ("<div id='o'><template shadowrootmod
 -- the inner default slot gets the outer slot, which flattens to the outer host's b, span and text
 #guard (List.range nestedSlots.size).any fun k => nestedSlots.isSlot k && (nestedSlots.findFlattenedSlottables k).size == 3
 
+-- the structural pseudo-classes counted in place agree with the sibling arrays
+#guard (let d := parseHtmlDocument "<ul> <li>a</li> x <li>b</li><p>c</p> <li>d</li><p>e</p></ul><div><span>s</span></div>"
+  (List.range d.size).all fun k =>
+    (d.get k).type != .element || (d.get k).parent.isNone ||
+    (let sibs := Selectors.elementSiblings d k
+     let same := fun (c : NodeId) => (d.get c).lname == (d.get k).lname && (d.get c).ns == (d.get k).ns
+     let st := sibs.filter same
+     Selectors.edgeSib d k (fun _ => true) false == (sibs[0]? == some k) &&
+     Selectors.edgeSib d k (fun _ => true) true == (sibs.back? == some k) &&
+     Selectors.edgeSib d k same false == (st[0]? == some k) &&
+     Selectors.edgeSib d k same true == (st.back? == some k) &&
+     Selectors.sibPos d k (fun _ => true) false == (sibs.toList.findIdx? (· == k)).map (· + 1) &&
+     Selectors.sibPos d k (fun _ => true) true == (sibs.toList.findIdx? (· == k)).map (sibs.size - ·) &&
+     Selectors.sibPos d k same false == (st.toList.findIdx? (· == k)).map (· + 1)))
+
+
 end L4Factoidal.DOM.Tests
+
