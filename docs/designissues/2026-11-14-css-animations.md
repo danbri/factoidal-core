@@ -222,6 +222,9 @@ Proved (axioms: propext, Classical.choice, Quot.sound):
 - `Easing.segment_mono`, `segment_between`, `evalPoints_two`, `evalPoints_two_mono`: one segment of
   `linear()` whose output does not fall is monotone in its input at every input, and between its two
   inputs it stays between its two outputs; a two-point `linear(a, b)` with a ≤ b does not decrease.
+- `Value.channel_range` (a written colour channel is in 0 to 255), `snapWidth_pos`, `snapWidth_le`
+  (snapping widens a line by no more than the slack of a rounding boundary), `snapWidth_idem`;
+  `Engine.withCurrentColor_plain` (a value with no `currentcolor` is itself: the colour is not read).
 - `Page.detachedWrite_connected`: a write whose node (or parent) is in a document's tree is never taken
   as changing nothing there. `CSS.restyleWith_nil` (same arena: the styles given), `restyleWith_nil_size`
   (an arena that grew: a style for every node). `Computed.styleAttributeDiff_same`: a longhand two
@@ -262,6 +265,11 @@ Open:
 - parse∘serialize = id for values and easings is tested, not proved.
 - Reversing-adjusted start values of transitions; `animation-range` and timelines other than the
   document's.
+- Corner shapes (`Value.lerpCorner`: powers and logarithms of 2 in `Float`) are tested against the
+  WPT numbers, not proved; `shape()` against `path()` does not interpolate yet.
+- A number of a declaration block kept as text has six decimals, so an easing set through
+  `element.style` is read back rounded; results within a thousandth of a rounding boundary are taken
+  as on it (`Value.slack`). The block could keep the numbers as written instead (css-values).
 - `rotate` between two axes and `aspect-ratio` use `Float` (sqrt, sin, acos, log, exp): tested, not
   proved. The list kinds (padding, joining, least common multiple) are tested, not proved.
 - Matrices are `Float`: decomposition then recomposition gives the matrix back, the ends of
