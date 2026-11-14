@@ -27,7 +27,7 @@ def ariaRoles : List String :=
    "list", "listbox", "listitem", "log", "main", "mark", "marquee", "math", "menu", "menubar",
    "menuitem", "menuitemcheckbox", "menuitemradio", "meter", "navigation", "none", "note",
    "option", "paragraph", "presentation", "progressbar", "radio", "radiogroup", "region", "row",
-   "rowgroup", "rowheader", "scrollbar", "search", "searchbox", "separator", "slider",
+   "rowgroup", "rowheader", "scrollbar", "search", "searchbox", "sectionfooter", "sectionheader", "separator", "slider",
    "spinbutton", "status", "strong", "subscript", "suggestion", "superscript", "switch", "tab",
    "table", "tablist", "tabpanel", "term", "textbox", "time", "timer", "toolbar", "tooltip",
    "tree", "treegrid", "treeitem"]
@@ -114,7 +114,7 @@ def inputRole (d : Dom) (k : NodeId) : String :=
   let list := (attr? d k "list").isSome
   match asciiLower ((attr? d k "type").getD "text") with
   | "button" | "image" | "reset" | "submit" => "button"
-  | "checkbox" => "checkbox"
+  | "checkbox" => if (attr? d k "switch").isSome then "switch" else "checkbox"
   | "radio" => "radio"
   | "range" => "slider"
   | "number" => "spinbutton"
@@ -138,6 +138,15 @@ def thRole (d : Dom) (k : NodeId) : String :=
       else "columnheader"
     | none => "columnheader"
 
+/-- An `img` (HTML-AAM `img`): `none` for an empty `alt` with no author name, and for an
+image with no source and no name at all; else `image`. -/
+def imgRole (d : Dom) (k : NodeId) : String :=
+  let blank := fun (o : Option String) => match o with | some v => v.trimAscii.toString.isEmpty | none => true
+  let authorNamed := nonEmpty (attr? d k "aria-label") || nonEmpty (attr? d k "aria-labelledby")
+  if attr? d k "alt" == some "" then (if authorNamed then "image" else "none")
+  else if blank (attr? d k "alt") && blank (attr? d k "title") && !authorNamed then "none"
+  else "image"
+
 /-- The implicit role of an HTML element (HTML-AAM §4, "HTML element role mappings"). -/
 def implicitRole (d : Dom) (k : NodeId) : String :=
   let x := d.get k
@@ -148,7 +157,8 @@ def implicitRole (d : Dom) (k : NodeId) : String :=
   | "a" | "area" => if (attr? d k "href").isSome then "link" else "generic"
   | "address" | "details" | "fieldset" | "hgroup" | "optgroup" => "group"
   | "article" => "article"
-  | "aside" => "complementary"
+  -- scoped to sectioning content and without a name: generic (HTML-AAM `aside`)
+  | "aside" => if hasAncestor d k ["article", "aside", "nav", "section"] && !named d k then "generic" else "complementary"
   | "b" | "bdi" | "bdo" | "body" | "data" | "div" | "i" | "pre" | "q" | "samp" | "small" | "span" | "u" => "generic"
   | "blockquote" => "blockquote"
   | "button" => "button"
@@ -167,10 +177,12 @@ def implicitRole (d : Dom) (k : NodeId) : String :=
   | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => "heading"
   | "hr" => "separator"
   | "html" => "document"
-  | "img" => if attr? d k "alt" == some "" then "none" else "image"
+  | "img" => imgRole d k
   | "input" => inputRole d k
   | "ins" => "insertion"
-  | "li" => "listitem"
+  | "li" => match (d.get k).parent with
+    | some p => if isHtml d p ["ul", "ol", "menu"] then "listitem" else "generic"
+    | none => "generic"
   | "main" => "main"
   | "mark" => "mark"
   | "math" => "math"
@@ -304,7 +316,8 @@ def textAlternative (d : Dom) (fuel : Nat) (k : NodeId) (labelled content : Bool
       if !fromContent.isEmpty then fromContent else
       let title := (attr? d k "title").getD ""
       if !title.trimAscii.toString.isEmpty then title else
-      (attr? d k "placeholder").getD ""
+      let ph := (attr? d k "placeholder").getD ""
+      if !ph.trimAscii.toString.isEmpty then ph else (attr? d k "aria-placeholder").getD ""
 
 /-- The names of children in order, block elements set apart by spaces. -/
 def childrenText (d : Dom) (fuel : Nat) (kids : List NodeId) : String :=
@@ -319,11 +332,15 @@ def childrenText (d : Dom) (fuel : Nat) (kids : List NodeId) : String :=
 def hostLabel (d : Dom) (fuel : Nat) (k : NodeId) : String :=
   let x := d.get k
   if x.ns != some htmlNS && !(x.ns == some svgNS) then "" else
-  let labels := fun (ls : List NodeId) => collapse (" ".intercalate (ls.map fun l => childrenText d fuel (d.get l).kids.toList))
+  -- the control itself is left out of its label's text
+  let labels := fun (ls : List NodeId) => collapse (" ".intercalate (ls.map fun l =>
+    childrenText d fuel ((d.get l).kids.toList.filter (· != k))))
   match x.lname with
   | "input" =>
     let t := asciiLower ((attr? d k "type").getD "text")
-    if ["button", "submit", "reset"].contains t then
+    let fromLabels := labels (labelsOf d k)
+    if !fromLabels.isEmpty && ["button", "submit", "reset", "image"].contains t then fromLabels
+    else if ["button", "submit", "reset"].contains t then
       match attr? d k "value" with
       | some v => v
       | none => if t == "submit" then "Submit" else if t == "reset" then "Reset" else labels (labelsOf d k)
@@ -452,5 +469,11 @@ private def nameOf (html tag : String) : String :=
 #guard nameOf "<a href=#><div>one</div><div>two</div></a>" "a" == "one two"
 #guard nameOf "<a href=#>x<span hidden>y</span></a>" "a" == "x"
 #guard nameOf "<fieldset><legend>Group</legend></fieldset>" "fieldset" == "Group"
+#guard roleOf "<img>" "img" == "none" && roleOf "<img alt='' aria-label=x>" "img" == "image" && roleOf "<img src=a.png alt=' '>" "img" == "none"
+#guard roleOf "<input type=checkbox switch>" "input" == "switch" && roleOf "<div><li>x</li></div>" "li" == "generic"
+#guard roleOf "<article><aside>x</aside></article>" "aside" == "generic" && roleOf "<aside>x</aside>" "aside" == "complementary"
+#guard nameOf "<label for=b>Go</label><input id=b type=submit value=v>" "input" == "Go" && nameOf "<input type=submit value=v>" "input" == "v"
+#guard nameOf "<input aria-placeholder=ap value=v>" "input" == "ap"
+
 
 end L4Factoidal.HTML.AccessibleRole
