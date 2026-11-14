@@ -804,6 +804,40 @@ def toBool : Value → Bool
 
 def HeapOf.obj (h : HeapOf H) (id : Nat) : Obj := h.objs.getD id default
 
+/-- The private key that marks an Array exotic object whose elements left the fast form
+(`Kind.array`) for ordinary properties: `Object.freeze`, or an index defined with attributes
+that are not all true. No String value has this key (`strKey` never makes a private key,
+`JS/Theorems.lean`: `strKey_ne_arrayMarkKey`), and `Obj.ownKeys` leaves private keys out, so
+scripts never see it. -/
+def arrayMarkKey : String := privKey " array"
+
+/-- IsArray (§7.2.2) of an object that is not a Proxy: an Array in the fast form, or an Array
+that left it (marked with `arrayMarkKey`). -/
+def Obj.isArray (o : Obj) : Bool :=
+  match o.kind with
+  | .array _ => true
+  | .ordinary => o.props.contains arrayMarkKey
+  | _ => false
+
+/-- Mark an object as an Array exotic object whose elements are ordinary properties (called
+where an Array leaves the fast form). The mark is a private, read-only data property. -/
+def Obj.markArray (o : Obj) : Obj :=
+  if o.props.contains arrayMarkKey then o
+  else { o with props := o.props.insert arrayMarkKey (.data (.bool true) false false false),
+                keys := o.keys.push arrayMarkKey }
+
+/-- Kind: invariant. Says: marking never changes the kind of an object (so every match on the
+kind treats a marked Array as it treated the unmarked object). -/
+theorem Obj.markArray_kind (o : Obj) : o.markArray.kind = o.kind := by
+  unfold Obj.markArray; split <;> rfl
+
+/-- Kind: invariant. Says: an Array in the fast form is an Array. -/
+theorem Obj.isArray_array (o : Obj) (es : Array Value) : ({ o with kind := .array es } : Obj).isArray = true := rfl
+
+#guard ({ kind := .ordinary } : Obj).markArray.isArray
+#guard !({ kind := .ordinary } : Obj).isArray
+#guard (({ kind := .ordinary } : Obj).markArray.markArray.keys.size == 1)
+
 /-- An own property, with the Array exotic `length` and index properties. -/
 def Obj.getOwn (o : Obj) (key : String) : Option PropV :=
   match o.kind with
@@ -848,6 +882,9 @@ def Obj.ownKeys (o : Obj) : Array String :=
     | _ => #[]
   let (syms, strs) := rest.partition isSymKey
   idx ++ ints ++ extra ++ strs ++ syms
+
+-- The Array mark is never an own key a script sees.
+#guard ({ kind := .ordinary } : Obj).markArray.ownKeys.size == 0
 
 /-- The own string keys (no Symbols), in order. -/
 def Obj.ownStrKeys (o : Obj) : Array String := o.ownKeys.filter (!isSymKey ·)

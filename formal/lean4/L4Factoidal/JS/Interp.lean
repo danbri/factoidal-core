@@ -4304,7 +4304,8 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
         let o ← getObj id
         let o := match o.kind with
           | .array es =>
-            let o := { o with kind := .ordinary }
+            -- the elements become ordinary properties; the object stays an Array (`markArray`)
+            let o := ({ o with kind := .ordinary } : Obj).markArray
             let o := (List.range es.size).foldl (fun (o : Obj) i => o.putOwn (toString i) (.data es[i]! true true true)) o
             o.putOwn "length" (.data (.num (Float.ofNat es.size)) false false false)
           | _ => o
@@ -4409,7 +4410,8 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       | _ =>
         let id ← toObj n thisV
         let custom ← getV n (.obj id) (symKey symToStringTag)
-        let builtin := match (← getObj id).kind with
+        let oo ← getObj id
+        let builtin := if oo.isArray then "Array" else match oo.kind with
           | .array _ => "Array"
           | .closure .. | .native _ | .bound .. => "Function"
           | .error => "Error"
@@ -4481,9 +4483,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       else newArray args
     | .arrayIsArray =>
       match a0 with
-      | .obj id => match (← getObj id).kind with
-        | .array _ => pure (.bool true)
-        | _ => pure (.bool false)
+      | .obj id => pure (.bool (← getObj id).isArray)
       | _ => pure (.bool false)
     | .arrayPush =>
       match thisV with
@@ -4595,7 +4595,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
         match a with
         | .obj aid => match (← getObj aid).kind with
           | .array more => acc := acc ++ more
-          | _ => acc := acc.push a
+          | _ => if (← getObj aid).isArray then acc := acc ++ (← elemsOf n a) else acc := acc.push a
         | _ => acc := acc.push a
       newArray acc
     | .arrayReverse =>
@@ -6429,10 +6429,11 @@ def defineOwnProp : Nat → Nat → String → Desc → M Bool
         | .array es, some i =>
           if w && e && c then defineOwn id k (.data v true true true)
           else
-            -- leave the fast form: keep the elements, and the length, as ordinary properties
+            -- leave the fast form: keep the elements, and the length, as ordinary properties;
+            -- the object stays an Array (`markArray`)
             let o' := (List.range es.size).foldl (fun o j => { o with
                 props := o.props.insert (toString j) (.data es[j]! true true true),
-                keys := o.keys.push (toString j) }) { o with kind := .ordinary }
+                keys := o.keys.push (toString j) }) ({ o with kind := .ordinary } : Obj).markArray
             modifyObj id fun _ => o'.putOwn "length" (.data (.num (Float.ofNat es.size)) true false false)
             defineOwn id k (.data v w e c)
             let _ := i
@@ -6487,6 +6488,15 @@ def jsonStr : Nat → Value → Nat → M Value
           | _ => pure "null"
         pure (.str ("[" ++ ",".intercalate parts ++ "]"))
       | _ =>
+        if o.isArray then
+          -- an Array that left the fast form (frozen, or with an index of other attributes)
+          let es ← elemsOf n v
+          let parts ← es.toList.mapM fun e => do
+            match ← jsonStr n e (depth + 1) with
+            | .str s => pure s
+            | _ => pure "null"
+          return .str ("[" ++ ",".intercalate parts ++ "]")
+
         let ks := o.ownStrKeys.filter fun k => match o.getOwn k with | some p => p.enumerable | none => false
         let parts ← ks.toList.filterMapM fun k => do
           match ← jsonStr n (← getV n v k) (depth + 1) with

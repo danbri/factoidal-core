@@ -174,6 +174,19 @@ theorem strKey_not_priv (s : String) : isPrivKey (strKey s) = false := by
       exact absurd h (by decide)
 
 /-- Kind: a security property of the key encoding.
+Says: the key that marks an Array whose elements left the fast form (`arrayMarkKey`) is a
+private key, so no String value has it: `o["..."]`, `in`, `Object.defineProperty` and
+`JSON.parse` can not read, write or forge the mark, and only the engine decides IsArray.
+Does not say: more than `strKey_not_priv` does about where `strKey` is called. -/
+theorem arrayMarkKey_priv : isPrivKey arrayMarkKey = true := by decide
+
+theorem strKey_ne_arrayMarkKey (s : String) : strKey s ≠ arrayMarkKey := by
+  intro h
+  have h1 := strKey_not_priv s
+  rw [h, arrayMarkKey_priv] at h1
+  exact Bool.noConfusion h1
+
+/-- Kind: a security property of the key encoding.
 Says: no String value has a Symbol's key: `strKey s` is not recognised by `isSymKey`, so
 `o["\u{10FFFF}0"]` is not the property of `Symbol.iterator`.
 Does not say: more than `strKey_not_priv` does about where `strKey` is called. -/

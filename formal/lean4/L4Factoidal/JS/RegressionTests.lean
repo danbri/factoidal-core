@@ -612,4 +612,9 @@ private def parses (src : String) : Bool := syn src == "ok"
 
 #guard out "var z = Iterator.zip([[1, 2, 3], 'ab'.split('')]); print(JSON.stringify([...z])); print(JSON.stringify([...Iterator.zip([[1], [2, 3]], { mode: 'longest', padding: ['p', 'q'] })])); try { [...Iterator.zip([[1], [2, 3]], { mode: 'strict' })] } catch (e) { print(e.name) } var k = Iterator.zipKeyed({ a: [1, 2], b: [3] }); print(JSON.stringify([...k])); try { Iterator.zip([1]) } catch (e) { print(e.name) } try { Iterator.zip([], { mode: 'x' }) } catch (e) { print(e.name) }" == ["[[1,\"a\"],[2,\"b\"]]", "[[1,2],[\"p\",3]]", "TypeError", "[{\"a\":1,\"b\":3}]", "TypeError", "TypeError"]
 
+-- An Array that leaves the fast form (Object.freeze, an index of other attributes) is still an
+-- Array: IsArray, JSON, concat and the toString tag (`Obj.isArray`, `arrayMarkKey`).
+#guard out "var a = Object.freeze([1, 2]); var b = [3]; Object.defineProperty(b, '0', { writable: false }); print(Array.isArray(a), Array.isArray(b), JSON.stringify(a), JSON.stringify({ s: a }), [0].concat(a).length, Object.prototype.toString.call(a), Object.isFrozen(a), Object.keys(a).join(), Object.getOwnPropertyNames(a).join(), a.length)" == ["true true [1,2] {\"s\":[1,2]} 3 [object Array] true 0,1 0,1,length 2"]
+#guard out "print(Array.isArray(Object.freeze({ length: 0 })), JSON.stringify(Object.freeze({ a: [] })))" == ["false {\"a\":[]}"]
+
 end L4Factoidal.JS.Tests
