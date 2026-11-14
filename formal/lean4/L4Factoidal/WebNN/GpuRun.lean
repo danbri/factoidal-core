@@ -252,9 +252,47 @@ def readGpu (s : State) (c tid ticket : Nat) : M (State × Nat) := do
   | .ok v => pure v
   | .error m => throw (.dom "OperationError" m)
 
-/-- `MLTensor.destroy()`, with its GPU buffer. -/
+/-- `createExportableTensor`: on a context on the GPU path, the tensor's GPU buffer is made
+at once and holds its value. -/
+def makeExportable (s : State) (tid : Nat) : M State := do
+  let some t := s.tensors[tid]? | throw (.type "not a tensor")
+  if !ctxGpu s t.ctx then throw (.dom "NotSupportedError" "exportable tensors need a context on the GPU")
+  let r : Except String State := do
+    let (s, id) ← tensorBuf s tid
+    let s ← if t.data.size > 0 then emit s (.writeBuffer id 0 (t.data ++ ByteArray.mk (Array.replicate (L4Factoidal.PageGpu.Wgsl.roundUp 4 t.data.size - t.data.size) 0))) else pure s
+    let t := s.tensors[tid]?.getD t
+    pure { s with tensors := s.tensors.setIfInBounds tid { t with exportable := true, onGpu := true } }
+  match r with
+  | .ok s => pure s
+  | .error m => throw (.dom "NotSupportedError" m)
+
+/-- `exportToGPU(tensor)`: the tensor's GPU buffer, given to the page's WebGPU. Its value is
+put there first if WebNN last wrote it on the CPU side. The answer is the buffer's id. -/
+def exportTensor (s : State) (c tid : Nat) : M (State × Nat) := do
+  let some t := s.tensors[tid]? | throw (.type "not a tensor")
+  if t.ctx != c then throw (.type "the tensor is of another context")
+  if t.destroyed then throw (.dom "InvalidStateError" "the tensor is destroyed")
+  if !t.exportable then throw (.type "exportToGPU: the tensor is not exportable")
+  let some id := t.buf | throw (.type "exportToGPU: the tensor is not exportable")
+  if t.exported then return (s, id)
+  let s ← if t.onGpu || t.data.size == 0 then pure s else
+    match emit s (.writeBuffer id 0 (t.data ++ ByteArray.mk (Array.replicate (L4Factoidal.PageGpu.Wgsl.roundUp 4 t.data.size - t.data.size) 0))) with
+    | .ok s => pure s
+    | .error m => throw (.dom "OperationError" m)
+  pure ({ s with tensors := s.tensors.setIfInBounds tid { t with exported := true, onGpu := true } }, id)
+
+/-- The page's `GPUBuffer` of an exported tensor was destroyed: WebNN has the tensor back,
+its value as WebGPU left it. A tensor destroyed meanwhile has its buffer destroyed now. -/
+def importTensor (s : State) (tid : Nat) : State :=
+  match s.tensors[tid]? with
+  | some t =>
+    let s := { s with tensors := s.tensors.setIfInBounds tid { t with exported := false } }
+    if t.destroyed then match t.buf with | some id => destroyAll s [id] | none => s else s
+  | none => s
+
+/-- `MLTensor.destroy()`, with its GPU buffer (kept while WebGPU holds it). -/
 def destroyTensor (s : State) (tid : Nat) : State :=
-  let buf := (s.tensors[tid]?.bind (·.buf))
+  let buf := (s.tensors[tid]?.bind fun t => if t.exported then none else t.buf)
   let s := L4Factoidal.WebNN.destroyTensor s tid
   match buf with
   | some id => destroyAll s [id]

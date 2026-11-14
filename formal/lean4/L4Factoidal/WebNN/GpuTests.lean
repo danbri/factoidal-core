@@ -47,6 +47,14 @@ def kinds (s : State) : List String := s.out.toList.map fun c => ((L4Factoidal.P
 #guard ((graph "" "relu").1.builders[0]?.bind (·.gpu)).isNone
 #guard ((graph "gpu" "relu" { gpuPage with page := L4Factoidal.PageGpu.State.empty 3 false }).1.builders[0]?.bind (·.gpu)).isNone
 #guard (graph "gpu" "relu" { gpuPage with page := L4Factoidal.PageGpu.State.empty 3 false }).2.getLast? == some ""
+-- exportable tensors: only on a GPU context; exported, WebNN may not write or read it until
+-- the page's GPUBuffer of it is destroyed (import)
+def exported : State × List String := run gpuPage [["context", "gpu"], ["tensor", "0", "float32", "4", "xrw"],
+  ["export", "0", "0"], ["write", "0", "0", "f32", "AAAAAAAAAAAAAAAAAAAAAA"], ["import", "0"]]
+#guard (exported.2.getD 2 "").toNat? == some 1073741824
+#guard (exported.2.getD 3 "").startsWith "!T"
+#guard (exported.1.tensors[0]?.map (·.exported)) == some false
+#guard ((run gpuPage [["context", ""], ["tensor", "0", "float32", "4", "xrw"]]).2.getD 1 "").startsWith "!DNotSupportedError"
 -- the CPU reference answers readTensor with its bytes (byte 0)
 #guard ((api (graph "gpu" "tanh").1 #["read".toUTF8, "0".toUTF8, "2".toUTF8]).2.get! 0) == 0
 end Tests

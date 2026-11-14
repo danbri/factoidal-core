@@ -1400,6 +1400,9 @@
   class GPUValidationError extends GPUError {}
   class GPUOutOfMemoryError extends GPUError {}
   let gpuNext = 1;
+  // A GPUBuffer of a GPU object the page did not make (a WebNN tensor's, exportToGPU): its
+  // destroy gives it back to its owner (`onDestroy`) instead of destroying it.
+  let gpuWrapBuffer;
   // A view over all of its buffer is sent as the buffer (n.gpu copies it); only a part is sliced.
   const gpuBytes = data => {
     if (data instanceof ArrayBuffer) return data;
@@ -1504,8 +1507,17 @@
           }
         });
       }
-      destroy() { send(8, [this.id]); }
+      destroy() {
+        if (this.giveBack) { const f = this.giveBack; this.giveBack = null; f(); return; }
+        if (this.foreign) return;
+        send(8, [this.id]);
+      }
     }
+    gpuWrapBuffer = (id, size, usage, onDestroy) => {
+      const b = Object.create(GPUBuffer.prototype);
+      Object.assign(b, { id, size, usage, mapState: 'unmapped', ok: true, foreign: true, giveBack: onDestroy });
+      return b;
+    };
     class GPUShaderModule {
       constructor(d) {
         this.id = gpuNext++; this.code = String(d.code);
@@ -7171,10 +7183,14 @@
       const d = descOf(descriptor, 'createTensor', true);
       return makeTensor(c, d, (d.readable ? 'r' : '') + (d.writable ? 'w' : ''));
     });
+    // Exportable tensors (WebNN–WebGPU interop): only on a context on the GPU path (Lean,
+    // WebNN.GpuRun.makeExportable), with this page's GPUDevice.
     asyncOp(MLContext, 'createExportableTensor', 2, function createExportableTensor(descriptor, gpuDevice) {
-      state(contexts, this, 'MLContext');
+      const c = state(contexts, this, 'MLContext');
       need(arguments, 2, "'createExportableTensor' on 'MLContext'");
-      throw new DOMException('Exportable tensors are not supported', 'NotSupportedError');
+      if (!(typeof GPUDevice === 'function' && gpuDevice instanceof GPUDevice)) throw new TypeError("createExportableTensor: parameter 2 is not of type 'GPUDevice'");
+      const d = descOf(descriptor, 'createExportableTensor', true);
+      return makeTensor(c, d, 'x' + (d.readable ? 'r' : '') + (d.writable ? 'w' : ''));
     });
     asyncOp(MLContext, 'createConstantTensor', 2, function createConstantTensor(descriptor, inputData) {
       const c = state(contexts, this, 'MLContext');
@@ -7228,11 +7244,17 @@
       const src = sourceOf(inputData, 'writeTensor');
       nn('write', c.id, t.id, src[0], src[1]);
     });
+    const nnElementBytes = { float32: 4, float16: 2, int32: 4, uint32: 4, int64: 8, uint64: 8, int8: 1, uint8: 1 };
     op(MLContext, 'exportToGPU', 1, function exportToGPU(tensor) {
-      state(contexts, this, 'MLContext');
+      const c = state(contexts, this, 'MLContext');
       need(arguments, 1, "'exportToGPU' on 'MLContext'");
-      tensorRef(tensor, 'exportToGPU');
-      throw new TypeError('exportToGPU: the tensor is not exportable');
+      const t = tensorRef(tensor, 'exportToGPU');
+      if (t.gpuBuffer) return t.gpuBuffer;
+      const id = +nn('export', c.id, t.id);
+      const size = t.shape.reduce((a, b) => a * b, 1) * (nnElementBytes[t.dataType] ?? 1);
+      t.gpuBuffer = gpuWrapBuffer(id, size, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+        () => { t.gpuBuffer = undefined; nn('import', t.id); });
+      return t.gpuBuffer;
     });
     let limitsText;
     op(MLContext, 'opSupportLimits', 0, function opSupportLimits() {

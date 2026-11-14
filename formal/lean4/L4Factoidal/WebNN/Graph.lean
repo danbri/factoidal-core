@@ -89,6 +89,11 @@ structure TensorRec where
   buf : Option Nat := none
   /-- The value is in `buf` (a GPU dispatch wrote it), not in `data`. -/
   onGpu : Bool := false
+  /-- Made by `createExportableTensor`: its value lives in `buf` and can be given to WebGPU. -/
+  exportable : Bool := false
+  /-- Given to WebGPU (`exportToGPU`) and not taken back yet: WebNN may not read, write or
+  dispatch with it until the page's `GPUBuffer` of it is destroyed. -/
+  exported : Bool := false
   deriving Inhabited
 
 structure State where
@@ -409,6 +414,7 @@ private def liveTensor (s : State) (c tid : Nat) (destroyed : Err := .type "the 
   | some t =>
     if t.ctx != c then .error (.type "the tensor is of another context")
     else if t.destroyed then .error destroyed
+    else if t.exported then .error (.type "the tensor is exported to WebGPU")
     else .ok t
 
 /-- `MLContext.writeTensor(tensor, data)`. -/
