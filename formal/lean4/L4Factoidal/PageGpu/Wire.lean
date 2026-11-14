@@ -187,6 +187,17 @@ def decodeWith (op : Nat) (ns : List Nat) (payload : ByteArray) : Except String 
   | 15 => read do return Command.unmap (← next)
   | _ => throw "gpu: unknown command"
 
+/-- Op 16 (or `binaryOp + 16`): the page asks for the bytes Lean holds for a buffer it read
+back (`getMappedRange`); the answer is the bytes themselves, not text. -/
+def mappedOp : Nat := 16
+
+/-- The buffer id of a `mappedOp` call. -/
+def mappedId (op : Nat) (bytes : ByteArray) : Option Nat :=
+  let ns := if op ≥ binaryOp then (binHeader bytes).toOption.map (·.1) else (nums (splitLine bytes).1).toOption
+  match ns with
+  | some [id] => some id
+  | _ => none
+
 /-- The command of one import call: a text header (ops below `binaryOp`) or a binary one. -/
 def decode (op : Nat) (bytes : ByteArray) : Except String Command :=
   if op ≥ binaryOp then do

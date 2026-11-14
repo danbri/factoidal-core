@@ -1534,6 +1534,7 @@
     UNIFORM: 64, STORAGE: 128, INDIRECT: 256, QUERY_RESOLVE: 512 });
   const GPUTextureUsage = Object.freeze({ COPY_SRC: 1, COPY_DST: 2, TEXTURE_BINDING: 4, STORAGE_BINDING: 8, RENDER_ATTACHMENT: 16 });
   const GPUShaderStage = Object.freeze({ VERTEX: 1, FRAGMENT: 2, COMPUTE: 4 });
+  const GPUMapMode = Object.freeze({ READ: 1, WRITE: 2 });
   const GPUColorWrite = Object.freeze({ RED: 1, GREEN: 2, BLUE: 4, ALPHA: 8, ALL: 15 });
   class GPUError { constructor(message) { this.message = String(message); } }
   class GPUValidationError extends GPUError {}
@@ -1570,6 +1571,8 @@
     h.set(words, 7);
     return h;
   };
+  // A compute pass's binary header (op 64 + 12): the count, then its words.
+  const computeHeader = words => { const h = new Uint32Array(words.length + 1); h[0] = words.length; h.set(words, 1); return h; };
   // A colour channel 0..1 as 0..255 (NaN as 0); the comparisons convert x to a number.
   const unorm = x => x >= 1 ? 255 : x > 0 ? Math.round(x * 255) : 0;
   class GPUDevice extends EventTarget {}
@@ -1601,14 +1604,44 @@
       }
       getMappedRange(offset = 0, size) {
         if (!this.mapped) throw new DOMException('buffer is not mapped', 'OperationError');
+        // A read map: the bytes the host read back (a copy; Lean holds them until unmap).
+        if (this.readMap) return offset === 0 && size === undefined ? this.mapped
+          : this.mapped.slice(offset, size === undefined ? undefined : offset + size);
         if (offset !== 0) throw new DOMException('getMappedRange at an offset is not in the page GPU subset', 'OperationError');
         return this.mapped;
       }
       unmap() {
+        if (this.mapState === 'pending') { this.mapCancel?.(); return; }
         if (!this.mapped) return;
-        send(3, [this.id, 0], this.mapped); this.mapped = undefined; this.mapState = 'unmapped';
+        if (this.readMap) { send(15, [this.id]); this.readMap = false; }
+        else send(3, [this.id, 0], this.mapped);
+        this.mapped = undefined; this.mapState = 'unmapped';
       }
-      mapAsync() { return Promise.reject(new DOMException('mapAsync is not in the page GPU subset', 'OperationError')); }
+      // mapAsync(READ): Lean checks the buffer (MAP_READ, this page's) and asks the host for
+      // its bytes; the host's answer comes back as a task, which takes the bytes from Lean.
+      mapAsync(mode, offset = 0, size) {
+        if (this.mapState !== 'unmapped') return Promise.reject(new DOMException('the buffer is mapped or being mapped', 'OperationError'));
+        if ((Number(mode) & 3) !== 1) return Promise.reject(new DOMException('only GPUMapMode.READ is in the page GPU subset', 'OperationError'));
+        return new Promise((resolve, reject) => {
+          let done = false;
+          const cb = register(() => {
+            callbacks.delete(cb);
+            if (done) return;
+            done = true; this.mapCancel = undefined;
+            const bytes = n.gpuBytes(16, String(this.id), '');
+            if (bytes instanceof ArrayBuffer) { this.mapped = bytes; this.readMap = true; this.mapState = 'mapped'; resolve(); }
+            else { this.mapState = 'unmapped'; reject(new DOMException('the GPU could not read the buffer back', 'OperationError')); }
+          });
+          this.mapState = 'pending';
+          this.mapCancel = () => { done = true; this.mapState = 'unmapped'; this.mapCancel = undefined; reject(new DOMException('unmapped before the map completed', 'AbortError')); };
+          const r = n.gpu(14, this.id + ' ' + cb, '');
+          if (r) {
+            callbacks.delete(cb); done = true; this.mapState = 'unmapped'; this.mapCancel = undefined;
+            const m = typeof r === 'number' ? 'gpu: import error ' + r : r;
+            report(m); reject(new DOMException(m, 'OperationError'));
+          }
+        });
+      }
       destroy() { send(8, [this.id]); }
     }
     class GPUShaderModule {
@@ -1637,12 +1670,44 @@
       }
       getBindGroupLayout() { return new GPUBindGroupLayout(this); }
     }
+    // Compute (record 2026-11-14-gpu-compute-and-webnn.md): Lean derives the pipeline's
+    // layout from the module's bindings; a bind group binds whole buffers.
+    class GPUComputePipeline {
+      constructor(d) {
+        this.id = gpuNext++;
+        const c = d.compute ?? {};
+        this.ok = send(10, [this.id, c.module?.id ?? 0], c.entryPoint ?? '');
+      }
+      getBindGroupLayout() { return new GPUBindGroupLayout(this); }
+    }
     class GPUBindGroup {
       constructor(d) {
         this.id = gpuNext++;
+        const p = d.layout?.pipeline;
+        if (p instanceof GPUComputePipeline) {
+          const header = [this.id, p.id, 0];
+          for (const e of d.entries ?? []) {
+            const r = e?.resource, b = r?.buffer ?? r;
+            if (r?.buffer && ((r.offset ?? 0) !== 0 || (r.size !== undefined && r.size !== b.size))) {
+              report('gpu: bind group: the page GPU subset binds whole buffers'); this.ok = false; return;
+            }
+            header.push(e.binding, b?.id ?? 0); header[2]++;
+          }
+          this.ok = send(11, header);
+          return;
+        }
         const e = (d.entries ?? []).find(x => x.binding === 0);
-        this.ok = send(6, [this.id, d.layout?.pipeline?.id ?? 0, e?.resource?.buffer?.id ?? e?.resource?.id ?? 0]);
+        this.ok = send(6, [this.id, p?.id ?? 0, e?.resource?.buffer?.id ?? e?.resource?.id ?? 0]);
       }
+    }
+    // A compute pass keeps its dispatches as header words: pipeline bind x y z.
+    class GPUComputePassEncoder {
+      constructor() { this.words = [0]; this.pipeline = 0; this.bind = 0; this.kind = 'compute'; }
+      setPipeline(p) { this.pipeline = p ? p.id : 0; }
+      setBindGroup(index, g) { if (index === 0) this.bind = g ? g.id : 0; else report('gpu: compute pass: only bind group 0'); }
+      dispatchWorkgroups(x, y = 1, z = 1) { this.words.push(this.pipeline, this.bind, +x, +y, +z); this.words[0]++; }
+      dispatchWorkgroupsIndirect() { report('gpu: dispatchWorkgroupsIndirect is not in the page GPU subset'); }
+      end() {}
     }
     // A pass keeps its draws as the words of its binary header (passHeader).
     class GPURenderPassEncoder {
@@ -1673,6 +1738,15 @@
         const pass = new GPURenderPassEncoder(a.view?.canvas ?? 0, lastClear);
         this.passes.push(pass); return pass;
       }
+      beginComputePass() { const pass = new GPUComputePassEncoder(); this.passes.push(pass); return pass; }
+      // copyBufferToBuffer(src, srcOffset, dst, dstOffset, size), or (src, dst, size?).
+      copyBufferToBuffer(src, a, b, c, d) {
+        const copy = typeof a === 'object' && a !== null
+          ? [src?.id ?? 0, 0, a.id ?? 0, 0, b === undefined ? Math.min(src.size, a.size) : +b]
+          : [src?.id ?? 0, +a, b?.id ?? 0, +c, d === undefined ? src.size - a : +d];
+        this.passes.push({ kind: 'copy', copy });
+      }
+      clearBuffer() { report('gpu: clearBuffer is not in the page GPU subset'); }
       finish() { return { passes: this.passes }; }
     }
     const queue = Object.freeze({
@@ -1692,7 +1766,10 @@
         for (let i = 0; i < buffers.length; i++) {
           const passes = buffers[i].passes;
           if (passes) for (let j = 0; j < passes.length; j++) {
-            const p = passes[j], r = gpuPass(passHeader(p.target, p.clear, p.count, p.words));
+            const p = passes[j];
+            const r = p.kind === 'compute' ? n.gpu(76, computeHeader(p.words).buffer, '')
+              : p.kind === 'copy' ? n.gpu(13, p.copy.join(' '), '')
+              : gpuPass(passHeader(p.target, p.clear, p.count, p.words));
             if (r) report(typeof r === 'number' ? 'gpu: import error ' + r : r);
           }
         }
@@ -1701,12 +1778,17 @@
     });
     Object.assign(device, {
       queue, features: new Set(), limits: Object.freeze({ maxBufferSize: 16777216, maxVertexBuffers: 8, maxVertexAttributes: 16,
-        maxTextureDimension2D: 2048, maxBindGroups: 1, maxUniformBufferBindingSize: 65536 }),
+        maxTextureDimension2D: 2048, maxBindGroups: 1, maxUniformBufferBindingSize: 65536,
+        maxStorageBufferBindingSize: 16777216, maxStorageBuffersPerShaderStage: 4, maxBindingsPerBindGroup: 4,
+        maxComputeInvocationsPerWorkgroup: 256, maxComputeWorkgroupSizeX: 256, maxComputeWorkgroupSizeY: 256,
+        maxComputeWorkgroupSizeZ: 64, maxComputeWorkgroupsPerDimension: 65535 }),
       lost: new Promise(r => { lostResolve = r; }), onuncapturederror: null, label: '',
       createBuffer: d => new GPUBuffer(d ?? {}),
       createShaderModule: d => new GPUShaderModule(d ?? {}),
       createRenderPipeline: d => new GPURenderPipeline(d ?? {}),
       createRenderPipelineAsync: d => Promise.resolve(new GPURenderPipeline(d ?? {})),
+      createComputePipeline: d => new GPUComputePipeline(d ?? {}),
+      createComputePipelineAsync: d => Promise.resolve(new GPUComputePipeline(d ?? {})),
       createBindGroup: d => new GPUBindGroup(d ?? {}),
       createCommandEncoder: () => new GPUCommandEncoder(),
       createPipelineLayout: () => 'auto',
@@ -3891,7 +3973,7 @@
     // ServiceWorkerContainer (section workers).
     get serviceWorker() { return serviceWorkerOf(); } }));
   def('GPUBufferUsage', GPUBufferUsage); def('GPUTextureUsage', GPUTextureUsage); def('GPUShaderStage', GPUShaderStage);
-  def('GPUColorWrite', GPUColorWrite); def('GPUValidationError', GPUValidationError); def('GPUOutOfMemoryError', GPUOutOfMemoryError);
+  def('GPUColorWrite', GPUColorWrite); def('GPUMapMode', GPUMapMode); def('GPUValidationError', GPUValidationError); def('GPUOutOfMemoryError', GPUOutOfMemoryError);
   def('GPUCanvasContext', GPUCanvasContext); def('GPUDevice', GPUDevice);
   // document.fonts: a FontFaceSet (section dombreadth).
   // Canvas 2D globals, made on first use (the canvas2d section above).

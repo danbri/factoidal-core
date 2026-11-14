@@ -275,7 +275,7 @@ def frameEntropyOf (id : Nat) (parent b : ByteArray) : Nat → ByteArray :=
     else b ++ ("frame:" ++ toString id ++ ":" ++ toString el).toUTF8
 
 def actions : List String := ["info", "load", "start", "click", "pointer", "key", "actions", "message", "webdriverStart", "webdriver", "computed", "resize", "advance", "settle", "turn", "close",
-  "aotModule", "resume", "host", "frame", "fetched", "net", "syncAnswer", "cookies"]
+  "aotModule", "resume", "host", "frame", "fetched", "net", "syncAnswer", "cookies", "gpuRead"]
 
 /-- An answer object with `nextSession` first: the number of the next session. -/
 def withNext (n : Nat) (answer : String) : String :=
@@ -372,14 +372,38 @@ def netDrained (w : WebApi.State) : WebApi.State :=
 
 /-- The session after a turn answer: the GPU commands it carried are the host's now. -/
 def drained (s : Page.Session) : Page.Session :=
-  { s with host := { s.host with dom := { s.host.dom with gpuOut := #[], canvas := s.host.dom.canvas.sent },
+  { s with host := { s.host with dom := { s.host.dom with gpuOut := #[], canvas := s.host.dom.canvas.sent,
+                                                           gpu := s.host.dom.gpu.newFrame },
                                   web := netDrained s.host.web } }
 
 def drainedLean (s : LeanJS.Session) : LeanJS.Session :=
   let h := s.host
   let web := if h.web.net.outbox.isEmpty && h.web.net.cancels.isEmpty && h.web.net.syncAnswers.isEmpty then h.web else netDrained h.web
   if h.dom.gpuOut.isEmpty && h.dom.canvas.drawn.isEmpty && h.web.net.outbox.isEmpty && h.web.net.cancels.isEmpty && h.web.net.syncAnswers.isEmpty then s else
-  s.setHost { h with dom := { h.dom with gpuOut := #[], canvas := h.dom.canvas.sent }, web }
+  s.setHost { h with dom := { h.dom with gpuOut := #[], canvas := h.dom.canvas.sent, gpu := h.dom.gpu.newFrame }, web }
+
+/-- The host's answers to the page's GPU readbacks (`PageGpu.deliver`; record
+2026-11-14-gpu-compute-and-webnn.md): `results` of `{ticket, dataBase64}` or
+`{ticket, error: true}`. Each answered ticket is the page's callback (the prelude's
+`mapAsync` registered it), queued as a task; an answer for no waiting readback, or of the
+wrong size, is dropped (the readback then fails). -/
+def gpuGive (h : Page.Host) (request : JSON.Json) : Page.Host := Id.run do
+  let xs := match request.field? "results" with
+    | some (.array xs) => xs
+    | _ => []
+  let mut gpu := h.dom.gpu
+  let mut loop := h.loop
+  for x in xs.take PageGpu.maxPending do
+    let t := (natField x "ticket").getD 0
+    if (PageGpu.pendingOf gpu t).isNone then continue
+    let data := match x.field? "dataBase64" with
+      | some (.string b) => Rendering.SfntProfile.decodeBase64 b
+      | _ => none
+    gpu := match data.bind (PageGpu.deliver gpu t) with
+      | some g => g
+      | none => PageGpu.fail gpu t
+    loop := loop.queueTask .other t
+  return { h with dom := { h.dom with gpu }, loop }
 
 /-- What Canvas 2D draws with and the layout reads, given anew before each action: the
 fonts and images the engine holds may have changed since the page started (`fontLoad`,
@@ -1168,6 +1192,10 @@ def actLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (act
       let a := if rest.size == all.size then a else LeanJSWorkers.pump a
       let a := { a with page := a.page.setHost (netGiveAll a.page.host rest) }
       (e.advance a (e.loop a).clock).1
+  | "gpuRead" =>
+    run fun a =>
+      let a := { a with page := a.page.setHost (gpuGive a.page.host request) }
+      (e.advance a (e.loop a).clock).1
   | "cookies" =>
     -- WebDriver "Delete All Cookies" (§14.5), asked by the embedder's test driver: the page
     -- session's jar is emptied. No web_api op does this: a page's scripts can not.
@@ -1386,6 +1414,9 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
           let ms := (natField request "elapsedMs").getD 0
           let (s, _) ← if ms == 0 then pure (s, true) else s.advanceP (s.loop.clock + ms)
           let s : Page.Session := { s with host := netGive s.host request }
+          return (← s.advanceP s.loop.clock).1
+      | "gpuRead" => run fun s => do
+          let s : Page.Session := { s with host := gpuGive s.host request }
           return (← s.advanceP s.loop.clock).1
       | _ => return ({ held with session := some (id, s, marks) }, .error "scriptSession: unknown action")
 

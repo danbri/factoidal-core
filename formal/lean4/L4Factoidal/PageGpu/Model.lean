@@ -465,7 +465,9 @@ def plan (s : State) : Command → Except String (Change × List HostCmd)
     if size > maxBuffer then throw "gpu: buffer too large"
     let size := Wgsl.roundUp 4 size
     if !usageOk usage then throw "gpu: buffer usage not allowed for pages (no MAP_WRITE, INDEX, INDIRECT or QUERY_RESOLVE; MAP_READ only with COPY_DST)"
-    return (.add id (.buffer size usage), [.createBuffer (s.gid id) size usage, .clearBuffer (s.gid id) size])
+    -- The host's buffer also has COPY_DST, which its clear needs (WebGPU's clearBuffer);
+    -- the page's own usage, kept in the table, is what every later check reads.
+    return (.add id (.buffer size usage), [.createBuffer (s.gid id) size (usage ||| usageCopyDst), .clearBuffer (s.gid id) size])
   | .writeBuffer id offset data => do
     let some (size, _) := bufferOf s id | throw "gpu: writeBuffer: no such buffer"
     if offset % 4 != 0 || data.size % 4 != 0 then throw "gpu: writeBuffer: not a multiple of 4"

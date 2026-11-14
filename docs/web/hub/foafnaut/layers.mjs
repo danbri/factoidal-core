@@ -222,7 +222,7 @@ export async function createLayerSurface(canvas,{check=false,waitForGpu=false}={
       shown=answer;
     },
     /** Replay page GPU commands (Lean's host commands of page session `p`). */
-    async replayGpu(p,commands){ensure();await gate();await gpuOf().replay(p,commands);},
+    async replayGpu(p,commands){ensure();await gate();return gpuOf().replay(p,commands);},
     /** The page canvases again, into the page layer on screen; true when one was drawn
      * (the caller then composites). */
     refreshCanvases(){ensure();return blitCanvases(shown);},

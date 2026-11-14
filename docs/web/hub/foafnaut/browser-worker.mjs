@@ -819,7 +819,8 @@ function gpuTake(p,commands){
     if(c.k==='write'){const i=gpuLog.findIndex(x=>x.k==='write'&&x.g[1]===c.g[1]&&x.offset===c.offset&&x.data.length===c.data.length);if(i>=0)gpuLog.splice(i,1);}
     // A 2D canvas's pixels are the whole canvas: only the last of each canvas is needed.
     if(c.k==='pixels'){const i=gpuLog.findIndex(x=>x.k==='pixels'&&x.g[1]===c.g[1]);if(i>=0)gpuLog.splice(i,1);}
-    if(c.k!=='pass')gpuLog.push(c);
+    // Passes, compute passes, copies and readbacks happen once: a new device does not repeat them.
+    if(c.k!=='pass'&&c.k!=='cpass'&&c.k!=='copy'&&c.k!=='read')gpuLog.push(c);
   }
   gpuPending.push(...commands);
   gpuShow();
@@ -827,9 +828,15 @@ function gpuTake(p,commands){
 /** Give the layer surface what it has not had: the whole log for a new surface or page. */
 async function gpuFeed(){
   if(!layerSurface||gpuPage<0)return;
+  const p=gpuPage;let reads;
   if(gpuFed!==layerSurface||layerSurface.pageGpuStats?.page!==gpuPage){
-    gpuFed=layerSurface;const log=gpuLog;gpuPending=[];await layerSurface.replayGpu(gpuPage,log);
-  }else if(gpuPending.length){const now=gpuPending;gpuPending=[];await layerSurface.replayGpu(gpuPage,now);}
+    gpuFed=layerSurface;const log=gpuLog;gpuPending=[];reads=await layerSurface.replayGpu(gpuPage,log);
+  }else if(gpuPending.length){const now=gpuPending;gpuPending=[];reads=await layerSurface.replayGpu(gpuPage,now);}
+  // GPU readbacks (mapAsync) go back to Lean, which resolves the page's promise in a task.
+  if(reads?.length&&doc?.script?.session===p){
+    try{scriptTurn(doc,scriptCall('',{op:'scriptSession',action:'gpuRead',session:p,results:reads}));}
+    catch(error){console.warn('foafnaut: page GPU readback:',String(error.message??error));}
+  }
 }
 /** A new page canvas frame on screen: replay, blit into the page layer, composite. No Lean call. */
 async function gpuShow(){

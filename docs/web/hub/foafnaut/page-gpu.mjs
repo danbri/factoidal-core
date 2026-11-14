@@ -5,8 +5,13 @@
 // rectangle and clip Lean gives (render answer `layers.canvases`), with Lean's blit WGSL.
 // Every id, size, offset, usage, shader text and rectangle is Lean's; this decides nothing.
 // The page's objects are kept apart from the engine's (a table per page session).
+// Compute (docs/designissues/2026-11-14-gpu-compute-and-webnn.md): compute pipelines with
+// the layout Lean gives, bind groups, compute passes, copies, and readbacks, whose bytes go
+// back to Lean (the host's `gpuRead` action) with the ticket Lean gave.
 
 const FORMAT='rgba8unorm';
+const b64=bytes=>{let s='';for(let i=0;i<bytes.length;i+=32768)s+=String.fromCharCode.apply(null,bytes.subarray(i,i+32768));return btoa(s);};
+const BINDING={uniform:{type:'uniform'},'read-only-storage':{type:'read-only-storage'},storage:{type:'storage'}};
 // Lean's run-length form of a 2D canvas's pixels (PageCanvas.rle): a word n, then with the
 // high bit n pixels as they are, else one pixel n times. Only copies bytes.
 export function unrle(b,w,h){
@@ -23,7 +28,9 @@ export function unrle(b,w,h){
 
 export function createPageGpu(device){
   let page=-1,blitCode='',blitPipeline,rect;
-  const objs=new Map(),canvases=new Map(),stats={commands:0,passes:0,pixels:0,errors:0,blits:0};
+  const objs=new Map(),canvases=new Map(),stats={commands:0,passes:0,pixels:0,errors:0,blits:0,computePasses:0,dispatches:0,reads:0};
+  // Readbacks of this replay: [ticket, the buffer], mapped after the replay's commands.
+  let reads=[];
   const of=g=>objs.get(g[1]);
   function reset(p){
     for(const o of objs.values())try{o.destroy?.();}catch{/* gone */}
@@ -77,6 +84,32 @@ export function createPageGpu(device){
         }
         pass.end();device.queue.submit([encoder.finish()]);stats.passes++;break;
       }
+      case 'cpipeline':{
+        const layout=device.createBindGroupLayout({entries:c.layout.map(([binding,type])=>({binding,visibility:GPUShaderStage.COMPUTE,buffer:BINDING[type]}))});
+        const pipeline=device.createComputePipeline({layout:device.createPipelineLayout({bindGroupLayouts:[layout]}),
+          compute:{module:of(c.shader),entryPoint:c.entry}});
+        pipeline.foafnautLayout=layout;objs.set(c.g[1],pipeline);break;
+      }
+      case 'cbind':{
+        const pipeline=of(c.pipeline);
+        objs.set(c.g[1],device.createBindGroup({layout:pipeline.foafnautLayout,
+          entries:c.entries.map(([binding,g,size])=>({binding,resource:{buffer:of(g),offset:0,size}}))}));
+        break;
+      }
+      case 'cpass':{
+        const encoder=device.createCommandEncoder(),pass=encoder.beginComputePass();
+        for(const d of c.dispatches){
+          pass.setPipeline(of(d.pipeline));
+          if(d.bind)pass.setBindGroup(0,of(d.bind));
+          pass.dispatchWorkgroups(d.x,d.y,d.z);stats.dispatches++;
+        }
+        pass.end();device.queue.submit([encoder.finish()]);stats.computePasses++;break;
+      }
+      case 'copy':{
+        const encoder=device.createCommandEncoder();
+        encoder.copyBufferToBuffer(of(c.src),c.srcOffset,of(c.dst),c.dstOffset,c.size);device.queue.submit([encoder.finish()]);break;
+      }
+      case 'read':reads.push([c.ticket,of(c.g),c.size]);break;
       case 'destroy':{
         const o=of(c.g);objs.delete(c.g[1]);
         for(const [node,t] of canvases)if(t===o)canvases.delete(node);
@@ -87,16 +120,27 @@ export function createPageGpu(device){
   }
   return {
     get stats(){return {...stats,objects:objs.size,canvases:canvases.size,page};},
-    /** Replay Lean's host commands of page session `p`, in order. */
+    /** Replay Lean's host commands of page session `p`, in order. The answer is the
+     * readbacks the commands asked for, for Lean (`gpuRead` action `results`): each
+     * {ticket, dataBase64}, or {ticket, error:true} when the map failed. */
     async replay(p,commands){
       if(p!==page)reset(p);
+      reads=[];
       device.pushErrorScope('validation');
       for(const c of commands){
-        if(c.g&&c.g[0]!==p||c.canvas&&c.canvas[0]!==p){warn('command','not of this page');continue;}
+        if(c.g&&c.g[0]!==p||c.canvas&&c.canvas[0]!==p||c.src&&c.src[0]!==p||c.dst&&c.dst[0]!==p){warn('command','not of this page');continue;}
         try{one(c);stats.commands++;}catch(error){warn(c.k,error);}
       }
       const error=await device.popErrorScope();
       if(error)warn('validation',error);
+      const now=reads;reads=[];
+      return Promise.all(now.map(async([ticket,buffer,size])=>{
+        try{
+          await buffer.mapAsync(GPUMapMode.READ,0,size);
+          const bytes=new Uint8Array(buffer.getMappedRange(0,size)).slice();buffer.unmap();stats.reads++;
+          return {ticket,dataBase64:b64(bytes)};
+        }catch(e){warn('read',e);return {ticket,error:true};}
+      }));
     },
     /** Draw each page canvas into `target` (the page layer) at Lean's rectangles. */
     blit(target,rects,code){

@@ -32,7 +32,9 @@ export type PresentTarget=Deno.UnsafeWindowSurface|{offscreen:true};
 
 /** framesInFlight: GPU submissions of this session that may be in flight at once (gpu_pacing.ts);
  * 0 is no bound, for measurement. onGpuDone gets the GPU time of each piece of GPU work. */
-export type SessionOptions={framesInFlight?:number;onGpuDone?:(gpuMs:number)=>void};
+export type SessionOptions={framesInFlight?:number;onGpuDone?:(gpuMs:number)=>void;
+  /** The readbacks a replay of page `p`'s GPU commands made (page-gpu.mjs), for Lean's `gpuRead`. */
+  onGpuReads?:(p:number,results:unknown[])=>void};
 
 export async function createHTMLWindowSession(device:GPUDevice,target:PresentTarget,native:Native,options:SessionOptions={}) {
   // The Lean svg-offscreen plan always answers rgba8unorm, which a macOS window
@@ -133,7 +135,8 @@ export async function createHTMLWindowSession(device:GPUDevice,target:PresentTar
   function pageGpu(p:number,commands:unknown[]):Promise<DrawResult|undefined> {
     return inOrder<DrawResult|undefined>(async()=>{
       if(disposed)return undefined;
-      await layered.replayGpu(p,commands);
+      const reads=await layered.replayGpu(p,commands);
+      if(reads?.length)options.onGpuReads?.(p,reads);
       if(!lastLayers||!layered.refreshCanvases())return undefined;
       return present(lastLayers.width,lastLayers.height,lastLayers.offset,false,performance.now(),{});
     });
