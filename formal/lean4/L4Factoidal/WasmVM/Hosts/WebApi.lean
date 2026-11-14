@@ -529,6 +529,53 @@ def subtle (s : State) (fs : Array ByteArray) : State × Except Int ByteArray :=
     (s, .ok (pack ["bool".toUTF8, (if yes then "1" else "0").toUTF8]))
   | _ => fail (-2)
 
+/-- The method name of a `subtle` call. -/
+def subtleMethod (fs : Array ByteArray) : String := (fs[0]?.bind String.fromUTF8?).getD ""
+
+/-- Kind: API contract. Says: `subtle` with the method "exportKey" changes no state and
+answers exactly `exportOp` of the session's keys: the export rule in Lean is the whole of what
+the operation does. -/
+theorem subtle_exportKey (s : State) (fs : Array ByteArray) (h : subtleMethod fs = "exportKey") :
+    subtle s fs = (s, errInt (exportOp s.keys (pairsOf fs))) := by
+  unfold subtleMethod at h
+  unfold subtle
+  simp only [h]
+
+/-- Kind: security invariant (key material), over the API's function. Says: what
+`crypto.subtle.exportKey` answers to the page is the same when the bytes of every
+non-extractable key of the session are replaced: whatever handle and format the page passes,
+it learns nothing of such a key from this operation. With `wrapPlain_blind` (wrapKey reads a key
+only through the same export) and `keyFields_blind` (the answers that carry a key carry its
+public fields only), exportKey and wrapKey of an extractable key are the only ways key bytes
+reach script. Does not say: anything of what the outputs of sign, encrypt or deriveBits reveal
+about a key: that is the primitives' strength, HACL*'s and the algorithms'. -/
+theorem subtle_exportKey_blind (s : State) (fs : Array ByteArray) (h : subtleMethod fs = "exportKey") :
+    (subtle { s with keys := s.keys.blind } fs).2 = (subtle s fs).2 := by
+  rw [subtle_exportKey _ _ h, subtle_exportKey _ _ h]
+  show errInt (exportOp s.keys.blind (pairsOf fs)) = errInt (exportOp s.keys (pairsOf fs))
+  rw [exportOp_blind]
+
+/-- Kind: security invariant (usages), over the API's function. Says: `crypto.subtle.sign`
+with a key that lacks the usage "sign" always answers an error, whatever the algorithm,
+parameters, data and the state of the random generator: no signature is ever answered. The
+error is the generator's when the draw of random bytes fails first, and InvalidAccessError
+otherwise (`sign_no_usage`: the signing function is that constant, so no primitive ran).
+Does not say: the same of verify, deriveBits, encrypt and decrypt at this level; for them
+the statement is on the operation's function (`verify_no_usage`, `deriveBits_no_usage`,
+`crypt_no_usage`), which `subtle` calls with the key the page named. -/
+theorem subtle_sign_no_usage (s : State) (fs : Array ByteArray) (h : subtleMethod fs = "sign") (k : Key)
+    (hk : keyOf s.keys (pairsOf fs) "key" = .ok k) (hu : k.usages.contains .sign = false) :
+    ∃ e, (subtle s fs).2 = .error e := by
+  unfold subtleMethod at h
+  unfold subtle
+  simp only [h, hk, errInt, Except.mapError]
+  split
+  · rename_i e _; exact ⟨e, rfl⟩
+  · rename_i rand s' _
+    refine ⟨Err.invalidAccess.code, ?_⟩
+    rw [sign_no_usage hu]
+    rfl
+
 /-- Forget a key (prelude.js calls this when the page's CryptoKey is collected): its bytes
 are zeroed in place when the store held the only reference (`WebHacl.wipe`). -/
 def dropKey (s : State) (h : Nat) : State × Nat :=

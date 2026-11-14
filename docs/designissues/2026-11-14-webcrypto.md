@@ -91,6 +91,8 @@ Proved (no `sorry`, no axiom beyond Lean's three):
 | `keyFor_no_usage`, `sign_no_usage`, `verify_no_usage`, `deriveBits_no_usage`, `crypt_no_usage` | an operation whose usage the key lacks IS the InvalidAccessError, for all other arguments: the answer is a constant, so no primitive ran |
 | `keyFor_wrong_alg`, `sign_wrong_alg` | the same for a key of another algorithm |
 | `wrapPlain_extractable`, `wrapPlain_blind` | wrapKey gets bytes to encrypt only from an extractable key; for a non-extractable key the answer does not depend on its bytes |
+| `subtle_exportKey`, `subtle_exportKey_blind` (`Hosts/WebApi.lean`) | over the API's own function: `crypto.subtle.exportKey` is exactly the export rule, and its answer is the same when the bytes of every non-extractable key of the session are replaced |
+| `subtle_sign_no_usage` (`Hosts/WebApi.lean`) | over the API's own function: `crypto.subtle.sign` with a key lacking "sign" always answers an error |
 | `keyFields_blind` (`Hosts/WebApi.lean`) | what the page receives for a key from generateKey, importKey, deriveKey, unwrapKey, cloneKey and getPublicKey (handle, type, extractable, usages, algorithm) is the same whatever the key's bytes |
 | `getPublicKey_hidePrivate`, `getPublicKey_ok` | getPublicKey's answer is a function of the public parts only; it is public, extractable, with exactly the usages asked, each allowed for a public key |
 | `supports_refused` | for a name with no keys here and no digest, `supports` is false for every operation and all arguments |
