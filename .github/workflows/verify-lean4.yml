@@ -213,6 +213,47 @@ jobs:
         working-directory: formal/lean4
         run: lake exe l4vc-probe
 
+      # Evidence for the hacl-star f557259007 re-pin of third_party/hacl (branch only,
+      # not for main): every known-answer and Wycheproof section of the crypto probes,
+      # and the C known-answer driver of the web engine's HACL* boundary.
+      - name: Fetch the pinned Wycheproof corpus
+        run: git submodule update --init --depth 1 third_party/testing/wycheproof
+
+      - name: l4crypto-probe (ChaCha20-Poly1305, HKDF, X25519, HPKE, ECDH P-256, RSA-OAEP, AES-GCM)
+        working-directory: formal/lean4
+        shell: bash
+        run: |
+          set -o pipefail
+          grep -m1 -E 'aes|AES' /proc/cpuinfo >/dev/null && echo "cpu flags: $(grep -m1 -o -w -E 'aes|pclmulqdq|avx|sse|movbe' /proc/cpuinfo | sort -u | tr '\n' ' ')"
+          lake exe l4crypto-probe 2>&1 | tee "$RUNNER_TEMP/l4crypto-probe.txt"
+
+      - name: l4jose-probe (ES256, RS256, Wycheproof ECDSA P-256 and RSA 2048/3072/4096)
+        working-directory: formal/lean4
+        shell: bash
+        run: |
+          set -o pipefail
+          lake exe l4jose-probe 2>&1 | tee "$RUNNER_TEMP/l4jose-probe.txt"
+
+      - name: C known-answer driver of ffi/hacl_webcrypto.c (tests/crypto/run-kat.sh)
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/kat"
+          bash tests/crypto/run-kat.sh "$RUNNER_TEMP/kat" 2>&1 | tee "$RUNNER_TEMP/kat.txt"
+
+      - name: Keep the probe outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hacl-repin-probes
+          path: |
+            ${{ runner.temp }}/l4crypto-probe.txt
+            ${{ runner.temp }}/l4jose-probe.txt
+            ${{ runner.temp }}/kat.txt
+          if-no-files-found: warn
+          retention-days: 30
+
       # The Notation3 reader on the W3C N3 Community Group suite and on the RDF
       # 1.1 and RDF 1.2 Turtle suites, with the N3/Turtle reader agreement
       # (https://github.com/danbri/factoidal/issues/1171). Both submodules are
