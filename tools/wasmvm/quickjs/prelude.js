@@ -7673,7 +7673,8 @@
   };
   const focusQuery = (id, q) => { const r = n.query(id, 189, q); return typeof r === 'string' && r !== '' ? Number(r) : -1; };
   for (const C of [HTMLElement, SVGElement, MathMLElement]) {
-    define(C.prototype, 'focus', function focus(options = undefined) { const t = focusQuery(nodeId(this), ''); if (t >= 0) focusMove(t); });
+    // an editing host that takes the focus gets the selection first (node_query 177 "f": a caret at its first caret position unless the selection is in it)
+    define(C.prototype, 'focus', function focus(options = undefined) { const t = focusQuery(nodeId(this), ''); if (t >= 0) { n.query(t, 177, 'f'); focusMove(t); } });
     define(C.prototype, 'blur', function blur() { if (focusCurrent() === nodeId(this)) focusMove(-1); });
   }
   // `activeElement` (DOM §4.5, HTML §6.6.6): the focused element retargeted against the
