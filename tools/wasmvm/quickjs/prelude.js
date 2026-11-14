@@ -1514,12 +1514,111 @@
     SHADING_LANGUAGE_VERSION: 0x8B8C, MAX_VERTEX_ATTRIBS: 0x8869, MAX_TEXTURE_SIZE: 0x0D33,
   };
   const glModes = { 0: 3, 1: 2, 4: 0, 5: 1 };
-  class WebGLObject {}
+  // The object interfaces of WebGL 1.0 §5.3 to §5.13 and WebGL 2.0 §3.1 to §3.5. None has a
+  // constructor a page may call: the context makes them (`glNew`).
+  class WebGLObject { constructor() { throw new TypeError('Illegal constructor'); } }
   class WebGLBuffer extends WebGLObject {}
-  class WebGLShader extends WebGLObject {}
+  class WebGLFramebuffer extends WebGLObject {}
   class WebGLProgram extends WebGLObject {}
-  class WebGLUniformLocation { constructor(program, offset, type) { this.program = program; this.offset = offset; this.type = type; } }
+  class WebGLRenderbuffer extends WebGLObject {}
+  class WebGLShader extends WebGLObject {}
+  class WebGLTexture extends WebGLObject {}
+  class WebGLQuery extends WebGLObject {}
+  class WebGLSampler extends WebGLObject {}
+  class WebGLSync extends WebGLObject {}
+  class WebGLTransformFeedback extends WebGLObject {}
+  class WebGLVertexArrayObject extends WebGLObject {}
+  class WebGLUniformLocation { constructor() { throw new TypeError('Illegal constructor'); } }
+  const glNew = C => Object.create(C.prototype);
+  const glClasses = [WebGLObject, WebGLBuffer, WebGLFramebuffer, WebGLProgram, WebGLRenderbuffer, WebGLShader, WebGLTexture,
+    WebGLQuery, WebGLSampler, WebGLSync, WebGLTransformFeedback, WebGLVertexArrayObject, WebGLUniformLocation];
+  const glFacts = new WeakMap(); // a WebGLActiveInfo's and a WebGLShaderPrecisionFormat's values
+  const glFact = (o, k) => { const f = glFacts.get(o); if (!f) throw new TypeError('Illegal invocation'); return f[k]; };
+  class WebGLActiveInfo {
+    constructor() { throw new TypeError('Illegal constructor'); }
+    get size() { return glFact(this, 'size'); }
+    get type() { return glFact(this, 'type'); }
+    get name() { return glFact(this, 'name'); }
+  }
+  class WebGLShaderPrecisionFormat {
+    constructor() { throw new TypeError('Illegal constructor'); }
+    get rangeMin() { return glFact(this, 'rangeMin'); }
+    get rangeMax() { return glFact(this, 'rangeMax'); }
+    get precision() { return glFact(this, 'precision'); }
+  }
+  const glEventText = new WeakMap();
+  class WebGLContextEvent extends Event {
+    constructor(type, init = undefined) {
+      super(type, init);
+      glEventText.set(this, init === undefined || init === null || init.statusMessage === undefined ? '' : String(init.statusMessage));
+    }
+    get statusMessage() { const m = glEventText.get(this); if (m === undefined) throw new TypeError('Illegal invocation'); return m; }
+  }
+  // The rendering context interfaces. Their constants, attributes and operations are Lean's
+  // table of the WebGL IDL (PageGl.Idl, web_api op 100), which the validator reads too: the
+  // interface object is made from it on first use (`lazy`, below). An operation checks its
+  // receiver and argument count (Web IDL) and hands the call to the context's implementation.
+  const glState = new WeakMap(); // page context -> { impl, version }
+  const glInterfaces = [];
+  const glInterface = version => glInterfaces[version] ??= makeGlInterface(version);
+  const makeGlInterface = version => {
+    const name = version === 2 ? 'WebGL2RenderingContext' : 'WebGLRenderingContext';
+    const text = apiOn() ? apiCall(100, [String(version)]) : null;
+    if (typeof text !== 'string') return undefined;
+    const C = function () { throw new TypeError('Illegal constructor'); };
+    const hidden = (o, k, value) => Object.defineProperty(o, k, { value, writable: false, enumerable: false, configurable: true });
+    hidden(C, 'name', name);
+    const P = C.prototype;
+    Object.defineProperty(C, 'prototype', { writable: false });
+    hidden(P, Symbol.toStringTag, name);
+    const stateOf = o => { const st = glState.get(o); if (!st) throw new TypeError('Illegal invocation'); return st; };
+    for (const line of text.split('\n')) {
+      const [kind, k, v] = line.split(' ');
+      if (kind === 'c') {
+        const d = { value: Number(v), writable: false, enumerable: true, configurable: false };
+        Object.defineProperty(C, k, d); Object.defineProperty(P, k, d);
+      } else if (kind === 'a') {
+        const get = function () { return stateOf(this).attr(k); };
+        hidden(get, 'name', 'get ' + k);
+        let set;
+        if (v === '0') { set = function (x) { stateOf(this).setAttr(k, x); }; hidden(set, 'name', 'set ' + k); }
+        Object.defineProperty(P, k, { get, set, enumerable: true, configurable: true });
+      } else if (kind === 'o') {
+        const len = Number(v);
+        const f = function (...args) {
+          const st = stateOf(this);
+          if (args.length < len) throw new TypeError(`Failed to execute '${k}' on '${name}': ${len} argument${len === 1 ? '' : 's'} required, but only ${args.length} present.`);
+          return st.call(k, args);
+        };
+        hidden(f, 'name', k); hidden(f, 'length', len);
+        Object.defineProperty(P, k, { value: f, writable: true, enumerable: true, configurable: true });
+      }
+    }
+    return C;
+  };
+  // The page's context object for an implementation (the object `glImplFor` answers).
   const glContextFor = (canvas, version) => {
+    const C = glInterface(version);
+    if (!C) return null;
+    const impl = glImplFor(canvas, version), page = glNew(C);
+    let drawingSpace = 'srgb', unpackSpace = 'srgb';
+    glState.set(page, { impl, version,
+      call(k, args) { const f = impl[k]; return typeof f === 'function' ? f.apply(impl, args) : undefined; },
+      attr(k) {
+        if (k === 'drawingBufferFormat') return 0x8058; // RGBA8
+        if (k === 'drawingBufferColorSpace') return drawingSpace;
+        if (k === 'unpackColorSpace') return unpackSpace;
+        return impl[k];
+      },
+      // PredefinedColorSpace: a value outside the enumeration is ignored (Web IDL §3.7.5).
+      setAttr(k, x) {
+        x = String(x);
+        if (x !== 'srgb' && x !== 'display-p3') return;
+        if (k === 'drawingBufferColorSpace') drawingSpace = x; else if (k === 'unpackColorSpace') unpackSpace = x;
+      } });
+    return page;
+  };
+  const glImplFor = (canvas, version) => {
     const gpuSend = (op, header, payload) => {
       const r = n.gpu(op, header.map(x => String(Math.max(0, Math.floor(Number(x) || 0)))).join(' '), payload ?? '');
       return typeof r === 'number' ? 'gpu: import error ' + r : r;
@@ -1589,7 +1688,7 @@
       lineWidth() {}, pixelStorei() {}, colorMask() {}, depthMask() {}, flush() {}, finish() {},
       clearColor(r, g, b, a) { clear = [r, g, b, a]; },
       clear(mask) { /* every frame of a page canvas starts cleared to the clear colour (loadOp: clear) */ },
-      createBuffer() { const b = new WebGLBuffer(); b.gpu = 0; b.size = 0; return b; },
+      createBuffer() { const b = glNew(WebGLBuffer); b.gpu = 0; b.size = 0; return b; },
       deleteBuffer(b) { if (b?.gpu) send(8, [b.gpu]); if (b) b.gpu = 0; },
       bindBuffer(target, b) { if (target === GL.ARRAY_BUFFER) arrayBuffer = b; else if (b) fail('only ARRAY_BUFFER in this slice', GL.INVALID_ENUM); },
       bufferData(target, data, usage) {
@@ -1604,12 +1703,12 @@
         if (target !== GL.ARRAY_BUFFER || !arrayBuffer?.gpu) { fail('bufferSubData needs a bound ARRAY_BUFFER with data'); return; }
         send(3, [arrayBuffer.gpu, offset], gpuBytes(data));
       },
-      createShader(type) { const s = new WebGLShader(); s.type = type; s.source = ''; return s; },
+      createShader(type) { const s = glNew(WebGLShader); s.type = type; s.source = ''; return s; },
       shaderSource(s, src) { s.source = String(src); },
       compileShader() {},
       getShaderParameter(s, p) { return p === GL.COMPILE_STATUS ? true : null; },
       getShaderInfoLog: () => '', deleteShader() {},
-      createProgram() { const p = new WebGLProgram(); p.shaders = []; p.pipelines = new Map(); return p; },
+      createProgram() { const p = glNew(WebGLProgram); p.shaders = []; p.pipelines = new Map(); return p; },
       attachShader(p, s) { p.shaders.push(s); }, detachShader() {}, deleteProgram() {},
       bindAttribLocation() { fail('bindAttribLocation: use layout(location = n); Lean assigns locations'); },
       linkProgram(p) {
@@ -1637,7 +1736,7 @@
       getAttribLocation(p, name) { const l = p.info?.attributes[name]; return l === undefined ? -1 : l; },
       getUniformLocation(p, name) {
         const u = String(name).startsWith('gl_') ? undefined : p.info?.uniforms[name];
-        return u ? new WebGLUniformLocation(p, u[0], u[1]) : null;
+        return u ? Object.assign(glNew(WebGLUniformLocation), { program: p, offset: u[0], type: u[1] }) : null;
       },
       // attribVersion moves only when an attribute changes, so a draw with the attributes of
       // the draw before reuses its pipeline and buffers (pages set them again each frame).
@@ -3206,9 +3305,7 @@
     'createImageBitmap'])
     if (!(name in globalThis)) Object.defineProperty(globalThis, name, { get: () => c2d()[name], configurable: true,
       set(v) { Object.defineProperty(globalThis, name, { value: v, writable: true, configurable: true }); } });
-  def('WebGLRenderingContext', Object.freeze({ ...GL })); def('WebGL2RenderingContext', Object.freeze({ ...GL }));
-  def('WebGLBuffer', WebGLBuffer); def('WebGLShader', WebGLShader); def('WebGLProgram', WebGLProgram);
-  def('WebGLUniformLocation', WebGLUniformLocation);
+  for (const C of [...glClasses, WebGLActiveInfo, WebGLShaderPrecisionFormat, WebGLContextEvent]) def(C.name, C);
   // pagewasm: a data property once read (WebIDL); before that an accessor that compiles the glue.
   if (wasmServed) Object.defineProperty(globalThis, 'WebAssembly', { configurable: true, enumerable: false,
     // QuickJS-NG hands the glue's function (bytecode); BubblePopJS hands its source.
@@ -3264,6 +3361,9 @@
       define(globalThis, name, v); return v;
     },
     set(v) { define(globalThis, name, v); } });
+  // The WebGL rendering context interfaces (made from Lean's table when a page first names one).
+  lazy('WebGLRenderingContext', () => glInterface(1));
+  lazy('WebGL2RenderingContext', () => glInterface(2));
   const apiError = (r, what) => {
     switch (r) {
       case -3: throw new DOMException(what, 'InvalidCharacterError');
@@ -7532,7 +7632,11 @@
     'SubtleCrypto', 'CryptoKey', 'performance', 'Performance', 'PerformanceEntry', 'PerformanceMark', 'PerformanceMeasure',
     'Blob', 'File', 'FileReader', 'FormData', 'Headers', 'Request', 'Response', 'fetch', 'XMLHttpRequest',
     'XMLHttpRequestEventTarget', 'XMLHttpRequestUpload', 'ReadableStream', 'WritableStream',
-    'TransformStream', 'MessageChannel', 'MessagePort', 'BroadcastChannel', 'webkitURL']);
+    'TransformStream', 'MessageChannel', 'MessagePort', 'BroadcastChannel', 'webkitURL',
+    // WebGL's interfaces are [Exposed=(Window,Worker)].
+    'WebGLRenderingContext', 'WebGL2RenderingContext', 'WebGLObject', 'WebGLBuffer', 'WebGLFramebuffer', 'WebGLProgram',
+    'WebGLRenderbuffer', 'WebGLShader', 'WebGLTexture', 'WebGLQuery', 'WebGLSampler', 'WebGLSync', 'WebGLTransformFeedback',
+    'WebGLVertexArrayObject', 'WebGLUniformLocation', 'WebGLActiveInfo', 'WebGLShaderPrecisionFormat', 'WebGLContextEvent']);
   // HTML §10.2.1: WorkerGlobalScope, DedicatedWorkerGlobalScope, WorkerLocation, WorkerNavigator.
   const makeWorkerScope = (url, name) => {
     inWorker = true;
