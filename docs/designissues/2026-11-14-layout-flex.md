@@ -117,6 +117,12 @@ Proved (Lean theorems; axioms `propext`, `Classical.choice`, `Quot.sound` only):
 | `Flex.spread_pairwise`, `spread_snd` | boxes placed by `spread` do not overlap; sizes are kept |
 | `Layout.percentHeights_size`, `percentHeights_get` | resolving percentage heights keeps one style per node |
 | `Layout.percentHeight_rest`, `percentHeight_px`, `percentHeight_auto`, `percentHeight_absolute` | the pass changes nothing of a style but its height; a length, `auto` and the style of an absolutely positioned box are left as they are |
+| `Ratio.autoSize_min`, `autoSize_max`, `fromWidth_min`, `fromHeight_min` | a size from a preferred aspect ratio is within `min-width`/`min-height`, and within the maximums unless a minimum is larger |
+| `Ratio.autoSize_ratio` | when the height that the ratio gives the used width is within the height's own limits it is the used height: the box has the ratio |
+| `Ratio.autoSize_natural`, `heightFor_widthFor_le` | with no limits the natural width stands; a maximum carried to the other axis and back is not exceeded |
+| `Layout.keywordWidth_isSome`, `resolve_keyword` | a width is taken from the contents or the fill width exactly when it is a sizing keyword; `CSS.resolve` answers `none` for a keyword, so code that does not know them lays the box out as `auto` |
+| `Layout.shrinkWidth_minContent`, `_maxContent`, `_auto` | a box that shrinks to fit takes its min-content or max-content width when its `width` says so, fit-content otherwise |
+| `ScrollExtent.extent_ge_client`, `extent_ge_kid`, `extent_inside` | the scroll size is never less than the client size; every box inside is within it; with no overflow it is the client size |
 
 Tested only (`#guard` through `Layout.render`, original fixtures): `FlexLayoutTests.lean` (90 cases),
 `PositionLayoutTests.lean` (47 cases), and the readers' guards in `BoxAlign.lean`, `FlexStyle.lean`,
@@ -226,10 +232,13 @@ A box laid out with no floats around it is the root of its formatting context: i
 by side, so a box that shrinks to fit around floated children is as wide as their row. A flow with no float
 computes none of this (`floats.isEmpty`).
 
-Simplifications to know: a plain block child of a flow with no float so far is laid out as a formatting
-context root, so floats inside it do not reach the paragraphs after it (they do when a float came before);
-a float inside an inline box is laid out inline; a line too narrow for its first word still takes it;
-`shape-outside` is not read.
+A plain block child of a flow (display block, not clipping, not replaced) is part of the flow's formatting
+context whether or not a float came before it (`Task.flowed`, `box ... participates`): it is not as high as its
+floats, and they stay beside the lines of the blocks after it (a floated image in a paragraph). Any other task
+lays a box out as the root of a context, which holds its floats.
+
+Simplifications to know: a float inside an inline box is laid out inline; a line too narrow for its first word
+still takes it; `shape-outside` is not read; with no `::after` box a "clearfix" container has no height.
 
 **Inline-blocks with blocks inside (CSS 2.1 §9.2.2).** An inline-block that has a block-level or floated
 child, or is positioned and has element children (`Layout.blockInside`), is one atomic box in its line whose
@@ -273,3 +282,101 @@ Open after this round: the same list as section 4, and: negative margins in coll
 block which is not a formatting context root when no float preceded it; the baseline of an inline-block;
 a theorem that a flow with no float lays out as it did before floats (it is true by `floats.isEmpty`, and is
 tested by the fixtures of the first round, which did not change).
+
+## 7. Third round: aspect ratio, canvas boxes, sizing keywords, scroll sizes, vertical flex, list markers
+
+**`aspect-ratio` (CSS Sizing 4 §5).** `Rendering/AspectRatio.lean` (no engine import, layout units):
+`heightFor`, `widthFor`, `fromWidth`, `fromHeight` and `autoSize`, which takes the natural width within the
+limits carried over from the height, then within the width's own, and gives the height by the ratio within its
+own limits: a limit of an axis wins over one carried from the other, a minimum over a maximum. The property is
+read into `Computed.pos` (`ratio : Option (Nat × Nat)`, `ratioAuto`) by `BoxPosition.lean` through the
+property table, with no change to `Style.apply`. `replacedSize` uses it for replaced elements
+(`aspect-ratio: auto <ratio>` keeps the ratio of content that has one). A box with `height: auto` takes the
+height of its width (of its border box with `box-sizing: border-box`): as its least height (§5.2, the
+automatic minimum is the content), or as its height when it clips or has a `min-height`. Flex items and
+grid items do not read it yet.
+
+**Canvas boxes.** A `canvas` is a replaced box of its natural size (its `width` and `height` attributes, 300
+by 150 without them), empty: `Layout.blankReplaced`. Its fallback content is not laid out.
+
+**Sizing keywords (CSS Sizing 3 §3.2).** `CSS.Length` gains `minContent`, `maxContent`, `fitContent` and
+`stretch` (also under `-webkit-fill-available` and `-moz-available`). `CSS.resolve` answers `none` for them,
+so every place that asks for a number reads them as `auto` (`resolve_keyword`). `width`, `min-width` and
+`max-width` of a box take the widths of its contents (`intrinsic`, asked only when a keyword is used) or the
+fill width (`keywordWidth`); a float, an inline-block and an absolutely positioned box take the keyword in
+place of shrink-to-fit (`shrinkWidth`). `height: stretch` fills a containing height that the styles make
+definite (`resolvedHeight`); `min-content`, `max-content` and `fit-content` heights are the content height.
+A flex item whose `flex-basis` (or, with `flex-basis: auto`, its `width`) is a keyword takes that width of its
+content as its flex base size, and in a column as its cross size. Not done: `fit-content(<length>)`, `stretch`
+against a height known only in layout.
+
+**Scroll sizes (CSSOM View §6.1).** `Rendering/ScrollExtent.lean`: `extent` is the padding box extended to the
+right and bottom edges of the boxes inside it (proved: never less than the client size, every box inside is
+within it, the client size when nothing overflows). `Layout.scrollSize` (`ScrollGeometry.lean`) finds the boxes
+of an element's descendants in a layout; the root element scrolls the viewport over the whole page. The engine
+answers `node_query` 38 with it and the `scrollWidth` and `scrollHeight` getters read the answer. Nothing is
+computed until a script asks. Not done: the padding after in-flow content, margins of flex and grid items,
+transforms, right-to-left and vertical scrolling origins, scroll positions (`scrollTop` stays 0).
+
+**Flex containers in vertical writing modes.** `writing-mode` is read into `Computed.pos` and inherited.
+`Layout.flexAxes` gives a container its physical axes (`column`, `mainFlip`, `crossFlip`): in a vertical writing
+mode a row runs down the inline axis (up with `row-reverse` or right-to-left), its lines stack along the block
+axis (from the right in `vertical-rl`), and a column runs along the block axis. `flexRow`, `flexColumn` and
+`flexColumnWrap` take their directions from the axes, and `column-gap`/`row-gap` are the gaps of the inline
+and block axes (`flexGaps`). The contents of the items, and block layout in general, stay horizontal: a
+vertical block container still stacks its children downwards, and text is not set vertically.
+
+**Cost of nested flex containers.** A row laid out a nested container once to measure it and again to stretch
+it, so N nested rows, each shorter than a sibling, cost 2^N layouts: 204, 775, 2749 and 12028 ms for 8, 10, 12
+and 14 levels in the interpreter. In a single-line container with a definite cross size the stretched height is
+known before the item's contents are laid out, and an item whose contents depend on its height is now laid
+out once at that height: 42, 63, 93 and 138 ms for the same pages (the re-layout of a stretched item is itself
+a single pass, so the whole is polynomial). Still two passes: a stretched container in a multi-line row, and a
+column item whose flexed height differs from its content's. A cache of layouts by node and constraints is the
+general fix (open).
+
+**List markers (CSS Lists 3 §3).** `list-style-type` (none, the bullet, a numbering style) and
+`list-style-position` are read into `Computed.pos` and inherited; `list-style` expands to them. A marker is
+outside the item's box by default, beside its first line and half an em before the content edge, and takes no
+room in the line; `inside` keeps it as the first thing in the line. The bullet is still drawn as `*`, and the
+numbering styles all draw decimal numbers.
+
+**Aspect ratio, sizing keywords, scroll extents, flex in vertical writing modes, list markers, percentage heights** (run 43581862867, core 68bdcc958, baseline main 6ecf053c7):
+
+| Directory | Chrome subtests | Baseline | This | Difference |
+|---|---:|---:|---:|---:|
+| css/css-flexbox | 4813 | 573 | 2503 | +1930 |
+| css/css-sizing | 6523 | 2077 | 2667 | +590 |
+| css/css-align | 5435 | 2928 | 3031 | +103 |
+| css/css-position | 1553 | 576 | 616 | +40 |
+| css/cssom-view | 2696 | 703 | 735 | +32 |
+| css/css-overflow | 1209 | 476 | 506 | +30 |
+| html/rendering | 92 | 53 | 29 | -24 |
+| css/css-box | 982 | 375 | 389 | +14 |
+| css/css-display | 576 | 379 | 386 | +7 |
+| css/css-lists | 974 | 568 | 575 | +7 |
+| css/css-writing-modes | 421 | 212 | 219 | +7 |
+| css/CSS2 | 2566 | 1826 | 1825 | -1 |
+
+The baseline of this check is the full run of main 6ecf053c7, from before the first layout merge, so these
+rows are the three rounds together (the other directories of the check moved with other merges to main and are
+left out). Test by test against the check of the second round (43578643617, the same names): 2,545 more
+subtests pass and 246 fewer, in 37 tests:
+
+- `css-sizing/animation/*-interpolation` and `min-width-composition` (-70): the sizing keywords are now values of `min-width`, `max-height` and the others, and this base had no
+  animation engine, so "from none to max-content at 0" answered the end value where an invalid end value used to
+  leave the start value. The animation engine on main interpolates these by steps.
+- `css-flexbox/alignment/flex-align-baseline-*-002`, `-004` (-67): flex containers in a vertical writing mode,
+  now laid out vertically; baseline alignment is not done yet in either axis (it passed where a start-aligned
+  horizontal row happened to give the same offsets).
+- `cssom-view/scrollWidthHeight-overflow-visible-margin-collapsing` (-20): the `inline-flex` case; the items'
+  `min-width` was not part of their intrinsic contribution, so the container was narrower than its items and the
+  scroll width, now measured, says so. Fixed in the next step (`boxWidths` clamps by `min-width`/`max-width`).
+- `css-mixins/functions/function-conditionals` (-22): not layout; passes that came from an unread `if()`.
+- `CSS2/linebox/animations/line-height-interpolation` (-18): not traced. The test reads only `line-height`, which
+  this round does not touch; the two checks were built on different commits of main.
+- `legend-display` (-8), `contain-intrinsic-size-logical-003` (-6), `intrinsic-percent-replaced-028` (-8, a canvas
+  now has a box: a replaced element with a percentage width contributes 0 to min-content, next step),
+  `overflow-empty-child-box` (-4, a box of no area is not scrollable overflow, next step), and 22 tests that lose
+  one to three subtests where `scrollWidth` used to equal `clientWidth` for want of a measurement (transforms,
+  relative inline boxes, scrollbars).
