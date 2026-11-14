@@ -247,9 +247,26 @@ theorem withCurrentColor_plain (ac : Access) (e : Nat) (property : String) (v : 
 def withSheet (s : State) (text : String) : State :=
   if text == s.sheet then s else { s with sheet := text, rules := Css.keyframesOf text }
 
+/-- The most animations, and the most effects, the state of one page holds, counting
+those that ended (none is freed while the page lives). At the bound the page makes no new
+one: the script constructors and `Element.animate` throw (`Api.createEffect`,
+`Api.createAnim`), and a CSS animation or transition does not start
+(`updateAnimations`, `startTransition`). The work of a style change and of a frame is a
+pass over these records, so it is bounded with them. -/
+def maxAnimations : Nat := 65536
+
+/-- The page is at the bound of `maxAnimations`: nothing more is added. -/
+def State.full (s : State) : Bool := s.anims.size ≥ maxAnimations || s.effects.size ≥ maxAnimations
+
 /-- The index of the effect of a new record. -/
 def addEffect (s : State) (e : EffectRec) : State × Nat :=
   ({ s with effects := s.effects.push e }, s.effects.size)
+
+/-- Kind: resource bound (one step). Says: a new effect is one more record, and the
+animations stay as they were. -/
+theorem addEffect_size (s : State) (e : EffectRec) :
+    (addEffect s e).1.effects.size = s.effects.size + 1 ∧ (addEffect s e).1.anims.size = s.anims.size := by
+  simp [addEffect]
 
 def addAnim (s : State) (a : AnimRec) : State × Nat :=
   let i := s.anims.size
@@ -259,6 +276,14 @@ def addAnim (s : State) (a : AnimRec) : State × Nat :=
     | some e => { s with effects := s.effects.modify e fun r => { r with anim := some i } }
     | none => s
   (s, i)
+
+/-- Kind: resource bound (one step). Says: a new animation is one more record, and no
+effect is added. So a state whose additions are all made when it is not `full` never
+holds more than `maxAnimations` animations or effects. -/
+theorem addAnim_size (s : State) (a : AnimRec) :
+    (addAnim s a).1.anims.size = s.anims.size + 1 ∧ (addAnim s a).1.effects.size = s.effects.size := by
+  unfold addAnim
+  cases a.effect <;> simp
 
 /-- Cancel an animation of style and take it off the page. -/
 def kill (s : State) (i : Nat) : State :=
@@ -314,6 +339,8 @@ def updateAnimations (s : State) (ac : Access) (e : Nat) : State := Id.run do
         s := s.setPlayer i ((a.player.play tl eff false).toOption.getD a.player)
     | some i, none => free := free.erase i; s := kill s i
     | none, some ks =>
+      -- at the bound of `maxAnimations` the animation does not start
+      if s.full then continue
       let rec_ : EffectRec := {
         target := some e, keyframes := Css.toKeyframes spec.easing ks,
         composite := spec.composite, timing := spec.timing, neutralEasing := spec.easing }
@@ -333,6 +360,8 @@ def updateAnimations (s : State) (ac : Access) (e : Nat) : State := Id.run do
 /-- A new transition of `property` on `e` from `before` to `after` (computed text): the
 keyframes `from` and `to`, fill `backwards`, playing (CSS Transitions 2 §5). -/
 def startTransition (s : State) (e : Nat) (property before after : String) (spec : Css.TransitionSpec) : State :=
+  -- at the bound of `maxAnimations` the transition does not start
+  if s.full then s else
   -- CSS Transitions 2 §5: the timing function is the effect's; the two keyframes are linear
   let timing : Timing := { delay := spec.delay, duration := some (.fin spec.duration), fill := .backwards, easing := spec.easing }
   let (s, ei) := addEffect s { target := some e, keyframes := Effect.fromTo property before after, timing }
@@ -342,6 +371,12 @@ def startTransition (s : State) (e : Nat) (property before after : String) (spec
   let (s, i) := addAnim s rec_
   let a := s.anims[i]!
   s.setPlayer i ((a.player.play (s.tl a) (s.effEnd a) true).toOption.getD a.player)
+
+/-- Kind: defined refusal at the bound. Says: on a page at its bound of animations a
+transition does not start: the state is unchanged. -/
+theorem startTransition_full (s : State) (e : Nat) (property before after : String) (spec : Css.TransitionSpec)
+    (h : s.full = true) : startTransition s e property before after spec = s := by
+  simp [startTransition, h]
 
 /-- CSS Transitions 1 §3 "starting of transitions" for element `e`: for each property
 with a matching transition whose computed value changed since the last style change, a

@@ -24,6 +24,9 @@ open L4Factoidal.Rendering
 def err (name message : String) : String :=
   (Json.object [("error", .string name), ("message", .string message)]).toString
 
+/-- The answer of a constructor on a page at its bound of animations. -/
+def tooMany : String := err "QuotaExceededError" "the page has too many animations"
+
 def jnum (x : Int) : Json := .number (Fix.format x)
 def jopt : Option Int → Json
   | some x => jnum x
@@ -304,6 +307,8 @@ def keyframesJson (e : EffectRec) : Json :=
 keyframes, "opt": options}`; the options hold the timing members and `composite`. The
 answer is `{"id": n}`. -/
 def createEffect (supports : String → String → Bool) (s : State) (target : Option Nat) (q : String) : State × String :=
+  -- the page is at its bound of animations (`maxAnimations`): the constructor throws
+  if s.full then (s, tooMany) else
   let j := (JSON.parseJson? q).getD (.object [])
   let opt := (j.field? "opt").getD (.object [])
   match timingOf {} opt, keyframesOf supports (j.field? "kf"), compositeOf (member opt "composite") with
@@ -410,6 +415,7 @@ def snapshot (s : State) (id : Nat) : State × String :=
 /-- A new animation (`new Animation(effect, timeline)`, §6.4.1): `{"effect": n or null,
 "timeline": true or false}`. An effect that another animation has leaves that one. -/
 def createAnim (s : State) (q : String) : State × String :=
+  if s.full then (s, tooMany) else
   let j := (JSON.parseJson? q).getD (.object [])
   let effect := (member j "effect").bind String.toNat?
   let timeline := (j.getBool? "timeline").getD true
@@ -420,6 +426,16 @@ def createAnim (s : State) (q : String) : State × String :=
     | none => s
   let (s, i) := addAnim s { effect, timeline }
   (s, (Json.object [("id", .number (toString i))]).toString)
+
+/-- Kind: defined refusal at the bound. Says: on a page that holds `maxAnimations`
+animations or effects, a new effect and a new animation are refused with the
+`QuotaExceededError` answer and the state is unchanged, whatever the request. Does not
+say: that an animation the style change makes is refused (that is `updateAnimations` and
+`startTransition`, which read the same `State.full`). -/
+theorem create_full (supports : String → String → Bool) (s : State) (target : Option Nat) (q : String)
+    (h : s.full = true) :
+    createEffect supports s target q = (s, tooMany) ∧ createAnim s q = (s, tooMany) := by
+  simp [createEffect, createAnim, h]
 
 /-- A time of a request: a number of milliseconds, or none for null. A text that is
 not a finite number is a TypeError. -/

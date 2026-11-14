@@ -209,6 +209,23 @@ cascade of that document: 31 to 41 ms there), and fixed:
 - A write that changes nothing in a document's tree (a new node, a clone, a change of a node that is in
   no tree: `Page.detachedWrite`) keeps the kept styles; `CSS.restyleWith` takes an arena that grew.
 
+## Bounds
+
+What a page controls, and what bounds it:
+
+- The animations and the effects of a page's state: at most `Engine.maxAnimations` (65,536) of each,
+  counting those that ended (none is freed while the page lives). At the bound a constructor answers
+  `QuotaExceededError` and the state is unchanged (`Api.create_full`, proved); a CSS animation or
+  transition does not start (`Engine.startTransition_full`, proved; `updateAnimations` reads the same
+  `State.full`, tested by reading only). One addition is one record (`addEffect_size`, `addAnim_size`).
+- The work of a style change and of a frame: one pass over those records and over the elements that
+  declare an animation or a transition; bounded with them, not proved as a count.
+- The keyframes of one effect, the stops of `linear()`, the commands of a `path()`: bounded by the
+  text they come in (a `node_query` text is at most `Hosts.Dom.maxString`; a sheet at most its
+  reader's limit); every loop over them is a `for` over that text or list. No count of their own.
+- Recursion: none in `Rendering/Animation` survives as a call (the tail-recursion gate passes).
+- Missing: a bound on the time of one style change as a number of steps; ended animations are kept.
+
 ## Proved, tested, open
 
 Proved (axioms: propext, Classical.choice, Quot.sound):
