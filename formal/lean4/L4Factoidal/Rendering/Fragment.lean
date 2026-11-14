@@ -187,22 +187,66 @@ def definiteHeight (dom : Dom) (styles : Array Computed) (id : Nat) : Option Flo
     | none => return none
   return none
 
+/-- The length that a percentage `height` of `id` resolves to (`definiteHeight`); `none`
+when the height is not a percentage, when the containing block's height depends on
+content, and for an absolutely positioned box, which resolves its own where it is placed. -/
+def resolvedHeight (dom : Dom) (styles : Array Computed) (id : Nat) : Option Float :=
+  let s := styles[id]!
+  match s.height with
+  | .percent _ | .calc _ _ => if s.pos.isAbsolute then none else definiteHeight dom styles id
+  | _ => none
+
+/-- The style of `id` with a percentage `height` that resolves as that length. -/
+def percentHeight (dom : Dom) (styles : Array Computed) (id : Nat) : Computed :=
+  match resolvedHeight dom styles id with
+  | some h => {styles[id]! with height := .px h}
+  | none => styles[id]!
+
 /-- The styles with each percentage `height` that `definiteHeight` resolves as that
 length (CSS 2.1 §10.5); a percentage of a height that depends on content stays, and is
-read as `auto`. Absolutely positioned boxes resolve theirs where they are placed. A
-document with no percentage height is returned as it is. -/
-def percentHeights (dom : Dom) (styles : Array Computed) : Array Computed := Id.run do
-  let mut out := styles
-  for id in [0:styles.size] do
-    let s := styles[id]!
-    let relative := match s.height with
-      | .percent _ | .calc _ _ => !s.pos.isAbsolute
-      | _ => false
-    if relative then
-      match definiteHeight dom styles id with
-      | some h => out := out.modify id fun c => {c with height := .px h}
-      | none => pure ()
-  return out
+read as `auto`. -/
+def percentHeights (dom : Dom) (styles : Array Computed) : Array Computed :=
+  (Array.range styles.size).map (percentHeight dom styles)
+
+/-- Kind: structure. Says: resolving percentage heights keeps one style per node. -/
+theorem percentHeights_size (dom : Dom) (styles : Array Computed) :
+    (percentHeights dom styles).size = styles.size := by
+  simp [percentHeights]
+
+/-- Kind: structure. Says: the style of a node after the pass is `percentHeight` of it. -/
+theorem percentHeights_get (dom : Dom) (styles : Array Computed) (id : Nat) (hid : id < styles.size) :
+    (percentHeights dom styles)[id]! = percentHeight dom styles id := by
+  simp [percentHeights, hid]
+
+/-- Kind: frame. Says: the pass changes nothing of a style but its `height`: two styles
+that differ at most there before it differ at most there after it. Does not say: what
+the new height is (a `Float`: tested). -/
+theorem percentHeight_rest (dom : Dom) (styles : Array Computed) (id : Nat) (h : Length) :
+    {percentHeight dom styles id with height := h} = {styles[id]! with height := h} := by
+  unfold percentHeight
+  split <;> rfl
+
+/-- Kind: frame. Says: a height that is a length is left as it is. -/
+theorem percentHeight_px (dom : Dom) (styles : Array Computed) (id : Nat) (v : Float)
+    (h : (styles[id]!).height = .px v) : percentHeight dom styles id = styles[id]! := by
+  simp [percentHeight, resolvedHeight, h]
+
+/-- Kind: frame. Says: `height: auto` is left as it is. -/
+theorem percentHeight_auto (dom : Dom) (styles : Array Computed) (id : Nat)
+    (h : (styles[id]!).height = .auto) : percentHeight dom styles id = styles[id]! := by
+  simp [percentHeight, resolvedHeight, h]
+
+theorem resolvedHeight_absolute (dom : Dom) (styles : Array Computed) (id : Nat)
+    (h : (styles[id]!).pos.isAbsolute = true) : resolvedHeight dom styles id = none := by
+  unfold resolvedHeight
+  simp only [h]
+  split <;> rfl
+
+/-- Kind: frame. Says: the style of an absolutely positioned box is left as it is: its
+percentage height is of its containing block's padding box, known where it is placed. -/
+theorem percentHeight_absolute (dom : Dom) (styles : Array Computed) (id : Nat)
+    (h : (styles[id]!).pos.isAbsolute = true) : percentHeight dom styles id = styles[id]! := by
+  simp [percentHeight, resolvedHeight_absolute dom styles id h]
 
 /-- An inline-block whose contents are not all inline (CSS 2.1 §9.2.2, §10.1): it has a
 child that is a block-level box or a float, or it is positioned and has element children
