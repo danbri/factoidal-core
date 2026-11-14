@@ -194,6 +194,55 @@ theorem decompress_raw_extra (b out : ByteArray) (h : decompress .deflateRaw b =
       subst h1
       exact ⟨e, he, by omega⟩
 
+/-! ## How often a DecompressionStream decodes (a work bound)
+
+A DecompressionStream keeps the bytes it has received and asks `decompress` whether they hold a
+whole stream. Asking after every chunk costs the square of the input (a page that writes one
+byte at a time). It asks only when the bytes received are at least twice what it last asked
+about (`askAgain`), and once more when it is closed: the bytes decoded in all are then at most
+three times the input (`askLoop_work`, plus the last ask). -/
+
+/-- Ask again: never asked yet, or the input has at least doubled since. -/
+def askAgain (asked size : Nat) : Bool := asked == 0 || size ≥ 2 * asked
+
+/-- The asks for running totals `sizes`: the bytes decoded in all, and the size last asked about. -/
+def askLoop : List Nat → Nat → Nat → Nat × Nat
+  | [], work, asked => (work, asked)
+  | s :: ss, work, asked =>
+    if askAgain asked s then askLoop ss (work + s) s else askLoop ss work asked
+
+/-- Kind: a resource bound. Says: the bytes decoded by the asks are at most twice the size last
+asked about (so at most twice the input), whatever the chunks. -/
+theorem askLoop_work (sizes : List Nat) (work asked : Nat) (h : work ≤ 2 * asked) :
+    (askLoop sizes work asked).1 ≤ 2 * (askLoop sizes work asked).2 := by
+  induction sizes generalizing work asked with
+  | nil => simpa [askLoop] using h
+  | cons s ss ih =>
+    simp only [askLoop]
+    split
+    · rename_i hs
+      apply ih
+      simp [askAgain] at hs
+      rcases hs with h0 | h2
+      · subst h0; omega
+      · omega
+    · exact ih work asked h
+
+/-- Kind: a resource bound. Says: the size last asked about is never more than the largest
+running total (nor the size asked before). -/
+theorem askLoop_asked (sizes : List Nat) (work asked b : Nat) (hb : asked ≤ b) (hs : ∀ s ∈ sizes, s ≤ b) :
+    (askLoop sizes work asked).2 ≤ b := by
+  induction sizes generalizing work asked with
+  | nil => simpa [askLoop] using hb
+  | cons s ss ih =>
+    simp only [askLoop]
+    split
+    · exact ih _ _ (hs s (by simp)) (fun x hx => hs x (by simp [hx]))
+    · exact ih _ _ hb (fun x hx => hs x (by simp [hx]))
+
+#guard (askLoop ((List.range 1000).map (· + 1)) 0 0).1 ≤ 2 * 1000
+#guard (askLoop ((List.range 1000).map (· + 1)) 0 0).1 == 1 + 2 + 4 + 8 + 16 + 32 + 64 + 128 + 256 + 512
+
 /-- The page's `web_api` operations (Hosts/WebApi.lean): 52 `(name)` the format's name, or -2
 (the constructors' TypeError); 50 `(name, bytes)` the compressed bytes; 51 `(name, bytes)`
 one status byte (0 a whole stream, 1 a whole stream with bytes after it, 2 more input
@@ -204,6 +253,13 @@ def op (code : Nat) (name : String) (bytes : ByteArray) : Except Int ByteArray :
   | some f =>
     match code with
     | 52 => .ok f.name.toUTF8
+    -- 53 `(name, "asked size")`: does a DecompressionStream that last asked about `asked`
+    -- bytes and now has `size` ask again (`askAgain`)
+    | 53 =>
+      let parts := ((String.fromUTF8? bytes).getD "").splitOn " "
+      let asked := (parts.getD 0 "").toNat?.getD 0
+      let size := (parts.getD 1 "").toNat?.getD 0
+      .ok (if askAgain asked size then "1" else "0").toUTF8
     | 50 => .ok (compress f bytes)
     | 51 =>
       match decompress f bytes with

@@ -9024,9 +9024,10 @@
     // ==== Compression Standard: CompressionStream, DecompressionStream ========================
     // The formats, the compressed bytes and what received bytes are, are Lean's
     // (WHATWG.Compression, web_api ops 50 to 52). A CompressionStream writes its output when it
-    // is closed; a DecompressionStream asks after each chunk whether a whole stream has arrived
-    // (up to 1 MiB; past that, when it is closed), so that its output comes before the error
-    // for bytes after the stream's end.
+    // is closed; a DecompressionStream asks whether a whole stream has arrived when the bytes
+    // received have doubled since it last asked (op 53, WHATWG.Compression.askAgain: the bytes
+    // decoded in all stay within three times the input) and when it is closed, so that its
+    // output comes before the error for bytes after the stream's end.
     const formatOf = (format, what) => {
       const name = `${format}`;
       if (typeof apiCall(52, [name], 0, false) !== 'string') throw new TypeError(`${what}: '${name}' is not a valid CompressionFormat`);
@@ -9060,7 +9061,7 @@
       constructor(format) {
         const what = "Failed to construct 'DecompressionStream'";
         const name = formatOf(format, what);
-        let parts = [], size = 0, ended = false;
+        let parts = [], size = 0, asked = 0, ended = false;
         const corrupt = () => new TypeError('DecompressionStream: the input is not a valid ' + name + ' stream');
         const ask = c => {
           const r = apiCall(51, [name, joinBytes(parts)], 0, true);
@@ -9078,7 +9079,7 @@
             if (bytes.length === 0) return;
             if (ended) throw new TypeError('DecompressionStream: data after the end of the compressed stream');
             parts.push(bytes); size += bytes.length;
-            if (size <= 1048576) ask(c);
+            if (apiCall(53, [name, asked + ' ' + size], 0, false) === '1') { asked = size; ask(c); }
           },
           flush(c) { if (!ended && !ask(c)) throw new TypeError('DecompressionStream: the compressed stream ended early'); } });
         GS.set(this, { kind: 'DecompressionStream', ts });
