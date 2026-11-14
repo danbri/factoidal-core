@@ -197,8 +197,20 @@ def parse (text : String) : Value := collapse (tokenize text)
 
 /-! ## Writing -/
 
-/-- A colour channel as a whole number 0 to 255. -/
-def channel (c : Int) : Int := Fix.clamp 0 255 (Fix.roundDiv c Fix.scale)
+/-- The slack of a rounding boundary: a thousandth. A number of a declaration kept as
+text carries six decimals (CSSOM writes a number so), so an easing function read back
+from a `style` attribute gives a progress within 10⁻⁶ of the one that was set, and a
+result that should be on a boundary (76.5 of a colour channel, a whole pixel of a line
+width) may arrive a hair under it. Results within the slack of a boundary are taken as on
+it. -/
+def slack : Int := 1000000
+
+/-- A colour channel as a whole number 0 to 255 (a half rounds up, within `slack`). -/
+def channel (c : Int) : Int := Fix.clamp 0 255 (Fix.roundDiv (c + slack) Fix.scale)
+
+/-- Kind: range. Says: a written colour channel is in 0 to 255, for every number. -/
+theorem channel_range (c : Int) : 0 ≤ channel c ∧ channel c ≤ 255 :=
+  Fix.clamp_between 0 255 _ (by decide)
 
 def tokText : Tok → String
   | .num n => Fix.formatCss n
@@ -348,6 +360,9 @@ inductive Kind where
   /-- `font-style` (CSS Fonts 4 §2.4): `normal` is `oblique 0deg`; the angle stays in
   [-90deg, 90deg]; `italic` is discrete. -/
   | fontStyle
+  /-- A corner shape (CSS Borders 4 §4.2): by the half corner of its superellipse
+  parameter; never added. -/
+  | cornerShape
   deriving DecidableEq, Repr, Inhabited
 
 /-- A number of a non-negative kind. -/
@@ -378,7 +393,7 @@ device pixel taken as one CSS pixel): a whole number of pixels stays; a width ab
 below 1px is 1px; any other is rounded down. A negative number is left as it is (the
 kinds of these properties clamp at 0 first). -/
 def snapWidth (n : Int) : Int :=
-  if n ≤ 0 then n else if n < one then one else Fix.floor n
+  if n ≤ 0 then n else if n < one then one else Fix.floor (n + slack)
 
 /-- The px lengths of a value snapped as line widths: the computed value of a border,
 outline or gap rule width. -/
@@ -915,7 +930,9 @@ def collapsePaths (v : List Tok) : List Tok := Id.run do
       | .num n =>
         if cmd.isEmpty then out := out.push t
         else
-          let n := if cmd == "A" && (k == 3 || k == 4) then (if n == 0 then 0 else one) else n
+          -- a flag of an arc is set when its number is above 0 (SVG 2 §9.5.1: the flags
+          -- interpolate as numbers, and a number that is not 0 is a set flag; below 0 it is unset)
+          let n := if cmd == "A" && (k == 3 || k == 4) then (if n ≤ 0 then 0 else one) else n
           text := text ++ " " ++ Fix.formatCss n
           k := k + 1
       | _ => out := out.push t
@@ -1552,6 +1569,61 @@ def fromOklab (v : List Tok) : List Tok := Id.run do
       rest := more
   return out.toList
 
+/-! ### Corner shapes (CSS Borders 4 §4.2 and its interpolation)
+
+A corner shape is a superellipse parameter: `round` 1, `bevel` 0, `scoop` -1, `squircle` 2,
+`square` ∞, `notch` -∞. Two shapes interpolate by their normalized half corner, a number
+in [0, 1]. `Float` arithmetic (powers and logarithms of 2): tested, not proved. -/
+
+/-- The superellipse parameter of a corner shape value; none for another value. -/
+def cornerParam (v : List Tok) : Option Float :=
+  match v with
+  | [.ident "round"] => some 1
+  | [.ident "bevel"] => some 0
+  | [.ident "scoop"] => some (-1)
+  | [.ident "squircle"] => some 2
+  | [.ident "square"] => some (1 / 0)
+  | [.ident "notch"] => some (-1 / 0)
+  | [.op "superellipse", .num k, .close] => some (toFloat k)
+  | [.op "superellipse", .ident "infinity", .close] => some (1 / 0)
+  | [.op "superellipse", .ident "-infinity", .close] => some (-1 / 0)
+  | _ => none
+
+/-- The normalized half corner of a parameter: -∞ is 0 and ∞ is 1; else, with
+k = 0.5^|s|, the number 0.5^k for s ≥ 0 and 1 - 0.5^k below 0. -/
+def cornerHalf (s : Float) : Float :=
+  if s.isInf then (if s > 0 then 1 else 0)
+  else
+    let c := Float.pow 0.5 (Float.pow 0.5 s.abs)
+    if s < 0 then 1 - c else c
+
+/-- The parameter of a half corner (the inverse of `cornerHalf`): 0 or less is -∞, 1 or
+more is ∞. -/
+def cornerOfHalf (x : Float) : Float :=
+  if x ≤ 0 then -1 / 0 else if x ≥ 1 then 1 / 0
+  else if x ≥ 0.5 then -(Float.log2 (-(Float.log2 x)))
+  else Float.log2 (-(Float.log2 (1 - x)))
+
+/-- A parameter as a corner shape: its keyword when it has one, else `superellipse()`. -/
+def cornerTokens (s : Float) : List Tok :=
+  if s.isNaN then [.ident "round"]
+  else if s.isInf then [.ident (if s > 0 then "square" else "notch")]
+  else
+    let k := ofFloat s
+    if k == one then [.ident "round"] else if k == 0 then [.ident "bevel"]
+    else if k == -one then [.ident "scoop"] else if k == 2 * one then [.ident "squircle"]
+    else [.op "superellipse", .num k, .close]
+
+/-- Two corner shapes at progress `p`: the half corners interpolate, the result is the
+shape of that half corner. -/
+def lerpCorner (p : Int) (a b : List Tok) : Option (List Tok) :=
+  match cornerParam a, cornerParam b with
+  | some x, some y =>
+    let hx := cornerHalf x
+    let hy := cornerHalf y
+    some (cornerTokens (cornerOfHalf (hx + (hy - hx) * toFloat p)))
+  | _, _ => none
+
 /-- The interpolation of a kind that is a list or has components to fill in; none when
 the values do not interpolate. -/
 def lerpKind (k : Kind) (p : Int) (a b : Value) : Option Value :=
@@ -1650,6 +1722,7 @@ def lerpKind (k : Kind) (p : Int) (a b : Value) : Option Value :=
         some [.num ((r * Float.ofInt Fix.scale).round.toInt64.toInt), .slash, .num one]
       else none
     | _, _ => none
+  | .cornerShape => lerpCorner p a b
   | .generic =>
     -- a colour outside legacy sRGB: every colour of the two values in Oklab
     if modernColor a || modernColor b then (lerpList p (toOklab a) (toOklab b)).map fromOklab
@@ -1790,6 +1863,7 @@ def add (k : Kind) (underlying value : Value) : Value :=
     match scaleOf underlying, scaleOf value with
     | some (x, y, z), some (x', y', z') => scaleText (Fix.mul x x') (Fix.mul y y') (Fix.mul z z')
     | _, _ => value
+  | .cornerShape => value
   | _ => match addList underlying value with
     | some r => finish k r
     | none => value
@@ -1972,22 +2046,25 @@ theorem snapWidth_pos (n : Int) (h : 0 < n) : 0 < snapWidth n := by
   unfold snapWidth Fix.floor
   have s : (0 : Int) < Fix.scale := by decide
   have o : one = Fix.scale := rfl
+  have sl : (0 : Int) ≤ slack := by decide
   split
   · omega
   · split
     · omega
     · rename_i h1 h2
-      have h3 : Fix.scale ≤ n := by omega
-      have : 1 ≤ n / Fix.scale := Int.le_ediv_of_mul_le s (by omega)
+      have h3 : 1 * Fix.scale ≤ n + slack := by omega
+      have : 1 ≤ (n + slack) / Fix.scale := Int.le_ediv_of_mul_le s h3
       have := Int.mul_le_mul_of_nonneg_right this (Int.le_of_lt s)
       omega
 
-/-- Kind: bound. Says: snapping never widens a line of 1px or more. -/
-theorem snapWidth_le (n : Int) (h : one ≤ n) : snapWidth n ≤ n := by
+/-- Kind: bound. Says: snapping widens a line of 1px or more by no more than the slack
+of a rounding boundary (a thousandth of a pixel). -/
+theorem snapWidth_le (n : Int) (h : one ≤ n) : snapWidth n ≤ n + slack := by
   unfold snapWidth Fix.floor
   have s : (0 : Int) < Fix.scale := by decide
   have o : one = Fix.scale := rfl
-  have := Int.ediv_mul_le n (Int.ne_of_gt s)
+  have sl : (0 : Int) ≤ slack := by decide
+  have := Int.ediv_mul_le (n + slack) (Int.ne_of_gt s)
   split
   · omega
   · split <;> omega
@@ -1996,6 +2073,8 @@ theorem snapWidth_le (n : Int) (h : one ≤ n) : snapWidth n ≤ n := by
 theorem snapWidth_idem (n : Int) : snapWidth (snapWidth n) = snapWidth n := by
   have s : (0 : Int) < Fix.scale := by decide
   have o : one = Fix.scale := rfl
+  have sl : (0 : Int) ≤ slack := by decide
+  have z0 : slack / Fix.scale = 0 := by decide
   -- a width that is not positive, or a whole number of px of at least 1, is its own snap
   have key : ∀ m : Int, (m ≤ 0 ∨ (∃ k : Int, 1 ≤ k ∧ m = k * Fix.scale)) → snapWidth m = m := by
     intro m hm
@@ -2005,7 +2084,7 @@ theorem snapWidth_idem (n : Int) : snapWidth (snapWidth n) = snapWidth n := by
       have z : ¬ (k * Fix.scale ≤ 0) := by omega
       have y : ¬ (k * Fix.scale < one) := by omega
       simp only [snapWidth, Fix.floor, if_neg z, if_neg y]
-      rw [Int.mul_ediv_cancel _ (Int.ne_of_gt s)]
+      rw [Int.add_comm, Int.add_mul_ediv_right _ _ (Int.ne_of_gt s), z0, Int.zero_add]
   apply key
   by_cases h0 : n ≤ 0
   · left
@@ -2016,8 +2095,9 @@ theorem snapWidth_idem (n : Int) : snapWidth (snapWidth n) = snapWidth n := by
       rw [show snapWidth n = one by simp [snapWidth, h0, h1]]
       omega
     · right
-      have q : 1 ≤ n / Fix.scale := Int.le_ediv_of_mul_le s (by omega)
-      exact ⟨n / Fix.scale, q, by simp [snapWidth, h0, h1, Fix.floor]⟩
+      have h3 : 1 * Fix.scale ≤ n + slack := by omega
+      have q : 1 ≤ (n + slack) / Fix.scale := Int.le_ediv_of_mul_le s h3
+      exact ⟨(n + slack) / Fix.scale, q, by simp [snapWidth, h0, h1, Fix.floor]⟩
 
 /-! ### Transform functions -/
 
@@ -2161,6 +2241,36 @@ private def at_ (k : Kind) (a b : String) (p : Int) : String := toText (interpol
 #guard at_ .generic "1px 2px" "3px" half == "3px"
 #guard at_ .transformList "translate(100px)" "translate(200px) rotate(720deg)" 250000000 == "translate(125px) rotate(180deg)"
 #guard at_ .transformList "none" "rotate(90deg)" half == "rotate(45deg)"
+-- corner shapes by their half corner (css/css-borders/corner-shape/corner-shape-interpolation.html)
+private def corner2 (a b : String) (p : Int) : String :=
+  match interpolate .cornerShape (parse a) (parse b) p with
+  | [.op "superellipse", .num k, .close] => "superellipse(" ++ Fix.formatPlaces 2 k ++ ")"
+  | v => toText v
+#guard [-300000000, 600000000, 1500000000].map (corner2 "round" "bevel") == ["superellipse(1.4)", "superellipse(0.36)", "superellipse(-0.46)"]
+#guard [-300000000, half, 600000000, one, 1500000000].map (corner2 "round" "scoop") ==
+  ["superellipse(1.91)", "bevel", "superellipse(-0.18)", "scoop", "superellipse(-2.95)"]
+#guard [-300000000, 600000000, 1500000000].map (corner2 "bevel" "squircle") == ["superellipse(-0.45)", "superellipse(0.98)", "square"]
+#guard [-300000000, 0, 600000000, one, 1500000000].map (corner2 "bevel" "square") ==
+  ["superellipse(-0.69)", "bevel", "superellipse(1.64)", "square", "square"]
+#guard [-300000000, 600000000, 1500000000].map (corner2 "bevel" "scoop") == ["superellipse(0.27)", "superellipse(-0.56)", "superellipse(-1.72)"]
+#guard [-300000000, 600000000, 1500000000].map (corner2 "bevel" "notch") == ["superellipse(0.69)", "superellipse(-1.64)", "notch"]
+#guard [-300000000, 0, half, 800000000, one].map (corner2 "notch" "square") == ["notch", "notch", "bevel", "superellipse(1.64)", "square"]
+#guard [-300000000, half, 800000000, 1100000000].map (corner2 "superellipse(3)" "superellipse(-2)") ==
+  ["square", "superellipse(0.16)", "superellipse(-0.9)", "superellipse(-2.99)"]
+#guard corner2 "round" "round" half == "round" && corner2 "superellipse(infinity)" "superellipse(-infinity)" half == "bevel"
+-- the flags of an arc are set above 0 (css/motion/animation/offset-path-interpolation-002.html)
+#guard at_ .shape "path(\"M 100 400 A 10 20 30 1 0 140 450\")" "path(\"M 300 200 A 50 60 70 0 1 380 290\")" (-one) ==
+  "path(\"M -100 600 A -30 -20 -10 1 0 -100 610\")"
+#guard at_ .shape "path(\"M 100 400 A 10 20 30 1 0 140 450\")" "path(\"M 300 200 A 50 60 70 0 1 380 290\")" 125000000 ==
+  "path(\"M 125 375 A 15 25 35 1 1 170 430\")"
+#guard at_ .shape "path(\"M 100 400 A 10 20 30 1 0 140 450\")" "path(\"M 300 200 A 50 60 70 0 1 380 290\")" (2 * one) ==
+  "path(\"M 500 0 A 90 100 110 0 1 620 130\")"
+-- a half of a colour channel rounds up also when it arrives a hair under (a progress read
+-- back with six decimals); a whole pixel of a line width likewise
+#guard toText (interpolate .generic (parse "rgb(0, 0, 0)") (parse "rgb(255, 165, 0)") 299999750) == "rgb(77, 50, 0)"
+#guard toText (snapWidths (interpolate .nonNegative (parse "10px") (parse "20px") (-300000250))) == "7px"
+#guard toText (snapWidths (interpolate .nonNegative (parse "10px") (parse "20px") 299999750)) == "13px"
+#guard toText (snapWidths (parse "6.99px 7.5px")) == "6px 7px"
 #guard at_ .transformList "scale(2)" "none" half == "scale(1.5)"
 -- colours outside legacy sRGB meet in Oklab (css/css-color/animation/color-interpolation.html,
 -- css/css-backgrounds/animations/box-shadow-interpolation.html)
