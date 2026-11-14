@@ -213,6 +213,13 @@ def kindOf (property : String) : Value.Kind :=
   else if property == "content-visibility" then .avoid "hidden"
   else .generic
 
+/-- The properties whose computed value is a line width (CSS Backgrounds 3 §4.3, CSS UI 4
+§5.2, CSS Gaps 1 §3): an animated value of one is snapped as a declared one is
+(`Value.snapWidths`). -/
+def lineWidth (property : String) : Bool :=
+  ["border-top-width", "border-right-width", "border-bottom-width", "border-left-width", "outline-width",
+   "column-rule-width", "row-rule-width"].contains property
+
 /-! ## The style change -/
 
 /-- The `@keyframes` rules of the page's sheets, read again only when the text changed. -/
@@ -424,7 +431,8 @@ def overridesWhere (s : State) (ac : Access) (keep : Nat → Bool) : List Overri
     (stack[k]?).map fun (v, t) =>
       -- a transform's matrices keep six significant digits (their small entries matter)
       { node := k.1, property := k.2, transition := t,
-        value := if kindOf k.2 == .transformList then Value.toTextPrecise v else Value.toText v }
+        value := if kindOf k.2 == .transformList then Value.toTextPrecise v
+          else if lineWidth k.2 then Value.toText (Value.snapWidths v) else Value.toText v }
 
 /-- The effect stack of every element (`overridesWhere`). -/
 def overrides (s : State) (ac : Access) : List Override := overridesWhere s ac fun _ => true
