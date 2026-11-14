@@ -59,6 +59,11 @@ def splitArgs (args : List Char) : List Char × Option (List Char) := Id.run do
       name := c :: name
   return (name.reverse, none)
 
+/-- The longest value, in bytes, that a substitution makes: a longer one is invalid at
+computed-value time. References that double a value at each step (`--b: var(--a) var(--a)`)
+would otherwise grow it exponentially (CSS Variables 1 §3.3 lets a UA refuse such values). -/
+def maxValueBytes : Nat := 1048576
+
 /-- `value` with each `var(--name, fallback)` replaced (CSS Variables 1 §3): by what `get`
 finds for the name, else by the fallback, itself substituted. `missing`: a reference has
 neither, or its name is not a custom property name; the declaration is then invalid at
@@ -94,14 +99,18 @@ def substitute (get : String → Found) : Nat → String → Found
             let name := trim (String.ofList name)
             let found := if name.startsWith "--" && name.length > 2 then get name else .missing
             match found with
-            | .value v => out := out ++ v
+            | .value v =>
+              out := out ++ v
+              if out.utf8ByteSize > maxValueBytes then return .missing
             | .pending => return .pending
             | .missing =>
               match fallback with
               | none => return .missing
               | some fb =>
                 match substitute get fuel (String.ofList fb) with
-                | .value v => out := out ++ trim v
+                | .value v =>
+                  out := out ++ trim v
+                  if out.utf8ByteSize > maxValueBytes then return .missing
                 | other => return other
             rest := rest'
             afterName := false
@@ -218,5 +227,10 @@ private def res (inherited own : List (String × String)) : List (String × Stri
 #guard res [("--a", "1"), ("--b", "2")] [("--a", "initial"), ("--b", "inherit")] == [("--b", "2")]
 #guard res [("--a", "1")] [("--b", "var(--a) var(--zz, x)")] == [("--a", "1"), ("--b", "1 x")]
 #guard res [("--a", "1")] [("--b", "var(--zz)")] == [("--a", "1")]
+-- a chain that doubles its value stops at the length limit, and stays fast
+private def doubling (n : Nat) : List (String × String) :=
+  ("--v0", "\"Something really really really long\"") ::
+    (List.range n).map fun i => (s!"--v{i + 1}", s!"var(--v{i}) var(--v{i})")
+#guard ((res [] (doubling 31)).map (·.1)).contains "--v10" && !((res [] (doubling 31)).map (·.1)).contains "--v20"
 
 end L4Factoidal.Rendering.CssVars
