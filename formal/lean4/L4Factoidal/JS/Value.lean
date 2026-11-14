@@ -609,6 +609,10 @@ structure ColdHeap (H : Type) where
   no collector, so a page that makes objects for ever (a timer that polls through promises)
   grew until the operating system ended the process; 2^23 objects are 2 to 4 GiB. -/
   maxObjs : Nat := 8388608
+  /-- The environment of the function (not an arrow function) whose parameters are being
+  bound, while their expressions run; 0 otherwise. Direct eval code there may not declare
+  `var arguments` (EvalDeclarationInstantiation). -/
+  paramEnv : Nat := 0
   realm : Realm := {}
   /-- The description of each Symbol; the well-known ones first (`wellKnown`). -/
   syms : Array String := wellKnown.map ("Symbol." ++ ·)

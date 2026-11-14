@@ -607,5 +607,6 @@ private def parses (src : String) : Bool := syn src == "ok"
 /-! ## Parameters with defaults are in their temporal dead zone until bound (§10.2.11) -/
 
 #guard out "var r = []; function t(f) { try { r.push(String(f())) } catch (e) { r.push(e.name) } } var b = 'outer'; t(() => (function (a = b, b) { return a })()); t(() => (function (x = x) { return x })()); t(() => (function (a, c = a) { return c })(3)); t(() => (function (a = 1, { d } = { d: a }) { return d })()); t(() => ({ m(y = y) {} }).m()); print(r.join())" == ["ReferenceError,ReferenceError,3,1,ReferenceError"]
+#guard out "var r = []; function t(f) { try { r.push(String(f())) } catch (e) { r.push(e.name) } } t(() => (function (p = eval('var arguments')) {})()); t(() => (function (p = eval('var a = 1'), q = a) { return q })()); t(() => ((p = eval('var arguments = 2')) => 'arrow')()); t(() => (function () { eval('var arguments = 3'); return arguments })()); print(r.join())" == ["SyntaxError,1,arrow,3"]
 
 end L4Factoidal.JS.Tests
