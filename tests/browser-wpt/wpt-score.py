@@ -162,16 +162,17 @@ def cmd_run(a):
     for i, p in enumerate(parts):
         with open(os.path.join(a.dir, f"part{i}.list"), "w") as f:
             f.write("\n".join(p) + "\n")
-        procs.append([start(i), time.time(), len(done_in(os.path.join(a.dir, f"part{i}.jsonl")))])
+        # [process, time of the last new line, lines, restarts in a row that added no line]
+        procs.append([start(i), time.time(), len(done_in(os.path.join(a.dir, f"part{i}.jsonl"))), 0])
     t0 = time.time()
     while True:
         alive = 0
         for i, slot in enumerate(procs):
-            p, since, count = slot
+            p, since, count, idle = slot
             jsonl = os.path.join(a.dir, f"part{i}.jsonl")
             now = len(done_in(jsonl))
             if now != count:
-                slot[1], slot[2] = time.time(), now
+                slot[1], slot[2], slot[3] = time.time(), now, 0
             if p.poll() is None:
                 alive += 1
                 if time.time() - slot[1] > a.stall:
@@ -185,16 +186,24 @@ def cmd_run(a):
                         with open(jsonl, "a") as f:
                             f.write(json.dumps({"file": stuck, "harness": "STALL", "message": f"no result in {a.stall}s of wall time", "subtests": []}) + "\n")
                     slot[0], slot[1], slot[2] = start(i), time.time(), len(done_in(jsonl))
-            elif len(done_in(jsonl)) < len(parts[i]) and p.returncode != 0 and slot[2] == now and time.time() - slot[1] > 5:
-                # Crashed without a line: mark the started test as a crash and resume.
+            elif now < len({n.lstrip("/") for n in parts[i]}) and idle < 3:
+                # Ended before its list was done, with any exit code: mark the started test
+                # as a crash and resume. (Before 2026-11-14 only a non-zero exit did this: a
+                # runner that ended with exit 0 in the middle of a Test262 page was not
+                # started again, and the 200 names after it never ran.) After 3 restarts in
+                # a row that add no line the part is left alone. The part counts as alive
+                # while it waits 5 s for its last lines, or the run would end here.
+                alive += 1
+                if not (slot[2] == now and time.time() - slot[1] > 5):
+                    continue
                 log = open(os.path.join(a.dir, f"part{i}.log")).read().split("\n")
                 started = [l[6:] for l in log if l.startswith("START ")]
                 stuck = started[-1] if started else None
-                if stuck and stuck not in done_in(jsonl):
+                wrote = bool(stuck and stuck not in done_in(jsonl))
+                if wrote:
                     with open(jsonl, "a") as f:
                         f.write(json.dumps({"file": stuck, "harness": "CRASH", "message": f"runner exit {p.returncode}", "subtests": []}) + "\n")
-                slot[0], slot[1], slot[2] = start(i), time.time(), len(done_in(jsonl))
-                alive += 1
+                slot[0], slot[1], slot[2], slot[3] = start(i), time.time(), len(done_in(jsonl)), (0 if wrote else idle + 1)
         total = sum(len(done_in(os.path.join(a.dir, f"part{i}.jsonl"))) for i in range(a.jobs))
         if server and server.poll() is not None:
             # Without its server every remaining test would be recorded "fetch failed".
