@@ -54,7 +54,7 @@ def tokens' (v : String) : List String :=
 
 /-- One name for synonyms: `img` is `image`, `presentation` is `none`. -/
 def normalize (t : String) : String :=
-  if t == "img" then "image" else if t == "presentation" then "none" else t
+  if t == "img" then "image" else if t == "presentation" then "none" else if t == "directory" then "list" else t
 
 def attr? (d : Dom) (k : NodeId) (name : String) : Option String :=
   ((d.get k).attrs.find? fun a => a.ns.isNone && a.lname == name).map (·.value)
@@ -363,8 +363,10 @@ theorem normalize_mem (t : String) (h : t ∈ ariaRoles) : normalize t ∈ answe
   · simp only [h1, if_true]; simp [ariaRoles]
   · by_cases h2 : (t == "presentation") = true
     · simp only [h1, h2, if_true, Bool.false_eq_true, if_false]; simp [ariaRoles]
-    · simp only [h1, h2, Bool.false_eq_true, if_false]
-      exact List.mem_append_left _ h
+    · by_cases h3 : (t == "directory") = true
+      · simp only [h1, h2, h3, if_true, Bool.false_eq_true, if_false]; simp [ariaRoles]
+      · simp only [h1, h2, h3, Bool.false_eq_true, if_false]
+        exact List.mem_append_left _ h
 
 /-- Says: an author's role that is answered is a role of WAI-ARIA (an invalid token, an
 abstract role or a misspelling is never answered). -/
@@ -414,7 +416,7 @@ theorem hidden_no_name (d : Dom) (k : NodeId) (fuel : Nat) (content : Bool)
 /-! ## Tests (html-aam/roles.html, wai-aria/role/fallback-roles.html) -/
 
 #guard tokens " Foo\tBUTTON  link " == ["foo", "button", "link"] && tokens "" == [] && tokens "\u2800 button" == ["\u2800", "button"]
-#guard normalize "img" == "image" && normalize "presentation" == "none" && normalize "link" == "link"
+#guard normalize "img" == "image" && normalize "presentation" == "none" && normalize "link" == "link" && normalize "directory" == "list"
 
 private def roleOf (html tag : String) : String :=
   let d := DOM.parseHtmlDocument html
