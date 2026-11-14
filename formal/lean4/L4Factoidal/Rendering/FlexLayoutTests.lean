@@ -141,6 +141,34 @@ private def wrapCss := "#c{display:flex;flex-wrap:wrap;width:100px} #c div{width
 #guard box three "#c{display:flex;flex-direction:column;gap:5px}" "c" == some (0,0,200,31)
 #guard box three "#c{display:flex;flex-direction:column;height:100px} #d{margin-top:auto}" "d" == some (0,93,200,7)
 
+-- A multi-line column (§9.3): the items break into columns at the container's height (two
+-- of 7 fit in 14); a column is as wide as its widest item (12 and 18) and `align-content:
+-- stretch` shares the free width (100 - 30 = 70) between the columns.
+private def columns := "#c{display:flex;flex-direction:column;flex-wrap:wrap;width:100px;height:14px} "
+#guard box three columns "c" == some (0,0,100,14)
+#guard box three columns "a" == some (0,0,47,7)
+#guard box three columns "b" == some (0,7,47,7)
+#guard box three columns "d" == some (47,0,53,7)
+#guard box three (columns ++ "#c{align-content:flex-start}") "b" == some (0,7,12,7)
+#guard box three (columns ++ "#c{align-content:flex-start}") "d" == some (12,0,18,7)
+#guard box three (columns ++ "#c{align-content:flex-start;align-items:flex-start}") "b" == some (0,7,6,7)
+#guard box three (columns ++ "#c{align-content:center}") "a" == some (35,0,12,7)
+#guard box three (columns ++ "#c{align-content:center}") "d" == some (47,0,18,7)
+#guard box three (columns ++ "#c{align-content:space-between}") "d" == some (82,0,18,7)
+#guard box three (columns ++ "#c{align-content:flex-end}") "a" == some (70,0,12,7)
+-- wrap-reverse: the columns start from the right.
+#guard box three "#c{display:flex;flex-direction:column;flex-wrap:wrap-reverse;width:100px;height:14px}" "a" == some (53,0,47,7)
+#guard box three "#c{display:flex;flex-direction:column;flex-wrap:wrap-reverse;width:100px;height:14px}" "d" == some (0,0,53,7)
+-- With no height to break at there is one column, as wide as the container.
+#guard box three "#c{display:flex;flex-direction:column;flex-wrap:wrap}" "c" == some (0,0,200,21)
+#guard box three "#c{display:flex;flex-direction:column;flex-wrap:wrap}" "b" == some (0,7,200,7)
+-- max-height breaks a container whose height is its content's; it is as high as its longest column.
+#guard box three "#c{display:flex;flex-direction:column;flex-wrap:wrap;max-height:15px;width:100px}" "c" == some (0,0,100,14)
+#guard box three "#c{display:flex;flex-direction:column;flex-wrap:wrap;max-height:15px;width:100px}" "d" == some (47,0,53,7)
+-- column-gap is between the columns, row-gap between the items of a column (7 + 3 + 7 fit in 17).
+#guard box three "#c{display:flex;flex-direction:column;flex-wrap:wrap;width:100px;height:17px;gap:3px 10px;align-content:flex-start}" "b" == some (0,10,12,7)
+#guard box three "#c{display:flex;flex-direction:column;flex-wrap:wrap;width:100px;height:17px;gap:3px 10px;align-content:flex-start}" "d" == some (22,0,18,7)
+
 -- Nesting: a row in a column in a row; a flex container in block flow and a block in a flex item.
 private def nested := "<div id=o><div id=l>LL</div><div id=m><div id=h>H</div><div id=r><div id=x>X</div><div id=y>Y</div></div></div></div><div id=p>P</div>"
 private def nestedCss := "#o{display:flex} #m{flex:1;display:flex;flex-direction:column} #r{display:flex} #y{flex:1}"
