@@ -9866,7 +9866,7 @@
         return later(() => {
           if (!kinds.has(this)) throw new TypeError('Illegal invocation: StorageManager.estimate');
           const f = call(202, ['estimate'], 'StorageManager.estimate');
-          return { usage: Number(text(f[0])), quota: Number(text(f[1])), usageDetails: { indexedDB: Number(text(f[2])), fileSystem: Number(text(f[3])) } };
+          return { usage: Number(text(f[0])), quota: Number(text(f[1])), usageDetails: { indexedDB: Number(text(f[2])), fileSystem: Number(text(f[3])), caches: Number(text(f[4] ?? new Uint8Array(0))) || 0 } };
         });
       }
       persisted() { return later(() => { if (!kinds.has(this)) throw new TypeError('Illegal invocation: StorageManager.persisted'); return text(call(202, ['persisted'], 'StorageManager.persisted')[0]) === '1'; }); }

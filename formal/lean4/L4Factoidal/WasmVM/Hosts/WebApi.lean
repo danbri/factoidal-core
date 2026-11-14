@@ -706,7 +706,7 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
       let (opfs, out) := L4Factoidal.ClientStorage.Fs.opFor s.opfs { origin := s.net.page.origin } fs
       ({ s with opfs }, .ok (pack out))
     else if code == 202 then
-      (s, .ok (pack (L4Factoidal.ClientStorage.Manager.op s.idb s.opfs { origin := s.net.page.origin } fs)))
+      (s, .ok (pack (L4Factoidal.ClientStorage.Manager.op s.idb s.opfs s.caches { origin := s.net.page.origin } fs)))
     -- Web Locks (203): the lock manager of the same storage key.
     else if code == 203 then
       let (locks, out) := L4Factoidal.ClientStorage.Locks.opFor s.locks { origin := s.net.page.origin } fs

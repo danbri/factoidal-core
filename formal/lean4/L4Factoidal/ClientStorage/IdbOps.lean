@@ -136,7 +136,7 @@ structure Shelf where
   live : Live := {}
   deriving Inhabited
 
-instance : Usage Shelf := ⟨fun s => sizeSum (fun p : String × Db => p.2.usage) s.dbs⟩
+instance : Usage Shelf := ⟨fun s => sizeSum (fun p : String × Db => p.1.utf8ByteSize + p.2.usage) s.dbs⟩
 
 /-! ## Tokens of answers and arguments -/
 

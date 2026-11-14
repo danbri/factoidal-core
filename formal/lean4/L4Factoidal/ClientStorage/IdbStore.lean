@@ -259,8 +259,13 @@ structure Db where
   nextStore : Nat := 1
   deriving Inhabited
 
-/-- The bytes a database holds: the sum of its stores' byte counts. -/
-def Db.usage (d : Db) : Nat := sizeSum (fun p : Nat × Store => p.2.bytes) d.stores
+/-- The bytes a store's description counts for in `estimate()`: its name and a fixed 64 for
+itself and for each index (an estimate, as the Storage Standard allows; a constant reveals
+nothing about the host). -/
+def Store.overhead (s : Store) : Nat := s.name.utf8ByteSize + 64 * (s.indexes.length + 1)
+
+/-- The bytes a database holds: the sum of its stores' byte counts and descriptions. -/
+def Db.usage (d : Db) : Nat := sizeSum (fun p : Nat × Store => p.2.bytes + p.2.overhead) d.stores
 
 /-- The store named `name`, with its id. -/
 def Db.storeNamed (d : Db) (name : String) : Option (Nat × Store) := d.stores.find? fun p => p.2.name == name
@@ -399,6 +404,6 @@ private def dbs1 := applyEffect [("d", db0)] (.commit "d" { db0 with stores := [
 #guard ((get dbs1 "d").bind fun d => (get d.stores 1).map (·.records.length)) == some 3
 #guard ((get dbs1 "d").bind fun d => (get d.stores 2).map (·.name)) == some "other"
 #guard (get (applyEffect dbs1 (.delete "d")) "d").isNone
-#guard ((get dbs1 "d").map Db.usage) == some st1.bytes
+#guard ((get dbs1 "d").map Db.usage) == some (st1.bytes + st1.overhead + ({ name := "other" } : Store).overhead)
 
 end L4Factoidal.ClientStorage.Idb
