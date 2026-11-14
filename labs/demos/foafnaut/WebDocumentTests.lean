@@ -90,8 +90,11 @@ private def ecmaInspection := WebDocument.inspect
         script.field? "source" == some (.string "classic()")
     | _ => false
   | .error _ => false
-#guard (WebDocument.inspect (DOM.parseHtmlDocument "<script type=' module '>export{}</script>") "https://example.test/").toOption.isNone
-#guard (WebDocument.run "<script type=' module '>export{}</script>" (json [("op",.string "inspect")]) 1 1).toOption.isNone
+-- A module script is the script session's to fetch and run (`LeanJSModules`): the page is
+-- accepted, and the host is given no script for it.
+#guard match WebDocument.inspect (DOM.parseHtmlDocument "<script type=' module '>export{}</script>") "https://example.test/" with
+  | .ok value => value.field? "scripts" == some (.array [])
+  | .error _ => false
 #guard WebDocument.documentTitle (L4Factoidal.DOM.parseHtmlDocument "<title>  Two\n  words </title>") == "Two words"
 #guard WebDocument.documentTitle (L4Factoidal.DOM.parseHtmlDocument "<p>none</p>") == ""
 
@@ -608,16 +611,20 @@ private def sizeAt (w : Nat) (html : String) (sources : List String) (fields : L
 -- Malformed resources stay refused in both modes.
 #guard (WebDocument.rules externalDOM (json [liberal,("resources",.array [resource linkId "p{}",resource linkId "p{}"])])).toOption.isNone
 #guard (WebDocument.rules externalDOM (json [liberal,("resources",.string "bad")])).toOption.isNone
--- Module scripts: strict refuses; liberal leaves them out and says so once each.
+-- Module scripts: both modes accept the page with no diagnostic; the host is given the
+-- classic scripts only (the script session fetches and runs the modules).
 private def moduleDOM := DOM.parseHtmlDocument "<script type=module>import x from './x.js'</script><script>var a=1</script><p>A</p>"
 private def diagnosticsOf (j : JSON.Json) : Nat := match j.field? "diagnostics" with | some (.array ds) => ds.length | _ => 0
-#guard (WebDocument.inspect moduleDOM "https://e.test/").toOption.isNone
-#guard match WebDocument.inspect moduleDOM "https://e.test/" (json [liberal]) with
-  | .ok j => diagnosticsOf j == 1 && (match j.field? "scripts" with | some (.array [_]) => true | _ => false)
+#guard match WebDocument.inspect moduleDOM "https://e.test/" with
+  | .ok j => diagnosticsOf j == 0 && (match j.field? "scripts" with | some (.array [_]) => true | _ => false)
   | _ => false
--- Scripts off (the host runs no page scripts): liberal leaves the classic scripts out too.
+#guard match WebDocument.inspect moduleDOM "https://e.test/" (json [liberal]) with
+  | .ok j => diagnosticsOf j == 0 && (match j.field? "scripts" with | some (.array [_]) => true | _ => false)
+  | _ => false
+-- Scripts off (the host runs no page scripts): liberal leaves every page script out, classic
+-- and module, and says so once.
 #guard match WebDocument.inspect moduleDOM "https://e.test/" (json [liberal,("scripting",.bool false)]) with
-  | .ok j => diagnosticsOf j == 2 && j.field? "scripts" == some (.array [])
+  | .ok j => diagnosticsOf j == 1 && j.field? "scripts" == some (.array [])
   | _ => false
 -- A document that strict mode accepts: liberal mode gives the same answer and no diagnostics.
 #guard (WebDocument.inspect urlDOM "https://example.test/a/page.html" (json [liberal])).toOption == some inspected
@@ -626,12 +633,13 @@ private def diagnosticsOf (j : JSON.Json) : Nat := match j.field? "diagnostics" 
 private def renderText (html : String) (fields : List (String × JSON.Json)) : String :=
   (WebDocument.runUncached html (json ([("op",.string "render"),("url",.string "https://e.test/p.html")] ++ fields)) 400 300).toOption.getD ""
 private def mentions (text part : String) : Nat := (text.splitOn part).length - 1
-private def modulePage := "<!doctype html><title>M</title><script type=module>import x from './x.js'</script><p>Words</p>"
-#guard renderText modulePage [] == ""
-#guard mentions (renderText modulePage [liberal,asks]) "\"diagnostics\"" == 1
-#guard mentions (renderText modulePage [liberal]) "\"diagnostics\"" == 0
-#guard mentions (renderText modulePage [liberal]) "foafnaut:console" ≥ 1
-#guard mentions (renderText modulePage [liberal,asks]) "\"feature\":\"module script\"" == 1
+-- (The example is a media condition that can not be read; a module script is no longer a skip.)
+private def mediaPage := "<!doctype html><title>M</title><style media='(hover: hover)'>p{color:red}</style><p>Words</p>"
+#guard renderText mediaPage [] == ""
+#guard mentions (renderText mediaPage [liberal,asks]) "\"diagnostics\"" == 1
+#guard mentions (renderText mediaPage [liberal]) "\"diagnostics\"" == 0
+#guard mentions (renderText mediaPage [liberal]) "foafnaut:console" ≥ 1
+#guard mentions (renderText mediaPage [liberal,asks]) "\"feature\":\"stylesheet media condition\"" ≥ 1
 private def plainPage := "<!doctype html><title>P</title><style media='(min-width: 100px)'>p{color:red}</style><p>Words <a href=x.html>link</a></p>"
 #guard renderText plainPage [] != ""
 #guard renderText plainPage [liberal] == renderText plainPage []
