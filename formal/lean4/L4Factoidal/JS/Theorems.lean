@@ -384,6 +384,38 @@ theorem blockFunsOk_special (s : Bool) (fd : List (String × Bool)) (h : blockFu
   rcases h with h | ⟨_, h⟩
   · exact absurd h hd
   · exact h x hx
+/-! ## Class elements, `super` and `new.target` early errors (parser, §15.7.1, §15.2.1) -/
+
+/-- Kind: a refusal (§15.7.1). Says: a getter, setter, generator or async method is never named "constructor". -/
+theorem classElementOk_special_ctor (k : Bool) : classElementOk false true k (.lit "constructor") = false := by
+  cases k <;> rfl
+/-- Kind: a refusal. Says: no static member is named "prototype". -/
+theorem classElementOk_static_prototype (sp f : Bool) : classElementOk true sp f (.lit "prototype") = false := by
+  cases sp <;> cases f <;> rfl
+/-- Kind: a refusal. Says: no field is named "constructor". -/
+theorem classElementOk_field_ctor (st sp : Bool) : classElementOk st sp true (.lit "constructor") = false := by
+  cases st <;> cases sp <;> rfl
+/-- Kind: a specification. Says: a computed key has no PropName and is never refused. -/
+theorem classElementOk_computed (st sp f : Bool) (e : Expr) : classElementOk st sp f (.computed e) = true := rfl
+/-- Kind: a refusal (§15.7.1). Says: `super(...)` is allowed only in a derived class constructor or an arrow function inside a place that allows it. -/
+theorem superCallIn_derived (k : FunKind) (o : Bool) (h : superCallIn k o = true) :
+    k = .ctor true ∨ (k = .arrow ∧ o = true) := by
+  cases k with
+  | ctor d => cases d <;> simp_all [superCallIn]
+  | arrow => simp_all [superCallIn]
+  | normal => simp [superCallIn] at h
+  | method => simp [superCallIn] at h
+/-- Kind: a refusal (§15.2.1). Says: a plain function body never allows `super.x`. -/
+theorem superPropIn_normal (o : Bool) : superPropIn .normal o = false := rfl
+
+/-- Kind: a refusal (§15.4.1). Says: an accepted getter has no parameters and no rest parameter. -/
+theorem accessorParamsOk_getter (c : Nat) (r : Bool) (h : accessorParamsOk true c r = true) : c = 0 ∧ r = false := by
+  simp [accessorParamsOk] at h; exact ⟨h.2, h.1⟩
+
+/-- Kind: a refusal. Says: an accepted setter has exactly one parameter and no rest parameter. -/
+theorem accessorParamsOk_setter (c : Nat) (r : Bool) (h : accessorParamsOk false c r = true) : c = 1 ∧ r = false := by
+  simp [accessorParamsOk] at h; exact ⟨h.2, h.1⟩
+
 /-! ## The size of the heap (`HeapOf.full`, `maxObjs`)
 
 The heap has no collector: an object, once made, stays. A page that makes objects for ever (a

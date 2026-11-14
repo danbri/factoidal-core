@@ -549,4 +549,26 @@ private def parses (src : String) : Bool := syn src == "ok"
 #guard parses "{ function f() {} function f() {} }" && parses "function g() { function f() {} var f; }" && parses "var f; function f() {}"
 #guard parses "{ function f() {} } var f;" && parses "{ { function f() {} } let f; }" && parses "{ function f() { var f; } }"
 
+/-! ## Class elements, private names, `super`, `new.target`, ImportCall and statement positions (early errors) -/
+
+#guard !parses "class C { get constructor() {} }" && !parses "class C { *constructor() {} }" && !parses "class C { async constructor() {} }"
+#guard !parses "class C { static prototype() {} }" && !parses "class C { static get prototype() {} }" && !parses "class C { constructor = 1 }" && !parses "class C { 'constructor' }"
+#guard !parses "class C { static prototype = 1 }" && !parses "class C { static constructor = 1 }" && !parses "class C { #constructor() {} }"
+#guard parses "class C { static constructor() {} constructor() {} static async *constructor() {} ['constructor'] = 1; static ['prototype'] = 2; prototype() {} }"
+#guard !parses "class C { # x }" && !parses "class C { #x; m() { this.# x } }" && !parses "class C { #x; m() { # x in this } }" && parses "class C { #x; m() { return this.#x + (#x in this) } }"
+#guard !parses "class C { m() { super() } }" && !parses "class C { constructor() { super() } }" && !parses "function f() { super.x }" && !parses "class C extends B { m() { super() } }"
+#guard parses "class C extends B { constructor() { super(); (() => super())(); } m() { return super.m() } static s() { super.x } x = super.y; static { super.z } }"
+#guard parses "var o = { m() { return super.x }, get g() { return super.y }, set s(v) { super.z = v }, *gen() { super.w } }"
+#guard parses "class C extends B { constructor(a = super()) { } m(a = super.x) {} }"
+#guard !parses "function f() { return () => super.x }" && !parses "var o = { m() { function g() { super.x } } }"
+#guard !parses "new import('x')" && !parses "new import.defer('x')" && !parses "import('x') = 1" && !parses "import('x')++" && parses "import('x').then(f)"
+#guard !parses "super()" && !parses "super.x" && !parses "new.target" && !parses "() => new.target" && parses "function f() { return () => new.target }"
+#guard parses "class C { x = new.target; static { new.target } }" && !parses "function f(a = super()) {}"
+#guard !parses "while (0) function f() {}" && !parses "if (1) async function f() {}" && parses "if (1) function f() {}" && !parses "for (;;) async function* g() {}"
+#guard parses "function f(a = new.target) {}" && parses "var o = { m(a = super.x) {} }" && !parses "function f(a = super.x) {}"
+#guard !parses "class C { g\\u0065t x() {} }" && !parses "class C { st\\u0061tic m() {} }" && !parses "class C { \\u0061sync m() {} }" && parses "class C { 'get'; x() {} }"
+#guard !parses "class yield {}" && !parses "var C = class static {}" && !parses "class let {}" && parses "class C {} var yield;"
+#guard !parses "({ get x(a) {} })" && !parses "({ set x() {} })" && !parses "({ set x(...a) {} })" && !parses "class C { get x(a = 1) {} }" && parses "({ get x() {}, set x([a]) {} })"
+#guard !parses "'use strict'; ({ public })" && !parses "function* g() { ({ yield }) }" && !parses "async function f() { ({ await }) }" && parses "var public = 1; ({ public })"
+
 end L4Factoidal.JS.Tests
