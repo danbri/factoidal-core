@@ -14,6 +14,7 @@ and `insertRule` refuses it with a SyntaxError): the sheet shows what the engine
 import L4Factoidal.Rendering.CssValues.Declaration
 import L4Factoidal.DOM.Selectors
 import L4Factoidal.Rendering.MediaQuery
+import L4Factoidal.Rendering.CssRegister
 
 namespace L4Factoidal.Rendering.CssSheet
 open L4Factoidal.Rendering.CssValues
@@ -348,6 +349,11 @@ def ruleOf : Nat → RawRule → Option Rule
         | none =>
           match declRules.find? (·.1 == name) with
           | some (_, kind, type) =>
+            if name == "property" then
+              -- an `@property` rule that is not a valid registration is dropped (CSS
+              -- Properties and Values API 1 §3)
+              (CssRegister.propertyRuleOf after body).map fun r => ⟨kind, type, after, body, head ++ " { " ++ r.text ++ " }"⟩
+            else
             -- descriptors are kept as written (they are not properties of the table)
             let decls := (splitTop ';' (body.length + 1) body.toList 0 none [] []).filterMap fun piece =>
               (declOf piece).map fun (n, v, _) => lower n ++ ": " ++ trimText v ++ ";"
@@ -467,11 +473,21 @@ def sheetOp (q : String) : String :=
     | some s => "1" ++ s
     | none => "0"
   | ["canon", text] => textOf (rulesOf text)
+  | ["property", prelude, body] =>
+    -- CSSPropertyRule: syntax, inherits ("1"/"0"), initial value ("1" and the value, or "0")
+    match CssRegister.propertyRuleOf prelude body with
+    | some r => "\x00".intercalate [r.syn, if r.inherits then "1" else "0", match r.initial with
+        | some v => "1" ++ v
+        | none => "0"]
+    | none => ""
   | _ => ""
 
 /-! ### Tests and theorems -/
 
 #guard (rulesOf "a { color: RED } b{}").map (·.cssText) == ["a { color: red; }", "b { }"]
+#guard (rulesOf "@property --a { initial-value: 0px; inherits: true; syntax: '<length>' } @property --b { inherits: true }").map (·.cssText) ==
+  ["@property --a { syntax: \"<length>\"; inherits: true; initial-value: 0px; }"]
+#guard sheetOp "property\x00--a\x00syntax: '*'; inherits: false" == "*\x000\x000"
 #guard (rulesOf "a { color: red; } /* x */ @media screen { b { top: 0 } }").map (·.kind) == ["Style", "Media"]
 #guard (rulesOf "@media (MIN-WIDTH:100px) and screen { b { top: 0 } }").map (·.cssText) ==
   ["@media not all {\n  b { top: 0px; }\n}"]

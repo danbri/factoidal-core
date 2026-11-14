@@ -2080,7 +2080,9 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
       | .ok (styles, flat, matchesOf) => if node < dom.size && (dom.get node).type == .element && dom.connected node then
           let c := styles[node]?.getD {}
           let view : Rendering.ComputedGeneric.View :=
-            { dom := flat, matchesOf := matchesOf, styles := styles, viewportW := width, viewportH := height }
+            { dom := flat, matchesOf := matchesOf, styles := styles, viewportW := width, viewportH := height,
+              -- the `@property` registrations of the page's sheets, read when a custom property is asked
+              registered := Thunk.mk fun _ => Rendering.ComputedGeneric.registrationsOf sheetText.get }
           -- 36: the custom properties that apply to the element (35 is the hit test); 200 + k: the k-th property's value
           some (if op == 20 then Rendering.ComputedValues.text c
             else if op == 36 then Rendering.ComputedGeneric.customNamesText view node

@@ -8706,6 +8706,16 @@
   Object.defineProperty(ruleClasses.MediaRule.prototype, 'media', { get() { return mediaListOf(this, () => ruleNow(this).prelude, () => {}); }, configurable: true, enumerable: true });
   Object.defineProperty(ruleClasses.KeyframesRule.prototype, 'name', { get() { return ruleNow(this).prelude; }, configurable: true, enumerable: true });
   Object.defineProperty(ruleClasses.LayerBlockRule.prototype, 'name', { get() { return ruleNow(this).prelude; }, configurable: true, enumerable: true });
+  // CSSPropertyRule (CSS Properties and Values API 1 §4.1): the descriptors as Lean reads
+  // them from the rule's block (CssRegister.propertyRuleOf, sheet op 'property')
+  {
+    const fields = rule => { const r = ruleNow(rule); return sheetOp('property', r.prelude, r.body).split('\u0000'); };
+    const P = ruleClasses.PropertyRule.prototype;
+    Object.defineProperty(P, 'name', { get() { return ruleNow(this).prelude; }, configurable: true, enumerable: true });
+    Object.defineProperty(P, 'syntax', { get() { return fields(this)[0] ?? ''; }, configurable: true, enumerable: true });
+    Object.defineProperty(P, 'inherits', { get() { return fields(this)[1] === '1'; }, configurable: true, enumerable: true });
+    Object.defineProperty(P, 'initialValue', { get() { const v = fields(this)[2] ?? '0'; return v.charAt(0) === '1' ? v.slice(1) : null; }, configurable: true, enumerable: true });
+  }
   Object.defineProperty(ruleClasses.ImportRule.prototype, 'href', { get() { const m = /^url\(\s*["']?([^"')]*)["']?\s*\)|^["']([^"']*)["']/.exec(ruleNow(this).prelude); return m ? (m[1] ?? m[2]) : ''; }, configurable: true, enumerable: true });
   // A sheet: of a style element (its text is the element's text), or constructed.
   const sheetOfText = (text, write, owner) => {
