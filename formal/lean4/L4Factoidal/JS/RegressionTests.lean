@@ -658,4 +658,21 @@ private def parses (src : String) : Bool := syn src == "ok"
 
 #guard out "var t = new Float64Array([0, 0]); print(Reflect.defineProperty(t, '0', { value: 1 }), t[0], Reflect.defineProperty(t, '2', { value: 1 }), Reflect.defineProperty(t, '-0', { value: 1 }), Reflect.defineProperty(t, '1', { value: 2, writable: false }), Reflect.defineProperty(t, '1', { get() {} }), Reflect.defineProperty(t, '1.5', { value: 1 }), t.hasOwnProperty('1.5'), Reflect.defineProperty(t, 'foo', { value: 1 }), t.foo)" == ["true 1 false false false false false false true 1"]
 
+/-! ## Regular expressions: the backtracking machine (`JS/Regex.lean`)
+
+Lookbehind matches backward, modifiers change `i`/`m`/`s` inside their group, duplicate names in
+different alternatives, `v`-flag class sets, `u` matching by code point, the `d` flag's
+indices, and a catastrophic pattern ends with a RangeError at the step budget. -/
+
+#guard out "print(JSON.stringify(/(?<=(\\d+)(\\d+))$/.exec('1053')), JSON.stringify('abcdef'.match(/(?<=([abc]+)).\\1/)), /(?<!a)b/.test('ab'), /(?<=\\$)\\d+/.exec('cost $42')[0])" == ["[\"\",\"1\",\"053\"] null false 42"]
+#guard out "print(/(?i:a)b/.test('Ab'), /(?i:a)b/.test('AB'), /a(?-i:b)/i.test('AB'), /(?m:^b)/.test('a\\nb'), /(?s:.)/.test('\\n'))" == ["true false false true true"]
+#guard out "var m = /(?<y>\\d{4})-\\d{2}|\\d{2}-(?<y>\\d{4})/.exec('12-2026'); print(m.groups.y, Object.keys(m.groups).length, '12-2026'.replace(/(?<y>\\d{4})-\\d{2}|\\d{2}-(?<y>\\d{4})/, '[$<y>]'))" == ["2026 1 [2026]"]
+#guard out "print(/[[a-z]--[aeiou]]+/v.exec('bcdae')[0], /[\\q{abc|d}x]/v.exec('zabc')[0], /[\\w&&\\d]+/v.exec('ab12')[0], /^[\\p{Lu}]+$/v.test('ÀB'))" == ["bcd abc 12 true"]
+#guard out "print(/./u.exec('\\u{1F600}')[0].length, /./.exec('\\u{1F600}')[0].length, /^.$/u.test('\\u{1F600}'), /\\u{1F600}/u.test('\\u{1F600}'), /\\udf06/u.exec('\\ud834\\udf06'))" == ["2 1 true true null"]
+#guard out "var m = /a(?<Z>b)/d.exec('xab'); print(JSON.stringify(m.indices), JSON.stringify(m.indices.groups.Z))" == ["[[1,3],[2,3]] [2,3]"]
+#guard out "print(/\\u212A/i.test('k'), /\\u212A/iu.test('k'), /ß/i.test('SS'), /[a-z]/i.test('K'), /\\w/iu.test('\\u017F'), /\\w/i.test('\\u017F'))" == ["false true false true true false"]
+#guard out "try { /(a+)+b/.test('a'.repeat(40)); print('matched') } catch (e) { print(e.name) }" == ["RangeError"]
+#guard out "var r = []; for (var p of ['(?<a>x)(?<a>y)', '(?ii:a)', '(?-:a)', '[a&&&b]', '\\\\p{InAdlam}', '(?<1a>x)', 'a{', '\\\\k<x>']) { try { new RegExp(p, 'v'); r.push('ok') } catch (e) { r.push(e.name) } } print(r.join())" == ["SyntaxError,SyntaxError,SyntaxError,SyntaxError,SyntaxError,SyntaxError,SyntaxError,SyntaxError"]
+#guard out "print(/\\1(a)/.exec('a')[0], /\\8/.test('8'), /[\\c_]/.test('\\x1f'), /a{/.test('a{'), /\\k<x>/.test('k<x>'), 'aaa'.split(/a/).length, 'a,b,,c'.split(/,/).join('|'))" == ["a true true true true 4 a|b||c"]
+
 end L4Factoidal.JS.Tests

@@ -2209,8 +2209,10 @@ L4Factoidal_JS_Re_alternative  # (b) as L4Factoidal_JS_Re_disjunction
 L4Factoidal_JS_Re_term  # (b) as L4Factoidal_JS_Re_disjunction
 L4Factoidal_JS_Re_atomP  # (b) as L4Factoidal_JS_Re_disjunction
 L4Factoidal_JS_Re_resolve  # (b) named back references resolved over the parsed pattern: depth is its group nesting
-L4Factoidal_JS_Re_groupCount  # (b) the capture count of a quantified atom: depth is its group nesting
-L4Factoidal_JS_Re_matchNode  # (b) the backtracking matcher (§22.2.2 continuations): depth is the pattern's nesting plus one level per repetition of a quantified group or sequence element matched so far; a repetition of one character matcher (.*, [a-z]+) is a loop, so the common long runs do not nest; fuel 64 * input length + 4096
+L4Factoidal_JS_Re_setOperand  # (b) the class set parser of the `v` flag (JS/Regex.lean): depth is the nesting of classes, at most Re.classDepth = 256 (deeper is a SyntaxError)
+L4Factoidal_JS_Re_setContents  # (b) as L4Factoidal_JS_Re_setOperand
+L4Factoidal_JS_Re_itemHas  # (b) class membership over the parsed class: depth is its nesting of classes, at most Re.classDepth = 256
+L4Factoidal_JS_Re_mergeRanges  # (c) Array.qsort over the General_Category ranges of the built-in Unicode table (Regex/UnicodeProps), a fixed input of a few thousand ranges, never page data
 L4Factoidal_JS_proxyTrap  # (c) a Proxy handler's trap: one [[Get]] on the handler, as L4Factoidal_JS_get*
 L4Factoidal_JS_hasProp  # (c) HasProperty: a `has` trap is a call, as L4Factoidal_JS_call*; a proxy of a proxy adds one level per proxy
 L4Factoidal_JS_ownKeysOf  # (c) OwnPropertyKeys: an `ownKeys` trap is a call, as L4Factoidal_JS_call*; one level per proxy in a chain
@@ -2218,7 +2220,7 @@ L4Factoidal_JS_elemAt  # (c) an Array iteration method's element: HasProperty an
 L4Factoidal_JS_arrayLikeLength  # (c) LengthOfArrayLike: [[Get]] of length and ToNumber are calls, as L4Factoidal_JS_get* and L4Factoidal_JS_to*
 L4Factoidal_JS_defineOwnProp  # (c) [[DefineOwnProperty]]: a defineProperty trap is a call and a Proxy passes the request to its target, one level per proxy, as L4Factoidal_JS_ownDesc
 L4Factoidal_JS_ownDesc  # (c) GetOwnProperty: a `getOwnPropertyDescriptor` trap and the descriptor's getters, as L4Factoidal_JS_get*
-L4Factoidal_JS_regexExec  # (c) RegExpBuiltinExec: lastIndex read and written through [[Get]]/[[Set]], as L4Factoidal_JS_get* and L4Factoidal_JS_put*; the match itself is L4Factoidal_JS_Re_matchNode
+L4Factoidal_JS_regexExec  # (c) RegExpBuiltinExec: lastIndex read and written through [[Get]]/[[Set]], as L4Factoidal_JS_get* and L4Factoidal_JS_put*; the match itself is L4Factoidal_JS_Re_run, a loop with a step budget (no recursion)
 L4Factoidal_JS_regExpExecG  # (c) RegExpExec (§22.2.7.1): the `exec` property read and called, as L4Factoidal_JS_get* and L4Factoidal_JS_call*; the built-in exec is L4Factoidal_JS_regexExec
 L4Factoidal_JS_regexpSymbol  # (b)(c) RegExp.prototype[@@match/@@replace/@@search/@@split/@@matchAll]: a loop over matches whose iterations are bounded by the string's length (each step advances lastIndex); exec, getters and the replacer are calls, as L4Factoidal_JS_call*
 L4Factoidal_JS_stringSymDispatch  # (c) String.prototype.match/replace/search/split/matchAll: one read of the argument's symbol method and one call, as L4Factoidal_JS_get* and L4Factoidal_JS_call*

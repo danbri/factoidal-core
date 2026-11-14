@@ -133,51 +133,15 @@ def fail {α} (msg : String) : P α := do
   let t ← peek
   throw s!"SyntaxError: {msg} at {describe t} (offset {t.pos})"
 
-/-- The modifier groups of a pattern (`(?ims-ims:`, ES2025 §22.2.1) are well formed: only
-`i`, `m` and `s`, none twice, not both lists empty, and a `:` after them. -/
-def modifiersValid (pat : String) : Bool := Id.run do
-  let cs := pat.toList.toArray
-  let mut i := 0
-  for _ in [0:cs.size + 1] do
-    if i + 2 ≥ cs.size then break
-    if cs[i]! == '\\' then i := i + 2; continue
-    if cs[i]! == '(' && cs[i+1]! == '?' && !":=!<".contains cs[i+2]! then
-      let mut j := i + 2
-      let mut seen : List Char := []
-      let mut dash := false
-      let mut addN := 0
-      let mut remN := 0
-      for _ in [0:cs.size] do
-        if j ≥ cs.size then break
-        let c := cs[j]!
-        if c == ':' then break
-        if c == '-' then
-          if dash then return false
-          dash := true; j := j + 1; continue
-        if !"ims".contains c || seen.contains c then return false
-        seen := c :: seen
-        if dash then remN := remN + 1 else addN := addN + 1
-        j := j + 1
-      if j ≥ cs.size || cs[j]! != ':' then return false
-      if dash && addN == 0 && remN == 0 then return false
-      i := j + 1
-    else i := i + 1
-  true
-
-#guard modifiersValid "(?i:a)(?-m:b)(?s-i:c)" && !modifiersValid "(?ii:a)" && !modifiersValid "(?-:a)"
-#guard !modifiersValid "(?i-i:a)" && !modifiersValid "(?g:a)" && !modifiersValid "(?i)" && modifiersValid "\\(?x"
-
 /-- A regular expression literal: its pattern and flags are checked as the source is parsed
-(early errors, §13.2.7.2), with the evaluator's compiler. A pattern it cannot take only for
-want of a feature (the `v` flag's set syntax, a well-formed modifier group) or a size limit is
-left to the evaluation, which reports it there as before. -/
+(early errors, §13.2.7.2), with the evaluator's compiler. A pattern refused only for a size
+limit is left to the evaluation, which reports it there as before. -/
 def regexLiteral (body flags : String) : P Expr := do
   match Re.compile body flags with
   | .ok _ => pure (.regex body flags)
   | .error e =>
     let limit := e.endsWith "too deep" || e.endsWith "too long"
-    let feature := flags.contains 'v' || (e.endsWith "invalid group" && modifiersValid body)
-    if limit || feature then pure (.regex body flags)
+    if limit then pure (.regex body flags)
     else fail (if e.startsWith "SyntaxError: " then (e.drop 13).toString else e)
 
 def expectP (p : String) : P Unit := do

@@ -1547,9 +1547,8 @@ def substitution (rep : String) (matched : String) (pos : Nat) (cs : Array Char)
       match (List.range (r.size - i)).find? (fun k => r[i + 2 + k]? == some '>') with
       | some k =>
         let name := String.ofList (r.extract (i + 2) (i + 2 + k)).toList
-        match names.find? (·.1 == name) with
-        | some (_, g) => out := out ++ (caps[g-1]?.join).getD ""
-        | none => pure ()
+        -- a duplicated name: the group of that name that took part
+        out := out ++ ((names.filter (·.1 == name)).toList.findSome? fun (_, g) => caps[g-1]?.join).getD ""
         i := i + 3 + k
       | none => out := out.push '$'; i := i + 1
     else out := out.push '$'; i := i + 1
@@ -6911,6 +6910,18 @@ def jsonStr : Nat → Value → Nat → M Value
         pure (.str ("{" ++ ",".intercalate parts ++ "}"))
 termination_by structural n _ _ => n
 
+/-- One search of a compiled pattern from `start` (`Re.execR`): the captures or none. Its
+steps are charged to the script (one step for each 64 of the matcher), and a pattern that
+spends the matcher's whole budget (`Re.budgetFor`) is a RangeError, the defined refusal of a
+catastrophic pattern. -/
+def reExec (re : Re.Compiled) (cs : Array Char) (start : Nat) : M (Option Re.Caps) := do
+  let (r, used) := Re.execR re cs start
+  charge (used / 64 + 1)
+  match r with
+  | .ok caps => pure (some caps)
+  | .none => pure none
+  | .limit => throwErr .range "Maximum regular expression backtracking exceeded"
+
 /-- RegExpBuiltinExec (§22.2.7.2) on a RegExp value: the captures, with `lastIndex` read
 and written for a global or sticky one. -/
 def regexExec : Nat → Value → String → M (Option (Array (Option (Nat × Nat))))
@@ -6924,18 +6935,14 @@ def regexExec : Nat → Value → String → M (Option (Array (Option (Nat × Na
     if g && li > Float.ofNat cs.size then
       putV n rv "lastIndex" (.num 0) true
       return none
-    -- The matcher's own fuel bounds one match (Re.matchFuel); the steps count it, so a
-    -- loop of matches over a long string stops at the budget.
-    match Re.exec re cs start with
+    -- The matcher's steps are charged (`reExec`), so a loop of matches over a long string
+    -- stops at the script's budget.
+    match ← reExec re cs start with
     | none =>
-      -- a sticky match is tried at `start` only (`Re.exec`): the rest of the subject is not
-      -- walked, and takes no steps
-      charge (if re.flags.sticky then 1 else (cs.size - start) / 64 + 1)
       if g then putV n rv "lastIndex" (.num 0) true
       pure none
     | some caps =>
       let e := match caps[0]? with | some (some (_, b)) => b | _ => start
-      charge ((e - start) / 64 + 1)
       if g then
         putV n rv "lastIndex" (.num (Float.ofNat e)) true
       pure (some caps)
@@ -6990,11 +6997,29 @@ def matchArray : Nat → Re.Compiled → String → Array (Option (Nat × Nat)) 
     let start := match caps[0]? with | some (some (a, _)) => a | _ => 0
     defineOwn aid "index" (.data (.num (Float.ofNat start)) true true true)
     defineOwn aid "input" (.data (.str s) true true true)
-    let groups ← if re.names.isEmpty then pure Value.undef else do
+    let named := re.namedGroups
+    let groups ← if named.isEmpty then pure Value.undef else do
       let o ← alloc { proto := .null }
-      for (nm, k) in re.names do defineOwn o nm (.data (vals.getD k .undef) true true true)
+      for (nm, ks) in named do
+        defineOwn o nm (.data ((ks.findSome? fun k => match caps[k]? with
+          | some (some _) => some (vals.getD k .undef) | _ => none).getD .undef) true true true)
       pure (.obj o)
     defineOwn aid "groups" (.data groups true true true)
+    -- MakeMatchIndicesIndexPairArray (§22.2.7.8) for the `d` flag
+    if re.flags.hasIndices then
+      let pairs ← caps.mapM fun c => match c with
+        | some (a, b) => newArray #[.num (Float.ofNat a), .num (Float.ofNat b)]
+        | none => pure .undef
+      let ind ← newArray pairs
+      if let .obj iid := ind then
+        let igroups ← if named.isEmpty then pure Value.undef else do
+          let o ← alloc { proto := .null }
+          for (nm, ks) in named do
+            defineOwn o nm (.data ((ks.findSome? fun k => match caps[k]? with
+              | some (some _) => some (pairs.getD k .undef) | _ => none).getD .undef) true true true)
+          pure (.obj o)
+        defineOwn iid "groups" (.data igroups true true true)
+      defineOwn aid "indices" (.data ind true true true)
     pure arr
 termination_by structural n _ _ _ => n
 
@@ -7249,7 +7274,7 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
         | _ => do newRegExp (← toStr n a0) (if id == .stringMatchAll then "g" else "")
       let (re, src, fl) ← regexpOf rx
       if id == .stringSearch then
-        return match Re.exec { re with flags := { re.flags with global := false, sticky := re.flags.sticky } } (charsOf s) 0 with
+        return match ← reExec { re with flags := { re.flags with global := false, sticky := re.flags.sticky } } (charsOf s) 0 with
           | some caps => match caps[0]? with | some (some (a, _)) => .num (Float.ofNat a) | _ => .num (-1)
           | none => .num (-1)
       if id == .stringMatch && !re.flags.global then
@@ -7268,7 +7293,7 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
         | some caps =>
           let (a, b) := match caps[0]? with | some (some p) => p | _ => (0, 0)
           out := out.push (← if id == .stringMatch then pure (.str (Str.ofUnitChars (cs.extract a b))) else matchArray n re s caps)
-          if a == b then putV n rx "lastIndex" (.num (Float.ofNat (b + 1))) true
+          if a == b then putV n rx "lastIndex" (.num (Float.ofNat (b + Re.widthAt cs re.flags.uv b))) true
       if id == .stringMatch then
         return ← (if out.isEmpty then pure .null else newArray out)
       let arr ← newArray out
@@ -7290,7 +7315,7 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
           found := found.push caps
           if !re.flags.global then break
           match caps[0]? with
-          | some (some (a, b)) => if a == b then putV n a0 "lastIndex" (.num (Float.ofNat (b + 1))) true
+          | some (some (a, b)) => if a == b then putV n a0 "lastIndex" (.num (Float.ofNat (b + Re.widthAt cs re.flags.uv b))) true
           | _ => pure ()
       let mut out := ""
       let mut last := 0
@@ -7304,7 +7329,9 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
             let capVals := capStrs.map fun c => match c with | some t => Value.str t | none => .undef
             let groups ← if re.names.isEmpty then pure #[] else do
               let o ← alloc { proto := .null }
-              for (nm, k) in re.names do defineOwn o nm (.data (capVals.getD (k - 1) .undef) true true true)
+              for (nm, ks) in re.namedGroups do
+                defineOwn o nm (.data ((ks.findSome? fun k => match capStrs[k - 1]? with
+                  | some (some t) => some (Value.str t) | _ => none).getD .undef) true true true)
               pure #[Value.obj o]
             toStr n (← callV n a1 .undef (#[.str matched] ++ capVals ++ #[.num (Float.ofNat a), .str s] ++ groups))
           else match substitution replStr matched a cs capStrs re.names with
@@ -7324,18 +7351,22 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
       if lim == 0 then return ← newArray #[]
       let sticky := { re with flags := { re.flags with sticky := true, global := false } }
       if cs.isEmpty then
-        return ← newArray (if (Re.exec sticky cs 0).isSome then #[] else #[.str s])
+        return ← newArray (if (← reExec sticky cs 0).isSome then #[] else #[.str s])
       let mut out : Array Value := #[]
       let mut p := 0
       let mut q := 0
+      -- the sticky attempts at q, q + 1, … of §22.2.6.14 are one search from q: its first
+      -- match starts at the first q where a sticky attempt matches
+      let searchRe := { re with flags := { re.flags with sticky := false, global := false } }
       for _ in [0:cs.size + 1] do
         if q ≥ cs.size then break
-        charge (cs.size / 64 + 1)
-        match Re.exec sticky cs q with
-        | none => q := q + 1
+        match ← reExec searchRe cs q with
+        | none => break
         | some caps =>
-          let e := match caps[0]? with | some (some (_, b)) => min b cs.size | _ => q
-          if e == p then q := q + 1
+          let (a, e) := match caps[0]? with | some (some (a, b)) => (a, min b cs.size) | _ => (q, q)
+          if a ≥ cs.size then break
+          q := a
+          if e == p then q := q + Re.widthAt cs re.flags.uv q
           else
             out := out.push (.str (Str.ofUnitChars (cs.extract p q)))
             if out.size == lim then return ← newArray out
