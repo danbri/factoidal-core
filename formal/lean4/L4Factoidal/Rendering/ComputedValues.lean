@@ -25,6 +25,7 @@ def length : CSS.Length → String
   | .percent v => FloatFormat.format v ++ "%"
   | .vw v => FloatFormat.format v ++ "vw"
   | .vh v => FloatFormat.format v ++ "vh"
+  | .calc p v => "calc(" ++ FloatFormat.format (p * 100) ++ "% + " ++ px v ++ ")"
 
 /-- `none` for a maximum that is `auto` here (CSS 2.1 §10.4, §10.7). -/
 def maxLength : CSS.Length → String

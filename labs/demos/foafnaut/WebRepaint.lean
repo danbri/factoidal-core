@@ -34,6 +34,7 @@ private def lengthEq : CSS.Length → CSS.Length → Bool
   | .percent a, .percent b => a == b
   | .vw a, .vw b => a == b
   | .vh a, .vh b => a == b
+  | .calc a c, .calc b d => a == b && c == d
   | _, _ => false
 private def edgesEq (a b : Edges) : Bool :=
   a.top == b.top && a.right == b.right && a.bottom == b.bottom && a.left == b.left
@@ -52,7 +53,7 @@ def sameShape (a b : Computed) : Bool :=
     lineHeightFactor,visible,clipOverflow,underline,decorationColor,preformatted,borderWidth,borderStyle,
     _borderColor,borderSpacingX,borderSpacingY,borderCollapse,captionBottom,verticalAlign,tableFixed,
     minWidth,maxWidth,minHeight,maxHeight,objectFit,textAlign,direction,unicodeBidi,autoMarginLeft,autoMarginRight,
-    autoMarginTop,autoMarginBottom,align,flex⟩ =>
+    autoMarginTop,autoMarginBottom,align,flex,pos⟩ =>
   display == b.display && lengthEq width b.width && lengthEq height b.height &&
   edgesEq margin b.margin && edgesEq padding b.padding &&
   background.isSome == b.background.isSome && fontSize == b.fontSize && fontFamily == b.fontFamily &&
@@ -68,7 +69,7 @@ def sameShape (a b : Computed) : Bool :=
   textAlign == b.textAlign && direction == b.direction && unicodeBidi == b.unicodeBidi &&
   autoMarginLeft == b.autoMarginLeft && autoMarginRight == b.autoMarginRight &&
   autoMarginTop == b.autoMarginTop && autoMarginBottom == b.autoMarginBottom &&
-  align.same b.align && flex.same b.flex
+  align.same b.align && flex.same b.flex && pos.same b.pos
 
 /-- The same style, colours included. -/
 def same (a b : Computed) : Bool :=

@@ -11,6 +11,9 @@ namespace L4Factoidal.Rendering.CSS
 inductive Length where
   | auto | px (value : Float) | percent (value : Float)
   | vw (value : Float) | vh (value : Float)
+  /-- A percentage (as a fraction) plus px: `calc(50% - 8px)`, and what a `border-box`
+  percentage is as a content-box size. -/
+  | calc (percent : Float) (px : Float)
   deriving Repr
 
 /-- The same length (a NaN is not the same as itself, as with `==` on floats). -/
@@ -20,6 +23,7 @@ def Length.same : Length → Length → Bool
   | .percent a, .percent b => a == b
   | .vw a, .vw b => a == b
   | .vh a, .vh b => a == b
+  | .calc a c, .calc b d => a == b && c == d
   | _, _ => false
 
 /-- An exact number of the property table as a float. -/
@@ -44,6 +48,21 @@ def lengthOfComponent : CssValues.CV → Option Length
   | .tok (.pct v) => some (.percent (ratToFloat v / 100))
   | .tok (.num v _) => if v == 0 then some (.px 0) else none
   | .tok (.ident "auto") => some .auto
+  | .fn "calc" args =>
+    -- the computed form of a sum of a percentage and a length: `calc(P% + Npx)`, `calc(P% - Npx)`
+    match CssValues.stripWs args with
+    | [.tok (.pct p), .tok (.delim '+'), .tok (.dim v _ "px")] => some (.calc (ratToFloat p / 100) (ratToFloat v))
+    | [.tok (.pct p), .tok (.delim '-'), .tok (.dim v _ "px")] => some (.calc (ratToFloat p / 100) (-(ratToFloat v)))
+    | [.tok (.dim v _ "px"), .tok (.delim '+'), .tok (.pct p)] => some (.calc (ratToFloat p / 100) (ratToFloat v))
+    | [.tok (.dim v _ "px"), .tok (.delim '-'), .tok (.pct p)] => some (.calc (-(ratToFloat p / 100)) (ratToFloat v))
+    | _ => none
+  | _ => none
+
+/-- The text `calc(P% + Npx)` or `calc(P% - Npx)` as a length: the computed form of a sum
+of a percentage and a length. -/
+def calcLengthOfText (text : String) : Option Length :=
+  match CssValues.stripWs (CssValues.CV.parse text) with
+  | [.fn "calc" args] => lengthOfComponent (.fn "calc" args)
   | _ => none
 
 /-- A length-valued property read through the property table. Viewport units are read
@@ -193,6 +212,10 @@ def alignShorthand (property value : String) : Option (List (String × String)) 
 #guard ((AlignStyle.set 10 {} "row-gap" "10%").map fun a => match a.rowGap with | .percent v => v | _ => -1) == some 0.1
 #guard ((AlignStyle.set 16 {} "order" "-3").map (·.order)) == some (-3)
 #guard (AlignStyle.set 16 {} "color" "red").isNone
+#guard ((tableLength 10 "width" "calc(100% - 2em)").map fun l => match l with | .calc p x => (p, x) | _ => (0, 0)) == some (1, -20)
+#guard ((tableLength 10 "width" "calc(1em + 50%)").map fun l => match l with | .calc p x => (p, x) | _ => (0, 0)) == some (0.5, 10)
+#guard ((tableLength 10 "width" "calc(1em * 3)").map fun l => match l with | .px x => x | _ => 0) == some 30
+#guard ((tableLength 10 "width" "12vw").map fun l => match l with | .vw x => x | _ => 0) == some 0.12
 #guard alignShorthand "gap" "4px 8px" == some [("row-gap", "4px"), ("column-gap", "8px")]
 #guard alignShorthand "gap" "4px" == some [("row-gap", "4px"), ("column-gap", "4px")]
 #guard alignShorthand "place-items" "center" == some [("align-items", "center"), ("justify-items", "center")]

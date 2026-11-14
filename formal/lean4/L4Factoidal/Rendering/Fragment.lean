@@ -31,13 +31,25 @@ structure Box where
   height : Float
   deriving Repr
 
+/-- An absolutely positioned box (CSS Positioned Layout 3 §2.1: `absolute` or `fixed`) that
+is not laid out yet: its containing block is an ancestor's padding box, known only when
+that ancestor's height is. `(x,y)` is its static position (§4.1): where its margin box
+would be in the flow. -/
+structure Pending where
+  id : Nat
+  x : Float
+  y : Float
+  deriving Repr
+
 /-- A laid-out fragment. For a box, `boxes[0]` is its own border box and `height` is the
-height of its margin box. -/
+height of its margin box. `pending` are the absolutely positioned descendants that the
+nearest positioned ancestor (or the root) still has to lay out. -/
 structure Result where
   nodes : Array Node := #[]
   boxes : Array Box := #[]
   runs : Array GlyphRun := #[]
   height : Float := 0
+  pending : Array Pending := #[]
   deriving Repr
 instance : Inhabited Result := ⟨{}⟩
 
@@ -47,11 +59,13 @@ def Result.shift (dx dy : Float) (r : Result) : Result :=
   if dx == 0 && dy == 0 then r else
   {r with nodes := if r.nodes.isEmpty then #[] else #[.group none ⟨1,0,0,1,dx,dy⟩ r.nodes.toList],
           boxes := r.boxes.map fun b => {b with x := b.x+dx, y := b.y+dy},
-          runs := r.runs.map fun run => {run with glyphs := run.glyphs.map fun g => {g with x := g.x+dx, y := g.y+dy}}}
+          runs := r.runs.map fun run => {run with glyphs := run.glyphs.map fun g => {g with x := g.x+dx, y := g.y+dy}},
+          pending := r.pending.map fun p => {p with x := p.x+dx, y := p.y+dy}}
 
 /-- Two fragments in one: the paint of `b` over that of `a`. The height is `a`'s. -/
 def Result.over (a b : Result) : Result :=
-  {a with nodes := a.nodes ++ b.nodes, boxes := a.boxes ++ b.boxes, runs := a.runs ++ b.runs}
+  {a with nodes := a.nodes ++ b.nodes, boxes := a.boxes ++ b.boxes, runs := a.runs ++ b.runs,
+          pending := a.pending ++ b.pending}
 
 /-- What a parent formatting context imposes on a child box. -/
 structure Constraints where
@@ -123,11 +137,38 @@ def collectItems (dom : Dom) (styles : Array Computed) (container : Nat) : Array
     if n.type == .text then
       text := text.push k
     else if n.type == .element then
-      if (styles[k]!).display != .none then
+      -- an absolutely positioned child is not an item (CSS Flexbox 1 §4.1)
+      if (styles[k]!).display != .none && !(styles[k]!).pos.isAbsolute then
         if text.any (fun t => !blankText (dom.get t).data) then out := out.push (.anonymous container text)
         text := #[]
         out := out.push (.element k)
   if text.any (fun t => !blankText (dom.get t).data) then out := out.push (.anonymous container text)
   return out
+
+/-- The absolutely positioned element children of a container that lays out items: each
+is pending at the content box's start corner (its static position, CSS Flexbox 1 §4.1,
+without the alignment that section adds). -/
+def absoluteChildren (dom : Dom) (styles : Array Computed) (container : Nat) (x y : Float) : Array Pending :=
+  (dom.get container).kids.filterMap fun k =>
+    if (dom.get k).type == .element && (styles[k]!).display != .none && (styles[k]!).pos.isAbsolute
+    then some ⟨k,x,y⟩ else none
+
+/-- `box-sizing: border-box` (CSS Sizing 3 §3.3) taken out of a style: `width`, `height`
+and their limits as content-box sizes, which is what the layout reads. A percentage
+becomes that percentage less the padding and border. A table's `width` is read as its
+border box by the table layout itself. -/
+def contentBoxed (s : Computed) : Computed :=
+  if !s.pos.borderBox || s.display.isTable then s else
+  let b := s.borderEdges
+  let p := s.padding
+  let h := b.left+b.right+p.left+p.right
+  let v := b.top+b.bottom+p.top+p.bottom
+  let less := fun (d : Float) (l : CSS.Length) => match l with
+    | .px w => CSS.Length.px (max 0 (w-d))
+    | .percent q => .calc q (-d)
+    | .calc q x => .calc q (x-d)
+    | other => other
+  {s with width := less h s.width, minWidth := less h s.minWidth, maxWidth := less h s.maxWidth,
+          height := less v s.height, minHeight := less v s.minHeight, maxHeight := less v s.maxHeight}
 
 end L4Factoidal.Rendering.Layout

@@ -1,4 +1,5 @@
 import L4Factoidal.Rendering.BoxAlign
+import L4Factoidal.Rendering.BoxPosition
 
 /-! Computed values of flex containers and flex items (CSS Flexible Box Layout 1 §5 and
 §7): `Computed.flex`. Values are read through the property table, as in `BoxAlign`. -/
@@ -111,6 +112,7 @@ def layoutShorthand (property value : String) : Option (List (String × String))
   let p := if property.startsWith "-webkit-" then CssValues.propertyName property else property
   if p == "flex" then flexShorthand value
   else if p == "flex-flow" then CssValues.expand p value
+  else if p == "inset" then positionShorthand p value
   else alignShorthand p value
 
 #guard flexShorthand "1" == some [("flex-grow", "1"), ("flex-shrink", "1"), ("flex-basis", "0%")]

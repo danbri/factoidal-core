@@ -110,7 +110,7 @@ theorem render_links {dom : Dom} {rules : List CSS.Rule} {font : FontProfile} {e
     {scene : Scene} {boxes : Array Box}
     (ok : render dom rules font embedding width height textScale state pictures treeScope = .ok (scene,boxes)) :
     ∃ (styles : Array Computed) (result : Result),
-      block dom styles font embedding pictures 64 0 0 0 (Float.ofNat width) = .ok result ∧
+      layoutRoot dom styles font embedding pictures (Float.ofNat width) (Float.ofNat height) = .ok result ∧
       boxes = result.boxes ∧
       scene.links = linkRegions dom styles boxes (Float.ofNat width)
         (linkHeight (Float.ofNat height) result.height) := by
@@ -138,7 +138,7 @@ theorem render_link_complete {dom : Dom} {rules : List CSS.Rule} {font : FontPro
     {pictures : Pictures} {treeScope : Option CSS.TreeScope} {scene : Scene} {boxes : Array Box}
     (ok : render dom rules font embedding width height textScale state pictures treeScope = .ok (scene,boxes)) :
     ∃ (styles : Array Computed) (result : Result),
-      block dom styles font embedding pictures 64 0 0 0 (Float.ofNat width) = .ok result ∧
+      layoutRoot dom styles font embedding pictures (Float.ofNat width) (Float.ofNat height) = .ok result ∧
       boxes = result.boxes ∧
       ∀ box ∈ boxes, ∀ (c : Box) (source : Nat) (href : String),
         anchorAncestor dom (dom.size+1) box.source = some (source,href) →

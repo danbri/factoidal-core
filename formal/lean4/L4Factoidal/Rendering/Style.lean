@@ -143,6 +143,8 @@ structure Computed where
   align : AlignStyle := {}
   /-- The flex container and flex item values (`Rendering/FlexStyle.lean`). -/
   flex : FlexStyle := {}
+  /-- Positioning, floats and box sizing (`Rendering/BoxPosition.lean`). -/
+  pos : PositionStyle := {}
   deriving Repr
 instance : Inhabited Computed := ⟨{}⟩
 
@@ -663,9 +665,12 @@ def length (s : String) : Except String Length := do
   if s.endsWith "vw" then return .vw ((← number ((s.dropEnd 2).toString))/100)
   if s.endsWith "vh" then return .vh ((← number ((s.dropEnd 2).toString))/100)
   if s == "0" then return .px 0
+  if s.startsWith "calc(" then
+    if let some l := calcLengthOfText s then return l
   throw s!"unsupported CSS length unit: {s}"
 def resolve (basis : Float) : Length → Option Float
   | .auto | .vw _ | .vh _ => none | .px n => some n | .percent n => some (basis*n)
+  | .calc p n => some (basis*p+n)
 /-- CSS Values 4 §6.2: viewport units, computed once the viewport is known. -/
 def Length.atViewport (width height : Float) : Length → Length
   | .vw n => .px (n*width).floor
@@ -867,6 +872,7 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     -- The values of flex and grid layout: each reader checks the property name first.
     if let some flex := s.flex.set s.fontSize property d.value then return {s with flex}
     if let some align := s.align.set s.fontSize property d.value then return {s with align}
+    if let some pos := s.pos.set s.fontSize property d.value then return {s with pos}
     throw s!"unsupported CSS property: {d.property}"
 
 /-- A value or property this profile can not use leaves the style as it was. -/
@@ -1477,6 +1483,8 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
   if ["html","body"].contains n.lname then result := {result with clipOverflow := false}
   -- The children of a flex or grid container are its items: blockified.
   if parent.display.isFlex || parent.display.isGrid then result := {result with display := result.display.blockified}
+  -- CSS 2.1 §9.7: an absolutely positioned or floated box is a block.
+  if result.pos.isAbsolute || result.pos.float != .none then result := {result with display := result.display.blockified}
   let decoration := parent.decorationColor.orElse (fun _ => if result.underline then some result.color else none)
   return {result with underline := decoration.isSome, decorationColor := decoration}
 
@@ -1511,7 +1519,8 @@ def computeAllWith (matchesOf : Nat → List Match) (dom : Dom) (textScale : Flo
         display := .inline, width := .auto, height := .auto,
         margin := {}, padding := {}, background := none, clipOverflow := false,
         borderStyle := .none, borderWidth := ⟨3,3,3,3⟩, borderColor := none,
-        autoMarginLeft := false, autoMarginRight := false, unicodeBidi := .normal}
+        autoMarginLeft := false, autoMarginRight := false, unicodeBidi := .normal,
+        autoMarginTop := false, autoMarginBottom := false, align := {}, flex := {}, pos := {}}
       styles := styles.set! id style
       pending := n.kids.toList ++ rest
   throw "DOM style traversal exceeds arena bound"

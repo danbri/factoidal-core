@@ -302,6 +302,9 @@ inductive Inline where
   /-- A bidi control character that an inline box with `unicode-bidi` adds (CSS
   Writing Modes 3 §2.4.2): no width, no paint. -/
   | bidiMark (c : Char)
+  /-- An absolutely positioned element inside inline content: no width, no paint; its
+  place in the line is its static position (`Result.pending`). -/
+  | outOfFlow (source : Nat)
   deriving Repr
 instance : Inhabited Inline := ⟨.closeAtomic⟩
 
@@ -425,6 +428,7 @@ def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) (p
     if s.display == .none then return #[]
     if n.type == .text then return (textItems id s n.data).toArray
     if n.type != .element then return #[]
+    if s.pos.isAbsolute then return #[.outOfFlow id]
     -- A replaced element with a picture: an `img`, and later a `video` or `canvas`.
     if let some picture := pictures id then
       let (w,h) := replacedSize s (some picture.size) available
@@ -517,7 +521,8 @@ its glyph positions moved by the same amount. -/
 private def shiftResult (dx dy : Float) (r : Result) : Result :=
   let boxes := r.boxes.map fun b => {b with x := b.x+dx, y := b.y+dy}
   let runs := r.runs.map fun run => {run with glyphs := run.glyphs.map fun g => {g with x := g.x+dx, y := g.y+dy}}
-  {r with nodes := #[.group none (translate dx dy) r.nodes.toList], boxes, runs}
+  {r with nodes := #[.group none (translate dx dy) r.nodes.toList], boxes, runs,
+          pending := r.pending.map fun p => {p with x := p.x+dx, y := p.y+dy}}
 
 /-- CSS 2.1 §10.6.1: the background of inline text covers its content area, the
 font's ascent and descent, from `top`. -/
@@ -555,7 +560,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
       | .top => tallTop := max tallTop h
       | .bottom => tallBottom := max tallBottom h
     | .atomic _ _ h _ => ascent := max ascent h
-    | .openAtomic _ _ | .closeAtomic | .bidiMark _ => pure ()
+    | .openAtomic _ _ | .closeAtomic | .bidiMark _ | .outOfFlow _ => pure ()
   -- A box aligned to the top or bottom of the line makes the line tall enough for it.
   if tallBottom > ascent+descent then ascent := tallBottom-descent
   if tallTop > ascent+descent then descent := tallTop-ascent
@@ -609,12 +614,15 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
       let moved := shiftResult (x+offset) top inner
       -- `inner` holds the border box of the inline-block first, then its content boxes.
       let _ := width
-      out := {out with nodes := out.nodes ++ moved.nodes, runs := out.runs ++ moved.runs, boxes := out.boxes ++ moved.boxes}
+      out := {out with nodes := out.nodes ++ moved.nodes, runs := out.runs ++ moved.runs, boxes := out.boxes ++ moved.boxes,
+                       pending := out.pending ++ moved.pending}
+    | .outOfFlow source => out := {out with pending := out.pending.push ⟨source,x+offset,y⟩}
     | _ => pure ()
   return out
 
 private def appendResult (a b : Result) : Result :=
-  {nodes := a.nodes ++ b.nodes, boxes := a.boxes ++ b.boxes, runs := a.runs ++ b.runs, height := a.height+b.height}
+  {nodes := a.nodes ++ b.nodes, boxes := a.boxes ++ b.boxes, runs := a.runs ++ b.runs, height := a.height+b.height,
+   pending := a.pending ++ b.pending}
 
 /-- A word of preformatted text: it never wraps. -/
 private def preformatted : Inline → Bool
@@ -630,7 +638,7 @@ private def bidiChars : Inline → Array Char
   | .lineBreak _ => #[' ']
   | .replaced .. | .atomic .. => #['￼']
   | .bidiMark c => #[c]
-  | .openAtomic _ _ | .closeAtomic => #[]
+  | .openAtomic _ _ | .closeAtomic | .outOfFlow _ => #[]
 
 /-- A class that makes a block take the bidi path: right-to-left letters, Arabic
 digits and the explicit formatting characters. -/
@@ -823,7 +831,8 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
   return out
 
 private def append (a b : Result) : Result :=
-  {nodes := a.nodes ++ b.nodes,boxes := a.boxes ++ b.boxes,runs := a.runs ++ b.runs, height := a.height+b.height}
+  {nodes := a.nodes ++ b.nodes,boxes := a.boxes ++ b.boxes,runs := a.runs ++ b.runs, height := a.height+b.height,
+   pending := a.pending ++ b.pending}
 /-- CSS 2.2 §10.3.9 and §10.6.6: an inline-block with `width:auto` is as wide as its
 widest line (at most the room); its content is laid out at the origin inside its
 border and padding. Its bottom margin edge sits on the line's baseline, as a
@@ -902,6 +911,9 @@ inductive Task where
   /-- The contents only of the box of `id` for a border box `width` wide: no decorations
   and no box of its own; the result's `height` is the content height (`Children.content`). -/
   | inner (id : Nat) (width : Float)
+  /-- Absolutely positioned boxes laid out in the containing block `(cx,cy,cw,ch)`: for
+  the root, whose containing block is the viewport (`render`). -/
+  | positioned (pending : Array Pending) (cx cy cw ch : Float)
   deriving Repr
 
 /-- The right edge of what a line layout placed, from its left edge `0`. -/
@@ -912,7 +924,8 @@ private def Result.shiftY (r : Result) (dy : Float) : Result :=
   if dy == 0 then r else
   {r with nodes := if r.nodes.isEmpty then #[] else #[.group none (translate 0 dy) r.nodes.toList],
           boxes := r.boxes.map fun b => {b with y := b.y+dy},
-          runs := r.runs.map fun run => {run with glyphs := run.glyphs.map fun g => {g with y := g.y+dy}}}
+          runs := r.runs.map fun run => {run with glyphs := run.glyphs.map fun g => {g with y := g.y+dy}},
+          pending := r.pending.map fun p => {p with y := p.y+dy}}
 
 /-- The style of the contents of a cell: the cell's own, or for an anonymous cell
 its parent's, with no box edges (an anonymous box has none). -/
@@ -942,7 +955,7 @@ private def sizesItself (dom : Dom) (styles : Array Computed) (pictures : Pictur
   let s := styles[id]!
   let n := dom.get id
   s.display.isFlex || s.display.isGrid || s.display.isTable || (pictures id).isSome ||
-    n.ns == some DOM.svgNS || n.lname == "hr"
+    n.ns == some DOM.svgNS || n.lname == "hr" || s.pos.isPositioned
 
 private def cellStyle (styles : Array Computed) : Table.Source → Computed
   | .element id => styles[id]!
@@ -1007,7 +1020,8 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
           let (c,d) ← intrinsic dom styles font embedding pictures fuel (.table none container run)
           widths := (max widths.1 (max a c),max widths.2 (max b d))
         | .node k =>
-          if (styles[k]!).display.isBlockLevel || (styles[k]!).display.isInlineContainer then
+          if (styles[k]!).pos.isAbsolute then pure ()
+          else if (styles[k]!).display.isBlockLevel || (styles[k]!).display.isInlineContainer then
             let (a,b) ← inlineWidths inline
             inline := #[]
             let (c,d) ← intrinsic dom styles font embedding pictures fuel (.box k)
@@ -1082,6 +1096,7 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
     | .table element container kids => tableWidths element container kids
     | .sized id _ _ | .box id => boxWidths id true
     | .inner id _ => boxWidths id false
+    | .positioned _ _ _ _ _ => return (0,0)
 
 /-- Block children stack vertically, and adjacent inline children share an
 anonymous inline formatting context. Width/height use the CSS content box.
@@ -1110,7 +1125,12 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
           content := append content (← layoutTask dom styles font embedding pictures fuel (.table none container run) innerX (innerY+content.height) width)
         | .node child =>
           let cs := styles[child]!
-          if cs.display.isBlockLevel then
+          if cs.pos.isAbsolute then
+            -- Out of flow (CSS 2.1 §9.6): pending at its static position, which is where the
+            -- flow has got to, or its place in the open line.
+            if inline.isEmpty then content := {content with pending := content.pending.push ⟨child,innerX,innerY+content.height⟩}
+            else inline := inline.push (.outOfFlow child)
+          else if cs.display.isBlockLevel then
             if !inline.isEmpty then
               content := append content (← inlineLayout font (← atomize font inline width) innerX (innerY+content.height) width (some s))
               inline := #[]
@@ -1198,6 +1218,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let mut paints : Array Node := #[]
       let mut boxes : Array Box := #[]
       let mut runs : Array GlyphRun := #[]
+      let mut pending : Array Pending := #[]
       for (cell,(r,outer)) in grid.cells.zip laid do
         let cs := cellStyle styles cell.source
         let cx := innerX+colX.getD cell.col 0
@@ -1215,11 +1236,13 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         paints := paints ++ moved.nodes
         boxes := boxes ++ moved.boxes
         runs := runs ++ moved.runs
+        pending := pending ++ moved.pending
       let tableBox : Array Box := match element with
         | some id => #[⟨id,outerX,top,borderWidth,borderHeight⟩]
         | none => #[]
       out := {out with nodes := out.nodes ++ nodes ++ paints, boxes := out.boxes ++ tableBox ++ boxes,
-                       runs := out.runs ++ runs, height := out.height+borderHeight}
+                       runs := out.runs ++ runs, height := out.height+borderHeight,
+                       pending := out.pending ++ pending}
       top := top+borderHeight
       for caption in grid.captions do
         if (styles[caption]!).captionBottom then
@@ -1254,6 +1277,85 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       heightSensitive := fun item => match item with
         | .element id => sizesItself dom styles pictures id
         | .anonymous _ _ => false}
+    -- An absolutely positioned box (CSS 2.1 §10.3.7 and §10.6.4) in the containing block
+    -- `(cx,cy,cw,ch)`; `(sx,sy)` is its static position.
+    let absolute (id : Nat) (sx sy cx cy cw ch : Float) : Except String Result := do
+      let s := styles[id]!
+      if s.display == .none then return {}
+      let m := s.margin
+      let b := s.borderEdges
+      let p := s.padding
+      let edgesX := b.left+b.right+p.left+p.right
+      let edgesY := b.top+b.bottom+p.top+p.bottom
+      let left := CSS.resolve cw s.pos.left
+      let right := CSS.resolve cw s.pos.right
+      let top := CSS.resolve ch s.pos.top
+      let bottom := CSS.resolve ch s.pos.bottom
+      let specified := CSS.resolve cw s.width
+      -- §10.3.7: the width is given, or fills the room between `left` and `right`, or
+      -- shrinks to fit the content.
+      let widthC ← match specified with
+        | some w => pure w
+        | none => match left,right with
+          | some l,some r => pure (cw-l-r-m.left-m.right-edgesX)
+          | _,_ => do
+            let (lo,hi) ← intrinsic dom styles font embedding pictures fuel (.box id)
+            pure (min hi (max lo (cw-left.getD 0-right.getD 0))-m.left-m.right-edgesX)
+      let widthC := max 0 (clampOpt ((CSS.resolve cw s.minWidth).getD 0) (CSS.resolve cw s.maxWidth) widthC)
+      let borderW := widthC+edgesX
+      let outerW := borderW+m.left+m.right
+      let bx := match left,right with
+        | some l,some r =>
+          -- both insets and a width: auto margins take the room that is left
+          let free := cw-l-r-outerW
+          cx+l+(if free > 0 && specified.isSome then
+                  (if s.autoMarginLeft && s.autoMarginRight then free/2 else if s.autoMarginLeft then free else 0)
+                else 0)
+        | some l,none => cx+l
+        | none,some r => cx+cw-r-outerW
+        | none,none => sx
+      -- §10.6.4: the height likewise; with none of these, the height of the content.
+      let minH := (CSS.resolve ch s.minHeight).getD 0
+      let maxH := CSS.resolve ch s.maxHeight
+      let given := CSS.resolve ch s.height
+      let imposed : Option Float := match given with
+        | some h => some (clampOpt minH maxH (max 0 h)+edgesY)
+        | none => match top,bottom with
+          | some t,some e => some (max edgesY (clampOpt (minH+edgesY) (maxH.map (·+edgesY)) (ch-t-e-m.top-m.bottom)))
+          | _,_ => none
+      let by' := match top with
+        | some t => cy+t
+        | none => if bottom.isSome then cy else sy
+      let r ← layoutTask dom styles font embedding pictures fuel (.sized id borderW imposed) bx by' cw
+      match top,bottom with
+      | none,some e => return r.shift 0 (cy+ch-e-r.height-by')
+      | some t,some e =>
+        let free := ch-t-e-r.height
+        if free > 0 && given.isSome then
+          return r.shift 0 (if s.autoMarginTop && s.autoMarginBottom then free/2 else if s.autoMarginTop then free else 0)
+        else return r
+      | _,_ => return r
+    -- The pending absolutely positioned boxes of `content` laid out in the containing block
+    -- `(cx,cy,cw,ch)`: those with a negative `z-index` under the content, the others over it,
+    -- each group in `z-index` order, then tree order (CSS 2.1 Appendix E, in part). A `fixed`
+    -- box stays pending until the root, whose containing block is the viewport.
+    let place (content : Result) (cx cy cw ch : Float) (root : Bool) : Except String Result := do
+      if content.pending.isEmpty then return content
+      let keyed := content.pending.mapIdx fun i p => (((styles[p.id]!).pos.zIndex.getD 0 : Int),i,p)
+      let ordered := if keyed.all (fun k => k.1 == 0) then keyed
+        else keyed.qsort fun a b => a.1 < b.1 || (a.1 == b.1 && a.2.1 < b.2.1)
+      let mut below : Result := {}
+      let mut above : Result := {}
+      let mut kept : Array Pending := #[]
+      for (z,_,p) in ordered do
+        if (styles[p.id]!).pos.position == .fixed && !root then kept := kept.push p
+        else
+          let r ← absolute p.id p.x p.y cx cy cw ch
+          if z < 0 then below := below.over r else above := above.over r
+      return {content with nodes := below.nodes ++ content.nodes ++ above.nodes,
+                           boxes := content.boxes ++ below.boxes ++ above.boxes,
+                           runs := content.runs ++ below.runs ++ above.runs,
+                           pending := kept ++ below.pending ++ above.pending}
     -- An element's box. `imposedWidth` and `imposedHeight` are the border-box sizes that the
     -- parent formatting context decided (`Task.sized`); with `contentOnly` the contents alone
     -- (`Task.inner`).
@@ -1324,20 +1426,57 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
           flexLayout children s (collectItems dom styles id)
             {x := innerX, y := innerY, width, height := definite, minHeight, maxHeight}
         else flow s id n.kids lead innerX innerY width
+      -- The absolutely positioned children of a flex container are not its items.
+      let content := if s.display.isFlex then
+          {content with pending := content.pending ++ absoluteChildren dom styles id innerX innerY}
+        else content
       if contentOnly then return content
       let height := definite.getD (clampOpt minHeight maxHeight content.height)
-      return frameBox id s outerX outerY (width+edgesX) (height+edgesY) content
+      -- A positioned box is the containing block of its absolutely positioned descendants:
+      -- its padding box (CSS 2.1 §10.1).
+      let content ← if s.pos.isPositioned then
+          place content (outerX+border.left) (outerY+border.top) (width+padding.left+padding.right)
+            (height+padding.top+padding.bottom) false
+        else pure content
+      let framed := frameBox id s outerX outerY (width+edgesX) (height+edgesY) content
+      -- CSS 2.1 §9.4.3: a relatively positioned box is moved from where it was laid out; the
+      -- flow after it is as if it had not moved. `left` wins over `right`, `top` over `bottom`.
+      if s.pos.position == .relative then
+        let dx := match CSS.resolve available s.pos.left with
+          | some l => l
+          | none => match CSS.resolve available s.pos.right with | some r => -r | none => 0
+        let dy := match s.pos.top with
+          | .px t => t
+          | _ => match s.pos.bottom with | .px e => -e | _ => 0
+        return framed.shift dx dy
+      return framed
     match task with
     | .contents container kids => flow (styles[container]!) container kids #[] x y available
     | .table element container kids => table element container kids
     | .box id => box id none none false
     | .sized id width height => box id (some width) height false
     | .inner id width => box id (some width) none true
+    | .positioned pending cx cy cw ch => place {pending} cx cy cw ch true
 
 /-- An element's block box: `layoutTask` of `.box id`. -/
 def block (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedding : Embedding)
     (pictures : Pictures) (fuel id : Nat) (x y available : Float) : Except String Result :=
   layoutTask dom styles font embedding pictures fuel (.box id) x y available
+
+/-- The layout of a document in a viewport `vw` by `vh`: the root's block box, then the
+absolutely positioned boxes with no positioned ancestor and the `fixed` boxes, whose
+containing block is the initial one, the viewport (CSS 2.1 §10.1). A box laid out there
+may leave `fixed` descendants pending: a few rounds. A document with no such box is
+`block` alone. -/
+def layoutRoot (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedding : Embedding)
+    (pictures : Pictures) (vw vh : Float) : Except String Result := do
+  let mut laid ← block dom styles font embedding pictures 64 0 0 0 vw
+  for _ in [0:4] do
+    if laid.pending.isEmpty then break
+    let placed ← layoutTask dom styles font embedding pictures 64 (.positioned laid.pending 0 0 vw vh) 0 0 vw
+    laid := {laid with nodes := laid.nodes ++ placed.nodes, boxes := laid.boxes ++ placed.boxes,
+                       runs := laid.runs ++ placed.runs, pending := placed.pending}
+  return laid
 
 /-- The nearest HTML anchor with an href attribute, including href="". -/
 def anchorAncestor (dom : Dom) : Nat → Nat → Option (Nat × String)
@@ -1440,12 +1579,15 @@ def render (dom : Dom) (rules : List CSS.Rule) (font : FontProfile) (embedding :
     {s with width := s.width.atViewport vw vh, height := s.height.atViewport vw vh,
             minWidth := s.minWidth.atViewport vw vh, maxWidth := s.maxWidth.atViewport vw vh,
             minHeight := s.minHeight.atViewport vw vh, maxHeight := s.maxHeight.atViewport vw vh,
-            align := (flexAtViewport vw vh s).align, flex := (flexAtViewport vw vh s).flex}
+            align := (flexAtViewport vw vh s).align, flex := (flexAtViewport vw vh s).flex,
+            pos := (flexAtViewport vw vh s).pos}
+  -- `box-sizing: border-box`: the layout reads content-box sizes.
+  let styles := styles.map contentBoxed
   let canvas := canvasBackground dom styles
   let styles := match canvas with
     | some (id,_) => styles.modify id fun s => {s with background := none}
     | none => styles
-  let result ← block dom styles font embedding pictures 64 0 0 0 vw
+  let result ← layoutRoot dom styles font embedding pictures vw vh
   let result : Result := match canvas with
     | some (id,c) => {result with nodes := #[Node.paint ⟨some id,{geometry := .rect 0 0 vw (max vh result.height),style := {fill := .solid c}}⟩] ++ result.nodes}
     | none => result

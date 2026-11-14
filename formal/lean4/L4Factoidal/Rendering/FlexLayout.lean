@@ -25,6 +25,7 @@ def flexFactor (x : Float) : Nat :=
 def resolveOpt (basis : Option Float) : CSS.Length → Option Float
   | .px v => some v
   | .percent p => basis.map (· * p)
+  | .calc p v => basis.map (· * p + v)
   | _ => none
 
 /-- `align-self` of an item (its own, or the container's `align-items`) as the cross-axis
@@ -376,10 +377,12 @@ def flexIntrinsic (kids : Children) (s : Computed) (items : Array Item) : Except
     hi := hi+gaps
   return (lo,hi)
 
-/-- Viewport lengths of the flex and alignment values, once the viewport is known. -/
+/-- Viewport lengths of the flex, alignment and inset values, once the viewport is known. -/
 def flexAtViewport (width height : Float) (s : Computed) : Computed :=
   {s with align := {s.align with rowGap := s.align.rowGap.atViewport width height,
                                  columnGap := s.align.columnGap.atViewport width height},
+          pos := {s.pos with top := s.pos.top.atViewport width height, right := s.pos.right.atViewport width height,
+                             bottom := s.pos.bottom.atViewport width height, left := s.pos.left.atViewport width height},
           flex := match s.flex.basis with
             | .length l => {s.flex with basis := .length (l.atViewport width height)}
             | _ => s.flex}
