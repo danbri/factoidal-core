@@ -863,7 +863,10 @@ def xmlDocument (contentType source : String) (forScript : Bool := false) : Dom 
       let d := d.linkChild 0 el none
       let (d, t) := d.createTextNode 0 msg
       return d.linkChild el t none
-  d.setNode 0 fun n => { n with contentType := contentType }
+  -- "" keeps the content type that the parsed tree gives (`DOM.parseXmlDocument`: by its root
+  -- element), else `application/xml`
+  d.setNode 0 fun n => { n with contentType := if !contentType.isEmpty then contentType
+    else if n.contentType.isEmpty then "application/xml" else n.contentType }
 
 /-- `create_node(kind + 16 × doc, data)`: the node a script makes, in document `doc`.
 Kinds: 0 `createTextNode`, 1 `createComment`, 2 `createDocumentFragment`, 3
@@ -1006,7 +1009,8 @@ makes of it, or with `xml` the XML parser (an XHTML document; a parse error give
 `parsererror` document of `xmlDocument`). -/
 def frameArena (source : String) (xml : Bool) : Dom :=
   if source.isEmpty then aboutBlank
-  else if xml then xmlDocument "application/xhtml+xml" source
+  -- a frame's XML document: its content type by its root element (XHTML, SVG, other XML)
+  else if xml then xmlDocument "" source
   else parseHtmlDocument source
 
 /-- A frame navigation the document's load event waits for is under way: a `src` URL for the
