@@ -588,6 +588,9 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
       if(!http)return failed;
       try{
         const headers=new Headers();for(const [n,v] of w.headers)headers.append(n,v);
+        // The host's part of a request, as a browser host's HTTP client has: a User-Agent
+        // (navigator.userAgent's value) when the page's script set none.
+        if(!headers.has("user-agent"))headers.set("user-agent","Foafnaut");
         const body=w.bodyBase64!==undefined?Uint8Array.from(atob(w.bodyBase64),c=>c.charCodeAt(0)):undefined;
         const r=await http.fetch(w.url,{method:w.method,headers,body,noFollow:true,signal:AbortSignal.timeout(30000)} as RequestInit);
         const bytes=new Uint8Array(await r.arrayBuffer());
