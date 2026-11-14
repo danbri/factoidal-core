@@ -6,6 +6,7 @@ import L4Factoidal.Rendering.OffsetParent
 import L4Factoidal.Rendering.AspectRatio
 import L4Factoidal.Rendering.ScrollGeometry
 import L4Factoidal.Rendering.GridLayout
+import L4Factoidal.Rendering.SelfPlace
 import L4Factoidal.Unicode.ScriptDirection
 import L4Factoidal.Unicode.LineBreak
 
@@ -1581,14 +1582,24 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let top := CSS.resolve ch s.pos.top
       let bottom := CSS.resolve ch s.pos.bottom
       let specified := CSS.resolve cw s.width
+      -- CSS Box Alignment 3 §6.1.2 and §6.2.2: `justify-self` and `align-self` of an
+      -- absolutely positioned box; `auto` and `normal` are `stretch`.
+      let placeOf := fun (a : CSS.ItemAlign) => match a with
+        | .auto | .normal | .stretch => SelfPlace.Place.stretch
+        | .center => .center
+        | .end_ | .flexEnd | .selfEnd | .right | .lastBaseline => .end_
+        | _ => .start
+      let placeX := placeOf s.align.justifySelf
+      let placeY := placeOf s.align.alignSelf
       -- §10.3.7: the width is given, or fills the room between `left` and `right`, or
       -- shrinks to fit the content.
       let widthC ← match specified with
         | some w => pure w
         | none => match left,right with
           | some l,some r =>
-            -- between two insets the box fills the room, unless its width is a keyword
-            if s.width.isKeyword then do
+            -- between two insets the box fills the room, unless its width is a keyword or
+            -- it is aligned (then it is as wide as its content: fit-content)
+            if s.width.isKeyword || placeX != .stretch then do
               let (lo,hi) ← intrinsic dom styles font embedding pictures fuel (.box id)
               pure (shrinkWidth s.width lo hi (cw-l-r)-m.left-m.right-edgesX)
             else pure (cw-l-r-m.left-m.right-edgesX)
@@ -1600,11 +1611,8 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let outerW := borderW+m.left+m.right
       let bx := match left,right with
         | some l,some r =>
-          -- both insets and a width: auto margins take the room that is left
-          let free := cw-l-r-outerW
-          cx+l+(if free > 0 && specified.isSome then
-                  (if s.autoMarginLeft && s.autoMarginRight then free/2 else if s.autoMarginLeft then free else 0)
-                else 0)
+          -- both insets: the room that is left goes to auto margins, else by `justify-self`
+          cx+l+LU.toPx (SelfPlace.offset (LU.ofPx (cw-l-r)) (LU.ofPx outerW) s.autoMarginLeft s.autoMarginRight placeX)
         | some l,none => cx+l
         | none,some r => cx+cw-r-outerW
         | none,none => at'.x+at'.fx*(at'.width-outerW)
@@ -1615,7 +1623,13 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let imposed : Option Float := match given with
         | some h => some (clampOpt minH maxH (max 0 h)+edgesY)
         | none => match top,bottom with
-          | some t,some e => some (max edgesY (clampOpt (minH+edgesY) (maxH.map (·+edgesY)) (ch-t-e-m.top-m.bottom)))
+          | some t,some e =>
+            -- between two insets the box fills the room, unless its height is a keyword
+            -- of the content or it is aligned (then it is as high as its content)
+            let fills : Bool := match s.height with
+              | .minContent | .maxContent | .fitContent => false
+              | _ => placeY == .stretch
+            if fills then some (max edgesY (clampOpt (minH+edgesY) (maxH.map (·+edgesY)) (ch-t-e-m.top-m.bottom))) else none
           | _,_ => none
       let by' := match top with
         | some t => cy+t
@@ -1625,10 +1639,8 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       | none,none => return r.shift 0 (at'.fy*(at'.height-r.height))
       | none,some e => return r.shift 0 (cy+ch-e-r.height-by')
       | some t,some e =>
-        let free := ch-t-e-r.height
-        if free > 0 && given.isSome then
-          return r.shift 0 (if s.autoMarginTop && s.autoMarginBottom then free/2 else if s.autoMarginTop then free else 0)
-        else return r
+        -- both insets: the room that is left goes to auto margins, else by `align-self`
+        return r.shift 0 (LU.toPx (SelfPlace.offset (LU.ofPx (ch-t-e)) (LU.ofPx r.height) s.autoMarginTop s.autoMarginBottom placeY))
       | _,_ => return r
     -- The pending absolutely positioned boxes of `content` laid out in the containing block
     -- `(cx,cy,cw,ch)`: those with a negative `z-index` under the content, the others over it,

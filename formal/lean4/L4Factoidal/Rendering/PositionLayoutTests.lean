@@ -58,6 +58,17 @@ private def rel := "#c{position:relative;margin-left:20px;padding:5px;border:2px
 -- Insets with a width and auto margins: centred.
 #guard box page (rel ++ "#p{position:absolute;left:0;right:0;width:30px;margin-left:auto;margin-right:auto}") "p" == some (62,14,30,7)
 #guard box page (rel ++ "#p{position:absolute;top:0;bottom:0;left:0;height:10px;margin-top:auto;margin-bottom:auto}") "p" == some (22,29,12,10)
+-- Self-alignment between two insets (CSS Box Alignment 3 §6.1.2, §6.2.2): an aligned box is
+-- as large as its content and goes to the start, centre or end of the room (110 by 50
+-- here); auto margins take the free room first.
+#guard box page (rel ++ "#p{position:absolute;inset:0;justify-self:center;align-self:end}") "p" == some (71,52,12,7)
+#guard box page (rel ++ "#p{position:absolute;inset:0;justify-self:start}") "p" == some (22,9,12,50)
+#guard box page (rel ++ "#p{position:absolute;inset:0;justify-self:end;align-self:center}") "p" == some (120,30.5,12,7)
+#guard box page (rel ++ "#p{position:absolute;inset:0;margin:auto;width:fit-content;height:fit-content}") "p" == some (71,30.5,12,7)
+#guard box page (rel ++ "#p{position:absolute;inset:0;margin:auto;align-self:start}") "p" == some (22,30.5,110,7)
+#guard box page (rel ++ "#p{position:absolute;inset:0;margin:auto 0 0;align-self:start}") "p" == some (22,52,110,7)
+-- Larger than the room: at the start.
+#guard box page (rel ++ "#p{position:absolute;inset:0;width:200px;justify-self:center}") "p" == some (22,9,200,50)
 -- Margins, padding and border of the box itself.
 #guard box page (rel ++ "#p{position:absolute;top:0;left:0;margin:3px;padding:1px}") "p" == some (25,12,14,9)
 -- The static position of a later child follows the flow.
