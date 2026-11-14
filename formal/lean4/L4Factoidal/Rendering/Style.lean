@@ -3,6 +3,7 @@ import L4Factoidal.DOM.OfHtml
 import L4Factoidal.Unicode.Bidi
 import L4Factoidal.Rendering.MediaQuery
 import L4Factoidal.Rendering.CssValues.Properties
+import L4Factoidal.Rendering.Math.Attributes
 import Std.Data.TreeMap
 import Std.Data.HashMap
 
@@ -120,6 +121,10 @@ structure Computed where
   takes the room a block-level box leaves; `margin` holds 0 on such a side. -/
   autoMarginLeft : Bool := false
   autoMarginRight : Bool := false
+  /-- MathML: `math-depth` (inherited): the script level, which `font-size: math` scales by. -/
+  mathDepth : Int := 0
+  /-- MathML: `math-style: compact` (inherited); false is `normal`, the display style. -/
+  mathCompact : Bool := false
   deriving Repr
 instance : Inhabited Computed := ⟨{}⟩
 
@@ -974,6 +979,17 @@ private def lexLE : List Nat → List Nat → Bool
   | _::_, [] => false
   | a::as, b::bs => if a == b then lexLE as bs else a < b
 
+/-- Kind: refinement (two definitions of one order).
+Says: the key order of this cascade is the order `Math.keyLE` that the theorems about
+MathML's mapped attributes are stated for (`Math.author_over_hint`, `Math.hint_over_ua`,
+`Math.place_idem`).
+Does not say: that `computedFrom` makes its keys as those theorems assume; that is read
+from its text (`[importance, origin and context, style attribute, specificity, order]`). -/
+theorem lexLE_eq_keyLE (a b : List Nat) : lexLE a b = Math.keyLE a b := by
+  induction a generalizing b with
+  | nil => simp [lexLE, Math.keyLE]
+  | cons x xs ih => cases b <;> simp [lexLE, Math.keyLE, ih]
+
 /-- The user agent style sheet of this profile: HTML §15.3.4 (phrasing content:
 hyperlink colours and underline) and §15.5.4 (the `button` element as an
 inline-block with a raised border, sunken while it is `:active`). The colours are
@@ -1380,7 +1396,8 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     margin := startMargin n.lname fontSize,
     borderSpacingX := parent.borderSpacingX, borderSpacingY := parent.borderSpacingY,
     borderCollapse := parent.borderCollapse, captionBottom := parent.captionBottom,
-    textAlign := parent.textAlign, direction := parent.direction}
+    textAlign := parent.textAlign, direction := parent.direction,
+    mathDepth := parent.mathDepth, mathCompact := parent.mathCompact}
   -- HTML §3.2.6.4 and §15.3.5: the `dir` attribute sets `direction` and isolates the
   -- element; `bdi` isolates, and `bdo` overrides with isolation. Author CSS wins.
   if n.ns == some DOM.htmlNS || n.ns.isNone then
@@ -1412,6 +1429,16 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
           else {initial with height := dimension}
   let mut winners : Std.TreeMap String (List Nat × Declaration) := {}
   let mut order : Nat := 0
+  -- MathML hook (`Rendering/Math/Attributes.lean`): the user agent declarations of MathML
+  -- Core appendix A and the attributes mapped to CSS, for an element in the MathML
+  -- namespace only. They go in first: an author declaration that comes later has a key
+  -- that is not smaller and takes the slot (`Math.author_over_hint`, `lexLE_eq_keyLE`).
+  if n.ns == some DOM.mathmlNS then
+    for h in Math.hints dom id do
+      if let some value := Math.profileValue n.lname h.property h.value parent.fontSize then
+        let key := h.level.key
+        if (winners.get? h.property).all (fun old => lexLE old.1 key) then
+          winners := winners.insert h.property (key,⟨h.property,value,h.level == .uaImportant⟩)
   for (origin,rule,matched) in matched do
     let specificity := matched.foldl (fun m s => if lexLE [m.1,m.2.1,m.2.2] [s.specificity.1,s.specificity.2.1,s.specificity.2.2] then s.specificity else m) (0,0,0)
     let onlyVisited := matched.all (·.visitedDependent)
@@ -1435,6 +1462,20 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
       -- External HTML paint rules are refused until that cascade is unified.
       if n.ns == some DOM.svgNS && priority[2]? == some 1 && !htmlProperties.contains key then pure ()
       else result := applyOrKeep result d
+  -- MathML hook: `math-style`, `math-depth` and `font-size: math` (MathML Core §4.3 to
+  -- §4.5; CSS Fonts 4 §2.5.1). Only an element with declarations reads these three slots.
+  if !winners.isEmpty then
+    if let some (_,d) := winners.get? "math-style" then
+      let v := (trim d.value).toLower
+      if v == "compact" then result := {result with mathCompact := true}
+      else if v == "normal" then result := {result with mathCompact := false}
+    if let some (_,d) := winners.get? "math-depth" then
+      result := {result with mathDepth := Math.depthOf d.value parent.mathDepth parent.mathCompact}
+    if let some (_,d) := winners.get? "font-size" then
+      if (trim d.value).toLower == "math" then
+        let (up,steps) := Math.depthScale parent.mathDepth result.mathDepth
+        let size := if up then parent.fontSize/Math.scalePower steps else parent.fontSize*Math.scalePower steps
+        result := {result with fontSize := size, lineHeight := result.lineHeightFactor.map (size*·) |>.getD result.lineHeight}
   -- A root or body never clips here: the window scrolls instead.
   if ["html","body"].contains n.lname then result := {result with clipOverflow := false}
   let decoration := parent.decorationColor.orElse (fun _ => if result.underline then some result.color else none)

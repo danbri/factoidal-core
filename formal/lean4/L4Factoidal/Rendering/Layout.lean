@@ -1,6 +1,7 @@
 import L4Factoidal.Rendering.Style
 import L4Factoidal.Rendering.FontFace
 import L4Factoidal.Rendering.TableLayout
+import L4Factoidal.Rendering.Math.Layout
 import L4Factoidal.Unicode.ScriptDirection
 import L4Factoidal.Unicode.LineBreak
 
@@ -443,6 +444,9 @@ def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) (p
     -- An image that is missing, broken or refused stands as its description, and stays a link.
     if n.lname == "img" then return altItems id s n
     if n.lname == "br" then return #[.lineBreak s]
+    -- MathML hook: an element in the MathML namespace is one atomic box in its line. The
+    -- empty pair of bounds marks it; `atomize` asks `mathSpecial` for its box.
+    if n.ns == some DOM.mathmlNS then return #[.openAtomic id s,.closeAtomic]
     if n.ns == some DOM.svgNS then
       let (width,height) ← svgSize n s available
       if width <= 0 || height <= 0 then return #[]
@@ -864,23 +868,35 @@ private def atomicBox (font : FontProfile) (id : Nat) (s : Computed) (items : Ar
 /-- Each outermost `openAtomic .. closeAtomic` becomes one `atomic` item. An
 inline-block inside another is laid out inline in it (its bounds are dropped). One
 pass over the items: a loop. -/
-def atomize (font : FontProfile) (items : Array Inline) (available : Float) : Except String (Array Inline) := do
+def atomize (font : FontProfile) (items : Array Inline) (available : Float)
+    (special : Nat → Computed → Except String (Option Inline) := fun _ _ => pure none) :
+    Except String (Array Inline) := do
   let mut out : Array Inline := #[]
   let mut depth : Nat := 0
   let mut opened : Option (Nat × Computed) := none
   let mut inside : Array Inline := #[]
+  -- MathML hook: `special` answers the finished box of an element that is laid out by
+  -- another algorithm (a MathML element); its closing bound follows at once and is skipped.
+  let mut skipClose := false
   for item in items do
     match item with
     | .openAtomic id s =>
-      if depth == 0 then
-        opened := some (id,s)
-        inside := #[]
-      depth := depth+1
+      match ← special id s with
+      | some box =>
+        skipClose := true
+        if depth == 0 then out := out.push box else inside := inside.push box
+      | none =>
+        if depth == 0 then
+          opened := some (id,s)
+          inside := #[]
+        depth := depth+1
     | .closeAtomic =>
-      if depth == 1 then
-        if let some (id,s) := opened then out := out.push (← atomicBox font id s inside available)
-        opened := none
-      depth := depth-1
+      if skipClose then skipClose := false
+      else
+        if depth == 1 then
+          if let some (id,s) := opened then out := out.push (← atomicBox font id s inside available)
+          opened := none
+        depth := depth-1
     | other => if depth == 0 then out := out.push other else inside := inside.push other
   -- Bounds always pair in `inlineItems`; an unpaired open keeps its content inline.
   return if depth == 0 then out else out ++ inside
@@ -960,6 +976,55 @@ private def tableFrame (styles : Array Computed) (element : Option Nat) (contain
    hs := if s.borderCollapse then 0 else s.borderSpacingX,
    vs := if s.borderCollapse then 0 else s.borderSpacingY}
 
+/-- MathML hook (`Rendering/Math/Layout.lean`): the MathML element `id` and its subtree
+laid out by MathML Core's algorithms. Answers its inline size, ascent and descent, and
+its content with the top left corner of its margin box at the origin: the border box of
+every element (so that layout reads find them), their backgrounds and borders, the
+rules, and the inline content of the token elements, each laid out here as one line
+(`inlineLayout` with unbounded room) in the token's style. `fuel` is the rendering's
+shared nesting budget. -/
+private def mathAtomic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedding : Embedding)
+    (pictures : Pictures) (fuel id : Nat) : Except String (Float × Float × Float × Result) := do
+  let leaf : Nat → Except String (Float × Float × Float × Result) := fun k => do
+    let ks := styles[k]!
+    let mut items : Array Inline := #[]
+    for c in (dom.get k).kids do
+      items := items ++ (← inlineItems dom styles embedding pictures 1.0e9 fuel c)
+    if items.isEmpty then return (0,0,0,{})
+    let line ← inlineLayout font (← atomize font items 1.0e9) 0 0 1.0e9 (some {ks with textAlign := .left})
+    let ascent := font.ascent*ks.fontSize/font.unitsPerEm+lineLeading font ks
+    return (lineExtent line,ascent,max 0 (line.height-ascent),line)
+  let out ← Math.layoutNode dom styles leaf fuel id
+  let ascent := Math.px out.box.ascent
+  let mut nodes : Array Node := #[]
+  let mut boxes : Array Box := #[]
+  let mut runs : Array GlyphRun := #[]
+  for b in out.boxes do
+    let (bx,by_,bw,bh) := (Math.px b.x,ascent+Math.px b.y,Math.px b.w,Math.px b.h)
+    boxes := boxes.push ⟨b.source,bx,by_,bw,bh⟩
+    nodes := nodes ++ decorations b.source (styles[b.source]!) bx by_ bw bh
+  for b in out.rules do
+    let bs := styles[b.source]!
+    if bs.visible then
+      nodes := nodes.push (.paint ⟨some b.source,{geometry := .rect (Math.px b.x) (ascent+Math.px b.y) (Math.px b.w) (Math.px b.h),style := {fill := .solid bs.color}}⟩)
+  for (line,lx,ly) in out.leaves do
+    let moved := shiftResult (Math.px lx) (ascent+Math.px ly) line
+    nodes := nodes ++ moved.nodes
+    boxes := boxes ++ moved.boxes
+    runs := runs ++ moved.runs
+  let descent := Math.px out.box.descent
+  return (Math.px out.box.width,ascent,descent,{nodes,boxes,runs,height := ascent+descent})
+
+/-- MathML hook: the box `atomize` puts in a line for a MathML element: its height in the
+line is its ascent, so that its baseline is the line's (a descent below the line's own
+is not added to the line: see the design record). `none` for any other element. -/
+private def mathSpecial (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedding : Embedding)
+    (pictures : Pictures) (fuel : Nat) : Nat → Computed → Except String (Option Inline) := fun id _ =>
+  if (dom.get id).ns == some DOM.mathmlNS then do
+    let (width,ascent,_,inner) ← mathAtomic dom styles font embedding pictures fuel id
+    return some (.atomic id width ascent inner)
+  else pure none
+
 /-- Min-content and max-content widths (CSS Sizing 3 §5), margins included for a box.
 Text is measured with `inlineLayout` itself: with no room, every break opportunity is
 taken (min-content); with unbounded room, none is (max-content). A table's widths are
@@ -971,8 +1036,9 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
   | fuel+1, task => do
     let inlineWidths (items : Array Inline) : Except String (Float × Float) := do
       if items.isEmpty then return (0,0)
-      let narrow ← inlineLayout font (← atomize font items 0) 0 0 0
-      let wide ← inlineLayout font (← atomize font items 1.0e9) 0 0 1.0e9
+      let special := mathSpecial dom styles font embedding pictures fuel
+      let narrow ← inlineLayout font (← atomize font items 0 special) 0 0 0
+      let wide ← inlineLayout font (← atomize font items 1.0e9 special) 0 0 1.0e9
       return (lineExtent narrow,lineExtent wide)
     let flowWidths (container : Nat) (kids : Array Nat) (lead : Array Inline) : Except String (Float × Float) := do
       let mut widths : Float × Float := (0,0)
@@ -1017,6 +1083,10 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
       let n := dom.get id
       let s := styles[id]!
       if s.display == .none then return (0,0)
+      -- MathML hook: a block-level MathML element is as wide as its math box.
+      if n.ns == some DOM.mathmlNS then
+        let w := (← mathAtomic dom styles font embedding pictures fuel id).1
+        return (w,w)
       if s.display.isTable then return (← tableWidths (some id) (n.parent.getD 0) n.kids)
       if let some picture := pictures id then
         let w := (replacedSize s (some picture.size) 0).1+horizontalEdges s
@@ -1055,19 +1125,19 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         match seg with
         | .run run =>
           if !inline.isEmpty then
-            content := append content (← inlineLayout font (← atomize font inline width) innerX (innerY+content.height) width (some s))
+            content := append content (← inlineLayout font (← atomize font inline width (mathSpecial dom styles font embedding pictures fuel)) innerX (innerY+content.height) width (some s))
             inline := #[]
           content := append content (← layoutTask dom styles font embedding pictures fuel (.table none container run) innerX (innerY+content.height) width)
         | .node child =>
           let cs := styles[child]!
           if cs.display.isBlockLevel then
             if !inline.isEmpty then
-              content := append content (← inlineLayout font (← atomize font inline width) innerX (innerY+content.height) width (some s))
+              content := append content (← inlineLayout font (← atomize font inline width (mathSpecial dom styles font embedding pictures fuel)) innerX (innerY+content.height) width (some s))
               inline := #[]
             content := append content (← layoutTask dom styles font embedding pictures fuel (.box child) innerX (innerY+content.height) width)
           else
             inline := inline ++ (← inlineItems dom styles embedding pictures width fuel child)
-      if !inline.isEmpty then content := append content (← inlineLayout font (← atomize font inline width) innerX (innerY+content.height) width (some s))
+      if !inline.isEmpty then content := append content (← inlineLayout font (← atomize font inline width (mathSpecial dom styles font embedding pictures fuel)) innerX (innerY+content.height) width (some s))
       return content
     -- A table box (CSS 2.1 §17): captions, then the grid, then bottom captions.
     let table (element : Option Nat) (container : Nat) (kids : Array Nat) : Except String Result := do
@@ -1173,6 +1243,11 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let n := dom.get id
       let s := styles[id]!
       if s.display == .none then return {}
+      -- MathML hook: a block-level MathML element (`math` with `display="block"`): its math
+      -- box, centred in the room (MathML Core §3.1.1).
+      if n.ns == some DOM.mathmlNS then
+        let (w,ascent,descent,inner) ← mathAtomic dom styles font embedding pictures fuel id
+        return {shiftResult (x+max 0 ((available-w)/2)) y inner with height := ascent+descent}
       if s.display.isTable then return (← table (some id) (n.parent.getD 0) n.kids)
       if n.lname == "hr" then
         return {nodes := #[.paint ⟨some id,{geometry := .rect x (y+8) available 1,style := {fill := .solid ⟨0.5,0.5,0.5⟩}}⟩],height := 17}

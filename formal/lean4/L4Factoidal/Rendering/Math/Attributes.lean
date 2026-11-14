@@ -136,11 +136,11 @@ theorem hint_over_ua {α : Type} (h v : α) (c a b n o : Nat) (hc : c ≤ 1) :
   simp [place, h1, h2]
 
 /-- The value of an attribute with no namespace. -/
-def attr? (n : Node) (key : String) : Option String :=
+def attr? (n : DOM.Node) (key : String) : Option String :=
   (n.attrs.find? fun a => a.ns.isNone && a.lname == key).map (·.value)
 
 /-- An attribute value compared ASCII case-insensitively, with its white space trimmed. -/
-def attrIs (n : Node) (key value : String) : Bool :=
+def attrIs (n : DOM.Node) (key value : String) : Bool :=
   match attr? n key with
   | some v => v.trimAscii.toString.toLower == value
   | none => false
@@ -153,7 +153,7 @@ def placedParents : List String :=
 /-- The parent element when it is a MathML element of `placedParents`, with the 1-based
 index of `id` among its element children and whether an `mprescripts` comes before it.
 One pass over the siblings, made only for children of those parents. -/
-def placeOf (dom : Dom) (id : Nat) : Option (Node × Nat × Bool) :=
+def placeOf (dom : Dom) (id : Nat) : Option (DOM.Node × Nat × Bool) :=
   match (dom.get id).parent with
   | none => none
   | some p =>

@@ -2329,3 +2329,5 @@ L4Factoidal_JS_exportedNamesF  # (c) GetExportedNames: depth is the chain of `ex
 L4Factoidal_JS_postOrder  # (c) the evaluation order of a module graph: depth is the import chain, at most fuel = modules + 1; a visited module is not entered again
 L4Factoidal_JS_namespaceOf  # (c) a namespace object and the namespaces it re-exports (`export * as`): depth is that chain, at most the number of modules, since a namespace made once is reused
 L4Factoidal_WasmVM_Hosts_LeanJSModules_visit*  # (c) fetching a module graph (visit, visitKids): depth is the import chain, at most fuel 4096 (deeper is "module graph too deep"); a URL in the module map is not visited again; a module's requests are a self tail call
+# --- MathML Core layout (Rendering/Math): 2026-11-14. The children of an element are loops; what recurses is the nesting of elements.
+L4Factoidal_Rendering_Math_layoutNode*  # (c) the nesting of MathML elements: one level of the shared rendering fuel for each element (64, from Layout.render, as layoutTask and inlineItems); the children of an element and the cells of a table are loops

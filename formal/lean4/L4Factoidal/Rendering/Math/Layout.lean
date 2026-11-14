@@ -1,0 +1,310 @@
+/-
+L4Factoidal.Rendering.Math.Layout — MathML Core layout over the DOM arena: the walk of a
+MathML subtree that gives each element its box.
+
+Specification: MathML Core (https://w3c.github.io/mathml-core/) §3: `math` and the
+elements laid out as `mrow` (`mrow`, `merror`, `mstyle`, `mphantom`, `semantics`,
+`maction`, `a`, unknown elements), token elements (`mi`, `mn`, `mo`, `mtext`, `ms`),
+`mspace`, `mpadded`, `mfrac`, `msqrt`, `mroot`, `msub`, `msup`, `msubsup`,
+`mmultiscripts`, `munder`, `mover`, `munderover`, `mtable`, `mtr`, `mtd`.
+
+The arithmetic of each construct is `Math.Box` (exact integers in layout units, with
+theorems). This module reads the document and the styles, asks `leaf` for the inline
+content of a token element (the text layout belongs to `Rendering.Layout`, which calls
+this module), and answers boxes relative to the root's left edge and baseline. It makes
+no paint: the caller draws the boxes' backgrounds and borders, the rules (fraction bar,
+radical overbar) and the leaves.
+
+Limits (see docs/designissues/2026-11-14-mathml-core-layout.md): no OpenType MATH table
+is read, so every font parameter is the fallback of a font with no MATH table, taken
+from the font size (x-height: half an em; rule thickness: 1/16 em; math axis: a quarter
+em); operators are not stretched and the operator dictionary is not consulted (an `mo`
+has the default spaces of 5/18 em unless `lspace` or `rspace` says otherwise); the radical
+sign is not drawn; a table is a grid of centred cells with no row or column spans.
+
+Only elements in the MathML namespace enter this module (`Rendering.Layout` tests the
+namespace), so a page with no MathML pays nothing for it.
+-/
+import L4Factoidal.Rendering.Style
+import L4Factoidal.Rendering.Math.Box
+import L4Factoidal.Rendering.Math.Attributes
+
+namespace L4Factoidal.Rendering.Math
+open L4Factoidal.DOM
+open L4Factoidal.Rendering.CSS (Computed)
+
+/-- CSS pixels to layout units (1/64 px), rounded; not a number gives 0. -/
+def lu (x : Float) : Int :=
+  if x >= 0 then Int.ofNat (x * 64).round.toUInt64.toNat else -Int.ofNat ((-x) * 64).round.toUInt64.toNat
+
+/-- Layout units to CSS pixels. -/
+def px (u : Int) : Float := Float.ofInt u / 64
+
+/-- A box of an element in the answer: left and top from the origin's left edge and
+baseline (top is negative above the baseline). -/
+structure PBox where
+  source : Nat
+  x : Int
+  y : Int
+  w : Int
+  h : Int
+  deriving Repr, Inhabited
+
+/-- A laid-out subtree. `box` is its margin box; `boxes` the border boxes of its
+elements, `rules` the bars to paint in an element's colour, `leaves` the inline content
+of its token elements (a payload of the caller with the left and top of its line box),
+all relative to this subtree's left edge and baseline. `op`: the subtree is an
+embellished operator (§3.2.4.1) that asks this space before and after it. -/
+structure Out (α : Type) where
+  box : MBox := {}
+  boxes : Array PBox := #[]
+  rules : Array PBox := #[]
+  leaves : Array (α × Int × Int) := #[]
+  op : Option (Int × Int) := none
+
+instance {α : Type} : Inhabited (Out α) := ⟨{}⟩
+
+/-- The subtree moved by `dx` right and `dy` down. -/
+def Out.shift {α : Type} (o : Out α) (dx dy : Int) : Out α :=
+  if dx == 0 && dy == 0 then o else
+  { o with boxes := o.boxes.map fun b => { b with x := b.x + dx, y := b.y + dy },
+           rules := o.rules.map fun b => { b with x := b.x + dx, y := b.y + dy },
+           leaves := o.leaves.map fun (a, x, y) => (a, x + dx, y + dy) }
+
+/-- `parent` with the content of `child` placed at `p`. The parent's box is not changed. -/
+def Out.add {α : Type} (parent child : Out α) (p : At) : Out α :=
+  let c := child.shift p.dx p.dy
+  { parent with boxes := parent.boxes ++ c.boxes, rules := parent.rules ++ c.rules,
+                leaves := parent.leaves ++ c.leaves }
+
+/-- The parameters of a font with no MATH table, from the font size, in layout units. -/
+structure Params where
+  em : Int
+  xHeight : Int
+  rule : Int
+  axis : Int
+  deriving Repr
+
+def Params.of (s : Computed) : Params :=
+  let em := lu s.fontSize
+  { em, xHeight := em / 2, rule := max 1 (em / 16), axis := em / 4 }
+
+/-- A length attribute of element `n` in layout units, `none` when absent or not a length. -/
+def lengthAttr (n : DOM.Node) (s : Computed) (key : String) (basis : Option Float := none) : Option Int :=
+  ((attr? n key).bind fun v => lengthPx s.fontSize v basis).map lu
+
+/-- The element's own box around its content (CSS 2.1 §8.1): padding, border and margin
+of the style, added to the content's box; the border box is recorded for the element. -/
+def wrap {α : Type} (id : Nat) (s : Computed) (o : Out α) : Out α :=
+  let b := s.borderEdges
+  let p := s.padding
+  let m := s.margin
+  let left := lu (m.left + b.left + p.left)
+  let right := lu (p.right + b.right + m.right)
+  let top := lu (b.top + p.top)
+  let bottom := lu (b.bottom + p.bottom)
+  let c := o.shift left 0
+  let own : PBox := ⟨id, lu m.left, -(o.box.ascent + top),
+    o.box.width + lu (b.left + p.left) + lu (p.right + b.right), o.box.ascent + top + o.box.descent + bottom⟩
+  { c with box := ⟨left + o.box.width + right, o.box.ascent + top + lu m.top, o.box.descent + bottom + lu m.bottom⟩,
+           boxes := #[own] ++ c.boxes }
+
+/-- §3.1.3.2: children on one baseline, each embellished operator with its spaces. A row
+whose only child is an embellished operator is itself one: the spaces are added by the
+row above it. -/
+def row {α : Type} (kids : Array (Out α)) : Out α := Id.run do
+  let single := kids.size == 1
+  let items : List RowItem := kids.toList.map fun k =>
+    match k.op with
+    | some (l, r) => if single then ⟨k.box, 0, 0⟩ else ⟨k.box, l, r⟩
+    | none => ⟨k.box, 0, 0⟩
+  let offsets := rowOffsets items
+  let mut out : Out α := { box := rowBox items, op := if single then (kids[0]?.bind (·.op)) else none }
+  for i in [0:kids.size] do
+    out := out.add kids[i]! ⟨offsets.getD i 0, 0⟩
+  return out
+
+/-- §3.3.2: a fraction. `linethickness` is a length, a percentage of the default
+thickness; zero gives a stack with no bar. -/
+def fractionOut {α : Type} (id : Nat) (n : DOM.Node) (s : Computed) (num den : Out α) : Out α :=
+  let P := Params.of s
+  let display := !s.mathCompact
+  let rule := max 0 ((lengthAttr n s "linethickness" (some (px P.rule))).getD P.rule)
+  let gap := if rule == 0 then (if display then 7 else 3) * P.rule / 2 else (if display then 3 else 1) * P.rule
+  let f := fraction { axis := P.axis, rule, numGap := gap, denGap := gap } num.box den.box
+  let o : Out α := { box := f.box, rules := if rule > 0 then #[⟨id, 0, f.barTop, f.box.width, rule⟩] else #[] }
+  (o.add num f.num).add den f.den
+
+/-- §3.4.1: a base with scripts after it. An embellished base makes the element one. -/
+def scriptsOut {α : Type} (s : Computed) (base : Out α) (sub sup : Option (Out α)) : Out α :=
+  let P := Params.of s
+  let r := scripts { subShift := P.xHeight / 3, supShift := P.xHeight, gap := 4 * P.rule }
+    base.box (sub.map (·.box)) (sup.map (·.box))
+  let o : Out α := { box := r.box, op := base.op }
+  let o := o.add base r.base
+  let o := match sub with | some c => o.add c r.sub | none => o
+  match sup with | some c => o.add c r.sup | none => o
+
+/-- §3.4.2: a base with a script under it and a script over it. -/
+def underOverOut {α : Type} (base : Out α) (under over : Option (Out α)) : Out α :=
+  let r := underOver base.box (under.map (·.box)) (over.map (·.box))
+  let o : Out α := { box := r.box, op := base.op }
+  let o := o.add base r.base
+  let o := match under with | some c => o.add c r.under | none => o
+  match over with | some c => o.add c r.over | none => o
+
+/-- The radical parameters of the style (§3.3.3, fallbacks of a font with no MATH table). -/
+def radicalParams (s : Computed) : RadicalParams :=
+  let P := Params.of s
+  { signWidth := P.em / 2, rule := P.rule,
+    gap := if s.mathCompact then P.rule * 5 / 4 else P.rule + P.xHeight / 4, extra := P.rule }
+
+/-- §3.3.3: content under a radical; the overbar is a rule. -/
+def radicalOut {α : Type} (id : Nat) (s : Computed) (content : Out α) : Out α :=
+  let p := radicalParams s
+  let (box, at_) := radical p content.box
+  let o : Out α := { box, rules := #[⟨id, p.signWidth, -(content.box.ascent + p.gap + p.rule), content.box.width, p.rule⟩] }
+  o.add content at_
+
+/-- §3.3.3 `mroot`: the radical, and the index before it, raised to 60% of the radical's
+height, with the kerns 5/18 em before and -10/18 em after. -/
+def rootOut {α : Type} (id : Nat) (s : Computed) (base index : Out α) : Out α :=
+  let P := Params.of s
+  let r := radicalOut id s base
+  let height := r.box.ascent + r.box.descent
+  let before := P.em * 5 / 18
+  let lead := max 0 (before + index.box.width - P.em * 10 / 18)
+  let indexX := if lead == 0 then 0 else before
+  let indexY := r.box.descent - 6 * height / 10 - index.box.descent
+  let o : Out α := { box := ⟨lead + r.box.width, max r.box.ascent (index.box.ascent - indexY),
+                             max r.box.descent (index.box.descent + indexY)⟩ }
+  (o.add r ⟨lead, 0⟩).add index ⟨indexX, indexY⟩
+
+/-- §3.3.6: `mpadded`. -/
+def paddedOut {α : Type} (n : DOM.Node) (s : Computed) (content : Out α) : Out α :=
+  let (box, at_) := padded content.box (lengthAttr n s "width") (lengthAttr n s "height") (lengthAttr n s "depth")
+    ((lengthAttr n s "lspace").getD 0) ((lengthAttr n s "voffset").getD 0)
+  ({ box } : Out α).add content at_
+
+/-- The space an `mo` asks before and after it: `lspace` and `rspace`, else the default
+of an operator that is not in the dictionary (5/18 em, §3.2.4.2). -/
+def operatorSpace (n : DOM.Node) (s : Computed) : Int × Int :=
+  let default := lu s.fontSize * 5 / 18
+  ((lengthAttr n s "lspace").getD default, (lengthAttr n s "rspace").getD default)
+
+/-- §3.5: a table from its rows of cells: each column as wide as its widest cell, each
+row as tall as its tallest cell above and below the row's baseline; cells centred in
+their columns; the table centred on the math axis. `rows`: the row element and its
+cells, laid out. -/
+def tableOut {α : Type} (s : Computed) (rows : Array (Nat × Array (Out α))) : Out α := Id.run do
+  let P := Params.of s
+  let columns := rows.foldl (fun m r => max m r.2.size) 0
+  let mut widths : Array Int := Array.replicate columns 0
+  for (_, cells) in rows do
+    for i in [0:cells.size] do
+      widths := widths.set! i (max (widths.getD i 0) cells[i]!.box.width)
+  let width := widths.foldl (· + ·) 0
+  let heights := rows.map fun (_, cells) =>
+    (cells.foldl (fun a c => max a c.box.ascent) 0, cells.foldl (fun a c => max a c.box.descent) 0)
+  let height := heights.foldl (fun h r => h + r.1 + r.2) 0
+  let ascent := height / 2 + P.axis
+  let mut out : Out α := { box := ⟨width, ascent, height - ascent⟩ }
+  let mut top : Int := -ascent
+  for k in [0:rows.size] do
+    let (rowId, cells) := rows[k]!
+    let (a, d) := heights.getD k (0, 0)
+    out := { out with boxes := out.boxes.push ⟨rowId, 0, top, width, a + d⟩ }
+    let mut x : Int := 0
+    for i in [0:cells.size] do
+      let w := widths.getD i 0
+      out := out.add cells[i]! ⟨x + (w - cells[i]!.box.width) / 2, top + a⟩
+      x := x + w
+    top := top + a + d
+  return out
+
+/-- §3.4.3: `mmultiscripts`: the base, then pairs of a subscript and a superscript, then
+after an `mprescripts` the pairs that go before the base. `kids`: the laid-out children
+with whether each is an `mprescripts`. Each pair is a column of scripts on the row. -/
+def multiscriptsOut {α : Type} (s : Computed) (kids : Array (Out α × Bool)) : Out α := Id.run do
+  let some (base, _) := kids[0]? | return {}
+  let mut post : Array (Out α) := #[]
+  let mut pre : Array (Out α) := #[]
+  let mut seenPre := false
+  let mut pending : Option (Out α) := none
+  for i in [1:kids.size] do
+    let (k, isPre) := kids[i]!
+    if isPre then
+      seenPre := true
+      pending := none
+    else
+      match pending with
+      | none => pending := some k
+      | some sub =>
+        let column := scriptsOut s ({} : Out α) (some sub) (some k)
+        if seenPre then pre := pre.push column else post := post.push column
+        pending := none
+  return row ((pre.push base) ++ post)
+
+def tokenNames : List String := ["mi", "mn", "mo", "mtext", "ms"]
+
+/-- The default padding of an `mtd` (appendix A: `padding: 0.5ex 0.4em`), which the
+layout profile does not read from the user agent declarations: used when the cell's
+style has no padding. -/
+def cellStyle (s : Computed) : Computed :=
+  let p := s.padding
+  if p.top == 0 && p.right == 0 && p.bottom == 0 && p.left == 0 then
+    { s with padding := ⟨s.fontSize / 4, s.fontSize * 0.4, s.fontSize / 4, s.fontSize * 0.4⟩ }
+  else s
+
+/-- The box of element `id` and of everything in it. `leaf k` lays out the inline
+content of element `k` (a token element, or an element that is not MathML) and answers
+its inline size, ascent and descent in CSS pixels with the caller's payload. Children
+that are not elements, and elements with `display: none`, take no part. One level of
+`fuel` for each element: the nesting bound of the rendering (64) is shared. -/
+def layoutNode {α : Type} (dom : Dom) (styles : Array Computed)
+    (leaf : Nat → Except String (Float × Float × Float × α)) : Nat → Nat → Except String (Out α)
+  | 0, _ => throw "unsupported MathML nesting depth (maximum 64)"
+  | fuel + 1, id => do
+    let n := dom.get id
+    let s := styles[id]!
+    let name := if n.ns == some mathmlNS then n.lname else ""
+    if name == "" || tokenNames.contains name then
+      let (w, a, d, payload) ← leaf id
+      let o : Out α := { box := ⟨lu w, lu a, lu d⟩, leaves := #[(payload, 0, -(lu a))] }
+      return wrap id s (if name == "mo" then { o with op := some (operatorSpace n s) } else o)
+    if name == "mspace" then
+      let len := fun (key : String) => (lengthAttr n s key).getD 0
+      return wrap id s { box := space (len "width") (len "height") (len "depth") }
+    if name == "mtable" then
+      let mut rows : Array (Nat × Array (Out α)) := #[]
+      for r in n.kids do
+        if (dom.get r).type == .element && (styles[r]!).display != .none then
+          let mut cells : Array (Out α) := #[]
+          for c in (dom.get r).kids do
+            if (dom.get c).type == .element && (styles[c]!).display != .none then
+              cells := cells.push (← layoutNode dom styles leaf fuel c)
+          rows := rows.push (r, cells)
+      return wrap id s (tableOut s rows)
+    let mut kids : Array (Out α) := #[]
+    let mut pres : Array Bool := #[]
+    for k in n.kids do
+      let kn := dom.get k
+      if kn.type == .element && (styles[k]!).display != .none then
+        kids := kids.push (← layoutNode dom styles leaf fuel k)
+        pres := pres.push (kn.ns == some mathmlNS && kn.lname == "mprescripts")
+    let content : Out α := match name, kids.size with
+      | "mfrac", 2 => fractionOut id n s kids[0]! kids[1]!
+      | "msub", 2 => scriptsOut s kids[0]! (some kids[1]!) none
+      | "msup", 2 => scriptsOut s kids[0]! none (some kids[1]!)
+      | "msubsup", 3 => scriptsOut s kids[0]! (some kids[1]!) (some kids[2]!)
+      | "munder", 2 => underOverOut kids[0]! (some kids[1]!) none
+      | "mover", 2 => underOverOut kids[0]! none (some kids[1]!)
+      | "munderover", 3 => underOverOut kids[0]! (some kids[1]!) (some kids[2]!)
+      | "mroot", 2 => rootOut id s kids[0]! kids[1]!
+      | "msqrt", _ => radicalOut id s (row kids)
+      | "mpadded", _ => paddedOut n s (row kids)
+      | "mmultiscripts", _ => multiscriptsOut s (kids.zip pres)
+      | _, _ => row kids
+    return wrap id (if name == "mtd" then cellStyle s else s) content
+
+end L4Factoidal.Rendering.Math
