@@ -85,6 +85,12 @@ const origin="http://web-platform.test",secureOrigin="https://web-platform.test"
 // wpt-hosts.ts for this process only. Without it, the runner reads the files of the
 // checkout and makes wptserve's wrappers itself (the older path).
 const wptserveMode=args.includes("--wptserve");
+// --dangerously-enable-webdriver-endpoint (with --wptserve): wdspec names of webdriver/tests/classic/ run, with
+// pytest from the WPT tree (wdspec-run.py) against the engine's WebDriver endpoint. The endpoint is remote control
+// of the browser: off without this flag, on 127.0.0.1 only, behind a 128-bit secret the engine makes
+// (L4Factoidal.WebDriver.Gate; risk Risk.webdriverEndpoint in skills/lean-risk-flags). Nothing else starts it.
+const webdriverOn=args.includes("--dangerously-enable-webdriver-endpoint");
+const webdriverPort=Number(opt("--webdriver-port","4444"));
 const serveSpec:WptServe={domains:wptDomains,subdomains:wptSubdomains,ports:wptPorts};
 const serveOrigin=`http://web-platform.test:${wptPorts.http[0]}`,serveSecureOrigin=`https://web-platform.test:${wptPorts.https[0]}`;
 let serve:{fetcher:ReturnType<typeof wptFetcher>;stop?:()=>Promise<void>}|undefined;
@@ -313,7 +319,9 @@ function servedName(id:string,path:string,url:string,exists:(f:string)=>boolean)
     /\.(window|worker)\.html$/.test(path)?path.replace(/^.*\.(window|worker)\.html$/,"$1"):"testharness";
   // wpt.fyi's .py names are wdspec tests: pytest drives a browser over WebDriver (webdriver/)
   // or reads its accessibility tree (aria/, core-aam/, mathml-aam/). wptserve has no page for them.
-  if(kind==="testharness"&&path.endsWith(".py"))return {file:id,kind:"wdspec",skip:"wdspec (pytest over WebDriver or an accessibility API), not a page"};
+  if(kind==="testharness"&&path.endsWith(".py"))
+    return webdriverOn&&path.startsWith("webdriver/tests/classic/")&&!path.includes("/support/")&&!/\/(conftest|__init__)\.py$/.test(path)?{file:id,kind:"wdspec"}:
+      {file:id,kind:"wdspec",skip:webdriverOn?"wdspec: only webdriver/tests/classic/ runs":"wdspec (pytest over WebDriver or an accessibility API), not a page; WebDriver needs --dangerously-enable-webdriver-endpoint"};
   if(kind==="testharness"){
     if(!testharnessPage.test(path))return {file:id,kind:"other",skip:"not a testharness page"};
     // NULs out: a UTF-16 page (html/infrastructure/urls/.../utf-16le.html) names the harness too.
@@ -731,6 +739,45 @@ async function benchBackend():Promise<{run:Run;info:Record<string,unknown>}> {
 }
 
 /** --list: run wpt.fyi-named tests from any checkout, one JSON line a case to --jsonl. */
+// ---- wdspec: the engine's WebDriver endpoint and pytest ------------------------------
+type Engine={scriptSession:(source:string,request:Record<string,unknown>)=>unknown};
+let webdriver:{secret:string;server:Deno.HttpServer}|undefined;
+/** Start the endpoint once: the engine decides (Gate.start) and makes the secret; the listener binds the
+ * address the engine allowed and passes every request through (Protocol.handle decides all). */
+function webdriverEndpoint(engine:Engine){
+  if(webdriver)return webdriver;
+  const address="127.0.0.1";
+  const {secret}=engine.scriptSession("",{action:"webdriverStart",address,port:webdriverPort,
+    platform:Deno.build.os==="darwin"?"mac":Deno.build.os,dangerouslyEnable:true}) as {secret:string};
+  const server=Deno.serve({hostname:address,port:webdriverPort,onListen:()=>{}},async request=>{
+    const url=new URL(request.url);
+    const body=request.method==="POST"?await request.text():"";
+    const answer=engine.scriptSession("",{action:"webdriver",method:request.method,path:url.pathname+url.search,
+      host:request.headers.get("host")??"",...(request.headers.has("origin")?{origin:request.headers.get("origin")}:{}),body}) as {status:number;body:string};
+    return new Response(answer.body,{status:answer.status,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-cache"}});
+  });
+  webdriver={secret,server};
+  return webdriver;
+}
+/** One wdspec file: pytest (wdspec-run.py) against the endpoint; each pytest test is a subtest. */
+async function runWdspec(engine:Engine,id:string):Promise<Case>{
+  const {secret}=webdriverEndpoint(engine);
+  const config=join(wpt,"factoidal-wptserve.json");
+  try{await Deno.stat(config);}catch{
+    await Deno.writeTextFile(config,JSON.stringify({browser_host:"web-platform.test",alternate_hosts:{alt:"not-web-platform.test"},
+      ports:{http:[8000,8001],https:[8443,8444],ws:[8888],wss:[8889]},doc_root:wpt}));
+  }
+  const t0=performance.now();
+  const out=await new Deno.Command("python3",{args:[join(here,"wdspec-run.py"),"--wpt-root",wpt,"--test",id,"--host","127.0.0.1",
+    "--port",String(webdriverPort),"--server-config",config,"--platform",Deno.build.os==="darwin"?"mac":Deno.build.os],
+    env:{FOAFNAUT_WD_SECRET:secret},stdout:"piped",stderr:"null",signal:AbortSignal.timeout(300000)}).output();
+  const line=new TextDecoder().decode(out.stdout).trim().split("\n").pop()??"";
+  try{
+    const r=JSON.parse(line) as {harness:string;message?:string;subtests:{name:string;status:string;message?:string}[]};
+    return {file:id,harness:r.harness,...(r.message?{message:r.message.slice(0,300)}:{}),subtests:r.subtests,ms:Math.round(performance.now()-t0)} as Case;
+  }catch{return {file:id,harness:"ERROR",message:`wdspec-run.py gave no result (exit ${out.code})`,subtests:[]};}
+}
+
 async function runList(listFile:string) {
   if(engineKind==="bench")throw new Error("--list runs on the engine (native or wasm), not the bench");
   const names=(await Deno.readTextFile(listFile)).split("\n").map(l=>l.trim()).filter(l=>l&&!l.startsWith("#"));
@@ -748,6 +795,7 @@ async function runList(listFile:string) {
       const t=named(id);
       if(t.skip)c={file:id,harness:"SKIP",message:t.skip,kind:t.kind,subtests:[]};
       else if(excluded.some(x=>id.includes(x)))c={file:id,harness:"SKIP",message:"excluded",kind:t.kind,subtests:[]};
+      else if(t.kind==="wdspec"&&backend.engine)c={...await runWdspec(backend.engine as Engine,id),kind:t.kind};
       else {c={...await backend.run(id,{html:t.html,url:t.url!}),kind:t.kind};}
     }catch(e){c={file:id,harness:"ERROR",message:String((e as Error).message??e).slice(0,300),subtests:[]};}
     cases.push(c);done.add(id);
@@ -762,6 +810,7 @@ async function runList(listFile:string) {
     measuredAt:new Date().toISOString(),wptRoot:wpt,wptCommit:opt("--wpt-commit")||null,engine:engineKind,scriptEngine,
     info:backend.info,wptserve:wptserveMode?{origin:serveOrigin,secureOrigin:serveSecureOrigin}:null,totals,cases},null,1)+"\n");
   serve?.fetcher.close();await serve?.stop?.();
+  await webdriver?.server.shutdown();
 }
 
 if(import.meta.main&&opt("--list"))await runList(opt("--list"));
