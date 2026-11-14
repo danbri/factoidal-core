@@ -126,6 +126,34 @@ def attrText (body : List CV) : String :=
       | _ => ""
     nameText ++ opText ++ value ++ flag
 
+def nthFunctions : List String := ["nth-child", "nth-last-child", "nth-of-type", "nth-last-of-type"]
+
+/-- The canonical text of An+B (CSSOM §6.7.2, "serialize an <an+b> value"): `2n+1` for
+`odd`, `n` and `-n` for a of 1 and -1, no `+0`, the integer alone when a is 0. -/
+def anbText (a b : Int) : String :=
+  let aPart := if a == 1 then "n" else if a == -1 then "-n" else toString a ++ "n"
+  if a == 0 then toString b
+  else if b == 0 then aPart
+  else if b > 0 then aPart ++ "+" ++ toString b
+  else aPart ++ toString b
+
+#guard anbText 2 1 == "2n+1" && anbText 2 0 == "2n" && anbText 0 (-1) == "-1" && anbText 1 0 == "n" &&
+  anbText (-1) (-5) == "-n-5" && anbText 5 (-5) == "5n-5"
+
+/-- The text of the argument of an `:nth-*()` from its tokens: a number token after the
+first one is written with its sign (the tokens of `2n+1` are `2n` and `+1`; a number with
+no sign could not follow there, CSS Syntax §6). -/
+def anbSource (cvs : List CV) : String :=
+  -- the state: the text so far, and whether a number here was written with its sign
+  let (out, _) := (trimWs cvs).foldl (fun (acc : String × Bool) cv =>
+    let (s, signed) := acc
+    match cv with
+    | .tok (.num v _) => (s ++ (if signed && v ≥ 0 then "+" else "") ++ serialize [cv], false)
+    | .tok .ws => (s ++ " ", signed)
+    | .tok (.delim _) => (s ++ serialize [cv], false)
+    | cv => (s ++ serialize [cv], true)) ("", false)
+  out
+
 def selectorFunctions : List String := ["is", "not", "where", "has", "matches", "-webkit-any", "host", "host-context", "slotted"]
 
 /-- The name of an `@keyframes` rule (CSS Animations 1 §3): one `<custom-ident>` (not `none`,
@@ -171,6 +199,17 @@ def selectorTokensText : Nat → List CV → String
       | .fn name args =>
         let n := lower name
         if selectorFunctions.contains n then n ++ "(" ++ selectorTokensText fuel args ++ ")"
+        else if nthFunctions.contains n then
+          -- the An+B part in its canonical form, then `of` and the selector list
+          let t := anbSource args
+          match t.splitOn " of " with
+          | ab :: rest =>
+            match L4Factoidal.DOM.Selectors.anPlusB ab with
+            | some (a, b) =>
+              let ofText := if rest.isEmpty then "" else " of " ++ selectorTokensText fuel (CV.parse (" of ".intercalate rest))
+              n ++ "(" ++ anbText a b ++ ofText ++ ")"
+            | none => n ++ "(" ++ t ++ ")"
+          | [] => n ++ "(" ++ t ++ ")"
         else n ++ "(" ++ rawText args ++ ")"
       | .raw s => s
     -- state: the text so far, a pending descendant space, values to skip white space before
@@ -193,6 +232,11 @@ def selectorText (s : String) : Option String :=
     some (selectorTokensText (cvSize 64 cvs + 2) cvs)
   else none
 
+#guard selectorText ":nth-child(odd)" == some ":nth-child(2n+1)"
+#guard selectorText ":nth-child( +n )" == some ":nth-child(n)"
+#guard selectorText "li:nth-last-of-type(-N-5)" == some "li:nth-last-of-type(-n-5)"
+#guard selectorText ":nth-child(2n+0 of .a,b)" == some ":nth-child(2n of .a, b)"
+#guard selectorText ":nth-child(5n -3)" == some ":nth-child(5n-3)" && selectorText ":nth-child(-n+ 6)" == some ":nth-child(-n+6)"
 #guard selectorText "*::before" == some "::before"
 #guard selectorText "a > *::marker, *::after" == some "a > ::marker, ::after"
 #guard selectorText "*:hover" == some "*:hover"
