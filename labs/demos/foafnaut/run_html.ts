@@ -433,6 +433,20 @@ async function main() {
       scriptTurn(page,turn,`pointer ${kind}`);
     }).catch(error=>console.error("Native HTML: page script pointer failed:",String(error)));
   };
+  // Keys for the page (WebScripts action key: L4Factoidal.WebDriver.HostKeys turns them into
+  // the WebDriver key actions test_driver's keys take, on the trusted input path). One at a
+  // time, in order. The window's own command for a key (scrolling) runs only when Lean says
+  // the page left the key alone (keyDefault); Space is sent as a key, so its text is not.
+  let keyChain:Promise<void>=Promise.resolve(),spaceSent=false;
+  const pageTakesKeys=()=>scriptsOn&&!!document.script&&scriptOps.includes("key");
+  const scriptKey=(page:typeof document,request:{text?:string;mac?:number;modifiers?:number},after?:()=>void)=>{
+    const session=page.script!.session;
+    keyChain=keyChain.then(async()=>{
+      const turn=await scriptCall("scriptSession","",{action:"key",session,...request}) as ScriptTurn;
+      scriptTurn(page,turn,"key");
+      if(after&&turn.keyDefault!==false&&page===document)after();
+    }).catch(error=>{console.error("Native HTML: page script key failed:",String(error));if(page===document)after?.();});
+  };
   const scriptTurn=(page:typeof document,turn:ScriptTurn,cause:string)=>{
     netQueue.push(...(turn.netRequests??[]).map(wire=>({session:turn.session,wire})));
     for(const line of turn.logs)console.log(`page: ${line.replace(/^\u0001(\w+)\u0001/,"$1: ")}`);
@@ -1380,17 +1394,31 @@ async function main() {
           edit(engine.shellText(shell(),String.fromCodePoint(event.a)));
           return;
         }
-        if(event.kind===9)return;
+        // Typed text goes to the page's focused element (Space went as its key).
+        if(event.kind===9){
+          if(event.a===32&&spaceSent){spaceSent=false;return;}
+          if(pageTakesKeys())scriptKey(document,{text:String.fromCodePoint(event.a)});
+          return;
+        }
         // Keys the menu did not take: space, page up and down, home, end, arrows, escape,
-        // Control-Tab. Lean's key table gives the command (issue 1268).
-        if(event.kind===5){const id=engine.pageKey(event.a,event.b);if(id!==null)windowCommand(id);}
+        // Control-Tab. Lean's key table gives the command (issue 1268); the page sees the key
+        // first, except a Command shortcut of the window.
+        if(event.kind===5){
+          const id=engine.pageKey(event.a,event.b);
+          const command=()=>{if(id!==null)windowCommand(id);};
+          if(pageTakesKeys()&&!((event.b&2)&&id!==null)){
+            spaceSent=event.a===49&&!(event.b&10);
+            scriptKey(document,{mac:event.a,modifiers:event.b},command);
+          }else command();
+        }
         if(event.kind===11){closeMenu();if(wheelSum)wheelSum.dy-=event.a/scale;scrollBy(-event.a);}
         // Kind 13, a right click (native_window.m): Lean may open the address menu.
         if(event.kind===13)menuPress(event.a,event.b,"context");
         if(event.kind===3&&holding){holding.x=event.a;holding.y=event.b;}
         if(event.kind===4)holding=undefined;
         if(event.kind===12)gestureWheel(event.a,event.b);
-        if(event.kind===5&&event.a===15)windowCommand(8);
+        // R alone reloads, except where the page takes keys (its text goes to the page).
+        if(event.kind===5&&event.a===15&&!pageTakesKeys())windowCommand(8);
         if(event.kind===10)windowCommand(event.a);
         if(event.kind===2){
           // Hit coordinates and boxes belong to the successfully presented frame.

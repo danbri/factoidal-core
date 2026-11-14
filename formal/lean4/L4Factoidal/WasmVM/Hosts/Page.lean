@@ -146,6 +146,10 @@ structure PointerState where
   over : Option Nat := none
   /-- The last press, for the click count (`WebDriver.Input.clickCount`). -/
   last : Option L4Factoidal.WebDriver.Input.LastPress := none
+  /-- The default action of the last `keydown` for the host, until the host reads it:
+  `true` when no listener canceled it and the key did not go to a text control or an
+  editing host (`Dom.keyEdits`), so the host may scroll the page for it. -/
+  keyDefault : Option Bool := none
   deriving Inhabited, Repr
 
 /-- The layout reads of scripts: the engine's layout of an arena at a viewport (CSS

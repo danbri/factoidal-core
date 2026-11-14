@@ -45,8 +45,14 @@ argument for `start`:
   pointer, mouse and wheel events at the element the layout's hit test gives
   (`Hosts.PageEvents.dispatchLow`). A request that WebDriver refuses (`invalid argument`,
   `move target out of bounds`, `no such element`) changes nothing after the point of the
-  error and the turn has `inputError` (`error`, `message`). Only this action changes the
-  session's trusted input state (`LeanJS.Session.trusted`).
+  error and the turn has `inputError` (`error`, `message`). Only this action and `key`
+  change the session's trusted input state (`LeanJS.Session.trusted`).
+- `key` (BubblePopJS sessions): a key a person pressed in a host, on the same path as
+  `actions` (`WebDriver.HostKeys`): `text` (committed text, typed as Element Send Keys
+  types it), or `mac` (a macOS virtual key code) or `key` (a DOM key value), with
+  `modifiers` (1 Shift, 2 Command, 4 Option, 8 Control). The turn's `keyDefault` says
+  whether the host may scroll for the key (its `keydown` was not canceled and it went to
+  no text control or editing host).
 - `message` (`data`: JSON text, `origin`): a message of the embedder to the page, as a
   `message` event at the window (a test host answers a page's request this way).
 - `resize` (`width`, `height`): the viewport in CSS pixels; `resize` at the window.
@@ -418,15 +424,6 @@ def pointerInit (request : JSON.Json) : String :=
     (if fields.any (·.1 == "pointerId") then [] else [("pointerId",num 1)]))).toString
 
 def boolField (request : JSON.Json) (k : String) : Bool := request.field? k == some (.bool true)
-
-/-- The key data of a `key` request as the JSON init of its keyboard events: `key`, `code`,
-the modifiers, `repeat` and the legacy `keyCode`. -/
-def keyInit (request : JSON.Json) : String :=
-  let bools := ["shiftKey","ctrlKey","altKey","metaKey","repeat"].map fun k => (k,JSON.Json.bool (boolField request k))
-  let code := match request.field? "keyCode" with
-    | some (.number n) => [("keyCode",JSON.Json.number n),("which",JSON.Json.number n)]
-    | _ => []
-  (JSON.Json.object ([("key",.string (str request "key")),("code",.string (str request "code"))] ++ bools ++ code)).toString
 
 /-- The page's viewport in CSS pixels: the window's `width`, and its `height` less the
 full chrome of `shell` (the rows that a render lays the page out in,
@@ -892,13 +889,19 @@ def netGive (h : Page.Host) (request : JSON.Json) : Page.Host := netGiveAll h (n
 
 /-- The error of the turn's Perform Actions (`actions`), if WebDriver refused it. -/
 def inputFields (s : LeanJS.Session) : List (String × JSON.Json) :=
-  match s.trusted.error with
+  (match s.trusted.error with
   | some er => [("inputError", .object [("error", .string er.code.name), ("message", .string er.message)])]
-  | none => []
+  | none => []) ++
+  -- whether the host may scroll for the last key (`PointerState.keyDefault`)
+  (match s.host.pointer.keyDefault with
+  | some b => [("keyDefault", .bool b)]
+  | none => [])
 
-/-- The error is reported once. -/
+/-- The error and the key's default are reported once. -/
 def inputReported (s : LeanJS.Session) : LeanJS.Session :=
-  if s.trusted.error.isNone then s else s.setTrusted { s.trusted with error := none }
+  let s := if s.trusted.error.isNone then s else s.setTrusted { s.trusted with error := none }
+  if s.host.pointer.keyDefault.isNone then s
+  else s.setHost { s.host with pointer := { s.host.pointer with keyDefault := none } }
 
 /-- The node of an element reference of a host's `actions`: `path:` and the child indices
 from the document (`WebDriver.Input.resolvePath`). -/
@@ -913,6 +916,34 @@ def inputSources (request : JSON.Json) : Except WebDriver.Error (List WebDriver.
   match request.field? "text" with
   | some (.string text) => .ok [WebDriver.Actions.typeableSource text]
   | _ => WebDriver.Actions.parse request
+
+/-- The key of a host's `key` request (`WebDriver.HostKeys.HostKey`): committed `text`, a
+macOS key code `mac`, or a DOM key value `key`, with the `modifiers` bits (1 Shift, 2
+Command, 4 Option, 8 Control). -/
+def hostKeyOf (request : JSON.Json) : Option WebDriver.HostKeys.HostKey :=
+  let bits := (natField request "modifiers").getD 0
+  match request.field? "text", natField request "mac", request.field? "key" with
+  | some (.string t), _, _ => some (.text t)
+  | _, some code, _ => some (.mac code bits)
+  | _, _, some (.string k) => some (.dom k bits)
+  | _, _, _ => none
+
+/-- Input of the user as WebDriver's Perform Actions (`Actions.perform`, then Release
+Actions with `release`) over the engine (`PageEvents.inputDriver`): the one place the
+trusted input state changes. An event that gives user activation records its time. -/
+def performInput (sources : List WebDriver.Actions.Source) (release : Bool) (a : LeanJSWorkers.Agents) :
+    LeanJSWorkers.Agents :=
+  let e := LeanJSWorkers.engine
+  let base := e.inputDriver refNode
+  let dispatch := fun (a : LeanJSWorkers.Agents) (low : WebDriver.Actions.Low) =>
+    let a := base.dispatch a low
+    if WebDriver.Input.activates low then { a with page := a.page.setTrusted { a.page.trusted with activated := some (e.loop a).clock } } else a
+  let d : WebDriver.Actions.Driver LeanJSWorkers.Agents := { env := base.env, dispatch := dispatch, wait := base.wait }
+  let start : WebDriver.Actions.Run LeanJSWorkers.Agents := { engine := a, input := a.page.trusted.actions }
+  let r := WebDriver.Actions.perform d start sources
+  let r := if release then WebDriver.Actions.release d r else r
+  let a := r.engine
+  { a with page := a.page.setTrusted { a.page.trusted with actions := r.input, error := r.error } }
 
 /-- The answer of a turn of the Lean engine; the session, its workers and its sandboxed
 frames' sessions are kept. A page with workers adds `workers` (how many run) and `fetches`
@@ -1019,30 +1050,16 @@ def actLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (act
     | some kind, some node => run (e.pointer · kind node (pointerInit request))
     | _, _ => keep "scriptSession: pointer needs kind (down, move, up, cancel) and node"
   | "key" =>
-    -- a key of the user (BubblePopJS sessions): `kind` "down" or "up", `key`, `code` and the modifiers
-    let key := str request "key"
-    if key.isEmpty then keep "scriptSession: key needs key"
-    else run (e.key · (str request "kind" == "up") (keyInit request)
-      { key, shift := boolField request "shiftKey", ctrl := boolField request "ctrlKey",
-        alt := boolField request "altKey", cmd := boolField request "metaKey" })
+    -- a key a person pressed in a host (the window, the Hub): its WebDriver key actions
+    -- (`WebDriver.HostKeys`) on the same trusted path as `actions`
+    match hostKeyOf request with
+    | some k => run (performInput [WebDriver.HostKeys.sourceOf k] false)
+    | none => keep "scriptSession: key needs text, mac or key"
   | "actions" =>
     -- input of the user as WebDriver's Perform Actions; the one place the trusted input state changes
     match inputSources request with
     | .error er => run fun a => { a with page := a.page.setTrusted { a.page.trusted with error := some er } }
-    | .ok sources =>
-      let release := boolField request "release"
-      run fun a =>
-        let base := e.inputDriver refNode
-        -- an event that gives user activation records its time
-        let dispatch := fun (a : LeanJSWorkers.Agents) (low : WebDriver.Actions.Low) =>
-          let a := base.dispatch a low
-          if WebDriver.Input.activates low then { a with page := a.page.setTrusted { a.page.trusted with activated := some (e.loop a).clock } } else a
-        let d : WebDriver.Actions.Driver LeanJSWorkers.Agents := { env := base.env, dispatch := dispatch, wait := base.wait }
-        let start : WebDriver.Actions.Run LeanJSWorkers.Agents := { engine := a, input := a.page.trusted.actions }
-        let r := WebDriver.Actions.perform d start sources
-        let r := if release then WebDriver.Actions.release d r else r
-        let a := r.engine
-        { a with page := a.page.setTrusted { a.page.trusted with actions := r.input, error := r.error } }
+    | .ok sources => run (performInput sources (boolField request "release"))
   | "message" =>
     -- a message of the embedder to the page: a `message` event at the window
     run fun a =>

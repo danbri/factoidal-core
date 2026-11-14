@@ -30,6 +30,7 @@ import L4Factoidal.Rendering.CssRegister
 import L4Factoidal.HTML.FormSubmission
 import L4Factoidal.DOM.Editing.Keys
 import L4Factoidal.DOM.Editing.TextControl
+import L4Factoidal.DOM.Editing.TextKeys
 import L4Factoidal.Rendering.Style
 import L4Factoidal.DOM.Named
 import L4Factoidal.DOM.CustomElements
@@ -1060,6 +1061,26 @@ def keyTarget (s : State) : Nat :=
     match keyHost s with
     | some h => h
     | none => (L4Factoidal.DOM.Editing.bodyOf (editView s)).getD 0
+
+/-- A key in the focused text control (`Editing.mutableTextControl`): the control and the
+key's command there (`Editing.textKeyCommandIn`), which `textEdit` (op 179) then runs. -/
+def textKeyOf (s : State) (k : L4Factoidal.DOM.Editing.KeyInput) : Option (Nat × String × String) :=
+  match focusedElement s.dom with
+  | some f =>
+    if L4Factoidal.DOM.Editing.mutableTextControl s.dom f then
+      let multiline := L4Factoidal.DOM.Editing.tagOf s.dom f == "textarea"
+      (L4Factoidal.DOM.Editing.textKeyCommandIn multiline k).map fun (c, v) => (f, c, v)
+    else none
+  | none => none
+
+/-- The focus is in a text control or the selection in an editing host: the keys that
+scroll a page (space, the arrows, Page Up and Down, Home, End) edit or move the caret
+there instead. -/
+def keyEdits (s : State) : Bool :=
+  (keyHost s).isSome ||
+    match focusedElement s.dom with
+    | some f => L4Factoidal.DOM.Editing.mutableTextControl s.dom f
+    | none => false
 
 /-- `Selection.modify(alter, direction, granularity)` (op 178, `q` the three words): the
 focus moves (`Editing.modifyFocus`), inside the editing host of the selection when there

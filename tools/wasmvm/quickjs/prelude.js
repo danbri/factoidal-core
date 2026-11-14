@@ -11732,6 +11732,14 @@
     dispatch(target, type, flags) {
       // not an event: the default action of a press, which only Lean asks for
       if (type === '@focus') { pressFocus(target); return ''; }
+      // the default action of a key in a text control (Lean chose the control and the
+      // command, Hosts.PageEvents.key): the command runs on its value (op 179) and fires input
+      if (type === '@edit') {
+        let d = {}; try { d = JSON.parse(n.query(0, 16, '')); } catch {}
+        const el = wrap(target);
+        if (el && typeof d.command === 'string' && typeof el.selectionStart === 'number') controlCommand(el, d.command, String(d.value ?? ''));
+        return '';
+      }
       // click, auxclick and contextmenu of pointer input are PointerEvents (Pointer Events 3 §4.2.12); a click with no pointer data is a MouseEvent
       const pointerClick = type === 'click' || type === 'auxclick' || type === 'contextmenu';
       let C = type.startsWith('pointer') ? PointerEvent : pointerClick || type === 'dblclick' || type.startsWith('mouse') ? MouseEvent

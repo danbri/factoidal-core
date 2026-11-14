@@ -30,6 +30,7 @@ the same order as `Hosts.Page`:
 -/
 import L4Factoidal.WasmVM.Hosts.Page
 import L4Factoidal.WebDriver.Input
+import L4Factoidal.WebDriver.HostKeys
 
 namespace L4Factoidal.WasmVM.Hosts.PageEvents
 open L4Factoidal.WasmVM.Hosts.Page
@@ -202,12 +203,20 @@ def inputInit (inputType : String) (data : Option String) (ranges : List L4Facto
       | none => .null),
     ("ranges", .array (ranges.map fun r => .array [n r.start.node, n r.start.offset, n r.stop.node, n r.stop.offset]))]).toString
 
+/-- The init of `@edit`, the default action of a key in a text control: the command and
+its value, which the page's glue gives to `textEdit` (op 179). -/
+def editInit (command value : String) : String :=
+  (L4Factoidal.JSON.Json.object [("command", .string command), ("value", .string value)]).toString
+
 /-- A key of the user (`up`: its release). `keydown` is fired at the editing host of the
 selection (else the `body`). When no listener canceled it, `keypress` is fired for a key
 with a character (`press`: its init; a host that gives none gets no `keypress`); when
 that is not canceled and the key edits (`DOM.Editing.keyCommandIn`), `beforeinput` is
 fired at the editing host; when that is not canceled the editing command runs and
-`input` is fired. ArrowLeft and ArrowRight move the caret. `init` is the JSON init of the
+`input` is fired. In a focused text control (`Dom.textKeyOf`) `beforeinput` is fired at
+the control and then `@edit`, where the page's glue runs the command (op 179). ArrowLeft
+and ArrowRight move the caret. `keyDefault` of the pointer state records whether the host
+may scroll for the key (not canceled, not edited). `init` is the JSON init of the
 keyboard events. Everything after `keydown` is a default action of the key: it runs
 through `Input.afterCancelable`, so a canceled `keydown` has none of it. -/
 def key (s : σ) (up : Bool) (init : String) (k : L4Factoidal.DOM.Editing.KeyInput) (press : Option String := none) : σ :=
@@ -218,6 +227,7 @@ def key (s : σ) (up : Bool) (init : String) (k : L4Factoidal.DOM.Editing.KeyInp
     (e.advance s (e.loop s).clock).1
   else
     let (s, prevented) := e.dispatchWith s target "keydown" init
+    let s := e.setPointer s { (e.host s).pointer with keyDefault := some (!prevented && !Hosts.Dom.keyEdits (e.host s).dom) }
     let s := Input.afterCancelable prevented (fun s =>
       let (s, pressPrevented) := match press with
         | some pressInit => e.dispatchWith s target "keypress" pressInit
@@ -241,8 +251,18 @@ def key (s : σ) (up : Bool) (init : String) (k : L4Factoidal.DOM.Editing.KeyInp
             | true, some (at_, it, d) => (e.dispatchWith s at_ "input" (inputInit it d)).1
             | _, _ => s) s
         | _, _ =>
-          let h := e.host s
-          e.setHost s { h with dom := Hosts.Dom.caretMove h.dom k }) s) s
+          match Hosts.Dom.textKeyOf (e.host s).dom k with
+          | some (control, command, value) =>
+            -- a text control: `beforeinput` at it, then the page's glue runs the command on
+            -- its value and selection (`@edit`: `Editing.textEdit`, op 179) and fires `input`
+            let inputType := L4Factoidal.DOM.Editing.inputTypeOf command
+            let data := L4Factoidal.DOM.Editing.inputDataOf command value
+            let (s, prevented) := e.dispatchWith s control "beforeinput" (inputInit inputType data [])
+            Input.afterCancelable prevented (fun s =>
+              (e.dispatchWith s control "@edit" (editInit command value)).1) s
+          | none =>
+            let h := e.host s
+            e.setHost s { h with dom := Hosts.Dom.caretMove h.dom k }) s) s
     (e.advance s (e.loop s).clock).1
 
 /-! ### Low-level input events (`WebDriver.Actions.Low`) -/

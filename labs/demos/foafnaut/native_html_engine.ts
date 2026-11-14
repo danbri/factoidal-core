@@ -92,6 +92,9 @@ export type ScriptTurn = {session:number;clock:number;changed:boolean;commandCou
   instructions:number;jobs:number;tasks:number;ns:number;
   /** Lean-validated page GPU commands of this turn (L4Factoidal.PageGpu) and their page session. */
   gpu?:unknown[];gpuPage?:number;
+  /** Action `key`: whether the host may scroll for the key (its keydown was not canceled and
+   * went to no text control or editing host; WebScripts `key`). */
+  keyDefault?:boolean;
   /** BubblePopJS dedicated workers: how many the page has, and the scripts they wait for
    * (answered with the action `fetched`; docs/designissues/2026-11-09-dedicated-workers.md). */
   workers?:number;fetches?:{id:number;url:string;kind:string}[]};
