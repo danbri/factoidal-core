@@ -136,7 +136,8 @@ def wideKeyword (top : List CV) : Option String :=
 
 /-- Whether the value has a substitution function, so it is kept as written until computed
 values are made (CSS Variables 1 §3). -/
-def hasSubstitution (cvs : List CV) : Bool := hasFn "var" 32 cvs || hasFn "env" 32 cvs
+def hasSubstitution (cvs : List CV) : Bool :=
+  hasFn "var" 32 cvs || hasFn "env" 32 cvs || hasFn "attr" 32 cvs || hasFn "if" 32 cvs
 
 /-- The short form of a `display` value (CSS Display 3 §2.5 and its serialisation: the
 single-keyword legacy forms where they exist). The words arrive in the order of the

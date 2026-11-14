@@ -519,6 +519,39 @@ def substitute (get : String → String) (fns : List (String × FnDef)) : Nat �
             | none => none
             | some none => some out
             | some (some v) => (substitute get fns fuel v).map (joinTokens out ·)
+          else if CssValues.lower name == "attr" then
+            -- `attr(<name> <type>?, <fallback>?)` (CSS Values 5 §7.7): the element's attribute,
+            -- asked through `get` as U+0001 "attr " and the name (U+0000 when it has none)
+            let groups := CssValues.splitCommas args
+            let spec := CssValues.stripWs (groups.headD [])
+            let fallback := match groups with
+              | _ :: fb :: more => some (more.foldl (fun acc g => acc ++ [CssValues.CV.tok .comma] ++ g) fb)
+              | _ => none
+            let useFallback := fun (_ : Unit) => match fallback with
+              | some fb => (substitute get fns fuel fb).map (joinTokens out ·)
+              | none => none
+            match spec with
+            | .tok (.ident an) :: ty =>
+              let raw := get ("\x01attr " ++ CssValues.lower an)
+              if raw == "\x00" then useFallback ()
+              else
+                let typed : Option (List CssValues.CV) := match ty with
+                  | [] => some [.tok (.str raw)]
+                  | [.tok (.ident u)] =>
+                    let u := CssValues.lower u
+                    if u == "raw-string" then some [.tok (.str raw)]
+                    else
+                      match CssValues.stripWs (CssValues.CV.parse raw) with
+                      | [.tok (.num x _)] => some (CssValues.CV.parse (CssValues.fmtRat x ++ (if u == "percent" then "%" else u)))
+                      | _ => none
+                  | [.fn t targs] =>
+                    if CssValues.lower t != "type" then none
+                    else (typedValue (CssValues.rawText targs) raw).map CssValues.CV.parse
+                  | _ => none
+                match typed with
+                | some ts => some (joinTokens out ts)
+                | none => useFallback ()
+            | _ => none
           else if CssValues.lower name == "var" then
             let groups := CssValues.splitCommas args
             let nameText := match CssValues.stripWs (groups.headD []) with
@@ -549,6 +582,15 @@ the walk to the root and the chain of variables. -/
 def computedLonghand (v : View) : Nat → Nat → String → String
   | 0, _, _ => ""
   | fuel + 1, id, p =>
+    -- what substitution looks up: a custom property of the element, or (U+0001 "attr " and
+    -- a name) one of its attributes, U+0000 when it has none
+    let lookupVar := fun (name : String) =>
+      if name.startsWith "\x01attr " then
+        let an := (name.drop 6).toString
+        match ((v.dom.get id).attrs.find? fun a => a.ns.isNone && a.lname == an) with
+        | some a => a.value
+        | none => "\x00"
+      else computedLonghand v fuel id name
     -- the element's flow, looked up only for a property of a logical property group
     let flow := fun (_ : Unit) =>
       CssValues.Logical.Flow.of (computedLonghand v fuel id "writing-mode") (computedLonghand v fuel id "direction")
@@ -603,7 +645,7 @@ def computedLonghand (v : View) : Nat → Nat → String → String
       | some (shorthand, raw) =>
         -- substitute, then read the shorthand's longhand `p`; invalid at computed-value
         -- time is as if not declared
-        match substitute (fun name => computedLonghand v fuel id name) v.functions.get 16 (CssValues.CV.parse raw) with
+        match substitute lookupVar v.functions.get 16 (CssValues.CV.parse raw) with
         | none => default ()
         | some cvs' =>
           match (CssValues.expand shorthand (CssValues.rawText cvs')).bind (·.lookup p) with
@@ -619,8 +661,9 @@ def computedLonghand (v : View) : Nat → Nat → String → String
       else if value == "unset" || value == "revert" || value == "revert-layer" then default ()
       else
         let cvs := CssValues.CV.parse value
-        if CssValues.hasFn "var" 32 cvs || CssValues.hasFn "if" 32 cvs || (!v.functions.get.isEmpty && hasDashedFn 32 cvs) then
-          match substitute (fun name => computedLonghand v fuel id name) v.functions.get 16 cvs with
+        if CssValues.hasFn "var" 32 cvs || CssValues.hasFn "if" 32 cvs || CssValues.hasFn "attr" 32 cvs ||
+            (!v.functions.get.isEmpty && hasDashedFn 32 cvs) then
+          match substitute lookupVar v.functions.get 16 cvs with
           -- a custom property invalid at computed-value time has the guaranteed-invalid
           -- value (CSS Variables 1 §3.1), not its parent's
           | none => if custom then "" else default ()
@@ -911,6 +954,11 @@ private def computedAt (html css prop : String) : String :=
 #guard computedAt "<div id=t></div>" "@function --f(--x: 10px) { --y: var(--x); result: var(--y); } #t { --actual: --f(); }" "--actual" == "10px"
 #guard computedAt "<div id=t></div>" "@function --f() returns <length> { result: calc(1px + 1px); } #t { --actual: --f(); }" "--actual" == "2px"
 #guard computedAt "<div id=t></div>" "@function --f() returns <length> { result: red; } #t { --actual: --f(); }" "--actual" == ""
+-- attr() (CSS Values 5 §7.7)
+#guard computedAt "<div id=t data-foo=abc></div>" "#t { --a: attr(data-foo); }" "--a" == "\"abc\""
+#guard computedAt "<div id=t data-foo=3></div>" "#t { width: attr(data-foo px); }" "width" == "3px"
+#guard computedAt "<div id=t></div>" "#t { --a: attr(data-foo, fallback); }" "--a" == "fallback"
+#guard computedAt "<div id=t data-foo=10px></div>" "#t { --a: attr(data-foo type(<length>)); }" "--a" == "10px"
 -- the styles of pseudo-elements
 private def pseudoAt (html css pe prop : String) : String :=
   let dom := DOM.parseHtmlDocument html
