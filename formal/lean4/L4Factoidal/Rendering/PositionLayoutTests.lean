@@ -684,4 +684,21 @@ private def wrapped := "<div id=o><div id=w><div id=a>A</div><div id=b>B</div></
 -- a later `display` takes it back
 #guard box wrapped "#w{display:contents} #w{display:block;padding-left:9px}" "a" == some (9,0,191,7)
 
+
+-- Margins collapse through an empty block (CSS 2.1 §8.3.1): its two margins and the
+-- margins around it are one margin, the largest (10, 20, 30 and 5 here: 30).
+private def spaced := "<div id=a>A</div><div id=e></div><div id=b>B</div>"
+#guard box spaced "#a{margin-bottom:10px} #e{margin:20px 0 30px} #b{margin-top:5px}" "b" == some (0,37,200,7)
+#guard box spaced "#e{margin:20px 0}" "b" == some (0,27,200,7)
+#guard box spaced "#e{margin:20px 0} #b{margin-top:50px}" "b" == some (0,57,200,7)
+-- two empty blocks in a row are still one margin
+#guard box "<div id=a>A</div><div class=e></div><div class=e></div><div id=b>B</div>" ".e{margin:20px 0}" "b" == some (0,27,200,7)
+-- a block with a height, a border, padding or text does not collapse through
+#guard box spaced "#e{margin:20px 0;height:1px}" "b" == some (0,48,200,7)
+#guard box spaced "#e{margin:20px 0;border-top:1px solid}" "b" == some (0,48,200,7)
+#guard box spaced "#e{margin:20px 0;padding-top:1px}" "b" == some (0,48,200,7)
+#guard box "<div id=a>A</div><div id=e>E</div><div id=b>B</div>" "#e{margin:20px 0}" "b" == some (0,54,200,7)
+-- a negative margin of the empty block takes off the margin around it
+#guard box spaced "#a{margin-bottom:10px} #e{margin:-4px 0 0}" "b" == some (0,13,200,7)
+
 end L4Factoidal.Rendering.PositionLayoutTests

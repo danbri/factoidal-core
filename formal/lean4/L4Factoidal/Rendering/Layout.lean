@@ -1688,7 +1688,8 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
                 content := {content with height := content.height+(cleared-here)}
                 previous := 0
             -- CSS 2.1 §8.3.1: the margin before this box and its own top margin collapse.
-            let overlap := overlapPx previous (if cs.display == .block then leadMargin dom styles fuel child else cs.margin.top)
+            let lead := if cs.display == .block then leadMargin dom styles fuel child else cs.margin.top
+            let overlap := overlapPx previous lead
             let top := innerY+content.height-overlap
             -- §9.5: a plain block is part of this formatting context: it is laid out under the
             -- floats with its lines beside them, and floats inside it stay in the context for
@@ -1704,8 +1705,19 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
                 layoutTask dom styles font embedding pictures fuel (sub <| .box child) (innerX+offset) top room
             -- the floats of a context only grow
             if plain && r.floats.size >= floats.size then floats := r.floats
-            content := {append content r with height := content.height-overlap+r.height}
-            previous := r.marginBottom
+            -- CSS 2.1 §8.3.1: a block with no height, border, padding or line box collapses
+            -- through: its own two margins are one margin, which joins the margin before it
+            -- (and, as `previous`, the one after it). At the top of a flow whose container
+            -- shows the first margin (`unbounded`) it is stacked as before.
+            let through := cs.display == .block && previous < unbounded/2 && r.runs.isEmpty &&
+              collapsesTop dom cs child && collapsesBottom dom cs child && (r.height-lead-r.marginBottom).abs < 0.001
+            if through then
+              let joined := collapsePx previous (collapsePx lead r.marginBottom)
+              content := {append content r with height := content.height-previous+joined}
+              previous := joined
+            else
+              content := {append content r with height := content.height-overlap+r.height}
+              previous := r.marginBottom
           else if cs.display.isInlineContainer || (cs.display == .inlineBlock && blockInside dom styles child) then
             -- An inline-level flex or grid container, or an inline-block with blocks inside:
             -- one atomic box, as wide as its content (shrink-to-fit, CSS 2.1 §10.3.9) unless
