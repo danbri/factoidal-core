@@ -6409,13 +6409,15 @@
         if (code !== null && (!Number.isFinite(code) || code < 0 || code > 65535)) throw new TypeError("Failed to construct 'WebSocketError': Value is outside the 'unsigned short' value range.");
         if (code !== null) code = Math.trunc(code);
         const reason = d.reason === undefined ? '' : usv(d.reason);
-        if (code === null && reason !== '') code = 1000;
         if (!wsErrorInternal) {
+          // the check and the code kept (1000 for a reason with no code) are Lean's
+          // (Net.WebSocket.closeCheck and closeCode, web_api 163)
           const r = apiCall(163, [code === null ? '' : String(code), reason]);
           if (typeof r === 'string' && r.startsWith('err')) {
             const [, name, msg] = r.split('\u0000');
             throw new DOMException(`Failed to construct 'WebSocketError': ${msg}`, name);
           }
+          if (typeof r === 'string' && r.startsWith('ok\u0000')) code = r.length > 3 ? Number(r.slice(3)) : null;
         }
         super(message, 'WebSocketError');
         wsErrorSlots.set(this, { closeCode: code, reason });

@@ -415,12 +415,17 @@ def send (s : Sock) (binary : Bool) (data : List UInt8) (key : List UInt8) : Opt
   else some ({ s with buffered := s.buffered + data.length, pool := s.pool ++ key },
     [sockWire s "WEBSOCKET-SEND" (some (ByteArray.mk (encodeClient key (if binary then 2 else 1) data).toArray))])
 
+/-- The close code sent (WebSockets §3.1 `close()` steps 3 to 5, and `WebSocketError`'s
+constructor): the given one, else 1000 when a reason is given, else none. -/
+def closeCode (code : Option Nat) (reason : String) : Option Nat :=
+  match code with
+  | none => if reason.isEmpty then none else some 1000
+  | c => c
+
 /-- `close(code, reason)` (§3.2 steps 3 to 6), the arguments checked (`closeCheck`); a reason
 without a code is sent with 1000. -/
 def close (s : Sock) (code : Option Nat) (reason : String) (key : List UInt8) : Sock × List PageFetch.Wire :=
-  let code := match code with
-    | none => if reason.isEmpty then none else some 1000
-    | c => c
+  let code := closeCode code reason
   if s.readyState ≥ 2 then (s, [])
   else if s.readyState == 0 then fail s
   else ({ s with readyState := 2, closeSent := true },
@@ -544,6 +549,38 @@ theorem closeCheck_code (c : Nat) (r : String) (h : closeCheck (some c) r = none
   · simp only [Bool.not_eq_true', Bool.not_eq_false, Bool.or_eq_true, beq_iff_eq, Bool.and_eq_true,
       decide_eq_true_eq] at h1
     exact h1
+
+/-- Kind: correctness theorem (WebSockets §3.1). Says: a reason with no code is sent with
+code 1000. -/
+theorem closeCode_reason (r : String) (h : r.isEmpty = false) : closeCode none r = some 1000 := by
+  simp [closeCode, h]
+
+/-- Kind: security theorem (WebSockets §3.1, RFC 6455 §7.4). Says: a `close()` or a
+`WebSocketError` that passes `closeCheck` sends no code but 1000 or one of 3000 to 4999 (a page
+cannot send the reserved codes, 1001 to 2999, that only an endpoint may), and a reason of at
+most 123 bytes. -/
+theorem closeCode_valid (code : Option Nat) (r : String) (h : closeCheck code r = none) :
+    (∀ c, closeCode code r = some c → c = 1000 ∨ (3000 ≤ c ∧ c ≤ 4999)) ∧ r.utf8ByteSize ≤ 123 := by
+  cases code with
+  | none =>
+    unfold closeCheck at h
+    refine ⟨fun c hc => ?_, ?_⟩
+    · unfold closeCode at hc
+      split at hc <;> simp_all
+    · by_cases hr : r.utf8ByteSize > 123
+      · simp [hr] at h
+      · omega
+  | some c =>
+    refine ⟨fun c' hc => ?_, ?_⟩
+    · simp only [closeCode, Option.some.injEq] at hc
+      subst hc; exact closeCheck_code c r h
+    · unfold closeCheck at h
+      by_cases h1 : (!(c == 1000 || (decide (3000 ≤ c) && decide (c ≤ 4999)))) = true
+      · simp only [h1, if_true] at h; simp at h
+      · simp only [h1, if_false, Bool.false_eq_true] at h
+        by_cases hr : r.utf8ByteSize > 123
+        · simp [hr] at h
+        · omega
 
 theorem check_none (h : Head) (hc : check h = none) :
     h.masked = false ∧ (h.op ≥ 8 → h.fin = true ∧ h.len7 ≤ 125) := by

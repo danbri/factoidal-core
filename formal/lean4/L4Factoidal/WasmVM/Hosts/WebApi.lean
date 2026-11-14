@@ -829,12 +829,13 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
         | none => ""))
     -- A multipart/form-data body's entries (`formData()`, Net.Multipart): empty is a failure.
     else if code == 164 then pure' (.ok (L4Factoidal.Net.Multipart.op fs))
-    -- A close code and reason (`WebSocketError`, Net.WebSocket.closeCheck): "" or the exception.
+    -- A close code and reason (`WebSocketError`, Net.WebSocket.closeCheck): "ok", U+0000 and the
+    -- code to keep (`closeCode`: 1000 for a reason with no code), or the exception.
     else if code == 163 then
       let str := fun (i : Nat) => (strArg fs i).toOption.getD ""
       match L4Factoidal.Net.WebSocket.closeCheck (str 0).toNat? (str 1) with
       | some (n, m) => pure' (ofStr ("err\u0000" ++ n ++ "\u0000" ++ m))
-      | none => pure' (ofStr "")
+      | none => pure' (ofStr ("ok\u0000" ++ ((L4Factoidal.Net.WebSocket.closeCode (str 0).toNat? (str 1)).map toString).getD ""))
     -- WebSocket (Net.WebSocket through Net.Xhr): the key and each masking key are fresh
     -- bytes of the engine's generator; only a page with the network on has connections.
     else if 156 ≤ code && code ≤ 161 then
