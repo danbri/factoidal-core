@@ -250,8 +250,7 @@ theorem presTree_core : ∀ e, namesOkList (presTree e) = true := by
   | app fn args =>
       simp only [children] at ih
       have hfb := namesOk_presApplyT fn args ih
-      unfold presTree
-      simp only []
+      simp only [presTree]
       repeat' split
       all_goals first
         | exact hfb

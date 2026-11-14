@@ -2327,3 +2327,25 @@ L4Factoidal_JS_exportedNamesF  # (c) GetExportedNames: depth is the chain of `ex
 L4Factoidal_JS_postOrder  # (c) the evaluation order of a module graph: depth is the import chain, at most fuel = modules + 1; a visited module is not entered again
 L4Factoidal_JS_namespaceOf  # (c) a namespace object and the namespaces it re-exports (`export * as`): depth is that chain, at most the number of modules, since a namespace made once is reused
 L4Factoidal_WasmVM_Hosts_LeanJSModules_visit*  # (c) fetching a module graph (visit, visitKids): depth is the import chain, at most fuel 4096 (deeper is "module graph too deep"); a URL in the module map is not visited again; a module's requests are a self tail call
+# --- MathML strict content, OpenMath, Core vocabulary (2026-11-14; https://github.com/danbri/factoidal-core/pull/433 lists the (a) lines as open work)
+L4Factoidal_MathML_exprEq*  # (b) nesting of a Content expression (exprEq, exprEqList, exprEqRows): a list continues by a tail call through &&, inside the mutual block
+L4Factoidal_MathML_isStrict*  # (b) nesting of a Content expression (isStrict, isStrictList): the operand list continues by a tail call through &&
+L4Factoidal_MathML_bottomUp  # (b) nesting of a Content expression: the traversal under toStrict and unstrict
+L4Factoidal_MathML_bottomUpList  # (a) PENDING https://github.com/danbri/factoidal-core/pull/433 one frame per operand of one application (cons after the call), on top of (b); to become an accumulator loop with its equation re-proved
+L4Factoidal_MathML_bottomUpRows  # (a) PENDING https://github.com/danbri/factoidal-core/pull/433 one frame per row of one matrix literal, on top of (b)
+L4Factoidal_MathML_rowsOf  # (a) PENDING https://github.com/danbri/factoidal-core/pull/433 one frame per argument of one linalg2:matrix application (unstrict)
+L4Factoidal_MathML_toOM  # (b) nesting of a Content expression written as an OpenMath object
+L4Factoidal_MathML_toOMList  # (a) PENDING https://github.com/danbri/factoidal-core/pull/433 one frame per operand of one application, on top of (b); theorem ofOM_toOM is stated over this form
+L4Factoidal_MathML_toOMRows  # (a) PENDING https://github.com/danbri/factoidal-core/pull/433 one frame per row of one matrix literal, on top of (b)
+L4Factoidal_MathML_ofOM  # (b) nesting of an OpenMath object read as a Content expression
+L4Factoidal_MathML_ofOMList  # (a) PENDING https://github.com/danbri/factoidal-core/pull/433 one frame per argument of one OMA, on top of (b); theorem ofOM_toOM is stated over this form
+L4Factoidal_MathML_omEq*  # (b) nesting of an OpenMath object (omEq, omEqList): a list continues by a tail call through &&
+L4Factoidal_MathML_omOfNode  # (b) nesting of an OpenMath XML document, at most the fuel 4096 of parseOpenMath (deeper is refused); children go through List.mapM
+L4Factoidal_MathML_omXml*  # (b) nesting of an OpenMath object (omXml, omXmlList): omXmlList is a self tail call over the list with an accumulator
+L4Factoidal_MathML_strictXml*  # (b) nesting of an OpenMath object written as Strict Content MathML (strictXml, strictXmlList): the list is a self tail call with an accumulator
+L4Factoidal_MathML_strictBvars  # (b) inside the strictXml mutual block: a self tail call over the bound variables, one strictXml call each
+L4Factoidal_MathML_strictAnnotations  # (b) inside the strictXml mutual block: a self tail call over the attribution pairs, one strictXml call each
+L4Factoidal_MathML_namesOk*  # (s) specification only (namesOk, namesOkList): the predicate of theorem presTree_core in MathML/CoreVocabulary.lean; called by that module's theorems and #guards only; depth is the nesting of the tree
+L4Factoidal_MathML_serialize*  # (s) specification only (serialize, serializeList): compares presTree with Present.pres in #guards of MathML/CoreVocabulary.lean; the executed writer is Present.pres
+L4Factoidal_MathML_presTree  # (s) specification only: the tree form of Present.pres for theorem presTree_core; the executed writer is Present.pres
+L4Factoidal_MathML_pres*T  # (s) specification only (presJoinT, presApplyT, presApplyArgsT, presRowsT, presCellsT): helpers of presTree, same recursion as the Present.pres helpers above
