@@ -1608,7 +1608,13 @@ def elementState (dom : DOM.Dom) (base : String) (request : JSON.Json) : Except 
   let visited := if urls.isEmpty then [] else (dom.treeOrder 0).toList.filter fun id =>
     let n := dom.get id
     Rendering.CSS.isHyperlink n && urls.contains (Syntax.resolveIri base (attr n "href"))
-  return {hover := node "hover", active := node "active", visited}
+  -- the values of running animations (`Rendering.Animation`; `measure` adds the field)
+  let animated := match request.field? "animated" with
+    | some (.array items) => items.filterMap fun
+      | .array [.number n, .string p, .string v, .bool t] => n.toNat?.map fun id => (id, p, v, t)
+      | _ => none
+    | _ => []
+  return {hover := node "hover", active := node "active", visited, animated}
 
 /-- The hover and active nodes a request names. -/
 def requestPointer (request : JSON.Json) : Option Nat × Option Nat :=
@@ -2006,24 +2012,100 @@ def fontFacesAnswer (h : Holds) (dom : DOM.Dom) (request : JSON.Json) : String :
       ("status",.string (if (fonts[i]?.bind id).isSome then "loaded" else "unloaded"))]
   (JSON.Json.array entries).toString
 
+/-- The request with the animated values of the page's animations, as the field
+`animated` that `elementState` reads: each a node, a longhand, its computed text, and
+whether a transition gives it. With none, the request as it is. -/
+def withAnimated (request : JSON.Json) (overrides : List Rendering.Animation.Override) : JSON.Json :=
+  if overrides.isEmpty then request else
+  let field : JSON.Json := .array (overrides.map fun o =>
+    .array [.number (toString o.node), .string o.property, .string o.value, .bool o.transition])
+  match request with
+  | .object fields => .object (fields.filter (·.1 != "animated") ++ [("animated", field)])
+  | j => j
+
 /-- The layout reads of a script session (`Page.Measure`) with the render request
-`request` (its `layoutFields`): the arena laid out `width` by `height` (`layOutDOM`)
-when a read first asks, then the answers from that one layout. -/
-def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts.Page.Measure := fun dom width height =>
-  let request := layoutRequest request
+`request` (its `layoutFields`): the arena laid out `width` by `rows` (`layOutDOM`)
+when a read first asks, then the answers from that one layout. `overrides` are the
+values of the page's running animations: the cascade and the layout take them
+(`CSS.withAnimated`).
+
+For the animation engine (`Page.animationAccess`), with no layout: 24 the cascaded
+animation and transition longhands of a node; 25 the text of the document's sheets; 27
+the computed text of "property U+0000 value" in the node's style; 28 the elements whose
+rules or `style` attribute declare an animation or a transition, as node numbers; 29 the
+computed text of the longhand named. -/
+def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts.Page.Measure := fun dom width height overrides =>
+  let request := withAnimated (layoutRequest request) overrides
   let held := heldNamed h ((namedImages request).toOption.getD [])
   let laid : Thunk (Except String Laid) := Thunk.mk fun _ => layOutDOM h request none dom width height held (none,none) kept
+  -- what the cascade reads: the flat tree, the rules, the tree scopes, the element state
+  let inputs : Thunk (Except String (DOM.Dom × List Rendering.CSS.Rule × Option Rendering.CSS.TreeScope × Rendering.CSS.ElementState × Float)) :=
+    Thunk.mk fun _ => do
+      let textScale := cssTextScale (← scalePercent request) (zoomUnit request)
+      let (rules,_) ← rulesWith kept dom request
+      let state := withPointer dom (← elementState dom (baseURL dom (str request "url")) request) (none,none)
+      let (flat,rules,treeScope) := flatView kept dom {medium := medium request} rules
+      return (flat,rules,treeScope,state,textScale)
   -- `getComputedStyle` (op 20) reads the cascade alone: no layout for it
   let styled : Thunk (Except String (Array Rendering.CSS.Computed)) := Thunk.mk fun _ => do
-    let textScale := cssTextScale (← scalePercent request) (zoomUnit request)
-    let (rules,_) ← rulesWith kept dom request
-    let state := withPointer dom (← elementState dom (baseURL dom (str request "url")) request) (none,none)
-    let (flat,rules,treeScope) := flatView kept dom {medium := medium request} rules
+    let (flat,rules,treeScope,state,textScale) ← inputs.get
     Rendering.CSS.computeFor treeScope flat rules textScale state
+  -- the rules that declare an animation or a transition (none on most pages)
+  let animationRules : Thunk (List Rendering.CSS.Rule) := Thunk.mk fun _ =>
+    match inputs.get with
+    | .ok (_,rules,_,_,_) => Rendering.Animation.Css.animationRules rules
+    | .error _ => []
+  let matchedOf := fun (node : Nat) => match inputs.get with
+    | .ok (flat,_,treeScope,state,_) =>
+      (match treeScope with
+        | none => Rendering.CSS.matchedRules flat node animationRules.get state
+        | some ts => Rendering.CSS.matchedRulesIn ts node animationRules.get state)
+    | .error _ => []
   -- 22: the device pixel ratio of the layout request (`zoomUnit`/100), with no layout
   -- 23: the `@font-face` faces of the page and the state of each (`document.fonts`)
-  fun node op => if op == 22 then some (Rendering.FloatFormat.format (Float.ofNat (zoomUnit request) / 100))
+  fun node op q => if op == 22 then some (Rendering.FloatFormat.format (Float.ofNat (zoomUnit request) / 100))
     else if op == 23 then some (fontFacesAnswer h dom request)
+    else if op == 24 then
+      if node < dom.size && (dom.get node).type == .element then
+        some (Rendering.Animation.Css.cascadedText
+          (Rendering.Animation.Css.cascaded (if animationRules.get.isEmpty then [] else matchedOf node)
+            (Rendering.CSS.attrValue (dom.get node) "style")))
+      else some ""
+    else if op == 25 then
+      let sheets := WebAccept.accept (WebAccept.mode request) (fun m => sheetsIn m dom request {medium := medium request})
+      some (match sheets with
+        | .ok (found,_) => sheetSource found
+        | .error _ => "")
+    else if op == 27 then
+      match styled.get, q.splitOn "\x00" with
+      | .ok styles, [property, value] =>
+        if node < dom.size && (dom.get node).type == .element then
+          let c := styles[node]?.getD {}
+          let v := value.trimAscii.toString.toLower
+          -- the CSS-wide keywords of a keyframe: the parent's value, or the initial one
+          if v == "inherit" then
+            let parent := ((dom.get node).parent.bind (styles[·]?)).getD {}
+            (Rendering.ComputedValues.values parent).lookup property
+          else if v == "initial" then (Rendering.ComputedValues.values {}).lookup property
+          else (Rendering.CSS.applyDeclaration c property value).bind fun c' =>
+            (Rendering.ComputedValues.values c').lookup property
+        else none
+      | _, _ => none
+    else if op == 28 then
+      let rules := animationRules.get
+      let ids := (List.range dom.size).filter fun id =>
+        let n := dom.get id
+        n.type == .element &&
+          (Rendering.Animation.Css.mentions (Rendering.CSS.attrValue n "style") ||
+            (!rules.isEmpty && !(Rendering.Animation.Css.cascaded (matchedOf id) "").isEmpty))
+      some (" ".intercalate (ids.map toString))
+    else if op == 29 then
+      match styled.get with
+      | .ok styles =>
+        if node < dom.size && (dom.get node).type == .element && dom.connected node then
+          (Rendering.ComputedValues.values (styles[node]?.getD {})).lookup q
+        else none
+      | .error _ => none
     else if op == 20 || op ≥ 200 then
       match styled.get with
       -- CSSOM §9 getComputedStyle: an element that is not connected to the page's

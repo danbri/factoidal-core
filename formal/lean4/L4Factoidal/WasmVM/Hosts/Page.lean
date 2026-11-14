@@ -33,6 +33,7 @@ import L4Factoidal.EventLoop.Model
 import L4Factoidal.EventLoop.Dispatch
 import L4Factoidal.HTML.FrameSessions
 import L4Factoidal.JSON.Serialize
+import L4Factoidal.Rendering.Animation.Api
 
 namespace L4Factoidal.WasmVM.Hosts.Page
 open L4Factoidal.WasmVM
@@ -141,10 +142,13 @@ structure PointerState where
   pending : Option (Nat × String) := none
   deriving Inhabited, Repr
 
+/-- The answers of one layout: node, op and the op's text (empty for most ops). -/
+abbrev Answers := Nat → Nat → String → Option String
+
 /-- The layout reads of scripts: the engine's layout of an arena at a viewport (CSS
 pixels), as the answers of `node_query` ops 17 (a node's boxes) and 18 (an SVG element's
 bounding box). The engine gives the function; it lays out when a read first asks. -/
-abbrev Measure := Arena → Nat → Nat → (Nat → Nat → Option String)
+abbrev Measure := Arena → Nat → Nat → List L4Factoidal.Rendering.Animation.Override → Answers
 
 structure Reads where
   measure : Option Measure := none
@@ -153,7 +157,10 @@ structure Reads where
   /-- DOM writes served so far: a layout is of one version. -/
   version : Nat := 0
   /-- The answers of the layout of `version` at the viewport, once a read asked. -/
-  kept : Option (Nat × (Nat → Nat → Option String)) := none
+  kept : Option (Nat × Answers) := none
+  /-- The timeline time of the kept answers: a page with animations is laid out again
+  when the time moved (`Host.measured`). -/
+  keptNow : Int := 0
   /-- Layouts made for reads. -/
   layouts : Nat := 0
   /-- The fonts, SVG path parser and images Canvas 2D draws with (the engine's). -/
@@ -182,6 +189,9 @@ structure Host where
   /-- Messages this session posted to a frame's session or to its parent's
   (`HTML.FrameSessions`), which the host has not taken. -/
   outbox : Array L4Factoidal.HTML.FrameSessions.Message := #[]
+  /-- The page's animations (`Rendering.Animation.Engine`): empty, and never read by a
+  layout, on a page that animates nothing. -/
+  anim : L4Factoidal.Rendering.Animation.State := {}
   deriving Inhabited
 
 /-- Budgets of one session. -/
@@ -351,21 +361,121 @@ def readOnlyImports : List String :=
   ["get_element_by_id", "document_element", "tag_name", "text_content_get", "get_attribute", "node_info",
    "node_string", "node_children", "node_query", "console_log", "gpu_command"]
 
-/-- A layout of the current arena and viewport for reads, counted. -/
-def Host.measureNow (h : Host) : Host × Option (Nat → Nat → Option String) :=
+/-- The name and value pairs of a `getComputedStyle` answer (measure op 20). -/
+def stylePairs (text : Option String) : List (String × String) :=
+  match text with
+  | some t => L4Factoidal.Rendering.Animation.Css.ofCascadedText t
+  | none => []
+
+/-- What the animation engine reads of the page at a style change: `base` is the layout
+with no animated value, `prev` the answers of the style change before (the before-change
+style of CSS Transitions 1 §3). Measure ops: 20 the computed style, 24 an element's
+cascaded animation and transition longhands, 25 the text of the sheets, 27 the computed
+value of "property U+0000 value" on an element, 28 the elements that declare an
+animation or a transition, 29 the computed value of the longhand named. -/
+def animationAccess (dom : Arena) (base : Answers) (prev : Option Answers) : L4Factoidal.Rendering.Animation.Access :=
+  { connected := fun n => n < dom.size && dom.connected n
+    base := fun n p => base n 29 p
+    prev := fun n p => prev.bind fun f => f n 29 p
+    changed := fun n => match prev with
+      | some f =>
+        ((stylePairs (base n 20 "")).zip (stylePairs (f n 20 ""))).filterMap fun ((k, v), (k', v')) =>
+          if k == k' && v != v' then some k else none
+      | none => []
+    compute := fun n p v => base n 27 (p ++ "\x00" ++ v)
+    decls := fun n => L4Factoidal.Rendering.Animation.Css.ofCascadedText ((base n 24 "").getD "")
+    candidates := (((base 0 28 "").getD "").splitOn " ").filterMap String.toNat?
+    sheet := fun _ => (base 0 25 "").getD "" }
+
+/-- A layout of the current arena and viewport for reads, counted. A page with an
+animation, or with an animation or transition declaration (measure op 28), has a style
+change first (`Animation.styleChange`), and its layout takes the animated values
+(`Animation.overrides`); any other page takes neither step. -/
+def Host.measureNow (h : Host) : Host × Option Answers :=
   match h.reads.measure with
   | none => (h, none)
   | some m =>
-    let f := m h.dom.dom h.reads.width h.reads.height
-    ({ h with reads := { h.reads with kept := some (h.reads.version, f), layouts := h.reads.layouts + 1 } }, some f)
+    let dom := h.dom.dom
+    let base := m dom h.reads.width h.reads.height []
+    let keep := fun (h : Host) (f : Answers) =>
+      ({ h with reads := { h.reads with kept := some (h.reads.version, f), keptNow := h.anim.now, layouts := h.reads.layouts + 1 } }, some f)
+    if h.anim.idle && (base 0 28 "").getD "" == "" then keep h base
+    else
+      let ac := animationAccess dom base (h.reads.kept.map (·.2))
+      let anim := L4Factoidal.Rendering.Animation.styleChange h.anim ac
+      let ovs := L4Factoidal.Rendering.Animation.overrides anim ac
+      keep { h with anim } (if ovs.isEmpty then base else m dom h.reads.width h.reads.height ovs)
 
 /-- The answers of the layout of the current arena and viewport: kept until a write or a
 new viewport, so reads after no write share one layout, and a read after writes makes
-one (as a browser's forced layout). -/
-def Host.measured (h : Host) : Host × Option (Nat → Nat → Option String) :=
+one (as a browser's forced layout). With animations the answers are also of one timeline
+time. -/
+def Host.measured (h : Host) : Host × Option Answers :=
   match h.reads.kept with
-  | some (v, f) => if v == h.reads.version then (h, some f) else h.measureNow
+  | some (v, f) =>
+    if v == h.reads.version && (h.anim.idle || h.reads.keptNow == h.anim.now) then (h, some f) else h.measureNow
   | none => h.measureNow
+
+/-- The document timeline's time is the event loop's clock when a task or a frame
+starts: it does not move while a script runs (Web Animations 1 §4.3: the timeline time is
+that of the last "update animations and send events"). -/
+def Host.tickTimeline (h : Host) : Host :=
+  let t := L4Factoidal.Rendering.Animation.Fix.ofInt (Int.ofNat h.loop.clock)
+  if h.anim.now == t then h else { h with anim := { h.anim with now := t } }
+
+/-- `node_query` ops 60 to 69, the Web Animations interfaces (`Rendering.Animation.Api`;
+requests and answers are JSON): 60 a new effect on element `node` (a node that is not an
+element: no target); 61 a change of effect `node`; 62 a read of effect `node`; 63 a
+new animation; 64 a method or setter of animation `node`; 65 the state of animation
+`node` with its acts; 66 the animations of element `node` (`q` "subtree": and of its
+descendants; node 0 with "subtree": of the document), after a style change; 67 the
+frame's part ("update animations"); 68 the timeline time in ms. A change of an
+animation is a change of what a layout reads. -/
+def animOp (h : Host) (node op : Nat) (q : String) : Host × Except Int String :=
+  let supports := L4Factoidal.Rendering.CSS.supportsDeclaration
+  let dom := h.dom.dom
+  let bump := fun (h : Host) (anim : L4Factoidal.Rendering.Animation.State) =>
+    { h with anim, reads := { h.reads with version := h.reads.version + 1 } }
+  let api := L4Factoidal.Rendering.Animation.Api.createEffect
+  match op with
+  | 60 =>
+    let target := if node < dom.size && (dom.get node).type == .element then some node else none
+    let (anim, r) := api supports h.anim target q
+    (bump h anim, .ok r)
+  | 61 =>
+    let (anim, r) := L4Factoidal.Rendering.Animation.Api.setEffect supports h.anim node q
+    (bump h anim, .ok r)
+  | 62 => (h, .ok (L4Factoidal.Rendering.Animation.Api.getEffect h.anim node q))
+  | 63 =>
+    let (anim, r) := L4Factoidal.Rendering.Animation.Api.createAnim h.anim q
+    (bump h anim, .ok r)
+  | 64 =>
+    let (anim, r) := L4Factoidal.Rendering.Animation.Api.callAnim h.anim node q
+    (bump h anim, .ok r)
+  | 65 =>
+    let (anim, r) := L4Factoidal.Rendering.Animation.Api.snapshot h.anim node
+    ({ h with anim }, .ok r)
+  | 66 =>
+    -- the style change first: CSS animations and transitions exist after it
+    let (h, _) := h.measured
+    let dom := h.dom.dom
+    let subtree := q == "subtree"
+    let under := fun (t : Nat) => Id.run do
+      -- `node` is `t` or an ancestor of it
+      let mut cur := some t
+      for _ in [0:dom.size + 1] do
+        match cur with
+        | none => return false
+        | some c => if c == node then return true else cur := (dom.get c).parent
+      return false
+    let wanted := fun (t : Nat) =>
+      t < dom.size && dom.connected t && (if subtree then node == 0 || under t else t == node)
+    (h, .ok (L4Factoidal.Rendering.Animation.Api.listAnimations h.anim wanted))
+  | 67 =>
+    let anim := L4Factoidal.Rendering.Animation.tick h.anim
+    (bump h anim, .ok (L4Factoidal.Rendering.Animation.Fix.format anim.now))
+  | 68 => (h, .ok (L4Factoidal.Rendering.Animation.Fix.format h.anim.now))
+  | _ => (h, .error (-2))
 
 /-- The `node_query` ops that `Hosts.Dom.serve` answers: below 16, and 30 to 32 (slots, the
 composed path, the postMessage origin check). Ops 100 to 199 are `Hosts.Dom.domOp`'s; the
@@ -414,7 +524,7 @@ def pageQuery (h : Host) (node op : Nat) : Host × Except Int String :=
   | 16 => (h, if h.event.isEmpty then .error (-1) else .ok h.event)
   | 19 => (h, .ok s!"{h.reads.width} {h.reads.height}")
   | 22 => (h, match h.reads.measure with
-      | some m => match m h.dom.dom h.reads.width h.reads.height node 22 with
+      | some m => match m h.dom.dom h.reads.width h.reads.height [] node 22 "" with
         | some r => .ok r
         | none => .error (-1)
       | none => .error (-2))
@@ -427,7 +537,7 @@ def pageQuery (h : Host) (node op : Nat) : Host × Except Int String :=
   | _ =>
     let (h, f) := h.measured
     match f with
-    | some f => (h, match f node op with | some r => .ok r | none => .error (-1))
+    | some f => (h, match f node op "" with | some r => .ok r | none => .error (-1))
     | none => (h, .error (-2))
 
 /-- A placeholder for the DOM state while an import holds it. -/
@@ -464,6 +574,14 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
     if domQueryOps (a 1) then
       let (dom, st, r) := Hosts.Dom.serve mem nm args h.dom st
       ({ h with dom }, st, r)
+    else if a 1 ≥ 60 && a 1 < 70 then
+      -- the Web Animations interfaces (`animOp`)
+      match Hosts.Dom.readStr mem st (a 2) (a 3) Hosts.Dom.maxString with
+      | .error e => (h, st, Hosts.Dom.codeOrTrap e)
+      | .ok q =>
+        let (h, answer) := animOp h (a 0) (a 1) q
+        let (st, r) := Hosts.Dom.answerStr mem st (a 4) (a 5) answer
+        (h, st, r)
     else if a 1 ≥ 100 && a 1 < 200 then
       -- ranges, selection, traversal, CharacterData (`Hosts.Dom.domOp`)
       match Hosts.Dom.readStr mem st (a 2) (a 3) Hosts.Dom.maxString with
@@ -787,6 +905,7 @@ is armed again, and the currently running task is null again) before the microta
 checkpoint, as in HTML §8.1.7.3 steps 6 and 7: so a timer set from a microtask does not
 take the nesting level of the task before it. -/
 def Session.runTaskP (s : Session) (r : L4Factoidal.EventLoop.Run) : Prog Session := do
+  let s := { s with host := s.host.tickTimeline }
   match r.kind with
   | .task =>
     match r.event with

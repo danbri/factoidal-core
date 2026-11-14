@@ -47,30 +47,31 @@ structure Keyframe where
 
 namespace Effect
 
-/-- §5.3.3 over offsets alone: a keyframe with no offset between two that have one takes
-an evenly spaced offset; the first is 0 and the last 1 (a single keyframe is 1).
-`run` is the keyframes with no offset seen since `prev`, the last offset known. -/
-def spreadGo (prev : Int) (run : Nat) : List (Option Int) → List Int
-  | [] => []
-  | some o :: rest =>
-    -- the `run` keyframes before this one sit between `prev` and `o`
-    let filled := (List.range run).map fun i =>
-      prev + (o - prev) * (Int.ofNat (i + 1)) / (Int.ofNat (run + 1))
-    filled ++ o :: spreadGo o 0 rest
-  | none :: rest => spreadGo prev (run + 1) rest
-
-/-- The computed offsets of keyframes with the given offsets (§5.3.3). -/
-def spread (offsets : List (Option Int)) : List Int :=
+/-- The computed offsets of keyframes with the given offsets (§5.3.3): the first is 0 and
+the last 1 when they give none (a single keyframe is 1); a run of keyframes with no
+offset between two that have one is spaced evenly between them. One pass, no recursion. -/
+def spread (offsets : List (Option Int)) : List Int := Id.run do
+  let n := offsets.length
   match offsets with
-  | [] => []
-  | [o] => [o.getD one]
-  | first :: rest =>
-    let first := first.getD 0
-    -- the last keyframe is 1 when it gives no offset
-    let rest' := match rest.reverse with
-      | none :: r => (some one :: r).reverse
-      | _ => rest
-    first :: spreadGo first 0 rest'
+  | [] => return []
+  | [o] => return [o.getD one]
+  | _ =>
+    let arr := offsets.toArray
+    let arr := arr.set! 0 (some ((arr[0]?.getD none).getD 0))
+    let arr := arr.set! (n - 1) (some ((arr[n - 1]?.getD none).getD one))
+    let mut out : Array Int := #[]
+    let mut prev : Int := 0
+    for idx in [0:n] do
+      match arr[idx]?.getD none with
+      | some o =>
+        -- the keyframes with no offset since `prev` sit between `prev` and `o`
+        let run := idx - out.size
+        for j in [0:run] do
+          out := out.push (prev + (o - prev) * (Int.ofNat (j + 1)) / (Int.ofNat (run + 1)))
+        out := out.push o
+        prev := o
+      | none => pure ()
+    return out.toList
 
 /-- The keyframes with their computed offsets (§5.3.3). -/
 def withOffsets (kfs : List Keyframe) : List Keyframe :=
@@ -108,14 +109,10 @@ def resolved (kind : Value.Kind) (underlying : Value) (k : PK) : Value :=
     | .add | .accumulate => Value.add kind underlying v
 
 /-- The last keyframe at or before `p` (and before 1) with the one after it; the first
-pair when none is. -/
+pair when none is. A loop: the recursive call is a tail call. -/
 def interval (p : Int) : List PK → Option (PK × PK)
   | a :: b :: rest =>
-    if b.offset ≤ p && b.offset < one then
-      match interval p (b :: rest) with
-      | some r => some r
-      | none => some (a, b)
-    else some (a, b)
+    if b.offset ≤ p && b.offset < one && !rest.isEmpty then interval p (b :: rest) else some (a, b)
   | _ => none
 
 /-- §5.3.4: the effect value of `prop` at iteration progress `p`; none when the effect

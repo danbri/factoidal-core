@@ -308,9 +308,9 @@ def createEffect (supports : String → String → Bool) (s : State) (target : O
     (s, (Json.object [("id", .number (toString i))]).toString)
 
 /-- A change of an effect: `{"op": "timing", "opt": {...}}` (`updateTiming`), `{"op":
-"keyframes", "kf": ...}` (`setKeyframes`), `{"op": "composite", "v": text}`, and for the
-target the op `target` with the node as the call's target. -/
-def setEffect (supports : String → String → Bool) (s : State) (id : Nat) (target : Option Nat) (q : String) : State × String :=
+"keyframes", "kf": ...}` (`setKeyframes`), `{"op": "composite", "v": text}`, `{"op":
+"target", "node": n or null}`, `{"op": "pseudo", "v": text}`. -/
+def setEffect (supports : String → String → Bool) (s : State) (id : Nat) (q : String) : State × String :=
   match s.effects[id]? with
   | none => (s, err "TypeError" "no such effect")
   | some e =>
@@ -330,7 +330,7 @@ def setEffect (supports : String → String → Bool) (s : State) (id : Nat) (ta
       | .ok (some c) => put { e with composite := c }
       | .ok none => (s, err "TypeError" "'auto' is not a composite operation of an effect")
       | .error m => (s, err "TypeError" m)
-    | some "target" => put { e with target }
+    | some "target" => put { e with target := (member j "node").bind String.toNat? }
     | some "pseudo" => put { e with pseudo := (member j "v").getD "" }
     | _ => (s, err "TypeError" "unknown effect operation")
 
@@ -541,7 +541,8 @@ private def run : State × String :=
   let (s, _) := callAnim s 0 "{\"m\":\"pause\"}"
   callAnim s 0 "{\"m\":\"currentTime\",\"v\":\"50000\"}"
 private def acW : Access :=
-  { connected := fun _ => true, base := fun _ => [("width", "50px")], prev := fun _ => [],
+  { connected := fun _ => true, base := fun _ p => if p == "width" then some "50px" else none,
+    prev := fun _ _ => none, changed := fun _ => [],
     compute := fun _ _ t => some t, decls := fun _ => [], candidates := [], sheet := fun _ => "" }
 #guard overrides run.1 acW == [{ node := 5, property := "width", value := "13px" }]
 #guard listAnimations run.1 (· == 5) == "[0]"

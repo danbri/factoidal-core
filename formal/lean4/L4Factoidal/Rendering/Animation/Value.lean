@@ -151,23 +151,36 @@ def tokenize (text : String) : List Tok := Id.run do
 def mkLp (px pct : Int) : Tok :=
   if pct == 0 then .dim px "px" else if px == 0 then .dim pct "%" else .lp px pct
 
-/-- Colour functions and `calc(P% ± Lpx)` as one token each: `rgb(r, g, b)`,
-`rgba(r, g, b, a)` (CSS Color 4 §15.2 serialization of sRGB) and the computed form of a
-mixed length-percentage (CSS Values 4 §10.12). Other tokens stay. -/
-def collapse : List Tok → List Tok
-  | .op f :: .num r :: .comma :: .num g :: .comma :: .num b :: .close :: rest =>
-    if f == "rgb" || f == "rgba" then .color r g b one :: collapse rest
-    else .op f :: .num r :: .comma :: .num g :: .comma :: .num b :: .close :: collapse rest
-  | .op f :: .num r :: .comma :: .num g :: .comma :: .num b :: .comma :: .num a :: .close :: rest =>
-    if f == "rgb" || f == "rgba" then .color r g b a :: collapse rest
-    else .op f :: .num r :: .comma :: .num g :: .comma :: .num b :: .comma :: .num a :: .close :: collapse rest
-  | .op "calc" :: .dim x u :: .ident sign :: .dim y v :: .close :: rest =>
+/-- A colour function or a `calc(P% ± Lpx)` at the head of `ts`, as one token, with the
+number of tokens it takes: `rgb(r, g, b)`, `rgba(r, g, b, a)` (CSS Color 4 §15.2
+serialization of sRGB) and the computed form of a mixed length-percentage (CSS Values 4
+§10.12). -/
+def headGroup : List Tok → Option (Tok × Nat)
+  | .op f :: .num r :: .comma :: .num g :: .comma :: .num b :: .close :: _ =>
+    if f == "rgb" || f == "rgba" then some (.color r g b one, 7) else none
+  | .op f :: .num r :: .comma :: .num g :: .comma :: .num b :: .comma :: .num a :: .close :: _ =>
+    if f == "rgb" || f == "rgba" then some (.color r g b a, 9) else none
+  | .op f :: .dim x u :: .ident sign :: .dim y v :: .close :: _ =>
     let y' := if sign == "-" then -y else y
-    if (sign == "+" || sign == "-") && u == "%" && v == "px" then mkLp y' x :: collapse rest
-    else if (sign == "+" || sign == "-") && u == "px" && v == "%" then mkLp x y' :: collapse rest
-    else .op "calc" :: .dim x u :: .ident sign :: .dim y v :: .close :: collapse rest
-  | t :: rest => t :: collapse rest
-  | [] => []
+    if f != "calc" || !(sign == "+" || sign == "-") then none
+    else if u == "%" && v == "px" then some (mkLp y' x, 5)
+    else if u == "px" && v == "%" then some (mkLp x y', 5)
+    else none
+  | _ => none
+
+/-- Each group of `headGroup` as its one token; other tokens stay. One pass, no
+recursion. -/
+def collapse (ts : List Tok) : List Tok := Id.run do
+  let mut rest := ts
+  let mut out : Array Tok := #[]
+  for _ in [0:ts.length + 1] do
+    match rest with
+    | [] => break
+    | t :: r =>
+      match headGroup rest with
+      | some (g, k) => out := out.push g; rest := rest.drop k
+      | none => out := out.push t; rest := r
+  return out.toList
 
 /-- The tokens of a computed value. -/
 def parse (text : String) : Value := collapse (tokenize text)
@@ -241,14 +254,18 @@ def lerpTok (p : Int) : Tok → Tok → Option Tok
   | .color r1 g1 b1 a1, .color r2 g2 b2 a2 => some (lerpColor p r1 g1 b1 a1 r2 g2 b2 a2)
   | a, b => if a == b then some a else none
 
-/-- Two values of the same shape at progress `p`, component by component. -/
-def lerpList (p : Int) : List Tok → List Tok → Option (List Tok)
-  | [], [] => some []
-  | a :: as, b :: bs =>
-    match lerpTok p a b, lerpList p as bs with
-    | some t, some ts => some (t :: ts)
-    | _, _ => none
-  | _, _ => none
+/-- Two values of the same shape at progress `p`, component by component; `acc` holds
+the components done, last first. A loop: each call is a tail call. -/
+def lerpGo (p : Int) : List Tok → List Tok → List Tok → Option (List Tok)
+  | [], [], acc => some acc.reverse
+  | a :: as, b :: bs, acc =>
+    match lerpTok p a b with
+    | some t => lerpGo p as bs (t :: acc)
+    | none => none
+  | _, _, _ => none
+
+/-- Two values of the same shape at progress `p`; none when the shapes differ. -/
+def lerpList (p : Int) (a b : List Tok) : Option (List Tok) := lerpGo p a b []
 
 /-- What a property's definition says of an animated value beyond its components. -/
 inductive Kind where
@@ -345,13 +362,15 @@ def addTok : Tok → Tok → Option Tok
   | .color r1 g1 b1 a1, .color r2 g2 b2 a2 => some (addColor r1 g1 b1 a1 r2 g2 b2 a2)
   | a, b => if a == b then some a else none
 
-def addList : List Tok → List Tok → Option (List Tok)
-  | [], [] => some []
-  | a :: as, b :: bs =>
-    match addTok a b, addList as bs with
-    | some t, some ts => some (t :: ts)
-    | _, _ => none
-  | _, _ => none
+def addGo : List Tok → List Tok → List Tok → Option (List Tok)
+  | [], [], acc => some acc.reverse
+  | a :: as, b :: bs, acc =>
+    match addTok a b with
+    | some t => addGo as bs (t :: acc)
+    | none => none
+  | _, _, _ => none
+
+def addList (a b : List Tok) : Option (List Tok) := addGo a b []
 
 /-- `value` added to `underlying` (composite operation `add` and `accumulate`, for
 values that add component-wise): the sum, or `value` when they do not add (Web
@@ -397,20 +416,25 @@ theorem lerpTok_dim (p a b : Int) (u : String) :
     lerpTok p (.dim a u) (.dim b u) = some (.dim (Fix.lerp a b p) u) := by
   simp [lerpTok]
 
+theorem lerpGo_length (p : Int) : ∀ (a b acc r : List Tok), lerpGo p a b acc = some r →
+    r.length = acc.length + a.length
+  | [], [], acc, r, h => by simp [lerpGo] at h; simp [← h]
+  | [], _ :: _, acc, r, h => by simp [lerpGo] at h
+  | _ :: _, [], acc, r, h => by simp [lerpGo] at h
+  | a :: as, b :: bs, acc, r, h => by
+    unfold lerpGo at h
+    split at h
+    · rename_i t _
+      have := lerpGo_length p as bs (t :: acc) r h
+      simp at this ⊢
+      omega
+    · simp at h
+
 /-- Kind: shape. Says: a component-wise interpolation has as many components as its
 start value. Does not say: what they are. -/
-theorem lerpList_length (p : Int) : ∀ (a b r : List Tok), lerpList p a b = some r → r.length = a.length
-  | [], [], r, h => by simp [lerpList] at h; simp [h]
-  | [], _ :: _, r, h => by simp [lerpList] at h
-  | _ :: _, [], r, h => by simp [lerpList] at h
-  | a :: as, b :: bs, r, h => by
-    unfold lerpList at h
-    split at h
-    · rename_i t ts _ hts
-      simp at h
-      subst h
-      simp [lerpList_length p as bs ts hts]
-    · simp at h
+theorem lerpList_length (p : Int) (a b r : List Tok) (h : lerpList p a b = some r) : r.length = a.length := by
+  have := lerpGo_length p a b [] r h
+  simpa using this
 
 /-- A token that is not a number below 0. -/
 def tokNonNeg : Tok → Prop

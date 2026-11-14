@@ -175,25 +175,26 @@ def keyframesName (prelude : String) : Option String :=
       then ((n.drop 1).toString.dropEnd 1).toString else n
     if n.isEmpty || n.toLower == "none" then none else some n
 
-/-- The `@keyframes` rules of sheet text, also inside the blocks of other at-rules
-(`@media`, `@supports`, `@layer`: their conditions are not read here), to `depth` levels.
-A later rule of one name replaces an earlier one. -/
-def keyframesGo : Nat → String → List (String × List CssKeyframe)
-  | 0, _ => []
-  | depth + 1, source =>
-    (blocks source).flatMap fun (prelude, body) =>
-      match keyframesName prelude with
-      | some name => [(name, keyframeBlock body)]
-      | none =>
-        let p := (trim prelude).toLower
-        if p.startsWith "@media" || p.startsWith "@supports" || p.startsWith "@layer" then keyframesGo depth body
-        else []
-
-/-- The `@keyframes` rules of a style sheet, by name; a page with none pays one substring
-search. -/
+/-- The `@keyframes` rules of a style sheet, by name, also those inside the blocks of
+`@media`, `@supports` and `@layer` (their conditions are not read here), to four levels,
+level by level. A later rule of one name is later in the list. A page with no
+`@keyframes` pays one substring search. -/
 def keyframesOf (source : String) : List (String × List CssKeyframe) :=
   if (source.splitOn "keyframes").length ≤ 1 && (source.toLower.splitOn "keyframes").length ≤ 1 then []
-  else keyframesGo 4 (stripComments source)
+  else Id.run do
+    let mut out : Array (String × List CssKeyframe) := #[]
+    let mut level : List String := [stripComments source]
+    for _ in [0:4] do
+      let mut next : List String := []
+      for text in level do
+        for (prelude, body) in blocks text do
+          match keyframesName prelude with
+          | some name => out := out.push (name, keyframeBlock body)
+          | none =>
+            let p := (trim prelude).toLower
+            if p.startsWith "@media" || p.startsWith "@supports" || p.startsWith "@layer" then next := next ++ [body]
+      level := next
+    return out.toList
 
 /-- The keyframes of an effect from a rule's, with the element's timing function where a
 keyframe gives none, and a keyframe at 0 that carries it when the rule has none there
@@ -342,11 +343,13 @@ def cascaded (matched : List CSS.Match) (styleAttr : String) : List (String × S
 def cascadedText (ds : List (String × String)) : String :=
   ds.foldl (fun acc (k, v) => acc ++ k ++ "\x00" ++ v ++ "\x00") ""
 
-def ofCascadedText (s : String) : List (String × String) :=
-  let rec go : List String → List (String × String)
-    | k :: v :: rest => (k, v) :: go rest
-    | _ => []
-  go (s.splitOn "\x00")
+def ofCascadedText (s : String) : List (String × String) := Id.run do
+  if s.isEmpty then return []
+  let parts := (s.splitOn "\x00").toArray
+  let mut out : Array (String × String) := #[]
+  for i in [0:parts.size / 2] do
+    out := out.push (parts[2 * i]?.getD "", parts[2 * i + 1]?.getD "")
+  return out.toList
 
 /-- Item `i` of a list that repeats to the length of the list of names (CSS Animations 1
 §4.2: "the list is repeated"); `default` for an empty list. -/

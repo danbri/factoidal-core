@@ -84,10 +84,14 @@ structure State where
 /-- What the engine reads of the page at a style change. -/
 structure Access where
   connected : Nat → Bool
-  /-- The computed style of an element without animations: longhand and computed text. -/
-  base : Nat → List (String × String)
-  /-- The same at the last style change, with the animations of then. -/
-  prev : Nat → List (String × String)
+  /-- The computed text of a longhand of an element, without animations; none for a
+  property the engine does not compute. -/
+  base : Nat → String → Option String
+  /-- The same at the last style change, with the animations of then (the before-change
+  style); none also for an element that had no style then. -/
+  prev : Nat → String → Option String
+  /-- The longhands of an element whose computed text differs between `prev` and `base`. -/
+  changed : Nat → List String
   /-- The computed text of a specified value of a longhand in the element's context. -/
   compute : Nat → String → String → Option String
   /-- The element's cascaded animation and transition longhands. -/
@@ -266,8 +270,6 @@ def updateTransitions (s : State) (ac : Access) (e : Nat) : State := Id.run do
   let specs := if connected then Css.transitions (ac.decls e) else []
   let mut s := s
   let running := owned s e isCssTransition
-  let base := if connected then ac.base e else []
-  let prev := if connected then ac.prev e else []
   -- running transitions: keep, cancel or replace
   for i in running do
     let a := s.anims[i]!
@@ -275,14 +277,14 @@ def updateTransitions (s : State) (ac : Access) (e : Nat) : State := Id.run do
       | .cssTransition p => p
       | _ => ""
     let spec := Css.transitionFor specs property
-    let after := base.lookup property
+    let after := if connected then ac.base e property else none
     match spec, after with
     | some sp, some after =>
       if a.toText == after then
         -- still going to this value; done when its effect is past its end
         if a.player.playState (s.tl a) (s.effEnd a) == .finished && a.player.pending == .none then s := kill s i
       else
-        let current := (prev.lookup property).getD a.toText
+        let current := (ac.prev e property).getD a.toText
         s := kill s i
         let kind := kindOf property
         if current != after && (Value.interpolable kind (Value.parse current) (Value.parse after) || sp.allowDiscrete)
@@ -295,10 +297,11 @@ def updateTransitions (s : State) (ac : Access) (e : Nat) : State := Id.run do
     match (s.anims[i]?).map (·.origin) with
     | some (Origin.cssTransition p) => some p
     | _ => none
-  for (property, after) in base do
+  for property in ac.changed e do
     if !animatable property || stillRunning.contains property then continue
     let some sp := Css.transitionFor specs property | continue
-    let some before := prev.lookup property | continue
+    let some before := ac.prev e property | continue
+    let some after := ac.base e property | continue
     if before == after then continue
     if sp.duration + sp.delay ≤ 0 then continue
     let kind := kindOf property
@@ -313,11 +316,15 @@ def orderKey (a : AnimRec) : Nat × Nat :=
 
 def orderLE (a b : Nat × Nat) : Bool := a.1 < b.1 || (a.1 == b.1 && a.2 ≤ b.2)
 
-/-- The animations that may give a value now, in composite order. -/
-def ordered (s : State) : List (Nat × AnimRec) :=
+/-- The animations with an effect whose target `keep` holds of, in composite order. -/
+def ordered (s : State) (keep : Nat → Bool := fun _ => true) : List (Nat × AnimRec) :=
   let live := (List.range s.anims.size).filterMap fun i =>
     match s.anims[i]? with
-    | some a => if a.dead || a.effect.isNone then none else some (i, a)
+    | some a =>
+      if a.dead then none
+      else match (s.effectOf a).bind (·.target) with
+        | some t => if keep t then some (i, a) else none
+        | none => none
     | none => none
   live.mergeSort fun x y => orderLE (orderKey x.2) (orderKey y.2)
 
@@ -328,24 +335,18 @@ stack. -/
 def overrides (s : State) (ac : Access) : List Override := Id.run do
   let mut stack : Std.HashMap (Nat × String) (Value × Bool) := {}
   let mut keys : Array (Nat × String) := #[]
-  let mut bases : Std.HashMap Nat (List (String × String)) := {}
-  for (_, a) in ordered s do
+  for (_, a) in ordered s ac.connected do
     let some eff := s.effectOf a | continue
     let some e := eff.target | continue
-    if !ac.connected e then continue
     let some p := s.progressOf a | continue
-    let base ← match bases[e]? with
-      | some b => pure b
-      | none =>
-        let b := ac.base e
-        bases := bases.insert e b
-        pure b
     for property in Effect.properties eff.keyframes do
       if !animatable property then continue
-      let some baseText := base.lookup property | continue
-      let underlying : Value := match stack[(e, property)]? with
-        | some (v, _) => v
-        | none => Value.parse baseText
+      let underlying : Value ← match stack[(e, property)]? with
+        | some (v, _) => pure v
+        | none =>
+          -- a property the engine does not compute is not animated
+          let some baseText := ac.base e property | continue
+          pure (Value.parse baseText)
       let compute := fun (text : String) => (ac.compute e property text).map Value.parse
       match Effect.value eff.keyframes eff.composite property (kindOf property) p underlying compute eff.neutralEasing with
       | some v =>
@@ -390,8 +391,10 @@ def tick (s : State) : State := Id.run do
 private def acOf (styles : List (Nat × List (String × String))) (decls : List (Nat × List (String × String)))
     (sheet : String) (prev : List (Nat × List (String × String)) := []) : Access :=
   { connected := fun _ => true
-    base := fun e => (styles.lookup e).getD []
-    prev := fun e => (prev.lookup e).getD []
+    base := fun e p => ((styles.lookup e).getD []).lookup p
+    prev := fun e p => ((prev.lookup e).getD []).lookup p
+    changed := fun e => ((styles.lookup e).getD []).filterMap fun (k, v) =>
+      if ((prev.lookup e).getD []).lookup k != some v then some k else none
     compute := fun _ _ text => some text
     decls := fun e => (decls.lookup e).getD []
     candidates := decls.map (·.1)
