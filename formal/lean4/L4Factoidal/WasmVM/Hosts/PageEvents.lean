@@ -212,16 +212,36 @@ its value, which the page's glue gives to `textEdit` (op 179). -/
 def editInit (command value : String) : String :=
   (L4Factoidal.JSON.Json.object [("command", .string command), ("value", .string value)]).toString
 
-/-- The element has a box in the layout of the page as it is now (it is being rendered):
-measure op 17 answers zeros for an element with no box. The layout is made and kept. -/
+/-- The computed values of measure op 20 ("name\x00value\x00…") say `display: none`. -/
+def displayNone (values : String) : Bool :=
+  let xs := (values.splitOn "\x00").toArray
+  (List.range (xs.size / 2)).any fun i => xs[2 * i]! == "display" && xs[2 * i + 1]! == "none"
+
+#guard displayNone "display\x00none\x00width\x00auto\x00"
+#guard !displayNone "display\x00block\x00visibility\x00none\x00"
+
+/-- The element is being rendered: neither it nor an ancestor (across shadow roots) has
+`display: none` in the layout of the page as it is now (measure op 20), which is made and
+kept. Without a layout every element counts as rendered. -/
 def rendered (s : σ) (n : Nat) : σ × Bool :=
   let s := e.setHost s (e.host s).measured.1
+  let d := (e.host s).dom.dom
   match (e.host s).reads.kept with
-  | some (_, f) =>
-    match (f n 17).bind Input.boxOf with
-    | some (_, _, w, h) => (s, w > 0 || h > 0)
-    | none => (s, false)
   | none => (s, true)
+  | some (_, f) => Id.run do
+    let mut k := n
+    for _ in [0:d.size + 1] do
+      if k ≥ d.size then break
+      let node := d.get k
+      if node.type == .element then
+        if (f k 20).any displayNone then return (s, false)
+      match node.parent with
+      | some p => k := p
+      | none =>
+        match (if d.isShadowRoot k then node.host else none) with
+        | some host => k := host
+        | none => break
+    return (s, true)
 
 /-- A key of the user (`up`: its release). `keydown` is fired at the editing host of the
 selection (else the `body`). When no listener canceled it, `keypress` is fired for a key
@@ -270,7 +290,7 @@ def key (s : σ) (up : Bool) (init : String) (k : L4Factoidal.DOM.Editing.KeyInp
           | some (control, command, value) =>
             -- a text control: `beforeinput` at it, then the page's glue runs the command on
             -- its value and selection (`@edit`: `Editing.textEdit`, op 179) and fires `input`;
-            -- a control that a listener hid (no box any more) is not edited
+            -- a control that a listener hid (display: none on it or an ancestor) is not edited
             let inputType := L4Factoidal.DOM.Editing.inputTypeOf command
             let data := L4Factoidal.DOM.Editing.inputDataOf command value
             let (s, shown) := e.rendered s control
