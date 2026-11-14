@@ -8780,6 +8780,51 @@ def atomicsNames : List (String × Nat × Nat) :=
   [("add", 0, 3), ("and", 1, 3), ("compareExchange", 2, 4), ("exchange", 3, 3), ("isLockFree", 4, 1),
    ("load", 5, 2), ("or", 6, 3), ("store", 7, 3), ("sub", 8, 3), ("xor", 9, 3), ("notify", 10, 3)]
 
+/-- %GeneratorFunction%, %AsyncGeneratorFunction%, %AsyncFunction% and their prototypes
+(§27.3, §27.4, §27.7), for `initRealm` (kept apart: one `do` block of the whole realm is past
+the elaborator's depth). -/
+def initFunctionKinds (g genProto asyncGenProto : Nat) : M Unit := do
+  -- %GeneratorFunction%, %AsyncGeneratorFunction%, %AsyncFunction% and their prototypes
+  -- (§27.3, §27.4, §27.7): not globals; reached as Object.getPrototypeOf(function* () {}) and
+  -- its constructor
+  let fnProtoId := (← realm).functionProto
+  let genFnProto ← alloc { proto := .obj fnProtoId }
+  let asyncGenFnProto ← alloc { proto := .obj fnProtoId }
+  let asyncFnProto ← alloc { proto := .obj fnProtoId }
+  let fnCtorV ← ownValue g "Function"
+  for (fp, inst, tag, k) in [(genFnProto, genProto, "GeneratorFunction", 1),
+      (asyncGenFnProto, asyncGenProto, "AsyncGeneratorFunction", 3), (asyncFnProto, 0, "AsyncFunction", 2)] do
+    if inst != 0 then
+      defineOwn fp "prototype" (.data (.obj inst) false false true)
+      defineOwn inst "constructor" (.data (.obj fp) false false true)
+    defineOwn fp (symKey symToStringTag) (.data (.str tag) false false true)
+    let c ← mkNative (.x (.dynFunction k)) tag 1
+    if let .obj cid := c then
+      modifyObj cid (fun o => { o with proto := match fnCtorV with | .obj f => .obj f | _ => .obj fnProtoId })
+      defineOwn cid "prototype" (.data (.obj fp) false false false)
+    defineOwn fp "constructor" (.data c false false true)
+  modify fun h => { h with realm := { h.realm with genFnProto := genFnProto, asyncGenFnProto := asyncGenFnProto, asyncFnProto := asyncFnProto } }
+
+/-- SuppressedError and DisposableStack (explicit resource management), for `initRealm`. -/
+def initDisposal (g errorProto : Nat) : M Unit := do
+  let mk : M Nat := alloc { proto := .obj (← realm).objectProto }
+  let supProto ← alloc { proto := .obj errorProto }
+  modify fun h => { h with realm := { h.realm with suppressedErrorProto := supProto } }
+  let supC ← ctorWith "SuppressedError" (.x .suppressedErrorCtor) 3 supProto
+  if let .obj cid := supC then
+    if let .obj e0 ← ownValue g "Error" then modifyObj cid fun o => { o with proto := .obj e0 }
+  setHidden g "SuppressedError" supC
+  setHidden supProto "name" (.str "SuppressedError")
+  setHidden supProto "message" (.str "")
+  let dsProto ← mk
+  modify fun h => { h with realm := { h.realm with disposableStackProto := dsProto } }
+  setHidden g "DisposableStack" (← ctorWith "DisposableStack" (.x .disposableStackCtor) 0 dsProto)
+  defineOwn dsProto "disposed" (.acc (← mkNative (.x .disposableStackDisposed) "get disposed" 0) .undef false true)
+  for (nm, k, l) in [("dispose", 0, 0), ("use", 1, 1), ("adopt", 2, 2), ("defer", 3, 1), ("move", 4, 0)] do
+    method dsProto nm (.x (.disposableStackMethod k)) l
+  if let some p := (← getObj dsProto).getOwn "dispose" then defineOwn dsProto (symKey symDispose) p
+  defineOwn dsProto (symKey symToStringTag) (.data (.str "DisposableStack") false false true)
+
 def initRealm : M Unit := do
   let objectProto ← alloc {}
   let functionProto ← alloc { proto := .obj objectProto, kind := .native .functionProto }
@@ -8928,23 +8973,7 @@ def initRealm : M Unit := do
   setHidden aggProto "name" (.str "AggregateError")
   setHidden aggProto "message" (.str "")
   if let .obj e0 ← ownValue g "Error" then method e0 "isError" (.x .errorIsError) 1
-  -- SuppressedError and DisposableStack (explicit resource management)
-  let supProto ← alloc { proto := .obj errorProto }
-  modify fun h => { h with realm := { h.realm with suppressedErrorProto := supProto } }
-  let supC ← ctorWith "SuppressedError" (.x .suppressedErrorCtor) 3 supProto
-  if let .obj cid := supC then
-    if let .obj e0 ← ownValue g "Error" then modifyObj cid fun o => { o with proto := .obj e0 }
-  setHidden g "SuppressedError" supC
-  setHidden supProto "name" (.str "SuppressedError")
-  setHidden supProto "message" (.str "")
-  let dsProto ← mk
-  modify fun h => { h with realm := { h.realm with disposableStackProto := dsProto } }
-  setHidden g "DisposableStack" (← ctorWith "DisposableStack" (.x .disposableStackCtor) 0 dsProto)
-  defineOwn dsProto "disposed" (.acc (← mkNative (.x .disposableStackDisposed) "get disposed" 0) .undef false true)
-  for (nm, k, l) in [("dispose", 0, 0), ("use", 1, 1), ("adopt", 2, 2), ("defer", 3, 1), ("move", 4, 0)] do
-    method dsProto nm (.x (.disposableStackMethod k)) l
-  if let some p := (← getObj dsProto).getOwn "dispose" then defineOwn dsProto (symKey symDispose) p
-  defineOwn dsProto (symKey symToStringTag) (.data (.str "DisposableStack") false false true)
+  initDisposal g errorProto
   -- Math
   let math ← mk
   setHidden g "Math" (.obj math)
@@ -9119,26 +9148,7 @@ def initRealm : M Unit := do
   method asyncGenProto "return" .agenReturn 1
   method asyncGenProto "throw" .agenThrow 1
   defineOwn asyncGenProto (symKey symToStringTag) (.data (.str "AsyncGenerator") false false true)
-  -- %GeneratorFunction%, %AsyncGeneratorFunction%, %AsyncFunction% and their prototypes
-  -- (§27.3, §27.4, §27.7): not globals; reached as Object.getPrototypeOf(function* () {}) and
-  -- its constructor
-  let fnProtoId := (← realm).functionProto
-  let genFnProto ← alloc { proto := .obj fnProtoId }
-  let asyncGenFnProto ← alloc { proto := .obj fnProtoId }
-  let asyncFnProto ← alloc { proto := .obj fnProtoId }
-  let fnCtorV ← ownValue g "Function"
-  for (fp, inst, tag, k) in [(genFnProto, genProto, "GeneratorFunction", 1),
-      (asyncGenFnProto, asyncGenProto, "AsyncGeneratorFunction", 3), (asyncFnProto, 0, "AsyncFunction", 2)] do
-    if inst != 0 then
-      defineOwn fp "prototype" (.data (.obj inst) false false true)
-      defineOwn inst "constructor" (.data (.obj fp) false false true)
-    defineOwn fp (symKey symToStringTag) (.data (.str tag) false false true)
-    let c ← mkNative (.x (.dynFunction k)) tag 1
-    if let .obj cid := c then
-      modifyObj cid (fun o => { o with proto := match fnCtorV with | .obj f => .obj f | _ => .obj fnProtoId })
-      defineOwn cid "prototype" (.data (.obj fp) false false false)
-    defineOwn fp "constructor" (.data c false false true)
-  modify fun h => { h with realm := { h.realm with genFnProto := genFnProto, asyncGenFnProto := asyncGenFnProto, asyncFnProto := asyncFnProto } }
+  initFunctionKinds g genProto asyncGenProto
   let promiseProto ← mk
   let promiseC ← ctorWith "Promise" .promiseCtor 1 promiseProto
   setHidden g "Promise" promiseC
