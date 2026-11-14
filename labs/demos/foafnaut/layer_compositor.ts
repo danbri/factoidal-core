@@ -195,7 +195,7 @@ export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,lim
       return {chrome:c,page:g};
     },
     /** Replay page GPU commands (Lean's host commands of page session `p`), in order. */
-    async replayGpu(p:number,commands:unknown[]){await (pageGpu??=createPageGpu(device)).replay(p,commands);},
+    async replayGpu(p:number,commands:unknown[]):Promise<unknown[]>{return await (pageGpu??=createPageGpu(device)).replay(p,commands);},
     /** The page canvases again, into the page layer; true when one was drawn (then composite). */
     refreshCanvases:()=>blitCanvases(),
     /** Draw one single-frame Lean scene into `target`: the reference that the composite must equal. */

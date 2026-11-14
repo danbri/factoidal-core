@@ -1394,6 +1394,12 @@ def gpuCommand (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : S
   match st.readMem mem (arg args 2) (arg args 3) with
   | .error _ => (s, st, codeOrTrap (-8))
   | .ok b =>
+    if arg args 0 % L4Factoidal.PageGpu.Wire.binaryOp == L4Factoidal.PageGpu.Wire.mappedOp then
+      -- `getMappedRange`: the bytes of a buffer the host read back (`PageGpu.deliver`), or -1
+      match (L4Factoidal.PageGpu.Wire.mappedId (arg args 0) b).bind (L4Factoidal.PageGpu.mappedOf s.gpu) with
+      | some bytes => let a := putOut mem st (arg args 4) (arg args 5) bytes; (s, a.1, a.2)
+      | none => (s, st, ret (-1))
+    else
     let r := gpuStep s (arg args 0) b
     let a := answerStr mem st (arg args 4) (arg args 5) (.ok r.2)
     (r.1, a.1, a.2)
@@ -1482,8 +1488,12 @@ theorem gpuCommand_within (mem : Nat) (args : Array Value) (s : State) (st : Sto
   · exact .inl rfl
   · split
     · exact .inl rfl
-    · dsimp only
-      exact answerStr_within mem st (arg args 4) (arg args 5) _
+    · split
+      · split
+        · exact putOut_within ..
+        · exact .inl rfl
+      · dsimp only
+        exact answerStr_within mem st (arg args 4) (arg args 5) _
 
 /-- A DOM import changes VM memory only at its output buffer, by at most its capacity
 bytes; an import with no output buffer does not change the store at all. -/

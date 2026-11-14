@@ -1204,7 +1204,14 @@ async function main() {
     device.addEventListener("uncapturederror",event=>{console.error("Native HTML GPU error:",(event as GPUUncapturedErrorEvent).error.message);running=false;Deno.exitCode=1;});
     device.lost.then(info=>{if(running){console.error("Native HTML GPU lost:",info.message);running=false;Deno.exitCode=1;}});
     // One session for the window's life. It keeps the pipeline and buffers (issue 1268).
-    session=await createHTMLWindowSession(device,target,native,{framesInFlight,onGpuDone:gpuMs=>{
+    session=await createHTMLWindowSession(device,target,native,{framesInFlight,
+      // GPU readbacks (mapAsync) go back to Lean, which resolves the page's promise in a task.
+      onGpuReads:(p,results)=>{
+        (scriptCall("scriptSession","",{action:"gpuRead",session:p,results}) as Promise<ScriptTurn>)
+          .then(turn=>{if(document.script?.session===p)scriptTurn(document,turn,"gpu");})
+          .catch(error=>console.error("Native HTML: GPU readback failed:",String(error)));
+      },
+      onGpuDone:gpuMs=>{
       const changed=gpuGuard.record(gpuMs);
       gpuHoldUntil=gpuGuard.slowed?performance.now()+gpuGuard.gapMs():0;
       if(!changed)return;

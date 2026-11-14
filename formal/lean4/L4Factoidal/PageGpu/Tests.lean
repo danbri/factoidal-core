@@ -215,7 +215,7 @@ fn tick(@builtin(global_invocation_id) id: vec3u) {
       if (ed.x == i) { let d = src[ed.y].xy - me.xy; f += d * (length(d) / p.k); }
       if (ed.y == i) { let d = src[ed.x].xy - me.xy; f += d * (length(d) / p.k); }
     }
-    f -= me.xy * 0.02;
+    f -= me.xy * 0.1;
     var v = (me.zw + f * p.dt) * 0.85;
     let s = length(v);
     if (s > 0.02) { v = v * (0.02 / s); }
