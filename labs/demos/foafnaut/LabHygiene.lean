@@ -162,9 +162,17 @@ engine-state rework (issue 390, PR 413): the engine's state is a value passed th
 ABI, so the lab keeps 3 `unsafe` and 3 `@[implemented_by]` (`shapeKept`, `pageWork`,
 `pageArtifact`); it has 4 `initialize` cells left. Its opaque count, 5, is measured by
 `#hygiene_counts` on wip/390-state after main 26323aaf5 (2026-11-11). Its 1 `partial def`
-is the `deriving Repr` of `NativeSVG.DisplayNode`. -/
+is the `deriving Repr` of `NativeSVG.DisplayNode`.
+
+Raised 2026-11-14 with the owner's approval (the ratchet's rule above): the formal
+`extern` count goes from 22 to 27 for five new entry points of `Crypto/WebHacl.lean`
+over HACL* (`rsaPublicRaw`, `rsaPrivateRaw`, `rsaPssSignRaw`, `rsaPssVerifyRaw`, `sha3Raw`).
+Each takes its precondition as a proof and is realised by one HACL* call in
+`ffi/hacl_webcrypto.c` (record `docs/designissues/2026-11-14-webcrypto.md`). A new verified
+primitive cannot be bound without an `@[extern]`, so this number can only stay at 22 by not
+having RSA or SHA-3. -/
 def baseline : Counts :=
-  ⟨⟨50, 3, 3, 1, 0, 5⟩, ⟨369, 0, 0, 153, 22, 1⟩⟩
+  ⟨⟨50, 3, 3, 1, 0, 5⟩, ⟨369, 0, 0, 153, 27, 1⟩⟩
 
 /-- Fails to compile when a count rises above `baseline`, or when either part read fewer
 modules than the baseline says (an empty walk does not pass). -/
