@@ -711,6 +711,44 @@ theorem shadowInitOfFlags_flags (i : ShadowInit) : shadowInitOfFlags (shadowFlag
   cases i with
   | mk a b c e f g => cases a <;> cases b <;> cases c <;> cases e <;> cases f <;> cases g <;> rfl
 
+/-- HTML §4.8.5 "process the iframe attributes": a frame inserted with no URL to load (its
+initial `about:blank`) runs the iframe load event steps at once, not as a task. The script
+side asks after inserting a frame: when `el` waits for that load (a "" navigation), it is
+taken from the navigations (so no task fires it again) and the answer is true. -/
+def takeBlankLoad (s : State) (el : Nat) : State × Bool :=
+  if s.navigations.any (fun nv => nv.1 == el && nv.2.isEmpty) then
+    ({ s with navigations := s.navigations.filter (fun nv => !(nv.1 == el && nv.2.isEmpty)) }, true)
+  else (s, false)
+
+/-- Taking a frame's load leaves no `about:blank` load of it waiting. -/
+theorem takeBlankLoad_taken (s : State) (el : Nat) :
+    ∀ nv ∈ (takeBlankLoad s el).1.navigations, ¬ (nv.1 = el ∧ nv.2 = "") := by
+  intro nv h
+  unfold takeBlankLoad at h
+  split at h
+  · simp only [Array.mem_filter] at h
+    intro ⟨h1, h2⟩
+    simp [h1, h2] at h
+  · rename_i hn
+    intro ⟨h1, h2⟩
+    apply hn
+    simp only [Array.any_eq_true]
+    obtain ⟨i, hi, rfl⟩ := Array.mem_iff_getElem.mp h
+    exact ⟨i, hi, by simp [h1, h2]⟩
+
+/-- Every other navigation stays. -/
+theorem takeBlankLoad_keeps (s : State) (el : Nat) (nv : Nat × String) (h : nv ∈ s.navigations)
+    (other : ¬ (nv.1 = el ∧ nv.2 = "")) : nv ∈ (takeBlankLoad s el).1.navigations := by
+  unfold takeBlankLoad
+  split
+  · simp only [Array.mem_filter]
+    refine ⟨h, ?_⟩
+    simp only [Bool.not_eq_true', Bool.and_eq_false_iff, beq_eq_false_iff_ne, ne_eq]
+    by_cases h1 : nv.1 = el
+    · exact .inr (by rw [Bool.eq_false_iff]; intro h2; exact other ⟨h1, String.isEmpty_iff.mp h2⟩)
+    · exact .inl h1
+  · exact h
+
 /-- `node_info(node, which)`: 0 `nodeType`; 1 parent; 2 first child; 3 last child;
 4 previous sibling; 5 next sibling; 6 number of children; 7 node document; 8 1 when an
 HTML element of an HTML document, else 0; 9 the template contents of a `template`
@@ -723,7 +761,8 @@ shadow root when open (`shadowRoot`); 21 a shadow root's host; 22 a shadow root'
 (`getRootNode({composed: true})`); 25 1 when connected (`isConnected`), else 0; 26 an
 element's shadow root, open or closed; 27 1 when the arena has a shadow host (for any `node`,
 even with no document); 28 the root
-(`getRootNode()`). -1 none, -2 no such node. -/
+(`getRootNode()`); 30 on a frame element: 1 when its initial `about:blank` load was waiting
+and is now taken to run at once (`takeBlankLoad`), else 0. -1 none, -2 no such node. -/
 def nodeInfo (args : Array Value) (s : State) : State × HostResult :=
   let d := s.dom
   let n := arg args 0
@@ -760,6 +799,7 @@ def nodeInfo (args : Array Value) (s : State) : State × HostResult :=
   | 26 => opt x.shadow
   | 27 => (s, ret (if d.hasShadow then 1 else 0))
   | 28 => (s, ret (d.root n))
+  | 30 => if frameOwner x then (let (s', taken) := takeBlankLoad s n; (s', ret (if taken then 1 else 0))) else (s, ret 0)
   | 29 => if frameOwner x then (s, ret (frameBits s n))
     else if x.type == .document then (s, ret (if s.parentOrigin.isSome then 128 else 0))
     else (s, ret (-1))
