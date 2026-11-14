@@ -22,6 +22,7 @@ web-platform-tests under `css/css-color/parsing/`.
 -/
 import L4Factoidal.Rendering.CssValues.Token
 import L4Factoidal.Rendering.CssValues.Approx
+import L4Factoidal.Rendering.CssValues.Numeric
 
 namespace L4Factoidal.Rendering.CssValues.Color
 
@@ -1003,30 +1004,6 @@ def relParts (n : String) (args : List CV) : Option Rel :=
       | _ => none
   | _ => none
 
-/-- The text of one component of a relative colour in the specified value: a channel
-keyword or `none` in lower case, a number, percentage or angle, or a function as written. -/
-def relCompText (o : Opts) (names : List String) (cv : CV) : Option String :=
-  match cv with
-  | .tok (.ident k) =>
-    let k := lower k
-    if k == "none" || k == "alpha" || names.contains k then some k else none
-  | .tok _ => (o.read cv).map fun _ => serialize [cv]
-  | .fn _ _ => some (serialize [cv])
-  | _ => none
-
-/-- The specified value of a relative colour: kept as a function, the origin colour in its
-own specified form. -/
-def relSpec (spec : CV → Option String) (o : Opts) (n : String) (r : Rel) : Option String := do
-  let origin ← spec r.origin
-  let names := channelNames r.space
-  let comps ← r.comps.mapM (relCompText o names)
-  let alpha ← (match r.alpha with
-    | some a => (relCompText o names a).map fun t => " / " ++ t
-    | none => some "")
-  let head := if n == "color" then "color(from " ++ origin ++ " " ++ r.space.name
-    else r.space.name ++ "(from " ++ origin
-  some (head ++ " " ++ " ".intercalate comps ++ alpha ++ ")")
-
 /-- Channel keywords replaced by their numbers, also inside functions (`calc()`). -/
 def substF : Nat → (String → Option Rat) → CV → CV
   | 0, _, cv => cv
@@ -1039,6 +1016,50 @@ def substF : Nat → (String → Option Rat) → CV → CV
     | .fn n args => .fn n (args.map (substF fuel env))
     | .block c body => .block c (body.map (substF fuel env))
     | cv => cv
+
+/-- The text of one component of a relative colour in the specified value: a channel
+keyword or `none` in lower case, a number, percentage or angle, or a function as written. -/
+def relCompText (o : Opts) (names : List String) (hue : Bool) (cv : CV) : Option String :=
+  -- the type a component may have (CSS Color 5 §4.1): an angle only for a hue, a
+  -- percentage for the other components; the channel keywords are numbers, so a `calc()`
+  -- that adds a percentage or an angle to one is not a component
+  let typed := fun (c : Comp) => match c with
+    | .angle _ => hue
+    | .pct _ => !hue
+    | _ => true
+  match cv with
+  | .tok (.ident k) =>
+    let k := lower k
+    if k == "none" || k == "alpha" || names.contains k then some k else none
+  | .tok _ => (o.read cv).bind fun c => if typed c then some (serialize [cv]) else none
+  | .fn _ _ =>
+    let zero := fun (k : String) => if k == "alpha" || names.contains k then some (0 : Rat) else none
+    let cv' := substF 32 zero cv
+    let ok := (numeric (some {}) { kind := .number } cv').isSome ||
+      (!hue && (numeric (some {}) { kind := .percent } cv').isSome) ||
+      (hue && (numeric (some {}) { kind := .angle } cv').isSome)
+    if ok then some (serialize [cv]) else none
+  | _ => none
+
+/-- The position of the hue among the components of a space (`hsl`, `hwb`: first; `lch`,
+`oklch`: third). -/
+def hueIndex : Space → Option Nat
+  | .hsl | .hwb => some 0
+  | .lch | .oklch => some 2
+  | _ => none
+
+/-- The specified value of a relative colour: kept as a function, the origin colour in its
+own specified form. -/
+def relSpec (spec : CV → Option String) (o : Opts) (n : String) (r : Rel) : Option String := do
+  let origin ← spec r.origin
+  let names := channelNames r.space
+  let comps ← (r.comps.zipIdx).mapM fun (c, i) => relCompText o names (hueIndex r.space == some i) c
+  let alpha ← (match r.alpha with
+    | some a => (relCompText o names false a).map fun t => " / " ++ t
+    | none => some "")
+  let head := if n == "color" then "color(from " ++ origin ++ " " ++ r.space.name
+    else r.space.name ++ "(from " ++ origin
+  some (head ++ " " ++ " ".intercalate comps ++ alpha ++ ")")
 
 /-- The origin colour in the target space, as the channel keywords see it (`rgb` channels
 are 0 to 255). -/
@@ -1266,6 +1287,14 @@ def computedOf (s : String) : Option String :=
 #guard computedOf "color-mix(in srgb, red 0%, green 0%, blue 50%)" == some "color(srgb 0 0 1 / 0.5)"
 #guard specOf "color-mix(in hsl, hsl(120deg 10% 20%) 150%, hsl(30deg 30% 40%))" == none
 #guard specOf "color-mix(in lab longer hue, lab(10 20 30), lab(50 60 70))" == none
+-- color-invalid-relative-color.html: a component of the wrong type
+#guard specOf "rgb(from rebeccapurple r 10deg 10)" == none
+#guard specOf "rgb(from rebeccapurple calc(r + 1%) g b)" == none
+#guard specOf "hsl(from rebeccapurple 10% s l)" == none
+#guard specOf "lch(from lch(.70 45 30) l c calc(h + 1deg))" == none
+#guard specOf "color(from color(srgb 0.7 0.5 0.3) srgb r g b / 10deg)" == none
+#guard (specOf "hsl(from rebeccapurple calc(h + 1) s l)").isSome && (specOf "lch(from lch(.70 45 30) l c 10deg)").isSome
+#guard (specOf "rgb(from rebeccapurple calc(r * 0.5) 10% g)").isSome
 -- color-valid-relative-color.html, color-computed-relative-color.html, color-computed-none.html
 #guard specOf "rgba(from rgb(20%, 40%, 60%, 80%) r g b / 0)"
   == some "rgb(from rgba(51, 102, 153, 0.8) r g b / 0)"
