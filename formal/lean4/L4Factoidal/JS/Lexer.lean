@@ -176,6 +176,54 @@ def scanStr (cs : Array Char) (q : Char) : Nat → Nat → String → Except Str
       | .error e => .error e
       | .ok (t, j) => scanStr cs q fuel j (acc ++ t)
 
+/-- The index after the `/` that closes a regular expression literal whose body starts at `i`
+(§12.9.5: a backslash takes the next character, a `/` inside a class `[...]` does not close,
+a line terminator ends the attempt), or `none` when there is none on the line. -/
+def skipRegexBody (cs : Array Char) : Nat → Nat → Bool → Option Nat
+  | 0, _, _ => none
+  | fuel + 1, i, inClass =>
+    if i ≥ cs.size then none else
+    let c := cs[i]!
+    if c == '\n' || c == '\r' || c.toNat == 0x2028 || c.toNat == 0x2029 then none
+    else if c == '\\' then skipRegexBody cs fuel (i + 2) inClass
+    else if c == '[' then skipRegexBody cs fuel (i + 1) true
+    else if c == ']' then skipRegexBody cs fuel (i + 1) false
+    else if c == '/' && !inClass then some (i + 1)
+    else skipRegexBody cs fuel (i + 1) inClass
+
+/-- After the character `prev` (the last one that is not white space) a `/` starts a regular
+expression literal, not a division: after an operator, an opening bracket, a separator, or at
+the start. Used where there are no tokens yet (inside a template's substitution). -/
+def regexAfterChar (prev : Char) : Bool :=
+  "(,=:[!&|?{;+-*%<>~^".toList.contains prev
+
+/-- Kind: progress. Says: a regular expression body that `skipRegexBody` closes ends after
+where it started, so the scan that uses it moves forward.
+Does not say: that the body is a valid pattern (`JS.Regex` decides that when it is compiled). -/
+theorem skipRegexBody_gt (cs : Array Char) : ∀ (fuel i : Nat) (inClass : Bool) (j : Nat),
+    skipRegexBody cs fuel i inClass = some j → i < j := by
+  intro fuel
+  induction fuel with
+  | zero => intro i c j h; simp [skipRegexBody] at h
+  | succ n ih =>
+    intro i c j h
+    unfold skipRegexBody at h
+    split at h
+    · simp at h
+    · dsimp only at h
+      repeat' split at h
+      all_goals first
+        | (simp at h; done)
+        | (have := ih _ _ _ h; omega)
+        | (injection h with h; omega)
+
+#guard regexAfterChar '(' && regexAfterChar ',' && regexAfterChar '=' && !regexAfterChar ')' &&
+  !regexAfterChar 'a' && !regexAfterChar '9' && !regexAfterChar ']' && !regexAfterChar '}'
+#guard skipRegexBody "'/g, 1)".toList.toArray 8 0 false == some 2
+#guard skipRegexBody "[/]x/ y".toList.toArray 8 0 false == some 5
+#guard skipRegexBody "a\\/b/".toList.toArray 8 0 false == some 5
+#guard skipRegexBody "2 }` x".toList.toArray 8 0 false == none
+
 /-- A template literal (§12.9.6). -/
 structure Tmpl where
   cooked : Array String := #[]
@@ -193,7 +241,7 @@ def scanTmpl (cs : Array Char) : Nat → Nat → String → String → Tmpl → 
     let c := cs[i]!
     if c == '`' then .ok ({ t with cooked := t.cooked.push (Str.canonical cooked), raw := t.raw.push (Str.ofHost raw) }, i + 1)
     else if c == '$' && charAt cs (i + 1) == '{' then
-      match matchBrace cs fuel (i + 2) 1 with
+      match matchBrace cs fuel (i + 2) 1 '(' with
       | .error e => .error e
       | .ok j =>
         let t := { t with cooked := t.cooked.push (Str.canonical cooked), raw := t.raw.push (Str.ofHost raw),
@@ -210,31 +258,37 @@ def scanTmpl (cs : Array Char) : Nat → Nat → String → String → Tmpl → 
       scanTmpl cs fuel (i + 1) (cooked ++ Str.ofHost (String.singleton c)) (raw.push c) t
     else scanTmpl cs fuel (i + 1) (cooked.push c) (raw.push c) t
 
-/-- The index of the `}` that closes a substitution opened before `i`. -/
-def matchBrace (cs : Array Char) : Nat → Nat → Nat → Except String Nat
-  | 0, _, _ => .error "SyntaxError: unterminated template literal"
-  | fuel + 1, i, depth =>
+/-- The index of the `}` that closes a substitution opened before `i`. `prev` is the last
+character before `i` that is not white space: it decides whether a `/` starts a regular
+expression literal (whose quotes and braces are not the substitution's) or is a division. -/
+def matchBrace (cs : Array Char) : Nat → Nat → Nat → Char → Except String Nat
+  | 0, _, _, _ => .error "SyntaxError: unterminated template literal"
+  | fuel + 1, i, depth, prev =>
     if i ≥ cs.size then .error "SyntaxError: unterminated template literal" else
     let c := cs[i]!
-    if c == '}' then (if depth == 1 then .ok i else matchBrace cs fuel (i + 1) (depth - 1))
-    else if c == '{' then matchBrace cs fuel (i + 1) (depth + 1)
+    if c == '}' then (if depth == 1 then .ok i else matchBrace cs fuel (i + 1) (depth - 1) c)
+    else if c == '{' then matchBrace cs fuel (i + 1) (depth + 1) c
     else if c == '"' || c == '\'' then
       match scanStr cs c cs.size (i + 1) "" with
       | .error e => .error e
-      | .ok (_, j) => matchBrace cs fuel j depth
+      | .ok (_, j) => matchBrace cs fuel j depth c
     else if c == '`' then
       match scanTmpl cs fuel (i + 1) "" "" {} with
       | .error e => .error e
-      | .ok (_, j) => matchBrace cs fuel j depth
+      | .ok (_, j) => matchBrace cs fuel j depth c
     else if c == '/' && charAt cs (i + 1) == '/' then
-      matchBrace cs fuel (scanWhile cs (fun c => !isLineTerm c) cs.size i) depth
+      matchBrace cs fuel (scanWhile cs (fun c => !isLineTerm c) cs.size i) depth prev
     else if c == '/' && charAt cs (i + 1) == '*' then
       let rec close : Nat → Nat → Nat
         | 0, k => k
         | f + 1, k => if k + 1 ≥ cs.size then cs.size
           else if cs[k]! == '*' && cs[k+1]! == '/' then k + 2 else close f (k + 1)
-      matchBrace cs fuel (close cs.size (i + 2)) depth
-    else matchBrace cs fuel (i + 1) depth
+      matchBrace cs fuel (close cs.size (i + 2)) depth prev
+    else if c == '/' && regexAfterChar prev then
+      match skipRegexBody cs cs.size (i + 1) false with
+      | some j => matchBrace cs fuel j depth ')'
+      | none => matchBrace cs fuel (i + 1) depth c
+    else matchBrace cs fuel (i + 1) depth (if c == ' ' || c == '\t' || isLineTerm c then prev else c)
 end
 
 structure Token where
@@ -437,6 +491,34 @@ def scanSepNum (cs : Array Char) (i : Nat) : Option (Except String ((Nat ⊕ Flo
 follows it. `a?.5:b` is the conditional `a ? .5 : b`, so the punctuator there is `?`. -/
 def optChainLookahead (cs : Array Char) (i : Nat) (p : Option String) : Option String :=
   if p == some "?." && i + 2 < cs.size && (charAt cs (i + 2)).isDigit then some "?" else p
+
+/-- Kind: a specification. Says: the lookahead changes no punctuator but `?.`. -/
+theorem optChainLookahead_other (cs : Array Char) (i : Nat) (p : Option String) (h : p ≠ some "?.") :
+    optChainLookahead cs i p = p := by
+  unfold optChainLookahead
+  have hb : (p == some "?.") = false := by simpa using h
+  simp [hb]
+
+/-- Kind: a specification. Says: `?.` with a decimal digit after it is read as `?` (the
+conditional operator; the `.` then starts a number). -/
+theorem optChainLookahead_digit (cs : Array Char) (i : Nat) (h1 : i + 2 < cs.size)
+    (h2 : (charAt cs (i + 2)).isDigit = true) :
+    optChainLookahead cs i (some "?.") = some "?" := by
+  simp [optChainLookahead, h1, h2]
+
+/-- Kind: a specification. Says: `?.` at the end of the input, or before a character that is
+no decimal digit, stays the optional chaining punctuator. -/
+theorem optChainLookahead_keeps (cs : Array Char) (i : Nat)
+    (h : ¬ (i + 2 < cs.size ∧ (charAt cs (i + 2)).isDigit = true)) :
+    optChainLookahead cs i (some "?.") = some "?." := by
+  unfold optChainLookahead
+  by_cases h1 : i + 2 < cs.size
+  · have h2 : (charAt cs (i + 2)).isDigit = false := by
+      cases hd : (charAt cs (i + 2)).isDigit with
+      | false => rfl
+      | true => exact absurd ⟨h1, hd⟩ h
+    simp [h2]
+  · simp [h1]
 
 /-- The punctuator at `i`, by the definition: the first of `punctuators` (longest first)
 whose characters are there. The lexer uses `matchPunct`, which agrees with it (the checks

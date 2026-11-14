@@ -505,4 +505,16 @@ def onSmallHeap (n : Nat) (src : String) : String × Bool × Nat :=
 -- a script that stays within the heap is not touched
 #guard onSmallHeap 5000 "var n = 0; for (var i = 0; i < 100000; i++) n += i; print(n)" == ("ok", true, 1)
 
+/-! ## `?.` before a digit; a regular expression inside a template's substitution
+
+§12.8: `?.` is the optional chaining punctuator only when no decimal digit follows, so the
+minified conditional `a?.5:1` is `a ? .5 : 1` (6 of 111 scripts of eight live sites did not
+parse for it). The scan for the `}` of a template substitution took the `'` of a regular
+expression literal for the start of a string: Test262's `harness/temporalHelpers.js` did not
+parse ("unterminated string literal"), and with it 2,810 tests. -/
+
+#guard out "var a = 8, o = { a: \"x'y\" }; print(a?.5:1, a ?.length, o?.a, a?.[0])" == ["0.5 undefined x'y undefined"]
+#guard out "var o = { a: \"x'y\" }; print(`${o.a.replace(/'/g, \"\\\\'\")}|${ 6 / 2 }|${ [1, 2].map(x => x / 2).join('/') }|${ '}' }|${ /[/}]/.test('}') }|${ o.a.length / 3 / 1 }`)" == ["x\\'y|3|0.5/1|}|true|1"]
+#guard out "var a = 8, g = 2; print(`${a / g}${a /g/ 1}`)" == ["44"]
+
 end L4Factoidal.JS.Tests
