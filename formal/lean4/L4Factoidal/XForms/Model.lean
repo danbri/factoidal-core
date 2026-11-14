@@ -535,8 +535,19 @@ def Model.readonlyAt (m : Model) (l : Loc) : Bool :=
     a required node is not empty. -/
 def Model.validAt (m : Model) (l : Loc) : Bool :=
   let o := m.own l
-  let v := ((m.item? l).map (·.stringValue)).getD ""
-  o.constraint && o.typeOk && (!o.required || v != "")
+  let it := m.item? l
+  let v := (it.map (·.stringValue)).getD ""
+  -- §6.1.1: an `xsi:type` attribute on the instance node also gives its type; the
+  -- type name is resolved with the namespaces in scope at the `instance` element
+  let xsiOk := match it with
+    | some (.tree _ (.element _ attrs _)) =>
+      (match attrs.find? (fun a => localOf a.name == "type" && prefixOf a.name != "") with
+       | some a =>
+         let ns := ((m.insts[l.doc - 2]?).map (fun i => (m.form.el i.el).ns)).getD []
+         typeValid ns a.value v
+       | none => true)
+    | _ => true
+  o.constraint && o.typeOk && xsiOk && (!o.required || v != "")
 
 /-! ## Evaluation contexts and bindings (§7.2) -/
 
@@ -689,7 +700,13 @@ def Model.viewLoop (m : Model) : Nat → List (Nat × List (Nat × Nat) × Cx ×
             | some (x :: _) => (({ cx with item := some x, pos := 1, size := 1 } : Cx),
                                 rel && m.relevantAt x.loc)
           let rel'' := if el.name == "case" then rel' && m.caseSelected el else rel'
-          m.viewLoop f (el.kids.map (fun k => (k, iter, cx', rel'')) ++ rest) acc
+          -- a group with a label is part of the view model (§9.1.1)
+          let acc' := match el.name == "group", (m.form.kidsNamed el "label").head? with
+            | true, some l =>
+              ({ el := e, iter := iter, kind := "group", id := (el.attr "id").getD "",
+                 label := normalizeSpaceStr l.text, relevant := rel'' } : Ctl) :: acc
+            | _, _ => acc
+          m.viewLoop f (el.kids.map (fun k => (k, iter, cx', rel'')) ++ rest) acc'
         else if controlKinds.contains el.name then
           match m.ctlOf el iter cx ns? rel with
           | .error err => .error err
@@ -884,16 +901,16 @@ def Model.doDelete (m : Model) (el : El) (iter : List (Nat × Nat))
       | _ => pure { cx1 with item := none }
   let ns := (← m.nodes el cx).getD []
   let size := ns.length
-  let targets ← match el.attr "at" with
-    | none => pure ns
+  let (targets, location) ← match el.attr "at" with
+    | none => pure (ns, 1)
     | some src => do
       let v ← m.evalCx el { cx with item := ns.head?, pos := 1, size := size } src info
       match numFloor? (Num.roundN v.toNum) with
       | some k =>
         let k' := if k < 1 then 1 else if k > Int.ofNat size then size else k.toNat
-        pure (ns[k' - 1]?).toList
+        pure ((ns[k' - 1]?).toList, k')
       -- §10.4: a NaN location is the last node
-      | none => pure (ns[size - 1]?).toList
+      | none => pure ((ns[size - 1]?).toList, size)
   let dels := targets.filter (fun t => match t with
     | .tree l _ => l.path.length > 1
     | _ => false)
@@ -903,7 +920,7 @@ def Model.doDelete (m : Model) (el : El) (iter : List (Nat × Nat))
     let m' := dels.reverse.foldl (fun (m : Model) t =>
       m.editDoc t.loc.doc (modKids t.loc.path.dropLast
         (fun kids => kids.eraseIdx (t.loc.path.getLast?.getD 0)))) m
-    pure (m'.afterEdit "xforms-delete" first.loc.doc [("deleted-nodes", .nodes dels)])
+    pure (m'.afterEdit "xforms-delete" first.loc.doc [("deleted-nodes", .nodes dels), ("delete-location", .num (.finite (Int.ofNat location) 0))])
 
 /-- Run one action element (§10). -/
 def Model.runBody (m : Model) (el : El) (iter : List (Nat × Nat))

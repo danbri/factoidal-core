@@ -1,0 +1,23 @@
+{
+ "case": "10.16.a",
+ "file": "Chapt10/10.16/10.16.a.xhtml",
+ "quote": "When activated both triggers must cause you to see a message that says \"Instance Message\".",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Message with bind attribute"
+  },
+  {
+   "expect": "message",
+   "contains": "Instance Message"
+  },
+  {
+   "do": "activate",
+   "label": "Message with ref attribute"
+  },
+  {
+   "expect": "message",
+   "contains": "Instance Message"
+  }
+ ]
+}

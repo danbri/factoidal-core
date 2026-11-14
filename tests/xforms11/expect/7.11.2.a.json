@@ -1,0 +1,18 @@
+{
+ "case": "7.11.2.a",
+ "file": "Chapt07/7.11/7.11.2/7.11.2.a.xhtml",
+ "quote": "After you activate the Insert A Date trigger you must see the correct value as output. You must see the XPath expression \"/Dates/date\" or \"2006-01-01\" :",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Insert A Date"
+  },
+  {
+   "expect": "values",
+   "values": [
+    "2006-01-01"
+   ],
+   "kind": "output"
+  }
+ ]
+}
