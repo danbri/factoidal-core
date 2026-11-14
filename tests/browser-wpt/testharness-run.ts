@@ -402,6 +402,8 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
   }catch{engineFeatures={};}
   (info as Record<string,unknown>).features=engineFeatures;
   let heldCanvasFont=false;
+  // Web fonts given to the engine in this process, by URL: the SHA-256 it holds them by ("" when refused).
+  const fontShas=new Map<string,string>();
   // What the host reads: files of the pinned copies (the default), or, with --wptserve,
   // the local wptserve over HTTP by WPT's own hostnames (wpt-hosts.ts), as a browser run does.
   const http=serve?.fetcher;
@@ -522,7 +524,34 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
       if(source===undefined)sheetFailures.push({nodeId:sh.nodeId,reason:"not fetched"});
       else sheetResources.push({nodeId:sh.nodeId,source,url:sh.url});
     }
-    const layout=sheetResources.length||sheetFailures.length?{layout:{url,resources:sheetResources,resourceFailures:sheetFailures}}:{};
+    // The page's web fonts (@font-face), loaded as a browser host loads them
+    // (native_html_document.ts loadWebFonts): Lean names the faces the page's text uses
+    // (fontFaces), the host fetches the first URL of each that it can and gives the bytes to
+    // Lean (webFontLoad: the font policy checks and holds them), and the layout request names
+    // them. Without this a page's own fonts (Ahem in most layout tests) are never used, and
+    // SVG text, which is drawn and hit only with a held font, is not there at all.
+    const webFonts:{url:string;sha256:string}[]=[];
+    const hasFace=(t:string)=>/@font-face/i.test(t);
+    const fontEngine=engine as unknown as {fontFaces?:(s:string,o:Record<string,unknown>)=>{faces?:{family:string;sources:string[]}[]};webFontLoad?:(b:Uint8Array,sha:string)=>unknown};
+    if((hasFace(html)||sheetResources.some(r=>hasFace(r.source)))&&typeof fontEngine.fontFaces==="function"&&typeof fontEngine.webFontLoad==="function"){
+      try{
+        const faces=fontEngine.fontFaces(html,{url,resources:sheetResources}).faces??[];
+        for(const face of faces.slice(0,16))for(const src of face.sources){
+          let sha=fontShas.get(src);
+          if(sha===undefined){
+            sha="";
+            const bytes=await readBytes(src);
+            if(bytes&&bytes.length<=8*1048576){
+              try{const h=[...new Uint8Array(await crypto.subtle.digest("SHA-256",bytes as BufferSource))].map(b=>b.toString(16).padStart(2,"0")).join("");
+                fontEngine.webFontLoad(bytes,h);sha=h;}catch{/* the font policy refused it */}
+            }
+            fontShas.set(src,sha);
+          }
+          if(sha){webFonts.push({url:src,sha256:sha});break;}
+        }
+      }catch{/* an engine without the op, or a page it refuses */}
+    }
+    const layout=sheetResources.length||sheetFailures.length||webFonts.length?{layout:{url,resources:sheetResources,resourceFailures:sheetFailures,...(webFonts.length?{webFonts}:{})}}:{};
     // The images of a canvas test (<img src>), held by the engine by their URL, as a host
     // holds the images it fetched: Canvas 2D draws them (docs/designissues/2026-11-08-canvas-2d.md).
     // The font of the canvas text tests (an @font-face the engine does not load for
