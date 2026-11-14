@@ -33,6 +33,36 @@ def valueOf (index : Std.HashMap String Nat) (v : ComputedGeneric.View) (id : Na
   if CssValues.isCustom name then some (ComputedGeneric.computedOf v id name)
   else (index[name]?).map fun k => ComputedGeneric.valueAt v id k
 
+/-- The border box of element `id` from its computed style, when its width and height
+are lengths: the reference box of its transforms (CSS Transforms 1 §6), with no layout.
+None for `auto` or a percentage size. -/
+def boxOf (v : ComputedGeneric.View) (id : Nat) : Option (Float × Float) :=
+  let px := fun (name : String) => match Value.parse (ComputedGeneric.resolvedLonghand v id name) with
+    | [.dim n "px"] => some (Value.toFloat n)
+    | _ => none
+  let border := ComputedGeneric.resolvedLonghand v id "box-sizing" == "border-box"
+  let side := fun (size : String) (around : List String) =>
+    (px size).map fun s => if border then s else around.foldl (fun acc n => acc + (px n).getD 0) s
+  match side "width" ["padding-left", "padding-right", "border-left-width", "border-right-width"],
+        side "height" ["padding-top", "padding-bottom", "border-top-width", "border-bottom-width"] with
+  | some w, some h => some (w, h)
+  | _, _ => none
+
+/-- The answer of `getComputedStyle` for the `k`-th name: `ComputedGeneric.valueAt`, and
+the resolved values of the transform properties (CSSOM §9.1, CSS Transforms 1 §15):
+`transform` as one `matrix()` or `matrix3d()` (`Value.resolvedTransform`), the percentages
+of `transform-origin` and `perspective-origin` as lengths of the element's box. The box is
+read only when the value has a percentage. The engine itself reads `valueOf`: the list of
+functions and the percentages, which is what interpolates. -/
+def resolvedAt (v : ComputedGeneric.View) (id : Nat) (k : Nat) : String :=
+  let text := ComputedGeneric.valueAt v id k
+  if k ≥ ComputedGeneric.computedBase then text else
+  let name := ComputedGeneric.nameLists.get.1[k]?
+  let box := fun (_ : Unit) => if text.contains '%' then boxOf v id else none
+  if name == some "transform" then Value.resolvedTransformText text (box ())
+  else if name == some "transform-origin" || name == some "perspective-origin" then Value.resolvedOriginText text (box ())
+  else text
+
 /-- The computed value of `property: value` in the context of element `id`; none when the
 value is not one the property takes, or holds a `var()` (not resolved here). `inherit` is
 the parent's computed value, `initial` the initial one, `unset` and `revert` one of the

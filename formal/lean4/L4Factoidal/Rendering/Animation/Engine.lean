@@ -421,7 +421,10 @@ def overridesWhere (s : State) (ac : Access) (keep : Nat → Bool) : List Overri
         stack := stack.insert (e, property) (v, isCssTransition a.origin)
       | none => pure ()
   return keys.toList.filterMap fun k =>
-    (stack[k]?).map fun (v, t) => { node := k.1, property := k.2, value := Value.toText v, transition := t }
+    (stack[k]?).map fun (v, t) =>
+      -- a transform's matrices keep six significant digits (their small entries matter)
+      { node := k.1, property := k.2, transition := t,
+        value := if kindOf k.2 == .transformList then Value.toTextPrecise v else Value.toText v }
 
 /-- The effect stack of every element (`overridesWhere`). -/
 def overrides (s : State) (ac : Access) : List Override := overridesWhere s ac fun _ => true

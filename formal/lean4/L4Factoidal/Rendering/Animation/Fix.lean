@@ -179,6 +179,22 @@ def format (x : Int) : String := formatPlaces 9 x
 /-- The decimal text as CSS serializes a number: at most six decimal places. -/
 def formatCss (x : Int) : String := formatPlaces 6 x
 
+/-- The decimal text with at most `digits` significant digits (and at most nine decimal
+places), rounded, with no exponent: how a browser writes the entries of a matrix. -/
+def formatSig (digits : Nat) (x : Int) : String :=
+  let width := (toString x.natAbs).length
+  if width ≤ digits then format x
+  else
+    let unit : Int := (10 : Int) ^ (width - digits)
+    format (roundDiv x unit * unit)
+
+#guard formatSig 6 (-2378247) == "-0.00237825"
+#guard formatSig 6 707106781 == "0.707107"
+#guard formatSig 6 1557407724 == "1.55741"
+#guard formatSig 6 (ofInt 250) == "250"
+#guard formatSig 6 0 == "0"
+#guard formatSig 6 123456789012 == "123.457"
+
 /-- Read decimal text: an optional sign, digits with an optional fraction, and an
 optional exponent (`1e-7`, as JavaScript writes small numbers). Digits beyond the ninth
 decimal place are rounded. `none` for anything else (`Infinity`, `NaN`, empty). -/
