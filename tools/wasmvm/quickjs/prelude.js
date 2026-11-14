@@ -10269,6 +10269,183 @@
   lazy('CookieChangeEvent', () => cookieStoreApi()?.classes.CookieChangeEvent);
   // ==== end Cookie Store API =====================================================================
 
+  // ==== Cache API (CacheStorage, Cache) ==========================================================
+  // The caches of the storage key are Lean's (ClientStorage/CacheStorage.lean, web_api op 206): the
+  // names, which entries a request matches (URL, method, Vary, the options), what put refuses and
+  // replaces. An entry's response is kept in Lean as opaque bytes written here (its status, headers,
+  // URL, type and body); matching never reads them. In memory only.
+  const makeCaches = () => {
+    const td = new TextDecoder(), text = b => td.decode(b);
+    const unpack = ab => {
+      const u = new Uint8Array(ab), u32 = i => (u[i] | u[i + 1] << 8 | u[i + 2] << 16 | u[i + 3] << 24) >>> 0;
+      const out = [];
+      for (let i = 0, at = 4, k = u32(0); i < k; i++) { const len = u32(at); out.push(u.subarray(at + 4, at + 4 + len)); at += 4 + len; }
+      return out;
+    };
+    const call = (args, what) => {
+      const r = apiCall(206, args, 0, true);
+      if (typeof r === 'number') throw new DOMException(`${what}: the cache is not available.`, r === -5 ? 'QuotaExceededError' : 'SecurityError');
+      const f = unpack(r), head = text(f[0]);
+      if (head === 'ok') return f.slice(1);
+      const name = head.slice(1);
+      if (name === 'TypeError') throw new TypeError(`Failed to execute '${what}': the request or the response can not be stored.`);
+      throw new DOMException(`Failed to execute '${what}': ${name}`, name);
+    };
+    const later = f => { try { return Promise.resolve(f()); } catch (e) { return Promise.reject(e); } };
+    const nameOf = n => JSON.stringify(String(n));
+    const RequestK = makeRequest(), ResponseK = makeResponse();
+    // A request argument: a Request, or a URL string made into one (Service Workers §5.4.2).
+    const reqOf = (input, what) => {
+      if (input instanceof RequestK) return input;
+      return new RequestK(input === undefined ? 'undefined' : usv(input));
+    };
+    const linesOf = list => list.map(e => e[0] + ':' + e[1]).join('\n');
+    const reqFields = r => { const st = requests.get(r); return [st.url, st.method, linesOf(headerState.get(st.headers).list)]; };
+    const optFields = o => { o = o == null ? {} : o; return [o.ignoreSearch ? '1' : '0', o.ignoreMethod ? '1' : '0', o.ignoreVary ? '1' : '0']; };
+    const enc = new TextEncoder();
+    const blobOf = (req, res) => {
+      const rs = responses.get(res), b = bodies.get(res), st = requests.get(req);
+      const plain = {};
+      for (const k of Object.keys(st)) { const v = st[k]; if (v === null || ['string', 'number', 'boolean'].includes(typeof v)) plain[k] = v; }
+      const meta = enc.encode(JSON.stringify({ status: rs.status, statusText: rs.statusText, type: rs.type, url: rs.url, redirected: rs.redirected,
+        headers: headerState.get(rs.headers).list, body: b.bytes !== null, req: plain }) + '\n');
+      const body = b.bytes === null ? new Uint8Array(0) : b.bytes;
+      const out = new Uint8Array(meta.length + body.length); out.set(meta, 0); out.set(body, meta.length);
+      return out;
+    };
+    const metaOf = blob => { const i = blob.indexOf(10); return [JSON.parse(text(blob.subarray(0, i))), blob.slice(i + 1)]; };
+    const responseFrom = blob => { const [m, body] = metaOf(blob); return responseOf({ status: m.status, statusText: m.statusText, url: m.url, type: m.type, redirected: m.redirected }, m.headers, 'immutable', m.body ? body : null); };
+    const requestFrom = (url, method, lines, blob) => {
+      const [m] = metaOf(blob);
+      const r = new RequestK(url, { method });
+      Object.assign(requests.get(r), m.req);
+      headerState.get(requests.get(r).headers).list = lines === '' ? [] : lines.split('\n').map(l => { const i = l.indexOf(':'); return [l.slice(0, i), l.slice(i + 1)]; });
+      headerState.get(requests.get(r).headers).guard = 'immutable';
+      return r;
+    };
+    const entries = f => { const out = []; for (let i = 0; i + 3 < f.length; i += 4) out.push([text(f[i]), text(f[i + 1]), text(f[i + 2]), f[i + 3]]); return out; };
+    const ids = new WeakMap();
+    let making = false;
+    const idOf = (o, what) => { const id = ids.get(o); if (id === undefined) throw new TypeError('Illegal invocation: ' + what); return String(id); };
+    const enumerate = C => {
+      for (const k of Object.getOwnPropertyNames(C.prototype)) if (k !== 'constructor')
+        Object.defineProperty(C.prototype, k, { ...Object.getOwnPropertyDescriptor(C.prototype, k), enumerable: true });
+    };
+    // Cache.put's steps on the page side: the bodies (used, then read), then Lean's checks and store.
+    const putOne = (cache, request, response, what) => {
+      const id = idOf(cache, what);
+      const r = reqOf(request, what);
+      if (!(response instanceof ResponseK)) throw new TypeError(`Failed to execute '${what}': parameter 2 is not of type 'Response'.`);
+      const b = bodies.get(response);
+      if (b.used || (b.stream && b.stream.locked)) throw new TypeError(`Failed to execute '${what}': the response body was already read.`);
+      const rs = responses.get(response);
+      const visible = rs.type === 'opaque' ? [] : headerState.get(rs.headers).list;
+      const blob = blobOf(r, response);
+      call(['put', id, ...reqFields(r), String(rs.status), linesOf(visible), blob], what);
+      if (b.bytes !== null) b.used = true;
+    };
+    class Cache {
+      constructor() { if (!making) throw new TypeError('Illegal constructor'); }
+      match(request, options = undefined) {
+        return later(() => {
+          const id = idOf(this, 'Cache.match');
+          if (arguments.length < 1) throw new TypeError("Failed to execute 'match' on 'Cache': 1 argument required, but only 0 present.");
+          const f = call(['match', id, ...reqFields(reqOf(request, 'Cache.match')), ...optFields(options)], 'Cache.match');
+          return f.length ? responseFrom(f[3]) : undefined;
+        });
+      }
+      matchAll(request = undefined, options = undefined) {
+        return later(() => {
+          const id = idOf(this, 'Cache.matchAll');
+          const has = request !== undefined;
+          const q = has ? reqFields(reqOf(request, 'Cache.matchAll')) : ['', '', ''];
+          return Object.freeze(entries(call(['matchAll', id, has ? '1' : '0', ...q, ...optFields(options)], 'Cache.matchAll')).map(e => responseFrom(e[3])));
+        });
+      }
+      add(request) {
+        if (arguments.length < 1) return Promise.reject(new TypeError("Failed to execute 'add' on 'Cache': 1 argument required, but only 0 present."));
+        return this.addAll([request]);
+      }
+      addAll(requests_) {
+        let reqs;
+        try {
+          idOf(this, 'Cache.addAll');
+          if (arguments.length < 1) throw new TypeError("Failed to execute 'addAll' on 'Cache': 1 argument required, but only 0 present.");
+          reqs = Array.from(requests_, x => reqOf(x, 'Cache.addAll'));
+          for (const r of reqs) {
+            const st = requests.get(r);
+            if (!/^https?:/.test(st.url) || st.method !== 'GET') throw new TypeError("Failed to execute 'addAll' on 'Cache': the request can not be stored.");
+          }
+        } catch (e) { return Promise.reject(e); }
+        return Promise.all(reqs.map(r => globalThis.fetch(r).then(res => {
+          const rs = responses.get(res);
+          if (rs.type === 'error' || rs.status < 200 || rs.status > 299 || rs.status === 206) throw new TypeError("Failed to execute 'addAll' on 'Cache': the response is not ok.");
+          if ((hGet(headerState.get(rs.headers), 'vary') ?? '').split(',').some(v => v.trim() === '*')) throw new TypeError("Failed to execute 'addAll' on 'Cache': the response varies on '*'.");
+          return res;
+        }))).then(rs => { for (let i = 0; i < reqs.length; i++) putOne(this, reqs[i], rs[i], 'Cache.addAll'); });
+      }
+      put(request, response) {
+        const n = arguments.length;
+        return later(() => {
+          if (n < 2) throw new TypeError(`Failed to execute 'put' on 'Cache': 2 arguments required, but only ${n} present.`);
+          putOne(this, request, response, 'Cache.put');
+        });
+      }
+      delete(request, options = undefined) {
+        return later(() => {
+          const id = idOf(this, 'Cache.delete');
+          if (arguments.length < 1) throw new TypeError("Failed to execute 'delete' on 'Cache': 1 argument required, but only 0 present.");
+          return text(call(['remove', id, ...reqFields(reqOf(request, 'Cache.delete')), ...optFields(options)], 'Cache.delete')[0]) === '1';
+        });
+      }
+      keys(request = undefined, options = undefined) {
+        return later(() => {
+          const id = idOf(this, 'Cache.keys');
+          const has = request !== undefined;
+          const q = has ? reqFields(reqOf(request, 'Cache.keys')) : ['', '', ''];
+          return Object.freeze(entries(call(['keys', id, has ? '1' : '0', ...q, ...optFields(options)], 'Cache.keys')).map(e => requestFrom(...e)));
+        });
+      }
+    }
+    setTag(Cache, 'Cache'); enumerate(Cache);
+    const cacheObj = id => { making = true; let c; try { c = new Cache(); } finally { making = false; } ids.set(c, id); return c; };
+    const brandS = new WeakSet();
+    const own = (o, what) => { if (!brandS.has(o)) throw new TypeError('Illegal invocation: ' + what); };
+    const needName = (n, what) => { if (n < 1) throw new TypeError(`Failed to execute '${what}' on 'CacheStorage': 1 argument required, but only 0 present.`); };
+    class CacheStorage {
+      constructor() { if (!making) throw new TypeError('Illegal constructor'); }
+      match(request, options = undefined) {
+        return later(() => {
+          own(this, 'CacheStorage.match');
+          if (arguments.length < 1) throw new TypeError("Failed to execute 'match' on 'CacheStorage': 1 argument required, but only 0 present.");
+          const o = options == null ? {} : options;
+          const f = call(['smatch', o.cacheName === undefined ? '' : nameOf(o.cacheName), ...reqFields(reqOf(request, 'CacheStorage.match')), ...optFields(o)], 'CacheStorage.match');
+          if (o.cacheName !== undefined && f.length === 0) return undefined;
+          return f.length ? responseFrom(f[3]) : undefined;
+        });
+      }
+      has(cacheName) { const n = arguments.length; return later(() => { own(this, 'CacheStorage.has'); needName(n, 'has'); return text(call(['has', nameOf(cacheName)], 'CacheStorage.has')[0]) === '1'; }); }
+      open(cacheName) { const n = arguments.length; return later(() => { own(this, 'CacheStorage.open'); needName(n, 'open'); return cacheObj(Number(text(call(['open', nameOf(cacheName)], 'CacheStorage.open')[0]))); }); }
+      delete(cacheName) { const n = arguments.length; return later(() => { own(this, 'CacheStorage.delete'); needName(n, 'delete'); return text(call(['delete', nameOf(cacheName)], 'CacheStorage.delete')[0]) === '1'; }); }
+      keys() { return later(() => { own(this, 'CacheStorage.keys'); return call(['names'], 'CacheStorage.keys').map(b => JSON.parse(text(b))); }); }
+    }
+    setTag(CacheStorage, 'CacheStorage'); enumerate(CacheStorage);
+    making = true; let storage; try { storage = new CacheStorage(); } finally { making = false; }
+    brandS.add(storage);
+    return { storage, classes: { Cache, CacheStorage } };
+  };
+  let cachesMade;
+  const cachesApi = () => {
+    if (cachesMade !== undefined) return cachesMade;
+    let secure = false;
+    try { const u = new URL(href); secure = u.protocol === 'https:' || u.hostname === 'localhost' || u.hostname === '127.0.0.1'; } catch {}
+    return cachesMade = !secure || !apiOn() || apiCall(206, ['names'], 0, true) === -2 || apiCall(88, ['a']) !== '' ? null : makeCaches();
+  };
+  lazy('caches', () => cachesApi()?.storage);
+  lazy('Cache', () => cachesApi()?.classes.Cache);
+  lazy('CacheStorage', () => cachesApi()?.classes.CacheStorage);
+  // ==== end Cache API ============================================================================
+
   // ---- User Timing: performance.mark, measure ---------------------------------------------
   // performance.now and timeOrigin are QuickJS-NG's, on the WASI clock, which is Lean's script
   // clock (Hosts.Page.ScriptClock). The entries are this list.
@@ -12388,7 +12565,7 @@
     'IDBCursorWithValue', 'IDBRecord', 'IDBTransaction', 'IDBDatabase', 'DOMStringList', 'QuotaExceededError', 'FileSystemHandle',
     'FileSystemFileHandle', 'FileSystemDirectoryHandle', 'FileSystemWritableFileStream', 'FileSystemSyncAccessHandle', 'StorageManager', 'Lock', 'LockManager',
     'ML', 'MLContext', 'MLGraph', 'MLOperand', 'MLTensor', 'MLGraphBuilder',
-    'StorageBucket', 'StorageBucketManager']);
+    'StorageBucket', 'StorageBucketManager', 'caches', 'Cache', 'CacheStorage']);
   // HTML §10.2.1: WorkerGlobalScope, DedicatedWorkerGlobalScope, WorkerLocation, WorkerNavigator.
   const makeWorkerScope = (url, name) => {
     inWorker = true;
