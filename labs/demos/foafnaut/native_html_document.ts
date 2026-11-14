@@ -321,6 +321,31 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
   if(scripted&&!scriptHost)
     throw new Error("Page scripts need the QuickJS guest module (--quickjs-wasm FILE) and an engine with scriptSession; this page is refused");
   if(inspection.stylesheets.length>MAX_RESOURCES&&!accept.liberal)throw new Error(`Native HTML exceeds ${MAX_RESOURCES} external stylesheets`);
+  // The bytes of the page's scripts and of its tab icon are read while its sheets and images
+  // are: they wait for nothing of those, and they stood one after the other before the
+  // scripts' start (Hacker News: 0.7 s for the icon and 0.14 s for the script after 1.4 s of
+  // sheet and images). Each is awaited where it was read before.
+  // Six scripts at a time, kept in the order of the document (the order they run in is Lean's).
+  const scriptsReading=scripted&&scriptHost?inOrder(inspection.scripts.filter(descriptor=>descriptor.kind==="classic"&&descriptor.src),6,async descriptor=>{
+    signal?.throwIfAborted();
+    try{
+      navigationURL(descriptor.url,inspection.baseURL,document.url);
+      const resource=await readSource(descriptor.url,signal);
+      return {nodeId:descriptor.nodeId,url:resource.url,source:resource.source};
+    }catch(error){
+      // Liberal mode: a script that is not fetched does not run, as in a browser after a failed fetch.
+      if(!accept.liberal||signal?.aborted)throw error;
+      fetchFailed("script",descriptor.url,`script not read: ${String(error instanceof Error?error.message:error)}`,"script not run");
+      return undefined;
+    }
+  }):undefined;
+  scriptsReading?.catch(()=>{});
+  // So are the images' bytes (Lean lists them and decides each transfer; the host makes the requests).
+  const imageBytes=fetchImageBytes(inspection.images??[],document.url,signal,
+    (imageURL,reason)=>fetchFailed("image",imageURL,`image not read: ${reason}`,"alt text shown"),engine as SubresourceEngine);
+  imageBytes.catch(()=>{});
+  const iconReading=inspection.icon?readSubresource(engine as SubresourceEngine,"image",inspection.icon,document.url,MAX_ICON_BYTES,signal):undefined;
+  iconReading?.catch(()=>{});
   // In liberal mode a stylesheet that is not read goes to Lean as a failure, with the reason;
   // Lean draws the page without it and says so (WebAccept.Skip.stylesheetMissing).
   const resourceFailures:{nodeId:number;url:string;reason:string}[]=[];
@@ -380,15 +405,12 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
   // the engine is given them (it decodes each) when the host says the page is shown (startImages),
   // so that the first frame waits neither for the network nor behind the decoding.
   const later=imagesAfterFirstFrame&&(inspection.images??[]).length>0;
-  const imageBytes=fetchImageBytes(inspection.images??[],document.url,signal,
-    (imageURL,reason)=>fetchFailed("image",imageURL,`image not read: ${reason}`,"alt text shown"),engine as SubresourceEngine);
-  imageBytes.catch(()=>{});
   let revision=0,imagesPending=later,imagesStarted=!later;
   const images:Record<string,unknown>=later?{}:await imageOptions(engine,await imageBytes);
   // The tab icon that Lean chose (WebDocument.iconURL), by the rules of images. One that fails or is refused leaves the tab with no icon.
   let iconBase64:string|undefined;
-  if(inspection.icon)try{
-    iconBase64=base64((await readSubresource(engine as SubresourceEngine,"image",inspection.icon,document.url,MAX_ICON_BYTES,signal)).bytes);
+  if(inspection.icon&&iconReading)try{
+    iconBase64=base64((await iconReading).bytes);
   }catch(error){if(signal?.aborted)throw error;console.error(`Native HTML icon refused: ${inspection.icon}: ${String(error instanceof Error?error.message:error)}`);
     fetchFailed("tab icon",inspection.icon,`icon not read: ${String(error instanceof Error?error.message:error)}`,"tab shown with no icon");}
   const webFonts=await loadWebFonts(engine as WebFontEngine,document.url,document.source,resources,signal);
@@ -402,20 +424,7 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
   await fonts;
   if(scripted&&scriptHost) {
     const supplied:{nodeId:number;source:string}[]=[];
-    // Six at a time, kept in the order of the document (the order they run in is Lean's).
-    const scriptsRead=await inOrder(inspection.scripts.filter(descriptor=>descriptor.kind==="classic"&&descriptor.src),6,async descriptor=>{
-      signal?.throwIfAborted();
-      try{
-        navigationURL(descriptor.url,inspection.baseURL,document.url);
-        const resource=await readSource(descriptor.url,signal);
-        return {nodeId:descriptor.nodeId,url:resource.url,source:resource.source};
-      }catch(error){
-        // Liberal mode: a script that is not fetched does not run, as in a browser after a failed fetch.
-        if(!accept.liberal||signal?.aborted)throw error;
-        fetchFailed("script",descriptor.url,`script not read: ${String(error instanceof Error?error.message:error)}`,"script not run");
-        return undefined;
-      }
-    });
+    const scriptsRead=await scriptsReading!;
     for(const read of scriptsRead)if(read){
       sources.push({kind:"Script",url:read.url,source:read.source});
       supplied.push({nodeId:read.nodeId,source:read.source});
