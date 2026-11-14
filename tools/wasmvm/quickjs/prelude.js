@@ -24,6 +24,14 @@
   const WINDOW = 0x0FFFFFFF;
   let nextTarget = 0x10000000;
   const define = (o, name, value) => Object.defineProperty(o, name, { value, writable: true, configurable: true });
+  // Trusted Types (section trustedtypes): these stay null until the page uses Trusted Types or
+  // one of its documents has a policy that asks for them, so other pages pay one comparison.
+  // ttAttr(element, namespace, name, value) and ttValue(type, node id or null, value, sink)
+  // answer the string that may reach the sink, or throw.
+  let ttAttr = null, ttValue = null, ttMeta = null, ttStart = null, ttDoc = null;
+  // `new FormData(form, submitter)`: the entry list of a form (section forms; Lean's
+  // HTML.FormEntries). Null in a worker, where there are no forms.
+  let formEntryList = null;
   const consts = (o, table) => { for (const k in table) Object.defineProperty(o, k, { value: table[k], enumerable: true }); };
 
   // ---- DOMException -------------------------------------------------------------
@@ -103,6 +111,9 @@
     return xs.length >= count ? xs : new Array(count).fill(0);
   };
   const layoutOf = el => query(nodeId(el), 17, 8);
+  // The same answer's last three numbers (CSSOM View offsetParent, decided by the engine):
+  // the offset parent's node (-1: none) and the border box's corner from its padding edge.
+  const offsetOf = el => { const b = layoutOf(el); return b.length >= 11 ? [b[8], b[9], b[10]] : [-1, b[0], b[1]]; };
   // WebIDL: two required `double` arguments (TypeError when missing or not finite).
   const pointArgs = (args, what) => {
     if (args.length < 2) throw new TypeError(`Failed to execute '${what}' on 'Document': 2 arguments required, but only ${args.length} present.`);
@@ -805,7 +816,7 @@
     hasAttributes() { return this.getAttributeNames().length > 0; }
     setAttribute(name, value) {
       if (arguments.length < 2) throw new TypeError('setAttribute: 2 arguments required');
-      const k = String(name), v = String(value);
+      const k = String(name), v = ttAttr === null ? String(value) : ttAttr(this, null, k, value);
       chk(n.setAttr(nodeId(this), k, v));
       // An event handler content attribute: a name that starts with "on", in any case.
       if (k.length >= 2 && (k.charCodeAt(0) | 32) === 111 && (k.charCodeAt(1) | 32) === 110)
@@ -813,7 +824,8 @@
     }
     setAttributeNS(ns, name, value) {
       if (arguments.length < 3) throw new TypeError('setAttributeNS: 3 arguments required');
-      chk(n.setAttr(nodeId(this), nsArg(ns) + '\u0000' + String(name), String(value)));
+      const q = String(name);
+      chk(n.setAttr(nodeId(this), nsArg(ns) + '\u0000' + q, ttAttr === null ? String(value) : ttAttr(this, nsArg(ns), q, value)));
     }
     removeAttribute(name) {
       const k = lowerIfHtml(this, String(name)), a = attrNodes(this).find(x => x.name === k);
@@ -886,7 +898,7 @@
     if (a.el !== null && a.el !== el) throw new DOMException('The attribute is in use by another element.', 'InUseAttributeError');
     const old = attrNode(el, a.ns, a.lname);
     if (old === attr) return attr;
-    const value = a.value;
+    const value = ttAttr === null ? a.value : ttAttr(el, a.ns ?? '', a.lname, a.value);
     if (old) detachAttr(old);
     const id = nodeId(el);
     chk(n.setAttr(id, a.ns === null && a.pfx === null ? a.lname : (a.ns ?? '') + '\u0000' + (a.pfx === null ? '' : a.pfx + ':') + a.lname, value));
@@ -909,6 +921,7 @@
     }
     set value(v) {
       const a = attrState.get(this); v = String(v);
+      if (a.el && ttAttr !== null) v = ttAttr(a.el, a.ns ?? '', a.lname, v);
       if (a.el) chk(n.setAttr(nodeId(a.el), (a.ns ?? '') + '\u0000' + (a.pfx === null ? '' : a.pfx + ':') + a.lname, v));
       else a.value = v;
     }
@@ -1016,9 +1029,9 @@
     blur() {}
     get offsetWidth() { return Math.round(layoutOf(this)[2]); }
     get offsetHeight() { return Math.round(layoutOf(this)[3]); }
-    get offsetLeft() { return Math.round(layoutOf(this)[0]); }
-    get offsetTop() { return Math.round(layoutOf(this)[1]); }
-    get offsetParent() { return this.isConnected && this.localName !== 'body' && this.localName !== 'html' ? document.body : null; }
+    get offsetLeft() { return Math.round(offsetOf(this)[1]); }
+    get offsetTop() { return Math.round(offsetOf(this)[2]); }
+    get offsetParent() { const p = offsetOf(this)[0]; return this.isConnected && p >= 0 ? wrap(p) : null; }
   }
   const clicking = new WeakSet();
   const styles = new WeakMap();
@@ -1504,12 +1517,213 @@
     SHADING_LANGUAGE_VERSION: 0x8B8C, MAX_VERTEX_ATTRIBS: 0x8869, MAX_TEXTURE_SIZE: 0x0D33,
   };
   const glModes = { 0: 3, 1: 2, 4: 0, 5: 1 };
-  class WebGLObject {}
+  // The object interfaces of WebGL 1.0 §5.3 to §5.13 and WebGL 2.0 §3.1 to §3.5. None has a
+  // constructor a page may call: the context makes them (`glNew`).
+  class WebGLObject { constructor() { throw new TypeError('Illegal constructor'); } }
   class WebGLBuffer extends WebGLObject {}
-  class WebGLShader extends WebGLObject {}
+  class WebGLFramebuffer extends WebGLObject {}
   class WebGLProgram extends WebGLObject {}
-  class WebGLUniformLocation { constructor(program, offset, type) { this.program = program; this.offset = offset; this.type = type; } }
-  const glContextFor = (canvas, version) => {
+  class WebGLRenderbuffer extends WebGLObject {}
+  class WebGLShader extends WebGLObject {}
+  class WebGLTexture extends WebGLObject {}
+  class WebGLQuery extends WebGLObject {}
+  class WebGLSampler extends WebGLObject {}
+  class WebGLSync extends WebGLObject {}
+  class WebGLTransformFeedback extends WebGLObject {}
+  class WebGLVertexArrayObject extends WebGLObject {}
+  class WebGLUniformLocation { constructor() { throw new TypeError('Illegal constructor'); } }
+  const glNew = C => Object.create(C.prototype);
+  const glClasses = [WebGLObject, WebGLBuffer, WebGLFramebuffer, WebGLProgram, WebGLRenderbuffer, WebGLShader, WebGLTexture,
+    WebGLQuery, WebGLSampler, WebGLSync, WebGLTransformFeedback, WebGLVertexArrayObject, WebGLUniformLocation];
+  const glFacts = new WeakMap(); // a WebGLActiveInfo's and a WebGLShaderPrecisionFormat's values
+  const glFact = (o, k) => { const f = glFacts.get(o); if (!f) throw new TypeError('Illegal invocation'); return f[k]; };
+  class WebGLActiveInfo {
+    constructor() { throw new TypeError('Illegal constructor'); }
+    get size() { return glFact(this, 'size'); }
+    get type() { return glFact(this, 'type'); }
+    get name() { return glFact(this, 'name'); }
+  }
+  class WebGLShaderPrecisionFormat {
+    constructor() { throw new TypeError('Illegal constructor'); }
+    get rangeMin() { return glFact(this, 'rangeMin'); }
+    get rangeMax() { return glFact(this, 'rangeMax'); }
+    get precision() { return glFact(this, 'precision'); }
+  }
+  const glEventText = new WeakMap();
+  class WebGLContextEvent extends Event {
+    constructor(type, init = undefined) {
+      super(type, init);
+      glEventText.set(this, init === undefined || init === null || init.statusMessage === undefined ? '' : String(init.statusMessage));
+    }
+    get statusMessage() { const m = glEventText.get(this); if (m === undefined) throw new TypeError('Illegal invocation'); return m; }
+  }
+  // The rendering context interfaces. Their constants, attributes, operations and overload
+  // signatures are Lean's table of the WebGL IDL (PageGl.Idl, web_api op 100), which the
+  // validator reads too: the interface object is made from it on first use (`lazyGroup`,
+  // below). An operation checks its receiver and argument count, converts its arguments by
+  // the signatures (Web IDL), and hands the call to Lean's state machine (PageGl.State, op
+  // 102) when Lean models the command, and to the drawing path below when it draws.
+  const glState = new WeakMap(); // page context -> its state
+  const glObjIds = new WeakMap(); // WebGL object -> { st, id }: the context that made it and Lean's number
+  const glInterfaces = [];
+  const glInterface = version => glInterfaces[version] ??= makeGlInterface(version);
+  const glClassNamed = name => glClasses.find(C => C.name === name);
+  // One overload: its argument types. A type: its letter (tools/webgl-idl-table.py), an
+  // interface name after `O`, optional (`~`), nullable (`?`).
+  const glOverloads = sig => sig.split('|').map(o => o === '' ? [] : o.split(',').map(t => {
+    const opt = t[0] === '~'; if (opt) t = t.slice(1);
+    const nullable = t.endsWith('?'); if (nullable) t = t.slice(0, -1);
+    return { t: t[0], cls: t.length > 1 ? glClassNamed(t.slice(1)) : null, opt, nullable };
+  }));
+  const glScalar = t => 'uilfbs'.includes(t);
+  const glImageSource = v => {
+    for (const name of ['ImageData', 'ImageBitmap', 'HTMLImageElement', 'HTMLCanvasElement', 'HTMLVideoElement', 'OffscreenCanvas', 'VideoFrame']) {
+      const d = Object.getOwnPropertyDescriptor(globalThis, name), C = d && d.value;
+      if (typeof C === 'function' && v instanceof C) return true;
+    }
+    return false;
+  };
+  const glTyped = { F: Float32Array, I: Int32Array, U: Uint32Array };
+  // Does a value go with an argument type? A scalar type takes any value, except an object
+  // or null where another overload has an object type for that argument.
+  const glFits = (ty, v, others, i) => {
+    const none = v === null || v === undefined, object = !none && (typeof v === 'object' || typeof v === 'function');
+    if (glScalar(ty.t)) return !((object || none) && others.some(o => o[i] && !glScalar(o[i].t) && o[i].t !== 'a'));
+    if (ty.t === 'a') return true;
+    if (none) return ty.nullable;
+    if (ty.t === 'O') return v instanceof ty.cls;
+    if (ty.t === 'B') return v instanceof ArrayBuffer || ArrayBuffer.isView(v) || (typeof SharedArrayBuffer === 'function' && v instanceof SharedArrayBuffer);
+    if (ty.t === 'V') return ArrayBuffer.isView(v);
+    if (ty.t === 'T') return glImageSource(v);
+    return object; // a typed array or a sequence
+  };
+  // The argument as a field of Lean's command (PageGl.Api.argOf).
+  const glField = (ty, v, st) => {
+    switch (ty.t) {
+      case 'u': return 'i' + (Number(v) >>> 0);
+      case 'i': return 'i' + (Number(v) | 0);
+      case 'l': { const x = Math.trunc(Number(v)); return 'i' + (x === x && x !== Infinity && x !== -Infinity ? x : 0); }
+      case 'f': return 'f' + Number(v);
+      case 'b': return 'i' + (v ? 1 : 0);
+      case 's': return 's' + String(v);
+      case 'O': { if (v === null || v === undefined) return 'o0'; const reg = glObjIds.get(v); return reg && reg.st === st ? 'o' + reg.id : 'o-'; }
+      case 'B': case 'V': return v === null || v === undefined ? 'u' : 'b' + v.byteLength + ' ' + (v.BYTES_PER_ELEMENT || 1);
+      case 'F': case 'I': case 'U': case 'Q':
+        if (ArrayBuffer.isView(v)) return 'b' + v.byteLength + ' ' + (v.BYTES_PER_ELEMENT || 1);
+        return 'l' + Array.from(v, x => { const y = Math.trunc(Number(x)); return y === y && y !== Infinity && y !== -Infinity ? y : 0; }).join(',');
+      default: return 'u';
+    }
+  };
+  // The overload a call takes (Web IDL §3.6, by argument count and then by which arguments
+  // are objects), and its arguments as fields. No overload: a TypeError.
+  const glConvert = (name, k, overloads, args, st) => {
+    const longest = overloads.reduce((m, o) => Math.max(m, o.length), 0), count = Math.min(args.length, longest);
+    const byCount = overloads.filter(o => o.length >= count && o.filter(t => !t.opt).length <= count);
+    for (const o of byCount) {
+      let ok = true;
+      for (let i = 0; i < count && ok; i++) ok = glFits(o[i], args[i], byCount.filter(x => x !== o), i);
+      if (ok) { const fields = []; for (let i = 0; i < count; i++) fields.push(glField(o[i], args[i], st)); return fields; }
+    }
+    throw new TypeError(`Failed to execute '${k}' on '${name}': the arguments match no overload.`);
+  };
+  const makeGlInterface = version => {
+    const name = version === 2 ? 'WebGL2RenderingContext' : 'WebGLRenderingContext';
+    const text = apiOn() ? apiCall(100, [String(version)]) : null;
+    if (typeof text !== 'string') return undefined;
+    const C = function () { throw new TypeError('Illegal constructor'); };
+    const hidden = (o, k, value) => Object.defineProperty(o, k, { value, writable: false, enumerable: false, configurable: true });
+    hidden(C, 'name', name);
+    const P = C.prototype;
+    Object.defineProperty(C, 'prototype', { writable: false });
+    hidden(P, Symbol.toStringTag, name);
+    const stateOf = o => { const st = glState.get(o); if (!st) throw new TypeError('Illegal invocation'); return st; };
+    const modelled = new Set();
+    for (const line of text.split('\n')) {
+      const [kind, k, v, sig] = line.split(' ');
+      if (kind === 'c') {
+        const d = { value: Number(v), writable: false, enumerable: true, configurable: false };
+        Object.defineProperty(C, k, d); Object.defineProperty(P, k, d);
+      } else if (kind === 'a') {
+        const get = function () { return stateOf(this).attr(k); };
+        hidden(get, 'name', 'get ' + k);
+        let set;
+        if (v === '0') { set = function (x) { stateOf(this).setAttr(k, x); }; hidden(set, 'name', 'set ' + k); }
+        Object.defineProperty(P, k, { get, set, enumerable: true, configurable: true });
+      } else if (kind === 'o') {
+        const len = Number(v), overloads = glOverloads(sig ?? '');
+        const f = function (...args) {
+          const st = stateOf(this);
+          if (args.length < len) throw new TypeError(`Failed to execute '${k}' on '${name}': ${len} argument${len === 1 ? '' : 's'} required, but only ${args.length} present.`);
+          return st.call(k, args, glConvert(name, k, overloads, args, st), modelled.has(k));
+        };
+        hidden(f, 'name', k); hidden(f, 'length', len);
+        Object.defineProperty(P, k, { value: f, writable: true, enumerable: true, configurable: true });
+      } else if (kind === 'm') modelled.add(k);
+    }
+    return C;
+  };
+  // The page's context object: Lean's state machine in front of the drawing path (`glImplFor`).
+  const glContextFor = (canvas, version, attributes) => {
+    const C = glInterface(version);
+    if (!C) return null;
+    const a = attributes !== null && typeof attributes === 'object' ? attributes : {};
+    const flag = (k, dflt) => (a[k] === undefined ? dflt : !!a[k]) ? '1' : '0';
+    const id = apiCall(101, [String(version), flag('alpha', true), flag('depth', true), flag('stencil', false)]);
+    if (typeof id !== 'string') return null;
+    const impl = glImplFor(canvas, version), page = glNew(C), objects = new Map();
+    let drawingSpace = 'srgb', unpackSpace = 'srgb';
+    // An error the drawing path found is recorded in Lean's flag (the first error wins there).
+    const drawError = keep => { const e = impl.getError(); if (e && keep) apiCall(102, [id, '$raise', 'i' + e]); };
+    const st = { impl, version,
+      call(k, args, fields, modelled) {
+        if (k === 'getError') { drawError(true); return Number(String(apiCall(102, [id, 'getError'])).slice(1)) || 0; }
+        const draw = impl[k];
+        if (!modelled) {
+          if (typeof draw !== 'function') return undefined;
+          const r = draw.apply(impl, args); drawError(true); return r;
+        }
+        const r = apiCall(102, [id, k].concat(fields));
+        if (typeof r !== 'string' || r === '!') return k.startsWith('is') ? false : k.startsWith('get') || k.startsWith('create') ? null : undefined;
+        switch (r[0]) {
+          case 'z': return null;
+          case 'i': return Number(r.slice(1));
+          case 't': return true;
+          case 'F': return false;
+          case 'o': {
+            const n = Number(r.slice(1));
+            if (!k.startsWith('create')) return objects.get(n) ?? null;
+            // A new object: the drawing path's when it makes that kind, else a plain one.
+            const made = typeof draw === 'function' ? draw.apply(impl, args) : glNew(glClassNamed(k === 'createVertexArray' ? 'WebGLVertexArrayObject' : 'WebGL' + k.slice(6)));
+            drawError(false);
+            glObjIds.set(made, { st, id: n }); objects.set(n, made);
+            return made;
+          }
+          default: {
+            // Accepted by Lean ('u'), or the drawing path's to answer ('d'): the drawing path runs;
+            // what it refuses of an accepted command is its own limit, not a GL error.
+            if (typeof draw !== 'function') return k.startsWith('get') ? null : undefined;
+            const out = draw.apply(impl, args); drawError(false);
+            if (k.startsWith('delete') && args[0]) { const reg = glObjIds.get(args[0]); if (reg) objects.delete(reg.id); }
+            return out;
+          }
+        }
+      },
+      attr(k) {
+        if (k === 'drawingBufferFormat') return 0x8058; // RGBA8
+        if (k === 'drawingBufferColorSpace') return drawingSpace;
+        if (k === 'unpackColorSpace') return unpackSpace;
+        return impl[k];
+      },
+      // PredefinedColorSpace: a value outside the enumeration is ignored (Web IDL §3.7.5).
+      setAttr(k, x) {
+        x = String(x);
+        if (x !== 'srgb' && x !== 'display-p3') return;
+        if (k === 'drawingBufferColorSpace') drawingSpace = x; else if (k === 'unpackColorSpace') unpackSpace = x;
+      } };
+    glState.set(page, st);
+    return page;
+  };
+  const glImplFor = (canvas, version) => {
     const gpuSend = (op, header, payload) => {
       const r = n.gpu(op, header.map(x => String(Math.max(0, Math.floor(Number(x) || 0)))).join(' '), payload ?? '');
       return typeof r === 'number' ? 'gpu: import error ' + r : r;
@@ -1579,7 +1793,7 @@
       lineWidth() {}, pixelStorei() {}, colorMask() {}, depthMask() {}, flush() {}, finish() {},
       clearColor(r, g, b, a) { clear = [r, g, b, a]; },
       clear(mask) { /* every frame of a page canvas starts cleared to the clear colour (loadOp: clear) */ },
-      createBuffer() { const b = new WebGLBuffer(); b.gpu = 0; b.size = 0; return b; },
+      createBuffer() { const b = glNew(WebGLBuffer); b.gpu = 0; b.size = 0; return b; },
       deleteBuffer(b) { if (b?.gpu) send(8, [b.gpu]); if (b) b.gpu = 0; },
       bindBuffer(target, b) { if (target === GL.ARRAY_BUFFER) arrayBuffer = b; else if (b) fail('only ARRAY_BUFFER in this slice', GL.INVALID_ENUM); },
       bufferData(target, data, usage) {
@@ -1594,12 +1808,12 @@
         if (target !== GL.ARRAY_BUFFER || !arrayBuffer?.gpu) { fail('bufferSubData needs a bound ARRAY_BUFFER with data'); return; }
         send(3, [arrayBuffer.gpu, offset], gpuBytes(data));
       },
-      createShader(type) { const s = new WebGLShader(); s.type = type; s.source = ''; return s; },
+      createShader(type) { const s = glNew(WebGLShader); s.type = type; s.source = ''; return s; },
       shaderSource(s, src) { s.source = String(src); },
       compileShader() {},
       getShaderParameter(s, p) { return p === GL.COMPILE_STATUS ? true : null; },
       getShaderInfoLog: () => '', deleteShader() {},
-      createProgram() { const p = new WebGLProgram(); p.shaders = []; p.pipelines = new Map(); return p; },
+      createProgram() { const p = glNew(WebGLProgram); p.shaders = []; p.pipelines = new Map(); return p; },
       attachShader(p, s) { p.shaders.push(s); }, detachShader() {}, deleteProgram() {},
       bindAttribLocation() { fail('bindAttribLocation: use layout(location = n); Lean assigns locations'); },
       linkProgram(p) {
@@ -1627,7 +1841,7 @@
       getAttribLocation(p, name) { const l = p.info?.attributes[name]; return l === undefined ? -1 : l; },
       getUniformLocation(p, name) {
         const u = String(name).startsWith('gl_') ? undefined : p.info?.uniforms[name];
-        return u ? new WebGLUniformLocation(p, u[0], u[1]) : null;
+        return u ? Object.assign(glNew(WebGLUniformLocation), { program: p, offset: u[0], type: u[1] }) : null;
       },
       // attribVersion moves only when an attribute changes, so a draw with the attributes of
       // the draw before reuses its pipeline and buffers (pages set them again each frame).
@@ -2153,8 +2367,8 @@
       let context = null;
       if (kind === '2d') context = c2d().context(this);
       else if (kind === 'webgpu') context = new GPUCanvasContext(this);
-      else if (kind === 'webgl2') context = glContextFor(this, 2);
-      else if (kind === 'webgl' || kind === 'experimental-webgl') context = glContextFor(this, 1);
+      else if (kind === 'webgl2') context = glContextFor(this, 2, arguments[1]);
+      else if (kind === 'webgl' || kind === 'experimental-webgl') context = glContextFor(this, 1, arguments[1]);
       if (context) gpuContexts.set(id, { kind, context });
       return context;
     }, writable: true, configurable: true },
@@ -2231,7 +2445,9 @@
     get charset() { return this.characterSet; }
     get inputEncoding() { return this.characterSet; }
     get contentType() { return str(nodeId(this), 9); }
-    get readyState() { return readyState; }
+    // xmlweb: a document that no navigation made (DOMParser, createDocument, XSLTProcessor)
+    // has the readiness "complete" (HTML §3.1.3 "current document readiness")
+    get readyState() { return this === document || info(nodeId(this), 12) >= 0 ? readyState : 'complete'; }
     get defaultView() { return this === document ? window : (info(nodeId(this), 12) >= 0 ? frameWindow(nodeId(this)) : null); }
     get location() { return this === document ? location : null; }
     get doctype() { return wrap(kids(nodeId(this)).find(k => info(k, 0) === 10) ?? -1); }
@@ -2748,7 +2964,7 @@
         // their identity, so `frame.contentWindow.TypeError === TypeError` as before.
         if (typeof v !== 'function' || typeof p !== 'string') return v;
         const d = Object.getOwnPropertyDescriptor(t, p);
-        return d && d.enumerable ? asFrame(v) : v;
+        return d && d.enumerable && 'value' in d ? asFrame(v) : v;
       },
       has(t, p) { return isOwn(p) || isVar(p) || Reflect.has(t, p); },
       set(t, p, v) {
@@ -2807,7 +3023,7 @@
   const timer = (repeat, f, delay, args) => {
     let run;
     if (typeof f === 'function') run = () => f.apply(window, args);
-    else { const code = String(f); run = () => (0, eval)(code); }
+    else { const code = ttValue === null ? String(f) : ttValue('TrustedScript', null, f, repeat ? 'Window setInterval' : 'Window setTimeout'); run = () => (0, eval)(code); }
     const t = Number(delay) | 0;
     return chk(n.timer(register(run), t < 0 ? 0 : t, repeat));
   };
@@ -3169,6 +3385,7 @@
       name = String(name);
       const id = chk(n.create(3 + 16 * nodeId(this), name));
       if (name.length === 6 && name.toLowerCase() === 'script') noteFreshScript(id);
+      else if (ttMeta !== null && name.length === 4 && name.toLowerCase() === 'meta') ttMeta();
       return made(id, options);
     });
     define(Document.prototype, 'createElementNS', function createElementNS(ns, qname, options = undefined) {
@@ -3193,9 +3410,7 @@
     'createImageBitmap'])
     if (!(name in globalThis)) Object.defineProperty(globalThis, name, { get: () => c2d()[name], configurable: true,
       set(v) { Object.defineProperty(globalThis, name, { value: v, writable: true, configurable: true }); } });
-  def('WebGLRenderingContext', Object.freeze({ ...GL })); def('WebGL2RenderingContext', Object.freeze({ ...GL }));
-  def('WebGLBuffer', WebGLBuffer); def('WebGLShader', WebGLShader); def('WebGLProgram', WebGLProgram);
-  def('WebGLUniformLocation', WebGLUniformLocation);
+  for (const C of [...glClasses, WebGLActiveInfo, WebGLShaderPrecisionFormat, WebGLContextEvent]) def(C.name, C);
   // pagewasm: a data property once read (WebIDL); before that an accessor that compiles the glue.
   if (wasmServed) Object.defineProperty(globalThis, 'WebAssembly', { configurable: true, enumerable: false,
     // QuickJS-NG hands the glue's function (bytecode); BubblePopJS hands its source.
@@ -3251,6 +3466,409 @@
       define(globalThis, name, v); return v;
     },
     set(v) { define(globalThis, name, v); } });
+  // A group of interfaces made together on first use: reading one name defines them all as
+  // the data properties Web IDL asks for (writable, configurable, not enumerable).
+  const lazyGroup = (names, make) => {
+    for (const name of names) Object.defineProperty(globalThis, name, { configurable: true, enumerable: false,
+      get() {
+        const made = apiOn() ? make() : undefined;
+        if (!made) { for (const k of names) delete globalThis[k]; return undefined; }
+        for (const k of names) define(globalThis, k, made[k]);
+        return made[name];
+      },
+      set(v) { define(globalThis, name, v); } });
+  };
+  // The WebGL rendering context interfaces (made from Lean's table when a page first names one).
+  lazyGroup(['WebGLRenderingContext', 'WebGL2RenderingContext'], () => {
+    const a = glInterface(1), b = glInterface(2);
+    return a && b ? { WebGLRenderingContext: a, WebGL2RenderingContext: b } : undefined;
+  });
+  // What the section needs of the page's other objects (filled in below it).
+  const codecsHost = {};
+  // ==== WebCodecs (docs/designissues/2026-11-14-webgl-webcodecs.md) ==== begin webcodecs section ====
+  // Page-facing objects only. What a frame is (its layout, visible rectangle, display size and
+  // rotation), which rows a copy moves, and whether a codec configuration is valid or supported
+  // are Lean's answers (L4Factoidal.WebCodecs, web_api ops 120 to 139): this converts arguments
+  // (Web IDL), keeps the bytes and moves the rows Lean lists. The section is text until a page
+  // first names one of its interfaces, so other pages carry no more JavaScript.
+  let codecsMade = null;
+  const codecs = () => codecsMade ??= new Function('apiCall', 'DOMException', 'EventTarget', 'DOMRectReadOnly', 'queueMicrotask',
+    'reportError', 'structuredClone', 'host', codecsSource)(apiCall, DOMException, EventTarget, DOMRectReadOnly,
+    f => { Promise.resolve().then(f); }, e => report(e), (v, o) => globalThis.structuredClone(v, o), codecsHost);
+  const codecsSource = `'use strict';
+    // Each object's state is here, never on the object: a method called on another object
+    // finds none and throws (Web IDL brand check).
+    const K = new WeakMap();
+    const st = o => { const s = K.get(o); if (!s) throw new TypeError('Illegal invocation'); return s; };
+    const need = (got, k, what) => { if (got < k) throw new TypeError("Failed to execute '" + what + "': " + k + ' argument' + (k === 1 ? '' : 's') + ' required, but only ' + got + ' present.'); };
+    const bad = what => new TypeError('WebCodecs: ' + what);
+    const dom = (name, what) => new DOMException(what, name);
+    // One operation of Lean's (WebCodecs.Api): text, or a TypeError when Lean refuses.
+    const ask = (op, args, what) => { const r = apiCall(op, args, 0, false); if (typeof r !== 'string') throw bad(what); return r; };
+    const nums = line => line === '' ? [] : line.split(' ').map(Number);
+    // Web IDL conversions.
+    const dict = (x, what) => { if (x === undefined || x === null) return {}; if (typeof x !== 'object' && typeof x !== 'function') throw bad(what + ' is not an object'); return x; };
+    const enforce = (v, max, what) => {
+      let x = Number(v);
+      if (x !== x || x === Infinity || x === -Infinity) throw bad(what + ' is not a finite number');
+      x = Math.trunc(x);
+      if (x < 0 || x > max) throw bad(what + ' is out of range');
+      return x + 0;
+    };
+    const enforceSigned = (v, what) => {
+      let x = Number(v);
+      if (x !== x || x === Infinity || x === -Infinity) throw bad(what + ' is not a finite number');
+      x = Math.trunc(x);
+      if (x < -9007199254740991 || x > 9007199254740991) throw bad(what + ' is out of range');
+      return x + 0;
+    };
+    const U32 = 4294967295, U64 = 9007199254740991;
+    const oneOf = (v, values, what) => { const s = String(v); if (!values.includes(s)) throw bad("'" + s + "' is not a value of " + what); return s; };
+    const isShared = x => typeof SharedArrayBuffer === 'function' && x instanceof SharedArrayBuffer;
+    // The bytes of an AllowSharedBufferSource, as a view (no copy).
+    const bytesOf = (x, what) => {
+      if (x instanceof ArrayBuffer || isShared(x)) { if (x.detached) throw bad(what + ' is detached'); return new Uint8Array(x); }
+      if (ArrayBuffer.isView(x)) { if (x.buffer.detached) throw bad(what + ' is detached'); return new Uint8Array(x.buffer, x.byteOffset, x.byteLength); }
+      throw bad(what + ' is not a buffer source');
+    };
+    // transfer: each buffer is detached once the bytes are taken (a buffer listed twice is a DataCloneError).
+    const transferList = (init, what) => {
+      if (init.transfer === undefined) return [];
+      const list = Array.from(init.transfer);
+      for (const b of list) if (!(b instanceof ArrayBuffer)) throw bad(what + ': transfer holds a value that is not an ArrayBuffer');
+      if (new Set(list).size !== list.length) throw dom('DataCloneError', what + ': a buffer is in transfer twice');
+      for (const b of list) if (b.detached) throw dom('DataCloneError', what + ': a buffer in transfer is detached');
+      return list;
+    };
+    const detach = list => { for (const b of list) { try { if (typeof b.transfer === 'function') b.transfer(); else structuredClone(b, { transfer: [b] }); } catch (e) {} } };
+    const getters = (C, names, read) => { for (const k of names) Object.defineProperty(C.prototype, k, { get: Object.defineProperty(function () { return read(st(this), k); }, 'name', { value: 'get ' + k }), enumerable: true, configurable: true }); };
+    const members = C => {
+      Object.defineProperty(C.prototype, Symbol.toStringTag, { value: C.name, configurable: true });
+      for (const k of Object.getOwnPropertyNames(C.prototype)) {
+        if (k === 'constructor') continue;
+        const d = Object.getOwnPropertyDescriptor(C.prototype, k);
+        if (d.configurable && !d.enumerable) { d.enumerable = true; Object.defineProperty(C.prototype, k, d); }
+      }
+      for (const k of Object.getOwnPropertyNames(C)) {
+        if (k === 'prototype' || k === 'length' || k === 'name') continue;
+        const d = Object.getOwnPropertyDescriptor(C, k);
+        if (d.configurable && !d.enumerable) { d.enumerable = true; Object.defineProperty(C, k, d); }
+      }
+      return C;
+    };
+
+    // ---- VideoColorSpace (WebCodecs 9.9) ----
+    const PRIMARIES = ['bt709', 'bt470bg', 'smpte170m', 'bt2020', 'smpte432'];
+    const TRANSFER = ['bt709', 'smpte170m', 'iec61966-2-1', 'linear', 'pq', 'hlg'];
+    const MATRIX = ['rgb', 'bt709', 'bt470bg', 'smpte170m', 'bt2020-ncl'];
+    const colorInit = init => {
+      const d = dict(init, 'VideoColorSpaceInit'), opt = (v, values, what) => v === undefined || v === null ? null : oneOf(v, values, what);
+      return { primaries: opt(d.primaries, PRIMARIES, 'VideoColorPrimaries'), transfer: opt(d.transfer, TRANSFER, 'VideoTransferCharacteristics'),
+        matrix: opt(d.matrix, MATRIX, 'VideoMatrixCoefficients'), fullRange: d.fullRange === undefined || d.fullRange === null ? null : !!d.fullRange };
+    };
+    class VideoColorSpace {
+      constructor(init = undefined) { K.set(this, colorInit(init)); }
+      toJSON() { const s = st(this); return { fullRange: s.fullRange, matrix: s.matrix, primaries: s.primaries, transfer: s.transfer }; }
+    }
+    getters(VideoColorSpace, ['primaries', 'transfer', 'matrix', 'fullRange'], (s, k) => s[k]);
+    const colorSpaceOf = v => { const c = Object.create(VideoColorSpace.prototype); K.set(c, v); return c; };
+
+    // ---- VideoFrame (WebCodecs 9.4) ----
+    // The frame's values and layout are Lean's (WebCodecs.Frame, WebCodecs.Layout): this reads
+    // the init (Web IDL), keeps the resource's bytes and moves the rows Lean lists.
+    const FORMATS = ['I420', 'I420P10', 'I420P12', 'I420A', 'I420AP10', 'I420AP12', 'I422', 'I422P10', 'I422P12', 'I422A', 'I422AP10',
+      'I422AP12', 'I444', 'I444P10', 'I444P12', 'I444A', 'I444AP10', 'I444AP12', 'NV12', 'RGBA', 'RGBX', 'BGRA', 'BGRX'];
+    const RGB = ['RGBA', 'RGBX', 'BGRA', 'BGRX'];
+    const rectArg = (r, what) => {
+      if (r === undefined) return '';
+      const d = dict(r, what), part = k => {
+        const x = d[k] === undefined ? 0 : Number(d[k]);
+        if (x !== x || x === Infinity || x === -Infinity || x < 0) throw bad(what + '.' + k + ' is negative or not finite');
+        return Math.trunc(x);
+      };
+      return [part('x'), part('y'), part('width'), part('height')].join(' ');
+    };
+    const layoutArg = (l, what) => {
+      if (l === undefined) return '';
+      const out = [];
+      for (const p of Array.from(l)) {
+        const d = dict(p, what);
+        if (d.offset === undefined || d.stride === undefined) throw bad(what + ': a PlaneLayout needs offset and stride');
+        out.push(enforce(d.offset, U32, 'offset'), enforce(d.stride, U32, 'stride'));
+      }
+      // An empty list has no planes: no format has none, so Lean refuses it by the count.
+      return out.length ? out.join(' ') : '0';
+    };
+    const displayArg = d => {
+      const w = d.displayWidth === undefined ? undefined : enforce(d.displayWidth, U32, 'displayWidth');
+      const h = d.displayHeight === undefined ? undefined : enforce(d.displayHeight, U32, 'displayHeight');
+      return w === undefined && h === undefined ? '' : w === undefined || h === undefined ? '-' : w + ' ' + h;
+    };
+    // The page's double, exactly: its eight bytes (Lean reads sign, mantissa and exponent).
+    const rotationArg = v => {
+      if (v === undefined) return '';
+      const x = Number(v);
+      if (x !== x || x === Infinity || x === -Infinity) throw bad('rotation is not a finite number');
+      return new Uint8Array(new Float64Array([x]).buffer);
+    };
+    const initArgs = d => [rectArg(d.visibleRect, 'visibleRect'), displayArg(d), rotationArg(d.rotation), d.flip ? '1' : ''];
+    const metaOf = line => { const m = nums(line); return { cw: m[0], ch: m[1], vx: m[2], vy: m[3], vw: m[4], vh: m[5], dw: m[6], dh: m[7], rotation: m[8], flip: m[9] === 1 }; };
+    const metaLine = s => [s.cw, s.ch, s.vx, s.vy, s.vw, s.vh, s.dw, s.dh, s.rotation, s.flip ? 1 : 0].join(' ');
+    // The rows Lean lists, copied (each line: source offset and stride, destination offset and stride, bytes a row, rows).
+    const move = (src, dst, lines) => {
+      for (const line of lines) {
+        const m = nums(line);
+        for (let r = 0; r < m[5]; r++) { const a = m[0] + r * m[1]; dst.set(src.subarray(a, a + m[4]), m[2] + r * m[3]); }
+      }
+    };
+    const rectOf = (x, y, w, h) => new DOMRectReadOnly(x, y, w, h);
+    const live = (s, what) => { if (s.closed) throw dom('InvalidStateError', what + ': the VideoFrame is closed'); return s; };
+    const frameOf = s => { const f = Object.create(VideoFrame.prototype); K.set(f, s); return f; };
+    const optionsOf = (s, options) => {
+      const d = dict(options, 'VideoFrameCopyToOptions');
+      const rect = rectArg(d.rect, 'rect'), layout = layoutArg(d.layout, 'layout');
+      const format = d.format === undefined ? undefined : oneOf(d.format, FORMATS, 'VideoPixelFormat');
+      const space = d.colorSpace === undefined ? undefined : oneOf(d.colorSpace, ['srgb', 'display-p3'], 'PredefinedColorSpace');
+      if (format !== undefined && format !== s.format && !RGB.includes(format)) throw dom('NotSupportedError', 'copyTo converts to RGBA, RGBX, BGRA and BGRX only');
+      return { rect: rect === '' ? [s.vx, s.vy, s.vw, s.vh].join(' ') : rect, layout, format: format === undefined ? s.format : format, space };
+    };
+    class VideoFrame {
+      constructor(image, init = undefined) {
+        need(arguments.length, 1, 'VideoFrame');
+        if (image instanceof VideoFrame) {
+          const b = K.get(image), d = dict(init, 'VideoFrameInit');
+          if (!b || b.closed) throw dom('InvalidStateError', 'VideoFrame: the source frame is closed');
+          const alpha = d.alpha === undefined ? 'keep' : oneOf(d.alpha, ['keep', 'discard'], 'AlphaOption');
+          const m = metaOf(ask(121, [b.format, metaLine(b)].concat(initArgs(d)), 'the VideoFrameInit is not valid for the source frame'));
+          let format = b.format, resource = b.resource;
+          if (alpha === 'discard') {
+            // The format without alpha; its bytes are the first bytes of the source's (Lean: dropAlpha_planes).
+            const a = ask(123, [b.format, String(b.cw), String(b.ch)], 'the frame has no format').split(' ');
+            format = a[0]; resource = b.resource.subarray(0, Number(a[1]));
+          }
+          K.set(this, Object.assign({}, b, m, { format, resource,
+            duration: d.duration === undefined ? b.duration : enforce(d.duration, U64, 'duration'),
+            timestamp: d.timestamp === undefined ? b.timestamp : enforceSigned(d.timestamp, 'timestamp') }));
+          return;
+        }
+        if (image instanceof ArrayBuffer || isShared(image) || ArrayBuffer.isView(image)) {
+          need(arguments.length, 2, 'VideoFrame');
+          const d = dict(init, 'VideoFrameBufferInit');
+          if (d.format === undefined || d.codedWidth === undefined || d.codedHeight === undefined || d.timestamp === undefined)
+            throw bad('VideoFrameBufferInit needs format, codedWidth, codedHeight and timestamp');
+          const format = oneOf(d.format, FORMATS, 'VideoPixelFormat');
+          const cw = enforce(d.codedWidth, U32, 'codedWidth'), ch = enforce(d.codedHeight, U32, 'codedHeight');
+          const timestamp = enforceSigned(d.timestamp, 'timestamp');
+          const duration = d.duration === undefined ? null : enforce(d.duration, U64, 'duration');
+          const layout = layoutArg(d.layout, 'layout');
+          const args = initArgs(d);
+          const color = d.colorSpace === undefined ? undefined : colorInit(d.colorSpace);
+          const transfer = transferList(d, 'VideoFrame');
+          const data = bytesOf(image, 'data');
+          const lines = ask(120, [format, String(cw), String(ch), String(data.byteLength), layout].concat(args), 'the VideoFrameBufferInit is not valid for the data').split('\\n');
+          const resource = new Uint8Array(Number(lines[0]));
+          move(data, resource, lines.slice(3));
+          detach(transfer);
+          const c = lines[2].split(' ');
+          // RGBX and BGRX: the fourth byte is padding, kept opaque (Lean says which formats).
+          if (c[4] === '1') for (let i = 3; i < resource.length; i += 4) resource[i] = 255;
+          K.set(this, Object.assign(metaOf(lines[1]), { format, timestamp, duration, resource, closed: false,
+            color: color === undefined ? { primaries: c[0], transfer: c[1], matrix: c[2], fullRange: c[3] === '1' } : color }));
+          return;
+        }
+        const s = imageFrame(image, dict(init, 'VideoFrameInit'));
+        if (!s) throw bad('the image is not a CanvasImageSource or a buffer');
+        K.set(this, s);
+      }
+      get format() { const s = st(this); return s.closed ? null : s.format; }
+      get codedWidth() { const s = st(this); return s.closed ? 0 : s.cw; }
+      get codedHeight() { const s = st(this); return s.closed ? 0 : s.ch; }
+      get codedRect() { const s = st(this); return s.closed ? null : rectOf(0, 0, s.cw, s.ch); }
+      get visibleRect() { const s = st(this); return s.closed ? null : rectOf(s.vx, s.vy, s.vw, s.vh); }
+      get rotation() { const s = st(this); return s.closed ? 0 : s.rotation; }
+      get flip() { const s = st(this); return s.closed ? false : s.flip; }
+      get displayWidth() { const s = st(this); return s.closed ? 0 : s.dw; }
+      get displayHeight() { const s = st(this); return s.closed ? 0 : s.dh; }
+      get duration() { return st(this).duration; }
+      get timestamp() { return st(this).timestamp; }
+      get colorSpace() { const s = st(this); return colorSpaceOf(s.closed ? { primaries: null, transfer: null, matrix: null, fullRange: null } : s.color); }
+      metadata() { live(st(this), 'metadata'); return {}; }
+      allocationSize(options = undefined) {
+        const s = live(st(this), 'allocationSize'), o = optionsOf(s, options);
+        if (o.format !== s.format) return Number(ask(122, [o.format, String(nums(o.rect)[2]), String(nums(o.rect)[3]), '', o.layout, ''], 'the options are not valid for the frame').split('\\n')[0]);
+        return Number(ask(122, [s.format, String(s.cw), String(s.ch), o.rect, o.layout, ''], 'the options are not valid for the frame').split('\\n')[0]);
+      }
+      copyTo(destination, options = undefined) {
+        try {
+          need(arguments.length, 1, 'copyTo');
+          const s = live(st(this), 'copyTo'), o = optionsOf(s, options);
+          const dst = bytesOf(destination, 'destination');
+          let src = s.resource, lines;
+          if (o.format !== s.format) {
+            // To RGB: Lean converts the rectangle to packed pixels; the rows then go as any RGBA frame's.
+            const r = nums(o.rect);
+            src = convertFrame(s, o);
+            lines = ask(122, [o.format, String(r[2]), String(r[3]), '', o.layout, String(dst.byteLength)], 'the destination or the options are not valid for the frame').split('\\n');
+          } else lines = ask(122, [s.format, String(s.cw), String(s.ch), o.rect, o.layout, String(dst.byteLength)], 'the destination or the options are not valid for the frame').split('\\n');
+          move(src, dst, lines.slice(1));
+          return Promise.resolve(lines.slice(1).map(line => { const m = nums(line); return { offset: m[2], stride: m[3] }; }));
+        } catch (e) { return Promise.reject(e); }
+      }
+      clone() { const s = live(st(this), 'clone'); return frameOf(Object.assign({}, s)); }
+      close() { const s = st(this); s.closed = true; s.resource = null; }
+    }
+    // A frame from an image needs the image's pixels (the canvas section's): not connected yet.
+    const imageFrame = (image, d) => { throw dom('NotSupportedError', 'VideoFrame from an image is not supported yet'); };
+    // The rectangle as packed pixels of an RGB format: Lean's conversion (WebCodecs.Convert.toRgb).
+    // It keeps the frame's primaries and transfer: a destination that is not sRGB is refused.
+    const convertFrame = (s, o) => {
+      if (o.space !== undefined && o.space !== 'srgb') throw dom('NotSupportedError', 'copyTo converts to sRGB only');
+      const r = apiCall(124, [s.format, String(s.cw), String(s.ch), o.rect, o.format, s.color.matrix === null ? '' : s.color.matrix, s.color.fullRange ? '1' : '', s.resource], 0, true);
+      if (typeof r === 'number') throw dom('NotSupportedError', 'copyTo does not convert this frame');
+      return new Uint8Array(r);
+    };
+
+    // ---- EncodedVideoChunk, EncodedAudioChunk (WebCodecs 8) ----
+    const chunkInit = (init, what) => {
+      const d = dict(init, what);
+      if (d.type === undefined || d.timestamp === undefined || d.data === undefined) throw bad(what + ' needs type, timestamp and data');
+      const type = oneOf(d.type, ['key', 'delta'], 'the chunk type');
+      const timestamp = enforceSigned(d.timestamp, 'timestamp');
+      const duration = d.duration === undefined ? null : enforce(d.duration, U64, 'duration');
+      const transfer = transferList(d, what);
+      const data = bytesOf(d.data, 'data').slice();
+      detach(transfer);
+      return { type, timestamp, duration, data };
+    };
+    const chunkCopy = (s, destination) => {
+      const dst = bytesOf(destination, 'destination');
+      if (dst.byteLength < s.data.byteLength) throw bad('the destination is smaller than the chunk');
+      dst.set(s.data);
+    };
+    class EncodedVideoChunk {
+      constructor(init) { need(arguments.length, 1, 'EncodedVideoChunk'); K.set(this, chunkInit(init, 'EncodedVideoChunkInit')); }
+      copyTo(destination) { need(arguments.length, 1, 'copyTo'); chunkCopy(st(this), destination); }
+    }
+    class EncodedAudioChunk {
+      constructor(init) { need(arguments.length, 1, 'EncodedAudioChunk'); K.set(this, chunkInit(init, 'EncodedAudioChunkInit')); }
+      copyTo(destination) { need(arguments.length, 1, 'copyTo'); chunkCopy(st(this), destination); }
+    }
+    for (const C of [EncodedVideoChunk, EncodedAudioChunk]) getters(C, ['type', 'timestamp', 'duration', 'byteLength'], (s, k) => k === 'byteLength' ? s.data.byteLength : s[k]);
+
+    // ---- The four codecs (WebCodecs 3 to 6) ----
+    // Whether a configuration is valid, and whether it is supported, are Lean's answers
+    // (WebCodecs.Config.check). This engine has no encoder or decoder: a valid configuration
+    // closes the codec with a NotSupportedError, as the standard says for an unsupported one.
+    const CONFIG = {
+      AudioDecoder: { required: ['sampleRate', 'numberOfChannels'], nums: [] },
+      VideoDecoder: { required: [], nums: ['codedWidth', 'codedHeight', 'displayAspectWidth', 'displayAspectHeight'] },
+      AudioEncoder: { required: ['sampleRate', 'numberOfChannels'], nums: ['bitrate'], sub: { opus: ['complexity', 'packetlossperc', 'frameDuration'] } },
+      VideoEncoder: { required: ['width', 'height'], nums: ['displayWidth', 'displayHeight', 'bitrate'] },
+    };
+    // The verdict on a configuration: 'invalid', 'unsupported' or 'supported'. Reads the members (Web IDL).
+    const checkConfig = (kind, config) => {
+      const d = dict(config, kind + 'Config'), shape = CONFIG[kind], lines = [];
+      if (d.codec === undefined) throw bad(kind + ': the configuration has no codec');
+      const codec = String(d.codec);
+      for (const k of shape.required) { if (d[k] === undefined) throw bad(kind + ': the configuration has no ' + k); lines.push(k + '=' + enforce(d[k], U64, k)); }
+      for (const k of shape.nums) if (d[k] !== undefined) lines.push(k + '=' + enforce(d[k], U64, k));
+      for (const g of Object.keys(shape.sub || {})) {
+        if (d[g] === undefined) continue;
+        const sub = dict(d[g], g);
+        for (const k of shape.sub[g]) if (sub[k] !== undefined) lines.push(g + '.' + k + '=' + enforce(sub[k], U64, k));
+      }
+      let detached = '';
+      if (d.description !== undefined && d.description !== null) {
+        const x = d.description, b = x instanceof ArrayBuffer || isShared(x) ? x : ArrayBuffer.isView(x) ? x.buffer : null;
+        if (b === null) throw bad(kind + ': the description is not a buffer source');
+        if (b.detached) detached = '1';
+      }
+      const verdict = ask(125, [kind, codec, lines.join('\\n'), detached], 'the configuration is not valid');
+      if (verdict === 'invalid') throw bad(kind + ': the configuration is not valid');
+      return verdict;
+    };
+    const cloneConfig = config => { const out = {}; for (const k of Object.keys(config)) out[k] = config[k]; return out; };
+    const codecInit = (init, what, outputType) => {
+      const d = dict(init, what + 'Init');
+      if (typeof d.output !== 'function' || typeof d.error !== 'function') throw bad(what + 'Init needs the output and error callbacks');
+      return { state: 'unconfigured', queue: 0, output: d.output, error: d.error, ondequeue: null, flushes: [] };
+    };
+    const closeCodec = (s, error) => {
+      // "Close codec" (WebCodecs 3.5 and its siblings): pending flushes are rejected; the error callback runs unless it is an abort.
+      s.state = 'closed';
+      for (const f of s.flushes.splice(0)) f.reject(error);
+      if (error.name !== 'AbortError') { try { s.error.call(undefined, error); } catch (e) { reportError(e); } }
+    };
+    const makeCodec = (kind, inputType, work, queueName) => {
+      const C = class extends EventTarget {
+        constructor(init) { super(); need(arguments.length, 1, kind); K.set(this, codecInit(init, kind)); }
+        get state() { return st(this).state; }
+        get ondequeue() { return st(this).ondequeue; }
+        set ondequeue(f) {
+          const s = st(this);
+          if (s.ondequeue) this.removeEventListener('dequeue', s.ondequeue);
+          s.ondequeue = typeof f === 'function' ? f : null;
+          if (s.ondequeue) this.addEventListener('dequeue', s.ondequeue);
+        }
+        configure(config) {
+          need(arguments.length, 1, 'configure');
+          const s = st(this), verdict = checkConfig(kind, config);
+          if (s.state === 'closed') throw dom('InvalidStateError', kind + ': the codec is closed');
+          s.state = 'configured';
+          // Not supported: the codec closes with a NotSupportedError, as a queued control message.
+          if (verdict !== 'supported') queueMicrotask(() => { if (s.state !== 'closed') closeCodec(s, dom('NotSupportedError', kind + ': the configuration is not supported')); });
+        }
+        flush() {
+          const s = st(this);
+          if (s.state !== 'configured') return Promise.reject(dom('InvalidStateError', kind + ': the codec is not configured'));
+          return new Promise((resolve, reject) => { s.flushes.push({ resolve, reject }); });
+        }
+        reset() {
+          const s = st(this);
+          if (s.state === 'closed') throw dom('InvalidStateError', kind + ': the codec is closed');
+          s.state = 'unconfigured'; s.queue = 0;
+          for (const f of s.flushes.splice(0)) f.reject(dom('AbortError', kind + ': the codec was reset'));
+        }
+        close() {
+          const s = st(this);
+          if (s.state === 'closed') throw dom('InvalidStateError', kind + ': the codec is closed');
+          closeCodec(s, dom('AbortError', kind + ': the codec was closed'));
+        }
+        static isConfigSupported(config) {
+          try {
+            need(arguments.length, 1, 'isConfigSupported');
+            const verdict = checkConfig(kind, config);
+            return Promise.resolve({ supported: verdict === 'supported', config: cloneConfig(config) });
+          } catch (e) { return Promise.reject(e); }
+        }
+      };
+      Object.defineProperty(C, 'name', { value: kind, configurable: true });
+      const run = function (input, options) {
+        need(arguments.length, 1, work);
+        const s = st(this);
+        if (!(input instanceof inputType())) throw bad(work + ': the argument is not of the expected interface');
+        if (s.state !== 'configured') throw dom('InvalidStateError', kind + ': the codec is not configured');
+        // Reached only between configure() and the close that follows an unsupported configuration.
+        s.queue++;
+      };
+      Object.defineProperty(run, 'name', { value: work, configurable: true });
+      Object.defineProperty(run, 'length', { value: 1, configurable: true });
+      Object.defineProperty(C.prototype, work, { value: run, writable: true, enumerable: true, configurable: true });
+      getters(C, [queueName], s => s.queue);
+      return members(C);
+    };
+    const AudioDecoder = makeCodec('AudioDecoder', () => EncodedAudioChunk, 'decode', 'decodeQueueSize');
+    const VideoDecoder = makeCodec('VideoDecoder', () => EncodedVideoChunk, 'decode', 'decodeQueueSize');
+    const AudioEncoder = makeCodec('AudioEncoder', () => AudioData, 'encode', 'encodeQueueSize');
+    const VideoEncoder = makeCodec('VideoEncoder', () => VideoFrame, 'encode', 'encodeQueueSize');
+    // AudioData arrives with the audio layout ops; the name is held so that encode can test its argument.
+    class AudioData { constructor() { throw dom('NotSupportedError', 'AudioData is not supported yet'); } }
+    for (const C of [VideoColorSpace, VideoFrame, EncodedVideoChunk, EncodedAudioChunk]) members(C);
+    return { VideoColorSpace, VideoFrame, EncodedVideoChunk, EncodedAudioChunk, AudioDecoder, VideoDecoder, AudioEncoder, VideoEncoder };
+`;
+  const codecNames = ['VideoColorSpace', 'VideoFrame', 'EncodedVideoChunk', 'EncodedAudioChunk', 'AudioDecoder', 'VideoDecoder', 'AudioEncoder', 'VideoEncoder'];
+  lazyGroup(codecNames, codecs);
+  // ==== end webcodecs section ====
   const apiError = (r, what) => {
     switch (r) {
       case -3: throw new DOMException(what, 'InvalidCharacterError');
@@ -3505,8 +4123,13 @@
     };
     class FormData {
       constructor(form = undefined, submitter = undefined) {
-        if (form !== undefined) throw new TypeError("Failed to construct 'FormData': forms are not supported in this build");
         forms.set(this, { entries: [] });
+        if (form === undefined) return;
+        if (formEntryList === null) throw new TypeError("Failed to construct 'FormData': parameter 1 is not of type 'HTMLFormElement'.");
+        // "construct the entry list": Lean's entries, then the formdata event at the form
+        // with a FormData of them, which a listener may change
+        forms.get(this).entries = formEntryList(form, submitter ?? null,
+          entries => { const fd = new FormData(); forms.get(fd).entries = entries; return fd; }, fd => forms.get(fd).entries.slice());
       }
       append(name, value, filename = undefined) {
         if (arguments.length < 2) throw new TypeError("Failed to execute 'append' on 'FormData': 2 arguments required");
@@ -5689,9 +6312,12 @@
     });
   // The window's event handler attributes too: `onmessage = f` in a frame's script is that
   // frame's window's handler, not the page's (it would replace the page's own).
+  // They are own properties of the window: the members of a [Global] interface are on the
+  // global object itself (Web IDL §3.7.6), so `window.hasOwnProperty('onload')` holds.
   for (const name of handlerNames) {
     const of = t => ((t === window || t == null) && scriptDocument ? windowOfScript() : t);
-    Object.defineProperty(Window.prototype, 'on' + name, { get() { return handlerOf(of(this), name); },
+    delete Window.prototype['on' + name];
+    Object.defineProperty(globalThis, 'on' + name, { get() { return handlerOf(of(this), name); },
       set(f) { setHandler(of(this), name, f); }, configurable: true, enumerable: true });
   }
   // document.open, write, writeln and close on a frame's document (HTML §8.4.3, §8.4.4). The
@@ -6089,7 +6715,14 @@
     comparePoint(node, offset) { needArgs(arguments, 2, 'comparePoint'); return Number(op(rid(this), 107, point(node, offset))); }
     intersectsNode(node) { needArgs(arguments, 1, 'intersectsNode'); return op(rid(this), 109, String(nodeId(node))) === '1'; }
     toString() { return op(rid(this), 111); }
-    createContextualFragment(fragment) { needArgs(arguments, 1, 'createContextualFragment'); const f = Number(op(rid(this), 116, String(fragment))); scanHandlers(f, false); return wrap(f); }
+    createContextualFragment(fragment) {
+      needArgs(arguments, 1, 'createContextualFragment');
+      const f = Number(op(rid(this), 116, String(fragment)));
+      scanHandlers(f, false);
+      // its script elements are not "already started": they run when the fragment is inserted
+      for (const k of elementsOf(f)) if (str(k, 0) === 'script') noteFreshScript(k);
+      return wrap(f);
+    }
     // CSSOM View §6.1: the boxes of the range's common ancestor element in Lean's layout.
     getBoundingClientRect() { let k = Number(op(rid(this), 110)); if (info(k, 0) !== 1) k = info(k, 1); if (k < 0 || info(k, 0) !== 1) return new DOMRect(0, 0, 0, 0); return wrap(k).getBoundingClientRect(); }
     getClientRects() { const r = this.getBoundingClientRect(); return r.width === 0 && r.height === 0 ? [] : [r]; }
@@ -7178,6 +7811,224 @@
   }
   // ==== end dombreadth ====
 
+  // ==== xmlweb: DOM XPath (DOM §8 "XPath") ================================================
+  // The expression is parsed and evaluated by Lean: DOM.XPathDom over the XPath 1.0
+  // evaluator of the engine (XPath.Full), node_query ops 121 (the prefixes an expression
+  // uses), 122 (evaluate) and 123 (the DOM's change count). Here: the interfaces, the calls
+  // of the page's XPathNSResolver, and the result object.
+  {
+    const SEP = '\u0001', SEP2 = '\u0002';
+    const xpThrow = r => {
+      const name = r.slice(1);
+      if (name === 'TypeError') throw new TypeError('The result is not a node set, and therefore cannot be converted to the desired type.');
+      const text = { SyntaxError: 'The string is not a valid XPath expression.',
+        NamespaceError: 'The string contains an invalid namespace.',
+        NotSupportedError: 'The node provided is not a valid context node type, or the result type is not known.' }[name] ?? 'XPath error';
+      throw new DOMException(text, name);
+    };
+    const xpAns = r => (typeof r === 'string' && r.charCodeAt(0) === 33 ? xpThrow(r) : r);
+    const badNs = () => new DOMException('The string contains an invalid namespace.', 'NamespaceError');
+    // XPathNSResolver is a callback interface (Web IDL §3.11 "call a user object's
+    // operation"): a function is called, any other object's lookupNamespaceURI is read at
+    // each call; an exception of the page's code is reported, and the prefix has no namespace.
+    const lookup = (resolver, prefix) => {
+      if (resolver === null || resolver === undefined) throw badNs();
+      let r = null;
+      try {
+        let v;
+        if (typeof resolver === 'function') v = resolver.call(undefined, prefix);
+        else {
+          const m = resolver.lookupNamespaceURI;
+          if (typeof m !== 'function') throw new TypeError('XPathNSResolver.lookupNamespaceURI is not a function');
+          v = m.call(resolver, prefix);
+        }
+        r = v === null || v === undefined ? null : `${v}`;
+      } catch (e) { report(e); r = null; }
+      if (r === null) throw badNs();
+      return r;
+    };
+    const resolverArg = r => {
+      if (r === null || r === undefined) return null;
+      if (typeof r !== 'object' && typeof r !== 'function') throw new TypeError("parameter is not of type 'XPathNSResolver'");
+      return r;
+    };
+    // An expression with its prefixes resolved: what createExpression keeps.
+    const compile = (expression, resolver) => {
+      expression = `${expression}`;
+      const ps = xpAns(op(0, 121, expression));
+      const bindings = [];
+      if (typeof ps === 'string' && ps !== '') for (const p of ps.split(SEP)) bindings.push(p + SEP2 + lookup(resolver, p));
+      return { expression, bindings };
+    };
+    const contextOf = node => {
+      if (node instanceof Attr) {
+        const a = attrState.get(node);
+        if (!a.el) throw new DOMException('The node provided is not a valid context node type.', 'NotSupportedError');
+        return { id: nodeId(a.el), spec: 'a' + (a.ns ?? '') + SEP2 + a.lname };
+      }
+      return { id: nodeId(node), spec: '' };
+    };
+    const results = new WeakMap(), expressions = new WeakMap();
+    const xr = o => { const s = results.get(o); if (!s) throw new TypeError('Illegal invocation'); return s; };
+    const run = (c, ctx, type) => {
+      type = (Number(type) >>> 0) & 0xFFFF;
+      const r = xpAns(op(ctx.id, 122, [String(type), ctx.spec, String(c.bindings.length), ...c.bindings, c.expression].join(SEP)));
+      const i = r.indexOf(SEP), kind = Number(i < 0 ? r : r.slice(0, i)), rest = i < 0 ? null : r.slice(i + 1);
+      const st = { type: kind, value: null, nodes: null, next: 0, stamp: '' };
+      if (kind === 1) st.value = Number(rest);
+      else if (kind === 2) st.value = rest ?? '';
+      else if (kind === 3) st.value = rest === '1';
+      else {
+        st.nodes = rest === null || rest === '' ? [] : rest.split(SEP).map(x => {
+          if (x.charCodeAt(0) !== 97) return wrap(Number(x));
+          const [el, ns, lname] = x.slice(1).split(SEP2);
+          return attrNode(wrap(Number(el)), ns || null, lname);
+        });
+        st.stamp = op(0, 123);
+      }
+      const o = Object.create(XPathResult.prototype);
+      results.set(o, st);
+      return o;
+    };
+    const isIter = s => s.type === 4 || s.type === 5, isSnap = s => s.type === 6 || s.type === 7;
+    class XPathResult {
+      constructor() { throw new TypeError('Illegal constructor'); }
+      get resultType() { return xr(this).type; }
+      get numberValue() { const s = xr(this); if (s.type !== 1) throw new TypeError('The result type is not a number.'); return s.value; }
+      get stringValue() { const s = xr(this); if (s.type !== 2) throw new TypeError('The result type is not a string.'); return s.value; }
+      get booleanValue() { const s = xr(this); if (s.type !== 3) throw new TypeError('The result type is not a boolean.'); return s.value; }
+      get singleNodeValue() { const s = xr(this); if (s.type !== 8 && s.type !== 9) throw new TypeError('The result type is not a single node.'); return s.nodes[0] ?? null; }
+      get invalidIteratorState() { const s = xr(this); return isIter(s) && op(0, 123) !== s.stamp; }
+      get snapshotLength() { const s = xr(this); if (!isSnap(s)) throw new TypeError('The result type is not a snapshot.'); return s.nodes.length; }
+      iterateNext() {
+        const s = xr(this);
+        if (!isIter(s)) throw new TypeError('The result type is not an iterator.');
+        if (op(0, 123) !== s.stamp) throw new DOMException('The document has mutated since the result was returned.', 'InvalidStateError');
+        return s.next < s.nodes.length ? s.nodes[s.next++] : null;
+      }
+      snapshotItem(index) {
+        const s = xr(this);
+        if (!isSnap(s)) throw new TypeError('The result type is not a snapshot.');
+        needArgs(arguments, 1, 'snapshotItem');
+        return s.nodes[Number(index) >>> 0] ?? null;
+      }
+    }
+    const types = { ANY_TYPE: 0, NUMBER_TYPE: 1, STRING_TYPE: 2, BOOLEAN_TYPE: 3, UNORDERED_NODE_ITERATOR_TYPE: 4,
+      ORDERED_NODE_ITERATOR_TYPE: 5, UNORDERED_NODE_SNAPSHOT_TYPE: 6, ORDERED_NODE_SNAPSHOT_TYPE: 7,
+      ANY_UNORDERED_NODE_TYPE: 8, FIRST_ORDERED_NODE_TYPE: 9 };
+    consts(XPathResult, types); consts(XPathResult.prototype, types);
+    class XPathExpression {
+      constructor() { throw new TypeError('Illegal constructor'); }
+      evaluate(contextNode, type = 0, result = null) {
+        const c = expressions.get(this);
+        if (!c) throw new TypeError('Illegal invocation');
+        needArgs(arguments, 1, 'evaluate');
+        return run(c, contextOf(contextNode), type);
+      }
+    }
+    // XPathEvaluatorBase (DOM §8.3): Document and XPathEvaluator include it.
+    const evaluatorBase = {
+      createExpression(expression, resolver = null) {
+        needArgs(arguments, 1, 'createExpression');
+        const e = Object.create(XPathExpression.prototype);
+        expressions.set(e, compile(expression, resolverArg(resolver)));
+        return e;
+      },
+      createNSResolver(nodeResolver) {
+        needArgs(arguments, 1, 'createNSResolver');
+        if (!(nodeResolver instanceof Node)) throw new TypeError("parameter 1 is not of type 'Node'");
+        return nodeResolver;
+      },
+      evaluate(expression, contextNode, resolver = null, type = 0, result = null) {
+        needArgs(arguments, 2, 'evaluate');
+        const ctx = contextOf(contextNode);
+        return run(compile(expression, resolverArg(resolver)), ctx, type);
+      },
+    };
+    class XPathEvaluator {}
+    mix(XPathEvaluator, evaluatorBase); mix(Document, evaluatorBase);
+    // Document.rootElement (SVG 2 §4.3.1): the document element when it is an svg element.
+    Object.defineProperty(Document.prototype, 'rootElement', { get() {
+      const e = this.documentElement;
+      return e && e.namespaceURI === 'http://www.w3.org/2000/svg' && e.localName === 'svg' ? e : null;
+    }, configurable: true, enumerable: true });
+    // XSLTProcessor (HTML §4.12.1.4 names it; the transform is XSLT 1.0). The engine's XSLT
+    // processor runs on the two DOM trees (node_query op 127, DOM.XsltDom) and answers the
+    // serialised result and the output method; the engine's HTML or XML parser reads it.
+    const xslt = new WeakMap();
+    const xs = o => { const s = xslt.get(o); if (!s) throw new TypeError('Illegal invocation'); return s; };
+    const transformed = (p, source) => {
+      const s = xs(p), src = nodeId(source);
+      if (s.style === null) return null;
+      const r = op(nodeId(s.style), 127, String(src));
+      if (typeof r !== 'string' || r.charCodeAt(0) !== 49) return null;
+      const i = r.indexOf(SEP);
+      return { method: r.slice(1, i), text: r.slice(i + 1) };
+    };
+    const xmlNodesOf = text => {
+      const d = new DOMParser().parseFromString('<r>' + text + '</r>', 'application/xml'), root = d.documentElement;
+      return root && root.localName === 'r' && root.namespaceURI === null ? root : null;
+    };
+    class XSLTProcessor {
+      constructor() { xslt.set(this, { style: null, params: new Map() }); }
+      importStylesheet(style) { needArgs(arguments, 1, 'importStylesheet'); nodeId(style); xs(this).style = style; }
+      transformToFragment(source, output) {
+        needArgs(arguments, 2, 'transformToFragment');
+        if (!(output instanceof Document)) throw new TypeError("parameter 2 is not of type 'Document'");
+        const r = transformed(this, source);
+        if (r === null) return null;
+        const f = output.createDocumentFragment();
+        if (r.method === 'html' || r.method === 'text') {
+          // the HTML fragment parser with a body context, as createContextualFragment runs
+          // it: a script of the result runs when the fragment is inserted
+          const range = document.createRange();
+          range.selectNodeContents(document.body || document.documentElement || document);
+          const parsed = range.createContextualFragment(r.text);
+          if (r.method === 'text') f.appendChild(output.createTextNode(parsed.textContent));
+          else while (parsed.firstChild) f.appendChild(output === document ? parsed.firstChild : output.adoptNode(parsed.firstChild));
+        } else {
+          const root = xmlNodesOf(r.text);
+          if (root === null) return null;
+          while (root.firstChild) f.appendChild(output.adoptNode(root.firstChild));
+        }
+        return f;
+      }
+      transformToDocument(source) {
+        needArgs(arguments, 1, 'transformToDocument');
+        const r = transformed(this, source);
+        if (r === null) return null;
+        if (r.method === 'html') return new DOMParser().parseFromString(r.text, 'text/html');
+        if (r.method === 'text') {
+          const d = new DOMParser().parseFromString('<html xmlns="http://www.w3.org/1999/xhtml"><head><title/></head><body><pre/></body></html>', 'application/xml');
+          const t = document.createElement('template'); t.innerHTML = r.text;
+          const pre = d.getElementsByTagName('pre')[0]; if (pre) pre.textContent = t.content.textContent;
+          return d;
+        }
+        const d = new DOMParser().parseFromString(r.text, 'application/xml');
+        return d;
+      }
+      setParameter(namespaceURI, localName, value) { needArgs(arguments, 3, 'setParameter'); xs(this).params.set(String(namespaceURI ?? '') + SEP + String(localName), value); }
+      getParameter(namespaceURI, localName) { needArgs(arguments, 2, 'getParameter'); const v = xs(this).params.get(String(namespaceURI ?? '') + SEP + String(localName)); return v === undefined ? null : v; }
+      removeParameter(namespaceURI, localName) { needArgs(arguments, 2, 'removeParameter'); xs(this).params.delete(String(namespaceURI ?? '') + SEP + String(localName)); }
+      clearParameters() { xs(this).params.clear(); }
+      reset() { const s = xs(this); s.style = null; s.params.clear(); }
+    }
+    // XMLSerializer (DOM Parsing §2.2): the XML serialization is Lean's (DOM.XmlSerialize,
+    // node_query op 124). An Attr is not a node of the arena; it serializes as "" (§3.2.1.7).
+    class XMLSerializer {
+      serializeToString(root) {
+        needArgs(arguments, 1, 'serializeToString');
+        if (root instanceof Attr) return '';
+        return op(nodeId(root), 124);
+      }
+    }
+    for (const [k, v] of Object.entries({ XPathResult, XPathExpression, XPathEvaluator, XSLTProcessor, XMLSerializer })) {
+      Object.defineProperty(v.prototype, Symbol.toStringTag, { value: k, configurable: true });
+      def(k, v);
+    }
+  }
+  // ==== end xmlweb ========================================================================
+
   // ==== workers: Dedicated Workers (HTML §10; docs/designissues/2026-11-09-dedicated-workers.md) ====
   // BubblePopJS only: the structured clone (n.serialize, n.deserialize) walks the heap in
   // Lean (L4Factoidal.JS.Clone), so on an engine without it `Worker` stays undefined.
@@ -7286,7 +8137,14 @@
     'SubtleCrypto', 'CryptoKey', 'performance', 'Performance', 'PerformanceEntry', 'PerformanceMark', 'PerformanceMeasure',
     'Blob', 'File', 'FileReader', 'FormData', 'Headers', 'Request', 'Response', 'fetch', 'XMLHttpRequest',
     'XMLHttpRequestEventTarget', 'XMLHttpRequestUpload', 'ReadableStream', 'WritableStream',
-    'TransformStream', 'MessageChannel', 'MessagePort', 'BroadcastChannel', 'webkitURL']);
+    'TransformStream', 'MessageChannel', 'MessagePort', 'BroadcastChannel', 'webkitURL',
+    // WebGL's interfaces are [Exposed=(Window,Worker)].
+    'WebGLRenderingContext', 'WebGL2RenderingContext', 'WebGLObject', 'WebGLBuffer', 'WebGLFramebuffer', 'WebGLProgram',
+    'WebGLRenderbuffer', 'WebGLShader', 'WebGLTexture', 'WebGLQuery', 'WebGLSampler', 'WebGLSync', 'WebGLTransformFeedback',
+    'WebGLVertexArrayObject', 'WebGLUniformLocation', 'WebGLActiveInfo', 'WebGLShaderPrecisionFormat', 'WebGLContextEvent',
+    // WebCodecs' are [Exposed=(Window,DedicatedWorker)].
+    'VideoColorSpace', 'VideoFrame', 'EncodedVideoChunk', 'EncodedAudioChunk', 'AudioData', 'AudioDecoder', 'VideoDecoder',
+    'AudioEncoder', 'VideoEncoder', 'ImageDecoder', 'ImageTrackList', 'ImageTrack', 'DOMRectReadOnly', 'DOMRect']);
   // HTML §10.2.1: WorkerGlobalScope, DedicatedWorkerGlobalScope, WorkerLocation, WorkerNavigator.
   const makeWorkerScope = (url, name) => {
     inWorker = true;
@@ -7360,8 +8218,13 @@
       for (let i = 0; i + 1 < xs.length; i += 2) if (/^on[a-z]+$/.test(xs[i])) contentHandler(wrap(k), xs[i].slice(2), xs[i + 1]);
     }
   };
+  // An attribute is compiled as an event handler only when Lean's table of event handler
+  // content attributes names it (HTML.TrustedTypes.isEventHandlerName, asked once for each
+  // name): so every attribute that can run script is a TrustedScript sink there.
+  const handlerNamed = new Map();
+  const handlerName = name => { let v = handlerNamed.get(name); if (v === undefined) handlerNamed.set(name, v = n.query(0, 194, 'h\u0000on' + name) === '1'); return v; };
   const contentHandler = (el, name, source) => {
-    if (!handlerNames.includes(name) || !(el instanceof HTMLElement || el instanceof SVGElement || el instanceof MathMLElement)) return;
+    if (!handlerNames.includes(name) || !handlerName(name) || !(el instanceof HTMLElement || el instanceof SVGElement || el instanceof MathMLElement)) return;
     const onBody = windowReflecting(el) && bodyWindowHandlers.has(name);
     const t = onBody ? bodyWindow(el) : el;
     // HTML "getting the current value of the event handler": the window's onerror handler has
@@ -7709,6 +8572,43 @@
     const checkForm = form => { let ok = true; for (const k of idsOf(fq(form, 'e'))) if (!check(wrap(k))) ok = false; return ok; };
     method(F, 'checkValidity', function checkValidity() { return checkForm(this); });
     method(F, 'reportValidity', function reportValidity() { return checkForm(this); });
+  }
+  // ---- new FormData(form, submitter) (XMLHttpRequest §5.3; HTML §4.10.21.4) -----------------
+  // Which controls contribute and what each gives is Lean's (HTML.FormEntries, node_query
+  // 196); here the checks' exceptions, the empty file of a file control and the formdata event.
+  {
+    const formData = new WeakMap();
+    class FormDataEvent extends Event {
+      constructor(type, init = undefined) {
+        if (arguments.length < 2 || init === null || typeof init !== 'object' || !(init.formData instanceof globalThis.FormData))
+          throw new TypeError("Failed to construct 'FormDataEvent': member formData is required and must be an instance of FormData.");
+        super(type, init);
+        formData.set(this, init.formData);
+      }
+      get formData() { return formData.get(this); }
+    }
+    def('FormDataEvent', FormDataEvent);
+    const constructing = new Set();
+    const unesc = t => t.replace(/\u0007([\s\S])/g, (m, c) => String.fromCharCode(c.charCodeAt(0) - 64));
+    formEntryList = (form, submitter, make, read) => {
+      const what = "Failed to construct 'FormData'";
+      if (!(form instanceof named.HTMLFormElement)) throw new TypeError(`${what}: parameter 1 is not of type 'HTMLFormElement'.`);
+      if (submitter !== null && !(submitter instanceof HTMLElement)) throw new TypeError(`${what}: parameter 2 is not of type 'HTMLElement'.`);
+      const id = nodeId(form);
+      const r = op(id, 196, submitter === null ? '' : String(nodeId(submitter)));
+      if (r[0] === 'T') throw new TypeError(`${what}: The specified element is not a submit button.`);
+      if (r[0] === 'N') throw new DOMException(`${what}: The specified element is not owned by this form element.`, 'NotFoundError');
+      if (constructing.has(id)) throw new DOMException(`${what}: The form is constructing its entry list.`, 'InvalidStateError');
+      const entries = r.length === 1 ? [] : r.slice(1).split('\u0002').map(e => {
+        const [name, value, file] = e.split('\u0001');
+        return [unesc(name), file === '1' ? new globalThis.File([], '', { type: 'application/octet-stream' }) : unesc(value)];
+      });
+      const fd = make(entries);
+      constructing.add(id);
+      try { const e = new FormDataEvent('formdata', { bubbles: true, formData: fd }); state(e).trusted = true; dispatch(form, e); }
+      finally { constructing.delete(id); }
+      return read(fd);
+    };
   }
   // ==== end forms =========================================================================
 
@@ -8080,12 +8980,520 @@
   }
   // ==== end dynscripts ====================================================================
 
+  // ==== imagesource: the image an img element asks for (HTML §4.8.4.3) =====================
+  // `currentSrc`: the source that Lean selects from `srcset`, `sizes`, `src` and the `source`
+  // children of a `picture` (HTML.ImageSource, node_query 195) for the device pixel ratio and
+  // the viewport of the element's document, resolved against that document's URL.
+  Object.defineProperty(named.HTMLImageElement.prototype, 'currentSrc', { get() {
+    const id = nodeId(this), d = info(id, 7), frame = d > 0 ? info(d, 12) : -1;
+    let size;
+    if (frame >= 0) { const b = layoutOf(wrap(frame)); size = [b[6], b[7]]; } else size = viewport();
+    const r = n.query(id, 195, globalThis.devicePixelRatio + '\u0000' + size[0] + '\u0000' + size[1]);
+    if (typeof r !== 'string' || r === '') return '';
+    return (frame >= 0 ? resolveURL(r.slice(1), docURL(d)) : resolveURL(r.slice(1))) ?? '';
+  }, configurable: true, enumerable: true });
+  // ==== end imagesource ===================================================================
+
+  // ==== trustedtypes: Trusted Types (https://w3c.github.io/trusted-types/dist/spec/) =====
+  // The objects are here: `trustedTypes`, the policies (whose functions are the page's) and
+  // the three trusted value types. Every decision is Lean's (HTML.TrustedTypes, node_query
+  // 194): whether a sink requires a trusted value, what happens to a value that is not one,
+  // whether a policy may be created, and which attributes and properties are sinks. The
+  // policies of a document are those of its `meta` elements; once seen, a policy stays (a
+  // policy does not go when its element is removed). The sinks ask nothing until the page
+  // goes live: it uses `trustedTypes`, or one of its documents declares a policy.
+  {
+    const isObj = v => v !== null && (typeof v === 'object' || typeof v === 'function');
+    const illegal = () => { throw new TypeError('Illegal constructor'); };
+    const ask = (doc, q) => { const r = n.query(doc, 194, q); return typeof r === 'number' ? fail(r) : r; };
+    // ---- the trusted values -----------------------------------------------------------------
+    const values = new WeakMap();
+    const stringOf = (o, kind) => { const v = isObj(o) ? values.get(o) : undefined; if (v === undefined || v.kind !== kind) throw new TypeError('Illegal invocation'); return v.s; };
+    class TrustedHTML { constructor() { illegal(); } toString() { return stringOf(this, 'TrustedHTML'); } toJSON() { return stringOf(this, 'TrustedHTML'); } }
+    class TrustedScript { constructor() { illegal(); } toString() { return stringOf(this, 'TrustedScript'); } toJSON() { return stringOf(this, 'TrustedScript'); } }
+    class TrustedScriptURL { constructor() { illegal(); } toString() { return stringOf(this, 'TrustedScriptURL'); } toJSON() { return stringOf(this, 'TrustedScriptURL'); } }
+    const classes = { TrustedHTML, TrustedScript, TrustedScriptURL };
+    const make = (kind, s) => { const o = Object.create(classes[kind].prototype); values.set(o, { kind, s }); return o; };
+    const isKind = (v, kind) => { const t = isObj(v) ? values.get(v) : undefined; return t !== undefined && t.kind === kind; };
+    // ---- policies ---------------------------------------------------------------------------
+    const functionOf = { TrustedHTML: 'createHTML', TrustedScript: 'createScript', TrustedScriptURL: 'createScriptURL' };
+    const policies = new WeakMap();
+    const policyOf = p => { const v = isObj(p) ? policies.get(p) : undefined; if (v === undefined) throw new TypeError('Illegal invocation'); return v; };
+    // "Get Trusted Type policy value"
+    const policyValue = (p, kind, value, args, throwIfMissing) => {
+      const f = p[functionOf[kind]];
+      if (f === null) {
+        if (throwIfMissing) throw new TypeError(`Policy ${p.name}'s TrustedTypePolicyOptions did not specify a '${functionOf[kind]}' member.`);
+        return null;
+      }
+      return f(value, ...args);
+    };
+    // "Create a Trusted Type"
+    const createValue = (self, kind, args) => {
+      const p = policyOf(self);
+      if (args.length < 1) throw new TypeError(`Failed to execute '${functionOf[kind]}' on 'TrustedTypePolicy': 1 argument required, but only 0 present.`);
+      const v = policyValue(p, kind, String(args[0]), Array.prototype.slice.call(args, 1), true);
+      return make(kind, v === null || v === undefined ? '' : String(v));
+    };
+    class TrustedTypePolicy {
+      constructor() { illegal(); }
+      get name() { return policyOf(this).name; }
+      createHTML(input) { return createValue(this, 'TrustedHTML', arguments); }
+      createScript(input) { return createValue(this, 'TrustedScript', arguments); }
+      createScriptURL(input) { return createValue(this, 'TrustedScriptURL', arguments); }
+    }
+    // ---- the policies of a document, and reports ----------------------------------------------
+    // the document whose policies govern a node: a frame's own document, else the page's
+    const docOf = id => { const d = info(id, 7); return d > 0 && info(d, 12) >= 0 ? d : 0; };
+    const globalDoc = () => (scriptDocument ? docOf(nodeId(scriptDocument)) : 0);
+    const seenPolicies = new Map();
+    const cspOf = doc => {
+      const now = ask(doc, 'm');
+      let list = seenPolicies.get(doc);
+      if (now !== '') {
+        if (!list) seenPolicies.set(doc, list = []);
+        for (const p of now.split('\u0001')) if (!list.includes(p)) list.push(p);
+      }
+      return list ? list.join('\u0001') : '';
+    };
+    const violationFields = { documentURI: '', referrer: '', blockedURI: '', effectiveDirective: '', violatedDirective: '', originalPolicy: '',
+      sourceFile: '', sample: '', disposition: 'enforce', statusCode: 0, lineNumber: 0, columnNumber: 0 };
+    if (typeof globalThis.SecurityPolicyViolationEvent !== 'function') {
+      const inits = new WeakMap();
+      class SecurityPolicyViolationEvent extends Event {
+        constructor(type, init = undefined) {
+          super(type, init);
+          const d = init === undefined || init === null ? {} : init, o = {};
+          for (const k of Object.keys(violationFields)) {
+            const v = d[k];
+            o[k] = v === undefined ? violationFields[k] : typeof violationFields[k] === 'number' ? Number(v) >>> 0 : String(v);
+          }
+          inits.set(this, o);
+        }
+      }
+      for (const k of Object.keys(violationFields))
+        Object.defineProperty(SecurityPolicyViolationEvent.prototype, k, { get() { return inits.get(this)[k]; }, enumerable: true, configurable: true });
+      def('SecurityPolicyViolationEvent', SecurityPolicyViolationEvent);
+    }
+    // a report to each violated policy (their places in the list, as Lean answers them)
+    const violations = (doc, csp, places, directive, blockedURI, sample) => {
+      const list = csp.split('\u0001');
+      for (const i of places.split(' ')) {
+        const p = i === '' ? undefined : list[Number(i)];
+        if (p === undefined) continue;
+        const init = { bubbles: true, composed: true, documentURI: String(wrap(doc).URL), blockedURI, effectiveDirective: directive,
+          violatedDirective: directive, originalPolicy: p.slice(1), disposition: p[0] === 'r' ? 'report' : 'enforce', sample };
+        setTimeout(() => { const e = new globalThis.SecurityPolicyViolationEvent('securitypolicyviolation', init); state(e).trusted = true; dispatch(wrap(doc), e); }, 0);
+      }
+    };
+    // ---- the factory --------------------------------------------------------------------------
+    const created = [];
+    let defaultPolicy = null;
+    const lower = t => t.replace(/[A-Z]/g, c => c.toLowerCase());
+    const nullable = v => (v === null || v === undefined ? '' : String(v));
+    const emptyHTML = make('TrustedHTML', ''), emptyScript = make('TrustedScript', '');
+    class TrustedTypePolicyFactory {
+      constructor() { illegal(); }
+      createPolicy(policyName, policyOptions = undefined) {
+        const what = "Failed to execute 'createPolicy' on 'TrustedTypePolicyFactory'";
+        if (arguments.length < 1) throw new TypeError(`${what}: 1 argument required, but only 0 present.`);
+        const name = String(policyName);
+        if (policyOptions !== undefined && policyOptions !== null && !isObj(policyOptions)) throw new TypeError(`${what}: parameter 2 is not of type 'TrustedTypePolicyOptions'.`);
+        const o = policyOptions ?? {};
+        const member = k => { const f = o[k]; if (f === undefined || f === null) return null; if (typeof f !== 'function') throw new TypeError(`${what}: '${k}' is not a function.`); return f; };
+        const createHTML = member('createHTML'), createScript = member('createScript'), createScriptURL = member('createScriptURL');
+        const doc = globalDoc(), csp = cspOf(doc), plain = t => t.replace(/[\u0000-\u0002]/g, '�');
+        const r = ask(doc, 'c\u0000' + csp + '\u0000' + plain(name) + '\u0000' + created.map(x => plain(x) + '\u0002').join(''));
+        if (r.length > 2) violations(doc, csp, r.slice(2), 'trusted-types', 'trusted-types-policy', name.slice(0, 40));
+        if (r[0] === '1') throw new TypeError(`${what}: Policy "${name}" disallowed.`);
+        if (name === 'default' && defaultPolicy !== null) throw new TypeError(`${what}: Policy with name "default" already exists.`);
+        const p = Object.create(TrustedTypePolicy.prototype);
+        policies.set(p, { name, createHTML, createScript, createScriptURL });
+        if (name === 'default') defaultPolicy = p;
+        created.push(name);
+        return p;
+      }
+      isHTML(value) { return isKind(value, 'TrustedHTML'); }
+      isScript(value) { return isKind(value, 'TrustedScript'); }
+      isScriptURL(value) { return isKind(value, 'TrustedScriptURL'); }
+      get emptyHTML() { return emptyHTML; }
+      get emptyScript() { return emptyScript; }
+      getAttributeType(tagName, attribute, elementNs = '', attrNs = '') {
+        if (arguments.length < 2) throw new TypeError("Failed to execute 'getAttributeType' on 'TrustedTypePolicyFactory': 2 arguments required.");
+        const local = lower(String(tagName)), attr = lower(String(attribute)), ens = nullable(elementNs) || HTML_NS, ans = nullable(attrNs);
+        if ((local + attr + ens + ans).includes('\u0000')) return null;
+        const r = ask(0, 'a\u0000' + ens + '\u0000' + local + '\u0000' + ans + '\u0000' + attr);
+        return r === '' ? null : r.split('\u0000')[0];
+      }
+      getPropertyType(tagName, property, elementNs = '') {
+        if (arguments.length < 2) throw new TypeError("Failed to execute 'getPropertyType' on 'TrustedTypePolicyFactory': 2 arguments required.");
+        const local = lower(String(tagName)), prop = String(property), ens = nullable(elementNs) || HTML_NS;
+        if ((local + prop + ens).includes('\u0000')) return null;
+        const r = ask(0, 'p\u0000' + ens + '\u0000' + local + '\u0000' + prop);
+        return r === '' ? null : r;
+      }
+      get defaultPolicy() { return defaultPolicy; }
+    }
+    const factory = Object.create(TrustedTypePolicyFactory.prototype);
+    for (const [k, C] of Object.entries({ TrustedHTML, TrustedScript, TrustedScriptURL, TrustedTypePolicy, TrustedTypePolicyFactory })) def(k, C);
+    // ---- "Get Trusted Type compliant string" --------------------------------------------------
+    const requiresOf = new Map();
+    const compliant = (kind, doc, input, sink) => {
+      if (isKind(input, kind)) return values.get(input).s;
+      const csp = cspOf(doc);
+      let required = requiresOf.get(csp);
+      if (required === undefined) { if (requiresOf.size >= 64) requiresOf.clear(); requiresOf.set(csp, required = ask(doc, 'r\u0000' + csp) === '1'); }
+      const text = String(input);
+      if (!required) return text;
+      // "Process value with a default policy": the page's function; an exception of it goes on
+      const converted = defaultPolicy === null ? null : policyValue(policies.get(defaultPolicy), kind, text, [kind, sink], false);
+      const gave = converted !== null && converted !== undefined;
+      const r = ask(doc, 'o\u0000' + csp + '\u00000\u0000' + (gave ? '1' : '0'));
+      if (r.length > 2) violations(doc, csp, r.slice(2), 'require-trusted-types-for', 'trusted-types-sink', sink + '|' + text.slice(0, 40));
+      if (r[0] === 'x') throw new TypeError(`This document requires '${kind}' assignment. The sink is '${sink}'.`);
+      return r[0] === 'd' ? String(converted) : text;
+    };
+    // "Get Trusted Types-compliant attribute value": `ns` null or '' for no namespace, `name`
+    // the qualified name given (lower case for an HTML element when there is no namespace)
+    const attrSinks = new Map();
+    const attrValue = (el, ns, name, value) => {
+      const id = nodeId(el);
+      const local = ns === null || ns === '' ? lowerIfHtml(el, name) : name.slice(name.indexOf(':') + 1);
+      const key = (str(id, 2) ?? '') + '\u0000' + str(id, 0) + '\u0000' + (ns ?? '') + '\u0000' + local;
+      let sink = attrSinks.get(key);
+      if (sink === undefined) {
+        if (attrSinks.size >= 512) attrSinks.clear();
+        const r = local.includes('\u0000') ? '' : ask(0, 'a\u0000' + key);
+        attrSinks.set(key, sink = r === '' ? null : r.split('\u0000'));
+      }
+      return sink === null ? String(value) : compliant(sink[0], docOf(id), value, sink[1]);
+    };
+    // ---- going live ---------------------------------------------------------------------------
+    let live = false;
+    const goLive = () => {
+      if (live) return;
+      live = true; ttMeta = null; ttStart = null; ttDoc = null;
+      ttAttr = attrValue;
+      ttValue = (kind, id, value, sink) => compliant(kind, id === null ? globalDoc() : docOf(id), value, sink);
+    };
+    const checked = new Set();
+    ttMeta = goLive;
+    ttStart = () => { if (ask(0, 'm') !== '') goLive(); };
+    ttDoc = d => { if (!checked.has(d)) { checked.add(d); if (ask(d, 'm') !== '') goLive(); } };
+    Object.defineProperty(Window.prototype, 'trustedTypes', { get() { goLive(); return factory; }, enumerable: true, configurable: true });
+    // ---- the sinks that take markup or script (the attribute sinks are in Element and Attr) ----
+    const setterSink = (C, prop, kind, sink, nullEmpty = false) => {
+      const d = C && Object.getOwnPropertyDescriptor(C.prototype, prop);
+      if (!d || !d.set) return;
+      const set = d.set;
+      Object.defineProperty(C.prototype, prop, { get: d.get, enumerable: d.enumerable, configurable: true,
+        set(v) { set.call(this, ttValue === null ? v : ttValue(kind, nodeId(this), nullEmpty && v === null ? '' : v, sink)); } });
+    };
+    setterSink(Element, 'innerHTML', 'TrustedHTML', 'Element innerHTML', true);
+    setterSink(Element, 'outerHTML', 'TrustedHTML', 'Element outerHTML', true);
+    if (typeof ShadowRoot === 'function') setterSink(ShadowRoot, 'innerHTML', 'TrustedHTML', 'ShadowRoot innerHTML', true);
+    setterSink(globalThis.HTMLIFrameElement, 'srcdoc', 'TrustedHTML', 'HTMLIFrameElement srcdoc');
+    setterSink(globalThis.HTMLScriptElement, 'src', 'TrustedScriptURL', 'HTMLScriptElement src');
+    const argSink = (C, name, index, kind, sink) => {
+      const f = C && C.prototype[name];
+      if (typeof f !== 'function') return;
+      define(C.prototype, name, Object.defineProperty(function (...args) {
+        if (ttValue !== null && args.length > index) args[index] = ttValue(kind, this instanceof Node ? nodeId(this) : null, args[index], sink);
+        return f.apply(this, args);
+      }, 'name', { value: name, configurable: true }));
+    };
+    argSink(Element, 'insertAdjacentHTML', 1, 'TrustedHTML', 'Element insertAdjacentHTML');
+    argSink(globalThis.DOMParser, 'parseFromString', 0, 'TrustedHTML', 'DOMParser parseFromString');
+    argSink(globalThis.Range, 'createContextualFragment', 0, 'TrustedHTML', 'Range createContextualFragment');
+    // document.write and writeln: the arguments joined; trusted when every one is TrustedHTML
+    for (const name of ['write', 'writeln']) {
+      const f = Document.prototype[name];
+      define(Document.prototype, name, Object.defineProperty(function (...text) {
+        if (ttValue === null || text.every(t => isKind(t, 'TrustedHTML'))) return f.apply(this, text);
+        return f.call(this, ttValue('TrustedHTML', nodeId(this), text.map(String).join(''), 'Document ' + name));
+      }, 'name', { value: name, configurable: true }));
+    }
+    // the script element's text: `text`, and `innerText` and `textContent` on a script element
+    const S = globalThis.HTMLScriptElement;
+    if (S) {
+      const textContent = Object.getOwnPropertyDescriptor(Node.prototype, 'textContent');
+      const innerText = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'innerText');
+      const checkedText = (self, v, name) => (ttValue === null ? v : ttValue('TrustedScript', nodeId(self), v, 'HTMLScriptElement ' + name));
+      Object.defineProperty(S.prototype, 'text', { enumerable: true, configurable: true,
+        get() { let t = ''; for (const c of this.childNodes) if (c.nodeType === 3) t += c.data; return t; },
+        set(v) { textContent.set.call(this, checkedText(this, v, 'text')); } });
+      Object.defineProperty(S.prototype, 'textContent', { enumerable: true, configurable: true,
+        get() { return textContent.get.call(this); },
+        set(v) { textContent.set.call(this, checkedText(this, v === null ? '' : v, 'textContent')); } });
+      if (innerText && innerText.set) Object.defineProperty(S.prototype, 'innerText', { enumerable: true, configurable: true,
+        get() { return innerText.get.call(this); },
+        set(v) { innerText.set.call(this, checkedText(this, v === null ? '' : v, 'innerText')); } });
+    }
+  }
+  // ==== end trustedtypes ==================================================================
+
+  // ==== sanitizer: HTML sanitization and the HTML insertion methods (HTML §8.5.2, §8.6) ====
+  // A Sanitizer's configuration, every method on it, and what a configuration keeps of
+  // parsed markup are Lean's (HTML.Sanitizer: node_query 192 the methods, 193 the tree).
+  // Here: Web IDL conversion of the dictionaries to the text Lean reads (`configWire` there),
+  // the objects, and the insertion methods. The markup is parsed into a fragment that no
+  // script can reach, sanitized there, and only then inserted; for the safe methods its
+  // event handler content attributes are never read.
+  {
+    const isObj = v => v !== null && (typeof v === 'object' || typeof v === 'function');
+    // a name, a namespace or a target in the wire: no character below U+0008
+    const esc = t => t.replace(/[\u0000-\u0007]/g, c => '\u0007' + String.fromCharCode(c.charCodeAt(0) + 64));
+    const unesc = t => t.replace(/\u0007([\s\S])/g, (m, c) => String.fromCharCode(c.charCodeAt(0) - 64));
+    const seq = (v, what) => {
+      if (!isObj(v) || typeof v[Symbol.iterator] !== 'function') throw new TypeError(`${what}: the value is not a sequence.`);
+      return [...v];
+    };
+    // "canonicalize a sanitizer name": a DOMString, or a dictionary with `name` and `namespace`
+    const nameWire = (v, defaultNs, what) => {
+      if (v === null || v === undefined || isObj(v)) {
+        const d = v ?? {}, nm = d.name;
+        if (nm === undefined) throw new TypeError(`${what}: required member name is undefined.`);
+        const name = String(nm), nsv = d.namespace;
+        const ns = nsv === undefined ? defaultNs : nsv === null ? null : String(nsv);
+        return esc(name) + '\u0005' + esc(ns ?? '');
+      }
+      return esc(String(v)) + '\u0005' + esc(defaultNs ?? '');
+    };
+    const attrList = (v, sep, what) => v === undefined ? '0' : '1' + seq(v, what).map(x => nameWire(x, null, what)).join(sep);
+    // "canonicalize a SanitizerElementWithAttributes"
+    const ruleWire = (v, what) => {
+      const name = nameWire(v, HTML_NS, what);
+      const dict = isObj(v);
+      const attributes = attrList(dict ? v.attributes : undefined, '\u0004', what);
+      const removeAttributes = attrList(dict ? v.removeAttributes : undefined, '\u0004', what);
+      return name + '\u0003' + attributes + '\u0003' + removeAttributes;
+    };
+    // "canonicalize a processing instruction"
+    const piTarget = (v, what) => {
+      if (v === null || v === undefined || isObj(v)) {
+        const t = (v ?? {}).target;
+        if (t === undefined) throw new TypeError(`${what}: required member target is undefined.`);
+        return String(t);
+      }
+      return String(v);
+    };
+    // a SanitizerConfig dictionary (members read in Web IDL order) as the wire text
+    const configWire = (v, what) => {
+      if (v !== null && v !== undefined && !isObj(v)) throw new TypeError(`${what}: the value is not of type 'SanitizerConfig'.`);
+      const d = v ?? {};
+      const names = (x, ns) => x === undefined ? '0' : '1' + seq(x, what).map(i => nameWire(i, ns, what)).join('\u0002');
+      const bool = x => x === undefined ? '' : (x ? '1' : '0');
+      const pis = x => x === undefined ? '0' : '1' + seq(x, what).map(i => '\u0005' + esc(piTarget(i, what))).join('\u0002');
+      const attributes = names(d.attributes, null), comments = bool(d.comments), dataAttributes = bool(d.dataAttributes);
+      const ex = d.elements, elements = ex === undefined ? '0' : '1' + seq(ex, what).map(i => ruleWire(i, what)).join('\u0002');
+      const javascriptURLs = bool(d.javascriptURLs), processingInstructions = pis(d.processingInstructions);
+      const removeAttributes = names(d.removeAttributes, null), removeElements = names(d.removeElements, HTML_NS);
+      const removeProcessingInstructions = pis(d.removeProcessingInstructions);
+      const replaceWithChildrenElements = names(d.replaceWithChildrenElements, HTML_NS);
+      return [elements, removeElements, replaceWithChildrenElements, processingInstructions, removeProcessingInstructions,
+        attributes, removeAttributes, comments, dataAttributes, javascriptURLs].join('\u0001');
+    };
+    // the wire text as a SanitizerConfig dictionary (members in Web IDL order)
+    const nameObj = w => { const i = w.indexOf('\u0005'), ns = unesc(w.slice(i + 1)); return { name: unesc(w.slice(0, i)), namespace: ns === '' ? null : ns }; };
+    const listOf = (w, sep, f) => w[0] !== '1' ? undefined : w.length === 1 ? [] : w.slice(1).split(sep).map(f);
+    const ruleObj = w => {
+      const [name, attributes, removeAttributes] = w.split('\u0003'), o = nameObj(name);
+      const a = listOf(attributes, '\u0004', nameObj), r = listOf(removeAttributes, '\u0004', nameObj);
+      if (a !== undefined) o.attributes = a;
+      if (r !== undefined) o.removeAttributes = r;
+      return o;
+    };
+    const configObj = w => {
+      const [elements, removeElements, replace, pis, removePis, attributes, removeAttributes, comments, data, js] = w.split('\u0001');
+      const o = {}, put = (k, v) => { if (v !== undefined) o[k] = v; }, pi = t => ({ target: unesc(t.slice(1)) });
+      put('attributes', listOf(attributes, '\u0002', nameObj));
+      if (comments !== '') o.comments = comments === '1';
+      if (data !== '') o.dataAttributes = data === '1';
+      put('elements', listOf(elements, '\u0002', ruleObj));
+      if (js !== '') o.javascriptURLs = js === '1';
+      put('processingInstructions', listOf(pis, '\u0002', pi));
+      put('removeAttributes', listOf(removeAttributes, '\u0002', nameObj));
+      put('removeElements', listOf(removeElements, '\u0002', nameObj));
+      put('removeProcessingInstructions', listOf(removePis, '\u0002', pi));
+      put('replaceWithChildrenElements', listOf(replace, '\u0002', nameObj));
+      return o;
+    };
+    const ask = q => { const r = n.query(0, 192, q); return typeof r === 'number' ? fail(r) : r; };
+    const wires = new WeakMap();
+    const wireOf = s => { const w = wires.get(s); if (w === undefined) throw new TypeError('Illegal invocation'); return w; };
+    const presetWire = (v, what) => {
+      if (String(v) !== 'default') throw new TypeError(`${what}: '${String(v)}' is not a valid enum value of type SanitizerPresets.`);
+      return 'default';
+    };
+    class Sanitizer {
+      constructor(configuration = 'default') {
+        const what = "Failed to construct 'Sanitizer'";
+        const w = configuration === null || isObj(configuration) ? configWire(configuration, what) : presetWire(configuration, what);
+        const r = ask('new\u0000' + w + '\u00001');
+        if (r[0] !== 'K') throw new TypeError(`${what}: the configuration is not valid.`);
+        wires.set(this, r.slice(1));
+      }
+      get() { return configObj(ask('get\u0000' + wireOf(this))); }
+      removeUnsafe() { const r = ask('removeUnsafe\u0000' + wireOf(this)); wires.set(this, r.slice(1)); return r[0] === '1'; }
+    }
+    // the modifier methods: Lean answers the method's result and the configuration after it
+    const named = (name, f) => Object.defineProperty(f, 'name', { value: name, configurable: true });
+    const modifier = (name, argWire) => {
+      const f = named(name, function (arg) {
+        const w = wireOf(this);
+        if (arguments.length < 1) throw new TypeError(`Failed to execute '${name}' on 'Sanitizer': 1 argument required, but only 0 present.`);
+        const r = ask(name + '\u0000' + w + '\u0000' + argWire(arg, `Failed to execute '${name}' on 'Sanitizer'`));
+        wires.set(this, r.slice(1));
+        return r[0] === '1';
+      });
+      Object.defineProperty(Sanitizer.prototype, name, { value: f, writable: true, configurable: true });
+    };
+    modifier('allowElement', ruleWire);
+    modifier('removeElement', (v, what) => nameWire(v, HTML_NS, what));
+    modifier('replaceElementWithChildren', (v, what) => nameWire(v, HTML_NS, what));
+    modifier('allowProcessingInstruction', (v, what) => esc(piTarget(v, what)));
+    modifier('removeProcessingInstruction', (v, what) => esc(piTarget(v, what)));
+    modifier('allowAttribute', (v, what) => nameWire(v, null, what));
+    modifier('removeAttribute', (v, what) => nameWire(v, null, what));
+    modifier('setComments', v => (v ? '1' : '0'));
+    modifier('setDataAttributes', v => (v ? '1' : '0'));
+    modifier('setJavascriptURLs', v => (v ? '1' : '0'));
+    def('Sanitizer', Sanitizer);
+
+    // "Get a sanitizer config from options": the prepared configuration (a wire text), or
+    // null for an unsafe method with no sanitizer. A configuration is prepared by Lean once
+    // for each text and mode (the texts of the last few are kept).
+    const preparedWires = new Map();
+    const optionsOf = (options, safe, what) => {
+      if (options !== undefined && options !== null && !isObj(options)) throw new TypeError(`${what}: the options are not an object.`);
+      const o = options ?? {};
+      const runScripts = safe ? false : !!o.runScripts;
+      let input = o.sanitizer;
+      if (input === undefined) { if (!safe) return { config: null, runScripts }; input = 'default'; }
+      const w = input instanceof Sanitizer ? wireOf(input)
+        : input === null || isObj(input) ? configWire(input, what) : presetWire(input, what);
+      const key = (safe ? '1' : '0') + w;
+      let config = preparedWires.get(key);
+      if (config === undefined) {
+        const r = ask('prepare\u0000' + w + '\u0000' + (safe ? '1' : '0'));
+        if (r[0] !== 'K') throw new TypeError(`${what}: the sanitizer configuration is not valid.`);
+        config = r.slice(1);
+        if (preparedWires.size >= 16) preparedWires.clear();
+        preparedWires.set(key, config);
+      }
+      return { config, runScripts };
+    };
+    const hierarchy = () => new DOMException('The operation would yield an incorrect node tree.', 'HierarchyRequestError');
+    const isHtmlNamed = (id, name) => info(id, 0) === 1 && str(id, 2) === HTML_NS && str(id, 0) === name;
+    // "Parse HTML for insertion": the sanitized fragment of `markup` for the context element
+    // `ctx` in the node document of `target`, or -1 when a safe method has a script context.
+    const parseFor = (ctx, markup, o, safe) => {
+      const ns = str(ctx, 2), name = str(ctx, 0);
+      if (safe && name === 'script' && (ns === HTML_NS || ns === 'http://www.w3.org/2000/svg')) return -1;
+      const f = chk(n.create(14 + 16 * info(ctx, 7), (ns ?? '') + '\u0000' + name + '\u0000' + markup));
+      if (o.config !== null) op(f, 193, (safe ? '1' : '0') + '\u0000' + o.config);
+      if (!safe) scanHandlers(f, false);
+      return f;
+    };
+    // the context element of a target: the element, or a shadow root's host
+    const contextOf2 = target => (info(target, 0) === 11 ? info(target, 21) : target);
+    // "target for HTML insertion": a template's contents, else the element
+    const targetOf = id => (isHtmlNamed(id, 'template') ? info(id, 9) : id);
+    // "parent for HTML insertion"
+    const parentFor = id => {
+      const p = info(id, 1);
+      if (p < 0) return -1;
+      if (info(p, 0) === 1) { if (isHtmlNamed(p, 'template')) throw hierarchy(); return p; }
+      if (info(p, 0) === 11 && info(p, 21) >= 0) return p;
+      throw hierarchy();
+    };
+    // "Filter and set HTML", "filter and pre-insert HTML", "filter and replace with HTML"
+    const setHTML = (ctx, target, markup, o, safe) => {
+      const f = parseFor(ctx, markup, o, safe);
+      if (f < 0) return;
+      chk(n.setText(target, '')); chk(n.insert(target, f, -1));
+    };
+    const preInsertHTML = (ctx, parent, child, markup, o, safe) => {
+      if (isHtmlNamed(ctx, 'html')) throw hierarchy();
+      const f = parseFor(ctx, markup, o, safe);
+      if (f >= 0) chk(n.insert(parent, f, child));
+    };
+    const replaceHTML = (ctx, parent, node, markup, o, safe) => {
+      if (isHtmlNamed(ctx, 'html')) throw hierarchy();
+      const f = parseFor(ctx, markup, o, safe);
+      if (f >= 0) chk(n.replace(parent, f, node));
+    };
+    const method = (C, name, f) => Object.defineProperty(C.prototype, name, { value: f, writable: true, configurable: true });
+    // the markup of a method: an unsafe method is a TrustedHTML sink (section trustedtypes)
+    const markupOf = (safe, id, html, sink) => (safe || ttValue === null ? String(html) : ttValue('TrustedHTML', id, html, sink));
+    // the six methods of an Element or a ShadowRoot and of a child node, safe and unsafe
+    for (const safe of [true, false]) {
+      const sfx = safe ? '' : 'Unsafe';
+      const args = (iface, name, a, k = 1) => {
+        const what = `Failed to execute '${name}' on '${iface}'`;
+        if (a.length < k) throw new TypeError(`${what}: ${k} argument required, but only ${a.length} present.`);
+        return what;
+      };
+      const roots = typeof ShadowRoot === 'function' ? [[Element, 'Element'], [ShadowRoot, 'ShadowRoot']] : [[Element, 'Element']];
+      for (const [C, iface] of roots) {
+        const place = self => { const id = nodeId(self); return iface === 'Element' ? [id, targetOf(id)] : [info(id, 21), id]; };
+        method(C, 'setHTML' + sfx, named('setHTML' + sfx, function (html, options = undefined) {
+          const what = args(iface, 'setHTML' + sfx, arguments), [ctx, target] = place(this);
+          setHTML(ctx, target, markupOf(safe, nodeId(this), html, iface + ' setHTML' + sfx), optionsOf(options, safe, what), safe);
+        }));
+        method(C, 'appendHTML' + sfx, named('appendHTML' + sfx, function (html, options = undefined) {
+          const what = args(iface, 'appendHTML' + sfx, arguments), [ctx, target] = place(this);
+          preInsertHTML(ctx, target, -1, markupOf(safe, nodeId(this), html, iface + ' appendHTML' + sfx), optionsOf(options, safe, what), safe);
+        }));
+        method(C, 'prependHTML' + sfx, named('prependHTML' + sfx, function (html, options = undefined) {
+          const what = args(iface, 'prependHTML' + sfx, arguments), [ctx, target] = place(this);
+          preInsertHTML(ctx, target, info(target, 2), markupOf(safe, nodeId(this), html, iface + ' prependHTML' + sfx), optionsOf(options, safe, what), safe);
+        }));
+      }
+      for (const C of [Element, CharacterData]) {
+        const iface = C === Element ? 'Element' : 'CharacterData';
+        method(C, 'beforeHTML' + sfx, named('beforeHTML' + sfx, function (html, options = undefined) {
+          const what = args(iface, 'beforeHTML' + sfx, arguments), id = nodeId(this), markup = markupOf(safe, id, html, 'Node beforeHTML' + sfx), o = optionsOf(options, safe, what);
+          const parent = parentFor(id);
+          if (parent >= 0) preInsertHTML(contextOf2(parent), parent, id, markup, o, safe);
+        }));
+        method(C, 'afterHTML' + sfx, named('afterHTML' + sfx, function (html, options = undefined) {
+          const what = args(iface, 'afterHTML' + sfx, arguments), id = nodeId(this), markup = markupOf(safe, id, html, 'Node afterHTML' + sfx), o = optionsOf(options, safe, what);
+          const parent = parentFor(id);
+          if (parent >= 0) preInsertHTML(contextOf2(parent), parent, info(id, 5), markup, o, safe);
+        }));
+        method(C, 'replaceWithHTML' + sfx, named('replaceWithHTML' + sfx, function (html, options = undefined) {
+          const what = args(iface, 'replaceWithHTML' + sfx, arguments), id = nodeId(this), markup = markupOf(safe, id, html, 'Node replaceWithHTML' + sfx), o = optionsOf(options, safe, what);
+          const parent = parentFor(id);
+          if (parent >= 0) replaceHTML(contextOf2(parent), parent, id, markup, o, safe);
+        }));
+      }
+    }
+    // Document.parseHTML and Document.parseHTMLUnsafe: a document with no browsing context
+    // that the HTML parser makes, sanitized before it is answered.
+    const parseDocument = (markup, o, safe) => {
+      const doc = chk(n.create(11, markup));
+      if (o.config !== null) op(doc, 193, (safe ? '1' : '0') + '\u0000' + o.config);
+      return wrap(doc);
+    };
+    define(Document, 'parseHTML', function parseHTML(html, options = undefined) {
+      if (arguments.length < 1) throw new TypeError("Failed to execute 'parseHTML' on 'Document': 1 argument required, but only 0 present.");
+      return parseDocument(String(html), optionsOf(options, true, "Failed to execute 'parseHTML' on 'Document'"), true);
+    });
+    define(Document, 'parseHTMLUnsafe', function parseHTMLUnsafe(html, options = undefined) {
+      if (arguments.length < 1) throw new TypeError("Failed to execute 'parseHTMLUnsafe' on 'Document': 1 argument required, but only 0 present.");
+      return parseDocument(markupOf(false, null, html, 'Document parseHTMLUnsafe'), optionsOf(options, false, "Failed to execute 'parseHTMLUnsafe' on 'Document'"), false);
+    });
+  }
+  // ==== end sanitizer =====================================================================
+
   // ---- Interface objects as Web IDL defines them (§3.7.1 to §3.7.3) ----
   // An interface's attributes, operations and constants are enumerable own properties of its
   // interface prototype object (of the interface object when static), and the prototype's
   // class string is the interface's name. The classes above are JavaScript classes, whose
-  // members are not enumerable: one pass sets both for every interface on the global. It
-  // runs when the prelude runs (once for the engine, not for each page).
+  // members are not enumerable: one pass sets both for every interface on the global, names
+  // the accessor functions, and puts the interface check in front of a getter that lacks it.
+  // It runs when the prelude runs (once for the engine, not for each page).
   for (const name of Object.getOwnPropertyNames(globalThis)) {
     if (esGlobals.has(name) || !/^[A-Z]/.test(name)) continue;
     const gd = Object.getOwnPropertyDescriptor(globalThis, name);
@@ -8096,10 +9504,33 @@
     if (P === null || typeof P !== 'object') continue;
     if (C.name === name && !Object.prototype.hasOwnProperty.call(P, Symbol.toStringTag))
       Object.defineProperty(P, Symbol.toStringTag, { value: name, writable: false, enumerable: false, configurable: true });
+    // The window and the worker scopes are global objects: their attributes are read with
+    // no `this`, so they keep no check.
+    const globalInterface = name === 'Window' || name.endsWith('GlobalScope');
     for (const k of Object.getOwnPropertyNames(P)) {
       if (k === 'constructor') continue;
       const pd = Object.getOwnPropertyDescriptor(P, k);
-      if (pd.configurable && !pd.enumerable) { pd.enumerable = true; Object.defineProperty(P, k, pd); }
+      if (!pd.configurable) continue;
+      let changed = false;
+      if (!pd.enumerable) { pd.enumerable = true; changed = true; }
+      if (typeof pd.get === 'function') {
+        // An attribute getter throws a TypeError for a `this` that is not an object of the
+        // interface (Web IDL §3.7.6). Most getters do already (they read the object's state);
+        // one that answers for a plain object gets the check in front. Asked once, here.
+        if (!globalInterface) {
+          let throws = false;
+          try { pd.get.call({}); } catch (e) { throws = e instanceof TypeError; }
+          if (!throws) {
+            const g = pd.get;
+            pd.get = function () { if (!(this instanceof C)) throw new TypeError('Illegal invocation'); return g.call(this); };
+            changed = true;
+          }
+        }
+        // the names of the accessor functions: "get x" and "set x" (Web IDL §3.7.6)
+        if (pd.get.name !== 'get ' + k) Object.defineProperty(pd.get, 'name', { value: 'get ' + k, configurable: true });
+        if (typeof pd.set === 'function' && pd.set.name !== 'set ' + k) Object.defineProperty(pd.set, 'name', { value: 'set ' + k, configurable: true });
+      }
+      if (changed) Object.defineProperty(P, k, pd);
     }
     for (const k of Object.getOwnPropertyNames(C)) {
       if (k === 'prototype' || k === 'length' || k === 'name') continue;
@@ -8149,8 +9580,8 @@
     report(e) { report(e); },
     // A page starts: the content event handler attributes of its elements. The host may
     // run the prelude once on an empty document and copy that state for each page.
-    start() { scanHandlers(0, false); },
-    script(id) { currentScript = id < 0 ? null : wrap(id); const d = id < 0 ? 0 : info(id, 7); scriptDocument = d > 0 ? wrap(d) : null; },
+    start() { if (ttStart !== null) ttStart(); scanHandlers(0, false); },
+    script(id) { currentScript = id < 0 ? null : wrap(id); const d = id < 0 ? 0 : info(id, 7); scriptDocument = d > 0 ? wrap(d) : null; if (d > 0 && ttDoc !== null) ttDoc(d); },
     url(u) { href = String(u); },
     release(id) { callbacks.delete(id); },
     // Section workers: this realm becomes a dedicated worker's global scope.

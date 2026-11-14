@@ -54,7 +54,7 @@ def domReads : Hosts.Dom.Import → List Read
   | .nodeInfo => []
   | .nodeString => []
   | .nodeChildren => []
-  | .createNode => [⟨1, 2, Hosts.Dom.maxString⟩]
+  | .createNode => [⟨1, 2, Hosts.Dom.maxDocument⟩]
   | .insertBefore => []
   | .removeChild => []
   | .replaceChild => []

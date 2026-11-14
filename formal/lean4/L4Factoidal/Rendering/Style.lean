@@ -3,6 +3,7 @@ import L4Factoidal.DOM.OfHtml
 import L4Factoidal.Unicode.Bidi
 import L4Factoidal.Rendering.MediaQuery
 import L4Factoidal.Rendering.CssValues.Properties
+import L4Factoidal.Rendering.FlexStyle
 import Std.Data.TreeMap
 import Std.Data.HashMap
 
@@ -16,10 +17,7 @@ for its style sheet. -/
 namespace L4Factoidal.Rendering.CSS
 open DOM
 private def trim (s : String) := s.trimAscii.toString
-inductive Length where
-  | auto | px (value : Float) | percent (value : Float)
-  | vw (value : Float) | vh (value : Float)
-  deriving Repr
+-- `Length` is in `Rendering/BoxAlign.lean`, which the flex and alignment values also use.
 structure Edges where
   top : Float := 0
   right : Float := 0
@@ -32,6 +30,8 @@ inductive Display where
   | none | block | inline | inlineBlock
   | table | inlineTable | tableRowGroup | tableHeaderGroup | tableFooterGroup
   | tableRow | tableCell | tableCaption | tableColumn | tableColumnGroup
+  /-- Flex and grid containers (CSS Display 3 §2.2): block-level, or inline-level. -/
+  | flex | inlineFlex | grid | inlineGrid
   deriving Repr, BEq
 
 /-- Boxes that are laid out by the table layout. `inline-table` is laid out as a
@@ -45,7 +45,22 @@ def Display.isTableInternal : Display → Bool
   | .tableCaption | .tableColumn | .tableColumnGroup => true
   | _ => false
 /-- Boxes that stack in block flow: blocks and tables. -/
-def Display.isBlockLevel (d : Display) : Bool := d == .block || d.isTable
+def Display.isBlockLevel (d : Display) : Bool := d == .block || d.isTable || d == .flex || d == .grid
+/-- A flex container (CSS Flexbox 1 §3): its children are flex items. -/
+def Display.isFlex (d : Display) : Bool := d == .flex || d == .inlineFlex
+/-- A grid container (CSS Grid 2 §5.1). -/
+def Display.isGrid (d : Display) : Bool := d == .grid || d == .inlineGrid
+/-- CSS Display 3 §2.7: the display of a flex or grid item is blockified. -/
+def Display.blockified : Display → Display
+  | .inline | .inlineBlock => .block
+  | .inlineTable => .table
+  | .inlineFlex => .flex
+  | .inlineGrid => .grid
+  | .tableRowGroup | .tableHeaderGroup | .tableFooterGroup | .tableRow | .tableCell
+  | .tableCaption | .tableColumn | .tableColumnGroup => .block
+  | d => d
+/-- An inline-level flex or grid container: one atomic box on a line. -/
+def Display.isInlineContainer (d : Display) : Bool := d == .inlineFlex || d == .inlineGrid
 /-- Boxes whose contents are one block formatting context (the strut of their lines). -/
 def Display.isBlockContainer (d : Display) : Bool :=
   d == .block || d == .tableCell || d == .tableCaption
@@ -120,6 +135,16 @@ structure Computed where
   takes the room a block-level box leaves; `margin` holds 0 on such a side. -/
   autoMarginLeft : Bool := false
   autoMarginRight : Bool := false
+  /-- `margin-top: auto` and `margin-bottom: auto`: read by flex and grid layout (in block
+  flow they are 0, CSS 2.1 §10.6.3). -/
+  autoMarginTop : Bool := false
+  autoMarginBottom : Bool := false
+  /-- Box alignment, gaps and `order` (`Rendering/BoxAlign.lean`): read by flex and grid. -/
+  align : AlignStyle := {}
+  /-- The flex container and flex item values (`Rendering/FlexStyle.lean`). -/
+  flex : FlexStyle := {}
+  /-- Positioning, floats and box sizing (`Rendering/BoxPosition.lean`). -/
+  pos : PositionStyle := {}
   deriving Repr
 instance : Inhabited Computed := ⟨{}⟩
 
@@ -323,7 +348,10 @@ def declarations (s : String) : Except String (List Declaration) := do
       let key := if key == "background" then "background-color" else key
       let expanded := if ["margin","padding"].contains key then
           (expandEdges key value important).toOption.getD []
-        else [⟨key,value,important⟩]
+        else match layoutShorthand key value with
+          -- `flex`, `flex-flow`, `gap`, `place-*`: their longhands, so the cascade orders them
+          | some longhands => longhands.map fun (k,v) => ⟨k,v,important⟩
+          | none => [⟨key,value,important⟩]
       for declaration in expanded do out := declaration :: out
   return out.reverse
 
@@ -637,9 +665,12 @@ def length (s : String) : Except String Length := do
   if s.endsWith "vw" then return .vw ((← number ((s.dropEnd 2).toString))/100)
   if s.endsWith "vh" then return .vh ((← number ((s.dropEnd 2).toString))/100)
   if s == "0" then return .px 0
+  if s.startsWith "calc(" then
+    if let some l := calcLengthOfText s then return l
   throw s!"unsupported CSS length unit: {s}"
 def resolve (basis : Float) : Length → Option Float
   | .auto | .vw _ | .vh _ => none | .px n => some n | .percent n => some (basis*n)
+  | .calc p n => some (basis*p+n)
 /-- CSS Values 4 §6.2: viewport units, computed once the viewport is known. -/
 def Length.atViewport (width height : Float) : Length → Length
   | .vw n => .px (n*width).floor
@@ -717,16 +748,24 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     | "table-caption" => return {s with display := .tableCaption}
     | "table-column" => return {s with display := .tableColumn}
     | "table-column-group" => return {s with display := .tableColumnGroup}
+    | "flex" => return {s with display := .flex}
+    | "inline-flex" => return {s with display := .inlineFlex}
+    | "grid" => return {s with display := .grid}
+    | "inline-grid" => return {s with display := .inlineGrid}
     | _ => throw "unsupported CSS display"
   | "width" => return {s with width := ← length d.value}
   | "height" => return {s with height := ← length d.value}
   | "margin" => return {s with margin := ← edgeValues d.value}
   | "padding" => return {s with padding := ← edgeValues d.value}
-  | "margin-top" => return {s with margin := {s.margin with top := ← edgePixel d.value}}
+  | "margin-top" =>
+    if (trim d.value).toLower == "auto" then return {s with margin := {s.margin with top := 0}, autoMarginTop := true}
+    return {s with margin := {s.margin with top := ← edgePixel d.value}, autoMarginTop := false}
   | "margin-right" =>
     if (trim d.value).toLower == "auto" then return {s with margin := {s.margin with right := 0}, autoMarginRight := true}
     return {s with margin := {s.margin with right := ← edgePixel d.value}, autoMarginRight := false}
-  | "margin-bottom" => return {s with margin := {s.margin with bottom := ← edgePixel d.value}}
+  | "margin-bottom" =>
+    if (trim d.value).toLower == "auto" then return {s with margin := {s.margin with bottom := 0}, autoMarginBottom := true}
+    return {s with margin := {s.margin with bottom := ← edgePixel d.value}, autoMarginBottom := false}
   | "margin-left" =>
     if (trim d.value).toLower == "auto" then return {s with margin := {s.margin with left := 0}, autoMarginLeft := true}
     return {s with margin := {s.margin with left := ← edgePixel d.value}, autoMarginLeft := false}
@@ -829,7 +868,12 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     let some names := familyNames d.value | throw s!"unsupported font family syntax: {d.value}"
     if names.any (·.contains ',') then throw s!"unsupported font family syntax: {d.value}"
     return {s with fontFamily := familyValue names}
-  | _ => throw s!"unsupported CSS property: {d.property}"
+  | property =>
+    -- The values of flex and grid layout: each reader checks the property name first.
+    if let some flex := s.flex.set s.fontSize property d.value then return {s with flex}
+    if let some align := s.align.set s.fontSize property d.value then return {s with align}
+    if let some pos := s.pos.set s.fontSize property d.value then return {s with pos}
+    throw s!"unsupported CSS property: {d.property}"
 
 /-- A value or property this profile can not use leaves the style as it was. -/
 private def applyOrKeep (s : Computed) (d : Declaration) : Computed :=
@@ -1437,6 +1481,10 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
       else result := applyOrKeep result d
   -- A root or body never clips here: the window scrolls instead.
   if ["html","body"].contains n.lname then result := {result with clipOverflow := false}
+  -- The children of a flex or grid container are its items: blockified.
+  if parent.display.isFlex || parent.display.isGrid then result := {result with display := result.display.blockified}
+  -- CSS 2.1 §9.7: an absolutely positioned or floated box is a block.
+  if result.pos.isAbsolute || result.pos.float != .none then result := {result with display := result.display.blockified}
   let decoration := parent.decorationColor.orElse (fun _ => if result.underline then some result.color else none)
   return {result with underline := decoration.isSome, decorationColor := decoration}
 
@@ -1471,7 +1519,8 @@ def computeAllWith (matchesOf : Nat → List Match) (dom : Dom) (textScale : Flo
         display := .inline, width := .auto, height := .auto,
         margin := {}, padding := {}, background := none, clipOverflow := false,
         borderStyle := .none, borderWidth := ⟨3,3,3,3⟩, borderColor := none,
-        autoMarginLeft := false, autoMarginRight := false, unicodeBidi := .normal}
+        autoMarginLeft := false, autoMarginRight := false, unicodeBidi := .normal,
+        autoMarginTop := false, autoMarginBottom := false, align := {}, flex := {}, pos := {}}
       styles := styles.set! id style
       pending := n.kids.toList ++ rest
   throw "DOM style traversal exceeds arena bound"

@@ -1924,9 +1924,10 @@ from this engine's layout of its arena as it stands (`WasmVM.Hosts.Page.Reads`):
 when a read first asks, once until the DOM or the viewport changes, as a browser forces
 a layout. The layout is that of a render with the session's `layout` request. -/
 
-/-- The answer of a layout read (op 35, the hit test, is below): op 17 "x y w h left top width height" (the border box
-in the page, then the client box: inside the borders; zero for an SVG element inside an
-`svg`, which has no CSS box, CSSOM View §6); op 18 an SVG element's bounding box in its
+/-- The answer of a layout read (op 35, the hit test, is below): op 17 "x y w h left top width height parent ox oy" (the border box
+in the page, then the client box: inside the borders, then the offset parent's node
+(-1: none) and the box's corner from that parent's padding edge; eight zeros for an SVG
+element inside an `svg`, which has no CSS box, CSSOM View §6); op 18 an SVG element's bounding box in its
 user space, "x y w h" (`WebHit.boundsOf`). -/
 def readAnswer (l : Laid) (node op : Nat) : Option String :=
   let line := fun (xs : List Float) => " ".intercalate (xs.map Rendering.FloatFormat.format)
@@ -1938,10 +1939,26 @@ def readAnswer (l : Laid) (node op : Nat) : Option String :=
   | 17 =>
     match box with
     | some (x0,y0,x1,y1) =>
-      let e : Rendering.CSS.Edges := match l.styles.get with
-        | .ok styles => (styles[node]?.map (·.borderEdges)).getD {}
-        | .error _ => {}
-      some (line [x0,y0,x1-x0,y1-y0,e.left,e.top,max 0 (x1-x0-e.left-e.right),max 0 (y1-y0-e.top-e.bottom)])
+      let styles : Array Rendering.CSS.Computed := match l.styles.get with
+        | .ok styles => styles
+        | .error _ => #[]
+      let e : Rendering.CSS.Edges := (styles[node]?.map (·.borderEdges)).getD {}
+      -- CSSOM View §7: the offset parent (`Rendering.Layout.offsetParent`; -1 for none) and
+      -- the border box's corner from the padding edge of that parent, or from the page.
+      let (parent,ox,oy) : Float × Float × Float := match Rendering.Layout.offsetParent l.dom styles node with
+        | none => (-1,x0,y0)
+        | some p =>
+          match l.boxes.find? (·.source == p) with
+          | none => (-1,x0,y0)
+          | some b =>
+            -- A `body` that is not positioned is the offset parent in name only: the offsets
+            -- are from the page, as browsers have them.
+            if DOM.Dom.isHtmlElement (l.dom.get p) "body" && !(styles[p]?.map (·.pos.isPositioned)).getD false then
+              (Float.ofNat p,x0,y0)
+            else
+              let pe : Rendering.CSS.Edges := (styles[p]?.map (·.borderEdges)).getD {}
+              (Float.ofNat p,x0-b.x-pe.left,y0-b.y-pe.top)
+      some (line [x0,y0,x1-x0,y1-y0,e.left,e.top,max 0 (x1-x0-e.left-e.right),max 0 (y1-y0-e.top-e.bottom),parent,ox,oy])
     | none => match (WebHit.boundsOf l.dom l.scene node).1 with
       | some (x0,y0,x1,y1) => some (line [x0,y0,x1-x0,y1-y0,0,0,0,0])
       | none => some "0 0 0 0 0 0 0 0"

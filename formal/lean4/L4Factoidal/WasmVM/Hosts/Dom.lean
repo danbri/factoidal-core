@@ -41,6 +41,8 @@ import L4Factoidal.DOM.Selectors
 import Std.Data.HashMap
 import L4Factoidal.DOM.OfHtml
 import L4Factoidal.DOM.OfXml
+import L4Factoidal.DOM.OfXmlFull
+import L4Factoidal.DOM.XmlSerialize
 import L4Factoidal.DOM.Forms
 import L4Factoidal.WHATWG.URL.Parser
 import L4Factoidal.DOM.Shadow
@@ -819,8 +821,11 @@ namespace-well-formed, a document whose element is a `parsererror` element (in t
 namespace browsers use for it) with the parser's message. -/
 def parsererrorNS : String := "http://www.mozilla.org/newlayout/xml/parsererror.xml"
 
-def xmlDocument (contentType source : String) : Dom :=
-  let d := match parseXmlDocument source with
+def xmlDocument (contentType source : String) (forScript : Bool := false) : Dom :=
+  -- (xmlweb) `forScript`: the document of `DOMParser`, which a script reads and nothing
+  -- lays out: it keeps prefixes, namespace declarations as attributes, CDATA sections and
+  -- the comments around the document element (`DOM.parseXmlDocumentFull`).
+  let d := match (if forScript then parseXmlDocumentFull source true else parseXmlDocument source) with
     | .ok d => d
     | .error msg => Id.run do
       let d : Dom := { nodes := #[{ type := .document, doc := 0, htmlDoc := false }] }
@@ -866,22 +871,42 @@ def createKind (d : Dom) (kind : Nat) (data : String) : Res Nat :=
     ok (d.setNode doc fun n => { n with contentType := ct }, doc)
   | 9, [name, pub, sys] => d.createDocumentType doc name pub sys
   | 11, _ => ok (d.graft (parseHtmlDocument data (shadow := false)))
-  | 12, ct :: rest => ok (d.graft (xmlDocument ct ("\x00".intercalate rest)))
+  | 12, ct :: rest => ok (d.graft (xmlDocument ct ("\x00".intercalate rest) (forScript := true)))
   | 13, ns :: name :: rest => ok (L4Factoidal.DOM.Fragment.parseInto d doc ns name ("\x00".intercalate rest))
   -- 14: the same with declarative shadow roots (`setHTMLUnsafe`).
   | 14, ns :: name :: rest => ok (L4Factoidal.DOM.Fragment.parseInto d doc ns name ("\x00".intercalate rest) (shadow := true))
   | _, _ => (d, .error .invalidCharacter)
 
+/-- (xmlweb) The most bytes of a source that `DOMParser` and `XMLHttpRequest.responseXML`
+give a parser (`create_node` kinds 11 and 12): a document a page loads this way is a
+resource of its own, not a string a script wrote, so it has the bound of a document
+(16 MiB) and not `maxString`. Every other kind keeps `maxString`. -/
+def maxDocument : Nat := 16777216
+
+/-- The most bytes `create_node` reads for a kind. -/
+def createBound (kind : Nat) : Nat :=
+  if kind % 16 == 11 || kind % 16 == 12 then maxDocument else maxString
+
 def createNode (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : State × HostResult :=
-  match readStr mem st (arg args 1) (arg args 2) maxString with
+  match readStr mem st (arg args 1) (arg args 2) (createBound (arg args 0)) with
   | .error e => (s, codeOrTrap e)
   | .ok data =>
     let kind := arg args 0
-    change s (.createNode kind data 0) fun d => match createKind d kind data with
+    let made := change s (.createNode kind data 0) fun d => match createKind d kind data with
       | (d, .error e) => (d, .error e)
       | (d, .ok n) =>
         -- `createElement` of the page's own document keeps its first command form.
         changed (if kind == 3 then Command.createElement data n else Command.createNode kind data n) d n
+    -- (xmlweb) HTML §8.5.1 "DOM parsing": the document that `DOMParser` makes has the URL
+    -- of the document of the parser's global object, here the page's (`State.url`).
+    if kind % 16 == 11 || kind % 16 == 12 then
+      (match made.2 with
+       | .values #[.i32 v] =>
+         if v.toNat < 2147483648 then
+           ({ made.1 with docURLs := made.1.docURLs.push (v.toNat, made.1.url) }, made.2)
+         else made
+       | _ => made)
+    else made
 
 /-- The document of an `iframe` with no `src` (HTML §7.3.1 "about:blank"): an HTML
 document with `html`, `head` and `body` and no doctype. -/
@@ -1275,6 +1300,11 @@ def nodeQueryOf (d : Dom) (n op : Nat) (q : String) : Except Int String :=
       match (q.drop 1).toString.splitOn " " with
       | flag :: ids => .ok (L4Factoidal.DOM.Fragment.getHTML d n (flag == "1") (ids.filterMap String.toNat?))
       | [] => .ok (L4Factoidal.DOM.Fragment.getHTML d n false [])
+    -- (xmlweb) HTML §8.4.3 "fragment serializing algorithm steps": a node of an XML
+    -- document is read by the XML serialization (`DOM.XmlSerialize`), not the HTML one
+    else if (d.get n).type == .element && !(d.get (d.get n).doc).htmlDoc then
+      .ok (if q == "1" then L4Factoidal.DOM.XmlSerialize.serialize d n
+           else L4Factoidal.DOM.XmlSerialize.serializeChildren d n)
     else .ok (L4Factoidal.DOM.Fragment.serialize d n (q == "1"))
   | 30 => if !d.isSlot n then .error (-2) else
     .ok (" ".intercalate ((if q == "1" then d.findFlattenedSlottables n else d.findSlottables n).toList.map toString))

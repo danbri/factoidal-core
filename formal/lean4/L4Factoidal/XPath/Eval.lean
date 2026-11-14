@@ -76,6 +76,12 @@ structure Ctx where
       refusal — rather than an empty tree that a stylesheet would
       quietly transform into nothing. -/
   docs : List (String × Doc) := []
+  /-- The node test of a step, when the caller's data model has a rule of its own for
+      names. `none` is XPath 1.0 §2.3 (`matchesTest`), which every caller before the
+      browser's DOM used. The DOM's rule for HTML documents (an unprefixed name matches
+      HTML elements, compared in ASCII lower case) is given here by `DOM.XPathDom`;
+      the evaluator itself knows nothing of HTML. -/
+  nameTest? : Option (Doc → List (String × String) → Ax → NodeTest → Item → Bool) := none
 deriving Inhabited
 
 /-- The document a document number names (`Loc.doc`): `0` is `doc`,
@@ -272,13 +278,19 @@ def substrIndex (hay needle : String) : Option Nat := Fn.String.indexOfSub hay n
 def idAttrNamed (a : Attribute) : Bool :=
   a.name == "xml:id" || a.name.toLower == "id"
 
+/-- The ID values of an element: the values of its ID attributes (`idAttrNamed`). -/
+def idValuesOf (it : Item) : List String :=
+  (attributesOf it).filterMap (fun x =>
+    match x with
+    | .attr _ a => if idAttrNamed a then some a.value else none
+    | _         => none)
+
+/-- §5.2.1: "If two elements in a document have the same unique ID ... then the
+    second element in document order must be treated as not having a unique ID."
+    So each reference selects the FIRST element in document order that has it. -/
 def resolveIds (d : Doc) (k : Nat) (refs : List String) : List Item :=
-  normalize ((allItems d k).filter (fun it =>
-    it.kind == .element &&
-    (attributesOf it).any (fun x =>
-      match x with
-      | .attr _ a => idAttrNamed a && refs.contains a.value
-      | _         => false)))
+  let els := (allItems d k).filter (fun it => it.kind == .element)
+  normalize (refs.filterMap (fun r => els.find? (fun it => (idValuesOf it).contains r)))
 
 /-! ## The function library this module implements -/
 
@@ -413,7 +425,10 @@ partial def evalSteps (c : Ctx) (base : List Item) : List Step → Option Value
 
 partial def evalStep (c : Ctx) (it : Item) (s : Step) : Option (List Item) :=
   let d := c.docOf it
-  applyPreds c ((axisItems d s.ax it).filter (matchesTest d c.nsctx s.ax s.test))
+  let test := match c.nameTest? with
+    | some f => f d c.nsctx s.ax s.test
+    | none   => matchesTest d c.nsctx s.ax s.test
+  applyPreds c ((axisItems d s.ax it).filter test)
     s.preds
 
 /-- Apply a predicate list to a node list, in the list's own order. -/

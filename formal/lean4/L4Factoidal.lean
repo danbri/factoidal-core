@@ -1069,6 +1069,17 @@ import L4Factoidal.Net.Xhr
 import L4Factoidal.DOM.SvgValues
 import L4Factoidal.Net.Storage
 import L4Factoidal.Net.Cookies
+import L4Factoidal.PageGl.Table
+import L4Factoidal.PageGl.Idl
+import L4Factoidal.PageGl.State
+import L4Factoidal.PageGl.Api
+import L4Factoidal.WebCodecs.Format
+import L4Factoidal.WebCodecs.Layout
+import L4Factoidal.WebCodecs.Frame
+import L4Factoidal.WebCodecs.Convert
+import L4Factoidal.WebCodecs.Codec
+import L4Factoidal.WebCodecs.Config
+import L4Factoidal.WebCodecs.Api
 import L4Factoidal.Net.ReferrerPolicy
 import L4Factoidal.Net.Csp
 import L4Factoidal.Net.BlobUrls
@@ -1252,6 +1263,8 @@ import L4Factoidal.Rendering.Tests
 import L4Factoidal.Rendering.CascadeTests
 import L4Factoidal.Rendering.ReplacedTests
 import L4Factoidal.Rendering.TableLayoutTests
+import L4Factoidal.Rendering.FlexLayoutTests
+import L4Factoidal.Rendering.PositionLayoutTests
 import L4Factoidal.Rendering.Links
 import L4Factoidal.Rendering.FontDataTests
 import L4Factoidal.Rendering.FontProviderTests

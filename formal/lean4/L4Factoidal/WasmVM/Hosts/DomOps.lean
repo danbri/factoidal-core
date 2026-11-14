@@ -18,6 +18,9 @@ InvalidNodeTypeError, -14 IndexSizeError, -15 WrongDocumentError, -16 InvalidSta
 -/
 import L4Factoidal.WasmVM.Hosts.Dom
 import L4Factoidal.DOM.Reflect
+import L4Factoidal.DOM.XPath.Evaluate
+import L4Factoidal.DOM.XPath.Xslt
+import L4Factoidal.DOM.XmlSerialize
 import L4Factoidal.Rendering.CssSupports
 import L4Factoidal.Rendering.CssValues.Declaration
 import L4Factoidal.Rendering.ComputedGeneric
@@ -36,6 +39,10 @@ import L4Factoidal.HTML.TextSelection
 import L4Factoidal.DOM.FormValidity
 import L4Factoidal.DOM.Focus
 import L4Factoidal.HTML.InnerText
+import L4Factoidal.HTML.Sanitizer
+import L4Factoidal.HTML.TrustedTypes
+import L4Factoidal.HTML.ImageSource
+import L4Factoidal.HTML.FormEntries
 
 namespace L4Factoidal.WasmVM.Hosts.Dom
 open L4Factoidal.DOM L4Factoidal.DOM.Range
@@ -317,7 +324,13 @@ def contextualFragment (rid : Nat) (src : String) : Op Nat := do
       if (d.get ex.doc).htmlDoc && ex.lname == "html" && ex.ns == some htmlNS then (htmlNS, "body")
       else (ex.ns.getD "", ex.lname)
     | none => (htmlNS, "body")
-  make (.createNode (13 + 16 * doc) (ns ++ "\x00" ++ name ++ "\x00" ++ src))
+  -- The fragment is not the arena's next node (the parse's own nodes come first), so the
+  -- command records the number that the parse answers.
+  let kind := 13 + 16 * doc
+  let data := ns ++ "\x00" ++ name ++ "\x00" ++ src
+  match createKind d kind data with
+  | (_, .ok frag) => exec (.createNode kind data frag); return frag
+  | (_, .error e) => throw (domErr e)
 
 /-! ## The selection (Selection API, w3c/selection-api) -/
 
@@ -396,6 +409,37 @@ def askText : Traversal.Ask → String
       | .nextSibling => 4 | .previousNode => 5 | .nextNode => 6
     s!"f {n} {m} {w.root} {w.whatToShow} {w.current} {w.node} {w.at_}"
 
+/-- Sanitize the children of `root` (HTML §8.6.4) with the prepared configuration `c`: the
+steps that `HTML.Sanitizer.plan` decides on the parsed tree, each run as a typed command
+(`exec`), so it is recorded and the layout replay sees the same tree. A step names its
+node; the node's parent is read when the step runs, because an element that was replaced
+with its children has moved them. Then the tree is checked against the configuration and
+the root is emptied when it does not conform (`HTML.Sanitizer.sanitizeChecked` is the same
+on the arena alone, with the theorem `safe_output`). -/
+def sanitizeM (root : Nat) (safe : Bool) (c : L4Factoidal.HTML.Sanitizer.Config) : Op Unit := do
+  let steps := L4Factoidal.HTML.Sanitizer.plan (← dom) root c safe
+  for st in steps do
+    let d ← dom
+    match st with
+    | .remove n =>
+      match (d.get n).parent with
+      | some p => exec (.removeChild p n)
+      | none => pure ()
+    | .unwrap n =>
+      match (d.get n).parent with
+      | some p =>
+        for k in (d.get n).kids do
+          exec (.insertBefore p k (some n))
+        exec (.removeChild p n)
+      | none => pure ()
+    | .dropAttr n ns l => exec (.removeAttributeNS n (ns.getD "") l)
+  -- the check after the walk (`HTML.Sanitizer.conforms`): a root whose content does not
+  -- conform to the configuration is emptied, so nothing the walk missed reaches the page
+  let d ← dom
+  if !L4Factoidal.HTML.Sanitizer.conforms d root c safe then
+    for k in (d.get root).kids do
+      exec (.removeChild root k)
+
 /-- Op `op` of `node_query` from 100, on the node or range number `id`, with argument `q`.
 
 Ranges: 100 a new range of document `id` (its number); 101 the range: "startNode
@@ -445,7 +489,11 @@ elements); 186 form owner, form elements, options, selected options, labels, lab
 and selectedness (`DOM.FormControls.answer`); 187 the range and selection of `setRangeText`
 (`HTML.TextSelection.answer`); 188 an input's typed value and constraint validation
 (`DOM.FormValidity.answer`); 189 the node that `focus()` focuses (`DOM.Focus.answer`); 191
-the text of `innerText` for collected items (`HTML.InnerText.answer`). -/
+the text of `innerText` for collected items (`HTML.InnerText.answer`); 192 the methods of a
+Sanitizer (`HTML.Sanitizer.answer`); 194 the decisions of Trusted Types
+(`HTML.TrustedTypes.answer`); 195 the image source an `img` selects
+(`HTML.ImageSource.answer`); 196 the entry list of a form (`HTML.FormEntries.answer`). One op changes the tree: 193 sanitizes the children of
+node `id` (`sanitizeM`). -/
 def domOpM (id op : Nat) (q : String) : Op String := do
   let xs := nums q
   let d ← dom
@@ -522,6 +570,33 @@ def domOpM (id op : Nat) (q : String) : Op String := do
       return ""
     | _ => throw (-2)
   | 120 => let n ← nodeArg d id; return toString (← splitText n (num xs 0).toNat)
+  -- ==== xmlweb (ops 121 to 129): DOM XPath (DOM §8; `DOM.XPathDom`), read-only ====
+  -- 121: the namespace prefixes that expression `q` uses, in the order written and
+  -- separated by U+0001, or "!SyntaxError" when `q` is not an XPath 1.0 expression
+  | 121 => return L4Factoidal.DOM.XPathDom.prefixesAnswer q
+  -- 122: `document.evaluate` with context node `id`: `q` is the expression, the result
+  -- type, the context attribute (or nothing) and the resolver's bindings, separated by
+  -- U+0001 (`DOM.XPathDom.answer`); the answer is the result type and the value or the
+  -- nodes, or "!" and the name of the exception
+  | 122 =>
+    let n ← nodeArg d id
+    return L4Factoidal.DOM.XPathDom.answer d n q
+  -- 123: the number of changes of the arena so far (`State.changes`): an XPathResult
+  -- iterator is invalid once it differs from the number at its evaluation
+  | 123 => return toString (← get).changes
+  -- 124: `XMLSerializer.serializeToString` of node `id` (DOM Parsing §3.2 "XML
+  -- serialization", `DOM.XmlSerialize.serialize`)
+  | 124 =>
+    let n ← nodeArg d id
+    return L4Factoidal.DOM.XmlSerialize.serialize d n
+  -- 127: `XSLTProcessor` (`DOM.XsltDom.transformAnswer`): transform the tree under node `q`
+  -- with the stylesheet under node `id` by the engine's XSLT 1.0 processor; "1", the output
+  -- method, U+0001 and the serialised result, or "0" and the reason it refused
+  | 127 =>
+    let style ← nodeArg d id
+    let source ← nodeArg d (num xs 0)
+    return L4Factoidal.DOM.XsltDom.transformAnswer d style source
+  -- ==== end of xmlweb ====
   | 130 =>
     let n ← nodeArg d id
     let s ← get
@@ -767,7 +842,11 @@ def domOpM (id op : Nat) (q : String) : Op String := do
     | some (el, _) =>
       if !frameAccessible st el then throw (-2)
       return ((st.docURLs.find? (·.1 == id)).map (·.2)).getD "about:blank"
-    | none => throw (-2)
+    | none =>
+      -- (xmlweb) a document that `DOMParser` made: the URL recorded at its parse
+      match st.docURLs.find? (·.1 == id) with
+      | some (_, u) => return u
+      | none => throw (-2)
   | 172 =>
     -- the encoding name of frame document `id` the page may reach (`characterSet`), as the
     -- embedder's decode named it; UTF-8 when it did not say
@@ -828,6 +907,25 @@ def domOpM (id op : Nat) (q : String) : Op String := do
     return L4Factoidal.DOM.Focus.answer d n q
   -- 191: the text of `innerText` for the collected items `q` (`HTML.InnerText.answer`)
   | 191 => return L4Factoidal.HTML.InnerText.answer q
+  -- 192: the methods of a Sanitizer and the preparation of a configuration
+  -- (`HTML.Sanitizer.answer`): `q` is the method, U+0000, the configuration, U+0000, an argument
+  | 192 => return L4Factoidal.HTML.Sanitizer.answer q
+  -- 193: sanitize the children of node `id` (the fragment or document that `setHTML`,
+  -- `parseHTML` or a method with a `sanitizer` option parsed): `q` is "1" for the safe
+  -- methods, U+0000, the prepared configuration
+  | 193 =>
+    let n ← nodeArg d id
+    match q.splitOn "\x00" with
+    | [safe, w] =>
+      sanitizeM n (safe == "1") (L4Factoidal.HTML.Sanitizer.parseConfig w)
+      return ""
+    | _ => throw (-2)
+  -- 194: the decisions of Trusted Types for document `id` (`HTML.TrustedTypes.answer`)
+  | 194 => return L4Factoidal.HTML.TrustedTypes.answer d id q
+  -- 195: the image an `img` element asks for (`HTML.ImageSource.answer`)
+  | 195 => let n ← nodeArg d id; return L4Factoidal.HTML.ImageSource.answer d n q
+  -- 196: the entry list of form `id` for `new FormData(form, submitter)` (`HTML.FormEntries.answer`)
+  | 196 => let n ← nodeArg d id; return L4Factoidal.HTML.FormEntries.answer d n q
   -- ==== end of domhtml ====
   | _ => throw (-2)
 
