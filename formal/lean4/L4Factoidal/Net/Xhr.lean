@@ -19,6 +19,7 @@ sequence sees the state of that point. `Ev.setState`, `.guardDone` and `.startFe
 the steps that are not events, in the place the standard has them.
 -/
 import L4Factoidal.Net.PageFetch
+import L4Factoidal.Net.BlobUrls
 import L4Factoidal.WHATWG.Encoding.Core
 
 namespace L4Factoidal.Net.Xhr
@@ -80,6 +81,8 @@ structure State where
   /-- The embedder turned the network on (`network:true`). -/
   enabled : Bool := false
   page : Page := Page.ofUrl ""
+  /-- The blob URLs of the session (`URL.createObjectURL`), each its origin's (`Net.BlobUrls`). -/
+  blobs : L4Factoidal.Net.BlobUrls.Store := {}
   xhrs : Array Xhr := #[]
   /-- Fetches the host has not answered: its id, the object's handle, and its transfer. -/
   live : Array (Nat × Nat × Transfer) := #[]
@@ -107,6 +110,11 @@ structure State where
   no `"document"` response type outside one. -/
   window : Bool := true
   deriving Inhabited
+
+/-- For a `blob:` URL: the type and bytes that a request of this page reads, from the entry
+its own origin made (`BlobUrls.resolve`: another origin's URL gives nothing). -/
+def State.blobOf (s : State) (url : String) : Option (String × ByteArray) :=
+  if url.startsWith "blob:" then (L4Factoidal.Net.BlobUrls.resolve s.blobs s.page.origin url).map fun e => (e.type, e.body) else none
 
 /-- A page's objects (each handle is its index plus one). -/
 def maxObjects : Nat := 65536
@@ -232,7 +240,7 @@ this mode (the steps "if xhr's synchronous flag is unset" hold it). -/
 def syncSend (s : State) (h : Nat) (x : Xhr) : State × Except Int String :=
   let id := s.nextTransfer
   let s := { s with nextTransfer := id + 1 }
-  let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred, sameOriginOnly := x.sameOnly }
+  let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred, sameOriginOnly := x.sameOnly, blob := s.blobOf x.url }
   let (s, out) := syncFetch s t
   match out with
   | .need => (s.set h { x with events := #[] }, .error errNeedHost)
@@ -289,7 +297,7 @@ def beginFetch (s : State) (h : Nat) (x : Xhr) : State :=
   if x.state != 1 || !x.sendFlag then s else
   let id := s.nextTransfer
   let s := { s with nextTransfer := id + 1 }
-  let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred, sameOriginOnly := x.sameOnly }
+  let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred, sameOriginOnly := x.sameOnly, blob := s.blobOf x.url }
   match plan t with
   | .send t' w => (s.set h { x with transfer := some id }) |> fun s => { s with live := s.live.push (id, h, t'), outbox := s.outbox.push w }
   | .deliver _ r => s.set h { x with deferred := some r }
@@ -713,5 +721,20 @@ no `XMLHttpRequest` and no request can be sent. Does not say: anything else of o
 theorem op_off (s : State) (c : Nat) (fs : Array ByteArray) (h : s.enabled = false) :
     op s c fs = (s, .error (-2)) := by
   simp [op, h]
+
+/-- Kind: security invariant (blob URLs). Says: the bytes a request of this page reads for a
+`blob:` URL are those of an entry that the page's own origin made: no page reads another
+origin's blob through its URL. Does not say: anything of `http` requests (`Net.PageFetch`). -/
+theorem blobOf_own (s : State) (url : String) (r : String × ByteArray) (h : s.blobOf url = some r) :
+    ∃ e, L4Factoidal.Net.BlobUrls.resolve s.blobs s.page.origin url = some e ∧
+      e.origin = s.page.origin ∧ r = (e.type, e.body) := by
+  unfold State.blobOf at h
+  split at h
+  · cases hr : L4Factoidal.Net.BlobUrls.resolve s.blobs s.page.origin url with
+    | none => simp [hr] at h
+    | some e =>
+      simp [hr] at h
+      exact ⟨e, rfl, L4Factoidal.Net.BlobUrls.resolve_origin _ _ _ _ hr, h.symm⟩
+  · simp at h
 
 end L4Factoidal.Net.Xhr

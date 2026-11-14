@@ -588,6 +588,20 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
     else if 80 ≤ code && code < 86 then
       let (storage, r) := L4Factoidal.Net.Storage.op s.storage s.net.page.origin code fs
       ({ s with storage }, r)
+    -- Blob URLs (File API §8.3): 90 `createObjectURL(type, bytes)`, 91 `revokeObjectURL(url)`.
+    -- The store is the network state's and names each URL's origin (the session's page
+    -- origin, never an argument); the UUID is drawn here.
+    else if code == 90 then
+      match randomBytes s 16 with
+      | .error e => (s, .error e)
+      | .ok (r, s) =>
+        match L4Factoidal.Net.BlobUrls.add s.net.blobs s.net.page.origin (Crypto.WebCrypto.uuidOf r)
+            ((strArg fs 0).toOption.getD "") (bytesArg fs 1) with
+        | some (blobs, url) => ({ s with net := { s.net with blobs } }, ofStr url)
+        | none => (s, .error (-5))
+    else if code == 91 then
+      ({ s with net := { s.net with blobs :=
+          L4Factoidal.Net.BlobUrls.revoke s.net.blobs s.net.page.origin ((strArg fs 0).toOption.getD "") } }, ofStr "")
     -- The Fetch API's rules: MIME type of a body, `Headers` validation, a `Request`'s method.
     else if 86 ≤ code && code < 90 then pure' (L4Factoidal.Net.FetchRules.op code fs)
     else pure' (.error (-2))

@@ -2227,6 +2227,10 @@
   for (const C of [Element, Document, DocumentFragment]) unscopable(C, ['prepend', 'append', 'replaceChildren']);
   for (const C of [Element, CharacterData, DocumentType]) unscopable(C, ['before', 'after', 'replaceWith', 'remove']);
   addHandlers(HTMLElement.prototype); addHandlers(Document.prototype); addHandlers(SVGElement.prototype);
+  // ElementCSSInlineStyle (CSSOM §7.1) and HTMLOrSVGElement (HTML §3.2.6): an SVG element has
+  // `style`, `dataset`, `focus` and `blur` as an HTML element has them.
+  for (const k of ['style', 'dataset', 'focus', 'blur'])
+    Object.defineProperty(SVGElement.prototype, k, Object.getOwnPropertyDescriptor(HTMLElement.prototype, k));
   protoOf = (id, t) => {
     switch (t) {
       case 1: {
@@ -3897,6 +3901,23 @@
       if (k !== 'origin') d.set = function (v) { setter(this, k, v); };
       Object.defineProperty(URL.prototype, k, d);
     });
+    // File API §8.3: blob URLs. The store, its bounds and who may read a URL (its own origin
+    // only) are Lean's (Net/BlobUrls.lean, web_api ops 90 and 91); a request for one is
+    // answered in Lean (Net/PageFetch.lean blobStep).
+    if (apiCall(91, ['']) !== -2) {
+      define(URL, 'createObjectURL', function createObjectURL(blob) {
+        if (arguments.length < 1) throw new TypeError("Failed to execute 'createObjectURL' on 'URL': 1 argument required, but only 0 present.");
+        const b = blobs.get(blob);
+        if (!b) throw new TypeError("Failed to execute 'createObjectURL' on 'URL': parameter 1 is not of type 'Blob'.");
+        const r = apiCall(90, [b.type, b.bytes]);
+        if (typeof r !== 'string') throw new DOMException("Failed to execute 'createObjectURL' on 'URL': too many blob URLs, or no entropy", 'QuotaExceededError');
+        return r;
+      });
+      define(URL, 'revokeObjectURL', function revokeObjectURL(url) {
+        if (arguments.length < 1) throw new TypeError("Failed to execute 'revokeObjectURL' on 'URL': 1 argument required, but only 0 present.");
+        apiCall(91, [usv(url)]);
+      });
+    }
     setTag(URL, 'URL');
     return URL;
   });

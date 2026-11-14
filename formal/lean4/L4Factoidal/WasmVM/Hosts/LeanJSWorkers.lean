@@ -191,7 +191,8 @@ owner's policy for the worker's URL (`PageFetch.Page.forWorker`: the owner's ori
 opaque for a `data:` worker; always the owner's local, secure and `hostCors` rules); sync
 requests by undo and redo of the worker's run (`syncCache`: the answers so far). -/
 def workerNet (owner : Net.Xhr.State) (url : String) (syncCache : Array Net.PageFetch.Answer) : Net.Xhr.State :=
-  { enabled := owner.enabled, page := owner.page.forWorker url, syncOk := true, syncAnswers := syncCache, window := false }
+  { enabled := owner.enabled, page := owner.page.forWorker url, syncOk := true, syncAnswers := syncCache, window := false,
+    blobs := owner.blobs }
 
 /-- The host of a new worker: an empty arena, the page's clock and clock rate, its own
 fresh entropy (`Agents.entropy`), so a worker's random values and keys owe nothing to the

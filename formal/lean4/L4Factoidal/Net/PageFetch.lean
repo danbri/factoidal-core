@@ -291,6 +291,9 @@ structure Transfer where
   sameOriginOnly : Bool := false
   /-- The host name (lowercase) and the address chosen for it (`Egress.choose`). -/
   pin : Option (String × String) := none
+  /-- For a `blob:` URL: the type and bytes of the entry that the page's own origin made
+  for it (`Net.BlobUrls.resolve`, given by `Net.Xhr`); `none` when there is none. -/
+  blob : Option (String × ByteArray) := none
   deriving Inhabited
 
 /-- The header `name` of a field list (`none` when absent). -/
@@ -444,9 +447,23 @@ def dataStep (t : Transfer) : Step :=
     .deliver t { status := 200, statusText := "OK", url := t.url, headers := [("Content-Type", mime)], body := b }
   | none => .fail "bad data: URL"
 
-/-- Plan the current URL: a `data:` URL is answered here, every other goes to `planNet`. -/
+/-- A `blob:` URL (File API §8.3; Fetch §4.2 "scheme fetch"), answered here from the entry
+that the page's own origin made (`Transfer.blob`): only `GET`, and only as the first URL of a
+request (a redirect to it is a network error). -/
+def blobStep (t : Transfer) : Step :=
+  if t.redirects != 0 || t.method != "GET" then .fail "blob: URL refused" else
+  match t.blob with
+  | some (type, b) =>
+    .deliver t { status := 200, statusText := "OK", url := t.url,
+                 headers := [("Content-Type", type), ("Content-Length", toString b.size)], body := b }
+  | none => .fail "blob: URL not found"
+
+/-- Plan the current URL: a `data:` or `blob:` URL is answered here, every other goes to
+`planNet`. -/
 def plan (t : Transfer) : Step :=
-  if t.url.startsWith "data:" then dataStep t else planNet t
+  if t.url.startsWith "data:" then dataStep t
+  else if t.url.startsWith "blob:" then blobStep t
+  else planNet t
 
 /-- A field a page never reads (Fetch §2.2.2 "forbidden response-header name"). -/
 def forbiddenResponseHeader (name : String) : Bool :=
@@ -587,8 +604,9 @@ theorem emit_reach {t t' : Transfer} {w w' : Wire} (h : emit t w = .send t' w') 
   · simp [wireReach, Transfer.resolveWire]
   · exact ⟨hr, rfl⟩
 
-/-- Kind: lemma. Says: a `data:` URL never makes `plan` send anything: every request `plan`
-sends is `planNet`'s. -/
+/-- Kind: lemma. Says: a `data:` or `blob:` URL never makes `plan` send anything (it is
+answered in the engine, so the host is told nothing of it): every request `plan` sends is
+`planNet`'s. -/
 theorem plan_send_net {t t' : Transfer} {w : Wire} (h : plan t = .send t' w) : planNet t = .send t' w := by
   unfold plan at h
   split at h
@@ -596,7 +614,12 @@ theorem plan_send_net {t t' : Transfer} {w : Wire} (h : plan t = .send t' w) : p
     split at h
     · simp at h
     · split at h <;> simp at h
-  · exact h
+  · split at h
+    · unfold blobStep at h
+      split at h
+      · simp at h
+      · split at h <;> simp at h
+    · exact h
 
 /-- Kind: policy theorem. Says: `plan` tells the host to make a request only when the current
 URL passes `mayConnect` for the page, on the same string the host gets (`Wire.url = t.url`),
