@@ -1979,7 +1979,8 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
   let n := dom.get id
   let block := ["html","body","div","p","section","main","article","header","footer","nav","aside",
     "h1","h2","h3","h4","h5","h6","ul","ol","li","dir","menu","dl","dt","dd","pre","listing","xmp","plaintext",
-    "blockquote","address","center","hr","form","fieldset","figure","figcaption"].contains n.lname
+    "blockquote","address","center","hr","form","fieldset","figure","figcaption",
+    "details","summary","hgroup","search"].contains n.lname
   -- HTML §15.3.1 and §6.12 (the user agent's `dialog:not([open])` and
   -- `[popover]:not(:popover-open)` rules, `display: none`): a dialog that is not open and a
   -- popover that is not showing (`Node.states` bit 1) start as not rendered, as the elements
@@ -1993,7 +1994,16 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     -- author rule for `display` wins, as over any user agent rule). It was not read: gov.uk's
     -- cookie notice showed the paragraphs of both of its answers.
     (n.ns == some DOM.htmlNS && ((n.lname == "dialog" && !hasAttr "open") || (hasAttr "popover" && n.states % 2 == 0) ||
-      hasAttr "hidden"))
+      hasAttr "hidden")) ||
+    -- HTML §15.5.4 (the `details` element): the content of a `details` that is not open,
+    -- all but its first `summary` child, is not rendered. It was drawn open.
+    (match n.parent with
+      | some p =>
+        let d := dom.get p
+        d.ns == some DOM.htmlNS && d.lname == "details" && !(d.attrs.any fun a => a.ns.isNone && a.lname == "open") &&
+          !(n.lname == "summary" &&
+            (d.kids.toList.find? fun k => (dom.get k).type == .element && (dom.get k).lname == "summary") == some id)
+      | none => false)
   let svgViewport := n.ns == some DOM.svgNS && n.lname == "svg"
   let svgOverflow := attrValue n "overflow"
   let scale := headingScale n.lname

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>What is not rendered</title>
+<style>
+body{margin:16px;font-family:sans-serif;font-size:16px}
+h1{font-size:20px;margin:0 0 8px 0}
+p,summary{margin:0 0 4px 0;padding:4px 8px;background-color:#2e7d32;color:#ffffff}
+.bad{background-color:#c62828}
+.shown{display:block}
+</style></head><body>
+<h1>What is not rendered: every line is green; a red line is content that should not be drawn</h1>
+<p>A paragraph with no attribute</p>
+<p class="bad" hidden>RED: an element with the hidden attribute</p>
+<p class="shown" hidden>An element with hidden and an author rule display: block is drawn</p>
+<noscript><p class="bad">RED: the content of noscript, drawn though scripts run</p></noscript>
+<details><summary>The summary of a closed details</summary><p class="bad">RED: the content of a closed details</p></details>
+<details open><summary>The summary of an open details</summary><p>The content of an open details</p></details>
+<p id="late" class="bad" hidden>RED: hidden was removed by a script, then set again</p>
+<p id="shown-late" hidden>A script removed hidden from this paragraph</p>
+<script>
+document.getElementById('shown-late').hidden=false;
+var late=document.getElementById('late');late.hidden=false;late.hidden=true;
+</script>
+</body></html>

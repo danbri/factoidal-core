@@ -329,6 +329,12 @@ private def page := "<p><a id='a' href='u'><span id='s'>AA</span></a> <a id='b'>
 #guard ((stateAt "<body><p id=h hidden=''>x</p></body>" "p{color:red}" "h").toOption.map (·.display == .none)) == some true
 #guard ((stateAt "<body><p id=h hidden>x</p></body>" "p{display:block}" "h").toOption.map (·.display == .block)) == some true
 #guard ((stateAt "<body><p id=h>x</p></body>" "" "h").toOption.map (·.display == .block)) == some true
+-- `details`: closed, only its first `summary` is rendered; open, all of it. `details` and `summary` are blocks.
+#guard ((stateAt "<details><summary id=s>S</summary><p id=c>hidden</p></details>" "" "c").toOption.map (·.display == .none)) == some true
+#guard ((stateAt "<details><summary id=s>S</summary><p id=c>hidden</p></details>" "" "s").toOption.map (·.display == .block)) == some true
+#guard ((stateAt "<details><summary>S</summary><summary id=t>second</summary></details>" "" "t").toOption.map (·.display == .none)) == some true
+#guard ((stateAt "<details open><summary>S</summary><p id=c>shown</p></details>" "" "c").toOption.map (·.display == .block)) == some true
+#guard ((stateAt "<details id=d><summary>S</summary></details>" "" "d").toOption.map (·.display == .block)) == some true
 -- An unknown pseudo-class drops its rule; the other rules stand.
 #guard ((stateAt page "a:focus{color:red} a{color:green}" "a" (active := some "a")).toOption.map (rgb255 ·.color)) == some (0,128,0)
 -- HTML §15.5.4: a button is an inline-block with a raised border; pressed, it is sunken and darker.
