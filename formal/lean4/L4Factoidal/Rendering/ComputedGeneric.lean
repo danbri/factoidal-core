@@ -71,6 +71,12 @@ def cascaded (v : View) (id : Nat) (p : String) : Option String := Id.run do
       | some value => some (key, value)
       | none => best
     else best
+  -- MathML hook (`Rendering/Math/Attributes.lean`): the user agent declarations of MathML
+  -- Core appendix A and the attributes mapped to CSS, before the rules, as in
+  -- `CSS.computedFrom`; for an element in the MathML namespace only.
+  if n.ns == some DOM.mathmlNS then
+    for h in Math.hints v.dom id do
+      best := consider best h.level.key ⟨h.property, h.value, h.level == .uaImportant⟩
   for (origin, rule, matched) in v.matchesOf id do
     let specificity := matched.foldl (fun m s =>
       if keyLE [m.1, m.2.1, m.2.2] [s.specificity.1, s.specificity.2.1, s.specificity.2.2] then s.specificity else m) (0, 0, 0)
@@ -194,6 +200,9 @@ def depthBound : Nat := 256
 shorthand put together from its longhands, or a shorthand that is kept whole. -/
 def computedOf (v : View) (id : Nat) (property : String) : String :=
   let p := CssValues.propertyName property
+  -- MathML hook: the computed `math-depth` is the integer the layout profile computed
+  -- (`auto-add` and `add()` are resolved against the parent there).
+  if p == "math-depth" then toString (v.styles[id]?.getD {}).mathDepth else
   match CssValues.lookup p with
   | none => if CssValues.isCustom p then computedLonghand v depthBound id p else ""
   | some row =>
