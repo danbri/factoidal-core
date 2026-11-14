@@ -341,6 +341,23 @@ def reqGuard (dbs : List (String × Db)) (l : Live) (tx store : Nat) (index : Op
       else if write && t.mode == .ro then .error "ReadOnlyError"
       else .ok (t, s)
 
+/-- Kind: order of exceptions (§4.4 and the request methods' first steps). Says: a store
+handle of a finished transaction whose store is not in its database (deleted, or created
+by a transaction that aborted) answers `InvalidStateError`, before any "not active" check. -/
+theorem reqGuard_ended_deleted (dbs : List (String × Db)) (l : Live) (tx store : Nat) (index : Option Nat) (write : Bool)
+    (name : String) (ht : l.txn? tx = none) (he : l.ended.find? (·.1 == tx) = some (tx, name))
+    (hs : get ((get dbs name).getD {}).stores store = none) :
+    reqGuard dbs l tx store index write = .error "InvalidStateError" := by
+  simp [reqGuard, ht, he, hs]
+
+/-- Kind: order of exceptions. Says: a handle of a finished transaction whose store is still
+in its database answers `TransactionInactiveError` (when no index is named). -/
+theorem reqGuard_ended_inactive (dbs : List (String × Db)) (l : Live) (tx store : Nat) (write : Bool)
+    (name : String) (s : Store) (ht : l.txn? tx = none) (he : l.ended.find? (·.1 == tx) = some (tx, name))
+    (hs : get ((get dbs name).getD {}).stores store = some s) :
+    reqGuard dbs l tx store none write = .error "TransactionInactiveError" := by
+  simp [reqGuard, ht, he, hs]
+
 /-- The clone of a value is over: the transaction that waited for it is active again. -/
 def Live.uncloning (l : Live) (tx : Nat) (isPut : Bool) : Live :=
   match l.txn? tx with
