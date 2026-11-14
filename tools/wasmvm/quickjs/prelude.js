@@ -4244,6 +4244,66 @@
   });
   const st_xhr = x => xhrState.get(x);
 
+  // ---- Origin (HTML §7.5 "Origin.from", the Origin interface) -----------------------------
+  // An object for an origin: a tuple origin by its serialization, or an opaque origin that is
+  // only itself. The origin of a URL is Lean's (the URL parser, web_api op 10); the page's is
+  // the one of its URL. isSameSite needs registrable domains: there is no public suffix list
+  // in this build, so it answers only what does not need one and throws for two different hosts.
+  lazy('Origin', () => {
+    const origins = new WeakMap();   // Origin -> { tuple: serialization } | { } (opaque: its identity)
+    const what = "Failed to execute 'from' on 'Origin'";
+    const internal = (o, name) => { const v = origins.get(o); if (!v) throw new TypeError(`Failed to execute '${name}' on 'Origin': Illegal invocation`); return v; };
+    const made = v => { const o = Object.create(Origin.prototype); origins.set(o, v); return o; };
+    const ofUrl = text => { const p = urlFields(String(text)); if (p === null) throw new TypeError(`${what}: not a URL`); return p[1] === 'null' ? {} : { tuple: p[1] }; };
+    class Origin {
+      constructor() { origins.set(this, {}); }
+      static from(value) {
+        if (typeof value === 'string') return made(ofUrl(value));
+        if (value === null || (typeof value !== 'object' && typeof value !== 'function')) throw new TypeError(`${what}: the value has no origin`);
+        if (origins.has(value)) return made(origins.get(value));
+        // this global: the page's or worker's own origin
+        if (value === globalThis) return made(ofUrl(href));
+        // a same-origin frame's window shares this realm and its origin; a window of another origin has none to give
+        if (frameOfWindow.has(value)) return made(ofUrl(href));
+        if (typeof globalThis.URL === 'function' && value instanceof globalThis.URL) return made(ofUrl(value.href));
+        if (ids.has(value) && value !== window) {
+          const id = ids.get(value);
+          if (info(id, 0) === 1 && (str(id, 0) === 'a' || str(id, 0) === 'area')) {
+            // HTML a and area, and SVG a: the origin of the URL its href names
+            const html = info(id, 8) === 1;
+            const raw = html ? n.attr(id, 'href') : str(id, 2) === 'http://www.w3.org/2000/svg' && str(id, 0) === 'a' ? (value.getAttribute('href') ?? value.getAttributeNS('http://www.w3.org/1999/xlink', 'href')) : null;
+            if (typeof raw === 'string') { const u = resolveURL(raw, value.baseURI || href); if (u !== null) return made(ofUrl(u)); }
+          }
+          throw new TypeError(`${what}: the element has no URL`);
+        }
+        // a message the user agent delivered: its sender's origin
+        if (value instanceof MessageEvent && state(value).trusted && typeof value.origin === 'string' && value.origin !== '') return made(value.origin === 'null' ? {} : ofUrl(value.origin));
+        throw new TypeError(`${what}: the value has no origin`);
+      }
+      get opaque() { return internal(this, 'opaque').tuple === undefined; }
+      isSameOrigin(other) {
+        const a = internal(this, 'isSameOrigin'), b = origins.get(other);
+        if (!b) throw new TypeError("Failed to execute 'isSameOrigin' on 'Origin': parameter 1 is not of type 'Origin'");
+        return a === b || (a.tuple !== undefined && a.tuple === b.tuple);
+      }
+      isSameSite(other) {
+        const a = internal(this, 'isSameSite'), b = origins.get(other);
+        if (!b) throw new TypeError("Failed to execute 'isSameSite' on 'Origin': parameter 1 is not of type 'Origin'");
+        if (a === b) return true;
+        if (a.tuple === undefined || b.tuple === undefined) return false;
+        const pa = urlFields(a.tuple), pb = urlFields(b.tuple);
+        if (pa === null || pb === null || pa[2] !== pb[2]) return false;
+        if (pa[6] === pb[6]) return true;
+        throw new DOMException("Failed to execute 'isSameSite' on 'Origin': two hosts need a public suffix list, which this build does not have", 'NotSupportedError');
+      }
+    }
+    for (const k of ['opaque', 'isSameOrigin', 'isSameSite'])
+      Object.defineProperty(Origin.prototype, k, { ...Object.getOwnPropertyDescriptor(Origin.prototype, k), enumerable: true });
+    Object.defineProperty(Origin, 'from', { ...Object.getOwnPropertyDescriptor(Origin, 'from'), enumerable: true });
+    setTag(Origin, 'Origin');
+    return Origin;
+  });
+
   // ==== SVG DOM (SVG 2 §4 "Basic data types and interfaces" and the element interfaces) ======
   // One table (`svgSpec`) names each element interface, its parent, its elements and the
   // attributes it reflects with their kinds; one implementation serves each kind of animated
