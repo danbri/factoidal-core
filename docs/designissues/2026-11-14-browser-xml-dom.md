@@ -107,4 +107,63 @@ MEASURED_PLACEHOLDER
 
 ## Proved / tested only / open
 
-PTO_PLACEHOLDER
+Proved (`L4Factoidal/DOM/XPath/Theorems.lean`; PROOF_STATUS):
+
+- `projNode_element`: with fuel left, the projection of an element is an element whose
+  children are the projections of its XPath children, one for one and in order.
+- `projNode_child`: child index `i` of a projected element names the projection of the
+  `i`-th XPath child of the DOM element, and nothing exactly when there is no such child.
+  The evaluator reads children only by this index (`childrenOf`), and `descendant`,
+  `following`, `preceding` and document order are functions of the addresses it gives.
+- `xkids_not_doctype`: a DocumentType is never a node of the projection.
+- `nodeAtPath_nil`, `nodeAtPath_cons`, `domOfPath_rooted`: the map from an address to a DOM
+  node reads the same child lists as the projection, index by index.
+- `refOfItem_ns`: a namespace node maps to no DOM node.
+
+Tested only (`#guard` in the same module, and the WPT runs above):
+
+- evaluation through the adapter on small arenas: child, descendant, attribute, parent,
+  following, preceding, the document order of a union, result types and errors;
+- `pathOf` and `domOfPath` are inverse on the test arena (not proved: it needs the arena
+  invariant that a node's `parent` lists it among its `kids`);
+- the HTML name test (the cases of WPT `text-html-elements.html`, `text-html-attributes.html`);
+- the prefixes of an expression;
+- the XML serialization (cases of WPT `XMLSerializer-serializeToString.html`);
+- the script-facing XML document builder (prefix, declarations, CDATA; round trip through
+  the serialization);
+- `XPath.Full.normalize` after its one-pass rewrite, `id()` with duplicate IDs, non-ASCII
+  names: by the suites only.
+
+Open:
+
+- No theorem yet that evaluating on the projection equals evaluating through a direct tree
+  interface (there is no such interface); the statement proved is the one the projection
+  makes true locally (children, order, addresses). A theorem that `pathOf` inverts
+  `domOfPath` on well-formed arenas is the next step.
+- The fuel of `projNode` (`d.size + 1`) is not proved to exceed the depth of every tree of a
+  well-formed arena.
+- Adjacent Text nodes are separate XPath nodes (XPath 1.0 has maximal text nodes); CDATASection
+  nodes are text nodes of the evaluator.
+- A root that is not a Document or DocumentFragment (a detached element): `/` selects a
+  document node that is no DOM node, so `/` gives nothing and `/*` gives the root element.
+- Namespaces of a DOM tree that no XML document can spell (an element and its attribute
+  using one prefix for two namespaces; an attribute with a namespace and no prefix gets a
+  made prefix, which `name()` shows).
+- `count(namespace::*)` counts the evaluator's namespace nodes although the page can get none.
+- Cost: `XPath.Full` is quadratic in places (`followingOf`, `descendantsOf` per step), and each
+  name test walks the declarations from the root (`scopeAtPath`). Fine for the suites; a page
+  that evaluates over a large document needs the evaluator's axes made linear.
+- XSLT: parameters do not reach the stylesheet; `key`, `format-number` and
+  `unparsed-entity-uri` are not implemented (3 subtests of `functions.tentative`); output
+  method `html` gives the HTML parser XML-serialised text, so an empty non-void element
+  (`<div/>`) reads as an open tag; `xsl:import`/`xsl:include` load nothing; `<?xml-stylesheet?>`
+  in a page is the lab's existing path (`WebXslt`), not changed here.
+- XML serialization: the require well-formed flag (the InvalidStateError cases of `innerHTML`
+  in XML documents) is not implemented; two choices against the letter of the specification
+  are stated in the module.
+- XML fragment parsing: `innerHTML` and `outerHTML` setters, `insertAdjacentHTML` and
+  `createContextualFragment` in an XML document still use the HTML fragment parser.
+- `DOMParser` documents: the document type declaration is not kept; the URL recorded is the
+  page's URL at load (`State.url`), which `history.pushState` does not change; a parser of
+  another frame's realm is not supported.
+- Cross-realm tests of `domxpath/` need a frame's window objects in the parent's realm.
