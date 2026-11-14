@@ -477,7 +477,11 @@ async function main() {
     // A turn that draws a page canvas is activity: no idle check (a Lean frame drawn again
     // with probes, which held up the next turns) while the page animates its canvas.
     if(turn.gpu?.length){gpuTurns.push({page:turn.gpuPage!,commands:turn.gpu});gpuFlush();lastActivity=Math.max(lastActivity,performance.now());}
-    if(page.applyTurn(turn)&&page===document)dirty=true;
+    if(page.applyTurn(turn)){
+      if(page===document)dirty=true;
+      // What elements made or changed by the turn ask for (a sheet, an image): fetched, then drawn.
+      page.fetchAdded?.(()=>{if(page===document)dirty=true;});
+    }
     if(turn.fetches?.length&&page.script)workerFetches(page,turn.fetches);
   };
   // Dedicated workers (BubblePopJS; docs/designissues/2026-11-09-dedicated-workers.md): the

@@ -3,7 +3,7 @@ import {resolve} from "node:path";
 import {sourceBound,MAX_SOURCE_BYTES,type HTMLEngine,type HTMLResource,type ScriptTurn} from "./native_html_engine.ts";
 import {addEntries,noteDiagnostics,noteTurn} from "./native_console.ts";
 import {netAnswer,type NetWire} from "./native_net.ts";
-import {loadSubresource} from "../../../docs/web/hub/foafnaut/page-load.mjs";
+import {loadSubresource,newlyListed} from "../../../docs/web/hub/foafnaut/page-load.mjs";
 
 /** The view state of a page. Lean applies it; the host only keeps the values. */
 // zoomUnit: the backing pixels for each point, in percent (WebDocument.zoomUnit): Lean lays the page
@@ -305,20 +305,24 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
   // Lean draws the page without it and says so (WebAccept.Skip.stylesheetMissing).
   const resourceFailures:{nodeId:number;url:string;reason:string}[]=[];
   let resourceBytes=0;
+  // One linked sheet. The engine decides the transfer of a sheet of any origin (readSubresource:
+  // each request and redirect).
+  const readSheet=async(sheetURL:string)=>{
+    const sheet=await readSubresource(engine as SubresourceEngine,"style",sheetURL,document.url,MAX_SOURCE_BYTES,signal,
+      async()=>{const read=await readSource(sheetURL,signal);return {url:read.url,bytes:read.raw,contentType:read.contentType};});
+    const resource={url:sheet.url,source:new TextDecoder("utf-8").decode(sheet.bytes),bytes:sheet.bytes.length};
+    sourceBound(resource.source);
+    if(resourceBytes+resource.bytes>MAX_RESOURCE_BYTES)throw new Error("Native HTML stylesheets exceed 32 MiB");
+    resourceBytes+=resource.bytes;
+    return resource;
+  };
   for(const [index,descriptor] of inspection.stylesheets.entries()) {
     signal?.throwIfAborted();
     try{
       if(index>=MAX_RESOURCES)throw new Error(`Native HTML exceeds ${MAX_RESOURCES} external stylesheets`);
       // The URL and owning node are selected and resolved by Lean.
       navigationURL(descriptor.url,inspection.baseURL,document.url);
-      // The engine decides the transfer of a sheet of any origin (readSubresource: each request
-      // and redirect, and that a sheet of another origin is text/css).
-      const sheet=await readSubresource(engine as SubresourceEngine,"style",descriptor.url,document.url,MAX_SOURCE_BYTES,signal,
-        async()=>{const read=await readSource(descriptor.url,signal);return {url:read.url,bytes:read.raw,contentType:read.contentType};});
-      const resource={url:sheet.url,source:new TextDecoder("utf-8").decode(sheet.bytes),bytes:sheet.bytes.length};
-      sourceBound(resource.source);
-      if(resourceBytes+resource.bytes>MAX_RESOURCE_BYTES)throw new Error("Native HTML stylesheets exceed 32 MiB");
-      resourceBytes+=resource.bytes;
+      const resource=await readSheet(descriptor.url);
       resources.push({nodeId:descriptor.nodeId,url:resource.url,source:resource.source});
     }catch(error){
       if(!accept.liberal||signal?.aborted)throw error;
@@ -380,6 +384,74 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
       if(turn.commands?.length)options.commands=turn.commands;
     }
   }
+  // Elements that the page's scripts make or change ask for sheets and images too (a link
+  // a script appended, a link whose rel a script set to stylesheet, an img a script made):
+  // the engine lists them when it is asked with the scripts' commands, and the host fetches
+  // what is new (page-load.mjs newlyListed). A page whose scripts change no element is not
+  // asked again.
+  const listed={sheets:new Set<string>(),images:new Set<string>()};
+  newlyListed(listed,inspection);
+  let imageCount=(inspection.images??[]).length;
+  const fetchListedAgain=async():Promise<boolean>=>{
+    if(!options.commands)return false;
+    const again=await engine.inspect(document.source,{url:document.url,...mode,commands:options.commands});
+    const fresh=newlyListed(listed,again) as {stylesheets:{nodeId:number;url:string}[];images:{key:string;url:string}[]};
+    let changed=false;
+    for(const descriptor of fresh.stylesheets) {
+      signal?.throwIfAborted();
+      try{
+        if(resources.length>=MAX_RESOURCES)throw new Error(`Native HTML exceeds ${MAX_RESOURCES} external stylesheets`);
+        navigationURL(descriptor.url,again.baseURL,document.url);
+        const resource=await readSheet(descriptor.url);
+        // A link has one sheet: the one of its URL now.
+        const held=resources.findIndex(r=>r.nodeId===descriptor.nodeId);if(held>=0)resources.splice(held,1);
+        resources.push({nodeId:descriptor.nodeId,url:resource.url,source:resource.source});
+      }catch(error){
+        if(signal?.aborted)throw error;
+        const reason=String(error instanceof Error?error.message:error);
+        fetchFailed("style sheet",descriptor.url,`style sheet not read: ${reason}`,"page drawn without it");
+        if(!resourceFailures.some(f=>f.nodeId===descriptor.nodeId))resourceFailures.push({nodeId:descriptor.nodeId,url:descriptor.url,reason});
+        options.resourceFailures=resourceFailures;
+      }
+      changed=true;
+    }
+    // The engine takes 64 images of a page (WebDocument.maxDocumentImages).
+    const wanted=fresh.images.slice(0,Math.max(0,64-imageCount));imageCount+=wanted.length;
+    if(wanted.length) {
+      const more=await imageOptions(engine,await fetchImageBytes(wanted,document.url,signal,
+        (imageURL,reason)=>fetchFailed("image",imageURL,`image not read: ${reason}`,"alt text shown"),engine as SubresourceEngine));
+      for(const key of ["images","heldImages"] as const)
+        if(Array.isArray(more[key])){options[key]=[...((options[key] as unknown[]|undefined)??[]),...(more[key] as unknown[])];changed=true;}
+    }
+    return changed;
+  };
+  // The first frame has what the scripts' first turn asked for.
+  if(script&&options.commands)try{await fetchListedAgain();}catch(error){
+    if(signal?.aborted)throw error;
+    console.error(`Native HTML: resources of script-made elements: ${String(error instanceof Error?error.message:error)}`);
+  }
+  // Later turns: one check at a time, not sooner than `againWait` ms after the last one; the
+  // wait doubles (to 4 s) while checks find nothing, so a page that animates its tree and adds
+  // no sheet or image is asked rarely.
+  let againTimer:ReturnType<typeof setTimeout>|undefined,againRunning=false,againDue=false,againWait=250,againAt=0;
+  const fetchAdded=(added:()=>void)=>{
+    if(!script||!options.commands)return;
+    if(againRunning){againDue=true;return;}
+    if(againTimer!==undefined)return;
+    againTimer=setTimeout(async()=>{
+      againTimer=undefined;againRunning=true;
+      try{
+        const changed=await fetchListedAgain();
+        againWait=changed?250:Math.min(4000,againWait*2);
+        if(changed)added();
+      }catch(error){
+        if(!signal?.aborted)console.error(`Native HTML: resources of script-made elements: ${String(error instanceof Error?error.message:error)}`);
+      }finally{
+        againRunning=false;againAt=performance.now()+againWait;
+        if(againDue&&!signal?.aborted){againDue=false;fetchAdded(added);}
+      }
+    },Math.max(0,againAt-performance.now()));
+  };
   // Pages show in the font of loadFontFile, or else in the Lean bitmap face.
   signal?.throwIfAborted();
   return Object.assign(page,{
@@ -392,6 +464,10 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
     liberal:!!accept.liberal,
     /** A render answered with the skips: later renders do not ask for them. */
     diagnosticsSeen:()=>{delete options.diagnostics;},
+    /** After a turn that changed the DOM: fetch the sheets and images that elements made or
+    changed by the page's scripts ask for; `added` is called when some arrived (the host
+    then draws the page again). */
+    fetchAdded,
     /** A later turn of the page's script session: its commands, when the DOM changed. */
     applyTurn:(turn:ScriptTurn)=>{noteTurn(page,turn);if(script)script.turn=turn;if(turn.changed&&turn.commands)options.commands=turn.commands;return turn.changed;},
     // What compile needs, as plain data, so the engine in a worker can run it.

@@ -309,3 +309,20 @@ Deno.test("page-load: a subresource transfer follows the engine's steps",async()
   assert(doc.includes("loadSubresource(step,"),"the window does not follow the engine's subresource steps");
   for(const kind of ['"image"','"style"','"font"'])assert(doc.includes(`readSubresource(engine as SubresourceEngine,${kind},`)||doc.includes(`readSubresource(engine,${kind},`),`no ${kind} is read through readSubresource`);
 });
+
+// What scripts added: only what was not listed before is fetched; a link whose URL changed is new.
+Deno.test("page-load: newly listed sheets and images",async()=>{
+  const {newlyListed}=await import("../../../docs/web/hub/foafnaut/page-load.mjs");
+  const listed={sheets:new Set<string>(),images:new Set<string>()};
+  const first={stylesheets:[{nodeId:4,url:"http://a.test/a.css"}],images:[{key:"http://a.test/1.png",url:"http://a.test/1.png"}]};
+  assert.deepEqual(newlyListed(listed,first),first);
+  assert.deepEqual(newlyListed(listed,first),{stylesheets:[],images:[]});
+  const later={stylesheets:[{nodeId:4,url:"http://a.test/a.css"},{nodeId:9,url:"http://a.test/b.css"},{nodeId:4,url:"http://a.test/c.css"}],
+    images:[{key:"http://a.test/1.png",url:"http://a.test/1.png"},{key:"http://b.test/2.png",url:"http://b.test/2.png"}]};
+  assert.deepEqual(newlyListed(listed,later),{stylesheets:[{nodeId:9,url:"http://a.test/b.css"},{nodeId:4,url:"http://a.test/c.css"}],
+    images:[{key:"http://b.test/2.png",url:"http://b.test/2.png"}]});
+  assert.deepEqual(newlyListed(listed,{}),{stylesheets:[],images:[]});
+  // The window asks again after a turn that changed the tree.
+  const doc=await Deno.readTextFile(`${lab}native_html_document.ts`),win=await Deno.readTextFile(`${lab}run_html.ts`);
+  assert(doc.includes("newlyListed(listed,again)")&&win.includes("page.fetchAdded?.("),"the window does not fetch what script-made elements ask for");
+});

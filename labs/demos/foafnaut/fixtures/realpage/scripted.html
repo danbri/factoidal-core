@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Elements made by scripts</title>
+<link rel="stylesheet" href="scripted-removed.css" id="removed">
+<link rel="preload" as="style" href="scripted-rel.css" id="rel">
+<style>
+body{margin:16px;font-family:sans-serif;font-size:16px}
+h1{font-size:20px;margin:0 0 8px 0}
+p{margin:0 0 4px 0;padding:4px 8px;background-color:#c62828;color:#ffffff}
+.kept{background-color:#2e7d32}
+img{display:block;margin:8px 0}
+</style></head><body>
+<h1>Elements made by scripts: every line is green, and a green picture follows the last</h1>
+<p class="kept gone">A linked sheet that a script removed no longer applies (and the page is drawn)</p>
+<p class="added">A sheet linked by an element a script appended</p>
+<p class="rel">A sheet whose link a script changed from rel=preload to rel=stylesheet</p>
+<p class="kept" id="picture">An img that a script made:</p>
+<script>
+document.getElementById('removed').remove();
+var link=document.createElement('link');link.rel='stylesheet';link.href='scripted-added.css';document.head.appendChild(link);
+document.getElementById('rel').rel='stylesheet';
+var img=document.createElement('img');img.src='logo.svg';img.alt='RED: the image a script made was not read';
+document.getElementById('picture').parentNode.appendChild(img);
+</script>
+</body></html>

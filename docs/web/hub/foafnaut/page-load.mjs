@@ -40,6 +40,21 @@ export async function loadStyleSheets(stylesheets,fetchText,limit=MAX_SHEETS) {
   return {resources,resourceFailures};
 }
 
+/** What a page's elements ask for now that they did not ask for before: the style sheets and
+images of an `inspect` answer (`inspection`) that are not in `listed` (`{sheets, images}`:
+sets this function fills). A host calls it with the first inspection of a page and, after a
+turn of the page's scripts changed the tree, with an inspection made with the scripts'
+commands: an element a script made, or a link whose `rel` or `href` a script set, is then
+listed by the engine as any other, and the host fetches what is new. A sheet is known by its
+node and URL, an image by its key. */
+export function newlyListed(listed,inspection) {
+  const stylesheets=(inspection?.stylesheets??[]).filter(sheet=>!listed.sheets.has(`${sheet.nodeId} ${sheet.url}`));
+  const images=(inspection?.images??[]).filter(image=>!listed.images.has(image.key));
+  for(const sheet of stylesheets)listed.sheets.add(`${sheet.nodeId} ${sheet.url}`);
+  for(const image of images)listed.images.add(image.key);
+  return {stylesheets,images};
+}
+
 /** One subresource of a page, of any origin (an image, a style sheet, a font, a script): the
 engine decides every step (`step`: its op `subresource`, Net.Subresource: the request to make,
 the address of a name, each redirect, CORS or no CORS, whether the answer is used), and the

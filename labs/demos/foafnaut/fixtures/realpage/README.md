@@ -14,6 +14,7 @@ not, so a capture of a page reads as a list of what works.
 | `grid.html` | a page frame with `grid-template-columns`, `fr`, `gap`, `grid-area` |
 | `position-float.html` | `position`, offsets, `float` with text beside it, `box-sizing` |
 | `images.html` + `logo.svg` | an SVG file as `img` (own size, sized by attributes, by a style, in a `data:` URL), inline SVG with metadata attributes, an inline SVG root sized in `em` |
+| `scripted.html` + `scripted-*.css` | elements made or changed by scripts: a removed link, an appended link, a link whose `rel` a script set, an `img` a script made |
 | `text.html` | `font-weight`, `font-style`, list markers, `white-space`, `text-transform` |
 
 Captures: `run_html.ts --html PAGE --shot OUT.png --offscreen --offscreen-size 1280x1600@1
