@@ -187,6 +187,9 @@ def exIds (sel : String) : Option (List String) :=
 #guard (["::scroll-button(up)", "::scroll-button( * )", "::scroll-button(block-end):focus", ":host(:is(div))", ":host(.a)",
   ":host-context(div)"].map Selectors.parse).all (·.isSome)
 #guard (["::scroll-button(foo)", "::scroll-button()", ":host(div .foo)", ":host()"].map Selectors.parse).all (·.isNone)
+-- the pseudo-element a selector names, and its element
+#guard ((Selectors.parse "#a::before").map fun l => l.map (·.pseudoElement)) == some [some "before"]
+#guard ((Selectors.parse "div > p:first-child::marker").map fun l => l.map (·.pseudoElement)) == some [some "marker"]
 -- comments are no tokens
 #guard (["[foo='BAR'] /* sanity check (match) */", "[foo=bar/**/i]", "/**/a/**/>/**/b", "[foo='/*x*/']"].map Selectors.parse).all (·.isSome)
 #guard (["a/**/b", "[foo='bar' /* x"].map Selectors.parse).all (·.isNone) || (Selectors.parse "a/**/b").isNone

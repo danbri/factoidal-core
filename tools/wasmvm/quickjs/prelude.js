@@ -12151,9 +12151,27 @@
     return computedNames;
   };
   const camel = name => name.replace(/-([a-z])/g, (m, c) => c.toUpperCase());
-  const computedValue = (el, name) => {
+  // The pseudo-elements Lean computes styles for, in its order (ComputedGeneric.pseudoNames):
+  // the value of the k-th name on the i-th is measure op 200 + 1000000 × (i + 1) + k.
+  const pseudoNames = ['before', 'after', 'marker', 'first-line', 'first-letter', 'placeholder', 'selection', 'backdrop',
+    'file-selector-button', 'target-text', 'spelling-error', 'grammar-error', 'details-content', 'checkmark',
+    'picker-icon', 'scroll-marker', 'column'];
+  const pseudoIndex = pseudo => {
+    if (pseudo === undefined || pseudo === null) return -1;
+    const p = String(pseudo).toLowerCase();
+    const name = p.startsWith('::') ? p.slice(2) : (p.startsWith(':') && ['before', 'after', 'first-line', 'first-letter'].includes(p.slice(1))) ? p.slice(1) : null;
+    return name === null ? -1 : pseudoNames.indexOf(name);
+  };
+  const computedValue = (el, name, pe = -1) => {
     const id = nodeId(el);
     if (namesFor(el).length === 0) return '';
+    if (pe >= 0) {
+      if (name.startsWith('--')) return '';
+      const k = computedIndex.get(name);
+      if (k === undefined) return '';
+      const r = n.query(id, 200 + 1000000 * (pe + 1) + k, '');
+      return typeof r === 'string' ? r : '';
+    }
     if (name.startsWith('--')) {
       // a custom property: its place among the element's custom properties (measure op 36),
       // then its value past the table's names
@@ -12187,10 +12205,10 @@
   };
   const cssName = p => p.startsWith('--') ? p : p.replace(/[A-Z]/g, c => '-' + c.toLowerCase()).replace(/^webkit-/, '-webkit-');
   const readOnlyDecl = () => new DOMException('The computed style declaration is read-only.', 'NoModificationAllowedError');
-  const computedStyle = el => {
+  const computedStyle = (el, pe = -1) => {
     const target = Object.create(CSSStyleDeclaration.prototype);
     const methods = {
-      getPropertyValue: name => computedValue(el, String(name).startsWith('--') ? String(name) : String(name).toLowerCase()),
+      getPropertyValue: name => computedValue(el, String(name).startsWith('--') ? String(name) : String(name).toLowerCase(), pe),
       getPropertyPriority: () => '',
       setProperty: () => { throw readOnlyDecl(); },
       removeProperty: () => { throw readOnlyDecl(); },
@@ -12204,9 +12222,9 @@
         if (p === 'cssText') return '';
         if (p === 'parentRule') return null;
         if (/^(0|[1-9][0-9]*)$/.test(p)) return namesFor(el)[Number(p)];
-        if (p === 'cssFloat') return computedValue(el, 'float');
+        if (p === 'cssFloat') return computedValue(el, 'float', pe);
         if (p in t) return Reflect.get(t, p);
-        return computedValue(el, p.includes('-') ? p : cssName(p));
+        return computedValue(el, p.includes('-') ? p : cssName(p), pe);
       },
       set() { throw readOnlyDecl(); },
       // every property Lean computes is a property of the declaration, dashed and camel-cased
@@ -12961,7 +12979,7 @@
   }
   def('getComputedStyle', (el, pseudo) => {
     if (!(el instanceof Element)) throw new TypeError("Failed to execute 'getComputedStyle': parameter 1 is not of type 'Element'.");
-    return computedStyle(el);
+    return computedStyle(el, pseudoIndex(pseudo));
   });
   def('getSelection', getSelection);
   for (const C of new Set([HTMLElement, HTMLUnknownElement, ...Object.values(named)])) reflectInstall(C);

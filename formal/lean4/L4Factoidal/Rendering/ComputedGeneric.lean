@@ -35,6 +35,8 @@ structure View where
   /-- The registered custom properties (CSS Properties and Values API 1): name and
   registration, the one that counts first. Read only when a custom property is asked for. -/
   registered : Thunk (List (String × CssRegister.PropertyRule)) := Thunk.pure []
+  /-- The rules of the page, for the styles of pseudo-elements (`computedPseudo`). -/
+  rules : List CSS.Rule := []
 
 /-- The properties registered by scripts (`CSS.registerProperty`), as the document node
 keeps them (`Hosts.Dom.Command.registerProperty`: attributes whose name starts with U+0001
@@ -201,7 +203,34 @@ def cascaded (v : View) (id : Nat) (p : String) (also : Option String := none) :
 #guard winning [([0, 0, 0, 0, 0], "ua"), ([0, 2, 0, 1, 0], "red"), ([0, 2, 0, 9, 0], "revert")] == some "ua"
 #guard winning [([0, 2, 0, 1, 0], "red"), ([0, 2, 0, 1, 1], "green")] == some "green"
 
-/-- The parent element of a node. -/
+/-- The pseudo-elements whose computed style a page may ask for, in the order of their
+numbers (`valueAt`: `pseudoBase` times the position plus one, plus the property's index). -/
+def pseudoNames : List String :=
+  ["before", "after", "marker", "first-line", "first-letter", "placeholder", "selection", "backdrop",
+   "file-selector-button", "target-text", "spelling-error", "grammar-error", "details-content", "checkmark",
+   "picker-icon", "scroll-marker", "column"]
+
+/-- The cascaded value of property `p` on pseudo-element `pe` of element `id` (CSS
+Pseudo-Elements 4 §3): the declarations of the rules whose selectors name `pe` and match the
+element, in the order of the cascade (`winning`). -/
+def cascadedPseudo (v : View) (id : Nat) (pe : String) (p : String) : Option String :=
+  let names := "all" :: coveringNames p
+  let cands := (v.rules.zipIdx).foldl (fun acc (rule, order) =>
+    match rule.selectors.find? (fun sel => match sel.complex with
+        | some c => DOM.Selectors.matchesPseudo v.dom id c pe
+        | none => false) with
+    | none => acc
+    | some sel =>
+      rule.declarations.foldl (fun acc d =>
+        if !names.contains d.property then acc
+        else
+          let value := if d.property == "all" then CssValues.specified "all" d.value
+            else (CssValues.expand d.property d.value).bind (·.lookup p)
+          match value with
+          | some value => (ruleKey d.important 1 rule.scope.isSome rule.layer sel.specificity order, value) :: acc
+          | none => acc) acc) []
+  winning cands
+
 def parentElement (dom : DOM.Dom) (id : Nat) : Option Nat :=
   match (dom.get id).parent with
   | some p => if (dom.get p).type == .element then some p else none
@@ -368,6 +397,32 @@ def computedOfWith (v : View) (id : Nat) (property : String) (longhand : String 
 def computedOf (v : View) (id : Nat) (property : String) : String :=
   computedOfWith v id property (computedLonghand v depthBound id)
 
+/-- The computed value of a longhand on pseudo-element `pe` of element `id`: its cascaded
+value there, computed against the element's font size; else the element's value for an
+inherited property (a pseudo-element inherits from its element) or the initial value. -/
+def computedPseudoLonghand (v : View) (id : Nat) (pe : String) (p : String) : String :=
+  let row := CssValues.lookup p
+  let inherited := CssValues.isCustom p || (row.map (·.inherited)).getD false
+  let initial := fun (_ : Unit) => match row with
+    | some r => match CssValues.specified r.name r.initial with
+      | some s => CssValues.computed { num := numCtx v id } r.name s
+      | none => r.initial
+    | none => ""
+  let fromElement := fun (_ : Unit) => computedLonghand v depthBound id p
+  match cascadedPseudo v id pe p with
+  | none => if inherited then fromElement () else initial ()
+  | some value =>
+    if value == "inherit" then fromElement ()
+    else if value == "initial" then initial ()
+    else if CssValues.cssWide.contains value then (if inherited then fromElement () else initial ())
+    else if CssValues.isCustom p then value
+    else if CssValues.hasFn "var" 32 (CssValues.CV.parse value) then (if inherited then fromElement () else initial ())
+    else CssValues.computed { num := numCtx v id } p value
+
+/-- The computed value of any property on pseudo-element `pe` of element `id`. -/
+def computedPseudo (v : View) (id : Nat) (pe : String) (property : String) : String :=
+  computedOfWith v id property (computedPseudoLonghand v id pe)
+
 /-- The properties of the layout profile whose computed value is the specified value
 (keywords and colours): when the element itself declares one, the answer is the
 declaration's computed value, which may be one the profile does not model (`display: grid`,
@@ -491,8 +546,18 @@ def resolvedLonghand (v : View) (id : Nat) (name : String) : String :=
 
 /-- The computed value of the `k`-th name (`longhandNames` then `otherNames`) on element
 `id`, with `profileValue` the layout profile's answer for a profile property. -/
+def pseudoBase : Nat := 1000000
+
 def valueAt (v : View) (id : Nat) (k : Nat) : String :=
-  if k ≥ computedBase then
+  if k ≥ pseudoBase then
+    -- a property of a pseudo-element: `pseudoBase` × (its place in `pseudoNames` + 1) + k
+    let (longhands, others) := nameLists.get
+    let j := k % pseudoBase
+    let name := if j < longhands.size then longhands[j]? else others[j - longhands.size]?
+    match pseudoNames[k / pseudoBase - 1]?, name with
+    | some pe, some name => computedPseudo v id pe name
+    | _, _ => ""
+  else if k ≥ computedBase then
     -- the computed value, not the resolved one: percentages and `auto` stay (Typed OM's
     -- computedStyleMap, CSS Typed OM 1 §4.2)
     let (longhands, others) := nameLists.get
@@ -555,6 +620,20 @@ private def computedAt (html css prop : String) : String :=
 -- overflow: clip is not the profile's hidden; the legacy -webkit-box
 #guard computedAt "<div id=t></div>" "#t { overflow: clip }" "overflow" == "clip"
 #guard computedAt "<div id=t></div>" "#t { display: -webkit-box }" "display" == "-webkit-box"
+-- the styles of pseudo-elements
+private def pseudoAt (html css pe prop : String) : String :=
+  let dom := DOM.parseHtmlDocument html
+  match CSS.parse css, dom.getElementById 0 "t" with
+  | .ok rules, some id =>
+    match computeAll dom rules with
+    | .ok styles =>
+      computedPseudo { dom := dom, matchesOf := fun i => matchedRules dom i rules, styles := styles, rules := rules } id pe prop
+    | .error _ => "error"
+  | _, _ => "error"
+#guard pseudoAt "<p id=t>x</p>" "#t::before { content: 'a'; color: red } p { color: blue }" "before" "color" == "rgb(255, 0, 0)"
+#guard pseudoAt "<p id=t>x</p>" "#t::before { content: 'a' } p { color: blue }" "before" "color" == "rgb(0, 0, 255)"
+#guard pseudoAt "<p id=t>x</p>" "#t::marker { font-size: 20px } #t::before { font-size: 30px }" "marker" "font-size" == "20px"
+#guard pseudoAt "<p id=t>x</p>" "p::after { margin-left: 3px }" "before" "margin-left" == "0px"
 -- revert-layer rolls back to the layer before; with no earlier layer, to the default
 #guard computedAt "<div id=t class=r></div>"
   "@layer a { #t { color: red } } @layer b { #t { color: blue } } @layer c { #t.r { color: revert-layer } }" "color" ==

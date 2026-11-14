@@ -377,7 +377,8 @@ def complexSpecificity : Nat → DOM.Selectors.Complex → Nat × Nat × Nat
         | .id _ => (1, 0, 0)
         | .cls _ => (0, 1, 0)
         | .attr _ _ _ _ _ _ => (0, 1, 0)
-        | .pseudo _ => (0, 1, 0)
+        -- a pseudo-element by name (`::before`) counts once, as its `.never` does
+        | .pseudo n => if n.startsWith "::" then (0, 0, 0) else (0, 1, 0)
         | .lang _ => (0, 1, 0)
         | .nth _ _ _ of => add (0, 1, 0) (most (of.getD []))
         | .not l => most l

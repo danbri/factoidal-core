@@ -611,7 +611,9 @@ def compound : Nat → PM (List Simple)
             out := out.push .never
           else if pseudoElements.contains n || n.startsWith "-webkit-" then
             pe := n
-            out := out.push .never
+            -- the pseudo-element by name as well, for the styles of a pseudo-element
+            -- (`matchesPseudo`); `.never` keeps the selector from matching an element
+            out := (out.push .never).push (.pseudo ("::" ++ n))
           else fail
         else
           let n := lowerAscii (← ident)
@@ -707,7 +709,7 @@ def compound : Nat → PM (List Simple)
           else if legacyPseudoElements.contains n then
             if !pe.isEmpty && !pseudoElementAfter pe n then fail
             pe := n
-            out := out.push .never
+            out := (out.push .never).push (.pseudo ("::" ++ n))
           else if plainPseudoClasses.contains n || (!pe.isEmpty && scrollbarPseudoClasses.contains n) then
             out := out.push (.pseudo n)
           else fail
@@ -1169,6 +1171,31 @@ def matchList (d : Dom) (scope : Option NodeId) : Nat → NodeId → List Comple
   | 0, _, _ => false
   | fuel + 1, k, l => l.any (matchComplex d scope fuel k)
 end
+
+/-- The pseudo-element a complex selector's subject names (`::before` is "before"), if any. -/
+def Complex.pseudoElement : Complex → Option String
+  | .mk parts =>
+    match parts.getLast? with
+    | some (_, c) => c.findSome? fun s => match s with
+      | .pseudo n => if n.startsWith "::" then some (n.drop 2).toString else none
+      | _ => none
+    | none => none
+
+/-- Whether `c` selects pseudo-element `pe` of element `k` (CSS Pseudo-Elements 4 §2): its
+subject names `pe`, and the rest of the subject compound and the compounds before it match
+`k` and its relatives. -/
+def matchesPseudo (d : Dom) (k : NodeId) (c : Complex) (pe : String) : Bool :=
+  c.pseudoElement == some pe &&
+    match c with
+    | .mk parts =>
+      match parts.reverse with
+      | (comb, last) :: before =>
+        let last' := last.filter fun s => match s with
+          | .never => false
+          | .pseudo n => !n.startsWith "::"
+          | _ => true
+        (d.get k).type == .element && matchComplex d none matchFuel k (.mk ((comb, last') :: before).reverse)
+      | [] => false
 
 /-- `element.matches(selectors)` with `scope` the element (DOM §4.9). -/
 def elementMatches (d : Dom) (k : NodeId) (l : List Complex) : Bool :=
