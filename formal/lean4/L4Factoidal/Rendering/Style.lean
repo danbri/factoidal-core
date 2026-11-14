@@ -958,9 +958,144 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     if let some pos := s.pos.set s.fontSize property d.value then return {s with pos}
     throw s!"unsupported CSS property: {d.property}"
 
-/-- A value or property this profile can not use leaves the style as it was. -/
+/-! ### Values this profile's parsers do not read, through the property table
+
+The parsers above read a small set of forms (`px`, `%`, nine colour names, hex and `rgb()`,
+a few keywords). A declaration they refuse is given a second reading: the property table
+(`CssValues`) reads the value in full CSS (every unit, `calc()` and the other math
+functions, every colour syntax, keywords in any case), computes it against the element's
+font size, and writes it in a form the parsers above do read. A declaration the parsers
+read is never changed, so nothing that was laid out before is laid out differently; a
+declaration neither reading understands is dropped as before. -/
+
+/-- A colour as `#rrggbb` (the alpha is not kept: this profile has opaque colours), or
+`transparent` when the alpha is 0; `none` when the value is not a colour with sRGB
+coordinates (`currentcolor`, `lab()` ...). -/
+def colorHex (value : String) : Option String :=
+  match CssValues.specified "color" value with
+  | none => none
+  | some s =>
+    let hex2 := fun (v : Rat) =>
+      let n := min 255 (v.floor.toNat)
+      String.ofList ((Nat.toDigits 16 (n / 16)) ++ (Nat.toDigits 16 (n % 16)))
+    match CssValues.stripWs (CssValues.CV.parse (CssValues.computed {} "color" s)) with
+    | [.fn name args] =>
+      let nums := (CssValues.stripWs args).filterMap fun cv => match cv with
+        | .tok (.num v _) => some v
+        | _ => none
+      match name, nums with
+      | "rgb", [r, g, b] => some ("#" ++ hex2 r ++ hex2 g ++ hex2 b)
+      | "rgba", [r, g, b, a] => if a == 0 then some "transparent" else some ("#" ++ hex2 r ++ hex2 g ++ hex2 b)
+      | _, _ => none
+    | _ => none
+
+/-- A font size or other positive float as a rational, to a thousandth. -/
+def ratOfFloat (x : Float) : Rat :=
+  if x.isFinite && x > 0 then ((x * 1000).round.toUInt64.toNat : Rat) / 1000 else 0
+
+/-- The computed value of `value` for `property` by the property table, with lengths in px
+against font size `fontSize`; `none` when it is not a value of the property. -/
+def tableComputed (fontSize : Float) (property value : String) : Option String :=
+  (CssValues.specified property value).map fun s =>
+    CssValues.computed { num := { fontSize := ratOfFloat fontSize } } property s
+
+/-- The absolute font size keywords (CSS Fonts 4 §3.5, medium 16px) in px. -/
+def fontSizeKeyword : String → Option Float
+  | "xx-small" => some 9 | "x-small" => some 10 | "small" => some 13 | "medium" => some 16
+  | "large" => some 18 | "x-large" => some 24 | "xx-large" => some 32 | "xxx-large" => some 48
+  | _ => none
+
+/-- A percentage text as a fraction. -/
+def percentOf (text : String) : Option Float :=
+  if text.endsWith "%" then (number (text.dropEnd 1).toString).toOption.map (· / 100) else none
+
+/-- A declaration this profile's parsers refused, written as they read it, when the
+property table reads it: lengths in px, colours as hex, `display` as the nearest box this
+profile lays out, border styles it does not draw as `solid`. `s` is the style so far (its
+font size is the element's, or the parent's for `font-size` itself). -/
+def tableDeclaration (s : Computed) (d : Declaration) : Option Declaration :=
+  let value := fun (v : String) => some { d with value := v }
+  let px := fun (x : Float) => CssValues.fmtRat (ratOfFloat x) ++ "px"
+  match d.property with
+  | "color" | "border-color" => (colorHex d.value).bind fun h => if h == "transparent" then none else value h
+  | "background-color" =>
+    -- also the colour of a `background` shorthand (`declarations` reads it as the colour)
+    match colorHex d.value with
+    | some h => value h
+    | none =>
+      let parts := (CssValues.stripWs (CssValues.CV.parse d.value)).map fun cv => CssValues.serialize [cv]
+      (parts.findSome? colorHex).bind value
+  | "font-size" =>
+    match (tableComputed s.fontSize "font-size" d.value).map (·.toLower) with
+    | none => none
+    | some t =>
+      match fontSizeKeyword t, percentOf t with
+      | some size, _ => value (px size)
+      | _, some fraction => value (px (fraction * s.fontSize))
+      | _, _ =>
+        if t == "larger" then value (px (s.fontSize * 1.2))
+        else if t == "smaller" then value (px (s.fontSize / 1.2))
+        else value t
+  | "line-height" =>
+    match tableComputed s.fontSize "line-height" d.value with
+    | none => none
+    | some t =>
+      match percentOf t with
+      | some fraction => value (px (fraction * s.fontSize))
+      | none => value t
+  | "border" =>
+    match CssValues.expand "border" d.value with
+    | none => none
+    | some ds =>
+      let width := ((ds.lookup "border-top-width").bind (tableComputed s.fontSize "border-top-width")).getD "3px"
+      let style := (ds.lookup "border-top-style").getD "none"
+      let style := if ["none", "hidden", "solid", "inset", "outset"].contains style then style else "solid"
+      let colour := ((ds.lookup "border-top-color").bind colorHex).filter (· != "transparent")
+      value (" ".intercalate ([width, style] ++ colour.toList))
+  | "border-style" =>
+    match (words d.value.toLower).head? with
+    | some w => if (CssValues.specified "border-top-style" w).isSome then value (if ["none", "hidden", "inset", "outset"].contains w then w else "solid") else none
+    | none => none
+  | "border-width" =>
+    (tableComputed s.fontSize "border-width" d.value).map fun t =>
+      { d with value := " ".intercalate ((words t).map fun w => (CssValues.lineWidthKeyword w).getD w) }
+  | "display" =>
+    match (CssValues.specified "display" d.value) with
+    | none => none
+    | some t =>
+      if ["flex", "grid", "flow-root", "list-item", "grid-lanes", "block ruby", "math", "block math"].contains t then value "block"
+      else if ["inline-flex", "inline-grid", "inline-grid-lanes", "ruby", "inline list-item"].contains t then value "inline-block"
+      else if t == "run-in" then value "inline"
+      else value t
+  | "text-align" =>
+    match (CssValues.specified "text-align" d.value) with
+    | some "justify" => value "start"
+    | some "-webkit-center" => value "center"
+    | some "-webkit-left" => value "left"
+    | some "-webkit-right" => value "right"
+    | some t => value t
+    | none => none
+  | "text-decoration" | "text-decoration-line" =>
+    if (CssValues.specified "text-decoration" d.value).isSome then
+      value (if (words d.value.toLower).contains "underline" then "underline" else "none")
+    else none
+  | "width" | "height" | "min-width" | "max-width" | "min-height" | "max-height"
+  | "margin-top" | "margin-right" | "margin-bottom" | "margin-left"
+  | "padding-top" | "padding-right" | "padding-bottom" | "padding-left" | "border-spacing" =>
+    (tableComputed s.fontSize d.property d.value).bind value
+  | _ =>
+    -- a keyword property: the table's canonical form (lower case)
+    (CssValues.specified d.property d.value).bind fun t => if t == d.value then none else value t
+
+/-- A value or property this profile can not use leaves the style as it was: after the
+second reading through the property table (`tableDeclaration`). -/
 private def applyOrKeep (s : Computed) (d : Declaration) : Computed :=
-  (apply s d).toOption.getD s
+  match apply s d with
+  | .ok r => r
+  | .error _ =>
+    match tableDeclaration s d with
+    | some d' => (apply s d').toOption.getD s
+    | none => s
 
 /-- The declarations of `rules` and of `style` attributes that this profile can not
 read, each once, in source order, as "property: value (reason)". Such a declaration is
