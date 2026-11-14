@@ -1511,6 +1511,30 @@ def bodyMarginHints (n : DOM.Node) (s : Computed) : Computed := Id.run do
   if let some v := first ["marginwidth"] then m := {m with right := v}
   return {s with margin := m}
 
+/-- HTML §15.3.3: the `body` of a document whose navigable's container is a `frame` or an
+`iframe` takes its margins from the container's `marginheight` and `marginwidth` attributes
+(pixel lengths), which win over the body's own attributes. -/
+def containerMarginHints (marginwidth marginheight : String) (s : Computed) : Computed :=
+  let m := s.margin
+  let m := match pixelLengthAttribute marginheight with
+    | some v => {m with top := v, bottom := v}
+    | none => m
+  let m := match pixelLengthAttribute marginwidth with
+    | some v => {m with left := v, right := v}
+    | none => m
+  {s with margin := m}
+
+/-- A container with neither attribute changes nothing. -/
+theorem containerMarginHints_blank (s : Computed) : containerMarginHints "" "" s = s := by
+  have h : HTML.Dimension.parseNonNegative "" = none := by decide
+  simp [containerMarginHints, pixelLengthAttribute, h]
+
+/-- A valid `marginwidth` sets both horizontal margins. -/
+theorem containerMarginHints_width (mw mh : String) (s : Computed) (v : Float)
+    (h : pixelLengthAttribute mw = some v) :
+    (containerMarginHints mw mh s).margin.left = v ∧ (containerMarginHints mw mh s).margin.right = v := by
+  simp [containerMarginHints, h]
+
 /-- The order of cascade keys: lists of numbers, lexicographically; a list is not above
 one it starts. -/
 def lexLE : List Nat → List Nat → Bool
@@ -2321,10 +2345,11 @@ def styleOfNode (matchesOf : Nat → List Match) (dom : Dom) (id : Nat) (parent 
     autoMarginTop := false, autoMarginBottom := false, align := {}, flex := {}, pos := {}}
 
 /-- Visit parents before children, using a work list and bounded arena size.
-`matchesOf id` are the rules that match element `id`, in sheet order. -/
-def computeAllWith (matchesOf : Nat → List Match) (dom : Dom) (textScale : Float := 1) : Except String (Array Computed) := do
+`matchesOf id` are the rules that match element `id`, in sheet order. `root` is the
+document styled: the page's (node 0), or the document of a frame in the same arena. -/
+def computeAllWith (matchesOf : Nat → List Match) (dom : Dom) (textScale : Float := 1) (root : Nat := 0) : Except String (Array Computed) := do
   if !textScale.isFinite || textScale < 0.5 then throw "text scale must be finite and at least 50%"
-  let mut pending := [0]
+  let mut pending := [root]
   let mut styles := Array.replicate dom.size ({} : Computed)
   for _ in [:dom.size+1] do
     match pending with
