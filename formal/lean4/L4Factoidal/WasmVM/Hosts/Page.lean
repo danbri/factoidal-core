@@ -730,6 +730,24 @@ others (16 to 29, 33, 34, 41, 200 and up) are this module's (`pageQuery`, `postT
 `mediaAnswer`). -/
 def domQueryOps (op : Nat) : Bool := op < 16 || (op ≥ 30 && op ≤ 32)
 
+/-- The `node_query` ops that `Hosts.Dom.domOp` answers: 100 to 199. -/
+def domOpRange (op : Nat) : Bool := op ≥ 100 && op < 200
+
+/-- The `node_query` op of a document's referrer source (`HTML.ReferrerSource`, `DomOps`). -/
+def referrerSourceOp : Nat := 173
+
+/-- Kind: correctness theorem. Says: no op of `getComputedStyle` (200 + k, the k-th computed
+property; 100200 + k, the computed value; 200 + 1000000 × (i + 1) + k, a pseudo-element's) is
+routed to `Hosts.Dom.domOp`: the two ranges are disjoint. -/
+theorem domOpRange_computed (k : Nat) : domOpRange (200 + k) = false := by
+  simp only [domOpRange, Bool.and_eq_false_iff, decide_eq_false_iff_not]; omega
+
+/-- Kind: correctness theorem. Says: the referrer source op is routed to `Hosts.Dom.domOp` and
+is not a `getComputedStyle` op. -/
+theorem referrerSourceOp_route : domOpRange referrerSourceOp = true ∧ ∀ k, referrerSourceOp ≠ 200 + k := by
+  refine ⟨by decide, fun k => ?_⟩
+  simp only [referrerSourceOp]; omega
+
 /-- The most messages a session may have waiting for the host. -/
 def maxOutbox : Nat := 4096
 
@@ -899,7 +917,7 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
         let (h, answer) := animOp h (a 0) (a 1) q
         let (st, r) := Hosts.Dom.answerStr mem st (a 4) (a 5) answer
         (h, st, r)
-    else if a 1 ≥ 100 && a 1 < 200 then
+    else if domOpRange (a 1) then
       -- ranges, selection, traversal, CharacterData, a document's referrer source (173; it
       -- was 210, the number of the tenth computed property: ops 200 and up are
       -- `getComputedStyle`'s, one a property)
