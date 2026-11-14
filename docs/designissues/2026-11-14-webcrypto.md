@@ -159,8 +159,26 @@ Open:
 
 ## 7. Measurements
 
-(filled in from the cloud checks; see section 8)
+Baseline: full run 20261114T0647Z of main d799500c7, WebCryptoAPI 48,427 of 70,798 Chrome subtests.
+
+| Branch | WebCryptoAPI | Difference | Worse |
+|---|---:|---:|---:|
+| `wip/webcrypto` (merged as main 610d4b48d; no new extern) | 48,616 | +189 | 0 (also 0 in `sample:40`, 2,694 names) |
+| `wip/webcrypto-hacl` (RSA for imported keys, SHA-3, cSHAKE; extern 22 -> 27) | 51,414 | +2,987 | 0 |
+
+Per directory for `wip/webcrypto-hacl`: import_export 7,854 -> 9,534, modern-algos 6,340 -> 6,756,
+encrypt_decrypt 10 -> 370, sign_verify 444 -> 800, wrapKey_unwrapKey 78 -> 208, top level 196 -> 241.
+
+What still fails and is not an algorithm left out: 162 subtests on each `supports` page stop at a
+script engine error ("yield in this position is not supported": an `await` inside a `switch` case
+of an async function in the test's helper), not at `supports` itself.
+
+Timings: the change adds nothing to a page that does not touch `crypto` (the section is made on first
+use of the global); `supports` is one Lean call per query.
 
 ## 8. Cloud checks
 
-(run ids and numbers)
+- 43574231128: `wip/webcrypto` at 171497bb7 on main 2db04faba, `/WebCryptoAPI/,sample:40`.
+- 43574286463: `wip/webcrypto-hacl` at b2417453c, `/WebCryptoAPI/`.
+- 43577423637: `wip/webcrypto-glue2` (brand check of `getRandomValues` and `randomUUID`;
+  `QuotaExceededError` exposed in workers).
