@@ -509,6 +509,17 @@ def listAnimations (s : State) (wanted : Nat → Bool) : String :=
     | none => false
   (Json.array (relevant.map fun (i, _) => .number (toString i))).toString
 
+/-- The answer of the frame's part (op 67), after `tick`: the events of CSS animations
+and transitions queued since the last frame, each `[type, target node, name, elapsed
+ms]`, given once; and whether the animations need another frame. -/
+def frameAnswer (s : State) : State × String :=
+  let s' : State := { s with events := #[], frameAsked := false }
+  let j := Json.object [
+    ("events", .array (s.events.toList.map fun e =>
+      .array [.string e.type, .number (toString e.target), .string e.name, jnum e.elapsed])),
+    ("again", .bool (needsFrame s'))]
+  (s', j.toString)
+
 /-! ## Tests -/
 
 private def yes : String → String → Bool := fun _ _ => true

@@ -387,6 +387,13 @@ def animationAccess (dom : Arena) (base : Answers) (prev : Option Answers) : L4F
     candidates := (((base 0 28 "").getD "").splitOn " ").filterMap String.toNat?
     sheet := fun _ => (base 0 25 "").getD "" }
 
+/-- Ask for an animation frame for the page's animations, once (`Animation.frameHandle`:
+the page's script objects answer it with op 67). -/
+def Host.askAnimationFrame (h : Host) : Host :=
+  if h.anim.frameAsked then h else
+  let (loop, _) := { h.loop with clock := h.time.sync h.loop.clock }.requestFrame L4Factoidal.Rendering.Animation.frameHandle
+  { h with loop, anim := { h.anim with frameAsked := true } }
+
 /-- A layout of the current arena and viewport for reads, counted. A page with an
 animation, or with an animation or transition declaration (measure op 28), has a style
 change first (`Animation.styleChange`), and its layout takes the animated values
@@ -404,7 +411,10 @@ def Host.measureNow (h : Host) : Host × Option Answers :=
       let ac := animationAccess dom base (h.reads.kept.map (·.2))
       let anim := L4Factoidal.Rendering.Animation.styleChange h.anim ac
       let ovs := L4Factoidal.Rendering.Animation.overrides anim ac
-      keep { h with anim } (if ovs.isEmpty then base else m dom h.reads.width h.reads.height ovs)
+      -- the events and the pending tasks of what the style change started need a frame
+      let h : Host := { h with anim }
+      let h := if L4Factoidal.Rendering.Animation.needsFrame anim then h.askAnimationFrame else h
+      keep h (if ovs.isEmpty then base else m dom h.reads.width h.reads.height ovs)
 
 /-- The answers of the layout of the current arena and viewport: kept until a write or a
 new viewport, so reads after no write share one layout, and a read after writes makes
@@ -429,8 +439,9 @@ element: no target); 61 a change of effect `node`; 62 a read of effect `node`; 6
 new animation; 64 a method or setter of animation `node`; 65 the state of animation
 `node` with its acts; 66 the animations of element `node` (`q` "subtree": and of its
 descendants; node 0 with "subtree": of the document), after a style change; 67 the
-frame's part ("update animations"); 68 the timeline time in ms; 69 which names of a
-keyframe object are animatable properties. A change of an
+frame's part ("update animations": the events of CSS animations and transitions, and
+whether another frame is needed; with `q` "ask": ask for a frame); 68 the timeline time in
+ms; 69 which names of a keyframe object are animatable properties. A change of an
 animation is a change of what a layout reads. -/
 def animOp (h : Host) (node op : Nat) (q : String) : Host × Except Int String :=
   let supports := L4Factoidal.Rendering.CSS.supportsDeclaration
@@ -473,11 +484,16 @@ def animOp (h : Host) (node op : Nat) (q : String) : Host × Except Int String :
       t < dom.size && dom.connected t && (if subtree then node == 0 || under t else t == node)
     (h, .ok (L4Factoidal.Rendering.Animation.Api.listAnimations h.anim wanted))
   | 67 =>
-    let anim := L4Factoidal.Rendering.Animation.tick h.anim
-    -- a layout is of the animations' state: a frame that changed none keeps it
-    let same := (List.range anim.anims.size).all fun i =>
-      (anim.anims[i]?).map (·.player) == (h.anim.anims[i]?).map (·.player)
-    ((if same then { h with anim } else bump h anim), .ok (L4Factoidal.Rendering.Animation.Fix.format anim.now))
+    if q == "ask" then (h.askAnimationFrame, .ok "{}")
+    else
+      let ticked := L4Factoidal.Rendering.Animation.tick h.anim (fun n => n < dom.size && dom.connected n)
+      -- a layout is of the animations' state: a frame that changed none keeps it
+      let same := (List.range ticked.anims.size).all fun i =>
+        (ticked.anims[i]?).map (·.player) == (h.anim.anims[i]?).map (·.player)
+      let (anim, r) := L4Factoidal.Rendering.Animation.Api.frameAnswer ticked
+      let h := if same then { h with anim } else bump h anim
+      let h := if L4Factoidal.Rendering.Animation.needsFrame anim then h.askAnimationFrame else h
+      (h, .ok r)
   | 68 => (h, .ok (L4Factoidal.Rendering.Animation.Fix.format h.anim.now))
   | 69 => (h, .ok (L4Factoidal.Rendering.Animation.Api.animatableNames supports q))
   | _ => (h, .error (-2))

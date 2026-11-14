@@ -502,7 +502,7 @@
   const handlerNames = ['abort', 'blur', 'cancel', 'change', 'click', 'close', 'contextmenu', 'dblclick', 'error', 'focus',
     'input', 'keydown', 'keypress', 'keyup', 'load', 'mousedown', 'mouseenter', 'mouseleave', 'mousemove', 'mouseout',
     'mouseover', 'mouseup', 'reset', 'resize', 'scroll', 'select', 'submit', 'toggle', 'wheel', 'animationend',
-    'transitionend', 'pointerdown', 'pointerup', 'pointermove', 'message', 'unhandledrejection', 'rejectionhandled',
+    'transitionend', 'animationstart', 'animationiteration', 'animationcancel', 'transitionrun', 'transitionstart', 'transitioncancel', 'pointerdown', 'pointerup', 'pointermove', 'message', 'unhandledrejection', 'rejectionhandled',
     'beforeunload', 'unload', 'hashchange', 'popstate', 'pageshow', 'pagehide', 'storage', 'online', 'offline',
     'afterprint', 'beforeprint', 'languagechange', 'messageerror', 'slotchange'];
   const handlers = new WeakMap();
@@ -4650,25 +4650,64 @@
     get currentTime() { return state(this).currentTime; }
     get timelineTime() { return state(this).timelineTime; }
   }
-  // The animation frame's part: Lean runs the pending play and pause tasks and updates the
-  // finished states (op 67); then each animation a script holds that is pending or running
-  // gets its acts, and the events queued are dispatched. A frame is asked for only while
-  // such an animation or event exists.
+  // CSS Animations 1 §4.2 and CSS Transitions 1 §6: the events of style's animations.
+  const eventFloat = (v, what) => { const x = v === undefined ? 0 : Number(v); if (!Number.isFinite(x)) throw new TypeError(what + ' is not a finite number.'); return x; };
+  class AnimationEvent extends Event {
+    constructor(type, init = undefined) {
+      if (arguments.length < 1) throw new TypeError("Failed to construct 'AnimationEvent': 1 argument required");
+      super(type, init);
+      const s = state(this), d = init == null ? {} : init;
+      s.animationName = d.animationName === undefined ? '' : String(d.animationName);
+      s.elapsedTime = eventFloat(d.elapsedTime, 'elapsedTime');
+      s.pseudoElement = d.pseudoElement === undefined ? '' : String(d.pseudoElement);
+    }
+    get animationName() { return state(this).animationName; }
+    get elapsedTime() { return state(this).elapsedTime; }
+    get pseudoElement() { return state(this).pseudoElement; }
+  }
+  class TransitionEvent extends Event {
+    constructor(type, init = undefined) {
+      if (arguments.length < 1) throw new TypeError("Failed to construct 'TransitionEvent': 1 argument required");
+      super(type, init);
+      const s = state(this), d = init == null ? {} : init;
+      s.propertyName = d.propertyName === undefined ? '' : String(d.propertyName);
+      s.elapsedTime = eventFloat(d.elapsedTime, 'elapsedTime');
+      s.pseudoElement = d.pseudoElement === undefined ? '' : String(d.pseudoElement);
+    }
+    get propertyName() { return state(this).propertyName; }
+    get elapsedTime() { return state(this).elapsedTime; }
+    get pseudoElement() { return state(this).pseudoElement; }
+  }
+  // The animation frame's part: Lean runs the pending play and pause tasks, updates the
+  // finished states and gives the events of CSS animations and transitions (op 67); each
+  // animation a script holds that is pending or running gets its acts; the events are
+  // dispatched. Lean asks for the frame (callback ANIMATION_FRAME) while its animations
+  // need one; a script object asks through op 67 "ask".
+  const ANIMATION_FRAME = 0x7FFFFFF1;
   const watched = new Set();
-  let animEvents = [], animFrame = false, animCallback = 0;
-  const askAnimFrame = () => { if (animFrame) return; animFrame = true; if (!animCallback) animCallback = register(onAnimFrame); n.frame(animCallback); };
+  let animEvents = [];
+  const askAnimFrame = () => { op(0, 67, 'ask'); };
   const onAnimFrame = () => {
-    animFrame = false;
-    op(0, 67, '');
+    const r = JSON.parse(op(0, 67, ''));
     for (const a of [...watched]) {
       const s = aop(aid(a), 65, '');
       applyActs(a, s);
       if (!s.pending && s.playState !== 'running') watched.delete(a);
     }
+    for (const [type, target, name, elapsed] of r.events ?? []) {
+      const el = wrap(target);
+      if (!el) continue;
+      const init = { bubbles: true, elapsedTime: elapsed / 1000 };
+      const e = type.startsWith('animation') ? new AnimationEvent(type, Object.assign(init, { animationName: name }))
+        : new TransitionEvent(type, Object.assign(init, { propertyName: name }));
+      state(e).trusted = true;
+      try { dispatch(el, e); } catch (x) { report(x); }
+    }
     const evs = animEvents; animEvents = [];
     for (const [a, e] of evs) { try { dispatch(a, e); } catch (x) { report(x); } }
     if (watched.size > 0 || animEvents.length > 0) askAnimFrame();
   };
+  callbacks.set(ANIMATION_FRAME, onAnimFrame);
   const abortError = () => new DOMException('The animation was cancelled.', 'AbortError');
   const newReady = st => { st.ready = new Promise((res, rej) => { st.readyRes = res; st.readyRej = rej; }); };
   const newFinished = st => { st.finished = new Promise((res, rej) => { st.finRes = res; st.finRej = rej; }); st.finished.catch(() => {}); };
@@ -4810,7 +4849,7 @@
     return animationsOf(nodeId(this), !!(options && options.subtree));
   });
   define(Document.prototype, 'getAnimations', function getAnimations() { return animationsOf(0, true); });
-  for (const [k, v] of Object.entries({ Animation, AnimationEffect, KeyframeEffect, AnimationTimeline, DocumentTimeline, AnimationPlaybackEvent, CSSAnimation, CSSTransition })) {
+  for (const [k, v] of Object.entries({ Animation, AnimationEffect, KeyframeEffect, AnimationTimeline, DocumentTimeline, AnimationPlaybackEvent, CSSAnimation, CSSTransition, AnimationEvent, TransitionEvent })) {
     Object.defineProperty(v.prototype, Symbol.toStringTag, { value: k, configurable: true });
     def(k, v);
   }

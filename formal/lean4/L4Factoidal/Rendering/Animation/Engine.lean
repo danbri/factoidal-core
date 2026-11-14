@@ -60,7 +60,22 @@ structure AnimRec where
   toText : String := ""
   /-- Removed from the page: cancelled by style, never listed again. -/
   dead : Bool := false
-  deriving Repr, Inhabited
+  /-- The phase, the iteration and the active time (ms) when the events of a CSS animation
+  or transition were last looked for (`phaseEvents`). -/
+  phase : Phase := .idle
+  iteration : Int := 0
+  activeTime : Int := 0
+  deriving DecidableEq, Repr, Inhabited
+
+/-- An animation or transition event for the page (CSS Animations 1 §4.2, CSS Transitions
+1 §6): the type, the target element, the animation's name or the transition's property,
+and the elapsed time in ms. -/
+structure CssEvent where
+  type : String
+  target : Nat
+  name : String
+  elapsed : Int
+  deriving DecidableEq, Repr, Inhabited
 
 /-- An animated value for the cascade. -/
 structure Override where
@@ -79,6 +94,10 @@ structure State where
   /-- The sheet text whose `@keyframes` rules are `rules`. -/
   sheet : String := ""
   rules : List (String × List Css.CssKeyframe) := []
+  /-- The events of CSS animations and transitions not yet given to the page. -/
+  events : Array CssEvent := #[]
+  /-- An animation frame is asked for (`frameHandle`). -/
+  frameAsked : Bool := false
   deriving Inhabited
 
 /-- What the engine reads of the page at a style change. -/
@@ -281,8 +300,8 @@ def updateTransitions (s : State) (ac : Access) (e : Nat) : State := Id.run do
     match spec, after with
     | some sp, some after =>
       if a.toText == after then
-        -- still going to this value; done when its effect is past its end
-        if a.player.playState (s.tl a) (s.effEnd a) == .finished && a.player.pending == .none then s := kill s i
+        -- still going to this value (a frame retires it after its end: `tick`)
+        pure ()
       else
         let current := (ac.prev e property).getD a.toText
         s := kill s i
@@ -369,22 +388,111 @@ def styleChange (s : State) (ac : Access) : State := Id.run do
     s := updateTransitions s ac e
   return s
 
+/-- The callback number of the animation frame the engine asks for (the page's script
+objects answer it with op 67). -/
+def frameHandle : Nat := 0x7FFFFFF1
+
+/-- The events of one CSS animation or transition since they were last looked for (CSS
+Animations 2 §4.1, CSS Transitions 2 §6.1: the tables of "previous phase" and "current
+phase"), with the record of the phase it has now. The elapsed time of a start is the
+interval start, max(min(-delay, active duration), 0); of an end, the interval end; of an
+iteration, the time of the iteration boundary; of a cancel, the active time last seen. -/
+def phaseEvents (s : State) (a : AnimRec) : AnimRec × List CssEvent :=
+  match a.owner, s.effectOf a, a.origin with
+  | _, _, .script => (a, [])
+  | some e, some eff, origin =>
+    let ct := a.player.currentTime (s.tl a)
+    let back := a.player.rate < 0
+    let now : Phase := if a.dead || ct.isNone then .idle else eff.timing.phase ct back
+    let iterNow : Int := match eff.timing.currentIteration ct back with
+      | some (.fin n) => n
+      | _ => a.iteration
+    let activeDur : Int := match eff.timing.activeDuration with
+      | .fin d => d
+      | .inf => 0
+    let iterDur : Int := match eff.timing.iterationDuration with
+      | .fin d => d
+      | .inf => 0
+    let startAt : Int := max (min (-eff.timing.delay) activeDur) 0
+    let endAt : Int := match eff.timing.endTime with
+      | .fin t => max (min (t - eff.timing.delay) activeDur) 0
+      | .inf => activeDur
+    let activeNow : Int := (eff.timing.activeTime ct back).getD a.activeTime
+    let (isAnimation, name) := match origin with
+      | .cssAnimation n => (true, n)
+      | .cssTransition p => (false, p)
+      | .script => (false, "")
+    let ev := fun (type : String) (elapsed : Int) => ({ type, target := e, name, elapsed } : CssEvent)
+    let evs : List CssEvent :=
+      if isAnimation then
+        match a.phase, now with
+        | .idle, .active | .before, .active => [ev "animationstart" startAt]
+        | .idle, .after | .before, .after => [ev "animationstart" startAt, ev "animationend" endAt]
+        | .active, .after => [ev "animationend" endAt]
+        | .active, .before => [ev "animationend" startAt]
+        | .after, .active => [ev "animationstart" endAt]
+        | .after, .before => [ev "animationstart" endAt, ev "animationend" startAt]
+        | .active, .active =>
+          if iterNow != a.iteration then
+            [ev "animationiteration" ((if iterNow > a.iteration then iterNow else iterNow + 1) * iterDur)]
+          else []
+        | .before, .idle | .active, .idle => [ev "animationcancel" a.activeTime]
+        | _, _ => []
+      else
+        match a.phase, now with
+        | .idle, .before => [ev "transitionrun" startAt]
+        | .idle, .active => [ev "transitionrun" startAt, ev "transitionstart" startAt]
+        | .idle, .after => [ev "transitionrun" startAt, ev "transitionstart" startAt, ev "transitionend" endAt]
+        | .before, .active => [ev "transitionstart" startAt]
+        | .before, .after => [ev "transitionstart" startAt, ev "transitionend" endAt]
+        | .active, .after => [ev "transitionend" endAt]
+        | .active, .before => [ev "transitionend" startAt]
+        | .after, .active => [ev "transitionstart" endAt]
+        | .after, .before => [ev "transitionstart" endAt, ev "transitionend" startAt]
+        | .before, .idle | .active, .idle => [ev "transitioncancel" a.activeTime]
+        | _, _ => []
+    ({ a with phase := now, iteration := iterNow, activeTime := activeNow }, evs)
+  | _, _, _ => (a, [])
+
 /-- The animation frame's part (HTML "update animations and send events", Web Animations
-1 §4.4.18): each pending play or pause task runs at the timeline time, and each
-animation's finished state is updated. -/
-def tick (s : State) : State := Id.run do
+1 §4.4.18): each pending play or pause task runs at the timeline time, each animation's
+finished state is updated, and the events of each CSS animation and transition are
+queued (`phaseEvents`). A CSS animation or transition whose element left the document is
+cancelled; a transition past its end is retired. -/
+def tick (s : State) (connected : Nat → Bool := fun _ => true) : State := Id.run do
   let mut s := s
   for i in [0:s.anims.size] do
     let a := s.anims[i]!
-    if a.dead then continue
-    match s.tl a with
-    | some t =>
-      let eff := s.effEnd a
-      let p := if a.player.pending != .none then a.player.ready t eff else a.player
-      let p := if p.startTime.isSome then p.updateFinished (some t) eff false false else p
-      if p != a.player then s := s.setPlayer i p
-    | none => pure ()
+    if a.dead && a.phase == .idle then continue
+    if !a.dead && (match a.owner with | some e => !connected e | none => false) then s := kill s i
+    let a := s.anims[i]!
+    if !a.dead then
+      match s.tl a with
+      | some t =>
+        let eff := s.effEnd a
+        let p := if a.player.pending != .none then a.player.ready t eff else a.player
+        let p := if p.startTime.isSome then p.updateFinished (some t) eff false false else p
+        if p != a.player then s := s.setPlayer i p
+      | none => pure ()
+    let a := s.anims[i]!
+    if a.origin != .script then
+      let (a', evs) := phaseEvents s a
+      -- a transition past its end is over: retired, with no further event
+      let a' := if isCssTransition a'.origin && a'.phase == .after then { a' with dead := true, phase := .idle } else a'
+      if a' != a || !evs.isEmpty then
+        s := { s with anims := s.anims.set! i a', events := s.events ++ evs.toArray }
   return s
+
+/-- Whether the page needs another animation frame for its animations: an event waits, an
+animation is pending or running, or a CSS animation or transition has events not yet
+looked for. -/
+def needsFrame (s : State) : Bool :=
+  !s.events.isEmpty || s.anims.any fun a =>
+    if a.dead then a.phase != .idle
+    else
+      let tl := s.tl a
+      tl.isSome && (a.player.pending != .none || a.player.playState tl (s.effEnd a) == .running
+        || (a.origin != .script && a.phase == .idle && (a.player.currentTime tl).isSome))
 
 /-! ## Tests: the three paths of css/support/interpolation-testcommon.js -/
 
@@ -465,5 +573,22 @@ private def pageHtml := "<div style=\"width: 10px\"><span>x</span></div>"
 -- the animated values of another element do not apply
 #guard ((CSS.withAnimated { animated := [(3, "width", "1px", false)] } (fun _ => [])) 4).isEmpty
 #guard ((CSS.withAnimated { animated := [(3, "width", "1px", false)] } (fun _ => [])) 3).length == 1
+
+-- events: a transition of 2 s is run and started at the first frame, ended after 2 s, then retired
+private def acE : Access := acOf [(7, [("width", "20px")])]
+  [(7, [("transition-property", "width"), ("transition-duration", "2s"), ("transition-timing-function", "linear")])]
+  "" [(7, [("width", "10px")])]
+private def sE0 : State := tick (styleChange {} acE)
+#guard sE0.events.toList.map (fun e => (e.type, e.name, e.elapsed)) == [("transitionrun", "width", 0), ("transitionstart", "width", 0)]
+#guard needsFrame sE0
+private def sE1 : State := tick { sE0 with now := Fix.ofInt 1000, events := #[] }
+#guard sE1.events.isEmpty && overrides sE1 acE == [{ node := 7, property := "width", value := "15px", transition := true }]
+private def sE2 : State := tick { sE1 with now := Fix.ofInt 2500 }
+#guard sE2.events.toList.map (fun e => (e.type, e.elapsed)) == [("transitionend", Fix.ofInt 2000)]
+#guard overrides sE2 acE == [] && !needsFrame { sE2 with events := #[] }
+-- a CSS animation: start at the first frame; its element leaves the document: cancel
+private def sA0 : State := tick (styleChange {} acA)
+#guard sA0.events.toList.map (fun e => (e.type, e.name, e.elapsed)) == [("animationstart", "a1", Fix.ofInt 50000)]
+#guard ((tick { sA0 with events := #[] } (fun _ => false)).events.toList.map (·.type)) == ["animationcancel"]
 
 end L4Factoidal.Rendering.Animation
