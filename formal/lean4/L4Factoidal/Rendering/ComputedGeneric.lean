@@ -153,7 +153,7 @@ def computedLonghand (v : View) : Nat → Nat → String → String
     let ctxOf : String → CssValues.ComputeCtx := fun value =>
       { num := numCtx v id
         currentColor :=
-          if mentionsCurrentColor value then
+          if mentionsCurrentColor value || p == "box-shadow" || p == "text-shadow" then
             if p == "color" then (parentElement v.dom id).map fun pid => computedLonghand v fuel pid "color"
             else some (computedLonghand v fuel id "color")
           else none }
