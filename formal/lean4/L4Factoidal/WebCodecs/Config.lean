@@ -52,9 +52,9 @@ def Fields.nonzero (f : Fields) (k : String) : Bool := f.get? k != some 0
 /-- Both members given, or neither. -/
 def Fields.together (f : Fields) (a b : String) : Bool := (f.get? a).isSome == (f.get? b).isSome
 
-/-- The frame durations of Opus, in microseconds (RFC 6716 §2.1.4: 2.5 to 60 ms, and the packed
-80, 100 and 120 ms). -/
-def opusFrameDurations : List Nat := [2500, 5000, 10000, 20000, 40000, 60000, 80000, 100000, 120000]
+/-- The frame durations an Opus encoder is configured with, in microseconds: the multiples of 2.5 ms
+up to 120 ms (RFC 6716 §2.1.4: frames of 2.5 to 60 ms, packed up to 120 ms in a packet). -/
+def opusFrameDurationOk (d : Nat) : Bool := d % 2500 == 0 && 2500 ≤ d && d ≤ 120000
 
 /-- The bit rates an Opus encoder takes, in bits a second (RFC 6716 §2.1.1). -/
 def opusBitrateOk (b : Nat) : Bool := 500 ≤ b && b ≤ 512000 * 255
@@ -77,7 +77,7 @@ def valid (k : Kind) (f : Fields) : Bool :=
       ((match f.get? "bitrate" with | some b => opusBitrateOk b | none => true) &&
        (match f.get? "opus.complexity" with | some c => decide (c ≤ 10) | none => true) &&
        (match f.get? "opus.packetlossperc" with | some p => decide (p ≤ 100) | none => true) &&
-       (match f.get? "opus.frameDuration" with | some d => opusFrameDurations.contains d | none => true)))
+       (match f.get? "opus.frameDuration" with | some d => opusFrameDurationOk d | none => true)))
   | .videoEncoder =>
     f.get? "width" != some 0 && f.get? "height" != some 0 && (f.get? "width").isSome && (f.get? "height").isSome &&
     f.nonzero "displayWidth" && f.nonzero "displayHeight" && f.nonzero "bitrate"
@@ -132,6 +132,8 @@ private def c (k : Kind) (codec : String) (nums : List (String × Nat) := []) (d
 #guard c .audioEncoder "opus" [("sampleRate", 8000), ("numberOfChannels", 2), ("opus.frameDuration", 0)] == "invalid"
 #guard c .audioEncoder "opus" [("sampleRate", 8000), ("numberOfChannels", 2), ("opus.frameDuration", 120001)] == "invalid"
 #guard c .audioEncoder "opus" [("sampleRate", 8000), ("numberOfChannels", 2), ("opus.frameDuration", 2501)] == "invalid"
+#guard c .audioEncoder "opus" [("sampleRate", 48000), ("numberOfChannels", 2), ("opus.frameDuration", 7500)] == "unsupported"
+#guard c .audioEncoder "opus" [("sampleRate", 48000), ("numberOfChannels", 2), ("opus.frameDuration", 120000)] == "unsupported"
 #guard c .audioEncoder "opus" [("sampleRate", 1), ("numberOfChannels", 2)] == "unsupported"
 #guard c .audioEncoder " opus " [("sampleRate", 48000), ("numberOfChannels", 2)] == "unsupported"
 #guard c .videoEncoder "vp8" [("width", 0), ("height", 480)] == "invalid"

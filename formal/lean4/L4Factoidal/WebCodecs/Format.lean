@@ -55,6 +55,15 @@ def hasAlpha : PixelFormat → Bool
   | .rgba | .bgra => true
   | _ => false
 
+/-- The format of the same pixels with the alpha channel dropped (`alpha: "discard"`, §9.4.2):
+the planar formats lose their last plane, RGBA and BGRA become RGBX and BGRX (the fourth byte is
+then padding). -/
+def dropAlpha : PixelFormat → PixelFormat
+  | .yuv c _ d => .yuv c false d
+  | .rgba => .rgbx
+  | .bgra => .bgrx
+  | f => f
+
 end PixelFormat
 
 structure Plane where
@@ -105,7 +114,24 @@ theorem PixelFormat.planes_pos (f : PixelFormat) :
   simp at this
   exact ⟨this.1.1, this.1.2, this.2⟩
 
+/-- Invariant. Says: a format with its alpha dropped has no alpha, and dropping twice changes
+nothing more. -/
+theorem PixelFormat.dropAlpha_noAlpha (f : PixelFormat) :
+    f.dropAlpha.hasAlpha = false ∧ f.dropAlpha.dropAlpha = f.dropAlpha := by
+  cases f <;> simp [PixelFormat.dropAlpha, PixelFormat.hasAlpha]
+
+/-- Layout. Says: the planes of a format with its alpha dropped are the first planes of the
+format, so the bytes of the smaller frame are the first bytes of the larger frame's resource and
+no byte moves. -/
+theorem PixelFormat.dropAlpha_planes (f : PixelFormat) : f.dropAlpha.planes <+: f.planes := by
+  cases f with
+  | yuv c a d => cases a <;> simp [PixelFormat.dropAlpha, PixelFormat.planes]
+  | _ => simp [PixelFormat.dropAlpha, PixelFormat.planes]
+
 #guard PixelFormat.all.length == 23
+#guard (PixelFormat.ofName? "I420A").map (·.dropAlpha.name) == some "I420"
+#guard (PixelFormat.ofName? "BGRA").map (·.dropAlpha.name) == some "BGRX"
+#guard (PixelFormat.ofName? "NV12").map (·.dropAlpha.name) == some "NV12"
 #guard PixelFormat.ofName? "I420AP10" == some (.yuv .c420 true .d10)
 #guard PixelFormat.ofName? "ABCD" == none
 #guard PixelFormat.ofName? "rgba" == none

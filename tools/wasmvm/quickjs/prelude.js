@@ -3361,9 +3361,401 @@
       define(globalThis, name, v); return v;
     },
     set(v) { define(globalThis, name, v); } });
+  // A group of interfaces made together on first use: reading one name defines them all as
+  // the data properties Web IDL asks for (writable, configurable, not enumerable).
+  const lazyGroup = (names, make) => {
+    for (const name of names) Object.defineProperty(globalThis, name, { configurable: true, enumerable: false,
+      get() {
+        const made = apiOn() ? make() : undefined;
+        if (!made) { for (const k of names) delete globalThis[k]; return undefined; }
+        for (const k of names) define(globalThis, k, made[k]);
+        return made[name];
+      },
+      set(v) { define(globalThis, name, v); } });
+  };
   // The WebGL rendering context interfaces (made from Lean's table when a page first names one).
-  lazy('WebGLRenderingContext', () => glInterface(1));
-  lazy('WebGL2RenderingContext', () => glInterface(2));
+  lazyGroup(['WebGLRenderingContext', 'WebGL2RenderingContext'], () => {
+    const a = glInterface(1), b = glInterface(2);
+    return a && b ? { WebGLRenderingContext: a, WebGL2RenderingContext: b } : undefined;
+  });
+  // What the section needs of the page's other objects (filled in below it).
+  const codecsHost = {};
+  // ==== WebCodecs (docs/designissues/2026-11-14-webgl-webcodecs.md) ==== begin webcodecs section ====
+  // Page-facing objects only. What a frame is (its layout, visible rectangle, display size and
+  // rotation), which rows a copy moves, and whether a codec configuration is valid or supported
+  // are Lean's answers (L4Factoidal.WebCodecs, web_api ops 120 to 139): this converts arguments
+  // (Web IDL), keeps the bytes and moves the rows Lean lists. The section is text until a page
+  // first names one of its interfaces, so other pages carry no more JavaScript.
+  let codecsMade = null;
+  const codecs = () => codecsMade ??= new Function('apiCall', 'DOMException', 'EventTarget', 'DOMRectReadOnly', 'queueMicrotask',
+    'reportError', 'structuredClone', 'host', codecsSource)(apiCall, DOMException, EventTarget, DOMRectReadOnly,
+    f => { Promise.resolve().then(f); }, e => report(e), (v, o) => globalThis.structuredClone(v, o), codecsHost);
+  const codecsSource = `'use strict';
+    // Each object's state is here, never on the object: a method called on another object
+    // finds none and throws (Web IDL brand check).
+    const K = new WeakMap();
+    const st = o => { const s = K.get(o); if (!s) throw new TypeError('Illegal invocation'); return s; };
+    const need = (got, k, what) => { if (got < k) throw new TypeError("Failed to execute '" + what + "': " + k + ' argument' + (k === 1 ? '' : 's') + ' required, but only ' + got + ' present.'); };
+    const bad = what => new TypeError('WebCodecs: ' + what);
+    const dom = (name, what) => new DOMException(what, name);
+    // One operation of Lean's (WebCodecs.Api): text, or a TypeError when Lean refuses.
+    const ask = (op, args, what) => { const r = apiCall(op, args, 0, false); if (typeof r !== 'string') throw bad(what); return r; };
+    const nums = line => line === '' ? [] : line.split(' ').map(Number);
+    // Web IDL conversions.
+    const dict = (x, what) => { if (x === undefined || x === null) return {}; if (typeof x !== 'object' && typeof x !== 'function') throw bad(what + ' is not an object'); return x; };
+    const enforce = (v, max, what) => {
+      let x = Number(v);
+      if (x !== x || x === Infinity || x === -Infinity) throw bad(what + ' is not a finite number');
+      x = Math.trunc(x);
+      if (x < 0 || x > max) throw bad(what + ' is out of range');
+      return x + 0;
+    };
+    const enforceSigned = (v, what) => {
+      let x = Number(v);
+      if (x !== x || x === Infinity || x === -Infinity) throw bad(what + ' is not a finite number');
+      x = Math.trunc(x);
+      if (x < -9007199254740991 || x > 9007199254740991) throw bad(what + ' is out of range');
+      return x + 0;
+    };
+    const U32 = 4294967295, U64 = 9007199254740991;
+    const oneOf = (v, values, what) => { const s = String(v); if (!values.includes(s)) throw bad("'" + s + "' is not a value of " + what); return s; };
+    const isShared = x => typeof SharedArrayBuffer === 'function' && x instanceof SharedArrayBuffer;
+    // The bytes of an AllowSharedBufferSource, as a view (no copy).
+    const bytesOf = (x, what) => {
+      if (x instanceof ArrayBuffer || isShared(x)) { if (x.detached) throw bad(what + ' is detached'); return new Uint8Array(x); }
+      if (ArrayBuffer.isView(x)) { if (x.buffer.detached) throw bad(what + ' is detached'); return new Uint8Array(x.buffer, x.byteOffset, x.byteLength); }
+      throw bad(what + ' is not a buffer source');
+    };
+    // transfer: each buffer is detached once the bytes are taken (a buffer listed twice is a DataCloneError).
+    const transferList = (init, what) => {
+      if (init.transfer === undefined) return [];
+      const list = Array.from(init.transfer);
+      for (const b of list) if (!(b instanceof ArrayBuffer)) throw bad(what + ': transfer holds a value that is not an ArrayBuffer');
+      if (new Set(list).size !== list.length) throw dom('DataCloneError', what + ': a buffer is in transfer twice');
+      for (const b of list) if (b.detached) throw dom('DataCloneError', what + ': a buffer in transfer is detached');
+      return list;
+    };
+    const detach = list => { for (const b of list) { try { if (typeof b.transfer === 'function') b.transfer(); else structuredClone(b, { transfer: [b] }); } catch (e) {} } };
+    const getters = (C, names, read) => { for (const k of names) Object.defineProperty(C.prototype, k, { get: Object.defineProperty(function () { return read(st(this), k); }, 'name', { value: 'get ' + k }), enumerable: true, configurable: true }); };
+    const members = C => {
+      Object.defineProperty(C.prototype, Symbol.toStringTag, { value: C.name, configurable: true });
+      for (const k of Object.getOwnPropertyNames(C.prototype)) {
+        if (k === 'constructor') continue;
+        const d = Object.getOwnPropertyDescriptor(C.prototype, k);
+        if (d.configurable && !d.enumerable) { d.enumerable = true; Object.defineProperty(C.prototype, k, d); }
+      }
+      for (const k of Object.getOwnPropertyNames(C)) {
+        if (k === 'prototype' || k === 'length' || k === 'name') continue;
+        const d = Object.getOwnPropertyDescriptor(C, k);
+        if (d.configurable && !d.enumerable) { d.enumerable = true; Object.defineProperty(C, k, d); }
+      }
+      return C;
+    };
+
+    // ---- VideoColorSpace (WebCodecs 9.9) ----
+    const PRIMARIES = ['bt709', 'bt470bg', 'smpte170m', 'bt2020', 'smpte432'];
+    const TRANSFER = ['bt709', 'smpte170m', 'iec61966-2-1', 'linear', 'pq', 'hlg'];
+    const MATRIX = ['rgb', 'bt709', 'bt470bg', 'smpte170m', 'bt2020-ncl'];
+    const colorInit = init => {
+      const d = dict(init, 'VideoColorSpaceInit'), opt = (v, values, what) => v === undefined || v === null ? null : oneOf(v, values, what);
+      return { primaries: opt(d.primaries, PRIMARIES, 'VideoColorPrimaries'), transfer: opt(d.transfer, TRANSFER, 'VideoTransferCharacteristics'),
+        matrix: opt(d.matrix, MATRIX, 'VideoMatrixCoefficients'), fullRange: d.fullRange === undefined || d.fullRange === null ? null : !!d.fullRange };
+    };
+    class VideoColorSpace {
+      constructor(init = undefined) { K.set(this, colorInit(init)); }
+      toJSON() { const s = st(this); return { fullRange: s.fullRange, matrix: s.matrix, primaries: s.primaries, transfer: s.transfer }; }
+    }
+    getters(VideoColorSpace, ['primaries', 'transfer', 'matrix', 'fullRange'], (s, k) => s[k]);
+    const colorSpaceOf = v => { const c = Object.create(VideoColorSpace.prototype); K.set(c, v); return c; };
+
+    // ---- VideoFrame (WebCodecs 9.4) ----
+    // The frame's values and layout are Lean's (WebCodecs.Frame, WebCodecs.Layout): this reads
+    // the init (Web IDL), keeps the resource's bytes and moves the rows Lean lists.
+    const FORMATS = ['I420', 'I420P10', 'I420P12', 'I420A', 'I420AP10', 'I420AP12', 'I422', 'I422P10', 'I422P12', 'I422A', 'I422AP10',
+      'I422AP12', 'I444', 'I444P10', 'I444P12', 'I444A', 'I444AP10', 'I444AP12', 'NV12', 'RGBA', 'RGBX', 'BGRA', 'BGRX'];
+    const RGB = ['RGBA', 'RGBX', 'BGRA', 'BGRX'];
+    const rectArg = (r, what) => {
+      if (r === undefined) return '';
+      const d = dict(r, what), part = k => {
+        const x = d[k] === undefined ? 0 : Number(d[k]);
+        if (x !== x || x === Infinity || x === -Infinity || x < 0) throw bad(what + '.' + k + ' is negative or not finite');
+        return Math.trunc(x);
+      };
+      return [part('x'), part('y'), part('width'), part('height')].join(' ');
+    };
+    const layoutArg = (l, what) => {
+      if (l === undefined) return '';
+      const out = [];
+      for (const p of Array.from(l)) {
+        const d = dict(p, what);
+        if (d.offset === undefined || d.stride === undefined) throw bad(what + ': a PlaneLayout needs offset and stride');
+        out.push(enforce(d.offset, U32, 'offset'), enforce(d.stride, U32, 'stride'));
+      }
+      // An empty list has no planes: no format has none, so Lean refuses it by the count.
+      return out.length ? out.join(' ') : '0';
+    };
+    const displayArg = d => {
+      const w = d.displayWidth === undefined ? undefined : enforce(d.displayWidth, U32, 'displayWidth');
+      const h = d.displayHeight === undefined ? undefined : enforce(d.displayHeight, U32, 'displayHeight');
+      return w === undefined && h === undefined ? '' : w === undefined || h === undefined ? '-' : w + ' ' + h;
+    };
+    // The page's double, exactly: its eight bytes (Lean reads sign, mantissa and exponent).
+    const rotationArg = v => {
+      if (v === undefined) return '';
+      const x = Number(v);
+      if (x !== x || x === Infinity || x === -Infinity) throw bad('rotation is not a finite number');
+      return new Uint8Array(new Float64Array([x]).buffer);
+    };
+    const initArgs = d => [rectArg(d.visibleRect, 'visibleRect'), displayArg(d), rotationArg(d.rotation), d.flip ? '1' : ''];
+    const metaOf = line => { const m = nums(line); return { cw: m[0], ch: m[1], vx: m[2], vy: m[3], vw: m[4], vh: m[5], dw: m[6], dh: m[7], rotation: m[8], flip: m[9] === 1 }; };
+    const metaLine = s => [s.cw, s.ch, s.vx, s.vy, s.vw, s.vh, s.dw, s.dh, s.rotation, s.flip ? 1 : 0].join(' ');
+    // The rows Lean lists, copied (each line: source offset and stride, destination offset and stride, bytes a row, rows).
+    const move = (src, dst, lines) => {
+      for (const line of lines) {
+        const m = nums(line);
+        for (let r = 0; r < m[5]; r++) { const a = m[0] + r * m[1]; dst.set(src.subarray(a, a + m[4]), m[2] + r * m[3]); }
+      }
+    };
+    const rectOf = (x, y, w, h) => new DOMRectReadOnly(x, y, w, h);
+    const live = (s, what) => { if (s.closed) throw dom('InvalidStateError', what + ': the VideoFrame is closed'); return s; };
+    const frameOf = s => { const f = Object.create(VideoFrame.prototype); K.set(f, s); return f; };
+    const optionsOf = (s, options) => {
+      const d = dict(options, 'VideoFrameCopyToOptions');
+      const rect = rectArg(d.rect, 'rect'), layout = layoutArg(d.layout, 'layout');
+      const format = d.format === undefined ? undefined : oneOf(d.format, FORMATS, 'VideoPixelFormat');
+      const space = d.colorSpace === undefined ? undefined : oneOf(d.colorSpace, ['srgb', 'display-p3'], 'PredefinedColorSpace');
+      if (format !== undefined && format !== s.format && !RGB.includes(format)) throw dom('NotSupportedError', 'copyTo converts to RGBA, RGBX, BGRA and BGRX only');
+      return { rect: rect === '' ? [s.vx, s.vy, s.vw, s.vh].join(' ') : rect, layout, format: format === undefined ? s.format : format, space };
+    };
+    class VideoFrame {
+      constructor(image, init = undefined) {
+        need(arguments.length, 1, 'VideoFrame');
+        if (image instanceof VideoFrame) {
+          const b = K.get(image), d = dict(init, 'VideoFrameInit');
+          if (!b || b.closed) throw dom('InvalidStateError', 'VideoFrame: the source frame is closed');
+          const alpha = d.alpha === undefined ? 'keep' : oneOf(d.alpha, ['keep', 'discard'], 'AlphaOption');
+          const m = metaOf(ask(121, [b.format, metaLine(b)].concat(initArgs(d)), 'the VideoFrameInit is not valid for the source frame'));
+          let format = b.format, resource = b.resource;
+          if (alpha === 'discard') {
+            // The format without alpha; its bytes are the first bytes of the source's (Lean: dropAlpha_planes).
+            const a = ask(123, [b.format, String(b.cw), String(b.ch)], 'the frame has no format').split(' ');
+            format = a[0]; resource = b.resource.subarray(0, Number(a[1]));
+          }
+          K.set(this, Object.assign({}, b, m, { format, resource,
+            duration: d.duration === undefined ? b.duration : enforce(d.duration, U64, 'duration'),
+            timestamp: d.timestamp === undefined ? b.timestamp : enforceSigned(d.timestamp, 'timestamp') }));
+          return;
+        }
+        if (image instanceof ArrayBuffer || isShared(image) || ArrayBuffer.isView(image)) {
+          need(arguments.length, 2, 'VideoFrame');
+          const d = dict(init, 'VideoFrameBufferInit');
+          if (d.format === undefined || d.codedWidth === undefined || d.codedHeight === undefined || d.timestamp === undefined)
+            throw bad('VideoFrameBufferInit needs format, codedWidth, codedHeight and timestamp');
+          const format = oneOf(d.format, FORMATS, 'VideoPixelFormat');
+          const cw = enforce(d.codedWidth, U32, 'codedWidth'), ch = enforce(d.codedHeight, U32, 'codedHeight');
+          const timestamp = enforceSigned(d.timestamp, 'timestamp');
+          const duration = d.duration === undefined ? null : enforce(d.duration, U64, 'duration');
+          const layout = layoutArg(d.layout, 'layout');
+          const args = initArgs(d);
+          const color = d.colorSpace === undefined ? undefined : colorInit(d.colorSpace);
+          const transfer = transferList(d, 'VideoFrame');
+          const data = bytesOf(image, 'data');
+          const lines = ask(120, [format, String(cw), String(ch), String(data.byteLength), layout].concat(args), 'the VideoFrameBufferInit is not valid for the data').split('\\n');
+          const resource = new Uint8Array(Number(lines[0]));
+          move(data, resource, lines.slice(3));
+          detach(transfer);
+          const c = lines[2].split(' ');
+          K.set(this, Object.assign(metaOf(lines[1]), { format, timestamp, duration, resource, closed: false,
+            color: color === undefined ? { primaries: c[0], transfer: c[1], matrix: c[2], fullRange: c[3] === '1' } : color }));
+          return;
+        }
+        const s = imageFrame(image, dict(init, 'VideoFrameInit'));
+        if (!s) throw bad('the image is not a CanvasImageSource or a buffer');
+        K.set(this, s);
+      }
+      get format() { const s = st(this); return s.closed ? null : s.format; }
+      get codedWidth() { const s = st(this); return s.closed ? 0 : s.cw; }
+      get codedHeight() { const s = st(this); return s.closed ? 0 : s.ch; }
+      get codedRect() { const s = st(this); return s.closed ? null : rectOf(0, 0, s.cw, s.ch); }
+      get visibleRect() { const s = st(this); return s.closed ? null : rectOf(s.vx, s.vy, s.vw, s.vh); }
+      get rotation() { const s = st(this); return s.closed ? 0 : s.rotation; }
+      get flip() { const s = st(this); return s.closed ? false : s.flip; }
+      get displayWidth() { const s = st(this); return s.closed ? 0 : s.dw; }
+      get displayHeight() { const s = st(this); return s.closed ? 0 : s.dh; }
+      get duration() { return st(this).duration; }
+      get timestamp() { return st(this).timestamp; }
+      get colorSpace() { const s = st(this); return colorSpaceOf(s.closed ? { primaries: null, transfer: null, matrix: null, fullRange: null } : s.color); }
+      metadata() { live(st(this), 'metadata'); return {}; }
+      allocationSize(options = undefined) {
+        const s = live(st(this), 'allocationSize'), o = optionsOf(s, options);
+        if (o.format !== s.format) return Number(ask(122, [o.format, String(nums(o.rect)[2]), String(nums(o.rect)[3]), '', o.layout, ''], 'the options are not valid for the frame').split('\\n')[0]);
+        return Number(ask(122, [s.format, String(s.cw), String(s.ch), o.rect, o.layout, ''], 'the options are not valid for the frame').split('\\n')[0]);
+      }
+      copyTo(destination, options = undefined) {
+        try {
+          need(arguments.length, 1, 'copyTo');
+          const s = live(st(this), 'copyTo'), o = optionsOf(s, options);
+          const dst = bytesOf(destination, 'destination');
+          let src = s.resource, lines;
+          if (o.format !== s.format) {
+            // To RGB: Lean converts the rectangle to packed pixels; the rows then go as any RGBA frame's.
+            const r = nums(o.rect);
+            src = convertFrame(s, o);
+            lines = ask(122, [o.format, String(r[2]), String(r[3]), '', o.layout, String(dst.byteLength)], 'the destination or the options are not valid for the frame').split('\\n');
+          } else lines = ask(122, [s.format, String(s.cw), String(s.ch), o.rect, o.layout, String(dst.byteLength)], 'the destination or the options are not valid for the frame').split('\\n');
+          move(src, dst, lines.slice(1));
+          return Promise.resolve(lines.slice(1).map(line => { const m = nums(line); return { offset: m[2], stride: m[3] }; }));
+        } catch (e) { return Promise.reject(e); }
+      }
+      clone() { const s = live(st(this), 'clone'); return frameOf(Object.assign({}, s)); }
+      close() { const s = st(this); s.closed = true; s.resource = null; }
+    }
+    // Conversions of pixels and frames from images arrive with the conversion ops; until then
+    // a frame from an image and a copy to another format answer NotSupportedError.
+    const imageFrame = (image, d) => { throw dom('NotSupportedError', 'VideoFrame from an image is not supported yet'); };
+    const convertFrame = (s, o) => { throw dom('NotSupportedError', 'copyTo to another pixel format is not supported yet'); };
+
+    // ---- EncodedVideoChunk, EncodedAudioChunk (WebCodecs 8) ----
+    const chunkInit = (init, what) => {
+      const d = dict(init, what);
+      if (d.type === undefined || d.timestamp === undefined || d.data === undefined) throw bad(what + ' needs type, timestamp and data');
+      const type = oneOf(d.type, ['key', 'delta'], 'the chunk type');
+      const timestamp = enforceSigned(d.timestamp, 'timestamp');
+      const duration = d.duration === undefined ? null : enforce(d.duration, U64, 'duration');
+      const transfer = transferList(d, what);
+      const data = bytesOf(d.data, 'data').slice();
+      detach(transfer);
+      return { type, timestamp, duration, data };
+    };
+    const chunkCopy = (s, destination) => {
+      const dst = bytesOf(destination, 'destination');
+      if (dst.byteLength < s.data.byteLength) throw bad('the destination is smaller than the chunk');
+      dst.set(s.data);
+    };
+    class EncodedVideoChunk {
+      constructor(init) { need(arguments.length, 1, 'EncodedVideoChunk'); K.set(this, chunkInit(init, 'EncodedVideoChunkInit')); }
+      copyTo(destination) { need(arguments.length, 1, 'copyTo'); chunkCopy(st(this), destination); }
+    }
+    class EncodedAudioChunk {
+      constructor(init) { need(arguments.length, 1, 'EncodedAudioChunk'); K.set(this, chunkInit(init, 'EncodedAudioChunkInit')); }
+      copyTo(destination) { need(arguments.length, 1, 'copyTo'); chunkCopy(st(this), destination); }
+    }
+    for (const C of [EncodedVideoChunk, EncodedAudioChunk]) getters(C, ['type', 'timestamp', 'duration', 'byteLength'], (s, k) => k === 'byteLength' ? s.data.byteLength : s[k]);
+
+    // ---- The four codecs (WebCodecs 3 to 6) ----
+    // Whether a configuration is valid, and whether it is supported, are Lean's answers
+    // (WebCodecs.Config.check). This engine has no encoder or decoder: a valid configuration
+    // closes the codec with a NotSupportedError, as the standard says for an unsupported one.
+    const CONFIG = {
+      AudioDecoder: { required: ['sampleRate', 'numberOfChannels'], nums: [] },
+      VideoDecoder: { required: [], nums: ['codedWidth', 'codedHeight', 'displayAspectWidth', 'displayAspectHeight'] },
+      AudioEncoder: { required: ['sampleRate', 'numberOfChannels'], nums: ['bitrate'], sub: { opus: ['complexity', 'packetlossperc', 'frameDuration'] } },
+      VideoEncoder: { required: ['width', 'height'], nums: ['displayWidth', 'displayHeight', 'bitrate'] },
+    };
+    // The verdict on a configuration: 'invalid', 'unsupported' or 'supported'. Reads the members (Web IDL).
+    const checkConfig = (kind, config) => {
+      const d = dict(config, kind + 'Config'), shape = CONFIG[kind], lines = [];
+      if (d.codec === undefined) throw bad(kind + ': the configuration has no codec');
+      const codec = String(d.codec);
+      for (const k of shape.required) { if (d[k] === undefined) throw bad(kind + ': the configuration has no ' + k); lines.push(k + '=' + enforce(d[k], U64, k)); }
+      for (const k of shape.nums) if (d[k] !== undefined) lines.push(k + '=' + enforce(d[k], U64, k));
+      for (const g of Object.keys(shape.sub || {})) {
+        if (d[g] === undefined) continue;
+        const sub = dict(d[g], g);
+        for (const k of shape.sub[g]) if (sub[k] !== undefined) lines.push(g + '.' + k + '=' + enforce(sub[k], U64, k));
+      }
+      let detached = '';
+      if (d.description !== undefined && d.description !== null) {
+        const x = d.description, b = x instanceof ArrayBuffer || isShared(x) ? x : ArrayBuffer.isView(x) ? x.buffer : null;
+        if (b === null) throw bad(kind + ': the description is not a buffer source');
+        if (b.detached) detached = '1';
+      }
+      const verdict = ask(125, [kind, codec, lines.join('\\n'), detached], 'the configuration is not valid');
+      if (verdict === 'invalid') throw bad(kind + ': the configuration is not valid');
+      return verdict;
+    };
+    const cloneConfig = config => { const out = {}; for (const k of Object.keys(config)) out[k] = config[k]; return out; };
+    const codecInit = (init, what, outputType) => {
+      const d = dict(init, what + 'Init');
+      if (typeof d.output !== 'function' || typeof d.error !== 'function') throw bad(what + 'Init needs the output and error callbacks');
+      return { state: 'unconfigured', queue: 0, output: d.output, error: d.error, ondequeue: null, flushes: [] };
+    };
+    const closeCodec = (s, error) => {
+      // "Close codec" (WebCodecs 3.5 and its siblings): pending flushes are rejected; the error callback runs unless it is an abort.
+      s.state = 'closed';
+      for (const f of s.flushes.splice(0)) f.reject(error);
+      if (error.name !== 'AbortError') { try { s.error.call(undefined, error); } catch (e) { reportError(e); } }
+    };
+    const makeCodec = (kind, inputType, work, queueName) => {
+      const C = class extends EventTarget {
+        constructor(init) { super(); need(arguments.length, 1, kind); K.set(this, codecInit(init, kind)); }
+        get state() { return st(this).state; }
+        get ondequeue() { return st(this).ondequeue; }
+        set ondequeue(f) {
+          const s = st(this);
+          if (s.ondequeue) this.removeEventListener('dequeue', s.ondequeue);
+          s.ondequeue = typeof f === 'function' ? f : null;
+          if (s.ondequeue) this.addEventListener('dequeue', s.ondequeue);
+        }
+        configure(config) {
+          need(arguments.length, 1, 'configure');
+          const s = st(this), verdict = checkConfig(kind, config);
+          if (s.state === 'closed') throw dom('InvalidStateError', kind + ': the codec is closed');
+          s.state = 'configured';
+          // Not supported: the codec closes with a NotSupportedError, as a queued control message.
+          if (verdict !== 'supported') queueMicrotask(() => { if (s.state !== 'closed') closeCodec(s, dom('NotSupportedError', kind + ': the configuration is not supported')); });
+        }
+        flush() {
+          const s = st(this);
+          if (s.state !== 'configured') return Promise.reject(dom('InvalidStateError', kind + ': the codec is not configured'));
+          return new Promise((resolve, reject) => { s.flushes.push({ resolve, reject }); });
+        }
+        reset() {
+          const s = st(this);
+          if (s.state === 'closed') throw dom('InvalidStateError', kind + ': the codec is closed');
+          s.state = 'unconfigured'; s.queue = 0;
+          for (const f of s.flushes.splice(0)) f.reject(dom('AbortError', kind + ': the codec was reset'));
+        }
+        close() {
+          const s = st(this);
+          if (s.state === 'closed') throw dom('InvalidStateError', kind + ': the codec is closed');
+          closeCodec(s, dom('AbortError', kind + ': the codec was closed'));
+        }
+        static isConfigSupported(config) {
+          try {
+            need(arguments.length, 1, 'isConfigSupported');
+            const verdict = checkConfig(kind, config);
+            return Promise.resolve({ supported: verdict === 'supported', config: cloneConfig(config) });
+          } catch (e) { return Promise.reject(e); }
+        }
+      };
+      Object.defineProperty(C, 'name', { value: kind, configurable: true });
+      const run = function (input, options) {
+        need(arguments.length, 1, work);
+        const s = st(this);
+        if (!(input instanceof inputType())) throw bad(work + ': the argument is not of the expected interface');
+        if (s.state !== 'configured') throw dom('InvalidStateError', kind + ': the codec is not configured');
+        // Reached only between configure() and the close that follows an unsupported configuration.
+        s.queue++;
+      };
+      Object.defineProperty(run, 'name', { value: work, configurable: true });
+      Object.defineProperty(run, 'length', { value: 1, configurable: true });
+      Object.defineProperty(C.prototype, work, { value: run, writable: true, enumerable: true, configurable: true });
+      getters(C, [queueName], s => s.queue);
+      return members(C);
+    };
+    const AudioDecoder = makeCodec('AudioDecoder', () => EncodedAudioChunk, 'decode', 'decodeQueueSize');
+    const VideoDecoder = makeCodec('VideoDecoder', () => EncodedVideoChunk, 'decode', 'decodeQueueSize');
+    const AudioEncoder = makeCodec('AudioEncoder', () => AudioData, 'encode', 'encodeQueueSize');
+    const VideoEncoder = makeCodec('VideoEncoder', () => VideoFrame, 'encode', 'encodeQueueSize');
+    // AudioData arrives with the audio layout ops; the name is held so that encode can test its argument.
+    class AudioData { constructor() { throw dom('NotSupportedError', 'AudioData is not supported yet'); } }
+    for (const C of [VideoColorSpace, VideoFrame, EncodedVideoChunk, EncodedAudioChunk]) members(C);
+    return { VideoColorSpace, VideoFrame, EncodedVideoChunk, EncodedAudioChunk, AudioDecoder, VideoDecoder, AudioEncoder, VideoEncoder };
+`;
+  const codecNames = ['VideoColorSpace', 'VideoFrame', 'EncodedVideoChunk', 'EncodedAudioChunk', 'AudioDecoder', 'VideoDecoder', 'AudioEncoder', 'VideoEncoder'];
+  lazyGroup(codecNames, codecs);
+  // ==== end webcodecs section ====
   const apiError = (r, what) => {
     switch (r) {
       case -3: throw new DOMException(what, 'InvalidCharacterError');
@@ -7636,7 +8028,10 @@
     // WebGL's interfaces are [Exposed=(Window,Worker)].
     'WebGLRenderingContext', 'WebGL2RenderingContext', 'WebGLObject', 'WebGLBuffer', 'WebGLFramebuffer', 'WebGLProgram',
     'WebGLRenderbuffer', 'WebGLShader', 'WebGLTexture', 'WebGLQuery', 'WebGLSampler', 'WebGLSync', 'WebGLTransformFeedback',
-    'WebGLVertexArrayObject', 'WebGLUniformLocation', 'WebGLActiveInfo', 'WebGLShaderPrecisionFormat', 'WebGLContextEvent']);
+    'WebGLVertexArrayObject', 'WebGLUniformLocation', 'WebGLActiveInfo', 'WebGLShaderPrecisionFormat', 'WebGLContextEvent',
+    // WebCodecs' are [Exposed=(Window,DedicatedWorker)].
+    'VideoColorSpace', 'VideoFrame', 'EncodedVideoChunk', 'EncodedAudioChunk', 'AudioData', 'AudioDecoder', 'VideoDecoder',
+    'AudioEncoder', 'VideoEncoder', 'ImageDecoder', 'ImageTrackList', 'ImageTrack', 'DOMRectReadOnly', 'DOMRect']);
   // HTML §10.2.1: WorkerGlobalScope, DedicatedWorkerGlobalScope, WorkerLocation, WorkerNavigator.
   const makeWorkerScope = (url, name) => {
     inWorker = true;

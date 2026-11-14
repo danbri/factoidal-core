@@ -10,6 +10,8 @@ record: docs/designissues/2026-11-14-webgl-webcodecs.md, section 4).
   * 122 `copyPlan(format, codedWidth, codedHeight, rect, layout, destinationSize)`: `copyPlan`,
     refused when the destination is smaller than the allocation size ("" for no destination:
     `allocationSize()`).
+  * 123 `dropAlpha(format, codedWidth, codedHeight)`: the format without its alpha channel and the
+    bytes of its resource (the first bytes of the frame's own: `PixelFormat.dropAlpha_planes`).
   * 125 `checkConfig(kind, codec, members, detached)`: `Config.check`.
 
 Arguments are fields of text: numbers in decimal, lists of numbers separated by spaces, "" for a
@@ -112,6 +114,12 @@ def copyPlanOp (fs : Array ByteArray) : Option String := do
   if !fits then none else
   pure ("\n".intercalate (s!"{plan.allocationSize}" :: plan.moves.map moveLine))
 
+def dropAlphaOp (fs : Array ByteArray) : Option String := do
+  let f ← PixelFormat.ofName? (strArg fs 0)
+  let cw ← natArg fs 1
+  let ch ← natArg fs 2
+  pure s!"{f.dropAlpha.name} {resourceSize f.dropAlpha cw ch}"
+
 def numsOf (s : String) : List (String × Nat) :=
   (s.splitOn "\n").filterMap fun line =>
     match line.splitOn "=" with
@@ -130,6 +138,7 @@ def op (code : Nat) (fs : Array ByteArray) : Except Int ByteArray :=
   | 120 => answer (frameOfBuffer fs)
   | 121 => answer (frameOfFrame fs)
   | 122 => answer (copyPlanOp fs)
+  | 123 => answer (dropAlphaOp fs)
   | 125 => answer (checkConfig fs)
   | _ => .error (-2)
 
@@ -160,6 +169,8 @@ private def run (code : Nat) (xs : List String) (bin : List (Nat × ByteArray) :
 #guard run 122 ["I420", "4", "2", "2 0 2 2", "", "6"] == "6\n2 4 0 2 2 2\n9 2 4 1 1 1\n11 2 5 1 1 1"
 #guard run 122 ["I420", "4", "2", "", "", "11"] == "error -20"
 #guard run 122 ["I420", "4", "2", "", "", ""] == "12\n0 4 0 4 4 2\n8 2 8 2 2 1\n10 2 10 2 2 1"
+#guard run 123 ["I420A", "4", "2"] == "I420 12"
+#guard run 123 ["RGBA", "4", "2"] == "RGBX 32"
 #guard run 125 ["VideoDecoder", "vp8", "", ""] == "unsupported"
 #guard run 125 ["VideoEncoder", "vp8", "width=640\nheight=0", ""] == "invalid"
 #guard run 125 ["AudioEncoder", "opus", "sampleRate=8000\nnumberOfChannels=2\nopus.complexity=11", ""] == "invalid"
