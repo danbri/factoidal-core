@@ -10916,6 +10916,9 @@
     }
     if (value instanceof Date) return keep(new Date(Date.prototype.getTime.call(value)));
     if (value instanceof RegExp) return keep(new RegExp(value.source, value.flags));
+    // a FileSystemHandle is serializable (File System Standard §2.2): a handle of the same entry
+    const fh = fsMade ? fsMade.handleState(value) : null;
+    if (fh) return keep(fsMade.handleOf(fh.path, fh.name, fh.dir));
     if (isShared(value)) throw cloneError('SharedArrayBuffer');
     if (value instanceof ArrayBuffer) {
       if (value.detached) throw cloneError('An ArrayBuffer is detached and');
