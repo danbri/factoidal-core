@@ -4165,10 +4165,22 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       let id ← toObj n a0
       newArray ((← ownKeysOf n id).filter (fun k => !isSymKey k && !isPrivKey k) |>.map keyStrV)
     | .objectGetPrototypeOf =>
+      -- [[GetPrototypeOf]] (§10.1.1, §10.5.1)
       let id ← toObj n a0
       let o ← getObj id
       match o.kind with
-      | .proxy (.obj t) _ => pure (← getObj t).proto
+      | .proxy t hnd =>
+        let .obj _ := t | throwErr .type "Cannot perform 'getPrototypeOf' on a proxy that has been revoked"
+        match ← proxyTrap n hnd "getPrototypeOf" with
+        | none => callNative n .objectGetPrototypeOf .undef #[t] none
+        | some f =>
+          let p ← callV n f hnd #[t]
+          if !(p.isObj || p matches .null) then
+            throwErr .type "'getPrototypeOf' on proxy: the trap returned neither an object nor null"
+          if !toBool (← callNative n .objectIsExtensible .undef #[t] none) then
+            if !sameValue p (← callNative n .objectGetPrototypeOf .undef #[t] none) then
+              throwErr .type "'getPrototypeOf' on proxy: the target is not extensible and has another prototype"
+          pure p
       | _ => pure o.proto
     | .objectSetPrototypeOf =>
       -- §20.1.2.23
@@ -4178,8 +4190,8 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
         match a1 with
         | .obj _ | .null =>
           match a0 with
-          | .obj id =>
-            if ← setProtoOf id a1 then pure a0
+          | .obj _ =>
+            if toBool (← callNative n (.reflect 2) .undef #[a0, a1] none) then pure a0
             else throwErr .type "Object.setPrototypeOf: the prototype of this object cannot be changed"
           | _ => pure a0
         | _ => throwErr .type "Object prototype may only be an Object or null" 
@@ -4247,11 +4259,30 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
         pure (.bool (!o.extensible && all))
       | _ => pure (.bool true)
     | .objectPreventExtensions =>
-      if let .obj id := a0 then modifyObj id fun o => { o with extensible := false }
-      pure a0
-    | .objectIsExtensible =>
       match a0 with
-      | .obj id => pure (.bool (← getObj id).extensible)
+      | .obj _ =>
+        if !toBool (← callNative n (.reflect 12) .undef #[a0] none) then
+          throwErr .type "Object.preventExtensions: the object refused"
+        pure a0
+      | _ => pure a0
+    | .objectIsExtensible =>
+      -- [[IsExtensible]] (§10.1.3, §10.5.3): a Proxy asks its trap, whose answer must be the target's
+      match a0 with
+      | .obj id0 =>
+        let mut cur := id0
+        for _ in [0:64] do
+          match (← getObj cur).kind with
+          | .proxy t hnd =>
+            let .obj tid := t | throwErr .type "Cannot perform 'isExtensible' on a proxy that has been revoked"
+            match ← proxyTrap n hnd "isExtensible" with
+            | some f =>
+              let b := toBool (← callV n f hnd #[t])
+              if b != toBool (← callNative n .objectIsExtensible .undef #[t] none) then
+                throwErr .type "'isExtensible' on proxy: the trap's answer is not the target's"
+              return .bool b
+            | none => cur := tid
+          | _ => return .bool (← getObj cur).extensible
+        pure (.bool false)
       | _ => pure (.bool false)
     | .objectProtoHasOwnProperty =>
       let k ← toKey n a0
@@ -4992,7 +5023,23 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       | 1 => needObj; callNative n .objectGetPrototypeOf .undef args none
       | 2 => needObj
              match a0, a1 with
-             | .obj id, .obj _ | .obj id, .null => pure (.bool (← setProtoOf id a1))
+             | .obj id0, .obj _ | .obj id0, .null =>
+               -- [[SetPrototypeOf]] (§10.1.2, §10.5.2): a Proxy asks its trap
+               let mut cur := id0
+               for _ in [0:64] do
+                 match (← getObj cur).kind with
+                 | .proxy t hnd =>
+                   let .obj tid := t | throwErr .type "Cannot perform 'setPrototypeOf' on a proxy that has been revoked"
+                   match ← proxyTrap n hnd "setPrototypeOf" with
+                   | some f =>
+                     if !toBool (← callV n f hnd #[t, a1]) then return .bool false
+                     if !toBool (← callNative n .objectIsExtensible .undef #[t] none) then
+                       if !sameValue a1 (← callNative n .objectGetPrototypeOf .undef #[t] none) then
+                         throwErr .type "'setPrototypeOf' on proxy: the target is not extensible and has another prototype"
+                     return .bool true
+                   | none => cur := tid
+                 | _ => return .bool (← setProtoOf cur a1)
+               pure (.bool false)
              | _, _ => throwErr .type "Object prototype may only be an Object or null"
       | 3 => needObj; let k ← toKey n a1; pure (.bool (← hasProp n (← toObj n a0) k))
       | 4 => needObj; if args.size > 2 then getRecv n (← toObj n a0) (← toKey n a1) (argD args 2) else getV n a0 (← toKey n a1)
@@ -5059,11 +5106,11 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
           | a => throw a)
         pure (.bool ok)
       | 6 =>
-        needObj
-        let ok ← tryCatch (do let _ ← callNative n .objectDefineProperty .undef args none; pure true) (fun e => match e with
-          | .throw _ => pure false
-          | a => throw a)
-        pure (.bool ok)
+        -- §28.1.3: the key, the descriptor (its TypeErrors), then [[DefineOwnProperty]]
+        let .obj tid := a0 | throwErr .type "Reflect.defineProperty called on a non-object"
+        let k ← toKey n a1
+        let desc ← toPropDesc n (argD args 2)
+        pure (.bool (← defineOwnProp n tid k desc))
       | 7 =>
         needObj
         let id ← toObj n a0
@@ -5082,7 +5129,26 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
         construct n a0 argv (if args.size > 2 then argD args 2 else a0)
       | 10 => needObj; callNative n .objectGetOwnPropertyDescriptor .undef args none
       | 11 => needObj; callNative n .objectIsExtensible .undef args none
-      | _ => needObj; let _ ← callNative n .objectPreventExtensions .undef args none; pure (.bool true)
+      | _ =>
+        -- [[PreventExtensions]] (§10.1.4, §10.5.4)
+        needObj
+        let .obj id0 := a0 | pure (.bool false)
+        let mut cur := id0
+        for _ in [0:64] do
+          match (← getObj cur).kind with
+          | .proxy t hnd =>
+            let .obj tid := t | throwErr .type "Cannot perform 'preventExtensions' on a proxy that has been revoked"
+            match ← proxyTrap n hnd "preventExtensions" with
+            | some f =>
+              let b := toBool (← callV n f hnd #[t])
+              if b && toBool (← callNative n .objectIsExtensible .undef #[t] none) then
+                throwErr .type "'preventExtensions' on proxy: the trap returned true but the target is extensible"
+              return .bool b
+            | none => cur := tid
+          | _ =>
+            modifyObj cur fun o => { o with extensible := false }
+            return .bool true
+        pure (.bool false)
     | .objectDefineProperties =>
       match a0 with
       | .obj id =>
@@ -6133,16 +6199,15 @@ def merge : Nat → Value → List Value → List Value → Array Value → M (L
     else merge n cmp as (b :: bs) (acc.push a)
 termination_by structural n _ _ _ _ => n
 
-/-- PropertyDescriptor from an object (§6.2.6.5 ToPropertyDescriptor), defined
-with ValidateAndApplyPropertyDescriptor's defaults for a new property. -/
-def defineFromDescriptor : Nat → Nat → String → Value → M Unit
-  | 0, _, _, _ => throw (.halt "fuel")
-  | n + 1, id, k, d => do
+/-- ToPropertyDescriptor (§6.2.6.5): the fields of `d` that are present, read in its order,
+with its TypeErrors. -/
+def toPropDesc : Nat → Value → M Desc
+  | 0, _ => throw (.halt "fuel")
+  | n + 1, d => do
     if !d.isObj then throwErr .type "Property description must be an object"
-    -- ToPropertyDescriptor (§6.2.6.5): the fields that are present, read in its order
     let field (f : String) : M (Option Value) := do
       match d with
-      | .obj did => if ((← get).findProp did f 1000).isSome then pure (some (← getV n d f)) else pure none
+      | .obj did => if ← hasProp n did f then pure (some (← getV n d f)) else pure none
       | _ => pure none
     let en ← field "enumerable"
     let cf ← field "configurable"
@@ -6156,20 +6221,49 @@ def defineFromDescriptor : Nat → Nat → String → Value → M Unit
       if !(← isCallable f) && !(match f with | .undef => true | _ => false) then throwErr .type "Setter must be a function"
     if (gt.isSome || st.isSome) && (vl.isSome || wr.isSome) then
       throwErr .type "Invalid property descriptor. Cannot both specify accessors and a value or writable attribute"
-    let desc : Desc := { value := vl, writable := wr.map toBool, get := gt, set := st,
-                         enumerable := en.map toBool, configurable := cf.map toBool }
-    -- ValidateAndApplyPropertyDescriptor (§10.1.6.3): `Desc.allowedOn` decides
+    pure { value := vl, writable := wr.map toBool, get := gt, set := st,
+           enumerable := en.map toBool, configurable := cf.map toBool }
+termination_by structural n _ => n
+
+/-- [[DefineOwnProperty]] (§10.1.6, §10.5.6): whether the property was defined as asked. An
+ordinary object asks `Desc.allowedOn` (ValidateAndApplyPropertyDescriptor, §10.1.6.3); a Proxy
+calls its `defineProperty` trap (or passes the request to its target) and `proxyDefineOk`
+checks the trap's true against the target. -/
+def defineOwnProp : Nat → Nat → String → Desc → M Bool
+  | 0, _, _, _ => throw (.halt "fuel")
+  | n + 1, id, k, desc => do
+    if let .proxy t hnd := (← getObj id).kind then
+      let .obj tid := t | throwErr .type s!"Cannot perform 'defineProperty' on a proxy that has been revoked"
+      match ← proxyTrap n hnd "defineProperty" with
+      | none => return ← defineOwnProp n tid k desc
+      | some f =>
+        -- FromPropertyDescriptor (§6.2.6.4)
+        let dobj ← newObject
+        if let some v := desc.value then defineOwn dobj "value" (.data v true true true)
+        if let some w := desc.writable then defineOwn dobj "writable" (.data (.bool w) true true true)
+        if let some g := desc.get then defineOwn dobj "get" (.data g true true true)
+        if let some x := desc.set then defineOwn dobj "set" (.data x true true true)
+        if let some e := desc.enumerable then defineOwn dobj "enumerable" (.data (.bool e) true true true)
+        if let some c := desc.configurable then defineOwn dobj "configurable" (.data (.bool c) true true true)
+        if !toBool (← callV n f hnd #[t, keyValue k, .obj dobj]) then return false
+        let td ← ownDesc n tid k
+        if !proxyDefineOk (← getObj tid).extensible desc td then
+          throwErr .type s!"'defineProperty' on proxy: the trap's answer for '{k}' does not agree with the target"
+        return true
     let o0 ← getObj id
     let old := o0.getOwn k
     match old with
-    | some p => if !desc.allowedOn p then throwErr .type s!"Cannot redefine property: {k}"
-    | none => if !o0.extensible then throwErr .type s!"Cannot define property {k}, object is not extensible"
+    | some p => if !desc.allowedOn p then return false
+    | none => if !o0.extensible then return false
     let e := desc.enumerable.getD (match old with | some p => p.enumerable | none => false)
     let c := desc.configurable.getD (match old with | some p => p.configurable | none => false)
+    let gt := desc.get
+    let st := desc.set
+    let vl := desc.value
     if gt.isSome || st.isSome then
       let (og, os) := match old with | some (.acc g s _ _) => (g, s) | _ => (.undef, .undef)
       defineOwn id k (.acc (gt.getD og) (st.getD os) e c)
-    else if let (some (.acc g s _ _), true) := (old, vl.isNone && wr.isNone) then
+    else if let (some (.acc g s _ _), true) := (old, vl.isNone && desc.writable.isNone) then
       -- a descriptor with neither kind's fields keeps the accessor
       defineOwn id k (.acc g s e c)
     else
@@ -6191,6 +6285,18 @@ def defineFromDescriptor : Nat → Nat → String → Value → M Unit
             defineOwn id k (.data v w e c)
             let _ := i
         | _, _ => defineOwn id k (.data v w e c)
+    return true
+termination_by structural n _ _ _ => n
+
+/-- DefinePropertyOrThrow (§7.3.8) with the descriptor object `d` (Object.defineProperty,
+Object.defineProperties, Object.create). -/
+def defineFromDescriptor : Nat → Nat → String → Value → M Unit
+  | 0, _, _, _ => throw (.halt "fuel")
+  | n + 1, id, k, d => do
+    let desc ← toPropDesc n d
+    if !(← defineOwnProp n id k desc) then
+      if (← getObj id).getOwn k |>.isSome then throwErr .type s!"Cannot redefine property: {k}"
+      else throwErr .type s!"Cannot define property {k}, object is not extensible"
 termination_by structural n _ _ _ => n
 
 /-- JSON.stringify (§25.5.2) without `replacer` and `space`. -/
@@ -8085,7 +8191,7 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       | .obj id =>
         match a0 with
         | .obj _ | .null =>
-          if ← setProtoOf id a0 then pure .undef
+          if toBool (← callNative n (.reflect 2) .undef #[.obj id, a0] none) then pure .undef
           else throwErr .type "Object.prototype.__proto__: the prototype of this object cannot be changed"
         | _ => pure .undef
       | _ => pure .undef

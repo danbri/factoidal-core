@@ -428,6 +428,24 @@ theorem typedOob_false (d : Bool) (off len e size : Nat) (h : typedOob d off len
 theorem typedOob_detached (off len e size : Nat) : typedOob true off len e size = true := by
   simp [typedOob]
 
+/-! ## A Proxy's defineProperty trap against its target (`proxyDefineOk`, §10.5.6) -/
+
+/-- Kind: a refusal (proxy invariant). Says: a trap may not report a new property defined on a
+target that is not extensible. -/
+theorem proxyDefineOk_nonextensible (d : Desc) : proxyDefineOk false d none = false := by
+  simp [proxyDefineOk]
+
+/-- Kind: a refusal. Says: a trap may not report a non-configurable property the target lacks. -/
+theorem proxyDefineOk_new_unconfigurable (e : Bool) (d : Desc) (h : d.configurable = some false) :
+    proxyDefineOk e d none = false := by
+  simp [proxyDefineOk, h]
+
+/-- Kind: a refusal. Says: a trap may not report a property non-configurable while the target's
+is configurable. -/
+theorem proxyDefineOk_configurable_target (e : Bool) (d : Desc) (p : PropV) (h : d.configurable = some false)
+    (hp : p.configurable = true) : proxyDefineOk e d (some p) = false := by
+  simp [proxyDefineOk, h, hp]
+
 /-! ## The size of the heap (`HeapOf.full`, `maxObjs`)
 
 The heap has no collector: an object, once made, stays. A page that makes objects for ever (a
