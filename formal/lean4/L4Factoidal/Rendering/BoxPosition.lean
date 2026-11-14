@@ -1,4 +1,5 @@
 import L4Factoidal.Rendering.BoxAlign
+import L4Factoidal.Rendering.Content
 
 /-! Computed values of positioning, floats and box sizing (CSS Positioned Layout 3, CSS 2.1
 §9.5, CSS Sizing 3 §3.3): `Computed.pos`. Values are read through the property table, as
@@ -64,6 +65,9 @@ structure PositionStyle where
   /-- `list-style-position: inside` (inherited): the marker is the first thing in the item's
   first line; else it is outside the item's box, beside that line. -/
   listInside : Bool := false
+  /-- `content` of a `::before` or `::after` (`Content.read`): the text of a value that
+  makes a box; `none` for `none` and `normal`, which make no box. -/
+  content : Option String := none
   deriving Repr
 
 /-- Every field equal: the two lay out the same. -/
@@ -72,7 +76,7 @@ def PositionStyle.same (a b : PositionStyle) : Bool :=
   a.left.same b.left && a.zIndex == b.zIndex && a.float == b.float && a.clear == b.clear &&
   a.borderBox == b.borderBox && a.ratio == b.ratio && a.ratioAuto == b.ratioAuto &&
   a.writingMode == b.writingMode && a.listStyle == b.listStyle && a.listInside == b.listInside &&
-  a.flowRoot == b.flowRoot
+  a.flowRoot == b.flowRoot && a.content == b.content
 
 /-- Out of flow by positioning: `absolute` or `fixed`. -/
 def PositionStyle.isAbsolute (p : PositionStyle) : Bool := p.position == .absolute || p.position == .fixed
@@ -98,6 +102,15 @@ def ratioOf (a b : Rat) : Option (Nat × Nat) :=
 `positionProperties` and `value` is a value of it; else `none`. -/
 def PositionStyle.set (fontSize : Float) (p : PositionStyle) (property value : String) : Option PositionStyle :=
   let name := if property.startsWith "-webkit-" || property.startsWith "-moz-" then CssValues.propertyName property else property
+  -- `content`: kept as its text when it makes a box; a CSS-wide keyword is the initial
+  -- value here (`normal`: no box), and any other text is not a value.
+  if name == "content" then
+    match Content.read value with
+    | some (.parts _) => some {p with content := some value}
+    | some .noBox => some {p with content := none}
+    | none => if ["initial", "inherit", "unset", "revert", "revert-layer"].contains value.trimAscii.toString.toLower
+        then some {p with content := none} else none
+  else
   if !positionProperties.contains name then none else
   match CssValues.specified name value with
   | none => none
@@ -213,6 +226,10 @@ def positionShorthand (property value : String) : Option (List (String × String
 #guard ((PositionStyle.set 10 {ratio := some (2, 1)} "aspect-ratio" "auto").map (·.ratio)) == some none
 #guard ((PositionStyle.set 10 {} "aspect-ratio" "0 / 1").map (·.ratio)) == some none
 #guard (PositionStyle.set 10 {} "aspect-ratio" "bogus").isNone
+#guard ((PositionStyle.set 10 {} "content" "\"a\" attr(x)").map (·.content)) == some (some "\"a\" attr(x)")
+#guard ((PositionStyle.set 10 {content := some "''"} "content" "none").map (·.content)) == some none
+#guard ((PositionStyle.set 10 {content := some "''"} "content" "unset").map (·.content)) == some none
+#guard ((PositionStyle.set 10 {} "content" "12px").map (·.content)) == none
 #guard ((PositionStyle.set 10 {} "list-style-type" "none").map (·.listStyle)) == some .none
 #guard ((PositionStyle.set 10 {} "list-style-type" "square").map (·.listStyle)) == some .square
 #guard ((PositionStyle.set 10 {} "list-style-position" "inside").map (·.listInside)) == some true

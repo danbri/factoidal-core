@@ -322,4 +322,67 @@ private def badge := "<div id=o>ab <span id=w>W<b id=p>P</b></span></div>"
 private def badgeCss := "#w{display:inline-block;position:relative;padding:2px} #p{position:absolute;right:0;top:0}"
 #guard (do let w ← box badge badgeCss "w"; let p ← box badge badgeCss "p"; pure (p.1-w.1,p.2.1-w.2.1,w.2.2.1,p.2.2)) == some (4,0,10,6,7)
 
+
+-- Generated content (`Generated`, CSS 2.1 §12.1): `::before` is laid out as the first child
+-- of its originating element and `::after` as the last, with the text of `content`.
+private def gen := "<div id=a>AA</div><div id=b>BB</div>"
+#guard at? gen "#a::before{content:'x'}" "x" == some (0,0)
+#guard at? gen "#a::before{content:'x'}" "AA" == some (6,0)
+#guard at? gen "#a:after{content:\"yz\"}" "yz" == some (12,0)
+#guard at? gen "#a:AFTER{content:\"yz\"}" "yz" == some (12,0)
+#guard at? gen "div#a::before{content:'x'} #b::before{content:'yy'}" "BB" == some (12,7)
+-- as blocks: 10 px, the line, a line
+#guard box gen "#a::before{content:'';display:block;height:10px} #a::after{content:'e';display:block}" "a" == some (0,0,200,24)
+#guard at? gen "#a::before{content:'';display:block;height:10px} #a::after{content:'e';display:block}" "e" == some (0,17)
+#guard box gen "#a::before{content:'';display:block;height:10px} #a::after{content:'e';display:block}" "b" == some (0,24,200,7)
+-- the clearfix: a cleared block (or table) at the end holds the element's floats
+private def clearfix := "<div id=a><div id=f style='float:left;height:30px;width:20px'></div>AA</div><div id=b>BB</div>"
+#guard box clearfix "" "a" == some (0,0,200,7)
+#guard box clearfix "#a::after{content:'';display:block;clear:both}" "a" == some (0,0,200,30)
+#guard box clearfix "#a::after{content:'';display:block;clear:both}" "b" == some (0,30,200,7)
+#guard box clearfix "#a:before,#a:after{content:' ';display:table} #a:after{clear:both}" "a" == some (0,0,200,30)
+-- attr() reads the originating element
+#guard at? "<div id=a title=Hi>AA</div>" "#a::before{content:attr(title) ': '}" "AA" == some (24,0)
+#guard at? "<div id=a>AA</div>" "#a::before{content:attr(title) '.'}" "AA" == some (6,0)
+-- no `content`, or `none`: no box
+#guard box gen "#a::before{display:block;height:10px}" "b" == some (0,7,200,7)
+#guard box gen "#a::before{content:none;display:block;height:10px}" "b" == some (0,7,200,7)
+#guard box gen "#a::before{content:'';display:block;height:10px} #a::before{content:normal}" "b" == some (0,7,200,7)
+#guard box gen "*,*::before,*::after{box-sizing:border-box}" "b" == some (0,7,200,7)
+-- the cascade of the pseudo-element's own rules: order, specificity, importance
+#guard at? "<div id=a class=c>AA</div>" ".c::before{content:'1'} #a::before{content:'22'}" "AA" == some (12,0)
+#guard at? "<div id=a class=c>AA</div>" "#a::before{content:'22'} .c::before{content:'1'}" "AA" == some (12,0)
+#guard at? "<div id=a class=c>AA</div>" "#a::before{content:'22'} .c::before{content:'1' !important}" "AA" == some (6,0)
+#guard at? "<div id=a class=c>AA</div>" ".c::before{content:'1'} .c::before{content:'333'}" "AA" == some (18,0)
+-- it inherits from its originating element, and the element's own rules are not its rules
+#guard at? gen "#a{font-size:14px;line-height:14px} #a::before{content:'x'}" "AA" == some (12,0)
+#guard at? gen "#a{margin-left:30px;padding-left:5px} #a::before{content:'x'}" "x" == some (35,0)
+-- selectors see the page's tree: the pseudo-element is nobody's first child or sibling
+#guard box "<div id=a><span id=s>S</span></div>" "#a::before{content:'';display:block;height:9px} #s:first-child{display:block;margin-left:12px}" "s" == some (12,9,188,7)
+#guard box "<div id=a><span id=s>S</span></div>" "#a::before{content:'';display:block;height:9px} #a > *{display:block;margin-left:12px}" "s" == some (12,9,188,7)
+#guard box "<div id=a></div><div id=b>BB</div>" "#a::before{content:'x'} #a:empty{height:20px}" "b" == some (0,20,200,7)
+-- positioned in its originating element; an item of a flex container
+#guard at? "<div id=a>AA</div>" "#a{position:relative;height:50px} #a::before{content:'x';position:absolute;left:10px;top:5px}" "x" == some (10,5)
+#guard at? "<div id=a>AA</div>" "#a{display:flex} #a::before{content:'b'} #a::after{content:'c'}" "c" == some (18,0)
+#guard at? "<div id=a>AA</div>" "#a{display:flex;justify-content:space-between} #a::before{content:'b'} #a::after{content:'c'}" "c" == some (194,0)
+-- a replaced element has none; a rule that names several
+#guard (at? "<p>P</p><img id=i>" "img::before{content:'no'}" "no").isNone
+#guard at? gen "#a::before,#b::before{content:'x'}" "BB" == some (6,7)
+#guard at? gen "#b,#a::before{content:'x';margin-left:6px}" "BB" == some (6,7)
+-- the boxes answered are the page's own, in the page's numbers
+#guard ((render gen "#a::before{content:'x';display:block} #b::after{content:'y'}").toOption.map fun (_,boxes) =>
+  boxes.all (·.source < (DOM.parseHtmlDocument gen).size)) == some true
+#guard ((render gen "#a::before{content:'x'} #b::after{content:'y'}").toOption.map (·.2.size)) ==
+  ((render gen "").toOption.map (·.2.size))
+-- the derived tree: two nodes a pseudo-element, the page's nodes as they were
+#guard (do
+  let dom := DOM.parseHtmlDocument gen
+  let (tree,styles) ← (Generated.styled none dom (← (CSS.parse "#a::before{content:'x'} #b::after{content:'y'} #b::before{content:none}").toOption)).toOption
+  pure (tree.size == dom.size + 6 && styles.size == tree.size &&
+    (List.range dom.size).all fun i => (tree.get i).lname == (dom.get i).lname && (tree.get i).parent == (dom.get i).parent)) == some true
+#guard (do
+  let dom := DOM.parseHtmlDocument gen
+  let (tree,_) ← (Generated.styled none dom (← (CSS.parse "*::before{box-sizing:border-box} #a{color:red}").toOption)).toOption
+  pure (tree.size == dom.size)) == some true
+
 end L4Factoidal.Rendering.PositionLayoutTests

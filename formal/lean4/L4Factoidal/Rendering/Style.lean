@@ -253,6 +253,13 @@ structure Rule where
   `inline-size`; `CssValues.Logical.mentions`): an element that no such rule matches
   skips the mapping to physical properties in `computedFrom`. -/
   usesLogical : Bool := false
+  /-- The selectors of the rule that end in `::before` (CSS Pseudo-Elements 4 §4.1), each
+  without the pseudo-element: a selector of the originating element. `selectors` has none
+  of them, so the rule matches no element by them; `Generated` gives the pseudo-element
+  its box and these rules. -/
+  before : List Selector := []
+  /-- The same for `::after`. -/
+  after : List Selector := []
   deriving Repr
 
 def attrValue (n : DOM.Node) (key : String) : String :=
@@ -429,6 +436,25 @@ private def selector (s : String) : Except String Selector :=
   | .ok sel => .ok sel
   | .error _ => complexSelector s
 
+/-- A selector that ends in the pseudo-element `::before` or `::after` (`:before` and
+`:after` too: CSS 2.1 §5.12.3), split: the selector of the originating element, and
+whether the pseudo-element is `::before`. A pseudo-element alone, or after a combinator,
+stands on `*`. `none` for any other selector. -/
+def generatedSelector (s : String) : Option (String × Bool) :=
+  let t := trim s
+  let low := t.toLower
+  let split := fun (n : Nat) (before : Bool) =>
+    let base := (t.dropEnd n).toString
+    let bare := match base.toList.getLast? with
+      | none => true
+      | some c => c == ' ' || c == '>' || c == '+' || c == '~' || c == '\t' || c == '\n'
+    some ((if bare then base ++ "*" else base), before)
+  if low.endsWith "::before" then split 8 true
+  else if low.endsWith "::after" then split 7 false
+  else if low.endsWith ":before" then split 7 true
+  else if low.endsWith ":after" then split 6 false
+  else none
+
 /-- The longhands that a side shorthand read by this profile sets, in the order of its
 values: the four sides of `margin`, `padding` and `inset`, the two sides of a
 flow-relative shorthand of one axis (`margin-block`, `padding-inline`, `inset-block`;
@@ -559,12 +585,20 @@ abbrev RawRule := List String × Rule
 is dropped whole, as CSS drops an invalid selector list. -/
 def ruleOfLeaf (leaf : SheetReader.Leaf) : Option Rule :=
   if !leaf.kind.isEmpty then none
-  else match (splitTopCommas leaf.prelude).mapM selector with
-    | .ok selectors =>
+  else
+    -- each selector with the pseudo-element it ends in: `none`, `::before`, `::after`
+    let texts := (splitTopCommas leaf.prelude).map fun s => match generatedSelector s with
+      | some (base,before) => (base,some before)
+      | none => (s,none)
+    match texts.mapM (fun t => selector t.1) with
+    | .ok all =>
+      let tagged := all.zip (texts.map (·.2))
+      let pick := fun (which : Option Bool) => tagged.filterMap fun (sel,w) => if w == which then some sel else none
       let declarations := declarationsOf leaf.decls
       let usesVars := declarations.any (·.usesVars)
       let usesLogical := declarations.any fun d => CssValues.Logical.mentions d.property
-      some {selectors, declarations, layer := leaf.rank, usesVars, usesLogical}
+      some {selectors := pick none, before := pick (some true), after := pick (some false),
+            declarations, layer := leaf.rank, usesVars, usesLogical}
     | .error _ => none
 
 /-- The rules of a sheet, each with the query lists of the `@media` rules it is in, before

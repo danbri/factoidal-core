@@ -102,22 +102,20 @@ private theorem throw_bind_ne {ε α β : Type} {e : ε} {f : α → Except ε �
     (throw e >>= f : Except ε β) ≠ .ok v := by
   intro h; cases h
 
-/-- **`render` keeps links to the foot of the document.** The links of a scene that
-`render` answers are `linkRegions` over the boxes it answers, at the viewport width and at
+/-- **`renderStyled` keeps links to the foot of the document.** The links of a scene that
+it answers are `linkRegions` over the boxes it answers, at the viewport width and at
 `linkHeight vh doc`, where `doc` is the height of the layout those boxes come from. -/
-theorem render_links {dom : Dom} {rules : List CSS.Rule} {font : FontProfile} {embedding : Embedding}
-    {width height : Nat} {textScale : Float} {state : CSS.ElementState} {pictures : Pictures} {treeScope : Option CSS.TreeScope}
-    {scene : Scene} {boxes : Array Box}
-    (ok : render dom rules font embedding width height textScale state pictures treeScope = .ok (scene,boxes)) :
+theorem renderStyled_links {dom : Dom} {computed : Array Computed} {font : FontProfile} {embedding : Embedding}
+    {width height : Nat} {pictures : Pictures} {scene : Scene} {boxes : Array Box}
+    (ok : renderStyled dom computed font embedding width height pictures = .ok (scene,boxes)) :
     ∃ (styles : Array Computed) (result : Result),
       layoutRoot dom styles font embedding pictures (Float.ofNat width) (Float.ofNat height) = .ok result ∧
       boxes = result.boxes ∧
       scene.links = linkRegions dom styles boxes (Float.ofNat width)
         (linkHeight (Float.ofNat height) result.height) := by
-  unfold render at ok
+  unfold renderStyled at ok
   split at ok
   · exact absurd ok throw_bind_ne
-  obtain ⟨raw, -, ok⟩ := bind_ok ok
   obtain ⟨result, made, ok⟩ := bind_ok ok
   refine ⟨_, result, made, ?_⟩
   split at ok <;>
@@ -129,6 +127,30 @@ theorem render_links {dom : Dom} {rules : List CSS.Rule} {font : FontProfile} {e
     cases ok
     exact ⟨rfl, rfl⟩
 
+/-- **`render` keeps links to the foot of the document.** `render` lays out `tree`, the
+page's tree with its generated content (`Generated.styled`); the boxes it answers are
+boxes of that layout, and the links of its scene are `linkRegions` over all the boxes of
+that layout, at the viewport width and at `linkHeight vh doc`, where `doc` is the height
+of the layout. -/
+theorem render_links {dom : Dom} {rules : List CSS.Rule} {font : FontProfile} {embedding : Embedding}
+    {width height : Nat} {textScale : Float} {state : CSS.ElementState} {pictures : Pictures} {treeScope : Option CSS.TreeScope}
+    {scene : Scene} {boxes : Array Box}
+    (ok : render dom rules font embedding width height textScale state pictures treeScope = .ok (scene,boxes)) :
+    ∃ (tree : Dom) (styles : Array Computed) (result : Result),
+      layoutRoot tree styles font embedding pictures (Float.ofNat width) (Float.ofNat height) = .ok result ∧
+      (∀ box ∈ boxes, box ∈ result.boxes) ∧
+      scene.links = linkRegions tree styles result.boxes (Float.ofNat width)
+        (linkHeight (Float.ofNat height) result.height) := by
+  unfold render at ok
+  obtain ⟨made, -, ok⟩ := bind_ok ok
+  obtain ⟨drawn, drew, ok⟩ := bind_ok ok
+  obtain ⟨styles, result, laid, same, links⟩ := renderStyled_links (scene := drawn.1) (boxes := drawn.2) drew
+  cases ok
+  refine ⟨made.1, styles, result, laid, ?_, same ▸ links⟩
+  intro box mem
+  rw [← same]
+  exact (Array.mem_filter.mp mem).1
+
 /-- **`render` with every link of the document.** For a scene that `render` answers, a box
 of its layout in an anchor, visible, not empty once clipped, inside the viewport's width
 and ending at or above the foot of that layout (`result.height`) has a region in the
@@ -137,18 +159,18 @@ theorem render_link_complete {dom : Dom} {rules : List CSS.Rule} {font : FontPro
     {embedding : Embedding} {width height : Nat} {textScale : Float} {state : CSS.ElementState}
     {pictures : Pictures} {treeScope : Option CSS.TreeScope} {scene : Scene} {boxes : Array Box}
     (ok : render dom rules font embedding width height textScale state pictures treeScope = .ok (scene,boxes)) :
-    ∃ (styles : Array Computed) (result : Result),
-      layoutRoot dom styles font embedding pictures (Float.ofNat width) (Float.ofNat height) = .ok result ∧
-      boxes = result.boxes ∧
-      ∀ box ∈ boxes, ∀ (c : Box) (source : Nat) (href : String),
-        anchorAncestor dom (dom.size+1) box.source = some (source,href) →
-        c = linkBox dom styles boxes box →
+    ∃ (tree : Dom) (styles : Array Computed) (result : Result),
+      layoutRoot tree styles font embedding pictures (Float.ofNat width) (Float.ofNat height) = .ok result ∧
+      (∀ box ∈ boxes, box ∈ result.boxes) ∧
+      ∀ box ∈ result.boxes, ∀ (c : Box) (source : Nat) (href : String),
+        anchorAncestor tree (tree.size+1) box.source = some (source,href) →
+        c = linkBox tree styles result.boxes box →
         (styles[box.source]!).visible = true → 0 < c.width → 0 < c.height →
         max 0 c.x < min (Float.ofNat width) (c.x+c.width) →
         max 0 c.y < c.y+c.height → c.y+c.height ≤ result.height →
         ∃ r ∈ scene.links, r.sourceNode = source ∧ r.href = href ∧ r.x = max 0 c.x ∧ r.y = max 0 c.y := by
-  obtain ⟨styles, result, made, same, links⟩ := render_links ok
-  refine ⟨styles, result, made, same, ?_⟩
+  obtain ⟨tree, styles, result, made, same, links⟩ := render_links ok
+  refine ⟨tree, styles, result, made, same, ?_⟩
   intro box mem c source href anchor clipped visible wide tall horizontal reaches inDocument
   rw [links]
   exact linkRegions_complete_document mem anchor clipped visible wide tall horizontal reaches inDocument

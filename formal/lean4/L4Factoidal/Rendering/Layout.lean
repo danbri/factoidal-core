@@ -1,4 +1,5 @@
 import L4Factoidal.Rendering.Style
+import L4Factoidal.Rendering.Generated
 import L4Factoidal.Rendering.FontFace
 import L4Factoidal.Rendering.TableLayout
 import L4Factoidal.Rendering.FlexLayout
@@ -1987,17 +1988,15 @@ def canvasBackground (dom : Dom) (styles : Array Computed) : Option (Nat × Colo
   let some body := (dom.get root).kids.find? (fun k => (dom.get k).lname == "body") | return none
   return ((styles[body]?).bind (·.background)).map (body,·)
 
-/-- Existing DOM input, explicit viewport and font data, immutable scene output.
-`pictures` holds the decoded content of replaced elements. A page with shadow trees is
-laid out on its flat tree (`DOM.Dom.flat`), with `treeScope` its node tree for selectors
-(`CSS.TreeScope`). -/
-def render (dom : Dom) (rules : List CSS.Rule) (font : FontProfile) (embedding : Embedding)
-    (width height : Nat) (textScale : Float := 1) (state : CSS.ElementState := {})
-    (pictures : Pictures := noPictures) (treeScope : Option CSS.TreeScope := none) : Except String (Scene × Array Box) := do
+/-- The scene of a tree whose styles are computed: existing DOM input, explicit viewport
+and font data, immutable scene output. `pictures` holds the decoded content of replaced
+elements. -/
+def renderStyled (dom : Dom) (computed : Array Computed) (font : FontProfile) (embedding : Embedding)
+    (width height : Nat) (pictures : Pictures := noPictures) : Except String (Scene × Array Box) := do
   if width == 0 || height == 0 || width > 4096 || height > 4096 then throw "unsupported viewport: require dimensions 1 to 4096"
   let vw := Float.ofNat width
   let vh := Float.ofNat height
-  let styles := (← CSS.computeFor treeScope dom rules textScale state).map fun s =>
+  let styles := computed.map fun s =>
     {s with width := s.width.atViewport vw vh, height := s.height.atViewport vw vh,
             minWidth := s.minWidth.atViewport vw vh, maxWidth := s.maxWidth.atViewport vw vh,
             minHeight := s.minHeight.atViewport vw vh, maxHeight := s.maxHeight.atViewport vw vh,
@@ -2021,5 +2020,18 @@ def render (dom : Dom) (rules : List CSS.Rule) (font : FontProfile) (embedding :
   if links.size > 49152 || links.any (fun link => link.href.utf8ByteSize > 2048) then
     throw "unsupported link region count or href exceeding 2048 UTF-8 bytes"
   return (⟨width,height,⟨1,1,0,0,0,0,Float.ofNat width,Float.ofNat height⟩, result.nodes.toList,result.runs,links⟩,result.boxes)
+
+/-- The scene of a page and the boxes of its nodes. A page with shadow trees is laid out
+on its flat tree (`DOM.Dom.flat`), with `treeScope` its node tree for selectors
+(`CSS.TreeScope`). The tree that is laid out has the page's `::before` and `::after`
+boxes too (`Generated.styled`): they paint, and a link's region covers them, but the
+boxes answered are those of the page's own nodes, so a point over generated content is a
+point in its originating element. -/
+def render (dom : Dom) (rules : List CSS.Rule) (font : FontProfile) (embedding : Embedding)
+    (width height : Nat) (textScale : Float := 1) (state : CSS.ElementState := {})
+    (pictures : Pictures := noPictures) (treeScope : Option CSS.TreeScope := none) : Except String (Scene × Array Box) := do
+  let made ← Generated.styled treeScope dom rules textScale state
+  let drawn ← renderStyled made.1 made.2 font embedding width height pictures
+  return (drawn.1,drawn.2.filter (·.source < dom.size))
 
 end L4Factoidal.Rendering.Layout
