@@ -2349,3 +2349,7 @@ L4Factoidal_MathML_namesOk*  # (s) specification only (namesOk, namesOkList): th
 L4Factoidal_MathML_serialize*  # (s) specification only (serialize, serializeList): compares presTree with Present.pres in #guards of MathML/CoreVocabulary.lean; the executed writer is Present.pres
 L4Factoidal_MathML_presTree  # (s) specification only: the tree form of Present.pres for theorem presTree_core; the executed writer is Present.pres
 L4Factoidal_MathML_pres*T  # (s) specification only (presJoinT, presApplyT, presApplyArgsT, presRowsT, presCellsT): helpers of presTree, same recursion as the Present.pres helpers above
+L4Factoidal_MathML_intentExpr  # (b) bracket nesting of one intent attribute value (MathML 4 section 5.1), at most the fuel 4*length+8 of parseIntent
+L4Factoidal_MathML_intentPostfix  # (b) inside the intentExpr mutual block: the chain of applications after a term is a self tail call
+L4Factoidal_MathML_intentArgs  # (b) inside the intentExpr mutual block: the argument list is a self tail call with an accumulator
+L4Factoidal_MathML_intentStr*  # (b) nesting of an intent expression (intentStr, intentStrArgs): the argument list is a self tail call with an accumulator
