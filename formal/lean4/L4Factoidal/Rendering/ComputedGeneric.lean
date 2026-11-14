@@ -197,15 +197,18 @@ def depthBound : Nat := 256
 
 /-- The computed value of any property of the table on element `id`: a longhand, a
 shorthand put together from its longhands, or a shorthand that is kept whole. -/
-def computedOf (v : View) (id : Nat) (property : String) : String :=
+def computedOfWith (v : View) (id : Nat) (property : String) (longhand : String → String) : String :=
   let p := CssValues.propertyName property
   match CssValues.lookup p with
   | none => if CssValues.isCustom p then computedLonghand v depthBound id p else ""
   | some row =>
-    if row.longhands.isEmpty then computedLonghand v depthBound id p
-    else if (CssValues.shapeOf row).isSome then
-      CssValues.recombine row fun l => computedLonghand v depthBound id l
+    if row.longhands.isEmpty then longhand p
+    else if (CssValues.shapeOf row).isSome then CssValues.recombine row longhand
     else computedLonghand v depthBound id p
+
+/-- `computedOfWith` with each longhand's computed value by the property table. -/
+def computedOf (v : View) (id : Nat) (property : String) : String :=
+  computedOfWith v id property (computedLonghand v depthBound id)
 
 /-- The properties of the layout profile whose computed value is the specified value
 (keywords and colours): when the element itself declares one, the answer is the
@@ -272,25 +275,12 @@ def customNamesText (v : View) (id : Nat) : String := "\x00".intercalate (custom
 the property table alone, for every property (the layout profile's too). -/
 def computedBase : Nat := 100000
 
-/-- The computed value of the `k`-th name (`longhandNames` then `otherNames`) on element
-`id`, with `profileValue` the layout profile's answer for a profile property. -/
-def valueAt (v : View) (id : Nat) (k : Nat) : String :=
-  if k ≥ computedBase then
-    -- the computed value, not the resolved one: percentages and `auto` stay (Typed OM's
-    -- computedStyleMap, CSS Typed OM 1 §4.2)
-    let (longhands, others) := nameLists.get
-    let j := k - computedBase
-    let name := if j < longhands.size then longhands[j]? else others[j - longhands.size]?
-    match name with
-    | some name => computedOf v id name
-    | none =>
-      match (customNames v id)[j - longhands.size - others.size]? with
-      | some name => computedLonghand v depthBound id name
-      | none => ""
-  else
-  let profile := if k < profileCount then ComputedValues.values (v.styles[id]?.getD {}) else []
-  match profile[k]? with
-  | some (name, value) =>
+/-- The resolved value of a longhand (CSSOM §9.1): for a property of the layout profile, the
+profile's answer, or the declaration's computed value where that is the answer
+(`declaredWins`, `absoluteWins`); for any other, the computed value by the property table. -/
+def resolvedLonghand (v : View) (id : Nat) (name : String) : String :=
+  match (ComputedValues.values (v.styles[id]?.getD {})).lookup name with
+  | some value =>
     if declaredWins.contains name then
       match cascaded v id name with
       | some declared => if CssValues.cssWide.contains declared then value else computedOf v id name
@@ -308,15 +298,34 @@ def valueAt (v : View) (id : Nat) (k : Nat) : String :=
           | _ => value
       | none => value
     else value
-  | none =>
+  | none => computedLonghand v depthBound id name
+
+/-- The computed value of the `k`-th name (`longhandNames` then `otherNames`) on element
+`id`, with `profileValue` the layout profile's answer for a profile property. -/
+def valueAt (v : View) (id : Nat) (k : Nat) : String :=
+  if k ≥ computedBase then
+    -- the computed value, not the resolved one: percentages and `auto` stay (Typed OM's
+    -- computedStyleMap, CSS Typed OM 1 §4.2)
     let (longhands, others) := nameLists.get
-    let name := if k < longhands.size then longhands[k]? else others[k - longhands.size]?
+    let j := k - computedBase
+    let name := if j < longhands.size then longhands[j]? else others[j - longhands.size]?
     match name with
     | some name => computedOf v id name
     | none =>
-      -- past the table's names: the custom properties of the element, in `customNames` order
-      match (customNames v id)[k - longhands.size - others.size]? with
+      match (customNames v id)[j - longhands.size - others.size]? with
       | some name => computedLonghand v depthBound id name
       | none => ""
+  else
+  let (longhands, others) := nameLists.get
+  let name := if k < longhands.size then longhands[k]? else others[k - longhands.size]?
+  match name with
+  | some name =>
+    if k < profileCount then resolvedLonghand v id name
+    else computedOfWith v id name (resolvedLonghand v id)
+  | none =>
+    -- past the table's names: the custom properties of the element, in `customNames` order
+    match (customNames v id)[k - longhands.size - others.size]? with
+    | some name => computedLonghand v depthBound id name
+    | none => ""
 
 end L4Factoidal.Rendering.ComputedGeneric
