@@ -64,6 +64,21 @@ def main():
 
         transport.HTTPWireProtocol.__init__ = with_secret
 
+        # The tests' raw HTTP fixture (`http`: tests/support/http_request.py) sends its own
+        # paths (/session, ...) on a plain http.client connection to the endpoint. Each such
+        # request without the secret is refused, and after Gate.maxFailures refusals the
+        # endpoint locks for the rest of the run (every later file: 403 refused). Requests to
+        # the endpoint's own host and port get the secret prefix when they lack it.
+        import http.client
+        request = http.client.HTTPConnection.request
+
+        def request_with_secret(self, method, url, *args, **kwargs):
+            if self.host == a.host and self.port == a.port and url.startswith("/") and not url.startswith(prefix + "/") and url != prefix:
+                url = prefix + url
+            return request(self, method, url, *args, **kwargs)
+
+        http.client.HTTPConnection.request = request_with_secret
+
     class Harness:
         outcomes = {"failed": "ERROR", "passed": "OK", "skipped": "SKIP"}
 
