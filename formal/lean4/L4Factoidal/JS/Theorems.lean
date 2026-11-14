@@ -454,6 +454,15 @@ theorem switchStmts_cont (k : Nat) (l : List String) (d : Expr) (cs : List Case)
     (h : Case.anyContOut 100000 cs = true) : switchStmts k l d cs = none := by
   simp [switchStmts, h]
 
+/-! ## Array iteration and holes (`arrayProbes`, §23.1.3) -/
+
+/-- Kind: a specification. Says: forEach, map, filter, some and every skip absent indices; find
+and findIndex read every index. -/
+theorem arrayProbes_spec : arrayProbes .arrayForEach = true ∧ arrayProbes .arrayMap = true ∧
+    arrayProbes .arrayFilter = true ∧ arrayProbes .arraySome = true ∧ arrayProbes .arrayEvery = true ∧
+    arrayProbes .arrayFind = false ∧ arrayProbes .arrayFindIndex = false := by
+  refine ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
 /-! ## The size of the heap (`HeapOf.full`, `maxObjs`)
 
 The heap has no collector: an object, once made, stays. A page that makes objects for ever (a
