@@ -215,7 +215,7 @@ structure State where
   frameEncodings : Array (Nat × String) := #[]
   /-- The `Referrer-Policy` response field of each frame's document, by frame element, as
   the embedder gave it (`noteFramePolicy`): the policy of that document's requests
-  (`HTML.ReferrerSource.answer`, `DomOps` op 210). -/
+  (`HTML.ReferrerSource.answer`, `DomOps` op 173). -/
   framePolicies : Array (Nat × String) := #[]
   /-- The editing state of the page's document between commands (`DOM.Editing`): the CSS
   styling flag, the default paragraph separator, design mode, and the state and value

@@ -1074,8 +1074,10 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
         let (h, answer) := animOp h (a 0) (a 1) q
         let (st, r) := Hosts.Dom.answerStr mem st (a 4) (a 5) answer
         (h, st, r)
-    else if a 1 ≥ 100 && (a 1 < 200 || a 1 == 210) then
-      -- ranges, selection, traversal, CharacterData, a document's referrer source (210)
+    else if a 1 ≥ 100 && a 1 < 200 then
+      -- ranges, selection, traversal, CharacterData, a document's referrer source (173; it
+      -- was 210, the number of the tenth computed property: ops 200 and up are
+      -- `getComputedStyle`'s, one a property)
       -- (`Hosts.Dom.domOp`)
       match Hosts.Dom.readStr mem st (a 2) (a 3) Hosts.Dom.maxString with
       | .error e => (h, st, Hosts.Dom.codeOrTrap e)
