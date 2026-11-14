@@ -56,7 +56,7 @@ Deno.test({name:"DOM breadth: Range, Selection, traversal, markup, reflection, c
   for(const want of ["range llo big worldSec d -1 true","clone <p id=\"a\">llo <b>big</b> world</p><p id=\"c\">Sec</p>",
     "live 4 3","html <p id=\"a\">XXHello <b>big</b> world<i>!</i></p>","sel 1 Range XXHello big world! a 4",
     "sel2 forward false","walk p,i,p","iter 5","reflect -3 12 20 false  /x/y #h","dir RTL rtl","size IndexSizeError",
-    "style block rgb(0, 0, 0)","css true false true \\30 a loaded function true true true","after DIV 0 new"])
+    "style block rgb(0, 0, 0)","css true true false \\30 a loaded function true true true","after DIV 0 new"])
     assert.ok(line.includes(want),`BubblePopJS: wanted "${want}" in ${line}`);
   if(guest){
     engine.scriptLoad(await Deno.readFile(guest));

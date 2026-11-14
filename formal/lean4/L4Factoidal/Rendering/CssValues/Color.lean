@@ -5,14 +5,17 @@ CSS Color 4 §15), in exact rational arithmetic.
 
 What is covered: named colours, `transparent`, `currentcolor`, system colours, hex
 colours, `rgb()`/`rgba()`, `hsl()`/`hsla()`, `hwb()`, `lab()`, `lch()`, `oklab()`,
-`oklch()`, `color()` for the predefined spaces, `color-mix()` (kept as a function in the
-specified value; resolved in the computed value when the mixing space is `srgb`, `hsl` or
-`hwb` and every colour is in the sRGB family), relative colours (kept in the specified
-value; resolved when origin and target are in the sRGB family), and `light-dark()`.
+`oklch()`, `color()` for the predefined spaces, `color-mix()`, relative colours and
+`light-dark()` (the last three are kept as functions in the specified value and resolved
+in the computed value).
 
-Conversions that need a cube root or a transfer function (to and from `lab`, `lch`,
-`oklab`, `oklch`, `srgb-linear`, the `xyz` spaces and the wide-gamut RGB spaces) are not
-done here: no `Float` is used in `CssValues`.
+Exact and approximate: parsing, clamping, rounding to 8 bits, the conversions inside the
+sRGB family (`rgb`, `hsl`, `hwb`, `color(srgb)`) and interpolation are exact rational
+arithmetic. The conversions to and from the other spaces (`lab`, `lch`, `oklab`, `oklch`,
+`srgb-linear`, the `xyz` spaces, the wide-gamut RGB spaces) need powers, cube roots and
+trigonometric functions: they are rational approximations (see "Conversions between
+colour spaces" below), used only by `color-mix()` and relative colours across spaces. No
+`Float` is used.
 
 The reference for the serialised text is Chrome, as recorded in the expectations of the
 web-platform-tests under `css/css-color/parsing/`.
@@ -135,28 +138,38 @@ def hwbToRgb (h w b : Rat) : Rat × Rat × Rat :=
     let (r, g, bl) := hslToRgb h 1 ((1 : Rat) / 2)
     (r * (1 - w - b) + w, g * (1 - w - b) + w, bl * (1 - w - b) + w)
 
-/-- The hue in degrees of an sRGB colour, or `none` for a grey. -/
-def rgbToHue (r g b : Rat) : Option Rat :=
+/-- The hue in degrees of an sRGB colour (0 for a grey). -/
+def rgbHue (r g b : Rat) : Rat :=
   let mx := rmax r (rmax g b)
   let mn := rmin r (rmin g b)
   let d := mx - mn
-  if d == 0 then none
-  else if mx == r then some (rmod ((g - b) / d * 60) 360)
-  else if mx == g then some ((b - r) / d * 60 + 120)
-  else some ((r - g) / d * 60 + 240)
+  if d == 0 then 0
+  else if mx == r then rmod ((g - b) / d * 60) 360
+  else if mx == g then (b - r) / d * 60 + 120
+  else (r - g) / d * 60 + 240
 
-/-- CSS Color 4 §7.2: sRGB to HSL (hue in degrees, saturation and lightness as percentages). -/
+/-- CSS Color 4 §7.2: sRGB to HSL (hue in degrees, saturation and lightness as
+percentages). A negative saturation (a colour outside the sRGB gamut) is made positive
+with the hue turned by 180 degrees. The hue is missing (powerless) when the saturation is
+0.001% or less, as in Chrome; Chrome computes in single precision, so the threshold is
+taken here with a margin of a thousandth of itself. -/
 def rgbToHsl (r g b : Rat) : Option Rat × Rat × Rat :=
   let mx := rmax r (rmax g b)
   let mn := rmin r (rmin g b)
   let l := (mx + mn) / 2
   let m := rmin l (1 - l)
   let s := if m == 0 then 0 else (mx - l) / m
-  (rgbToHue r g b, s * 100, l * 100)
+  let h := rgbHue r g b
+  let (h, s) := if s < 0 then (rmod (h + 180) 360, -s) else (h, s)
+  (if s ≤ (1001 : Rat) / 100000000 then none else some h, s * 100, l * 100)
 
-/-- CSS Color 4 §8.2: sRGB to HWB (hue in degrees, whiteness and blackness as percentages). -/
+/-- CSS Color 4 §8.2: sRGB to HWB (hue in degrees, whiteness and blackness as
+percentages). The hue is missing (powerless) when whiteness and blackness add up to
+99.999% or more, as in Chrome. -/
 def rgbToHwb (r g b : Rat) : Option Rat × Rat × Rat :=
-  (rgbToHue r g b, rmin r (rmin g b) * 100, (1 - rmax r (rmax g b)) * 100)
+  let mx := rmax r (rmax g b)
+  let mn := rmin r (rmin g b)
+  (if mx - mn ≤ (1 : Rat) / 100000 then none else some (rgbHue r g b), mn * 100, (1 - mx) * 100)
 
 /-! ### Tables -/
 
@@ -381,8 +394,9 @@ def readComps (o : Opts) (sp : Split) : Option (Comp × Comp × Comp) :=
   | _ => none
 
 /-- `rgb()` and `rgba()`: the legacy syntax takes three numbers or three percentages; the
-modern one any mix, and `none`. -/
-def parseRgb (o : Opts) (args : List CV) : Option Color := do
+modern one any mix, and `none`. `cl` limits a channel of the modern syntax (`clamp01`, or
+nothing for a relative colour). -/
+def parseRgb (o : Opts) (cl : Rat → Rat) (args : List CV) : Option Color := do
   let sp ← splitArgs args
   let a ← readAlpha o sp.legacy sp.alpha
   let (x, y, z) ← readComps o sp
@@ -394,9 +408,9 @@ def parseRgb (o : Opts) (args : List CV) : Option Color := do
       some ⟨.rgb, some (clamp01 (r / 100)), some (clamp01 (g / 100)), some (clamp01 (b / 100)), a⟩
     | _, _, _ => none
   else
-    let r ← numOrPct 255 (fun v => clamp01 (v / 255)) x
-    let g ← numOrPct 255 (fun v => clamp01 (v / 255)) y
-    let b ← numOrPct 255 (fun v => clamp01 (v / 255)) z
+    let r ← numOrPct 255 (fun v => cl (v / 255)) x
+    let g ← numOrPct 255 (fun v => cl (v / 255)) y
+    let b ← numOrPct 255 (fun v => cl (v / 255)) z
     some ⟨.rgb, r, g, b, a⟩
 
 /-- `hsl()` and `hsla()`: the legacy syntax takes a hue and two percentages. -/
@@ -467,8 +481,8 @@ def parseColorFn (o : Opts) (args : List CV) : Option Color :=
   | _ => none
 
 /-- The colour of one of the plain colour functions (no nested colour). -/
-def parseFn (o : Opts) (n : String) (args : List CV) : Option Color :=
-  if n == "rgb" || n == "rgba" then parseRgb o args
+def parseFn (o : Opts) (n : String) (args : List CV) (cl : Rat → Rat := clamp01) : Option Color :=
+  if n == "rgb" || n == "rgba" then parseRgb o cl args
   else if n == "hsl" || n == "hsla" then parseHsl o args
   else if n == "hwb" then parseHwb o args
   else if n == "lab" then parseLab o .lab 100 125 args
@@ -500,4 +514,979 @@ def keywordColor (k : String) : Option Color :=
   else match lookup namedColors k with
     | some (r, g, b) => some (ofBytes r g b)
     | none => (lookup systemColors k).map fun (r, g, b) => ofBytes r g b
+
+/-! ### Conversions between colour spaces (CSS Color 4 §10): rational approximations
+
+The conversions inside the sRGB family (`rgb`, `hsl`, `hwb`, `color(srgb)`) above are exact.
+The others need a transfer function (a power), a cube root, or sine, cosine and arctangent:
+their values are irrational in general. They are computed here as rational approximations
+with series, each step rounded to 18 decimal places; a converted colour is then rounded to
+10 decimal places. So a converted component is an approximation (within about 1e-10 of the
+real value), never an exact value, and no theorem below speaks about it. The matrices and
+constants are those of the sample code of CSS Color 4 §18. -/
+
+/-- `x` rounded to `n` decimal places (halves upwards). -/
+def roundTo (n : Nat) (x : Rat) : Rat := ((roundHalfUp (x * pow10 n) : Int) : Rat) / pow10 n
+
+def q18 (x : Rat) : Rat := roundTo 18 x
+
+/-- ln 2 to 30 decimal places. -/
+def ln2 : Rat := (693147180559945309417232121458 : Rat) / pow10 30
+
+/-- π to 30 decimal places. -/
+def piApprox : Rat := (3141592653589793238462643383280 : Rat) / pow10 30
+
+/-- The terms of the exponential series from the `k`-th on, added to `sum`. -/
+def expSeries : Nat → Nat → Rat → Rat → Rat → Rat
+  | 0, _, _, _, sum => sum
+  | fuel + 1, k, r, term, sum =>
+    let t := q18 (term * r / (k : Rat))
+    expSeries fuel (k + 1) r t (sum + t)
+
+/-- An approximation of `e ^ z`: `z` is reduced by a multiple of ln 2 to at most 0.35 in
+size, then 30 terms of the series. -/
+def expApprox (z : Rat) : Rat :=
+  let k : Int := roundHalfUp (z / ln2)
+  let r := z - (k : Rat) * ln2
+  let e := expSeries 30 1 r 1 1
+  if 0 ≤ k then e * ((2 ^ k.toNat : Nat) : Rat) else e / ((2 ^ (-k).toNat : Nat) : Rat)
+
+/-- `x = m * 2 ^ k` with `m` in `[2/3, 4/3)` (for `x > 0`, within the fuel). -/
+def normPow2 : Nat → Rat → Int → Rat × Int
+  | 0, m, k => (m, k)
+  | fuel + 1, m, k =>
+    if (4 : Rat) / 3 ≤ m then normPow2 fuel (m / 2) (k + 1)
+    else if m < (2 : Rat) / 3 then normPow2 fuel (m * 2) (k - 1)
+    else (m, k)
+
+/-- The series `t + t^3/3 + t^5/5 + ...` continued: `p` is the last power, `j` its index. -/
+def atanhSeries : Nat → Nat → Rat → Rat → Rat → Rat
+  | 0, _, _, _, sum => sum
+  | fuel + 1, j, t2, p, sum =>
+    let p' := q18 (p * t2)
+    atanhSeries fuel (j + 2) t2 p' (sum + p' / ((j + 2 : Nat) : Rat))
+
+/-- An approximation of `ln x` for `x > 0`. -/
+def lnApprox (x : Rat) : Rat :=
+  let (m, k) := normPow2 400 x 0
+  let t := q18 ((m - 1) / (m + 1))
+  2 * atanhSeries 24 1 (q18 (t * t)) t t + (k : Rat) * ln2
+
+/-- An approximation of `x ^ y` for `x ≥ 0` (0 for `x ≤ 0`; exactly 1 for `x = 1`). -/
+def powApprox (x y : Rat) : Rat :=
+  if x ≤ 0 then 0 else q18 (expApprox (q18 (y * lnApprox x)))
+
+/-- `f` applied to the size of `x`, with the sign of `x`. -/
+def signed (f : Rat → Rat) (x : Rat) : Rat := if x < 0 then -(f (-x)) else f x
+
+def cbrtApprox (x : Rat) : Rat := signed (fun a => powApprox a ((1 : Rat) / 3)) x
+
+/-- The alternating series of sine (from `term = r`, `n = 1`) or cosine (`term = 1`, `n = 0`). -/
+def trigSeries : Nat → Nat → Rat → Rat → Rat → Rat
+  | 0, _, _, _, sum => sum
+  | fuel + 1, n, r2, term, sum =>
+    let t := q18 (-(term * r2) / (((n + 1) * (n + 2) : Nat) : Rat))
+    trigSeries fuel (n + 2) r2 t (sum + t)
+
+/-- Approximations of the sine and cosine of an angle in degrees; exact at multiples of 90. -/
+def sinCosDeg (deg : Rat) : Rat × Rat :=
+  let d := rmod deg 360
+  if d == 0 then (0, 1) else if d == 90 then (1, 0)
+  else if d == 180 then (0, -1) else if d == 270 then (-1, 0)
+  else
+    let r := q18 ((d - 180) * piApprox / 180)
+    let r2 := q18 (r * r)
+    -- sin d = -sin (d - 180), cos d = -cos (d - 180); the reduced angle is within ±π.
+    (-(trigSeries 30 1 r2 r r), -(trigSeries 30 0 r2 1 1))
+
+/-- The series `t - t^3/3 + t^5/5 - ...` continued. -/
+def atanSeries : Nat → Nat → Rat → Rat → Rat → Rat
+  | 0, _, _, _, sum => sum
+  | fuel + 1, j, t2, p, sum =>
+    let p' := q18 (-(p * t2))
+    atanSeries fuel (j + 2) t2 p' (sum + p' / ((j + 2 : Nat) : Rat))
+
+/-- An approximation of the arctangent, in degrees, of `t` in `[0, 1]`: the angle is halved
+twice (`tan (a/2) = t / (1 + √(1 + t²))`), then the series. -/
+def atanUnitDeg (t : Rat) : Rat :=
+  let half (t : Rat) : Rat := q18 (t / (1 + powApprox (1 + t * t) ((1 : Rat) / 2)))
+  let u := half (half t)
+  4 * atanSeries 24 1 (q18 (u * u)) u u * 180 / piApprox
+
+/-- An approximation of the angle of the point `(x, y)` in degrees in `[0, 360)`; exact on
+the axes. -/
+def atan2Deg (y x : Rat) : Rat :=
+  let ay := if y < 0 then -y else y
+  let ax := if x < 0 then -x else x
+  if ax == 0 && ay == 0 then 0
+  else
+    let base := if ay ≤ ax then atanUnitDeg (ay / ax) else 90 - atanUnitDeg (ax / ay)
+    if 0 ≤ x then (if 0 ≤ y then base else rmod (360 - base) 360)
+    else (if 0 ≤ y then 180 - base else 180 + base)
+
+abbrev V3 := Rat × Rat × Rat
+abbrev M3 := V3 × V3 × V3
+
+def mulV (m : M3) (v : V3) : V3 :=
+  let dot (r : V3) : Rat := r.1 * v.1 + r.2.1 * v.2.1 + r.2.2 * v.2.2
+  (dot m.1, dot m.2.1, dot m.2.2)
+
+def map3 (f : Rat → Rat) (v : V3) : V3 := (f v.1, f v.2.1, f v.2.2)
+
+def linSrgbToXyz : M3 :=
+  (((506752 : Rat) / 1228815, (87881 : Rat) / 245763, (12673 : Rat) / 70218),
+   ((87098 : Rat) / 409605, (175762 : Rat) / 245763, (12673 : Rat) / 175545),
+   ((7918 : Rat) / 409605, (87881 : Rat) / 737289, (1001167 : Rat) / 1053270))
+
+def xyzToLinSrgb : M3 :=
+  (((12831 : Rat) / 3959, (-329 : Rat) / 214, (-1974 : Rat) / 3959),
+   ((-851781 : Rat) / 878810, (1648619 : Rat) / 878810, (36519 : Rat) / 878810),
+   ((705 : Rat) / 12673, (-2585 : Rat) / 12673, (705 : Rat) / 667))
+
+def linP3ToXyz : M3 :=
+  (((608311 : Rat) / 1250200, (189793 : Rat) / 714400, (198249 : Rat) / 1000160),
+   ((35783 : Rat) / 156275, (247089 : Rat) / 357200, (198249 : Rat) / 2500400),
+   (0, (32229 : Rat) / 714400, (5220557 : Rat) / 5000800))
+
+def xyzToLinP3 : M3 :=
+  (((446124 : Rat) / 178915, (-333277 : Rat) / 357830, (-72051 : Rat) / 178915),
+   ((-14852 : Rat) / 17905, (63121 : Rat) / 35810, (423 : Rat) / 17905),
+   ((11844 : Rat) / 330415, (-50337 : Rat) / 660830, (316169 : Rat) / 330415))
+
+def linProphotoToXyz50 : M3 :=
+  ((0.79776664490064230, 0.13518129740053308, 0.03134773412839220),
+   (0.28807482881940130, 0.71183523424187300, 0.00008993693872564),
+   (0, 0, 0.82510460251046020))
+
+def xyz50ToLinProphoto : M3 :=
+  ((1.34578688164715830, -0.25557208737979464, -0.05110186497554526),
+   (-0.54463070512490190, 1.50824774284514680, 0.02052744743642139),
+   (0, 0, 1.21196754563894520))
+
+def linA98ToXyz : M3 :=
+  (((573536 : Rat) / 994567, (263643 : Rat) / 1420810, (187206 : Rat) / 994567),
+   ((591459 : Rat) / 1989134, (6239551 : Rat) / 9945670, (374412 : Rat) / 4972835),
+   ((53769 : Rat) / 1989134, (351524 : Rat) / 4972835, (4929758 : Rat) / 4972835))
+
+def xyzToLinA98 : M3 :=
+  (((1829569 : Rat) / 896150, (-506331 : Rat) / 896150, (-308931 : Rat) / 896150),
+   ((-851781 : Rat) / 878810, (1648619 : Rat) / 878810, (36519 : Rat) / 878810),
+   ((16779 : Rat) / 1248040, (-147721 : Rat) / 1248040, (1266979 : Rat) / 1248040))
+
+def lin2020ToXyz : M3 :=
+  (((63426534 : Rat) / 99577255, (20160776 : Rat) / 139408157, (47086771 : Rat) / 278816314),
+   ((26158966 : Rat) / 99577255, (472592308 : Rat) / 697040785, (8267143 : Rat) / 139408157),
+   (0, (19567812 : Rat) / 697040785, (295819943 : Rat) / 278816314))
+
+def xyzToLin2020 : M3 :=
+  (((30757411 : Rat) / 17917100, (-6372589 : Rat) / 17917100, (-4539589 : Rat) / 17917100),
+   ((-19765991 : Rat) / 29648200, (47925759 : Rat) / 29648200, (467509 : Rat) / 29648200),
+   ((792561 : Rat) / 44930125, (-1921689 : Rat) / 44930125, (42328811 : Rat) / 44930125))
+
+def d65ToD50 : M3 :=
+  ((1.0479297925449969, 0.022946870601609652, -0.05019226628920524),
+   (0.02962780877005599, 0.9904344267538799, -0.017073799063418826),
+   (-0.009243040646204504, 0.015055191490298152, 0.7518742814281371))
+
+def d50ToD65 : M3 :=
+  ((0.955473421488075, -0.02309845494876471, 0.06325924320057072),
+   (-0.0283697093338637, 1.0099953980813041, 0.021041441191917323),
+   (0.012314014864481998, -0.020507649298898964, 1.330365926242124))
+
+def xyzToLms : M3 :=
+  ((0.8190224379967030, 0.3619062600528904, -0.1288737815209879),
+   (0.0329836539323885, 0.9292868615863434, 0.0361446663506424),
+   (0.0481771893596242, 0.2642395317527308, 0.6335478284694309))
+
+def lmsToOklab : M3 :=
+  ((0.2104542683093140, 0.7936177747023054, -0.0040720430116193),
+   (1.9779985324311684, -2.4285922420485799, 0.4505937096174110),
+   (0.0259040424655478, 0.7827717124575296, -0.8086757549230774))
+
+def lmsToXyz : M3 :=
+  ((1.2268798758459243, -0.5578149944602171, 0.2813910456659647),
+   (-0.0405757452148008, 1.1122868032803170, -0.0717110580655164),
+   (-0.0763729366746601, -0.4214933324022432, 1.5869240198367816))
+
+def oklabToLms : M3 :=
+  ((1, 0.3963377773761749, 0.2158037573099136),
+   (1, -0.1055613458156586, -0.0638541728258133),
+   (1, -0.0894841775298119, -1.2914855480194092))
+
+/-- The D50 white point (CIE chromaticities 0.3457, 0.3585). -/
+def whiteD50 : V3 := ((3457 : Rat) / 3585, 1, (2958 : Rat) / 3585)
+
+def linSrgb (v : Rat) : Rat :=
+  signed (fun a => if a ≤ (4045 : Rat) / 100000 then a * 100 / 1292
+    else powApprox ((a + (55 : Rat) / 1000) * 1000 / 1055) ((12 : Rat) / 5)) v
+
+def gamSrgb (v : Rat) : Rat :=
+  signed (fun a => if (31308 : Rat) / 10000000 < a
+    then (1055 : Rat) / 1000 * powApprox a ((5 : Rat) / 12) - (55 : Rat) / 1000
+    else a * 1292 / 100) v
+
+def linProphoto (v : Rat) : Rat :=
+  signed (fun a => if a ≤ (16 : Rat) / 512 then a / 16 else powApprox a ((9 : Rat) / 5)) v
+
+def gamProphoto (v : Rat) : Rat :=
+  signed (fun a => if (1 : Rat) / 512 ≤ a then powApprox a ((5 : Rat) / 9) else 16 * a) v
+
+def labToXyz50 (v : V3) : V3 :=
+  let κ : Rat := (24389 : Rat) / 27
+  let ε : Rat := (216 : Rat) / 24389
+  let (l, a, b) := v
+  let f1 := (l + 16) / 116
+  let f0 := f1 + a / 500
+  let f2 := f1 - b / 200
+  let x := if ε < f0 * f0 * f0 then f0 * f0 * f0 else (116 * f0 - 16) / κ
+  let y := if κ * ε < l then f1 * f1 * f1 else l / κ
+  let z := if ε < f2 * f2 * f2 then f2 * f2 * f2 else (116 * f2 - 16) / κ
+  (x * whiteD50.1, y * whiteD50.2.1, z * whiteD50.2.2)
+
+def xyz50ToLab (v : V3) : V3 :=
+  let κ : Rat := (24389 : Rat) / 27
+  let ε : Rat := (216 : Rat) / 24389
+  let f (t : Rat) : Rat := if ε < t then cbrtApprox t else (κ * t + 16) / 116
+  let f0 := f (v.1 / whiteD50.1)
+  let f1 := f (v.2.1 / whiteD50.2.1)
+  let f2 := f (v.2.2 / whiteD50.2.2)
+  (116 * f1 - 16, 500 * (f0 - f1), 200 * (f1 - f2))
+
+/-- A colour of a rectangular space as XYZ D65 (approximation). -/
+def toXyz (s : Space) (v : V3) : V3 :=
+  match s with
+  | .srgbLinear => mulV linSrgbToXyz v
+  | .displayP3 => mulV linP3ToXyz (map3 linSrgb v)
+  | .displayP3Linear => mulV linP3ToXyz v
+  | .a98Rgb => mulV linA98ToXyz (map3 (signed fun a => powApprox a ((563 : Rat) / 256)) v)
+  | .prophotoRgb => mulV d50ToD65 (mulV linProphotoToXyz50 (map3 linProphoto v))
+  | .rec2020 => mulV lin2020ToXyz (map3 (signed fun a => powApprox a ((12 : Rat) / 5)) v)
+  | .xyzD50 => mulV d50ToD65 v
+  | .xyzD65 => v
+  | .lab => mulV d50ToD65 (labToXyz50 v)
+  | .oklab => mulV lmsToXyz (map3 (fun c => c * c * c) (mulV oklabToLms v))
+  | _ => mulV linSrgbToXyz (map3 linSrgb v)
+
+/-- XYZ D65 as a colour of a rectangular space (approximation). -/
+def fromXyz (s : Space) (v : V3) : V3 :=
+  match s with
+  | .srgbLinear => mulV xyzToLinSrgb v
+  | .displayP3 => map3 gamSrgb (mulV xyzToLinP3 v)
+  | .displayP3Linear => mulV xyzToLinP3 v
+  | .a98Rgb => map3 (signed fun a => powApprox a ((256 : Rat) / 563)) (mulV xyzToLinA98 v)
+  | .prophotoRgb => map3 gamProphoto (mulV xyz50ToLinProphoto (mulV d65ToD50 v))
+  | .rec2020 => map3 (signed fun a => powApprox a ((5 : Rat) / 12)) (mulV xyzToLin2020 v)
+  | .xyzD50 => mulV d65ToD50 v
+  | .xyzD65 => v
+  | .lab => xyz50ToLab (mulV d65ToD50 v)
+  | .oklab => mulV lmsToOklab (map3 cbrtApprox (mulV xyzToLms v))
+  | _ => map3 gamSrgb (mulV xyzToLinSrgb v)
+
+/-- The rectangular space a space is a form of: `lab` for `lch`, `oklab` for `oklch`,
+`srgb` for `rgb`, `hsl` and `hwb`. -/
+def rectOf : Space → Space
+  | .lch => .lab
+  | .oklch => .oklab
+  | .rgb | .hsl | .hwb => .srgb
+  | s => s
+
+/-- The components of a colour (none missing) in another space; a hue that is powerless
+there is missing. Exact inside the sRGB family, an approximation rounded to 10 decimal
+places otherwise. -/
+def convertV (src dst : Space) (v : V3) : Option Rat × Option Rat × Option Rat :=
+  let (c1, c2, c3) := v
+  let rect : V3 := match src with
+    | .hsl => hslToRgb c1 (c2 / 100) (c3 / 100)
+    | .hwb => hwbToRgb c1 (c2 / 100) (c3 / 100)
+    | .lch | .oklch => let (s, c) := sinCosDeg c3; (c1, c2 * c, c2 * s)
+    | _ => v
+  let r := if rectOf src == rectOf dst then rect
+    else map3 (roundTo 10) (fromXyz (rectOf dst) (toXyz (rectOf src) rect))
+  let polar (eps : Rat) : Option Rat × Option Rat × Option Rat :=
+    let (l, a, b) := r
+    if src == dst then (some c1, some c2, some c3)
+    else
+      let ch := roundTo 10 (powApprox (a * a + b * b) ((1 : Rat) / 2))
+      (some l, some ch, if ch ≤ eps then none else some (roundTo 10 (atan2Deg b a)))
+  match dst with
+  | .hsl => let (h, s, l) := rgbToHsl r.1 r.2.1 r.2.2; (h, some s, some l)
+  | .hwb => let (h, w, b) := rgbToHwb r.1 r.2.1 r.2.2; (h, some w, some b)
+  | .lch => polar ((15 : Rat) / 10000)
+  | .oklch => polar ((4 : Rat) / 1000000)
+  | _ => (some r.1, some r.2.1, some r.2.2)
+
+/-! ### `color-mix()` (CSS Color 5 §3) -/
+
+inductive HueMethod where
+  | shorter | longer | increasing | decreasing
+  deriving Repr, DecidableEq
+
+/-- The interpolation method of a `color-mix()`: the canonical name of the space, the hue
+method, and whether it was written. -/
+structure Method where
+  space : String
+  hue : HueMethod := .shorter
+  given : Bool := true
+
+/-- The canonical name of a space `color-mix()` can interpolate in. -/
+def mixSpaceName (s : String) : Option String :=
+  if s == "hsl" || s == "hwb" || s == "lab" || s == "lch" || s == "oklab" || s == "oklch" then some s
+  else (predefined s).map Space.name
+
+def isPolar (s : String) : Bool := s == "hsl" || s == "hwb" || s == "lch" || s == "oklch"
+
+def hueMethod (s : String) : Option HueMethod :=
+  if s == "shorter" then some .shorter
+  else if s == "longer" then some .longer
+  else if s == "increasing" then some .increasing
+  else if s == "decreasing" then some .decreasing
+  else none
+
+def HueMethod.text : HueMethod → String
+  | .shorter => "" | .longer => " longer hue" | .increasing => " increasing hue"
+  | .decreasing => " decreasing hue"
+
+/-- The first argument of a `color-mix()` read as `in <space> [<method> hue]`: `none` when
+it starts with `in` and is malformed; `some none` when it is not an interpolation method. -/
+def parseMethod (g : List CV) : Option (Option Method) :=
+  match stripWs g with
+  | .tok (.ident i) :: rest =>
+    if lower i != "in" then some none
+    else match rest with
+      | [.tok (.ident s)] => (mixSpaceName (lower s)).map fun n => some { space := n }
+      | [.tok (.ident s), .tok (.ident m), .tok (.ident h)] =>
+        if lower h == "hue" && isPolar (lower s) then
+          (hueMethod (lower m)).map fun hm => some { space := lower s, hue := hm }
+        else none
+      | _ => none
+  | _ => some none
+
+/-- The values between the top-level commas. -/
+def splitCommas (cvs : List CV) : List (List CV) :=
+  let (cur, acc) := cvs.foldl (fun (st : List CV × List (List CV)) cv =>
+    match cv with
+    | .tok .comma => ([], st.1.reverse :: st.2)
+    | cv => (cv :: st.1, st.2)) ([], [])
+  (cur.reverse :: acc).reverse
+
+/-- One colour of a `color-mix()` with its percentage (before or after it, 0% to 100%). -/
+def parseItem (o : Opts) (g : List CV) : Option (CV × Option Rat) :=
+  let pct (cv : CV) : Option Rat :=
+    match o.read cv with
+    | some (.pct p) => if 0 ≤ p && p ≤ 100 then some p else none
+    | _ => none
+  match stripWs g with
+  | [c] => some (c, none)
+  | [a, b] =>
+    match o.read a with
+    | some (.pct _) => (pct a).map fun p => (b, some p)
+    | _ => (pct b).map fun p => (a, some p)
+  | _ => none
+
+/-- The percentages with the ones left out filled in: they share what is left of 100%. -/
+def fillPcts (ps : List (Option Rat)) : List Rat :=
+  let given := ps.filterMap id
+  let sum := given.foldl (· + ·) 0
+  let missing := ps.length - given.length
+  let share := if missing == 0 then 0 else clampPos ((100 - sum) / (missing : Rat))
+  ps.map (·.getD share)
+
+/-- The method and the colours of a `color-mix()`. -/
+def mixParts (o : Opts) (args : List CV) : Option (Method × List (CV × Option Rat)) := do
+  let groups := splitCommas args
+  let (method, groups) ← (match groups with
+    | g :: rest =>
+      match parseMethod g with
+      | none => none
+      | some none => some (({ space := "oklab", given := false } : Method), groups)
+      | some (some m) => some (m, rest)
+    | [] => none)
+  let items ← groups.mapM (parseItem o)
+  if items.isEmpty then none
+  some (method, items)
+
+/-- The specified value of a `color-mix()`: kept as a function. The default method
+(`in oklab`) and the default hue method are left out; percentages are left out when none
+was written, when the two are 50%, or when the only one is 100%, and are written for
+every colour otherwise. -/
+def mixSpec (spec : CV → Option String) (o : Opts) (args : List CV) : Option String := do
+  let (method, items) ← mixParts o args
+  let texts ← items.mapM fun it => spec it.1
+  let ps := items.map (·.2)
+  let shown : List (Option Rat) :=
+    if ps.all (·.isNone) then ps
+    else
+      let f := fillPcts ps
+      if f == [50, 50] then [none, none] else if f == [100] then [none] else f.map some
+  let parts := (texts.zip shown).map fun (t, p) =>
+    match p with
+    | some p => t ++ " " ++ fmtRat p ++ "%"
+    | none => t
+  let head :=
+    if !method.given || (method.space == "oklab") then ""
+    else "in " ++ method.space ++ method.hue.text ++ ", "
+  some ("color-mix(" ++ head ++ ", ".intercalate parts ++ ")")
+
+/-- Missing components and alpha taken as 0 and 1. -/
+def fill0 (c : Color) : Color :=
+  { c with c1 := some (c.c1.getD 0), c2 := some (c.c2.getD 0), c3 := some (c.c3.getD 0),
+           alpha := some (c.alpha.getD 1) }
+
+/-- The kind of each component of a space, for carrying missing components over (CSS
+Color 4 §12.2, analogous components): 1 red or X, 2 green or Y, 3 blue or Z, 4 hue,
+5 colourfulness, 6 lightness, 7 and 8 the opponent axes, 0 no analogue. -/
+def kinds : Space → Nat × Nat × Nat
+  | .hsl => (4, 5, 6)
+  | .hwb => (4, 0, 0)
+  | .lab | .oklab => (6, 7, 8)
+  | .lch | .oklch => (6, 5, 4)
+  | _ => (1, 2, 3)
+
+/-- A colour in the space `target`, with its missing components carried over as Chrome
+does: a colour already in that space keeps them; a colour with all three missing keeps all
+three missing; a missing component stays missing in the analogous component of the target;
+when both components other than the hue of a polar colour are missing, every component
+of the target other than the hue is missing; when both opponent axes of a `lab` or `oklab`
+colour are missing, the colourfulness and the hue of the target are missing; when chroma
+and hue of an `lch` or `oklch` colour are missing, the opponent axes of the target are. A powerless hue of the converted colour is missing. The conversion is exact inside
+the sRGB family and an approximation otherwise (see `convertV`). -/
+def toMixSpace (target : Space) (c : Color) : Option Color :=
+  let polar (s : Space) : Bool := s == .hsl || s == .hwb
+  if c.space == target then some c
+  else if c.c1.isNone && c.c2.isNone && c.c3.isNone then some ⟨target, none, none, none, c.alpha⟩
+  else
+    -- A chroma at or below the threshold of CSS Color 4 §10 counts as 0 (a grey).
+    let chroma := c.c2.getD 0
+    let chroma := if (c.space == .lch && chroma ≤ (15 : Rat) / 10000)
+      || (c.space == .oklch && chroma ≤ (4 : Rat) / 1000000) then 0 else chroma
+    let (x, y, z) := convertV c.space target (c.c1.getD 0,
+      if c.space == .lch || c.space == .oklch then chroma else c.c2.getD 0, c.c3.getD 0)
+    let (k1, k2, k3) := kinds c.space
+    let missing (k : Nat) : Bool :=
+      k != 0 && ((k == k1 && c.c1.isNone) || (k == k2 && c.c2.isNone) || (k == k3 && c.c3.isNone))
+    let (t1, t2, t3) := kinds target
+    -- A polar colour with both components other than the hue missing.
+    let both := (polar c.space && c.c2.isNone && c.c3.isNone)
+      || ((c.space == .lch || c.space == .oklch) && c.c1.isNone && c.c2.isNone)
+    -- A `lab` or `oklab` colour with both opponent axes missing.
+    let noAxes := (c.space == .lab || c.space == .oklab) && c.c2.isNone && c.c3.isNone
+    -- An `lch` or `oklch` colour with chroma and hue missing.
+    let noChroma := (c.space == .lch || c.space == .oklch) && c.c2.isNone && c.c3.isNone
+    let gone (k : Nat) : Bool :=
+      missing k || (both && k != 4) || (noAxes && (k == 4 || k == 5))
+        || (noChroma && (k == 7 || k == 8))
+    some ⟨target, if gone t1 then none else x, if gone t2 then none else y,
+      if gone t3 then none else z, c.alpha⟩
+
+/-- CSS Color 4 §12.4: the two hues adjusted for a hue interpolation method. -/
+def fixHue (m : HueMethod) (a b : Rat) : Rat × Rat :=
+  let d := b - a
+  match m with
+  | .shorter => if 180 < d then (a + 360, b) else if d < -180 then (a, b + 360) else (a, b)
+  | .longer =>
+    if 0 < d && d < 180 then (a + 360, b)
+    else if -180 < d && d ≤ 0 then (a, b + 360) else (a, b)
+  | .increasing => if d < 0 then (a, b + 360) else (a, b)
+  | .decreasing => if 0 < d then (a + 360, b) else (a, b)
+
+def fillFrom (a b : Option Rat) : Option Rat :=
+  match a with
+  | some v => some v
+  | none => b
+
+/-- CSS Color 4 §12: two colours of the same space interpolated with weights `p` and `q`
+(`p + q = 1`): a component missing in one is taken from the other; the components other
+than the hue are premultiplied by alpha (and are 0 when the resulting alpha is 0). -/
+def mixPair (hm : HueMethod) (x y : Color) (p q : Rat) : Color :=
+  let hueIdx : Nat := match x.space with
+    | .hsl | .hwb => 1
+    | .lch | .oklch => 3
+    | _ => 0
+  let ax := fillFrom x.alpha y.alpha
+  let ay := fillFrom y.alpha x.alpha
+  let pa := ax.getD 1
+  let qa := ay.getD 1
+  let alpha := pa * p + qa * q
+  let lin (i : Nat) (u v : Option Rat) : Option Rat :=
+    match fillFrom u v, fillFrom v u with
+    | some u, some v =>
+      if i == hueIdx then
+        let (u, v) := fixHue hm u v
+        some (rmod (u * p + v * q) 360)
+      else if alpha == 0 then some 0
+      else some ((u * pa * p + v * qa * q) / alpha)
+    | _, _ => none
+  ⟨x.space, lin 1 x.c1 y.c1, lin 2 x.c2 y.c2, lin 3 x.c3 y.c3,
+    match ax, ay with
+    | some _, some _ => some alpha
+    | _, _ => none⟩
+
+/-- The colours mixed one after the other, each with its share of the weight so far (in
+equal shares while the weight so far is 0). -/
+def mixFold (hm : HueMethod) : Color → Rat → List (Color × Rat) → Color
+  | acc, _, [] => acc
+  | acc, w, (c, wc) :: rest =>
+    let tot := w + wc
+    let acc' := if tot == 0 then mixPair hm acc c ((1 : Rat) / 2) ((1 : Rat) / 2)
+      else mixPair hm acc c (w / tot) (wc / tot)
+    mixFold hm acc' tot rest
+
+/-- A result of interpolation in `hsl` or `hwb` as `color(srgb ...)`; with a missing
+component or alpha it stays as it is. -/
+def polarToSrgb (c : Color) : Color :=
+  match c.space with
+  | .hsl | .hwb =>
+    match c.rgba? with
+    | some v => ⟨.srgb, some v.r, some v.g, some v.b, c.alpha⟩
+    | none => c
+  | _ => c
+
+/-- The space a colour function makes. -/
+def fnSpace (n : String) : Option Space :=
+  if n == "rgb" || n == "rgba" then some .rgb
+  else if n == "hsl" || n == "hsla" then some .hsl
+  else if n == "hwb" then some .hwb
+  else if n == "lab" then some .lab
+  else if n == "lch" then some .lch
+  else if n == "oklab" then some .oklab
+  else if n == "oklch" then some .oklch
+  else none
+
+/-- The computed value of a `color-mix()` (CSS Color 5 §3.1): every colour is converted to
+the interpolation space (`toMixSpace`); percentages are normalised to add up to 100%; when
+they add up to less, alpha is scaled by the sum. A result in `hsl` or `hwb` is given as
+`color(srgb ...)`. `none` when a colour cannot be resolved. -/
+def mixResolve (res : CV → Option Color) (o : Opts) (args : List CV) : Option Color := do
+  let (method, items) ← mixParts o args
+  let space ← (match fnSpace method.space with
+    | some s => some s
+    | none => predefined method.space)
+  let cols ← items.mapM fun it => (res it.1).bind (toMixSpace space)
+  let ps := fillPcts (items.map (·.2))
+  let sum := ps.foldl (· + ·) 0
+  let ws := ps.map fun p => if sum == 0 then 0 else p / sum
+  let mult : Rat := if sum < 100 then sum / 100 else 1
+  match cols.zip ws with
+  | [] => none
+  | (c, w) :: rest =>
+    let m := mixFold method.hue c w rest
+    some (polarToSrgb { m with alpha := m.alpha.map (· * mult) })
+
+/-! ### Relative colours (CSS Color 5 §4) -/
+
+/-- The channel keywords of a relative colour in a space. -/
+def channelNames : Space → List String
+  | .hsl => ["h", "s", "l"]
+  | .hwb => ["h", "w", "b"]
+  | .lab | .oklab => ["l", "a", "b"]
+  | .lch | .oklch => ["l", "c", "h"]
+  | .xyzD50 | .xyzD65 => ["x", "y", "z"]
+  | _ => ["r", "g", "b"]
+
+/-- The parts of a relative colour. -/
+structure Rel where
+  origin : CV
+  space : Space
+  comps : List CV
+  alpha : Option CV
+
+/-- `fn(from <color> c1 c2 c3 [/ alpha])` and `color(from <color> <space> c1 c2 c3 [/ alpha])`. -/
+def relParts (n : String) (args : List CV) : Option Rel :=
+  match stripWs args with
+  | .tok (.ident f) :: origin :: rest =>
+    if lower f != "from" then none
+    else do
+      let (space, rest) ← (if n == "color" then
+          match rest with
+          | .tok (.ident s) :: r => (predefined (lower s)).map fun sp => (sp, r)
+          | _ => none
+        else (fnSpace n).map fun sp => (sp, rest))
+      match rest with
+      | [x, y, z] => some ⟨origin, space, [x, y, z], none⟩
+      | [x, y, z, .tok (.delim '/'), w] => some ⟨origin, space, [x, y, z], some w⟩
+      | _ => none
+  | _ => none
+
+/-- The text of one component of a relative colour in the specified value: a channel
+keyword or `none` in lower case, a number, percentage or angle, or a function as written. -/
+def relCompText (o : Opts) (names : List String) (cv : CV) : Option String :=
+  match cv with
+  | .tok (.ident k) =>
+    let k := lower k
+    if k == "none" || k == "alpha" || names.contains k then some k else none
+  | .tok _ => (o.read cv).map fun _ => serialize [cv]
+  | .fn _ _ => some (serialize [cv])
+  | _ => none
+
+/-- The specified value of a relative colour: kept as a function, the origin colour in its
+own specified form. -/
+def relSpec (spec : CV → Option String) (o : Opts) (n : String) (r : Rel) : Option String := do
+  let origin ← spec r.origin
+  let names := channelNames r.space
+  let comps ← r.comps.mapM (relCompText o names)
+  let alpha ← (match r.alpha with
+    | some a => (relCompText o names a).map fun t => " / " ++ t
+    | none => some "")
+  let head := if n == "color" then "color(from " ++ origin ++ " " ++ r.space.name
+    else r.space.name ++ "(from " ++ origin
+  some (head ++ " " ++ " ".intercalate comps ++ alpha ++ ")")
+
+/-- Channel keywords replaced by their numbers, also inside functions (`calc()`). -/
+def substF : Nat → (String → Option Rat) → CV → CV
+  | 0, _, cv => cv
+  | fuel + 1, env, cv =>
+    match cv with
+    | .tok (.ident k) =>
+      match env (lower k) with
+      | some v => .tok (.num v false)
+      | none => cv
+    | .fn n args => .fn n (args.map (substF fuel env))
+    | .block c body => .block c (body.map (substF fuel env))
+    | cv => cv
+
+/-- The origin colour in the target space, as the channel keywords see it (`rgb` channels
+are 0 to 255). -/
+def originChannels (target : Space) (c : Color) : Option Color :=
+  if target == .rgb then
+    (toMixSpace .srgb c).map fun s =>
+      { s with c1 := s.c1.map (· * 255), c2 := s.c2.map (· * 255), c3 := s.c3.map (· * 255) }
+  else toMixSpace target c
+
+/-- The computed value of a relative colour whose origin is already resolved: the channel
+keywords are replaced by the origin's channels and the function is read as usual, without
+clamping of `rgb` channels. A keyword that stands alone for a missing channel gives `none`;
+inside a function a missing channel is 0. The result is not a legacy colour: `rgb`, `hsl`
+and `hwb` give `color(srgb ...)`. -/
+def relResolve (o : Opts) (n : String) (r : Rel) (origin : Color) : Option Color := do
+  let oc ← originChannels r.space origin
+  let names := channelNames r.space
+  let chan (k : String) : Option (Option Rat) :=
+    if k == "alpha" then some oc.alpha
+    else match names with
+      | [n1, n2, n3] =>
+        if k == n1 then some oc.c1 else if k == n2 then some oc.c2
+        else if k == n3 then some oc.c3 else none
+      | _ => none
+  let env (k : String) : Option Rat := (chan k).map (·.getD 0)
+  let sub (cv : CV) : CV :=
+    match cv with
+    | .tok (.ident k) =>
+      match chan (lower k) with
+      | some none => .tok (.ident "none")
+      | _ => substF 16 env cv
+    | cv => substF 16 env cv
+  let sep : List CV := [.tok .ws]
+  let comps := (r.comps.map sub).foldr (fun cv acc => cv :: sep ++ acc) []
+  let alphaCv : CV := match r.alpha with
+    | some w => sub w
+    | none => match oc.alpha with
+      | some a => .tok (.num a false)
+      | none => .tok (.ident "none")
+  let args := (if n == "color" then [CV.tok (.ident r.space.name), .tok .ws] else [])
+    ++ comps ++ [.tok (.delim '/'), .tok .ws, alphaCv]
+  let c ← parseFn o n args id
+  match c.space with
+  | .rgb => some { c with space := .srgb }
+  | _ => some (polarToSrgb c)
+
+/-! ### The colour of a component value -/
+
+/-- The two colours of `light-dark(a, b)`. -/
+def lightDarkParts (args : List CV) : Option (CV × CV) :=
+  match (splitCommas args).map stripWs with
+  | [[a], [b]] => some (a, b)
+  | _ => none
+
+/-- The specified value: keywords in lower case, colour functions in canonical form,
+`color-mix()`, relative colours and `light-dark()` kept as functions. -/
+def specF : Nat → Opts → CV → Option String
+  | 0, _, _ => none
+  | fuel + 1, o, cv =>
+    match cv with
+    | .tok (.ident s) =>
+      let k := lower s
+      if isKeyword k then some k else none
+    | .tok (.hash s _) => (parseHex s).map Color.css
+    | .fn name args =>
+      let n := lower name
+      if n == "color-mix" then mixSpec (specF fuel o) o args
+      else if n == "light-dark" then
+        match lightDarkParts args with
+        | some (a, b) => do
+          let ta ← specF fuel o a
+          let tb ← specF fuel o b
+          some ("light-dark(" ++ ta ++ ", " ++ tb ++ ")")
+        | none => none
+      else match relParts n args with
+        | some r => relSpec (specF fuel o) o n r
+        | none => (parseFn o n args).map Color.css
+    | _ => none
+
+/-- The colour a component value resolves to, when it can be resolved here. -/
+def resolveF : Nat → Opts → CV → Option Color
+  | 0, _, _ => none
+  | fuel + 1, o, cv =>
+    match cv with
+    | .tok (.ident s) =>
+      let k := lower s
+      if k == "currentcolor" then
+        match o.current.map fun t => trimWs (CV.parse t) with
+        | some [c] => resolveF fuel { o with current := none } c
+        | _ => none
+      else keywordColor k
+    | .tok (.hash s _) => parseHex s
+    | .fn name args =>
+      let n := lower name
+      if n == "color-mix" then mixResolve (resolveF fuel o) o args
+      else if n == "light-dark" then
+        match lightDarkParts args with
+        | some (a, b) => resolveF fuel o (if o.dark then b else a)
+        | none => none
+      else match relParts n args with
+        | some r => (resolveF fuel o r.origin).bind (relResolve o n r)
+        | none => parseFn o n args
+    | _ => none
+
+/-- The colour that component value `cv` is: `none` for an invalid colour, and for a
+colour that depends on `currentcolor` when `o.current` is not given. System colours have
+their light-scheme values; `light-dark()` follows `o.dark`. -/
+def resolve (o : Opts) (cv : CV) : Option Color := resolveF 32 o cv
+
+/-- The canonical text of the colour that component value `cv` is (one component value: an
+ident, a hash token or a function), or `none` when it is not a valid `<color>`. In the
+computed form a colour that cannot be resolved (it depends on `currentcolor` and
+`o.current` is not given) keeps its specified text. -/
+def parse (o : Opts) (cv : CV) : Option String :=
+  match specF 32 o cv with
+  | none => none
+  | some spec =>
+    if o.computed then
+      match cv with
+      | .tok (.ident s) =>
+        if lower s == "currentcolor" then some (o.current.getD "currentcolor")
+        else ((resolve o cv).map Color.css).getD spec
+      | _ => ((resolve o cv).map Color.css).getD spec
+    else some spec
+
+/-! ### Tests
+
+Each `#guard` is a test (one input, one expected text), not a proof. The expected texts are
+those of the web-platform-tests named in the comments. -/
+
+/-- The specified value of a colour text (test helper). -/
+def specOf (s : String) : Option String :=
+  match trimWs (CV.parse s) with
+  | [cv] => parse {} cv
+  | _ => none
+
+/-- The computed value of a colour text where `currentcolor` is `rgb(255, 0, 0)` (test
+helper). -/
+def computedOf (s : String) : Option String :=
+  match trimWs (CV.parse s) with
+  | [cv] => parse { computed := true, current := some "rgb(255, 0, 0)" } cv
+  | _ => none
+
+-- css/css-color/parsing/color-valid.html, color-computed.html, color-invalid.html
+#guard specOf "currentcolor" == some "currentcolor"
+#guard specOf "transparent" == some "transparent"
+#guard specOf "#234" == some "rgb(34, 51, 68)"
+#guard specOf "#FEDCBA" == some "rgb(254, 220, 186)"
+#guard specOf "rgba(2, 3, 4, 50%)" == some "rgba(2, 3, 4, 0.5)"
+#guard specOf "hsla(120, 100%, 50%, 0.25)" == some "rgba(0, 255, 0, 0.25)"
+#guard specOf "rgb(20, 10, 0, -10)" == some "rgba(20, 10, 0, 0)"
+#guard specOf "rgb(100%, 200%, 300%)" == some "rgb(255, 255, 255)"
+#guard specOf "light-dark(black, white)" == some "light-dark(black, white)"
+#guard computedOf "currentcolor" == some "rgb(255, 0, 0)"
+#guard computedOf "transparent" == some "rgba(0, 0, 0, 0)"
+#guard computedOf "magenta" == some "rgb(255, 0, 255)"
+#guard specOf "auto" == none
+#guard specOf "rgb(10%, 20, 30%)" == none
+#guard specOf "rgb(1,2,3,4,5)" == none
+-- color-computed-named-color.html, color-invalid-named-color.html, color-valid-system-color.html
+#guard computedOf "TransParent" == some "rgba(0, 0, 0, 0)"
+#guard computedOf "rebeccapurple" == some "rgb(102, 51, 153)"
+#guard specOf "blac\u212A" == none
+#guard specOf "AccentColorText" == some "accentcolortext"
+#guard computedOf "LinkText" == some "rgb(0, 0, 238)"
+-- color-computed-hex-color.html, color-invalid-hex-color.html, css/CSS2/syntax/colors-007.html
+#guard computedOf "#ffffffff" == some "rgb(255, 255, 255)"
+#guard computedOf "#FFCc99" == some "rgb(255, 204, 153)"
+#guard specOf "#1000" == some "rgba(17, 0, 0, 0)"
+#guard specOf "#fffff" == none
+#guard specOf "#ffg" == none
+-- color-valid-rgb.html, color-computed-rgb.html, color-invalid-rgb.html
+#guard specOf "rgb(128 none none)" == some "color(srgb 0.501961 none none)"
+#guard specOf "rgb(none none none / 50%)" == some "color(srgb none none none / 0.5)"
+#guard specOf "rgba(-20% 20% 40% / 50%)" == some "rgba(0, 51, 102, 0.5)"
+#guard specOf "rgb(250% 51 40%)" == some "rgb(255, 51, 102)"
+#guard computedOf "rgb(42%, 3%, 50%)" == some "rgb(107, 8, 128)"
+#guard computedOf "rgba(0, 51, 255, 0.42)" == some "rgba(0, 51, 255, 0.42)"
+#guard computedOf "rgb(2.5, 3.4, 4.6)" == some "rgb(3, 3, 5)"
+#guard specOf "rgb(none, none, none)" == none
+#guard specOf "rgb(0, 0 0)" == none
+#guard specOf "rgb(257, 0, 5 / 0)" == none
+-- color-computed-hsl.html, color-valid-hsl.html, color-invalid-hsl.html
+#guard computedOf "hsl(120 30% 50% / 0.5)" == some "rgba(89, 166, 89, 0.5)"
+#guard computedOf "hsl(-300, 100%, 37.5%)" == some "rgb(191, 191, 0)"
+#guard computedOf "hsla(0, 12.5%, 12.5%, 0)" == some "rgba(36, 28, 28, 0)"
+#guard computedOf "hsl(30deg, 100%, 100%)" == some "rgb(255, 255, 255)"
+#guard specOf "hsl(120 30 none / 0.5)" == some "hsl(120 30% none / 0.5)"
+#guard specOf "hsl(30 -50 60)" == some "rgb(153, 153, 153)"
+#guard specOf "hsl(0, 50, 30%)" == none
+#guard specOf "hsl(none, 100%, 50%)" == none
+-- color-computed-hwb.html, color-valid-hwb.html, color-invalid-hwb.html
+#guard specOf "hwb(320deg 30% 40%)" == some "rgb(153, 77, 128)"
+#guard computedOf "hwb(0 70% 60%)" == some "rgb(137, 137, 137)"
+#guard computedOf "hwb(120 none 50%)" == some "hwb(120 none 50%)"
+#guard specOf "hwb(90deg, 50%, 50%)" == none
+-- color-valid-lab.html, color-invalid-lab.html
+#guard specOf "lab(400 0 10/50%)" == some "lab(100 0 10 / 0.5)"
+#guard specOf "lab(50% 50% -20%)" == some "lab(50 62.5 -25)"
+#guard specOf "oklab(20% 70% -80%/0.5)" == some "oklab(0.2 0.28 -0.32 / 0.5)"
+#guard specOf "lch(10 20 1.28rad)" == some "lch(10 20 73.3386)"
+#guard specOf "oklch(0.5 -20% -20)" == some "oklch(0.5 0 340)"
+#guard specOf "lab(0% 0 0 1)" == none
+-- color-valid-color-function.html, color-invalid-color-function.html
+#guard specOf "color(xyz 20% 0 10/50%)" == some "color(xyz-d65 0.2 0 10 / 0.5)"
+#guard specOf "color(display-p3 -200 -200 -200 / -200)" == some "color(display-p3 -200 -200 -200 / 0)"
+#guard specOf "color(srgb 10% none none / none)" == some "color(srgb 0.1 none none / none)"
+#guard specOf "color(srgb 0, 0, 0)" == none
+#guard specOf "color(displayp3 1 1 1)" == none
+-- color-valid-color-mix-function.html, color-computed-color-mix-function.html,
+-- color-invalid-color-mix-function.html
+#guard specOf "color-mix(in srgb, 70% red, 50% blue)" == some "color-mix(in srgb, red 70%, blue 50%)"
+#guard specOf "color-mix(in hsl, red 50%, blue)" == some "color-mix(in hsl, red, blue)"
+#guard specOf "color-mix(in lch decreasing hue, red, hsl(120, 100%, 50%))"
+  == some "color-mix(in lch decreasing hue, red, rgb(0, 255, 0))"
+#guard specOf "color-mix(in srgb, red 60%, green, blue 40%)"
+  == some "color-mix(in srgb, red 60%, green 0%, blue 40%)"
+#guard computedOf "color-mix(in hsl, hsl(120deg 10% 20%), hsl(30deg 30% 40%))"
+  == some "color(srgb 0.33 0.36 0.24)"
+#guard computedOf "color-mix(in hsl longer hue, hsl(40deg 50% 50%), hsl(60deg 50% 50%))"
+  == some "color(srgb 0.25 0.333333 0.75)"
+#guard computedOf "color-mix(in hwb, transparent, hwb(30deg 30% 40%))"
+  == some "color(srgb 0.6 0.45 0.3 / 0.5)"
+#guard computedOf "color-mix(in srgb, red 10%, blue)" == some "color(srgb 0.1 0 0.9)"
+#guard computedOf "color-mix(in srgb, red 0%, green 0%, blue 50%)" == some "color(srgb 0 0 1 / 0.5)"
+#guard specOf "color-mix(in hsl, hsl(120deg 10% 20%) 150%, hsl(30deg 30% 40%))" == none
+#guard specOf "color-mix(in lab longer hue, lab(10 20 30), lab(50 60 70))" == none
+-- color-valid-relative-color.html, color-computed-relative-color.html, color-computed-none.html
+#guard specOf "rgba(from rgb(20%, 40%, 60%, 80%) r g b / 0)"
+  == some "rgb(from rgba(51, 102, 153, 0.8) r g b / 0)"
+#guard computedOf "rgb(from rebeccapurple r g b)" == some "color(srgb 0.4 0.2 0.6)"
+#guard computedOf "hwb(from rebeccapurple 0 w b / alpha)" == some "color(srgb 0.6 0.2 0.2)"
+#guard computedOf "hwb(from hwb(120deg 20% 50% / .5) h w none / alpha)"
+  == some "hwb(120 20% none / 0.5)"
+#guard computedOf "lab(from lab(25 20 50) l a a / a)" == some "lab(25 20 20)"
+#guard computedOf "hsl(from hwb(none 25% 25%) h s l)" == some "hsl(none 50% 50%)"
+#guard computedOf "light-dark(rgb(from rebeccapurple r g b), rgb(from rebeccapurple r g b))"
+  == some "color(srgb 0.4 0.2 0.6)"
+-- color-computed-color-mix-function.html, color-computed-relative-color.html,
+-- color-computed-none.html: conversions outside the sRGB family (approximations; the
+-- tests compare numbers within 0.01, the texts here are this module's own digits)
+#guard computedOf "color-mix(in hsl, lch(100% 0 0), blue)" == some "color(srgb 0.625 0.625 0.875)"
+#guard computedOf "color-mix(in oklch, oklab(0.5 none 0.1))" == some "oklch(0.5 0.1 90)"
+#guard computedOf "lch(from hsl(0 0 0) l c h)" == some "lch(0 0 none)"
+#guard computedOf "color(from color(srgb-linear 0.25 0.5 0.75) srgb r g b)"
+  == some "color(srgb 0.537099 0.735357 0.880825)"
+#guard computedOf "oklch(from color(srgb 0.25 0.5 0.75) l c h)"
+  == some "oklch(0.58555 0.118266 250.532)"
+
+/-! ### Theorems -/
+
+/-- Kind: range. Says: `clamp01` always lands in `[0, 1]`. Does not say: anything about
+rounding to 8 bits (see `byteOf_le`). -/
+theorem clamp01_range (x : Rat) : 0 ≤ clamp01 x ∧ clamp01 x ≤ 1 := by
+  unfold clamp01
+  split
+  · decide
+  · split
+    · decide
+    · rename_i h0 h1
+      exact ⟨Rat.not_lt.mp h0, Rat.not_lt.mp h1⟩
+
+/-- Kind: structure. Says: clamping to `[0, 1]` twice is the same as clamping once. Does
+not say: that clamping commutes with any conversion between colour spaces. -/
+theorem clamp01_idem (x : Rat) : clamp01 (clamp01 x) = clamp01 x := by
+  have h := clamp01_range x
+  generalize clamp01 x = y at h
+  unfold clamp01
+  rw [if_neg (Rat.not_lt.mpr h.1), if_neg (Rat.not_lt.mpr h.2)]
+
+/-- Kind: range. Says: the 8-bit value of any channel or alpha is at most 255. Does not
+say: which of two neighbouring bytes a value near a half is rounded to (the `#guard`s on
+`rgb(42%, 3%, 50%)` and `hwb(320deg 30% 40%)` test halves going up). -/
+theorem byteOf_le (x : Rat) : byteOf x ≤ 255 := Nat.min_le_left _ _
+
+/-- Kind: functional. Says: with saturation 0 every channel of the HSL conversion is the
+lightness, for any hue. Does not say: anything about saturations near 0. -/
+theorem hslChan_grey (h l n : Rat) : hslChan h 0 l n = l := by
+  simp [hslChan, Rat.zero_mul, Rat.sub_eq_add_neg, Rat.neg_zero, Rat.add_zero]
+
+/-- Kind: functional. Says: an HSL colour of saturation 0 is the grey `r = g = b = l`.
+Does not say: that the result is in `[0, 1]` (the lightness is not clamped here). -/
+theorem hslToRgb_grey (h l : Rat) : hslToRgb h 0 l = (l, l, l) := by
+  simp [hslToRgb, hslChan_grey]
+
+/-- Kind: functional. Says: when whiteness and blackness add up to 1 or more, the HWB
+conversion is the grey `w / (w + b)` in all three channels, for any hue. Does not say:
+anything for `w + b < 1`. -/
+theorem hwbToRgb_grey (h w b : Rat) (hwb : 1 ≤ w + b) :
+    hwbToRgb h w b = (w / (w + b), w / (w + b), w / (w + b)) := by
+  simp [hwbToRgb, hwb]
+
+set_option maxRecDepth 100000 in
+/-- Kind: table. Says: the table of named colours has the 148 names of CSS Color 4 §6.1
+and every channel in it is an 8-bit value. Does not say: that the values are the right
+ones (the 455 subtests of `color-computed-named-color.html` test that, outside the build). -/
+theorem namedColors_bytes :
+    namedColors.length = 148
+      ∧ namedColors.all (fun e => e.2.1 < 256 && e.2.2.1 < 256 && e.2.2.2 < 256) = true := by
+  decide
+
+/-- The hexadecimal digit (lower case) of a value below 16. -/
+def hexDigit (n : Nat) : Char :=
+  if n < 10 then Char.ofNat (48 + n) else Char.ofNat (87 + n)
+
+/-- Kind: round trip. Says: the hexadecimal digit of every value below 16 reads back as
+that value. Does not say: anything about upper-case digits (the `#guard` on `#FEDCBA`
+tests those). -/
+theorem hexVal_hexDigit : ∀ n : Fin 16, hexVal (hexDigit n.val) = some n.val := by
+  decide
+
+set_option maxRecDepth 100000 in
+/-- Kind: round trip. Says: the two hexadecimal digits of every byte read back as the
+byte. Does not say: that `parseHex` is applied to them (see `parseHex_bytes`). -/
+theorem hexPair_roundtrip : ∀ b : Fin 256,
+    (hexVal (hexDigit (b.val / 16))).bind (fun hi =>
+      (hexVal (hexDigit (b.val % 16))).map (fun lo => 16 * hi + lo)) = some b.val := by
+  decide
+
+set_option maxRecDepth 100000 in
+/-- Kind: round trip. Says: for every byte, the channel `b / 255` has the 8-bit value `b`:
+a legacy colour made of bytes is serialised with the same bytes. Does not say: that the
+text `rgb(r, g, b)` is parsed back by `parse` (the `#guard`s test that on examples). -/
+theorem byteOf_ofByte : ∀ b : Fin 256, byteOf ((b.val : Rat) / 255) = b.val := by
+  decide +kernel
+
+set_option maxRecDepth 100000 in
+/-- Kind: range. Says: for every byte `b`, the channel `b / 255` is not changed by
+clamping. Does not say: anything about channels that are not a byte over 255. -/
+theorem clamp01_byte : ∀ b : Fin 256, clamp01 ((b.val : Rat) / 255) = (b.val : Rat) / 255 := by
+  decide +kernel
+
+/-- Kind: round trip. Says: the component values of the canonical text `rgb(r, g, b)` of
+an opaque 8-bit colour are read by `parseRgb` (with the literal reader) as that same
+colour, for all bytes `r`, `g`, `b`; with `byteOf_ofByte` its text is then the same again.
+Does not say: that the tokenizer makes exactly these component values from the text (the
+`#guard`s test the path through the tokenizer on examples), nor anything about colours
+with alpha below 1. -/
+theorem parseRgb_bytes (r g b : Fin 256) :
+    parseRgb {} clamp01 [.tok (.num (r.val : Rat) true), .tok .comma, .tok .ws,
+      .tok (.num (g.val : Rat) true), .tok .comma, .tok .ws, .tok (.num (b.val : Rat) true)]
+      = some (ofBytes r.val g.val b.val) := by
+  simp [parseRgb, splitArgs, stripWs, CV.isWs, readAlpha, readComps, literalReader, ofBytes,
+    clamp01_byte]
+  decide +kernel
+
 end L4Factoidal.Rendering.CssValues.Color

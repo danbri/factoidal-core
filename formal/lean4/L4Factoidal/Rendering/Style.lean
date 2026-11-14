@@ -2,6 +2,7 @@ import L4Factoidal.Rendering.Scene
 import L4Factoidal.DOM.OfHtml
 import L4Factoidal.Unicode.Bidi
 import L4Factoidal.Rendering.MediaQuery
+import L4Factoidal.Rendering.CssValues.Properties
 import Std.Data.TreeMap
 import Std.Data.HashMap
 
@@ -1526,17 +1527,11 @@ theorem computeFor_none (dom : Dom) (rules : List Rule) (textScale : Float) (sta
 end L4Factoidal.Rendering.CSS
 
 namespace L4Factoidal.Rendering.CSS
-/-- `CSS.supports(property, value)` (CSS Conditional 3 §8.1) for this profile: the
-declaration is one the profile reads and applies (`apply`); a custom property takes any
-value; the CSS-wide keywords stand for any property of the profile. -/
+/-- `CSS.supports(property, value)` (CSS Conditional 3 §8.1): the declaration parses under
+the grammar of the property table (`CssValues.supports`, the function that the style
+declaration block and computed values use). Until 2026-11-14 this answered for the layout
+profile alone (`apply`); it now answers for the parser, as the standard says, so a
+property that parses and is not yet laid out is supported here. -/
 def supportsDeclaration (property value : String) : Bool :=
-  let p := (property.trimAscii.toString).toLower
-  let v := value.trimAscii.toString
-  if p.startsWith "--" then p.length > 2
-  else if v.isEmpty || v.contains ';' || v.contains '!' then false
-  else if ["inherit", "initial", "unset", "revert", "revert-layer"].contains v.toLower then
-    htmlProperties.contains p
-  else match declarations (p ++ ":" ++ v) with
-    | .ok ds => !ds.isEmpty && ds.all fun d => (apply {} d).toOption.isSome
-    | .error _ => false
+  CssValues.supports (property.trimAscii.toString) value
 end L4Factoidal.Rendering.CSS

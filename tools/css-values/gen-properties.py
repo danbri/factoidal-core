@@ -228,6 +228,17 @@ def build(quiet=False):
     for i, name in enumerate(kept):
         lines.append("  (%s, %s)%s" % (lean_string(name), lean_string(syntaxes[name]),
                                        "," if i + 1 < len(kept) else ""))
+    lines += [
+        "]",
+        "",
+        "/-- Legacy names: alias, the property it stands for. A declaration of an alias is a declaration of",
+        "its target (CSS Cascade 4 §3.1 legacy name aliases). -/",
+        "def aliases : Array (String × String) := #[",
+    ]
+    alias_names = sorted(aliases, key=byte_order)
+    for i, name in enumerate(alias_names):
+        lines.append("  (%s, %s)%s" % (lean_string(name), lean_string(aliases[name]),
+                                       "," if i + 1 < len(alias_names) else ""))
     lines += ["]", "", "end L4Factoidal.Rendering.CssValues.Data", ""]
     return "\n".join(lines), errors, warnings, len(names), len(kept)
 

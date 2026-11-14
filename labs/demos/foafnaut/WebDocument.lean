@@ -19,6 +19,7 @@ import L4Factoidal.Rendering.SfntProfile
 import L4Factoidal.FrameCost.Band
 import L4Factoidal.FrameCost.Lru
 import L4Factoidal.Rendering.ComputedValues
+import L4Factoidal.Rendering.ComputedGeneric
 import WebRepaint
 import L4Factoidal.WHATWG.Encoding.Sniff
 import WebHit
@@ -2014,12 +2015,25 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
   let held := heldNamed h ((namedImages request).toOption.getD [])
   let laid : Thunk (Except String Laid) := Thunk.mk fun _ => layOutDOM h request none dom width height held (none,none) kept
   -- `getComputedStyle` (op 20) reads the cascade alone: no layout for it
-  let styled : Thunk (Except String (Array Rendering.CSS.Computed)) := Thunk.mk fun _ => do
+  -- with the styles: the flat tree and the rules that match an element, for the computed
+  -- value of a property outside the layout profile (`ComputedGeneric`, made when asked for)
+  let styled : Thunk (Except String (Array Rendering.CSS.Computed × DOM.Dom × (Nat → List Rendering.CSS.Match))) := Thunk.mk fun _ => do
     let textScale := cssTextScale (← scalePercent request) (zoomUnit request)
     let (rules,_) ← rulesWith kept dom request
     let state := withPointer dom (← elementState dom (baseURL dom (str request "url")) request) (none,none)
     let (flat,rules,treeScope) := flatView kept dom {medium := medium request} rules
-    Rendering.CSS.computeFor treeScope flat rules textScale state
+    let styles ← Rendering.CSS.computeFor treeScope flat rules textScale state
+    -- the rule buckets of `computeFor`, built again only if such a value is asked for
+    let matchesOf : Nat → List Rendering.CSS.Match := match treeScope with
+      | some ts =>
+        let ix : Thunk Rendering.CSS.ScopedIndex := Thunk.mk fun _ => Rendering.CSS.ScopedIndex.build rules
+        let ks : Thunk Rendering.CSS.ElemKeys := Thunk.mk fun _ => Rendering.CSS.ElemKeys.of ts.tree
+        fun id => ix.get.matched (ks.get.get ts.tree) ts id state
+      | none =>
+        let ix : Thunk Rendering.CSS.RuleIndex := Thunk.mk fun _ => Rendering.CSS.RuleIndex.build rules
+        let ks : Thunk Rendering.CSS.ElemKeys := Thunk.mk fun _ => Rendering.CSS.ElemKeys.of flat
+        fun id => ix.get.matched (ks.get.get flat) flat id state
+    return (styles, flat, matchesOf)
   -- 40: the text of the document's style sheets, with no layout: the editing algorithms
   -- (`Hosts.Dom.editOp`, `document.execCommand`) read the styles of nodes from it
   let sheetText : Thunk String := Thunk.mk fun _ =>
@@ -2035,10 +2049,11 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
       match styled.get with
       -- CSSOM §9 getComputedStyle: an element that is not connected to the page's
       -- document has no computed style (the declaration is empty)
-      | .ok styles => if node < dom.size && (dom.get node).type == .element && dom.connected node then
+      | .ok (styles, flat, matchesOf) => if node < dom.size && (dom.get node).type == .element && dom.connected node then
           let c := styles[node]?.getD {}
           some (if op == 20 then Rendering.ComputedValues.text c
-            else (((Rendering.ComputedValues.values c)[op - 200]?).map (·.2)).getD "")
+            else Rendering.ComputedGeneric.valueAt
+              { dom := flat, matchesOf := matchesOf, styles := styles, viewportW := width, viewportH := height } node (op - 200))
         else some ""
       | .error _ => none
     else match laid.get with

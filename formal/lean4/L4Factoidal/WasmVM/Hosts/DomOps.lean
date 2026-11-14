@@ -19,6 +19,8 @@ InvalidNodeTypeError, -14 IndexSizeError, -15 WrongDocumentError, -16 InvalidSta
 import L4Factoidal.WasmVM.Hosts.Dom
 import L4Factoidal.DOM.Reflect
 import L4Factoidal.Rendering.CssSupports
+import L4Factoidal.Rendering.CssValues.Declaration
+import L4Factoidal.Rendering.ComputedGeneric
 import L4Factoidal.HTML.FormSubmission
 import L4Factoidal.DOM.Editing.Commands
 import L4Factoidal.Rendering.Style
@@ -640,6 +642,14 @@ def domOpM (id op : Nat) (q : String) : Op String := do
     | "0" :: rest => return if L4Factoidal.Rendering.CssSupports.supportsText ("\x00".intercalate rest) then "1" else "0"
     | _ => throw (-2)
   | 166 => return L4Factoidal.Rendering.CssSupports.escape q
+  | 151 =>
+    -- the style declaration block of a page's CSSStyleDeclaration (CSSOM §6.6), as text
+    -- operations on the `style` attribute's value (`CssValues.styleOp`)
+    return L4Factoidal.Rendering.CssValues.styleOp q
+  | 152 =>
+    -- the property names of a computed style (`ComputedGeneric.namesText`): the page
+    -- reads the value of the k-th name with measure op 200 + k
+    return L4Factoidal.Rendering.ComputedGeneric.namesText
   | 167 =>
     -- a reflected attribute's setter, applied: the decision of 161, then the content
     -- attribute set or removed as a command (the page has no MutationObserver and the row

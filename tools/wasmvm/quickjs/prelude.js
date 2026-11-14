@@ -981,6 +981,7 @@
       });
     }
     get style() { let s = styles.get(this); if (!s) styles.set(this, s = styleOf(this)); return s; }
+    set style(v) { this.style.cssText = v; }
     click() {
       if (chk(n.query(nodeId(this), 11, '')) === '1') return;
       if (clicking.has(this)) return;
@@ -1000,24 +1001,63 @@
   }
   const clicking = new WeakSet();
   const styles = new WeakMap();
-  const styleOf = el => new Proxy({}, {
-    get(t, p) {
-      if (p === 'cssText') return el.getAttribute('style') ?? '';
-      if (p === 'getPropertyValue') return name => decls(el).get(String(name)) ?? '';
-      if (p === 'setProperty') return (name, value) => { const d = decls(el); if (value === null || value === '') d.delete(String(name)); else d.set(String(name), String(value)); write(el, d); };
-      if (p === 'removeProperty') return name => { const d = decls(el); const v = d.get(String(name)) ?? ''; d.delete(String(name)); write(el, d); return v; };
-      if (typeof p !== 'string') return undefined;
-      return decls(el).get(p.replace(/[A-Z]/g, c => '-' + c.toLowerCase())) ?? '';
-    },
-    set(t, p, v) {
-      if (p === 'cssText') { el.setAttribute('style', String(v)); return true; }
-      const d = decls(el), name = String(p).replace(/[A-Z]/g, c => '-' + c.toLowerCase());
-      if (v === null || v === '') d.delete(name); else d.set(name, String(v));
-      write(el, d); return true;
-    },
-  });
-  const decls = el => { const m = new Map(); for (const part of (el.getAttribute('style') ?? '').split(';')) { const i = part.indexOf(':'); if (i > 0) m.set(part.slice(0, i).trim().toLowerCase(), part.slice(i + 1).trim()); } return m; };
-  const write = (el, d) => el.setAttribute('style', [...d].map(([k, v]) => `${k}: ${v}`).join('; '));
+  // ---- element.style (CSSOM §6.6): the declaration block is the value of the style attribute.
+  // Lean (CssValues.styleOp, node_query op 151) parses it, changes it and writes it as text:
+  // which values a property takes, how they are written and how shorthands expand are decided
+  // there. This is the WebIDL surface only. An engine without op 151 answers "" everywhere.
+  const styleOp = (...parts) => { const r = n.query(0, 151, parts.join('\u0000')); return typeof r === 'string' ? r : ''; };
+  const cssPropName = p => p === 'cssFloat' ? 'float' : (p.startsWith('--') || p.includes('-')) ? p
+    : p.replace(/[A-Z]/g, c => '-' + c.toLowerCase()).replace(/^webkit-/, '-webkit-');
+  const styleOf = el => {
+    const block = () => el.getAttribute('style') ?? '';
+    // U+0001: the operation left the block as it was (an invalid value, a property not set)
+    const write = nb => { if (nb !== '\u0001' && nb !== block()) el.setAttribute('style', nb); };
+    const names = () => { const r = styleOp('names', block()); return r === '' ? [] : r.split('\u0000'); };
+    const methods = {
+      getPropertyValue(name) { if (arguments.length < 1) throw new TypeError('getPropertyValue: 1 argument required'); return styleOp('get', block(), String(name)); },
+      getPropertyPriority(name) { if (arguments.length < 1) throw new TypeError('getPropertyPriority: 1 argument required'); return styleOp('pri', block(), String(name)); },
+      setProperty(name, value, priority = '') {
+        if (arguments.length < 2) throw new TypeError('setProperty: 2 arguments required');
+        write(styleOp('set', block(), String(name), value === null ? '' : String(value), priority === null ? '' : String(priority)));
+      },
+      removeProperty(name) {
+        if (arguments.length < 1) throw new TypeError('removeProperty: 1 argument required');
+        const r = styleOp('rem', block(), String(name)).split('\u0000'); write(r[0]); return r[1] ?? '';
+      },
+      item(i) { if (arguments.length < 1) throw new TypeError('item: 1 argument required'); return names()[i >>> 0] ?? ''; },
+    };
+    const isIndex = p => /^(0|[1-9][0-9]*)$/.test(p);
+    return new Proxy(Object.create(CSSStyleDeclaration.prototype), {
+      get(t, p) {
+        if (typeof p !== 'string') return Reflect.get(t, p);
+        if (p === 'cssText') return styleOp('txt', block());
+        if (p === 'length') return names().length;
+        if (p === 'parentRule') return null;
+        if (Object.prototype.hasOwnProperty.call(methods, p)) return methods[p];
+        if (isIndex(p)) return names()[Number(p)];
+        if (p in t) return Reflect.get(t, p);
+        return styleOp('get', block(), cssPropName(p));
+      },
+      set(t, p, v) {
+        if (typeof p !== 'string') return Reflect.set(t, p, v);
+        if (p === 'cssText') { el.setAttribute('style', styleOp('txt', String(v))); return true; }
+        if (p === 'length' || p === 'parentRule' || isIndex(p)) return true;
+        write(styleOp('set', block(), cssPropName(p), v === null ? '' : String(v), ''));
+        return true;
+      },
+      has(t, p) {
+        if (typeof p !== 'string') return Reflect.has(t, p);
+        if (p in t || p === 'cssText' || p === 'length' || p === 'parentRule' || p === 'cssFloat' || Object.prototype.hasOwnProperty.call(methods, p)) return true;
+        if (isIndex(p)) return Number(p) < names().length;
+        return styleOp('sup', cssPropName(p), 'initial') === '1';
+      },
+      ownKeys(t) { return names().map((x, i) => String(i)).concat(Reflect.ownKeys(t)); },
+      getOwnPropertyDescriptor(t, p) {
+        if (typeof p === 'string' && isIndex(p)) { const xs = names(); if (Number(p) < xs.length) return { value: xs[Number(p)], enumerable: true, configurable: true, writable: false }; }
+        return Reflect.getOwnPropertyDescriptor(t, p);
+      },
+    });
+  };
   class HTMLUnknownElement extends HTMLElement {}
   // The HTML element names whose interface is HTMLElement itself (HTML §3.2.2), and the valid
   // custom element names (node_query 181, DOM.CustomElements.validName; asked once a name):
@@ -2082,6 +2122,8 @@
     'basefont', 'noframes', 'noembed', 'plaintext', 'search', 'strike']) htmlClasses[t] = HTMLElement;
   for (const t of ['listing', 'xmp']) htmlClasses[t] = named.HTMLPreElement;
   class SVGElement extends Element {
+    get style() { let s = styles.get(this); if (!s) styles.set(this, s = styleOf(this)); return s; }
+    set style(v) { this.style.cssText = v; }
     // SVG 2 §8.10 getBBox: the bounds of the element's geometry in its own user space.
     getBBox() { const b = query(nodeId(this), 18, 4); return new DOMRect(b[0], b[1], b[2], b[3]); }
   }
@@ -6051,21 +6093,31 @@
   // engine keeps one cascade and one layout per DOM version, and a read of a style property
   // makes no layout.
   class CSSStyleDeclaration { constructor() { throw new TypeError('Illegal constructor'); } }
-  // The property names of Lean's computed style, in Lean's order (op 20's answer), once.
-  let computedNames = null;
+  // The property names of Lean's computed style, once: the listed longhands (the layout
+  // profile's first, in Lean's order), then the names that are answered for and not listed
+  // (shorthands, legacy names): ComputedGeneric.namesText, node_query op 152. The value of the
+  // k-th name is measure op 200 + k. An engine without op 152 has the names of op 20's answer.
+  let computedNames = null, computedIndex = null;
   const namesOf = r => { const xs = r.split('\u0000'), out = []; for (let i = 0; i + 1 < xs.length; i += 2) out.push(xs[i]); return out; };
   const namesFor = el => {
-    if (computedNames === null) { const r = n.query(nodeId(el), 20, ''); if (typeof r !== 'string' || r === '') return []; computedNames = namesOf(r); }
+    if (computedNames === null) {
+      const all = n.query(0, 152, '');
+      let listed, other = [];
+      if (typeof all === 'string' && all !== '') { const parts = all.split('\u0001'); listed = parts[0].split('\u0000'); other = parts[1] ? parts[1].split('\u0000') : []; }
+      else { const r = n.query(nodeId(el), 20, ''); if (typeof r !== 'string' || r === '') return []; listed = namesOf(r); }
+      computedNames = listed;
+      computedIndex = new Map(listed.concat(other).map((x, i) => [x, i]));
+    }
     return computedNames;
   };
   const camel = name => name.replace(/-([a-z])/g, (m, c) => c.toUpperCase());
   const computedValue = (el, name) => {
     const id = nodeId(el);
     if (namesFor(el).length === 0) return '';
-    const k = computedNames.indexOf(name);
-    if (k < 0) return '';
+    const k = computedIndex.get(name);
+    if (k === undefined) return '';
     if (name === 'width' || name === 'height') {
-      const d = n.query(id, 200 + computedNames.indexOf('display'), '');
+      const d = n.query(id, 200 + computedIndex.get('display'), '');
       const u = d !== 'none' ? n.query(id, 21, '') : '';
       if (typeof u === 'string' && u !== '') return u.split(' ')[name === 'width' ? 0 : 1] + 'px';
     }
@@ -6113,7 +6165,7 @@
         if (p in t || p === 'length' || p === 'cssText' || p === 'cssFloat' || Object.prototype.hasOwnProperty.call(methods, p)) return true;
         const xs = namesFor(el);
         if (/^(0|[1-9][0-9]*)$/.test(p)) return Number(p) < xs.length;
-        return xs.includes(p) || xs.includes(cssName(p));
+        return xs.length > 0 && (computedIndex.has(p) || computedIndex.has(cssName(p)));
       },
       ownKeys(t) { const xs = namesFor(el); return [...xs.keys()].map(String).concat(Reflect.ownKeys(t)); },
       getOwnPropertyDescriptor(t, p) {
