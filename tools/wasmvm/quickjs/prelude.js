@@ -13826,6 +13826,8 @@
         return m.startsWith('no such ') || m.startsWith('invalid selector') ? fail(m.split(':')[0], m) : fail('javascript error', m);
       }
       const seen = new Set();
+      // bounded as Lean's fromWire is (64 levels): a deeper result is refused
+      let depth = 0;
       const clone = v => {
         if (v === undefined || v === null) return null;
         if (typeof v === 'boolean' || typeof v === 'string') return v;
@@ -13835,12 +13837,13 @@
         if (v instanceof Element) { if (!v.isConnected) throw { stale: true }; return { '@node': nodeId(v) }; }
         if (typeof v !== 'object' && typeof v !== 'function') return null;
         if (seen.has(v)) throw new TypeError('cyclic object value');
-        seen.add(v);
+        if (depth >= 64) throw new TypeError('the result is nested more than 64 levels deep');
+        seen.add(v); depth++;
         try {
           if (Array.isArray(v) || v instanceof NodeList || v instanceof HTMLCollection) return Array.from(v, clone);
           if (typeof v.toJSON === 'function') return v.toJSON();
           const o = {}; for (const k in v) o[k] = clone(v[k]); return o;
-        } finally { seen.delete(v); }
+        } finally { seen.delete(v); depth--; }
       };
       try { return JSON.stringify({ value: clone(r) }); }
       catch (e) { return e && e.stale ? fail('stale element reference', 'the element is not in the document') : fail('javascript error', e && e.message); }
