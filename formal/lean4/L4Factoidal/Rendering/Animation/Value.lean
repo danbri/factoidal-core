@@ -363,6 +363,9 @@ inductive Kind where
   /-- A corner shape (CSS Borders 4 §4.2): by the half corner of its superellipse
   parameter; never added. -/
   | cornerShape
+  /-- `transform-origin` (CSS Transforms 1 §8): two lengths or percentages and an optional
+  length z; a missing z is 0px, and a z of 0px is not written. -/
+  | origin
   /-- A length whose keyword `word` is the length 0 (`letter-spacing: normal`,
   `vertical-align: baseline`): the keyword interpolates and adds as 0px. With `keep`, a
   result of 0 at an end whose value was the keyword is the keyword (the computed value of
@@ -1641,6 +1644,26 @@ def clampShapeRadii (v : List Tok) : List Tok := Id.run do
     out := out.push (if radii then clampTok0 t else t)
   return out.toList
 
+/-- Two components of which one is a zero of the other's type: a number 0 beside a
+length is that length's 0, and a length of 0 beside a number is the number 0 (a side of
+`border-image-outset` is a number or a length, and 0 is the same side either way). Other
+pairs stay. -/
+def alignZero (x y : Tok) : Tok × Tok :=
+  match x, y with
+  | .num a, .dim b u => if a == 0 then (.dim 0 u, .dim b u) else if b == 0 then (.num a, .num 0) else (x, y)
+  | .dim a u, .num b => if b == 0 then (.dim a u, .dim 0 u) else if a == 0 then (.num 0, .num b) else (x, y)
+  | _, _ => (x, y)
+
+/-- The components of a `transform-origin`: x, y and z (0px when not written). -/
+def originOf (v : List Tok) : Option (Tok × Tok × Tok) :=
+  match v with
+  | [x, y] => some (x, y, .dim 0 "px")
+  | [x, y, z] => some (x, y, z)
+  | _ => none
+
+/-- A `transform-origin` in its shortest form: z is written unless it is 0px. -/
+def originText (x y z : Tok) : List Tok := if z == .dim 0 "px" then [x, y] else [x, y, z]
+
 /-- The keyword of a `zeroWord` kind as the length 0. -/
 def zeroOf (word : String) (v : List Tok) : List Tok := if v == [.ident word] then [.dim 0 "px"] else v
 
@@ -1681,10 +1704,21 @@ def lerpKind (k : Kind) (p : Int) (a b : Value) : Option Value :=
       let r := Fix.clamp (Fix.ofInt (-90)) (Fix.ofInt 90) (Fix.lerp x y p)
       some (if r == 0 then [.ident "normal"] else [.ident "oblique", .dim r "deg"])
     | _, _ => none
+  | .origin =>
+    match originOf a, originOf b with
+    | some (x, y, z), some (x', y', z') =>
+      match lerpTok p x x', lerpTok p y y', lerpTok p z z' with
+      | some rx, some ry, some rz => some (originText rx ry rz)
+      | _, _, _ => none
+    | _, _ => none
   | .sides =>
     match sidesOf a, sidesOf b with
     | some (t, r, bo, l, f), some (t', r', bo', l', f') =>
       if f != f' then none else
+      let (t, t') := alignZero t t'
+      let (r, r') := alignZero r r'
+      let (bo, bo') := alignZero bo bo'
+      let (l, l') := alignZero l l'
       match lerpTok p t t', lerpTok p r r', lerpTok p bo bo', lerpTok p l l' with
       | some x1, some x2, some x3, some x4 => some (sidesText (clampTok0 x1) (clampTok0 x2) (clampTok0 x3) (clampTok0 x4) f)
       | _, _, _, _ => none
@@ -1838,9 +1872,20 @@ def add (k : Kind) (underlying value : Value) : Value :=
             else rotateText (qx / sn) (qy / sn) (qz / sn) (ofFloat (Matrix.degrees (2 * Float.acos qw)))
         | _, _ => value
     | _, _ => value
+  | .origin =>
+    match originOf underlying, originOf value with
+    | some (x, y, z), some (x', y', z') =>
+      match addTok x x', addTok y y', addTok z z' with
+      | some rx, some ry, some rz => originText rx ry rz
+      | _, _, _ => value
+    | _, _ => value
   | .sides =>
     match sidesOf underlying, sidesOf value with
     | some (t, r, bo, l, f), some (t', r', bo', l', f') =>
+      let (t, t') := alignZero t t'
+      let (r, r') := alignZero r r'
+      let (bo, bo') := alignZero bo bo'
+      let (l, l') := alignZero l l'
       match addTok t t', addTok r r', addTok bo bo', addTok l l' with
       | some x1, some x2, some x3, some x4 => if f == f' then sidesText x1 x2 x3 x4 f else value
       | _, _, _, _ => value
@@ -2126,6 +2171,23 @@ theorem snapWidth_idem (n : Int) : snapWidth (snapWidth n) = snapWidth n := by
       have q : 1 ≤ (n + slack) / Fix.scale := Int.le_ediv_of_mul_le s h3
       exact ⟨(n + slack) / Fix.scale, q, by simp [snapWidth, h0, h1, Fix.floor]⟩
 
+/-- Kind: identity. Says: two numbers, and two lengths, are left as they are by
+`alignZero`: only a number beside a length is touched. -/
+theorem alignZero_same (a b : Int) (u v : String) :
+    alignZero (.num a) (.num b) = (.num a, .num b) ∧ alignZero (.dim a u) (.dim b v) = (.dim a u, .dim b v) :=
+  ⟨rfl, rfl⟩
+
+/-- Kind: round trip. Says: the shortest form of a `transform-origin` reads back as the
+three components it was written from, for all components. -/
+theorem originOf_text (x y z : Tok) : originOf (originText x y z) = some (x, y, z) := by
+  unfold originText
+  split
+  · rename_i h
+    have hz := eq_of_beq h
+    subst hz
+    rfl
+  · rfl
+
 /-! ### Transform functions -/
 
 theorem zeroLike_idem (t : Tok) : zeroLike (zeroLike t) = zeroLike t := by
@@ -2285,6 +2347,15 @@ private def corner2 (a b : String) (p : Int) : String :=
 #guard [-300000000, half, 800000000, 1100000000].map (corner2 "superellipse(3)" "superellipse(-2)") ==
   ["square", "superellipse(0.16)", "superellipse(-0.9)", "superellipse(-2.99)"]
 #guard corner2 "round" "round" half == "round" && corner2 "superellipse(infinity)" "superellipse(-infinity)" half == "bevel"
+-- a side that is 0 is a number or a length as the other value's side is
+-- (css/css-backgrounds/animations/border-image-outset-composition.html)
+#guard at_ .sides "100px 100" "0px 0px" (-250000000) == "125px 125" && at_ .sides "100px 100" "0 0" (-250000000) == "125px 125"
+#guard at_ .sides "100px 100" "0px 0 0px 0" 250000000 == "75px 75"
+#guard at_ .sides "1 2" "3px 4px" half == "3px 4px"
+-- transform-origin: a missing z is 0px (css/css-transforms/animation/transform-origin-composition.html)
+#guard at_ .origin "100px 100px" "160px 140px 40px" (-250000000) == "85px 90px -10px"
+#guard at_ .origin "100px 100px" "160px 140px 40px" 0 == "100px 100px"
+#guard toText (add .origin (parse "40px 60px") (parse "60px 40px 10px")) == "100px 100px 10px"
 -- a radius is not below 0 (css/css-masking/animations/clip-path-interpolation-002.html)
 #guard at_ .shape "circle(10px at 25px 75%)" "circle(50px at 50px 50%)" (-300000000) == "circle(0px at 17.5px 82.5%)"
 #guard at_ .shape "ellipse(10px 20px at 25px 75px)" "ellipse(50px 100px at 50px 50px)" (-300000000) == "ellipse(0px 0px at 17.5px 82.5px)"
