@@ -3011,7 +3011,7 @@
     get title() { const t = elementsOf(nodeId(this)).find(k => str(k, 0) === 'title'); return t === undefined ? '' : (str(t, 4) ?? '').replace(/[ \t\n\f\r]+/g, ' ').trim(); }
     set title(v) { const t = elementsOf(nodeId(this)).find(k => str(k, 0) === 'title'); if (t !== undefined) chk(n.setText(t, String(v))); }
     get activeElement() { return this.body; }
-    hasFocus() { return true; }
+    hasFocus() { if (!(this instanceof Document)) throw new TypeError('Illegal invocation'); return true; }
     // HTML §3.1.3: the page is always shown here (never hidden or prerendered)
     get hidden() { return false; }
     get visibilityState() { return 'visible'; }
@@ -3045,7 +3045,7 @@
     get applets() { return liveCollection(() => []); }
     get currentScript() { return currentScript; }
     getElementById(id) { id = String(id); if (id === '') return null; const k = chk(n.query(nodeId(this), 5, id)); return k === null ? null : wrap(Number(k)); }
-    getElementsByName(name) { return staticList(elementsOf(nodeId(this)).filter(k => n.attr(k, 'name') === String(name)).map(wrap)); }
+    getElementsByName(name) { if (arguments.length < 1) throw new TypeError("Failed to execute 'getElementsByName' on 'Document': 1 argument required, but only 0 present."); return staticList(elementsOf(nodeId(this)).filter(k => n.attr(k, 'name') === String(name)).map(wrap)); }
     // Each node is made in this document: kind + 16 × its node number (Hosts.Dom.createKind).
     createElement(name, options) { return wrap(chk(n.create(3 + 16 * nodeId(this), String(name)))); }
     createElementNS(ns, qname) {
@@ -11564,6 +11564,7 @@
   define(Document.prototype, 'write', function write(...text) { docWrite(this, text, 'write'); });
   define(Document.prototype, 'writeln', function writeln(...text) { docWrite(this, [...text, '\n'], 'writeln'); });
   define(Document.prototype, 'close', function close() {
+    if (!(this instanceof Document)) throw new TypeError('Illegal invocation');
     if (!written.has(this)) return;
     const el = writtenFrame(this, 'close'), old = nodeId(this), markup = written.get(this);
     written.delete(this);
@@ -12097,10 +12098,15 @@
     queryCommandState(commandId) { needArgs(arguments, 1, 'queryCommandState'); return this === document && editQuery(176, 's\u0000' + String(commandId)) === '1'; },
     queryCommandSupported(commandId) { needArgs(arguments, 1, 'queryCommandSupported'); return editQuery(176, 'u\u0000' + String(commandId)) === '1'; },
     queryCommandValue(commandId) { needArgs(arguments, 1, 'queryCommandValue'); return this === document ? editQuery(176, 'v\u0000' + String(commandId)) : ''; },
-  })) define(Document.prototype, k, f);
+  })) {
+    // Web IDL §3.7.6: an operation called on an object that is not a Document throws
+    const g = { [k](...a) { if (!(this instanceof Document)) throw new TypeError('Illegal invocation'); return f.apply(this, a); } }[k];
+    Object.defineProperty(g, 'length', { value: f.length, configurable: true });
+    define(Document.prototype, k, g);
+  }
   Object.defineProperty(Document.prototype, 'designMode', {
-    get() { return this === document ? editQuery(177, 'd') : 'off'; },
-    set(v) { v = String(v).toLowerCase(); if (this === document && (v === 'on' || v === 'off')) n.query(0, 177, v === 'on' ? 'd1' : 'd0'); },
+    get() { if (!(this instanceof Document)) throw new TypeError('Illegal invocation'); return this === document ? editQuery(177, 'd') : 'off'; },
+    set(v) { if (!(this instanceof Document)) throw new TypeError('Illegal invocation'); v = String(v).toLowerCase(); if (this === document && (v === 'on' || v === 'off')) n.query(0, 177, v === 'on' ? 'd1' : 'd0'); },
     configurable: true, enumerable: true });
   // The page of a script session does not scroll (as window.scrollTo): nothing to bring into view.
   if (!('scrollIntoView' in Element.prototype)) define(Element.prototype, 'scrollIntoView', function scrollIntoView() {});
@@ -13130,8 +13136,9 @@
   {
     const htmlRoot = doc => { const e = doc.documentElement; return e && info(nodeId(e), 8) === 1 && e.localName === 'html' ? e : null; };
     const bodyOf = doc => { const b = doc.body; return b && b.localName === 'body' ? b : null; };
-    Object.defineProperty(Document.prototype, 'dir', { get() { const e = htmlRoot(this); return e ? e.dir : ''; },
-      set(v) { const e = htmlRoot(this); if (e) e.dir = v; }, configurable: true, enumerable: true });
+    const isDoc = d => { if (!(d instanceof Document)) throw new TypeError('Illegal invocation'); return d; };
+    Object.defineProperty(Document.prototype, 'dir', { get() { const e = htmlRoot(isDoc(this)); return e ? e.dir : ''; },
+      set(v) { const e = htmlRoot(isDoc(this)); if (e) e.dir = v; }, configurable: true, enumerable: true });
     for (const [idl, content] of [['fgColor', 'text'], ['linkColor', 'link'], ['vlinkColor', 'vlink'], ['alinkColor', 'alink'], ['bgColor', 'bgcolor']])
       Object.defineProperty(Document.prototype, idl, { get() { const b = bodyOf(this); return b ? b.getAttribute(content) ?? '' : ''; },
         set(v) { const b = bodyOf(this); if (b) b.setAttribute(content, v === null ? '' : String(v)); }, configurable: true, enumerable: true });
