@@ -16,6 +16,7 @@ import {createHTMLWindowSession,type PresentTarget} from "./native_html_session.
 import {hostState,STATE_PAGES,STATE_COMMANDS} from "./native_state.ts";
 import {cleanupUI} from "./ui_cleanup.ts";
 import {createRouter} from "../../../docs/web/hub/foafnaut/link-route.mjs";
+import {fetchedAnswer} from "../../../docs/web/hub/foafnaut/page-load.mjs";
 import type {LinkRoute} from "./native_html_engine.ts";
 import {requestRenderPlan} from "./render_plan.ts";
 import {pngOf,texturePixels} from "./png_write.ts";
@@ -444,8 +445,11 @@ async function main() {
   // worker's URL is of the page's origin), then the turn goes on.
   const workerFetches=async(page:typeof document,fetches:{id:number;url:string;kind:string}[])=>{
     const session=page.script!.session;
-    const results=await Promise.all(fetches.map(f=>readSource(f.url).then(r=>({id:f.id,status:200,url:r.url,contentType:"",source:r.source}),
-      ()=>({id:f.id,status:0,url:f.url,contentType:"",source:""}))));
+    // The type and X-Content-Type-Options go to Lean as the server sent them: Lean decides
+    // whether the answer is a script (nosniff, LeanJSWorkers.scriptAccepted). A file has neither.
+    const results=await Promise.all(fetches.map(f=>fetchedAnswer(f,async(url:string)=>{
+      const r=await readSource(url);
+      return {status:200,url:r.url,contentType:r.contentType,contentTypeOptions:r.contentTypeOptions,source:r.source};})));
     if(page.script?.session!==session)return;
     (scriptCall("scriptSession","",{action:"fetched",session,results}) as Promise<ScriptTurn>)
       .then(turn=>scriptTurn(page,turn,"worker scripts")).catch(error=>console.error("Native HTML: worker scripts failed:",String(error)));

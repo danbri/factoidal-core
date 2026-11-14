@@ -1,0 +1,83 @@
+// page-load.mjs: the steps every host takes for a page between the engine's `inspect`
+// answer and its requests (record: docs/designissues/2026-11-14-engine-integration.md).
+//
+// A host moves bytes: the engine says what to fetch (op `inspect`) and decides what the
+// bytes mean. Each host used to write these steps for itself, and they drifted: the Hub
+// fetched no linked style sheet, its hit test was asked with fewer layout fields than its
+// render, and two hosts answered a script fetch with no Content-Type. The steps are here
+// once, with the host's `fetch` given as a function. Nothing here reads a page: no markup,
+// no CSS, no URL is parsed in this file.
+//
+// Hosts: docs/web/hub/foafnaut/browser-worker.mjs (the Hub), labs/demos/foafnaut/run_html.ts
+// and native_html_document.ts (the window and Textnaut), tests/browser-wpt/testharness-run.ts
+// (the WPT runner). labs/demos/foafnaut/host_parity_test.ts fails when one of them builds
+// these requests by hand again.
+
+/** The engine's bound on the supplied sheets of one request (WebDocument.validateResources). */
+export const MAX_SHEETS=64;
+
+/** The reason of an error, as one line for the console. */
+const reasonOf=error=>String(error instanceof Error?error.message:error);
+
+/** The linked style sheets of a page: every sheet the engine listed (`inspect.stylesheets`,
+each `{nodeId, url}` chosen and resolved by the engine), fetched with `fetchText(url)`, which
+answers `{url, source}` or throws. A sheet that is not read is a failure with its reason: the
+engine draws the page without it in liberal mode and refuses the page in strict mode
+(WebAccept.Skip.stylesheetMissing). Sheets past `limit` are failures too.
+Answer: `{resources:[{nodeId,url,source}], resourceFailures:[{nodeId,url,reason}]}`. */
+export async function loadStyleSheets(stylesheets,fetchText,limit=MAX_SHEETS) {
+  const resources=[],resourceFailures=[];
+  for(const [index,sheet] of (stylesheets??[]).entries()) {
+    if(index>=limit){resourceFailures.push({nodeId:sheet.nodeId,url:sheet.url,reason:`more than ${limit} linked style sheets`});continue;}
+    try{
+      const got=await fetchText(sheet.url);
+      resources.push({nodeId:sheet.nodeId,url:got.url??sheet.url,source:got.source});
+    }catch(error){
+      if(error?.name==='AbortError')throw error;
+      resourceFailures.push({nodeId:sheet.nodeId,url:sheet.url,reason:reasonOf(error)});
+    }
+  }
+  return {resources,resourceFailures};
+}
+
+/** The fields of a page that every request which lays the page out must carry, the same in
+each: a render, a hit test (`nodeAt`), the selection, find in page, a print layout, and the
+`layout` request of the page's script session (WebDocument.layoutFields). A request that
+leaves one out is laid out again, as another page: its answer is not of the frame on screen.
+`page` is the host's record of the page: `url`, and what it fetched and was told
+(`resources`, `resourceFailures`, `images`, `heldImages`, `webFonts`, `commands`, `liberal`,
+`scripting`). The view (text size, zoom unit, media) is the host's to add. */
+export function pageLayoutFields(page) {
+  const out={url:page.url};
+  if(page.liberal)out.liberal=true;
+  if(page.scripting===false)out.scripting=false;
+  for(const key of ['resources','resourceFailures','images','heldImages','webFonts','commands']) {
+    const value=page[key];
+    if(Array.isArray(value)&&value.length)out[key]=value;
+  }
+  return out;
+}
+
+/** The embedder's answer to one script fetch of a turn (`fetches`: a worker's script, an
+imported script): the status, the final URL, and the Content-Type and X-Content-Type-Options
+as the server sent them, with the text. The engine decides whether it is a script
+(LeanJSWorkers.scriptAccepted: `nosniff` with a type that is not JavaScript is refused), so
+the two header values must reach it. `fetchRaw(url)` answers
+`{status, url, contentType, contentTypeOptions, source}` or throws; a throw is a network
+error (status 0). */
+export async function fetchedAnswer(wanted,fetchRaw) {
+  try{
+    const got=await fetchRaw(wanted.url);
+    return {id:wanted.id,status:got.status??200,url:got.url??wanted.url,contentType:got.contentType??'',
+      contentTypeOptions:got.contentTypeOptions??'',source:got.source??''};
+  }catch{
+    return {id:wanted.id,status:0,url:wanted.url,contentType:'',contentTypeOptions:'',source:''};
+  }
+}
+
+/** `fetchRaw` over a `fetch`-like function, for a host whose pages are HTTP(S). */
+export const rawOverFetch=fetchLike=>async url=>{
+  const response=await fetchLike(url);
+  return {status:response.status,url:response.url||url,contentType:response.headers.get('content-type')??'',
+    contentTypeOptions:response.headers.get('x-content-type-options')??'',source:await response.text()};
+};

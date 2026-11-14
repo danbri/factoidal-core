@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Integration fixture: classic</title>
+<link rel="stylesheet" href="site.css">
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<script src="checks.js"></script>
+</head>
+<body>
+<div id="page">
+<div id="top"></div>
+<div id="header"></div>
+<div id="navbox"><nav><ul><li id="n1"></li><li id="n2"></li><li id="n3"></li></ul></nav></div>
+<div id="cardbox"><div id="cards"><div class="card" id="c1"></div><div class="card" id="c2"></div><div class="card" id="c3"></div><div class="card" id="c4"></div><div class="card" id="c5"></div></div></div>
+<div id="mediabox"><div id="wide"></div><div id="never"></div></div>
+<div id="picbox"><img id="pic" src="teal.png" alt="a teal block"></div>
+<div id="fadebox"><div id="fade"></div></div>
+<div id="formbox"><form id="f" action="never.html" method="post"><input id="q" name="q" value="first"><input type="checkbox" id="ck" name="ck" value="yes" checked><button id="go" name="go" value="pressed">Go</button></form></div>
+<div id="listbox"><ul id="list"></ul></div>
+<div id="posbox"><div id="abs"></div></div>
+<div id="sizebox"><div id="bb"></div></div>
+<div id="unitbox"><div id="units"></div></div>
+<div id="selbox"><i id="s-first"></i><i id="s-nth"></i><i id="s-child" class="child"></i><i class="first"></i><i id="s-next" class="next"></i><i id="s-attr" data-k="v"></i><i id="s-not" class="plain"></i><i id="s-is" class="one"></i></div>
+</div>
+<script>
+'use strict';
+// What a page does after it has loaded, with features used together: the sheet, the
+// image, timers, storage, a transition, a form and a DOM change that moves boxes.
+sharedChecks();
+promise_test(function () {
+  const pic = document.getElementById('pic');
+  const loaded = pic.complete ? Promise.resolve() : new Promise(function (resolve, reject) { pic.onload = resolve; pic.onerror = function () { reject(new Error('the image did not load')); }; });
+  return loaded.then(function () {
+    assert_equals(pic.naturalWidth, 40, 'naturalWidth'); assert_equals(pic.naturalHeight, 20, 'naturalHeight');
+    assert_rect('pic', [0, 210, 40, 20]);
+  });
+}, 'image: an img takes the size of its file');
+promise_test(function () {
+  const order = [];
+  return new Promise(function (resolve) {
+    setTimeout(function () { order.push('timeout'); resolve(); }, 0);
+    Promise.resolve().then(function () { order.push('microtask'); });
+    order.push('script');
+  }).then(function () { assert_array_equals(order, ['script', 'microtask', 'timeout']); });
+}, 'event loop: script, then microtask, then timer');
+promise_test(function () {
+  return new Promise(function (resolve) { requestAnimationFrame(resolve); }).then(function (time) { assert_equals(typeof time, 'number'); });
+}, 'event loop: an animation frame callback runs');
+test(function () {
+  localStorage.setItem('integration-key', 'kept');
+  assert_equals(localStorage.getItem('integration-key'), 'kept');
+  localStorage.removeItem('integration-key');
+  assert_equals(localStorage.getItem('integration-key'), null);
+}, 'storage: localStorage keeps and removes a value');
+test(function () {
+  document.cookie = 'integration=1; path=/';
+  assert_true(document.cookie.split('; ').indexOf('integration=1') >= 0, 'document.cookie is "' + document.cookie + '"');
+}, 'storage: document.cookie keeps a cookie');
+promise_test(function () {
+  const fade = document.getElementById('fade');
+  assert_equals(getComputedStyle(fade).opacity, '1', 'before');
+  const ended = new Promise(function (resolve, reject) {
+    fade.addEventListener('transitionend', function (event) { resolve(event.propertyName); });
+    setTimeout(function () { reject(new Error('no transitionend within 2 s')); }, 2000);
+  });
+  fade.className = 'off';
+  return ended.then(function (name) {
+    assert_equals(name, 'opacity'); assert_equals(getComputedStyle(fade).opacity, '0.25', 'after');
+  });
+}, 'transition: opacity runs to its end and transitionend fires');
+promise_test(function () {
+  const form = document.getElementById('f');
+  document.getElementById('q').value = 'second';
+  const submitted = new Promise(function (resolve, reject) {
+    form.addEventListener('submit', function (event) {
+      event.preventDefault();
+      const data = new FormData(form, event.submitter);
+      resolve([data.get('q'), data.get('ck'), data.get('go'), event.submitter && event.submitter.id]);
+    });
+    setTimeout(function () { reject(new Error('no submit event within 2 s')); }, 2000);
+  });
+  document.getElementById('go').click();
+  return submitted.then(function (values) { assert_array_equals(values, ['second', 'yes', 'pressed', 'go']); });
+}, 'form: a click on the button submits the values the user set');
+test(function () {
+  const list = document.getElementById('list');
+  ['alpha', 'beta', 'gamma'].forEach(function (text) { const li = document.createElement('li'); li.textContent = text; list.appendChild(li); });
+  assert_equals(list.children.length, 3);
+  assert_rect('list', [0, 280, 600, 60]);
+}, 'DOM: items a script appends take room in the layout');
+</script>
+</body>
+</html>

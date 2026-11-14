@@ -372,7 +372,9 @@ export function named(name:string):Named {
 type Run=(file:string,page?:{html?:string;url:string})=>Promise<Case>;
 /** A script turn, with the worker script fetches it waits for (an engine with Workers). */
 type ScriptTurnWithFetches={session:number;logs:string[];errors:string[];instructions:number;fetches?:{id:number;url:string;kind?:string}[]};
-async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engine?:unknown}> {
+/** `fetcher`: where the host reads pages from, in place of the local wptserve: the host parity check
+(labs/demos/foafnaut/host_parity_test.ts) runs its fixtures through this same path from a server of its own. */
+export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,"fetch">):Promise<{run:Run;info:Record<string,unknown>;engine?:unknown}> {
   const {loadHTML}=await import("../../labs/demos/foafnaut/native_html_engine.ts");
   const engine=await loadHTML(engineKind==="wasm"?undefined:opt("--native-engine",join(root,"labs/demos/foafnaut/.build/web-render/engines/libweb-render.dylib")));
   const info={...engine.scriptInfo(),scriptEngine};
@@ -406,7 +408,7 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
   const fontShas=new Map<string,string>();
   // What the host reads: files of the pinned copies (the default), or, with --wptserve,
   // the local wptserve over HTTP by WPT's own hostnames (wpt-hosts.ts), as a browser run does.
-  const http=serve?.fetcher;
+  const http=fetcher??serve?.fetcher;
   const readText=async(url:string):Promise<string|undefined>=>{
     if(new URL(url).pathname==="/resources/testharnessreport.js"&&isWptHost(url))return await Deno.readTextFile(join(here,"testharnessreport.js"));
     if(http){try{const r=await http.fetch(url);if(!r.ok){await r.body?.cancel();return undefined;}return await r.text();}catch{return undefined;}}
