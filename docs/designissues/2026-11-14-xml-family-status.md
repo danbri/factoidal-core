@@ -240,3 +240,23 @@ Open:
   after the vendored commit, so the copy is to be refreshed first (with a `PROVENANCE.md` entry and a new
   baseline) before the feature is written.
 - The remaining failures and unsupported cases listed per suite above.
+
+## Measured after the merges of 2026-11-14 morning
+
+Runner binaries built from the merged sources; W3C xsdtests 7bc3365c, qt4tests b1616b79, xslt40-test 91328fbf.
+Before = main 19fb349c1 (the XML modules did not change on main between it and d799500c7).
+
+| Suite | Before | After |
+|---|---|---|
+| `l4xsd-datatypes` (Part 2 instance tests) | 16,135 pass, 0 fail (out of 16,135 scored; 2,925 unread patterns) | 19,060 pass, 0 fail (out of 19,060 scored; 0 unread) |
+| `l4xsd11` (Part 1) | 41,089 pass, 485 fail, 94 unsupported (out of 41,668) | 41,090 / 484 / 94 |
+| `l4qt4` XPath 4.0 | 29,478 / 51 / 9,145 (out of 38,674) | 29,483 / 46 / 9,145 |
+| `l4qt4` XQuery 4.0 | 46,023 / 539 / 904 (out of 47,466) | 46,264 / 298 / 904 |
+| `l4xslt4` | 11,687 / 703 / 1,400 (out of 13,790) | 11,728 / 662 / 1,400 |
+| `l4xforms` (W3C XForms 1.1) | no engine | model 212 / 6 / 31 (of 249); view model 42 / 5 / 36 (of 83); submission 0 / 0 / 100 (of 100); 29 need a human reader |
+| WPT domxpath / xml/xslt / xml | 2 of 1,171 / 0 of 187 / 46 of 55 | 1,164 / 183 / 53 (branch checks 43563531377, 43574629255) |
+
+Proved in this round (beyond the list above): `XPath4` loops `castTokens` and `leavesAll` replace `mapM` inside the
+fuel-bounded type walks (the four walks are on the tail-recursion allow list with their bound, fuel 16);
+`DOM.XPathDom.elemPrefix_xmlNS`, `attrPrefix_xmlNS` (the XPath projection writes a node of the XML namespace with
+the prefix `xml`); the DOM XPath theorems now compile with the engine build.
