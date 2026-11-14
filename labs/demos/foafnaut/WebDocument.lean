@@ -2195,7 +2195,11 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
     match styled.get, inputs.get with
     | .ok view, .ok (_,rules,none,state,textScale) =>
       if textScale == 1 && (carry.isSome || !Rendering.CSS.readsStyleAttribute rules) then
-        some { index := index.get, rules := rules, state := {state with animated := []}, styles := view.styles }
+        some { index := index.get, rules := rules, state := {state with animated := []}, styles := view.styles,
+               -- (the rules are those of the measure before when it left them)
+               parentOnly := match carry with
+                 | some (c,_) => c.parentOnly
+                 | none => Rendering.CSS.attributesReachParentOnly rules }
       else none
     | _, _ => none
   -- the position of each computed style name, for the reads by name of the animation engine
