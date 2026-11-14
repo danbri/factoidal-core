@@ -365,6 +365,25 @@ theorem protoChange_no_cycle (o : Nat) (cur v : Value) (e i : Bool) (ch : List N
   intro hm
   simp_all [protoChangeAllowed]
 
+/-! ## Function declarations in a block (`blockFunsOk`, §14.2.1, B.3.2.4) -/
+
+/-- Kind: a refusal. Says: in strict code the function declarations of a block have distinct names. -/
+theorem blockFunsOk_strict (fd : List (String × Bool)) (h : blockFunsOk true fd = true) :
+    (fd.map (·.1)).eraseDups.length = (fd.map (·.1)).length := by
+  simpa [blockFunsOk] using h
+/-- Kind: a specification. Says: function declarations with distinct names are always accepted. -/
+theorem blockFunsOk_distinct (s : Bool) (fd : List (String × Bool))
+    (h : (fd.map (·.1)).eraseDups.length = (fd.map (·.1)).length) : blockFunsOk s fd = true := by
+  simp [blockFunsOk, h]
+/-- Kind: a refusal (Annex B.3.2.4 is for plain functions only). Says: when names repeat, a
+generator or async function declaration's name is not one of the repeated ones. -/
+theorem blockFunsOk_special (s : Bool) (fd : List (String × Bool)) (h : blockFunsOk s fd = true)
+    (hd : (fd.map (·.1)).eraseDups.length ≠ (fd.map (·.1)).length) (x : String) (hx : (x, true) ∈ fd) :
+    (fd.map (·.1)).count x = 1 := by
+  simp [blockFunsOk] at h hd
+  rcases h with h | ⟨_, h⟩
+  · exact absurd h hd
+  · exact h x hx
 /-! ## The size of the heap (`HeapOf.full`, `maxObjs`)
 
 The heap has no collector: an object, once made, stays. A page that makes objects for ever (a

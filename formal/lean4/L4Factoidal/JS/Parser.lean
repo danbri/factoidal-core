@@ -36,6 +36,10 @@ structure PState where
   /-- The names in `vars`, for the test in `P.addVar` (a function of a generated program has
   thousands of `var` names). -/
   varSet : Std.HashSet String := {}
+  /-- The names of the `var` declarations of the current function body, in order, with
+  repeats, and without the Annex B.3.3 names of functions in blocks: a block's
+  VarDeclaredNames for its early errors (§14.2.1) are a range of it. -/
+  realVars : Array String := #[]
   usesArgs : Bool := false
   strict : Bool := false
   inFun : Bool := false
@@ -172,6 +176,10 @@ def addVar (n : String) : P Unit :=
     if s.varSet.contains n then s
     else { s with vars := s.vars.push n, varSet := s.varSet.insert n }
 
+/-- A name of a `var` declaration (`realVars`). -/
+def addRealVar (n : String) : P Unit :=
+  modify fun s => { s with realVars := s.realVars.push n }
+
 /-- Record lexically declared names in the current block (`lexStack`). -/
 def addLex (names : List String) : P Unit :=
   modify fun s => match s.lexStack with
@@ -200,6 +208,14 @@ end P
 
 open P
 
+/-- The function declarations of a block, as (name, generator or async): may they stand
+together? A name declared twice is an early error (§14.2.1), except in code that is not strict
+when every declaration of it is a plain function (Annex B.3.2.4). -/
+def blockFunsOk (strict : Bool) (fdecls : List (String × Bool)) : Bool :=
+  let funs := fdecls.map (·.1)
+  funs.eraseDups.length == funs.length ||
+    (!strict && fdecls.all fun (x, special) => !special || funs.count x == 1)
+
 /-- The lexically declared names of a statement list (§8.2.4). -/
 def lexNames (ss : List Stmt) : List String :=
   ss.flatMap fun s => match s with
@@ -207,14 +223,21 @@ def lexNames (ss : List Stmt) : List String :=
     | .classDecl x _ => [x]
     | _ => []
 
-/-- Early errors of a block (§14.2.1): a name declared twice lexically, or both
-lexically and with `var` inside the block. -/
-def checkDecls (ss : List Stmt) (vars : List String) : P Unit := do
+/-- Early errors of a block (§14.2.1, §14.12.1): a name declared twice lexically, or both
+lexically and with `var` inside the block. `inBlock`: a block or a `switch`, where function
+declarations are lexical too; not the top level of a function body, where they are `var`s. -/
+def checkDecls (ss : List Stmt) (vars : List String) (inBlock : Bool := true) : P Unit := do
   let lex := lexNames ss
   if lex.eraseDups.length != lex.length then fail "identifier has already been declared"
-  let funs := ss.flatMap fun s => match s with | .funDecl x _ => [x] | _ => []
+  let fdecls := ss.filterMap fun s => match s with
+    | .funDecl x f => some (x, f.gen || f.async)
+    | _ => none
+  let funs := fdecls.map (·.1)
   if lex.any (fun x => vars.contains x || funs.contains x) then
     fail "identifier has already been declared"
+  if inBlock then
+    if funs.any vars.contains then fail "identifier has already been declared"
+    if !blockFunsOk (← get).strict fdecls then fail "identifier has already been declared"
 
 /-- Binary operator precedence; `in` is excluded in a `for` head (`noIn`). -/
 def binPrec (t : Token) (noIn : Bool) : Option (Nat × Sum BinOp LogOp) :=
@@ -564,8 +587,8 @@ def parseStmt : Nat → P Stmt
         let cs ← parseCases n false []
         popScope
         modify fun s => { s with breakables := st.breakables }
-        let after := (← get).vars
-        checkDecls (cs.flatMap fun c => match c with | .mk _ b => b) (after.extract st.vars.size after.size).toList
+        let after := (← get).realVars
+        checkDecls (cs.flatMap fun c => match c with | .mk _ b => b) (after.extract st.realVars.size after.size).toList
         return .switchS d cs
       | "debugger" => advance; semi; return .empty
       | "class" =>
@@ -675,12 +698,13 @@ def parseBlock : Nat → P (List Stmt)
   | 0 => fail "parser fuel exhausted"
   | n + 1 => do
     expectP "{"
-    let before := (← get).vars
+    let before := (← get).realVars
     pushScope
+    let inBlock := (← get).depth != (← get).topDepth
     let ss ← parseStmts n #[]
     popScope
-    let after := (← get).vars
-    checkDecls ss (after.extract before.size after.size).toList
+    let after := (← get).realVars
+    checkDecls ss (after.extract before.size after.size).toList inBlock
     expectP "}"
     return ss
 
@@ -693,7 +717,10 @@ def parseDecls : Nat → DeclKind → Bool → List Decl → P (List Decl)
         let name ← bindingName
         if kind != .var && name == "let" then fail "'let' cannot be a lexically bound name"
         pure (Pat.id name)
-    if kind == .var then for x in target.names do addVar x
+    if kind == .var then
+      for x in target.names do
+        addVar x
+        addRealVar x
     let init ← if ← atP "=" then advance; pure (some (← parseAssign n noIn)) else pure none
     let acc := acc ++ [Decl.mk target init]
     if ← atP "," then advance; parseDecls n kind noIn acc
@@ -858,7 +885,7 @@ def parseBody : Nat → Option String → List PatElem → Option Pat → FunKin
       fail "a function with a 'use strict' directive needs a simple parameter list"
     if (strict || kind == .arrow || kind == .method || !simple) && names.eraseDups.length != names.length then
       fail "duplicate parameter name not allowed in this context"
-    set { outer with vars := #[], varSet := {}, usesArgs := false, strict, inFun := true, loops := 0,
+    set { outer with vars := #[], varSet := {}, realVars := #[], usesArgs := false, strict, inFun := true, loops := 0,
                      breakables := 0, labels := [],
                      inGen := gen == 1 || gen == 3, inAsync := gen == 2 || gen == 3,
                      depth := 0, topDepth := 1, lexStack := [names], pending := #[],
@@ -868,7 +895,7 @@ def parseBody : Nat → Option String → List PatElem → Option Pat → FunKin
     let inner ← get
     let usesArgs := inner.usesArgs
     let arrow := kind == .arrow
-    set { inner with vars := outer.vars, varSet := outer.varSet, strict := outer.strict, inFun := outer.inFun,
+    set { inner with vars := outer.vars, varSet := outer.varSet, realVars := outer.realVars, strict := outer.strict, inFun := outer.inFun,
                      loops := outer.loops, breakables := outer.breakables, labels := outer.labels,
                      inGen := outer.inGen, inAsync := outer.inAsync, usesArgs := outer.usesArgs || (arrow && usesArgs),
                      depth := outer.depth, topDepth := outer.topDepth, lexStack := outer.lexStack,
