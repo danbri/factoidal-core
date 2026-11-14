@@ -67,6 +67,9 @@ inductive Kind where
   | meter (which : Nat)
   /-- `nonce` (HTML §2.6.5, "nonce hiding"): prelude.js keeps the internal slot. -/
   | nonce
+  /-- `draggable` (HTML §6.11.7): a boolean whose content attribute is the keyword "true"
+  or "false", and whose default depends on the element. -/
+  | draggable
   deriving Repr, Inhabited
 
 structure Row where
@@ -81,7 +84,7 @@ for the IDL name in ASCII lower case), type and its arguments:
 `s` string, `sn` string with [LegacyNullToEmptyString], `s?` nullable string, `u` URL, `ud` URL defaulting to the
 document's URL, `b` boolean, `l D` long, `ll` limited long, `ul D` unsigned long,
 `pl D` limited to positive, `pf D` limited to positive with fallback, `cl D MIN MAX`
-clamped, `d D` double, `dl D` limited double, `ti` tabIndex, `t` DOMTokenList,
+clamped, `d D` double, `dl D` limited double, `ti` tabIndex, `dg` draggable, `t` DOMTokenList,
 `e MISSING INVALID KEYWORDS [?]` enumerated (`-` no default; keywords comma-separated, `k=c`
 for a keyword whose canonical keyword is `c`, an empty keyword as nothing between commas;
 `?` nullable). -/
@@ -141,6 +144,7 @@ HTMLElement hidden . b
 HTMLElement inert . b
 HTMLElement accessKey . s
 HTMLElement tabIndex . ti
+HTMLElement draggable . dg
 HTMLElement enterKeyHint . e - - enter,done,go,next,previous,search,send
 HTMLElement inputMode . e - - none,text,tel,url,email,numeric,decimal,search
 HTMLAnchorElement,HTMLAreaElement target . s
@@ -368,7 +372,7 @@ def parseKind : List String → Option Kind
   | ["s"] => some (.str false) | ["sn"] => some (.str true) | ["s?"] => some .nstr
   | ["u"] => some (.url false) | ["ud"] => some (.url true)
   | ["b"] => some .bool | ["ti"] => some .tabIndex | ["t"] => some .tokens
-  | ["ot"] => some .optionText | ["nc"] => some .nonce
+  | ["ot"] => some .optionText | ["nc"] => some .nonce | ["dg"] => some .draggable
   | ["m", w] => w.toNat?.map .meter
   | ["ll"] => some (.limitedLong (-1))
   | ["l", d] => d.toInt?.map .long
@@ -511,6 +515,32 @@ def tabIndexDefault (d : Dom) (el : NodeId) : Int :=
   else if n == "summary" then 0
   else -1
 
+/-- The `draggable` default (HTML §6.11.7, the auto state): true for an `img` element and
+for an `a` element with an `href` attribute. -/
+def draggableDefault (d : Dom) (el : NodeId) : Bool :=
+  let n := (d.get el).lname
+  n == "img" || (n == "a" && (attr d el "href").isSome)
+
+/-- The states of the `draggable` attribute. -/
+inductive DragState where
+  | yes | no | auto
+  deriving Repr, DecidableEq, Inhabited
+
+/-- The state of the attribute's value `v`: the keywords "true" and "false" (ASCII
+case-insensitive); any other value, and no attribute, is the auto state. -/
+def dragState (v : Option String) : DragState :=
+  match v.map asciiLower with
+  | some "true" => .yes
+  | some "false" => .no
+  | _ => .auto
+
+/-- `draggable`'s getter: the state decides, and the auto state takes the element's default. -/
+def draggableOf (st : DragState) (dflt : Bool) : Bool :=
+  match st with
+  | .yes => true
+  | .no => false
+  | .auto => dflt
+
 /-- The state of an enumerated attribute: its canonical keyword, or the default. -/
 def enumGet (keywords : List (String × String)) (missing invalid : Option String) (v : Option String) :
     Option String :=
@@ -542,6 +572,7 @@ def get (d : Dom) (el : NodeId) (r : Row) (base : String) : String :=
       | some u => u.href
       | none => s
   | .bool => if v.isSome then "1" else "0"
+  | .draggable => if draggableOf (dragState v) (draggableDefault d el) then "1" else "0"
   | .long dflt => toString (match v.bind parseInteger with
       | some k => if k ≥ -2147483648 && k ≤ 2147483647 then k else dflt
       | none => dflt)
@@ -579,6 +610,7 @@ def set (r : Row) (value : String) : Except Int String :=
   match r.kind with
   | .str _ | .url _ | .tokens | .double _ false | .optionText | .meter _ | .nonce => .ok ("s" ++ value)
   | .bool => .ok (if value == "1" then "s" else "r")
+  | .draggable => .ok (if value == "1" then "strue" else "sfalse")
   | .enum _ _ _ nullable => .ok (if nullable && value == "\x01" then "r" else "s" ++ value)
   | .nstr => .ok (if value == "\x01" then "r" else "s" ++ value)
   | .long _ | .tabIndex => .ok ("s" ++ value)
@@ -616,7 +648,7 @@ def rowsOf (iface : String) : String := Id.run do
       | .limitedLong _ => "I" | .unsigned _ => "U" | .positive _ false => "P" | .positive _ true => "F"
       | .clamped .. => "C" | .double _ false => "d" | .double _ true => "D"
       | .enum _ _ _ false => "e" | .enum _ _ _ true => "E" | .nstr => "E" | .tokens => "t"
-      | .optionText => "s" | .meter _ => "d" | .nonce => "N"
+      | .optionText => "s" | .meter _ => "d" | .nonce => "N" | .draggable => "b"
     out := out ++ s!"{i} {r.idl} {k} {r.content}\x00"
   return out
 
@@ -647,6 +679,22 @@ theorem bool_roundtrip (r : Row) (h : r.kind = .bool) (d : Dom) (el : NodeId) (b
   · simp [set, h]
   · intro hv; simp [get, h, hv]
   · intro v hv; simp [get, h, hv]
+
+/-- `draggable` (kind: a setter's decision, and a getter that does not depend on the
+element). Says: set to true the setter decides the content attribute "true", set to false
+"false"; and in the true and false states the getter answers true and false on every
+element (the element's default enters only in the auto state). Does not say: that the
+keywords "true" and "false" are read as those states (`dragState`, tested below), nor what
+an element with no `draggable` attribute answers (`draggableDefault`, tested). -/
+theorem draggable_decided (r : Row) (h : r.kind = .draggable) (dflt : Bool) :
+    set r "1" = .ok "strue" ∧ set r "0" = .ok "sfalse" ∧
+    draggableOf .yes dflt = true ∧ draggableOf .no dflt = false := by
+  refine ⟨?_, ?_, rfl, rfl⟩
+  · simp [set, h]
+  · simp [set, h]
+
+#guard dragState (applied none "strue") == .yes && dragState (applied (some "x") "sfalse") == .no
+#guard dragState (some "TRUE") == .yes && dragState (some "") == .auto && dragState none == .auto && dragState (some "auto") == .auto
 
 /-- Round trip for a nullable string (the ARIA attributes). Says: setting null decides to
 remove the attribute, an absent attribute reads null (U+0001 on the wire), setting a

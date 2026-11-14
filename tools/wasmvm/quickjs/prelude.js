@@ -521,7 +521,18 @@
     'mouseover', 'mouseup', 'reset', 'resize', 'scroll', 'select', 'submit', 'toggle', 'wheel', 'animationend',
     'transitionend', 'pointerdown', 'pointerup', 'pointermove', 'message', 'unhandledrejection', 'rejectionhandled',
     'beforeunload', 'unload', 'hashchange', 'popstate', 'pageshow', 'pagehide', 'storage', 'online', 'offline',
-    'afterprint', 'beforeprint', 'languagechange', 'messageerror', 'slotchange', 'beforetoggle', 'command', 'invalid'];
+    'afterprint', 'beforeprint', 'languagechange', 'messageerror', 'slotchange', 'beforetoggle', 'command', 'invalid',
+    // the rest of GlobalEventHandlers and WindowEventHandlers (HTML §8.1.8.2)
+    'auxclick', 'beforeinput', 'beforematch', 'canplay', 'canplaythrough', 'contextlost', 'contextrestored', 'copy',
+    'cuechange', 'cut', 'drag', 'dragend', 'dragenter', 'dragleave', 'dragover', 'dragstart', 'drop', 'durationchange',
+    'emptied', 'ended', 'formdata', 'loadeddata', 'loadedmetadata', 'loadstart', 'paste', 'pause', 'play', 'playing',
+    'progress', 'ratechange', 'scrollend', 'securitypolicyviolation', 'seeked', 'seeking', 'stalled', 'suspend',
+    'timeupdate', 'volumechange', 'waiting', 'webkitanimationend', 'webkitanimationiteration', 'webkitanimationstart',
+    'webkittransitionend', 'pagereveal', 'pageswap'];
+  // The event type of a handler: the attribute's name without "on", except the prefixed
+  // animation events, whose types are in camel case (HTML §8.1.8.2).
+  const handlerTypes = { webkitanimationend: 'webkitAnimationEnd', webkitanimationiteration: 'webkitAnimationIteration',
+    webkitanimationstart: 'webkitAnimationStart', webkittransitionend: 'webkitTransitionEnd' };
   const handlers = new WeakMap();
   const handlerOf = (t, name) => handlers.get(t)?.get(name)?.value ?? null;
   const setHandler = (t, name, f) => {
@@ -533,7 +544,7 @@
       h = { value };
       m.set(name, h);
       const special = name === 'error' && t === window;
-      addListener(t, name, function (event) {
+      addListener(t, handlerTypes[name] ?? name, function (event) {
         const v = h.value;
         if (typeof v !== 'function') return;
         const r = special && event instanceof ErrorEvent
@@ -547,7 +558,7 @@
   // handlers and the WindowEventHandlers are the window's.
   const bodyWindowHandlers = new Set(['blur', 'error', 'focus', 'load', 'resize', 'scroll', 'afterprint', 'beforeprint',
     'beforeunload', 'hashchange', 'languagechange', 'message', 'messageerror', 'offline', 'online', 'pagehide', 'pageshow',
-    'popstate', 'rejectionhandled', 'storage', 'unhandledrejection', 'unload']);
+    'popstate', 'rejectionhandled', 'storage', 'unhandledrejection', 'unload', 'pagereveal', 'pageswap']);
   const windowReflecting = el => el instanceof HTMLElement && (el.localName === 'body' || el.localName === 'frameset');
   const addHandlers = proto => {
     for (const name of handlerNames)
@@ -802,7 +813,7 @@
       if (a) detachAttr(a);
       chk(n.removeAttr(nodeId(this), String(name)));
       // Removing an event handler content attribute deactivates the handler (HTML §8.1.8.1).
-      if (a && k.startsWith('on') && handlerNames.includes(k.slice(2)) && this instanceof HTMLElement)
+      if (a && k.startsWith('on') && handlerNames.includes(k.slice(2)) && (this instanceof HTMLElement || this instanceof SVGElement || this instanceof MathMLElement))
         setHandler(windowReflecting(this) && bodyWindowHandlers.has(k.slice(2)) ? window : this, k.slice(2), null);
     }
     removeAttributeNS(ns, name) { const a = attrNode(this, nsArg(ns) || null, String(name)); if (a) detachAttr(a); chk(n.removeAttr(nodeId(this), nsArg(ns) + '\u0000' + String(name))); }
@@ -2134,6 +2145,8 @@
     // SVG 2 §8.10 getBBox: the bounds of the element's geometry in its own user space.
     getBBox() { const b = query(nodeId(this), 18, 4); return new DOMRect(b[0], b[1], b[2], b[3]); }
   }
+  // MathML Core §2.3: the interface of the elements in the MathML namespace.
+  class MathMLElement extends Element {}
   class CharacterData extends Node {
     get data() { return str(nodeId(this), 3); }
     set data(v) { chk(n.setText(nodeId(this), v === null ? '' : String(v))); }
@@ -2311,14 +2324,20 @@
   for (const C of [Element, Document, DocumentFragment]) unscopable(C, ['prepend', 'append', 'replaceChildren']);
   for (const C of [Element, CharacterData, DocumentType]) unscopable(C, ['before', 'after', 'replaceWith', 'remove']);
   addHandlers(HTMLElement.prototype); addHandlers(Document.prototype); addHandlers(SVGElement.prototype);
-  // ElementCSSInlineStyle (CSSOM §7.1) and HTMLOrSVGElement (HTML §3.2.6): an SVG element has
-  // `style`, `dataset`, `focus` and `blur` as an HTML element has them.
-  for (const k of ['style', 'dataset', 'focus', 'blur'])
-    Object.defineProperty(SVGElement.prototype, k, Object.getOwnPropertyDescriptor(HTMLElement.prototype, k));
+  addHandlers(MathMLElement.prototype);
+  // ElementCSSInlineStyle (CSSOM §7.1) and HTMLOrSVGElement (HTML §3.2.6): an SVG element
+  // and a MathML element have `style`, `dataset`, `focus` and `blur` as an HTML element has them.
+  for (const C of [SVGElement, MathMLElement])
+    for (const k of ['style', 'dataset', 'focus', 'blur'])
+      Object.defineProperty(C.prototype, k, Object.getOwnPropertyDescriptor(HTMLElement.prototype, k));
   protoOf = (id, t) => {
     switch (t) {
       case 1: {
-        if (!htmlEl(id)) return str(id, 2) !== 'http://www.w3.org/2000/svg' ? Element.prototype : svgProtoOf ? svgProtoOf(str(id, 0)) : SVGElement.prototype;
+        if (!htmlEl(id)) {
+          const ns = str(id, 2);
+          if (ns === 'http://www.w3.org/2000/svg') return svgProtoOf ? svgProtoOf(str(id, 0)) : SVGElement.prototype;
+          return (ns === 'http://www.w3.org/1998/Math/MathML' ? MathMLElement : Element).prototype;
+        }
         const l = str(id, 0), C = htmlClasses[l];
         return (C ?? (plainHTMLElements.has(l) || isCustomName(l) ? HTMLElement : HTMLUnknownElement)).prototype;
       }
@@ -5716,7 +5735,7 @@
   for (const [k, v] of Object.entries({ EventTarget, Event, CustomEvent, UIEvent, MouseEvent, KeyboardEvent, FocusEvent, ErrorEvent,
     WheelEvent, PointerEvent, DOMRect, DOMRectReadOnly, CompositionEvent, InputEvent, DragEvent, HashChangeEvent, MessageEvent, StorageEvent, DeviceMotionEvent,
     DeviceOrientationEvent, BeforeUnloadEvent, TextEvent,
-    PromiseRejectionEvent, Node, Element, HTMLElement, HTMLUnknownElement, SVGElement, CharacterData, Text, CDATASection, Comment,
+    PromiseRejectionEvent, Node, Element, HTMLElement, HTMLUnknownElement, SVGElement, MathMLElement, CharacterData, Text, CDATASection, Comment,
     ProcessingInstruction, DocumentType, DocumentFragment, Document, HTMLDocument, XMLDocument, DOMImplementation, NodeList, HTMLCollection, NamedNodeMap, Attr, DOMParser, SubmitEvent,
     DOMTokenList, DOMException, AbortController, AbortSignal, Window, MutationObserver, MutationRecord, ...named })) def(k, v);
   if (shadowEngine()) def('ShadowRoot', ShadowRoot);
@@ -7140,13 +7159,14 @@
   // a clone's attributes are set by Lean, not through setAttribute).
   const scanHandlers = (root, inclusive) => {
     for (const k of inclusive && info(root, 0) === 1 ? [root, ...elementsOf(root)] : elementsOf(root)) {
-      if (!htmlEl(k)) continue;
+      // HTML, SVG and MathML elements have event handler content attributes
+      if (!htmlEl(k)) { const ns = str(k, 2); if (ns !== 'http://www.w3.org/2000/svg' && ns !== 'http://www.w3.org/1998/Math/MathML') continue; }
       const a = str(k, 6) ?? ''; const xs = a === '' ? [] : a.split('\u0000');
       for (let i = 0; i + 1 < xs.length; i += 2) if (/^on[a-z]+$/.test(xs[i])) contentHandler(wrap(k), xs[i].slice(2), xs[i + 1]);
     }
   };
   const contentHandler = (el, name, source) => {
-    if (!handlerNames.includes(name)) return;
+    if (!handlerNames.includes(name) || !(el instanceof HTMLElement || el instanceof SVGElement || el instanceof MathMLElement)) return;
     const onBody = windowReflecting(el) && bodyWindowHandlers.has(name);
     const t = onBody ? window : el;
     // HTML "getting the current value of the event handler": the window's onerror handler has
@@ -7597,7 +7617,7 @@
     if (to >= 0 && focusedId === -1 && connectedId(to)) { focusedId = to; focusBit(to, true); fireFocusEvent(newEl, 'focus', false, oldEl); fireFocusEvent(newEl, 'focusin', true, oldEl); }
   };
   const focusQuery = (id, q) => { const r = n.query(id, 189, q); return typeof r === 'string' && r !== '' ? Number(r) : -1; };
-  for (const C of [HTMLElement, SVGElement]) {
+  for (const C of [HTMLElement, SVGElement, MathMLElement]) {
     define(C.prototype, 'focus', function focus(options = undefined) { const t = focusQuery(nodeId(this), ''); if (t >= 0) focusMove(t); });
     define(C.prototype, 'blur', function blur() { if (focusCurrent() === nodeId(this)) focusMove(-1); });
   }
@@ -7827,13 +7847,18 @@
       try { runText(text); } catch (e) { report(e); } finally { currentScript = before; scriptDocument = beforeDocument; }
     };
     const fire = (el, type) => { const e = new Event(type); state(e).trusted = true; dispatch(el, e); };
+    // Scripting is enabled only in a document with a browsing context: the page's (0), or
+    // a frame's (node_info 12 answers its iframe) while that iframe is in a document.
+    const scripting = id => {
+      const doc = info(id, 7);
+      if (doc === 0) return true;
+      const frame = info(doc, 12);
+      return frame >= 0 && connectedId(frame);
+    };
     const prepare = id => {
       if (info(id, 0) !== 1 || str(id, 0) !== 'script') { fresh.delete(id); return; }
       if (!connectedId(id)) return;
-      // scripting is enabled only in a document with a browsing context: the page's (0) or
-      // a frame's (node_info 12 answers its iframe)
-      const doc = info(id, 7);
-      if (doc !== 0 && info(doc, 12) < 0) return;
+      if (!scripting(id)) return;
       const src = n0.attr(id, 'src'), el = wrap(id);
       const text = typeof src === 'string' ? '' : el.textContent;
       if (typeof src !== 'string' && text === '') return;
@@ -7844,7 +7869,7 @@
       const fetcher = url === null || url === undefined ? undefined : globalThis.fetch;
       if (typeof fetcher !== 'function') { Promise.resolve().then(() => fire(el, 'error')); return; }
       fetcher(url).then(r => { if (!r.ok) throw new TypeError('script load failed'); return r.text(); })
-        .then(code => { execute(el, code); fire(el, 'load'); }, () => fire(el, 'error'));
+        .then(code => { if (!scripting(id)) return; execute(el, code); fire(el, 'load'); }, () => { if (scripting(id)) fire(el, 'error'); });
     };
     const after = r => { if (r === 0 && fresh.size) for (const id of [...fresh]) prepare(id); return r; };
     noteFreshScript = id => {
