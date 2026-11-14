@@ -36,6 +36,7 @@ import L4Factoidal.HTML.TextSelection
 import L4Factoidal.DOM.FormValidity
 import L4Factoidal.DOM.Focus
 import L4Factoidal.HTML.InnerText
+import L4Factoidal.HTML.ReferrerSource
 
 namespace L4Factoidal.WasmVM.Hosts.Dom
 open L4Factoidal.DOM L4Factoidal.DOM.Range
@@ -759,6 +760,13 @@ def domOpM (id op : Nat) (q : String) : Op String := do
       let u := if st.hostLoads then url else ""
       set { st with navigations := (st.navigations.filter fun (nv : Nat × String) => nv.1 != el).push (el, u) }
       return "1"
+  | 210 =>
+    -- the referrer source of document `id` (0: the page's) for a request one of its scripts
+    -- makes (Referrer Policy §8.3 steps 1 to 3): the URL it names, U+0000, the token of its
+    -- referrer policy (`HTML.ReferrerSource.answer`: the document's `meta name=referrer`,
+    -- else its response's `Referrer-Policy`, else its container's for a `srcdoc` document)
+    let st ← get
+    return L4Factoidal.HTML.ReferrerSource.answer d st.url st.frames st.docURLs st.framePolicies id
   | 171 =>
     -- the URL of document `id`: the page's, or a frame document the page may reach
     if id == 0 then return (← get).url

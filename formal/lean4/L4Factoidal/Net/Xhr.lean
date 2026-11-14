@@ -240,10 +240,11 @@ def setReferrer (s : State) (h : Nat) (referrer : String) : State :=
   | none => s
   | some x => s.set h { x with referrer := if referrer.isEmpty then some "" else ownUrl s.page referrer }
 
-/-- The document that asks for object `h`, when it is a frame's in this realm: kept only when
-its URL is of the page's origin (frames of another origin have a session of their own). An
-`about:` or `blob:` document gives no URL here, so its requests fall back to the session's
-client; the caller (`node_query` 210) names the container's URL for a `srcdoc` document. -/
+/-- The document that asks for object `h` (`node_query` 210 names it: the page's, or a
+frame's in this realm; the container's URL for a `srcdoc` document): its URL is kept only
+when it is of the page's origin (frames of another origin have a session of their own).
+Any other (`about:blank`, a `blob:` document, a URL of another origin) is a client with no
+URL: its requests carry no referrer. -/
 def setClient (s : State) (h : Nat) (url : String) (policy : String) : State :=
   match s.get? h with
   | none => s
@@ -251,7 +252,7 @@ def setClient (s : State) (h : Nat) (url : String) (policy : String) : State :=
     let pol := (ReferrerPolicy.Policy.ofToken policy).getD s.policy
     match ownUrl s.page url with
     | some u => s.set h { x with client := some (u, pol) }
-    | none => s.set h { x with client := some (s.client, pol) }
+    | none => s.set h { x with client := some ("", pol) }
 
 /-- The referrer of object `x`'s request: the one it names, else its document's URL, else the
 session's client. -/
@@ -829,10 +830,11 @@ private def refOf (s : State) (url : String) (opts : List String) : Option Strin
 #guard refOf { stc with policy := policyOfHeader "bogus, no-referrer" } "http://a.example/y" [] == none
 #guard policyOfHeader "bogus" == .strictOriginWhenCrossOrigin
 -- a same-origin frame's document asks: its URL and its policy; a document of another
--- origin is never named (the session's client stands in)
+-- origin, or with no URL of its own, is never named: no referrer
 #guard refOf stc "http://a.example/y" ["about:client", "", "http://a.example/frame.html", ""] == some "http://a.example/frame.html"
 #guard refOf stc "http://a.example/y" ["about:client", "", "http://a.example/frame.html", "origin"] == some "http://a.example/"
-#guard refOf stc "http://a.example/y" ["about:client", "", "http://evil.example/frame.html", ""] == some "http://a.example/dir/page.html?q"
+#guard refOf stc "http://a.example/y" ["about:client", "", "http://evil.example/frame.html", ""] == none
+#guard refOf stc "http://a.example/y" ["about:client", "", "about:blank", "unsafe-url"] == none
 -- an embedder that names no client: no Referer at all
 #guard refOf { stc with client := "" } "http://b.example/y" [] == none
 
