@@ -1010,6 +1010,11 @@ def frameWrite (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : S
       | none => (s, ret (-2))
     | [] => (s, ret (-2))
 
+/-- The `create_node` import: kind 15 writes a frame's document (`frameWrite`), every other
+kind makes a node (`createNode`). -/
+def createNodeOrWrite (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : State × HostResult :=
+  if arg args 0 % 16 == 15 then frameWrite mem args s st else createNode mem args s st
+
 /-- The nodes an insertion of `n` inserts: the children of a fragment, else `n`. -/
 def insertedBy (d : Dom) (n : Nat) : Array Nat :=
   if (d.get n).type == .fragment then (d.get n).kids else #[n]
@@ -1297,9 +1302,7 @@ def call (mem : Nat) (f : Import) (args : Array Value) (s : State) (st : StoreOf
   | .nodeInfo => let r := nodeInfo args s; (r.1, st, r.2)
   | .nodeString => let r := nodeString mem args s st; (s, r.1, r.2)
   | .nodeChildren => let r := nodeChildren mem args s st; (s, r.1, r.2)
-  | .createNode =>
-    if arg args 0 % 16 == 15 then (let r := frameWrite mem args s st; (r.1, st, r.2))
-    else (let r := createNode mem args s st; (r.1, st, r.2))
+  | .createNode => let r := createNodeOrWrite mem args s st; (r.1, st, r.2)
   | .insertBefore => let r := insertBefore args s; (r.1, st, r.2)
   | .removeChild => let r := removeChild args s; (r.1, st, r.2)
   | .replaceChild => let r := replaceChild args s; (r.1, st, r.2)
