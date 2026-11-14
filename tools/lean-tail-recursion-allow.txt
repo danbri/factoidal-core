@@ -2349,3 +2349,8 @@ L4Factoidal_XForms_Engine_modKids*  # (b) node replacement at an address; depth 
 L4Factoidal_ClientStorage_Idb_Key_read  # (c) one call per level of nested array keys; the fuel is Key.maxDepth = 64 (Key.ofToks)
 L4Factoidal_ClientStorage_Idb_Key_cmp  # (c) the head of an array item; the spine is a tail call; keys come from Key.read, nested at most 64 deep
 L4Factoidal_ClientStorage_Idb_Key_write  # (c) the head of an array item; the spine is a tail call; nested at most 64 deep
+# --- XPath 4.0 schema simple types (XPath4/SchemaSimple.lean): 2026-11-14. What recurses is the nesting of one simple type definition (the item type of a list, the members of a union); tokens and members are walked by loops (castTokens, firstCast, leavesAll, List.any, List.all).
+L4Factoidal_XPath4_atomInBodyF  # (c) the nesting of a simple type definition, fuel 16
+L4Factoidal_XPath4_castToBodyF  # (c) the nesting of a simple type definition, fuel 16; the tokens of a list value are a loop (castTokens)
+L4Factoidal_XPath4_generalizedF  # (c) the nesting of a simple type definition, fuel 16
+L4Factoidal_XPath4_pureLeavesF  # (c) the nesting of a simple type definition, fuel 16; the members are a loop (leavesAll)

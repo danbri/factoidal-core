@@ -92,6 +92,15 @@ def generalizedF : Nat → SimpleType → Bool
 
 def generalized (t : SimpleType) : Bool := generalizedF 16 t
 
+/-- The leaves of every member, in order, by a loop over the members
+(`acc` holds the leaves so far, reversed); `none` when a member has none. -/
+def leavesAll (f : SimpleType → Option (List AType)) : List SimpleType → List AType → Option (List AType)
+  | [], acc => some acc.reverse
+  | m :: ms, acc =>
+    match f m with
+    | some ls => leavesAll f ms (ls.reverse ++ acc)
+    | none => none
+
 /-- The built-in atomic types that a pure union of built-in types (no
 facets anywhere) is the union of, in order; `none` for another type. Such
 a union is the choice of those types. -/
@@ -101,7 +110,7 @@ def pureLeavesF : Nat → SimpleType → Option (List AType)
     match t with
     | .atomic b f => if facetsNone f && b != .anySimpleType then some [.b b] else none
     | .list _ _ => none
-    | .union ms f => if facetsNone f then (ms.mapM (pureLeavesF n)).map List.flatten else none
+    | .union ms f => if facetsNone f then leavesAll (pureLeavesF n) ms [] else none
 
 def pureLeaves (t : SimpleType) : Option (List AType) := pureLeavesF 16 t
 
@@ -112,6 +121,15 @@ def firstCast (f : SimpleType → M (List Atomic)) : List SimpleType → Option 
     match f m with
     | .ok r => some r
     | .error _ => firstCast f ms
+
+/-- Cast every token, in order, by a loop over the tokens (`acc` holds
+the values so far, reversed); the first error ends it. -/
+def castTokens (f : String → M (List Atomic)) : List String → List Atomic → M (List Atomic)
+  | [], acc => .ok acc.reverse
+  | tk :: rest, acc =>
+    match f tk with
+    | .ok r => castTokens f rest (r.reverse ++ acc)
+    | .error e => .error e
 
 /-- The lexical form the facets are tested on after a cast gave `r`. -/
 def lexAfter (a : Atomic) (r : List Atomic) : String :=
@@ -139,10 +157,8 @@ def castToBodyF (ns : String → Option String) : Nat → SimpleType → Atomic 
         let norm := applyWhiteSpace .collapse a.str
         if (valueOf t norm).isNone then err "FORG0001" ("the value " ++ a.str ++ " is not valid for the list type")
         else
-          match ((norm.splitOn " ").filter (· != "")).mapM
-              (fun tk => castToBodyF ns n item (Atomic.untypedOf tk)) with
-          | .error e => .error e
-          | .ok rs => .ok rs.flatten
+          castTokens (fun tk => castToBodyF ns n item (Atomic.untypedOf tk))
+            ((norm.splitOn " ").filter (· != "")) []
     | .union ms _ =>
       if !a.isLexical && ms.any (fun m => atomInBodyF n m a) && (valueOf t (xsdCanon a)).isSome then .ok [a]
       else

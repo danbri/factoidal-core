@@ -1207,8 +1207,10 @@ def pCastTarget : Nat → P (IType × Bool)
     let t ← match listT with
       | some t => pure t
       | none => withReader (fun c => { c with castTarget := true }) (pItemType n)
-    -- XQuery 4.0: a cast target that is not a simple type (XQST0052)
-    if c0.xquery then
+    -- XQuery 4.0: a cast target that is not a simple type (XQST0052);
+    -- not in the first pass over a prolog, where a type name that is not
+    -- known yet reads as item()
+    if c0.xquery && !c0.lenientTypes then
       match t with
       | .item | .anyNode | .xnode | .elem _ | .attr _ | .elemT .. | .attrT .. | .schemaElem _
       | .schemaAttr _ | .text | .comment | .nsNode | .pi _ | .doc _ | .empty =>
