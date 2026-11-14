@@ -5693,7 +5693,7 @@
   };
 
   // The document that makes a request (Referrer Policy §8.3 steps 1 to 3): Lean names the URL
-  // it gives as the referrer and its referrer policy (node_query 210, HTML.ReferrerSource: its
+  // it gives as the referrer and its referrer policy (node_query 173, HTML.ReferrerSource: its
   // meta, its response's Referrer-Policy, a srcdoc document's container) and keeps them for
   // the request (web_api 98, Net.Xhr.setClient: a URL of the page's own origin, else none).
   // A worker has no document: its client is its script, which the session holds.
@@ -5701,7 +5701,7 @@
     if (inWorker) return;
     const d = scriptDocument !== null && scriptDocument !== document ? nodeId(scriptDocument) : 0;
     // the page document's URL as its history has it now (pushState may change it in its origin)
-    const r = n.query(d, 210, d === 0 ? String(href) : '');
+    const r = n.query(d, 173, d === 0 ? String(href) : '');
     if (typeof r !== 'string') return;
     const i = r.indexOf('\u0000');
     if (i > 0) apiCall(98, [h, 'about:client', '', r.slice(0, i), r.slice(i + 1)]);
