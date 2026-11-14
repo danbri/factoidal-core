@@ -3577,6 +3577,8 @@
     return l;
   };
   let href = 'about:blank';
+  // the document's creation URL (HTML §7.5): history.pushState changes `href`, not this
+  let creationHref = null;
   const location = {
     get href() { return href; }, toString() { return href; },
     get protocol() { return /^[a-z][a-z0-9+.-]*:/i.exec(href)?.[0] ?? ''; },
@@ -12843,7 +12845,8 @@
     };
     const call = (args, what) => {
       // a service worker names its script URL after 'sw:' (Lean then allows any url of its origin)
-      const r = apiCall(204, [args[0], swScope ? 'sw:' + href : href, String(Math.trunc(Date.now())), ...args.slice(1)], 0, true);
+      const url = creationHref ?? href;
+      const r = apiCall(204, [args[0], swScope ? 'sw:' + url : url, String(Math.trunc(Date.now())), ...args.slice(1)], 0, true);
       if (typeof r === 'number') throw new DOMException(`${what}: cookies are not available.`, 'SecurityError');
       const f = unpack(r).map(text);
       if (f[0] === 'ok') return f.slice(1);
@@ -16138,6 +16141,7 @@
   const makeWorkerScope = (url, name) => {
     inWorker = true;
     href = url;
+    creationHref = url;
     // a shared worker's scope (the SharedWorker constructor names it so): its connections
     const isShared = name.startsWith(SHARED);
     if (isShared) { name = name.slice(SHARED.length); sharedScope = { ports: [] }; }
@@ -17914,7 +17918,7 @@
     // run the prelude once on an empty document and copy that state for each page.
     start() { if (ttStart !== null) ttStart(); scanHandlers(0, false); flushViolations(); imgStart(); },
     script(id) { currentScript = id < 0 ? null : wrap(id); const d = id < 0 ? 0 : info(id, 7); scriptDocument = d > 0 ? wrap(d) : null; if (d > 0 && ttDoc !== null) ttDoc(d); },
-    url(u) { href = String(u); },
+    url(u) { href = String(u); creationHref = href; },
     release(id) { callbacks.delete(id); },
     // Section workers: this realm becomes a dedicated worker's global scope.
     worker(url, name) { makeWorkerScope(String(url), String(name)); },
