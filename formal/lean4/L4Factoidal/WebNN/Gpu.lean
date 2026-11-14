@@ -222,6 +222,39 @@ theorem tileMap_fits (inShape : Shape) (s : Shape) (o : List Nat) (hv : Shape.Va
   obtain ⟨a, _, rfl⟩ := hc
   exact ⟨out_fits s o hv hs a, hin a⟩
 
+/-- A valid multi-index's coordinate is below its dimension, and the dimension is at most the
+shape's size. -/
+theorem valid_coord : ∀ (s : Shape) (o : List Nat), Shape.Valid s o → ∀ a, a < s.length →
+    o.getD a 0 < s.getD a 1 ∧ s.getD a 1 ≤ Shape.size s
+  | [], [], _, a, ha => by simp at ha
+  | d :: ds, i :: is, ⟨hi, hv⟩, a, ha => by
+    have hp := valid_getD_lt.valid_size_pos ds is hv
+    cases a with
+    | zero =>
+      simp only [List.getD_cons_zero, Shape.size_cons]
+      exact ⟨hi, Nat.le_mul_of_pos_right d hp⟩
+    | succ a =>
+      simp only [List.getD_cons_succ, Shape.size_cons]
+      have ⟨h1, h2⟩ := valid_coord ds is hv a (by simpa using ha)
+      exact ⟨h1, Nat.le_trans h2 (Nat.le_mul_of_pos_left _ (by omega))⟩
+  | [], _ :: _, h, _, _ => by simp [Shape.Valid] at h
+  | _ :: _, [], h, _, _ => by simp [Shape.Valid] at h
+
+/-- Kind: bound (discharges `Fits`). Says: reverse's map (its output has its input's shape)
+fits in 32 bits on every valid index of a shape of at most 4,194,240 elements: a reversed
+coordinate `dim - 1 - o` never goes below 0. -/
+theorem reverseMap_fits (s : Shape) (axes : List Nat) (o : List Nat) (hv : Shape.Valid s o)
+    (hs : Shape.size s ≤ 4194240) : ∀ c ∈ reverseMap s axes s.length, c.Fits o := by
+  intro c hc
+  simp only [reverseMap, List.mem_map, List.mem_range] at hc
+  obtain ⟨a, ha, rfl⟩ := hc
+  have ⟨h1, h2⟩ := valid_coord s o hv a ha
+  split
+  · refine ⟨out_fits s o hv hs a, ?_, ?_⟩
+    · unfold two32; omega
+    · simp only [Coord.eval]; omega
+  · exact out_fits s o hv hs a
+
 /-- Kind: equality (a whole kernel's index arithmetic). Says: for every valid output index
 of an output of at most `maxElements` (4,194,240) elements, each coordinate transpose's kernel prints
 computes, in WGSL's `u32` arithmetic, the coordinate of `Move.transposeIdx perm o`, the

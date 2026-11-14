@@ -70,6 +70,7 @@ end Tests
 #print axioms L4Factoidal.WebNN.Gpu.transpose_coords
 #print axioms L4Factoidal.WebNN.Gpu.expandMap_fits
 #print axioms L4Factoidal.WebNN.Gpu.tileMap_fits
+#print axioms L4Factoidal.WebNN.Gpu.reverseMap_fits
 #print axioms L4Factoidal.WebNN.transposeMap_eval
 #print axioms L4Factoidal.WebNN.expandMap_eval
 
