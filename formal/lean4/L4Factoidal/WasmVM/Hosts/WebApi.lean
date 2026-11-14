@@ -54,6 +54,7 @@ import L4Factoidal.Net.Cookies
 import L4Factoidal.Net.ServiceWorkerScope
 import L4Factoidal.Net.EventSource
 import L4Factoidal.Net.SecureContext
+import L4Factoidal.Net.Multipart
 import L4Factoidal.DOM.SvgValues
 import L4Factoidal.PageGl.Api
 import L4Factoidal.WebCodecs.Api
@@ -804,6 +805,8 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
         ("retry", match p.retry with | some r => .number (toString r) | none => .null),
         ("events", .array (evs.map fun e => .array [.string e.type, .string e.data, .string e.lastEventId]))]
       pure' (ofStr j.toString)
+    -- A multipart/form-data body's entries (`formData()`, Net.Multipart): empty is a failure.
+    else if code == 164 then pure' (.ok (L4Factoidal.Net.Multipart.op fs))
     -- A close code and reason (`WebSocketError`, Net.WebSocket.closeCheck): "" or the exception.
     else if code == 163 then
       let str := fun (i : Nat) => (strArg fs i).toOption.getD ""

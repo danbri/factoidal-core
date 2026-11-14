@@ -5883,8 +5883,24 @@
       formData() {
         return bodyTake(this, name + '.formData').then(b => {
           const type = bodyMime(bodies.get(this));
-          if (!/^application\/x-www-form-urlencoded(;|$)/.test(type)) throw new TypeError(`Failed to execute 'formData' on '${name}': only application/x-www-form-urlencoded bodies are read in this build`);
           const form = new (makeFormData())();
+          // multipart/form-data: the entries are Lean's (Net.Multipart, web_api 164)
+          if (/^multipart\/form-data(;|$)/i.test(type)) {
+            const r = apiCall(164, [type, b], 0, true);
+            const u = r instanceof ArrayBuffer ? new Uint8Array(r) : new Uint8Array(0);
+            if (u.length === 0) throw new TypeError(`Failed to execute 'formData' on '${name}': the multipart/form-data body could not be parsed`);
+            const dv = new DataView(u.buffer, u.byteOffset, u.byteLength), dec = new TextDecoder();
+            let at = 1;
+            const field = () => { const n = dv.getUint32(at); at += 4; const v = u.subarray(at, at + n); at += n; return v; };
+            while (at < u.length) {
+              const file = u[at] === 1; at += 1;
+              const key = dec.decode(field()), filename = dec.decode(field()), ftype = dec.decode(field()), body = field();
+              if (file) form.append(key, new (makeFile())([body.slice()], filename, { type: ftype }));
+              else form.append(key, dec.decode(body));
+            }
+            return form;
+          }
+          if (!/^application\/x-www-form-urlencoded(;|$)/.test(type)) throw new TypeError(`Failed to execute 'formData' on '${name}': the body's type is neither multipart/form-data nor application/x-www-form-urlencoded`);
           for (const [k, v] of new URLSearchParams(new TextDecoder().decode(b))) form.append(k, v);
           return form;
         });
