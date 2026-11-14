@@ -2,7 +2,7 @@ import {loadHTML,type HTMLArtifact,type HTMLLayers,type HistoryAnswer,type Shell
 import {printImages,pdfPageCount,DEFAULT_PAPER} from "./native_print.ts";
 import {clampOffset,keeps} from "./layer_compositor.ts";
 import {prefetchTarget,trackMotion,stateKey,sameState,canSwap,keepReach,PREFETCH_MARGIN_ROWS,FRAME_MS,type Motion,type StateKey} from "./scroll_prefetch.ts";
-import {inputURL,loadFontFile,prepareHTML,readSource,refusalHTML,setFontHost,setPageDecoding,setScriptHost,type PageView} from "./native_html_document.ts";
+import {inputURL,loadFontFile,prepareHTML,readSource,refusalHTML,setFontHost,setImagesAfterFirstFrame,setPageDecoding,setScriptHost,type PageView} from "./native_html_document.ts";
 import {fallbackFontHost,loadFallbackFonts,mayNeedFallbackFonts,type FallbackFont,type PageFonts} from "./native_html_fonts.ts";
 import type {ScriptPlan,ScriptTurn} from "./native_html_engine.ts";
 import {addEntries,consoleRequest,noteDiagnostics} from "./native_console.ts";
@@ -280,7 +280,7 @@ async function main() {
     while(gpuTurns.length){const t=gpuTurns.shift()!,start=performance.now();
       session.pageGpu(t.page,t.commands).then(r=>{if(!r?.presented)return;const ms=Math.round((performance.now()-start)*10)/10;
         pageGpuMs.push(ms);if(perfSummary)console.log(JSON.stringify({type:"native-html-page-canvas",t:Math.round(performance.now()),ms}));
-        if(shotFile&&pageGpuMs.length===120)takeShot();})
+        if(shotFile&&pageGpuMs.length>=120&&!(document as {imagesPending?:()=>boolean}).imagesPending?.())takeShot();})
         .catch(error=>console.error("Native HTML: page GPU failed:",String(error)));}
   };
   let scriptsOn=false,scriptOps:string[]=[];
@@ -293,6 +293,9 @@ async function main() {
   // §13.2.3.2's table of suggested defaults (WHATWG.Encoding.Sniff.localeEncoding).
   let encodingSetting="";const systemLocale=navigator.language??"";
   setPageDecoding({fallback:encodingSetting,locale:systemLocale});
+  // A window shows a page before its images are in and draws it again with them. Runs that
+  // compare frames or replay input (checks, sweeps, commands, printing) wait for the images.
+  setImagesAfterFirstFrame(!check&&!checkAll&&!sweep&&!commands&&!pasted&&!printPDF);
   const sessionEngines=new Map<number,string>();
   // Lean's plan, from the engine that runs the scripts (the worker's); the plans of the
   // settings are kept for the chrome marker, which is drawn without waiting.
@@ -471,6 +474,28 @@ async function main() {
       if(after&&turn.keyDefault!==false&&page===document)after();
     }).catch(error=>{console.error("Native HTML: page script key failed:",String(error));if(page===document)after?.();});
   };
+  // The session lays the page out for its scripts with the request of its start: tell it what
+  // arrived since (a sheet, an imported sheet, images: WebScripts.takeLayout), with the view as at start.
+  const tellSession=(page:typeof document)=>{
+    const fields=page.takeLayoutChange?.();
+    if(!fields||!page.script)return;
+    const session=page.script.session;
+    (scriptCall("scriptSession","",{action:"turn",session,layout:{url:page.url,textScalePercent:view.textScalePercent??100,
+      zoomUnit:view.zoomUnit??100,...fields}}) as Promise<ScriptTurn>)
+      .then(next=>{if(page.script?.session===session)scriptTurn(page,next,"layout");})
+      .catch(error=>console.error("Native HTML: page script layout update failed:",String(error)));
+  };
+  // What arrived after a page was first shown (its `revision`): the page is drawn again.
+  const revisionShown=new WeakMap<object,number>();
+  const lateArrivals=()=>{
+    // A page that is on screen takes its images now (they were read while it was laid out).
+    if(presented?.document===document)(document as {startImages?:()=>void}).startImages?.();
+    const revision=(document as {revision?:()=>number}).revision?.();
+    if(revision===undefined||revisionShown.get(document)===revision)return;
+    const first=!revisionShown.has(document);
+    revisionShown.set(document,revision);
+    if(!first||revision>0){dirty=true;tellSession(document);}
+  };
   const scriptTurn=(page:typeof document,turn:ScriptTurn,cause:string)=>{
     netQueue.push(...(turn.netRequests??[]).map(wire=>({session:turn.session,wire})));
     for(const line of turn.logs)console.log(`page: ${line.replace(/^\u0001(\w+)\u0001/,"$1: ")}`);
@@ -483,19 +508,7 @@ async function main() {
     if(page.applyTurn(turn)){
       if(page===document)dirty=true;
       // What elements made or changed by the turn ask for (a sheet, an image): fetched, then drawn.
-      if(turn.changed)page.fetchAdded?.(()=>{
-        if(page===document)dirty=true;
-        // The session lays the page out for its scripts with the request of its start: tell it
-        // what arrived since (WebScripts.takeLayout), with the view as at start.
-        const fields=page.takeLayoutChange?.();
-        if(fields&&page.script){
-          const session=page.script.session;
-          (scriptCall("scriptSession","",{action:"turn",session,layout:{url:page.url,textScalePercent:view.textScalePercent??100,
-            zoomUnit:view.zoomUnit??100,...fields}}) as Promise<ScriptTurn>)
-            .then(next=>{if(page.script?.session===session)scriptTurn(page,next,"layout");})
-            .catch(error=>console.error("Native HTML: page script layout update failed:",String(error)));
-        }
-      });
+      if(turn.changed)page.fetchAdded?.(()=>{if(page===document)dirty=true;tellSession(page);});
     }
     if(turn.fetches?.length&&page.script)workerFetches(page,turn.fetches);
   };
@@ -1388,7 +1401,8 @@ async function main() {
       checkedFrames++;
       trace("native-html-checked",{frame:frameNumber,why:"idle",idleMs:ms(lastActivity,idleStart),drawMs:Math.round(result.drawMs*10)/10,pixelHash:result.pixelHash});
       // --shot on a page with no animated page canvas: the first idle-checked frame.
-      if(shotFile&&!pageGpuMs.length)await takeShot();
+      // (A capture waits for the page's images, which a window takes after the first frame.)
+      if(shotFile&&!pageGpuMs.length&&!(document as {imagesPending?:()=>boolean}).imagesPending?.())await takeShot();
     };
     const handle=(event:UIEvent)=>{
         if(event.kind===6){running=false;return;}
@@ -1518,6 +1532,7 @@ async function main() {
         }
     };
     while(running){
+      lateArrivals();
       const pumpStart=performance.now();if(lastPump!==undefined){pumpGaps.push(pumpStart-lastPump);if(firstFrameAt!==undefined&&lastPump>=firstFrameAt)pumpGapsLate.push(pumpStart-lastPump);if(pumpStart-lastPump>50)trace("native-html-pump-gap",{ms:ms(lastPump,pumpStart),frames:frameNumber,rendering:!!rendering});}lastPump=pumpStart;native.pump();checkHold();const pumpEnd=performance.now();
       if(pumpEnd-pumpStart>30)trace("native-html-pump-stall",{ms:ms(pumpStart,pumpEnd)});
       // Take every native event now and keep each with the time it was taken. None is dropped here.
