@@ -414,6 +414,14 @@ def served_wanted(names):
             files.add(re.sub(r"\.any\.[a-z-]+\.html$", ".any.js", p))
         if p.startswith("third_party/test262/"):
             continue
+        if p.startswith("webdriver/tests/"):
+            # A wdspec file is a pytest module of the package webdriver/tests: its fixtures and
+            # helpers (webdriver/tests/support/) and every package file above it are needed.
+            prefixes.add("webdriver/tests/support/")
+            up = os.path.dirname(p)
+            while up.startswith("webdriver"):
+                files |= {f"{up}/{f}" for f in ("__init__.py", "conftest.py", "pytest.ini")}
+                up = os.path.dirname(up)
         d = os.path.dirname(p)
         for base in (d, os.path.dirname(d)):
             if base:
