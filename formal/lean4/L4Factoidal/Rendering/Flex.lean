@@ -14,7 +14,8 @@ Proved here (each theorem's comment says what it says and does not say):
 - `place_pairwise`: items placed along a line do not overlap;
 - `justify_between_nonneg`, `justify_fits`: content distribution never pulls items
   together, and with room to spare keeps them inside the line;
-- `breakLines_sum`, `breakLines_pos`: every item is on exactly one line, no line is empty. -/
+- `breakLines_sum`, `breakLines_pos`: every item is on exactly one line, no line is empty;
+- `alignOffset_within`: an item no larger than its line lies inside it. -/
 namespace L4Factoidal.Rendering.Flex
 open LU
 
@@ -637,6 +638,87 @@ theorem placeLoop_snd (between : Int) (outers : List Int) : ∀ (pos : Int) (acc
 theorem place_snd (start between : Int) (outers : List Int) :
     (place start between outers).map Prod.snd = outers := by
   simp [place, placeLoop_snd]
+
+/-! ### Lines (§9.3 step 5) -/
+
+/-- The loop of `breakLines`: `count` items of total size `width` are on the open line. -/
+def breakLoop (room gap : Int) (count : Nat) (width : Int) (acc : Array Nat) : List Int → Array Nat
+  | [] => if count = 0 then acc else acc.push count
+  | w :: rest =>
+    if count = 0 then breakLoop room gap 1 w acc rest
+    else if width + gap + w ≤ room then breakLoop room gap (count + 1) (width + gap + w) acc rest
+    else breakLoop room gap 1 w (acc.push count) rest
+
+/-- The items of a multi-line container collected into lines: the number of items on
+each line, in order. Items are taken one by one while the next one fits in `room` with
+the `gap` before it; an item that does not fit alone still gets a line. `outers` are the
+items' hypothetical outer main sizes. -/
+def breakLines (room gap : Int) (outers : List Int) : List Nat :=
+  (breakLoop room gap 0 0 #[] outers).toList
+
+theorem breakLoop_sum (room gap : Int) (outers : List Int) : ∀ (count : Nat) (width : Int) (acc : Array Nat),
+    (breakLoop room gap count width acc outers).toList.sum = acc.toList.sum + count + outers.length := by
+  induction outers with
+  | nil =>
+    intro count width acc
+    unfold breakLoop
+    split
+    · rename_i h; simp [h]
+    · simp
+  | cons w rest ih =>
+    intro count width acc
+    unfold breakLoop
+    split
+    · rename_i h; rw [ih]; simp [h]; omega
+    · split
+      · rw [ih]; simp; omega
+      · rw [ih]; simp; omega
+
+/-- Partition. Says: the line sizes sum to the number of items: every item is on exactly
+one line (lines are consecutive runs, so with `breakLines_pos` they partition the items
+in order). -/
+theorem breakLines_sum (room gap : Int) (outers : List Int) :
+    (breakLines room gap outers).sum = outers.length := by
+  unfold breakLines; rw [breakLoop_sum]; simp
+
+theorem breakLoop_pos (room gap : Int) (outers : List Int) : ∀ (count : Nat) (width : Int) (acc : Array Nat),
+    (∀ c ∈ acc.toList, 0 < c) → ∀ c ∈ (breakLoop room gap count width acc outers).toList, 0 < c := by
+  induction outers with
+  | nil =>
+    intro count width acc hacc c hc
+    unfold breakLoop at hc
+    split at hc
+    · exact hacc c hc
+    · rename_i h
+      rw [Array.toList_push, List.mem_append] at hc
+      rcases hc with hc | hc
+      · exact hacc c hc
+      · simp only [List.mem_singleton] at hc; omega
+  | cons w rest ih =>
+    intro count width acc hacc c hc
+    unfold breakLoop at hc
+    split at hc
+    · exact ih _ _ _ hacc c hc
+    · rename_i h
+      split at hc
+      · exact ih _ _ _ hacc c hc
+      · refine ih _ _ _ ?_ c hc
+        intro d hd
+        rw [Array.toList_push, List.mem_append] at hd
+        rcases hd with hd | hd
+        · exact hacc d hd
+        · simp only [List.mem_singleton] at hd; omega
+
+/-- Lemma. Says: no line is empty. -/
+theorem breakLines_pos (room gap : Int) (outers : List Int) : ∀ c ∈ breakLines room gap outers, 0 < c := by
+  unfold breakLines
+  exact breakLoop_pos room gap outers 0 0 #[] (by simp)
+
+#guard breakLines 100 0 [40, 40, 40, 40, 40] == [2, 2, 1]
+#guard breakLines 100 10 [45, 45, 45] == [2, 1]
+#guard breakLines 100 0 [300, 20, 20] == [1, 2]
+#guard breakLines 100 0 [] == []
+#guard breakLines 100 0 [0, 0, 100, 0] == [4]
 
 /-! ### Cross-axis alignment of an item in its line (§9.6) -/
 
