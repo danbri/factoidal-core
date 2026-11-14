@@ -1513,7 +1513,9 @@ def getV : Nat → Value → String → M Value
       if key.front.isDigit then
         if let .typed ty b off len := (← getObj id).kind then
           if let some i := arrayIndex? key then
-            return (if i < (← liveLen ty b off len) then typedRead ty (bufferBytes (← getObj b)) (off + i * elemSize ty) else .undef)
+            let live ← liveLen ty b off len
+            let bo ← getObj b
+            return (if i < live then typedRead ty (bufferBytes bo) (off + i * elemSize ty) else .undef)
       match (← get).findProp id key 1000 with
       | none =>
         match (← getObj id).kind with
