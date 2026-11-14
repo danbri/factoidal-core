@@ -159,9 +159,23 @@ private def floatCss := "#f{float:left;width:30px;height:20px} #g{float:right;wi
 #guard box floated floatCss "g" == some (160,0,40,10)
 #guard box floated floatCss "t" == some (0,0,200,7)
 #guard at? floated floatCss "TT" == some (30,0)
--- §10.6.7: a box that is the root of its formatting context is as high as its floats.
-#guard box floated floatCss "c" == some (0,0,200,20)
-#guard box floated floatCss "n" == some (0,20,200,7)
+-- A plain block does not hold its floats: they stay in the formatting context, and the
+-- lines of the block after it are beside them too.
+#guard box floated floatCss "c" == some (0,0,200,7)
+#guard box floated floatCss "n" == some (0,7,200,7)
+#guard at? floated floatCss "N" == some (30,7)
+#guard box floated (floatCss ++ "#n{clear:both}") "n" == some (0,20,200,7)
+-- §10.6.7: a box that is the root of a formatting context is as high as its floats.
+#guard box floated (floatCss ++ "#c{overflow:hidden}") "c" == some (0,0,200,20)
+#guard box floated (floatCss ++ "#c{overflow:hidden}") "n" == some (0,20,200,7)
+-- Flex items do not float (CSS Flexbox 1 §3): the column is 20 + 10 + 7 high.
+#guard box floated (floatCss ++ "#c{display:flex;flex-direction:column}") "n" == some (0,37,200,7)
+-- A float in a paragraph: the next paragraph is beside it as well.
+private def article := "<div id=p1><div id=f>F</div>AA</div><div id=p2>BB</div><div id=p3>CC</div>"
+#guard at? article "#f{float:left;width:30px;height:10px}" "AA" == some (30,0)
+#guard at? article "#f{float:left;width:30px;height:10px}" "BB" == some (30,7)
+#guard at? article "#f{float:left;width:30px;height:10px}" "CC" == some (0,14)
+#guard box article "#f{float:left;width:30px;height:10px}" "p2" == some (0,7,200,7)
 -- A second float on the same side goes beside the first.
 #guard box floated "#f{float:left;width:30px;height:20px} #g{float:left;width:40px;height:10px}" "g" == some (30,0,40,10)
 -- With no room beside it, below.
