@@ -1551,8 +1551,7 @@ private def tableHints (dom : Dom) (id : Nat) (s parent : Computed) : Computed :
   if let some w := widthHint then s := {s with width := w}
   let heightHint := if ["td","th"].contains tag then nonzeroDimensionAttribute (attrValue n "height")
     else if ["table","tr"].contains tag then dimensionAttribute (attrValue n "height") else none
-  if let some h := heightHint then
-    if let .px _ := h then s := {s with height := h}
+  if let some h := heightHint then s := {s with height := h}
   if ["table","tr","td","th"].contains tag then
     let bg := attrValue n "bgcolor"
     if !bg.isEmpty then if let .ok c := color bg then s := {s with background := some c}
@@ -1570,8 +1569,8 @@ private def tableHints (dom : Dom) (id : Nat) (s parent : Computed) : Computed :
 `width` and `height` properties; `hr` width too. `hspace` and `vspace` of `img`, `embed`,
 `object`, `marquee` and an image button map to the horizontal and vertical margins; the
 `border` of `img`, `object` and an image button to the border widths, with a solid border.
-All below author CSS. A percentage height is left out: this layout resolves it against a
-height of 0. -/
+All below author CSS. A percentage height resolves against a definite containing height
+(`Fragment.percentHeights`) and is read as `auto` otherwise. -/
 def replacedHints (n : DOM.Node) (s : Computed) : Computed := Id.run do
   let tag := n.lname
   let imageInput := tag == "input" && (attrValue n "type").toLower == "image"
@@ -1580,8 +1579,7 @@ def replacedHints (n : DOM.Node) (s : Computed) : Computed := Id.run do
   let mut s := s
   if let some w := dimensionAttribute (attrValue n "width") then s := {s with width := w}
   if sized then
-    if let some h := dimensionAttribute (attrValue n "height") then
-      if let .px _ := h then s := {s with height := h}
+    if let some h := dimensionAttribute (attrValue n "height") then s := {s with height := h}
   if imageInput || ["img","embed","object","marquee"].contains tag then
     if let some (.px h) := dimensionAttribute (attrValue n "hspace") then
       s := {s with margin := {s.margin with left := h, right := h}}
@@ -1608,8 +1606,7 @@ def sourceDimensionHints (dom : Dom) (id : Nat) (s : Computed) : Computed := Id.
     let src := dom.get k
     let mut s := s
     if let some w := dimensionAttribute (attrValue src "width") then s := {s with width := w}
-    if let some h := dimensionAttribute (attrValue src "height") then
-      if let .px _ := h then s := {s with height := h}
+    if let some h := dimensionAttribute (attrValue src "height") then s := {s with height := h}
     return s
 
 /-- HTML §15.3.3: the margins of `body` from its `marginheight`, `topmargin`, `marginwidth`
