@@ -551,4 +551,31 @@ private def moved := "<div id=a>AA</div><div id=b>BB</div>"
 -- an inline box is not transformed
 #guard at? "<div>ab <span id=s>cd</span></div>" "#s{transform:translate(10px,3px)}" "cd" == some (18,0)
 
+
+-- Percentage margins and padding (CSS 2.1 §8.3, §8.4): of the containing block's width,
+-- on all four sides, where the styles make that width definite (`Layout.percentEdges`).
+private def inside := "<div id=c><div id=k>K</div></div>"
+#guard box inside "#c{width:100px} #k{margin-left:10%}" "k" == some (10,0,90,7)
+#guard box inside "#c{width:100px} #k{margin-left:10%;padding-left:5%}" "k" == some (10,0,90,7)
+#guard at? inside "#c{width:100px} #k{margin-left:10%;padding-left:5%}" "K" == some (15,0)
+#guard box inside "#k{margin:0 10%}" "k" == some (20,0,160,7)
+-- top and bottom are of the width too
+#guard box inside "#c{width:100px} #k{padding-top:10%;padding-bottom:20%}" "k" == some (0,0,100,37)
+#guard box inside "#c{width:100px} #k{margin-top:10%}" "k" == some (0,10,100,7)
+-- the containing block's own width may be a percentage, or what its margins leave
+#guard box inside "#c{width:50%} #k{margin-left:10%}" "k" == some (10,0,90,7)
+#guard box inside "#c{margin:0 50px} #k{margin-left:10%}" "k" == some (60,0,90,7)
+#guard box inside "#c{width:100px;padding:0 10px;box-sizing:border-box} #k{margin-left:10%}" "k" == some (18,0,72,7)
+-- a length and a percentage together; a negative percentage
+#guard box inside "#c{width:100px} #k{margin-left:calc(10% + 5px)}" "k" == some (15,0,85,7)
+#guard box inside "#c{width:100px} #k{margin-left:-10%}" "k" == some (-10,0,110,7)
+-- a flex item's percentage is of its container's width; an inline box's of its block's
+#guard at? inside "#c{display:flex;width:100px} #k{padding-left:10%}" "K" == some (10,0)
+#guard at? "<div id=c>ab <span id=s>cd</span></div>" "#c{width:100px} #s{padding-left:10%}" "cd" == some (28,0)
+-- a containing block whose width depends on its content: the percentage is left out
+#guard box inside "#c{float:left} #k{margin-left:10%}" "k" == some (0,0,6,7)
+-- a later length replaces the percentage
+#guard box inside "#c{width:100px} #k{margin-left:10%} #k{margin-left:4px}" "k" == some (4,0,96,7)
+#guard box inside "#c{width:100px} #k{margin-left:10%} #k{margin-left:auto;width:20px}" "k" == some (80,0,20,7)
+
 end L4Factoidal.Rendering.PositionLayoutTests

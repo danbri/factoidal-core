@@ -496,4 +496,107 @@ def contentBoxed (s : Computed) : Computed :=
   {s with width := less h s.width, minWidth := less h s.minWidth, maxWidth := less h s.maxWidth,
           height := less v s.height, minHeight := less v s.minHeight, maxHeight := less v s.maxHeight}
 
+/-- The style with the percentage parts of its margins and padding resolved against a
+containing block `width` wide (CSS 2.1 §8.3, §8.4: all four sides are of the width). -/
+def withEdges (s : Computed) (width : Float) : Computed :=
+  if !s.pos.percentEdges then s else
+  let m := s.pos.marginOf
+  let p := s.pos.paddingOf
+  {s with margin := ⟨s.margin.top+m.1*width,s.margin.right+m.2.1*width,s.margin.bottom+m.2.2.1*width,s.margin.left+m.2.2.2*width⟩,
+          padding := ⟨s.padding.top+max 0 (p.1*width),s.padding.right+max 0 (p.2.1*width),
+                      s.padding.bottom+max 0 (p.2.2.1*width),s.padding.left+max 0 (p.2.2.2*width)⟩,
+          pos := {s.pos with marginOf := (0,0,0,0), paddingOf := (0,0,0,0)}}
+
+/-- The content width of the box of a node when the styles alone make it definite, given
+the width `cb` of its containing block (when that is definite) and its own style with its
+edges resolved: a length; a percentage of `cb`; for a block-level box in the flow with
+`width: auto`, what `cb` leaves inside its margins, borders and padding. An inline box
+passes its containing block on. `none`: the width depends on content (a float, an
+inline-block, a table cell, an absolutely positioned box with no length). Limits that are
+lengths apply. -/
+def definiteWidth (s : Computed) (element : Bool) (cb : Option Float) : Option Float :=
+  if !element then cb else
+  if s.display == .none then none else
+  if s.display == .inline then cb else
+  let b := s.borderEdges
+  let inside := b.left+b.right+s.padding.left+s.padding.right
+  -- `box-sizing: border-box`: a width names the border box
+  let content := fun (w : Float) => if s.pos.borderBox then max 0 (w-inside) else w
+  let limit := fun (w : Float) =>
+    let w := match s.maxWidth with
+      | .px m => min w (content m)
+      | _ => w
+    match s.minWidth with
+    | .px m => max w (content m)
+    | _ => w
+  match s.width with
+  | .px w => some (limit (content w))
+  | .percent p => if s.pos.isAbsolute then none else cb.map fun c => limit (content (max 0 (c*p)))
+  | .auto =>
+    if s.pos.isAbsolute || s.pos.float != .none || !s.display.isBlockLevel || s.display.isTable then none
+    else cb.map fun c => limit (max 0 (c-s.margin.left-s.margin.right-inside))
+  | _ => none
+
+/-- The pass down the tree: `pending` holds nodes with the width of their containing block.
+One step a node; `fuel` is the number of nodes. -/
+def percentEdgesLoop (dom : Dom) : Nat → List (Nat × Option Float) → Array Computed → Array Computed
+  | 0, _, out => out
+  | _+1, [], out => out
+  | fuel+1, (id,cb) :: rest, out =>
+    let n := dom.get id
+    let s := out[id]!
+    -- an absolutely positioned box resolves against a padding box known only in layout
+    let s := match cb with
+      | some w => if s.pos.isAbsolute then s else withEdges s w
+      | none => s
+    let own := definiteWidth s (n.type == .element) cb
+    percentEdgesLoop dom fuel (n.kids.toList.map (fun k => (k,own)) ++ rest) (out.set! id s)
+
+/-- The styles with the percentage margins and padding of each box resolved against the
+width of its containing block, where the styles make that width definite (`definiteWidth`:
+the viewport `width` for the root, then down through blocks in the flow and boxes with a
+length for a width); elsewhere a percentage part stays out, as before it was read. A page
+with no percentage margin or padding pays one pass over its styles. -/
+def percentEdges (dom : Dom) (styles : Array Computed) (width : Float) : Array Computed :=
+  if !(styles.any fun s => s.pos.percentEdges) then styles
+  else percentEdgesLoop dom (dom.size+1) [(0,some width)] styles
+
+/-- Kind: frame. Says: a page with no percentage margin or padding is left as it is. -/
+theorem percentEdges_unused (dom : Dom) (styles : Array Computed) (width : Float)
+    (h : (styles.any fun s => s.pos.percentEdges) = false) : percentEdges dom styles width = styles := by
+  simp [percentEdges, h]
+
+/-- Kind: structure. Says: the pass keeps one style a node. -/
+theorem percentEdgesLoop_size (dom : Dom) (fuel : Nat) (pending : List (Nat × Option Float)) (out : Array Computed) :
+    (percentEdgesLoop dom fuel pending out).size = out.size := by
+  induction fuel generalizing pending out with
+  | zero => rfl
+  | succ fuel ih =>
+    cases pending with
+    | nil => rfl
+    | cons head rest =>
+      obtain ⟨id, cb⟩ := head
+      unfold percentEdgesLoop
+      simp only []
+      rw [ih]
+      simp
+
+theorem percentEdges_size (dom : Dom) (styles : Array Computed) (width : Float) :
+    (percentEdges dom styles width).size = styles.size := by
+  unfold percentEdges
+  split
+  · rfl
+  · exact percentEdgesLoop_size ..
+
+/-- Kind: frame. Says: resolving the edges of a style changes its margin, its padding and
+its position record only. -/
+theorem withEdges_rest (s : Computed) (width : Float) (m p : Edges) (q : PositionStyle) :
+    {withEdges s width with margin := m, padding := p, pos := q} = {s with margin := m, padding := p, pos := q} := by
+  unfold withEdges
+  split <;> rfl
+
+/-- Kind: frame. Says: a style with no percentage edge is left as it is. -/
+theorem withEdges_none (s : Computed) (width : Float) (h : s.pos.percentEdges = false) : withEdges s width = s := by
+  simp [withEdges, h]
+
 end L4Factoidal.Rendering.Layout
