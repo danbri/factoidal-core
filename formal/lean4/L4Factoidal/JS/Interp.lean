@@ -4479,15 +4479,40 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       checkStrLen (parts.foldl (fun acc t => acc + t.utf8ByteSize + sep.utf8ByteSize) 0)
       pure (.str (Str.canonical (sep.intercalate parts)))
     | .arrayIndexOf | .arrayIncludes =>
-      let es ← elemsOf n thisV
-      let start := relIndex (← toNum n a1) es.size
-      let found := (List.range es.size).find? fun i => i ≥ start &&
-        (if id == .arrayIncludes then sameValueZero es[i]! a0 else strictEq es[i]! a0)
+      -- §23.1.3.17, §23.1.3.16: indexOf skips absent indices (HasProperty) and uses ===;
+      -- includes reads every index and uses SameValueZero
+      let oid ← toObj n thisV
+      let len ← arrayLikeLength n (.obj oid)
+      if len == 0 then return (if id == .arrayIncludes then .bool false else .num (-1))
+      let start := relIndex (← toNum n a1) len
+      let mut found : Option Nat := none
+      for k in [start:len] do
+        let x? ← elemAt n oid k (id == .arrayIndexOf)
+        if let some x := x? then
+          if (if id == .arrayIncludes then sameValueZero x a0 else strictEq x a0) then
+            found := some k
+            break
       if id == .arrayIncludes then pure (.bool found.isSome)
       else pure (.num (match found with | some i => Float.ofNat i | none => -1))
     | .arrayLastIndexOf =>
-      let es ← elemsOf n thisV
-      let found := (List.range es.size).reverse.find? fun i => strictEq es[i]! a0
+      -- §23.1.3.20: from fromIndex (default len - 1) down to 0, skipping absent indices
+      let oid ← toObj n thisV
+      let len ← arrayLikeLength n (.obj oid)
+      if len == 0 then return .num (-1)
+      let from_ ← if args.size ≥ 2 then do
+          let x := toIntegerOrInf (← toNum n a1)
+          pure (if x ≥ 0 then (if x ≥ len.toFloat then some (len - 1) else some x.toUInt64.toNat)
+            else let k := len.toFloat + x; if k < 0 then none else some k.toUInt64.toNat)
+        else pure (some (len - 1))
+      let some start := from_ | return .num (-1)
+      let mut found : Option Nat := none
+      for j in [0:start + 1] do
+        let k := start - j
+        let x? ← elemAt n oid k true
+        if let some x := x? then
+          if strictEq x a0 then
+            found := some k
+            break
       pure (.num (match found with | some i => Float.ofNat i | none => -1))
     | .arrayConcat =>
       let es ← elemsOf n thisV

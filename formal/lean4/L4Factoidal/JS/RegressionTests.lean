@@ -602,5 +602,6 @@ private def parses (src : String) : Bool := syn src == "ok"
 /-! ## Error.isError, Promise.try, RegExp.escape -/
 
 #guard out "print(RegExp.escape('foo.bar'), RegExp.escape('1 '), RegExp.escape('_\\n'), RegExp.escape('\\u2028,'), Error.isError(new TypeError()), Error.isError({}), Error.isError(Object.create(Error.prototype))); Promise.try((a, b) => a + b, 2, 3).then(v => print('try', v)); Promise.try(() => { throw 7 }).catch(e => print('caught', e))" == ["\\x66oo\\.bar \\x31\\x20 _\\n \\u2028\\x2c true false false", "try 5", "caught 7"]
+#guard out "var a = [1, 2, 1, NaN]; print(a.lastIndexOf(1), a.lastIndexOf(1, 1), a.lastIndexOf(1, -3), a.lastIndexOf(1, -9), a.indexOf(1, 1), a.indexOf(NaN), a.includes(NaN), a.includes(2, -1), Array.prototype.indexOf.call({ 0: 'x', 2: 'x', length: 3 }, 'x', 1), Array.prototype.includes.call({ length: 2 }, undefined), Array.prototype.indexOf.call({ length: 2 }, undefined))" == ["2 0 0 -1 2 -1 true false 2 true -1"]
 
 end L4Factoidal.JS.Tests
