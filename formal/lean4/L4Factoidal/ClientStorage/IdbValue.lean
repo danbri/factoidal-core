@@ -62,14 +62,29 @@ def subtree (ts : Val) (i : Nat) : Val := ts.extract i (skip ts i)
 /-- The index of the `n`th child subtree of the token at `i`. -/
 def childAt (ts : Val) (i n : Nat) : Nat := (List.range n).foldl (fun j _ => skip ts j) (i + 1)
 
-/-- The bits of the double that is the natural number `n` (exact below 2^53), as the token
-of a number. -/
-def numTok (tag : Char) (n : Nat) : Tok :=
-  if n == 0 then tok tag "0000000000000000" else
+/-- The bits of the double that is the natural number `n` (exact below 2^53). For a
+positive double the bits are also its order image (`numImage`). -/
+def natBits (n : Nat) : Nat :=
+  if n == 0 then 0 else
   let e := Nat.log2 n
   let mant := if e ≤ 52 then (n - 2 ^ e) <<< (52 - e) else (n - 2 ^ e) >>> (e - 52)
-  let bits := ((1023 + e) <<< 52) + mant
+  ((1023 + e) <<< 52) + mant
+
+/-- The token of the number `n`. -/
+def numTok (tag : Char) (n : Nat) : Tok :=
+  let bits := natBits n
   (String.singleton tag).toUTF8 ++ hex8 (bits >>> 32) ++ hex8 (bits % 4294967296)
+
+/-- The integer part of the positive double whose order image is `v` (0 for a negative
+one), at most 2^53: what a key generator reads from an explicit key (§2.11). -/
+def floorOfImage (v : Int) : Nat :=
+  if v ≤ 0 then 0 else
+  let bits := v.toNat
+  let e := bits >>> 52
+  let mant := bits % (1 <<< 52) + (1 <<< 52)
+  if e < 1023 then 0
+  else if e ≥ 1023 + 53 then 1 <<< 53
+  else if e ≥ 1023 + 52 then mant <<< (e - 1023 - 52) else mant >>> (1023 + 52 - e)
 
 /-- The value of the own property `id` of the object or array at `i` (pairs of a `k` token
 and a value), among `n` pairs from `j`. -/
@@ -203,6 +218,8 @@ private def v1 : Val := T ["o2", "ka", one, "kb", "o2", "kc", "sx", "kd", "A2", 
 #guard extractKey v1 (.many ["a", "zz"]) == none
 #guard numTok 'n' 1 == one.toUTF8 && numTok 'n' 2 == two.toUTF8 && numTok 'n' 3 == "n4008000000000000".toUTF8
 #guard numTok 'n' 1000 == "n408f400000000000".toUTF8
+#guard floorOfImage (Int.ofNat (natBits 1000)) == 1000 && floorOfImage (Int.ofNat (natBits 1)) == 1
+#guard floorOfImage 0x4008cccccccccccd == 3 && floorOfImage 0x3fe0000000000000 == 0 && floorOfImage (-5) == 0
 -- a Blob's size and type, a File's name
 #guard evalPath (T ["Ltext/plain", "bhello"]) "size" == some #[numTok 'n' 5]
 #guard evalPath (T ["Ltext/plain", "bhello"]) "type" == some (T ["stext/plain"])
