@@ -6,20 +6,30 @@ retrieval). `web_api` ops 96 and 97 (`WasmVM.Hosts.WebApi`).
 
 ## Decisions
 
-* For scripts only, tonight. The engine sends no `Cookie` field and reads no `Set-Cookie`
-  field (`Net.PageFetch`: no credentials; `responseOf_no_set_cookie`). What a script sets
-  with `document.cookie` it reads back with `document.cookie`; no server sees it. This keeps
-  a page's own scripts working (consent, preferences) and changes nothing on the wire.
-* In memory, for the session. Nothing is written to disk.
-* A cookie is its host's. The host and the secure flag are the engine's (the session's page
-  origin), never an argument. A `Domain` attribute must domain-match the host; one that names
-  a parent domain is accepted and the cookie is still kept for the host alone: no public
+* The jar is one page session's, in memory. Nothing is written to disk, and no cookie
+  outlives the page or is seen by another page: the jar is partitioned more finely than by
+  top-level site.
+* On the network (`Net.PageFetch`, `Net.Xhr`): a response to a request made with
+  credentials may set cookies (`setFromHeader`: `HttpOnly` and `SameSite` too), and a request
+  made with credentials carries those of its URL's host (`forRequest`). Credentials go with a
+  request to the page's own origin, and to another origin only when the page asked
+  (`credentials: "include"`, `withCredentials`); never with a preflight.
+* A cookie is its host's. A `Domain` attribute must domain-match the host; one that names a
+  parent domain is accepted and the cookie is still kept for the host alone: no public
   suffix list is held, so no cookie is shared between hosts (`set_keeps_host`,
-  `visible_host`). This is narrower than the standard and is the safe side.
+  `setFromHeader_keeps_host`, `visible_host`, `sent_host`). This is narrower than the
+  standard and is the safe side.
+* `SameSite`: a request that is not same-site with the page carries only `SameSite=None`
+  cookies (`sent_cross_site`), which must be `Secure` (`admitHttp_keeps_host`). A cookie with
+  no `SameSite` is `Lax`. "Same-site" here is the page's own scheme and host (no public
+  suffix list: a subdomain counts as another site, which sends less). A script's
+  `document.cookie` cannot ask for `SameSite=None`: its cookies are `Lax`.
 * A script cannot set or read an `HttpOnly` cookie (`set_no_httpOnly`, `visible_not_httpOnly`),
-  and a `Secure` cookie is neither set by nor shown to a page that is not secure
-  (`visible_secure`).
-* The `__Secure-` and `__Host-` prefixes are enforced (§4.1.3).
+  and a `Secure` cookie is neither set by nor shown or sent to what is not secure
+  (`visible_secure`, `sent_secure`). A response that is not secure does not replace a
+  `Secure` cookie (§5.7 "leave secure cookies alone").
+* The `__Secure-` and `__Host-` prefixes are enforced (§4.1.3), and `__Http-` and
+  `__Host-Http-`, which only a response can set.
 
 Every loop is a core list combinator or a tail call on a shorter list.
 -/
@@ -53,6 +63,8 @@ structure Cookie where
   expires : Option Nat := none
   /-- Its place in the order of creation. -/
   created : Nat := 0
+  /-- `SameSite`: 0 not given (treated as `Lax`), 1 `None`, 2 `Lax`, 3 `Strict`. -/
+  sameSite : Nat := 0
   deriving DecidableEq, Repr, Inhabited
 
 /-- The cookies of the session. -/
@@ -195,6 +207,8 @@ structure Attributes where
   path : Option String := none
   secure : Bool := false
   httpOnly : Bool := false
+  /-- As `Cookie.sameSite`. -/
+  sameSite : Nat := 0
 
 /-- One attribute (§5.6): its name and value, trimmed. -/
 def readAttribute (a : Attributes) (text : String) : Attributes :=
@@ -217,6 +231,11 @@ def readAttribute (a : Attributes) (text : String) : Attributes :=
   | "path" => { a with path := if value.isEmpty || !value.startsWith "/" then none else some value }
   | "secure" => { a with secure := true }
   | "httponly" => { a with httpOnly := true }
+  | "samesite" => { a with sameSite := match lower value with
+      | "none" => 1
+      | "lax" => 2
+      | "strict" => 3
+      | _ => 0 }
   | _ => a
 
 /-- The name, the value and the attribute texts of a cookie string (§5.6 steps 1 to 6);
@@ -246,12 +265,18 @@ def admit (site : Site) (now : Nat) (name value : String) (a : Attributes) : Opt
                 | some d => some (if d ≤ 0 then 0 else now + d.toNat)
                 | none => a.expires }
 
+/-- A name with the `__Http-` or `__Host-Http-` prefix (ASCII case-insensitive). -/
+def httpPrefix (name : String) : Bool :=
+  (lower name).startsWith "__http-" || (lower name).startsWith "__host-http-"
+
 /-- The cookie that a script's string makes for `site` at time `now`; `none` when the string
 is refused (`nameValue`, `admit`). -/
 def parseForScript (site : Site) (now : Nat) (text : String) : Option Cookie :=
   match nameValue text with
   | none => none
-  | some (name, value, attrs) => admit site now name value (attrs.foldl readAttribute {})
+  | some (name, value, attrs) =>
+    -- the `__Http-` and `__Host-Http-` prefixes are a response's to set (they need `HttpOnly`)
+    if httpPrefix name then none else admit site now name value (attrs.foldl readAttribute {})
 
 /-- A cookie has ended at `now`. -/
 def expired (c : Cookie) (now : Nat) : Bool :=
@@ -276,6 +301,63 @@ def setFromScript (jar : Jar) (site : Site) (now : Nat) (text : String) : Jar :=
     let c := { c with created := (old.map (·.created)).getD jar.next }
     let kept := if (rest.filter (·.host == c.host)).length ≥ maxPerHost then rest.drop 1 else rest
     { cookies := kept ++ [c], next := jar.next + 1 }
+
+/-! ## Setting a cookie from a response (§5.6, §5.7: the "HTTP API") -/
+
+/-- The steps of the storage model that refuse a response's cookie, and the cookie kept: for
+the response's host; `HttpOnly` and `SameSite` as given; `SameSite=None` only with `Secure`. -/
+def admitHttp (site : Site) (now : Nat) (name value : String) (a : Attributes) : Option Cookie :=
+  if a.secure && !site.secure then none
+  else if (a.domain.any fun d => !d.isEmpty && !domainMatch site.host d) then none
+  else if (lower name).startsWith "__secure-" && !a.secure then none
+  else if (lower name).startsWith "__host-" && !(a.secure && a.domain.all (·.isEmpty) && a.path == some "/") then none
+  else if httpPrefix name && !(a.secure && a.httpOnly) then none
+  else if a.sameSite == 1 && !a.secure then none
+  else some { name, value, host := site.host, path := a.path.getD (defaultPath site.path), secure := a.secure,
+              httpOnly := a.httpOnly, sameSite := a.sameSite,
+              expires := match a.maxAge with
+                | some d => some (if d ≤ 0 then 0 else now + d.toNat)
+                | none => a.expires }
+
+/-- The cookie a `Set-Cookie` field makes for a response from `site`. -/
+def parseForHeader (site : Site) (now : Nat) (text : String) : Option Cookie :=
+  match nameValue text with
+  | none => none
+  | some (name, value, attrs) => admitHttp site now name value (attrs.foldl readAttribute {})
+
+/-- A `Set-Cookie` field of a response from `site` at `now`: the jar after it. A refused field
+changes nothing; a cookie that has ended removes the one it names; a response that is not
+secure leaves a `Secure` cookie of that name alone (§5.7 step 11). -/
+def setFromHeader (jar : Jar) (site : Site) (now : Nat) (text : String) : Jar :=
+  match parseForHeader site now text with
+  | none => jar
+  | some c =>
+    if !site.secure && jar.cookies.any (fun o => o.secure && o.name == c.name && o.host == c.host && pathMatch c.path o.path) then jar else
+    let old := jar.cookies.find? (sameKey · c)
+    let rest := jar.cookies.filter fun o => !sameKey o c && !expired o now
+    if expired c now then { jar with cookies := rest } else
+    let c := { c with created := (old.map (·.created)).getD jar.next }
+    let kept := if (rest.filter (·.host == c.host)).length ≥ maxPerHost then rest.drop 1 else rest
+    { cookies := kept ++ [c], next := jar.next + 1 }
+
+/-! ## The `Cookie` field of a request (§5.8.3) -/
+
+/-- A cookie that a request to `site` (its URL's host, path and scheme) carries at `now`.
+`sameSite`: the request is same-site with the page that makes it; when it is not, only a
+`SameSite=None` cookie goes. `HttpOnly` cookies go: they are hidden from scripts, not from
+the server. -/
+def sent (site : Site) (now : Nat) (sameSite : Bool) (c : Cookie) : Bool :=
+  c.host == site.host && pathMatch site.path c.path && (!c.secure || site.secure) && !expired c now &&
+    (sameSite || c.sameSite == 1)
+
+/-- The cookies of a request, in the order of §5.8.3. -/
+def sentCookies (jar : Jar) (site : Site) (now : Nat) (sameSite : Bool) : List Cookie :=
+  (jar.cookies.filter (sent site now sameSite)).mergeSort fun a b =>
+    a.path.length > b.path.length || (a.path.length == b.path.length && a.created ≤ b.created)
+
+/-- The value of the `Cookie` field ("" for none). -/
+def forRequest (jar : Jar) (site : Site) (now : Nat) (sameSite : Bool) : String :=
+  "; ".intercalate ((sentCookies jar site now sameSite).map fun c => if c.name.isEmpty then c.value else c.name ++ "=" ++ c.value)
 
 /-! ## Reading (§5.8.3) -/
 
@@ -386,7 +468,9 @@ theorem parse_keeps_host (site : Site) (now : Nat) (text : String) (c : Cookie)
   unfold parseForScript at h
   split at h
   · simp at h
-  · exact admit_keeps_host _ _ _ _ _ _ h
+  · split at h
+    · simp at h
+    · exact admit_keeps_host _ _ _ _ _ _ h
 
 /-- Kind: privacy invariant. Says: after `document.cookie = text`, every cookie in the jar
 was there before or is for the host of the page that set it and is not `HttpOnly`: a script
@@ -416,6 +500,101 @@ theorem set_keeps_host (jar : Jar) (site : Site) (now : Nat) (text : String) (c 
         · simp only [List.mem_singleton] at hk
           rw [hk]
           exact .inr ⟨hn.1, hn.2.1⟩
+
+/-- Kind: privacy invariant (cookies are their host's, on the wire). Says: every cookie a
+request carries was stored for exactly the host the request goes to: no cookie of one host
+is ever sent to another, a subdomain or a parent domain included. -/
+theorem sent_host (jar : Jar) (site : Site) (now : Nat) (ss : Bool) (c : Cookie)
+    (h : c ∈ sentCookies jar site now ss) : c.host = site.host := by
+  unfold sentCookies at h
+  have h' := (List.mem_filter.mp ((List.mem_mergeSort).mp h)).2
+  unfold sent at h'
+  simp only [Bool.and_eq_true, beq_iff_eq] at h'
+  exact h'.1.1.1.1
+
+/-- Kind: security invariant. Says: a request to a URL that is not secure never carries a
+`Secure` cookie. -/
+theorem sent_secure (jar : Jar) (site : Site) (now : Nat) (ss : Bool) (c : Cookie)
+    (h : c ∈ sentCookies jar site now ss) (hs : site.secure = false) : c.secure = false := by
+  unfold sentCookies at h
+  have h' := (List.mem_filter.mp ((List.mem_mergeSort).mp h)).2
+  unfold sent at h'
+  simp only [Bool.and_eq_true, Bool.or_eq_true, Bool.not_eq_eq_eq_not, Bool.not_true, hs, Bool.false_eq_true, or_false] at h'
+  exact h'.1.1.2
+
+/-- Kind: privacy invariant (`SameSite`). Says: a request that is not same-site with the page
+that makes it carries only cookies set with `SameSite=None`: a cookie with `Lax`, `Strict`
+or no `SameSite` never goes with a cross-site request. -/
+theorem sent_cross_site (jar : Jar) (site : Site) (now : Nat) (c : Cookie)
+    (h : c ∈ sentCookies jar site now false) : c.sameSite = 1 := by
+  unfold sentCookies at h
+  have h' := (List.mem_filter.mp ((List.mem_mergeSort).mp h)).2
+  unfold sent at h'
+  simp only [Bool.and_eq_true, Bool.or_eq_true, Bool.false_eq_true, false_or, beq_iff_eq] at h'
+  exact h'.2
+
+/-- Kind: privacy invariant (cookies are their host's, a response's). Says: a cookie that the
+storage model admits for a response is for the host of that response, is `Secure` only from
+a secure response, and is `SameSite=None` only when it is `Secure`, whatever `Domain` its
+attributes name. -/
+theorem admitHttp_keeps_host (site : Site) (now : Nat) (name value : String) (a : Attributes) (c : Cookie)
+    (h : admitHttp site now name value a = some c) :
+    c.host = site.host ∧ (c.secure = true → site.secure = true) ∧ (c.sameSite = 1 → c.secure = true) := by
+  unfold admitHttp at h
+  split at h
+  · simp at h
+  · rename_i h1
+    split at h
+    · simp at h
+    · split at h
+      · simp at h
+      · split at h
+        · simp at h
+        · split at h
+          · simp at h
+          · split at h
+            · simp at h
+            · rename_i h6
+              simp only [Option.some.injEq] at h
+              rw [← h]
+              refine ⟨rfl, ?_, ?_⟩
+              · intro hs
+                cases hsite : site.secure <;> simp_all
+              · intro hn
+                cases hsec : a.secure <;> simp_all
+
+/-- Kind: privacy invariant. Says: after a `Set-Cookie` field of a response from `site`, every
+cookie in the jar was there before or is for the host of that response: a response never
+adds a cookie for another host. -/
+theorem setFromHeader_keeps_host (jar : Jar) (site : Site) (now : Nat) (text : String) (c : Cookie)
+    (h : c ∈ (setFromHeader jar site now text).cookies) :
+    (∃ o ∈ jar.cookies, o.name = c.name ∧ o.value = c.value ∧ o.host = c.host ∧ o.httpOnly = c.httpOnly) ∨
+      c.host = site.host := by
+  unfold setFromHeader at h
+  split at h
+  · exact .inl ⟨c, h, rfl, rfl, rfl, rfl⟩
+  · rename_i n hp
+    have hn : n.host = site.host := by
+      unfold parseForHeader at hp
+      split at hp
+      · simp at hp
+      · exact (admitHttp_keeps_host _ _ _ _ _ _ hp).1
+    have old : ∀ x, x ∈ jar.cookies.filter (fun o => !sameKey o n && !expired o now) → x ∈ jar.cookies :=
+      fun x hx => (List.mem_filter.mp hx).1
+    split at h
+    · exact .inl ⟨c, h, rfl, rfl, rfl, rfl⟩
+    · split at h
+      · exact .inl ⟨c, old c h, rfl, rfl, rfl, rfl⟩
+      · simp only at h
+        rcases List.mem_append.mp h with hk | hk
+        · have hin : c ∈ jar.cookies.filter (fun o => !sameKey o n && !expired o now) := by
+            split at hk
+            · exact List.mem_of_mem_drop hk
+            · exact hk
+          exact .inl ⟨c, old c hin, rfl, rfl, rfl, rfl⟩
+        · simp only [List.mem_singleton] at hk
+          rw [hk]
+          exact .inr hn
 
 /-! ## Checks (RFC 6265bis and the cases of WPT cookies/) -/
 
@@ -464,5 +643,32 @@ private def j1 : Jar := set1 (set1 {} "a=1") "b=2; Path=/"
 #guard siteOf "http://[::1]:8000" false "" == some { host := "[::1]", path := "/", secure := false }
 #guard siteOf "null" false "/" == none && siteOf "file://" false "/" == none
 #guard defaultPath "/dir/page.html" == "/dir" && defaultPath "/page" == "/" && defaultPath "" == "/" && defaultPath "/a/b/" == "/a/b"
+
+-- the HTTP side (WPT cookies/attributes, cookies/prefix/*.header, cookies/samesite): a
+-- response's cookies, HttpOnly hidden from scripts and sent to the server
+private def setH (j : Jar) (t : String) (s : Site := site) (now : Nat := 1000) : Jar := setFromHeader j s now t
+private def jh : Jar := setH (setH (setH {} "sid=1; HttpOnly; Path=/") "pref=2; Path=/") "x=3; SameSite=None; Secure; Path=/"
+#guard forScript jh site 1000 == "pref=2; x=3"
+#guard forRequest jh site 1000 true == "sid=1; pref=2; x=3"
+-- a cross-site request: only the SameSite=None cookie
+#guard forRequest jh site 1000 false == "x=3"
+-- another host, a subdomain and a parent domain get nothing
+#guard forRequest jh { site with host := "example.com" } 1000 true == "" && forRequest jh { site with host := "a.www.example.com" } 1000 true == ""
+-- Secure cookies do not go to a plain URL; a plain response does not replace one
+#guard forRequest jh plain 1000 true == "sid=1; pref=2"
+#guard forRequest (setH jh "x=evil; Path=/" plain) site 1000 true == "sid=1; pref=2; x=3"
+-- SameSite=None needs Secure; a script does not replace an HttpOnly cookie; a response does
+#guard forRequest (setH {} "y=1; SameSite=None") site 1000 true == ""
+#guard forRequest (set1 jh "sid=evil; Path=/") site 1000 true == "sid=1; pref=2; x=3"
+#guard forRequest (setH jh "sid=9; Path=/") site 1000 true == "sid=9; pref=2; x=3"
+-- Max-Age=0 from a response deletes; an expired cookie is not sent
+#guard forRequest (setH jh "pref=; Max-Age=0; Path=/") site 1000 true == "sid=1; x=3"
+#guard forRequest (setH {} "t=1; Max-Age=5") site 1005 true == ""
+-- prefixes: __Http- and __Host-Http- need HttpOnly and Secure, and are never a script's
+#guard forRequest (setH {} "__Http-a=1; Secure; HttpOnly") site 1000 true == "__Http-a=1"
+#guard forRequest (setH {} "__Http-a=1; Secure") site 1000 true == ""
+#guard forScript (set1 {} "__Http-a=1; Secure") site 1000 == "" && forScript (set1 {} "__Host-Http-a=1; Secure; Path=/") site 1000 == ""
+#guard forRequest (setH {} "__Host-Http-a=1; Secure; HttpOnly; Path=/") site 1000 true == "__Host-Http-a=1"
+#guard forRequest (setH {} "__Host-a=1; Secure; Path=/; Domain=www.example.com") site 1000 true == ""
 
 end L4Factoidal.Net.Cookies
