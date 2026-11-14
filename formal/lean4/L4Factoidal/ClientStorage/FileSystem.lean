@@ -92,6 +92,23 @@ structure Access where
   pos : Nat := 0
   deriving Inhabited
 
+/-- A change to the tree, as a `FileSystemObserver` reports it. -/
+structure Change where
+  kind : String
+  path : Path
+  /-- Where a moved entry was. -/
+  src : Path := []
+  dir : Bool
+  deriving Inhabited
+
+/-- What one `observe()` of a `FileSystemObserver` watches. -/
+structure Observer where
+  id : Nat
+  path : Path
+  dir : Bool
+  recursive : Bool
+  deriving Inhabited
+
 structure Live where
   writables : List Writable := []
   accesses : List Access := []
@@ -101,6 +118,9 @@ structure Live where
   clock : Nat := 1
   /-- The unique ids given out (`getUniqueId`), by kind and path: an entry keeps its id. -/
   uids : List (String × Nat) := []
+  /-- The observations, and the changes not yet handed to them (kept only while there is one). -/
+  observers : List Observer := []
+  log : List Change := []
   deriving Inhabited
 
 structure Shelf where
@@ -344,9 +364,79 @@ def op (quota : Nat) (s : Shelf) (a : Array Tok) : Shelf × List Tok :=
   else if strAt a 0 == "wclose" then wclose quota s (natAt a 1)
   else other quota s a
 
+/-! ## File system observers (WICG File System Observer, the tentative WPT tests) -/
+
+/-- The changes from one tree to the next: entries that appeared, disappeared, and files whose
+contents changed (their change counter moved). -/
+def diff (before after : Tree) : List Change :=
+  (before.entries.filter (fun e => (after.lookup e.1).isNone)).map (fun e => { kind := "disappeared", path := e.1, dir := e.2.isDir }) ++
+  (after.entries.filter (fun e => (before.lookup e.1).isNone)).map (fun e => { kind := "appeared", path := e.1, dir := e.2.isDir }) ++
+  after.entries.filterMap fun e =>
+    match before.lookup e.1, e.2 with
+    | some (.file _ m), .file _ m' => if m != m' then some { kind := "modified", path := e.1, dir := false } else none
+    | _, _ => none
+
+/-- A path an observation covers: the observed file itself; under an observed directory, its
+children (all its descendants when recursive). -/
+def Observer.covers (o : Observer) (p : Path) : Bool :=
+  if !o.dir then p == o.path
+  else o.path.isPrefixOf p && p != o.path && (o.recursive || p.length == o.path.length + 1)
+
+/-- The records of one change for one observation: kind, the changed entry's kind, its path
+relative to the observed one, and where it was moved from (relative), if anywhere. -/
+def recordsOf (o : Observer) (c : Change) : List (String × Bool × Path × Option Path) :=
+  let rel (p : Path) := p.drop o.path.length
+  if c.kind == "moved" then
+    if o.covers c.path then [(if o.covers c.src then "moved" else "appeared", c.dir, rel c.path, if o.covers c.src then some (rel c.src) else none)]
+    else if o.covers c.src then [("disappeared", c.dir, rel c.src, none)]
+    else []
+  else if o.covers c.path then [(c.kind, c.dir, rel c.path, none)] else []
+
+/-- The answer of `drain`: for each change in order and each observation that covers it, the
+observer's id, the kind, `d`/`f`, the relative path (count, names), `1` and the moved-from path
+or `0`, and the observed path and its kind (the record's root). -/
+def drainToks (l : Live) : List Tok :=
+  l.log.flatMap fun c => l.observers.flatMap fun o => (recordsOf o c).flatMap fun r =>
+    [N o.id, S r.1, S (if r.2.1 then "d" else "f"), N r.2.2.1.length] ++ r.2.2.1.map S ++
+    (match r.2.2.2 with | some f => [S "1", N f.length] ++ f.map S | none => [S "0"]) ++
+    [S (pathStr o.path), S (if o.dir then "d" else "f")]
+
+/-- `op` with the observers: their own commands (`observe id path kind recursive`, `unobserve
+id path`, `disconnect id`, `drain`), and, while there is an observation, the changes every
+other command makes to the tree logged for them (a move as one `moved` change). -/
+def observed (quota : Nat) (s : Shelf) (a : Array Tok) : Shelf × List Tok :=
+  let l := s.live
+  match strAt a 0 with
+  | "observe" =>
+    let p := pathOf (strAt a 2)
+    let dir := strAt a 3 == "d"
+    match s.tree.lookup p with
+    | some n =>
+      if n.isDir != dir then (s, fail "NotFoundError") else
+      let o : Observer := { id := natAt a 1, path := p, dir, recursive := strAt a 4 == "1" }
+      ({ s with live := { l with observers := (l.observers.filter fun x => !(x.id == o.id && x.path == p)) ++ [o] } }, ok)
+    | none => (s, fail "NotFoundError")
+  | "unobserve" =>
+    let p := pathOf (strAt a 2)
+    ({ s with live := { l with observers := l.observers.filter fun x => !(x.id == natAt a 1 && x.path == p) } }, ok)
+  | "disconnect" =>
+    let obs := l.observers.filter (·.id != natAt a 1)
+    ({ s with live := { l with observers := obs, log := if obs.isEmpty then [] else l.log } }, ok)
+  | "drain" => ({ s with live := { l with log := [] } }, ok (drainToks l))
+  | cmd =>
+    let r := op quota s a
+    if l.observers.isEmpty then r else
+    let okAns := match r.2 with | t :: _ => (String.fromUTF8? t) == some "ok" | [] => false
+    let ch : List Change :=
+      if cmd == "move" && okAns then
+        [{ kind := "moved", path := pathOf (strAt a 2) ++ [strAt a 3], src := pathOf (strAt a 1),
+           dir := ((s.tree.lookup (pathOf (strAt a 1))).map (·.isDir)).getD false }]
+      else diff s.tree r.1.tree
+    ({ r.1 with live := { r.1.live with log := r.1.live.log ++ ch } }, r.2)
+
 /-- One command for the context whose storage key is `k`, on the in-memory shed. -/
 def opFor (shed : Shed Shelf) (k : ClientStorage.Key) (a : Array Tok) : Shed Shelf × List Tok :=
-  shed.act k (fun s => op defaultQuota s a) (fail "SecurityError")
+  shed.act k (fun s => observed defaultQuota s a) (fail "SecurityError")
 
 /-! ## Theorems -/
 
@@ -463,6 +553,29 @@ files (directories and open swap buffers count nothing). -/
 theorem usage_eq (s : Shelf) :
     Usage.usage s = sizeSum (fun e : Path × Node => match e.2 with | .file b _ => b.size | .dir => 0) s.tree.entries := rfl
 
+/-- Kind: observer law. Says: observing never changes the files: for every command other than
+the observers' own, the tree after `observed` is the tree after `op`; the observers' own
+commands leave the tree as it was. -/
+theorem observed_tree (quota : Nat) (s : Shelf) (a : Array Tok)
+    (h : strAt a 0 ≠ "observe" ∧ strAt a 0 ≠ "unobserve" ∧ strAt a 0 ≠ "disconnect" ∧ strAt a 0 ≠ "drain") :
+    (observed quota s a).1.tree = (op quota s a).1.tree := by
+  unfold observed
+  split
+  · exact absurd ‹_› h.1
+  · exact absurd ‹_› h.2.1
+  · exact absurd ‹_› h.2.2.1
+  · exact absurd ‹_› h.2.2.2
+  · dsimp only
+    split
+    · rfl
+    · rfl
+
+theorem observer_cmds_tree (quota : Nat) (s : Shelf) (a : Array Tok)
+    (h : strAt a 0 = "observe" ∨ strAt a 0 = "unobserve" ∨ strAt a 0 = "disconnect" ∨ strAt a 0 = "drain") :
+    (observed quota s a).1.tree = s.tree := by
+  unfold observed
+  rcases h with h | h | h | h <;> simp only [h] <;> (try split) <;> (try split) <;> rfl
+
 /-- Kind: security theorem (the file system is partitioned by storage key). Says: whatever
 a context with one storage key does to its file system, the answer another key then gets
 for any command is the answer it would have got without it: no file, name, size or id of
@@ -487,6 +600,13 @@ private def s1 : Shelf := (answers {} [["get", "", "dir", "d", "1"], ["get", "di
 #guard (answers (answers s1 [["remove", "", "", "0"]]).1 [["list", ""]]).2 == ["ok"]
 #guard (answers s1 [["uid", "dir", "d"], ["uid", "b", "f"], ["uid", "dir", "d"]]).2 ==
   ["ok 00000000-0000-4000-8000-000000000001", "ok 00000000-0000-4000-8000-000000000002", "ok 00000000-0000-4000-8000-000000000001"]
+-- observers: a file made, changed, moved and removed under an observed directory
+private def obs (s : Shelf) (cmds : List (List String)) : Shelf × List String :=
+  cmds.foldl (fun (acc : Shelf × List String) c => let (s, r) := observed 100 acc.1 (T c); (s, acc.2 ++ [shown r])) (s, [])
+#guard (obs s1 [["observe", "7", "dir", "d", "0"], ["get", "dir", "n.txt", "f", "1"], ["drain"], ["move", "dir/n.txt", "dir", "m.txt"], ["drain"],
+  ["remove", "dir", "m.txt", "0"], ["drain"], ["observe", "8", "nope", "d", "0"], ["disconnect", "7"], ["get", "dir", "z", "f", "1"], ["drain"]]).2 ==
+  ["ok", "ok", "ok 7 appeared f 1 n.txt 0 dir d", "ok", "ok 7 moved f 1 m.txt 1 1 n.txt dir d", "ok", "ok 7 disappeared f 1 m.txt 0 dir d",
+   "!NotFoundError", "ok", "ok", "ok"]
 -- the pickers: refused, and the shelf is unchanged
 #guard (answers s1 [["picker", "open", "0", "", ""], ["picker", "save", "1", "", ""], ["list", ""]]).2 == ["!SecurityError", "!TypeError", "ok dir d b f"]
 #guard (answers s1 [["list", ""], ["list", "dir"], ["list", "nope"]]).2 == ["ok dir d b f", "ok a.txt f", "!NotFoundError"]
