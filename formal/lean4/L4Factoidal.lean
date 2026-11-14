@@ -1264,6 +1264,8 @@ import L4Factoidal.WHATWG.URLPattern
 import L4Factoidal.WHATWG.URLPatternTests
 import L4Factoidal.WHATWG.Streams
 import L4Factoidal.WHATWG.Compression
+import L4Factoidal.Temporal.Iso
+import L4Factoidal.Temporal.Parse
 import L4Factoidal.HTML.FormSubmission
 import L4Factoidal.HTML.FormSubmissionTests
 import L4Factoidal.Unicode.RangeTable
