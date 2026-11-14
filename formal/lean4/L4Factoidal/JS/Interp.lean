@@ -7630,7 +7630,8 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       -- 5 date of epoch days; 6 date-time string, 7 time string → parts | null; 8 duration
       -- string → ten fields | null; 9 date string; 10 time string (h, mi, s, ns, precision);
       -- 11 round (x, increment, mode) → BigInt; 12 balance time (ns) → [days, h, mi, s, ms, us,
-      -- ns]; 13 date-time within limits (y, m, d, time ns); 14 compare dates
+      -- ns]; 13 date-time within limits (y, m, d, time ns); 14 compare dates; 15 a time zone
+      -- identifier → [0 UTC | 1 offset, offset ns] | null; 16 an offset string (ns, full)
       let int (i : Nat) : Int := match argD args i with
         | .num x => if x.isFinite then truncInt x else 0
         | .big b => b
@@ -7682,6 +7683,10 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
         arr [num dd, num h, num mi, num s, num ms, num us, num ns]
       | 13 => pure (.bool (Temporal.dateTimeWithinLimits (int 1) (nat 2) (nat 3) (int 4)))
       | 14 => pure (num (Temporal.compareDate (int 1, nat 2, nat 3) (int 4, nat 5, nat 6)))
+      | 15 => match Temporal.parseTimeZoneId (← str 1) with
+        | some (k, ns) => arr [num k, .big ns]
+        | none => pure .null
+      | 16 => pure (.str (Temporal.formatOffset (int 1) (toBool (argD args 2))))
       | _ => throwErr .type "temporal: unknown operation"
     | (.x .errorIsError) =>
       match a0 with

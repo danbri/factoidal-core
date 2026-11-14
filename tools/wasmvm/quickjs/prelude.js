@@ -9210,6 +9210,7 @@
           if (name === 'monthCode') { if (typeof v === 'symbol') throw TE('monthCode is a Symbol'); out.monthCode = String(v); }
           else if (name === 'month' || name === 'day') out[name] = toPosIntTrunc(v, name);
           else if (name === 'offset') { if (typeof v === 'symbol') throw TE('offset is a Symbol'); out.offset = String(v); }
+          else if (name === 'timeZone') out.timeZone = v;
           else out[name] = toIntTrunc(v, name);
         } else if (required.includes(name)) throw TE(`${name} is required`);
       }
@@ -10236,17 +10237,235 @@
       plainTimeISO(tz = undefined) { const [, t] = nowParts(); return newTime(t); },
     };
 
+
+    // ---- ZonedDateTime (UTC and fixed offsets only)
+    const tzOf = v => {
+      if (typeof v !== 'string') throw TE('a time zone is a string');
+      let r = T(15, v);
+      if (r === null) {
+        const p = T(6, v);
+        if (p !== null) {
+          if (p[11] !== '') r = T(15, p[11]);
+          else if (p[9] === 1) r = [0, 0n];
+          else if (p[9] === 2) r = BigInt(p[10]) % 60000000000n === 0n ? [1, BigInt(p[10])] : null;
+          else throw RE(`'${v}' is not a time zone`);
+        }
+        else if (/^t?\d\d:?\d\d/i.test(v) === false && v !== '') {
+          const pt = T(7, v);
+          if (pt !== null && pt[9] === 1) r = [0, 0n];
+        }
+      }
+      if (r === null) throw RE(`unknown time zone '${v}' (only UTC and fixed offsets are supported)`);
+      const off = BigInt(r[1]);
+      return { id: r[0] === 0 ? 'UTC' : T(16, off, false), off };
+    };
+    const localOf = (ns, off) => {
+      const l = ns + off;
+      const days = l / NS_PER_DAY - (l % NS_PER_DAY < 0n ? 1n : 0n);
+      const d = T(5, Number(days));
+      const b = balance(l - days * NS_PER_DAY);
+      return { y: d[0], m: d[1], d: d[2], t: b.slice(1) };
+    };
+    const epochOf = (y, m, d, t, off) => BigInt(T(4, y, m, d)) * NS_PER_DAY + timeNs(t) - off;
+    const newZoned = (ns, tz, nt) => {
+      if (ns < -NS_LIMIT || ns > NS_LIMIT) throw RE('the instant is outside the range Temporal supports');
+      return make(ZonedDateTime, 'ZonedDateTime', Object.assign({ ns, tz: tz.id, off: tz.off }, localOf(ns, tz.off)), nt);
+    };
+    const zonedOptions = options => {
+      const o = optionsObject(options);
+      stringOption(o, 'disambiguation', ['compatible', 'earlier', 'later', 'reject'], 'compatible');
+      const offset = stringOption(o, 'offset', ['prefer', 'use', 'ignore', 'reject'], 'reject');
+      const overflow = overflowOption(o);
+      return { offset, overflow };
+    };
+    // the epoch nanoseconds of a local date-time with an offset given as a string (InterpretISODateTimeOffset)
+    const interpret = (y, m, d, t, tz, offsetNs, offsetOpt) => {
+      const exact = epochOf(y, m, d, t, tz.off);
+      if (offsetNs === undefined || offsetOpt === 'ignore' || offsetOpt === 'prefer') return exact;
+      if (offsetOpt === 'use') return epochOf(y, m, d, t, offsetNs);
+      // reject: the offset must be the zone's (rounded to minutes when the string had minutes only)
+      if (offsetNs !== tz.off) throw RE('the offset does not match the time zone');
+      return exact;
+    };
+    const toZoned = (item, options) => {
+      if (isObj(item)) {
+        if (kindOf(item) === 'ZonedDateTime') { zonedOptions(options); const s = slots.get(item); return newZoned(s.ns, { id: s.tz, off: s.off }); }
+        calendarId(item.calendar === undefined ? undefined : calendarOf(item.calendar));
+        const [f] = readFields(item, ['day', 'hour', 'microsecond', 'millisecond', 'minute', 'month', 'monthCode', 'nanosecond', 'offset', 'second', 'timeZone', 'year'], ['day', 'year']);
+        if (f.timeZone === undefined) throw TE('timeZone is required');
+        const tz = tzOf(f.timeZone);
+        const { offset, overflow } = zonedOptions(options);
+        const m = resolveMonth(f);
+        const [y, mm, d] = regulate(f.year, m, f.day, overflow);
+        const t = regulateTime([f.hour, f.minute, f.second, f.millisecond, f.microsecond, f.nanosecond].map(v => v === undefined ? 0 : v), overflow);
+        let offNs;
+        if (f.offset !== undefined) { const r = T(15, f.offset); if (r === null || /^[+-]?$/.test(f.offset)) { const q = /^[+-]\d\d(:?\d\d(:?\d\d([.,]\d{1,9})?)?)?$/.test(f.offset) ? T(7, '00:00' + f.offset) : null; if (q === null) throw RE(`'${f.offset}' is not an offset`); offNs = BigInt(q[10]); } else offNs = BigInt(r[1]); }
+        return newZoned(interpret(y, mm, d, t, tz, offNs, offset), tz);
+      }
+      if (typeof item !== 'string') throw TE('a zoned date-time is required');
+      const p = T(6, item);
+      if (p === null) throw RE(`'${item}' is not an ISO 8601 date-time`);
+      if (p[11] === '') throw RE('a zoned date-time string needs a [time zone] annotation');
+      checkCalendarAnnotation(p[12]);
+      if (!isoDateValid(p[0], p[1], p[2])) throw RE(`'${item}' is not a valid date`);
+      const tz = tzOf(p[11]);
+      const { offset } = zonedOptions(options);
+      const t = p[4] ? timeFromParts(p) : [0, 0, 0, 0, 0, 0];
+      const offNs = p[9] === 2 ? BigInt(p[10]) : p[9] === 1 ? undefined : undefined;
+      const ns = p[9] === 1 ? epochOf(p[0], p[1], p[2], t, 0n) : interpret(p[0], p[1], p[2], t, tz, offNs, offset);
+      return newZoned(ns, tz);
+    };
+    class ZonedDateTime {
+      constructor(epochNanoseconds, timeZone, calendar = undefined) {
+        if (new.target === undefined) throw TE("Constructor Temporal.ZonedDateTime requires 'new'");
+        const ns = BigInt(epochNanoseconds);
+        if (ns < -NS_LIMIT || ns > NS_LIMIT) throw RE('the instant is outside the range Temporal supports');
+        if (typeof timeZone !== 'string') throw TE('the time zone is a string');
+        const r = T(15, timeZone);
+        if (r === null) throw RE(`unknown time zone '${timeZone}'`);
+        calendarId(calendar);
+        const off = BigInt(r[1]);
+        slots.set(this, Object.assign({ kind: 'ZonedDateTime', ns, tz: r[0] === 0 ? 'UTC' : T(16, off, false), off }, localOf(ns, off)));
+      }
+      static from(item, options = undefined) { return toZoned(item, options); }
+      static compare(one, two) { const a = slots.get(toZoned(one)).ns, b = slots.get(toZoned(two)).ns; return a < b ? -1 : a > b ? 1 : 0; }
+      get timeZoneId() { return get(this, 'ZonedDateTime', 'timeZoneId').tz; }
+      get offset() { return T(16, get(this, 'ZonedDateTime', 'offset').off, true); }
+      get offsetNanoseconds() { return Number(get(this, 'ZonedDateTime', 'offsetNanoseconds').off); }
+      get epochMilliseconds() { const ns = get(this, 'ZonedDateTime', 'epochMilliseconds').ns; return Number(ns / 1000000n - (ns % 1000000n < 0n ? 1n : 0n)); }
+      get epochNanoseconds() { return get(this, 'ZonedDateTime', 'epochNanoseconds').ns; }
+      get hoursInDay() { get(this, 'ZonedDateTime', 'hoursInDay'); return 24; }
+      equals(other) { const s = get(this, 'ZonedDateTime', 'equals'), o = slots.get(toZoned(other)); return s.ns === o.ns && s.tz === o.tz; }
+      with(like, options = undefined) {
+        const s = get(this, 'ZonedDateTime', 'with');
+        if (!isObj(like)) throw TE('with needs an object');
+        rejectTemporalLike(like);
+        const [f, any] = readFields(like, ['day', 'hour', 'microsecond', 'millisecond', 'minute', 'month', 'monthCode', 'nanosecond', 'offset', 'second', 'year'], []);
+        if (!any) throw TE('with needs at least one field');
+        const { offset, overflow } = (() => { const o = optionsObject(options); stringOption(o, 'disambiguation', ['compatible', 'earlier', 'later', 'reject'], 'compatible'); const offset = stringOption(o, 'offset', ['prefer', 'use', 'ignore', 'reject'], 'prefer'); return { offset, overflow: overflowOption(o) }; })();
+        const merged = { year: f.year === undefined ? s.y : f.year, day: f.day === undefined ? s.d : f.day };
+        if (f.month !== undefined || f.monthCode !== undefined) { merged.month = f.month; merged.monthCode = f.monthCode; } else merged.month = s.m;
+        const m = resolveMonth(merged);
+        const [y, mm, d] = regulate(merged.year, m, merged.day, overflow);
+        const t = regulateTime([f.hour, f.minute, f.second, f.millisecond, f.microsecond, f.nanosecond].map((v, i) => v === undefined ? s.t[i] : v), overflow);
+        const tz = { id: s.tz, off: s.off };
+        return newZoned(interpret(y, mm, d, t, tz, f.offset === undefined ? s.off : BigInt((T(7, '00:00' + f.offset) || (() => { throw RE('not an offset'); })())[10]), offset), tz);
+      }
+      withPlainTime(time = undefined) { const s = get(this, 'ZonedDateTime', 'withPlainTime'); const t = time === undefined ? [0, 0, 0, 0, 0, 0] : slots.get(toTime(time)).t; return newZoned(epochOf(s.y, s.m, s.d, t, s.off), { id: s.tz, off: s.off }); }
+      withTimeZone(timeZone) { const s = get(this, 'ZonedDateTime', 'withTimeZone'); return newZoned(s.ns, tzOf(timeZone)); }
+      withCalendar(calendar) { const s = get(this, 'ZonedDateTime', 'withCalendar'); if (calendar === undefined) throw TE('a calendar is required'); calendarOf(calendar); return newZoned(s.ns, { id: s.tz, off: s.off }); }
+      add(duration, options = undefined) { return zonedAdd(this, duration, options, 1, 'add'); }
+      subtract(duration, options = undefined) { return zonedAdd(this, duration, options, -1, 'subtract'); }
+      until(other, options = undefined) { return zonedDifference(this, other, options, 1, 'until'); }
+      since(other, options = undefined) { return zonedDifference(this, other, options, -1, 'since'); }
+      round(roundTo) {
+        const s = get(this, 'ZonedDateTime', 'round');
+        const local = newDateTime(s.y, s.m, s.d, s.t.slice());
+        const r = slots.get(apply(PlainDateTime.prototype.round, local, [roundTo]));
+        return newZoned(epochOf(r.y, r.m, r.d, r.t, s.off), { id: s.tz, off: s.off });
+      }
+      startOfDay() { const s = get(this, 'ZonedDateTime', 'startOfDay'); return newZoned(epochOf(s.y, s.m, s.d, [0, 0, 0, 0, 0, 0], s.off), { id: s.tz, off: s.off }); }
+      getTimeZoneTransition(direction) {
+        get(this, 'ZonedDateTime', 'getTimeZoneTransition');
+        if (direction === undefined) throw TE('a direction is required');
+        const o = typeof direction === 'string' ? Object.assign(Object.create(null), { direction }) : optionsObject(direction);
+        const dir = stringOption(o, 'direction', ['next', 'previous'], undefined);
+        if (dir === undefined) throw RE('direction is required');
+        return null;
+      }
+      toInstant() { return newInstant(get(this, 'ZonedDateTime', 'toInstant').ns); }
+      toPlainDate() { const s = get(this, 'ZonedDateTime', 'toPlainDate'); return newDate(s.y, s.m, s.d); }
+      toPlainTime() { return newTime(get(this, 'ZonedDateTime', 'toPlainTime').t.slice()); }
+      toPlainDateTime() { const s = get(this, 'ZonedDateTime', 'toPlainDateTime'); return newDateTime(s.y, s.m, s.d, s.t.slice()); }
+      toString(options = undefined) {
+        const s = get(this, 'ZonedDateTime', 'toString');
+        const o = optionsObject(options);
+        const cal = calendarNameOption(o);
+        const p = precisionOption(o);
+        const offOpt = stringOption(o, 'offset', ['auto', 'never'], 'auto');
+        const tzName = stringOption(o, 'timeZoneName', ['auto', 'never', 'critical'], 'auto');
+        return zonedString(s, p, cal, offOpt, tzName);
+      }
+      toJSON() { const s = get(this, 'ZonedDateTime', 'toJSON'); return zonedString(s, { precision: undefined, unitNs: 1n, mode: 'trunc' }, 'auto', 'auto', 'auto'); }
+      toLocaleString() { const s = get(this, 'ZonedDateTime', 'toLocaleString'); return zonedString(s, { precision: undefined, unitNs: 1n, mode: 'trunc' }, 'auto', 'auto', 'auto'); }
+      valueOf() { throw TE('use Temporal.ZonedDateTime.compare to compare zoned date-times'); }
+    }
+    const zonedString = (s, p, cal, offOpt, tzName) => {
+      const ns = p.unitNs === 1n ? s.ns : roundNs(s.ns, p.unitNs, p.mode);
+      const l = localOf(ns, s.off);
+      let r = T(9, l.y, l.m, l.d) + 'T' + formatTime(l.t, p.precision);
+      if (offOpt !== 'never') r += T(16, s.off, false);
+      if (tzName !== 'never') r += (tzName === 'critical' ? '[!' : '[') + s.tz + ']';
+      if (cal === 'always' || cal === 'critical') r += cal === 'critical' ? '[!u-ca=iso8601]' : '[u-ca=iso8601]';
+      return r;
+    };
+    const zonedAdd = (self, durationLike, options, sign, what) => {
+      const s = get(self, 'ZonedDateTime', what);
+      const f = slots.get(toDuration(durationLike)).f.map(v => v * sign);
+      const overflow = overflowOption(optionsObject(options));
+      let ns = s.ns;
+      if (f[0] || f[1] || f[2] || f[3]) {
+        const r = T(2, s.y, s.m, s.d, f[0], f[1], f[2], f[3], overflow === 'reject');
+        if (r === null) throw RE('the result is not a valid date');
+        ns = epochOf(r[0], r[1], r[2], s.t, s.off);
+      }
+      return newZoned(ns + durTimeNs(f, false), { id: s.tz, off: s.off });
+    };
+    const zonedDifference = (self, other, options, sign, what) => {
+      const s = get(self, 'ZonedDateTime', what);
+      const o2 = slots.get(toZoned(other));
+      const o = optionsObject(options);
+      const lu = unitOption(o, 'largestUnit', UNITS, 'auto', ['auto']);
+      const inc = incrementOption(o);
+      const mode = roundingModeOption(o, 'trunc');
+      const su = unitOption(o, 'smallestUnit', UNITS, 'nanosecond');
+      const largest = lu === 'auto' ? (unitIndex(su) < 4 ? su : 'hour') : lu;
+      if (unitIndex(largest) > unitIndex(su)) throw RE('largestUnit is smaller than smallestUnit');
+      if (unitIndex(largest) <= 3 && s.tz !== o2.tz) throw RE('date units need the same time zone');
+      const opts = Object.assign(Object.create(null), { largestUnit: largest, smallestUnit: su, roundingIncrement: inc, roundingMode: mode });
+      if (unitIndex(largest) > 3) {
+        const a = newInstant(s.ns), b = newInstant(o2.ns);
+        return apply(sign > 0 ? Instant.prototype.until : Instant.prototype.since, a, [b, opts]);
+      }
+      const a = newDateTime(s.y, s.m, s.d, s.t.slice());
+      const bl = localOf(o2.ns, s.off);
+      const b = newDateTime(bl.y, bl.m, bl.d, bl.t);
+      return dateTimeDifference(a, b, opts, sign, what);
+    };
+    for (const k of ['year', 'month', 'monthCode', 'day', 'dayOfWeek', 'dayOfYear', 'weekOfYear', 'yearOfWeek', 'daysInWeek', 'daysInMonth', 'daysInYear', 'monthsInYear', 'inLeapYear', 'calendarId', 'era', 'eraYear']) {
+      const g = Object.getOwnPropertyDescriptor(PlainDate.prototype, k).get;
+      Object.defineProperty(ZonedDateTime.prototype, k, { get: { [k]() { const s = get(this, 'ZonedDateTime', k); return apply(g, newDate(s.y, s.m, s.d), []); } }[k], configurable: true });
+    }
+    for (const k of ['hour', 'minute', 'second', 'millisecond', 'microsecond', 'nanosecond']) {
+      const i = TIME_UNITS.indexOf(k);
+      Object.defineProperty(ZonedDateTime.prototype, k, { get: { [k]() { return get(this, 'ZonedDateTime', k).t[i]; } }[k], configurable: true });
+    }
+    // conversions to ZonedDateTime from the other types
+    Object.defineProperty(Instant.prototype, 'toZonedDateTimeISO', { value: function toZonedDateTimeISO(timeZone) { const s = get(this, 'Instant', 'toZonedDateTimeISO'); return newZoned(s.ns, tzOf(timeZone)); }, writable: true, configurable: true });
+    Object.defineProperty(PlainDateTime.prototype, 'toZonedDateTime', { value: function toZonedDateTime(timeZone, options = undefined) {
+      const s = get(this, 'PlainDateTime', 'toZonedDateTime'); const tz = tzOf(timeZone);
+      stringOption(optionsObject(options), 'disambiguation', ['compatible', 'earlier', 'later', 'reject'], 'compatible');
+      return newZoned(epochOf(s.y, s.m, s.d, s.t, tz.off), tz); }, writable: true, configurable: true });
+    Object.defineProperty(PlainDate.prototype, 'toZonedDateTime', { value: function toZonedDateTime(item) {
+      const s = get(this, 'PlainDate', 'toZonedDateTime');
+      let tz, t = [0, 0, 0, 0, 0, 0];
+      if (isObj(item)) {
+        const tzv = item.timeZone;
+        if (tzv === undefined) tz = tzOf(item); else { tz = tzOf(tzv); const pt = item.plainTime; if (pt !== undefined) t = slots.get(toTime(pt)).t; }
+      } else tz = tzOf(item);
+      return newZoned(epochOf(s.y, s.m, s.d, t, tz.off), tz); }, writable: true, configurable: true });
+    Now.zonedDateTimeISO = function zonedDateTimeISO(tz = undefined) { return newZoned(nowNs(), tz === undefined ? { id: 'UTC', off: 0n } : tzOf(tz)); };
     // ---- the namespace, as Web IDL-like built-ins: methods writable and configurable, not enumerable
     const tag = (C, name) => {
       Object.defineProperty(C.prototype, Symbol.toStringTag, { value: 'Temporal.' + name, configurable: true });
       Object.defineProperty(C, 'prototype', { writable: false });
     };
     tag(Duration, 'Duration'); tag(PlainDate, 'PlainDate'); tag(PlainTime, 'PlainTime'); tag(PlainDateTime, 'PlainDateTime');
-    tag(PlainYearMonth, 'PlainYearMonth'); tag(PlainMonthDay, 'PlainMonthDay'); tag(Instant, 'Instant');
+    tag(PlainYearMonth, 'PlainYearMonth'); tag(PlainMonthDay, 'PlainMonthDay'); tag(Instant, 'Instant'); tag(ZonedDateTime, 'ZonedDateTime');
     for (const k of Object.keys(Now)) Object.defineProperty(Now, k, { enumerable: false });
     Object.defineProperty(Now, Symbol.toStringTag, { value: 'Temporal.Now', configurable: true });
     const Temporal = {};
-    for (const [k, v] of Object.entries({ Duration, PlainDate, PlainTime, PlainDateTime, PlainYearMonth, PlainMonthDay, Instant, Now }))
+    for (const [k, v] of Object.entries({ Duration, PlainDate, PlainTime, PlainDateTime, PlainYearMonth, PlainMonthDay, Instant, ZonedDateTime, Now }))
       Object.defineProperty(Temporal, k, { value: v, writable: true, configurable: true });
     Object.defineProperty(Temporal, Symbol.toStringTag, { value: 'Temporal', configurable: true });
     return Temporal;
