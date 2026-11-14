@@ -90,7 +90,8 @@ const wptserveMode=args.includes("--wptserve");
 // of the browser: off without this flag, on 127.0.0.1 only, behind a 128-bit secret the engine makes
 // (L4Factoidal.WebDriver.Gate; risk Risk.webdriverEndpoint in skills/lean-risk-flags). Nothing else starts it.
 const webdriverOn=args.includes("--dangerously-enable-webdriver-endpoint");
-const webdriverPort=Number(opt("--webdriver-port","4444"));
+// --webdriver-port: default a free port of the machine (several runners may share it).
+let webdriverPort=Number(opt("--webdriver-port","0"));
 const serveSpec:WptServe={domains:wptDomains,subdomains:wptSubdomains,ports:wptPorts};
 const serveOrigin=`http://web-platform.test:${wptPorts.http[0]}`,serveSecureOrigin=`https://web-platform.test:${wptPorts.https[0]}`;
 let serve:{fetcher:ReturnType<typeof wptFetcher>;stop?:()=>Promise<void>}|undefined;
@@ -750,6 +751,7 @@ let webdriver:{secret:string;server:Deno.HttpServer}|undefined;
 function webdriverEndpoint(engine:Engine){
   if(webdriver)return webdriver;
   const address="127.0.0.1";
+  if(!webdriverPort){const l=Deno.listen({hostname:address,port:0});webdriverPort=(l.addr as Deno.NetAddr).port;l.close();}
   const {secret}=engine.scriptSession("",{action:"webdriverStart",address,port:webdriverPort,
     platform:Deno.build.os==="darwin"?"mac":Deno.build.os,dangerouslyEnable:true}) as {secret:string};
   const server=Deno.serve({hostname:address,port:webdriverPort,onListen:()=>{}},async request=>{
