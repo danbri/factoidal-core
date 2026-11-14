@@ -167,49 +167,46 @@ Open:
 
 ## Measured counts
 
-Run of `lake exe l4xforms` on commit de30df48f (built from that tree,
-2026-11-14 05:17 UTC), 178 sidecars. The whole run takes 61 ms; `lake build
-l4xforms` on top of the already built XML and XPath modules takes under one
-minute. "Unsupported" is a case with no sidecar yet, or a run in which the
-engine reported something it does not implement; it is never a pass.
+Run of `lake exe l4xforms` on commit a8c79c26e (built from that tree,
+2026-11-14 05:32 UTC), 186 sidecars. The whole run takes under 0.1 s (93 ms);
+`lake build l4xforms` on top of the already built XML and XPath modules takes
+under one minute. "Unsupported" is a case with no sidecar yet, or a run in
+which the engine reported something it does not implement; it is never a pass.
 
 | Chapter | (a) model | (b) view model | (c) submission | (d) human reader |
 |---|---|---|---|---|
 | 2 | | | 0 pass, 0 fail, 4 unsupported (out of 4) | |
-| 3 | 11 pass, 7 fail, 15 unsupported (out of 33) | 0 pass, 0 fail, 2 unsupported (out of 2) | 0 pass, 0 fail, 2 unsupported (out of 2) | |
-| 4 | 31 pass, 6 fail, 21 unsupported (out of 58) | | 0 pass, 0 fail, 6 unsupported (out of 6) | 3 |
+| 3 | 18 pass, 2 fail, 13 unsupported (out of 33) | 0 pass, 0 fail, 2 unsupported (out of 2) | 0 pass, 0 fail, 2 unsupported (out of 2) | |
+| 4 | 33 pass, 4 fail, 21 unsupported (out of 58) | | 0 pass, 0 fail, 6 unsupported (out of 6) | 3 |
 | 5 | 5 pass, 0 fail, 10 unsupported (out of 15) | | | |
-| 6 | 8 pass, 1 fail, 0 unsupported (out of 9) | | 0 pass, 0 fail, 2 unsupported (out of 2) | |
-| 7 | 40 pass, 6 fail, 16 unsupported (out of 62) | | | |
-| 8 | | 12 pass, 4 fail, 33 unsupported (out of 49) | 0 pass, 0 fail, 1 unsupported (out of 1) | 9 |
-| 9 | | 8 pass, 1 fail, 15 unsupported (out of 24) | | |
-| 10 | 27 pass, 2 fail, 28 unsupported (out of 57) | 2 pass, 0 fail, 6 unsupported (out of 8) | 0 pass, 0 fail, 1 unsupported (out of 1) | 4 |
+| 6 | 8 pass, 0 fail, 1 unsupported (out of 9) | | 0 pass, 0 fail, 2 unsupported (out of 2) | |
+| 7 | 48 pass, 2 fail, 12 unsupported (out of 62) | | | |
+| 8 | | 13 pass, 3 fail, 33 unsupported (out of 49) | 0 pass, 0 fail, 1 unsupported (out of 1) | 9 |
+| 9 | | 9 pass, 1 fail, 14 unsupported (out of 24) | | |
+| 10 | 29 pass, 1 fail, 27 unsupported (out of 57) | 2 pass, 0 fail, 6 unsupported (out of 8) | 0 pass, 0 fail, 1 unsupported (out of 1) | 4 |
 | 11 | | | 0 pass, 0 fail, 84 unsupported (out of 84) | |
-| Appendix B | 6 pass, 1 fail, 8 unsupported (out of 15) | | | |
+| Appendix B | 7 pass, 0 fail, 8 unsupported (out of 15) | | | |
 | Appendix G | | | | 10 |
 | Appendix H | | | | 3 |
-| **Total** | **128 pass, 23 fail, 98 unsupported (out of 249)** | **22 pass, 5 fail, 56 unsupported (out of 83)** | **0 pass, 0 fail, 100 unsupported (out of 100)** | **29** |
+| **Total** | **148 pass, 9 fail, 92 unsupported (out of 249)** | **24 pass, 4 fail, 55 unsupported (out of 83)** | **0 pass, 0 fail, 100 unsupported (out of 100)** | **29** |
 
-The failures of that run, by cause:
+Before: the first run (de30df48f, 178 sidecars) gave model 128 pass, 23 fail,
+98 unsupported; view model 22 pass, 5 fail, 56 unsupported.
 
-- linked files were not found because the runner mis-resolved relative paths
-  (3.2.2.a, 3.3.2.c): fixed in the next commit, not yet re-measured;
-- a `model` attribute that names no model (3.2.3.f, 4.5.1.a1, 4.7.e2), the
-  `functions` attribute (3.3.1.b, 7.12.a), an inline instance with two root
-  elements (3.3.2.g), `context()` (7.10.4.a), the XForms `id()` function
-  (7.10.3.b, 7.10.3.c), a node binding taking precedence over `value` on
-  `output` (8.1.5.b), child elements of `dispatch` taking precedence over
-  attributes (10.8.1.b), `output` inside `message` (10.16.c), an `origin`
-  node-set of several nodes (B.8.a): written in the next commit, not yet
-  re-measured;
+The failures of this run, by cause:
+
 - not implemented: `itemset` bindings (3.2.4.e, 3.2.4.f), lazy authoring
   (4.2.2.c2), `range` events and the datatypes `range` accepts (4.4.16.a,
   4.4.17.a, 8.1.1.a), `xforms-output-error` (4.5.5.a), `alert` (8.1.5.c),
-  `select1` items (8.3.3.b), schema-defined types (6.2.1.a: the next commit
-  reports it as unsupported, not as a failure);
+  `select1` items (8.3.3.b);
+- 7.10.3.b: the XForms `id()` function with a node-set second argument;
+- 10.2.a: under examination (a control of the test is not found by its label);
 - 7.9.8.a calls `adjust-dateTime-to-timezone()` with no argument and expects
   an empty output; the engine treats the wrong number of arguments as an
   error;
 - 9.2.3.1.a (a document no driver page lists) has `<case value="out"/>`
   inside `toggle`; `value` is an expression (§10.6.1), `out` selects no node,
   so no case is toggled.
+
+6.2.1.a uses a type defined by an inline schema; the engine reports it as
+unsupported.
