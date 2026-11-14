@@ -280,7 +280,7 @@ async function main() {
     while(gpuTurns.length){const t=gpuTurns.shift()!,start=performance.now();
       session.pageGpu(t.page,t.commands).then(r=>{if(!r?.presented)return;const ms=Math.round((performance.now()-start)*10)/10;
         pageGpuMs.push(ms);if(perfSummary)console.log(JSON.stringify({type:"native-html-page-canvas",t:Math.round(performance.now()),ms}));
-        if(shotFile&&pageGpuMs.length>=120&&!(document as {imagesPending?:()=>boolean}).imagesPending?.())takeShot();})
+        if(shotFile&&pageGpuMs.length>=120&&!(document as {imagesPending?:()=>boolean}).imagesPending?.()&&!sizesFirst(document))takeShot();})
         .catch(error=>console.error("Native HTML: page GPU failed:",String(error)));}
   };
   let scriptsOn=false,scriptOps:string[]=[];
@@ -295,7 +295,19 @@ async function main() {
   setPageDecoding({fallback:encodingSetting,locale:systemLocale});
   // A window shows a page that runs no script before its images are in and draws it again with
   // them. Runs that compare frames or replay input (checks, sweeps, commands, printing) wait.
-  setImagesAfterFirstFrame(!check&&!checkAll&&!sweep&&!commands&&!pasted&&!printPDF);
+  const showFirst=!check&&!checkAll&&!sweep&&!commands&&!pasted&&!printPDF;
+  setImagesAfterFirstFrame(showFirst);
+  // A page with images is laid out and shown first with their sizes only (`imagePixels:false`:
+  // every image has its place, no pixel is decoded, nothing is painted for them), then drawn
+  // again with the pixels; nothing moves between the two. Decoding stood before the first frame
+  // (8 s on a page of three photographs and six SVG files). `pixelsAsked` holds the pages that
+  // have been shown once. A page with no image, and a run that compares frames, asks once.
+  const pixelsAsked=new WeakSet<object>();
+  const sizesFirst=(page:{request:(w:number,h:number)=>{options:Record<string,unknown>}})=>{
+    if(!showFirst||pixelsAsked.has(page))return false;
+    const o=page.request(1,1).options as {images?:unknown[];heldImages?:unknown[]};
+    return !!(o.images?.length||o.heldImages?.length);
+  };
   const sessionEngines=new Map<number,string>();
   // Lean's plan, from the engine that runs the scripts (the worker's); the plans of the
   // settings are kept for the chrome marker, which is drawn without waiting.
@@ -408,7 +420,8 @@ async function main() {
   // It is not shown (the window's size is not known yet), so it asks for no CPU probe, as an
   // interactive frame asks for none: the probe draws the page's SVG on the CPU, 9 s of the 14 s
   // to the first frame of a page with a dozen inline icons. Runs that check every frame keep it.
-  const firstView:PageView&{checks?:boolean}=check||checkAll||(!idleChecksOnly&&(!!sweep||!!commands))?{}:{checks:false};
+  const firstView:PageView&{checks?:boolean}={...(check||checkAll||(!idleChecksOnly&&(!!sweep||!!commands))?{}:{checks:false}),
+    ...(sizesFirst(document)?{imagePixels:false}:{})};
   const firstFrame=Promise.resolve(document.compile(width,height,firstView));
   // The first call of the main-thread engine costs 0.4 to 0.6 s (the engine's own start on this
   // thread). It was the history entry made after this compile, between the page and its first
@@ -506,8 +519,12 @@ async function main() {
   // What arrived after a page was first shown (its `revision`): the page is drawn again.
   const revisionShown=new WeakMap<object,number>();
   const lateArrivals=()=>{
-    // A page that is on screen takes its images now (they were read while it was laid out).
-    if(presented?.document===document)(document as {startImages?:()=>void}).startImages?.();
+    // A page that is on screen takes its images now (they were read while it was laid out),
+    // and one shown with its images' sizes only is drawn again with their pixels.
+    if(presented?.document===document){
+      (document as {startImages?:()=>void}).startImages?.();
+      if(!pixelsAsked.has(document)){const again=sizesFirst(document);pixelsAsked.add(document);if(again)dirty=true;}
+    }
     const revision=(document as {revision?:()=>number}).revision?.();
     if(revision===undefined||revisionShown.get(document)===revision)return;
     const first=!revisionShown.has(document);
@@ -847,7 +864,8 @@ async function main() {
     const animated=clock&&(clock.has||clock.clicks.length)?{animationTime:clock.time,animationClicks:clock.clicks}:{};
     // The splash clock starts when its first frame is shown, so it is seen from the start.
     const splashing=splash?{splash:{reduce:splash.reduce,ms:splash.start===undefined?0:Math.round(performance.now()-splash.start)}}:{};
-    return page.request(width,height,{...view0,...animated,...splashing,live:page===checked,...(everyFrame?{}:{checks:false})});
+    return page.request(width,height,{...view0,...animated,...splashing,live:page===checked,...(everyFrame?{}:{checks:false}),
+      ...(sizesFirst(page)?{imagePixels:false}:{})});
   };
   let presented:PresentedState<typeof document>|undefined;
   const recordPresented=(record:RequestRecord,at:number)=>{
@@ -1420,7 +1438,7 @@ async function main() {
       trace("native-html-checked",{frame:frameNumber,why:"idle",idleMs:ms(lastActivity,idleStart),drawMs:Math.round(result.drawMs*10)/10,pixelHash:result.pixelHash});
       // --shot on a page with no animated page canvas: the first idle-checked frame.
       // (A capture waits for the page's images, which a window takes after the first frame.)
-      if(shotFile&&!pageGpuMs.length&&!(document as {imagesPending?:()=>boolean}).imagesPending?.())await takeShot();
+      if(shotFile&&!pageGpuMs.length&&!(document as {imagesPending?:()=>boolean}).imagesPending?.()&&!sizesFirst(document))await takeShot();
     };
     const handle=(event:UIEvent)=>{
         if(event.kind===6){running=false;return;}
