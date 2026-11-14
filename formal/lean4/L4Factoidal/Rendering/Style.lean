@@ -1552,6 +1552,11 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
   if ["html","body"].contains n.lname then result := {result with clipOverflow := false}
   -- The children of a flex or grid container are its items: blockified.
   if parent.display.isFlex || parent.display.isGrid then result := {result with display := result.display.blockified}
+  -- MathML hook: `float` has no effect on a child of a MathML element (MathML Core §3.1.1:
+  -- such a child takes part in the parent's math layout).
+  if let some p := n.parent then
+    if (dom.get p).ns == some DOM.mathmlNS && result.pos.float != .none then
+      result := {result with pos := {result.pos with float := .none}}
   -- CSS 2.1 §9.7: an absolutely positioned or floated box is a block.
   if result.pos.isAbsolute || result.pos.float != .none then result := {result with display := result.display.blockified}
   let decoration := parent.decorationColor.orElse (fun _ => if result.underline then some result.color else none)
