@@ -22,6 +22,8 @@ import L4Factoidal.Net.PageFetch
 import L4Factoidal.Net.BlobUrls
 import L4Factoidal.Net.Integrity
 import L4Factoidal.Net.CspPolicy
+import L4Factoidal.Net.WebSocket
+import L4Factoidal.Crypto.WebHacl
 import L4Factoidal.WHATWG.Encoding.Core
 
 namespace L4Factoidal.Net.Xhr
@@ -124,6 +126,8 @@ structure State where
   /-- The latest time in seconds a script gave (`send`, `document.cookie`): cookie expiry. -/
   now : Nat := 0
   xhrs : Array Xhr := #[]
+  /-- The page's WebSocket connections (`Net.WebSocket`), by id (ids are `nextTransfer`'s). -/
+  sockets : Array WebSocket.Sock := #[]
   /-- Fetches the host has not answered: its id, the object's handle, and its transfer. -/
   live : Array (Nat × Nat × Transfer) := #[]
   nextTransfer : Nat := 1
@@ -536,6 +540,12 @@ def responseEvents (x : Xhr) (r : Response) : Array Ev :=
 
 /-- The host's answer to a fetch. The callback of the object, when a task is to run it. -/
 def give (s : State) (id : Nat) (a : Answer) : State × Option Nat :=
+  match s.sockets.findIdx? (·.id == id) with
+  | some i =>
+    -- a WebSocket connection's answer (Net.WebSocket.onAnswer, with the engine's SHA-1)
+    let (k, ws) := WebSocket.onAnswer (Crypto.WebHacl.hashFast .sha1) s.sockets[i]! a
+    ({ s with sockets := s.sockets.set! i k, outbox := s.outbox ++ ws.toArray }, if k.events.isEmpty then none else some k.cb)
+  | none =>
   match s.live.find? (·.1 == id) with
   | none => (s, none)
   | some (_, h, t) =>
@@ -694,6 +704,75 @@ def cspOp (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int 
     -- may `eval` and its kin compile a string
     let (s, blocked) := cspEval s
     (s, okStr (if blocked then "1" else "0"))
+  | _ => (s, .error (-2))
+
+/-- The WebSocket ops (`web_api` 156 to 161), with fresh entropy from the engine's generator
+for the key and the masking keys. 156 `new WebSocket` (base URL, URL, callback, the
+subprotocols): `ok NUL id NUL url` or `err NUL name NUL message`; 157 `send` (id, "t" or
+"b", bytes); 158 `close` (id, code or "", reason); 159 a read (id; 0 readyState,
+1 bufferedAmount, 2 protocol, 3 url); 160 the next event (id): "", `open NUL protocol`,
+`text NUL data`, `binary`, `error`, `close NUL code NUL reason NUL 1|0`; 161 the bytes of the
+last `binary`. -/
+def wsOp (s : State) (code : Nat) (fs : Array ByteArray) (entropy : ByteArray) : State × Except Int ByteArray :=
+  let str := fun (i : Nat) => (String.fromUTF8? (fs.getD i ByteArray.empty)).getD ""
+  let nat := fun (i : Nat) => (str i).toNat?.getD 0
+  let ok := fun (t : String) => Except.ok (α := ByteArray) (ε := Int) t.toUTF8
+  let at? := fun (id : Nat) => s.sockets.findIdx? (·.id == id)
+  match code with
+  | 156 =>
+    let protocols := ((List.range fs.size).drop 3).map str
+    match WebSocket.openCheck (str 0) (str 1) protocols s.page.secure with
+    | .error (n, m) => (s, ok ("err\u0000" ++ n ++ "\u0000" ++ m))
+    | .ok u =>
+      if s.sockets.size ≥ 256 then (s, ok "err\u0000SyntaxError\u0000Too many WebSocket connections.") else
+      let id := s.nextTransfer
+      let (k, ws) := WebSocket.connect s.page id (nat 2) u protocols entropy
+      ({ s with nextTransfer := id + 1, sockets := s.sockets.push k, outbox := s.outbox ++ ws.toArray },
+        ok ("ok\u0000" ++ toString id ++ "\u0000" ++ k.url))
+  | 157 =>
+    match at? (nat 0) with
+    | none => (s, .error errType)
+    | some i =>
+      match WebSocket.send s.sockets[i]! (str 1 == "b") (fs.getD 2 ByteArray.empty).toList (entropy.extract 0 4).toList with
+      | none => (s, ok "err\u0000InvalidStateError\u0000Still in CONNECTING state.")
+      | some (k, ws) => ({ s with sockets := s.sockets.set! i k, outbox := s.outbox ++ ws.toArray }, ok "")
+  | 158 =>
+    match at? (nat 0) with
+    | none => (s, .error errType)
+    | some i =>
+      let code := (str 1).toNat?
+      match WebSocket.closeCheck code (str 2) with
+      | some (n, m) => (s, ok ("err\u0000" ++ n ++ "\u0000" ++ m))
+      | none =>
+        let (k, ws) := WebSocket.close s.sockets[i]! code (str 2) (entropy.extract 0 4).toList
+        ({ s with sockets := s.sockets.set! i k, outbox := s.outbox ++ ws.toArray }, ok "")
+  | 159 =>
+    match at? (nat 0) with
+    | none => (s, .error errType)
+    | some i =>
+      let k := s.sockets[i]!
+      (s, ok (match nat 1 with
+        | 0 => toString k.readyState | 1 => toString k.buffered | 2 => k.protocol | _ => k.url))
+  | 160 =>
+    match at? (nat 0) with
+    | none => (s, .error errType)
+    | some i =>
+      let k := s.sockets[i]!
+      match k.events[0]? with
+      | none => (s, ok "")
+      | some e =>
+        let k := { k with events := k.events.extract 1 k.events.size }
+        let (k, t) := match e with
+          | .opened p => (k, "open\u0000" ++ p)
+          | .text d => (k, "text\u0000" ++ d)
+          | .binary b => ({ k with lastBinary := b }, "binary")
+          | .error => (k, "error")
+          | .closed c r cl => (k, "close\u0000" ++ toString c ++ "\u0000" ++ r ++ "\u0000" ++ (if cl then "1" else "0"))
+        ({ s with sockets := s.sockets.set! i k }, ok t)
+  | 161 =>
+    match at? (nat 0) with
+    | none => (s, .error errType)
+    | some i => (s, .ok s.sockets[i]!.lastBinary)
   | _ => (s, .error (-2))
 
 /-- A `web_api` op on the network objects: ops 60 to 79, 98, 99 and 150 to 153 (answers -2 when the embedder

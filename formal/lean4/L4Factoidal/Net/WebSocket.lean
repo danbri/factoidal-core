@@ -40,6 +40,7 @@ control frame read is whole (FIN) and at most 125 bytes.
 import L4Factoidal.WHATWG.URL.Parser
 import L4Factoidal.WHATWG.Base64
 import L4Factoidal.Crypto.SHA1
+import L4Factoidal.Net.PageFetch
 
 namespace L4Factoidal.Net.WebSocket
 open L4Factoidal.WHATWG
@@ -236,6 +237,187 @@ def parse : List UInt8 → Read
   | b0 :: b1 :: rest => parseWith (headOf b0 b1) rest
   | _ => .more
 
+/-! ## A connection (WebSockets §4, RFC 6455 §4 to §7) -/
+
+/-- What the page hears of a connection, in order. -/
+inductive Ev where
+  | opened (protocol : String)
+  | text (s : String)
+  | binary (b : ByteArray)
+  | error
+  | closed (code : Nat) (reason : String) (clean : Bool)
+  deriving Inhabited
+
+/-- One connection of the page. The host is told to connect (`Wire` method `WEBSOCKET`, with
+the handshake's fields), to write (`WEBSOCKET-SEND`, the frame's bytes) and to close
+(`WEBSOCKET-CLOSE`); its answers are the handshake's response (status, fields, the bytes after
+it) and then each piece of bytes read (status 1), or the end of the connection (status 0). -/
+structure Sock where
+  id : Nat
+  /-- The URL as the page gave it, resolved (`ws`/`wss`). -/
+  url : String
+  /-- The request for the address rule (resolve, pin): the URL in its `http`/`https` form. -/
+  t : PageFetch.Transfer
+  key : String
+  protocols : List String
+  origin : String
+  /-- CONNECTING 0, OPEN 1, CLOSING 2, CLOSED 3. -/
+  readyState : Nat := 0
+  protocol : String := ""
+  handshaken : Bool := false
+  buf : List UInt8 := []
+  frag : Option (Nat × List UInt8) := none
+  buffered : Nat := 0
+  closeSent : Bool := false
+  closeRecv : Option (Nat × String) := none
+  /-- Masking keys for frames the engine sends on its own (pong, the reply to a close): fresh
+  entropy given at the start and with each `send`. -/
+  pool : List UInt8 := []
+  events : Array Ev := #[]
+  cb : Nat := 0
+  /-- The bytes of the last binary message the page took (`web_api` 161). -/
+  lastBinary : ByteArray := ByteArray.empty
+  deriving Inhabited
+
+/-- The `http`/`https` form of a `ws`/`wss` URL (WebSockets §4.1 step 1). -/
+def httpForm (u : URL.Url) : URL.Url := { u with scheme := if u.scheme == "wss" then "https" else "http" }
+
+/-- A wire to the host for this connection. -/
+def sockWire (s : Sock) (method : String) (body : Option ByteArray := none) : PageFetch.Wire :=
+  { id := s.id, method, url := s.url, headers := [], body }
+
+/-- The connection fails (RFC 6455 §7.1.7): the host closes it; the page hears `error` and
+`close` (1006, not clean), once. -/
+def fail (s : Sock) : Sock × List PageFetch.Wire :=
+  if s.readyState == 3 then (s, []) else
+  ({ s with readyState := 3, events := s.events.push .error |>.push (.closed 1006 "" false) }, [sockWire s "WEBSOCKET-CLOSE"])
+
+/-- The wire that opens the connection from a planned request (resolve-only first, then the
+connection with the handshake to the chosen address). -/
+def connectWire (s : Sock) (w : PageFetch.Wire) : PageFetch.Wire :=
+  if w.resolve then w
+  else match URL.parseUrl s.url with
+    | some u =>
+      { id := s.id, method := "WEBSOCKET", url := s.url, headers := handshakeFields u s.key s.origin s.protocols, body := none, address := w.address, port := w.port }
+    | none => w
+
+/-- Plan the connection (the scheme, local-address, mixed-content and DNS rules of the page's
+requests, `PageFetch.plan`), or fail it. -/
+def planStep (s : Sock) (st : PageFetch.Step) : Sock × List PageFetch.Wire :=
+  match st with
+  | .send t w => ({ s with t }, [connectWire s w])
+  | _ => fail s
+
+/-- Start a connection: `u` passed `openCheck`; `entropy`: at least 16 bytes for the key and
+more for masking keys. A blocked port fails at once. -/
+def connect (page : PageFetch.Page) (id cb : Nat) (u : URL.Url) (protocols : List String) (entropy : ByteArray) :
+    Sock × List PageFetch.Wire :=
+  let t : PageFetch.Transfer :=
+    { id, page, method := "GET", url := (httpForm u).serialize, headers := [], body := none, credentials := true, destination := "websocket" }
+  let s : Sock :=
+    { id, url := u.serialize, t, key := keyOf entropy, protocols, origin := page.origin, cb, pool := (entropy.extract 16 entropy.size).toList }
+  if badPorts.contains (portOf u) then fail s else planStep s (PageFetch.plan t)
+
+/-- Four bytes of the pool for a frame the engine sends on its own. -/
+def takeKey (s : Sock) : Sock × List UInt8 :=
+  match s.pool with
+  | a :: b :: c :: d :: rest => ({ s with pool := rest }, [a, b, c, d])
+  | _ => (s, [0x5a, 0xa5, 0x3c, 0xc3])
+
+/-- The payload of a close frame: the code (two bytes) and the reason. -/
+def closePayload (code : Option Nat) (reason : String) : List UInt8 :=
+  match code with
+  | some c => [(c / 256).toUInt8, (c % 256).toUInt8] ++ reason.toUTF8.toList
+  | none => []
+
+/-- A whole message from the server (§6.2): the page hears it while the connection is open. -/
+def deliver (s : Sock) (op : Nat) (data : List UInt8) : Sock × List PageFetch.Wire :=
+  if s.readyState != 1 then (s, []) else
+  if op == 1 then
+    match String.fromUTF8? (ByteArray.mk data.toArray) with
+    | some text => ({ s with events := s.events.push (.text text) }, [])
+    | none => fail s
+  else ({ s with events := s.events.push (.binary (ByteArray.mk data.toArray)) }, [])
+
+/-- One frame from the server. -/
+def onFrame (s : Sock) (f : Frame) : Sock × List PageFetch.Wire :=
+  match f.opcode with
+  | 0 =>
+    match s.frag with
+    | none => fail s
+    | some (op, acc) =>
+      let acc := acc ++ f.payload
+      if acc.length > maxMessage then fail s
+      else if f.fin then deliver { s with frag := none } op acc
+      else ({ s with frag := some (op, acc) }, [])
+  | 1 | 2 =>
+    if s.frag.isSome then fail s
+    else if f.fin then deliver s f.opcode f.payload
+    else ({ s with frag := some (f.opcode, f.payload) }, [])
+  | 8 =>
+    let code := match f.payload with
+      | a :: b :: _ => some (a.toNat * 256 + b.toNat)
+      | _ => none
+    let reason := (String.fromUTF8? (ByteArray.mk (f.payload.drop 2).toArray)).getD ""
+    let s := { s with closeRecv := some (code.getD 1005, reason), readyState := 2 }
+    if s.closeSent then (s, []) else
+    -- the reply echoes the code (RFC 6455 §5.5.1); the server then ends the connection
+    let (s, k) := takeKey s
+    ({ s with closeSent := true }, [sockWire s "WEBSOCKET-SEND" (some (ByteArray.mk (encodeClient k 8 (closePayload code "")).toArray))])
+  | 9 =>
+    let (s, k) := takeKey s
+    (s, [sockWire s "WEBSOCKET-SEND" (some (ByteArray.mk (encodeClient k 10 f.payload).toArray))])
+  | _ => (s, [])
+
+/-- Read every whole frame of the buffer (at most `fuel`). -/
+def drain (s : Sock) : Nat → Sock × List PageFetch.Wire
+  | 0 => (s, [])
+  | fuel + 1 =>
+    if s.readyState == 3 then (s, []) else
+    match parse s.buf with
+    | .more => (s, [])
+    | .bad _ _ => fail s
+    | .frame f rest =>
+      let (s, ws) := onFrame { s with buf := rest } f
+      let (s, ws') := drain s fuel
+      (s, ws ++ ws')
+
+/-- The host's answer for this connection. `sha1`: the engine's SHA-1. -/
+def onAnswer (sha1 : ByteArray → ByteArray) (s : Sock) (a : PageFetch.Answer) : Sock × List PageFetch.Wire :=
+  if s.readyState == 3 then (s, []) else
+  if !s.handshaken then
+    if s.t.phase == .resolve then planStep s (PageFetch.onAnswer s.t a)
+    else if a.status == 0 then fail s
+    else match handshakeCheck sha1 s.key s.protocols a.status a.headers with
+      | .error _ => fail s
+      | .ok p =>
+        let s := { s with handshaken := true, readyState := 1, protocol := p, events := s.events.push (.opened p), buf := a.body.toList }
+        drain s (s.buf.length + 1)
+  else if a.status == 0 then
+    -- the connection ended (RFC 6455 §7.1.4): clean when both close frames were exchanged
+    let clean := s.closeSent && s.closeRecv.isSome
+    let (code, reason) := if clean then s.closeRecv.getD (1005, "") else (1006, "")
+    ({ s with readyState := 3, buffered := 0, events := s.events.push (.closed code reason clean) }, [])
+  else
+    let s := { s with buf := s.buf ++ a.body.toList, buffered := 0 }
+    drain s (s.buf.length + 1)
+
+/-- `send(data)` (§3.3) on an open connection with a fresh masking key: the frame for the host;
+when closing or closed, only `bufferedAmount` grows. `none`: still connecting
+(`InvalidStateError`). -/
+def send (s : Sock) (binary : Bool) (data : List UInt8) (key : List UInt8) : Option (Sock × List PageFetch.Wire) :=
+  if s.readyState == 0 then none
+  else if s.readyState != 1 then some ({ s with buffered := s.buffered + data.length }, [])
+  else some ({ s with buffered := s.buffered + data.length, pool := s.pool ++ key },
+    [sockWire s "WEBSOCKET-SEND" (some (ByteArray.mk (encodeClient key (if binary then 2 else 1) data).toArray))])
+
+/-- `close(code, reason)` (§3.2 steps 3 to 6), the arguments checked (`closeCheck`). -/
+def close (s : Sock) (code : Option Nat) (reason : String) (key : List UInt8) : Sock × List PageFetch.Wire :=
+  if s.readyState ≥ 2 then (s, [])
+  else if s.readyState == 0 then fail s
+  else ({ s with readyState := 2, closeSent := true },
+    [sockWire s "WEBSOCKET-SEND" (some (ByteArray.mk (encodeClient key 8 (closePayload code reason)).toArray))])
+
 /-! ## Examples (RFC 6455 §5.7) -/
 
 -- a single-frame unmasked text message "Hello"
@@ -268,6 +450,37 @@ def parse : List UInt8 → Read
   (closeCheck (some 5000) "").isSome && (closeCheck none (String.ofList (List.replicate 124 'a'))).isSome
 -- RFC 6455 §1.3: the key "dGhlIHNhbXBsZSBub25jZQ==" is answered "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
 #guard acceptOf L4Factoidal.Crypto.sha1 "dGhlIHNhbXBsZSBub25jZQ==" == "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
+
+-- a connection from a local page: the handshake with the RFC's key, a text frame, the end
+private def evName : Ev → String
+  | .opened p => "open " ++ p | .text t => "text " ++ t | .binary b => s!"binary {b.size}" | .error => "error"
+  | .closed c r k => s!"close {c} {r} {k}"
+private def flow : List String :=
+  let page := PageFetch.Page.ofUrl "http://127.0.0.1:8000/x.html"
+  let e := "the sample nonce".toUTF8 ++ ByteArray.mk (Array.replicate 64 7)
+  match openCheck "http://127.0.0.1:8000/x.html" "ws://127.0.0.1:8888/echo" [] false with
+  | .error _ => ["bad url"]
+  | .ok u =>
+    let (s, ws) := connect page 5 9 u [] e
+    let first := ws.map fun w => w.method ++ " " ++ w.url ++ " " ++ ((PageFetch.headerGet w.headers "sec-websocket-key").getD "")
+    let (s, _) := onAnswer L4Factoidal.Crypto.sha1 s { status := 101, headers := [("Upgrade", "websocket"), ("Connection", "Upgrade"),
+      ("Sec-WebSocket-Accept", "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=")], body := ByteArray.mk #[0x81, 0x02, 0x48, 0x69] }
+    let (s, _) := onAnswer L4Factoidal.Crypto.sha1 s { status := 1, body := ByteArray.mk #[0x82, 0x01] }
+    let (s, _) := onAnswer L4Factoidal.Crypto.sha1 s { status := 1, body := ByteArray.mk #[0x00] }
+    let (s, _) := onAnswer L4Factoidal.Crypto.sha1 s { status := 0 }
+    first ++ s.events.toList.map evName
+#guard flow == ["WEBSOCKET ws://127.0.0.1:8888/echo dGhlIHNhbXBsZSBub25jZQ==", "open ", "text Hi", "binary 1", "close 1006  false"]
+-- a wrong accept fails the connection; a blocked port sends nothing
+#guard (let page := PageFetch.Page.ofUrl "http://127.0.0.1:8000/x.html"
+  match openCheck "http://127.0.0.1:8000/x.html" "ws://127.0.0.1:8888/echo" [] false with
+  | .ok u => let (s, _) := connect page 5 9 u [] (ByteArray.mk (Array.replicate 80 1))
+    let (s, ws) := onAnswer L4Factoidal.Crypto.sha1 s { status := 101, headers := [("Upgrade", "websocket"), ("Connection", "Upgrade"),
+      ("Sec-WebSocket-Accept", "x")] }
+    s.events.toList.map evName == ["error", "close 1006  false"] && ws.map (·.method) == ["WEBSOCKET-CLOSE"]
+  | .error _ => false)
+#guard (match openCheck "http://127.0.0.1:8000/x.html" "ws://127.0.0.1:25/" [] false with
+  | .ok u => (connect (PageFetch.Page.ofUrl "http://127.0.0.1:8000/x.html") 5 9 u [] (ByteArray.mk (Array.replicate 80 1))).2.map (·.method) == ["WEBSOCKET-CLOSE"]
+  | .error _ => false)
 
 /-! ## Theorems -/
 
@@ -385,5 +598,52 @@ theorem parse_frame (buf : List UInt8) (f : Frame) (r : List UInt8) (h : parse b
               simp only [lenOf, hlt, if_true, Option.some.injEq, Prod.mk.injEq] at hl
               simp only [List.length_take]; omega
   · simp at h
+
+/-- Kind: lemma. Says: the wires of a failed connection only close it. -/
+theorem fail_wires (s : Sock) (s' : Sock) (ws : List PageFetch.Wire) (h : fail s = (s', ws)) :
+    ∀ w ∈ ws, w.method = "WEBSOCKET-CLOSE" := by
+  unfold fail at h
+  split at h
+  · simp only [Prod.mk.injEq] at h; obtain ⟨-, rfl⟩ := h; simp
+  · simp only [Prod.mk.injEq] at h; obtain ⟨-, rfl⟩ := h; simp [sockWire]
+
+/-- Kind: policy theorem. Says: a connection to a blocked port (Fetch §2.10) sends nothing: the
+only wire is the one that closes it. -/
+theorem connect_badPort (page : PageFetch.Page) (id cb : Nat) (u : URL.Url) (ps : List String) (e : ByteArray)
+    (hb : badPorts.contains (portOf u) = true) (s : Sock) (ws : List PageFetch.Wire)
+    (h : connect page id cb u ps e = (s, ws)) : ∀ w ∈ ws, w.method = "WEBSOCKET-CLOSE" := by
+  unfold connect at h
+  simp only [hb, if_true] at h
+  exact fail_wires _ _ _ h
+
+/-- Kind: policy theorem. Says: the first wire of a connection that is not a close is the one
+`PageFetch.plan` chose for its `http`/`https` form (so it passes `mayConnect`, mixed content
+and the address rule, `PageFetch.plan_send_allowed`), sent on as a resolve or as the
+connection to the same address and port. -/
+theorem connect_planned (page : PageFetch.Page) (id cb : Nat) (u : URL.Url) (ps : List String) (e : ByteArray)
+    (s : Sock) (ws : List PageFetch.Wire) (h : connect page id cb u ps e = (s, ws)) (w : PageFetch.Wire)
+    (hw : w ∈ ws) (hm : w.method ≠ "WEBSOCKET-CLOSE") :
+    ∃ t w0, PageFetch.plan s.t = .send t w0 ∨ (PageFetch.plan
+      { id, page, method := "GET", url := (httpForm u).serialize, headers := [], body := none, credentials := true, destination := "websocket" } = .send t w0 ∧
+      (w = w0 ∨ (w.address = w0.address ∧ w.port = w0.port))) := by
+  unfold connect at h
+  split at h
+  · exact absurd (fail_wires _ _ _ h w hw) hm
+  · unfold planStep at h
+    simp only at h
+    split at h
+    · rename_i t w0 hp
+      simp only [Prod.mk.injEq] at h
+      obtain ⟨-, rfl⟩ := h
+      simp only [List.mem_singleton] at hw
+      subst hw
+      refine ⟨t, w0, .inr ⟨hp, ?_⟩⟩
+      unfold connectWire
+      split
+      · exact .inl rfl
+      · split
+        · exact .inr ⟨rfl, rfl⟩
+        · exact .inl rfl
+    · exact absurd (fail_wires _ _ _ h w hw) hm
 
 end L4Factoidal.Net.WebSocket

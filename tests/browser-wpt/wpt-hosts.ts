@@ -37,7 +37,7 @@ export const wptDomains = ["web-platform.test", "not-web-platform.test"];
 /** The ports of this runner's wptserve config (wpt-score.py serve) that a fetch may use:
  * http, http-local, http-public; https, https-local, https-public. (Its HTTP/2 server on
  * 9000 is not used: the HTTPS client here speaks HTTP/1.1.) */
-export const wptPorts: Record<string, number[]> = { http: [8000, 8001, 8002, 8003], https: [8443, 8444, 8445, 8446] };
+export const wptPorts: Record<string, number[]> = { http: [8000, 8001, 8002, 8003], https: [8443, 8444, 8445, 8446], ws: [8888], wss: [8889] };
 
 /** Every hostname of the mode: each base domain and each of its subdomains. */
 export function wptHostnames(s: WptServe): Set<string> {
@@ -60,6 +60,20 @@ export function wptRoute(url: string, s: WptServe): { port: number; scheme: "htt
   const port = Number(u.port || (scheme === "http" ? 80 : 443));
   if (!(s.ports[scheme] ?? []).includes(port)) return { refused: `wptserve does not serve ${scheme} on port ${port}` };
   return { port, scheme };
+}
+
+/** A WebSocket connection (TCP, or TLS for `wss`) that reaches only the local wptserve's
+ * WebSocket ports, by WPT's names. The engine writes the handshake and the frames. */
+export async function wptSocket(url: string, s: WptServe): Promise<Deno.Conn> {
+  const u = new URL(url);
+  const scheme = u.protocol === "ws:" ? "ws" : u.protocol === "wss:" ? "wss" : undefined;
+  if (!scheme) throw new TypeError(`WPT test mode: not a WebSocket URL: ${url}`);
+  if (!wptHostnames(s).has(u.hostname)) throw new TypeError(`WPT test mode: not a WPT host: ${u.hostname}`);
+  const port = Number(u.port || (scheme === "ws" ? 80 : 443));
+  if (!(s.ports[scheme] ?? []).includes(port)) throw new TypeError(`wptserve does not serve ${scheme} on port ${port}`);
+  if (scheme === "wss" && !s.caPEM) throw new TypeError("WPT test mode: no WPT CA for wss");
+  const tcp = await Deno.connect({ hostname: "127.0.0.1", port });
+  return scheme === "wss" ? await Deno.startTls(tcp, { hostname: u.hostname, caCerts: [s.caPEM as string] }) : tcp;
 }
 
 /** A fetch that reaches only the local wptserve, by WPT's names. Redirects are followed
@@ -93,7 +107,7 @@ export function wptFetcher(s: WptServe) {
     }
     return Object.defineProperty(response, "finalURL", { value: url });
   };
-  return { fetch: fetchWpt, close: () => { for (const c of clients.values()) c.close(); clients.clear(); } };
+  return { fetch: fetchWpt, socket: (url: string) => wptSocket(url, s), close: () => { for (const c of clients.values()) c.close(); clients.clear(); } };
 }
 
 const MAX_RESPONSE_BYTES = 64 * 1048576;
