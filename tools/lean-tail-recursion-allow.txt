@@ -2329,3 +2329,13 @@ L4Factoidal_JS_exportedNamesF  # (c) GetExportedNames: depth is the chain of `ex
 L4Factoidal_JS_postOrder  # (c) the evaluation order of a module graph: depth is the import chain, at most fuel = modules + 1; a visited module is not entered again
 L4Factoidal_JS_namespaceOf  # (c) a namespace object and the namespaces it re-exports (`export * as`): depth is that chain, at most the number of modules, since a namespace made once is reused
 L4Factoidal_WasmVM_Hosts_LeanJSModules_visit*  # (c) fetching a module graph (visit, visitKids): depth is the import chain, at most fuel 4096 (deeper is "module graph too deep"); a URL in the module map is not visited again; a module's requests are a self tail call
+# --- 2026-11-14 CSS values: recursion on the nesting of one value's functions and blocks; each level is a fold or map over the list
+L4Factoidal_Rendering_CssValues_CV_css  # (c) the nesting of one value, at most the fuel serialize gives: cvSize 64 + 2 (parseCVs nests to maxNesting = 64)
+L4Factoidal_Rendering_CssValues_cssList  # (c) the nesting of one value, at most cvSize 64 + 2 (with CV.css)
+L4Factoidal_Rendering_CssValues_cvSize  # (c) the nesting of one value, fuel 64
+L4Factoidal_Rendering_CssValues_rawText_go  # (c) the nesting of one value, at most cvSize 64 + 2
+L4Factoidal_Rendering_CssValues_untag  # (c) the nesting of one matched value, fuel 8 or 16
+L4Factoidal_Rendering_CssValues_hasFn  # (c) the nesting of one value, fuel 32
+L4Factoidal_Rendering_CssValues_hasBadToken  # (c) the nesting of one value, fuel 32
+L4Factoidal_Rendering_CssValues_Color_substF  # (c) the nesting of the channel expressions of a relative colour, fuel 16
+L4Factoidal_Rendering_CssSheet_preludeText_go  # (c) the nesting of an at-rule prelude, at most cvSize 64 + 2
