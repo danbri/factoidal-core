@@ -754,6 +754,16 @@ def expandF : Nat → String → String → Option (List (String × String))
                 match (matchAll (env none) (.anyOf (heads.map G.prop)) top).map tagged with
                 | none => none
                 | some found =>
+                  -- `list-style: none` (CSS Lists 3 §3.4): a none sets the image and the type
+                  -- that are not written otherwise
+                  let noneWords := (top.filter fun cv => match cv with
+                    | .tok (.ident k) => lower k == "none"
+                    | _ => false).length
+                  let found := if p == "list-style" && noneWords > 0 then
+                      let found := if (found.lookup "list-style-type").isNone && (noneWords == 2 || (found.lookup "list-style-image").isSome)
+                        then found ++ [("list-style-type", "none")] else found
+                      if (found.lookup "list-style-image").isNone then found ++ [("list-style-image", "none")] else found
+                    else found
                   some (groups.flatMap fun group =>
                     let head := group.headD ""
                     let v := match found.lookup head with
@@ -1146,6 +1156,8 @@ def initialComputed (ctx : ComputeCtx) (row : Property) : String :=
 #guard (lookup "background").map (fun r => recombine r fun l => ((expand "background" "none").getD []).lookup l |>.getD "") == some "none"
 #guard (lookup "background").map (fun r => recombine r fun l => ((expand "background" "red").getD []).lookup l |>.getD "") == some "red"
 #guard positionXY "top left" == some ("left", "top") && positionXY "right 10px top 5px" == some ("right 10px", "top 5px")
+#guard (expand "list-style" "none").map (·.lookup "list-style-type") == some (some "none")
+#guard (expand "list-style" "square none").map (·.lookup "list-style-type") == some (some "square")
 #guard specified "flex" "0 1 1" == none
 #guard specified "flex" "0 1" == some "0 1" && (specified "flex" "0 auto").isSome && (specified "flex" "1 0 0").isSome
 #guard specified "color" "RED" == some "red"
