@@ -14118,6 +14118,98 @@
     setHandler(t, name, f);
   };
 
+  // ==== tables: the script interface of tables (HTML §4.9) ================================
+  // The collections (rows, tBodies, cells), the indices (rowIndex, sectionRowIndex,
+  // cellIndex), the caption, head and foot, and where insertRow puts a row or which item a
+  // delete removes are Lean's (HTML.TableDom, node_query 199); the page makes and moves the
+  // elements.
+  {
+    const tq = (el, q) => { const r = n.query(nodeId(el), 199, q); return typeof r === 'string' ? r : ''; };
+    const idsOf = r => (r === '' ? [] : r.split(' ').map(Number));
+    const one = r => (r === '' ? null : wrap(Number(r)));
+    const T = named.HTMLTableElement, SEC = named.HTMLTableSectionElement, TR = named.HTMLTableRowElement, TD = named.HTMLTableCellElement;
+    const prop = (C, name, get, set) => Object.defineProperty(C.prototype, name, { get, set, configurable: true, enumerable: true });
+    const method = (C, name, f) => Object.defineProperty(C.prototype, name, { value: f, writable: true, configurable: true, enumerable: true });
+    const cache = () => { const m = new WeakMap(); return (el, mk) => { let c = m.get(el); if (!c) m.set(el, c = mk()); return c; }; };
+    const rowsC = cache(), bodiesC = cache(), secRowsC = cache(), cellsC = cache();
+    const indexSize = (what, i) => new DOMException(`Failed to execute '${what}': The index provided (${i}) is outside the range of the rows or cells.`, 'IndexSizeError');
+    const long = v => Number(v) | 0;
+    const make = (el, tag) => el.ownerDocument.createElement(tag);
+    prop(T, 'rows', function () { const t = this; return rowsC(t, () => liveCollection(() => idsOf(tq(t, 'r')))); });
+    prop(T, 'tBodies', function () { const t = this; return bodiesC(t, () => liveCollection(() => idsOf(tq(t, 'b')))); });
+    // the first element child that is neither a caption nor a colgroup (where a thead goes)
+    const afterCaptions = t => { for (let c = t.firstElementChild; c; c = c.nextElementSibling) if (!(c instanceof HTMLElement) || (c.localName !== 'caption' && c.localName !== 'colgroup')) return c; return null; };
+    const place = { caption: t => t.firstChild, thead: afterCaptions, tfoot: () => null };
+    for (const [k, q, tag, err] of [['caption', 'C', 'caption', 'TypeError'], ['tHead', 'H', 'thead', 'HierarchyRequestError'], ['tFoot', 'F', 'tfoot', 'HierarchyRequestError']]) {
+      prop(T, k, function () { return one(tq(this, q)); }, function (v) {
+        if (v !== null && v !== undefined && !(v instanceof HTMLElement && v.localName === tag)) {
+          const m = `Failed to set the '${k}' property on 'HTMLTableElement': the value is not a ${tag} element.`;
+          throw err === 'TypeError' ? new TypeError(m) : new DOMException(m, err);
+        }
+        const old = one(tq(this, q));
+        if (old) old.remove();
+        if (v === null || v === undefined) return;
+        this.insertBefore(v, place[tag](this));
+      });
+      const C = k[0].toUpperCase() + k.slice(1);
+      method(T, 'create' + C, function () {
+        const old = one(tq(this, q));
+        if (old) return old;
+        const el = make(this, tag);
+        this.insertBefore(el, place[tag](this));
+        return el;
+      });
+      method(T, 'delete' + C, function () { const old = one(tq(this, q)); if (old) old.remove(); });
+    }
+    method(T, 'createTBody', function createTBody() {
+      const el = make(this, 'tbody'), bodies = idsOf(tq(this, 'b'));
+      this.insertBefore(el, bodies.length ? wrap(bodies[bodies.length - 1]).nextSibling : null);
+      return el;
+    });
+    method(T, 'insertRow', function insertRow(index = -1) {
+      const i = long(index), r = tq(this, '+\u0000' + i);
+      if (r === 'E' || r === '') throw indexSize("insertRow' on 'HTMLTableElement", i);
+      const tr = make(this, 'tr'), xs = r.split(' ');
+      if (xs[0] === 'B') { const b = make(this, 'tbody'); b.appendChild(tr); this.appendChild(b); }
+      else if (xs[0] === 'A') wrap(Number(xs[1])).appendChild(tr);
+      else wrap(Number(xs[1])).insertBefore(tr, wrap(Number(xs[2])));
+      return tr;
+    });
+    const deleteIn = (el, q, list, what, index) => {
+      const i = long(index), r = tq(el, q + '\u0000' + i);
+      if (r === 'E') throw indexSize(what, i);
+      if (r !== '') { const k = list()[Number(r)]; if (k !== undefined) wrap(k).remove(); }
+    };
+    method(T, 'deleteRow', function deleteRow(index) {
+      if (arguments.length < 1) throw new TypeError("Failed to execute 'deleteRow' on 'HTMLTableElement': 1 argument required, but only 0 present.");
+      deleteIn(this, '-', () => idsOf(tq(this, 'r')), "deleteRow' on 'HTMLTableElement", index);
+    });
+    // a section's rows and a row's cells: insert at an index (-1: at the end)
+    const insertIn = (el, list, tag, what, index) => {
+      const i = long(index);
+      if (tq(el, 'e\u0000' + i) === 'E') throw indexSize(what, i);
+      const ks = list(), x = make(el, tag);
+      el.insertBefore(x, i === -1 || i === ks.length ? null : wrap(ks[i]));
+      return x;
+    };
+    prop(SEC, 'rows', function () { const s = this; return secRowsC(s, () => liveCollection(() => idsOf(tq(s, 'R')))); });
+    method(SEC, 'insertRow', function insertRow(index = -1) { return insertIn(this, () => idsOf(tq(this, 'R')), 'tr', "insertRow' on 'HTMLTableSectionElement", index); });
+    method(SEC, 'deleteRow', function deleteRow(index) {
+      if (arguments.length < 1) throw new TypeError("Failed to execute 'deleteRow' on 'HTMLTableSectionElement': 1 argument required, but only 0 present.");
+      deleteIn(this, 'd', () => idsOf(tq(this, 'R')), "deleteRow' on 'HTMLTableSectionElement", index);
+    });
+    prop(TR, 'cells', function () { const r = this; return cellsC(r, () => liveCollection(() => idsOf(tq(r, 'c')))); });
+    prop(TR, 'rowIndex', function () { return Number(tq(this, 'i')); });
+    prop(TR, 'sectionRowIndex', function () { return Number(tq(this, 's')); });
+    method(TR, 'insertCell', function insertCell(index = -1) { return insertIn(this, () => idsOf(tq(this, 'c')), 'td', "insertCell' on 'HTMLTableRowElement", index); });
+    method(TR, 'deleteCell', function deleteCell(index) {
+      if (arguments.length < 1) throw new TypeError("Failed to execute 'deleteCell' on 'HTMLTableRowElement': 1 argument required, but only 0 present.");
+      deleteIn(this, 'd', () => idsOf(tq(this, 'c')), "deleteCell' on 'HTMLTableRowElement", index);
+    });
+    prop(TD, 'cellIndex', function () { return Number(tq(this, 'x')); });
+  }
+  // ==== end tables ========================================================================
+
   // ==== forms: the script interface of form controls (HTML §4.10) ========================
   // The collections and the selectedness are Lean's (DOM.FormControls, node_query 186): "f"
   // form owner, "e" the elements of a form, "o" the options of a select, "s" its selected

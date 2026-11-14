@@ -48,6 +48,7 @@ import L4Factoidal.HTML.FormEntries
 import L4Factoidal.HTML.ReferrerSource
 import L4Factoidal.HTML.ProtocolHandler
 import L4Factoidal.HTML.SessionHistory
+import L4Factoidal.HTML.TableDom
 
 namespace L4Factoidal.WasmVM.Hosts.Dom
 open L4Factoidal.DOM L4Factoidal.DOM.Range
@@ -498,7 +499,7 @@ the text of `innerText` for collected items (`HTML.InnerText.answer`); 192 the m
 Sanitizer (`HTML.Sanitizer.answer`); 194 the decisions of Trusted Types
 (`HTML.TrustedTypes.answer`); 195 the image source an `img` selects
 (`HTML.ImageSource.answer`); 196 the entry list of a form (`HTML.FormEntries.answer`); 197
-the session history (`HTML.SessionHistory.answer`); 198
+the session history (`HTML.SessionHistory.answer`); 199 the tables (`HTML.TableDom.answer`); 198
 whether a protocol handler call may go on (`HTML.ProtocolHandler.answer`). One op changes the tree: 193 sanitizes the children of
 node `id` (`sanitizeM`). -/
 def domOpM (id op : Nat) (q : String) : Op String := do
@@ -961,6 +962,8 @@ def domOpM (id op : Nat) (q : String) : Op String := do
   -- 198: whether `navigator.registerProtocolHandler` or `unregisterProtocolHandler` may go on
   -- (`HTML.ProtocolHandler.answer`): `q` is the document's URL, U+0000, scheme, U+0000, URL
   | 198 => return L4Factoidal.HTML.ProtocolHandler.answer q
+  -- 199: the script interface of tables on node `id` (`HTML.TableDom.answer`)
+  | 199 => let n ← nodeArg d id; return L4Factoidal.HTML.TableDom.answer d n q
   -- ==== end of domhtml ====
   | _ => throw (-2)
 
