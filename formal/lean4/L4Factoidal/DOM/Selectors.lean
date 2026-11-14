@@ -582,6 +582,15 @@ def compound : Nat → PM (List Simple)
               let _ ← ident
               let _ ← skipWs
               expectClose
+            else if n == "scroll-button" then
+              -- `::scroll-button(*)` or a direction (CSS Overflow 5 §3.1)
+              let _ ← skipWs
+              if (← peek) == some '*' then bump
+              else
+                let d := lowerAscii (← ident)
+                if !["up", "down", "left", "right", "block-start", "block-end", "inline-start", "inline-end"].contains d then fail
+              let _ ← skipWs
+              expectClose
             else if viewTransitionPseudoElements.contains n then
               -- `*` or a name, then classes, with no white space between them
               let _ ← skipWs
@@ -657,6 +666,15 @@ def compound : Nat → PM (List Simple)
               let _ ← skipWs
               expectClose
               out := out.push (.pseudo "state()")
+            | "host" | "host-context" =>
+              -- `:host(<compound-selector>)` (CSS Scoping 1 §3.2.1): matches no element of a
+              -- document tree
+              let _ ← skipWs
+              let c ← compound fuel
+              if hasPseudoElement c then fail
+              let _ ← skipWs
+              expectClose
+              out := out.push (.pseudo (n ++ "()"))
             | "lang" =>
               let t ← argText
               bump

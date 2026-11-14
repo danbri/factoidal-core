@@ -183,6 +183,10 @@ def exIds (sel : String) : Option (List String) :=
   "::view-transition-group()", "::view-transition-group(*.*)", "::view-transition-group(a. b)",
   "::view-transition-new(default)", "::view-transition-old(a):hover", "::selection:first-child",
   ":has()", ":heading()", ":heading(a)", ":no-such-class"].map Selectors.parse).all (·.isNone)
+-- ::scroll-button() and :host()
+#guard (["::scroll-button(up)", "::scroll-button( * )", "::scroll-button(block-end):focus", ":host(:is(div))", ":host(.a)",
+  ":host-context(div)"].map Selectors.parse).all (·.isSome)
+#guard (["::scroll-button(foo)", "::scroll-button()", ":host(div .foo)", ":host()"].map Selectors.parse).all (·.isNone)
 -- comments are no tokens
 #guard (["[foo='BAR'] /* sanity check (match) */", "[foo=bar/**/i]", "/**/a/**/>/**/b", "[foo='/*x*/']"].map Selectors.parse).all (·.isSome)
 #guard (["a/**/b", "[foo='bar' /* x"].map Selectors.parse).all (·.isNone) || (Selectors.parse "a/**/b").isNone
