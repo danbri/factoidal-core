@@ -548,8 +548,7 @@ private def glyphNodes (font : FontProfile) (run : GlyphRun) (s : Computed) : Ar
   let scale := run.fontSize/font.unitsPerEm
   for g in run.glyphs do
     for geometry in font.outline g.index do
-      let primitive : Primitive := {geometry,style := glyphStyle s run.fontSize scale,
-        transform := glyphTransform s scale g.x g.y (font.ascent*scale)}
+      let primitive : Primitive := {geometry,style := glyphStyle s run.fontSize scale,transform := glyphTransform s scale g.x g.y (font.ascent*scale)}
       out := out.push (.paint ⟨some run.source,primitive⟩)
   if s.underline && !run.glyphs.isEmpty then
     let left := (run.glyphs[0]?).map (·.x) |>.getD 0
@@ -596,8 +595,8 @@ private def shapedNodes (word : FontProvider.Word) (run : GlyphRun) (s : Compute
       out := out.push node
       continue
     for geometry in glyph.geometry do
-      out := out.push (.paint ⟨some run.source,{geometry,style := glyphStyle s run.fontSize scale,
-        transform := glyphTransform s scale position.x position.y (baseline-position.y)}⟩)
+      let place := glyphTransform s scale position.x position.y (baseline-position.y)
+      out := out.push (.paint ⟨some run.source,{geometry,style := glyphStyle s run.fontSize scale,transform := place}⟩)
   if s.underline && width > 0 then
     let thickness := max 1 (run.fontSize/14)
     out := out.push (.paint ⟨some run.source,{geometry := .rect left (baseline+thickness) width thickness, style := {fill := .solid (s.decorationColor.getD s.color)}}⟩)
