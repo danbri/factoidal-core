@@ -13063,7 +13063,11 @@
       const visible = rs.type === 'opaque' ? [] : headerState.get(rs.headers).list;
       const blob = blobOf(r, response);
       call(['put', id, ...reqFields(r), String(rs.status), linesOf(visible), blob], what);
-      if (b.bytes !== null) b.used = true;
+      // put read the body through a reader (Service Workers §5.4.7): its stream stays locked
+      if (b.bytes !== null) {
+        try { const bs = response.body; if (bs && !bs.locked) bs.getReader(); } catch (_) {}
+        b.used = true;
+      }
     };
     class Cache {
       constructor() { if (!making) throw new TypeError('Illegal constructor'); }
