@@ -903,8 +903,9 @@ theorem breakLines_pos (room gap : Int) (outers : List Int) : ∀ c ∈ breakLin
 
 /-! ### Cross-axis alignment of an item in its line (§9.6) -/
 
-/-- `align-self` values as the algorithm reads them. `baseline` is `start` until
-baselines are known to the caller. -/
+/-- `align-self` values as the algorithm reads them. `baseline` is `start` in
+`alignOffset`; a caller that knows the baselines places such an item with
+`baselineOffset`. -/
 inductive Align where
   | start | end_ | center | stretch | baseline
   deriving Repr, BEq, DecidableEq
@@ -928,6 +929,69 @@ theorem alignOffset_within (a : Align) (line outer : Int) (h : outer ≤ line) :
        have h2 := Int.ediv_le_self 2 (by omega : 0 ≤ line - outer)
        omega)
 
+/-! ### Baseline alignment in a line (§9.4 step 8, §8.3)
+
+The items of a line that align by their baselines share one baseline. Each has an ascent
+(from its cross-start margin edge to its baseline) and an outer cross size; its descent
+is the rest. The shared baseline is as far from the line's start as the largest ascent,
+and the items need the largest ascent plus the largest descent of cross size. -/
+
+/-- The largest ascent of the baseline-aligned items `(ascent, outer)` of a line, and the
+cross size they need together. -/
+def baselineExtent (items : List (Int × Int)) : Int × Int :=
+  let ascent := items.foldl (fun m i => max m i.1) 0
+  let descent := items.foldl (fun m i => max m (i.2 - i.1)) 0
+  (ascent, ascent + descent)
+
+/-- The offset of a baseline-aligned item from the start of its line. -/
+def baselineOffset (lineAscent ascent : Int) : Int := lineAscent - ascent
+
+private theorem le_foldl_max (f : Int × Int → Int) (items : List (Int × Int)) :
+    ∀ (init : Int), init ≤ items.foldl (fun m i => max m (f i)) init ∧
+      ∀ i ∈ items, f i ≤ items.foldl (fun m i => max m (f i)) init := by
+  induction items with
+  | nil => intro init; simp
+  | cons j rest ih =>
+    intro init
+    simp only [List.foldl_cons]
+    have h := ih (max init (f j))
+    refine ⟨by omega, ?_⟩
+    intro i hi
+    rcases List.mem_cons.mp hi with rfl | hi'
+    · omega
+    · exact h.2 i hi'
+
+/-- Says: the baselines coincide: every baseline-aligned item has its baseline at the
+line's largest ascent. -/
+theorem baseline_shared (items : List (Int × Int)) (i : Int × Int) :
+    baselineOffset (baselineExtent items).1 i.1 + i.1 = (baselineExtent items).1 := by
+  unfold baselineOffset; omega
+
+/-- Containment. Says: a baseline-aligned item lies inside the cross size that
+`baselineExtent` gives the line: it starts at or after the line's start and ends at or
+before that size. -/
+theorem baseline_within (items : List (Int × Int)) (i : Int × Int) (h : i ∈ items) :
+    0 ≤ baselineOffset (baselineExtent items).1 i.1 ∧
+      baselineOffset (baselineExtent items).1 i.1 + i.2 ≤ (baselineExtent items).2 := by
+  unfold baselineOffset baselineExtent
+  have ha := (le_foldl_max (fun i => i.1) items 0).2 i h
+  have hd := (le_foldl_max (fun i => i.2 - i.1) items 0).2 i h
+  simp only at ha hd ⊢
+  omega
+
+/-- Says: the cross size for the baseline-aligned items is never negative, and no
+smaller than the largest ascent. -/
+theorem baselineExtent_ge (items : List (Int × Int)) :
+    0 ≤ (baselineExtent items).1 ∧ (baselineExtent items).1 ≤ (baselineExtent items).2 := by
+  unfold baselineExtent
+  have ha := (le_foldl_max (fun i => i.1) items 0).1
+  have hd := (le_foldl_max (fun i => i.2 - i.1) items 0).1
+  simp only at ha hd ⊢
+  omega
+
+#guard baselineExtent [(10, 30), (25, 30), (5, 40)] == (25, 60)
+#guard baselineOffset 25 10 == 15
+#guard baselineExtent [] == (0, 0)
 #guard justify .spaceBetween 90 4 == (0, 30)
 #guard justify .spaceAround 80 4 == (10, 20)
 #guard justify .spaceEvenly 100 4 == (20, 20)

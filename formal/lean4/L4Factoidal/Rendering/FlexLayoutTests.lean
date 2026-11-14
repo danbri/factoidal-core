@@ -257,6 +257,27 @@ private def within (factor : Nat) (page : Option (Nat × Nat)) : Bool := page.an
 #guard Layout.overWork 10 (Layout.workLimit 10 + 1)
 #guard !Layout.overWork 10 (Layout.workLimit 10)
 
+-- Baseline alignment (§8.3, §9.4 step 8): the items' first baselines on one line. Glyphs
+-- sit at the top of their 7 px line here, so an item's baseline is its text's top plus 7.
+-- `a` has 10 px of padding above its text, `b` none: `b` moves down by 10.
+private def based := "<div id=o><div id=a>A</div><div id=b>B</div><div id=c>C</div></div>"
+private def basedCss := "#o{display:flex;align-items:baseline} #a{padding-top:10px} "
+#guard box based basedCss "a" == some (0,0,6,17)
+#guard box based basedCss "b" == some (6,10,6,7)
+#guard box based basedCss "o" == some (0,0,200,17)
+-- an item taller below its baseline makes the line taller: ascent 17, descent 20
+#guard box based (basedCss ++ "#c{padding-bottom:20px}") "o" == some (0,0,200,37)
+#guard box based (basedCss ++ "#c{padding-bottom:20px}") "c" == some (12,10,6,27)
+-- an item not aligned by its baseline keeps its own alignment
+#guard box based (basedCss ++ "#c{align-self:flex-end}") "c" == some (12,10,6,7)
+#guard box based (basedCss ++ "#c{align-self:flex-start}") "c" == some (12,0,6,7)
+-- an item with no line box: its bottom edge is its baseline
+#guard box "<div id=o><div id=a>A</div><div id=e></div></div>" (basedCss ++ "#e{width:5px;height:3px}") "e" == some (6,14,5,3)
+-- each line of a wrapping row has its own baseline
+#guard box based (basedCss ++ "#o{flex-wrap:wrap;width:14px}") "c" == some (0,17,6,7)
+-- with `align-items: flex-start` nothing moves
+#guard box based "#o{display:flex;align-items:flex-start} #a{padding-top:10px}" "b" == some (6,0,6,7)
+
 -- Nesting: a row in a column in a row; a flex container in block flow and a block in a flex item.
 private def nested := "<div id=o><div id=l>LL</div><div id=m><div id=h>H</div><div id=r><div id=x>X</div><div id=y>Y</div></div></div></div><div id=p>P</div>"
 private def nestedCss := "#o{display:flex} #m{flex:1;display:flex;flex-direction:column} #r{display:flex} #y{flex:1}"
