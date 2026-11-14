@@ -224,7 +224,7 @@ numbers (`valueAt`: `pseudoBase` times the position plus one, plus the property'
 def pseudoNames : List String :=
   ["before", "after", "marker", "first-line", "first-letter", "placeholder", "selection", "backdrop",
    "file-selector-button", "target-text", "spelling-error", "grammar-error", "details-content", "checkmark",
-   "picker-icon", "scroll-marker", "column"]
+   "picker-icon", "scroll-marker", "column", "search-text"]
 
 /-- Whether property `p` applies to pseudo-element `pe` (CSS Pseudo-Elements 4 §2.3, §2.5,
 §3.1, §4.2): `::first-line` and `::placeholder` take the font, colour, background and text
@@ -242,7 +242,7 @@ def appliesToPseudo (pe p : String) : Bool :=
   | "marker" => CssValues.isCustom p || pre ["font", "animation", "transition"] ||
       ["color", "white-space", "white-space-collapse", "text-wrap-mode", "text-combine-upright", "unicode-bidi",
        "direction", "content", "line-height", "all"].contains p
-  | "selection" | "target-text" | "spelling-error" | "grammar-error" =>
+  | "selection" | "target-text" | "spelling-error" | "grammar-error" | "search-text" =>
     CssValues.isCustom p || pre ["text-decoration"] ||
       ["color", "background-color", "text-shadow", "stroke-color", "fill-color", "stroke-width", "all"].contains p
   | _ => true
@@ -614,6 +614,14 @@ theorem ifCondition_zero (get : String → String) (subst : List CssValues.CV �
 def mentionsCurrentColor (value : String) : Bool :=
   ((CssValues.lower value).splitOn "currentcolor").length > 1
 
+/-- Whether values name a resource: a `url()`, or an `image-set()`, `image()` or `src()`
+function (CSS Values 5 §7.7.1: what an attr()-tainted value may not be). -/
+def namesResource (cvs : List CssValues.CV) : Bool :=
+  cvs.any (fun cv => match cv with
+    | .tok (.url _) => true
+    | _ => false) ||
+  ["url", "image-set", "-webkit-image-set", "image", "src"].any fun f => CssValues.hasFn f 32 cvs
+
 /-- `bolder` and `lighter` against the parent's computed weight (CSS Fonts 4 §2.2.1, the
 table of relative weights); the parent's weight as text. -/
 def relativeWeight (keyword parent : String) : String :=
@@ -746,6 +754,9 @@ def computedLonghand (v : View) : Nat → Nat → String → String
             let text := CssValues.rawText cvs'
             -- a value past the length limit is invalid (`CssVars.maxValueBytes`)
             if text.utf8ByteSize > CssVars.maxValueBytes then (if custom then "" else default ())
+            -- a value with attr() in it that comes to name a resource is invalid (CSS Values 5
+            -- §7.7.1, attr()-tainting; here for attr() written in the declaration itself)
+            else if !custom && (CssValues.hasFn "attr" 32 cvs) && namesResource cvs' then default ()
             else if custom then
               match reg with
               | some r => (CssRegister.computedValue (ctxOf text) r.syn text).getD (default ())
@@ -1146,6 +1157,9 @@ private def resolvedAt (html css prop : String) : String :=
 #guard resolvedAt "<div id=t></div>" "#t { position: relative; bottom: 3px }" "top" == "-3px"
 #guard resolvedAt "<div id=t></div>" "#t { position: relative }" "left" == "0px"
 #guard resolvedAt "<div id=t></div>" "#t { position: static }" "left" == "auto"
+-- attr()-tainting (attr-security.html)
+#guard computedAt "<div id=t data-foo='https://x.test/a.png'></div>" "#t { background-image: image-set(attr(data-foo)) }" "background-image" == "none"
+#guard computedAt "<div id=t data-foo='x'></div>" "#t { --x: image-set(attr(data-foo)) }" "--x" == "image-set(\"x\")"
 -- relative font weights (font-weight-computed.html)
 #guard resolvedAt "<div style='font-weight: 550'><p id=t></p></div>" "#t { font-weight: lighter }" "font-weight" == "400"
 #guard resolvedAt "<div style='font-weight: 800'><p id=t></p></div>" "#t { font: bolder 10px serif }" "font-weight" == "900"

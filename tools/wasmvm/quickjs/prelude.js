@@ -12176,7 +12176,7 @@
   // the value of the k-th name on the i-th is measure op 200 + 1000000 × (i + 1) + k.
   const pseudoNames = ['before', 'after', 'marker', 'first-line', 'first-letter', 'placeholder', 'selection', 'backdrop',
     'file-selector-button', 'target-text', 'spelling-error', 'grammar-error', 'details-content', 'checkmark',
-    'picker-icon', 'scroll-marker', 'column'];
+    'picker-icon', 'scroll-marker', 'column', 'search-text'];
   // -1: the element itself; -2: a pseudo-element argument that is not one Lean computes
   // (ill-formed or unknown), whose computed style is empty (CSSOM §9)
   const pseudoIndex = pseudo => {
