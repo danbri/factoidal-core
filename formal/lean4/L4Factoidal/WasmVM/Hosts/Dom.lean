@@ -108,6 +108,10 @@ inductive Command where
   node is `root` (`Dom.graft`, the next node numbers). So a replay over the parsed page
   makes the same node numbers after a frame loads. -/
   | frameDocument (el : Nat) (source : String) (xml : Bool) (root : Nat)
+  /-- A property registered by `CSS.registerProperty` (CSS Properties and Values API 1
+  §5.1: the document's registered property set): the name and the registration text
+  (`CssRegister.docEntry`), kept on the document node where no script reads it. -/
+  | registerProperty (name entry : String)
   deriving BEq, Repr, Inhabited
 
 /-- A request to the event loop. -/
@@ -345,6 +349,17 @@ def codeOrTrap (e : Int) : HostResult := if e == -8 then .trap "foafnaut_dom: st
 /-- Character data: the nodes whose `textContent` setter changes only their data. -/
 def charData (d : Dom) (n : Nat) : Bool := Dom.isCharacterData (d.get n)
 
+/-- The attribute name under which the document node keeps a registered property: it
+starts with U+0001, which no attribute name a script can set has. -/
+def registeredKey (name : String) : String := "\x01property " ++ name
+
+/-- The document `d` (node 0) with `name` registered as `entry`; a second registration of
+a name is refused before it gets here (`CSS.registerProperty`), and the first stays. -/
+def registerOnDocument (d : Dom) (name entry : String) : Dom :=
+  let k := registeredKey name
+  if (d.get 0).attrs.any (·.lname == k) then d
+  else d.setNode 0 fun e => { e with attrs := e.attrs.push { lname := k, value := entry } }
+
 /-- What a command writes and nothing else reads until it is written again: an
 attribute (node, ASCII-lowercase name: the names that may be one attribute) or the
 data of a character data node (node, ""; an attribute name is never empty). `d` is the
@@ -370,7 +385,8 @@ def Command.sameWrite : Command → Command → Bool
 `name` and the tree): a write before one of them stays before it. -/
 def Command.reads : Command → Bool
   | .cloneNode .. | .importNode .. | .normalize _ | .setAttributeNS .. | .removeAttributeNS ..
-  | .adoptNode .. | .setChecked .. | .resetForm _ | .attachShadow .. | .assignSlot .. | .replaceData .. | .splitText .. | .frameDocument .. => true
+  | .adoptNode .. | .setChecked .. | .resetForm _ | .attachShadow .. | .assignSlot .. | .replaceData .. | .splitText .. | .frameDocument ..
+  | .registerProperty .. => true
   | _ => false
 
 /-- `Command.live` with a NodeIterator: each step on the arena as the change leaves it. -/
@@ -1578,6 +1594,10 @@ def Command.apply (d : Dom) : Command → Except String Dom
     checkNode d n
     if v ≥ 16 then throw "script command: states exceed bound"
     return d.setNode n fun x => { x with states := v }
+  | .registerProperty name entry => do
+    if d.nodes.isEmpty || (d.get 0).type != .document then throw "script command: no document"
+    if entry.utf8ByteSize > 65536 then throw "script command: registration exceeds bound"
+    return registerOnDocument d name entry
   | .resetForm n => do
     checkNode d n
     if !Forms.isHtml d n ["form"] then throw "script command: target must be a form"

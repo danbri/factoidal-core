@@ -36,6 +36,16 @@ structure View where
   registration, the one that counts first. Read only when a custom property is asked for. -/
   registered : Thunk (List (String × CssRegister.PropertyRule)) := Thunk.pure []
 
+/-- The properties registered by scripts (`CSS.registerProperty`), as the document node
+keeps them (`Hosts.Dom.Command.registerProperty`: attributes whose name starts with U+0001
+and `property `). They win over `@property` rules (§3). -/
+def registrationsOfDocument (dom : DOM.Dom) : List (String × CssRegister.PropertyRule) :=
+  if dom.nodes.isEmpty then []
+  else (dom.get 0).attrs.toList.filterMap fun a =>
+    if a.lname.startsWith "\x01property " then
+      (CssRegister.entryRule a.value).map fun r => ((a.lname.drop 10).toString, r)
+    else none
+
 /-- The registrations of the `@property` rules of a document's style sheets (§3), the last
 of a name first. A sheet text with no `@property` is not read again. -/
 def registrationsOf (source : String) : List (String × CssRegister.PropertyRule) :=
@@ -538,6 +548,10 @@ private def computedAt (html css prop : String) : String :=
 #guard computedAt "<div id=t></div>" "@property --c { syntax: '<color>'; inherits: true; initial-value: red } #t { --c: 10px }" "--c" ==
   "rgb(255, 0, 0)"
 #guard computedAt "<div id=t></div>" "@property --x { syntax: '<length>'; inherits: true } #t { --x: 2px }" "--x" == "2px"
+-- a property registered by a script is kept on the document node
+#guard (let d := DOM.parseHtmlDocument "<p>x</p>"
+  let d := d.setNode 0 fun e => { e with attrs := e.attrs.push { lname := "\x01property --x", value := "<length>\x000\x0011px" } }
+  (registrationsOfDocument d).map (·.1)) == ["--x"]
 -- revert-layer rolls back to the layer before; with no earlier layer, to the default
 #guard computedAt "<div id=t class=r></div>"
   "@layer a { #t { color: red } } @layer b { #t { color: blue } } @layer c { #t.r { color: revert-layer } }" "color" ==
