@@ -631,4 +631,8 @@ private def parses (src : String) : Bool := syn src == "ok"
 #guard out "Array.prototype[2] = 3; var arr = [1, 2, 3, 4, 5]; print(arr.every(function (v) { delete arr[2]; return v != 3 })); delete Array.prototype[2]" == ["false"]
 #guard out "var d = [3, 1, 2]; delete d[1]; d.sort(); print(d.length, d[0], d[1], 2 in d); var n = 0; [1, , 3].forEach(() => n++); print(n, [[1], , [2]].flat().length)" == ["3 2 3 false", "2 2"]
 
+/-! ## IsArray through a Proxy; a sealed Array's elements are not configurable -/
+
+#guard out "var s = Object.seal([1, , 3]); print(Array.isArray(s), Object.isSealed(s), Object.getOwnPropertyDescriptor(s, '0').configurable, s.length, 1 in s); print(Array.isArray(new Proxy([], {})), Array.isArray(new Proxy({}, {}))); var r = Proxy.revocable([], {}); r.revoke(); try { Array.isArray(r.proxy) } catch (e) { print(e.name) }" == ["true true false 3 false", "true false", "TypeError"]
+
 end L4Factoidal.JS.Tests
