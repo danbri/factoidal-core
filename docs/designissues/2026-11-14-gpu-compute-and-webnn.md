@@ -242,10 +242,52 @@ files; `Move.lean`, `Compute.lean`, `Shape.lean` and `Eval.lean` belong to the w
 change there (the `Idx` equalities, a hook in `Eval` to choose the backend) is agreed in the
 coordination log first.
 
+### 2.6 Built so far (first group)
+
+- `WebNN/Idx.lean`: `Coord`, `Idx.eval`; the maps of transpose, slice, expand (broadcast), tile
+  and reverse as data, each proved equal to `Move`'s function (`transposeMap_eval`,
+  `sliceMap_eval`, `expandMap_eval`, `tileMap_eval`, `reverseMap_eval`; `remap_transposeMap`).
+- `WebNN/Gpu.lean`: kernels as `Wgsl.Module` values through `Wgsl.finish`: element-wise binary
+  with broadcasting (add, sub, mul, div, max, min, pow), unary (abs, ceil, cos, exp, floor,
+  neg, reciprocal, relu, sigmoid, sin, softsign, tan), transpose. `emitC_eval`: the printed
+  `u32` index arithmetic computes `Coord.eval` whenever its values fit in 32 bits (with
+  `evalU`, a Lean reading of WGSL's `u32` `+ - * / %`). `#guard`s: every kernel passes the
+  subset check, the printed broadcast index, refusals (`gelu`, `tanh`, outputs over one dispatch).
+- Not yet: the `Fits` side condition discharged from the tensor quota for whole kernels; the
+  output unravel (`k / stride % dim`) proved equal to `Shape.unravel`; matmul, gemm, conv2d,
+  pooling and reductions (a `forCap` loop each); the backend choice in `Graph`/`Eval` (to be
+  agreed with the webnn agent); running graphs through `PageGpu` commands.
+
+Differential test, 2026-11-14, this Mac (Apple M-series, Metal through Deno's WebGPU): Lean
+printed each kernel and the CPU reference's outputs (`Compute.unaryF`/`binaryF` in binary64,
+rounded once to binary32, binary operators broadcast by `Move.broadcastMap`) for 1,024
+deterministic inputs; the kernels ran on the GPU and the outputs were compared with the
+tolerances of the WebNN conformance tests.
+
+| Operator | Largest difference | WPT tolerance | |
+|---|---|---|---|
+| abs, ceil, floor, neg, relu, max, min, add, sub, mul, transpose | 0 ULP | 0 or 1 ULP | within |
+| reciprocal | 1 ULP | 2 ULP | within |
+| div | 2 ULP | 2 ULP | within |
+| softsign | 2 ULP | 3 ULP | within |
+| pow | 5 ULP | 32 ULP | within |
+| sigmoid | 7 ULP | 34 ULP | within |
+| exp | 13 ULP | 32 ULP | within |
+| cos, sin | 6.4e-7 absolute | 2^-10 absolute | within |
+| tan | 1.2e-6 absolute | 2^-10 absolute | within |
+| sqrt | 2 ULP | 1 ULP | over: CPU reference |
+| tanh | 44 ULP | 16 ULP | over: CPU reference |
+| log | 75 ULP | 8 ULP | over: CPU reference |
+
+One GPU, one input set: a different GPU can differ, so the table is per device and the plan is
+to run the same test on the Hub's GPU before an operator is enabled there.
+
 ## Proved / tested only / open
 
-- Proved: section 1.2.
+- Proved: section 1.2; `WebNN.Idx` map equalities; `emitC_eval`.
 - Tested only: the WGSL printer; the replay and readback on a real GPU (section 1.5); the
-  prelude's compute API (by the cloud check's WPT and the demo page, not by a theorem).
+  prelude's compute API (by the cloud check's WPT, `page_gpu_test.ts` and the demo page, not by
+  a theorem); WebNN kernels' floating-point results (section 2.6, one GPU).
 - Open: the engine end to end in the native window and on the Hub with the demo; error scopes
-  from the host's compiler for compute; `requestAdapter` on hosts without GPU replay; part 2.
+  from the host's compiler for compute; `requestAdapter` on hosts without GPU replay; the rest
+  of part 2 (section 2.6, "not yet").
