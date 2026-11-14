@@ -11400,9 +11400,9 @@
     return op(0, 166, String(ident));
   });
   // CSS.registerProperty (CSS Properties and Values API 1 §5.1): Lean checks the name, the
-  // syntax string and the initial value (CssRegister.registerOp, node_query op 155). The
-  // names registered are kept here so that a second registration is refused; the
-  // registration does not yet change computed values.
+  // syntax string and the initial value (CssRegister.registerOp, node_query op 155); an
+  // accepted one joins the document's registered property set in Lean, which computed
+  // values read. The names registered are kept here so that a second registration is refused.
   const registeredProperties = new Set();
   define(CSSns, 'registerProperty', function (definition) {
     if (arguments.length < 1) throw new TypeError('CSS.registerProperty: 1 argument required');
@@ -11412,7 +11412,7 @@
     const name = String(definition.name), syntax = definition.syntax === undefined ? '*' : String(definition.syntax);
     const initial = definition.initialValue === undefined ? '0' : '1' + String(definition.initialValue);
     if (registeredProperties.has(name)) throw new DOMException(`The property '${name}' is already registered`, 'InvalidModificationError');
-    const r = n.query(0, 155, [name, syntax, initial].join('\u0000'));
+    const r = n.query(0, 155, [name, syntax, initial, definition.inherits ? '1' : '0'].join('\u0000'));
     if (r !== '') throw new DOMException(`CSS.registerProperty: the definition of '${name}' is not valid`, typeof r === 'string' ? r : 'SyntaxError');
     registeredProperties.add(name);
   });

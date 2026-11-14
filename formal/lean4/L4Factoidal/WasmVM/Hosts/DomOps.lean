@@ -741,8 +741,13 @@ def domOpM (id op : Nat) (q : String) : Op String := do
     -- CSS Typed OM: reification, serialisation, numeric types and arithmetic (`CssTyped.typedOp`)
     return L4Factoidal.Rendering.CssTyped.typedOp q
   | 155 =>
-    -- `CSS.registerProperty`: the checks of the name, the syntax and the initial value
-    return L4Factoidal.Rendering.CssRegister.registerOp q
+    -- `CSS.registerProperty`: the checks of the name, the syntax and the initial value;
+    -- an accepted registration joins the document's registered property set
+    let r := L4Factoidal.Rendering.CssRegister.registerOp q
+    if r == "" then
+      if let some (name, entry) := L4Factoidal.Rendering.CssRegister.registration q then
+        exec (.registerProperty name entry)
+    return r
   | 167 =>
     -- a reflected attribute's setter, applied: the decision of 161, then the content
     -- attribute set or removed as a command (the page has no MutationObserver and the row

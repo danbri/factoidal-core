@@ -108,12 +108,14 @@ def registerCheck (name syn : String) (initial : Option String) : String :=
       | some v => if initialValid (some g) v then "" else "SyntaxError"
       | none => "SyntaxError"
 
-/-- The page's protocol: `name` U+0000 `syntax` U+0000 "1" and the initial value, or "0". -/
+/-- The page's protocol: `name` U+0000 `syntax` U+0000 "1" and the initial value, or "0",
+then (optionally) U+0000 and `inherits` as "1" or "0". -/
 def registerOp (q : String) : String :=
   match q.splitOn "\x00" with
-  | [name, syn, initial] =>
+  | name :: syn :: initial :: _ =>
     registerCheck name syn (if initial.startsWith "1" then some (initial.drop 1).toString else none)
   | _ => "SyntaxError"
+
 
 /-! ### `@property` rules (§3) -/
 
@@ -173,6 +175,38 @@ def computedValue (ctx : ComputeCtx) (syn : String) (value : String) : Option St
     (matchAll (env (some ctx)) g top).map fun out => serialize (untag 16 out)
   | some none => some (trimText value)
   | none => none
+
+/-- A registration as the document keeps it (`Command.registerProperty`): the syntax, "1"
+or "0" for inherits, and "1" and the initial value or "0", separated by U+0000. -/
+def docEntry (r : PropertyRule) : String :=
+  "\x00".intercalate [r.syn, if r.inherits then "1" else "0", match r.initial with
+    | some v => "1" ++ v
+    | none => "0"]
+
+/-- The registration of a document entry (`docEntry`). -/
+def entryRule (entry : String) : Option PropertyRule :=
+  match entry.splitOn "\x00" with
+  | syn :: inh :: rest =>
+    let initial := "\x00".intercalate rest
+    let iv : Option String := if initial.startsWith "1" then some (initial.drop 1).toString else none
+    some { syn := syn, inherits := inh == "1", initial := iv }
+  | _ => none
+
+/-- The name and document entry of an accepted `CSS.registerProperty` request
+(`registerOp` answered ""); `none` when it has no `inherits` field. -/
+def registration (q : String) : Option (String × String) :=
+  match q.splitOn "\x00" with
+  | [name, syn, initial, inh] =>
+    let iv : Option String := if initial.startsWith "1" then some (initial.drop 1).toString else none
+    let r : PropertyRule := { syn := syn, inherits := inh == "1", initial := iv }
+    some (name, docEntry r)
+  | _ => none
+
+-- a registration kept on the document reads back as itself
+#guard entryRule (docEntry { syn := "<length>", inherits := false, initial := some "1px" }) ==
+  some { syn := "<length>", inherits := false, initial := some "1px" }
+#guard entryRule (docEntry { syn := "*", inherits := true, initial := none }) == some { syn := "*", inherits := true, initial := none }
+#guard registration "--x\x00<color>\x001red\x000" == some ("--x", "<color>\x000\x001red")
 
 #guard propertyRuleOf "--valid" "syntax: \"<color> | none\"; inherits: false; initial-value: red;" ==
   some { syn := "<color> | none", inherits := false, initial := some "red" }
