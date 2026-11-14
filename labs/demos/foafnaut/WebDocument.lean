@@ -1989,6 +1989,16 @@ def readAnswer (l : Laid) (node op : Nat) : Option String :=
         return acc
       some (" ".intercalate (chain.toList.map toString))
     | none => some ""
+  -- 38: `scrollWidth` and `scrollHeight` (CSSOM View §6.1), "w h" in whole CSS pixels
+  -- (`Rendering.Layout.scrollSize`): the padding box extended to the boxes inside it; for
+  -- the root element, the viewport extended to the whole page. "0 0" with no box.
+  | 38 =>
+    let border : Rendering.CSS.Edges := match l.styles.get with
+      | .ok styles => (styles[node]?.map (·.borderEdges)).getD {}
+      | .error _ => {}
+    match Rendering.Layout.scrollSize l.dom l.boxes border (Float.ofNat l.scene.width) (Float.ofNat l.scene.height) node with
+    | some (w,h) => some (line [w,h])
+    | none => some "0 0"
   -- 21: the used width and height of the node's content box (CSSOM §9.1 resolved values
   -- of `width` and `height`), "" when the node has no box
   | 21 => match box, l.styles.get with

@@ -794,8 +794,10 @@
     get clientHeight() { return this === document.documentElement ? viewport()[1] : Math.round(layoutOf(this)[7]); }
     get clientLeft() { return Math.round(layoutOf(this)[4]); }
     get clientTop() { return Math.round(layoutOf(this)[5]); }
-    get scrollWidth() { return this.clientWidth; }
-    get scrollHeight() { return this.clientHeight; }
+    // node_query 38: the scrollable overflow, decided by the engine from its layout (an
+    // engine without it answers zeros: then the client size, as before).
+    get scrollWidth() { const s = query(nodeId(this), 38, 2); return s[0] > 0 ? s[0] : this.clientWidth; }
+    get scrollHeight() { const s = query(nodeId(this), 38, 2); return s[1] > 0 ? s[1] : this.clientHeight; }
     get scrollTop() { return 0; } set scrollTop(v) {}
     get scrollLeft() { return 0; } set scrollLeft(v) {}
     get tagName() { return str(nodeId(this), 1); }
