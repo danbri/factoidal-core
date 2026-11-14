@@ -7398,7 +7398,16 @@
       clearParameters() { xs(this).params.clear(); }
       reset() { const s = xs(this); s.style = null; s.params.clear(); }
     }
-    for (const [k, v] of Object.entries({ XPathResult, XPathExpression, XPathEvaluator, XSLTProcessor })) {
+    // XMLSerializer (DOM Parsing §2.2): the XML serialization is Lean's (DOM.XmlSerialize,
+    // node_query op 124). An Attr is not a node of the arena; it serializes as "" (§3.2.1.7).
+    class XMLSerializer {
+      serializeToString(root) {
+        needArgs(arguments, 1, 'serializeToString');
+        if (root instanceof Attr) return '';
+        return op(nodeId(root), 124);
+      }
+    }
+    for (const [k, v] of Object.entries({ XPathResult, XPathExpression, XPathEvaluator, XSLTProcessor, XMLSerializer })) {
       Object.defineProperty(v.prototype, Symbol.toStringTag, { value: k, configurable: true });
       def(k, v);
     }
