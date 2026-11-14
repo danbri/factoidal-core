@@ -17,6 +17,7 @@ longhands. From it:
 import L4Factoidal.Rendering.CssValues.Grammar
 import L4Factoidal.Rendering.CssValues.Color
 import L4Factoidal.Rendering.CssValues.Data
+import Std.Data.HashMap
 
 namespace L4Factoidal.Rendering.CssValues
 
@@ -29,15 +30,38 @@ structure Property where
   longhands : List String
   deriving Repr, Inhabited
 
+/-! ### The table, indexed once
+
+The rows are static data. The indexes below are lazy constants: each is built the first
+time a script asks for a property value, and never for a page that does not. A grammar
+text is read into a grammar at most once (the thunk of its row). -/
+
+/-- The rows by property name. -/
+def propertyMap : Thunk (Std.HashMap String Property) := Thunk.mk fun _ =>
+  Data.properties.foldl (fun m (n, g, inh, ini, ls) =>
+    m.insert n { name := n, grammar := g, inherited := inh, initial := ini,
+                 longhands := (ls.splitOn " ").filter (· != "") }) {}
+
 /-- The row of a property (the name in lower case). -/
-def lookup (name : String) : Option Property :=
-  (Data.properties.find? fun row => row.1 == name).map fun (n, g, inh, ini, ls) =>
-    { name := n, grammar := g, inherited := inh, initial := ini,
-      longhands := (ls.splitOn " ").filter (· != "") }
+def lookup (name : String) : Option Property := propertyMap.get[name]?
+
+/-- The grammars of the properties, each read when first used. -/
+def propertyGrammars : Thunk (Std.HashMap String (Thunk (Option G))) := Thunk.mk fun _ =>
+  Data.properties.foldl (fun m (n, g, _, _, _) => m.insert n (Thunk.mk fun _ => vds g)) {}
+
+/-- The grammars of the non-terminals, each read when first used. -/
+def syntaxGrammars : Thunk (Std.HashMap String (Thunk (Option G))) := Thunk.mk fun _ =>
+  Data.syntaxes.foldl (fun m (n, g) => m.insert n (Thunk.mk fun _ => vds g)) {}
+
+/-- The grammar of a property. -/
+def propG (name : String) : Option G := (propertyGrammars.get[name]?).bind (·.get)
 
 /-- The grammar of a non-terminal. -/
-def syntaxOf (name : String) : Option String :=
-  (Data.syntaxes.find? fun row => row.1 == name).map (·.2)
+def syntaxG (name : String) : Option G := (syntaxGrammars.get[name]?).bind (·.get)
+
+/-- The legacy names and what they stand for. -/
+def aliasMap : Thunk (Std.HashMap String String) := Thunk.mk fun _ =>
+  Data.aliases.foldl (fun m (a, t) => m.insert a t) {}
 
 def isCustom (p : String) : Bool := p.length > 2 && p.toList.take 2 == ['-', '-']
 
@@ -47,9 +71,7 @@ def propertyName (p : String) : String :=
   if isCustom p then p
   else
     let l := lower p
-    match Data.aliases.find? fun row => row.1 == l with
-    | some (_, target) => target
-    | none => l
+    (aliasMap.get[l]?).getD l
 
 /-- A text with CSS white space removed at both ends. -/
 def trimText (s : String) : String :=
@@ -85,14 +107,14 @@ def colorReader : Color.Reader := fun cv =>
 /-- The matcher's environment: specified values with `none`, computed values with a
 context. -/
 def env (ctx : Option ComputeCtx) : Env :=
-  { syntaxOf := syntaxOf
-    propSyntax := fun p => (lookup p).map (·.grammar)
+  { syntaxG := syntaxG
+    propG := propG
     color := Color.parse { computed := ctx.isSome, current := ctx.bind (·.currentColor), read := colorReader }
     ctx := ctx.map (·.num) }
 
-/-- The canonical text of `cvs` under a grammar text. -/
-def matchText (ctx : Option ComputeCtx) (grammar : String) (cvs : List CV) : Option String :=
-  (vds grammar).bind fun g => (matchAll (env ctx) g cvs).map fun o => serialize (untag 16 o)
+/-- The canonical text of `cvs` as a value of property `p` (a name of the table). -/
+def matchText (ctx : Option ComputeCtx) (p : String) (cvs : List CV) : Option String :=
+  (propG p).bind fun g => (matchAll (env ctx) g cvs).map fun o => serialize (untag 16 o)
 
 /-- The single CSS-wide keyword that the values are, if they are one. -/
 def wideKeyword (top : List CV) : Option String :=
@@ -155,7 +177,7 @@ def specified (property value : String) : Option String :=
         | none =>
           if hasSubstitution cvs then some (rawText cvs)
           else if p == "all" then none
-          else (matchText none row.grammar top).map (canonical p)
+          else (matchText none row.name top).map (canonical p)
 
 /-- `CSS.supports(property, value)` (CSS Conditional 3 §8.1): the value parses. -/
 def supports (property value : String) : Bool := (specified property value).isSome
@@ -191,7 +213,7 @@ def pairShorthands : List String :=
    "border-block-width", "border-block-style", "border-block-color",
    "border-inline-width", "border-inline-style", "border-inline-color",
    "scroll-margin-block", "scroll-margin-inline", "scroll-padding-block", "scroll-padding-inline",
-   "contain-intrinsic-size", "grid-gap"]
+   "contain-intrinsic-size", "grid-gap", "size", "min-size", "max-size"]
 
 def anyOrderShorthands : List String :=
   ["border-top", "border-right", "border-bottom", "border-left",
@@ -219,11 +241,19 @@ def tagged (out : List CV) : List (String × String) :=
     | .fn name args => if isTag name then some ((name.drop 1).toString, serialize (untag 16 args)) else none
     | _ => none
 
-/-- The canonical specified form of the initial value of a property ("" when not known). -/
-def initialSpecified (p : String) : String :=
+/-- The canonical specified form of the initial value of a property ("" when not known),
+computed from the table. -/
+def initialSpecifiedOf (p : String) : String :=
   match lookup p with
-  | some row => (matchText none row.grammar (stripWs (CV.parse row.initial))).getD row.initial
+  | some row => (matchText none row.name (stripWs (CV.parse row.initial))).getD row.initial
   | none => ""
+
+/-- The canonical initial values, each computed when first used. -/
+def initialValues : Thunk (Std.HashMap String (Thunk String)) := Thunk.mk fun _ =>
+  Data.properties.foldl (fun m (n, _, _, _, _) => m.insert n (Thunk.mk fun _ => initialSpecifiedOf n)) {}
+
+/-- The canonical specified form of the initial value of a property ("" when not known). -/
+def initialSpecified (p : String) : String := ((initialValues.get[p]?).map (·.get)).getD ""
 
 /-- The grammar of the `font` shorthand with its parts tagged by longhand. -/
 def fontGrammar : G :=
@@ -298,7 +328,7 @@ def expand (property value : String) : Option (List (String × String)) :=
                   let head := group.headD ""
                   let v := match found.lookup head with
                     | some v => v
-                    | none => (specified head ((lookup head).map (·.initial) |>.getD "")).getD ""
+                    | none => initialSpecified head
                   group.map fun l => (l, v))
 
 /-- The value of a shorthand of a generic shape from the values of its longhands (`get`
@@ -342,7 +372,7 @@ def recombine (row : Property) (get : String → String) : String :=
             let head := group.headD ""
             let v := get head
             let uniform := group.all fun l => get l == v
-            let initial := (specified head ((lookup head).map (·.initial) |>.getD "")).getD ""
+            let initial := initialSpecified head
             (v, uniform, v == initial)
           if parts.any (fun (_, uniform, _) => !uniform) then ""
           else
@@ -415,7 +445,7 @@ def computed (ctx : ComputeCtx) (property value : String) : String :=
       let cvs := CV.parse value
       if hasSubstitution cvs then value
       else
-        let v := canonical p ((matchText (some ctx) row.grammar (stripWs cvs)).getD value)
+        let v := canonical p ((matchText (some ctx) row.name (stripWs cvs)).getD value)
         if lineWidthProperties.contains p then (lineWidthKeyword v).getD v
         else if p == "font-weight" then (if v == "normal" then "400" else if v == "bold" then "700" else v)
         else v

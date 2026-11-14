@@ -236,8 +236,10 @@ def vds (s : String) : Option G :=
 /-- What the matcher needs from outside: the non-terminals, the property grammars, the
 colour parser, and the context of computed values (`none`: specified values). -/
 structure Env where
-  syntaxOf : String → Option String
-  propSyntax : String → Option String
+  /-- The grammar of a non-terminal. -/
+  syntaxG : String → Option G
+  /-- The grammar of a property. -/
+  propG : String → Option G
   color : CV → Option String
   ctx : Option Ctx := none
 
@@ -259,25 +261,29 @@ def G.isComma : G → Bool
   | .lit c => c == ','
   | _ => false
 
-/-- Juxtaposition. A comma of the grammar is left out of the value where the items before
-it (since the start or the last comma) or all the items after it are left out (CSS Values
-4 §2.1): `emitted` says that an item gave a value since the start or the last comma. -/
-def seqWith (m : G → List CV → Res) : List G → Bool → List CV → Res
-  | [], _, ts => [([], ts)]
-  | g :: gs, emitted, ts =>
-    if g.isComma then
-      if !emitted then seqWith m gs false ts
+/-- Juxtaposition. A comma of the grammar between items is left out of the value where
+the items before it (since the start or the last comma) or all the items after it are left
+out (CSS Values 4 §2.1). `first`: no item of this sequence came before; `consumed`: an item
+took a value since the start or the last comma; `shown`: such an item gave output (a keyword
+written `a=` takes a value and gives none). A comma that is the first or the last item of
+its sequence is a literal: it must be there. A comma is written only between outputs. -/
+def seqWith (m : G → List CV → Res) : List G → Bool → Bool → Bool → List CV → Res
+  | [], _, _, _, ts => [([], ts)]
+  | g :: gs, first, consumed, shown, ts =>
+    if g.isComma && !first && !gs.isEmpty then
+      if !consumed then seqWith m gs false false false ts
       else
         let withComma : Res := match ts with
           | .tok .comma :: rest =>
-            (seqWith m gs false rest).filterMap fun (o2, r2) =>
-              if o2.isEmpty then none else some (CV.tok .comma :: o2, r2)
+            (seqWith m gs false false false rest).filterMap fun (o2, r2) =>
+              if r2.length < rest.length then some (if shown && !o2.isEmpty then CV.tok .comma :: o2 else o2, r2)
+              else none
           | _ => []
-        let without : Res := (seqWith m gs false ts).filter fun (o2, r2) => o2.isEmpty && r2.length == ts.length
+        let without : Res := (seqWith m gs false false false ts).filter fun (_, r2) => r2.length == ts.length
         (withComma ++ without).take cap
     else
       ((m g ts).flatMap fun (o1, r1) =>
-        (seqWith m gs (emitted || !o1.isEmpty) r1).map fun (o2, r2) => (o1 ++ o2, r2)).take cap
+        (seqWith m gs false (consumed || r1.length < ts.length) (shown || !o1.isEmpty) r1).map fun (o2, r2) => (o1 ++ o2, r2)).take cap
 
 /-- A multiplier, as a loop over the number of repetitions (a tail call, so a list of any
 length uses no stack): `frontier` holds the matches of `n` repetitions (their values in
@@ -475,7 +481,7 @@ def leaf (env : Env) (m : G → List CV → Res) (name : String) (lo hi : Option
   | "position" => positionLeaf env.ctx false ts
   | "bg-position" => positionLeaf env.ctx true ts
   | _ =>
-    match (env.syntaxOf name).bind vds with
+    match env.syntaxG name with
     | some g => m g ts
     | none => []
 
@@ -500,7 +506,7 @@ def matchG (env : Env) : Nat → G → List CV → Res
       | _ => []
     | .ref name lo hi => leaf env (matchG env fuel) name lo hi ts
     | .prop name =>
-      match (env.propSyntax name).bind vds with
+      match env.propG name with
       | some g' => (matchG env fuel g' ts).map fun (o, r) => ([CV.fn (tagName name) o], r)
       | none => []
     | .tag name g' => (matchG env fuel g' ts).map fun (o, r) => ([CV.fn (tagName name) o], r)
@@ -520,7 +526,7 @@ def matchG (env : Env) : Nat → G → List CV → Res
             if r.isEmpty then some ([CV.block opener o'], rest) else none).take 1
         else []
       | _ => []
-    | .seq gs => seqWith (matchG env fuel) gs false ts
+    | .seq gs => seqWith (matchG env fuel) gs true false false ts
     | .oneOf gs => (gs.flatMap fun g' => matchG env fuel g' ts).take cap
     | .anyOf gs => setWith (matchG env fuel) false (gs.length + 1) (indexed gs) [] ts
     | .allOf gs => setWith (matchG env fuel) true (gs.length + 1) (indexed gs) [] ts
@@ -566,14 +572,14 @@ def hasBadToken : Nat → Bool → List CV → Bool
 /-! ### Tests -/
 
 private def testEnv : Env :=
-  { syntaxOf := fun n => match n with
-      | "line-width" => some "<length [0,∞]> | thin | medium | thick"
-      | "line-style" => some "none | hidden | dotted | dashed | solid | double | groove | ridge | inset | outset"
-      | "shadow" => some "<color>? && [ <length>{2} <length [0,∞]>? <length>? ] && inset?"
-      | "fit()" => some "fit-content( <length-percentage [0,∞]> )"
+  { syntaxG := fun n => match n with
+      | "line-width" => vds "<length [0,∞]> | thin | medium | thick"
+      | "line-style" => vds "none | hidden | dotted | dashed | solid | double | groove | ridge | inset | outset"
+      | "shadow" => vds "<color>? && [ <length>{2} <length [0,∞]>? <length>? ] && inset?"
+      | "fit()" => vds "fit-content( <length-percentage [0,∞]> )"
       | _ => none
-    propSyntax := fun p => match p with
-      | "margin-top" => some "<length-percentage> | auto"
+    propG := fun p => match p with
+      | "margin-top" => vds "<length-percentage> | auto"
       | _ => none
     color := fun cv => match cv with
       | .tok (.ident s) => if ["red", "blue"].contains (lower s) then some (lower s) else none
@@ -637,6 +643,12 @@ private def run (grammar value : String) (ctx : Option Ctx := none) : Option Str
 #guard run "in [ xyz=xyz-d65 | lab ] [ shorter= hue= | longer hue ]?" "in XYZ shorter hue" == some "in xyz-d65"
 #guard run "in [ xyz=xyz-d65 | lab ] [ shorter= hue= | longer hue ]?" "in lab longer hue" == some "in lab longer hue"
 #guard run "a , b? , c" "a, , c" == none
+#guard run "f( <integer> , [ start | end= ]? )" "f(2, end)" == some "f(2)"
+#guard run "f( <integer> , [ start | end= ]? )" "f(2, start)" == some "f(2, start)"
+#guard run "f( [ nonzero= | evenodd ]? , <length># )" "f(nonzero, 1px, 2px)" == some "f(1px, 2px)"
+#guard run "f( [ nonzero= | evenodd ]? , <length># )" "f(evenodd, 1px)" == some "f(evenodd, 1px)"
+#guard run "[ a , ]* b" "a, a, b" == some "a, a, b"
+#guard run "[ a , ]* b" "a a b" == none
 #guard run "translateX( <length> )" "TRANSLATEX(1px)" == some "translateX(1px)"
 #guard run "<integer [1,∞]>" "0" == none
 #guard run "<integer [1,∞]>" "2" == some "2"

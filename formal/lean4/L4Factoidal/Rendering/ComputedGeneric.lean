@@ -17,6 +17,7 @@ do not use it.
 import L4Factoidal.Rendering.Style
 import L4Factoidal.Rendering.ComputedValues
 import L4Factoidal.Rendering.CssValues.Declaration
+import Std.Data.HashMap
 
 namespace L4Factoidal.Rendering.ComputedGeneric
 open L4Factoidal.Rendering.CSS
@@ -40,14 +41,22 @@ def keyLE : List Nat → List Nat → Bool
   | _ :: _, [] => false
   | a :: as, b :: bs => if a == b then keyLE as bs else a < b
 
+/-- For each property, the names of the shorthands that have it as a longhand, and the
+legacy names of the property and of those shorthands. Built once (a lazy constant). -/
+def coverIndex : Thunk (Std.HashMap String (List String)) := Thunk.mk fun _ =>
+  let add := fun (m : Std.HashMap String (List String)) (k v : String) => m.insert k (v :: (m[k]?).getD [])
+  let m := CssValues.Data.properties.foldl (fun m (n, _, _, _, ls) =>
+    if ls == "" then m else (ls.splitOn " ").foldl (fun m l => if l == "" then m else add m l n) m) {}
+  CssValues.Data.aliases.foldl (fun m (alias, target) =>
+    -- the alias of a longhand sets it; the alias of a shorthand sets its longhands
+    let m := add m target alias
+    match CssValues.lookup target with
+    | some row => row.longhands.foldl (fun m l => add m l alias) m
+    | none => m) m
+
 /-- The property names whose declarations can set property `p`: `p`, the shorthands that
-have it as a longhand, and the legacy names of those. One pass over the table for a
-query, so that each declaration of the cascade is then one list lookup. -/
-def coveringNames (p : String) : List String :=
-  let direct := p :: CssValues.Data.properties.toList.filterMap fun (n, _, _, _, ls) =>
-    if ls == "" then none else if (ls.splitOn " ").contains p then some n else none
-  direct ++ CssValues.Data.aliases.toList.filterMap fun (alias, target) =>
-    if direct.contains target then some alias else none
+have it as a longhand, and the legacy names of those. -/
+def coveringNames (p : String) : List String := p :: (coverIndex.get[p]?).getD []
 
 /-- The cascaded value of property `p` (a name of the table, or a custom property) on
 element `id`: the canonical specified value of the winning declaration. -/
@@ -209,27 +218,33 @@ the answer. -/
 def absoluteWins : List String := ["margin-", "padding-", "min-", "max-"]
 
 /-- The names a computed style lists: the layout profile's (in its order), then every
-other longhand of the table (legacy aliases and prefixed names left out). -/
-def longhandNames : List String :=
+other longhand of the table (legacy aliases and prefixed names left out); and the other
+names it answers for (shorthands and legacy names). Built once (a lazy constant). -/
+def nameLists : Thunk (Array String × Array String) := Thunk.mk fun _ =>
   let profile := (ComputedValues.values {}).map (·.1)
-  profile ++ CssValues.Data.properties.toList.filterMap fun (n, _, _, _, ls) =>
-    if ls == "" && !profile.contains n && n.toList.head? != some '-' && !(CssValues.Data.aliases.any fun a => a.1 == n) then some n
-    else none
+  let aliases := CssValues.aliasMap.get
+  let longhands := profile ++ CssValues.Data.properties.toList.filterMap fun (n, _, _, _, ls) =>
+    if ls == "" && !profile.contains n && n.toList.head? != some '-' && !aliases.contains n then some n else none
+  let listed : Std.HashMap String Unit := longhands.foldl (fun m n => m.insert n ()) {}
+  let others := CssValues.Data.properties.toList.filterMap fun (n, _, _, _, _) => if listed.contains n then none else some n
+  (longhands.toArray, others.toArray)
 
-/-- The other names a computed style answers for: shorthands and legacy names. -/
-def otherNames : List String :=
-  let listed := longhandNames
-  CssValues.Data.properties.toList.filterMap fun (n, _, _, _, _) => if listed.contains n then none else some n
+def longhandNames : List String := nameLists.get.1.toList
+
+def otherNames : List String := nameLists.get.2.toList
 
 /-- The answer of a page for the names of a computed style: the listed names separated by
 U+0000, then U+0001, then the other names. -/
 def namesText : String :=
   "\x00".intercalate longhandNames ++ "\x01" ++ "\x00".intercalate otherNames
 
+/-- The number of properties of the layout profile: the first names of `nameLists`. -/
+def profileCount : Nat := (ComputedValues.values {}).length
+
 /-- The computed value of the `k`-th name (`longhandNames` then `otherNames`) on element
 `id`, with `profileValue` the layout profile's answer for a profile property. -/
 def valueAt (v : View) (id : Nat) (k : Nat) : String :=
-  let profile := ComputedValues.values (v.styles[id]?.getD {})
+  let profile := if k < profileCount then ComputedValues.values (v.styles[id]?.getD {}) else []
   match profile[k]? with
   | some (name, value) =>
     if declaredWins.contains name then
@@ -250,7 +265,9 @@ def valueAt (v : View) (id : Nat) (k : Nat) : String :=
       | none => value
     else value
   | none =>
-    match (longhandNames ++ otherNames)[k]? with
+    let (longhands, others) := nameLists.get
+    let name := if k < longhands.size then longhands[k]? else others[k - longhands.size]?
+    match name with
     | some name => computedOf v id name
     | none => ""
 

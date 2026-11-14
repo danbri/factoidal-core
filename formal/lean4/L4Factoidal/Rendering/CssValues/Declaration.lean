@@ -182,16 +182,21 @@ def Block.set (b : Block) (property value priority : String) : Block :=
 /-- The property names of the block in order (`item`, `length`). -/
 def Block.names (b : Block) : List String := b.map (·.name)
 
-/-- The shorthands with a generic shape that have `name` among their longhands: most
-longhands first; legacy aliases left out. -/
-def shorthandsOf (name : String) : List Property :=
+/-- For each longhand, the shorthands with a generic shape that have it among their
+longhands: most longhands first; legacy aliases left out. Built once (a lazy constant). -/
+def shorthandIndex : Thunk (Std.HashMap String (List Property)) := Thunk.mk fun _ =>
   let rows := Data.properties.toList.filterMap fun (n, _, _, _, ls) =>
-    if ls == "" || (Data.aliases.any fun a => a.1 == n) then none
+    if ls == "" || (aliasMap.get.contains n) then none
     else
       match lookup n with
-      | some row => if row.longhands.contains name && (shapeOf row).isSome then some row else none
+      | some row => if (shapeOf row).isSome then some row else none
       | none => none
-  rows.mergeSort fun a b => a.longhands.length ≥ b.longhands.length
+  let rows := rows.mergeSort fun a b => a.longhands.length ≥ b.longhands.length
+  rows.foldl (fun m row =>
+    row.longhands.foldl (fun m l => m.insert l ((m[l]?).getD [] ++ [row])) m) {}
+
+/-- The shorthands with a generic shape that have `name` among their longhands. -/
+def shorthandsOf (name : String) : List Property := (shorthandIndex.get[name]?).getD []
 
 def declText (name value : String) (important : Bool) : String :=
   name ++ ": " ++ value ++ (if important then " !important" else "") ++ ";"
