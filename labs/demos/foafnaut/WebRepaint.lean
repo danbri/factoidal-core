@@ -59,7 +59,7 @@ def sameShape (a b : Computed) : Bool :=
     lineHeightFactor,visible,clipOverflow,underline,decorationColor,preformatted,borderWidth,borderStyle,
     _borderColor,borderSpacingX,borderSpacingY,borderCollapse,captionBottom,verticalAlign,tableFixed,
     minWidth,maxWidth,minHeight,maxHeight,objectFit,textAlign,direction,unicodeBidi,autoMarginLeft,autoMarginRight,
-    autoMarginTop,autoMarginBottom,align,flex,pos,_vars⟩ =>
+    autoMarginTop,autoMarginBottom,align,flex,pos,_vars,grid⟩ =>
   display == b.display && lengthEq width b.width && lengthEq height b.height &&
   edgesEq margin b.margin && edgesEq padding b.padding &&
   background.isSome == b.background.isSome && fontSize == b.fontSize && fontFamily == b.fontFamily &&
@@ -75,7 +75,7 @@ def sameShape (a b : Computed) : Bool :=
   textAlign == b.textAlign && direction == b.direction && unicodeBidi == b.unicodeBidi &&
   autoMarginLeft == b.autoMarginLeft && autoMarginRight == b.autoMarginRight &&
   autoMarginTop == b.autoMarginTop && autoMarginBottom == b.autoMarginBottom &&
-  align.same b.align && flex.same b.flex && pos.same b.pos
+  align.same b.align && flex.same b.flex && pos.same b.pos && grid.same b.grid
 
 /-- The same style, colours included. -/
 def same (a b : Computed) : Bool :=

@@ -4,6 +4,7 @@ import L4Factoidal.Unicode.Bidi
 import L4Factoidal.Rendering.MediaQuery
 import L4Factoidal.Rendering.CssValues.Properties
 import L4Factoidal.Rendering.FlexStyle
+import L4Factoidal.Rendering.GridStyle
 import L4Factoidal.Rendering.CssValues.Logical
 import L4Factoidal.Rendering.SheetReader
 import L4Factoidal.Rendering.CssVars
@@ -153,6 +154,8 @@ structure Computed where
   computed value. Empty on a page that declares none; an element that declares none
   shares its parent's map. -/
   vars : CssVars.Vars := {}
+  /-- The grid container and grid item values (`Rendering/GridStyle.lean`). -/
+  grid : GridStyle := {}
   deriving Repr
 instance : Inhabited Computed := ⟨{}⟩
 
@@ -479,7 +482,12 @@ def declarationsOf (ds : List SheetReader.Decl) : List Declaration :=
       | ls => ls ++ acc
     else match layoutShorthand key d.value with
       | some longhands => longhands.map (fun (k,v) => (⟨k,v,d.important⟩ : Declaration)) ++ acc
-      | none => whole :: acc) []
+      | none =>
+        -- `grid`, `grid-template`, `grid-area`, `grid-row`, `grid-column`: their longhands
+        -- (one that mentions `var()` is kept whole)
+        match (if CssVars.mentions d.value then none else gridShorthand key d.value) with
+        | some longhands => longhands.map (fun (k,v) => (⟨k,v,d.important⟩ : Declaration)) ++ acc
+        | none => whole :: acc) []
 
 /-- A declaration that is a custom property or mentions `var()`. -/
 def Declaration.usesVars (d : Declaration) : Bool :=
@@ -1008,6 +1016,7 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     if let some flex := s.flex.set s.fontSize property d.value then return {s with flex}
     if let some align := s.align.set s.fontSize property d.value then return {s with align}
     if let some pos := s.pos.set s.fontSize property d.value then return {s with pos}
+    if let some grid := s.grid.set s.fontSize property d.value then return {s with grid}
     throw s!"unsupported CSS property: {d.property}"
 
 /-! ### Values this profile's parsers do not read, through the property table
