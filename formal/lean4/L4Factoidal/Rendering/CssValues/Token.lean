@@ -44,7 +44,8 @@ inductive CV where
   /-- Canonical text made by a value parser (a colour, a simplified `calc()`): serialised
   as it is. Never made by `CV.parse`. -/
   | raw (s : String)
-  deriving Repr, Inhabited
+  -- no `Repr`: deriving it for a nested inductive makes a `partial def`
+  deriving Inhabited
 
 /-! ### Characters -/
 
@@ -436,14 +437,14 @@ def spaceBetween (a b : CV) : Bool :=
   | _, _ => true
 
 mutual
-  /-- The canonical text of one component value: functions lower-cased, their contents
-  serialised as a list. -/
+  /-- The canonical text of one component value: a function with its name as the value
+  parser gave it (the grammar's spelling), its contents serialised as a list. -/
   def CV.css : Nat → CV → String
     | 0, _ => ""
     | fuel + 1, cv =>
       match cv with
       | .tok t => t.css
-      | .fn name args => lower name ++ "(" ++ cssList fuel args ++ ")"
+      | .fn name args => name ++ "(" ++ cssList fuel args ++ ")"
       | .block o body => String.singleton o ++ cssList fuel body ++ String.singleton (closerChar o)
       | .raw s => s
   /-- The canonical text of a list of component values: one space between values, none

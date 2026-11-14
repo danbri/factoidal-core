@@ -22,7 +22,9 @@ namespace L4Factoidal.Rendering.CssValues
 
 /-- A grammar of the value definition syntax. -/
 inductive G where
-  /-- A keyword (lower case). -/
+  /-- A keyword (lower case). The table may write `a=b`: the keyword `a`, whose canonical
+  form is `b` (`xyz=xyz-d65`); `a=` is a keyword that is left out of the canonical value
+  (a default that is not serialised). This is the table's notation, not the specifications'. -/
   | kw (s : String)
   /-- A literal delimiter: `/`, `,` and the like. -/
   | lit (c : Char)
@@ -85,7 +87,7 @@ def refToken (cs : List Char) : VT :=
       .ref (String.ofList name) false (rangeBound lo) (rangeBound hi)
     | _ => .ref (String.ofList name) false none none
 
-def isWordChar (c : Char) : Bool := c.isAlphanum || c == '-' || c == '_' || c == '@'
+def isWordChar (c : Char) : Bool := c.isAlphanum || c == '-' || c == '_' || c == '@' || c == '='
 
 /-- The tokens of a grammar text. -/
 def vdsTokens : Nat → List Char → List VT → List VT
@@ -134,7 +136,7 @@ def vdsTokens : Nat → List Char → List VT → List VT
         let w := cs.takeWhile isWordChar
         let after := cs.drop w.length
         match after with
-        | '(' :: r => vdsTokens fuel r (.fnOpen (lower (String.ofList w)) :: acc)
+        | '(' :: r => vdsTokens fuel r (.fnOpen (String.ofList w) :: acc)
         | _ => vdsTokens fuel after (.word (lower (String.ofList w)) :: acc)
       else vdsTokens fuel rest (.lit c :: acc)
 
@@ -250,12 +252,29 @@ def isTag (name : String) : Bool := name.toList.head? == some '\x01'
 
 def cssWide : List String := ["inherit", "initial", "unset", "revert", "revert-layer"]
 
-/-- Juxtaposition. -/
-def seqWith (m : G → List CV → Res) : List G → List CV → Res
-  | [], ts => [([], ts)]
-  | g :: gs, ts =>
-    ((m g ts).flatMap fun (o1, r1) =>
-      (seqWith m gs r1).map fun (o2, r2) => (o1 ++ o2, r2)).take cap
+def G.isComma : G → Bool
+  | .lit c => c == ','
+  | _ => false
+
+/-- Juxtaposition. A comma of the grammar is left out of the value where the items before
+it (since the start or the last comma) or all the items after it are left out (CSS Values
+4 §2.1): `emitted` says that an item gave a value since the start or the last comma. -/
+def seqWith (m : G → List CV → Res) : List G → Bool → List CV → Res
+  | [], _, ts => [([], ts)]
+  | g :: gs, emitted, ts =>
+    if g.isComma then
+      if !emitted then seqWith m gs false ts
+      else
+        let withComma : Res := match ts with
+          | .tok .comma :: rest =>
+            (seqWith m gs false rest).filterMap fun (o2, r2) =>
+              if o2.isEmpty then none else some (CV.tok .comma :: o2, r2)
+          | _ => []
+        let without : Res := (seqWith m gs false ts).filter fun (o2, r2) => o2.isEmpty && r2.length == ts.length
+        (withComma ++ without).take cap
+    else
+      ((m g ts).flatMap fun (o1, r1) =>
+        (seqWith m gs (emitted || !o1.isEmpty) r1).map fun (o2, r2) => (o1 ++ o2, r2)).take cap
 
 /-- A multiplier: more repetitions first, each taking at least one value. -/
 def repWith (m : G → List CV → Res) (g : G) (lo : Nat) (hi : Option Nat) (comma : Bool) : Nat → Nat → List CV → Res
@@ -367,7 +386,11 @@ def matchG (env : Env) : Nat → G → List CV → Res
     match g with
     | .kw s =>
       match ts with
-      | .tok (.ident i) :: rest => if lower i == s then [([.tok (.ident s)], rest)] else []
+      | .tok (.ident i) :: rest =>
+        match s.splitOn "=" with
+        | [k] => if lower i == k then [([.tok (.ident k)], rest)] else []
+        | [k, canon] => if lower i == k then [(if canon == "" then [] else [.tok (.ident canon)], rest)] else []
+        | _ => []
       | _ => []
     | .lit c =>
       match ts with
@@ -383,7 +406,7 @@ def matchG (env : Env) : Nat → G → List CV → Res
     | .fn name arg =>
       match ts with
       | .fn n args :: rest =>
-        if lower n == name then
+        if lower n == lower name then
           ((matchG env fuel arg (stripWs args)).filterMap fun (o, r) =>
             if r.isEmpty then some ([CV.fn name o], rest) else none).take 1
         else []
@@ -396,7 +419,7 @@ def matchG (env : Env) : Nat → G → List CV → Res
             if r.isEmpty then some ([CV.block opener o'], rest) else none).take 1
         else []
       | _ => []
-    | .seq gs => seqWith (matchG env fuel) gs ts
+    | .seq gs => seqWith (matchG env fuel) gs false ts
     | .oneOf gs => (gs.flatMap fun g' => matchG env fuel g' ts).take cap
     | .anyOf gs => setWith (matchG env fuel) false (gs.length + 1) (indexed gs) [] ts
     | .allOf gs => setWith (matchG env fuel) true (gs.length + 1) (indexed gs) [] ts
@@ -490,6 +513,17 @@ private def run (grammar value : String) (ctx : Option Ctx := none) : Option Str
 #guard run "<string>+" "'a' \"b\"" == some "\"a\" \"b\""
 #guard run "<url>" "url(a.png)" == some "url(\"a.png\")"
 #guard run "<length>" "2em" (some {}) == some "32px"
+#guard run "f( <length> , <length>? )" "f(1px)" == some "f(1px)"
+#guard run "f( <length> , <length>? )" "f(1px,)" == none
+#guard run "f( <length> , <length>? )" "F(1px, 2px)" == some "f(1px, 2px)"
+#guard run "f( [ a || b ]? , <length># )" "f(1px, 2px)" == some "f(1px, 2px)"
+#guard run "f( [ a || b ]? , <length># )" "f(b a, 1px)" == some "f(a b, 1px)"
+#guard run "f( [ a || b ]? , <length># )" "f(, 1px)" == none
+#guard run "a , b? , c" "a, c" == some "a, c"
+#guard run "in [ xyz=xyz-d65 | lab ] [ shorter= hue= | longer hue ]?" "in XYZ shorter hue" == some "in xyz-d65"
+#guard run "in [ xyz=xyz-d65 | lab ] [ shorter= hue= | longer hue ]?" "in lab longer hue" == some "in lab longer hue"
+#guard run "a , b? , c" "a, , c" == none
+#guard run "translateX( <length> )" "TRANSLATEX(1px)" == some "translateX(1px)"
 #guard run "<integer [1,∞]>" "0" == none
 #guard run "<integer [1,∞]>" "2" == some "2"
 

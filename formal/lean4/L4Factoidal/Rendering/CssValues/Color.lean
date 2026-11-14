@@ -15,7 +15,7 @@ arithmetic. The conversions to and from the other spaces (`lab`, `lch`, `oklab`,
 `srgb-linear`, the `xyz` spaces, the wide-gamut RGB spaces) need powers, cube roots and
 trigonometric functions: they are rational approximations (see "Conversions between
 colour spaces" below), used only by `color-mix()` and relative colours across spaces. No
-`Float` is used.
+floating-point type is used.
 
 The reference for the serialised text is Chrome, as recorded in the expectations of the
 web-platform-tests under `css/css-color/parsing/`.
@@ -1488,5 +1488,60 @@ theorem parseRgb_bytes (r g b : Fin 256) :
   simp [parseRgb, splitArgs, stripWs, CV.isWs, readAlpha, readComps, literalReader, ofBytes,
     clamp01_byte]
   decide +kernel
+
+/-- Kind: round trip. Says: the six hexadecimal digits of three bytes are read by
+`parseHex` as the opaque legacy colour of those bytes, for all bytes. Does not say:
+anything about the 3-, 4- and 8-digit forms or upper-case digits (tested by `#guard`s). -/
+theorem parseHex_bytes (r g b : Fin 256) :
+    parseHex (String.ofList [hexDigit (r.val / 16), hexDigit (r.val % 16), hexDigit (g.val / 16),
+      hexDigit (g.val % 16), hexDigit (b.val / 16), hexDigit (b.val % 16)])
+      = some (ofBytes r.val g.val b.val) := by
+  have d (n : Nat) (h : n < 16) : hexVal (hexDigit n) = some n := hexVal_hexDigit ⟨n, h⟩
+  have e (n : Nat) : 16 * (n / 16) + n % 16 = n := Nat.div_add_mod n 16
+  simp [parseHex, d _ (by omega : r.val / 16 < 16), d _ (by omega : r.val % 16 < 16),
+    d _ (by omega : g.val / 16 < 16), d _ (by omega : g.val % 16 < 16),
+    d _ (by omega : b.val / 16 < 16), d _ (by omega : b.val % 16 < 16), e]
+
+/-- Kind: range. Says: for two hues in `[0, 360)`, the `shorter` fix-up leaves them at
+most 180 degrees apart. Does not say: that the interpolated hue is in `[0, 360)` (`mixPair`
+reduces it modulo 360 afterwards). -/
+theorem fixHue_shorter (a b : Rat) (ha : 0 ≤ a) (ha' : a < 360) (hb : 0 ≤ b) (hb' : b < 360) :
+    (fixHue .shorter a b).2 - (fixHue .shorter a b).1 ≤ 180
+      ∧ -180 ≤ (fixHue .shorter a b).2 - (fixHue .shorter a b).1 := by
+  simp only [fixHue]
+  split <;> (try split) <;> grind
+
+/-- Kind: range. Says: for two hues in `[0, 360)`, the `increasing` fix-up makes the second
+hue at least the first and less than a full turn above it. Does not say: anything about
+hues outside `[0, 360)`. -/
+theorem fixHue_increasing (a b : Rat) (ha : 0 ≤ a) (ha' : a < 360) (hb : 0 ≤ b) (hb' : b < 360) :
+    0 ≤ (fixHue .increasing a b).2 - (fixHue .increasing a b).1
+      ∧ (fixHue .increasing a b).2 - (fixHue .increasing a b).1 < 360 := by
+  simp only [fixHue]
+  split <;> grind
+
+/-- Kind: range. Says: for two hues in `[0, 360)`, the `decreasing` fix-up makes the second
+hue at most the first and less than a full turn below it. Does not say: anything about
+hues outside `[0, 360)`. -/
+theorem fixHue_decreasing (a b : Rat) (ha : 0 ≤ a) (ha' : a < 360) (hb : 0 ≤ b) (hb' : b < 360) :
+    (fixHue .decreasing a b).2 - (fixHue .decreasing a b).1 ≤ 0
+      ∧ -360 < (fixHue .decreasing a b).2 - (fixHue .decreasing a b).1 := by
+  simp only [fixHue]
+  split <;> grind
+
+/-- Kind: functional. Says: in a `color-mix()` of two colours where only the first
+percentage `p ≤ 100%` is written, the second is `100% - p`. Does not say: anything about
+more than two colours or about percentages that add up to more or less than 100%. -/
+theorem fillPcts_one (p : Rat) (h : p ≤ 100) : fillPcts [some p, none] = [p, 100 - p] := by
+  simp [fillPcts, clampPos]
+  grind
+
+/-- Kind: functional. Says: the alpha of two interpolated colours that both have an alpha
+is the weighted sum of the two alphas. Does not say: anything about the other components
+(they are premultiplied) or about a missing alpha. -/
+theorem mixPair_alpha (hm : HueMethod) (x y : Color) (p q a b : Rat)
+    (hx : x.alpha = some a) (hy : y.alpha = some b) :
+    (mixPair hm x y p q).alpha = some (a * p + b * q) := by
+  simp [mixPair, fillFrom, hx, hy]
 
 end L4Factoidal.Rendering.CssValues.Color

@@ -113,7 +113,8 @@ inductive Calc where
   | fn (name : String) (args : List Calc)
   /-- `e`, `pi`, `infinity`, `-infinity`, `nan`; a rounding strategy; `none` in `clamp()`. -/
   | kw (name : String)
-  deriving Repr, Inhabited
+  -- no `Repr`: deriving it for a nested inductive makes a `partial def`
+  deriving Inhabited
 
 /-- The type of a calculation: the exponent of each base type (§10.2). A percentage is
 typed as the kind it resolves against when the context mixes them. -/

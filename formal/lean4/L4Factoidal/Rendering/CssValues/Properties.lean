@@ -104,6 +104,39 @@ def wideKeyword (top : List CV) : Option String :=
 values are made (CSS Variables 1 §3). -/
 def hasSubstitution (cvs : List CV) : Bool := hasFn "var" 32 cvs || hasFn "env" 32 cvs
 
+/-- The short form of a `display` value (CSS Display 3 §2.5 and its serialisation: the
+single-keyword legacy forms where they exist). The words arrive in the order of the
+grammar: outside, inside, `list-item`. -/
+def displayCanon (v : String) : String :=
+  let ws := v.splitOn " "
+  if ws.contains "list-item" then
+    " ".intercalate (ws.filter fun w => w != "flow" && w != "block")
+  else
+    match ws with
+    | ["flow"] => "block"
+    | ["block", "flow"] => "block"
+    | ["block", "flow-root"] => "flow-root"
+    | ["block", "flex"] => "flex"
+    | ["block", "grid"] => "grid"
+    | ["block", "table"] => "table"
+    | ["block", "grid-lanes"] => "grid-lanes"
+    | ["inline", "flow"] => "inline"
+    | ["inline", "flow-root"] => "inline-block"
+    | ["inline", "flex"] => "inline-flex"
+    | ["inline", "grid"] => "inline-grid"
+    | ["inline", "table"] => "inline-table"
+    | ["inline", "grid-lanes"] => "inline-grid-lanes"
+    | ["inline", "ruby"] => "ruby"
+    | ["inline", "math"] => "math"
+    | ["run-in", "flow"] => "run-in"
+    | _ => v
+
+/-- The canonical forms that the order of the grammar alone does not give, by property. -/
+def canonical (p v : String) : String :=
+  match p with
+  | "display" => displayCanon v
+  | _ => v
+
 /-- The canonical specified value of `value` for property `property`: `none` when the
 property is not known or the value is not one of its values. -/
 def specified (property value : String) : Option String :=
@@ -122,7 +155,7 @@ def specified (property value : String) : Option String :=
         | none =>
           if hasSubstitution cvs then some (rawText cvs)
           else if p == "all" then none
-          else matchText none row.grammar top
+          else (matchText none row.grammar top).map (canonical p)
 
 /-- `CSS.supports(property, value)` (CSS Conditional 3 §8.1): the value parses. -/
 def supports (property value : String) : Bool := (specified property value).isSome
@@ -336,7 +369,7 @@ def computed (ctx : ComputeCtx) (property value : String) : String :=
       let cvs := CV.parse value
       if hasSubstitution cvs then value
       else
-        let v := (matchText (some ctx) row.grammar (stripWs cvs)).getD value
+        let v := canonical p ((matchText (some ctx) row.grammar (stripWs cvs)).getD value)
         if lineWidthProperties.contains p then (lineWidthKeyword v).getD v
         else if p == "font-weight" then (if v == "normal" then "400" else if v == "bold" then "700" else v)
         else v
@@ -371,6 +404,13 @@ def initialComputed (ctx : ComputeCtx) (row : Property) : String :=
 #guard specified "transform" "translate(10px, 20%) rotate(45deg)" == some "translate(10px, 20%) rotate(45deg)"
 #guard specified "box-shadow" "1px 2px red" == some "red 1px 2px"
 #guard supports "display" "flex"
+#guard specified "display" "flow" == some "block"
+#guard specified "display" "inline flow-root" == some "inline-block"
+#guard specified "display" "list-item flow" == some "list-item"
+#guard specified "display" "inline list-item" == some "inline list-item"
+#guard specified "transform" "translatex(1px) TRANSLATE(1px)" == some "translateX(1px) translate(1px)"
+#guard specified "background-image" "linear-gradient(to left bottom, red, blue)" == some "linear-gradient(to left bottom, red, blue)"
+#guard specified "background-image" "linear-gradient(red, blue)" == some "linear-gradient(red, blue)"
 #guard !supports "display" "flexx"
 #guard expand "margin" "1px 2px" == some [("margin-top", "1px"), ("margin-right", "2px"), ("margin-bottom", "1px"), ("margin-left", "2px")]
 #guard expand "margin" "1px 2px 3px 4px 5px" == none
