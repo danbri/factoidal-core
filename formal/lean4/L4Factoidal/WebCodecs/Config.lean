@@ -9,6 +9,8 @@ not supported makes `isConfigSupported` answer `supported: false` and `configure
 with a NotSupportedError. This engine has no encoder and no decoder, so no configuration is
 supported (`check_not_supported`): the page is told so, and nothing is handed to a host codec.
 -/
+import L4Factoidal.WebCodecs.Codec
+
 namespace L4Factoidal.WebCodecs.Config
 
 inductive Kind where
@@ -82,8 +84,15 @@ def valid (k : Kind) (f : Fields) : Bool :=
     f.get? "width" != some 0 && f.get? "height" != some 0 && (f.get? "width").isSome && (f.get? "height").isSome &&
     f.nonzero "displayWidth" && f.nonzero "displayHeight" && f.nonzero "bitrate"
 
-/-- "Check Configuration Support" for a valid configuration. No codec is implemented. -/
-def supported (_k : Kind) (_f : Fields) : Bool := false
+/-- The codecs this engine can run for a kind of codec object: none. -/
+def implemented (_c : Codec.Codec) (_k : Kind) : Bool := false
+
+/-- "Check Configuration Support" for a valid configuration: the codec string names a codec of the
+registry (`Codec.parse`: as written, with no trimming and no case folding) that is implemented. -/
+def supported (k : Kind) (f : Fields) : Bool :=
+  match Codec.parse f.codec with
+  | some c => implemented c k
+  | none => false
 
 def check (k : Kind) (f : Fields) : Verdict :=
   if !valid k f then .invalid else if supported k f then .supported else .unsupported
@@ -105,10 +114,10 @@ theorem check_detached (k : Kind) (f : Fields) (h : f.detached = true) : check k
 encoder or a decoder. This engine has none; the statement must be replaced by a narrower one in
 the commit that adds a codec. Does not say: that an unsupported codec string is well formed. -/
 theorem check_not_supported (k : Kind) (f : Fields) : check k f ≠ .supported := by
-  unfold check supported
+  unfold check supported implemented
   split
   · simp
-  · simp
+  · split <;> simp
 
 /-! ## Tests (`webcodecs/*-config.https.any.js`, `audio-decoder`, `video-decoder`) -/
 

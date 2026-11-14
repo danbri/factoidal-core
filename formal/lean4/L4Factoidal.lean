@@ -1069,6 +1069,7 @@ import L4Factoidal.WebCodecs.Format
 import L4Factoidal.WebCodecs.Layout
 import L4Factoidal.WebCodecs.Frame
 import L4Factoidal.WebCodecs.Convert
+import L4Factoidal.WebCodecs.Codec
 import L4Factoidal.WebCodecs.Config
 import L4Factoidal.WebCodecs.Api
 import L4Factoidal.Net.ReferrerPolicy
