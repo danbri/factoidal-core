@@ -47,7 +47,7 @@ async function main() {
     console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--shortcut-sweep] [--print-pdf FILE] [--scroll-sweep] [--watch-sweep SECONDS] [--single-frame] [--offscreen] [--check-pixels] [--perf-summary] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts] [--strict | --be-liberal-in-what-we-accept] [--no-splash | --splash] [--find-sweep]\nCommand-Q quits; Command-R and R reload; Command-T, Command-W and Shift-Command-T open, close and reopen tabs; Command-1 to 9, Control-Tab and Shift-Command-[ ] change tab; Space, Page Up, Page Down, Home, End and arrows scroll; Escape stops loading; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints; Command-F finds in the page, Command-G and Shift-Command-G go to the next and previous match, Escape closes find; Command-O opens a file and Command-S saves the page as fetched; Option-Command-J opens the console tab (foafnaut:console). A splash with the release shows over the first page in a window; --no-splash leaves it out (it is always off screen off, and in sweeps and checks). By default the browser draws a page without what the built-in engine may skip (module scripts, media conditions it can not read, stylesheets not fetched, scripts when they are off, inline SVG it can not draw) and lists each skip in the console; --strict refuses such a page. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
   }
   let scrollSweep=false,watchSeconds=0,framesInFlight=1,splashArg:"on"|"off"|undefined;
-  let shotFile:string|undefined;
+  let shotFile:string|undefined,shotSize:[number,number,number]=[800,500,2],textSize=200;
   let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false;
   while(args.length){const arg=args.shift();
     if(arg==="--html"||arg==="--url"){
@@ -61,6 +61,11 @@ async function main() {
     // Off screen: a PNG of the window after the 120th present of page canvases, a picture of
     // what the native engine drew (the page's layers, its canvases and the chrome).
     else if(arg==="--shot"){shotFile=args.shift();if(!shotFile)throw new Error("--shot needs a file path");}
+    // The off-screen window in points and its backing scale (`--offscreen-size 1280x1600@1`), and the text
+    // size of the window in percent of a usual browser's (with none, the default of a new window, 200).
+    else if(arg==="--offscreen-size"){const m=/^(\d+)x(\d+)(?:@(\d))?$/.exec(args.shift()??"");
+      if(!m)throw new Error("--offscreen-size needs WIDTHxHEIGHT[@SCALE]");shotSize=[Number(m[1]),Number(m[2]),Number(m[3]??2)];}
+    else if(arg==="--text-size"){textSize=Number(args.shift());if(!(textSize>=50&&textSize<=1000))throw new Error("--text-size needs a percentage from 50 to 1000");}
     // No visible window (issue 1268): frames are drawn into a GPU texture of the window size, and
     // events go through the window library's queue as before, from a window that is never shown.
     // Sweeps then run with the screen locked, the display asleep, or on a machine with no display.
@@ -1128,7 +1133,7 @@ async function main() {
     // Off screen the backing scale is 2, as on a Retina display, so the sweeps' backing-pixel
     // coordinates mean the same on every machine.
     let target:PresentTarget={offscreen:true};
-    if(offscreen)native.createOffscreen(800,500,2,windowTitle(document));
+    if(offscreen)native.createOffscreen(shotSize[0],shotSize[1],shotSize[2],windowTitle(document));
     else{
       const handles=native.create(800,500,windowTitle(document));
       target=new Deno.UnsafeWindowSurface(cocoaSurfaceOptions(handles,width,height));
@@ -1155,7 +1160,7 @@ async function main() {
     // Layout in points, drawn at the backing scale (WebDocument, Device pixels): Lean lays the page
     // out width/scale CSS px wide. The starting text zoom is 200% of a usual browser's text at this
     // scale (WebSelection.unitPercent), as on the Hub; a saved zoom (read above, applied later) wins.
-    view.zoomUnit=scale*100;view.textScalePercent=Math.max(50,Math.round(200*scale/5)*5);
+    view.zoomUnit=scale*100;view.textScalePercent=Math.max(50,Math.round(textSize*scale/5)*5);
     if(commands)native.testRaise();
     device.addEventListener("uncapturederror",event=>{console.error("Native HTML GPU error:",(event as GPUUncapturedErrorEvent).error.message);running=false;Deno.exitCode=1;});
     device.lost.then(info=>{if(running){console.error("Native HTML GPU lost:",info.message);running=false;Deno.exitCode=1;}});
