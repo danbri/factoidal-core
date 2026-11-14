@@ -403,12 +403,13 @@ private def common := ["id","fill","stroke","color","fill-opacity","stroke-opaci
 private def paintServers := ["linearGradient","radialGradient","solidColor"]
 /-- Attributes that say nothing about what is drawn, and that HTML pages put on inline SVG:
 accessibility and scripting metadata (WAI-ARIA `role` and `aria-*`; `tabindex` of SVG 2 §8.2;
-`focusable` of SVG Tiny 1.2 §13.12.1; `data-*` of SVG 2 §5.9; `lang`), and `class`, which only
-names the element for selectors. The reader reads past them. Before 2026-11-14 each refused
+`focusable` of SVG Tiny 1.2 §13.12.1; `data-*` of SVG 2 §5.9; `lang`; `alt`, which is no SVG
+attribute and which pages write on an `svg` as they would on an `img`: lean-lang.org), and
+`class`, which only names the element for selectors. The reader reads past them. Before 2026-11-14 each refused
 its whole `svg`: every icon of gov.uk (`focusable`), of developer.mozilla.org (`class`) and of
 BBC News (`class`, `focusable`, `aria-hidden`). -/
 def inertAttribute (name : String) : Bool :=
-  name.startsWith "aria-" || name.startsWith "data-" || ["focusable","role","tabindex","lang","class"].contains name
+  name.startsWith "aria-" || name.startsWith "data-" || ["focusable","role","tabindex","lang","class","alt"].contains name
 
 private def validateAttrs (tag : String) (attrs : List NamespaceAttribute) (extra : List String) : Except String Unit := do
   for a in attrs do
