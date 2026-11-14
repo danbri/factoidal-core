@@ -881,7 +881,25 @@ def resolvedLonghand (v : View) (id : Nat) (name : String) : String :=
           | _ => value
       | none => value
     else value
-  | none => computedLonghand v depthBound id name
+  | none =>
+    let value := computedLonghand v depthBound id name
+    match opposite name with
+    | some opp =>
+      -- a relatively positioned box (CSS Position 3 §3.4): an `auto` inset is the opposite
+      -- one negated, or 0px when both are `auto` (CSSOM §9 resolved value)
+      if value == "auto" && computedLonghand v depthBound id "position" == "relative" then
+        let o := computedLonghand v depthBound id opp
+        if o == "auto" then "0px"
+        else match CssValues.stripWs (CssValues.CV.parse o) with
+          | [.tok (.dim x _ u)] => if CssValues.lower u == "px" then CssValues.fmtRat (-x) ++ "px" else value
+          | _ => value
+      else value
+    | none => value
+where
+  /-- The inset on the other side. -/
+  opposite : String → Option String
+    | "top" => some "bottom" | "bottom" => some "top" | "left" => some "right" | "right" => some "left"
+    | _ => none
 
 /-- The computed value of the `k`-th name (`longhandNames` then `otherNames`) on element
 `id`, with `profileValue` the layout profile's answer for a profile property. -/
@@ -976,6 +994,18 @@ private def computedAt (html css prop : String) : String :=
 #guard computedAt "<div id=t></div>" "@function --f(--x: 10px) { --y: var(--x); result: var(--y); } #t { --actual: --f(); }" "--actual" == "10px"
 #guard computedAt "<div id=t></div>" "@function --f() returns <length> { result: calc(1px + 1px); } #t { --actual: --f(); }" "--actual" == "2px"
 #guard computedAt "<div id=t></div>" "@function --f() returns <length> { result: red; } #t { --actual: --f(); }" "--actual" == ""
+-- resolved insets of a relatively positioned box
+private def resolvedAt (html css prop : String) : String :=
+  let dom := DOM.parseHtmlDocument html
+  match CSS.parse css, dom.getElementById 0 "t" with
+  | .ok rules, some id =>
+    match computeAll dom rules with
+    | .ok styles => resolvedLonghand { dom := dom, matchesOf := fun i => matchedRules dom i rules, styles := styles } id prop
+    | .error _ => "error"
+  | _, _ => "error"
+#guard resolvedAt "<div id=t></div>" "#t { position: relative; bottom: 3px }" "top" == "-3px"
+#guard resolvedAt "<div id=t></div>" "#t { position: relative }" "left" == "0px"
+#guard resolvedAt "<div id=t></div>" "#t { position: static }" "left" == "auto"
 -- env()
 #guard computedAt "<div id=t></div>" "#t { --a: env(unknown-env-name, 10px); }" "--a" == "10px"
 #guard computedAt "<div id=t></div>" "#t { --a: env(safe-area-inset-top); }" "--a" == "0px"
