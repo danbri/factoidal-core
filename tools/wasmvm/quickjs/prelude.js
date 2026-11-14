@@ -13440,7 +13440,7 @@
     get playbackRate() { return snap(this).playbackRate; }
     set playbackRate(v) { call(this, { m: 'playbackRate', v: String(Number(v)) }); }
     get playState() { return snap(this).playState; }
-    get replaceState() { aid(this); return 'active'; }
+    get replaceState() { return snap(this).replaceState; }
     get pending() { return snap(this).pending; }
     get overallProgress() { return snap(this).overallProgress; }
     get ready() { snap(this); return animState.get(this).ready; }
@@ -13454,16 +13454,16 @@
       call(this, { m: 'updatePlaybackRate', v: String(Number(rate)) });
     }
     reverse() { call(this, { m: 'reverse' }); }
-    persist() { aid(this); }
-    // §6.4.9: the animated values of the effect's properties, as the target's computed style
-    // has them now, written to its `style` attribute.
+    persist() { call(this, { m: 'persist' }); }
+    // §6.4.9: Lean gives the values of the animation's target in the effect stack up to this
+    // animation (op 65 "commit"), or the error (a target with no style attribute, a target
+    // that is not rendered); they are written to the target's `style` attribute.
     commitStyles() {
+      const id = aid(this);
       const eff = animState.get(this).effect, target = eff instanceof KeyframeEffect ? eff.target : null;
-      if (target === null) throw new DOMException('The animation has no target.', 'InvalidStateError');
-      if (!target.isConnected) throw new DOMException('The target is not rendered.', 'InvalidStateError');
-      const cs = getComputedStyle(target), names = new Set();
-      for (const k of eff.getKeyframes()) for (const name of Object.keys(k)) if (!['offset', 'computedOffset', 'easing', 'composite'].includes(name)) names.add(name);
-      for (const name of names) { const css = cssName(name === 'cssFloat' ? 'float' : name === 'cssOffset' ? 'offset' : name); const v = cs.getPropertyValue(css); if (v !== '') target.style.setProperty(css, v); }
+      const values = aop(id, 65, 'commit');
+      if (target === null || !Array.isArray(values)) return;
+      for (const [name, value] of values) target.style.setProperty(name, value);
     }
   }
   for (const name of ['finish', 'cancel', 'remove']) Object.defineProperty(Animation.prototype, 'on' + name, { get() { return handlerOf(this, name); },
