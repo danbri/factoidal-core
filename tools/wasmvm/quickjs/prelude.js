@@ -8640,13 +8640,16 @@
     }
     if (random) {
       define(Crypto.prototype, 'getRandomValues', function getRandomValues(array) {
+        if (!cryptoObjects.has(this)) throw new TypeError("Failed to execute 'getRandomValues' on 'Crypto': Illegal invocation");
         if (arguments.length < 1) throw new TypeError("Failed to execute 'getRandomValues' on 'Crypto': 1 argument required");
         if (!(intArrays.some(C => array instanceof C))) throw new DOMException("Failed to execute 'getRandomValues' on 'Crypto': The provided ArrayBufferView is of type that is not an integer array.", 'TypeMismatchError');
         if (array.byteLength > 65536) throw new (makeQuotaError())(`Failed to execute 'getRandomValues' on 'Crypto': The ArrayBufferView's byte length (${array.byteLength}) exceeds the number of bytes of entropy available via this API (65536).`);
         new Uint8Array(array.buffer, array.byteOffset, array.byteLength).set(new Uint8Array(api(30, [String(array.byteLength)], 0, true, 'getRandomValues')));
         return array;
       });
-      define(Crypto.prototype, 'randomUUID', function randomUUID() { return api(31, [], 0, false, 'randomUUID'); });
+      define(Crypto.prototype, 'randomUUID', function randomUUID() {
+        if (!cryptoObjects.has(this)) throw new TypeError("Failed to execute 'randomUUID' on 'Crypto': Illegal invocation");
+        return api(31, [], 0, false, 'randomUUID'); });
     }
     // StructuredSerialize of a CryptoKey (§15.4 "serializable"): the copy has its own handle
     // to the same key in Lean, so the page's dropping one does not wipe the other's.
@@ -12617,7 +12620,7 @@
     'SubtleCrypto', 'CryptoKey', 'performance', 'Performance', 'PerformanceEntry', 'PerformanceMark', 'PerformanceMeasure',
     'Blob', 'File', 'FileReader', 'FormData', 'Headers', 'Request', 'Response', 'fetch', 'XMLHttpRequest',
     'XMLHttpRequestEventTarget', 'XMLHttpRequestUpload', 'ReadableStream', 'ReadableStreamDefaultReader', 'ReadableStreamBYOBReader', 'ReadableStreamDefaultController', 'ReadableByteStreamController', 'ReadableStreamBYOBRequest', 'WritableStream', 'WritableStreamDefaultWriter',
-    'WritableStreamDefaultController', 'TransformStream', 'TransformStreamDefaultController', 'ByteLengthQueuingStrategy', 'CountQueuingStrategy', 'CompressionStream', 'DecompressionStream', 'MessageChannel', 'MessagePort', 'BroadcastChannel', 'webkitURL',
+    'WritableStreamDefaultController', 'TransformStream', 'TransformStreamDefaultController', 'ByteLengthQueuingStrategy', 'CountQueuingStrategy', 'CompressionStream', 'DecompressionStream', 'MessageChannel', 'MessagePort', 'BroadcastChannel', 'webkitURL', 'QuotaExceededError',
     // WebGL's interfaces are [Exposed=(Window,Worker)].
     'WebGLRenderingContext', 'WebGL2RenderingContext', 'WebGLObject', 'WebGLBuffer', 'WebGLFramebuffer', 'WebGLProgram',
     'WebGLRenderbuffer', 'WebGLShader', 'WebGLTexture', 'WebGLQuery', 'WebGLSampler', 'WebGLSync', 'WebGLTransformFeedback',
