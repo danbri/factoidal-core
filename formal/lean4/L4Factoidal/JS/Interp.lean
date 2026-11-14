@@ -1228,6 +1228,10 @@ def helperRunning : String := privKey "%HelperRunning"
 /-- The hidden slot of a Date object (`[[DateValue]]` is its `.prim (.num t)`). -/
 def dateKey : String := privKey "%DateValue"
 
+/-- The hidden mark of an array whose `join` is running: joining it again from inside (an array
+that holds itself, directly or through others) would recurse without end. -/
+def joiningKey : String := privKey "%Joining"
+
 /-- The record of a `yield*` in an async generator (§15.5.5 with generatorKind async), held
 where a sync `yield*` holds its iterator (`GFrame.delegate`): an object with these hidden
 slots. The phase: 0 at a `yield` (or before the first `next`), 1 the result of `next` or
@@ -4545,13 +4549,25 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
         | _ => newArray #[]
       | _ => newArray #[]
     | .arrayJoin | .arrayToString =>
-      let es ← elemsOf n thisV
-      let sep ← if id == .arrayJoin then (match a0 with | .undef => pure "," | v => toStr n v) else pure ","
-      let parts ← es.toList.mapM fun v => match v with
-        | .undef | .null => pure ""
-        | v => toStr n v
-      checkStrLen (parts.foldl (fun acc t => acc + t.utf8ByteSize + sep.utf8ByteSize) 0)
-      pure (.str (Str.canonical (sep.intercalate parts)))
+      -- a cycle (the array met again while it is being joined) is an implementation limit:
+      -- RangeError, as exhausting the stack is in other engines, and never a native overflow
+      let self? : Option Nat := match thisV with | .obj o => some o | _ => none
+      if let some o := self? then
+        if hiddenFlag (← getObj o) joiningKey then throwErr .range "Maximum call stack size exceeded"
+        setHidden o joiningKey (.bool true)
+      let res ← tryCatch (do
+          let es ← elemsOf n thisV
+          let sep ← if id == .arrayJoin then (match a0 with | .undef => pure "," | v => toStr n v) else pure ","
+          let parts ← es.toList.mapM fun v => match v with
+            | .undef | .null => pure ""
+            | v => toStr n v
+          checkStrLen (parts.foldl (fun acc t => acc + t.utf8ByteSize + sep.utf8ByteSize) 0)
+          pure (Except.ok (Value.str (Str.canonical (sep.intercalate parts)))))
+        (fun a => pure (Except.error a))
+      if let some o := self? then deleteOwn o joiningKey
+      match res with
+      | .ok v => pure v
+      | .error a => throw a
     | .arrayIndexOf | .arrayIncludes =>
       -- §23.1.3.17, §23.1.3.16: indexOf skips absent indices (HasProperty) and uses ===;
       -- includes reads every index and uses SameValueZero
