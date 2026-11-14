@@ -23,13 +23,15 @@ says whether they may be used and whether a script may ever read them.
   (`Out.done` with `hidden`).
 * No cookies: these requests carry no jar (`Transfer.jar` is empty), so no `Cookie` is sent
   and none is stored. The page session's jar is the script session's (`Net.Xhr`).
-* A response that is not ok (status outside 200 to 299) is a failure for the element.
+* A response that is not ok (status outside 200 to 299) is a failure for the element, and so is
+  one whose type the element may not use (`typeOk`: style sheets, scripts and nosniff).
 * The engine holds each transfer in progress in a table of at most `maxLive`; a host that
   starts more gets failures.
 
 ## What is proved
 
-`start_wire` and `answer_wire`: every request the host is told to make passes the page's
+`after_style_type`: a style sheet is used only when `text/css`, or of the page's own origin and
+not sent with `nosniff`. `start_wire` and `answer_wire`: every request the host is told to make passes the page's
 policy (`wireReach`: no special-purpose address for a page from the network) and, for the
 first one, `mayConnect` (scheme, local address, mixed content) on the URL the host fetches.
 `start_mixed`: an `https` document never sends a request to an `http` URL. `kind_known`: a
@@ -71,6 +73,34 @@ def request (id : Nat) (page : Page) (kind url referrer : String) (policy : Refe
   { id, page, method := "GET", url, headers := [], body := none, noCors := cors.isNone,
     credentials := cors == some true, destination := kind, referrer, referrerPolicy := policy }
 
+/-- The essence of a `Content-Type` value: before any parameter, trimmed, lower case. -/
+def essence (v : String) : String :=
+  lower (trimWs ((v.splitOn ";").headD ""))
+
+/-- A JavaScript MIME type essence (MIME Sniffing §4.6). -/
+def javaScriptType (e : String) : Bool :=
+  ["application/ecmascript", "application/javascript", "application/x-ecmascript",
+   "application/x-javascript", "text/ecmascript", "text/javascript", "text/javascript1.0",
+   "text/javascript1.1", "text/javascript1.2", "text/javascript1.3", "text/javascript1.4",
+   "text/javascript1.5", "text/jscript", "text/livescript", "text/x-ecmascript",
+   "text/x-javascript"].contains e
+
+/-- Is an answer of type essence `type` usable for destination `kind` (Fetch §4.1 "should
+response to request be blocked due to its MIME type" and "due to nosniff"; HTML §4.6.7.2 for
+style sheets): a style sheet of another origin, or one sent with `nosniff`, is `text/css`; a
+script is never an image, audio, video or CSV type, and with `nosniff` has a JavaScript type.
+`same`: the answer is of the page's own origin. -/
+def typeOk (kind : String) (same nosniff : Bool) (type : String) : Bool :=
+  if kind == "style" then type == "text/css" || (same && !nosniff)
+  else if kind == "script" then
+    !(type.startsWith "image/" || type.startsWith "audio/" || type.startsWith "video/" || type == "text/csv") &&
+      (!nosniff || javaScriptType type)
+  else true
+
+/-- The answer was sent with `X-Content-Type-Options: nosniff`. -/
+def nosniffOf (hs : List (String × String)) : Bool :=
+  (headerGet hs "x-content-type-options").any fun v => lower (trimWs ((v.splitOn ",").headD "")) == "nosniff"
+
 /-- An ok status (Fetch §2.2.6). -/
 def okStatus (s : Nat) : Bool := 200 ≤ s && s ≤ 299
 
@@ -83,6 +113,8 @@ def after (tab : Table) (id : Nat) (last : Option Answer) : Step → Table × Ou
     match last with
     | some a =>
       if !okStatus a.status then (tab, .fail id s!"status {a.status}") else
+      if !typeOk t.destination t.same (nosniffOf a.headers) (essence ((headerGet a.headers "content-type").getD "")) then
+        (tab, .fail id "refused: the type is not one this element may use") else
       (tab, .done id a.status ((headerGet a.headers "content-type").getD "")
         (if a.url.isEmpty then t.url else a.url) (r.tainting == "opaque") none)
     | none =>
@@ -146,6 +178,17 @@ private def resolved : Table × Out → Table × Out
 #guard (match resolved (start {} page "image" "https://a.example/x.png" "" .default none) with
   | (tab, .wire id _) => match answer tab id { status := 404 } with | (_, .fail _ _) => true | _ => false
   | _ => false)
+-- a style sheet of another origin that is not text/css is refused; one of the page's origin is used
+#guard (match resolved (start {} page "style" "https://b.example/s.css" "" .default none) with
+  | (tab, .wire id _) => match answer tab id { status := 200, headers := [("Content-Type", "text/plain")] } with | (_, .fail _ _) => true | _ => false
+  | _ => false)
+#guard (match resolved (start {} page "style" "https://a.example/s.css" "" .default none) with
+  | (tab, .wire id _) => match answer tab id { status := 200, headers := [("Content-Type", "text/plain")] } with | (_, .done ..) => true | _ => false
+  | _ => false)
+#guard (match resolved (start {} page "script" "https://a.example/s.js" "" .default none) with
+  | (tab, .wire id _) => match answer tab id { status := 200, headers := [("Content-Type", "text/plain"), ("X-Content-Type-Options", "nosniff")] } with
+    | (_, .fail _ _) => true | _ => false
+  | _ => false)
 -- a name that resolves to a special-purpose address is refused
 #guard (match start {} page "image" "https://intranet.example/x.png" "" .default none with
   | (tab, .wire id _) => match answer tab id { addresses := ["10.0.0.1"] } with | (_, .fail _ _) => true | _ => false
@@ -163,7 +206,9 @@ theorem after_wire (tab : Table) (id : Nat) (last : Option Answer) (st : Step) (
     exact ⟨t, by rw [h.2.2]⟩
   · simp at h
   · split at h
-    · split at h <;> simp at h
+    · split at h
+      · simp at h
+      · split at h <;> simp at h
     · simp at h
 
 /-- Kind: lemma. Says: a `start` that tells the host to make a request does so for the plan of
@@ -226,6 +271,24 @@ theorem start_mixed (tab : Table) (page : Page) (kind url referrer : String) (po
   unfold mayConnect at hc
   simp only [hs, Bool.not_true, Bool.false_or, Bool.and_eq_true, beq_iff_eq] at hc
   exact hc.2
+
+/-- Kind: security theorem (HTML §4.6.7.2, Fetch §4.1). Says: a style sheet the host is told
+to use is `text/css`, or of the page's own origin and not sent with `nosniff`. -/
+theorem after_style_type (tab : Table) (id : Nat) (a : Answer) (t : Transfer) (r : Response) (tab' : Table)
+    (id' st : Nat) (ty u : String) (hd : Bool) (b : Option ByteArray) (hk : t.destination = "style")
+    (h : after tab id (some a) (.deliver t r) = (tab', .done id' st ty u hd b)) :
+    essence ty = "text/css" ∨ (t.same = true ∧ nosniffOf a.headers = false) := by
+  unfold after at h
+  by_cases h1 : (!okStatus a.status) = true
+  · simp [h1] at h
+  · simp only [h1, if_false, Bool.false_eq_true] at h
+    by_cases h2 : (!typeOk t.destination t.same (nosniffOf a.headers) (essence ((headerGet a.headers "content-type").getD ""))) = true
+    · simp [h2] at h
+    · simp only [h2, if_false, Bool.false_eq_true, Prod.mk.injEq, Out.done.injEq] at h
+      obtain ⟨-, -, -, rfl, -⟩ := h
+      simp only [Bool.not_eq_true', Bool.not_eq_false] at h2
+      simp only [typeOk, hk, if_true, Bool.or_eq_true, beq_iff_eq, Bool.and_eq_true, Bool.not_eq_true'] at h2
+      exact h2
 
 /-- Kind: policy theorem. Says: a request of a destination this file does not know is
 refused before anything is sent. -/
