@@ -864,8 +864,10 @@ def domOpM (id op : Nat) (q : String) : Op String := do
     -- makes (Referrer Policy §8.3 steps 1 to 3): the URL it names, U+0000, the token of its
     -- referrer policy (`HTML.ReferrerSource.answer`: the document's `meta name=referrer`,
     -- else its response's `Referrer-Policy`, else its container's for a `srcdoc` document)
+    -- `q`: the page document's current URL when the page's history changed it (it is of the
+    -- page's origin: `Net.Xhr.setClient` keeps a URL only when it is), else ""
     let st ← get
-    return L4Factoidal.HTML.ReferrerSource.answer d st.url st.frames st.docURLs st.framePolicies id
+    return L4Factoidal.HTML.ReferrerSource.answer d (if id == 0 && !q.isEmpty then q else st.url) st.frames st.docURLs st.framePolicies id
   | 171 =>
     -- the URL of document `id`: the page's, or a frame document the page may reach
     if id == 0 then return (← get).url

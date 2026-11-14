@@ -5686,7 +5686,8 @@
   const referrerClient = h => {
     if (inWorker) return;
     const d = scriptDocument !== null && scriptDocument !== document ? nodeId(scriptDocument) : 0;
-    const r = n.query(d, 210, '');
+    // the page document's URL as its history has it now (pushState may change it in its origin)
+    const r = n.query(d, 210, d === 0 ? String(href) : '');
     if (typeof r !== 'string') return;
     const i = r.indexOf('\u0000');
     if (i > 0) apiCall(98, [h, 'about:client', '', r.slice(0, i), r.slice(i + 1)]);
