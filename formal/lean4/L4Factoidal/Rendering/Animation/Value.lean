@@ -24,6 +24,7 @@ itself is itself (`interpolate_self`); a non-negative kind gives no negative num
 [0, 1] (`lerpTok_num`, with `Fix.lerp_between`).
 -/
 import L4Factoidal.Rendering.Animation.Fix
+import L4Factoidal.Rendering.Animation.Matrix
 
 namespace L4Factoidal.Rendering.Animation
 
@@ -1040,12 +1041,425 @@ def withLineNames (tracks : List Tok) (names : List (Nat × List Tok)) : List To
 def repeatHeads (v : List Tok) : List Tok :=
   (v.zip (v.drop 1)).filterMap fun (x, y) => if x == .op "repeat" then some y else none
 
+/-! ### Transform lists (CSS Transforms 1 §11 to §13, CSS Transforms 2 §8 and §9)
+
+Two lists pair up function by function while the functions share a primitive (the
+`translate`, `scale`, `rotate` or `skew` family, a matrix, a perspective); from the first
+pair that does not, the rest of each list is one matrix and the two matrices interpolate by
+decomposition (`Matrix.blend`). -/
+
+/-- A transform function read from its tokens: lengths as tokens (px, a percentage, or
+both), numbers and angles (in degrees) as `Fix` integers. `three` says the function was
+one of three dimensions. -/
+inductive TF where
+  | translate (x y z : Tok) (three : Bool)
+  | scale (x y z : Int) (three : Bool)
+  /-- The axis as written and the angle. -/
+  | rotate (x y z : Int) (deg : Int) (three : Bool)
+  | skew (ax ay : Int)
+  /-- 6 numbers (`matrix()`) or 16 (`matrix3d()`). -/
+  | matrix (m : List Int)
+  /-- The distance in px; none for `perspective(none)`. -/
+  | perspective (d : Option Int)
+  deriving DecidableEq, Repr, Inhabited
+
+/-- An angle in degrees. -/
+def angleDeg : Tok → Option Int
+  | .dim n u =>
+    if u == "deg" then some n
+    else if u == "rad" then some (ofFloat (toFloat n * 180 / Matrix.pi))
+    else if u == "grad" then some (Fix.roundDiv (n * 9) 10)
+    else if u == "turn" then some (n * 360)
+    else none
+  | .num n => if n == 0 then some 0 else none
+  | _ => none
+
+def isLength : Tok → Bool
+  | .dim _ u => u == "px" || u == "%"
+  | .lp _ _ => true
+  | _ => false
+
+/-- A number, or a percentage as a number (`scale(50%)`). -/
+def numberOf : Tok → Option Int
+  | .num n => some n
+  | .dim n u => if u == "%" then some (Fix.roundDiv n 100) else none
+  | _ => none
+
+/-- The identity matrix as the 16 numbers of `matrix3d()`. -/
+def identity16 : List Int := [one, 0, 0, 0, 0, one, 0, 0, 0, 0, one, 0, 0, 0, 0, one]
+
+/-- One transform function from the tokens of `name(arguments)`; none for anything else. -/
+def readFn (item : List Tok) : Option TF :=
+  match item with
+  | .op name :: rest =>
+    if rest.getLast? != some .close then none else
+    let args := rest.dropLast.filter (· != .comma)
+    let zero : Tok := .dim 0 "px"
+    let lengths := args.all isLength
+    let numbers := args.mapM numberOf
+    let angles := args.mapM angleDeg
+    if name == "translate" then
+      match args with
+      | [x] => if lengths then some (.translate x zero zero false) else none
+      | [x, y] => if lengths then some (.translate x y zero false) else none
+      | _ => none
+    else if name == "translatex" then
+      match args with
+      | [x] => if lengths then some (.translate x zero zero false) else none
+      | _ => none
+    else if name == "translatey" then
+      match args with
+      | [y] => if lengths then some (.translate zero y zero false) else none
+      | _ => none
+    else if name == "translatez" then
+      match args with
+      | [z] => if lengths then some (.translate zero zero z true) else none
+      | _ => none
+    else if name == "translate3d" then
+      match args with
+      | [x, y, z] => if lengths then some (.translate x y z true) else none
+      | _ => none
+    else if name == "scale" then
+      match numbers with
+      | some [x] => some (.scale x x one false)
+      | some [x, y] => some (.scale x y one false)
+      | _ => none
+    else if name == "scalex" then
+      match numbers with
+      | some [x] => some (.scale x one one false)
+      | _ => none
+    else if name == "scaley" then
+      match numbers with
+      | some [y] => some (.scale one y one false)
+      | _ => none
+    else if name == "scalez" then
+      match numbers with
+      | some [z] => some (.scale one one z true)
+      | _ => none
+    else if name == "scale3d" then
+      match numbers with
+      | some [x, y, z] => some (.scale x y z true)
+      | _ => none
+    else if name == "rotate" || name == "rotatez" then
+      match angles with
+      | some [a] => some (.rotate 0 0 one a false)
+      | _ => none
+    else if name == "rotatex" then
+      match angles with
+      | some [a] => some (.rotate one 0 0 a true)
+      | _ => none
+    else if name == "rotatey" then
+      match angles with
+      | some [a] => some (.rotate 0 one 0 a true)
+      | _ => none
+    else if name == "rotate3d" then
+      match args with
+      | [.num x, .num y, .num z, a] => (angleDeg a).map fun d => .rotate x y z d true
+      | _ => none
+    else if name == "skew" then
+      match angles with
+      | some [a] => some (.skew a 0)
+      | some [a, b] => some (.skew a b)
+      | _ => none
+    else if name == "skewx" then
+      match angles with
+      | some [a] => some (.skew a 0)
+      | _ => none
+    else if name == "skewy" then
+      match angles with
+      | some [a] => some (.skew 0 a)
+      | _ => none
+    else if name == "matrix" then
+      match numbers with
+      | some m => if m.length == 6 then some (.matrix m) else none
+      | none => none
+    else if name == "matrix3d" then
+      match numbers with
+      | some m => if m.length == 16 then some (.matrix m) else none
+      | none => none
+    else if name == "perspective" then
+      match args with
+      | [.ident "none"] => some (.perspective none)
+      | [.dim d "px"] => some (.perspective (some d))
+      | _ => none
+    else none
+  | _ => none
+
+/-- The functions of a transform list; `none` is the empty list. None when a function is
+not one this reads. -/
+def readTransforms (v : List Tok) : Option (List TF) :=
+  if isNone v then some [] else (items v).mapM readFn
+
+def fnTokens (name : String) (args : List Tok) : List Tok :=
+  .op name :: args.intersperse .comma ++ [.close]
+
+/-- A function as tokens, in the primitive's form. -/
+def writeFn : TF → List Tok
+  | .translate x y z three => if three then fnTokens "translate3d" [x, y, z] else fnTokens "translate" [x, y]
+  | .scale x y z three =>
+    if three then fnTokens "scale3d" [.num x, .num y, .num z] else fnTokens "scale" [.num x, .num y]
+  | .rotate x y z d three =>
+    if three then fnTokens "rotate3d" [.num x, .num y, .num z, .dim d "deg"] else fnTokens "rotate" [.dim d "deg"]
+  | .skew ax ay => fnTokens "skew" [.dim ax "deg", .dim ay "deg"]
+  | .matrix m => fnTokens (if m.length == 6 then "matrix" else "matrix3d") (m.map .num)
+  | .perspective none => fnTokens "perspective" [.ident "none"]
+  | .perspective (some d) => fnTokens "perspective" [.dim d "px"]
+
+def writeTransforms (fs : List TF) : List Tok := joinItems (fs.map writeFn)
+
+/-- A length in px: a percentage is of `basis` (the side of the reference box), when the
+caller has one. -/
+def lengthPx (basis : Option Float) : Tok → Option Float
+  | .dim n u =>
+    if u == "px" then some (toFloat n)
+    else if u == "%" then (if n == 0 then some 0 else basis.map fun b => toFloat n * b / 100)
+    else none
+  | .lp px pct => if pct == 0 then some (toFloat px) else basis.map fun b => toFloat px + toFloat pct * b / 100
+  | _ => none
+
+/-- The matrix of a function (CSS Transforms 1 §13, CSS Transforms 2 §8); `box` is the
+reference box's width and height for percentages. None for a percentage with no box. -/
+def fnMatrix (box : Option (Float × Float)) : TF → Option Matrix.M
+  | .translate x y z _ =>
+    match lengthPx (box.map (·.1)) x, lengthPx (box.map (·.2)) y, lengthPx none z with
+    | some a, some b, some c => some (Matrix.translate a b c)
+    | _, _, _ => none
+  | .scale x y z _ => some (Matrix.scale (toFloat x) (toFloat y) (toFloat z))
+  | .rotate x y z d _ => some (Matrix.rotate (toFloat x) (toFloat y) (toFloat z) (toFloat d))
+  | .skew ax ay => some (Matrix.skew (toFloat ax) (toFloat ay))
+  | .matrix m =>
+    match m with
+    | [a, b, c, d, e, f] => some (Matrix.ofAffine (toFloat a) (toFloat b) (toFloat c) (toFloat d) (toFloat e) (toFloat f))
+    | _ => if m.length == 16 then some (m.map toFloat).toArray else none
+  | .perspective none => some Matrix.identity
+  -- CSS Transforms 2 §8: a distance below 1px is 1px
+  | .perspective (some d) => some (Matrix.perspective (toFloat (max d one)))
+
+/-- The product of a list's matrices. -/
+def listMatrix (box : Option (Float × Float)) (fs : List TF) : Option Matrix.M :=
+  fs.foldl (fun acc f => match acc, fnMatrix box f with
+    | some m, some n => some (Matrix.mul m n)
+    | _, _ => none) (some Matrix.identity)
+
+/-- A matrix as a function: `matrix()` when it is one of two dimensions. -/
+def matrixFn (m : Matrix.M) : TF :=
+  if Matrix.is2D m then
+    .matrix ([m.at 0 0, m.at 0 1, m.at 1 0, m.at 1 1, m.at 3 0, m.at 3 1].map ofFloat)
+  else .matrix ((List.range 16).map fun i => ofFloat (m.getD i 0))
+
+/-- The function that does nothing, of the family of `f` (CSS Transforms 1 §11: what a
+shorter list is padded with). -/
+def identityFn : TF → TF
+  | .translate x y z t => .translate (zeroLike x) (zeroLike y) (zeroLike z) t
+  | .scale _ _ _ t => .scale one one one t
+  | .rotate x y z _ t => .rotate x y z 0 t
+  | .skew _ _ => .skew 0 0
+  | .matrix m => .matrix (if m.length == 6 then [one, 0, 0, one, 0, 0] else identity16)
+  | .perspective _ => .perspective none
+
+/-- Two functions share a primitive. -/
+def samePrimitive : TF → TF → Bool
+  | .translate .., .translate .. => true
+  | .scale .., .scale .. => true
+  | .rotate .., .rotate .. => true
+  | .skew .., .skew .. => true
+  | .matrix _, .matrix _ => true
+  | .perspective _, .perspective _ => true
+  | _, _ => false
+
+/-- Two axes point one way. -/
+def sameDirection (x y z x' y' z' : Int) : Bool :=
+  let (a, b, c, a', b', c') := (toFloat x, toFloat y, toFloat z, toFloat x', toFloat y', toFloat z')
+  let (n, n') := (Float.sqrt (a * a + b * b + c * c), Float.sqrt (a' * a' + b' * b' + c' * c'))
+  n > 0 && n' > 0 && (a * a' + b * b' + c * c') / (n * n') > 0.999999
+
+/-- Two functions of one primitive at progress `p` (CSS Transforms 2 §9 "interpolation
+of primitives and derived transform functions"): translations, scales and skews by
+component; rotations about one direction by the angle (a rotation by 0 takes the other's
+axis), about two directions as matrices; matrices by decomposition; perspectives by the
+reciprocal of the distance (the entry of the matrix). None when a matrix has no
+decomposition or two lengths do not combine. -/
+def lerpFn (p : Int) : TF → TF → Option TF
+  | .translate x y z t, .translate x' y' z' t' =>
+    match lerpTok p x x', lerpTok p y y', lerpTok p z z' with
+    | some rx, some ry, some rz => some (.translate rx ry rz (t || t'))
+    | _, _, _ => none
+  | .scale x y z t, .scale x' y' z' t' =>
+    some (.scale (Fix.lerp x x' p) (Fix.lerp y y' p) (Fix.lerp z z' p) (t || t'))
+  | .rotate x y z d t, .rotate x' y' z' d' t' =>
+    if d == 0 then some (.rotate x' y' z' (Fix.lerp d d' p) t')
+    else if d' == 0 || sameDirection x y z x' y' z' then some (.rotate x y z (Fix.lerp d d' p) t)
+    else
+      (Matrix.blend (Matrix.rotate (toFloat x) (toFloat y) (toFloat z) (toFloat d))
+        (Matrix.rotate (toFloat x') (toFloat y') (toFloat z') (toFloat d')) (toFloat p)).map matrixFn
+  | .skew a b, .skew a' b' => some (.skew (Fix.lerp a a' p) (Fix.lerp b b' p))
+  | .matrix m, .matrix m' =>
+    match fnMatrix none (.matrix m), fnMatrix none (.matrix m') with
+    | some x, some y => (Matrix.blend x y (toFloat p)).map matrixFn
+    | _, _ => none
+  | .perspective d, .perspective d' =>
+    let inv := fun (d : Option Int) => match d with
+      | some d => 1 / toFloat (max d one)
+      | none => 0
+    let r := Matrix.lerp (inv d) (inv d') (toFloat p)
+    some (.perspective (if r > 0 then some (ofFloat (1 / r)) else none))
+  | _, _ => none
+
+/-- Two lists of functions at progress `p` (CSS Transforms 2 §9 "interpolation of
+transforms"): the shorter list padded with identity functions; pairs of one primitive by
+`lerpFn`; from the first pair of two primitives, the rest of each list as one matrix. -/
+def lerpTransforms (p : Int) (a b : List TF) : Option (List TF) := Id.run do
+  let a' := a ++ (b.drop a.length).map identityFn
+  let b' := b ++ (a.drop b.length).map identityFn
+  let mut out : Array TF := #[]
+  for i in [0:a'.length] do
+    match a'[i]?, b'[i]? with
+    | some x, some y =>
+      if samePrimitive x y then
+        match lerpFn p x y with
+        | some r => out := out.push r
+        | none => return none
+      else
+        match listMatrix none (a'.drop i), listMatrix none (b'.drop i) with
+        | some ma, some mb =>
+          match Matrix.blend ma mb (toFloat p) with
+          | some m => return some (out.toList ++ [matrixFn m])
+          | none => return none
+        | _, _ => return none
+    | _, _ => return none
+  return some out.toList
+
+/-- `b` accumulated onto `a`, two functions of one primitive (Web Animations 1 §5.2;
+CSS Transforms 2 §9): translations and skews add, scales add about 1, rotations about one
+direction add their angles, perspectives add the reciprocals of their distances, matrices
+accumulate by decomposition. -/
+def accFn : TF → TF → Option TF
+  | .translate x y z t, .translate x' y' z' t' =>
+    match addTok x x', addTok y y', addTok z z' with
+    | some rx, some ry, some rz => some (.translate rx ry rz (t || t'))
+    | _, _, _ => none
+  | .scale x y z t, .scale x' y' z' t' => some (.scale (x + x' - one) (y + y' - one) (z + z' - one) (t || t'))
+  | .rotate x y z d t, .rotate x' y' z' d' t' =>
+    if d == 0 then some (.rotate x' y' z' (d + d') t')
+    else if d' == 0 || sameDirection x y z x' y' z' then some (.rotate x y z (d + d') t)
+    else
+      (Matrix.accumulate (Matrix.rotate (toFloat x) (toFloat y) (toFloat z) (toFloat d))
+        (Matrix.rotate (toFloat x') (toFloat y') (toFloat z') (toFloat d'))).map matrixFn
+  | .skew a b, .skew a' b' => some (.skew (a + a') (b + b'))
+  | .matrix m, .matrix m' =>
+    match fnMatrix none (.matrix m), fnMatrix none (.matrix m') with
+    | some x, some y => (Matrix.accumulate x y).map matrixFn
+    | _, _ => none
+  | .perspective d, .perspective d' =>
+    let inv := fun (d : Option Int) => match d with
+      | some d => 1 / toFloat (max d one)
+      | none => 0
+    let r := inv d + inv d'
+    some (.perspective (if r > 0 then some (ofFloat (1 / r)) else none))
+  | _, _ => none
+
+/-- Two lists accumulated: paired as in `lerpTransforms`. -/
+def accTransforms (a b : List TF) : Option (List TF) := Id.run do
+  let a' := a ++ (b.drop a.length).map identityFn
+  let b' := b ++ (a.drop b.length).map identityFn
+  let mut out : Array TF := #[]
+  for i in [0:a'.length] do
+    match a'[i]?, b'[i]? with
+    | some x, some y =>
+      if samePrimitive x y then
+        match accFn x y with
+        | some r => out := out.push r
+        | none => return none
+      else
+        match listMatrix none (a'.drop i), listMatrix none (b'.drop i) with
+        | some ma, some mb =>
+          match Matrix.accumulate ma mb with
+          | some m => return some (out.toList ++ [matrixFn m])
+          | none => return none
+        | _, _ => return none
+    | _, _ => return none
+  return some out.toList
+
+/-- The names of the functions of a list. -/
+def fnNames (v : List Tok) : List String :=
+  (items v).filterMap fun it => match it with
+    | .op name :: _ => some name
+    | _ => none
+
+/-- The functions that do not interpolate argument by argument. -/
+def byMatrix (name : String) : Bool :=
+  name == "matrix" || name == "matrix3d" || name == "perspective" || name == "rotate3d"
+
+/-- A transform list at progress `p` between two: lists whose functions have the same
+names and argument counts, none of them a matrix, a perspective or a `rotate3d()`, move
+argument by argument and keep their names; any others go through `lerpTransforms`. -/
+def lerpTransformList (p : Int) (a b : Value) : Option Value :=
+  let plain := zipItems (lerpList p) transformIdentity (if isNone a then [] else items a) (if isNone b then [] else items b)
+  let kept : Option Value := match plain with
+    | some r => if (fnNames a ++ fnNames b).any byMatrix then none else some (joinItems r)
+    | none => none
+  match kept with
+  | some r => some r
+  | none =>
+    match readTransforms a, readTransforms b with
+    | some x, some y => (lerpTransforms p x y).map writeTransforms
+    | _, _ => none
+
+/-- The resolved value of `transform` (CSS Transforms 1 §15 with CSSOM §9.1 "resolved
+value"): the list as one `matrix()` or `matrix3d()`; `box` is the reference box for
+percentages. None for `none`, for a list this does not read and for a percentage with no
+box: the computed value then stands. -/
+def resolvedTransform (box : Option (Float × Float)) (v : Value) : Option Value :=
+  if isNone v then none
+  else match readTransforms v with
+    | some fs => (listMatrix box fs).map fun m => writeFn (matrixFn m)
+    | none => none
+
+/-- The text of a value with numbers to six significant digits (`toText` writes six
+decimal places): for matrices, whose small entries matter. -/
+def toTextPrecise (v : Value) : String :=
+  " ".intercalate ((toText (v.map fun t => match t with
+    | .num n => .ident ("\x01" ++ Fix.formatSig 6 n)
+    | t => t)).splitOn " \x01") |>.replace "\x01" ""
+
+/-- The text `getComputedStyle` gives for the computed text of `transform`: one matrix
+(`resolvedTransform`), or the text as it is. -/
+def resolvedTransformText (text : String) (box : Option (Float × Float) := none) : String :=
+  if text == "none" || text.isEmpty then text
+  else match resolvedTransform box (parse text) with
+    | some v => toTextPrecise v
+    | none => text
+
+/-- The text `getComputedStyle` gives for the computed text of `transform-origin` or
+`perspective-origin` (CSSOM §9.1: the used value): the percentages of the first and the
+second component are of the width and the height of the reference box. The text as it
+is with no box, or for components that are not lengths. -/
+def resolvedOriginText (text : String) (box : Option (Float × Float)) : String :=
+  match box with
+  | none => text
+  | some (w, h) =>
+    let v := parse text
+    if v.length > 3 then text else
+    let r := (v.zip [some w, some h, none]).mapM fun ((t, basis) : Tok × Option Float) => match t with
+      | .dim n u =>
+        if u == "px" then some t
+        else if u == "%" then basis.map fun b => Tok.dim (ofFloat (toFloat n * b / 100)) "px"
+        else none
+      | .lp px pct => basis.map fun b => Tok.dim (ofFloat (toFloat px + toFloat pct * b / 100)) "px"
+      | _ => none
+    match r with
+    | some r => toText r
+    | none => text
+
+#guard resolvedOriginText "50% 50%" (some (50, 80)) == "25px 40px"
+#guard resolvedOriginText "calc(-25% + 30px) 10px 5px" (some (50, 80)) == "17.5px 10px 5px"
+#guard resolvedOriginText "50% 50%" none == "50% 50%" && resolvedOriginText "left top" (some (50, 80)) == "left top"
+
 /-- The interpolation of a kind that is a list or has components to fill in; none when
 the values do not interpolate. -/
 def lerpKind (k : Kind) (p : Int) (a b : Value) : Option Value :=
   match k with
-  | .transformList =>
-    (zipItems (lerpList p) transformIdentity (if isNone a then [] else items a) (if isNone b then [] else items b)).map joinItems
+  | .transformList => lerpTransformList p a b
   | .filterList =>
     (zipItems (lerpList p) filterNeutral
       (if isNone a then [] else (items a).map filterFull) (if isNone b then [] else (items b).map filterFull)).map
@@ -1267,10 +1681,17 @@ neutral value; `scale` is x + y - 1; other values as `add`. -/
 def accumulate (k : Kind) (underlying value : Value) : Value :=
   match k with
   | .transformList =>
-    match zipItems (accItem transformIdentity) transformIdentity
-        (if isNone underlying then [] else items underlying) (if isNone value then [] else items value) with
-    | some r => joinItems r
-    | none => value
+    let plain := zipItems (accItem transformIdentity) transformIdentity
+        (if isNone underlying then [] else items underlying) (if isNone value then [] else items value)
+    let kept : Option Value := match plain with
+      | some r => if (fnNames underlying ++ fnNames value).any byMatrix then none else some (joinItems r)
+      | none => none
+    match kept with
+    | some r => r
+    | none =>
+      match readTransforms underlying, readTransforms value with
+      | some x, some y => ((accTransforms x y).map writeTransforms).getD value
+      | _, _ => value
   | .filterList =>
     match zipItems (accItem filterNeutral) filterNeutral
         (if isNone underlying then [] else items underlying) (if isNone value then [] else items value) with
@@ -1426,6 +1847,91 @@ theorem unit_range (ts : List Tok) (n : Int) (h : Tok.num n ∈ finish .unit ts)
   subst ht
   exact Fix.clamp_between 0 one _ (by decide)
 
+/-! ### Transform functions -/
+
+theorem zeroLike_idem (t : Tok) : zeroLike (zeroLike t) = zeroLike t := by
+  cases t <;> rfl
+
+/-- Kind: structure. Says: the identity function that pads a shorter list is of the same
+primitive as the function it stands beside, so padding alone never sends a pair to the
+matrix path. Does not say: that the pair interpolates (two lengths may not combine). -/
+theorem samePrimitive_identityFn (f : TF) : samePrimitive f (identityFn f) = true := by
+  cases f <;> rfl
+
+/-- Kind: structure. Says: the identity function of an identity function is itself.
+Does not say: that its matrix is the identity matrix (`Float`; tested). -/
+theorem identityFn_idem (f : TF) : identityFn (identityFn f) = identityFn f := by
+  cases f with
+  | translate x y z t => simp [identityFn, zeroLike_idem]
+  | scale x y z t => rfl
+  | rotate x y z d t => rfl
+  | skew a b => rfl
+  | matrix m =>
+    by_cases h : m.length = 6
+    · simp [identityFn, h]
+    · simp [identityFn, h, identity16]
+  | perspective d => rfl
+
+/-- Kind: end point. Says: two scales at progress 0 are the first, exactly. Does not
+say: anything of the `three` flag beyond: it is set when either function had it. -/
+theorem lerpFn_scale_zero (x y z x' y' z' : Int) (t t' : Bool) :
+    lerpFn 0 (.scale x y z t) (.scale x' y' z' t') = some (.scale x y z (t || t')) := by
+  simp [lerpFn, Fix.lerp_zero]
+
+/-- Kind: end point. Says: two scales at progress 1 are the second, exactly. -/
+theorem lerpFn_scale_one (x y z x' y' z' : Int) (t t' : Bool) :
+    lerpFn one (.scale x y z t) (.scale x' y' z' t') = some (.scale x' y' z' (t || t')) := by
+  simp [lerpFn, Fix.lerp_one]
+
+/-- Kind: identity. Says: a scale interpolated with itself is itself at every progress,
+in range or not. -/
+theorem lerpFn_scale_self (x y z : Int) (t : Bool) (p : Int) :
+    lerpFn p (.scale x y z t) (.scale x y z t) = some (.scale x y z t) := by
+  simp [lerpFn, Fix.lerp_self]
+
+/-- Kind: end points. Says: two skews at progress 0 and 1 are the first and the second. -/
+theorem lerpFn_skew_ends (a b a' b' : Int) :
+    lerpFn 0 (.skew a b) (.skew a' b') = some (.skew a b) ∧ lerpFn one (.skew a b) (.skew a' b') = some (.skew a' b') := by
+  simp [lerpFn, Fix.lerp_zero, Fix.lerp_one]
+
+/-- Kind: bounds. Says: for a progress in [0, 1] each component of the scale between two
+scales lies between the two components. Does not say: anything outside [0, 1] (an easing
+may overshoot; scales are not clamped). -/
+theorem lerpFn_scale_between (x y z x' y' z' : Int) (t t' : Bool) (p : Int) (hp0 : 0 ≤ p) (hp1 : p ≤ one) :
+    ∃ rx ry rz, lerpFn p (.scale x y z t) (.scale x' y' z' t') = some (.scale rx ry rz (t || t')) ∧
+      min x x' ≤ rx ∧ rx ≤ max x x' ∧ min y y' ≤ ry ∧ ry ≤ max y y' ∧ min z z' ≤ rz ∧ rz ≤ max z z' :=
+  ⟨Fix.lerp x x' p, Fix.lerp y y' p, Fix.lerp z z' p, rfl,
+    (Fix.lerp_between x x' p hp0 hp1).1, (Fix.lerp_between x x' p hp0 hp1).2,
+    (Fix.lerp_between y y' p hp0 hp1).1, (Fix.lerp_between y y' p hp0 hp1).2,
+    (Fix.lerp_between z z' p hp0 hp1).1, (Fix.lerp_between z z' p hp0 hp1).2⟩
+
+/-- Kind: neutral element. Says: accumulating the identity scale onto a scale, or a
+scale onto the identity scale, gives the scale (1 is counted once). -/
+theorem accFn_scale_identity (x y z : Int) (t t' : Bool) :
+    accFn (.scale x y z t) (identityFn (.scale x y z t')) = some (.scale x y z (t || t')) ∧
+    accFn (identityFn (.scale x y z t')) (.scale x y z t) = some (.scale x y z (t' || t)) := by
+  constructor <;> simp [accFn, identityFn] <;> omega
+
+/-- Kind: additivity. Says: accumulating skews adds their angles, in either order and
+grouped either way. Does not say: that the matrices commute (they do not; the sum is of
+the angles, Web Animations 1 §5.2). -/
+theorem accFn_skew_add (a b a' b' a'' b'' : Int) :
+    accFn (.skew a b) (.skew a' b') = some (.skew (a + a') (b + b')) ∧
+    accFn (.skew a b) (.skew a' b') = accFn (.skew a' b') (.skew a b) ∧
+    (accFn (.skew a b) (.skew a' b')).bind (accFn · (.skew a'' b'')) =
+      (accFn (.skew a' b') (.skew a'' b'')).bind (accFn (.skew a b)) := by
+  refine ⟨rfl, ?_, ?_⟩ <;> simp [accFn] <;> omega
+
+/-- Kind: additivity. Says: the sum of number components is the sum of the numbers:
+commutative and associative, so the order in which effects of one property add their
+numbers does not change the result. Does not say: the same of lists (a list of
+functions is joined, and order matters there). -/
+theorem addTok_num_assoc (a b c : Int) :
+    addTok (.num a) (.num b) = some (.num (a + b)) ∧
+    addTok (.num a) (.num b) = addTok (.num b) (.num a) ∧
+    (addTok (.num a) (.num b)).bind (addTok · (.num c)) = (addTok (.num b) (.num c)).bind (addTok (.num a)) := by
+  refine ⟨rfl, ?_, ?_⟩ <;> simp [addTok] <;> omega
+
 /-! ## Tests: the cases of the interpolation tests (css/support/interpolation-testcommon.js) -/
 
 private def at_ (k : Kind) (a b : String) (p : Int) : String := toText (interpolate k (parse a) (parse b) p)
@@ -1483,7 +1989,55 @@ private def at_ (k : Kind) (a b : String) (p : Int) : String := toText (interpol
 #guard at_ .transformList "translate(100px)" "translate(200px) rotate(720deg)" 250000000 == "translate(125px) rotate(180deg)"
 #guard at_ .transformList "none" "rotate(90deg)" half == "rotate(45deg)"
 #guard at_ .transformList "scale(2)" "none" half == "scale(1.5)"
-#guard at_ .transformList "translate(10px)" "rotate(90deg)" 400000000 == "translate(10px)"
+-- two primitives: the lists as matrices (css/css-transforms/animation/list-interpolation.html)
+#guard at_ .transformList "rotate(0deg) translate(100px)" "rotate(720deg) scale(2) translate(200px)" 250000000 ==
+  "rotate(180deg) matrix(1.25, 0, 0, 1.25, 175, 0)"
+#guard at_ .transformList "scale(2) rotate(0deg) translate(100px)" "rotate(720deg) scale(2) translate(200px)" 250000000 ==
+  "matrix(2, 0, 0, 2, 250, 0)"
+#guard at_ .transformList "translateX(100px) scaleX(3) translate(500px) scale(2)" "translateY(200px) scale(5) translateX(100px) scaleY(3)"
+  250000000 == "translate(75px, 50px) scale(3.5, 2) translate(400px, 0px) scale(1.75, 2.25)"
+#guard at_ .transformList "rotateX(90deg) translateX(100px)" "rotate3d(50, 0, 0, 180deg) translateY(200px)" 250000000 ==
+  "rotate3d(1, 0, 0, 112.5deg) translate(75px, 50px)"
+#guard at_ .transformList "rotate(0deg) scaleX(1)" "rotate(720deg) translateX(0px) scaleX(2)" 250000000 ==
+  "rotate(180deg) matrix(1.25, 0, 0, 1, 0, 0)"
+-- a percentage keeps the functions as they are named (no matrix without a box)
+#guard at_ .transformList "translateY(70%)" "translateY(90%) scaleZ(2)" 250000000 == "translatey(75%) scalez(1.25)"
+-- perspective by the reciprocal of the distance; none is infinitely far
+-- (css/css-transforms/animation/transform-interpolation-001.html)
+#guard at_ .transformList "perspective(400px)" "perspective(500px)" (-one) == "perspective(333.333333px)"
+#guard at_ .transformList "perspective(none)" "perspective(500px)" half == "perspective(1000px)"
+#guard at_ .transformList "perspective(none)" "perspective(500px)" (-one) == "perspective(none)"
+#guard at_ .transformList "scaleZ(2)" "scaleZ(2) perspective(500px)" (one + one) == "scale3d(1, 1, 2) perspective(250px)"
+-- matrices by decomposition (transform-interpolation-005.html)
+#guard toTextPrecise (interpolate .transformList (parse "matrix(1, 0, 0, 1, 0, -6)") (parse "matrix(0, 7, -1, 0, 6, 0)") (-one)) ==
+  "matrix(0, 5, 1, 0, -6, -12)"
+#guard toTextPrecise (interpolate .transformList (parse "matrix(1, 0, 0, 1, 0, -6)") (parse "matrix(0, 7, -1, 0, 6, 0)") 333333333) ==
+  "matrix(2.59808, 1.5, -0.5, 0.866025, 2, -4)"
+#guard toTextPrecise (interpolate .transformList (parse "matrix(1, 0.36, 0, 1, 200, 200)") (parse "matrix(1, 0, 0, 1, 200, 200)") (one + one)) ==
+  "matrix(0.881775, -0.317439, 0, 1.12565, 200, 200)"
+-- a matrix with no inverse does not interpolate: the values flip at 50%
+#guard at_ .transformList "matrix(1, 1, 0, 0, 0, 0)" "matrix(1, 0, 0, 1, 0, 0)" 400000000 == "matrix(1, 1, 0, 0, 0, 0)"
+-- the resolved value (css/css-transforms/parsing/transform-computed.html)
+#guard resolvedTransformText "perspective(10px)" == "matrix3d(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, -0.1, 0, 0, 0, 1)"
+#guard resolvedTransformText "matrix3d(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)" == "matrix(1, 0, 0, 1, 0, 0)"
+#guard resolvedTransformText "perspective(none)" == "matrix(1, 0, 0, 1, 0, 0)"
+#guard resolvedTransformText "translate(50px) rotate(180deg)" == "matrix(-1, 0, 0, -1, 50, 0)"
+#guard resolvedTransformText "none" == "none" && resolvedTransformText "translate(10%)" == "translate(10%)"
+#guard (resolvedTransform (some (200, 100)) (parse "translate(10%, 50%)")).map toTextPrecise == some "matrix(1, 0, 0, 1, 20, 50)"
+-- every function reads and writes back as its primitive
+#guard ["translate(1px, 2px)", "translate3d(1px, 2px, 3px)", "scale(2, 3)", "scale3d(2, 3, 4)", "rotate(30deg)",
+  "rotate3d(1, 2, 3, 30deg)", "skew(10deg, 20deg)", "matrix(1, 2, 3, 4, 5, 6)", "perspective(100px)", "perspective(none)"].all fun t =>
+  ((readTransforms (parse t)).map fun fs => toText (writeTransforms fs)) == some t
+#guard ((readTransforms (parse "translateX(5px) scaleY(2) rotateX(10deg) skewY(3deg) rotateZ(4deg)")).map fun fs => toText (writeTransforms fs)) ==
+  some "translate(5px, 0px) scale(1, 2) rotate3d(1, 0, 0, 10deg) skew(0deg, 3deg) rotate(4deg)"
+#guard (readTransforms (parse "translate(1px, 2px, 3px)")).isNone && (readTransforms (parse "foo(1)")).isNone
+-- accumulation (css/css-transforms/animation/transform-*-composition.html)
+#guard toText (accumulate .transformList (parse "perspective(10px)") (parse "perspective(10px)")) == "perspective(5px)"
+#guard toText (accumulate .transformList (parse "scaleX(2)") (parse "scaleX(3)")) == "scalex(4)"
+#guard toText (accumulate .transformList (parse "skewX(45deg)") (parse "skewX(30deg)")) == "skewx(75deg)"
+#guard toText (accumulate .transformList (parse "translateX(100px)") (parse "translateX(50px)")) == "translatex(150px)"
+#guard toText (accumulate .transformList (parse "rotate3d(1, 1, 0, 45deg)") (parse "rotate3d(2, 2, 0, 45deg)")) == "rotate3d(1, 1, 0, 90deg)"
+#guard toText (accumulate .transformList (parse "matrix(1, 0, 0, 1, 100, 0)") (parse "matrix(2, 0, 0, 2, 50, 0)")) == "matrix(2, 0, 0, 2, 150, 0)"
 #guard at_ .filterList "none" "hue-rotate(20deg)" 300000000 == "hue-rotate(6deg)"
 #guard at_ .filterList "blur(6px)" "blur(10px) hue-rotate(180deg)" half == "blur(8px) hue-rotate(90deg)"
 #guard at_ .filterList "brightness(0.5)" "none" (one + one) == "brightness(1.5)"
