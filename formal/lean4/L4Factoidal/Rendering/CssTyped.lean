@@ -178,6 +178,14 @@ def opaqueProperty (property : String) : Bool :=
   | some row => !row.longhands.isEmpty || (trimText row.grammar).endsWith "{1,2}"
   | none => false
 
+/-- The flow-relative axis shorthands that take one typed value for both sides, as their
+longhands do (`margin-block`, `padding-inline`, `inset-block`, `border-block-width` ...). -/
+def axisShorthand (p : String) : Bool :=
+  ["margin-", "padding-", "inset-", "border-"].any (fun pre => p.startsWith pre) &&
+    (["block", "inline"].any fun axis =>
+      ["", "-width", "-style", "-color"].any fun post =>
+        ["margin-", "padding-", "inset-", "border-"].any fun pre => p == pre ++ axis ++ post)
+
 /-- The value of a custom property with no registration (or the universal syntax) as a
 typed value: always an unparsed value (CSS Properties and Values API 1 §6.1). -/
 def unparsedOf (text : String) : String :=
@@ -188,6 +196,8 @@ def unparsedOf (text : String) : String :=
 def reifyFor (property text : String) : String :=
   let cvs := CV.parse text
   if isCustom property then unparsedOf text
+  -- an axis shorthand of one value for both sides is that value, typed as its longhands'
+  else if axisShorthand (propertyName property) && (stripWs cvs).length == 1 then reify text
   else if opaqueProperty property && !hasFn "var" 32 cvs && (wideKeyword (stripWs cvs)).isNone then styleJson text
   else reify text
 
@@ -257,6 +267,7 @@ def syntaxAccepts (syn text : String) : Bool :=
 #guard (reifyBySyntax "*" "if(){}").startsWith "[{\"t\":\"unparsed\""
 #guard (reifyBySyntax "<custom-ident>" "foo").startsWith "[{\"t\":\"kw\""
 #guard (reifyFor "--x" "10px").startsWith "{\"t\":\"unparsed\""
+#guard (reifyFor "margin-block" "10px").startsWith "{\"t\":\"u\""
 
 /-- The typed values of a list-valued property's text: one for each comma-separated item. -/
 def reifyAll (text : String) : String :=
@@ -451,14 +462,6 @@ def calcAnswer (c : Option Calc) : String :=
   match c with
   | some c => calcJson (calcFuel c) c
   | none => ""
-
-/-- The flow-relative axis shorthands that take one typed value for both sides, as their
-longhands do (`margin-block`, `padding-inline`, `inset-block`, `border-block-width` ...). -/
-def axisShorthand (p : String) : Bool :=
-  ["margin-", "padding-", "inset-", "border-"].any (fun pre => p.startsWith pre) &&
-    (["block", "inline"].any fun axis =>
-      ["", "-width", "-style", "-color"].any fun post =>
-        ["margin-", "padding-", "inset-", "border-"].any fun pre => p == pre ++ axis ++ post)
 
 /-- A shorthand that takes no typed value in `StylePropertyMap.set()` (only a string, a
 CSS-wide keyword or an unparsed value): every shorthand but the axis ones. -/
