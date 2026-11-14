@@ -4505,9 +4505,18 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
         | v => newArray #[v]
       else newArray args
     | .arrayIsArray =>
-      match a0 with
-      | .obj id => pure (.bool (← getObj id).isArray)
-      | _ => pure (.bool false)
+      -- IsArray (§7.2.2): a Proxy answers for its target; a revoked one throws
+      let rec isArr : Nat → Value → M Bool
+        | 0, _ => pure false
+        | k + 1, .obj id => do
+          let o ← getObj id
+          match o.kind with
+          | .proxy t hnd =>
+            if let .null := hnd then throwErr .type "Cannot perform 'IsArray' on a proxy that has been revoked"
+            isArr k t
+          | _ => pure o.isArray
+        | _ + 1, _ => pure false
+      pure (.bool (← isArr 100000 a0))
     | .arrayPush =>
       match thisV with
       | .obj id =>
@@ -5303,10 +5312,18 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       match a0 with
       | .obj id =>
         let o ← getObj id
+        -- a sealed Array's elements are not configurable: they leave the fast form (`markArray`)
+        let o := match o.kind with
+          | .array es =>
+            let o := ({ o with kind := .ordinary } : Obj).markArray
+            let o := (List.range es.size).foldl (fun (o : Obj) i =>
+              if Value.isHole es[i]! then o else o.putOwn (toString i) (PropV.data es[i]! true true true)) o
+            o.putOwn "length" (.data (.num (Float.ofNat es.size)) true false false)
+          | _ => o
         let props := o.props.mapValues (fun p => (match p with
           | .data v w e _ => .data v w e false
           | .acc g s e _ => .acc g s e false))
-        modifyObj id fun o => { o with props, extensible := false }
+        modifyObj id fun _ => { o with props, extensible := false }
         pure a0
       | _ => pure a0
     | .objectIsSealed =>
