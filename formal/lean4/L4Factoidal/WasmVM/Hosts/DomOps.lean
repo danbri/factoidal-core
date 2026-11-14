@@ -33,6 +33,7 @@ import L4Factoidal.DOM.ElementRef
 import L4Factoidal.DOM.FormControls
 import L4Factoidal.HTML.TextSelection
 import L4Factoidal.DOM.FormValidity
+import L4Factoidal.DOM.Focus
 
 namespace L4Factoidal.WasmVM.Hosts.Dom
 open L4Factoidal.DOM L4Factoidal.DOM.Range
@@ -441,7 +442,7 @@ element and 185 the elements that a reflecting IDL attribute of element `id` ans
 elements); 186 form owner, form elements, options, selected options, labels, labeled control
 and selectedness (`DOM.FormControls.answer`); 187 the range and selection of `setRangeText`
 (`HTML.TextSelection.answer`); 188 an input's typed value and constraint validation
-(`DOM.FormValidity.answer`). -/
+(`DOM.FormValidity.answer`); 189 the node that `focus()` focuses (`DOM.Focus.answer`). -/
 def domOpM (id op : Nat) (q : String) : Op String := do
   let xs := nums q
   let d ← dom
@@ -784,6 +785,11 @@ def domOpM (id op : Nat) (q : String) : Op String := do
   | 188 =>
     let n ← nodeArg d id
     return L4Factoidal.DOM.FormValidity.answer d n q
+  -- 189: the node that `focus()` on element `id` focuses, or with `q` "d" its focus delegate
+  -- (`DOM.Focus.answer`); "" for none
+  | 189 =>
+    let n ← nodeArg d id
+    return L4Factoidal.DOM.Focus.answer d n q
   -- ==== end of domhtml ====
   | _ => throw (-2)
 

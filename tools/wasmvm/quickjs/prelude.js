@@ -2579,7 +2579,7 @@
     get slotAssignment() { return info(nodeId(this), 22) & 4 ? 'manual' : 'named'; }
     get clonable() { return (info(nodeId(this), 22) & 8) !== 0; }
     get serializable() { return (info(nodeId(this), 22) & 16) !== 0; }
-    get activeElement() { return null; }
+    get activeElement() { return focusRetarget(nodeId(this)); }
     get onslotchange() { return handlerOf(this, 'slotchange'); }
     set onslotchange(f) { setHandler(this, 'slotchange', f); }
   }
@@ -7497,6 +7497,49 @@
   }
   // ==== end forms =========================================================================
 
+  // ==== focus: the focused element (HTML §6.6) ============================================
+  // Which node `focus()` focuses is Lean's (DOM.Focus, node_query 189: the element when it is
+  // a focusable area, else the first focusable area of a shadow tree that delegates focus).
+  // The focused element is the page's state, mirrored into the arena (`Node.states` bit 8) for
+  // `:focus`, `:focus-visible` and `:focus-within`. A page that never calls focus() does
+  // nothing here.
+  let focusedId = -1;
+  const focusBit = (id, on) => { const b = n.treeOp(id, 0, 31); if (typeof b !== 'number' || b < 0) return; const nb = on ? b | 8 : b & ~8; if (nb !== b) n.treeOp(id, nb, 30); };
+  // the focused node, or -1: an element that left its document no longer has the focus
+  const focusCurrent = () => { if (focusedId >= 0 && !connectedId(focusedId)) { focusBit(focusedId, false); focusedId = -1; } return focusedId; };
+  const fireFocusEvent = (el, type, bubbles, related) => {
+    const e = new FocusEvent(type, { bubbles, composed: true, relatedTarget: related, view: window });
+    state(e).trusted = true;
+    dispatch(el, e);
+  };
+  // The focus update steps (HTML §6.6.4): blur and focusout at the old element, then focus and
+  // focusin at the new one (-1: the viewport).
+  const focusMove = to => {
+    const from = focusCurrent();
+    if (from === to) return;
+    const oldEl = from >= 0 ? wrap(from) : null, newEl = to >= 0 ? wrap(to) : null;
+    if (from >= 0) { focusBit(from, false); focusedId = -1; fireFocusEvent(oldEl, 'blur', false, newEl); fireFocusEvent(oldEl, 'focusout', true, newEl); }
+    if (to >= 0 && focusedId === -1 && connectedId(to)) { focusedId = to; focusBit(to, true); fireFocusEvent(newEl, 'focus', false, oldEl); fireFocusEvent(newEl, 'focusin', true, oldEl); }
+  };
+  const focusQuery = (id, q) => { const r = n.query(id, 189, q); return typeof r === 'string' && r !== '' ? Number(r) : -1; };
+  for (const C of [HTMLElement, SVGElement]) {
+    define(C.prototype, 'focus', function focus(options = undefined) { const t = focusQuery(nodeId(this), ''); if (t >= 0) focusMove(t); });
+    define(C.prototype, 'blur', function blur() { if (focusCurrent() === nodeId(this)) focusMove(-1); });
+  }
+  // `activeElement` (DOM §4.5, HTML §6.6.6): the focused element retargeted against the
+  // document or the shadow root; a document with no focused element answers its body.
+  const focusRetarget = rootId => {
+    let k = focusCurrent();
+    for (let i = 0; k >= 0 && i < 1024; i++) {
+      const r = info(k, 28);
+      if (r === rootId) return wrap(k);
+      k = r >= 0 && info(r, 0) === 11 ? info(r, 21) : -1;
+    }
+    return null;
+  };
+  Object.defineProperty(Document.prototype, 'activeElement', { get() { return focusRetarget(nodeId(this)) ?? this.body; }, configurable: true, enumerable: true });
+  // ==== end focus ==========================================================================
+
   // ==== popover: popovers, dialogs and their invoker buttons (HTML §6.12, §4.11.4, §4.10.6) ====
   // Which popovers show and which dialog is modal is the page's state, mirrored into the
   // arena as element states (tree_op 30 and 31, `Node.states`: bit 1 a showing popover, bit 2
@@ -7618,6 +7661,9 @@
       el.removeAttribute('open');
       if (modal.delete(id)) setState(id, 2, false);
       if (result !== undefined && result !== null) returnValues.set(el, String(result));
+      const back = previousFocus.get(el);
+      previousFocus.delete(el);
+      if (back !== undefined && back >= 0 && connectedId(back)) { const t = focusQuery(back, ''); if (t >= 0) focusMove(t); }
       task(() => { const e = new Event('close'); state(e).trusted = true; dispatch(el, e); });
     };
     const openDialog = (el, asModal, source) => {
@@ -7631,7 +7677,13 @@
       queueToggle(el, 'closed', 'open', source);
       el.setAttribute('open', '');
       if (asModal) { modal.add(id); setState(id, 2, true); for (const k of [...showing]) if (kindOf(wrap(k)) !== 'manual') hidePop(wrap(k), true, null); }
+      // the dialog focusing steps (HTML §4.11.4): the focus goes to the dialog's focus delegate,
+      // and comes back to the element that had it when the dialog closes
+      previousFocus.set(el, focusCurrent());
+      const t = focusQuery(id, 'd');
+      if (t >= 0) focusMove(t); else if (asModal) focusMove(-1);
     };
+    const previousFocus = new WeakMap();
     method(D, 'show', function show() { openDialog(this, false, null); });
     method(D, 'showModal', function showModal() { openDialog(this, true, null); });
     method(D, 'close', function close(returnValue = undefined) { closeDialog(this, returnValue, null); });

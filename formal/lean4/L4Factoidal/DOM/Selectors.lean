@@ -606,6 +606,15 @@ def matchSimple (d : Dom) (scope : Option NodeId) : Nat → NodeId → Simple �
       | "defined" => !(x.ns == some htmlNS && CustomElements.validName x.lname) || x.states / 4 % 2 == 1
       | "popover-open" => x.states % 2 == 1
       | "modal" => x.states / 2 % 2 == 1
+      -- the focused element (`Node.states` bit 8, set by the page's `focus()`); a shadow host
+      -- has the focus when an element of its shadow tree has it (Selectors 4 §9.4), and
+      -- `:focus-within` reads the shadow-including descendants
+      | "focus" | "focus-visible" =>
+        x.states / 8 % 2 == 1 ||
+          (match x.shadow with
+           | some s => (CustomElements.reach d s).any fun j => (d.get j).states / 8 % 2 == 1
+           | none => false)
+      | "focus-within" => (CustomElements.reach d k).any fun j => (d.get j).states / 8 % 2 == 1
       | _ => false
     | .nth kind a b of =>
       let x := d.get k
@@ -727,5 +736,8 @@ private def matchesSel (k : NodeId) (sel : String) : Bool :=
 #guard matchesSel 2 ":modal" && !matchesSel 1 ":modal"
 #guard matchesSel 1 ":defined" && !matchesSel 3 ":defined" && matchesSel 4 ":defined" && matchesSel 3 ":not(:defined)"
 #guard matchesSel 5 ":checked" && !matchesSel 6 ":checked"
+#guard !matchesSel 1 ":focus" && !matchesSel 1 ":focus-within"
+#guard elementMatches ({ nodes := stateTree.nodes.modify 1 fun n => { n with states := 9 } } : Dom) 1 ((parse ":focus").getD []) &&
+  elementMatches ({ nodes := stateTree.nodes.modify 1 fun n => { n with states := 9 } } : Dom) 1 ((parse ":focus-within:popover-open").getD [])
 
 end L4Factoidal.DOM.Selectors

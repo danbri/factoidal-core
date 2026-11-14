@@ -87,7 +87,7 @@ private def commandOf (command : JSON.Json) : Except String L4Factoidal.WasmVM.H
   | "setStates" =>
     exactly ["nodeId","states"]
     let states ← node "states"
-    if states ≥ 8 then throw "script command: states exceed bound"
+    if states ≥ 16 then throw "script command: states exceed bound"
     return .setStates (← node "nodeId") states
   | "adoptNode" => exactly ["nodeId","document"]; return .adoptNode (← node "nodeId") (← node "document")
   | "importNode" =>
