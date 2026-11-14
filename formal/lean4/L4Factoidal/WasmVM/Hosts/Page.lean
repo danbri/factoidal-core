@@ -580,7 +580,8 @@ since its last measure (`Reads.styleWrites`), the cascade is of the subtrees of 
 elements (`Measure`'s last argument), and, when no time passed and no script changed an
 animation, so are the style change (`Animation.styleChangeOn`) and the effect stacks
 (`Animation.overridesWhere`): the animated values of the other elements are those of the
-last measure. A script that writes one element's style and reads a computed value, again
+last measure. When only the time moved (a frame of a page whose animations run), there is
+no style change: the effect stacks at the new time, and the animated elements styled again. A script that writes one element's style and reads a computed value, again
 and again, then pays for that element each time and not for the document. -/
 def Host.measureNow (h : Host) : Host × Option Answers :=
   match h.reads.measure with
@@ -637,8 +638,13 @@ def Host.measureNow (h : Host) : Host × Option Answers :=
           L4Factoidal.Rendering.Animation.overridesWhere anim ac dirty
         if anim.idle && candidates.isEmpty then keep h base none
         else finish h anim ovs candidates (k.final.map fun c => (c, nodes))
+      else if nodes.isEmpty && k.epoch == h.reads.animEpoch then
+        -- only the time moved: no declaration and no style changed, so style starts and
+        -- cancels nothing (a style change would find every animation as it is); the effect
+        -- stacks are those of the new time
+        finish h h.anim (L4Factoidal.Rendering.Animation.overrides h.anim ac) candidates none
       else
-        -- time passed, or a script changed an animation: every animation again
+        -- a script changed an animation: every animation again
         let anim := L4Factoidal.Rendering.Animation.styleChange h.anim ac
         if anim.idle && candidates.isEmpty then keep h base none
         else finish h anim (L4Factoidal.Rendering.Animation.overrides anim ac) candidates none
