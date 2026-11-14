@@ -744,7 +744,7 @@ def postToFrame (h : Host) (node : Nat) (q : String) : Host × Except Int String
     let src := Hosts.Dom.pageOrigin d
     let target : Option (Nat × Bool × L4Factoidal.HTML.Frames.Origin) :=
       if node == windowId then d.parentOrigin.map fun o => (0, true, o)
-      else if node < d.dom.size && L4Factoidal.DOM.Dom.isHtmlElement (d.dom.get node) "iframe" then
+      else if node < d.dom.size && Hosts.Dom.frameOwner (d.dom.get node) then
         some (node, false, (Hosts.Dom.elementFrame d node).origin)
       else none
     match target with
@@ -1719,7 +1719,7 @@ def Session.startP (s : Session) (url : String) (scripts : Array (Nat × String)
   let d0 := { s.host.dom with url }
   let web := { s.host.web with net := { enabled := s.limits.network, page := L4Factoidal.Net.PageFetch.Page.ofUrl url s.limits.hostCors s.limits.pageAddress, client := url, policy := L4Factoidal.Net.Xhr.policyOfHeader s.limits.referrerPolicy, csp := L4Factoidal.Net.Xhr.cspOf s.limits.csp s.limits.cspReportOnly s.limits.cspMeta, violations := s.limits.cspViolations, syncOk := s.limits.syncOk, syncAnswers := s.limits.syncAnswers, mayBlock := s.limits.mayBlock } }
   let s := { s with host := { s.host with web } }
-  let d0 := if d0.framing && d0.dom.nodes.any (L4Factoidal.DOM.Dom.isHtmlElement · "iframe") then
+  let d0 := if d0.framing && d0.dom.nodes.any Hosts.Dom.frameOwner then
     let d1 := Hosts.Dom.connectFrames d0 #[0]
     { d1 with navigations := d1.navigations.filter (!·.2.isEmpty) } else d0
   let s := { s with host := { s.host with dom := d0 } }

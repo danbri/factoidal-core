@@ -567,7 +567,7 @@ def setAttribute (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) :
       match change s c (record c fun d => d.setAttribute n name v) with
       | (s, r) =>
         -- HTML §4.8.5: setting `src` of an iframe with a browsing context navigates it.
-        if Dom.isHtmlElement (s.dom.get n) "iframe" && Dom.asciiLower name == "src" && s.frames.any (·.1 == n) then
+        if frameOwner (s.dom.get n) && Dom.asciiLower name == "src" && s.frames.any (·.1 == n) then
           ({ s with navigations := s.navigations.push (n, if s.hostLoads && !v.trimAscii.toString.isEmpty then frameURL s v else "") }, r)
         else (s, r)
 
@@ -756,7 +756,7 @@ def nodeInfo (args : Array Value) (s : State) : State × HostResult :=
   | 26 => opt x.shadow
   | 27 => (s, ret (if d.hasShadow then 1 else 0))
   | 28 => (s, ret (d.root n))
-  | 29 => if Dom.isHtmlElement x "iframe" then (s, ret (frameBits s n))
+  | 29 => if frameOwner x then (s, ret (frameBits s n))
     else if x.type == .document then (s, ret (if s.parentOrigin.isSome then 128 else 0))
     else (s, ret (-1))
   | _ => (s, ret (-2))
@@ -946,6 +946,10 @@ def aboutBlank : Dom := Id.run do
   return d.linkChild html body none
 
 /-- The `src` URL of an `iframe` element, when it has a non-empty one. -/
+/-- An element that has a child navigable when connected (HTML §4.8.5 `iframe`, §16.2
+`frame`). -/
+def frameOwner (x : DOM.Node) : Bool := Dom.isHtmlElement x "iframe" || Dom.isHtmlElement x "frame"
+
 def frameSrc (d : Dom) (el : Nat) : Option String :=
   match attrValue? d el "src" with
   | some v => if v.trimAscii.toString.isEmpty then none else some v
@@ -982,13 +986,13 @@ def connectFrames (s : State) (inserted : Array Nat) : State := Id.run do
     let root := s.dom.root top
     if (s.dom.get root).type != .document || !(root == 0 || s.frames.any (·.2 == root)) then continue
     for k in s.dom.treeOrder top do
-      if Dom.isHtmlElement (s.dom.get k) "iframe" && !(s.frames.any (·.1 == k)) then
+      if frameOwner (s.dom.get k) && !(s.frames.any (·.1 == k)) then
         let (d, doc) := s.dom.graft aboutBlank
         -- the frame's flags and origin as they are now (HTML §4.8.5: kept until it navigates)
         let info := frameFor s (docFrame s root) k
         -- HTML §4.8.5 "process the iframe attributes": `srcdoc` first (Lean loads it),
         -- then a `src` URL (the embedder's, when it loads URLs), else `about:blank`.
-        let nav := if (attrValue? d k "srcdoc").isSome then "about:srcdoc"
+        let nav := if Dom.isHtmlElement (d.get k) "iframe" && (attrValue? d k "srcdoc").isSome then "about:srcdoc"
           else if s.hostLoads then ((frameSrc d k).map (frameURL s)).getD "" else ""
         match addCommand s (.frameDocument k "" false doc) d with
         | (s', .values #[.i32 0]) =>

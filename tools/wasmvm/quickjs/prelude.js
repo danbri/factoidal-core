@@ -1383,10 +1383,13 @@
   reflectURL(named.HTMLImageElement, ['src']); reflectString(named.HTMLImageElement, ['alt']);
   reflectURL(named.HTMLScriptElement, ['src']);
   reflectURL(named.HTMLLinkElement, ['href']); reflectString(named.HTMLLinkElement, ['rel', 'type', 'media']);
-  Object.defineProperties(named.HTMLIFrameElement.prototype, {
-    contentDocument: { get() { return wrap(info(nodeId(this), 11)); }, configurable: true },
-    contentWindow: { get() { const d = info(nodeId(this), 11); return d < 0 ? null : frameWindow(d); }, configurable: true },
-  });
+  // HTML §4.8.5, §16.2: an iframe's or a frame's content document and window (null with no
+  // child navigable, or one the page may not reach).
+  for (const C of [named.HTMLIFrameElement, named.HTMLFrameElement])
+    Object.defineProperties(C.prototype, {
+      contentDocument: { get() { const d = info(nodeId(this), 11); return d < 0 ? null : wrap(d); }, configurable: true, enumerable: true },
+      contentWindow: { get() { const d = info(nodeId(this), 11); return d < 0 ? null : frameWindow(d); }, configurable: true, enumerable: true },
+    });
   // ---- WebGPU subset (docs/designissues/2026-11-08-page-gpu.md) ------------------------
   // Page-facing objects only. Each method packs its arguments into one `gpu_command` import
   // (`n.gpu(op, header, payload)`); Lean (L4Factoidal.PageGpu) decodes, validates and turns

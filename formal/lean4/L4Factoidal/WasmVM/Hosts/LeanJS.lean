@@ -752,7 +752,7 @@ def start (base : Session) (dom : Arena) (url : String) (scripts : Array (Nat ×
   let gpu := L4Factoidal.PageGpu.State.empty lim.gpuPage
   let domHost : Page.DomHost := { dom := dom, commandLimit := lim.commands, logLimit := lim.logs, framing := lim.frames, gpu := gpu, url, selfOrigin := origins.map (·.1), parentOrigin := origins.map (·.2), hostLoads := lim.hostLoads }
   -- the page's own iframes get browsing contexts before its scripts run (as `Page.Session.startP`)
-  let domHost := if domHost.framing && dom.nodes.any (L4Factoidal.DOM.Dom.isHtmlElement · "iframe") then
+  let domHost := if domHost.framing && dom.nodes.any Hosts.Dom.frameOwner then
     let d1 := Hosts.Dom.connectFrames domHost #[0]
     { d1 with navigations := d1.navigations.filter (!·.2.isEmpty) } else domHost
   let s := { base with
