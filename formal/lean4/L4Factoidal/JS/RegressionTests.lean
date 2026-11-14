@@ -481,4 +481,28 @@ own and no early error (§15.7.1 forbids it in the initialiser or block itself a
 #guard (out "class C { static { arguments } }").head!.startsWith "SyntaxError"
 #guard (out "class C { x = () => arguments }").head!.startsWith "SyntaxError"
 
+/-! ## A full heap stops the script (`HeapOf.full`, `maxObjs`)
+
+The heap has no collector, so a script that makes objects for ever grew until the operating
+system ended the process (the WPT runner's processes ended with SIGKILL on pages that poll
+through promises and timers). `tick` looks at the heap's size every 1024 steps, a call and a
+`charge` every time: past `maxObjs` objects or environment records the run halts (not an
+exception: `catch` does not see it), as at the end of the step budget. -/
+
+/-- A script on a heap of at most `n` objects: how it ended, whether the heap stayed near the
+limit, and how many lines it printed. -/
+def onSmallHeap (n : Nat) (src : String) : String × Bool × Nat :=
+  match runScript { freshHeap with maxObjs := n } src with
+  | (.halted w, h) => (w, h.objs.size ≤ n + 3000, h.out.size)
+  | (.ok, h) => ("ok", true, h.out.size)
+  | (.threw _ m, h) => ("threw " ++ m, true, h.out.size)
+  | (.syntaxError m, h) => (m, true, h.out.size)
+
+#guard onSmallHeap 5000 "var a = []; for (;;) a.push({})" == (heapFullMsg, true, 0)
+#guard onSmallHeap 5000 "function poll(i) { return new Promise(function (r) { r() }).then(function () { return poll(i + 1) }) } poll(0)" == (heapFullMsg, true, 0)
+#guard onSmallHeap 5000 "var f = function () { return function () {} }; var k = []; for (;;) k.push(f())" == (heapFullMsg, true, 0)
+#guard onSmallHeap 5000 "try { var a = []; for (;;) a.push({}) } catch (e) { print('caught') } print('after')" == (heapFullMsg, true, 0)
+-- a script that stays within the heap is not touched
+#guard onSmallHeap 5000 "var n = 0; for (var i = 0; i < 100000; i++) n += i; print(n)" == ("ok", true, 1)
+
 end L4Factoidal.JS.Tests

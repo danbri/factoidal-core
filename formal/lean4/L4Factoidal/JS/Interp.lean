@@ -144,9 +144,24 @@ def fillSlots (args : Array Value) (nParams size : Nat) : Array Value :=
   if a.size == size then a else
   (List.range (size - a.size)).foldl (fun a _ => a.push .undef) a
 
+/-- What a script is stopped with when its heap is full (`HeapOf.full`). -/
+def heapFullMsg : String := "memory limit: the script's heap is full"
+
+/-- One step. Every 1024th step also looks at the size of the heap (`HeapOf.full`), so a loop
+that makes objects stops at `maxObjs` and not when the machine is out of memory. -/
 @[inline] def tick : M Unit := do
   let h ← get
   if h.steps == 0 then throw (.halt "step budget exhausted")
+  if h.steps % 1024 == 0 && h.full then throw (.halt heapFullMsg)
+  set { h with steps := h.steps - 1 }
+
+/-- The step of a function call. It looks at the size of the heap every time: a run of few
+steps (an event handler, a timer callback) starts with a call, so on a full heap no run gets
+further than its first call, however short the runs are. -/
+@[inline] def tickCall : M Unit := do
+  let h ← get
+  if h.steps == 0 then throw (.halt "step budget exhausted")
+  if h.full then throw (.halt heapFullMsg)
   set { h with steps := h.steps - 1 }
 
 /-- Take `k` steps at once: the work of a built-in that loops inside Lean (over a string,
@@ -158,6 +173,7 @@ def charge (k : Nat) : M Unit := do
   if h.steps < k then
     set { h with steps := 0 }
     throw (.halt "step budget exhausted")
+  if h.full then throw (.halt heapFullMsg)
   set { h with steps := h.steps - k }
 
 /-- The longest string `repeat` and `padStart` make: 256 MiB of UTF-8. -/
@@ -1898,7 +1914,7 @@ termination_by structural n _ _ _ => n
 def callClosure : Nat → FunDef → Nat → Value → Value → Value → Value → Value → Value → Array Value → M Value
   | 0, _, _, _, _, _, _, _, _, _ => throw (.halt "fuel")
   | n + 1, fd, env, capThis, capNT, home, fnObj, thisV, newTarget, args => do
-    tick
+    tickCall
     let h ← get
     if h.depth ≥ h.maxDepth then throwErr .range "Maximum call stack size exceeded"
     let saved := h.depth
@@ -5832,7 +5848,7 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
         | none => none
       match callee with
       | some (c, cenv, capThis) =>
-        tick
+        tickCall
         let depth := (match fr with | f0 :: _ => f0.depth + 1 | [] => 1)
         if depth > vmMaxDepth then
           vmStash regs fregs (bp + code.nregs)

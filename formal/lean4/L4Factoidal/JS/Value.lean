@@ -548,6 +548,11 @@ structure ColdHeap (H : Type) where
   jobHead : Nat := 0
   /-- Jobs run in total (a host counts its microtasks with it). -/
   jobsRun : Nat := 0
+  /-- The most objects, and the most environment records, a heap may hold (`HeapOf.full`):
+  past it a script is stopped (`Abrupt.halt`), as at the end of its step budget. The heap has
+  no collector, so a page that makes objects for ever (a timer that polls through promises)
+  grew until the operating system ended the process; 2^23 objects are 2 to 4 GiB. -/
+  maxObjs : Nat := 8388608
   realm : Realm := {}
   /-- The description of each Symbol; the well-known ones first (`wellKnown`). -/
   syms : Array String := wellKnown.map ("Symbol." ++ ·)
@@ -584,6 +589,9 @@ structure HeapOf (H : Type) extends ColdHeap H where
   maxDepth : UInt32 := 400
 
 instance : Inhabited (HeapOf H) := ⟨{}⟩
+
+/-- The heap is over its size: more objects, or more environment records, than `maxObjs`. -/
+@[inline] def HeapOf.full (h : HeapOf H) : Bool := h.objs.size > h.maxObjs || h.envs.size > h.maxObjs
 
 abbrev Heap := HeapOf Unit
 
