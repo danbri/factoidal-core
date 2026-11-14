@@ -204,14 +204,6 @@ def isIdent (name : String) : CV → Bool
   | .tok (.ident s) => lower s == name
   | _ => false
 
-/-- The values before `round` and the radii after it (with `round`), when the radii are not
-all zero lengths. -/
-def splitRound (args : List CV) : List CV × List CV :=
-  let before := args.takeWhile (!isIdent "round" ·)
-  let after := args.drop (before.length + 1)
-  if after.isEmpty || after.all isZeroLength then (before, [])
-  else (before, .tok (.ident "round") :: after)
-
 /-- Four sides in the shortest form (top, right, bottom, left), compared by their text. -/
 def shortestSides (sides : List CV) : List CV :=
   match sides with
@@ -222,6 +214,40 @@ def shortestSides (sides : List CV) : List CV :=
       else [t, r, b]
     else sides
   | _ => sides
+
+def isSlash : CV → Bool
+  | .tok (.delim '/') => true
+  | _ => false
+
+def isWsCV : CV → Bool
+  | .tok .ws => true
+  | _ => false
+
+/-- One to four values as four (CSS Box 4 §3.2: a missing one copies its opposite). -/
+def fourOf : List CV → List CV
+  | [a] => [a, a, a, a]
+  | [a, b] => [a, b, a, b]
+  | [a, b, c] => [a, b, c, b]
+  | xs => xs
+
+/-- The radii after `round` in their shortest form (CSS Shapes 1 §3.1, as `border-radius`):
+each list of four in its shortest form, and the vertical radii left out when they are the
+horizontal ones. -/
+def shortestRadii (radii : List CV) : List CV :=
+  let ws := stripWs radii
+  let h := ws.takeWhile fun cv => !isSlash cv
+  let v := ws.drop (h.length + 1)
+  let text := fun (xs : List CV) => (fourOf xs).map fun cv => serialize [cv]
+  let h' := shortestSides (fourOf h)
+  if v.isEmpty || text v == text h then h' else h' ++ [.tok (.delim '/')] ++ shortestSides (fourOf v)
+
+/-- The values before `round` and the radii after it (with `round`), when the radii are not
+all zero lengths. -/
+def splitRound (args : List CV) : List CV × List CV :=
+  let before := args.takeWhile (!isIdent "round" ·)
+  let after := args.drop (before.length + 1)
+  if after.isEmpty || after.all (fun cv => isZeroLength cv || isSlash cv || isWsCV cv) then (before, [])
+  else (before, .tok (.ident "round") :: shortestRadii after)
 
 /-- `rect(top right bottom left)` as the sides of an `inset()`: `auto` is the edge. -/
 def rectSides (sides : List CV) : Option (List CV) :=
