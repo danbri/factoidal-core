@@ -58,15 +58,25 @@ def gridStretches (c : ContentAlign) : Bool := c == .normal || c == .stretch
 
 /-- `justify-self` or `align-self` of an item (`auto` is the container's `justify-items`
 or `align-items`) as the alignment in its area. `normal` is `stretch` for a grid item;
-the baseline values are read as `start`. -/
-def gridSelfAlign (own container : ItemAlign) (reverse : Bool) : Grid.SelfAlign :=
+the baseline values are read as `start`. `reverse`: the start of the axis is the physical
+right (a right-to-left container), for `left` and `right`. `flip`: the item's own start
+side is the container's end side (an item whose direction is not the container's), for
+`self-start` and `self-end`. -/
+def gridSelfAlign (own container : ItemAlign) (reverse : Bool) (flip : Bool := false) : Grid.SelfAlign :=
   match (if own == .auto then container else own) with
   | .auto | .normal | .stretch => .stretch
-  | .start | .flexStart | .selfStart | .baseline => .start
-  | .end_ | .flexEnd | .selfEnd | .lastBaseline => .end_
+  | .start | .flexStart | .baseline => .start
+  | .end_ | .flexEnd | .lastBaseline => .end_
+  | .selfStart => if flip then .end_ else .start
+  | .selfEnd => if flip then .start else .end_
   | .left => if reverse then .end_ else .start
   | .right => if reverse then .start else .end_
   | .center => .center
+
+#guard gridSelfAlign .selfStart .normal false true == .end_
+#guard gridSelfAlign .selfEnd .normal false true == .start
+#guard gridSelfAlign .auto .selfStart false false == .start
+#guard gridSelfAlign .left .normal true == .end_
 
 /-- The explicit grid and the placement of the items of a grid container. -/
 structure GridPlan where
@@ -258,7 +268,7 @@ def gridLayout (kids : Children) (s : Computed) (items0 : Array Item) (box : Con
     let extent := Grid.spanExtent colStarts colSizes a.col a.colSpan
     let areaW := gridPx extent.2
     let areaX := if rtl then box.width-LU.toPx extent.1-areaW else LU.toPx extent.1
-    let justify := gridSelfAlign is.align.justifySelf s.align.justifyItems rtl
+    let justify := gridSelfAlign is.align.justifySelf s.align.justifyItems rtl (is.direction != s.direction)
     let width ← gridItemWidth kids item is areaW (justify == .stretch)
     let outerW := width+m.left+m.right
     let dx := match autoCrossOffset is.autoMarginLeft is.autoMarginRight (areaW-outerW) with
