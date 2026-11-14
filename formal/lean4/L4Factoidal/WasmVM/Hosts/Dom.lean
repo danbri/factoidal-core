@@ -1402,7 +1402,7 @@ def gpuCommand (mem : Nat) (args : Array Value) (s : State) (st : StoreOf M) : S
   match st.readMem mem (arg args 2) (arg args 3) with
   | .error _ => (s, st, codeOrTrap (-8))
   | .ok b =>
-    if arg args 0 % L4Factoidal.PageGpu.Wire.binaryOp == L4Factoidal.PageGpu.Wire.mappedOp then
+    if arg args 0 == L4Factoidal.PageGpu.Wire.mappedOp || arg args 0 == L4Factoidal.PageGpu.Wire.binaryOp + L4Factoidal.PageGpu.Wire.mappedOp then
       -- `getMappedRange`: the bytes of a buffer the host read back (`PageGpu.deliver`), or -1
       match (L4Factoidal.PageGpu.Wire.mappedId (arg args 0) b).bind (L4Factoidal.PageGpu.mappedOf s.gpu) with
       | some bytes => let a := putOut mem st (arg args 4) (arg args 5) bytes; (s, a.1, a.2)
