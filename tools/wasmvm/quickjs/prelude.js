@@ -12242,8 +12242,11 @@
     idl(Lock, 'Lock');
     // A granted request: its callback runs with the lock, which is held until the callback's
     // promise settles; Lean is then told, and answers the requests that are granted next.
+    // A granted request is held from its grant (so a steal before its callback runs rejects it);
+    // its callback runs in a microtask, unless its signal was aborted first or it was stolen.
     const run = e => {
-      held.set(e.id, e);
+      if (held.get(e.id) !== e) return;
+      if (e.signal && e.signal.aborted) { release(e); e.reject(e.signal.reason); return; }
       let p;
       try { p = Promise.resolve(e.callback(make(Lock, { name: e.name, mode: e.mode }))); } catch (err) { p = Promise.reject(err); }
       p.then(v => { release(e); e.resolve(v); }, err => { release(e); e.reject(err); });
@@ -12255,6 +12258,7 @@
         if (!e) continue;
         pending.delete(e.id);
         if (e.signal) e.signal.removeEventListener('abort', e.onabort);
+        held.set(e.id, e);
         queueMicrotask(() => run(e));
       }
     };
@@ -12284,7 +12288,7 @@
           }
           // the holders a steal released: their request promises reject
           for (const b of f.slice(2)) { const h = held.get(Number(text(b))); if (h) { held.delete(h.id); h.reject(new DOMException('The lock was stolen by another request.', 'AbortError')); } }
-          if (state === '1') { queueMicrotask(() => run(e)); return; }
+          if (state === '1') { held.set(id, e); queueMicrotask(() => run(e)); return; }
           pending.set(id, e);
           if (signal) {
             e.onabort = () => { if (!pending.has(id)) return; pending.delete(id); reject(signal.reason); grant(call(['abort', String(id)], 'LockManager.request')); };
