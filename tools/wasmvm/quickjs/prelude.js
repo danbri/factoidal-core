@@ -282,6 +282,7 @@
     constructor(type, init = undefined) {
       super(type, init); const s = state(this), d = initOf(init);
       s.data = d.data === undefined || d.data === null ? null : String(d.data); s.isComposing = !!d.isComposing; s.inputType = String(d.inputType ?? '');
+      s.ranges = Array.isArray(d.ranges) ? d.ranges : Array.isArray(d.targetRanges) ? d.targetRanges : [];
     }
   }
   getters(InputEvent, ['data', 'isComposing', 'inputType']);
@@ -5945,11 +5946,12 @@
     selectAllChildren(node) { needArgs(arguments, 1, 'selectAllChildren'); op(0, 148, String(nodeId(node))); },
     deleteFromDocument() { op(0, 149); },
     containsNode(node, allowPartialContainment = false) { needArgs(arguments, 1, 'containsNode'); return op(0, 150, nodeId(node) + ' ' + (allowPartialContainment ? 1 : 0)) === '1'; },
-    modify() {},
+    // Selection API "modify": the engine moves the focus (DOM.Editing.modifyFocus, op 178).
+    modify(alter = '', direction = '', granularity = '') { n.query(0, 178, [alter, direction, granularity].map(String).join(' ')); },
     getComposedRanges() { const s = selState(); return s ? [new StaticRange({ startContainer: wrap(s.b[0]), startOffset: s.b[1], endContainer: wrap(s.b[2]), endOffset: s.b[3] })] : []; },
     toString() { const s = selState(); return s ? op(s.k, 111) : ''; },
   })) define(Selection.prototype, k, ['addRange', 'removeRange', 'removeAllRanges', 'empty', 'collapse', 'setPosition', 'collapseToStart',
-    'collapseToEnd', 'extend', 'setBaseAndExtent', 'selectAllChildren', 'deleteFromDocument'].includes(k) ? selChanging(f) : f);
+    'collapseToEnd', 'extend', 'setBaseAndExtent', 'selectAllChildren', 'deleteFromDocument', 'modify'].includes(k) ? selChanging(f) : f);
   for (const [k, f] of Object.entries({
     anchorNode() { const s = selState(); return s ? wrap(s.dir === 2 ? s.b[2] : s.b[0]) : null; },
     anchorOffset() { const s = selState(); return s ? (s.dir === 2 ? s.b[3] : s.b[1]) : 0; },
@@ -5966,10 +5968,46 @@
   // The algorithms are the engine's (DOM.Editing, node_query ops 175 to 177); this is the
   // WebIDL glue. No method throws for a command name: an unknown command answers false or ''.
   const editQuery = (k, s) => { const r = n.query(0, k, s); return typeof r === 'string' ? r : ''; };
+  // The focused text control (an input with a text selection, or a textarea), if any: a
+  // command then edits its value and selection (DOM.Editing.textEdit, op 179).
+  const miscEdit = ['stylewithcss', 'usecss', 'defaultparagraphseparator', 'selectall'];
+  const editControl = () => {
+    const el = document.activeElement;
+    if (el === null || el === undefined || el === document.body) return null;
+    if (el.localName !== 'textarea' && el.localName !== 'input') return null;
+    try { return typeof el.selectionStart === 'number' && typeof el.setSelectionRange === 'function' ? el : null; } catch { return null; }
+  };
+  const controlQuery = (el, command, value) => editQuery(179,
+    [command, el.localName === 'textarea' ? '1' : '0', el.selectionStart, el.selectionEnd, value, el.value].join('\u0000'));
+  // The document commands (styleWithCSS and the like) work from a text control only when
+  // the control is in editable content.
+  const controlInEditable = el => el.parentElement !== null && el.parentElement.isContentEditable === true;
+  const controlCommand = (el, commandId, value) => {
+    let command = String(commandId).toLowerCase(), text = String(value);
+    if (miscEdit.includes(command) && command !== 'selectall') return null;
+    if (command === 'inserthtml') { const t = document.createElement('template'); t.innerHTML = text; text = t.content.textContent; command = 'inserttext'; }
+    const r = controlQuery(el, command, text);
+    if (r === '') return false;
+    const at = r.indexOf('\u0000'), [start, end, inputType] = r.slice(0, at).split(' '), next = r.slice(at + 1);
+    if (next !== el.value) el.value = next;
+    el.setSelectionRange(Number(start), Number(end));
+    if (inputType !== '-') {
+      const e = new InputEvent('input', { bubbles: true, cancelable: false, inputType, data: inputType === 'insertText' ? text : null });
+      state(e).trusted = true;
+      dispatch(el, e);
+    }
+    return true;
+  };
   for (const [k, f] of Object.entries({
     execCommand(commandId, showUI = false, value = '') {
       needArgs(arguments, 1, 'execCommand');
       if (this !== document) return false;
+      const control = editControl();
+      if (control !== null) {
+        const done = controlCommand(control, commandId, value);
+        if (done !== null) return done;
+        if (!controlInEditable(control)) return false;
+      }
       const r = selChanging(() => editQuery(175, String(commandId) + '\u0000' + String(value)))().split('\u0000');
       if (r[0] !== '1') return false;
       if (r.length > 2) {
@@ -5980,7 +6018,17 @@
       }
       return true;
     },
-    queryCommandEnabled(commandId) { needArgs(arguments, 1, 'queryCommandEnabled'); return this === document && editQuery(176, 'e\u0000' + String(commandId)) === '1'; },
+    queryCommandEnabled(commandId) {
+      needArgs(arguments, 1, 'queryCommandEnabled');
+      if (this !== document) return false;
+      const control = editControl();
+      if (control !== null) {
+        const command = String(commandId).toLowerCase();
+        if (!miscEdit.includes(command) || command === 'selectall') return controlQuery(control, '?' + command, '') === '1';
+        if (!controlInEditable(control)) return false;
+      }
+      return editQuery(176, 'e\u0000' + String(commandId)) === '1';
+    },
     queryCommandIndeterm(commandId) { needArgs(arguments, 1, 'queryCommandIndeterm'); return this === document && editQuery(176, 'i\u0000' + String(commandId)) === '1'; },
     queryCommandState(commandId) { needArgs(arguments, 1, 'queryCommandState'); return this === document && editQuery(176, 's\u0000' + String(commandId)) === '1'; },
     queryCommandSupported(commandId) { needArgs(arguments, 1, 'queryCommandSupported'); return editQuery(176, 'u\u0000' + String(commandId)) === '1'; },
@@ -5990,8 +6038,15 @@
     get() { return this === document ? editQuery(177, 'd') : 'off'; },
     set(v) { v = String(v).toLowerCase(); if (this === document && (v === 'on' || v === 'off')) n.query(0, 177, v === 'on' ? 'd1' : 'd0'); },
     configurable: true, enumerable: true });
+  // The page of a script session does not scroll (as window.scrollTo): nothing to bring into view.
+  if (!('scrollIntoView' in Element.prototype)) define(Element.prototype, 'scrollIntoView', function scrollIntoView() {});
   if (!('dataTransfer' in InputEvent.prototype)) Object.defineProperty(InputEvent.prototype, 'dataTransfer', { get() { return null; }, configurable: true, enumerable: true });
-  if (!('getTargetRanges' in InputEvent.prototype)) define(InputEvent.prototype, 'getTargetRanges', function getTargetRanges() { return []; });
+  // Input Events §4.1.2: the ranges the engine gave a beforeinput of an editing command
+  // (node numbers and offsets), or the StaticRanges of a script's init.
+  if (!('getTargetRanges' in InputEvent.prototype)) define(InputEvent.prototype, 'getTargetRanges', function getTargetRanges() {
+    return (state(this).ranges ?? []).map(r => Array.isArray(r)
+      ? new StaticRange({ startContainer: wrap(r[0]), startOffset: r[1], endContainer: wrap(r[2]), endOffset: r[3] }) : r);
+  });
   if (!('contentEditable' in HTMLElement.prototype)) Object.defineProperty(HTMLElement.prototype, 'contentEditable', {
     get() { const r = n.query(nodeId(this), 177, 'c'); return typeof r === 'string' ? r : 'inherit'; },
     set(v) {
@@ -7533,16 +7588,21 @@
     },
     // Lean dispatches an event of the user agent at a node, the document (0) or the window.
     dispatch(target, type, flags) {
-      const C = type.startsWith('pointer') ? PointerEvent : type === 'click' || type.startsWith('mouse') ? MouseEvent : type === 'message' ? MessageEvent : Event;
+      let C = type.startsWith('pointer') ? PointerEvent : type === 'click' || type.startsWith('mouse') ? MouseEvent : type === 'message' ? MessageEvent : Event;
       const init = { bubbles: (flags & 1) !== 0, cancelable: (flags & 2) !== 0, composed: (flags & 4) !== 0, view: window };
-      // The pointer's coordinates, buttons and pointer fields, as Lean gives them.
+      // The pointer's coordinates, buttons and pointer fields, as Lean gives them; the key of
+      // a keyboard event; the inputType and data of an input event of an editing command.
       let data = {};
-      if (C !== Event) { const s = n.query(0, 16, ''); if (typeof s === 'string' && s !== '') { try { data = JSON.parse(s); } catch {} } }
+      const keyOrInput = type === 'keydown' || type === 'keyup' || type === 'keypress' || type === 'beforeinput' || type === 'input';
+      if (C !== Event || keyOrInput) { const s = n.query(0, 16, ''); if (typeof s === 'string' && s !== '') { try { data = JSON.parse(s); } catch {} } }
+      if (keyOrInput && typeof data.key === 'string') C = KeyboardEvent;
+      else if (keyOrInput && typeof data.inputType === 'string') C = InputEvent;
       // shadowframes: a message from another session (HTML.FrameSessions): its data is
       // serialized; its source is the frame it came through, or the parent.
       if (C === MessageEvent) { try { data.data = JSON.parse(data.data); } catch { data.data = null; } data.source = data.frame >= 0 ? opaqueWindow(data.frame) : parentWindow(); delete data.frame; }
       const e = new C(type, Object.assign({}, data, init));
       for (const k of ['pageX', 'pageY', 'offsetX', 'offsetY', 'movementX', 'movementY']) if (typeof data[k] === 'number') state(e)[k] = data[k];
+      if (C === KeyboardEvent && typeof data.keyCode === 'number') { state(e).keyCode = data.keyCode; state(e).which = data.keyCode; }
       state(e).trusted = true;
       if (type === 'DOMContentLoaded') readyState = 'interactive';
       if (type === 'load' && target === WINDOW) readyState = 'complete';

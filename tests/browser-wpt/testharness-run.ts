@@ -209,6 +209,8 @@ function scriptFile(url:string):string|undefined {
   const u=new URL(url);
   if(u.origin!==origin&&u.origin!==secureOrigin)return undefined;
   if(u.pathname==="/resources/testharnessreport.js")return join(here,"testharnessreport.js");
+  // test_driver's vendor file is the runner's too (key input of the user: scriptSession action `key`).
+  if(u.pathname==="/resources/testdriver-vendor.js")return join(here,"testdriver-vendor.js");
   // wptserve's one rewrite (tools/serve/serve.py `rewrites`).
   const pathname=u.pathname==="/resources/WebIDLParser.js"?"/resources/webidl2/lib/webidl2.js":u.pathname;
   const path=wptFile(decodeURIComponent(pathname));
@@ -409,6 +411,8 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
   const http=serve?.fetcher;
   const readText=async(url:string):Promise<string|undefined>=>{
     if(new URL(url).pathname==="/resources/testharnessreport.js"&&isWptHost(url))return await Deno.readTextFile(join(here,"testharnessreport.js"));
+    // test_driver's vendor file is the runner's too (testdriver-vendor.js of this directory).
+    if(new URL(url).pathname==="/resources/testdriver-vendor.js"&&isWptHost(url))return await Deno.readTextFile(join(here,"testdriver-vendor.js"));
     if(http){try{const r=await http.fetch(url);if(!r.ok){await r.body?.cancel();return undefined;}return await r.text();}catch{return undefined;}}
     const path=scriptFile(url);if(!path)return undefined;
     try{let source=await Deno.readTextFile(path);
@@ -610,16 +614,40 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
     const take=(t:ScriptTurnWithFetches)=>{logs.push(...t.logs);errors.push(...t.errors);instructions+=t.instructions;collectNet(t as {netRequests?:NetWire[]});};
     collectNet(turn as {netRequests?:NetWire[]});
     const startFetches=(turn as ScriptTurnWithFetches).fetches??[];
-    turn=await ss({action:"settle",session:turn.session,budgetMs:70000});
-    take(turn);
+    // test_driver (testdriver-vendor.js of this directory): a request of the page leaves it as a
+    // console line; it is run as input of the user (scriptSession action `key`). The page then
+    // settles in short slices of virtual time, so a request is seen before the test's own
+    // timeout runs. Pages without testdriver.js settle in one call, as before.
+    const driver=scriptEngine==="bubblepop"&&html.includes("testdriver.js");
+    let driverSeen=0;
+    const drive=async():Promise<boolean>=>{
+      let did=false;
+      for(;driverSeen<logs.length;driverSeen++){
+        const line=logs[driverSeen];
+        if(!line.startsWith("__wpt_driver "))continue;
+        let req:{keys?:Record<string,unknown>[]};
+        try{req=JSON.parse(line.slice(13));}catch{continue;}
+        for(const k of req.keys??[]){take(turn=await ss({...k,action:"key",session:turn.session}));did=true;}
+      }
+      return did;
+    };
+    const settleTo=async(budgetMs:number)=>{
+      if(!driver){take(turn=await ss({action:"settle",session:turn.session,budgetMs}));return;}
+      const stop=turn.clock+budgetMs;
+      for(let i=0;i<200000;i++){
+        take(turn=await ss({action:"settle",session:turn.session,budgetMs:Math.max(1,Math.min(16,stop-turn.clock))}));
+        const did=await drive();
+        if(turn.clock>=stop||(!did&&(turn as {quiet?:boolean}).quiet))break;
+      }
+    };
+    await settleTo(70000);
     let pending:Fetch[]=[...startFetches,...((turn as ScriptTurnWithFetches).fetches??[])].filter(f=>!answered.has(f.id));
     for(let round=0;pending.length&&round<1000;round++){
       for(const f of pending)answered.add(f.id);
       const results=await Promise.all(pending.map(hostFetch));
       const given=engine.scriptSession("",{action:"fetched",session:turn.session,results}) as ScriptTurnWithFetches;
       take(given);
-      turn=await ss({action:"settle",session:turn.session,budgetMs:70000});
-      take(turn);
+      await settleTo(70000);
       pending=[...(given.fetches??[]),...((turn as ScriptTurnWithFetches).fetches??[])].filter((f,i,all)=>!answered.has(f.id)&&all.findIndex(g=>g.id===f.id)===i);
     }
     // Frames and page requests (XMLHttpRequest: `network:true`): answer each navigation with
@@ -633,7 +661,7 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
           take(turn=await ss({action:"frame",session,node:nav.nodeId,url:nav.url,source:source??"",...(frameEncoding?{encoding:frameEncoding}:{}),
             ...(source===undefined?{failed:true}:{resources:await resourcesOf(source,nav.url)})}));
         }
-        take(turn=await ss({action:"settle",session,budgetMs:Math.max(1,70000-turn.clock)}));
+        await settleTo(Math.max(1,70000-turn.clock));
       }
     };
     await answerFrames();
@@ -643,7 +671,7 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
       inflight.delete(id);
       const now=performance.now(),elapsedMs=Math.round(now-lastNet);lastNet=now;
       take(turn=await ss({action:"net",session:turn.session,results:[answer],elapsedMs}));
-      take(turn=await ss({action:"settle",session:turn.session,budgetMs:Math.max(1,70000-turn.clock)}));
+      await settleTo(Math.max(1,70000-turn.clock));
       await answerFrames();
     }
     engine.scriptSession("",{action:"close"});

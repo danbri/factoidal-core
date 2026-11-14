@@ -28,15 +28,23 @@ def supportedCommands : List String :=
 
 def isSupported (command : String) : Bool := supportedCommands.contains command
 
+/-- The commands that change formatting: not enabled in a `plaintext-only` editing host
+(HTML §6.8.1: only raw text is editable there). -/
+def stylingCommands : List String :=
+  ["backcolor", "bold", "createlink", "fontname", "fontsize", "forecolor", "hilitecolor", "italic",
+   "removeformat", "strikethrough", "subscript", "superscript", "underline", "unlink"] ++ blockCommands
+
 /-- "Enabled": a miscellaneous command, or there is an active range whose start and end
-nodes are editable or editing hosts, inside one editing host. -/
+nodes are editable or editing hosts, inside one editing host (and for a formatting
+command, not a `plaintext-only` one). -/
 def isEnabled (e : Ed) (command : String) : Bool :=
   miscCommands.contains command ||
     (hasActive e &&
       (let r := activeOf e
        (isEditable e r.start.node || isEditingHost e r.start.node) &&
        (isEditable e r.stop.node || isEditingHost e r.stop.node) &&
-       (chain e.dom (commonAncestor e.dom r)).any (isEditingHost e)))
+       (chain e.dom (commonAncestor e.dom r)).any (isEditingHost e)) &&
+      !(stylingCommands.contains command && inPlaintextHost e))
 
 /-- Enabled. Says: with no active range, only the miscellaneous commands are enabled.
 Does not say: that a command with an active range is enabled (its ends must be editable). -/
@@ -119,11 +127,29 @@ def action (command value : String) : M Bool := do
       | some r => return r
       | none => return false
 
+/-- The elements with no content (HTML §13.1.2 "void elements"). -/
+def voidNames : List String :=
+  ["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"]
+
+/-- A boundary point inside a void element is the point just before the element: nothing
+can be put in it (browsers edit before it). -/
+def leaveVoid (d : Dom) (bp : BP) : BP :=
+  if isHtml d bp.node voidNames then
+    match parentOf d bp.node with
+    | some p => ⟨p, indexOf d bp.node⟩
+    | none => bp
+  else bp
+
 /-- `document.execCommand(command, showUI, value)`: the command name in any case. -/
 def execCommand (command value : String) : M Bool := do
   let command := lower command
   if !isSupported command then return false
   if !(← rd fun e => isEnabled e command) then return false
+  if !miscCommands.contains command then
+    let e ← get
+    let r := activeOf e
+    let r' : Rng := ⟨leaveVoid e.dom r.start, leaveVoid e.dom r.stop⟩
+    if r' != r then setActive r'
   action command value
 
 /-- Unsupported. Says: `execCommand` of a command that is not supported answers false
@@ -200,6 +226,38 @@ def execCommandWithEvent (command value : String) : M (Bool × Option (NodeId ×
     | some h => if (← rd fun e => detached e.dom h) then rd affectedHost else pure (some h)
     | none => rd affectedHost
   return (ok, host.map fun h => (h, inputTypeOf c, inputDataOf c value))
+
+/-- A boundary point moved down to the end of the inline content before it. -/
+def descendBack (e : Ed) (bp : BP) : BP := Id.run do
+  let d := e.dom
+  let mut cur := bp
+  for _ in [0:d.size + 1] do
+    if cur.offset == 0 then break
+    match (kidsOf d cur.node)[cur.offset - 1]? with
+    | some c => if isInlineNode e c && nodeLength d c != 0 && !isHtml d c ["br", "img"] then cur := ⟨c, nodeLength d c⟩ else break
+    | none => break
+  return cur
+
+/-- A boundary point moved down to the start of the inline content after it. -/
+def descendForward (e : Ed) (bp : BP) : BP := Id.run do
+  let d := e.dom
+  let mut cur := bp
+  for _ in [0:d.size + 1] do
+    match (kidsOf d cur.node)[cur.offset]? with
+    | some c => if isInlineNode e c && nodeLength d c != 0 && !isHtml d c ["br", "img"] then cur := ⟨c, 0⟩ else break
+    | none => break
+  return cur
+
+/-- The target range of a command's `beforeinput` event: the range the command would
+delete first, with its ends in the innermost inline content; none for a command that
+deletes nothing, and the selection itself for a command that would change nothing. The
+command runs on a copy of the state; nothing is kept. -/
+def targetRange (command value : String) : M (Option Rng) := do
+  let e ← get
+  let (_, e') := (execCommand command value).run { e with target := none, log := #[] }
+  -- a command that would change nothing targets the selection as it is
+  if e'.log.isEmpty then return if hasActive e then some (activeOf e) else none
+  return e'.target.map fun r => ⟨descendBack e r.start, descendForward e r.stop⟩
 
 def queryEnabled (command : String) : M Bool := do
   let command := lower command

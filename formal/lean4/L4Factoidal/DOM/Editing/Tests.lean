@@ -9,7 +9,7 @@ Also checked on each input here: the block-extended range contains the range (an
 counterexample to its idempotence), "restore the values" after "record the values" changes
 nothing, and "delete the selection" leaves a collapsed range inside the editing host.
 -/
-import L4Factoidal.DOM.Editing.Commands
+import L4Factoidal.DOM.Editing.Keys
 import L4Factoidal.DOM.Fragment
 import L4Factoidal.DOM.OfHtml
 
@@ -111,12 +111,79 @@ def query (html : String) (commands : List (String × String)) (q : String) : Bo
 #guard run "foo[]bar" [("inserthorizontalrule", "")] == "foo<hr>bar"
 #guard run "foo[]bar" [("inserthtml", "<b>ab</b>")] == "foo<b>ab</b>bar"
 #guard run "foo[]bar" [("insertimage", "/img/lion.svg")] == "foo<img src=\"/img/lion.svg\">bar"
+-- blocks with different white-space (editing/other/join-different-white-space-style-paragraphs.html):
+-- only the first line joins, in a span that keeps its white-space
+#guard run "<div style=\"white-space:normal\">abc[]</div><div style=\"white-space:pre\">def</div>" [("forwarddelete", "")] ==
+  "<div style=\"white-space:normal\">abc<span style=\"white-space: pre\">def</span></div>"
+#guard run "<div style=\"white-space:normal\">abc</div><div style=\"white-space:pre\">[]def\nghi</div>" [("delete", "")] ==
+  "<div style=\"white-space:normal\">abc<span style=\"white-space: pre\">def</span></div><div style=\"white-space:pre\">ghi</div>"
+#guard run "<div style=\"white-space:pre\">abc[]</div><div style=\"white-space:normal\"><b>def<br></b>ghi</div>" [("forwarddelete", "")] ==
+  "<div style=\"white-space:pre\">abc<span style=\"white-space: normal\"><b>def</b></span></div><div style=\"white-space:normal\">ghi</div>"
+#guard run "abc[]<div style=\"white-space:pre\">def\nghi</div>" [("forwarddelete", "")] ==
+  "abc<span style=\"white-space: pre\">def</span><div style=\"white-space:pre\">ghi</div>"
+#guard run "<div style=\"white-space:pre\">abc[]</div>def<br>ghi" [("forwarddelete", "")] ==
+  "<div style=\"white-space:pre\">abc<span style=\"white-space: normal\">def</span></div>ghi"
+-- a line break where white-space keeps line feeds is a line feed (editing/other/insertlinebreak-with-white-space-style)
+#guard run "<div style=\"white-space:pre\">a[]bc</div>" [("insertlinebreak", "")] == "<div style=\"white-space:pre\">a\nbc</div>"
+#guard run "<div style=\"white-space:pre\">abc[]</div>" [("insertlinebreak", "")] == "<div style=\"white-space:pre\">abc\n<br></div>"
+-- a block span splits like a paragraph (editing/other/insertparagraph-in-editing-host-cannot-have-div)
+#guard run "<span style=\"display:block\">a[]b</span>" [("insertparagraph", "")] ==
+  "<span style=\"display:block\">a</span><span style=\"display:block\">b</span>"
+-- an inline box is content of the line, not a paragraph (editing/other/insertparagraph-with-white-space-style)
+#guard run "<div style=\"display:inline; white-space:pre\">a[]bc</div>" [("insertparagraph", "")] ==
+  "<div><div style=\"display:inline; white-space:pre\">a</div></div><div><div style=\"display:inline; white-space:pre\">bc</div></div>"
+-- a flex item splits like a paragraph (editing/data/insertparagraph.js)
+#guard run "<div style=display:flex><span>a[]bc</span></div>" [("insertparagraph", "")] ==
+  "<div style=\"display:flex\"><span>a</span><span>bc</span></div>"
+-- text typed at the edge of a link stays outside it (editing/other/typing-around-link-element-*)
+#guard run "<p><a href=\"about:blank\">abc[]</a></p>" [("inserttext", "X"), ("inserttext", "Y")] ==
+  "<p><a href=\"about:blank\">abc</a>XY</p>"
+#guard run "<p><b><a href=\"about:blank\">[]abc</a></b></p>" [("inserttext", "X")] ==
+  "<p><b>X<a href=\"about:blank\">abc</a></b></p>"
+#guard run "<p><a href=\"about:blank\">a[]bc</a></p>" [("inserttext", "X")] == "<p><a href=\"about:blank\">aXbc</a></p>"
+-- inline markup is inserted between the halves of the inline element at the caret
+-- (editing/other/inserthtml-do-not-preserve-inline-styles.html)
+#guard run "<b>a[]c</b>" [("inserthtml", "<font face=\"monospace\">b</font>")] ==
+  "<b>a</b><font face=\"monospace\">b</font><b>c</b>"
+#guard run "<b>abc[]</b>" [("inserthtml", "<i>def</i>")] == "<b>abc</b><i>def</i>"
+-- a plaintext-only editing host takes text only (editing/plaintext-only/insertHTML.html, styling-commands.html)
+#guard run "<div contenteditable=\"plaintext-only\">A[]B</div>" [("inserthtml", "<div>abc</div><div>d  ef</div>")] ==
+  "<div contenteditable=\"plaintext-only\">Aabc<br>d efB</div>"
+#guard run "<div contenteditable=\"plaintext-only\">A[]B</div>" [("inserthtml", "<script>x</script><b>y</b>")] ==
+  "<div contenteditable=\"plaintext-only\">AyB</div>"
+#guard run "<div contenteditable=\"plaintext-only\">a[b]c</div>" [("bold", "")] ==
+  "<div contenteditable=\"plaintext-only\">abc</div>"
 -- nothing outside the editing host changes: a selection outside it enables no command
 #guard (let (d, _, _) := setup "foo"
   let p := ((d.treeOrder 0 true).find? fun n => isHtml d n ["p"]).getD 0
   let ed := Ed.start d (some ⟨⟨p, 0⟩, ⟨p, 1⟩⟩) {} {}
   let (ok, ed') := (execCommand "bold" "").run ed
   !ok && ed'.log.isEmpty)
+
+/-- The focus after `Selection.modify("move", direction, granularity)` from the caret of
+`html`: the data of its Text node and the offset. -/
+def modified (html : String) (forward : Bool) (granularity : String) : Option (String × Nat) :=
+  let (d, div, sel) := setup html
+  let ed := Ed.start d sel {} {}
+  (modifyFocus ed div true (activeOf ed).stop forward granularity).map fun bp => ((d.get bp.node).data, bp.offset)
+
+-- Selection.modify by character and by word (selection/contenteditable/modify-around-inline-element-boundary)
+#guard modified "ab[]c" true "character" == some ("abc", 3)
+#guard modified "abc []<b>def</b>" true "character" == some ("def", 1)
+#guard modified "abc <b>[]def</b>" false "character" == some ("abc ", 3)
+#guard modified "foo []bar baz" true "word" == some ("foo bar baz", 7)
+#guard modified "foo bar[] baz" false "word" == some ("foo bar baz", 4)
+#guard modified "<p>fo[]o</p><p>bar</p>" true "paragraphboundary" == some ("foo", 3)
+-- keys: what each does, and the caret keys
+#guard keyCommand { key := "a" } == some ("inserttext", "a")
+#guard keyCommand { key := "b", ctrl := true } == some ("bold", "")
+#guard keyCommand { key := "ArrowLeft" } == none
+#guard (let (d, _, sel) := setup "<p>ab[]c</p>"
+  let ed := Ed.start d sel {} {}
+  (caretKey ed { key := "ArrowRight" }).map (·.start.offset)) == some 3
+#guard (let (d, _, sel) := setup "<p>ab[]c</p>"
+  let ed := Ed.start d sel {} {}
+  (caretKey ed { key := "Home" }).map (·.start.offset)) == some 0
 
 /-- The inputs the properties below are checked on. -/
 def inputs : List String :=

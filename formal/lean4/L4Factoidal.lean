@@ -1235,6 +1235,8 @@ import L4Factoidal.DOM.OfHtml
 import L4Factoidal.DOM.Theorems
 import L4Factoidal.DOM.Tests
 import L4Factoidal.DOM.Editing.Commands
+import L4Factoidal.DOM.Editing.Keys
+import L4Factoidal.DOM.Editing.TextControl
 import L4Factoidal.DOM.Editing.Tests
 import L4Factoidal.Rendering.Tests
 import L4Factoidal.Rendering.CascadeTests
