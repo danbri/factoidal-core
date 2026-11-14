@@ -46,14 +46,16 @@ private def optEq {α : Type} (eq : α → α → Bool) : Option α → Option �
 /-- Every field of `Computed` but the colours is equal, and a background, a border and
 an underline are there in both or in neither: the two styles lay out the same and make
 the same paints. The anonymous constructor names every field in order, so a field added
-to `Computed` stops this from compiling until it is sorted here. -/
+to `Computed` stops this from compiling until it is sorted here. The custom properties
+(`vars`) are not compared: they act only through the other fields of this element and of
+its descendants, each of which is compared itself. -/
 def sameShape (a b : Computed) : Bool :=
   match a with
   | ⟨display,width,height,margin,padding,_color,background,fontSize,fontFamily,lineHeight,
     lineHeightFactor,visible,clipOverflow,underline,decorationColor,preformatted,borderWidth,borderStyle,
     _borderColor,borderSpacingX,borderSpacingY,borderCollapse,captionBottom,verticalAlign,tableFixed,
     minWidth,maxWidth,minHeight,maxHeight,objectFit,textAlign,direction,unicodeBidi,autoMarginLeft,autoMarginRight,
-    autoMarginTop,autoMarginBottom,align,flex,pos⟩ =>
+    autoMarginTop,autoMarginBottom,align,flex,pos,_vars⟩ =>
   display == b.display && lengthEq width b.width && lengthEq height b.height &&
   edgesEq margin b.margin && edgesEq padding b.padding &&
   background.isSome == b.background.isSome && fontSize == b.fontSize && fontFamily == b.fontFamily &&
