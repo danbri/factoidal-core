@@ -1286,6 +1286,7 @@ import L4Factoidal.Risk
 import L4Factoidal.WebDriver.Gate
 import L4Factoidal.WebDriver.Protocol
 import L4Factoidal.WebDriver.HostKeys
+import L4Factoidal.WebDriver.Touch
 import L4Factoidal.Rendering.Tests
 import L4Factoidal.Rendering.CascadeTests
 import L4Factoidal.Rendering.ReplacedTests

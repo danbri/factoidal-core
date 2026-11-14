@@ -305,6 +305,50 @@
     constructor(type, init = undefined) { super(type, init); state(this).dataTransfer = initOf(init).dataTransfer ?? null; }
   }
   getters(DragEvent, ['dataTransfer']);
+  // Touch Events (W3C Recommendation and Level 2 draft): a touch point, a list of them and
+  // the event. Lean keeps the touch points and fires the events (WebDriver.Touch).
+  const touchState = new WeakMap();
+  const touchFields = ['clientX', 'clientY', 'screenX', 'screenY', 'pageX', 'pageY', 'radiusX', 'radiusY', 'rotationAngle',
+    'force', 'altitudeAngle', 'azimuthAngle'];
+  class Touch {
+    constructor(init) {
+      if (arguments.length < 1) throw new TypeError("Failed to construct 'Touch': 1 argument required");
+      const d = initOf(init);
+      if (d.identifier === undefined) throw new TypeError("required member identifier is undefined");
+      if (!(d.target instanceof EventTarget)) throw new TypeError("member target is not of type 'EventTarget'");
+      const s = { identifier: d.identifier | 0, target: d.target, touchType: String(d.touchType ?? 'direct') };
+      for (const k of touchFields) { const v = Number(d[k] ?? 0); if (!Number.isFinite(v)) throw new TypeError(`member ${k} is not a finite number`); s[k] = v; }
+      touchState.set(this, s);
+    }
+  }
+  for (const k of ['identifier', 'target', 'touchType', ...touchFields])
+    Object.defineProperty(Touch.prototype, k, { get() { const s = touchState.get(this); if (!s) throw new TypeError('Illegal invocation'); return s[k]; }, configurable: true, enumerable: true });
+  class TouchList {
+    constructor() { throw new TypeError('Illegal constructor'); }
+    get length() { return touchState.get(this)?.length ?? 0; }
+    item(i) { return this[i >>> 0] ?? null; }
+  }
+  const touchList = items => {
+    const l = Object.create(TouchList.prototype);
+    items.forEach((t, i) => Object.defineProperty(l, i, { value: t, enumerable: true }));
+    touchState.set(l, items);
+    return l;
+  };
+  define(TouchList.prototype, Symbol.iterator, Array.prototype.values);
+  class TouchEvent extends UIEvent {
+    constructor(type, init = undefined) {
+      super(type, init); const s = state(this), d = initOf(init);
+      for (const k of ['touches', 'targetTouches', 'changedTouches']) {
+        const items = d[k] === undefined ? [] : Array.from(d[k]);
+        if (items.some(t => !(t instanceof Touch))) throw new TypeError(`member ${k} is not a sequence of Touch`);
+        s[k] = touchList(items);
+      }
+      modifiers(s, d);
+    }
+  }
+  getters(TouchEvent, ['touches', 'targetTouches', 'changedTouches', 'altKey', 'metaKey', 'ctrlKey', 'shiftKey']);
+  for (const [C, n] of [[Touch, 'Touch'], [TouchList, 'TouchList'], [TouchEvent, 'TouchEvent']])
+    Object.defineProperty(C.prototype, Symbol.toStringTag, { value: n, configurable: true });
   class HashChangeEvent extends Event {
     constructor(type, init = undefined) { super(type, init); const d = initOf(init); state(this).oldURL = String(d.oldURL ?? ''); state(this).newURL = String(d.newURL ?? ''); }
   }
@@ -544,7 +588,7 @@
     'emptied', 'ended', 'formdata', 'loadeddata', 'loadedmetadata', 'loadstart', 'paste', 'pause', 'play', 'playing',
     'progress', 'ratechange', 'scrollend', 'securitypolicyviolation', 'seeked', 'seeking', 'stalled', 'suspend',
     'timeupdate', 'volumechange', 'waiting', 'webkitanimationend', 'webkitanimationiteration', 'webkitanimationstart',
-    'webkittransitionend', 'pagereveal', 'pageswap'];
+    'webkittransitionend', 'pagereveal', 'pageswap', 'touchstart', 'touchmove', 'touchend', 'touchcancel'];
   // The event type of a handler: the attribute's name without "on", except the prefixed
   // animation events, whose types are in camel case (HTML §8.1.8.2).
   const handlerTypes = { webkitanimationend: 'webkitAnimationEnd', webkitanimationiteration: 'webkitAnimationIteration',
@@ -8619,7 +8663,7 @@
   }
   // ==== end shadowframes: frames ========================================================
   for (const [k, v] of Object.entries({ EventTarget, Event, CustomEvent, UIEvent, MouseEvent, KeyboardEvent, FocusEvent, ErrorEvent,
-    WheelEvent, PointerEvent, DOMRect, DOMRectReadOnly, CompositionEvent, InputEvent, DragEvent, HashChangeEvent, MessageEvent, StorageEvent, DeviceMotionEvent,
+    WheelEvent, PointerEvent, Touch, TouchList, TouchEvent, DOMRect, DOMRectReadOnly, CompositionEvent, InputEvent, DragEvent, HashChangeEvent, MessageEvent, StorageEvent, DeviceMotionEvent,
     DeviceOrientationEvent, BeforeUnloadEvent, TextEvent,
     PromiseRejectionEvent, Node, Element, HTMLElement, HTMLUnknownElement, SVGElement, MathMLElement, CharacterData, Text, CDATASection, Comment,
     ProcessingInstruction, DocumentType, DocumentFragment, Document, HTMLDocument, XMLDocument, DOMImplementation, NodeList, HTMLCollection, NamedNodeMap, Attr, DOMParser, SubmitEvent,
@@ -11753,10 +11797,17 @@
       // a keyboard event; the inputType and data of an input event of an editing command.
       let data = {};
       const keyOrInput = type === 'keydown' || type === 'keyup' || type === 'keypress' || type === 'beforeinput' || type === 'input';
-      if (C !== Event || keyOrInput) { const s = n.query(0, 16, ''); if (typeof s === 'string' && s !== '') { try { data = JSON.parse(s); } catch {} } }
+      const touch = type === 'touchstart' || type === 'touchmove' || type === 'touchend' || type === 'touchcancel';
+      if (C !== Event || keyOrInput || touch) { const s = n.query(0, 16, ''); if (typeof s === 'string' && s !== '') { try { data = JSON.parse(s); } catch {} } }
       if (keyOrInput && typeof data.key === 'string') C = KeyboardEvent;
       else if (keyOrInput && typeof data.inputType === 'string') C = InputEvent;
       if (pointerClick && typeof data.pointerId === 'number') C = PointerEvent;
+      // the touch points of a touch event, as Lean lists them (node: the touch's target)
+      if (touch && Array.isArray(data.changedTouches)) {
+        C = TouchEvent;
+        for (const k of ['touches', 'targetTouches', 'changedTouches'])
+          data[k] = (data[k] ?? []).map(t => new Touch(Object.assign({}, t, { target: wrap(t.node) })));
+      }
       // the related target of a boundary event (over, out, enter, leave), as Lean names it
       if (typeof data.relatedNode === 'number') { data.relatedTarget = wrap(data.relatedNode); delete data.relatedNode; }
       // shadowframes: a message from another session (HTML.FrameSessions): its data is

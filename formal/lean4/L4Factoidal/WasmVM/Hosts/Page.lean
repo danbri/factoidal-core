@@ -35,6 +35,7 @@ import L4Factoidal.EventLoop.Dispatch
 import L4Factoidal.HTML.FrameSessions
 import L4Factoidal.JSON.Serialize
 import L4Factoidal.WebDriver.Input
+import L4Factoidal.WebDriver.Touch
 
 namespace L4Factoidal.WasmVM.Hosts.Page
 open L4Factoidal.WasmVM
@@ -150,6 +151,8 @@ structure PointerState where
   `true` when no listener canceled it and the key did not go to a text control or an
   editing host (`Dom.keyEdits`), so the host may scroll the page for it. -/
   keyDefault : Option Bool := none
+  /-- The touch points on the surface (`WebDriver.Touch`), from the touch pointers. -/
+  touches : L4Factoidal.WebDriver.Touch.Surface := {}
   deriving Inhabited, Repr
 
 /-- The layout reads of scripts: the engine's layout of an arena at a viewport (CSS
@@ -838,6 +841,9 @@ def flagsOf (type : String) : Nat :=
   -- keys and `beforeinput` bubble, can be canceled and are composed; `input` can not be canceled
   else if type == "keydown" || type == "keyup" || type == "keypress" || type == "beforeinput" then 7
   else if type == "input" then 5
+  -- touch events bubble and are composed; `touchcancel` can not be canceled (Touch Events §5)
+  else if type == "touchstart" || type == "touchmove" || type == "touchend" then 7
+  else if type == "touchcancel" then 5
   else if type == "DOMContentLoaded" then 1
   else 0
 

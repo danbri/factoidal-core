@@ -310,6 +310,31 @@ target. -/
 def firePlanned (s : σ) (init : Option Nat → String) (plan : List Input.Planned) : σ :=
   plan.foldl (fun s ev => (e.dispatchWith s ev.2.1 ev.1 (init ev.2.2)).1) s
 
+/-- The touch event of a touch pointer (`WebDriver.Touch`): `touchstart` at the element
+under a press, `touchmove` and `touchend` (`touchcancel`) at the element the touch started
+on. A pointer that is not a touch, or a move of a touch that is not down, has none. -/
+def touchEvent (s : σ) (phase : Actions.Phase) (pointerId : Nat) (hit : Nat) (x y : Int) (mods : Actions.Mods) : σ :=
+  let p := (e.host s).pointer
+  let fire := fun (s : σ) (surface : Touch.Surface) (type : String) (q : Touch.Point) =>
+    let s := e.setPointer s { (e.host s).pointer with touches := surface }
+    (e.dispatchWith s q.target type (Touch.init surface q.target q mods)).1
+  match phase with
+  | .down =>
+    let q : Touch.Point := { id := pointerId, target := hit, x, y }
+    fire s (p.touches.start q) "touchstart" q
+  | .move =>
+    match p.touches.move pointerId x y with
+    | some (surface, q) => fire s surface "touchmove" q
+    | none => s
+  | .up =>
+    match p.touches.finish pointerId x y with
+    | some (surface, q) => fire s surface "touchend" q
+    | none => s
+  | .cancel =>
+    match p.touches.finish pointerId x y with
+    | some (surface, q) => fire s surface "touchcancel" q
+    | none => s
+
 /-- A pointer event at a viewport point (Pointer Events 3, UI Events §5): first the
 boundary events of the element now under the pointer; then
 - a move: `pointermove`, and `mousemove` for a mouse or pen unless its press was canceled;
@@ -322,6 +347,7 @@ boundary events of the element now under the pointer; then
   ancestor of the press and the release, and `dblclick` after the second click of a pair;
   a touch then leaves (`pointerout`, `pointerleave`);
 - a cancel: `pointercancel`, and the pointer leaves.
+A touch pointer also fires its touch events (`touchEvent`) after its pointer event.
 `detail` is the click count. -/
 def lowPointer (s : σ) (phase : Actions.Phase) (type : Actions.PointerType) (pointerId : Nat) (x y : Int)
     (button : Int) (buttons : Nat) (mods : Actions.Mods) (props : Actions.Props) : σ :=
@@ -340,12 +366,14 @@ def lowPointer (s : σ) (phase : Actions.Phase) (type : Actions.PointerType) (po
   let s := match phase with
     | .move =>
       let s := (e.dispatchWith s hit "pointermove" (init 0 none)).1
-      if !mouse || (p.pressed.isSome && p.canceled) then s else (e.dispatchWith s hit "mousemove" (init 0 none)).1
+      if !mouse then e.touchEvent s .move pointerId hit x y mods
+      else if p.pressed.isSome && p.canceled then s else (e.dispatchWith s hit "mousemove" (init 0 none)).1
     | .down =>
       let b := button.toNat
       let now := (e.loop s).clock
       let count := Input.clickCount p.last now x y b
-      let first := p.pressed.isNone
+      -- every touch is a pointer of its own: its press is always its first button
+      let first := p.pressed.isNone || !mouse
       let (s, canceled) :=
         if first then e.dispatchWith s hit "pointerdown" (init count none)
         else ((e.dispatchWith s hit "pointermove" (init count none)).1, p.canceled)
@@ -358,6 +386,7 @@ def lowPointer (s : σ) (phase : Actions.Phase) (type : Actions.PointerType) (po
           -- the focused element loses it (`DOM.Focus.pressTarget`; "@focus" is not an event
           -- but the prelude's focus update steps)
           Input.afterCancelable downCanceled (fun s => (e.dispatch s hit "@focus").1) s) s
+      let s := if mouse then s else e.touchEvent s .down pointerId hit x y mods
       if b == 2 then (e.dispatchWith s hit "contextmenu" (init 0 none)).1 else s
     | .up =>
       let b := button.toNat
@@ -365,7 +394,8 @@ def lowPointer (s : σ) (phase : Actions.Phase) (type : Actions.PointerType) (po
         | some l => l.count
         | none => 1
       let last := buttons == 0
-      let s := (e.dispatchWith s hit (if last then "pointerup" else "pointermove") (init count none)).1
+      let s := (e.dispatchWith s hit (if last || !mouse then "pointerup" else "pointermove") (init count none)).1
+      let s := if mouse then s else e.touchEvent s .up pointerId hit x y mods
       let s := if !mouse then s else
         Input.afterCancelable p.canceled (fun s => (e.dispatchWith s hit "mouseup" (init count none)).1) s
       let s := match p.pressed with
@@ -381,6 +411,7 @@ def lowPointer (s : σ) (phase : Actions.Phase) (type : Actions.PointerType) (po
         e.setPointer s { (e.host s).pointer with over := none }
     | .cancel =>
       let s := (e.dispatchWith s hit "pointercancel" (init 0 none)).1
+      let s := if mouse then s else e.touchEvent s .cancel pointerId hit x y mods
       let s := e.firePlanned s (init 0) (Input.boundary "pointer" (some (chainOf (e.host s).dom.dom hit)) none)
       e.setPointer s { (e.host s).pointer with pressed := none, canceled := false, pending := none, over := none }
   (e.advance s (e.loop s).clock).1
