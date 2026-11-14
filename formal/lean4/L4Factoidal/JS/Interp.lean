@@ -4202,7 +4202,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
         | none => callNative n .objectGetPrototypeOf .undef #[t] none
         | some f =>
           let p ← callV n f hnd #[t]
-          if !(p.isObj || p matches .null) then
+          if !(p.isObj || (p matches .null)) then
             throwErr .type "'getPrototypeOf' on proxy: the trap returned neither an object nor null"
           if !toBool (← callNative n .objectIsExtensible .undef #[t] none) then
             if !sameValue p (← callNative n .objectGetPrototypeOf .undef #[t] none) then
@@ -6197,15 +6197,15 @@ def iterArray : Nat → Native → Value → Value → Value → Nat → Nat →
       -- map's result keeps the index (as undefined: an Array here has no holes)
       | none => iterArray n id f thisArg arr len (i + 1) (if id == .arrayMap then acc.push .undef else acc)
       | some x =>
-      let r ← callV n f thisArg #[x, .num (Float.ofNat i), arr]
-      match id with
-      | .arrayMap => iterArray n id f thisArg arr len (i + 1) (acc.push r)
-      | .arrayFilter => iterArray n id f thisArg arr len (i + 1) (if toBool r then acc.push x else acc)
-      | .arraySome => if toBool r then pure (.bool true) else iterArray n id f thisArg arr len (i + 1) acc
-      | .arrayEvery => if toBool r then iterArray n id f thisArg arr len (i + 1) acc else pure (.bool false)
-      | .arrayFind => if toBool r then pure x else iterArray n id f thisArg arr len (i + 1) acc
-      | .arrayFindIndex => if toBool r then pure (.num (Float.ofNat i)) else iterArray n id f thisArg arr len (i + 1) acc
-      | _ => iterArray n id f thisArg arr len (i + 1) acc
+        let r ← callV n f thisArg #[x, .num (Float.ofNat i), arr]
+        match id with
+        | .arrayMap => iterArray n id f thisArg arr len (i + 1) (acc.push r)
+        | .arrayFilter => iterArray n id f thisArg arr len (i + 1) (if toBool r then acc.push x else acc)
+        | .arraySome => if toBool r then pure (.bool true) else iterArray n id f thisArg arr len (i + 1) acc
+        | .arrayEvery => if toBool r then iterArray n id f thisArg arr len (i + 1) acc else pure (.bool false)
+        | .arrayFind => if toBool r then pure x else iterArray n id f thisArg arr len (i + 1) acc
+        | .arrayFindIndex => if toBool r then pure (.num (Float.ofNat i)) else iterArray n id f thisArg arr len (i + 1) acc
+        | _ => iterArray n id f thisArg arr len (i + 1) acc
     else
       match id with
       | .arrayMap | .arrayFilter => newArray acc
@@ -6373,7 +6373,7 @@ def defineFromDescriptor : Nat → Nat → String → Value → M Unit
   | n + 1, id, k, d => do
     let desc ← toPropDesc n d
     if !(← defineOwnProp n id k desc) then
-      if (← getObj id).getOwn k |>.isSome then throwErr .type s!"Cannot redefine property: {k}"
+      if ((← getObj id).getOwn k).isSome then throwErr .type s!"Cannot redefine property: {k}"
       else throwErr .type s!"Cannot define property {k}, object is not extensible"
 termination_by structural n _ _ _ => n
 
@@ -7466,7 +7466,8 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       let (_, st) ← thisStack "get DisposableStack.prototype.disposed"
       pure (.bool st)
     | (.x (.disposableStackMethod k)) =>
-      let what := s!"DisposableStack.prototype.{(#["dispose", "use", "adopt", "defer", "move"]).getD k ""}"
+      let mname := (#["dispose", "use", "adopt", "defer", "move"] : Array String).getD k ""
+      let what := s!"DisposableStack.prototype.{mname}"
       let (sid, disposed) ← thisStack what
       let stackV := match (← getObj sid).getOwn dsStackKey with | some (.data v ..) => v | _ => .undef
       let push (v m : Value) : M Unit := do
