@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Selectors of the cascade</title>
+<style>
+body{margin:16px;font-family:sans-serif;font-size:16px}
+p,li{margin:0;padding:4px 8px;background-color:#c62828;color:#ffffff}
+ul{margin:0;padding:0}
+h1{font-size:20px;margin:0 0 8px 0}
+/* each rule turns its line green */
+.child > p{background-color:#2e7d32}
+.next p + p{background-color:#2e7d32}
+.later h2 ~ p{background-color:#2e7d32}
+p[data-kind]{background-color:#2e7d32}
+p[data-kind="exact"]{background-color:#2e7d32}
+p[data-file$=".pdf"]{background-color:#2e7d32}
+.neg:not(.off){background-color:#2e7d32}
+.list li:first-child{background-color:#2e7d32}
+.list li:last-child{background-color:#2e7d32}
+.list li:nth-child(2n){background-color:#2e7d32}
+:is(section, article) > .is{background-color:#2e7d32}
+:where(section) .where{background-color:#2e7d32}
+.esc\:aped{background-color:#2e7d32}
+.keep{background-color:#2e7d32}
+:where(.keep.keep){background-color:#c62828}
+.list li{background-color:#c62828}
+.list li:nth-child(3){background-color:#2e7d32}
+.unknown::before, .unknown{background-color:#2e7d32}
+h2{font-size:16px;margin:8px 0 0 0}
+</style></head><body>
+<h1>Selectors of the cascade: every line is green</h1>
+<div class="child"><p>child combinator: .child &gt; p</p></div>
+<div class="next"><p style="background-color:#2e7d32">(the paragraph before)</p><p>next sibling: p + p</p></div>
+<div class="later"><h2>heading</h2><p>later sibling: h2 ~ p</p></div>
+<p data-kind="exact">attribute: p[data-kind] and p[data-kind="exact"]</p>
+<p data-file="report.pdf">attribute suffix: p[data-file$=".pdf"]</p>
+<p class="neg">negation: .neg:not(.off)</p>
+<ul class="list"><li>li:first-child</li><li>li:nth-child(2n)</li><li>li:nth-child(3)</li><li>li:last-child and li:nth-child(2n)</li></ul>
+<section><p class="is">:is(section, article) &gt; .is</p><p class="where">:where(section) .where</p></section>
+<p class="esc:aped">escaped class name: .esc\:aped</p>
+<p class="keep">specificity: .keep wins over a later :where(.keep.keep)</p>
+<p class="unknown">a pseudo-element in a list does not drop the rule: .unknown::before, .unknown</p>
+</body></html>

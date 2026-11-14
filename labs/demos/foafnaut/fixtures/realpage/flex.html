@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Flex layout</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:sans-serif;font-size:16px}
+.bar{display:flex;align-items:center;justify-content:space-between;background-color:#1d4f91;color:#ffffff;padding:0 16px;height:56px}
+.bar .logo{font-size:20px}
+.bar nav{display:flex;gap:24px}
+.bar nav a{color:#ffffff;text-decoration:none}
+main{padding:16px}
+h1{font-size:20px;margin:0 0 12px 0}
+.cards{display:flex;flex-wrap:wrap;gap:16px}
+.card{flex:1 1 200px;background-color:#e8eef7;padding:12px;min-height:80px}
+.card.wide{flex:2 1 400px;background-color:#cfe0f5}
+.row{display:flex;margin-top:16px;height:60px}
+.row .fixed{width:120px;background-color:#f2c94c}
+.row .grow{flex-grow:1;background-color:#6fcf97}
+.row .last{width:80px;background-color:#eb5757;order:-1}
+.col{display:flex;flex-direction:column;gap:8px;margin-top:16px;width:240px}
+.col div{background-color:#bdbdbd;padding:6px}
+.center{display:flex;align-items:center;justify-content:center;height:80px;margin-top:16px;background-color:#f5f5f5}
+.center span{background-color:#2e7d32;color:#ffffff;padding:8px 16px}
+</style></head><body>
+<header class="bar"><span class="logo">Logo</span><nav><a href="#a">One</a><a href="#b">Two</a><a href="#c">Three</a></nav></header>
+<main>
+<h1>Flex: a bar with the links at the right; cards in a row; a red box first by order</h1>
+<div class="cards"><div class="card">Card one</div><div class="card wide">Card two, twice the share</div><div class="card">Card three</div></div>
+<div class="row"><div class="fixed">120 px</div><div class="grow">takes the rest</div><div class="last">first</div></div>
+<div class="col"><div>column one</div><div>column two</div><div>column three</div></div>
+<div class="center"><span>centred both ways</span></div>
+</main></body></html>
