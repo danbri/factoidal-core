@@ -26,6 +26,9 @@ import L4Factoidal.DOM.Named
 import L4Factoidal.DOM.CustomElements
 import L4Factoidal.HTML.ScriptType
 import L4Factoidal.DOM.ElementRef
+import L4Factoidal.DOM.FormControls
+import L4Factoidal.HTML.TextSelection
+import L4Factoidal.DOM.FormValidity
 
 namespace L4Factoidal.WasmVM.Hosts.Dom
 open L4Factoidal.DOM L4Factoidal.DOM.Range
@@ -431,7 +434,10 @@ node `id` reaches, in shadow-including tree order (`DOM.CustomElements`); 183 th
 script element `id` (`HTML.ScriptType`: "classic", "module", "importmap" or "data"); 184 the
 element and 185 the elements that a reflecting IDL attribute of element `id` answers
 (`DOM.ElementRef`: `q` is the content attribute, U+0000, the explicitly set element or
-elements). -/
+elements); 186 form owner, form elements, options, selected options, labels, labeled control
+and selectedness (`DOM.FormControls.answer`); 187 the range and selection of `setRangeText`
+(`HTML.TextSelection.answer`); 188 an input's typed value and constraint validation
+(`DOM.FormValidity.answer`). -/
 def domOpM (id op : Nat) (q : String) : Op String := do
   let xs := nums q
   let d ← dom
@@ -745,6 +751,21 @@ def domOpM (id op : Nat) (q : String) : Op String := do
   | 185 =>
     let n ← nodeArg d id
     return L4Factoidal.DOM.ElementRef.answerMany d n q
+  -- 186: form controls (`DOM.FormControls.answer`): `q` "f" the form owner of `id`, "e" the
+  -- elements of form `id`, "o" the options of select `id`, "s" its selected options, "l" the
+  -- labels of `id`, "c" the labeled control of label `id`, "x" the selectedness of option `id`
+  | 186 =>
+    let n ← nodeArg d id
+    return L4Factoidal.DOM.FormControls.answer d n q
+  -- 187: `setRangeText` (`HTML.TextSelection.answer`): `q` "len start end selStart selEnd
+  -- newLen mode"; the replaced range and the selection after
+  | 187 => return L4Factoidal.HTML.TextSelection.answer q
+  -- 188: the typed value of an input and constraint validation (`DOM.FormValidity.answer`):
+  -- `q` is a letter and U+0000-separated arguments (sanitized value, value as number or date
+  -- and back, stepUp and stepDown, validity bits, willValidate)
+  | 188 =>
+    let n ← nodeArg d id
+    return L4Factoidal.DOM.FormValidity.answer d n q
   -- ==== end of domhtml ====
   | _ => throw (-2)
 

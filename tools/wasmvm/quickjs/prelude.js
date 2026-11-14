@@ -1086,7 +1086,8 @@
   reflectURL(named.HTMLAnchorElement, ['href']); reflectString(named.HTMLAnchorElement, ['target', 'download', 'rel']);
   reflectURL(named.HTMLAreaElement, ['href']);
   Object.defineProperty(named.HTMLLabelElement.prototype, 'htmlFor', { get() { return this.getAttribute('for') ?? ''; }, set(v) { this.setAttribute('for', String(v)); }, configurable: true });
-  const formOf = el => { let k = info(nodeId(el), 1); while (k >= 0) { if (info(k, 0) === 1 && htmlEl(k) && str(k, 0) === 'form') return wrap(k); k = info(k, 1); } return null; };
+  // The form owner (HTML §4.10.18.3) is Lean's: DOM.FormControls.formOwner, node_query 186 "f".
+  const formOf = el => { const r = n.query(nodeId(el), 186, 'f'); return typeof r === 'string' && r !== '' ? wrap(Number(r)) : null; };
   class SubmitEvent extends Event {
     constructor(type, init = undefined) { super(type, init); state(this).submitter = initOf(init).submitter ?? null; }
     get submitter() { return state(this).submitter; }
@@ -5771,6 +5772,344 @@
     const t = onBody ? window : el;
     setHandler(t, name, onBody && name === 'error' ? function (m, s, l, c, e) { return f.call(this, m); } : f);
   };
+
+  // ==== forms: the script interface of form controls (HTML §4.10) ========================
+  // The collections and the selectedness are Lean's (DOM.FormControls, node_query 186): "f"
+  // form owner, "e" the elements of a form, "o" the options of a select, "s" its selected
+  // options, "l" the labels of a control, "c" a label's control, "x" an option's
+  // selectedness; tree_op 6 sets an option's selectedness. The selection of a text control is
+  // the page's state; `setRangeText`'s arithmetic is Lean's (HTML.TextSelection, 187).
+  // A textarea's value is its text content and an input's its `value` attribute, as before
+  // (there is no separate dirty value yet).
+  {
+    const fq = (el, q) => { const r = n.query(nodeId(el), 186, q); return typeof r === 'string' ? r : ''; };
+    const idsOf = r => (r === '' ? [] : r.split(' ').map(Number));
+    const one = r => (r === '' ? null : wrap(Number(r)));
+    const prop = (C, name, get, set) => Object.defineProperty(C.prototype, name, { get, set, configurable: true, enumerable: true });
+    const method = (C, name, f) => Object.defineProperty(C.prototype, name, { value: f, writable: true, configurable: true, enumerable: true });
+    const I = named.HTMLInputElement, S = named.HTMLSelectElement, O = named.HTMLOptionElement, T = named.HTMLTextAreaElement,
+      F = named.HTMLFormElement, L = named.HTMLLabelElement, B = named.HTMLButtonElement, OUT = named.HTMLOutputElement,
+      FS = named.HTMLFieldSetElement;
+    const isIndex = p => typeof p === 'string' && /^(0|[1-9][0-9]*)$/.test(p);
+    const task = f => { chk(n.timer(register(f), 0, 0)); };
+
+    // ---- collections with named items ----
+    class HTMLFormControlsCollection extends HTMLCollection {}
+    class HTMLOptionsCollection extends HTMLCollection {}
+    class RadioNodeList extends NodeList {}
+    def('HTMLFormControlsCollection', HTMLFormControlsCollection); def('HTMLOptionsCollection', HTMLOptionsCollection); def('RadioNodeList', RadioNodeList);
+    const radioIds = new WeakMap(), ownerOf = new WeakMap();
+    const namedIn = (ks, name) => (name === '' ? [] : ks.filter(k => n0.attr(k, 'id') === name || n0.attr(k, 'name') === name));
+    const radioList = ids => { const l = liveList(ids, RadioNodeList.prototype); radioIds.set(l, ids); return l; };
+    prop(RadioNodeList, 'value', function () {
+      for (const k of radioIds.get(this)()) if (str(k, 0) === 'input' && chk(n.query(k, 14, '')) === 'radio' && chk(n.treeOp(k, 0, 7)) === 1) return n0.attr(k, 'value') ?? 'on';
+      return '';
+    }, function (v) {
+      v = String(v);
+      for (const k of radioIds.get(this)()) if (str(k, 0) === 'input' && chk(n.query(k, 14, '')) === 'radio' && (typeof n0.attr(k, 'value') === 'string' ? n0.attr(k, 'value') : 'on') === v) { chk(n.treeOp(k, 1, 6)); return; }
+    });
+    // `radio`: several controls of one name are a RadioNodeList (form.elements), else the first
+    const collectionOf = (ids, proto, radio) => {
+      const item = name => { const xs = namedIn(ids(), name); return xs.length === 0 ? null : xs.length === 1 || !radio ? wrap(xs[0]) : radioList(() => namedIn(ids(), name)); };
+      const c = new Proxy(Object.create(proto), {
+        get(t, p, recv) {
+          if (isIndex(p)) { const k = ids()[Number(p)]; return k === undefined ? undefined : wrap(k); }
+          if (p === 'length') return ids().length;
+          if (p === 'namedItem') return name => item(String(name));
+          if (typeof p === 'string' && !(p in t)) { const x = item(p); if (x !== null) return x; }
+          return Reflect.get(t, p, recv);
+        },
+        // an accessor of the interface (`length`, `selectedIndex`) is called on the collection
+        set(t, p, v, recv) {
+          if (isIndex(p)) return false;
+          for (let o = t; o; o = Object.getPrototypeOf(o)) { const d = Object.getOwnPropertyDescriptor(o, p); if (d) { if (d.set) { d.set.call(recv, v); return true; } break; } }
+          return Reflect.set(t, p, v, recv);
+        },
+        defineProperty(t, p, desc) { if (isIndex(p)) return false; return Reflect.defineProperty(t, p, desc); },
+        has(t, p) { if (isIndex(p)) return Number(p) < ids().length; return p === 'length' || Reflect.has(t, p) || (typeof p === 'string' && namedIn(ids(), p).length > 0); },
+        ownKeys() { return [...ids().keys()].map(String); },
+        getOwnPropertyDescriptor(t, p) {
+          if (isIndex(p) && Number(p) < ids().length) return { value: wrap(ids()[Number(p)]), enumerable: true, configurable: true, writable: false };
+          return undefined;
+        },
+      });
+      return c;
+    };
+    const cachedColl = () => { const m = new WeakMap(); return (el, make) => { let c = m.get(el); if (!c) m.set(el, c = make()); return c; }; };
+
+    // ---- form ----
+    const formElements = cachedColl();
+    prop(F, 'elements', function () { const f = this; return formElements(f, () => collectionOf(() => idsOf(fq(f, 'e')), HTMLFormControlsCollection.prototype, true)); });
+    prop(F, 'length', function () { return idsOf(fq(this, 'e')).length; });
+
+    // ---- label and labels ----
+    prop(L, 'control', function () { return one(fq(this, 'c')); });
+    prop(L, 'form', function () { const c = one(fq(this, 'c')); return c ? formOf(c) : null; });
+    const labelLists = cachedColl();
+    const labelsGetter = function () { const el = this; return labelLists(el, () => liveList(() => idsOf(fq(el, 'l')))); };
+    for (const C of [B, S, T, OUT, named.HTMLMeterElement, named.HTMLProgressElement]) prop(C, 'labels', labelsGetter);
+    prop(I, 'labels', function () { return typeState(this) === 'hidden' ? null : labelsGetter.call(this); });
+    for (const C of [S, T, OUT, FS, named.HTMLObjectElement]) prop(C, 'form', function () { return formOf(this); });
+
+    // ---- select and option ----
+    const optionIds = sel => idsOf(fq(sel, 'o')), selectedIds = sel => idsOf(fq(sel, 's'));
+    // the nearest ancestor select of an option
+    const selectOf = o => { for (let p = o.parentNode; p; p = p.parentNode) if (p instanceof S) return p; return null; };
+    const setSelected = (k, v) => { chk(n.treeOp(k, v ? 1 : 0, 6)); };
+    const optionsOf = cachedColl(), selectedOf = cachedColl();
+    prop(S, 'options', function () { const sel = this; return optionsOf(sel, () => { const c = collectionOf(() => optionIds(sel), HTMLOptionsCollection.prototype, false); ownerOf.set(c, sel); return c; }); });
+    prop(S, 'selectedOptions', function () { const sel = this; return selectedOf(sel, () => liveCollection(() => selectedIds(sel))); });
+    prop(S, 'length', function () { return optionIds(this).length; }, function (v) {
+      v = v >>> 0;
+      const ks = optionIds(this);
+      if (v > 100000) return;
+      for (let i = ks.length - 1; i >= v; i--) wrap(ks[i]).remove();
+      for (let i = ks.length; i < v; i++) this.appendChild(this.ownerDocument.createElement('option'));
+    });
+    method(S, 'item', function item(i) { const k = optionIds(this)[i >>> 0]; return k === undefined ? null : wrap(k); });
+    method(S, 'namedItem', function namedItem(name) { const xs = namedIn(optionIds(this), String(name)); return xs.length ? wrap(xs[0]) : null; });
+    method(S, 'add', function add(element, before = null) {
+      if (!(element instanceof O) && !(element instanceof named.HTMLOptGroupElement)) throw new TypeError("Failed to execute 'add' on 'HTMLSelectElement': parameter 1 is not an option or an optgroup.");
+      let ref = null;
+      if (before !== null && before !== undefined) ref = before instanceof Element ? before : this.item(before);
+      for (let a = this; a; a = a.parentNode) if (a === element) throw new DOMException('The element is an ancestor of the select.', 'HierarchyRequestError');
+      (ref ? ref.parentNode : this).insertBefore(element, ref);
+    });
+    method(S, 'remove', function remove(index) {
+      if (arguments.length === 0) { Element.prototype.remove.call(this); return; }
+      const k = optionIds(this)[index | 0]; if (k !== undefined) wrap(k).remove();
+    });
+    prop(S, 'selectedIndex', function () { const s = selectedIds(this); return s.length ? optionIds(this).indexOf(s[0]) : -1; }, function (v) {
+      v = v | 0;
+      const ks = optionIds(this);
+      for (const k of ks) setSelected(k, false);
+      if (v >= 0 && v < ks.length) setSelected(ks[v], true);
+    });
+    prop(S, 'value', function () { const s = selectedIds(this); return s.length ? wrap(s[0]).value : ''; }, function (v) {
+      v = String(v);
+      const ks = optionIds(this);
+      for (const k of ks) setSelected(k, false);
+      for (const k of ks) if (wrap(k).value === v) { setSelected(k, true); break; }
+    });
+    prop(S, 'type', function () { return this.hasAttribute('multiple') ? 'select-multiple' : 'select-one'; });
+    HTMLOptionsCollection.prototype.add = function add(element, before = null) { ownerOf.get(this).add(element, before); };
+    HTMLOptionsCollection.prototype.remove = function remove(index) { ownerOf.get(this).remove(index | 0); };
+    Object.defineProperty(HTMLOptionsCollection.prototype, 'length', { get() { return ownerOf.get(this).length; }, set(v) { ownerOf.get(this).length = v; }, configurable: true, enumerable: true });
+    Object.defineProperty(HTMLOptionsCollection.prototype, 'selectedIndex', { get() { return ownerOf.get(this).selectedIndex; }, set(v) { ownerOf.get(this).selectedIndex = v; }, configurable: true, enumerable: true });
+    prop(O, 'selected', function () { const sel = selectOf(this); return sel ? selectedIds(sel).includes(nodeId(this)) : fq(this, 'x') === '1'; }, function (v) {
+      const id = nodeId(this), sel = selectOf(this);
+      setSelected(id, !!v);
+      if (v && sel && !sel.hasAttribute('multiple')) for (const k of optionIds(sel)) if (k !== id) setSelected(k, false);
+    });
+    prop(O, 'index', function () { const sel = selectOf(this); return sel ? Math.max(0, optionIds(sel).indexOf(nodeId(this))) : 0; });
+    prop(O, 'form', function () { const sel = selectOf(this); return sel ? formOf(sel) : null; });
+    prop(O, 'text', function () { return this.textContent.replace(/[\t\n\f\r ]+/g, ' ').replace(/^ | $/g, ''); }, function (v) { this.textContent = v; });
+    const OptionFactory = function Option(text = undefined, value = undefined, defaultSelected = false, selected = false) {
+      if (!new.target) throw new TypeError("Failed to construct 'Option': Please use the 'new' operator.");
+      const o = (scriptDocument ?? document).createElement('option');
+      if (text !== undefined && String(text) !== '') o.textContent = String(text);
+      if (value !== undefined) o.setAttribute('value', String(value));
+      if (defaultSelected) o.setAttribute('selected', '');
+      if (selected) setSelected(nodeId(o), true);
+      return o;
+    };
+    OptionFactory.prototype = O.prototype; def('Option', OptionFactory);
+    const ImageFactory = function Image(width = undefined, height = undefined) {
+      if (!new.target) throw new TypeError("Failed to construct 'Image': Please use the 'new' operator.");
+      const img = (scriptDocument ?? document).createElement('img');
+      if (width !== undefined) img.setAttribute('width', String(width >>> 0));
+      if (height !== undefined) img.setAttribute('height', String(height >>> 0));
+      return img;
+    };
+    ImageFactory.prototype = named.HTMLImageElement.prototype; def('Image', ImageFactory);
+
+    // ---- textarea, output, fieldset ----
+    prop(T, 'value', function () { return this.textContent.replace(/\r\n?/g, '\n'); }, function (v) {
+      v = v === null ? '' : String(v);
+      if (v !== this.textContent) { this.textContent = v; selOf(this).start = selOf(this).end = v.length; selOf(this).dir = 'none'; }
+    });
+    prop(T, 'defaultValue', function () { return this.textContent; }, function (v) { this.textContent = String(v); });
+    prop(T, 'textLength', function () { return this.value.length; });
+    prop(T, 'type', function () { return 'textarea'; });
+    prop(OUT, 'value', function () { return this.textContent; }, function (v) { this.textContent = String(v); });
+    prop(OUT, 'defaultValue', function () { return this.textContent; }, function (v) { this.textContent = String(v); });
+    prop(OUT, 'type', function () { return 'output'; });
+    prop(FS, 'type', function () { return 'fieldset'; });
+    const fieldsetElements = cachedColl();
+    prop(FS, 'elements', function () { const fs = this; return fieldsetElements(fs, () => collectionOf(() => [...fs.querySelectorAll('button,fieldset,input,object,output,select,textarea')].map(nodeId), HTMLFormControlsCollection.prototype, true)); });
+
+    // ---- input: the members that are not plain reflection ----
+    const indeterminate = new WeakMap();
+    prop(I, 'indeterminate', function () { return indeterminate.get(this) === true; }, function (v) { indeterminate.set(this, !!v); });
+    prop(I, 'list', function () {
+      const id = this.getAttribute('list');
+      if (id === null || id === '') return null;
+      const root = this.getRootNode(), el = root.getElementById ? root.getElementById(id) : root.querySelector('#' + CSSns.escape(id));
+      return el instanceof named.HTMLDataListElement ? el : null;
+    });
+    prop(I, 'files', function () { return null; });
+
+    // ---- the selection of a text control (HTML §4.10.20) ----
+    const selState = new WeakMap();
+    const selOf = el => { let s = selState.get(el); if (!s) selState.set(el, s = { start: 0, end: 0, dir: 'none' }); return s; };
+    const selects = el => el instanceof T || ['text', 'search', 'url', 'tel', 'password'].includes(typeState(el));
+    const needSel = (el, what) => { if (!selects(el)) throw new DOMException(`Failed to read or set '${what}': the element's type does not have a text selection.`, 'InvalidStateError'); };
+    const fireSelect = el => task(() => { const e = new Event('select', { bubbles: true }); state(e).trusted = true; dispatch(el, e); });
+    // "Set the selection range": the end at most the length, the start at most the end.
+    const setSel = (el, start, end, dir) => {
+      const len = el.value.length, s = selOf(el);
+      end = end === null || end === undefined ? len : Math.min(end, len);
+      start = Math.min(start === null || start === undefined ? 0 : start, end);
+      dir = dir === 'backward' || dir === 'forward' ? dir : 'none';
+      const changed = s.start !== start || s.end !== end || s.dir !== dir;
+      s.start = start; s.end = end; s.dir = dir;
+      if (changed) fireSelect(el);
+    };
+    const clamp = (el, x) => Math.min(x, el.value.length);
+    for (const C of [I, T]) {
+      prop(C, 'selectionStart', function () { return selects(this) ? clamp(this, selOf(this).start) : null; },
+        function (v) { needSel(this, 'selectionStart'); const s = selOf(this); v = v === null ? 0 : v >>> 0; setSel(this, v, Math.max(clamp(this, s.end), v), s.dir); });
+      prop(C, 'selectionEnd', function () { return selects(this) ? clamp(this, selOf(this).end) : null; },
+        function (v) { needSel(this, 'selectionEnd'); const s = selOf(this); setSel(this, clamp(this, s.start), v === null ? 0 : v >>> 0, s.dir); });
+      prop(C, 'selectionDirection', function () { return selects(this) ? selOf(this).dir : null; },
+        function (v) { needSel(this, 'selectionDirection'); const s = selOf(this); setSel(this, clamp(this, s.start), clamp(this, s.end), String(v)); });
+      method(C, 'setSelectionRange', function setSelectionRange(start, end, direction = undefined) {
+        if (arguments.length < 2) throw new TypeError("Failed to execute 'setSelectionRange': 2 arguments required.");
+        needSel(this, 'setSelectionRange');
+        setSel(this, start >>> 0, end >>> 0, direction === undefined ? 'none' : String(direction));
+      });
+      method(C, 'select', function select() {
+        if (this instanceof I && ['hidden', 'checkbox', 'radio', 'submit', 'image', 'reset', 'button', 'range', 'file', 'color'].includes(typeState(this))) return;
+        setSel(this, 0, null, 'none');
+      });
+      method(C, 'setRangeText', function setRangeText(replacement, start = undefined, end = undefined, selectionMode = 'preserve') {
+        if (arguments.length < 1) throw new TypeError("Failed to execute 'setRangeText': 1 argument required.");
+        needSel(this, 'setRangeText');
+        replacement = String(replacement);
+        const s = selOf(this), value = this.value;
+        if (arguments.length === 1) { start = clamp(this, s.start); end = clamp(this, s.end); }
+        else { if (arguments.length < 3) throw new TypeError("Failed to execute 'setRangeText': 3 arguments required."); start = start >>> 0; end = end >>> 0; }
+        if (start > end) throw new DOMException('The start is greater than the end.', 'IndexSizeError');
+        const mode = String(selectionMode);
+        if (!['select', 'start', 'end', 'preserve'].includes(mode)) throw new TypeError(`Failed to execute 'setRangeText': '${mode}' is not a valid SelectionMode.`);
+        const r = chk(n.query(0, 187, [value.length, start, end, clamp(this, s.start), clamp(this, s.end), replacement.length, mode].join(' '))).split(' ').map(Number);
+        const next = value.slice(0, r[0]) + replacement + value.slice(r[1]);
+        const dir = s.dir;
+        if (next !== value) { if (this instanceof T) this.textContent = next; else this.setAttribute('value', next); }
+        setSel(this, r[2], r[3], mode === 'preserve' ? dir : 'none');
+      });
+    }
+    // ---- the typed value of an input, stepping and constraint validation (HTML §4.10.5,
+    // §4.10.21): Lean's (DOM.FormValidity over HTML.InputValue, node_query 188) ----
+    const vq = (el, ...parts) => { const r = n.query(nodeId(el), 188, parts.join('\u0000')); return typeof r === 'string' ? r : ''; };
+    const numericTypes = ['date', 'month', 'week', 'time', 'datetime-local', 'number', 'range'];
+    // The value (HTML §4.10.5.1.x "value sanitization"): the `value` attribute as the type reads
+    // it. A one-line text needs no sanitizing, so no question is asked for it.
+    const inputValue = el => {
+      const t = typeState(el), raw = el.getAttribute('value');
+      if (t === 'hidden' || t === 'submit' || t === 'image' || t === 'reset' || t === 'button') return raw ?? '';
+      if (t === 'checkbox' || t === 'radio') return raw ?? 'on';
+      if (t === 'file') return '';
+      const v = raw ?? '';
+      if ((t === 'text' || t === 'search' || t === 'tel' || t === 'password') && !/[\r\n]/.test(v)) return v;
+      return vq(el, 'S', v);
+    };
+    prop(I, 'value', function () { return inputValue(this); }, function (v) {
+      v = v === null ? '' : String(v);
+      if (typeState(this) === 'file') { if (v !== '') throw new DOMException('The value of a file input can only be set to the empty string.', 'InvalidStateError'); return; }
+      const before = inputValue(this);
+      this.setAttribute('value', v);
+      const now = inputValue(this);
+      // a value that a script sets moves the cursor to its end
+      if (now !== before) { const s = selOf(this); s.start = s.end = now.length; s.dir = 'none'; }
+    });
+    const step = (el, dir, k) => {
+      const r = vq(el, dir, inputValue(el), String(k === undefined ? 1 : k | 0));
+      if (r === 'e' || r === '') throw new DOMException('The element has no allowed value step.', 'InvalidStateError');
+      if (r[0] === 'v') el.value = r.slice(1);
+    };
+    method(I, 'stepUp', function stepUp(n = 1) { step(this, '+', n); });
+    method(I, 'stepDown', function stepDown(n = 1) { step(this, '-', n); });
+    prop(I, 'valueAsNumber', function () { const r = vq(this, 'N', inputValue(this)); return r === '' ? NaN : Number(r); }, function (v) {
+      v = Number(v);
+      if (!numericTypes.includes(typeState(this))) throw new DOMException('This input type has no value as a number.', 'InvalidStateError');
+      if (v === Infinity || v === -Infinity) throw new TypeError("Failed to set the 'valueAsNumber' property: the value is infinite.");
+      const r = Number.isNaN(v) ? '' : vq(this, 'n', String(v));
+      this.value = r[0] === 'v' ? r.slice(1) : '';
+    });
+    prop(I, 'valueAsDate', function () {
+      if (!['date', 'month', 'week', 'time'].includes(typeState(this))) return null;
+      const r = vq(this, 'D', inputValue(this)); return r === '' ? null : new Date(Number(r));
+    }, function (v) {
+      if (!['date', 'month', 'week', 'time'].includes(typeState(this))) throw new DOMException('This input type has no value as a date.', 'InvalidStateError');
+      if (v === null) { this.value = ''; return; }
+      if (!(v instanceof Date)) throw new TypeError("Failed to set the 'valueAsDate' property: the value is not a Date.");
+      const r = Number.isNaN(v.getTime()) ? '' : vq(this, 'd', String(v.getTime()));
+      this.value = r[0] === 'v' ? r.slice(1) : '';
+    });
+    method(I, 'showPicker', function showPicker() {
+      if (this.hasAttribute('disabled') || this.hasAttribute('readonly')) throw new DOMException('The input is not mutable.', 'InvalidStateError');
+      throw new DOMException('showPicker() needs a user gesture.', 'NotAllowedError');
+    });
+
+    class ValidityState { constructor() { throw new TypeError('Illegal constructor'); } }
+    def('ValidityState', ValidityState);
+    const validityEl = new WeakMap(), validityObj = new WeakMap(), customMessage = new WeakMap();
+    const patternMismatch = el => {
+      const p = el.getAttribute('pattern'), t = typeState(el);
+      if (p === null || !['text', 'search', 'url', 'tel', 'email', 'password'].includes(t)) return false;
+      const v = inputValue(el);
+      if (v === '') return false;
+      let re;
+      try { re = new RegExp('^(?:' + p + ')$', 'v'); } catch { try { re = new RegExp('^(?:' + p + ')$', 'u'); } catch { return false; } }
+      return t === 'email' && el.hasAttribute('multiple') ? !v.split(',').every(x => re.test(x)) : !re.test(v);
+    };
+    // The validity states as bits: 1 valueMissing, 2 typeMismatch, 4 patternMismatch, 8 tooLong,
+    // 16 tooShort, 32 rangeUnderflow, 64 rangeOverflow, 128 stepMismatch, 256 badInput,
+    // 512 customError. Lean decides 1, 2, 32, 64 and 128; the pattern is a JavaScript regular
+    // expression; tooLong and tooShort need a user edit, which a script's value is not.
+    const validityBits = el => {
+      let bits = 0;
+      if (el instanceof I) { bits = Number(vq(el, 'V', inputValue(el))) || 0; if (patternMismatch(el)) bits |= 4; }
+      else if (el instanceof T) bits = Number(vq(el, 'V', el.value)) || 0;
+      else if (el instanceof S) bits = Number(vq(el, 'V', '')) || 0;
+      if ((customMessage.get(el) ?? '') !== '') bits |= 512;
+      return bits;
+    };
+    ['valueMissing', 'typeMismatch', 'patternMismatch', 'tooLong', 'tooShort', 'rangeUnderflow', 'rangeOverflow', 'stepMismatch', 'badInput', 'customError']
+      .forEach((name, i) => prop(ValidityState, name, function () { return (validityBits(validityEl.get(this)) & (1 << i)) !== 0; }));
+    prop(ValidityState, 'valid', function () { return validityBits(validityEl.get(this)) === 0; });
+    const messages = ['Please fill out this field.', 'Please enter a value of the right type.', 'Please match the requested format.', 'Please shorten this text.',
+      'Please lengthen this text.', 'The value is too low.', 'The value is too high.', 'Please enter a valid value.', 'Please enter a valid value.'];
+    const willValidate = el => vq(el, 'W') === '1';
+    const check = el => {
+      if (!willValidate(el) || validityBits(el) === 0) return true;
+      const e = new Event('invalid', { cancelable: true }); state(e).trusted = true; dispatch(el, e);
+      return false;
+    };
+    for (const C of [I, T, S, B, OUT, FS, named.HTMLObjectElement]) {
+      prop(C, 'willValidate', function () { return willValidate(this); });
+      prop(C, 'validity', function () { let v = validityObj.get(this); if (!v) { v = Object.create(ValidityState.prototype); validityEl.set(v, this); validityObj.set(this, v); } return v; });
+      prop(C, 'validationMessage', function () {
+        if (!willValidate(this)) return '';
+        const bits = validityBits(this);
+        if (bits & 512) return customMessage.get(this);
+        for (let i = 0; i < 9; i++) if (bits & (1 << i)) return messages[i];
+        return '';
+      });
+      method(C, 'checkValidity', function checkValidity() { return check(this); });
+      method(C, 'reportValidity', function reportValidity() { return check(this); });
+      method(C, 'setCustomValidity', function setCustomValidity(message) {
+        if (arguments.length < 1) throw new TypeError("Failed to execute 'setCustomValidity': 1 argument required.");
+        customMessage.set(this, String(message));
+      });
+    }
+    // "Statically validate the constraints" of a form (HTML §4.10.21.3)
+    const checkForm = form => { let ok = true; for (const k of idsOf(fq(form, 'e'))) if (!check(wrap(k))) ok = false; return ok; };
+    method(F, 'checkValidity', function checkValidity() { return checkForm(this); });
+    method(F, 'reportValidity', function reportValidity() { return checkForm(this); });
+  }
+  // ==== end forms =========================================================================
 
   // ==== dynscripts: scripts that a script inserts (HTML §4.12.1 "prepare the script element") ====
   // A script element made by createElement runs when it is connected and has a source: an

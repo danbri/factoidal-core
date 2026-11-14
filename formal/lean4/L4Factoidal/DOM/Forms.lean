@@ -81,10 +81,13 @@ def setChecked (d : Dom) (k : NodeId) (v : Bool) : Dom :=
 def checkedInGroup (d : Dom) (k : NodeId) : Option NodeId :=
   (radioGroup d k).find? (checkedness d ·)
 
-/-- The reset algorithm of a form (HTML §4.10.22): its inputs lose the dirty flag. -/
+/-- The reset algorithm of a form (HTML §4.10.22): its inputs lose the dirty checkedness
+flag, and the options of its selects their dirtiness (the selectedness is again the
+`selected` attribute). -/
 def resetForm (d : Dom) (form : NodeId) : Dom :=
   (d.treeOrder form false).foldl (fun d j =>
-    if isHtml d j ["input"] && formOwner d j == some form then d.setNode j fun x => { x with checkedness := none }
+    if (isHtml d j ["input"] && formOwner d j == some form) || isHtml d j ["option"] then
+      d.setNode j fun x => { x with checkedness := none }
     else d) d
 
 /-- The summary of its parent details (HTML §4.11.2): the first `summary` child of a
@@ -140,7 +143,8 @@ else its first labelable descendant. -/
 def labeledControl (d : Dom) (label : NodeId) : Option NodeId :=
   match attr? d label "for" with
   | some id =>
-    match d.getElementById (d.root label) id with
+    -- an empty `for` names nothing (an ID is not the empty string)
+    match (if id.isEmpty then none else d.getElementById (d.root label) id) with
     | some k => if labelable d k then some k else none
     | none => none
   | none => (d.treeOrder label false).find? (labelable d ·)

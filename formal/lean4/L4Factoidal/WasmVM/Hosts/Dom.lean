@@ -1080,7 +1080,8 @@ def cloneNode (args : Array Value) (s : State) : State × HostResult :=
 /-- `tree_op(a, b, which)`: 1 `isEqualNode` (1 or 0); 2 `normalize()` of `a`; 3
 `b.adoptNode(a)` (DOM §4.5: a document is NotSupportedError); 4 and 5
 `b.importNode(a, deep)` (shallow, deep; the new node); 6 set the checkedness of input `a`
-to `b` (1 or 0); 7 the checkedness of `a`; 8 the other checked radio button of `a`'s
+(or the selectedness of option `a`, `DOM.FormControls.selectedness`) to `b` (1 or 0); 7 the
+checkedness of `a`; 8 the other checked radio button of `a`'s
 group, or -1; 9 reset form `a` (DOM.Forms). Shadow trees: 20 `a.attachShadow(init)` with the
 state bits `b` (`shadowFlags`): the shadow root, or NotSupportedError (-10); 22 empty the
 manually assigned nodes of slot `a`; 23 append node `b` to them (`slot.assign`). Ops 3, 4
@@ -1105,7 +1106,7 @@ def treeOp (args : Array Value) (s : State) : State × HostResult :=
     -- the template contents of a template element stay where they are
     else if (s.dom.get a).type == .fragment && (s.dom.get a).host.isSome then (s, ret 0)
     else change s (.adoptNode a b) fun d => changed (.adoptNode a b) (d.adopt a b)
-  | 6 => if !Forms.isHtml s.dom a ["input"] then (s, ret (-2))
+  | 6 => if !Forms.isHtml s.dom a ["input", "option"] then (s, ret (-2))
     else change s (.setChecked a (b != 0)) fun d => changed (.setChecked a (b != 0)) (Forms.setChecked d a (b != 0))
   | 7 => (s, ret (if Forms.checkedness s.dom a then 1 else 0))
   | 8 => match Forms.checkedInGroup s.dom a with | some k => (s, ret k) | none => (s, ret (-1))
@@ -1482,7 +1483,7 @@ def Command.apply (d : Dom) : Command → Except String Dom
     return d.adopt n doc
   | .setChecked n v => do
     checkNode d n
-    if !Forms.isHtml d n ["input"] then throw "script command: target must be an input"
+    if !Forms.isHtml d n ["input", "option"] then throw "script command: target must be an input or an option"
     return Forms.setChecked d n v
   | .resetForm n => do
     checkNode d n
