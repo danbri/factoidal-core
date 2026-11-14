@@ -212,7 +212,7 @@ structure Held where
   layoutRequest : JSON.Json := .object []
   /-- The WebDriver endpoint, when the test runner started one (`webdriverStart`): the
   gate's configuration (secret, port), the protocol's state and what this browser is. -/
-  webdriver : Option (WebDriver.Gate.Config × WebDriver.Protocol.Server × WebDriver.Protocol.Browser) := none
+  webdriver : Option (WebDriver.Gate.Config × WebDriver.Protocol.Server × WebDriver.Protocol.Browser × WebDriver.Window.State) := none
 
 instance : Inhabited Held := ⟨{}⟩
 
@@ -1154,7 +1154,7 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
     match WebDriver.Gate.start launch, natField request "port" with
     | .ok secret, some port =>
       let browser : WebDriver.Protocol.Browser := { platform := (match str request "platform" with | "" => "linux" | p => p) }
-      return ({ held with webdriver := some ({ secret, port }, {}, browser) },
+      return ({ held with webdriver := some ({ secret, port }, {}, browser, {}) },
         .ok (JSON.Json.object [("secret", .string secret)]).toString)
     | .ok _, none => return (held, .error "scriptSession: webdriverStart needs a port")
     | .error r, _ => return (held, .error s!"scriptSession: the WebDriver endpoint is refused ({repr r})")
@@ -1162,7 +1162,7 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
     -- one request of the endpoint's listener: the gate, then the protocol (`Protocol.handle`)
     match held.webdriver with
     | none => return (held, .error "scriptSession: no WebDriver endpoint")
-    | some (cfg, srv, browser) =>
+    | some (cfg, srv, browser, window) =>
       let r : WebDriver.Protocol.Request := { method := str request "method", path := str request "path",
         host := str request "host", body := str request "body", entropy := ← turnBytes,
         origin := match request.field? "origin" with
@@ -1171,13 +1171,20 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
       let (srv, out) := WebDriver.Protocol.handle cfg browser srv r
       let reply := fun (status : Nat) (body : JSON.Json) =>
         (JSON.Json.object [("status", .number (toString status)), ("body", .string body.toString)]).toString
-      let held := { held with webdriver := some (cfg, srv, browser) }
+      let held := { held with webdriver := some (cfg, srv, browser, window) }
       match out with
       | .reply status body => return (held, .ok (reply status body))
-      | .page _ _ _ _ =>
-        -- the commands on a page are not served yet
-        let e : WebDriver.Error := { code := .unsupportedOperation, message := "this command is not supported yet" }
-        return (held, .ok (reply e.code.status e.body))
+      | .page command _ body _ =>
+        -- the window's own commands (`WebDriver.Window`); the commands on a page are not served yet
+        match WebDriver.Window.answer window command body with
+        | some (window, result) =>
+          let held := { held with webdriver := some (cfg, srv, browser, window) }
+          match result with
+          | .ok v => return (held, .ok (reply 200 (WebDriver.successBody v)))
+          | .error e => return (held, .ok (reply e.code.status e.body))
+        | none =>
+          let e : WebDriver.Error := { code := .unsupportedOperation, message := "this command is not supported yet" }
+          return (held, .ok (reply e.code.status e.body))
   | "close" => return ({ held with session := none, turn := none, leanSession := none, leanWorkers := {}, frames := #[], leanFrames := #[], frameScan := 0 }, .ok "{\"closed\":true}")
   | _ =>
   if held.turn.isSome then return (held, .error "scriptSession: a turn waits for the host")

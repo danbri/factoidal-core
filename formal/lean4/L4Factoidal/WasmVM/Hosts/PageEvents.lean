@@ -33,6 +33,7 @@ import L4Factoidal.WebDriver.Input
 import L4Factoidal.WebDriver.HostKeys
 -- not used here: the WebDriver endpoint's protocol, reached by the lab's `WebScripts` through this module
 import L4Factoidal.WebDriver.Protocol
+import L4Factoidal.WebDriver.Window
 
 namespace L4Factoidal.WasmVM.Hosts.PageEvents
 open L4Factoidal.WasmVM.Hosts.Page
