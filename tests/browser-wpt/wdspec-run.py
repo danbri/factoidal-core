@@ -42,6 +42,17 @@ def main():
     import localpaths  # noqa: F401
     import pytest
     from webdriver import transport
+    # The fixtures of the wdspec tests are plugins that webdriver/tests/conftest.py names; a
+    # tree without that file (a partial checkout) gets them named here, with
+    # `tests` as the package of webdriver/tests (another `tests` may be on the path).
+    plugins_args = []
+    if not os.path.exists(os.path.join(root, "webdriver", "tests", "conftest.py")):
+        import types
+        tests_package = types.ModuleType("tests")
+        tests_package.__path__ = [os.path.join(root, "webdriver", "tests")]
+        sys.modules["tests"] = tests_package
+        for plugin in ("tests.support.fixtures", "tests.support.bidi.fixtures", "tests.support.classic.fixtures"):
+            plugins_args += ["-p", plugin]
 
     if a.secret:
         # Every request path starts with the secret: the client's URL prefix.
@@ -125,7 +136,7 @@ def main():
         sys.stdout = sys.stderr  # pytest's own report goes to the log, the result line to stdout
         try:
             pytest.main(["--strict-markers", "-vv", "--capture", "no", "--basetemp", os.path.join(cache, "pytest"),
-                         "--showlocals", "-p", "no:cacheprovider", "-o=console_output_style=classic",
+                         "--showlocals", "-p", "no:cacheprovider", "-o=console_output_style=classic", *plugins_args,
                          os.path.join(root, a.test)], plugins=[harness, subtests])
         except Exception as e:  # noqa: BLE001
             harness.outcome = ("INTERNAL-ERROR", str(e))
