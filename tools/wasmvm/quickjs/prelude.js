@@ -8100,6 +8100,20 @@
   }
   // ==== end dynscripts ====================================================================
 
+  // ==== imagesource: the image an img element asks for (HTML §4.8.4.3) =====================
+  // `currentSrc`: the source that Lean selects from `srcset`, `sizes`, `src` and the `source`
+  // children of a `picture` (HTML.ImageSource, node_query 195) for the device pixel ratio and
+  // the viewport of the element's document, resolved against that document's URL.
+  Object.defineProperty(named.HTMLImageElement.prototype, 'currentSrc', { get() {
+    const id = nodeId(this), d = info(id, 7), frame = d > 0 ? info(d, 12) : -1;
+    let size;
+    if (frame >= 0) { const b = layoutOf(wrap(frame)); size = [b[6], b[7]]; } else size = viewport();
+    const r = n.query(id, 195, globalThis.devicePixelRatio + '\u0000' + size[0] + '\u0000' + size[1]);
+    if (typeof r !== 'string' || r === '') return '';
+    return (frame >= 0 ? resolveURL(r.slice(1), docURL(d)) : resolveURL(r.slice(1))) ?? '';
+  }, configurable: true, enumerable: true });
+  // ==== end imagesource ===================================================================
+
   // ==== trustedtypes: Trusted Types (https://w3c.github.io/trusted-types/dist/spec/) =====
   // The objects are here: `trustedTypes`, the policies (whose functions are the page's) and
   // the three trusted value types. Every decision is Lean's (HTML.TrustedTypes, node_query
