@@ -333,6 +333,11 @@ lean_exe «frame-cost-cases» where root := `Harness.FrameCostCases
 @[default_target] lean_lib PageGpu where
   roots := #[`L4Factoidal.PageGpu]
 
+-- WebNN kernels for the validated GPU path, generated from the CPU reference's operator names
+-- and index maps (docs/designissues/2026-11-14-gpu-compute-and-webnn.md, part 2).
+@[default_target] lean_lib WebNNGpu where
+  roots := #[`L4Factoidal.WebNN.Idx, `L4Factoidal.WebNN.Gpu]
+
 -- Canvas 2D for page scripts, drawn by Lean: colours, paths, strokes, coverage, operators,
 -- text, images, the wire, and their theorems (docs/designissues/2026-11-08-canvas-2d.md).
 @[default_target] lean_lib PageCanvas where
