@@ -371,7 +371,7 @@ def numArith (op : ArOp) (a b : Num) : M Num :=
     | .sub => pure (.i (x - y))
     | .mul => pure (.i (x * y))
     | .div => if y == 0 then err "FOAR0001" "division by zero"
-              else match Fn.Numeric.decDiv? 18 (Dec.ofInt x) (Dec.ofInt y) with
+              else match Fn.Numeric.decDivNearest? 18 (Dec.ofInt x) (Dec.ofInt y) with
                 | some d => pure (.d d) | none => err "FOAR0001"
     | .idiv => if y == 0 then err "FOAR0001" "division by zero" else pure (.i (Int.tdiv x y))
     | .mod => if y == 0 then err "FOAR0001" "division by zero" else pure (.i (Int.tmod x y))
@@ -380,7 +380,7 @@ def numArith (op : ArOp) (a b : Num) : M Num :=
     | .add => pure (.d (Dec.norm (Dec.add x y)))
     | .sub => pure (.d (Dec.norm (Dec.sub x y)))
     | .mul => pure (.d (Fn.Numeric.decMul x y))
-    | .div => match Fn.Numeric.decDiv? (max 18 (x.scale + 18)) x y with
+    | .div => match Fn.Numeric.decDivNearest? (max 18 (x.scale + 18)) x y with
               | some d => pure (.d d) | none => err "FOAR0001" "division by zero"
     | .idiv => match Fn.Numeric.decIntDiv? x y with
                | some q => pure (.i q) | none => err "FOAR0001" "division by zero"

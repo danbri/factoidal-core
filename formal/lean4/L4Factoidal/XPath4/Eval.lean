@@ -287,13 +287,14 @@ def castTargetError : IType → Option String
   | .anyFn | .fnT .. => some "XPST0080"
   | .choice ts => if ts.all (fun t => match t with | .atomic _ | .enum _ | .choice _ => true | _ => false) then none else some "XPST0080"
   | .atomic aty => if aty == .b .anyAtomicType || aty == .b .notation then some "XPST0080" else none
-  | .enum _ | .arrT _ | .mapT _ _ | .record _ _ | .anyArr | .anyMap => none
+  | .enum _ | .arrT _ | .mapT _ _ | .record _ _ | .anyArr | .anyMap | .schemaType _ => none
   | .jnodeT .. | .xnode => some "XPST0080"
   | _ => some "XPST0051"
 
 /-- Whether an item type is a valid cast target (XPath 4.0 §4.19.2). -/
 def isCastTarget : IType → Bool
-  | .atomic _ | .choice _ | .enum _ | .arrT _ | .mapT _ _ | .record _ _ | .anyArr | .anyMap => true
+  | .atomic _ | .choice _ | .enum _ | .arrT _ | .mapT _ _ | .record _ _ | .anyArr | .anyMap
+  | .schemaType _ => true
   | _ => false
 
 mutual
@@ -825,7 +826,11 @@ def eval : Nat → Env → Expr → M Seq
           else if total == 1 && kw.isEmpty && env.schema.isSimpleType q then
             match args with
             | [some a] => castTo env (← eval n env a) (.schemaType q) true
-            | _ => err "XPST0017" ("the constructor function " ++ q.show ++ " takes one argument")
+            -- `T(?)`: the constructor function itself
+            | _ =>
+              let v : QN := { uri := "#trusted", loc := "a0" }
+              pure [.fn (.inline [(v, .seq (.atomic (.b .anyAtomicType)) .opt)] (.seq .item .star)
+                (.cast (.var v) (.schemaType q) true) false [])]
           else err "XPST0017" ("unknown function " ++ q.show)
       | some sig =>
         if q.uri == nsFN && q.loc == "concat" then
@@ -1744,7 +1749,8 @@ end
     (XPath 4.0 §4.12, `XQuery4.xpathGrammar`). -/
 def parseXPath4 (src : String) (ns : List (String × String) := [])
     (schemaDecl : Bool → QN → Bool := fun _ _ => false)
-    (features : FeatureSettings := {}) (schemaSimple : QN → Bool := fun _ => false) : M Expr := do
+    (features : FeatureSettings := {})
+    (schemaSimple : QN → Option SchemaSimpleUse := fun _ => none) : M Expr := do
   let e ← parseXPath src ns (some L4Factoidal.XQuery4.xpathGrammar) schemaDecl features schemaSimple
   features.check e
   -- static check (XPath 4.0 §2.4.1, XPST0017): a call of a function in
@@ -1767,7 +1773,7 @@ theorem evalConfigured_staticTypingOff (fuel : Nat) (env : Env) (e : Expr) :
 
 /-- Evaluate an XPath 4.0 expression string. -/
 def evalString (src : String) (env : Env := {}) : M Seq := do
-  let e ← parseXPath4 src env.ns env.schema.declared env.features env.schema.isSimpleType
+  let e ← parseXPath4 src env.ns env.schema.declared env.features env.schema.simpleUse
   evalConfigured 100000 env e
 
 /-- Applying the default settings leaves evaluation definitionally

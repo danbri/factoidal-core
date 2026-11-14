@@ -168,6 +168,19 @@ inductive IType where
   | empty
 deriving Repr, Inhabited
 
+/-- How a simple type of the in-scope schema that is not built in may be
+    used as a type name (the static context of the parser). -/
+inductive SchemaSimpleUse where
+  /-- A generalized atomic type (XPath 4.0 §3.2.7): an atomic type, or a
+      pure union type (a union with no facets of its own whose members are
+      generalized atomic types). Allowed wherever an item type is; read as
+      `t`. -/
+  | general (t : IType)
+  /-- A list type, or a union type that is not pure: only the target of
+      `cast` and `castable` (XPath 4.0 §4.19.2); XPST0051 elsewhere. -/
+  | castOnly
+deriving Repr, Inhabited
+
 /-- A node test in a step. -/
 inductive NodeTest where
   | name (t : NameTest)

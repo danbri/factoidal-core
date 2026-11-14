@@ -86,9 +86,12 @@ structure PCtx where
       a global declaration. None by default (no schema in scope). -/
   schemaDecl : Bool → QN → Bool := fun _ _ => false
   /-- The in-scope schema types that are simple types and not built in
-      (`XPath4.SchemaHook.isSimpleType`): such a name is a type name of
-      the static context. None by default (no schema in scope). -/
-  schemaSimple : QN → Bool := fun _ => false
+      (`XPath4.SchemaHook.simpleUse`): such a name is a type name of the
+      static context. None by default (no schema in scope). -/
+  schemaSimple : QN → Option SchemaSimpleUse := fun _ => none
+  /-- The parser is reading the target of `cast` or `castable`, where a
+      list type or a union type that is not pure is allowed. -/
+  castTarget : Bool := false
 
 abbrev P := ReaderT PCtx (StateT Nat (Except Err))
 
@@ -494,7 +497,13 @@ def atomicTypeOf (q : QN) : P IType := do
   | some (_, t) => return t
   | none => pure ()
   -- a simple type of the in-scope schema
-  if q.uri != nsXS && c.schemaSimple q then return .schemaType q
+  if q.uri != nsXS then
+    match c.schemaSimple q with
+    | some (.general t) => return t
+    | some .castOnly =>
+      if c.castTarget then return .schemaType q
+      else throw { code := "XPST0051", msg := "not a generalized atomic type: " ++ q.show }
+    | none => pure ()
   if c.lenientTypes && q.uri != nsXS then return .item
   if q.uri == nsXS then
     if q.loc == "numeric" then
@@ -758,7 +767,7 @@ def pItemType : Nat → P IType
               -- XPath 4.0 §3.2.9: the key type is a generalized atomic type
               -- (XPST0152); `item()` stands for a type not known yet
               let keyOk1 : IType → Bool := fun t => match t with
-                | .atomic _ | .enum _ | .item => true
+                | .atomic _ | .enum _ | .item | .schemaType _ => true
                 | _ => false
               let keyOk : Bool := match k with
                 | .choice ts => ts.all keyOk1
@@ -1187,7 +1196,7 @@ def pCastTarget : Nat → P (IType × Bool)
     if listT.isNone then set st
     let t ← match listT with
       | some t => pure t
-      | none => pItemType n
+      | none => withReader (fun c => { c with castTarget := true }) (pItemType n)
     let c ← read
     let i ← get
     let j := skipWsF c.s (c.s.size + 1) 0 i
@@ -1768,7 +1777,8 @@ end
     declarations prolog. -/
 def parseXPath (src : String) (ns : List (String × String) := []) (ext : Option ExtGrammar := none)
     (schemaDecl : Bool → QN → Bool := fun _ _ => false)
-    (features : FeatureSettings := {}) (schemaSimple : QN → Bool := fun _ => false) : M Expr :=
+    (features : FeatureSettings := {})
+    (schemaSimple : QN → Option SchemaSimpleUse := fun _ => none) : M Expr :=
   let p : P Expr := do
     -- prolog (XPath 4.0 §2.1): DefaultElementNamespaceDecl? NamespaceDecl*
     let mut extra : List (String × String) := []
