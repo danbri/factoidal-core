@@ -415,7 +415,26 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
     engineFeatures={...(line?JSON.parse(line.slice(8)):{}),"module scripts":logs.includes("__probe_module")};
   }catch{engineFeatures={};}
   (info as Record<string,unknown>).features=engineFeatures;
-  let heldCanvasFont=false;
+  // The page font. A host holds one (the window and the Hub hold Noto Sans) and the engine lays
+  // text out with it. With none held the engine lays every page out in its bitmap face and
+  // draws with no web font at all: a page's own font (Ahem in most layout tests) was fetched,
+  // checked and held, and its text was still measured in the bitmap face (9 letters of
+  // `font: 10px/1 Ahem` were 77.14px wide, not 90px). The runner holds the font the hosts
+  // hold, so a test page is laid out as a host lays it out. --no-page-font keeps the bitmap
+  // face; the host parity check (`fetcher`) keeps it too, as its expected results are of it.
+  // `heldFont` is what the engine holds now: the canvas text tests hold their own font in
+  // its place (the engine's held font list is one list).
+  let heldFont:"none"|"page"|"canvas"="none";
+  let pageFont:{bytes:Uint8Array;sha256:string}|undefined;
+  if(!fetcher&&!args.includes("--no-page-font"))try{
+    const bytes=await Deno.readFile(join(root,"third_party/fonts/noto-sans/NotoSans-Regular.ttf"));
+    pageFont={bytes,sha256:[...new Uint8Array(await crypto.subtle.digest("SHA-256",bytes as BufferSource))].map(b=>b.toString(16).padStart(2,"0")).join("")};
+  }catch{console.error("warning: no page font (third_party/fonts/noto-sans/NotoSans-Regular.ttf): pages are laid out in the bitmap face, with no web font");}
+  const holdPageFont=()=>{
+    if(heldFont==="page"||!pageFont)return;
+    try{engine.fontLoadBytes(pageFont.bytes,"Noto Sans",pageFont.sha256);heldFont="page";}
+    catch(error){console.error(`warning: the page font was refused: ${String(error instanceof Error?error.message:error)}`);pageFont=undefined;}
+  };
   // Web fonts given to the engine in this process, by URL: the SHA-256 it holds them by ("" when refused).
   const fontShas=new Map<string,string>();
   // What the host reads: files of the pinned copies (the default), or, with --wptserve,
@@ -586,10 +605,13 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
     // holds the images it fetched: Canvas 2D draws them (docs/designissues/2026-11-08-canvas-2d.md).
     // The font of the canvas text tests (an @font-face the engine does not load for
     // scripts), held once as the engine's font, as a host holds the fonts it fetched.
-    if(file.includes("/canvas/")&&html.includes("CanvasTest")&&!heldCanvasFont){
-      const bytes=await readBytes(new URL("/fonts/CanvasTest.ttf",url).href);
-      if(bytes)try{engine.fontLoadBytes(bytes,"CanvasTest","canvastest");heldCanvasFont=true;}catch{/* refused */}
-    }
+    // Every other page is laid out in the page font (holdPageFont).
+    if(file.includes("/canvas/")&&html.includes("CanvasTest")){
+      if(heldFont!=="canvas"){
+        const bytes=await readBytes(new URL("/fonts/CanvasTest.ttf",url).href);
+        if(bytes)try{engine.fontLoadBytes(bytes,"CanvasTest","canvastest");heldFont="canvas";}catch{/* refused */}
+      }
+    } else holdPageFont();
     if(file.includes("/canvas/")&&engine.imageLoad)
       for(const m of html.matchAll(/<img[^>]*\ssrc=["']?([^"' >]+)/g)){
         const key=new URL(m[1],url).href,bytes=await readBytes(key);
