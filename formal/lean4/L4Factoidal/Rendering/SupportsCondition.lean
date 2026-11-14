@@ -70,7 +70,7 @@ def knownWebkitPseudoElements : List String :=
 list) that `DOM.Selectors` reads, with no `-webkit-` pseudo-element it does not know (those
 are valid in a selector only for web compatibility, CSS Conditional 4 §5.1). -/
 def supportsSelector (text : String) : Bool :=
-  match L4Factoidal.DOM.Selectors.parse text with
+  match L4Factoidal.DOM.Selectors.parse text (strict := true) with
   | some [_] =>
     let pieces := (text.toLower.splitOn "::-webkit-").drop 1
     pieces.all fun piece =>

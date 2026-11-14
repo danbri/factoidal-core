@@ -164,6 +164,10 @@ def preprocess (s : String) : Array Char := stripComments (preprocessRaw s)
 structure P where
   cs : Array Char
   i : Nat := 0
+  /-- `:is()` and `:where()` read their argument as a plain selector list, not a forgiving
+  one: the parse of `CSS.supports("selector(...)")` (CSS Conditional 4 §3), where an
+  invalid selector anywhere makes the condition false. -/
+  strict : Bool := false
 
 abbrev PM := StateT P (Except String)
 
@@ -684,7 +688,7 @@ def compound : Nat → PM (List Simple)
               if l.any (·.hasPseudoElement) then fail
               out := out.push (.not l)
             | "is" | "where" =>
-              let l ← forgivingList fuel
+              let l ← if (← get).strict then selectorList fuel else forgivingList fuel
               let _ ← skipWs
               expectClose
               out := out.push (.is l)
@@ -767,14 +771,16 @@ def compound : Nat → PM (List Simple)
 end
 
 /-- Parse a selectors string; `none` when it is invalid (a SyntaxError). -/
-def parse (s : String) : Option (List Complex) :=
+def parse (s : String) (strict : Bool := false) : Option (List Complex) :=
   match (do
       let l ← selectorList parseFuel
       let _ ← skipWs
       if !(← atEnd) then fail
-      return l : PM (List Complex)).run { cs := preprocess s } with
+      return l : PM (List Complex)).run { cs := preprocess s, strict := strict } with
   | .ok (l, _) => some l
   | .error _ => none
+
+#guard (parse ":is(:foo, .a)").isSome && (parse ":is(:foo, .a)" true).isNone && (parse ":is(.a, .b)" true).isSome
 
 /-! ## Matching -/
 
