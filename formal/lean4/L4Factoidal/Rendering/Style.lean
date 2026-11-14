@@ -1989,7 +1989,11 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
   -- `noscript { display: none }` with scripting enabled; `SfntProfile.unrenderedText` already
   -- shapes none of its text). It was laid out: lean-lang.org began with its noscript notice.
   let hidden := ["head","style","script","title","meta","link","template","base","area","param","noscript"].contains n.lname ||
-    (n.ns == some DOM.htmlNS && ((n.lname == "dialog" && !hasAttr "open") || (hasAttr "popover" && n.states % 2 == 0)))
+    -- the `hidden` attribute (HTML §15.3.1, the user agent's `[hidden] { display: none }`; an
+    -- author rule for `display` wins, as over any user agent rule). It was not read: gov.uk's
+    -- cookie notice showed the paragraphs of both of its answers.
+    (n.ns == some DOM.htmlNS && ((n.lname == "dialog" && !hasAttr "open") || (hasAttr "popover" && n.states % 2 == 0) ||
+      hasAttr "hidden"))
   let svgViewport := n.ns == some DOM.svgNS && n.lname == "svg"
   let svgOverflow := attrValue n "overflow"
   let scale := headingScale n.lname

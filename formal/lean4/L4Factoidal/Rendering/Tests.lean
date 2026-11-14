@@ -324,6 +324,11 @@ private def page := "<p><a id='a' href='u'><span id='s'>AA</span></a> <a id='b'>
 -- `noscript` is not rendered: scripts run here (2026-11-14; before, its content was laid out).
 #guard ((stateAt "<body><p>a</p><noscript id=n><p>enable scripts</p></noscript></body>" "" "n").toOption.map (·.display == .none)) == some true
 #guard ((stateAt "<body><p id=k>a</p><noscript><p>enable scripts</p></noscript></body>" "" "k").toOption.map (·.display == .block)) == some true
+-- The `hidden` attribute: not rendered; an author rule for `display` wins.
+#guard ((stateAt "<body><p id=h hidden>x</p></body>" "" "h").toOption.map (·.display == .none)) == some true
+#guard ((stateAt "<body><p id=h hidden=''>x</p></body>" "p{color:red}" "h").toOption.map (·.display == .none)) == some true
+#guard ((stateAt "<body><p id=h hidden>x</p></body>" "p{display:block}" "h").toOption.map (·.display == .block)) == some true
+#guard ((stateAt "<body><p id=h>x</p></body>" "" "h").toOption.map (·.display == .block)) == some true
 -- An unknown pseudo-class drops its rule; the other rules stand.
 #guard ((stateAt page "a:focus{color:red} a{color:green}" "a" (active := some "a")).toOption.map (rgb255 ·.color)) == some (0,128,0)
 -- HTML §15.5.4: a button is an inline-block with a raised border; pressed, it is sunken and darker.
