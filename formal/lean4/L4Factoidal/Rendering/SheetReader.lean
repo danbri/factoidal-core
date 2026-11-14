@@ -428,131 +428,187 @@ def anonName (n : Nat) : String := "\x01" ++ toString n
 def layerPath (parent : List String) (name : String) : List String :=
   parent ++ ((trim name).splitOn ".").map trim
 
+/-- The text before a `{` is the start of a custom property declaration (`--name: ...`),
+whose value may hold a block (CSS Variables 1 §2). No selector starts so. -/
+def customValueStart (buf : String) : Bool :=
+  let p := trim buf
+  p.startsWith "--" && p.contains ':'
+
+/-- The pieces of a sheet text: the text up to each `{`, `}` or `;` that is outside a
+string and outside a `()`, `[]` or value block (CSS Syntax 3 §5.4.8), with that character;
+the last piece ends with the character 0. `quote` is the open quote (0: none), `esc` a
+pending backslash, `closers` the closing characters of the open blocks, innermost first.
+A tail call per character: this is the loop over the text, and it keeps no other state. -/
+def scan : List Char → String → Char → Bool → List Char → Array (String × Char) → Array (String × Char)
+  | [], buf, _, _, _, out => out.push (buf, '\x00')
+  | c :: rest, buf, quote, esc, closers, out =>
+    if quote != '\x00' then
+      if esc then scan rest (buf.push c) quote false closers out
+      else if c == '\\' then scan rest (buf.push c) quote true closers out
+      else if c == quote || c == '\n' then scan rest (buf.push c) '\x00' false closers out
+      else scan rest (buf.push c) quote false closers out
+    else if esc then scan rest (buf.push c) quote false closers out
+    else if c == '\\' then scan rest (buf.push c) quote true closers out
+    else if c == '"' || c == '\'' then scan rest (buf.push c) c false closers out
+    else match closers with
+      | k :: more =>
+        if c == k then scan rest (buf.push c) quote false more out
+        else if c == '(' then scan rest (buf.push c) quote false (')' :: closers) out
+        else if c == '[' then scan rest (buf.push c) quote false (']' :: closers) out
+        else if c == '{' then scan rest (buf.push c) quote false ('}' :: closers) out
+        else scan rest (buf.push c) quote false closers out
+      | [] =>
+        if c == '(' then scan rest (buf.push c) quote false [')'] out
+        else if c == '[' then scan rest (buf.push c) quote false [']'] out
+        else if c == '{' then
+          if customValueStart buf then scan rest (buf.push c) quote false ['}'] out
+          else scan rest "" quote false [] (out.push (buf, c))
+        else if c == '}' || c == ';' then scan rest "" quote false [] (out.push (buf, c))
+        else scan rest (buf.push c) quote false closers out
+
+/-- The pieces of a sheet text without its comments. -/
+def pieces (source : String) : Array (String × Char) :=
+  scan (stripComments source).toList "" '\x00' false [] #[]
+
+/-- Every character of a text is in one piece: the pieces, each with its ending
+character, are as long as the text and one more (the 0 that ends the last piece). -/
+theorem scan_length (cs : List Char) (buf : String) (quote : Char) (esc : Bool) (closers : List Char)
+    (out : Array (String × Char)) :
+    ((scan cs buf quote esc closers out).toList.map fun p => p.1.length + 1).sum =
+      (out.toList.map fun p => p.1.length + 1).sum + buf.length + cs.length + 1 := by
+  induction cs generalizing buf quote esc closers out with
+  | nil => simp [scan]; omega
+  | cons c rest ih =>
+    unfold scan
+    split
+    · split
+      · rw [ih]; simp [String.length_push]; omega
+      · split
+        · rw [ih]; simp [String.length_push]; omega
+        · split <;> (rw [ih]; simp [String.length_push]; omega)
+    · split
+      · rw [ih]; simp [String.length_push]; omega
+      · split
+        · rw [ih]; simp [String.length_push]; omega
+        · split
+          · rw [ih]; simp [String.length_push]; omega
+          · split
+            · split
+              · rw [ih]; simp [String.length_push]; omega
+              · split
+                · rw [ih]; simp [String.length_push]; omega
+                · split
+                  · rw [ih]; simp [String.length_push]; omega
+                  · split <;> (rw [ih]; simp [String.length_push]; omega)
+            · split
+              · rw [ih]; simp [String.length_push]; omega
+              · split
+                · rw [ih]; simp [String.length_push]; omega
+                · split
+                  · split
+                    · rw [ih]; simp [String.length_push]; omega
+                    · rw [ih]; simp; omega
+                  · split
+                    · rw [ih]; simp; omega
+                    · rw [ih]; simp [String.length_push]; omega
+
 /-- The rules of a sheet text, in order (see the head of this file). `supports` evaluates
-the condition of an `@supports` rule. A sheet that stops early closes its open blocks. -/
+the condition of an `@supports` rule. A sheet that stops early closes its open blocks.
+The loop is over the pieces of the text (`pieces`): one step for each rule, declaration
+and block end. -/
 def read (supports : String → Bool) (source : String) : Array Leaf := Id.run do
   let mut out : Array Leaf := #[]
   let mut stack : List Frame := []
   let mut top : Frame := {}
   let mut layers : Array (List String) := #[]
   let mut anon := 0
-  let mut buf := ""
-  let mut closers : List Char := []
-  let mut quote : Option Char := none
-  let mut esc := false
+  -- the text of a prelude that a `;` did not end (outside a style rule)
+  let mut carry := ""
   -- the depth inside the block of an at-rule that is kept as written, or skipped
   let mut raw := 0
+  let mut rawBody := ""
   let mut rawLeaf : Option Leaf := none
   -- no rule but `@charset`, `@import` and `@layer` statements so far: `@import` is valid
   let mut head := true
-  for c in (stripComments source).toList do
-    match quote with
-    | some q =>
-      buf := buf.push c
-      if esc then esc := false
-      else if c == '\\' then esc := true
-      else if c == q || c == '\n' then quote := none
-    | none =>
-      if esc then
-        esc := false
-        buf := buf.push c
-      else if c == '\\' then
-        esc := true
-        buf := buf.push c
-      else if c == '"' || c == '\'' then
-        quote := some c
-        buf := buf.push c
-      else if raw > 0 then
-        if c == '}' && raw == 1 then
-          if let some leaf := rawLeaf then out := out.push { leaf with body := buf }
-          raw := 0
-          rawLeaf := none
-          buf := ""
-        else
-          buf := buf.push c
-          if c == '{' then raw := raw + 1
-          else if c == '}' then raw := raw - 1
-      else if !closers.isEmpty then
-        buf := buf.push c
-        if c == '(' then closers := ')' :: closers
-        else if c == '[' then closers := ']' :: closers
-        else if c == '{' then closers := '}' :: closers
-        else if closers.head? == some c then closers := closers.drop 1
-      else if c == '(' then
-        buf := buf.push c
-        closers := [')']
-      else if c == '[' then
-        buf := buf.push c
-        closers := [']']
-      else if c == '{' then
-        let p := trim buf
-        buf := ""
-        head := false
-        if p.startsWith "@" then
-          let (name, rest) := atName p
-          if name == "media" then
-            out := flushed out top
-            stack := { top with decls := [] } :: stack
-            top := { top with decls := [], media := rest :: top.media }
-          else if name == "supports" && supports rest then
-            out := flushed out top
-            stack := { top with decls := [] } :: stack
-            top := { top with decls := [] }
-          else if name == "layer" && (splitCommas rest).length == 1 then
-            let path := if rest.isEmpty then top.layer ++ [anonName anon] else layerPath top.layer rest
-            if rest.isEmpty then anon := anon + 1
-            layers := register layers path
-            out := flushed out top
-            stack := { top with decls := [] } :: stack
-            top := { top with decls := [], layer := path }
-          else
-            raw := 1
-            rawLeaf := if skippedBlocks.contains name then none
-              else some { kind := name, prelude := rest, media := top.media, layer := top.layer }
-        else if !top.selector.isEmpty && p.startsWith "--" && p.contains ':' then
-          -- the value of a custom property may be a block (CSS Variables 1 §2)
-          buf := p.push '{'
-          closers := ['}']
-        else if p.isEmpty then
-          raw := 1
-          rawLeaf := none
-        else
+  for (text, term) in pieces source do
+    if raw > 0 then
+      if term == '}' && raw == 1 then
+        if let some leaf := rawLeaf then out := out.push { leaf with body := rawBody ++ text }
+        raw := 0
+        rawBody := ""
+        rawLeaf := none
+      else if term == '\x00' then rawBody := rawBody ++ text
+      else
+        rawBody := (rawBody ++ text).push term
+        if term == '{' then raw := raw + 1
+        else if term == '}' then raw := raw - 1
+    else if term == '{' then
+      let p := trim (carry ++ text)
+      carry := ""
+      head := false
+      if p.startsWith "@" then
+        let (name, rest) := atName p
+        if name == "media" then
           out := flushed out top
           stack := { top with decls := [] } :: stack
-          top := { selector := nest top.selector (plainPrelude p), media := top.media, layer := top.layer }
-      else if c == '}' then
-        if !top.selector.isEmpty then
-          if let some d := declOf buf then top := { top with decls := d :: top.decls }
-        buf := ""
-        match stack with
-        | f :: rest =>
+          top := { top with decls := [], media := rest :: top.media }
+        else if name == "supports" && supports rest then
           out := flushed out top
-          top := f
-          stack := rest
-        | [] => pure ()
-      else if c == ';' then
-        let p := trim buf
-        if p.startsWith "@" then
-          let (name, rest) := atName p
-          if name == "layer" then
-            for n in splitCommas rest do
-              layers := register layers (layerPath top.layer n)
-          else if name == "import" then
-            -- valid only before every other rule (CSS Cascade 5 §6.1)
-            if head then out := out.push { kind := name, prelude := rest }
-          else
-            if name != "charset" then head := false
-            out := out.push { kind := name, prelude := rest, media := top.media, layer := top.layer }
-          buf := ""
-        else if !top.selector.isEmpty then
-          if let some d := declOf buf then top := { top with decls := d :: top.decls }
-          buf := ""
-        else buf := buf.push c
-      else buf := buf.push c
+          stack := { top with decls := [] } :: stack
+          top := { top with decls := [] }
+        else if name == "layer" && (splitCommas rest).length == 1 then
+          let path := if rest.isEmpty then top.layer ++ [anonName anon] else layerPath top.layer rest
+          if rest.isEmpty then anon := anon + 1
+          layers := register layers path
+          out := flushed out top
+          stack := { top with decls := [] } :: stack
+          top := { top with decls := [], layer := path }
+        else
+          raw := 1
+          rawLeaf := if skippedBlocks.contains name then none
+            else some { kind := name, prelude := rest, media := top.media, layer := top.layer }
+      else if p.isEmpty then
+        raw := 1
+        rawLeaf := none
+      else
+        out := flushed out top
+        stack := { top with decls := [] } :: stack
+        top := { selector := nest top.selector (plainPrelude p), media := top.media, layer := top.layer }
+    else if term == '}' then
+      if !top.selector.isEmpty then
+        if let some d := declOf text then top := { top with decls := d :: top.decls }
+      carry := ""
+      match stack with
+      | f :: rest =>
+        out := flushed out top
+        top := f
+        stack := rest
+      | [] => pure ()
+    else if term == ';' then
+      let p := trim (carry ++ text)
+      if p.startsWith "@" then
+        let (name, rest) := atName p
+        if name == "layer" then
+          for n in splitCommas rest do
+            layers := register layers (layerPath top.layer n)
+        else if name == "import" then
+          -- valid only before every other rule (CSS Cascade 5 §6.1)
+          if head then out := out.push { kind := name, prelude := rest }
+        else
+          if name != "charset" then head := false
+          out := out.push { kind := name, prelude := rest, media := top.media, layer := top.layer }
+        carry := ""
+      else if !top.selector.isEmpty then
+        if let some d := declOf text then top := { top with decls := d :: top.decls }
+      else
+        -- outside a style rule a `;` does not end a selector: it is part of one that
+        -- is then not a selector, and its rule is dropped
+        carry := (carry ++ text).push ';'
+    else if !top.selector.isEmpty then
+      -- the end of the text
+      if let some d := declOf text then top := { top with decls := d :: top.decls }
   if raw > 0 then
-    if let some leaf := rawLeaf then out := out.push { leaf with body := buf }
-  else if !top.selector.isEmpty then
-    if let some d := declOf buf then top := { top with decls := d :: top.decls }
+    if let some leaf := rawLeaf then out := out.push { leaf with body := rawBody }
   out := flushed out top
   for f in stack do out := flushed out f
   return out.map fun leaf => if leaf.layer.isEmpty then leaf else { leaf with rank := rankOf layers leaf.layer }
