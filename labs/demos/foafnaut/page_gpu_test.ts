@@ -12,7 +12,7 @@ import {loadHTML} from "./native_html_engine.ts";
 // SCRIPT_ENGINE=bubblepop runs the same turns on BubblePopJS (the JavaScript engine written in Lean) (WasmVM/Hosts/LeanJS.lean):
 // the start requests carry engine:"bubblepop", and no guest module is needed.
 const lean=Deno.env.get("SCRIPT_ENGINE")==="bubblepop";
-const withEngine=(request:Record<string,unknown>)=>lean?{...request,engine:"bubblepop"}:request;
+const withEngine=(request:Record<string,unknown>)=>({...(lean?{...request,engine:"bubblepop"}:request),gpuReplay:true});
 
 const library=new URL("./.build/web-render/engines/libweb-render.dylib",import.meta.url).pathname;
 const guest=Deno.env.get("QUICKJS_WASM")??`${Deno.env.get("HOME")}/working/qjs-wasm/qjs-wasmvm.wasm`;

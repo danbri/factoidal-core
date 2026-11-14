@@ -191,6 +191,10 @@ def decodeWith (op : Nat) (ns : List Nat) (payload : ByteArray) : Except String 
 back (`getMappedRange`); the answer is the bytes themselves, not text. -/
 def mappedOp : Nat := 16
 
+/-- Op 17: does the embedder replay this page's GPU commands (`State.replay`)? The answer
+is "1" or "0" (`navigator.gpu.requestAdapter()` answers null on "0"). -/
+def replayOp : Nat := 17
+
 /-- The buffer id of a `mappedOp` call. -/
 def mappedId (op : Nat) (bytes : ByteArray) : Option Nat :=
   let ns := if op ≥ binaryOp then (binHeader bytes).toOption.map (·.1) else (nums (splitLine bytes).1).toOption

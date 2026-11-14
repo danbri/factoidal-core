@@ -256,9 +256,13 @@ structure State where
   pending : List (Nat × Nat × Nat) := []
   /-- Readbacks answered and not yet unmapped: (buffer, bytes). -/
   mapped : List (Nat × ByteArray) := []
+  /-- The embedder replays this page's host commands on a GPU (a host fact given at the
+  session's start, `gpuReplay`). Without it, `navigator.gpu.requestAdapter()` answers null
+  and WebNN runs on the CPU reference: no work waits for a GPU that is not there. -/
+  replay : Bool := false
   deriving Inhabited
 
-def State.empty (page : Nat) : State := { page }
+def State.empty (page : Nat) (replay : Bool := false) : State := { page, replay }
 
 def State.get (s : State) (id : Nat) : Option Obj := s.objs.lookup id
 

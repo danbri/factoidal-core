@@ -1026,7 +1026,7 @@ def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (h
   let ent ← match held.startEntropy with
     | some e => if held.syncCache.isEmpty then entropy id else pure e
     | none => entropy id
-  let lim : Page.Limits := { commands, logs, gpuPage := id, entropy := ent, encoding := str request "encoding", frames := true, hostLoads, network, hostCors, pageAddress := str request "pageAddress", referrerPolicy := str request "referrerPolicy", syncOk := true, syncAnswers := held.syncCache }
+  let lim : Page.Limits := { commands, logs, gpuPage := id, gpuReplay := request.field? "gpuReplay" == some (.bool true), entropy := ent, encoding := str request "encoding", frames := true, hostLoads, network, hostCors, pageAddress := str request "pageAddress", referrerPolicy := str request "referrerPolicy", syncOk := true, syncAnswers := held.syncCache }
   let made := show Except String (Array (Nat × String) × Array String × Bool × DOM.Dom) from do
     let dom ← parse html url
     let (scripts, missing, hasModule) ← scriptSources dom request (modules := true)
@@ -1313,7 +1313,7 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
         let (vw, vh) := (viewport request).getD (800, 600)
         let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh, canvasEnv := canvas }
         let rate := max 1 ((natField request "instructionsPerMs").getD 100000)
-        let prog := PageAot.startProg aot dom url scripts { commands, logs, gpuPage := held.nextSession, entropy := ← entropy held.nextSession, encoding := str request "encoding", network := request.field? "network" == some (.bool true), hostCors := request.field? "hostCors" == some (.bool true), pageAddress := str request "pageAddress" } #[] missing
+        let prog := PageAot.startProg aot dom url scripts { commands, logs, gpuPage := held.nextSession, gpuReplay := request.field? "gpuReplay" == some (.bool true), entropy := ← entropy held.nextSession, encoding := str request "encoding", network := request.field? "network" == some (.bool true), hostCors := request.field? "hostCors" == some (.bool true), pageAddress := str request "pageAddress" } #[] missing
           reads { instructionsPerMs := rate }
         let id := held.nextSession
         beginTurn { held with session := none, leanSession := none, nextSession := id + 1, layoutRequest := layoutOf request } id {} {} true true prog
@@ -1330,7 +1330,7 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
         let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh, canvasEnv := canvas }
         let rate := max 1 ((natField request "instructionsPerMs").getD 100000)
         let hostLoads := request.field? "navigations" == some (.bool true)
-        let s ← Page.start m dom url scripts { commands, logs, gpuPage := held.nextSession, entropy := ent, encoding := str request "encoding", network := request.field? "network" == some (.bool true), hostCors := request.field? "hostCors" == some (.bool true), pageAddress := str request "pageAddress", syncOk := true, syncAnswers := held.syncCache, frames := true, hostLoads, mayBlock := request.field? "network" == some (.bool true) && mentionsXhr scripts } #[] reads { instructionsPerMs := rate }
+        let s ← Page.start m dom url scripts { commands, logs, gpuPage := held.nextSession, gpuReplay := request.field? "gpuReplay" == some (.bool true), entropy := ent, encoding := str request "encoding", network := request.field? "network" == some (.bool true), hostCors := request.field? "hostCors" == some (.bool true), pageAddress := str request "pageAddress", syncOk := true, syncAnswers := held.syncCache, frames := true, hostLoads, mayBlock := request.field? "network" == some (.bool true) && mentionsXhr scripts } #[] reads { instructionsPerMs := rate }
         return missing.foldl Page.Session.fail s
       match started with
       | (.error e, _) => return (held, .error s!"scriptSession: {e}")

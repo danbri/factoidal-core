@@ -44,6 +44,7 @@ struct VOut { @builtin(position) pos: vec4f, @location(0) color: vec3f }
 async function main() {
   if (!navigator.gpu) { say('No navigator.gpu in this engine.'); return; }
   const adapter = await navigator.gpu.requestAdapter();
+  if (!adapter) { say('No GPU adapter: this browser does not draw page WebGPU here.'); return; }
   const device = await adapter.requestDevice();
   const canvas = document.getElementById('gpu');
   const context = canvas.getContext('webgpu');

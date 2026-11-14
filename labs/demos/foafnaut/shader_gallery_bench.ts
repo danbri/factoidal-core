@@ -44,7 +44,7 @@ const rows:Record<string,unknown>[]=[];
 for(const size of sizes)for(const api of apis)for(const shader of shaders){
   const url=`file:///shader-gallery.html?shader=${shader}&api=${api}&size=${size}&readout=0`;
   const t0=performance.now();
-  let turn=engine.scriptSession(page,{action:"start",url,resources:[],...(lean?{engine:"bubblepop"}:{})}) as unknown as Turn;
+  let turn=engine.scriptSession(page,{action:"start",url,resources:[],gpuReplay:true,...(lean?{engine:"bubblepop"}:{})}) as unknown as Turn;
   const startMs=performance.now()-t0;
   const gpu=createPageGpu(device);
   const replay=async(t:Turn)=>{if(t.gpu?.length){await gpu.replay(t.gpuPage,t.gpu);}};
