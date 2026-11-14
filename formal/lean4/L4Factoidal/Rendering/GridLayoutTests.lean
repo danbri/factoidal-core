@@ -217,4 +217,8 @@ private def tracks (html extra id : String) : Option (String × String) := do
 #guard box "<div id=c><div id=a>A</div><div id=b>B</div></div>" "#c{display:grid;grid-template-columns:50px 50px;grid-template-rows:30px;align-items:last baseline} #b{font-size:14px;line-height:14px;padding-bottom:3px}" "a" == some (0,20,50,7)
 #guard box "<div id=c><div id=a>A</div><div id=b>B</div></div>" "#c{display:grid;grid-template-columns:50px 50px;grid-template-rows:30px;align-items:last baseline} #b{font-size:14px;line-height:14px;padding-bottom:3px}" "b" == some (50,13,50,17)
 
+
+-- A line far outside the grid is clamped (§8.1): the item is placed, the grid stays bounded.
+#guard (box "<div id=c><div id=a>A</div></div>" "#c{display:grid;grid-template-columns:10px} #a{grid-column:1 / span 999999999;grid-row:-99999999}" "a").isSome
+
 end L4Factoidal.Rendering.GridLayoutTests
