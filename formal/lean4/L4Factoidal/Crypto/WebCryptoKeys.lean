@@ -10,7 +10,8 @@ Specifications: Web Cryptography Level 2 (W3C Editor's Draft): §14 SubtleCrypto
 sections), §32 HMAC, §33 HKDF, §34 PBKDF2; "Modern Algorithms in the Web Cryptography
 API" (WICG) for ChaCha20-Poly1305; RFC 5480 and RFC 5915 (EC keys in SPKI and PKCS #8),
 RFC 8410 (Ed25519 and X25519 in SPKI and PKCS #8), RFC 7517, 7518 and 8037 (JWK), X.690
-(DER). Record: docs/designissues/2026-11-09-hacl-web-crypto.md.
+(DER). Records: docs/designissues/2026-11-09-hacl-web-crypto.md and
+2026-11-14-webcrypto.md (`supports`, `getPublicKey`, the usage and format theorems).
 
 ## Keys are handles
 
@@ -195,6 +196,11 @@ def normalizeSpec (op name : String) : Res (String × List String) :=
     let r (ms : List String) : Res (String × List String) := .ok (reg, ms)
     match op, reg with
     | "digest", "SHA-1" | "digest", "SHA-256" | "digest", "SHA-384" | "digest", "SHA-512" => r []
+    -- exportKey and getPublicKey take no parameters: registered for `supports` (the
+    -- operations themselves read the key's own algorithm).
+    | "exportKey", "HMAC" | "exportKey", "ECDSA" | "exportKey", "ECDH" | "exportKey", "Ed25519"
+    | "exportKey", "X25519" | "exportKey", "ChaCha20-Poly1305" => r []
+    | "getPublicKey", "ECDSA" | "getPublicKey", "ECDH" | "getPublicKey", "Ed25519" | "getPublicKey", "X25519" => r []
     | "generateKey", "HMAC" | "importKey", "HMAC" | "get key length", "HMAC" => r ["hash:h!", "length:l"]
     | "generateKey", "ECDSA" | "generateKey", "ECDH" | "importKey", "ECDSA" | "importKey", "ECDH" =>
       r ["namedCurve:s!"]
@@ -1054,6 +1060,183 @@ def crypt (enc : Bool) (algName : String) (p : Args) (k : Key) (data : ByteArray
       return m
   | _ => throw .invalidAccess
 
+/-! ## getPublicKey (modern algorithms draft): the public key of a private key -/
+
+/-- The algorithms whose private keys carry their public key. -/
+def Alg.hasPair : Alg → Bool
+  | .ecdsa | .ecdh | .ed25519 | .x25519 => true
+  | _ => false
+
+/-- `getPublicKey(key, usages)`: NotSupportedError for an algorithm without key pairs,
+InvalidAccessError unless the key is private, SyntaxError for a usage a public key of the
+algorithm cannot have; then the pair's public key, extractable, with those usages. It is
+built from the public key the private key carries (`pub`): no primitive runs. -/
+def getPublicKey (k : Key) (us : List Usage) : Res Key :=
+  if !k.algo.alg.hasPair then .error .notSupported
+  else if k.type != .privateKey then .error .invalidAccess
+  else if !us.all ((allowedUsages k.algo.alg .publicKey).contains ·) then .error .syntax
+  else .ok { type := .publicKey, extractable := true, algo := k.algo, usages := us, material := k.pub }
+
+/-- A private key with its private bytes (the scalar or seed, `material`) replaced. Its
+public key stays. -/
+def Key.hidePrivate (k : Key) : Key := { k with material := ByteArray.empty }
+
+/-- Kind: security invariant (key material). Says: the key `getPublicKey` answers is the
+same whatever the private bytes of the key it was given (the scalar or the seed): it is a
+function of the public parts only, so no private byte can reach the
+page through it, extractable or not. Does not say: that the public parts stored with a
+private key are the right ones for it (import and generate make them, by HACL*). -/
+theorem getPublicKey_hidePrivate (k : Key) (us : List Usage) :
+    getPublicKey k.hidePrivate us = getPublicKey k us := by
+  rfl
+
+/-- Kind: API contract. Says: a key `getPublicKey` answers is public, extractable, has
+exactly the usages asked for, each one a usage a public key of the algorithm may have, and
+came from a private key. Does not say: which error a refusal is. -/
+theorem getPublicKey_ok {k pk : Key} {us : List Usage} (h : getPublicKey k us = .ok pk) :
+    pk.type = .publicKey ∧ pk.extractable = true ∧ pk.usages = us ∧ k.type = .privateKey ∧
+      ∀ u ∈ us, u ∈ allowedUsages k.algo.alg .publicKey := by
+  unfold getPublicKey at h
+  split at h
+  · cases h
+  · split at h
+    · cases h
+    · rename_i hpriv
+      split at h
+      · cases h
+      · rename_i hall
+        cases h
+        refine ⟨rfl, rfl, rfl, by simpa using hpriv, ?_⟩
+        intro u hu
+        have hall' : us.all ((allowedUsages k.algo.alg .publicKey).contains ·) = true := by simpa using hall
+        simpa using List.all_eq_true.mp hall' u hu
+
+/-! ## supports (modern algorithms draft `SubtleCrypto.supports`)
+
+Whether an operation with these (already normalized) parameters can succeed here for some
+key and data. It answers from the same tables the operations use and is truthful about what
+this engine refuses: AES, RSA, P-384 and P-521, Ed448 and X448, ML-KEM, ML-DSA and KMAC are
+reported as not supported (`supports_refused`). -/
+
+def hashOf (p : Args) : Option HashAlg := (p.str? "hash").bind HashAlg.ofName?
+
+/-- importKey can make a key of this algorithm with these parameters (for some format). -/
+def importSupported (algName : String) (p : Args) : Bool :=
+  match algOf? algName with
+  | some .hmac => (hashOf p).isSome && p.nat? "length" != some 0
+  | some .ecdsa | some .ecdh => p.str? "namedCurve" == some "P-256"
+  | some _ => true
+  | none => false
+
+/-- deriveBits can succeed with these parameters and this length (`none` for null). -/
+def deriveSupported (algName : String) (p : Args) (length : Option Nat) (store : KeyStore) : Bool :=
+  match algOf? algName with
+  | some .hkdf => match hashOf p, length with
+    | some h, some len => len % 8 == 0 && len / 8 ≤ 255 * h.size
+    | _, _ => false
+  | some .pbkdf2 => match hashOf p, length with
+    | some _, some len => len % 8 == 0 && (p.nat? "iterations").getD 0 != 0
+    | _, _ => false
+  | some .ecdh | some .x25519 =>
+    match keyOf store p "public" with
+    | .ok pk => pk.type == .publicKey && pk.algo.alg.name == algName &&
+        (match length with | some len => len ≤ 256 | none => true)
+    | .error _ => false
+  | _ => false
+
+/-- encrypt and decrypt (and so wrapKey and unwrapKey) can succeed with these parameters. -/
+def cryptSupported (algName : String) (p : Args) : Bool :=
+  match algOf? algName with
+  | some .chacha => ((p.get? "iv").getD .empty).size == 12 &&
+      (match p.nat? "tagLength" with | some t => t == 128 | none => true)
+  | _ => false
+
+/-- `supports(operation, algorithm, lengthOrAdditionalAlgorithm)`, after prelude.js has
+normalized `algorithm` for `op` (`p`, name `algName`) and, for deriveKey and unwrapKey, the
+additional algorithm for importKey (`t`) and "get key length" (`g`). `length` is deriveBits'
+length. -/
+def supports (op algName : String) (p t g : Args) (length : Option Nat) (store : KeyStore) : Bool :=
+  let tName := (t.str? "name").getD ""
+  match op with
+  | "digest" => (HashAlg.ofName? algName).isSome
+  | "generateKey" =>
+    match algOf? algName with
+    | some .hmac => (hashOf p).isSome && p.nat? "length" != some 0
+    | some .ecdsa | some .ecdh => p.str? "namedCurve" == some "P-256"
+    | some .ed25519 | some .x25519 | some .chacha => true
+    | _ => false
+  | "importKey" => importSupported algName p
+  | "exportKey" =>
+    match algOf? algName with
+    | some .hkdf | some .pbkdf2 | none => false
+    | some _ => true
+  | "getPublicKey" => match algOf? algName with | some a => a.hasPair | none => false
+  | "sign" | "verify" =>
+    match algOf? algName with
+    | some .hmac | some .ed25519 => true
+    | some .ecdsa => (hashOf p).isSome
+    | _ => false
+  | "encrypt" | "decrypt" | "wrapKey" => cryptSupported algName p
+  | "unwrapKey" => cryptSupported algName p && importSupported tName t
+  | "deriveBits" => deriveSupported algName p length store
+  | "deriveKey" =>
+    importSupported tName t &&
+      (match keyLength tName (if g.isEmpty then t else g) with
+       | .ok len => deriveSupported algName p len store
+       | .error _ => false)
+  -- encapsulateKey, encapsulateBits, decapsulateKey, decapsulateBits: no KEM here.
+  | _ => false
+
+/-- Kind: policy invariant (refused algorithms are never advertised). Says: for a name that
+is not an algorithm with keys here (`algOf?` answers `none`: AES, RSA, Ed448, X448, ML-KEM,
+ML-DSA, KMAC, …) and not a digest this engine has, `supports` answers false for every
+operation, all parameters, every length and every additional algorithm. Does not say: that
+`true` answers are always followed by success (an operation can still fail on its key or
+data), nor anything of P-384 or P-521, which are refused inside algorithms that have keys
+here (see the `#guard`s). -/
+theorem supports_refused (op algName : String) (p t g : Args) (length : Option Nat) (store : KeyStore)
+    (hk : algOf? algName = none) (hd : HashAlg.ofName? algName = none) :
+    supports op algName p t g length store = false := by
+  unfold supports importSupported deriveSupported cryptSupported
+  simp only [hk, hd]
+  split <;> simp
+  intro _
+  split <;> rfl
+
+#guard supports "generateKey" "HMAC" #[("hash", "SHA-256".toUTF8)] #[] #[] none {} == true
+#guard supports "generateKey" "HMAC" #[("hash", "SHA-256".toUTF8), ("length", "0".toUTF8)] #[] #[] none {} == false
+#guard supports "generateKey" "ECDH" #[("namedCurve", "P-256".toUTF8)] #[] #[] none {} == true
+#guard supports "generateKey" "ECDH" #[("namedCurve", "P-51".toUTF8)] #[] #[] none {} == false
+-- Truthful refusals: P-384 keys, RSA, AES.
+#guard supports "generateKey" "ECDSA" #[("namedCurve", "P-384".toUTF8)] #[] #[] none {} == false
+#guard supports "generateKey" "RSA-OAEP" #[("hash", "SHA-256".toUTF8)] #[] #[] none {} == false
+#guard supports "importKey" "RSA-OAEP" #[("hash", "SHA-256".toUTF8)] #[] #[] none {} == false
+#guard supports "generateKey" "AES-GCM" #[("length", "256".toUTF8)] #[] #[] none {} == false
+#guard supports "encrypt" "AES-GCM" #[] #[] #[] none {} == false
+#guard supports "digest" "SHA-256" #[] #[] #[] none {} == true
+#guard supports "digest" "SHA3-512" #[] #[] #[] none {} == false
+#guard supports "digest" "HMAC" #[] #[] #[] none {} == false
+#guard supports "sign" "SHA-256" #[] #[] #[] none {} == false
+#guard supports "encrypt" "ChaCha20-Poly1305" #[("iv", ByteArray.mk (Array.replicate 12 0))] #[] #[] none {} == true
+#guard supports "encrypt" "ChaCha20-Poly1305" #[("iv", ByteArray.mk (Array.replicate 10 0)), ("tagLength", "128".toUTF8)] #[] #[] none {} == false
+#guard supports "encrypt" "ChaCha20-Poly1305" #[("iv", ByteArray.mk (Array.replicate 12 0)), ("tagLength", "100".toUTF8)] #[] #[] none {} == false
+-- HKDF: at most 255 blocks of the hash, whole octets, never a null length (WPT supports.https.any.js).
+#guard supports "deriveBits" "HKDF" #[("hash", "SHA-256".toUTF8)] #[] #[] (some (255 * 256)) {} == true
+#guard supports "deriveBits" "HKDF" #[("hash", "SHA-256".toUTF8)] #[] #[] (some (255 * 256 + 8)) {} == false
+#guard supports "deriveBits" "HKDF" #[("hash", "SHA-256".toUTF8)] #[] #[] (some 11) {} == false
+#guard supports "deriveBits" "HKDF" #[("hash", "SHA-256".toUTF8)] #[] #[] none {} == false
+#guard supports "deriveBits" "PBKDF2" #[("hash", "SHA-256".toUTF8), ("iterations", "100000".toUTF8)] #[] #[] (some 256) {} == true
+#guard supports "deriveKey" "HKDF" #[("hash", "SHA-256".toUTF8)]
+  #[("name", "HMAC".toUTF8), ("hash", "SHA-256".toUTF8), ("length", "65288".toUTF8)] #[] none {} == false
+#guard supports "deriveKey" "HKDF" #[("hash", "SHA-256".toUTF8)]
+  #[("name", "HMAC".toUTF8), ("hash", "SHA-256".toUTF8)] #[] none {} == true
+#guard supports "deriveKey" "HKDF" #[("hash", "SHA-256".toUTF8)]
+  #[("name", "AES-GCM".toUTF8)] #[("name", "AES-GCM".toUTF8), ("length", "256".toUTF8)] none {} == false
+#guard supports "getPublicKey" "Ed25519" #[] #[] #[] none {} == true
+#guard supports "getPublicKey" "HMAC" #[] #[] #[] none {} == false
+#guard supports "encapsulateBits" "ML-KEM-768" #[] #[] #[] none {} == false
+#guard supports "GENERATEKEY" "HMAC" #[("hash", "SHA-256".toUTF8)] #[] #[] none {} == false
+
 /-! ## Theorems: extractability and the usages rules -/
 
 theorem exportKey_extractable {k : Key} {f : String} {e : Exported} (h : exportKey k f = .ok e) :
@@ -1129,6 +1312,88 @@ theorem crypt_usage {e : Bool} {a : String} {p : Args} {k : Key} {d out : ByteAr
     k.algo.alg.name = a ∧ k.usages.contains (if e then .encrypt else .decrypt) = true :=
   keyFor_of_bind h
 
+/-! ### Usages are enforced before any primitive runs
+
+The theorems above say a success had the usage. These say the converse in the strongest
+form: without the usage (or with another algorithm's key) the answer IS the
+InvalidAccessError, a constant, so it is not computed from any primitive's output: HACL* is
+not called on that path, by the value of the function. -/
+
+/-- Kind: security invariant (usages). Says: the check every key operation starts with
+answers InvalidAccessError when the key lacks the usage. Does not say: that every operation
+starts with this check; that is each operation's own theorem below. -/
+theorem keyFor_no_usage {k : Key} {a : String} {u : Usage} (h : k.usages.contains u = false) :
+    keyFor k a u = .error .invalidAccess := by
+  unfold keyFor; rw [h]; simp
+
+/-- Kind: security invariant (usages). Says: the same when the key is of another algorithm
+than the one the operation names. Does not say: anything of a key of the right algorithm. -/
+theorem keyFor_wrong_alg {k : Key} {a : String} {u : Usage} (h : k.algo.alg.name ≠ a) :
+    keyFor k a u = .error .invalidAccess := by
+  unfold keyFor; simp [h]
+
+/-- Kind: security invariant (usages). Says: `sign` with a key that lacks "sign" answers
+InvalidAccessError for every algorithm, parameter set, message and random input: the answer
+is that constant, so no signing primitive ran. Does not say: anything of a key that has the
+usage. -/
+theorem sign_no_usage {a : String} {p : Args} {k : Key} {d r : ByteArray}
+    (h : k.usages.contains .sign = false) : sign a p k d r = .error .invalidAccess := by
+  unfold sign; rw [keyFor_no_usage h]; rfl
+
+/-- Kind: security invariant (usages). Says: `verify` with a key that lacks "verify" is the
+InvalidAccessError for all other arguments: no verification primitive ran. Does not say:
+anything of a key that has the usage. -/
+theorem verify_no_usage {a : String} {p : Args} {k : Key} {s d : ByteArray}
+    (h : k.usages.contains .verify = false) : verify a p k s d = .error .invalidAccess := by
+  unfold verify; rw [keyFor_no_usage h]; rfl
+
+/-- Kind: security invariant (usages). Says: `deriveBits` with a key that lacks "deriveBits"
+is the InvalidAccessError for all other arguments: no derivation ran. Does not say: anything
+of deriveKey, which the API runs as deriveBits after its own check of "deriveKey"
+(`Hosts.WebApi.subtle`). -/
+theorem deriveBits_no_usage {a : String} {p : Args} {k : Key} {l : Option Nat} {s : KeyStore}
+    (h : k.usages.contains .deriveBits = false) : deriveBits a p k l s = .error .invalidAccess := by
+  unfold deriveBits; rw [keyFor_no_usage h]; rfl
+
+/-- Kind: security invariant (usages). Says: encrypt needs "encrypt" and decrypt needs
+"decrypt": without it the answer is InvalidAccessError and no cipher ran. Does not say:
+anything of wrapKey and unwrapKey, which check "wrapKey" and "unwrapKey" themselves before
+they call this (`Hosts.WebApi.subtle`). -/
+theorem crypt_no_usage {e : Bool} {a : String} {p : Args} {k : Key} {d : ByteArray}
+    (h : k.usages.contains (if e then .encrypt else .decrypt) = false) :
+    crypt e a p k d = .error .invalidAccess := by
+  unfold crypt; rw [keyFor_no_usage h]; rfl
+
+/-- Kind: security invariant (usages). Says: an operation named for one algorithm never
+runs on another algorithm's key (sign; the same proof serves the other operations through
+`keyFor_wrong_alg`). Does not say: which algorithms a key can be made for. -/
+theorem sign_wrong_alg {a : String} {p : Args} {k : Key} {d r : ByteArray}
+    (h : k.algo.alg.name ≠ a) : sign a p k d r = .error .invalidAccess := by
+  unfold sign; rw [keyFor_wrong_alg h]; rfl
+
+/-! ### wrapKey reads a key only through exportKey -/
+
+/-- wrapKey's first half (§14.3.11 steps 9-12): the bytes that will be encrypted are the
+key's export in `format` (a JWK as the JSON text `jwkText` makes). -/
+def wrapPlain (jwkText : List (String × JwkVal) → ByteArray) (k : Key) (format : String) : Res ByteArray :=
+  (exportKey k format).map fun e => match e with | .bytes b => b | .jwk ms => jwkText ms
+
+/-- Kind: security invariant (key material). Says: wrapKey gets bytes to encrypt only from
+an extractable key. Does not say: anything of the wrapping key, which is used, not read. -/
+theorem wrapPlain_extractable {j : List (String × JwkVal) → ByteArray} {k : Key} {f : String} {b : ByteArray}
+    (h : wrapPlain j k f = .ok b) : k.extractable = true := by
+  unfold wrapPlain at h
+  cases he : exportKey k f with
+  | error e => rw [he] at h; cases h
+  | ok e => exact exportKey_extractable he
+
+/-- Kind: security invariant (key material). Says: for a non-extractable key, what wrapKey
+would encrypt does not depend on the key's bytes (it is the refusal). Does not say: that the
+ciphertext of an extractable key hides it; that is the wrapping cipher's strength. -/
+theorem wrapPlain_blind (j : List (String × JwkVal) → ByteArray) (k : Key) (f : String)
+    (h : k.extractable = false) : wrapPlain j k f = wrapPlain j k.blind f := by
+  unfold wrapPlain; rw [exportKey_blind k f h]
+
 theorem finishKey_ok {m : Made} {x : Bool} {us : List Usage} {k : Key} (h : finishKey m x us = .ok k) :
     k.usages = us ∧ k.extractable = x ∧ k.type = m.type ∧ (k.type ≠ .publicKey → us ≠ []) := by
   unfold finishKey at h
@@ -1153,6 +1418,277 @@ theorem importKey_usages {n : String} {p : Args} {f : String} {d : ByteArray} {j
     rw [hm] at h
     have := finishKey_ok h
     exact ⟨this.1, this.2.1, this.2.2.2⟩
+
+/-! ## Theorems: the key formats are read exactly
+
+SPKI and PKCS #8 are DER. `readTlv_tlv` (above) is the round trip of one TLV. Here: reading
+is exact (`tlv_of_readTlv`: what is accepted is the canonical encoding of what is answered,
+so a non-minimal length, an indefinite length or a truncated value is refused, and no
+accepted input has a second reading), the round trips of the two containers, and that an
+accepted SPKI is exactly the canonical SPKI of its parts (no bytes skipped, none trailing).
+JWK members are base64url: `unb64_b64`. -/
+
+/-- Kind: round trip (DER). Says: `expect` reads back what `tlv` wrote with the same tag,
+and answers the rest untouched. Hypothesis: contents shorter than 2^16. Does not say: what a
+different tag gives (it is refused: see `expect`). -/
+theorem expect_tlv (tag : UInt8) (c rest : List UInt8) (h : c.length < 65536) :
+    expect tag (tlv tag c ++ rest) = some (c, rest) := by
+  unfold expect; rw [readTlv_tlv tag c rest h]; simp
+
+/-- Kind: round trip (DER). Says: `expect_tlv` with nothing after the TLV. Does not say:
+more than `expect_tlv`. -/
+theorem expect_tlv_nil (tag : UInt8) (c : List UInt8) (h : c.length < 65536) :
+    expect tag (tlv tag c) = some (c, []) := by
+  have := expect_tlv tag c [] h
+  simpa using this
+
+/-- Kind: size bound. Says: a TLV is at least as long as its contents. Does not say: how
+much longer (2 to 4 octets). -/
+theorem length_le_tlv (tag : UInt8) (c : List UInt8) : c.length ≤ (tlv tag c).length := by
+  unfold tlv; simp; omega
+
+/-- Kind: parser exactness (DER). Says: whatever `readTlv` accepts is the canonical encoding
+(`tlv`, minimal length octets) of the tag and contents it answers, followed by the rest it
+answers; and the contents are shorter than 2^16. So nothing is skipped or read twice, and an
+input with a non-minimal, indefinite or over-long length is not accepted. Does not say:
+anything of the contents' own structure. -/
+theorem tlv_of_readTlv {b : List UInt8} {t : UInt8} {c r : List UInt8} (h : readTlv b = some (t, c, r)) :
+    b = tlv t c ++ r ∧ c.length < 65536 := by
+  match b, h with
+  | tag :: l0 :: rest, h =>
+    simp only [readTlv] at h
+    split at h
+    · rename_i h0
+      split at h
+      · rename_i h1
+        simp only [Option.some.injEq, Prod.mk.injEq] at h
+        obtain ⟨rfl, rfl, rfl⟩ := h
+        have hl : (rest.take l0.toNat).length = l0.toNat := by simp [List.length_take]; omega
+        have hlt : l0.toNat < 128 := by simpa [UInt8.lt_iff_toNat_lt] using h0
+        refine ⟨?_, by omega⟩
+        unfold tlv derLen
+        rw [hl, if_pos hlt]
+        simp [List.take_append_drop]
+      · cases h
+    · split at h
+      · rename_i h81
+        have e81 : l0 = 0x81 := by simpa using h81
+        subst e81
+        split at h
+        · rename_i l1 r'
+          split at h
+          · rename_i hc
+            simp only [Option.some.injEq, Prod.mk.injEq] at h
+            obtain ⟨rfl, rfl, rfl⟩ := h
+            simp only [Bool.and_eq_true, decide_eq_true_eq] at hc
+            obtain ⟨hge, hle⟩ := hc
+            have hge' : 128 ≤ l1.toNat := by
+              have : (128 : UInt8) ≤ l1 := hge
+              simpa [UInt8.le_iff_toNat_le] using this
+            have hl : (r'.take l1.toNat).length = l1.toNat := by simp [List.length_take]; omega
+            have hlt : l1.toNat < 256 := l1.toNat_lt
+            refine ⟨?_, by omega⟩
+            unfold tlv derLen
+            rw [hl, if_neg (by omega), if_pos hlt]
+            simp [List.take_append_drop]
+          · cases h
+        · cases h
+      · split at h
+        · rename_i h82
+          have e82 : l0 = 0x82 := by simpa using h82
+          subst e82
+          split at h
+          · rename_i l1 l2 r'
+            split at h
+            · rename_i hc
+              simp only [Option.some.injEq, Prod.mk.injEq] at h
+              obtain ⟨rfl, rfl, rfl⟩ := h
+              simp only [Bool.and_eq_true, decide_eq_true_eq] at hc
+              obtain ⟨hge, hle⟩ := hc
+              have h1 : l1.toNat < 256 := l1.toNat_lt
+              have h2 : l2.toNat < 256 := l2.toNat_lt
+              have hl : (r'.take (l1.toNat * 256 + l2.toNat)).length = l1.toNat * 256 + l2.toNat := by
+                simp [List.length_take]; omega
+              have hd : (l1.toNat * 256 + l2.toNat) / 256 = l1.toNat := by omega
+              have hm : (l1.toNat * 256 + l2.toNat) % 256 = l2.toNat := by omega
+              refine ⟨?_, by omega⟩
+              unfold tlv derLen
+              rw [hl, if_neg (by omega), if_neg (by omega), hd, hm]
+              simp [List.take_append_drop]
+            · cases h
+          · cases h
+        · cases h
+  | [_], h => simp [readTlv] at h
+  | [], h => simp [readTlv] at h
+
+/-- Kind: parser exactness. Says: `expect` accepts only the canonical encoding of the
+contents it answers, with the tag asked for, followed by the rest it answers. Does not say:
+anything of the contents' own structure. -/
+theorem tlv_of_expect {tag : UInt8} {b c r : List UInt8} (h : expect tag b = some (c, r)) :
+    b = tlv tag c ++ r ∧ c.length < 65536 := by
+  unfold expect at h
+  cases hr : readTlv b with
+  | none => rw [hr] at h; cases h
+  | some x =>
+    obtain ⟨t, c', r'⟩ := x
+    rw [hr] at h
+    by_cases ht : (t == tag) = true
+    · simp only [ht, if_true, Option.some.injEq, Prod.mk.injEq] at h
+      obtain ⟨rfl, rfl⟩ := h
+      have e : t = tag := by simpa using ht
+      subst e
+      exact tlv_of_readTlv hr
+    · simp [ht] at h
+
+/-- Kind: round trip (SPKI, no algorithm parameters: Ed25519, X25519). Says: reading the
+SubjectPublicKeyInfo `spkiOf` writes gives the OID and the key bytes back, with no
+parameters. Hypothesis: the whole encoding is shorter than 2^16 octets (every key format
+here is). Does not say: that the key bytes are a valid key. -/
+theorem readSpki_spkiOf (oid key : List UInt8) (h : (spkiOf oid [] key).length < 65536) :
+    readSpki (spkiOf oid [] key) = some (oid, none, key) := by
+  unfold spkiOf at h ⊢
+  simp only [List.append_nil] at h ⊢
+  have h1 := Nat.lt_of_le_of_lt (length_le_tlv 0x30 _) h
+  have h2 : (tlv 0x30 (tlv 0x06 oid)).length < 65536 := by
+    simp only [List.length_append] at h1; omega
+  have h3 : (tlv 0x03 (0 :: key)).length < 65536 := by
+    simp only [List.length_append] at h1; omega
+  have h5 := Nat.lt_of_le_of_lt (length_le_tlv 0x30 _) h2
+  have h6 := Nat.lt_of_le_of_lt (length_le_tlv 0x06 _) h5
+  have h7 := Nat.lt_of_le_of_lt (length_le_tlv 0x03 _) h3
+  unfold readSpki
+  simp only [expect_tlv_nil _ _ h1, expect_tlv _ _ _ h5, expect_tlv_nil _ _ h7, readAlgId,
+    expect_tlv_nil _ _ h6, Option.bind_some, Option.bind_eq_bind]
+  simp
+
+/-- Kind: round trip (SPKI with algorithm parameters: the EC curve OID). Says: reading the
+SubjectPublicKeyInfo `spkiOf` writes with one parameter TLV gives the OID, that TLV and the
+key bytes back. Hypothesis: the whole encoding is shorter than 2^16 octets. Does not say:
+that the parameters name a curve this engine has, or that the key bytes are a valid point. -/
+theorem readSpki_spkiOf_params (oid key : List UInt8) (pt : UInt8) (pc : List UInt8)
+    (h : (spkiOf oid (tlv pt pc) key).length < 65536) :
+    readSpki (spkiOf oid (tlv pt pc) key) = some (oid, some (tlv pt pc), key) := by
+  unfold spkiOf at h ⊢
+  have h1 := Nat.lt_of_le_of_lt (length_le_tlv 0x30 _) h
+  have h2 : (tlv 0x30 (tlv 0x06 oid ++ tlv pt pc)).length < 65536 := by
+    simp only [List.length_append] at h1; omega
+  have h3 : (tlv 0x03 (0 :: key)).length < 65536 := by
+    simp only [List.length_append] at h1; omega
+  have h4 := Nat.lt_of_le_of_lt (length_le_tlv 0x30 _) h2
+  have h5 : (tlv 0x06 oid).length < 65536 := by simp only [List.length_append] at h4; omega
+  have h5' : (tlv pt pc).length < 65536 := by simp only [List.length_append] at h4; omega
+  have h6 := Nat.lt_of_le_of_lt (length_le_tlv 0x06 _) h5
+  have h6' := Nat.lt_of_le_of_lt (length_le_tlv pt _) h5'
+  have h7 := Nat.lt_of_le_of_lt (length_le_tlv 0x03 _) h3
+  have hne : (tlv pt pc).isEmpty = false := by unfold tlv; rfl
+  have hp : readTlv (tlv pt pc) = some (pt, pc, []) := by
+    have := readTlv_tlv pt pc [] h6'
+    simpa using this
+  unfold readSpki
+  simp only [expect_tlv_nil _ _ h1, expect_tlv _ _ _ h4, expect_tlv_nil _ _ h7, readAlgId,
+    expect_tlv _ _ _ h6, Option.bind_some, Option.bind_eq_bind]
+  simp [hne, hp]
+
+/-- Kind: round trip (PKCS #8). Says: reading the PrivateKeyInfo `pkcs8Of` writes gives the
+OID and the private key octets back (no parameters). Hypothesis: the whole encoding is
+shorter than 2^16 octets. Does not say: the converse (PKCS #8 may carry attributes after the
+key, which the reader accepts and does not return), nor anything of the key octets. -/
+theorem readPkcs8_pkcs8Of (oid pk : List UInt8) (h : (pkcs8Of oid [] pk).length < 65536) :
+    readPkcs8 (pkcs8Of oid [] pk) = some (oid, none, pk) := by
+  unfold pkcs8Of at h ⊢
+  simp only [List.append_nil, List.append_assoc] at h ⊢
+  have h1 := Nat.lt_of_le_of_lt (length_le_tlv 0x30 _) h
+  have h2 : (tlv 0x30 (tlv 0x06 oid)).length < 65536 := by
+    simp only [List.length_append] at h1; omega
+  have h3 : (tlv 0x04 pk).length < 65536 := by
+    simp only [List.length_append] at h1; omega
+  have h5 := Nat.lt_of_le_of_lt (length_le_tlv 0x30 _) h2
+  have h6 := Nat.lt_of_le_of_lt (length_le_tlv 0x06 _) h5
+  have h7 := Nat.lt_of_le_of_lt (length_le_tlv 0x04 _) h3
+  have h0 : ([0] : List UInt8).length < 65536 := by decide
+  unfold readPkcs8
+  simp only [expect_tlv_nil _ _ h1, expect_tlv _ _ _ h0, expect_tlv _ _ _ h5, expect_tlv_nil _ _ h7,
+    readAlgId, expect_tlv_nil _ _ h6, Option.bind_some, Option.bind_eq_bind]
+  simp
+
+/-- Kind: parser exactness (SPKI). Says: an input `readSpki` accepts is exactly the
+canonical SubjectPublicKeyInfo of the OID, parameters and key bytes it answers: no byte of
+the input is skipped and none trails. With `readSpki_spkiOf` this makes export after import
+the identity on accepted SPKI bytes. Does not say: that the key bytes are a valid key (the
+algorithm's import steps and HACL* check that). -/
+theorem spkiOf_of_readSpki {b oid key : List UInt8} {params : Option (List UInt8)}
+    (h : readSpki b = some (oid, params, key)) : b = spkiOf oid (params.getD []) key := by
+  unfold readSpki at h
+  cases h1 : expect 0x30 b with
+  | none => simp [h1] at h
+  | some x1 =>
+    obtain ⟨seq, rest⟩ := x1
+    simp only [h1, Option.bind_eq_bind, Option.bind_some] at h
+    by_cases hre : rest.isEmpty = true
+    · have hrest : rest = [] := by simpa using hre
+      subst hrest
+      simp only [List.isEmpty_nil, Bool.not_true, Bool.false_eq_true, if_false] at h
+      cases h2 : expect 0x30 seq with
+      | none => simp [h2] at h
+      | some x2 =>
+        obtain ⟨aid, r⟩ := x2
+        simp only [h2, Option.bind_some] at h
+        cases h3 : expect 0x03 r with
+        | none => simp [h3] at h
+        | some x3 =>
+          obtain ⟨bits, r2⟩ := x3
+          simp only [h3, Option.bind_some] at h
+          by_cases hr2 : r2.isEmpty = true
+          · have hr2' : r2 = [] := by simpa using hr2
+            subst hr2'
+            simp only [List.isEmpty_nil, Bool.not_true, Bool.false_eq_true, if_false] at h
+            cases h4 : readAlgId aid with
+            | none => simp [h4] at h
+            | some x4 =>
+              obtain ⟨oid', params'⟩ := x4
+              simp only [h4, Option.bind_some] at h
+              split at h
+              · rename_i key'
+                simp only [Option.pure_def, Option.some.injEq, Prod.mk.injEq] at h
+                obtain ⟨rfl, rfl, rfl⟩ := h
+                have e1 := (tlv_of_expect h1).1
+                have e2 := (tlv_of_expect h2).1
+                have e3 := (tlv_of_expect h3).1
+                -- the AlgorithmIdentifier: the OID, then nothing or exactly one TLV
+                have ea : aid = tlv 0x06 oid' ++ params'.getD [] := by
+                  unfold readAlgId at h4
+                  cases h5 : expect 0x06 aid with
+                  | none => simp [h5] at h4
+                  | some x5 =>
+                    obtain ⟨o, ra⟩ := x5
+                    simp only [h5, Option.bind_eq_bind, Option.bind_some] at h4
+                    have e5 := (tlv_of_expect h5).1
+                    by_cases hra : ra.isEmpty = true
+                    · have : ra = [] := by simpa using hra
+                      subst this
+                      simp only [List.isEmpty_nil, if_true, Option.pure_def, Option.some.injEq, Prod.mk.injEq] at h4
+                      obtain ⟨rfl, rfl⟩ := h4
+                      simpa using e5
+                    · simp only [hra, Bool.false_eq_true, if_false] at h4
+                      split at h4
+                      · simp only [Option.pure_def, Option.some.injEq, Prod.mk.injEq] at h4
+                        obtain ⟨rfl, rfl⟩ := h4
+                        simpa using e5
+                      · cases h4
+                rw [e1, e2, e3, ea]
+                unfold spkiOf
+                simp
+              · cases h
+          · simp [hr2] at h
+    · simp [hre] at h
+
+/-- Kind: round trip (JWK octets). Says: decoding the base64url text a JWK export writes
+for key bytes gives those bytes back (`k`, `x`, `y`, `d` and the RSA members). Rests on
+`JOSE.Base64Url.decode_encode`. Does not say: that the whole JWK object survives the trip
+through the page (prelude.js builds and reads the object; tested, not proved). -/
+theorem unb64_b64 (b : ByteArray) : unb64? (b64 b) = some b := by
+  unfold unb64? b64 JOSE.Base64Url.decode JOSE.Base64Url.encode
+  simp [JOSE.Base64Url.decode_encode]
 
 /-! ## Checks (pure parts; the externs do not run in the interpreter) -/
 

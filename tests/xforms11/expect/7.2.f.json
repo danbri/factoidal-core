@@ -1,0 +1,13 @@
+{
+ "case": "7.2.f",
+ "file": "Chapt07/7.2/7.2.f.xhtml",
+ "quote": "7.2.f namespace declarations in scope for the attribute are applied to the expression The Car Make input control must contain the value \"Mazda\" and you must be unable to change the value.",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "Car Make",
+   "value": "Mazda",
+   "readonly": true
+  }
+ ]
+}

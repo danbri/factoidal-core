@@ -1,0 +1,18 @@
+{
+ "case": "5.2.1.c",
+ "file": "Chapt05/5.2/5.2.1/5.2.1.c.xhtml",
+ "quote": "When the form first displays you should not see any valid or invalid messages. If an implementation fires validity events on form initialization (incorrectly) then you may see XFORMS-INVALID output for all types (except string) below. This is not being tested but is an error. When you activate the Run Test trigger below you must see an 'xforms-valid' output for all the data types. If the data type does not accept empty content you will see an 'XFORMS-INVALID' output. An 'XFORMS-INVALID' output is a failure for this test case.",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Run Test"
+  },
+  {
+   "expect": "each-value",
+   "kind": "output",
+   "label": "Result",
+   "contains": "xforms-valid",
+   "except": []
+  }
+ ]
+}

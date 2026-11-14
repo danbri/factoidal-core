@@ -1,0 +1,15 @@
+{
+ "case": "3.2.3.a",
+ "file": "Chapt03/3.2/3.2.3/3.2.3.a.xhtml",
+ "quote": "You must see the value \"120\": [...] You must see the value \"1994\":",
+ "steps": [
+  {
+   "expect": "values",
+   "values": [
+    "120",
+    "1994"
+   ],
+   "kind": "output"
+  }
+ ]
+}

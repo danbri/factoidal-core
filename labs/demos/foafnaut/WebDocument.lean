@@ -49,8 +49,15 @@ in CSS px, `width` by `rows` device pixels at the text scale `percent` (a text s
 on a 1600 px wide window is an 800 px wide viewport, as a page zoom of 200% is). Pages are
 drawn in light colours: `prefers-color-scheme: dark` does not hold. -/
 def mediaEnv (medium : String) (width rows percent : Nat) : Rendering.MediaQuery.Env :=
-  let css := fun (n : Nat) => n.toFloat * 100 / (max 1 percent).toFloat
-  {medium, width := some (css width), height := some (css rows), dark := some false}
+  WasmVM.Hosts.Page.mediaEnvOf medium width rows percent
+
+/-- Kind: seam theorem (media queries). Says: the media environment the layout reads its
+sheets in is the one `matchMedia` evaluates a query in (`Hosts.Page.mediaAnswer`): one maker
+for both. Does not say: that the two are given the same viewport and zoom (the session's
+`layout` request and viewport are the host's; `host_parity_test.ts` checks a page where
+`matchMedia` and an `@media` block must agree). -/
+theorem mediaEnv_eq (medium : String) (width rows percent : Nat) :
+    mediaEnv medium width rows percent = WasmVM.Hosts.Page.mediaEnvOf medium width rows percent := rfl
 
 private def sheetTyped (n : DOM.Node) : Bool :=
   !Rendering.CSS.hasAttribute n "disabled" && ["","text/css"].contains (attr n "type")
@@ -2027,10 +2034,15 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
   -- with the styles: the flat tree and the rules that match an element, for the computed
   -- value of a property outside the layout profile (`ComputedGeneric`, made when asked for)
   let styled : Thunk (Except String (Array Rendering.CSS.Computed × DOM.Dom × (Nat → List Rendering.CSS.Match))) := Thunk.mk fun _ => do
-    let textScale := cssTextScale (← scalePercent request) (zoomUnit request)
-    let (rules,_) ← rulesWith kept dom request
+    let percent ← scalePercent request
+    let textScale := cssTextScale percent (zoomUnit request)
+    -- The media environment of the layout (`layOutDOMIn`), so that the computed values a script
+    -- reads are of the rules the page is laid out with: a `@media (min-width: …)` block that
+    -- the layout applies holds here too. (It was the media type alone, with no viewport.)
+    let env := mediaEnv (medium request) width height (percent*100/zoomUnit request)
+    let (rules,_) ← rulesWith kept dom request env
     let state := withPointer dom (← elementState dom (baseURL dom (str request "url")) request) (none,none)
-    let (flat,rules,treeScope) := flatView kept dom {medium := medium request} rules
+    let (flat,rules,treeScope) := flatView kept dom env rules
     let styles ← Rendering.CSS.computeFor treeScope flat rules textScale state
     -- the rule buckets of `computeFor`, built again only if such a value is asked for
     let matchesOf : Nat → List Rendering.CSS.Match := match treeScope with
@@ -2054,6 +2066,13 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
   fun node op => if op == 22 then some (Rendering.FloatFormat.format (Float.ofNat (zoomUnit request) / 100))
     else if op == 23 then some (fontFacesAnswer h dom request)
     else if op == 40 then some sheetText.get
+    -- 41: the inputs of the layout's media environment (`mediaEnv`): the media type, the
+    -- viewport in CSS pixels and the zoom, with no layout. `matchMedia` evaluates its query
+    -- in the environment they make (`Hosts.Page.mediaAnswer`).
+    else if op == 41 then
+      match scalePercent request with
+      | .ok percent => some s!"{medium request} {width} {height} {percent*100/zoomUnit request}"
+      | .error _ => none
     else if op == 20 || op ≥ 200 then
       match styled.get with
       -- CSSOM §9 getComputedStyle: an element that is not connected to the page's
@@ -2130,6 +2149,19 @@ theorem layoutRequest_congr (a b : JSON.Json) (agree : ∀ k ∈ layoutFields, a
       simp only [List.filterMap_cons,h k (List.mem_cons_self ..),ih (fun x m => h x (List.mem_cons_of_mem _ m))]
   unfold layoutRequest
   rw [same _ agree]
+
+/-- Kind: determinism theorem (hosts). Says: two render requests that agree on every layout
+field give the same layout of the same source, window, held fonts, held images and pointer
+state: nothing else a host puts in a request (its shell and scroll, the operation, the answer
+format, checks) reaches the layout. Does not say: that two hosts send requests that agree on
+the layout fields (`labs/demos/foafnaut/host_parity_test.ts` checks the hosts), nor that the
+bytes a host fetched for a field are the same in both. -/
+theorem layOut_agree (h : Holds) (kept : Kept) (html : String) (a b : JSON.Json) (width height top : Nat)
+    (fonts held : List (String × String)) (pointer : Option Nat × Option Nat)
+    (agree : ∀ k ∈ layoutFields, a.field? k = b.field? k) :
+    layOut h ⟨html,layoutRequest a,width,height,top,fonts,held,pointer⟩ kept =
+      layOut h ⟨html,layoutRequest b,width,height,top,fonts,held,pointer⟩ kept := by
+  rw [layoutRequest_congr a b agree]
 
 /-- The chrome height that the layout key holds: the full chrome, whatever its fold. -/
 def layoutTop (shell : Option WebShell.Shell) (width : Nat) : Nat :=

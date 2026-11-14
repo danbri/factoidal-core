@@ -464,4 +464,68 @@ by doubling, not from a list of its parts. -/
 #guard out "print('abc'.replace('b', '[$&$&]'), 'a-b'.replace(/(\\w)-(\\w)/, '$2$1$&'), 'abc'.repeat(3), 'x'.padStart(7, 'ab'), 'x'.padEnd(6, '-'), ''.repeat(5).length, [1, 2].join('-'), 'a'.concat('b', 1))" == ["a[bb]c baa-b abcabcabc abababx x----- 0 1-2 ab1"]
 #guard repeatStr "ab" 0 == "" && repeatStr "ab" 1 == "ab" && repeatStr "ab" 5 == "ababababab" && repeatStr "" 9 == ""
 
+/-! ## `Reflect.set` with a receiver; receivers of `getOrInsert`; `arguments` in a class body
+
+`Reflect.set(target, key, value, receiver)` (§10.1.9.2 OrdinarySetWithOwnDescriptor): a setter
+found on the target is called with the receiver as `this`, and a data property is made on the
+receiver (through a Proxy receiver's `defineProperty` trap, or its target). It used the target
+for both, so a Proxy `set` trap that forwards with `Reflect.set` lost the proxy.
+`WeakMap.prototype.getOrInsert` took a Map and `Map.prototype.getOrInsert` a WeakMap.
+`arguments` in the parameters of a method or function inside a static block is that function's
+own and no early error (§15.7.1 forbids it in the initialiser or block itself and its arrows). -/
+
+#guard out "var t = { set x(v) { this.got = v } }, r = {}; print(Reflect.set(t, 'x', 1, r), r.got, t.got, Reflect.set(t, 'y', 2, r), r.y, t.y, Reflect.set(t, 'z', 3), t.z); var p = new Proxy(t, { set(tg, k, v, rc) { return Reflect.set(tg, k, v, rc) } }); p.x = 9; print(p.got, t.got); var fr = Object.freeze({ a: 1 }); print(Reflect.set({}, 'a', 2, fr), Reflect.set(Object.freeze({ q: 1 }), 'q', 2, {}), Reflect.set({ get g() { return 1 } }, 'g', 2, {}))" == ["true 1 undefined true 2 undefined true 3", "9 9", "false false false"]
+#guard out "var log=[]; var p = new Proxy({}, { defineProperty(t,k,d){ log.push(k, d.value, Object.keys(d).join()); return Reflect.defineProperty(t,k,d) } }); print(Reflect.set({}, 'a', 5, p), p.a, log.join('|'))" == ["true 5 a|5|value,writable,enumerable,configurable"]
+#guard out "function tt(f){ try { f(); return 'no' } catch (e) { return e.constructor.name } } print(tt(()=>WeakMap.prototype.getOrInsert.call(new Map, {}, 1)), tt(()=>Map.prototype.getOrInsertComputed.call(new WeakMap, {}, ()=>1)), new Map().getOrInsert(1,2), new WeakMap().getOrInsertComputed({}, ()=>7))" == ["TypeError TypeError 2 7"]
+#guard out "var m; class C { static { new class { method({a = m = arguments}) { } }().method({}); (function(){ m = arguments.length })(1,2) } } print(m)" == ["2"]
+#guard (out "class C { static { arguments } }").head!.startsWith "SyntaxError"
+#guard (out "class C { x = () => arguments }").head!.startsWith "SyntaxError"
+
+/-! ## A full heap stops the script (`HeapOf.full`, `maxObjs`)
+
+The heap has no collector, so a script that makes objects for ever grew until the operating
+system ended the process (the WPT runner's processes ended with SIGKILL on pages that poll
+through promises and timers). `tick` looks at the heap's size every 1024 steps, a call and a
+`charge` every time: past `maxObjs` objects or environment records the run halts (not an
+exception: `catch` does not see it), as at the end of the step budget. -/
+
+/-- A script on a heap of at most `n` objects: how it ended, whether the heap stayed near the
+limit, and how many lines it printed. -/
+def onSmallHeap (n : Nat) (src : String) : String × Bool × Nat :=
+  match runScript { freshHeap with maxObjs := n } src with
+  | (.halted w, h) => (w, h.objs.size ≤ n + 3000, h.out.size)
+  | (.ok, h) => ("ok", true, h.out.size)
+  | (.threw _ m, h) => ("threw " ++ m, true, h.out.size)
+  | (.syntaxError m, h) => (m, true, h.out.size)
+
+#guard onSmallHeap 5000 "var a = []; for (;;) a.push({})" == (heapFullMsg, true, 0)
+#guard onSmallHeap 5000 "function poll(i) { return new Promise(function (r) { r() }).then(function () { return poll(i + 1) }) } poll(0)" == (heapFullMsg, true, 0)
+#guard onSmallHeap 5000 "var f = function () { return function () {} }; var k = []; for (;;) k.push(f())" == (heapFullMsg, true, 0)
+#guard onSmallHeap 5000 "try { var a = []; for (;;) a.push({}) } catch (e) { print('caught') } print('after')" == (heapFullMsg, true, 0)
+-- a script that stays within the heap is not touched
+#guard onSmallHeap 5000 "var n = 0; for (var i = 0; i < 100000; i++) n += i; print(n)" == ("ok", true, 1)
+
+/-! ## `?.` before a digit; a regular expression inside a template's substitution
+
+§12.8: `?.` is the optional chaining punctuator only when no decimal digit follows, so the
+minified conditional `a?.5:1` is `a ? .5 : 1` (6 of 111 scripts of eight live sites did not
+parse for it). The scan for the `}` of a template substitution took the `'` of a regular
+expression literal for the start of a string: Test262's `harness/temporalHelpers.js` did not
+parse ("unterminated string literal"), and with it 2,810 tests. -/
+
+#guard out "var a = 8, o = { a: \"x'y\" }; print(a?.5:1, a ?.length, o?.a, a?.[0])" == ["0.5 undefined x'y undefined"]
+#guard out "var o = { a: \"x'y\" }; print(`${o.a.replace(/'/g, \"\\\\'\")}|${ 6 / 2 }|${ [1, 2].map(x => x / 2).join('/') }|${ '}' }|${ /[/}]/.test('}') }|${ o.a.length / 3 / 1 }`)" == ["x\\'y|3|0.5/1|}|true|1"]
+#guard out "var a = 8, g = 2; print(`${a / g}${a /g/ 1}`)" == ["44"]
+
+/-! ## Redefining a property that is not configurable (§10.1.6.3)
+
+A redefinition that changes nothing is accepted; one that would change a frozen value, the
+enumerability, the kind or the functions of an accessor is a TypeError (`Desc.allowedOn`);
+a new property on an object that is not extensible is a TypeError. Test262
+`built-ins/Object/defineProperty`, `defineProperties`, `create`, `freeze`, `seal` and
+`built-ins/Reflect`: 2,018 of 2,383 before, 2,243 after, none lost (local run). -/
+
+#guard out "class C {} var r = []; function t(f) { try { f(); r.push('ok') } catch (e) { r.push(e.name) } } t(() => Object.defineProperty(C, 'prototype', { writable: false })); var o = {}; Object.defineProperty(o, 'x', { value: 1, writable: false, configurable: false }); t(() => Object.defineProperty(o, 'x', { value: 1 })); t(() => Object.defineProperty(o, 'x', { value: 2 })); t(() => Object.defineProperty(o, 'x', { writable: true })); t(() => Object.defineProperty(o, 'x', { enumerable: true })); t(() => Object.defineProperty(o, 'x', { get() {} })); t(() => Object.defineProperty(o, 'x', {})); t(() => Object.defineProperty(o, 'x', { configurable: true })); print(r.join())" == ["ok,ok,TypeError,TypeError,TypeError,TypeError,ok,TypeError"]
+#guard out "var g = function () { return 1 }, o = {}, r = []; function t(f) { try { f(); r.push('ok') } catch (e) { r.push(e.name) } } Object.defineProperty(o, 'a', { get: g }); t(() => Object.defineProperty(o, 'a', { get: g })); t(() => Object.defineProperty(o, 'a', { get() {} })); t(() => Object.defineProperty(o, 'a', { value: 1 })); t(() => Object.defineProperty(o, 'a', { set: undefined })); var p = Object.preventExtensions({ k: 1 }); t(() => Object.defineProperty(p, 'n', { value: 1 })); t(() => Object.defineProperty(p, 'k', { value: 2 })); t(() => Object.defineProperty({}, 'z', { get: 1 })); t(() => Object.defineProperty({}, 'z', { get() {}, value: 1 })); var q = {}; Object.defineProperty(q, 'acc', { get: g, configurable: true }); Object.defineProperty(q, 'acc', { enumerable: true }); print(r.join(), p.k, typeof Object.getOwnPropertyDescriptor(q, 'acc').get, Object.keys(q).join())" == ["ok,TypeError,TypeError,ok,TypeError,ok,TypeError,TypeError 2 function acc"]
+
 end L4Factoidal.JS.Tests

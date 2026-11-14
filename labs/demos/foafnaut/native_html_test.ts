@@ -237,8 +237,8 @@ Deno.test("resource size, resource count, cancellation and URL schemes are bound
     assert.equal((await readSource(url)).bytes,2*1048576,"a 2 MiB page is read");
     await Deno.writeTextFile(path,"x".repeat(16*1048576+1));
     await assert.rejects(()=>readSource(url),/exceeds 16 MiB/);
-    await Deno.writeTextFile(path,html(Array.from({length:17},(_,n)=>`<link rel="stylesheet" href="${n}.css">`).join("")));
-    await assert.rejects(()=>prepareHTML(engine,url),/16 external stylesheets/);
+    await Deno.writeTextFile(path,html(Array.from({length:65},(_,n)=>`<link rel="stylesheet" href="${n}.css">`).join("")));
+    await assert.rejects(()=>prepareHTML(engine,url),/64 external stylesheets/);
     const controller=new AbortController();controller.abort();
     await assert.rejects(()=>prepareHTML(engine,url,controller.signal),/abort/i);
     await Deno.writeFile(path,new Uint8Array([0x63,0x61,0x66,0xe9]));

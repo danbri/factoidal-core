@@ -1,0 +1,78 @@
+{
+ "case": "10.3.e",
+ "file": "Chapt10/10.3/10.3.e.xhtml",
+ "quote": "After activating any of the Test triggers the numbers output onto the page must match those on the label of the activated trigger control.",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Test A: 1 2 3 5 4 5"
+  },
+  {
+   "expect": "values",
+   "values": [
+    "1",
+    "2",
+    "3",
+    "5",
+    "4",
+    "5",
+    "6",
+    "0"
+   ],
+   "kind": "output"
+  },
+  {
+   "do": "activate",
+   "label": "Test B: 1 2 5 3 4 5"
+  },
+  {
+   "expect": "values",
+   "values": [
+    "1",
+    "2",
+    "5",
+    "3",
+    "4",
+    "5",
+    "6",
+    "0"
+   ],
+   "kind": "output"
+  },
+  {
+   "do": "activate",
+   "label": "Test C: 1 2 5 3 4 5"
+  },
+  {
+   "expect": "values",
+   "values": [
+    "1",
+    "2",
+    "5",
+    "3",
+    "4",
+    "5",
+    "6",
+    "0"
+   ],
+   "kind": "output"
+  },
+  {
+   "do": "activate",
+   "label": "Test G: Sizes remain 5 and 0, respectively"
+  },
+  {
+   "expect": "values",
+   "values": [
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "5",
+    "0"
+   ],
+   "kind": "output"
+  }
+ ]
+}

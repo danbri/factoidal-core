@@ -1,0 +1,12 @@
+{
+ "case": "10.18.a",
+ "file": "Chapt10/10.18/10.18.a.xhtml",
+ "quote": "You must see the value \"10\" for the Number Of Nodes output :",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "Number Of Nodes",
+   "value": "10"
+  }
+ ]
+}

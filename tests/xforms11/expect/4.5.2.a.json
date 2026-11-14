@@ -1,0 +1,17 @@
+{
+ "case": "4.5.2.a",
+ "file": "Chapt04/4.5/4.5.2/4.5.2.a.xhtml",
+ "quote": "You may see an xforms-compute-exception message. Processing must halt after dispatching an xforms-compute-exception with implementation-specific error-message in the event context information. Processor specific testing is required to listen for the xforms-compute-exception and provide the error-message. You must not see 'Hello world!' beneath this paragraph.",
+ "steps": [
+  {
+   "expect": "exception",
+   "name": "xforms-compute-exception"
+  },
+  {
+   "expect": "absent",
+   "values": [
+    "Hello world!"
+   ]
+  }
+ ]
+}

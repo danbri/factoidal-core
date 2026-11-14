@@ -1,0 +1,21 @@
+{
+ "case": "10.a",
+ "file": "Chapt10/10.a.xhtml",
+ "quote": "If you change the value in the Car Model input control and activate the Reset trigger the value must be set back to the initial value of \"Del Sol\".",
+ "steps": [
+  {
+   "do": "setvalue",
+   "label": "Car Model",
+   "value": "Civic"
+  },
+  {
+   "do": "activate",
+   "label": "Reset"
+  },
+  {
+   "expect": "control",
+   "label": "Car Model",
+   "value": "Del Sol"
+  }
+ ]
+}

@@ -1,0 +1,23 @@
+{
+ "case": "10.17.b",
+ "file": "Chapt10/10.17/10.17.b.xhtml",
+ "quote": "When you activate the Positive Test trigger you must see the message \"This is the positive test\". When you activate the Negative Test trigger you must NOT see the message \"This is the negative test\".",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Positive Test"
+  },
+  {
+   "expect": "message",
+   "contains": "This is the positive test"
+  },
+  {
+   "do": "activate",
+   "label": "Negative Test"
+  },
+  {
+   "expect": "no-message",
+   "contains": "This is the negative test"
+  }
+ ]
+}

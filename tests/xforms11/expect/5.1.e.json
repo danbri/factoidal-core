@@ -1,0 +1,25 @@
+{
+ "case": "5.1.e",
+ "file": "Chapt05/5.1/5.1.e.xhtml",
+ "quote": "When you activate the Valid Value trigger you must see an \"xforms-valid\" output for the date data type. When you activate the Invalid Value trigger you must see an \"XFORMS-INVALID\" output for the date data type.",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Valid Value"
+  },
+  {
+   "expect": "control",
+   "label": "Event result",
+   "value": "xforms-valid (date)"
+  },
+  {
+   "do": "activate",
+   "label": "Invalid Value"
+  },
+  {
+   "expect": "control",
+   "label": "Event result",
+   "value": "XFORMS-INVALID (date)"
+  }
+ ]
+}

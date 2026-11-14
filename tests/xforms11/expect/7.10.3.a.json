@@ -1,0 +1,16 @@
+{
+ "case": "7.10.3.a",
+ "file": "Chapt07/7.10/7.10.3/7.10.3.a.xhtml",
+ "quote": "You must see the values \"Node-A\", \"Node-B\", and \"Node-C\" for the Node Values output.",
+ "steps": [
+  {
+   "expect": "values",
+   "values": [
+    "Node-A",
+    "Node-B",
+    "Node-C"
+   ],
+   "label": "Node Values"
+  }
+ ]
+}

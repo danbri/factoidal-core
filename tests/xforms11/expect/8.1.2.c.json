@@ -1,0 +1,15 @@
+{
+ "case": "8.1.2.c",
+ "file": "Chapt08/8.1/8.1.2/8.1.2.c.xhtml",
+ "quote": "You must see an input bound to a node of type xsd:date. It might be rendered as a calendar control. The default value is 1997-12-21. You must see an input bound to a node of type boolean. It might be rendered as a checkbox. The default value is false.",
+ "steps": [
+  {
+   "expect": "values",
+   "values": [
+    "1997-12-21",
+    "false"
+   ],
+   "kind": "input"
+  }
+ ]
+}

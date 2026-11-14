@@ -1,0 +1,14 @@
+{
+ "case": "3.3.4.a",
+ "file": "Chapt03/3.3/3.3.4/3.3.4.a.xhtml",
+ "quote": "You must see the value \"suzuka blue\":",
+ "steps": [
+  {
+   "expect": "values",
+   "values": [
+    "suzuka blue"
+   ],
+   "kind": "output"
+  }
+ ]
+}

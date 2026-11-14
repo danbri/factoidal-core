@@ -779,6 +779,10 @@ import L4Factoidal.Math.Tests
 import L4Factoidal.Math.Sigmoid
 import L4Factoidal.Math.SigmoidTests
 import L4Factoidal.XForms.BindTests
+import L4Factoidal.XForms.DepGraph
+import L4Factoidal.XForms.Eval
+import L4Factoidal.XForms.Model
+import L4Factoidal.XForms.Theorems
 import L4Factoidal.GRDDL.Discovery
 import L4Factoidal.GRDDL.Agent
 import L4Factoidal.GRDDL.AgentTests
@@ -1068,6 +1072,16 @@ import L4Factoidal.Net.PageFetch
 import L4Factoidal.Net.Xhr
 import L4Factoidal.DOM.SvgValues
 import L4Factoidal.Net.Storage
+import L4Factoidal.ClientStorage.Core
+import L4Factoidal.ClientStorage.IdbKey
+import L4Factoidal.ClientStorage.Sorted
+import L4Factoidal.ClientStorage.IdbValue
+import L4Factoidal.ClientStorage.IdbStore
+import L4Factoidal.ClientStorage.IdbOps
+import L4Factoidal.ClientStorage.IdbTests
+import L4Factoidal.ClientStorage.FileSystem
+import L4Factoidal.ClientStorage.Manager
+import L4Factoidal.ClientStorage.Locks
 import L4Factoidal.Net.Cookies
 import L4Factoidal.PageGl.Table
 import L4Factoidal.PageGl.Idl
@@ -1079,6 +1093,7 @@ import L4Factoidal.WebCodecs.Frame
 import L4Factoidal.WebCodecs.Convert
 import L4Factoidal.WebCodecs.Codec
 import L4Factoidal.WebCodecs.Config
+import L4Factoidal.WebCodecs.Orient
 import L4Factoidal.WebCodecs.Api
 import L4Factoidal.Net.ReferrerPolicy
 import L4Factoidal.Net.Csp
@@ -1230,6 +1245,7 @@ import L4Factoidal.WHATWG.URL.Parser
 import L4Factoidal.WHATWG.URL.Theorems
 import L4Factoidal.WHATWG.URLPattern
 import L4Factoidal.WHATWG.URLPatternTests
+import L4Factoidal.WHATWG.Streams
 import L4Factoidal.HTML.FormSubmission
 import L4Factoidal.HTML.FormSubmissionTests
 import L4Factoidal.Unicode.RangeTable
@@ -1259,6 +1275,12 @@ import L4Factoidal.DOM.Editing.Commands
 import L4Factoidal.DOM.Editing.Keys
 import L4Factoidal.DOM.Editing.TextControl
 import L4Factoidal.DOM.Editing.Tests
+import L4Factoidal.WebDriver.Keys
+import L4Factoidal.WebDriver.Errors
+import L4Factoidal.WebDriver.Actions
+import L4Factoidal.WebDriver.Input
+import L4Factoidal.WebDriver.Gate
+import L4Factoidal.WebDriver.Protocol
 import L4Factoidal.Rendering.Tests
 import L4Factoidal.Rendering.CascadeTests
 import L4Factoidal.Rendering.ReplacedTests

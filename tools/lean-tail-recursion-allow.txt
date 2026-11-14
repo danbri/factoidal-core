@@ -2361,3 +2361,16 @@ L4Factoidal_MathML_intentExpr  # (b) bracket nesting of one intent attribute val
 L4Factoidal_MathML_intentPostfix  # (b) inside the intentExpr mutual block: the chain of applications after a term is a self tail call
 L4Factoidal_MathML_intentArgs  # (b) inside the intentExpr mutual block: the argument list is a self tail call with an accumulator
 L4Factoidal_MathML_intentStr*  # (b) nesting of an intent expression (intentStr, intentStrArgs): the argument list is a self tail call with an accumulator
+# --- Added 2026-11-14, the XForms 1.1 engine (XForms/Eval.lean, XForms/Model.lean) ---
+L4Factoidal_XForms_Engine_evalE*  # (b) XPath 1.0 expression walk; fuel 256 decreases at each call; depth is the nesting of one expression (form text)
+L4Factoidal_XForms_Engine_flatten*  # (b) the host document flattened to an element table; fuel 512; depth is the element nesting of the form document
+L4Factoidal_XForms_Engine_modKids*  # (b) node replacement at an address; depth is the length of the child-index path, the element nesting of one instance document
+# --- Client storage (ClientStorage/IdbKey): 2026-11-14. Lists and array spines are folds or tail calls; what recurses is the nesting of arrays in an IndexedDB key, read to at most Key.maxDepth = 64 (a deeper key is refused with DataError).
+L4Factoidal_ClientStorage_Idb_Key_read  # (c) one call per level of nested array keys; the fuel is Key.maxDepth = 64 (Key.ofToks)
+L4Factoidal_ClientStorage_Idb_Key_cmp  # (c) the head of an array item; the spine is a tail call; keys come from Key.read, nested at most 64 deep
+L4Factoidal_ClientStorage_Idb_Key_write  # (c) the head of an array item; the spine is a tail call; nested at most 64 deep
+# --- XPath 4.0 schema simple types (XPath4/SchemaSimple.lean): 2026-11-14. What recurses is the nesting of one simple type definition (the item type of a list, the members of a union); tokens and members are walked by loops (castTokens, firstCast, leavesAll, List.any, List.all).
+L4Factoidal_XPath4_atomInBodyF  # (c) the nesting of a simple type definition, fuel 16
+L4Factoidal_XPath4_castToBodyF  # (c) the nesting of a simple type definition, fuel 16; the tokens of a list value are a loop (castTokens)
+L4Factoidal_XPath4_generalizedF  # (c) the nesting of a simple type definition, fuel 16
+L4Factoidal_XPath4_pureLeavesF  # (c) the nesting of a simple type definition, fuel 16; the members are a loop (leavesAll)

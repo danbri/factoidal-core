@@ -1,0 +1,17 @@
+{
+ "case": "7.8.1.a",
+ "file": "Chapt07/7.8/7.8.1/7.8.1.a.xhtml",
+ "quote": "You must see the value \"Yes\" for the Adult output and the value \"Unsafe\" for the Safety output.",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "Adult",
+   "value": "Yes"
+  },
+  {
+   "expect": "control",
+   "label": "Safety",
+   "value": "Unsafe"
+  }
+ ]
+}

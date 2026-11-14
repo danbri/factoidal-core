@@ -1,0 +1,11 @@
+{
+ "case": "7.5.b",
+ "file": "Chapt07/7.5/7.5.b.xhtml",
+ "quote": "You must see an xforms-binding-exception message or a fatal error due to an xforms-binding-exception.",
+ "steps": [
+  {
+   "expect": "exception",
+   "name": "xforms-binding-exception"
+  }
+ ]
+}

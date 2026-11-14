@@ -1,0 +1,23 @@
+{
+ "case": "4.4.1.a",
+ "file": "Chapt04/4.4/4.4.1/4.4.1.a.xhtml",
+ "quote": "Activate the Insert A Date trigger below to fire the xforms-insert event. You must see an xforms-insert message and the correct values must be output below. You must see the value \"before\" : You must see the value \"2006-01-01\" :",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Insert A Date"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-insert"
+  },
+  {
+   "expect": "values",
+   "values": [
+    "before",
+    "2006-01-01"
+   ],
+   "kind": "output"
+  }
+ ]
+}

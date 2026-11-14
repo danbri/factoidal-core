@@ -731,13 +731,14 @@ def normalizeLineEnds (xml11 : Bool) (cs : List Char) : List Char :=
 def parseModule (src : String) (ns : List (String × String) := [])
     (loader : String → Except Err (List (QN × IType)) := fun _ => .ok [])
     (schemaDecl : Bool → QN → Bool := fun _ _ => false)
-    (xml11 : Bool := false) (features : FeatureSettings := {}) : M Module :=
+    (xml11 : Bool := false) (features : FeatureSettings := {})
+    (schemaSimple : QN → Option SchemaSimpleUse := fun _ => none) : M Module :=
   let s := (normalizeLineEnds xml11 src.toList).toArray
   -- first pass: the named types, with forward references read as item()
-  let types0 := match ((pModule [] true loader).run { s, ns, schemaDecl, xml11, features }).run 0 with
+  let types0 := match ((pModule [] true loader).run { s, ns, schemaDecl, xml11, features, schemaSimple, xquery := true }).run 0 with
     | .ok (m, _) => m.types
     | .error _ => []
-  match ((pModule types0 false loader).run { s, ns, schemaDecl, xml11, features }).run 0 with
+  match ((pModule types0 false loader).run { s, ns, schemaDecl, xml11, features, schemaSimple, xquery := true }).run 0 with
   | .ok (m, _) => .ok m
   | .error e => .error e
 
@@ -792,7 +793,7 @@ def typeLoader (env : Env) : Nat → List String → String → Except Err (List
   | d + 1, seen, uri =>
     if seen.contains uri then .ok [] else
     (moduleTexts env uri).foldlM (fun acc t => do
-      let lm ← parseModule t [] (typeLoader env d (uri :: seen)) env.schema.declared env.xml11
+      let lm ← parseModule t [] (typeLoader env d (uri :: seen)) env.schema.declared env.xml11 {} env.schema.simpleUse
       if (lm.libNs.map (·.2)) != some uri then pure acc
       else pure (acc ++ lm.ownTypes.filterMap (fun (q, ty, priv) => if priv then none else some (q, ty)))) []
 
@@ -816,7 +817,7 @@ def loadImports (env : Env) : Nat → List String → Module → M (List Module 
         | ts => ts
       if texts.isEmpty then err "XQST0059" ("no module found for namespace " ++ u)
       for t in texts do
-        let lm ← parseModule t [] (typeLoader env 8 seen) env.schema.declared env.xml11 env.features
+        let lm ← parseModule t [] (typeLoader env 8 seen) env.schema.declared env.xml11 env.features env.schema.simpleUse
         if (lm.libNs.map (·.2)) != some u then err "XQST0059" ("the module text is not a module for " ++ u)
         let (sub, seen') ← loadImports env d seen lm
         seen := seen'
@@ -870,6 +871,8 @@ def checkModules (env : Env) (ms : List Module) : M Unit := do
       (findSigAny q).isSome || (q.uri == nsFN && q.loc == "concat") ||
       -- XQuery Update Facility 3.0 §6.1
       (q.uri == nsFN && q.loc == "put" && (k == 2 || k == 3)) ||
+      -- the constructor function of a simple type of the in-scope schema
+      (k == 1 && env.schema.isSimpleType q) ||
       fnsM.any (fun (q2, lo, hi) => (q2 == q || (q.uri == nsFN && q.pfx == "" && q2 == { q with uri := "" }))
         && lo ≤ k && k ≤ hi)
     let _ := known
@@ -1079,7 +1082,7 @@ def withFnLookup (fuel : Nat) (env : Env) : Env :=
 
 /-- Parse and evaluate an XQuery 4.0 main module. -/
 def evalQuery (src : String) (env : Env := {}) (fuel : Nat := 100000) : M Seq := do
-  let m ← parseModule src env.ns (typeLoader env 8 []) env.schema.declared env.xml11 env.features
+  let m ← parseModule src env.ns (typeLoader env 8 []) env.schema.declared env.xml11 env.features env.schema.simpleUse
   evalModule fuel (withFnLookup fuel env) m
 
 def evalQShow (src : String) : String :=

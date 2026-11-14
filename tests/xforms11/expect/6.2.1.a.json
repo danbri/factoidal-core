@@ -1,0 +1,23 @@
+{
+ "case": "6.2.1.a",
+ "file": "Chapt06/6.2/6.2.1/6.2.1.a.xhtml",
+ "quote": "The First Name input control is bound to an atomic datatype. When you activate the Use Joe trigger you must see an xforms-valid message. When you activate the Use Empty String trigger you must see an xforms-invalid message.",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Use Joe"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-valid"
+  },
+  {
+   "do": "activate",
+   "label": "Use Empty String"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-invalid"
+  }
+ ]
+}

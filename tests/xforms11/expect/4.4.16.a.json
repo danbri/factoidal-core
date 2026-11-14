@@ -1,0 +1,15 @@
+{
+ "case": "4.4.16.a",
+ "file": "Chapt04/4.4/4.4.16/4.4.16.a.xhtml",
+ "quote": "You must see an xforms-in-range message when you activate the In Range trigger.",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "In Range"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-in-range"
+  }
+ ]
+}

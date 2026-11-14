@@ -1,0 +1,27 @@
+{
+ "case": "10.h",
+ "file": "Chapt10/10.h.xhtml",
+ "quote": "When you activate the Set Value trigger you must see four messages: xforms:action, xforms-recalculate, xforms-revalidate, and xforms-refresh.",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Set Value"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms:action"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-recalculate"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-revalidate"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-refresh"
+  }
+ ]
+}

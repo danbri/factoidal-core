@@ -1,0 +1,11 @@
+{
+ "case": "4.4.11.a",
+ "file": "Chapt04/4.4/4.4.11/4.4.11.a.xhtml",
+ "quote": "You must have seen an xforms-disabled event message.",
+ "steps": [
+  {
+   "expect": "message",
+   "contains": "xforms-disabled"
+  }
+ ]
+}

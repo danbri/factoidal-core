@@ -1,0 +1,25 @@
+{
+ "case": "6.1.5.a",
+ "file": "Chapt06/6.1/6.1.5/6.1.5.a.xhtml",
+ "quote": "You must see the output \"Discount : 750\" after you have activated the Enter 1500 trigger. You must see the output \"Discount : 1000\" after you have activated the Enter 2000 trigger.",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Enter 1500"
+  },
+  {
+   "expect": "control",
+   "label": "Discount",
+   "value": "750"
+  },
+  {
+   "do": "activate",
+   "label": "Enter 2000"
+  },
+  {
+   "expect": "control",
+   "label": "Discount",
+   "value": "1000"
+  }
+ ]
+}

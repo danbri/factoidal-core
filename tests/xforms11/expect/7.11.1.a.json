@@ -1,0 +1,17 @@
+{
+ "case": "7.11.1.a",
+ "file": "Chapt07/7.11/7.11.1/7.11.1.a.xhtml",
+ "quote": "You must see the values \"Garfield\", \"Heathcliff\", \"Felix\", and \"Tom\" output from the Nodeset output control.",
+ "steps": [
+  {
+   "expect": "values",
+   "values": [
+    "Garfield",
+    "Heathcliff",
+    "Felix",
+    "Tom"
+   ],
+   "label": "Nodeset"
+  }
+ ]
+}

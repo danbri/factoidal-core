@@ -1,0 +1,14 @@
+{
+ "case": "3.3.2.a",
+ "file": "Chapt03/3.3/3.3.2/3.3.2.a.xhtml",
+ "quote": "You must not have seen any messages or errors.",
+ "steps": [
+  {
+   "expect": "no-message",
+   "contains": ""
+  },
+  {
+   "expect": "no-fatal"
+  }
+ ]
+}

@@ -101,7 +101,7 @@ def runtimeNatives : Array Native :=
     .promiseAllElement, (.x (.promiseSettleElement 0)), (.x (.promiseSettleElement 1)), (.x .proxyRevoke), (.x .promiseAnyReject),
     (.x .cloneSerialize), (.x .cloneDeserialize), (.x .classicScript),
     (.x (.asyncFromSync 3)), (.x (.asyncFromSync 4)), (.x (.asyncFromSync 5)),
-    (.x (.promiseThenableFn false)), (.x (.promiseThenableFn true)), (.x .namedGetterSet), (.x .urlPattern)]
+    (.x (.promiseThenableFn false)), (.x (.promiseThenableFn true)), (.x .namedGetterSet), (.x .urlPattern), (.x .streams)]
 
 /-! ## Writing -/
 
@@ -472,6 +472,10 @@ def eKind (k : Kind) : EM Unit :=
   | .prim v => do putNat 15; eValue v
   | .error => putNat 16
   | .args => putNat 17
+  | .queue q => do
+    -- a stream controller's queue: the values that wait, with their sizes, and the total
+    putNat 19; putNat q.count; putFloat q.total
+    for (v, s) in q.toList do eValue v; putFloat s
 
 def eObj (o : Obj) : EM Unit := do
   putNat o.liveKeys.size
@@ -1007,6 +1011,14 @@ def dKind (base : HeapOf H) : DM Kind := do
   | 16 => pure .error
   | 17 => pure .args
   | 18 => let buf ← getNat; let off ← getNat; pure (.dataView buf off (← getNat))
+  | 19 =>
+    let k ← getNat
+    let total ← getFloat
+    let mut items := Array.emptyWithCapacity k
+    for _ in [0:k] do
+      let v ← dValue
+      items := items.push (v, ← getFloat)
+    pure (.queue { items, head := 0, total })
   | _ => throw "snapshot: bad object kind"
 
 def dObj (base : HeapOf H) : DM Obj := do

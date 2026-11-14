@@ -287,13 +287,14 @@ def castTargetError : IType → Option String
   | .anyFn | .fnT .. => some "XPST0080"
   | .choice ts => if ts.all (fun t => match t with | .atomic _ | .enum _ | .choice _ => true | _ => false) then none else some "XPST0080"
   | .atomic aty => if aty == .b .anyAtomicType || aty == .b .notation then some "XPST0080" else none
-  | .enum _ | .arrT _ | .mapT _ _ | .record _ _ | .anyArr | .anyMap => none
+  | .enum _ | .arrT _ | .mapT _ _ | .record _ _ | .anyArr | .anyMap | .schemaType _ => none
   | .jnodeT .. | .xnode => some "XPST0080"
   | _ => some "XPST0051"
 
 /-- Whether an item type is a valid cast target (XPath 4.0 §4.19.2). -/
 def isCastTarget : IType → Bool
-  | .atomic _ | .choice _ | .enum _ | .arrT _ | .mapT _ _ | .record _ _ | .anyArr | .anyMap => true
+  | .atomic _ | .choice _ | .enum _ | .arrT _ | .mapT _ _ | .record _ _ | .anyArr | .anyMap
+  | .schemaType _ => true
   | _ => false
 
 mutual
@@ -344,6 +345,12 @@ def castToF (e : Env) : Nat → Seq → IType → Bool → M Seq
   | [] => if opt then pure [] else err "XPTY0004" "empty sequence cannot be cast"
   | [a] =>
     match t with
+    -- a simple type of the in-scope schema (F&O 4.0 §23.3: derived, list
+    -- and union types), by its Part 2 body
+    | .schemaType q =>
+      match e.schema.simpleBody q with
+      | some body => return (← castToBody e.nsResolve body a).map Item.atom
+      | none => err "XPST0051" ("unknown type " ++ q.show)
     | .atomic (.b lb) =>
       match builtinListItem? lb with
       | some it =>
@@ -814,6 +821,16 @@ def eval : Nat → Env → Expr → M Seq
           | some r => r
           | none =>
           if (findSigAny q).isSome then err "XPST0017" ("wrong number of arguments for " ++ q.show)
+          -- the constructor function of a simple type of the in-scope
+          -- schema (F&O 4.0 §22.5): `T($v)` is `$v cast as T?`
+          else if total == 1 && kw.isEmpty && env.schema.isSimpleType q then
+            match args with
+            | [some a] => castTo env (← eval n env a) (.schemaType q) true
+            -- `T(?)`: the constructor function itself
+            | _ =>
+              let v : QN := { uri := "#trusted", loc := "a0" }
+              pure [.fn (.inline [(v, .seq (.atomic (.b .anyAtomicType)) .opt)] (.seq .item .star)
+                (.cast (.var v) (.schemaType q) true) false [])]
           else err "XPST0017" ("unknown function " ++ q.show)
       | some sig =>
         if q.uri == nsFN && q.loc == "concat" then
@@ -965,7 +982,13 @@ def eval : Nat → Env → Expr → M Seq
           -- XQuery 4.0 hook: a function declared in the prolog
           match XQuery4.refUser? (fun f as => apply n env f as) env q k with
           | some r => r
-          | none => err "XPST0017" ("unknown function " ++ q.show ++ "#" ++ toString k)
+          | none =>
+            -- the constructor function of a simple type of the in-scope schema
+            if k == 1 && env.schema.isSimpleType q then
+              let v : QN := { uri := "#trusted", loc := "a0" }
+              pure [.fn (.inline [(v, .seq (.atomic (.b .anyAtomicType)) .opt)] (.seq .item .star)
+                (.cast (.var v) (.schemaType q) true) false [])]
+            else err "XPST0017" ("unknown function " ++ q.show ++ "#" ++ toString k)
   -- trust is lexical (F&O 4.0 §17.4.1): a function made by untrusted
   -- code runs as untrusted code
   | .inline ps ret body focus =>
@@ -1726,8 +1749,9 @@ end
     (XPath 4.0 §4.12, `XQuery4.xpathGrammar`). -/
 def parseXPath4 (src : String) (ns : List (String × String) := [])
     (schemaDecl : Bool → QN → Bool := fun _ _ => false)
-    (features : FeatureSettings := {}) : M Expr := do
-  let e ← parseXPath src ns (some L4Factoidal.XQuery4.xpathGrammar) schemaDecl features
+    (features : FeatureSettings := {})
+    (schemaSimple : QN → Option SchemaSimpleUse := fun _ => none) : M Expr := do
+  let e ← parseXPath src ns (some L4Factoidal.XQuery4.xpathGrammar) schemaDecl features schemaSimple
   features.check e
   -- static check (XPath 4.0 §2.4.1, XPST0017): a call of a function in
   -- the fn, math, map or array namespace needs a signature of its arity
@@ -1749,7 +1773,7 @@ theorem evalConfigured_staticTypingOff (fuel : Nat) (env : Env) (e : Expr) :
 
 /-- Evaluate an XPath 4.0 expression string. -/
 def evalString (src : String) (env : Env := {}) : M Seq := do
-  let e ← parseXPath4 src env.ns env.schema.declared env.features
+  let e ← parseXPath4 src env.ns env.schema.declared env.features env.schema.simpleUse
   evalConfigured 100000 env e
 
 /-- Applying the default settings leaves evaluation definitionally

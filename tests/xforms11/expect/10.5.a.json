@@ -1,0 +1,46 @@
+{
+ "case": "10.5.a",
+ "file": "Chapt10/10.5/10.5.a.xhtml",
+ "quote": "When you activate the Set index To -1 trigger you must see three xforms-scroll-first messages and the index must display the number 1. When you activate the Set index To 100 trigger you must see three xforms-scroll-last messages and the index must display the number 3. When you activate the Set index To 2 trigger you must not see a message and the index must display the number 2.",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Set index To -1"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-scroll-first"
+  },
+  {
+   "expect": "control",
+   "label": "index",
+   "value": "1"
+  },
+  {
+   "do": "activate",
+   "label": "Set index To 100"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-scroll-last"
+  },
+  {
+   "expect": "control",
+   "label": "index",
+   "value": "3"
+  },
+  {
+   "do": "activate",
+   "label": "Set index To 2"
+  },
+  {
+   "expect": "no-message",
+   "contains": ""
+  },
+  {
+   "expect": "control",
+   "label": "index",
+   "value": "2"
+  }
+ ]
+}

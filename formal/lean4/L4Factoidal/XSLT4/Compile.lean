@@ -1332,7 +1332,9 @@ def standardNs : List (String × String) :=
    ("fn", nsFN), ("math", nsMATH), ("map", nsMAP), ("array", nsARR), ("err", nsERR)]
 
 def rootCx (m : Mod) (i : Nat) (as : Attrs) : CM SCx := do
-  let c : SCx := { baseUri := m.uri, types := (← get).types }
+  -- the simple types of the in-scope schema (§3.15) are type names
+  let c : SCx := { baseUri := m.uri, types := (← get).types,
+                   schemaSimple := (XSD11.schemaHookOf (← get).xsd).simpleUse }
   let c ← c.enter m i as
   match as.get "fixed-namespaces" with
   | none => pure c

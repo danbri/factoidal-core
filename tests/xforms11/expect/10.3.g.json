@@ -1,0 +1,14 @@
+{
+ "case": "10.3.g",
+ "file": "Chapt10/10.3/10.3.g.xhtml",
+ "quote": "You must see the value \"7\" :",
+ "steps": [
+  {
+   "expect": "values",
+   "values": [
+    "7"
+   ],
+   "kind": "output"
+  }
+ ]
+}

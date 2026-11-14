@@ -1,0 +1,17 @@
+{
+ "case": "7.7.2.b",
+ "file": "Chapt07/7.7/7.7.2/7.7.2.b.xhtml",
+ "quote": "You must see a value of \"NaN\" for Minimum A and Minimum B.",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "Minimum A",
+   "value": "NaN"
+  },
+  {
+   "expect": "control",
+   "label": "Minimum B",
+   "value": "NaN"
+  }
+ ]
+}

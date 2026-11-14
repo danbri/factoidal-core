@@ -1,0 +1,16 @@
+{
+ "case": "8.1.3.a",
+ "file": "Chapt08/8.1/8.1.3/8.1.3.a.xhtml",
+ "quote": "You must see an xforms-value-changed message every time the value in the Password secret control changes.",
+ "steps": [
+  {
+   "do": "setvalue",
+   "label": "Password",
+   "value": "opensesame"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-value-changed"
+  }
+ ]
+}

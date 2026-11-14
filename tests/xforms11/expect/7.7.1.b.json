@@ -1,0 +1,17 @@
+{
+ "case": "7.7.1.b",
+ "file": "Chapt07/7.7/7.7.1/7.7.1.b.xhtml",
+ "quote": "Average A and Average B must show a value of \"NaN\".",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "Average A",
+   "value": "NaN"
+  },
+  {
+   "expect": "control",
+   "label": "Average B",
+   "value": "NaN"
+  }
+ ]
+}

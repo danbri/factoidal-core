@@ -1,0 +1,12 @@
+{
+ "case": "7.10.2.a",
+ "file": "Chapt07/7.10/7.10.2/7.10.2.a.xhtml",
+ "quote": "You must see the value \"8023.451\" for the Converted Amount output.",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "Converted Amount",
+   "value": "8023.451"
+  }
+ ]
+}

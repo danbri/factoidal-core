@@ -10,7 +10,10 @@ docs/designissues/2026-11-08-page-scripts.md, "Web APIs over Lean"). The algorit
   * `Crypto.WebCrypto`, `Crypto.WebCryptoKeys` and `Crypto.WebHacl`:
     `crypto.getRandomValues`, `randomUUID`, and `crypto.subtle` (digest, HMAC, HKDF,
     PBKDF2, ECDSA and ECDH on P-256, Ed25519, X25519, ChaCha20-Poly1305), with the
-    primitives HACL*'s (record docs/designissues/2026-11-09-hacl-web-crypto.md).
+    primitives HACL*'s (record docs/designissues/2026-11-09-hacl-web-crypto.md);
+  * the Web Neural Network API (`WebNN.Api`, op 140): `navigator.ml`, graph building with
+    shape inference, and the CPU reference backend (record
+    docs/designissues/2026-11-14-webnn.md).
 
 `web_api(op, flags, ptr, len, buf, cap)`. The `len` bytes at `ptr` are the arguments:
 a little-endian u32 count, then each argument as a u32 length and its bytes (strings in
@@ -38,11 +41,15 @@ import L4Factoidal.Crypto.WebCrypto
 import L4Factoidal.Crypto.WebCryptoKeys
 import L4Factoidal.Net.Xhr
 import L4Factoidal.Net.Storage
+import L4Factoidal.ClientStorage.IdbOps
+import L4Factoidal.ClientStorage.Manager
+import L4Factoidal.ClientStorage.Locks
 import L4Factoidal.Net.FetchRules
 import L4Factoidal.Net.Cookies
 import L4Factoidal.DOM.SvgValues
 import L4Factoidal.PageGl.Api
 import L4Factoidal.WebCodecs.Api
+import L4Factoidal.WebNN.Api
 import L4Factoidal.JSON.Parser
 import L4Factoidal.JSON.Serialize
 import Std.Data.HashMap
@@ -72,6 +79,14 @@ structure State where
   net : L4Factoidal.Net.Xhr.State := {}
   /-- The page's Web Storage areas (`Net.Storage`, ops 80 to 85): in memory, by origin. -/
   storage : L4Factoidal.Net.Storage.Store := {}
+  /-- IndexedDB (`ClientStorage.Idb`, op 200): the databases and live state of each storage
+  key, in memory. -/
+  idb : L4Factoidal.ClientStorage.Shed L4Factoidal.ClientStorage.Idb.Shelf := {}
+  /-- The origin private file system of each storage key (`ClientStorage.Fs`, op 201), in
+  memory: no host file is read or written. -/
+  opfs : L4Factoidal.ClientStorage.Shed L4Factoidal.ClientStorage.Fs.Shelf := {}
+  /-- The lock manager of each storage key (`ClientStorage.Locks`, op 203). -/
+  locks : L4Factoidal.ClientStorage.Shed L4Factoidal.ClientStorage.Locks.Shelf := {}
   /-- The cookies scripts set and read (`Net.Cookies`, ops 96 and 97): in memory, each its
   host's; none is sent or received on the network. -/
   cookies : L4Factoidal.Net.Cookies.Jar := {}
@@ -82,6 +97,9 @@ structure State where
   draws : Nat := 0
   /-- The CryptoKeys of the session. -/
   keys : Crypto.WebCryptoKeys.KeyStore := {}
+  /-- The Web Neural Network objects of the session (`WebNN.Graph`, op 140): contexts, graph
+  builders, graphs and tensors. Empty until a page uses `navigator.ml`. -/
+  nn : L4Factoidal.WebNN.State := {}
   deriving Inhabited
 
 /-! ## Arguments -/
@@ -323,6 +341,14 @@ def keyFields (handle : Nat) (k : Key) : List ByteArray :=
     ",".intercalate (k.usages.map (·.name)), algo.alg.name, toString pairs.length].map (·.toUTF8) ++
     pairs.flatMap fun (a, b) => [a.toUTF8, b.toUTF8]
 
+/-- Kind: security invariant (key material). Says: the fields the page receives for a key
+(what its `CryptoKey` object is made from: handle, type, extractable, usages, algorithm) are
+the same whatever the key's bytes: generateKey, importKey, deriveKey, unwrapKey, cloneKey and
+getPublicKey answer with these fields and nothing else of the key, so none of them hands key
+bytes to script. Does not say: anything of exportKey and wrapKey (`exportOp_blind`,
+`wrapPlain_blind`) or of the outputs of primitives keyed by the bytes. -/
+theorem keyFields_blind (handle : Nat) (k : Key) : keyFields handle k.blind = keyFields handle k := rfl
+
 def jwkFields (ms : List (String × JwkVal)) : List ByteArray :=
   ["jwk".toUTF8, (toString ms.length).toUTF8] ++ ms.flatMap fun (n, v) =>
     match v with
@@ -487,8 +513,8 @@ def subtle (s : State) (fs : Array ByteArray) : State × Except Int ByteArray :=
       let wk ← keyOf s.keys a "wrappingKey"
       if wk.algo.alg.name != algName || !wk.usages.contains .wrapKey then throw .invalidAccess
       let k ← keyOf s.keys a "key"
-      let e ← exportKey k ((a.str? "format").getD "")
-      let bytes := match e with | .bytes b => b | .jwk ms => (jwkJson ms).toUTF8
+      -- The key's bytes come from exportKey alone (`wrapPlain_extractable`, `wrapPlain_blind`).
+      let bytes ← wrapPlain (fun ms => (jwkJson ms).toUTF8) k ((a.str? "format").getD "")
       let wk' := { wk with usages := wk.usages ++ [.encrypt] }
       let c ← crypt true algName p wk' bytes
       pure (pack ["bytes".toUTF8, c])))
@@ -506,7 +532,68 @@ def subtle (s : State) (fs : Array ByteArray) : State × Except Int ByteArray :=
         addKey s.keys nk) with
     | .ok (st, f) => ({ s with keys := st }, .ok (pack f))
     | .error e => fail e
+  -- getPublicKey (modern algorithms draft): a new handle for the public key of a private key.
+  | "getPublicKey" =>
+    match errInt (do
+        let us ← usagesOf a
+        let k ← keyOf s.keys a "key"
+        let pk ← getPublicKey k us
+        addKey s.keys pk) with
+    | .ok (st, f) => ({ s with keys := st }, .ok (pack f))
+    | .error e => fail e
+  -- SubtleCrypto.supports: a question of the registry, no key made or used.
+  | "supports" =>
+    let yes := supports ((a.str? "op").getD "") algName p (sub a "t:") (sub a "g:") (lengthArg a) s.keys
+    (s, .ok (pack ["bool".toUTF8, (if yes then "1" else "0").toUTF8]))
   | _ => fail (-2)
+
+/-- The method name of a `subtle` call. -/
+def subtleMethod (fs : Array ByteArray) : String := (fs[0]?.bind String.fromUTF8?).getD ""
+
+/-- Kind: API contract. Says: `subtle` with the method "exportKey" changes no state and
+answers exactly `exportOp` of the session's keys: the export rule in Lean is the whole of what
+the operation does. Does not say: what prelude.js does with the answer (it shapes the
+ArrayBuffer or the JsonWebKey object from these fields). -/
+theorem subtle_exportKey (s : State) (fs : Array ByteArray) (h : subtleMethod fs = "exportKey") :
+    subtle s fs = (s, errInt (exportOp s.keys (pairsOf fs))) := by
+  unfold subtleMethod at h
+  unfold subtle
+  simp only [h]
+
+/-- Kind: security invariant (key material), over the API's function. Says: what
+`crypto.subtle.exportKey` answers to the page is the same when the bytes of every
+non-extractable key of the session are replaced: whatever handle and format the page passes,
+it learns nothing of such a key from this operation. With `wrapPlain_blind` (wrapKey reads a key
+only through the same export) and `keyFields_blind` (the answers that carry a key carry its
+public fields only), exportKey and wrapKey of an extractable key are the only ways key bytes
+reach script. Does not say: anything of what the outputs of sign, encrypt or deriveBits reveal
+about a key: that is the primitives' strength, HACL*'s and the algorithms'. -/
+theorem subtle_exportKey_blind (s : State) (fs : Array ByteArray) (h : subtleMethod fs = "exportKey") :
+    (subtle { s with keys := s.keys.blind } fs).2 = (subtle s fs).2 := by
+  rw [subtle_exportKey _ _ h, subtle_exportKey _ _ h]
+  show errInt (exportOp s.keys.blind (pairsOf fs)) = errInt (exportOp s.keys (pairsOf fs))
+  rw [exportOp_blind]
+
+/-- Kind: security invariant (usages), over the API's function. Says: `crypto.subtle.sign`
+with a key that lacks the usage "sign" always answers an error, whatever the algorithm,
+parameters, data and the state of the random generator: no signature is ever answered. The
+error is the generator's when the draw of random bytes fails first, and InvalidAccessError
+otherwise (`sign_no_usage`: the signing function is that constant, so no primitive ran).
+Does not say: the same of verify, deriveBits, encrypt and decrypt at this level; for them
+the statement is on the operation's function (`verify_no_usage`, `deriveBits_no_usage`,
+`crypt_no_usage`), which `subtle` calls with the key the page named. -/
+theorem subtle_sign_no_usage (s : State) (fs : Array ByteArray) (h : subtleMethod fs = "sign") (k : Key)
+    (hk : keyOf s.keys (pairsOf fs) "key" = .ok k) (hu : k.usages.contains .sign = false) :
+    ∃ e, (subtle s fs).2 = .error e := by
+  unfold subtleMethod at h
+  unfold subtle
+  simp only [h, hk, errInt, Except.mapError]
+  split
+  · rename_i e _; exact ⟨e, rfl⟩
+  · rename_i rand s' _
+    refine ⟨Err.invalidAccess.code, ?_⟩
+    rw [sign_no_usage hu]
+    rfl
 
 /-- Forget a key (prelude.js calls this when the page's CryptoKey is collected): its bytes
 are zeroed in place when the store held the only reference (`WebHacl.wipe`). -/
@@ -599,6 +686,21 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
     else if 80 ≤ code && code < 86 then
       let (storage, r) := L4Factoidal.Net.Storage.op s.storage s.net.page.origin code fs
       ({ s with storage }, r)
+    -- IndexedDB: one command (its name is the first argument) on the shelf of the session's
+    -- storage key, which is the page's origin, never an argument. The answer is its tokens.
+    else if code == 200 then
+      let (idb, out) := L4Factoidal.ClientStorage.Idb.opFor s.idb { origin := s.net.page.origin } fs
+      ({ s with idb }, .ok (pack out))
+    -- The File System API (201) and StorageManager (202), for the same storage key.
+    else if code == 201 then
+      let (opfs, out) := L4Factoidal.ClientStorage.Fs.opFor s.opfs { origin := s.net.page.origin } fs
+      ({ s with opfs }, .ok (pack out))
+    else if code == 202 then
+      (s, .ok (pack (L4Factoidal.ClientStorage.Manager.op s.idb s.opfs { origin := s.net.page.origin } fs)))
+    -- Web Locks (203): the lock manager of the same storage key.
+    else if code == 203 then
+      let (locks, out) := L4Factoidal.ClientStorage.Locks.opFor s.locks { origin := s.net.page.origin } fs
+      ({ s with locks }, .ok (pack out))
     -- Blob URLs (File API §8.3): 90 `createObjectURL(type, bytes)`, 91 `revokeObjectURL(url)`.
     -- The store is the network state's and names each URL's origin (the session's page
     -- origin, never an argument); the UUID is drawn here.
@@ -627,6 +729,10 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
       ({ s with gl }, r)
     -- WebCodecs: frame layouts and copy plans, configuration checks (pure functions of the arguments).
     else if 120 ≤ code && code < 140 then pure' (L4Factoidal.WebCodecs.Api.op code fs)
+    -- The Web Neural Network API (`L4Factoidal.WebNN.api`): one command and its arguments.
+    else if code == 140 then
+      let (nn, out) := L4Factoidal.WebNN.api s.nn fs
+      ({ s with nn }, .ok out)
     else pure' (.error (-2))
 
 section

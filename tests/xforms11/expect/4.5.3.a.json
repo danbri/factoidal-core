@@ -1,0 +1,17 @@
+{
+ "case": "4.5.3.a",
+ "file": "Chapt04/4.5/4.5.3/4.5.3.a.xhtml",
+ "quote": "You may see an xforms-version-exception message. Processing must halt after dispatching an xforms-version-exception with implementation-specific error-information in the event context information. Processor specific testing is required to listen for the xforms-version-exception and provide the error-information. You must not see 'Hello world!' beneath this paragraph.",
+ "steps": [
+  {
+   "expect": "exception",
+   "name": "xforms-version-exception"
+  },
+  {
+   "expect": "absent",
+   "values": [
+    "Hello world!"
+   ]
+  }
+ ]
+}

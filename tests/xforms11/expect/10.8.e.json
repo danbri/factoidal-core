@@ -1,0 +1,15 @@
+{
+ "case": "10.8.e",
+ "file": "Chapt10/10.8/10.8.e.xhtml",
+ "quote": "When you activate the Fire Custom Event trigger you must not see a custom-event message.",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Fire Custom Event"
+  },
+  {
+   "expect": "no-message",
+   "contains": "custom-event"
+  }
+ ]
+}

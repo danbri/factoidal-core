@@ -1,0 +1,17 @@
+{
+ "case": "8.1.5.b",
+ "file": "Chapt08/8.1/8.1.5/8.1.5.b.xhtml",
+ "quote": "You must see the value \"1032\" for the Tax output control and the value \"2005\" for the Car Year output control.",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "Tax",
+   "value": "1032"
+  },
+  {
+   "expect": "control",
+   "label": "Car Year",
+   "value": "2005"
+  }
+ ]
+}

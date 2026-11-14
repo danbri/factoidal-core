@@ -1,0 +1,12 @@
+{
+ "case": "9.3.1.b",
+ "file": "Chapt09/9.3/9.3.1/9.3.1.b.xhtml",
+ "quote": "The value of the Initial Index output must be \"3\".",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "Initial Index",
+   "value": "3"
+  }
+ ]
+}

@@ -1,0 +1,16 @@
+{
+ "case": "10.3.i",
+ "file": "Chapt10/10.3/10.3.i.xhtml",
+ "quote": "You must have seen an xforms-insert message. The Node Count output must display a value of \"6\".",
+ "steps": [
+  {
+   "expect": "message",
+   "contains": "xforms-insert"
+  },
+  {
+   "expect": "control",
+   "label": "Node Count",
+   "value": "6"
+  }
+ ]
+}

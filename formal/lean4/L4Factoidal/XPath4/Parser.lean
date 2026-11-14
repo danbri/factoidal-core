@@ -85,6 +85,16 @@ structure PCtx where
       the static context (`XPath4.SchemaHook.declared`): whether the name has
       a global declaration. None by default (no schema in scope). -/
   schemaDecl : Bool → QN → Bool := fun _ _ => false
+  /-- The in-scope schema types that are simple types and not built in
+      (`XPath4.SchemaHook.simpleUse`): such a name is a type name of the
+      static context. None by default (no schema in scope). -/
+  schemaSimple : QN → Option SchemaSimpleUse := fun _ => none
+  /-- The parser is reading the target of `cast` or `castable`, where a
+      list type or a union type that is not pure is allowed. -/
+  castTarget : Bool := false
+  /-- The text is an XQuery module (set by `XQuery4.parseModule`): the
+      errors that only XQuery defines apply (XQST0052). -/
+  xquery : Bool := false
 
 abbrev P := ReaderT PCtx (StateT Nat (Except Err))
 
@@ -489,8 +499,23 @@ def atomicTypeOf (q : QN) : P IType := do
   match c.types.find? (fun (n, _) => n == q) with
   | some (_, t) => return t
   | none => pure ()
+  -- a simple type of the in-scope schema
+  if q.uri != nsXS then
+    match c.schemaSimple q with
+    | some (.general t) => return t
+    | some .castOnly =>
+      if c.castTarget then return .schemaType q
+      else throw { code := "XPST0051", msg := "not a generalized atomic type: " ++ q.show }
+    | none => pure ()
   if c.lenientTypes && q.uri != nsXS then return .item
   if q.uri == nsXS then
+    -- the target of cast and castable (XPath 4.0 §4.19.2, XPST0080;
+    -- XQuery 4.0: a type of the in-scope schema types that is not a
+    -- simple type is XQST0052)
+    if c.castTarget && q.loc == "anySimpleType" then
+      throw { code := "XPST0080", msg := "cast to an abstract type: " ++ q.show }
+    if c.castTarget && c.xquery && (q.loc == "anyType" || q.loc == "untyped") then
+      throw { code := "XQST0052", msg := "the cast target is not a simple type: " ++ q.show }
     if q.loc == "numeric" then
       pure (.choice [.atomic (.b .double), .atomic (.b .float), .atomic (.b .decimal)])
     -- xs:error: the union type with no member types (XSD 1.1 Part 2 §3.16.7.3)
@@ -752,7 +777,7 @@ def pItemType : Nat → P IType
               -- XPath 4.0 §3.2.9: the key type is a generalized atomic type
               -- (XPST0152); `item()` stands for a type not known yet
               let keyOk1 : IType → Bool := fun t => match t with
-                | .atomic _ | .enum _ | .item => true
+                | .atomic _ | .enum _ | .item | .schemaType _ => true
                 | _ => false
               let keyOk : Bool := match k with
                 | .choice ts => ts.all keyOk1
@@ -1181,7 +1206,16 @@ def pCastTarget : Nat → P (IType × Bool)
     if listT.isNone then set st
     let t ← match listT with
       | some t => pure t
-      | none => pItemType n
+      | none => withReader (fun c => { c with castTarget := true }) (pItemType n)
+    -- XQuery 4.0: a cast target that is not a simple type (XQST0052);
+    -- not in the first pass over a prolog, where a type name that is not
+    -- known yet reads as item()
+    if c0.xquery && !c0.lenientTypes then
+      match t with
+      | .item | .anyNode | .xnode | .elem _ | .attr _ | .elemT .. | .attrT .. | .schemaElem _
+      | .schemaAttr _ | .text | .comment | .nsNode | .pi _ | .doc _ | .empty =>
+        throw { code := "XQST0052", msg := "the cast target is not a simple type" }
+      | _ => pure ()
     let c ← read
     let i ← get
     let j := skipWsF c.s (c.s.size + 1) 0 i
@@ -1762,7 +1796,8 @@ end
     declarations prolog. -/
 def parseXPath (src : String) (ns : List (String × String) := []) (ext : Option ExtGrammar := none)
     (schemaDecl : Bool → QN → Bool := fun _ _ => false)
-    (features : FeatureSettings := {}) : M Expr :=
+    (features : FeatureSettings := {})
+    (schemaSimple : QN → Option SchemaSimpleUse := fun _ => none) : M Expr :=
   let p : P Expr := do
     -- prolog (XPath 4.0 §2.1): DefaultElementNamespaceDecl? NamespaceDecl*
     let mut extra : List (String × String) := []
@@ -1810,7 +1845,7 @@ def parseXPath (src : String) (ns : List (String × String) := []) (ext : Option
     if i < c.s.size then synErr ("unexpected text at offset " ++ toString i ++ ": '" ++
        String.ofList ((List.range (min 20 (c.s.size - i))).map (fun k => chAt c.s (i + k))) ++ "'")
     pure e
-  match (p.run { s := src.toList.toArray, ns, ext, schemaDecl, features }).run 0 with
+  match (p.run { s := src.toList.toArray, ns, ext, schemaDecl, features, schemaSimple }).run 0 with
   | .ok (e, _) => .ok e
   | .error e => .error e
 

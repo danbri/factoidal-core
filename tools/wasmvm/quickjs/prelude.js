@@ -1918,8 +1918,8 @@
   // The section's code is text until a page first uses Canvas 2D: compiled then, so pages
   // without a 2D canvas carry no more JavaScript (QuickJS's collector walks every function's
   // code on each cycle). It sees the prelude only through these parameters.
-  const make2d = () => new Function('n', 'define', 'named', 'nodeId', 'canvasSize', 'gpuContexts', 'DOMException', 'EventTarget',
-    make2dSource)(n, define, named, nodeId, canvasSize, gpuContexts, DOMException, EventTarget);
+  const make2d = () => new Function('n', 'define', 'named', 'nodeId', 'canvasSize', 'gpuContexts', 'DOMException', 'EventTarget', 'media',
+    make2dSource)(n, define, named, nodeId, canvasSize, gpuContexts, DOMException, EventTarget, codecsHost);
   const make2dSource = `'use strict';
     const K = Symbol('canvas2d');
     let q = [], strs = [], strIx = new Map(), tails = [], tailLen = 0, queued = false, selected = -1;
@@ -2208,9 +2208,18 @@
     define(P, 'drawImage', function (img, ...a) {
       const s = self(this);
       if (a.length !== 2 && a.length !== 4 && a.length !== 8) throw new TypeError("Failed to execute 'drawImage': Valid arities are: [3, 5, 9], but " + (a.length + 1) + ' arguments provided.');
+      const v = a.map(Number);
+      if (media.isFrame && media.isFrame(img)) {
+        // A VideoFrame (WebCodecs §9.4): its pixels as Lean turned them (op 126), drawn at the
+        // frame's display size; a source rectangle is in display units.
+        const f = frameBitmap(img), kx = f.w / f.dw, ky = f.h / f.dh;
+        const r = a.length === 2 ? [NaN, NaN, NaN, NaN, v[0], v[1], f.dw, f.dh] : a.length === 4 ? [NaN, NaN, NaN, NaN, ...v]
+          : [v[0] * kx, v[1] * ky, v[2] * kx, v[3] * ky, v[4], v[5], v[6], v[7]];
+        on(s.id); q.push(80, 2, f.id, ...r); q.push(94, 4, f.id);
+        return;
+      }
       const [kind, src] = sourceOf(img, 'drawImage');
       if (kind === 3 && src === '') return;
-      const v = a.map(Number);
       const r = a.length === 2 ? [NaN, NaN, NaN, NaN, v[0], v[1], NaN, NaN] : a.length === 4 ? [NaN, NaN, NaN, NaN, ...v] : v;
       on(s.id); q.push(80, kind, kind === 3 ? str(src) : src, ...r);
     });
@@ -2341,13 +2350,55 @@
           resolve(bitmapOf(4, tail(bytes), 0, 0, img.width, img.height, img.width, img.height));
           return;
         }
+        if (media.isFrame && media.isFrame(img)) {
+          // A VideoFrame: drawn at its display size on a scratch bitmap, which the new bitmap copies.
+          const f = frameBitmap(img), id = nextOffscreen++;
+          q.push(2, id, f.dw, f.dh, 0); selected = id;
+          q.push(80, 2, f.id, NaN, NaN, NaN, NaN, 0, 0, f.dw, f.dh); q.push(94, 4, f.id);
+          const b = bitmapOf(1, id, sx, sy, sw, sh, Number.isNaN(sw) ? f.dw : sw, Number.isNaN(sh) ? f.dh : sh);
+          q.push(2, id, 0, 0, 0); selected = id; later();
+          resolve(b);
+          return;
+        }
         const [kind, src] = sourceOf(img, 'createImageBitmap');
         const size = nums(ask([11, kind, kind === 3 ? 0 : src], kind === 3 ? [src] : []));
         if (size.length < 2) throw new DOMException('The source image could not be decoded.', 'InvalidStateError');
         resolve(bitmapOf(kind, kind === 3 ? str(src) : src, sx, sy, sw, sh, Number.isNaN(sw) ? size[0] : sw, Number.isNaN(sh) ? size[1] : sh));
       } catch (e) { reject(e); }
     });
-    return { CanvasRenderingContext2D, OffscreenCanvasRenderingContext2D, OffscreenCanvas, Path2D, ImageData,
+    // A VideoFrame as a bitmap of Lean's (kind 4, from its oriented RGBA pixels: the media
+    // host's frameImage), with its oriented size and its display size. The caller releases it.
+    const frameBitmap = img => {
+      const f = media.frameImage(img), id = nextObj++;
+      q.push(93, id, 4, tail(f.bytes), 0, 0, f.w, f.h, f.w, f.h); later();
+      return { id, w: f.w, h: f.h, dw: f.dw, dh: f.dh };
+    };
+    // The pixels of a canvas image source as RGBA bytes (for a VideoFrame made from it): drawn on
+    // a scratch bitmap of its size and read back (op 202). null: not a source this reads.
+    const pixelsOf = img => {
+      let w, h;
+      if (img instanceof named.HTMLCanvasElement) { w = canvasSize(img, 'width', 300); h = canvasSize(img, 'height', 150); }
+      else if (img instanceof OffscreenCanvas) { w = img[K].w; h = img[K].h; }
+      else if (img instanceof ImageBitmap) {
+        if (img[K].closed) throw new DOMException('The ImageBitmap is closed.', 'InvalidStateError');
+        w = img[K].w; h = img[K].h;
+      } else if (img instanceof named.HTMLImageElement) {
+        const size = img.src === '' ? [] : nums(ask([11, 3, 0], [img.src]));
+        if (size.length < 2) throw new DOMException('The image is not decoded.', 'InvalidStateError');
+        [w, h] = size;
+      } else return null;
+      if (!(w > 0 && h > 0)) throw new DOMException('The image has no pixels.', 'InvalidStateError');
+      const [kind, src] = sourceOf(img, 'VideoFrame');
+      const id = nextOffscreen++;
+      q.push(2, id, w, h, 0); selected = id;
+      q.push(80, kind, kind === 3 ? str(src) : src, NaN, NaN, NaN, NaN, 0, 0, NaN, NaN);
+      flush();
+      const bytes = n.gpuBytes(202, '[]', pack([2, id, 0, 0, w, h], [], 0));
+      q.push(2, id, 0, 0, 0); selected = id; later();
+      if (!(bytes instanceof ArrayBuffer)) throw new DOMException('The image could not be read.', 'InvalidStateError');
+      return { w, h, bytes: new Uint8Array(bytes) };
+    };
+    return { CanvasRenderingContext2D, OffscreenCanvasRenderingContext2D, OffscreenCanvas, Path2D, ImageData, pixelsOf,
       ImageBitmap, CanvasGradient, CanvasPattern, TextMetrics, DOMMatrix, DOMMatrixReadOnly, DOMPoint, DOMPointReadOnly, createImageBitmap,
       context: canvas => contextFor(CanvasRenderingContext2D, canvas, nodeId(canvas), canvasSize(canvas, 'width', 300), canvasSize(canvas, 'height', 150), true),
       resized: canvas => { const id = nodeId(canvas); q.push(2, id, canvasSize(canvas, 'width', 300), canvasSize(canvas, 'height', 150), 1); selected = id; later(); },
@@ -3399,7 +3450,13 @@
   // ==== end customelements ================================================================
   def('location', location);
   def('navigator', Object.freeze({ userAgent: 'Foafnaut', language: 'en', languages: ['en'], platform: '', onLine: true,
-    cookieEnabled: false, hardwareConcurrency: 1, gpu }));
+    cookieEnabled: false, hardwareConcurrency: 1, gpu,
+    // StorageManager (section File System API); undefined on an engine without the ops.
+    get storage() { return fsApi()?.manager; },
+    // LockManager (section Web Locks API).
+    get locks() { return locksApi()?.manager; },
+    // Web Neural Network API (section webnn): a secure context's navigator has it.
+    get ml() { return webnnOn() ? webnn().ml : undefined; } }));
   def('GPUBufferUsage', GPUBufferUsage); def('GPUTextureUsage', GPUTextureUsage); def('GPUShaderStage', GPUShaderStage);
   def('GPUColorWrite', GPUColorWrite); def('GPUValidationError', GPUValidationError); def('GPUOutOfMemoryError', GPUOutOfMemoryError);
   def('GPUCanvasContext', GPUCanvasContext); def('GPUDevice', GPUDevice);
@@ -3661,19 +3718,10 @@
           const timestamp = enforceSigned(d.timestamp, 'timestamp');
           const duration = d.duration === undefined ? null : enforce(d.duration, U64, 'duration');
           const layout = layoutArg(d.layout, 'layout');
-          const args = initArgs(d);
           const color = d.colorSpace === undefined ? undefined : colorInit(d.colorSpace);
           const transfer = transferList(d, 'VideoFrame');
           const data = bytesOf(image, 'data');
-          const lines = ask(120, [format, String(cw), String(ch), String(data.byteLength), layout].concat(args), 'the VideoFrameBufferInit is not valid for the data').split('\\n');
-          const resource = new Uint8Array(Number(lines[0]));
-          move(data, resource, lines.slice(3));
-          detach(transfer);
-          const c = lines[2].split(' ');
-          // RGBX and BGRX: the fourth byte is padding, kept opaque (Lean says which formats).
-          if (c[4] === '1') for (let i = 3; i < resource.length; i += 4) resource[i] = 255;
-          K.set(this, Object.assign(metaOf(lines[1]), { format, timestamp, duration, resource, closed: false,
-            color: color === undefined ? { primaries: c[0], transfer: c[1], matrix: c[2], fullRange: c[3] === '1' } : color }));
+          K.set(this, bufferFrame(format, cw, ch, data, layout, d, timestamp, duration, color, () => detach(transfer)));
           return;
         }
         const s = imageFrame(image, dict(init, 'VideoFrameInit'));
@@ -3717,8 +3765,43 @@
       clone() { const s = live(st(this), 'clone'); return frameOf(Object.assign({}, s)); }
       close() { const s = st(this); s.closed = true; s.resource = null; }
     }
-    // A frame from an image needs the image's pixels (the canvas section's): not connected yet.
-    const imageFrame = (image, d) => { throw dom('NotSupportedError', 'VideoFrame from an image is not supported yet'); };
+    // A frame's state from the page's bytes: Lean's layout (op 120) says the resource's size, the
+    // frame's values, the format's colour space and the rows to copy.
+    const bufferFrame = (format, cw, ch, data, layout, d, timestamp, duration, color, taken) => {
+      const lines = ask(120, [format, String(cw), String(ch), String(data.byteLength), layout].concat(initArgs(d)), 'the VideoFrameBufferInit is not valid for the data').split('\\n');
+      const resource = new Uint8Array(Number(lines[0]));
+      move(data, resource, lines.slice(3));
+      taken();
+      const c = lines[2].split(' ');
+      // RGBX and BGRX: the fourth byte is padding, kept opaque (Lean says which formats).
+      if (c[4] === '1') for (let i = 3; i < resource.length; i += 4) resource[i] = 255;
+      return Object.assign(metaOf(lines[1]), { format, timestamp, duration, resource, closed: false,
+        color: color === undefined ? { primaries: c[0], transfer: c[1], matrix: c[2], fullRange: c[3] === '1' } : color });
+    };
+    // A frame from a canvas image source (§9.4.2 "Initialize Frame From Other Frame"'s image
+    // case): its pixels as RGBA (the canvas section's, read through the host), RGBX when the
+    // init discards alpha. The timestamp is required for these sources.
+    const imageFrame = (image, d) => {
+      const px = host.pixelsOf ? host.pixelsOf(image) : null;
+      if (px === null) return null;
+      if (d.timestamp === undefined) throw bad('timestamp required to construct VideoFrame from this source');
+      const timestamp = enforceSigned(d.timestamp, 'timestamp');
+      const duration = d.duration === undefined ? null : enforce(d.duration, U64, 'duration');
+      const alpha = d.alpha === undefined ? 'keep' : oneOf(d.alpha, ['keep', 'discard'], 'AlphaOption');
+      return bufferFrame(alpha === 'discard' ? 'RGBX' : 'RGBA', px.w, px.h, px.bytes, '', d, timestamp, duration, undefined, () => {});
+    };
+    // What the canvas section needs of a frame: its visible rectangle as RGBA, oriented (Lean's
+    // conversion, op 124, then its orientation, op 126), with the oriented and the display size.
+    host.isFrame = x => x instanceof VideoFrame;
+    host.frameImage = f => {
+      const s = live(st(f), 'drawImage');
+      const rgba = convertFrame(s, { rect: [s.vx, s.vy, s.vw, s.vh].join(' '), format: 'RGBA', space: undefined });
+      const turned = s.rotation % 180 !== 0, w = turned ? s.vh : s.vw, h = turned ? s.vw : s.vh;
+      if (s.rotation === 0 && !s.flip) return { w, h, dw: s.dw, dh: s.dh, bytes: rgba };
+      const r = apiCall(126, [String(s.rotation), s.flip ? '1' : '', String(s.vw), String(s.vh), rgba], 0, true);
+      if (typeof r === 'number') throw dom('InvalidStateError', 'the frame could not be drawn');
+      return { w, h, dw: s.dw, dh: s.dh, bytes: new Uint8Array(r) };
+    };
     // The rectangle as packed pixels of an RGB format: Lean's conversion (WebCodecs.Convert.toRgb).
     // It keeps the frame's primaries and transfer: a destination that is not sRGB is refused.
     const convertFrame = (s, o) => {
@@ -3868,6 +3951,7 @@
 `;
   const codecNames = ['VideoColorSpace', 'VideoFrame', 'EncodedVideoChunk', 'EncodedAudioChunk', 'AudioDecoder', 'VideoDecoder', 'AudioEncoder', 'VideoEncoder'];
   lazyGroup(codecNames, codecs);
+  codecsHost.pixelsOf = image => c2d().pixelsOf(image);
   // ==== end webcodecs section ====
   const apiError = (r, what) => {
     switch (r) {
@@ -5825,6 +5909,319 @@
     setTag(URLPattern, 'URLPattern');
     return URLPattern;
   });
+  // ==== webnn ==== Web Neural Network API (https://www.w3.org/TR/webnn/): navigator.ml, ML,
+  // MLContext, MLGraphBuilder, MLOperand, MLGraph, MLTensor.
+  // Everything is decided and computed in Lean (L4Factoidal.WebNN, web_api op 140: one call
+  // with a command and its arguments): which operators exist and what their arguments are
+  // (the operator table, asked for once), whether a call is valid, the data types and shapes
+  // of operands, the graph, the tensors and the arithmetic. This section converts arguments
+  // (WebIDL), keeps the numbers that name Lean's objects, and makes the promises. Nothing here
+  // runs until a page reads navigator.ml or one of the interface names.
+  const webnn = (() => { let made; return () => made ??= makeWebnn(); })();
+  const webnnOn = () => /^https:|^http:\/\/(localhost|127\.0\.0\.1)[:\/]/.test(href) && apiOn() && apiCall(140, ['lost', '0']) !== -2;
+  const makeWebnn = () => {
+    const nnRaw = (fields, bytes) => apiCall(140, fields, 0, bytes);
+    const refuse = r => {
+      if (r[1] === 'T') throw new TypeError(r.slice(2));
+      const k = r.indexOf(':');
+      throw new DOMException(r.slice(k + 1), r.slice(2, k));
+    };
+    // One call: the answer text, or the refusal thrown (`!T…` TypeError, `!D<name>:…` DOMException).
+    const nn = (...fields) => {
+      const r = nnRaw(fields, false);
+      if (typeof r !== 'string') throw new DOMException('WebNN is not available', 'NotSupportedError');
+      if (r.charCodeAt(0) === 33) refuse(r);
+      return r;
+    };
+    const DTYPES = ['float32', 'float16', 'int32', 'uint32', 'int64', 'uint64', 'int8', 'uint8', 'bfloat16', 'float8e4m3'];
+    // ---- WebIDL conversions ----
+    const f64 = new Float64Array(1), w32 = new Uint32Array(f64.buffer);
+    const h8 = x => (x >>> 0).toString(16).padStart(8, '0');
+    // A double as the 16 hexadecimal digits of its bits (exact, and no number parsing in Lean).
+    const hex = x => { f64[0] = x; return h8(w32[1]) + h8(w32[0]); };
+    const ulong = (v, what, enforce = true) => {
+      let x = +v;
+      if (!enforce) { if (!Number.isFinite(x)) return 0; x = Math.trunc(x); return x - Math.floor(x / 4294967296) * 4294967296; }
+      if (!Number.isFinite(x)) throw new TypeError(`${what}: the value is not a finite number`);
+      x = Math.trunc(x);
+      if (x < 0 || x > 4294967295) throw new TypeError(`${what}: the value is outside the range of unsigned long`);
+      return x + 0;
+    };
+    const long = (v, what) => {
+      let x = +v;
+      if (!Number.isFinite(x)) throw new TypeError(`${what}: the value is not a finite number`);
+      x = Math.trunc(x);
+      if (x < -2147483648 || x > 2147483647) throw new TypeError(`${what}: the value is outside the range of long`);
+      return x + 0;
+    };
+    const double = (v, what) => { const x = +v; if (!Number.isFinite(x)) throw new TypeError(`${what}: the value is not a finite number`); return x; };
+    const float = (v, what) => { const x = Math.fround(double(v, what)); if (!Number.isFinite(x)) throw new TypeError(`${what}: the value is outside the range of float`); return x; };
+    const seq = (v, conv, what) => {
+      if (v === null || (typeof v !== 'object' && typeof v !== 'function') || typeof v[Symbol.iterator] !== 'function') throw new TypeError(`${what}: the value is not a sequence`);
+      const out = [];
+      for (const x of v) out.push(conv(x, what));
+      return out;
+    };
+    const enumOf = (v, values, what) => { const s = String(v); if (!values.includes(s)) throw new TypeError(`${what}: '${s}' is not a valid enum value`); return s; };
+    // MLNumber: (bigint or unrestricted double).
+    const mlnumber = v => {
+      if (typeof v === 'bigint') return 'b' + v.toString();
+      if (typeof v === 'object' && v !== null) { const p = v[Symbol.toPrimitive] ? v[Symbol.toPrimitive]('number') : v.valueOf(); if (typeof p === 'bigint') return 'b' + p.toString(); }
+      return 'd' + hex(+v);
+    };
+    const operands = new WeakMap(), builders = new WeakMap(), contexts = new WeakMap(), graphs = new WeakMap(), tensors = new WeakMap();
+    const operandRef = (v, what) => { const s = operands.get(v); if (!s) throw new TypeError(`${what}: the value is not of type 'MLOperand'`); return s.ref; };
+    // The text of one converted value, by the table's type code.
+    const conv = (code, extra, v, what) => {
+      switch (code) {
+        case 'o': return operandRef(v, what);
+        case 'O': return seq(v, operandRef, what).join(',');
+        case 'u': return String(ulong(v, what));
+        case 'w': return String(ulong(v, what, false));
+        case 'l': return String(long(v, what));
+        case 'U': return seq(v, ulong, what).join(',');
+        case 'W': return seq(v, x => ulong(x, what, false), what).join(',');
+        case 'x': return v !== null && typeof v === 'object' ? 's' + seq(v, ulong, what).join(',') : 'n' + ulong(v, what);
+        case 'd': return hex(double(v, what));
+        case 'F': return seq(v, float, what).map(hex).join(',');
+        case 'b': return v ? '1' : '0';
+        case 'e': return enumOf(v, extra, what);
+        case 'E': return seq(v, x => enumOf(x, extra, what), what).join(',');
+        case 'n': return mlnumber(v);
+        case 't': return enumOf(v, DTYPES, what);
+      }
+      throw new TypeError(what);
+    };
+    const dictOf = (v, what) => { if (v === undefined || v === null) return {}; if (typeof v !== 'object' && typeof v !== 'function') throw new TypeError(`${what}: the value is not an object`); return v; };
+    // MLOperandDescriptor (members in order: dataType, shape) and MLTensorDescriptor.
+    const descOf = (v, what, tensor) => {
+      const o = dictOf(v, what);
+      const dt = o.dataType;
+      if (dt === undefined) throw new TypeError(`${what}: required member dataType is undefined`);
+      const dataType = enumOf(dt, DTYPES, what);
+      const readable = tensor ? !!o.readable : false;
+      const sh = o.shape;
+      if (sh === undefined) throw new TypeError(`${what}: required member shape is undefined`);
+      const shape = seq(sh, ulong, what);
+      const writable = tensor ? !!o.writable : false;
+      return { dataType, shape, readable, writable };
+    };
+    // A buffer source as (kind, bytes): the kind is the view's class name, for Lean to check
+    // against the data type.
+    const sourceOf = (v, what) => {
+      if (v instanceof ArrayBuffer || isShared(v)) return ['ArrayBuffer', v.detached ? new Uint8Array(0) : new Uint8Array(v)];
+      if (ArrayBuffer.isView(v)) return [Object.prototype.toString.call(v).slice(8, -1), v.buffer.detached ? new Uint8Array(0) : new Uint8Array(v.buffer, v.byteOffset, v.byteLength)];
+      throw new TypeError(`${what}: the value is not of type '(ArrayBuffer or ArrayBufferView)'`);
+    };
+    const illegal = () => { throw new TypeError('Illegal constructor'); };
+    const state = (map, o, name) => { const s = map.get(o); if (!s) throw new TypeError(`Illegal invocation: not of type '${name}'`); return s; };
+    const need = (args, n, where) => { if (args.length < n) throw new TypeError(`Failed to execute ${where}: ${n} argument${n === 1 ? '' : 's'} required, but only ${args.length} present.`); };
+    // WebIDL: operations and attributes are enumerable; a promise-returning operation
+    // answers a rejected promise where it would throw.
+    const op = (C, name, length, f) => {
+      Object.defineProperty(f, 'name', { value: name, configurable: true });
+      Object.defineProperty(f, 'length', { value: length, configurable: true });
+      Object.defineProperty(C.prototype, name, { value: f, writable: true, enumerable: true, configurable: true });
+    };
+    const asyncOp = (C, name, length, f) => op(C, name, length, function (...args) { try { return Promise.resolve(f.apply(this, args)); } catch (e) { return Promise.reject(e); } });
+    const attr = (C, name, get) => {
+      Object.defineProperty(get, 'name', { value: 'get ' + name, configurable: true });
+      Object.defineProperty(C.prototype, name, { get, enumerable: true, configurable: true });
+    };
+
+    class MLOperand { constructor() { illegal(); } }
+    attr(MLOperand, 'dataType', function () { return state(operands, this, 'MLOperand').dataType; });
+    attr(MLOperand, 'shape', function () { return state(operands, this, 'MLOperand').shape; });
+    const numbers = t => Object.freeze(t === '' ? [] : t.split(',').map(Number));
+    const makeOperand = (b, text) => {
+      const [i, dataType, shape] = text.split(':');
+      const o = Object.create(MLOperand.prototype);
+      operands.set(o, { ref: b.id + '.' + i, dataType, shape: numbers(shape) });
+      return o;
+    };
+
+    class MLTensor { constructor() { illegal(); } }
+    for (const k of ['dataType', 'shape', 'readable', 'writable', 'constant']) attr(MLTensor, k, function () { return state(tensors, this, 'MLTensor')[k]; });
+    op(MLTensor, 'destroy', 0, function destroy() { const t = state(tensors, this, 'MLTensor'); t.destroyed = true; nn('destroyTensor', t.id); });
+    const makeTensor = (c, d, flags, source) => {
+      const fields = ['tensor', c.id, d.dataType, d.shape.join(','), flags];
+      if (source) fields.push(source[0], source[1]);
+      const id = +nn(...fields);
+      const t = Object.create(MLTensor.prototype);
+      tensors.set(t, { id, ctx: c, dataType: d.dataType, shape: Object.freeze(d.shape), readable: flags.includes('r'), writable: flags.includes('w'), constant: flags.includes('c') });
+      return t;
+    };
+
+    class MLGraph { constructor() { illegal(); } }
+    op(MLGraph, 'destroy', 0, function destroy() { nn('destroyGraph', state(graphs, this, 'MLGraph').id); });
+
+    class MLContext { constructor() { illegal(); } }
+    const tensorRef = (v, what) => { const s = tensors.get(v); if (!s) throw new TypeError(`${what}: the value is not of type 'MLTensor'`); return s; };
+    // record<USVString, T>: the own enumerable string keys, in order.
+    const record = (v, each, what) => {
+      if (v === null || (typeof v !== 'object' && typeof v !== 'function')) throw new TypeError(`${what}: the value is not an object`);
+      const out = [];
+      for (const k of Object.keys(v)) out.push(usv(k), each(v[k], what));
+      return out;
+    };
+    op(MLContext, 'dispatch', 3, function dispatch(graph, inputs, outputs) {
+      const c = state(contexts, this, 'MLContext');
+      need(arguments, 3, "'dispatch' on 'MLContext'");
+      const g = graphs.get(graph);
+      if (!g) throw new TypeError("Failed to execute 'dispatch' on 'MLContext': parameter 1 is not of type 'MLGraph'.");
+      const ins = record(inputs, (t, w) => tensorRef(t, w).id, 'dispatch: inputs');
+      const outs = record(outputs, (t, w) => tensorRef(t, w).id, 'dispatch: outputs');
+      nn('dispatch', c.id, g.id, ins.length / 2, ...ins, ...outs);
+    });
+    asyncOp(MLContext, 'createTensor', 1, function createTensor(descriptor) {
+      const c = state(contexts, this, 'MLContext');
+      need(arguments, 1, "'createTensor' on 'MLContext'");
+      const d = descOf(descriptor, 'createTensor', true);
+      return makeTensor(c, d, (d.readable ? 'r' : '') + (d.writable ? 'w' : ''));
+    });
+    asyncOp(MLContext, 'createExportableTensor', 2, function createExportableTensor(descriptor, gpuDevice) {
+      state(contexts, this, 'MLContext');
+      need(arguments, 2, "'createExportableTensor' on 'MLContext'");
+      throw new DOMException('Exportable tensors are not supported', 'NotSupportedError');
+    });
+    asyncOp(MLContext, 'createConstantTensor', 2, function createConstantTensor(descriptor, inputData) {
+      const c = state(contexts, this, 'MLContext');
+      need(arguments, 2, "'createConstantTensor' on 'MLContext'");
+      const d = descOf(descriptor, 'createConstantTensor', false);
+      return makeTensor(c, d, 'c', sourceOf(inputData, 'createConstantTensor'));
+    });
+    asyncOp(MLContext, 'readTensor', 1, function readTensor(tensor, outputData) {
+      const c = state(contexts, this, 'MLContext');
+      need(arguments, 1, "'readTensor' on 'MLContext'");
+      const t = tensorRef(tensor, 'readTensor');
+      const byob = arguments.length > 1;
+      const r = nnRaw(byob ? ['read', c.id, t.id, sourceOf(outputData, 'readTensor')[1].length] : ['read', c.id, t.id], true);
+      if (typeof r === 'number') throw new DOMException('WebNN is not available', 'NotSupportedError');
+      if (r[0] !== 0) { let m = ''; for (let i = 1; i < r.length; i++) m += String.fromCharCode(r[i]); refuse(m); }
+      // The bytes are those of this point in the context's timeline; the promise settles
+      // later, and by then the tensor or the context may be destroyed, or the buffer detached.
+      return Promise.resolve().then(() => {
+        if (t.destroyed || c.destroyed) throw new DOMException('The tensor was destroyed before it was read.', 'InvalidStateError');
+        if (!byob) return r.slice(1).buffer;
+        const view = sourceOf(outputData, 'readTensor')[1];
+        if (view.length < r.length - 1) throw new TypeError('readTensor: the output buffer is detached');
+        view.set(r.subarray(1));
+      });
+    });
+    op(MLContext, 'writeTensor', 2, function writeTensor(tensor, inputData) {
+      const c = state(contexts, this, 'MLContext');
+      need(arguments, 2, "'writeTensor' on 'MLContext'");
+      const t = tensorRef(tensor, 'writeTensor');
+      const src = sourceOf(inputData, 'writeTensor');
+      nn('write', c.id, t.id, src[0], src[1]);
+    });
+    op(MLContext, 'exportToGPU', 1, function exportToGPU(tensor) {
+      state(contexts, this, 'MLContext');
+      need(arguments, 1, "'exportToGPU' on 'MLContext'");
+      tensorRef(tensor, 'exportToGPU');
+      throw new TypeError('exportToGPU: the tensor is not exportable');
+    });
+    let limitsText;
+    op(MLContext, 'opSupportLimits', 0, function opSupportLimits() {
+      state(contexts, this, 'MLContext');
+      return JSON.parse(limitsText ??= nn('limits'));
+    });
+    op(MLContext, 'destroy', 0, function destroy() {
+      const c = state(contexts, this, 'MLContext');
+      if (c.destroyed) return;
+      c.destroyed = true;
+      nn('destroyContext', c.id);
+      c.lose({ message: 'The context was destroyed.' });
+    });
+    attr(MLContext, 'accelerated', function () { return state(contexts, this, 'MLContext').accelerated; });
+    // A promise attribute answers a rejected promise where it would throw.
+    attr(MLContext, 'lost', function () { try { return state(contexts, this, 'MLContext').lost; } catch (e) { return Promise.reject(e); } });
+
+    class ML { constructor() { illegal(); } }
+    asyncOp(ML, 'createContext', 0, function createContext(options = {}) {
+      if (!mlState.has(this)) throw new TypeError("Illegal invocation: not of type 'ML'");
+      // Overloads: (GPUDevice), or (optional MLContextOptions). Members in order.
+      const isDevice = typeof GPUDevice === 'function' && options instanceof GPUDevice;
+      const o = isDevice ? {} : dictOf(options, 'createContext');
+      const accelerated = o.accelerated === undefined ? true : !!o.accelerated;
+      if (o.deviceType !== undefined) enumOf(o.deviceType, ['cpu', 'gpu', 'npu'], 'createContext: deviceType');
+      if (o.powerPreference !== undefined) enumOf(o.powerPreference, ['default', 'high-performance', 'low-power'], 'createContext: powerPreference');
+      const c = Object.create(MLContext.prototype);
+      let lose;
+      const lost = new Promise(r => { lose = r; });
+      contexts.set(c, { id: +nn('context'), accelerated: isDevice ? true : accelerated, lost, lose, destroyed: false });
+      return c;
+    });
+
+    class MLGraphBuilder {
+      constructor(context) {
+        need(arguments, 1, "to construct 'MLGraphBuilder'");
+        const c = contexts.get(context);
+        if (!c) throw new TypeError("Failed to construct 'MLGraphBuilder': parameter 1 is not of type 'MLContext'.");
+        builders.set(this, { id: +nn('builder', c.id), ctx: c });
+      }
+    }
+    op(MLGraphBuilder, 'input', 2, function input(name, descriptor) {
+      const b = state(builders, this, 'MLGraphBuilder');
+      need(arguments, 2, "'input' on 'MLGraphBuilder'");
+      name = usv(name);
+      const d = descOf(descriptor, 'input', false);
+      return makeOperand(b, nn('input', b.id, name, d.dataType, d.shape.join(',')));
+    });
+    op(MLGraphBuilder, 'constant', 1, function constant(first, second) {
+      const b = state(builders, this, 'MLGraphBuilder');
+      need(arguments, 1, "'constant' on 'MLGraphBuilder'");
+      // Overloads: (MLTensor), (MLOperandDescriptor, AllowSharedBufferSource), (MLOperandDataType, MLNumber).
+      if (arguments.length === 1) return makeOperand(b, nn('constantTensor', b.id, tensorRef(first, 'constant').id));
+      if (first === undefined || first === null || typeof first === 'object' || typeof first === 'function') {
+        const d = descOf(first, 'constant', false);
+        const src = sourceOf(second, 'constant');
+        return makeOperand(b, nn('constant', b.id, d.dataType, d.shape.join(','), src[0], src[1]));
+      }
+      return makeOperand(b, nn('scalar', b.id, enumOf(first, DTYPES, 'constant'), mlnumber(second)));
+    });
+    asyncOp(MLGraphBuilder, 'build', 1, function build(outputs) {
+      const b = state(builders, this, 'MLGraphBuilder');
+      need(arguments, 1, "'build' on 'MLGraphBuilder'");
+      const outs = record(outputs, operandRef, 'build: outputs');
+      nn('build', b.id, ...outs);
+      const g = Object.create(MLGraph.prototype);
+      graphs.set(g, { id: b.id, ctx: b.ctx });
+      return g;
+    });
+    // The operators: one method for each line of Lean's table, `name|param:type,…|member:type,…|1 or s`.
+    const parts = t => t === '' ? [] : t.split(',').map(p => { const k = p.indexOf(':'), code = p.slice(k + 1); return [p.slice(0, k), code[0], code.length > 2 ? code.slice(2).split('/') : null]; });
+    for (const line of nn('table').split('\n')) {
+      const [name, ps, os, ret] = line.split('|');
+      const params = parts(ps), members = parts(os);
+      members.push(['label', 's', null]);
+      // dictionary members are converted in lexicographical order
+      members.sort((x, y) => x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : 0);
+      const required = params.length;
+      op(MLGraphBuilder, name, required, function (...args) {
+        const b = state(builders, this, 'MLGraphBuilder');
+        need(args, required, `'${name}' on 'MLGraphBuilder'`);
+        const fields = ['op', b.id, name, ''];
+        for (let i = 0; i < required; i++) fields.push(params[i][0], conv(params[i][1], params[i][2], args[i], `${name}: ${params[i][0]}`));
+        const o = dictOf(args[required], `${name}: options`);
+        for (const m of members) {
+          const v = o[m[0]];
+          if (v === undefined) continue;
+          if (m[1] === 's') fields[3] = usv(v);
+          else fields.push(m[0], conv(m[1], m[2], v, `${name}: ${m[0]}`));
+        }
+        const made = nn(...fields).split(';').map(t => makeOperand(b, t));
+        return ret === 's' ? made : made[0];
+      });
+    }
+    for (const [C, tag] of [[ML, 'ML'], [MLContext, 'MLContext'], [MLGraph, 'MLGraph'], [MLOperand, 'MLOperand'], [MLTensor, 'MLTensor'], [MLGraphBuilder, 'MLGraphBuilder']]) setTag(C, tag);
+    const mlState = new WeakSet();
+    const ml = Object.create(ML.prototype);
+    mlState.add(ml);
+    return { ml, ML, MLContext, MLGraph, MLOperand, MLTensor, MLGraphBuilder };
+  };
+  for (const name of ['ML', 'MLContext', 'MLGraph', 'MLOperand', 'MLTensor', 'MLGraphBuilder']) lazy(name, () => webnnOn() ? webnn()[name] : undefined);
+  // ==== end webnn ====
   // The webkitURL alias (URL §6.1).
   lazy('webkitURL', () => globalThis.URL);
 
@@ -6071,15 +6468,70 @@
         });
       },
     };
+    // getPublicKey (modern algorithms draft): Lean builds the public key from the public parts
+    // the private key carries.
+    subtleMethods.getPublicKey = function getPublicKey(key, keyUsages) {
+      return start(() => {
+        if (arguments.length < 2) throw new TypeError('getPublicKey: 2 arguments required');
+        const k = keyOf(key), us = usagesOf(keyUsages);
+        return later(() => keyAnswer(call(['getPublicKey', 'key', String(k.handle), ...usagePairs(us)], 'getPublicKey')), [key]);
+      });
+    };
+    // SubtleCrypto.supports (modern algorithms draft): the WebIDL conversions and the
+    // normalization here, the answer Lean's (WebCryptoKeys.supports). An algorithm that does
+    // not normalize for the operation is not supported.
+    const supportOps = ['encrypt', 'decrypt', 'sign', 'verify', 'digest', 'generateKey', 'deriveKey', 'deriveBits', 'importKey',
+      'exportKey', 'wrapKey', 'unwrapKey', 'encapsulateKey', 'encapsulateBits', 'decapsulateKey', 'decapsulateBits', 'getPublicKey'];
+    const supports = function supports(operation, algorithm, lengthOrAdditionalAlgorithm = null) {
+      if (arguments.length < 2) throw new TypeError('supports: 2 arguments required');
+      const op = domString(operation), extra = lengthOrAdditionalAlgorithm;
+      if (!supportOps.includes(op)) return false;
+      try {
+        const args = ['supports', 'op', op];
+        if (op === 'deriveKey' || op === 'unwrapKey') {
+          if (extra === null || extra === undefined || typeof extra === 'number') return false;
+          args.push(...normalize('importKey', extra, 't:').pairs, ...normalize('get key length', extra, 'g:').pairs);
+        } else if (op === 'deriveBits') {
+          args.push('length', extra === null || extra === undefined ? 'null' : String(enforceRange(extra, 4294967295, 'length')));
+        }
+        const a = op === 'deriveKey' ? normalize('deriveBits', algorithm)
+          : op === 'wrapKey' ? normalizeEither('wrapKey', 'encrypt', algorithm)
+          : op === 'unwrapKey' ? normalizeEither('unwrapKey', 'decrypt', algorithm)
+          : normalize(op, algorithm);
+        args.push(...a.pairs);
+        return ascii(call(args, 'supports')[1]) === '1';
+      } catch (e) { return false; }
+    };
+    // The KEM operations of the modern algorithms draft. No KEM algorithm is registered in
+    // Lean, so "normalize an algorithm" refuses every call with NotSupportedError.
+    const noKem = (op, algorithm) => { normalize(op, algorithm); throw new DOMException(`${op}: no key encapsulation algorithm is supported`, 'NotSupportedError'); };
+    subtleMethods.encapsulateKey = function encapsulateKey(encapsulationAlgorithm, encapsulationKey, sharedKeyAlgorithm, extractable, keyUsages) {
+      return start(() => { if (arguments.length < 5) throw new TypeError('encapsulateKey: 5 arguments required'); return noKem('encapsulateKey', encapsulationAlgorithm); });
+    };
+    subtleMethods.encapsulateBits = function encapsulateBits(encapsulationAlgorithm, encapsulationKey) {
+      return start(() => { if (arguments.length < 2) throw new TypeError('encapsulateBits: 2 arguments required'); return noKem('encapsulateBits', encapsulationAlgorithm); });
+    };
+    subtleMethods.decapsulateKey = function decapsulateKey(decapsulationAlgorithm, decapsulationKey, ciphertext, sharedKeyAlgorithm, extractable, keyUsages) {
+      return start(() => { if (arguments.length < 6) throw new TypeError('decapsulateKey: 6 arguments required'); return noKem('decapsulateKey', decapsulationAlgorithm); });
+    };
+    subtleMethods.decapsulateBits = function decapsulateBits(decapsulationAlgorithm, decapsulationKey, ciphertext) {
+      return start(() => { if (arguments.length < 3) throw new TypeError('decapsulateBits: 3 arguments required'); return noKem('decapsulateBits', decapsulationAlgorithm); });
+    };
     class SubtleCrypto { constructor() { throw new TypeError('Illegal constructor'); } }
     if (subtleOn) for (const [k, f] of Object.entries(subtleMethods)) define(SubtleCrypto.prototype, k, f);
+    if (subtleOn) define(SubtleCrypto, 'supports', supports);
     setTag(SubtleCrypto, 'SubtleCrypto');
     const subtle = Object.create(SubtleCrypto.prototype);
-    class Crypto { constructor() { throw new TypeError('Illegal constructor'); } get subtle() { return subtleOn ? subtle : undefined; } }
+    const cryptoObjects = new WeakSet();
+    class Crypto {
+      constructor() { throw new TypeError('Illegal constructor'); }
+      get subtle() { if (!cryptoObjects.has(this)) throw new TypeError("'subtle' getter called on an object that is not a Crypto"); return subtleOn ? subtle : undefined; }
+    }
     if (random) {
       define(Crypto.prototype, 'getRandomValues', function getRandomValues(array) {
+        if (arguments.length < 1) throw new TypeError("Failed to execute 'getRandomValues' on 'Crypto': 1 argument required");
         if (!(intArrays.some(C => array instanceof C))) throw new DOMException("Failed to execute 'getRandomValues' on 'Crypto': The provided ArrayBufferView is of type that is not an integer array.", 'TypeMismatchError');
-        if (array.byteLength > 65536) throw new DOMException(`Failed to execute 'getRandomValues' on 'Crypto': The ArrayBufferView's byte length (${array.byteLength}) exceeds the number of bytes of entropy available via this API (65536).`, 'QuotaExceededError');
+        if (array.byteLength > 65536) throw new (makeQuotaError())(`Failed to execute 'getRandomValues' on 'Crypto': The ArrayBufferView's byte length (${array.byteLength}) exceeds the number of bytes of entropy available via this API (65536).`);
         new Uint8Array(array.buffer, array.byteOffset, array.byteLength).set(new Uint8Array(api(30, [String(array.byteLength)], 0, true, 'getRandomValues')));
         return array;
       });
@@ -6089,8 +6541,24 @@
     // to the same key in Lean, so the page's dropping one does not wipe the other's.
     cloneCryptoKey = key => { keyOf(key); return keyAnswer(call(['cloneKey', 'key', String(keyOf(key).handle)], 'structuredClone')); };
     setTag(Crypto, 'Crypto');
+    // WebIDL: an interface's attributes and operations are enumerable (these three classes are
+    // made on first use, after the pass at the end of the prelude that does it for the rest).
+    for (const C of [Crypto, SubtleCrypto, CryptoKey]) {
+      for (const k of Object.getOwnPropertyNames(C.prototype)) {
+        if (k === 'constructor') continue;
+        const d = Object.getOwnPropertyDescriptor(C.prototype, k);
+        if (d.configurable && !d.enumerable) { d.enumerable = true; Object.defineProperty(C.prototype, k, d); }
+      }
+      for (const k of Object.getOwnPropertyNames(C)) {
+        if (k === 'prototype' || k === 'length' || k === 'name') continue;
+        const d = Object.getOwnPropertyDescriptor(C, k);
+        if (d.configurable && !d.enumerable) { d.enumerable = true; Object.defineProperty(C, k, d); }
+      }
+    }
     define(globalThis, 'Crypto', Crypto); define(globalThis, 'SubtleCrypto', SubtleCrypto); define(globalThis, 'CryptoKey', CryptoKey);
-    return Object.create(Crypto.prototype);
+    const cryptoObject = Object.create(Crypto.prototype);
+    cryptoObjects.add(cryptoObject);
+    return cryptoObject;
   });
   // ==== end haclweb ====
   for (const k of ['Crypto', 'SubtleCrypto', 'CryptoKey'])
@@ -6196,6 +6664,1239 @@
     return out;
   });
 
+  // ==== IndexedDB (Indexed Database API 3.0) ===================================================
+  // Everything a page can observe is Lean's (ClientStorage/Idb*.lean, web_api op 200): the
+  // databases of the storage key (the engine's origin, never an argument), the order of a
+  // method's exceptions, key order and key ranges, key paths (evaluated on the stored record,
+  // so on the clone), which transaction runs, when it commits, what an abort undoes, cursors,
+  // and the events of open and delete requests. In memory for the session; nothing is written
+  // to disk. This block is the WebIDL surface: it converts arguments, writes a value as the
+  // tokens of its structured serialisation and reads them back, holds the objects, and
+  // dispatches the event each `pump` hands it (the listener order is Lean's too: `plan`).
+  const makeIdb = () => {
+    const td = new TextDecoder(), text = b => td.decode(b);
+    const ascii = b => { let s = ''; for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); return s; };
+    const unpack = ab => {
+      const u = new Uint8Array(ab), u32 = i => (u[i] | u[i + 1] << 8 | u[i + 2] << 16 | u[i + 3] << 24) >>> 0;
+      const out = [];
+      for (let i = 0, at = 4, k = u32(0); i < k; i++) { const len = u32(at); out.push(u.subarray(at + 4, at + 4 + len)); at += 4 + len; }
+      return out;
+    };
+    // One command: the answer's fields after `ok`; `!Name` is thrown as that exception.
+    const call = (args, what = 'IndexedDB') => {
+      const r = apiCall(200, args, 0, true);
+      if (typeof r === 'number') throw new DOMException(`${what}: storage is not available.`, r === -5 ? 'QuotaExceededError' : 'UnknownError');
+      const f = unpack(r), head = text(f[0]);
+      if (head === 'ok') return f.slice(1);
+      if (head[0] !== '!') return f;
+      const name = head.slice(1);
+      if (name === 'TypeError') throw new TypeError(`Failed to execute '${what}'`);
+      throw new DOMException(`Failed to execute '${what}': ${name}`, name);
+    };
+    const num = b => Number(ascii(b));
+    const dv = new DataView(new ArrayBuffer(8));
+    const h8 = x => (x + 0x100000000).toString(16).slice(1);
+    const hex64 = x => { dv.setFloat64(0, x); return h8(dv.getUint32(0)) + h8(dv.getUint32(4)); };
+    const unhex64 = h => { dv.setUint32(0, parseInt(h.slice(0, 8), 16)); dv.setUint32(4, parseInt(h.slice(8, 16), 16)); return dv.getFloat64(0); };
+    const btok = u8 => { const out = new Uint8Array(u8.length + 1); out[0] = 98; out.set(u8, 1); return out; };
+    const bytesOfSource = v => ArrayBuffer.isView(v) ? new Uint8Array(v.buffer, v.byteOffset, v.byteLength) : new Uint8Array(v);
+    const need = (k, have, what) => { if (have < k) throw new TypeError(`Failed to execute '${what}': ${k} argument${k > 1 ? 's' : ''} required, but only ${have} present.`); };
+
+    // ---- keys: "convert a value to a key" (§7.4) as tokens; Lean decides what a key is ------
+    const keyToks = (v, out, seen) => {
+      if (typeof v === 'number') { out.push('n' + hex64(v)); return true; }
+      if (typeof v === 'string') { out.push('s' + stEnc(v)); return true; }
+      if (v instanceof Date) { out.push('d' + hex64(Date.prototype.getTime.call(v))); return true; }
+      if (v instanceof ArrayBuffer || ArrayBuffer.isView(v)) {
+        if ((v instanceof ArrayBuffer ? v : v.buffer).detached) return false;
+        out.push(btok(bytesOfSource(v)));
+        return true;
+      }
+      if (Array.isArray(v)) {
+        const len = v.length;
+        if (seen.has(v)) return false;
+        seen.add(v);
+        out.push('A' + len);
+        for (let i = 0; i < len; i++) {
+          if (!Object.prototype.hasOwnProperty.call(v, i)) return false;
+          if (!keyToks(v[i], out, seen)) return false;
+        }
+        return true;
+      }
+      return false;
+    };
+    // A counted key argument: its tokens, or the one token `x` for a value that is not a key.
+    const keyArg = v => { const out = []; const okk = keyToks(v, out, new Set()); return okk ? [String(out.length), ...out] : ['1', 'x']; };
+    const readKey = (f, st) => {
+      const t = f[st.i++], tag = t[0];
+      if (tag === 110) return unhex64(ascii(t.subarray(1)));
+      if (tag === 100) return new Date(unhex64(ascii(t.subarray(1))));
+      if (tag === 115) return stDec(text(t.subarray(1)));
+      if (tag === 98) return t.slice(1).buffer;
+      const k = num(t.subarray(1)), a = [];
+      for (let i = 0; i < k; i++) a.push(readKey(f, st));
+      return a;
+    };
+    // A counted run of key tokens at f[st.i].
+    const countedKey = (f, st) => { const k = num(f[st.i++]); if (k === 0) return undefined; return readKey(f, st); };
+
+    // ---- values: StructuredSerializeForStorage as tokens, and back --------------------------
+    const dataClone = what => new DOMException(`Failed to store a value: ${what} could not be cloned.`, 'DataCloneError');
+    const ser = (v, out, mem) => {
+      switch (typeof v) {
+        case 'undefined': out.push('u'); return;
+        case 'boolean': out.push(v ? 't' : 'f'); return;
+        case 'number': out.push('n' + hex64(v)); return;
+        case 'bigint': out.push('i' + v.toString()); return;
+        case 'string': out.push('s' + stEnc(v)); return;
+        case 'symbol': throw dataClone('A Symbol');
+      }
+      if (v === null) { out.push('z'); return; }
+      if (mem.has(v)) { out.push('@' + mem.get(v)); return; }
+      if (typeof v === 'function') throw dataClone('A function');
+      mem.set(v, mem.size);
+      for (const P of [Boolean, Number, BigInt, String]) {
+        let x, isP = true;
+        try { x = P.prototype.valueOf.call(v); } catch { isP = false; }
+        if (isP) { out.push('B'); ser(x, out, mem); return; }
+      }
+      if (v instanceof Date) { out.push('d' + hex64(Date.prototype.getTime.call(v))); return; }
+      if (v instanceof RegExp) { out.push('r' + v.flags + '/' + stEnc(v.source)); return; }
+      if (isShared(v)) throw dataClone('A SharedArrayBuffer');
+      if (v instanceof ArrayBuffer) { if (v.detached) throw dataClone('A detached ArrayBuffer'); out.push(btok(new Uint8Array(v))); return; }
+      if (ArrayBuffer.isView(v)) {
+        if (v.buffer.detached) throw dataClone('A detached view');
+        if (isShared(v.buffer)) throw dataClone('A SharedArrayBuffer');
+        const kind = typeof DataView === 'function' && v instanceof DataView ? 'DataView' : typedArrays.find(T => v instanceof T).name;
+        out.push('V' + kind + ',' + v.byteOffset + ',' + v.byteLength);
+        ser(v.buffer, out, mem);
+        return;
+      }
+      if (v instanceof Map) {
+        const entries = [...Map.prototype.entries.call(v)];
+        out.push('M' + entries.length);
+        for (const [k, x] of entries) { ser(k, out, mem); ser(x, out, mem); }
+        return;
+      }
+      if (v instanceof Set) {
+        const items = [...Set.prototype.values.call(v)];
+        out.push('S' + items.length);
+        for (const x of items) ser(x, out, mem);
+        return;
+      }
+      if (v instanceof DOMException) { out.push('X'); ser(String(v.message), out, mem); ser(String(v.name), out, mem); return; }
+      if (BlobC && v instanceof BlobC) {
+        const b = blobs.get(v);
+        if (FileC && v instanceof FileC) { out.push('F' + stEnc(b.type), 's' + stEnc(v.name), 'n' + hex64(v.lastModified), btok(b.bytes)); return; }
+        out.push('L' + stEnc(b.type), btok(b.bytes));
+        return;
+      }
+      if (isPlatform(v) || kinds.has(v)) throw dataClone(Object.prototype.toString.call(v));
+      if (v instanceof Error) {
+        const name = errorNames.includes(v.name) ? v.name : 'Error';
+        const d = Object.getOwnPropertyDescriptor(v, 'message'), sd = Object.getOwnPropertyDescriptor(v, 'stack');
+        out.push('E' + name);
+        ser(d && 'value' in d ? String(d.value) : undefined, out, mem);
+        ser(sd && 'value' in sd && typeof sd.value === 'string' ? sd.value : undefined, out, mem);
+        ser(has(v, 'cause') ? v.cause : undefined, out, mem);
+        return;
+      }
+      const isArray = Array.isArray(v);
+      if (!isArray) {
+        const tag = Object.prototype.toString.call(v);
+        if (tag === '[object Arguments]' || slotted.some(C => typeof C === 'function' && v instanceof C)) throw dataClone(tag);
+      }
+      const len = isArray ? v.length : 0, at = out.length;
+      out.push('');
+      let count = 0, dense = isArray;
+      for (const k of Object.keys(v)) {
+        if (!has(v, k)) continue;
+        const x = v[k];
+        if (dense && k !== String(count)) dense = false;
+        out.push('k' + stEnc(k));
+        ser(x, out, mem);
+        count++;
+      }
+      if (isArray && dense && count === len) {
+        // a dense array: its values alone (the key tokens, one before each value, are dropped)
+        const body = out.splice(at + 1), kept = [];
+        for (let i = 0, depth = 0; i < body.length; i++) {
+          const t = body[i];
+          if (depth === 0 && typeof t === 'string' && t[0] === 'k') { depth = 1; continue; }
+          kept.push(t);
+          depth += kidsOf(t) - 1;
+        }
+        out[at] = 'A' + len;
+        for (const t of kept) out.push(t);
+      } else out[at] = isArray ? 'a' + len + ',' + count : 'o' + count;
+    };
+    // The subtrees that follow a token (as ClientStorage.Idb.kids).
+    const kidsOf = t => {
+      if (typeof t !== 'string') return 0;
+      const c = t[0], k = () => Number(t.slice(1).split(',')[0]);
+      if (c === 'A' || c === 'S') return k();
+      if (c === 'o' || c === 'M') return 2 * k();
+      if (c === 'a') return 2 * Number(t.slice(1).split(',')[1]);
+      if (c === 'V' || c === 'B' || c === 'L') return 1;
+      if (c === 'X') return 2;
+      if (c === 'E' || c === 'F') return 3;
+      return 0;
+    };
+    const serialize = v => { const out = []; ser(v, out, new Map()); return out; };
+    const put = (o, k, v) => Object.defineProperty(o, k, { value: v, writable: true, enumerable: true, configurable: true });
+    const de = (f, st) => {
+      const t = f[st.i++], c = String.fromCharCode(t[0]), body = () => text(t.subarray(1));
+      const keep = o => { st.objs.push(o); return o; };
+      const pairs = (o, k) => { for (let i = 0; i < k; i++) { const key = stDec(text(f[st.i++].subarray(1))); put(o, key, de(f, st)); } return o; };
+      switch (c) {
+        case 'u': return undefined;
+        case 'z': return null;
+        case 't': return true;
+        case 'f': return false;
+        case 'n': return unhex64(ascii(t.subarray(1)));
+        case 'i': return BigInt(body());
+        case 's': return stDec(body());
+        case '@': return st.objs[Number(body())];
+        case 'd': return keep(new Date(unhex64(ascii(t.subarray(1)))));
+        case 'r': { const b = body(), k = b.indexOf('/'); return keep(new RegExp(stDec(b.slice(k + 1)), b.slice(0, k))); }
+        case 'b': return keep(t.slice(1).buffer);
+        case 'B': { const slot = st.objs.length; st.objs.push(null); return st.objs[slot] = Object(de(f, st)); }
+        case 'V': {
+          const [kind, off, len] = body().split(','), slot = st.objs.length;
+          st.objs.push(null);
+          const buf = de(f, st), C = globalThis[kind];
+          return st.objs[slot] = kind === 'DataView' ? new DataView(buf, +off, +len) : new C(buf, +off, len / C.BYTES_PER_ELEMENT);
+        }
+        case 'A': { const k = Number(body()), a = keep([]); for (let i = 0; i < k; i++) put(a, i, de(f, st)); return a; }
+        case 'a': { const [len, k] = body().split(','); return pairs(keep(new Array(+len)), +k); }
+        case 'o': return pairs(keep({}), Number(body()));
+        case 'M': { const k = Number(body()), m = keep(new Map()); for (let i = 0; i < k; i++) { const key = de(f, st); m.set(key, de(f, st)); } return m; }
+        case 'S': { const k = Number(body()), s = keep(new Set()); for (let i = 0; i < k; i++) s.add(de(f, st)); return s; }
+        case 'X': { const slot = st.objs.length; st.objs.push(null); const m = de(f, st); return st.objs[slot] = new DOMException(m, de(f, st)); }
+        case 'E': {
+          const slot = st.objs.length;
+          st.objs.push(null);
+          const m = de(f, st), stack = de(f, st), cause = de(f, st), C = globalThis[body()] ?? Error;
+          const e = m === undefined ? new C() : new C(m);
+          if (stack !== undefined) define(e, 'stack', stack);
+          if (cause !== undefined) define(e, 'cause', cause);
+          return st.objs[slot] = e;
+        }
+        case 'L': { const slot = st.objs.length; st.objs.push(null); const bytes = new Uint8Array(f[st.i++].slice(1)); return st.objs[slot] = new (makeBlob())([bytes], { type: stDec(body()) }); }
+        case 'F': {
+          const slot = st.objs.length;
+          st.objs.push(null);
+          const name = stDec(text(f[st.i++].subarray(1))), modified = unhex64(ascii(f[st.i++].subarray(1))), bytes = new Uint8Array(f[st.i++].slice(1));
+          return st.objs[slot] = new (makeFile())([bytes], name, { type: stDec(body()), lastModified: modified });
+        }
+      }
+      throw new DOMException('A stored value could not be read.', 'DataError');
+    };
+    const deserialize = (f, from, to) => de(to === undefined ? f : f.slice(0, to), { i: from, objs: [] });
+
+    // ---- the objects ------------------------------------------------------------------------
+    const kinds = new WeakMap();           // every IndexedDB object: its state
+    const st = (o, C, what) => { const s = kinds.get(o); if (!s || s.kind !== C) throw new TypeError('Illegal invocation: ' + what); return s; };
+    const reqs = new Map(), txs = new Map(), conns = new Map(), cursors = new Map();
+    const handlerAttr = (C, name) => Object.defineProperty(C.prototype, 'on' + name, { configurable: true, enumerable: true,
+      get() { return handlerOf(this, name); }, set(f) { setHandler(this, name, f); } });
+    const idl = (C, tag) => {
+      setTag(C, tag);
+      for (const k of Object.getOwnPropertyNames(C.prototype)) {
+        if (k === 'constructor') continue;
+        Object.defineProperty(C.prototype, k, { ...Object.getOwnPropertyDescriptor(C.prototype, k), enumerable: true });
+      }
+      return C;
+    };
+    let making = false;
+    const make = (C, state) => { making = true; let o; try { o = new C(); } finally { making = false; } kinds.set(o, { kind: C.name, ...state }); return o; };
+    const guard = () => { if (!making) throw new TypeError('Illegal constructor'); };
+
+    class DOMStringList {
+      constructor() { guard(); }
+      get length() { return st(this, 'DOMStringList', 'length').items.length; }
+      item(index) { need(1, arguments.length, 'DOMStringList.item'); const v = st(this, 'DOMStringList', 'item').items[index >>> 0]; return v === undefined ? null : v; }
+      contains(string) { need(1, arguments.length, 'DOMStringList.contains'); return st(this, 'DOMStringList', 'contains').items.includes(String(string)); }
+      [Symbol.iterator]() { return st(this, 'DOMStringList', 'iterator').items[Symbol.iterator](); }
+    }
+    idl(DOMStringList, 'DOMStringList');
+    const stringList = items => {
+      const o = make(DOMStringList, { items });
+      items.forEach((v, i) => Object.defineProperty(o, i, { value: v, enumerable: true, configurable: true }));
+      return o;
+    };
+    const names = f => stringList(f.map(b => stDec(text(b))));
+
+    class IDBRequest extends EventTarget {
+      constructor() { guard(); super(); }
+      get result() { const s = st(this, 'IDBRequest', 'result'); if (!s.done) throw new DOMException('The request has not finished.', 'InvalidStateError'); return s.result; }
+      get error() { const s = st(this, 'IDBRequest', 'error'); if (!s.done) throw new DOMException('The request has not finished.', 'InvalidStateError'); return s.error; }
+      get source() { return st(this, 'IDBRequest', 'source').source; }
+      get transaction() { return st(this, 'IDBRequest', 'transaction').tx; }
+      get readyState() { return st(this, 'IDBRequest', 'readyState').done ? 'done' : 'pending'; }
+    }
+    idl(IDBRequest, 'IDBRequest'); handlerAttr(IDBRequest, 'success'); handlerAttr(IDBRequest, 'error');
+    class IDBOpenDBRequest extends IDBRequest { constructor() { super(); } }
+    idl(IDBOpenDBRequest, 'IDBOpenDBRequest'); handlerAttr(IDBOpenDBRequest, 'blocked'); handlerAttr(IDBOpenDBRequest, 'upgradeneeded');
+    const newReq = (C, id, source, tx) => {
+      const r = make(C, { kind: 'IDBRequest', id, source, tx, done: false, result: undefined, error: null });
+      reqs.set(id, r);
+      return r;
+    };
+
+    class IDBVersionChangeEvent extends Event {
+      constructor(type, init = undefined) {
+        need(1, arguments.length, "IDBVersionChangeEvent' constructor");
+        super(type, init);
+        const d = dict(init, 'IDBVersionChangeEvent');
+        const u = (v, nullable) => { if (v === undefined) return nullable ? null : 0; if (v === null && nullable) return null; const x = Number(v); if (!Number.isFinite(x) || x < 0 || x > 9007199254740991) throw new TypeError('IDBVersionChangeEvent: a version is out of range'); return Math.trunc(x); };
+        kinds.set(this, { kind: 'IDBVersionChangeEvent', oldVersion: u(d.oldVersion, false), newVersion: u(d.newVersion, true) });
+      }
+      get oldVersion() { return st(this, 'IDBVersionChangeEvent', 'oldVersion').oldVersion; }
+      get newVersion() { return st(this, 'IDBVersionChangeEvent', 'newVersion').newVersion; }
+    }
+    idl(IDBVersionChangeEvent, 'IDBVersionChangeEvent');
+
+    // ---- events: the path request, transaction, connection; the order is Lean's `plan` -----
+    const idbDispatch = (path, event) => {
+      const s = state(event), target = path[path.length - 1];
+      s.trusted = true; s.dispatching = true; s.target = target; s.path = path.slice().reverse();
+      const args = ['plan', s.bubbles ? '1' : '0', String(path.length), ...path.map(t => String(idOf(t)))];
+      for (const t of path) {
+        const p = chk(n.plan(idOf(t), s.type, 0));
+        for (let i = 1 + p[0]; i + 3 < p.length; i += 4) args.push(String(p[i + 1]), (p[i + 2] & 8) ? '1' : '0', String(p[i]));
+      }
+      const plan = call(args).map(num);
+      let threw = false, stopAt = null;
+      for (let i = 0; i + 3 < plan.length; i += 4) {
+        const cb = plan[i], node = plan[i + 1], phase = plan[i + 2] & 7, capture = (plan[i + 2] & 8) !== 0, depth = plan[i + 3];
+        if (s.stopImmediate) break;
+        if (s.stop && (stopAt === null || stopAt.depth !== depth || stopAt.capture !== capture)) break;
+        const r = records.get(cb);
+        if (!r || r.removed) continue;
+        if (r.once) removeRecord(r);
+        s.currentTarget = wrapTarget(node); s.phase = phase; s.passive = !!r.passive;
+        const saved = globalEvent;
+        globalEvent = event;
+        try {
+          const f = r.callback;
+          if (typeof f === 'function') f.call(s.currentTarget, event);
+          else { const h = f.handleEvent; if (typeof h !== 'function') throw new TypeError('handleEvent is not a function'); h.call(f, event); }
+        } catch (e) { threw = true; report(e); }
+        finally { globalEvent = saved; s.passive = false; }
+        if (s.stop && stopAt === null) stopAt = { depth, capture };
+      }
+      s.phase = 0; s.currentTarget = null; s.dispatching = false; s.stop = false; s.stopImmediate = false;
+      return threw;
+    };
+    const pathOf = (req, tx) => tx ? [kinds.get(tx).db, tx, req] : [req];
+
+    // ---- the pump: one event a task -----------------------------------------------------------
+    let pumping = false;
+    const kick = () => { if (pumping) return; pumping = true; timer(0, pumpOnce, 0, []); };
+    const pumpOnce = () => {
+      pumping = false;
+      const f = call(['pump']), kind = text(f[0]);
+      if (kind === 'idle') return;
+      kick();
+      deliver(kind, f);
+    };
+    const exception = name => new DOMException(`IndexedDB: ${name}`, name);
+    const finishTx = (tx, f, from) => {
+      const s = kinds.get(tx);
+      s.finished = true; s.names = names(f.slice(from));
+      txs.delete(s.id);
+      for (const c of s.cursors) { const co = cursors.get(c); if (co) reqs.delete(kinds.get(kinds.get(co).request).id); cursors.delete(c); }
+      const d = kinds.get(s.db);
+      if (d.upgrade === tx) d.upgrade = null;
+    };
+    const deliver = (kind, f) => {
+      if (kind === 'req') {
+        const r = reqs.get(num(f[1])), tx = txs.get(num(f[2]));
+        if (!r) return;
+        const s = kinds.get(r), isOk = text(f[3]) === 'ok';
+        s.done = true;
+        if (!s.cursor) reqs.delete(s.id);
+        if (isOk) {
+          const p = text(f[4]), at = { i: 5 };
+          s.error = null;
+          if (p === 'u') s.result = undefined;
+          else if (p === 'z') { s.result = null; if (s.cursor) { const c = kinds.get(s.cursor); c.key = c.primaryKey = c.value = undefined; c.got = false; } }
+          else if (p === 'k') s.result = readKey(f, at);
+          else if (p === 'v') s.result = deserialize(f, 5);
+          else if (p === 'n') s.result = num(f[5]);
+          else if (p === 'c') {
+            const cur = cursors.get(num(f[5])), c = kinds.get(cur);
+            at.i = 6;
+            c.key = countedKey(f, at); c.primaryKey = countedKey(f, at);
+            c.value = c.keyOnly ? undefined : deserialize(f, at.i);
+            c.got = true;
+            s.result = cur;
+          } else if (p === 'l') {
+            const what = num(f[5]), count = num(f[6]), out = [];
+            at.i = 7;
+            const value = () => { const k = num(f[at.i++]); const v = deserialize(f, at.i, at.i + k); at.i += k; return v; };
+            for (let i = 0; i < count; i++) {
+              if (what === 0) out.push(value());
+              else if (what === 1) out.push(countedKey(f, at));
+              else { const key = countedKey(f, at), primaryKey = countedKey(f, at); out.push(make(IDBRecord, { key, primaryKey, value: value() })); }
+            }
+            s.result = out;
+          }
+          const threw = idbDispatch(pathOf(r, tx), new Event('success'));
+          if (tx) call(['done', String(kinds.get(tx).id), threw ? '1' : '0', '']);
+        } else {
+          const name = text(f[4]);
+          s.result = undefined; s.error = exception(name);
+          const e = new Event('error', { bubbles: true, cancelable: true });
+          const threw = idbDispatch(pathOf(r, tx), e);
+          if (tx) {
+            const t = kinds.get(tx), aborts = threw || !state(e).canceled;
+            // the transaction's error: the request's, or AbortError when a listener threw; not for
+            // the requests that an abort already under way fails
+            if (aborts && !t.error && !t.aborting && name !== 'AbortError') { t.aborting = true; t.error = threw ? exception('AbortError') : s.error; }
+            call(['done', String(t.id), threw ? '1' : '0', aborts && !threw ? name : '']);
+          }
+        }
+        kick();
+        return;
+      }
+      if (kind === 'tx') {
+        const tx = txs.get(num(f[1]));
+        if (!tx) return;
+        const s = kinds.get(tx), done = text(f[2]) === 'complete';
+        finishTx(tx, f, done ? 3 : 4);
+        if (!done) {
+          const name = text(f[3]);
+          if (!s.error && name) s.error = exception(name);
+          if (s.mode === 'versionchange') { const d = kinds.get(s.db); d.closed = true; d.names = s.names; }
+        }
+        idbDispatch([s.db, tx], new Event(done ? 'complete' : 'abort', { bubbles: !done }));
+        return;
+      }
+      if (kind === 'versionchange') {
+        const db = conns.get(num(f[1]));
+        if (!db || kinds.get(db).closed) return;
+        const next = text(f[3]);
+        idbDispatch([db], new IDBVersionChangeEvent('versionchange', { oldVersion: num(f[2]), newVersion: next === 'null' ? null : Number(next) }));
+        kick();
+        return;
+      }
+      if (kind === 'open') {
+        const r = reqs.get(num(f[1]));
+        if (!r) return;
+        const s = kinds.get(r), what = text(f[2]);
+        if (what === 'blocked') {
+          const next = text(f[4]);
+          idbDispatch([r], new IDBVersionChangeEvent('blocked', { oldVersion: num(f[3]), newVersion: next === 'null' ? null : Number(next) }));
+          return;
+        }
+        if (what === 'upgradeneeded') {
+          const db = make(IDBDatabase, { id: num(f[3]), name: s.name, version: num(f[6]), closed: false, upgrade: null, names: stringList([]) });
+          conns.set(num(f[3]), db);
+          const tx = newTx(num(f[4]), db, 'versionchange');
+          kinds.get(db).upgrade = tx;
+          s.result = db; s.tx = tx; s.done = true; s.error = null;
+          const threw = idbDispatch([r], new IDBVersionChangeEvent('upgradeneeded', { oldVersion: num(f[5]), newVersion: num(f[6]) }));
+          if (threw) kinds.get(tx).error = exception('AbortError');
+          call(['done', String(num(f[4])), threw ? '1' : '0', '']);
+          kick();
+          return;
+        }
+        reqs.delete(s.id);
+        s.done = true; s.tx = null;
+        if (what === 'success') {
+          if (!s.result) { s.result = make(IDBDatabase, { id: num(f[3]), name: s.name, version: num(f[4]), closed: false, upgrade: null, names: stringList([]) }); conns.set(num(f[3]), s.result); }
+          s.error = null;
+          idbDispatch([r], new Event('success'));
+        } else if (what === 'deleted') {
+          s.result = undefined; s.error = null;
+          idbDispatch([r], new IDBVersionChangeEvent('success', { oldVersion: num(f[3]), newVersion: null }));
+        } else {
+          if (s.result) { const d = kinds.get(s.result); d.closed = true; d.version = num(f[5]); conns.delete(d.id); }
+          s.result = undefined; s.error = exception(text(f[3]));
+          idbDispatch([r], new Event('error', { bubbles: true, cancelable: true }));
+        }
+      }
+    };
+
+    // ---- IDBKeyRange --------------------------------------------------------------------------
+    class IDBKeyRange {
+      constructor() { guard(); }
+      get lower() { return st(this, 'IDBKeyRange', 'lower').lower; }
+      get upper() { return st(this, 'IDBKeyRange', 'upper').upper; }
+      get lowerOpen() { return st(this, 'IDBKeyRange', 'lowerOpen').lowerOpen; }
+      get upperOpen() { return st(this, 'IDBKeyRange', 'upperOpen').upperOpen; }
+      includes(key) {
+        need(1, arguments.length, 'IDBKeyRange.includes');
+        const s = st(this, 'IDBKeyRange', 'includes');
+        return text(call(['includes', ...s.args, ...keyArg(key)], 'IDBKeyRange.includes')[0]) === '1';
+      }
+      static only(value) { need(1, arguments.length, 'IDBKeyRange.only'); const k = keyArg(value); return range(k, k, false, false, 'only'); }
+      static lowerBound(lower, open = false) { need(1, arguments.length, 'IDBKeyRange.lowerBound'); return range(keyArg(lower), ['0'], !!open, true, 'lowerBound'); }
+      static upperBound(upper, open = false) { need(1, arguments.length, 'IDBKeyRange.upperBound'); return range(['0'], keyArg(upper), true, !!open, 'upperBound'); }
+      static bound(lower, upper, lowerOpen = false, upperOpen = false) {
+        need(2, arguments.length, 'IDBKeyRange.bound');
+        const lo = keyArg(lower), hi = keyArg(upper);
+        return range(lo, hi, !!lowerOpen, !!upperOpen, 'bound');
+      }
+    }
+    idl(IDBKeyRange, 'IDBKeyRange');
+    for (const k of ['only', 'lowerBound', 'upperBound', 'bound']) Object.defineProperty(IDBKeyRange, k, { ...Object.getOwnPropertyDescriptor(IDBKeyRange, k), enumerable: true });
+    const range = (lo, hi, lowerOpen, upperOpen, what) => {
+      const args = [String((lowerOpen ? 1 : 0) | (upperOpen ? 2 : 0)), ...lo, ...hi];
+      call(['range', ...args], 'IDBKeyRange.' + what);
+      // the bounds as values of their own: read back from the tokens
+      const value = k => k[0] === '0' ? undefined : readKey(k.slice(1).map(t => typeof t === 'string' ? utf8raw(t) : t), { i: 0 });
+      return make(IDBKeyRange, { args, lower: value(lo), upper: value(hi), lowerOpen, upperOpen });
+    };
+    const te = new TextEncoder(), utf8raw = s => te.encode(s);
+    // A query argument: a key range, a key, or nothing (flag 4: nothing where one is required).
+    const rangeArg = (v, required) => {
+      if (v === undefined || v === null) return [required ? '4' : '0', '0', '0'];
+      const s = typeof v === 'object' ? kinds.get(v) : undefined;
+      if (s && s.kind === 'IDBKeyRange') return s.args;
+      const k = keyArg(v);
+      return ['0', ...k, ...k];
+    };
+    const directions = ['next', 'nextunique', 'prev', 'prevunique'];
+    const dirArg = (d, what) => { const i = directions.indexOf(String(d)); if (i < 0) throw new TypeError(`Failed to execute '${what}': '${d}' is not a valid IDBCursorDirection.`); return i; };
+    const u32Arg = (v, what) => { const x = Number(v); if (!Number.isFinite(x) || Math.trunc(x) < 0 || Math.trunc(x) > 4294967295) throw new TypeError(`Failed to execute '${what}': value is outside the range of unsigned long.`); return Math.trunc(x); };
+
+    // ---- sources: object stores and indexes ---------------------------------------------------
+    const keyPathValue = kp => kp === 'n' ? null : kp[0] === 's' ? kp.slice(1) : (kp.length === 1 ? [] : kp.slice(1).split('\n'));
+    const keyPathArg = (v, what) => {
+      if (v === undefined || v === null) return 'n';
+      if (typeof v === 'object' && typeof v[Symbol.iterator] === 'function') return 'a' + [...v].map(x => stEnc(String(x))).join('\n');
+      return 's' + stEnc(String(v));
+    };
+    // The source's ids for a command: transaction, store, index ('' for a store).
+    const src = s => s.kind === 'IDBIndex' ? [String(kinds.get(s.store).txId), String(s.storeId), String(s.id)] : [String(s.txId), String(s.id), ''];
+    const txOf = s => s.kind === 'IDBIndex' ? kinds.get(s.store).tx : s.tx;
+    const request = (self, s, op, args, what) => {
+      const f = call(['req', ...src(s), op, ...args], what), tx = txOf(s);
+      kick();
+      return newReq(IDBRequest, num(f[0]), self, tx);
+    };
+    const cursorRequest = (self, s, op, query, direction, what) => {
+      const d = dirArg(direction, what);
+      const f = call(['req', ...src(s), op, String(d), ...rangeArg(query, false)], what), tx = txOf(s);
+      const r = newReq(IDBRequest, num(f[0]), self, tx);
+      const keyOnly = op === 'openKeyCursor';
+      const cur = make(keyOnly ? IDBCursor : IDBCursorWithValue, { kind: 'IDBCursor', id: num(f[1]), source: self, direction: directions[d], keyOnly, request: r, tx, got: false,
+        key: undefined, primaryKey: undefined, value: undefined });
+      cursors.set(num(f[1]), cur);
+      kinds.get(tx).cursors.push(num(f[1]));
+      kinds.get(r).cursor = cur;
+      kick();
+      return r;
+    };
+    // getAll(query, count) or getAll({ query, count, direction }).
+    const allArgs = (a, what) => {
+      let query = a[0], count = a[1], direction = 'next';
+      const s = query !== null && typeof query === 'object' ? kinds.get(query) : undefined;
+      if (query !== null && typeof query === 'object' && !(s && s.kind === 'IDBKeyRange') && !(query instanceof Date) && !Array.isArray(query) &&
+          !(query instanceof ArrayBuffer) && !ArrayBuffer.isView(query)) {
+        const o = query;
+        query = o.query; count = o.count; direction = o.direction === undefined ? 'next' : o.direction;
+      }
+      const c = count === undefined ? 0 : u32Arg(count, what), d = dirArg(direction, what);
+      return [String(c), String(d), ...rangeArg(query, false)];
+    };
+    const queryMethods = (C, kind) => {
+      const S = (o, what) => st(o, kind, what);
+      Object.assign(C.prototype, {
+        get(query) { const s = S(this, 'get'); need(1, arguments.length, kind + '.get'); return request(this, s, 'get', rangeArg(query, true), kind + '.get'); },
+        getKey(query) { const s = S(this, 'getKey'); need(1, arguments.length, kind + '.getKey'); return request(this, s, 'getKey', rangeArg(query, true), kind + '.getKey'); },
+        getAll(queryOrOptions = undefined, count = undefined) { const s = S(this, 'getAll'); return request(this, s, 'getAll', allArgs([queryOrOptions, count], kind + '.getAll'), kind + '.getAll'); },
+        getAllKeys(queryOrOptions = undefined, count = undefined) { const s = S(this, 'getAllKeys'); return request(this, s, 'getAllKeys', allArgs([queryOrOptions, count], kind + '.getAllKeys'), kind + '.getAllKeys'); },
+        getAllRecords(options = undefined) { const s = S(this, 'getAllRecords'); return request(this, s, 'getAllRecords', allArgs([options === undefined || options === null ? {} : options, undefined], kind + '.getAllRecords'), kind + '.getAllRecords'); },
+        count(query = undefined) { const s = S(this, 'count'); return request(this, s, 'count', rangeArg(query, false), kind + '.count'); },
+        openCursor(query = undefined, direction = 'next') { const s = S(this, 'openCursor'); return cursorRequest(this, s, 'openCursor', query, direction, kind + '.openCursor'); },
+        openKeyCursor(query = undefined, direction = 'next') { const s = S(this, 'openKeyCursor'); return cursorRequest(this, s, 'openKeyCursor', query, direction, kind + '.openKeyCursor'); },
+      });
+    };
+    const storeInfo = s => {
+      let f;
+      try { f = call(['storeinfo', String(s.txId), String(s.id), '', stEnc(s.dbName)]); } catch (_) { return null; }
+      return { name: stDec(text(f[0])), keyPath: text(f[1]), autoIncrement: text(f[2]) === '1', indexNames: f.slice(3) };
+    };
+    const indexInfo = s => {
+      const o = kinds.get(s.store);
+      let f;
+      try { f = call(['indexinfo', String(o.txId), String(s.storeId), String(s.id), stEnc(o.dbName)]); } catch (_) { return null; }
+      return { name: stDec(text(f[0])), keyPath: text(f[1]), unique: text(f[2]) === '1', multiEntry: text(f[3]) === '1' };
+    };
+    // A value to store: checked, then cloned with the transaction inactive (§6.2 "add or put").
+    const cloneInactive = (txId, value) => {
+      call(['active', String(txId), '0']);
+      try { return serialize(value); } catch (e) { call(['active', String(txId), '1']); throw e; }
+    };
+    const store = (self, op, value, key, hasKey) => {
+      const s = st(self, 'IDBObjectStore', op);
+      call(['putcheck', String(s.txId), String(s.id), hasKey ? '1' : '0'], 'IDBObjectStore.' + op);
+      const k = hasKey ? keyArg(key) : ['0'];
+      if (k[1] === 'x') throw new DOMException(`Failed to execute 'IDBObjectStore.${op}': the parameter is not a valid key.`, 'DataError');
+      const toks = cloneInactive(s.txId, value);
+      return request(self, s, op, [...k, ...toks], 'IDBObjectStore.' + op);
+    };
+    class IDBObjectStore {
+      constructor() { guard(); }
+      get name() { const s = st(this, 'IDBObjectStore', 'name'); const i = storeInfo(s); return i ? (s.name = i.name) : s.name; }
+      set name(v) { const s = st(this, 'IDBObjectStore', 'name'); const name = String(v); call(['renameStore', String(s.txId), String(s.id), stEnc(name)], 'IDBObjectStore.name'); s.name = name; }
+      get keyPath() { const s = st(this, 'IDBObjectStore', 'keyPath'); return s.keyPath; }
+      get indexNames() { const s = st(this, 'IDBObjectStore', 'indexNames'); const i = storeInfo(s); return i ? names(i.indexNames) : stringList([]); }
+      get transaction() { return st(this, 'IDBObjectStore', 'transaction').tx; }
+      get autoIncrement() { return st(this, 'IDBObjectStore', 'autoIncrement').autoIncrement; }
+      put(value, key = undefined) { need(1, arguments.length, 'IDBObjectStore.put'); return store(this, 'put', value, key, key !== undefined); }
+      add(value, key = undefined) { need(1, arguments.length, 'IDBObjectStore.add'); return store(this, 'add', value, key, key !== undefined); }
+      delete(query) { const s = st(this, 'IDBObjectStore', 'delete'); need(1, arguments.length, 'IDBObjectStore.delete'); return request(this, s, 'delete', rangeArg(query, true), 'IDBObjectStore.delete'); }
+      clear() { const s = st(this, 'IDBObjectStore', 'clear'); return request(this, s, 'clear', [], 'IDBObjectStore.clear'); }
+      index(name) {
+        const s = st(this, 'IDBObjectStore', 'index');
+        need(1, arguments.length, 'IDBObjectStore.index');
+        const nm = String(name), f = call(['index', String(s.txId), String(s.id), stEnc(nm)], 'IDBObjectStore.index'), id = num(f[0]);
+        return s.indexes.get(id) ?? newIndex(this, s, id);
+      }
+      createIndex(name, keyPath, options = undefined) {
+        const s = st(this, 'IDBObjectStore', 'createIndex');
+        need(2, arguments.length, 'IDBObjectStore.createIndex');
+        const d = dict(options, 'IDBObjectStore.createIndex'), nm = String(name), kp = keyPathArg(keyPath);
+        const f = call(['createIndex', String(s.txId), String(s.id), stEnc(nm), kp, d.unique ? '1' : '0', d.multiEntry ? '1' : '0'], 'IDBObjectStore.createIndex');
+        kick();
+        return newIndex(this, s, num(f[0]));
+      }
+      deleteIndex(name) {
+        const s = st(this, 'IDBObjectStore', 'deleteIndex');
+        need(1, arguments.length, 'IDBObjectStore.deleteIndex');
+        call(['deleteIndex', String(s.txId), String(s.id), stEnc(String(name))], 'IDBObjectStore.deleteIndex');
+      }
+    }
+    queryMethods(IDBObjectStore, 'IDBObjectStore');
+    idl(IDBObjectStore, 'IDBObjectStore');
+    const newStore = (tx, id) => {
+      const t = kinds.get(tx), s = { id, tx, txId: t.id, dbName: kinds.get(t.db).name, indexes: new Map(), name: '', keyPath: null, autoIncrement: false };
+      const i = storeInfo(s);
+      if (i) { const kp = keyPathValue(i.keyPath); s.name = i.name; s.keyPath = kp === null ? null : Array.isArray(kp) ? kp.map(stDec) : stDec(kp); s.autoIncrement = i.autoIncrement; }
+      const o = make(IDBObjectStore, s);
+      t.stores.set(id, o);
+      return o;
+    };
+    class IDBIndex {
+      constructor() { guard(); }
+      get name() { const s = st(this, 'IDBIndex', 'name'); const i = indexInfo(s); return i ? (s.name = i.name) : s.name; }
+      set name(v) { const s = st(this, 'IDBIndex', 'name'); const name = String(v); call(['renameIndex', String(kinds.get(s.store).txId), String(s.storeId), String(s.id), stEnc(name)], 'IDBIndex.name'); s.name = name; }
+      get objectStore() { return st(this, 'IDBIndex', 'objectStore').store; }
+      get keyPath() { return st(this, 'IDBIndex', 'keyPath').keyPath; }
+      get multiEntry() { return st(this, 'IDBIndex', 'multiEntry').multiEntry; }
+      get unique() { return st(this, 'IDBIndex', 'unique').unique; }
+    }
+    queryMethods(IDBIndex, 'IDBIndex');
+    idl(IDBIndex, 'IDBIndex');
+    const newIndex = (storeObj, s, id) => {
+      const x = { id, store: storeObj, storeId: s.id, name: '', keyPath: null, unique: false, multiEntry: false };
+      const i = indexInfo(x);
+      if (i) { x.name = i.name; const kp = keyPathValue(i.keyPath); x.keyPath = Array.isArray(kp) ? kp.map(stDec) : stDec(kp); x.unique = i.unique; x.multiEntry = i.multiEntry; }
+      const o = make(IDBIndex, x);
+      s.indexes.set(id, o);
+      return o;
+    };
+
+    // ---- cursors ------------------------------------------------------------------------------
+    const cur = (o, what) => { const s = kinds.get(o); if (!s || s.kind !== 'IDBCursor') throw new TypeError('Illegal invocation: IDBCursor.' + what); return s; };
+    const curCall = (s, op, args, what) => call(['cur', String(kinds.get(s.tx).id), String(s.id), op, String(kinds.get(s.request).id), ...args], 'IDBCursor.' + what);
+    const again = s => { const r = kinds.get(s.request); r.done = false; s.got = false; kick(); };
+    class IDBCursor {
+      constructor() { guard(); }
+      get source() { return cur(this, 'source').source; }
+      get direction() { return cur(this, 'direction').direction; }
+      get key() { return cur(this, 'key').key; }
+      get primaryKey() { return cur(this, 'primaryKey').primaryKey; }
+      get request() { return cur(this, 'request').request; }
+      advance(count) {
+        const s = cur(this, 'advance');
+        need(1, arguments.length, 'IDBCursor.advance');
+        const c = u32Arg(count, 'IDBCursor.advance');
+        if (c === 0) throw new TypeError("Failed to execute 'IDBCursor.advance': a count argument with value 0 (zero) was supplied, must be greater than 0.");
+        curCall(s, 'advance', [String(c)], 'advance');
+        again(s);
+      }
+      continue(key = undefined) {
+        const s = cur(this, 'continue');
+        curCall(s, 'continue', key === undefined ? ['0'] : keyArg(key), 'continue');
+        again(s);
+      }
+      continuePrimaryKey(key, primaryKey) {
+        const s = cur(this, 'continuePrimaryKey');
+        need(2, arguments.length, 'IDBCursor.continuePrimaryKey');
+        curCall(s, 'continuePrimaryKey', [...keyArg(key), ...keyArg(primaryKey)], 'continuePrimaryKey');
+        again(s);
+      }
+      update(value) {
+        const s = cur(this, 'update');
+        need(1, arguments.length, 'IDBCursor.update');
+        curCall(s, 'updatecheck', [], 'update');
+        const toks = cloneInactive(kinds.get(s.tx).id, value);
+        const f = call(['cur', String(kinds.get(s.tx).id), String(s.id), 'update', '0', ...toks], 'IDBCursor.update');
+        kick();
+        return newReq(IDBRequest, num(f[0]), this, s.tx);
+      }
+      delete() {
+        const s = cur(this, 'delete');
+        const f = curCall(s, 'delete', [], 'delete');
+        kick();
+        return newReq(IDBRequest, num(f[0]), this, s.tx);
+      }
+    }
+    idl(IDBCursor, 'IDBCursor');
+    class IDBCursorWithValue extends IDBCursor {
+      constructor() { super(); }
+      get value() { return cur(this, 'value').value; }
+    }
+    idl(IDBCursorWithValue, 'IDBCursorWithValue');
+    class IDBRecord {
+      constructor() { guard(); }
+      get key() { return st(this, 'IDBRecord', 'key').key; }
+      get primaryKey() { return st(this, 'IDBRecord', 'primaryKey').primaryKey; }
+      get value() { return st(this, 'IDBRecord', 'value').value; }
+    }
+    idl(IDBRecord, 'IDBRecord');
+
+    // ---- transactions and connections ---------------------------------------------------------
+    class IDBTransaction extends EventTarget {
+      constructor() { guard(); super(); }
+      get objectStoreNames() {
+        const s = st(this, 'IDBTransaction', 'objectStoreNames');
+        if (s.finished) return s.names;
+        return names(call(['txinfo', String(s.id)]));
+      }
+      get mode() { return st(this, 'IDBTransaction', 'mode').mode; }
+      get durability() { return st(this, 'IDBTransaction', 'durability').durability; }
+      get db() { return st(this, 'IDBTransaction', 'db').db; }
+      get error() { return st(this, 'IDBTransaction', 'error').error; }
+      objectStore(name) {
+        const s = st(this, 'IDBTransaction', 'objectStore');
+        need(1, arguments.length, 'IDBTransaction.objectStore');
+        const nm = String(name);
+        if (s.finished) throw new DOMException("Failed to execute 'IDBTransaction.objectStore': the transaction has finished.", 'InvalidStateError');
+        const id = num(call(['objectStore', String(s.id), stEnc(nm)], 'IDBTransaction.objectStore')[0]);
+        return s.stores.get(id) ?? newStore(this, id);
+      }
+      commit() { const s = st(this, 'IDBTransaction', 'commit'); if (s.finished) throw new DOMException("Failed to execute 'IDBTransaction.commit': the transaction has finished.", 'InvalidStateError'); call(['commit', String(s.id)], 'IDBTransaction.commit'); kick(); }
+      abort() { const s = st(this, 'IDBTransaction', 'abort'); if (s.finished) throw new DOMException("Failed to execute 'IDBTransaction.abort': the transaction has finished.", 'InvalidStateError'); call(['abort', String(s.id)], 'IDBTransaction.abort'); s.aborting = true; kick(); }
+    }
+    idl(IDBTransaction, 'IDBTransaction');
+    for (const k of ['abort', 'complete', 'error']) handlerAttr(IDBTransaction, k);
+    const newTx = (id, db, mode, durability = 'default') => {
+      const tx = make(IDBTransaction, { id, db, mode, durability, error: null, finished: false, names: null, stores: new Map(), cursors: [] });
+      txs.set(id, tx);
+      return tx;
+    };
+    class IDBDatabase extends EventTarget {
+      constructor() { guard(); super(); }
+      get name() { return st(this, 'IDBDatabase', 'name').name; }
+      get version() { const s = st(this, 'IDBDatabase', 'version'); if (!s.closed) { try { s.version = num(call(['dbinfo', String(s.id)])[1]); } catch (_) {} } return s.version; }
+      get objectStoreNames() { const s = st(this, 'IDBDatabase', 'objectStoreNames'); if (!s.closed) { try { s.names = names(call(['dbinfo', String(s.id)]).slice(2)); } catch (_) {} } return s.names; }
+      transaction(storeNames, mode = 'readonly', options = undefined) {
+        const s = st(this, 'IDBDatabase', 'transaction');
+        need(1, arguments.length, 'IDBDatabase.transaction');
+        const list = typeof storeNames === 'object' && storeNames !== null && typeof storeNames[Symbol.iterator] === 'function' ? [...storeNames].map(String) : [String(storeNames)];
+        const m = String(mode), d = dict(options, 'IDBDatabase.transaction');
+        if (!['readonly', 'readwrite', 'versionchange'].includes(m)) throw new TypeError(`Failed to execute 'IDBDatabase.transaction': '${m}' is not a valid IDBTransactionMode.`);
+        const durability = d.durability === undefined ? 'default' : String(d.durability);
+        if (!['default', 'strict', 'relaxed'].includes(durability)) throw new TypeError(`Failed to execute 'IDBDatabase.transaction': '${durability}' is not a valid IDBTransactionDurability.`);
+        if (s.closed) throw new DOMException("Failed to execute 'IDBDatabase.transaction': the connection is closing.", 'InvalidStateError');
+        const id = num(call(['transaction', String(s.id), m, ...list.map(stEnc)], 'IDBDatabase.transaction')[0]);
+        const tx = newTx(id, this, m, durability);
+        // the transaction is active until control returns to the event loop
+        timer(0, () => { call(['deactivate', String(id)]); kick(); }, 0, []);
+        return tx;
+      }
+      close() { const s = st(this, 'IDBDatabase', 'close'); if (s.closed) return; try { s.version = num(call(['dbinfo', String(s.id)])[1]); s.names = names(call(['dbinfo', String(s.id)]).slice(2)); } catch (_) {} s.closed = true; call(['close', String(s.id)]); conns.delete(s.id); kick(); }
+      createObjectStore(name, options = undefined) {
+        const s = st(this, 'IDBDatabase', 'createObjectStore');
+        need(1, arguments.length, 'IDBDatabase.createObjectStore');
+        const d = dict(options, 'IDBDatabase.createObjectStore'), nm = String(name), kp = keyPathArg(d.keyPath);
+        const f = call(['createStore', String(s.id), stEnc(nm), kp, d.autoIncrement ? '1' : '0'], 'IDBDatabase.createObjectStore');
+        return newStore(s.upgrade, num(f[0]));
+      }
+      deleteObjectStore(name) {
+        const s = st(this, 'IDBDatabase', 'deleteObjectStore');
+        need(1, arguments.length, 'IDBDatabase.deleteObjectStore');
+        call(['deleteStore', String(s.id), stEnc(String(name))], 'IDBDatabase.deleteObjectStore');
+      }
+    }
+    idl(IDBDatabase, 'IDBDatabase');
+    for (const k of ['abort', 'close', 'error', 'versionchange']) handlerAttr(IDBDatabase, k);
+
+    // ---- the factory --------------------------------------------------------------------------
+    class IDBFactory {
+      constructor() { guard(); }
+      open(name, version = undefined) {
+        st(this, 'IDBFactory', 'open');
+        need(1, arguments.length, 'IDBFactory.open');
+        const nm = String(name);
+        let v = '';
+        if (version !== undefined) {
+          const x = Number(version);
+          if (!Number.isFinite(x) || Math.trunc(x) < 1 || Math.trunc(x) > 9007199254740991) throw new TypeError("Failed to execute 'IDBFactory.open': the version is out of range.");
+          v = String(Math.trunc(x));
+        }
+        const f = call(['open', stEnc(nm), v], 'IDBFactory.open');
+        const r = newReq(IDBOpenDBRequest, num(f[0]), null, null);
+        kinds.get(r).name = nm;
+        kick();
+        return r;
+      }
+      deleteDatabase(name) {
+        st(this, 'IDBFactory', 'deleteDatabase');
+        need(1, arguments.length, 'IDBFactory.deleteDatabase');
+        const f = call(['deleteDatabase', stEnc(String(name)), ''], 'IDBFactory.deleteDatabase');
+        const r = newReq(IDBOpenDBRequest, num(f[0]), null, null);
+        kick();
+        return r;
+      }
+      databases() {
+        try { st(this, 'IDBFactory', 'databases'); } catch (e) { return Promise.reject(e); }
+        return new Promise(resolve => {
+          timer(0, () => {
+            const f = call(['databases']), out = [];
+            for (let i = 1; i + 1 < f.length; i += 2) out.push({ name: stDec(text(f[i])), version: num(f[i + 1]) });
+            resolve(out);
+          }, 0, []);
+        });
+      }
+      cmp(first, second) {
+        st(this, 'IDBFactory', 'cmp');
+        need(2, arguments.length, 'IDBFactory.cmp');
+        const a = keyArg(first), b = keyArg(second);
+        return Number(text(call(['cmp', ...a, ...b], 'IDBFactory.cmp')[0]));
+      }
+    }
+    idl(IDBFactory, 'IDBFactory');
+    return { factory: make(IDBFactory, {}), classes: { IDBFactory, IDBRequest, IDBOpenDBRequest, IDBVersionChangeEvent, IDBKeyRange, IDBObjectStore,
+      IDBIndex, IDBCursor, IDBCursorWithValue, IDBRecord, IDBTransaction, IDBDatabase, DOMStringList } };
+  };
+  let idbMade;
+  const idb = () => {
+    if (idbMade !== undefined) return idbMade;
+    return idbMade = apiCall(200, ['databases'], 0, true) === -2 ? null : makeIdb();
+  };
+  lazy('indexedDB', () => idb()?.factory);
+  for (const name of ['IDBFactory', 'IDBRequest', 'IDBOpenDBRequest', 'IDBVersionChangeEvent', 'IDBKeyRange', 'IDBObjectStore', 'IDBIndex', 'IDBCursor',
+    'IDBCursorWithValue', 'IDBRecord', 'IDBTransaction', 'IDBDatabase', 'DOMStringList']) lazy(name, () => idb()?.classes[name]);
+  // ==== end IndexedDB ============================================================================
+
+  // ==== File System API (WHATWG fs) and StorageManager =========================================
+  // The origin private file system of the storage key is Lean's (ClientStorage/FileSystem.lean,
+  // web_api op 201): a tree of names to bytes in memory. No host file is read or written, and
+  // nothing is on disk. Lean decides names, kinds, locks, the swap buffer of a writable (nothing
+  // is visible before close) and every exception. A handle here is a path and a kind.
+  // StorageManager (op 202): usage is the sum of what IndexedDB and the file system hold for
+  // this key, the quota a constant of the engine; persist() and persisted() answer false.
+  const makeFs = () => {
+    const td = new TextDecoder(), text = b => td.decode(b);
+    const unpack = ab => {
+      const u = new Uint8Array(ab), u32 = i => (u[i] | u[i + 1] << 8 | u[i + 2] << 16 | u[i + 3] << 24) >>> 0;
+      const out = [];
+      for (let i = 0, at = 4, k = u32(0); i < k; i++) { const len = u32(at); out.push(u.subarray(at + 4, at + 4 + len)); at += 4 + len; }
+      return out;
+    };
+    const call = (op, args, what) => {
+      const r = apiCall(op, args, 0, true);
+      if (typeof r === 'number') throw new DOMException(`${what}: storage is not available.`, r === -5 ? 'QuotaExceededError' : 'UnknownError');
+      const f = unpack(r), head = text(f[0]);
+      if (head === 'ok') return f.slice(1);
+      if (head[0] !== '!') return null;
+      const name = head.slice(1);
+      if (name === 'TypeError') throw new TypeError(`Failed to execute '${what}'`);
+      if (name === 'QuotaExceededError') throw new (makeQuotaError())(`Failed to execute '${what}': the quota has been exceeded.`);
+      throw new DOMException(`Failed to execute '${what}': ${name}`, name);
+    };
+    // An operation of a promise-returning method: its exception is the promise's rejection.
+    const later = f => { try { return Promise.resolve(f()); } catch (e) { return Promise.reject(e); } };
+    const kinds = new WeakMap();
+    const st = (o, what) => { const s = kinds.get(o); if (!s || s.path === undefined) throw new TypeError('Illegal invocation: ' + what); return s; };
+    const join = (dir, name) => dir === '' ? name : dir + '/' + name;
+    const need = (k, have, what) => { if (have < k) throw new TypeError(`Failed to execute '${what}': ${k} argument${k > 1 ? 's' : ''} required, but only ${have} present.`); };
+    let making = false;
+    const guard = () => { if (!making) throw new TypeError('Illegal constructor'); };
+    const make = (C, state) => { making = true; let o; try { o = new C(); } finally { making = false; } kinds.set(o, state); return o; };
+    const idl = (C, tag) => {
+      setTag(C, tag);
+      for (const k of Object.getOwnPropertyNames(C.prototype)) {
+        if (k === 'constructor') continue;
+        Object.defineProperty(C.prototype, k, { ...Object.getOwnPropertyDescriptor(C.prototype, k), enumerable: true });
+      }
+      return C;
+    };
+    const handle = (path, name, dir) => make(dir ? FileSystemDirectoryHandle : FileSystemFileHandle, { path, name, dir });
+    const bytesOf = data => {
+      if (typeof data === 'string') return utf8(data);
+      if (BlobC && data instanceof BlobC) return blobBytes(data);
+      if (data instanceof ArrayBuffer) return new Uint8Array(data.slice(0));
+      if (ArrayBuffer.isView(data)) return new Uint8Array(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength));
+      return null;
+    };
+    const size = (v, what) => { const x = Number(v); if (!Number.isFinite(x) || x < 0) throw new TypeError(`Failed to execute '${what}': the value is not a size.`); return Math.trunc(x); };
+
+    class FileSystemHandle {
+      constructor() { guard(); }
+      get kind() { return st(this, 'FileSystemHandle.kind').dir ? 'directory' : 'file'; }
+      get name() { return st(this, 'FileSystemHandle.name').name; }
+      isSameEntry(other) {
+        return later(() => {
+          const s = st(this, 'FileSystemHandle.isSameEntry');
+          need(1, arguments.length, 'FileSystemHandle.isSameEntry');
+          const o = st(other, 'FileSystemHandle.isSameEntry');
+          return text(call(201, ['same', s.path, s.dir ? 'd' : 'f', o.path, o.dir ? 'd' : 'f'], 'isSameEntry')[0]) === '1';
+        });
+      }
+      remove(options = undefined) {
+        return later(() => {
+          const s = st(this, 'FileSystemHandle.remove'), d = dict(options, 'FileSystemHandle.remove');
+          call(201, ['remove', s.path, '', d.recursive ? '1' : '0'], 'FileSystemHandle.remove');
+        });
+      }
+      getUniqueId() { return later(() => { const s = st(this, 'FileSystemHandle.getUniqueId'); return (s.dir ? 'd:' : 'f:') + s.path; }); }
+    }
+    idl(FileSystemHandle, 'FileSystemHandle');
+    class FileSystemFileHandle extends FileSystemHandle {
+      constructor() { super(); }
+      getFile() {
+        return later(() => {
+          const s = st(this, 'FileSystemFileHandle.getFile');
+          const f = call(201, ['stat', s.path], 'FileSystemFileHandle.getFile');
+          return new (makeFile())([f[1].slice()], s.name, { lastModified: Number(text(f[0])) });
+        });
+      }
+      createWritable(options = undefined) {
+        return later(() => {
+          const s = st(this, 'FileSystemFileHandle.createWritable'), d = dict(options, 'FileSystemFileHandle.createWritable');
+          const mode = d.mode === undefined ? 'siloed' : String(d.mode);
+          if (mode !== 'siloed' && mode !== 'exclusive') throw new TypeError(`Failed to execute 'createWritable': '${mode}' is not a valid mode.`);
+          const id = Number(text(call(201, ['wopen', s.path, d.keepExistingData ? '1' : '0', mode === 'exclusive' ? '1' : '0'], 'FileSystemFileHandle.createWritable')[0]));
+          return newWritable(id);
+        });
+      }
+      move(...args) {
+        return later(() => {
+          const s = st(this, 'FileSystemFileHandle.move');
+          need(1, args.length, 'FileSystemFileHandle.move');
+          const dest = args.length > 1 || (typeof args[0] === 'object' && args[0] !== null) ? st(args[0], 'FileSystemFileHandle.move') : null;
+          const name = String(args.length > 1 ? args[1] : dest ? s.name : args[0]);
+          const dir = dest ? dest.path : s.path.includes('/') ? s.path.slice(0, s.path.lastIndexOf('/')) : '';
+          call(201, ['move', s.path, dir, stEnc(name)], 'FileSystemFileHandle.move');
+          s.path = join(dir, stEnc(name)); s.name = name;
+        });
+      }
+    }
+    idl(FileSystemFileHandle, 'FileSystemFileHandle');
+    // createSyncAccessHandle is exposed in dedicated workers only.
+    if (typeof document === 'undefined')
+      Object.defineProperty(FileSystemFileHandle.prototype, 'createSyncAccessHandle', { writable: true, enumerable: true, configurable: true,
+        value: function createSyncAccessHandle(options = undefined) {
+          return later(() => {
+            const s = st(this, 'FileSystemFileHandle.createSyncAccessHandle'), d = dict(options, 'createSyncAccessHandle');
+            const modes = ['readwrite', 'read-only', 'readwrite-unsafe'], mode = d.mode === undefined ? 'readwrite' : String(d.mode);
+            if (!modes.includes(mode)) throw new TypeError(`Failed to execute 'createSyncAccessHandle': '${mode}' is not a valid mode.`);
+            const id = Number(text(call(201, ['aopen', s.path, String(modes.indexOf(mode))], 'createSyncAccessHandle')[0]));
+            return make(FileSystemSyncAccessHandle, { access: id, open: true });
+          });
+        } });
+    const entriesOf = (self, pick) => {
+      let items = null, i = 0;
+      const it = {
+        next() {
+          return later(() => {
+            if (items === null) {
+              const s = st(self, 'FileSystemDirectoryHandle'), f = call(201, ['list', s.path], 'FileSystemDirectoryHandle');
+              items = [];
+              for (let k = 0; k + 1 < f.length; k += 2) { const enc = text(f[k]); items.push(handle(join(s.path, enc), stDec(enc), text(f[k + 1]) === 'd')); }
+            }
+            if (i >= items.length) return { value: undefined, done: true };
+            const h = items[i++];
+            return { value: pick === 0 ? h.name : pick === 1 ? h : [h.name, h], done: false };
+          });
+        },
+        return(value) { i = Infinity; items = items ?? []; return Promise.resolve({ value, done: true }); },
+        [Symbol.asyncIterator]() { return this; },
+      };
+      return it;
+    };
+    class FileSystemDirectoryHandle extends FileSystemHandle {
+      constructor() { super(); }
+      getFileHandle(name, options = undefined) {
+        return later(() => {
+          const s = st(this, 'FileSystemDirectoryHandle.getFileHandle');
+          need(1, arguments.length, 'FileSystemDirectoryHandle.getFileHandle');
+          const d = dict(options, 'getFileHandle'), nm = String(name), enc = stEnc(nm);
+          call(201, ['get', s.path, enc, 'f', d.create ? '1' : '0'], 'FileSystemDirectoryHandle.getFileHandle');
+          return handle(join(s.path, enc), nm, false);
+        });
+      }
+      getDirectoryHandle(name, options = undefined) {
+        return later(() => {
+          const s = st(this, 'FileSystemDirectoryHandle.getDirectoryHandle');
+          need(1, arguments.length, 'FileSystemDirectoryHandle.getDirectoryHandle');
+          const d = dict(options, 'getDirectoryHandle'), nm = String(name), enc = stEnc(nm);
+          call(201, ['get', s.path, enc, 'd', d.create ? '1' : '0'], 'FileSystemDirectoryHandle.getDirectoryHandle');
+          return handle(join(s.path, enc), nm, true);
+        });
+      }
+      removeEntry(name, options = undefined) {
+        return later(() => {
+          const s = st(this, 'FileSystemDirectoryHandle.removeEntry');
+          need(1, arguments.length, 'FileSystemDirectoryHandle.removeEntry');
+          const d = dict(options, 'removeEntry'), nm = String(name);
+          if (nm === '') throw new TypeError("Failed to execute 'removeEntry': the name is empty.");
+          call(201, ['remove', s.path, stEnc(nm), d.recursive ? '1' : '0'], 'FileSystemDirectoryHandle.removeEntry');
+        });
+      }
+      resolve(possibleDescendant) {
+        return later(() => {
+          const s = st(this, 'FileSystemDirectoryHandle.resolve');
+          need(1, arguments.length, 'FileSystemDirectoryHandle.resolve');
+          const o = st(possibleDescendant, 'FileSystemDirectoryHandle.resolve');
+          const f = call(201, ['resolve', s.path, o.path], 'FileSystemDirectoryHandle.resolve');
+          return f === null ? null : f.map(b => stDec(text(b)));
+        });
+      }
+      keys() { st(this, 'FileSystemDirectoryHandle.keys'); return entriesOf(this, 0); }
+      values() { st(this, 'FileSystemDirectoryHandle.values'); return entriesOf(this, 1); }
+      entries() { st(this, 'FileSystemDirectoryHandle.entries'); return entriesOf(this, 2); }
+      [Symbol.asyncIterator]() { st(this, 'FileSystemDirectoryHandle.entries'); return entriesOf(this, 2); }
+    }
+    idl(FileSystemDirectoryHandle, 'FileSystemDirectoryHandle');
+
+    // ---- FileSystemWritableFileStream: a WritableStream when the engine has one -----------------
+    const Base = typeof WritableStream === 'function' ? WritableStream : Object;
+    // One chunk (the standard's "write a chunk"): a write, a seek or a truncate on the swap buffer.
+    const writeChunk = (w, chunk) => {
+      if (!w.open) throw new TypeError('The stream is closed.');
+      try {
+        const data = bytesOf(chunk);
+        if (data !== null) { call(201, ['wwrite', String(w.id), '', data], 'write'); return; }
+        if (chunk === null || typeof chunk !== 'object') throw new TypeError("Failed to execute 'write': the data is not writable.");
+        const type = String(chunk.type);
+        if (type === 'write') {
+          if (chunk.data === undefined) throw new DOMException("Failed to execute 'write': write requires a data argument.", 'SyntaxError');
+          const bytes = bytesOf(chunk.data);
+          if (bytes === null) throw new TypeError("Failed to execute 'write': the data is not writable.");
+          call(201, ['wwrite', String(w.id), chunk.position === undefined || chunk.position === null ? '' : String(size(chunk.position, 'write')), bytes], 'write');
+        } else if (type === 'seek') {
+          if (chunk.position === undefined || chunk.position === null) throw new DOMException("Failed to execute 'write': seek requires a position argument.", 'SyntaxError');
+          call(201, ['wseek', String(w.id), String(size(chunk.position, 'seek'))], 'seek');
+        } else if (type === 'truncate') {
+          if (chunk.size === undefined || chunk.size === null) throw new DOMException("Failed to execute 'write': truncate requires a size argument.", 'SyntaxError');
+          call(201, ['wtrunc', String(w.id), String(size(chunk.size, 'truncate'))], 'truncate');
+        } else throw new TypeError(`Failed to execute 'write': '${type}' is not a valid command.`);
+      } catch (e) {
+        // an error ends the stream: the swap buffer is dropped and nothing was written to the file
+        w.open = false;
+        apiCall(201, ['wabort', String(w.id)], 0, true);
+        throw e;
+      }
+    };
+    const closeW = w => { if (!w.open) throw new TypeError('The stream is closed.'); w.open = false; call(201, ['wclose', String(w.id)], 'close'); };
+    const abortW = w => { if (w.open) { w.open = false; apiCall(201, ['wabort', String(w.id)], 0, true); } };
+    let sinkFor = null;
+    class FileSystemWritableFileStream extends Base {
+      constructor() {
+        guard();
+        const w = sinkFor;
+        if (Base === Object) super();
+        else super({ write(chunk) { writeChunk(w, chunk); }, close() { closeW(w); }, abort() { abortW(w); } });
+      }
+      write(data) {
+        const w = kinds.get(this);
+        if (Base !== Object) return later(() => { const writer = this.getWriter(), p = writer.write(data); writer.releaseLock(); return p; });
+        return later(() => writeChunk(w, data));
+      }
+      seek(position) { need(1, arguments.length, 'FileSystemWritableFileStream.seek'); return this.write({ type: 'seek', position }); }
+      truncate(size) { need(1, arguments.length, 'FileSystemWritableFileStream.truncate'); return this.write({ type: 'truncate', size }); }
+    }
+    if (Base === Object) {
+      FileSystemWritableFileStream.prototype.close = function close() { const w = kinds.get(this); return later(() => closeW(w)); };
+      FileSystemWritableFileStream.prototype.abort = function abort() { const w = kinds.get(this); return later(() => abortW(w)); };
+    }
+    idl(FileSystemWritableFileStream, 'FileSystemWritableFileStream');
+    const newWritable = id => { const w = { id, open: true }; sinkFor = w; try { return make(FileSystemWritableFileStream, w); } finally { sinkFor = null; } };
+
+    // ---- FileSystemSyncAccessHandle (dedicated workers): reads and writes in place --------------
+    const acc = (o, what) => { const s = kinds.get(o); if (!s || s.access === undefined) throw new TypeError('Illegal invocation: FileSystemSyncAccessHandle.' + what); return s; };
+    const atOf = (options, what) => { const d = dict(options, what); return d.at === undefined ? '' : String(size(d.at, what)); };
+    const view = (b, what) => { if (b instanceof ArrayBuffer) return new Uint8Array(b); if (ArrayBuffer.isView(b)) return new Uint8Array(b.buffer, b.byteOffset, b.byteLength); throw new TypeError(`Failed to execute '${what}': the buffer is not a BufferSource.`); };
+    class FileSystemSyncAccessHandle {
+      constructor() { guard(); }
+      read(buffer, options = undefined) {
+        const s = acc(this, 'read');
+        need(1, arguments.length, 'FileSystemSyncAccessHandle.read');
+        const u = view(buffer, 'read'), at = atOf(options, 'read');
+        const f = call(201, ['aread', String(s.access), at, String(u.length)], 'FileSystemSyncAccessHandle.read');
+        u.set(f[0]);
+        return f[0].length;
+      }
+      write(buffer, options = undefined) {
+        const s = acc(this, 'write');
+        need(1, arguments.length, 'FileSystemSyncAccessHandle.write');
+        const u = view(buffer, 'write'), at = atOf(options, 'write');
+        return Number(text(call(201, ['awrite', String(s.access), at, u.slice()], 'FileSystemSyncAccessHandle.write')[0]));
+      }
+      truncate(newSize) { const s = acc(this, 'truncate'); need(1, arguments.length, 'FileSystemSyncAccessHandle.truncate'); call(201, ['atrunc', String(s.access), String(size(newSize, 'truncate'))], 'FileSystemSyncAccessHandle.truncate'); }
+      getSize() { const s = acc(this, 'getSize'); return Number(text(call(201, ['asize', String(s.access)], 'FileSystemSyncAccessHandle.getSize')[0])); }
+      flush() { const s = acc(this, 'flush'); call(201, ['aflush', String(s.access)], 'FileSystemSyncAccessHandle.flush'); }
+      close() { const s = acc(this, 'close'); if (s.open) { s.open = false; call(201, ['aclose', String(s.access)], 'FileSystemSyncAccessHandle.close'); } }
+    }
+    idl(FileSystemSyncAccessHandle, 'FileSystemSyncAccessHandle');
+
+    // ---- StorageManager -------------------------------------------------------------------------
+    class StorageManager {
+      constructor() { guard(); }
+      estimate() {
+        return later(() => {
+          if (!kinds.has(this)) throw new TypeError('Illegal invocation: StorageManager.estimate');
+          const f = call(202, ['estimate'], 'StorageManager.estimate');
+          return { usage: Number(text(f[0])), quota: Number(text(f[1])), usageDetails: { indexedDB: Number(text(f[2])), fileSystem: Number(text(f[3])) } };
+        });
+      }
+      persisted() { return later(() => { if (!kinds.has(this)) throw new TypeError('Illegal invocation: StorageManager.persisted'); return text(call(202, ['persisted'], 'StorageManager.persisted')[0]) === '1'; }); }
+      getDirectory() {
+        return later(() => {
+          if (!kinds.has(this)) throw new TypeError('Illegal invocation: StorageManager.getDirectory');
+          call(201, ['root'], 'StorageManager.getDirectory');
+          return handle('', '', true);
+        });
+      }
+    }
+    // persist() is exposed in windows only.
+    if (typeof document !== 'undefined')
+      StorageManager.prototype.persist = function persist() { return later(() => { if (!kinds.has(this)) throw new TypeError('Illegal invocation: StorageManager.persist'); return text(call(202, ['persist'], 'StorageManager.persist')[0]) === '1'; }); };
+    idl(StorageManager, 'StorageManager');
+    return { manager: make(StorageManager, {}), classes: { FileSystemHandle, FileSystemFileHandle, FileSystemDirectoryHandle, FileSystemWritableFileStream,
+      FileSystemSyncAccessHandle, StorageManager } };
+  };
+  let fsMade;
+  const fsApi = () => {
+    if (fsMade !== undefined) return fsMade;
+    return fsMade = !apiOn() || apiCall(202, ['persisted'], 0, true) === -2 ? null : makeFs();
+  };
+  for (const name of ['FileSystemHandle', 'FileSystemFileHandle', 'FileSystemDirectoryHandle', 'FileSystemWritableFileStream', 'FileSystemSyncAccessHandle',
+    'StorageManager']) lazy(name, () => fsApi()?.classes[name]);
+  // ==== end File System API ======================================================================
+
+  // ==== Web Locks API ============================================================================
+  // The lock manager of the storage key is Lean's (ClientStorage/Locks.lean, web_api op 203):
+  // which request is granted and when, the queue, ifAvailable, steal, abort, and what query
+  // lists. This block converts arguments, runs a granted request's callback and tells Lean when
+  // its promise has settled. Locks are per session: a page and its workers do not share them yet.
+  const makeLocks = () => {
+    const td = new TextDecoder(), text = b => td.decode(b);
+    const unpack = ab => {
+      const u = new Uint8Array(ab), u32 = i => (u[i] | u[i + 1] << 8 | u[i + 2] << 16 | u[i + 3] << 24) >>> 0;
+      const out = [];
+      for (let i = 0, at = 4, k = u32(0); i < k; i++) { const len = u32(at); out.push(u.subarray(at + 4, at + 4 + len)); at += 4 + len; }
+      return out;
+    };
+    const call = (args, what) => {
+      const r = apiCall(203, args, 0, true);
+      if (typeof r === 'number') throw new DOMException(`${what}: locks are not available.`, 'UnknownError');
+      const f = unpack(r), head = text(f[0]);
+      if (head === 'ok') return f.slice(1);
+      throw new DOMException(`Failed to execute '${what}': ${head.slice(1)}`, head.slice(1));
+    };
+    const kinds = new WeakMap();
+    let making = false;
+    const guard = () => { if (!making) throw new TypeError('Illegal constructor'); };
+    const make = (C, state) => { making = true; let o; try { o = new C(); } finally { making = false; } kinds.set(o, state); return o; };
+    const idl = (C, tag) => {
+      setTag(C, tag);
+      for (const k of Object.getOwnPropertyNames(C.prototype)) {
+        if (k === 'constructor') continue;
+        Object.defineProperty(C.prototype, k, { ...Object.getOwnPropertyDescriptor(C.prototype, k), enumerable: true });
+      }
+      return C;
+    };
+    const clientId = 'client-' + Math.floor(Math.random() * 0x100000000).toString(16);
+    const held = new Map(), pending = new Map();
+    class Lock {
+      constructor() { guard(); }
+      get name() { const s = kinds.get(this); if (!s) throw new TypeError('Illegal invocation: Lock.name'); return s.name; }
+      get mode() { const s = kinds.get(this); if (!s) throw new TypeError('Illegal invocation: Lock.mode'); return s.mode; }
+    }
+    idl(Lock, 'Lock');
+    // A granted request: its callback runs with the lock, which is held until the callback's
+    // promise settles; Lean is then told, and answers the requests that are granted next.
+    const run = e => {
+      held.set(e.id, e);
+      let p;
+      try { p = Promise.resolve(e.callback(make(Lock, { name: e.name, mode: e.mode }))); } catch (err) { p = Promise.reject(err); }
+      p.then(v => { release(e); e.resolve(v); }, err => { release(e); e.reject(err); });
+    };
+    const release = e => { if (!held.has(e.id)) return; held.delete(e.id); grant(call(['release', String(e.id)], 'LockManager.request')); };
+    const grant = ids => {
+      for (const b of ids) {
+        const e = pending.get(Number(text(b)));
+        if (!e) continue;
+        pending.delete(e.id);
+        if (e.signal) e.signal.removeEventListener('abort', e.onabort);
+        queueMicrotask(() => run(e));
+      }
+    };
+    class LockManager {
+      constructor() { guard(); }
+      request(name, ...rest) {
+        return new Promise((resolve, reject) => {
+          if (!kinds.has(this)) throw new TypeError('Illegal invocation: LockManager.request');
+          if (arguments.length < 2) throw new TypeError("Failed to execute 'LockManager.request': 2 arguments required.");
+          const callback = rest.length > 1 ? rest[1] : rest[0], d = rest.length > 1 ? dict(rest[0], 'LockManager.request') : {};
+          if (typeof callback !== 'function') throw new TypeError("Failed to execute 'LockManager.request': the callback is not a function.");
+          const nm = String(name), mode = d.mode === undefined ? 'exclusive' : String(d.mode);
+          if (mode !== 'exclusive' && mode !== 'shared') throw new TypeError(`Failed to execute 'LockManager.request': '${mode}' is not a valid LockMode.`);
+          const signal = d.signal === undefined || d.signal === null ? null : d.signal;
+          if (signal !== null && !(signal instanceof AbortSignal)) throw new TypeError("Failed to execute 'LockManager.request': the signal is not an AbortSignal.");
+          const flags = (d.ifAvailable ? 1 : 0) | (d.steal ? 2 : 0) | (signal ? 4 : 0);
+          const args = [stEnc(nm), mode === 'shared' ? 's' : 'x', String(flags), clientId];
+          call(['check', ...args], 'LockManager.request');
+          if (signal && signal.aborted) { reject(signal.reason); return; }
+          const f = call(['request', ...args], 'LockManager.request'), id = Number(text(f[0])), state = text(f[1]);
+          const e = { id, name: nm, mode, callback, resolve, reject, signal, onabort: null };
+          if (state === 'none') {
+            // ifAvailable and the lock is taken: the callback runs with null
+            queueMicrotask(() => { try { resolve(callback(null)); } catch (err) { reject(err); } });
+            return;
+          }
+          // the holders a steal released: their request promises reject
+          for (const b of f.slice(2)) { const h = held.get(Number(text(b))); if (h) { held.delete(h.id); h.reject(new DOMException('The lock was stolen by another request.', 'AbortError')); } }
+          if (state === '1') { queueMicrotask(() => run(e)); return; }
+          pending.set(id, e);
+          if (signal) {
+            e.onabort = () => { if (!pending.has(id)) return; pending.delete(id); reject(signal.reason); grant(call(['abort', String(id)], 'LockManager.request')); };
+            signal.addEventListener('abort', e.onabort);
+          }
+        });
+      }
+      query() {
+        return new Promise(resolve => {
+          if (!kinds.has(this)) throw new TypeError('Illegal invocation: LockManager.query');
+          const f = call(['query'], 'LockManager.query').map(text), bar = f.indexOf('|');
+          const rows = xs => { const out = []; for (let i = 0; i + 2 < xs.length; i += 3) out.push({ name: stDec(xs[i]), mode: xs[i + 1], clientId: xs[i + 2] }); return out; };
+          resolve({ held: rows(f.slice(0, bar)), pending: rows(f.slice(bar + 1)) });
+        });
+      }
+    }
+    idl(LockManager, 'LockManager');
+    return { manager: make(LockManager, {}), classes: { Lock, LockManager } };
+  };
+  let locksMade;
+  const locksApi = () => {
+    if (locksMade !== undefined) return locksMade;
+    return locksMade = !apiOn() || apiCall(203, ['query'], 0, true) === -2 ? null : makeLocks();
+  };
+  lazy('Lock', () => locksApi()?.classes.Lock);
+  lazy('LockManager', () => locksApi()?.classes.LockManager);
+  // ==== end Web Locks API ========================================================================
+
   // ---- User Timing: performance.mark, measure ---------------------------------------------
   // performance.now and timeOrigin are QuickJS-NG's, on the WASI clock, which is Lean's script
   // clock (Hosts.Page.ScriptClock). The entries are this list.
@@ -6288,7 +7989,16 @@
     define(C.prototype, 'toString', function toString() { return this.href; });
   }
   // ==== end of basics ====
-  def('matchMedia', q => ({ matches: false, media: String(q), addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {} }));
+  // matchMedia (CSSOM View §4.2). Whether the query holds is Lean's (node_query 41:
+  // Rendering.MediaQuery.holds in the media environment of the page's layout, the one its
+  // style sheets are read in), asked at each read of `matches`, so it follows the window.
+  // A query Lean can not read, and an engine without the op, answer false. No change events yet.
+  def('matchMedia', q => {
+    const media = String(q);
+    const list = { media, onchange: null, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent() { return true; } };
+    Object.defineProperty(list, 'matches', { enumerable: true, configurable: true, get() { return n.query(0, 41, media) === '1'; } });
+    return list;
+  });
   def('postMessage', () => {});
   def('focus', () => {}); def('blur', () => {}); def('close', () => {}); def('stop', () => {}); def('scrollTo', () => {}); def('scrollBy', () => {});
   def('alert', () => {}); def('confirm', () => false); def('prompt', () => null);
@@ -8142,9 +9852,18 @@
     'WebGLRenderingContext', 'WebGL2RenderingContext', 'WebGLObject', 'WebGLBuffer', 'WebGLFramebuffer', 'WebGLProgram',
     'WebGLRenderbuffer', 'WebGLShader', 'WebGLTexture', 'WebGLQuery', 'WebGLSampler', 'WebGLSync', 'WebGLTransformFeedback',
     'WebGLVertexArrayObject', 'WebGLUniformLocation', 'WebGLActiveInfo', 'WebGLShaderPrecisionFormat', 'WebGLContextEvent',
+    // Canvas 2D's worker side (HTML §4.12.5: [Exposed=(Window,Worker)]); the worker's host
+    // keeps its own canvas bitmaps in Lean (PageCanvas), as a page's does.
+    'OffscreenCanvas', 'OffscreenCanvasRenderingContext2D', 'ImageData', 'ImageBitmap', 'createImageBitmap', 'Path2D',
+    'CanvasGradient', 'CanvasPattern', 'TextMetrics', 'DOMMatrix', 'DOMMatrixReadOnly', 'DOMPoint', 'DOMPointReadOnly',
     // WebCodecs' are [Exposed=(Window,DedicatedWorker)].
     'VideoColorSpace', 'VideoFrame', 'EncodedVideoChunk', 'EncodedAudioChunk', 'AudioData', 'AudioDecoder', 'VideoDecoder',
-    'AudioEncoder', 'VideoEncoder', 'ImageDecoder', 'ImageTrackList', 'ImageTrack', 'DOMRectReadOnly', 'DOMRect']);
+    'AudioEncoder', 'VideoEncoder', 'ImageDecoder', 'ImageTrackList', 'ImageTrack', 'DOMRectReadOnly', 'DOMRect',
+    // client-side storage (sections IndexedDB and File System API)
+    'indexedDB', 'IDBFactory', 'IDBRequest', 'IDBOpenDBRequest', 'IDBVersionChangeEvent', 'IDBKeyRange', 'IDBObjectStore', 'IDBIndex', 'IDBCursor',
+    'IDBCursorWithValue', 'IDBRecord', 'IDBTransaction', 'IDBDatabase', 'DOMStringList', 'QuotaExceededError', 'FileSystemHandle',
+    'FileSystemFileHandle', 'FileSystemDirectoryHandle', 'FileSystemWritableFileStream', 'FileSystemSyncAccessHandle', 'StorageManager', 'Lock', 'LockManager',
+    'ML', 'MLContext', 'MLGraph', 'MLOperand', 'MLTensor', 'MLGraphBuilder']);
   // HTML §10.2.1: WorkerGlobalScope, DedicatedWorkerGlobalScope, WorkerLocation, WorkerNavigator.
   const makeWorkerScope = (url, name) => {
     inWorker = true;
@@ -8157,7 +9876,7 @@
     for (const k of ['href', 'origin', 'protocol', 'host', 'hostname', 'port', 'pathname', 'search', 'hash'])
       Object.defineProperty(WorkerLocation.prototype, k, { get() { return parts.get(this)[k]; }, configurable: true, enumerable: true });
     class WorkerNavigator { constructor() { throw new TypeError('Illegal constructor'); } }
-    for (const k of ['userAgent', 'language', 'languages', 'platform', 'onLine', 'hardwareConcurrency'])
+    for (const k of ['userAgent', 'language', 'languages', 'platform', 'onLine', 'hardwareConcurrency', 'storage', 'locks', 'ml'])
       Object.defineProperty(WorkerNavigator.prototype, k, { get() { return nav[k]; }, configurable: true, enumerable: true });
     for (const [k, v] of [['appCodeName', 'Mozilla'], ['appName', 'Netscape'], ['product', 'Gecko']])
       Object.defineProperty(WorkerNavigator.prototype, k, { get() { return v; }, configurable: true, enumerable: true });
@@ -8729,6 +10448,10 @@
     return null;
   };
   Object.defineProperty(Document.prototype, 'activeElement', { get() { return focusRetarget(nodeId(this)) ?? this.body; }, configurable: true, enumerable: true });
+  // A press of the user's pointer on node `id` (Lean asks, after a `mousedown` that no listener
+  // canceled: Hosts.PageEvents.lowPointer): the focusable area there takes the focus, else the
+  // focused element loses it. Which area is Lean's (DOM.Focus.pressTarget, node_query 189 "p").
+  const pressFocus = id => { const t = focusQuery(id, 'p'); if (t >= 0) { n.query(t, 177, 'f'); focusMove(t); } else focusMove(-1); };
   // ==== end focus ==========================================================================
 
   // ==== popover: popovers, dialogs and their invoker buttons (HTML §6.12, §4.11.4, §4.10.6) ====
@@ -9549,7 +11272,12 @@
     },
     // Lean dispatches an event of the user agent at a node, the document (0) or the window.
     dispatch(target, type, flags) {
-      let C = type.startsWith('pointer') ? PointerEvent : type === 'click' || type.startsWith('mouse') ? MouseEvent : type === 'message' ? MessageEvent : Event;
+      // not an event: the default action of a press, which only Lean asks for
+      if (type === '@focus') { pressFocus(target); return ''; }
+      // click, auxclick and contextmenu of pointer input are PointerEvents (Pointer Events 3 §4.2.12); a click with no pointer data is a MouseEvent
+      const pointerClick = type === 'click' || type === 'auxclick' || type === 'contextmenu';
+      let C = type.startsWith('pointer') ? PointerEvent : pointerClick || type === 'dblclick' || type.startsWith('mouse') ? MouseEvent
+        : type === 'wheel' ? WheelEvent : type === 'message' ? MessageEvent : Event;
       const init = { bubbles: (flags & 1) !== 0, cancelable: (flags & 2) !== 0, composed: (flags & 4) !== 0, view: window };
       // The pointer's coordinates, buttons and pointer fields, as Lean gives them; the key of
       // a keyboard event; the inputType and data of an input event of an editing command.
@@ -9558,6 +11286,9 @@
       if (C !== Event || keyOrInput) { const s = n.query(0, 16, ''); if (typeof s === 'string' && s !== '') { try { data = JSON.parse(s); } catch {} } }
       if (keyOrInput && typeof data.key === 'string') C = KeyboardEvent;
       else if (keyOrInput && typeof data.inputType === 'string') C = InputEvent;
+      if (pointerClick && typeof data.pointerId === 'number') C = PointerEvent;
+      // the related target of a boundary event (over, out, enter, leave), as Lean names it
+      if (typeof data.relatedNode === 'number') { data.relatedTarget = wrap(data.relatedNode); delete data.relatedNode; }
       // shadowframes: a message from another session (HTML.FrameSessions): its data is
       // serialized; its source is the frame it came through, or the parent.
       let via = -1;

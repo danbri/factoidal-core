@@ -1,0 +1,16 @@
+{
+ "case": "7.4.6.a",
+ "file": "Chapt07/7.4/7.4.6/7.4.6.a.xhtml",
+ "quote": "You must see the value \"John\" in all three input fields.",
+ "steps": [
+  {
+   "expect": "values",
+   "values": [
+    "John",
+    "John",
+    "John"
+   ],
+   "kind": "input"
+  }
+ ]
+}

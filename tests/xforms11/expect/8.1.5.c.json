@@ -1,0 +1,33 @@
+{
+ "case": "8.1.5.c",
+ "file": "Chapt08/8.1/8.1.5/8.1.5.c.xhtml",
+ "quote": "When you activate the Enter An Invalid Value trigger you must see a message that says \"That is an invalid name\". When you activate the Dispatch Hint Message trigger you must see a message that says \"This is the hint message\". When you activate the Dispatch Help Message trigger you must see a message that says \"This is the help message\".",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Enter An Invalid Value"
+  },
+  {
+   "expect": "control",
+   "kind": "output",
+   "valid": false,
+   "alert": "That is an invalid name"
+  },
+  {
+   "do": "activate",
+   "label": "Dispatch Hint Message"
+  },
+  {
+   "expect": "message",
+   "contains": "This is the hint message"
+  },
+  {
+   "do": "activate",
+   "label": "Dispatch Help Message"
+  },
+  {
+   "expect": "message",
+   "contains": "This is the help message"
+  }
+ ]
+}

@@ -1,0 +1,15 @@
+{
+ "case": "4.4.12.a",
+ "file": "Chapt04/4.4/4.4.12/4.4.12.a.xhtml",
+ "quote": "You must see a DOMActivate message after you activate the DOMActivate trigger.",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "DOMActivate"
+  },
+  {
+   "expect": "message",
+   "contains": "DOMActivate"
+  }
+ ]
+}

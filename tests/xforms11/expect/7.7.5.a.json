@@ -1,0 +1,12 @@
+{
+ "case": "7.7.5.a",
+ "file": "Chapt07/7.7/7.7.5/7.7.5.a.xhtml",
+ "quote": "You must see the value \"1\" for Index.",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "Index",
+   "value": "1"
+  }
+ ]
+}

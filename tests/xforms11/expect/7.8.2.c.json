@@ -1,0 +1,15 @@
+{
+ "case": "7.8.2.c",
+ "file": "Chapt07/7.8/7.8.2/7.8.2.c.xhtml",
+ "quote": "You must have seen an xforms-binding-exception message or a fatal error due to an xforms-binding-exception. You must see no value for the Invalid Property output.",
+ "steps": [
+  {
+   "expect": "exception",
+   "name": "xforms-binding-exception"
+  },
+  {
+   "expect": "no-value",
+   "label": "Invalid Property"
+  }
+ ]
+}

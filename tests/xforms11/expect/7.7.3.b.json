@@ -1,0 +1,17 @@
+{
+ "case": "7.7.3.b",
+ "file": "Chapt07/7.7/7.7.3/7.7.3.b.xhtml",
+ "quote": "You must see a value of \"NaN\" for Maximum A and Maximum B.",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "Maximum A",
+   "value": "NaN"
+  },
+  {
+   "expect": "control",
+   "label": "Maximum B",
+   "value": "NaN"
+  }
+ ]
+}

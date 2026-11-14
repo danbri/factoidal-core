@@ -1,0 +1,14 @@
+{
+ "case": "7.9.1.a",
+ "file": "Chapt07/7.9/7.9.1/7.9.1.a.xhtml",
+ "quote": "You must see one of two values for the Local Date output: either the date based on your local time zone information or only the date portion of the results from the now() function.",
+ "now": "2026-11-14T05:00:00Z",
+ "note": "the host clock is scripted: now is 2026-11-14T05:00:00Z, timezone UTC",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "Local Date",
+   "prefix": "2026-11-14"
+  }
+ ]
+}

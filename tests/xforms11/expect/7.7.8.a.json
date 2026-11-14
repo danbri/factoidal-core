@@ -1,0 +1,22 @@
+{
+ "case": "7.7.8.a",
+ "file": "Chapt07/7.7/7.7.8/7.7.8.a.xhtml",
+ "quote": "You must see a value of \"-1\" for the compare('apple','orange') output control. You must see a value of \"0\" for the compare('apple','apple') output control. You must see a value of \"1\" for the compare('orange','apple') output control.",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "compare('apple','orange')",
+   "value": "-1"
+  },
+  {
+   "expect": "control",
+   "label": "compare('apple','apple')",
+   "value": "0"
+  },
+  {
+   "expect": "control",
+   "label": "compare('orange','apple')",
+   "value": "1"
+  }
+ ]
+}

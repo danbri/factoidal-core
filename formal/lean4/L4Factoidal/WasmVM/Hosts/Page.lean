@@ -29,10 +29,12 @@ import L4Factoidal.WasmVM.Hosts.Dom
 import L4Factoidal.WasmVM.Hosts.WebApi
 import L4Factoidal.WasmVM.Hosts.PageWasm
 import L4Factoidal.WasmVM.Hosts.DomOps
+import L4Factoidal.Rendering.MediaQuery
 import L4Factoidal.EventLoop.Model
 import L4Factoidal.EventLoop.Dispatch
 import L4Factoidal.HTML.FrameSessions
 import L4Factoidal.JSON.Serialize
+import L4Factoidal.WebDriver.Input
 
 namespace L4Factoidal.WasmVM.Hosts.Page
 open L4Factoidal.WasmVM
@@ -139,6 +141,11 @@ structure PointerState where
   move that waits for the next frame: at most one move is dispatched in a frame. -/
   moveFrame : Option Nat := none
   pending : Option (Nat × String) := none
+  /-- The element the pointer is over (the target of its last event): what the boundary
+  events (over, out, enter, leave) of the next event compare with. -/
+  over : Option Nat := none
+  /-- The last press, for the click count (`WebDriver.Input.clickCount`). -/
+  last : Option L4Factoidal.WebDriver.Input.LastPress := none
   deriving Inhabited, Repr
 
 /-- The layout reads of scripts: the engine's layout of an arena at a viewport (CSS
@@ -198,7 +205,7 @@ structure Limits where
   /-- Memory pages of 64 KiB: 2048 is 128 MiB (QuickJS's own heap limit is 64 MiB). -/
   pages : Nat := 2048
   /-- Commands a page may make (`Hosts.Dom.State.commandLimit`). -/
-  commands : Nat := 4096
+  commands : Nat := Hosts.Dom.maxCommands
   /-- The page number of this session's GPU objects (`L4Factoidal.PageGpu.Gid.page`). -/
   gpuPage : Nat := 0
   /-- Console lines a page may write (`Hosts.Dom.State.logLimit`). -/
@@ -372,7 +379,8 @@ def Host.measured (h : Host) : Host × Option (Nat → Nat → Option String) :=
 
 /-- The `node_query` ops that `Hosts.Dom.serve` answers: below 16, and 30 to 32 (slots, the
 composed path, the postMessage origin check). Ops 100 to 199 are `Hosts.Dom.domOp`'s; the
-others (16 to 29, 33, 34, 200 and up) are this module's (`pageQuery`, `postToFrame`). -/
+others (16 to 29, 33, 34, 41, 200 and up) are this module's (`pageQuery`, `postToFrame`,
+`mediaAnswer`). -/
 def domQueryOps (op : Nat) : Bool := op < 16 || (op ≥ 30 && op ≤ 32)
 
 /-- The most messages a session may have waiting for the host. -/
@@ -446,6 +454,39 @@ def Host.editRules (h : Host) : Host × L4Factoidal.Rendering.CSS.RuleIndex :=
     else let ix := Hosts.Dom.editIndex sheet; ({ h with editIndex := some (sheet, ix) }, ix)
   | none => let ix := Hosts.Dom.editIndex sheet; ({ h with editIndex := some (sheet, ix) }, ix)
 
+/-- The media environment of a layout (`MediaQuery.Env`): the media type, and the viewport
+in CSS px, `width` by `rows` device pixels at the text scale `percent` (a text scale of 200%
+on a 1600 px wide window is an 800 px wide viewport, as a page zoom of 200% is). Pages are
+drawn in light colours: `prefers-color-scheme: dark` does not hold. The one maker of the
+environment: the layout's sheets (`WebDocument.mediaEnv`) and `matchMedia` both take it. -/
+def mediaEnvOf (medium : String) (width rows percent : Nat) : L4Factoidal.Rendering.MediaQuery.Env :=
+  let css := fun (n : Nat) => n.toFloat * 100 / (max 1 percent).toFloat
+  {medium, width := some (css width), height := some (css rows), dark := some false}
+
+/-- `matchMedia` (CSSOM View §4.2, `node_query` op 41): whether the media query list `q`
+holds in the media environment of the page's layout. The layout request says the
+environment's inputs (measure op 41: the media type, the viewport in CSS pixels and the
+zoom, with no layout), `mediaEnvOf` makes the environment as the layout does, and
+`MediaQuery.holds` is the evaluator of the sheets. "1" or "0"; "" for a list that can not
+be read. A session with no layout request answers -2. -/
+def mediaAnswer (h : Host) (q : String) : Except Int String :=
+  match h.reads.measure with
+  | none => .error (-2)
+  | some m =>
+    match m h.dom.dom h.reads.width h.reads.height 0 41 with
+    | none => .error (-1)
+    | some text =>
+      match text.splitOn " " with
+      | [medium, w, r, p] =>
+        match w.toNat?, r.toNat?, p.toNat? with
+        | some w, some r, some p =>
+          .ok (match L4Factoidal.Rendering.MediaQuery.holds (mediaEnvOf medium w r p) q with
+            | some true => "1"
+            | some false => "0"
+            | none => "")
+        | _, _, _ => .error (-1)
+      | _ => .error (-1)
+
 /-- A placeholder for the DOM state while an import holds it. -/
 def emptyDomHost : DomHost := { dom := {} }
 
@@ -509,6 +550,13 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
         | .ok q =>
           let (h, answer) := postToFrame h (a 0) q
           let (st, r) := Hosts.Dom.answerStr mem st (a 4) (a 5) answer
+          (h, st, r))
+      else if a 1 == 41 then
+        -- matchMedia: the query text against the layout's media environment (`mediaAnswer`)
+        (match Hosts.Dom.readStr mem st (a 2) (a 3) Hosts.Dom.maxString with
+        | .error e => (h, st, Hosts.Dom.codeOrTrap e)
+        | .ok q =>
+          let (st, r) := Hosts.Dom.answerStr mem st (a 4) (a 5) (mediaAnswer h q)
           (h, st, r))
       else
         let (h, answer) := pageQuery h (a 0) (a 1)
@@ -776,7 +824,13 @@ def Session.runJobsP (s : Session) : Prog Session := do
 
 /-- Event flags of `qjs_dispatch`: 1 bubbles, 2 cancelable, 4 composed. -/
 def flagsOf (type : String) : Nat :=
-  if type == "click" || type.startsWith "mouse" || type.startsWith "pointer" then 7
+  -- enter and leave do not bubble, can not be canceled and are not composed (UI Events
+  -- §5.3, Pointer Events 3 §4.2)
+  if type == "mouseenter" || type == "mouseleave" || type == "pointerenter" || type == "pointerleave" then 0
+  -- these bubble and are composed, and can not be canceled
+  else if type == "pointercancel" || type == "gotpointercapture" || type == "lostpointercapture" then 5
+  else if type == "click" || type == "auxclick" || type == "dblclick" || type == "contextmenu" || type == "wheel"
+      || type.startsWith "mouse" || type.startsWith "pointer" then 7
   -- keys and `beforeinput` bubble, can be canceled and are composed; `input` can not be canceled
   else if type == "keydown" || type == "keyup" || type == "keypress" || type == "beforeinput" then 7
   else if type == "input" then 5

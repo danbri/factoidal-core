@@ -1,0 +1,51 @@
+{
+ "case": "9.3.4.a",
+ "file": "Chapt09/9.3/9.3.4/9.3.4.a.xhtml",
+ "quote": "When you activate the Show Out Case trigger it must be replaced by the Show In Case trigger. When you activate the Show In Case trigger it must be replaced by the Show Out Case trigger.",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "Show Out Case",
+   "kind": "trigger",
+   "relevant": true
+  },
+  {
+   "expect": "control",
+   "label": "Show In Case",
+   "kind": "trigger",
+   "relevant": false
+  },
+  {
+   "do": "activate",
+   "label": "Show Out Case"
+  },
+  {
+   "expect": "control",
+   "label": "Show In Case",
+   "kind": "trigger",
+   "relevant": true
+  },
+  {
+   "expect": "control",
+   "label": "Show Out Case",
+   "kind": "trigger",
+   "relevant": false
+  },
+  {
+   "do": "activate",
+   "label": "Show In Case"
+  },
+  {
+   "expect": "control",
+   "label": "Show Out Case",
+   "kind": "trigger",
+   "relevant": true
+  },
+  {
+   "expect": "control",
+   "label": "Show In Case",
+   "kind": "trigger",
+   "relevant": false
+  }
+ ]
+}

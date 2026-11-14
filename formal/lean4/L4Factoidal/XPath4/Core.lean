@@ -10,6 +10,7 @@ import L4Factoidal.XPath4.ExprEq
 import L4Factoidal.XPath4.Doc
 import L4Factoidal.XPath4.Catalog
 import L4Factoidal.XPath4.JNode
+import L4Factoidal.XPath4.SchemaSimple
 import L4Factoidal.EXPath.File.FS
 import Std.Data.HashMap
 
@@ -57,6 +58,11 @@ structure SchemaTypeInfo where
   /-- The typed value of a lexical form validated against the type;
       `none` when the form is not valid. Absent for a complex type. -/
   cast : Option (String → Option (List Atomic)) := none
+  /-- The XSD 1.1 Part 2 body of a simple type (base, variety, members or
+      item type, facets): what `cast as`, `castable as`, the constructor
+      function and `instance of` use (`XPath4.SchemaSimple`). Absent for a
+      complex type. -/
+  body : Option L4Factoidal.XSD.SimpleType := none
 deriving Inhabited
 
 /-- Schema component facts needed by F&O 4.0 §14.6.6. These describe the
@@ -114,6 +120,27 @@ structure SchemaHook where
   /-- Content model facts for schema-based element-to-map conversion. -/
   contentInfo : QN → Option SchemaContentInfo := fun _ => none
 deriving Inhabited
+
+/-- The Part 2 body of a simple type of the in-scope schema that is not
+    built in; `none` for another name. -/
+def SchemaHook.simpleBody (h : SchemaHook) (q : QN) : Option L4Factoidal.XSD.SimpleType :=
+  (h.typeInfo q).bind (·.body)
+
+/-- Is the name a simple type of the in-scope schema (not built in)? Such
+    a type has a constructor function. -/
+def SchemaHook.isSimpleType (h : SchemaHook) (q : QN) : Bool := (h.simpleBody q).isSome
+
+/-- How the parser may use a simple type name of the in-scope schema
+    (`PCtx.schemaSimple`): a pure union of built-in types is the choice of
+    those types; another generalized atomic type is itself; a list type or
+    a union that is not pure is a cast target only. -/
+def SchemaHook.simpleUse (h : SchemaHook) (q : QN) : Option SchemaSimpleUse :=
+  (h.simpleBody q).map (fun body =>
+    if generalized body then
+      match body, pureLeaves body with
+      | .union _ _, some ls => .general (.choice (ls.map IType.atomic))
+      | _, _ => .general (.schemaType q)
+    else .castOnly)
 
 /-- The in-scope element (`true`) or attribute (`false`) declaration test
     for the parser (`PCtx.schemaDecl`, XPST0008 of `schema-element()` and
@@ -669,6 +696,10 @@ def subtypeF : Nat → IType → IType → Bool
          | some ps => ps.all (fun p => subtypeF f p (.choice us))
          | none => false)
     | .atomic x, .atomic y => x.derives y
+    -- a simple type of the in-scope schema is a subtype of itself and of
+    -- xs:anyAtomicType (its relation to other types needs the schema)
+    | .schemaType a, .schemaType b => a == b
+    | .schemaType _, .atomic y => y == .b .anyAtomicType
     | .enum _, .atomic y => (AType.b .string).derives y
     | .enum xs, .enum ys => xs.all (fun x => ys.contains x)
     | .elem _, .anyNode | .attr _, .anyNode | .text, .anyNode | .comment, .anyNode
@@ -752,6 +783,10 @@ def Env.itemMatchesF (e : Env) : Nat → Item → IType → Bool
          | none => true)
       | _ => false
   | .atomic t => match i with | .atom a => a.ty.derives t | _ => false
+  -- a simple type of the in-scope schema: by value (`XPath4.SchemaSimple`)
+  | .schemaType q => match i, e.schema.simpleBody q with
+      | .atom a, some body => atomInBody body a
+      | _, _ => false
   | .anyFn => i.isFn
   | .fnT ps r => i.fnArity == some ps.length &&
       (match i with

@@ -1,0 +1,16 @@
+{
+ "case": "8.1.7.d",
+ "file": "Chapt08/8.1/8.1.7/8.1.7.d.xhtml",
+ "quote": "You must see a range control that displays an xforms-value-changed message when you change its value.",
+ "steps": [
+  {
+   "do": "setvalue",
+   "label": "Car age",
+   "value": "7"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-value-changed"
+  }
+ ]
+}

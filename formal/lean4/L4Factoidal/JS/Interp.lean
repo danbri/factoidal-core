@@ -7,6 +7,7 @@ import L4Factoidal.JS.NumFmt
 import L4Factoidal.JSON.Parser
 import L4Factoidal.JS.JsonText
 import L4Factoidal.WHATWG.URLPattern
+import L4Factoidal.Prim.Float16
 
 /-!
 # L4Factoidal.JS.Interp — the evaluator
@@ -144,9 +145,24 @@ def fillSlots (args : Array Value) (nParams size : Nat) : Array Value :=
   if a.size == size then a else
   (List.range (size - a.size)).foldl (fun a _ => a.push .undef) a
 
+/-- What a script is stopped with when its heap is full (`HeapOf.full`). -/
+def heapFullMsg : String := "memory limit: the script's heap is full"
+
+/-- One step. Every 1024th step also looks at the size of the heap (`HeapOf.full`), so a loop
+that makes objects stops at `maxObjs` and not when the machine is out of memory. -/
 @[inline] def tick : M Unit := do
   let h ← get
   if h.steps == 0 then throw (.halt "step budget exhausted")
+  if h.steps % 1024 == 0 && h.full then throw (.halt heapFullMsg)
+  set { h with steps := h.steps - 1 }
+
+/-- The step of a function call. It looks at the size of the heap every time: a run of few
+steps (an event handler, a timer callback) starts with a call, so on a full heap no run gets
+further than its first call, however short the runs are. -/
+@[inline] def tickCall : M Unit := do
+  let h ← get
+  if h.steps == 0 then throw (.halt "step budget exhausted")
+  if h.full then throw (.halt heapFullMsg)
   set { h with steps := h.steps - 1 }
 
 /-- Take `k` steps at once: the work of a built-in that loops inside Lean (over a string,
@@ -158,6 +174,7 @@ def charge (k : Nat) : M Unit := do
   if h.steps < k then
     set { h with steps := 0 }
     throw (.halt "step budget exhausted")
+  if h.full then throw (.halt heapFullMsg)
   set { h with steps := h.steps - k }
 
 /-- The longest string `repeat` and `padStart` make: 256 MiB of UTF-8. -/
@@ -477,6 +494,7 @@ def typedRead (ty : Nat) (bytes : ByteArray) (at_ : Nat) : Value :=
   | 7 => .num (Float32.ofBits (u 4).toUInt32).toFloat
   | 9 => let x := u 8; .big (if x ≥ 2 ^ 63 then (x : Int) - 2 ^ 64 else x)
   | 10 => .big (u 8)
+  | 11 => .num (L4Factoidal.Prim.Float16.toFloat (u 2).toUInt16)
   | _ => .num (Float.ofBits (u 8).toUInt64)
 
 /-- ToUint8Clamp (§7.1.12): round half to even, clamped to 0..255. -/
@@ -497,6 +515,7 @@ def typedBytes (ty : Nat) (x : Float) : ByteArray :=
   | 3 | 4 => int 2
   | 5 | 6 => int 4
   | 7 => le x.toFloat32.toBits.toNat 4
+  | 11 => le (L4Factoidal.Prim.Float16.ofFloat x).toNat 2
   | _ => le x.toBits.toNat 8
 
 /-- Direct reads for Uint8Array and Uint8ClampedArray. -/
@@ -1898,7 +1917,7 @@ termination_by structural n _ _ _ => n
 def callClosure : Nat → FunDef → Nat → Value → Value → Value → Value → Value → Value → Array Value → M Value
   | 0, _, _, _, _, _, _, _, _, _ => throw (.halt "fuel")
   | n + 1, fd, env, capThis, capNT, home, fnObj, thisV, newTarget, args => do
-    tick
+    tickCall
     let h ← get
     if h.depth ≥ h.maxDepth then throwErr .range "Maximum call stack size exceeded"
     let saved := h.depth
@@ -4893,6 +4912,62 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       | 4 => needObj; if args.size > 2 then getRecv n (← toObj n a0) (← toKey n a1) (argD args 2) else getV n a0 (← toKey n a1)
       | 5 =>
         needObj
+        let recv := if args.size > 3 then argD args 3 else a0
+        if !sameValue recv a0 then
+          -- Reflect.set with a receiver that is not the target (§10.1.9.2
+          -- OrdinarySetWithOwnDescriptor): a setter found on the target's chain is called with
+          -- the receiver as `this`; a data property is made or changed on the receiver.
+          let key ← toKey n a1
+          let val := argD args 2
+          let tid ← toObj n a0
+          match (← getObj tid).kind with
+          | .proxy t hnd =>
+            match ← proxyTrap n hnd "set" with
+            | some f => return .bool (toBool (← callV n f hnd #[t, keyValue key, val, recv]))
+            | none => return ← callNative n (.reflect 5) .undef #[t, a1, val, recv] none
+          | _ => pure ()
+          match (← get).findProp tid key 1000 with
+          | some (.acc _ st _ _) =>
+            if st.isObj then
+              let _ ← callV n st recv #[val]
+              return .bool true
+            else return .bool false
+          | some (.data _ false _ _) => return .bool false
+          | _ =>
+            match recv with
+            | .obj rid =>
+              let existing ← ownDesc n rid key
+              match existing with
+              | some (.acc ..) | some (.data _ false _ _) => return .bool false
+              | _ => pure ()
+              -- the receiver's [[DefineOwnProperty]]: a Proxy passes it to its `defineProperty`
+              -- trap, or to its target when it has none
+              let mut cur := rid
+              for _ in [0:64] do
+                match (← getObj cur).kind with
+                | .proxy t hnd =>
+                  match ← proxyTrap n hnd "defineProperty" with
+                  | some f =>
+                    let d ← newObject
+                    defineOwn d "value" (.data val true true true)
+                    if existing.isNone then
+                      defineOwn d "writable" (.data (.bool true) true true true)
+                      defineOwn d "enumerable" (.data (.bool true) true true true)
+                      defineOwn d "configurable" (.data (.bool true) true true true)
+                    return .bool (toBool (← callV n f hnd #[t, keyValue key, .obj d]))
+                  | none =>
+                    match t with
+                    | .obj tid => cur := tid
+                    | _ => return .bool false
+                | _ => break
+              let ro ← getObj cur
+              match ro.getOwn key with
+              | some (.data _ true e c) => defineOwn cur key (.data val true e c); return .bool true
+              | some _ => return .bool false
+              | none =>
+                if ro.extensible then defineOwn cur key (.data val true true true); return .bool true
+                else return .bool false
+            | _ => return .bool false
         let ok ← tryCatch (do putV n a0 (← toKey n a1) (argD args 2) true; pure true) (fun e => match e with
           | .throw _ => pure false
           | a => throw a)
@@ -5069,6 +5144,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
         | 4 => Float.cosh x | 5 => Float.tanh x | 6 => Float.asin x | 7 => Float.acos x
         | 8 => Float.asinh x | 9 => Float.acosh x | 10 => Float.atanh x
         | 11 => Float.exp x - 1 | 12 => Float.log (1 + x)
+        | 14 => L4Factoidal.Prim.Float16.round x
         | _ => x.toFloat32.toFloat))
     | .mathHypot =>
       let xs ← args.toList.mapM (toNum n)
@@ -5776,7 +5852,7 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
         | none => none
       match callee with
       | some (c, cenv, capThis) =>
-        tick
+        tickCall
         let depth := (match fr with | f0 :: _ => f0.depth + 1 | [] => 1)
         if depth > vmMaxDepth then
           vmStash regs fregs (bp + code.nregs)
@@ -5977,38 +6053,42 @@ def defineFromDescriptor : Nat → Nat → String → Value → M Unit
   | 0, _, _, _ => throw (.halt "fuel")
   | n + 1, id, k, d => do
     if !d.isObj then throwErr .type "Property description must be an object"
-    let has (f : String) : M Bool := do
+    -- ToPropertyDescriptor (§6.2.6.5): the fields that are present, read in its order
+    let field (f : String) : M (Option Value) := do
       match d with
-      | .obj did => pure ((← get).findProp did f 1000).isSome
-      | _ => pure false
-    let old := (← getObj id).getOwn k
-    if let some p := old then
-      if !p.configurable then
-        -- only a writable data property may change its value
-        match p with
-        | .data _ true e c =>
-          if ← has "value" then defineOwn id k (.data (← getV n d "value") true e c)
-          if ← has "writable" then
-            if !(toBool (← getV n d "writable")) then
-              let v := match (← getObj id).getOwn k with | some (.data v ..) => v | _ => .undef
-              defineOwn id k (.data v false e c)
-          return
-        | _ => throwErr .type s!"Cannot redefine property: {k}"
-    let e ← if ← has "enumerable" then do pure (toBool (← getV n d "enumerable"))
-      else pure (match old with | some p => p.enumerable | none => false)
-    let c ← if ← has "configurable" then do pure (toBool (← getV n d "configurable"))
-      else pure (match old with | some p => p.configurable | none => false)
-    if (← has "get") || (← has "set") then
-      let g ← getV n d "get"
-      let s ← getV n d "set"
-      if !(g.isObj || match g with | .undef => true | _ => false) then throwErr .type "Getter must be a function"
+      | .obj did => if ((← get).findProp did f 1000).isSome then pure (some (← getV n d f)) else pure none
+      | _ => pure none
+    let en ← field "enumerable"
+    let cf ← field "configurable"
+    let vl ← field "value"
+    let wr ← field "writable"
+    let gt ← field "get"
+    let st ← field "set"
+    if let some g := gt then
+      if !(← isCallable g) && !(match g with | .undef => true | _ => false) then throwErr .type "Getter must be a function"
+    if let some f := st then
+      if !(← isCallable f) && !(match f with | .undef => true | _ => false) then throwErr .type "Setter must be a function"
+    if (gt.isSome || st.isSome) && (vl.isSome || wr.isSome) then
+      throwErr .type "Invalid property descriptor. Cannot both specify accessors and a value or writable attribute"
+    let desc : Desc := { value := vl, writable := wr.map toBool, get := gt, set := st,
+                         enumerable := en.map toBool, configurable := cf.map toBool }
+    -- ValidateAndApplyPropertyDescriptor (§10.1.6.3): `Desc.allowedOn` decides
+    let o0 ← getObj id
+    let old := o0.getOwn k
+    match old with
+    | some p => if !desc.allowedOn p then throwErr .type s!"Cannot redefine property: {k}"
+    | none => if !o0.extensible then throwErr .type s!"Cannot define property {k}, object is not extensible"
+    let e := desc.enumerable.getD (match old with | some p => p.enumerable | none => false)
+    let c := desc.configurable.getD (match old with | some p => p.configurable | none => false)
+    if gt.isSome || st.isSome then
       let (og, os) := match old with | some (.acc g s _ _) => (g, s) | _ => (.undef, .undef)
-      defineOwn id k (.acc (if ← has "get" then g else og) (if ← has "set" then s else os) e c)
+      defineOwn id k (.acc (gt.getD og) (st.getD os) e c)
+    else if let (some (.acc g s _ _), true) := (old, vl.isNone && wr.isNone) then
+      -- a descriptor with neither kind's fields keeps the accessor
+      defineOwn id k (.acc g s e c)
     else
-      let w ← if ← has "writable" then do pure (toBool (← getV n d "writable"))
-        else pure (match old with | some (.data _ w _ _) => w | _ => false)
-      let v ← if ← has "value" then getV n d "value"
-        else pure (match old with | some (.data v ..) => v | _ => .undef)
+      let w := desc.writable.getD (match old with | some (.data _ w _ _) => w | _ => false)
+      let v := vl.getD (match old with | some (.data v ..) => v | _ => .undef)
       match (← getObj id).kind, k with
       | .array _, "length" => putV n (.obj id) k v true
       | _, _ =>
@@ -6406,11 +6486,11 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
       let idx := toIntegerOrInf (← toNum n a0)
       if idx < 0 || idx > 9007199254740991 then throwErr .range "Offset is outside the bounds of the DataView"
       let idx := idx.toUInt64.toNat
-      let size := if ty ≥ 9 then 8 else elemSize ty
+      let size := elemSize ty
       let isSet := match id with | .dataViewSet _ => true | _ => false
       -- set: the value is converted before the offset is checked.
       let bits : Option ByteArray ← if !isSet then pure none else
-        if ty ≥ 9 then do
+        if typedIsBig ty then do
           let i ← match ← toPrim n a1 "number" with
             | .big i => pure i
             | .bool bb => pure (if bb then 1 else 0)
@@ -6438,7 +6518,7 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
         if at_ + size > bytes.size then throwErr .type "Cannot perform DataView get on a detached ArrayBuffer"
         let raw := bytes.extract at_ (at_ + size)
         let le := if little then raw else ByteArray.mk raw.data.reverse
-        if ty ≥ 9 then
+        if typedIsBig ty then
           let u := (List.range 8).foldl (fun a k => a + (le.get! k).toNat * 2 ^ (8 * k)) 0
           pure (.big (if ty == 9 && u ≥ 2 ^ 63 then (u : Int) - 2 ^ 64 else u))
         else pure (typedRead ty le 0)
@@ -7823,14 +7903,14 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
         let rest := held.filter fun v => !sameValue v a0
         modifyObj tokens fun o => { o with kind := .array rest }
         pure (.bool (rest.size < held.size))
-    | (.x (.mapUpsert computed)) =>
+    | (.x (.mapUpsert computed weak)) =>
       let ck : Nat ← match thisV with
         | .obj c => match (← getObj c).kind with
           | .coll k _ _ => pure k
           | _ => throwErr .type "method called on incompatible receiver"
         | _ => throwErr .type "method called on incompatible receiver"
-      if ck != 0 && ck != 2 then throwErr .type "method called on incompatible receiver"
-      let weak := ck == 2
+      -- Map's method needs a Map (kind 0), WeakMap's a WeakMap (kind 2)
+      if ck != (if weak then 2 else 0) then throwErr .type "method called on incompatible receiver"
       if computed && !(← isCallable a1) then throwErr .type "getOrInsertComputed: the callback is not a function"
       if weak && !a0.isObj then throwErr .type "Invalid value used as weak collection key"
       if toBool (← callNative n .mapHas thisV #[a0] none) then callNative n .mapGet thisV #[a0] none
@@ -7839,6 +7919,53 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
         let v ← if computed then callV n a1 .undef #[key] else pure a1
         let _ ← callNative n .mapSet thisV #[a0, v] none
         pure v
+    | (.x .streams) =>
+      -- `n.streams(op, ...)` for the page's stream classes: the queue-with-sizes of a
+      -- controller and the fill plan of a BYOB read are `WHATWG.Streams`
+      let queueOf (v : Value) : M (Nat × L4Factoidal.WHATWG.Streams.SizedQueue Value) := do
+        match v with
+        | .obj id =>
+          match (← getObj id).kind with
+          | .queue q => pure (id, q)
+          | _ => throwErr .type "streams: not a queue"
+        | _ => throwErr .type "streams: not a queue"
+      let natArg (i : Nat) : M Nat := do
+        match argD args i with
+        | .num x => pure (if x.isFinite && x > 0 then x.toUInt64.toNat else 0)
+        | _ => pure 0
+      match a0 with
+      | .num op =>
+        match op.toUInt64.toNat with
+        | 0 => pure (.obj (← alloc { proto := .null, kind := .queue {} }))
+        | 1 =>
+          let (id, q) ← queueOf a1
+          let size ← match argD args 3 with
+            | .num s => pure s
+            | _ => throwErr .range "The chunk size is not a finite, non-negative number"
+          match q.enqueue (argD args 2) size with
+          | some q' => modifyObj id (fun o => { o with kind := .queue q' }); pure .undef
+          | none => throwErr .range "The chunk size is not a finite, non-negative number"
+        | 2 =>
+          let (id, q) ← queueOf a1
+          -- the queue leaves the object first, so that `dequeue` changes its array in place
+          modifyObj id (fun o => { o with kind := .ordinary })
+          match q.dequeue with
+          | some (v, q') => modifyObj id (fun o => { o with kind := .queue q' }); pure v
+          | none => modifyObj id (fun o => { o with kind := .queue q }); pure .undef
+        | 3 => let (_, q) ← queueOf a1; pure (q.peek.getD .undef)
+        | 4 => let (id, _) ← queueOf a1; modifyObj id (fun o => { o with kind := .queue .reset }); pure .undef
+        | 5 => let (_, q) ← queueOf a1; pure (.num q.total)
+        | 6 => let (_, q) ← queueOf a1; pure (.num q.count.toFloat)
+        | 7 =>
+          match a1 with
+          | .num h => if L4Factoidal.WHATWG.Streams.validHighWaterMark h then pure a1
+                      else throwErr .range "The high water mark is negative or not a number"
+          | _ => throwErr .range "The high water mark is negative or not a number"
+        | 8 =>
+          let p := L4Factoidal.WHATWG.Streams.fillPlan (← natArg 1) (← natArg 2) (← natArg 3) (← natArg 4) (← natArg 5)
+          pure (.num (if p.ready then -(p.toCopy.toFloat) - 1 else p.toCopy.toFloat))
+        | _ => throwErr .type "streams: unknown operation"
+      | _ => throwErr .type "streams: unknown operation"
     | (.x .urlPattern) =>
       -- `n.urlPattern(op, ...)` for the page's URLPattern class: the Standard's algorithms are
       -- `WHATWG.URLPattern.create` and `exec`; this converts the arguments and builds the answer.
@@ -8231,8 +8358,8 @@ def initRealm : M Unit := do
     if isMap then
       method p "get" .mapGet 1
       method p "set" .mapSet 2
-      method p "getOrInsert" (.x (.mapUpsert false)) 2
-      method p "getOrInsertComputed" (.x (.mapUpsert true)) 2
+      method p "getOrInsert" (.x (.mapUpsert false (k == 2))) 2
+      method p "getOrInsertComputed" (.x (.mapUpsert true (k == 2))) 2
     else method p "add" .setAdd 1
     if k == 1 then
       for (nm, j) in [("union", 0), ("intersection", 1), ("difference", 2), ("symmetricDifference", 3),
@@ -8299,7 +8426,7 @@ def initRealm : M Unit := do
     setHidden nc "parseInt" (← ownValue g "parseInt")
   for (nm, op) in [("cbrt", 0), ("log2", 1), ("log10", 2), ("sinh", 3), ("cosh", 4), ("tanh", 5),
       ("asin", 6), ("acos", 7), ("asinh", 8), ("acosh", 9), ("atanh", 10), ("expm1", 11),
-      ("log1p", 12), ("fround", 13)] do
+      ("log1p", 12), ("fround", 13), ("f16round", 14)] do
     method math nm (.math1 op) 1
   method math "hypot" .mathHypot 2
   method math "imul" .mathImul 2
@@ -8476,7 +8603,7 @@ def initRealm : M Unit := do
   setHidden g "DataView" (← ctorWith "DataView" .dataViewCtor 1 dataViewProto)
   defineOwn dataViewProto (symKey symToStringTag) (.data (.str "DataView") false false true)
   for (nm, ty) in [("Int8", 0), ("Uint8", 1), ("Int16", 3), ("Uint16", 4), ("Int32", 5), ("Uint32", 6),
-      ("Float32", 7), ("Float64", 8), ("BigInt64", 9), ("BigUint64", 10)] do
+      ("Float32", 7), ("Float64", 8), ("BigInt64", 9), ("BigUint64", 10), ("Float16", 11)] do
     method dataViewProto ("get" ++ nm) (.dataViewGet ty) 1
     method dataViewProto ("set" ++ nm) (.dataViewSet ty) 2
   defineOwn bufferProto (symKey symToStringTag) (.data (.str "ArrayBuffer") false false true)

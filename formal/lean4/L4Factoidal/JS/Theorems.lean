@@ -15,7 +15,8 @@ import L4Factoidal.JS.Interp
   answer of `Str.unitAt?`.
 - `isPrivKey_privKey`, `forAwaitFn_private`, `forAwaitStmt_hasYield`: the helpers of
   `for await` are private-name keys, and its statements always go to the generator machine.
-- `tick_spent`, `tick_step`, `charge_spent`, `charge_step`, `maxDenseArray_bounds`: what a
+- `tick_spent`, `tick_step`, `charge_spent`, `charge_step`, `maxDenseArray_bounds`, `tick_full`,
+  `tickCall_full`, `charge_full`, `heap_check_within_1024`: what a
   step and a charge do to the budget, and the dense-array limit.
 - `strKey_not_priv`, `strKey_not_sym`, `keyStr_strKey`, `strKey_injective`,
   `strKey_ne_privKey`: the property key of a String value is never a private name's or a
@@ -236,11 +237,126 @@ theorem tick_spent {H : Type} (h : HeapOf H) (h0 : h.steps = 0) :
   simp [tick, h0, EStateM.run, bind, EStateM.bind, get, getThe, MonadStateOf.get, EStateM.get,
     throw, throwThe, MonadExceptOf.throw, EStateM.throw]
 
-/-- Kind: a cost. Says: with steps left, `tick` takes exactly one and changes nothing else. -/
-theorem tick_step {H : Type} (h : HeapOf H) (h0 : h.steps ≠ 0) :
+/-- Kind: a cost. Says: with steps left, and the heap within its size, `tick` takes exactly
+one step and changes nothing else. -/
+theorem tick_step {H : Type} (h : HeapOf H) (h0 : h.steps ≠ 0) (hf : h.full = false) :
     (tick : JSM H Unit).run h = .ok () { h with steps := h.steps - 1 } := by
-  simp [tick, h0, EStateM.run, bind, EStateM.bind, get, getThe, MonadStateOf.get, EStateM.get,
+  simp [tick, h0, hf, EStateM.run, bind, EStateM.bind, get, getThe, MonadStateOf.get, EStateM.get,
     set, MonadStateOf.set, EStateM.set]
+
+/-! ## Redefining a property (`Desc.allowedOn`, §10.1.6.3)
+
+`Object.defineProperty` on a property that is not configurable: what may change. Before
+2026-11-14 the engine refused every redefinition of a property that was neither configurable
+nor writable, also one that changed nothing (`Object.defineProperty(C, 'prototype', {
+writable: false })` on a class), and let the enumerability of a writable one be asked for. -/
+
+/-- Kind: a specification. Says: a configurable property accepts every descriptor. -/
+theorem allowedOn_configurable (d : Desc) (cur : PropV) (h : cur.configurable = true) : d.allowedOn cur = true := by
+  simp [Desc.allowedOn, h]
+
+/-- Kind: a specification. Says: a descriptor with no fields is accepted on every property (it
+asks for no change). -/
+theorem allowedOn_empty (cur : PropV) : ({} : Desc).allowedOn cur = true := by
+  cases cur <;> simp [Desc.allowedOn]
+
+/-- Kind: a refusal (object integrity). Says: a property that is not configurable never
+becomes configurable. -/
+theorem allowedOn_stays_unconfigurable (d : Desc) (cur : PropV) (hc : cur.configurable = false)
+    (h : d.allowedOn cur = true) : d.configurable ≠ some true := by
+  intro hd
+  simp [Desc.allowedOn, hc, hd] at h
+
+/-- Kind: a refusal (object integrity: frozen data stays). Says: a data property that is
+neither configurable nor writable keeps its value: an accepted descriptor that names a value
+names the same value (SameValue), and does not make the property writable.
+Does not say: that `defineFromDescriptor` asks `allowedOn` for every exotic object (it does for
+ordinary objects and arrays; typed arrays and Proxies have their own paths). -/
+theorem allowedOn_frozen (d : Desc) (v : Value) (e : Bool) (h : d.allowedOn (.data v false e false) = true) :
+    d.writable ≠ some true ∧ ∀ x, d.value = some x → sameValue x v = true := by
+  constructor
+  · intro hw
+    simp [Desc.allowedOn, PropV.configurable, hw] at h
+  · intro x hx
+    cases hs : sameValue x v with
+    | true => rfl
+    | false => simp [Desc.allowedOn, PropV.configurable, hx, hs] at h
+
+/-- Kind: a refusal. Says: an accessor that is not configurable keeps its getter and setter
+and does not become a data property. -/
+theorem allowedOn_accessor (d : Desc) (g s : Value) (e : Bool) (h : d.allowedOn (.acc g s e false) = true) :
+    d.value = none ∧ d.writable = none ∧ (∀ x, d.get = some x → sameValue x g = true) ∧
+      (∀ x, d.set = some x → sameValue x s = true) := by
+  refine ⟨?_, ?_, ?_, ?_⟩
+  · cases hv : d.value with
+    | none => rfl
+    | some x => simp [Desc.allowedOn, PropV.configurable, hv] at h
+  · cases hv : d.writable with
+    | none => rfl
+    | some x => simp [Desc.allowedOn, PropV.configurable, hv] at h
+  · intro x hx
+    cases hs : sameValue x g with
+    | true => rfl
+    | false => simp [Desc.allowedOn, PropV.configurable, hx, hs] at h
+  · intro x hx
+    cases hs : sameValue x s with
+    | true => rfl
+    | false => simp [Desc.allowedOn, PropV.configurable, hx, hs] at h
+
+/-! ## The size of the heap (`HeapOf.full`, `maxObjs`)
+
+The heap has no collector: an object, once made, stays. A page that makes objects for ever (a
+timer that polls through promises, as WPT `fetch/metadata/generated/element-video-poster`
+does) grew until the operating system ended the host's process (seven runner processes of the
+full run of 19fb349c1 ended with SIGKILL). The engine now stops such a script itself. -/
+
+/-- Kind: a refusal. Says: on a full heap, a step whose number is a multiple of 1024 halts the
+run and changes nothing (the heap grows no further through that run).
+Does not say: how many objects one step can make (a built-in can make many; those that loop
+take their steps with `charge`, which looks at the heap every time), or how many bytes an
+object holds (its properties and elements are not counted: see the design record). -/
+theorem tick_full {H : Type} (h : HeapOf H) (h0 : h.steps ≠ 0) (hk : h.steps % 1024 = 0)
+    (hf : h.full = true) :
+    (tick : JSM H Unit).run h = .error (.halt heapFullMsg) h := by
+  simp [tick, h0, hk, hf, EStateM.run, bind, EStateM.bind, get, getThe, MonadStateOf.get,
+    EStateM.get, throw, throwThe, MonadExceptOf.throw, EStateM.throw]
+
+/-- Kind: a refusal. Says: on a full heap no function is entered: the step of a call halts
+the run and changes nothing, whatever the step count. A run of a page starts with a call, so
+a page whose heap is full runs no further handler or callback. -/
+theorem tickCall_full {H : Type} (h : HeapOf H) (h0 : h.steps ≠ 0) (hf : h.full = true) :
+    (tickCall : JSM H Unit).run h = .error (.halt heapFullMsg) h := by
+  simp [tickCall, h0, hf, EStateM.run, bind, EStateM.bind, get, getThe, MonadStateOf.get,
+    EStateM.get, throw, throwThe, MonadExceptOf.throw, EStateM.throw]
+
+/-- Kind: a cost. Says: within the heap's size a call's step is `tick`'s: one step. -/
+theorem tickCall_step {H : Type} (h : HeapOf H) (h0 : h.steps ≠ 0) (hf : h.full = false) :
+    (tickCall : JSM H Unit).run h = .ok () { h with steps := h.steps - 1 } := by
+  simp [tickCall, h0, hf, EStateM.run, bind, EStateM.bind, get, getThe, MonadStateOf.get,
+    EStateM.get, set, MonadStateOf.set, EStateM.set]
+
+/-- Kind: a refusal. Says: on a full heap a charge that the budget covers halts the run, with
+the heap as it was: the work the charge stands for is not done. -/
+theorem charge_full {H : Type} (h : HeapOf H) (k : Nat) (hk : k ≠ 0) (hge : ¬ h.steps < k.toUInt64)
+    (hf : h.full = true) :
+    (charge k : JSM H Unit).run h = .error (.halt heapFullMsg) h := by
+  simp [charge, hk, hge, hf, EStateM.run, bind, EStateM.bind, get, getThe, MonadStateOf.get,
+    EStateM.get, throw, throwThe, MonadExceptOf.throw, EStateM.throw]
+
+/-- Kind: a bound. Says: among any 1024 consecutive step counts one is a multiple of 1024:
+counting down from `s`, the count `s - s % 1024` is reached within 1023 steps. With
+`tick_full`: a loop on a full heap halts within 1024 of its steps.
+Does not say: this for `UInt64` (the step count's type; the statement is about `Nat`). -/
+theorem heap_check_within_1024 (s : Nat) : s % 1024 < 1024 ∧ (s - s % 1024) % 1024 = 0 := by
+  omega
+
+/-- Kind: a refusal. Says: a heap with more objects than `maxObjs` is full. -/
+theorem full_of_objs {H : Type} (h : HeapOf H) (hgt : h.objs.size > h.maxObjs) : h.full = true := by
+  simp [HeapOf.full, hgt]
+
+/-- Kind: a refusal. Says: a heap with more environment records than `maxObjs` is full. -/
+theorem full_of_envs {H : Type} (h : HeapOf H) (hgt : h.envs.size > h.maxObjs) : h.full = true := by
+  simp [HeapOf.full, hgt]
 
 /-- Kind: a refusal. Says: a charge of more steps than are left halts the run with the budget
 at zero, so the work it stands for (growing an array, walking a string) is not done.
@@ -253,9 +369,10 @@ theorem charge_spent {H : Type} (h : HeapOf H) (k : Nat) (hk : k ≠ 0) (hlt : h
     EStateM.throw]
 
 /-- Kind: a cost. Says: a charge within the budget takes exactly its steps. -/
-theorem charge_step {H : Type} (h : HeapOf H) (k : Nat) (hk : k ≠ 0) (hge : ¬ h.steps < k.toUInt64) :
+theorem charge_step {H : Type} (h : HeapOf H) (k : Nat) (hk : k ≠ 0) (hge : ¬ h.steps < k.toUInt64)
+    (hf : h.full = false) :
     (charge k : JSM H Unit).run h = .ok () { h with steps := h.steps - k.toUInt64 } := by
-  simp [charge, hk, hge, EStateM.run, bind, EStateM.bind, get, getThe, MonadStateOf.get,
+  simp [charge, hk, hge, hf, EStateM.run, bind, EStateM.bind, get, getThe, MonadStateOf.get,
     EStateM.get, set, MonadStateOf.set, EStateM.set]
 
 /-- Kind: a bound. Says: the dense-array limit is below 2^31 (a scalar on 32-bit Wasm) and its

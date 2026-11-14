@@ -36,6 +36,19 @@ argument for `start`:
   answer; `button`, `buttons`, `pointerType`): the pointer and mouse events of
   `Page.Session.pointer`, with a click on release; at most one move in a frame. A host
   that finds no `pointer` in `info` sends `click`.
+- `actions` (BubblePopJS sessions): input of the user as WebDriver's Perform Actions
+  (`L4Factoidal.WebDriver.Actions`; W3C WebDriver §15). `actions` is the request's list of
+  input sources (key, pointer, wheel, none) with their actions, or `text` is a text to type
+  (Element Send Keys); `release:true` then runs Release Actions. An element origin is
+  `{"element-6066-11e4-a52e-4f735466cecf": "path:0/1/2"}`: the child indices from the
+  document (`s` enters a shadow root). The actions run tick by tick as trusted keyboard,
+  pointer, mouse and wheel events at the element the layout's hit test gives
+  (`Hosts.PageEvents.dispatchLow`). A request that WebDriver refuses (`invalid argument`,
+  `move target out of bounds`, `no such element`) changes nothing after the point of the
+  error and the turn has `inputError` (`error`, `message`). Only this action changes the
+  session's trusted input state (`LeanJS.Session.trusted`).
+- `message` (`data`: JSON text, `origin`): a message of the embedder to the page, as a
+  `message` event at the window (a test host answers a page's request this way).
 - `resize` (`width`, `height`): the viewport in CSS pixels; `resize` at the window.
 - `frame` (`node`, `url`, and `bytesBase64` with `contentType`, or `source`, with
   `resources`; or `failed`): the embedder's answer to a frame navigation of a turn's
@@ -232,7 +245,7 @@ def frameEntropyOf (id : Nat) (parent b : ByteArray) : Nat → ByteArray :=
   fun el => if parent.isEmpty || b.isEmpty then ByteArray.empty
     else b ++ ("frame:" ++ toString id ++ ":" ++ toString el).toUTF8
 
-def actions : List String := ["info", "load", "start", "click", "pointer", "key", "resize", "advance", "settle", "turn", "close",
+def actions : List String := ["info", "load", "start", "click", "pointer", "key", "actions", "message", "resize", "advance", "settle", "turn", "close",
   "aotModule", "resume", "host", "frame", "fetched", "net", "syncAnswer"]
 
 /-- An answer object with `nextSession` first: the number of the next session. -/
@@ -877,6 +890,30 @@ def netGiveAll (h : Page.Host) (answers : Array (Nat × Net.PageFetch.Answer)) :
 
 def netGive (h : Page.Host) (request : JSON.Json) : Page.Host := netGiveAll h (netResults request)
 
+/-- The error of the turn's Perform Actions (`actions`), if WebDriver refused it. -/
+def inputFields (s : LeanJS.Session) : List (String × JSON.Json) :=
+  match s.trusted.error with
+  | some er => [("inputError", .object [("error", .string er.code.name), ("message", .string er.message)])]
+  | none => []
+
+/-- The error is reported once. -/
+def inputReported (s : LeanJS.Session) : LeanJS.Session :=
+  if s.trusted.error.isNone then s else s.setTrusted { s.trusted with error := none }
+
+/-- The node of an element reference of a host's `actions`: `path:` and the child indices
+from the document (`WebDriver.Input.resolvePath`). -/
+def refNode (d : DOM.Dom) (ref : String) : Option Nat :=
+  if ref.startsWith "path:" then
+    WebDriver.Input.resolvePath (fun n => (d.get n).kids) (fun n => (d.get n).shadow) 0 (String.ofList (ref.toList.drop 5))
+  else none
+
+/-- The input sources of an `actions` request: its `text` typed at the keyboard, else its
+`actions` (`WebDriver.Actions.parse`). -/
+def inputSources (request : JSON.Json) : Except WebDriver.Error (List WebDriver.Actions.Source) :=
+  match request.field? "text" with
+  | some (.string text) => .ok [WebDriver.Actions.typeableSource text]
+  | _ => WebDriver.Actions.parse request
+
 /-- The answer of a turn of the Lean engine; the session, its workers and its sandboxed
 frames' sessions are kept. A page with workers adds `workers` (how many run) and `fetches`
 (the scripts they wait for). `fEnt` is the entropy of frames that get a session in this turn
@@ -893,15 +930,15 @@ def leanTurn (held : Held) (id : Nat) (before : Before) (a : LeanJSWorkers.Agent
   let view := View.ofLean s
   let view := if a.waits then { view with quiet := false } else view
   let (answer, marks) := turnAnswerOf id before view marks full ns
-    ([("engine",.string "bubblepop")] ++ frameFields s.host loads ++ workers ++ netFields s.host)
-  ({ held with leanSession := some (id, drainedLean s, marks), leanWorkers := a.w, leanFrames := frames, frameScan := scan }, .ok answer)
+    ([("engine",.string "bubblepop")] ++ frameFields s.host loads ++ workers ++ netFields s.host ++ inputFields s)
+  ({ held with leanSession := some (id, inputReported (drainedLean s), marks), leanWorkers := a.w, leanFrames := frames, frameScan := scan }, .ok answer)
 
 /-- `start` on the Lean engine: its realm is made at the first page (the prelude runs
 once), and each page starts from it with its own arena. -/
 def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (html : String) (request : JSON.Json) (measure : JSON.Json → Option Page.Measure)
     (canvas : PageCanvas.Env := {}) : M (Held × Except String String) := do
   let url := str request "url"
-  let commands := min 1048576 ((natField request "commandLimit").getD 4096)
+  let commands := min 1048576 ((natField request "commandLimit").getD L4Factoidal.WasmVM.Hosts.Dom.maxCommands)
   let logs := min 1048576 ((natField request "logLimit").getD 1024)
   let id := held.nextSession
   let hostLoads := request.field? "navigations" == some (.bool true)
@@ -988,6 +1025,30 @@ def actLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (act
     else run (e.key · (str request "kind" == "up") (keyInit request)
       { key, shift := boolField request "shiftKey", ctrl := boolField request "ctrlKey",
         alt := boolField request "altKey", cmd := boolField request "metaKey" })
+  | "actions" =>
+    -- input of the user as WebDriver's Perform Actions; the one place the trusted input state changes
+    match inputSources request with
+    | .error er => run fun a => { a with page := a.page.setTrusted { a.page.trusted with error := some er } }
+    | .ok sources =>
+      let release := boolField request "release"
+      run fun a =>
+        let base := e.inputDriver refNode
+        -- an event that gives user activation records its time
+        let dispatch := fun (a : LeanJSWorkers.Agents) (low : WebDriver.Actions.Low) =>
+          let a := base.dispatch a low
+          if WebDriver.Input.activates low then { a with page := a.page.setTrusted { a.page.trusted with activated := some (e.loop a).clock } } else a
+        let d : WebDriver.Actions.Driver LeanJSWorkers.Agents := { env := base.env, dispatch := dispatch, wait := base.wait }
+        let start : WebDriver.Actions.Run LeanJSWorkers.Agents := { engine := a, input := a.page.trusted.actions }
+        let r := WebDriver.Actions.perform d start sources
+        let r := if release then WebDriver.Actions.release d r else r
+        let a := r.engine
+        { a with page := a.page.setTrusted { a.page.trusted with actions := r.input, error := r.error } }
+  | "message" =>
+    -- a message of the embedder to the page: a `message` event at the window
+    run fun a =>
+      let a := e.checkpoint (e.dispatchWith a Page.windowId "message"
+        (Page.messageInit { frame := 0, toParent := false, data := str request "data", origin := str request "origin" })).1
+      (e.advance a (e.loop a).clock).1
   | "resize" =>
     match viewport request with
     | some (w, h) => run fun s => let s := e.resize s w h; (e.advance s (e.loop s).clock).1
@@ -1067,7 +1128,7 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
     | none, some aot =>
       -- The AOT path: Lean asks the host for a fresh instance, then runs the program.
       let url := str request "url"
-      let commands := min 1048576 ((natField request "commandLimit").getD 4096)
+      let commands := min 1048576 ((natField request "commandLimit").getD L4Factoidal.WasmVM.Hosts.Dom.maxCommands)
       let logs := min 1048576 ((natField request "logLimit").getD 1024)
       let made := show Except String (Array (Nat × String) × Array String × DOM.Dom) from do
         let dom ← parse html url
@@ -1086,7 +1147,7 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
     | none, none => return (held, .error "scriptSession: no guest module; load it first")
     | some m, _ =>
       let url := str request "url"
-      let commands := min 1048576 ((natField request "commandLimit").getD 4096)
+      let commands := min 1048576 ((natField request "commandLimit").getD L4Factoidal.WasmVM.Hosts.Dom.maxCommands)
       let logs := min 1048576 ((natField request "logLimit").getD 1024)
       let ent ← entropy held.nextSession
       let started ← WebWasm.timed fun _ => show Except String Page.Session from do

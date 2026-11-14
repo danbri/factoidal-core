@@ -1,0 +1,21 @@
+{
+ "case": "8.1.10.b",
+ "file": "Chapt08/8.1/8.1.10/8.1.10.b.xhtml",
+ "quote": "8.1.10.b incremental attribute of select element You must see an xforms-value-changed message whenever you change the selection in the Select A Flavor select control. When you make a selection a list of the first letter of the flavor(s) must be displayed in the Selected Flavor output control. Each letter is separated by a space in the list.",
+ "steps": [
+  {
+   "do": "setvalue",
+   "label": "Select A Flavor",
+   "value": "v c"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-value-changed"
+  },
+  {
+   "expect": "control",
+   "label": "Selected Flavor",
+   "value": "v c"
+  }
+ ]
+}

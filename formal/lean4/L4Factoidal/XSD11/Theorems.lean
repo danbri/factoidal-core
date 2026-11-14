@@ -10,10 +10,11 @@ to the rest of the code base.
 * `simple_validity_is_xsd`: the simple-type validation of this tree is
   Part 2 validation by `L4Factoidal.XSD` (`XSD.valueOf` on the type's
   Part 2 body), with the `pattern` facets of `XSD11.Pattern`.
-* `patternOk11_shared`: when the shared XSD 1.1 regex profile
-  (`Regex.Profiles.compileXsd11`, also used by `XSD.SimpleType`) reads a
-  pattern, `XSD11.Pattern` uses the regex it gives, so the two pattern
-  dialects are one definition wherever both apply.
+* `patternOk11_eq`: the `pattern` test of `XSD11.Pattern` is the one of
+  `XSD.SimpleType` (`XSD.patternMatches`) for every pattern: both read a
+  pattern with `Regex.Profiles.xsd11Re`. `patternOk11_shared` is the
+  earlier statement, for patterns the restricted profile
+  (`Regex.Profiles.compileXsd11`) reads; it follows.
 * `builtin_body`: a built-in atomic type's Part 2 body is the built-in
   of `XSD.Datatypes` with no facets, so a value is valid for it exactly
   when `XSD.lexicalMap` maps its normalized form.
@@ -140,7 +141,7 @@ theorem validateSimple_ok (s : Schema) (h : Hooks) (bs : NsBindings) (t : Nat) (
 uses exactly that regex. -/
 theorem xsdPatternRe_shared (p : String) (r : Regex.Re)
     (h : Regex.Profiles.compileXsd11 p = .ok r) : xsdPatternRe p = some r := by
-  simp [xsdPatternRe, h]
+  simp [xsdPatternRe, Regex.Profiles.xsd11Re, h]
 
 theorem filterMap_patternMatch11 (lit : String) :
     ∀ alts : List String, (∀ p ∈ alts, (Regex.Profiles.compileXsd11 p).toOption.isSome) →
@@ -154,24 +155,41 @@ theorem filterMap_patternMatch11 (lit : String) :
       cases hc : Regex.Profiles.compileXsd11 p with
       | ok r =>
         have h1 : patternMatch11 p lit = some (Regex.Exec.acceptsNorm r (lit.toList.map Char.toNat)) := by
-          simp [patternMatch11, xsdPatternRe, hc]
+          simp [patternMatch11, xsdPatternRe, Regex.Profiles.xsd11Re, hc]
         have h2 : (Regex.Profiles.compileXsd11 p).toOption = some r := by simp [hc, Except.toOption]
         rw [List.filterMap_cons, List.filterMap_cons, h1, h2, ih]
         rfl
       | error e => simp [hc, Except.toOption] at hp
 
-/-- When the shared profile reads every pattern of the groups, the XSD 1.1
-pattern test is the one of `XSD.SimpleType` (`XSD.patternMatches`). -/
-theorem patternOk11_shared (lit : String) :
-    ∀ groups : List (List String),
-      (∀ alts ∈ groups, ∀ p ∈ alts, (Regex.Profiles.compileXsd11 p).toOption.isSome) →
-      patternOk11 groups lit = XSD.patternMatches groups lit
-  | [], _ => rfl
-  | alts :: gs, h => by
-      have ih := patternOk11_shared lit gs (fun a ha => h a (List.mem_cons_of_mem _ ha))
-      have hf := filterMap_patternMatch11 lit alts (h alts List.mem_cons_self)
-      unfold patternOk11 XSD.patternMatches at *
-      simp only [List.all_cons, hf, ih, List.isEmpty_map, List.any_map]
-      rfl
+/-- Kind: agreement of two validators (Part 1 assessment and Part 2
+validation share one `pattern` test).
+Says: for every list of pattern groups and every literal, the pattern
+test of `XSD11` (`patternOk11`) gives the same answer as the pattern test
+of `XSD.SimpleType` (`XSD.patternMatches`), whatever syntax the patterns
+use.
+Does not say: that the shared reader `Regex.Profiles.xsd11Re` accepts
+exactly the XSD 1.1 Appendix G language, or that a pattern no reader
+reads is rejected (it makes its group vacuous in both). -/
+theorem patternOk11_eq (lit : String) (groups : List (List String)) :
+    patternOk11 groups lit = XSD.patternMatches groups lit := by
+  unfold patternOk11 XSD.patternMatches
+  congr 1
+  funext alts
+  have h : alts.filterMap (fun p => patternMatch11 p lit) =
+      (alts.filterMap (fun p => Regex.Profiles.xsd11Re p)).map
+        (fun r => Regex.Exec.acceptsNorm r (lit.toList.map Char.toNat)) := by
+    rw [List.map_filterMap]
+    rfl
+  simp only [h, List.isEmpty_map, List.any_map]
+  rfl
+
+/-- When the restricted profile reads every pattern of the groups, the
+XSD 1.1 pattern test is the one of `XSD.SimpleType`
+(`XSD.patternMatches`). Kept for its callers; `patternOk11_eq` is the
+statement without the hypothesis. -/
+theorem patternOk11_shared (lit : String) (groups : List (List String))
+    (_h : ∀ alts ∈ groups, ∀ p ∈ alts, (Regex.Profiles.compileXsd11 p).toOption.isSome) :
+    patternOk11 groups lit = XSD.patternMatches groups lit :=
+  patternOk11_eq lit groups
 
 end L4Factoidal.XSD11

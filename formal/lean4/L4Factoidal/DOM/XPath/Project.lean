@@ -56,9 +56,12 @@ for the XML namespace, and a made prefix (no XML document can declare it: it hol
 space-free marker and the attribute's index) for an attribute that has a namespace and
 no prefix (`setAttributeNS(ns, "local", v)`). -/
 def attrPrefix (a : Attr) (i : Nat) : String :=
+  -- the XML namespace has one prefix, `xml`, whatever prefix the DOM node carries
+  -- (Namespaces in XML §3: no other prefix may be bound to it)
+  if a.ns == some xmlNS then "xml" else
   match a.pfx with
   | some p => p
-  | none => if a.ns == some xmlNS then "xml" else s!"_xpns{i}"
+  | none => s!"_xpns{i}"
 
 /-- The qualified name of an attribute in the projection. -/
 def attrName (a : Attr) (i : Nat) : String :=
@@ -84,9 +87,15 @@ def attrDomIndex (n : Node) (slot : Nat) : Option Nat :=
 def attrSlot (n : Node) (idx : Nat) : Option Nat :=
   (plainAttrs n).findIdx? fun x => x.1 == idx
 
+/-- The prefix of an element in the projection: its own, but `xml` for an element in the
+XML namespace (no other prefix and no default declaration may name that namespace, so
+the DOM's `createElementNS(xmlNamespace, "foo")` is written `xml:foo`). -/
+def elemPrefix (n : Node) : Option String :=
+  if n.ns == some xmlNS then some "xml" else n.pfx
+
 /-- The tag of an element in the projection: its qualified name. -/
 def elemTag (n : Node) : String :=
-  match n.pfx with
+  match elemPrefix n with
   | some p => p ++ ":" ++ n.lname
   | none => n.lname
 
@@ -94,7 +103,7 @@ def elemTag (n : Node) : String :=
 evaluator's resolution gives the DOM's namespaces. `dflt` is the default namespace the
 element inherits in the projection. -/
 def elemDecls (n : Node) (dflt : Option String) : List XML.Attribute :=
-  let own : List XML.Attribute := match n.pfx, n.ns with
+  let own : List XML.Attribute := match elemPrefix n, n.ns with
     | some p, some u =>
       if p == "xml" || p == "xmlns" then []
       else [({ name := "xmlns:" ++ p, value := u } : XML.Attribute)]
@@ -130,7 +139,7 @@ def elemAttrs (n : Node) (dflt : Option String) : List XML.Attribute :=
 
 /-- The default namespace the children of an element inherit in the projection. -/
 def childDefault (n : Node) (dflt : Option String) : Option String :=
-  match n.pfx with
+  match elemPrefix n with
   | some _ => dflt
   | none => n.ns
 

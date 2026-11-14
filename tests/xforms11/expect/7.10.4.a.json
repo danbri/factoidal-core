@@ -1,0 +1,48 @@
+{
+ "case": "7.10.4.a",
+ "file": "Chapt07/7.10/7.10.4/7.10.4.a.xhtml",
+ "quote": "You must initially see the value \"Unknown\" for the Bad Fruit picked output and four triggers labeled \"apple\", \"orange\", \"mandarine\", and \"tomato\". When you activate one of these triggers, you must see one of these values for the Bad Fruit picked output: \"apple\", \"orange\", \"mandarine\", or \"tomato\".",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "Bad Fruit picked",
+   "value": "Unknown"
+  },
+  {
+   "do": "activate",
+   "label": "apple"
+  },
+  {
+   "expect": "control",
+   "label": "Bad Fruit picked",
+   "value": "apple"
+  },
+  {
+   "do": "activate",
+   "label": "orange"
+  },
+  {
+   "expect": "control",
+   "label": "Bad Fruit picked",
+   "value": "orange"
+  },
+  {
+   "do": "activate",
+   "label": "mandarine"
+  },
+  {
+   "expect": "control",
+   "label": "Bad Fruit picked",
+   "value": "mandarine"
+  },
+  {
+   "do": "activate",
+   "label": "tomato"
+  },
+  {
+   "expect": "control",
+   "label": "Bad Fruit picked",
+   "value": "tomato"
+  }
+ ]
+}

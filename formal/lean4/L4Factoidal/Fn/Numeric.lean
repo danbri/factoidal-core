@@ -81,6 +81,77 @@ def decDiv? (scale : Nat) (a b : Dec) : Option Dec :=
     let den := b.mantissa * (10 : Int) ^ a.scale
     some (Dec.norm ⟨Int.tdiv num den, scale⟩)
 
+/-- The quotient of `num` by `den` (`den` not zero) rounded to the nearest
+    integer, a tie to the even one. -/
+def divNearestEven (num den : Int) : Int :=
+  let q := Int.tdiv num den
+  let r := num - q * den
+  let twice := 2 * r.natAbs
+  let d := den.natAbs
+  if twice > d || (twice == d && q % 2 != 0) then
+    (if (num < 0) != (den < 0) then q - 1 else q + 1)
+  else q
+
+/-- §6.2.4 `op:numeric-divide` with the quotient ROUNDED to `scale`
+    fractional digits (to nearest, a tie to even), where `decDiv?`
+    truncates. F&O 4.0 §4.2.4 leaves the choice to the implementation
+    ("truncated or rounded in an implementation-defined manner"); XPath
+    4.0 and XQuery 4.0 use this one, so that
+    `round-half-to-even(830993497117024304 div -999999999999999999, 18)`
+    is `-0.830993497117024305` (qt4tests `op-numeric-divideintg2args-2`).
+    `none` on a zero divisor (FOAR0001). -/
+def decDivNearest? (scale : Nat) (a b : Dec) : Option Dec :=
+  if b.mantissa == 0 then none
+  else
+    let num := a.mantissa * (10 : Int) ^ (b.scale + scale)
+    let den := b.mantissa * (10 : Int) ^ a.scale
+    some (Dec.norm ⟨divNearestEven num den, scale⟩)
+
+/-- Kind: agreement with the exact quotient.
+    Says: when a non-zero `den` divides `num` exactly (the truncated
+    quotient times `den` is `num`), rounding to nearest gives the
+    truncated quotient.
+    Does not say: how far the rounded quotient is from the exact one when
+    the division is not exact (tested by `#guard`s below; the bound of
+    half a unit is open). -/
+theorem divNearestEven_exact (num den : Int) (hd : den ≠ 0) (h : Int.tdiv num den * den = num) :
+    divNearestEven num den = Int.tdiv num den := by
+  have hn : den.natAbs ≠ 0 := by simpa using hd
+  have h1 : ¬ (0 > den.natAbs) := by omega
+  have h2 : ((0 : Nat) == den.natAbs) = false := by
+    simp only [beq_eq_false_iff_ne, ne_eq]
+    omega
+  unfold divNearestEven
+  simp only [h, Int.sub_self, Int.natAbs_zero, Nat.mul_zero]
+  simp [h1, h2]
+
+/-- Kind: agreement of two functions on a class of inputs.
+    Says: when the quotient has at most `scale` fractional digits (the
+    scaled division is exact), `decDivNearest?` and the truncating
+    `decDiv?` give the same decimal.
+    Does not say: anything when digits are lost; there the two differ by
+    at most one unit of the last place (tested, not proved). -/
+theorem decDivNearest_eq_decDiv_of_exact (scale : Nat) (a b : Dec)
+    (h : Int.tdiv (a.mantissa * (10 : Int) ^ (b.scale + scale)) (b.mantissa * (10 : Int) ^ a.scale) *
+          (b.mantissa * (10 : Int) ^ a.scale) = a.mantissa * (10 : Int) ^ (b.scale + scale)) :
+    decDivNearest? scale a b = decDiv? scale a b := by
+  simp only [decDivNearest?, decDiv?]
+  split
+  · rfl
+  · rename_i hb
+    have hb' : b.mantissa ≠ 0 := by simpa using hb
+    have hden : b.mantissa * (10 : Int) ^ a.scale ≠ 0 :=
+      Int.mul_ne_zero hb' (Int.pow_ne_zero (by decide))
+    rw [divNearestEven_exact _ _ hden h]
+
+/-- Kind: totality of the refusal.
+    Says: `decDivNearest?` gives `none` exactly when the divisor is zero.
+    Does not say: anything about the value otherwise. -/
+theorem decDivNearest_none_iff (scale : Nat) (a b : Dec) :
+    decDivNearest? scale a b = none ↔ b.mantissa = 0 := by
+  simp only [decDivNearest?]
+  split <;> simp_all
+
 /-- The FLOOR of a decimal, which is not `Dec.floorDiv` — that name is
     on a truncating division. Needed wherever a negative offset must
     carry into the next lower day (`Fn.DateTime.plusDuration`). -/
@@ -161,6 +232,23 @@ writes out. -/
 #guard decMul ⟨7800, 0⟩ ⟨21, 1⟩ = ⟨16380, 0⟩
 #guard decDiv? 18 ⟨40, 0⟩ ⟨-16, 0⟩ = some ⟨-25, 1⟩
 #guard decDiv? 18 ⟨1, 0⟩ ⟨0, 0⟩ = none
+-- rounding to nearest, where `decDiv?` truncates
+#guard decDivNearest? 18 ⟨40, 0⟩ ⟨-16, 0⟩ = some ⟨-25, 1⟩
+#guard decDivNearest? 18 ⟨1, 0⟩ ⟨0, 0⟩ = none
+#guard decDivNearest? 18 ⟨1, 0⟩ ⟨3, 0⟩ = some ⟨333333333333333333, 18⟩
+#guard decDivNearest? 18 ⟨2, 0⟩ ⟨3, 0⟩ = some ⟨666666666666666667, 18⟩
+#guard decDivNearest? 18 ⟨-2, 0⟩ ⟨3, 0⟩ = some ⟨-666666666666666667, 18⟩
+#guard decDivNearest? 18 ⟨2, 0⟩ ⟨-3, 0⟩ = some ⟨-666666666666666667, 18⟩
+-- qt4tests op-numeric-divideintg2args-2 and op-numeric-dividedec2args-4
+#guard decDivNearest? 18 ⟨830993497117024304, 0⟩ ⟨-999999999999999999, 0⟩ = some ⟨-830993497117024305, 18⟩
+#guard decDivNearest? 18 ⟨-999999999999999999, 0⟩ ⟨617375191608514839, 0⟩ = some ⟨-1619760582531006901, 18⟩
+-- ties go to the even digit
+#guard divNearestEven 5 10 = 0
+#guard divNearestEven 15 10 = 2
+#guard divNearestEven (-15) 10 = -2
+#guard divNearestEven 25 10 = 2
+#guard divNearestEven 7 2 = 4
+#guard divNearestEven (-7) 2 = -4
 #guard decIntDiv? ⟨10, 0⟩ ⟨3, 0⟩ = some 3
 #guard decIntDiv? ⟨-10, 0⟩ ⟨3, 0⟩ = some (-3)
 #guard decMod? ⟨10, 0⟩ ⟨3, 0⟩ = some ⟨1, 0⟩

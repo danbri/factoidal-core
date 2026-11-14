@@ -1,0 +1,12 @@
+{
+ "case": "7.9.4.b",
+ "file": "Chapt07/7.9/7.9.4/7.9.4.b.xhtml",
+ "quote": "You must see the value \"4\" for the Test output.",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "Test",
+   "value": "4"
+  }
+ ]
+}

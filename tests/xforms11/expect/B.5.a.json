@@ -1,0 +1,14 @@
+{
+ "case": "B.5.a",
+ "file": "Appendix/B/B.5/b.5.a.xhtml",
+ "quote": "You must see only one item product(\"SKU-0815\") :",
+ "steps": [
+  {
+   "expect": "values",
+   "values": [
+    "SKU-0815"
+   ],
+   "label": "Product"
+  }
+ ]
+}

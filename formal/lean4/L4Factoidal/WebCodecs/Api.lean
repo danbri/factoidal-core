@@ -16,6 +16,9 @@ record: docs/designissues/2026-11-14-webgl-webcodecs.md, section 4).
     `Convert.toRgb`: the rectangle of the frame as packed pixels of an RGB format (bytes); -23
     (NotSupportedError) for a frame this does not convert.
   * 125 `checkConfig(kind, codec, members, detached)`: `Config.check`.
+  * 126 `orient(rotation, flip, width, height, bytes)`: `Orient.orient`: packed 4-byte pixels
+    of a `width × height` rectangle turned by the rotation (degrees) and mirrored when `flip` is
+    "1", as a frame is drawn (bytes); -20 when the bytes are not `width × height` pixels.
 
 Arguments are fields of text: numbers in decimal, lists of numbers separated by spaces, "" for a
 member the page did not give. The rotation is the 8 bytes of the page's double, little-endian.
@@ -24,6 +27,7 @@ Errors: -20 TypeError (what the standard refuses), -2 not an op.
 import L4Factoidal.WebCodecs.Frame
 import L4Factoidal.WebCodecs.Convert
 import L4Factoidal.WebCodecs.Config
+import L4Factoidal.WebCodecs.Orient
 
 namespace L4Factoidal.WebCodecs.Api
 
@@ -144,6 +148,12 @@ def checkConfig (fs : Array ByteArray) : Option String := do
   let k ← Config.Kind.ofName? (strArg fs 0)
   pure (Config.check k { codec := strArg fs 1, nums := numsOf (strArg fs 2), detached := strArg fs 3 == "1" }).name
 
+def orientOp (fs : Array ByteArray) : Option ByteArray := do
+  let r ← natArg fs 0
+  let w ← natArg fs 2
+  let h ← natArg fs 3
+  Orient.orient (Orient.quarters r) (strArg fs 1 == "1") w h (fs[4]?.getD ByteArray.empty)
+
 def op (code : Nat) (fs : Array ByteArray) : Except Int ByteArray :=
   let answer := fun (r : Option String) => match r with
     | some s => .ok s.toUTF8
@@ -157,6 +167,9 @@ def op (code : Nat) (fs : Array ByteArray) : Except Int ByteArray :=
     | some b => .ok b
     | none => .error (-23)
   | 125 => answer (checkConfig fs)
+  | 126 => match orientOp fs with
+    | some b => .ok b
+    | none => .error (-20)
   | _ => .error (-2)
 
 /-! ## Tests -/
@@ -194,6 +207,12 @@ private def run (code : Nat) (xs : List String) (bin : List (Nat × ByteArray) :
 #guard run 125 ["VideoDecoder", "vp8", "", ""] == "unsupported"
 #guard run 125 ["VideoEncoder", "vp8", "width=640\nheight=0", ""] == "invalid"
 #guard run 125 ["AudioEncoder", "opus", "sampleRate=8000\nnumberOfChannels=2\nopus.complexity=11", ""] == "invalid"
-#guard run 126 [] == "error -2"
+-- A 2 × 1 image turned a quarter: 1 wide, 2 high, the left pixel at the top.
+#guard (op 126 #["90".toUTF8, "".toUTF8, "2".toUTF8, "1".toUTF8, ⟨#[1, 1, 1, 1, 2, 2, 2, 2]⟩]).toOption.map (·.toList) ==
+  some [1, 1, 1, 1, 2, 2, 2, 2]
+#guard (op 126 #["0".toUTF8, "1".toUTF8, "2".toUTF8, "1".toUTF8, ⟨#[1, 1, 1, 1, 2, 2, 2, 2]⟩]).toOption.map (·.toList) ==
+  some [2, 2, 2, 2, 1, 1, 1, 1]
+#guard run 126 ["0", "", "2", "1", "abc"] == "error -20"
+#guard run 127 [] == "error -2"
 
 end L4Factoidal.WebCodecs.Api

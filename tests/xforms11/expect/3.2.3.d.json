@@ -1,0 +1,14 @@
+{
+ "case": "3.2.3.d",
+ "file": "Chapt03/3.2/3.2.3/3.2.3.d.xhtml",
+ "quote": "You must see the value \"silver\":",
+ "steps": [
+  {
+   "expect": "values",
+   "values": [
+    "silver"
+   ],
+   "kind": "output"
+  }
+ ]
+}

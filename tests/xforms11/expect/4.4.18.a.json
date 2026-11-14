@@ -1,0 +1,23 @@
+{
+ "case": "4.4.18.a",
+ "file": "Chapt04/4.4/4.4.18/4.4.18.a.xhtml",
+ "quote": "You must see an xforms-scroll-first message when you activate the Scroll First trigger. You must see an xforms-scroll-last message when you activate the Scroll Last trigger.",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Scroll First"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-scroll-first"
+  },
+  {
+   "do": "activate",
+   "label": "Scroll Last"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-scroll-last"
+  }
+ ]
+}

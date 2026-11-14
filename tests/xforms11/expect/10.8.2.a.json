@@ -1,0 +1,15 @@
+{
+ "case": "10.8.2.a",
+ "file": "Chapt10/10.8/10.8.2/10.8.2.a.xhtml",
+ "quote": "After you activate the Fire Custom Event trigger you must see a custom-event message.",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Fire Custom Event"
+  },
+  {
+   "expect": "message",
+   "contains": "custom-event"
+  }
+ ]
+}

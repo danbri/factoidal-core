@@ -1,0 +1,21 @@
+{
+ "case": "10.18.e",
+ "file": "Chapt10/10.18/10.18.e.xhtml",
+ "quote": "10.18.e iteration of XForms actions - Summing Selected Results example You must see a value of \"6\" for the Total Sum output and a value of \"4\" for the Counter output.",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Get Sum"
+  },
+  {
+   "expect": "control",
+   "label": "Total Sum",
+   "value": "6"
+  },
+  {
+   "expect": "control",
+   "label": "Counter",
+   "value": "4"
+  }
+ ]
+}
