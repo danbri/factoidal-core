@@ -684,7 +684,9 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
     const collectNet=(t:{netRequests?:NetWire[]})=>{for(const w of t.netRequests??[]){
       if(w.method==="WEBSOCKET-SEND"||w.method==="WEBSOCKET-CLOSE")sockAct(w);else inflight.set(w.id,netFetch(w));}};
     const ss=(req:Record<string,unknown>)=>resolveSync(engine.scriptSession("",req) as ScriptTurnWithFetches) as Promise<typeof turn>;
-    const take=(t:ScriptTurnWithFetches)=>{logs.push(...t.logs);errors.push(...t.errors);instructions+=t.instructions;collectNet(t as {netRequests?:NetWire[]});};
+    // the script fetches (workers' scripts and importScripts) every turn asks for
+    const wanted:Fetch[]=[];
+    const take=(t:ScriptTurnWithFetches)=>{for(const f of t.fetches??[])wanted.push(f);logs.push(...t.logs);errors.push(...t.errors);instructions+=t.instructions;collectNet(t as {netRequests?:NetWire[]});};
     collectNet(turn as {netRequests?:NetWire[]});
     const startFetches=(turn as ScriptTurnWithFetches).fetches??[];
     // test_driver (testdriver-vendor.js of this directory): a request of the page leaves it as a
@@ -735,15 +737,19 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
       }
     };
     await settleTo(70000);
-    let pending:Fetch[]=[...startFetches,...((turn as ScriptTurnWithFetches).fetches??[])].filter(f=>!answered.has(f.id));
-    for(let round=0;pending.length&&round<1000;round++){
-      for(const f of pending)answered.add(f.id);
-      const results=await Promise.all(pending.map(hostFetch));
-      const given=engine.scriptSession("",{action:"fetched",session:turn.session,results}) as ScriptTurnWithFetches;
-      take(given);
-      await settleTo(70000);
-      pending=[...(given.fetches??[]),...((turn as ScriptTurnWithFetches).fetches??[])].filter((f,i,all)=>!answered.has(f.id)&&all.findIndex(g=>g.id===f.id)===i);
-    }
+    // Answer every script fetch asked for so far (a worker made after a page request was
+    // answered asks in a later turn), until none is left.
+    const serveFetches=async()=>{
+      for(let round=0;round<1000;round++){
+        const pending=[...startFetches,...wanted].filter((f,i,all)=>!answered.has(f.id)&&all.findIndex(g=>g.id===f.id)===i);
+        if(!pending.length)return;
+        for(const f of pending)answered.add(f.id);
+        const results=await Promise.all(pending.map(hostFetch));
+        take(engine.scriptSession("",{action:"fetched",session:turn.session,results}) as ScriptTurnWithFetches);
+        await settleTo(Math.max(1,70000-turn.clock));
+      }
+    };
+    await serveFetches();
     // Frames and page requests (XMLHttpRequest: `network:true`): answer each navigation with
     // its document and each request from wptserve; the engine decides all (redirect "manual").
     // `elapsedMs` moves the virtual clock by the real time waited, so timers and `timeout` still fire.
@@ -773,6 +779,7 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
         if(finished())break;
         take(turn=await ss({action:"advance",session:turn.session,ms:500}));
         await settleTo(Math.max(1,Math.min(1000,70000-turn.clock)));
+        await serveFetches();
         await answerFrames();
         continue;
       }
@@ -780,6 +787,7 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
       inflight.delete(id);
       const now=performance.now(),elapsedMs=Math.round(now-lastNet);lastNet=now;
       take(turn=await ss({action:"net",session:turn.session,results:[answer],elapsedMs}));
+      await serveFetches();
       // a connection that is open reads on
       const sock=sockets.get(id);
       if(sock&&(answer as {status?:number}).status!==0)inflight.set(id,sockRead(id,sock.conn));
