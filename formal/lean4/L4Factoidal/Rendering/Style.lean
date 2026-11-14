@@ -5,6 +5,7 @@ import L4Factoidal.Rendering.MediaQuery
 import L4Factoidal.Rendering.CssValues.Properties
 import L4Factoidal.Rendering.FlexStyle
 import L4Factoidal.Rendering.SheetReader
+import L4Factoidal.Rendering.CssVars
 import L4Factoidal.DOM.Selectors
 import Std.Data.TreeMap
 import Std.Data.HashMap
@@ -147,6 +148,10 @@ structure Computed where
   flex : FlexStyle := {}
   /-- Positioning, floats and box sizing (`Rendering/BoxPosition.lean`). -/
   pos : PositionStyle := {}
+  /-- The custom properties of the element (CSS Variables 1 §2; inherited): name to
+  computed value. Empty on a page that declares none; an element that declares none
+  shares its parent's map. -/
+  vars : CssVars.Vars := {}
   deriving Repr
 instance : Inhabited Computed := ⟨{}⟩
 
@@ -221,6 +226,10 @@ structure Rule where
   /-- The place of the rule's cascade layer in the layer order of its sheet (CSS Cascade 5
   §6.4, `SheetReader.rankOf`): 0 for a rule in no layer, 1 for the first layer declared. -/
   layer : Nat := 0
+  /-- A declaration of the rule is a custom property or mentions `var()`: an element that
+  no such rule matches (and whose `style` attribute has none) skips the substitution step
+  of `computedFrom`. -/
+  usesVars : Bool := false
   deriving Repr
 
 def attrValue (n : DOM.Node) (key : String) : String :=
@@ -414,11 +423,39 @@ orders them. -/
 def declarationsOf (ds : List SheetReader.Decl) : List Declaration :=
   ds.foldr (fun d acc =>
     let key := if d.name == "background" then "background-color" else d.name
-    if key == "margin" || key == "padding" then
+    -- a `margin` or `padding` that mentions `var()` is kept whole: its sides are known
+    -- only after substitution (`computedFrom`)
+    if (key == "margin" || key == "padding") && !CssVars.mentions d.value then
       (expandEdges key d.value d.important).toOption.getD [] ++ acc
     else match layoutShorthand key d.value with
       | some longhands => longhands.map (fun (k,v) => (⟨k,v,d.important⟩ : Declaration)) ++ acc
       | none => ⟨key,d.value,d.important⟩ :: acc) []
+
+/-- A declaration that is a custom property or mentions `var()`. -/
+def Declaration.usesVars (d : Declaration) : Bool :=
+  d.property.startsWith "--" || CssVars.mentions d.value
+
+/-- The four sides of `margin` and `padding`, for a declaration of the shorthand kept
+whole (one that mentions `var()`). -/
+def edgeSides (property : String) : List String :=
+  ["top","right","bottom","left"].map (property ++ "-" ++ ·)
+
+/-- A winning declaration with its `var()` references replaced by the element's custom
+properties, as the declaration of longhand `key`: a `margin` or `padding` kept whole gives
+its side `key` after substitution. `none`: invalid at computed-value time (CSS Variables 1
+§3.1), so the property is as if not declared. -/
+def substituted (vars : CssVars.Vars) (key : String) (d : Declaration) : Option Declaration :=
+  if !CssVars.mentions d.value then (if d.property == key then some d else none)
+  else match vars.apply d.value with
+    | none => none
+    | some value =>
+      if d.property == key then some {d with value}
+      else ((expandEdges d.property value d.important).toOption.getD []).find? (·.property == key)
+
+/-- A declaration with no `var()` is not changed by substitution. -/
+theorem substituted_plain (vars : CssVars.Vars) (d : Declaration) (h : CssVars.mentions d.value = false) :
+    substituted vars d.property d = some d := by
+  simp [substituted, h]
 
 /-- The declarations of a declaration list (a `style` attribute), split as CSS Syntax 3
 says (`SheetReader.splitDecls`: a `;` in a string, a `url()` or a block ends nothing).
@@ -460,7 +497,9 @@ is dropped whole, as CSS drops an invalid selector list. -/
 def ruleOfLeaf (leaf : SheetReader.Leaf) : Option Rule :=
   if !leaf.kind.isEmpty then none
   else match (splitTopCommas leaf.prelude).mapM selector with
-    | .ok selectors => some {selectors, declarations := declarationsOf leaf.decls, layer := leaf.rank}
+    | .ok selectors =>
+      let declarations := declarationsOf leaf.decls
+      some {selectors, declarations, layer := leaf.rank, usesVars := declarations.any (·.usesVars)}
     | .error _ => none
 
 /-- The rules of a sheet, each with the query lists of the `@media` rules it is in, before
@@ -1075,6 +1114,8 @@ def droppedDeclarations (dom : Dom) (rules : List Rule) : Array String := Id.run
     if n.type == .element && hasAttribute n "style" then
       if let .ok ds := declarations (attrValue n "style") then all := all ++ ds.toArray
   for d in all do
+    -- custom properties and declarations with `var()` are read by the cascade, not here
+    if d.usesVars then continue
     match apply {} d with
     | .ok _ => pure ()
     | .error reason =>
@@ -1768,7 +1809,7 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     margin := startMargin n.lname fontSize,
     borderSpacingX := parent.borderSpacingX, borderSpacingY := parent.borderSpacingY,
     borderCollapse := parent.borderCollapse, captionBottom := parent.captionBottom,
-    textAlign := parent.textAlign, direction := parent.direction}
+    textAlign := parent.textAlign, direction := parent.direction, vars := parent.vars}
   -- HTML §3.2.6.4 and §15.3.5: the `dir` attribute sets `direction` and isolates the
   -- element; `bdi` isolates, and `bdo` overrides with isolation. Author CSS wins.
   if n.ns == some DOM.htmlNS || n.ns.isNone then
@@ -1800,23 +1841,44 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
           else {initial with height := dimension}
   let mut winners : Std.TreeMap String (List Nat × Declaration) := {}
   let mut order : Nat := 0
+  -- a matched rule or the `style` attribute has a custom property or a `var()`
+  let mut usesVars := false
   for (origin,rule,matched) in matched do
     let specificity := matched.foldl (fun m s => if lexLE [m.1,m.2.1,m.2.2] [s.specificity.1,s.specificity.2.1,s.specificity.2.2] then s.specificity else m) (0,0,0)
     let onlyVisited := matched.all (·.visitedDependent)
+    if rule.usesVars then usesVars := true
     for d in rule.declarations do
       if !onlyVisited || visitedProperties.contains d.property then
         let key := ruleKey d.important origin rule.scope.isSome rule.layer specificity order
-        if (winners.get? d.property).all (fun old => lexLE old.1 key) then
+        if rule.usesVars && (d.property == "margin" || d.property == "padding") then
+          -- a shorthand kept whole (it mentions `var()`) stands for each of its sides
+          for side in edgeSides d.property do
+            if (winners.get? side).all (fun old => lexLE old.1 key) then winners := winners.insert side (key,d)
+        else if (winners.get? d.property).all (fun old => lexLE old.1 key) then
           winners := winners.insert d.property (key,d)
       order := order+1
   for d in ← declarations (attrValue n "style") do
     let key := inlineKey d.important order
-    if (winners.get? d.property).all (fun old => lexLE old.1 key) then winners := winners.insert d.property (key,d)
+    if d.usesVars then usesVars := true
+    if d.property == "margin" || d.property == "padding" then
+      for side in edgeSides d.property do
+        if (winners.get? side).all (fun old => lexLE old.1 key) then winners := winners.insert side (key,d)
+    else if (winners.get? d.property).all (fun old => lexLE old.1 key) then winners := winners.insert d.property (key,d)
     order := order+1
-  -- Font size precedes line-height and inheritance-sensitive dependent values.
   let mut result := initial
-  if let some (_,d) := winners.get? "font-size" then result := applyOrKeep result d
-  for (key,(priority,d)) in winners.toList do
+  let mut chosen := winners.toList
+  if usesVars then
+    -- CSS Variables 1: the element's custom properties first (its own winning
+    -- declarations over the inherited ones), then every other winner with its `var()`
+    -- references replaced; one that is invalid at computed-value time is left out
+    let own := chosen.filterMap fun (key,(_,d)) => if key.startsWith "--" then some (key,d.value) else none
+    let vars := CssVars.resolve parent.vars own
+    result := {result with vars}
+    chosen := chosen.filterMap fun (key,(priority,d)) =>
+      if key.startsWith "--" then none else (substituted vars key d).map fun d' => (key,(priority,d'))
+  -- Font size precedes line-height and inheritance-sensitive dependent values.
+  if let some (_,(_,d)) := chosen.find? (·.1 == "font-size") then result := applyOrKeep result d
+  for (key,(priority,d)) in chosen do
     if key != "font-size" then
       -- Inline SVG paint declarations stay with the existing SVG producer.
       -- External HTML paint rules are refused until that cascade is unified.
