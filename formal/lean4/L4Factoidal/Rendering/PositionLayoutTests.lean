@@ -479,4 +479,21 @@ private def two := "<div id=a>AA</div><div id=b>BB</div>"
 -- padding is never negative: the declaration is dropped
 #guard box "<div id=c><div id=k>K</div></div>" "#c{width:100px} #k{padding-left:-10px}" "k" == some (0,0,100,7)
 
+
+-- `min-height` and `max-height` as a percentage or `stretch` of a containing block whose
+-- height the styles make definite (CSS 2.1 §10.7; CSS Sizing 4 §6.1). The container is
+-- 50 px high; the box has margins of 2 and 3, a border of 3 and padding of 2, so the
+-- stretch height of its border box is 45.
+private def limited := "<div id=c><div id=k></div></div>"
+private def limitCss := "#c{height:50px;width:40px} #k{margin:2px 0 3px;border:3px solid blue;padding:2px;width:20px;"
+#guard (box limited (limitCss ++ "height:55px;max-height:stretch}") "k").map (·.2.2.2) == some 45
+#guard (box limited (limitCss ++ "height:10px;min-height:stretch}") "k").map (·.2.2.2) == some 45
+#guard (box limited (limitCss ++ "height:55px;max-height:50%}") "k").map (·.2.2.2) == some 35
+#guard (box limited (limitCss ++ "height:10px;min-height:50%}") "k").map (·.2.2.2) == some 35
+-- with a containing block whose height depends on content the limit does not apply
+#guard (box limited ("#c{width:40px} #k{margin:2px 0 3px;border:3px solid blue;padding:2px;width:20px;height:55px;max-height:50%}") "k").map (·.2.2.2) == some 65
+-- a replaced element: `max-width: stretch` and `min-width: stretch` are its fill width
+#guard (box "<div id=c><canvas id=k></canvas></div>" "#c{width:40px} #k{display:block;margin:0 2px 0 3px;width:55px;height:10px;max-width:stretch}" "k").map (·.2.2.1) == some 35
+#guard (box "<div id=c><canvas id=k></canvas></div>" "#c{width:40px} #k{display:block;margin:0 2px 0 3px;width:10px;height:10px;min-width:stretch}" "k").map (·.2.2.1) == some 35
+
 end L4Factoidal.Rendering.PositionLayoutTests

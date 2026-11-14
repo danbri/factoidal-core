@@ -280,11 +280,39 @@ def resolvedHeight (dom : Dom) (styles : Array Computed) (id : Nat) : Option Flo
     | none => none
   | _ => none
 
-/-- The style of `id` with a percentage `height` that resolves as that length. -/
+/-- The length that a `min-height` or `max-height` `l` of `id` resolves to when it is a
+percentage or `stretch` (CSS 2.1 §10.7; CSS Sizing 4 §6.1) and the containing block's
+height is definite from the styles (`definiteHeight` of the parent element): the
+percentage of that height, or what fills it inside the box's margins, borders and padding.
+`none` for any other value, when that height depends on content (the limit then does not
+apply), and for an absolutely positioned box. -/
+def resolvedLimit (dom : Dom) (styles : Array Computed) (id : Nat) (l : CSS.Length) : Option Float :=
+  let s := styles[id]!
+  let containing := fun (_ : Unit) =>
+    if s.pos.isAbsolute then none else
+    match (dom.get id).parent with
+    | some parent => if (dom.get parent).type == .element then definiteHeight dom styles parent else none
+    | none => none
+  match l with
+  | .percent p => (containing ()).map fun h => max 0 (h*p)
+  | .stretch => (containing ()).map fun h =>
+      max 0 (h-s.margin.top-s.margin.bottom-s.borderEdges.top-s.borderEdges.bottom-s.padding.top-s.padding.bottom)
+  | _ => none
+
+/-- A limit as the length it resolves to, or as it is. -/
+def limitLength (dom : Dom) (styles : Array Computed) (id : Nat) (l : CSS.Length) : CSS.Length :=
+  match resolvedLimit dom styles id l with
+  | some v => .px v
+  | none => l
+
+/-- The style of `id` with a percentage `height` that resolves as that length, and its
+`min-height` and `max-height` likewise. -/
 def percentHeight (dom : Dom) (styles : Array Computed) (id : Nat) : Computed :=
-  match resolvedHeight dom styles id with
-  | some h => {styles[id]! with height := .px h}
-  | none => styles[id]!
+  let s := styles[id]!
+  let height := match resolvedHeight dom styles id with
+    | some h => .px h
+    | none => s.height
+  {s with height, minHeight := limitLength dom styles id s.minHeight, maxHeight := limitLength dom styles id s.maxHeight}
 
 /-- The styles with each percentage `height` that `definiteHeight` resolves as that
 length (CSS 2.1 §10.5); a percentage of a height that depends on content stays, and is
@@ -302,23 +330,52 @@ theorem percentHeights_get (dom : Dom) (styles : Array Computed) (id : Nat) (hid
     (percentHeights dom styles)[id]! = percentHeight dom styles id := by
   simp [percentHeights, hid]
 
-/-- Kind: frame. Says: the pass changes nothing of a style but its `height`: two styles
-that differ at most there before it differ at most there after it. Does not say: what
-the new height is (a `Float`: tested). -/
-theorem percentHeight_rest (dom : Dom) (styles : Array Computed) (id : Nat) (h : CSS.Length) :
-    {percentHeight dom styles id with height := h} = {styles[id]! with height := h} := by
+/-- Kind: frame. Says: the pass changes nothing of a style but its `height`, `min-height`
+and `max-height`: two styles that differ at most there before it differ at most there
+after it. Does not say: what the new values are (`Float`: tested). -/
+theorem percentHeight_rest (dom : Dom) (styles : Array Computed) (id : Nat) (h lo hi : CSS.Length) :
+    {percentHeight dom styles id with height := h, minHeight := lo, maxHeight := hi} =
+      {styles[id]! with height := h, minHeight := lo, maxHeight := hi} := by
   unfold percentHeight
-  split <;> rfl
+  rfl
 
-/-- Kind: frame. Says: a height that is a length is left as it is. -/
+/-- Kind: frame. Says: a limit that is a length, `auto` or a content keyword is left as it is. -/
+theorem limitLength_px (dom : Dom) (styles : Array Computed) (id : Nat) (v : Float) :
+    limitLength dom styles id (.px v) = .px v := rfl
+
+theorem limitLength_auto (dom : Dom) (styles : Array Computed) (id : Nat) :
+    limitLength dom styles id .auto = .auto := rfl
+
+/-- Kind: frame. Says: a height that is a length, with limits that are lengths or `auto`,
+is left as it is. -/
 theorem percentHeight_px (dom : Dom) (styles : Array Computed) (id : Nat) (v : Float)
-    (h : (styles[id]!).height = .px v) : percentHeight dom styles id = styles[id]! := by
-  simp [percentHeight, resolvedHeight, h]
+    (h : (styles[id]!).height = .px v)
+    (lo : limitLength dom styles id (styles[id]!).minHeight = (styles[id]!).minHeight)
+    (hi : limitLength dom styles id (styles[id]!).maxHeight = (styles[id]!).maxHeight) :
+    percentHeight dom styles id = styles[id]! := by
+  unfold percentHeight
+  simp only [resolvedHeight, h, lo, hi]
+  generalize styles[id]! = s at h
+  cases s
+  simp_all
 
-/-- Kind: frame. Says: `height: auto` is left as it is. -/
+/-- Kind: frame. Says: `height: auto` with such limits is left as it is. -/
 theorem percentHeight_auto (dom : Dom) (styles : Array Computed) (id : Nat)
-    (h : (styles[id]!).height = .auto) : percentHeight dom styles id = styles[id]! := by
-  simp [percentHeight, resolvedHeight, h]
+    (h : (styles[id]!).height = .auto)
+    (lo : limitLength dom styles id (styles[id]!).minHeight = (styles[id]!).minHeight)
+    (hi : limitLength dom styles id (styles[id]!).maxHeight = (styles[id]!).maxHeight) :
+    percentHeight dom styles id = styles[id]! := by
+  unfold percentHeight
+  simp only [resolvedHeight, h, lo, hi]
+  generalize styles[id]! = s at h
+  cases s
+  simp_all
+
+theorem resolvedLimit_absolute (dom : Dom) (styles : Array Computed) (id : Nat) (l : CSS.Length)
+    (h : (styles[id]!).pos.isAbsolute = true) : resolvedLimit dom styles id l = none := by
+  unfold resolvedLimit
+  simp only [h]
+  split <;> rfl
 
 theorem resolvedHeight_absolute (dom : Dom) (styles : Array Computed) (id : Nat)
     (h : (styles[id]!).pos.isAbsolute = true) : resolvedHeight dom styles id = none := by
@@ -330,7 +387,7 @@ theorem resolvedHeight_absolute (dom : Dom) (styles : Array Computed) (id : Nat)
 percentage height is of its containing block's padding box, known where it is placed. -/
 theorem percentHeight_absolute (dom : Dom) (styles : Array Computed) (id : Nat)
     (h : (styles[id]!).pos.isAbsolute = true) : percentHeight dom styles id = styles[id]! := by
-  simp [percentHeight, resolvedHeight_absolute dom styles id h]
+  simp [percentHeight, limitLength, resolvedHeight_absolute dom styles id h, resolvedLimit_absolute dom styles id _ h]
 
 /-- A width given as a sizing keyword (CSS Sizing 3 §3.2, §5.1), as a content-box width:
 `lo` and `hi` are the min-content and max-content widths of the box's contents and `fill`
