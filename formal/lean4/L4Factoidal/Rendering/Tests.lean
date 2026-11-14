@@ -260,7 +260,8 @@ private def rulesAt (width : Float) (source : String) : Nat :=
 #guard rulesAt 400 "@media (min-width: 500px) { .a { color: red } } p{color:blue}" == 1
 #guard rulesAt 400 "@media screen and (max-width: 600px) { .a { color: red } } @media print { p{color:red} }" == 1
 #guard rulesAt 800 "@media (prefers-color-scheme: dark) { p{color:white} } @media not (prefers-color-scheme: dark) { p{color:black} }" == 1
-#guard rulesAt 800 "@media (hover: hover) { p{color:red} } p{color:blue}" == 1
+#guard rulesAt 800 "@media screen or print { p{color:red} } p{color:blue}" == 1
+#guard rulesAt 800 "@media (hover: hover) and (width >= 600px) { p{color:red} } p{color:blue}" == 2
 -- SVG width and height attributes in em and rem (BBC News icons: width="1em"), in both modes.
 #guard (CSS.computeAll (DOM.parseHtmlDocument "<p><svg width='1em' height='2rem' viewBox='0 0 32 32'></svg></p>") []).toOption.isSome
 #guard CSS.mediaMatches "print" "all" && !CSS.mediaMatches "screen" "print" && !CSS.mediaMatches "print" "print and (color)"

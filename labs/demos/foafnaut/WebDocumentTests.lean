@@ -601,8 +601,8 @@ private def sizeAt (w : Nat) (html : String) (sources : List String) (fields : L
 #guard sizeAt 800 "<style>@media (max-width: 600px){p{font-size:12px}}</style><p id=target>A</p>" [] == some 16
 #guard sizeAt 800 "<style media='not print'>p{font-size:20px}</style><style media='(prefers-color-scheme: dark)'>p{font-size:40px}</style><p id=target>A</p>" [] == some 20
 -- A media condition that can not be read: strict refuses the page, liberal does not apply the sheet.
-#guard sizeAt 800 "<style media='(hover: hover)'>p{font-size:30px}</style><p id=target>A</p>" [] == none
-#guard sizeAt 800 "<style media='(hover: hover)'>p{font-size:30px}</style><p id=target>A</p>" [] [liberal] == some 16
+#guard sizeAt 800 "<style media='screen or print'>p{font-size:30px}</style><p id=target>A</p>" [] == none
+#guard sizeAt 800 "<style media='screen or print'>p{font-size:30px}</style><p id=target>A</p>" [] [liberal] == some 16
 #guard sizeAt 800 "<link rel=stylesheet href=a.css media='screen or print'><p id=target>A</p>" ["p{font-size:30px}"] [liberal] == some 16
 -- An external stylesheet that was not fetched: strict refuses, liberal draws without it.
 #guard (WebDocument.rules externalDOM (json [liberal])).toOption.isSome
