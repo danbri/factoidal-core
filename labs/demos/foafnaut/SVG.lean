@@ -401,8 +401,18 @@ private def common := ["id","fill","stroke","color","fill-opacity","stroke-opaci
   "display","visibility","stop-color","stop-opacity","solid-color","solid-opacity","pointer-events"]
 /-- SVG Tiny 1.2 §11.13 and §11.16: elements that define a paint and draw nothing. -/
 private def paintServers := ["linearGradient","radialGradient","solidColor"]
+/-- Attributes that say nothing about what is drawn, and that HTML pages put on inline SVG:
+accessibility and scripting metadata (WAI-ARIA `role` and `aria-*`; `tabindex` of SVG 2 §8.2;
+`focusable` of SVG Tiny 1.2 §13.12.1; `data-*` of SVG 2 §5.9; `lang`), and `class`, which only
+names the element for selectors. The reader reads past them. Before 2026-11-14 each refused
+its whole `svg`: every icon of gov.uk (`focusable`), of developer.mozilla.org (`class`) and of
+BBC News (`class`, `focusable`, `aria-hidden`). -/
+def inertAttribute (name : String) : Bool :=
+  name.startsWith "aria-" || name.startsWith "data-" || ["focusable","role","tabindex","lang","class"].contains name
+
 private def validateAttrs (tag : String) (attrs : List NamespaceAttribute) (extra : List String) : Except String Unit := do
   for a in attrs do
+    if a.name.namespace_.isNone && inertAttribute a.name.localPart then continue
     if let some uri := a.name.namespace_ then
       if uri == svgURI || (uri == "http://www.w3.org/1999/xlink" && !(["use","linearGradient","radialGradient","image"].contains tag && a.name.localPart == "href")) ||
           (uri == "http://www.w3.org/XML/1998/namespace" && !["lang","space","base"].contains a.name.localPart) then
@@ -1983,7 +1993,9 @@ private def parseRootWithContext (root : NamespaceNode) (outputWidth outputHeigh
     if !["1.1","2.0"].contains version then throw "unsupported SVG version label"
   for key in ["width","height"] do
     if let some source := attr attrs key then
-      let viewportUnit := (trim source).endsWith "vw" || (trim source).endsWith "vh"
+      -- `em` and `rem` (BBC News: `width="7em"`) are, like the viewport units, lengths that the
+      -- host's layout computed (`CSS.computedFrom`): the output size holds their value.
+      let viewportUnit := (trim source).endsWith "vw" || (trim source).endsWith "vh" || (trim source).endsWith "em"
       let size ← if (trim source).endsWith "%" || viewportUnit then
         if outputWidth <= 0 || outputHeight <= 0 then throw "percentage root dimensions require explicit host output viewport"
         -- The host output size already holds the viewport unit's computed value.
