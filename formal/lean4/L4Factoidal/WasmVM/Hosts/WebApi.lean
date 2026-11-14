@@ -37,6 +37,7 @@ import L4Factoidal.WasmVM.Hosts.Dom
 import L4Factoidal.WHATWG.Encoding.Api
 import L4Factoidal.WHATWG.URL.Parser
 import L4Factoidal.WHATWG.Base64
+import L4Factoidal.WHATWG.Compression
 import L4Factoidal.Crypto.WebCrypto
 import L4Factoidal.Crypto.WebCryptoKeys
 import L4Factoidal.Net.Xhr
@@ -679,6 +680,8 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
     | .ok (reg, ms) => ofStr ("\n".intercalate (reg :: ms))
     | .error e => .error e.code
   | 41 => subtle s fs
+  -- Compression Standard: 50 compress, 51 decompress, 52 the format (WHATWG.Compression.op)
+  | 50 | 51 | 52 => pure' do L4Factoidal.WHATWG.Compression.op op (← strArg fs 0) (bytesArg fs 1)
   | 42 => match natArg fs 0 with
     | .ok h => let (s, n) := dropKey s h; (s, ofStr (toString n))
     | .error e => (s, .error e)

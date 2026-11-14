@@ -7872,14 +7872,127 @@
     }
     idl(CountQueuingStrategy, 'CountQueuingStrategy');
 
+    // ==== Encoding Standard §7.4, §7.5: TextDecoderStream, TextEncoderStream ===================
+    // A TransformStream over the page's decoder (the decoding is Lean's, through TextDecoder) or
+    // over UTF-8 encoding with a leading surrogate carried from one chunk to the next.
+    const GS = new WeakMap();   // a TextDecoderStream, TextEncoderStream, CompressionStream or DecompressionStream -> { ts, ... }
+    const gsOf = (o, name, what) => { const s = GS.get(o); if (!s || s.kind !== name) throw brandError(name, what); return s; };
+    const pair = (C, name) => {
+      for (const k of ['readable', 'writable'])
+        Object.defineProperty(C.prototype, k, { get: { [k]() { return gsOf(this, name, k).ts[k]; } }[k], enumerable: true, configurable: true });
+      Object.defineProperty(Object.getOwnPropertyDescriptor(C.prototype, 'readable').get, 'name', { value: 'get readable' });
+      Object.defineProperty(Object.getOwnPropertyDescriptor(C.prototype, 'writable').get, 'name', { value: 'get writable' });
+    };
+    class TextDecoderStream {
+      constructor(label = 'utf-8', options = undefined) {
+        const dec = new globalThis.TextDecoder(label, options);
+        const ts = new TransformStream({ __proto__: null,
+          transform(chunk, c) { const s = dec.decode(chunk, { stream: true }); if (s !== '') c.enqueue(s); },
+          flush(c) { const s = dec.decode(); if (s !== '') c.enqueue(s); } });
+        GS.set(this, { kind: 'TextDecoderStream', ts, dec });
+      }
+      get encoding() { return gsOf(this, 'TextDecoderStream', 'encoding').dec.encoding; }
+      get fatal() { return gsOf(this, 'TextDecoderStream', 'fatal').dec.fatal; }
+      get ignoreBOM() { return gsOf(this, 'TextDecoderStream', 'ignoreBOM').dec.ignoreBOM; }
+    }
+    pair(TextDecoderStream, 'TextDecoderStream');
+    idl(TextDecoderStream, 'TextDecoderStream');
+    class TextEncoderStream {
+      constructor() {
+        const enc = new globalThis.TextEncoder();
+        let lead = '';   // a leading surrogate at the end of the last chunk
+        const ts = new TransformStream({ __proto__: null,
+          transform(chunk, c) {
+            let s = `${chunk}`;
+            if (lead !== '') { s = lead + s; lead = ''; }
+            const last = s.length > 0 ? s.charCodeAt(s.length - 1) : 0;
+            if (last >= 0xD800 && last <= 0xDBFF) { lead = s.slice(-1); s = s.slice(0, -1); }
+            if (s !== '') c.enqueue(enc.encode(s));
+          },
+          flush(c) { if (lead !== '') c.enqueue(new Uint8Array([0xEF, 0xBF, 0xBD])); } });
+        GS.set(this, { kind: 'TextEncoderStream', ts });
+      }
+      get encoding() { gsOf(this, 'TextEncoderStream', 'encoding'); return 'utf-8'; }
+    }
+    pair(TextEncoderStream, 'TextEncoderStream');
+    idl(TextEncoderStream, 'TextEncoderStream');
+
+    // ==== Compression Standard: CompressionStream, DecompressionStream ========================
+    // The formats, the compressed bytes and what received bytes are, are Lean's
+    // (WHATWG.Compression, web_api ops 50 to 52). A CompressionStream writes its output when it
+    // is closed; a DecompressionStream asks after each chunk whether a whole stream has arrived
+    // (up to 1 MiB; past that, when it is closed), so that its output comes before the error
+    // for bytes after the stream's end.
+    const formatOf = (format, what) => {
+      const name = `${format}`;
+      if (typeof apiCall(52, [name], 0, false) !== 'string') throw new TypeError(`${what}: '${name}' is not a valid CompressionFormat`);
+      return name;
+    };
+    const joinBytes = parts => {
+      let size = 0; for (const p of parts) size += p.length;
+      const out = new Uint8Array(size); let at = 0;
+      for (const p of parts) { out.set(p, at); at += p.length; }
+      return out;
+    };
+    const chunkBytes = (chunk, what) => {
+      // a BufferSource, not [AllowShared]
+      if (!(chunk instanceof ArrayBuffer) && !(ArrayBuffer.isView(chunk) && !isShared(chunk.buffer))) throw new TypeError(`${what}: the chunk is not a BufferSource`);
+      return copyBytes(bufferSource(chunk, what));
+    };
+    class CompressionStream {
+      constructor(format) {
+        const what = "Failed to construct 'CompressionStream'";
+        const name = formatOf(format, what);
+        const parts = [];
+        const ts = new TransformStream({ __proto__: null,
+          transform(chunk) { parts.push(chunkBytes(chunk, 'CompressionStream')); },
+          flush(c) { c.enqueue(new Uint8Array(api(50, [name, joinBytes(parts)], 0, true, 'CompressionStream'))); } });
+        GS.set(this, { kind: 'CompressionStream', ts });
+      }
+    }
+    pair(CompressionStream, 'CompressionStream');
+    idl(CompressionStream, 'CompressionStream');
+    class DecompressionStream {
+      constructor(format) {
+        const what = "Failed to construct 'DecompressionStream'";
+        const name = formatOf(format, what);
+        let parts = [], size = 0, ended = false;
+        const corrupt = () => new TypeError('DecompressionStream: the input is not a valid ' + name + ' stream');
+        const ask = c => {
+          const r = apiCall(51, [name, joinBytes(parts)], 0, true);
+          if (typeof r === 'number') throw corrupt();
+          const b = new Uint8Array(r);
+          if (b[0] === 2) return false;
+          ended = true;
+          if (b.length > 1) c.enqueue(b.slice(1));
+          if (b[0] === 1) throw new TypeError('DecompressionStream: data after the end of the compressed stream');
+          return true;
+        };
+        const ts = new TransformStream({ __proto__: null,
+          transform(chunk, c) {
+            const bytes = chunkBytes(chunk, 'DecompressionStream');
+            if (bytes.length === 0) return;
+            if (ended) throw new TypeError('DecompressionStream: data after the end of the compressed stream');
+            parts.push(bytes); size += bytes.length;
+            if (size <= 1048576) ask(c);
+          },
+          flush(c) { if (!ended && !ask(c)) throw new TypeError('DecompressionStream: the compressed stream ended early'); } });
+        GS.set(this, { kind: 'DecompressionStream', ts });
+      }
+    }
+    pair(DecompressionStream, 'DecompressionStream');
+    idl(DecompressionStream, 'DecompressionStream');
+
     return { ReadableStream, ReadableStreamDefaultReader, ReadableStreamBYOBReader, ReadableStreamDefaultController, ReadableByteStreamController,
       ReadableStreamBYOBRequest, WritableStream, WritableStreamDefaultWriter, WritableStreamDefaultController, TransformStream,
-      TransformStreamDefaultController, ByteLengthQueuingStrategy, CountQueuingStrategy };
+      TransformStreamDefaultController, ByteLengthQueuingStrategy, CountQueuingStrategy, TextDecoderStream, TextEncoderStream,
+      CompressionStream, DecompressionStream };
   };
   // The classes are made together, the first time a page names one of them (a page without
   // streams makes none of them).
   let streamClasses = null;
-  for (const k of ['ReadableStream', 'ReadableStreamDefaultReader', 'ReadableStreamBYOBReader', 'ReadableStreamDefaultController', 'ReadableByteStreamController', 'ReadableStreamBYOBRequest', 'WritableStream', 'WritableStreamDefaultWriter', 'WritableStreamDefaultController', 'TransformStream', 'TransformStreamDefaultController', 'ByteLengthQueuingStrategy', 'CountQueuingStrategy'])
+  for (const k of ['ReadableStream', 'ReadableStreamDefaultReader', 'ReadableStreamBYOBReader', 'ReadableStreamDefaultController', 'ReadableByteStreamController', 'ReadableStreamBYOBRequest', 'WritableStream', 'WritableStreamDefaultWriter', 'WritableStreamDefaultController', 'TransformStream', 'TransformStreamDefaultController', 'ByteLengthQueuingStrategy', 'CountQueuingStrategy',
+    'TextDecoderStream', 'TextEncoderStream', 'CompressionStream', 'DecompressionStream'])
     lazy(k, () => typeof n.streams !== 'function' ? undefined : (streamClasses ??= makeStreams())[k]);
   // ---- end of Streams Standard -----------------------------------------------------------
 
@@ -11820,7 +11933,7 @@
     'SubtleCrypto', 'CryptoKey', 'performance', 'Performance', 'PerformanceEntry', 'PerformanceMark', 'PerformanceMeasure',
     'Blob', 'File', 'FileReader', 'FormData', 'Headers', 'Request', 'Response', 'fetch', 'XMLHttpRequest',
     'XMLHttpRequestEventTarget', 'XMLHttpRequestUpload', 'ReadableStream', 'ReadableStreamDefaultReader', 'ReadableStreamBYOBReader', 'ReadableStreamDefaultController', 'ReadableByteStreamController', 'ReadableStreamBYOBRequest', 'WritableStream', 'WritableStreamDefaultWriter',
-    'WritableStreamDefaultController', 'TransformStream', 'TransformStreamDefaultController', 'ByteLengthQueuingStrategy', 'CountQueuingStrategy', 'MessageChannel', 'MessagePort', 'BroadcastChannel', 'webkitURL',
+    'WritableStreamDefaultController', 'TransformStream', 'TransformStreamDefaultController', 'ByteLengthQueuingStrategy', 'CountQueuingStrategy', 'CompressionStream', 'DecompressionStream', 'MessageChannel', 'MessagePort', 'BroadcastChannel', 'webkitURL',
     // WebGL's interfaces are [Exposed=(Window,Worker)].
     'WebGLRenderingContext', 'WebGL2RenderingContext', 'WebGLObject', 'WebGLBuffer', 'WebGLFramebuffer', 'WebGLProgram',
     'WebGLRenderbuffer', 'WebGLShader', 'WebGLTexture', 'WebGLQuery', 'WebGLSampler', 'WebGLSync', 'WebGLTransformFeedback',
