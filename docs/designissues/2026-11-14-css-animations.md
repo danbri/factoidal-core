@@ -473,6 +473,10 @@ full list. Baseline: the full run of main d799500c7 (before any of this was on m
 | 43574527916 | 4 commits on the cascade branch | 48,829 | 3,668 | 1,228 | 983 | 116 |
 | 43575885979 | + `linear()`, Oklab, line widths | 48,623 (3 pages STALL) | 3,675 | 1,229 | 1,007 | 121 |
 | 43582584406 | + the cost fixes, corner shapes, arc flags, rounding slack: merged as cee52ef58 | 50,161 | 3,675 | 1,405 | 1,007 | 121 |
+| 43586303902 | + frame handle, currentcolor, ended transitions, time-only frames (main cee52ef58 + 8) | 50,638 | 3,853 | 1,421 (3 pages STALL) | 1,052 | 121 |
+| 43594267414 | + the class-write path (main 538dd1f33 + 14) | 50,487 | 3,856 | 2,616 | 1,051 | 121 |
+| 43597405132 | + animated values with generated content, the frame's style change with the `listen` import (main c779ca54d + 20) | 50,598 | 3,851 | 2,645 | 1,075 | 121 |
+| 43599471322 | + one cascade a layout, the referrer source as op 173 (c779ca54d + 25) | 50,596 | 3,851 | 2,705 | 1,075 | 121 |
 
 Merged: main 335ab3b69..cee52ef58, +40,182 subtests on these names in the check.
 
@@ -484,6 +488,20 @@ the time before the engine existed (when most of their subtests failed) in brack
 `rotate-interpolation` 16.4 s, 7.7 s (5.8 s); `border-image-width-interpolation` 112 s, 7.1 s (28 s);
 `line-height-interpolation` 54.8 s, 8.5 s (24.5 s); `row-rule-inset-interpolation` 72 s, 15.8 s (48 s). The slowest is
 `css-transitions/properties-value-inherit-001.html` (219 s: a hundred transitions read every frame).
+
+The second batch (the rows from 43586303902 on). The three `properties-value` pages that stalled
+past 300 s run: 515, 488 and 244 subtests (Chrome's counts: 580, 580, 290), in 120 to 193 s on loaded
+runners. The interpolation number moves with main as well as with this work: css-values' merge made
+`getComputedStyle` answer resolved values for `line-height` and the insets, which the engine then
+read as animation inputs (-262 until `Computed.resolvedApart`), and the generated content merge left
+the animated values out of the layout's styles (-270 until the `Generated.styled` fix). The every-40th
+sample: 51,587 at the baseline, 53,311 with the branch on main c779ca54d.
+
+Time: the 774 pages took 1,330 s in 43586303902 and 2,120 to 2,220 s in the checks on main c779ca54d.
+Pages that pass nothing and only read computed values doubled as well
+(`calc-size-height-interpolation` 45 s, then 59 to 108 s), so most of that is the cost of one
+computed value read on that main, not of the engine; the memo of an element's matches per measure
+is this work's answer to it (numbers of the last check below, when it is in).
 
 A page with no animation and no `animation`/`transition` declaration: the every-40th sample (2,347
 names) took 1,320 s before the engine and 1,366 s with it on a later main (other merges are in that
