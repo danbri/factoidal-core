@@ -2740,7 +2740,9 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
       let faces ← fontFaces dom request
       let styles ← Rendering.CSS.computeAll dom rules textScale
       let held := (((← get).holds.font).map (fun h => h.fonts.toList.map (·.family))).getD []
-      let used := Rendering.FontFaceRule.usedFaces faces held dom styles
+      -- a face the text uses now, or one the page's rules name (text a script adds later)
+      let declared := Rendering.FontFaceRule.declaredFaces faces rules
+      let used := (Rendering.FontFaceRule.usedFaces faces held dom styles).mapIdx fun i u => u || declared.getD i false
       let list := (List.range faces.size).filterMap fun i =>
         if used[i]! then some (JSON.Json.object [("family",.string faces[i]!.family),
           ("sources",.array (faces[i]!.sources.map .string))]) else none
