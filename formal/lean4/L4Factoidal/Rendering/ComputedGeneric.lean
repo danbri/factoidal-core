@@ -192,6 +192,15 @@ def winningF : Nat → List (List Nat × String) → Option String
 
 def winning (cands : List (List Nat × String)) : Option String := winningF (cands.length + 1) cands
 
+/-- A cascade key of a normal declaration of the user agent's sheet (`CSS.ruleKey`: not
+important, origin 0). -/
+def uaNormal (key : List Nat) : Bool := key.take 2 == [0, 0] || key.take 2 == [0, 1]
+
+#guard uaNormal (CSS.ruleKey false 0 false 0 (0, 0, 1) 3)
+#guard !uaNormal (CSS.ruleKey false 1 false 0 (0, 0, 1) 3)
+#guard !uaNormal (CSS.ruleKey true 0 false 0 (0, 0, 1) 3)
+#guard !uaNormal (CSS.inlineKey false 0)
+
 /-- Kind: policy. Says: the cascaded value is never `revert` or `revert-layer`: those roll
 back to another declaration, or to none. -/
 theorem winningF_not_revert (fuel : Nat) (cands : List (List Nat × String)) (v : String)
@@ -1020,8 +1029,10 @@ def resolvedLonghand (v : View) (id : Nat) (name : String) : String :=
       | none => value
     else if absoluteWins.any (fun pre => name.startsWith pre) then
       -- a margin, padding or size limit the element declares as an absolute length (also
-      -- through calc() and units the layout profile does not read): that length
-      match cascaded v id name also with
+      -- through calc() and units the layout profile does not read): that length. A normal
+      -- declaration of the UA sheet is left to the profile, which has it below the
+      -- presentational hints (`CSS.hintedProperties`)
+      match winning ((cascadedAll v id name also).filter fun (key, _) => !uaNormal key) with
       | some declared =>
         if CssValues.cssWide.contains declared then value
         else
