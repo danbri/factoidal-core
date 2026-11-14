@@ -478,6 +478,20 @@ def leaf (env : Env) (m : G → List CV → Res) (name : String) (lo hi : Option
       | _ => none) ts
   | "color" | "hex-color" => oneCV (fun cv => (env.color cv).map CV.raw) ts
   | "declaration-value" | "any-value" => if ts.isEmpty then [] else [([.raw (rawText ts)], [])]
+  | "family-name" =>
+    -- CSS Fonts 4 §2.1: a string, or identifiers; a single identifier may not be a
+    -- CSS-wide keyword or `default` (a name of several identifiers may hold them)
+    match ts with
+    | .tok (.str s) :: rest => [([.tok (.str s)], rest)]
+    | _ =>
+      let idents := ts.takeWhile fun cv => match cv with
+        | .tok (.ident _) => true
+        | _ => false
+      match idents with
+      | [] => []
+      | [.tok (.ident n)] =>
+        if cssWide.contains (lower n) || lower n == "default" then [] else [(idents, ts.drop 1)]
+      | _ => [(idents, ts.drop idents.length)]
   | "position" => positionLeaf env.ctx false ts
   | "bg-position" => positionLeaf env.ctx true ts
   | _ =>
