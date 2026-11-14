@@ -204,6 +204,10 @@ def declaredWins : List String :=
    "border-collapse", "caption-side", "vertical-align", "table-layout", "object-fit",
    "text-align", "direction", "unicode-bidi"]
 
+/-- The prefixes of the profile's length properties for which a declared absolute length is
+the answer. -/
+def absoluteWins : List String := ["margin-", "padding-", "min-", "max-"]
+
 /-- The names a computed style lists: the layout profile's (in its order), then every
 other longhand of the table (legacy aliases and prefixed names left out). -/
 def longhandNames : List String :=
@@ -231,6 +235,18 @@ def valueAt (v : View) (id : Nat) (k : Nat) : String :=
     if declaredWins.contains name then
       match cascaded v id name with
       | some declared => if CssValues.cssWide.contains declared then value else computedOf v id name
+      | none => value
+    else if absoluteWins.any (fun pre => name.startsWith pre) then
+      -- a margin, padding or size limit the element declares as an absolute length (also
+      -- through calc() and units the layout profile does not read): that length
+      match cascaded v id name with
+      | some declared =>
+        if CssValues.cssWide.contains declared then value
+        else
+          let g := computedOf v id name
+          match CssValues.stripWs (CssValues.CV.parse g) with
+          | [.tok (.dim _ _ "px")] => g
+          | _ => value
       | none => value
     else value
   | none =>
