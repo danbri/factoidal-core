@@ -3811,6 +3811,8 @@
     };
     const brand = new WeakSet();
     const check = (o, what) => { if (!brand.has(o)) throw new TypeError(`Illegal invocation: '${what}' on 'History'`); };
+    // a frame's script shares this realm but not the page's history: its calls change nothing
+    const inFrame = () => scriptDocument !== null && scriptDocument !== document;
     class History {
       constructor() { throw new TypeError('Illegal constructor'); }
       get length() { check(this, 'length'); return length; }
@@ -3820,7 +3822,7 @@
       go(delta = 0) {
         check(this, 'go');
         const d = Math.trunc(Number(delta)) | 0;
-        if (d === 0) return;
+        if (d === 0 || inFrame()) return;
         const w = ensure();
         setTimeout(() => {
           const r = n.query(0, 197, 'go\u0000' + w + '\u0000' + d);
@@ -3839,6 +3841,7 @@
       const what = op === 'push' ? 'pushState' : 'replaceState';
       if (args.length < 2) throw new TypeError(`Failed to execute '${what}' on 'History': 2 arguments required, but only ${args.length} present.`);
       const serialized = globalThis.structuredClone(data);
+      if (inFrame()) return;
       const given = url !== undefined && url !== null;
       const key = states.push(serialized) - 1;
       const r = n.query(0, 197, op + '\u0000' + ensure() + '\u0000' + (given ? String(url) : '') + '\u0000' + (given ? '1' : '0') + '\u0000' + key);
