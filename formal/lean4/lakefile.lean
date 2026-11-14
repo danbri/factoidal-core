@@ -95,6 +95,14 @@ vendored. AES-GCM is the x86-64-only section below. -/
 target hacl_chachapoly_shim.o pkg : FilePath :=
   buildHaclO pkg "hacl_chachapoly_shim" (pkg.dir / "ffi" / "hacl_chachapoly.c")
 
+/-- RSASSA-PSS (Hacl_RSAPSS.c, vendored 2026-11-09 for crypto.subtle RSA-PSS). -/
+target Hacl_RSAPSS.o pkg : FilePath :=
+  buildHaclO pkg "Hacl_RSAPSS" (haclDir pkg / "src" / "Hacl_RSAPSS.c")
+
+/-- SHA-3 and SHAKE (Hacl_Hash_SHA3.c, vendored 2026-11-14 for crypto.subtle digest). -/
+target Hacl_Hash_SHA3.o pkg : FilePath :=
+  buildHaclO pkg "Hacl_Hash_SHA3" (haclDir pkg / "src" / "Hacl_Hash_SHA3.c")
+
 /-- The web engine's boundary to HACL* (`L4Factoidal/Crypto/WebHacl.lean`,
 crypto.subtle of page scripts): `ffi/hacl_webcrypto.c`, over the units below. -/
 target hacl_webcrypto_shim.o pkg : FilePath :=
@@ -201,6 +209,8 @@ extern_lib libl4hacl pkg := do
   let cpShim ← hacl_chachapoly_shim.o.fetch
   let kdfShim ← hacl_kdf_shim.o.fetch
   let webShim ← hacl_webcrypto_shim.o.fetch
+  let rsapss ← Hacl_RSAPSS.o.fetch
+  let sha3 ← Hacl_Hash_SHA3.o.fetch
   let hpkeShim ← hacl_hpke_shim.o.fetch
   let aead ← Hacl_AEAD_Chacha20Poly1305.o.fetch
   let chacha ← Hacl_Chacha20.o.fetch
@@ -221,7 +231,7 @@ extern_lib libl4hacl pkg := do
   let name := nameToStaticLib "l4hacl"
   buildStaticLib (pkg.staticLibDir / name)
     (#[shim, ed, curve, sha2, p256Shim, rsaShim, p256, bn64, bn,
-      cpShim, kdfShim, hpkeShim, webShim,
+      cpShim, kdfShim, hpkeShim, webShim, rsapss, sha3,
       aead, chacha, poly, hkdf, hmac, sha1, blake2s, blake2b, memzero, hpke,
       aesShim] ++ vale)
 

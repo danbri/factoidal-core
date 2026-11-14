@@ -101,6 +101,9 @@ Proved (no `sorry`, no axiom beyond Lean's three):
 | `spkiOf_of_readSpki` | an accepted SPKI is exactly the canonical SPKI of its parts: export after import is the identity on accepted bytes |
 | `unb64_b64` | the base64url of JWK members decodes to the bytes |
 | `sha3?_size`, `sha3?_fixed`, `cshakeLen_named_refused` (hacl branch) | SHA-3 answers have the length asked; a fixed-length function is never answered at another length; a named cSHAKE is refused |
+| `generateKey_rsa_refused` (hacl branch) | generateKey of an RSA algorithm is an error for all arguments and asks for no random bytes: no RSA key is ever generated |
+| `readUInt_uintContents` (hacl branch) | the DER INTEGER written for an RSA key part reads back as the number without leading zero octets |
+| `rsaPublic?_size`, `rsaPrivate?_size`, `rsaPssSign?_size`, `rsaPssVerify_false_of_bad_sig` (hacl branch) | RSA answers are |n| octets; a signature of another length never verifies |
 
 Already on main and still holding: `exportKey_extractable`, `exportKey_blind`,
 `exportOp_extractable`, `exportOp_blind`, `keyOf_blind`, `sign_usage`, `verify_usage`,
