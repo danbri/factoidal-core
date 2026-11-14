@@ -228,6 +228,10 @@ structure Reads where
   /-- One of `styleWrites` is there for a `class` written under it: the rules that match
   in its subtree may differ, not only the declarations of the element itself. -/
   styleSubtrees : Bool := false
+  /-- The version that the last write which may change a style made (`Reads.wrote`, not
+  neutral): a layout of that version or a later one has the styles of the document as it
+  is (`Host.frameStyles`). -/
+  styleWriteAt : Nat := 0
   /-- The version `styleWrites` is exact for: `Reads.wrote` keeps it at `version`. A write
   that raises `version` by any other way leaves it behind, and the next measure is then
   of the whole document (`Host.measureNow`): a new write path that does not go through
@@ -235,6 +239,11 @@ structure Reads where
   styleVersion : Nat := 0
   /-- Changes of animations by scripts (`animOp`). -/
   animEpoch : Nat := 0
+  /-- A script listens for an animation or a transition event (`animationEventTypes`):
+  the styles of the page are then brought up to date in its frames (`Host.frameStyles`),
+  as a rendering update does, so that an animation or a transition starts, and its
+  events come, with no layout read by a script. -/
+  animEvents : Bool := false
   /-- The fonts, SVG path parser and images Canvas 2D draws with (the engine's). -/
   canvasEnv : L4Factoidal.PageCanvas.Env := {}
   deriving Inhabited
@@ -255,7 +264,8 @@ def Reads.wrote (r : Reads) (style : Option Nat := none) (neutral : Bool := fals
       else match style, noted with
         | some n, some ns => if ns.contains n then some ns else if ns.length ≥ 32 then none else some (n :: ns)
         | _, _ => none
-    styleSubtrees := if neutral then r.styleSubtrees else r.styleSubtrees || subtree }
+    styleSubtrees := if neutral then r.styleSubtrees else r.styleSubtrees || subtree
+    styleWriteAt := if neutral then r.styleWriteAt else r.version + 1 }
 
 /-- Kind: safety of the partial restyle. Says: after a write that is neither of a `style`
 attribute nor neutral, no element is noted: the next measure styles the whole document.
@@ -270,6 +280,19 @@ mark away: only a measure does (`Host.measureNow`). Does not say: that the mark 
 (it may stay after the noted elements are forgotten, which costs nothing). -/
 theorem Reads.wrote_subtree (r : Reads) (n : Nat) :
     (r.wrote (some n) false true).styleSubtrees = true := by
+  simp [Reads.wrote]
+
+/-- Kind: cost. Says: a neutral write (a timer, a listener, a change of an animation by a
+script) does not move the version of the last style write: a frame after it alone makes
+no style change (`Host.frameStyles`). -/
+theorem Reads.wrote_neutral (r : Reads) (style : Option Nat) (subtree : Bool) :
+    (r.wrote style true subtree).styleWriteAt = r.styleWriteAt := by
+  simp [Reads.wrote]
+
+/-- Kind: liveness. Says: a write that is not neutral is the last style write of the new
+version, so a layout kept from before it is behind it. -/
+theorem Reads.wrote_style (r : Reads) (style : Option Nat) (subtree : Bool) :
+    (r.wrote style false subtree).styleWriteAt = (r.wrote style false subtree).version := by
   simp [Reads.wrote]
 
 theorem Reads.wrote_keeps_subtree (r : Reads) (style : Option Nat) (neutral subtree : Bool)
@@ -733,6 +756,67 @@ def Host.measured (h : Host) : Host × Option Answers :=
     if v == h.reads.version && (h.anim.idle || h.reads.keptNow == h.anim.now) then (h, some f) else h.measureNow
   | none => h.measureNow
 
+/-- The event types of CSS Animations 1 §5 and CSS Transitions 1 §6, with the prefixed
+types of Compatibility §3.3. -/
+def animationEventTypes : List String :=
+  ["animationstart", "animationend", "animationiteration", "animationcancel",
+   "transitionrun", "transitionstart", "transitionend", "transitioncancel",
+   "webkitAnimationStart", "webkitAnimationEnd", "webkitAnimationIteration", "webkitTransitionEnd"]
+
+/-- After a write of a page: `listens` says the write is a new listener for one of
+`animationEventTypes`, `neutral` that it changes nothing a style reads. A page with such
+a listener gets an animation frame after each write that may change a style (and after
+the listener itself): the frame makes the style change (`Host.frameStyles`). HTML §8.1.7.3
+"update the rendering" does that in every frame of every page; here only where a script
+can see the difference without reading a style or a layout, which is by these events. -/
+def Host.afterWrite (h : Host) (listens neutral : Bool) : Host :=
+  let h := if listens then { h with reads := { h.reads with animEvents := true } } else h
+  if h.reads.animEvents && (listens || !neutral) then h.askAnimationFrame else h
+
+theorem Host.askAnimationFrame_reads (h : Host) : h.askAnimationFrame.reads = h.reads := by
+  unfold Host.askAnimationFrame
+  split <;> rfl
+
+/-- Kind: cost (a page that does not use the feature pays nothing). Says: on a page with
+no listener for an animation or transition event, a write that adds none leaves the host
+as it is: no frame is asked for, nothing is measured. Does not say: what such a page pays
+when a script reads a layout (`Host.measureNow`). -/
+theorem Host.afterWrite_quiet (h : Host) (neutral : Bool) (hq : h.reads.animEvents = false) :
+    h.afterWrite false neutral = h := by
+  simp [Host.afterWrite, hq]
+
+/-- Kind: liveness of the events. Says: after a new listener for one of the event types
+the page is marked, whatever it was. -/
+theorem Host.afterWrite_listens (h : Host) (neutral : Bool) :
+    (h.afterWrite true neutral).reads.animEvents = true := by
+  simp [Host.afterWrite, Host.askAnimationFrame_reads]
+
+/-- The style part of a frame's rendering update, for a page whose script listens for an
+animation or transition event: when something was written since the last measure, the
+styles are made again, which starts and cancels the animations and transitions of the
+written elements (`Host.measureNow`). A frame in which nothing that a style reads was
+written since the last measure (`Reads.styleWriteAt`) measures nothing here: the time
+alone, a timer, a listener or a script's change of an animation asks for no style change. -/
+def Host.frameStyles (h : Host) : Host :=
+  if !h.reads.animEvents then h else
+  match h.reads.kept with
+  | some (v, _) => if h.reads.styleWriteAt ≤ v then h else h.measureNow.1
+  | none => h.measureNow.1
+
+/-- Kind: cost. Says: when the kept layout is of the last style write or later, a frame
+measures nothing, whatever the page listens for. -/
+theorem Host.frameStyles_fresh (h : Host) (v : Nat) (f : Answers) (hk : h.reads.kept = some (v, f))
+    (hv : h.reads.styleWriteAt ≤ v) : h.frameStyles = h := by
+  unfold Host.frameStyles
+  split
+  · rfl
+  · simp [hk, hv]
+
+/-- Kind: cost. Says: a frame of a page with no such listener makes no style change and
+no measure of its own. -/
+theorem Host.frameStyles_quiet (h : Host) (hq : h.reads.animEvents = false) : h.frameStyles = h := by
+  simp [Host.frameStyles, hq]
+
 /-- The document timeline's time is the event loop's clock when a task or a frame
 starts: it does not move while a script runs (Web Animations 1 §4.3: the timeline time is
 that of the last "update animations and send events"). -/
@@ -794,6 +878,9 @@ def animOp (h : Host) (node op : Nat) (q : String) : Host × Except Int String :
   | 67 =>
     if q == "ask" then (h.askAnimationFrame, .ok "{}")
     else
+      -- the styles of the writes since the last measure first (only on a page that listens
+      -- for the events of animations): what they start is ticked in this frame
+      let h := h.frameStyles
       let ticked := L4Factoidal.Rendering.Animation.tick h.anim (fun n => n < dom.size && dom.connected n)
       -- a layout is of the animations' state: a frame that changed none keeps it
       let same := (List.range ticked.anims.size).all fun i =>
@@ -1138,15 +1225,21 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
           else none
         | .error _ => none
       else none
+    let neutral := styleNeutralImports.contains nm || detachedWrite h.dom.dom nm a
     let reads := if readOnlyImports.contains nm then h.reads
-      else h.reads.wrote (styleOf.map (·.1)) (styleNeutralImports.contains nm || detachedWrite h.dom.dom nm a)
-        (styleOf.any (·.2))
+      else h.reads.wrote (styleOf.map (·.1)) neutral (styleOf.any (·.2))
+    -- a new listener for an animation or transition event (`Host.afterWrite`)
+    let listens := nm == "add_event_listener" &&
+      (match Hosts.Dom.readStr mem st (a 1) (a 2) 24 with
+        | .ok name => animationEventTypes.contains name
+        | .error _ => false)
     -- the DOM state leaves the host for the call, so that a change of the arena is in place
     -- (`Hosts.Dom.change`)
     let ds := h.dom
     let h := { h with dom := emptyDomHost }
     let (dom, st, r) := Hosts.Dom.serve mem nm args ds st
-    ({ h with dom, reads }, st, r)
+    let h := { h with dom, reads }
+    ((if readOnlyImports.contains nm then h else h.afterWrite listens neutral), st, r)
 
 /-- Host id `id` (an import index) with its binding. -/
 def serve (mem : Nat) (bs : Array Wasi.Binding) (id : Nat) (args : Array Value) (h : Host) (st : StoreOf M) :

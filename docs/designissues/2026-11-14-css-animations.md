@@ -163,6 +163,26 @@ The document timeline's time is the event loop's clock at the start of the curre
 (`Host.tickTimeline`). It does not move while a script runs, so an animation made and read in one task
 is read at exactly its start, as in a browser.
 
+### Style changes with no read by a script
+
+A style change is made when a script reads a style or a layout (`Host.measured`). A browser also
+makes one in every frame (HTML §8.1.7.3 "update the rendering"), so there a transition starts and
+its events come even when the script only wrote a style and then waits. A script can see that
+difference without a read in one way: by the events. So a page gets the frame's style change exactly
+when a script of it listens for an animation or transition event (`Page.animationEventTypes`,
+`Reads.animEvents`, set by the listener import): after the listener, and after each later write that
+may change a style, the page asks for its animation frame (`Host.afterWrite`), and the frame makes
+the styles of the document as written (`Host.frameStyles`) before it runs "update animations and send
+events". A frame after no such write (the time alone, timers, listeners, a script's change of an
+animation: `Reads.styleWriteAt`) measures nothing. A page with no such listener is as before
+(`Host.afterWrite_quiet`, `Host.frameStyles_quiet`).
+
+Found on `css/css-transitions/events-001.html` to `-008`, `css/css-animations/animation-iteration-event-001.html`
+and some thirty more files, all TIMEOUT with no subtest: they set a style, add a listener and wait.
+Not covered: a script that neither reads nor listens and later reads a time (`getAnimations()` makes
+the style change then, so the animation starts late), and the window, which does not paint animated
+values yet.
+
 ### Script interfaces
 
 `Element.animate`, `Element.getAnimations`, `Document.getAnimations`, `document.timeline`,
@@ -272,6 +292,11 @@ Proved (axioms: propext, Classical.choice, Quot.sound):
 - `Page.subtreesWithin_length` (the nodes the partial path reads after `class` writes are at most
   `subtreeLimit`), `Reads.wrote_subtree`, `Reads.wrote_keeps_subtree` (a `class` write marks that a
   subtree is to be read again, and only a measure takes the mark away).
+- `Host.afterWrite_quiet`, `Host.frameStyles_quiet` (a page with no listener for an animation or
+  transition event: a write asks for no frame and a frame measures nothing), `Host.afterWrite_listens`
+  (a new listener marks the page), `Host.frameStyles_fresh` (a frame whose kept layout is of the last
+  style write or later measures nothing), `Reads.wrote_neutral`, `Reads.wrote_style` (only a write that
+  may change a style moves `styleWriteAt`), `Host.askAnimationFrame_reads`.
 - `Reads.wrote_other`, `Reads.wrote_version` (`Hosts/Page`): a write that is neither of a `style`
   nor of a `class` attribute forgets the noted elements, and every `wrote` leaves the note exact for the new version;
   a write path that raises the version another way leaves `styleVersion` behind, and the next measure
