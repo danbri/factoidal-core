@@ -28,9 +28,9 @@ The differences between the two models, and what the projection does about each:
   declarations. The projection writes the declarations that make the evaluator's
   namespace resolution (`XPath.Full.expandedName`) give the DOM's namespace: one for
   the element's own name when it differs from the inherited default, and one for each
-  prefixed attribute. The DOM's own `xmlns` attributes are not projected: XPath has no
-  attribute nodes for namespace declarations (§5.3), and a second declaration of the
-  same prefix would not be namespace well-formed.
+  prefixed attribute. The DOM's own `xmlns` attributes are not attribute nodes: XPath
+  has none for namespace declarations (§5.3). Of them the projection keeps, as
+  declarations, each `xmlns:p` whose prefix no name of the element uses.
 * A tree whose root is a Document or a DocumentFragment (a shadow root is one) projects
   to the evaluator's document node. A tree with any other root (an element that is not
   in a document) projects under a document node that stands for no DOM node (`wrapped`).
@@ -102,13 +102,24 @@ def elemDecls (n : Node) (dflt : Option String) : List XML.Attribute :=
     | none, _ =>
       if n.ns == dflt then []
       else [({ name := "xmlns", value := n.ns.getD "" } : XML.Attribute)]
-  (plainAttrs n).foldl (fun (acc : List XML.Attribute) (x : Nat × Attr) =>
+  let named := (plainAttrs n).foldl (fun (acc : List XML.Attribute) (x : Nat × Attr) =>
     match x.2.ns with
     | none => acc
     | some u =>
       let p := attrPrefix x.2 x.1
       if p == "xml" || p == "xmlns" || acc.any (fun y => y.name == "xmlns:" ++ p) then acc
       else acc ++ [({ name := "xmlns:" ++ p, value := u } : XML.Attribute)]) own
+  -- The element's own `xmlns:p` attributes, for the prefixes that no name of the element
+  -- uses: they are in scope for the element's content (a prefix in an XSLT stylesheet's
+  -- expressions; the namespace axis). A declaration the evaluator's namespace layer
+  -- would refuse (a reserved prefix or namespace name, an empty value) is left out.
+  -- Where a DOM declaration and a node's own namespace disagree, the node's wins.
+  n.attrs.toList.foldl (fun (acc : List XML.Attribute) (a : Attr) =>
+    if a.ns == some xmlnsNS && a.pfx == some "xmlns" && a.lname != "xml" && a.lname != "xmlns"
+        && a.value != "" && a.value != xmlNS && a.value != xmlnsNS
+        && !acc.any (fun y => y.name == "xmlns:" ++ a.lname) then
+      acc ++ [({ name := "xmlns:" ++ a.lname, value := a.value } : XML.Attribute)]
+    else acc) named
 
 /-- The attribute list of an element in the projection: its attribute nodes in order,
 then the namespace declarations (`elemDecls`). The evaluator numbers attribute slots by
