@@ -372,3 +372,129 @@ theorem resolve_bounds (room : Int) (items : List Item) : ∀ s ∈ (resolve roo
     exact this s hs
   have := resolve_within room items s hs hf
   simpa [St.cur, hf] using this
+
+theorem sum_map_add3 {α : Type} (L : List α) (F A B C : α → Int) (h : ∀ x ∈ L, F x = A x + B x + C x) :
+    (L.map F).sum = (L.map A).sum + (L.map B).sum + (L.map C).sum := by
+  induction L with
+  | nil => simp
+  | cons a rest ih =>
+    have ha := h a List.mem_cons_self
+    have hr := ih (fun x hx => h x (List.mem_cons_of_mem a hx))
+    simp only [List.map_cons, List.sum_cons]
+    omega
+
+theorem sum_map_natCast (l : List Nat) : (l.map fun (q : Nat) => (q : Int)).sum = (l.sum : Int) := by
+  induction l with
+  | nil => simp
+  | cons a rest ih => simp only [List.map_cons, List.sum_cons, ih]; omega
+
+theorem sum_map_neg_natCast (l : List Nat) : (l.map fun (q : Nat) => -(q : Int)).sum = -(l.sum : Int) := by
+  induction l with
+  | nil => simp
+  | cons a rest ih => simp only [List.map_cons, List.sum_cons, ih]; omega
+
+/-- The signed shares of a round sum to the signed amount when some weight is not zero. -/
+theorem shares_sum (c : Ctx) (l : List St) (h : 0 < (l.map (weight c.growing)).sum) :
+    (shares c l).sum = if c.growing then (amount c l : Int) else -(amount c l : Int) := by
+  unfold shares
+  cases hg : c.growing with
+  | true => simp only [if_true]; rw [sum_map_natCast, distribute_sum _ _ (by simpa [hg] using h)]
+  | false =>
+    simp only [Bool.false_eq_true, if_false]
+    rw [sum_map_neg_natCast, distribute_sum _ _ (by simpa [hg] using h)]
+
+/-- A frozen item is handed nothing. -/
+theorem cands_frozen_zero (c : Ctx) (l : List St) : ∀ p ∈ cands c l, p.1.frozen = true → p.2 = 0 := by
+  intro p hp hf
+  unfold cands shares at hp
+  rw [List.zip_map_right] at hp
+  obtain ⟨⟨s, q⟩, hsq, rfl⟩ := List.mem_map.mp hp
+  have hw : (weight c.growing s, q) ∈ (l.map (weight c.growing)).zip
+      (distribute (amount c l) (l.map (weight c.growing))) := by
+    rw [List.zip_map_left]
+    exact List.mem_map.mpr ⟨(s, q), hsq, rfl⟩
+  have hq : q = 0 := distribute_zero _ _ _ hw (by
+    simp only [Prod.map_fst, id_eq] at hf
+    simp [weight, hf])
+  simp [hq]
+
+/-- Exactness of one round. Says: when a round is exact (`exactRound`), every item is
+frozen after it and the outer sizes sum to exactly the room. -/
+theorem round_exact (c : Ctx) (l : List St) (h : exactRound c l = true) :
+    (round c l).all (·.frozen) = true ∧ used (round c l) = c.room := by
+  unfold exactRound at h
+  simp only [Bool.and_eq_true, decide_eq_true_eq] at h
+  obtain ⟨⟨hw, hamt⟩, htv⟩ := h
+  constructor
+  · unfold round
+    rw [List.all_eq_true]
+    intro s hs
+    obtain ⟨p, _, rfl⟩ := List.mem_map.mp hs
+    cases hf : p.1.frozen with
+    | true => exact step_frozen_of_frozen _ _ hf
+    | false => exact step_frozen_of_freezes _ _ (by simp [freezes, htv])
+  · unfold used round
+    rw [List.map_map]
+    rw [sum_map_add3 (cands c l) (St.outer ∘ step (totalViolation c l)) (fun p => p.1.outer) (fun p => p.2) violation]
+    · have h1 : ((cands c l).map fun p => p.1.outer).sum = used l := by
+        have := congrArg (fun x => (x.map St.outer).sum) (cands_fst c l)
+        simpa [List.map_map, Function.comp_def, used] using this
+      have h2 : ((cands c l).map fun p => p.2).sum = (shares c l).sum := by
+        have := congrArg List.sum (cands_snd c l)
+        simpa using this
+      have h3 : ((cands c l).map violation).sum = 0 := htv
+      rw [h1, h2, h3, shares_sum c l hw, hamt]
+      omega
+    · intro p hp
+      simp only [Function.comp_apply]
+      unfold step violation
+      cases hf : p.1.frozen with
+      | true => simp [cands_frozen_zero c l p hp hf]
+      | false =>
+        simp only [Bool.false_or, htv, freezes, decide_true, Bool.true_or, Bool.not_true,
+          Bool.false_eq_true, if_false]
+        simp only [St.outer, St.cur, hf, Bool.false_eq_true, if_false, if_true, unclamped]
+        omega
+
+/-- Exact sum. Says: when `resolve` reports `exact` (its last round handed out all of
+the free space to items with a non-zero weight and the limits moved nothing in total),
+the outer main sizes of the items sum to exactly `room`: with the gaps, the container's
+inner main size, with no unit lost or made by rounding. Does not say: anything when
+`exact` is false (every flexible item hit a limit, the factors sum to less than 1, or
+no item can flex): then the line may underflow or overflow, as the specification has it. -/
+theorem resolve_exact (room : Int) (items : List Item) (h : (resolve room items).exact = true) :
+    used (resolve room items).items = room := by
+  unfold resolve at h ⊢
+  have hinv := loop_inv (ctxOf room items) (fun l e => e = true → used l = room)
+    (fun l e _ _ he => (round_exact (ctxOf room items) l he).2) items.length
+    (items.map (init (ctxOf room items).growing)) false (by simp)
+  exact hinv h
+
+theorem used_eq (l : List St) : used l = (l.map St.cur).sum + (l.map fun s => s.item.edges).sum := by
+  unfold used
+  induction l with
+  | nil => simp
+  | cons a rest ih => simp only [List.map_cons, List.sum_cons, St.outer] at ih ⊢; omega
+
+/-- The same as a sum of sizes: the used main sizes and the items' edges sum to `room`. -/
+theorem resolve_exact_sizes (room : Int) (items : List Item) (h : (resolve room items).exact = true) :
+    (resolve room items).sizes.sum + (items.map (·.edges)).sum = room := by
+  have hu := resolve_exact room items h
+  have hi := congrArg (fun l => (l.map Item.edges).sum) (resolve_items room items)
+  simp only [List.map_map, Function.comp_def] at hi
+  rw [used_eq, hi] at hu
+  exact hu
+
+#guard (resolve 6400 [{base := 0, grow := one}, {base := 0, grow := one}, {base := 0, grow := one}]).sizes == [2133, 2133, 2134]
+#guard (resolve 6400 [{base := 0, grow := one}, {base := 0, grow := one}, {base := 0, grow := one}]).exact
+-- a maximum takes an item out; the others share the rest
+#guard (resolve 600 [{base := 0, grow := one, hi := some 100}, {base := 0, grow := one}, {base := 100}]).sizes == [100, 400, 100]
+-- shrinking in proportion to shrink factor times base size (CSS Flexbox 1 §9.7, example 6 sizes ×1)
+#guard (resolve 300 [{base := 200}, {base := 400}]).sizes == [100, 200]
+#guard (resolve 300 [{base := 200, lo := 150}, {base := 400}]).sizes == [150, 150]
+-- factors that sum to less than 1 hand out that fraction of the free space
+#guard (resolve 1000 [{base := 0, grow := 250000}, {base := 0, grow := 250000}]).sizes == [250, 250]
+#guard !(resolve 1000 [{base := 0, grow := 250000}, {base := 0, grow := 250000}]).exact
+-- nothing can flex
+#guard (resolve 1000 [{base := 100, shrink := 0}, {base := 200}]).sizes == [100, 200]
+#guard (resolve 100 []).sizes == []
