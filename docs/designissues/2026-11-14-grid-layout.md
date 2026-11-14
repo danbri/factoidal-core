@@ -99,6 +99,16 @@ theorem's doc comment states its kind, what it says and what it does not say):
 - The sums of the inflexible base sizes and of the flex factors run as loops with an
   accumulator, proved equal to their list definitions (`inflexSum_eq_loop`,
   `flexSum_eq_loop`, used by the compiler through `@[csimp]`).
+- Positioned boxes in a grid (§9.1, `Grid/Abspos.lean`): the lines found are lines of the
+  implicit grid or the padding edge (`absLines_inside`, `inImplicit_le`); `auto` on both
+  sides is the padding box (`absSpan_auto`); two numbered lines come out in order
+  (`absRaw_ordered`).
+- Baseline alignment (§11.6, `Grid/Baseline.lean`): an aligned item's baseline ends at
+  its row's largest (`baselineShift_spec`), so two aligned items of a row end aligned
+  (`baselineShift_aligned`).
+- A track size with no percentage has the same sizing functions for every container size
+  (`TrackSize.toFn_of_not_hasPercent`): rows are sized a second time only when one has a
+  percentage.
 - Determinism: every function here is a pure function of its arguments; the same grid
   gives the same layout.
 
@@ -121,9 +131,9 @@ Open:
 
 ## Not done
 
-Baseline alignment (read as `start`), subgrid (laid out as a nested grid), positioned
-children of a grid container, vertical writing modes, `aspect-ratio`, percentage tracks
-resolved a second time against a content-sized container, masonry (`grid-lanes`).
+`last baseline` (read as `start`), baseline alignment in columns (`justify-self:
+baseline`), an inline-block's own baseline, subgrid (laid out as a nested grid), vertical
+writing modes, `aspect-ratio`, masonry (`grid-lanes`).
 
 ## Measured
 
