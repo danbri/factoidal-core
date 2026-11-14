@@ -3883,6 +3883,19 @@
     return s;
   };
 
+  // ---- document.cookie (HTML §3.1.5; RFC 6265bis for a "non-HTTP" API) -----------------------
+  // The jar, what a script may set and what it reads are Lean's (Net/Cookies.lean, web_api
+  // ops 96 and 97): cookies are in memory and each is its host's; none is sent on the network.
+  // The host is the engine's; this passes the document's path and the time.
+  const cookieClock = Date.now;
+  const cookieArgs = doc => {
+    const p = urlFields(doc === document ? href : docURL(nodeId(doc)));
+    return [p === null ? '/' : p[8], Math.floor(cookieClock() / 1000)];
+  };
+  Object.defineProperty(Document.prototype, 'cookie', { configurable: true, enumerable: true,
+    get() { const r = apiCall(96, cookieArgs(this)); return typeof r === 'string' ? r : ''; },
+    set(v) { apiCall(97, [...cookieArgs(this), String(v)]); } });
+
   // ---- Request (Fetch §5.4) ------------------------------------------------------------------
   const requests = new WeakMap();
   const makeRequest = () => {

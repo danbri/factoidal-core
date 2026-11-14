@@ -37,6 +37,7 @@ import L4Factoidal.Crypto.WebCryptoKeys
 import L4Factoidal.Net.Xhr
 import L4Factoidal.Net.Storage
 import L4Factoidal.Net.FetchRules
+import L4Factoidal.Net.Cookies
 import L4Factoidal.DOM.SvgValues
 import L4Factoidal.JSON.Parser
 import L4Factoidal.JSON.Serialize
@@ -67,6 +68,9 @@ structure State where
   net : L4Factoidal.Net.Xhr.State := {}
   /-- The page's Web Storage areas (`Net.Storage`, ops 80 to 85): in memory, by origin. -/
   storage : L4Factoidal.Net.Storage.Store := {}
+  /-- The cookies scripts set and read (`Net.Cookies`, ops 96 and 97): in memory, each its
+  host's; none is sent or received on the network. -/
+  cookies : L4Factoidal.Net.Cookies.Jar := {}
   rng : Option Crypto.WebCrypto.Drbg := none
   /-- Generate calls of the generator so far (SP 800-90A's reseed counter). -/
   draws : Nat := 0
@@ -605,6 +609,10 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
           L4Factoidal.Net.BlobUrls.revoke s.net.blobs s.net.page.origin ((strArg fs 0).toOption.getD "") } }, ofStr "")
     -- The Fetch API's rules: MIME type of a body, `Headers` validation, a `Request`'s method.
     else if 86 ≤ code && code < 90 then pure' (L4Factoidal.Net.FetchRules.op code fs)
+    -- `document.cookie`: the host and the secure flag are the session's page's, never arguments.
+    else if code == 96 || code == 97 then
+      let (cookies, r) := L4Factoidal.Net.Cookies.op s.cookies s.net.page.origin s.net.page.secure code fs
+      ({ s with cookies }, r)
     -- The values the SVG DOM reflects: a length, a number, a number list, a transform list.
     else if 92 ≤ code && code < 96 then pure' (L4Factoidal.DOM.SvgValues.op code fs)
     else pure' (.error (-2))
