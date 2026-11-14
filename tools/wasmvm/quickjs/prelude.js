@@ -2503,6 +2503,22 @@
       q.push(93, id, 4, tail(f.bytes), 0, 0, f.w, f.h, f.w, f.h); later();
       return { id, w: f.w, h: f.h, dw: f.dw, dh: f.dh };
     };
+    // Encoded image bytes (PNG, JPEG, GIF) as RGBA: a bitmap of kind 5, which the engine's decoders
+    // make (PageCanvas.Env.decode), drawn on a scratch bitmap and read back. null: not decoded.
+    const decodeImage = bytes => {
+      const id = nextObj++;
+      q.push(93, id, 5, tail(bytes), 0, 0, 0, 0, bytes.length, 0); later();
+      let size = [];
+      try { size = nums(ask([11, 2, id])); } catch (e) {}
+      if (size.length < 2 || !(size[0] > 0 && size[1] > 0)) { q.push(94, 4, id); later(); return null; }
+      const [w, h] = size, cid = nextOffscreen++;
+      q.push(2, cid, w, h, 0); selected = cid;
+      q.push(80, 2, id, NaN, NaN, NaN, NaN, 0, 0, NaN, NaN);
+      flush();
+      const px = n.gpuBytes(202, '[]', pack([2, cid, 0, 0, w, h], [], 0));
+      q.push(94, 4, id); q.push(94, 5, cid); later();
+      return px instanceof ArrayBuffer ? { w, h, bytes: new Uint8Array(px) } : null;
+    };
     // The pixels of a canvas image source as RGBA bytes (for a VideoFrame made from it): drawn on
     // a scratch bitmap of its size and read back (op 202). null: not a source this reads.
     const pixelsOf = img => {
@@ -2528,7 +2544,7 @@
       if (!(bytes instanceof ArrayBuffer)) throw new DOMException('The image could not be read.', 'InvalidStateError');
       return { w, h, bytes: new Uint8Array(bytes) };
     };
-    return { CanvasRenderingContext2D, OffscreenCanvasRenderingContext2D, OffscreenCanvas, Path2D, ImageData, pixelsOf,
+    return { CanvasRenderingContext2D, OffscreenCanvasRenderingContext2D, OffscreenCanvas, Path2D, ImageData, pixelsOf, decodeImage,
       ImageBitmap, CanvasGradient, CanvasPattern, TextMetrics, DOMMatrix, DOMMatrixReadOnly, DOMPoint, DOMPointReadOnly, createImageBitmap,
       context: (canvas, options) => contextFor(CanvasRenderingContext2D, canvas, nodeId(canvas), canvasSize(canvas, 'width', 300), canvasSize(canvas, 'height', 150), true, options),
       resized: canvas => { const id = nodeId(canvas); q.push(2, id, canvasSize(canvas, 'width', 300), canvasSize(canvas, 'height', 150), 1); selected = id; later(); },
@@ -4188,12 +4204,151 @@
       close() { const s = st(this); s.closed = true; s.resource = null; }
     }
     members(AudioData);
+
+    // ---- ImageDecoder (WebCodecs §10) ----
+    // Whether a type is decoded, and the orientation of the image, are Lean's (WebCodecs.Image,
+    // ops 133 and 134); the pixels are the engine's decoders' (through the canvas section). Still
+    // images: one track of one frame.
+    const ilive = (s, what) => { if (s.closed) throw dom('InvalidStateError', what + ': the ImageDecoder is closed'); return s; };
+    const settle = () => { let resolve, reject; const p = new Promise((a, b) => { resolve = a; reject = b; }); p.catch(() => {}); return { p, resolve, reject }; };
+    class ImageTrack {
+      constructor() { throw new TypeError('Illegal constructor'); }
+      get animated() { return st(this).animated; }
+      get frameCount() { return st(this).frames; }
+      get repetitionCount() { return st(this).repetitions; }
+      get selected() { const t = st(this); return t.list.selected === t.index; }
+      set selected(v) {
+        const t = st(this);
+        if (t.list.closed) return;
+        if (v) t.list.selected = t.index; else if (t.list.selected === t.index) t.list.selected = -1;
+      }
+    }
+    class ImageTrackList {
+      constructor() { throw new TypeError('Illegal constructor'); }
+      get ready() { return st(this).ready.p; }
+      get length() { return st(this).tracks.length; }
+      get selectedIndex() { return st(this).selected; }
+      get selectedTrack() { const l = st(this); return l.selected < 0 ? null : l.tracks[l.selected] ?? null; }
+    }
+    const trackList = () => {
+      // The list's indexed getter (Web IDL) over its state, which the list and its proxy share.
+      const l = Object.create(ImageTrackList.prototype), state = { tracks: [], selected: -1, ready: settle(), closed: false };
+      K.set(l, state);
+      const p = new Proxy(l, {
+        get(t, k, r) { if (typeof k === 'string' && /^(0|[1-9][0-9]*)$/.test(k)) return state.tracks[+k]; return Reflect.get(t, k, t); },
+        has(t, k) { if (typeof k === 'string' && /^(0|[1-9][0-9]*)$/.test(k)) return +k < state.tracks.length; return Reflect.has(t, k); },
+        getOwnPropertyDescriptor(t, k) {
+          if (typeof k === 'string' && /^(0|[1-9][0-9]*)$/.test(k)) return +k < state.tracks.length ? { value: state.tracks[+k], writable: false, enumerable: true, configurable: true } : undefined;
+          return Reflect.getOwnPropertyDescriptor(t, k);
+        },
+        ownKeys(t) { return state.tracks.map((_, i) => String(i)).concat(Reflect.ownKeys(t)); },
+      });
+      K.set(p, state);
+      return p;
+    };
+    class ImageDecoder {
+      constructor(init) {
+        need(arguments.length, 1, 'ImageDecoder');
+        const d = dict(init, 'ImageDecoderInit');
+        if (d.type === undefined || d.data === undefined) throw bad('ImageDecoderInit needs type and data');
+        const type = String(d.type);
+        const verdict = ask(133, [type], 'the type is not a MIME type');
+        if (verdict === 'invalid') throw bad('ImageDecoderInit: the type is not a MIME type');
+        if ((d.desiredWidth === undefined) !== (d.desiredHeight === undefined)) throw bad('ImageDecoderInit: desiredWidth and desiredHeight go together');
+        const stream = typeof ReadableStream === 'function' && d.data instanceof ReadableStream;
+        let bytes = null;
+        if (!stream) {
+          const transfer = transferList(d, 'ImageDecoder');
+          bytes = bytesOf(d.data, 'data');
+          if (bytes.byteLength === 0) throw bad('ImageDecoderInit: the data is empty');
+          bytes = bytes.slice();
+          detach(transfer);
+        }
+        const tracks = trackList();
+        const s = { type, verdict, bytes, complete: false, completed: settle(), tracks, closed: false, pixels: undefined };
+        K.set(this, s);
+        const metadata = () => {
+          const l = K.get(tracks);
+          if (s.closed) return;
+          if (s.verdict !== 'supported') { const e = dom('NotSupportedError', 'ImageDecoder: the type ' + type + ' is not decoded'); l.ready.reject(e); s.completed.reject(e); return; }
+          const t = Object.create(ImageTrack.prototype);
+          K.set(t, { animated: false, frames: 1, repetitions: 0, index: 0, list: l });
+          l.tracks.push(t); l.selected = 0;
+          l.ready.resolve();
+        };
+        const received = () => { s.complete = true; s.completed.resolve(); metadata(); };
+        if (!stream) queueMicrotask(received);
+        else {
+          const chunks = [], reader = d.data.getReader();
+          const pump = () => reader.read().then(r => {
+            if (s.closed) return;
+            if (r.done) {
+              let n = 0; for (const c of chunks) n += c.byteLength;
+              s.bytes = new Uint8Array(n); n = 0;
+              for (const c of chunks) { s.bytes.set(c, n); n += c.byteLength; }
+              received();
+              return;
+            }
+            chunks.push(bytesOf(r.value, 'chunk').slice());
+            return pump();
+          }, e => { if (!s.closed) { const x = dom('EncodingError', 'ImageDecoder: the stream failed'); K.get(tracks).ready.reject(x); s.completed.reject(x); } });
+          pump();
+        }
+      }
+      get type() { const s = st(this); return s.closed ? '' : s.type; }
+      get complete() { return st(this).complete; }
+      get completed() { return st(this).completed.p; }
+      get tracks() { return st(this).tracks; }
+      decode(options = undefined) {
+        const s = st(this);
+        if (s.closed) return Promise.reject(dom('InvalidStateError', 'decode: the ImageDecoder is closed'));
+        const d = dict(options, 'ImageDecodeOptions');
+        const index = d.frameIndex === undefined ? 0 : enforce(d.frameIndex, U32, 'frameIndex');
+        const l = K.get(s.tracks);
+        return l.ready.p.then(() => {
+          if (s.closed) throw dom('AbortError', 'decode: the ImageDecoder was closed');
+          if (l.selected < 0) throw dom('InvalidStateError', 'decode: no track is selected');
+          if (s.pixels === undefined) {
+            s.pixels = host.decodeImage ? host.decodeImage(s.bytes) : null;
+            const o = s.pixels ? ask(134, [s.bytes], 'the image has no orientation').split(' ') : null;
+            if (s.pixels) { s.pixels.rotation = Number(o[0]); s.pixels.flip = o[1] === '1'; }
+          }
+          if (s.pixels === null) throw dom('EncodingError', 'decode: the image could not be decoded');
+          if (index >= K.get(l.tracks[l.selected]).frames) throw new RangeError('decode: frameIndex is out of range');
+          const px = s.pixels;
+          const frame = bufferFrame('RGBA', px.w, px.h, px.bytes, '', { rotation: px.rotation, flip: px.flip }, 0, null, undefined, () => {});
+          return { image: frameOf(frame), complete: true };
+        });
+      }
+      reset() { ilive(st(this), 'reset'); }
+      close() {
+        const s = st(this);
+        if (s.closed) return;
+        s.closed = true;
+        const l = K.get(s.tracks);
+        l.closed = true; l.tracks = []; l.selected = -1;
+        const e = dom('AbortError', 'ImageDecoder: closed');
+        l.ready.reject(e); s.completed.reject(e);
+      }
+      static isTypeSupported(type) {
+        try {
+          need(arguments.length, 1, 'isTypeSupported');
+          const v = ask(133, [String(type)], 'the type is not a MIME type');
+          if (v === 'invalid') throw bad('isTypeSupported: the type is not a MIME type');
+          return Promise.resolve(v === 'supported');
+        } catch (e) { return Promise.reject(e); }
+      }
+    }
+    for (const C of [ImageDecoder, ImageTrackList, ImageTrack]) members(C);
     for (const C of [VideoColorSpace, VideoFrame, EncodedVideoChunk, EncodedAudioChunk]) members(C);
-    return { VideoColorSpace, VideoFrame, EncodedVideoChunk, EncodedAudioChunk, AudioDecoder, VideoDecoder, AudioEncoder, VideoEncoder, AudioData };
+    return { VideoColorSpace, VideoFrame, EncodedVideoChunk, EncodedAudioChunk, AudioDecoder, VideoDecoder, AudioEncoder, VideoEncoder, AudioData,
+      ImageDecoder, ImageTrackList, ImageTrack };
 `;
-  const codecNames = ['VideoColorSpace', 'VideoFrame', 'EncodedVideoChunk', 'EncodedAudioChunk', 'AudioDecoder', 'VideoDecoder', 'AudioEncoder', 'VideoEncoder', 'AudioData'];
+  const codecNames = ['VideoColorSpace', 'VideoFrame', 'EncodedVideoChunk', 'EncodedAudioChunk', 'AudioDecoder', 'VideoDecoder', 'AudioEncoder', 'VideoEncoder', 'AudioData',
+    'ImageDecoder', 'ImageTrackList', 'ImageTrack'];
   lazyGroup(codecNames, codecs);
   codecsHost.pixelsOf = image => c2d().pixelsOf(image);
+  codecsHost.decodeImage = bytes => c2d().decodeImage(bytes);
   codecsHost.convertColors = (from, to, bgr, bytes) => {
     const r = apiCall(132, [from, to, bgr ? '1' : '', bytes], 0, true);
     if (typeof r === 'number') throw new TypeError('colour conversion from ' + from + ' to ' + to + ' failed');
