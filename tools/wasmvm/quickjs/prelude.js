@@ -5788,7 +5788,9 @@
   }
   if (frameEngine()) def('postMessage', function postMessage(message, targetOrigin, transfer) {
     if (arguments.length < 1) throw new TypeError("Failed to execute 'postMessage' on 'Window': 1 argument required, but only 0 present.");
-    postTo(0, message, targetOrigin, transfer);
+    // `postMessage(…)` in a frame's script is that frame's window's: it posts to the frame's
+    // own window, where the frame's listeners are, not to the page's
+    postTo(scriptDocument !== null && scriptDocument !== document ? nodeId(scriptDocument) : 0, message, targetOrigin, transfer);
   });
   // HTML §9.4 MessageChannel and MessagePort: two entangled ports in this realm; a message
   // waits in the port's queue until the port is started (start() or onmessage).
