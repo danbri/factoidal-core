@@ -16228,6 +16228,8 @@
     'FileSystemFileHandle', 'FileSystemDirectoryHandle', 'FileSystemWritableFileStream', 'FileSystemSyncAccessHandle', 'StorageManager', 'Lock', 'LockManager',
     'ML', 'MLContext', 'MLGraph', 'MLOperand', 'MLTensor', 'MLGraphBuilder',
     'StorageBucket', 'StorageBucketManager', 'caches', 'Cache', 'CacheStorage', 'FileSystemObserver', 'FileSystemChangeRecord']);
+  // FileSystemObserver is not exposed in service workers: the name is not defined there.
+  const notInServiceWorkers = new Set(['FileSystemObserver', 'FileSystemChangeRecord']);
   // The Cookie Store is [Exposed=(ServiceWorker,Window)]: a service worker's scope keeps it.
   const serviceStorageGlobals = new Set(['cookieStore', 'CookieStore', 'CookieChangeEvent', 'CookieStoreManager']);
   // The [SecureContext] interfaces of client-side storage: dropped from a worker that is not a secure context.
@@ -16334,7 +16336,8 @@
       pathname: u.pathname, search: u.search, hash: u.hash });
     const wnav = Object.create(WorkerNavigator.prototype);
     for (const k of Object.getOwnPropertyNames(globalThis))
-      if ((!esGlobals.has(k) && !workerGlobals.has(k) && !(isService && serviceStorageGlobals.has(k))) || (!secureWorker && secureOnlyGlobals.has(k))) { try { delete globalThis[k]; } catch {} }
+      if ((!esGlobals.has(k) && !workerGlobals.has(k) && !(isService && serviceStorageGlobals.has(k))) || (!secureWorker && secureOnlyGlobals.has(k))
+        || (isService && notInServiceWorkers.has(k))) { try { delete globalThis[k]; } catch {} }
     // Service Workers §4.1: XMLHttpRequest is not exposed in a service worker; fetch keeps the
     // class for its requests (made before the global goes)
     if (isService) try { xhrForFetch = globalThis.XMLHttpRequest; delete globalThis.XMLHttpRequest; delete globalThis.XMLHttpRequestEventTarget; delete globalThis.XMLHttpRequestUpload; } catch {}
