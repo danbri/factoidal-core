@@ -8080,6 +8080,259 @@
   }
   // ==== end dynscripts ====================================================================
 
+  // ==== sanitizer: HTML sanitization and the HTML insertion methods (HTML §8.5.2, §8.6) ====
+  // A Sanitizer's configuration, every method on it, and what a configuration keeps of
+  // parsed markup are Lean's (HTML.Sanitizer: node_query 192 the methods, 193 the tree).
+  // Here: Web IDL conversion of the dictionaries to the text Lean reads (`configWire` there),
+  // the objects, and the insertion methods. The markup is parsed into a fragment that no
+  // script can reach, sanitized there, and only then inserted; for the safe methods its
+  // event handler content attributes are never read.
+  {
+    const isObj = v => v !== null && (typeof v === 'object' || typeof v === 'function');
+    // a name, a namespace or a target in the wire: no character below U+0008
+    const esc = t => t.replace(/[\u0000-\u0007]/g, c => '\u0007' + String.fromCharCode(c.charCodeAt(0) + 64));
+    const unesc = t => t.replace(/\u0007([\s\S])/g, (m, c) => String.fromCharCode(c.charCodeAt(0) - 64));
+    const seq = (v, what) => {
+      if (!isObj(v) || typeof v[Symbol.iterator] !== 'function') throw new TypeError(`${what}: the value is not a sequence.`);
+      return [...v];
+    };
+    // "canonicalize a sanitizer name": a DOMString, or a dictionary with `name` and `namespace`
+    const nameWire = (v, defaultNs, what) => {
+      if (v === null || v === undefined || isObj(v)) {
+        const d = v ?? {}, nm = d.name;
+        if (nm === undefined) throw new TypeError(`${what}: required member name is undefined.`);
+        const name = String(nm), nsv = d.namespace;
+        const ns = nsv === undefined ? defaultNs : nsv === null ? null : String(nsv);
+        return esc(name) + '\u0005' + esc(ns ?? '');
+      }
+      return esc(String(v)) + '\u0005' + esc(defaultNs ?? '');
+    };
+    const attrList = (v, sep, what) => v === undefined ? '0' : '1' + seq(v, what).map(x => nameWire(x, null, what)).join(sep);
+    // "canonicalize a SanitizerElementWithAttributes"
+    const ruleWire = (v, what) => {
+      const name = nameWire(v, HTML_NS, what);
+      const dict = isObj(v);
+      const attributes = attrList(dict ? v.attributes : undefined, '\u0004', what);
+      const removeAttributes = attrList(dict ? v.removeAttributes : undefined, '\u0004', what);
+      return name + '\u0003' + attributes + '\u0003' + removeAttributes;
+    };
+    // "canonicalize a processing instruction"
+    const piTarget = (v, what) => {
+      if (v === null || v === undefined || isObj(v)) {
+        const t = (v ?? {}).target;
+        if (t === undefined) throw new TypeError(`${what}: required member target is undefined.`);
+        return String(t);
+      }
+      return String(v);
+    };
+    // a SanitizerConfig dictionary (members read in Web IDL order) as the wire text
+    const configWire = (v, what) => {
+      if (v !== null && v !== undefined && !isObj(v)) throw new TypeError(`${what}: the value is not of type 'SanitizerConfig'.`);
+      const d = v ?? {};
+      const names = (x, ns) => x === undefined ? '0' : '1' + seq(x, what).map(i => nameWire(i, ns, what)).join('\u0002');
+      const bool = x => x === undefined ? '' : (x ? '1' : '0');
+      const pis = x => x === undefined ? '0' : '1' + seq(x, what).map(i => '\u0005' + esc(piTarget(i, what))).join('\u0002');
+      const attributes = names(d.attributes, null), comments = bool(d.comments), dataAttributes = bool(d.dataAttributes);
+      const ex = d.elements, elements = ex === undefined ? '0' : '1' + seq(ex, what).map(i => ruleWire(i, what)).join('\u0002');
+      const javascriptURLs = bool(d.javascriptURLs), processingInstructions = pis(d.processingInstructions);
+      const removeAttributes = names(d.removeAttributes, null), removeElements = names(d.removeElements, HTML_NS);
+      const removeProcessingInstructions = pis(d.removeProcessingInstructions);
+      const replaceWithChildrenElements = names(d.replaceWithChildrenElements, HTML_NS);
+      return [elements, removeElements, replaceWithChildrenElements, processingInstructions, removeProcessingInstructions,
+        attributes, removeAttributes, comments, dataAttributes, javascriptURLs].join('\u0001');
+    };
+    // the wire text as a SanitizerConfig dictionary (members in Web IDL order)
+    const nameObj = w => { const i = w.indexOf('\u0005'), ns = unesc(w.slice(i + 1)); return { name: unesc(w.slice(0, i)), namespace: ns === '' ? null : ns }; };
+    const listOf = (w, sep, f) => w[0] !== '1' ? undefined : w.length === 1 ? [] : w.slice(1).split(sep).map(f);
+    const ruleObj = w => {
+      const [name, attributes, removeAttributes] = w.split('\u0003'), o = nameObj(name);
+      const a = listOf(attributes, '\u0004', nameObj), r = listOf(removeAttributes, '\u0004', nameObj);
+      if (a !== undefined) o.attributes = a;
+      if (r !== undefined) o.removeAttributes = r;
+      return o;
+    };
+    const configObj = w => {
+      const [elements, removeElements, replace, pis, removePis, attributes, removeAttributes, comments, data, js] = w.split('\u0001');
+      const o = {}, put = (k, v) => { if (v !== undefined) o[k] = v; }, pi = t => ({ target: unesc(t.slice(1)) });
+      put('attributes', listOf(attributes, '\u0002', nameObj));
+      if (comments !== '') o.comments = comments === '1';
+      if (data !== '') o.dataAttributes = data === '1';
+      put('elements', listOf(elements, '\u0002', ruleObj));
+      if (js !== '') o.javascriptURLs = js === '1';
+      put('processingInstructions', listOf(pis, '\u0002', pi));
+      put('removeAttributes', listOf(removeAttributes, '\u0002', nameObj));
+      put('removeElements', listOf(removeElements, '\u0002', nameObj));
+      put('removeProcessingInstructions', listOf(removePis, '\u0002', pi));
+      put('replaceWithChildrenElements', listOf(replace, '\u0002', nameObj));
+      return o;
+    };
+    const ask = q => { const r = n.query(0, 192, q); return typeof r === 'number' ? fail(r) : r; };
+    const wires = new WeakMap();
+    const wireOf = s => { const w = wires.get(s); if (w === undefined) throw new TypeError('Illegal invocation'); return w; };
+    const presetWire = (v, what) => {
+      if (String(v) !== 'default') throw new TypeError(`${what}: '${String(v)}' is not a valid enum value of type SanitizerPresets.`);
+      return 'default';
+    };
+    class Sanitizer {
+      constructor(configuration = 'default') {
+        const what = "Failed to construct 'Sanitizer'";
+        const w = configuration === null || isObj(configuration) ? configWire(configuration, what) : presetWire(configuration, what);
+        const r = ask('new\u0000' + w + '\u00001');
+        if (r[0] !== 'K') throw new TypeError(`${what}: the configuration is not valid.`);
+        wires.set(this, r.slice(1));
+      }
+      get() { return configObj(ask('get\u0000' + wireOf(this))); }
+      removeUnsafe() { const r = ask('removeUnsafe\u0000' + wireOf(this)); wires.set(this, r.slice(1)); return r[0] === '1'; }
+    }
+    // the modifier methods: Lean answers the method's result and the configuration after it
+    const named = (name, f) => Object.defineProperty(f, 'name', { value: name, configurable: true });
+    const modifier = (name, argWire) => {
+      const f = named(name, function (arg) {
+        const w = wireOf(this);
+        if (arguments.length < 1) throw new TypeError(`Failed to execute '${name}' on 'Sanitizer': 1 argument required, but only 0 present.`);
+        const r = ask(name + '\u0000' + w + '\u0000' + argWire(arg, `Failed to execute '${name}' on 'Sanitizer'`));
+        wires.set(this, r.slice(1));
+        return r[0] === '1';
+      });
+      Object.defineProperty(Sanitizer.prototype, name, { value: f, writable: true, configurable: true });
+    };
+    modifier('allowElement', ruleWire);
+    modifier('removeElement', (v, what) => nameWire(v, HTML_NS, what));
+    modifier('replaceElementWithChildren', (v, what) => nameWire(v, HTML_NS, what));
+    modifier('allowProcessingInstruction', (v, what) => esc(piTarget(v, what)));
+    modifier('removeProcessingInstruction', (v, what) => esc(piTarget(v, what)));
+    modifier('allowAttribute', (v, what) => nameWire(v, null, what));
+    modifier('removeAttribute', (v, what) => nameWire(v, null, what));
+    modifier('setComments', v => (v ? '1' : '0'));
+    modifier('setDataAttributes', v => (v ? '1' : '0'));
+    modifier('setJavascriptURLs', v => (v ? '1' : '0'));
+    def('Sanitizer', Sanitizer);
+
+    // "Get a sanitizer config from options": the prepared configuration (a wire text), or
+    // null for an unsafe method with no sanitizer. A configuration is prepared by Lean once
+    // for each text and mode (the texts of the last few are kept).
+    const preparedWires = new Map();
+    const optionsOf = (options, safe, what) => {
+      if (options !== undefined && options !== null && !isObj(options)) throw new TypeError(`${what}: the options are not an object.`);
+      const o = options ?? {};
+      const runScripts = safe ? false : !!o.runScripts;
+      let input = o.sanitizer;
+      if (input === undefined) { if (!safe) return { config: null, runScripts }; input = 'default'; }
+      const w = input instanceof Sanitizer ? wireOf(input)
+        : input === null || isObj(input) ? configWire(input, what) : presetWire(input, what);
+      const key = (safe ? '1' : '0') + w;
+      let config = preparedWires.get(key);
+      if (config === undefined) {
+        const r = ask('prepare\u0000' + w + '\u0000' + (safe ? '1' : '0'));
+        if (r[0] !== 'K') throw new TypeError(`${what}: the sanitizer configuration is not valid.`);
+        config = r.slice(1);
+        if (preparedWires.size >= 16) preparedWires.clear();
+        preparedWires.set(key, config);
+      }
+      return { config, runScripts };
+    };
+    const hierarchy = () => new DOMException('The operation would yield an incorrect node tree.', 'HierarchyRequestError');
+    const isHtmlNamed = (id, name) => info(id, 0) === 1 && str(id, 2) === HTML_NS && str(id, 0) === name;
+    // "Parse HTML for insertion": the sanitized fragment of `markup` for the context element
+    // `ctx` in the node document of `target`, or -1 when a safe method has a script context.
+    const parseFor = (ctx, markup, o, safe) => {
+      const ns = str(ctx, 2), name = str(ctx, 0);
+      if (safe && name === 'script' && (ns === HTML_NS || ns === 'http://www.w3.org/2000/svg')) return -1;
+      const f = chk(n.create(14 + 16 * info(ctx, 7), (ns ?? '') + '\u0000' + name + '\u0000' + markup));
+      if (o.config !== null) op(f, 193, (safe ? '1' : '0') + '\u0000' + o.config);
+      if (!safe) scanHandlers(f, false);
+      return f;
+    };
+    // the context element of a target: the element, or a shadow root's host
+    const contextOf2 = target => (info(target, 0) === 11 ? info(target, 21) : target);
+    // "target for HTML insertion": a template's contents, else the element
+    const targetOf = id => (isHtmlNamed(id, 'template') ? info(id, 9) : id);
+    // "parent for HTML insertion"
+    const parentFor = id => {
+      const p = info(id, 1);
+      if (p < 0) return -1;
+      if (info(p, 0) === 1) { if (isHtmlNamed(p, 'template')) throw hierarchy(); return p; }
+      if (info(p, 0) === 11 && info(p, 21) >= 0) return p;
+      throw hierarchy();
+    };
+    // "Filter and set HTML", "filter and pre-insert HTML", "filter and replace with HTML"
+    const setHTML = (ctx, target, markup, o, safe) => {
+      const f = parseFor(ctx, markup, o, safe);
+      if (f < 0) return;
+      chk(n.setText(target, '')); chk(n.insert(target, f, -1));
+    };
+    const preInsertHTML = (ctx, parent, child, markup, o, safe) => {
+      if (isHtmlNamed(ctx, 'html')) throw hierarchy();
+      const f = parseFor(ctx, markup, o, safe);
+      if (f >= 0) chk(n.insert(parent, f, child));
+    };
+    const replaceHTML = (ctx, parent, node, markup, o, safe) => {
+      if (isHtmlNamed(ctx, 'html')) throw hierarchy();
+      const f = parseFor(ctx, markup, o, safe);
+      if (f >= 0) chk(n.replace(parent, f, node));
+    };
+    const method = (C, name, f) => Object.defineProperty(C.prototype, name, { value: f, writable: true, configurable: true });
+    // the six methods of an Element or a ShadowRoot and of a child node, safe and unsafe
+    for (const safe of [true, false]) {
+      const sfx = safe ? '' : 'Unsafe';
+      const args = (iface, name, a, k = 1) => {
+        const what = `Failed to execute '${name}' on '${iface}'`;
+        if (a.length < k) throw new TypeError(`${what}: ${k} argument required, but only ${a.length} present.`);
+        return what;
+      };
+      const roots = typeof ShadowRoot === 'function' ? [[Element, 'Element'], [ShadowRoot, 'ShadowRoot']] : [[Element, 'Element']];
+      for (const [C, iface] of roots) {
+        const place = self => { const id = nodeId(self); return iface === 'Element' ? [id, targetOf(id)] : [info(id, 21), id]; };
+        method(C, 'setHTML' + sfx, named('setHTML' + sfx, function (html, options = undefined) {
+          const what = args(iface, 'setHTML' + sfx, arguments), [ctx, target] = place(this);
+          setHTML(ctx, target, String(html), optionsOf(options, safe, what), safe);
+        }));
+        method(C, 'appendHTML' + sfx, named('appendHTML' + sfx, function (html, options = undefined) {
+          const what = args(iface, 'appendHTML' + sfx, arguments), [ctx, target] = place(this);
+          preInsertHTML(ctx, target, -1, String(html), optionsOf(options, safe, what), safe);
+        }));
+        method(C, 'prependHTML' + sfx, named('prependHTML' + sfx, function (html, options = undefined) {
+          const what = args(iface, 'prependHTML' + sfx, arguments), [ctx, target] = place(this);
+          preInsertHTML(ctx, target, info(target, 2), String(html), optionsOf(options, safe, what), safe);
+        }));
+      }
+      for (const C of [Element, CharacterData]) {
+        const iface = C === Element ? 'Element' : 'CharacterData';
+        method(C, 'beforeHTML' + sfx, named('beforeHTML' + sfx, function (html, options = undefined) {
+          const what = args(iface, 'beforeHTML' + sfx, arguments), id = nodeId(this), markup = String(html), o = optionsOf(options, safe, what);
+          const parent = parentFor(id);
+          if (parent >= 0) preInsertHTML(contextOf2(parent), parent, id, markup, o, safe);
+        }));
+        method(C, 'afterHTML' + sfx, named('afterHTML' + sfx, function (html, options = undefined) {
+          const what = args(iface, 'afterHTML' + sfx, arguments), id = nodeId(this), markup = String(html), o = optionsOf(options, safe, what);
+          const parent = parentFor(id);
+          if (parent >= 0) preInsertHTML(contextOf2(parent), parent, info(id, 5), markup, o, safe);
+        }));
+        method(C, 'replaceWithHTML' + sfx, named('replaceWithHTML' + sfx, function (html, options = undefined) {
+          const what = args(iface, 'replaceWithHTML' + sfx, arguments), id = nodeId(this), markup = String(html), o = optionsOf(options, safe, what);
+          const parent = parentFor(id);
+          if (parent >= 0) replaceHTML(contextOf2(parent), parent, id, markup, o, safe);
+        }));
+      }
+    }
+    // Document.parseHTML and Document.parseHTMLUnsafe: a document with no browsing context
+    // that the HTML parser makes, sanitized before it is answered.
+    const parseDocument = (markup, o, safe) => {
+      const doc = chk(n.create(11, markup));
+      if (o.config !== null) op(doc, 193, (safe ? '1' : '0') + '\u0000' + o.config);
+      return wrap(doc);
+    };
+    define(Document, 'parseHTML', function parseHTML(html, options = undefined) {
+      if (arguments.length < 1) throw new TypeError("Failed to execute 'parseHTML' on 'Document': 1 argument required, but only 0 present.");
+      return parseDocument(String(html), optionsOf(options, true, "Failed to execute 'parseHTML' on 'Document'"), true);
+    });
+    define(Document, 'parseHTMLUnsafe', function parseHTMLUnsafe(html, options = undefined) {
+      if (arguments.length < 1) throw new TypeError("Failed to execute 'parseHTMLUnsafe' on 'Document': 1 argument required, but only 0 present.");
+      return parseDocument(String(html), optionsOf(options, false, "Failed to execute 'parseHTMLUnsafe' on 'Document'"), false);
+    });
+  }
+  // ==== end sanitizer =====================================================================
+
   // ---- Interface objects as Web IDL defines them (§3.7.1 to §3.7.3) ----
   // An interface's attributes, operations and constants are enumerable own properties of its
   // interface prototype object (of the interface object when static), and the prototype's
