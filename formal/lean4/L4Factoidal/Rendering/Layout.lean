@@ -1,5 +1,6 @@
 import L4Factoidal.Rendering.Style
 import L4Factoidal.Rendering.Generated
+import L4Factoidal.Rendering.InlineBox
 import L4Factoidal.Rendering.FontFace
 import L4Factoidal.Rendering.TableLayout
 import L4Factoidal.Rendering.FlexLayout
@@ -365,8 +366,20 @@ inductive Inline where
   /-- An absolutely positioned element inside inline content: no width, no paint; its
   place in the line is its static position (`Result.pending`). -/
   | outOfFlow (source : Nat)
+  /-- The start of an inline box (a `span`, an `a`; CSS 2.1 §9.2.2): the line gives room
+  for its left margin, border and padding (`inlineLead`). `continued`: the box began on an
+  earlier line, and has no edge here. -/
+  | openInline (source : Nat) (style : Computed) (continued : Bool)
+  /-- The end of an inline box: room for its right padding, border and margin. -/
+  | closeInline (source : Nat) (style : Computed)
   deriving Repr
 instance : Inhabited Inline := ⟨.closeAtomic⟩
+
+/-- What the start of an inline box adds to its line: the left margin, border and padding. -/
+def inlineLead (s : Computed) : Float := s.margin.left+s.borderEdges.left+s.padding.left
+
+/-- What the end of an inline box adds to its line: the right padding, border and margin. -/
+def inlineTrail (s : Computed) : Float := s.padding.right+s.borderEdges.right+s.margin.right
 
 /-- A character of the scripts that break between letters with no space between words
 (UAX 14 classes ID, CJ, H2 and H3, and their punctuation): Han, kana, Hangul, CJK
@@ -513,13 +526,15 @@ def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) (p
     -- A block inside an inline (old pages often have one) breaks the line around it.
     -- An inline-block is one atomic box: `atomize` lays out what is between its bounds.
     -- An inline box with `unicode-bidi` is wrapped in its bidi control characters.
+    -- An inline box is between its bounds, which give it its boxes and its edges on the lines.
     let mut out : Array Inline := if s.display.isBlockLevel then #[.lineBreak s]
       else if s.display == .inlineBlock then #[.openAtomic id s]
-      else (bidiOpen s).map .bidiMark
+      else (if s.display == .inline then #[.openInline id s false] else #[]) ++ (bidiOpen s).map .bidiMark
     for child in n.kids do out := out ++ (← inlineItems dom styles embedding pictures available fuel child)
     if s.display == .inline && s.background.isSome then out := out.map (withBackground s)
     return if s.display.isBlockLevel then out.push (.lineBreak s)
-      else if s.display == .inlineBlock then out.push .closeAtomic else out ++ (bidiClose s).map .bidiMark
+      else if s.display == .inlineBlock then out.push .closeAtomic
+      else out ++ (bidiClose s).map .bidiMark ++ (if s.display == .inline then #[.closeInline id s] else #[])
 
 private def translate (x y : Float) : Transform := ⟨1,0,0,1,x,y⟩
 
@@ -567,6 +582,8 @@ private def itemWidth (font : FontProfile) (rtl : Option Bool := none) : Inline 
     | none => return font.advance*s.fontSize/font.unitsPerEm*Float.ofNat text.length
     | some word => return word.advance*s.fontSize/font.unitsPerEm
   | .replaced _ _ w _ _ | .atomic _ _ w _ _ => pure w
+  | .openInline _ s continued => pure (if continued then 0 else inlineLead s)
+  | .closeInline _ s => pure (inlineTrail s)
   | _ => pure 0
 
 /-- A colour glyph as one rectangle filled with its image (`ColrRaster`), drawn at the
@@ -650,19 +667,45 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
         descent := max descent (h/2-s.fontSize/4)
       | .top => tallTop := max tallTop h
       | .bottom => tallBottom := max tallBottom h
-    | .openAtomic _ _ | .closeAtomic | .bidiMark _ | .outOfFlow _ => pure ()
+    | .openAtomic _ _ | .closeAtomic | .bidiMark _ | .outOfFlow _ | .openInline .. | .closeInline .. => pure ()
   -- A box aligned to the top or bottom of the line makes the line tall enough for it.
   if tallBottom > ascent+descent then ascent := tallBottom-descent
   if tallTop > ascent+descent then descent := tallTop-ascent
   let mut out : Result := {height := ascent+descent, baseline := some (y+ascent)}
+  -- The inline boxes open at this point of the line, innermost first, each with its
+  -- extent so far (`InlineBox`), and their backgrounds and borders, which go under the text.
+  let mut frames : List (InlineBox.Frame × Computed) := []
+  let mut under : Array Node := #[]
+  -- On a line reordered by bidi an inline box may be in pieces: its words paint its
+  -- background, and its box is the extent of all of them.
+  let reordered := !dirs.isEmpty
+  -- The box of an inline box on this line and its decorations: the content area of its
+  -- font with its padding and borders (CSS 2.1 §10.6.1), the side borders only where the
+  -- box starts or ends on this line.
+  let fragment := fun (f : InlineBox.Frame) (s : Computed) (ended : Bool) =>
+    let b := s.borderEdges
+    let scale := s.fontSize/font.unitsPerEm
+    let top := y+ascent-font.ascent*scale-s.padding.top-b.top
+    let height := (font.ascent+font.descent)*scale+s.padding.top+s.padding.bottom+b.top+b.bottom
+    let left := LU.toPx f.lo
+    let width := LU.toPx (f.hi-f.lo)
+    -- most inline boxes have nothing to paint
+    let nodes := if (s.background.isNone || reordered) && s.borderStyle == .none then #[] else
+      decorations f.id {s with background := if reordered then none else s.background,
+                               borderWidth := {s.borderWidth with left := if f.start then s.borderWidth.left else 0,
+                                                                  right := if ended then s.borderWidth.right else 0}}
+        left top width height
+    ((⟨f.id,left,top,width,height⟩ : Box),nodes)
   for k in [0:items.size] do
     let (offset,item) := items[k]!
     let rtl := dirs[k]?.getD none
+    -- what the item covers of the line, for the inline boxes it is in
+    let mut extent : Option (Float × Float) := none
     match item with
     | .word source s text start =>
       let top := y+ascent-font.ascent*s.fontSize/font.unitsPerEm
       let leading := lineLeading font s
-      if s.background.isSome then
+      if reordered && s.background.isSome then
         out := {out with nodes := out.nodes ++ textBackground font source s (x+offset) top (← itemWidth font rtl item)}
       match ← font.word s text rtl with
       | none =>
@@ -673,6 +716,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
           ({index := c.toNat, x := x+offset+Float.ofNat i*advance, y := top, advance, clusterStart := start+i, clusterEnd := start+i+1} : Glyph)
         let run : GlyphRun := ⟨source,font.family,s.fontSize,text,glyphs⟩
         out := {out with nodes := out.nodes ++ glyphNodes font run s, runs := out.runs.push run, boxes := out.boxes.push ⟨source,x+offset,top-leading,advance*Float.ofNat chars.length,s.lineHeight⟩}
+        extent := some (x+offset,x+offset+advance*Float.ofNat chars.length)
       | some word =>
         let scale := s.fontSize/word.unitsPerEm
         let width := word.advance*s.fontSize/font.unitsPerEm
@@ -680,12 +724,14 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
           ({index := glyph.index,x := x+offset+glyph.x*scale,y := top+glyph.y*scale, advance := glyph.advance*scale,clusterStart := start+glyph.clusterStart,clusterEnd := start+glyph.clusterEnd} : Glyph)
         let run : GlyphRun := ⟨source,font.family,s.fontSize,text,glyphs⟩
         out := {out with nodes := out.nodes ++ shapedNodes word run s (x+offset) (y+ascent) width, runs := out.runs.push run,boxes := out.boxes.push ⟨source,x+offset,top-leading,width,s.lineHeight⟩}
+        extent := some (x+offset,x+offset+width)
     | .space source s =>
       let advance ← spaceWidth font s
       let leading := lineLeading font s
       let top := y+ascent-font.ascent*s.fontSize/font.unitsPerEm-leading
-      out := {out with nodes := out.nodes ++ textBackground font source s (x+offset) (top+leading) advance,
+      out := {out with nodes := if reordered then out.nodes ++ textBackground font source s (x+offset) (top+leading) advance else out.nodes,
                        boxes := out.boxes.push ⟨source,x+offset,top,advance,s.lineHeight⟩}
+      extent := some (x+offset,x+offset+advance)
       if s.underline && s.visible then
         let thickness := max 1 (s.fontSize/14)
         out := {out with nodes := out.nodes.push (.paint ⟨some source,{geometry := .rect (x+offset) (y+ascent+thickness) advance thickness,style := {fill := .solid (s.decorationColor.getD s.color)}}⟩)}
@@ -699,7 +745,8 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
       let m := s.margin
       out := {out with nodes := out.nodes.push (.group none (translate (x+offset) top) nodes),
                        boxes := out.boxes.push ⟨source,x+offset+m.left,top+m.top,width-m.left-m.right,height-m.top-m.bottom⟩}
-    | .atomic _ s _ height inner =>
+      extent := some (x+offset,x+offset+width)
+    | .atomic _ s width height inner =>
       let top := match s.verticalAlign with
         | .baseline => y+ascent-height
         | .middle => y+ascent-s.fontSize/4-height/2
@@ -709,9 +756,32 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
       -- `inner` holds the border box of the inline-block first, then its content boxes.
       out := {out with nodes := out.nodes ++ moved.nodes, runs := out.runs ++ moved.runs, boxes := out.boxes ++ moved.boxes,
                        pending := out.pending ++ moved.pending, work := out.work+moved.work, rough := out.rough || moved.rough}
+      extent := some (x+offset,x+offset+width)
     | .outOfFlow source => out := {out with pending := out.pending.push {id := source, x := x+offset, y}}
+    | .openInline id s continued =>
+      let edge := x+offset+(if continued then 0 else s.margin.left)
+      frames := (InlineBox.Frame.opened id (LU.ofPx edge) (LU.ofPx (s.borderEdges.left+s.padding.left)) (!continued),s) :: frames
+    | .closeInline _ s =>
+      match frames with
+      | (f,fs) :: rest =>
+        let f := f.close (LU.ofPx (x+offset)) (LU.ofPx (s.padding.right+s.borderEdges.right))
+        let (box,nodes) := fragment f fs true
+        out := {out with boxes := out.boxes.push box}
+        under := under ++ nodes
+        frames := InlineBox.merge rest f (LU.ofPx fs.margin.left) (LU.ofPx fs.margin.right) true
+      | [] => pure ()
     | _ => pure ()
-  return out
+    if let some (a,b) := extent then frames := InlineBox.place frames (LU.ofPx a) (LU.ofPx b)
+  -- The inline boxes still open go on to the next line: their boxes here have no right edge.
+  for _ in [0:frames.length] do
+    match frames with
+    | (f,fs) :: rest =>
+      let (box,nodes) := fragment f fs false
+      out := {out with boxes := out.boxes.push box}
+      under := under ++ nodes
+      frames := InlineBox.merge rest f (LU.ofPx fs.margin.left) 0 false
+    | [] => break
+  return if under.isEmpty then out else {out with nodes := under ++ out.nodes}
 
 private def appendResult (a b : Result) : Result :=
   {nodes := a.nodes ++ b.nodes, boxes := a.boxes ++ b.boxes, runs := a.runs ++ b.runs, height := a.height+b.height,
@@ -732,7 +802,7 @@ private def bidiChars : Inline → Array Char
   | .lineBreak _ => #[' ']
   | .replaced .. | .atomic .. => #['￼']
   | .bidiMark c => #[c]
-  | .openAtomic _ _ | .closeAtomic | .outOfFlow _ => #[]
+  | .openAtomic _ _ | .closeAtomic | .outOfFlow _ | .openInline .. | .closeInline .. => #[]
 
 /-- A class that makes a block take the bidi path: right-to-left letters, Arabic
 digits and the explicit formatting characters. -/
@@ -807,7 +877,7 @@ def bidiLine (line : Array (Float × Inline)) (levels paras : Array Nat) (lineEn
   for q in [0:n] do
     let j := n-1-q
     match line[j]!.2 with
-    | .space _ _ | .lineBreak _ | .bidiMark _ => ls := ls.set! j (paras[j]?.getD 0)
+    | .space _ _ | .lineBreak _ | .bidiMark _ | .openInline .. | .closeInline .. => ls := ls.set! j (paras[j]?.getD 0)
     | _ => break
   let order := Unicode.reorderByLevels (Array.range n) ls
   let width := fun (j : Nat) => (if j+1 < n then line[j+1]!.1 else lineEnd) - line[j]!.1
@@ -817,6 +887,17 @@ def bidiLine (line : Array (Float × Inline)) (levels paras : Array Nat) (lineEn
     xs := xs.set! j pen
     pen := pen+width j
   return ((Array.range n).map fun j => (xs[j]!, line[j]!.2), ls.map fun l => some (l % 2 == 1))
+
+/-- The starts of inline boxes `starts` (index, node, style) placed on a line at `cursor`,
+one after the other: each takes the room of its left margin, border and padding. -/
+private def placeStarts (starts : Array (Nat × Nat × Computed)) (line : Array (Float × Inline)) (lineIdx : Array Nat)
+    (cursor : Float) : Array (Float × Inline) × Array Nat × Float :=
+  starts.foldl (fun (acc : Array (Float × Inline) × Array Nat × Float) (st : Nat × Nat × Computed) =>
+    (acc.1.push (acc.2.2,.openInline st.2.1 st.2.2 false),acc.2.1.push st.1,acc.2.2+inlineLead st.2.2)) (line,lineIdx,cursor)
+
+/-- The start of a new line inside the inline boxes `open`: each goes on, with no edge. -/
+private def continuedStarts (open_ : Array (Nat × Nat × Computed)) : Array (Float × Inline) × Array Nat :=
+  if open_.isEmpty then (#[],#[]) else (open_.map fun st => (0,.openInline st.2.1 st.2.2 true),open_.map (·.1))
 
 /-- Word wrapping constructs line participants first. The font profile and
 positioned glyph runs are consumed to paint the actual word geometry. With bidi
@@ -857,9 +938,34 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
   let mut pendingK : Nat := 0
   let mut line : Array (Float × Inline) := #[]
   let mut lineIdx : Array Nat := #[]
+  -- Inline boxes: those that have begun and not ended (index of the start, node, style),
+  -- which a new line continues; those whose start waits for the item it begins with, so
+  -- that a start and its edge are never left at the end of a line.
+  let mut openBoxes : Array (Nat × Nat × Computed) := #[]
+  let mut waiting : Array (Nat × Nat × Computed) := #[]
+  -- The line has something that gives it height (CSS 2.1 §9.4.2: a line with only empty
+  -- inline boxes that have no margin, border or padding is as if it were not there), or
+  -- an inline box that starts on it.
+  let mut content := false
+  let mut fresh := false
   for k in [0:items.size] do
     let item := items[k]!
     match item with
+    | .openInline id s _ => waiting := waiting.push (k,id,s)
+    | .closeInline _ s =>
+      -- An inline box with nothing in it starts here too.
+      if !waiting.isEmpty then
+        (line,lineIdx,cursorX) := placeStarts waiting line lineIdx cursorX
+        if waiting.any fun (_,_,ws) => inlineLead ws != 0 then content := true
+        openBoxes := openBoxes ++ waiting
+        waiting := #[]
+        fresh := true
+      line := line.push (cursorX,item)
+      lineIdx := lineIdx.push k
+      let trail := inlineTrail s
+      cursorX := cursorX+trail
+      if trail != 0 then content := true
+      openBoxes := openBoxes.pop
     | .space source s =>
       if s.preformatted then
         -- A preserved space is placed where it stands, and lines do not wrap.
@@ -872,6 +978,7 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
         lineIdx := lineIdx.push k
         cursorX := cursorX+(← spaceWidth font s)
         pendingSpace := none
+        content := true
       else
         pendingSpace := some (source,s)
         pendingK := k
@@ -884,6 +991,7 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
         else pure 0
       line := line.push (cursorX+gap,item)
       lineIdx := lineIdx.push k
+      content := true
     | .bidiMark _ =>
       -- No width and no break: a space before it is placed first, to keep logical order.
       if let some (source,s) := pendingSpace then
@@ -894,18 +1002,26 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
         pendingSpace := none
       line := line.push (cursorX,item)
       lineIdx := lineIdx.push k
+      content := true
     | .lineBreak _ =>
+      if !waiting.isEmpty then
+        (line,lineIdx,cursorX) := placeStarts waiting line lineIdx cursorX
+        openBoxes := openBoxes ++ waiting
+        waiting := #[]
       let (row,dirs) := place (line.push (cursorX,item)) (lineIdx.push k) cursorX
       let row ← lineLayout font row (x+indent cursorX out.height) (y+out.height) strut dirs
       out := appendResult out {row with height := if row.height > 0 then row.height else 19.2}
-      line := #[]
-      lineIdx := #[]
+      (line,lineIdx) := continuedStarts openBoxes
       cursorX := 0
       pendingSpace := none
+      content := false
+      fresh := false
     | _ =>
       let width ← itemWidth font (dirOf k) item
+      -- The item goes on a line with the starts of the inline boxes it begins.
+      let lead := if waiting.isEmpty then 0 else waiting.foldl (fun w (_,_,ws) => w+inlineLead ws) 0
       -- The pieces of a word cut by bidi levels go on one line together.
-      let mut whole := width
+      let mut whole := width+lead
       if bidi && !glued k then
         let mut j := k+1
         for _ in [0:items.size] do
@@ -920,22 +1036,29 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
       if cursorX > 0 && cursorX+gap+whole > (band out.height).2 && !preformatted item && !glued k then
         let (row,dirs) := place line lineIdx cursorX
         out := appendResult out (← lineLayout font row (x+indent cursorX out.height) (y+out.height) strut dirs)
-        line := #[]
-        lineIdx := #[]
+        (line,lineIdx) := continuedStarts openBoxes
         cursorX := 0
+        fresh := false
       else
         if gap > 0 then
           if let some (source,s) := pendingSpace then
             line := line.push (cursorX,.space source s)
             lineIdx := lineIdx.push pendingK
         cursorX := cursorX+gap
+      if !waiting.isEmpty then
+        (line,lineIdx,cursorX) := placeStarts waiting line lineIdx cursorX
+        openBoxes := openBoxes ++ waiting
+        waiting := #[]
+        fresh := true
       line := line.push (cursorX,item)
       lineIdx := lineIdx.push k
       cursorX := cursorX+width
       pendingSpace := none
-  if !line.isEmpty then
+      content := true
+  if !line.isEmpty && (content || fresh) then
     let (row,dirs) := place line lineIdx cursorX
-    out := appendResult out (← lineLayout font row (x+indent cursorX out.height) (y+out.height) strut dirs)
+    let row ← lineLayout font row (x+indent cursorX out.height) (y+out.height) strut dirs
+    out := appendResult out (if content then row else {row with height := 0})
   return out
 
 private def append (a b : Result) : Result :=
@@ -2002,6 +2125,20 @@ def linkRegionOf (dom : Dom) (styles : Array Computed) (clips : Std.TreeMap Nat 
       if right > left && bottom > top then some ⟨source,href,left,top,right-left,bottom-top⟩ else none
     else none
 
+/-- An element whose boxes are those of an inline box, one on each line that holds part
+of it (`Inline.openInline`): an inline element that is not replaced. -/
+def isInlineBox (dom : Dom) (styles : Array Computed) (id : Nat) : Bool :=
+  let n := dom.get id
+  n.type == .element && ((styles[id]?).map (·.display == .inline)).getD false &&
+    !["img","br","canvas","video"].contains n.lname && n.ns != some DOM.svgNS
+
+/-- The boxes that link regions are cut from: the boxes of text, of replaced elements and
+of block-level and atomic boxes. The box of an inline box is left out: what is inside it
+has boxes of its own, so a link has a region for each piece of its content, as it had
+before inline boxes had boxes. -/
+def linkSources (dom : Dom) (styles : Array Computed) (boxes : Array Box) : Array Box :=
+  boxes.filter fun b => !isInlineBox dom styles b.source
+
 /-- Link fragments come from the same visible layout boxes as glyphs and
 replaced elements. Collapsed spaces produce boxes only when retained on a line.
 In box order, one region per box at most (`LinkTheorems.mem_linkRegions`). -/
@@ -2052,7 +2189,7 @@ def renderStyled (dom : Dom) (computed : Array Computed) (font : FontProfile) (e
   -- Links are kept down to the foot of the document, not the viewport: a host that scrolls
   -- a band of the page with no new layout (the Hub, issue 1268) hit-tests links below the
   -- first screen with this list.
-  let links := linkRegions dom styles result.boxes (Float.ofNat width) (linkHeight vh result.height)
+  let links := linkRegions dom styles (linkSources dom styles result.boxes) (Float.ofNat width) (linkHeight vh result.height)
   if links.size > 49152 || links.any (fun link => link.href.utf8ByteSize > 2048) then
     throw "unsupported link region count or href exceeding 2048 UTF-8 bytes"
   return (⟨width,height,⟨1,1,0,0,0,0,Float.ofNat width,Float.ofNat height⟩, result.nodes.toList,result.runs,links⟩,result.boxes)

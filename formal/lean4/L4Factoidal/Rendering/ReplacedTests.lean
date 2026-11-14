@@ -144,9 +144,10 @@ private def firstFill (html extra : String) : Except String (Option (Float × Fl
 -- The body then paints no background of its own: one rectangle, then the glyph.
 #guard (render "<p>A</p>" "body{background:red}").map (·.1.tree.length) == .ok 2
 
--- An inline element's background is drawn behind its text: one rectangle per word.
+-- An inline element's background is drawn behind its text: one rectangle for its box on
+-- the line, under the two glyphs.
 #guard (render "<p><span style='background:red'>A B</span></p>" "").map (fun r =>
-  (r.1.tree.flatMap (fun n => n.lower identity [])).length) == .ok 5
+  (r.1.tree.flatMap (fun n => n.lower identity [])).length) == .ok 3
 
 -- A margin on inline SVG moves it; it no longer refuses the page.
 #guard (boxes "<div><svg id='s' width='10' height='10' style='margin:4px'></svg></div>").map (·.head?) == .ok (some ("s",4,4,10,10))

@@ -111,7 +111,7 @@ theorem renderStyled_links {dom : Dom} {computed : Array Computed} {font : FontP
     ∃ (styles : Array Computed) (result : Result),
       layoutRoot dom styles font embedding pictures (Float.ofNat width) (Float.ofNat height) = .ok result ∧
       boxes = result.boxes ∧
-      scene.links = linkRegions dom styles boxes (Float.ofNat width)
+      scene.links = linkRegions dom styles (linkSources dom styles boxes) (Float.ofNat width)
         (linkHeight (Float.ofNat height) result.height) := by
   unfold renderStyled at ok
   split at ok
@@ -139,7 +139,7 @@ theorem render_links {dom : Dom} {rules : List CSS.Rule} {font : FontProfile} {e
     ∃ (tree : Dom) (styles : Array Computed) (result : Result),
       layoutRoot tree styles font embedding pictures (Float.ofNat width) (Float.ofNat height) = .ok result ∧
       (∀ box ∈ boxes, box ∈ result.boxes) ∧
-      scene.links = linkRegions tree styles result.boxes (Float.ofNat width)
+      scene.links = linkRegions tree styles (linkSources tree styles result.boxes) (Float.ofNat width)
         (linkHeight (Float.ofNat height) result.height) := by
   unfold render at ok
   obtain ⟨made, -, ok⟩ := bind_ok ok
@@ -151,8 +151,15 @@ theorem render_links {dom : Dom} {rules : List CSS.Rule} {font : FontProfile} {e
   rw [← same]
   exact (Array.mem_filter.mp mem).1
 
+/-- A box that link regions are cut from is a box of the layout, and not the box of an
+inline box. -/
+theorem mem_linkSources {dom : Dom} {styles : Array Computed} {boxes : Array Box} {box : Box} :
+    box ∈ linkSources dom styles boxes ↔ box ∈ boxes ∧ isInlineBox dom styles box.source = false := by
+  simp [linkSources, Array.mem_filter]
+
 /-- **`render` with every link of the document.** For a scene that `render` answers, a box
-of its layout in an anchor, visible, not empty once clipped, inside the viewport's width
+of its layout in an anchor (the box of text, of a replaced element, of a block or an
+atomic box: `linkSources`), visible, not empty once clipped, inside the viewport's width
 and ending at or above the foot of that layout (`result.height`) has a region in the
 scene's links, at any viewport height. -/
 theorem render_link_complete {dom : Dom} {rules : List CSS.Rule} {font : FontProfile}
@@ -162,9 +169,9 @@ theorem render_link_complete {dom : Dom} {rules : List CSS.Rule} {font : FontPro
     ∃ (tree : Dom) (styles : Array Computed) (result : Result),
       layoutRoot tree styles font embedding pictures (Float.ofNat width) (Float.ofNat height) = .ok result ∧
       (∀ box ∈ boxes, box ∈ result.boxes) ∧
-      ∀ box ∈ result.boxes, ∀ (c : Box) (source : Nat) (href : String),
+      ∀ box ∈ linkSources tree styles result.boxes, ∀ (c : Box) (source : Nat) (href : String),
         anchorAncestor tree (tree.size+1) box.source = some (source,href) →
-        c = linkBox tree styles result.boxes box →
+        c = linkBox tree styles (linkSources tree styles result.boxes) box →
         (styles[box.source]!).visible = true → 0 < c.width → 0 < c.height →
         max 0 c.x < min (Float.ofNat width) (c.x+c.width) →
         max 0 c.y < c.y+c.height → c.y+c.height ≤ result.height →
