@@ -174,6 +174,8 @@ comment has its "Says" and "Does not say"):
 - Sorted records: `insert_sorted`, `erase_sorted`, `find_insert_self`, `find_erase_self`.
 - Cursor: `walk_eq_filter` (a cursor run from no position visits exactly the records in its range, each once,
   in key order), `walkRev_eq_filter` (descending for `prev`).
+- Exception order of finished transactions' handles: `reqGuard_ended_deleted`, `reqGuard_ended_inactive`,
+  `schemaGuard_ended_upgrade` ("has been deleted" before "not active"; "not active" before the name checks).
 - Transactions: `run_effect`, `op_dbs` (every command but `pump` leaves the databases as they were: what an
   aborted transaction did was never in them), `effect_none`, `commit_visible` (a later transaction reads what
   was committed), `commit_other_store`, `effect_other_db`, `commit_last_wins` (commit order).
@@ -229,6 +231,15 @@ Open:
 - Timing is not covered by any theorem here.
 - No risk token (`skills/lean-risk-flags`) is taken: nothing here is crypto, and no fallback path exists (an
   engine without the ops leaves the globals undefined).
+
+## Transaction activity and promise jobs
+
+HTML runs a microtask checkpoint after each event listener callback, so the jobs a listener queues (the
+continuation of an `await` on a request) run while the transaction is still active. The page side has no
+synchronous checkpoint, so after dispatching an event of a transaction it tells Lean `done` (inactive) only
+after eight promise-job hops: a continuation queued by a listener, and continuations up to eight jobs deep,
+run first; a timer callback queued by a listener runs after, with the transaction inactive. The exact
+statement (inactive after the checkpoint, whatever its depth) is open.
 
 ## Performance
 
