@@ -405,7 +405,11 @@ async function main() {
     return prepareHTML(lean,indexURL,undefined,undefined,{liberal});
   }),width=1280,height=800;
   // The first compile runs in the worker too: it warms the worker, and no frame is compiled on the main thread.
-  let frame:HTMLArtifact=await document.compile(width,height);
+  // It is not shown (the window's size is not known yet), so it asks for no CPU probe, as an
+  // interactive frame asks for none: the probe draws the page's SVG on the CPU, 9 s of the 14 s
+  // to the first frame of a page with a dozen inline icons. Runs that check every frame keep it.
+  const firstView:PageView&{checks?:boolean}=check||checkAll||(!idleChecksOnly&&(!!sweep||!!commands))?{}:{checks:false};
+  let frame:HTMLArtifact=await document.compile(width,height,firstView);
   console.log(JSON.stringify({type:"native-html-loaded",url:document.url,primitives:frame.primitiveCount,links:frame.webRender.links.length,width,height}));
   if(check){
     // Synthetic limits exercise only the published planner ABI. Window rendering
