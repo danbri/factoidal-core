@@ -168,6 +168,24 @@ private def pageT := "<div class=a><p id=t class=b>x</p></div>"
 -- user agent's margins, which are not declarations, so they stand where CSS says 0)
 #guard marginOf pageT "p { margin: 3px } #t { margin: var(--none) }" == some [8, 0, 8, 0]
 #guard marginOf pageT "p { margin: calc(1px + 2px) 0 }" == some [3, 0, 3, 0]
+-- flow-relative properties (CSS Logical 1): one cascade with the physical ones, by direction
+private def paddingOf (html css : String) : Option (List Float) :=
+  (styleAt html css).map fun s => [s.padding.top, s.padding.right, s.padding.bottom, s.padding.left]
+#guard marginOf pageT "p { margin: 0; margin-inline-start: 5px; margin-block-end: 7px }" == some [0, 0, 7, 5]
+#guard marginOf "<div dir=rtl><p id=t>x</p></div>" "p { margin: 0; margin-inline-start: 5px }" == some [0, 5, 0, 0]
+#guard marginOf pageT "p { margin: 0; direction: rtl; margin-inline-start: 5px }" == some [0, 5, 0, 0]
+#guard marginOf pageT "p { margin: 0; margin-inline: 5px 6px; margin-block: 1px }" == some [1, 6, 1, 5]
+#guard marginOf pageT "p { margin-inline-start: 5px; margin-left: 9px; margin-top: 0; margin-bottom: 0 }" == some [0, 0, 0, 9]
+#guard marginOf pageT "p { margin-left: 9px; margin-inline-start: 5px; margin-top: 0; margin-bottom: 0 }" == some [0, 0, 0, 5]
+#guard marginOf pageT "#t { margin-left: 9px } p { margin: 0; margin-inline-start: 5px }" == some [0, 0, 0, 9]
+#guard marginOf pageT ":root { --m: 5px 6px } p { margin: 0; margin-inline: var(--m) }" == some [0, 6, 0, 5]
+#guard paddingOf pageT "p { padding-inline: 3px; padding-block-start: 2px }" == some [2, 3, 0, 3]
+#guard paddingOf "<p id=t style='padding-inline-end: 4px'>x</p>" "" == some [0, 4, 0, 0]
+#guard widthOf pageT "p { inline-size: 10px }" == some 10
+#guard widthOf pageT "p { inline-size: 10px; width: 20px }" == some 20
+#guard widthOf pageT "p { width: 20px; inline-size: 10px }" == some 10
+#guard (styleAt pageT "p { block-size: 10px; max-inline-size: 30px }").map (fun s => (reprStr s.height, reprStr s.maxWidth)) ==
+  (styleAt pageT "p { height: 10px; max-width: 30px }").map (fun s => (reprStr s.height, reprStr s.maxWidth))
 -- a page with no custom property has no map
 #guard (styleAt pageT "p { width: 10px }").map (·.vars.isEmpty) == some true
 #guard (styleAt pageT ":root { --a: 1 } p { width: 10px }").map (·.vars.toList) == some [("--a", "1")]

@@ -4,6 +4,7 @@ import L4Factoidal.Unicode.Bidi
 import L4Factoidal.Rendering.MediaQuery
 import L4Factoidal.Rendering.CssValues.Properties
 import L4Factoidal.Rendering.FlexStyle
+import L4Factoidal.Rendering.CssValues.Logical
 import L4Factoidal.Rendering.SheetReader
 import L4Factoidal.Rendering.CssVars
 import L4Factoidal.DOM.Selectors
@@ -230,6 +231,10 @@ structure Rule where
   no such rule matches (and whose `style` attribute has none) skips the substitution step
   of `computedFrom`. -/
   usesVars : Bool := false
+  /-- A declaration of the rule may be for a flow-relative property (`margin-inline-start`,
+  `inline-size`; `CssValues.Logical.mentions`): an element that no such rule matches
+  skips the mapping to physical properties in `computedFrom`. -/
+  usesLogical : Bool := false
   deriving Repr
 
 def attrValue (n : DOM.Node) (key : String) : String :=
@@ -406,44 +411,59 @@ private def selector (s : String) : Except String Selector :=
   | .ok sel => .ok sel
   | .error _ => complexSelector s
 
-private def expandEdges (key value : String) (important : Bool) : Except String (List Declaration) := do
-  -- the component values: `calc(1px + 2px)` and `var(--a, 1px 2px)` are one each
-  let values ← match SheetReader.splitWords value with
-    | [a] => pure [a,a,a,a]
-    | [a,b] => pure [a,b,a,b]
-    | [a,b,c] => pure [a,b,c,b]
-    | [a,b,c,d] => pure [a,b,c,d]
-    | _ => throw "CSS edge shorthand requires one to four values"
-  return (["top","right","bottom","left"].zip values).map fun (side,v) =>
-    ⟨key ++ "-" ++ side,v,important⟩
+/-- The longhands that a side shorthand read by this profile sets, in the order of its
+values: the four sides of `margin`, `padding` and `inset`, the two sides of a
+flow-relative shorthand of one axis (`margin-block`, `padding-inline`, `inset-block`;
+`CssValues.Logical.pair`). Empty for any other property. -/
+def sidesOf (property : String) : List String :=
+  if property == "margin" || property == "padding" then ["top","right","bottom","left"].map (property ++ "-" ++ ·)
+  else if property == "inset" then ["top","right","bottom","left"]
+  else match CssValues.Logical.pair property with
+    | some (a, b) => [a, b]
+    | none => []
+
+/-- The longhand declarations of a side shorthand: one to four values for four sides (CSS
+Box 4 §3.2), one or two for the two sides of an axis (CSS Logical 1 §4.2). The values are
+the component values: `calc(1px + 2px)` and `var(--a, 1px 2px)` are one each. Empty when
+the property is not a side shorthand or the number of values is not one it takes. -/
+def expandSides (property value : String) (important : Bool) : List Declaration :=
+  let names := sidesOf property
+  let each := match names.length, SheetReader.splitWords value with
+    | 4, [a] => [a,a,a,a]
+    | 4, [a,b] => [a,b,a,b]
+    | 4, [a,b,c] => [a,b,c,b]
+    | 4, [a,b,c,d] => [a,b,c,d]
+    | 2, [a] => [a,a]
+    | 2, [a,b] => [a,b]
+    | _, _ => []
+  (names.zip each).map fun (name, v) => ⟨name,v,important⟩
 
 /-- The declarations of this profile for declarations as written (`SheetReader.Decl`):
-`margin` and `padding` as their four sides, `background` as the colour, the layout
+side shorthands as their longhands (`expandSides`), `background` as the colour, the layout
 shorthands (`flex`, `flex-flow`, `gap`, `place-*`) as their longhands, so the cascade
 orders them. -/
 def declarationsOf (ds : List SheetReader.Decl) : List Declaration :=
   ds.foldr (fun d acc =>
     let key := if d.name == "background" then "background-color" else d.name
-    -- a `margin` or `padding` that mentions `var()` is kept whole: its sides are known
-    -- only after substitution (`computedFrom`)
-    if (key == "margin" || key == "padding") && !CssVars.mentions d.value then
-      (expandEdges key d.value d.important).toOption.getD [] ++ acc
+    let whole : Declaration := ⟨key,d.value,d.important⟩
+    -- a side shorthand that mentions `var()` is kept whole: its sides are known only
+    -- after substitution (`computedFrom`)
+    if (key == "margin" || key == "padding" || key == "inset" || CssValues.Logical.mentions key) &&
+        !CssVars.mentions d.value then
+      match expandSides key d.value d.important with
+      | [] => if key == "margin" || key == "padding" then acc else whole :: acc
+      | sides => sides ++ acc
     else match layoutShorthand key d.value with
       | some longhands => longhands.map (fun (k,v) => (⟨k,v,d.important⟩ : Declaration)) ++ acc
-      | none => ⟨key,d.value,d.important⟩ :: acc) []
+      | none => whole :: acc) []
 
 /-- A declaration that is a custom property or mentions `var()`. -/
 def Declaration.usesVars (d : Declaration) : Bool :=
   d.property.startsWith "--" || CssVars.mentions d.value
 
-/-- The four sides of `margin` and `padding`, for a declaration of the shorthand kept
-whole (one that mentions `var()`). -/
-def edgeSides (property : String) : List String :=
-  ["top","right","bottom","left"].map (property ++ "-" ++ ·)
-
 /-- A winning declaration with its `var()` references replaced by the element's custom
-properties, as the declaration of longhand `key`: a `margin` or `padding` kept whole gives
-its side `key` after substitution. `none`: invalid at computed-value time (CSS Variables 1
+properties, as the declaration of longhand `key`: a side shorthand kept whole (`sidesOf`)
+gives its side `key` after substitution. `none`: invalid at computed-value time (CSS Variables 1
 §3.1), so the property is as if not declared. -/
 def substituted (vars : CssVars.Vars) (key : String) (d : Declaration) : Option Declaration :=
   if !CssVars.mentions d.value then (if d.property == key then some d else none)
@@ -451,7 +471,7 @@ def substituted (vars : CssVars.Vars) (key : String) (d : Declaration) : Option 
     | none => none
     | some value =>
       if d.property == key then some {d with value}
-      else ((expandEdges d.property value d.important).toOption.getD []).find? (·.property == key)
+      else (expandSides d.property value d.important).find? (·.property == key)
 
 /-- A declaration with no `var()` is not changed by substitution. -/
 theorem substituted_plain (vars : CssVars.Vars) (d : Declaration) (h : CssVars.mentions d.value = false) :
@@ -500,7 +520,9 @@ def ruleOfLeaf (leaf : SheetReader.Leaf) : Option Rule :=
   else match (splitTopCommas leaf.prelude).mapM selector with
     | .ok selectors =>
       let declarations := declarationsOf leaf.decls
-      some {selectors, declarations, layer := leaf.rank, usesVars := declarations.any (·.usesVars)}
+      let usesVars := declarations.any (·.usesVars)
+      let usesLogical := declarations.any fun d => CssValues.Logical.mentions d.property
+      some {selectors, declarations, layer := leaf.rank, usesVars, usesLogical}
     | .error _ => none
 
 /-- The rules of a sheet, each with the query lists of the `@media` rules it is in, before
@@ -1380,6 +1402,32 @@ theorem inlineKey_wins (important : Bool) (layer : Nat) (sp : Nat × Nat × Nat)
     lexLE (ruleKey important 1 false layer sp n) (inlineKey important n') = true := by
   cases important <;> simp [ruleKey, inlineKey, lexLE]
 
+/-- The winning declarations of an element with those of flow-relative properties under
+the physical names they stand for in `flow` (CSS Logical 1 §4.1): of the two declarations
+for one physical property, the one with the greater cascade key stands. A list with no
+flow-relative name is not changed. -/
+def physicalWinners (flow : CssValues.Logical.Flow) (chosen : List (String × List Nat × Declaration)) :
+    List (String × List Nat × Declaration) :=
+  let logicals := chosen.filter fun e => (CssValues.Logical.physical flow e.1).isSome
+  if logicals.isEmpty then chosen else
+  let others : Std.TreeMap String (List Nat × Declaration) :=
+    chosen.foldl (fun m (k, v) => if (CssValues.Logical.physical flow k).isSome then m else m.insert k v) {}
+  (logicals.foldl (fun m (key, priority, d) =>
+    match CssValues.Logical.physical flow key with
+    | none => m
+    | some name =>
+      if (m.get? name).all (fun old => lexLE old.1 priority) then m.insert name (priority, {d with property := name})
+      else m) others).toList
+
+/-- Winners with no flow-relative name are what they were. -/
+theorem physicalWinners_plain (flow : CssValues.Logical.Flow) (chosen : List (String × List Nat × Declaration))
+    (h : ∀ e ∈ chosen, CssValues.Logical.physical flow e.1 = none) : physicalWinners flow chosen = chosen := by
+  have : (chosen.filter fun e => (CssValues.Logical.physical flow e.1).isSome) = [] := by
+    apply List.filter_eq_nil_iff.mpr
+    intro e he
+    simp [h e he]
+  simp [physicalWinners, this]
+
 /-- The user agent style sheet of this profile: HTML §15.3.4 (phrasing content:
 hyperlink colours and underline) and §15.5.4 (the `button` element as an
 inline-block with a raised border, sunken while it is `:active`). The colours are
@@ -1844,27 +1892,35 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
   let mut order : Nat := 0
   -- a matched rule or the `style` attribute has a custom property or a `var()`
   let mut usesVars := false
+  -- a matched rule or the `style` attribute may have a flow-relative property
+  let mut usesLogical := false
   for (origin,rule,matched) in matched do
     let specificity := matched.foldl (fun m s => if lexLE [m.1,m.2.1,m.2.2] [s.specificity.1,s.specificity.2.1,s.specificity.2.2] then s.specificity else m) (0,0,0)
     let onlyVisited := matched.all (·.visitedDependent)
     if rule.usesVars then usesVars := true
+    if rule.usesLogical then usesLogical := true
     for d in rule.declarations do
       if !onlyVisited || visitedProperties.contains d.property then
         let key := ruleKey d.important origin rule.scope.isSome rule.layer specificity order
-        if rule.usesVars && (d.property == "margin" || d.property == "padding") then
-          -- a shorthand kept whole (it mentions `var()`) stands for each of its sides
-          for side in edgeSides d.property do
+        -- a side shorthand kept whole (it mentions `var()`) stands for each of its sides
+        let sides := if rule.usesVars && CssVars.mentions d.value then sidesOf d.property else []
+        if sides.isEmpty then
+          if (winners.get? d.property).all (fun old => lexLE old.1 key) then
+            winners := winners.insert d.property (key,d)
+        else
+          for side in sides do
             if (winners.get? side).all (fun old => lexLE old.1 key) then winners := winners.insert side (key,d)
-        else if (winners.get? d.property).all (fun old => lexLE old.1 key) then
-          winners := winners.insert d.property (key,d)
       order := order+1
   for d in ← declarations (attrValue n "style") do
     let key := inlineKey d.important order
     if d.usesVars then usesVars := true
-    if d.property == "margin" || d.property == "padding" then
-      for side in edgeSides d.property do
+    if CssValues.Logical.mentions d.property then usesLogical := true
+    let sides := if CssVars.mentions d.value then sidesOf d.property else []
+    if sides.isEmpty then
+      if (winners.get? d.property).all (fun old => lexLE old.1 key) then winners := winners.insert d.property (key,d)
+    else
+      for side in sides do
         if (winners.get? side).all (fun old => lexLE old.1 key) then winners := winners.insert side (key,d)
-    else if (winners.get? d.property).all (fun old => lexLE old.1 key) then winners := winners.insert d.property (key,d)
     order := order+1
   let mut result := initial
   let mut chosen := winners.toList
@@ -1877,6 +1933,17 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     result := {result with vars}
     chosen := chosen.filterMap fun (key,(priority,d)) =>
       if key.startsWith "--" then none else (substituted vars key d).map fun d' => (key,(priority,d'))
+  if usesLogical then
+    -- CSS Logical 1 §4: a flow-relative property and the physical property it stands for
+    -- in the element's flow are one property in the cascade. This profile lays out
+    -- horizontal lines, so the flow is the element's direction: its own winning
+    -- declaration, else the inherited one or the `dir` attribute.
+    let rtl := match chosen.find? (·.1 == "direction") with
+      | some (_,(_,d)) =>
+        let v := (trim d.value).toLower
+        if v == "rtl" then true else if v == "ltr" then false else initial.direction == .rtl
+      | none => initial.direction == .rtl
+    chosen := physicalWinners {rtl} chosen
   -- Font size precedes line-height and inheritance-sensitive dependent values.
   if let some (_,(_,d)) := chosen.find? (·.1 == "font-size") then result := applyOrKeep result d
   for (key,(priority,d)) in chosen do
