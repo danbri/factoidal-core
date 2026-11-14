@@ -134,12 +134,43 @@ runs the WGSL AST: 5 to 8 WebGL subtests and 53 WebCodecs ones; a design of its 
   8-bit formats. Primaries and transfer characteristics are not converted: an sRGB destination only; a
   Display P3 destination is refused (`NotSupportedError`).
 - An RGBX or BGRX frame keeps 255 in its padding byte (the frame is opaque whatever the page put there).
+- `WebCodecs.Orient` (op 126): a frame's rotation (clockwise quarter turns) then flip (a horizontal
+  mirror), applied to its visible rectangle as packed pixels, for `drawImage(frame)` and
+  `createImageBitmap(frame)`. Each output byte copies the source byte `byteSrc` names; `byteSrc_lt`
+  proves that byte is inside the rectangle's bytes. The frame is drawn at its display size.
+- A `VideoFrame` from a canvas, an `OffscreenCanvas`, an `ImageBitmap` or an image: the source is drawn
+  on a scratch bitmap of its size in Lean's canvas and read back as RGBA (RGBX when `alpha` is
+  `discard`); the timestamp is required for these sources (a `TypeError` without it).
+- Canvas 2D in dedicated workers: `OffscreenCanvas` and the objects of its context are
+  `[Exposed=(Window,Worker)]`; a worker's host keeps its own canvas bitmaps in Lean (`PageCanvas`), so
+  the worker scope keeps those names instead of deleting them.
 
 A `VideoFrame` made from bytes with a `visibleRect` keeps its coded size (the standard's text); one
 WPT subtest (`copyTo from byte data with non-default visibleRect`) expects the coded size to shrink to
 the visible size, and fails here.
 
-## 5. WebCodecs: codecs
+## 5. WebCodecs: audio and codecs
+
+`WebCodecs.Audio` (ops 127 to 131):
+
+- "valid AudioDataInit" and the duration (`initCheck`): frames, channels and the sample rate above zero,
+  enough bytes; the duration `⌊frames × 10⁶ / rate⌋` computed exactly on the rate's mantissa and exponent
+  (the double's bytes, as for a rotation).
+- "Compute Copy Element Count" (`plan`): the RangeErrors of plane index, frame offset and frame count;
+  the elements copied (one channel to a planar destination, all channels to an interleaved one).
+- `copy`: every conversion between the eight `AudioSampleFormat`s. Integer to integer by shifting (exact
+  widening; narrowing drops the low bits); integer to `f32` by the scale `2^(bits-1)`, rounded once to
+  `f32`; `f32` to integer scaled, rounded to nearest and clamped (NaN is silence); `f32` to `f32` copies
+  the bits.
+- The PCM decoders (`pcmDecode`): `pcm-u8`, `pcm-s16`, `pcm-s32` and `pcm-f32` output their samples as
+  they are (interleaved), `pcm-s24` widened to `s32`, `ulaw` and `alaw` expanded to `s16` by G.711. A
+  chunk that is not whole frames is an `EncodingError`. These are the only codecs this engine runs, so
+  `Config.check` answers `supported` for an `AudioDecoder` with one of them and for nothing else.
+
+The page glue keeps the decode queue: each `decode` is a control message that decrements the queue,
+fires `dequeue`, decodes in Lean and calls `output`; `flush` resolves after the messages before it;
+`reset` and `close` drop the messages not yet run and reject pending flushes.
+
 
 `WebCodecs.Config.check` answers `invalid` (a `TypeError`), `unsupported` or `supported` for the four
 codec kinds: the standard's validity rules (an empty codec string, a detached description, zero sizes,
@@ -194,7 +225,14 @@ Axioms: none beyond `propext`, `Classical.choice`, `Quot.sound`; no `sorry`, `na
 | `Named.ofName?_name`, `Named.ofName?_sound` | `WebCodecs.Codec` | the 18 fixed codec names are accepted exactly |
 | `vp9_profile_depth`, `vp9_profile_chroma`, `parseVp9_valid` | `WebCodecs.Codec` | an accepted VP9 string meets the profile constraints |
 | `check_blank`, `check_detached` | `WebCodecs.Config` | an empty codec string or a detached description is invalid for every kind |
-| `check_not_supported` | `WebCodecs.Config` | no configuration is answered as supported (to be narrowed when a codec is added) |
+| `check_supported_pcm` | `WebCodecs.Config` | a configuration is supported only for an `AudioDecoder` whose codec string names a PCM codec (decoded in Lean) |
+| `source_lt`, `byteSrc_lt`, `orient_size` | `WebCodecs.Orient` | every pixel and byte an oriented image copies is inside the source rectangle; the image keeps its size |
+| `source_half_involutive`, `source_flip_involutive` | `WebCodecs.Orient` | a half turn twice, and a mirror twice, show every pixel where it was |
+| `Format.ofName?_name` | `WebCodecs.Audio` | the eight sample format names are read back |
+| `initCheck_refuses` | `WebCodecs.Audio` | an init with no frames, no channels or a rate not above zero is refused |
+| `srcIndex_lt` | `WebCodecs.Audio` | every sample a copy reads lies wholly inside the data, planar or interleaved |
+| `narrow_widen` | `WebCodecs.Audio` | narrowing a widened integer sample gives it back (u8 ↔ s16 ↔ s32) |
+| `ulaw_range`, `alaw_range`, `ulaw_odd`, `alaw_odd` | `WebCodecs.Audio` | all 256 G.711 codes expand into 16 bits; the sign bit only negates (by `decide`) |
 
 **Tested only** (`#guard`, from the WPT cases)
 
@@ -214,8 +252,10 @@ Axioms: none beyond `propext`, `Classical.choice`, `Quot.sound`; no `sorry`, `na
 - No theorem that `exec` generates the error the specification names for each command (it is tested).
 - Framebuffer attachments, `clear`/`readPixels` pixels held by Lean, texture contents: not modelled.
 - Primaries and transfer conversion (sRGB, Display P3, BT.2020 PQ/HLG); 10 and 12-bit conversion.
-- `VideoFrame` from an image, a canvas or an `ImageBitmap`, `drawImage(frame)`, `AudioData`,
-  `ImageDecoder`, serialization and transfer of frames and chunks: not connected yet.
+- `ImageDecoder`, serialization and transfer of frames, chunks and `AudioData`: not connected yet.
+- The values of float sample conversions (`ofFloat`, `toFloat`) are tested against the WPT templates,
+  not proved; their reads are by checked access.
+- A Display P3 destination for `copyTo` and `getImageData`: refused / not converted.
 - Risk flags: none taken. The conversion arithmetic is exact integer arithmetic; no hash, no crypto.
 
 ## 7. Performance
