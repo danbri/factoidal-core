@@ -37,6 +37,7 @@ import L4Factoidal.DOM.FormValidity
 import L4Factoidal.DOM.Focus
 import L4Factoidal.HTML.InnerText
 import L4Factoidal.HTML.Sanitizer
+import L4Factoidal.HTML.TrustedTypes
 
 namespace L4Factoidal.WasmVM.Hosts.Dom
 open L4Factoidal.DOM L4Factoidal.DOM.Range
@@ -478,7 +479,8 @@ and selectedness (`DOM.FormControls.answer`); 187 the range and selection of `se
 (`HTML.TextSelection.answer`); 188 an input's typed value and constraint validation
 (`DOM.FormValidity.answer`); 189 the node that `focus()` focuses (`DOM.Focus.answer`); 191
 the text of `innerText` for collected items (`HTML.InnerText.answer`); 192 the methods of a
-Sanitizer (`HTML.Sanitizer.answer`). One op changes the tree: 193 sanitizes the children of
+Sanitizer (`HTML.Sanitizer.answer`); 194 the decisions of Trusted Types
+(`HTML.TrustedTypes.answer`). One op changes the tree: 193 sanitizes the children of
 node `id` (`sanitizeM`). -/
 def domOpM (id op : Nat) (q : String) : Op String := do
   let xs := nums q
@@ -875,6 +877,8 @@ def domOpM (id op : Nat) (q : String) : Op String := do
       sanitizeM n (safe == "1") (L4Factoidal.HTML.Sanitizer.parseConfig w)
       return ""
     | _ => throw (-2)
+  -- 194: the decisions of Trusted Types for document `id` (`HTML.TrustedTypes.answer`)
+  | 194 => return L4Factoidal.HTML.TrustedTypes.answer d id q
   -- ==== end of domhtml ====
   | _ => throw (-2)
 
