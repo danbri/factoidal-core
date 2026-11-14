@@ -2156,6 +2156,7 @@ L4Factoidal_DOM_Selectors_matchFrom  # (c) DOM.Selectors matching: depth <= maxC
 L4Factoidal_DOM_Selectors_matchComplex  # (c) DOM.Selectors matching: depth <= maxCompounds (1024) per complex selector times maxNesting (32); walks over the tree are loops
 L4Factoidal_DOM_Selectors_matchList  # (c) DOM.Selectors matching: depth <= maxCompounds (1024) per complex selector times maxNesting (32); walks over the tree are loops
 L4Factoidal_DOM_XPathDom_projNode  # (b) DOM XPath: the projection of a DOM tree to the XPath 1.0 data model follows the nesting of the tree, as the evaluator (XPath.Full) does over XML.Node
+L4Factoidal_DOM_XmlSerialize_serializeNode  # (b) XML serialization (DOM Parsing 3.2): one frame for each level of nesting of the DOM tree being serialized
 L4Factoidal_JS_parse*  # (b) the JavaScript parser (formal/lean4/L4Factoidal/JS/Parser.lean): recursive descent, so the depth is the nesting of the script's statements and expressions; statement, argument and element lists are self tail calls; every function has fuel 64 * tokens + 1024
 L4Factoidal_JS_eval*  # (b)(c) the JavaScript evaluator (JS/Interp.lean): depth is the nesting of the script plus the JavaScript call depth, which Heap.maxDepth (400) bounds with a RangeError; loop iterations and statement lists are self tail calls (a loop of 10^6 iterations runs in constant stack)
 L4Factoidal_JS_*Loop  # (b)(c) JavaScript loops (whileLoop, doLoop, forLoop, forInLoop): each iteration is a self tail call; the cycle is the body's evaluation, nesting as L4Factoidal_JS_eval*
