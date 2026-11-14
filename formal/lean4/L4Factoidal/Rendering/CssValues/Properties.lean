@@ -17,6 +17,7 @@ longhands. From it:
 import L4Factoidal.Rendering.CssValues.Grammar
 import L4Factoidal.Rendering.CssValues.Color
 import L4Factoidal.Rendering.CssValues.Data
+import L4Factoidal.Rendering.CssValues.Shapes
 import Std.Data.HashMap
 
 namespace L4Factoidal.Rendering.CssValues
@@ -170,7 +171,13 @@ def canonical (p v : String) : String :=
   match p with
   | "display" => displayCanon v
   | "scale" => if v == "none" then v else scaleCanon v
+  | "rotate" => rotateCanon v
   | _ => v
+
+/-- `canonical`, and for a shape property the shape's canonical form (`shapeValue`):
+`none` when a `path()` in it is not path data, so the value is not one of the property's. -/
+def canonicalValue (p v : String) : Option String :=
+  if shapeProperties.contains p then shapeValue false p v else some (canonical p v)
 
 /-- Whether the values can not be the value of a custom property (CSS Variables 1 §2): a
 bad string or url, an unmatched closing token, or a top-level `;` or `!`. A `{}` block is
@@ -199,7 +206,7 @@ def specified (property value : String) : Option String :=
         | none =>
           if hasSubstitution cvs then some (rawText cvs)
           else if p == "all" then none
-          else (matchText none row.name top).map (canonical p)
+          else (matchText none row.name top).bind (canonicalValue p)
 
 /-- `CSS.supports(property, value)` (CSS Conditional 3 §8.1): the value parses. -/
 def supports (property value : String) : Bool := (specified property value).isSome
@@ -721,7 +728,15 @@ def positionAreaComputed (v : String) : String :=
 
 /-- The computed forms that the grammar's leaves do not give, by property. -/
 def computedForm (p v : String) : String :=
+  -- a sum of a percentage and no length is the percentage
+  let v := if (v.splitOn "+ 0px)").length > 1 then serialize (dropZeroLengths 8 (CV.parse v)) else v
   if lineWidthProperties.contains p then (lineWidthKeyword v).getD v
+  else if shapeProperties.contains p then (shapeValue true p v).getD v
+  else if p == "rotate" then rotateCanon v
+  else if p == "offset-rotate" then offsetRotateComputed v
+  else if p == "zoom" then zoomComputed v
+  else if p == "word-spacing" then (if v == "normal" then "0px" else v)
+  else if p == "letter-spacing" then (if v == "0px" then "normal" else v)
   else if p == "font-weight" then (if v == "normal" then "400" else if v == "bold" then "700" else v)
   else if p == "font-stretch" || p == "font-width" then (fontWidthKeyword v).getD v
   else if p == "position-area" then positionAreaComputed v
@@ -752,7 +767,10 @@ def computed (ctx : ComputeCtx) (property value : String) : String :=
       let cvs := CV.parse value
       if hasSubstitution cvs then value
       else
-        computedForm p (canonical p ((matchText (some ctx) row.name (stripWs cvs)).getD value))
+        let form := computedForm p (canonical p ((matchText (some ctx) row.name (stripWs cvs)).getD value))
+        if p == "box-shadow" then shadowComputed 4 ctx.currentColor form
+        else if p == "text-shadow" then shadowComputed 3 ctx.currentColor form
+        else form
 
 /-- The computed initial value of a property. -/
 def initialComputed (ctx : ComputeCtx) (row : Property) : String :=
