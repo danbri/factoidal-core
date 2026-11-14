@@ -121,6 +121,13 @@ def Block.parseOnly (names : List String) (text : String) : Block :=
         | none => b
         | some ds => ds.foldl (fun b (n, v) => b.putLast { name := n, value := v, important := important }) b) []
 
+/-- The property names a block text declares, as written (lower case, except custom
+properties): no value is parsed. -/
+def declNames (text : String) : List String :=
+  let cs := preprocess text.toList
+  (splitTop ';' (cs.length + 1) cs 0 none [] []).filterMap fun piece =>
+    (declOf piece).map fun (name, _, _) => if isCustom name then name else lower name
+
 /-- The longhand declarations of shorthand `row`, when all are in the block with one
 important flag. -/
 def Block.longhandsOf (b : Block) (row : Property) : Option (List Decl) :=
