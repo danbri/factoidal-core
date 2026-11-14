@@ -378,6 +378,42 @@ def scopePrelude (prelude : String) : Option String :=
 #guard scopePrelude "" == some ""
 #guard (["()", "to ()", "(div::before)", "div", "(.a) unknown (.c)", "1px", "(.a) from (.c)", "(.c <> .d)"].map scopePrelude).all (·.isNone)
 
+/-- Whether an `@container` prelude is a list of container conditions (CSS Conditional 5
+§3.1): each an optional container name (an identifier that is not `none`, `and`, `or`,
+`not`, `default` or a CSS-wide keyword) and an optional query, not both left out; a query is
+`not` and a query in parentheses, or queries in parentheses (or functions, such as
+`style()`, or general enclosed) joined by `and` or `or`. -/
+def containerPreludeOk (prelude : String) : Bool :=
+  let items := (splitCommas (stripWs (CV.parse prelude))).map stripWs
+  let reserved := ["none", "and", "or", "not", "default", "initial", "inherit", "unset", "revert", "revert-layer"]
+  let isParens := fun (cv : CV) => match cv with
+    | .block '(' _ | .fn _ _ => true
+    | _ => false
+  let isWord := fun (w : String) (cv : CV) => match cv with
+    | .tok (.ident k) => lower k == w
+    | _ => false
+  -- `P ((and|or) P)*`, or `not P`
+  let queryOk := fun (q : List CV) => match q with
+    | [] => true
+    | [n, p] => (isWord "not" n && isParens p) || isParens n && false
+    | p :: rest =>
+      isParens p && (rest.length % 2 == 0) &&
+        ((List.range (rest.length / 2)).all fun i =>
+          (isWord "and" (rest.getD (2 * i) default) || isWord "or" (rest.getD (2 * i) default)) &&
+            isParens (rest.getD (2 * i + 1) default))
+  !items.isEmpty && items.all fun item =>
+    match item with
+    | [] => false
+    | .tok (.ident n) :: q =>
+      if lower n == "not" then queryOk item
+      else !reserved.contains (lower n) && queryOk q
+    | q => !q.isEmpty && queryOk q
+
+#guard ["name not (width <= 500px)", "not (width <= 500px)", "(width: 100px), (height: 100px)", "(width), name (height)",
+  "--foo", "container, container2", "name (width: 100px) and (height: 100px)", "name foo(width)"].all containerPreludeOk
+#guard !(["", "(width),", ",(width)", "name screen", "name foo (width: 100px)", "foo foo not (width)", "1px not (width)",
+  "none not (width)", "and not (width)", "\"foo\" not (width)", "name not not (width)"].any containerPreludeOk)
+
 /-- The at-rules with a block of rules, and `CSSRule.type` of each (0 where CSSOM gives no
 number). -/
 def groupRules : List (String × String × Nat) :=
@@ -405,7 +441,9 @@ def ruleOf (defaultNs : Bool := false) : Nat → RawRule → Option Rule
       let after := if name == "media" then mediaListText after else after
       -- an @scope prelude (CSS Cascade 6 §2.1): its selectors written as selectors; a
       -- prelude that is not one drops the rule
-      let scope := if name == "scope" then scopePrelude (String.ofList (rest.dropWhile isNameChar)) else some after
+      let scope := if name == "scope" then scopePrelude (String.ofList (rest.dropWhile isNameChar))
+        else if name == "container" && !containerPreludeOk after then none
+        else some after
       let after := scope.getD after
       let head := "@" ++ name ++ (if after == "" then "" else " " ++ after)
       if scope.isNone then none else
