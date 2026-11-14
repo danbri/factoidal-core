@@ -3004,6 +3004,27 @@
     set title(v) { const t = elementsOf(nodeId(this)).find(k => str(k, 0) === 'title'); if (t !== undefined) chk(n.setText(t, String(v))); }
     get activeElement() { return this.body; }
     hasFocus() { return true; }
+    // HTML §3.1.3: the page is always shown here (never hidden or prerendered)
+    get hidden() { return false; }
+    get visibilityState() { return 'visible'; }
+    // the document's referrer: none is known for a page or frame of this realm
+    get referrer() { return ''; }
+    // HTML §3.1.3: with no Last-Modified date known, the current local date and time, as
+    // "MM/DD/YYYY hh:mm:ss"
+    get lastModified() {
+      const d = new Date(), p = x => String(x).padStart(2, '0');
+      return `${p(d.getMonth() + 1)}/${p(d.getDate())}/${String(d.getFullYear()).padStart(4, '0')} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+    }
+    // HTML §7.1.4.1: a document with no browsing context has no domain; the page and its
+    // same-origin frames have the host of the page's origin. Setting it to anything else is
+    // refused (SecurityError): the origin's domain is never relaxed here.
+    get domain() { const id = nodeId(this); return id === 0 || info(id, 12) >= 0 ? location.hostname : ''; }
+    set domain(v) {
+      v = String(v);
+      const id = nodeId(this);
+      if (!(id === 0 || info(id, 12) >= 0) || v.toLowerCase() !== location.hostname)
+        throw new DOMException(`Failed to set the 'domain' property on 'Document': '${v}' is not a suffix the document's domain may be set to.`, 'SecurityError');
+    }
     get scripts() { return this.getElementsByTagName('script'); }
     get forms() { return this.getElementsByTagName('form'); }
     get images() { return this.getElementsByTagName('img'); }
@@ -3117,6 +3138,10 @@
   for (const C of [Element, Document, DocumentFragment]) unscopable(C, ['prepend', 'append', 'replaceChildren']);
   for (const C of [Element, CharacterData, DocumentType]) unscopable(C, ['before', 'after', 'replaceWith', 'remove']);
   addHandlers(HTMLElement.prototype); addHandlers(Document.prototype); addHandlers(SVGElement.prototype);
+  // the Document's own event handlers (HTML §3.1.3)
+  for (const name of ['readystatechange', 'visibilitychange'])
+    Object.defineProperty(Document.prototype, 'on' + name, { get() { return handlerOf(this, name); },
+      set(f) { setHandler(this, name, f); }, configurable: true, enumerable: true });
   addHandlers(MathMLElement.prototype);
   // ElementCSSInlineStyle (CSSOM §7.1) and HTMLOrSVGElement (HTML §3.2.6): an SVG element
   // and a MathML element have `style`, `dataset`, `focus` and `blur` as an HTML element has them.
@@ -15989,8 +16014,9 @@
       for (const k of ['pageX', 'pageY', 'offsetX', 'offsetY', 'movementX', 'movementY']) if (typeof data[k] === 'number') state(e)[k] = data[k];
       if (C === KeyboardEvent && typeof data.keyCode === 'number') { state(e).keyCode = data.keyCode; state(e).which = data.keyCode; }
       state(e).trusted = true;
-      if (type === 'DOMContentLoaded') readyState = 'interactive';
-      if (type === 'load' && target === WINDOW) readyState = 'complete';
+      // "update the current document readiness" fires readystatechange at the document
+      if (type === 'DOMContentLoaded' && readyState !== 'interactive') { readyState = 'interactive'; fire(document, 'readystatechange'); }
+      if (type === 'load' && target === WINDOW && readyState !== 'complete') { readyState = 'complete'; fire(document, 'readystatechange'); }
       if (type === 'load' && target !== WINDOW && target !== 0 && info(target, 29) >= 0) frameLoad(target);
       // A message from a frame's own session is for the window of the document that holds
       // its iframe: a same-origin frame's window when the iframe is in that frame's document.
