@@ -185,8 +185,16 @@ def flexRow (kids : Children) (s : Computed) (items : Array Item) (box : Content
     let minH := (resolveOpt box.height is.minHeight).getD 0
     let maxH := resolveOpt box.height is.maxHeight
     let fixed := (resolveOpt box.height is.height).map fun h => clampOpt minH maxH h+padV
+    -- Cost: in a single-line container with a definite cross size, the height of an item
+    -- that stretches is known before its contents are laid out (§9.4 step 11). An item whose
+    -- contents depend on its height (a nested container) is laid out once, at that height,
+    -- not once to measure it and again to stretch it: nested containers do not double the work.
+    let stretches := !multi && fixed.isNone && itemAlign s is == .stretch && !is.autoMarginTop && !is.autoMarginBottom
+    let ahead := if stretches then
+        box.height.map fun h => max padV (clampOpt (minH+padV) (maxH.map (·+padV)) (h-m.top-m.bottom))
+      else fixed
     let r ← if kids.heightSensitive item then
-        kids.layout item x box.y {available := box.width, width := some width, height := fixed}
+        kids.layout item x box.y {available := box.width, width := some width, height := ahead}
       else kids.content item x box.y width
     let natural := if kids.heightSensitive item then r.height-m.top-m.bottom
       else fixed.getD (clampOpt minH maxH r.height+padV)
