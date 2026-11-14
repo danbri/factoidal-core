@@ -2514,10 +2514,6 @@ abbrev DocM (M : Type → Type) := ExceptT String (StateT Engine M)
   | .ok a => pure a
   | .error e => throw e
 
-/-- A document request, with `laidOut` as the layout of a render. `run` passes the
-kept layout (`Engine.frame`); `runUncached` passes `layOut`, so that tests compare the two. With
-`bytes`, a render answer names its storage floats and tile words as sections
-(`DataForm.sections`) and gives their bytes; other answers have no section. -/
 /-- An answer of op `subresource`: the request for the host to make, done, or failed. -/
 def subresourceJson : Net.Subresource.Out → JSON.Json
   | .wire id w => .object [("id", WebScripts.num id), ("wire", WebScripts.wireJson w)]
@@ -2555,6 +2551,10 @@ def subresourceOp (tab : Net.Subresource.Table) (request : JSON.Json) : Net.Subr
     (Net.Subresource.cancel tab id, "{}")
   | _ => (tab, "{\"error\":\"subresource: unknown action\"}")
 
+/-- A document request, with `laidOut` as the layout of a render. `run` passes the
+kept layout (`Engine.frame`); `runUncached` passes `layOut`, so that tests compare the two. With
+`bytes`, a render answer names its storage floats and tile words as sections
+(`DataForm.sections`) and gives their bytes; other answers have no section. -/
 def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : LayoutKey → DocM M Laid) (bytes : Bool) (html : String)
     (request : JSON.Json) (width height : Nat) : DocM M (String × Array ByteArray) := do
   let .object fields := request | throw "document request must be an object"
