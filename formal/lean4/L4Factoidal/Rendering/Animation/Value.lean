@@ -1735,6 +1735,30 @@ def originOf (v : List Tok) : Option (Tok × Tok × Tok) :=
   | [x, y, z] => some (x, y, z)
   | _ => none
 
+/-- A `transform-origin` with its keywords as percentages and its offsets in the order x
+then y (CSS Transforms 1 §8: `left`, `center`, `right` are 0%, 50%, 100% of the width,
+`top`, `center`, `bottom` of the height; a `top` or `bottom` first, or a `left` or `right`
+second, is the pair written the other way round; one value alone leaves the other
+`center`). Values with no keyword are as they were. -/
+def originWords (v : List Tok) : List Tok :=
+  let vertical := fun (t : Tok) => t == .ident "top" || t == .ident "bottom"
+  let horizontal := fun (t : Tok) => t == .ident "left" || t == .ident "right"
+  let pct := fun (n : Int) => Tok.dim (n * Fix.one) "%"
+  let x := fun (t : Tok) => if t == .ident "left" then pct 0 else if t == .ident "center" then pct 50
+    else if t == .ident "right" then pct 100 else t
+  let y := fun (t : Tok) => if t == .ident "top" then pct 0 else if t == .ident "center" then pct 50
+    else if t == .ident "bottom" then pct 100 else t
+  match v with
+  | [a] => if vertical a then [pct 50, y a] else [x a, pct 50]
+  | a :: b :: rest => if vertical a || horizontal b then x b :: y a :: rest else x a :: y b :: rest
+  | v => v
+
+/-- Kind: correctness (no change where there is nothing to do). Says: a pair of offsets
+that are numbers or lengths, with or without z, is itself. -/
+theorem originWords_dims (a b : Int) (u w : String) (rest : List Tok) :
+    originWords (.dim a u :: .dim b w :: rest) = .dim a u :: .dim b w :: rest := by
+  simp [originWords]
+
 /-- A `transform-origin` in its shortest form: z is written unless it is 0px. -/
 def originText (x y z : Tok) : List Tok := if z == .dim 0 "px" then [x, y] else [x, y, z]
 
@@ -1779,7 +1803,7 @@ def lerpKind (k : Kind) (p : Int) (a b : Value) : Option Value :=
       some (if r == 0 then [.ident "normal"] else [.ident "oblique", .dim r "deg"])
     | _, _ => none
   | .origin =>
-    match originOf a, originOf b with
+    match originOf (originWords a), originOf (originWords b) with
     | some (x, y, z), some (x', y', z') =>
       match lerpTok p x x', lerpTok p y y', lerpTok p z z' with
       | some rx, some ry, some rz => some (originText rx ry rz)
@@ -1941,7 +1965,7 @@ def add (k : Kind) (underlying value : Value) : Value :=
         | _, _ => value
     | _, _ => value
   | .origin =>
-    match originOf underlying, originOf value with
+    match originOf (originWords underlying), originOf (originWords value) with
     | some (x, y, z), some (x', y', z') =>
       match addTok x x', addTok y y', addTok z z' with
       | some rx, some ry, some rz => originText rx ry rz
@@ -1968,6 +1992,8 @@ def add (k : Kind) (underlying value : Value) : Value :=
     | none => value
   | .ratio => value
   | .shape =>
+    -- shapes that do not interpolate (a keyword radius, two functions) do not add either
+    if !interpolable .shape underlying value then value else
     let (ia, ha) := insetForm underlying
     let (ib, hb) := insetForm value
     if ha && hb then ((addList ia ib).map fun r => ((items r).map insetText).flatten).getD value
@@ -2035,6 +2061,13 @@ def accumulate (k : Kind) (underlying value : Value) : Value :=
     | some (x, y, z), some (x', y', z') => scaleText (x + x' - one) (y + y' - one) (z + z' - one)
     | _, _ => value
   | _ => add k underlying value
+
+/-- Kind: correctness of a refusal. Says: two shapes that do not interpolate do not add
+or accumulate: the keyframe's value replaces the underlying one (css-masking's
+clip-path-composition: a circle with a keyword radius). -/
+theorem add_shape_replace (underlying value : Value) (h : interpolable .shape underlying value = false) :
+    add .shape underlying value = value ∧ accumulate .shape underlying value = value := by
+  simp [accumulate, add, h]
 
 /-! ## Theorems -/
 
@@ -2441,6 +2474,18 @@ private def corner2 (a b : String) (p : Int) : String :=
 #guard at_ .shape "circle(10px at 25px 75%)" "circle(50px at 50px 50%)" (-300000000) == "circle(0px at 17.5px 82.5%)"
 #guard at_ .shape "ellipse(10px 20px at 25px 75px)" "ellipse(50px 100px at 50px 50px)" (-300000000) == "ellipse(0px 0px at 17.5px 82.5px)"
 #guard at_ .shape "circle(10px at 25px 75%)" "circle(50px at 50px 50%)" half == "circle(30px at 37.5px 62.5%)"
+-- transform-origin keywords (css-transforms/animation/transform-origin-composition.html)
+#guard toText (originWords (parse "top right 20px")) == "100% 0% 20px"
+#guard toText (originWords (parse "left top 80px")) == "0% 0% 80px"
+#guard toText (originWords (parse "center")) == "50% 50%" && toText (originWords (parse "bottom")) == "50% 100%"
+#guard toText (originWords (parse "right")) == "100% 50%" && toText (originWords (parse "10px 20px 5px")) == "10px 20px 5px"
+#guard toText (add .origin (parse "top right 20px") (parse "left top 80px")) == "100% 0% 100px"
+#guard at_ .origin "left top" "right bottom" half == "50% 50%"
+-- composition (css-masking/animations/clip-path-composition.html): numeric radii add; a keyword radius replaces
+#guard toText (add .shape (parse "circle(100px at 25px 25%)") (parse "circle(10px at 25px 75%)")) == "circle(110px at 50px 100%)"
+#guard toText (add .shape (parse "circle(farthest-side at 25px 75%)") (parse "circle(farthest-side at 25px 75%)")) == "circle(farthest-side at 25px 75%)"
+#guard toText (add .shape (parse "circle(50px at 10px 20px)") (parse "circle(farthest-side at 30px 40px)")) == "circle(farthest-side at 30px 40px)"
+#guard toText (accumulate .shape (parse "circle(farthest-side at 25px 75%)") (parse "circle(farthest-side at 50px 50%)")) == "circle(farthest-side at 50px 50%)"
 -- a keyword that is the length 0 (css/css-text/animations/letter-spacing-interpolation.html,
 -- word-spacing-interpolation.html, css/css-transitions/animations/vertical-align-interpolation.html)
 #guard [-300000000, 0, 300000000, one].map (at_ (.zeroWord "normal" true) "normal" "20px") == ["-6px", "normal", "6px", "20px"]
