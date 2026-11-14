@@ -50,6 +50,7 @@ import L4Factoidal.ClientStorage.CookieStore
 import L4Factoidal.ClientStorage.CacheStorage
 import L4Factoidal.Net.FetchRules
 import L4Factoidal.Net.Cookies
+import L4Factoidal.Net.ServiceWorkerScope
 import L4Factoidal.DOM.SvgValues
 import L4Factoidal.PageGl.Api
 import L4Factoidal.WebCodecs.Api
@@ -756,6 +757,8 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
     else if code == 140 then
       let (nn, out) := L4Factoidal.WebNN.api s.nn fs
       ({ s with nn }, .ok out)
+    -- Service workers: `register()`'s URL checks and registration matching (pure, no state).
+    else if code == 154 || code == 155 then pure' (L4Factoidal.Net.ServiceWorkerScope.op code fs)
     else pure' (.error (-2))
 
 section
