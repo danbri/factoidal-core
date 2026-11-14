@@ -539,13 +539,23 @@ def Session.runJobs (s : Session) : Session :=
   | some m => s.fail m
   | none => s
 
+/-- Report a new error at the window: a SyntaxError (`isSyntax`) or a TypeError with `msg`
+(HTML "report an exception" of a module script's error to rethrow). -/
+def Session.reportNew (s : Session) (isSyntax : Bool) (msg : String) : Session :=
+  let msg := if msg.startsWith "SyntaxError: " then (msg.drop 13).toString else msg
+  let (s, v) := s.runG fun h => JS.newError h (if isSyntax then .syntax else .type) msg
+  (s.api? "report" #[v]).1.fail ((if isSyntax then "SyntaxError: " else "TypeError: ") ++ msg)
+
 /-- Run a classic script; an exception is reported at the window (HTML "report an
-exception", the prelude's `report`) and recorded. -/
+exception", the prelude's `report`) and recorded. A script that does not parse has a
+SyntaxError as its error to rethrow (HTML "create a classic script", step 9), reported the
+same way: `window.onerror` and `error` listeners see it. -/
 def Session.eval (s : Session) (src : String) : Session :=
   let (s, o, _) := s.run fun h => let (o, h) := JS.evalScript h src; ((o, .undef), h)
   match o with
   | .ok => s
   | .threw v m => (s.api? "report" #[v]).1.fail m
+  | .syntaxError m => s.reportNew true m
   | o => s.fail ((failure o).getD "")
 
 def Session.dispatchOnly (s : Session) (target : Nat) (type : String) : Session × Bool :=
@@ -565,13 +575,6 @@ def engine : PageEvents.Engine Session :=
     lastFrame := Session.lastFrame, setLastFrame := fun s f => { s with lastFrame := f } }
 
 /-! ## Module scripts (`LeanJSModules`, `JS.Modules`) -/
-
-/-- Report a new error at the window: a SyntaxError (`isSyntax`) or a TypeError with `msg`
-(HTML "report an exception" of a module script's error to rethrow). -/
-def Session.reportNew (s : Session) (isSyntax : Bool) (msg : String) : Session :=
-  let msg := if msg.startsWith "SyntaxError: " then (msg.drop 13).toString else msg
-  let (s, v) := s.runG fun h => JS.newError h (if isSyntax then .syntax else .type) msg
-  (s.api? "report" #[v]).1.fail ((if isSyntax then "SyntaxError: " else "TypeError: ") ++ msg)
 
 /-- Run one module script (HTML "execute the script element" for a module script): fire
 `error` for a failed fetch, report its error to rethrow, or link and evaluate its graph and
