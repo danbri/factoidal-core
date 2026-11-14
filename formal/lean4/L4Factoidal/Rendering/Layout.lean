@@ -1075,24 +1075,37 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
     let flowWidths (container : Nat) (kids : Array Nat) (lead : Array Inline) : Except String (Float × Float) := do
       let mut widths : Float × Float := (0,0)
       let mut inline := lead
+      -- The max-content widths of the floats so far that nothing has cleared (CSS 2.1
+      -- §9.5): with all the room they sit side by side, and the lines and boxes after them
+      -- are beside them. With no float in the flow this stays 0.
+      let mut beside : Float := 0
       for seg in Table.segments dom styles kids do
         match seg with
         | .run run =>
           let (a,b) ← inlineWidths inline
           inline := #[]
           let (c,d) ← intrinsic dom styles font embedding pictures fuel (.table none container run)
-          widths := (max widths.1 (max a c),max widths.2 (max b d))
+          widths := (max widths.1 (max a c),max widths.2 (max (b+beside) (d+beside)))
         | .node k =>
           if (styles[k]!).pos.isAbsolute then pure ()
+          else if (styles[k]!).pos.float != .none then
+            let (c,d) ← intrinsic dom styles font embedding pictures fuel (.box k)
+            if (styles[k]!).pos.clear != .none then
+              widths := (widths.1,max widths.2 beside)
+              beside := 0
+            widths := (max widths.1 c,widths.2)
+            beside := beside+d
           else if (styles[k]!).display.isBlockLevel || (styles[k]!).display.isInlineContainer then
             let (a,b) ← inlineWidths inline
             inline := #[]
+            widths := (max widths.1 a,max widths.2 (b+beside))
+            if (styles[k]!).pos.clear != .none then beside := 0
             let (c,d) ← intrinsic dom styles font embedding pictures fuel (.box k)
-            widths := (max widths.1 (max a c),max widths.2 (max b d))
+            widths := (max widths.1 c,max widths.2 (d+beside))
           else
             inline := inline ++ (← inlineItems dom styles embedding pictures 0 fuel k)
       let (a,b) ← inlineWidths inline
-      return (max widths.1 a,max widths.2 b)
+      return (max widths.1 a,max widths.2 (b+beside))
     let tableWidths (element : Option Nat) (container : Nat) (kids : Array Nat) : Except String (Float × Float) := do
       let frame := tableFrame styles element container
       let grid := Table.build dom styles (element.getD container) kids
