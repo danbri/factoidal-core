@@ -1109,6 +1109,11 @@ def relResolve (o : Opts) (n : String) (r : Rel) (origin : Color) : Option Color
   | .rgb => some { c with space := .srgb }
   | _ => some (polarToSrgb c)
 
+/-- The `<blend-mode>` keywords (Compositing 1 §10). -/
+def blendModes : List String :=
+  ["normal", "multiply", "screen", "overlay", "darken", "lighten", "color-dodge", "color-burn", "hard-light",
+   "soft-light", "difference", "exclusion", "hue", "saturation", "color", "luminosity"]
+
 /-! ### `alpha()` (CSS Color 5 §4.6) -/
 
 /-- `alpha(from <color> / <alpha>)`: the origin and the alpha component. -/
@@ -1154,6 +1159,20 @@ def specF : Nat → Opts → CV → Option String
           let tb ← specF fuel o b
           some ("light-dark(" ++ ta ++ ", " ++ tb ++ ")")
         | none => none
+      else if n == "color-layers" then
+        -- color-layers([<blend-mode>,]? <color>#) (CSS Color 6): `normal` is left out
+        let pieces := (splitCommas args).map stripWs
+        let (mode, colours) := match pieces with
+          | [.tok (.ident k)] :: rest => if blendModes.contains (lower k) then (some (lower k), rest) else (none, pieces)
+          | _ => (none, pieces)
+        if colours.isEmpty then none else do
+          let ts ← colours.mapM fun piece => match piece with
+            | [c] => specF fuel o c
+            | _ => none
+          let head := match mode with
+            | some m => if m == "normal" then [] else [m]
+            | none => []
+          some ("color-layers(" ++ ", ".intercalate (head ++ ts) ++ ")")
       else if n == "alpha" then
         match alphaParts args with
         | some (origin, w) => do

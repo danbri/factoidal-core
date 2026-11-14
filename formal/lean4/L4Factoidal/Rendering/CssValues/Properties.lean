@@ -1217,6 +1217,13 @@ def initialComputed (ctx : ComputeCtx) (row : Property) : String :=
   ["color(srgb 1 0 0 / 0.5)", "color(srgb 0.4 0.2 0.6)", "color(srgb 1 0 0 / none)", "color(srgb 1 0 0)", "color(srgb 1 0 0 / 0)",
    "color(srgb 1 0 0 / 0.9)", "color(srgb 1 0 0 / 0.75)", "color(display-p3 1 0 0 / 0.5)", "color(srgb 0 none 0)",
    "lab(50 20 -30 / 0.5)"]
+-- color-layers() (color-valid-color-layers-function.html, color-invalid-color-layers-function.html)
+#guard ["color-layers(red)", "color-layers(multiply, red, blue)", "color-layers(currentcolor, blue)",
+  "color-layers(rgb(from black r g b / 0.5), green)", "color-layers(color-layers(red, blue), green)"].all
+  fun v => specified "color" v == some v
+#guard specified "color" "color-layers(normal, red, blue)" == some "color-layers(red, blue)"
+#guard (["color-layers()", "color-layers(normal)", "color-layers(red blue)", "color-layers(red, blue, )", "color-layers(, red)",
+  "color-layers(plus-lighter, red)", "color-layers(multiply, multiply, red)", "color-layers(50%, red)"].map (specified "color")).all (·.isNone)
 -- line-height percentages are of the font size (font-computed.html)
 #guard computed { num := { fontSize := 32 } } "line-height" "calc(120% + 1.2em)" == "76.8px"
 #guard computed { num := { fontSize := 32 } } "line-height" "150%" == "48px"
