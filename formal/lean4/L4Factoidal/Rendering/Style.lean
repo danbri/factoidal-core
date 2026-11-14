@@ -1525,6 +1525,18 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
         if let .ok l := length d.value then result := {result with width := l}
       if let some (_,d) := winners.get? "block-size" then
         if let .ok l := length d.value then result := {result with height := l}
+      -- the logical paddings likewise: block is top and bottom, inline follows `direction`
+      let rtl := result.direction == .rtl
+      if let some (_,d) := winners.get? "padding-block-start" then
+        if let .ok v := edgePixel d.value then result := {result with padding := {result.padding with top := v}}
+      if let some (_,d) := winners.get? "padding-block-end" then
+        if let .ok v := edgePixel d.value then result := {result with padding := {result.padding with bottom := v}}
+      if let some (_,d) := winners.get? "padding-inline-start" then
+        if let .ok v := edgePixel d.value then
+          result := {result with padding := if rtl then {result.padding with right := v} else {result.padding with left := v}}
+      if let some (_,d) := winners.get? "padding-inline-end" then
+        if let .ok v := edgePixel d.value then
+          result := {result with padding := if rtl then {result.padding with left := v} else {result.padding with right := v}}
     if let some (_,d) := winners.get? "math-style" then
       let v := (trim d.value).toLower
       if v == "compact" then result := {result with mathCompact := true}

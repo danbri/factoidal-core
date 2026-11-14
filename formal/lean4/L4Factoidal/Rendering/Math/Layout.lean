@@ -19,7 +19,7 @@ Limits (see docs/designissues/2026-11-14-mathml-core-layout.md): no OpenType MAT
 is read, so every font parameter is the fallback of a font with no MATH table, taken
 from the font size (x-height: half an em; rule thickness: 1/16 em; math axis: a quarter
 em); operators are not stretched (of the operator dictionary only `lspace` and `rspace`
-are used); the radical sign is not drawn; a table is a grid of centred cells with no row
+are used, and `movablelimits`); the radical sign is not drawn; a table is a grid of centred cells with no row
 or column spans.
 
 Only elements in the MathML namespace enter this module (`Rendering.Layout` tests the
@@ -32,7 +32,7 @@ import L4Factoidal.Rendering.Math.OperatorDictionary
 
 namespace L4Factoidal.Rendering.Math
 open L4Factoidal.DOM
-open L4Factoidal.Rendering.CSS (Computed Length)
+open L4Factoidal.Rendering.CSS (Computed)
 
 /-- CSS pixels to layout units (1/64 px), rounded; not a number gives 0. -/
 def lu (x : Float) : Int :=
@@ -75,6 +75,8 @@ structure Out (α : Type) where
   leaves : Array (α × Int × Int) := #[]
   op : Option OpSpaces := none
   spaceLike : Bool := false
+  /-- The core operator of this embellished operator has `movablelimits` (§3.2.4.2). -/
+  movable : Bool := false
 
 instance {α : Type} : Inhabited (Out α) := ⟨{}⟩
 
@@ -109,13 +111,13 @@ def lengthAttr (n : DOM.Node) (s : Computed) (key : String) (basis : Option Floa
 
 /-- A size in pixels as layout units; `none` for `auto` and for the units this layout
 does not resolve (a percentage, viewport units). -/
-def pixels : Length → Option Int
+def pixels : CSS.Length → Option Int
   | .px v => some (lu v)
   | _ => none
 
 /-- A content size under the `width` or `height` property and its limits (CSS 2.1 §10.4:
 the property, then the maximum, then the minimum). -/
-def sized (content : Int) (size min max : Length) : Int :=
+def sized (content : Int) (size min max : CSS.Length) : Int :=
   let v := (pixels size).getD content
   let v := match pixels max with | some m => Min.min v m | none => v
   match pixels min with | some m => Max.max v m | none => v
@@ -159,7 +161,8 @@ def row {α : Type} (kids : Array (Out α)) : Out α := Id.run do
     | none => ⟨k.box, 0, 0⟩
   let offsets := rowOffsets items
   let mut out : Out α := { box := rowBox items, op := if embellished then (operators[0]?.bind (·.op)) else none,
-                           spaceLike := kids.all (·.spaceLike) }
+                           spaceLike := kids.all (·.spaceLike),
+                           movable := embellished && ((operators[0]?.map (·.movable)).getD false) }
   for i in [0:kids.size] do
     out := out.add kids[i]! ⟨offsets.getD i 0, 0⟩
   return out
@@ -174,7 +177,7 @@ def fractionOut {α : Type} (id : Nat) (n : DOM.Node) (s : Computed) (num den : 
   let f := fraction { axis := P.axis, rule, numGap := gap, denGap := gap } num.box den.box
   -- a fraction whose numerator is an embellished operator is one (§3.2.4.1)
   let o : Out α := { box := f.box, rules := if rule > 0 then #[⟨id, 0, f.barTop, f.box.width, rule⟩] else #[],
-                     op := num.op }
+                     op := num.op, movable := num.movable }
   (o.add num f.num).add den f.den
 
 /-- §3.4.1: a base with scripts after it. An embellished base makes the element one. -/
@@ -182,7 +185,7 @@ def scriptsOut {α : Type} (s : Computed) (base : Out α) (sub sup : Option (Out
   let P := Params.of s
   let r := scripts { subShift := P.xHeight / 3, supShift := P.xHeight, gap := 4 * P.rule }
     base.box (sub.map (·.box)) (sup.map (·.box))
-  let o : Out α := { box := r.box, op := base.op }
+  let o : Out α := { box := r.box, op := base.op, movable := base.movable }
   let o := o.add base r.base
   let o := match sub with | some c => o.add c r.sub | none => o
   match sup with | some c => o.add c r.sup | none => o
@@ -190,7 +193,7 @@ def scriptsOut {α : Type} (s : Computed) (base : Out α) (sub sup : Option (Out
 /-- §3.4.2: a base with a script under it and a script over it. -/
 def underOverOut {α : Type} (base : Out α) (under over : Option (Out α)) : Out α :=
   let r := underOver base.box (under.map (·.box)) (over.map (·.box))
-  let o : Out α := { box := r.box, op := base.op }
+  let o : Out α := { box := r.box, op := base.op, movable := base.movable }
   let o := o.add base r.base
   let o := match under with | some c => o.add c r.under | none => o
   match over with | some c => o.add c r.over | none => o
@@ -226,7 +229,7 @@ def rootOut {α : Type} (id : Nat) (s : Computed) (base index : Out α) : Out α
 def paddedOut {α : Type} (n : DOM.Node) (s : Computed) (content : Out α) : Out α :=
   let (box, at_) := padded content.box (lengthAttr n s "width") (lengthAttr n s "height") (lengthAttr n s "depth")
     ((lengthAttr n s "lspace").getD 0) ((lengthAttr n s "voffset").getD 0)
-  ({ box, op := content.op, spaceLike := content.spaceLike } : Out α).add content at_
+  ({ box, op := content.op, spaceLike := content.spaceLike, movable := content.movable } : Out α).add content at_
 
 /-- The text of the text children of element `id`, with the white space at its ends
 removed: the content of an `mo` that the dictionary is read by. -/
@@ -247,6 +250,15 @@ def operatorSpaces (dom : Dom) (id : Nat) (n : DOM.Node) (s : Computed) : OpSpac
     ((lengthAttr n s "lspace").getD (em * (p.lspace : Int) / 18),
      (lengthAttr n s "rspace").getD (em * (p.rspace : Int) / 18))
   ⟨one .pre, one .inf, one .post⟩
+
+/-- `movablelimits` of an `mo` (§3.2.4.2): the attribute (`true` or `false`), else the
+dictionary's for its content (in its `form` attribute's form, else in any form). -/
+def operatorMovable (dom : Dom) (id : Nat) (n : DOM.Node) : Bool :=
+  if attrIs n "movablelimits" "true" then true
+  else if attrIs n "movablelimits" "false" then false
+  else
+    let explicit := (attr? n "form").bind formOf
+    (lookup (textContent dom id) (explicit.getD .inf) explicit.isSome).movablelimits
 
 /-- §3.5: a table from its rows of cells: each column as wide as its widest cell, each
 row as tall as its tallest cell above and below the row's baseline; cells centred in
@@ -328,7 +340,8 @@ def layoutNode {α : Type} (dom : Dom) (styles : Array Computed)
     if name == "" || tokenNames.contains name then
       let (w, a, d, payload) ← leaf id
       let o : Out α := { box := ⟨lu w, lu a, lu d⟩, leaves := #[(payload, 0, -(lu a))] }
-      return wrap id s (if name == "mo" then { o with op := some (operatorSpaces dom id n s) }
+      return wrap id s (if name == "mo" then { o with op := some (operatorSpaces dom id n s),
+                                                         movable := operatorMovable dom id n }
         else if name == "mtext" then { o with spaceLike := true } else o)
     if name == "mspace" then
       let len := fun (key : String) => (lengthAttr n s key).getD 0
@@ -350,14 +363,20 @@ def layoutNode {α : Type} (dom : Dom) (styles : Array Computed)
       if kn.type == .element && (styles[k]!).display != .none && !(styles[k]!).outOfFlow then
         kids := kids.push (← layoutNode dom styles leaf fuel k)
         pres := pres.push (kn.ns == some mathmlNS && kn.lname == "mprescripts")
+    -- §3.4.2: under and over scripts of an operator with movable limits are laid out as
+    -- subscripts and superscripts when the math style is compact
+    let limits := s.mathCompact && ((kids[0]?.map (·.movable)).getD false)
     let content : Out α := match name, kids.size with
       | "mfrac", 2 => fractionOut id n s kids[0]! kids[1]!
       | "msub", 2 => scriptsOut s kids[0]! (some kids[1]!) none
       | "msup", 2 => scriptsOut s kids[0]! none (some kids[1]!)
       | "msubsup", 3 => scriptsOut s kids[0]! (some kids[1]!) (some kids[2]!)
-      | "munder", 2 => underOverOut kids[0]! (some kids[1]!) none
-      | "mover", 2 => underOverOut kids[0]! none (some kids[1]!)
-      | "munderover", 3 => underOverOut kids[0]! (some kids[1]!) (some kids[2]!)
+      | "munder", 2 => if limits then scriptsOut s kids[0]! (some kids[1]!) none
+                       else underOverOut kids[0]! (some kids[1]!) none
+      | "mover", 2 => if limits then scriptsOut s kids[0]! none (some kids[1]!)
+                      else underOverOut kids[0]! none (some kids[1]!)
+      | "munderover", 3 => if limits then scriptsOut s kids[0]! (some kids[1]!) (some kids[2]!)
+                           else underOverOut kids[0]! (some kids[1]!) (some kids[2]!)
       | "mroot", 2 => rootOut id s kids[0]! kids[1]!
       | "msqrt", _ => radicalOut id s (row kids)
       | "mpadded", _ => paddedOut n s (row kids)
