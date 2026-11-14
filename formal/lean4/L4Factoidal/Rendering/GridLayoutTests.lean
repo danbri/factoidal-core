@@ -187,4 +187,11 @@ private def tracks (html extra id : String) : Option (String × String) := do
 -- A subgrid stretches in its subgridded axes whatever its own alignment says.
 #guard box "<div id=c><div id=s><div id=i>I</div></div></div>" "#c{display:grid;grid-template-columns:100px;grid-template-rows:40px} #s{display:grid;grid-template:subgrid / subgrid;align-self:start;justify-self:end}" "s" == some (0,0,100,40)
 
+
+-- A nested grid stretched in a fixed row is laid out once at that height: its own auto row
+-- stretches to it.
+#guard box "<div id=c><div id=s><div id=i>I</div></div></div>" "#c{display:grid;grid-template-rows:30px} #s{display:grid}" "s" == some (0,0,200,30)
+#guard box "<div id=c><div id=s><div id=i>I</div></div></div>" "#c{display:grid;grid-template-rows:30px} #s{display:grid}" "i" == some (0,0,200,30)
+#guard box "<div id=c><div id=s><div id=i>I</div></div></div>" "#c{display:grid;grid-template-rows:30px} #s{display:grid;margin-top:4px;padding:1px}" "i" == some (1,5,198,24)
+
 end L4Factoidal.Rendering.GridLayoutTests

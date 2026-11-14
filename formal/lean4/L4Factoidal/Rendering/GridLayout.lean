@@ -84,6 +84,18 @@ def gridBaselineSelf (own container : ItemAlign) : Bool :=
 #guard gridSelfAlign .auto .selfStart false false == .start
 #guard gridSelfAlign .left .normal true == .end_
 
+/-- The size of the tracks `start` up to `start + span` with the gaps between them, when
+every one of them has a fixed size that no content changes (min and max sizing functions
+fixed and equal); else `none`. -/
+def gridFixedSpan (fns : Array Grid.TrackFn) (gap start span : Nat) : Option Nat :=
+  ((List.range span).foldl (fun acc k => acc.bind fun sum =>
+      match fns[start + k]? with
+      | some ⟨.fixed a, .fixed b⟩ => if a == b then some (sum + a) else none
+      | _ => none) (some 0)).map (· + gap * (span - 1))
+
+#guard gridFixedSpan #[⟨.fixed 10, .fixed 10⟩, ⟨.fixed 20, .fixed 20⟩] 5 0 2 == some 35
+#guard gridFixedSpan #[⟨.fixed 10, .fixed 10⟩, ⟨.auto, .auto⟩] 5 0 2 == none
+
 /-- The explicit grid and the placement of the items of a grid container. -/
 structure GridPlan where
   /-- The area of each item, in tracks of the implicit grid. -/
@@ -268,6 +280,7 @@ def gridLayout (kids : Children) (s : Computed) (items0 : Array Item) (box : Con
   -- the baseline-aligned items (§11.6): index, row, baseline from the margin box's top
   let mut baselined : Array (Nat × Nat × Nat) := #[]
   let mut rowItems : Array Grid.Contribution := #[]
+  let rowFns := gridTrackFns plan.rowAxis g.autoRows plan.rowLead plan.rows availH
   for i in [0:n] do
     let item := items[i]!
     let is := styles[i]!
@@ -293,6 +306,16 @@ def gridLayout (kids : Children) (s : Computed) (items0 : Array Item) (box : Con
     let fixed := match is.height with
       | .px h => some (clampOpt minH maxH h+padV)
       | _ => none
+    -- An item stretched in rows whose sizes no content changes has its final height now: a
+    -- flex or grid container is then laid out once, not measured and laid out again.
+    let rowStretch := (is.grid.templateRows.subgrid && is.display.isGrid) ||
+      gridSelfAlign is.align.alignSelf s.align.alignItems false == .stretch
+    let fixed := match fixed, gridFixedSpan rowFns rowGap a.row a.rowSpan with
+      | none, some areaU =>
+        if kids.heightSensitive item && rowStretch && !is.autoMarginTop && !is.autoMarginBottom then
+          some (max padV (clampOpt (minH+padV) (maxH.map (·+padV)) (gridPx areaU-m.top-m.bottom)))
+        else none
+      | f, _ => f
     let r ← if kids.heightSensitive item then
         kids.layout item x box.y {available := areaW, width := some width, height := fixed}
       else kids.content item x box.y width
@@ -315,7 +338,6 @@ def gridLayout (kids : Children) (s : Computed) (items0 : Array Item) (box : Con
   -- §12.3 step 3: the rows. A container with no definite height is as high as its rows,
   -- within its min-height and max-height; when those change the height, the rows are
   -- sized again in it.
-  let rowFns := gridTrackFns plan.rowAxis g.autoRows plan.rowLead plan.rows availH
   let rowCollapsed := gridCollapsed plan.rowAxis plan.rowLead plan.rows (plan.areas.map fun a => (a.row, a.rowSpan))
   let stretchRows := gridStretches s.align.alignContent
   let firstRows := gridSizes rowFns rowCollapsed rowGap rowItems
