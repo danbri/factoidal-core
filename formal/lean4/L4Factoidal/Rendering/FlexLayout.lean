@@ -99,9 +99,10 @@ def mainPositions (justify : Flex.Justify) (room gap : Int) (outers : List Int) 
   let free := room - outers.sum
   let autoCount := LU.total autos
   let autoShare : Int := if 0 < free && 0 < autoCount then free / (autoCount : Int) else 0
-  let (start, between) := if 0 < autoShare then (0, 0) else Flex.justify justify free outers.length
   let grown := (outers.zip autos).map fun (o, a) => o + autoShare * (a : Int)
-  (Flex.place start (between + gap) grown, autoShare)
+  -- `Flex.spread`: each item's place is a share of the whole free space, so the last item
+  -- of `space-between` ends exactly at the line's end (`Flex.lead_between_last`).
+  (if 0 < autoShare then Flex.place 0 gap grown else Flex.spread justify free gap grown, autoShare)
 
 /-- `align-content` as distribution of the lines from the cross-start side; `none` for
 `stretch` (and `normal`, which is `stretch` in a flex container). `reverse`: `wrap-reverse`
