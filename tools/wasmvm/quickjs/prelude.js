@@ -12156,13 +12156,18 @@
   const pseudoNames = ['before', 'after', 'marker', 'first-line', 'first-letter', 'placeholder', 'selection', 'backdrop',
     'file-selector-button', 'target-text', 'spelling-error', 'grammar-error', 'details-content', 'checkmark',
     'picker-icon', 'scroll-marker', 'column'];
+  // -1: the element itself; -2: a pseudo-element argument that is not one Lean computes
+  // (ill-formed or unknown), whose computed style is empty (CSSOM §9)
   const pseudoIndex = pseudo => {
     if (pseudo === undefined || pseudo === null) return -1;
     const p = String(pseudo).toLowerCase();
-    const name = p.startsWith('::') ? p.slice(2) : (p.startsWith(':') && ['before', 'after', 'first-line', 'first-letter'].includes(p.slice(1))) ? p.slice(1) : null;
-    return name === null ? -1 : pseudoNames.indexOf(name);
+    if (!p.startsWith(':')) return -1;
+    const name = p.startsWith('::') ? p.slice(2) : ['before', 'after', 'first-line', 'first-letter'].includes(p.slice(1)) ? p.slice(1) : null;
+    const i = name === null ? -1 : pseudoNames.indexOf(name);
+    return i < 0 ? -2 : i;
   };
   const computedValue = (el, name, pe = -1) => {
+    if (pe === -2) return '';
     const id = nodeId(el);
     if (namesFor(el).length === 0) return '';
     if (pe >= 0) {
