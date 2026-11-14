@@ -234,12 +234,15 @@ theorem fillPlan_not_ready (q len filled e m : Nat) (h : (fillPlan q len filled 
 def queueOf (xs : List (Nat × Float)) : SizedQueue Nat :=
   xs.foldl (fun q (a, s) => (q.enqueue a s).getD q) {}
 
+/-- Dequeue `k` more times onto `acc` (newest first): a tail call, so a loop. -/
+def drainAcc : Nat → SizedQueue Nat → List Nat → List Nat × SizedQueue Nat
+  | 0, q, acc => (acc.reverse, q)
+  | k + 1, q, acc => match q.dequeue with
+    | some (a, q') => drainAcc k q' (a :: acc)
+    | none => (acc.reverse, q)
+
 /-- Dequeue `k` times: the values, and the queue left. -/
-def drain : Nat → SizedQueue Nat → List Nat × SizedQueue Nat
-  | 0, q => ([], q)
-  | k + 1, q => match q.dequeue with
-    | some (a, q') => let (as, q'') := drain k q'; (a :: as, q'')
-    | none => ([], q)
+def drain (k : Nat) (q : SizedQueue Nat) : List Nat × SizedQueue Nat := drainAcc k q []
 
 #guard (queueOf [(1, 1), (2, 2), (3, 4)]).toList.map (·.1) == [1, 2, 3]
 #guard (queueOf [(1, 1), (2, 2), (3, 4)]).total == 7 && (queueOf [(1, 1), (2, 2), (3, 4)]).count == 3
