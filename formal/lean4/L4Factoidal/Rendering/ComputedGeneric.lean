@@ -261,9 +261,12 @@ def cascadedPseudo (v : View) (id : Nat) (pe : String) (p : String) : Option Str
   if !appliesToPseudo pe p then none else
   let names := "all" :: coveringNames p
   let cands := (v.rules.zipIdx).foldl (fun acc (rule, order) =>
-    match rule.selectors.find? (fun sel => match sel.complex with
+    -- `::before` and `::after` selectors are kept on the rule as selectors of the
+    -- originating element (`Rule.before`, `Rule.after`)
+    let generated := if pe == "before" then rule.before else if pe == "after" then rule.after else []
+    match (rule.selectors.find? (fun sel => match sel.complex with
         | some c => DOM.Selectors.matchesPseudo v.dom id c pe
-        | none => false) with
+        | none => false)).orElse (fun _ => generated.find? fun sel => CSS.selectorMatches v.dom id sel) with
     | none => acc
     | some sel =>
       rule.declarations.foldl (fun acc d =>
