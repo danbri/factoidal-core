@@ -2377,4 +2377,33 @@ def render (dom : Dom) (rules : List CSS.Rule) (font : FontProfile) (embedding :
   let drawn ← renderStyled (Generated.flattenContents made.1 made.2) made.2 font embedding width height pictures
   return (drawn.1,drawn.2.filter (·.source < dom.size))
 
+/-- `render`, and with its answer the computed styles of the page's own nodes: those the
+layout was made with (`Generated.styled`). A caller that reads styles of the laid out page
+(the border edges of a box, the styles a pointer state is compared with) takes them from
+here and does not cascade the document a second time. -/
+def renderWithStyles (dom : Dom) (rules : List CSS.Rule) (font : FontProfile) (embedding : Embedding)
+    (width height : Nat) (textScale : Float := 1) (state : CSS.ElementState := {})
+    (pictures : Pictures := noPictures) (treeScope : Option CSS.TreeScope := none) :
+    Except String ((Scene × Array Box) × Array Computed) := do
+  let made ← Generated.styled treeScope dom rules textScale state
+  let drawn ← renderStyled (Generated.flattenContents made.1 made.2) made.2 font embedding width height pictures
+  return ((drawn.1,drawn.2.filter (·.source < dom.size)),made.2.extract 0 dom.size)
+
+/-- Kind: correctness of the shared styles. Says: on a page whose sheet makes no
+generated content, the layout is the layout of the styles of `CSS.computeFor`, and the
+styles answered are those styles (their first `dom.size`, which is all of them when the
+cascade gives one style a node). Does not say: the same for a page with `::before` or
+`::after` content, where the styles are those of `Generated.styled`'s own cascade over
+the page's nodes (the same rules and the same animated values; not proved equal). -/
+theorem renderWithStyles_unused (dom : Dom) (rules : List CSS.Rule) (font : FontProfile) (embedding : Embedding)
+    (width height : Nat) (textScale : Float) (state : CSS.ElementState) (pictures : Pictures)
+    (treeScope : Option CSS.TreeScope) (h : Generated.used rules = false) :
+    renderWithStyles dom rules font embedding width height textScale state pictures treeScope =
+      (CSS.computeFor treeScope dom rules textScale state).bind fun styles =>
+        (renderStyled (Generated.flattenContents dom styles) styles font embedding width height pictures).bind fun drawn =>
+          Except.ok ((drawn.1,drawn.2.filter (·.source < dom.size)),styles.extract 0 dom.size) := by
+  unfold renderWithStyles
+  rw [Generated.styled_unused treeScope dom rules textScale state h]
+  cases CSS.computeFor treeScope dom rules textScale state <;> rfl
+
 end L4Factoidal.Rendering.Layout
