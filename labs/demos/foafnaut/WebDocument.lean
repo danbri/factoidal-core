@@ -2330,7 +2330,11 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
           -- 36: the custom properties that apply to the element (35 is the hit test); 200 + k: the k-th property's value
           some (if op == 20 then Rendering.ComputedValues.text c
             else if op == 36 then Rendering.ComputedGeneric.customNamesText view node
-            else Rendering.Animation.Computed.resolvedAt view node (op - 200))
+            else Rendering.Animation.Computed.resolvedAt view node (op - 200) fun _ =>
+              -- the laid out border box, for a percentage of a box whose size is not a length
+              match laid.get with
+              | .ok l => (readAnswer l node 17).bind Rendering.Animation.Computed.sizeOfBox
+              | .error _ => none)
         else some ""
       | .error _ => none
     else match laid.get with
