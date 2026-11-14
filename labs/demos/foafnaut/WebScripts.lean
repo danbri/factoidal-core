@@ -1148,9 +1148,10 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
     -- runner sends `dangerouslyEnable`, and only with its `--dangerously-enable-webdriver-endpoint`;
     -- this is the one acceptance of `Risk.webdriverEndpoint` (skills/lean-risk-flags §5).
     -- `Gate.start` refuses without it, off loopback, or with no entropy.
-    let launch : WebDriver.Gate.Launch := {
-      enabled := if request.field? "dangerouslyEnable" == some (.bool true) then some (Risk.dangerouslyAccept .webdriverEndpoint) else none,
-      address := str request "address", entropy := ← turnBytes }
+    let enabled : Option (Risk.Accepted .webdriverEndpoint) :=
+      if request.field? "dangerouslyEnable" == some (.bool true) then some (Risk.dangerouslyAccept .webdriverEndpoint) else none
+    let entropy ← turnBytes
+    let launch : WebDriver.Gate.Launch := { enabled, address := str request "address", entropy }
     match WebDriver.Gate.start launch, natField request "port" with
     | .ok secret, some port =>
       let browser : WebDriver.Protocol.Browser := { platform := (match str request "platform" with | "" => "linux" | p => p) }
@@ -1163,11 +1164,11 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
     match held.webdriver with
     | none => return (held, .error "scriptSession: no WebDriver endpoint")
     | some (cfg, srv, browser, window, doc) =>
-      let r : WebDriver.Protocol.Request := { method := str request "method", path := str request "path",
-        host := str request "host", body := str request "body", entropy := ← turnBytes,
-        origin := match request.field? "origin" with
-          | some (.string o) => some o
-          | _ => none }
+      let origin : Option String := match request.field? "origin" with
+        | some (.string o) => some o
+        | _ => none
+      let entropy ← turnBytes
+      let r : WebDriver.Protocol.Request := { method := str request "method", path := str request "path", host := str request "host", body := str request "body", entropy, origin }
       let (srv, out) := WebDriver.Protocol.handle cfg browser srv r
       let reply := fun (status : Nat) (body : JSON.Json) =>
         (JSON.Json.object [("status", .number (toString status)), ("body", .string body.toString)]).toString
