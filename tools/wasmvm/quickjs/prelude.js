@@ -2910,6 +2910,12 @@
     get forms() { return this.getElementsByTagName('form'); }
     get images() { return this.getElementsByTagName('img'); }
     get links() { const id = nodeId(this); return liveCollection(() => elementsOf(id).filter(k => ['a', 'area'].includes(str(k, 0)) && n.attr(k, 'href') !== null)); }
+    // HTML §3.1.5: embeds and plugins (the embed elements), anchors (a elements with a name),
+    // applets (always empty); in the document's tree only, never in a shadow tree
+    get embeds() { const id = nodeId(this); return liveCollection(() => elementsOf(id).filter(k => htmlEl(k) && str(k, 0) === 'embed')); }
+    get plugins() { return this.embeds; }
+    get anchors() { const id = nodeId(this); return liveCollection(() => elementsOf(id).filter(k => htmlEl(k) && str(k, 0) === 'a' && n.attr(k, 'name') !== null)); }
+    get applets() { return liveCollection(() => []); }
     get currentScript() { return currentScript; }
     getElementById(id) { id = String(id); if (id === '') return null; const k = chk(n.query(nodeId(this), 5, id)); return k === null ? null : wrap(Number(k)); }
     getElementsByName(name) { return staticList(elementsOf(nodeId(this)).filter(k => n.attr(k, 'name') === String(name)).map(wrap)); }
