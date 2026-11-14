@@ -41,8 +41,11 @@ structure Env where
   nsctx : List (String × String) := []
   /-- Repeat id to its index (§7.7.5). -/
   indexes : List (String × Nat) := []
-  /-- The in-scope evaluation context node, for `current()` and `context()`. -/
+  /-- The context node the expression started from, for `current()` (§7.10.2). -/
   current : Option Item := none
+  /-- The in-scope evaluation context node of the element that holds the
+      expression, for `context()` (§7.10.4). -/
+  context : Option Item := none
   /-- Event context information, for `event()` (§7.11.2). -/
   eventInfo : List (String × Value) := []
   /-- The host's clock reading, an xsd:dateTime in UTC. -/
@@ -332,7 +335,27 @@ def callFn (env : Env) (it : Item) (pos size : Nat) (f0 : String) (vals : List V
       let k := if id == "" then env.defaultInst else (env.instIds.find? (·.1 == id)).map (·.2)
       .ok (.nodes ((k.bind (instRoot env)).toList))
   | "current", [] => .ok (.nodes [env.current.getD it])
-  | "context", [] => .ok (.nodes [env.current.getD it])
+  | "context", [] => .ok (.nodes [env.context.getD (env.current.getD it)])
+  | "id", v :: rest =>
+      -- §7.10.3: the elements of type xsd:ID (here: `xsi:type` naming `ID`) or with
+      -- an `xml:id` attribute whose value is one of the given IDs, in the documents
+      -- of the second argument's nodes (default: the context node's document)
+      let refs := match v with
+        | .nodes ns => (normalize ns).flatMap (fun (i : Item) => splitWs i.stringValue)
+        | other => splitWs other.toStr
+      let roots : List Item := match rest with
+        | [.nodes ns] => ns
+        | _ => [it]
+      let docNos := (roots.map (·.loc.doc)).eraseDups
+      let found := docNos.flatMap (fun k =>
+        (allItems (env.docOf (Item.doc [] k)) k).filter (fun x =>
+          match x with
+          | .tree _ (.element _ attrs _) =>
+            (attrs.any (fun a => localOf a.name == "type" && prefixOf a.name != "" && localOf a.value == "ID")
+              && refs.contains (normalizeSpaceStr x.stringValue)) ||
+            attrs.any (fun a => a.name == "xml:id" && refs.contains a.value)
+          | _ => false))
+      .ok (.nodes (normalize found))
   | "index", [v] =>
       .ok (match env.indexes.find? (·.1 == v.toStr) with
         | some (_, i) => .num (.finite (Int.ofNat i) 0)

@@ -1,0 +1,18 @@
+{
+ "case": "9.3.1.a",
+ "file": "Chapt09/9.3/9.3.1/9.3.1.a.xhtml",
+ "quote": "You must see the values \"winshield wipers\", \"tires\", \"exhaust\", and \"air freshener\" output below.",
+ "note": "the condition spells the first value \"winshield wipers\"; the instance data has \"windshield wipers\"",
+ "steps": [
+  {
+   "expect": "values",
+   "values": [
+    "windshield wipers",
+    "tires",
+    "exhaust",
+    "air freshener"
+   ],
+   "kind": "output"
+  }
+ ]
+}

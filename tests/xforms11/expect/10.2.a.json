@@ -1,0 +1,49 @@
+{
+ "case": "10.2.a",
+ "file": "Chapt10/10.2/10.2.a.xhtml",
+ "quote": "You must see the value \"white\" in the Color output control, the value \"excellent\" in the Condition output control, and the value \"Toyoto\" in the Make output control. When you activate the Set Color trigger the value in the Color output must change to \"blue\". When you activate the Set Condition trigger the value in the Condition output must change to \"fair\". When you activate the Set Make trigger the value in the Make output must not change.",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "Color",
+   "value": "white"
+  },
+  {
+   "expect": "control",
+   "label": "Condition",
+   "value": "excellent"
+  },
+  {
+   "expect": "control",
+   "label": "Make",
+   "value": "Toyoto"
+  },
+  {
+   "do": "activate",
+   "label": "Set Color"
+  },
+  {
+   "expect": "control",
+   "label": "Color",
+   "value": "blue"
+  },
+  {
+   "do": "activate",
+   "label": "Set Condition"
+  },
+  {
+   "expect": "control",
+   "label": "Condition",
+   "value": "fair"
+  },
+  {
+   "do": "activate",
+   "label": "Set Make"
+  },
+  {
+   "expect": "control",
+   "label": "Make",
+   "value": "Toyoto"
+  }
+ ]
+}

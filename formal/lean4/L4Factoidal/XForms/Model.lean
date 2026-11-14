@@ -197,7 +197,12 @@ def loadInstances (fm : Form) (res : List (String × String)) : List Inst × Lis
       | .error _ => none
   fm.models.foldl (fun (acc : List Inst × List (Nat × String)) mi =>
     let mel := fm.el mi
-    let schemaErrs := match mel.attr "schema" with
+    let rootCount := fun (e : El) => match e.node with
+      | .element _ _ kids => (kids.filter isElem).length
+      | _ => 0
+    let badInline := ((fm.kidsNamed mel "instance").filter (fun e =>
+      (e.attr "src").isNone && rootCount e > 1)).map (fun e => (mi, "#" ++ (e.attr "id").getD "instance"))
+    let schemaErrs := badInline ++ match mel.attr "schema" with
       | none => []
       | some s => ((splitWs s).filter (fun u => !u.startsWith "#" && !(res.any (·.1 == u)))).map (fun u => (mi, u))
     (fm.kidsNamed mel "instance").foldl (fun (acc : List Inst × List (Nat × String)) e =>
@@ -259,6 +264,15 @@ def typeValid (ns : List (String × String)) (q : String) (v : String) : Bool :=
       v.toList.all Char.isDigit && v.length ≥ 12 && v.length ≤ 19
     else v == "" || (XSD.validLexicalFor .xsd10 l v).getD true
   else true
+
+/-- Is the type one `typeValid` decides? -/
+def typeKnown (ns : List (String × String)) (q : String) : Bool :=
+  let uri := nsLookup ns (prefixOf q)
+  if uri == xsNs then (XSD.validLexicalFor .xsd10 (localOf q) "").isSome
+  else if uri == xfNs then
+    ["listItem", "listItems", "dayTimeDuration", "yearMonthDuration", "email", "card-number"].contains (localOf q)
+      || (XSD.validLexicalFor .xsd10 (localOf q) "").isSome
+  else false
 
 /-! ## The model state -/
 
@@ -495,7 +509,13 @@ def Model.recalc (m : Model) : Except String Model := do
         required := old.required || req, constraint := old.constraint && con,
         typeOk := old.typeOk && tyOk, hasCalc := old.hasCalc || (el.attr "calculate").isSome }
     pure ((bn.loc, merged) :: acc.filter (fun p => p.1 != bn.loc))) []
-  pure { m1 with mips := mips }
+  let unknown := m1.bns.filterMap (fun bn =>
+    let el := m1.form.el bn.bind
+    (el.attr "type").bind (fun q => if typeKnown el.ns q then none else some q))
+  let m2 := match unknown.head? with
+    | some q => { m1 with out := Output.unsupported s!"type '{q}' is not a built-in type (schema-defined types are not implemented)" :: m1.out }
+    | none => m1
+  pure { m2 with mips := mips }
 
 def Model.own (m : Model) (l : Loc) : Mips := ((m.mips.find? (·.1 == l)).map (·.2)).getD {}
 
@@ -521,10 +541,12 @@ def Model.validAt (m : Model) (l : Loc) : Bool :=
 /-! ## Evaluation contexts and bindings (§7.2) -/
 
 def Model.evalCx (m : Model) (el : El) (cx : Cx) (src : String)
-    (info : List (String × Value) := []) : Except String Value :=
+    (info : List (String × Value) := []) (inScope : Option Item := none) : Except String Value :=
   match cx.item with
   | none => .ok (.nodes [])
-  | some it => (evalStr (m.env cx.model (xpNs el) (some it) info) it cx.pos cx.size src).map (·.1)
+  | some it =>
+    let env := m.env cx.model (xpNs el) (some it) info
+    (evalStr { env with context := inScope.orElse (fun _ => some it) } it cx.pos cx.size src).map (·.1)
 
 def Model.switchModel (m : Model) (el : El) (cx : Cx) : Cx :=
   match el.attr "model" with
@@ -537,6 +559,10 @@ def Model.switchModel (m : Model) (el : El) (cx : Cx) : Cx :=
 /-- The node-set of an element's binding attributes (`bind`, else `ref`
     or `nodeset`); `none` when it has none. -/
 def Model.nodes (m : Model) (el : El) (cx : Cx) : Except String (Option (List Item)) :=
+  let modelOk := match el.attr "model" with
+    | none => true
+    | some id => ((m.form.byId id).map (fun i => (m.form.el i).name == "model")).getD false
+  if !modelOk then .error s!"the model attribute '{(el.attr "model").getD ""}' does not name a model" else
   match el.attr "bind" with
   | some id =>
     (match m.form.byId id with
@@ -609,7 +635,8 @@ def Model.ctlOf (m : Model) (el : El) (iter : List (Nat × Nat)) (cx : Cx)
   let cxB : Cx := match bound with
     | some x => { cx with item := some x, pos := 1, size := 1 }
     | none => cx
-  let value ← match el.name == "output", el.attr "value" with
+  -- §8.1.5: on `output` a node binding takes precedence over `value`
+  let value ← match el.name == "output" && ns?.isNone, el.attr "value" with
     | true, some src => (m.evalCx el cx src).map Value.toStr
     | _, _ => pure ((bound.map (·.stringValue)).getD "")
   let label ← match (m.form.kidsNamed el "label").head? with
@@ -745,6 +772,30 @@ def Model.childValue (m : Model) (el : El) (child : String) (iter : List (Nat ×
       pure (some v.toStr)
     | none => .ok (some (normalizeSpaceStr c.text))
 
+/-- The text of an element with `output` children evaluated in place
+    (the content of `message`, §10.16). -/
+def Model.mixedText (m : Model) (el : El) (iter : List (Nat × Nat))
+    (info : List (String × Value)) : Except String String := do
+  let kids := match el.node with
+    | .element _ _ ks => ks
+    | _ => []
+  let r ← kids.foldlM (fun (acc : String × Nat) k => do
+    match k with
+    | .element .. =>
+      let c := m.form.el ((el.kids[acc.2]?).getD 0)
+      if c.name == "output" then
+        let (cx, ns) ← m.single c iter
+        let v ← match ns, c.attr "value" with
+          | some l, _ => pure ((l.head?.map (·.stringValue)).getD "")
+          | none, some src => (m.evalCx c cx src info).map Value.toStr
+          | none, none => pure ""
+        pure (acc.1 ++ v, acc.2 + 1)
+      else pure (acc.1 ++ c.text, acc.2 + 1)
+    | .text t => pure (acc.1 ++ t, acc.2)
+    | .cdata t => pure (acc.1 ++ t, acc.2)
+    | _ => pure acc) ("", 0)
+  pure (normalizeSpaceStr r.1)
+
 def Model.afterEdit (m : Model) (ev : String) (docNo : Nat) : Model :=
   match m.insts[docNo - 2]? with
   | none => m
@@ -765,20 +816,24 @@ def Model.doInsert (m : Model) (el : El) (iter : List (Nat × Nat))
   | none => pure m
   | some ctxNode =>
     let ns := (← m.nodes el cx).getD []
+    -- the origin node-set (all its element nodes are cloned, in order); default: the last node
     let origin ← match el.attr "origin" with
-      | none => pure ns.getLast?
+      | none => pure ns.getLast?.toList
       | some src =>
         match ← m.evalCx el cx src info with
-        | .nodes (x :: _) => pure (some x)
-        | _ => pure none
-    match origin with
-    | some (.tree _ node) =>
+        | .nodes xs => pure xs
+        | _ => pure []
+    let clones := origin.filterMap (fun x => match x with
+      | .tree _ n => some n
+      | _ => none)
+    match clones with
+    | _ :: _ =>
       let size := ns.length
       if size == 0 then
         -- no node-set: the clone becomes the first child of the context node
         if (el.attr "context").isNone then pure m
         else pure ((m.editDoc ctxNode.loc.doc
-          (modKids ctxNode.loc.path (fun kids => node :: kids))).afterEdit "xforms-insert" ctxNode.loc.doc)
+          (modKids ctxNode.loc.path (fun kids => clones ++ kids))).afterEdit "xforms-insert" ctxNode.loc.doc)
       else
         let atIdx ← match el.attr "at" with
           | none => pure size
@@ -794,9 +849,9 @@ def Model.doInsert (m : Model) (el : El) (iter : List (Nat × Nat))
           let ci := p.getLast?.getD 0
           let j := if before then ci else ci + 1
           pure ((m.editDoc tgt.loc.doc (modKids p.dropLast
-            (fun kids => kids.take j ++ [node] ++ kids.drop j))).afterEdit "xforms-insert" tgt.loc.doc)
+            (fun kids => kids.take j ++ clones ++ kids.drop j))).afterEdit "xforms-insert" tgt.loc.doc)
         | none => pure m
-    | _ => pure m
+    | [] => pure m
 
 /-- `delete` (§10.4), for element, text and other child nodes; the
     root element of an instance is never deleted. -/
@@ -848,27 +903,21 @@ def Model.runBody (m : Model) (el : El) (iter : List (Nat × Nat))
     | some node =>
       let v ← match el.attr "value" with
         | some src =>
-          (m.evalCx el { cx with item := some node, pos := 1, size := 1 } src info).map Value.toStr
+          (m.evalCx el { cx with item := some node, pos := 1, size := 1 } src info cx.item).map Value.toStr
         | none => pure el.text
       pure ((m.setValue node.loc v).flag cx.model false true true true)
   else if el.name == "message" then
     let (_, ns) ← m.single el iter
-    let text := match ns with
-      | some l => (l.head?.map (·.stringValue)).getD ""
-      | none => normalizeSpaceStr el.text
+    let text ← match ns with
+      | some l => pure ((l.head?.map (·.stringValue)).getD "")
+      | none => m.mixedText el iter info
     pure (m.emit (.message ((el.attr "level").getD "modal") text))
   else if el.name == "dispatch" then
-    let name := (el.attr "name").orElse (fun _ => none)
-    let name ← match name with
-      | some n => pure (some n)
-      | none => m.childValue el "name" iter info
-    let tgt := (el.attr "targetid").orElse (fun _ => el.attr "target")
-    let tgt ← match tgt with
-      | some t => pure (some t)
-      | none => m.childValue el "targetid" iter info
-    let delay ← match el.attr "delay" with
-      | some d => pure (some d)
-      | none => m.childValue el "delay" iter info
+    -- §10.8: a child element takes precedence over the attribute of the same name
+    let name := (← m.childValue el "name" iter info).orElse (fun _ => el.attr "name")
+    let tgt := (← m.childValue el "targetid" iter info).orElse (fun _ =>
+      (el.attr "targetid").orElse (fun _ => el.attr "target"))
+    let delay := (← m.childValue el "delay" iter info).orElse (fun _ => el.attr "delay")
     match name, tgt.bind m.form.byId with
     | some n, some t =>
       let d := Work.dispatch n t iter []
@@ -886,9 +935,7 @@ def Model.runBody (m : Model) (el : El) (iter : List (Nat × Nat))
   else if el.name == "reset" then
     pure (m.push [.dispatch "xforms-reset" modelEl [] []])
   else if el.name == "toggle" then
-    let cid ← match el.attr "case" with
-      | some c => pure (some c)
-      | none => m.childValue el "case" iter info
+    let cid := (← m.childValue el "case" iter info).orElse (fun _ => el.attr "case")
     match cid.bind m.form.byId with
     | none => pure m
     | some c =>
@@ -921,18 +968,14 @@ def Model.runBody (m : Model) (el : El) (iter : List (Nat × Nat))
         pure ((m'.flag modelEl true true true true).push (ev.map (fun n => Work.dispatch n r iter [])))
     | _, _ => pure m
   else if el.name == "setfocus" then
-    let cid ← match el.attr "control" with
-      | some c => pure (some c)
-      | none => m.childValue el "control" iter info
+    let cid := (← m.childValue el "control" iter info).orElse (fun _ => el.attr "control")
     match cid.bind m.form.byId with
     | some c => pure (m.push [.dispatch "xforms-focus" c iter []])
     | none => pure m
   else if el.name == "insert" then m.doInsert el iter info
   else if el.name == "delete" then m.doDelete el iter info
   else if el.name == "load" then
-    let uri ← match el.attr "resource" with
-      | some u => pure (some u)
-      | none => m.childValue el "resource" iter info
+    let uri := (← m.childValue el "resource" iter info).orElse (fun _ => el.attr "resource")
     let (_, ns) ← m.single el iter
     let uri := uri.getD (((ns.bind (·.head?)).map (·.stringValue)).getD "")
     pure (m.emit (.load uri ((el.attr "show").getD "replace")))
@@ -1041,6 +1084,14 @@ def Model.run : Nat → Model → Model
     | [] => m
     | w :: rest => Model.run f (({ m with work := rest }).exec w)
 
+/-- The names of the XForms functions `Eval.callFn` provides. -/
+def xformsFunctions : List String :=
+  ["instance", "current", "context", "id", "index", "boolean-from-string", "is-card-number", "if",
+   "choose", "avg", "min", "max", "count-non-empty", "power", "random", "compare", "property",
+   "digest", "hmac", "now", "local-date", "local-dateTime", "days-from-date", "days-to-date",
+   "seconds-from-dateTime", "seconds-to-dateTime", "adjust-dateTime-to-timezone", "seconds",
+   "months", "event"]
+
 /-- The work of initialisation (§4.2): load the instances, then
     `xforms-model-construct` to every model, `xforms-model-construct-done`
     to every model, the first view, `xforms-ready` to every model. -/
@@ -1054,9 +1105,15 @@ def Model.initWork (m : Model) : Model :=
       let ts := splitWs v
       !ts.isEmpty && !ts.any (fun t => t == "1.0" || t == "1.1")
   let d (n : String) (mi : Nat) := Work.dispatch n mi [] []
+  -- §7.12: every function named by `functions` must be available
+  let functionsBad (mi : Nat) : Bool :=
+    match (m.form.el mi).attr "functions" with
+    | none => false
+    | some v => (splitWs v).any (fun f => !(xformsFunctions.contains (localOf f)))
   { m with insts := insts, work :=
       errs.map (fun (mi, uri) => Work.dispatch "xforms-link-exception" mi [] [("resource-uri", .str uri)]) ++
       (models.filter versionBad).map (d "xforms-version-exception") ++
+      (models.filter functionsBad).map (d "xforms-compute-exception") ++
       models.map (d "xforms-model-construct") ++ models.map (d "xforms-model-construct-done") ++
       [Work.uiInit] ++ models.map (d "xforms-ready") }
 
