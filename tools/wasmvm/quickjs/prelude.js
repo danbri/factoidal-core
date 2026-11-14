@@ -1247,7 +1247,14 @@
     ['HTMLMenuElement', ['menu']], ['HTMLPictureElement', ['picture']], ['HTMLMarqueeElement', ['marquee']]];
   const named = {};
   for (const [name, tags] of elementClasses) named[name] = htmlClass(name, tags);
-  Object.defineProperty(named.HTMLTemplateElement.prototype, 'content', { get() { return wrap(info(nodeId(this), 9)); }, configurable: true });
+  // a template's contents and the template ("template contents" host, DOM §4.5): the page
+  // reaches a contents fragment only through this getter
+  const templateOfContent = new Map();
+  Object.defineProperty(named.HTMLTemplateElement.prototype, 'content', { get() {
+    const id = nodeId(this), c = info(id, 9);
+    if (c >= 0) templateOfContent.set(c, id);
+    return wrap(c);
+  }, configurable: true });
   // ---- Media elements (HTML §4.8.11) in a browser with no media decoders: no type can be
   // played (canPlayType answers ""), so a resource is never fetched; the load algorithm ends
   // in the "dedicated media source failure steps" (a MediaError with code
@@ -15277,10 +15284,14 @@
       const f = chk(n.create(14 + 16 * info(ctx, 7), (ns ?? '') + '\u0000' + name + '\u0000' + markup));
       if (o.config !== null) op(f, 193, (safe ? '1' : '0') + '\u0000' + o.config);
       if (!safe) scanHandlers(f, false);
+      // with runScripts the fragment's script elements are not "already started": they run
+      // when the fragment is inserted into a document with a browsing context
+      if (o.runScripts) for (const k of elementsOf(f)) if (str(k, 0) === 'script') noteFreshScript(k);
       return f;
     };
-    // the context element of a target: the element, or a shadow root's host
-    const contextOf2 = target => (info(target, 0) === 11 ? info(target, 21) : target);
+    // the context element of a target: the element, or a shadow root's host, or the template
+    // whose contents the target is
+    const contextOf2 = target => (info(target, 0) === 11 ? (info(target, 21) >= 0 ? info(target, 21) : templateOfContent.get(target)) : target);
     // "target for HTML insertion": a template's contents, else the element
     const targetOf = id => (isHtmlNamed(id, 'template') ? info(id, 9) : id);
     // "parent for HTML insertion"
@@ -15288,7 +15299,7 @@
       const p = info(id, 1);
       if (p < 0) return -1;
       if (info(p, 0) === 1) { if (isHtmlNamed(p, 'template')) throw hierarchy(); return p; }
-      if (info(p, 0) === 11 && info(p, 21) >= 0) return p;
+      if (info(p, 0) === 11 && (info(p, 21) >= 0 || templateOfContent.has(p))) return p;
       throw hierarchy();
     };
     // "Filter and set HTML", "filter and pre-insert HTML", "filter and replace with HTML"
@@ -15351,6 +15362,79 @@
           const parent = parentFor(id);
           if (parent >= 0) replaceHTML(contextOf2(parent), parent, id, markup, o, safe);
         }));
+      }
+    }
+    // ---- The HTML streaming methods (HTML "html-streaming-methods"): stream{,Append,Prepend,
+    // Before,After,ReplaceWith}HTML{,Unsafe} answer a WritableStream of strings. The insertion
+    // point is fixed when the method is called; after each chunk the markup written so far is
+    // parsed again (the same fragment parse, sanitizer and context as the one-shot methods)
+    // and replaces what the stream inserted before, so the content shows as it arrives. Script
+    // elements run once, when the stream closes, and only for an unsafe method with
+    // runScripts.
+    const streamAt = (ctx, parent, beforeOf, o, safe, isTemplateTarget) => {
+      let text = '', inserted = [], closed = false;
+      const render = final => {
+        for (const k of inserted) if (info(k, 1) === parent) chk(n.remove(parent, k));
+        inserted = [];
+        const f = parseFor(ctx, text, final ? o : { config: o.config, runScripts: false }, safe);
+        if (f < 0) return;
+        inserted = kids(f).slice();
+        const before = beforeOf();
+        chk(n.insert(parent, f, before === null || info(before, 1) !== parent ? -1 : before));
+      };
+      return new WritableStream({
+        write(chunk) {
+          if (closed) return;
+          if (typeof chunk === 'symbol') throw new TypeError('The chunk is not a string.');
+          text += String(chunk);
+          render(false);
+        },
+        close() { closed = true; if (o.runScripts && !isTemplateTarget) render(true); },
+        abort() { closed = true; },
+      });
+    };
+    for (const safe of [true, false]) {
+      const sfx = safe ? '' : 'Unsafe';
+      const optionsFor = (options, name, iface) => optionsOf(options, safe, `Failed to execute '${name}' on '${iface}'`);
+      const roots = typeof ShadowRoot === 'function' ? [[Element, 'Element'], [ShadowRoot, 'ShadowRoot']] : [[Element, 'Element']];
+      for (const [C, iface] of roots) {
+        const place = self => { const id = nodeId(self); return iface === 'Element' ? [id, targetOf(id)] : [info(id, 21), id]; };
+        method(C, 'streamHTML' + sfx, named('streamHTML' + sfx, function (options = undefined) {
+          const o = optionsFor(options, 'streamHTML' + sfx, iface), [ctx, target] = place(this);
+          chk(n.setText(target, ''));
+          return streamAt(ctx, target, () => null, o, safe, target !== nodeId(this) || info(target, 0) === 11 && info(target, 21) < 0);
+        }));
+        method(C, 'streamAppendHTML' + sfx, named('streamAppendHTML' + sfx, function (options = undefined) {
+          const o = optionsFor(options, 'streamAppendHTML' + sfx, iface), [ctx, target] = place(this);
+          if (isHtmlNamed(ctx, 'html')) throw hierarchy();
+          return streamAt(ctx, target, () => null, o, safe, target !== nodeId(this));
+        }));
+        method(C, 'streamPrependHTML' + sfx, named('streamPrependHTML' + sfx, function (options = undefined) {
+          const o = optionsFor(options, 'streamPrependHTML' + sfx, iface), [ctx, target] = place(this);
+          if (isHtmlNamed(ctx, 'html')) throw hierarchy();
+          const first = info(target, 2);
+          return streamAt(ctx, target, () => (first < 0 ? null : first), o, safe, target !== nodeId(this));
+        }));
+      }
+      for (const C of [Element, CharacterData]) {
+        const iface = C === Element ? 'Element' : 'CharacterData';
+        const at = (self, name, options, where) => {
+          const id = nodeId(self), o = optionsFor(options, name, iface);
+          const parent = parentFor(id);
+          if (parent < 0) return new WritableStream({});
+          const ctx = contextOf2(parent);
+          if (isHtmlNamed(ctx, 'html')) throw hierarchy();
+          const templateTarget = info(parent, 0) === 11 && info(parent, 21) < 0;
+          if (where === 'before') return streamAt(ctx, parent, () => id, o, safe, templateTarget);
+          if (where === 'after') { const next = info(id, 5); return streamAt(ctx, parent, () => (next < 0 ? null : next), o, safe, templateTarget); }
+          // replaceWith: the node leaves at once; the content goes where it was
+          const next = info(id, 5);
+          chk(n.remove(parent, id));
+          return streamAt(ctx, parent, () => (next < 0 ? null : next), o, safe, templateTarget);
+        };
+        method(C, 'streamBeforeHTML' + sfx, named('streamBeforeHTML' + sfx, function (options = undefined) { return at(this, 'streamBeforeHTML' + sfx, options, 'before'); }));
+        method(C, 'streamAfterHTML' + sfx, named('streamAfterHTML' + sfx, function (options = undefined) { return at(this, 'streamAfterHTML' + sfx, options, 'after'); }));
+        method(C, 'streamReplaceWithHTML' + sfx, named('streamReplaceWithHTML' + sfx, function (options = undefined) { return at(this, 'streamReplaceWithHTML' + sfx, options, 'replace'); }));
       }
     }
     // Document.parseHTML and Document.parseHTMLUnsafe: a document with no browsing context
