@@ -1,5 +1,5 @@
 {
- "note": "What each fixture gives today, read by labs/demos/foafnaut/host_parity_test.ts. 'known': subtests that fail in every host, each with the reason and the owner. 'hosts': subtests that fail or are missing in one host only, a known difference between hosts. 'painted': the blocks the window must draw (colour, box in CSS pixels from the top strip), with 'known' where it does not yet. Measured on the engine of main 19fb349c1 (release build-19fb349c134d-foafnaut-engine-darwin-arm64), 2026-11-14. A listed failure that passes is reported by the check: remove it here.",
+ "note": "What each fixture gives today, read by labs/demos/foafnaut/host_parity_test.ts. 'known': subtests that fail in every host, each with the reason and the owner. 'hosts': subtests that fail or are missing in one host only, a known difference between hosts (none now: Textnaut ran no script of a page with a module script until it was given page requests). 'painted': the blocks the window must draw (colour, box in CSS pixels from the top strip), with 'known' where it does not yet. Measured on the engine of main 19fb349c1 (release build-19fb349c134d-foafnaut-engine-darwin-arm64), 2026-11-14. A listed failure that passes is reported by the check: remove it here.",
  "fixtures": {
   "classic.html": {
    "subtests": [
@@ -247,18 +247,7 @@
     "transition: opacity runs to its end and transitionend fires": "CSS transitions are not on main (the animation engine is on wip/css-anim-values). Owner: css-anim.",
     "module script: top-level await": "top-level await is a SyntaxError in a BubblePopJS module. Owner: js-core."
    },
-   "hosts": {
-    "textnaut": {
-     "block: the header box": "Textnaut starts the session with no network: the module graph is never answered, so no script of the page runs. Owner: integration.",
-     "media query: a block that does not hold does not apply": "Textnaut starts the session with no network: the module graph is never answered, so no script of the page runs. Owner: integration.",
-     "selector in querySelectorAll: the same selectors match": "Textnaut starts the session with no network: the module graph is never answered, so no script of the page runs. Owner: integration.",
-     "storage: localStorage keeps and removes a value": "Textnaut starts the session with no network: the module graph is never answered, so no script of the page runs. Owner: integration.",
-     "storage: document.cookie keeps a cookie": "Textnaut starts the session with no network: the module graph is never answered, so no script of the page runs. Owner: integration.",
-     "event loop: script, then microtask, then timer": "Textnaut starts the session with no network: the module graph is never answered, so no script of the page runs. Owner: integration.",
-     "event loop: an animation frame callback runs": "Textnaut starts the session with no network: the module graph is never answered, so no script of the page runs. Owner: integration.",
-     "module script: imports a module, fetches JSON and fills the list": "Textnaut starts the session with no network: the module graph is never answered, so no script of the page runs. Owner: integration."
-    }
-   },
+   "hosts": {},
    "painted": [
     {
      "name": "top strip",

@@ -2,7 +2,9 @@
 // (https://github.com/danbri/factoidal-core/issues/371). The engine loads and lays out the page;
 // this host maps its text to terminal cells and terminal bytes.
 import { loadHTML, type HTMLEngine, type ScriptTurn } from "../native_html_engine.ts";
-import { inputURL, loadFontFile, navigationURL, prepareHTML, setScriptHost } from "../native_html_document.ts";
+import { inputURL, loadFontFile, navigationURL, prepareHTML, readSource, setScriptHost } from "../native_html_document.ts";
+import { netAnswer, type NetWire } from "../native_net.ts";
+import { fetchedAnswer } from "../../../../docs/web/hub/foafnaut/page-load.mjs";
 import { barRow, type BigText, bodySize, CELL_HEIGHT, CELL_WIDTH, decorateGrid, displayRow, dumpText, fillerRow, type GlyphRun, type Grid, layoutGrid, type Level, type LinkRow, readPaint, sanitizeText } from "./grid.ts";
 import { useWasm } from "./web-render-select.mjs";
 import { Input, keysOf } from "./input.ts";
@@ -45,18 +47,36 @@ function pageViewport(options: Options, charWidth = CELL_WIDTH) {
 /** Bitmap advance of the font size that has the most characters: one cell is one character of the body text. */
 const bodyCharWidth = (runs: GlyphRun[]): number => bodySize(runs) * CELL_WIDTH / 16;
 
+/** A sync request of a turn (`netSync`: a module script's graph, a sync XMLHttpRequest): the host
+makes the request and the same action runs again with the answer, as run_html.ts does. The engine
+chose the request (origin, CORS, redirects, addresses: Net.PageFetch); this only moves bytes. */
+async function synced(engine: HTMLEngine, turn: ScriptTurn): Promise<ScriptTurn> {
+  for (let i = 0; turn.netSync && i < 4096; i++)
+    turn = engine.scriptSession("", { action: "syncAnswer", session: turn.session, answer: await netAnswer(turn.netSync) });
+  return turn;
+}
+
 /** Run page scripts on the engine's BubblePopJS. Returns false when this engine has none. */
 export function enableScripts(engine: HTMLEngine, options: Options): boolean {
   const off = () => { setScriptHost({ start: () => undefined }); return false; };
   if (!options.scripts) return off();
-  try { if (!engine.scriptInfo().engines?.includes("bubblepop")) return off(); } catch { return off(); }
+  let network = false;
+  try {
+    const info = engine.scriptInfo();
+    if (!info.engines?.includes("bubblepop")) return off();
+    // Page requests (fetch, XMLHttpRequest, module scripts), as in the window: an engine with the
+    // `net` action makes them through this host. Without it a page with a module script ran no
+    // script at all, and `fetch` was not defined.
+    network = info.ops.includes("net");
+  } catch { return off(); }
   setScriptHost({
-    start: (source, url, resources, encoding, mode = {}) => {
+    start: async (source, url, resources, encoding, mode = {}) => {
       const { width, height } = pageViewport(options);
-      const turn = engine.scriptSession(source, {
+      const turn = await synced(engine, engine.scriptSession(source, {
         action: "start", url, resources, width, height, engine: "bubblepop",
         layout: { url, textScalePercent: 100, ...mode }, ...(encoding ? { encoding } : {}),
-      });
+        ...(network ? { network: true } : {}),
+      }));
       note(turn, options);
       return turn;
     },
@@ -68,18 +88,36 @@ function note(turn: ScriptTurn, options: Options) {
   for (const line of [...turn.logs, ...turn.errors]) console.error(`page: ${sanitizeText(line)}`);
 }
 
-/** A bounded run of the page's timers: up to 8 turns and 1 second of page time. */
-function settle(engine: HTMLEngine, doc: Doc, options: Options) {
+/** A bounded run of the page after its start. What the page waits for from the network is
+answered first, at most 64 answers (its requests, `netRequests`; the scripts of its workers,
+`fetches`); then its timers run, up to 8 turns and 1 second of page time. */
+async function settle(engine: HTMLEngine, doc: Doc, options: Options) {
   const script = doc.script;
   if (!script) return;
-  let turn = script.turn, budget = 1000;
-  for (let i = 0; i < 8 && turn.nextWake !== null; i++) {
-    const ms = Math.max(0, Math.ceil(turn.nextWake - turn.clock));
-    if (ms > budget) break;
-    budget -= ms;
-    turn = engine.scriptSession("", { action: "advance", session: script.session, ms });
-    note(turn, options);
-    doc.applyTurn(turn);
+  let turn = script.turn, budget = 1000, timers = 0;
+  const requests: NetWire[] = [], answered = new Set<number>();
+  const take = (next: ScriptTurn) => { turn = next; note(next, options); doc.applyTurn(next); requests.push(...(next.netRequests ?? [])); };
+  requests.push(...(turn.netRequests ?? []));
+  for (let answers = 0; answers < 64;) {
+    const wanted = (turn.fetches ?? []).filter((f) => !answered.has(f.id));
+    if (requests.length) {
+      answers++;
+      take(await synced(engine, engine.scriptSession("", { action: "net", session: script.session, results: [await netAnswer(requests.shift()!)] })));
+    } else if (wanted.length) {
+      answers++;
+      for (const f of wanted) answered.add(f.id);
+      // The type and X-Content-Type-Options as the server sent them: Lean decides whether the answer is a script.
+      const results = await Promise.all(wanted.map((f) => fetchedAnswer(f, async (url: string) => {
+        const r = await readSource(url);
+        return { status: 200, url: r.url, contentType: r.contentType, contentTypeOptions: r.contentTypeOptions, source: r.source };
+      })));
+      take(await synced(engine, engine.scriptSession("", { action: "fetched", session: script.session, results })));
+    } else if (timers < 8 && turn.nextWake !== null) {
+      const ms = Math.max(0, Math.ceil(turn.nextWake - turn.clock));
+      if (ms > budget) break;
+      budget -= ms; timers++;
+      take(await synced(engine, engine.scriptSession("", { action: "advance", session: script.session, ms })));
+    } else break;
   }
 }
 
@@ -110,7 +148,7 @@ export async function layoutDoc(doc: Doc, options: Options, charWidth?: number) 
 export async function renderPage(engine: HTMLEngine, url: string, options: Options, inline?: string, signal?: AbortSignal): Promise<Rendered> {
   const t0 = performance.now();
   const doc = await prepareHTML(engine, url, signal, inline, { liberal: options.liberal });
-  settle(engine, doc, options);
+  await settle(engine, doc, options);
   const load = performance.now() - t0;
   const { grid, charWidth, layout, cells } = await layoutDoc(doc, options);
   return { doc, grid, charWidth, ms: { load, layout, cells } };
