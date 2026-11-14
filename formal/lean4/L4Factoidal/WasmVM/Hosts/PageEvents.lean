@@ -194,7 +194,7 @@ def inputInit (inputType : String) (data : Option String) (ranges : List L4Facto
 
 /-- A key of the user (`up`: its release). `keydown` is fired at the editing host of the
 selection (else the `body`). When it is not canceled and the key edits
-(`DOM.Editing.keyCommand`), `beforeinput` is fired at the editing host; when that is not
+(`DOM.Editing.keyCommandIn`), `beforeinput` is fired at the editing host; when that is not
 canceled the editing command runs and `input` is fired. ArrowLeft and ArrowRight move the
 caret. `init` is the JSON init of the keyboard events. -/
 def key (s : σ) (up : Bool) (init : String) (k : L4Factoidal.DOM.Editing.KeyInput) : σ :=
@@ -207,7 +207,7 @@ def key (s : σ) (up : Bool) (init : String) (k : L4Factoidal.DOM.Editing.KeyInp
     let (s, prevented) := e.dispatchWith s target "keydown" init
     let s :=
       if prevented then s
-      else match L4Factoidal.DOM.Editing.keyCommand k, Hosts.Dom.keyHost (e.host s).dom with
+      else match Hosts.Dom.keyCommandOf (e.host s).dom k, Hosts.Dom.keyHost (e.host s).dom with
         | some (command, value), some host =>
           let inputType := L4Factoidal.DOM.Editing.inputTypeOf command
           let data := L4Factoidal.DOM.Editing.inputDataOf command value

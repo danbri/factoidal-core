@@ -342,6 +342,18 @@ def lineEndFrom (e : Ed) (eb : NodeId) (from_ : Nat) : BP × Option NodeId × Bo
         if !post.isEmpty then return (⟨n, utf16Length (String.ofList pre)⟩, some n, true)
   return (⟨eb, nodeLength d eb⟩, none, false)
 
+/-- The white-space of the line that starts at child `from_` of `eb`: that of the parent
+of its first Text node or line break, else that of `eb`. -/
+def lineWhiteSpace (e : Ed) (eb : NodeId) (from_ : Nat) : String := Id.run do
+  let d := e.dom
+  for top in (kidsOf d eb).extract from_ (kidsOf d eb).size do
+    if isEl d top && isBlockNode e top then break
+    for n in d.treeOrder top true do
+      if isEl d n && isBlockNode e n then return whiteSpaceOf e eb
+      if (isText d n && !(d.get n).data.isEmpty) || isHtml d n ["br", "img"] then
+        return whiteSpaceOf e ((parentOf d n).getD eb)
+  return whiteSpaceOf e eb
+
 /-- Move the line that starts at child `from_` of block `eb` into `dest` (before its child
 `before`, else at its end), inside a `span` with the white-space `ws` of `eb`; the line
 break that ended the line is removed, and so is what the move left empty in `eb`. -/
@@ -352,12 +364,35 @@ def moveFirstLine (dest : NodeId) (before : Option NodeId) (eb : NodeId) (from_ 
   let frag ← extractRange (d.size + 1) ⟨⟨eb, from_⟩, stop⟩
   let d ← rd (·.dom)
   if hasKids d frag then
-    let span ← createElement "span"
-    setAttr span "style" ("white-space: " ++ ws)
-    appendChild span frag
-    insertBefore dest span before
+    -- a line that is one `span` keeps its white-space on that `span` (browsers: no
+    -- second `span` around it); else a new `span` holds the line
+    let only := if (kidsOf d frag).size == 1 then (kidsOf d frag)[0]? else none
+    match only.filter fun c => isHtml d c ["span"] with
+    | some c =>
+      if getDecl (styleDecls d c) "white-space" != some ws then
+        setAttr c "style" (serializeDecls (setDecl (styleDecls d c) "white-space" ws))
+      insertBefore dest c before
+    | none =>
+      let span ← createElement "span"
+      setAttr span "style" ("white-space: " ++ ws)
+      appendChild span frag
+      insertBefore dest span before
   match breaker with
-  | some b => if isFeed then replaceData b 0 1 "" else removeNode b
+  | some b =>
+    if isFeed then replaceData b 0 1 ""
+    -- the `br` (or the Text node the line feed left empty), and the inline elements its
+    -- removal leaves empty
+    if !isFeed || (← rd fun e => (e.dom.get b).data.isEmpty) then
+      let mut cur := b
+      for _ in [0:d.size + 1] do
+        let e ← get
+        let d := e.dom
+        match parentOf d cur with
+        | some p =>
+          removeNode cur
+          let d ← rd (·.dom)
+          if p != eb && isEditable e p && isInlineNode e p && !hasKids d p then cur := p else break
+        | none => break
   | none => pure ()
   -- what the move left empty where the line was
   for _ in [0:d.size + 1] do
@@ -542,9 +577,10 @@ def deleteSelection (blockMerging : Bool := true) (stripWrappers : Bool := true)
       | none => pure ()
     let e ← get
     let d := e.dom
-    if whiteSpaceOf e sb != whiteSpaceOf e eb then
+    let lineWs := lineWhiteSpace e eb (indexOf d ref + 1)
+    if whiteSpaceOf e sb != lineWs then
       -- the line after the start block, with another white-space, joins it in a span
-      moveFirstLine sb none eb (indexOf d ref + 1) (whiteSpaceOf e eb)
+      moveFirstLine sb none eb (indexOf d ref + 1) lineWs
       let d ← rd (·.dom)
       if !hasKids d sb then
         let br ← createElement "br"
@@ -840,12 +876,28 @@ def isCombining (c : Option Char) : Bool :=
     (0x300 ≤ n && n ≤ 0x36f) || (0x591 ≤ n && n ≤ 0x5bd) || n == 0x5c1 || n == 0x5c2
   | none => false
 
+/-- Nothing that shows follows the boundary point in its editing host: every node that
+starts at or after it is invisible (a `br` that ends the last block, collapsed
+whitespace). -/
+def nothingAfter (e : Ed) (bp : BP) : Bool :=
+  let d := e.dom
+  match editingHostOf e bp.node with
+  | none => false
+  | some host =>
+    (!isText d bp.node || bp.offset == nodeLength d bp.node) &&
+      (d.treeOrder host true).all fun n =>
+        n == host || n == bp.node ||
+          position d ⟨(parentOf d n).getD host, indexOf d n⟩ bp == .before || isInvisible e n
+
 /-- The `forwardDelete` command. -/
 def forwardDeleteCommand : M Unit := do
   let r ← getActive
   if !r.collapsed then
     deleteSelection
     return
+  -- at the end of the editing host's content there is nothing to delete (browsers keep
+  -- the `br` that ends the last block; the draft removes it)
+  if (← rd fun e => nothingAfter e r.start) then return
   canonicalizeWhitespace r.start.node r.start.offset
   let r ← getActive
   let mut node := r.start.node
@@ -1049,7 +1101,9 @@ def lineBreakAtCaret : M Unit := do
     setActive ⟨caret, caret⟩
     let e ← get
     let d := e.dom
-    if caret.offset == nodeLength d text && !contentAfter e text then
+    -- the editing host bounds the line: content after an inline host does not show the
+    -- new line inside it (browsers add the second break there too)
+    if caret.offset == nodeLength d text && !contentAfter e text (editingHostOf e text) then
       let br ← createElement "br"
       match parentOf d text with
       | some p => insertBefore p br (d.nextSibling text)
@@ -1059,7 +1113,7 @@ def lineBreakAtCaret : M Unit := do
   let br ← createElement "br"
   rangeInsertNode br
   collapseAfter br
-  if (← rd fun e => isCollapsedLineBreak e br) then
+  if (← rd fun e => !contentAfter e br (editingHostOf e br)) then
     let br2 ← createElement "br"
     rangeInsertNode br2
     collapseAfter br

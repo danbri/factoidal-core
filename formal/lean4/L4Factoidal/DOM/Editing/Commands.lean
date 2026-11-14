@@ -250,14 +250,26 @@ def descendForward (e : Ed) (bp : BP) : BP := Id.run do
 
 /-- The target range of a command's `beforeinput` event: the range the command would
 delete first, with its ends in the innermost inline content; none for a command that
-deletes nothing, and the selection itself for a command that would change nothing. The
-command runs on a copy of the state; nothing is kept. -/
+deletes nothing; the selection itself for a command that would change nothing, or whose
+range would leave the editing host. The command runs on a copy of the state; nothing is
+kept. -/
 def targetRange (command value : String) : M (Option Rng) := do
   let e ← get
   let (_, e') := (execCommand command value).run { e with target := none, log := #[] }
   -- a command that would change nothing targets the selection as it is
   if e'.log.isEmpty then return if hasActive e then some (activeOf e) else none
-  return e'.target.map fun r => ⟨descendBack e r.start, descendForward e r.stop⟩
+  -- a selection that is not collapsed is the target, its ends moved into the inline
+  -- content it starts and ends with (`<p>{abc}</p>` is the text's 0 to 3)
+  if hasActive e && !(activeOf e).collapsed && e'.target.isSome then
+    let r := activeOf e
+    return some ⟨descendForward e r.start, descendBack e r.stop⟩
+  match e'.target, affectedHost e with
+  | some r, some host =>
+    -- content outside the editing host is not deleted: the selection as it is
+    if !e.dom.isInclusiveAncestor host r.start.node || !e.dom.isInclusiveAncestor host r.stop.node then
+      return some (activeOf e)
+    return some ⟨descendBack e r.start, descendForward e r.stop⟩
+  | t, _ => return t.map fun r => ⟨descendBack e r.start, descendForward e r.stop⟩
 
 def queryEnabled (command : String) : M Bool := do
   let command := lower command

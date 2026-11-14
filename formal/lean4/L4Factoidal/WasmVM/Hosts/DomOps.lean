@@ -907,6 +907,10 @@ def editView (s : State) : L4Factoidal.DOM.Editing.Ed :=
 /-- The editing host a key edits: the affected editing host of the selection. -/
 def keyHost (s : State) : Option Nat := L4Factoidal.DOM.Editing.affectedHost (editView s)
 
+/-- The editing command of a key where the selection is (`Editing.keyCommandIn`). -/
+def keyCommandOf (s : State) (k : L4Factoidal.DOM.Editing.KeyInput) : Option (String × String) :=
+  L4Factoidal.DOM.Editing.keyCommandIn (editView s) k
+
 /-- The element key events are fired at: the editing host of the selection, else the
 `body`, else the document element (the page has no focus model beyond this). -/
 def keyTarget (s : State) : Nat :=

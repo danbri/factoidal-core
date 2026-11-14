@@ -8,7 +8,9 @@ W3C Editing APIs draft): Backspace is `delete`, Delete is `forwardDelete`, Enter
 `insertText` of it, and Control or Meta with B, I, U is the format command. The arrow keys
 Left and Right move the caret by one character.
 
-Proved: `keyCommand_printable` (a single character with no Control, Meta or Alt inserts
+In a `plaintext-only` editing host Enter is `insertLineBreak` (`keyCommandIn`).
+
+Proved: `keyCommandIn_rich`, `keyCommandIn_plain`, `keyCommand_printable` (a single character with no Control, Meta or Alt inserts
 exactly that character), `keyCommand_modified` (with Control or Meta no text is inserted),
 `keyCommand_named` (the four editing keys).
 -/
@@ -80,6 +82,37 @@ theorem keyCommand_named :
     keyCommand { key := "Enter" } = some ("insertparagraph", "") ∧
     keyCommand { key := "Enter", shift := true } = some ("insertlinebreak", "") := by
   refine ⟨rfl, rfl, rfl, rfl⟩
+
+/-- The editing command of a key where the selection is: as `keyCommand`, but in a
+`plaintext-only` editing host Enter makes a line break, not a paragraph (only raw text
+is editable there: HTML §6.8.1; browsers fire `insertLineBreak`). -/
+def keyCommandIn (e : Ed) (k : KeyInput) : Option (String × String) :=
+  match keyCommand k with
+  | some (c, v) => some (if c == "insertparagraph" && inPlaintextHost e then "insertlinebreak" else c, v)
+  | none => none
+
+/-- Outside plain text. Says: where the selection is not in a `plaintext-only` editing
+host, a key does what `keyCommand` says. Does not say: what it does inside one. -/
+theorem keyCommandIn_rich (e : Ed) (k : KeyInput) (h : inPlaintextHost e = false) :
+    keyCommandIn e k = keyCommand k := by
+  unfold keyCommandIn
+  cases keyCommand k with
+  | none => rfl
+  | some cv => simp [h]
+
+/-- Plain text. Says: in a `plaintext-only` editing host no key makes a paragraph.
+Does not say: that `execCommand("insertParagraph")` makes none there (the command is
+not a key). -/
+theorem keyCommandIn_plain (e : Ed) (k : KeyInput) (v : String) (h : inPlaintextHost e = true) :
+    keyCommandIn e k ≠ some ("insertparagraph", v) := by
+  unfold keyCommandIn
+  cases keyCommand k with
+  | none => simp
+  | some cv =>
+    obtain ⟨c, w⟩ := cv
+    by_cases hc : c = "insertparagraph"
+    · simp [h, hc]
+    · simp [h, hc]
 
 /-- A Text node a caret can be in: with data, not a collapsed whitespace node, and (with
 `editableOnly`) editable. -/

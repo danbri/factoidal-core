@@ -530,7 +530,7 @@ def isLineContent (e : Ed) (n : NodeId) : Bool :=
 
 /-- Inline content follows `br` in its block: the walk forward meets content or another
 `br` before a block boundary. -/
-def contentAfter (e : Ed) (br : NodeId) : Bool := Id.run do
+def contentAfter (e : Ed) (br : NodeId) (stopAt : Option NodeId := none) : Bool := Id.run do
   let d := e.dom
   let mut cur := br
   for _ in [0:d.size + 1] do
@@ -545,7 +545,7 @@ def contentAfter (e : Ed) (br : NodeId) : Bool := Id.run do
         cur := s
     | none =>
       match parentOf d cur with
-      | some p => if isBlockNode e p then return false else cur := p
+      | some p => if isBlockNode e p || some p == stopAt then return false else cur := p
       | none => return false
   return false
 
