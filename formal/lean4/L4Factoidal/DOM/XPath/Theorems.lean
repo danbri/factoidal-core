@@ -13,7 +13,7 @@ back from an address reads the same child lists (`nodeAtPath_cons`).
 
 PROVED here: `refOfItem_ns`, `xkids_not_doctype`, `projNode_element`, `projNode_child`,
 `nodeAtPath_nil`, `nodeAtPath_cons`, `domOfPath_rooted`, `htmlNameTest_not_name`,
-`answerOf_number`, `answerOf_string`, `answerOf_boolean`, `serializeNode_text`.
+`answerOf_number`, `answerOf_string`, `answerOf_boolean`, `serializeNode_text`, `elemPrefix_xmlNS`, `attrPrefix_xmlNS`.
 TESTED here (`#guard`): evaluation through the adapter on small arenas (child, attribute,
 descendant, following, preceding, parent, document order of a union, the HTML name test),
 the prefixes of an expression, the serialization cases of WPT, the document builder.
@@ -141,6 +141,18 @@ theorem serializeNode_text (d : Dom) (fuel : Nat) (id : NodeId) (inh : Option St
       (XmlSerialize.escText (d.get id).data, idx) := by
   simp [XmlSerialize.serializeNode, h]
 
+/-- Kind: namespace constraint (Namespaces in XML §3). An element in the XML namespace is
+projected with the prefix `xml`, whatever prefix the DOM node carries, so the evaluator's
+namespace resolution never sees another prefix bound to that namespace.
+Does not say: anything of an element in another namespace (its own prefix is kept). -/
+theorem elemPrefix_xmlNS (n : Node) (h : n.ns = some xmlNS) : elemPrefix n = some "xml" := by
+  simp [elemPrefix, h]
+
+/-- Kind: namespace constraint. An attribute in the XML namespace is projected with the
+prefix `xml`, whatever its DOM prefix and slot. -/
+theorem attrPrefix_xmlNS (a : Attr) (i : Nat) (h : a.ns = some xmlNS) : attrPrefix a i = "xml" := by
+  simp [attrPrefix, h]
+
 #print axioms refOfItem_ns
 #print axioms xkids_not_doctype
 #print axioms projNode_element
@@ -153,6 +165,8 @@ theorem serializeNode_text (d : Dom) (fuel : Nat) (id : NodeId) (inh : Option St
 #print axioms answerOf_string
 #print axioms answerOf_boolean
 #print axioms serializeNode_text
+#print axioms elemPrefix_xmlNS
+#print axioms attrPrefix_xmlNS
 
 /-! ## Tests: evaluation through the adapter -/
 
