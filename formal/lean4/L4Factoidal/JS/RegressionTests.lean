@@ -464,4 +464,21 @@ by doubling, not from a list of its parts. -/
 #guard out "print('abc'.replace('b', '[$&$&]'), 'a-b'.replace(/(\\w)-(\\w)/, '$2$1$&'), 'abc'.repeat(3), 'x'.padStart(7, 'ab'), 'x'.padEnd(6, '-'), ''.repeat(5).length, [1, 2].join('-'), 'a'.concat('b', 1))" == ["a[bb]c baa-b abcabcabc abababx x----- 0 1-2 ab1"]
 #guard repeatStr "ab" 0 == "" && repeatStr "ab" 1 == "ab" && repeatStr "ab" 5 == "ababababab" && repeatStr "" 9 == ""
 
+/-! ## `Reflect.set` with a receiver; receivers of `getOrInsert`; `arguments` in a class body
+
+`Reflect.set(target, key, value, receiver)` (§10.1.9.2 OrdinarySetWithOwnDescriptor): a setter
+found on the target is called with the receiver as `this`, and a data property is made on the
+receiver (through a Proxy receiver's `defineProperty` trap, or its target). It used the target
+for both, so a Proxy `set` trap that forwards with `Reflect.set` lost the proxy.
+`WeakMap.prototype.getOrInsert` took a Map and `Map.prototype.getOrInsert` a WeakMap.
+`arguments` in the parameters of a method or function inside a static block is that function's
+own and no early error (§15.7.1 forbids it in the initialiser or block itself and its arrows). -/
+
+#guard out "var t = { set x(v) { this.got = v } }, r = {}; print(Reflect.set(t, 'x', 1, r), r.got, t.got, Reflect.set(t, 'y', 2, r), r.y, t.y, Reflect.set(t, 'z', 3), t.z); var p = new Proxy(t, { set(tg, k, v, rc) { return Reflect.set(tg, k, v, rc) } }); p.x = 9; print(p.got, t.got); var fr = Object.freeze({ a: 1 }); print(Reflect.set({}, 'a', 2, fr), Reflect.set(Object.freeze({ q: 1 }), 'q', 2, {}), Reflect.set({ get g() { return 1 } }, 'g', 2, {}))" == ["true 1 undefined true 2 undefined true 3", "9 9", "false false false"]
+#guard out "var log=[]; var p = new Proxy({}, { defineProperty(t,k,d){ log.push(k, d.value, Object.keys(d).join()); return Reflect.defineProperty(t,k,d) } }); print(Reflect.set({}, 'a', 5, p), p.a, log.join('|'))" == ["true 5 a|5|value,writable,enumerable,configurable"]
+#guard out "function tt(f){ try { f(); return 'no' } catch (e) { return e.constructor.name } } print(tt(()=>WeakMap.prototype.getOrInsert.call(new Map, {}, 1)), tt(()=>Map.prototype.getOrInsertComputed.call(new WeakMap, {}, ()=>1)), new Map().getOrInsert(1,2), new WeakMap().getOrInsertComputed({}, ()=>7))" == ["TypeError TypeError 2 7"]
+#guard out "var m; class C { static { new class { method({a = m = arguments}) { } }().method({}); (function(){ m = arguments.length })(1,2) } } print(m)" == ["2"]
+#guard (out "class C { static { arguments } }").head!.startsWith "SyntaxError"
+#guard (out "class C { x = () => arguments }").head!.startsWith "SyntaxError"
+
 end L4Factoidal.JS.Tests

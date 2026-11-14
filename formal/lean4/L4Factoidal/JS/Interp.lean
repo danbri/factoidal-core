@@ -4893,6 +4893,62 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       | 4 => needObj; if args.size > 2 then getRecv n (← toObj n a0) (← toKey n a1) (argD args 2) else getV n a0 (← toKey n a1)
       | 5 =>
         needObj
+        let recv := if args.size > 3 then argD args 3 else a0
+        if !sameValue recv a0 then
+          -- Reflect.set with a receiver that is not the target (§10.1.9.2
+          -- OrdinarySetWithOwnDescriptor): a setter found on the target's chain is called with
+          -- the receiver as `this`; a data property is made or changed on the receiver.
+          let key ← toKey n a1
+          let val := argD args 2
+          let tid ← toObj n a0
+          match (← getObj tid).kind with
+          | .proxy t hnd =>
+            match ← proxyTrap n hnd "set" with
+            | some f => return .bool (toBool (← callV n f hnd #[t, keyValue key, val, recv]))
+            | none => return ← callNative n (.reflect 5) .undef #[t, a1, val, recv] none
+          | _ => pure ()
+          match (← get).findProp tid key 1000 with
+          | some (.acc _ st _ _) =>
+            if st.isObj then
+              let _ ← callV n st recv #[val]
+              return .bool true
+            else return .bool false
+          | some (.data _ false _ _) => return .bool false
+          | _ =>
+            match recv with
+            | .obj rid =>
+              let existing ← ownDesc n rid key
+              match existing with
+              | some (.acc ..) | some (.data _ false _ _) => return .bool false
+              | _ => pure ()
+              -- the receiver's [[DefineOwnProperty]]: a Proxy passes it to its `defineProperty`
+              -- trap, or to its target when it has none
+              let mut cur := rid
+              for _ in [0:64] do
+                match (← getObj cur).kind with
+                | .proxy t hnd =>
+                  match ← proxyTrap n hnd "defineProperty" with
+                  | some f =>
+                    let d ← newObject
+                    defineOwn d "value" (.data val true true true)
+                    if existing.isNone then
+                      defineOwn d "writable" (.data (.bool true) true true true)
+                      defineOwn d "enumerable" (.data (.bool true) true true true)
+                      defineOwn d "configurable" (.data (.bool true) true true true)
+                    return .bool (toBool (← callV n f hnd #[t, keyValue key, .obj d]))
+                  | none =>
+                    match t with
+                    | .obj tid => cur := tid
+                    | _ => return .bool false
+                | _ => break
+              let ro ← getObj cur
+              match ro.getOwn key with
+              | some (.data _ true e c) => defineOwn cur key (.data val true e c); return .bool true
+              | some _ => return .bool false
+              | none =>
+                if ro.extensible then defineOwn cur key (.data val true true true); return .bool true
+                else return .bool false
+            | _ => return .bool false
         let ok ← tryCatch (do putV n a0 (← toKey n a1) (argD args 2) true; pure true) (fun e => match e with
           | .throw _ => pure false
           | a => throw a)
@@ -7823,14 +7879,14 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
         let rest := held.filter fun v => !sameValue v a0
         modifyObj tokens fun o => { o with kind := .array rest }
         pure (.bool (rest.size < held.size))
-    | (.x (.mapUpsert computed)) =>
+    | (.x (.mapUpsert computed weak)) =>
       let ck : Nat ← match thisV with
         | .obj c => match (← getObj c).kind with
           | .coll k _ _ => pure k
           | _ => throwErr .type "method called on incompatible receiver"
         | _ => throwErr .type "method called on incompatible receiver"
-      if ck != 0 && ck != 2 then throwErr .type "method called on incompatible receiver"
-      let weak := ck == 2
+      -- Map's method needs a Map (kind 0), WeakMap's a WeakMap (kind 2)
+      if ck != (if weak then 2 else 0) then throwErr .type "method called on incompatible receiver"
       if computed && !(← isCallable a1) then throwErr .type "getOrInsertComputed: the callback is not a function"
       if weak && !a0.isObj then throwErr .type "Invalid value used as weak collection key"
       if toBool (← callNative n .mapHas thisV #[a0] none) then callNative n .mapGet thisV #[a0] none
@@ -8231,8 +8287,8 @@ def initRealm : M Unit := do
     if isMap then
       method p "get" .mapGet 1
       method p "set" .mapSet 2
-      method p "getOrInsert" (.x (.mapUpsert false)) 2
-      method p "getOrInsertComputed" (.x (.mapUpsert true)) 2
+      method p "getOrInsert" (.x (.mapUpsert false (k == 2))) 2
+      method p "getOrInsertComputed" (.x (.mapUpsert true (k == 2))) 2
     else method p "add" .setAdd 1
     if k == 1 then
       for (nm, j) in [("union", 0), ("intersection", 1), ("difference", 2), ("symmetricDifference", 3),

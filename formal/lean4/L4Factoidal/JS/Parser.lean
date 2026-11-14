@@ -808,9 +808,21 @@ def parseFunction : Nat → Option String → FunKind → Nat → P FunDef
     expectP "("
     let outerGen := (← get).inGen
     modify fun s => { s with inGen := gen == 1 || gen == 3 }
-    let (ps, rest) ← parseParams n #[]
+    let (ps, rest) ← parseMethodParams n
     modify fun s => { s with inGen := outerGen }
     parseBody n name ps rest kind gen
+
+/-- The parameter list of a function that is not an arrow function: `arguments` there is the
+function's own, so the class-initialiser rule (§15.7.1) of an enclosing field initialiser or
+static block does not reach into it. -/
+def parseMethodParams : Nat → P (List PatElem × Option Pat)
+  | 0 => fail "parser fuel exhausted"
+  | n + 1 => do
+    let fi := (← get).fieldInit
+    modify fun s => { s with fieldInit := false }
+    let r ← parseParams n #[]
+    modify fun s => { s with fieldInit := fi }
+    return r
 
 /-- A parameter list after `(`, to the `)` (consumed): patterns with initialisers
 and a rest parameter (§15.1). -/
@@ -1294,7 +1306,7 @@ def parseObject : Nat → List PropDef → P (List PropDef)
         advance
         let k ← parsePropKey n
         expectP "("
-        let (ps, rest) ← parseParams n #[]
+        let (ps, rest) ← parseMethodParams n
         let f ← parseBody n none ps rest .method 0
         pure (if t.text == "get" then PropDef.getter k f else PropDef.setter k f)
       else if isP t "*" then
@@ -1302,7 +1314,7 @@ def parseObject : Nat → List PropDef → P (List PropDef)
         let k ← parsePropKey n
         expectP "("
         let og := (← get).inGen
-        let (ps, rest) ← parseParams n #[]
+        let (ps, rest) ← parseMethodParams n
         let f ← parseBody n none ps rest .method 1
         modify fun s => { s with inGen := og }
         pure (PropDef.init k (.func f))
@@ -1312,7 +1324,7 @@ def parseObject : Nat → List PropDef → P (List PropDef)
         let k ← parsePropKey n
         expectP "("
         let og := (← get).inAsync
-        let (ps, rest) ← parseParams n #[]
+        let (ps, rest) ← parseMethodParams n
         let f ← parseBody n none ps rest .method (if g then 3 else 2)
         modify fun s => { s with inAsync := og }
         pure (PropDef.init k (.func f))
@@ -1328,7 +1340,7 @@ def parseObject : Nat → List PropDef → P (List PropDef)
         let k ← parsePropKey n
         if ← atP "(" then
           advance
-          let (ps, rest) ← parseParams n #[]
+          let (ps, rest) ← parseMethodParams n
           pure (PropDef.init k (.func (← parseBody n none ps rest .method 0)))
         else
           expectP ":"
@@ -1466,7 +1478,7 @@ def parseMembers : Nat → Bool → Option FunDef → List Member → P (Option 
     let k ← parsePropKey n
     if ← atP "(" then
       advance
-      let (ps, rest) ← parseParams n #[]
+      let (ps, rest) ← parseMethodParams n
       let isCtor := !static && !accessor && (kt.kind == .ident || kt.kind == .kw || kt.kind == .str) && kt.text == "constructor"
       if isCtor then
         if ctor.isSome then fail "a class may only have one constructor"

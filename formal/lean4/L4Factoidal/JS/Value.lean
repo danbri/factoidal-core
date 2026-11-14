@@ -130,7 +130,7 @@ inductive NativeX where
   implementation that keeps every object alive. -/
   | weakRefCtor | weakRefDeref | finRegCtor | finRegMethod (k : Nat)
   /-- `getOrInsert` and `getOrInsertComputed` of Map and WeakMap (the upsert proposal). -/
-  | mapUpsert (computed : Bool)
+  | mapUpsert (computed weak : Bool)
   deriving BEq, Repr, Inhabited
 
 /-- The built-in functions (§19 to §28 for the subset). -/
