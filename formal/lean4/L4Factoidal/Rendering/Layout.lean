@@ -5,6 +5,7 @@ import L4Factoidal.Rendering.FlexLayout
 import L4Factoidal.Rendering.OffsetParent
 import L4Factoidal.Rendering.AspectRatio
 import L4Factoidal.Rendering.ScrollGeometry
+import L4Factoidal.Rendering.GridLayout
 import L4Factoidal.Unicode.ScriptDirection
 import L4Factoidal.Unicode.LineBreak
 
@@ -1232,6 +1233,9 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
         if s.display.isFlex then
           let (a,b) ← flexIntrinsic children s (collectItems dom styles id)
           return (a+add,b+add)
+        if s.display.isGrid then
+          let (a,b) ← gridIntrinsic children s (collectItems dom styles id)
+          return (a+add,b+add)
         -- an outside marker (the default) takes no room in the item's lines
         let lead := if n.lname == "li" && s.pos.listInside then (textItems id s (listMarker dom font s.pos.listStyle id)).toArray
           else if n.lname == "img" then altItems id s n else #[]
@@ -1707,6 +1711,9 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let content ← if s.display.isFlex then
           flexLayout children s (collectItems dom styles id)
             {x := innerX, y := innerY, width, height := definite, minHeight, maxHeight}
+        else if s.display.isGrid then
+          gridLayout children s (collectItems dom styles id)
+            {x := innerX, y := innerY, width, height := definite, minHeight, maxHeight, source := some id}
         else flow s id n.kids lead innerX innerY width (if joinsTop then unbounded else 0) around definite
       -- CSS 2.1 §10.6.7: a box that is the root of its block formatting context (one laid
       -- out with no floats around it) is as high as its floats; one in a context with floats
@@ -1727,13 +1734,15 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
                            height := max content.height marker.height}
       if contentOnly then return content
       -- The same at the bottom: the last child's margin sticks out of a block with no height.
-      let joinsBottom := imposedWidth.isNone && imposedHeight.isNone && collapsesBottom dom s id && !s.display.isFlex
+      let joinsBottom := imposedWidth.isNone && imposedHeight.isNone && collapsesBottom dom s id && !s.display.isFlex && !s.display.isGrid
       let marginBottom := if joinsBottom then max margin.bottom content.marginBottom else margin.bottom
       let content := if joinsBottom then {content with height := content.height-content.marginBottom} else content
       let height := definite.getD (clampOpt minHeight maxHeight content.height)
-      -- The absolutely positioned children of a flex container are not its items.
+      -- The absolutely positioned children of a flex or grid container are not its items.
       let content := if s.display.isFlex then
           {content with pending := content.pending ++ flexAbsolutes dom styles id innerX innerY width height}
+        else if s.display.isGrid then
+          {content with pending := content.pending ++ gridAbsolutes dom styles id innerX innerY width height}
         else content
       -- A positioned box is the containing block of its absolutely positioned descendants:
       -- its padding box (CSS 2.1 §10.1).

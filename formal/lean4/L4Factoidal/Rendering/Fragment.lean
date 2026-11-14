@@ -137,6 +137,9 @@ structure ContentBox where
   height : Option Float := none
   minHeight : Float := 0
   maxHeight : Option Float := none
+  /-- The element whose content box this is, when the context records used values for it
+  (grid: the used track sizes, for `getComputedStyle`). -/
+  source : Option Nat := none
   deriving Repr
 
 /-- White space only (CSS Text 3 §4.1.1 document white space). -/
