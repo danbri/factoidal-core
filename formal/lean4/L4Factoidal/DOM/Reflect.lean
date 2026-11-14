@@ -338,6 +338,8 @@ HTMLInputElement step . s
 HTMLInputElement defaultValue value s
 HTMLInputElement align . s
 HTMLInputElement useMap . s
+HTMLInputElement width . ul 0
+HTMLInputElement height . ul 0
 HTMLButtonElement value . s
 HTMLSelectElement size . ul 0
 HTMLOptionElement defaultSelected selected b
