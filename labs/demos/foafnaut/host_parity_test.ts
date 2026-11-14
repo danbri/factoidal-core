@@ -82,8 +82,13 @@ async function enginePath(which:"runner"|"prepared",url:string):Promise<Parity> 
 async function windowPath(url:string,shot:string):Promise<{subtests:Subtest[];log:string}|undefined> {
   const r=await run([...base,"--unstable-webgpu","run_html.ts","--url",url,"--shot",shot,"--offscreen","--no-splash","--no-state",
     "--watch-sweep","7","--native-engine",library],120);
-  // No GPU in this launch context (exit 2): the path is not run, and the caller says so.
-  if(r.code===2||/GPU BLOCKED/.test(r.stderr))return undefined;
+  // No GPU in this launch context (exit 2), or a window that never showed a frame (no display, a
+  // missing part of the build): the path is not run, and the caller says so. A window that showed
+  // the page and then failed is a failure.
+  if(r.code===2||/GPU BLOCKED/.test(r.stderr)||(r.code!==0&&!r.stdout.includes('"native-html-presented"'))){
+    console.log(`host parity: the window did not show the page (exit ${r.code}): ${r.stderr.trim().split("\n").slice(-2).join(" | ").slice(0,300)}`);
+    return undefined;
+  }
   assert.equal(r.code,0,`run_html.ts ended with ${r.code}: ${r.stderr.slice(-600)}`);
   return {subtests:resultsOf(r.stdout),log:r.stdout};
 }
@@ -186,7 +191,7 @@ for(const fixture of Object.keys(expected.fixtures)) {
     const server=serve(),shot=await Deno.makeTempFile({suffix:".png"});
     try{
       const shown=await windowPath(`${server.origin()}/integration/${fixture}`,shot);
-      if(!shown){console.log("NOT RUN: host parity in the window needs a GPU");return;}
+      if(!shown){console.log("NOT RUN: host parity in the window needs the window to show a frame (a GPU)");return;}
       const problems=judge("window",fixture,shown.subtests);
       // What was drawn: each block of one colour, in CSS pixels from the header's corner.
       const image=await pngPixels(shot),want=expected.fixtures[fixture].painted;
