@@ -417,6 +417,17 @@ def gridAbsBlock (f : GridFrame) (cx cy cw ch : Float) (g : GridStyle) : Float �
   let x := if f.rtl then f.x+f.width-LU.toPx e else f.x+LU.toPx s
   (x, f.y+LU.toPx t, max 0 (LU.toPx (e-s)), max 0 (LU.toPx (b-t)))
 
+/-- The static position of an absolutely positioned child of a grid container that is its
+containing block (§9.1, §9.2): in an axis where the child names a line, the start of its
+grid area (the end, in a right-to-left container); in an axis with two `auto` lines, the
+content box's start, as before. -/
+def gridStatic (f : GridFrame) (cx cy cw ch : Float) (g : GridStyle) (p : Pending) : Pending :=
+  let cols := Grid.absLines f.colNames f.colLead f.colSizes.size g.columnStart g.columnEnd
+  let rows := Grid.absLines f.rowNames f.rowLead f.rowSizes.size g.rowStart g.rowEnd
+  let (ax, ay, aw, ah) := gridAbsBlock f cx cy cw ch g
+  let p := if cols == (none, none) then p else {p with x := ax, width := aw, fx := if f.rtl then 1 else 0}
+  if rows == (none, none) then p else {p with y := ay, height := ah, fy := 0}
+
 /-- The absolutely positioned children of a grid container are not grid items (CSS Grid 2
 §9.2). Their static position is that of a box which is the only item of an area whose edges
 are the container's content edges, at the start of both axes: `fx = fy = 0`. -/
