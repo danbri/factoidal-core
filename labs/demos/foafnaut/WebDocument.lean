@@ -2193,6 +2193,16 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
           let ks : Thunk Rendering.CSS.ElemKeys := Thunk.mk fun _ => Rendering.CSS.ElemKeys.of flat
           fun id => index.get.matched (ks.get.get flat) flat id state
     let matchesOf := Rendering.CSS.withAnimated state matchesOf
+    -- an element's matches are made once a measure: the property table asks for them
+    -- several times for one value (the cascaded value, the flow, the logical partner), and the
+    -- animation engine reads several values of one element (one thunk a node; none is forced
+    -- for a node nobody asks about)
+    let memo : Array (Thunk (List Rendering.CSS.Match)) :=
+      Array.ofFn (n := flat.size) fun i => Thunk.mk fun _ => matchesOf i.val
+    let matchesOf : Nat → List Rendering.CSS.Match := fun id =>
+      match memo[id]? with
+      | some t => t.get
+      | none => matchesOf id
     -- the styles: those of the measure before with the named subtrees styled again
     -- (`CSS.restyleWith`), or the cascade of the document
     let whole := fun (_ : Unit) => Rendering.CSS.computeFor treeScope flat rules textScale state
