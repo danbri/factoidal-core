@@ -200,6 +200,9 @@ private def paddingOf (html css : String) : Option (List Float) :=
 #guard (styleAt pageT ".a { font-size: 30px; font-family: Foo } p { font-size: 10px; font-family: Bar } #t { font: inherit }").map
   (fun s => (s.fontSize, s.fontFamily)) == some (30, "Foo")
 #guard (styleAt "<div><h1 id=t>x</h1></div>" "h1 { font-size: inherit }").map (·.fontSize) == some 16
+-- a background shorthand with no colour resets the colour
+#guard (styleAt pageT ".a { background-color: red } #t { background: none }").map (fun s => s.background.isNone) == some true
+#guard (styleAt pageT "#t { background: url(a.png) no-repeat #00f }").map (fun s => (s.background.map (·.b)).getD 0) == some 1
 -- the `font` shorthand sets the size, the family and the line height
 #guard (styleAt pageT "#t { font: xx-small serif }").map (fun s => (s.fontSize, s.fontFamily)) == some (9, "serif")
 #guard (styleAt pageT "#t { font: italic bold 12px/30px Georgia, serif }").map (fun s => (s.fontSize, s.lineHeight)) ==

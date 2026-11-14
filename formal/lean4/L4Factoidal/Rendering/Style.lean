@@ -499,8 +499,11 @@ shorthands (`flex`, `flex-flow`, `gap`, `place-*`) as their longhands, so the ca
 orders them. -/
 def declarationsOf (ds : List SheetReader.Decl) : List Declaration :=
   ds.foldr (fun d acc =>
-    let key := if d.name == "background" then "background-color" else d.name
+    let key := d.name
     let whole : Declaration := ⟨key,d.value,d.important⟩
+    -- `background` is also its colour, `background-color`, which this profile reads (`apply`,
+    -- `tableDeclaration`); the shorthand stays for getComputedStyle's other longhands
+    if key == "background" then (⟨"background-color",d.value,d.important⟩ : Declaration) :: whole :: acc else
     -- a side shorthand that mentions `var()` is kept whole: its sides are known only
     -- after substitution (`computedFrom`)
     if (key == "margin" || key == "padding" || key == "inset" || CssValues.Logical.mentions key) &&
@@ -1137,13 +1140,23 @@ def tableDeclaration (s : Computed) (d : Declaration) : Option Declaration :=
   let px := fun (x : Float) => CssValues.fmtRat (ratOfFloat x) ++ "px"
   match d.property with
   | "color" | "border-color" => (colorHex d.value).bind fun h => if h == "transparent" then none else value h
-  | "background-color" =>
+  | "background-color" | "background" =>
     -- also the colour of a `background` shorthand (`declarations` reads it as the colour)
     match colorHex d.value with
     | some h => value h
     | none =>
       let parts := (CssValues.stripWs (CssValues.CV.parse d.value)).map fun cv => CssValues.serialize [cv]
-      (parts.findSome? colorHex).bind value
+      match parts.findSome? colorHex with
+      | some h => value h
+      | none =>
+        -- a `background` with no colour sets the colour to its initial value (CSS
+        -- Backgrounds 3 §3.10), when it is a background value at all
+        -- (the colour that `declarationsOf` takes from a `background` is a `background-color`
+        -- declaration with the shorthand's value)
+        if (d.property == "background" || d.property == "background-color") &&
+            (CssValues.specified "background-color" d.value).isNone && (CssValues.specified "background" d.value).isSome then
+          value "transparent"
+        else none
   | "font-size" =>
     match (tableComputed s.fontSize "font-size" d.value).map (·.toLower) with
     | none => none
@@ -1729,7 +1742,7 @@ def userAgentRules : List Rule := (parse userAgentSheet).toOption.getD []
 
 /-- A rule that matches only through `:visited` sets only colours (Selectors 4 §8.2,
 the privacy restriction that browsers apply to visited links). -/
-def visitedProperties : List String := ["color","background-color","border-color"]
+def visitedProperties : List String := ["color","background","background-color","border-color"]
 
 /-- A rule that matches an element: its origin (0 the user agent, 1 the author), the rule,
 and those of its selectors that match. -/

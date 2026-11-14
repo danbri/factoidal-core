@@ -272,7 +272,8 @@ private def rulesAt (width : Float) (source : String) : Nat :=
 #guard rules "p{color:blue" == 1
 #guard rules "p{color:blue} /* never closed" == 1
 #guard rules "} p{content:'}'}" == 1
-#guard ((CSS.declarations "background:url(http://x.org/a.png);color:;nonsense;width:1px").toOption.map List.length) == some 3
+-- `background` is kept and also given as its colour (`background-color`)
+#guard ((CSS.declarations "background:url(http://x.org/a.png);color:;nonsense;width:1px").toOption.map List.length) == some 4
 -- Old pages: lists, definition lists, images, blocks inside links, and CSS we do not lay out.
 #guard (run "<ul><li>A<li>B</ul><ol><li>C</ol>" css) matches .ok _
 #guard (run "<dl><dt>A<dd><p>B</dl><a href=x><h3>C</h3></a>" css) matches .ok _
