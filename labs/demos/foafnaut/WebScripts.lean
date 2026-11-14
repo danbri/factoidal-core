@@ -4,6 +4,7 @@ import L4Factoidal.WasmVM.Hosts.LeanJSRealm
 import L4Factoidal.WasmVM.Hosts.LeanJSWorkers
 import L4Factoidal.DOM.OfXml
 import L4Factoidal.WHATWG.Encoding.Sniff
+import L4Factoidal.HTML.CspSource
 import WebRenderScript
 import WebWasm
 import WebShell
@@ -68,6 +69,11 @@ argument for `start`:
   document joins the arena (`Command.frameDocument`), its scripts run in the page's realm
   with `document` the frame's, and its `load` event follows (`frameLoads` counts the
   `srcdoc` loads of a turn).
+- `csp` and `cspReportOnly` in `start`: the `Content-Security-Policy` and
+  `Content-Security-Policy-Report-Only` fields of the page's response (several fields joined
+  with commas). With the page's `meta` policies they are the session's policy
+  (`Net.Xhr.cspOf`): scripts it forbids do not run, requests it forbids are not made, and
+  each violation is a `securitypolicyviolation` event.
 - `referrerPolicy` in `start`, in `frame` and in each `fetched` result: the `Referrer-Policy`
   field of the response the document or worker script came with (several fields joined
   with commas; absent or "" for none). The requests of that document or worker carry a
@@ -210,6 +216,10 @@ structure Held where
   /-- The action that waits for the answer to a sync request (`netSync`), and its page and
   request; `syncAnswer` puts the answer in `syncCache` and does the action again. -/
   pendingSync : Option (String × String × JSON.Json) := none
+  /-- The entropy of a `start` that waits for sync answers: the start is done again with the
+  same, so `Math.random` and `crypto` give the rerun what they gave the run whose request
+  the host has answered (a token a script drew is the token the request carried). -/
+  startEntropy : Option ByteArray := none
   /-- The dedicated workers of that session's page (`Hosts.LeanJSWorkers`). -/
   leanWorkers : LeanJSWorkers.Workers := {}
   /-- The `layout` request of the session's `start`: its layout reads (`Page.Reads.measure`)
@@ -988,7 +998,11 @@ def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (h
   let hostLoads := request.field? "navigations" == some (.bool true)
   let network := request.field? "network" == some (.bool true)
   let hostCors := request.field? "hostCors" == some (.bool true)
-  let lim : Page.Limits := { commands, logs, gpuPage := id, entropy := ← entropy id, encoding := str request "encoding", frames := true, hostLoads, network, hostCors, pageAddress := str request "pageAddress", referrerPolicy := str request "referrerPolicy", syncOk := true, syncAnswers := held.syncCache }
+  -- a start done again after a sync request (its answers are in `syncCache`) keeps its entropy
+  let ent ← match held.startEntropy with
+    | some e => if held.syncCache.isEmpty then entropy id else pure e
+    | none => entropy id
+  let lim : Page.Limits := { commands, logs, gpuPage := id, entropy := ent, encoding := str request "encoding", frames := true, hostLoads, network, hostCors, pageAddress := str request "pageAddress", referrerPolicy := str request "referrerPolicy", syncOk := true, syncAnswers := held.syncCache }
   let made := show Except String (Array (Nat × String) × Array String × Bool × DOM.Dom) from do
     let dom ← parse html url
     let (scripts, missing, hasModule) ← scriptSources dom request (modules := true)
@@ -996,6 +1010,12 @@ def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (h
   match made with
   | .error e => return (held, .error s!"scriptSession: {e}")
   | .ok (scripts, missing, hasModule, dom) =>
+    -- Content Security Policy: the page's policy (its response's fields from the embedder, its
+    -- `meta` elements) decides which of its classic scripts run; the others are violations
+    let cspMeta := L4Factoidal.HTML.CspSource.metaText dom 0
+    let (scripts, cspViolations) := L4Factoidal.HTML.CspSource.filterScripts (str request "csp") (str request "cspReportOnly")
+      (L4Factoidal.Net.PageFetch.Page.ofUrl url hostCors (str request "pageAddress")) dom (LeanJSModules.baseOf dom url) scripts
+    let lim := { lim with csp := str request "csp", cspReportOnly := str request "cspReportOnly", cspMeta, cspViolations }
     let (base, ns0) ← WebWasm.timed fun _ => match held.leanBase with
       | some b => Except.ok b
       | none => LeanJS.prepare
@@ -1007,7 +1027,7 @@ def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (h
       let page := Net.PageFetch.Page.ofUrl url hostCors (str request "pageAddress")
       let loaded := if hasModule then LeanJSModules.load dom url page held.syncCache else .ok {}
       if let .error w := loaded then
-        return ({ held with leanBase := some base, pendingSync := some ("start", html, request) }, netSyncAnswer id w)
+        return ({ held with leanBase := some base, pendingSync := some ("start", html, request), startEntropy := some ent }, netSyncAnswer id w)
       let mods := match loaded with | .ok m => m | .error _ => {}
       let lim := { lim with syncAnswers := held.syncCache.extract mods.used held.syncCache.size }
       let (vw, vh) := (viewport request).getD (800, 600)
@@ -1021,9 +1041,9 @@ def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (h
         -- workers the page's scripts made: their scripts are asked for
         LeanJSWorkers.pump { page := s, base := some base, entropy := wEnt }
       match a.page.host.web.net.syncWanted with
-      | some w => return ({ held with leanBase := some base, pendingSync := some ("start", html, request) }, netSyncAnswer id w)
+      | some w => return ({ held with leanBase := some base, pendingSync := some ("start", html, request), startEntropy := some ent }, netSyncAnswer id w)
       | none =>
-        let held := { held with leanBase := some base, session := none, leanSession := none, nextSession := id + 1, leanWorkers := {}, layoutRequest := layoutOf request, syncCache := #[], pendingSync := none }
+        let held := { held with leanBase := some base, session := none, leanSession := none, nextSession := id + 1, leanWorkers := {}, layoutRequest := layoutOf request, syncCache := #[], pendingSync := none, startEntropy := none }
         return leanTurn { held with frames := #[], leanFrames := #[], frameScan := 0 }
           id {} a {} true (ns0 + ns) (frameEntropyOf id lim.entropy b)
 

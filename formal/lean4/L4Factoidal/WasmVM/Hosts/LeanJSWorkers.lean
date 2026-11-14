@@ -227,11 +227,15 @@ def workerPolicy (owner : Net.Xhr.State) (policy : Option String) : Net.Referrer
 /-- The network state of a new worker (`Net.Xhr`): on when its owner's is, with the
 owner's policy for the worker's URL (`PageFetch.Page.forWorker`: the owner's origin, or
 opaque for a `data:` worker; always the owner's local, secure and `hostCors` rules); sync
-requests by undo and redo of the worker's run (`syncCache`: the answers so far). -/
+requests by undo and redo of the worker's run (`syncCache`: the answers so far). A worker
+whose script is a `data:` or `blob:` URL has its owner's Content Security Policy (CSP §4.1.4:
+a local scheme inherits); a worker from the network has none here yet (its own response's
+fields are not read: an open item of the design record). -/
 def workerNet (owner : Net.Xhr.State) (url : String) (syncCache : Array Net.PageFetch.Answer)
     (policy : Option String := none) : Net.Xhr.State :=
   { enabled := owner.enabled, page := owner.page.forWorker url, syncOk := true, syncAnswers := syncCache, window := false,
-    blobs := owner.blobs, client := url, policy := workerPolicy owner policy }
+    blobs := owner.blobs, client := url, policy := workerPolicy owner policy,
+    csp := if url.startsWith "data:" || url.startsWith "blob:" then owner.csp else [] }
 
 /-- The host of a new worker: an empty arena, the page's clock and clock rate, its own
 fresh entropy (`Agents.entropy`), so a worker's random values and keys owe nothing to the

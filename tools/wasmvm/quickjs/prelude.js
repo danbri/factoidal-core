@@ -393,6 +393,25 @@
     }
   }
   getters(MessageEvent, ['data', 'origin', 'lastEventId', 'source', 'ports']);
+  // CSP §5.1: the event of a policy violation. Its required members are WebIDL's.
+  class SecurityPolicyViolationEvent extends Event {
+    constructor(type, init = undefined) {
+      super(type, init); const s = state(this), d = initOf(init);
+      if (init !== undefined && init !== null) {
+        for (const k of ['documentURI', 'violatedDirective', 'effectiveDirective', 'originalPolicy', 'disposition', 'statusCode'])
+          if (d[k] === undefined) throw new TypeError(`Failed to construct 'SecurityPolicyViolationEvent': required member ${k} is undefined.`);
+        if (d.disposition !== 'enforce' && d.disposition !== 'report') throw new TypeError(`Failed to construct 'SecurityPolicyViolationEvent': The provided value '${d.disposition}' is not a valid enum value of type SecurityPolicyViolationEventDisposition.`);
+      }
+      for (const k of ['documentURI', 'referrer', 'blockedURI', 'violatedDirective', 'effectiveDirective', 'originalPolicy', 'sourceFile', 'sample'])
+        s[k] = d[k] === undefined ? '' : String(d[k]);
+      s.disposition = d.disposition === undefined ? 'enforce' : d.disposition;
+      s.statusCode = (Number(d.statusCode) || 0) & 0xFFFF;
+      s.lineNumber = (Number(d.lineNumber) || 0) >>> 0; s.columnNumber = (Number(d.columnNumber) || 0) >>> 0;
+    }
+  }
+  getters(SecurityPolicyViolationEvent, ['documentURI', 'referrer', 'blockedURI', 'violatedDirective', 'effectiveDirective', 'originalPolicy',
+    'sourceFile', 'sample', 'disposition', 'statusCode', 'lineNumber', 'columnNumber']);
+  Object.defineProperty(SecurityPolicyViolationEvent.prototype, Symbol.toStringTag, { value: 'SecurityPolicyViolationEvent', configurable: true });
   class StorageEvent extends Event {
     constructor(type, init = undefined) {
       super(type, init); const s = state(this), d = initOf(init);
@@ -4714,13 +4733,14 @@
         const s = S(this), what = "Failed to execute 'send' on 'XMLHttpRequest'";
         let has = 0, ct = '', bytes = '';
         if (body !== null && body !== undefined) { has = 1; [bytes, ct] = extractBody(body, what); }
-        const x = this, cb = register(() => drain(x, s));
+        const x = this, cb = register(() => { drain(x, s); flushViolations(); });
         const up = upload.get(s.upload).listened;
         s.text = s.json = s.buf = s.doc = null;
         referrerClient(s.h);
         call(63, [s.h, cb, up ? 1 : 0, has, ct, bytes], what);
         drain(this, s);
         if (call(67, [s.h, 5]) === '1') chk(n.timer(register(() => { call(76, [s.h]); drain(x, s); }), 0, 0));
+        flushViolations();
         if (s.ms > 0 && call(67, [s.h, 0]) !== '4') s.timer = chk(n.timer(register(() => { s.timer = 0; call(66, [s.h]); drain(x, s); }), s.ms, 0));
       }
       abort() { const s = S(this); call(65, [s.h]); s.text = s.json = s.buf = s.doc = null; drain(this, s); }
@@ -4747,6 +4767,35 @@
   };
   const xhrState = new WeakMap();
   lazy('XMLHttpRequest', makeXHR);
+
+  // ---- Content Security Policy: the enforcement points ask Lean (Net.CspPolicy through the
+  // session's policy, web_api 150 to 153) and report what Lean queued. Nothing is decided
+  // here: a request, an inline script or a worker goes ahead unless the answer is "1".
+  // cspOn: whether the session has a policy at all, asked once (a page with none pays that).
+  const cspOn = (() => { let on; return () => on ??= apiCall(150, ['?']) === '1'; })();
+  const cspBlocksRequest = (directive, url, nonce, parserInserted, node) =>
+    cspOn() && apiCall(151, [directive, String(url), nonce ?? '', parserInserted ? '1' : '0', node]) === '1';
+  const cspBlocksInline = (script, element, nonce, source, node) =>
+    cspOn() && apiCall(152, [script ? '1' : '0', element ? '1' : '0', nonce ?? '', String(source), node]) === '1';
+  // CSP §5.5 "report a violation": a task fires securitypolicyviolation at the element when it
+  // is in a document, else at the document (in a worker, at its global).
+  const flushViolations = () => {
+    if (!cspOn()) return;
+    const r = apiCall(150, []);
+    if (typeof r !== 'string' || r === '') return;
+    const records = r.split('\u0001').map(x => x.split('\u0000'));
+    chk(n.timer(register(() => {
+      for (const [directive, blocked, policy, disposition, node, sample] of records) {
+        const id = Number(node), target = inWorker ? globalThis : (id > 0 && connectedId(id) ? wrap(id) : document);
+        const e = new SecurityPolicyViolationEvent('securitypolicyviolation', { bubbles: true, composed: true,
+          documentURI: String(href).split('#')[0], referrer: '', blockedURI: blocked, violatedDirective: directive, effectiveDirective: directive,
+          originalPolicy: policy, disposition, statusCode: !inWorker && /^https?:/.test(href) ? 200 : 0, sample: sample ?? '',
+          sourceFile: '', lineNumber: 0, columnNumber: 0 });
+        state(e).trusted = true;
+        dispatch(target, e);
+      }
+    }), 0, 0));
+  };
 
   // The document that makes a request (Referrer Policy §8.3 steps 1 to 3): Lean names the URL
   // it gives as the referrer and its referrer policy (node_query 210, HTML.ReferrerSource: its
@@ -10262,7 +10311,7 @@
   }
   // ==== end shadowframes: frames ========================================================
   for (const [k, v] of Object.entries({ EventTarget, Event, CustomEvent, UIEvent, MouseEvent, KeyboardEvent, FocusEvent, ErrorEvent,
-    WheelEvent, PointerEvent, Touch, TouchList, TouchEvent, DOMRect, DOMRectReadOnly, CompositionEvent, InputEvent, DragEvent, HashChangeEvent, MessageEvent, StorageEvent, DeviceMotionEvent,
+    WheelEvent, PointerEvent, Touch, TouchList, TouchEvent, DOMRect, DOMRectReadOnly, CompositionEvent, InputEvent, DragEvent, HashChangeEvent, MessageEvent, StorageEvent, SecurityPolicyViolationEvent, DeviceMotionEvent,
     DeviceOrientationEvent, BeforeUnloadEvent, TextEvent,
     PromiseRejectionEvent, Node, Element, HTMLElement, HTMLUnknownElement, SVGElement, MathMLElement, CharacterData, Text, CDATASection, Comment,
     ProcessingInstruction, DocumentType, DocumentFragment, Document, HTMLDocument, XMLDocument, DOMImplementation, NodeList, HTMLCollection, NamedNodeMap, Attr, DOMParser, SubmitEvent,
@@ -11935,6 +11984,15 @@
       const scheme = /^[a-z][a-z0-9+.-]*:/i.exec(url)?.[0] ?? '';
       if (scheme !== 'data:' && scheme !== 'blob:' && originOf(url) !== originOf(href))
         throw new DOMException(`Failed to construct 'Worker': Script at '${url}' cannot be accessed from origin '${originOf(href)}'.`, 'SecurityError');
+      // Content Security Policy: worker-src (then child-src, script-src, default-src) governs the
+      // worker's script; a forbidden one is a failed load: no worker, an `error` event here
+      if (cspBlocksRequest('worker-src', url, '', false, 0)) {
+        flushViolations();
+        workerSlots.set(this, { id: -1, terminated: true });
+        const self = this;
+        chk(n.timer(register(() => { const e = new Event('error'); state(e).trusted = true; dispatch(self, e); }), 0, 0));
+        return;
+      }
       const id = n.worker(0, url, name);
       workerSlots.set(this, { id, terminated: false });
       workerObjects.set(id, this);
@@ -12003,6 +12061,13 @@
       const scheme = /^[a-z][a-z0-9+.-]*:/i.exec(url)?.[0] ?? '';
       if (scheme !== 'data:' && scheme !== 'blob:' && originOf(url) !== originOf(href))
         throw new DOMException(`Failed to construct 'SharedWorker': Script at '${url}' cannot be accessed from origin '${originOf(href)}'.`, 'SecurityError');
+      if (cspBlocksRequest('worker-src', url, '', false, 0)) {
+        flushViolations();
+        sharedSlots.set(this, remotePort(() => {}));
+        const self = this;
+        chk(n.timer(register(() => { const e = new Event('error'); state(e).trusted = true; dispatch(self, e); }), 0, 0));
+        return;
+      }
       const key = url + '\u0000' + name;
       let shared = sharedByKey.get(key);
       if (!shared) {
@@ -12028,7 +12093,7 @@
   // interfaces this engine has), besides the language's own (`esGlobals`).
   const workerGlobals = new Set(['self', 'console', 'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval',
     'queueMicrotask', 'reportError', 'structuredClone', 'atob', 'btoa', 'WebAssembly', 'DOMException', 'EventTarget', 'Event',
-    'CustomEvent', 'MessageEvent', 'ErrorEvent', 'PromiseRejectionEvent', 'ProgressEvent', 'AbortController', 'AbortSignal',
+    'CustomEvent', 'MessageEvent', 'ErrorEvent', 'PromiseRejectionEvent', 'ProgressEvent', 'SecurityPolicyViolationEvent', 'AbortController', 'AbortSignal',
     'TextEncoder', 'TextDecoder', 'TextEncoderStream', 'TextDecoderStream', 'URL', 'URLSearchParams', 'URLPattern', 'crypto', 'Crypto',
     'SubtleCrypto', 'CryptoKey', 'performance', 'Performance', 'PerformanceEntry', 'PerformanceMark', 'PerformanceMeasure',
     'Blob', 'File', 'FileReader', 'FormData', 'Headers', 'Request', 'Response', 'fetch', 'XMLHttpRequest',
@@ -12137,6 +12202,8 @@
   const contentHandler = (el, name, source) => {
     if (!handlerNames.includes(name) || !handlerName(name) || !(el instanceof HTMLElement || el instanceof SVGElement || el instanceof MathMLElement)) return;
     const onBody = windowReflecting(el) && bodyWindowHandlers.has(name);
+    // Content Security Policy: an event handler attribute is an inline script (script-src-attr)
+    if (cspBlocksInline(true, false, '', source, nodeId(el))) return;
     const t = onBody ? bodyWindow(el) : el;
     // HTML "getting the current value of the event handler": the window's onerror handler has
     // the parameters event, source, lineno, colno and error. A source that does not compile
@@ -12875,8 +12942,15 @@
       if (typeof src !== 'string' && text === '') return;
       fresh.delete(id);
       if (n.query(id, 183, '') !== 'classic') return;
-      if (typeof src !== 'string') { execute(el, text); return; }
+      // Content Security Policy: an inline script by its nonce or the digest of its text, an
+      // external one by its URL and nonce (script-src-elem); a script the policy forbids does
+      // not run, and an external one fires `error` as a failed load does
+      const nonce = n0.attr(id, 'nonce');
+      if (typeof src !== 'string') { if (cspBlocksInline(true, true, typeof nonce === 'string' ? nonce : '', text, id)) { flushViolations(); return; } execute(el, text); return; }
       const url = src === '' ? null : resolveURL(src);
+      if (url !== null && url !== undefined && cspBlocksRequest('script-src-elem', url, typeof nonce === 'string' ? nonce : '', false, id)) {
+        flushViolations(); Promise.resolve().then(() => fire(el, 'error')); return;
+      }
       const fetcher = url === null || url === undefined ? undefined : globalThis.fetch;
       if (typeof fetcher !== 'function') { Promise.resolve().then(() => fire(el, 'error')); return; }
       fetcher(url).then(r => { if (!r.ok) throw new TypeError('script load failed'); return r.text(); })
@@ -13564,7 +13638,7 @@
     report(e) { report(e); },
     // A page starts: the content event handler attributes of its elements. The host may
     // run the prelude once on an empty document and copy that state for each page.
-    start() { if (ttStart !== null) ttStart(); scanHandlers(0, false); },
+    start() { if (ttStart !== null) ttStart(); scanHandlers(0, false); flushViolations(); },
     script(id) { currentScript = id < 0 ? null : wrap(id); const d = id < 0 ? 0 : info(id, 7); scriptDocument = d > 0 ? wrap(d) : null; if (d > 0 && ttDoc !== null) ttDoc(d); },
     url(u) { href = String(u); },
     release(id) { callbacks.delete(id); },

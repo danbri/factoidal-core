@@ -498,6 +498,8 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
     let html:string,encoding:string|undefined,url:string;
     // the Referrer-Policy field of the page's response: Lean reads it (Net.Xhr.policyOfHeader)
     let pagePolicy="";
+    // the page's Content-Security-Policy and -Report-Only fields: Lean parses and enforces them (Net.Xhr.cspOf)
+    let pageCsp="",pageCspReportOnly="";
     if(page&&page.html!==undefined){html=page.html;url=page.url;}
     else if(page&&http){
       // The page as wptserve serves it: its wrappers, substitutions, headers and redirects.
@@ -506,6 +508,7 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
       ({html,encoding}=decode(new Uint8Array(await r.arrayBuffer()),r.headers.get("content-type")??""));
       url=(r as Response&{finalURL?:string}).finalURL??page.url;
       pagePolicy=r.headers.get("referrer-policy")??"";
+      pageCsp=r.headers.get("content-security-policy")??"";pageCspReportOnly=r.headers.get("content-security-policy-report-only")??"";
     }
     else if(file.endsWith(".any.worker.html")){html=workerWrapper(file.replace(/\.worker\.html$/,".js"));url=`${origin}/${file}`;}
     else if(file.endsWith(".worker.html")&&exists(wptFile(file.replace(/\.html$/,".js")))){html=workerWrapper(file.replace(/\.html$/,".js"));url=`${origin}/${file}`;}
@@ -593,7 +596,7 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
       }
     // navigations:true: this runner loads frames' URLs (scriptSession action `frame`).
     let turn=start(html,{action:"start",url,resources,...layout,commandLimit:200000,logLimit:100000,instructionsPerMs:scriptRate,...(encoding?{encoding}:{}),
-      navigations:true,...(http?{network:true,pageAddress:"127.0.0.1"}:{}),...(pagePolicy?{referrerPolicy:pagePolicy}:{}),...(scriptEngine==="bubblepop"?{engine:"bubblepop"}:{})});
+      navigations:true,...(http?{network:true,pageAddress:"127.0.0.1"}:{}),...(pagePolicy?{referrerPolicy:pagePolicy}:{}),...(pageCsp?{csp:pageCsp}:{}),...(pageCspReportOnly?{cspReportOnly:pageCspReportOnly}:{}),...(scriptEngine==="bubblepop"?{engine:"bubblepop"}:{})});
     // The engine's page requests in flight (each from one turn): http.fetch to wptserve.
     type NetWire={id:number;method:string;url:string;headers:[string,string][];bodyBase64?:string};
     const inflight=new Map<number,Promise<{id:number;answer:Record<string,unknown>}>>();

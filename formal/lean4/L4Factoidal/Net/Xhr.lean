@@ -663,6 +663,9 @@ def cspOp (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int 
   | 150 =>
     -- the violations not yet reported, one a line (U+0001 between records), and the queue is
     -- emptied: the prelude fires a `securitypolicyviolation` event for each
+    -- with the field "?": only whether the session has a policy or a violation to report
+    -- (the prelude asks once, so a page with no policy pays one call)
+    if strAt fs 0 == "?" then (s, okStr (if s.csp.isEmpty && s.violations.isEmpty then "0" else "1")) else
     ({ s with violations := #[] }, okStr ("\x01".intercalate s.violations.toList))
   | 151 =>
     -- may a request of this kind go: the directive name, the URL, the element's nonce, "1"
@@ -1008,6 +1011,7 @@ private def tryGet (s : State) (url : String) : State :=
 #guard (tryGet (stp "" "connect-src 'none'") "http://b.example/y#frag").violations.toList ==
   ["connect-src\x00http://b.example/y\x00connect-src 'none'\x00report\x000\x00"]
 #guard (run1 (tryGet (stp "connect-src 'self'") "http://b.example/y") 150 []).1.violations.isEmpty
+#guard (run1 (stp "connect-src 'self'") 150 ["?"]).2 == "1" && (run1 stc 150 ["?"]).2 == "0"
 -- a redirect to a URL the policy forbids is a network error
 #guard drain (give (tryGet (stp "connect-src http://a.example") "http://a.example/y") 1
     ({ status := 302, headers := [("Location", "http://b.example/z")] } : Answer)).1 == ["readystatechange", "error", "loadend"]
