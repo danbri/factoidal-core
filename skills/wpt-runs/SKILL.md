@@ -69,7 +69,10 @@ reports only part of WPT (Ladybird on wpt.fyi: 35,966 of 94,406 names) is left o
   (the tarball holds `foafnaut/libweb-render.dylib`; static Lean runtime). Its gate is the engine build
   and one WPT page, none of `build.yml`'s other gates, so a main commit has a macOS engine for drawing
   pages and for a macOS WPT run also while `build.yml` publishes no `foafnaut-darwin-arm64` set. The
-  macOS full run takes the full set when the commit has one, else this one.
+  macOS full run takes the full set when the commit has one, else this one. A branch or any commit on
+  request: `gh workflow run foafnaut-macos.yml -R danbri/factoidal-builds -f core_ref=wip/x -f branch=true`,
+  then `gh run download RUN_ID -R danbri/factoidal-builds -n foafnaut-engine-darwin-arm64 -D out/` (no
+  release for a branch; the artifact is kept 5 days). The account runs 5 macOS jobs at once.
 - **What changed since the previous run**: every valid full run is compared with the previous valid one
   of the same platform and WPT commit: subtests and points, the directories that fell and rose, where
   subtests were lost, the tests that lost most, and the core commits between the two. It is in the job
