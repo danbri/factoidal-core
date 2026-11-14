@@ -1,0 +1,23 @@
+{
+ "case": "10.7.1.a",
+ "file": "Chapt10/10.7/10.7.1/10.7.1.a.xhtml",
+ "quote": "The triggers below must shift the focus to the proper form controls when activated. The \"Set Focus To Age\" trigger must place the focus into the input control labeled Age. The \"Set Focus To DOB\" trigger must place the focus into the input control labeled DOB.",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Set focus to Age field"
+  },
+  {
+   "expect": "focus",
+   "label": "Age"
+  },
+  {
+   "do": "activate",
+   "label": "Set focus to DOB field"
+  },
+  {
+   "expect": "focus",
+   "label": "DOB"
+  }
+ ]
+}

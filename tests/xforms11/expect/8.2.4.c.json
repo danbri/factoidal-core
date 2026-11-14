@@ -1,0 +1,18 @@
+{
+ "case": "8.2.4.c",
+ "file": "Chapt08/8.2/8.2.4/8.2.4.c.xhtml",
+ "quote": "When you enter an alphanumeric value in the input field you must see the message \"Instance Alert Message\". Enter 'abc', tab out, and see the alert message",
+ "steps": [
+  {
+   "do": "setvalue",
+   "label": "Enter 'abc', tab out, and see the alert message",
+   "value": "abc"
+  },
+  {
+   "expect": "control",
+   "label": "Enter 'abc', tab out, and see the alert message",
+   "valid": false,
+   "alert": "Instance Alert Message"
+  }
+ ]
+}

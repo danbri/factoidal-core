@@ -1,0 +1,15 @@
+{
+ "case": "9.1.1.c",
+ "file": "Chapt09/9.1/9.1.1/9.1.1.c.xhtml",
+ "quote": "When you activate the Set Focus To Group 2 trigger it will set the focus to the second group. The focus (your cursor) must be inside the Street Name 2 input control of the Billing Address group.",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Set Focus To Group 2"
+  },
+  {
+   "expect": "focus",
+   "label": "Street Name 2"
+  }
+ ]
+}
