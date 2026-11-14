@@ -203,6 +203,7 @@ def kindOf (property : String) : Value.Kind :=
   else if ["column-rule-color", "column-rule-width", "row-rule-color", "row-rule-width"].contains property then .gapList
   else if ["border-top-left-radius", "border-top-right-radius", "border-bottom-left-radius",
       "border-bottom-right-radius"].contains property then .radius
+  else if property.startsWith "corner-" && property.endsWith "-shape" then .cornerShape
   else if property == "offset-rotate" then .offsetRotate
   else if property == "clip-path" || property == "shape-outside" || property == "offset-path" then .shape
   -- images, counters and the clip margin do not interpolate (CSS Images 3 §6, CSS Lists 3 §4)
