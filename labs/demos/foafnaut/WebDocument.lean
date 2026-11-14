@@ -2213,6 +2213,25 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
              -- the `@property` registrations of the page's sheets, read when a custom property is asked
              registered := Thunk.mk fun _ =>
                Rendering.ComputedGeneric.registrationsOfDocument dom ++ Rendering.ComputedGeneric.registrationsOf sheetText.get }
+  -- the styles of the document of a frame in the same arena (root `r`, not the page's
+  -- document): a cascade of its own, the UA sheet and the frame document's `style` elements,
+  -- from its root (`CSS.computeAllWith` at `r`). The body of such a document takes the margins
+  -- of its container's `marginwidth` and `marginheight` (`CSS.containerMarginHints`), which the
+  -- script side brings in `q` as U+0002, the two values and U+0000 between them.
+  let frameView := fun (r node : Nat) (q : String) => (do
+    let source := String.intercalate "\n" ((dom.treeOrder r).toList.filterMap fun id =>
+      if DOM.Dom.isHtmlElement (dom.get id) "style" then dom.textContent id else none)
+    let rules ← Rendering.CSS.parseIn {medium := medium request} source
+    let ix := Rendering.CSS.RuleIndex.build rules
+    let matchesOf : Nat → List Rendering.CSS.Match := fun id => ix.matched (Rendering.CSS.readKeys dom) dom id {}
+    let styles ← Rendering.CSS.computeAllWith matchesOf dom 1 r
+    let n := dom.get node
+    let isBody := DOM.Dom.isHtmlElement n "body" && (n.parent.bind fun p => (dom.get p).parent) == some r
+    let styles := match isBody, q.startsWith "\x02", (q.drop 1).toString.splitOn "\x00" with
+      | true, true, [mw, mh] => styles.modify node (Rendering.CSS.containerMarginHints mw mh)
+      | _, _, _ => styles
+    return ({ dom := dom, matchesOf := matchesOf, styles := styles, viewportW := width, viewportH := height } :
+      Rendering.ComputedGeneric.View) : Except String Rendering.ComputedGeneric.View)
   -- what this measure leaves for the next (`Page.Carry`): for a page with no shadow tree, at
   -- text scale 1, whose rules do not read the `style` attribute
   let left : Thunk (Option WasmVM.Hosts.Page.Carry) := Thunk.mk fun _ =>
@@ -2302,7 +2321,8 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
     else if let some r := (if op ≥ 200 then Rendering.Layout.gridResolvedAt
         (fun _ => match laid.get with | .ok l => l.scene.tree | .error _ => []) node (op - 200) else none) then some r
     else if op == 20 || op == 36 || op ≥ 200 then
-      match styled.get with
+      let root := dom.shadowIncludingRoot node
+      match (if element node && root != 0 && dom.connected node then frameView root node q else styled.get) with
       -- CSSOM §9 getComputedStyle: an element that is not connected to the page's
       -- document has no computed style (the declaration is empty)
       | .ok view => if element node && dom.connected node then
