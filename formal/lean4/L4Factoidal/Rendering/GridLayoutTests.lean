@@ -204,4 +204,17 @@ private def tracks (html extra id : String) : Option (String × String) := do
 #guard box four "#c{display:grid;grid:100px 100px / 50px 50px;width:300px;height:200px;align-content:start;writing-mode:vertical-rl}" "d" == some (100,0,100,50)
 #guard box four "#c{display:grid;grid:100px 100px / 50px 50px;width:300px;height:200px;align-content:start;writing-mode:vertical-lr;direction:rtl}" "a" == some (0,150,100,50)
 
+
+-- Overflow alignment (CSS Box Alignment 3 §4.4): a safe item larger than its area starts at
+-- the area's start; an unsafe one overflows at the start.
+#guard box "<div id=c><div id=a>A</div></div>" "#c{display:grid;grid-template-columns:50px;grid-template-rows:10px} #a{width:80px;height:20px;justify-self:safe end;align-self:safe center}" "a" == some (0,0,80,20)
+#guard box "<div id=c><div id=a>A</div></div>" "#c{display:grid;grid-template-columns:50px;grid-template-rows:10px} #a{width:80px;height:20px;justify-self:end;align-self:center}" "a" == some (-30,-5,80,20)
+#guard box "<div id=c><div id=a>A</div></div>" "#c{display:grid;grid-template-columns:50px;justify-items:safe end} #a{width:80px}" "a" == some (0,0,80,7)
+
+
+-- Last-baseline alignment: the items sit at the end of their row with their last
+-- baselines lined up (b's is 3 px above its bottom, so a moves up 3 px).
+#guard box "<div id=c><div id=a>A</div><div id=b>B</div></div>" "#c{display:grid;grid-template-columns:50px 50px;grid-template-rows:30px;align-items:last baseline} #b{font-size:14px;line-height:14px;padding-bottom:3px}" "a" == some (0,20,50,7)
+#guard box "<div id=c><div id=a>A</div><div id=b>B</div></div>" "#c{display:grid;grid-template-columns:50px 50px;grid-template-rows:30px;align-items:last baseline} #b{font-size:14px;line-height:14px;padding-bottom:3px}" "b" == some (50,13,50,17)
+
 end L4Factoidal.Rendering.GridLayoutTests

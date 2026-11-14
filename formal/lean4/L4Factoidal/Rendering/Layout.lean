@@ -611,7 +611,7 @@ private def shiftResult (dx dy : Float) (r : Result) : Result :=
   let runs := r.runs.map fun run => {run with glyphs := run.glyphs.map fun g => {g with x := g.x+dx, y := g.y+dy}}
   {r with nodes := #[.group none (translate dx dy) r.nodes.toList], boxes, runs,
           pending := r.pending.map fun p => {p with x := p.x+dx, y := p.y+dy},
-          baseline := r.baseline.map (·+dy)}
+          baseline := r.baseline.map (·+dy), lastBaseline := r.lastBaseline.map (·+dy)}
 
 /-- CSS 2.1 §10.6.1: the background of inline text covers its content area, the
 font's ascent and descent, from `top`. -/
@@ -654,7 +654,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
   -- A box aligned to the top or bottom of the line makes the line tall enough for it.
   if tallBottom > ascent+descent then ascent := tallBottom-descent
   if tallTop > ascent+descent then descent := tallTop-ascent
-  let mut out : Result := {height := ascent+descent, baseline := some (y+ascent)}
+  let mut out : Result := {height := ascent+descent, baseline := some (y+ascent), lastBaseline := some (y+ascent)}
   for k in [0:items.size] do
     let (offset,item) := items[k]!
     let rtl := dirs[k]?.getD none
@@ -716,7 +716,8 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
 private def appendResult (a b : Result) : Result :=
   {nodes := a.nodes ++ b.nodes, boxes := a.boxes ++ b.boxes, runs := a.runs ++ b.runs, height := a.height+b.height,
    pending := a.pending ++ b.pending, baseline := a.baseline <|> b.baseline,
-   work := a.work+b.work, rough := a.rough || b.rough}
+   work := a.work+b.work, rough := a.rough || b.rough,
+   lastBaseline := b.lastBaseline <|> a.lastBaseline}
 
 /-- A word of preformatted text: it never wraps. -/
 private def preformatted : Inline → Bool
@@ -941,7 +942,8 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
 private def append (a b : Result) : Result :=
   {nodes := a.nodes ++ b.nodes,boxes := a.boxes ++ b.boxes,runs := a.runs ++ b.runs, height := a.height+b.height,
    pending := a.pending ++ b.pending, baseline := a.baseline <|> b.baseline,
-   work := a.work+b.work, rough := a.rough || b.rough}
+   work := a.work+b.work, rough := a.rough || b.rough,
+   lastBaseline := b.lastBaseline <|> a.lastBaseline}
 /-- CSS 2.2 §10.3.9 and §10.6.6: an inline-block with `width:auto` is as wide as its
 widest line (at most the room); its content is laid out at the origin inside its
 border and padding. Its bottom margin edge sits on the line's baseline, as a
@@ -1059,7 +1061,7 @@ private def Result.shiftY (r : Result) (dy : Float) : Result :=
           boxes := r.boxes.map fun b => {b with y := b.y+dy},
           runs := r.runs.map fun run => {run with glyphs := run.glyphs.map fun g => {g with y := g.y+dy}},
           pending := r.pending.map fun p => {p with y := p.y+dy},
-          baseline := r.baseline.map (·+dy)}
+          baseline := r.baseline.map (·+dy), lastBaseline := r.lastBaseline.map (·+dy)}
 
 /-- The style of the contents of a cell: the cell's own, or for an anonymous cell
 its parent's, with no box edges (an anonymous box has none). -/

@@ -101,6 +101,9 @@ structure Result where
   of something inside it was left out: its size is right, the places of what is inside
   may not be. It is laid out again before it is used as the final fragment. -/
   rough : Bool := false
+  /-- The last baseline of the fragment, page y: that of its last line box. Combining
+  fragments keeps the last one. -/
+  lastBaseline : Option Float := none
   deriving Repr
 instance : Inhabited Result := ⟨{}⟩
 
@@ -134,13 +137,14 @@ def Result.shift (dx dy : Float) (r : Result) : Result :=
           pending := r.pending.map fun p => {p with x := p.x+dx, y := p.y+dy},
           floats := r.floats.map fun f => {f with x := f.x+LU.ofPx dx, y := f.y+LU.ofPx dy},
           grid := r.grid.map fun g => {g with x := g.x+dx, y := g.y+dy},
-          baseline := r.baseline.map (·+dy)}
+          baseline := r.baseline.map (·+dy), lastBaseline := r.lastBaseline.map (·+dy)}
 
 /-- Two fragments in one: the paint of `b` over that of `a`. The height is `a`'s. -/
 def Result.over (a b : Result) : Result :=
   {a with nodes := a.nodes ++ b.nodes, boxes := a.boxes ++ b.boxes, runs := a.runs ++ b.runs,
           pending := a.pending ++ b.pending, baseline := a.baseline <|> b.baseline,
-          work := a.work + b.work, rough := a.rough || b.rough}
+          work := a.work + b.work, rough := a.rough || b.rough,
+          lastBaseline := b.lastBaseline <|> a.lastBaseline}
 
 /-- Says: putting fragments together adds their work: no layout goes uncounted. -/
 theorem Result.over_work (a b : Result) : (a.over b).work = a.work + b.work := rfl

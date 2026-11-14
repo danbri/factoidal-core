@@ -123,6 +123,13 @@ structure AlignStyle where
   rowGap : Length := .auto
   columnGap : Length := .auto
   order : Int := 0
+  /-- The overflow position `safe` (CSS Box Alignment 3 §4.4) of `align-items`,
+  `align-self`, `justify-items`, `justify-self`: an item larger than its alignment
+  container is aligned to its start. `unsafe` and no keyword are false. -/
+  alignItemsSafe : Bool := false
+  alignSelfSafe : Bool := false
+  justifyItemsSafe : Bool := false
+  justifySelfSafe : Bool := false
   deriving Repr
 
 /-- Every field equal: the two lay out the same. -/
@@ -130,12 +137,19 @@ def AlignStyle.same (a b : AlignStyle) : Bool :=
   a.justifyContent == b.justifyContent && a.alignContent == b.alignContent &&
   a.alignItems == b.alignItems && a.alignSelf == b.alignSelf &&
   a.justifyItems == b.justifyItems && a.justifySelf == b.justifySelf &&
-  a.rowGap.same b.rowGap && a.columnGap.same b.columnGap && a.order == b.order
+  a.rowGap.same b.rowGap && a.columnGap.same b.columnGap && a.order == b.order &&
+  a.alignItemsSafe == b.alignItemsSafe && a.alignSelfSafe == b.alignSelfSafe &&
+  a.justifyItemsSafe == b.justifyItemsSafe && a.justifySelfSafe == b.justifySelfSafe
 
 /-- The words of a canonical keyword value, without the overflow position (`safe`,
 `unsafe`: this layout aligns as `unsafe` does, except where the specification falls back). -/
 def alignWords (canonical : String) : List String :=
   (canonical.splitOn " ").filter fun w => w != "" && w != "safe" && w != "unsafe"
+
+/-- The value has the overflow position `safe`. -/
+def alignSafe (canonical : String) : Bool := (canonical.splitOn " ").contains "safe"
+
+#guard alignSafe "safe end" && !alignSafe "unsafe end" && !alignSafe "end"
 
 def contentAlignOf (canonical : String) : Option ContentAlign :=
   match alignWords canonical with
@@ -205,10 +219,14 @@ def AlignStyle.set (fontSize : Float) (a : AlignStyle) (property value : String)
     match p with
     | "justify-content" => if reset then some {a with justifyContent := .normal} else (contentAlignOf v).map fun x => {a with justifyContent := x}
     | "align-content" => if reset then some {a with alignContent := .normal} else (contentAlignOf v).map fun x => {a with alignContent := x}
-    | "align-items" => if reset then some {a with alignItems := .normal} else (itemAlignOf v).map fun x => {a with alignItems := x}
-    | "align-self" => if reset then some {a with alignSelf := .auto} else (itemAlignOf v).map fun x => {a with alignSelf := x}
-    | "justify-items" => if reset then some {a with justifyItems := .normal} else (itemAlignOf v).map fun x => {a with justifyItems := x}
-    | "justify-self" => if reset then some {a with justifySelf := .auto} else (itemAlignOf v).map fun x => {a with justifySelf := x}
+    | "align-items" => if reset then some {a with alignItems := .normal, alignItemsSafe := false}
+        else (itemAlignOf v).map fun x => {a with alignItems := x, alignItemsSafe := alignSafe v}
+    | "align-self" => if reset then some {a with alignSelf := .auto, alignSelfSafe := false}
+        else (itemAlignOf v).map fun x => {a with alignSelf := x, alignSelfSafe := alignSafe v}
+    | "justify-items" => if reset then some {a with justifyItems := .normal, justifyItemsSafe := false}
+        else (itemAlignOf v).map fun x => {a with justifyItems := x, justifyItemsSafe := alignSafe v}
+    | "justify-self" => if reset then some {a with justifySelf := .auto, justifySelfSafe := false}
+        else (itemAlignOf v).map fun x => {a with justifySelf := x, justifySelfSafe := alignSafe v}
     | "row-gap" =>
       if reset || v == "normal" then some {a with rowGap := .auto} else (tableLength fontSize p value).map fun x => {a with rowGap := x}
     | "column-gap" =>
@@ -228,6 +246,8 @@ def alignShorthand (property value : String) : Option (List (String × String)) 
 #guard ((AlignStyle.set 16 {} "justify-content" "space-between").map (·.justifyContent)) == some .spaceBetween
 #guard ((AlignStyle.set 16 {} "justify-content" "safe CENTER").map (·.justifyContent)) == some .center
 #guard ((AlignStyle.set 16 {} "align-items" "last baseline").map (·.alignItems)) == some .lastBaseline
+#guard ((AlignStyle.set 16 {} "justify-self" "safe end").map fun a => (a.justifySelf, a.justifySelfSafe)) == some (.end_, true)
+#guard ((AlignStyle.set 16 {} "align-self" "unsafe end").map (·.alignSelfSafe)) == some false
 #guard ((AlignStyle.set 16 {} "align-items" "bogus").map (·.alignItems)) == none
 #guard ((AlignStyle.set 16 {} "-webkit-align-items" "center").map (·.alignItems)) == some .center
 #guard ((AlignStyle.set 10 {} "column-gap" "1.5em").map fun a => match a.columnGap with | .px v => v | _ => -1) == some 15
