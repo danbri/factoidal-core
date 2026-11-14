@@ -590,4 +590,8 @@ private def parses (src : String) : Bool := syn src == "ok"
 
 #guard out "var seen = []; Array.prototype.forEach.call({ 0: 'a', 2: 'c', length: 4 }, (v, i) => seen.push(i + v)); var m = [1, , 3].map(x => x * 2); var f = [1, , 3].findIndex(x => x === undefined); var o = { 1: 11, 2: 9, length: { valueOf() { return {} }, toString() { return '2' } } }; var fl = Array.prototype.filter.call(o, () => true); var r = Array.prototype.reduce.call({ 1: 'x', 3: 'y', length: 4 }, (a, b) => a + b); var e; try { [].reduce((a, b) => a) } catch (x) { e = x.name } var g = []; var a = [1, 2, 3]; a.forEach((v, i) => { if (i === 0) a.pop(); g.push(v) }); print(seen.join(), m.length, 1 in m, f, fl.join(), r, e, g.join())" == ["0a,2c 3 true 1 11 xy TypeError 1,2"]
 
+/-! ## Iterator.concat (§27.1.3.2.2) -/
+
+#guard out "var it = Iterator.concat([1, 2], new Set([3]), 'ab'.split('')); print([...it].join(), typeof it.next, Object.getPrototypeOf(it) === Object.getPrototypeOf(Iterator.from([]).map(x => x))); try { Iterator.concat(1) } catch (e) { print(e.name) } var c = 0; var r = { [Symbol.iterator]() { c++; return [9][Symbol.iterator]() } }; var j = Iterator.concat(r, r); print(c, j.next().value, c, [...j].join(), c)" == ["1,2,3,a,b function true", "TypeError", "0 9 1 9 2"]
+
 end L4Factoidal.JS.Tests
