@@ -2268,7 +2268,7 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
   let n := dom.get id
   let block := ["html","body","div","p","section","main","article","header","footer","nav","aside",
     "h1","h2","h3","h4","h5","h6","ul","ol","li","dir","menu","dl","dt","dd","pre","listing","xmp","plaintext",
-    "blockquote","address","center","hr","form","fieldset","figure","figcaption",
+    "blockquote","address","center","hr","form","fieldset","legend","figure","figcaption",
     "details","summary","hgroup","search"].contains n.lname
   -- HTML §15.3.1 and §6.12 (the user agent's `dialog:not([open])` and
   -- `[popover]:not(:popover-open)` rules, `display: none`): a dialog that is not open and a

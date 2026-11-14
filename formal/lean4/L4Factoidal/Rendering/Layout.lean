@@ -709,7 +709,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
   let mut out : Result := {height := ascent+descent, baseline := some (y+ascent), lastBaseline := some (y+ascent)}
   -- The inline boxes open at this point of the line, innermost first, each with its
   -- extent so far (`InlineBox`), and their backgrounds and borders, which go under the text.
-  let mut frames : List (InlineBox.Frame × Computed) := []
+  let mut frames : List (InlineBox.Frame Float × Computed) := []
   let mut under : Array Node := #[]
   -- On a line reordered by bidi an inline box may be in pieces: its words paint its
   -- background, and its box is the extent of all of them.
@@ -717,13 +717,16 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
   -- The box of an inline box on this line and its decorations: the content area of its
   -- font with its padding and borders (CSS 2.1 §10.6.1), the side borders only where the
   -- box starts or ends on this line.
-  let fragment := fun (f : InlineBox.Frame) (s : Computed) (ended : Bool) =>
+  let fragment := fun (f : InlineBox.Frame Float) (s : Computed) (ended : Bool) =>
     let b := s.borderEdges
     let scale := s.fontSize/font.unitsPerEm
     let top := y+ascent-font.ascent*scale-s.padding.top-b.top
     let height := (font.ascent+font.descent)*scale+s.padding.top+s.padding.bottom+b.top+b.bottom
-    let left := LU.toPx f.lo
-    let width := LU.toPx (f.hi-f.lo)
+    let left := f.lo
+    -- never past the box's right edge by a rounding of the subtraction: the width of a
+    -- container that shrinks to fit is read from these boxes
+    let span := f.hi-f.lo
+    let width := if left+span > f.hi then span-(left+span-f.hi) else span
     -- most inline boxes have nothing to paint
     let nodes := if (s.background.isNone || reordered) && s.borderStyle == .none then #[] else
       decorations f.id {s with background := if reordered then none else s.background,
@@ -795,18 +798,18 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
     | .outOfFlow source => out := {out with pending := out.pending.push {id := source, x := x+offset, y}}
     | .openInline id s continued =>
       let edge := x+offset+(if continued then 0 else s.margin.left)
-      frames := (InlineBox.Frame.opened id (LU.ofPx edge) (LU.ofPx (s.borderEdges.left+s.padding.left)) (!continued),s) :: frames
+      frames := (InlineBox.Frame.opened id edge (s.borderEdges.left+s.padding.left) (!continued),s) :: frames
     | .closeInline _ s =>
       match frames with
       | (f,fs) :: rest =>
-        let f := f.close (LU.ofPx (x+offset)) (LU.ofPx (s.padding.right+s.borderEdges.right))
+        let f := f.close (x+offset) (s.padding.right+s.borderEdges.right)
         let (box,nodes) := fragment f fs true
         out := {out with boxes := out.boxes.push box}
         under := under ++ nodes
-        frames := InlineBox.merge rest f (LU.ofPx fs.margin.left) (LU.ofPx fs.margin.right) true
+        frames := InlineBox.merge rest f fs.margin.left fs.margin.right true
       | [] => pure ()
     | _ => pure ()
-    if let some (a,b) := extent then frames := InlineBox.place frames (LU.ofPx a) (LU.ofPx b)
+    if let some (a,b) := extent then frames := InlineBox.place frames a b
   -- The inline boxes still open go on to the next line: their boxes here have no right edge.
   for _ in [0:frames.length] do
     match frames with
@@ -814,7 +817,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
       let (box,nodes) := fragment f fs false
       out := {out with boxes := out.boxes.push box}
       under := under ++ nodes
-      frames := InlineBox.merge rest f (LU.ofPx fs.margin.left) 0 false
+      frames := InlineBox.merge rest f fs.margin.left 0 false
     | [] => break
   return if under.isEmpty then out else {out with nodes := under ++ out.nodes}
 
@@ -1539,6 +1542,20 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
     | .positioned _ _ _ _ _ => return (0,0)
     | .rough inner => intrinsic dom styles font embedding pictures fuel inner
 
+/-- HTML §15.5.13: the rendered legend of a `fieldset` is its first `legend` child that is
+in flow (not floated, not absolutely positioned). Its width shrinks to fit. One test of
+the name for any other element. -/
+def renderedLegend (dom : Dom) (styles : Array Computed) (id : Nat) : Bool :=
+  let n := dom.get id
+  n.lname == "legend" && n.type == .element &&
+  match n.parent with
+  | some p =>
+    (dom.get p).lname == "fieldset" &&
+      ((dom.get p).kids.find? fun k =>
+        (dom.get k).type == .element && (dom.get k).lname == "legend" && (styles[k]!).display != .none &&
+          !(styles[k]!).pos.isAbsolute && (styles[k]!).pos.float == .none) == some id
+  | none => false
+
 /-- The style of the box whose padding box is the containing block of the absolutely
 positioned box `id` (CSS 2.1 §10.1): its nearest ancestor that holds absolutely positioned
 boxes (`containsAbsolutes`), else the root element's. A loop up the ancestors. -/
@@ -1971,6 +1988,10 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let n := dom.get id
       let s := styles[id]!
       if s.display == .none then return {}
+      -- HTML §15.5.13: the rendered legend of a fieldset shrinks to fit its contents.
+      let s := match s.width with
+        | .auto => if renderedLegend dom styles id then {s with width := .fitContent} else s
+        | _ => s
       if s.display.isTable then
         match imposedWidth with
         | none => return (← table (some id) (n.parent.getD 0) n.kids)
