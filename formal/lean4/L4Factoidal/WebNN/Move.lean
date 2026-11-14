@@ -115,34 +115,27 @@ theorem normIndex_lt (v : Int) (dim : Nat) (h : 0 < dim) : normIndex v dim < dim
   generalize (if v < 0 then v + ↑dim else v).toNat = w
   split <;> omega
 
-/-- concat: which input an index along the concat axis falls in, and the index within that
-input, from the sizes of the inputs along the axis. -/
-def locate : List Nat → Nat → Nat × Nat
-  | [], a => (0, a)
-  | d :: ds, a => if a < d then (0, a) else ((locate ds (a - d)).1 + 1, (locate ds (a - d)).2)
+/-- concat: which input an index along the concat axis falls in (counted from `j`), and the
+index within that input, from the sizes of the inputs along the axis. A loop. -/
+def locateFrom (j : Nat) : List Nat → Nat → Nat × Nat
+  | [], a => (j, a)
+  | d :: ds, a => if a < d then (j, a) else locateFrom (j + 1) ds (a - d)
 
-theorem locate_cons_add (d : Nat) (ds : List Nat) (m : Nat) :
-    locate (d :: ds) (d + m) = ((locate ds m).1 + 1, (locate ds m).2) := by
-  have h : ¬ (d + m < d) := by omega
-  simp only [locate, if_neg h, Nat.add_sub_cancel_left]
+def locate (ds : List Nat) (a : Nat) : Nat × Nat := locateFrom 0 ds a
 
-/-- Kind: inverse (the index half of "concat then split gives the parts back"). Says: with
-inputs of sizes `ds` along the concat axis, the position `offset + r` of the concatenation,
-where `offset` is the total size of the first `j` inputs and `r` is below the size of input
-`j`, is read from input `j` at `r`. `split` reads its part `j` from exactly those positions
-(a slice starting at `offset`), so each part of a split of a concatenation is the input it
-came from, element for element. Does not say: the same about the flat buffers (checked by
-`#guard`s on tensors, and by the WPT concat and split vectors). -/
-theorem locate_offset : ∀ (ds : List Nat) (j r : Nat) (hj : j < ds.length), r < ds[j] →
-    locate ds ((ds.take j).foldl (· + ·) 0 + r) = (j, r)
-  | [], j, _, hj, _ => absurd hj (Nat.not_lt_zero _)
-  | d :: ds, 0, r, _, hr => by
+/-- Kind: inverse with accumulator. Says: an offset into part `j` selects that part,
+numbered from `j0`, and preserves its local index. Does not say: that tensor buffers match
+the supplied dimensions. -/
+theorem locateFrom_offset : ∀ (ds : List Nat) (j0 j r : Nat) (hj : j < ds.length), r < ds[j] →
+    locateFrom j0 ds ((ds.take j).foldl (· + ·) 0 + r) = (j0 + j, r)
+  | [], _, j, _, hj, _ => absurd hj (Nat.not_lt_zero _)
+  | d :: ds, j0, 0, r, _, hr => by
     simp only [List.getElem_cons_zero] at hr
-    simp [locate, hr]
-  | d :: ds, j + 1, r, hj, hr => by
+    simp [locateFrom, hr]
+  | d :: ds, j0, j + 1, r, hj, hr => by
     simp only [List.getElem_cons_succ] at hr
     have hj' : j < ds.length := by simpa using hj
-    have ih := locate_offset ds j r hj' hr
+    have ih := locateFrom_offset ds (j0 + 1) j r hj' hr
     have hsum : ∀ (l : List Nat) (x : Nat), l.foldl (· + ·) x = x + l.foldl (· + ·) 0 := by
       intro l
       induction l with
@@ -151,7 +144,23 @@ theorem locate_offset : ∀ (ds : List Nat) (j r : Nat) (hj : j < ds.length), r 
     have h : ((d :: ds).take (j + 1)).foldl (· + ·) 0 + r = d + ((ds.take j).foldl (· + ·) 0 + r) := by
       simp only [List.take_succ_cons, List.foldl_cons]
       rw [hsum (ds.take j) (0 + d)]; omega
-    rw [h, locate_cons_add, ih]
+    have hge : ¬ (d + ((ds.take j).foldl (· + ·) 0 + r) < d) := by omega
+    rw [h]
+    simp only [locateFrom, if_neg hge, Nat.add_sub_cancel_left]
+    rw [ih]
+    simp [Nat.add_assoc, Nat.add_comm 1 j]
+
+/-- Kind: inverse (the index half of "concat then split gives the parts back"). Says: with
+inputs of sizes `ds` along the concat axis, the position `offset + r` of the concatenation,
+where `offset` is the total size of the first `j` inputs and `r` is below the size of input
+`j`, is read from input `j` at `r`. `split` reads its part `j` from exactly those positions
+(a slice starting at `offset`), so each part of a split of a concatenation is the input it
+came from, element for element. Does not say: the same about the flat buffers (checked by
+`#guard`s on tensors, and by the WPT concat and split vectors). -/
+theorem locate_offset (ds : List Nat) (j r : Nat) (hj : j < ds.length) (hr : r < ds[j]) :
+    locate ds ((ds.take j).foldl (· + ·) 0 + r) = (j, r) := by
+  have h := locateFrom_offset ds 0 j r hj hr
+  simpa [locate] using h
 
 /-- Kind: definitional link. Says: reordering a list by the inverse permutation is reading
 it through `transposeIdx`: so `transposeIdx_permute` is also "the shape (and every
@@ -319,6 +328,12 @@ def «where» (cond tv fv : Tensor) (out : Shape) : Tensor :=
 end Tensor
 
 /-! ## Checks -/
+
+-- Axis extents from webnn/validation_tests/concat.https.any.js (three inputs).
+#guard locate [1, 2, 3] 0 == (0, 0)
+#guard locate [1, 2, 3] 2 == (1, 1)
+#guard locate [1, 2, 3] 5 == (2, 2)
+
 
 private def ti (s : Shape) (l : List Int) : Tensor := ⟨.int32, s, .i l.toArray⟩
 private def ints (t : Tensor) : List Int := t.buf.toInts.toList

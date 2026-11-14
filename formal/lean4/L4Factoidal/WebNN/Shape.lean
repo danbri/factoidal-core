@@ -24,6 +24,22 @@ def size : Shape → Nat
 @[simp] theorem size_nil : size [] = 1 := rfl
 @[simp] theorem size_cons (d : Nat) (ds : Shape) : size (d :: ds) = d * size ds := rfl
 
+/-- `size` as a loop (the compiled form of `size`: `size_eq_sizeTR`). -/
+def sizeTR (s : Shape) : Nat := s.foldl (· * ·) 1
+
+/-- Kind: accumulator invariant. Says: folding dimensions from `x` gives `x` times their
+product. Does not say: that dimensions satisfy operand limits. -/
+theorem foldl_mul_size (s : Shape) (x : Nat) : s.foldl (· * ·) x = x * size s := by
+  induction s generalizing x with
+  | nil => simp
+  | cons d ds ih => simp [ih, Nat.mul_assoc]
+
+/-- Kind: implementation equals specification (`csimp`: compiled code runs `sizeTR`, a loop,
+where the source says `size`). Says: the loop computes the element count for every shape.
+Does not say: anything about allocation or execution time. -/
+@[csimp] theorem size_eq_sizeTR : @size = @sizeTR := by
+  funext s; simp [sizeTR, foldl_mul_size]
+
 /-- Kind: algebraic identity. Says: the element count of two shapes joined is the product of
 their counts. Does not say: anything about data. -/
 theorem size_append (a b : Shape) : size (a ++ b) = size a * size b := by
@@ -42,6 +58,40 @@ def broadcastRev : List Nat → List Nat → Option (List Nat)
   | [], ys => some ys
   | xs, [] => some xs
   | x :: xs, y :: ys => (bdim x y).bind fun d => (broadcastRev xs ys).map (d :: ·)
+
+/-- `broadcastRev` as a loop with the result so far (innermost last) in `acc`. -/
+def broadcastRevTR (acc : List Nat) : List Nat → List Nat → Option (List Nat)
+  | [], ys => some (acc.reverse ++ ys)
+  | xs, [] => some (acc.reverse ++ xs)
+  | x :: xs, y :: ys =>
+    match bdim x y with
+    | some d => broadcastRevTR (d :: acc) xs ys
+    | none => none
+
+/-- Kind: accumulator invariant. Says: the loop prefixes the reverse accumulator to the
+reference broadcast result. Does not say: that the shapes are broadcastable. -/
+theorem broadcastRevTR_eq : ∀ (acc xs ys : List Nat),
+    broadcastRevTR acc xs ys = (broadcastRev xs ys).map (acc.reverse ++ ·)
+  | acc, [], ys => by simp [broadcastRevTR, broadcastRev]
+  | acc, x :: xs, [] => by simp [broadcastRevTR, broadcastRev]
+  | acc, x :: xs, y :: ys => by
+    simp only [broadcastRevTR, broadcastRev]
+    cases h : bdim x y with
+    | none => simp
+    | some d =>
+      simp only [Option.bind_some]
+      rw [broadcastRevTR_eq (d :: acc) xs ys]
+      cases broadcastRev xs ys <;> simp
+
+/-- The loop started with an empty accumulator (a constant, as `csimp` needs). -/
+def broadcastRevLoop (xs ys : List Nat) : Option (List Nat) := broadcastRevTR [] xs ys
+
+/-- Kind: implementation equals specification (`csimp`). Says: the loop gives the same
+answer as `broadcastRev` for every pair of shapes. Does not say: anything about tensor data. -/
+@[csimp] theorem broadcastRev_eq_TR : @broadcastRev = @broadcastRevLoop := by
+  funext xs ys
+  rw [broadcastRevLoop, broadcastRevTR_eq]
+  cases broadcastRev xs ys <;> simp
 
 /-- The shape two operands broadcast to (WebNN "bidirectionally broadcasting the shapes"),
 or `none` when they are not broadcastable. -/
@@ -201,6 +251,49 @@ def unravel : Shape → Nat → List Nat
   | [], _ => []
   | _ :: ds, k => (k / size ds) :: unravel ds (k % size ds)
 
+/-- `ravel` as a loop (Horner's rule), with the number so far in `acc`. -/
+def ravelTR (acc : Nat) : Shape → List Nat → Nat
+  | d :: ds, i :: is => ravelTR (acc * d + i) ds is
+  | s, _ => acc * size s
+
+/-- Kind: accumulator invariant. Says: the loop adds the prefix contribution to the
+reference flat index. Does not say: that the index is in bounds. -/
+theorem ravelTR_eq : ∀ (acc : Nat) (s : Shape) (idx : List Nat), ravelTR acc s idx = acc * size s + ravel s idx
+  | acc, [], idx => by simp [ravelTR, ravel]
+  | acc, d :: ds, [] => by simp [ravelTR, ravel]
+  | acc, d :: ds, i :: is => by
+    simp only [ravelTR, ravel, size_cons]
+    rw [ravelTR_eq (acc * d + i) ds is, Nat.add_mul, Nat.mul_assoc, Nat.add_assoc]
+
+/-- Horner's loop started at 0 (a constant, as `csimp` needs). -/
+def ravelLoop (s : Shape) (idx : List Nat) : Nat := ravelTR 0 s idx
+
+/-- Kind: implementation equals specification (`csimp`). Says: Horner's loop computes `ravel`.
+Does not say: that its arguments describe a valid index. -/
+@[csimp] theorem ravel_eq_TR : @ravel = @ravelLoop := by
+  funext s idx; simp [ravelLoop, ravelTR_eq]
+
+/-- `unravel` as a loop, with the indices so far (innermost first) in `acc`. -/
+def unravelTR (acc : List Nat) : Shape → Nat → List Nat
+  | [], _ => acc.reverse
+  | _ :: ds, k => unravelTR ((k / size ds) :: acc) ds (k % size ds)
+
+/-- Kind: accumulator invariant. Says: the loop prefixes the reverse accumulator to the
+reference indices. Does not say: that the flat index is in bounds. -/
+theorem unravelTR_eq : ∀ (acc : List Nat) (s : Shape) (k : Nat), unravelTR acc s k = acc.reverse ++ unravel s k
+  | acc, [], k => by simp [unravelTR, unravel]
+  | acc, d :: ds, k => by
+    simp only [unravelTR, unravel]
+    rw [unravelTR_eq]; simp
+
+/-- The `unravel` loop started with no indices (a constant, as `csimp` needs). -/
+def unravelLoop (s : Shape) (k : Nat) : List Nat := unravelTR [] s k
+
+/-- Kind: implementation equals specification (`csimp`). Says: the loop computes `unravel`.
+Does not say: that the resulting indices are in bounds without a bound on `k`. -/
+@[csimp] theorem unravel_eq_TR : @unravel = @unravelLoop := by
+  funext s k; simp [unravelLoop, unravelTR_eq]
+
 /-- Kind: bound. Says: the flat number of a multi-index that is within the shape is below the
 shape's element count, so reading it never leaves the tensor's data. -/
 theorem ravel_lt : ∀ (s : Shape) (idx : List Nat), Valid s idx → ravel s idx < size s
@@ -263,6 +356,13 @@ theorem ravel_unravel : ∀ (s : Shape) (k : Nat), k < size s → ravel s (unrav
 #guard broadcastsTo [3, 1] [2, 3, 4] && !broadcastsTo [2, 3, 4] [3, 1]
 #guard ravel [2, 3, 4] [1, 2, 3] == 23 && unravel [2, 3, 4] 23 == [1, 2, 3]
 #guard size [2, 3, 4] == 24 && size [] == 1 && size [0, 5] == 0
+
+-- Shapes from webnn/validation_tests/expand.https.any.js and transpose.https.any.js.
+#guard broadcastRevTR [] [5, 1, 3] [5, 4, 3] == some [5, 4, 3]
+#guard broadcastRevTR [] [] [5, 4, 3] == some [5, 4, 3]
+#guard sizeTR [1, 2, 3, 4] == 24
+#guard ravelTR 0 [1, 2, 3, 4] [0, 1, 2, 3] == 23
+#guard unravelTR [] [1, 2, 3, 4] 23 == [0, 1, 2, 3]
 
 end Shape
 end L4Factoidal.WebNN
