@@ -5,17 +5,17 @@
  "steps": [
   {
    "expect": "control",
-   "label": "Car Make",
+   "label": "Car Make (appearance=full)",
    "value": "Lotus"
   },
   {
    "expect": "control",
-   "label": "Car Year",
+   "label": "Car Year (appearance=compact)",
    "value": "2005"
   },
   {
    "expect": "control",
-   "label": "Car Color",
+   "label": "Car Color (appearance=minimal)",
    "value": "Aztec Bronze"
   }
  ]

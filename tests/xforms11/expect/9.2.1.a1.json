@@ -5,45 +5,45 @@
  "steps": [
   {
    "expect": "control",
-   "label": "In Case",
+   "label": "Case In",
    "kind": "trigger",
    "relevant": true
   },
   {
    "expect": "control",
-   "label": "Out Case",
+   "label": "Case Out",
    "kind": "trigger",
    "relevant": false
   },
   {
    "do": "activate",
-   "label": "In Case"
+   "label": "Case In"
   },
   {
    "expect": "control",
-   "label": "Out Case",
+   "label": "Case Out",
    "kind": "trigger",
    "relevant": true
   },
   {
    "expect": "control",
-   "label": "In Case",
+   "label": "Case In",
    "kind": "trigger",
    "relevant": false
   },
   {
    "do": "activate",
-   "label": "Out Case"
+   "label": "Case Out"
   },
   {
    "expect": "control",
-   "label": "In Case",
+   "label": "Case In",
    "kind": "trigger",
    "relevant": true
   },
   {
    "expect": "control",
-   "label": "Out Case",
+   "label": "Case Out",
    "kind": "trigger",
    "relevant": false
   }

@@ -1,0 +1,15 @@
+{
+ "case": "B.2.a",
+ "file": "Appendix/B/B.2/b.2.a.xhtml",
+ "quote": "You must see an empty person name after the person name of \"Jane Doe\" :",
+ "steps": [
+  {
+   "expect": "values",
+   "values": [
+    "Jane Doe",
+    ""
+   ],
+   "label": "Person Name"
+  }
+ ]
+}

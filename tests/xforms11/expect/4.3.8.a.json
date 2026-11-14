@@ -5,7 +5,7 @@
  "steps": [
   {
    "do": "activate",
-   "label": "Trigger Help Event"
+   "label": "Dispatch Help"
   },
   {
    "expect": "message",
@@ -17,7 +17,7 @@
   },
   {
    "do": "activate",
-   "label": "Trigger Hint Event"
+   "label": "Dispatch Hint"
   },
   {
    "expect": "message",
