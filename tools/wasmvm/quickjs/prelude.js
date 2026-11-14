@@ -2369,7 +2369,7 @@
     define(P, 'getLineDash', function () { return nums(ask([8, self(this).id])); });
     const text = op => function (t, x, y, maxWidth) {
       const s = self(this); need(arguments.length, 3, op === 76 ? 'fillText' : 'strokeText'); on(s.id);
-      q.push(op, str(t), +x, +y, maxWidth === undefined ? NaN : +maxWidth);
+      q.push(op, str(t), +x, +y, maxWidth === undefined ? Infinity : +maxWidth);
     };
     define(P, 'fillText', text(76));
     define(P, 'strokeText', text(77));

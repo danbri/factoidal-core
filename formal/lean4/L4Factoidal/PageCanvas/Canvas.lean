@@ -503,13 +503,14 @@ def Run.shape (r : Run) (font : Font) (s : String) : Run × Option Text.Shaped :
 
 /-- The outline of text at `(x, y)` in user space, as HTML §4.12.5.1.13 places it. -/
 def Run.textPath (r : Run) (st : DrawState) (s : String) (x y maxW : Float) : Run × Option Path :=
-  if !finite [x, y] || (!maxW.isNaN && (!maxW.isFinite || maxW <= 0)) then (r, none) else
+  -- HTML: a maxWidth that was given and is NaN or not above zero draws nothing; none given is +∞.
+  if !finite [x, y] || maxW.isNaN || maxW <= 0 then (r, none) else
   let (r, sh) := r.shape st.font s
   match sh with
   | none => (r, none)
   | some sh =>
     let width := sh.word.advance * sh.scale
-    let sx := if !maxW.isNaN && width > maxW && width > 0 then maxW / width else 1
+    let sx := if maxW.isFinite && width > maxW && width > 0 then maxW / width else 1
     let x0 := x + Text.alignShift st.align st.direction (width * sx)
     let y0 := y + Text.baselineShift st.baseline sh - sh.word.ascent * sh.scale
     (r, some (Text.outlinePath sh x0 y0 sx))
@@ -517,13 +518,13 @@ def Run.textPath (r : Run) (st : DrawState) (s : String) (x y maxW : Float) : Ru
 /-- The colour glyphs of text at `(x, y)`, placed as `textPath` places outlines. -/
 def Run.textColour (r : Run) (st : DrawState) (s : String) (x y maxW : Float) :
     Run × Array (Bitmap × Float × Float × Float × Float) :=
-  if !finite [x, y] || (!maxW.isNaN && (!maxW.isFinite || maxW <= 0)) then (r, #[]) else
+  if !finite [x, y] || maxW.isNaN || maxW <= 0 then (r, #[]) else
   let (r, sh) := r.shape st.font s
   match sh with
   | none => (r, #[])
   | some sh =>
     let width := sh.word.advance * sh.scale
-    let sx := if !maxW.isNaN && width > maxW && width > 0 then maxW / width else 1
+    let sx := if maxW.isFinite && width > maxW && width > 0 then maxW / width else 1
     let x0 := x + Text.alignShift st.align st.direction (width * sx)
     let y0 := y + Text.baselineShift st.baseline sh - sh.word.ascent * sh.scale
     (r, Text.colourImages sh x0 y0 sx)
