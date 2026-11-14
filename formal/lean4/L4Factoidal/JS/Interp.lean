@@ -355,6 +355,16 @@ def isConstructor (v : Value) : M Bool := do
   match v with
   | .obj id => match (← getObj id).kind with
     | .proxy (.obj t) _ => pure (← getObj t).kind.constructs
+    -- a bound function constructs when its target does (BoundFunctionCreate, §10.4.1.3)
+    | .bound (.obj t) .. => do
+      let rec go : Nat → Nat → M Bool
+        | 0, _ => pure false
+        | k + 1, t => do
+          match (← getObj t).kind with
+          | .bound (.obj t') .. => go k t'
+          | .proxy (.obj t') _ => pure (← getObj t').kind.constructs
+          | kd => pure kd.constructs
+      go 1000 t
     | k => pure k.constructs
   | _ => pure false
 
@@ -5045,18 +5055,77 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       | _ => throwErr .type "next method called on incompatible receiver"
     | .iterSelf => pure thisV
     | .arrayFrom =>
+      -- §23.1.2.1: `this` makes the result when it is a constructor other than Array; a map
+      -- function's error closes the iterator
       let mapFn := a1
-      let usingIter ← match a0 with
-        | .undef | .null => throwErr .type "Array.from requires an array-like or iterable"
-        | _ => getV n a0 (symKey symIterator)
-      let vs ← match usingIter with
-        | .undef | .null => elemsOf n a0
-        | _ => do iterToArray n (← getIterator n a0) #[]
-      let vs ← match mapFn with
-        | .undef => pure vs
-        | f => (List.range vs.size).toArray.mapM fun i => callV n f (argD args 2) #[vs[i]!, .num (Float.ofNat i)]
-      newArray vs
-    | .arrayOf => newArray args
+      let mapping := !(mapFn matches .undef)
+      if mapping && !(← isCallable mapFn) then throwErr .type "Array.from: the map function is not callable"
+      let custom ← match thisV with
+        | .obj cid => do
+          let k := (← getObj cid).kind
+          pure ((← isConstructor thisV) && !(match k with | .native .arrayCtor => true | _ => false))
+        | _ => pure false
+      match a0 with
+      | .undef | .null => throwErr .type "Array.from requires an array-like or iterable"
+      | _ => pure ()
+      let put (a : Value) (i : Nat) (v : Value) : M Unit := do
+        let .obj aid := a | throwErr .type "Array.from: the constructor did not make an object"
+        if !(← defineOwnProp n aid (toString i) { value := some v, writable := some true, enumerable := some true, configurable := some true }) then
+          throwErr .type s!"Cannot define property {i} of the Array.from result"
+      let usingIter ← getV n a0 (symKey symIterator)
+      match usingIter with
+      | .undef | .null =>
+        let oid ← toObj n a0
+        let len ← arrayLikeLength n (.obj oid)
+        let a ← if custom then some <$> construct n thisV #[.num (Float.ofNat len)] thisV else pure none
+        if a.isNone && len > 4294967295 then throwErr .range "Invalid array length"
+        let m := min len 10000000
+        charge (m / 64)
+        let mut vs : Array Value := #[]
+        for i in [0:m] do
+          let v ← getV n (.obj oid) (toString i)
+          let v ← if mapping then callV n mapFn (argD args 2) #[v, .num (Float.ofNat i)] else pure v
+          match a with
+          | some a => put a i v
+          | none => vs := vs.push v
+        match a with
+        | none => newArray vs
+        | some a => putV n a "length" (.num (Float.ofNat len)) true; pure a
+      | _ =>
+        let a ← if custom then some <$> construct n thisV #[] thisV else pure none
+        if !(← isCallable usingIter) then throwErr .type "Array.from: Symbol.iterator is not a function"
+        let it ← callV n usingIter a0 #[]
+        if !it.isObj then throwErr .type "Result of the Symbol.iterator method is not an object"
+        let mut vs : Array Value := #[]
+        let mut k := 0
+        for _ in [0:10000000] do
+          tick
+          match ← iterStep n it with
+          | none => break
+          | some v =>
+            -- an abrupt completion of the mapping or the definition closes the iterator first
+            let v ← tryCatch (do
+                let v ← if mapping then callV n mapFn (argD args 2) #[v, .num (Float.ofNat k)] else pure v
+                if let some a := a then put a k v
+                pure v)
+              fun e => do
+                tryCatch (iterClose n it) fun _ => pure ()
+                throw e
+            if a.isNone then vs := vs.push v
+            k := k + 1
+        match a with
+        | none => newArray vs
+        | some a => putV n a "length" (.num (Float.ofNat k)) true; pure a
+    | .arrayOf =>
+      let custom ← match thisV with
+        | .obj cid => do
+          let kd := (← getObj cid).kind
+          pure ((← isConstructor thisV) && !(match kd with | .native .arrayCtor => true | _ => false))
+        | _ => pure false
+      if custom then
+        let a ← construct n thisV #[.num (Float.ofNat args.size)] thisV
+        speciesFill n a args (some args.size)
+      else newArray args
     | .dateNow => pure (.num ((← hostNowNs) / 1000000).floor)
     | .promiseCtor =>
       let nt ← match newTarget with
