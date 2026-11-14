@@ -169,6 +169,14 @@ private def columns := "#c{display:flex;flex-direction:column;flex-wrap:wrap;wid
 #guard box three "#c{display:flex;flex-direction:column;flex-wrap:wrap;width:100px;height:17px;gap:3px 10px;align-content:flex-start}" "b" == some (0,10,12,7)
 #guard box three "#c{display:flex;flex-direction:column;flex-wrap:wrap;width:100px;height:17px;gap:3px 10px;align-content:flex-start}" "d" == some (22,0,18,7)
 
+-- §9.9.1: a multi-line row can break after every item: as a float it is as wide as its
+-- max-content width when that fits (12 + 6 + 18); in less room it takes the room (two
+-- lines in 20), but no less than its widest item. A single-line row does not break.
+#guard box three "#c{display:flex;flex-wrap:wrap;float:left}" "c" == some (0,0,36,7)
+#guard box three "#c{display:flex;flex-wrap:wrap;float:left}" "d" == some (18,0,18,7)
+#guard box three "#c{display:flex;flex-wrap:wrap;float:left}" "c" (width := 20) == some (0,0,20,14)
+#guard box three "#c{display:flex;float:left}" "c" (width := 20) == some (0,0,36,7)
+
 -- Nesting: a row in a column in a row; a flex container in block flow and a block in a flex item.
 private def nested := "<div id=o><div id=l>LL</div><div id=m><div id=h>H</div><div id=r><div id=x>X</div><div id=y>Y</div></div></div></div><div id=p>P</div>"
 private def nestedCss := "#o{display:flex} #m{flex:1;display:flex;flex-direction:column} #r{display:flex} #y{flex:1}"
