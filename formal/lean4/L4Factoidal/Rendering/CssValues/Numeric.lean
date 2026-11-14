@@ -150,7 +150,7 @@ def Ty.inv (a : Ty) : Ty := ⟨-a.len, -a.pct, -a.ang, -a.tim, -a.frq, -a.res, -
 
 def mathFunctions : List String :=
   ["calc", "min", "max", "clamp", "round", "mod", "rem", "sin", "cos", "tan", "asin", "acos",
-   "atan", "atan2", "pow", "sqrt", "hypot", "log", "exp", "abs", "sign"]
+   "atan", "atan2", "pow", "sqrt", "hypot", "log", "exp", "abs", "sign", "progress"]
 
 def roundingStrategies : List String := ["nearest", "up", "down", "to-zero"]
 
@@ -240,6 +240,13 @@ mutual
           -- the comma-separated arguments: a rounding strategy is the first argument of
           -- `round()`, and `none` may stand for the ends of `clamp()`
           let groups := splitCommas args
+          -- `progress(no-clamp ...)` (CSS Values 5 §8.1): the keyword before the first argument
+          let (noClamp, groups) := match n, groups with
+            | "progress", first :: rest =>
+              match stripWs first with
+              | .tok (.ident s) :: more => if lower s == "no-clamp" then (true, more :: rest) else (false, groups)
+              | _ => (false, groups)
+            | _, _ => (false, groups)
           let parsed := ((List.range groups.length).zip groups).mapM fun (i, g) =>
             let word := match stripWs g with
               | [.tok (.ident s)] => some (lower s)
@@ -249,7 +256,7 @@ mutual
               if (n == "round" && i == 0 && roundingStrategies.contains w) || (n == "clamp" && w == "none") then some (Calc.kw w)
               else calcExpr fuel g
             | none => calcExpr fuel g
-          parsed.map fun xs => .fn n xs
+          parsed.map fun xs => .fn n (if noClamp then .kw "no-clamp" :: xs else xs)
         else none
       | _ => none
   /-- A calc sum over component values (white space included). -/
@@ -289,7 +296,7 @@ def Calc.type (pctAs : Kind) : Nat → Calc → Option Ty
     | .prod xs => (xs.mapM (Calc.type pctAs fuel)).map fun ts => ts.foldl Ty.mul {}
     | .fn name args =>
       let args' := args.filter fun a => match a with
-        | .kw k => !(roundingStrategies.contains k || k == "none")
+        | .kw k => !(roundingStrategies.contains k || k == "none" || k == "no-clamp")
         | _ => true
       match args'.mapM (Calc.type pctAs fuel) with
       | none => none
@@ -309,6 +316,7 @@ def Calc.type (pctAs : Kind) : Nat → Calc → Option Ty
         | "sqrt" | "exp" => if n == 1 && ts.all (· == num) then some num else none
         | "abs" => if n == 1 then ts.head? else none
         | "sign" => if n == 1 then some num else none
+        | "progress" => if n == 3 && (allSame ts).isSome then some num else none
         | _ => none
 
 /-! ### Simplification -/
@@ -408,6 +416,11 @@ def evalFn (name : String) (strategy : String) (vs : List Rat) (unit : String) :
     if a ≤ 0 || b ≤ 0 || b == 1 then none
     else some (.val (approx (Color.lnApprox a / Color.lnApprox b)) "")
   | "exp", [a] => some (.val (approx (Color.expApprox a)) "")
+  | "progress", [v, start, finish] =>
+    -- (v - start) / (finish - start), 0 when the ends are equal, clamped to [0, 1]
+    -- unless `no-clamp` (CSS Values 5 §8.1)
+    let p := if finish == start then 0 else (v - start) / (finish - start)
+    some (.val (if strategy == "no-clamp" then p else ratMax 0 (ratMin 1 p)) "")
   | _, _ => none
 where
   /-- An approximate result, to 10 decimal places. -/
@@ -483,10 +496,10 @@ def Calc.simp (ctx : Option Ctx) : Nat → Calc → Calc
     | .fn name args =>
       let ys := args.map (Calc.simp ctx fuel)
       let strategy := match ys with
-        | .kw k :: _ => if roundingStrategies.contains k then k else "nearest"
+        | .kw k :: _ => if roundingStrategies.contains k || k == "no-clamp" then k else "nearest"
         | _ => "nearest"
       let operands := ys.filter fun y => match y with
-        | .kw k => !roundingStrategies.contains k
+        | .kw k => !(roundingStrategies.contains k || k == "no-clamp")
         | _ => true
       match sameUnitValues operands with
       | some (vs, u) =>
@@ -530,6 +543,8 @@ def Calc.css : Nat → Bool → Calc → String
         (acc.1 ++ piece, false)) ("", true)).1
       -- a product inside a sum or a product is written in parentheses (§10.14)
       if nested then "(" ++ body ++ ")" else body
+    | .fn name (.kw "no-clamp" :: args) =>
+      name ++ "(no-clamp " ++ ", ".intercalate (args.map (Calc.css fuel false)) ++ ")"
     | .fn name args =>
       name ++ "(" ++ ", ".intercalate (args.map (Calc.css fuel false)) ++ ")"
 
@@ -629,6 +644,17 @@ private def len : NumReq := { kind := .length }
 private def lenPct : NumReq := { kind := .length, allowPct := true }
 private def lenPos : NumReq := { kind := .length, lo := some 0 }
 
+-- progress() (CSS Values 5 §8.1), from progress-serialize.html and progress-computed.html
+private def num : NumReq := { kind := .number }
+#guard spec num "progress(100px, 0px, 100px)" == some "calc(1)"
+#guard spec num "progress(10em, 0px, 10em)" == some "progress(10em, 0px, 10em)"
+#guard comp num "progress(10em, 0px, 10em)" == some "1"
+#guard spec num "progress(1%, (10% - 10%), 100%)" == some "calc(0.01)"
+#guard spec num "calc(0.5 * progress(200px, 0px, 100px))" == some "calc(0.5)"
+#guard spec num "progress(2rad, 1rad, 1rad)" == some "calc(0)"
+#guard spec num "progress(no-clamp 10em, 0px, 10rem)" == some "progress(no-clamp 10em, 0px, 10rem)"
+#guard comp num "progress(no-clamp 1000em, 10em, 110em)" == some "9.9"
+#guard spec num "progress(1px, 0deg, 1px)" == none
 #guard spec len "1PX" == some "1px"
 #guard spec len "0" == some "0px"
 #guard spec len "1" == none
