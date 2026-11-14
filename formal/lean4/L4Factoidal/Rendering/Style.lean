@@ -1007,6 +1007,14 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     let v ← match factor with | none => pixels d.value | some n => pure (n*s.fontSize)
     if v <= 0 then throw "line-height must be positive"
     return {s with lineHeight := v, lineHeightFactor := factor}
+  -- `white-space` and `white-space-collapse` (CSS Text 4 §3): white space and line breaks
+  -- kept (`pre`, `pre-wrap`, `pre-line`, `break-spaces`, `preserve`) or collapsed
+  | "white-space" | "white-space-collapse" =>
+    match (trim d.value).toLower with
+    | "pre" | "pre-wrap" | "pre-line" | "break-spaces" | "preserve" | "preserve-breaks" | "preserve-spaces" =>
+      return {s with preformatted := true}
+    | "normal" | "nowrap" | "collapse" => return {s with preformatted := false}
+    | _ => throw "unsupported CSS white-space"
   | "visibility" => match d.value with
     | "visible" => return {s with visible := true}
     | "hidden" | "collapse" => return {s with visible := false}
@@ -1305,6 +1313,7 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
                  lineHeight := lineHeightOf source.fontSize source.lineHeightFactor source.lineHeight,
                  fontWeight := source.fontWeight, oblique := source.oblique}
   | "visibility" => some {s with visible := source.visible}
+  | "white-space" | "white-space-collapse" => some {s with preformatted := source.preformatted}
   | "overflow" => some {s with clipOverflow := source.clipOverflow}
   | "text-decoration" | "text-decoration-line" => some {s with underline := source.underline}
   | "border-width" => some {s with borderWidth := source.borderWidth}
@@ -1330,7 +1339,7 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
 them). -/
 def inheritedProperties : List String :=
   ["color","font","font-size","font-family","font-weight","font-style","line-height","visibility","border-spacing","border-collapse",
-   "caption-side","text-align","direction"]
+   "caption-side","text-align","direction","white-space","white-space-collapse"]
 
 /-- The style a CSS-wide keyword takes the property from (CSS Cascade 4 §7.3): `inherit`
 the parent's; `initial` the initial values (the fields of an empty `Computed`); `unset`
