@@ -326,7 +326,7 @@ to run the same test on the Hub's GPU before an operator is enabled there.
 
 | On the GPU path | On the CPU reference (kernel exists, measured over tolerance) | CPU reference only (no kernel yet) |
 |---|---|---|
-| add, sub, mul, div, max, min, pow, prelu; abs, ceil, cos, exp, floor, neg, reciprocal, relu, sigmoid, sin, softsign, tan, sign, roundEven, leakyRelu, linear, hardSigmoid, hardSwish, clamp; transpose, expand, slice, tile, reverse, reshape, identity, concat (≤ 7 inputs); matmul; reduceSum, reduceMean, reduceL1, reduceSumSquare, reduceProduct, reduceMax, reduceMin; softmax; conv2d (NCHW, OIHW); maxPool2d (NCHW) | log, tanh, sqrt, elu, gemm, averagePool2d, batchNormalization | the rest of the operator table (gelu, erf, softplus, layer and instance normalisation, gather and scatter, resample2d, convTranspose2d, the recurrent operators, quantisation, comparisons and logical operators, argMin/argMax, cumulativeSum, where, pad, triangular, cast, l2Pool2d, other layouts) |
+| add, sub, mul, div, max, min, pow, prelu; abs, ceil, cos, exp, floor, neg, reciprocal, relu, sigmoid, sin, softsign, tan, sign, roundEven, leakyRelu, linear, hardSigmoid, hardSwish, clamp; transpose, expand, slice, tile, reverse, reshape, identity, concat (≤ 7 inputs); matmul; reduceSum, reduceMean, reduceL1, reduceSumSquare, reduceProduct, reduceMax, reduceMin; softmax; erf; conv2d (NCHW, OIHW); maxPool2d (NCHW) | log, tanh, sqrt, elu, gelu, gemm, averagePool2d, batchNormalization | the rest of the operator table (softplus, layer and instance normalisation, gather and scatter, resample2d, convTranspose2d, the recurrent operators, quantisation, comparisons and logical operators, argMin/argMax, cumulativeSum, where, pad, triangular, cast, l2Pool2d, other layouts) |
 
 - **Second differential group** (same machine and method as 2.6):
 
@@ -336,6 +336,8 @@ to run the same test on the Hub's GPU before an operator is enabled there.
 | hardSwish | 2 ULP | 4 ULP | within |
 | softmax over 16 | 11 ULP | 51 ULP (3·16 + 3) | within |
 | elu | 27 ULP (`exp(x) − 1`); 93 ULP (`2·exp(x/2)·sinh(x/2)`) | 18 ULP | over: CPU reference |
+| erf (the CPU reference's series and continued fraction, transcribed) | 6.0e-7 absolute | 2^-10 absolute | within |
+| gelu (same erf) | 13,790 ULP at an output of −0.00072 (absolute 9.5e-7): `1 − erf` cancels in `f32` | 18 ULP | over: CPU reference |
 | batchNormalization | 169 ULP at an output of 0.0032 (absolute 1.9e-6) | 6 ULP | over: CPU reference |
 
 - **`f32` literals.** Operator parameters (alpha, beta, epsilon, clamp bounds) reach the

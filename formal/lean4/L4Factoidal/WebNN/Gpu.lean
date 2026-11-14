@@ -634,6 +634,32 @@ def batchNormKernel (s : Shape) (axis : Nat) (eps : Float) (scale bias : Bool) :
   let y := if bias then add y (.index (nm "bias") c) else y
   Wgsl.finish (kernel (["x", "mean", "variance"] ++ (if scale then ["scale"] else []) ++ (if bias then ["bias"] else [])) s y)
 
+/-- erf and gelu, transcribed from the CPU reference's own algorithm (`Compute.erfSmall`: the
+series of 90 positive terms; `Compute.erfcLarge`: the continued fraction of 60 levels; the
+branch at 2.5): both are computed for `a = |x|` (or `|x|/√2`) and the branch selects one. -/
+def erfKernel (name : String) (s : Shape) : Except String Wgsl.Module := do
+  if name != "erf" && name != "gelu" then throw s!"webnn gpu: no kernel for {name}"
+  if Shape.size s > maxElements then throw "webnn gpu: output too large for one dispatch"
+  let some sqrtPi := floatLit (Float.sqrt (4.0 * Float.atan 1.0)) | throw "pi"
+  let some sqrt2 := floatLit (Float.sqrt 2.0) | throw "sqrt2"
+  let x := Wgsl.Expr.index (nm "x") (nm "k")
+  let a := if name == "gelu" then Wgsl.Expr.binary "/" (call1 "abs" x) sqrt2 else call1 "abs" x
+  let ft := fun (e : Wgsl.Expr) => Wgsl.Expr.call (.ty (.scalar .f32)) (.cons e .nil)
+  let decls : List Wgsl.Stmt := [.letS "a" none a, .letS "x2" none (mulE (f "2.0") (mulE (nm "a") (nm "a"))),
+    .varS "term" none (some (nm "a")), .varS "ser" none (some (nm "a")), .varS "cf" none (some (nm "a"))]
+  let series := stmts [.assign (nm "term") "" (.binary "/" (mulE (nm "term") (nm "x2")) (ft (add (mulE (u 2) (nm "t")) (u 3)))),
+    .assign (nm "ser") "" (add (nm "ser") (nm "term"))]
+  let frac := stmts [.assign (nm "cf") "" (add (nm "a") (.binary "/" (.binary "/" (ft (.binary "-" (u 60) (nm "t"))) (f "2.0")) (nm "cf")))]
+  let ex := call1 "exp" (.unary "-" (mulE (nm "a") (nm "a")))
+  let small := mulE (mulE (.binary "/" (f "2.0") sqrtPi) ex) (nm "ser")
+  let large := .binary "/" ex (mulE sqrtPi (nm "cf"))
+  let lt := Wgsl.Expr.binary "<" (nm "a") (f "2.5")
+  let erfA := sel (.binary "-" (f "1.0") large) small lt
+  let erfcA := sel large (.binary "-" (f "1.0") small) lt
+  let v := if name == "erf" then sel erfA (.unary "-" erfA) (.binary "<" x (f "0.0"))
+    else sel (mulE (mulE (f "0.5") x) (add (f "1.0") erfA)) (mulE (mulE (f "0.5") x) erfcA) (.binary "<" x (f "0.0"))
+  Wgsl.finish (loopsKernel ["x"] s decls [(0, 90, series), (0, 60, frac)] v)
+
 /-- Workgroups to dispatch for `n` output elements. -/
 def groups (n : Nat) : Nat := (n + wg - 1) / wg
 

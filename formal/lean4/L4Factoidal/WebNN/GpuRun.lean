@@ -14,7 +14,7 @@ against its work budget, and a refusal anywhere makes the graph run on the CPU r
 (at `build`) or the dispatch fail with an `OperationError` (at `dispatch`). The theorems of
 `PageGpu` (subset, clamped indices, dispatch bounds, quotas, readback) hold for all of it.
 
-Operators on the GPU path (float32): `gpuOps`. `log`, `tanh`, `sqrt`, `elu`, `gemm`,
+Operators on the GPU path (float32): `gpuOps`. `log`, `tanh`, `sqrt`, `elu`, `gelu`, `gemm`,
 `averagePool2d` and `batchNormalization` stay on the CPU reference: measured outside the
 WebNN tolerances on a GPU (section 2.6 of the record), though their kernels exist.
 -/
@@ -50,7 +50,7 @@ def gpuOps : List String :=
    "transpose", "expand", "slice", "tile", "reverse", "reshape", "identity", "matmul",
    "reduceSum", "reduceMean", "reduceL1", "reduceSumSquare", "reduceProduct", "reduceMax", "reduceMin",
    "conv2d", "maxPool2d",
-   "leakyRelu", "linear", "hardSigmoid", "hardSwish", "sign", "roundEven", "clamp", "prelu", "softmax", "concat"]
+   "leakyRelu", "linear", "hardSigmoid", "hardSwish", "sign", "roundEven", "clamp", "prelu", "softmax", "concat", "erf"]
 
 /-- How a node runs on the GPU: a kernel with its input operands in binding order, or a copy
 of one operand into the output. -/
@@ -95,6 +95,7 @@ def kernelFor (n : Node) (descs : Array Desc) : Except String Run := do
       | _ => none
     pure (.kernel (← Gpu.clampKernel (d "input") (bound "minValue") (bound "maxValue")) [← one "input"])
   | "prelu" => pure (.kernel (← Gpu.binaryKernel "prelu" (d "input") (d "slope") o) [← one "input", ← one "slope"])
+  | "erf" => pure (.kernel (← Gpu.erfKernel "erf" (d "input")) [← one "input"])
   | "softmax" => pure (.kernel (← Gpu.softmaxKernel (d "input") (c.nat "axis")) [← one "input"])
   | "concat" =>
     let ids := c.ids "inputs"
