@@ -188,6 +188,19 @@ def badCustomValue (top : List CV) : Bool :=
     | .tok (.delim '!') => true
     | _ => false
 
+/-- A `flex` value whose leading unitless zero the grammar reads as the basis: CSS Flexbox
+1 §7.2 reads a unitless zero that is not after two flex factors as a flex factor, so
+`flex: 0 1 1` is not a value (its last `1` is no basis). -/
+def flexZeroMisread (top : List CV) : Bool :=
+  match top with
+  | .tok (.num n _) :: _ :: _ =>
+    -- the grow factor read is not that zero
+    n == 0 && ((propG "flex").bind fun g => matchAll (env none) g top).any fun out =>
+      out.any fun cv => match cv with
+        | .fn name args => isTag name && (name.drop 1).toString == "flex-grow" && serialize (untag 16 args) != "0"
+        | _ => false
+  | _ => false
+
 /-- The canonical specified value of `value` for property `property`: `none` when the
 property is not known or the value is not one of its values. -/
 def specified (property value : String) : Option String :=
@@ -205,7 +218,7 @@ def specified (property value : String) : Option String :=
         | some k => some k
         | none =>
           if hasSubstitution cvs then some (rawText cvs)
-          else if p == "all" then none
+          else if p == "all" || (p == "flex" && flexZeroMisread top) then none
           else (matchText none row.name top).bind (canonicalValue p)
 
 /-- `CSS.supports(property, value)` (CSS Conditional 3 §8.1): the value parses. -/
@@ -873,6 +886,8 @@ def initialComputed (ctx : ComputeCtx) (row : Property) : String :=
 
 /-! ### Tests -/
 
+#guard specified "flex" "0 1 1" == none
+#guard specified "flex" "0 1" == some "0 1" && (specified "flex" "0 auto").isSome && (specified "flex" "1 0 0").isSome
 #guard specified "color" "RED" == some "red"
 #guard specified "color" "#f00" == some "rgb(255, 0, 0)"
 #guard specified "color" "1px" == none
