@@ -123,6 +123,18 @@ Proved (Lean theorems; axioms `propext`, `Classical.choice`, `Quot.sound` only):
 | `Layout.keywordWidth_isSome`, `resolve_keyword` | a width is taken from the contents or the fill width exactly when it is a sizing keyword; `CSS.resolve` answers `none` for a keyword, so code that does not know them lays the box out as `auto` |
 | `Layout.shrinkWidth_minContent`, `_maxContent`, `_auto` | a box that shrinks to fit takes its min-content or max-content width when its `width` says so, fit-content otherwise |
 | `ScrollExtent.extent_ge_client`, `extent_ge_kid`, `extent_inside` | the scroll size is never less than the client size; every box inside is within it; with no overflow it is the client size |
+| `ScrollExtent.extent_no_area`, `areaEdges_mem` | when no box inside has an extent the scroll size is the client size, wherever those boxes are; an edge that counts is the edge of a box with a width or a height |
+| `Observe.intersect_within`, `intersect_comm`, `intersect_self`, `intersect_of_within`, `intersect_apart` | what two rectangles share is inside both; it does not depend on their order; a target inside the root is wholly shared; rectangles apart share nothing |
+| `Observe.within_grow`, `margin?_length`, `thresholdIndex_le` | a root margin that is not negative only adds to the root; a root margin that parses has four sides; the threshold index is at most the number of thresholds |
+| `Observe.observe_shared`, `observe_none` | an observation that intersects reports a rectangle inside the target and the root's bounds, one that does not has no shared rectangle; a target with no box never intersects |
+| `SelfPlace.offset_within`, `offset_full`, `offset_auto_both` | a box placed between two insets starts inside the room when it fits; a box as large as the room starts at its start; two auto margins centre it |
+| `Layout.overWork_iff`, `workLimit_mono`, `Result.over_work`, `Result.shift_work` | the layout is refused exactly when its work is over the limit of the document; a larger document never has a smaller limit; the work of two fragments together is the sum; moving a fragment keeps its work |
+| `Generated.derive_size`, `spots_length_le`, `derive_size_le` | the tree with generated content has two more nodes for each pseudo-element, at most two pseudo-elements a node: at most five times the page's nodes |
+| `Generated.addSpot_keeps`, `derive_keeps` | every node of the page keeps its number, type, name, attributes, data and parent in that tree |
+| `Generated.styled_unused` | a sheet with no pseudo-element rule that has `content` gives the page's own tree and the styles of `CSS.computeFor` |
+| `Content.chars_le`, `chars_prefix`, `read_parts_le` | the text of a pseudo-element is at most 65,536 characters whatever the attributes hold; parts only add after what is there; a `content` value has at most 64 parts |
+| `Layout.intrinsicLimits_none`, `intrinsicLimits_min` | with no length limit an intrinsic width stands; a `min-width` that is a length has the last word |
+| `LinkTheorems.renderStyled_links`, `render_links`, `render_link_complete` (restated) | the boxes `render` answers are boxes of the layout of the tree it laid out, and its links are the link regions of all the boxes of that layout, generated content included |
 
 Tested only (`#guard` through `Layout.render`, original fixtures): `FlexLayoutTests.lean` (90 cases),
 `PositionLayoutTests.lean` (47 cases), and the readers' guards in `BoxAlign.lean`, `FlexStyle.lean`,
@@ -238,7 +250,7 @@ floats, and they stay beside the lines of the blocks after it (a floated image i
 lays a box out as the root of a context, which holds its floats.
 
 Simplifications to know: a float inside an inline box is laid out inline; a line too narrow for its first word
-still takes it; `shape-outside` is not read; with no `::after` box a "clearfix" container has no height.
+still takes it; `shape-outside` is not read.
 
 **Inline-blocks with blocks inside (CSS 2.1 §9.2.2).** An inline-block that has a block-level or floated
 child, or is positioned and has element children (`Layout.blockInside`), is one atomic box in its line whose
@@ -380,3 +392,143 @@ subtests pass and 246 fewer, in 37 tests:
   `overflow-empty-child-box` (-4, a box of no area is not scrollable overflow, next step), and 22 tests that lose
   one to three subtests where `scrollWidth` used to equal `clientWidth` for want of a measurement (transforms,
   relative inline boxes, scrollbars).
+
+## 8. Fourth round: generated content, a bound on layout work, observers, alignment of positioned boxes
+
+**Generated content (CSS 2.1 §12.1; CSS Pseudo-Elements 4 §4.1).** A `::before` or `::after` box is laid out as
+the first or last child of its originating element, so the layout has no rule of its own for it.
+`Rendering/Generated.lean` derives the tree that is laid out: for each pseudo-element, an element named
+`::before` or `::after` and a text node in it, **appended to the node array** and linked into the originating
+element's child list. The page's nodes keep their numbers and all but their child lists (`derive_keeps`), so
+every answer by node number stands; the boxes that `Layout.render` answers are those of the page's own nodes
+(a point over generated content is a point in its originating element), while the paint, the glyph runs and
+the link regions cover the generated boxes too.
+
+Selectors never see the added nodes. `ruleOfLeaf` (`Style.lean`) splits a selector that ends in `::before` or
+`::after` (or `:before`, `:after`) off into `Rule.before` / `Rule.after`: the selector of the originating
+element. `Generated.styled` matches the page's elements on the page's own tree as before, and gives each added
+element the author rules whose `before` (or `after`) selector matches its originating element; the cascade then
+runs unchanged over the derived tree (`CSS.computeAllWith`), so the pseudo-element inherits as a child does and
+its rules are ordered by the same keys (importance, layer, specificity, order). The user agent's rules for an
+element are not rules for its pseudo-elements.
+
+A pseudo-element exists only with `content` (§12.2): one is added only where a rule with a `content`
+declaration matches, and after the cascade one whose `content` computes to `none` or `normal` is
+`display: none`. `Rendering/Content.lean` reads the value (kept as text in `Computed.pos.content`): strings
+with their escapes, `attr()` of the originating element, `open-quote` and `close-quote` as curly quotes; an
+image and a counter stand for nothing (the box is still made). Replaced elements and controls have none.
+
+Cost: a sheet with no pseudo-element rule that has `content` pays one pass over its rules
+(`styled_unused`); else each element looks once in the buckets of the rules that have `content` (a rule such
+as `*::before{box-sizing:border-box}` is not among them), and the rest is paid per pseudo-element. Interpreted,
+1,804 nodes: no such rule 156 ms (as before the change), a `content` rule that matches nothing 166 ms, a
+clearfix `::after` on each of 300 rows 234 ms, `::before` text on each of 300 links 208 ms. Each rule index is
+built once and held as a value (`Generated.Index`): a closure of the shape
+`match x with | a => let ix := build ..; fun id => ..` was compiled to build the index on every call, which
+measured as +40% on the same page.
+
+Not done: counters and `counter()`, images in `content`, `::marker`, `::first-line`, `::first-letter`,
+`quotes`, a repaint when only a pseudo-element's style changes under `:hover` (`WebRepaint` compares the
+styles of the page's own nodes), `getComputedStyle(el, '::before')` from this tree (it has its own path).
+
+**A bound on layout work (local Lean rules §11).** Flex layout lays an item out to measure it and again at its
+final size, so containers nested N deep, each stretched, cost 2^N layouts. Two things now hold:
+
+- `Constraints.measure` marks a layout whose positions will be thrown away. In it a flex container skips the
+  second layout of stretched and flexed items and returns a rough result (`Result.rough`: sizes right,
+  positions not final), so a measuring pass costs one layout a node; a grid container does the same for an
+  item whose rows may still change its height. Towers of nested rows, wrapping rows,
+  columns with flexible items and positioned rows are laid out at most twice a node at any depth (fixtures at
+  depth 8, 16, 24, 30, 40 in `FlexLayoutTests.lean`); with a table between the levels the count grows with
+  nodes times depth, as it does for grids nested in grids (27, 83, 171, 291 and 627 box layouts at depth 4, 8,
+  12, 16 and 24).
+- `Result.work` counts the box layouts a subtree caused, the discarded ones included. `layoutTask` refuses the
+  page with the error `layout work limit: ...` when the count passes `Layout.workLimit nodes = 256 * (nodes +
+  64)` (`overWork_iff`): a defined refusal of that page's layout, never a hang.
+
+Which bounds are proved, tested only, or absent:
+
+| Bound | Status |
+|---|---|
+| nesting depth of layout, intrinsic sizing and inline collection (64) | by fuel in the definitions: a deeper page is refused with an error |
+| the refusal fires exactly past the work limit; the limit grows with the node count | proved (`overWork_iff`, `workLimit_mono`) |
+| the tree with generated content is at most 5 times the page's nodes; the text of a pseudo-element at most 65,536 characters; a `content` value at most 64 parts | proved (`derive_size_le`, `chars_le`, `read_parts_le`) |
+| flex, block and table towers stay below the work limit | tested only (the fixtures above) |
+| float placement, line breaking and table columns are linear in boxes and words | tested only (measurements), and not counted in `Result.work` |
+| the running time of a layout is bounded by a function of its work count | absent: the counter counts box layouts, not the steps of the loops inside one |
+| paint nodes of a scene (1,048,576) and link regions (49,152) | by a check in `render` before the scene is returned: an error, after the layout has run |
+
+**`vertical-align` of atomic inline boxes (CSS 2.1 §10.8.1).** An inline-block, and an inline flex or grid
+container, is placed in its line as a replaced element is: `top` and `bottom` at the line's edges, `middle`
+on the baseline plus a quarter em, else its bottom margin edge on the baseline (`Inline.atomic` carries the
+box's style). Open: the baseline of an inline-block with lines in it is its last line's, not its bottom edge.
+
+**Observers of layout.** `Rendering/Observe.lean` (no engine import, layout units) decides what an
+`IntersectionObserver` reports: the rectangle two rectangles share (`intersect`; edge-adjacent rectangles share
+one of no area, which counts as intersecting, Intersection Observer §3.2.8 step 9), the root margin (`margin?`,
+`marginText`, `rootBounds`), the ratio, the threshold index and the observation (`observe`), with a text form
+that the engine answers as `web_api` 170 (an observation) and 171 (a root margin read back, or an error that
+becomes a `SyntaxError`). The prelude holds the objects (`IntersectionObserver`, `IntersectionObserverEntry`,
+`ResizeObserver`, `ResizeObserverEntry`, `ResizeObserverSize`), made on first use: `observe()` and any change
+of the tree ask for one check in the next frame, which takes the boxes from the layout reads (`node_query` 17
+and 21), runs the resize observations (Resize Observer §3.4: gather at depth, broadcast, repeat; what is left
+is reported as an error and delivered next frame) and then the intersection observations, whose callbacks run
+in a task. A page with no observer runs none of this, and the natives that change the tree are wrapped only
+after the first `observe()`.
+
+Not done: clipping by scrolling ancestors between a target and its root, scroll positions (the page of a
+script session does not scroll, so a target below the first screen stays "not intersecting"), scroll margins,
+visibility (v2), SVG targets without a CSS box, observers across frames.
+
+**Absolutely positioned boxes between two insets (CSS Box Alignment 3 §6.1, CSS 2.1 §10.3.7).**
+`Rendering/SelfPlace.lean` (layout units): `offset` places a box of a given outer size in the room between two
+insets by its auto margins (both auto centre it) and then by `justify-self` or `align-self`, never outside the
+room when it fits. `inset: 0` with `margin: auto` centres a box that shrinks to fit. `display: flow-root` is a
+block that holds its floats and its children's margins (`pos.flowRoot`).
+
+**Intrinsic widths.** The contribution of a box to the width of a shrink-to-fit container is within its
+`min-width` and `max-width` when they are lengths (`Layout.intrinsicLimits`; CSS Sizing 3 §5.1). A block-level
+replaced element whose `width` or `max-width` is a percentage contributes its `min-width` to min-content, not
+its natural width (§5.2.2); one on a line is still measured at its natural size. A box of no width and no
+height is not part of the scrollable overflow (`ScrollExtent.areaEdges`); one with an extent in one axis is.
+
+**Generated content, the work bound, observers, alignment of positioned boxes, vertical-align of atomic boxes, intrinsic widths** (run 43586684433, core 8906ef3a4 on main 9e852e986; baseline: the full run of main 2b464c0a8):
+
+| Directory | Chrome subtests | Full run of main 2b464c0a8 | This check | Difference |
+|---|---:|---:|---:|---:|
+| css/css-flexbox | 4775 | 1092 | 3645 | +2553 |
+| css/css-sizing | 6239 | 2115 | 4754 | +2639 |
+| css/css-align | 5005 | 2802 | 3688 | +886 |
+| css/css-position | 1507 | 587 | 1310 | +723 |
+| css/CSS2 | 2551 | 1825 | 2403 | +578 |
+| css/css-box | 970 | 375 | 924 | +549 |
+| css/css-overflow | 1118 | 472 | 600 | +128 |
+| css/css-display | 488 | 314 | 369 | +55 |
+| css/cssom-view | 2253 | 684 | 731 | +47 |
+| css/css-lists | 675 | 556 | 646 | +90 |
+| css/css-writing-modes | 396 | 192 | 219 | +27 |
+| css/css-content | 266 | 232 | 249 | +17 |
+| css/css-pseudo | 769 | 160 | 223 | +63 |
+| css/css-inline | 697 | 435 | 513 | +78 |
+| intersection-observer | 402 | 5 | 194 | +189 |
+| resize-observer | 128 | 5 | 67 | +62 |
+| html/rendering | 11165 | 6912 | 6981 | +69 |
+
+All 4,558 names of the check: 71,977 -> 82,504 of 100,737, 710 tests better, 54 worse (-229). The baseline is
+older than the base of the branch, so the rows hold other merges too: the animation engine (the `animation`
+directories and the interpolation tests), the cascade, the third layout round. On the 4,088 names that the third
+round's check also ran, test by test: +7,320 and -67. Of the +7,320, tests of animation and interpolation are
++5,932 and parsing and computed-value tests +127; the other tests, which are what this round changes, are +981:
+css-flexbox +507, css-align +314 (absolutely positioned boxes between two insets), cssom-view +57, css-sizing
++31, css-position +30, css-writing-modes +20. `intersection-observer` 5 -> 194 of 402 and `resize-observer`
+5 -> 67 of 128 are this round alone.
+
+The 11 tests worse than in the third round's check (-67): `css-properties-values-api/typedom` (-48, not layout);
+`css-overflow/scrollable-overflow-zero-one-axis` (-6) and `scrollable-overflow-self-collapsing` (-1): a box with
+an extent in one axis only was left out of the scrollable overflow; fixed before the merge (`areaEdges` leaves
+out only a box of no width and no height); `contain-intrinsic-size-logical-003` (-2) and `-029` (-1), which pass
+or fail with the intrinsic widths of boxes they do not size; `css-box/parsing/padding-computed` and
+`css-box/inheritance` (-2 each, not traced); three single subtests outside layout. Against the older full run the
+list also has the vertical writing mode tests of `css-inline/baseline-source` (-40: passes by coincidence of
+offsets while inline-blocks ignored `vertical-align`) and the losses recorded in sections 5 to 7.
+
