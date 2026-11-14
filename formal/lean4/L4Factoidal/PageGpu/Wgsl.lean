@@ -190,8 +190,9 @@ def maxStructs : Nat := 16
 `maxComputeInvocationsPerWorkgroup` and `maxComputeWorkgroupSizeX/Y/Z`). -/
 def maxInvocations : Nat := 256
 def maxWorkgroupZ : Nat := 64
-/-- Bindings of group 0 in one module (uniform and storage together). -/
-def maxBindings : Nat := 4
+/-- Bindings of group 0 in one module (uniform and storage together): WebGPU's default
+`maxStorageBuffersPerShaderStage`. -/
+def maxBindings : Nat := 8
 /-- Iterations of a `for` loop capped by `min(e, C)`: `C - lo` at most this. -/
 def maxCapLoop : Nat := 65536
 

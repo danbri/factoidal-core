@@ -14,11 +14,9 @@ against its work budget, and a refusal anywhere makes the graph run on the CPU r
 (at `build`) or the dispatch fail with an `OperationError` (at `dispatch`). The theorems of
 `PageGpu` (subset, clamped indices, dispatch bounds, quotas, readback) hold for all of it.
 
-Operators on the GPU path (float32): the element-wise binary operators, the unary operators
-of `Gpu.unaryExpr`, transpose, expand, slice, tile, reverse, reshape, identity, matmul, the
-reductions of `Gpu.reduceForm`, conv2d (NCHW, OIHW) and maxPool2d (NCHW). `log`, `tanh`,
-`sqrt`, `gemm` and `averagePool2d` stay on the CPU reference: measured outside the WebNN
-tolerances on a GPU (section 2.6 of the record).
+Operators on the GPU path (float32): `gpuOps`. `log`, `tanh`, `sqrt`, `elu`, `gemm`,
+`averagePool2d` and `batchNormalization` stay on the CPU reference: measured outside the
+WebNN tolerances on a GPU (section 2.6 of the record), though their kernels exist.
 -/
 import L4Factoidal.WebNN.Graph
 import L4Factoidal.WebNN.Gpu
@@ -51,7 +49,8 @@ def gpuOps : List String :=
    "abs", "ceil", "cos", "exp", "floor", "neg", "reciprocal", "relu", "sigmoid", "sin", "softsign", "tan",
    "transpose", "expand", "slice", "tile", "reverse", "reshape", "identity", "matmul",
    "reduceSum", "reduceMean", "reduceL1", "reduceSumSquare", "reduceProduct", "reduceMax", "reduceMin",
-   "conv2d", "maxPool2d"]
+   "conv2d", "maxPool2d",
+   "leakyRelu", "linear", "hardSigmoid", "hardSwish", "sign", "roundEven", "clamp", "prelu", "softmax", "concat"]
 
 /-- How a node runs on the GPU: a kernel with its input operands in binding order, or a copy
 of one operand into the output. -/
@@ -87,6 +86,19 @@ def kernelFor (n : Node) (descs : Array Desc) : Except String Run := do
     let s := d "input"
     pure (.kernel (← Gpu.moveKernel (reverseMap s (c.nats "axes" (List.range s.length)) o.length) s o) [← one "input"])
   | "matmul" => pure (.kernel (← Gpu.matmulKernel (d "a") (d "b") o) [← one "a", ← one "b"])
+  | "leakyRelu" | "linear" | "hardSigmoid" | "hardSwish" =>
+    let (a0, b0) := if n.op == "hardSigmoid" then (0.2, 0.5) else if n.op == "leakyRelu" then (0.01, 0.0) else (1.0, 0.0)
+    pure (.kernel (← Gpu.unaryABKernel n.op (d "input") (c.num "alpha" a0) (c.num "beta" b0)) [← one "input"])
+  | "clamp" =>
+    let bound := fun (k : String) => match c.arg? k with
+      | some (.number b i x) => some (numberToFloat .float32 b i x)
+      | _ => none
+    pure (.kernel (← Gpu.clampKernel (d "input") (bound "minValue") (bound "maxValue")) [← one "input"])
+  | "prelu" => pure (.kernel (← Gpu.binaryKernel "prelu" (d "input") (d "slope") o) [← one "input", ← one "slope"])
+  | "softmax" => pure (.kernel (← Gpu.softmaxKernel (d "input") (c.nat "axis")) [← one "input"])
+  | "concat" =>
+    let ids := c.ids "inputs"
+    pure (.kernel (← Gpu.concatKernel (ids.map fun i => (descs[i]?.getD default).shape) (c.nat "axis") o) ids)
   | "conv2d" =>
     if c.str "inputLayout" "nchw" != "nchw" || !["", "oihw"].contains (c.str "filterLayout" "") then
       throw "conv2d: NCHW input and OIHW filter only on the GPU path"

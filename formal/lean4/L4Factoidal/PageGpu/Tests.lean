@@ -56,7 +56,7 @@ def indexed : String := "
 -- a bad access mode, a second group, or a binding out of range are refused.
 #guard !ok (Wgsl.compile "@group(0) @binding(0) var<storage, write> b: array<f32>;")
 #guard !ok (Wgsl.compile "@group(1) @binding(0) var<storage, read_write> b: array<f32>;")
-#guard !ok (Wgsl.compile "@group(0) @binding(4) var<storage, read_write> b: array<f32>;")
+#guard !ok (Wgsl.compile "@group(0) @binding(8) var<storage, read_write> b: array<f32>;")
 #guard !ok (Wgsl.compile "@group(0) @binding(0) var<storage> a: array<f32>; @group(0) @binding(0) var<storage> b: array<f32>;")
 #guard !ok (Wgsl.compile "fn f() -> f32 { return 1.0; }")
 #guard !ok (Wgsl.compile "@fragment fn fs() -> @location(0) vec4f { var x = 0.0; for (var j = 0; j < 100000; j++) { x += 1.0; } return vec4f(x); }")
