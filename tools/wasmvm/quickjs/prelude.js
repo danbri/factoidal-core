@@ -7342,6 +7342,11 @@
     };
     class XPathEvaluator {}
     mix(XPathEvaluator, evaluatorBase); mix(Document, evaluatorBase);
+    // Document.rootElement (SVG 2 §4.3.1): the document element when it is an svg element.
+    Object.defineProperty(Document.prototype, 'rootElement', { get() {
+      const e = this.documentElement;
+      return e && e.namespaceURI === 'http://www.w3.org/2000/svg' && e.localName === 'svg' ? e : null;
+    }, configurable: true, enumerable: true });
     // XSLTProcessor (HTML §4.12.1.4 names it; the transform is XSLT 1.0). The engine's XSLT
     // processor runs on the two DOM trees (node_query op 127, DOM.XsltDom) and answers the
     // serialised result and the output method; the engine's HTML or XML parser reads it.
