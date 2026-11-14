@@ -107,6 +107,15 @@ def flexShorthand (value : String) : Option (List (String × String)) :=
       | [(c, false), (a, true), (b, true)] => triple a b c
       | _ => none
 
+/-- The longhands of `list-style` (CSS Lists 3 §3.4) by the property table. A `none` in
+the value sets `list-style-type` when no other word of the value names the type. -/
+def listShorthand (value : String) : Option (List (String × String)) :=
+  (CssValues.expand "list-style" value).map fun longhands =>
+    let words := (value.toLower.splitOn " ").filter (· != "")
+    if words.contains "none" && longhands.lookup "list-style-type" == some "disc" && !words.contains "disc" then
+      longhands.map fun (k,v) => if k == "list-style-type" then (k,"none") else (k,v)
+    else longhands
+
 /-- The longhand declarations of a shorthand that layout reads (`flex`, `flex-flow`, the
 alignment shorthands), by the property table; `none` for any other property, or when the
 value is not one of the shorthand's (the declaration is then dropped by its reader). -/
@@ -115,6 +124,8 @@ def layoutShorthand (property value : String) : Option (List (String × String))
   if p == "flex" then flexShorthand value
   else if p == "flex-flow" then CssValues.expand p value
   else if p == "inset" then positionShorthand p value
+  -- `list-style`: the layout reads `list-style-type` (CSS Lists 3 §3.4)
+  else if p == "list-style" then listShorthand value
   else alignShorthand p value
 
 #guard flexShorthand "1" == some [("flex-grow", "1"), ("flex-shrink", "1"), ("flex-basis", "0%")]
@@ -127,6 +138,11 @@ def layoutShorthand (property value : String) : Option (List (String × String))
 #guard flexShorthand "bogus" == none
 #guard layoutShorthand "flex-flow" "column wrap" == some [("flex-direction", "column"), ("flex-wrap", "wrap")]
 #guard layoutShorthand "color" "red" == none
+#guard (layoutShorthand "list-style" "none").map (fun l => l.lookup "list-style-type") == some (some "none")
+#guard (layoutShorthand "list-style" "square inside").map (fun l => l.lookup "list-style-type") == some (some "square")
+#guard (layoutShorthand "list-style" "none inside").map (fun l => l.lookup "list-style-type") == some (some "none")
+#guard (layoutShorthand "list-style" "disc none").map (fun l => l.lookup "list-style-type") == some (some "disc")
+#guard (layoutShorthand "list-style" "inside").map (fun l => l.lookup "list-style-type") == some (some "disc")
 #guard ((FlexStyle.set 16 {} "flex-direction" "column-reverse").map fun f => (f.column, f.reverse)) == some (true, true)
 #guard ((FlexStyle.set 16 {} "flex-grow" "2.5").map (·.grow)) == some 2.5
 #guard ((FlexStyle.set 20 {} "flex-basis" "2em").map fun f => match f.basis with | .length (.px v) => v | _ => -1) == some 40

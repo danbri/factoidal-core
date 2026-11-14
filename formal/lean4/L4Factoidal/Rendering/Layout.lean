@@ -944,10 +944,12 @@ def atomize (font : FontProfile) (items : Array Inline) (available : Float) : Ex
   -- Bounds always pair in `inlineItems`; an unpaired open keeps its content inline.
   return if depth == 0 then out else out ++ inside
 
-/-- What goes before a list item: its number in an ordered list, else a star. -/
-private def listMarker (dom : Dom) (id : Nat) : String := Id.run do
+/-- What goes before a list item (CSS Lists 3 §3.1 `list-style-type`): nothing with
+`none`; its number with a numbering style, or by default in an ordered list; else a star. -/
+private def listMarker (dom : Dom) (style : CSS.ListStyle) (id : Nat) : String := Id.run do
+  if style == .none then return ""
   let some parent := (dom.get id).parent | return "* "
-  if (dom.get parent).lname != "ol" then return "* "
+  if style == .bullet || (style == .auto && (dom.get parent).lname != "ol") then return "* "
   let mut number := 1
   for kid in (dom.get parent).kids do
     if kid == id then break
@@ -1214,7 +1216,8 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
         if s.display.isFlex then
           let (a,b) ← flexIntrinsic children s (collectItems dom styles id)
           return (a+add,b+add)
-        let lead := if n.lname == "li" then (textItems id s (listMarker dom id)).toArray
+        -- an outside marker (the default) takes no room in the item's lines
+        let lead := if n.lname == "li" && s.pos.listInside then (textItems id s (listMarker dom s.pos.listStyle id)).toArray
           else if n.lname == "img" then altItems id s n else #[]
         let (a,b) ← flowWidths id n.kids lead
         return (a+add,b+add)
@@ -1643,8 +1646,10 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         let (sw,sh) ← svgSize n sized available
         let nodes ← embedding id s sw sh
         return replaced sw sh (fun cx cy => [.group none (translate cx cy) nodes]) {s with background := none}
-      let lead := if n.lname == "li" then (textItems id s (listMarker dom id)).toArray
-        else if n.lname == "img" then altItems id s n else #[]
+      -- A list item's marker (CSS Lists 3 §3): the first thing in the first line with
+      -- `list-style-position: inside`, else outside the box beside that line (below).
+      let markerItems := if n.lname == "li" then (textItems id s (listMarker dom s.pos.listStyle id)).toArray else #[]
+      let lead := if n.lname == "img" then altItems id s n else if s.pos.listInside then markerItems else #[]
       -- CSS 2.1 §10.7: the height within `min-height` and `max-height` (px; a percentage has
       -- no definite basis here). An imposed height is the parent's and is not clamped again.
       let minHeight := match s.minHeight with | .px h => h | _ => 0
@@ -1680,6 +1685,16 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
           {content with height := max content.height (floatsHeight content.floats innerY), floats := #[],
                         marginBottom := if floatsHeight content.floats innerY > content.height then 0 else content.marginBottom}
         else content
+      -- An outside marker: beside the first line, ending half an em before the content edge
+      -- (after it in a right-to-left item). It takes no room in the line and is not part of
+      -- the item's box; an item with nothing else in it is one line high.
+      let content ← if markerItems.isEmpty || s.pos.listInside then pure content else do
+        let marker ← inlineLayout font markerItems 0 innerY unbounded (some {s with textAlign := .left})
+        let gap := s.fontSize/2
+        let dx := if s.direction == .rtl then innerX+width+gap else innerX-lineExtent marker-gap
+        let marker := marker.shift dx 0
+        pure {content with nodes := content.nodes ++ marker.nodes, runs := marker.runs ++ content.runs,
+                           height := max content.height marker.height}
       if contentOnly then return content
       -- The same at the bottom: the last child's margin sticks out of a block with no height.
       let joinsBottom := imposedWidth.isNone && imposedHeight.isNone && collapsesBottom dom s id && !s.display.isFlex

@@ -173,6 +173,29 @@ private def scroll (html extra id : String) : Option (Float × Float) := do
 #guard scroll "<html id=h><body><div id=a>AA</div></body></html>" "" "h" == some (200,200)
 #guard scroll "<html id=h><body><div id=a>AA</div></body></html>" "#a{height:500px}" "h" == some (200,500)
 
+-- List markers (CSS Lists 3 §3): outside the item's box by default, half an em before its
+-- content edge (the list's 40px of padding leaves the room); the item's text is at the edge.
+private def listed := "<ul id=u><li id=i>AA</li><li id=j>BB</li></ul>"
+private def xOf (html extra text : String) : Option Float := (at? html extra text).map (·.1)
+#guard xOf listed "" "AA" == some 40
+#guard xOf listed "" "*" == some 30.5
+#guard box listed "" "i" == (box listed "ul{list-style:none}" "i")
+-- `list-style-type: none` (also through `list-style`, and inherited) draws no marker.
+#guard xOf listed "ul{list-style-type:none}" "*" == none
+#guard xOf listed "ul{list-style:none}" "*" == none
+#guard xOf ("<div id=g>" ++ listed ++ "</div>") "#g{list-style:none}" "*" == none
+#guard xOf listed "ul{list-style:none} #j{list-style-type:disc}" "*" == some 30.5
+-- A numbering style numbers the items, as an `ol` does by default.
+#guard xOf listed "ul{list-style-type:decimal}" "2." == some 24.5
+#guard xOf "<ol><li>AA</li><li>BB</li></ol>" "" "2." == some 24.5
+#guard xOf "<ol><li>AA</li><li>BB</li></ol>" "ol{list-style-type:square}" "2." == none
+-- `list-style-position: inside`: the marker is the first thing in the line.
+#guard xOf listed "ul{list-style-position:inside}" "*" == some 40
+#guard xOf listed "ul{list-style-position:inside}" "AA" == some 52
+#guard xOf listed "ul{list-style:inside none}" "AA" == some 40
+-- An item with nothing in it is still one line high.
+#guard (box "<ul><li id=e></li></ul>" "" "e").map (·.2.2.2) == some 7
+
 -- Margin collapse (CSS 2.1 §8.3.1): adjoining margins of siblings; the larger stands.
 private def stack := "<div id=a>A</div>\n<div id=b>B</div><div id=c><div id=d>D</div></div><div id=e>E</div>"
 #guard box stack "#a{margin-bottom:10px} #b{margin-top:4px}" "b" == some (0,17,200,7)

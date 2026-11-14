@@ -28,6 +28,12 @@ inductive WritingMode where
   | horizontalTb | verticalRl | verticalLr
   deriving Repr, BEq
 
+/-- `list-style-type` (CSS Lists 3 §3.1; inherited), as this profile draws markers:
+`auto` is by the kind of list (a number in `ol`, else a bullet), `none` no marker. -/
+inductive ListStyle where
+  | auto | none | bullet | number
+  deriving Repr, BEq
+
 structure PositionStyle where
   position : Position := .static
   /-- The inset properties; `auto` is no inset. -/
@@ -48,6 +54,11 @@ structure PositionStyle where
   ratioAuto : Bool := false
   /-- `writing-mode`; the cascade copies it from the parent (it is inherited). -/
   writingMode : WritingMode := .horizontalTb
+  /-- `list-style-type`; inherited, as `writingMode` is. -/
+  listStyle : ListStyle := .auto
+  /-- `list-style-position: inside` (inherited): the marker is the first thing in the item's
+  first line; else it is outside the item's box, beside that line. -/
+  listInside : Bool := false
   deriving Repr
 
 /-- Every field equal: the two lay out the same. -/
@@ -55,7 +66,7 @@ def PositionStyle.same (a b : PositionStyle) : Bool :=
   a.position == b.position && a.top.same b.top && a.right.same b.right && a.bottom.same b.bottom &&
   a.left.same b.left && a.zIndex == b.zIndex && a.float == b.float && a.clear == b.clear &&
   a.borderBox == b.borderBox && a.ratio == b.ratio && a.ratioAuto == b.ratioAuto &&
-  a.writingMode == b.writingMode
+  a.writingMode == b.writingMode && a.listStyle == b.listStyle && a.listInside == b.listInside
 
 /-- Out of flow by positioning: `absolute` or `fixed`. -/
 def PositionStyle.isAbsolute (p : PositionStyle) : Bool := p.position == .absolute || p.position == .fixed
@@ -65,7 +76,7 @@ def PositionStyle.isPositioned (p : PositionStyle) : Bool := p.position != .stat
 
 def positionProperties : List String :=
   ["position", "top", "right", "bottom", "left", "z-index", "float", "clear", "box-sizing", "aspect-ratio",
-   "writing-mode"]
+   "writing-mode", "list-style-type", "list-style-position"]
 
 /-- The ratio `a / b` (width to height) as two whole numbers in lowest terms; `none` when
 it is degenerate (a term that is zero or negative: CSS Sizing 4 §5.1, it behaves as `auto`). -/
@@ -132,6 +143,23 @@ def PositionStyle.set (fontSize : Float) (p : PositionStyle) (property value : S
       | "border-box" => some {p with borderBox := true}
       | "content-box" => some {p with borderBox := false}
       | _ => none
+    | "list-style-type" =>
+      if v == "inherit" || v == "unset" then some p
+      else if reset then some {p with listStyle := .auto} else
+      match v with
+      | "none" => some {p with listStyle := .none}
+      | "disc" | "circle" | "square" | "disclosure-open" | "disclosure-closed" => some {p with listStyle := .bullet}
+      | "decimal" | "decimal-leading-zero" | "lower-alpha" | "upper-alpha" | "lower-latin" | "upper-latin"
+      | "lower-roman" | "upper-roman" | "lower-greek" => some {p with listStyle := .number}
+      -- another counter style or a string: the marker of the kind of list stands
+      | _ => some {p with listStyle := .auto}
+    | "list-style-position" =>
+      if v == "inherit" || v == "unset" then some p
+      else if reset then some {p with listInside := false} else
+      match v with
+      | "inside" => some {p with listInside := true}
+      | "outside" => some {p with listInside := false}
+      | _ => none
     | "writing-mode" =>
       -- inherited: `inherit` and `unset` keep the parent's, which the style already holds
       if v == "inherit" || v == "unset" then some p
@@ -177,6 +205,10 @@ def positionShorthand (property value : String) : Option (List (String × String
 #guard ((PositionStyle.set 10 {ratio := some (2, 1)} "aspect-ratio" "auto").map (·.ratio)) == some none
 #guard ((PositionStyle.set 10 {} "aspect-ratio" "0 / 1").map (·.ratio)) == some none
 #guard (PositionStyle.set 10 {} "aspect-ratio" "bogus").isNone
+#guard ((PositionStyle.set 10 {} "list-style-type" "none").map (·.listStyle)) == some .none
+#guard ((PositionStyle.set 10 {} "list-style-position" "inside").map (·.listInside)) == some true
+#guard ((PositionStyle.set 10 {listStyle := .none} "list-style-type" "decimal").map (·.listStyle)) == some .number
+#guard ((PositionStyle.set 10 {listStyle := .none} "list-style-type" "inherit").map (·.listStyle)) == some .none
 #guard ((PositionStyle.set 10 {} "writing-mode" "vertical-rl").map (·.writingMode)) == some .verticalRl
 #guard ((PositionStyle.set 10 {writingMode := .verticalLr} "writing-mode" "inherit").map (·.writingMode)) == some .verticalLr
 #guard ((PositionStyle.set 10 {writingMode := .verticalLr} "writing-mode" "initial").map (·.writingMode)) == some .horizontalTb
