@@ -48,8 +48,12 @@ def isWs (c : Char) : Bool :=
   n == 9 || n == 11 || n == 12 || n == 32 || n == 0xA0 || n == 0xFEFF || n == 0x1680 ||
   (n ≥ 0x2000 && n ≤ 0x200A) || n == 0x202F || n == 0x205F || n == 0x3000
 
+/-- The start of an identifier. Not the three characters reserved in property keys (U+10FFFD,
+a private use character, and the noncharacters U+10FFFE and U+10FFFF: none is ID_Start), so a
+name of source text is never a Symbol's or a private name's key (`strKey`, `JS/Syntax.lean`). -/
 def isIdStart (c : Char) : Bool :=
-  c.isAlpha || c == '$' || c == '_' || (c.toNat > 127 && !isWs c && !isLineTerm c)
+  c.isAlpha || c == '$' || c == '_' ||
+    (c.toNat > 127 && !isWs c && !isLineTerm c && c.toNat < 0x10FFFD)
 
 def isIdPart (c : Char) : Bool :=
   isIdStart c || c.isDigit || c.toNat == 0x200C || c.toNat == 0x200D

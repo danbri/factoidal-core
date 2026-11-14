@@ -312,4 +312,23 @@ finished (they were counted as timeouts). -/
 #guard out "var r = []; for (var t of ['function f() { for await (x of y) ; }', 'async function f() { for await (x in y) ; }', 'async function f() { for await (;;) ; }']) { try { eval(t); r.push('ok') } catch (e) { r.push(e.name) } } print(r.join())" == ["SyntaxError,SyntaxError,SyntaxError"]
 #guard out "print(Object.getOwnPropertyNames(globalThis).filter(k => /forAwait|AsyncFromSync/.test(k)).length, Reflect.ownKeys(globalThis).filter(k => typeof k == 'string' && k.charCodeAt(0) > 0xD7FF).length)" == ["0 0"]
 
+/-! ## Property keys of strings that start with a reserved character
+
+A key is a Lean `String`; U+10FFFF starts a Symbol's key and U+10FFFE a private name's.
+Before 2026-11-14 a String value was its own key, so `o["\u{10FFFE}x"]` read the private
+member `#x`, and `o["\u{10FFFF}0"]` the property of `Symbol.iterator`. ToPropertyKey of a
+String now puts U+10FFFD before a string that starts with one of the three (`strKey`);
+listings of keys take it off (`keyStr`). Theorems: `strKey_injective` and the others in
+`JS/Theorems.lean`. WPT `wasm/core/names.wast` (480 subtests) has an export name that starts
+with U+10FFFE. -/
+
+#guard out "class A { #x = 1; static has(o) { return #x in o } } var a = new A(); print(A.has(a), A.has({}), a['\\u{10FFFE}x'], '\\u{10FFFE}x' in a, Object.keys(a).length)" == ["true false undefined false 0"]
+#guard out "var o = {}; var k = '\\u{10FFFE}x', s = '\\u{10FFFF}0', m = '\\u{10FFFD}q'; o[k] = 1; o[s] = 2; o[m] = 3; print(Object.keys(o).map(x => x.length + ':' + x.codePointAt(0).toString(16)).join(), o[k], o[s], o[m], k in o, o.hasOwnProperty(s), JSON.stringify(o) === JSON.stringify({[k]: 1, [s]: 2, [m]: 3}), Object.getOwnPropertySymbols(o).length, Reflect.ownKeys(o).length)" == ["3:10fffe,3:10ffff,3:10fffd 1 2 3 true true true 0 3"]
+#guard out "var o = {'\\u{10FFFE}a': 1, '\\u{10FFFF}1': 2}; var r = []; for (var k in o) r.push(k.codePointAt(0).toString(16) + k.slice(2)); print(r.join(), Object.entries(o).map(e => e[0].length + '=' + e[1]).join(), Object.getOwnPropertyNames(o).length); var p = JSON.parse(JSON.stringify(o)); print(Object.keys(p).length, p['\\u{10FFFE}a'], p['\\u{10FFFF}1'], Object.getOwnPropertySymbols(p).length)" == ["10fffea,10ffff1 3=1,3=2 2", "2 1 2 0"]
+#guard out "var o = {}; o[Symbol.iterator] = 5; print(o['\\u{10FFFF}0'], Object.keys(o).length, globalThis['\\u{10FFFE}forAwait0'], '\\u{10FFFE}forAwait0' in globalThis)" == ["undefined 0 undefined false"]
+#guard out "var f = {['\\u{10FFFE}n']() {}}; var g = Object.values(f)[0]; print(g.name.length, g.name.codePointAt(0).toString(16)); var {['\\u{10FFFE}n']: h} = f; print(typeof h); var d = Object.getOwnPropertyDescriptors({'\\u{10FFFD}z': 1}); print(Object.keys(d)[0].length, d['\\u{10FFFD}z'].value)" == ["3 10fffe", "function", "3 1"]
+#guard out "var m = new Map([['\\u{10FFFE}k', 1]]); var o = Object.fromEntries(m); print(o['\\u{10FFFE}k'], Object.keys(o)[0] === '\\u{10FFFE}k', Object.keys(Object.assign({}, o))[0] === '\\u{10FFFE}k', Object.keys({...o})[0] === '\\u{10FFFE}k')" == ["1 true true true"]
+-- a name of source text does not start with a reserved character
+#guard out "try { eval('var \\u{10FFFE}forAwait0 = 1') } catch (e) { print(e.name) } try { eval('var o = {}; o.\\u{10FFFE}x') } catch (e) { print(e.name) }" == ["SyntaxError", "SyntaxError"]
+
 end L4Factoidal.JS.Tests

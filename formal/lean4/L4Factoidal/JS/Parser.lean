@@ -272,7 +272,7 @@ end
 def propName? (t : Token) : Option String :=
   match t.kind with
   | .ident | .kw => some t.text
-  | .str => some t.text
+  | .str => some (strKey t.text)
   | .num => some (numToString t.num)
   | .big => some t.text
   | _ => none
@@ -1118,7 +1118,7 @@ def parsePrimary : Nat → P Expr
         advance
         let pt ← peek
         if !(pt.kind == .ident || pt.kind == .kw) || !isK (← peekAt 1) "in" then fail "unexpected private name"
-        advance; return .str (privKey pt.text)
+        advance; return privIn (privKey pt.text)
       | _ => fail "unexpected token"
     | .eof => fail "unexpected end of input"
 

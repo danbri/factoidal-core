@@ -54,10 +54,38 @@ inductive MemberKind where
   deriving BEq, Repr, Inhabited, DecidableEq
 
 /-- The property key of a private name `#x` (§6.2.12): a string that starts with
-U+10FFFE. Like Symbol keys (`Value.lean`), source text can make the same string; and
-two classes with the same private name share it. Record, section 5. -/
+U+10FFFE. Two classes with the same private name share it (record, section 5). A String
+value never becomes such a key: `strKey` puts a mark before a string that starts with one of
+the three reserved characters. -/
 def privKey (name : String) : String := String.singleton (Char.ofNat 0x10FFFE) ++ name
 def isPrivKey (k : String) : Bool := k.front == Char.ofNat 0x10FFFE
+
+/-! ### Property keys of String values
+
+A property key is a Lean `String`. Three first characters are reserved: U+10FFFF starts the key
+of a Symbol (`symKey`, `Value.lean`), U+10FFFE the key of a private name (`privKey`), and
+U+10FFFD (`strMark`) the key of a String value that itself starts with one of these three
+characters. So the key of a String value (`strKey`) is never a Symbol's or a private name's
+key, and different strings have different keys (`JS/Theorems.lean`: `strKey_not_priv`,
+`strKey_not_sym`, `keyStr_strKey`, `strKey_injective`). Before 2026-11-14 a string's key was
+the string, and `o["\u{10FFFE}x"]` named the private member `#x` (WPT `wasm/core/names.wast`:
+an export name that starts with U+10FFFE). -/
+
+/-- The mark before the key of a String value that starts with a reserved character. -/
+def strMark : Char := Char.ofNat 0x10FFFD
+
+/-- A first character that is reserved in property keys: U+10FFFD, U+10FFFE or U+10FFFF. -/
+def keyReserved (c : Char) : Bool := c.toNat ≥ 0x10FFFD
+
+/-- ToPropertyKey of a String value (§7.1.19): the string, with `strMark` before it when it
+starts with a reserved character. -/
+def strKey (s : String) : String :=
+  if keyReserved s.front then String.singleton strMark ++ s else s
+
+/-- The String value of a key that `strKey` made (the name a listing of keys gives). -/
+def keyStr (k : String) : String :=
+  if k.front == strMark then (k.drop 1).toString else k
+
 
 /-- The names that the parser's reading of `for await` calls (`forAwaitStmt` in
 `JS/Parser.lean`, `NativeX.forAwait`): hidden properties of the global object. They start
@@ -365,6 +393,11 @@ instance : Inhabited Pat := ⟨.id ""⟩
 instance : Inhabited Decl := ⟨.mk (.id "") none⟩
 instance : Inhabited ForInit := ⟨.expr .null⟩
 instance : Inhabited ClassDef := ⟨.mk none none none []⟩
+
+/-- The left operand of `#x in o` (§13.10.1), as the parser gives it: a member of the hole
+(`Expr.ident ""`, which source text cannot write) named by the private name's key. The
+evaluator tests that key itself; a String operand of `in` goes through `strKey`. -/
+def privIn (key : String) : Expr := .member (.ident "") key
 
 def FunDef.name : FunDef → Option String | .mk n .. => n
 def FunDef.params : FunDef → List PatElem | .mk _ p .. => p

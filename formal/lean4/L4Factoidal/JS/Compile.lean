@@ -216,6 +216,8 @@ def cE : Nat → Expr → Nat → C Unit
   | 0, _, _ => fail
   | n + 1, e, dst => do
     match e with
+    -- `#x in o`: the left operand is not an expression (`privIn`); the evaluator runs it
+    | .binary .inOp (.member (.ident "") _) _ => fail
     | .lit (.num x) => discard <| emit (.loadF dst x)
     | .lit v => discard <| emit (.loadV dst v)
     | .num x => discard <| emit (.loadF dst x)

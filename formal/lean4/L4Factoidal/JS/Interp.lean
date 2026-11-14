@@ -426,7 +426,10 @@ def namedGetterKey : String := privKey "WindowNamedProperties"
 
 /-- A property key as a value: a Symbol for a Symbol key, else the string. -/
 def keyValue (k : String) : Value :=
-  match symOfKey? k with | some i => .sym i | none => .str k
+  match symOfKey? k with | some i => .sym i | none => .str (keyStr k)
+
+/-- The String value of a key that is not a Symbol's (a name in a listing of keys). -/
+@[inline] def keyStrV (k : String) : Value := .str (keyStr k)
 
 /-- The integer part of a number, 0 for NaN and the infinities (the start of ToInt8 to
 ToUint32, §7.1.6 to §7.1.11). -/
@@ -512,7 +515,7 @@ def nameOfKey (key : String) : M String := do
   | some id =>
     let d := (← get).syms.getD id ""
     pure (if d.isEmpty && id ≥ wellKnown.size then "" else "[" ++ d ++ "]")
-  | none => pure (if isPrivKey key then "#" ++ (key.drop 1).toString else key)
+  | none => pure (if isPrivKey key then "#" ++ (key.drop 1).toString else keyStr key)
 
 
 
@@ -761,6 +764,7 @@ def liftName (k : Nat) : String := "%y" ++ toString k
 /-- A literal: its evaluation cannot be observed, and it is not worth a temporary. -/
 def isLiteral : Expr → Bool
   | .num _ | .str _ | .bool _ | .null | .bigint _ | .lit _ => true
+  | .member (.ident "") _ => true  -- the private name of `#x in o` (`privIn`)
   | _ => false
 
 def liftPush (st : Stmt) : Lift Unit := modify fun s => (s.1, s.2.push st)
@@ -1013,7 +1017,7 @@ def jsonToValue : Nat → L4Factoidal.JSON.Json → M Value
     | .array xs => newArray (← xs.toArray.mapM (jsonToValue fuel))
     | .object kvs =>
       let o ← newObject
-      for (k, v) in kvs do defineOwn o k (.data (← jsonToValue fuel v) true true true)
+      for (k, v) in kvs do defineOwn o (strKey k) (.data (← jsonToValue fuel v) true true true)
       pure (.obj o)
 
 def bufferBytes (o : Obj) : ByteArray :=
@@ -1615,7 +1619,7 @@ def toKey : Nat → Value → M String
   | 0, _ => throw (.halt "fuel")
   | n + 1, v => do
     match v with
-    | .str s => pure s
+    | .str s => pure (strKey s)
     | .num x => pure (keyOfNum x)
     | .sym id => pure (symKey id)
     | .obj _ => toKey n (← toPrim n v "string")
@@ -2465,6 +2469,11 @@ def evalExpr : Nat → Ctx → Expr → M Value
         | .typeof => pure (.str (← typeOf v))
         | .void => pure .undef
         | .delete => pure (.bool true)
+    | .binary .inOp (.member (.ident "") k) b =>
+      -- `#x in o` (§13.10.1, `privIn`): the private name's key itself
+      match ← evalExpr n ctx b with
+      | .obj id => pure (.bool (← hasProp n id k))
+      | _ => throwErr .type "Cannot use 'in' operator to search for a key in a non-object"
     | .binary op a b =>
       let x ← (match leafV (← get) ctx a with | .hole => evalExpr n ctx a | v => pure v)
       let y ← (match leafV (← get) ctx b with | .hole => evalExpr n ctx b | v => pure v)
@@ -2741,7 +2750,7 @@ def forInLoop : Nat → Ctx → List String → Option DeclKind → Pat → Valu
       | .obj id => pure ((← get).findProp id k 1000).isSome
       | _ => pure true
     if !present then return ← forInLoop n ctx labels kind target obj ks body
-    let ctx' ← bindIter n ctx kind target (.str k)
+    let ctx' ← bindIter n ctx kind target (keyStrV k)
     let r ← evalStmt n ctx' [] body
     match loopNext labels r with
     | some out => pure out
@@ -3827,14 +3836,14 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       | .proxy .. | .typed .. =>
         let ks := (← ownKeysOf n id).filter (fun k => !isSymKey k && !isPrivKey k)
         let ks ← ks.filterM fun k => do pure (match ← ownDesc n id k with | some p => p.enumerable | none => false)
-        newArray (ks.map .str)
+        newArray (ks.map keyStrV)
       | _ =>
         let ks := o.ownStrKeys.filter fun k => match o.getOwn k with
           | some p => p.enumerable | none => false
-        newArray (ks.map .str)
+        newArray (ks.map keyStrV)
     | .objectGetOwnPropertyNames =>
       let id ← toObj n a0
-      newArray ((← ownKeysOf n id).filter (fun k => !isSymKey k && !isPrivKey k) |>.map .str)
+      newArray ((← ownKeysOf n id).filter (fun k => !isSymKey k && !isPrivKey k) |>.map keyStrV)
     | .objectGetPrototypeOf =>
       let id ← toObj n a0
       let o ← getObj id
@@ -4254,7 +4263,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       let ks := o.ownStrKeys.filter fun k => match o.getOwn k with | some p => p.enumerable | none => false
       let vs ← ks.mapM fun k => do
         let v ← getV n (.obj id) k
-        if id_ == .objectEntries then newArray #[.str k, v] else pure v
+        if id_ == .objectEntries then newArray #[keyStrV k, v] else pure v
       newArray vs
     | .arrayValues | .arrayKeys | .arrayEntries =>
       let o ← toObj n thisV
@@ -4669,7 +4678,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       let id ← toObj n a0
       let res ← newObject
       for k in (← getObj id).ownKeys do
-        let d ← callNative n .objectGetOwnPropertyDescriptor .undef #[.obj id, match symOfKey? k with | some i => .sym i | none => .str k] none
+        let d ← callNative n .objectGetOwnPropertyDescriptor .undef #[.obj id, keyValue k] none
         defineOwn res k (.data d true true true)
       pure (.obj res)
     | .objectFromEntries =>
@@ -5777,7 +5786,7 @@ def jsonStr : Nat → Value → Nat → M Value
         let ks := o.ownStrKeys.filter fun k => match o.getOwn k with | some p => p.enumerable | none => false
         let parts ← ks.toList.filterMapM fun k => do
           match ← jsonStr n (← getV n v k) (depth + 1) with
-          | .str s => pure (some (quote k ++ ":" ++ s))
+          | .str s => pure (some (quote (keyStr k) ++ ":" ++ s))
           | _ => pure none
         pure (.str ("{" ++ ",".intercalate parts ++ "}"))
 termination_by structural n _ _ => n

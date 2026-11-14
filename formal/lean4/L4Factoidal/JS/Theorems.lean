@@ -15,6 +15,9 @@ import L4Factoidal.JS.Interp
   answer of `Str.unitAt?`.
 - `isPrivKey_privKey`, `forAwaitFn_private`, `forAwaitStmt_hasYield`: the helpers of
   `for await` are private-name keys, and its statements always go to the generator machine.
+- `strKey_not_priv`, `strKey_not_sym`, `keyStr_strKey`, `strKey_injective`,
+  `strKey_ne_privKey`: the property key of a String value is never a private name's or a
+  Symbol's key, is injective, and is undone by `keyStr`.
 
 The evaluator is a Lean function, so it is deterministic by construction: the same
 script and heap give the same outcome and heap. Each function of the parser and of
@@ -123,5 +126,98 @@ theorem forAwaitStmt_hasYield (inGen : Bool) (uid : Nat) (kind : Option DeclKind
     intro n
     cases inGen <;> simp [forAwaitStmt, Stmt.hasYieldF, Stmt.anyYield, Decl.anyYield, Expr.hasYieldF]
   exact h 99984
+
+/-! ## Property keys (`strKey`, `keyStr`, `privKey`, `symKey`)
+
+ToPropertyKey of a String value is `strKey` (`toKey`'s `.str` case, the parser's string
+property names, `JSON.parse`'s member names); listings of keys give `keyStr`. -/
+
+/-- Kind: a lemma about strings. Says: a string that starts with a character starts with it. -/
+theorem front_singleton_append (c : Char) (s : String) : (String.singleton c ++ s).front = c := by
+  simp [String.front_eq, String.front?_eq, String.toList_append]
+
+/-- Kind: a lemma about strings. Says: dropping the first character gives the rest back. -/
+theorem drop_one_singleton_append (c : Char) (s : String) :
+    ((String.singleton c ++ s).drop 1).toString = s := by
+  apply String.ext
+  simp [String.toList_append]
+
+/-- Kind: a property of the key encoding.
+Says: the key of a String value starts with `strMark` or with a character that is not reserved.
+Does not say: which of the two (a string that starts with a reserved character gets the mark). -/
+theorem strKey_front (s : String) :
+    (strKey s).front = strMark ∨ keyReserved (strKey s).front = false := by
+  unfold strKey
+  split
+  · left; exact front_singleton_append _ _
+  · right; rename_i h; simpa using h
+
+/-- Kind: a security property of the key encoding (the defect behind WPT `names.wast`).
+Says: no String value has a private name's key: for every string `s`, `strKey s` is not
+recognised by `isPrivKey`. So a computed member access, `in`, `Object.defineProperty`,
+`JSON.parse` and every other use of ToPropertyKey on a string cannot reach a private member
+or the hidden helpers of the global object.
+Does not say: that every place that makes a key from a string calls `strKey` (`toKey`, the
+parser's string property names and `JSON.parse` do; the `#guard`s of `RegressionTests` check
+them), or anything about the embedding host's own property names. -/
+theorem strKey_not_priv (s : String) : isPrivKey (strKey s) = false := by
+  unfold isPrivKey
+  rcases strKey_front s with h | h
+  · rw [h]; decide
+  · cases hf : (strKey s).front == Char.ofNat 0x10FFFE
+    · rfl
+    · have h2 : (strKey s).front = Char.ofNat 0x10FFFE := eq_of_beq hf
+      rw [h2] at h
+      exact absurd h (by decide)
+
+/-- Kind: a security property of the key encoding.
+Says: no String value has a Symbol's key: `strKey s` is not recognised by `isSymKey`, so
+`o["\u{10FFFF}0"]` is not the property of `Symbol.iterator`.
+Does not say: more than `strKey_not_priv` does about where `strKey` is called. -/
+theorem strKey_not_sym (s : String) : isSymKey (strKey s) = false := by
+  unfold isSymKey
+  rcases strKey_front s with h | h
+  · rw [h]; decide
+  · cases hf : (strKey s).front == symMark
+    · rfl
+    · have h2 : (strKey s).front = symMark := eq_of_beq hf
+      rw [h2] at h
+      exact absurd h (by decide)
+
+/-- Kind: a round trip.
+Says: `keyStr` gives back the string `strKey` was given, so `Object.keys`, `for`-`in`,
+`Reflect.ownKeys` and `JSON.stringify` name a property by the string it was made with.
+Does not say: what `keyStr` gives for a key that `strKey` did not make. -/
+theorem keyStr_strKey (s : String) : keyStr (strKey s) = s := by
+  unfold strKey
+  split
+  · unfold keyStr
+    rw [front_singleton_append, if_pos (by decide)]
+    exact drop_one_singleton_append _ _
+  · rename_i h
+    unfold keyStr
+    have hf : (s.front == strMark) = false := by
+      cases hf : s.front == strMark
+      · rfl
+      · have h2 : s.front = strMark := eq_of_beq hf
+        rw [h2] at h
+        exact absurd h (by decide)
+    rw [hf]
+    rfl
+
+/-- Kind: injectivity of the key encoding.
+Says: different String values have different keys.
+Does not say: anything about numbers (`keyOfNum`) or Symbols (`symKey`), whose keys are
+kept apart from a string's by `strKey_not_sym` and by their own forms. -/
+theorem strKey_injective (s t : String) (h : strKey s = strKey t) : s = t := by
+  have := congrArg keyStr h
+  simpa [keyStr_strKey] using this
+
+/-- Kind: a corollary. Says: a String value's key is never the key of a private name. -/
+theorem strKey_ne_privKey (s name : String) : strKey s ≠ privKey name := by
+  intro h
+  have h1 := strKey_not_priv s
+  rw [h, isPrivKey_privKey] at h1
+  cases h1
 
 end L4Factoidal.JS

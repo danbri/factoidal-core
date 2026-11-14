@@ -293,11 +293,11 @@ def namespaceOf (g : ModGraph) : Nat → Nat → ModLives → M (Nat × ModLives
         let mut lives := lives.set! m (some { live with ns := some o })
         for (x, r) in namespaceNames g m do
           match r with
-          | .binding m' l => defineOwn o x (.acc (← getterOf lives m' l) .undef true false)
+          | .binding m' l => defineOwn o (strKey x) (.acc (← getterOf lives m' l) .undef true false)
           | .ns m' =>
             let (o', lv) ← namespaceOf g n m' lives
             lives := lv
-            defineOwn o x (.data (.obj o') true true false)
+            defineOwn o (strKey x) (.data (.obj o') true true false)
           | _ => pure ()
         defineOwn o (symKey symToStringTag) (.data (.str "Module") false false false)
         modifyObj o fun ob => { ob with extensible := false }
