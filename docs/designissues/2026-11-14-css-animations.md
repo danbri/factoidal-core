@@ -121,6 +121,13 @@ border box from its computed width, height, padding and border when those are le
 stands. The engine itself keeps reading the list of functions (`valueOf`), which is what
 interpolates. Matrix entries are written with six significant digits (`Fix.formatSig`).
 
+### Easing functions (`Easing`)
+
+Keywords, `cubic-bezier()`, `steps()` and `linear()` (CSS Easing 2 §2.2: the stops as points, a
+missing input spread evenly between its neighbours, an input never below the one before it, a stop
+with two inputs as two points; outside the points the first and the last segment continue).
+Serialization writes every point with its input.
+
 ### Timing, effects, playback (`Timing`, `Effect`, `Model`)
 
 Each procedure of Web Animations 1 is one pure function named for its section: phases and progress
@@ -186,6 +193,12 @@ Proved (axioms: propext, Classical.choice, Quot.sound):
   `clamp_between`, `clamp_idem`.
 - `Easing.evalSteps_mono` (a step function does not decrease, over all inputs), `stepOf_range`,
   `eval_linear`, `eval_ends` (keyword and cubic easings map 0 to 0 and 1 to 1).
+- `Easing.evalPoints_identity` (`linear(0, 1)` is the identity at every input), `evalPoints_ends`
+  (two points at 0 and 1 give their outputs there).
+- `Reads.wrote_other`, `Reads.wrote_version` (`Hosts/Page`): a write that is not of a `style`
+  attribute forgets the noted elements, and every `wrote` leaves the note exact for the new version;
+  a write path that raises the version another way leaves `styleVersion` behind, and the next measure
+  is of the whole document.
 - `Easing.bezNum_mono`: the x of a cubic Bézier with x1 and x2 in [0, 1] does not decrease with the
   parameter, exactly (over integers): the assumption of the bisection, and the reason CSS Easing 1
   restricts x1 and x2. Proof: the difference is affine in x1 and in x2, so it is a weighted sum of the
@@ -216,8 +229,8 @@ Open:
 - That `solveT`'s bisection ends at the nearest parameter is tested, not proved (the x it searches
   is proved monotone: `Easing.bezNum_mono`).
 - parse∘serialize = id for values and easings is tested, not proved.
-- Reversing-adjusted start values of transitions; `linear()`; `animation-range` and timelines other
-  than the document's.
+- Reversing-adjusted start values of transitions; `animation-range` and timelines other than the
+  document's.
 - `rotate` between two axes and `aspect-ratio` use `Float` (sqrt, sin, acos, log, exp): tested, not
   proved. The list kinds (padding, joining, least common multiple) are tested, not proved.
 - Matrices are `Float`: decomposition then recomposition gives the matrix back, the ends of
