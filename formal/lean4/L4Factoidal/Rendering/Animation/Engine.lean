@@ -204,6 +204,7 @@ def kindOf (property : String) : Value.Kind :=
   else if ["border-top-left-radius", "border-top-right-radius", "border-bottom-left-radius",
       "border-bottom-right-radius"].contains property then .radius
   else if property.startsWith "corner-" && property.endsWith "-shape" then .cornerShape
+  else if property == "transform-origin" then .origin
   else if property == "letter-spacing" then .zeroWord "normal" true
   else if property == "word-spacing" then .zeroWord "normal" false
   else if property == "vertical-align" then .zeroWord "baseline" false
