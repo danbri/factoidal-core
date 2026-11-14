@@ -29,6 +29,9 @@
   // ttAttr(element, namespace, name, value) and ttValue(type, node id or null, value, sink)
   // answer the string that may reach the sink, or throw.
   let ttAttr = null, ttValue = null, ttMeta = null, ttStart = null, ttDoc = null;
+  // `new FormData(form, submitter)`: the entry list of a form (section forms; Lean's
+  // HTML.FormEntries). Null in a worker, where there are no forms.
+  let formEntryList = null;
   const consts = (o, table) => { for (const k in table) Object.defineProperty(o, k, { value: table[k], enumerable: true }); };
 
   // ---- DOMException -------------------------------------------------------------
@@ -3513,8 +3516,13 @@
     };
     class FormData {
       constructor(form = undefined, submitter = undefined) {
-        if (form !== undefined) throw new TypeError("Failed to construct 'FormData': forms are not supported in this build");
         forms.set(this, { entries: [] });
+        if (form === undefined) return;
+        if (formEntryList === null) throw new TypeError("Failed to construct 'FormData': parameter 1 is not of type 'HTMLFormElement'.");
+        // "construct the entry list": Lean's entries, then the formdata event at the form
+        // with a FormData of them, which a listener may change
+        forms.get(this).entries = formEntryList(form, submitter ?? null,
+          entries => { const fd = new FormData(); forms.get(fd).entries = entries; return fd; }, fd => forms.get(fd).entries.slice());
       }
       append(name, value, filename = undefined) {
         if (arguments.length < 2) throw new TypeError("Failed to execute 'append' on 'FormData': 2 arguments required");
@@ -7732,6 +7740,43 @@
     const checkForm = form => { let ok = true; for (const k of idsOf(fq(form, 'e'))) if (!check(wrap(k))) ok = false; return ok; };
     method(F, 'checkValidity', function checkValidity() { return checkForm(this); });
     method(F, 'reportValidity', function reportValidity() { return checkForm(this); });
+  }
+  // ---- new FormData(form, submitter) (XMLHttpRequest §5.3; HTML §4.10.21.4) -----------------
+  // Which controls contribute and what each gives is Lean's (HTML.FormEntries, node_query
+  // 196); here the checks' exceptions, the empty file of a file control and the formdata event.
+  {
+    const formData = new WeakMap();
+    class FormDataEvent extends Event {
+      constructor(type, init = undefined) {
+        if (arguments.length < 2 || init === null || typeof init !== 'object' || !(init.formData instanceof globalThis.FormData))
+          throw new TypeError("Failed to construct 'FormDataEvent': member formData is required and must be an instance of FormData.");
+        super(type, init);
+        formData.set(this, init.formData);
+      }
+      get formData() { return formData.get(this); }
+    }
+    def('FormDataEvent', FormDataEvent);
+    const constructing = new Set();
+    const unesc = t => t.replace(/\u0007([\s\S])/g, (m, c) => String.fromCharCode(c.charCodeAt(0) - 64));
+    formEntryList = (form, submitter, make, read) => {
+      const what = "Failed to construct 'FormData'";
+      if (!(form instanceof named.HTMLFormElement)) throw new TypeError(`${what}: parameter 1 is not of type 'HTMLFormElement'.`);
+      if (submitter !== null && !(submitter instanceof HTMLElement)) throw new TypeError(`${what}: parameter 2 is not of type 'HTMLElement'.`);
+      const id = nodeId(form);
+      const r = op(id, 196, submitter === null ? '' : String(nodeId(submitter)));
+      if (r[0] === 'T') throw new TypeError(`${what}: The specified element is not a submit button.`);
+      if (r[0] === 'N') throw new DOMException(`${what}: The specified element is not owned by this form element.`, 'NotFoundError');
+      if (constructing.has(id)) throw new DOMException(`${what}: The form is constructing its entry list.`, 'InvalidStateError');
+      const entries = r.length === 1 ? [] : r.slice(1).split('\u0002').map(e => {
+        const [name, value, file] = e.split('\u0001');
+        return [unesc(name), file === '1' ? new globalThis.File([], '', { type: 'application/octet-stream' }) : unesc(value)];
+      });
+      const fd = make(entries);
+      constructing.add(id);
+      try { const e = new FormDataEvent('formdata', { bubbles: true, formData: fd }); state(e).trusted = true; dispatch(form, e); }
+      finally { constructing.delete(id); }
+      return read(fd);
+    };
   }
   // ==== end forms =========================================================================
 

@@ -39,6 +39,7 @@ import L4Factoidal.HTML.InnerText
 import L4Factoidal.HTML.Sanitizer
 import L4Factoidal.HTML.TrustedTypes
 import L4Factoidal.HTML.ImageSource
+import L4Factoidal.HTML.FormEntries
 
 namespace L4Factoidal.WasmVM.Hosts.Dom
 open L4Factoidal.DOM L4Factoidal.DOM.Range
@@ -488,7 +489,7 @@ and selectedness (`DOM.FormControls.answer`); 187 the range and selection of `se
 the text of `innerText` for collected items (`HTML.InnerText.answer`); 192 the methods of a
 Sanitizer (`HTML.Sanitizer.answer`); 194 the decisions of Trusted Types
 (`HTML.TrustedTypes.answer`); 195 the image source an `img` selects
-(`HTML.ImageSource.answer`). One op changes the tree: 193 sanitizes the children of
+(`HTML.ImageSource.answer`); 196 the entry list of a form (`HTML.FormEntries.answer`). One op changes the tree: 193 sanitizes the children of
 node `id` (`sanitizeM`). -/
 def domOpM (id op : Nat) (q : String) : Op String := do
   let xs := nums q
@@ -889,6 +890,8 @@ def domOpM (id op : Nat) (q : String) : Op String := do
   | 194 => return L4Factoidal.HTML.TrustedTypes.answer d id q
   -- 195: the image an `img` element asks for (`HTML.ImageSource.answer`)
   | 195 => let n ← nodeArg d id; return L4Factoidal.HTML.ImageSource.answer d n q
+  -- 196: the entry list of form `id` for `new FormData(form, submitter)` (`HTML.FormEntries.answer`)
+  | 196 => let n ← nodeArg d id; return L4Factoidal.HTML.FormEntries.answer d n q
   -- ==== end of domhtml ====
   | _ => throw (-2)
 
