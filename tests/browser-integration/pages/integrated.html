@@ -29,25 +29,22 @@
 // What a page does after it has loaded, with features used together: the sheet, the
 // image, timers, storage, a transition, a form and a DOM change that moves boxes.
 sharedChecks();
-promise_test(function () {
+async_check('image: an img takes the size of its file', function () {
   const pic = document.getElementById('pic');
   const loaded = pic.complete ? Promise.resolve() : new Promise(function (resolve, reject) { pic.onload = resolve; pic.onerror = function () { reject(new Error('the image did not load')); }; });
   return loaded.then(function () {
     assert_equals(pic.naturalWidth, 40, 'naturalWidth'); assert_equals(pic.naturalHeight, 20, 'naturalHeight');
     assert_rect('pic', [0, 210, 40, 20]);
-  });
-}, 'image: an img takes the size of its file');
-promise_test(function () {
+  });});
+async_check('event loop: script, then microtask, then timer', function () {
   const order = [];
   return new Promise(function (resolve) {
     setTimeout(function () { order.push('timeout'); resolve(); }, 0);
     Promise.resolve().then(function () { order.push('microtask'); });
     order.push('script');
-  }).then(function () { assert_array_equals(order, ['script', 'microtask', 'timeout']); });
-}, 'event loop: script, then microtask, then timer');
-promise_test(function () {
-  return new Promise(function (resolve) { requestAnimationFrame(resolve); }).then(function (time) { assert_equals(typeof time, 'number'); });
-}, 'event loop: an animation frame callback runs');
+  }).then(function () { assert_array_equals(order, ['script', 'microtask', 'timeout']); });});
+async_check('event loop: an animation frame callback runs', function () {
+  return new Promise(function (resolve) { requestAnimationFrame(resolve); }).then(function (time) { assert_equals(typeof time, 'number'); });});
 test(function () {
   localStorage.setItem('integration-key', 'kept');
   assert_equals(localStorage.getItem('integration-key'), 'kept');
@@ -58,47 +55,46 @@ test(function () {
   document.cookie = 'integration=1; path=/';
   assert_true(document.cookie.split('; ').indexOf('integration=1') >= 0, 'document.cookie is "' + document.cookie + '"');
 }, 'storage: document.cookie keeps a cookie');
-promise_test(function () {
+async_check('transition: opacity runs to its end and transitionend fires', function () {
   const fade = document.getElementById('fade');
   assert_equals(getComputedStyle(fade).opacity, '1', 'before');
-  const ended = new Promise(function (resolve, reject) {
+  const ended = new Promise(function (resolve) {
     fade.addEventListener('transitionend', function (event) { resolve(event.propertyName); });
-    setTimeout(function () { reject(new Error('no transitionend within 2 s')); }, 2000);
   });
   fade.className = 'off';
   return ended.then(function (name) {
     assert_equals(name, 'opacity'); assert_equals(getComputedStyle(fade).opacity, '0.25', 'after');
-  });
-}, 'transition: opacity runs to its end and transitionend fires');
-promise_test(function () {
+  });});
+async_check('form: a click on the button submits the values the user set', function () {
   const form = document.getElementById('f');
   document.getElementById('q').value = 'second';
   const submitted = new Promise(function (resolve, reject) {
     form.addEventListener('submit', function (event) {
       event.preventDefault();
-      const data = new FormData(form, event.submitter);
-      resolve([data.get('q'), data.get('ck'), data.get('go'), event.submitter && event.submitter.id]);
+      try {
+        const data = new FormData(form, event.submitter);
+        resolve([data.get('q'), data.get('ck'), data.get('go'), event.submitter && event.submitter.id]);
+      } catch (error) { reject(error); }
     });
-    setTimeout(function () { reject(new Error('no submit event within 2 s')); }, 2000);
   });
   document.getElementById('go').click();
-  return submitted.then(function (values) { assert_array_equals(values, ['second', 'yes', 'pressed', 'go']); });
-}, 'form: a click on the button submits the values the user set');
+  return submitted.then(function (values) { assert_array_equals(values, ['second', 'yes', 'pressed', 'go']); });});
 // The module script (app.mjs) reports here: it imports util.mjs, fetches data.json and
-// fills the list.
-var moduleDone;
-promise_test(function () {
-  return new Promise(function (resolve, reject) {
-    moduleDone = resolve;
-    setTimeout(function () { reject(new Error('the module script did not report within 3 s')); }, 3000);
-  }).then(function (report) {
+// fills the list. A second module (tla.mjs) uses top-level await.
+var moduleDone, awaitDone;
+async_check('module script: imports a module, fetches JSON and fills the list', function () {
+  return new Promise(function (resolve) { moduleDone = resolve; }).then(function (report) {
     assert_equals(report.imported, 42, 'the value imported from util.mjs');
     assert_array_equals(report.items, ['alpha', 'beta', 'gamma'], 'the items of data.json');
     assert_equals(document.getElementById('list').children.length, 3);
     assert_rect('list', [0, 280, 600, 60]);
   });
-}, 'module script: imports a module, fetches JSON and fills the list');
+}, 3);
+async_check('module script: top-level await', function () {
+  return new Promise(function (resolve) { awaitDone = resolve; }).then(function (value) { assert_equals(value, 'awaited'); });
+}, 3);
 </script>
 <script type="module" src="app.mjs"></script>
+<script type="module" src="tla.mjs"></script>
 </body>
 </html>
