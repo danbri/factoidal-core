@@ -283,6 +283,26 @@ cascade of that document: 31 to 41 ms there), and fixed:
   ends in the same class (`#test-N .transition`), so each element tries all of them (the rule buckets
   are by the last compound); the whole path paid that for every element.
 
+### Cascades per layout read (found on real pages)
+
+A script that reads a layout after a write (`offsetWidth`, `getBoundingClientRect`) made, counted
+from the code: the layout's own cascade (`Generated.styled` in `Layout.render`); a second whole
+cascade for `Laid.styles` (a thunk that cascaded the document again when a read asked for the border
+edges of a box); a third before the layout on a page with an inline `svg` root (liberal mode); and,
+on a page where an element declares an animation or a transition, the animation engine's own
+(`WebDocument.measure`, `styled`). All of them the same function of the same inputs. Now
+`Layout.renderWithStyles` answers the styles of the page's own nodes with the layout, and
+`layOutDOMIn` keeps those as `Laid.styles` and reads the SVG refusals from them: one cascade for a
+layout (`renderWithStyles_unused`: with no generated content they are `CSS.computeFor`'s). The
+engine's own cascade is still separate: its document is the script's (the layout's has the paint
+slots of script transforms taken out), so the two are not the same styles.
+
+Also: two computed style texts that are equal are no longer parsed to be compared
+(`animationAccess.changed`, an element with `transition: all`).
+
+Not measured yet on an engine (no local engine; numbers to come from the pages agent's tool on the
+first build that has this).
+
 ## Bounds
 
 What a page controls, and what bounds it:
@@ -330,6 +350,8 @@ Proved (axioms: propext, Classical.choice, Quot.sound):
 - `Engine.needsFrame_out` (an animation with untaken acts keeps the page asking for a frame);
   `Value.add_shape_replace` (two shapes that do not interpolate do not add or accumulate: the
   keyframe's value replaces); `Value.originWords_dims` (an origin of lengths is not rewritten).
+- `Layout.renderWithStyles_unused` (the styles a layout answers are those of `CSS.computeFor` on a
+  page with no generated content, and the layout is the layout of those styles).
 - `Host.afterWrite_quiet`, `Host.frameStyles_quiet` (a page with no listener for an animation or
   transition event: a write asks for no frame and a frame measures nothing), `Host.afterWrite_listens`
   (a new listener marks the page), `Host.frameStyles_fresh` (a frame whose kept layout is of the last
