@@ -212,6 +212,17 @@ its value, which the page's glue gives to `textEdit` (op 179). -/
 def editInit (command value : String) : String :=
   (L4Factoidal.JSON.Json.object [("command", .string command), ("value", .string value)]).toString
 
+/-- The element has a box in the layout of the page as it is now (it is being rendered):
+measure op 17 answers zeros for an element with no box. The layout is made and kept. -/
+def rendered (s : σ) (n : Nat) : σ × Bool :=
+  let s := e.setHost s (e.host s).measured.1
+  match (e.host s).reads.kept with
+  | some (_, f) =>
+    match (f n 17).bind Input.boxOf with
+    | some (_, _, w, h) => (s, w > 0 || h > 0)
+    | none => (s, false)
+  | none => (s, true)
+
 /-- A key of the user (`up`: its release). `keydown` is fired at the editing host of the
 selection (else the `body`). When no listener canceled it, `keypress` is fired for a key
 with a character (`press`: its init; a host that gives none gets no `keypress`); when
@@ -258,12 +269,16 @@ def key (s : σ) (up : Bool) (init : String) (k : L4Factoidal.DOM.Editing.KeyInp
           match Hosts.Dom.textKeyOf (e.host s).dom k with
           | some (control, command, value) =>
             -- a text control: `beforeinput` at it, then the page's glue runs the command on
-            -- its value and selection (`@edit`: `Editing.textEdit`, op 179) and fires `input`
+            -- its value and selection (`@edit`: `Editing.textEdit`, op 179) and fires `input`;
+            -- a control that a listener hid (no box any more) is not edited
             let inputType := L4Factoidal.DOM.Editing.inputTypeOf command
             let data := L4Factoidal.DOM.Editing.inputDataOf command value
+            let (s, shown) := e.rendered s control
+            if !shown then s else
             let (s, prevented) := e.dispatchWith s control "beforeinput" (inputInit inputType data [])
             Input.afterCancelable prevented (fun s =>
-              (e.dispatchWith s control "@edit" (editInit command value)).1) s
+              let (s, shown) := e.rendered s control
+              if !shown then s else (e.dispatchWith s control "@edit" (editInit command value)).1) s
           | none =>
             let h := e.host s
             e.setHost s { h with dom := Hosts.Dom.caretMove h.dom k }) s) s
