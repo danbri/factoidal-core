@@ -747,7 +747,14 @@ def Host.measureNow (h : Host) : Host × Option Answers :=
       let dirty := underAny dom nodes
       let anim := if nodes.isEmpty then h.anim
         else L4Factoidal.Rendering.Animation.styleChangeOn h.anim ac dirty (candidates.filter dirty)
-      if anim.idle && candidates.isEmpty then keep h base none
+      if anim.idle && candidates.isEmpty then
+        -- the page's last animation ended in this style change: the state with it cancelled is
+        -- the page's state (it was dropped here, and the animation went on as if still declared:
+        -- no cancel event, no rejected promise), its acts and events wait for a frame, and
+        -- the page keeps no styles
+        let h : Host := { h with anim := L4Factoidal.Rendering.Animation.noteAnimated anim [] }
+        let h := if L4Factoidal.Rendering.Animation.needsFrame anim then h.askAnimationFrame else h
+        keep h base none
       else if k.now == h.anim.now && k.epoch == h.reads.animEpoch then
         -- the same time and the same animations: the effect stacks of the written elements
         let ovs := k.overrides.filter (fun o => !dirty o.node) ++
