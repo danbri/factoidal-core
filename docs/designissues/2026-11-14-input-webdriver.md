@@ -186,6 +186,8 @@ cookies, frames, screenshots, BiDi. The full run does not pass the flag yet.
 
 | Step | Commit | Run | Result |
 |---|---|---|---|
+| Form controls get boxes (user agent sheet) | `fd26b4862` | branch check 43582807983 | against the previous check of the same names: pointerevents 1,438 -> 1,528 of 2,662 (clicks and capture over inputs), html/rendering +47, css-ui +10; two losses (-1 each: a tentative checkbox switch's display under appearance:none; an empty textarea's scrollHeight) |
+| A text control is hidden only under display: none | `f3003dfb5` | branch check 43582224376 | edit-in-textcontrol-immediately-after-hidden back to 4 of 6 in its four variants; uievents/keyboard 16 of 16; uievents/textInput 8 -> 19; selection/textcontrols 16 -> 25 |
 | Host keys, text controls, touch events, pointer capture, endpoint actions, on main | `a7c2ad45d` | branch check 43578325009 | +2,285 on 3,778 names against the `d799500c7` full run: pointerevents 432 -> 1,438 of 2,662; touch-events 48 -> 720 of 992; uievents/mouse 50 -> 152; uievents 134 -> 157; pointerevents/compat 4 -> 28; uievents/constructors 10 -> 21; uievents/order-of-events 1 -> 12. Five tests worse (legend-display -16, module charset-01 -6, css-sizing stretch -2, two -1), none on the input path |
 | WebDriver actions, trusted input, Gate, Protocol, on main | `fbde2abf1` | branch check 43574374683 | +642 on 3,946 names against the `d799500c7` full run (part is main's own later work): pointerevents 432 -> 535, uievents/mouse 50 -> 139, uievents 134 -> 150, pointerevents/compat 4 -> 23, dom/events 642 -> 659, uievents/keyboard 2 -> 15, uievents/order-of-events 1 -> 10. One test worse (module charset-01, -6, not input) |
 | Key actions (editing's work), on main | `2598f05e7` | branch check 43559453757 | +13,980 on /editing/, /input-events/, /selection/, /uievents/, sample:150 against main `19fb349c1`: editing/other 2,203 -> 12,014 of 16,742; input-events 303 -> 2,545 of 3,366; editing/plaintext-only 593 -> 1,526; editing/whitespaces 424 -> 1,161. 9 tests worse, -19 subtests |
@@ -243,6 +245,16 @@ part (event classes, `relatedTarget`, the focus update steps); the runner's driv
 
 Open:
 
+- Found and handed on: an `await` inside a `switch` case throws in BubblePopJS (js-core;
+  `editing/other/exec-command-with-text-editor`, 2,064 subtests, times out with none); the
+  layout of some test pages is taller than Chrome's, so an element origin falls outside the
+  800x600 viewport (`move target out of bounds`, e.g. `uievents/click/click_event_target_siblings`);
+  `CookieChangeEvent` is an undefined global on http pages (storage), which stops the
+  `uievents/order-of-events` recorder.
+- Boundary events when the layout changes under a still pointer (UI Events: at the next
+  rendering update); input into frames (pointer events tests that click in an `iframe`).
+- wdspec in the full run: the shard tree and the runner flag (ci); the page commands after
+  navigation have not run against wptserve pages yet.
 - Pointer capture (`setPointerCapture` and the capture events), compatibility mouse events
   after a touch, pen hover. Touch events are fired (`WebDriver.Touch`); `radiusX`, `force` and
   the rest are fixed values.
