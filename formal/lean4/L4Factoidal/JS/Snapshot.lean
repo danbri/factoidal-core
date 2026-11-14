@@ -101,7 +101,7 @@ def runtimeNatives : Array Native :=
     .promiseAllElement, (.x (.promiseSettleElement 0)), (.x (.promiseSettleElement 1)), (.x .proxyRevoke), (.x .promiseAnyReject),
     (.x .cloneSerialize), (.x .cloneDeserialize), (.x .classicScript),
     (.x (.asyncFromSync 3)), (.x (.asyncFromSync 4)), (.x (.asyncFromSync 5)),
-    (.x (.promiseThenableFn false)), (.x (.promiseThenableFn true)), (.x .namedGetterSet), (.x .urlPattern), (.x .streams),
+    (.x (.promiseThenableFn false)), (.x (.promiseThenableFn true)), (.x .namedGetterSet), (.x .urlPattern), (.x .streams), (.x .temporal),
     (.x .capabilityExecutor), (.x .adoptClosure)]
 
 /-! ## Writing -/

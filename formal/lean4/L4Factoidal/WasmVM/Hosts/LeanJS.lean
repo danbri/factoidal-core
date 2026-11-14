@@ -699,7 +699,9 @@ def prepareSource (lim : Page.Limits := {}) : Except String Session := do
     -- the URL Pattern Standard (`WHATWG.URLPattern`), for the prelude's URLPattern class
     ("urlPattern", .x .urlPattern, 4),
     -- the Streams Standard's queue and fill plan (`WHATWG.Streams`), for the prelude's classes
-    ("streams", .x .streams, 6)]
+    ("streams", .x .streams, 6),
+    -- the Temporal proposal's calendar arithmetic and strings (`Temporal`), for the prelude
+    ("temporal", .x .temporal, 9)]
   let ((o, f), heap) := JS.evalValue heap prelude
   if let some m := failure o then throw s!"prelude: {m}"
   let ((o, api), heap) := JS.callFunction heap f .undef #[nobj]

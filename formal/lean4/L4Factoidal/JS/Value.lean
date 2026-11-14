@@ -84,6 +84,9 @@ inductive NativeX where
   4 a rejection that closes the iterator, 5 a rejection, 6 ask the iterator for the next
   value, 7 read the array-like's next index). -/
   | arrayFromAsync | fromAsyncStep (k : Nat)
+  /-- The Temporal proposal's decisions (`Temporal.Iso`, `Temporal.Parse`) for the prelude's
+  Temporal classes: `n.temporal(op, ...)` (ops listed at the native's case in JS/Interp.lean). -/
+  | temporal
   /-- `Iterator.zip` (false) and `Iterator.zipKeyed` (true): a helper of kind 7. -/
   | iteratorZip (keyed : Bool)
   /-- `Promise.race` (0) and `Promise.allSettled` (1) (§27.2.4.5, §27.2.4.2), and the
