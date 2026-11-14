@@ -344,7 +344,7 @@ fonts and images the engine holds may have changed since the page started (`font
 `imageLoad`, `imageDrop`), and a read lays the page out with those held at the read, as
 the frame does. A layout already made for the DOM's version is kept (`Reads.kept`). -/
 def setReads (held : Held) (env : PageCanvas.Env) (measure : Option Page.Measure) : Held :=
-  let page := fun (h : Page.Host) => { h with reads := { h.reads with canvasEnv := env, measure } }
+  let page := fun (h : Page.Host) => { h with reads := { h.reads with canvasEnv := env, measure, styleKept := none, styleWrites := none } }
   { held with
     session := held.session.map fun (id, s, m) => (id, { s with host := page s.host }, m),
     leanSession := held.leanSession.map fun (id, s, m) => (id, s.setHost (page s.host), m) }

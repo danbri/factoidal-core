@@ -70,6 +70,7 @@ def callback (s : σ) (cb : Nat) (target : Int) (arg : Nat) : σ :=
 
 /-- Run what the event loop gave (as `Page.Session.runTaskP`). -/
 def runTask (s : σ) (r : L4Factoidal.EventLoop.Run) : σ :=
+  let s := e.setHost s (e.host s).tickTimeline
   match r.kind with
   | .task =>
     match r.event with
