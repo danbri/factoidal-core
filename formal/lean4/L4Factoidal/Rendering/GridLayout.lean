@@ -76,9 +76,14 @@ def gridSelfAlign (own container : ItemAlign) (reverse : Bool) (flip : Bool := f
   | .center => .center
 
 /-- The item takes part in baseline alignment in its row (`align-self: baseline`, or
-`auto` with `align-items: baseline`). `last baseline` is read as `start`. -/
+`auto` with `align-items: baseline`). -/
 def gridBaselineSelf (own container : ItemAlign) : Bool :=
   (if own == .auto then container else own) == .baseline
+
+/-- The same for `last baseline`: the item's last baseline is aligned with the others' of
+its row, and the items are at the end of their areas (CSS Box Alignment 3 §9.3). -/
+def gridLastBaselineSelf (own container : ItemAlign) : Bool :=
+  (if own == .auto then container else own) == .lastBaseline
 
 #guard gridSelfAlign .selfStart .normal false true == .end_
 #guard gridSelfAlign .selfEnd .normal false true == .start
@@ -96,6 +101,26 @@ def gridFixedSpan (fns : Array Grid.TrackFn) (gap start span : Nat) : Option Nat
 
 #guard gridFixedSpan #[⟨.fixed 10, .fixed 10⟩, ⟨.fixed 20, .fixed 20⟩] 5 0 2 == some 35
 #guard gridFixedSpan #[⟨.fixed 10, .fixed 10⟩, ⟨.auto, .auto⟩] 5 0 2 == none
+
+/-- The offset of an item's margin box in its area (`Grid.selfOffset`), with the overflow
+position: a `safe` item larger than its area starts at the area's start (CSS Box
+Alignment 3 §4.4). -/
+def gridSelfOffset (a : Grid.SelfAlign) (safe : Bool) (area size : Nat) : Int :=
+  if safe && area < size then 0 else Grid.selfOffset a area size
+
+/-- Kind: conformance (CSS Box Alignment 3 §4.4). Says: a safe item never starts before
+its area's start. -/
+theorem gridSelfOffset_safe (a : Grid.SelfAlign) (area size : Nat) : 0 ≤ gridSelfOffset a true area size := by
+  unfold gridSelfOffset
+  split
+  · exact Int.le_refl 0
+  · rename_i h
+    have hle : size ≤ area := by simp at h; omega
+    exact (Grid.selfOffset_inside a area size hle).1
+
+/-- Whether the item's own or its container's value has `safe`. -/
+def gridSafe (own : ItemAlign) (ownSafe containerSafe : Bool) : Bool :=
+  if own == .auto then containerSafe else ownSafe
 
 /-- The explicit grid and the placement of the items of a grid container. -/
 structure GridPlan where
@@ -281,6 +306,8 @@ def gridLayoutH (kids : Children) (s : Computed) (items0 : Array Item) (box : Co
   let mut laid : Array (Result × Float × Float × Float × Float) := #[]   -- measured, x, border-box width, natural border-box height, area width
   -- the baseline-aligned items (§11.6): index, row, baseline from the margin box's top
   let mut baselined : Array (Nat × Nat × Nat) := #[]
+  -- the last-baseline-aligned items: index, row, last baseline up from the margin box's bottom
+  let mut lastBaselined : Array (Nat × Nat × Nat) := #[]
   -- baselines are horizontal ones: in a vertical writing mode (container or item) the item
   -- keeps its start alignment
   let horizontal := fun (is : Computed) =>
@@ -303,7 +330,8 @@ def gridLayoutH (kids : Children) (s : Computed) (items0 : Array Item) (box : Co
     let dx := match autoCrossOffset is.autoMarginLeft is.autoMarginRight (areaW-outerW) with
       | some d => d
       | none =>
-        let d := LU.toPx (Grid.selfOffset justify (gridUnits areaW) (gridUnits outerW))
+        let d := LU.toPx (gridSelfOffset justify (gridSafe is.align.justifySelf is.align.justifySelfSafe s.align.justifyItemsSafe)
+          (gridUnits areaW) (gridUnits outerW))
         if rtl then areaW-outerW-d else d
     let x := box.x+areaX+dx
     let padV := is.borderEdges.top+is.borderEdges.bottom+is.padding.top+is.padding.bottom
@@ -337,12 +365,22 @@ def gridLayoutH (kids : Children) (s : Computed) (items0 : Array Item) (box : Co
     if a.rowSpan == 1 && horizontal is && gridBaselineSelf is.align.alignSelf s.align.alignItems && !(is.grid.templateRows.subgrid && is.display.isGrid) then
       -- no line box: the baseline is synthesized from the border box's bottom edge
       baselined := baselined.push (i, a.row, gridUnits ((r.baseline.map (·-box.y)).getD (m.top+natural)))
+    if a.rowSpan == 1 && horizontal is && gridLastBaselineSelf is.align.alignSelf s.align.alignItems && !(is.grid.templateRows.subgrid && is.display.isGrid) then
+      let bottom := m.top+natural+m.bottom
+      lastBaselined := lastBaselined.push (i, a.row, gridUnits (max 0 (bottom-((r.lastBaseline.map (·-box.y)).getD (m.top+natural)))))
   -- §11.6: a baseline-aligned item asks of its row its height and its shift.
   let aligned := baselined.toList.map fun (_,row,b) => (row,b)
   let mut shifts : Array Nat := Array.replicate n 0
   for (i,row,b) in baselined do
     let shift := Grid.baselineShift aligned row b
     shifts := shifts.modify i fun _ => shift
+    rowItems := rowItems.modify i fun c => {c with minimum := c.minimum+shift, minContent := c.minContent+shift,
+                                                   maxContent := c.maxContent+shift}
+  let lastAligned := lastBaselined.toList.map fun (_,row,b) => (row,b)
+  let mut lastShifts : Array (Option Nat) := Array.replicate n none
+  for (i,row,b) in lastBaselined do
+    let shift := Grid.baselineShift lastAligned row b
+    lastShifts := lastShifts.modify i fun _ => some shift
     rowItems := rowItems.modify i fun c => {c with minimum := c.minimum+shift, minContent := c.minContent+shift,
                                                    maxContent := c.maxContent+shift}
   -- §12.3 step 3: the rows. A container with no definite height is as high as its rows,
@@ -405,9 +443,11 @@ def gridLayoutH (kids : Children) (s : Computed) (items0 : Array Item) (box : Co
     let outerH := height+m.top+m.bottom
     let shift := shifts.getD i 0
     let dy := if shift > 0 || (a.rowSpan == 1 && horizontal is && !rowSubgrid && gridBaselineSelf is.align.alignSelf s.align.alignItems) then gridPx shift
+      else if let some up := lastShifts.getD i none then areaH-outerH-gridPx up
       else match autoCrossOffset is.autoMarginTop is.autoMarginBottom (areaH-outerH) with
       | some d => d
-      | none => LU.toPx (Grid.selfOffset align (gridUnits areaH) (gridUnits outerH))
+      | none => LU.toPx (gridSelfOffset align (gridSafe is.align.alignSelf is.align.alignSelfSafe s.align.alignItemsSafe)
+          (gridUnits areaH) (gridUnits outerH))
     let y := box.y+LU.toPx extent.1+dy
     -- the inline axis of a right-to-left vertical grid runs bottom to top
     let y := if flipY then box.y+contentH-(y-box.y)-(height+m.top+m.bottom) else y
@@ -473,6 +513,8 @@ def alignTranspose (a : AlignStyle) : AlignStyle :=
   {a with justifyContent := a.alignContent, alignContent := a.justifyContent,
           justifyItems := a.alignItems, alignItems := a.justifyItems,
           justifySelf := a.alignSelf, alignSelf := a.justifySelf,
+          justifyItemsSafe := a.alignItemsSafe, alignItemsSafe := a.justifyItemsSafe,
+          justifySelfSafe := a.alignSelfSafe, alignSelfSafe := a.justifySelfSafe,
           rowGap := a.columnGap, columnGap := a.rowGap}
 
 /-- Kind: shape. Says: the area list of a grid `w` columns wide, exchanged, has `w` rows. -/
