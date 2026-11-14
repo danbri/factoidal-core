@@ -234,3 +234,60 @@ Open:
 - `:dir()` does not follow the directionality of form control values or slots.
 - No proof that `SheetReader.read` gives the rules of the CSS Syntax grammar; that
   `substitute` terminates is by fuel, and its result is tested, not proved.
+
+## Third part: the regressions of the first check, and more CSSOM
+
+The check of the 23 commits on main d799500c7 (10,374 names, against that commit's full
+run) gave +6,311 subtests with 122 tests worse (-890). The losses fell in three groups:
+
+1. False passes that a correct answer removes: the css-mixins, `if()`, `attr()`,
+   `random()` and `env()` tests compare two custom properties through
+   `getComputedStyle`; both were '' before custom properties had computed values.
+2. Bugs, fixed here:
+   - A shorthand read by its parts (`byGrammar`) when an alternative of its grammar
+     holds keywords or types outside any `<'property'>`: `white-space: pre` was read as
+     the initial values, `block-step: none` written back as `down`, `grid-template` areas
+     and `grid: auto-flow ...` refused. `tightAlternatives` keeps only the alternatives
+     that name their parts, `keywordLonghands` gives the legacy `white-space` keywords
+     their longhands, and a value of any other alternative keeps the shorthand whole.
+   - `font: 12px/1.5 Georgia` was not read by the layout cascade at all (and
+     `getComputedStyle(...).font` came from the parent): `fontLonghands`.
+   - A chain of custom properties that doubles at each step exhausted memory (a
+     crash): substitution stops at `CssVars.maxValueBytes`.
+   - Pseudo-element pairs, `:has()` in `:has()`, `*::before` serialisation,
+     `selector()` lists, `@keyframes` names, typed values on the axis shorthands,
+     `float` of an absolutely positioned box, `flex: 0 1 1`.
+3. Layout tests where more CSS is now read than the layout lays out (`block-size` and
+   the flow-relative sizes apply; `stretch` and the keyword sizes are the layout's).
+
+New since: `revert-layer` and `revert` roll back in `getComputedStyle`; a shorthand with
+`var()` gives its longhands after substitution; registered custom properties from
+`@property` rules (initial value, inheritance, computed value by the syntax);
+`CSSPropertyRule`; An+B, `@scope` preludes and namespace prefixes in `selectorText`;
+comments in selectors; `mediaText` of malformed queries; gap rule lists with
+`repeat()`; `inset()` radii; the types of relative colour components; `progress()`.
+
+### Proved, tested, open (third part)
+
+Proved: `keywordLonghands_whiteSpace` (the legacy keywords set exactly the three
+longhands), `tightAlternatives_oneOf` (the reading by parts keeps only alternatives of the
+table's grammar that it can read), `winningF_not_revert` (the cascaded value is never
+`revert` or `revert-layer`).
+
+Tested only (`#guard`): shorthand serialisations (white-space, block-step, grid, rule,
+corner: 15), the font shorthand in the cascade (3), the doubling chain, selector pairs and
+`:has()` nesting (18), comments (6), An+B (6), `@scope` (6), namespaces (5), `@property`
+(9 + 6 on pages), revert-layer on pages (3), `getComputedStyle` of `var()` shorthands (6),
+relative colour types (7), gap rule lists (6), `mediaText` (5), `progress()` (9).
+
+Open:
+
+- `CSS.registerProperty` is checked but its registration does not reach computed values:
+  the measure of a page sees the document, and a registration made by a script is not
+  in it yet (the spec keeps it on the document: a document-level field, or a command,
+  is the next step).
+- The resolved values of `top`/`left`/`bottom`/`right` need the layout's containing
+  block (getComputedStyle-insets-*).
+- `ch` and `ex` use the 0.5em fallback, not the font's glyphs.
+- Infinity and NaN in `calc()` are kept as written.
+- A colour with alpha is opaque in the layout profile (the paint model has no alpha).
