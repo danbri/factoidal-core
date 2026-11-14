@@ -13,6 +13,14 @@ function assert_rect(id, expected, tolerance) {
 function styleOf(id, property) {
   return getComputedStyle(document.getElementById(id)).getPropertyValue(property);
 }
+// A check that ends later: each runs on its own and fails on its own after `seconds` (2), so
+// that one feature a host lacks does not hold up the others. `run` answers a promise.
+function async_check(name, run, seconds) {
+  const t = async_test(name), limit = seconds || 2;
+  const timer = t.step_timeout(function () { assert_unreached('not finished within ' + limit + ' s'); }, limit * 1000);
+  Promise.resolve().then(run).then(function () { clearTimeout(timer); t.done(); },
+    function (error) { clearTimeout(timer); t.step(function () { throw error; }); });
+}
 // The checks that every fixture shares: the external sheet, the cascade's selectors and
 // values, and the layout modes. Each is one subtest, so a result names what failed.
 function sharedChecks() {
