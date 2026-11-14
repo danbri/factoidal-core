@@ -902,8 +902,8 @@
     // reads, once until the DOM or the viewport changes). The root element's client box
     // is the viewport.
     getBoundingClientRect() { const b = layoutOf(this); return new DOMRect(b[0], b[1], b[2], b[3]); }
-    // an element with no box (the engine answers "") has no client rects (CSSOM View §6.1)
-    getClientRects() { const s = n.query(nodeId(this), 17, ''); if (typeof s !== 'string' || s === '') return []; const b = layoutOf(this); return [new DOMRect(b[0], b[1], b[2], b[3])]; }
+    // an element with no box (the engine's twelfth number is -1) has no client rects (CSSOM View §6.1)
+    getClientRects() { const b = query(nodeId(this), 17, 8); if (b.length >= 12 && b[11] === -1) return []; return [new DOMRect(b[0], b[1], b[2], b[3])]; }
     get clientWidth() { return this === document.documentElement ? viewport()[0] : Math.round(layoutOf(this)[6]); }
     get clientHeight() { return this === document.documentElement ? viewport()[1] : Math.round(layoutOf(this)[7]); }
     get clientLeft() { return Math.round(layoutOf(this)[4]); }
