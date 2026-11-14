@@ -131,6 +131,14 @@ private def floatCss := "#f{float:left;width:30px;height:20px} #g{float:right;wi
 -- A float with no width is as wide as its content.
 #guard box floated "#f{float:left}" "f" == some (0,0,6,7)
 #guard box floated "#f{float:right}" "f" == some (194,0,6,7)
+-- A box that shrinks to fit is as wide as its floats side by side (30 + 40), and a float
+-- in it that clears starts a new row.
+private def menu := "<div id=u><div id=f>F</div><div id=g>G</div></div>"
+private def menuCss := "#u{float:left} #f{float:left;width:30px;height:20px} #g{float:left;width:40px;height:10px} "
+#guard box menu menuCss "u" == some (0,0,70,20)
+#guard box menu menuCss "g" == some (30,0,40,10)
+#guard box menu (menuCss ++ "#g{clear:left}") "u" == some (0,0,40,30)
+#guard box menu (menuCss ++ "#g{clear:left}") "g" == some (0,20,40,10)
 -- §9.5.2 clear: below the floats of that side.
 #guard box floated (floatCss ++ "#t{clear:left}") "t" == some (0,20,200,7)
 #guard box floated (floatCss ++ "#t{clear:right}") "t" == some (0,10,200,7)
