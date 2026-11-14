@@ -162,4 +162,29 @@ private def restylePage (style : String) : String :=
   | .ok rules => !CSS.readsStyleAttribute rules
   | .error _ => false)
 
+/-! ## Cost test: the nodes styled again
+
+`restyleWith` must style the named subtrees and nothing else, whatever the size of the
+page: the interpolation tests write one element's style and read a computed value some
+hundreds of times a page. The count is taken from outside: the rules given for the second
+pass put a width on every element, which the styles before do not have, so exactly the
+nodes that are styled again differ from the styles before. -/
+
+private def restyledCount (paragraphs : Nat) : Option Nat :=
+  let html := "<div>" ++ String.join (List.replicate paragraphs "<p>a <b>b</b></p>") ++ "<p id=\"t\">a <b>b</b></p></div>"
+  let d := DOM.parseHtmlDocument html
+  match CSS.parse "* { width: 77px }", firstWithId d "t", CSS.computeAll d [] with
+  | .ok marked, some t, .ok before =>
+    let ix := CSS.RuleIndex.build marked
+    match CSS.restyleWith (fun id => ix.matched (CSS.readKeys d) d id {}) d before [t] with
+    | .ok after =>
+      some ((List.range d.size).filter fun i =>
+        (after[i]?).map ComputedValues.text != (before[i]?).map ComputedValues.text).length
+    | .error _ => none
+  | _, _, _ => none
+
+-- the element and its one element child, on a page of 10 paragraphs and of 400
+#guard restyledCount 10 == some 2
+#guard restyledCount 400 == some 2
+
 end L4Factoidal.Rendering.Animation.Computed
