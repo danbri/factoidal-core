@@ -407,7 +407,9 @@ def stringOf (us : List Nat) : String := String.ofList (stringOf.go none us)
 
 A key crosses as tokens, one byte string each, in pre-order: `n` + 16 hex digits (a
 number's bits), `d` + 16 hex digits (a date's time value), `s` + a boundary string, `b` +
-the bytes, `A` + a count followed by that many keys (a dense array). The page side walks
+the bytes, `A` + a count followed by that many keys (a dense array), and `V` + kind,
+byte offset, byte length followed by a `b` token (a view on a buffer, in a stored value;
+the key is the bytes the view covers). The page side walks
 the JavaScript value ("convert a value to a key", §7.4) and writes `x` for a value that is
 not a key; whether a number is a key (NaN) is decided here. -/
 
@@ -436,6 +438,17 @@ def Key.read : Nat → Array Tok → Nat → Option (Key × Nat)
       | 'd' => (numOfTok t).map fun v => (.date v, i + 1)
       | 's' => some (.string (unitsOf (bodyStr t)), i + 1)
       | 'b' => some (.binary ((bodyOf t).toList.map (·.toNat)), i + 1)
+      | 'V' =>
+        -- a view on a buffer (a stored value's typed array or DataView): its bytes
+        match (bodyStr t).splitOn ",", ts[i + 1]? with
+        | [_, off, len], some b =>
+          match off.toNat?, len.toNat? with
+          | some off, some len =>
+            if tagOf b == 'b' && off + len + 1 ≤ b.size then
+              some (.binary ((b.extract (1 + off) (1 + off + len)).toList.map (·.toNat)), i + 2)
+            else none
+          | _, _ => none
+        | _, _ => none
       | 'A' =>
         match (bodyStr t).toNat? with
         | none => none

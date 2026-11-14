@@ -1067,6 +1067,7 @@ import L4Factoidal.Net.Storage
 import L4Factoidal.ClientStorage.Core
 import L4Factoidal.ClientStorage.IdbKey
 import L4Factoidal.ClientStorage.Sorted
+import L4Factoidal.ClientStorage.IdbValue
 import L4Factoidal.Net.Cookies
 import L4Factoidal.PageGl.Table
 import L4Factoidal.PageGl.Idl
