@@ -29,16 +29,18 @@ export type PageDecoder=(bytes:Uint8Array,contentType:string,fallback?:string,lo
 system's language; the host sets them, Lean decides with them (WebDocument.decodeBinWith). */
 let pageDecoding={fallback:"",locale:""};
 export function setPageDecoding(next:{fallback?:string;locale?:string}){pageDecoding={...pageDecoding,...next};}
-export async function readSource(url:string,signal?:AbortSignal,decode?:PageDecoder):Promise<{url:string;source:string;bytes:number;encoding?:string;raw:Uint8Array}> {
+export async function readSource(url:string,signal?:AbortSignal,decode?:PageDecoder):Promise<{url:string;source:string;bytes:number;encoding?:string;raw:Uint8Array;contentType:string;contentTypeOptions:string}> {
   const parsed=new URL(inputURL(url));
   const abort=()=>signal?.throwIfAborted();abort();
-  let bytes:Uint8Array,finalURL=url,contentType="";
+  let bytes:Uint8Array,finalURL=url,contentType="",contentTypeOptions="";
   if(parsed.protocol==="file:") {
     if((await Deno.stat(parsed)).size>MAX_SOURCE_BYTES)throw new Error("Native HTML resource exceeds 16 MiB");
     bytes=await Deno.readFile(parsed);abort();
   } else {
     const response=await fetch(parsed,{signal:AbortSignal.any([AbortSignal.timeout(10000),...(signal?[signal]:[])])});
     finalURL=inputURL(response.url);contentType=response.headers.get("content-type")??"";
+    // For a script fetch, Lean decides with this header whether the answer is a script (nosniff).
+    contentTypeOptions=response.headers.get("x-content-type-options")??"";
     if(!response.ok){await response.body?.cancel();throw new Error(`HTTP ${response.status}: ${url}`);}
     const reader=response.body?.getReader();
     if(!reader)throw new Error("Native HTML resource has no response body");
@@ -59,7 +61,7 @@ export async function readSource(url:string,signal?:AbortSignal,decode?:PageDeco
   const decoded=decode?await decode(bytes,contentType):undefined;
   const source=decoded?decoded.source:new TextDecoder("utf-8").decode(bytes);
   sourceBound(source);
-  return {url:finalURL,source,bytes:bytes.length,raw:bytes,...(decoded?{encoding:decoded.encoding}:{})};
+  return {url:finalURL,source,bytes:bytes.length,raw:bytes,contentType,contentTypeOptions,...(decoded?{encoding:decoded.encoding}:{})};
 }
 /** Limits on image bytes: each image, and all images of a page (Lean takes at most
 8 MiB of Base64 text for a page, which is 6 MiB of bytes). */
