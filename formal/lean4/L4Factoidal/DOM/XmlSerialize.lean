@@ -235,4 +235,23 @@ context namespace, the map that binds `xml` to the XML namespace, and prefix ind
 def serialize (d : Dom) (id : NodeId) : String :=
   (serializeNode d (d.size + 1) id none [(some xmlNS, ["xml"])] 1).1
 
+/-- The XML serialization of the children of node `id`, one after another, each with no
+context namespace: what `innerHTML` reads in an XML document (HTML §8.4.3 "fragment
+serializing algorithm steps", the XML branch). The children of a `template` element are
+its template contents. The prefix index runs on from child to child.
+
+The require well-formed flag of that algorithm is not implemented: where it would throw
+InvalidStateError, this gives the markup (open). -/
+def serializeChildren (d : Dom) (id : NodeId) : String :=
+  let n := d.get id
+  let kids : List NodeId :=
+    if n.type == .element && n.ns == some htmlNS && n.lname == "template" then
+      (match n.content with
+       | some c => (d.get c).kids.toList
+       | none => n.kids.toList)
+    else n.kids.toList
+  (kids.foldl (fun (acc : String × Nat) (c : NodeId) =>
+    let r := serializeNode d (d.size + 1) c none [(some xmlNS, ["xml"])] acc.2
+    (acc.1 ++ r.1, r.2)) ("", 1)).1
+
 end L4Factoidal.DOM.XmlSerialize
