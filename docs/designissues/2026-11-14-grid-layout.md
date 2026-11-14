@@ -81,7 +81,9 @@ theorem's doc comment states its kind, what it says and what it does not say):
   auto-placement never covers an explicitly placed item; with sparse packing the cursor
   never moves backwards (`step_cursor_le`, `foldl_step_cursor_le`); every area lies
   inside the grid the placement reports (`placeRows_inside`); one area for each item
-  (`place_size`).
+  (`place_size`); the column or row found for an item is the earliest free one
+  (`firstFreeCol_earliest`, `firstFreeRow_earliest`, `fitInRow_earliest`); placing the
+  placed areas again as definite positions gives the same areas (`placeAll_idem`).
 - Track sizing: the shares of flexible tracks add up to the space exactly
   (`frRound_sum`, `expandFlexible_sum`, `expandFlexible_sum_of_zero_base`); each share is
   proportional to its factor to within one unit (`share_proportional`); a track with a
@@ -118,13 +120,11 @@ the layout glue (`GridLayoutTests.lean`, original fixtures on a monospace test f
 
 Open:
 
-- An idempotence theorem for placement (placing the placed areas again as definite
-  positions gives the same areas).
 - The exact-sum theorem at the level of `sizeTracks` (it is proved for
   `expandFlexible`, which `sizeTracks` calls for flexible tracks in a definite space),
   and the sum when a flexible track is frozen at its base size in an earlier round (it
   holds for the last round, `frRound_sum`).
-- That each auto-placed slot is the earliest free one (tested, not proved).
+- That the dense cursor restarts at the start of the grid for every item (tested).
 - A cost theorem. The layout of a document is kept by its key
   (`FrameCost.layout_once_per_distinct_key`), so an unchanged document, and the grids in
   it, are not laid out again; there is no cache below the document.
