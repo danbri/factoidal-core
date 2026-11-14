@@ -306,7 +306,11 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
     // Liberal mode: when the script engine refuses to start (the setting names an engine this
     // host does not have), the page is drawn with its scripts not run, as Lean's scriptsOff skip.
     const turn=await Promise.resolve(scriptHost.start(document.source,document.url,supplied,document.encoding,
-      {...mode,...(resources.length?{resources}:{}),...(webFonts.length?{webFonts}:{})})).catch(error=>{
+      // The layout fields of the render request above (WebDocument.layoutFields): the layout
+      // the page's scripts read is then the one the page is drawn with (its images' sizes, a
+      // sheet that failed), and the engine keeps one layout for both, not two.
+      {...mode,...(resources.length?{resources}:{}),...(webFonts.length?{webFonts}:{}),...images,
+        ...(resourceFailures.length?{resourceFailures}:{})})).catch(error=>{
       if(!accept.liberal||signal?.aborted)throw error;
       addEntries(page,[{source:"System",severity:"warning",feature:"page scripts",where:document.url,
         message:String(error instanceof Error?error.message:error),action:"scripts not run"}]);
