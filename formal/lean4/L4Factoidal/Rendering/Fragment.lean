@@ -90,6 +90,10 @@ structure Result where
   /-- The grid of the grid container whose contents this is (`GridFrame`); none
   elsewhere. -/
   grid : Option GridFrame := none
+  /-- The first baseline of the fragment (CSS Box Alignment 3 §9.1), page y: that of its
+  first line box; none when it has no line box (the consumer then synthesizes one from
+  the border box). Combining fragments keeps the first one. -/
+  baseline : Option Float := none
   deriving Repr
 instance : Inhabited Result := ⟨{}⟩
 
@@ -102,12 +106,13 @@ def Result.shift (dx dy : Float) (r : Result) : Result :=
           runs := r.runs.map fun run => {run with glyphs := run.glyphs.map fun g => {g with x := g.x+dx, y := g.y+dy}},
           pending := r.pending.map fun p => {p with x := p.x+dx, y := p.y+dy},
           floats := r.floats.map fun f => {f with x := f.x+LU.ofPx dx, y := f.y+LU.ofPx dy},
-          grid := r.grid.map fun g => {g with x := g.x+dx, y := g.y+dy}}
+          grid := r.grid.map fun g => {g with x := g.x+dx, y := g.y+dy},
+          baseline := r.baseline.map (·+dy)}
 
 /-- Two fragments in one: the paint of `b` over that of `a`. The height is `a`'s. -/
 def Result.over (a b : Result) : Result :=
   {a with nodes := a.nodes ++ b.nodes, boxes := a.boxes ++ b.boxes, runs := a.runs ++ b.runs,
-          pending := a.pending ++ b.pending}
+          pending := a.pending ++ b.pending, baseline := a.baseline <|> b.baseline}
 
 /-- What a parent formatting context imposes on a child box. -/
 structure Constraints where

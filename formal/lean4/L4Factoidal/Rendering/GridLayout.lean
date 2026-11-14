@@ -2,6 +2,7 @@ import L4Factoidal.Rendering.Fragment
 import L4Factoidal.Rendering.FlexLayout
 import L4Factoidal.Rendering.Grid.Align
 import L4Factoidal.Rendering.Grid.Abspos
+import L4Factoidal.Rendering.Grid.Baseline
 
 /-! Grid layout (CSS Grid Layout 2) of a container's items: this module reads the
 computed values (`Computed.grid`, `Computed.align`), asks the pure modules under
@@ -72,6 +73,11 @@ def gridSelfAlign (own container : ItemAlign) (reverse : Bool) (flip : Bool := f
   | .left => if reverse then .end_ else .start
   | .right => if reverse then .start else .end_
   | .center => .center
+
+/-- The item takes part in baseline alignment in its row (`align-self: baseline`, or
+`auto` with `align-items: baseline`). `last baseline` is read as `start`. -/
+def gridBaselineSelf (own container : ItemAlign) : Bool :=
+  (if own == .auto then container else own) == .baseline
 
 #guard gridSelfAlign .selfStart .normal false true == .end_
 #guard gridSelfAlign .selfEnd .normal false true == .start
@@ -259,6 +265,8 @@ def gridLayout (kids : Children) (s : Computed) (items0 : Array Item) (box : Con
   -- §12.3 step 2: each item at the width its columns give it; its height is what it asks
   -- of its rows.
   let mut laid : Array (Result × Float × Float × Float × Float) := #[]   -- measured, x, border-box width, natural border-box height, area width
+  -- the baseline-aligned items (§11.6): index, row, baseline from the margin box's top
+  let mut baselined : Array (Nat × Nat × Nat) := #[]
   let mut rowItems : Array Grid.Contribution := #[]
   for i in [0:n] do
     let item := items[i]!
@@ -291,6 +299,17 @@ def gridLayout (kids : Children) (s : Computed) (items0 : Array Item) (box : Con
     let outerH := gridUnits (natural+m.top+m.bottom)
     rowItems := rowItems.push {start := a.row, span := a.rowSpan, minimum := outerH, minContent := outerH, maxContent := outerH}
     laid := laid.push (r,x,width,natural,areaW)
+    if a.rowSpan == 1 && gridBaselineSelf is.align.alignSelf s.align.alignItems then
+      -- no line box: the baseline is synthesized from the border box's bottom edge
+      baselined := baselined.push (i, a.row, gridUnits ((r.baseline.map (·-box.y)).getD (m.top+natural)))
+  -- §11.6: a baseline-aligned item asks of its row its height and its shift.
+  let aligned := baselined.toList.map fun (_,row,b) => (row,b)
+  let mut shifts : Array Nat := Array.replicate n 0
+  for (i,row,b) in baselined do
+    let shift := Grid.baselineShift aligned row b
+    shifts := shifts.modify i fun _ => shift
+    rowItems := rowItems.modify i fun c => {c with minimum := c.minimum+shift, minContent := c.minContent+shift,
+                                                   maxContent := c.maxContent+shift}
   -- §12.3 step 3: the rows. A container with no definite height is as high as its rows,
   -- within its min-height and max-height; when those change the height, the rows are
   -- sized again in it.
@@ -340,7 +359,9 @@ def gridLayout (kids : Children) (s : Computed) (items0 : Array Item) (box : Con
           max padV (clampOpt (minH+padV) (maxH.map (·+padV)) (areaH-m.top-m.bottom))
         else natural
     let outerH := height+m.top+m.bottom
-    let dy := match autoCrossOffset is.autoMarginTop is.autoMarginBottom (areaH-outerH) with
+    let shift := shifts.getD i 0
+    let dy := if shift > 0 || (a.rowSpan == 1 && gridBaselineSelf is.align.alignSelf s.align.alignItems) then gridPx shift
+      else match autoCrossOffset is.autoMarginTop is.autoMarginBottom (areaH-outerH) with
       | some d => d
       | none => LU.toPx (Grid.selfOffset align (gridUnits areaH) (gridUnits outerH))
     let y := box.y+LU.toPx extent.1+dy

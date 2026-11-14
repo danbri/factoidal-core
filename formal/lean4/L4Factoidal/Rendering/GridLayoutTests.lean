@@ -161,4 +161,13 @@ private def tracks (html extra id : String) : Option (String × String) := do
 #guard box "<div id=c><div id=a>A</div></div>" "#c{display:grid;grid-template-rows:60%}" "c" == some (0,0,200,7)
 #guard (box "<div id=c><div id=a>A</div></div>" "#c{display:grid;grid-template-rows:60%}" "a").map (·.2.2.2) == some 4.1875
 
+
+-- Baseline alignment (§11.6): with a 14 px font the second item's baseline is 7 px lower,
+-- so the first moves down 7 px; the row is as high as the shifted item needs.
+#guard box "<div id=c><div id=a>A</div><div id=b>B</div></div>" "#c{display:grid;grid-template-columns:50px 50px;align-items:baseline} #b{font-size:14px;line-height:14px}" "a" == some (0,7,50,7)
+#guard box "<div id=c><div id=a>A</div><div id=b>B</div></div>" "#c{display:grid;grid-template-columns:50px 50px;align-items:baseline} #b{font-size:14px;line-height:14px}" "b" == some (50,0,50,14)
+#guard box "<div id=c><div id=a>A</div><div id=b>B</div></div>" "#c{display:grid;grid-template-columns:50px 50px;align-items:baseline} #b{font-size:14px;line-height:14px}" "c" == some (0,0,200,14)
+-- an item with no line box: its baseline is its border box's bottom edge
+#guard box "<div id=c><div id=a></div><div id=b>B</div></div>" "#c{display:grid;grid-template-columns:50px 50px;align-items:baseline} #a{height:20px}" "b" == some (50,13,50,7)
+
 end L4Factoidal.Rendering.GridLayoutTests
