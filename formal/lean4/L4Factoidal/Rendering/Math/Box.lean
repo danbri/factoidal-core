@@ -479,4 +479,24 @@ theorem padded_none (c : MBox) (hw : 0 ≤ c.width) (ha : 0 ≤ c.ascent) (hd : 
 #guard stretchSize 10 50 [20, 40] false == 40 && stretchSize 10 50 [20, 40] true == 50 &&
        stretchSize 10 30 [20, 40] true == 40 && stretchSize 10 5 [20, 40] true == 10
 
+/-! ### Axioms of the theorems above (the build log shows them) -/
+
+#print axioms mirror_inside
+#print axioms mirror_mirror
+#print axioms rowWidth_eq_sum
+#print axioms row_child_fits
+#print axioms rowAscent_tight
+#print axioms rowDescent_tight
+#print axioms fraction_contains
+#print axioms fraction_bar_between
+#print axioms fraction_num_above_baseline
+#print axioms scripts_contains
+#print axioms scripts_gap
+#print axioms underOver_contains
+#print axioms radical_contains
+#print axioms stretchSize_ge_base
+#print axioms stretchSize_reaches
+#print axioms space_nonneg
+#print axioms padded_none
+
 end L4Factoidal.Rendering.Math

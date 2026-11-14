@@ -368,4 +368,13 @@ theorem depthScale_same (d : Int) : depthScale d d = (false, 0) := by
 #guard depthScale 0 2 == (false, 2) && depthScale 3 1 == (true, 2)
 #guard keyLE Level.ua.key Level.hint.key && !keyLE Level.hint.key Level.ua.key && keyLE Level.hint.key Level.uaImportant.key
 
+/-! ### Axioms of the theorems above (the build log shows them) -/
+
+#print axioms keyLE_refl
+#print axioms place_idem
+#print axioms hint_le_author
+#print axioms author_over_hint
+#print axioms hint_over_ua
+#print axioms depthScale_same
+
 end L4Factoidal.Rendering.Math

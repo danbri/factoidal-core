@@ -159,4 +159,12 @@ def formOf (value : String) : Option Form :=
 #guard formOf " Prefix " == some Form.pre && formOf "x" == none
 #guard operatorDictionaryData.size == 1180
 
+/-! ### Axioms of the theorems above (the build log shows them) -/
+
+#print axioms formAt_cases
+#print axioms lookupWith_default
+#print axioms lookupWith_found
+#print axioms lookupWith_explicit_missing
+#print axioms decode_spaces
+
 end L4Factoidal.Rendering.Math

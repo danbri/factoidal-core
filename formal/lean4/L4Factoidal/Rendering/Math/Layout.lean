@@ -410,4 +410,9 @@ def layoutNode {α : Type} (dom : Dom) (styles : Array Computed)
       | _, _ => row kids rtl
     return wrap id (if name == "mtd" then cellStyle s else s) content
 
+/-! ### Axioms of the theorems above (the build log shows them) -/
+
+#print axioms sized_min
+#print axioms sized_auto
+
 end L4Factoidal.Rendering.Math
