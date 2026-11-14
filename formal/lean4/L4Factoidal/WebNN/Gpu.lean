@@ -208,25 +208,30 @@ def transposeKernel (perm : List Nat) (inShape : Shape) : Except String Wgsl.Mod
   if Shape.size out > maxElements then throw "webnn gpu: output too large for one dispatch"
   Wgsl.finish (kernel ["x"] out (.index (.name "x") (flatIndex (transposeMap perm) inShape)))
 
-/-- A kernel whose output element `k` is accumulated over `count` steps of a loop counter
-`t` (`for (var t = lo; t < min(count, count); t++)`, a `forCap` loop: its cost bound is
-`count`): `acc` starts at `init`, each step does `acc = step`, the output is `fin`. -/
-def foldKernel (ins : List String) (outShape : Shape) (count lo : Nat) (init : Wgsl.Expr)
-    (step : Wgsl.Expr) (fin : Wgsl.Expr) : Wgsl.Module :=
-  let loop := Wgsl.Stmt.forCap "t" .u32 lo (u count) count (stmts [.assign (.name "acc") "" step])
+/-- A kernel whose output element `k` comes from variables `decls` updated by `steps` over
+`count` iterations of a loop counter `t` (a `forCap` loop, cost bound `count`). -/
+def loopKernel (ins : List String) (outShape : Shape) (count lo : Nat) (decls : List Wgsl.Stmt)
+    (steps : Wgsl.Stmts) (fin : Wgsl.Expr) : Wgsl.Module :=
+  let loop := Wgsl.Stmt.forCap "t" .u32 lo (u count) count steps
   let m := kernel ins outShape fin
-  -- the accumulation goes before the store of `kernel`'s body
   let body := match m.fns with
     | [f] => match f.body with
       | .cons k (.cons (.ifS c inner e) .nil) =>
         let rec splice : Wgsl.Stmts → Wgsl.Stmts
-          | .cons (.assign l op v) .nil => .cons (.varS "acc" none (some init)) (.cons loop (.cons (.assign l op v) .nil))
+          | .cons (.assign l op v) .nil => stmts (decls ++ [loop, .assign l op v])
           | .cons st rest => .cons st (splice rest)
           | .nil => .nil
         Wgsl.Stmts.cons k (.cons (.ifS c (splice inner) e) .nil)
       | b => b
     | _ => .nil
   { m with fns := m.fns.map fun f => { f with body := body } }
+
+/-- A kernel whose output element `k` is accumulated over `count` steps of a loop counter
+`t` (`for (var t = lo; t < min(count, count); t++)`, a `forCap` loop: its cost bound is
+`count`): `acc` starts at `init`, each step does `acc = step`, the output is `fin`. -/
+def foldKernel (ins : List String) (outShape : Shape) (count lo : Nat) (init : Wgsl.Expr)
+    (step : Wgsl.Expr) (fin : Wgsl.Expr) : Wgsl.Module :=
+  loopKernel ins outShape count lo [.varS "acc" none (some init)] (stmts [.assign (.name "acc") "" step]) fin
 
 /-- matmul (`Compute.matmul`): `a` of shape `[..., M, K]`, `b` of `[..., K, N]`, output
 `[..., M, N]`, the batch dimensions broadcast by `expandMap` (as the CPU's `broadcastMap`);
@@ -283,6 +288,74 @@ def reduceKernel (name : String) (s : Shape) (axes : List Nat) : Except String W
   let init := if fromFirst then x (u 0) else f (if name == "reduceProduct" then "1.0" else "0.0")
   Wgsl.finish (foldKernel ["x"] keptShape count (if fromFirst then 1 else 0) init (stepF (.name "acc") (x (.name "t"))) (finF (.name "acc")))
 
+def nm (s : String) : Wgsl.Expr := .name s
+def add (a b : Wgsl.Expr) : Wgsl.Expr := .binary "+" a b
+def mulE (a b : Wgsl.Expr) : Wgsl.Expr := .binary "*" a b
+def andE (a b : Wgsl.Expr) : Wgsl.Expr := .binary "&&" a b
+
+/-- The window loop of conv2d and pooling, as `Compute.conv2dNchw` / `pool2dNchw` index it:
+for loop step `t` over (`ic`,) `ky`, `kx`: `iy = y·sh + ky·dh`, `ix = x·sw + kx·dw`, and the
+cell is inside when `iy ≥ pt ∧ iy - pt < h ∧ ix ≥ pl ∧ ix - pl < w` (the same `Nat` tests). -/
+def windowLets (kh kw sh sw dh dw : Nat) : List Wgsl.Stmt :=
+  [.letS "ky" none (.binary "%" (.binary "/" (nm "t") (u kw)) (u kh)),
+   .letS "kx" none (.binary "%" (nm "t") (u kw)),
+   .letS "iy" none (add (mulE (nm (coordName 2)) (u sh)) (mulE (nm "ky") (u dh))),
+   .letS "ix" none (add (mulE (nm (coordName 3)) (u sw)) (mulE (nm "kx") (u dw)))]
+
+def inside (h w pt pl : Nat) : Wgsl.Expr :=
+  andE (andE (.binary ">=" (nm "iy") (u pt)) (.binary "<" (.binary "-" (nm "iy") (u pt)) (u h)))
+       (andE (.binary ">=" (nm "ix") (u pl)) (.binary "<" (.binary "-" (nm "ix") (u pl)) (u w)))
+
+/-- conv2d on an NCHW input and an OIHW filter (`Compute.conv2dNchw`): output `[n, oc, oh, ow]`,
+`groups` groups, optional bias; padding `[top, bottom, left, right]`. -/
+def conv2dKernel (inShape filterShape out : Shape) (strides dilations padding : List Nat) (groups : Nat)
+    (bias : Bool) : Except String Wgsl.Module := do
+  let g := fun (l : List Nat) (i : Nat) => l.getD i 0
+  let c := g inShape 1; let h := g inShape 2; let wd := g inShape 3
+  let oc := g filterShape 0; let icg := g filterShape 1; let kh := g filterShape 2; let kw := g filterShape 3
+  if inShape.length != 4 || filterShape.length != 4 || out.length != 4 || groups == 0 || oc % groups != 0 then
+    throw "webnn gpu: conv2d shapes"
+  if Shape.size out > maxElements then throw "webnn gpu: output too large for one dispatch"
+  let count := icg * kh * kw
+  if count == 0 || count > Wgsl.maxCapLoop then throw "webnn gpu: conv2d window out of range"
+  let ocg := oc / groups
+  let pt := g padding 0; let pl := g padding 2
+  let lets := [Wgsl.Stmt.letS "ic" none (.binary "/" (nm "t") (u (kh * kw)))] ++
+    windowLets kh kw (g strides 0) (g strides 1) (g dilations 0) (g dilations 1) ++
+    [.letS "cin" none (add (mulE (.binary "/" (nm (coordName 1)) (u ocg)) (u icg)) (nm "ic"))]
+  let xi := add (mulE (add (mulE (add (mulE (nm (coordName 0)) (u c)) (nm "cin")) (u h)) (.binary "-" (nm "iy") (u pt))) (u wd))
+    (.binary "-" (nm "ix") (u pl))
+  let wi := add (mulE (add (mulE (add (mulE (nm (coordName 1)) (u icg)) (nm "ic")) (u kh)) (nm "ky")) (u kw)) (nm "kx")
+  let step := Wgsl.Stmt.ifS (inside h wd pt pl)
+    (stmts [.assign (nm "acc") "" (add (nm "acc") (mulE (.index (nm "x") xi) (.index (nm "w") wi)))]) .nil
+  let fin := if bias then add (nm "acc") (.index (nm "bias") (nm (coordName 1))) else nm "acc"
+  Wgsl.finish (loopKernel (if bias then ["x", "w", "bias"] else ["x", "w"]) out count 0
+    [.varS "acc" none (some (f "0.0"))] (stmts (lets ++ [step])) fin)
+
+/-- averagePool2d and maxPool2d on an NCHW input (`Compute.pool2dNchw`): padding cells are not
+part of a window; a window with no cell gives 0. -/
+def poolKernel (name : String) (inShape out : Shape) (window strides dilations padding : List Nat) :
+    Except String Wgsl.Module := do
+  let g := fun (l : List Nat) (i : Nat) => l.getD i 0
+  let c := g inShape 1; let h := g inShape 2; let wd := g inShape 3
+  let kh := g window 0; let kw := g window 1
+  if inShape.length != 4 || out.length != 4 then throw "webnn gpu: pool shapes"
+  if name != "averagePool2d" && name != "maxPool2d" then throw s!"webnn gpu: no kernel for {name}"
+  if Shape.size out > maxElements then throw "webnn gpu: output too large for one dispatch"
+  let count := kh * kw
+  if count == 0 || count > Wgsl.maxCapLoop then throw "webnn gpu: pool window out of range"
+  let pt := g padding 0; let pl := g padding 2
+  let v := Wgsl.Expr.index (nm "x") (add (mulE (add (mulE (add (mulE (nm (coordName 0)) (u c)) (nm (coordName 1))) (u h))
+    (.binary "-" (nm "iy") (u pt))) (u wd)) (.binary "-" (nm "ix") (u pl)))
+  let upd := if name == "maxPool2d"
+    then Wgsl.Stmt.ifS (.binary "==" (nm "cnt") (u 0)) (stmts [.assign (nm "acc") "" v]) (stmts [.assign (nm "acc") "" (call2 "max" (nm "acc") v)])
+    else .assign (nm "acc") "" (add (nm "acc") v)
+  let step := Wgsl.Stmt.ifS (inside h wd pt pl) (stmts [upd, .assign (nm "cnt") "" (add (nm "cnt") (u 1))]) .nil
+  let value := if name == "maxPool2d" then nm "acc" else .binary "/" (nm "acc") (.call (.ty (.scalar .f32)) (.cons (nm "cnt") .nil))
+  let fin := Wgsl.Expr.call (.fn "select") (.cons value (.cons (f "0.0") (.cons (.binary "==" (nm "cnt") (u 0)) .nil)))
+  Wgsl.finish (loopKernel ["x"] out count 0 [.varS "acc" none (some (f "0.0")), .varS "cnt" none (some (u 0))]
+    (stmts (windowLets kh kw (g strides 0) (g strides 1) (g dilations 0) (g dilations 1) ++ [step])) fin)
+
 /-- Workgroups to dispatch for `n` output elements. -/
 def groups (n : Nat) : Nat := (n + wg - 1) / wg
 
@@ -312,6 +385,9 @@ def printed : Except String Wgsl.Module → String
 #guard (["reduceSum", "reduceMean", "reduceL1", "reduceSumSquare", "reduceProduct", "reduceMax", "reduceMin"].all
   fun n => !(printed (reduceKernel n [2, 3, 4] [1])).startsWith "error")
 #guard (printed (reduceKernel "reduceLogSum" [2, 3] [1])).startsWith "error"
+#guard !(printed (conv2dKernel [1, 4, 8, 8] [6, 2, 3, 3] [1, 6, 8, 8] [1, 1] [1, 1] [1, 1, 1, 1] 2 true)).startsWith "error"
+#guard !(printed (poolKernel "averagePool2d" [1, 2, 8, 8] [1, 2, 4, 4] [3, 3] [2, 2] [1, 1] [1, 1, 1, 1])).startsWith "error"
+#guard !(printed (poolKernel "maxPool2d" [1, 2, 8, 8] [1, 2, 4, 4] [3, 3] [2, 2] [1, 1] [1, 1, 1, 1])).startsWith "error"
 #guard (printed (matmulKernel [2, 70000] [70000, 2] [2, 2])).startsWith "error"
 -- the u32 evaluator on the printed coordinate of a slice
 #guard evalU (fun s => if s == "o0" then some 5 else none) (emitC coordName (.add (.lit 2) (.mulLit (.out 0) 3))) == some 17
