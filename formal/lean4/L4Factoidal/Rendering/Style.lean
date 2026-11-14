@@ -3,6 +3,7 @@ import L4Factoidal.DOM.OfHtml
 import L4Factoidal.Unicode.Bidi
 import L4Factoidal.Rendering.MediaQuery
 import L4Factoidal.Rendering.CssValues.Properties
+import L4Factoidal.Rendering.SheetReader
 import L4Factoidal.DOM.Selectors
 import Std.Data.TreeMap
 import Std.Data.HashMap
@@ -192,6 +193,9 @@ structure Rule where
   /-- The shadow root whose style sheet the rule is from (CSS Scoping 1 §3.1); none for
   the document's. -/
   scope : Option Nat := none
+  /-- The place of the rule's cascade layer in the layer order of its sheet (CSS Cascade 5
+  §6.4, `SheetReader.rankOf`): 0 for a rule in no layer, 1 for the first layer declared. -/
+  layer : Nat := 0
   deriving Repr
 
 def attrValue (n : DOM.Node) (key : String) : String :=
@@ -368,7 +372,8 @@ private def selector (s : String) : Except String Selector :=
   | .error _ => complexSelector s
 
 private def expandEdges (key value : String) (important : Bool) : Except String (List Declaration) := do
-  let values ← match words value with
+  -- the component values: `calc(1px + 2px)` and `var(--a, 1px 2px)` are one each
+  let values ← match SheetReader.splitWords value with
     | [a] => pure [a,a,a,a]
     | [a,b] => pure [a,b,a,b]
     | [a,b,c] => pure [a,b,c,b]
@@ -377,69 +382,21 @@ private def expandEdges (key value : String) (important : Bool) : Except String 
   return (["top","right","bottom","left"].zip values).map fun (side,v) =>
     ⟨key ++ "-" ++ side,v,important⟩
 
-/-- A declaration this profile can not read is dropped; the others stand. -/
-def declarations (s : String) : Except String (List Declaration) := do
-  let mut out : List Declaration := []
-  for item in s.splitOn ";" do
-    let item := trim item
-    if let key::first::more := item.splitOn ":" then
-      let value := trim (":".intercalate (first::more))
-      let important := value.endsWith "!important"
-      let value := if important then trim ((value.dropEnd 10).toString) else value
-      -- a custom property name is case-sensitive (CSS Variables 1 §2)
-      let key := if (trim key).startsWith "--" then trim key else (trim key).toLower
-      let key := if key == "background" then "background-color" else key
-      let expanded := if ["margin","padding"].contains key then
-          (expandEdges key value important).toOption.getD []
-        else [⟨key,value,important⟩]
-      for declaration in expanded do out := declaration :: out
-  return out.reverse
+/-- The declarations of this profile for declarations as written (`SheetReader.Decl`):
+`margin` and `padding` as their four sides, `background` as the colour. -/
+def declarationsOf (ds : List SheetReader.Decl) : List Declaration :=
+  ds.foldr (fun d acc =>
+    let key := if d.name == "background" then "background-color" else d.name
+    if key == "margin" || key == "padding" then
+      (expandEdges key d.value d.important).toOption.getD [] ++ acc
+    else ⟨key,d.value,d.important⟩ :: acc) []
 
-/-- CSS comments are removed before tokenizing this deliberately small grammar.
-A comment that never closes runs to the end of the input. -/
-private def comments (s : String) : String := Id.run do
-  let pieces := s.splitOn "/*"
-  let mut out := pieces.headD ""
-  for p in pieces.drop 1 do
-    if let _::first::more := p.splitOn "*/" then out := out ++ "*/".intercalate (first::more)
-  return out
-
-/-- The top level of a sheet, as (prelude, block) pairs. Blocks nest inside
-at-rules and strings hide braces, so this counts them. A sheet that stops early
-closes itself, as CSS says. One pass over the characters: no recursion. -/
-private def topLevel (source : String) : List (String × String) := Id.run do
-  let mut out : List (String × String) := []
-  let mut prelude := ""
-  let mut body := ""
-  let mut depth := 0
-  let mut quote : Option Char := none
-  let mut escaped := false
-  for c in source.toList do
-    let structural := quote.isNone && (c == '{' || c == '}' || (c == ';' && depth == 0))
-    if let some q := quote then
-      if escaped then escaped := false
-      else if c == '\\' then escaped := true
-      else if c == q then quote := none
-    else if c == '"' || c == '\'' then quote := some c
-    if !structural then
-      if depth == 0 then prelude := prelude.push c else body := body.push c
-    else if c == '{' then
-      if depth > 0 then body := body.push c
-      depth := depth+1
-    else if c == '}' then
-      if depth == 0 then prelude := ""
-      else if depth == 1 then
-        out := (prelude,body) :: out
-        prelude := ""
-        body := ""
-        depth := 0
-      else
-        body := body.push c
-        depth := depth-1
-    else if (trim prelude).startsWith "@" then prelude := ""
-    else prelude := prelude.push c
-  if depth > 0 then out := (prelude,body) :: out
-  return out.reverse
+/-- The declarations of a declaration list (a `style` attribute), split as CSS Syntax 3
+says (`SheetReader.splitDecls`: a `;` in a string, a `url()` or a block ends nothing).
+A declaration this profile can not read is dropped later (`applyOrKeep`); the others
+stand. -/
+def declarations (s : String) : Except String (List Declaration) :=
+  .ok (declarationsOf (SheetReader.splitDecls s))
 
 /-- A media query list of `@media` (Media Queries Level 4 §2) holds for the media
 type `medium` when one of its queries is that type or `all`, with an optional
@@ -453,73 +410,78 @@ def mediaMatches (medium queries : String) : Bool :=
     | [kind] => kind == medium || kind == "all"
     | _ => false
 
-/-- Rules of a sheet in the media environment `env` (`MediaQuery.Env`: the media type,
-and the viewport and colour scheme when the host gives them). The rules of an `@media`
-block whose query list holds in `env` (`MediaQuery.applies`) are read in place; a list
-that `MediaQuery` can not read does not hold. Other at-rules are skipped whole, as is an
-`@media` block in an `@media` block. A rule with a selector this profile can not read
-is dropped whole, as CSS drops an invalid selector list. Only the first 131072
-characters of a sheet are read. -/
-def parseInBlocks (env : MediaQuery.Env) (source : String) : Except String (List Rule) := do
-  let mut out : List Rule := []
-  for (head,body) in topLevel (comments (source.take 131072).toString) do
-    let head := trim head
-    let blocks := if !head.startsWith "@" then [(head,body)]
-      else if (head.take 6).toString.toLower == "@media" && MediaQuery.applies env (head.drop 6).toString
-        then topLevel body
-      else []
-    for (inner,content) in blocks do
-      if !(trim inner).startsWith "@" then
-        if let .ok selectors := (splitTopCommas inner).mapM selector then
-          out := {selectors, declarations := ← declarations content} :: out
-  return out.reverse
+/-- The most bytes of a sheet text that are read: 8 MiB. The text of all the sheets of a
+document is read as one (`WebDocument.sheetSource`), and a large site's sheets are a few
+hundred kilobytes to a few megabytes. The bound keeps the cost of a hostile page's sheet
+finite; what is past it is not read. -/
+def maxSheetBytes : Nat := 8388608
 
-/-- The rules of a sheet, each with the query list of its `@media` block (none outside
-one), before any media environment is read: what `parseIn` filters. -/
-def parseRaw (source : String) : Except String (List (Option String × Rule)) := do
-  let mut out : List (Option String × Rule) := []
-  for (head,body) in topLevel (comments (source.take 131072).toString) do
-    let head := trim head
-    let blocks : List (Option String × String × String) := if !head.startsWith "@" then [(none,head,body)]
-      else if (head.take 6).toString.toLower == "@media" then
-        let query := (head.drop 6).toString
-        (topLevel body).map fun (inner,content) => (some query,inner,content)
-      else []
-    for (query,inner,content) in blocks do
-      if !(trim inner).startsWith "@" then
-        if let .ok selectors := (splitTopCommas inner).mapM selector then
-          out := (query,{selectors, declarations := ← declarations content}) :: out
-  return out.reverse
+/-- The leaves of a sheet text (`SheetReader.read`), with `@supports` conditions answered
+by the property table (`CssSupports.ruleHolds`). -/
+def sheetLeaves (source : String) : Array SheetReader.Leaf :=
+  SheetReader.read CssSupports.ruleHolds
+    (if source.utf8ByteSize ≤ maxSheetBytes then source else (source.take maxSheetBytes).toString)
+
+/-- A style rule of a sheet with the query lists of the `@media` rules around it, innermost
+first (none outside one): the rule applies when every list holds. -/
+abbrev RawRule := List String × Rule
+
+/-- The style rule of a leaf of a sheet. A rule with a selector this profile can not read
+is dropped whole, as CSS drops an invalid selector list. -/
+def ruleOfLeaf (leaf : SheetReader.Leaf) : Option Rule :=
+  if !leaf.kind.isEmpty then none
+  else match (splitTopCommas leaf.prelude).mapM selector with
+    | .ok selectors => some {selectors, declarations := declarationsOf leaf.decls, layer := leaf.rank}
+    | .error _ => none
+
+/-- The rules of a sheet, each with the query lists of the `@media` rules it is in, before
+any media environment is read: what `parseInRaw` filters. Read by `SheetReader`: rules in
+`@media` (nested too), in `@supports` when the condition holds, in `@layer` (with the
+layer's place in the layer order), and nested style rules; `@container`, `@scope` and
+`@starting-style` blocks are skipped. -/
+def parseRaw (source : String) : Except String (List RawRule) :=
+  .ok ((sheetLeaves source).toList.filterMap fun leaf => (ruleOfLeaf leaf).map fun rule => (leaf.media,rule))
 
 /-- The rules of `parseRaw` that hold in the media environment `env`: those outside an
-`@media` block or in one whose query list holds. A relayout at another width needs only
-this step; a host may keep what `parseRaw` read (realperf: reading Wikipedia's sheets
+`@media` block or in blocks whose query lists all hold. A relayout at another width needs
+only this step; a host may keep what `parseRaw` read (realperf: reading Wikipedia's sheets
 again was 30 ms of each relayout). -/
-def parseInRaw (env : MediaQuery.Env) (raw : List (Option String × Rule)) : List Rule :=
-  raw.filterMap fun (query,rule) => if query.all (MediaQuery.applies env) then some rule else none
+def parseInRaw (env : MediaQuery.Env) (raw : List RawRule) : List Rule :=
+  raw.filterMap fun (queries,rule) => if queries.all (MediaQuery.applies env) then some rule else none
 
-/-- Rules of a sheet in the media environment `env`: `parseRaw`, then `parseInRaw`. Agrees
-with `parseInBlocks`, which reads the blocks in place (`CascadeTests`). -/
+/-- Rules of a sheet in the media environment `env` (`MediaQuery.Env`: the media type,
+and the viewport and colour scheme when the host gives them), with the media conditions
+tested before a rule's selectors are read. A list that `MediaQuery` can not read does not
+hold. Agrees with `parseIn` (`parseInBlocks_eq`). -/
+def parseInBlocks (env : MediaQuery.Env) (source : String) : Except String (List Rule) :=
+  .ok ((sheetLeaves source).toList.filterMap fun leaf =>
+    if leaf.media.all (MediaQuery.applies env) then ruleOfLeaf leaf else none)
+
+/-- Rules of a sheet in the media environment `env`: `parseRaw`, then `parseInRaw`. -/
 def parseIn (env : MediaQuery.Env) (source : String) : Except String (List Rule) := do
   return parseInRaw env (← parseRaw source)
+
+/-- Reading the rules and then filtering by the media conditions (`parseIn`, what a host
+that keeps the read sheet does) gives the rules of filtering first (`parseInBlocks`). -/
+theorem parseInBlocks_eq (env : MediaQuery.Env) (source : String) :
+    parseIn env source = parseInBlocks env source := by
+  simp only [parseIn, parseRaw, parseInRaw, parseInBlocks, bind, Except.bind, pure, Except.pure]
+  congr 1
+  rw [List.filterMap_filterMap]
+  congr 1
+  funext leaf
+  cases h : ruleOfLeaf leaf <;> simp [Option.bind]
 
 /-- Rules of a sheet for the media type `medium` ("screen" or "print") with no viewport:
 an `@media` query with a width or colour-scheme feature does not hold. -/
 def parseFor (medium source : String) : Except String (List Rule) := parseIn {medium} source
 
 /-- The descriptor blocks of the `@font-face` rules of a sheet (CSS Fonts 4 §4.1), in
-order, with those inside an `@media` block whose query list holds in `env` (by default
-the media type `medium` with no viewport). Only
-the first 131072 characters of a sheet are read, as for `parseFor`. -/
-def fontFaceBlocks (medium source : String) (env : MediaQuery.Env := {medium}) : List String := Id.run do
-  let mut out : List String := []
-  for (head,body) in topLevel (comments (source.take 131072).toString) do
-    let head := trim head
-    let blocks := if (head.take 6).toString.toLower == "@media" && MediaQuery.applies env (head.drop 6).toString
-        then topLevel body else [(head,body)]
-    for (inner,content) in blocks do
-      if (trim inner).toLower == "@font-face" then out := content :: out
-  return out.reverse
+order: those outside `@media`, and those in `@media` blocks whose query lists hold in `env`
+(by default the media type `medium` with no viewport). -/
+def fontFaceBlocks (medium source : String) (env : MediaQuery.Env := {medium}) : List String :=
+  (sheetLeaves source).toList.filterMap fun leaf =>
+    if leaf.kind == "font-face" && leaf.media.all (MediaQuery.applies env) then some leaf.body else none
 
 /-- `id` is `target` or one of its ancestors. The walk is bounded by the arena size. -/
 def inclusiveAncestor (dom : Dom) (id : Nat) : Nat → Option Nat → Bool
@@ -1187,10 +1149,149 @@ private def replacedHints (n : DOM.Node) (s : Computed) : Computed := Id.run do
     if let .px _ := h then s := {s with height := h}
   return s
 
-private def lexLE : List Nat → List Nat → Bool
+/-- The order of cascade keys: lists of numbers, lexicographically; a list is not above
+one it starts. -/
+def lexLE : List Nat → List Nat → Bool
   | [], _ => true
   | _::_, [] => false
   | a::as, b::bs => if a == b then lexLE as bs else a < b
+
+theorem lexLE_refl (a : List Nat) : lexLE a a = true := by
+  induction a with
+  | nil => rfl
+  | cons x xs ih => simp [lexLE, ih]
+
+/-- Any two keys are comparable: the cascade always has a winner. -/
+theorem lexLE_total (a b : List Nat) : lexLE a b = true ∨ lexLE b a = true := by
+  induction a generalizing b with
+  | nil => exact .inl rfl
+  | cons x xs ih =>
+    cases b with
+    | nil => exact .inr rfl
+    | cons y ys =>
+      simp only [lexLE]
+      by_cases hxy : x = y
+      · subst hxy
+        simpa using ih ys
+      · have hyx : ¬ y = x := fun h => hxy h.symm
+        simp only [beq_iff_eq, hxy, hyx, if_false, decide_eq_true_eq]
+        omega
+
+theorem lexLE_trans (a b c : List Nat) : lexLE a b = true → lexLE b c = true → lexLE a c = true := by
+  induction a generalizing b c with
+  | nil => intros; rfl
+  | cons x xs ih =>
+    cases b with
+    | nil => simp [lexLE]
+    | cons y ys =>
+      cases c with
+      | nil => simp [lexLE]
+      | cons z zs =>
+        simp only [lexLE]
+        by_cases hxy : x = y
+        · subst hxy
+          by_cases hxz : x = z
+          · subst hxz
+            simpa using ih ys zs
+          · simp [hxz]
+        · by_cases hyz : y = z
+          · subst hyz
+            simp only [beq_iff_eq, hxy, if_false, beq_self_eq_true, if_true, decide_eq_true_eq]
+            intro h _
+            exact h
+          · by_cases hxz : x = z
+            · subst hxz
+              simp only [beq_iff_eq, hxy, hyz, if_false, decide_eq_true_eq]
+              omega
+            · simp only [beq_iff_eq, hxy, hyz, hxz, if_false, decide_eq_true_eq]
+              omega
+
+/-- Two keys that are each at most the other are one key: with the source order in every
+key (`ruleKey`, `inlineKey`), two declarations never tie, so the winner does not depend on
+the order in which they are met. -/
+theorem lexLE_antisymm (a b : List Nat) : lexLE a b = true → lexLE b a = true → a = b := by
+  induction a generalizing b with
+  | nil => cases b <;> simp [lexLE]
+  | cons x xs ih =>
+    cases b with
+    | nil => simp [lexLE]
+    | cons y ys =>
+      simp only [lexLE]
+      by_cases hxy : x = y
+      · subst hxy
+        simp only [beq_self_eq_true, if_true]
+        intro h1 h2
+        rw [ih ys h1 h2]
+      · have hyx : ¬ y = x := fun h => hxy h.symm
+        simp only [beq_iff_eq, hxy, hyx, if_false, decide_eq_true_eq]
+        omega
+
+/-- The position of unlayered declarations among layer places: above every layer for
+normal declarations (`SheetReader` keeps at most 4096 layers). -/
+def unlayered : Nat := 1000000
+
+/-- Where a declaration of a rule in layer place `layer` (0: no layer) stands among the
+declarations of one origin and context (CSS Cascade 5 §6.4.3): for normal declarations a
+later layer wins and unlayered declarations win over every layer; for important ones the
+order is the reverse. -/
+def layerPosition (important : Bool) (layer : Nat) : Nat :=
+  if layer == 0 then (if important then 0 else unlayered)
+  else if important then unlayered - layer else layer
+
+theorem layerPosition_normal_unlayered (l : Nat) (h0 : 0 < l) (h : l < unlayered) :
+    layerPosition false l < layerPosition false 0 := by
+  have : l ≠ 0 := by omega
+  simp [layerPosition, this, h]
+
+theorem layerPosition_important_unlayered (l : Nat) (h0 : 0 < l) (h : l < unlayered) :
+    layerPosition true 0 < layerPosition true l := by
+  have : l ≠ 0 := by omega
+  simp only [layerPosition, this, beq_self_eq_true, if_true, beq_iff_eq, if_false]
+  omega
+
+theorem layerPosition_normal_later (a b : Nat) (h0 : 0 < a) (h : a < b) :
+    layerPosition false a < layerPosition false b := by
+  have ha : a ≠ 0 := by omega
+  have hb : b ≠ 0 := by omega
+  simp [layerPosition, ha, hb, h]
+
+theorem layerPosition_important_later (a b : Nat) (h0 : 0 < a) (h : a < b) (hb : b < unlayered) :
+    layerPosition true b < layerPosition true a := by
+  have ha : a ≠ 0 := by omega
+  have hb' : b ≠ 0 := by omega
+  simp only [layerPosition, ha, hb', beq_iff_eq, if_false, if_true]
+  omega
+
+/-- The cascade key of a declaration of a style rule (CSS Cascade 5 §6.1, most significant
+first): importance; origin (0 user agent, 1 author) and context (a shadow tree's normal
+declarations lose to the document's, its important ones win); 0 for "not attached to the
+element"; the layer (`layerPosition`); the specificity of the selector that matched; the
+order of appearance. The greatest key wins (`lexLE`). -/
+def ruleKey (important : Bool) (origin : Nat) (inShadow : Bool) (layer : Nat)
+    (specificity : Nat × Nat × Nat) (order : Nat) : List Nat :=
+  let context := if (origin == 1 && inShadow) == important then 1 else 0
+  [if important then 1 else 0, origin*2+context, 0, layerPosition important layer,
+   specificity.1, specificity.2.1, specificity.2.2, order]
+
+/-- The cascade key of a declaration of a `style` attribute: an author declaration of the
+document, attached to the element (above every style rule of its importance, layered or
+not: CSS Cascade 5 §6.1 "element-attached styles"). -/
+def inlineKey (important : Bool) (order : Nat) : List Nat :=
+  [if important then 1 else 0, 2+(if important then 0 else 1), 1, 0, 0, 0, 0, order]
+
+/-- Declarations met at different places in the order of appearance have different keys:
+no two declarations of an element tie. -/
+theorem ruleKey_order (i i' : Bool) (o o' : Nat) (s s' : Bool) (l l' : Nat) (sp sp' : Nat × Nat × Nat)
+    (n n' : Nat) (h : n ≠ n') : ruleKey i o s l sp n ≠ ruleKey i' o' s' l' sp' n' := by
+  simp only [ruleKey, ne_eq, List.cons.injEq, and_true, not_and]
+  intros
+  exact h
+
+/-- A normal declaration of a `style` attribute wins over a normal declaration of any
+author rule of the document, and an important one over any important one. -/
+theorem inlineKey_wins (important : Bool) (layer : Nat) (sp : Nat × Nat × Nat) (n n' : Nat) :
+    lexLE (ruleKey important 1 false layer sp n) (inlineKey important n') = true := by
+  cases important <;> simp [ruleKey, inlineKey, lexLE]
 
 /-- The user agent style sheet of this profile: HTML §15.3.4 (phrasing content:
 hyperlink colours and underline) and §15.5.4 (the `button` element as an
@@ -1659,13 +1760,12 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     let onlyVisited := matched.all (·.visitedDependent)
     for d in rule.declarations do
       if !onlyVisited || visitedProperties.contains d.property then
-        let context := if (origin == 1 && rule.scope.isSome) == d.important then 1 else 0
-        let key := [if d.important then 1 else 0,origin*2+context,0,specificity.1,specificity.2.1,specificity.2.2,order]
+        let key := ruleKey d.important origin rule.scope.isSome rule.layer specificity order
         if (winners.get? d.property).all (fun old => lexLE old.1 key) then
           winners := winners.insert d.property (key,d)
       order := order+1
   for d in ← declarations (attrValue n "style") do
-    let key := [if d.important then 1 else 0,2+(if d.important then 0 else 1),1,0,0,0,order]
+    let key := inlineKey d.important order
     if (winners.get? d.property).all (fun old => lexLE old.1 key) then winners := winners.insert d.property (key,d)
     order := order+1
   -- Font size precedes line-height and inheritance-sensitive dependent values.

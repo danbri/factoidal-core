@@ -88,8 +88,9 @@ private def manyElements (m : Nat) : String :=
 #guard candidateTotal (manyElements 300) (manyRules 2000) == 600
 #guard agrees (manyElements 60) (manyRules 200)
 
-/-! `parseIn` (the sheet read once, `parseRawKept`, then filtered by the media queries)
-gives the rules of `parseInBlocks` (the blocks read in place for one environment). -/
+/-! `parseIn` (the sheet read once, `parseRaw`, then filtered by the media queries)
+gives the rules of `parseInBlocks` (the conditions tested first, for one environment):
+`CSS.parseInBlocks_eq` proves it; these run it. -/
 private def mediaSheet :=
   "p{color:red}@media (min-width: 600px){p{color:blue}.a{margin:1px}}@media print{p{color:green}}" ++
   "@media screen and (max-width: 400px){div{padding:2px}}@media (prefers-color-scheme: dark){a{color:#fff}}" ++
@@ -105,7 +106,8 @@ private def sameRules (env : MediaQuery.Env) (source : String) : Bool :=
 #guard sameRules {width := some 300, height := some 600, dark := some true} mediaSheet
 #guard sameRules {medium := "print"} mediaSheet
 #guard sameRules {width := some 800} sheet
-#guard ((parseIn {width := some 800} mediaSheet).toOption.map List.length) == some 6
+-- with the rule of the `@media screen` block inside `@media all` (read since 2026-11-14)
+#guard ((parseIn {width := some 800} mediaSheet).toOption.map List.length) == some 7
 
 /-! Pages with shadow trees: the scoped buckets (`ScopedIndex`) against the plain loop
 (`matchedRulesIn`, the premise of `CSS.computeAllIn_eq_linear`), on every node, and the

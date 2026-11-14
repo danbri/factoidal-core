@@ -158,7 +158,7 @@ stores (`WebRender.StoresKept`) in `Kept`, a field of its state. A layout looks 
 there, and gives back what it made (`Made`), which the engine adds (`Kept.add`). -/
 
 /-- A style sheet's text, read (`CSS.parseRaw`). -/
-abbrev RawSheet := Except String (List (Option String × Rendering.CSS.Rule))
+abbrev RawSheet := Except String (List Rendering.CSS.RawRule)
 
 structure Kept where
   parsed : Array (String × Bool × Except String DOM.Dom) := #[]
