@@ -395,7 +395,11 @@ def cmd_sparse(a):
     print(f"{len(want)} files besides resources/, common/ and the Test262 harness")
 
 
-SERVED_TOPS = ("tools/", "resources/", "common/", "fonts/", "images/", "interfaces/", "third_party/test262/harness/")
+# websockets/handlers/: wptserve's WebSocket server answers from there (ws_doc_root, pywebsocket's
+# *_wsh.py handlers) for every page that opens a WebSocket, whatever its directory; without it
+# each handshake is answered 404 and every WebSocket test times out.
+SERVED_TOPS = ("tools/", "resources/", "common/", "fonts/", "images/", "interfaces/", "third_party/test262/harness/",
+               "websockets/handlers/")
 
 
 def served_wanted(names):
