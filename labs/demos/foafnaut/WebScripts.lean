@@ -275,7 +275,7 @@ def frameEntropyOf (id : Nat) (parent b : ByteArray) : Nat → ByteArray :=
     else b ++ ("frame:" ++ toString id ++ ":" ++ toString el).toUTF8
 
 def actions : List String := ["info", "load", "start", "click", "pointer", "key", "actions", "message", "webdriverStart", "webdriver", "resize", "advance", "settle", "turn", "close",
-  "aotModule", "resume", "host", "frame", "fetched", "net", "syncAnswer"]
+  "aotModule", "resume", "host", "frame", "fetched", "net", "syncAnswer", "cookies"]
 
 /-- An answer object with `nextSession` first: the number of the next session. -/
 def withNext (n : Nat) (answer : String) : String :=
@@ -1150,6 +1150,12 @@ def actLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (act
       let a := if rest.size == all.size then a else LeanJSWorkers.pump a
       let a := { a with page := a.page.setHost (netGiveAll a.page.host rest) }
       (e.advance a (e.loop a).clock).1
+  | "cookies" =>
+    -- WebDriver "Delete All Cookies" (§14.5), asked by the embedder's test driver: the page
+    -- session's jar is emptied. No web_api op does this: a page's scripts can not.
+    run fun a =>
+      let h := a.page.host
+      { a with page := a.page.setHost { h with web := { h.web with net := { h.web.net with cookies := {} } } } }
   | _ => keep "scriptSession: unknown action"
 
 /-- One action on what the engine holds. `measure` lays out an arena for the layout reads

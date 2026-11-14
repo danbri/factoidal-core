@@ -535,6 +535,18 @@ def Transfer.cookieValue (t : Transfer) : String :=
   | some site => Cookies.forRequest t.jar site t.now (t.site ≤ 1)
   | none => ""
 
+/-- The jar after the `Set-Cookie` fields of the answer to this hop (Fetch §4.6 "HTTP-network
+fetch": cookies are received only when credentials are included; RFC 6265bis §5.7): each
+field for the host, path and scheme of the URL it answers; the answer to a request that is
+not same-site with the page sets only `SameSite=None` cookies. -/
+def Transfer.storeCookies (t : Transfer) (jar : Cookies.Jar) (a : Answer) : Cookies.Jar :=
+  if !t.sendsCredentials then jar else
+  match (URL.parseUrl t.url).bind cookieSite with
+  | none => jar
+  | some site =>
+    a.headers.foldl (fun j (f : String × String) =>
+      if lower f.1 == "set-cookie" then Cookies.setFromHeaderIn j site t.now (t.site ≤ 1) f.2 else j) jar
+
 /-- The `Cookie` field of the main request, when there is one. -/
 def Transfer.cookieField (t : Transfer) : List (String × String) :=
   if t.cookieValue.isEmpty then [] else [("Cookie", t.cookieValue)]
@@ -1290,6 +1302,45 @@ cookie value: a request to another origin without `credentials: "include"` (or
 `withCredentials`), any request in mode "omit", and every request on the Hub carry none. -/
 theorem cookieValue_needs_credentials (t : Transfer) (h : t.sendsCredentials = false) : t.cookieValue = "" := by
   simp [Transfer.cookieValue, h]
+
+/-- Kind: privacy theorem (credentials). Says: the answer to a hop that is not made with
+credentials stores no cookie, whatever `Set-Cookie` fields it has. -/
+theorem storeCookies_needs_credentials (t : Transfer) (jar : Cookies.Jar) (a : Answer)
+    (h : t.sendsCredentials = false) : t.storeCookies jar a = jar := by
+  simp [Transfer.storeCookies, h]
+
+theorem foldl_setIn_keeps_host (site : Cookies.Site) (now : Nat) (ss : Bool) (hs : List (String × String))
+    (jar : Cookies.Jar) (c : Cookies.Cookie)
+    (h : c ∈ (hs.foldl (fun j (f : String × String) =>
+      if lower f.1 == "set-cookie" then Cookies.setFromHeaderIn j site now ss f.2 else j) jar).cookies) :
+    (∃ o ∈ jar.cookies, o.host = c.host) ∨ c.host = site.host := by
+  induction hs generalizing jar with
+  | nil => exact .inl ⟨c, h, rfl⟩
+  | cons f rest ih =>
+    simp only [List.foldl_cons] at h
+    rcases ih _ h with ⟨o, ho, hh⟩ | hh
+    · split at ho
+      · rcases Cookies.setFromHeaderIn_keeps_host jar site now ss f.2 o ho with ⟨o', ho', -, -, hh', -⟩ | hh''
+        · exact .inl ⟨o', ho', hh'.trans hh⟩
+        · exact .inr (hh.symm.trans hh'')
+      · exact .inl ⟨o, ho, hh⟩
+    · exact .inr hh
+
+/-- Kind: privacy invariant (cookies are their host's, network side). Says: after the answer
+to a hop, every cookie of the jar was there before (for its host) or is for the host of the
+URL that hop went to: a response never sets a cookie for another host. -/
+theorem storeCookies_keeps_host (t : Transfer) (jar : Cookies.Jar) (a : Answer) (c : Cookies.Cookie)
+    (h : c ∈ (t.storeCookies jar a).cookies) :
+    (∃ o ∈ jar.cookies, o.host = c.host) ∨ ∃ site, (URL.parseUrl t.url).bind cookieSite = some site ∧ c.host = site.host := by
+  unfold Transfer.storeCookies at h
+  split at h
+  · exact .inl ⟨c, h, rfl⟩
+  · split at h
+    · exact .inl ⟨c, h, rfl⟩
+    · rename_i site hs
+      rcases foldl_setIn_keeps_host site t.now (t.site ≤ 1) a.headers jar c h with h1 | h1
+      · exact .inl h1
+      · exact .inr ⟨site, hs, h1⟩
 
 /-- Kind: privacy theorem (credentials across origins). Says: a hop to a URL that is not of
 the page's origin (or after the request left it) is made with credentials only when the

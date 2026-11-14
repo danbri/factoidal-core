@@ -96,9 +96,6 @@ structure State where
   buckets : L4Factoidal.ClientStorage.Shed L4Factoidal.ClientStorage.Buckets.Shelf := {}
   /-- The caches of each storage key (`ClientStorage.Caches`, op 206). -/
   caches : L4Factoidal.ClientStorage.Shed L4Factoidal.ClientStorage.Caches.Shelf := {}
-  /-- The cookies scripts set and read (`Net.Cookies`, ops 96 and 97): in memory, each its
-  host's; none is sent or received on the network. -/
-  cookies : L4Factoidal.Net.Cookies.Jar := {}
   /-- WebGL: the interface tables and the contexts' state (`PageGl.Api`, ops 100 to 119). -/
   gl : L4Factoidal.PageGl.Api.State := {}
   rng : Option Crypto.WebCrypto.Drbg := none
@@ -715,8 +712,8 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
     -- The Cookie Store API (204): the jar of `document.cookie`; the host and the secure flag are
     -- the session's page's, never arguments.
     else if code == 204 then
-      let (cookies, out) := L4Factoidal.ClientStorage.CookieStore.op s.cookies s.net.page.origin s.net.page.secure fs
-      ({ s with cookies }, .ok (pack out))
+      let (cookies, out) := L4Factoidal.ClientStorage.CookieStore.op s.net.cookies s.net.page.origin s.net.page.secure fs
+      ({ s with net := { s.net with cookies } }, .ok (pack out))
     -- The Cache API (206): the caches of the same storage key.
     else if code == 206 then
       let (caches, out) := L4Factoidal.ClientStorage.Caches.opFor s.caches { origin := s.net.page.origin } fs
@@ -743,8 +740,10 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
     else if 86 ≤ code && code < 90 then pure' (L4Factoidal.Net.FetchRules.op code fs)
     -- `document.cookie`: the host and the secure flag are the session's page's, never arguments.
     else if code == 96 || code == 97 then
-      let (cookies, r) := L4Factoidal.Net.Cookies.op s.cookies s.net.page.origin s.net.page.secure code fs
-      ({ s with cookies }, r)
+      -- the jar is the network's too (`Net.Xhr.State.cookies`); the time a script gives is kept
+      let (cookies, r) := L4Factoidal.Net.Cookies.op s.net.cookies s.net.page.origin s.net.page.secure code fs
+      let now := max s.net.now ((L4Factoidal.Net.Cookies.strAt fs 1).toNat?.getD 0)
+      ({ s with net := { s.net with cookies, now } }, r)
     -- The values the SVG DOM reflects: a length, a number, a number list, a transform list.
     else if 92 ≤ code && code < 96 then pure' (L4Factoidal.DOM.SvgValues.op code fs)
     -- WebGL: the rendering context interfaces (and, later ops, the contexts' state machine).

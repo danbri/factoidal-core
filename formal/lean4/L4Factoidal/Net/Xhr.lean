@@ -61,6 +61,8 @@ structure Xhr where
   headers : Array (String × String) := #[]
   body : Option ByteArray := none
   cred : Bool := false
+  /-- Fetch credentials mode "omit": no cookie is sent with the request or stored from its answer. -/
+  omitCred : Bool := false
   /-- Fetch mode "same-origin" (`fetch`); XHR is always "cors". -/
   sameOnly : Bool := false
   /-- Fetch redirect mode "error" (`fetch`); XHR always follows. -/
@@ -115,6 +117,12 @@ structure State where
   violations : Array String := #[]
   /-- The blob URLs of the session (`URL.createObjectURL`), each its origin's (`Net.BlobUrls`). -/
   blobs : L4Factoidal.Net.BlobUrls.Store := {}
+  /-- The page session's cookies (`Net.Cookies`), in memory only: `document.cookie` (web_api 96,
+  97) and the network (the `Cookie` field of a request made with credentials, the `Set-Cookie`
+  fields of its answer) share them. -/
+  cookies : Cookies.Jar := {}
+  /-- The latest time in seconds a script gave (`send`, `document.cookie`): cookie expiry. -/
+  now : Nat := 0
   xhrs : Array Xhr := #[]
   /-- Fetches the host has not answered: its id, the object's handle, and its transfer. -/
   live : Array (Nat × Nat × Transfer) := #[]
@@ -383,8 +391,10 @@ def syncFetch (s : State) (t0 : Transfer) : State × SyncOutcome := Id.run do
       -- does not change what the host is asked (`syncWanted` is set once in a run)
       | none => return ({ s with syncWanted := s.syncWanted.orElse fun _ => some w }, .need)
       | some a =>
-        s := { s with syncUsed := s.syncUsed + 1 }
-        step := onAnswer t a
+        -- the answer's cookies first: the next hop of a redirect carries them
+        let jar := t.storeCookies s.cookies a
+        s := { s with syncUsed := s.syncUsed + 1, cookies := jar }
+        step := onAnswer { t with jar } a
   return (s, .failed)
 
 /-- Sync `send` (XHR §4.5.2 step 12): the fetch happens now; on failure a `NetworkError` is
@@ -393,7 +403,7 @@ this mode (the steps "if xhr's synchronous flag is unset" hold it). -/
 def syncSend (s : State) (h : Nat) (x : Xhr) : State × Except Int String :=
   let id := s.nextTransfer
   let s := { s with nextTransfer := id + 1 }
-  let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred, sameOriginOnly := x.sameOnly, redirectError := x.redirectError, blob := s.blobOf x.url, referrer := referrerFor s x, referrerPolicy := policyFor s x, noCors := x.noCors, redirectManual := x.redirectManual }
+  let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred, sameOriginOnly := x.sameOnly, redirectError := x.redirectError, blob := s.blobOf x.url, referrer := referrerFor s x, referrerPolicy := policyFor s x, noCors := x.noCors, redirectManual := x.redirectManual, omitCredentials := x.omitCred, jar := s.cookies, now := s.now }
   let (s, blocked) := cspRequest s "connect-src" x.url
   let (s, out) := if blocked then (s, SyncOutcome.failed) else syncFetch s t
   match out with
@@ -454,7 +464,7 @@ def beginFetch (s : State) (h : Nat) (x : Xhr) : State :=
   if blocked then s.set h { x with deferFail := true } else
   let id := s.nextTransfer
   let s := { s with nextTransfer := id + 1 }
-  let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred, sameOriginOnly := x.sameOnly, redirectError := x.redirectError, blob := s.blobOf x.url, referrer := referrerFor s x, referrerPolicy := policyFor s x, noCors := x.noCors, redirectManual := x.redirectManual }
+  let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred, sameOriginOnly := x.sameOnly, redirectError := x.redirectError, blob := s.blobOf x.url, referrer := referrerFor s x, referrerPolicy := policyFor s x, noCors := x.noCors, redirectManual := x.redirectManual, omitCredentials := x.omitCred, jar := s.cookies, now := s.now }
   match plan t with
   | .send t' w => (s.set h { x with transfer := some id }) |> fun s => { s with live := s.live.push (id, h, t'), outbox := s.outbox.push w }
   | .deliver _ r =>
@@ -532,8 +542,11 @@ def give (s : State) (id : Nat) (a : Answer) : State × Option Nat :=
     match s.get? h with
     | none => ({ s with live := s.live.filter (·.1 != id) }, none)
     | some x =>
+    -- the answer's cookies first: the next hop of a redirect carries them
+    let jar := t.storeCookies s.cookies a
+    let s := { s with cookies := jar }
     let s1 := { s with live := s.live.filter (·.1 != id) }
-    match onAnswer t a with
+    match onAnswer { t with jar } a with
     | .send t' w =>
       -- a redirect's target is checked against the policy as the first URL was (CSP §4.1.2)
       let (s, blocked) := if t'.redirects != t.redirects then cspRequest s "connect-src" t'.url true else (s, false)
@@ -702,8 +715,9 @@ def op (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int Byt
     | (s, .ok a) => (s, okStr a)
     | (s, .error e) => (s, .error e)
   | 63 =>
-    -- send: handle, cb, listener, hasBody, isText, body
+    -- send: handle, cb, listener, hasBody, isText, body, the time in seconds
     let body := if natAt fs 3 != 0 then some (fs.getD 5 ByteArray.empty) else none
+    let s := { s with now := max s.now (natAt fs 6) }
     match sendX s (natAt fs 0) body (strAt fs 4) (natAt fs 1) (natAt fs 2 != 0) with
     | (s, .ok a) => (s, okStr a)
     | (s, .error e) => (s, .error e)
@@ -783,12 +797,12 @@ def op (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int Byt
       if s.window && !x.async && x.state != 0 then (s, .error errAccess)
       else (s.set (natAt fs 0) { x with timeout := natAt fs 1 }, okStr "")
   | 73 =>
-    -- withCredentials: only the CORS check changes (no credentials exist to send)
+    -- withCredentials (0, 1) or fetch's credentials mode (0 same-origin, 1 include, 2 omit)
     match s.get? (natAt fs 0) with
     | none => (s, .error errType)
     | some x =>
       if x.state > 1 || x.sendFlag then (s, .error errInvalidState)
-      else (s.set (natAt fs 0) { x with cred := natAt fs 1 != 0 }, okStr "")
+      else (s.set (natAt fs 0) { x with cred := natAt fs 1 == 1, omitCred := natAt fs 1 == 2 }, okStr "")
   | 75 => (s, okStr "1")
   | 78 =>
     -- the multipart/form-data body of a FormData: five fields an entry (name, "1" for a

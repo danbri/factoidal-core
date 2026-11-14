@@ -652,9 +652,15 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
       for(;driverSeen<logs.length;driverSeen++){
         const line=logs[driverSeen];
         if(!line.startsWith("__wpt_driver "))continue;
-        let req:{id?:number;actions?:unknown;text?:string};
+        let req:{id?:number;actions?:unknown;text?:string;cookies?:string};
         try{req=JSON.parse(line.slice(13));}catch{continue;}
         if(typeof req.id!=="number")continue;
+        // WebDriver "Delete All Cookies": the engine empties the page session's jar
+        if(req.cookies==="delete"){
+          take(turn=await ss({action:"cookies",session:turn.session}));
+          take(turn=await ss({action:"message",session:turn.session,data:JSON.stringify({type:"testdriver-complete",id:req.id,status:"success"}),origin:new URL(url).origin}));
+          did=true;continue;
+        }
         // The engine performs the actions (WebDriver's Perform Actions, in Lean) and says
         // whether WebDriver refuses them; the page is answered with a `message` event.
         take(turn=await ss({action:"actions",session:turn.session,...(typeof req.text==="string"?{text:req.text}:{actions:req.actions})}));

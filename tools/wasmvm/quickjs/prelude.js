@@ -5006,7 +5006,7 @@
         const up = upload.get(s.upload).listened;
         s.text = s.json = s.buf = s.doc = null;
         referrerClient(s.h);
-        call(63, [s.h, cb, up ? 1 : 0, has, ct, bytes], what);
+        call(63, [s.h, cb, up ? 1 : 0, has, ct, bytes, Math.floor(cookieClock() / 1000)], what);
         drain(this, s);
         if (call(67, [s.h, 5]) === '1') chk(n.timer(register(() => { call(76, [s.h]); drain(x, s); }), 0, 0));
         flushViolations();
@@ -5277,7 +5277,8 @@
 
   // ---- document.cookie (HTML §3.1.5; RFC 6265bis for a "non-HTTP" API) -----------------------
   // The jar, what a script may set and what it reads are Lean's (Net/Cookies.lean, web_api
-  // ops 96 and 97): cookies are in memory and each is its host's; none is sent on the network.
+  // ops 96 and 97): cookies are in memory and each is its host's; the network's requests share
+  // the jar (Net.Xhr: the Cookie field of a request made with credentials, Set-Cookie stored).
   // The host is the engine's; this passes the document's path and the time.
   const cookieClock = Date.now;
   const cookieArgs = doc => {
@@ -5512,7 +5513,8 @@
         const fail = e => { if (!settled) { settled = true; reject(e); } };
         signal.addEventListener('abort', () => { if (settled) return; fail(signal.reason); try { x.abort(); } catch { /* done */ } });
         try { x.open(st.method, st.url, true); } catch (e) { fail(new TypeError(String(e && e.message || e))); return; }
-        apiCall(73, [s.h, st.credentials === 'include' ? 1 : 0]);
+        // credentials: Lean sends the jar's cookies and stores the answer's only as the mode allows
+        apiCall(73, [s.h, st.credentials === 'include' ? 1 : st.credentials === 'omit' ? 2 : 0]);
         // the mode: Lean refuses what "same-origin" forbids, sends a "no-cors" request only when
         // it is simple, and makes its answer opaque (Net.PageFetch: plan_noCors_simple, responseOf_opaque)
         if (st.mode === 'same-origin') apiCall(77, [s.h, 1]); else if (st.mode === 'no-cors') apiCall(77, [s.h, 2]);

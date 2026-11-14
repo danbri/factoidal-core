@@ -10,7 +10,8 @@
 // file names the element of a request (its tree path from the document) and passes the
 // request on. A console line does this in the WPT runner only; no browser host reads it.
 //
-// Done: click, send_keys, action_sequence (key, pointer, wheel and none sources).
+// Done: click, send_keys, action_sequence (key, pointer, wheel and none sources),
+// delete_all_cookies (scriptSession action `cookies`: WebDriver's Delete All Cookies).
 // Not done (each rejects with "not implemented"): the other hooks of test_driver_internal.
 (function () {
   'use strict';
@@ -47,6 +48,8 @@
     pending.set(id, [resolve, reject]);
     console.log('__wpt_driver ' + JSON.stringify(Object.assign({ id }, body)));
   });
+  // "Delete All Cookies" (WebDriver §14.5): the engine empties the page session's jar.
+  window.test_driver_internal.delete_all_cookies = function () { return request({ cookies: 'delete' }); };
   const attempt = f => { try { return f(); } catch (e) { return Promise.reject(e); } };
   // "Element Click" (WebDriver §12.5.1): a mouse moves to the element's in-view centre
   // point, and its primary button goes down and up.
