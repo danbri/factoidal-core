@@ -2350,6 +2350,7 @@ L4Factoidal_Rendering_CssValues_cvSize  # (c) the nesting of one value, fuel 64
 L4Factoidal_Rendering_CssValues_rawText_go  # (c) the nesting of one value, at most cvSize 64 + 2
 L4Factoidal_Rendering_CssValues_untag  # (c) the nesting of one matched value, fuel 8 or 16
 L4Factoidal_Rendering_CssValues_hasFn  # (c) the nesting of one value, fuel 32
+L4Factoidal_Rendering_CssValues_badSubstitution  # (c) the nesting of one value, fuel 32
 L4Factoidal_Rendering_CssValues_hasBadToken  # (c) the nesting of one value, fuel 32
 L4Factoidal_Rendering_CssValues_Color_substF  # (c) the nesting of the channel expressions of a relative colour, fuel 16
 L4Factoidal_Rendering_CssSheet_preludeText_go  # (c) the nesting of an at-rule prelude, at most cvSize 64 + 2

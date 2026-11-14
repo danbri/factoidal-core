@@ -139,6 +139,24 @@ values are made (CSS Variables 1 §3). -/
 def hasSubstitution (cvs : List CV) : Bool :=
   hasFn "var" 32 cvs || hasFn "env" 32 cvs || hasFn "attr" 32 cvs || hasFn "if" 32 cvs
 
+/-- Whether a substitution function in the values has arguments it cannot have (CSS
+Variables 1 §3, CSS Values 5 §7.7): `var()` must name a custom property, `attr()` an
+attribute and `env()` an environment variable, first. `fuel` bounds the nesting read. -/
+def badSubstitution : Nat → List CV → Bool
+  | 0, _ => false
+  | fuel + 1, cvs => cvs.any fun cv => match cv with
+    | .fn n args =>
+      let k := lower n
+      let first := (stripWs args).head?
+      let named := fun (custom : Bool) => match first with
+        | some (.tok (.ident x)) => !custom || isCustom x
+        | _ => false
+      ((k == "var" && !named true) || ((k == "attr" || k == "env") && !named false)) || badSubstitution fuel args
+    | .block _ body => badSubstitution fuel body
+    | _ => false
+
+#guard badSubstitution 32 (CV.parse "attr()") && badSubstitution 32 (CV.parse "calc(var(x) + 1px)") && !badSubstitution 32 (CV.parse "attr(data-x type(<color>), red)")
+
 /-- The short form of a `display` value (CSS Display 3 §2.5 and its serialisation: the
 single-keyword legacy forms where they exist). The words arrive in the order of the
 grammar: outside, inside, `list-item`. -/
@@ -272,7 +290,7 @@ def specified (property value : String) : Option String :=
       else match wideKeyword top with
         | some k => some k
         | none =>
-          if hasSubstitution cvs then some (rawText cvs)
+          if hasSubstitution cvs then (if badSubstitution 32 cvs then none else some (rawText cvs))
           else if p == "all" || (p == "flex" && flexZeroMisread top) then none
           else (matchText none row.name top).bind (canonicalValue p)
 
@@ -737,7 +755,7 @@ def expandF : Nat → String → String → Option (List (String × String))
           match wideKeyword top with
           | some k => some (row.longhands.map fun l => (l, k))
           | none =>
-            if hasSubstitution cvs then some [(p, canonical)]
+            if hasSubstitution cvs then (if badSubstitution 32 cvs then none else some [(p, canonical)])
             else if p == "background" then (backgroundExpand top).orElse fun _ => some [(p, canonical)]
             else if p == "mask" then (maskExpand top).orElse fun _ => some [(p, canonical)]
             else if p == "background-position" then
@@ -1091,6 +1109,22 @@ def axisKeyword : String → Option String
   | "left" => some "0%" | "top" => some "0%" | "center" => some "50%" | "right" => some "100%" | "bottom" => some "100%"
   | _ => none
 
+/-- A position keyword with an offset as one length-percentage (CSS Backgrounds 3 §3.6):
+from `left`/`top` the offset, from `right`/`bottom` the rest of 100%. -/
+def edgeOffset (k : String) (off : CV) : Option String :=
+  let far := k == "right" || k == "bottom"
+  if !(far || k == "left" || k == "top") then none
+  else if !far then some (serialize [off])
+  else match off with
+    | .tok (.pct p) => some (fmtRat (100 - p) ++ "%")
+    | .tok (.dim x _ u) =>
+      if x < 0 then some ("calc(100% + " ++ fmtRat (-x) ++ u ++ ")")
+      else some ("calc(100% - " ++ fmtRat x ++ u ++ ")")
+    | _ => none
+
+#guard edgeOffset "right" (.tok (.pct 7)) == some "93%" && edgeOffset "left" (.tok (.pct (-20))) == some "-20%"
+#guard edgeOffset "right" (.tok (.dim (-10) true "px")) == some "calc(100% + 10px)"
+
 /-- The properties whose computed value is a number clamped to [0, 1]. -/
 def unitIntervalProperties : List String :=
   ["opacity", "fill-opacity", "stroke-opacity", "stop-opacity", "flood-opacity", "shape-image-threshold"]
@@ -1145,6 +1179,7 @@ def computedForm (p v : String) : String :=
   else if ["background-position-x", "background-position-y", "mask-position-x", "mask-position-y"].contains p then
     ", ".intercalate ((splitCommas (stripWs (CV.parse v))).map fun item => match item with
       | [.tok (.ident k)] => (axisKeyword k).getD k
+      | [.tok (.ident k), off] => (edgeOffset k off).getD (serialize item)
       | item => serialize item)
   else v
 
@@ -1224,6 +1259,12 @@ def initialComputed (ctx : ComputeCtx) (row : Property) : String :=
 #guard specified "color" "color-layers(normal, red, blue)" == some "color-layers(red, blue)"
 #guard (["color-layers()", "color-layers(normal)", "color-layers(red blue)", "color-layers(red, blue, )", "color-layers(, red)",
   "color-layers(plus-lighter, red)", "color-layers(multiply, multiply, red)", "color-layers(50%, red)"].map (specified "color")).all (·.isNone)
+-- a substitution function with no name is invalid (content-invalid.html, parse-invalid-input.html)
+#guard specified "content" "attr()" == none && specified "color" "attr(" == none && specified "color" "var(--x)" == some "var(--x)"
+-- background-position offsets from the far edges (background-position-computed.html)
+#guard computed {} "background-position-x" "right 7%" == "93%" && computed {} "background-position-y" "bottom 16%" == "84%"
+#guard computed {} "background-position-x" "right -10px" == "calc(100% + 10px)"
+#guard computed {} "background-position-x" "left -20%, right 10px" == "-20%, calc(100% - 10px)"
 -- line-height percentages are of the font size (font-computed.html)
 #guard computed { num := { fontSize := 32 } } "line-height" "calc(120% + 1.2em)" == "76.8px"
 #guard computed { num := { fontSize := 32 } } "line-height" "150%" == "48px"
