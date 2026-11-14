@@ -87,6 +87,9 @@ inductive Command where
   | setChecked (node : Nat) (value : Bool)
   /-- The reset algorithm of form `node` (`DOM.Forms.resetForm`). -/
   | resetForm (node : Nat)
+  /-- The element states of `node` (`Node.states`: a showing popover, a modal dialog, a
+  defined custom element) set to `states`. -/
+  | setStates (node : Nat) (states : Nat)
   /-- `attachShadow` of `host` (`DOM.Dom.attachShadow`, the state as `shadowFlags`) made or
   reused shadow root `result`. -/
   | attachShadow (host flags result : Nat)
@@ -635,6 +638,23 @@ theorem frameScriptsInRealm_sameOrigin (s : State) (el : Nat) (h : frameScriptsI
     frameAccessible s el = true ∧ (elementFrame s el).scriptsMayRun = true := by
   simpa [frameScriptsInRealm] using h
 
+/-- The scripts of a frame's document that run in the page's realm: all of them when the
+page may reach the frame's document and its scripts may run (`frameScriptsInRealm`), else
+none. The engines ask this of the state after the navigation's document is attached
+(`attachDocument`), so the origin is the one of the URL the document came from, not the one
+the frame had before (an `about:blank` frame has its parent's origin until it navigates). -/
+def realmScripts (s : State) (el : Nat) (scripts : Array (Nat × String)) : Array (Nat × String) :=
+  if frameScriptsInRealm s el then scripts else #[]
+
+/-- Kind: security invariant (frames). Says: no script of a frame document that the page may
+not reach (another origin, or a sandbox without `allow-same-origin`) is given to the page's
+realm. Does not say: that the origin kept for the frame is the right one (`navigatedTo`
+keeps the origin of the URL the embedder names for the document), nor anything of a frame's
+own session. -/
+theorem realmScripts_needs_access (s : State) (el : Nat) (scripts : Array (Nat × String))
+    (h : frameAccessible s el = false) : realmScripts s el scripts = #[] := by
+  simp [realmScripts, frameScriptsInRealm, h]
+
 /-- The state of `iframe` `el` as bits (`node_info` 29): 1 its document is reachable, 2
 scripts may run, 4 forms may submit, 8 popups, 16 top-level navigation, 32 modals, 64 it
 has a browsing context (it is connected in a document that has one). -/
@@ -959,13 +979,42 @@ def navigatedTo (s : State) (el doc : Nat) (u : String) : State :=
   { s with docURLs := (s.docURLs.filter (·.1 != doc)).push (doc, u),
            frameInfo := (s.frameInfo.filter (·.1 != el)).push (el, f) }
 
+/-- The entry pushed for `el`, after the others for `el` are filtered out, is the one found. -/
+theorem find_push_filter {α : Type} (xs : Array (Nat × α)) (el : Nat) (f : α) :
+    ((xs.filter (·.1 != el)).push (el, f)).find? (·.1 == el) = some (el, f) := by
+  rw [Array.find?_push]
+  have h : (xs.filter (·.1 != el)).find? (·.1 == el) = none := by
+    rw [Array.find?_eq_none]
+    intro x hx
+    have := (Array.mem_filter.mp hx).2
+    simpa using this
+  simp [h]
+
+open L4Factoidal.HTML.Frames in
+/-- Kind: security invariant (frames). Says: once a navigation of frame `el` to URL `u` is
+recorded, the frame kept for `el` (its flags and origin, which `frameAccessible` and
+`realmScripts` read) is the one of `u` under the element's sandbox and its container
+document's frame, whatever was kept for it before. Does not say: that `u` is the URL the
+document really came from; the embedder names it. -/
+theorem navigatedTo_frame (s : State) (el doc : Nat) (u : String) (parent : L4Factoidal.HTML.Frames.Frame) :
+    frameFor (navigatedTo s el doc u) parent el =
+      frameOf (docFrame s (s.dom.get el).doc).flags (docFrame s (s.dom.get el).doc).origin
+        (attrValue? s.dom el "sandbox") none (some u) (1000000000 + el) := by
+  simp [frameFor, navigatedTo, find_push_filter]
+
 /-- The navigation of `iframe` `el` ends with document `source` ("" is `about:blank`):
 it joins the arena (`Dom.graft`, recorded as `Command.frameDocument`), becomes the frame's
 document, and the frames it holds get their own browsing contexts. The answer has the new
 document node, or none when the command was refused. -/
-def attachDocument (s : State) (el : Nat) (source : String) (xml : Bool := false) : State × Option Nat :=
+def attachDocument (s : State) (el : Nat) (source : String) (xml : Bool := false)
+    (responseUrl : Option String := none) : State × Option Nat :=
   -- (encoding100) the URL this navigation went to, when it was one ("" is about:blank)
   let navURL := ((s.navigations.find? (·.1 == el)).map (·.2)).filter fun u => !u.isEmpty && u != "about:srcdoc"
+  -- the URL the document came from, when the embedder followed redirects and names it: the
+  -- document's URL and origin are that URL's (HTML §7.4.2.3), not the requested one's
+  let navURL := match navURL, responseUrl with
+    | some u, some r => if r.isEmpty then some u else some r
+    | n, _ => n
   let s := { s with navigations := s.navigations.filter (·.1 != el) }
   if !isNode s.dom el then (s, none) else
   let (d, root) := s.dom.graft (frameArena source xml)
@@ -1082,7 +1131,9 @@ def cloneNode (args : Array Value) (s : State) : State × HostResult :=
 `b.importNode(a, deep)` (shallow, deep; the new node); 6 set the checkedness of input `a`
 (or the selectedness of option `a`, `DOM.FormControls.selectedness`) to `b` (1 or 0); 7 the
 checkedness of `a`; 8 the other checked radio button of `a`'s
-group, or -1; 9 reset form `a` (DOM.Forms). Shadow trees: 20 `a.attachShadow(init)` with the
+group, or -1; 9 reset form `a` (DOM.Forms); 30 set the element states of `a` to the bits
+`b` (`Node.states`: 1 popover showing, 2 modal dialog, 4 custom element defined, 8 focused),
+31 read them. Shadow trees: 20 `a.attachShadow(init)` with the
 state bits `b` (`shadowFlags`): the shadow root, or NotSupportedError (-10); 22 empty the
 manually assigned nodes of slot `a`; 23 append node `b` to them (`slot.assign`). Ops 3, 4
 and 5 refuse a shadow root (DOM §4.5: HierarchyRequestError for `adoptNode`,
@@ -1112,6 +1163,9 @@ def treeOp (args : Array Value) (s : State) : State × HostResult :=
   | 8 => match Forms.checkedInGroup s.dom a with | some k => (s, ret k) | none => (s, ret (-1))
   | 9 => if !Forms.isHtml s.dom a ["form"] then (s, ret (-2))
     else change s (.resetForm a) fun d => changed (.resetForm a) (Forms.resetForm d a)
+  | 30 => if !isElement s.dom a || b ≥ 16 then (s, ret (-2))
+    else change s (.setStates a b) fun d => changed (.setStates a b) (d.setNode a fun x => { x with states := b })
+  | 31 => (s, ret (s.dom.get a).states)
   | 4 | 5 => if !isNode s.dom b || !isDoc b then (s, ret (-2)) else if isDoc a || s.dom.isShadowRoot a then (s, ret (-10)) else
     let deep := arg args 2 == 5
     change s (.importNode a b deep 0) fun d => let (d, c) := d.cloneNode a deep (some b); changed (.importNode a b deep c) d c
@@ -1485,6 +1539,10 @@ def Command.apply (d : Dom) : Command → Except String Dom
     checkNode d n
     if !Forms.isHtml d n ["input", "option"] then throw "script command: target must be an input or an option"
     return Forms.setChecked d n v
+  | .setStates n v => do
+    checkNode d n
+    if v ≥ 16 then throw "script command: states exceed bound"
+    return d.setNode n fun x => { x with states := v }
   | .resetForm n => do
     checkNode d n
     if !Forms.isHtml d n ["form"] then throw "script command: target must be a form"

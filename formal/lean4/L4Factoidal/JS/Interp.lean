@@ -6,6 +6,7 @@ import L4Factoidal.JS.Date
 import L4Factoidal.JS.NumFmt
 import L4Factoidal.JSON.Parser
 import L4Factoidal.JS.JsonText
+import L4Factoidal.WHATWG.URLPattern
 
 /-!
 # L4Factoidal.JS.Interp — the evaluator
@@ -289,6 +290,24 @@ def mkError (k : ErrKind) (msg : String) : M Value := do
 def throwErr {α} (k : ErrKind) (msg : String) : M α := do
   throw (.throw (← mkError k msg))
 
+/-- `s` repeated `n` times, by doubling: about log₂ n appends and no list of `n` parts
+(`"a".repeat(2 ** 28)` as a list of parts took gigabytes before the string was made). -/
+def repeatStr (s : String) (n : Nat) : String :=
+  let rec go : Nat → Nat → String → String → String
+    | 0, _, _, acc => acc
+    | fuel + 1, k, cur, acc =>
+      if k == 0 then acc
+      else go fuel (k / 2) (if k / 2 == 0 then cur else cur ++ cur) (if k % 2 == 1 then acc ++ cur else acc)
+  go 64 n s ""
+
+/-- A string of `bytes` bytes may be made: at most `maxStringBytes`, else a RangeError
+("Invalid string length", as engines answer for a string past their limit). Every place that
+makes a string from parts asks first, so no script makes the engine allocate past it:
+`s += s` in a loop, `join`, `concat`, a template, `replace` with `$&` (Test262
+`staging/sm/String/replace-math` asks for 2^36 units and took the process with it). -/
+@[inline] def checkStrLen (bytes : Nat) : M Unit :=
+  if bytes > maxStringBytes then throwErr .range "Invalid string length" else pure ()
+
 def newObject : M Nat := do alloc { proto := .obj (← realm).objectProto }
 
 def newArray (es : Array Value) : M Value := do
@@ -303,6 +322,7 @@ def Kind.constructs : Kind → Bool
     | .errorCtor _ | .symbolCtor | .promiseCtor | .mapCtor _ | .regexpCtor | .proxyCtor
     | .bufferCtor | .typedCtor _ | .dateCtor | .dataViewCtor => true
     | (.x .sharedCtor) | (.x .typedArrayCtor) | (.x .iteratorCtor) | (.x .aggregateErrorCtor) => true
+    | (.x .weakRefCtor) | (.x .finRegCtor) => true
     | _ => false
   | .bound .. => true
   | _ => false
@@ -1140,6 +1160,14 @@ def setDelegatePhase (it : Value) (ph : Nat) : M Unit :=
   | .obj id => setHidden id delegPhaseKey (.num (Float.ofNat ph))
   | _ => pure ()
 
+/-- The GlobalSymbolRegistry (§20.4.2.2): a hidden object of the global object, its
+properties the registered keys. The hidden slots of a WeakRef (its target) and of a
+FinalizationRegistry (its cleanup callback, and the array of unregister tokens). -/
+def symbolRegistryKey : String := privKey "%SymbolRegistry"
+def weakRefTargetKey : String := privKey "%WeakRefTarget"
+def finRegCallbackKey : String := privKey "%CleanupCallback"
+def finRegTokensKey : String := privKey "%UnregisterTokens"
+
 /-- The hidden slots of an async-from-sync iterator (§27.1.6.3 `[[SyncIteratorRecord]]`): the
 sync iterator and its `next`; and the global object's hidden property that holds
 %AsyncFromSyncIteratorPrototype%. -/
@@ -1245,13 +1273,15 @@ def hostNowNs : M Float := do
 
 /-- GetSubstitution (§22.1.3.19.1): `$$`, `$&`, `` $` ``, `$'`, `$n`, `$nn`, `$<name>`. -/
 def substitution (rep : String) (matched : String) (pos : Nat) (cs : Array Char)
-    (caps : Array (Option String)) (names : Array (String × Nat)) : String := Id.run do
+    (caps : Array (Option String)) (names : Array (String × Nat)) : Option String := Id.run do
   let r := rep.toList.toArray
   let tailAt := pos + Str.jsLength matched
   let mut out := ""
   let mut i := 0
   for _ in [0:r.size + 1] do
     if i ≥ r.size then break
+    -- `none`: the result is past `maxStringBytes` (each `$&` or `$1` adds a whole match)
+    if out.utf8ByteSize > maxStringBytes then return none
     let c := r[i]!
     if c != '$' || i + 1 ≥ r.size then out := out.push c; i := i + 1; continue
     let d := r[i+1]!
@@ -1278,7 +1308,7 @@ def substitution (rep : String) (matched : String) (pos : Nat) (cs : Array Char)
         i := i + 3 + k
       | none => out := out.push '$'; i := i + 1
     else out := out.push '$'; i := i + 1
-  return Str.canonical out
+  return (if out.utf8ByteSize > maxStringBytes then none else some (Str.canonical out))
 
 /-- QuoteJSONString (§25.5.2.3) for surrogates: a code unit of a surrogate that is not part
 of a pair is written as `\\uXXXX`, in lower-case hexadecimal (well-formed JSON.stringify). -/
@@ -1796,12 +1826,16 @@ def binop : Nat → BinOp → Value → Value → M Value
     | .add =>
       match a, b with
       | .num x, .num y => pure (.num (x + y))
-      | .str x, .str y => pure (.str (Str.jsAppend x y))
+      | .str x, .str y => checkStrLen (x.utf8ByteSize + y.utf8ByteSize); pure (.str (Str.jsAppend x y))
       | _, _ =>
         let pa ← toPrim n a "default"
         let pb ← toPrim n b "default"
         match pa, pb with
-        | .str _, _ | _, .str _ => pure (.str (Str.jsAppend (← toStr n pa) (← toStr n pb)))
+        | .str _, _ | _, .str _ =>
+          let sa ← toStr n pa
+          let sb ← toStr n pb
+          checkStrLen (sa.utf8ByteSize + sb.utf8ByteSize)
+          pure (.str (Str.jsAppend sa sb))
         | .big x, .big y => pure (.big (x + y))
         | .big _, _ | _, .big _ => throwErr .type "Cannot mix BigInt and other types, use explicit conversions"
         | _, _ => pure (.num ((← toNum n pa) + (← toNum n pb)))
@@ -2430,6 +2464,7 @@ def evalExpr : Nat → Ctx → Expr → M Value
         let str ← match v with
           | .sym _ => throwErr .type "Cannot convert a Symbol value to a string"
           | _ => toStr n v
+        checkStrLen (out.utf8ByteSize + str.utf8ByteSize)
         out := Str.jsAppend (Str.jsAppend out str) (cooked.getD (i + 1) "")
         i := i + 1
       pure (.str out)
@@ -2589,7 +2624,7 @@ def evalExpr : Nat → Ctx → Expr → M Value
       -- a string held by this binding alone is appended to in place: the slot lets go first
       let v ← match old, r with
         | .num p, .num q => pure (.num (p + q))
-        | .str p, .str q => dropSlotStr ctx h i p; pure (.str (Str.jsAppend p q))
+        | .str p, .str q => checkStrLen (p.utf8ByteSize + q.utf8ByteSize); dropSlotStr ctx h i p; pure (.str (Str.jsAppend p q))
         | .str p, .num q => dropSlotStr ctx h i p; pure (.str (Str.jsAppend p (numToString q)))
         | _, _ => binop n .add old r
       assignLocal n ctx x h i v
@@ -2599,7 +2634,7 @@ def evalExpr : Nat → Ctx → Expr → M Value
       let r ← (match leafV (← get) ctx rhs with | .hole => evalExpr n ctx rhs | v => pure v)
       let v ← match old, r with
         | .num p, .num q => pure (.num (p + q))
-        | .str p, .str q => dropNameStr ctx x p; pure (.str (Str.jsAppend p q))
+        | .str p, .str q => checkStrLen (p.utf8ByteSize + q.utf8ByteSize); dropNameStr ctx x p; pure (.str (Str.jsAppend p q))
         | .str p, .num q => dropNameStr ctx x p; pure (.str (Str.jsAppend p (numToString q)))
         | _, _ => binop n .add old r
       assignName n ctx x v
@@ -3323,7 +3358,7 @@ def directEval : Nat → Ctx → Value → M Value
   | n + 1, ctx, src => do
     match src with
     | .str code =>
-      match (parseScript code ctx.strict).map Resolve.script with
+      match (parseScript code ctx.strict (evalCode := true)).map Resolve.script with
       | .error e => throwErr .syntax ((e.drop 13).toString)
       | .ok sc =>
         let env ← newEnv ctx.env
@@ -4309,6 +4344,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       let parts ← es.toList.mapM fun v => match v with
         | .undef | .null => pure ""
         | v => toStr n v
+      checkStrLen (parts.foldl (fun acc t => acc + t.utf8ByteSize + sep.utf8ByteSize) 0)
       pure (.str (Str.canonical (sep.intercalate parts)))
     | .arrayIndexOf | .arrayIncludes =>
       let es ← elemsOf n thisV
@@ -4971,7 +5007,7 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       let need := len.toUInt64.toNat - cur
       if need > maxStringBytes then throwErr .range "Invalid string length"
       charge (need / 64)
-      let reps := String.join (List.replicate (need / Str.jsLength fill + 1) fill)
+      let reps := repeatStr fill (need / Str.jsLength fill + 1)
       let pad := substr reps 0 need
       pure (.str (if id_ == .stringPadStart then Str.jsAppend pad s else Str.jsAppend s pad))
     | .stringCodePointAt =>
@@ -5006,10 +5042,14 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
         else match indexOfFrom s pat 0 with | some p => [p] | none => []
       let mut out := ""
       let mut last := 0
+      -- each `$&` of the replacement adds the search string: asked before it is made
+      let whole := (replStr.splitOn "$&").length - 1
+      if !fnRepl then checkStrLen (replStr.utf8ByteSize + whole * pat.utf8ByteSize)
       for p in positions do
         out := out ++ substr s last p
         let r ← if fnRepl then toStr n (← callV n a1 .undef #[.str pat, .num (Float.ofNat p), .str s])
           else pure ((replStr.replace "$&" pat).replace "$$" "$")
+        checkStrLen (out.utf8ByteSize + r.utf8ByteSize)
         out := out ++ r
         last := p + Str.jsLength pat
       pure (.str (Str.canonical (out ++ substr s last (Str.jsLength s))))
@@ -5253,6 +5293,7 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
       -- append, so the append is in place when nothing else holds the string, and a loop of
       -- appends is linear (as `dropSlotStr` in the evaluator)
       | .str x, .str y =>
+        checkStrLen (x.utf8ByteSize + y.utf8ByteSize)
         let regs := if dst == a then regs.set! (bp + a) .undef else regs
         vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) (.str (Str.jsAppend x y))) fregs
       | .str x, .fl =>
@@ -6197,7 +6238,10 @@ def extraNative : Nat → Native → Value → Array Value → Option Value → 
               for (nm, k) in re.names do defineOwn o nm (.data (capVals.getD (k - 1) .undef) true true true)
               pure #[Value.obj o]
             toStr n (← callV n a1 .undef (#[.str matched] ++ capVals ++ #[.num (Float.ofNat a), .str s] ++ groups))
-          else pure (substitution replStr matched a cs capStrs re.names)
+          else match substitution replStr matched a cs capStrs re.names with
+            | some t => pure t
+            | none => throwErr .range "Invalid string length"
+        checkStrLen (out.utf8ByteSize + rep.utf8ByteSize)
         out := out ++ Str.ofUnitChars (cs.extract last a) ++ rep
         last := b
       pure (.str (out ++ Str.ofUnitChars (cs.extract last cs.size)))
@@ -6656,9 +6700,10 @@ def stringOrMath : Nat → Native → Value → Array Value → M Value
           let bytes := c.toUInt64.toNat * s.utf8ByteSize
           if bytes > maxStringBytes then throwErr .range "Invalid string length"
           charge (bytes / 64)
-          pure (.str (Str.canonical (String.join (List.replicate c.toUInt64.toNat s))))
+          pure (.str (Str.canonical (repeatStr s c.toUInt64.toNat)))
         | .stringConcat =>
           let parts ← args.toList.mapM (toStr n)
+          checkStrLen (parts.foldl (fun acc t => acc + t.utf8ByteSize) s.utf8ByteSize)
           pure (.str (Str.canonical (s ++ String.join parts)))
         | .stringSplit =>
           match a0 with
@@ -7689,6 +7734,192 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
       -- the host's function for the named properties of the global object (`namedGlobal`)
       defineOwn r.globalObj namedGetterKey (.data a0 false false false)
       pure .undef
+    | (.x .symbolFor) | (.x .symbolKeyFor) =>
+      let reg ← match (← getObj r.globalObj).props.get? symbolRegistryKey with
+        | some (.data (.obj id) ..) => pure id
+        | _ => do
+          let id ← alloc { proto := .null }
+          setHidden r.globalObj symbolRegistryKey (.obj id)
+          pure id
+      if id == (.x .symbolFor) then
+        let key ← toStr n a0
+        match (← getObj reg).props.get? (strKey key) with
+        | some (.data v ..) => pure v
+        | _ =>
+          let sid ← modifyGet fun h => (h.syms.size, { h with syms := h.syms.push key })
+          defineOwn reg (strKey key) (.data (.sym sid) true true true)
+          pure (.sym sid)
+      else
+        match a0 with
+        | .sym sid =>
+          let o ← getObj reg
+          pure (match o.keys.find? (fun k => match o.props.get? k with
+              | some (.data (.sym j) ..) => j == sid | _ => false) with
+            | some k => .str (keyStr k)
+            | none => .undef)
+        | _ => throwErr .type "Symbol.keyFor: the argument is not a symbol"
+    | (.x .stringRaw) =>
+      let cooked ← toObj n a0
+      let raw ← toObj n (← getV n (.obj cooked) "raw")
+      let len := toIntegerOrInf (← toNum n (← getV n (.obj raw) "length"))
+      let count := if len ≤ 0 then 0 else len.toUInt64.toNat
+      charge (count / 8)
+      let mut out := ""
+      for i in [0:count] do
+        out := Str.jsAppend out (← toStr n (← getV n (.obj raw) (toString i)))
+        if i + 1 < count && i + 1 < args.size then
+          out := Str.jsAppend out (← toStr n (argD args (i + 1)))
+      pure (.str out)
+    | (.x .weakRefCtor) =>
+      let nt ← match newTarget with
+        | some nt => pure nt
+        | none => throwErr .type "Constructor WeakRef requires 'new'"
+      if !a0.isObj then throwErr .type "WeakRef: the target must be an object"
+      let pp ← getV n nt "prototype"
+      let proto ← if pp.isObj then pure pp else getV n (← getV n (.obj r.globalObj) "WeakRef") "prototype"
+      let o ← alloc { proto }
+      setHidden o weakRefTargetKey a0
+      pure (.obj o)
+    | (.x .weakRefDeref) =>
+      match thisV with
+      | .obj oid =>
+        match (← getObj oid).props.get? weakRefTargetKey with
+        | some (.data v ..) => pure v
+        | _ => throwErr .type "WeakRef.prototype.deref called on an incompatible receiver"
+      | _ => throwErr .type "WeakRef.prototype.deref called on an incompatible receiver"
+    | (.x .finRegCtor) =>
+      let nt ← match newTarget with
+        | some nt => pure nt
+        | none => throwErr .type "Constructor FinalizationRegistry requires 'new'"
+      if !(← isCallable a0) then throwErr .type "FinalizationRegistry: the cleanup callback is not a function"
+      let pp ← getV n nt "prototype"
+      let proto ← if pp.isObj then pure pp else getV n (← getV n (.obj r.globalObj) "FinalizationRegistry") "prototype"
+      let o ← alloc { proto }
+      setHidden o finRegCallbackKey a0
+      setHidden o finRegTokensKey (← newArray #[])
+      pure (.obj o)
+    | (.x (.finRegMethod k)) =>
+      let (oid, tokens) ← match thisV with
+        | .obj oid =>
+          match (← getObj oid).props.get? finRegTokensKey with
+          | some (.data (.obj t) ..) => pure (oid, t)
+          | _ => throwErr .type "FinalizationRegistry method called on an incompatible receiver"
+        | _ => throwErr .type "FinalizationRegistry method called on an incompatible receiver"
+      let _ := oid
+      let held ← match (← getObj tokens).kind with | .array es => pure es | _ => pure #[]
+      if k == 0 then
+        -- register(target, heldValue, unregisterToken)
+        if !a0.isObj then throwErr .type "FinalizationRegistry.register: the target must be an object"
+        if sameValue a0 a1 then throwErr .type "FinalizationRegistry.register: the target and the held value are the same"
+        let tok := argD args 2
+        match tok with
+        | .undef => pure ()
+        | .obj _ => modifyObj tokens fun o => { o with kind := .array (held.push tok) }
+        | _ => throwErr .type "FinalizationRegistry.register: the unregister token must be an object"
+        pure .undef
+      else
+        -- unregister(unregisterToken): were there cells with the token
+        if !a0.isObj then throwErr .type "FinalizationRegistry.unregister: the token must be an object"
+        let rest := held.filter fun v => !sameValue v a0
+        modifyObj tokens fun o => { o with kind := .array rest }
+        pure (.bool (rest.size < held.size))
+    | (.x (.mapUpsert computed)) =>
+      let ck : Nat ← match thisV with
+        | .obj c => match (← getObj c).kind with
+          | .coll k _ _ => pure k
+          | _ => throwErr .type "method called on incompatible receiver"
+        | _ => throwErr .type "method called on incompatible receiver"
+      if ck != 0 && ck != 2 then throwErr .type "method called on incompatible receiver"
+      let weak := ck == 2
+      if computed && !(← isCallable a1) then throwErr .type "getOrInsertComputed: the callback is not a function"
+      if weak && !a0.isObj then throwErr .type "Invalid value used as weak collection key"
+      if toBool (← callNative n .mapHas thisV #[a0] none) then callNative n .mapGet thisV #[a0] none
+      else
+        let key := match a0 with | .num x => if x == 0 then Value.num 0 else a0 | _ => a0
+        let v ← if computed then callV n a1 .undef #[key] else pure a1
+        let _ ← callNative n .mapSet thisV #[a0, v] none
+        pure v
+    | (.x .urlPattern) =>
+      -- `n.urlPattern(op, ...)` for the page's URLPattern class: the Standard's algorithms are
+      -- `WHATWG.URLPattern.create` and `exec`; this converts the arguments and builds the answer.
+      let names := ["protocol", "username", "password", "hostname", "port", "pathname", "search", "hash"]
+      -- a URLPatternInput (WebIDL): an object is a URLPatternInit, its members read in
+      -- lexicographical order; anything else is a USVString
+      let toInput (v : Value) : M L4Factoidal.WHATWG.URLPattern.Input := do
+        match v with
+        | .obj _ =>
+          let member (k : String) : M (Option String) := do
+            match ← getV n v k with
+            | .undef => pure none
+            | x => pure (some (Str.toHost (← toStr n x)))
+          let baseURL ← member "baseURL"
+          let hash ← member "hash"
+          let hostname ← member "hostname"
+          let password ← member "password"
+          let pathname ← member "pathname"
+          let port ← member "port"
+          let protocol ← member "protocol"
+          let search ← member "search"
+          let username ← member "username"
+          pure (.init { protocol, username, password, hostname, port, pathname, search, hash, baseURL })
+        | .undef | .null => pure (.init {})
+        | x => pure (.str (Str.toHost (← toStr n x)))
+      let optStr (v : Value) : M (Option String) := do
+        match v with
+        | .undef => pure none
+        | x => pure (some (Str.toHost (← toStr n x)))
+      let a2 := argD args 2
+      let a3 := argD args 3
+      if (match a0 with | .num x => x == 0 | _ => false) then
+        let input ← toInput a1
+        let base ← optStr a2
+        match L4Factoidal.WHATWG.URLPattern.create input base (toBool a3) with
+        | .error msg => throwErr .type msg
+        | .ok p =>
+          let record ← newObject
+          let comps := [p.protocol, p.username, p.password, p.hostname, p.port, p.pathname, p.search, p.hash]
+          for (name, c) in names.zip comps do
+            defineOwn record name (.data (.str (Str.ofHost c.pattern)) false true false)
+            let re ← alloc { proto := .obj r.regexpProto, kind := .regexp c.regex "" "" }
+            setHidden record (privKey ("re:" ++ name)) (.obj re)
+            setHidden record (privKey ("names:" ++ name)) (← newArray (c.names.map fun s => Value.str (Str.ofHost s)))
+          defineOwn record "hasRegExpGroups" (.data (.bool p.hasRegexpGroups) false true false)
+          pure (.obj record)
+      else
+        let o ← match a1 with
+          | .obj id => getObj id
+          | _ => throwErr .type "URLPattern: not a pattern"
+        let comp (name : String) : M L4Factoidal.WHATWG.URLPattern.Component := do
+          match o.props.get? (privKey ("re:" ++ name)), o.props.get? (privKey ("names:" ++ name)) with
+          | some (.data (.obj rid) ..), some (.data (.obj nid) ..) =>
+            match (← getObj rid).kind, (← getObj nid).kind with
+            | .regexp re _ _, .array ns =>
+              pure { pattern := "", regex := re, names := ns.map fun v => match v with | .str s => Str.toHost s | _ => "" }
+            | _, _ => throwErr .type "URLPattern: not a pattern"
+          | _, _ => throwErr .type "URLPattern: not a pattern"
+        let pat : L4Factoidal.WHATWG.URLPattern.Pattern :=
+          { protocol := ← comp "protocol", username := ← comp "username", password := ← comp "password",
+            hostname := ← comp "hostname", port := ← comp "port", pathname := ← comp "pathname",
+            search := ← comp "search", hash := ← comp "hash" }
+        let input ← toInput a2
+        let base ← optStr a3
+        match L4Factoidal.WHATWG.URLPattern.exec pat input base with
+        | .error msg => throwErr .type msg
+        | .ok none => pure .null
+        | .ok (some res) =>
+          let out ← newObject
+          let inputs ← newArray (match a3 with | .undef => #[a2] | b => #[a2, b])
+          defineOwn out "inputs" (.data inputs true true true)
+          for (name, (v, groups)) in names.zip res.components.toList do
+            let c ← newObject
+            defineOwn c "input" (.data (.str (Str.ofHost v)) true true true)
+            let g ← newObject
+            for (k, gv) in groups do
+              defineOwn g (strKey (Str.ofHost k))
+                (.data (match gv with | some s => Value.str (Str.ofHost s) | none => .undef) true true true)
+            defineOwn c "groups" (.data (.obj g) true true true)
+            defineOwn out name (.data (.obj c) true true true)
+          pure (.obj out)
     | (.x .dynImport) =>
       let pid ← newPromise
       let x ← tryCatch (do let _ ← toStr n a0; pure none) (fun a => pure (some a))
@@ -8000,6 +8231,8 @@ def initRealm : M Unit := do
     if isMap then
       method p "get" .mapGet 1
       method p "set" .mapSet 2
+      method p "getOrInsert" (.x (.mapUpsert false)) 2
+      method p "getOrInsertComputed" (.x (.mapUpsert true)) 2
     else method p "add" .setAdd 1
     if k == 1 then
       for (nm, j) in [("union", 0), ("intersection", 1), ("difference", 2), ("symmetricDifference", 3),
@@ -8047,7 +8280,9 @@ def initRealm : M Unit := do
       ("at", .stringAt, 1), ("codePointAt", .stringCodePointAt, 1), ("trimStart", .stringTrimStart, 0),
       ("trimEnd", .stringTrimEnd, 0), ("replace", .stringReplace, 2), ("replaceAll", .stringReplaceAll, 2)] do
     method stringProto nm f l
-  if let .obj sc := stringC then method sc "fromCodePoint" .stringFromCodePoint 1
+  if let .obj sc := stringC then
+    method sc "fromCodePoint" .stringFromCodePoint 1
+    method sc "raw" (.x .stringRaw) 1
   method stringProto "localeCompare" (.x .stringLocaleCompare) 1
   -- Annex B.2.2.15, B.2.2.16: trimLeft and trimRight are trimStart and trimEnd
   for (alias, nm) in [("trimLeft", "trimStart"), ("trimRight", "trimEnd"), ("toLocaleUpperCase", "toUpperCase"),
@@ -8089,6 +8324,18 @@ def initRealm : M Unit := do
   if let .obj sc := symC then
     for i in [0:wellKnown.size] do
       defineOwn sc (wellKnown[i]!) (.data (.sym i) false false false)
+    method sc "for" (.x .symbolFor) 1
+    method sc "keyFor" (.x .symbolKeyFor) 1
+  -- WeakRef (§26.1) and FinalizationRegistry (§26.2)
+  let weakRefProto ← mk
+  setHidden g "WeakRef" (← ctorWith "WeakRef" (.x .weakRefCtor) 1 weakRefProto)
+  method weakRefProto "deref" (.x .weakRefDeref) 0
+  defineOwn weakRefProto (symKey symToStringTag) (.data (.str "WeakRef") false false true)
+  let finRegProto ← mk
+  setHidden g "FinalizationRegistry" (← ctorWith "FinalizationRegistry" (.x .finRegCtor) 1 finRegProto)
+  method finRegProto "register" (.x (.finRegMethod 0)) 2
+  method finRegProto "unregister" (.x (.finRegMethod 1)) 1
+  defineOwn finRegProto (symKey symToStringTag) (.data (.str "FinalizationRegistry") false false true)
   method symbolProto "toString" .symbolToString 0
   method symbolProto "valueOf" .symbolValueOf 0
   defineOwn symbolProto "description" (.acc (← mkNative .symbolDescription "get description" 0) .undef false true)

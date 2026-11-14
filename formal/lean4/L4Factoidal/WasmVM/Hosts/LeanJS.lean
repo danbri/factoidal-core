@@ -617,7 +617,9 @@ def prepareSource (lim : Page.Limits := {}) : Except String Session := do
   let heap := JS.addNatives heap nobj #[("serialize", .x .cloneSerialize, 2), ("deserialize", .x .cloneDeserialize, 1),
     ("runScript", .x .classicScript, 1),
     -- the global object's slot for the page's named properties (`JS.namedGetterKey`)
-    ("setNamedGetter", .x .namedGetterSet, 1)]
+    ("setNamedGetter", .x .namedGetterSet, 1),
+    -- the URL Pattern Standard (`WHATWG.URLPattern`), for the prelude's URLPattern class
+    ("urlPattern", .x .urlPattern, 4)]
   let ((o, f), heap) := JS.evalValue heap prelude
   if let some m := failure o then throw s!"prelude: {m}"
   let ((o, api), heap) := JS.callFunction heap f .undef #[nobj]
@@ -676,6 +678,12 @@ def start (base : Session) (dom : Arena) (url : String) (scripts : Array (Nat ×
   let s := { base with
     heap := { base.heap with maxDepth := callDepth.toUInt32 },
     limits := lim, steps := 0, jobs := 0, tasks := 0, errors := #[], lastFrame := none }
+  -- Math.random: a seed of this session's own, not the realm snapshot's constant
+  -- (`WebApi.mathRandomSeed`; as `LeanJSWorkers.start` does for a worker). With the constant
+  -- every page drew the same sequence, so two pages' "random" tokens were equal.
+  let s := match Hosts.WebApi.mathRandomSeed lim.entropy with
+    | some x => { s with heap := { s.heap with rng := x } }
+    | none => s
   let mut s := s.setHost { dom := domHost, reads, time, web := { entropy := lim.entropy, docEncoding := lim.encoding, net := { enabled := lim.network, page := L4Factoidal.Net.PageFetch.Page.ofUrl url lim.hostCors lim.pageAddress, syncOk := lim.syncOk, syncAnswers := lim.syncAnswers, mayBlock := lim.mayBlock } } }
   s := (s.api? "start" #[]).1
   s := (s.api? "url" #[.str (JS.Str.ofHost url)]).1
@@ -702,13 +710,16 @@ def start (base : Session) (dom : Arena) (url : String) (scripts : Array (Nat ×
 joins the arena, its classic scripts run in the page's realm with the current script set
 (none for a frame of another origin or a sandbox without scripts), its `load` event at the
 `iframe` is a task, and the window's when it was waiting for this frame. -/
-def loadFrame (s : Session) (el : Nat) (source : String) (scripts : Array (Nat × String)) (xml : Bool := false) :
-    Session := Id.run do
-  let run := Hosts.Dom.frameScriptsInRealm s.host.dom el
-  let (dom, root) := Hosts.Dom.attachDocument s.host.dom el source xml
+def loadFrame (s : Session) (el : Nat) (source : String) (scripts : Array (Nat × String)) (xml : Bool := false)
+    (responseUrl : Option String := none) : Session := Id.run do
+  let (dom, root) := Hosts.Dom.attachDocument s.host.dom el source xml responseUrl
+  -- Which scripts run here is asked of the frame as it is after this navigation
+  -- (`Hosts.Dom.realmScripts`, `realmScripts_needs_access`, `navigatedTo_frame`): asked
+  -- before, a frame that was `about:blank` or same-origin and went to another origin had
+  -- that document's scripts run in the page's realm.
+  let scripts := Hosts.Dom.realmScripts dom el scripts
   let mut s := s.setHost { s.host with dom }
   if let some root := root then
-    let scripts := if run then scripts else #[]
     for (node, src) in scripts do
       s := (s.api? "script" #[.num (Float.ofNat (node + root))]).1
       s := s.eval src

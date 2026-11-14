@@ -129,6 +129,12 @@ structure Node where
   manual : Array NodeId := #[]
   /-- A slottable's manual slot assignment (DOM §4.2.2.1). -/
   manualSlot : Option NodeId := none
+  /-- States of an element that the page's objects decide and selectors read
+  (`DOM.Selectors`), as bits: 1 a popover that is showing (`:popover-open`, HTML §6.12);
+  2 a modal dialog (`:modal`); 4 a custom element that is defined (HTML §4.13.3: an element
+  with a custom element name matches `:defined` only then); 8 the focused element (`:focus`,
+  `DOM.Focus`). 0 for every node a parser makes; a clone starts at 0. -/
+  states : Nat := 0
 deriving Inhabited, Repr
 
 structure Dom where

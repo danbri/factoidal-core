@@ -122,7 +122,7 @@ def xhtmlResolver (src : String) : Resolver :=
 /-- Parse a document in the XML syntax of HTML into a DOM arena; node 0 is the Document.
 Every node of the tree comes from at least one character of the source, so the loop
 bound `src.length + 2` is never reached by a parsed tree. -/
-def parseXmlDocument (src : String) : Except String Dom := do
+def parseXmlTree (src : String) : Except String Dom := do
   let root ← parseNamespaceViewWith (xhtmlResolver src) src
   let mut d : Dom := { nodes := #[{ type := .document, htmlDoc := false }] }
   let mut work : List (NodeId × NamespaceNode) := [(0, root)]
@@ -136,6 +136,17 @@ def parseXmlDocument (src : String) : Except String Dom := do
         | .element _ _ kids => kids.map (id, ·) ++ rest
         | .other _ => rest
   throw "XHTML: the tree has more nodes than its source has characters"
+
+/-- An XML source as a document (`parseXmlTree`). A document whose root element is in the
+HTML namespace is an XHTML document: its content type is `application/xhtml+xml` (a caller
+that knows the content type sets it after), so that `createElement` in it makes HTML
+elements (DOM §4.5 "createElement" step 5). Before, the page's own XHTML document had no
+content type, and every element a script created in it was in no namespace: an `iframe`
+made by a script never loaded. -/
+def parseXmlDocument (src : String) : Except String Dom := do
+  let d ← parseXmlTree src
+  let xhtml := (d.get 0).kids.any fun k => (d.get k).type == .element && (d.get k).ns == some htmlNS
+  return if xhtml then d.setNode 0 fun n => { n with contentType := "application/xhtml+xml" } else d
 
 /-- A URL whose document the XML parser reads: its path ends in `.xht` or `.xhtml` (any
 case), the file name extensions that the `application/xhtml+xml` registration lists

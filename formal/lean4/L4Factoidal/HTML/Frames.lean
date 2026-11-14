@@ -47,10 +47,20 @@ def Origin.serialize : Origin → String
 def sameOrigin (a b : Origin) : Bool := decide (a = b)
 
 /-- The origin of a URL (URL §4.7): a tuple origin for the schemes that have one, else a
-new opaque origin with identity `fresh`. A blob URL's origin is not modelled (opaque). -/
+new opaque origin with identity `fresh`. A blob URL has the origin of the URL in its path
+when that is `http` or `https` (as `Url.origin`; no blob URL entry is asked): the engine
+answers a `blob:` navigation only from the page's own blob URL store (`Net.BlobUrls`), so
+a frame sent to its page's blob URL is a document of the page's origin. -/
 def originOf (u : Url) (fresh : Nat) : Origin :=
   if ["http", "https", "ws", "wss", "ftp"].contains u.scheme then
     .tuple u.scheme ((u.host.map Host.serialize).getD "") u.port
+  else if u.scheme == "blob" then
+    match (basicParse u.serializePath).toOption with
+    | some pu =>
+      if pu.scheme == "http" || pu.scheme == "https" then
+        .tuple pu.scheme ((pu.host.map Host.serialize).getD "") pu.port
+      else .opaque fresh
+    | none => .opaque fresh
   else .opaque fresh
 
 /-- The origin of a URL string, or a new opaque origin when it does not parse. -/
@@ -331,6 +341,10 @@ theorem nested_no_scripts (parentFlags : SandboxFlags) (parentOrigin : Origin) (
 #guard !(parseSandbox "allow-scripts ALLOW-SAME-ORIGIN").scripts && !(parseSandbox "allow-scripts allow-same-origin").origin
 #guard (frameOf {} (.tuple "https" "a.example" none) (some "allow-scripts") (some "<p>x") none 7).origin == .opaque 7
 #guard (frameOf {} (.tuple "https" "a.example" none) none (some "<p>x") none 7).origin == .tuple "https" "a.example" none
+-- a blob URL: the origin of the URL in its path; opaque when that is not http or https
+#guard originOfString "blob:https://a.example/0a1b" 7 == .tuple "https" "a.example" none
+#guard originOfString "blob:weird:whatever" 7 == .opaque 7
+#guard originOfString "data:text/html,x" 7 == .opaque 7
 #guard (frameOf {} (.tuple "https" "a.example" none) none none (some "https://b.example:8080/x") 7).origin ==
   .tuple "https" "b.example" (some 8080)
 #guard postMessageDelivers (.tuple "https" "a.example" none) (.tuple "https" "a.example" none) "https://a.example/page" == some true

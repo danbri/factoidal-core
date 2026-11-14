@@ -182,6 +182,9 @@ structure Host where
   /-- Messages this session posted to a frame's session or to its parent's
   (`HTML.FrameSessions`), which the host has not taken. -/
   outbox : Array L4Factoidal.HTML.FrameSessions.Message := #[]
+  /-- The rules of the page's style sheets for the editing commands (`Hosts.Dom.editOp`),
+  with the sheet text they were parsed from: parsed again only when the text changes. -/
+  editIndex : Option (String × L4Factoidal.Rendering.CSS.RuleIndex) := none
   deriving Inhabited
 
 /-- Budgets of one session. -/
@@ -430,6 +433,19 @@ def pageQuery (h : Host) (node op : Nat) : Host × Except Int String :=
     | some f => (h, match f node op with | some r => .ok r | none => .error (-1))
     | none => (h, .error (-2))
 
+/-- The rules of the page's style sheets for an editing command: the text of the sheets
+comes from the layout reads (measure op 40, no layout); the index of the last text is kept. -/
+def Host.editRules (h : Host) : Host × L4Factoidal.Rendering.CSS.RuleIndex :=
+  let (h, f) := h.measured
+  let sheet := match f with
+    | some f => (f 0 40).getD ""
+    | none => ""
+  match h.editIndex with
+  | some (text, ix) =>
+    if text == sheet then (h, ix)
+    else let ix := Hosts.Dom.editIndex sheet; ({ h with editIndex := some (sheet, ix) }, ix)
+  | none => let ix := Hosts.Dom.editIndex sheet; ({ h with editIndex := some (sheet, ix) }, ix)
+
 /-- A placeholder for the DOM state while an import holds it. -/
 def emptyDomHost : DomHost := { dom := {} }
 
@@ -470,15 +486,12 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
       | .error e => (h, st, Hosts.Dom.codeOrTrap e)
       | .ok q =>
         if Hosts.Dom.editOps.contains (a 1) then
-          -- editing (`Hosts.Dom.editOp`): the algorithms read styles, so they get the text of
-          -- the page's style sheets (measure op 40, no layout); 175 changes the tree
-          let (h, f) := if a 1 == 177 then (h, none) else h.measured
-          let sheet := match f with
-            | some f => (f 0 40).getD ""
-            | none => ""
+          -- editing (`Hosts.Dom.editOp`): the algorithms read styles, so they get the rules of
+          -- the page's style sheets (`Host.editRules`, no layout); 175 changes the tree
+          let (h, ix) := if a 1 ≥ 177 then (h, Hosts.Dom.editIndex "") else h.editRules
           let ds := h.dom
           let h := { h with dom := emptyDomHost }
-          let (dom, answer) := Hosts.Dom.editOp ds sheet (a 0) (a 1) q
+          let (dom, answer) := Hosts.Dom.editOp ds ix (a 0) (a 1) q
           let reads := if a 1 == 175 then { h.reads with version := h.reads.version + 1 } else h.reads
           let (st, r) := Hosts.Dom.answerStr mem st (a 4) (a 5) answer
           ({ h with dom, reads }, st, r)
@@ -764,6 +777,9 @@ def Session.runJobsP (s : Session) : Prog Session := do
 /-- Event flags of `qjs_dispatch`: 1 bubbles, 2 cancelable, 4 composed. -/
 def flagsOf (type : String) : Nat :=
   if type == "click" || type.startsWith "mouse" || type.startsWith "pointer" then 7
+  -- keys and `beforeinput` bubble, can be canceled and are composed; `input` can not be canceled
+  else if type == "keydown" || type == "keyup" || type == "keypress" || type == "beforeinput" then 7
+  else if type == "input" then 5
   else if type == "DOMContentLoaded" then 1
   else 0
 
@@ -1203,14 +1219,15 @@ each with the current script set (so `document` is the frame's document while it
 a microtask checkpoint after it; then the `load` event at the `iframe` is a task, and the
 window's when it was waiting for this frame. `scripts` are the script elements of `source`
 parsed on its own, with their sources. A frame of another origin, or one whose sandbox
-forbids scripts, runs none here (`Hosts.Dom.frameScriptsInRealm`). -/
+forbids scripts, runs none here (`Hosts.Dom.realmScripts`, asked after the document is
+attached: the origin is the one of the URL it came from). -/
 def Session.loadFrameP (s : Session) (el : Nat) (source : String) (scripts : Array (Nat × String))
-    (xml : Bool := false) : Prog Session := do
-  let run := Hosts.Dom.frameScriptsInRealm s.host.dom el
-  let (dom, root) := Hosts.Dom.attachDocument s.host.dom el source xml
+    (xml : Bool := false) (responseUrl : Option String := none) : Prog Session := do
+  let (dom, root) := Hosts.Dom.attachDocument s.host.dom el source xml responseUrl
+  -- asked of the frame as it is after this navigation (`Hosts.Dom.realmScripts`)
+  let scripts := Hosts.Dom.realmScripts dom el scripts
   let mut s := { s with host := { s.host with dom } }
   if let some root := root then
-    let scripts := if run then scripts else #[]
     for (node, src) in scripts do
       s ← s.setScriptP (node + root : Nat)
       let (s', status, text) ← s.evalP src

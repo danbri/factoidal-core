@@ -405,4 +405,63 @@ script (§13.3.10: a promise, rejected while no host loads modules for scripts).
 #guard out "#!/usr/bin/env node\nprint(1)" == ["1"]
 #guard out "var p = import('./x.js'); print(p instanceof Promise); p.catch(e => print(e.name)); import({ toString() { throw new RangeError('s') } }).catch(e => print(e.name)); print(typeof globalThis['%import'], Object.getOwnPropertyNames(globalThis).filter(k => /import/.test(k)).length)" == ["true", "undefined 0", "TypeError", "RangeError"]
 
+/-! ## Early errors of classes, async functions and generators (§15.7.1, §15.8.1, §15.5.1)
+
+Negative Test262 pages that the parser accepted until 2026-11-14 (the largest group left once
+parse errors were reported). -/
+
+private def syn (src : String) : String :=
+  match parseScript src with | .ok _ => "ok" | .error _ => "SyntaxError"
+
+-- `await` and `yield` as names where they are operators; `let` and `yield` in strict code
+#guard ["async function f() { var await }", "async function f() { await: ; }", "async function f() { void \\u0061wait }",
+  "function* g() { void yield }", "function* g() { yield: ; }", "'use strict'; var yield", "'use strict'; yield: ;",
+  "'use strict'; let = 1"].map syn == List.replicate 8 "SyntaxError"
+#guard ["var await = 1; await: ;", "var yield = 1; void yield", "function f() { var await, yield; return await + yield }",
+  "var let = 1; let"].map syn == List.replicate 4 "ok"
+-- `arguments` and `super()` in a field initialiser or a static block; an arrow function keeps the rule
+#guard ["class C { x = arguments }", "class C { static { arguments } }", "class C { x = () => arguments }",
+  "class C extends Object { x = super() }", "class C extends Object { static { super() } }"].map syn ==
+  List.replicate 5 "SyntaxError"
+#guard ["class C { x = function () { return arguments } }", "class C { m() { return arguments } }",
+  "class C extends Object { constructor() { super() } }", "class C { x = 1; static { var a = 1 } }"].map syn ==
+  List.replicate 4 "ok"
+-- private names: declared once, used only inside a class that declares them, not deleted
+#guard ["class C { #x; #x }", "class C { #x() {} get #x() { return 1 } }", "class C { m() { this.#y } }",
+  "var o = {}; o.#x", "class C { #x; m() { delete this.#x } }", "class C { #x; m() { delete (this.#x) } }",
+  "class C { #x; m() { delete this?.#x } }"].map syn == List.replicate 7 "SyntaxError"
+#guard ["class C { get #x() { return 1 } set #x(v) {} }", "class C { #x; m() { class D { n(o) { return o.#x } } } }",
+  "class C { #x = 1; static has(o) { return #x in o } }"].map syn == List.replicate 3 "ok"
+#guard out "class C { #x = 7; m() { return eval('this.#x') } } print(new C().m()); try { eval('var o = {}; o.#q') } catch (e) { print(e.name) }" == ["7", "TypeError"]
+-- a "use strict" directive needs simple parameters
+#guard ["function f(a = 1) { 'use strict' }", "function f([a]) { 'use strict' }", "function f(...a) { 'use strict' }",
+  "(a = 1) => { 'use strict' }"].map syn == List.replicate 4 "SyntaxError"
+#guard syn "function f(a, b) { 'use strict' }" == "ok"
+
+/-! ## Built-ins that were missing: `Symbol.for`, `String.raw`, WeakRef, FinalizationRegistry, `getOrInsert`
+
+`Symbol.for` is how libraries share a symbol across bundles (React's element type is
+`Symbol.for('react.element')`); it was "for is not a function". The heap has no collector, so a
+WeakRef's target is never collected and a FinalizationRegistry never calls back. -/
+
+#guard out "var a = Symbol.for('app.x'), b = Symbol.for('app.x'), c = Symbol('app.x'); print(a === b, a === c, Symbol.keyFor(a), Symbol.keyFor(c), a.description, typeof a, a.toString()); try { Symbol.keyFor('x') } catch (e) { print(e.name) } var o = { [a]: 1 }; print(o[Symbol.for('app.x')], Symbol.for.length, Symbol.keyFor.name)" == ["true false app.x undefined app.x symbol Symbol(app.x)", "TypeError", "1 1 keyFor"]
+#guard out "print(String.raw`a\\n${1 + 1}b\\t${'c'}`, String.raw({ raw: ['x', 'y', 'z'] }, 0, 1, 2), String.raw({ raw: 'abc' }, '-', '+'), String.raw.length)" == ["a\\n2b\\tc x0y1z a-b+c 1"]
+#guard out "var t = {}; var w = new WeakRef(t); print(w.deref() === t, Object.prototype.toString.call(w), typeof WeakRef.prototype.deref); try { new WeakRef(1) } catch (e) { print(e.name) } try { WeakRef(t) } catch (e) { print(e.name) } var fr = new FinalizationRegistry(() => {}); var tok = {}; print(fr.register(t, 'held', tok), fr.unregister(tok), fr.unregister(tok), Object.prototype.toString.call(fr)); try { fr.register(t, t) } catch (e) { print(e.name) } try { new FinalizationRegistry(1) } catch (e) { print(e.name) }" == ["true [object WeakRef] function", "TypeError", "TypeError", "undefined true false [object FinalizationRegistry]", "TypeError", "TypeError"]
+#guard out "var m = new Map([[1, 'a']]); print(m.getOrInsert(1, 'x'), m.getOrInsert(2, 'b'), m.getOrInsertComputed(3, k => 'k' + k), m.getOrInsertComputed(3, k => 'no'), m.size, [...m.keys()].join()); var wm = new WeakMap(), k = {}; print(wm.getOrInsert(k, 5), wm.getOrInsertComputed(k, () => 6)); try { wm.getOrInsert(1, 2) } catch (e) { print(e.name) } try { Map.prototype.getOrInsert.call(new Set, 1, 2) } catch (e) { print(e.name) }" == ["a b k3 k3 3 1,2,3", "5 5", "TypeError", "TypeError"]
+
+/-! ## No string past `maxStringBytes`
+
+A script could make the engine allocate without bound: `s += s` in a loop doubles a string at
+one step a turn, and `replace` with `$1` multiplies a match (Test262
+`staging/sm/String/replace-math` asks for 2^36 units; the WPT runner's process ended in the
+middle of that page on 2026-11-14). Concatenation, templates, `join`, `concat` and `replace` now
+ask `checkStrLen` first and throw a RangeError, as `repeat` and `padStart` did; `repeat` builds
+by doubling, not from a list of its parts. -/
+
+#guard out "var s = 'x'; try { while (true) s += s } catch (e) { print(e.name, s.length) } try { var t = 'ab'; for (var i = 0; i < 40; i++) t = t + t } catch (e) { print(e.name, t.length) }" == ["RangeError 268435456", "RangeError 268435456"]
+#guard out "function puff(x, n) { while (x.length < n) x += x; return x.substring(0, n); } var x = puff('1', 1 << 16); var rep = puff('$1', 1 << 14); try { var y = x.replace(/(.+)/g, rep); print(y.length) } catch (e) { print(e.name, e.message) }" == ["RangeError Invalid string length"]
+#guard out "var big = 'y'.repeat(1 << 22); var r = []; for (var f of [() => new Array(128).fill(big).join(''), () => big.concat(...new Array(100).fill(big)), () => { var a = `${big}${big}`; for (var i = 0; i < 7; i++) a = `${a}${a}`; return a }, () => big.replace(big, '$&'.repeat(100))]) { try { f(); r.push('made') } catch (e) { r.push(e.name) } } print(r.join())" == ["RangeError,RangeError,RangeError,RangeError"]
+#guard out "print('abc'.replace('b', '[$&$&]'), 'a-b'.replace(/(\\w)-(\\w)/, '$2$1$&'), 'abc'.repeat(3), 'x'.padStart(7, 'ab'), 'x'.padEnd(6, '-'), ''.repeat(5).length, [1, 2].join('-'), 'a'.concat('b', 1))" == ["a[bb]c baa-b abcabcabc abababx x----- 0 1-2 ab1"]
+#guard repeatStr "ab" 0 == "" && repeatStr "ab" 1 == "ab" && repeatStr "ab" 5 == "ababababab" && repeatStr "" 9 == ""
+
 end L4Factoidal.JS.Tests

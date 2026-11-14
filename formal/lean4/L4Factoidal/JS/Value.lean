@@ -115,6 +115,22 @@ inductive NativeX where
   host's named properties (`namedGetterKey`, `namedGlobal`). A String key cannot name that
   slot (`strKey`), so the page host sets it through this built-in. -/
   | namedGetterSet
+  /-- The URL Pattern Standard for the page object `URLPattern` (`WHATWG/URLPattern.lean`),
+  a host's `n.urlPattern(op, ...)`: op 0 `(input, baseURL, ignoreCase)` compiles a pattern
+  and answers its record (the eight pattern strings, `hasRegExpGroups`, and hidden: each
+  component's compiled regular expression and group names), or throws the TypeError; op 1
+  `(record, input, baseURL)` is `exec`: the match result or null. -/
+  | urlPattern
+  /-- `Symbol.for` and `Symbol.keyFor` (§20.4.2.2, §20.4.2.6: the GlobalSymbolRegistry, a
+  hidden object of the realm); `String.raw` (§22.1.2.4). -/
+  | symbolFor | symbolKeyFor | stringRaw
+  /-- WeakRef (§26.1): the constructor and `deref`. FinalizationRegistry (§26.2): the
+  constructor, `register` (0) and `unregister` (1). The heap has no collector, so a target is
+  never collected and a cleanup callback is never called: what ECMA-262 allows of an
+  implementation that keeps every object alive. -/
+  | weakRefCtor | weakRefDeref | finRegCtor | finRegMethod (k : Nat)
+  /-- `getOrInsert` and `getOrInsertComputed` of Map and WeakMap (the upsert proposal). -/
+  | mapUpsert (computed : Bool)
   deriving BEq, Repr, Inhabited
 
 /-- The built-in functions (§19 to §28 for the subset). -/

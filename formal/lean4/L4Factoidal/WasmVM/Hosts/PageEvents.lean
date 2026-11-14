@@ -182,6 +182,54 @@ def pointer (s : σ) (kind : PointerKind) (node : Nat) (init : String) : σ :=
       else e.moveNow s target init
   (e.advance s (e.loop s).clock).1
 
+/-- The init of an `InputEvent` as JSON: its `inputType`, `data` and target ranges (each
+"start node, start offset, end node, end offset"). -/
+def inputInit (inputType : String) (data : Option String) (ranges : List L4Factoidal.DOM.Range.Rng := []) : String :=
+  let n := fun (k : Nat) => L4Factoidal.JSON.Json.number (toString k)
+  (L4Factoidal.JSON.Json.object [("inputType", .string inputType),
+    ("data", match data with
+      | some v => .string v
+      | none => .null),
+    ("ranges", .array (ranges.map fun r => .array [n r.start.node, n r.start.offset, n r.stop.node, n r.stop.offset]))]).toString
+
+/-- A key of the user (`up`: its release). `keydown` is fired at the editing host of the
+selection (else the `body`). When it is not canceled and the key edits
+(`DOM.Editing.keyCommandIn`), `beforeinput` is fired at the editing host; when that is not
+canceled the editing command runs and `input` is fired. ArrowLeft and ArrowRight move the
+caret. `init` is the JSON init of the keyboard events. -/
+def key (s : σ) (up : Bool) (init : String) (k : L4Factoidal.DOM.Editing.KeyInput) : σ :=
+  let s := (e.advance s (e.loop s).clock).1
+  let target := Hosts.Dom.keyTarget (e.host s).dom
+  if up then
+    let s := (e.dispatchWith s target "keyup" init).1
+    (e.advance s (e.loop s).clock).1
+  else
+    let (s, prevented) := e.dispatchWith s target "keydown" init
+    let s :=
+      if prevented then s
+      else match Hosts.Dom.keyCommandOf (e.host s).dom k, Hosts.Dom.keyHost (e.host s).dom with
+        | some (command, value), some host =>
+          let inputType := L4Factoidal.DOM.Editing.inputTypeOf command
+          let data := L4Factoidal.DOM.Editing.inputDataOf command value
+          let (h, ix) := (e.host s).editRules
+          let s := e.setHost s h
+          let ranges := (Hosts.Dom.editTarget h.dom ix command value).toList
+          let (s, prevented) := e.dispatchWith s host "beforeinput" (inputInit inputType data ranges)
+          if prevented then s
+          else
+            let h := e.host s
+            let ds := h.dom
+            let h := { h with dom := emptyDomHost }
+            let (dom, ok, ev) := Hosts.Dom.editKey ds ix command value
+            let s := e.setHost s { h with dom, reads := { h.reads with version := h.reads.version + 1 } }
+            match ok, ev with
+            | true, some (at_, it, d) => (e.dispatchWith s at_ "input" (inputInit it d)).1
+            | _, _ => s
+        | _, _ =>
+          let h := e.host s
+          e.setHost s { h with dom := Hosts.Dom.caretMove h.dom k }
+    (e.advance s (e.loop s).clock).1
+
 /-- The viewport moved: reads lay out again, and `resize` at the window when it changed. -/
 def resize (s : σ) (width height : Nat) : σ :=
   let r := (e.host s).reads

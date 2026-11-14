@@ -61,6 +61,8 @@ structure Xhr where
   cred : Bool := false
   /-- Fetch mode "same-origin" (`fetch`); XHR is always "cors". -/
   sameOnly : Bool := false
+  /-- Fetch redirect mode "error" (`fetch`); XHR always follows. -/
+  redirectError : Bool := false
   timeout : Nat := 0
   responseType : String := ""
   mimeOverride : Option String := none
@@ -240,7 +242,7 @@ this mode (the steps "if xhr's synchronous flag is unset" hold it). -/
 def syncSend (s : State) (h : Nat) (x : Xhr) : State × Except Int String :=
   let id := s.nextTransfer
   let s := { s with nextTransfer := id + 1 }
-  let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred, sameOriginOnly := x.sameOnly, blob := s.blobOf x.url }
+  let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred, sameOriginOnly := x.sameOnly, redirectError := x.redirectError, blob := s.blobOf x.url }
   let (s, out) := syncFetch s t
   match out with
   | .need => (s.set h { x with events := #[] }, .error errNeedHost)
@@ -297,7 +299,7 @@ def beginFetch (s : State) (h : Nat) (x : Xhr) : State :=
   if x.state != 1 || !x.sendFlag then s else
   let id := s.nextTransfer
   let s := { s with nextTransfer := id + 1 }
-  let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred, sameOriginOnly := x.sameOnly, blob := s.blobOf x.url }
+  let t : Transfer := { id, page := s.page, method := x.method, url := x.url, headers := x.headers.toList, body := x.body, credentials := x.cred, sameOriginOnly := x.sameOnly, redirectError := x.redirectError, blob := s.blobOf x.url }
   match plan t with
   | .send t' w => (s.set h { x with transfer := some id }) |> fun s => { s with live := s.live.push (id, h, t'), outbox := s.outbox.push w }
   | .deliver _ r => s.set h { x with deferred := some r }
@@ -606,6 +608,11 @@ def op (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int Byt
       (name, v)
     let body := formDataBody entries
     if body.size > maxBody then (s, .error (-5)) else (s, .ok body)
+  | 79 =>
+    -- redirect mode "error" (`fetch`): `PageFetch.onAnswer_redirect_error`
+    match s.get? (natAt fs 0) with
+    | none => (s, .error errType)
+    | some x => (s.set (natAt fs 0) { x with redirectError := natAt fs 1 != 0 }, okStr "")
   | 77 =>
     -- mode same-origin (`fetch`)
     match s.get? (natAt fs 0) with

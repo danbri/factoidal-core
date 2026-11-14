@@ -282,6 +282,7 @@
     constructor(type, init = undefined) {
       super(type, init); const s = state(this), d = initOf(init);
       s.data = d.data === undefined || d.data === null ? null : String(d.data); s.isComposing = !!d.isComposing; s.inputType = String(d.inputType ?? '');
+      s.ranges = Array.isArray(d.ranges) ? d.ranges : Array.isArray(d.targetRanges) ? d.targetRanges : [];
     }
   }
   getters(InputEvent, ['data', 'isComposing', 'inputType']);
@@ -521,7 +522,18 @@
     'mouseover', 'mouseup', 'reset', 'resize', 'scroll', 'select', 'submit', 'toggle', 'wheel', 'animationend',
     'transitionend', 'pointerdown', 'pointerup', 'pointermove', 'message', 'unhandledrejection', 'rejectionhandled',
     'beforeunload', 'unload', 'hashchange', 'popstate', 'pageshow', 'pagehide', 'storage', 'online', 'offline',
-    'afterprint', 'beforeprint', 'languagechange', 'messageerror', 'slotchange'];
+    'afterprint', 'beforeprint', 'languagechange', 'messageerror', 'slotchange', 'beforetoggle', 'command', 'invalid',
+    // the rest of GlobalEventHandlers and WindowEventHandlers (HTML §8.1.8.2)
+    'auxclick', 'beforeinput', 'beforematch', 'canplay', 'canplaythrough', 'contextlost', 'contextrestored', 'copy',
+    'cuechange', 'cut', 'drag', 'dragend', 'dragenter', 'dragleave', 'dragover', 'dragstart', 'drop', 'durationchange',
+    'emptied', 'ended', 'formdata', 'loadeddata', 'loadedmetadata', 'loadstart', 'paste', 'pause', 'play', 'playing',
+    'progress', 'ratechange', 'scrollend', 'securitypolicyviolation', 'seeked', 'seeking', 'stalled', 'suspend',
+    'timeupdate', 'volumechange', 'waiting', 'webkitanimationend', 'webkitanimationiteration', 'webkitanimationstart',
+    'webkittransitionend', 'pagereveal', 'pageswap'];
+  // The event type of a handler: the attribute's name without "on", except the prefixed
+  // animation events, whose types are in camel case (HTML §8.1.8.2).
+  const handlerTypes = { webkitanimationend: 'webkitAnimationEnd', webkitanimationiteration: 'webkitAnimationIteration',
+    webkitanimationstart: 'webkitAnimationStart', webkittransitionend: 'webkitTransitionEnd' };
   const handlers = new WeakMap();
   const handlerOf = (t, name) => handlers.get(t)?.get(name)?.value ?? null;
   const setHandler = (t, name, f) => {
@@ -533,7 +545,7 @@
       h = { value };
       m.set(name, h);
       const special = name === 'error' && t === window;
-      addListener(t, name, function (event) {
+      addListener(t, handlerTypes[name] ?? name, function (event) {
         const v = h.value;
         if (typeof v !== 'function') return;
         const r = special && event instanceof ErrorEvent
@@ -547,8 +559,12 @@
   // handlers and the WindowEventHandlers are the window's.
   const bodyWindowHandlers = new Set(['blur', 'error', 'focus', 'load', 'resize', 'scroll', 'afterprint', 'beforeprint',
     'beforeunload', 'hashchange', 'languagechange', 'message', 'messageerror', 'offline', 'online', 'pagehide', 'pageshow',
-    'popstate', 'rejectionhandled', 'storage', 'unhandledrejection', 'unload']);
+    'popstate', 'rejectionhandled', 'storage', 'unhandledrejection', 'unload', 'pagereveal', 'pageswap']);
   const windowReflecting = el => el instanceof HTMLElement && (el.localName === 'body' || el.localName === 'frameset');
+  // The window a body or frameset element's window-reflecting handlers belong to (HTML
+  // §8.1.8.1): its own document's. For a same-origin frame's document that is the frame's
+  // window target, not the page's window (whose handlers a frame's `<body onload>` replaced).
+  const bodyWindow = el => { const d = info(nodeId(el), 7); return d > 0 ? frameTarget(d) : window; };
   const addHandlers = proto => {
     for (const name of handlerNames)
       Object.defineProperty(proto, 'on' + name, { get() { return handlerOf(this, name); },
@@ -639,7 +655,9 @@
     hasChildNodes() { return info(nodeId(this), 6) > 0; }
     get childNodes() {
       let l = listCache.get(this);
-      if (!l) { const id = nodeId(this); l = liveList(() => kids(id)); listCache.set(this, l); }
+      // the node's number is read at each use: a frame's Document object takes the number of
+      // the document that document.close() made
+      if (!l) { nodeId(this); l = liveList(() => kids(nodeId(this))); listCache.set(this, l); }
       return l;
     }
     get firstChild() { return wrap(info(nodeId(this), 2)); }
@@ -802,8 +820,8 @@
       if (a) detachAttr(a);
       chk(n.removeAttr(nodeId(this), String(name)));
       // Removing an event handler content attribute deactivates the handler (HTML §8.1.8.1).
-      if (a && k.startsWith('on') && handlerNames.includes(k.slice(2)) && this instanceof HTMLElement)
-        setHandler(windowReflecting(this) && bodyWindowHandlers.has(k.slice(2)) ? window : this, k.slice(2), null);
+      if (a && k.startsWith('on') && handlerNames.includes(k.slice(2)) && (this instanceof HTMLElement || this instanceof SVGElement || this instanceof MathMLElement))
+        setHandler(windowReflecting(this) && bodyWindowHandlers.has(k.slice(2)) ? bodyWindow(this) : this, k.slice(2), null);
     }
     removeAttributeNS(ns, name) { const a = attrNode(this, nsArg(ns) || null, String(name)); if (a) detachAttr(a); chk(n.removeAttr(nodeId(this), nsArg(ns) + '\u0000' + String(name))); }
     toggleAttribute(name, force) {
@@ -1186,8 +1204,19 @@
     else if (st.prev >= 0) chk(n.treeOp(st.prev, 1, 6));
     else chk(n.treeOp(k, st.old, 6));
   };
+  let invokerActivation = () => {};
   const activation = (k, targetId) => {
-    if (!htmlEl(k)) return;
+    if (!htmlEl(k)) {
+      // An SVG a element that is a link (SVG 2 §16.2; Lean names it the activation target):
+      // its link navigates a frame as an HTML a's does (node_query 190).
+      if (str(k, 0) === 'a' && str(k, 2) === 'http://www.w3.org/2000/svg') {
+        const raw = n.attr(k, 'href') ?? wrap(k).getAttributeNS('http://www.w3.org/1999/xlink', 'href'), target = n.attr(k, 'target');
+        const url = typeof raw === 'string' ? resolveURL(raw, wrap(k).baseURI || href) : null;
+        if (url !== null && /^(https?|data|blob|about):/i.test(url) && (typeof target === 'string' && target !== '' || info(k, 7) > 0))
+          n.query(k, 190, (typeof target === 'string' ? target : '') + '\u0000' + url);
+      }
+      return;
+    }
     const el = wrap(k), name = str(k, 0);
     if (name === 'input' || name === 'button') {
       const t = chk(n.query(k, 14, ''));
@@ -1198,11 +1227,20 @@
       }
       if (chk(n.query(k, 11, '')) === '1') return;
       const form = formOf(el);
-      if (!form) return;
-      if (t === 'submit' || t === 'image') submitForm(form, el);
-      else if (t === 'reset') resetForm(form);
+      if (form && (t === 'submit' || t === 'image')) { submitForm(form, el); return; }
+      if (form && t === 'reset') { resetForm(form); return; }
+      // a button with `commandfor` or `popovertarget` (section popover)
+      invokerActivation(el, t);
     } else if (name === 'a' || name === 'area') {
-      followHyperlink(el.href);
+      // A link in a frame's document, or one whose target names a frame, navigates that
+      // frame: Lean chooses it and queues the navigation (node_query 190). A link of the
+      // page's own document with no target is the fragment navigation below.
+      const url = el.href, target = n.attr(k, 'target');
+      if (/^(https?|data|blob|about):/i.test(url) && (typeof target === 'string' && target !== '' || info(k, 7) > 0)) {
+        const own = info(k, 7) > 0 ? docURL(info(k, 7)) : href;
+        if (url.split('#')[0] !== own.split('#')[0] || !url.includes('#')) { if (n.query(k, 190, (typeof target === 'string' ? target : '') + '\u0000' + url) === '1') return; }
+      }
+      followHyperlink(url);
     } else if (name === 'label') {
       const c = chk(n.query(k, 13, String(targetId)));
       if (c !== null) wrap(Number(c)).click();
@@ -1214,8 +1252,8 @@
   };
   for (const C of [named.HTMLBodyElement, named.HTMLFrameSetElement])
     for (const name of bodyWindowHandlers) {
-      Object.defineProperty(C.prototype, 'on' + name, { get() { return handlerOf(window, name); },
-        set(f) { setHandler(window, name, f); }, configurable: true, enumerable: true });
+      Object.defineProperty(C.prototype, 'on' + name, { get() { return handlerOf(bodyWindow(this), name); },
+        set(f) { setHandler(bodyWindow(this), name, f); }, configurable: true, enumerable: true });
     }
   reflectURL(named.HTMLIFrameElement, ['src']); reflectString(named.HTMLIFrameElement, ['srcdoc', 'name', 'width', 'height', 'allow']);
   reflectURL(named.HTMLImageElement, ['src']); reflectString(named.HTMLImageElement, ['alt']);
@@ -2132,6 +2170,8 @@
     // SVG 2 §8.10 getBBox: the bounds of the element's geometry in its own user space.
     getBBox() { const b = query(nodeId(this), 18, 4); return new DOMRect(b[0], b[1], b[2], b[3]); }
   }
+  // MathML Core §2.3: the interface of the elements in the MathML namespace.
+  class MathMLElement extends Element {}
   class CharacterData extends Node {
     get data() { return str(nodeId(this), 3); }
     set data(v) { chk(n.setText(nodeId(this), v === null ? '' : String(v))); }
@@ -2309,14 +2349,20 @@
   for (const C of [Element, Document, DocumentFragment]) unscopable(C, ['prepend', 'append', 'replaceChildren']);
   for (const C of [Element, CharacterData, DocumentType]) unscopable(C, ['before', 'after', 'replaceWith', 'remove']);
   addHandlers(HTMLElement.prototype); addHandlers(Document.prototype); addHandlers(SVGElement.prototype);
-  // ElementCSSInlineStyle (CSSOM §7.1) and HTMLOrSVGElement (HTML §3.2.6): an SVG element has
-  // `style`, `dataset`, `focus` and `blur` as an HTML element has them.
-  for (const k of ['style', 'dataset', 'focus', 'blur'])
-    Object.defineProperty(SVGElement.prototype, k, Object.getOwnPropertyDescriptor(HTMLElement.prototype, k));
+  addHandlers(MathMLElement.prototype);
+  // ElementCSSInlineStyle (CSSOM §7.1) and HTMLOrSVGElement (HTML §3.2.6): an SVG element
+  // and a MathML element have `style`, `dataset`, `focus` and `blur` as an HTML element has them.
+  for (const C of [SVGElement, MathMLElement])
+    for (const k of ['style', 'dataset', 'focus', 'blur'])
+      Object.defineProperty(C.prototype, k, Object.getOwnPropertyDescriptor(HTMLElement.prototype, k));
   protoOf = (id, t) => {
     switch (t) {
       case 1: {
-        if (!htmlEl(id)) return str(id, 2) !== 'http://www.w3.org/2000/svg' ? Element.prototype : svgProtoOf ? svgProtoOf(str(id, 0)) : SVGElement.prototype;
+        if (!htmlEl(id)) {
+          const ns = str(id, 2);
+          if (ns === 'http://www.w3.org/2000/svg') return svgProtoOf ? svgProtoOf(str(id, 0)) : SVGElement.prototype;
+          return (ns === 'http://www.w3.org/1998/Math/MathML' ? MathMLElement : Element).prototype;
+        }
         const l = str(id, 0), C = htmlClasses[l];
         return (C ?? (plainHTMLElements.has(l) || isCustomName(l) ? HTMLElement : HTMLUnknownElement)).prototype;
       }
@@ -2577,7 +2623,7 @@
     get slotAssignment() { return info(nodeId(this), 22) & 4 ? 'manual' : 'named'; }
     get clonable() { return (info(nodeId(this), 22) & 8) !== 0; }
     get serializable() { return (info(nodeId(this), 22) & 16) !== 0; }
-    get activeElement() { return null; }
+    get activeElement() { return focusRetarget(nodeId(this)); }
     get onslotchange() { return handlerOf(this, 'slotchange'); }
     set onslotchange(f) { setHandler(this, 'slotchange', f); }
   }
@@ -2646,9 +2692,12 @@
   const window = globalThis;
   ids.set(window, WINDOW);
   const document = wrap(0);
-  const frameWindows = new Map(), frameCells = new Map();
+  const frameWindows = new Map(), frameCells = new Map(), frameOfWindow = new WeakMap();
   // `postMessage` to the window of a frame's document (assigned where the frames' targets are).
   let postFrame = () => {};
+  // The parent window of a frame's document in this realm: the window of the document that
+  // holds its iframe (the page's, or another frame's).
+  const parentOfDoc = doc => { const el = info(doc, 12), pd = el >= 0 ? info(el, 7) : 0; return pd > 0 ? frameWindow(pd) : window; };
   const frameWindow = doc0 => {
     let w = frameWindows.get(doc0);
     if (w) return w;
@@ -2662,7 +2711,7 @@
       postFrame(cell.doc, message, targetOrigin, transfer);
     };
     const own = { document: () => wrap(cell.doc), window: () => w, self: () => w, frames: () => w, globalThis: () => w,
-      parent: () => window, top: () => window, frameElement: () => wrap(info(cell.doc, 12)), length: () => 0,
+      parent: () => parentOfDoc(cell.doc), top: () => window, frameElement: () => wrap(info(cell.doc, 12)), length: () => 0,
       location: () => frameLocation(cell.doc), postMessage: () => post };
     // Frames share this realm. A function reached through a frame's window runs with that
     // frame's document as `document` for the length of the call (as the frame's own scripts
@@ -2683,9 +2732,16 @@
       inFrame.set(f, g);
       return g;
     };
+    // What a script sets on this window (`frame.contentWindow.x = v`) is this window's: it
+    // does not replace the page's global of that name (frames share the realm, not their
+    // windows' properties). A frame's own scripts' globals are the realm's and are read below.
+    const vars = Object.create(null);
+    const isOwn = p => Object.prototype.hasOwnProperty.call(own, p), isVar = p => Object.prototype.hasOwnProperty.call(vars, p);
     w = new Proxy(window, {
       get(t, p) {
-        if (Object.prototype.hasOwnProperty.call(own, p)) return own[p]();
+        if (isOwn(p)) return own[p]();
+        if (isVar(p)) return vars[p];
+        if (typeof p === 'string' && p.startsWith('on') && handlerNames.includes(p.slice(2))) return handlerOf(frameTarget(cell.doc), p.slice(2));
         const v = Reflect.get(t, p, t);
         // Only a page's own global functions (enumerable: a function declaration or an
         // assignment). The platform's constructors and methods are not enumerable and keep
@@ -2694,9 +2750,17 @@
         const d = Object.getOwnPropertyDescriptor(t, p);
         return d && d.enumerable ? asFrame(v) : v;
       },
-      has(t, p) { return Object.prototype.hasOwnProperty.call(own, p) || Reflect.has(t, p); },
+      has(t, p) { return isOwn(p) || isVar(p) || Reflect.has(t, p); },
+      set(t, p, v) {
+        // `frame.contentWindow.location = url` navigates the frame (as its `src` does)
+        if (isOwn(p)) { if (p === 'location') wrap(info(cell.doc, 12)).setAttribute('src', String(v)); return true; }
+        // an event handler attribute of the window (`onload`, `onmessage`) is the frame's target's
+        if (typeof p === 'string' && p.startsWith('on') && handlerNames.includes(p.slice(2))) { setHandler(frameTarget(cell.doc), p.slice(2), v); return true; }
+        vars[p] = v; return true;
+      },
+      deleteProperty(t, p) { if (isVar(p)) { delete vars[p]; return true; } return !isOwn(p); },
     });
-    frameWindows.set(doc0, w); frameCells.set(doc0, cell);
+    frameWindows.set(doc0, w); frameCells.set(doc0, cell); frameOfWindow.set(w, cell);
     return w;
   };
   // encoding100: a same-origin frame's Location: its document's URL (node_query 171) and
@@ -2810,6 +2874,10 @@
     // "Look up a custom element definition" (HTML §4.13.3) for the element numbered `id`.
     const lookup = id => {
       if (info(id, 0) !== 1 || !htmlEl(id)) return null;
+      // a document with no browsing context has no definitions (the page's document is 0; a
+      // frame's document answers its iframe to node_info 12)
+      const doc = info(id, 7);
+      if (doc !== 0 && info(doc, 12) < 0) return null;
       const l = str(id, 0), d = defsByName.get(l);
       if (d && d.localName === l) return d;
       let is = isValues.get(id);
@@ -2817,6 +2885,8 @@
       if (is !== undefined) { const e = defsByName.get(is); if (e && e.localName === l) return e; }
       return null;
     };
+    // the element's "defined" state, for `:defined` (tree_op 30 and 31: `Node.states` bit 4)
+    const markDefined = id => { const b = n.treeOp(id, 0, 31); if (typeof b === 'number' && b >= 0 && !(b & 4)) n.treeOp(id, b | 4, 30); };
     const callback = (el, name, args) => {
       const st = ceState.get(el), f = st && st.def && st.def.callbacks[name];
       if (f) try { f.apply(el, args); } catch (e) { report(e); }
@@ -2863,6 +2933,7 @@
       }
       def.stack.pop();
       st.state = 'custom';
+      markDefined(id);
       const el = wrappers.get(id);
       for (const [name, args] of pending) callback(el, name, args);
       return el;
@@ -2892,6 +2963,7 @@
         const id = chk(n0.create(3 + 16 * (scriptDocument ? nodeId(scriptDocument) : 0), def.localName));
         ids.set(self, id); wrappers.set(id, self); ceState.set(self, st0);
         if (def.localName !== def.name) isValues.set(id, def.name);
+        markDefined(id);
         return;
       }
       const entry = def.stack[def.stack.length - 1];
@@ -2950,7 +3022,9 @@
       };
       n.setAttr = (id, name, value) => attrChange(id, name, () => setAttr0(id, name, value));
       n.removeAttr = (id, name) => attrChange(id, name, () => removeAttr0(id, name));
-      n.clone = (id, deep) => { const c = clone0(id, deep); if (typeof c === 'number' && c >= 0) for (const k of reach(c)) tryUpgrade(k); return c; };
+      // a clone has the `is` value of its original (DOM §4.5 "clone a node" step 2.1.2)
+      const copyIs = (from, to) => { if (isValues.size === 0) return; const a = reach(from), b = reach(to); if (a.length === b.length) a.forEach((k, i) => { const v = isValues.get(k); if (v !== undefined) isValues.set(b[i], v); }); else { const v = isValues.get(from); if (v !== undefined) isValues.set(to, v); } };
+      n.clone = (id, deep) => { const c = clone0(id, deep); if (typeof c === 'number' && c >= 0) { copyIs(id, c); for (const k of reach(c)) tryUpgrade(k); } return c; };
       // tree_op 3 adopts a node; 4 and 5 import one (a clone in another document)
       n.treeOp = (id, arg, op) => {
         if (op === 3) {
@@ -2963,7 +3037,7 @@
           return r;
         }
         const r = treeOp0(id, arg, op);
-        if ((op === 4 || op === 5) && typeof r === 'number' && r >= 0) for (const k of reach(r)) tryUpgrade(k);
+        if ((op === 4 || op === 5) && typeof r === 'number' && r >= 0) { copyIs(id, r); for (const k of reach(r)) tryUpgrade(k); }
         return r;
       };
     };
@@ -3871,6 +3945,7 @@
     let b;
     try { b = bState(o, what); } catch (e) { return Promise.reject(e); }
     if (b.used || (b.stream && b.stream.locked)) return Promise.reject(new TypeError(`Failed to execute '${what}': the body was already read`));
+    if (b.signal && b.signal.aborted) return Promise.reject(b.signal.reason);
     if (b.bytes !== null) b.used = true;
     return Promise.resolve(b.bytes === null ? new Uint8Array(0) : b.bytes);
   };
@@ -4080,10 +4155,11 @@
   // ---- Response (Fetch §5.5) -----------------------------------------------------------------
   const responses = new WeakMap();
   // A response object from its parts: `guard` is its headers' guard.
-  const responseOf = (parts, list, guard, bytes) => {
+  const responseOf = (parts, list, guard, bytes, signal) => {
     const r = Object.create(makeResponse().prototype), headers = headersOf(list, guard);
     responses.set(r, { ...parts, headers });
-    bodies.set(r, { bytes, used: false, stream: undefined, headers });
+    // signal: the fetch's (Fetch §5.6 "fetch" step 11: aborting it errors the response's body)
+    bodies.set(r, { bytes, used: false, stream: undefined, headers, signal });
     return r;
   };
   const makeResponse = () => {
@@ -4143,7 +4219,7 @@
         const st = R(this, 'clone'), b = bodies.get(this);
         if (b.used || (b.stream && b.stream.locked)) throw new TypeError("Failed to execute 'clone' on 'Response': the body was already read");
         const hs = headerState.get(st.headers);
-        return responseOf({ status: st.status, statusText: st.statusText, url: st.url, type: st.type, redirected: st.redirected }, hs.list, hs.guard, b.bytes);
+        return responseOf({ status: st.status, statusText: st.statusText, url: st.url, type: st.type, redirected: st.redirected }, hs.list, hs.guard, b.bytes, b.signal);
       }
     }
     for (const k of ['type', 'url', 'redirected', 'status', 'ok', 'statusText', 'headers', 'clone'])
@@ -4164,10 +4240,12 @@
         const x = new globalThis.XMLHttpRequest(), s = st_xhr(x);
         let settled = false;
         const fail = e => { if (!settled) { settled = true; reject(e); } };
-        signal.addEventListener('abort', () => { if (settled) return; try { x.abort(); } catch { /* done */ } fail(signal.reason); });
+        signal.addEventListener('abort', () => { if (settled) return; fail(signal.reason); try { x.abort(); } catch { /* done */ } });
         try { x.open(st.method, st.url, true); } catch (e) { fail(new TypeError(String(e && e.message || e))); return; }
         apiCall(73, [s.h, st.credentials === 'include' ? 1 : 0]);
         if (st.mode === 'same-origin') apiCall(77, [s.h, 1]);
+        // redirect mode "error": Lean refuses the redirect (web_api op 79); "manual" is followed
+        if (st.redirect === 'error') apiCall(79, [s.h, 1]);
         x.responseType = 'arraybuffer';
         for (const e of headerState.get(st.headers).list) x.setRequestHeader(e[0], e[1]);
         x.onload = () => {
@@ -4176,8 +4254,8 @@
           const raw = x.response, list = [];
           for (const line of x.getAllResponseHeaders().split('\r\n')) { const i = line.indexOf(': '); if (i > 0) list.push([line.slice(0, i).toLowerCase(), line.slice(i + 2)]); }
           const url = x.responseURL, p = urlFields(url);
-          resolve(responseOf({ status: x.status, statusText: x.statusText, url, type: p !== null && p[1] !== pageOrigin() ? 'cors' : 'basic',
-            redirected: url !== '' && url !== st.url.split('#')[0] }, list, 'immutable', raw === null ? new Uint8Array(0) : new Uint8Array(raw)));
+          resolve(responseOf({ status: x.status, statusText: x.statusText, url, type: p !== null && p[1] !== pageOrigin() && p[2] !== 'data:' && p[2] !== 'blob:' ? 'cors' : 'basic',
+            redirected: url !== '' && url !== st.url.split('#')[0] }, list, 'immutable', raw === null ? new Uint8Array(0) : new Uint8Array(raw), signal));
         };
         x.onerror = () => fail(new TypeError('Failed to fetch'));
         x.onabort = () => fail(new DOMException('The request was aborted.', 'AbortError'));
@@ -4189,6 +4267,66 @@
     };
   });
   const st_xhr = x => xhrState.get(x);
+
+  // ---- Origin (HTML §7.5 "Origin.from", the Origin interface) -----------------------------
+  // An object for an origin: a tuple origin by its serialization, or an opaque origin that is
+  // only itself. The origin of a URL is Lean's (the URL parser, web_api op 10); the page's is
+  // the one of its URL. isSameSite needs registrable domains: there is no public suffix list
+  // in this build, so it answers only what does not need one and throws for two different hosts.
+  lazy('Origin', () => {
+    const origins = new WeakMap();   // Origin -> { tuple: serialization } | { } (opaque: its identity)
+    const what = "Failed to execute 'from' on 'Origin'";
+    const internal = (o, name) => { const v = origins.get(o); if (!v) throw new TypeError(`Failed to execute '${name}' on 'Origin': Illegal invocation`); return v; };
+    const made = v => { const o = Object.create(Origin.prototype); origins.set(o, v); return o; };
+    const ofUrl = text => { const p = urlFields(String(text)); if (p === null) throw new TypeError(`${what}: not a URL`); return p[1] === 'null' ? {} : { tuple: p[1] }; };
+    class Origin {
+      constructor() { origins.set(this, {}); }
+      static from(value) {
+        if (typeof value === 'string') return made(ofUrl(value));
+        if (value === null || (typeof value !== 'object' && typeof value !== 'function')) throw new TypeError(`${what}: the value has no origin`);
+        if (origins.has(value)) return made(origins.get(value));
+        // this global: the page's or worker's own origin
+        if (value === globalThis) return made(ofUrl(href));
+        // a same-origin frame's window shares this realm and its origin; a window of another origin has none to give
+        if (frameOfWindow.has(value)) return made(ofUrl(href));
+        if (typeof globalThis.URL === 'function' && value instanceof globalThis.URL) return made(ofUrl(value.href));
+        if (ids.has(value) && value !== window) {
+          const id = ids.get(value);
+          if (info(id, 0) === 1 && (str(id, 0) === 'a' || str(id, 0) === 'area')) {
+            // HTML a and area, and SVG a: the origin of the URL its href names
+            const html = info(id, 8) === 1;
+            const raw = html ? n.attr(id, 'href') : str(id, 2) === 'http://www.w3.org/2000/svg' && str(id, 0) === 'a' ? (value.getAttribute('href') ?? value.getAttributeNS('http://www.w3.org/1999/xlink', 'href')) : null;
+            if (typeof raw === 'string') { const u = resolveURL(raw, value.baseURI || href); if (u !== null) return made(ofUrl(u)); }
+          }
+          throw new TypeError(`${what}: the element has no URL`);
+        }
+        // a message the user agent delivered: its sender's origin
+        if (value instanceof MessageEvent && state(value).trusted && typeof value.origin === 'string' && value.origin !== '') return made(value.origin === 'null' ? {} : ofUrl(value.origin));
+        throw new TypeError(`${what}: the value has no origin`);
+      }
+      get opaque() { return internal(this, 'opaque').tuple === undefined; }
+      isSameOrigin(other) {
+        const a = internal(this, 'isSameOrigin'), b = origins.get(other);
+        if (!b) throw new TypeError("Failed to execute 'isSameOrigin' on 'Origin': parameter 1 is not of type 'Origin'");
+        return a === b || (a.tuple !== undefined && a.tuple === b.tuple);
+      }
+      isSameSite(other) {
+        const a = internal(this, 'isSameSite'), b = origins.get(other);
+        if (!b) throw new TypeError("Failed to execute 'isSameSite' on 'Origin': parameter 1 is not of type 'Origin'");
+        if (a === b) return true;
+        if (a.tuple === undefined || b.tuple === undefined) return false;
+        const pa = urlFields(a.tuple), pb = urlFields(b.tuple);
+        if (pa === null || pb === null || pa[2] !== pb[2]) return false;
+        if (pa[6] === pb[6]) return true;
+        throw new DOMException("Failed to execute 'isSameSite' on 'Origin': two hosts need a public suffix list, which this build does not have", 'NotSupportedError');
+      }
+    }
+    for (const k of ['opaque', 'isSameOrigin', 'isSameSite'])
+      Object.defineProperty(Origin.prototype, k, { ...Object.getOwnPropertyDescriptor(Origin.prototype, k), enumerable: true });
+    Object.defineProperty(Origin, 'from', { ...Object.getOwnPropertyDescriptor(Origin, 'from'), enumerable: true });
+    setTag(Origin, 'Origin');
+    return Origin;
+  });
 
   // ==== SVG DOM (SVG 2 §4 "Basic data types and interfaces" and the element interfaces) ======
   // One table (`svgSpec`) names each element interface, its parent, its elements and the
@@ -4844,6 +4982,31 @@
     if (typeof r === 'string') return r;
     return r === null || r === -1 ? null : storageErr(r, what);
   };
+  // HTML §12.2.1 "broadcast": a change is told to every other Document of the origin that
+  // holds the area. In this realm those are the page's window and its same-origin frames'
+  // windows, but for the window of the script that made the change. A page with no frame
+  // target (frameTargets is empty) pays one size check: the old value is read only for them.
+  const storageMutate = (kind, key, value, op, args, what) => {
+    if (frameTargets.size === 0) { storageCall(kind, op, args, what); return; }
+    const read = k => { const v = apiCall(82, [kind, k]); return typeof v === 'string' ? stDec(v) : null; };
+    const had = key === null ? Number(apiCall(80, [kind])) > 0 : read(stEnc(key));
+    storageCall(kind, op, args, what);
+    const now = key === null ? null : value;
+    if (key === null ? !had : had === now) return;
+    const own = windowOfScript(), from = scriptDocument !== null && scriptDocument !== document ? docURL(nodeId(scriptDocument)) : href;
+    const tell = (target, doc) => {
+      if (target === own) return;
+      setTimeout(() => {
+        const e = new globalThis.StorageEvent('storage', { key, oldValue: key === null ? null : had, newValue: now, url: from, storageArea: storageAreas[kind] });
+        state(e).trusted = true;
+        const before = scriptDocument;
+        scriptDocument = doc > 0 ? wrap(doc) : null;
+        try { dispatch(target, e); } finally { scriptDocument = before; }
+      }, 0);
+    };
+    tell(window, 0);
+    for (const [doc, target] of frameTargets) if (info(doc, 12) >= 0) tell(target, doc);
+  };
   const storageNeed = (n, have, what) => { if (have < n) throw new TypeError(`Failed to execute '${what}' on 'Storage': ${n} argument${n > 1 ? 's' : ''} required, but only ${have} present.`); };
   const makeStorage = () => {
     if (StorageC) return StorageC;
@@ -4864,13 +5027,13 @@
       setItem(key, value) {
         storageNeed(2, arguments.length, 'setItem');
         const kind = K(this, 'setItem'), k = stEnc(key), v = stEnc(value);
-        storageCall(kind, 83, [k, v], 'setItem');
+        storageMutate(kind, String(key), String(value), 83, [k, v], 'setItem');
       }
       removeItem(key) {
         storageNeed(1, arguments.length, 'removeItem');
-        storageCall(K(this, 'removeItem'), 84, [stEnc(key)], 'removeItem');
+        storageMutate(K(this, 'removeItem'), String(key), null, 84, [stEnc(key)], 'removeItem');
       }
-      clear() { storageCall(K(this, 'clear'), 85, [], 'clear'); }
+      clear() { storageMutate(K(this, 'clear'), null, null, 85, [], 'clear'); }
     }
     for (const k of ['length', 'key', 'getItem', 'setItem', 'removeItem', 'clear'])
       Object.defineProperty(Storage.prototype, k, { ...Object.getOwnPropertyDescriptor(Storage.prototype, k), enumerable: true });
@@ -4890,18 +5053,18 @@
     const proxy = new Proxy(target, {
       get(t, p, r) { return named(t, p) ? item(p) : Reflect.get(t, p, r); },
       set(t, p, v, r) {
-        if (typeof p === 'string' && r === proxy) { const k = stEnc(p), x = stEnc(v); storageCall(kind, 83, [k, x], 'setItem'); return true; }
+        if (typeof p === 'string' && r === proxy) { const k = stEnc(p), x = stEnc(v); storageMutate(kind, p, String(v), 83, [k, x], 'setItem'); return true; }
         return Reflect.set(t, p, v, r);
       },
       defineProperty(t, p, desc) {
         if (typeof p !== 'string') return Reflect.defineProperty(t, p, desc);
         if (!('value' in desc) && !('writable' in desc)) return false;
         const k = stEnc(p), x = stEnc(desc.value);
-        storageCall(kind, 83, [k, x], 'setItem');
+        storageMutate(kind, p, String(desc.value), 83, [k, x], 'setItem');
         return true;
       },
       deleteProperty(t, p) {
-        if (named(t, p) && item(p) !== undefined) { storageCall(kind, 84, [stEnc(p)], 'removeItem'); return true; }
+        if (named(t, p) && item(p) !== undefined) { storageMutate(kind, p, null, 84, [stEnc(p)], 'removeItem'); return true; }
         return Reflect.deleteProperty(t, p);
       },
       has(t, p) { return Reflect.has(t, p) || (typeof p === 'string' && item(p) !== undefined); },
@@ -5012,6 +5175,32 @@
     }
     setTag(URL, 'URL');
     return URL;
+  });
+  // ---- URL Pattern Standard: URLPattern ---------------------------------------------------
+  // The engine compiles and matches (n.urlPattern: L4Factoidal.WHATWG.URLPattern, in Lean); this
+  // class holds the record it answers. An engine without the native has no URLPattern.
+  lazy('URLPattern', () => {
+    if (typeof n.urlPattern !== 'function') return undefined;
+    const patterns = new WeakMap();
+    const st = o => brand(patterns, o, 'URLPattern');
+    class URLPattern {
+      // WebIDL overloads: (input, baseURL, options) and (input, options)
+      constructor(input = {}, baseURL = undefined, options = undefined) {
+        let base, opts;
+        if (arguments.length >= 3) { base = usv(baseURL); opts = options; }
+        else if (arguments.length === 2 && baseURL !== undefined && baseURL !== null && typeof baseURL !== 'object' && typeof baseURL !== 'function') base = usv(baseURL);
+        else opts = baseURL;
+        const o = dict(opts, "Failed to construct 'URLPattern'");
+        patterns.set(this, n.urlPattern(0, input, base, !!o.ignoreCase));
+      }
+      test(input = {}, baseURL = undefined) { return n.urlPattern(1, st(this), input, baseURL === undefined ? undefined : usv(baseURL)) !== null; }
+      exec(input = {}, baseURL = undefined) { return n.urlPattern(1, st(this), input, baseURL === undefined ? undefined : usv(baseURL)); }
+      get hasRegExpGroups() { return st(this).hasRegExpGroups; }
+    }
+    for (const k of ['protocol', 'username', 'password', 'hostname', 'port', 'pathname', 'search', 'hash'])
+      Object.defineProperty(URLPattern.prototype, k, { get() { return st(this)[k]; }, enumerable: true, configurable: true });
+    setTag(URLPattern, 'URLPattern');
+    return URLPattern;
   });
   // The webkitURL alias (URL §6.1).
   lazy('webkitURL', () => globalThis.URL);
@@ -5493,7 +5682,11 @@
   windowOfScript = () => scriptDocument ? frameTarget(nodeId(scriptDocument)) : window;
   frameLoad = el => { const d = info(el, 11), t = d >= 0 ? frameTargets.get(d) : undefined; if (t) { const e = new Event('load'); state(e).trusted = true; dispatch(t, e); } };
   for (const k of ['addEventListener', 'removeEventListener'])
-    define(Window.prototype, k, function (...a) { return EventTarget.prototype[k].apply((this === window || this == null) && scriptDocument ? windowOfScript() : this, a); });
+    define(Window.prototype, k, function (...a) {
+      // a frame's window (`frame.contentWindow.addEventListener`): that frame's target
+      const cell = this == null ? undefined : frameOfWindow.get(this);
+      return EventTarget.prototype[k].apply(cell ? frameTarget(cell.doc) : (this === window || this == null) && scriptDocument ? windowOfScript() : this, a);
+    });
   // The window's event handler attributes too: `onmessage = f` in a frame's script is that
   // frame's window's handler, not the page's (it would replace the page's own).
   for (const name of handlerNames) {
@@ -5596,8 +5789,11 @@
     const data = globalThis.structuredClone(message);
     if (typeof r !== 'string' || !r.startsWith('1')) return;
     const origin = r.slice(2);
+    // HTML §9.3.3 step 8.3: the source is the window of the script that posts. A frame's
+    // script (running with its document as `document`) posts as its frame's window.
+    const from = scriptDocument !== null && scriptDocument !== document ? frameWindow(nodeId(scriptDocument)) : window;
     setTimeout(() => {
-      const e = new MessageEvent('message', { data, origin, source: window, ports });
+      const e = new MessageEvent('message', { data, origin, source: from, ports });
       state(e).trusted = true;
       if (doc <= 0) { dispatch(window, e); return; }
       // To a frame's window: its listeners run with the frame's document as `document`.
@@ -5628,12 +5824,14 @@
     get parent() { return parentProxy; }, get top() { return parentProxy; }, get length() { return 1; },
     close() {}, focus() {}, blur() {} }));
   if (frameEngine()) {
-    Object.defineProperty(globalThis, 'parent', { get: () => frameSession() ? parentWindow() : window, configurable: true });
+    Object.defineProperty(globalThis, 'parent', { get: () => frameSession() ? parentWindow() : scriptDocument && scriptDocument !== document ? parentOfDoc(nodeId(scriptDocument)) : window, configurable: true });
     Object.defineProperty(globalThis, 'top', { get: () => frameSession() ? parentWindow() : window, configurable: true });
   }
   if (frameEngine()) def('postMessage', function postMessage(message, targetOrigin, transfer) {
     if (arguments.length < 1) throw new TypeError("Failed to execute 'postMessage' on 'Window': 1 argument required, but only 0 present.");
-    postTo(0, message, targetOrigin, transfer);
+    // `postMessage(…)` in a frame's script is that frame's window's: it posts to the frame's
+    // own window, where the frame's listeners are, not to the page's
+    postTo(scriptDocument !== null && scriptDocument !== document ? nodeId(scriptDocument) : 0, message, targetOrigin, transfer);
   });
   // HTML §9.4 MessageChannel and MessagePort: two entangled ports in this realm; a message
   // waits in the port's queue until the port is started (start() or onmessage).
@@ -5678,7 +5876,7 @@
   for (const [k, v] of Object.entries({ EventTarget, Event, CustomEvent, UIEvent, MouseEvent, KeyboardEvent, FocusEvent, ErrorEvent,
     WheelEvent, PointerEvent, DOMRect, DOMRectReadOnly, CompositionEvent, InputEvent, DragEvent, HashChangeEvent, MessageEvent, StorageEvent, DeviceMotionEvent,
     DeviceOrientationEvent, BeforeUnloadEvent, TextEvent,
-    PromiseRejectionEvent, Node, Element, HTMLElement, HTMLUnknownElement, SVGElement, CharacterData, Text, CDATASection, Comment,
+    PromiseRejectionEvent, Node, Element, HTMLElement, HTMLUnknownElement, SVGElement, MathMLElement, CharacterData, Text, CDATASection, Comment,
     ProcessingInstruction, DocumentType, DocumentFragment, Document, HTMLDocument, XMLDocument, DOMImplementation, NodeList, HTMLCollection, NamedNodeMap, Attr, DOMParser, SubmitEvent,
     DOMTokenList, DOMException, AbortController, AbortSignal, Window, MutationObserver, MutationRecord, ...named })) def(k, v);
   if (shadowEngine()) def('ShadowRoot', ShadowRoot);
@@ -5950,11 +6148,12 @@
     selectAllChildren(node) { needArgs(arguments, 1, 'selectAllChildren'); op(0, 148, String(nodeId(node))); },
     deleteFromDocument() { op(0, 149); },
     containsNode(node, allowPartialContainment = false) { needArgs(arguments, 1, 'containsNode'); return op(0, 150, nodeId(node) + ' ' + (allowPartialContainment ? 1 : 0)) === '1'; },
-    modify() {},
+    // Selection API "modify": the engine moves the focus (DOM.Editing.modifyFocus, op 178).
+    modify(alter = '', direction = '', granularity = '') { n.query(0, 178, [alter, direction, granularity].map(String).join(' ')); },
     getComposedRanges() { const s = selState(); return s ? [new StaticRange({ startContainer: wrap(s.b[0]), startOffset: s.b[1], endContainer: wrap(s.b[2]), endOffset: s.b[3] })] : []; },
     toString() { const s = selState(); return s ? op(s.k, 111) : ''; },
   })) define(Selection.prototype, k, ['addRange', 'removeRange', 'removeAllRanges', 'empty', 'collapse', 'setPosition', 'collapseToStart',
-    'collapseToEnd', 'extend', 'setBaseAndExtent', 'selectAllChildren', 'deleteFromDocument'].includes(k) ? selChanging(f) : f);
+    'collapseToEnd', 'extend', 'setBaseAndExtent', 'selectAllChildren', 'deleteFromDocument', 'modify'].includes(k) ? selChanging(f) : f);
   for (const [k, f] of Object.entries({
     anchorNode() { const s = selState(); return s ? wrap(s.dir === 2 ? s.b[2] : s.b[0]) : null; },
     anchorOffset() { const s = selState(); return s ? (s.dir === 2 ? s.b[3] : s.b[1]) : 0; },
@@ -5971,10 +6170,46 @@
   // The algorithms are the engine's (DOM.Editing, node_query ops 175 to 177); this is the
   // WebIDL glue. No method throws for a command name: an unknown command answers false or ''.
   const editQuery = (k, s) => { const r = n.query(0, k, s); return typeof r === 'string' ? r : ''; };
+  // The focused text control (an input with a text selection, or a textarea), if any: a
+  // command then edits its value and selection (DOM.Editing.textEdit, op 179).
+  const miscEdit = ['stylewithcss', 'usecss', 'defaultparagraphseparator', 'selectall'];
+  const editControl = () => {
+    const el = document.activeElement;
+    if (el === null || el === undefined || el === document.body) return null;
+    if (el.localName !== 'textarea' && el.localName !== 'input') return null;
+    try { return typeof el.selectionStart === 'number' && typeof el.setSelectionRange === 'function' ? el : null; } catch { return null; }
+  };
+  const controlQuery = (el, command, value) => editQuery(179,
+    [command, el.localName === 'textarea' ? '1' : '0', el.selectionStart, el.selectionEnd, value, el.value].join('\u0000'));
+  // The document commands (styleWithCSS and the like) work from a text control only when
+  // the control is in editable content.
+  const controlInEditable = el => el.parentElement !== null && el.parentElement.isContentEditable === true;
+  const controlCommand = (el, commandId, value) => {
+    let command = String(commandId).toLowerCase(), text = String(value);
+    if (miscEdit.includes(command) && command !== 'selectall') return null;
+    if (command === 'inserthtml') { const t = document.createElement('template'); t.innerHTML = text; text = t.content.textContent; command = 'inserttext'; }
+    const r = controlQuery(el, command, text);
+    if (r === '') return false;
+    const at = r.indexOf('\u0000'), [start, end, inputType] = r.slice(0, at).split(' '), next = r.slice(at + 1);
+    if (next !== el.value) el.value = next;
+    el.setSelectionRange(Number(start), Number(end));
+    if (inputType !== '-') {
+      const e = new InputEvent('input', { bubbles: true, cancelable: false, inputType, data: inputType === 'insertText' ? text : null });
+      state(e).trusted = true;
+      dispatch(el, e);
+    }
+    return true;
+  };
   for (const [k, f] of Object.entries({
     execCommand(commandId, showUI = false, value = '') {
       needArgs(arguments, 1, 'execCommand');
       if (this !== document) return false;
+      const control = editControl();
+      if (control !== null) {
+        const done = controlCommand(control, commandId, value);
+        if (done !== null) return done;
+        if (!controlInEditable(control)) return false;
+      }
       const r = selChanging(() => editQuery(175, String(commandId) + '\u0000' + String(value)))().split('\u0000');
       if (r[0] !== '1') return false;
       if (r.length > 2) {
@@ -5985,7 +6220,17 @@
       }
       return true;
     },
-    queryCommandEnabled(commandId) { needArgs(arguments, 1, 'queryCommandEnabled'); return this === document && editQuery(176, 'e\u0000' + String(commandId)) === '1'; },
+    queryCommandEnabled(commandId) {
+      needArgs(arguments, 1, 'queryCommandEnabled');
+      if (this !== document) return false;
+      const control = editControl();
+      if (control !== null) {
+        const command = String(commandId).toLowerCase();
+        if (!miscEdit.includes(command) || command === 'selectall') return controlQuery(control, '?' + command, '') === '1';
+        if (!controlInEditable(control)) return false;
+      }
+      return editQuery(176, 'e\u0000' + String(commandId)) === '1';
+    },
     queryCommandIndeterm(commandId) { needArgs(arguments, 1, 'queryCommandIndeterm'); return this === document && editQuery(176, 'i\u0000' + String(commandId)) === '1'; },
     queryCommandState(commandId) { needArgs(arguments, 1, 'queryCommandState'); return this === document && editQuery(176, 's\u0000' + String(commandId)) === '1'; },
     queryCommandSupported(commandId) { needArgs(arguments, 1, 'queryCommandSupported'); return editQuery(176, 'u\u0000' + String(commandId)) === '1'; },
@@ -5995,8 +6240,15 @@
     get() { return this === document ? editQuery(177, 'd') : 'off'; },
     set(v) { v = String(v).toLowerCase(); if (this === document && (v === 'on' || v === 'off')) n.query(0, 177, v === 'on' ? 'd1' : 'd0'); },
     configurable: true, enumerable: true });
+  // The page of a script session does not scroll (as window.scrollTo): nothing to bring into view.
+  if (!('scrollIntoView' in Element.prototype)) define(Element.prototype, 'scrollIntoView', function scrollIntoView() {});
   if (!('dataTransfer' in InputEvent.prototype)) Object.defineProperty(InputEvent.prototype, 'dataTransfer', { get() { return null; }, configurable: true, enumerable: true });
-  if (!('getTargetRanges' in InputEvent.prototype)) define(InputEvent.prototype, 'getTargetRanges', function getTargetRanges() { return []; });
+  // Input Events §4.1.2: the ranges the engine gave a beforeinput of an editing command
+  // (node numbers and offsets), or the StaticRanges of a script's init.
+  if (!('getTargetRanges' in InputEvent.prototype)) define(InputEvent.prototype, 'getTargetRanges', function getTargetRanges() {
+    return (state(this).ranges ?? []).map(r => Array.isArray(r)
+      ? new StaticRange({ startContainer: wrap(r[0]), startOffset: r[1], endContainer: wrap(r[2]), endOffset: r[3] }) : r);
+  });
   if (!('contentEditable' in HTMLElement.prototype)) Object.defineProperty(HTMLElement.prototype, 'contentEditable', {
     get() { const r = n.query(nodeId(this), 177, 'c'); return typeof r === 'string' ? r : 'inherit'; },
     set(v) {
@@ -7030,7 +7282,7 @@
   const workerGlobals = new Set(['self', 'console', 'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval',
     'queueMicrotask', 'reportError', 'structuredClone', 'atob', 'btoa', 'WebAssembly', 'DOMException', 'EventTarget', 'Event',
     'CustomEvent', 'MessageEvent', 'ErrorEvent', 'PromiseRejectionEvent', 'ProgressEvent', 'AbortController', 'AbortSignal',
-    'TextEncoder', 'TextDecoder', 'TextEncoderStream', 'TextDecoderStream', 'URL', 'URLSearchParams', 'crypto', 'Crypto',
+    'TextEncoder', 'TextDecoder', 'TextEncoderStream', 'TextDecoderStream', 'URL', 'URLSearchParams', 'URLPattern', 'crypto', 'Crypto',
     'SubtleCrypto', 'CryptoKey', 'performance', 'Performance', 'PerformanceEntry', 'PerformanceMark', 'PerformanceMeasure',
     'Blob', 'File', 'FileReader', 'FormData', 'Headers', 'Request', 'Response', 'fetch', 'XMLHttpRequest',
     'XMLHttpRequestEventTarget', 'XMLHttpRequestUpload', 'ReadableStream', 'WritableStream',
@@ -7102,15 +7354,16 @@
   // a clone's attributes are set by Lean, not through setAttribute).
   const scanHandlers = (root, inclusive) => {
     for (const k of inclusive && info(root, 0) === 1 ? [root, ...elementsOf(root)] : elementsOf(root)) {
-      if (!htmlEl(k)) continue;
+      // HTML, SVG and MathML elements have event handler content attributes
+      if (!htmlEl(k)) { const ns = str(k, 2); if (ns !== 'http://www.w3.org/2000/svg' && ns !== 'http://www.w3.org/1998/Math/MathML') continue; }
       const a = str(k, 6) ?? ''; const xs = a === '' ? [] : a.split('\u0000');
       for (let i = 0; i + 1 < xs.length; i += 2) if (/^on[a-z]+$/.test(xs[i])) contentHandler(wrap(k), xs[i].slice(2), xs[i + 1]);
     }
   };
   const contentHandler = (el, name, source) => {
-    if (!handlerNames.includes(name)) return;
+    if (!handlerNames.includes(name) || !(el instanceof HTMLElement || el instanceof SVGElement || el instanceof MathMLElement)) return;
     const onBody = windowReflecting(el) && bodyWindowHandlers.has(name);
-    const t = onBody ? window : el;
+    const t = onBody ? bodyWindow(el) : el;
     // HTML "getting the current value of the event handler": the window's onerror handler has
     // the parameters event, source, lineno, colno and error. A source that does not compile
     // sets the handler to null (replacing an earlier one) and the error is reported.
@@ -7459,6 +7712,315 @@
   }
   // ==== end forms =========================================================================
 
+  // ==== innertext: innerText and outerText (HTML §3.2.7) ==================================
+  // The getter walks the element's rendered subtree with Lean's computed styles and gives
+  // Lean the items of the "rendered text collection steps" (text runs with their white-space
+  // behaviour, br, the tab and line feed of table cells and rows, required line breaks); the
+  // text (white space collapsed, line breaks merged) is Lean's: HTML.InnerText, node_query 190.
+  {
+    const cv = (el, name) => computedValue(el, name);
+    const parentOf = e => { const p = e.parentNode; return p instanceof ShadowRoot ? p.host : p; };
+    const rendered = el => { if (!el.isConnected) return false; for (let e = el; e instanceof Element; e = parentOf(e)) if (cv(e, 'display') === 'none') return false; return true; };
+    const blocks = new Set(['block', 'flow-root', 'flex', 'grid', 'table', 'list-item', 'table-caption']);
+    const wsLetter = el => { const w = cv(el, 'white-space'); return w === 'pre' || w === 'pre-wrap' || w === 'break-spaces' ? 'p' : w === 'pre-line' ? 'l' : 'c'; };
+    const transformed = (el, text) => {
+      const t = cv(el, 'text-transform');
+      return t === 'uppercase' ? text.toUpperCase() : t === 'lowercase' ? text.toLowerCase()
+        : t === 'capitalize' ? text.replace(/(^|[\t\n\f\r ])([^\t\n\f\r ])/g, (m, a, b) => a + b.toUpperCase()) : text;
+    };
+    const visibleEl = el => { const v = cv(el, 'visibility'); return v !== 'hidden' && v !== 'collapse'; };
+    // the items of the children of `el` (its own text runs are written when it is visible)
+    const children = (el, out, visible) => {
+      let letter = null;
+      for (const c of el.childNodes) {
+        if (c.nodeType === 3) { if (visible) { letter ??= wsLetter(el); out.push(letter + transformed(el, c.data).replace(/\u0000/g, '�')); } }
+        else if (c.nodeType === 1) collect(c, out);
+      }
+    };
+    const collect = (el, out) => {
+      const display = cv(el, 'display');
+      if (display === 'none') return;
+      const visible = visibleEl(el), html = htmlEl(nodeId(el)), name = el.localName;
+      if (html && name === 'br') { if (visible) out.push('b'); return; }
+      const block = blocks.has(display), p = html && name === 'p';
+      if (visible) { if (p) out.push('n2'); if (block) out.push('n1'); }
+      children(el, out, visible);
+      if (!visible) return;
+      if (display === 'table-cell' && el.nextElementSibling !== null) out.push('t\t');
+      if (display === 'table-row' && (el.nextElementSibling !== null || (el.parentNode instanceof Element && cv(el.parentNode, 'display').startsWith('table-') && el.parentNode.nextElementSibling !== null))) out.push('t\n');
+      if (p) out.push('n2');
+      if (block) out.push('n1');
+    };
+    const textOf = el => {
+      if (!rendered(el)) return el.textContent;
+      const out = [];
+      children(el, out, visibleEl(el));
+      const r = n.query(0, 191, out.join('\u0000'));
+      // an engine without op 190, or more text than one question holds: the text content
+      return typeof r === 'string' ? r : el.textContent;
+    };
+    // The fragment of the setters: the lines of the text, a `br` between two of them.
+    const fragmentOf = (el, v) => {
+      const doc = el.ownerDocument, f = doc.createDocumentFragment();
+      v.split(/\r\n|\r|\n/).forEach((line, i) => {
+        if (i > 0) f.appendChild(doc.createElement('br'));
+        if (line !== '') f.appendChild(doc.createTextNode(line));
+      });
+      return f;
+    };
+    Object.defineProperty(HTMLElement.prototype, 'innerText', { get() { return textOf(this); }, set(v) {
+      const f = fragmentOf(this, v === null ? '' : String(v));
+      this.textContent = '';
+      if (f.firstChild) this.appendChild(f);
+    }, configurable: true, enumerable: true });
+    Object.defineProperty(HTMLElement.prototype, 'outerText', { get() { return textOf(this); }, set(v) {
+      const parent = this.parentNode;
+      if (parent === null) throw new DOMException('The element has no parent.', 'NoModificationAllowedError');
+      const next = this.nextSibling, prev = this.previousSibling;
+      const f = fragmentOf(this, String(v));
+      if (!f.firstChild) f.appendChild(this.ownerDocument.createTextNode(''));
+      parent.replaceChild(f, this);
+      // adjacent Text nodes are merged, as the setter's steps 7 and 8 say
+      if (next !== null && next.nodeType === 3 && next.previousSibling !== null && next.previousSibling.nodeType === 3) { next.previousSibling.data += next.data; next.remove(); }
+      if (prev !== null && prev.nodeType === 3 && prev.nextSibling !== null && prev.nextSibling.nodeType === 3) { const m = prev.nextSibling; prev.data += m.data; m.remove(); }
+    }, configurable: true, enumerable: true });
+  }
+  // ==== end innertext =====================================================================
+
+  // ==== focus: the focused element (HTML §6.6) ============================================
+  // Which node `focus()` focuses is Lean's (DOM.Focus, node_query 189: the element when it is
+  // a focusable area, else the first focusable area of a shadow tree that delegates focus).
+  // The focused element is the page's state, mirrored into the arena (`Node.states` bit 8) for
+  // `:focus`, `:focus-visible` and `:focus-within`. A page that never calls focus() does
+  // nothing here.
+  let focusedId = -1;
+  const focusBit = (id, on) => { const b = n.treeOp(id, 0, 31); if (typeof b !== 'number' || b < 0) return; const nb = on ? b | 8 : b & ~8; if (nb !== b) n.treeOp(id, nb, 30); };
+  // the focused node, or -1: an element that left its document no longer has the focus
+  const focusCurrent = () => { if (focusedId >= 0 && !connectedId(focusedId)) { focusBit(focusedId, false); focusedId = -1; } return focusedId; };
+  const fireFocusEvent = (el, type, bubbles, related) => {
+    const e = new FocusEvent(type, { bubbles, composed: true, relatedTarget: related, view: window });
+    state(e).trusted = true;
+    dispatch(el, e);
+  };
+  // The focus update steps (HTML §6.6.4): blur and focusout at the old element, then focus and
+  // focusin at the new one (-1: the viewport).
+  const focusMove = to => {
+    const from = focusCurrent();
+    if (from === to) return;
+    const oldEl = from >= 0 ? wrap(from) : null, newEl = to >= 0 ? wrap(to) : null;
+    if (from >= 0) { focusBit(from, false); focusedId = -1; fireFocusEvent(oldEl, 'blur', false, newEl); fireFocusEvent(oldEl, 'focusout', true, newEl); }
+    if (to >= 0 && focusedId === -1 && connectedId(to)) { focusedId = to; focusBit(to, true); fireFocusEvent(newEl, 'focus', false, oldEl); fireFocusEvent(newEl, 'focusin', true, oldEl); }
+  };
+  const focusQuery = (id, q) => { const r = n.query(id, 189, q); return typeof r === 'string' && r !== '' ? Number(r) : -1; };
+  for (const C of [HTMLElement, SVGElement, MathMLElement]) {
+    // an editing host that takes the focus gets the selection first (node_query 177 "f": a caret at its first caret position unless the selection is in it)
+    define(C.prototype, 'focus', function focus(options = undefined) { const t = focusQuery(nodeId(this), ''); if (t >= 0) { n.query(t, 177, 'f'); focusMove(t); } });
+    define(C.prototype, 'blur', function blur() { if (focusCurrent() === nodeId(this)) focusMove(-1); });
+  }
+  // `activeElement` (DOM §4.5, HTML §6.6.6): the focused element retargeted against the
+  // document or the shadow root; a document with no focused element answers its body.
+  const focusRetarget = rootId => {
+    let k = focusCurrent();
+    for (let i = 0; k >= 0 && i < 1024; i++) {
+      const r = info(k, 28);
+      if (r === rootId) return wrap(k);
+      k = r >= 0 && info(r, 0) === 11 ? info(r, 21) : -1;
+    }
+    return null;
+  };
+  Object.defineProperty(Document.prototype, 'activeElement', { get() { return focusRetarget(nodeId(this)) ?? this.body; }, configurable: true, enumerable: true });
+  // ==== end focus ==========================================================================
+
+  // ==== popover: popovers, dialogs and their invoker buttons (HTML §6.12, §4.11.4, §4.10.6) ====
+  // Which popovers show and which dialog is modal is the page's state, mirrored into the
+  // arena as element states (tree_op 30 and 31, `Node.states`: bit 1 a showing popover, bit 2
+  // a modal dialog) so that Lean's selectors match `:popover-open` and `:modal`. A page with
+  // no popover and no dialog call does nothing here.
+  {
+    const prop = (C, name, get, set) => Object.defineProperty(C.prototype, name, { get, set, configurable: true, enumerable: true });
+    const method = (C, name, f) => Object.defineProperty(C.prototype, name, { value: f, writable: true, configurable: true, enumerable: true });
+    const task = f => { chk(n.timer(register(f), 0, 0)); };
+    const getStates = id => { const b = n.treeOp(id, 0, 31); return typeof b === 'number' && b >= 0 ? b : 0; };
+    const setState = (id, bit, on) => { const b = getStates(id), nb = on ? b | bit : b & ~bit; if (nb !== b) chk(n.treeOp(id, nb, 30)); };
+    const toggleInit = new WeakMap();
+    class ToggleEvent extends Event {
+      constructor(type, init = undefined) {
+        super(type, init);
+        const d = init === undefined || init === null ? {} : init;
+        toggleInit.set(this, { oldState: d.oldState === undefined ? '' : String(d.oldState), newState: d.newState === undefined ? '' : String(d.newState), source: d.source === undefined ? null : d.source });
+      }
+      get oldState() { return toggleInit.get(this).oldState; }
+      get newState() { return toggleInit.get(this).newState; }
+      get source() { return toggleInit.get(this).source; }
+    }
+    def('ToggleEvent', ToggleEvent);
+    const commandInit = new WeakMap();
+    class CommandEvent extends Event {
+      constructor(type, init = undefined) {
+        super(type, init);
+        const d = init === undefined || init === null ? {} : init;
+        commandInit.set(this, { command: d.command === undefined ? '' : String(d.command), source: d.source === undefined ? null : d.source });
+      }
+      get command() { return commandInit.get(this).command; }
+      get source() { return commandInit.get(this).source; }
+    }
+    def('CommandEvent', CommandEvent);
+    const fireToggle = (el, type, oldState, newState, cancelable, source) => {
+      const e = new ToggleEvent(type, { cancelable, oldState, newState, source });
+      state(e).trusted = true;
+      return dispatch(el, e);
+    };
+    // "Queue a popover toggle event task" (and a dialog's): a task not yet run is replaced,
+    // and the event keeps the first old state.
+    const pendingToggle = new WeakMap();
+    const queueToggle = (el, oldState, newState, source) => {
+      const p = pendingToggle.get(el);
+      if (p) { oldState = p.oldState; p.cancelled = true; }
+      const rec = { oldState, cancelled: false };
+      pendingToggle.set(el, rec);
+      task(() => { if (rec.cancelled) return; pendingToggle.delete(el); fireToggle(el, 'toggle', oldState, newState, false, source); });
+    };
+
+    // ---- popovers ----
+    const showing = new Set(), modal = new Set();
+    let watching = false;
+    const kindOf = el => (el instanceof HTMLElement ? el.popover : null);
+    // "Check popover validity" (HTML §6.12.1)
+    const valid = (el, expectShowing, throws) => {
+      if (kindOf(el) === null) { if (throws) throw new DOMException('The element is not a popover.', 'NotSupportedError'); return false; }
+      const id = nodeId(el);
+      if (expectShowing !== showing.has(id)) return false;
+      if (!el.isConnected || (modal.has(id) && el.hasAttribute('open'))) {
+        if (throws) throw new DOMException('The popover is not connected, or is a modal dialog.', 'InvalidStateError');
+        return false;
+      }
+      return true;
+    };
+    const hidePop = (el, fire, source) => {
+      const id = nodeId(el);
+      if (!showing.has(id)) return;
+      // the auto popovers shown after this one close first
+      if (kindOf(el) !== 'manual') { const order = [...showing]; for (let i = order.length - 1; i > order.indexOf(id); i--) { const o = wrap(order[i]); if (showing.has(order[i]) && kindOf(o) !== 'manual') hidePop(o, fire, null); } }
+      if (fire) { fireToggle(el, 'beforetoggle', 'open', 'closed', false, source); if (!showing.has(id)) return; }
+      showing.delete(id); setState(id, 1, false);
+      if (fire) queueToggle(el, 'open', 'closed', source);
+    };
+    // a showing popover that leaves the document or loses its attribute hides, with no events
+    const watch = () => {
+      if (watching) return;
+      watching = true;
+      const sweep = () => { for (const k of [...showing]) { const o = wrap(k); if (!o.isConnected || kindOf(o) === null) hidePop(o, false, null); } };
+      for (const k of ['remove', 'replace', 'setText', 'setAttr', 'removeAttr']) {
+        const f = n[k];
+        n[k] = (...a) => { const r = f.apply(n, a); if (showing.size) sweep(); return r; };
+      }
+    };
+    const showPop = (el, source) => {
+      if (!valid(el, false, true)) return;
+      if (!fireToggle(el, 'beforetoggle', 'closed', 'open', true, source)) return;
+      if (!valid(el, false, true)) return;
+      const id = nodeId(el);
+      if (kindOf(el) !== 'manual') {
+        // an auto popover closes the other auto popovers, except those it is inside (by the tree, or by its invoker)
+        for (const k of [...showing]) { const o = wrap(k); if (showing.has(k) && kindOf(o) !== 'manual' && !o.contains(el) && !(source && o.contains(source))) hidePop(o, true, null); }
+        if (!valid(el, false, true)) return;
+      }
+      watch();
+      showing.add(id); setState(id, 1, true);
+      queueToggle(el, 'closed', 'open', source);
+    };
+    const sourceOf = options => (options !== null && typeof options === 'object' && options.source !== undefined && options.source !== null ? options.source : null);
+    method(HTMLElement, 'showPopover', function showPopover(options = undefined) { showPop(this, sourceOf(options)); });
+    method(HTMLElement, 'hidePopover', function hidePopover() { if (valid(this, true, true)) hidePop(this, true, null); });
+    method(HTMLElement, 'togglePopover', function togglePopover(options = undefined) {
+      const force = typeof options === 'boolean' ? options : options !== null && typeof options === 'object' ? options.force : undefined;
+      const id = nodeId(this), source = sourceOf(options);
+      if (showing.has(id) && force !== true) { if (valid(this, true, true)) hidePop(this, true, source); }
+      else if (!showing.has(id) && force !== false) showPop(this, source);
+      else valid(this, showing.has(id), true);
+      return showing.has(id);
+    });
+
+    // ---- dialog ----
+    const D = named.HTMLDialogElement, returnValues = new WeakMap();
+    const closeDialog = (el, result, source) => {
+      if (!el.hasAttribute('open')) return;
+      const id = nodeId(el);
+      fireToggle(el, 'beforetoggle', 'open', 'closed', false, source);
+      if (!el.hasAttribute('open')) return;
+      queueToggle(el, 'open', 'closed', source);
+      el.removeAttribute('open');
+      if (modal.delete(id)) setState(id, 2, false);
+      if (result !== undefined && result !== null) returnValues.set(el, String(result));
+      const back = previousFocus.get(el);
+      previousFocus.delete(el);
+      if (back !== undefined && back >= 0 && connectedId(back)) { const t = focusQuery(back, ''); if (t >= 0) focusMove(t); }
+      task(() => { const e = new Event('close'); state(e).trusted = true; dispatch(el, e); });
+    };
+    const openDialog = (el, asModal, source) => {
+      const id = nodeId(el), isModal = modal.has(id) && el.hasAttribute('open');
+      if (el.hasAttribute('open') && isModal === asModal) return;
+      if (el.hasAttribute('open')) throw new DOMException('The dialog is already open in the other way.', 'InvalidStateError');
+      if (asModal && !el.isConnected) throw new DOMException('The dialog is not connected.', 'InvalidStateError');
+      if (asModal && showing.has(id)) throw new DOMException('The dialog is a showing popover.', 'InvalidStateError');
+      if (!fireToggle(el, 'beforetoggle', 'closed', 'open', true, source)) return;
+      if (el.hasAttribute('open') || (asModal && (!el.isConnected || showing.has(id)))) return;
+      queueToggle(el, 'closed', 'open', source);
+      el.setAttribute('open', '');
+      if (asModal) { modal.add(id); setState(id, 2, true); for (const k of [...showing]) if (kindOf(wrap(k)) !== 'manual') hidePop(wrap(k), true, null); }
+      // the dialog focusing steps (HTML §4.11.4): the focus goes to the dialog's focus delegate,
+      // and comes back to the element that had it when the dialog closes
+      previousFocus.set(el, focusCurrent());
+      const t = focusQuery(id, 'd');
+      if (t >= 0) focusMove(t); else if (asModal) focusMove(-1);
+    };
+    const previousFocus = new WeakMap();
+    method(D, 'show', function show() { openDialog(this, false, null); });
+    method(D, 'showModal', function showModal() { openDialog(this, true, null); });
+    method(D, 'close', function close(returnValue = undefined) { closeDialog(this, returnValue, null); });
+    const requestClose = (el, result, source) => {
+      if (!el.hasAttribute('open')) return;
+      const e = new Event('cancel', { cancelable: true }); state(e).trusted = true;
+      if (dispatch(el, e)) closeDialog(el, result, source);
+    };
+    method(D, 'requestClose', function requestClose_(returnValue = undefined) { requestClose(this, returnValue, null); });
+    prop(D, 'returnValue', function () { return returnValues.get(this) ?? ''; }, function (v) { returnValues.set(this, String(v)); });
+
+    // ---- invoker buttons: `commandfor` with `command`, and `popovertarget` ----
+    const commands = ['toggle-popover', 'show-popover', 'hide-popover', 'close', 'request-close', 'show-modal'];
+    const commandOf = el => { const c = el.getAttribute('command'); if (c === null) return ''; if (c.startsWith('--')) return c; const l = c.toLowerCase(); return commands.includes(l) ? l : ''; };
+    prop(named.HTMLButtonElement, 'command', function () { return commandOf(this); }, function (v) { this.setAttribute('command', String(v)); });
+    invokerActivation = (el, t) => {
+      const isButton = el instanceof named.HTMLButtonElement;
+      if (!isButton && !['button', 'submit', 'reset', 'image'].includes(t)) return;
+      const target = isButton ? el.commandForElement : null;
+      if (target) {
+        const command = commandOf(el);
+        if (command === '') return;
+        const e = new CommandEvent('command', { cancelable: true, composed: true, command, source: el });
+        state(e).trusted = true;
+        if (!dispatch(target, e) || command.startsWith('--')) return;
+        const id = nodeId(target), isPop = kindOf(target) !== null;
+        if (command === 'toggle-popover' && isPop) { if (showing.has(id)) hidePop(target, true, el); else showPop(target, el); }
+        else if (command === 'show-popover' && isPop) { if (!showing.has(id)) showPop(target, el); }
+        else if (command === 'hide-popover' && isPop) { if (showing.has(id)) hidePop(target, true, el); }
+        else if (target instanceof D) {
+          if (command === 'show-modal') { if (!target.hasAttribute('open')) openDialog(target, true, el); }
+          else if (command === 'close') closeDialog(target, el.value === '' ? undefined : el.value, el);
+          else if (command === 'request-close') requestClose(target, el.value === '' ? undefined : el.value, el);
+        }
+        return;
+      }
+      const pop = el.popoverTargetElement;
+      if (!pop || kindOf(pop) === null) return;
+      const action = el.popoverTargetAction, id = nodeId(pop);
+      if (action === 'show' && showing.has(id)) return;
+      if (action === 'hide' && !showing.has(id)) return;
+      if (showing.has(id)) hidePop(pop, true, el); else showPop(pop, el);
+    };
+  }
+  // ==== end popover =======================================================================
+
   // ==== dynscripts: scripts that a script inserts (HTML §4.12.1 "prepare the script element") ====
   // A script element made by createElement runs when it is connected and has a source: an
   // inline classic script at once; a `src` script when its text has arrived, then `load` (or
@@ -7471,15 +8033,28 @@
     const fresh = new Set();
     let wrappedForScripts = false;
     const runText = typeof n0.runScript === 'function' ? src => n0.runScript(src) : src => (0, eval)(src);
+    // The script runs with its element's node document as `document` (a frame's document
+    // for a script inserted there), as the engine does for the scripts of a parsed frame.
     const execute = (el, text) => {
-      const before = currentScript;
+      const before = currentScript, beforeDocument = scriptDocument;
+      const d = info(nodeId(el), 7);
       currentScript = el;
-      try { runText(text); } catch (e) { report(e); } finally { currentScript = before; }
+      scriptDocument = d > 0 ? wrap(d) : null;
+      try { runText(text); } catch (e) { report(e); } finally { currentScript = before; scriptDocument = beforeDocument; }
     };
     const fire = (el, type) => { const e = new Event(type); state(e).trusted = true; dispatch(el, e); };
+    // Scripting is enabled only in a document with a browsing context: the page's (0), or
+    // a frame's (node_info 12 answers its iframe) while that iframe is in a document.
+    const scripting = id => {
+      const doc = info(id, 7);
+      if (doc === 0) return true;
+      const frame = info(doc, 12);
+      return frame >= 0 && connectedId(frame);
+    };
     const prepare = id => {
       if (info(id, 0) !== 1 || str(id, 0) !== 'script') { fresh.delete(id); return; }
       if (!connectedId(id)) return;
+      if (!scripting(id)) return;
       const src = n0.attr(id, 'src'), el = wrap(id);
       const text = typeof src === 'string' ? '' : el.textContent;
       if (typeof src !== 'string' && text === '') return;
@@ -7490,7 +8065,7 @@
       const fetcher = url === null || url === undefined ? undefined : globalThis.fetch;
       if (typeof fetcher !== 'function') { Promise.resolve().then(() => fire(el, 'error')); return; }
       fetcher(url).then(r => { if (!r.ok) throw new TypeError('script load failed'); return r.text(); })
-        .then(code => { execute(el, code); fire(el, 'load'); }, () => fire(el, 'error'));
+        .then(code => { if (!scripting(id)) return; execute(el, code); fire(el, 'load'); }, () => { if (scripting(id)) fire(el, 'error'); });
     };
     const after = r => { if (r === 0 && fresh.size) for (const id of [...fresh]) prepare(id); return r; };
     noteFreshScript = id => {
@@ -7543,20 +8118,32 @@
     },
     // Lean dispatches an event of the user agent at a node, the document (0) or the window.
     dispatch(target, type, flags) {
-      const C = type.startsWith('pointer') ? PointerEvent : type === 'click' || type.startsWith('mouse') ? MouseEvent : type === 'message' ? MessageEvent : Event;
+      let C = type.startsWith('pointer') ? PointerEvent : type === 'click' || type.startsWith('mouse') ? MouseEvent : type === 'message' ? MessageEvent : Event;
       const init = { bubbles: (flags & 1) !== 0, cancelable: (flags & 2) !== 0, composed: (flags & 4) !== 0, view: window };
-      // The pointer's coordinates, buttons and pointer fields, as Lean gives them.
+      // The pointer's coordinates, buttons and pointer fields, as Lean gives them; the key of
+      // a keyboard event; the inputType and data of an input event of an editing command.
       let data = {};
-      if (C !== Event) { const s = n.query(0, 16, ''); if (typeof s === 'string' && s !== '') { try { data = JSON.parse(s); } catch {} } }
+      const keyOrInput = type === 'keydown' || type === 'keyup' || type === 'keypress' || type === 'beforeinput' || type === 'input';
+      if (C !== Event || keyOrInput) { const s = n.query(0, 16, ''); if (typeof s === 'string' && s !== '') { try { data = JSON.parse(s); } catch {} } }
+      if (keyOrInput && typeof data.key === 'string') C = KeyboardEvent;
+      else if (keyOrInput && typeof data.inputType === 'string') C = InputEvent;
       // shadowframes: a message from another session (HTML.FrameSessions): its data is
       // serialized; its source is the frame it came through, or the parent.
-      if (C === MessageEvent) { try { data.data = JSON.parse(data.data); } catch { data.data = null; } data.source = data.frame >= 0 ? opaqueWindow(data.frame) : parentWindow(); delete data.frame; }
+      let via = -1;
+      if (C === MessageEvent) { try { data.data = JSON.parse(data.data); } catch { data.data = null; } via = data.frame; data.source = data.frame >= 0 ? opaqueWindow(data.frame) : parentWindow(); delete data.frame; }
       const e = new C(type, Object.assign({}, data, init));
       for (const k of ['pageX', 'pageY', 'offsetX', 'offsetY', 'movementX', 'movementY']) if (typeof data[k] === 'number') state(e)[k] = data[k];
+      if (C === KeyboardEvent && typeof data.keyCode === 'number') { state(e).keyCode = data.keyCode; state(e).which = data.keyCode; }
       state(e).trusted = true;
       if (type === 'DOMContentLoaded') readyState = 'interactive';
       if (type === 'load' && target === WINDOW) readyState = 'complete';
       if (type === 'load' && target !== WINDOW && target !== 0 && info(target, 29) >= 0) frameLoad(target);
+      // A message from a frame's own session is for the window of the document that holds
+      // its iframe: a same-origin frame's window when the iframe is in that frame's document.
+      if (via >= 0 && target === WINDOW) {
+        const d = info(via, 7);
+        if (d > 0) { const before = scriptDocument; scriptDocument = wrap(d); try { return dispatch(frameTarget(d), e) ? '' : 'prevented'; } finally { scriptDocument = before; } }
+      }
       return dispatch(wrapTarget(target), e) ? '' : 'prevented';
     },
     report(e) { report(e); },

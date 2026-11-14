@@ -68,6 +68,9 @@ structure Ed where
   valueOv : List (String × String) := []
   /-- The active range for which the overrides were set. -/
   ovRange : Option Rng := none
+  /-- The range the command deletes first ("delete the selection" notes it): the target
+  range of the command's `beforeinput` event (Input Events §4.1.2 `getTargetRanges()`). -/
+  target : Option Rng := none
   env : Env := {}
 
 instance : Inhabited Ed := ⟨{ dom := {} }⟩
@@ -305,6 +308,21 @@ replay of the log. -/
 theorem applyPrim_refused (e : Ed) (p : Prim) (h : permitted e p = false) : applyPrim e p = e := by
   simp [applyPrim, h]
 
+/-- The guard, read off. Says: a permitted insertion goes into a parent that is in no
+document or inside an editing host, a permitted removal comes out of such a parent, and a
+permitted change of an attribute or of character data is of such a node. So no permitted
+change has a node of the document outside every editing host as its place. Does not say:
+that the inserted node itself came from inside the host (its old parent is checked by
+`permitted` too, not stated here), nor that `touchable` survives later changes. -/
+theorem permitted_touchable (e : Ed) :
+    (∀ parent node child, permitted e (.insertBefore parent node child) = true → touchable e parent = true) ∧
+    (∀ parent node, permitted e (.remove parent node) = true → touchable e parent = true) ∧
+    (∀ node name value, permitted e (.setAttr node name value) = true → touchable e node = true) ∧
+    (∀ node name, permitted e (.removeAttr node name) = true → touchable e node = true) ∧
+    (∀ node offset count data, permitted e (.replaceData node offset count data) = true → touchable e node = true) ∧
+    (∀ node offset r, permitted e (.splitText node offset r) = true → touchable e node = true) := by
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩ <;> intros <;> simp_all [permitted]
+
 /-- The log only grows, by at most one change per `applyPrim`. -/
 theorem applyPrim_log (e : Ed) (p : Prim) :
     (applyPrim e p).log = e.log ∨ (applyPrim e p).log = e.log.push p := by
@@ -387,6 +405,13 @@ def setRangeAt (k : Nat) (r : Rng) : M Unit :=
   modify fun e => { e with live := { e.live with ranges := e.live.ranges.set! k (some r) } }
 
 def setActive (r : Rng) : M Unit := setRangeAt 0 r
+
+/-- The innermost editing host around the active range's common ancestor is
+`contenteditable=plaintext-only`. -/
+def inPlaintextHost (e : Ed) : Bool :=
+  match (chain e.dom (commonAncestor e.dom (activeOf e))).toList.reverse.find? (isEditingHost e) with
+  | some h => contentEditable e.dom h == "plaintext-only"
+  | none => false
 
 /-- `range.setStart(node, offset)` (DOM §5.5): the end follows a start that is after it. -/
 def setStart (n : NodeId) (o : Nat) : M Unit := do
@@ -505,7 +530,7 @@ def isLineContent (e : Ed) (n : NodeId) : Bool :=
 
 /-- Inline content follows `br` in its block: the walk forward meets content or another
 `br` before a block boundary. -/
-def contentAfter (e : Ed) (br : NodeId) : Bool := Id.run do
+def contentAfter (e : Ed) (br : NodeId) (stopAt : Option NodeId := none) : Bool := Id.run do
   let d := e.dom
   let mut cur := br
   for _ in [0:d.size + 1] do
@@ -520,7 +545,7 @@ def contentAfter (e : Ed) (br : NodeId) : Bool := Id.run do
         cur := s
     | none =>
       match parentOf d cur with
-      | some p => if isBlockNode e p then return false else cur := p
+      | some p => if isBlockNode e p || some p == stopAt then return false else cur := p
       | none => return false
   return false
 
