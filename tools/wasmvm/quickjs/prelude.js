@@ -12236,18 +12236,19 @@
     const state = {
       cssText: () => '',
       setCssText: () => { throw readOnlyDecl(); },
-      length: () => namesFor(el).length,
+      // an ill-formed pseudo-element (pe -2) has an empty declaration (CSSOM §9)
+      length: () => pe === -2 ? 0 : namesFor(el).length,
       parentRule: () => null,
       getPropertyValue: name => computedValue(el, name.startsWith('--') ? name : name.toLowerCase(), pe),
       getPropertyPriority: () => '',
       setProperty: () => { throw readOnlyDecl(); },
       removeProperty: () => { throw readOnlyDecl(); },
-      item: i => namesFor(el)[i >>> 0] ?? '',
+      item: i => pe === -2 ? '' : namesFor(el)[i >>> 0] ?? '',
     };
     const proxy = new Proxy(target, {
       get(t, p, r) {
         if (typeof p !== 'string') return Reflect.get(t, p, r);
-        if (/^(0|[1-9][0-9]*)$/.test(p)) return namesFor(el)[Number(p)];
+        if (/^(0|[1-9][0-9]*)$/.test(p)) return pe === -2 ? undefined : namesFor(el)[Number(p)];
         if (p in t) return Reflect.get(t, p, r);
         return computedValue(el, p.includes('-') ? p : cssName(p), pe);
       },
