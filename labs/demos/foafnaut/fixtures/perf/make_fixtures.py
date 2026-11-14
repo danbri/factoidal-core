@@ -25,8 +25,9 @@ Fixtures (sizes are checked below and written to the manifest):
            with layout reads (getBoundingClientRect, getComputedStyle) between rounds
   images   34 PNG images of three sizes, 6 SVG files and 4 inline SVG drawings
   form     a form of 240 controls in fieldsets, with a script that fills and validates it
-  cascade  3,000 elements with short text and 2,000 rules (class, descendant and child
-           combinators, :not(), :hover, :first-child, [data-x], var()): the cascade, not text
+  cascade  3,000 elements with short text in lists of up to 160 items, and 2,000 rules (class,
+           descendant and child combinators, :not(), :hover, :first-child, :last-child,
+           :nth-child(), [data-x], var()): the cascade, not text
   longtext a long plain text page: 60 sections, about 45,000 words, few rules (shaping and
            line breaking)
   reads    a script that reads layout 1,000 times with no change between (one layout is
@@ -745,7 +746,7 @@ def cascade():
         d.open("section", f'class="group c{g % 50}" data-x="{g % 7}"')
         d.el("h3", word(r), f'class="head c{r.below(50)}"')
         d.open("ul", f'class="items c{r.below(50)}"')
-        for i in range(6):
+        for i in range(min(160, (CASCADE_ELEMENTS - 12 - d.elements) // 3)):
             d.open("li", f'class="item c{r.below(50)} {"odd" if i % 2 else "even"}" data-x="{r.below(9)}"')
             d.el("span", word(r), f'class="label c{r.below(50)}"')
             d.el("a", word(r), f'href="#g{g}" class="link c{r.below(50)}"')
@@ -768,8 +769,11 @@ def cascade():
         return f".c{r.below(80)}"            # c50..c79 match nothing, as most rules of a site
 
     def sel():
-        k = r.below(10)
+        k = r.below(13)
         return [lambda: f"{c()} {r.pick(tags)}",
+                lambda: f"li{c()}:nth-child({1 + r.below(5)}n) > span",
+                lambda: f"{c()}:last-child:not(:first-child)",
+                lambda: f"li:not({c()}):hover > a",
                 lambda: f"{r.pick(tags)}{c()} > {r.pick(tags)}",
                 lambda: f"{c()}:not({c()}) {r.pick(['span', 'a'])}",
                 lambda: f"{r.pick(['li', 'a'])}{c()}:hover",

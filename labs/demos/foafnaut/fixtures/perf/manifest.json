@@ -4,8 +4,8 @@
   "article.html": "858d1594651513adeb247442a1266164dab621402bab1ad749c0b1df7dc9dcfe",
   "cards.css": "589572ac9c58f54557126fd94d0f530a0e5db663f0997871688e1345cb684345",
   "cards.html": "af7e063f807d833ffa05257124d1cafb1038f38fa6f9d601004cba0e1ca8385e",
-  "cascade.css": "2d5b2c4a9d34ecd582d42c3c0d355b50e64d7ab721f3c0bd2391a78e16256eff",
-  "cascade.html": "c1e74289c9c53937987137e31fc163ee0d8462781f602012ae0d945a03304d90",
+  "cascade.css": "106662c45aba645afba7024d65e6d8f24eb41e05181b0815e26f36831d52f480",
+  "cascade.html": "d476d0f8ddba2609e2d3cdd0d6ab09b839c94a2f98d493f2d91f4429683fe257",
   "domloop.css": "2fa3e2c5f78f62ab6c36e4f229d577d2b4b109444278644bbec3a45836ec882d",
   "domloop.html": "b97264d8e8cf5c0fca0481c6bb6efec90e3958d35f21064afcda404c82e8e745",
   "form.css": "c3b2c9e5d8bd6935ca0f14d4c776c917a81cd5e489bbb0a4328a08dc7a9639ab",
@@ -92,10 +92,10 @@
    "scripted": false
   },
   "cascade": {
-   "bytes": 225837,
+   "bytes": 232234,
    "elements": 3000,
    "files": 2,
-   "groups": 142,
+   "groups": 8,
    "page": "cascade.html",
    "rules": 2000,
    "scripted": false
@@ -170,7 +170,7 @@
   }
  },
  "generator": "make_fixtures.py",
- "set_sha256": "b8fb5857d67e4b00db3d8861249cdcac39e699dd18b2892178fa864b44e3b58e",
+ "set_sha256": "a3eb6207d443602c83e3e5ee07ebe1a664b9532fb2cd9e2f2d77579a464f14c2",
  "version": 2,
  "viewport": [
   1280,

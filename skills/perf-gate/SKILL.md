@@ -20,7 +20,7 @@ writes them, `--check` verifies the whole set (the driver does both before every
 
 | fixture | what | scripted |
 |---|---|---|
-| `cascade` | 3,000 elements of short text, 2,000 rules (class, descendant, child, `:not()`, `:hover`, `:first-child`, `[data-x]`, `var()`): the cascade, not text | no |
+| `cascade` | 3,000 elements of short text in lists of up to 160 items, 2,000 rules (class, descendant, child, `:not()`, `:hover`, `:first-child`, `:last-child`, `:nth-child()`, `[data-x]`, `var()`): the cascade, not text. Main's cascade fix (48ce9a85f) took its first layout from 1,650 to 700 ms (macOS) | no |
 | `article` | a long article, 3,000 elements, 2,000 rules with `@media` blocks, custom properties, `::before` | no |
 | `longtext` | about 41,500 words in 60 sections, four rules: shaping and line breaking | no |
 | `table` | 100 rows of 20 cells and a header row | no |
