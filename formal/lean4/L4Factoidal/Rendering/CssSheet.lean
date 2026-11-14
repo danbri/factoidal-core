@@ -440,6 +440,120 @@ theorem containerConditions_length (p : String) :
     (containerConditions p).length = (topCommaPieces p.toList 0 "" []).length := by
   simp [containerConditions]
 
+/-! ### `@font-feature-values` -/
+
+/-- The feature value blocks of `@font-feature-values` (CSS Fonts 4 §6.9.1) and how many
+values a declaration of each takes: at least, and at most (0: no limit). -/
+def featureValueTypes : List (String × Nat × Nat) :=
+  [("stylistic", 1, 1), ("styleset", 1, 0), ("character-variant", 1, 2), ("swash", 1, 1),
+   ("ornaments", 1, 1), ("annotation", 1, 1)]
+
+/-- The family name list of a `@font-feature-values` prelude in canonical form (CSS Fonts 4
+§6.9.1, `<family-name>#`): each a string, or identifiers that are not one generic family,
+CSS-wide keyword or dashed identifier; `none` when it is not such a list. -/
+def featureFamilies (prelude : String) : Option String :=
+  let generic := ["serif", "sans-serif", "cursive", "fantasy", "monospace", "system-ui", "emoji", "math", "fangsong",
+    "ui-serif", "ui-sans-serif", "ui-monospace", "ui-rounded", "initial", "inherit", "unset", "default", "revert",
+    "revert-layer"]
+  let pieces := splitCommas (stripWs (CV.parse prelude))
+  let names := pieces.map fun piece => match piece with
+    | [.tok (.str s)] => some (serializeString s)
+    | [.tok (.ident k)] =>
+      if generic.contains (lower k) || k.startsWith "--" then none else some (serializeIdent k)
+    | words =>
+      let ks := words.filterMap fun (cv : CV) => match cv with
+        | .tok (.ident k) => some k
+        | _ => none
+      if words.isEmpty || ks.length != words.length then none else some (" ".intercalate (ks.map serializeIdent))
+  if pieces.isEmpty then none else (names.mapM id).map (", ".intercalate ·)
+
+/-- One declaration of a feature value block, `name: n n ...` with non-negative integers,
+when it is one: the name and the values. -/
+def featureDecl (cvs : List CV) : Option (String × List Nat) :=
+  match stripWs cvs with
+  | .tok (.ident name) :: .tok .colon :: values =>
+    let ns := values.filterMap fun (cv : CV) => match cv with
+      | .tok (.num x true) => if x ≥ 0 && x.den == 1 then some x.num.toNat else none
+      | _ => none
+    if values.isEmpty || ns.length != values.length then none else some (name, ns)
+  | _ => none
+
+/-- The pieces of a list of component values between its top-level semicolons. -/
+def splitSemicolons (cvs : List CV) : List (List CV) :=
+  let (done, cur) := cvs.foldl (fun (acc : Array (List CV) × Array CV) cv => match cv with
+    | .tok .semicolon => (acc.1.push acc.2.toList, #[])
+    | cv => (acc.1, acc.2.push cv)) (#[], #[])
+  (done.push cur.toList).toList
+
+/-- The value blocks of a `@font-feature-values` body (CSS Fonts 4 §6.9.1), in the order of
+each type's first block: the at-rules of a known type with no prelude, their declarations
+that parse (a name declared again keeps its place and takes the new values); other at-rules
+and declarations are dropped. One pass over the body's top-level values. -/
+def featureBlocks (body : String) : List (String × List (String × String)) :=
+  -- the state: the at-rule being read (its name and whether it has a prelude), or junk
+  -- until a semicolon
+  let step := fun (st : Option (String × Bool) × Bool × Array (String × List CV)) (cv : CV) =>
+    let (rule, junk, out) := st
+    match rule with
+    | some (n, pre) =>
+      match cv with
+      | .tok .ws => st
+      | .block '{' inner => (none, false, if pre then out else out.push (n, inner))
+      | .tok .semicolon => (none, false, out)
+      | _ => (some (n, true), junk, out)
+    | none =>
+      if junk then (match cv with
+        | .tok .semicolon => (none, false, out)
+        | _ => st)
+      else match cv with
+        | .tok .ws | .tok .semicolon => st
+        | .tok (.atKeyword n) => (some (lower n, false), false, out)
+        | _ => (none, true, out)
+  let (_, _, blocks) := (CV.parse body).foldl step (none, false, #[])
+  let merged := blocks.foldl (fun (acc : Array (String × Array (String × String))) (n, inner) =>
+    match featureValueTypes.find? (·.1 == n) with
+    | none => acc
+    | some (_, least, most) =>
+      let decls := (splitSemicolons inner).filterMap fun piece =>
+        (featureDecl piece).bind fun (name, ns) =>
+          if ns.length < least || (most != 0 && ns.length > most) then none
+          else some (serializeIdent name, " ".intercalate (ns.map toString))
+      let put := fun (ds : Array (String × String)) (d : String × String) =>
+        match ds.findIdx? (·.1 == d.1) with
+        | some i => ds.set! i d
+        | none => ds.push d
+      match acc.findIdx? (·.1 == n) with
+      | some i => acc.modify i fun (k, ds) => (k, decls.foldl put ds)
+      | none => acc.push (n, decls.foldl put #[])) #[]
+  merged.toList.map fun (n, ds) => (n, ds.toList)
+
+/-- The cssText of a `@font-feature-values` rule, when its prelude is a family name list. -/
+def featureValuesText (prelude body : String) : Option String :=
+  (featureFamilies prelude).map fun fams =>
+    let blocks := (featureBlocks body).filter (!·.2.isEmpty)
+    let inner := blocks.map fun (n, ds) =>
+      "@" ++ n ++ " { " ++ " ".intercalate (ds.map fun (k, v) => k ++ ": " ++ v ++ ";") ++ " }"
+    "@font-feature-values " ++ fams ++ " {" ++ (if inner.isEmpty then " }" else " " ++ " ".intercalate inner ++ " }")
+
+#guard featureValuesText "bongo" "@styleset { abc: 1 2 3; }" == some "@font-feature-values bongo { @styleset { abc: 1 2 3; } }"
+#guard featureValuesText "bongo" "@styleset { blah: 1; de-blah: 1; blah: 2; }" ==
+  some "@font-feature-values bongo { @styleset { blah: 2; de-blah: 1; } }"
+#guard featureValuesText "bongo" "@styleset { abc: 1 2 3" == some "@font-feature-values bongo { @styleset { abc: 1 2 3; } }"
+#guard (["", ";", ",;", "@styleset;", "@styleset abc;", "@styleset { abc }", "@styleset { abc: 1 2 3a }",
+  "@styleset { abc: 1 2 3, def: 1; }", "@blah @styleset { abc: 1 2 3; }", "@blah , @styleset { abc: 1 2 3; }",
+  "styleset { blah: 1 }", "@bongo { blah: 1 }", "@styleset { blah: -1 }", "@styleset { blah: 1.5 }", "@stylistic { blah: 1 2 }",
+  "@character-variant { blah: 1 2 3 }", "@styleset { \"blah\": 1; }", "@styleset { complex blah: 1; }",
+  "@styleset { :123blah: 1; }", "@styleset { 123blah: 1; }"].map (featureValuesText "bongo")).all
+  (· == some "@font-feature-values bongo { }")
+#guard featureValuesText "bongo" "@stylistic { blah: 1 2 } @ornaments { a: 23; b: 4; } @stylistic { blah: 1 2 }" ==
+  some "@font-feature-values bongo { @ornaments { a: 23; b: 4; } }"
+#guard featureValuesText "bongo" "@ornaments { a: 1; } @styleset { x: -1 } @character-variant { b: 23 4; }" ==
+  some "@font-feature-values bongo { @ornaments { a: 1; } @character-variant { b: 23 4; } }"
+#guard featureValuesText "bongo" "@styleset { complex\\20 blah: 1; }" == some "@font-feature-values bongo { @styleset { complex\\ blah: 1; } }"
+#guard (["bongo,, super bongo", "bongo,*", "bongo, sans-serif", "serif, sans-serif", "bongo, \"super\" bongo", "--bongo", ""].map
+  fun p => featureValuesText p "").all (·.isNone)
+#guard featureFamilies "bongo, \"super bongo\", 'bongo the supreme'" == some "bongo, \"super bongo\", \"bongo the supreme\""
+
 /-- The at-rules with a block of rules, and `CSSRule.type` of each (0 where CSSOM gives no
 number). -/
 def groupRules : List (String × String × Nat) :=
@@ -507,7 +621,9 @@ def ruleOf (defaultNs : Bool := false) : Nat → RawRule → Option Rule
               let frames := (rawRules body).map fun r => preludeText r.prelude ++ " { " ++ (Block.parse (r.body.getD "")).text ++ " }"
               let text := "@keyframes " ++ after ++ " { " ++ (if frames.isEmpty then "" else "\n  " ++ "\n  ".intercalate frames ++ "\n") ++ "}"
               some ⟨"Keyframes", 7, after, body, text⟩
-            else if name == "font-feature-values" then some ⟨"FontFeatureValues", 14, after, body, head ++ " { " ++ trimText body ++ " }"⟩
+            else if name == "font-feature-values" then
+              (featureValuesText (String.ofList (rest.dropWhile isNameChar)) body).map fun text =>
+                ⟨"FontFeatureValues", 14, after, body, text⟩
             else none
     | _ =>
       match raw.body, selectorText raw.prelude defaultNs with
