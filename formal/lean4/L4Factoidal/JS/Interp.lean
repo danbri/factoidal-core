@@ -9004,6 +9004,120 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
         | some a => throw a
         | none => pure ()
       pure (.obj pid)
+    | (.x .arrayFromAsync) =>
+      -- Array.fromAsync (asyncItems, mapfn, thisArg): a promise for the array; every abrupt
+      -- completion of the setup rejects it (IfAbruptRejectPromise)
+      let pid ← newPromise
+      let x ← tryCatch (do
+          let mapfn := a1
+          if !(mapfn matches .undef) && !(← isCallable mapfn) then throwErr .type "Array.fromAsync: mapfn is not callable"
+          let nullish (v : Value) : Bool := match v with | .undef | .null => true | _ => false
+          let am ← if nullish a0 then pure Value.undef else getV n a0 (symKey 1)
+          let sm ← if nullish am && !nullish a0 then getV n a0 (symKey symIterator) else pure Value.undef
+          if !nullish am || !nullish sm then
+            -- an async iterator (or the async-from-sync wrapper of a sync one)
+            let arr ← if ← isConstructor thisV then construct n thisV #[] thisV else newArray #[]
+            let it ← callNative n (.x (.forAwait 0)) .undef #[a0] none
+            let nextM ← getV n it "next"
+            let _ ← callNative n (.x (.fromAsyncStep 6)) .undef #[.obj pid, arr, it, nextM, mapfn, argD args 2, .num 0] none
+          else
+            -- an array-like: each index read and awaited in turn
+            let o ← toObj n a0
+            let len ← arrayLikeLength n (.obj o)
+            let arr ← if ← isConstructor thisV then construct n thisV #[.num (Float.ofNat len)] thisV else newArray #[]
+            let _ ← callNative n (.x (.fromAsyncStep 7)) .undef #[.obj pid, arr, .obj o, .num (Float.ofNat len), mapfn, argD args 2, .num 0] none
+          pure none)
+        (fun a => pure (some a))
+      match x with
+      | some (.throw e) => rejectPromise n pid e
+      | some a => throw a
+      | none => pure ()
+      pure (.obj pid)
+    | (.x (.fromAsyncStep k)) =>
+      -- the state, bound in front of the reaction's argument: the promise, the array, the
+      -- iterator (or the array-like), `next` (or the length), mapfn, thisArg, the index
+      let pid := match a0 with | .obj p => p | _ => 0
+      let arr := a1
+      let src := argD args 2
+      let aux := argD args 3
+      let mapfn := argD args 4
+      let thisArg := argD args 5
+      let idx : Nat := match argD args 6 with | .num x => x.toUInt64.toNat | _ => 0
+      let arg := argD args 7
+      let bindStep (j : Nat) (st : Array Value) : M Value := do
+        let f ← nativeFn (.x (.fromAsyncStep j))
+        pure (Value.obj (← alloc { proto := .obj r.functionProto, kind := .bound f .undef st }))
+      let state (i : Nat) : Array Value := #[.obj pid, arr, src, aux, mapfn, thisArg, .num (Float.ofNat i)]
+      -- Await (§6.2.3.1): PromiseResolve, then the reactions
+      let awaitV (v : Value) (onF onR : Value) : M Unit := do
+        let vp ← promiseResolve n v
+        performThen n vp onF onR .undef
+      let closeIt : M Unit := do
+        let _ ← tryCatch (do
+            let m ← getV n src "return"
+            if ← isCallable m then
+              discard <| callV n m src #[]
+            pure ())
+          (fun a => match a with | .halt w => throw (.halt w) | _ => pure ())
+      let x ← tryCatch (do
+          match k with
+          | 5 => rejectPromise n pid (argD args 1)
+          | 4 =>
+            closeIt
+            rejectPromise n pid (argD args 3)
+          | 6 =>
+            let res ← callV n aux src #[]
+            if !res.isObj then throwErr .type "Array.fromAsync: the iterator result is not an object"
+            awaitV res (← bindStep 0 (state idx)) (← bindStep 5 #[.obj pid])
+          | 0 =>
+            if !arg.isObj then throwErr .type "Array.fromAsync: the iterator result is not an object"
+            if toBool (← getV n arg "done") then
+              putV n arr "length" (.num (Float.ofNat idx)) true
+              resolvePromise n pid arr
+            else
+              let v ← getV n arg "value"
+              if mapfn matches .undef then
+                putV n arr (toString idx) v true
+                let _ ← callNative n (.x (.fromAsyncStep 6)) .undef (state (idx + 1)) none
+              else
+                let mv ← tryCatch (do pure (Except.ok (← callV n mapfn thisArg #[v, .num (Float.ofNat idx)])))
+                  (fun a => pure (Except.error a))
+                match mv with
+                | .ok m => awaitV m (← bindStep 1 (state idx)) (← bindStep 4 (#[.obj pid, .undef, src]))
+                | .error (.throw e) =>
+                  closeIt
+                  rejectPromise n pid e
+                | .error a => throw a
+          | 1 =>
+            putV n arr (toString idx) arg true
+            let _ ← callNative n (.x (.fromAsyncStep 6)) .undef (state (idx + 1)) none
+          | 7 =>
+            let len : Nat := match aux with | .num x => x.toUInt64.toNat | _ => 0
+            if idx ≥ len then
+              putV n arr "length" (.num (Float.ofNat len)) true
+              resolvePromise n pid arr
+            else
+              let v ← getV n src (toString idx)
+              awaitV v (← bindStep 2 (state idx)) (← bindStep 5 #[.obj pid])
+          | 2 =>
+            if mapfn matches .undef then
+              putV n arr (toString idx) arg true
+              let _ ← callNative n (.x (.fromAsyncStep 7)) .undef (state (idx + 1)) none
+            else
+              let m ← callV n mapfn thisArg #[arg, .num (Float.ofNat idx)]
+              awaitV m (← bindStep 3 (state idx)) (← bindStep 5 #[.obj pid])
+          | _ =>
+            putV n arr (toString idx) arg true
+            let _ ← callNative n (.x (.fromAsyncStep 7)) .undef (state (idx + 1)) none
+          pure none)
+        (fun a => pure (some a))
+      match x with
+      | some (.throw e) =>
+        if k == 0 || k == 1 || k == 6 then closeIt
+        rejectPromise n pid e
+      | some a => throw a
+      | none => pure ()
+      pure Value.undef
     | (.x .stringIsWellFormed) | (.x .stringToWellFormed) =>
       let tp ← thisPrim thisV
       match tp with
@@ -9385,6 +9499,7 @@ def initRealm : M Unit := do
   setHidden stringProto (symKey symIterator) (← mkNative .stringIterator "[Symbol.iterator]" 0)
   if let .obj ac := arrayC then
     method ac "from" .arrayFrom 1
+    method ac "fromAsync" (.x .arrayFromAsync) 1
     method ac "of" .arrayOf 0
   if let .obj oc := objectC then
     method oc "getOwnPropertySymbols" .objectGetOwnPropertySymbols 1

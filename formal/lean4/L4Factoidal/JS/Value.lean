@@ -78,6 +78,12 @@ inductive NativeX where
   | iteratorDispose | adoptClosure
   /-- `Error.isError` (§20.5.2.1), `Promise.try` (§27.2.4.8), `RegExp.escape` (§22.2.5.1). -/
   | errorIsError | promiseTry | regexpEscape
+  /-- `Array.fromAsync` (ES2026 §23.1.2.2) and the steps of its loop, each a bound native
+  function that a promise reaction calls (`fromAsyncStep`: 0 an iterator result, 1 a mapped
+  value of the iterator loop, 2 a value of the array-like loop, 3 a mapped value of it,
+  4 a rejection that closes the iterator, 5 a rejection, 6 ask the iterator for the next
+  value, 7 read the array-like's next index). -/
+  | arrayFromAsync | fromAsyncStep (k : Nat)
   /-- `Iterator.zip` (false) and `Iterator.zipKeyed` (true): a helper of kind 7. -/
   | iteratorZip (keyed : Bool)
   /-- `Promise.race` (0) and `Promise.allSettled` (1) (§27.2.4.5, §27.2.4.2), and the
