@@ -3413,6 +3413,94 @@
     return FormDataC = FormData;
   };
   lazy('FormData', makeFormData);
+  // ---- FileReader (File API §6.2) ---------------------------------------------------------
+  // A read is tasks of this realm: loadstart, progress, load and loadend at the reader, in that
+  // order, with the result packaged when the read ends (§6.2.3). The text is Lean's decoding
+  // (TextDecoder), the data URL Lean's base64 (btoa), the type's charset Lean's MIME parser.
+  lazy('FileReader', () => {
+    const PE = makeProgressEvent();
+    const readers = new WeakMap();
+    const R = (o, what) => brand(readers, o, 'FileReader.' + what);
+    const fireAt = (reader, type, loaded, total) => {
+      const e = new PE(type, { lengthComputable: total > 0, loaded, total });
+      state(e).trusted = true;
+      dispatch(reader, e);
+    };
+    const binary = bytes => { let s = ''; for (let i = 0; i < bytes.length; i += 8192) s += String.fromCharCode(...bytes.subarray(i, i + 8192)); return s; };
+    const charsetOf = type => {
+      const canon = type === '' ? -1 : apiCall(86, [type]);
+      const m = typeof canon === 'string' ? /;charset=(?:"((?:[^"\\]|\\.)*)"|([^;]*))/.exec(canon) : null;
+      return m ? (m[1] !== undefined ? m[1].replace(/\\(.)/g, '$1') : m[2]) : '';
+    };
+    const packaged = (kind, bytes, type, label) => {
+      if (kind === 'arraybuffer') return bytes.slice().buffer;
+      if (kind === 'binary') return binary(bytes);
+      if (kind === 'dataurl') return 'data:' + (type === '' ? 'application/octet-stream' : type) + ';base64,' + btoa(binary(bytes));
+      // Text: a byte order mark names the encoding (Encoding "decode"); else the label given,
+      // else the charset of the blob's type, else UTF-8.
+      if (bytes.length >= 3 && bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF) return new TextDecoder('utf-8').decode(bytes);
+      if (bytes.length >= 2 && bytes[0] === 0xFE && bytes[1] === 0xFF) return new TextDecoder('utf-16be').decode(bytes);
+      if (bytes.length >= 2 && bytes[0] === 0xFF && bytes[1] === 0xFE) return new TextDecoder('utf-16le').decode(bytes);
+      for (const l of [label, charsetOf(type)]) {
+        if (l === undefined || l === null || l === '') continue;
+        let decoder;
+        try { decoder = new TextDecoder(l); } catch { continue; }
+        return decoder.decode(bytes);
+      }
+      return new TextDecoder().decode(bytes);
+    };
+    const read = (reader, kind, blob, label, what) => {
+      const s = R(reader, what), b = blobs.get(blob);
+      if (!b) throw new TypeError(`Failed to execute '${what}' on 'FileReader': parameter 1 is not of type 'Blob'.`);
+      if (s.state === 1) throw new DOMException(`Failed to execute '${what}' on 'FileReader': the reader is reading`, 'InvalidStateError');
+      s.state = 1; s.result = null; s.error = null;
+      const run = ++s.run, bytes = b.bytes, type = b.type, n = bytes.length;
+      // Each event is a task of its own, so the microtasks of one event's listeners (a promise
+      // that waits for it) run before the next event, as when a browser fires them from tasks.
+      const task = f => setTimeout(() => { if (s.run === run) f(); }, 0);
+      const finish = () => task(() => {
+        if (s.state !== 1) return;
+        s.state = 2;
+        let event = 'load';
+        try { s.result = packaged(kind, bytes, type, label); }
+        catch (e) { s.result = null; s.error = new DOMException(String(e && e.message || e), 'NotReadableError'); event = 'error'; }
+        fireAt(reader, event, n, n);
+        task(() => { if (s.state !== 1) fireAt(reader, 'loadend', n, n); });
+      });
+      task(() => {
+        if (s.state !== 1) return;
+        fireAt(reader, 'loadstart', 0, n);
+        if (n > 0) task(() => { if (s.state !== 1) return; fireAt(reader, 'progress', n, n); finish(); });
+        else finish();
+      });
+    };
+    const need = (have, what) => { if (have < 1) throw new TypeError(`Failed to execute '${what}' on 'FileReader': 1 argument required, but only 0 present.`); };
+    class FileReader extends EventTarget {
+      constructor() { super(); readers.set(this, { state: 0, result: null, error: null, run: 0 }); }
+      get readyState() { return R(this, 'readyState').state; }
+      get result() { return R(this, 'result').result; }
+      get error() { return R(this, 'error').error; }
+      readAsArrayBuffer(blob) { need(arguments.length, 'readAsArrayBuffer'); read(this, 'arraybuffer', blob, undefined, 'readAsArrayBuffer'); }
+      readAsBinaryString(blob) { need(arguments.length, 'readAsBinaryString'); read(this, 'binary', blob, undefined, 'readAsBinaryString'); }
+      readAsText(blob, encoding = undefined) { need(arguments.length, 'readAsText'); read(this, 'text', blob, encoding === undefined ? undefined : String(encoding), 'readAsText'); }
+      readAsDataURL(blob) { need(arguments.length, 'readAsDataURL'); read(this, 'dataurl', blob, undefined, 'readAsDataURL'); }
+      abort() {
+        const s = R(this, 'abort');
+        if (s.state !== 1) { s.result = null; return; }
+        s.state = 2; s.result = null;
+        const run = ++s.run;
+        fireAt(this, 'abort', 0, 0);
+        if (s.run === run && s.state !== 1) fireAt(this, 'loadend', 0, 0);
+      }
+    }
+    const states = { EMPTY: 0, LOADING: 1, DONE: 2 };
+    consts(FileReader, states); consts(FileReader.prototype, states);
+    for (const name of ['loadstart', 'progress', 'load', 'abort', 'error', 'loadend'])
+      Object.defineProperty(FileReader.prototype, 'on' + name, { get() { return handlerOf(this, name); },
+        set(f) { setHandler(this, name, f); }, configurable: true, enumerable: true });
+    setTag(FileReader, 'FileReader');
+    return FileReader;
+  });
   // A request body (XHR §4.5.1 and Fetch "extract a body"): [bytes, Content-Type or ''].
   // A FormData's multipart body and boundary are Lean's (op 78).
   const extractBody = (body, what) => {
