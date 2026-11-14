@@ -243,6 +243,14 @@ private def within (factor : Nat) (page : Option (Nat × Nat)) : Bool := page.an
 -- a table between the levels: each level measures the table inside it once more (the
 -- count grows with nodes times depth, not with a power of the depth)
 #guard within 12 (work (tower 12 "<table><tr><td>" "</td></tr></table>") ".f{display:flex}")
+-- grids in grids, each stretched: a grid measures an item whose rows may still change and
+-- lays it out again; the count grows with the nodes times the depth
+#guard within 5 (work (tower 12) ".f{display:grid;grid-template-columns:1fr 1fr}")
+#guard within 6 (work (tower 16) ".f{display:grid;grid-template-columns:1fr 1fr}")
+-- with rows of a fixed size nothing is laid out twice
+#guard within 1 (work (tower 16) ".f{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:400px}")
+-- grids and rows by turns
+#guard within 2 (work (tower 16) ".f{display:grid;grid-template-columns:1fr 1fr} .f .f{display:flex} .f .f .f{display:grid} .f .f .f .f{display:flex}")
 -- the layout of such a page is the same as before: the innermost row is stretched
 #guard (work (tower 3) ".f{display:flex}").isSome
 -- the refusal at the bound
