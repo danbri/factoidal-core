@@ -276,4 +276,28 @@ def usedFaces (faces : Array Face) (held : List String) (dom : Dom) (styles : Ar
     used := usedBy faces held families n.data used
   return used
 
+/-- The faces whose family a `font-family` declaration of the page's rules names (the
+`font` shorthand is read into `font-family` by the cascade). A page that builds its text
+from script after it loads has no text naming its fonts yet, so `usedFaces` alone would
+fetch none of them; a face its own rules name is fetched as well. -/
+def declaredFaces (faces : Array Face) (rules : List CSS.Rule) : Array Bool :=
+  if faces.isEmpty then #[] else
+  let families : List String := rules.foldl (fun acc r => r.declarations.foldl (fun acc d =>
+    if d.property == "font-family" then ((CSS.familyNames d.value).getD []).map (·.toLower) ++ acc else acc) acc) []
+  faces.map fun f => families.contains f.family.toLower
+
+/-- Kind: totality. Says: one answer for each face. -/
+theorem declaredFaces_size (faces : Array Face) (rules : List CSS.Rule) :
+    (declaredFaces faces rules).size = faces.size ∨ faces.size = 0 := by
+  unfold declaredFaces
+  split
+  · right; simp_all
+  · left; simp
+
+#guard ((CSS.parse ".g{font:10px/1 Ahem}").toOption.map fun rs =>
+  declaredFaces #[{family := "Ahem", sources := ["a.ttf"]}, {family := "Other", sources := ["b.ttf"]}] rs) ==
+  some #[true, false]
+#guard ((CSS.parse ".g{font-family:'Ahem', serif}").toOption.map fun rs =>
+  declaredFaces #[{family := "ahem", sources := ["a.ttf"]}] rs) == some #[true]
+
 end L4Factoidal.Rendering.FontFaceRule
