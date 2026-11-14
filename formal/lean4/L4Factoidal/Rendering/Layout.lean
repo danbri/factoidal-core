@@ -707,14 +707,15 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
       let moved := shiftResult (x+offset) top inner
       -- `inner` holds the border box of the inline-block first, then its content boxes.
       out := {out with nodes := out.nodes ++ moved.nodes, runs := out.runs ++ moved.runs, boxes := out.boxes ++ moved.boxes,
-                       pending := out.pending ++ moved.pending}
+                       pending := out.pending ++ moved.pending, work := out.work+moved.work, rough := out.rough || moved.rough}
     | .outOfFlow source => out := {out with pending := out.pending.push {id := source, x := x+offset, y}}
     | _ => pure ()
   return out
 
 private def appendResult (a b : Result) : Result :=
   {nodes := a.nodes ++ b.nodes, boxes := a.boxes ++ b.boxes, runs := a.runs ++ b.runs, height := a.height+b.height,
-   pending := a.pending ++ b.pending, baseline := a.baseline <|> b.baseline}
+   pending := a.pending ++ b.pending, baseline := a.baseline <|> b.baseline,
+   work := a.work+b.work, rough := a.rough || b.rough}
 
 /-- A word of preformatted text: it never wraps. -/
 private def preformatted : Inline → Bool
@@ -938,7 +939,8 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
 
 private def append (a b : Result) : Result :=
   {nodes := a.nodes ++ b.nodes,boxes := a.boxes ++ b.boxes,runs := a.runs ++ b.runs, height := a.height+b.height,
-   pending := a.pending ++ b.pending, baseline := a.baseline <|> b.baseline}
+   pending := a.pending ++ b.pending, baseline := a.baseline <|> b.baseline,
+   work := a.work+b.work, rough := a.rough || b.rough}
 /-- CSS 2.2 §10.3.9 and §10.6.6: an inline-block with `width:auto` is as wide as its
 widest line (at most the room); its content is laid out at the origin inside its
 border and padding. Its bottom margin edge sits on the line's baseline, as a
@@ -1041,6 +1043,9 @@ inductive Task where
   /-- `box id` in a block formatting context that has `floats` already (CSS 2.1 §9.5): the
   lines of the box and of its descendants are beside them. -/
   | flowed (id : Nat) (floats : Array Floats.Box)
+  /-- `task` laid out only to be measured (`Constraints.measure`): everything inside is
+  laid out in that mode too, and no item is laid out a second time. -/
+  | rough (task : Task)
   deriving Repr
 
 /-- The right edge of what a line layout placed, from its left edge `0`. -/
@@ -1293,6 +1298,7 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
     | .sized id _ _ | .box id | .flowed id _ => boxWidths id true
     | .inner id _ => boxWidths id false
     | .positioned _ _ _ _ _ => return (0,0)
+    | .rough inner => intrinsic dom styles font embedding pictures fuel inner
 
 /-- Block children stack vertically, and adjacent inline children share an
 anonymous inline formatting context. Width/height use the CSS content box.
@@ -1306,6 +1312,15 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
     Nat → Task → Float → Float → Float → Except String Result
   | 0, _, _, _, _ => throw "unsupported HTML nesting depth (maximum 64)"
   | fuel+1, task, x, y, available => do
+    -- A task wrapped in `Task.rough` is a measuring pass (`Constraints.measure`): what it
+    -- lays out is in that mode too (`sub`), so no nested container doubles the work.
+    let measure := match task with
+      | .rough _ => true
+      | _ => false
+    let task := match task with
+      | .rough inner => inner
+      | other => other
+    let sub := fun (t : Task) => if measure then Task.rough t else t
     -- The flow of `kids` in a block container with style `s`: block-level children
     -- stack, inline children share line boxes, runs of internal table boxes are tables.
     -- `before` is the margin that adjoins the top of the flow (the container's own, when it
@@ -1331,7 +1346,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
             content := append content lines
             inline := #[]
           let (offset,room) := floatBand floats innerX width (innerY+content.height) 1
-          content := append content (← layoutTask dom styles font embedding pictures fuel (.table none container run) (innerX+offset) (innerY+content.height) room)
+          content := append content (← layoutTask dom styles font embedding pictures fuel (sub <| .table none container run) (innerX+offset) (innerY+content.height) room)
           previous := 0
         | .node child =>
           -- CSS 2.1 §10.5: a percentage height that the styles alone left open (`percentHeights`)
@@ -1367,7 +1382,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
               | .none => top
               | c => LU.toPx (Floats.clearY floats.toList (c != .right && c != .inlineEnd) (c != .left && c != .inlineStart) (LU.ofPx top))
             let r ← layoutTask dom styles font embedding pictures fuel
-              (.sized child (max 0 (outer-cs.margin.left-cs.margin.right)) none) innerX top width
+              (sub <| .sized child (max 0 (outer-cs.margin.left-cs.margin.right)) none) innerX top width
             let ltr := s.direction == .ltr
             let left := match cs.pos.float with
               | .left => true
@@ -1377,7 +1392,8 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
             let (fx,fy) := Floats.place floats.toList left (LU.ofPx innerX) (LU.ofPx width) (LU.ofPx outer) (LU.ofPx r.height) (LU.ofPx top)
             let r := r.shift (LU.toPx fx-innerX) (LU.toPx fy-top)
             content := {content with nodes := content.nodes ++ r.nodes, boxes := content.boxes ++ r.boxes,
-                                     runs := content.runs ++ r.runs, pending := content.pending ++ r.pending}
+                                     runs := content.runs ++ r.runs, pending := content.pending ++ r.pending,
+                                     work := content.work+r.work, rough := content.rough || r.rough}
             floats := floats.push ⟨left,fx,fy,LU.ofPx outer,LU.ofPx r.height⟩
           else if cs.display.isBlockLevel then
             if !inline.isEmpty then
@@ -1407,11 +1423,11 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
             let cn := dom.get child
             let plain := cs.display == .block && !cs.clipOverflow && !cs.pos.flowRoot && (pictures child).isNone &&
               (blankReplaced cn).isNone && cn.ns != some DOM.svgNS && cn.lname != "hr"
-            let r ← if plain then layoutTask dom styles font embedding pictures fuel (.flowed child floats) innerX top width
-              else if floats.isEmpty then layoutTask dom styles font embedding pictures fuel (.box child) innerX top width
+            let r ← if plain then layoutTask dom styles font embedding pictures fuel (sub <| .flowed child floats) innerX top width
+              else if floats.isEmpty then layoutTask dom styles font embedding pictures fuel (sub <| .box child) innerX top width
               else do
                 let (offset,room) := floatBand floats innerX width top 1
-                layoutTask dom styles font embedding pictures fuel (.box child) (innerX+offset) top room
+                layoutTask dom styles font embedding pictures fuel (sub <| .box child) (innerX+offset) top room
             -- the floats of a context only grow
             if plain && r.floats.size >= floats.size then floats := r.floats
             content := {append content r with height := content.height-overlap+r.height}
@@ -1426,7 +1442,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
               | none => do
                 let (lo,hi) ← intrinsic dom styles font embedding pictures fuel (.box child)
                 pure (shrinkWidth cs.width lo hi width)
-            let r ← layoutTask dom styles font embedding pictures fuel (.sized child (max 0 (outer-edges)) none) 0 0 width
+            let r ← layoutTask dom styles font embedding pictures fuel (sub <| .sized child (max 0 (outer-edges)) none) 0 0 width
             inline := inline.push (.atomic child cs outer r.height r)
           else
             inline := inline ++ (← inlineItems dom styles embedding pictures width fuel child)
@@ -1479,7 +1495,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         let (c,ks) := cellContents dom cell.source
         let w := Table.spanSize widths cell.col cell.colSpan hs
         let left := innerX+colX.getD cell.col 0+cs.padding.left
-        let r ← layoutTask dom styles font embedding pictures fuel (.contents c ks) left cs.padding.top (max 0 (w-cs.padding.left-cs.padding.right))
+        let r ← layoutTask dom styles font embedding pictures fuel (sub <| .contents c ks) left cs.padding.top (max 0 (w-cs.padding.left-cs.padding.right))
         let own := (CSS.resolve 0 cs.height).getD 0
         let outer := max (r.height+cs.padding.top+cs.padding.bottom) (own+cs.padding.top+cs.padding.bottom)
         laid := laid.push (r,outer)
@@ -1499,7 +1515,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let mut top := y+frame.margin.top
       for caption in grid.captions do
         if !(styles[caption]!).captionBottom then
-          let r ← layoutTask dom styles font embedding pictures fuel (.box caption) outerX top borderWidth
+          let r ← layoutTask dom styles font embedding pictures fuel (sub <| .box caption) outerX top borderWidth
           out := append out r
           top := top+r.height
       let innerY := top+frame.padding.top
@@ -1508,6 +1524,8 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let mut boxes : Array Box := #[]
       let mut runs : Array GlyphRun := #[]
       let mut pending : Array Pending := #[]
+      let mut work : Nat := 0
+      let mut rough := false
       for (cell,(r,outer)) in grid.cells.zip laid do
         let cs := cellStyle styles cell.source
         let cx := innerX+colX.getD cell.col 0
@@ -1526,16 +1544,18 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         boxes := boxes ++ moved.boxes
         runs := runs ++ moved.runs
         pending := pending ++ moved.pending
+        work := work+r.work
+        rough := rough || r.rough
       let tableBox : Array Box := match element with
         | some id => #[⟨id,outerX,top,borderWidth,borderHeight⟩]
         | none => #[]
       out := {out with nodes := out.nodes ++ nodes ++ paints, boxes := out.boxes ++ tableBox ++ boxes,
                        runs := out.runs ++ runs, height := out.height+borderHeight,
-                       pending := out.pending ++ pending}
+                       pending := out.pending ++ pending, work := out.work+work, rough := out.rough || rough}
       top := top+borderHeight
       for caption in grid.captions do
         if (styles[caption]!).captionBottom then
-          let r ← layoutTask dom styles font embedding pictures fuel (.box caption) outerX top borderWidth
+          let r ← layoutTask dom styles font embedding pictures fuel (sub <| .box caption) outerX top borderWidth
           out := append out r
           top := top+r.height
       return {out with height := top-y+frame.margin.bottom}
@@ -1553,13 +1573,15 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         | .anonymous container kids => intrinsic dom styles font embedding pictures fuel (.contents container kids)
       layout := fun item ix iy c => match item with
         | .element id => match c.width with
-          | some w => layoutTask dom styles font embedding pictures fuel (.sized id w c.height) ix iy c.available
-          | none => layoutTask dom styles font embedding pictures fuel (.box id) ix iy c.available
+          | some w => layoutTask dom styles font embedding pictures fuel
+              (if c.measure then Task.rough (.sized id w c.height) else sub <| .sized id w c.height) ix iy c.available
+          | none => layoutTask dom styles font embedding pictures fuel
+              (if c.measure then Task.rough (.box id) else sub <| .box id) ix iy c.available
         | .anonymous container kids =>
-          layoutTask dom styles font embedding pictures fuel (.contents container kids) ix iy (c.width.getD c.available)
+          layoutTask dom styles font embedding pictures fuel (sub <| .contents container kids) ix iy (c.width.getD c.available)
       content := fun item ix iy w => match item with
-        | .element id => layoutTask dom styles font embedding pictures fuel (.inner id w) ix iy w
-        | .anonymous container kids => layoutTask dom styles font embedding pictures fuel (.contents container kids) ix iy w
+        | .element id => layoutTask dom styles font embedding pictures fuel (sub <| .inner id w) ix iy w
+        | .anonymous container kids => layoutTask dom styles font embedding pictures fuel (sub <| .contents container kids) ix iy w
       frame := fun item ix iy w h content => match item with
         | .element id => let s := styles[id]!; frameBox id s (ix+s.margin.left) (iy+s.margin.top) w h content
         | .anonymous _ _ => {content with height := h}
@@ -1634,7 +1656,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let by' := match top with
         | some t => cy+t
         | none => if bottom.isSome then cy else at'.y
-      let r ← layoutTask dom styles font embedding pictures fuel (.sized id borderW imposed) bx by' cw
+      let r ← layoutTask dom styles font embedding pictures fuel (sub <| .sized id borderW imposed) bx by' cw
       match top,bottom with
       | none,none => return r.shift 0 (at'.fy*(at'.height-r.height))
       | none,some e => return r.shift 0 (cy+ch-e-r.height-by')
@@ -1667,7 +1689,8 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       return {content with nodes := below.nodes ++ content.nodes ++ above.nodes,
                            boxes := content.boxes ++ below.boxes ++ above.boxes,
                            runs := content.runs ++ below.runs ++ above.runs,
-                           pending := kept ++ below.pending ++ above.pending}
+                           pending := kept ++ below.pending ++ above.pending,
+                           work := content.work+below.work+above.work}
     -- An element's box. `imposedWidth` and `imposedHeight` are the border-box sizes that the
     -- parent formatting context decided (`Task.sized`); with `contentOnly` the contents alone
     -- (`Task.inner`).
@@ -1681,7 +1704,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         | none => return (← table (some id) (n.parent.getD 0) n.kids)
         | some w =>
           -- A table sizes itself (CSS 2.1 §17.5.2) in the width it is given.
-          return (← layoutTask dom styles font embedding pictures fuel (.table (some id) (n.parent.getD 0) n.kids) x y w)
+          return (← layoutTask dom styles font embedding pictures fuel (sub <| .table (some id) (n.parent.getD 0) n.kids) x y w)
       let margin := s.margin
       let padding := s.padding
       let border := s.borderEdges
@@ -1771,10 +1794,10 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
           | _ => if ratioFixed then ratioHeight.map (clampOpt minHeight maxHeight) else none
       let content ← if s.display.isFlex then
           flexLayout children s (collectItems dom styles id)
-            {x := innerX, y := innerY, width, height := definite, minHeight, maxHeight}
+            {x := innerX, y := innerY, width, height := definite, minHeight, maxHeight, measure}
         else if s.display.isGrid then
           gridLayout children s (collectItems dom styles id)
-            {x := innerX, y := innerY, width, height := definite, minHeight, maxHeight, source := some id}
+            {x := innerX, y := innerY, width, height := definite, minHeight, maxHeight, source := some id, measure}
         else flow s id n.kids lead innerX innerY width (if joinsTop then unbounded else 0) around definite
       -- CSS 2.1 §10.6.7: a box that is the root of its block formatting context (one laid
       -- out with no floats around it) is as high as its floats; one in a context with floats
@@ -1793,6 +1816,11 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         let marker := marker.shift dx 0
         pure {content with nodes := content.nodes ++ marker.nodes, runs := marker.runs ++ content.runs,
                            height := max content.height marker.height}
+      -- One more box laid out. A document whose layout takes more work than its limit is
+      -- refused here (`workLimit`), with what it has done so far bounded by that limit.
+      let content := {content with work := content.work+1}
+      if overWork dom.size content.work then
+        throw "layout work limit: the page's boxes take too many layouts (nested containers that are laid out again and again)"
       if contentOnly then return content
       -- The same at the bottom: the last child's margin sticks out of a block with no height.
       let joinsBottom := imposedWidth.isNone && imposedHeight.isNone && collapsesBottom dom s id && !s.display.isFlex && !s.display.isGrid
@@ -1848,6 +1876,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
     | .sized id width height => box id (some width) height false
     | .inner id width => box id (some width) none true
     | .positioned pending cx cy cw ch => place {pending} cx cy cw ch true fun _ => none
+    | .rough inner => layoutTask dom styles font embedding pictures fuel (.rough inner) x y available
 
 /-- An element's block box: `layoutTask` of `.box id`. -/
 def block (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedding : Embedding)
@@ -1868,7 +1897,7 @@ def layoutRoot (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
     if laid.pending.isEmpty then break
     let placed ← layoutTask dom styles font embedding pictures 64 (.positioned laid.pending 0 0 vw vh) 0 0 vw
     laid := {laid with nodes := laid.nodes ++ placed.nodes, boxes := laid.boxes ++ placed.boxes,
-                       runs := laid.runs ++ placed.runs, pending := placed.pending}
+                       runs := laid.runs ++ placed.runs, pending := placed.pending, work := laid.work+placed.work}
   return laid
 
 /-- The nearest HTML anchor with an href attribute, including href="". -/

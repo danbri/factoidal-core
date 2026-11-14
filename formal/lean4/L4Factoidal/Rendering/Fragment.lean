@@ -94,8 +94,35 @@ structure Result where
   first line box; none when it has no line box (the consumer then synthesizes one from
   the border box). Combining fragments keeps the first one. -/
   baseline : Option Float := none
+  /-- The number of box layouts that this fragment took, with those of a measuring pass
+  whose result was laid out again: the counter that `workLimit` bounds. -/
+  work : Nat := 0
+  /-- The fragment was laid out to be measured (`Constraints.measure`) and a second layout
+  of something inside it was left out: its size is right, the places of what is inside
+  may not be. It is laid out again before it is used as the final fragment. -/
+  rough : Bool := false
   deriving Repr
 instance : Inhabited Result := ⟨{}⟩
+
+/-- The most box layouts that the layout of a document of `nodes` nodes may take. A layout
+lays a box out once, or twice when a flex or grid container first measures an item and
+then gives it its final size; a container that is itself only being measured leaves the
+second layout out (`Constraints.measure`), so the count grows with the nodes times the
+nesting depth (at most 64), not with a power of the depth. A document that would take
+more is refused (`overWork`), and the engine goes on. -/
+def workLimit (nodes : Nat) : Nat := 256 * (nodes + 64)
+
+/-- The refusal at the bound: a fragment that took more work than the document's limit. -/
+def overWork (nodes work : Nat) : Bool := decide (workLimit nodes < work)
+
+/-- Says: the layout is refused exactly when its work is over the limit of the document. -/
+theorem overWork_iff (nodes work : Nat) : overWork nodes work = true ↔ workLimit nodes < work := by
+  simp [overWork]
+
+/-- Says: a larger document never has a smaller limit: adding content can not turn a
+layout that was within the limit into a refused one by the limit alone. -/
+theorem workLimit_mono (a b : Nat) (h : a ≤ b) : workLimit a ≤ workLimit b := by
+  unfold workLimit; omega
 
 /-- A fragment moved by `(dx,dy)`: its paint in a translated group, its boxes and glyph
 positions moved by the same amount. Not moved at all: the fragment itself. -/
@@ -112,7 +139,15 @@ def Result.shift (dx dy : Float) (r : Result) : Result :=
 /-- Two fragments in one: the paint of `b` over that of `a`. The height is `a`'s. -/
 def Result.over (a b : Result) : Result :=
   {a with nodes := a.nodes ++ b.nodes, boxes := a.boxes ++ b.boxes, runs := a.runs ++ b.runs,
-          pending := a.pending ++ b.pending, baseline := a.baseline <|> b.baseline}
+          pending := a.pending ++ b.pending, baseline := a.baseline <|> b.baseline,
+          work := a.work + b.work, rough := a.rough || b.rough}
+
+/-- Says: putting fragments together adds their work: no layout goes uncounted. -/
+theorem Result.over_work (a b : Result) : (a.over b).work = a.work + b.work := rfl
+
+/-- Says: moving a fragment does not change its work. -/
+theorem Result.shift_work (dx dy : Float) (r : Result) : (r.shift dx dy).work = r.work := by
+  unfold Result.shift; split <;> rfl
 
 /-- What a parent formatting context imposes on a child box. -/
 structure Constraints where
@@ -124,6 +159,9 @@ structure Constraints where
   width : Option Float := none
   /-- The used height of the border box, when the parent decides it. -/
   height : Option Float := none
+  /-- Only the size of the fragment is wanted (a measuring pass): a container laid out
+  with it does not lay its own items out a second time (`Result.rough`). -/
+  measure : Bool := false
   deriving Repr
 
 /-- A child of a flex or grid container. -/
@@ -171,6 +209,8 @@ structure ContentBox where
   /-- The element whose content box this is, when the context records used values for it
   (grid: the used track sizes, for `getComputedStyle`). -/
   source : Option Nat := none
+  /-- The container is only being measured (`Constraints.measure`). -/
+  measure : Bool := false
   deriving Repr
 
 /-- White space only (CSS Text 3 §4.1.1 document white space). -/

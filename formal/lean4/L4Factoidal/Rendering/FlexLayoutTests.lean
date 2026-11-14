@@ -217,6 +217,38 @@ private def goesDown := uprightItems ++ "#c{display:flex;width:50px;height:100px
 #guard box upright (uprightItems ++ "#o{writing-mode:vertical-lr} #c{display:flex;width:50px;height:100px}") "b" == some (0,20,50,20)
 #guard box upright (uprightItems ++ "#o{writing-mode:vertical-lr} #c{writing-mode:horizontal-tb;display:flex;width:50px;height:100px}") "b" == some (10,0,30,20)
 
+-- Cost (`Result.work`, `Layout.workLimit`): containers nested in containers, each shorter
+-- than a sibling so that it is stretched, are laid out a bounded number of times each. The
+-- count is the box layouts of the whole page, measuring passes included; before the
+-- measuring mode it doubled with every level (2^N).
+private def work (html extra : String) : Option (Nat × Nat) := do
+  let dom := DOM.parseHtmlDocument html
+  let styles ← (CSS.computeFor none dom (← (CSS.parse (css ++ extra)).toOption) 1 {}).toOption
+  let r ← (Layout.layoutRoot dom (styles.map Layout.contentBoxed) font noSVG Layout.noPictures 200 200).toOption
+  pure (r.work, dom.size)
+private def tower (depth : Nat) (between : String := "") (after : String := "") : String := Id.run do
+  let mut s := "<div>leaf</div>"
+  for k in [0:depth] do
+    s := s!"<div class=f><div class=t style='height:{20*(k+1)}px'>AA</div>" ++ between ++ s ++ after ++ "</div>"
+  return s
+private def within (factor : Nat) (page : Option (Nat × Nat)) : Bool := page.any fun (w,n) => w ≤ factor*n
+-- rows in rows: at most two layouts a node, at any depth
+#guard within 2 (work (tower 8) ".f{display:flex}")
+#guard within 2 (work (tower 16) ".f{display:flex}")
+#guard within 2 (work (tower 40) ".f{display:flex}")
+-- wrapping rows, columns with flexible items, positioned rows
+#guard within 2 (work (tower 30) ".f{display:flex;flex-wrap:wrap;width:150px} .t{width:40px}")
+#guard within 6 (work (tower 30) "body{height:4000px;display:flex;flex-direction:column} .f{display:flex;flex-direction:column;flex:1} .t{flex:1}")
+#guard within 2 (work (tower 24) ".f{display:flex;position:relative}")
+-- a table between the levels: each level measures the table inside it once more (the
+-- count grows with nodes times depth, not with a power of the depth)
+#guard within 12 (work (tower 12 "<table><tr><td>" "</td></tr></table>") ".f{display:flex}")
+-- the layout of such a page is the same as before: the innermost row is stretched
+#guard (work (tower 3) ".f{display:flex}").isSome
+-- the refusal at the bound
+#guard Layout.overWork 10 (Layout.workLimit 10 + 1)
+#guard !Layout.overWork 10 (Layout.workLimit 10)
+
 -- Nesting: a row in a column in a row; a flex container in block flow and a block in a flex item.
 private def nested := "<div id=o><div id=l>LL</div><div id=m><div id=h>H</div><div id=r><div id=x>X</div><div id=y>Y</div></div></div></div><div id=p>P</div>"
 private def nestedCss := "#o{display:flex} #m{flex:1;display:flex;flex-direction:column} #r{display:flex} #y{flex:1}"

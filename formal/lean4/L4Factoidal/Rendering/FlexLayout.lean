@@ -235,8 +235,10 @@ def flexRow (kids : Children) (s : Computed) (items : Array Item) (box : Content
     -- An item that stretches to a known height is laid out as a whole box at that height
     -- too: percentage heights inside it are of that height (CSS Flexbox 1 §9.4 step 11).
     let whole := kids.heightSensitive item || (stretches && ahead.isSome)
+    -- An item laid out before its height is known is only measured (`Constraints.measure`).
     let r ← if whole then
-        kids.layout item x box.y {available := box.width, width := some width, height := ahead}
+        kids.layout item x box.y {available := box.width, width := some width, height := ahead,
+                                  measure := box.measure || ahead.isNone}
       else kids.content item x box.y width
     let natural := if whole then r.height-m.top-m.bottom
       else fixed.getD (clampOpt minH maxH r.height+padV)
@@ -305,9 +307,16 @@ def flexRow (kids : Children) (s : Computed) (items : Array Item) (box : Content
         -- with `wrap-reverse` the cross-start side of a line is its bottom
         if reverseCross then lineCross-outerCross-d else d
     let dy := lineTops.getD line 0+offset
+    -- The measured fragment is the final one when the height is the same and nothing in it
+    -- was left rough. A container that is itself only being measured does not lay the item
+    -- out again (its own size does not depend on it): the fragment is marked rough. Else the
+    -- item is laid out at its final height, and the work of the measuring pass is counted.
     let done ← if whole then
-        if (height-natural).abs < 0.01 then pure (r.shift 0 dy)
-        else kids.layout item x (box.y+dy) {available := box.width, width := some width, height := some height}
+        if (height-natural).abs < 0.01 && !r.rough then pure (r.shift 0 dy)
+        else if box.measure then pure {r.shift 0 dy with rough := true}
+        else do
+          let again ← kids.layout item x (box.y+dy) {available := box.width, width := some width, height := some height}
+          pure {again with work := again.work+r.work}
       else pure (kids.frame item x (box.y+dy) width height (r.shift 0 dy))
     out := out.over done
   return {out with height := innerCross}
@@ -367,7 +376,7 @@ def flexColumn (kids : Children) (s : Computed) (items : Array Item) (box : Cont
     let sensitive := kids.heightSensitive item
     let needContent := basis.isNone || (minSpecified.isNone && !is.clipOverflow)
     let measured ← if sensitive then
-        if needContent then some <$> kids.layout item x y {available := box.width, width := some width}
+        if needContent then some <$> kids.layout item x y {available := box.width, width := some width, measure := true}
         else pure none
       else some <$> kids.content item x y width
     let contentH := match measured with
@@ -410,13 +419,17 @@ def flexColumn (kids : Children) (s : Computed) (items : Array Item) (box : Cont
     let top := if axes.mainFlip then inner-pos-outer else pos
     let itemY := box.y+LU.toPx top+(if is.autoMarginTop then LU.toPx autoShare else 0)
     let height := LU.toPx (sizes.getD i 0)+padV
-    let constraints : Constraints := {available := box.width, width := some width, height := some height}
+    let constraints : Constraints := {available := box.width, width := some width, height := some height,
+                                      measure := box.measure}
     let done ← match measured with
       | none => kids.layout item x itemY constraints
       | some r =>
         if kids.heightSensitive item then
-          if (height-(r.height-m.top-m.bottom)).abs < 0.01 then pure (r.shift 0 (itemY-measuredY))
-          else kids.layout item x itemY constraints
+          if (height-(r.height-m.top-m.bottom)).abs < 0.01 && !r.rough then pure (r.shift 0 (itemY-measuredY))
+          else if box.measure then pure {r.shift 0 (itemY-measuredY) with rough := true}
+          else do
+            let again ← kids.layout item x itemY constraints
+            pure {again with work := again.work+r.work}
         else pure (kids.frame item x itemY width height (r.shift 0 (itemY-measuredY)))
     out := out.over done
   return {out with height := LU.toPx inner}
@@ -463,7 +476,7 @@ def flexColumnWrap (kids : Children) (s : Computed) (items : Array Item) (box : 
     let sensitive := kids.heightSensitive item
     let needContent := basis.isNone || (minSpecified.isNone && !is.clipOverflow)
     let measured ← if sensitive then
-        if needContent then some <$> kids.layout item box.x box.y {available := box.width, width := some width}
+        if needContent then some <$> kids.layout item box.x box.y {available := box.width, width := some width, measure := true}
         else pure none
       else some <$> kids.content item box.x box.y width
     let contentH := match measured with
@@ -575,11 +588,16 @@ def flexColumnWrap (kids : Children) (s : Computed) (items : Array Item) (box : 
         if fromRight then lineCross-outerW-d else d
     let x := box.x+lineLefts.getD line 0+offset
     let itemY := box.y+dy
-    let constraints : Constraints := {available := box.width, width := some width, height := some height}
+    let constraints : Constraints := {available := box.width, width := some width, height := some height,
+                                      measure := box.measure}
     let done ← match measured with
       | none => kids.layout item x itemY constraints
       | some r =>
-        if kids.heightSensitive item then kids.layout item x itemY constraints
+        if kids.heightSensitive item then
+          if box.measure then pure {r.shift (x-box.x) (itemY-box.y) with rough := true}
+          else do
+            let again ← kids.layout item x itemY constraints
+            pure {again with work := again.work+r.work}
         else if (width-hypWidth).abs < 0.01 then
           pure (kids.frame item x itemY width height (r.shift (x-box.x) (itemY-box.y)))
         else do

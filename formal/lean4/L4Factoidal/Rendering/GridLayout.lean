@@ -320,8 +320,12 @@ def gridLayout (kids : Children) (s : Computed) (items0 : Array Item) (box : Con
           some (max padV (clampOpt (minH+padV) (maxH.map (·+padV)) (gridPx areaU-m.top-m.bottom)))
         else none
       | f, _ => f
+    -- An item whose height the rows may still change is only measured here
+    -- (`Constraints.measure`): a container inside it does not lay its own items out twice,
+    -- so nested containers cost a layout a level, not twice the level below (`Result.work`).
     let r ← if kids.heightSensitive item then
-        kids.layout item x box.y {available := areaW, width := some width, height := fixed}
+        kids.layout item x box.y {available := areaW, width := some width, height := fixed,
+                                  measure := box.measure || fixed.isNone}
       else kids.content item x box.y width
     let natural := if kids.heightSensitive item then r.height-m.top-m.bottom
       else fixed.getD (clampOpt minH maxH r.height+padV)
@@ -401,11 +405,16 @@ def gridLayout (kids : Children) (s : Computed) (items0 : Array Item) (box : Con
       | none => LU.toPx (Grid.selfOffset align (gridUnits areaH) (gridUnits outerH))
     let y := box.y+LU.toPx extent.1+dy
     let done ← if kids.heightSensitive item then
-        if (height-natural).abs < 0.01 then pure (r.shift 0 (y-box.y))
-        else kids.layout item x y {available := areaW, width := some width, height := some height}
+        -- a container that is itself only measured keeps the measured item: its size is right
+        if box.measure then pure (r.shift 0 (y-box.y))
+        else if (height-natural).abs < 0.01 && !r.rough then pure (r.shift 0 (y-box.y))
+        else do
+          let again ← kids.layout item x y {available := areaW, width := some width, height := some height}
+          -- the measuring pass is work done too
+          pure {again with work := again.work+r.work}
       else pure (kids.frame item x y width height (r.shift 0 (y-box.y)))
     out := out.over done
-  return {out with height := contentH,
+  return {out with height := contentH, rough := out.rough || box.measure,
                    grid := some {x := box.x, y := box.y, width := box.width, height := contentH, rtl,
                                  colNames := plan.colNames, rowNames := plan.rowNames,
                                  colLead := plan.colLead, rowLead := plan.rowLead,
