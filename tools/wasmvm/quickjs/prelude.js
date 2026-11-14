@@ -6453,6 +6453,1436 @@
   // The webkitURL alias (URL §6.1).
   lazy('webkitURL', () => globalThis.URL);
 
+  // ---- Streams Standard: ReadableStream, WritableStream, TransformStream ------------------
+  // https://streams.spec.whatwg.org/. The queue of a controller (a queue-with-sizes, §8.1), the
+  // high water mark of a strategy (§7.4) and the plan of a byte-stream fill (§4.10.11
+  // ReadableByteStreamControllerFillPullIntoDescriptorFromQueue) are the engine's (n.streams:
+  // L4Factoidal.WHATWG.Streams, in Lean). The rest of this section is the Standard's promise
+  // plumbing between the page's callbacks: its abstract operations, under their names
+  // shortened (rs = ReadableStream, rdc = ReadableStreamDefaultController, rbc =
+  // ReadableByteStreamController, ws = WritableStream, wdc = WritableStreamDefaultController,
+  // ts = TransformStream, tdc = TransformStreamDefaultController). An engine without the
+  // native has no streams. The page's objects are keys of WeakMaps; the state is in records.
+  const makeStreams = () => {
+    const P = Promise, pThen = Promise.prototype.then, apply = Reflect.apply, ns = n.streams;
+    const then = (p, f, r) => apply(pThen, p, [f, r]);
+    const resolved = v => new P(r => r(v));
+    const rejected = e => new P((_, r) => r(e));
+    const handled = p => { then(p, undefined, () => {}); return p; };
+    const upon = (p, f, r) => { handled(then(p, f, r)); };
+    const microtask = f => { then(resolved(undefined), f); };
+    // a promise with its functions, and whether it is settled (the writer's ready and closed)
+    const deferred = () => {
+      const d = { settled: false };
+      d.promise = new P((a, b) => { d.resolve = v => { d.settled = true; a(v); }; d.reject = e => { d.settled = true; b(e); }; });
+      return d;
+    };
+    const deferredResolved = v => { const d = deferred(); d.resolve(v); return d; };
+    const deferredRejected = e => { const d = deferred(); d.reject(e); handled(d.promise); return d; };
+    const isObject = x => (typeof x === 'object' && x !== null) || typeof x === 'function';
+    const promiseCall = (f, self, args) => { try { return resolved(apply(f, self, args)); } catch (e) { return rejected(e); } };
+    const illegal = () => { throw new TypeError('Illegal constructor'); };
+    const brandError = (name, what) => new TypeError(`${what}: the receiver is not a ${name}`);
+    // WebIDL: a dictionary argument, a callback member, [EnforceRange] unsigned long long
+    const toDict = (v, what) => { if (v === undefined || v === null) return undefined; if (!isObject(v)) throw new TypeError(`${what} is not an object`); return v; };
+    const fnMember = (o, k, what) => { const f = o[k]; if (f === undefined) return undefined; if (typeof f !== 'function') throw new TypeError(`${what}: '${k}' is not a function`); return f; };
+    const enforceULL = (v, what) => {
+      const x = Number(v);
+      if (x !== x || x === Infinity || x === -Infinity) throw new TypeError(`${what} is not a finite number`);
+      const t = Math.trunc(x);
+      if (t < 0 || t > 9007199254740991) throw new TypeError(`${what} is out of range`);
+      return t === 0 ? 0 : t;
+    };
+    // WebIDL operations and attributes are enumerable; the interface has a class string.
+    const idl = (C, name) => {
+      for (const k of Object.getOwnPropertyNames(C.prototype)) if (k !== 'constructor') Object.defineProperty(C.prototype, k, { enumerable: true });
+      Object.defineProperty(C.prototype, Symbol.toStringTag, { value: name, configurable: true });
+      Object.defineProperty(C, 'prototype', { writable: false });
+      return C;
+    };
+    // ArrayBuffers (ECMA-262 §25.1): transfer, detached, and a view's own constructor
+    const abTransfer = ArrayBuffer.prototype.transfer, abSlice = ArrayBuffer.prototype.slice;
+    const abDetached = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, 'detached').get;
+    const transfer = b => apply(abTransfer, b, []);
+    const detached = b => apply(abDetached, b, []);
+    const taTag = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), Symbol.toStringTag).get;
+    const viewCtors = { Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array, Uint32Array, Float32Array, Float64Array, BigInt64Array, BigUint64Array };
+    if (typeof Float16Array === 'function') viewCtors.Float16Array = Float16Array;
+    const viewCtor = v => viewCtors[apply(taTag, v, [])];
+    const cloneAsUint8Array = v => new Uint8Array(apply(abSlice, v.buffer, [v.byteOffset, v.byteOffset + v.byteLength]));
+
+    // §7.4 a queuing strategy; §8.1 queue-with-sizes (the queue is the engine's object)
+    const convertStrategy = (s, what) => {
+      const d = toDict(s, what);
+      if (d === undefined) return {};
+      const h = d.highWaterMark, size = fnMember(d, 'size', what);
+      return { highWaterMark: h === undefined ? undefined : Number(h), size };
+    };
+    const extractHWM = (st, dflt) => st.highWaterMark === undefined ? dflt : ns(7, st.highWaterMark);
+    const extractSize = st => { const f = st.size; return f === undefined ? () => 1 : chunk => f(chunk); };
+    const qNew = () => ns(0), qEnqueue = (q, v, size) => ns(1, q, v, size), qDequeue = q => ns(2, q), qPeek = q => ns(3, q);
+    const qReset = q => ns(4, q), qTotal = q => ns(5, q), qCount = q => ns(6, q);
+
+    const RS = new WeakMap(), RD = new WeakMap(), RC = new WeakMap(), BR = new WeakMap(), IT = new WeakMap();
+    const WS = new WeakMap(), WR = new WeakMap(), WC = new WeakMap(), TS = new WeakMap(), TC = new WeakMap();
+
+    // ==== §4 readable streams =============================================================
+    const rsLocked = rs => rs.reader !== undefined;
+    const rsHasDefaultReader = rs => rs.reader !== undefined && !rs.reader.byob;
+    const rsHasBYOBReader = rs => rs.reader !== undefined && rs.reader.byob;
+    const rsNew = self => { const rs = { self, state: 'readable', reader: undefined, storedError: undefined, disturbed: false, controller: undefined }; RS.set(self, rs); return rs; };
+    const rsClose = rs => {
+      rs.state = 'closed';
+      const reader = rs.reader;
+      if (reader === undefined) return;
+      reader.closed.resolve(undefined);
+      if (!reader.byob) { const reqs = reader.readRequests; reader.readRequests = []; for (const r of reqs) r.close(); }
+    };
+    const rsError = (rs, e) => {
+      rs.state = 'errored'; rs.storedError = e;
+      const reader = rs.reader;
+      if (reader === undefined) return;
+      reader.closed.reject(e); handled(reader.closed.promise);
+      if (reader.byob) errorReadIntoRequests(reader, e); else errorReadRequests(reader, e);
+    };
+    const rsCancel = (rs, reason) => {
+      rs.disturbed = true;
+      if (rs.state === 'closed') return resolved(undefined);
+      if (rs.state === 'errored') return rejected(rs.storedError);
+      rsClose(rs);
+      const reader = rs.reader;
+      if (reader !== undefined && reader.byob) { const reqs = reader.readIntoRequests; reader.readIntoRequests = []; for (const r of reqs) r.close(undefined); }
+      return then(rs.controller.cancelSteps(reason), () => undefined);
+    };
+    const rsFulfillReadRequest = (rs, chunk, done) => { const r = rs.reader.readRequests.shift(); if (done) r.close(); else r.chunk(chunk); };
+    const rsFulfillReadIntoRequest = (rs, chunk, done) => { const r = rs.reader.readIntoRequests.shift(); if (done) r.close(chunk); else r.chunk(chunk); };
+
+    // §4.3, §4.4 readers
+    const errorReadRequests = (rd, e) => { const reqs = rd.readRequests; rd.readRequests = []; for (const r of reqs) r.error(e); };
+    const errorReadIntoRequests = (rd, e) => { const reqs = rd.readIntoRequests; rd.readIntoRequests = []; for (const r of reqs) r.error(e); };
+    const readerInit = (rd, rs) => {
+      rd.stream = rs; rs.reader = rd;
+      if (rs.state === 'readable') rd.closed = deferred();
+      else if (rs.state === 'closed') rd.closed = deferredResolved(undefined);
+      else rd.closed = deferredRejected(rs.storedError);
+    };
+    const readerRelease = rd => {
+      const rs = rd.stream, e = new TypeError('the reader was released');
+      if (rs.state === 'readable') rd.closed.reject(e); else rd.closed = deferredRejected(e);
+      handled(rd.closed.promise);
+      rs.controller.releaseSteps();
+      rs.reader = undefined; rd.stream = undefined;
+    };
+    const acquireDefaultReader = rs => {
+      if (rsLocked(rs)) throw new TypeError('the stream is locked to a reader');
+      const rd = { byob: false, readRequests: [] };
+      readerInit(rd, rs);
+      return rd;
+    };
+    const acquireBYOBReader = rs => {
+      if (rsLocked(rs)) throw new TypeError('the stream is locked to a reader');
+      if (!rs.controller.byte) throw new TypeError('a BYOB reader needs a byte stream');
+      const rd = { byob: true, readIntoRequests: [] };
+      readerInit(rd, rs);
+      return rd;
+    };
+    const defaultReaderRead = (rd, req) => {
+      const rs = rd.stream;
+      rs.disturbed = true;
+      if (rs.state === 'closed') req.close();
+      else if (rs.state === 'errored') req.error(rs.storedError);
+      else rs.controller.pullSteps(req);
+    };
+    const defaultReaderRelease = rd => { readerRelease(rd); errorReadRequests(rd, new TypeError('the reader was released')); };
+    const byobReaderRead = (rd, view, min, req) => {
+      const rs = rd.stream;
+      rs.disturbed = true;
+      if (rs.state === 'errored') req.error(rs.storedError); else rbcPullInto(rs.controller, view, min, req);
+    };
+    const byobReaderRelease = rd => { readerRelease(rd); errorReadIntoRequests(rd, new TypeError('the reader was released')); };
+
+    // §4.6, §4.9 the default controller
+    const rdcCanCloseOrEnqueue = c => !c.closeRequested && c.stream.state === 'readable';
+    const rdcGetDesiredSize = c => { const st = c.stream.state; return st === 'errored' ? null : st === 'closed' ? 0 : c.hwm - qTotal(c.queue); };
+    const rdcShouldCallPull = c => {
+      const rs = c.stream;
+      if (!rdcCanCloseOrEnqueue(c) || !c.started) return false;
+      if (rsHasDefaultReader(rs) && rs.reader.readRequests.length > 0) return true;
+      return rdcGetDesiredSize(c) > 0;
+    };
+    const rdcCallPullIfNeeded = c => {
+      if (!rdcShouldCallPull(c)) return;
+      if (c.pulling) { c.pullAgain = true; return; }
+      c.pulling = true;
+      upon(c.pullAlg(), () => { c.pulling = false; if (c.pullAgain) { c.pullAgain = false; rdcCallPullIfNeeded(c); } }, e => rdcError(c, e));
+    };
+    const rdcClear = c => { c.pullAlg = c.cancelAlg = c.sizeAlg = undefined; };
+    const rdcClose = c => {
+      if (!rdcCanCloseOrEnqueue(c)) return;
+      c.closeRequested = true;
+      if (qCount(c.queue) === 0) { rdcClear(c); rsClose(c.stream); }
+    };
+    const rdcError = (c, e) => {
+      const rs = c.stream;
+      if (rs.state !== 'readable') return;
+      qReset(c.queue); rdcClear(c); rsError(rs, e);
+    };
+    const rdcEnqueue = (c, chunk) => {
+      if (!rdcCanCloseOrEnqueue(c)) return;
+      const rs = c.stream;
+      if (rsHasDefaultReader(rs) && rs.reader.readRequests.length > 0) rsFulfillReadRequest(rs, chunk, false);
+      else {
+        let size;
+        try { size = c.sizeAlg(chunk); } catch (e) { rdcError(c, e); throw e; }
+        try { qEnqueue(c.queue, chunk, size); } catch (e) { rdcError(c, e); throw e; }
+      }
+      rdcCallPullIfNeeded(c);
+    };
+    const rdcSetUp = (rs, self, startAlg, pullAlg, cancelAlg, hwm, sizeAlg) => {
+      const c = { self, byte: false, stream: rs, queue: qNew(), started: false, closeRequested: false, pullAgain: false, pulling: false,
+        hwm, sizeAlg, pullAlg, cancelAlg,
+        cancelSteps(reason) { qReset(c.queue); const r = c.cancelAlg(reason); rdcClear(c); return r; },
+        pullSteps(req) {
+          if (qCount(c.queue) > 0) {
+            const chunk = qDequeue(c.queue);
+            if (c.closeRequested && qCount(c.queue) === 0) { rdcClear(c); rsClose(rs); } else rdcCallPullIfNeeded(c);
+            req.chunk(chunk);
+          } else { rs.reader.readRequests.push(req); rdcCallPullIfNeeded(c); }
+        },
+        releaseSteps() {} };
+      RC.set(self, c);
+      rs.controller = c;
+      const startResult = startAlg();
+      upon(resolved(startResult), () => { c.started = true; rdcCallPullIfNeeded(c); }, r => rdcError(c, r));
+      return c;
+    };
+    // CreateReadableStream (§4.9.1): a stream the engine makes for tee, transform and from
+    const createReadableStream = (startAlg, pullAlg, cancelAlg, hwm = 1, sizeAlg = () => 1) => {
+      const rs = rsNew(Object.create(ReadableStream.prototype));
+      rdcSetUp(rs, Object.create(ReadableStreamDefaultController.prototype), startAlg, pullAlg, cancelAlg, hwm, sizeAlg);
+      return rs;
+    };
+    const createReadableByteStream = (startAlg, pullAlg, cancelAlg) => {
+      const rs = rsNew(Object.create(ReadableStream.prototype));
+      rbcSetUp(rs, Object.create(ReadableByteStreamController.prototype), startAlg, pullAlg, cancelAlg, 0, undefined);
+      return rs;
+    };
+
+    // §4.7, §4.8, §4.10 the byte controller
+    const rbcGetDesiredSize = c => { const st = c.stream.state; return st === 'errored' ? null : st === 'closed' ? 0 : c.hwm - c.queueTotalSize; };
+    const rbcShouldCallPull = c => {
+      const rs = c.stream;
+      if (rs.state !== 'readable' || c.closeRequested || !c.started) return false;
+      if (rsHasDefaultReader(rs) && rs.reader.readRequests.length > 0) return true;
+      if (rsHasBYOBReader(rs) && rs.reader.readIntoRequests.length > 0) return true;
+      return rbcGetDesiredSize(c) > 0;
+    };
+    const rbcCallPullIfNeeded = c => {
+      if (!rbcShouldCallPull(c)) return;
+      if (c.pulling) { c.pullAgain = true; return; }
+      c.pulling = true;
+      upon(c.pullAlg(), () => { c.pulling = false; if (c.pullAgain) { c.pullAgain = false; rbcCallPullIfNeeded(c); } }, e => rbcError(c, e));
+    };
+    const rbcClear = c => { c.pullAlg = c.cancelAlg = undefined; };
+    const rbcInvalidateBYOBRequest = c => {
+      if (c.byobRequest === null) return;
+      const r = BR.get(c.byobRequest);
+      r.controller = undefined; r.view = null;
+      c.byobRequest = null;
+    };
+    const rbcClearPendingPullIntos = c => { rbcInvalidateBYOBRequest(c); c.pendingPullIntos = []; };
+    const rbcError = (c, e) => {
+      const rs = c.stream;
+      if (rs.state !== 'readable') return;
+      rbcClearPendingPullIntos(c);
+      c.queue = []; c.queueTotalSize = 0;
+      rbcClear(c); rsError(rs, e);
+    };
+    const rbcClose = c => {
+      const rs = c.stream;
+      if (c.closeRequested || rs.state !== 'readable') return;
+      if (c.queueTotalSize > 0) { c.closeRequested = true; return; }
+      if (c.pendingPullIntos.length > 0) {
+        const first = c.pendingPullIntos[0];
+        if (first.bytesFilled % first.elementSize !== 0) {
+          const e = new TypeError('the stream was closed with a partly filled element');
+          rbcError(c, e); throw e;
+        }
+      }
+      rbcClear(c); rsClose(rs);
+    };
+    const rbcConvertPullInto = d => new d.viewConstructor(transfer(d.buffer), d.byteOffset, d.bytesFilled / d.elementSize);
+    const rbcCommitPullInto = (rs, d) => {
+      const done = rs.state === 'closed', view = rbcConvertPullInto(d);
+      if (d.readerType === 'default') rsFulfillReadRequest(rs, view, done); else rsFulfillReadIntoRequest(rs, view, done);
+    };
+    const rbcEnqueueChunkToQueue = (c, buffer, byteOffset, byteLength) => { c.queue.push({ buffer, byteOffset, byteLength }); c.queueTotalSize += byteLength; };
+    const rbcEnqueueClonedChunkToQueue = (c, buffer, byteOffset, byteLength) => {
+      let clone;
+      try { clone = apply(abSlice, buffer, [byteOffset, byteOffset + byteLength]); } catch (e) { rbcError(c, e); throw e; }
+      rbcEnqueueChunkToQueue(c, clone, 0, byteLength);
+    };
+    const rbcEnqueueDetachedPullIntoToQueue = (c, d) => {
+      if (d.bytesFilled > 0) rbcEnqueueClonedChunkToQueue(c, d.buffer, d.byteOffset, d.bytesFilled);
+      c.pendingPullIntos.shift();
+    };
+    const rbcHandleQueueDrain = c => {
+      if (c.queueTotalSize === 0 && c.closeRequested) { rbcClear(c); rsClose(c.stream); } else rbcCallPullIfNeeded(c);
+    };
+    // FillPullIntoDescriptorFromQueue: how many bytes go into the descriptor, and whether it is
+    // then ready, is the engine's plan (n.streams 8: the Standard's steps 1 to 7).
+    const rbcFillPullIntoFromQueue = (c, d) => {
+      const plan = ns(8, c.queueTotalSize, d.byteLength, d.bytesFilled, d.elementSize, d.minimumFill);
+      const ready = plan < 0;
+      let remaining = ready ? -plan - 1 : plan;
+      const queue = c.queue;
+      while (remaining > 0) {
+        const head = queue[0], k = Math.min(remaining, head.byteLength);
+        new Uint8Array(d.buffer).set(new Uint8Array(head.buffer, head.byteOffset, k), d.byteOffset + d.bytesFilled);
+        if (head.byteLength === k) queue.shift(); else { head.byteOffset += k; head.byteLength -= k; }
+        c.queueTotalSize -= k;
+        d.bytesFilled += k;
+        remaining -= k;
+      }
+      return ready;
+    };
+    const rbcFillReadRequestFromQueue = (c, req) => {
+      const e = c.queue.shift();
+      c.queueTotalSize -= e.byteLength;
+      rbcHandleQueueDrain(c);
+      req.chunk(new Uint8Array(e.buffer, e.byteOffset, e.byteLength));
+    };
+    const rbcProcessPullIntosUsingQueue = c => {
+      const filled = [];
+      while (c.pendingPullIntos.length > 0) {
+        if (c.queueTotalSize === 0) break;
+        const d = c.pendingPullIntos[0];
+        if (rbcFillPullIntoFromQueue(c, d)) { c.pendingPullIntos.shift(); filled.push(d); }
+      }
+      return filled;
+    };
+    const rbcProcessReadRequestsUsingQueue = c => {
+      const reader = c.stream.reader;
+      while (reader.readRequests.length > 0) {
+        if (c.queueTotalSize === 0) return;
+        rbcFillReadRequestFromQueue(c, reader.readRequests.shift());
+      }
+    };
+    const rbcEnqueue = (c, chunk) => {
+      const rs = c.stream;
+      if (c.closeRequested || rs.state !== 'readable') return;
+      const buffer = chunk.buffer, byteOffset = chunk.byteOffset, byteLength = chunk.byteLength;
+      if (detached(buffer)) throw new TypeError("the chunk's buffer is detached");
+      const transferred = transfer(buffer);
+      if (c.pendingPullIntos.length > 0) {
+        const first = c.pendingPullIntos[0];
+        if (detached(first.buffer)) throw new TypeError("the BYOB request's buffer is detached");
+        rbcInvalidateBYOBRequest(c);
+        first.buffer = transfer(first.buffer);
+        if (first.readerType === 'none') rbcEnqueueDetachedPullIntoToQueue(c, first);
+      }
+      if (rsHasDefaultReader(rs)) {
+        rbcProcessReadRequestsUsingQueue(c);
+        if (rs.reader.readRequests.length === 0) rbcEnqueueChunkToQueue(c, transferred, byteOffset, byteLength);
+        else {
+          if (c.pendingPullIntos.length > 0) c.pendingPullIntos.shift();
+          rsFulfillReadRequest(rs, new Uint8Array(transferred, byteOffset, byteLength), false);
+        }
+      } else if (rsHasBYOBReader(rs)) {
+        rbcEnqueueChunkToQueue(c, transferred, byteOffset, byteLength);
+        for (const d of rbcProcessPullIntosUsingQueue(c)) rbcCommitPullInto(rs, d);
+      } else rbcEnqueueChunkToQueue(c, transferred, byteOffset, byteLength);
+      rbcCallPullIfNeeded(c);
+    };
+    const rbcGetBYOBRequest = c => {
+      if (c.byobRequest === null && c.pendingPullIntos.length > 0) {
+        const first = c.pendingPullIntos[0];
+        const view = new Uint8Array(first.buffer, first.byteOffset + first.bytesFilled, first.byteLength - first.bytesFilled);
+        const br = Object.create(ReadableStreamBYOBRequest.prototype);
+        BR.set(br, { controller: c, view });
+        c.byobRequest = br;
+      }
+      return c.byobRequest;
+    };
+    const rbcPullInto = (c, view, min, req) => {
+      const rs = c.stream;
+      let elementSize = 1, ctor = DataView;
+      const tc = viewCtor(view);
+      if (tc !== undefined) { elementSize = tc.BYTES_PER_ELEMENT; ctor = tc; }
+      const minimumFill = min * elementSize, byteOffset = view.byteOffset, byteLength = view.byteLength;
+      let buffer;
+      try { buffer = transfer(view.buffer); } catch (e) { req.error(e); return; }
+      const d = { buffer, bufferByteLength: buffer.byteLength, byteOffset, byteLength, bytesFilled: 0, minimumFill, elementSize, viewConstructor: ctor, readerType: 'byob' };
+      if (c.pendingPullIntos.length > 0) { c.pendingPullIntos.push(d); rs.reader.readIntoRequests.push(req); return; }
+      if (rs.state === 'closed') { req.close(new ctor(d.buffer, d.byteOffset, 0)); return; }
+      if (c.queueTotalSize > 0) {
+        if (rbcFillPullIntoFromQueue(c, d)) {
+          const filled = rbcConvertPullInto(d);
+          rbcHandleQueueDrain(c);
+          req.chunk(filled);
+          return;
+        }
+        if (c.closeRequested) {
+          const e = new TypeError('the stream was closed with a partly filled element');
+          rbcError(c, e); req.error(e); return;
+        }
+      }
+      c.pendingPullIntos.push(d);
+      rs.reader.readIntoRequests.push(req);
+      rbcCallPullIfNeeded(c);
+    };
+    const rbcRespondInClosedState = (c, first) => {
+      if (first.readerType === 'none') c.pendingPullIntos.shift();
+      const rs = c.stream;
+      if (rsHasBYOBReader(rs)) {
+        const filled = [], k = rs.reader.readIntoRequests.length;
+        while (filled.length < k) filled.push(c.pendingPullIntos.shift());
+        for (const d of filled) rbcCommitPullInto(rs, d);
+      }
+    };
+    const rbcRespondInReadableState = (c, bytesWritten, d) => {
+      d.bytesFilled += bytesWritten;
+      if (d.readerType === 'none') {
+        rbcEnqueueDetachedPullIntoToQueue(c, d);
+        for (const f of rbcProcessPullIntosUsingQueue(c)) rbcCommitPullInto(c.stream, f);
+        return;
+      }
+      if (d.bytesFilled < d.minimumFill) return;
+      c.pendingPullIntos.shift();
+      const remainder = d.bytesFilled % d.elementSize;
+      if (remainder > 0) { const end = d.byteOffset + d.bytesFilled; rbcEnqueueClonedChunkToQueue(c, d.buffer, end - remainder, remainder); }
+      d.bytesFilled -= remainder;
+      const filled = rbcProcessPullIntosUsingQueue(c);
+      rbcCommitPullInto(c.stream, d);
+      for (const f of filled) rbcCommitPullInto(c.stream, f);
+    };
+    const rbcRespondInternal = (c, bytesWritten) => {
+      const first = c.pendingPullIntos[0];
+      rbcInvalidateBYOBRequest(c);
+      if (c.stream.state === 'closed') rbcRespondInClosedState(c, first); else rbcRespondInReadableState(c, bytesWritten, first);
+      rbcCallPullIfNeeded(c);
+    };
+    const rbcRespond = (c, bytesWritten) => {
+      const first = c.pendingPullIntos[0];
+      if (c.stream.state === 'closed') { if (bytesWritten !== 0) throw new TypeError('bytesWritten must be 0 when the stream is closed'); }
+      else {
+        if (bytesWritten === 0) throw new TypeError('bytesWritten must be more than 0 while the stream is readable');
+        if (first.bytesFilled + bytesWritten > first.byteLength) throw new RangeError('bytesWritten is past the end of the view');
+      }
+      first.buffer = transfer(first.buffer);
+      rbcRespondInternal(c, bytesWritten);
+    };
+    const rbcRespondWithNewView = (c, view) => {
+      const first = c.pendingPullIntos[0];
+      if (c.stream.state === 'closed') { if (view.byteLength !== 0) throw new TypeError('the view must be empty when the stream is closed'); }
+      else if (view.byteLength === 0) throw new TypeError('the view must not be empty while the stream is readable');
+      if (first.byteOffset + first.bytesFilled !== view.byteOffset) throw new RangeError('the view starts at another offset than the BYOB request');
+      if (first.bufferByteLength !== view.buffer.byteLength) throw new RangeError("the view's buffer has another size than the BYOB request's");
+      if (first.bytesFilled + view.byteLength > first.byteLength) throw new RangeError('the view is longer than the BYOB request');
+      const k = view.byteLength;
+      first.buffer = transfer(view.buffer);
+      rbcRespondInternal(c, k);
+    };
+    const rbcSetUp = (rs, self, startAlg, pullAlg, cancelAlg, hwm, autoAllocateChunkSize) => {
+      const c = { self, byte: true, stream: rs, pullAgain: false, pulling: false, byobRequest: null, started: false, closeRequested: false,
+        hwm, pullAlg, cancelAlg, autoAllocateChunkSize, pendingPullIntos: [], queue: [], queueTotalSize: 0,
+        cancelSteps(reason) { rbcClearPendingPullIntos(c); c.queue = []; c.queueTotalSize = 0; const r = c.cancelAlg(reason); rbcClear(c); return r; },
+        pullSteps(req) {
+          if (c.queueTotalSize > 0) { rbcFillReadRequestFromQueue(c, req); return; }
+          const auto = c.autoAllocateChunkSize;
+          if (auto !== undefined) {
+            let buffer;
+            try { buffer = new ArrayBuffer(auto); } catch (e) { req.error(e); return; }
+            c.pendingPullIntos.push({ buffer, bufferByteLength: auto, byteOffset: 0, byteLength: auto, bytesFilled: 0, minimumFill: 1, elementSize: 1, viewConstructor: Uint8Array, readerType: 'default' });
+          }
+          rs.reader.readRequests.push(req);
+          rbcCallPullIfNeeded(c);
+        },
+        releaseSteps() {
+          if (c.pendingPullIntos.length > 0) { const first = c.pendingPullIntos[0]; first.readerType = 'none'; c.pendingPullIntos = [first]; }
+        } };
+      RC.set(self, c);
+      rs.controller = c;
+      const startResult = startAlg();
+      upon(resolved(startResult), () => { c.started = true; rbcCallPullIfNeeded(c); }, r => rbcError(c, r));
+      return c;
+    };
+
+    // §4.9.2 ReadableStreamTee
+    const rsDefaultTee = (rs, cloneForBranch2) => {
+      const reader = acquireDefaultReader(rs);
+      let reading = false, readAgain = false, canceled1 = false, canceled2 = false, reason1, reason2, branch1, branch2;
+      const cancelPromise = deferred();
+      const pullAlg = () => {
+        if (reading) { readAgain = true; return resolved(undefined); }
+        reading = true;
+        defaultReaderRead(reader, {
+          chunk: chunk => microtask(() => {
+            readAgain = false;
+            let chunk2 = chunk;
+            if (!canceled2 && cloneForBranch2) {
+              try { chunk2 = structuredClone(chunk); }
+              catch (e) { rdcError(branch1.controller, e); rdcError(branch2.controller, e); cancelPromise.resolve(rsCancel(rs, e)); return; }
+            }
+            if (!canceled1) rdcEnqueue(branch1.controller, chunk);
+            if (!canceled2) rdcEnqueue(branch2.controller, chunk2);
+            reading = false;
+            if (readAgain) pullAlg();
+          }),
+          close: () => {
+            reading = false;
+            if (!canceled1) rdcClose(branch1.controller);
+            if (!canceled2) rdcClose(branch2.controller);
+            if (!canceled1 || !canceled2) cancelPromise.resolve(undefined);
+          },
+          error: () => { reading = false; } });
+        return resolved(undefined);
+      };
+      const cancel1 = reason => { canceled1 = true; reason1 = reason; if (canceled2) cancelPromise.resolve(rsCancel(rs, [reason1, reason2])); return cancelPromise.promise; };
+      const cancel2 = reason => { canceled2 = true; reason2 = reason; if (canceled1) cancelPromise.resolve(rsCancel(rs, [reason1, reason2])); return cancelPromise.promise; };
+      branch1 = createReadableStream(() => undefined, pullAlg, cancel1);
+      branch2 = createReadableStream(() => undefined, pullAlg, cancel2);
+      upon(reader.closed.promise, undefined, r => {
+        rdcError(branch1.controller, r); rdcError(branch2.controller, r);
+        if (!canceled1 || !canceled2) cancelPromise.resolve(undefined);
+      });
+      return [branch1, branch2];
+    };
+    const rsByteTee = rs => {
+      let reader = acquireDefaultReader(rs);
+      let reading = false, readAgain1 = false, readAgain2 = false, canceled1 = false, canceled2 = false, reason1, reason2, branch1, branch2;
+      const cancelPromise = deferred();
+      const forwardReaderError = thisReader => upon(thisReader.closed.promise, undefined, r => {
+        if (thisReader !== reader) return;
+        rbcError(branch1.controller, r); rbcError(branch2.controller, r);
+        if (!canceled1 || !canceled2) cancelPromise.resolve(undefined);
+      });
+      const pullWithDefaultReader = () => {
+        if (reader.byob) { byobReaderRelease(reader); reader = acquireDefaultReader(rs); forwardReaderError(reader); }
+        defaultReaderRead(reader, {
+          chunk: chunk => microtask(() => {
+            readAgain1 = false; readAgain2 = false;
+            let chunk2 = chunk;
+            if (!canceled1 && !canceled2) {
+              try { chunk2 = cloneAsUint8Array(chunk); }
+              catch (e) { rbcError(branch1.controller, e); rbcError(branch2.controller, e); cancelPromise.resolve(rsCancel(rs, e)); return; }
+            }
+            if (!canceled1) rbcEnqueue(branch1.controller, chunk);
+            if (!canceled2) rbcEnqueue(branch2.controller, chunk2);
+            reading = false;
+            if (readAgain1) pull1(); else if (readAgain2) pull2();
+          }),
+          close: () => {
+            reading = false;
+            if (!canceled1) rbcClose(branch1.controller);
+            if (!canceled2) rbcClose(branch2.controller);
+            if (branch1.controller.pendingPullIntos.length > 0) rbcRespond(branch1.controller, 0);
+            if (branch2.controller.pendingPullIntos.length > 0) rbcRespond(branch2.controller, 0);
+            if (!canceled1 || !canceled2) cancelPromise.resolve(undefined);
+          },
+          error: () => { reading = false; } });
+      };
+      const pullWithBYOBReader = (view, forBranch2) => {
+        if (!reader.byob) { defaultReaderRelease(reader); reader = acquireBYOBReader(rs); forwardReaderError(reader); }
+        const byobBranch = forBranch2 ? branch2 : branch1, otherBranch = forBranch2 ? branch1 : branch2;
+        byobReaderRead(reader, view, 1, {
+          chunk: chunk => microtask(() => {
+            readAgain1 = false; readAgain2 = false;
+            const byobCanceled = forBranch2 ? canceled2 : canceled1, otherCanceled = forBranch2 ? canceled1 : canceled2;
+            if (!otherCanceled) {
+              let cloned;
+              try { cloned = cloneAsUint8Array(chunk); }
+              catch (e) { rbcError(byobBranch.controller, e); rbcError(otherBranch.controller, e); cancelPromise.resolve(rsCancel(rs, e)); return; }
+              if (!byobCanceled) rbcRespondWithNewView(byobBranch.controller, chunk);
+              rbcEnqueue(otherBranch.controller, cloned);
+            } else if (!byobCanceled) rbcRespondWithNewView(byobBranch.controller, chunk);
+            reading = false;
+            if (readAgain1) pull1(); else if (readAgain2) pull2();
+          }),
+          close: chunk => {
+            reading = false;
+            const byobCanceled = forBranch2 ? canceled2 : canceled1, otherCanceled = forBranch2 ? canceled1 : canceled2;
+            if (!byobCanceled) rbcClose(byobBranch.controller);
+            if (!otherCanceled) rbcClose(otherBranch.controller);
+            if (chunk !== undefined) {
+              if (!byobCanceled) rbcRespondWithNewView(byobBranch.controller, chunk);
+              if (!otherCanceled && otherBranch.controller.pendingPullIntos.length > 0) rbcRespond(otherBranch.controller, 0);
+            }
+            if (!byobCanceled || !otherCanceled) cancelPromise.resolve(undefined);
+          },
+          error: () => { reading = false; } });
+      };
+      const pull1 = () => {
+        if (reading) { readAgain1 = true; return resolved(undefined); }
+        reading = true;
+        const br = rbcGetBYOBRequest(branch1.controller);
+        if (br === null) pullWithDefaultReader(); else pullWithBYOBReader(BR.get(br).view, false);
+        return resolved(undefined);
+      };
+      const pull2 = () => {
+        if (reading) { readAgain2 = true; return resolved(undefined); }
+        reading = true;
+        const br = rbcGetBYOBRequest(branch2.controller);
+        if (br === null) pullWithDefaultReader(); else pullWithBYOBReader(BR.get(br).view, true);
+        return resolved(undefined);
+      };
+      const cancel1 = reason => { canceled1 = true; reason1 = reason; if (canceled2) cancelPromise.resolve(rsCancel(rs, [reason1, reason2])); return cancelPromise.promise; };
+      const cancel2 = reason => { canceled2 = true; reason2 = reason; if (canceled1) cancelPromise.resolve(rsCancel(rs, [reason1, reason2])); return cancelPromise.promise; };
+      branch1 = createReadableByteStream(() => undefined, pull1, cancel1);
+      branch2 = createReadableByteStream(() => undefined, pull2, cancel2);
+      forwardReaderError(reader);
+      return [branch1, branch2];
+    };
+
+    // §4.9.1 ReadableStreamPipeTo
+    const rsPipeTo = (source, dest, preventClose, preventAbort, preventCancel, signal) => {
+      const reader = acquireDefaultReader(source), writer = acquireWriter(dest);
+      source.disturbed = true;
+      let shuttingDown = false, currentWrite = resolved(undefined);
+      return new P((resolve, reject) => {
+        let abortAlg;
+        const finalize = (isError, error) => {
+          writerRelease(writer); defaultReaderRelease(reader);
+          if (signal !== undefined) signal.removeEventListener('abort', abortAlg);
+          if (isError) reject(error); else resolve(undefined);
+        };
+        const waitForWrites = () => { const old = currentWrite; return then(currentWrite, () => old !== currentWrite ? waitForWrites() : undefined); };
+        const shutdownWithAction = (action, isError, error) => {
+          if (shuttingDown) return;
+          shuttingDown = true;
+          const rest = () => upon(action(), () => finalize(isError, error), e => finalize(true, e));
+          if (dest.state === 'writable' && !wsCloseQueuedOrInFlight(dest)) upon(waitForWrites(), rest); else rest();
+        };
+        const shutdown = (isError, error) => {
+          if (shuttingDown) return;
+          shuttingDown = true;
+          if (dest.state === 'writable' && !wsCloseQueuedOrInFlight(dest)) upon(waitForWrites(), () => finalize(isError, error)); else finalize(isError, error);
+        };
+        if (signal !== undefined) {
+          abortAlg = () => {
+            const error = signal.reason, actions = [];
+            if (!preventAbort) actions.push(() => dest.state === 'writable' ? wsAbort(dest, error) : resolved(undefined));
+            if (!preventCancel) actions.push(() => source.state === 'readable' ? rsCancel(source, error) : resolved(undefined));
+            shutdownWithAction(() => {
+              // wait for all the actions (the Standard's "wait for all")
+              const ps = actions.map(a => a());
+              return new P((ok, bad) => { let left = ps.length; if (left === 0) ok(undefined); for (const p of ps) then(p, () => { if (--left === 0) ok(undefined); }, bad); });
+            }, true, error);
+          };
+          if (signal.aborted) { abortAlg(); return; }
+          signal.addEventListener('abort', abortAlg);
+        }
+        const pipeStep = () => {
+          if (shuttingDown) return resolved(true);
+          return then(writer.ready.promise, () => new P((resolveRead, rejectRead) => {
+            defaultReaderRead(reader, {
+              // the write is not made inside the source's enqueue(): it waits for a microtask
+              chunk: chunk => {
+                currentWrite = then(resolved(undefined), () => writer.stream === undefined ? undefined : then(writerWrite(writer, chunk), undefined, () => {}));
+                resolveRead(false);
+              },
+              close: () => resolveRead(true),
+              error: rejectRead });
+          }));
+        };
+        const pipeLoop = () => new P((resolveLoop, rejectLoop) => {
+          const next = done => { if (done) resolveLoop(undefined); else then(pipeStep(), next, rejectLoop); };
+          next(false);
+        });
+        const isOrBecomesErrored = (stream, promise, action) => { if (stream.state === 'errored') action(stream.storedError); else upon(promise, undefined, action); };
+        const isOrBecomesClosed = (stream, promise, action) => { if (stream.state === 'closed') action(); else upon(promise, action); };
+        // errors go forward, then backward; closing goes forward, then backward
+        isOrBecomesErrored(source, reader.closed.promise, e => { if (!preventAbort) shutdownWithAction(() => wsAbort(dest, e), true, e); else shutdown(true, e); });
+        isOrBecomesErrored(dest, writer.closed.promise, e => { if (!preventCancel) shutdownWithAction(() => rsCancel(source, e), true, e); else shutdown(true, e); });
+        isOrBecomesClosed(source, reader.closed.promise, () => { if (!preventClose) shutdownWithAction(() => writerCloseWithErrorPropagation(writer)); else shutdown(); });
+        if (wsCloseQueuedOrInFlight(dest) || dest.state === 'closed') {
+          const e = new TypeError('the destination closed before all the data was piped to it');
+          if (!preventCancel) shutdownWithAction(() => rsCancel(source, e), true, e); else shutdown(true, e);
+        }
+        handled(pipeLoop());
+      });
+    };
+    const pipeOptions = (options, what) => {
+      const d = toDict(options, what);
+      if (d === undefined) return { preventAbort: false, preventCancel: false, preventClose: false, signal: undefined };
+      const preventAbort = !!d.preventAbort, preventCancel = !!d.preventCancel, preventClose = !!d.preventClose, signal = d.signal;
+      if (signal !== undefined && !(typeof AbortSignal === 'function' && signal instanceof AbortSignal)) throw new TypeError(`${what}: 'signal' is not an AbortSignal`);
+      return { preventAbort, preventCancel, preventClose, signal };
+    };
+
+    // §4.2 class ReadableStream
+    class ReadableStream {
+      constructor(underlyingSource = undefined, strategy = undefined) {
+        if (underlyingSource === undefined) underlyingSource = null;
+        else if (!isObject(underlyingSource)) throw new TypeError("Failed to construct 'ReadableStream': the underlying source is not an object");
+        const st = convertStrategy(strategy, "Failed to construct 'ReadableStream': the strategy");
+        const what = "Failed to construct 'ReadableStream'";
+        let auto, cancel, pull, start, type;
+        if (underlyingSource !== null) {
+          auto = underlyingSource.autoAllocateChunkSize;
+          if (auto !== undefined) auto = enforceULL(auto, what + ': autoAllocateChunkSize');
+          cancel = fnMember(underlyingSource, 'cancel', what); pull = fnMember(underlyingSource, 'pull', what); start = fnMember(underlyingSource, 'start', what);
+          type = underlyingSource.type;
+          if (type !== undefined) { type = String(type); if (type !== 'bytes') throw new TypeError(`${what}: '${type}' is not a stream type`); }
+        }
+        const rs = rsNew(this);
+        const startAlg = c => start === undefined ? () => undefined : () => apply(start, underlyingSource, [c]);
+        const pullAlg = c => pull === undefined ? () => resolved(undefined) : () => promiseCall(pull, underlyingSource, [c]);
+        const cancelAlg = cancel === undefined ? () => resolved(undefined) : reason => promiseCall(cancel, underlyingSource, [reason]);
+        if (type === 'bytes') {
+          if (st.size !== undefined) throw new RangeError(`${what}: a byte stream's strategy has no size function`);
+          const hwm = extractHWM(st, 0);
+          if (auto === 0) throw new TypeError(`${what}: autoAllocateChunkSize is 0`);
+          const c = Object.create(ReadableByteStreamController.prototype);
+          rbcSetUp(rs, c, startAlg(c), pullAlg(c), cancelAlg, hwm, auto);
+        } else {
+          const sizeAlg = extractSize(st), hwm = extractHWM(st, 1);
+          const c = Object.create(ReadableStreamDefaultController.prototype);
+          rdcSetUp(rs, c, startAlg(c), pullAlg(c), cancelAlg, hwm, sizeAlg);
+        }
+      }
+      static from(asyncIterable) {
+        // WebIDL async iterable: an object; ReadableStreamFromIterable (§4.9.1) opens it
+        if (!isObject(asyncIterable)) throw new TypeError('ReadableStream.from: the value is not an object');
+        let iterator, nextMethod;
+        const am = asyncIterable[Symbol.asyncIterator];
+        if (am === undefined || am === null) {
+          const sm = asyncIterable[Symbol.iterator];
+          if (typeof sm !== 'function') throw new TypeError('ReadableStream.from: the value is not iterable');
+          const it = apply(sm, asyncIterable, []);
+          if (!isObject(it)) throw new TypeError('ReadableStream.from: the iterator is not an object');
+          const syncNext = it.next;
+          // %AsyncFromSyncIteratorPrototype% (ECMA-262 §27.1.6): the value of a result is awaited
+          const settle = r => { if (!isObject(r)) throw new TypeError('the iterator result is not an object'); const done = !!r.done; return then(resolved(r.value), value => ({ value, done })); };
+          iterator = {
+            next() { return promiseCall(() => settle(apply(syncNext, it, [])), undefined, []); },
+            return(v) {
+              return promiseCall(() => {
+                const ret = it.return;
+                if (ret === undefined || ret === null) return { value: v, done: true };
+                return settle(apply(ret, it, [v]));
+              }, undefined, []);
+            } };
+          nextMethod = iterator.next;
+        } else {
+          if (typeof am !== 'function') throw new TypeError('ReadableStream.from: @@asyncIterator is not a function');
+          iterator = apply(am, asyncIterable, []);
+          if (!isObject(iterator)) throw new TypeError('ReadableStream.from: the iterator is not an object');
+          nextMethod = iterator.next;
+        }
+        let rs;
+        const pullAlg = () => {
+          let nextResult;
+          try { nextResult = apply(nextMethod, iterator, []); } catch (e) { return rejected(e); }
+          return then(resolved(nextResult), r => {
+            if (!isObject(r)) throw new TypeError('the iterator result is not an object');
+            if (r.done) rdcClose(rs.controller); else rdcEnqueue(rs.controller, r.value);
+          });
+        };
+        const cancelAlg = reason => {
+          let ret;
+          try { ret = iterator.return; } catch (e) { return rejected(e); }
+          if (ret === undefined || ret === null) return resolved(undefined);
+          let result;
+          try { result = apply(ret, iterator, [reason]); } catch (e) { return rejected(e); }
+          return then(resolved(result), r => { if (!isObject(r)) throw new TypeError('the iterator result is not an object'); });
+        };
+        rs = createReadableStream(() => undefined, pullAlg, cancelAlg, 0);
+        return rs.self;
+      }
+      get locked() { const rs = RS.get(this); if (!rs) throw brandError('ReadableStream', 'locked'); return rsLocked(rs); }
+      cancel(reason = undefined) {
+        const rs = RS.get(this);
+        if (!rs) return rejected(brandError('ReadableStream', 'cancel'));
+        if (rsLocked(rs)) return rejected(new TypeError('cancel: the stream is locked to a reader'));
+        return rsCancel(rs, reason);
+      }
+      getReader(options = undefined) {
+        const rs = RS.get(this);
+        if (!rs) throw brandError('ReadableStream', 'getReader');
+        const d = toDict(options, 'getReader: the options');
+        let mode = d === undefined ? undefined : d.mode;
+        if (mode !== undefined) { mode = String(mode); if (mode !== 'byob') throw new TypeError(`getReader: '${mode}' is not a reader mode`); }
+        if (mode === undefined) { const rd = acquireDefaultReader(rs); const o = Object.create(ReadableStreamDefaultReader.prototype); RD.set(o, rd); return o; }
+        const rd = acquireBYOBReader(rs); const o = Object.create(ReadableStreamBYOBReader.prototype); RD.set(o, rd); return o;
+      }
+      pipeThrough(transform, options = undefined) {
+        const rs = RS.get(this);
+        if (!rs) throw brandError('ReadableStream', 'pipeThrough');
+        if (arguments.length < 1) throw new TypeError('pipeThrough: 1 argument required');
+        if (!isObject(transform)) throw new TypeError('pipeThrough: the transform is not an object');
+        const readable = transform.readable;
+        if (!RS.has(readable)) throw new TypeError("pipeThrough: 'readable' is not a ReadableStream");
+        const writable = transform.writable, ws = WS.get(writable);
+        if (!ws) throw new TypeError("pipeThrough: 'writable' is not a WritableStream");
+        const o = pipeOptions(options, 'pipeThrough');
+        if (rsLocked(rs)) throw new TypeError('pipeThrough: the stream is locked to a reader');
+        if (ws.writer !== undefined) throw new TypeError('pipeThrough: the writable side is locked to a writer');
+        handled(rsPipeTo(rs, ws, o.preventClose, o.preventAbort, o.preventCancel, o.signal));
+        return readable;
+      }
+      pipeTo(destination, options = undefined) {
+        const rs = RS.get(this);
+        if (!rs) return rejected(brandError('ReadableStream', 'pipeTo'));
+        const ws = WS.get(destination);
+        if (!ws) return rejected(new TypeError('pipeTo: the destination is not a WritableStream'));
+        let o;
+        try { o = pipeOptions(options, 'pipeTo'); } catch (e) { return rejected(e); }
+        if (rsLocked(rs)) return rejected(new TypeError('pipeTo: the stream is locked to a reader'));
+        if (ws.writer !== undefined) return rejected(new TypeError('pipeTo: the destination is locked to a writer'));
+        return rsPipeTo(rs, ws, o.preventClose, o.preventAbort, o.preventCancel, o.signal);
+      }
+      tee() {
+        const rs = RS.get(this);
+        if (!rs) throw brandError('ReadableStream', 'tee');
+        const [a, b] = rs.controller.byte ? rsByteTee(rs) : rsDefaultTee(rs, false);
+        return [a.self, b.self];
+      }
+      values(options = undefined) {
+        const rs = RS.get(this);
+        if (!rs) throw brandError('ReadableStream', 'values');
+        const d = toDict(options, 'values: the options');
+        const preventCancel = d === undefined ? false : !!d.preventCancel;
+        const it = Object.create(rsAsyncIteratorPrototype);
+        IT.set(it, { reader: acquireDefaultReader(rs), preventCancel, ongoing: undefined, finished: false });
+        return it;
+      }
+    }
+    idl(ReadableStream, 'ReadableStream');
+    Object.defineProperty(ReadableStream, 'from', { enumerable: true });
+    Object.defineProperty(ReadableStream.prototype, Symbol.asyncIterator, { value: ReadableStream.prototype.values, writable: true, configurable: true });
+    // WebIDL §3.7.10: the asynchronous iterator prototype object of ReadableStream
+    const rsAsyncIteratorPrototype = Object.create(Object.getPrototypeOf(Object.getPrototypeOf((async function* () {}).prototype)), {
+      next: { writable: true, enumerable: true, configurable: true, value: function next() {
+        const it = IT.get(this);
+        if (!it) return rejected(new TypeError('next: the receiver is not a ReadableStream async iterator'));
+        const steps = () => {
+          if (it.finished) return resolved({ value: undefined, done: true });
+          const p = deferred(), reader = it.reader;
+          defaultReaderRead(reader, {
+            chunk: chunk => p.resolve({ value: chunk, done: false }),
+            close: () => { defaultReaderRelease(reader); p.resolve(undefined); },
+            error: e => { defaultReaderRelease(reader); p.reject(e); } });
+          return then(p.promise, r => {
+            it.ongoing = undefined;
+            if (r === undefined) { it.finished = true; return { value: undefined, done: true }; }
+            return r;
+          }, e => { it.ongoing = undefined; it.finished = true; throw e; });
+        };
+        it.ongoing = it.ongoing === undefined ? steps() : then(it.ongoing, steps, steps);
+        return it.ongoing;
+      } },
+      return: { writable: true, enumerable: true, configurable: true, value: function (value) {
+        const it = IT.get(this);
+        if (!it) return rejected(new TypeError('return: the receiver is not a ReadableStream async iterator'));
+        const steps = () => {
+          if (it.finished) return resolved({ value, done: true });
+          it.finished = true;
+          const reader = it.reader;
+          if (!it.preventCancel) {
+            const result = rsCancel(reader.stream, value);
+            defaultReaderRelease(reader);
+            return result;
+          }
+          defaultReaderRelease(reader);
+          return resolved(undefined);
+        };
+        it.ongoing = it.ongoing === undefined ? steps() : then(it.ongoing, steps, steps);
+        return then(it.ongoing, () => ({ value, done: true }));
+      } } });
+    Object.defineProperty(rsAsyncIteratorPrototype.return, 'name', { value: 'return', configurable: true });
+    Object.defineProperty(rsAsyncIteratorPrototype, Symbol.toStringTag, { value: 'ReadableStream AsyncIterator', configurable: true });
+
+    // §4.4 to §4.8 readers, controllers, the BYOB request
+    const readResult = p => ({ chunk: v => p.resolve({ value: v, done: false }), close: v => p.resolve({ value: v, done: true }), error: e => p.reject(e) });
+    class ReadableStreamDefaultReader {
+      constructor(stream) {
+        if (arguments.length < 1) throw new TypeError("Failed to construct 'ReadableStreamDefaultReader': 1 argument required");
+        const rs = RS.get(stream);
+        if (!rs) throw new TypeError("Failed to construct 'ReadableStreamDefaultReader': the argument is not a ReadableStream");
+        RD.set(this, acquireDefaultReader(rs));
+      }
+      get closed() { const rd = RD.get(this); if (!rd || rd.byob) return rejected(brandError('ReadableStreamDefaultReader', 'closed')); return rd.closed.promise; }
+      cancel(reason = undefined) {
+        const rd = RD.get(this);
+        if (!rd || rd.byob) return rejected(brandError('ReadableStreamDefaultReader', 'cancel'));
+        if (rd.stream === undefined) return rejected(new TypeError('cancel: the reader was released'));
+        return rsCancel(rd.stream, reason);
+      }
+      read() {
+        const rd = RD.get(this);
+        if (!rd || rd.byob) return rejected(brandError('ReadableStreamDefaultReader', 'read'));
+        if (rd.stream === undefined) return rejected(new TypeError('read: the reader was released'));
+        const p = deferred();
+        defaultReaderRead(rd, readResult(p));
+        return p.promise;
+      }
+      releaseLock() {
+        const rd = RD.get(this);
+        if (!rd || rd.byob) throw brandError('ReadableStreamDefaultReader', 'releaseLock');
+        if (rd.stream !== undefined) defaultReaderRelease(rd);
+      }
+    }
+    idl(ReadableStreamDefaultReader, 'ReadableStreamDefaultReader');
+    class ReadableStreamBYOBReader {
+      constructor(stream) {
+        if (arguments.length < 1) throw new TypeError("Failed to construct 'ReadableStreamBYOBReader': 1 argument required");
+        const rs = RS.get(stream);
+        if (!rs) throw new TypeError("Failed to construct 'ReadableStreamBYOBReader': the argument is not a ReadableStream");
+        RD.set(this, acquireBYOBReader(rs));
+      }
+      get closed() { const rd = RD.get(this); if (!rd || !rd.byob) return rejected(brandError('ReadableStreamBYOBReader', 'closed')); return rd.closed.promise; }
+      cancel(reason = undefined) {
+        const rd = RD.get(this);
+        if (!rd || !rd.byob) return rejected(brandError('ReadableStreamBYOBReader', 'cancel'));
+        if (rd.stream === undefined) return rejected(new TypeError('cancel: the reader was released'));
+        return rsCancel(rd.stream, reason);
+      }
+      read(view, options = undefined) {
+        const rd = RD.get(this);
+        if (!rd || !rd.byob) return rejected(brandError('ReadableStreamBYOBReader', 'read'));
+        if (!ArrayBuffer.isView(view)) return rejected(new TypeError('read: the argument is not an ArrayBuffer view'));
+        let min = 1;
+        try {
+          const d = toDict(options, 'read: the options');
+          if (d !== undefined && d.min !== undefined) min = enforceULL(d.min, 'read: min');
+        } catch (e) { return rejected(e); }
+        if (view.byteLength === 0) return rejected(new TypeError('read: the view is empty'));
+        if (view.buffer.byteLength === 0) return rejected(new TypeError("read: the view's buffer is empty"));
+        if (detached(view.buffer)) return rejected(new TypeError("read: the view's buffer is detached"));
+        if (min === 0) return rejected(new TypeError('read: min is 0'));
+        if (viewCtor(view) !== undefined) { if (min > view.length) return rejected(new RangeError('read: min is more than the length of the view')); }
+        else if (min > view.byteLength) return rejected(new RangeError('read: min is more than the length of the view'));
+        if (rd.stream === undefined) return rejected(new TypeError('read: the reader was released'));
+        const p = deferred();
+        byobReaderRead(rd, view, min, readResult(p));
+        return p.promise;
+      }
+      releaseLock() {
+        const rd = RD.get(this);
+        if (!rd || !rd.byob) throw brandError('ReadableStreamBYOBReader', 'releaseLock');
+        if (rd.stream !== undefined) byobReaderRelease(rd);
+      }
+    }
+    idl(ReadableStreamBYOBReader, 'ReadableStreamBYOBReader');
+    class ReadableStreamDefaultController {
+      constructor() { illegal(); }
+      get desiredSize() { const c = RC.get(this); if (!c || c.byte) throw brandError('ReadableStreamDefaultController', 'desiredSize'); return rdcGetDesiredSize(c); }
+      close() {
+        const c = RC.get(this);
+        if (!c || c.byte) throw brandError('ReadableStreamDefaultController', 'close');
+        if (!rdcCanCloseOrEnqueue(c)) throw new TypeError('close: the stream is closed, closing or errored');
+        rdcClose(c);
+      }
+      enqueue(chunk = undefined) {
+        const c = RC.get(this);
+        if (!c || c.byte) throw brandError('ReadableStreamDefaultController', 'enqueue');
+        if (!rdcCanCloseOrEnqueue(c)) throw new TypeError('enqueue: the stream is closed, closing or errored');
+        rdcEnqueue(c, chunk);
+      }
+      error(e = undefined) {
+        const c = RC.get(this);
+        if (!c || c.byte) throw brandError('ReadableStreamDefaultController', 'error');
+        rdcError(c, e);
+      }
+    }
+    idl(ReadableStreamDefaultController, 'ReadableStreamDefaultController');
+    class ReadableByteStreamController {
+      constructor() { illegal(); }
+      get byobRequest() { const c = RC.get(this); if (!c || !c.byte) throw brandError('ReadableByteStreamController', 'byobRequest'); return rbcGetBYOBRequest(c); }
+      get desiredSize() { const c = RC.get(this); if (!c || !c.byte) throw brandError('ReadableByteStreamController', 'desiredSize'); return rbcGetDesiredSize(c); }
+      close() {
+        const c = RC.get(this);
+        if (!c || !c.byte) throw brandError('ReadableByteStreamController', 'close');
+        if (c.closeRequested) throw new TypeError('close: the stream is closing already');
+        if (c.stream.state !== 'readable') throw new TypeError('close: the stream is closed or errored');
+        rbcClose(c);
+      }
+      enqueue(chunk) {
+        const c = RC.get(this);
+        if (!c || !c.byte) throw brandError('ReadableByteStreamController', 'enqueue');
+        if (!ArrayBuffer.isView(chunk)) throw new TypeError('enqueue: the chunk is not an ArrayBuffer view');
+        if (chunk.byteLength === 0) throw new TypeError('enqueue: the chunk is empty');
+        if (chunk.buffer.byteLength === 0) throw new TypeError("enqueue: the chunk's buffer is empty");
+        if (c.closeRequested) throw new TypeError('enqueue: the stream is closing');
+        if (c.stream.state !== 'readable') throw new TypeError('enqueue: the stream is closed or errored');
+        rbcEnqueue(c, chunk);
+      }
+      error(e = undefined) {
+        const c = RC.get(this);
+        if (!c || !c.byte) throw brandError('ReadableByteStreamController', 'error');
+        rbcError(c, e);
+      }
+    }
+    idl(ReadableByteStreamController, 'ReadableByteStreamController');
+    class ReadableStreamBYOBRequest {
+      constructor() { illegal(); }
+      get view() { const r = BR.get(this); if (!r) throw brandError('ReadableStreamBYOBRequest', 'view'); return r.view; }
+      respond(bytesWritten) {
+        const r = BR.get(this);
+        if (!r) throw brandError('ReadableStreamBYOBRequest', 'respond');
+        if (arguments.length < 1) throw new TypeError('respond: 1 argument required');
+        const k = enforceULL(bytesWritten, 'respond: bytesWritten');
+        if (r.controller === undefined) throw new TypeError('respond: the BYOB request is no longer valid');
+        if (detached(r.view.buffer)) throw new TypeError("respond: the view's buffer is detached");
+        rbcRespond(r.controller, k);
+      }
+      respondWithNewView(view) {
+        const r = BR.get(this);
+        if (!r) throw brandError('ReadableStreamBYOBRequest', 'respondWithNewView');
+        if (!ArrayBuffer.isView(view)) throw new TypeError('respondWithNewView: the argument is not an ArrayBuffer view');
+        if (r.controller === undefined) throw new TypeError('respondWithNewView: the BYOB request is no longer valid');
+        if (detached(view.buffer)) throw new TypeError("respondWithNewView: the view's buffer is detached");
+        rbcRespondWithNewView(r.controller, view);
+      }
+    }
+    idl(ReadableStreamBYOBRequest, 'ReadableStreamBYOBRequest');
+
+    // ==== §5 writable streams =============================================================
+    const closeSentinel = {};
+    const wsNew = self => {
+      const ws = { self, state: 'writable', storedError: undefined, writer: undefined, controller: undefined, writeRequests: [],
+        inFlightWriteRequest: undefined, closeRequest: undefined, inFlightCloseRequest: undefined, pendingAbortRequest: undefined, backpressure: false };
+      WS.set(self, ws);
+      return ws;
+    };
+    const wsCloseQueuedOrInFlight = ws => ws.closeRequest !== undefined || ws.inFlightCloseRequest !== undefined;
+    const wsHasOperationMarkedInFlight = ws => ws.inFlightWriteRequest !== undefined || ws.inFlightCloseRequest !== undefined;
+    const wsRejectCloseAndClosedPromiseIfNeeded = ws => {
+      if (ws.closeRequest !== undefined) { ws.closeRequest.reject(ws.storedError); ws.closeRequest = undefined; }
+      const writer = ws.writer;
+      if (writer !== undefined) { writer.closed.reject(ws.storedError); handled(writer.closed.promise); }
+    };
+    const wsFinishErroring = ws => {
+      ws.state = 'errored';
+      ws.controller.errorSteps();
+      const storedError = ws.storedError, reqs = ws.writeRequests;
+      ws.writeRequests = [];
+      for (const w of reqs) w.reject(storedError);
+      if (ws.pendingAbortRequest === undefined) { wsRejectCloseAndClosedPromiseIfNeeded(ws); return; }
+      const abortRequest = ws.pendingAbortRequest;
+      ws.pendingAbortRequest = undefined;
+      if (abortRequest.wasAlreadyErroring) { abortRequest.reject(storedError); wsRejectCloseAndClosedPromiseIfNeeded(ws); return; }
+      upon(ws.controller.abortSteps(abortRequest.reason),
+        () => { abortRequest.resolve(undefined); wsRejectCloseAndClosedPromiseIfNeeded(ws); },
+        reason => { abortRequest.reject(reason); wsRejectCloseAndClosedPromiseIfNeeded(ws); });
+    };
+    const wsStartErroring = (ws, reason) => {
+      const controller = ws.controller;
+      ws.state = 'erroring'; ws.storedError = reason;
+      const writer = ws.writer;
+      if (writer !== undefined) writerEnsureReadyPromiseRejected(writer, reason);
+      if (!wsHasOperationMarkedInFlight(ws) && controller.started) wsFinishErroring(ws);
+    };
+    const wsDealWithRejection = (ws, error) => { if (ws.state === 'writable') wsStartErroring(ws, error); else wsFinishErroring(ws); };
+    const wsUpdateBackpressure = (ws, backpressure) => {
+      const writer = ws.writer;
+      if (writer !== undefined && backpressure !== ws.backpressure) { if (backpressure) writer.ready = deferred(); else writer.ready.resolve(undefined); }
+      ws.backpressure = backpressure;
+    };
+    const wsAbort = (ws, reason) => {
+      if (ws.state === 'closed' || ws.state === 'errored') return resolved(undefined);
+      ws.controller.abortController.abort(reason);
+      const state = ws.state;
+      if (state === 'closed' || state === 'errored') return resolved(undefined);
+      if (ws.pendingAbortRequest !== undefined) return ws.pendingAbortRequest.promise;
+      let wasAlreadyErroring = false;
+      if (state === 'erroring') { wasAlreadyErroring = true; reason = undefined; }
+      const d = deferred();
+      ws.pendingAbortRequest = { promise: d.promise, resolve: d.resolve, reject: d.reject, reason, wasAlreadyErroring };
+      if (!wasAlreadyErroring) wsStartErroring(ws, reason);
+      return d.promise;
+    };
+    const wsClose = ws => {
+      const state = ws.state;
+      if (state === 'closed' || state === 'errored') return rejected(new TypeError('the stream is closed or errored'));
+      const d = deferred();
+      ws.closeRequest = d;
+      const writer = ws.writer;
+      if (writer !== undefined && ws.backpressure && state === 'writable') writer.ready.resolve(undefined);
+      wdcClose(ws.controller);
+      return d.promise;
+    };
+    // §5.5 the writer
+    const acquireWriter = ws => {
+      if (ws.writer !== undefined) throw new TypeError('the stream is locked to a writer');
+      const wr = { stream: ws };
+      ws.writer = wr;
+      const state = ws.state;
+      if (state === 'writable') {
+        wr.ready = !wsCloseQueuedOrInFlight(ws) && ws.backpressure ? deferred() : deferredResolved(undefined);
+        wr.closed = deferred();
+      } else if (state === 'erroring') { wr.ready = deferredRejected(ws.storedError); wr.closed = deferred(); }
+      else if (state === 'closed') { wr.ready = deferredResolved(undefined); wr.closed = deferredResolved(undefined); }
+      else { wr.ready = deferredRejected(ws.storedError); wr.closed = deferredRejected(ws.storedError); }
+      return wr;
+    };
+    const writerEnsureClosedPromiseRejected = (wr, error) => {
+      if (!wr.closed.settled) wr.closed.reject(error); else wr.closed = deferredRejected(error);
+      handled(wr.closed.promise);
+    };
+    const writerEnsureReadyPromiseRejected = (wr, error) => {
+      if (!wr.ready.settled) wr.ready.reject(error); else wr.ready = deferredRejected(error);
+      handled(wr.ready.promise);
+    };
+    const writerCloseWithErrorPropagation = wr => {
+      const ws = wr.stream, state = ws.state;
+      if (wsCloseQueuedOrInFlight(ws) || state === 'closed') return resolved(undefined);
+      if (state === 'errored') return rejected(ws.storedError);
+      return wsClose(ws);
+    };
+    const writerGetDesiredSize = wr => {
+      const ws = wr.stream, state = ws.state;
+      if (state === 'errored' || state === 'erroring') return null;
+      if (state === 'closed') return 0;
+      return wdcGetDesiredSize(ws.controller);
+    };
+    const writerRelease = wr => {
+      const ws = wr.stream, e = new TypeError('the writer was released');
+      writerEnsureReadyPromiseRejected(wr, e);
+      writerEnsureClosedPromiseRejected(wr, e);
+      ws.writer = undefined; wr.stream = undefined;
+    };
+    const writerWrite = (wr, chunk) => {
+      const ws = wr.stream, controller = ws.controller;
+      const chunkSize = wdcGetChunkSize(controller, chunk);
+      if (ws !== wr.stream) return rejected(new TypeError('the writer was released'));
+      const state = ws.state;
+      if (state === 'errored') return rejected(ws.storedError);
+      if (wsCloseQueuedOrInFlight(ws) || state === 'closed') return rejected(new TypeError('the stream is closing or closed'));
+      if (state === 'erroring') return rejected(ws.storedError);
+      const d = deferred();
+      ws.writeRequests.push(d);
+      wdcWrite(controller, chunk, chunkSize);
+      return d.promise;
+    };
+    // §5.7 the controller
+    const wdcClear = c => { c.writeAlg = c.closeAlg = c.abortAlg = c.sizeAlg = undefined; };
+    const wdcGetDesiredSize = c => c.hwm - qTotal(c.queue);
+    const wdcGetBackpressure = c => wdcGetDesiredSize(c) <= 0;
+    const wdcError = (c, error) => { wdcClear(c); wsStartErroring(c.stream, error); };
+    const wdcErrorIfNeeded = (c, error) => { if (c.stream.state === 'writable') wdcError(c, error); };
+    const wdcGetChunkSize = (c, chunk) => {
+      if (c.sizeAlg === undefined) return 1;
+      try { return c.sizeAlg(chunk); } catch (e) { wdcErrorIfNeeded(c, e); return 1; }
+    };
+    const wdcProcessClose = c => {
+      const ws = c.stream;
+      ws.inFlightCloseRequest = ws.closeRequest; ws.closeRequest = undefined;
+      qDequeue(c.queue);
+      const p = c.closeAlg();
+      wdcClear(c);
+      upon(p, () => {
+        ws.inFlightCloseRequest.resolve(undefined); ws.inFlightCloseRequest = undefined;
+        if (ws.state === 'erroring') {
+          ws.storedError = undefined;
+          if (ws.pendingAbortRequest !== undefined) { ws.pendingAbortRequest.resolve(undefined); ws.pendingAbortRequest = undefined; }
+        }
+        ws.state = 'closed';
+        if (ws.writer !== undefined) ws.writer.closed.resolve(undefined);
+      }, reason => {
+        ws.inFlightCloseRequest.reject(reason); ws.inFlightCloseRequest = undefined;
+        if (ws.pendingAbortRequest !== undefined) { ws.pendingAbortRequest.reject(reason); ws.pendingAbortRequest = undefined; }
+        wsDealWithRejection(ws, reason);
+      });
+    };
+    const wdcProcessWrite = (c, chunk) => {
+      const ws = c.stream;
+      ws.inFlightWriteRequest = ws.writeRequests.shift();
+      upon(c.writeAlg(chunk), () => {
+        ws.inFlightWriteRequest.resolve(undefined); ws.inFlightWriteRequest = undefined;
+        const state = ws.state;
+        qDequeue(c.queue);
+        if (!wsCloseQueuedOrInFlight(ws) && state === 'writable') wsUpdateBackpressure(ws, wdcGetBackpressure(c));
+        wdcAdvanceQueueIfNeeded(c);
+      }, reason => {
+        if (ws.state === 'writable') wdcClear(c);
+        ws.inFlightWriteRequest.reject(reason); ws.inFlightWriteRequest = undefined;
+        wsDealWithRejection(ws, reason);
+      });
+    };
+    const wdcAdvanceQueueIfNeeded = c => {
+      const ws = c.stream;
+      if (!c.started || ws.inFlightWriteRequest !== undefined) return;
+      if (ws.state === 'erroring') { wsFinishErroring(ws); return; }
+      if (qCount(c.queue) === 0) return;
+      const value = qPeek(c.queue);
+      if (value === closeSentinel) wdcProcessClose(c); else wdcProcessWrite(c, value);
+    };
+    const wdcClose = c => { qEnqueue(c.queue, closeSentinel, 0); wdcAdvanceQueueIfNeeded(c); };
+    const wdcWrite = (c, chunk, chunkSize) => {
+      try { qEnqueue(c.queue, chunk, chunkSize); } catch (e) { wdcErrorIfNeeded(c, e); return; }
+      const ws = c.stream;
+      if (!wsCloseQueuedOrInFlight(ws) && ws.state === 'writable') wsUpdateBackpressure(ws, wdcGetBackpressure(c));
+      wdcAdvanceQueueIfNeeded(c);
+    };
+    const wdcSetUp = (ws, self, startAlg, writeAlg, closeAlg, abortAlg, hwm, sizeAlg) => {
+      const c = { self, stream: ws, queue: qNew(), started: false, hwm, sizeAlg, writeAlg, closeAlg, abortAlg, abortController: new AbortController(),
+        abortSteps(reason) { const r = c.abortAlg(reason); wdcClear(c); return r; },
+        errorSteps() { qReset(c.queue); } };
+      WC.set(self, c);
+      ws.controller = c;
+      wsUpdateBackpressure(ws, wdcGetBackpressure(c));
+      const startResult = startAlg();
+      upon(resolved(startResult), () => { c.started = true; wdcAdvanceQueueIfNeeded(c); }, r => { c.started = true; wsDealWithRejection(ws, r); });
+      return c;
+    };
+    const createWritableStream = (startAlg, writeAlg, closeAlg, abortAlg, hwm = 1, sizeAlg = () => 1) => {
+      const ws = wsNew(Object.create(WritableStream.prototype));
+      wdcSetUp(ws, Object.create(WritableStreamDefaultController.prototype), startAlg, writeAlg, closeAlg, abortAlg, hwm, sizeAlg);
+      return ws;
+    };
+    class WritableStream {
+      constructor(underlyingSink = undefined, strategy = undefined) {
+        if (underlyingSink === undefined) underlyingSink = null;
+        else if (!isObject(underlyingSink)) throw new TypeError("Failed to construct 'WritableStream': the underlying sink is not an object");
+        const st = convertStrategy(strategy, "Failed to construct 'WritableStream': the strategy");
+        const what = "Failed to construct 'WritableStream'";
+        let abort, close, start, type, write;
+        if (underlyingSink !== null) {
+          abort = fnMember(underlyingSink, 'abort', what); close = fnMember(underlyingSink, 'close', what); start = fnMember(underlyingSink, 'start', what);
+          type = underlyingSink.type; write = fnMember(underlyingSink, 'write', what);
+        }
+        if (type !== undefined) throw new RangeError(`${what}: a sink has no type`);
+        const ws = wsNew(this);
+        const sizeAlg = extractSize(st), hwm = extractHWM(st, 1);
+        const c = Object.create(WritableStreamDefaultController.prototype);
+        wdcSetUp(ws, c,
+          start === undefined ? () => undefined : () => apply(start, underlyingSink, [c]),
+          write === undefined ? () => resolved(undefined) : chunk => promiseCall(write, underlyingSink, [chunk, c]),
+          close === undefined ? () => resolved(undefined) : () => promiseCall(close, underlyingSink, []),
+          abort === undefined ? () => resolved(undefined) : reason => promiseCall(abort, underlyingSink, [reason]),
+          hwm, sizeAlg);
+      }
+      get locked() { const ws = WS.get(this); if (!ws) throw brandError('WritableStream', 'locked'); return ws.writer !== undefined; }
+      abort(reason = undefined) {
+        const ws = WS.get(this);
+        if (!ws) return rejected(brandError('WritableStream', 'abort'));
+        if (ws.writer !== undefined) return rejected(new TypeError('abort: the stream is locked to a writer'));
+        return wsAbort(ws, reason);
+      }
+      close() {
+        const ws = WS.get(this);
+        if (!ws) return rejected(brandError('WritableStream', 'close'));
+        if (ws.writer !== undefined) return rejected(new TypeError('close: the stream is locked to a writer'));
+        if (wsCloseQueuedOrInFlight(ws)) return rejected(new TypeError('close: the stream is closing already'));
+        return wsClose(ws);
+      }
+      getWriter() {
+        const ws = WS.get(this);
+        if (!ws) throw brandError('WritableStream', 'getWriter');
+        const wr = acquireWriter(ws), o = Object.create(WritableStreamDefaultWriter.prototype);
+        WR.set(o, wr);
+        return o;
+      }
+    }
+    idl(WritableStream, 'WritableStream');
+    class WritableStreamDefaultWriter {
+      constructor(stream) {
+        if (arguments.length < 1) throw new TypeError("Failed to construct 'WritableStreamDefaultWriter': 1 argument required");
+        const ws = WS.get(stream);
+        if (!ws) throw new TypeError("Failed to construct 'WritableStreamDefaultWriter': the argument is not a WritableStream");
+        WR.set(this, acquireWriter(ws));
+      }
+      get closed() { const wr = WR.get(this); if (!wr) return rejected(brandError('WritableStreamDefaultWriter', 'closed')); return wr.closed.promise; }
+      get desiredSize() {
+        const wr = WR.get(this);
+        if (!wr) throw brandError('WritableStreamDefaultWriter', 'desiredSize');
+        if (wr.stream === undefined) throw new TypeError('desiredSize: the writer was released');
+        return writerGetDesiredSize(wr);
+      }
+      get ready() { const wr = WR.get(this); if (!wr) return rejected(brandError('WritableStreamDefaultWriter', 'ready')); return wr.ready.promise; }
+      abort(reason = undefined) {
+        const wr = WR.get(this);
+        if (!wr) return rejected(brandError('WritableStreamDefaultWriter', 'abort'));
+        if (wr.stream === undefined) return rejected(new TypeError('abort: the writer was released'));
+        return wsAbort(wr.stream, reason);
+      }
+      close() {
+        const wr = WR.get(this);
+        if (!wr) return rejected(brandError('WritableStreamDefaultWriter', 'close'));
+        const ws = wr.stream;
+        if (ws === undefined) return rejected(new TypeError('close: the writer was released'));
+        if (wsCloseQueuedOrInFlight(ws)) return rejected(new TypeError('close: the stream is closing already'));
+        return wsClose(ws);
+      }
+      releaseLock() {
+        const wr = WR.get(this);
+        if (!wr) throw brandError('WritableStreamDefaultWriter', 'releaseLock');
+        if (wr.stream !== undefined) writerRelease(wr);
+      }
+      write(chunk = undefined) {
+        const wr = WR.get(this);
+        if (!wr) return rejected(brandError('WritableStreamDefaultWriter', 'write'));
+        if (wr.stream === undefined) return rejected(new TypeError('write: the writer was released'));
+        return writerWrite(wr, chunk);
+      }
+    }
+    idl(WritableStreamDefaultWriter, 'WritableStreamDefaultWriter');
+    class WritableStreamDefaultController {
+      constructor() { illegal(); }
+      get signal() { const c = WC.get(this); if (!c) throw brandError('WritableStreamDefaultController', 'signal'); return c.abortController.signal; }
+      error(e = undefined) {
+        const c = WC.get(this);
+        if (!c) throw brandError('WritableStreamDefaultController', 'error');
+        if (c.stream.state === 'writable') wdcError(c, e);
+      }
+    }
+    idl(WritableStreamDefaultController, 'WritableStreamDefaultController');
+
+    // ==== §6 transform streams ============================================================
+    const tsSetBackpressure = (ts, backpressure) => {
+      if (ts.backpressureChange !== undefined) ts.backpressureChange.resolve(undefined);
+      ts.backpressureChange = deferred();
+      ts.backpressure = backpressure;
+    };
+    const tsUnblockWrite = ts => { if (ts.backpressure) tsSetBackpressure(ts, false); };
+    const tdcClear = c => { c.transformAlg = c.flushAlg = c.cancelAlg = undefined; };
+    const tsErrorWritableAndUnblockWrite = (ts, e) => { tdcClear(ts.controller); wdcErrorIfNeeded(ts.writable.controller, e); tsUnblockWrite(ts); };
+    const tsError = (ts, e) => { rdcError(ts.readable.controller, e); tsErrorWritableAndUnblockWrite(ts, e); };
+    const tdcEnqueue = (c, chunk) => {
+      const ts = c.stream, rc = ts.readable.controller;
+      if (!rdcCanCloseOrEnqueue(rc)) throw new TypeError('enqueue: the readable side is closed, closing or errored');
+      try { rdcEnqueue(rc, chunk); } catch (e) { tsErrorWritableAndUnblockWrite(ts, e); throw ts.readable.storedError; }
+      const backpressure = !rdcShouldCallPull(rc);
+      if (backpressure !== ts.backpressure) tsSetBackpressure(ts, true);
+    };
+    const tdcPerformTransform = (c, chunk) => then(c.transformAlg(chunk), undefined, r => { tsError(c.stream, r); throw r; });
+    const tdcTerminate = c => {
+      const ts = c.stream;
+      rdcClose(ts.readable.controller);
+      tsErrorWritableAndUnblockWrite(ts, new TypeError('the transform stream was terminated'));
+    };
+    const tsSinkWrite = (ts, chunk) => {
+      const c = ts.controller;
+      if (ts.backpressure) {
+        return then(ts.backpressureChange.promise, () => {
+          const writable = ts.writable;
+          if (writable.state === 'erroring') throw writable.storedError;
+          return tdcPerformTransform(c, chunk);
+        });
+      }
+      return tdcPerformTransform(c, chunk);
+    };
+    const tsSinkAbort = (ts, reason) => {
+      const c = ts.controller;
+      if (c.finishPromise !== undefined) return c.finishPromise.promise;
+      const readable = ts.readable, f = c.finishPromise = deferred();
+      const p = c.cancelAlg(reason);
+      tdcClear(c);
+      upon(p, () => { if (readable.state === 'errored') f.reject(readable.storedError); else { rdcError(readable.controller, reason); f.resolve(undefined); } },
+        r => { rdcError(readable.controller, r); f.reject(r); });
+      return f.promise;
+    };
+    const tsSinkClose = ts => {
+      const c = ts.controller;
+      if (c.finishPromise !== undefined) return c.finishPromise.promise;
+      const readable = ts.readable, f = c.finishPromise = deferred();
+      const p = c.flushAlg();
+      tdcClear(c);
+      upon(p, () => { if (readable.state === 'errored') f.reject(readable.storedError); else { rdcClose(readable.controller); f.resolve(undefined); } },
+        r => { rdcError(readable.controller, r); f.reject(r); });
+      return f.promise;
+    };
+    const tsSourceCancel = (ts, reason) => {
+      const c = ts.controller;
+      if (c.finishPromise !== undefined) return c.finishPromise.promise;
+      const writable = ts.writable, f = c.finishPromise = deferred();
+      const p = c.cancelAlg(reason);
+      tdcClear(c);
+      upon(p, () => {
+        if (writable.state === 'errored') f.reject(writable.storedError);
+        else { wdcErrorIfNeeded(writable.controller, reason); tsUnblockWrite(ts); f.resolve(undefined); }
+      }, r => { wdcErrorIfNeeded(writable.controller, r); tsUnblockWrite(ts); f.reject(r); });
+      return f.promise;
+    };
+    const tsSourcePull = ts => { tsSetBackpressure(ts, false); return ts.backpressureChange.promise; };
+    const tsInitialize = (ts, startPromise, wHWM, wSize, rHWM, rSize) => {
+      const startAlg = () => startPromise;
+      ts.writable = createWritableStream(startAlg, chunk => tsSinkWrite(ts, chunk), () => tsSinkClose(ts), reason => tsSinkAbort(ts, reason), wHWM, wSize);
+      ts.readable = createReadableStream(startAlg, () => tsSourcePull(ts), reason => tsSourceCancel(ts, reason), rHWM, rSize);
+      ts.backpressure = undefined; ts.backpressureChange = undefined;
+      tsSetBackpressure(ts, true);
+      ts.controller = undefined;
+    };
+    class TransformStream {
+      constructor(transformer = undefined, writableStrategy = undefined, readableStrategy = undefined) {
+        const what = "Failed to construct 'TransformStream'";
+        if (transformer === undefined) transformer = null;
+        else if (!isObject(transformer)) throw new TypeError(`${what}: the transformer is not an object`);
+        const wst = convertStrategy(writableStrategy, `${what}: the writable strategy`);
+        const rst = convertStrategy(readableStrategy, `${what}: the readable strategy`);
+        let cancel, flush, readableType, start, transform, writableType;
+        if (transformer !== null) {
+          cancel = fnMember(transformer, 'cancel', what); flush = fnMember(transformer, 'flush', what); readableType = transformer.readableType;
+          start = fnMember(transformer, 'start', what); transform = fnMember(transformer, 'transform', what); writableType = transformer.writableType;
+        }
+        if (readableType !== undefined) throw new RangeError(`${what}: a transformer has no readableType`);
+        if (writableType !== undefined) throw new RangeError(`${what}: a transformer has no writableType`);
+        const rHWM = extractHWM(rst, 0), rSize = extractSize(rst), wHWM = extractHWM(wst, 1), wSize = extractSize(wst);
+        const startPromise = deferred();
+        const ts = { self: this };
+        TS.set(this, ts);
+        tsInitialize(ts, startPromise.promise, wHWM, wSize, rHWM, rSize);
+        const co = Object.create(TransformStreamDefaultController.prototype);
+        const c = { self: co, stream: ts, finishPromise: undefined,
+          transformAlg: transform === undefined
+            ? chunk => { try { tdcEnqueue(c, chunk); return resolved(undefined); } catch (e) { return rejected(e); } }
+            : chunk => promiseCall(transform, transformer, [chunk, co]),
+          flushAlg: flush === undefined ? () => resolved(undefined) : () => promiseCall(flush, transformer, [co]),
+          cancelAlg: cancel === undefined ? () => resolved(undefined) : reason => promiseCall(cancel, transformer, [reason]) };
+        TC.set(co, c);
+        ts.controller = c;
+        if (start !== undefined) startPromise.resolve(apply(start, transformer, [co])); else startPromise.resolve(undefined);
+      }
+      get readable() { const ts = TS.get(this); if (!ts) throw brandError('TransformStream', 'readable'); return ts.readable.self; }
+      get writable() { const ts = TS.get(this); if (!ts) throw brandError('TransformStream', 'writable'); return ts.writable.self; }
+    }
+    idl(TransformStream, 'TransformStream');
+    class TransformStreamDefaultController {
+      constructor() { illegal(); }
+      get desiredSize() { const c = TC.get(this); if (!c) throw brandError('TransformStreamDefaultController', 'desiredSize'); return rdcGetDesiredSize(c.stream.readable.controller); }
+      enqueue(chunk = undefined) { const c = TC.get(this); if (!c) throw brandError('TransformStreamDefaultController', 'enqueue'); tdcEnqueue(c, chunk); }
+      error(e = undefined) { const c = TC.get(this); if (!c) throw brandError('TransformStreamDefaultController', 'error'); tsError(c.stream, e); }
+      terminate() { const c = TC.get(this); if (!c) throw brandError('TransformStreamDefaultController', 'terminate'); tdcTerminate(c); }
+    }
+    idl(TransformStreamDefaultController, 'TransformStreamDefaultController');
+
+    // ==== §7 queuing strategies ===========================================================
+    const strategyInit = (init, name) => {
+      if (!isObject(init)) throw new TypeError(`Failed to construct '${name}': the argument is not an object`);
+      const h = init.highWaterMark;
+      if (h === undefined) throw new TypeError(`Failed to construct '${name}': highWaterMark is required`);
+      return Number(h);
+    };
+    // one function a realm, named size, with no prototype and no [[Construct]]
+    const byteLengthSize = ({ size(chunk) { return chunk.byteLength; } }).size;
+    const countSize = ({ size() { return 1; } }).size;
+    const HW = new WeakMap();
+    class ByteLengthQueuingStrategy {
+      constructor(init) { HW.set(this, { hwm: strategyInit(init, 'ByteLengthQueuingStrategy'), bytes: true }); }
+      get highWaterMark() { const s = HW.get(this); if (!s || !s.bytes) throw brandError('ByteLengthQueuingStrategy', 'highWaterMark'); return s.hwm; }
+      get size() { const s = HW.get(this); if (!s || !s.bytes) throw brandError('ByteLengthQueuingStrategy', 'size'); return byteLengthSize; }
+    }
+    idl(ByteLengthQueuingStrategy, 'ByteLengthQueuingStrategy');
+    class CountQueuingStrategy {
+      constructor(init) { HW.set(this, { hwm: strategyInit(init, 'CountQueuingStrategy'), bytes: false }); }
+      get highWaterMark() { const s = HW.get(this); if (!s || s.bytes) throw brandError('CountQueuingStrategy', 'highWaterMark'); return s.hwm; }
+      get size() { const s = HW.get(this); if (!s || s.bytes) throw brandError('CountQueuingStrategy', 'size'); return countSize; }
+    }
+    idl(CountQueuingStrategy, 'CountQueuingStrategy');
+
+    return { ReadableStream, ReadableStreamDefaultReader, ReadableStreamBYOBReader, ReadableStreamDefaultController, ReadableByteStreamController,
+      ReadableStreamBYOBRequest, WritableStream, WritableStreamDefaultWriter, WritableStreamDefaultController, TransformStream,
+      TransformStreamDefaultController, ByteLengthQueuingStrategy, CountQueuingStrategy };
+  };
+  // The classes are made together, the first time a page names one of them (a page without
+  // streams makes none of them).
+  let streamClasses = null;
+  for (const k of ['ReadableStream', 'ReadableStreamDefaultReader', 'ReadableStreamBYOBReader', 'ReadableStreamDefaultController', 'ReadableByteStreamController', 'ReadableStreamBYOBRequest', 'WritableStream', 'WritableStreamDefaultWriter', 'WritableStreamDefaultController', 'TransformStream', 'TransformStreamDefaultController', 'ByteLengthQueuingStrategy', 'CountQueuingStrategy'])
+    lazy(k, () => typeof n.streams !== 'function' ? undefined : (streamClasses ??= makeStreams())[k]);
+  // ---- end of Streams Standard -----------------------------------------------------------
+
   // ---- HTML §8.3: atob, btoa (forgiving-base64 of Infra, in Lean) ---------------------------
   lazy('atob', () => function atob(data) {
     if (arguments.length < 1) throw new TypeError("Failed to execute 'atob' on 'Window': 1 argument required, but only 0 present.");
@@ -10389,8 +11819,8 @@
     'TextEncoder', 'TextDecoder', 'TextEncoderStream', 'TextDecoderStream', 'URL', 'URLSearchParams', 'URLPattern', 'crypto', 'Crypto',
     'SubtleCrypto', 'CryptoKey', 'performance', 'Performance', 'PerformanceEntry', 'PerformanceMark', 'PerformanceMeasure',
     'Blob', 'File', 'FileReader', 'FormData', 'Headers', 'Request', 'Response', 'fetch', 'XMLHttpRequest',
-    'XMLHttpRequestEventTarget', 'XMLHttpRequestUpload', 'ReadableStream', 'WritableStream',
-    'TransformStream', 'MessageChannel', 'MessagePort', 'BroadcastChannel', 'webkitURL',
+    'XMLHttpRequestEventTarget', 'XMLHttpRequestUpload', 'ReadableStream', 'ReadableStreamDefaultReader', 'ReadableStreamBYOBReader', 'ReadableStreamDefaultController', 'ReadableByteStreamController', 'ReadableStreamBYOBRequest', 'WritableStream', 'WritableStreamDefaultWriter',
+    'WritableStreamDefaultController', 'TransformStream', 'TransformStreamDefaultController', 'ByteLengthQueuingStrategy', 'CountQueuingStrategy', 'MessageChannel', 'MessagePort', 'BroadcastChannel', 'webkitURL',
     // WebGL's interfaces are [Exposed=(Window,Worker)].
     'WebGLRenderingContext', 'WebGL2RenderingContext', 'WebGLObject', 'WebGLBuffer', 'WebGLFramebuffer', 'WebGLProgram',
     'WebGLRenderbuffer', 'WebGLShader', 'WebGLTexture', 'WebGLQuery', 'WebGLSampler', 'WebGLSync', 'WebGLTransformFeedback',
