@@ -188,6 +188,35 @@ private def keyed := "<div id=c><div id=a>AA BBB</div><div id=b>B</div></div>"
 #guard box keyed "#c{display:flex;flex-direction:column} #a{width:max-content}" "a" == some (0,0,36,7)
 #guard box keyed "#c{display:flex;flex-direction:column} #a{width:stretch;margin:0 4px}" "a" == some (4,0,192,7)
 
+-- Vertical writing modes (CSS Writing Modes 4 §3): a row runs down the inline axis and its
+-- lines stack along the block axis, from the left in vertical-lr and the right in vertical-rl.
+-- (WPT css-flexbox/align-content-wmvert-001: two columns of 10 and 30 share 160 of free width.)
+private def upright := "<div id=o><div id=c><div id=a></div><div id=b><div id=k></div></div></div></div>"
+private def uprightItems := "#a{width:10px;height:20px;flex:none} #b{height:20px;flex:none} #k{width:30px;height:10px} "
+private def wrapsDown := uprightItems ++ "#c{display:flex;flex-wrap:wrap;width:200px;height:20px;"
+#guard box upright (wrapsDown ++ "writing-mode:vertical-lr}") "a" == some (0,0,10,20)
+#guard box upright (wrapsDown ++ "writing-mode:vertical-lr}") "b" == some (90,0,110,20)
+#guard box upright (wrapsDown ++ "writing-mode:vertical-rl}") "a" == some (190,0,10,20)
+#guard box upright (wrapsDown ++ "writing-mode:vertical-rl}") "b" == some (0,0,110,20)
+#guard box upright (wrapsDown ++ "writing-mode:vertical-rl;flex-wrap:wrap-reverse}") "b" == some (90,0,110,20)
+-- One line: the items go down, or up with row-reverse or a right-to-left direction.
+private def goesDown := uprightItems ++ "#c{display:flex;width:50px;height:100px;"
+#guard box upright (goesDown ++ "writing-mode:vertical-lr}") "b" == some (0,20,50,20)
+#guard box upright (goesDown ++ "writing-mode:vertical-lr;flex-direction:row-reverse}") "a" == some (0,80,10,20)
+#guard box upright (goesDown ++ "writing-mode:vertical-lr;flex-direction:row-reverse}") "b" == some (0,60,50,20)
+#guard box upright (goesDown ++ "writing-mode:vertical-lr;direction:rtl}") "a" == some (0,80,10,20)
+#guard box upright (goesDown ++ "writing-mode:vertical-lr;justify-content:center}") "a" == some (0,30,10,20)
+#guard box upright (goesDown ++ "writing-mode:vertical-rl;align-items:flex-start}") "a" == some (40,0,10,20)
+-- column-gap is the gap along the inline axis, which is vertical here.
+#guard box upright (goesDown ++ "writing-mode:vertical-lr;gap:0 5px}") "b" == some (0,25,50,20)
+-- A column runs along the block axis: from the right in vertical-rl.
+#guard box upright (uprightItems ++ "#c{display:flex;flex-direction:column;writing-mode:vertical-rl;width:200px;height:50px}") "a" == some (190,0,10,20)
+#guard box upright (uprightItems ++ "#c{display:flex;flex-direction:column;writing-mode:vertical-rl;width:200px;height:50px}") "b" == some (160,0,30,20)
+#guard box upright (uprightItems ++ "#c{display:flex;flex-direction:column;writing-mode:vertical-lr;width:200px;height:50px}") "b" == some (10,0,30,20)
+-- writing-mode is inherited, and a value on the container wins.
+#guard box upright (uprightItems ++ "#o{writing-mode:vertical-lr} #c{display:flex;width:50px;height:100px}") "b" == some (0,20,50,20)
+#guard box upright (uprightItems ++ "#o{writing-mode:vertical-lr} #c{writing-mode:horizontal-tb;display:flex;width:50px;height:100px}") "b" == some (10,0,30,20)
+
 -- Nesting: a row in a column in a row; a flex container in block flow and a block in a flex item.
 private def nested := "<div id=o><div id=l>LL</div><div id=m><div id=h>H</div><div id=r><div id=x>X</div><div id=y>Y</div></div></div></div><div id=p>P</div>"
 private def nestedCss := "#o{display:flex} #m{flex:1;display:flex;flex-direction:column} #r{display:flex} #y{flex:1}"

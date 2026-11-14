@@ -119,9 +119,42 @@ def crossJustify (c : ContentAlign) (reverse : Bool) : Option Flex.Justify :=
   | .spaceAround => some .spaceAround
   | .spaceEvenly => some .spaceEvenly
 
-/-- A row or row-reverse flex container, single-line or multi-line. -/
+/-- The physical axes of a flex container (CSS Flexbox 1 §2, CSS Writing Modes 4 §3): the
+main axis is vertical (`column`), the items run from its bottom or right end (`mainFlip`),
+and the cross axis starts at its bottom or right end (`crossFlip`). In a horizontal
+writing mode a row is horizontal and runs from the right when the direction is
+right-to-left; in a vertical writing mode a row runs down the inline axis, a column
+along the block axis (from the right in `vertical-rl`), and lines stack along the other. -/
+structure Axes where
+  column : Bool
+  mainFlip : Bool
+  crossFlip : Bool
+  deriving Repr, BEq
+
+/-- The axes of the flex container with style `s`. -/
+def flexAxes (s : Computed) : Axes :=
+  let rtl := s.direction == .rtl
+  let wrapReverse := s.flex.wrap == .wrapReverse
+  match s.pos.writingMode with
+  | .horizontalTb =>
+    if s.flex.column then {column := true, mainFlip := s.flex.reverse, crossFlip := rtl != wrapReverse}
+    else {column := false, mainFlip := rtl != s.flex.reverse, crossFlip := wrapReverse}
+  | mode =>
+    -- the block axis is horizontal: from the right in `vertical-rl`
+    let fromRight := mode == .verticalRl
+    if s.flex.column then {column := false, mainFlip := fromRight != s.flex.reverse, crossFlip := rtl != wrapReverse}
+    else {column := true, mainFlip := rtl != s.flex.reverse, crossFlip := fromRight != wrapReverse}
+
+/-- The gap between items along the main axis, and between lines: `column-gap` is the gap
+along the inline axis and `row-gap` along the block axis, whatever the writing mode. -/
+def flexGaps (s : Computed) : CSS.Length × CSS.Length :=
+  if s.flex.column then (s.align.rowGap,s.align.columnGap) else (s.align.columnGap,s.align.rowGap)
+
+/-- A flex container whose main axis is horizontal, single-line or multi-line: a row in a
+horizontal writing mode, a column in a vertical one. -/
 def flexRow (kids : Children) (s : Computed) (items : Array Item) (box : ContentBox) : Except String Result := do
-  let gap := max 0 ((CSS.resolve box.width s.align.columnGap).getD 0)
+  let axes := flexAxes s
+  let gap := max 0 ((CSS.resolve box.width (flexGaps s).1).getD 0)
   -- §9.2: flex base sizes, minimum and maximum main sizes.
   let mut cores : Array Flex.Item := #[]
   let mut styles : Array Computed := #[]
@@ -160,8 +193,7 @@ def flexRow (kids : Children) (s : Computed) (items : Array Item) (box : Content
   let n := items.size
   let inner := LU.ofPx box.width
   let gapU := LU.ofPx gap
-  let rtl := s.direction == .rtl
-  let mainRight := rtl != s.flex.reverse
+  let mainRight := axes.mainFlip
   let justify := mainJustify s.align.justifyContent s.flex.reverse (some !mainRight)
   -- §9.3: the lines. A single-line container has one, whatever its items' sizes.
   let multi := s.flex.wrap != .nowrap
@@ -217,18 +249,20 @@ def flexRow (kids : Children) (s : Computed) (items : Array Item) (box : Content
     first := first+count
   -- §9.4 step 8 and §9.6: the cross size of the container and the place of each line
   -- (`align-content`); a single line fills a definite cross size.
-  let crossGap := if multi then max 0 ((resolveOpt box.height s.align.rowGap).getD 0) else 0
+  let crossGap := if multi then max 0 ((resolveOpt box.height (flexGaps s).2).getD 0) else 0
   let gaps := crossGap*Float.ofNat (lines.size-1)
   let total := lineSizes.foldl (·+·) 0+gaps
   let innerCross := match box.height with
     | some h => h
     | none => clampOpt box.minHeight box.maxHeight total
-  let reverseCross := s.flex.wrap == .wrapReverse
+  -- `wrap-reverse` swaps the cross-start and cross-end sides (§5.2); the cross axis starts
+  -- at the bottom when the axes say so (`crossFlip`).
+  let reverseCross := axes.crossFlip
   let (lineHeights,lineTops) : Array Float × Array Float :=
     if !multi then (#[innerCross],#[0])
     else
       let free := innerCross-total
-      let distribution := crossJustify s.align.alignContent reverseCross
+      let distribution := crossJustify s.align.alignContent (s.flex.wrap == .wrapReverse)
       let extra := if distribution.isNone && free > 0 && lines.size > 0 then free/Float.ofNat lines.size else 0
       let sizes := lineSizes.map (·+extra)
       let (start,between) := match distribution with
@@ -275,10 +309,11 @@ def flexRow (kids : Children) (s : Computed) (items : Array Item) (box : Content
     out := out.over done
   return {out with height := innerCross}
 
-/-- A column or column-reverse flex container (single line). -/
+/-- A single-line flex container whose main axis is vertical: a column in a horizontal
+writing mode, a row in a vertical one. -/
 def flexColumn (kids : Children) (s : Computed) (items : Array Item) (box : ContentBox) : Except String Result := do
-  let gap := max 0 ((resolveOpt box.height s.align.rowGap).getD 0)
-  let rtl := s.direction == .rtl
+  let axes := flexAxes s
+  let gap := max 0 ((resolveOpt box.height (flexGaps s).1).getD 0)
   let n := items.size
   -- The cross size (width) of each item, then its content at that width: the natural height
   -- is its flex base size when `flex-basis` and `height` give none (§9.2 step 3).
@@ -316,8 +351,8 @@ def flexColumn (kids : Children) (s : Computed) (items : Array Item) (box : Cont
       | some d => d
       | none =>
         let d := LU.toPx (Flex.alignOffset align (LU.ofPx box.width) (LU.ofPx outerW))
-        -- the cross-start side is the right in a right-to-left container
-        if rtl then freeW-d else d
+        -- the cross-start side is the right in a right-to-left container (`crossFlip`)
+        if axes.crossFlip then freeW-d else d
     let x := box.x+dx
     let definite := resolveOpt box.height is.height
     let basis := match is.flex.basis with
@@ -369,7 +404,7 @@ def flexColumn (kids : Children) (s : Computed) (items : Array Item) (box : Cont
     let (measured,x,measuredY,width) := laid[i]!
     let padV := is.borderEdges.top+is.borderEdges.bottom+is.padding.top+is.padding.bottom
     let (pos,outer) := placed.getD i (0,0)
-    let top := if s.flex.reverse then inner-pos-outer else pos
+    let top := if axes.mainFlip then inner-pos-outer else pos
     let itemY := box.y+LU.toPx top+(if is.autoMarginTop then LU.toPx autoShare else 0)
     let height := LU.toPx (sizes.getD i 0)+padV
     let constraints : Constraints := {available := box.width, width := some width, height := some height}
@@ -390,9 +425,9 @@ its widest item (§9.4 step 8) and the columns are distributed across the contai
 width by `align-content` (§9.6). Cost: an item that `stretch` makes wider than its own
 content has that content laid out a second time, at the column's width. -/
 def flexColumnWrap (kids : Children) (s : Computed) (items : Array Item) (box : ContentBox) : Except String Result := do
-  let gap := max 0 ((resolveOpt box.height s.align.rowGap).getD 0)
-  let crossGap := max 0 ((CSS.resolve box.width s.align.columnGap).getD 0)
-  let rtl := s.direction == .rtl
+  let axes := flexAxes s
+  let gap := max 0 ((resolveOpt box.height (flexGaps s).1).getD 0)
+  let crossGap := max 0 ((CSS.resolve box.width (flexGaps s).2).getD 0)
   let n := items.size
   -- §9.4 step 7: the hypothetical cross size (width) of each item is its `width` or its
   -- fit-content width; its content at that width gives the flex base size when
@@ -474,7 +509,7 @@ def flexColumnWrap (kids : Children) (s : Computed) (items : Array Item) (box : 
     let autos := lineStyles.map fun is => (if is.autoMarginTop then 1 else 0) + (if is.autoMarginBottom then 1 else 0)
     let (placed,autoShare) := mainPositions justify room gapU (resolved.items.map Flex.St.outer) autos
     for ((pos,outer),(size,is)) in placed.zip (resolved.sizes.zip lineStyles) do
-      let top := if s.flex.reverse then inner-pos-outer else pos
+      let top := if axes.mainFlip then inner-pos-outer else pos
       let dy := LU.toPx top+(if is.autoMarginTop then LU.toPx autoShare else 0)
       main := main.push (dy,LU.toPx size+is.borderEdges.top+is.borderEdges.bottom+is.padding.top+is.padding.bottom)
     first := first+count
@@ -492,7 +527,7 @@ def flexColumnWrap (kids : Children) (s : Computed) (items : Array Item) (box : 
   -- the free width between them. The cross-start side is the left, or the right in a
   -- right-to-left container; `wrap-reverse` swaps the two.
   let reverseCross := s.flex.wrap == .wrapReverse
-  let fromRight := rtl != reverseCross
+  let fromRight := axes.crossFlip
   let total := lineSizes.foldl (·+·) 0+crossGap*Float.ofNat (lines.size-1)
   let free := box.width-total
   let distribution : Option Flex.Justify := match s.align.alignContent with
@@ -554,7 +589,7 @@ def flexColumnWrap (kids : Children) (s : Computed) (items : Array Item) (box : 
 context. The result's `height` is the height of the content box. -/
 def flexLayout (kids : Children) (s : Computed) (items : Array Item) (box : ContentBox) : Except String Result :=
   let items := orderItems kids items
-  if s.flex.column then
+  if (flexAxes s).column then
     if s.flex.wrap != .nowrap then flexColumnWrap kids s items box else flexColumn kids s items box
   else flexRow kids s items box
 
@@ -565,13 +600,14 @@ widest item. -/
 def flexIntrinsic (kids : Children) (s : Computed) (items : Array Item) : Except String (Float × Float) := do
   let mut lo : Float := 0
   let mut hi : Float := 0
-  let breaks := !s.flex.column && s.flex.wrap != .nowrap
+  let column := (flexAxes s).column
+  let breaks := !column && s.flex.wrap != .nowrap
   for item in items do
     let (a,b) ← kids.intrinsic item
-    if s.flex.column || breaks then lo := max lo a else lo := lo+a
-    if s.flex.column then hi := max hi b else hi := hi+b
-  if !s.flex.column && items.size > 1 then
-    let gap := match s.align.columnGap with | .px v => max 0 v | _ => 0
+    if column || breaks then lo := max lo a else lo := lo+a
+    if column then hi := max hi b else hi := hi+b
+  if !column && items.size > 1 then
+    let gap := match (flexGaps s).1 with | .px v => max 0 v | _ => 0
     let gaps := gap*Float.ofNat (items.size-1)
     if !breaks then lo := lo+gaps
     hi := hi+gaps
@@ -584,24 +620,24 @@ cross axis. `space-between` is `start` and the other distributions are centred, 
 one item. -/
 def flexAbsolutes (dom : Dom) (styles : Array Computed) (container : Nat) (x y width height : Float) : Array Pending :=
   let s := styles[container]!
-  let rtl := s.direction == .rtl
+  let axes := flexAxes s
   (dom.get container).kids.filterMap fun k =>
     let cs := styles[k]!
     if (dom.get k).type == .element && cs.display != .none && cs.pos.isAbsolute then
-      let mainEnd := if s.flex.column then s.flex.reverse else rtl != s.flex.reverse
-      let main : Float := match mainJustify s.align.justifyContent s.flex.reverse (if s.flex.column then none else some !mainEnd) with
+      let mainEnd := axes.mainFlip
+      let main : Float := match mainJustify s.align.justifyContent s.flex.reverse (if axes.column then none else some !mainEnd) with
         | .start | .spaceBetween => 0
         | .end_ => 1
         | .center | .spaceAround | .spaceEvenly => 0.5
       let main := if mainEnd then 1-main else main
-      let crossEnd := if s.flex.column then rtl else s.flex.wrap == .wrapReverse
+      let crossEnd := axes.crossFlip
       let cross : Float := match itemAlign s cs with
         | .start | .stretch | .baseline => 0
         | .end_ => 1
         | .center => 0.5
       let cross := if crossEnd then 1-cross else cross
       some {id := k, x, y, width, height,
-            fx := if s.flex.column then cross else main, fy := if s.flex.column then main else cross}
+            fx := if axes.column then cross else main, fy := if axes.column then main else cross}
     else none
 
 /-- Viewport lengths of the flex, alignment and inset values, once the viewport is known. -/

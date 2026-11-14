@@ -1982,7 +1982,9 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     margin := startMargin n.lname fontSize,
     borderSpacingX := parent.borderSpacingX, borderSpacingY := parent.borderSpacingY,
     borderCollapse := parent.borderCollapse, captionBottom := parent.captionBottom,
-    textAlign := parent.textAlign, direction := parent.direction, vars := parent.vars}
+    textAlign := parent.textAlign, direction := parent.direction, vars := parent.vars,
+    -- `writing-mode` is inherited (CSS Writing Modes 4 §3.2); the rest of `pos` is not
+    pos := {writingMode := parent.pos.writingMode}}
   -- HTML §3.2.6.4 and §15.3.5: the `dir` attribute sets `direction` and isolates the
   -- element; `bdi` isolates, and `bdo` overrides with isolation. Author CSS wins.
   if n.ns == some DOM.htmlNS || n.ns.isNone then

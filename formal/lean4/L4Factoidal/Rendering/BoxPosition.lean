@@ -20,6 +20,14 @@ inductive Clear where
   | none | left | right | both | inlineStart | inlineEnd
   deriving Repr, BEq
 
+/-- `writing-mode` (CSS Writing Modes 4 §3.2; inherited): the block axis is vertical, or
+horizontal from the right (`vertical-rl`, `sideways-rl`) or from the left (`vertical-lr`,
+`sideways-lr`). Block and inline layout are horizontal in this profile; flex containers
+read it for their axes (`Layout.flexAxes`). -/
+inductive WritingMode where
+  | horizontalTb | verticalRl | verticalLr
+  deriving Repr, BEq
+
 structure PositionStyle where
   position : Position := .static
   /-- The inset properties; `auto` is no inset. -/
@@ -38,13 +46,16 @@ structure PositionStyle where
   ratio : Option (Nat × Nat) := none
   /-- `aspect-ratio: auto <ratio>`: a replaced element with a natural ratio keeps its own. -/
   ratioAuto : Bool := false
+  /-- `writing-mode`; the cascade copies it from the parent (it is inherited). -/
+  writingMode : WritingMode := .horizontalTb
   deriving Repr
 
 /-- Every field equal: the two lay out the same. -/
 def PositionStyle.same (a b : PositionStyle) : Bool :=
   a.position == b.position && a.top.same b.top && a.right.same b.right && a.bottom.same b.bottom &&
   a.left.same b.left && a.zIndex == b.zIndex && a.float == b.float && a.clear == b.clear &&
-  a.borderBox == b.borderBox && a.ratio == b.ratio && a.ratioAuto == b.ratioAuto
+  a.borderBox == b.borderBox && a.ratio == b.ratio && a.ratioAuto == b.ratioAuto &&
+  a.writingMode == b.writingMode
 
 /-- Out of flow by positioning: `absolute` or `fixed`. -/
 def PositionStyle.isAbsolute (p : PositionStyle) : Bool := p.position == .absolute || p.position == .fixed
@@ -53,7 +64,8 @@ def PositionStyle.isAbsolute (p : PositionStyle) : Bool := p.position == .absolu
 def PositionStyle.isPositioned (p : PositionStyle) : Bool := p.position != .static
 
 def positionProperties : List String :=
-  ["position", "top", "right", "bottom", "left", "z-index", "float", "clear", "box-sizing", "aspect-ratio"]
+  ["position", "top", "right", "bottom", "left", "z-index", "float", "clear", "box-sizing", "aspect-ratio",
+   "writing-mode"]
 
 /-- The ratio `a / b` (width to height) as two whole numbers in lowest terms; `none` when
 it is degenerate (a term that is zero or negative: CSS Sizing 4 §5.1, it behaves as `auto`). -/
@@ -120,6 +132,15 @@ def PositionStyle.set (fontSize : Float) (p : PositionStyle) (property value : S
       | "border-box" => some {p with borderBox := true}
       | "content-box" => some {p with borderBox := false}
       | _ => none
+    | "writing-mode" =>
+      -- inherited: `inherit` and `unset` keep the parent's, which the style already holds
+      if v == "inherit" || v == "unset" then some p
+      else if reset then some {p with writingMode := .horizontalTb} else
+      match v with
+      | "horizontal-tb" => some {p with writingMode := .horizontalTb}
+      | "vertical-rl" | "sideways-rl" => some {p with writingMode := .verticalRl}
+      | "vertical-lr" | "sideways-lr" => some {p with writingMode := .verticalLr}
+      | _ => none
     | "aspect-ratio" =>
       -- `auto`, `<ratio>` or both (CSS Sizing 4 §5.1); a ratio is `a / b` or `a` (`a / 1`).
       if reset || v == "auto" then some {p with ratio := none, ratioAuto := false} else
@@ -156,6 +177,9 @@ def positionShorthand (property value : String) : Option (List (String × String
 #guard ((PositionStyle.set 10 {ratio := some (2, 1)} "aspect-ratio" "auto").map (·.ratio)) == some none
 #guard ((PositionStyle.set 10 {} "aspect-ratio" "0 / 1").map (·.ratio)) == some none
 #guard (PositionStyle.set 10 {} "aspect-ratio" "bogus").isNone
+#guard ((PositionStyle.set 10 {} "writing-mode" "vertical-rl").map (·.writingMode)) == some .verticalRl
+#guard ((PositionStyle.set 10 {writingMode := .verticalLr} "writing-mode" "inherit").map (·.writingMode)) == some .verticalLr
+#guard ((PositionStyle.set 10 {writingMode := .verticalLr} "writing-mode" "initial").map (·.writingMode)) == some .horizontalTb
 #guard positionShorthand "inset" "0 auto 3px" == some [("top", "0px"), ("right", "auto"), ("bottom", "3px"), ("left", "auto")]
 
 end L4Factoidal.Rendering.CSS
