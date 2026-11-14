@@ -1985,7 +1985,10 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
   -- popover that is not showing (`Node.states` bit 1) start as not rendered, as the elements
   -- of `head` do; an author rule for `display` still wins.
   let hasAttr := fun (name : String) => n.attrs.any fun a => a.ns.isNone && a.lname == name
-  let hidden := ["head","style","script","title","meta","link","template","base","area","param"].contains n.lname ||
+  -- `noscript`: scripts run in this engine, so what it holds is not rendered (HTML §15.3.1,
+  -- `noscript { display: none }` with scripting enabled; `SfntProfile.unrenderedText` already
+  -- shapes none of its text). It was laid out: lean-lang.org began with its noscript notice.
+  let hidden := ["head","style","script","title","meta","link","template","base","area","param","noscript"].contains n.lname ||
     (n.ns == some DOM.htmlNS && ((n.lname == "dialog" && !hasAttr "open") || (hasAttr "popover" && n.states % 2 == 0)))
   let svgViewport := n.ns == some DOM.svgNS && n.lname == "svg"
   let svgOverflow := attrValue n "overflow"

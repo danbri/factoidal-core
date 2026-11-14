@@ -321,6 +321,9 @@ private def page := "<p><a id='a' href='u'><span id='s'>AA</span></a> <a id='b'>
 -- A rule that matches only through `:visited` sets colours only.
 #guard ((stateAt page "a:visited{color:red;display:none}" "a" (visited := ["a"])).toOption.map fun s => (rgb255 s.color,s.display == .inline)) == some ((255,0,0),true)
 #guard ((stateAt page "a:link{display:none}" "a").toOption.map (·.display == .none)) == some true
+-- `noscript` is not rendered: scripts run here (2026-11-14; before, its content was laid out).
+#guard ((stateAt "<body><p>a</p><noscript id=n><p>enable scripts</p></noscript></body>" "" "n").toOption.map (·.display == .none)) == some true
+#guard ((stateAt "<body><p id=k>a</p><noscript><p>enable scripts</p></noscript></body>" "" "k").toOption.map (·.display == .block)) == some true
 -- An unknown pseudo-class drops its rule; the other rules stand.
 #guard ((stateAt page "a:focus{color:red} a{color:green}" "a" (active := some "a")).toOption.map (rgb255 ·.color)) == some (0,128,0)
 -- HTML §15.5.4: a button is an inline-block with a raised border; pressed, it is sunken and darker.
