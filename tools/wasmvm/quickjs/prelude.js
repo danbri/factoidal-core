@@ -15586,6 +15586,16 @@
             pd.get = function () { if (!(this instanceof C)) throw new TypeError('Illegal invocation'); return g.call(this); };
             changed = true;
           }
+          // the same for a setter (Web IDL §3.7.6 "attribute setter" step 4)
+          if (typeof pd.set === 'function') {
+            let setThrows = false;
+            try { pd.set.call({}, undefined); } catch (e) { setThrows = e instanceof TypeError; }
+            if (!setThrows) {
+              const st = pd.set;
+              pd.set = function (v) { if (!(this instanceof C)) throw new TypeError('Illegal invocation'); return st.call(this, v); };
+              changed = true;
+            }
+          }
         }
         // the names of the accessor functions: "get x" and "set x" (Web IDL §3.7.6)
         if (pd.get.name !== 'get ' + k) Object.defineProperty(pd.get, 'name', { value: 'get ' + k, configurable: true });
