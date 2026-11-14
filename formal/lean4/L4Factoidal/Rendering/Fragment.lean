@@ -281,6 +281,24 @@ def shrinkWidth (l : CSS.Length) (lo hi room : Float) : Float :=
   | .stretch => room
   | _ => min hi (max lo room)
 
+/-- Kind: totality. Says: a width is taken from the contents or the fill width exactly
+when it is a sizing keyword; any other length is left to `CSS.resolve`. -/
+theorem keywordWidth_isSome (l : CSS.Length) (lo hi fill : Float) :
+    (keywordWidth l lo hi fill).isSome = l.isKeyword := by
+  cases l <;> rfl
+
+/-- Kind: frame. Says: a sizing keyword is not a number: wherever the layout asks
+`CSS.resolve` for one it gets `none`, as for `auto`, so code that does not know the
+keywords lays the box out as `auto`. -/
+theorem resolve_keyword (basis : Float) (l : CSS.Length) (h : l.isKeyword = true) : CSS.resolve basis l = none := by
+  cases l <;> first | rfl | (simp [CSS.Length.isKeyword] at h)
+
+/-- Says: a box that shrinks to fit takes exactly its min-content or max-content width
+when its `width` says so, and the fit-content width when it is `auto`. -/
+theorem shrinkWidth_minContent (lo hi room : Float) : shrinkWidth .minContent lo hi room = lo := rfl
+theorem shrinkWidth_maxContent (lo hi room : Float) : shrinkWidth .maxContent lo hi room = hi := rfl
+theorem shrinkWidth_auto (lo hi room : Float) : shrinkWidth .auto lo hi room = min hi (max lo room) := rfl
+
 /-- An inline-block whose contents are not all inline (CSS 2.1 §9.2.2, §10.1): it has a
 child that is a block-level box or a float, or it is positioned and has element children
 (it is then the containing block of its absolutely positioned descendants). Such a box is
