@@ -1,0 +1,19 @@
+{
+ "case": "4.4.17.a",
+ "file": "Chapt04/4.4/4.4.17/4.4.17.a.xhtml",
+ "quote": "You must see an xforms-out-of-range message only after you activate the Out Of Range trigger.",
+ "steps": [
+  {
+   "expect": "no-message",
+   "contains": "xforms-out-of-range"
+  },
+  {
+   "do": "activate",
+   "label": "Out Of Range"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-out-of-range"
+  }
+ ]
+}

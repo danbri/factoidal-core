@@ -1,0 +1,15 @@
+{
+ "case": "4.3.7.a",
+ "file": "Chapt04/4.3/4.3.7/4.3.7.a.xhtml",
+ "quote": "When you activate the Set Focus trigger you must see an xforms-focus message.",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Set Focus"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-focus"
+  }
+ ]
+}

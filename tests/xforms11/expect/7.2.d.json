@@ -1,0 +1,16 @@
+{
+ "case": "7.2.d",
+ "file": "Chapt07/7.2/7.2.d.xhtml",
+ "quote": "7.2.d context node for the computed expression is the node currently being processed You must see a value of \"6\" for the first Subtotal output, a value of \"20\" for the second Subtotal output, and a value of \"42\" for the third Subtotal output.",
+ "steps": [
+  {
+   "expect": "values",
+   "values": [
+    "6",
+    "20",
+    "42"
+   ],
+   "label": "Subtotal"
+  }
+ ]
+}

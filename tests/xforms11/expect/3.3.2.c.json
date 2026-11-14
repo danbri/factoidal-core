@@ -1,0 +1,22 @@
+{
+ "case": "3.3.2.c",
+ "file": "Chapt03/3.3/3.3.2/3.3.2.c.xhtml",
+ "quote": "You must see three output fields. The Name output field must have the value \"James\", the Age output field must have the value \"18\", and the Education output field must have the value \"high school\".",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "Name",
+   "value": "James"
+  },
+  {
+   "expect": "control",
+   "label": "Age",
+   "value": "18"
+  },
+  {
+   "expect": "control",
+   "label": "Education",
+   "value": "high school"
+  }
+ ]
+}

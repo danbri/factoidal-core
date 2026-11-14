@@ -1,0 +1,11 @@
+{
+ "case": "4.2.2.c2",
+ "file": "Chapt04/4.2/4.2.2/4.2.2.c2.xhtml",
+ "quote": "You must have seen an xforms-binding-exception message or a fatal error due to an xforms-binding-exception.",
+ "steps": [
+  {
+   "expect": "exception",
+   "name": "xforms-binding-exception"
+  }
+ ]
+}

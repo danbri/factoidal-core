@@ -1,0 +1,27 @@
+{
+ "case": "8.1.1.b",
+ "file": "Chapt08/8.1/8.1.1/8.1.1.b.xhtml",
+ "quote": "You must see an xforms-enabled message, an xforms-value-changed message, an xforms-valid message, an xforms-readwrite message, and an xforms-optional message.",
+ "steps": [
+  {
+   "expect": "message",
+   "contains": "xforms-enabled"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-value-changed"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-valid"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-readwrite"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-optional"
+  }
+ ]
+}

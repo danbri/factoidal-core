@@ -1,0 +1,17 @@
+{
+ "case": "7.9.5.a",
+ "file": "Chapt07/7.9/7.9.5/7.9.5.a.xhtml",
+ "quote": "You must see the value \"2002-01-01\" for the Test 1 output. You must see the value \"1969-12-31\" for the Test 2 output.",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "Test 1",
+   "value": "2002-01-01"
+  },
+  {
+   "expect": "control",
+   "label": "Test 2",
+   "value": "1969-12-31"
+  }
+ ]
+}

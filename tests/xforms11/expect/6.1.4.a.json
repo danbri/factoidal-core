@@ -1,0 +1,22 @@
+{
+ "case": "6.1.4.a",
+ "file": "Chapt06/6.1/6.1.4/6.1.4.a.xhtml",
+ "quote": "You must only be able to enter a value into the Last Name input field. The Title and First Name input fields must be hidden or unavailable.",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "Last Name",
+   "relevant": true
+  },
+  {
+   "expect": "control",
+   "label": "Title",
+   "relevant": false
+  },
+  {
+   "expect": "control",
+   "label": "First Name",
+   "relevant": false
+  }
+ ]
+}

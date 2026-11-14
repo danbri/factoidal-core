@@ -1,0 +1,16 @@
+{
+ "case": "7.10.2.b",
+ "file": "Chapt07/7.10/7.10.2/7.10.2.b.xhtml",
+ "quote": "You must see the value \"Jan Feb Mar\" for the Months output.",
+ "steps": [
+  {
+   "expect": "values",
+   "values": [
+    "Jan",
+    "Feb",
+    "Mar"
+   ],
+   "label": "Months"
+  }
+ ]
+}

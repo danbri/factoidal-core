@@ -1,0 +1,31 @@
+{
+ "case": "8.1.1.c",
+ "file": "Chapt08/8.1/8.1.1/8.1.1.c.xhtml",
+ "quote": "You must see an xforms-disabled message only.",
+ "steps": [
+  {
+   "expect": "message",
+   "contains": "xforms-disabled"
+  },
+  {
+   "expect": "no-message",
+   "contains": "xforms-enabled"
+  },
+  {
+   "expect": "no-message",
+   "contains": "xforms-value-changed"
+  },
+  {
+   "expect": "no-message",
+   "contains": "xforms-valid"
+  },
+  {
+   "expect": "no-message",
+   "contains": "xforms-readwrite"
+  },
+  {
+   "expect": "no-message",
+   "contains": "xforms-optional"
+  }
+ ]
+}

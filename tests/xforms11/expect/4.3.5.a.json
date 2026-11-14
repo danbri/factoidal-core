@@ -1,0 +1,31 @@
+{
+ "case": "4.3.5.a",
+ "file": "Chapt04/4.3/4.3.5/4.3.5.a.xhtml",
+ "quote": "After you activate the Reset trigger you must see five different messages: xforms-reset, xforms-rebuild, xforms-recalculate, xforms-revalidate, and xforms-refresh.",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Reset"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-reset"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-rebuild"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-recalculate"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-revalidate"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-refresh"
+  }
+ ]
+}

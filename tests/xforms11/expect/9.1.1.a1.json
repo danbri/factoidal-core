@@ -1,0 +1,17 @@
+{
+ "case": "9.1.1.a1",
+ "file": "Chapt09/9.1/9.1.1/9.1.1.a1.xhtml",
+ "quote": "You must not be able to see the Street Name and City input controls or they must be somehow unavailable to you.",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "Street Name",
+   "relevant": false
+  },
+  {
+   "expect": "control",
+   "label": "City",
+   "relevant": false
+  }
+ ]
+}

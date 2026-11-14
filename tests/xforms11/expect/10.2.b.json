@@ -1,0 +1,35 @@
+{
+ "case": "10.2.b",
+ "file": "Chapt10/10.2/10.2.b.xhtml",
+ "quote": "10.2.b setvalue element with expression and literal, element with neither You must see the value \"white\" in the Color output control and the value \"excellent\" in the Condition output control. When you activate the Set Color trigger the value in the Color output must change to \"blue\". When you activate the Set Condition trigger the value in the Condition output must change being empty.",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "Color",
+   "value": "white"
+  },
+  {
+   "expect": "control",
+   "label": "Condition",
+   "value": "excellent"
+  },
+  {
+   "do": "activate",
+   "label": "Set Color"
+  },
+  {
+   "expect": "control",
+   "label": "Color",
+   "value": "blue"
+  },
+  {
+   "do": "activate",
+   "label": "Set Condition"
+  },
+  {
+   "expect": "control",
+   "label": "Condition",
+   "value": ""
+  }
+ ]
+}

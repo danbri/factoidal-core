@@ -1,0 +1,19 @@
+{
+ "case": "10.8.d",
+ "file": "Chapt10/10.8/10.8.d.xhtml",
+ "quote": "After activating the Fire Custom Event trigger you must see two messages: Child Element and Parent Element.",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Fire Custom Event"
+  },
+  {
+   "expect": "message",
+   "contains": "Child Element"
+  },
+  {
+   "expect": "message",
+   "contains": "Parent Element"
+  }
+ ]
+}

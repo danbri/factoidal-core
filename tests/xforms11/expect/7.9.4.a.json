@@ -1,0 +1,17 @@
+{
+ "case": "7.9.4.a",
+ "file": "Chapt07/7.9/7.9.4/7.9.4.a.xhtml",
+ "quote": "You must see the value \"11688\" for the Test 1 output. You must see the value \"-1\" for the Test 2 output.",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "Test 1",
+   "value": "11688"
+  },
+  {
+   "expect": "control",
+   "label": "Test 2",
+   "value": "-1"
+  }
+ ]
+}

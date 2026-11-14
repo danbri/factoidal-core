@@ -1,0 +1,16 @@
+{
+ "case": "10.18.b",
+ "file": "Chapt10/10.18/10.18.b.xhtml",
+ "quote": "After you activate the Run Test trigger the Number Of Nodes output must show the value \"10\".",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Run Test"
+  },
+  {
+   "expect": "control",
+   "label": "Number Of Nodes",
+   "value": "10"
+  }
+ ]
+}

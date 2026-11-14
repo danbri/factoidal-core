@@ -1,0 +1,22 @@
+{
+ "case": "7.2.b",
+ "file": "Chapt07/7.2/7.2.b.xhtml",
+ "quote": "You must see a value of \"Curtiss\" for First Name, a value of \"Hewie\" for Last Name, and a value of \"chewie@example.com\" for Email Address.",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "First Name",
+   "value": "Curtiss"
+  },
+  {
+   "expect": "control",
+   "label": "Last Name",
+   "value": "Hewie"
+  },
+  {
+   "expect": "control",
+   "label": "Email Address",
+   "value": "chewie@example.com"
+  }
+ ]
+}

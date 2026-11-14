@@ -1,0 +1,11 @@
+{
+ "case": "3.3.1.c2",
+ "file": "Chapt03/3.3/3.3.1/3.3.1.c2.xhtml",
+ "quote": "You must see an xforms-link-exception message or a fatal error due to an xforms-link-exception.",
+ "steps": [
+  {
+   "expect": "exception",
+   "name": "xforms-link-exception"
+  }
+ ]
+}

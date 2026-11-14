@@ -1,0 +1,12 @@
+{
+ "case": "8.2.1.a",
+ "file": "Chapt08/8.2/8.2.1/8.2.1.a.xhtml",
+ "quote": "You must see an input control with the label \"Instance Data\".",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "Instance Data",
+   "kind": "input"
+  }
+ ]
+}

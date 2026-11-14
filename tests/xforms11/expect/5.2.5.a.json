@@ -1,0 +1,11 @@
+{
+ "case": "5.2.5.a",
+ "file": "Chapt05/5.2/5.2.5/5.2.5.a.xhtml",
+ "quote": "You must have seen the message \"You entered a valid yearMonthDuration\".",
+ "steps": [
+  {
+   "expect": "message",
+   "contains": "You entered a valid yearMonthDuration"
+  }
+ ]
+}

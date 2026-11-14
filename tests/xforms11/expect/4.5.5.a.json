@@ -1,0 +1,11 @@
+{
+ "case": "4.5.5.a",
+ "file": "Chapt04/4.5/4.5.5/4.5.5.a.xhtml",
+ "quote": "You must see an xforms-output-error message.",
+ "steps": [
+  {
+   "expect": "message",
+   "contains": "xforms-output-error"
+  }
+ ]
+}

@@ -1,0 +1,11 @@
+{
+ "case": "4.2.1.b2",
+ "file": "Chapt04/4.2/4.2.1/4.2.1.b2.xhtml",
+ "quote": "You must have seen an xforms-link-exception message or a fatal error due to an xforms-link-exception.",
+ "steps": [
+  {
+   "expect": "exception",
+   "name": "xforms-link-exception"
+  }
+ ]
+}

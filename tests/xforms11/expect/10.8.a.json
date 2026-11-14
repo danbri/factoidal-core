@@ -1,0 +1,15 @@
+{
+ "case": "10.8.a",
+ "file": "Chapt10/10.8/10.8.a.xhtml",
+ "quote": "After you activate the Rebuild trigger you must see an xforms-rebuild message.",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Rebuild"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-rebuild"
+  }
+ ]
+}

@@ -1,0 +1,17 @@
+{
+ "case": "7.10.1.a",
+ "file": "Chapt07/7.10/7.10.1/7.10.1.a.xhtml",
+ "quote": "You must see the value \"John\" for the First Name output. You must see the value \"George\" for the Second Name output.",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "First Name",
+   "value": "John"
+  },
+  {
+   "expect": "control",
+   "label": "Second Name",
+   "value": "George"
+  }
+ ]
+}

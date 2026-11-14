@@ -1,0 +1,12 @@
+{
+ "case": "7.9.4.c",
+ "file": "Chapt07/7.9/7.9.4/7.9.4.c.xhtml",
+ "quote": "You must see the value \"NaN\" for the Test output.",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "Test",
+   "value": "NaN"
+  }
+ ]
+}

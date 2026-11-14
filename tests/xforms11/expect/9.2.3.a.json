@@ -1,0 +1,31 @@
+{
+ "case": "9.2.3.a",
+ "file": "Chapt09/9.2/9.2.3/9.2.3.a.xhtml",
+ "quote": "If you are in the \"in\" case and you activate the Show Out Case trigger you must see an xforms-deselect(in) message followed by an xforms-select(out) message. If you are in the \"out\" case and you activate the Show In Case trigger you must see an xforms-deselect(out) message followed by an xforms-select(in) message.",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Show Out Case"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-deselect(in)"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-select(out)"
+  },
+  {
+   "do": "activate",
+   "label": "Show In Case"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-deselect(out)"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-select(in)"
+  }
+ ]
+}

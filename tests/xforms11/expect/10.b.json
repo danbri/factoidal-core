@@ -1,0 +1,19 @@
+{
+ "case": "10.b",
+ "file": "Chapt10/10.b.xhtml",
+ "quote": "When you activate the Insert Car trigger you must see an xforms:action message and an xforms-rebuild message.",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Insert Car"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms:action"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-rebuild"
+  }
+ ]
+}
