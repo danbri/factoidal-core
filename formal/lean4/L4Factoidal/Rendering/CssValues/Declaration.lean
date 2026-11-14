@@ -156,6 +156,70 @@ def fontFaceDescriptors : List String :=
    "font-feature-settings", "font-variation-settings", "font-named-instance", "font-display",
    "font-language-override", "ascent-override", "descent-override", "line-gap-override", "size-adjust"]
 
+/-- The font technologies of `tech()` this engine accepts (CSS Fonts 4 §4.3.1); the others
+(`incremental`, `color-SVG`, `features-graphite`) drop their component. -/
+def fontTechs : List String :=
+  ["features-opentype", "features-aat", "color-colrv0", "color-colrv1", "color-sbix", "color-cbdt", "variations", "palettes"]
+
+/-- The `@font-face` `src` descriptor (CSS Fonts 4 §4.3): its components that parse, each
+`url()` with an optional `format()` and an optional `tech()` of known keywords after it,
+or `local()`; a component that does not parse is left out, and with none left the value is
+none. Technology keywords are written in lower case. -/
+def fontSrcValue (v : String) : Option String :=
+  let formats := ["collection", "embedded-opentype", "opentype", "svg", "truetype", "woff", "woff2"]
+  let one := fun (piece : List CV) => match stripWs piece with
+    | [.fn f args] =>
+      if lower f == "local" then (if (stripWs args).isEmpty then none else some (serialize [.fn "local" (stripWs args)]))
+      else if lower f == "url" then some (serialize [.fn f args])
+      else none
+    | url :: rest =>
+      let isUrl := match url with
+        | .tok (.url _) => true
+        | .fn f _ => lower f == "url"
+        | _ => false
+      if !isUrl then none else
+      let fmt : Option (Option String) := match rest with
+        | .fn f args :: _ =>
+          if lower f != "format" then some none
+          else match stripWs args with
+            | [.tok (.ident k)] => if formats.contains (lower k) then some (some (lower k)) else none
+            | [.tok (.str t)] => some (some (serialize [.tok (.str t)]))
+            | _ => none
+        | _ => some none
+      match fmt with
+      | none => none
+      | some f =>
+        let rest := if f.isSome then rest.drop 1 else rest
+        let tech : Option (Option String) := match rest with
+          | [] => some none
+          | [.fn t args] =>
+            if lower t != "tech" then none
+            else
+              let items := (splitCommas args).map stripWs
+              let ks := items.filterMap fun it => match it with
+                | [.tok (.ident k)] => if fontTechs.contains (lower k) then some (lower k) else none
+                | _ => none
+              if items.isEmpty || ks.length != items.length then none else some (some (", ".intercalate ks))
+          | _ => none
+        match tech with
+        | none => none
+        | some t => some (serialize [url] ++ (match f with
+            | some k => " format(" ++ k ++ ")"
+            | none => "") ++ (match t with
+            | some k => " tech(" ++ k ++ ")"
+            | none => ""))
+    | [] => none
+  let parts := (splitCommas (CV.parse v)).filterMap one
+  if parts.isEmpty then none else some (", ".intercalate parts)
+
+#guard fontSrcValue "url(\"foo.ttf\") tech(color-COLRv0)" == some "url(\"foo.ttf\") tech(color-colrv0)"
+#guard (["url(\"foo.ttf\") tech()", "url(\"foo.ttf\") tech(\"variations\")", "url(\"foo.ttf\") tech(features-opentype color-COLRv0)",
+  "url(\"foo.ttf\") tech(xyzzy, features-opentype)", "url(\"foo.ttf\") tech(features-opentype) format(opentype)",
+  "url(\"foo.ttf\") dummy(\"opentype\") tech(variations)", "url(\"foo.ttf\") format(opentype) tech(features-opentype) dummy(something)"].map fontSrcValue).all (·.isNone)
+#guard (fontSrcValue "url(\"foo.ttf\") tech(incremental), url(\"bar.html\")").isSome &&
+  (fontSrcValue "url(\"foo.ttf\") format(dummy), url(\"foo.ttf\") tech(variations)").isSome &&
+  (fontSrcValue "url(\"foo.ttf\") format(opentype) tech(features-opentype)").isSome && (fontSrcValue "url(x.woff)").isSome
+
 /-- The value of descriptor `name` of an at-rule (`ctx`, such as `font-face`), when the
 value is one: `none` for a name that is no descriptor of the rule or a value that does not
 parse. -/
@@ -166,6 +230,7 @@ def descriptorValue (ctx name value : String) : Option String :=
   else if n == "unicode-range" then
     let pieces := ((String.ofList (dropComments v.toList false #[])).splitOn ",").map trimText
     (pieces.mapM urangeOf).map (", ".intercalate ·)
+  else if n == "src" then fontSrcValue v
   else if n == "font-display" then
     let k := lower v
     if ["auto", "block", "swap", "fallback", "optional"].contains k then some k else none

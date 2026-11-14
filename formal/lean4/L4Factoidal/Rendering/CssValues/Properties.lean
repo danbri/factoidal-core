@@ -140,8 +140,8 @@ def hasSubstitution (cvs : List CV) : Bool :=
   hasFn "var" 32 cvs || hasFn "env" 32 cvs || hasFn "attr" 32 cvs || hasFn "if" 32 cvs
 
 /-- Whether a substitution function in the values has arguments it cannot have (CSS
-Variables 1 §3, CSS Values 5 §7.7): `var()` must name a custom property, `attr()` an
-attribute and `env()` an environment variable, first. `fuel` bounds the nesting read. -/
+Variables 1 §3, CSS Values 5 §7.7): `var()`, `attr()` and `env()` must name something
+first (`var(prop)` stays: it is invalid only when substituted). `fuel` bounds the nesting read. -/
 def badSubstitution : Nat → List CV → Bool
   | 0, _ => false
   | fuel + 1, cvs => cvs.any fun cv => match cv with
@@ -149,13 +149,13 @@ def badSubstitution : Nat → List CV → Bool
       let k := lower n
       let first := (stripWs args).head?
       let named := fun (custom : Bool) => match first with
-        | some (.tok (.ident x)) => !custom || isCustom x
+        | some (.tok (.ident _)) => true
         | _ => false
       ((k == "var" && !named true) || ((k == "attr" || k == "env") && !named false)) || badSubstitution fuel args
     | .block _ body => badSubstitution fuel body
     | _ => false
 
-#guard badSubstitution 32 (CV.parse "attr()") && badSubstitution 32 (CV.parse "calc(var(x) + 1px)") && !badSubstitution 32 (CV.parse "attr(data-x type(<color>), red)")
+#guard badSubstitution 32 (CV.parse "attr()") && badSubstitution 32 (CV.parse "calc(var() + 1px)") && !badSubstitution 32 (CV.parse "attr(data-x type(<color>), red)") && !badSubstitution 32 (CV.parse "var(prop)")
 
 /-- The short form of a `display` value (CSS Display 3 §2.5 and its serialisation: the
 single-keyword legacy forms where they exist). The words arrive in the order of the
