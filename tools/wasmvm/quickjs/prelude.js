@@ -9346,8 +9346,15 @@
         const defLargest = UNITS[Math.min(firstNonZero(f), unitIndex(smallest))];
         const largest = lu === undefined || lu === 'auto' ? defLargest : lu;
         if (unitIndex(largest) > unitIndex(smallest)) throw RE('largestUnit is smaller than smallestUnit');
-        if (rel !== undefined || unitIndex(largest) < 3 || unitIndex(smallest) < 3 || f[0] || f[1] || f[2])
-          throw RE('rounding with calendar units needs relativeTo, which this engine does not support yet');
+        const rd = relativeDate(rel);
+        if (rd !== undefined) {
+          const start = newDateTime(rd.y, rd.m, rd.d, [0, 0, 0, 0, 0, 0]);
+          const end = relativeEnd(start, f);
+          const opts = Object.assign(Object.create(null), { largestUnit: largest, smallestUnit: smallest, roundingIncrement: inc, roundingMode: mode });
+          return dateTimeDifference(start, end, opts, 1, 'round');
+        }
+        if (unitIndex(largest) < 3 || unitIndex(smallest) < 3 || f[0] || f[1] || f[2])
+          throw RE('rounding with years, months or weeks needs relativeTo');
         return roundTimeDuration(f, largest, smallest, inc, mode);
       }
       total(totalOf) {
@@ -9357,7 +9364,27 @@
         const rel = o.relativeTo;
         const unit = unitOption(o, 'unit', UNITS, undefined);
         if (unit === undefined) throw RE('unit is required');
-        if (rel !== undefined || unitIndex(unit) < 3 || f[0] || f[1] || f[2]) throw RE('totals in calendar units need relativeTo, which this engine does not support yet');
+        const rd = relativeDate(rel);
+        if (rd !== undefined) {
+          const start = newDateTime(rd.y, rd.m, rd.d, [0, 0, 0, 0, 0, 0]);
+          const end = relativeEnd(start, f);
+          const ui = unitIndex(unit);
+          if (ui >= 3) {
+            const se = slots.get(start), ee = slots.get(end);
+            const ns = BigInt(T(4, ee.y, ee.m, ee.d) - T(4, se.y, se.m, se.d)) * NS_PER_DAY + timeNs(ee.t) - timeNs(se.t);
+            const per = UNIT_NS[ui];
+            return Number(ns / per) + Number(ns % per) / Number(per);
+          }
+          const opts = Object.assign(Object.create(null), { largestUnit: unit, smallestUnit: unit, roundingMode: 'trunc' });
+          const whole = slots.get(dateTimeDifference(start, end, opts, 1, 'total')).f[ui];
+          const sg = durSign(f) || 1;
+          const at = k => { const g = [0, 0, 0, 0]; g[ui] = k; const se = slots.get(start); const r = T(2, se.y, se.m, se.d, g[0], g[1], g[2], g[3], false); return BigInt(T(4, r[0], r[1], r[2])) * NS_PER_DAY; };
+          const ee = slots.get(end);
+          const endNs = BigInt(T(4, ee.y, ee.m, ee.d)) * NS_PER_DAY + timeNs(ee.t);
+          const lo = at(whole), hi = at(whole + sg);
+          return whole + sg * Number(endNs - lo) / Number(hi - lo);
+        }
+        if (unitIndex(unit) < 3 || f[0] || f[1] || f[2]) throw RE('totals in years, months or weeks need relativeTo');
         const ns = durTimeNs(f, true);
         const per = UNIT_NS[unitIndex(unit)];
         const q = ns / per, r = ns % per;
@@ -9384,6 +9411,33 @@
       const k = DUR_FIELDS[i];
       Object.defineProperty(Duration.prototype, k, { get: { [k]() { return get(this, 'Duration', k).f[i]; } }[k], configurable: true });
     }
+    // GetTemporalRelativeToOption: a PlainDate (or the date of a PlainDateTime, a property bag,
+    // a string); undefined when absent. Zoned relativeTo values are not supported.
+    const relativeDate = rel => {
+      if (rel === undefined) return undefined;
+      if (isObj(rel)) {
+        const k = kindOf(rel);
+        if (k === 'PlainDate' || k === 'PlainDateTime') { const s = slots.get(rel); return { y: s.y, m: s.m, d: s.d }; }
+        if (k === 'ZonedDateTime') throw RE('a zoned relativeTo is not supported');
+        if (rel.timeZone !== undefined) throw RE('a zoned relativeTo is not supported');
+        return slots.get(toDate(rel));
+      }
+      if (typeof rel !== 'string') throw TE('relativeTo must be a string or an object');
+      const p = T(6, rel);
+      if (p === null) throw RE(`'${rel}' is not a valid relativeTo`);
+      if (p[11] !== '') throw RE('a zoned relativeTo is not supported');
+      if (p[9] === 1) throw RE('a relativeTo string with Z needs a time zone');
+      checkCalendarAnnotation(p[12]);
+      if (!isoDateValid(p[0], p[1], p[2])) throw RE(`'${rel}' is not a valid date`);
+      return { y: p[0], m: p[1], d: p[2] };
+    };
+    // the date-time `start` moved by the duration `f` (calendar units, then time)
+    const relativeEnd = (start, f) => {
+      const s = slots.get(start);
+      const b = balance(timeNs(s.t) + durTimeNs(f, false));
+      const r = T(2, s.y, s.m, s.d, f[0], f[1], f[2], f[3] + b[0], false);
+      return newDateTime(r[0], r[1], r[2], b.slice(1));
+    };
     const UNIT_NS = [0n, 0n, 0n, NS_PER_DAY, 3600000000000n, 60000000000n, 1000000000n, 1000000n, 1000n, 1n];
     const firstNonZero = f => { for (let i = 0; i < 10; i++) if (f[i] !== 0) return i; return 9; };
     const largestOf = f => UNITS[firstNonZero(f)];
@@ -9802,6 +9856,23 @@
       withCalendar(calendar) { const s = get(this, 'PlainDateTime', 'withCalendar'); if (calendar === undefined) throw TE('a calendar is required'); calendarOf(calendar); return newDateTime(s.y, s.m, s.d, s.t.slice()); }
       add(duration, options = undefined) { return dateTimeAdd(this, duration, options, 1, 'add'); }
       subtract(duration, options = undefined) { return dateTimeAdd(this, duration, options, -1, 'subtract'); }
+      until(other, options = undefined) { return dateTimeDifference(this, other, options, 1, 'until'); }
+      since(other, options = undefined) { return dateTimeDifference(this, other, options, -1, 'since'); }
+      round(roundTo) {
+        const s = get(this, 'PlainDateTime', 'round');
+        if (roundTo === undefined) throw TE('round needs an argument');
+        const o = typeof roundTo === 'string' ? Object.assign(Object.create(null), { smallestUnit: roundTo }) : optionsObject(roundTo);
+        const inc = incrementOption(o);
+        const mode = roundingModeOption(o, 'halfExpand');
+        const su = unitOption(o, 'smallestUnit', ['day'].concat(TIME_UNITS), undefined);
+        if (su === undefined) throw RE('smallestUnit is required');
+        if (su === 'day') { if (inc !== 1) throw RE('roundingIncrement must be 1 for days'); }
+        else checkIncrement(su, inc, false);
+        const per = UNIT_NS[unitIndex(su)] * BigInt(inc);
+        const b = balance(roundNs(timeNs(s.t), per, mode));
+        const r = b[0] !== 0 ? T(2, s.y, s.m, s.d, 0, 0, 0, b[0], false) : [s.y, s.m, s.d];
+        return newDateTime(r[0], r[1], r[2], b.slice(1));
+      }
       toPlainDate() { const s = get(this, 'PlainDateTime', 'toPlainDate'); return newDate(s.y, s.m, s.d); }
       toPlainTime() { return newTime(get(this, 'PlainDateTime', 'toPlainTime').t.slice()); }
       toString(options = undefined) {
@@ -9831,6 +9902,49 @@
       const r = T(2, s.y, s.m, s.d, f[0], f[1], f[2], f[3] + b[0], overflow === 'reject');
       if (r === null) throw RE('the result is not a valid date');
       return newDateTime(r[0], r[1], r[2], b.slice(1));
+    };
+    const dateTimeDifference = (self, other, options, sign, what) => {
+      const s = get(self, 'PlainDateTime', what);
+      const o2 = slots.get(toDateTime(other));
+      const o = optionsObject(options);
+      const lu = unitOption(o, 'largestUnit', UNITS, 'auto', ['auto']);
+      const inc = incrementOption(o);
+      let mode = roundingModeOption(o, 'trunc');
+      const su = unitOption(o, 'smallestUnit', UNITS, 'nanosecond');
+      const largest = lu === 'auto' ? (unitIndex(su) < 3 ? su : 'day') : lu;
+      if (unitIndex(largest) > unitIndex(su)) throw RE('largestUnit is smaller than smallestUnit');
+      if (unitIndex(su) > 3) checkIncrement(su, inc, false); else if (su === 'day' && inc !== 1 && false) throw RE('');
+      if (sign < 0) mode = negateMode(mode);
+      // DifferenceISODateTime: the time difference, borrowing a day when its sign differs
+      let tdiff = timeNs(o2.t) - timeNs(s.t);
+      const dsign = T(14, o2.y, o2.m, o2.d, s.y, s.m, s.d);
+      let end = { y: o2.y, m: o2.m, d: o2.d };
+      if (tdiff !== 0n && dsign !== 0 && (tdiff < 0n ? -1 : 1) !== dsign) {
+        const r = T(2, o2.y, o2.m, o2.d, 0, 0, 0, -dsign, false); end = { y: r[0], m: r[1], d: r[2] };
+        tdiff += BigInt(dsign) * NS_PER_DAY;
+      }
+      let f;
+      if (unitIndex(largest) <= 3) {
+        const r = T(3, s.y, s.m, s.d, end.y, end.m, end.d, unitIndex(largest));
+        if (unitIndex(su) > 3) tdiff = roundNs(tdiff, UNIT_NS[unitIndex(su)] * BigInt(inc), mode);
+        const tb = balanceDurationTime([0, 0, 0, 0, 0, 0, 0, 0, 0, 0], tdiff, 'hour');
+        f = [r[0], r[1], r[2], r[3]].concat(tb.slice(4));
+        if (unitIndex(su) <= 3) {
+          const keep = f.slice(0, 4);
+          if (su === 'day' && inc === 1) {
+            // round the time into the days
+            const total = BigInt(keep[3]) * NS_PER_DAY + tdiff;
+            keep[3] = Number(roundNs(total, NS_PER_DAY, mode) / NS_PER_DAY);
+            f = keep.concat([0, 0, 0, 0, 0, 0]);
+          } else f = nudgeCalendar(s, end, keep.concat([0, 0, 0, 0, 0, 0]), su, inc, mode, unitIndex(largest));
+        }
+      } else {
+        const days = BigInt(T(4, end.y, end.m, end.d) - T(4, s.y, s.m, s.d));
+        const total = roundNs(days * NS_PER_DAY + tdiff, UNIT_NS[unitIndex(su)] * BigInt(inc), mode);
+        f = balanceDurationTime([0, 0, 0, 0, 0, 0, 0, 0, 0, 0], total, largest);
+      }
+      if (sign < 0) f = f.map(v => v === 0 ? 0 : -v);
+      return newDuration(f);
     };
     // the date getters of PlainDate, also on PlainDateTime
     for (const k of ['year', 'month', 'monthCode', 'day', 'dayOfWeek', 'dayOfYear', 'weekOfYear', 'yearOfWeek', 'daysInWeek', 'daysInMonth', 'daysInYear', 'monthsInYear', 'inLeapYear', 'calendarId', 'era', 'eraYear']) {
@@ -9880,6 +9994,23 @@
       get era() { get(this, 'PlainYearMonth', 'era'); return undefined; }
       get eraYear() { get(this, 'PlainYearMonth', 'eraYear'); return undefined; }
       equals(other) { const s = get(this, 'PlainYearMonth', 'equals'), o = slots.get(PlainYearMonth.from(other)); return s.y === o.y && s.m === o.m && s.d === o.d; }
+      with(like, options = undefined) {
+        const s = get(this, 'PlainYearMonth', 'with');
+        if (!isObj(like)) throw TE('with needs an object');
+        rejectTemporalLike(like);
+        const [f, any] = readFields(like, ['month', 'monthCode', 'year'], []);
+        if (!any) throw TE('with needs at least one field');
+        const overflow = overflowOption(optionsObject(options));
+        const merged = { year: f.year === undefined ? s.y : f.year };
+        if (f.month !== undefined || f.monthCode !== undefined) { merged.month = f.month; merged.monthCode = f.monthCode; } else merged.month = s.m;
+        const m = resolveMonth(merged);
+        const [y, mm] = regulate(merged.year, m, 1, overflow);
+        return checkedYearMonth(y, mm);
+      }
+      add(duration, options = undefined) { return yearMonthAdd(this, duration, options, 1, 'add'); }
+      subtract(duration, options = undefined) { return yearMonthAdd(this, duration, options, -1, 'subtract'); }
+      until(other, options = undefined) { return yearMonthDifference(this, other, options, 1, 'until'); }
+      since(other, options = undefined) { return yearMonthDifference(this, other, options, -1, 'since'); }
       toPlainDate(item) {
         const s = get(this, 'PlainYearMonth', 'toPlainDate');
         if (!isObj(item)) throw TE('toPlainDate needs an object with day');
@@ -9902,6 +10033,37 @@
         return T(14, a.y, a.m, a.d, b.y, b.m, b.d);
       }
     }
+    // PlainYearMonth's limits: -271821-04 to 275760-09
+    const ymWithin = (y, m) => !(y < -271821 || (y === -271821 && m < 4) || y > 275760 || (y === 275760 && m > 9));
+    const checkedYearMonth = (y, m) => { if (!ymWithin(y, m)) throw RE('the year-month is outside the range Temporal supports'); return newYearMonth(y, m, 1); };
+    const yearMonthAdd = (self, durationLike, options, sign, what) => {
+      const s = get(self, 'PlainYearMonth', what);
+      const f = slots.get(toDuration(durationLike)).f.map(v => v * sign);
+      const overflow = overflowOption(optionsObject(options));
+      if (f.slice(2).some(v => v !== 0)) throw RE('a PlainYearMonth adds years and months only');
+      const r = T(2, s.y, s.m, 1, f[0], f[1], 0, 0, overflow === 'reject');
+      if (r === null) throw RE('the result is not a valid date');
+      return checkedYearMonth(r[0], r[1]);
+    };
+    const yearMonthDifference = (self, other, options, sign, what) => {
+      const s = get(self, 'PlainYearMonth', what);
+      const o2 = slots.get(PlainYearMonth.from(other));
+      const o = optionsObject(options);
+      const lu = unitOption(o, 'largestUnit', ['year', 'month'], 'auto', ['auto']);
+      const inc = incrementOption(o);
+      let mode = roundingModeOption(o, 'trunc');
+      const su = unitOption(o, 'smallestUnit', ['year', 'month'], 'month');
+      const largest = lu === 'auto' ? 'year' : lu;
+      if (unitIndex(largest) > unitIndex(su)) throw RE('largestUnit is smaller than smallestUnit');
+      if (sign < 0) mode = negateMode(mode);
+      if (s.y === o2.y && s.m === o2.m) return newDuration([0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+      const a = { y: s.y, m: s.m, d: 1 }, b = { y: o2.y, m: o2.m, d: 1 };
+      const r = T(3, a.y, a.m, 1, b.y, b.m, 1, unitIndex(largest));
+      let f = [r[0], r[1], 0, 0, 0, 0, 0, 0, 0, 0];
+      if (su !== 'month' || inc !== 1) f = nudgeCalendar(a, b, f, su, inc, mode, unitIndex(largest));
+      if (sign < 0) f = f.map(v => v === 0 ? 0 : -v);
+      return newDuration(f);
+    };
     class PlainMonthDay {
       constructor(isoMonth, isoDay, calendar = undefined, referenceISOYear = 1972) {
         if (new.target === undefined) throw TE("Constructor Temporal.PlainMonthDay requires 'new'");
@@ -9933,6 +10095,20 @@
       get day() { return get(this, 'PlainMonthDay', 'day').d; }
       get calendarId() { get(this, 'PlainMonthDay', 'calendarId'); return 'iso8601'; }
       equals(other) { const s = get(this, 'PlainMonthDay', 'equals'), o = slots.get(PlainMonthDay.from(other)); return s.y === o.y && s.m === o.m && s.d === o.d; }
+      with(like, options = undefined) {
+        const s = get(this, 'PlainMonthDay', 'with');
+        if (!isObj(like)) throw TE('with needs an object');
+        rejectTemporalLike(like);
+        const [f, any] = readFields(like, ['day', 'month', 'monthCode', 'year'], []);
+        if (!any) throw TE('with needs at least one field');
+        const overflow = overflowOption(optionsObject(options));
+        const merged = { day: f.day === undefined ? s.d : f.day, year: f.year };
+        if (f.month !== undefined || f.monthCode !== undefined) { merged.month = f.month; merged.monthCode = f.monthCode; } else merged.monthCode = monthCodeOf(s.m);
+        if (merged.monthCode === undefined && merged.year === undefined) throw TE('a month needs a year here; give monthCode');
+        const m = resolveMonth(merged);
+        const [, mm, d] = regulate(merged.year === undefined ? 1972 : merged.year, m, merged.day, overflow);
+        return newMonthDay(mm, d, 1972);
+      }
       toPlainDate(item) {
         const s = get(this, 'PlainMonthDay', 'toPlainDate');
         if (!isObj(item)) throw TE('toPlainDate needs an object with year');
