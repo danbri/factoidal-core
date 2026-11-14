@@ -412,7 +412,7 @@ def Host.measureNow (h : Host) : Host × Option Answers :=
       let anim := L4Factoidal.Rendering.Animation.styleChange h.anim ac
       let ovs := L4Factoidal.Rendering.Animation.overrides anim ac
       -- the events and the pending tasks of what the style change started need a frame
-      let h : Host := { h with anim }
+      let h : Host := { h with anim := L4Factoidal.Rendering.Animation.noteAnimated anim ovs }
       let h := if L4Factoidal.Rendering.Animation.needsFrame anim then h.askAnimationFrame else h
       keep h (if ovs.isEmpty then base else m dom h.reads.width h.reads.height ovs)
 

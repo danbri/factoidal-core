@@ -98,6 +98,10 @@ structure State where
   events : Array CssEvent := #[]
   /-- An animation frame is asked for (`frameHandle`). -/
   frameAsked : Bool := false
+  /-- The element and longhand pairs that an animation (not a transition) gave a value at
+  the last style change: the before-change style holds those values, so a difference
+  from the style without animations starts no transition there. -/
+  lastAnimated : List (Nat × String) := []
   deriving Inhabited
 
 /-- What the engine reads of the page at a style change. -/
@@ -318,8 +322,11 @@ def updateTransitions (s : State) (ac : Access) (e : Nat) : State := Id.run do
     match (s.anims[i]?).map (·.origin) with
     | some (Origin.cssTransition p) => some p
     | _ => none
+  -- CSS Transitions 1 §3: the before-change and after-change styles both hold the values
+  -- of animations, so a property an animation gave a value starts no transition
+  let animatedBefore := (s.lastAnimated.filter (·.1 == e)).map (·.2)
   for property in ac.changed e do
-    if !animatable property || stillRunning.contains property then continue
+    if !animatable property || stillRunning.contains property || animatedBefore.contains property then continue
     let some sp := Css.transitionFor specs property | continue
     let some before := ac.prev e property | continue
     let some after := ac.base e property | continue
@@ -376,6 +383,10 @@ def overrides (s : State) (ac : Access) : List Override := Id.run do
       | none => pure ()
   return keys.toList.filterMap fun k =>
     (stack[k]?).map fun (v, t) => { node := k.1, property := k.2, value := Value.toText v, transition := t }
+
+/-- The state with the animated values of this style change noted (`lastAnimated`). -/
+def noteAnimated (s : State) (ovs : List Override) : State :=
+  { s with lastAnimated := ovs.filterMap fun o => if o.transition then none else some (o.node, o.property) }
 
 /-- A style change (CSS Transitions 1 §3 "style change event"): the `@keyframes` rules of
 the sheets as they are now, then the CSS animations and the transitions of every element
@@ -576,6 +587,8 @@ private def pageHtml := "<div style=\"width: 10px\"><span>x</span></div>"
 #guard ((CSS.withAnimated { animated := [(3, "width", "1px", false)] } (fun _ => [])) 4).isEmpty
 #guard ((CSS.withAnimated { animated := [(3, "width", "1px", false)] } (fun _ => [])) 3).length == 1
 
+-- an animated value of the last style change starts no transition when the animation ends
+#guard (styleChange (noteAnimated {} [{ node := 7, property := "width", value := "10px" }]) acT).anims.size == 0
 -- events: a transition of 2 s is run and started at the first frame, ended after 2 s, then retired
 private def acE : Access := acOf [(7, [("width", "20px")])]
   [(7, [("transition-property", "width"), ("transition-duration", "2s"), ("transition-timing-function", "linear")])]
