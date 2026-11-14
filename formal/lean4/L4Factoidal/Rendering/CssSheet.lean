@@ -492,6 +492,10 @@ def ruleOf (defaultNs : Bool := false) : Nat → RawRule → Option Rule
               -- an `@property` rule that is not a valid registration is dropped (CSS
               -- Properties and Values API 1 §3)
               (CssRegister.propertyRuleOf after body).map fun r => ⟨kind, type, after, body, head ++ " { " ++ r.text ++ " }"⟩
+            else if name == "font-face" then
+              -- the descriptors of the rule, those that do not parse dropped
+              let block := (Block.parse body "font-face").text
+              some ⟨kind, type, after, body, head ++ " { " ++ block ++ (if block == "" then "" else " ") ++ "}"⟩
             else
             -- descriptors are kept as written (they are not properties of the table)
             let decls := (splitTop ';' (body.length + 1) body.toList 0 none [] []).filterMap fun piece =>
@@ -575,7 +579,10 @@ def setSelector (rule : Rule) (selector : String) : Rule :=
 
 /-- A style rule with a new declaration block (the text of `rule.style`). -/
 def setBody (rule : Rule) (body : String) : Rule :=
-  if rule.kind != "Style" then rule
+  if rule.kind == "FontFace" then
+    let block := (Block.parse body "font-face").text
+    { rule with body := block, cssText := "@font-face { " ++ block ++ (if block == "" then "" else " ") ++ "}" }
+  else if rule.kind != "Style" then rule
   else
     let block := (Block.parse body).text
     { rule with body := block, cssText := rule.prelude ++ " { " ++ block ++ (if block == "" then "" else " ") ++ "}" }
@@ -629,6 +636,12 @@ def sheetOp (q : String) : String :=
   | _ => ""
 
 /-! ### Tests and theorems -/
+
+-- @font-face: its descriptors, a unicode-range in canonical form and one that does not parse dropped
+#guard (rulesOf "@font-face { font-family: foo; src: url(http://example.com); unicode-range: u+a?; bogus: 1 }").map (·.cssText) ==
+  ["@font-face { font-family: foo; src: url(http://example.com); unicode-range: U+A0-AF; }"]
+#guard (setBody ((rulesOf "@font-face { font-family: foo }").headD default) "font-family: foo; unicode-range: u+0-1").cssText ==
+  "@font-face { font-family: foo; unicode-range: U+0-1; }"
 
 #guard (rulesOf "a { color: RED } b{}").map (·.cssText) == ["a { color: red; }", "b { }"]
 #guard (rulesOf "@property --a { initial-value: 0px; inherits: true; syntax: '<length>' } @property --b { inherits: true }").map (·.cssText) ==

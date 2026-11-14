@@ -1158,20 +1158,22 @@
   const styleOf = el => blockStyle(() => el.getAttribute('style') ?? '', nb => el.setAttribute('style', nb));
   // A CSSStyleDeclaration over a declaration block kept as text: `block()` reads it,
   // `store(text)` keeps a changed one.
-  const blockStyle = (block, store) => {
+  // `ctx`: the at-rule whose descriptors the block has ('font-face'); empty for a style block
+  const blockStyle = (block, store, ctx = '') => {
+    const blockOp = (verb, ...a) => styleOp(ctx ? ctx + ':' + verb : verb, ...a);
     // U+0001: the operation left the block as it was (an invalid value, a property not set)
     const write = nb => { if (nb !== '\u0001' && nb !== block()) store(nb); };
-    const names = () => { const r = styleOp('names', block()); return r === '' ? [] : r.split('\u0000'); };
+    const names = () => { const r = blockOp('names', block()); return r === '' ? [] : r.split('\u0000'); };
     const methods = {
-      getPropertyValue(name) { if (arguments.length < 1) throw new TypeError('getPropertyValue: 1 argument required'); return styleOp('get', block(), String(name)); },
-      getPropertyPriority(name) { if (arguments.length < 1) throw new TypeError('getPropertyPriority: 1 argument required'); return styleOp('pri', block(), String(name)); },
+      getPropertyValue(name) { if (arguments.length < 1) throw new TypeError('getPropertyValue: 1 argument required'); return blockOp('get', block(), String(name)); },
+      getPropertyPriority(name) { if (arguments.length < 1) throw new TypeError('getPropertyPriority: 1 argument required'); return blockOp('pri', block(), String(name)); },
       setProperty(name, value, priority = '') {
         if (arguments.length < 2) throw new TypeError('setProperty: 2 arguments required');
-        write(styleOp('set', block(), String(name), value === null ? '' : String(value), priority === null ? '' : String(priority)));
+        write(blockOp('set', block(), String(name), value === null ? '' : String(value), priority === null ? '' : String(priority)));
       },
       removeProperty(name) {
         if (arguments.length < 1) throw new TypeError('removeProperty: 1 argument required');
-        const r = styleOp('rem', block(), String(name)).split('\u0000'); write(r[0]); return r[1] ?? '';
+        const r = blockOp('rem', block(), String(name)).split('\u0000'); write(r[0]); return r[1] ?? '';
       },
       item(i) { if (arguments.length < 1) throw new TypeError('item: 1 argument required'); return names()[i >>> 0] ?? ''; },
     };
@@ -1179,19 +1181,19 @@
     return new Proxy(Object.create(CSSStyleDeclaration.prototype), {
       get(t, p) {
         if (typeof p !== 'string') return Reflect.get(t, p);
-        if (p === 'cssText') return styleOp('txt', block());
+        if (p === 'cssText') return blockOp('txt', block());
         if (p === 'length') return names().length;
         if (p === 'parentRule') return null;
         if (Object.prototype.hasOwnProperty.call(methods, p)) return methods[p];
         if (isIndex(p)) return names()[Number(p)];
         if (p in t) return Reflect.get(t, p);
-        return styleOp('get', block(), cssPropName(p));
+        return blockOp('get', block(), cssPropName(p));
       },
       set(t, p, v) {
         if (typeof p !== 'string') return Reflect.set(t, p, v);
-        if (p === 'cssText') { store(styleOp('txt', String(v))); return true; }
+        if (p === 'cssText') { store(blockOp('txt', String(v))); return true; }
         if (p === 'length' || p === 'parentRule' || isIndex(p)) return true;
-        write(styleOp('set', block(), cssPropName(p), v === null ? '' : String(v), ''));
+        write(blockOp('set', block(), cssPropName(p), v === null ? '' : String(v), ''));
         return true;
       },
       has(t, p) {
@@ -12436,7 +12438,7 @@
       const r = ruleNow(rule); if (r.detached) { r.body = nb; return; }
       const a = sheetOp('setbody', r.holder.st.text(), String(r.index), nb);
       if (a.charAt(0) === '\u0000') { r.holder.st.write(a.slice(1)); const fresh = ruleState.get(rulesOf(r.holder)[r.index]); Object.assign(rs, { body: fresh.body, cssText: fresh.cssText }); rulesOf(r.holder)[r.index] = rule; }
-    });
+    }, rs.kind === 'FontFace' ? 'font-face' : '');
     return rs.style;
   };
   for (const [k, f] of Object.entries({

@@ -92,16 +92,93 @@ def Block.put (b : Block) (d : Decl) : Block :=
 /-- Set a declaration at the end, removing an earlier one of the property (parsing). -/
 def Block.putLast (b : Block) (d : Decl) : Block := b.remove d.name ++ [d]
 
+/-! ### Descriptors -/
+
+/-- The text of a value with its comments taken out. A loop over the characters (a tail
+call). -/
+def dropComments (cs : List Char) (inComment : Bool) (acc : Array Char) : List Char :=
+  match cs with
+  | [] => acc.toList
+  | '/' :: '*' :: rest => dropComments rest true acc
+  | '*' :: '/' :: rest => if inComment then dropComments rest false acc else dropComments rest false ((acc.push '*').push '/')
+  | c :: rest => if inComment then dropComments rest true acc else dropComments rest false (acc.push c)
+
+/-- The number of hex digits `ds`. -/
+def hexNat (ds : List Char) : Nat :=
+  ds.foldl (fun n c => n * 16 + ((hexVal c).getD 0)) 0
+
+/-- Upper-case hex digits of `n`, at least one. -/
+def hexUpper (n : Nat) : String := (String.ofList (Nat.toDigits 16 n)).toUpper
+
+/-- One `<urange>` (CSS Syntax 3 §7.1), from its text with comments taken out, in canonical
+form (`U+A0-AF`): `u+`, then one to six hex digits and question marks (the digits first),
+or one to six hex digits, `-` and one to six hex digits; the range is in order and ends at
+or below U+10FFFF. Whitespace inside is not a range. -/
+def urangeOf (t : String) : Option String :=
+  match t.toList with
+  | u :: '+' :: rest =>
+    if u != 'u' && u != 'U' then none else
+    let isHex := fun (c : Char) => (hexVal c).isSome
+    let hex := rest.takeWhile isHex
+    let after := rest.drop hex.length
+    let qs := after.takeWhile (· == '?')
+    let after := after.drop qs.length
+    let n := hex.length + qs.length
+    if n == 0 || n > 6 then none else
+    let range : Option (Nat × Nat) :=
+      if !qs.isEmpty then
+        if after.isEmpty then some (hexNat (hex ++ qs.map fun _ => '0'), hexNat (hex ++ qs.map fun _ => 'f')) else none
+      else match after with
+        | [] => some (hexNat hex, hexNat hex)
+        | '-' :: last =>
+          if !last.isEmpty && last.length ≤ 6 && last.all isHex then some (hexNat hex, hexNat last) else none
+        | _ => none
+    match range with
+    | some (a, b) =>
+      if a > b || b > 0x10FFFF then none
+      else some ("U+" ++ hexUpper a ++ (if a == b then "" else "-" ++ hexUpper b))
+    | none => none
+  | _ => none
+
+/-- The `@font-face` descriptors (CSS Fonts 4 §4): `unicode-range` a list of ranges in
+canonical form, `font-display` one of its keywords; the others are kept as written. -/
+def fontFaceDescriptors : List String :=
+  ["font-family", "src", "font-style", "font-weight", "font-stretch", "font-width", "unicode-range",
+   "font-feature-settings", "font-variation-settings", "font-named-instance", "font-display",
+   "font-language-override", "ascent-override", "descent-override", "line-gap-override", "size-adjust"]
+
+/-- The value of descriptor `name` of an at-rule (`ctx`, such as `font-face`), when the
+value is one: `none` for a name that is no descriptor of the rule or a value that does not
+parse. -/
+def descriptorValue (ctx name value : String) : Option String :=
+  let n := lower name
+  let v := trimText value
+  if ctx != "font-face" || !fontFaceDescriptors.contains n || v == "" then none
+  else if n == "unicode-range" then
+    let pieces := ((String.ofList (dropComments v.toList false #[])).splitOn ",").map trimText
+    (pieces.mapM urangeOf).map (", ".intercalate ·)
+  else if n == "font-display" then
+    let k := lower v
+    if ["auto", "block", "swap", "fallback", "optional"].contains k then some k else none
+  else some v
+
+/-- The declarations a declaration `name: value` stands for: in a style block (`ctx` empty)
+the property's longhands (`expand`); in an at-rule's block the descriptor. -/
+def expandIn (ctx name value : String) : Option (List (String × String)) :=
+  if ctx == "" then expand name value
+  else (descriptorValue ctx name value).map fun v => [(lower name, v)]
+
 /-- The block a text denotes (CSSOM §6.6.1 "parse a CSS declaration block"): invalid
-declarations are dropped, shorthands expanded, the last declaration of a property wins. -/
-def Block.parse (text : String) : Block :=
+declarations are dropped, shorthands expanded, the last declaration of a property wins.
+`ctx`: the at-rule whose descriptors the block has (empty for a style block). -/
+def Block.parse (text : String) (ctx : String := "") : Block :=
   let cs := preprocess text.toList
   let pieces := splitTop ';' (cs.length + 1) cs 0 none [] []
   pieces.foldl (fun b piece =>
     match declOf piece with
     | none => b
     | some (name, value, important) =>
-      match expand name value with
+      match expandIn ctx name value with
       | none => b
       | some ds => ds.foldl (fun b (n, v) => b.putLast { name := n, value := v, important := important }) b) []
 
@@ -177,11 +254,11 @@ def Block.removeProperty (b : Block) (property : String) : Block :=
 /-- `setProperty(property, value, priority)` (CSSOM §6.6.1): an empty value removes the
 property; a priority other than "" or "important" and a value that does not parse leave
 the block as it is. -/
-def Block.set (b : Block) (property value priority : String) : Block :=
+def Block.set (b : Block) (property value priority : String) (ctx : String := "") : Block :=
   if trimText value == "" then b.removeProperty property
   else if !(priority == "" || lower priority == "important") then b
   else
-    match expand property value with
+    match expandIn ctx property value with
     | none => b
     | some ds =>
       ds.foldl (fun b (n, v) => b.put { name := n, value := v, important := lower priority == "important" }) b
@@ -241,21 +318,31 @@ fields of `q` are separated by U+0000, the first is the verb.
 - `txt` text → the block text in canonical form (`cssText`)
 - `names` block → the property names, separated by U+0000
 - `sup` property value → "1" or "0"
-- `val` property value → "1" and the canonical value, or "0" -/
+- `val` property value → "1" and the canonical value, or "0"
+
+A verb written `ctx:verb` (`font-face:set`) works on a block of the descriptors of at-rule
+`ctx` (`descriptorValue`). -/
 def styleOp (q : String) : String :=
-  match q.splitOn "\x00" with
-  | ["get", block, property] => (Block.parse block).get property
-  | ["pri", block, property] => (Block.parse block).priority property
+  -- a verb `ctx:verb` is on the block of an at-rule's descriptors (`font-face:set`)
+  let (ctx, fields) := match q.splitOn "\x00" with
+    | verb :: rest =>
+      match verb.splitOn ":" with
+      | [c, v] => (c, v :: rest)
+      | _ => ("", verb :: rest)
+    | [] => ("", [])
+  match fields with
+  | ["get", block, property] => (Block.parse block ctx).get property
+  | ["pri", block, property] => (Block.parse block ctx).priority property
   | ["set", block, property, value, priority] =>
-    let b := Block.parse block
-    let b' := b.set property value priority
+    let b := Block.parse block ctx
+    let b' := b.set property value priority ctx
     if b' == b then "\x01" else b'.text
   | ["rem", block, property] =>
-    let b := Block.parse block
+    let b := Block.parse block ctx
     let b' := b.removeProperty property
     (if b' == b then "\x01" else b'.text) ++ "\x00" ++ b.get property
-  | ["txt", text] => (Block.parse text).text
-  | ["names", block] => "\x00".intercalate (Block.parse block).names
+  | ["txt", text] => (Block.parse text ctx).text
+  | ["names", block] => "\x00".intercalate (Block.parse block ctx).names
   | ["sup", property, value] => if supports property value then "1" else "0"
   | ["val", property, value] =>
     match specified property value with
@@ -266,6 +353,20 @@ def styleOp (q : String) : String :=
 /-! ### Tests and theorems -/
 
 #guard (Block.parse "color: RED; margin: 1px 2px").text == "color: red; margin: 1px 2px;"
+-- unicode-range (urange-parsing.html)
+#guard ["u/**/+/**/a/**/?", "u+abc", "U+AbC", "u+a", "u+a????", "u/**/+0a/**/?", "u+00000a", "u+1e9a", "u/**/+0/**/?",
+  "u+000000", "u+0?????", "u+1e3", "u+1e-20", "u/**/+0/**/-0a", "u+000000-0aaaaa", "u+0-1"].map
+  (descriptorValue "font-face" "unicode-range") ==
+  ["U+A0-AF", "U+ABC", "U+ABC", "U+A", "U+A0000-AFFFF", "U+A0-AF", "U+A", "U+1E9A", "U+0-F", "U+0", "U+0-FFFFF", "U+1E3",
+   "U+1E-20", "U+0-A", "U+0-AAAAA", "U+0-1"].map some
+#guard (["u+efg", "u+ abc", "u +abc", "u+aaaaaaa", "u+aaaaaa?", "u+a?a", "u+aaaaaa", "u+a?????", "u/**/0", "u+0000000",
+  "u+0?a", "u+0+0a", "u+0?-0a", "u+0-0a?", "u+222222-22222a", "u-0-1", "u+"].map
+  (descriptorValue "font-face" "unicode-range")).all (·.isNone)
+#guard descriptorValue "font-face" "unicode-range" "u+0-7f, U+A?" == some "U+0-7F, U+A0-AF"
+#guard styleOp "font-face:get\x00unicode-range: u+a?\x00unicode-range" == "U+A0-AF"
+#guard styleOp "font-face:set\x00font-family: x\x00unicode-range\x00u+0-1\x00" == "font-family: x; unicode-range: U+0-1;"
+#guard styleOp "font-face:set\x00font-family: x\x00unicode-range\x00u+efg\x00" == "\x01"
+#guard styleOp "set\x00\x00unicode-range\x00u+0-1\x00" == "\x01"
 #guard (Block.parse "color: red; color: blue").text == "color: blue;"
 #guard (Block.parse "color: red; nonsense: 1; width: -1px; height: 2px").text == "color: red; height: 2px;"
 #guard (Block.parse "color: red !important").text == "color: red !important;"
