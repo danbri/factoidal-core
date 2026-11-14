@@ -23,8 +23,8 @@
  */
 
 
-#ifndef __internal_Hacl_P256_H
-#define __internal_Hacl_P256_H
+#ifndef internal_Hacl_P256_H
+#define internal_Hacl_P256_H
 
 #if defined(__cplusplus)
 extern "C" {
@@ -35,11 +35,7 @@ extern "C" {
 #include "krml/lowstar_endianness.h"
 #include "krml/internal/target.h"
 
-#include "internal/Hacl_P256_PrecompTable.h"
-#include "internal/Hacl_Krmllib.h"
-#include "internal/Hacl_Bignum_Base.h"
 #include "../Hacl_P256.h"
-#include "lib_intrinsics.h"
 
 bool Hacl_Impl_P256_DH_ecp256dh_i(uint8_t *public_key, uint8_t *private_key);
 
@@ -54,5 +50,5 @@ Hacl_Impl_P256_DH_ecp256dh_r(
 }
 #endif
 
-#define __internal_Hacl_P256_H_DEFINED
-#endif
+#define internal_Hacl_P256_H_DEFINED
+#endif /* internal_Hacl_P256_H */

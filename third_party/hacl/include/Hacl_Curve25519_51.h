@@ -23,8 +23,8 @@
  */
 
 
-#ifndef __Hacl_Curve25519_51_H
-#define __Hacl_Curve25519_51_H
+#ifndef Hacl_Curve25519_51_H
+#define Hacl_Curve25519_51_H
 
 #if defined(__cplusplus)
 extern "C" {
@@ -34,8 +34,6 @@ extern "C" {
 #include "krml/internal/types.h"
 #include "krml/lowstar_endianness.h"
 #include "krml/internal/target.h"
-
-#include "Hacl_Krmllib.h"
 
 /**
 Compute the scalar multiple of a point.
@@ -69,5 +67,5 @@ bool Hacl_Curve25519_51_ecdh(uint8_t *out, uint8_t *priv, uint8_t *pub);
 }
 #endif
 
-#define __Hacl_Curve25519_51_H_DEFINED
-#endif
+#define Hacl_Curve25519_51_H_DEFINED
+#endif /* Hacl_Curve25519_51_H */

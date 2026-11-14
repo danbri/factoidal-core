@@ -103,6 +103,20 @@
    ]
   },
   {
+   "src": "third_party/hacl/src/Hacl_Hash_SHA3.c",
+   "flags": [
+    "-I",
+    "$ROOT/third_party/hacl/include"
+   ]
+  },
+  {
+   "src": "third_party/hacl/src/Hacl_Hash_MD5.c",
+   "flags": [
+    "-I",
+    "$ROOT/third_party/hacl/include"
+   ]
+  },
+  {
    "src": "third_party/hacl/src/Lib_Memzero0.c",
    "flags": [
     "-I",

@@ -2,7 +2,7 @@
  *
  * Realises the `@[extern "l4_web_hacl_*"]` opaques of
  * formal/lean4/L4Factoidal/Crypto/WebHacl.lean over the vendored HACL* C
- * (third_party/hacl/, cryspen/hacl-packages 05c3d8fb321ed65e3db3a6a8b853019e86fb40a2,
+ * (third_party/hacl/, hacl-star/hacl-star f557259007db9933442dde10aa995c1b00bd3446,
  * Apache-2.0; third_party/hacl/PROVENANCE.md). Design record:
  * docs/designissues/2026-11-09-hacl-web-crypto.md, section "The C boundary".
  *

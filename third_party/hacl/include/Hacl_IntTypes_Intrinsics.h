@@ -23,8 +23,8 @@
  */
 
 
-#ifndef __Hacl_IntTypes_Intrinsics_H
-#define __Hacl_IntTypes_Intrinsics_H
+#ifndef Hacl_IntTypes_Intrinsics_H
+#define Hacl_IntTypes_Intrinsics_H
 
 #if defined(__cplusplus)
 extern "C" {
@@ -70,8 +70,8 @@ Hacl_IntTypes_Intrinsics_sub_borrow_u64(uint64_t cin, uint64_t x, uint64_t y, ui
   uint64_t res = x - y - cin;
   uint64_t
   c =
-    ((FStar_UInt64_gte_mask(res, x) & ~FStar_UInt64_eq_mask(res, x))
-    | (FStar_UInt64_eq_mask(res, x) & cin))
+    ((FStar_UInt64_gte_mask(res, x) & ~FStar_UInt64_eq_mask(res, x)) |
+      (FStar_UInt64_eq_mask(res, x) & cin))
     & 1ULL;
   r[0U] = res;
   return c;
@@ -81,5 +81,5 @@ Hacl_IntTypes_Intrinsics_sub_borrow_u64(uint64_t cin, uint64_t x, uint64_t y, ui
 }
 #endif
 
-#define __Hacl_IntTypes_Intrinsics_H_DEFINED
-#endif
+#define Hacl_IntTypes_Intrinsics_H_DEFINED
+#endif /* Hacl_IntTypes_Intrinsics_H */

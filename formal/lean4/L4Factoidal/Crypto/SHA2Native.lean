@@ -44,8 +44,8 @@ What is trusted, and by whom:
     Hacl_Hash_SHA2.c`, entry point `Hacl_Hash_SHA2_hash_256`),
     extracted by KaRaMeL from F*/Low* code proved memory-safe and
     functionally correct against the specification by Project Everest.
-    Vendored unmodified from cryspen/hacl-packages commit
-    05c3d8fb321ed65e3db3a6a8b853019e86fb40a2 (2024-09-30), Apache-2.0
+    Vendored unmodified from hacl-star/hacl-star commit
+    f557259007db9933442dde10aa995c1b00bd3446 (2026-10-29), Apache-2.0
     — `third_party/hacl/PROVENANCE.md`. The same translation unit was
     already compiled and linked (native `extern_lib libl4hacl`, and
     `Wasm/build-wasm.sh`) because Ed25519 needs SHA-512 internally.

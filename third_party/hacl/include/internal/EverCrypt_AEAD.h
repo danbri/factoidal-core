@@ -23,8 +23,8 @@
  */
 
 
-#ifndef __Hacl_Chacha20_Vec128_H
-#define __Hacl_Chacha20_Vec128_H
+#ifndef internal_EverCrypt_AEAD_H
+#define internal_EverCrypt_AEAD_H
 
 #if defined(__cplusplus)
 extern "C" {
@@ -35,29 +35,29 @@ extern "C" {
 #include "krml/lowstar_endianness.h"
 #include "krml/internal/target.h"
 
-void
-Hacl_Chacha20_Vec128_chacha20_encrypt_128(
-  uint32_t len,
-  uint8_t *out,
-  uint8_t *text,
-  uint8_t *key,
-  uint8_t *n,
-  uint32_t ctr
-);
+#include "internal/Hacl_Spec.h"
+#include "../EverCrypt_AEAD.h"
 
-void
-Hacl_Chacha20_Vec128_chacha20_decrypt_128(
-  uint32_t len,
-  uint8_t *out,
-  uint8_t *cipher,
-  uint8_t *key,
-  uint8_t *n,
-  uint32_t ctr
-);
+/**
+Both encryption and decryption require a state that holds the key.
+The state may be reused as many times as desired.
+*/
+typedef struct EverCrypt_AEAD_state_s_s
+{
+  Spec_Cipher_Expansion_impl impl;
+  uint8_t *ek;
+}
+EverCrypt_AEAD_state_s;
+
+/**
+Both encryption and decryption require a state that holds the key.
+The state may be reused as many times as desired.
+*/
+bool EverCrypt_AEAD_uu___is_Ek(Spec_Agile_AEAD_alg a, EverCrypt_AEAD_state_s projectee);
 
 #if defined(__cplusplus)
 }
 #endif
 
-#define __Hacl_Chacha20_Vec128_H_DEFINED
-#endif
+#define internal_EverCrypt_AEAD_H_DEFINED
+#endif /* internal_EverCrypt_AEAD_H */

@@ -2,10 +2,11 @@
  * (third_party/hacl/src/EverCrypt_AEAD.c, EverCrypt_AutoConfig2.c,
  * EverCrypt_Chacha20Poly1305.c), https://github.com/danbri/factoidal/issues/677.
  *
- * Upstream (cryspen/hacl-packages 05c3d8fb321ed65e3db3a6a8b853019e86fb40a2)
- * generates this file with CMake from config/Config.h.in. This file is that
- * template filled in by hand for the one configuration this tree builds, and
- * it is NOT an upstream file: it holds no code, only the feature switches.
+ * Upstream (hacl-star/hacl-star f557259007db9933442dde10aa995c1b00bd3446)
+ * generates this file with the shell script dist/gcc-compatible/configure.
+ * This file is what that script writes, filled in by hand for the one
+ * configuration this tree builds, and it is NOT an upstream file: it holds no
+ * code, only the feature switches.
  *
  * - HACL_CAN_COMPILE_VALE is 1 only on x86-64 (Linux or macOS, not
  *   Emscripten). The lakefile assembles the Vale .S files only there, and
@@ -15,7 +16,8 @@
  *   ChaCha20-Poly1305 units are not vendored, so EverCrypt_Chacha20Poly1305.c
  *   (link closure of EverCrypt_AEAD.c) compiles to the portable
  *   Hacl_AEAD_Chacha20Poly1305 calls only.
- * - The TARGET_ARCHITECTURE ids are the values of config/default_config.h. */
+ * - The TARGET_ARCHITECTURE ids have the values of the vendored
+ *   evercrypt_targetconfig.h (X64 = 2). */
 #ifndef L4_HACL_VALE_CONFIG_H
 #define L4_HACL_VALE_CONFIG_H
 

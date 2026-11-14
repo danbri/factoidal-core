@@ -121,11 +121,11 @@ SOURCES=()
 while IFS= read -r file; do SOURCES+=("$file"); done < "$BUILD/core-c-files.txt"
 # HACL* for crypto.subtle (L4Factoidal/Crypto/WebHacl.lean; record
 # docs/designissues/2026-11-09-hacl-web-crypto.md): the vendored, unmodified units the
-# boundary ffi/hacl_webcrypto.c calls, and their link closure (BLAKE2 for Hacl_HMAC.c).
+# boundary ffi/hacl_webcrypto.c calls, and their link closure (BLAKE2 and MD5 for Hacl_HMAC.c).
 # Portable C only: no Vale assembly, no vector units, so native and Wasm are the same code.
 HACL="$ROOT/third_party/hacl"
 HACL_SOURCES=("$PROJECT/ffi/hacl_webcrypto.c")
-for unit in Hacl_Hash_SHA1 Hacl_Hash_SHA2 Hacl_Hash_SHA3 Hacl_HMAC Hacl_Hash_Blake2s Hacl_Hash_Blake2b Hacl_Ed25519 \
+for unit in Hacl_Hash_SHA1 Hacl_Hash_SHA2 Hacl_Hash_SHA3 Hacl_HMAC Hacl_Hash_Blake2s Hacl_Hash_Blake2b Hacl_Hash_MD5 Hacl_Ed25519 \
   Hacl_Curve25519_51 Hacl_P256 Hacl_AEAD_Chacha20Poly1305 Hacl_Chacha20 Hacl_MAC_Poly1305 Hacl_Bignum Hacl_Bignum64 Hacl_RSAPSS Lib_Memzero0; do
   HACL_SOURCES+=("$HACL/src/$unit.c")
 done

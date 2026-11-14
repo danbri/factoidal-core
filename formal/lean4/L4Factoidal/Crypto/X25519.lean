@@ -23,8 +23,8 @@ COMPUTE.
 Trusted: X25519 as implemented by HACL*
 (`Hacl_Curve25519_51_scalarmult` and `_secret_to_public`), extracted by
 KaRaMeL from F*/Low* code proved by Project Everest, vendored unmodified
-from cryspen/hacl-packages commit
-05c3d8fb321ed65e3db3a6a8b853019e86fb40a2 — `third_party/hacl/PROVENANCE.md`.
+from hacl-star/hacl-star commit
+f557259007db9933442dde10aa995c1b00bd3446 — `third_party/hacl/PROVENANCE.md`.
 And `ffi/hacl_kdf.c`, which is two length checks per entry point.
 
 HACL* CLAMPS the scalar itself, as RFC 7748 §5 requires (`decodeScalar25519`:

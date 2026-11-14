@@ -44,7 +44,7 @@ Trusted: HPKE as implemented by HACL*
 `Hacl_Curve25519_51.c`, `Hacl_HKDF.c`, `Hacl_HMAC.c`,
 `Hacl_AEAD_Chacha20Poly1305.c`), extracted by KaRaMeL from F*/Low* code
 proved by Project Everest, vendored unmodified from
-cryspen/hacl-packages commit 05c3d8fb321ed65e3db3a6a8b853019e86fb40a2 —
+hacl-star/hacl-star commit f557259007db9933442dde10aa995c1b00bd3446 —
 `third_party/hacl/PROVENANCE.md`. And `ffi/hacl_hpke.c`, which is length
 checks and one concatenation.
 

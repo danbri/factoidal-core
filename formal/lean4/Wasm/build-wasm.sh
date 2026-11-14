@@ -431,9 +431,10 @@ HACL_DIR="$REPO_ROOT/third_party/hacl"
 # The 2026-09-07 additions: ChaCha20-Poly1305 (Crypto/ChaChaPoly.lean),
 # HMAC + HKDF-SHA-256 (Crypto/Hkdf.lean), X25519 (Crypto/X25519.lean, over the
 # Hacl_Curve25519_51.c already listed) and HPKE base mode (Crypto/Hpke.lean).
-# Hacl_Hash_SHA1.c, Hacl_Hash_Blake2s.c, Hacl_Hash_Blake2b.c and
-# Lib_Memzero0.c are LINK CLOSURE of Hacl_HMAC.c, which is one translation
-# unit for every HMAC hash; no Lean code calls them, and leaving them out
+# Hacl_Hash_SHA1.c, Hacl_Hash_Blake2s.c, Hacl_Hash_Blake2b.c, Hacl_Hash_MD5.c
+# and Lib_Memzero0.c are LINK CLOSURE of Hacl_HMAC.c, which is one translation
+# unit for every HMAC hash (MD5 and SHA-3 since the hacl-star f557259007
+# re-pin); no Lean code calls them, and leaving them out
 # fails the link. Every unit here is the PORTABLE scalar variant: the
 # Simd128/Simd256 and Vec128/Vec256 units need target intrinsics wasm32 does
 # not have. AES-GCM: the pinned release has no portable AES-GCM, only Vale
@@ -451,7 +452,8 @@ for f in "$HACL_DIR/src/Hacl_Ed25519.c" "$HACL_DIR/src/Hacl_Curve25519_51.c" \
          "$HACL_DIR/src/Hacl_Chacha20.c" "$HACL_DIR/src/Hacl_MAC_Poly1305.c" \
          "$HACL_DIR/src/Hacl_HKDF.c" "$HACL_DIR/src/Hacl_HMAC.c" \
          "$HACL_DIR/src/Hacl_Hash_SHA1.c" "$HACL_DIR/src/Hacl_Hash_Blake2s.c" \
-         "$HACL_DIR/src/Hacl_Hash_Blake2b.c" "$HACL_DIR/src/Lib_Memzero0.c" \
+         "$HACL_DIR/src/Hacl_Hash_Blake2b.c" "$HACL_DIR/src/Hacl_Hash_MD5.c" \
+         "$HACL_DIR/src/Lib_Memzero0.c" \
          "$HACL_DIR/src/Hacl_HPKE_Curve51_CP32_SHA256.c" "$HACL_DIR/src/Hacl_RSAPSS.c" \
          "$HACL_DIR/src/Hacl_Hash_SHA3.c"; do
   emcc $CFLAGS -I "$HACL_DIR/include" -c "$f" -o "$LIB_OBJ/$(basename "${f%.c}").o"

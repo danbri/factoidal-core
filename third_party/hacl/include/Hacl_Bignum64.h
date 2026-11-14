@@ -23,8 +23,8 @@
  */
 
 
-#ifndef __Hacl_Bignum64_H
-#define __Hacl_Bignum64_H
+#ifndef Hacl_Bignum64_H
+#define Hacl_Bignum64_H
 
 #if defined(__cplusplus)
 extern "C" {
@@ -35,7 +35,6 @@ extern "C" {
 #include "krml/lowstar_endianness.h"
 #include "krml/internal/target.h"
 
-#include "Hacl_Krmllib.h"
 #include "Hacl_Bignum.h"
 
 typedef Hacl_Bignum_MontArithmetic_bn_mont_ctx_u64 *Hacl_Bignum64_pbn_mont_ctx_u64;
@@ -394,5 +393,5 @@ uint64_t Hacl_Bignum64_eq_mask(uint32_t len, uint64_t *a, uint64_t *b);
 }
 #endif
 
-#define __Hacl_Bignum64_H_DEFINED
-#endif
+#define Hacl_Bignum64_H_DEFINED
+#endif /* Hacl_Bignum64_H */

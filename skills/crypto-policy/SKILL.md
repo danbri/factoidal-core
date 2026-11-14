@@ -209,7 +209,7 @@ that, and checks the primitives against `node:crypto`.
 ### The `@[extern]` crypto family, as it stands 2026-09-07
 
 Every member is HACL\* from the SAME pinned commit,
-`cryspen/hacl-packages` `05c3d8fb321ed65e3db3a6a8b853019e86fb40a2`
+`hacl-star/hacl-star` `f557259007db9933442dde10aa995c1b00bd3446`
 (`third_party/hacl/PROVENANCE.md`). A NEW member needs the same three
 things every existing one has: a module-header trust statement naming
 what is trusted and what is NOT checked, a shim carrying length checks

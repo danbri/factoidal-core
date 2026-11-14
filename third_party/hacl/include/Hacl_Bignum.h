@@ -23,8 +23,8 @@
  */
 
 
-#ifndef __Hacl_Bignum_H
-#define __Hacl_Bignum_H
+#ifndef Hacl_Bignum_H
+#define Hacl_Bignum_H
 
 #if defined(__cplusplus)
 extern "C" {
@@ -35,7 +35,6 @@ extern "C" {
 #include "krml/lowstar_endianness.h"
 #include "krml/internal/target.h"
 
-#include "Hacl_Krmllib.h"
 #include "lib_intrinsics.h"
 
 typedef struct Hacl_Bignum_MontArithmetic_bn_mont_ctx_u32_s
@@ -60,5 +59,5 @@ Hacl_Bignum_MontArithmetic_bn_mont_ctx_u64;
 }
 #endif
 
-#define __Hacl_Bignum_H_DEFINED
-#endif
+#define Hacl_Bignum_H_DEFINED
+#endif /* Hacl_Bignum_H */

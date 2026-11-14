@@ -23,8 +23,8 @@
  */
 
 
-#ifndef __internal_Hacl_Ed25519_H
-#define __internal_Hacl_Ed25519_H
+#ifndef internal_Hacl_Ed25519_H
+#define internal_Hacl_Ed25519_H
 
 #if defined(__cplusplus)
 extern "C" {
@@ -35,12 +35,6 @@ extern "C" {
 #include "krml/lowstar_endianness.h"
 #include "krml/internal/target.h"
 
-#include "internal/Hacl_Krmllib.h"
-#include "internal/Hacl_Hash_SHA2.h"
-#include "internal/Hacl_Ed25519_PrecompTable.h"
-#include "internal/Hacl_Curve25519_51.h"
-#include "internal/Hacl_Bignum_Base.h"
-#include "internal/Hacl_Bignum25519_51.h"
 #include "../Hacl_Ed25519.h"
 
 void Hacl_Bignum25519_reduce_513(uint64_t *a);
@@ -71,5 +65,5 @@ void Hacl_Impl_Ed25519_Ladder_point_mul(uint64_t *out, uint8_t *scalar, uint64_t
 }
 #endif
 
-#define __internal_Hacl_Ed25519_H_DEFINED
-#endif
+#define internal_Hacl_Ed25519_H_DEFINED
+#endif /* internal_Hacl_Ed25519_H */

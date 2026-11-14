@@ -23,8 +23,8 @@
  */
 
 
-#ifndef __internal_Hacl_Curve25519_51_H
-#define __internal_Hacl_Curve25519_51_H
+#ifndef internal_Hacl_Curve25519_51_H
+#define internal_Hacl_Curve25519_51_H
 
 #if defined(__cplusplus)
 extern "C" {
@@ -35,8 +35,6 @@ extern "C" {
 #include "krml/lowstar_endianness.h"
 #include "krml/internal/target.h"
 
-#include "internal/Hacl_Krmllib.h"
-#include "internal/Hacl_Bignum25519_51.h"
 #include "../Hacl_Curve25519_51.h"
 
 void
@@ -53,5 +51,5 @@ void Hacl_Curve25519_51_finv(uint64_t *o, uint64_t *i, FStar_UInt128_uint128 *tm
 }
 #endif
 
-#define __internal_Hacl_Curve25519_51_H_DEFINED
-#endif
+#define internal_Hacl_Curve25519_51_H_DEFINED
+#endif /* internal_Hacl_Curve25519_51_H */

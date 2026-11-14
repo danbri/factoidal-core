@@ -50,7 +50,7 @@ Trusted: HKDF-SHA-256 and HMAC-SHA-256 as implemented by HACL*
 `Hacl_HKDF_extract_sha2_256`, `Hacl_HKDF_expand_sha2_256`,
 `Hacl_HMAC_compute_sha2_256`), extracted by KaRaMeL from F*/Low* code
 proved by Project Everest; vendored unmodified from
-cryspen/hacl-packages commit 05c3d8fb321ed65e3db3a6a8b853019e86fb40a2
+hacl-star/hacl-star commit f557259007db9933442dde10aa995c1b00bd3446
 (`third_party/hacl/PROVENANCE.md`). And `ffi/hacl_kdf.c`, which is
 length checks and `lean_sarray` plumbing with no arithmetic.
 

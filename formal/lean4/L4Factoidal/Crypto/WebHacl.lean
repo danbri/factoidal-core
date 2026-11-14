@@ -4,7 +4,7 @@ L4Factoidal.Crypto.WebHacl — the web engine's boundary to HACL*: the externs t
 
 Record: docs/designissues/2026-11-09-hacl-web-crypto.md. C side: `ffi/hacl_webcrypto.c`
 (the only C between page scripts and HACL*), over the vendored HACL* C of
-`third_party/hacl/` (cryspen/hacl-packages 05c3d8fb321ed65e3db3a6a8b853019e86fb40a2,
+`third_party/hacl/` (hacl-star/hacl-star f557259007db9933442dde10aa995c1b00bd3446,
 Apache-2.0; `third_party/hacl/PROVENANCE.md`).
 
 ## The boundary, as types
