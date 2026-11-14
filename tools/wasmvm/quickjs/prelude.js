@@ -10216,6 +10216,8 @@
   class MessagePort extends EventTarget {
     constructor() { if (!portMaking) throw new TypeError('Illegal constructor'); super(); this._q = []; this._started = false; this._other = null; this._closed = false; }
     postMessage(message, transfer) {
+      // a port whose other end is in another agent (a SharedWorker's): the message crosses as bytes
+      if (this._remote) { if (!this._closed) this._remote(message, transfer); return; }
       const data = globalThis.structuredClone(message), o = this._other;
       if (!o || o._closed || this._closed) return;
       o._q.push(data); if (o._started) o._flush();
@@ -11879,6 +11881,9 @@
     const head = n.worker(3);
     if (typeof head !== 'string' || head === '') return;
     const { w, k, h } = JSON.parse(head);
+    // a shared worker's events are its ports': the page's SharedWorker objects, the scope's connections
+    const shared = inWorker ? (sharedScope ? sharedScope : null) : sharedById.get(w);
+    if (shared) { sharedEvent(shared, k, h); return; }
     const target = inWorker ? globalThis : workerObjects.get(w);
     if (!target || (!inWorker && workerSlots.get(target).terminated)) return;
     if (k === 'message') {
@@ -11942,6 +11947,75 @@
   handlerProp(Worker.prototype, ['message', 'messageerror', 'error']);
   Object.defineProperty(Worker.prototype, Symbol.toStringTag, { value: 'Worker', configurable: true });
   if (workersOn) def('Worker', Worker);
+  // ---- SharedWorker (HTML §10.2.6.4, §10.2.1.2) on the same core: Lean keeps the worker as it
+  // keeps a dedicated one (its own realm, loop and budget; only bytes cross). One worker for
+  // each script URL and name among the documents of this realm (a page and its same-origin
+  // frames: this engine has one session a page, so pages do not share one). A connection is a
+  // pair of MessagePorts, one here and one in the worker's scope; every message on the
+  // worker's one channel names its connection ({ port, data }), and { port, connect } opens it.
+  const SHARED = '\u0001shared\u0001';
+  const sharedByKey = new Map(), sharedById = new Map(), sharedSlots = new WeakMap();
+  let sharedScope = null;   // in a shared worker's realm: { ports: [MessagePort] }
+  const remotePort = send => { portMaking = true; const p = new MessagePort(); portMaking = false; p._remote = send; return p; };
+  const portTake = (port, data) => { if (!port || port._closed) return; port._q.push(data); if (port._started) port._flush(); };
+  const sharedEvent = (shared, k, h) => {
+    if (k === 'message') {
+      let m = null;
+      try { m = n0.deserialize(n.worker(4)); } catch { return; }
+      if (m === null || typeof m !== 'object' || typeof m.port !== 'number') return;
+      if (inWorker && m.connect === true) {
+        // HTML §10.2.6.4 step 11.4: a connect event at the scope, with the new port as its source
+        const port = remotePort((message, transfer) => n.worker(1, 0, cloneOut({ port: m.port, data: message }, transfer, 'MessagePort')));
+        shared.ports[m.port] = port;
+        const e = new MessageEvent('connect', { data: '', ports: [port], source: port });
+        state(e).trusted = true;
+        dispatch(globalThis, e);
+        return;
+      }
+      portTake(shared.ports[m.port], m.data);
+    } else if (k === 'loaderror' && !inWorker) {
+      for (const o of shared.objects) { const e = new Event('error'); state(e).trusted = true; dispatch(o, e); }
+    } else if (k === 'error' && !inWorker) {
+      // an uncaught error of a shared worker is its own (HTML §10.2.5): not an event of the page
+      try { n.log('Uncaught (in shared worker) ' + JSON.parse(h).message); } catch { /* no message */ }
+    }
+  };
+  class SharedWorker extends EventTarget {
+    constructor(scriptURL, options = undefined) {
+      if (arguments.length < 1) throw new TypeError("Failed to construct 'SharedWorker': 1 argument required, but only 0 present.");
+      super();
+      const o = typeof options === 'string' ? { name: options } : options == null ? {} : options;
+      if (typeof o !== 'object' && typeof o !== 'function') throw new TypeError("Failed to construct 'SharedWorker': The provided value is not of type '(DOMString or SharedWorkerOptions)'.");
+      const type = o.type === undefined ? 'classic' : String(o.type);
+      if (type !== 'classic' && type !== 'module') throw new TypeError(`Failed to construct 'SharedWorker': The provided value '${type}' is not a valid enum value of type WorkerType.`);
+      const name = o.name === undefined ? '' : String(o.name);
+      const url = resolveURL(String(scriptURL), scriptBase());
+      if (url === null) throw new DOMException(`Failed to construct 'SharedWorker': The URL '${scriptURL}' is invalid.`, 'SyntaxError');
+      if (type === 'module') throw new DOMException("Failed to construct 'SharedWorker': module workers are not supported here.", 'NotSupportedError');
+      const scheme = /^[a-z][a-z0-9+.-]*:/i.exec(url)?.[0] ?? '';
+      if (scheme !== 'data:' && scheme !== 'blob:' && originOf(url) !== originOf(href))
+        throw new DOMException(`Failed to construct 'SharedWorker': Script at '${url}' cannot be accessed from origin '${originOf(href)}'.`, 'SecurityError');
+      const key = url + '\u0000' + name;
+      let shared = sharedByKey.get(key);
+      if (!shared) {
+        shared = { id: n.worker(0, url, SHARED + name), ports: [], objects: [] };
+        sharedByKey.set(key, shared); sharedById.set(shared.id, shared);
+      }
+      const k = shared.ports.length, id = shared.id;
+      const port = remotePort((message, transfer) => n.worker(1, id, cloneOut({ port: k, data: message }, transfer, 'MessagePort')));
+      shared.ports.push(port); shared.objects.push(this);
+      sharedSlots.set(this, port);
+      n.worker(1, id, n0.serialize({ port: k, connect: true }, []));
+    }
+    get port() {
+      const p = sharedSlots.get(this);
+      if (!p) throw new TypeError('Illegal invocation');
+      return p;
+    }
+  }
+  handlerProp(SharedWorker.prototype, ['error']);
+  Object.defineProperty(SharedWorker.prototype, Symbol.toStringTag, { value: 'SharedWorker', configurable: true });
+  if (workersOn && typeof MessagePort === 'function') def('SharedWorker', SharedWorker);
   // The globals a dedicated worker's scope keeps (HTML §10.2.1 and the [Exposed=Worker]
   // interfaces this engine has), besides the language's own (`esGlobals`).
   const workerGlobals = new Set(['self', 'console', 'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval',
@@ -11973,9 +12047,13 @@
   const makeWorkerScope = (url, name) => {
     inWorker = true;
     href = url;
+    // a shared worker's scope (the SharedWorker constructor names it so): its connections
+    const isShared = name.startsWith(SHARED);
+    if (isShared) { name = name.slice(SHARED.length); sharedScope = { ports: [] }; }
     const nav = globalThis.navigator;
     class WorkerGlobalScope extends EventTarget { constructor() { throw new TypeError('Illegal constructor'); } }
     class DedicatedWorkerGlobalScope extends WorkerGlobalScope { constructor() { throw new TypeError('Illegal constructor'); } }
+    class SharedWorkerGlobalScope extends WorkerGlobalScope { constructor() { throw new TypeError('Illegal constructor'); } }
     const parts = new WeakMap();
     class WorkerLocation { constructor() { throw new TypeError('Illegal constructor'); } toString() { return parts.get(this).href; } }
     for (const k of ['href', 'origin', 'protocol', 'host', 'hostname', 'port', 'pathname', 'search', 'hash'])
@@ -11993,8 +12071,8 @@
     const wnav = Object.create(WorkerNavigator.prototype);
     for (const k of Object.getOwnPropertyNames(globalThis))
       if (!esGlobals.has(k) && !workerGlobals.has(k)) { try { delete globalThis[k]; } catch {} }
-    Object.setPrototypeOf(globalThis, DedicatedWorkerGlobalScope.prototype);
-    const WP = WorkerGlobalScope.prototype, DP = DedicatedWorkerGlobalScope.prototype;
+    Object.setPrototypeOf(globalThis, isShared ? SharedWorkerGlobalScope.prototype : DedicatedWorkerGlobalScope.prototype);
+    const WP = WorkerGlobalScope.prototype, DP = isShared ? SharedWorkerGlobalScope.prototype : DedicatedWorkerGlobalScope.prototype;
     const getter = (o, k, f) => Object.defineProperty(o, k, { get: f, configurable: true, enumerable: true });
     getter(WP, 'self', function () { return globalThis; });
     getter(WP, 'location', () => loc);
@@ -12017,16 +12095,17 @@
       }
     });
     getter(DP, 'name', () => name);
-    define(DP, 'postMessage', function postMessage(message, options = undefined) {
+    if (!isShared) define(DP, 'postMessage', function postMessage(message, options = undefined) {
       if (arguments.length < 1) throw new TypeError("Failed to execute 'postMessage' on 'DedicatedWorkerGlobalScope': 1 argument required, but only 0 present.");
       n.worker(1, 0, cloneOut(message, options, 'DedicatedWorkerGlobalScope'));
     });
     define(DP, 'close', function close() { n.worker(10); });
     handlerProp(WP, ['error', 'languagechange', 'offline', 'online', 'rejectionhandled', 'unhandledrejection']);
-    handlerProp(DP, ['message', 'messageerror']);
+    handlerProp(DP, isShared ? ['connect'] : ['message', 'messageerror']);
     Object.defineProperty(WP, Symbol.toStringTag, { value: 'WorkerGlobalScope', configurable: true });
-    Object.defineProperty(DP, Symbol.toStringTag, { value: 'DedicatedWorkerGlobalScope', configurable: true });
-    for (const [k, v] of Object.entries({ WorkerGlobalScope, DedicatedWorkerGlobalScope, WorkerLocation, WorkerNavigator })) def(k, v);
+    Object.defineProperty(DP, Symbol.toStringTag, { value: isShared ? 'SharedWorkerGlobalScope' : 'DedicatedWorkerGlobalScope', configurable: true });
+    // a scope exposes its own interface only (WebIDL [Exposed])
+    for (const [k, v] of Object.entries({ WorkerGlobalScope, ...(isShared ? { SharedWorkerGlobalScope } : { DedicatedWorkerGlobalScope }), WorkerLocation, WorkerNavigator })) def(k, v);
     uncaughtHook = (message, e) => n.worker(11, message, href, 0, 0);
   };
   // ==== end workers ====
