@@ -279,6 +279,10 @@ def gridLayout (kids : Children) (s : Computed) (items0 : Array Item) (box : Con
   let mut laid : Array (Result × Float × Float × Float × Float) := #[]   -- measured, x, border-box width, natural border-box height, area width
   -- the baseline-aligned items (§11.6): index, row, baseline from the margin box's top
   let mut baselined : Array (Nat × Nat × Nat) := #[]
+  -- baselines are horizontal ones: in a vertical writing mode (container or item) the item
+  -- keeps its start alignment
+  let horizontal := fun (is : Computed) =>
+    s.pos.writingMode == .horizontalTb && is.pos.writingMode == .horizontalTb
   let mut rowItems : Array Grid.Contribution := #[]
   let rowFns := gridTrackFns plan.rowAxis g.autoRows plan.rowLead plan.rows availH
   for i in [0:n] do
@@ -324,7 +328,7 @@ def gridLayout (kids : Children) (s : Computed) (items0 : Array Item) (box : Con
     let outerH := gridUnits (natural+m.top+m.bottom)
     rowItems := rowItems.push {start := a.row, span := a.rowSpan, minimum := outerH, minContent := outerH, maxContent := outerH}
     laid := laid.push (r,x,width,natural,areaW)
-    if a.rowSpan == 1 && gridBaselineSelf is.align.alignSelf s.align.alignItems && !(is.grid.templateRows.subgrid && is.display.isGrid) then
+    if a.rowSpan == 1 && horizontal is && gridBaselineSelf is.align.alignSelf s.align.alignItems && !(is.grid.templateRows.subgrid && is.display.isGrid) then
       -- no line box: the baseline is synthesized from the border box's bottom edge
       baselined := baselined.push (i, a.row, gridUnits ((r.baseline.map (·-box.y)).getD (m.top+natural)))
   -- §11.6: a baseline-aligned item asks of its row its height and its shift.
@@ -391,7 +395,7 @@ def gridLayout (kids : Children) (s : Computed) (items0 : Array Item) (box : Con
         else natural
     let outerH := height+m.top+m.bottom
     let shift := shifts.getD i 0
-    let dy := if shift > 0 || (a.rowSpan == 1 && !rowSubgrid && gridBaselineSelf is.align.alignSelf s.align.alignItems) then gridPx shift
+    let dy := if shift > 0 || (a.rowSpan == 1 && horizontal is && !rowSubgrid && gridBaselineSelf is.align.alignSelf s.align.alignItems) then gridPx shift
       else match autoCrossOffset is.autoMarginTop is.autoMarginBottom (areaH-outerH) with
       | some d => d
       | none => LU.toPx (Grid.selfOffset align (gridUnits areaH) (gridUnits outerH))
