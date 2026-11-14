@@ -153,10 +153,23 @@ def displayCanon (v : String) : String :=
     | ["run-in", "flow"] => "run-in"
     | _ => v
 
+/-- The canonical form of a `scale` value (CSS Transforms 2 §5): percentages are numbers,
+a third value of 1 is left out, and two equal values are one. -/
+def scaleCanon (v : String) : String :=
+  let nums := (stripWs (CV.parse v)).map fun cv => match cv with
+    | .tok (.pct x) => CV.tok (.num (x / 100) false)
+    | cv => cv
+  let texts := nums.map fun cv => serialize [cv]
+  match texts with
+  | [x, y, z] => if z == "1" then (if x == y then x else x ++ " " ++ y) else x ++ " " ++ y ++ " " ++ z
+  | [x, y] => if x == y then x else x ++ " " ++ y
+  | _ => serialize nums
+
 /-- The canonical forms that the order of the grammar alone does not give, by property. -/
 def canonical (p v : String) : String :=
   match p with
   | "display" => displayCanon v
+  | "scale" => if v == "none" then v else scaleCanon v
   | _ => v
 
 /-- The canonical specified value of `value` for property `property`: `none` when the
@@ -610,6 +623,71 @@ def lineWidthProperties : List String :=
    "border-block-start-width", "border-block-end-width", "border-inline-start-width", "border-inline-end-width",
    "outline-width", "column-rule-width", "row-rule-width"]
 
+/-- The filter functions whose argument is a number or percentage: whether the computed
+value is clamped to 1 (Filter Effects 1 §11). -/
+def filterAmounts : List (String × Bool) :=
+  [("brightness", false), ("contrast", false), ("saturate", false),
+   ("grayscale", true), ("invert", true), ("opacity", true), ("sepia", true)]
+
+/-- The computed form of the filter functions in a value: a left-out argument is its
+default, a percentage is a number, and the amount is clamped where the function says. The
+recursion is on the nesting of the value. -/
+def filterComputed : Nat → List CV → List CV
+  | 0, cvs => cvs
+  | fuel + 1, cvs => cvs.map fun cv => match cv with
+    | .fn name args =>
+      let n := lower name
+      match filterAmounts.lookup n with
+      | some clampOne =>
+        let amount : Option Rat := match stripWs args with
+          | [] => some 1
+          | [.tok (.num x _)] => some x
+          | [.tok (.pct x)] => some (x / 100)
+          | _ => none
+        match amount with
+        | some x => .fn name [.tok (.num (if clampOne then ratMin 1 x else x) false)]
+        | none => .fn name args
+      | none =>
+        if n == "blur" && (stripWs args).isEmpty then .fn name [.tok (.dim 0 true "px")]
+        else if n == "hue-rotate" && (stripWs args).isEmpty then .fn name [.tok (.dim 0 true "deg")]
+        else .fn name (filterComputed fuel args)
+    | cv => cv
+
+/-- The numeric keywords of `font-width` as percentages (CSS Fonts 4 §2.5). -/
+def fontWidthKeyword : String → Option String
+  | "ultra-condensed" => some "50%" | "extra-condensed" => some "62.5%" | "condensed" => some "75%"
+  | "semi-condensed" => some "87.5%" | "normal" => some "100%" | "semi-expanded" => some "112.5%"
+  | "expanded" => some "125%" | "extra-expanded" => some "150%" | "ultra-expanded" => some "200%"
+  | _ => none
+
+/-- The position keywords of one axis as percentages (CSS Backgrounds 3 §3.6). -/
+def axisKeyword : String → Option String
+  | "left" => some "0%" | "top" => some "0%" | "center" => some "50%" | "right" => some "100%" | "bottom" => some "100%"
+  | _ => none
+
+/-- The properties whose computed value is a number clamped to [0, 1]. -/
+def unitIntervalProperties : List String :=
+  ["opacity", "fill-opacity", "stroke-opacity", "stop-opacity", "flood-opacity", "shape-image-threshold"]
+
+/-- The computed forms that the grammar's leaves do not give, by property. -/
+def computedForm (p v : String) : String :=
+  if lineWidthProperties.contains p then (lineWidthKeyword v).getD v
+  else if p == "font-weight" then (if v == "normal" then "400" else if v == "bold" then "700" else v)
+  else if p == "font-stretch" || p == "font-width" then (fontWidthKeyword v).getD v
+  else if p == "filter" || p == "backdrop-filter" then
+    let cvs := stripWs (CV.parse v)
+    serialize (filterComputed 8 cvs)
+  else if unitIntervalProperties.contains p then
+    match stripWs (CV.parse v) with
+    | [.tok (.num x _)] => fmtRat (ratMax 0 (ratMin 1 x))
+    | [.tok (.pct x)] => fmtRat (ratMax 0 (ratMin 1 (x / 100)))
+    | _ => v
+  else if ["background-position-x", "background-position-y", "mask-position-x", "mask-position-y"].contains p then
+    ", ".intercalate ((splitCommas (stripWs (CV.parse v))).map fun item => match item with
+      | [.tok (.ident k)] => (axisKeyword k).getD k
+      | item => serialize item)
+  else v
+
 /-- The computed value of a canonical specified value (not a CSS-wide keyword: the cascade
 resolves those): lengths absolute, colours resolved, `calc()` computed. A value the
 grammar does not read in computed form stays as specified. -/
@@ -623,10 +701,7 @@ def computed (ctx : ComputeCtx) (property value : String) : String :=
       let cvs := CV.parse value
       if hasSubstitution cvs then value
       else
-        let v := canonical p ((matchText (some ctx) row.name (stripWs cvs)).getD value)
-        if lineWidthProperties.contains p then (lineWidthKeyword v).getD v
-        else if p == "font-weight" then (if v == "normal" then "400" else if v == "bold" then "700" else v)
-        else v
+        computedForm p (canonical p ((matchText (some ctx) row.name (stripWs cvs)).getD value))
 
 /-- The computed initial value of a property. -/
 def initialComputed (ctx : ComputeCtx) (row : Property) : String :=
@@ -702,6 +777,16 @@ def initialComputed (ctx : ComputeCtx) (row : Property) : String :=
 #guard (lookup "grid-row").map (fun row => recombine row fun l => if l == "grid-row-start" then "2" else "span 3") == some "2 / span 3"
 #guard (lookup "container").map (fun row => recombine row fun l => if l == "container-name" then "foo" else "normal") == some "foo"
 #guard computed {} "width" "2em" == "32px"
+#guard computed {} "filter" "blur()" == "blur(0px)"
+#guard computed {} "filter" "invert(200%) brightness(300%)" == "invert(1) brightness(3)"
+#guard computed {} "filter" "hue-rotate() drop-shadow(1px 2px red)" == "hue-rotate(0deg) drop-shadow(rgb(255, 0, 0) 1px 2px)"
+#guard computed {} "opacity" "-2" == "0"
+#guard computed {} "opacity" "50%" == "0.5"
+#guard computed {} "font-stretch" "condensed" == "75%"
+#guard computed {} "background-position-x" "center, left" == "50%, 0%"
+#guard specified "scale" "100% 200% 1" == some "1 2"
+#guard specified "scale" "2 2" == some "2"
+#guard specified "scale" "1%" == some "0.01"
 #guard computed {} "color" "red" == "rgb(255, 0, 0)"
 #guard computed { currentColor := some "rgb(0, 128, 0)" } "border-top-color" "currentcolor" == "rgb(0, 128, 0)"
 #guard computed {} "border-top-width" "medium" == "3px"
