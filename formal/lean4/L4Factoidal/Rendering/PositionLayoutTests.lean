@@ -615,4 +615,34 @@ private def onLine := "<div id=d>ab <span id=s>cd</span> ef</div>"
 #guard at? onLine "#s{display:inline-block;padding:5px;vertical-align:top}" "ab" == some (0,0)
 #guard box onLine "#s{display:inline-block;padding:5px;vertical-align:top}" "d" == some (0,0,200,17)
 
+
+-- Self-alignment of an absolutely positioned box in a containing block with a vertical
+-- writing mode or `direction: rtl` (CSS Box Alignment 3 §4, §6.1.2): `justify-self` is for
+-- the inline axis and `align-self` for the block axis of the containing block; `start`
+-- and `end` are its sides. A 40 by 40 block, a 20 by 20 box with `inset: 0`.
+private def aligned := "<div id=c><div id=k><div id=in></div></div></div>"
+private def alignedCss := "#c{position:relative;width:40px;height:40px} #k{position:absolute;inset:0} #in{width:20px;height:20px} "
+-- horizontal, left to right: the inline axis is the horizontal one
+#guard box aligned (alignedCss ++ "#k{justify-self:end}") "k" == some (20,0,20,40)
+#guard box aligned (alignedCss ++ "#k{align-self:end}") "k" == some (0,20,40,20)
+-- right to left: `start` is the right side; `left` is still the left
+#guard box aligned (alignedCss ++ "#c{direction:rtl} #k{justify-self:start}") "k" == some (20,0,20,40)
+#guard box aligned (alignedCss ++ "#c{direction:rtl} #k{justify-self:end}") "k" == some (0,0,20,40)
+#guard box aligned (alignedCss ++ "#c{direction:rtl} #k{justify-self:left}") "k" == some (0,0,20,40)
+-- the box's own direction for `self-start`
+#guard box aligned (alignedCss ++ "#k{direction:rtl;justify-self:self-start}") "k" == some (20,0,20,40)
+#guard box aligned (alignedCss ++ "#c{direction:rtl} #k{direction:ltr;justify-self:self-start}") "k" == some (0,0,20,40)
+-- a vertical containing block: `justify-self` moves the box down its inline axis
+#guard box aligned (alignedCss ++ "#c{writing-mode:vertical-lr} #k{writing-mode:horizontal-tb;justify-self:start}") "k" == some (0,0,40,20)
+#guard box aligned (alignedCss ++ "#c{writing-mode:vertical-lr} #k{writing-mode:horizontal-tb;justify-self:center}") "k" == some (0,10,40,20)
+#guard box aligned (alignedCss ++ "#c{writing-mode:vertical-lr} #k{writing-mode:horizontal-tb;justify-self:end}") "k" == some (0,20,40,20)
+#guard box aligned (alignedCss ++ "#c{writing-mode:vertical-lr} #k{writing-mode:horizontal-tb;justify-self:right}") "k" == some (0,20,40,20)
+-- and `align-self` across: from the left in vertical-lr, from the right in vertical-rl
+#guard box aligned (alignedCss ++ "#c{writing-mode:vertical-lr} #k{writing-mode:horizontal-tb;align-self:start}") "k" == some (0,0,20,40)
+#guard box aligned (alignedCss ++ "#c{writing-mode:vertical-rl} #k{writing-mode:horizontal-tb;align-self:start}") "k" == some (20,0,20,40)
+#guard box aligned (alignedCss ++ "#c{writing-mode:vertical-rl} #k{writing-mode:horizontal-tb;align-self:end}") "k" == some (0,0,20,40)
+-- right to left in a vertical containing block: its inline axis starts at the bottom
+#guard box aligned (alignedCss ++ "#c{writing-mode:vertical-rl;direction:rtl} #k{writing-mode:horizontal-tb;direction:ltr;justify-self:start}") "k" == some (0,20,40,20)
+#guard box aligned (alignedCss ++ "#c{writing-mode:vertical-rl;direction:rtl} #k{writing-mode:horizontal-tb;direction:ltr;justify-self:self-start}") "k" == some (0,0,40,20)
+
 end L4Factoidal.Rendering.PositionLayoutTests

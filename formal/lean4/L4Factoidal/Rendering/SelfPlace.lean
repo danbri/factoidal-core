@@ -62,6 +62,61 @@ theorem offset_auto_both (room outer : Int) (place : Place) (h : outer < room) :
   have : ¬ (room - outer ≤ 0) := by omega
   simp [this]
 
+/-! ### Which physical side `start` is on (CSS Writing Modes 4 §6; CSS Box Alignment 3 §4)
+
+`start` and `end` are sides of a writing mode: of the alignment container's for `start`,
+`end` and the baselines, of the box's own for `self-start` and `self-end`. On a physical
+axis (the horizontal one or the vertical one) a writing mode starts at the left or top,
+or at the right or bottom (`startsAtEnd`). -/
+
+/-- Whether the writing mode starts the physical axis at its right or bottom end.
+`horizontalAxis`: the axis is the horizontal one. `vertical`: the writing mode is a
+vertical one, so the vertical axis is its inline axis. `blockAtEnd`: its block axis
+starts at the right (`vertical-rl`). `inlineAtEnd`: its inline axis starts at the right or
+bottom (`direction: rtl`). -/
+def startsAtEnd (horizontalAxis vertical blockAtEnd inlineAtEnd : Bool) : Bool :=
+  if horizontalAxis != vertical then inlineAtEnd else vertical && blockAtEnd
+
+/-- The placement on a physical axis of a placement by `start` and `end` in a writing
+mode that starts the axis at its far end when `flip`. -/
+def Place.physical (place : Place) (flip : Bool) : Place :=
+  match place with
+  | .start => if flip then .end_ else .start
+  | .end_ => if flip then .start else .end_
+  | other => other
+
+/-- Says: a writing mode that starts an axis at the left or top changes nothing. -/
+theorem Place.physical_same (place : Place) : place.physical false = place := by
+  cases place <;> rfl
+
+/-- Says: turning a placement round twice gives it back: `start` of a flipped mode is
+`end` of the other, and the reverse. -/
+theorem Place.physical_twice (place : Place) (flip : Bool) : (place.physical flip).physical flip = place := by
+  cases place <;> cases flip <;> rfl
+
+/-- Says: `stretch` and `center` do not depend on the writing mode. -/
+theorem Place.physical_middle (flip : Bool) :
+    Place.stretch.physical flip = .stretch ∧ Place.center.physical flip = .center := ⟨rfl, rfl⟩
+
+/-- Says: in a horizontal writing mode the horizontal axis follows the direction and the
+vertical axis starts at the top. -/
+theorem startsAtEnd_horizontal (blockAtEnd inlineAtEnd : Bool) :
+    startsAtEnd true false blockAtEnd inlineAtEnd = inlineAtEnd ∧
+      startsAtEnd false false blockAtEnd inlineAtEnd = false := by
+  cases blockAtEnd <;> cases inlineAtEnd <;> exact ⟨rfl, rfl⟩
+
+/-- Says: in a vertical writing mode the vertical axis follows the direction and the
+horizontal axis starts where the blocks start. -/
+theorem startsAtEnd_vertical (blockAtEnd inlineAtEnd : Bool) :
+    startsAtEnd false true blockAtEnd inlineAtEnd = inlineAtEnd ∧
+      startsAtEnd true true blockAtEnd inlineAtEnd = blockAtEnd := by
+  cases blockAtEnd <;> cases inlineAtEnd <;> exact ⟨rfl, rfl⟩
+
+#guard Place.start.physical true == .end_
+#guard Place.end_.physical true == .start
+#guard startsAtEnd true false false true == true
+#guard startsAtEnd true true true false == true
+#guard startsAtEnd false true true false == false
 #guard offset 100 20 false false .center == 40
 #guard offset 100 20 false false .end_ == 80
 #guard offset 100 20 false false .start == 0

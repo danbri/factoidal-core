@@ -1539,6 +1539,23 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
     | .positioned _ _ _ _ _ => return (0,0)
     | .rough inner => intrinsic dom styles font embedding pictures fuel inner
 
+/-- The style of the box whose padding box is the containing block of the absolutely
+positioned box `id` (CSS 2.1 §10.1): its nearest ancestor that holds absolutely positioned
+boxes (`containsAbsolutes`), else the root element's. A loop up the ancestors. -/
+def absoluteContainer (dom : Dom) (styles : Array Computed) (id : Nat) : Computed := Id.run do
+  let mut cur := id
+  let mut last := styles[id]!
+  for _ in [0:dom.size+1] do
+    match (dom.get cur).parent with
+    | some p =>
+      if (dom.get p).type != .element then return last
+      let s := styles[p]!
+      if s.pos.containsAbsolutes then return s
+      last := s
+      cur := p
+    | none => return last
+  return last
+
 /-- Block children stack vertically, and adjacent inline children share an
 anonymous inline formatting context. Width/height use the CSS content box.
 Tables are laid out by the table model (`Table`): see `layoutTask`'s `.table` case.
@@ -1846,13 +1863,28 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let specified := CSS.resolve cw s.width
       -- CSS Box Alignment 3 §6.1.2 and §6.2.2: `justify-self` and `align-self` of an
       -- absolutely positioned box; `auto` and `normal` are `stretch`.
-      let placeOf := fun (a : CSS.ItemAlign) => match a with
+      -- `justify-self` is for the inline axis of the containing block's writing mode and
+      -- `align-self` for its block axis; `start` and `end` are sides of that writing mode,
+      -- `self-start` and `self-end` of the box's own, `left` and `right` of the page.
+      let plain := fun (a : CSS.ItemAlign) => a == .auto || a == .normal || a == .stretch
+      let container := if plain s.align.justifySelf && plain s.align.alignSelf then s else absoluteContainer dom styles id
+      let flowOf := fun (st : Computed) (horizontalAxis : Bool) =>
+        SelfPlace.startsAtEnd horizontalAxis (st.pos.writingMode != .horizontalTb) (st.pos.writingMode == .verticalRl)
+          (st.direction == .rtl)
+      let placeOn := fun (horizontalAxis : Bool) =>
+        let inlineAxis := horizontalAxis != (container.pos.writingMode != .horizontalTb)
+        let a := if inlineAxis then s.align.justifySelf else s.align.alignSelf
+        match a with
         | .auto | .normal | .stretch => SelfPlace.Place.stretch
         | .center => .center
-        | .end_ | .flexEnd | .selfEnd | .right | .lastBaseline => .end_
-        | _ => .start
-      let placeX := placeOf s.align.justifySelf
-      let placeY := placeOf s.align.alignSelf
+        | .end_ | .flexEnd | .lastBaseline => SelfPlace.Place.end_.physical (flowOf container horizontalAxis)
+        | .selfStart => SelfPlace.Place.start.physical (flowOf s horizontalAxis)
+        | .selfEnd => SelfPlace.Place.end_.physical (flowOf s horizontalAxis)
+        | .left => .start
+        | .right => .end_
+        | _ => SelfPlace.Place.start.physical (flowOf container horizontalAxis)
+      let placeX := placeOn true
+      let placeY := placeOn false
       -- §10.3.7: the width is given, or fills the room between `left` and `right`, or
       -- shrinks to fit the content.
       let widthC ← match specified with
