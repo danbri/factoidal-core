@@ -193,6 +193,8 @@ HTMLLinkElement,HTMLStyleElement,HTMLScriptElement nonce . nc
 HTMLBaseElement href . u
 HTMLCanvasElement width . ul 300
 HTMLCanvasElement height . ul 150
+HTMLInputElement colorSpace . e limited-srgb limited-srgb limited-srgb,display-p3
+HTMLInputElement alpha . b
 HTMLInputElement,HTMLSelectElement,HTMLTextAreaElement autocomplete . s
 HTMLOptionElement value . ot
 HTMLOptionElement label . ot

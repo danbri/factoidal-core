@@ -14,6 +14,7 @@ for date, week, time and local date and time; months since January 1970 for mont
 calendar is computed on integers and converted.
 -/
 import L4Factoidal.JS.Number
+import L4Factoidal.HTML.InputColor
 
 namespace L4Factoidal.HTML.InputValue
 
@@ -261,6 +262,9 @@ structure Attrs where
   step : Option String := none
   /-- The `value` content attribute (the default value). -/
   dflt : Option String := none
+  /-- A colour well's `colorspace` is `display-p3`, and it has the `alpha` attribute. -/
+  colorP3 : Bool := false
+  alpha : Bool := false
   deriving Inhabited
 
 /-- The minimum and maximum; a `range` has the defaults 0 and 100. -/
@@ -381,9 +385,8 @@ def sanitize (type : String) (multiple : Bool) (a : Attrs) (v : String) : String
           let pick := if x - lo < hi - x then lo else hi
           if pick > mx then lo else if pick < mn then hi else pick
     (ofNumber .range x).getD ""
-  | "color" =>
-    let cs := v.toList
-    if cs.length == 7 && cs.head? == some '#' && (cs.drop 1).all isHex then String.ofList (cs.map lowerChar) else "#000000"
+  -- "update a color" (`HTML.InputColor`): any CSS colour, in the element's colour space
+  | "color" => InputColor.update v a.colorP3 a.alpha
   | _ => v
 
 /-! ## What is proved -/
@@ -400,18 +403,12 @@ theorem stripNewlines_idem (s : String) : stripNewlines (stripNewlines s) = stri
   unfold stripNewlines
   simp [List.filter_filter]
 
-/-- Says: the value of a colour well is always a valid simple colour of seven characters,
-whatever a script sets. Does not say: which colour an invalid value becomes beyond the
-definition (black). -/
-theorem sanitize_color_length (multiple : Bool) (a : Attrs) (v : String) :
+/-- Says: the value of a colour well without `alpha` in `limited-srgb` is always seven
+characters (a valid simple colour), whatever a script sets. -/
+theorem sanitize_color_length (multiple : Bool) (a : Attrs) (v : String) (h1 : a.colorP3 = false) (h2 : a.alpha = false) :
     (sanitize "color" multiple a v).length = 7 := by
-  unfold sanitize
-  simp only
-  split
-  · rename_i h
-    simp only [Bool.and_eq_true, beq_iff_eq] at h
-    simp [h.1.1]
-  · decide
+  simp only [sanitize, h1, h2]
+  exact InputColor.update_hex_length v
 
 /-- Says: the default allowed value step of every state is greater than zero, so stepping
 with no `step` attribute always moves the value. Does not say: the round trip
@@ -442,7 +439,7 @@ theorem defaultStep_positive (t : Ty) : defaultStep t * stepScale t > 0 := by
 #guard validFloat "1e+5" && validFloat "-0.0" && !validFloat "e5" && !validFloat "1.5.2" && !validFloat " 1"
 #guard sanitize "text" false {} "a\r\nb" == "ab" && sanitize "url" false {} "  http://a/\n " == "http://a/"
 #guard sanitize "email" true {} " a@b , c@d " == "a@b,c@d" && sanitize "number" false {} "abc" == "" && sanitize "date" false {} "2019-02-30" == ""
-#guard sanitize "color" false {} "#AbCdEf" == "#abcdef" && sanitize "color" false {} "red" == "#000000"
+#guard sanitize "color" false {} "#AbCdEf" == "#abcdef" && sanitize "color" false {} "red" == "#ff0000" && sanitize "color" false {} "x" == "#000000"
 #guard sanitize "range" false {} "" == "50" && sanitize "range" false {} "200" == "100" && sanitize "range" false {} "-5" == "0" && sanitize "range" false {} "3.4" == "3"
 #guard sanitize "range" false { min := some "0", max := some "10", step := some "4" } "7" == "8"
 #guard sanitize "datetime-local" false {} "2019-12-10 12:00:00" == "2019-12-10T12:00"

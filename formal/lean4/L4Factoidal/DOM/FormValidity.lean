@@ -20,7 +20,8 @@ open L4Factoidal.DOM L4Factoidal.DOM.Forms L4Factoidal.HTML
 
 /-- The attributes of an `input` that its typed value reads. -/
 def attrsOf (d : Dom) (k : NodeId) : InputValue.Attrs :=
-  { min := attr? d k "min", max := attr? d k "max", step := attr? d k "step", dflt := attr? d k "value" }
+  { min := attr? d k "min", max := attr? d k "max", step := attr? d k "step", dflt := attr? d k "value",
+    colorP3 := ((attr? d k "colorspace").map (·.toLower)) == some "display-p3", alpha := (attr? d k "alpha").isSome }
 
 /-- The control has a `datalist` ancestor. -/
 def inDatalist (d : Dom) (k : NodeId) : Bool := Id.run do
