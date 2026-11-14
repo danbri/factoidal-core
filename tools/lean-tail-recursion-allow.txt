@@ -2411,3 +2411,5 @@ L4Factoidal_WebDriver_Page_fromWire  # (c) the nesting of one script result, fue
 L4Factoidal_HTML_AccessibleRole_textAlternative*  # (b) the text alternative walks the element nesting of one document; fuel is the arena size and decreases at each element
 L4Factoidal_HTML_AccessibleRole_childrenText*  # (b) one call per child of one element, each into textAlternative with less fuel; depth is the element nesting of the document
 L4Factoidal_HTML_AccessibleRole_hostLabel*  # (b) a label's content through childrenText with less fuel; depth is the element nesting of the document
+L4Factoidal_Rendering_CSS_resolveHasIn  # (c) the nesting of :is()/:not()/:where()/of lists in one selector, fuel 16
+L4Factoidal_Rendering_CSS_mentionsHas  # (c) the nesting of :is()/:not()/:where()/of lists in one selector, fuel 16

@@ -2667,9 +2667,16 @@ element of the document: the compound becomes its other simple selectors and the
 where it held (`Simple.anchors`), so that matching an element does not search a subtree
 again (selectors/invalidation/has-complexity.html: a `main:has(span) span` rule over many
 spans). One pass over the document for each such compound. -/
-def resolveHasIn (dom : Dom) (c : DOM.Selectors.Complex) : DOM.Selectors.Complex :=
-  match c with
-  | .mk parts => .mk (parts.map fun (comb, simples) =>
+def resolveHasIn (dom : Dom) : Nat → DOM.Selectors.Complex → DOM.Selectors.Complex
+  | 0, c => c
+  | fuel + 1, .mk parts => .mk (parts.map fun (comb, simples) =>
+      -- the selector lists inside `:is()`, `:not()`, `:where()` and `:nth-child(of ...)`
+      -- first: a `:has()` there is anchored at the element the inner compound is tried on
+      let simples := simples.map fun (s : DOM.Selectors.Simple) => match s with
+        | .is l => .is (l.map (resolveHasIn dom fuel))
+        | .not l => .not (l.map (resolveHasIn dom fuel))
+        | .nth k a b (some l) => .nth k a b (some (l.map (resolveHasIn dom fuel)))
+        | s => s
       let isHas := fun (s : DOM.Selectors.Simple) => match s with
         | .has _ => true
         | _ => false
@@ -2679,26 +2686,42 @@ def resolveHasIn (dom : Dom) (c : DOM.Selectors.Complex) : DOM.Selectors.Complex
           DOM.Selectors.matchCompound dom none DOM.Selectors.matchFuel k simples).toArray
         (comb, simples.filter (!isHas ·) ++ [.anchors ids]))
 
+/-- Whether a selector has a `:has()`, at the top or inside `:is()`, `:not()`, `:where()` or
+an `of` list (the nesting read to `fuel` levels). -/
+def mentionsHas : Nat → DOM.Selectors.Complex → Bool
+  | 0, _ => false
+  | fuel + 1, .mk parts => parts.any fun (_, simples) => simples.any fun s => match s with
+    | .has _ => true
+    | .is l | .not l | .nth _ _ _ (some l) => l.any (mentionsHas fuel)
+    | _ => false
+
 /-- The rules with their `:has()` compounds resolved against the document (`resolveHasIn`);
 rules with no `:has()` are as they were. -/
 def resolveHas (dom : Dom) (rules : List Rule) : List Rule :=
-  if !(rules.any fun r => r.selectors.any fun sel => (sel.complex.map (fun c => !(hasLists c).isEmpty)).getD false) then rules
+  if !(rules.any fun r => r.selectors.any fun sel => (sel.complex.map (mentionsHas 16)).getD false) then rules
   else rules.map fun r =>
     { r with selectors := r.selectors.map fun sel => match sel.complex with
-      | some c => if (hasLists c).isEmpty then sel else { sel with complex := some (resolveHasIn dom c) }
+      | some c => if !mentionsHas 16 c then sel else { sel with complex := some (resolveHasIn dom 16 c) }
       | none => sel }
 
+#guard (match DOM.Selectors.parse ":is(main:has(span)) .s" with
+  | some [c] =>
+    let d := DOM.parseHtmlDocument "<main><div><span></span></div><p class=s></p></main><p class=s></p>"
+    let c' := resolveHasIn d 16 c
+    ((List.range d.size).filter fun k => DOM.Selectors.matchComplex d none DOM.Selectors.matchFuel k c') ==
+      ((List.range d.size).filter fun k => DOM.Selectors.matchComplex d none DOM.Selectors.matchFuel k c)
+  | _ => false)
 #guard (match DOM.Selectors.parse "main:has(span) .s" with
   | some [c] =>
     let d := DOM.parseHtmlDocument "<main><div><span></span></div><p class=s></p></main><p class=s></p>"
-    let c' := resolveHasIn d c
+    let c' := resolveHasIn d 16 c
     ((List.range d.size).filter fun k => DOM.Selectors.matchComplex d none DOM.Selectors.matchFuel k c') ==
       ((List.range d.size).filter fun k => DOM.Selectors.matchComplex d none DOM.Selectors.matchFuel k c)
   | _ => false)
 
 /-- A rule list with no `:has()` is left as it is. -/
 theorem resolveHas_plain (dom : Dom) (rules : List Rule)
-    (h : (rules.any fun r => r.selectors.any fun sel => (sel.complex.map (fun c => !(hasLists c).isEmpty)).getD false) = false) :
+    (h : (rules.any fun r => r.selectors.any fun sel => (sel.complex.map (mentionsHas 16)).getD false) = false) :
     resolveHas dom rules = rules := by
   simp [resolveHas, h]
 
