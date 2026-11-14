@@ -93,4 +93,25 @@ private def flexAbsCss := "#f{display:flex;position:relative;height:50px} #p{pos
 #guard box page "#a{width:calc(100% - 30px)}" "a" == some (0,0,170,7)
 #guard box page "#a{width:calc(50% + 10px)}" "a" == some (0,0,110,7)
 
+-- Margin collapse (CSS 2.1 §8.3.1): adjoining margins of siblings; the larger stands.
+private def stack := "<div id=a>A</div>\n<div id=b>B</div><div id=c><div id=d>D</div></div><div id=e>E</div>"
+#guard box stack "#a{margin-bottom:10px} #b{margin-top:4px}" "b" == some (0,17,200,7)
+#guard box stack "#a{margin-bottom:4px} #b{margin-top:10px}" "b" == some (0,17,200,7)
+-- A first child's top margin sticks out of a parent with no border or padding...
+#guard box stack "#d{margin-top:10px}" "c" == some (0,24,200,7)
+#guard box stack "#d{margin-top:10px}" "d" == some (0,24,200,7)
+#guard box stack "#b{margin-bottom:6px} #c{margin-top:3px} #d{margin-top:10px}" "d" == some (0,24,200,7)
+-- ...and a last child's bottom margin likewise.
+#guard box stack "#d{margin-bottom:10px}" "c" == some (0,14,200,7)
+#guard box stack "#d{margin-bottom:10px}" "e" == some (0,31,200,7)
+-- A border, padding, a height, `overflow: hidden` or a flex container keeps them in.
+#guard box stack "#c{border-top:0;padding:1px} #d{margin-top:10px}" "d" == some (1,25,198,7)
+#guard box stack "#c{overflow:hidden} #d{margin:10px 0}" "c" == some (0,14,200,27)
+#guard box stack "#c{display:flex;flex-direction:column} #d{margin:10px 0}" "c" == some (0,14,200,27)
+#guard box stack "#c{height:20px} #d{margin-bottom:10px}" "e" == some (0,34,200,7)
+-- Text between two blocks keeps their margins apart.
+#guard box "<div id=a>A</div>x<div id=b>B</div>" "#a{margin-bottom:10px} #b{margin-top:4px}" "b" == some (0,28,200,7)
+-- The body's margin and its first child's collapse; the root's does not.
+#guard box "<h1 id=h>H</h1>" "body{margin:8px} #h{margin:20px 0;font-size:7px}" "h" == some (8,20,184,7)
+
 end L4Factoidal.Rendering.PositionLayoutTests

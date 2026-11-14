@@ -948,7 +948,52 @@ def frameBox (id : Nat) (s : Computed) (outerX outerY borderWidth borderHeight :
   let nodes := clipContent s.clipOverflow (decorations id s outerX outerY borderWidth borderHeight) content.nodes
     ⟨outerX+border.left,outerY+border.top,borderWidth-border.left-border.right,borderHeight-border.top-border.bottom,identity⟩
   {content with nodes, boxes := #[⟨id,outerX,outerY,borderWidth,borderHeight⟩] ++ content.boxes,
-                height := s.margin.top+borderHeight+s.margin.bottom}
+                height := s.margin.top+borderHeight+s.margin.bottom, marginBottom := s.margin.bottom}
+
+/-- CSS 2.1 §8.3.1: the top margin of a block adjoins the top margin of its first in-flow
+block child when no border, padding or clearance is between them and the block does not
+establish a new block formatting context. A list item's marker is content before it. -/
+def collapsesTop (dom : Dom) (s : Computed) (id : Nat) : Bool :=
+  let n := dom.get id
+  s.display == .block && s.borderEdges.top == 0 && s.padding.top == 0 && !s.clipOverflow &&
+    !s.pos.isAbsolute && s.pos.float == .none && n.lname != "li" && n.ns != some DOM.svgNS &&
+    (n.parent.map fun p => (dom.get p).type == .element).getD false
+
+/-- The same for the bottom margin and the last in-flow block child: also no height or
+minimum height (CSS 2.1 §8.3.1). -/
+def collapsesBottom (dom : Dom) (s : Computed) (id : Nat) : Bool :=
+  let n := dom.get id
+  let auto := fun (l : CSS.Length) => match l with | .auto => true | _ => false
+  s.display == .block && s.borderEdges.bottom == 0 && s.padding.bottom == 0 && !s.clipOverflow &&
+    !s.pos.isAbsolute && s.pos.float == .none && auto s.height && auto s.minHeight &&
+    n.ns != some DOM.svgNS && (n.parent.map fun p => (dom.get p).type == .element).getD false
+
+/-- The first child of `id` when it is an in-flow block box with nothing in flow before
+it: white space, comments, boxes with `display: none` and absolutely positioned boxes
+are not in flow. -/
+def firstBlock (dom : Dom) (styles : Array Computed) (id : Nat) : Option Nat := Id.run do
+  for k in (dom.get id).kids do
+    let n := dom.get k
+    if n.type == .text then
+      if !blankText n.data then return none
+    else if n.type == .element then
+      let s := styles[k]!
+      if s.display == .none || s.pos.isAbsolute then continue
+      return if s.display.isBlockLevel then some k else none
+  return none
+
+/-- The top margin that the box of `id` shows to what is before it: its own, or the
+largest of its own and those of the first blocks nested at its top that adjoin it
+(CSS 2.1 §8.3.1; margins are not negative in this profile). `fuel` bounds the nesting. -/
+def leadMargin (dom : Dom) (styles : Array Computed) : Nat → Nat → Float
+  | 0, id => (styles[id]!).margin.top
+  | fuel+1, id =>
+    let s := styles[id]!
+    if collapsesTop dom s id then
+      match firstBlock dom styles id with
+      | some k => max s.margin.top (leadMargin dom styles fuel k)
+      | none => s.margin.top
+    else s.margin.top
 
 /-- A replaced element, a table or a flex or grid container: a box whose contents depend
 on its height, or that sizes itself (`Children.heightSensitive`). -/
@@ -1113,17 +1158,23 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
   | fuel+1, task, x, y, available => do
     -- The flow of `kids` in a block container with style `s`: block-level children
     -- stack, inline children share line boxes, runs of internal table boxes are tables.
+    -- `before` is the margin that adjoins the top of the flow (the container's own, when it
+    -- collapses with its first child; else 0); the result's `marginBottom` is the margin at
+    -- the end of the flow. Adjoining margins of sibling blocks collapse: the larger stands.
     let flow (s : Computed) (container : Nat) (kids : Array Nat) (lead : Array Inline)
-        (innerX innerY width : Float) : Except String Result := do
+        (innerX innerY width : Float) (before : Float := 0) : Except String Result := do
       let mut content : Result := {}
+      let mut previous : Float := before
       let mut inline : Array Inline := lead
       for seg in Table.segments dom styles kids do
         match seg with
         | .run run =>
           if !inline.isEmpty then
-            content := append content (← inlineLayout font (← atomize font inline width) innerX (innerY+content.height) width (some s))
+            let lines ← inlineLayout font (← atomize font inline width) innerX (innerY+content.height) width (some s)
+            content := append content lines
             inline := #[]
           content := append content (← layoutTask dom styles font embedding pictures fuel (.table none container run) innerX (innerY+content.height) width)
+          previous := 0
         | .node child =>
           let cs := styles[child]!
           if cs.pos.isAbsolute then
@@ -1133,9 +1184,16 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
             else inline := inline.push (.outOfFlow child)
           else if cs.display.isBlockLevel then
             if !inline.isEmpty then
-              content := append content (← inlineLayout font (← atomize font inline width) innerX (innerY+content.height) width (some s))
+              let lines ← inlineLayout font (← atomize font inline width) innerX (innerY+content.height) width (some s)
+              content := append content lines
               inline := #[]
-            content := append content (← layoutTask dom styles font embedding pictures fuel (.box child) innerX (innerY+content.height) width)
+              -- white space between blocks makes no line: the margins still adjoin
+              if lines.height > 0 then previous := 0
+            -- CSS 2.1 §8.3.1: the margin before this box and its own top margin collapse.
+            let overlap := min previous (if cs.display == .block then leadMargin dom styles fuel child else cs.margin.top)
+            let r ← layoutTask dom styles font embedding pictures fuel (.box child) innerX (innerY+content.height-overlap) width
+            content := {append content r with height := content.height-overlap+r.height}
+            previous := r.marginBottom
           else if cs.display.isInlineContainer then
             -- An inline-level flex or grid container: one atomic box, as wide as its content
             -- (shrink-to-fit, CSS 2.1 §10.3.9) unless its width is given.
@@ -1149,8 +1207,12 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
             inline := inline.push (.atomic child outer r.height r)
           else
             inline := inline ++ (← inlineItems dom styles embedding pictures width fuel child)
-      if !inline.isEmpty then content := append content (← inlineLayout font (← atomize font inline width) innerX (innerY+content.height) width (some s))
-      return content
+      if !inline.isEmpty then
+        let lines ← inlineLayout font (← atomize font inline width) innerX (innerY+content.height) width (some s)
+        content := append content lines
+        if lines.height > 0 then previous := 0
+      -- no block was laid out: `previous` is still `before`, which is not a margin of this flow
+      return {content with marginBottom := if content.height <= 0 || previous >= unbounded/2 then 0 else previous}
     -- A table box (CSS 2.1 §17): captions, then the grid, then bottom captions.
     let table (element : Option Nat) (container : Nat) (kids : Array Nat) : Except String Result := do
       let frame := tableFrame styles element container
@@ -1392,8 +1454,12 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
           max 0 (max ((CSS.resolve available s.minWidth).getD 0) width)
       -- §10.3.3: auto margins share the room the box leaves; an imposed box is placed by its parent.
       let shift := if imposedWidth.isSome then 0 else autoMarginShift s available (margin.left+width+edgesX+margin.right)
+      -- CSS 2.1 §8.3.1: a block in a block formatting context whose top margin adjoins its
+      -- first child's shows the larger of the two, and the child starts at its top edge.
+      let joinsTop := imposedWidth.isNone && !contentOnly && collapsesTop dom s id
+      let marginTop := if joinsTop then leadMargin dom styles fuel id else margin.top
       let outerX := x+shift+margin.left
-      let outerY := y+margin.top
+      let outerY := y+marginTop
       let innerX := outerX+border.left+padding.left
       let innerY := outerY+border.top+padding.top
       -- A block-level replaced element: its margin box at the start of the line, or where
@@ -1402,7 +1468,8 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         let (ow,oh,nodes) := replacedBox id s w h content
         let dx := if imposedWidth.isSome then 0 else autoMarginShift s available ow
         ({nodes := #[.group none (translate (x+dx) y) nodes],
-          boxes := #[⟨id,x+dx+margin.left,outerY,ow-margin.left-margin.right,oh-margin.top-margin.bottom⟩],height := oh} : Result)
+          boxes := #[⟨id,x+dx+margin.left,outerY,ow-margin.left-margin.right,oh-margin.top-margin.bottom⟩],height := oh,
+          marginBottom := margin.bottom} : Result)
       -- The style a replaced element is sized with: its own, or the imposed content box.
       let sized : Computed := match imposedWidth with
         | none => s
@@ -1429,8 +1496,12 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let content ← if s.display.isFlex then
           flexLayout children s (collectItems dom styles id)
             {x := innerX, y := innerY, width, height := definite, minHeight, maxHeight}
-        else flow s id n.kids lead innerX innerY width
+        else flow s id n.kids lead innerX innerY width (if joinsTop then unbounded else 0)
       if contentOnly then return content
+      -- The same at the bottom: the last child's margin sticks out of a block with no height.
+      let joinsBottom := imposedWidth.isNone && imposedHeight.isNone && collapsesBottom dom s id && !s.display.isFlex
+      let marginBottom := if joinsBottom then max margin.bottom content.marginBottom else margin.bottom
+      let content := if joinsBottom then {content with height := content.height-content.marginBottom} else content
       let height := definite.getD (clampOpt minHeight maxHeight content.height)
       -- The absolutely positioned children of a flex container are not its items.
       let content := if s.display.isFlex then
@@ -1443,6 +1514,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
             (height+padding.top+padding.bottom) false
         else pure content
       let framed := frameBox id s outerX outerY (width+edgesX) (height+edgesY) content
+      let framed := {framed with height := marginTop+height+edgesY+marginBottom, marginBottom}
       -- CSS 2.1 §9.4.3: a relatively positioned box is moved from where it was laid out; the
       -- flow after it is as if it had not moved. `left` wins over `right`, `top` over `bottom`.
       if s.pos.position == .relative then

@@ -58,6 +58,9 @@ structure Result where
   runs : Array GlyphRun := #[]
   height : Float := 0
   pending : Array Pending := #[]
+  /-- The part of `height` that is the bottom margin of the box (or of the last block of
+  a flow): it collapses with the margin that follows it (CSS 2.1 §8.3.1). -/
+  marginBottom : Float := 0
   deriving Repr
 instance : Inhabited Result := ⟨{}⟩
 

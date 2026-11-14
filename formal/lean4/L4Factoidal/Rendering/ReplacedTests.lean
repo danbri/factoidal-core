@@ -89,8 +89,11 @@ private def painted (fit : ObjectFit) (w h : Float) : List (Float × Float × Fl
 #guard (boxes "<div>AB <img id='i' src='a.png'> C</div>").map (·.head?) == .ok (some ("i",18,0,40,20))
 -- max-width: 100% in a narrow container.
 #guard boxes "<div style='width:30px'><img id='i' src='a.png' style='max-width:100%'></div>" == .ok [("i",0,0,30,15)]
--- Block: its own line, with its margins.
-#guard boxes "<div id='d'><img id='i' src='a.png' style='display:block;margin:5px'></div>" == .ok [("d",0,0,200,30),("i",5,5,40,20)]
+-- Block: its own line, with its margins. They adjoin the margins of the `div`, which has
+-- no border or padding, and collapse with them (CSS 2.1 §8.3.1): the `div` is the image's box.
+#guard boxes "<div id='d'><img id='i' src='a.png' style='display:block;margin:5px'></div>" == .ok [("d",0,5,200,20),("i",5,5,40,20)]
+-- A border on the `div` keeps the margins inside it.
+#guard boxes "<div id='d' style='border:1px solid black'><img id='i' src='a.png' style='display:block;margin:5px'></div>" == .ok [("d",0,0,200,32),("i",6,6,40,20)]
 -- Border and padding grow the box; the image keeps its size.
 #guard boxes "<div><img id='i' src='a.png' style='border:2px solid red;padding:3px'></div>" == .ok [("i",0,0,50,30)]
 -- vertical-align: middle centres the image half an x-height above the baseline.
