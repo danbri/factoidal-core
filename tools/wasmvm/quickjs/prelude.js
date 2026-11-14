@@ -651,7 +651,9 @@
     hasChildNodes() { return info(nodeId(this), 6) > 0; }
     get childNodes() {
       let l = listCache.get(this);
-      if (!l) { const id = nodeId(this); l = liveList(() => kids(id)); listCache.set(this, l); }
+      // the node's number is read at each use: a frame's Document object takes the number of
+      // the document that document.close() made
+      if (!l) { nodeId(this); l = liveList(() => kids(nodeId(this))); listCache.set(this, l); }
       return l;
     }
     get firstChild() { return wrap(info(nodeId(this), 2)); }
@@ -3921,6 +3923,7 @@
     let b;
     try { b = bState(o, what); } catch (e) { return Promise.reject(e); }
     if (b.used || (b.stream && b.stream.locked)) return Promise.reject(new TypeError(`Failed to execute '${what}': the body was already read`));
+    if (b.signal && b.signal.aborted) return Promise.reject(b.signal.reason);
     if (b.bytes !== null) b.used = true;
     return Promise.resolve(b.bytes === null ? new Uint8Array(0) : b.bytes);
   };
@@ -4130,10 +4133,11 @@
   // ---- Response (Fetch §5.5) -----------------------------------------------------------------
   const responses = new WeakMap();
   // A response object from its parts: `guard` is its headers' guard.
-  const responseOf = (parts, list, guard, bytes) => {
+  const responseOf = (parts, list, guard, bytes, signal) => {
     const r = Object.create(makeResponse().prototype), headers = headersOf(list, guard);
     responses.set(r, { ...parts, headers });
-    bodies.set(r, { bytes, used: false, stream: undefined, headers });
+    // signal: the fetch's (Fetch §5.6 "fetch" step 11: aborting it errors the response's body)
+    bodies.set(r, { bytes, used: false, stream: undefined, headers, signal });
     return r;
   };
   const makeResponse = () => {
@@ -4193,7 +4197,7 @@
         const st = R(this, 'clone'), b = bodies.get(this);
         if (b.used || (b.stream && b.stream.locked)) throw new TypeError("Failed to execute 'clone' on 'Response': the body was already read");
         const hs = headerState.get(st.headers);
-        return responseOf({ status: st.status, statusText: st.statusText, url: st.url, type: st.type, redirected: st.redirected }, hs.list, hs.guard, b.bytes);
+        return responseOf({ status: st.status, statusText: st.statusText, url: st.url, type: st.type, redirected: st.redirected }, hs.list, hs.guard, b.bytes, b.signal);
       }
     }
     for (const k of ['type', 'url', 'redirected', 'status', 'ok', 'statusText', 'headers', 'clone'])
@@ -4214,7 +4218,7 @@
         const x = new globalThis.XMLHttpRequest(), s = st_xhr(x);
         let settled = false;
         const fail = e => { if (!settled) { settled = true; reject(e); } };
-        signal.addEventListener('abort', () => { if (settled) return; try { x.abort(); } catch { /* done */ } fail(signal.reason); });
+        signal.addEventListener('abort', () => { if (settled) return; fail(signal.reason); try { x.abort(); } catch { /* done */ } });
         try { x.open(st.method, st.url, true); } catch (e) { fail(new TypeError(String(e && e.message || e))); return; }
         apiCall(73, [s.h, st.credentials === 'include' ? 1 : 0]);
         if (st.mode === 'same-origin') apiCall(77, [s.h, 1]);
@@ -4227,7 +4231,7 @@
           for (const line of x.getAllResponseHeaders().split('\r\n')) { const i = line.indexOf(': '); if (i > 0) list.push([line.slice(0, i).toLowerCase(), line.slice(i + 2)]); }
           const url = x.responseURL, p = urlFields(url);
           resolve(responseOf({ status: x.status, statusText: x.statusText, url, type: p !== null && p[1] !== pageOrigin() && p[2] !== 'data:' && p[2] !== 'blob:' ? 'cors' : 'basic',
-            redirected: url !== '' && url !== st.url.split('#')[0] }, list, 'immutable', raw === null ? new Uint8Array(0) : new Uint8Array(raw)));
+            redirected: url !== '' && url !== st.url.split('#')[0] }, list, 'immutable', raw === null ? new Uint8Array(0) : new Uint8Array(raw), signal));
         };
         x.onerror = () => fail(new TypeError('Failed to fetch'));
         x.onabort = () => fail(new DOMException('The request was aborted.', 'AbortError'));
