@@ -36,10 +36,8 @@ structure View where
 def ratOf (x : Float) : Rat :=
   if x.isFinite && x > 0 then ((x * 1000).round.toUInt64.toNat : Rat) / 1000 else 0
 
-def keyLE : List Nat → List Nat → Bool
-  | [], _ => true
-  | _ :: _, [] => false
-  | a :: as, b :: bs => if a == b then keyLE as bs else a < b
+/-- The order of cascade keys: the cascade's own (`CSS.lexLE`). -/
+abbrev keyLE : List Nat → List Nat → Bool := CSS.lexLE
 
 /-- For each property, the names of the shorthands that have it as a longhand, and the
 legacy names of the property and of those shorthands. Built once (a lazy constant). -/
@@ -82,12 +80,10 @@ def cascaded (v : View) (id : Nat) (p : String) : Option String := Id.run do
     let onlyVisited := matched.all (·.visitedDependent)
     for d in rule.declarations do
       if !onlyVisited || visitedProperties.contains d.property then
-        let context := if (origin == 1 && rule.scope.isSome) == d.important then 1 else 0
-        let key := [if d.important then 1 else 0, origin * 2 + context, 0, specificity.1, specificity.2.1, specificity.2.2, order]
-        best := consider best key d
+        best := consider best (ruleKey d.important origin rule.scope.isSome rule.layer specificity order) d
       order := order + 1
   for d in CssValues.Block.parseOnly names (attrValue n "style") do
-    let key := [if d.important then 1 else 0, 2 + (if d.important then 0 else 1), 1, 0, 0, 0, order]
+    let key := inlineKey d.important order
     if (d.name == p || d.name == "all") && (best.map (fun b => keyLE b.1 key)).getD true then best := some (key, d.value)
     order := order + 1
   return best.map (·.2)
