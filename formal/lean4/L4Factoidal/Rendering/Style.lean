@@ -344,7 +344,8 @@ def declarations (s : String) : Except String (List Declaration) := do
       let value := trim (":".intercalate (first::more))
       let important := value.endsWith "!important"
       let value := if important then trim ((value.dropEnd 10).toString) else value
-      let key := (trim key).toLower
+      -- a custom property name is case-sensitive (CSS Variables 1 §2)
+      let key := if (trim key).startsWith "--" then trim key else (trim key).toLower
       let key := if key == "background" then "background-color" else key
       let expanded := if ["margin","padding"].contains key then
           (expandEdges key value important).toOption.getD []
