@@ -42,6 +42,7 @@ def display : Display → String
   | .tableHeaderGroup => "table-header-group" | .tableFooterGroup => "table-footer-group"
   | .tableRow => "table-row" | .tableCell => "table-cell" | .tableCaption => "table-caption"
   | .tableColumn => "table-column" | .tableColumnGroup => "table-column-group"
+  | .flex => "flex" | .inlineFlex => "inline-flex" | .grid => "grid" | .inlineGrid => "inline-grid"
 
 def borderStyle : BorderStyle → String
   | .none => "none" | .solid => "solid" | .inset => "inset" | .outset => "outset"

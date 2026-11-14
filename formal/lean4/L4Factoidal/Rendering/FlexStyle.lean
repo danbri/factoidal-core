@@ -26,6 +26,17 @@ structure FlexStyle where
   basis : FlexBasis := .auto
   deriving Repr
 
+def FlexBasis.same : FlexBasis → FlexBasis → Bool
+  | .auto, .auto => true
+  | .content, .content => true
+  | .length a, .length b => a.same b
+  | _, _ => false
+
+/-- Every field equal: the two lay out the same. -/
+def FlexStyle.same (a b : FlexStyle) : Bool :=
+  a.column == b.column && a.reverse == b.reverse && a.wrap == b.wrap &&
+  a.grow == b.grow && a.shrink == b.shrink && a.basis.same b.basis
+
 def flexProperties : List String :=
   ["flex-direction", "flex-wrap", "flex-grow", "flex-shrink", "flex-basis"]
 

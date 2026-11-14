@@ -13,6 +13,15 @@ inductive Length where
   | vw (value : Float) | vh (value : Float)
   deriving Repr
 
+/-- The same length (a NaN is not the same as itself, as with `==` on floats). -/
+def Length.same : Length → Length → Bool
+  | .auto, .auto => true
+  | .px a, .px b => a == b
+  | .percent a, .percent b => a == b
+  | .vw a, .vw b => a == b
+  | .vh a, .vh b => a == b
+  | _, _ => false
+
 /-- An exact number of the property table as a float. -/
 def ratToFloat (r : Rat) : Float := Float.ofInt r.num / Float.ofNat r.den
 
@@ -74,6 +83,13 @@ structure AlignStyle where
   columnGap : Length := .auto
   order : Int := 0
   deriving Repr
+
+/-- Every field equal: the two lay out the same. -/
+def AlignStyle.same (a b : AlignStyle) : Bool :=
+  a.justifyContent == b.justifyContent && a.alignContent == b.alignContent &&
+  a.alignItems == b.alignItems && a.alignSelf == b.alignSelf &&
+  a.justifyItems == b.justifyItems && a.justifySelf == b.justifySelf &&
+  a.rowGap.same b.rowGap && a.columnGap.same b.columnGap && a.order == b.order
 
 /-- The words of a canonical keyword value, without the overflow position (`safe`,
 `unsafe`: this layout aligns as `unsafe` does, except where the specification falls back). -/
