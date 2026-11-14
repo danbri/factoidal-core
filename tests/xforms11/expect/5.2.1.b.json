@@ -10,7 +10,7 @@
   {
    "expect": "each-value",
    "kind": "output",
-   "label": "",
+   "label": "Result",
    "contains": "xforms-valid",
    "except": []
   }
