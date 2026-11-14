@@ -5,11 +5,12 @@ request's referrer", §8.4 "strip url for use as a referrer".
 
 ## Status
 
-The engine sends no `Referer` at all: a page cannot set one (`Net.PageFetch`:
-`forbiddenRequestHeader`, `plan_wire_forbidden`) and the engine adds none, which every
-policy allows (§8.3: a user agent may send less). This module is the computation for the day
-it sends one, with what it may then send proved now, so that the privacy bound is a theorem
-before the feature exists: `determine` is not called by any host.
+`Net.PageFetch` sends a `Referer` with the requests of `fetch` and `XMLHttpRequest`
+(`PageFetch.referrerOf`, on the table `decide` of this file; `PageFetch.wire_referer` says
+every `Referer` on a wire is that function's value). The policy is the request's, else its
+document's or worker's (`ofHeader` for a `Referrer-Policy` response field, `ofMeta` for
+`<meta name=referrer>`, `ofAttribute` for a `referrerpolicy` attribute), else the default.
+A page still cannot set the field itself (`forbiddenRequestHeader`).
 
 ## What is proved
 
@@ -20,7 +21,10 @@ a password or a fragment (`determine_no_credentials`); under the default policy
 (`strict_cross_origin_no_path`), and a request from a trustworthy origin to one that is not
 gets nothing (`strict_downgrade_none`, also for `strict-origin` and
 `no-referrer-when-downgrade`); `no-referrer` sends nothing; `same-origin` sends nothing
-across origins.
+across origins. `determine` is the table `decide` applied to a source (`determine_decide`),
+and a referrer made from a referrer (a redirect: Fetch §4.1 step 8 runs again on the
+referrer the hop before carried) is still nothing, the first source's origin or the first
+source stripped (`determine_chain`): a redirect never widens what is sent.
 -/
 
 namespace L4Factoidal.Net.ReferrerPolicy
@@ -98,6 +102,65 @@ def determine (policy : Policy) (source target : Url) (long : Bool := false) : O
   | .originWhenCrossOrigin => if sameOrigin source target then some full else some origin
   | .noReferrerWhenDowngrade => if downgrade source target then none else some full
 
+/-- What of its source a referrer carries. -/
+inductive Sent where
+  | nothing
+  /-- The origin only: no path, no query. -/
+  | origin
+  /-- The source without credentials and fragment. -/
+  | full
+  deriving DecidableEq, Repr, Inhabited
+
+/-- §8.3 steps 8 and on as a table: what a policy lets a request carry, from whether its
+source and target are same-origin (`same`) and whether it is a downgrade (`down`). Every
+caller that makes a `Referer` (`Net.PageFetch.referrerOf`) reads this table. -/
+def decide (policy : Policy) (same down : Bool) : Sent :=
+  match policy with
+  | .noReferrer => .nothing
+  | .origin => .origin
+  | .unsafeUrl => .full
+  | .strictOrigin => if down then .nothing else .origin
+  | .strictOriginWhenCrossOrigin => if same then .full else if down then .nothing else .origin
+  | .sameOrigin => if same then .full else .nothing
+  | .originWhenCrossOrigin => if same then .full else .origin
+  | .noReferrerWhenDowngrade => if down then .nothing else .full
+
+/-- ASCII lower case. -/
+def lowerAscii (s : String) : String :=
+  s.map fun c => if 'A' ≤ c ∧ c ≤ 'Z' then Char.ofNat (c.toNat + 32) else c
+
+/-- §8.1 "parse a referrer policy from a `Referrer-Policy` header": the last token of the
+field's values (joined with commas by the caller) that is a policy; unknown tokens and the
+empty string are skipped, so a newer policy a server lists last wins only when it is known. -/
+def Policy.ofHeader (value : String) : Option Policy :=
+  ((value.splitOn ",").map fun t => Policy.ofToken (lowerAscii t.trimAscii.toString)).foldl
+    (fun acc p => match p with | some q => some q | none => acc) none
+
+/-- A `referrerpolicy` content attribute (HTML §2.3.3 enumerated attribute over the policies:
+ASCII case-insensitive, no legacy keywords; a value that is not a policy is the empty state). -/
+def Policy.ofAttribute (value : String) : Option Policy := Policy.ofToken (lowerAscii value)
+
+/-- `<meta name=referrer content=…>` (HTML §4.2.5.1): the content in ASCII lower case, with
+the four legacy keywords. `none`: the document's policy stays as it was. -/
+def Policy.ofMeta (content : String) : Option Policy :=
+  match lowerAscii content.trimAscii.toString with
+  | "never" => some .noReferrer
+  | "default" => some .strictOriginWhenCrossOrigin
+  | "always" => some .unsafeUrl
+  | "origin-when-crossorigin" => some .originWhenCrossOrigin
+  | v => Policy.ofToken v
+
+/-- The token of a policy (the value `Request.referrerPolicy` shows). -/
+def Policy.token : Policy → String
+  | .noReferrer => "no-referrer"
+  | .noReferrerWhenDowngrade => "no-referrer-when-downgrade"
+  | .sameOrigin => "same-origin"
+  | .origin => "origin"
+  | .strictOrigin => "strict-origin"
+  | .originWhenCrossOrigin => "origin-when-cross-origin"
+  | .strictOriginWhenCrossOrigin => "strict-origin-when-cross-origin"
+  | .unsafeUrl => "unsafe-url"
+
 /-! ## Theorems -/
 
 /-- Kind: privacy bound. Says: whatever the policy, the referrer is nothing, the source's
@@ -166,6 +229,61 @@ theorem sameOrigin_cross_none (s t : Url) (long : Bool) (hc : sameOrigin s t = f
     determine .sameOrigin s t long = none := by
   cases hl : localScheme s <;> simp [determine, hl, hc]
 
+/-- Kind: refinement. Says: `determine` is the table `decide` applied to the source: nothing
+for a local scheme; else nothing, the origin, or the stripped source (the origin when it is
+too long) as the table says for same-origin and downgrade. -/
+theorem determine_decide (p : Policy) (s t : Url) (long : Bool) :
+    determine p s t long =
+      if localScheme s then none else
+      match decide p (sameOrigin s t) (downgrade s t) with
+      | .nothing => none
+      | .origin => some (strip s true)
+      | .full => some (if long then strip s true else strip s false) := by
+  cases hl : localScheme s <;> cases hs : sameOrigin s t <;> cases hd : downgrade s t <;> cases p <;>
+    simp [determine, decide, hl, hs, hd]
+
+/-- Kind: round trip. Says: a policy's token names that policy. -/
+theorem ofToken_token (p : Policy) : Policy.ofToken p.token = some p := by
+  cases p <;> rfl
+
+/-- Kind: lemma. Says: stripping twice is stripping once to the narrower form. -/
+theorem strip_strip (u : Url) (a b : Bool) : strip (strip u a) b = strip u (a || b) := by
+  cases a <;> cases b <;> simp [strip]
+
+/-- Kind: privacy theorem (redirects). Says: a referrer computed from a referrer (the next
+hop of a redirect, under any policy, to any target) is nothing, the first source's origin,
+or the first source stripped: a redirect never adds to what the first hop could carry, and
+once only the origin was sent, the path and query are gone for the rest of the chain. -/
+theorem determine_chain (p p' : Policy) (s t t' r : Url) (long long' : Bool)
+    (h : determine p s t long = some r) :
+    determine p' r t' long' = none ∨ determine p' r t' long' = some (strip s true) ∨
+      (determine p' r t' long' = some (strip s false) ∧ r = strip s false) := by
+  rcases determine_cases p' r t' long' with h' | h' | h'
+  · exact Or.inl h'
+  · rcases determine_cases p s t long with hs | hs | hs <;> rw [hs] at h
+    · simp at h
+    · simp only [Option.some.injEq] at h
+      rw [h', ← h, strip_strip]
+      exact Or.inr (Or.inl rfl)
+    · simp only [Option.some.injEq] at h
+      rw [h', ← h, strip_strip]
+      exact Or.inr (Or.inl rfl)
+  · rcases determine_cases p s t long with hs | hs | hs <;> rw [hs] at h
+    · simp at h
+    · simp only [Option.some.injEq] at h
+      rw [h', ← h, strip_strip]
+      exact Or.inr (Or.inl rfl)
+    · simp only [Option.some.injEq] at h
+      rw [h', ← h, strip_strip]
+      exact Or.inr (Or.inr ⟨rfl, rfl⟩)
+
+/-- Kind: privacy theorem (the table). Says: under the default policy the table gives the
+full source only to the same origin, and nothing on a downgrade. -/
+theorem decide_default (same down : Bool) :
+    (decide .default same down = .full ↔ same = true) ∧
+      (same = false → down = true → decide .default same down = .nothing) := by
+  cases same <;> cases down <;> simp [decide, Policy.default]
+
 /-! ## Checks (the cases of WPT referrer-policy/generic/test-case.sub.js) -/
 
 private def page : Url :=
@@ -192,5 +310,16 @@ private def originOnly : Url := { scheme := "https", host := "a.example" }
 -- a local scheme is never a referrer
 #guard determine .unsafeUrl { scheme := "data", host := "" } cross == none
 #guard Policy.ofToken "origin" == some .origin && Policy.ofToken "Origin" == none && Policy.ofToken "" == none
+
+-- the Referrer-Policy header: the last known token wins; unknown ones and "" are skipped
+#guard Policy.ofHeader "no-referrer, origin" == some .origin
+#guard Policy.ofHeader "origin, never-heard-of-it" == some .origin
+#guard Policy.ofHeader "Unsafe-URL" == some .unsafeUrl && Policy.ofHeader "" == none && Policy.ofHeader "always" == none
+-- meta: the legacy keywords; an attribute has none
+#guard Policy.ofMeta " Always " == some .unsafeUrl && Policy.ofMeta "never" == some .noReferrer
+#guard Policy.ofMeta "origin-when-crossorigin" == some .originWhenCrossOrigin && Policy.ofMeta "bogus" == none
+#guard Policy.ofAttribute "ORIGIN" == some .origin && Policy.ofAttribute "always" == none
+-- a redirect chain: origin only after a cross-origin hop, even back to the first origin
+#guard (determine .originWhenCrossOrigin page cross).bind (determine .originWhenCrossOrigin · same) == some originOnly
 
 end L4Factoidal.Net.ReferrerPolicy
