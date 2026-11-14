@@ -102,6 +102,35 @@ private def flexAbsCss := "#f{display:flex;position:relative;height:50px} #p{pos
 #guard box page "#c{height:40px} #p{box-sizing:border-box;height:50%;padding:2px}" "p" == some (0,7,200,20)
 #guard box "<div id=o><div id=m><div id=i>I</div></div></div>" "#o{height:80px} #m{height:50%} #i{height:25%}" "i" == some (0,0,200,10)
 
+-- aspect-ratio (CSS Sizing 4 §5.1): with `height: auto` the height is the width's by the ratio.
+#guard box page "#a{aspect-ratio:2;width:100px}" "a" == some (0,0,100,50)
+#guard box page "#a{aspect-ratio:2;width:100px}" "c" == some (0,50,200,14)
+#guard box page "#a{aspect-ratio:2/1}" "a" == some (0,0,200,100)
+#guard box page "#a{aspect-ratio:1/2;width:10px}" "a" == some (0,0,10,20)
+-- A height that is given wins; content taller than the ratio's height shows (§5.2), unless the box clips.
+#guard box page "#a{aspect-ratio:2;width:100px;height:10px}" "a" == some (0,0,100,10)
+#guard box page "#a{aspect-ratio:100;width:100px}" "a" == some (0,0,100,7)
+#guard box page "#a{aspect-ratio:100;width:100px;overflow:hidden}" "a" == some (0,0,100,1)
+-- The ratio is of the content box, or of the border box with `box-sizing: border-box`.
+#guard box page "#a{aspect-ratio:2;width:100px;padding:5px}" "a" == some (0,0,110,60)
+#guard box page "#a{aspect-ratio:2;width:100px;box-sizing:border-box;padding:5px}" "a" == some (0,0,100,50)
+#guard box page "#p{position:absolute;aspect-ratio:2;width:40px}" "p" == some (0,7,40,20)
+-- A canvas is a replaced box of its natural size: its attributes, or 300 by 150.
+private def drawing := "<div id=o><canvas id=k width=15 height=15>no canvas</canvas></div><div id=z>Z</div>"
+#guard box drawing "" "k" == some (0,0,15,15)
+#guard box drawing "" "z" == some (0,15,200,7)
+#guard box "<canvas id=k></canvas>" "#k{display:block}" "k" == some (0,0,300,150)
+-- With `aspect-ratio` and auto sizes: the natural width, the height by the ratio, within
+-- the limits of both axes (the cases of WPT css-sizing/aspect-ratio/replaced-element-043).
+private def ratioCss := "#k{display:block;width:auto;height:auto;aspect-ratio:2;"
+#guard box drawing (ratioCss ++ "}") "k" == some (0,0,15,7.5)
+#guard box drawing (ratioCss ++ "width:40px}") "k" == some (0,0,40,20)
+#guard box drawing (ratioCss ++ "height:25px}") "k" == some (0,0,50,25)
+#guard box drawing (ratioCss ++ "min-height:10px}") "k" == some (0,0,20,10)
+#guard box drawing (ratioCss ++ "max-width:10px}") "k" == some (0,0,10,5)
+#guard box drawing (ratioCss ++ "min-width:20px;max-height:5px}") "k" == some (0,0,20,5)
+#guard box drawing (ratioCss ++ "max-width:10px;min-height:10px}") "k" == some (0,0,10,10)
+
 -- Margin collapse (CSS 2.1 §8.3.1): adjoining margins of siblings; the larger stands.
 private def stack := "<div id=a>A</div>\n<div id=b>B</div><div id=c><div id=d>D</div></div><div id=e>E</div>"
 #guard box stack "#a{margin-bottom:10px} #b{margin-top:4px}" "b" == some (0,17,200,7)
