@@ -665,11 +665,13 @@ Such a page keeps its styles (`StyleKept`). When only `style` attributes and `cl
 attributes were written since its last measure (`Reads.styleWrites`), the cascade is of
 the subtrees of those elements, and of the parents of the elements whose `class` was
 written when no rule has `:has()` and those subtrees are small (`subtreesWithin`;
-`Measure`'s last argument), and, when no time passed and no script changed an
-animation, so are the style change (`Animation.styleChangeOn`) and the effect stacks
-(`Animation.overridesWhere`): the animated values of the other elements are those of the
-last measure. When only the time moved (a frame of a page whose animations run), there is
-no style change: the effect stacks at the new time, and the animated elements styled again. A script that writes one element's style and reads a computed value, again
+`Measure`'s last argument), and so is the style change
+(`Animation.styleChangeOn`: of the written elements, at any time); when no time passed
+and no script changed an animation, so are the effect stacks (`Animation.overridesWhere`):
+the animated values of the other elements are those of the last measure. When nothing
+was written (the time moved in a frame of a page whose animations run, or a script
+changed an animation), there is no style change: the effect stacks at the new time, and
+the animated elements styled again. A script that writes one element's style and reads a computed value, again
 and again, then pays for that element each time and not for the document. -/
 def Host.measureNow (h : Host) : Host × Option Answers :=
   match h.reads.measure with
@@ -717,7 +719,12 @@ def Host.measureNow (h : Host) : Host × Option Answers :=
       if h.anim.idle && candidates.isEmpty then keep h base none
       else
         let ac := animationAccess dom base (h.reads.kept.map (·.2)) (some candidates)
-        let anim := L4Factoidal.Rendering.Animation.styleChange h.anim ac
+        -- nothing a style reads was written since the last measure of this viewport: no
+        -- declaration changed, so the style change starts and cancels nothing (below)
+        let same := match h.reads.kept, h.reads.styleKept with
+          | some (v, _), some k => h.reads.styleWriteAt ≤ v && k.width == w && k.height == ht
+          | _, _ => false
+        let anim := if same then h.anim else L4Factoidal.Rendering.Animation.styleChange h.anim ac
         finish h anim (L4Factoidal.Rendering.Animation.overrides anim ac) candidates none
     | some (k, nodes, under) =>
       let ac := animationAccess dom base (h.reads.kept.map (·.2)) (some k.candidates)
@@ -726,23 +733,24 @@ def Host.measureNow (h : Host) : Host × Option Answers :=
       let declare := (under.filter fun n => n < dom.size && dom.connected n && !(ac.decls n).isEmpty).eraseDups
       let candidates := k.candidates.filter (fun c => !under.contains c) ++ declare
       let ac := { ac with candidates }
-      if k.now == h.anim.now && k.epoch == h.reads.animEpoch then
-        let dirty := underAny dom nodes
-        let anim := L4Factoidal.Rendering.Animation.styleChangeOn h.anim ac dirty (candidates.filter dirty)
+      -- The style change is of the written elements alone. The declarations of the others
+      -- are as they were, and CSS Transitions 1 §3 takes the before-change style with the
+      -- animations at the current time: for them the two styles are equal, whatever time
+      -- passed and whatever a script did to an animation, so nothing starts and nothing is
+      -- cancelled (a transition a script cancelled does not start again; an element whose
+      -- value follows an ancestor's running animation starts no transition of its own).
+      let dirty := underAny dom nodes
+      let anim := if nodes.isEmpty then h.anim
+        else L4Factoidal.Rendering.Animation.styleChangeOn h.anim ac dirty (candidates.filter dirty)
+      if anim.idle && candidates.isEmpty then keep h base none
+      else if k.now == h.anim.now && k.epoch == h.reads.animEpoch then
+        -- the same time and the same animations: the effect stacks of the written elements
         let ovs := k.overrides.filter (fun o => !dirty o.node) ++
           L4Factoidal.Rendering.Animation.overridesWhere anim ac dirty
-        if anim.idle && candidates.isEmpty then keep h base none
-        else finish h anim ovs candidates (k.final.map fun c => (c, nodes))
-      else if nodes.isEmpty && k.epoch == h.reads.animEpoch then
-        -- only the time moved: no declaration and no style changed, so style starts and
-        -- cancels nothing (a style change would find every animation as it is); the effect
-        -- stacks are those of the new time
-        finish h h.anim (L4Factoidal.Rendering.Animation.overrides h.anim ac) candidates none
+        finish h anim ovs candidates (k.final.map fun c => (c, nodes))
       else
-        -- a script changed an animation: every animation again
-        let anim := L4Factoidal.Rendering.Animation.styleChange h.anim ac
-        if anim.idle && candidates.isEmpty then keep h base none
-        else finish h anim (L4Factoidal.Rendering.Animation.overrides anim ac) candidates none
+        -- the time moved or a script changed an animation: the effect stacks of every element
+        finish h anim (L4Factoidal.Rendering.Animation.overrides anim ac) candidates none
 
 /-- The answers of the layout of the current arena and viewport: kept until a write or a
 new viewport, so reads after no write share one layout, and a read after writes makes

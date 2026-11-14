@@ -183,6 +183,25 @@ Not covered: a script that neither reads nor listens and later reads a time (`ge
 the style change then, so the animation starts late), and the window, which does not paint animated
 values yet.
 
+### Which elements a style change looks at
+
+CSS Transitions 1 §3 compares, for each element, the before-change style with the after-change
+style, and takes the before-change style "with any styles derived from declarative animations
+updated to the current time". So an element whose declarations did not change has two equal styles,
+whatever time passed and whatever a script did to an animation: nothing starts for it and nothing
+is cancelled. The host therefore makes the style change for the written elements only
+(`Host.measureNow`): when nothing was written (a frame, or a script's `cancel()`, `currentTime`,
+`play()`), there is none, only the effect stacks at the new state; on a page with no kept styles
+the whole style change is skipped when nothing a style reads was written since the last measure
+(`Reads.styleWriteAt`). Before, a time or an animation changed by a script made the style change of
+every element against the kept styles of an earlier time: a transition a script had cancelled
+started again from its last value, and an element following an ancestor's running transition
+(an `em` length under a font-size transition) started one of its own at each such step.
+
+A frame is also needed while an animation holds acts that no script object took (a promise to
+resolve or reject): an animation made and cancelled by style in one task has never been ticked, and
+its `finished` promise was left pending (`Engine.needsFrame_out`).
+
 ### Script interfaces
 
 `Element.animate`, `Element.getAnimations`, `Document.getAnimations`, `document.timeline`,
@@ -292,6 +311,9 @@ Proved (axioms: propext, Classical.choice, Quot.sound):
 - `Page.subtreesWithin_length` (the nodes the partial path reads after `class` writes are at most
   `subtreeLimit`), `Reads.wrote_subtree`, `Reads.wrote_keeps_subtree` (a `class` write marks that a
   subtree is to be read again, and only a measure takes the mark away).
+- `Engine.needsFrame_out` (an animation with untaken acts keeps the page asking for a frame);
+  `Value.add_shape_replace` (two shapes that do not interpolate do not add or accumulate: the
+  keyframe's value replaces); `Value.originWords_dims` (an origin of lengths is not rewritten).
 - `Host.afterWrite_quiet`, `Host.frameStyles_quiet` (a page with no listener for an animation or
   transition event: a write asks for no frame and a frame measures nothing), `Host.afterWrite_listens`
   (a new listener marks the page), `Host.frameStyles_fresh` (a frame whose kept layout is of the last
