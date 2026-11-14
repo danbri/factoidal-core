@@ -209,7 +209,7 @@ function scriptFile(url:string):string|undefined {
   const u=new URL(url);
   if(u.origin!==origin&&u.origin!==secureOrigin)return undefined;
   if(u.pathname==="/resources/testharnessreport.js")return join(here,"testharnessreport.js");
-  // test_driver's vendor file is the runner's too (key input of the user: scriptSession action `key`).
+  // test_driver's vendor file is the runner's too (input of the user: scriptSession action `actions`).
   if(u.pathname==="/resources/testdriver-vendor.js")return join(here,"testdriver-vendor.js");
   // wptserve's one rewrite (tools/serve/serve.py `rewrites`).
   const pathname=u.pathname==="/resources/WebIDLParser.js"?"/resources/webidl2/lib/webidl2.js":u.pathname;
@@ -620,7 +620,7 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
     collectNet(turn as {netRequests?:NetWire[]});
     const startFetches=(turn as ScriptTurnWithFetches).fetches??[];
     // test_driver (testdriver-vendor.js of this directory): a request of the page leaves it as a
-    // console line; it is run as input of the user (scriptSession action `key`). The page then
+    // console line; it is run as input of the user (scriptSession action `actions`). The page then
     // settles in short slices of virtual time, so a request is seen before the test's own
     // timeout runs. Pages without testdriver.js settle in one call, as before.
     const driver=scriptEngine==="bubblepop"&&html.includes("testdriver.js");
@@ -630,9 +630,17 @@ async function engineBackend():Promise<{run:Run;info:Record<string,unknown>;engi
       for(;driverSeen<logs.length;driverSeen++){
         const line=logs[driverSeen];
         if(!line.startsWith("__wpt_driver "))continue;
-        let req:{keys?:Record<string,unknown>[]};
+        let req:{id?:number;actions?:unknown;text?:string};
         try{req=JSON.parse(line.slice(13));}catch{continue;}
-        for(const k of req.keys??[]){take(turn=await ss({...k,action:"key",session:turn.session}));did=true;}
+        if(typeof req.id!=="number")continue;
+        // The engine performs the actions (WebDriver's Perform Actions, in Lean) and says
+        // whether WebDriver refuses them; the page is answered with a `message` event.
+        take(turn=await ss({action:"actions",session:turn.session,...(typeof req.text==="string"?{text:req.text}:{actions:req.actions})}));
+        const refused=(turn as {inputError?:{error:string;message:string}}).inputError;
+        const reply=refused?{type:"testdriver-complete",id:req.id,status:"error",message:`${refused.error}: ${refused.message}`}
+          :{type:"testdriver-complete",id:req.id,status:"success"};
+        take(turn=await ss({action:"message",session:turn.session,data:JSON.stringify(reply),origin:new URL(url).origin}));
+        did=true;
       }
       return did;
     };

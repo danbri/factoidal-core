@@ -33,6 +33,7 @@ import L4Factoidal.EventLoop.Model
 import L4Factoidal.EventLoop.Dispatch
 import L4Factoidal.HTML.FrameSessions
 import L4Factoidal.JSON.Serialize
+import L4Factoidal.WebDriver.Input
 
 namespace L4Factoidal.WasmVM.Hosts.Page
 open L4Factoidal.WasmVM
@@ -139,6 +140,11 @@ structure PointerState where
   move that waits for the next frame: at most one move is dispatched in a frame. -/
   moveFrame : Option Nat := none
   pending : Option (Nat × String) := none
+  /-- The element the pointer is over (the target of its last event): what the boundary
+  events (over, out, enter, leave) of the next event compare with. -/
+  over : Option Nat := none
+  /-- The last press, for the click count (`WebDriver.Input.clickCount`). -/
+  last : Option L4Factoidal.WebDriver.Input.LastPress := none
   deriving Inhabited, Repr
 
 /-- The layout reads of scripts: the engine's layout of an arena at a viewport (CSS
@@ -776,7 +782,13 @@ def Session.runJobsP (s : Session) : Prog Session := do
 
 /-- Event flags of `qjs_dispatch`: 1 bubbles, 2 cancelable, 4 composed. -/
 def flagsOf (type : String) : Nat :=
-  if type == "click" || type.startsWith "mouse" || type.startsWith "pointer" then 7
+  -- enter and leave do not bubble, can not be canceled and are not composed (UI Events
+  -- §5.3, Pointer Events 3 §4.2)
+  if type == "mouseenter" || type == "mouseleave" || type == "pointerenter" || type == "pointerleave" then 0
+  -- these bubble and are composed, and can not be canceled
+  else if type == "pointercancel" || type == "gotpointercapture" || type == "lostpointercapture" then 5
+  else if type == "click" || type == "auxclick" || type == "dblclick" || type == "contextmenu" || type == "wheel"
+      || type.startsWith "mouse" || type.startsWith "pointer" then 7
   -- keys and `beforeinput` bubble, can be canceled and are composed; `input` can not be canceled
   else if type == "keydown" || type == "keyup" || type == "keypress" || type == "beforeinput" then 7
   else if type == "input" then 5

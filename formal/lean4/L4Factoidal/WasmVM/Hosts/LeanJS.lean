@@ -433,24 +433,32 @@ structure Session where
   tasks : Nat := 0
   errors : Array String := #[]
   lastFrame : Option Nat := none
+  /-- The state of trusted input (`WebDriver.Input.Trusted`: the keys and buttons the user
+  holds, the last user activation). It is a field of the session and not of the heap: a
+  run of the engine is a function of the heap (`Session.run`), so no script and no import
+  reads or changes it (`Session.run_trusted`). Only `setTrusted` changes it, and only the
+  host's input actions call that (`WebScripts`, action `actions`). -/
+  trusted : L4Factoidal.WebDriver.Input.Trusted := {}
   deriving Inhabited
+
+def Session.setTrusted (s : Session) (t : L4Factoidal.WebDriver.Input.Trusted) : Session := { s with trusted := t }
 
 def Session.host (s : Session) : Host := (s.heap.host.map (·.page)).getD default
 
 /-- Set the page host. The heap is taken apart first, so the arena is not copied. -/
 def Session.setHost (s : Session) (h : Host) : Session :=
-  let ⟨heap, api, limits, steps, jobs, tasks, errors, lastFrame⟩ := s
+  let ⟨heap, api, limits, steps, jobs, tasks, errors, lastFrame, trusted⟩ := s
   let lh := heap.host.getD default
-  ⟨{ heap with host := some { lh with page := h } }, api, limits, steps, jobs, tasks, errors, lastFrame⟩
+  ⟨{ heap with host := some { lh with page := h } }, api, limits, steps, jobs, tasks, errors, lastFrame, trusted⟩
 
 /-- The worker part of the host (`Hosts.LeanJSWorkers`). -/
 def Session.wk (s : Session) : WorkerHost := (s.heap.host.map (·.wk)).getD {}
 
 /-- Set the worker part of the host (the heap taken apart, as `setHost`). -/
 def Session.setWk (s : Session) (wk : WorkerHost) : Session :=
-  let ⟨heap, api, limits, steps, jobs, tasks, errors, lastFrame⟩ := s
+  let ⟨heap, api, limits, steps, jobs, tasks, errors, lastFrame, trusted⟩ := s
   let lh := heap.host.getD default
-  ⟨{ heap with host := some { lh with wk } }, api, limits, steps, jobs, tasks, errors, lastFrame⟩
+  ⟨{ heap with host := some { lh with wk } }, api, limits, steps, jobs, tasks, errors, lastFrame, trusted⟩
 
 /-- Whether the realm has made no ask of workers and holds no event from them: the case of
 every page that makes no worker, checked once per microtask checkpoint. -/
@@ -461,9 +469,9 @@ def Session.wkIdle (s : Session) : Bool :=
 
 /-- The step budget of each run of this session (`runBudget` for a page). -/
 def Session.setBudget (s : Session) (budget : Nat) : Session :=
-  let ⟨heap, api, limits, steps, jobs, tasks, errors, lastFrame⟩ := s
+  let ⟨heap, api, limits, steps, jobs, tasks, errors, lastFrame, trusted⟩ := s
   let lh := heap.host.getD default
-  ⟨{ heap with host := some { lh with budget } }, api, limits, steps, jobs, tasks, errors, lastFrame⟩
+  ⟨{ heap with host := some { lh with budget } }, api, limits, steps, jobs, tasks, errors, lastFrame, trusted⟩
 
 def Session.fail (s : Session) (what : String) : Session :=
   { s with errors := if s.errors.size < 256 then s.errors.push what else s.errors }
@@ -471,7 +479,7 @@ def Session.fail (s : Session) (what : String) : Session :=
 /-- One run of the engine: the budget is set, the steps it used counted, and the loop's
 clock moves up to script time at the end (as `Page.Session.run`). -/
 def Session.run (s : Session) (f : JHeap → (JS.Outcome × JS.Value) × JHeap) : Session × JS.Outcome × JS.Value :=
-  let ⟨heap, api, limits, steps, jobs, tasks, errors, lastFrame⟩ := s
+  let ⟨heap, api, limits, steps, jobs, tasks, errors, lastFrame, trusted⟩ := s
   let lh := heap.host.getD default
   let page := lh.page
   let page := { page with time := page.time.atRun page.loop.clock steps }
@@ -485,11 +493,11 @@ def Session.run (s : Session) (f : JHeap → (JS.Outcome × JS.Value) × JHeap) 
   let page := lh.page
   let time := page.time.atRun page.loop.clock steps
   let page := { page with time, loop := { page.loop with clock := time.sync page.loop.clock } }
-  (⟨{ heap with host := some { lh with page } }, api, limits, steps, jobs, tasks, errors, lastFrame⟩, o, v)
+  (⟨{ heap with host := some { lh with page } }, api, limits, steps, jobs, tasks, errors, lastFrame, trusted⟩, o, v)
 
 /-- One run of the engine with any answer (as `run`). -/
 def Session.runG {α : Type} (s : Session) (f : JHeap → α × JHeap) : Session × α :=
-  let ⟨heap, api, limits, steps, jobs, tasks, errors, lastFrame⟩ := s
+  let ⟨heap, api, limits, steps, jobs, tasks, errors, lastFrame, trusted⟩ := s
   let lh := heap.host.getD default
   let page := lh.page
   let page := { page with time := page.time.atRun page.loop.clock steps }
@@ -502,7 +510,7 @@ def Session.runG {α : Type} (s : Session) (f : JHeap → α × JHeap) : Session
   let page := lh.page
   let time := page.time.atRun page.loop.clock steps
   let page := { page with time, loop := { page.loop with clock := time.sync page.loop.clock } }
-  (⟨{ heap with host := some { lh with page } }, api, limits, steps, jobs, tasks, errors, lastFrame⟩, a)
+  (⟨{ heap with host := some { lh with page } }, api, limits, steps, jobs, tasks, errors, lastFrame, trusted⟩, a)
 
 /-- The text of an outcome that is not normal. -/
 def failure : JS.Outcome → Option String
@@ -567,6 +575,76 @@ def Session.callbackOnly (s : Session) (cb : Nat) (target : Int) (arg : Nat) : S
   { s with tasks := s.tasks + 1 }
 
 def Session.release (s : Session) (cb : Nat) : Session := (s.api? "release" #[.num (Float.ofNat cb)]).1
+
+/-! ### Trusted input is out of reach of scripts
+
+Everything a page's script does, and everything an import does for it, happens inside a
+run of the engine: a function of the heap that `Session.run` or `Session.runG` is given.
+The theorems below say that such a run leaves `Session.trusted` as it was, whatever the
+function is. So the keys and buttons held and the user activation of a session change
+only where `Session.setTrusted` is called: in the host's input actions. -/
+
+/-- Isolation (run). Says: a run of the engine with any function of the heap (any script,
+with any imports) leaves the trusted input state unchanged. Does not say: that the
+script can not make events of its own (it can; `dispatchEvent` marks them untrusted in
+the prelude, which Lean does not check). -/
+theorem Session.run_trusted (s : Session) (f : JHeap → (JS.Outcome × JS.Value) × JHeap) :
+    (s.run f).1.trusted = s.trusted := by
+  obtain ⟨heap, api, limits, steps, jobs, tasks, errors, lastFrame, trusted⟩ := s
+  rfl
+
+/-- Isolation (run with any answer). Says: as `run_trusted`, for `runG`. Does not say:
+more than that. -/
+theorem Session.runG_trusted {α : Type} (s : Session) (f : JHeap → α × JHeap) :
+    (s.runG f).1.trusted = s.trusted := by
+  obtain ⟨heap, api, limits, steps, jobs, tasks, errors, lastFrame, trusted⟩ := s
+  rfl
+
+theorem Session.setBudget_trusted (s : Session) (budget : Nat) : (s.setBudget budget).trusted = s.trusted := by
+  obtain ⟨heap, api, limits, steps, jobs, tasks, errors, lastFrame, trusted⟩ := s
+  rfl
+
+theorem Session.setHost_trusted (s : Session) (h : Host) : (s.setHost h).trusted = s.trusted := by
+  obtain ⟨heap, api, limits, steps, jobs, tasks, errors, lastFrame, trusted⟩ := s
+  rfl
+
+theorem Session.fail_trusted (s : Session) (what : String) : (s.fail what).trusted = s.trusted := rfl
+
+/-- Isolation (a call of the prelude). Says: a call of a method of the prelude's object
+(a dispatch, a callback) leaves the trusted input state unchanged. Does not say: what
+the method does to the page. -/
+theorem Session.api?_trusted (s : Session) (name : String) (args : Array JS.Value) :
+    (s.api? name args).1.trusted = s.trusted := by
+  simp only [Session.api?]
+  repeat' split
+  all_goals simp [Session.fail_trusted, Session.run_trusted]
+
+/-- Isolation (an event). Says: dispatching an event to the page's listeners, trusted or
+not, leaves the trusted input state unchanged: a listener can not press a key, hold a
+button or give the page user activation. Does not say: that listeners run (that is the
+prelude's dispatch). -/
+theorem Session.dispatchOnly_trusted (s : Session) (target : Nat) (type : String) :
+    (s.dispatchOnly target type).1.trusted = s.trusted := by
+  simp [Session.dispatchOnly, Session.api?_trusted]
+
+/-- Isolation (a timer or frame callback). Says: running a callback of the page leaves the
+trusted input state unchanged. Does not say: more than that. -/
+theorem Session.callbackOnly_trusted (s : Session) (cb : Nat) (target : Int) (arg : Nat) :
+    (s.callbackOnly cb target arg).trusted = s.trusted := by
+  simp [Session.callbackOnly, Session.api?_trusted]
+
+/-- Isolation (microtasks). Says: the microtask checkpoint (every promise job of the
+page) leaves the trusted input state unchanged. Does not say: more than that. -/
+theorem Session.runJobs_trusted (s : Session) : s.runJobs.trusted = s.trusted := by
+  simp only [Session.runJobs]
+  repeat' split
+  all_goals simp [Session.fail_trusted, Session.setBudget_trusted, Session.run_trusted]
+
+/-- Only the setter. Says: `setTrusted` gives exactly the state it is given, and changes
+nothing a script can read: the host, and so the DOM and the event loop, stay as they
+were. Does not say: who calls it (the host's input actions; read `WebScripts`). -/
+theorem Session.setTrusted_spec (s : Session) (t : L4Factoidal.WebDriver.Input.Trusted) :
+    (s.setTrusted t).trusted = t ∧ (s.setTrusted t).host = s.host := ⟨rfl, rfl⟩
 
 /-- The session as an engine of `Hosts.PageEvents`. -/
 def engine : PageEvents.Engine Session :=

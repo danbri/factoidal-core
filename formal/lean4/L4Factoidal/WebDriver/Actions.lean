@@ -266,6 +266,31 @@ def parse (request : Json) : Except Error (List Source) := do
     throw (bad "an id is used for two kinds of source")
   return sources
 
+/-! ## Element Send Keys (§12.5.3) -/
+
+/-- The key actions of a text typed at the keyboard (WebDriver §12.5.3 "dispatch actions
+for a string"): a modifier key in the text goes down and stays down until the null key
+(U+E000) or the end of the text; a character that needs Shift on a US keyboard is typed
+with Shift down around it unless Shift is held; every other key goes down and up. -/
+def typeable (text : String) : List Action :=
+  let shiftKey := String.singleton (Char.ofNat 0xE008)
+  let (acts, held) := text.toList.foldl (init := (([] : List Action), ([] : List String))) fun (acts, held) c =>
+    let v := String.singleton c
+    if c.toNat == 0xE000 then (acts ++ held.reverse.map Action.keyUp, [])
+    else if Keys.isModifier (Keys.ofRaw c).key then
+      if held.contains v then (acts, held) else (acts ++ [Action.keyDown v], held ++ [v])
+    else if Keys.isShifted c && !held.any (fun h => (keyDataOfValue h) == "Shift") then
+      (acts ++ [Action.keyDown shiftKey, Action.keyDown v, Action.keyUp v, Action.keyUp shiftKey], held)
+    else (acts ++ [Action.keyDown v, Action.keyUp v], held)
+  acts ++ held.reverse.map Action.keyUp
+where
+  keyDataOfValue (v : String) : String := match v.toList with
+    | [c] => (Keys.ofRaw c).key
+    | _ => v
+
+/-- The source of a typed text. -/
+def typeableSource (text : String) : Source := { id := "send keys", kind := .key, actions := typeable text }
+
 /-! ## Ticks (§15.4 "actions by tick") -/
 
 /-- One tick: the number of each source that has an action in it, and the action. -/
@@ -455,10 +480,17 @@ structure Run (σ : Type) where
   input : State := {}
   error : Option Error := none
 
-/-- What a run needs of the engine: the page's `Env` now, how to dispatch one low-level
-event, and how to let time pass. -/
+/-- The action reads the layout: its coordinates count from an element. -/
+def Action.needsLayout : Action → Bool
+  | .pointerMove _ (.element _) _ _ _ => true
+  | .scroll _ (.element _) _ _ _ _ => true
+  | _ => false
+
+/-- What a run needs of the engine: the page's `Env` now (with `true`, the centres of
+element references, for which the engine may lay the page out and keep the layout), how
+to dispatch one low-level event, and how to let time pass. -/
 structure Driver (σ : Type) where
-  env : σ → Env
+  env : σ → Bool → σ × Env
   dispatch : σ → Low → σ
   wait : σ → Nat → σ
 
@@ -467,9 +499,10 @@ variable {σ : Type}
 /-- One action of a tick: stepped in the page as it is now, its events dispatched. -/
 def performAction (d : Driver σ) (kinds : Nat → String × Kind) (r : Run σ) (ka : Nat × Action) : Run σ :=
   if r.error.isSome then r else
-  match step (d.env r.engine) r.input (kinds ka.1).1 (kinds ka.1).2 ka.2 with
-  | .ok (st, lows) => { r with input := st, engine := lows.foldl d.dispatch r.engine }
-  | .error e => { r with error := some e }
+  let (engine, env) := d.env r.engine ka.2.needsLayout
+  match step env r.input (kinds ka.1).1 (kinds ka.1).2 ka.2 with
+  | .ok (st, lows) => { r with input := st, engine := lows.foldl d.dispatch engine }
+  | .error e => { r with engine, error := some e }
 
 /-- One tick: its actions in source order, then the tick's duration passes. -/
 def performTick (d : Driver σ) (kinds : Nat → String × Kind) (r : Run σ) (t : Tick) : Run σ :=
@@ -627,7 +660,7 @@ private def lowsOf (s : String) : String × List Low :=
   match parse (req s) with
   | .error e => (e.code.name, [])
   | .ok ss =>
-    let d : Driver (List Low) := { env := fun _ => envOf 800 600, dispatch := fun acc l => acc ++ [l], wait := fun acc _ => acc }
+    let d : Driver (List Low) := { env := fun s _ => (s, envOf 800 600), dispatch := fun acc l => acc ++ [l], wait := fun acc _ => acc }
     let r := perform d { engine := [] } ss
     match r.error with
     | some e => (e.code.name, r.engine)
@@ -670,6 +703,11 @@ private def lowsOf (s : String) : String × List Low :=
   ("", [.pointer .move .pen 2 1 2 (-1) 0 {} [("pressure", "0.5"), ("tiltX", "-30")]])
 #guard lowsOf "{\"actions\":[{\"type\":\"pointer\",\"id\":\"p\",\"actions\":[{\"type\":\"pointerDown\",\"button\":0,\"pressure\":1.5}]}]}" == ("invalid argument", [])
 -- Release Actions: Shift and the primary button go up, last pressed first
+-- Element Send Keys: Shift around a capital, a held modifier released by the null key
+#guard typeable "aB" == [.keyDown "a", .keyUp "a", .keyDown "\uE008", .keyDown "B", .keyUp "B", .keyUp "\uE008"]
+#guard typeable "\uE009a\uE000b" == [.keyDown "\uE009", .keyDown "a", .keyUp "a", .keyUp "\uE009", .keyDown "b", .keyUp "b"]
+#guard typeable "\uE008ab" == [.keyDown "\uE008", .keyDown "a", .keyUp "a", .keyDown "b", .keyUp "b", .keyUp "\uE008"]
+#guard typeable "\uE008A" == [.keyDown "\uE008", .keyDown "A", .keyUp "A", .keyUp "\uE008"]
 private def heldState : State :=
   { keys := ["Shift"], mods := { shift := true }, pointers := [("m", { pressed := [0], x := 3, y := 4 })],
     cancel := [("m", .pointer .mouse, .pointerUp 0), ("k", .key, .keyUp "\uE008")] }

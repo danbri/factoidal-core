@@ -1,76 +1,67 @@
 // Foafnaut's testdriver-vendor.js (this repository's own file; a WPT runner supplies its
 // own, as wptrunner does). The runner (testharness-run.ts) serves it in place of
-// /resources/testdriver-vendor.js. A request of test_driver leaves the page as a console
-// line, as results do; the runner then gives the engine the input of the user it asks for
-// (scriptSession action `key`), and the page sees trusted events. What a key does is the
-// engine's decision (DOM.Editing.keyCommand); this file only names the keys of WebDriver.
-// Done: send_keys and the key actions of action_sequence. Not done: pointer actions, click.
+// /resources/testdriver-vendor.js.
+//
+// A request of test_driver leaves the page as a console line, as results do. The runner
+// gives it to the engine as input of the user (scriptSession action `actions`: WebDriver's
+// Perform Actions, decided in L4Factoidal.WebDriver.Actions and dispatched as trusted
+// events by Hosts.PageEvents), and answers with a `message` event at the window, as
+// wptrunner's own vendor file is answered. Nothing about the input is decided here: this
+// file names the element of a request (its tree path from the document) and passes the
+// request on. A console line does this in the WPT runner only; no browser host reads it.
+//
+// Done: click, send_keys, action_sequence (key, pointer, wheel and none sources).
+// Not done (each rejects with "not implemented"): the other hooks of test_driver_internal.
 (function () {
   'use strict';
   if (!window.test_driver_internal) return;
-  // WebDriver's key code points (WebDriver §17.4.2) as KeyboardEvent key values.
-  const KEYS = { '': null, '': 'Backspace', '': 'Tab', '': 'Enter', '': 'Enter', '': 'Shift',
-    '': 'Control', '': 'Alt', '': 'Escape', '': ' ', '': 'PageUp', '': 'PageDown',
-    '': 'End', '': 'Home', '': 'ArrowLeft', '': 'ArrowUp', '': 'ArrowRight', '': 'ArrowDown',
-    '': 'Insert', '': 'Delete', '': 'Meta', '': 'Shift', '': 'Control', '': 'Alt', '': 'Meta' };
-  const MODS = { Shift: 'shiftKey', Control: 'ctrlKey', Alt: 'altKey', Meta: 'metaKey' };
-  const KEYCODES = { Backspace: 8, Tab: 9, Enter: 13, Shift: 16, Control: 17, Alt: 18, Escape: 27, ' ': 32, PageUp: 33, PageDown: 34,
-    End: 35, Home: 36, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, Insert: 45, Delete: 46, Meta: 91 };
-  const held = { shiftKey: false, ctrlKey: false, altKey: false, metaKey: false };
-  const codeOf = key => /^[a-z]$/i.test(key) ? 'Key' + key.toUpperCase() : /^[0-9]$/.test(key) ? 'Digit' + key : key === ' ' ? 'Space'
-    : key in MODS ? key + 'Left' : key.length === 1 ? '' : key;
-  const keyCodeOf = key => KEYCODES[key] ?? (/^[a-z0-9]$/i.test(key) ? key.toUpperCase().charCodeAt(0) : 0);
-  // One low-level key event of the user: the modifiers are those held when it happens.
-  const keyEvent = (kind, raw) => {
-    const key = raw in KEYS ? KEYS[raw] : raw;
-    if (key === null) return null;
-    if (key in MODS) held[MODS[key]] = kind === 'down';
-    return Object.assign({ kind, key, code: codeOf(key), keyCode: keyCodeOf(key) }, held);
+  const ELEMENT = 'element-6066-11e4-a52e-4f735466cecf';
+  // The tree path of a node from this document: child indices, `s` into a shadow root.
+  const pathOf = node => {
+    const steps = [];
+    while (node && node !== document) {
+      const parent = node.parentNode;
+      if (parent) { steps.unshift(Array.prototype.indexOf.call(parent.childNodes, node)); node = parent; }
+      else if (typeof ShadowRoot === 'function' && node instanceof ShadowRoot && node.host) { steps.unshift('s'); node = node.host; }
+      else return null;
+    }
+    return node === document ? 'path:' + steps.join('/') : null;
+  };
+  const refOf = element => {
+    const path = pathOf(element);
+    if (path === null) throw new Error('the element is not in the document of the test');
+    return { [ELEMENT]: path };
   };
   let serial = 0;
-  // Ask the runner for the events; the promise resolves when the page has seen them all.
-  const run = events => new Promise(resolve => {
-    events = events.filter(e => e !== null);
-    if (events.length === 0) { resolve(); return; }
-    let left = events.length;
-    const seen = e => {
-      if (!e.isTrusted || --left > 0) return;
-      window.removeEventListener('keydown', seen, true);
-      window.removeEventListener('keyup', seen, true);
-      setTimeout(resolve, 0);
-    };
-    window.addEventListener('keydown', seen, true);
-    window.addEventListener('keyup', seen, true);
-    console.log('__wpt_driver ' + JSON.stringify({ id: ++serial, keys: events }));
+  const pending = new Map();
+  window.addEventListener('message', e => {
+    const d = e.data;
+    if (!d || d.type !== 'testdriver-complete' || !pending.has(d.id)) return;
+    const [resolve, reject] = pending.get(d.id);
+    pending.delete(d.id);
+    if (d.status === 'success') resolve(); else reject(new Error(d.message));
   });
-  // "Element Send Keys" (WebDriver §12.5.3): the element is focused; a modifier in the text
-  // stays down until the end of the text or the null key.
-  window.test_driver_internal.send_keys = function (element, keys) {
-    if (element && typeof element.focus === 'function') element.focus();
-    const events = [], down = [];
-    const release = () => { while (down.length) events.push(keyEvent('up', down.pop())); };
-    for (const ch of String(keys)) {
-      if (ch === '') { release(); continue; }
-      const key = ch in KEYS ? KEYS[ch] : ch;
-      if (key in MODS) { if (!down.includes(ch)) { down.push(ch); events.push(keyEvent('down', ch)); } continue; }
-      events.push(keyEvent('down', ch));
-      events.push(keyEvent('up', ch));
-    }
-    release();
-    return run(events);
+  // Ask the runner; the promise settles when the page has seen every event of the request.
+  const request = body => new Promise((resolve, reject) => {
+    const id = ++serial;
+    pending.set(id, [resolve, reject]);
+    console.log('__wpt_driver ' + JSON.stringify(Object.assign({ id }, body)));
+  });
+  const attempt = f => { try { return f(); } catch (e) { return Promise.reject(e); } };
+  // "Element Click" (WebDriver §12.5.1): a mouse moves to the element's in-view centre
+  // point, and its primary button goes down and up.
+  window.test_driver_internal.click = function (element) {
+    return attempt(() => request({ actions: [{ type: 'pointer', id: 'testdriver click', parameters: { pointerType: 'mouse' },
+      actions: [{ type: 'pointerMove', x: 0, y: 0, origin: refOf(element) }, { type: 'pointerDown', button: 0 }, { type: 'pointerUp', button: 0 }] }] }));
   };
-  // "Perform Actions" (WebDriver §15.7) for key sources: tick by tick, each source's action.
+  // "Element Send Keys" (WebDriver §12.5.3): the element is focused; the text is typed.
+  window.test_driver_internal.send_keys = function (element, keys) {
+    if (element && typeof element.focus === 'function' && document.activeElement !== element) element.focus();
+    return request({ text: String(keys) });
+  };
+  // "Perform Actions" (WebDriver §15.7): an element origin is named by its path.
   window.test_driver_internal.action_sequence = function (actions) {
-    const events = [];
-    const ticks = Math.max(0, ...actions.map(a => (a.actions || []).length));
-    for (let i = 0; i < ticks; i++) {
-      for (const source of actions) {
-        const a = (source.actions || [])[i];
-        if (!a || a.type === 'pause') continue;
-        if (source.type === 'key' && (a.type === 'keyDown' || a.type === 'keyUp')) events.push(keyEvent(a.type === 'keyDown' ? 'down' : 'up', a.value));
-        else return Promise.reject(new Error('action_sequence: ' + source.type + ' ' + a.type + ' is not implemented by testdriver-vendor.js'));
-      }
-    }
-    return run(events);
+    return attempt(() => request({ actions: actions.map(source => Object.assign({}, source, {
+      actions: (source.actions || []).map(a => a && a.origin instanceof Element ? Object.assign({}, a, { origin: refOf(a.origin) }) : a) })) }));
   };
 })();

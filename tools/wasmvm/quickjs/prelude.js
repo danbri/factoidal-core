@@ -9620,7 +9620,10 @@
     },
     // Lean dispatches an event of the user agent at a node, the document (0) or the window.
     dispatch(target, type, flags) {
-      let C = type.startsWith('pointer') ? PointerEvent : type === 'click' || type.startsWith('mouse') ? MouseEvent : type === 'message' ? MessageEvent : Event;
+      // click, auxclick and contextmenu of pointer input are PointerEvents (Pointer Events 3 §4.2.12); a click with no pointer data is a MouseEvent
+      const pointerClick = type === 'click' || type === 'auxclick' || type === 'contextmenu';
+      let C = type.startsWith('pointer') ? PointerEvent : pointerClick || type === 'dblclick' || type.startsWith('mouse') ? MouseEvent
+        : type === 'wheel' ? WheelEvent : type === 'message' ? MessageEvent : Event;
       const init = { bubbles: (flags & 1) !== 0, cancelable: (flags & 2) !== 0, composed: (flags & 4) !== 0, view: window };
       // The pointer's coordinates, buttons and pointer fields, as Lean gives them; the key of
       // a keyboard event; the inputType and data of an input event of an editing command.
@@ -9629,6 +9632,9 @@
       if (C !== Event || keyOrInput) { const s = n.query(0, 16, ''); if (typeof s === 'string' && s !== '') { try { data = JSON.parse(s); } catch {} } }
       if (keyOrInput && typeof data.key === 'string') C = KeyboardEvent;
       else if (keyOrInput && typeof data.inputType === 'string') C = InputEvent;
+      if (pointerClick && typeof data.pointerId === 'number') C = PointerEvent;
+      // the related target of a boundary event (over, out, enter, leave), as Lean names it
+      if (typeof data.relatedNode === 'number') { data.relatedTarget = wrap(data.relatedNode); delete data.relatedNode; }
       // shadowframes: a message from another session (HTML.FrameSessions): its data is
       // serialized; its source is the frame it came through, or the parent.
       let via = -1;

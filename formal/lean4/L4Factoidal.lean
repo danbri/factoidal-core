@@ -1255,6 +1255,10 @@ import L4Factoidal.DOM.Editing.Commands
 import L4Factoidal.DOM.Editing.Keys
 import L4Factoidal.DOM.Editing.TextControl
 import L4Factoidal.DOM.Editing.Tests
+import L4Factoidal.WebDriver.Keys
+import L4Factoidal.WebDriver.Errors
+import L4Factoidal.WebDriver.Actions
+import L4Factoidal.WebDriver.Input
 import L4Factoidal.Rendering.Tests
 import L4Factoidal.Rendering.CascadeTests
 import L4Factoidal.Rendering.ReplacedTests
