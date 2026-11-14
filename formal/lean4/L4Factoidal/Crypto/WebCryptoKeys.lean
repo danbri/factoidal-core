@@ -10,7 +10,8 @@ Specifications: Web Cryptography Level 2 (W3C Editor's Draft): §14 SubtleCrypto
 sections), §32 HMAC, §33 HKDF, §34 PBKDF2; "Modern Algorithms in the Web Cryptography
 API" (WICG) for ChaCha20-Poly1305; RFC 5480 and RFC 5915 (EC keys in SPKI and PKCS #8),
 RFC 8410 (Ed25519 and X25519 in SPKI and PKCS #8), RFC 7517, 7518 and 8037 (JWK), X.690
-(DER). Record: docs/designissues/2026-11-09-hacl-web-crypto.md.
+(DER). Records: docs/designissues/2026-11-09-hacl-web-crypto.md and
+2026-11-14-webcrypto.md (`supports`, `getPublicKey`, the usage and format theorems).
 
 ## Keys are handles
 
