@@ -107,7 +107,10 @@ MEASURED_PLACEHOLDER
 
 ## Proved / tested only / open
 
-Proved (`L4Factoidal/DOM/XPath/Theorems.lean`; PROOF_STATUS):
+Proved (`L4Factoidal/DOM/XPath/Theorems.lean`). The first seven and the module's `#guard`s
+were compiled by the cloud engine build of run 43562441059 (the module imported by
+`Hosts.DomOps` on the check branch `wip/xml-specs-xmlweb-thm`; `WEB_RENDER_BUILD_RC=0`);
+the last five and `#print axioms` are in proof check 2 (PROOF2_STATUS):
 
 - `projNode_element`: with fuel left, the projection of an element is an element whose
   children are the projections of its XPath children, one for one and in order.
@@ -119,6 +122,12 @@ Proved (`L4Factoidal/DOM/XPath/Theorems.lean`; PROOF_STATUS):
 - `nodeAtPath_nil`, `nodeAtPath_cons`, `domOfPath_rooted`: the map from an address to a DOM
   node reads the same child lists as the projection, index by index.
 - `refOfItem_ns`: a namespace node maps to no DOM node.
+- `htmlNameTest_not_name`: the node test of HTML documents equals XPath 1.0's for every
+  node test that is not a QName; the HTML rule changes QName tests only.
+- `answerOf_number`, `answerOf_string`, `answerOf_boolean`: a request for the number,
+  string or boolean result type answers the evaluator's conversion of the value.
+- `serializeNode_text`: a Text node serializes as its escaped data and leaves the generated
+  prefix index unchanged.
 
 Tested only (`#guard` in the same module, and the WPT runs above):
 
