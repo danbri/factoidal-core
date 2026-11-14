@@ -1110,6 +1110,9 @@ def tableDeclaration (s : Computed) (d : Declaration) : Option Declaration :=
       if ["flex", "grid", "flow-root", "list-item", "grid-lanes", "block ruby", "math", "block math"].contains t then value "block"
       else if ["inline-flex", "inline-grid", "inline-grid-lanes", "ruby", "inline list-item"].contains t then value "inline-block"
       else if t == "run-in" then value "inline"
+      -- the legacy flexible boxes (CSS Display 3 §2.6 note: -webkit-box) as flex containers
+      else if t == "-webkit-box" then value "flex"
+      else if t == "-webkit-inline-box" then value "inline-flex"
       else value t
   | "text-align" =>
     match (CssValues.specified "text-align" d.value) with
