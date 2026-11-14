@@ -95,18 +95,19 @@ def toOM : Expr → OMObj
   | .sym s   => .omv s
   | .bool b  => .oms "logic1" (if b then "true" else "false")
   | .rat n d => .oma (.oms "nums1" "rational") [.omi n, .omi d]
-  | .vec xs  => .oma (.oms "linalg2" "vector") (toOMList xs)
-  | .mat rws => .oma (.oms "linalg2" "matrix") (toOMRows rws)
+  | .vec xs  => .oma (.oms "linalg2" "vector") (toOMLoop xs [])
+  | .mat rws => .oma (.oms "linalg2" "matrix") (toOMRowsLoop rws [])
   | .app fn args =>
       match bareSymbol fn args with
       | some (cd, name) => .oms cd name
-      | none            => .oma (headOM fn) (toOMList args)
-def toOMList : List Expr → List OMObj
-  | []      => []
-  | a :: as => toOM a :: toOMList as
-def toOMRows : List (List Expr) → List OMObj
-  | []      => []
-  | r :: rs => .oma (.oms "linalg2" "matrixrow") (toOMList r) :: toOMRows rs
+      | none            => .oma (headOM fn) (toOMLoop args [])
+/-- `toOM` over a list, in order: a loop with an accumulator. -/
+def toOMLoop : List Expr → List OMObj → List OMObj
+  | [], acc      => acc.reverse
+  | a :: as, acc => toOMLoop as (toOM a :: acc)
+def toOMRowsLoop : List (List Expr) → List OMObj → List OMObj
+  | [], acc      => acc.reverse
+  | r :: rs, acc => toOMRowsLoop rs (.oma (.oms "linalg2" "matrixrow") (toOMLoop r []) :: acc)
 end
 
 /-- The OpenMath object of an expression: of its strict form (MathML 3 section 4.6). -/
@@ -134,19 +135,21 @@ def ofOM : OMObj → Option Expr
           else if cd == "logic1" && name == "false" then some (.bool false)
           else none
   | .oma h args =>
-      match headKey h, ofOMList args with
+      match headKey h, ofOMLoop args [] with
       | some k, some as => if strictNodeOk (.app k as) then some (.app k as) else none
       | _, _            => none
   | .omf _ _      => none
   | .omstr _      => none
   | .ombind _ _ _ => none
   | .omattr _ _   => none
-def ofOMList : List OMObj → Option (List Expr)
-  | []      => some []
-  | o :: os =>
-      match ofOM o, ofOMList os with
-      | some e, some es => some (e :: es)
-      | _, _            => none
+/-- `ofOM` over a list, in order; `none` as soon as one object is refused. A loop with an
+    accumulator. -/
+def ofOMLoop : List OMObj → List Expr → Option (List Expr)
+  | [], acc      => some acc.reverse
+  | o :: os, acc =>
+      match ofOM o with
+      | some e => ofOMLoop os (e :: acc)
+      | none   => none
 end
 
 /-- Read an OpenMath object as a strict expression. -/
@@ -160,14 +163,25 @@ theorem headKey_headOM (fn : String) : headKey (headOM fn) = some fn := by
       obtain ⟨cd, name⟩ := p
       simpa [headKey] using keyOf_of_symbolOf h
 
-theorem ofOMList_toOMList (l : List Expr) (h : ∀ c ∈ l, ofOM (toOM c) = some c) :
-    ofOMList (toOMList l) = some l := by
+theorem toOMLoop_eq : ∀ (l : List Expr) (acc : List OMObj),
+    toOMLoop l acc = acc.reverse ++ l.map toOM
+  | [], acc      => by simp [toOMLoop]
+  | a :: as, acc => by simp [toOMLoop, toOMLoop_eq as]
+
+theorem ofOMLoop_map (l : List Expr) (h : ∀ c ∈ l, ofOM (toOM c) = some c) :
+    ∀ acc : List Expr, ofOMLoop (l.map toOM) acc = some (acc.reverse ++ l) := by
   induction l with
-  | nil => simp [toOMList, ofOMList]
+  | nil => intro acc; simp [ofOMLoop]
   | cons a as ih =>
+      intro acc
       have ha := h a (by simp)
-      have has := ih (fun c hc => h c (by simp [hc]))
-      simp [toOMList, ofOMList, ha, has]
+      have has := ih (fun c hc => h c (by simp [hc])) (a :: acc)
+      simp [ofOMLoop, ha, has]
+
+theorem ofOMList_toOMList (l : List Expr) (h : ∀ c ∈ l, ofOM (toOM c) = some c) :
+    ofOMLoop (toOMLoop l []) [] = some l := by
+  rw [toOMLoop_eq]
+  simpa using ofOMLoop_map l h []
 
 /-- Theorem 2 of `docs/designissues/2026-10-28-mathml-finish.md` (round trip). Says: a strict
     expression written as an OpenMath object and read back is the same expression.
@@ -194,7 +208,7 @@ theorem ofOM_toOM : ∀ s, isStrict s = true → ofOM (toOM s) = some s := by
           subst hfn; subst hargs
           simp [toOM, hb, ofOM, keyOf_of_symbolOf hsym]
       | none =>
-          have hl : ofOMList (toOMList args) = some args :=
+          have hl : ofOMLoop (toOMLoop args []) [] = some args :=
             ofOMList_toOMList args (fun c hc => ih c hc (hch c hc))
           simp [toOM, hb, ofOM, headKey_headOM, hl, hnode]
 

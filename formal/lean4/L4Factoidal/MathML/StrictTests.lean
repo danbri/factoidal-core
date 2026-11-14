@@ -69,6 +69,7 @@ private def noEnv : String → Option (Int × Int) := fun _ => none
 #print axioms toStrict_isStrict
 #print axioms toStrict_of_isStrict
 #print axioms toStrict_idempotent
+#print axioms isStrict_iff_toStrict_eq
 #print axioms unstrict_toStrict
 #print axioms evalStrict_toStrict
 #print axioms evalStrict_of_native

@@ -141,28 +141,39 @@ end
 mutual
 /-- Rewrite every node with `f`, children first. -/
 def bottomUp (f : Expr → Expr) : Expr → Expr
-  | .app fn args => f (.app fn (bottomUpList f args))
-  | .mat rws     => f (.mat (bottomUpRows f rws))
-  | .vec xs      => f (.vec (bottomUpList f xs))
+  | .app fn args => f (.app fn (bottomUpLoop f args []))
+  | .mat rws     => f (.mat (bottomUpRowsLoop f rws []))
+  | .vec xs      => f (.vec (bottomUpLoop f xs []))
   | .int n       => f (.int n)
   | .rat n d     => f (.rat n d)
   | .bool b      => f (.bool b)
   | .sym s       => f (.sym s)
-def bottomUpList (f : Expr → Expr) : List Expr → List Expr
-  | []      => []
-  | a :: as => bottomUp f a :: bottomUpList f as
-def bottomUpRows (f : Expr → Expr) : List (List Expr) → List (List Expr)
-  | []      => []
-  | r :: rs => bottomUpList f r :: bottomUpRows f rs
+/-- `bottomUp f` over a list, in order: a loop with an accumulator. -/
+def bottomUpLoop (f : Expr → Expr) : List Expr → List Expr → List Expr
+  | [], acc      => acc.reverse
+  | a :: as, acc => bottomUpLoop f as (bottomUp f a :: acc)
+def bottomUpRowsLoop (f : Expr → Expr) : List (List Expr) → List (List Expr) → List (List Expr)
+  | [], acc      => acc.reverse
+  | r :: rs, acc => bottomUpRowsLoop f rs (bottomUpLoop f r [] :: acc)
 end
 
-theorem bottomUpList_eq (f : Expr → Expr) : ∀ l, bottomUpList f l = l.map (bottomUp f)
-  | []      => by simp [bottomUpList]
-  | a :: as => by simp [bottomUpList, bottomUpList_eq f as]
+theorem bottomUpLoop_eq (f : Expr → Expr) :
+    ∀ l acc, bottomUpLoop f l acc = acc.reverse ++ l.map (bottomUp f)
+  | [], acc      => by simp [bottomUpLoop]
+  | a :: as, acc => by simp [bottomUpLoop, bottomUpLoop_eq f as]
 
-theorem bottomUpRows_eq (f : Expr → Expr) : ∀ l, bottomUpRows f l = l.map (fun r => r.map (bottomUp f))
-  | []      => by simp [bottomUpRows]
-  | r :: rs => by simp [bottomUpRows, bottomUpList_eq, bottomUpRows_eq f rs]
+theorem bottomUpList_eq (f : Expr → Expr) (l : List Expr) :
+    bottomUpLoop f l [] = l.map (bottomUp f) := by
+  simp [bottomUpLoop_eq]
+
+theorem bottomUpRowsLoop_eq (f : Expr → Expr) :
+    ∀ l acc, bottomUpRowsLoop f l acc = acc.reverse ++ l.map (fun r => r.map (bottomUp f))
+  | [], acc      => by simp [bottomUpRowsLoop]
+  | r :: rs, acc => by simp [bottomUpRowsLoop, bottomUpList_eq, bottomUpRowsLoop_eq f rs]
+
+theorem bottomUpRows_eq (f : Expr → Expr) (l : List (List Expr)) :
+    bottomUpRowsLoop f l [] = l.map (fun r => r.map (bottomUp f)) := by
+  simp [bottomUpRowsLoop_eq]
 
 /-- The direct children of a node. -/
 def children : Expr → List Expr
@@ -414,18 +425,32 @@ theorem toStrict_of_isStrict : ∀ e, isStrict e = true → toStrict e = e := by
 theorem toStrict_idempotent (e : Expr) : toStrict (toStrict e) = toStrict e :=
   toStrict_of_isStrict _ (toStrict_isStrict e)
 
+/-- Theorem (characterisation). Says: an expression is strict exactly when `toStrict` leaves it
+    unchanged, so `isStrict` decides the fixed points of the transformation.
+    Does not say: that strict means valid against the MathML schema. -/
+theorem isStrict_iff_toStrict_eq (e : Expr) : isStrict e = true ↔ toStrict e = e := by
+  constructor
+  · exact toStrict_of_isStrict e
+  · intro h
+    have hs := toStrict_isStrict e
+    rw [h] at hs
+    exact hs
+
 /-! ## Back to the forms the evaluator reads -/
 
 def isTwo : Expr → Bool
   | .int n => n == 2
   | _      => false
 
-/-- The rows of a `linalg2:matrix` application whose arguments are all `linalg2:matrixrow`. -/
-def rowsOf : List Expr → Option (List (List Expr))
-  | [] => some []
-  | .app fn r :: rest =>
-      if fn == "linalg2:matrixrow" then (rowsOf rest).map (fun rs => r :: rs) else none
-  | _ :: _ => none
+/-- The rows of a `linalg2:matrix` application whose arguments are all `linalg2:matrixrow`: a loop
+    with an accumulator. -/
+def rowsOfLoop : List Expr → List (List Expr) → Option (List (List Expr))
+  | [], acc => some acc.reverse
+  | .app fn r :: rest, acc =>
+      if fn == "linalg2:matrixrow" then rowsOfLoop rest (r :: acc) else none
+  | _ :: _, _ => none
+
+def rowsOf (l : List Expr) : Option (List (List Expr)) := rowsOfLoop l []
 
 /-- One step back at a node: a strict form becomes the form `Core.eval` reads, and the two forms of
     a square root (`root [x]`, `root [2, x]`) become one. -/
@@ -458,10 +483,15 @@ def uNode : Expr → Expr
 /-- Strict (or mixed) content rewritten into the forms `Core.eval` reads. -/
 def unstrict : Expr → Expr := bottomUp uNode
 
-theorem rowsOf_map (g : Expr → Expr) : ∀ rws : List (List Expr),
-    rowsOf (rws.map (fun r => Expr.app "linalg2:matrixrow" (r.map g))) = some (rws.map (fun r => r.map g))
-  | []      => by simp [rowsOf]
-  | r :: rs => by simp [rowsOf, rowsOf_map g rs]
+theorem rowsOfLoop_map (g : Expr → Expr) : ∀ (rws acc : List (List Expr)),
+    rowsOfLoop (rws.map (fun r => Expr.app "linalg2:matrixrow" (r.map g))) acc
+      = some (acc.reverse ++ rws.map (fun r => r.map g))
+  | [], acc      => by simp [rowsOfLoop]
+  | r :: rs, acc => by simp [rowsOfLoop, rowsOfLoop_map g rs]
+
+theorem rowsOf_map (g : Expr → Expr) (rws : List (List Expr)) :
+    rowsOf (rws.map (fun r => Expr.app "linalg2:matrixrow" (r.map g))) = some (rws.map (fun r => r.map g)) := by
+  simp [rowsOf, rowsOfLoop_map]
 
 /-- Node step back: undoing a strict step gives what the step back gives on the original node. -/
 theorem unstrict_sNode (x : Expr) : unstrict (sNode x) = uNode (mapChildren unstrict x) := by
@@ -470,7 +500,7 @@ theorem unstrict_sNode (x : Expr) : unstrict (sNode x) = uNode (mapChildren unst
   | bool b => simp [sNode, unstrict, bottomUp, mapChildren]
   | sym s => simp [sNode, unstrict, bottomUp, mapChildren]
   | rat n d =>
-      simp [sNode, unstrict, bottomUp, bottomUpList, mapChildren, uNode]
+      simp [sNode, unstrict, bottomUp, bottomUpList_eq, mapChildren, uNode]
   | vec xs =>
       simp [sNode, unstrict, bottomUp, bottomUpList_eq, mapChildren, uNode]
   | mat rws =>
@@ -498,7 +528,7 @@ theorem unstrict_sNode (x : Expr) : unstrict (sNode x) = uNode (mapChildren unst
       case rel =>
         by_cases hl : args.length = 2
         · simp [sNode, hk, hl, unstrict, bottomUp, bottomUpList_eq, mapChildren]
-        · simp [sNode, hk, hl, unstrict, bottomUp, bottomUpList, bottomUpList_eq, mapChildren, uNode]
+        · simp [sNode, hk, hl, unstrict, bottomUp, bottomUpList_eq, mapChildren, uNode]
       case minmax =>
         by_cases hs : args.length = 1
         · simp [sNode, hk, hs, unstrict, bottomUp, bottomUpList_eq, mapChildren]
@@ -507,7 +537,7 @@ theorem unstrict_sNode (x : Expr) : unstrict (sNode x) = uNode (mapChildren unst
           unfold unstrict
           have h1 : bottomUp uNode (Expr.app fn [Expr.app "set1:set" args])
               = Expr.app fn (args.map (bottomUp uNode)) := by
-            simp [bottomUp, bottomUpList, bottomUpList_eq, uNode, hk]
+            simp [bottomUp, bottomUpList_eq, uNode, hk]
           rw [h1]
           simp only [mapChildren]
           have hs' : (args.map (bottomUp uNode)).length ≠ 1 := by simpa using hs
