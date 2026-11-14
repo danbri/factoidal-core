@@ -447,33 +447,39 @@ has no generic shape here (it is then kept whole) or holds a substitution functi
 not a valid declaration. -/
 def expand (property value : String) : Option (List (String × String)) := expandF 4 property value
 
-/-- The value of a shorthand written by walking its grammar: each named part gives its
-value, an optional part whose properties are all initial is left out (`leaveOut`), `||` shows
-the parts that are not initial (the first if none is). `none`: the grammar has a form
-this does not write. -/
-def unparse (value : String → String) (isInitial : String → Bool) (leaveOut : Bool) : Nat → G → Option (List String)
-  | 0, _ => none
+/-- The ways to write a shorthand by walking its grammar, the first choices first: each
+named part gives its value, an optional part whose properties all have the value they
+would get if left out is left out (`leaveOut`), `||` shows the parts that are not at their
+default (the first if none is), and each alternative of `|` is a way (a keyword
+alternative too, when `keywords`). The caller keeps the first way that expands back to the
+same longhands. At most `ways` are kept at each step. -/
+def unparse (value : String → String) (isDefault : String → Bool) (leaveOut keywords : Bool) : Nat → G → List (List String)
+  | 0, _ => []
   | fuel + 1, g =>
-    let skip := fun (g' : G) => leaveOut && (let ps := propsOf fuel g'; !ps.isEmpty && ps.all isInitial)
+    let skip := fun (g' : G) => leaveOut && (let ps := propsOf fuel g'; !ps.isEmpty && ps.all isDefault)
+    let product := fun (gs : List G) =>
+      gs.foldl (fun (acc : List (List String)) g' =>
+        (acc.flatMap fun pre => (unparse value isDefault leaveOut keywords fuel g').map fun p => pre ++ p).take 8) [[]]
     match g with
-    | .prop n => let v := value n; if v == "" then none else some [v]
-    | .tag n _ => let v := value n; if v == "" then none else some [v]
+    | .prop n => let v := value n; if v == "" then [] else [[v]]
+    | .tag n _ => let v := value n; if v == "" then [] else [[v]]
     | .kw k =>
       match k.splitOn "=" with
-      | [a] => some [a]
-      | [_, b] => some (if b == "" then [] else [b])
-      | _ => none
-    | .lit c => some [String.singleton c]
-    | .seq gs => (gs.mapM (unparse value isInitial leaveOut fuel)).map List.flatten
-    | .rep g' lo _ _ => if lo == 0 && skip g' then some [] else unparse value isInitial leaveOut fuel g'
+      | [a] => [[a]]
+      | [_, b] => [if b == "" then [] else [b]]
+      | _ => []
+    | .lit c => [[String.singleton c]]
+    | .seq gs => product gs
+    | .rep g' lo _ _ => if lo == 0 && skip g' then [[]] else unparse value isDefault leaveOut keywords fuel g'
     | .anyOf gs =>
       let shown := gs.filter fun g' => !skip g'
-      let shown := if shown.isEmpty then gs.take 1 else shown
-      (shown.mapM (unparse value isInitial leaveOut fuel)).map List.flatten
-    | .allOf gs => (gs.mapM (unparse value isInitial leaveOut fuel)).map List.flatten
-    | .oneOf gs => gs.findSome? fun g' => if (propsOf fuel g').isEmpty then none else unparse value isInitial leaveOut fuel g'
-    | .req g' => unparse value isInitial leaveOut fuel g'
-    | _ => none
+      product (if shown.isEmpty then gs.take 1 else shown)
+    | .allOf gs => product gs
+    | .oneOf gs =>
+      ((gs.filter fun g' => keywords || !(propsOf fuel g').isEmpty).flatMap
+        (unparse value isDefault leaveOut keywords fuel)).take 8
+    | .req g' => unparse value isDefault leaveOut keywords fuel g'
+    | _ => []
 
 /-- The pieces of an unparsed value as text: one space between pieces, none before a comma. -/
 def joinPieces (pieces : List String) : String := (" ".intercalate pieces).replace " ," ","
@@ -510,18 +516,18 @@ def recombineF : Nat → Property → (String → String) → String
               else match lookup n with
                 | some sub => recombineF fuel sub get
                 | none => ""
-            let isInitial := fun (n : String) =>
-              if row.longhands.contains n then get n == initialSpecified n
-              else match lookup n with
-                | some sub => sub.longhands.all fun l => get l == initialSpecified l
-                | none => false
             let want := row.longhands.map fun l => (l, get l)
+            -- a longhand is at its default when it has the value it would get if left out
+            let atDefault := fun (l : String) => get l == missingDefault row.name "" want l
+            let isDefault := fun (n : String) =>
+              if row.longhands.contains n then atDefault n
+              else match lookup n with
+                | some sub => sub.longhands.all atDefault
+                | none => false
             let attempt := fun (leaveOut : Bool) =>
-              match unparse value isInitial leaveOut 24 g with
-              | some pieces =>
+              (unparse value isDefault leaveOut (row.name != "flex") 24 g).findSome? fun pieces =>
                 let text := joinPieces pieces
                 if text != "" && expandF 4 row.name text == some want then some text else none
-              | none => none
             ((attempt (row.name != "flex")).orElse fun _ => attempt false).getD ""
           | some .font =>
             let resetOk := row.longhands.all fun l => fontWritten.contains l || get l == initialSpecified l
