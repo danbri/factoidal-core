@@ -2413,3 +2413,5 @@ L4Factoidal_HTML_AccessibleRole_childrenText*  # (b) one call per child of one e
 L4Factoidal_HTML_AccessibleRole_hostLabel*  # (b) a label's content through childrenText with less fuel; depth is the element nesting of the document
 L4Factoidal_Rendering_CSS_resolveHasIn  # (c) the nesting of :is()/:not()/:where()/of lists in one selector, fuel 16
 L4Factoidal_Rendering_CSS_mentionsHas  # (c) the nesting of :is()/:not()/:where()/of lists in one selector, fuel 16
+L4Factoidal_Rendering_CSS_resolveStructuralIn  # (c) the nesting of :is()/:not()/:where()/of lists in one selector, fuel 16
+L4Factoidal_Rendering_CSS_mentionsStructural  # (c) the nesting of :is()/:not()/:where()/of lists in one selector, fuel 16

@@ -2725,13 +2725,125 @@ theorem resolveHas_plain (dom : Dom) (rules : List Rule)
     resolveHas dom rules = rules := by
   simp [resolveHas, h]
 
+/-- Where each element is among its element siblings, for the whole document in one pass
+over every child list: its place from the start and from the end, and among the siblings of
+its type from the start and from the end (0 for a node that is no element or has no
+parent). -/
+structure SibPlaces where
+  first : Array Nat
+  last : Array Nat
+  typeFirst : Array Nat
+  typeLast : Array Nat
+
+def SibPlaces.of (dom : Dom) : SibPlaces := Id.run do
+  let n := dom.size
+  let mut first := Array.replicate n 0
+  let mut last := Array.replicate n 0
+  let mut typeFirst := Array.replicate n 0
+  let mut typeLast := Array.replicate n 0
+  for p in [0:n] do
+    let kids := ((dom.get p).kids.filter fun c => (dom.get c).type == .element)
+    let m := kids.size
+    let mut seen : Std.HashMap (String × Option String) Nat := {}
+    for h : i in [0:m] do
+      let c := kids[i]
+      first := first.set! c (i + 1)
+      last := last.set! c (m - i)
+      let key := ((dom.get c).lname, (dom.get c).ns)
+      let t := (seen.getD key 0) + 1
+      seen := seen.insert key t
+      typeFirst := typeFirst.set! c t
+    -- the places among the siblings of each type from the end: the counts less the place
+    for h : i in [0:m] do
+      let c := kids[i]
+      let key := ((dom.get c).lname, (dom.get c).ns)
+      typeLast := typeLast.set! c ((seen.getD key 0) + 1 - typeFirst[c]!)
+  return { first, last, typeFirst, typeLast }
+
+/-- The elements, ascending, whose places satisfy `ok` (one pass over the nodes). -/
+def SibPlaces.where_ (sp : SibPlaces) (ok : Nat → Bool) : Array Nat :=
+  ((List.range sp.first.size).filter fun k => sp.first[k]! != 0 && ok k).toArray
+
+/-- A structural pseudo-class (`:first-child` ... `:only-of-type`, `:nth-child(An+B)` and its
+kin without `of`) as the elements where it holds, worked out from the sibling places;
+`none` for any other simple selector. -/
+def structuralAnchors (sp : SibPlaces) : DOM.Selectors.Simple → Option (Array Nat)
+  | .pseudo "first-child" => some (sp.where_ fun k => sp.first[k]! == 1)
+  | .pseudo "last-child" => some (sp.where_ fun k => sp.last[k]! == 1)
+  | .pseudo "only-child" => some (sp.where_ fun k => sp.first[k]! == 1 && sp.last[k]! == 1)
+  | .pseudo "first-of-type" => some (sp.where_ fun k => sp.typeFirst[k]! == 1)
+  | .pseudo "last-of-type" => some (sp.where_ fun k => sp.typeLast[k]! == 1)
+  | .pseudo "only-of-type" => some (sp.where_ fun k => sp.typeFirst[k]! == 1 && sp.typeLast[k]! == 1)
+  | .nth kind a b none =>
+    let pos := fun (k : Nat) => match kind with
+      | .child => sp.first[k]! | .lastChild => sp.last[k]!
+      | .ofType => sp.typeFirst[k]! | .lastOfType => sp.typeLast[k]!
+    some (sp.where_ fun k => DOM.Selectors.nthOk a b (pos k))
+  | _ => none
+
+/-- A complex selector with its structural pseudo-classes, also inside `:is()`, `:not()`,
+`:where()` and `of` lists, as the elements where they hold (`Simple.anchors`): matching
+then looks an element up instead of reading its parent's child list each time. -/
+def resolveStructuralIn (sp : Thunk SibPlaces) : Nat → DOM.Selectors.Complex → DOM.Selectors.Complex
+  | 0, c => c
+  | fuel + 1, .mk parts => .mk (parts.map fun (comb, simples) =>
+      (comb, simples.map fun (s : DOM.Selectors.Simple) => match s with
+        | .is l => .is (l.map (resolveStructuralIn sp fuel))
+        | .not l => .not (l.map (resolveStructuralIn sp fuel))
+        | .nth k a b (some l) => .nth k a b (some (l.map (resolveStructuralIn sp fuel)))
+        | s => match structuralAnchors sp.get s with
+          | some ids => .anchors ids
+          | none => s))
+
+/-- Whether a selector has a structural pseudo-class (the nesting read to `fuel` levels). -/
+def mentionsStructural : Nat → DOM.Selectors.Complex → Bool
+  | 0, _ => false
+  | fuel + 1, .mk parts => parts.any fun (_, simples) => simples.any fun s => match s with
+    | .pseudo n => ["first-child", "last-child", "only-child", "first-of-type", "last-of-type", "only-of-type"].contains n
+    | .nth _ _ _ none => true
+    | .is l | .not l | .nth _ _ _ (some l) => l.any (mentionsStructural fuel)
+    | _ => false
+
+/-- The rules with their structural pseudo-classes worked out for the document (one pass
+over its child lists, made only when a rule has one); other rules are as they were. -/
+def resolveStructural (dom : Dom) (rules : List Rule) : List Rule :=
+  if !(rules.any fun r => r.selectors.any fun sel => (sel.complex.map (mentionsStructural 16)).getD false) then rules
+  else
+    let sp : Thunk SibPlaces := Thunk.mk fun _ => SibPlaces.of dom
+    rules.map fun r =>
+      { r with selectors := r.selectors.map fun sel => match sel.complex with
+        | some c => if !mentionsStructural 16 c then sel else { sel with complex := some (resolveStructuralIn sp 16 c) }
+        | none => sel }
+
+/-- The rules as a document with no shadow tree matches them: a `:has()` nothing satisfies
+dropped (`pruneHas`), each `:has()` compound and each structural pseudo-class worked out
+once for the document (`resolveHas`, `resolveStructural`). -/
+def forDocument (dom : Dom) (rules : List Rule) : List Rule :=
+  resolveStructural dom (resolveHas dom (pruneHas dom rules))
+
+#guard ["li:first-child", "li:last-child", "li:only-child", "p:first-of-type", "p:last-of-type", "span:only-of-type",
+    "li:nth-child(2n+1)", "li:nth-last-child(2)", "p:nth-of-type(2)", "p:nth-last-of-type(1)", ":not(:first-child) > span",
+    "ul > :is(li:last-child, p:first-of-type)"].all fun t =>
+  match DOM.Selectors.parse t with
+  | some [c] =>
+    let d := DOM.parseHtmlDocument "<ul> <li>a</li> x <li>b</li><p>c</p> <li>d</li><p>e<span>s</span></p></ul><div><span>t</span><b>u</b></div>"
+    let c' := resolveStructuralIn (Thunk.mk fun _ => SibPlaces.of d) 16 c
+    ((List.range d.size).filter fun k => DOM.Selectors.matchComplex d none DOM.Selectors.matchFuel k c') ==
+      ((List.range d.size).filter fun k => DOM.Selectors.matchComplex d none DOM.Selectors.matchFuel k c)
+  | _ => false
+
+/-- A rule list with no structural pseudo-class is left as it is. -/
+theorem resolveStructural_plain (dom : Dom) (rules : List Rule)
+    (h : (rules.any fun r => r.selectors.any fun sel => (sel.complex.map (mentionsStructural 16)).getD false) = false) :
+    resolveStructural dom rules = rules := by
+  simp [resolveStructural, h]
+
 /-- `computeAll` for a page with no shadow tree; `computeAllIn` for one with shadow trees. -/
 def computeFor (treeScope : Option TreeScope) (dom : Dom) (rules : List Rule) (textScale : Float := 1)
     (state : ElementState := {}) : Except String (Array Computed) :=
-  let rules := pruneHas dom rules
   match treeScope with
-  | none => computeAll dom (resolveHas dom rules) textScale state
-  | some ts => computeAllIn ts dom rules textScale state
+  | none => computeAll dom (forDocument dom rules) textScale state
+  | some ts => computeAllIn ts dom (pruneHas dom rules) textScale state
 
 /-- The buckets give the styles of the plain loop wherever they give its matches. -/
 theorem computeAll_eq_linear (dom : Dom) (rules : List Rule) (textScale : Float) (state : ElementState)
@@ -2755,7 +2867,7 @@ theorem computeAllIn_eq_linear (ts : TreeScope) (dom : Dom) (rules : List Rule) 
 `:has()` nothing satisfies, `pruneHas`, and the `:has()` compounds worked out once,
 `resolveHas`). -/
 theorem computeFor_none (dom : Dom) (rules : List Rule) (textScale : Float) (state : ElementState) :
-    computeFor none dom rules textScale state = computeAll dom (resolveHas dom (pruneHas dom rules)) textScale state := rfl
+    computeFor none dom rules textScale state = computeAll dom (forDocument dom rules) textScale state := rfl
 
 /-- A page whose rules have no `:has()` is matched against its rules as they are. -/
 theorem pruneHas_plain (dom : Dom) (rules : List Rule)
