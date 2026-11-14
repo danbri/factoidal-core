@@ -440,6 +440,36 @@ theorem containerConditions_length (p : String) :
     (containerConditions p).length = (topCommaPieces p.toList 0 "" []).length := by
   simp [containerConditions]
 
+/-- The parts of an `@import` prelude (CSS Cascade 5 §2, CSSOM §6.4.2): the URL, the layer
+(`none` when there is no `layer`; `""` for an anonymous one), the supports condition (`none`
+when there is none) and the media query list, in canonical form. -/
+def importParts (prelude : String) : String × Option String × Option String × String :=
+  let cvs := stripWs (CV.parse prelude)
+  let (href, rest) : String × List CV := match cvs with
+    | .tok (.str u) :: rest => (u, rest)
+    | .tok (.url u) :: rest => (u, rest)
+    | .fn f args :: rest =>
+      if lower f == "url" then
+        (match stripWs args with
+         | [.tok (.str u)] => u
+         | _ => "", rest)
+      else ("", cvs)
+    | _ => ("", cvs)
+  let (layer, rest) : Option String × List CV := match rest with
+    | .tok (.ident k) :: r => if lower k == "layer" then (some "", r) else (none, rest)
+    | .fn f args :: r => if lower f == "layer" then (some (rawText (trimWs args)), r) else (none, rest)
+    | _ => (none, rest)
+  let (supports, rest) : Option String × List CV := match rest with
+    | .fn f args :: r => if lower f == "supports" then (some (rawText (trimWs args)), r) else (none, rest)
+    | _ => (none, rest)
+  let media := if rest.isEmpty then "" else mediaListText (preludeText (serialize rest))
+  (href, layer, supports, media)
+
+#guard importParts "url(\"a.css\") layer(base) supports(display: grid) screen" ==
+  ("a.css", some "base", some "display: grid", "screen")
+#guard importParts "\"a.css\"" == ("a.css", none, none, "")
+#guard importParts "url(a.css) layer print, screen" == ("a.css", some "", none, "print, screen")
+
 /-! ### `@font-feature-values` -/
 
 /-- The feature value blocks of `@font-feature-values` (CSS Fonts 4 §6.9.1) and how many
@@ -719,6 +749,7 @@ text; an error as U+0001 and the name of the DOMException.
 - `setsel` text index selector, `setbody` text index block
 - `selector` text → "1" and the canonical selector, or "0"
 - `canon` text → the sheet text in canonical form
+- `import` prelude → an `@import` rule's URL, layer, supports condition and media
 - `container` prelude → the conditions of an `@container` rule, each name U+0002 query,
   separated by U+0001 -/
 def sheetOp (q : String) : String :=
@@ -739,6 +770,13 @@ def sheetOp (q : String) : String :=
     | some s => "1" ++ s
     | none => "0"
   | ["canon", text] => textOf (rulesOf text)
+  | ["import", prelude] =>
+    -- CSSImportRule: href, layer ("1" and the name, or "0"), supports ("1" and the text, or "0"), media
+    let (href, layer, supports, media) := importParts prelude
+    let opt := fun (o : Option String) => match o with
+      | some x => "1" ++ x
+      | none => "0"
+    "\x00".intercalate [href, opt layer, opt supports, media]
   | ["container", prelude] =>
     -- CSSContainerRule.conditions: name and query separated by U+0002, conditions by U+0001
     "\x01".intercalate ((containerConditions prelude).map fun (n, q) => n ++ "\x02" ++ q)

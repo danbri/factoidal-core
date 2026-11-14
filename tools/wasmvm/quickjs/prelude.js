@@ -12533,7 +12533,19 @@
     Object.defineProperty(P, 'inherits', { get() { return fields(this)[1] === '1'; }, configurable: true, enumerable: true });
     Object.defineProperty(P, 'initialValue', { get() { const v = fields(this)[2] ?? '0'; return v.charAt(0) === '1' ? v.slice(1) : null; }, configurable: true, enumerable: true });
   }
-  Object.defineProperty(ruleClasses.ImportRule.prototype, 'href', { get() { const m = /^url\(\s*["']?([^"')]*)["']?\s*\)|^["']([^"']*)["']/.exec(ruleNow(this).prelude); return m ? (m[1] ?? m[2]) : ''; }, configurable: true, enumerable: true });
+  // CSSImportRule (CSSOM §6.4.2): the parts of the prelude as the engine reads them
+  // (CssSheet.importParts, sheet op 'import'); the imported sheet is not loaded here
+  {
+    const parts = rule => sheetOp('import', ruleNow(rule).prelude).split('\u0000');
+    const opt = x => x === undefined || x.charAt(0) !== '1' ? null : x.slice(1);
+    Object.defineProperties(ruleClasses.ImportRule.prototype, {
+      href: { get() { return parts(this)[0] ?? ''; }, configurable: true, enumerable: true },
+      layerName: { get() { return opt(parts(this)[1]); }, configurable: true, enumerable: true },
+      supportsText: { get() { return opt(parts(this)[2]); }, configurable: true, enumerable: true },
+      media: { get() { const r = this; return mediaListOf(r, () => parts(r)[3] ?? '', () => {}); }, set(v) { this.media.mediaText = v; }, configurable: true, enumerable: true },
+      styleSheet: { get() { ruleNow(this); return null; }, configurable: true, enumerable: true },
+    });
+  }
   // A sheet: of a style element (its text is the element's text), or constructed.
   const sheetOfText = (text, write, owner) => {
     const sheet = Object.create(CSSStyleSheet.prototype);
