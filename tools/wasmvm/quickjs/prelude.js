@@ -393,6 +393,15 @@
     }
   }
   getters(MessageEvent, ['data', 'origin', 'lastEventId', 'source', 'ports']);
+  // WebSockets §3.4: the event of a closed connection.
+  class CloseEvent extends Event {
+    constructor(type, init = undefined) {
+      super(type, init); const s = state(this), d = initOf(init);
+      s.wasClean = !!d.wasClean; s.code = (Number(d.code) || 0) & 0xFFFF; s.reason = d.reason === undefined ? '' : String(d.reason);
+    }
+  }
+  getters(CloseEvent, ['wasClean', 'code', 'reason']);
+  Object.defineProperty(CloseEvent.prototype, Symbol.toStringTag, { value: 'CloseEvent', configurable: true });
   // CSP §5.1: the event of a policy violation. Its required members are WebIDL's.
   class SecurityPolicyViolationEvent extends Event {
     constructor(type, init = undefined) {
@@ -5502,6 +5511,88 @@
     return ResponseC = Response;
   };
   lazy('Response', () => (apiCall(88, ['a']) !== '' ? undefined : makeResponse()));
+  // ---- WebSocket (WebSockets Standard §3): every decision is Lean's (Net.WebSocket through
+  // Net.Xhr, web_api 156 to 161): the URL and the subprotocols, a blocked port, the
+  // address rules of the page's requests, the handshake, the frames, close(). The host moves
+  // the bytes of one connection. Events come as tasks of the networking source.
+  lazy('WebSocket', () => {
+    if (apiCall(75, []) !== '1') return undefined;
+    const slots = new WeakMap();
+    const S = o => { const s = slots.get(o); if (!s) throw new TypeError('Illegal invocation'); return s; };
+    const thrown = (r, what) => {
+      const [, name, message] = String(r).split('\u0000');
+      return name === 'TypeError' ? new TypeError(`${what}: ${message}`) : new DOMException(`${what}: ${message}`, name || 'SyntaxError');
+    };
+    const fire = (ws, e) => { state(e).trusted = true; dispatch(ws, e); };
+    // the events Lean queued for this connection, in order
+    const pump = ws => {
+      const s = slots.get(ws);
+      if (!s) return;
+      for (let i = 0; i < 100000; i++) {
+        const r = apiCall(160, [s.id]);
+        if (typeof r !== 'string' || r === '') return;
+        const [kind, a, b, c] = r.split('\u0000');
+        if (kind === 'open') fire(ws, new Event('open'));
+        else if (kind === 'text') fire(ws, new MessageEvent('message', { data: r.slice(5), origin: s.origin }));
+        else if (kind === 'binary') {
+          const buf = apiCall(161, [s.id], 0, true), bytes = buf instanceof ArrayBuffer ? buf : new ArrayBuffer(0);
+          fire(ws, new MessageEvent('message', { data: s.binaryType === 'blob' ? new (makeBlob())([bytes]) : bytes, origin: s.origin }));
+        } else if (kind === 'error') fire(ws, new Event('error'));
+        else if (kind === 'close') fire(ws, new CloseEvent('close', { code: Number(a), reason: b, wasClean: c === '1' }));
+      }
+    };
+    const later = ws => chk(n.timer(register(() => pump(ws)), 0, 0));
+    class WebSocket extends EventTarget {
+      constructor(url, protocols = undefined) {
+        const what = "Failed to construct 'WebSocket'";
+        if (arguments.length < 1) throw new TypeError(`${what}: 1 argument required, but only 0 present.`);
+        super();
+        const list = protocols === undefined ? [] : typeof protocols === 'string' ? [protocols]
+          : protocols !== null && typeof protocols === 'object' && typeof protocols[Symbol.iterator] === 'function' ? Array.from(protocols, usv)
+          : [usv(protocols)];
+        const self = this;
+        const r = apiCall(156, [scriptBase(), usv(url), register(() => pump(self)), ...list]);
+        if (typeof r !== 'string' || !r.startsWith('ok')) throw thrown(typeof r === 'string' ? r : 'err\u0000SyntaxError\u0000The URL is invalid.', what);
+        const [, id, resolved] = r.split('\u0000');
+        let origin = 'null'; try { origin = new URL(resolved).origin; } catch { /* none */ }
+        slots.set(this, { id: Number(id), url: resolved, binaryType: 'blob', origin });
+        later(this);
+      }
+      get url() { return S(this).url; }
+      get readyState() { return Number(apiCall(159, [S(this).id, 0])); }
+      get bufferedAmount() { return Number(apiCall(159, [S(this).id, 1])); }
+      get protocol() { return String(apiCall(159, [S(this).id, 2])); }
+      get extensions() { S(this); return ''; }
+      get binaryType() { return S(this).binaryType; }
+      set binaryType(v) { const s = S(this), t = String(v); if (t === 'blob' || t === 'arraybuffer') s.binaryType = t; }
+      send(data) {
+        const s = S(this), what = "Failed to execute 'send' on 'WebSocket'";
+        if (arguments.length < 1) throw new TypeError(`${what}: 1 argument required, but only 0 present.`);
+        let kind = 'b', bytes;
+        if (data instanceof ArrayBuffer) bytes = new Uint8Array(data.slice(0));
+        else if (ArrayBuffer.isView(data)) bytes = new Uint8Array(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength));
+        else if (BlobC && data instanceof BlobC) bytes = new Uint8Array(blobBytes(data));
+        else { kind = 't'; bytes = utf8(data); }
+        const r = apiCall(157, [s.id, kind, bytes]);
+        if (typeof r === 'string' && r.startsWith('err')) throw thrown(r, what);
+      }
+      close(code = undefined, reason = undefined) {
+        const s = S(this), what = "Failed to execute 'close' on 'WebSocket'";
+        // WebIDL [Clamp] unsigned short
+        let c = '';
+        if (code !== undefined) { const x = Number(code); c = String(Number.isNaN(x) ? 0 : Math.min(65535, Math.max(0, Math.round(x)))); }
+        const r = apiCall(158, [s.id, c, reason === undefined ? '' : usv(reason)]);
+        if (typeof r === 'string' && r.startsWith('err')) throw thrown(r, what);
+        later(this);
+      }
+    }
+    const states = { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 };
+    consts(WebSocket, states); consts(WebSocket.prototype, states);
+    handlerProp(WebSocket.prototype, ['open', 'message', 'error', 'close']);
+    setTag(WebSocket, 'WebSocket');
+    return WebSocket;
+  });
+
   lazy('fetch', () => {
     if (apiCall(75, []) !== '1') return undefined;
     return function fetch(input, init = undefined) {
@@ -10812,7 +10903,7 @@
   }
   // ==== end shadowframes: frames ========================================================
   for (const [k, v] of Object.entries({ EventTarget, Event, CustomEvent, UIEvent, MouseEvent, KeyboardEvent, FocusEvent, ErrorEvent,
-    WheelEvent, PointerEvent, Touch, TouchList, TouchEvent, DOMRect, DOMRectReadOnly, CompositionEvent, InputEvent, DragEvent, HashChangeEvent, MessageEvent, StorageEvent, SecurityPolicyViolationEvent, DeviceMotionEvent,
+    WheelEvent, PointerEvent, Touch, TouchList, TouchEvent, DOMRect, DOMRectReadOnly, CompositionEvent, InputEvent, DragEvent, HashChangeEvent, MessageEvent, CloseEvent, StorageEvent, SecurityPolicyViolationEvent, DeviceMotionEvent,
     DeviceOrientationEvent, BeforeUnloadEvent, TextEvent,
     PromiseRejectionEvent, Node, Element, HTMLElement, HTMLUnknownElement, SVGElement, MathMLElement, CharacterData, Text, CDATASection, Comment,
     ProcessingInstruction, DocumentType, DocumentFragment, Document, HTMLDocument, XMLDocument, DOMImplementation, NodeList, HTMLCollection, NamedNodeMap, Attr, DOMParser, SubmitEvent,
@@ -13280,7 +13371,7 @@
     'SubtleCrypto', 'CryptoKey', 'performance', 'Performance', 'PerformanceEntry', 'PerformanceMark', 'PerformanceMeasure',
     'Blob', 'File', 'FileReader', 'FormData', 'Headers', 'Request', 'Response', 'fetch', 'XMLHttpRequest',
     'XMLHttpRequestEventTarget', 'XMLHttpRequestUpload', 'ReadableStream', 'ReadableStreamDefaultReader', 'ReadableStreamBYOBReader', 'ReadableStreamDefaultController', 'ReadableByteStreamController', 'ReadableStreamBYOBRequest', 'WritableStream', 'WritableStreamDefaultWriter',
-    'WritableStreamDefaultController', 'TransformStream', 'TransformStreamDefaultController', 'ByteLengthQueuingStrategy', 'CountQueuingStrategy', 'CompressionStream', 'DecompressionStream', 'MessageChannel', 'MessagePort', 'BroadcastChannel', 'webkitURL',
+    'WritableStreamDefaultController', 'TransformStream', 'TransformStreamDefaultController', 'ByteLengthQueuingStrategy', 'CountQueuingStrategy', 'CompressionStream', 'DecompressionStream', 'MessageChannel', 'MessagePort', 'BroadcastChannel', 'webkitURL', 'WebSocket', 'CloseEvent',
     // WebGL's interfaces are [Exposed=(Window,Worker)].
     'WebGLRenderingContext', 'WebGL2RenderingContext', 'WebGLObject', 'WebGLBuffer', 'WebGLFramebuffer', 'WebGLProgram',
     'WebGLRenderbuffer', 'WebGLShader', 'WebGLTexture', 'WebGLQuery', 'WebGLSampler', 'WebGLSync', 'WebGLTransformFeedback',

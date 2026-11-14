@@ -715,6 +715,9 @@ const b64=bytes=>{let s='';for(let i=0;i<bytes.length;i+=32768)s+=String.fromCha
 const wireBody=w=>w.bodyBase64!==undefined?Uint8Array.from(atob(w.bodyBase64),c=>c.charCodeAt(0)):undefined;
 async function netAnswer(w){
   if(w.resolve)return {id:w.id,addresses:[]};
+  // a WebSocket connection's wires (Net.WebSocket): this host has no sockets yet, so the
+  // connection fails (status 0) and nothing goes out
+  if(String(w.method).startsWith('WEBSOCKET'))return {id:w.id,status:0};
   try{
     const r=await fetch(w.url,{method:w.method,headers:w.headers,body:wireBody(w),credentials:'omit',redirect:'follow',mode:'cors',
       cache:'no-store',referrerPolicy:'no-referrer',signal:AbortSignal.timeout(300000)});
@@ -727,6 +730,7 @@ async function netAnswer(w){
 // A worker may make a sync request, so the call stays synchronous, as the engine's calls are.
 function netAnswerSync(w){
   if(w.resolve)return {id:w.id,addresses:[]};
+  if(String(w.method).startsWith('WEBSOCKET'))return {id:w.id,status:0};
   try{
     const x=new XMLHttpRequest();
     x.open(w.method,w.url,false);x.withCredentials=false;x.responseType='arraybuffer';

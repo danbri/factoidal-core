@@ -758,6 +758,20 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
       ({ s with nn }, .ok out)
     -- Service workers: `register()`'s URL checks and registration matching (pure, no state).
     else if code == 154 || code == 155 then pure' (L4Factoidal.Net.ServiceWorkerScope.op code fs)
+    -- WebSocket (Net.WebSocket through Net.Xhr): the key and each masking key are fresh
+    -- bytes of the engine's generator; only a page with the network on has connections.
+    else if 156 ≤ code && code ≤ 161 then
+      if !s.net.enabled then pure' (.error (-2)) else
+      let want := if code == 156 then 96 else if code == 157 || code == 158 then 4 else 0
+      if want == 0 then
+        let (net, r) := L4Factoidal.Net.Xhr.wsOp s.net code fs ByteArray.empty
+        ({ s with net }, r)
+      else
+        match randomBytes s want with
+        | .error e => (s, .error e)
+        | .ok (e, s) =>
+          let (net, r) := L4Factoidal.Net.Xhr.wsOp s.net code fs e
+          ({ s with net }, r)
     else pure' (.error (-2))
 
 section

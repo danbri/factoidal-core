@@ -67,6 +67,9 @@ function b64(bytes:Uint8Array):string{
 /** The host's answer to one wire of a turn (`netRequests` or `netSync`). */
 export async function netAnswer(w:NetWire,opts:NetOptions={}):Promise<NetAnswer>{
   const failed={id:w.id,status:0};
+  // a WebSocket connection's wires (Net.WebSocket): this host has no sockets yet, so the
+  // connection fails and nothing goes out
+  if(w.method.startsWith("WEBSOCKET"))return failed;
   if(w.resolve){
     try{
       const host=new URL(w.url).hostname;

@@ -604,9 +604,54 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
     const b64=(u:Uint8Array)=>{let s="";for(let i=0;i<u.length;i+=32768)s+=String.fromCharCode(...u.subarray(i,i+32768));return btoa(s);};
     // pageAddress: wptserve serves every WPT page from 127.0.0.1, so the page is local and the
     // engine asks for no name resolution (Net.PageFetch); a resolve-only wire gets no address.
+    // WebSocket connections (Net.WebSocket): the engine writes the handshake and the frames;
+    // the host opens the connection, writes in order and reads. Each read is an answer
+    // (status 1 with the bytes, status 0 at the end).
+    const sockets=new Map<number,{conn:Deno.Conn;writing:Promise<unknown>}>();
+    const sockRead=(id:number,conn:Deno.Conn)=>(async()=>{
+      const buf=new Uint8Array(65536);
+      try{const n=await conn.read(buf);if(n===null)return {id,answer:{id,status:0}};return {id,answer:{id,status:1,bodyBase64:b64(buf.subarray(0,n))}};}
+      catch{return {id,answer:{id,status:0}};}
+    })();
+    const sockOpen=async(w:NetWire):Promise<{id:number;answer:Record<string,unknown>}>=>{
+      const failed={id:w.id,answer:{id:w.id,status:0}};
+      if(!http)return failed;
+      let conn:Deno.Conn;
+      try{conn=await http.socket(w.url);}catch{return failed;}
+      try{
+        const u=new URL(w.url);
+        let head=`GET ${u.pathname}${u.search} HTTP/1.1\r\n`;
+        for(const [n,v] of w.headers)head+=`${n}: ${v}\r\n`;
+        await conn.write(new TextEncoder().encode(head+"\r\n"));
+        let got=new Uint8Array(0);const buf=new Uint8Array(65536);
+        for(;;){
+          const at=got.findIndex((_,i)=>got[i]===13&&got[i+1]===10&&got[i+2]===13&&got[i+3]===10);
+          if(at>=0){
+            const text=new TextDecoder().decode(got.subarray(0,at)),lines=text.split("\r\n");
+            const m=/^HTTP\/1\.[01] (\d{3}) ?(.*)$/.exec(lines[0]??"");
+            if(!m){conn.close();return failed;}
+            const headers=lines.slice(1).map(l=>{const i=l.indexOf(":");return [l.slice(0,i).trim(),l.slice(i+1).trim()];}).filter(h=>h[0]);
+            sockets.set(w.id,{conn,writing:Promise.resolve()});
+            return {id:w.id,answer:{id:w.id,status:Number(m[1]),statusText:m[2],headers,bodyBase64:b64(got.subarray(at+4))}};
+          }
+          if(got.length>65536){conn.close();return failed;}
+          const n=await conn.read(buf);
+          if(n===null){conn.close();return failed;}
+          const next=new Uint8Array(got.length+n);next.set(got);next.set(buf.subarray(0,n),got.length);got=next;
+        }
+      }catch{try{conn.close();}catch{/* closed */}return failed;}
+    };
+    // A write or a close: in order with the connection's other writes; no answer.
+    const sockAct=(w:NetWire)=>{
+      const s=sockets.get(w.id);if(!s)return;
+      if(w.method==="WEBSOCKET-CLOSE"){s.writing=s.writing.then(()=>{try{s.conn.close();}catch{/* closed */}});sockets.delete(w.id);return;}
+      const bytes=w.bodyBase64!==undefined?Uint8Array.from(atob(w.bodyBase64),c=>c.charCodeAt(0)):new Uint8Array(0);
+      s.writing=s.writing.then(async()=>{try{let at=0;while(at<bytes.length)at+=await s.conn.write(bytes.subarray(at));}catch{/* the read sees the end */}});
+    };
     const netFetch=async(w:NetWire):Promise<{id:number;answer:Record<string,unknown>}>=>{
       const failed={id:w.id,answer:{id:w.id,status:0}};
       if((w as {resolve?:boolean}).resolve)return {id:w.id,answer:{id:w.id,addresses:[]}};
+      if(w.method==="WEBSOCKET")return sockOpen(w);
       if(!http)return failed;
       try{
         const headers=new Headers();for(const [n,v] of w.headers)headers.append(n,v);
@@ -636,7 +681,8 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
     // what is due, and the page settles again (the workers record).
     type Fetch={id:number;url:string;kind?:string};
     const answered=new Set<number>();
-    const collectNet=(t:{netRequests?:NetWire[]})=>{for(const w of t.netRequests??[])inflight.set(w.id,netFetch(w));};
+    const collectNet=(t:{netRequests?:NetWire[]})=>{for(const w of t.netRequests??[]){
+      if(w.method==="WEBSOCKET-SEND"||w.method==="WEBSOCKET-CLOSE")sockAct(w);else inflight.set(w.id,netFetch(w));}};
     const ss=(req:Record<string,unknown>)=>resolveSync(engine.scriptSession("",req) as ScriptTurnWithFetches) as Promise<typeof turn>;
     const take=(t:ScriptTurnWithFetches)=>{logs.push(...t.logs);errors.push(...t.errors);instructions+=t.instructions;collectNet(t as {netRequests?:NetWire[]});};
     collectNet(turn as {netRequests?:NetWire[]});
@@ -711,14 +757,32 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
     };
     await answerFrames();
     let lastNet=performance.now();
+    const finished=()=>logs.some(l=>l.startsWith("__wpt_done "));
     for(let round=0;inflight.size&&round<5000&&turn.clock<70000;round++){
-      const {id,answer}=await Promise.race(inflight.values());
+      // an open WebSocket may stay silent: then the page's time goes on in steps of 500 ms
+      const tick=sockets.size?new Promise<null>(r=>setTimeout(()=>r(null),100)):undefined;
+      const got=tick?await Promise.race([...inflight.values(),tick]):await Promise.race(inflight.values());
+      if(got===null){
+        if(finished())break;
+        take(turn=await ss({action:"advance",session:turn.session,ms:500}));
+        await settleTo(Math.max(1,Math.min(1000,70000-turn.clock)));
+        await answerFrames();
+        continue;
+      }
+      const {id,answer}=got;
       inflight.delete(id);
       const now=performance.now(),elapsedMs=Math.round(now-lastNet);lastNet=now;
       take(turn=await ss({action:"net",session:turn.session,results:[answer],elapsedMs}));
+      // a connection that is open reads on
+      const sock=sockets.get(id);
+      if(sock&&(answer as {status?:number}).status!==0)inflight.set(id,sockRead(id,sock.conn));
+      else if(sock)sockets.delete(id);
       await settleTo(Math.max(1,70000-turn.clock));
       await answerFrames();
+      if(finished()&&[...inflight.keys()].every(k=>sockets.has(k)))break;
     }
+    for(const s of sockets.values()){try{s.conn.close();}catch{/* closed */}}
+    sockets.clear();
     // keep: the page stays the session's page (a WebDriver navigation)
     if(!opts?.keep)engine.scriptSession("",{action:"close"});
     return {...resultOf(file,logs),ms:Math.round(performance.now()-t0),instructions,clock:turn.clock,...(errors.length?{errors:errors.slice(0,5)}:{})};
