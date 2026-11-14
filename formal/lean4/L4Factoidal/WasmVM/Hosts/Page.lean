@@ -572,8 +572,13 @@ def animationAccess (dom : Arena) (base : Answers) (prev : Option Answers) (cand
       | some f =>
         -- the layout profile's properties that differ (op 20 lists them in one order), and
         -- the properties declared for the element then or now (op 26) that differ
-        let profile := ((stylePairs (base n 20 "")).zip (stylePairs (f n 20 ""))).filterMap fun ((k, v), (k', v')) =>
-          if k == k' && v != v' then some k else none
+        -- (the two texts are read apart only when they differ: on most style changes an
+        -- element's computed style is as it was)
+        let now := base n 20 ""
+        let before := f n 20 ""
+        let profile := if now == before then [] else
+          ((stylePairs now).zip (stylePairs before)).filterMap fun ((k, v), (k', v')) =>
+            if k == k' && v != v' then some k else none
         -- (only when the declarations the element's cascade reads changed: op 26 with no text)
         if base n 26 "" == f n 26 "" then profile else
         -- with the same rules and a font, colour and flow that stayed: the longhands that
