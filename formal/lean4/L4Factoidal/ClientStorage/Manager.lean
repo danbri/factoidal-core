@@ -18,6 +18,7 @@ L4Factoidal.ClientStorage.Manager — `StorageManager` (Storage Standard §5: `e
 import L4Factoidal.ClientStorage.IdbOps
 import L4Factoidal.ClientStorage.FileSystem
 import L4Factoidal.ClientStorage.CacheStorage
+import L4Factoidal.ClientStorage.Buckets
 
 namespace L4Factoidal.ClientStorage.Manager
 
@@ -38,6 +39,17 @@ def op (idb : Shed Idb.Shelf) (fs : Shed Fs.Shelf) (cs : Shed Caches.Shelf) (k :
       Fs.N (Usage.usage (cs.shelf k))]
   | "persisted" | "persist" => Fs.ok [Fs.S "0"]
   | _ => Fs.fail "NotSupportedError"
+
+/-- `StorageBucket.estimate()` (`web_api` 205 `estimate name generation`): what the live
+bucket's own storage holds (its caches) and its quota (the one asked for, else the default);
+`UnknownError` for a deleted bucket. -/
+def bucketEstimate (bs : Shed Buckets.Shelf) (cs : Shed Caches.Shelf) (origin : String) (a : Array ByteArray) : List ByteArray :=
+  match Buckets.route bs origin (#["@b".toUTF8] ++ a.extract 1 3) with
+  | none => Fs.fail "UnknownError"
+  | some (k, _) =>
+    match Buckets.live (bs.shelf { origin }) (Fs.strAt a 1) (Fs.natAt a 2) with
+    | none => Fs.fail "UnknownError"
+    | some b => Fs.ok [Fs.N (Usage.usage (cs.shelf k)), Fs.N (b.quota.getD defaultQuota)]
 
 /-- Kind: accounting law. Says: the usage `estimate()` reports is the sum of the bytes the
 storage APIs hold for the key (each of which is proved equal to the sum of its stored
@@ -60,5 +72,11 @@ theorem op_local (idb idb' : Shed Idb.Shelf) (fs fs' : Shed Fs.Shelf) (cs cs' : 
   ["ok", "0", "1073741824", "0", "0", "0"]
 #guard (op {} {} {} { origin := "null" } #["estimate".toUTF8]).map (fun t => (String.fromUTF8? t).getD "") == ["!TypeError"]
 #guard (op {} {} {} { origin := "https://a.example" } #["persist".toUTF8]).map (fun t => (String.fromUTF8? t).getD "") == ["ok", "0"]
+
+-- a bucket's estimate: its own caches' usage and quota; a bucket that is gone: UnknownError
+#guard (let bs := (Buckets.opFor {} { origin := "https://a.example" } #["open".toUTF8, "b".toUTF8, "".toUTF8, "".toUTF8, "500".toUTF8]).1;
+  [(bucketEstimate bs {} "https://a.example" #["estimate".toUTF8, "b".toUTF8, "1".toUTF8]).map (fun t => (String.fromUTF8? t).getD ""),
+   (bucketEstimate bs {} "https://a.example" #["estimate".toUTF8, "b".toUTF8, "2".toUTF8]).map (fun t => (String.fromUTF8? t).getD "")]) ==
+  [["ok", "0", "500"], ["!UnknownError"]]
 
 end L4Factoidal.ClientStorage.Manager

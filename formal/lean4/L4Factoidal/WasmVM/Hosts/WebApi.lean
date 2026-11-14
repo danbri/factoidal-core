@@ -764,8 +764,12 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
         ({ s with caches }, .ok (pack out))
     -- Storage Buckets (205): the buckets of the same storage key.
     else if code == 205 then
-      let (buckets, out) := L4Factoidal.ClientStorage.Buckets.opFor s.buckets { origin := s.net.page.origin } fs
-      ({ s with buckets }, .ok (pack out))
+      -- a bucket's estimate counts the bucket's own storage (Manager.bucketEstimate)
+      if (L4Factoidal.ClientStorage.Fs.strAt fs 0) == "estimate" then
+        (s, .ok (pack (L4Factoidal.ClientStorage.Manager.bucketEstimate s.buckets s.caches s.net.page.origin fs)))
+      else
+        let (buckets, out) := L4Factoidal.ClientStorage.Buckets.opFor s.buckets { origin := s.net.page.origin } fs
+        ({ s with buckets }, .ok (pack out))
     -- Blob URLs (File API §8.3): 90 `createObjectURL(type, bytes)`, 91 `revokeObjectURL(url)`.
     -- The store is the network state's and names each URL's origin (the session's page
     -- origin, never an argument); the UUID is drawn here.
