@@ -329,8 +329,8 @@ def lowPointer (s : σ) (phase : Actions.Phase) (type : Actions.PointerType) (po
       let (s, canceled) :=
         if first then e.dispatchWith s hit "pointerdown" (init count none)
         else ((e.dispatchWith s hit "pointermove" (init count none)).1, p.canceled)
-      let s := e.setPointer s { (e.host s).pointer with pressed := some hit, canceled,
-        last := some { time := now, x, y, button := b, count } }
+      let press : Input.LastPress := { time := now, x, y, button := b, count }
+      let s := e.setPointer s { (e.host s).pointer with pressed := some hit, canceled := canceled, last := some press }
       let s := if !mouse then s else
         Input.afterCancelable canceled (fun s =>
           let (s, downCanceled) := e.dispatchWith s hit "mousedown" (init count none)
@@ -354,8 +354,8 @@ def lowPointer (s : σ) (phase : Actions.Phase) (type : Actions.PointerType) (po
           let s := (e.dispatchWith s at_ (Input.clickType b) (init count none)).1
           if b == 0 && count % 2 == 0 then (e.dispatchWith s at_ "dblclick" (init count none)).1 else s
         | none => s
-      let s := e.setPointer s { (e.host s).pointer with pressed := if last then none else p.pressed,
-        canceled := if last then false else p.canceled }
+      let held : Option Nat := if last then none else p.pressed
+      let s := e.setPointer s { (e.host s).pointer with pressed := held, canceled := !last && p.canceled }
       if mouse then s else
         let s := e.firePlanned s (init 0) (Input.boundary "pointer" (some (chainOf (e.host s).dom.dom hit)) none)
         e.setPointer s { (e.host s).pointer with over := none }
@@ -397,18 +397,18 @@ def inputEnv (resolve : Arena → String → Option Nat) (s : σ) (layout : Bool
   let height := h.reads.height
   let boxes : Option (Nat → Nat → Option String) := if layout then h.reads.kept.map (·.2) else none
   let d := h.dom.dom
-  (s, { width, height,
-        centre := fun ref =>
-          match boxes, resolve d ref with
-          | some f, some node =>
-            ((f node 17).bind Input.boxOf).map fun b => Actions.inViewCentre width height b.1 b.2.1 b.2.2.1 b.2.2.2
-          | _, _ => none })
+  let centre : String → Option (Int × Int) := fun ref =>
+    match boxes, resolve d ref with
+    | some f, some node =>
+      ((f node 17).bind Input.boxOf).map fun b => Actions.inViewCentre width height b.1 b.2.1 b.2.2.1 b.2.2.2
+    | _, _ => none
+  (s, { width := width, height := height, centre := centre })
 
 /-- The engine as the driver of WebDriver's actions (`Actions.perform`): each low-level
 event is dispatched as above, and a tick's duration moves the clock. -/
 def inputDriver (resolve : Arena → String → Option Nat) : Actions.Driver σ :=
-  { env := e.inputEnv resolve, dispatch := e.dispatchLow,
-    wait := fun s ms => if ms == 0 then s else (e.advance s ((e.loop s).clock + ms)).1 }
+  let wait : σ → Nat → σ := fun s ms => if ms == 0 then s else (e.advance s ((e.loop s).clock + ms)).1
+  { env := e.inputEnv resolve, dispatch := e.dispatchLow, wait := wait }
 
 /-- The viewport moved: reads lay out again, and `resize` at the window when it changed. -/
 def resize (s : σ) (width height : Nat) : σ :=

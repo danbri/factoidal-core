@@ -1032,14 +1032,14 @@ def actLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (act
     | .ok sources =>
       let release := boolField request "release"
       run fun a =>
-        let d := e.inputDriver refNode
+        let base := e.inputDriver refNode
         -- an event that gives user activation records its time
-        let d := { d with dispatch := fun (a : LeanJSWorkers.Agents) low =>
-          let a := d.dispatch a low
-          if WebDriver.Input.activates low then
-            { a with page := a.page.setTrusted { a.page.trusted with activated := some (e.loop a).clock } }
-          else a }
-        let r := WebDriver.Actions.perform d { engine := a, input := a.page.trusted.actions } sources
+        let dispatch := fun (a : LeanJSWorkers.Agents) (low : WebDriver.Actions.Low) =>
+          let a := base.dispatch a low
+          if WebDriver.Input.activates low then { a with page := a.page.setTrusted { a.page.trusted with activated := some (e.loop a).clock } } else a
+        let d : WebDriver.Actions.Driver LeanJSWorkers.Agents := { env := base.env, dispatch := dispatch, wait := base.wait }
+        let start : WebDriver.Actions.Run LeanJSWorkers.Agents := { engine := a, input := a.page.trusted.actions }
+        let r := WebDriver.Actions.perform d start sources
         let r := if release then WebDriver.Actions.release d r else r
         let a := r.engine
         { a with page := a.page.setTrusted { a.page.trusted with actions := r.input, error := r.error } }
