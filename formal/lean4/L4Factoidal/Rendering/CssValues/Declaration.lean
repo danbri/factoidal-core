@@ -196,7 +196,7 @@ def shorthandIndex : Thunk (Std.HashMap String (List Property)) := Thunk.mk fun 
     if ls == "" || (aliasMap.get.contains n) then none
     else
       match lookup n with
-      | some row => if (shapeOf row).isSome then some row else none
+      | some row => if recombinable row then some row else none
       | none => none
   let rows := rows.mergeSort fun a b => a.longhands.length ≥ b.longhands.length
   rows.foldl (fun m row =>

@@ -571,6 +571,98 @@ def repeatParts (item : List CV) : Option (List CV × List (List CV)) :=
     else none
   | _ => none
 
+/-! ### `background` and `background-position` (CSS Backgrounds 3 §3.10, §3.6) -/
+
+/-- The horizontal and vertical parts of one `<bg-position>` (in its canonical text): one
+value is the horizontal one but for `top`/`bottom`; two values are horizontal then vertical
+unless their keywords say otherwise; three or four values are a keyword with its offset for
+each axis, in either order. -/
+def positionXY (text : String) : Option (String × String) :=
+  let ws := (stripWs (CV.parse text)).map fun cv => serialize [cv]
+  let horiz := fun (w : String) => w == "left" || w == "right"
+  let vert := fun (w : String) => w == "top" || w == "bottom"
+  let kw := fun (w : String) => horiz w || vert w || w == "center"
+  match ws with
+  | [a] => if vert a then some ("center", a) else some (a, "center")
+  | [a, b] => if vert a || horiz b then some (b, a) else some (a, b)
+  | _ =>
+    -- groups of a keyword and the offset after it
+    let groups := ws.foldl (fun (acc : List (List String)) w =>
+      if kw w then [w] :: acc else match acc with
+        | g :: rest => (g ++ [w]) :: rest
+        | [] => [[w]]) [] |>.reverse
+    match groups with
+    | [g1, g2] =>
+      let t1 := " ".intercalate g1
+      let t2 := " ".intercalate g2
+      if vert (g1.headD "") || horiz (g2.headD "") then some (t2, t1) else some (t1, t2)
+    | _ => none
+
+/-- The text of one position from its horizontal and vertical parts. -/
+def positionText (x y : String) : String := x ++ " " ++ y
+
+/-- The items of a comma-separated list value, as texts. -/
+def listItems (v : String) : List String :=
+  (splitCommas (stripWs (CV.parse v))).map fun g => serialize (stripWs g)
+
+/-- The grammar of one `background` layer with its parts tagged; the last layer has a colour. -/
+def bgLayerGrammar (final : Bool) : G :=
+  let r := fun (n : String) => G.ref n none none
+  .anyOf ([.tag "image" (r "bg-image"),
+    .seq [.tag "position" (r "bg-position"), .rep (.seq [.lit '/', .tag "size" (r "bg-size")]) 0 (some 1) false],
+    .tag "repeat" (r "repeat-style"), .tag "attachment" (r "attachment"),
+    .tag "box1" (r "visual-box"), .tag "box2" (r "bg-clip")] ++ (if final then [.tag "color" (.prop "background-color")] else []))
+
+/-- The longhands of a `background` value: each layer read alone, a part left out at its
+initial value, one box the origin and the clip, the colour from the last layer. -/
+def backgroundExpand (top : List CV) : Option (List (String × String)) := do
+  let layers := (splitCommas top).map stripWs
+  let n := layers.length
+  let parts ← (layers.zipIdx).mapM fun (layer, i) =>
+    (matchAll (env none) (bgLayerGrammar (i + 1 == n)) layer).map tagged
+  let get := fun (ps : List (String × String)) (k d : String) => (ps.lookup k).getD d
+  let xy ← parts.mapM fun ps => positionXY (get ps "position" "0% 0%")
+  let origin := parts.map fun ps => match ps.lookup "box1", ps.lookup "box2" with
+    | some b, _ => b
+    | none, some b => if ["border-box", "padding-box", "content-box"].contains b then b else "padding-box"
+    | none, none => "padding-box"
+  let clip := parts.map fun ps => match ps.lookup "box1", ps.lookup "box2" with
+    | _, some b => b
+    | some b, none => b
+    | none, none => "border-box"
+  let join := fun (xs : List String) => ", ".intercalate xs
+  some [("background-image", join (parts.map (get · "image" "none"))),
+    ("background-position-x", join (xy.map (·.1))), ("background-position-y", join (xy.map (·.2))),
+    ("background-size", join (parts.map (get · "size" "auto"))),
+    ("background-repeat", join (parts.map (get · "repeat" "repeat"))),
+    ("background-attachment", join (parts.map (get · "attachment" "scroll"))),
+    ("background-origin", join origin), ("background-clip", join clip),
+    ("background-color", ((parts.getLast?).bind (·.lookup "color")).getD "transparent")]
+
+/-- The `background` value of its longhands, when their lists agree in length. -/
+def backgroundText (get : String → String) : String :=
+  let ls := ["background-image", "background-position-x", "background-position-y", "background-size",
+    "background-repeat", "background-attachment", "background-origin", "background-clip"].map fun l => listItems (get l)
+  let color := get "background-color"
+  match ls with
+  | [imgs, xs, ys, sizes, reps, atts, origins, clips] =>
+    let n := imgs.length
+    if !([xs, ys, sizes, reps, atts, origins, clips].all (·.length == n)) || n == 0 || color == "" then ""
+    else
+      let layer := fun (i : Nat) =>
+        let pick := fun (xs : List String) => xs.getD i ""
+        let pos := positionText (pick xs) (pick ys)
+        let size := pick sizes
+        let posPart := if pos != "0% 0%" || size != "auto" then [pos ++ (if size != "auto" then " / " ++ size else "")] else []
+        let boxes := if pick origins == "padding-box" && pick clips == "border-box" then []
+          else if pick origins == pick clips then [pick origins] else [pick origins, pick clips]
+        let colorPart := if i + 1 == n && color != "transparent" then [color] else []
+        let ps := (if pick imgs != "none" then [pick imgs] else []) ++ posPart ++
+          (if pick reps != "repeat" then [pick reps] else []) ++ (if pick atts != "scroll" then [pick atts] else []) ++ boxes ++ colorPart
+        if ps.isEmpty then "none" else " ".intercalate ps
+      ", ".intercalate ((List.range n).map layer)
+  | _ => ""
+
 /-- `expand`, with `fuel` for a shorthand whose parts are shorthands. -/
 def expandF : Nat → String → String → Option (List (String × String))
   | 0, _, _ => none
@@ -590,6 +682,12 @@ def expandF : Nat → String → String → Option (List (String × String))
           | some k => some (row.longhands.map fun l => (l, k))
           | none =>
             if hasSubstitution cvs then some [(p, canonical)]
+            else if p == "background" then (backgroundExpand top).orElse fun _ => some [(p, canonical)]
+            else if p == "background-position" then
+              match (listItems canonical).mapM positionXY with
+              | some xys => some [("background-position-x", ", ".intercalate (xys.map (·.1))),
+                  ("background-position-y", ", ".intercalate (xys.map (·.2)))]
+              | none => some [(p, canonical)]
             else if gapRuleShorthands.contains p && isRuleList top then
               -- a list of rules (CSS Gaps 1 §4.3): each rule read alone, each longhand the
               -- list of its part, `repeat()` kept around the parts it repeats
@@ -712,6 +810,11 @@ def recombineF : Nat → Property → (String → String) → String
   | fuel + 1, row, get =>
     let vs := row.longhands.map get
     if vs.any (· == "") then ""
+    else if row.name == "background" then backgroundText get
+    else if row.name == "background-position" then
+      let xs := listItems (get "background-position-x")
+      let ys := listItems (get "background-position-y")
+      if xs.length != ys.length then "" else ", ".intercalate ((xs.zip ys).map fun (x, y) => positionText x y)
     else if gapRuleShorthands.contains row.name && vs.any (fun v => isRuleList (stripWs (CV.parse v))) then
       -- a list of rules: each item put together from the same item of each longhand
       let lists := vs.map fun v => (splitCommas (stripWs (CV.parse v))).map stripWs
@@ -816,6 +919,11 @@ def recombineF : Nat → Property → (String → String) → String
               match parts.filter (fun (_, _, isInitial) => !isInitial) with
               | [] => (parts.head?.map (·.1)).getD ""
               | shown => " ".intercalate (shown.map (·.1))
+
+/-- A shorthand that `recombine` writes from its longhands: one of a generic shape, or
+`background` and `background-position` (written by layers). -/
+def recombinable (row : Property) : Bool :=
+  (shapeOf row).isSome || row.name == "background" || row.name == "background-position"
 
 /-- The value of a shorthand of a generic shape from the values of its longhands (`get`
 answers "" for one that is not set): "" when it can not be written as one value. -/
@@ -1027,6 +1135,17 @@ def initialComputed (ctx : ComputeCtx) (row : Property) : String :=
 #guard specified "background-image" "linear-gradient(in srgb, red, 50%, blue)" == some "linear-gradient(red, 50%, blue)"
 #guard specified "background-image" "linear-gradient(in oklab, red, blue)" == some "linear-gradient(in oklab, red, blue)"
 #guard specified "background-image" "linear-gradient(in oklch longer hue, red, blue)" == some "linear-gradient(in oklch longer hue, red, blue)"
+-- background (background-valid.html)
+#guard expand "background" "none" == some [("background-image", "none"), ("background-position-x", "0%"),
+  ("background-position-y", "0%"), ("background-size", "auto"), ("background-repeat", "repeat"),
+  ("background-attachment", "scroll"), ("background-origin", "padding-box"), ("background-clip", "border-box"),
+  ("background-color", "transparent")]
+#guard (expand "background" "border-box content-box").map (·.lookup "background-clip") == some (some "content-box")
+#guard (lookup "background").map (fun r => recombine r fun l => ((expand "background" "url(\"a\") 1px 2px / 3px 4px space round local padding-box content-box, rgb(5, 6, 7) url(\"a\") 1px 2px / 3px 4px space round local padding-box content-box").getD []).lookup l |>.getD "") ==
+  some "url(\"a\") 1px 2px / 3px 4px space round local padding-box content-box, url(\"a\") 1px 2px / 3px 4px space round local padding-box content-box rgb(5, 6, 7)"
+#guard (lookup "background").map (fun r => recombine r fun l => ((expand "background" "none").getD []).lookup l |>.getD "") == some "none"
+#guard (lookup "background").map (fun r => recombine r fun l => ((expand "background" "red").getD []).lookup l |>.getD "") == some "red"
+#guard positionXY "top left" == some ("left", "top") && positionXY "right 10px top 5px" == some ("right 10px", "top 5px")
 #guard specified "flex" "0 1 1" == none
 #guard specified "flex" "0 1" == some "0 1" && (specified "flex" "0 auto").isSome && (specified "flex" "1 0 0").isSome
 #guard specified "color" "RED" == some "red"

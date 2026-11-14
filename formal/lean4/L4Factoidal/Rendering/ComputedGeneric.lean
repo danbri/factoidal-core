@@ -719,7 +719,7 @@ def computedOfWith (v : View) (id : Nat) (property : String) (longhand : String 
   | none => if CssValues.isCustom p then computedLonghand v depthBound id p else ""
   | some row =>
     if row.longhands.isEmpty then longhand p
-    else if (CssValues.shapeOf row).isSome then CssValues.recombine row longhand
+    else if CssValues.recombinable row then CssValues.recombine row longhand
     else computedLonghand v depthBound id p
 
 /-- `computedOfWith` with each longhand's computed value by the property table. -/
@@ -1006,6 +1006,9 @@ private def resolvedAt (html css prop : String) : String :=
 #guard resolvedAt "<div id=t></div>" "#t { position: relative; bottom: 3px }" "top" == "-3px"
 #guard resolvedAt "<div id=t></div>" "#t { position: relative }" "left" == "0px"
 #guard resolvedAt "<div id=t></div>" "#t { position: static }" "left" == "auto"
+-- the background shorthand by its longhands
+#guard computedAt "<div id=t></div>" "#t { background: url(a.png) no-repeat red }" "background-repeat" == "no-repeat"
+#guard computedAt "<div id=t></div>" "#t { background: red }" "background-color" == "rgb(255, 0, 0)"
 -- env()
 #guard computedAt "<div id=t></div>" "#t { --a: env(unknown-env-name, 10px); }" "--a" == "10px"
 #guard computedAt "<div id=t></div>" "#t { --a: env(safe-area-inset-top); }" "--a" == "0px"
