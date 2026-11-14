@@ -340,6 +340,14 @@ to run the same test on the Hub's GPU before an operator is enabled there.
 | gelu (same erf) | 13,790 ULP at an output of −0.00072 (absolute 9.5e-7): `1 − erf` cancels in `f32` | 18 ULP | over: CPU reference |
 | batchNormalization | 169 ULP at an output of 0.0032 (absolute 1.9e-6) | 6 ULP | over: CPU reference |
 
+- **End to end on a GPU (this Mac).** A Lean program drove `WebNN.api` as the page would: a
+  context with `deviceType: "gpu"` on a replayed page, a graph `softmax(relu(matmul(a, W) +
+  bias))` with `a` [64,64] and constants `W` [64,32] and `bias` [32], `build`, `writeTensor`,
+  `dispatch`, `readTensor` (answer byte 2) and `readGpu`. Its 37 host commands, replayed
+  through `page-gpu.mjs`, ran with no validation error; the readback differed from the CPU
+  reference's answer to the same graph by at most 23 ULP (the WPT tolerance of these four
+  operators together is 228). Replay, GPU and readback took 104 ms, pipeline creation
+  included.
 - **`f32` literals.** Operator parameters (alpha, beta, epsilon, clamp bounds) reach the
   kernels as nine significant digits of their `f32` value (`Gpu.floatLit`), which read back
   as the same `f32`.
