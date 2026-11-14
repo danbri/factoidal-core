@@ -14982,6 +14982,15 @@
     if (typeof r !== 'string' || r === '') return '';
     return (frame >= 0 ? resolveURL(r.slice(1), docURL(d)) : resolveURL(r.slice(1))) ?? '';
   }, configurable: true, enumerable: true });
+  // `width` and `height` of an img (HTML §4.8.4.4): the rendered size of the image in CSS
+  // pixels (the content box of Lean's layout, measure op 21), else its natural size, which
+  // is 0 here while images are not decoded for scripts; the setters set the content
+  // attributes (unsigned long).
+  for (const [k, i] of [['width', 0], ['height', 1]])
+    Object.defineProperty(named.HTMLImageElement.prototype, k, {
+      get() { const s = n.query(nodeId(this), 21, ''); if (typeof s !== 'string' || s === '') return 0; const v = Number(s.split(' ')[i]); return Number.isFinite(v) ? Math.round(v) : 0; },
+      set(v) { let x = Number(v) >>> 0; if (x > 2147483647) x = 0; this.setAttribute(k, String(x)); },
+      configurable: true, enumerable: true });
   // ==== end imagesource ===================================================================
 
   // ==== trustedtypes: Trusted Types (https://w3c.github.io/trusted-types/dist/spec/) =====
