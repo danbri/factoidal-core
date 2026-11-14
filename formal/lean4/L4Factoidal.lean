@@ -399,6 +399,7 @@ import L4Factoidal.Crypto.Aead
 import L4Factoidal.Crypto.AesGcmNative
 import L4Factoidal.Crypto.CipherCall
 import L4Factoidal.Crypto.RsaNative
+import L4Factoidal.Crypto.OaepEncoding
 import L4Factoidal.Crypto.RsaOaep
 import L4Factoidal.Crypto.RsaOaepTests
 import L4Factoidal.VC.Multibase
