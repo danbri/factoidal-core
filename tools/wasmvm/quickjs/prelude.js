@@ -1153,52 +1153,50 @@
   // which values a property takes, how they are written and how shorthands expand are decided
   // there. This is the WebIDL surface only. An engine without op 151 answers "" everywhere.
   const styleOp = (...parts) => { const r = n.query(0, 151, parts.join('\u0000')); return typeof r === 'string' ? r : ''; };
+  // The state of each CSSStyleDeclaration (its proxy and target): what its members, which are
+  // on CSSStyleDeclaration.prototype (CSSOM §6.6), read and change.
+  const declState = new WeakMap();
   const cssPropName = p => p === 'cssFloat' ? 'float' : (p.startsWith('--') || p.includes('-')) ? p
     : p.replace(/[A-Z]/g, c => '-' + c.toLowerCase()).replace(/^webkit-/, '-webkit-');
   const styleOf = el => blockStyle(() => el.getAttribute('style') ?? '', nb => el.setAttribute('style', nb));
   // A CSSStyleDeclaration over a declaration block kept as text: `block()` reads it,
   // `store(text)` keeps a changed one.
   // `ctx`: the at-rule whose descriptors the block has ('font-face'); empty for a style block
-  const blockStyle = (block, store, ctx = '') => {
+  const blockStyle = (block, store, ctx = '', parentRule = null) => {
     const blockOp = (verb, ...a) => styleOp(ctx ? ctx + ':' + verb : verb, ...a);
     // U+0001: the operation left the block as it was (an invalid value, a property not set)
     const write = nb => { if (nb !== '\u0001' && nb !== block()) store(nb); };
     const names = () => { const r = blockOp('names', block()); return r === '' ? [] : r.split('\u0000'); };
-    const methods = {
-      getPropertyValue(name) { if (arguments.length < 1) throw new TypeError('getPropertyValue: 1 argument required'); return blockOp('get', block(), String(name)); },
-      getPropertyPriority(name) { if (arguments.length < 1) throw new TypeError('getPropertyPriority: 1 argument required'); return blockOp('pri', block(), String(name)); },
-      setProperty(name, value, priority = '') {
-        if (arguments.length < 2) throw new TypeError('setProperty: 2 arguments required');
-        write(blockOp('set', block(), String(name), value === null ? '' : String(value), priority === null ? '' : String(priority)));
-      },
-      removeProperty(name) {
-        if (arguments.length < 1) throw new TypeError('removeProperty: 1 argument required');
-        const r = blockOp('rem', block(), String(name)).split('\u0000'); write(r[0]); return r[1] ?? '';
-      },
-      item(i) { if (arguments.length < 1) throw new TypeError('item: 1 argument required'); return names()[i >>> 0] ?? ''; },
+    const state = {
+      cssText: () => blockOp('txt', block()),
+      setCssText: v => store(blockOp('txt', String(v))),
+      length: () => names().length,
+      parentRule: () => parentRule,
+      getPropertyValue: name => blockOp('get', block(), String(name)),
+      getPropertyPriority: name => blockOp('pri', block(), String(name)),
+      setProperty: (name, value, priority) => write(blockOp('set', block(), String(name), value === null ? '' : String(value), priority === null ? '' : String(priority))),
+      removeProperty: name => { const r = blockOp('rem', block(), String(name)).split('\u0000'); write(r[0]); return r[1] ?? ''; },
+      item: i => names()[i >>> 0] ?? '',
     };
     const isIndex = p => /^(0|[1-9][0-9]*)$/.test(p);
-    return new Proxy(Object.create(CSSStyleDeclaration.prototype), {
-      get(t, p) {
-        if (typeof p !== 'string') return Reflect.get(t, p);
-        if (p === 'cssText') return blockOp('txt', block());
-        if (p === 'length') return names().length;
-        if (p === 'parentRule') return null;
-        if (Object.prototype.hasOwnProperty.call(methods, p)) return methods[p];
+    const target = Object.create(CSSStyleProperties.prototype);
+    const proxy = new Proxy(target, {
+      get(t, p, r) {
+        if (typeof p !== 'string') return Reflect.get(t, p, r);
         if (isIndex(p)) return names()[Number(p)];
-        if (p in t) return Reflect.get(t, p);
+        if (p in t) return Reflect.get(t, p, r);
         return blockOp('get', block(), cssPropName(p));
       },
-      set(t, p, v) {
-        if (typeof p !== 'string') return Reflect.set(t, p, v);
-        if (p === 'cssText') { store(blockOp('txt', String(v))); return true; }
-        if (p === 'length' || p === 'parentRule' || isIndex(p)) return true;
+      set(t, p, v, r) {
+        if (typeof p !== 'string') return Reflect.set(t, p, v, r);
+        if (isIndex(p)) return true;
+        if (p in t) { Reflect.set(t, p, v, r); return true; }
         write(blockOp('set', block(), cssPropName(p), v === null ? '' : String(v), ''));
         return true;
       },
       has(t, p) {
         if (typeof p !== 'string') return Reflect.has(t, p);
-        if (p in t || p === 'cssText' || p === 'length' || p === 'parentRule' || p === 'cssFloat' || Object.prototype.hasOwnProperty.call(methods, p)) return true;
+        if (p in t) return true;
         if (isIndex(p)) return Number(p) < names().length;
         return styleOp('sup', cssPropName(p), 'initial') === '1';
       },
@@ -1208,6 +1206,8 @@
         return Reflect.getOwnPropertyDescriptor(t, p);
       },
     });
+    declState.set(target, state); declState.set(proxy, state);
+    return proxy;
   };
   class HTMLUnknownElement extends HTMLElement {}
   // The HTML element names whose interface is HTMLElement itself (HTML §3.2.2), and the valid
@@ -12135,6 +12135,25 @@
   // engine keeps one cascade and one layout per DOM version, and a read of a style property
   // makes no layout.
   class CSSStyleDeclaration { constructor() { throw new TypeError('Illegal constructor'); } }
+  // CSSStyleProperties (CSSOM §6.7): the declarations of style rules, style attributes and
+  // getComputedStyle; its property attributes are answered by the proxy of each object.
+  class CSSStyleProperties extends CSSStyleDeclaration {}
+  {
+    const declOf = d => { const st = declState.get(d); if (!st) throw new TypeError('Illegal invocation'); return st; };
+    const need = (args, k, what) => { if (args.length < k) throw new TypeError(`${what}: ${k} argument${k > 1 ? 's' : ''} required`); };
+    Object.defineProperties(CSSStyleDeclaration.prototype, {
+      cssText: { get() { return declOf(this).cssText(); }, set(v) { declOf(this).setCssText(v); }, configurable: true, enumerable: true },
+      length: { get() { return declOf(this).length(); }, configurable: true, enumerable: true },
+      parentRule: { get() { return declOf(this).parentRule(); }, configurable: true, enumerable: true },
+      item: { value: function item(index) { const st = declOf(this); need(arguments, 1, 'item'); return st.item(index); }, writable: true, configurable: true, enumerable: true },
+      getPropertyValue: { value: function getPropertyValue(property) { const st = declOf(this); need(arguments, 1, 'getPropertyValue'); return st.getPropertyValue(String(property)); }, writable: true, configurable: true, enumerable: true },
+      getPropertyPriority: { value: function getPropertyPriority(property) { const st = declOf(this); need(arguments, 1, 'getPropertyPriority'); return st.getPropertyPriority(String(property)); }, writable: true, configurable: true, enumerable: true },
+      setProperty: { value: function setProperty(property, value, priority = '') { const st = declOf(this); need(arguments, 2, 'setProperty'); st.setProperty(String(property), value, priority); }, writable: true, configurable: true, enumerable: true },
+      removeProperty: { value: function removeProperty(property) { const st = declOf(this); need(arguments, 1, 'removeProperty'); return st.removeProperty(String(property)); }, writable: true, configurable: true, enumerable: true },
+    });
+    Object.defineProperty(CSSStyleProperties.prototype, 'cssFloat', { get() { return declOf(this).getPropertyValue('float'); },
+      set(v) { declOf(this).setProperty('float', v === null ? '' : String(v), ''); }, configurable: true, enumerable: true });
+  }
   // The property names of Lean's computed style, once: the listed longhands (the layout
   // profile's first, in Lean's order), then the names that are answered for and not listed
   // (shorthands, legacy names): ComputedGeneric.namesText, node_query op 152. The value of the
@@ -12213,31 +12232,30 @@
   const cssName = p => p.startsWith('--') ? p : p.replace(/[A-Z]/g, c => '-' + c.toLowerCase()).replace(/^webkit-/, '-webkit-');
   const readOnlyDecl = () => new DOMException('The computed style declaration is read-only.', 'NoModificationAllowedError');
   const computedStyle = (el, pe = -1) => {
-    const target = Object.create(CSSStyleDeclaration.prototype);
-    const methods = {
-      getPropertyValue: name => computedValue(el, String(name).startsWith('--') ? String(name) : String(name).toLowerCase(), pe),
+    const target = Object.create(CSSStyleProperties.prototype);
+    const state = {
+      cssText: () => '',
+      setCssText: () => { throw readOnlyDecl(); },
+      length: () => namesFor(el).length,
+      parentRule: () => null,
+      getPropertyValue: name => computedValue(el, name.startsWith('--') ? name : name.toLowerCase(), pe),
       getPropertyPriority: () => '',
       setProperty: () => { throw readOnlyDecl(); },
       removeProperty: () => { throw readOnlyDecl(); },
       item: i => namesFor(el)[i >>> 0] ?? '',
     };
-    return new Proxy(target, {
-      get(t, p) {
-        if (typeof p !== 'string') return Reflect.get(t, p);
-        if (Object.prototype.hasOwnProperty.call(methods, p)) return methods[p];
-        if (p === 'length') return namesFor(el).length;
-        if (p === 'cssText') return '';
-        if (p === 'parentRule') return null;
+    const proxy = new Proxy(target, {
+      get(t, p, r) {
+        if (typeof p !== 'string') return Reflect.get(t, p, r);
         if (/^(0|[1-9][0-9]*)$/.test(p)) return namesFor(el)[Number(p)];
-        if (p === 'cssFloat') return computedValue(el, 'float', pe);
-        if (p in t) return Reflect.get(t, p);
+        if (p in t) return Reflect.get(t, p, r);
         return computedValue(el, p.includes('-') ? p : cssName(p), pe);
       },
       set() { throw readOnlyDecl(); },
       // every property Lean computes is a property of the declaration, dashed and camel-cased
       has(t, p) {
         if (typeof p !== 'string') return Reflect.has(t, p);
-        if (p in t || p === 'length' || p === 'cssText' || p === 'cssFloat' || Object.prototype.hasOwnProperty.call(methods, p)) return true;
+        if (p in t) return true;
         const xs = namesFor(el);
         if (/^(0|[1-9][0-9]*)$/.test(p)) return Number(p) < xs.length;
         return xs.length > 0 && (computedIndex.has(p) || computedIndex.has(cssName(p)));
@@ -12249,6 +12267,8 @@
         return Reflect.getOwnPropertyDescriptor(t, p);
       },
     });
+    declState.set(target, state); declState.set(proxy, state);
+    return proxy;
   };
   define(CSSStyleDeclaration.prototype, Symbol.iterator, function* () { for (let i = 0; i < this.length; i++) yield this[i]; });
   // ---- the CSS namespace (CSS Conditional 3 §8.1, CSSOM §2.1): Lean's answers -------------
@@ -12450,7 +12470,7 @@
       const r = ruleNow(rule); if (r.detached) { r.body = nb; return; }
       const a = sheetOp('setbody', r.holder.st.text(), String(r.index), nb);
       if (a.charAt(0) === '\u0000') { r.holder.st.write(a.slice(1)); const fresh = ruleState.get(rulesOf(r.holder)[r.index]); Object.assign(rs, { body: fresh.body, cssText: fresh.cssText }); rulesOf(r.holder)[r.index] = rule; }
-    }, rs.kind === 'FontFace' ? 'font-face' : '');
+    }, rs.kind === 'FontFace' ? 'font-face' : '', rule);
     return rs.style;
   };
   for (const [k, f] of Object.entries({
@@ -12459,10 +12479,10 @@
     parentStyleSheet() { let h = ruleNow(this).holder; while (h.rule) h = ruleState.get(h.rule).holder; return h.sheet ?? null; },
     parentRule() { return ruleNow(this).holder.rule ?? null; },
   })) Object.defineProperty(CSSRule.prototype, k, { get: f, configurable: true, enumerable: true });
-  Object.defineProperty(CSSRule.prototype, 'cssText', { get() { return ruleNow(this).cssText; }, set() {}, configurable: true, enumerable: true });
+  Object.defineProperty(CSSRule.prototype, 'cssText', { get() { return ruleNow(this).cssText; }, set(v) { ruleNow(this); }, configurable: true, enumerable: true });
   Object.defineProperty(CSSGroupingRule.prototype, 'cssRules', { get() { const g = groupHolder(this); g.rule = this; return ruleListOf(g); }, configurable: true, enumerable: true });
-  define(CSSGroupingRule.prototype, 'insertRule', function (rule, index = 0) { if (arguments.length < 1) throw new TypeError('insertRule: 1 argument required'); const g = groupHolder(this); g.rule = this; return insertInto(g, rule, index); });
-  define(CSSGroupingRule.prototype, 'deleteRule', function (index) { if (arguments.length < 1) throw new TypeError('deleteRule: 1 argument required'); const g = groupHolder(this); g.rule = this; deleteFrom(g, index); });
+  define(CSSGroupingRule.prototype, 'insertRule', function insertRule(rule, index = 0) { if (arguments.length < 1) throw new TypeError('insertRule: 1 argument required'); const g = groupHolder(this); g.rule = this; return insertInto(g, rule, index); });
+  define(CSSGroupingRule.prototype, 'deleteRule', function deleteRule(index) { if (arguments.length < 1) throw new TypeError('deleteRule: 1 argument required'); const g = groupHolder(this); g.rule = this; deleteFrom(g, index); });
   Object.defineProperty(CSSConditionRule.prototype, 'conditionText', { get() { return ruleNow(this).prelude; }, configurable: true, enumerable: true });
   // CSSContainerRule (CSS Conditional 5 §7.3): the conditions as the engine splits the prelude
   const containerConds = rule => { const t = sheetOp('container', ruleNow(rule).prelude); return t === '' ? [] : t.split('\u0001').map(c => { const [name, query] = c.split('\u0002'); return Object.freeze({ name, query }); }); };
@@ -13081,7 +13101,7 @@
       Object.defineProperty(Document.prototype, idl, { get() { const b = bodyOf(this); return b ? b.getAttribute(content) ?? '' : ''; },
         set(v) { const b = bodyOf(this); if (b) b.setAttribute(content, v === null ? '' : String(v)); }, configurable: true, enumerable: true });
   }
-  for (const [k, v] of Object.entries({ AbstractRange, Range, StaticRange, Selection, NodeFilter, NodeIterator, TreeWalker, CSSStyleDeclaration })) {
+  for (const [k, v] of Object.entries({ AbstractRange, Range, StaticRange, Selection, NodeFilter, NodeIterator, TreeWalker, CSSStyleDeclaration, CSSStyleProperties })) {
     if (k !== 'NodeFilter') Object.defineProperty(v.prototype, Symbol.toStringTag, { value: k, configurable: true });
     def(k, v);
   }
