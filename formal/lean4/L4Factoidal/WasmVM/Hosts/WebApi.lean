@@ -713,8 +713,8 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
     | .ok (reg, ms) => ofStr ("\n".intercalate (reg :: ms))
     | .error e => .error e.code
   | 41 => subtle s fs
-  -- Compression Standard: 50 compress, 51 decompress, 52 the format (WHATWG.Compression.op)
-  | 50 | 51 | 52 => pure' do L4Factoidal.WHATWG.Compression.op op (← strArg fs 0) (bytesArg fs 1)
+  -- Compression Standard: 50 compress, 51 decompress, 52 the format, 53 ask again (WHATWG.Compression.op)
+  | 50 | 51 | 52 | 53 => pure' do L4Factoidal.WHATWG.Compression.op op (← strArg fs 0) (bytesArg fs 1)
   -- Secure Contexts: is the environment with this top-level creation URL a secure context
   -- ("1" or "0"); decides whether the `[SecureContext]` members of `crypto` exist.
   | 43 => pure' do ofStr (if L4Factoidal.Net.SecureContext.secureContext (← strArg fs 0) then "1" else "0")
