@@ -288,6 +288,20 @@ No timing was measured: the engine was not built locally (cloud check only).
 - Storing a `FileSystemHandle` in IndexedDB or sending one by `postMessage`: needs structured serialisation of
   platform objects across the boundary.
 
+## Open
+
+- Storage shared between a page and its workers or frames of the same origin (each engine session keeps its own
+  state): web-locks `workers`/`frames`, the Cache API's `common` test, IndexedDB across contexts.
+- A bucket's own IndexedDB, CacheStorage, file system and locks (`NotSupportedError`).
+- Interface objects are lazy getters on the global until first read, so idlharness's "should not have a getter"
+  checks fail for every storage interface (about two subtests per interface and global); making them data
+  properties at start would cost every page.
+- `idbindex-multientry`'s 1,000-item value read 1,001 times decodes a million string tokens one host call each
+  and reaches the script heap limit; one decode per answer would need another answer format.
+- Cookie Store: domain cookies (the shared jar is host-only), `SameSite`, `Partitioned`, public suffixes,
+  service worker subscriptions.
+- That `pump` commits exactly when the specification says, as one statement over the command machine.
+
 ## Not done in this change
 
 A bucket's own storage (IndexedDB, CacheStorage, file system, locks) is not routed to the bucket.
@@ -310,16 +324,16 @@ A bucket's own storage (IndexedDB, CacheStorage, file system, locks) is not rout
 Cloud branch checks (Linux, the Chrome subtests of each directory; window and dedicated worker variants; shared
 and service worker variants are skipped by the engine):
 
-| Directory | Before (85.06% run) | Check 43574264951 (core) | Check 43581496432 (merged fee2bfe2d) | Check 43587790347 (merged 402eec368) | Chrome |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| IndexedDB | 32 | 1,782 | 2,755 | 5,097 | 5,849 |
-| fs | 9 | 82 | 113 | 852 | 1,121 |
-| file-system-access | 32 | 36 | 117 | 129 | 163 |
-| storage (StorageManager) | 34 | 79 | 86 | 87 | 103 |
-| storage/buckets | 34 | 34 | 175 | 310 | 379 |
-| web-locks | 35 | 207 | 212 | 369 | 488 |
-| cookiestore | 45 | 45 | 215 | 229 | 636 |
-| service-workers/cache-storage | 0 | 0 | 216 | 556 | 615 |
+| Directory | Before (85.06% run) | Check 43574264951 (core) | Check 43581496432 (merged fee2bfe2d) | Check 43587790347 (merged 402eec368) | Check 43594726192 (merged 873955244) | Chrome |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| IndexedDB | 32 | 1,782 | 2,755 | 5,097 | 5,202 | 5,849 |
+| fs | 9 | 82 | 113 | 852 | 955 | 1,121 |
+| file-system-access | 32 | 36 | 117 | 129 | 129 | 163 |
+| storage (StorageManager) | 34 | 79 | 86 | 87 | 89 | 103 |
+| storage/buckets | 34 | 34 | 175 | 310 | 312 | 379 |
+| web-locks | 35 | 207 | 212 | 369 | 400 | 488 |
+| cookiestore | 45 | 45 | 215 | 229 | 303 | 636 |
+| service-workers/cache-storage | 0 | 0 | 216 | 556 | 556 | 615 |
 
 The last column's main has shared and service workers (another agent's work), so their variants run too.
 
