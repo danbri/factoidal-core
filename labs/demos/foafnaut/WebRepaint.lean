@@ -35,6 +35,10 @@ private def lengthEq : CSS.Length → CSS.Length → Bool
   | .vw a, .vw b => a == b
   | .vh a, .vh b => a == b
   | .calc a c, .calc b d => a == b && c == d
+  | .minContent, .minContent => true
+  | .maxContent, .maxContent => true
+  | .fitContent, .fitContent => true
+  | .stretch, .stretch => true
   | _, _ => false
 private def edgesEq (a b : Edges) : Bool :=
   a.top == b.top && a.right == b.right && a.bottom == b.bottom && a.left == b.left

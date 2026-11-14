@@ -27,6 +27,10 @@ def length : CSS.Length → String
   | .vw v => FloatFormat.format (v * 100) ++ "vw"
   | .vh v => FloatFormat.format (v * 100) ++ "vh"
   | .calc p v => "calc(" ++ FloatFormat.format (p * 100) ++ "% + " ++ px v ++ ")"
+  | .minContent => "min-content"
+  | .maxContent => "max-content"
+  | .fitContent => "fit-content"
+  | .stretch => "stretch"
 
 /-- `none` for a maximum that is `auto` here (CSS 2.1 §10.4, §10.7). -/
 def maxLength : CSS.Length → String

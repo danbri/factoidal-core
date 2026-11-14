@@ -1277,7 +1277,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
               | some w => pure (clampOpt ((CSS.resolve width cs.minWidth).getD 0) (CSS.resolve width cs.maxWidth) w+horizontalEdges cs)
               | none => do
                 let (lo,hi) ← intrinsic dom styles font embedding pictures fuel (.box child)
-                pure (min hi (max lo width))
+                pure (shrinkWidth cs.width lo hi width)
             let top := floats.foldl (fun t f => max t (LU.toPx f.y)) (innerY+content.height)
             let top := match cs.pos.clear with
               | .none => top
@@ -1341,7 +1341,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
               | some w => pure (clampOpt ((CSS.resolve width cs.minWidth).getD 0) (CSS.resolve width cs.maxWidth) w+horizontalEdges cs)
               | none => do
                 let (lo,hi) ← intrinsic dom styles font embedding pictures fuel (.box child)
-                pure (min hi (max lo width))
+                pure (shrinkWidth cs.width lo hi width)
             let r ← layoutTask dom styles font embedding pictures fuel (.sized child (max 0 (outer-edges)) none) 0 0 width
             inline := inline.push (.atomic child outer r.height r)
           else
@@ -1503,10 +1503,15 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let widthC ← match specified with
         | some w => pure w
         | none => match left,right with
-          | some l,some r => pure (cw-l-r-m.left-m.right-edgesX)
+          | some l,some r =>
+            -- between two insets the box fills the room, unless its width is a keyword
+            if s.width.isKeyword then do
+              let (lo,hi) ← intrinsic dom styles font embedding pictures fuel (.box id)
+              pure (shrinkWidth s.width lo hi (cw-l-r)-m.left-m.right-edgesX)
+            else pure (cw-l-r-m.left-m.right-edgesX)
           | _,_ => do
             let (lo,hi) ← intrinsic dom styles font embedding pictures fuel (.box id)
-            pure (min hi (max lo (cw-left.getD 0-right.getD 0))-m.left-m.right-edgesX)
+            pure (shrinkWidth s.width lo hi (cw-left.getD 0-right.getD 0)-m.left-m.right-edgesX)
       let widthC := max 0 (clampOpt ((CSS.resolve cw s.minWidth).getD 0) (CSS.resolve cw s.maxWidth) widthC)
       let borderW := widthC+edgesX
       let outerW := borderW+m.left+m.right
@@ -1587,14 +1592,23 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         let w := imposedWidth.getD available
         return {nodes := #[.paint ⟨some id,{geometry := .rect x (y+8) w 1,style := {fill := .solid ⟨0.5,0.5,0.5⟩}}⟩],height := 17}
       -- CSS 2.1 §10.4: the width, then `max-width`, then `min-width` (a minimum wins).
+      -- CSS Sizing 3 §3.2: `width`, `min-width` or `max-width` given as a keyword is a
+      -- width of the contents (measured only when a keyword is used) or the fill width.
+      let fill := available-margin.left-margin.right-edgesX
+      let keyed := imposedWidth.isNone && (s.width.isKeyword || s.minWidth.isKeyword || s.maxWidth.isKeyword)
+      let (contentLo,contentHi) ← if keyed then intrinsic dom styles font embedding pictures fuel (.inner id 0)
+        else pure (0,0)
+      let widthOf := fun (l : CSS.Length) => match keywordWidth l contentLo contentHi fill with
+        | some w => some w
+        | none => CSS.resolve available l
       let width := match imposedWidth with
         | some w => max 0 (w-edgesX)
         | none =>
-          let width := (CSS.resolve available s.width).getD (available-margin.left-margin.right-edgesX)
-          let width := match CSS.resolve available s.maxWidth with
+          let width := (widthOf s.width).getD fill
+          let width := match widthOf s.maxWidth with
             | some m => min width m
             | none => width
-          max 0 (max ((CSS.resolve available s.minWidth).getD 0) width)
+          max 0 (max ((widthOf s.minWidth).getD 0) width)
       -- §10.3.3: auto margins share the room the box leaves; an imposed box is placed by its parent.
       let shift := if imposedWidth.isSome then 0 else autoMarginShift s available (margin.left+width+edgesX+margin.right)
       -- CSS 2.1 §8.3.1: a block in a block formatting context whose top margin adjoins its

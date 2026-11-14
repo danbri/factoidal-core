@@ -194,6 +194,16 @@ def resolvedHeight (dom : Dom) (styles : Array Computed) (id : Nat) : Option Flo
   let s := styles[id]!
   match s.height with
   | .percent _ | .calc _ _ => if s.pos.isAbsolute then none else definiteHeight dom styles id
+  -- `height: stretch` (CSS Sizing 4 §6.1): the margin box fills a definite containing height
+  | .stretch =>
+    if s.pos.isAbsolute then none else
+    match (dom.get id).parent with
+    | some parent =>
+      if (dom.get parent).type == .element then
+        (definiteHeight dom styles parent).map fun h =>
+          max 0 (h-s.margin.top-s.margin.bottom-s.borderEdges.top-s.borderEdges.bottom-s.padding.top-s.padding.bottom)
+      else none
+    | none => none
   | _ => none
 
 /-- The style of `id` with a percentage `height` that resolves as that length. -/
@@ -247,6 +257,29 @@ percentage height is of its containing block's padding box, known where it is pl
 theorem percentHeight_absolute (dom : Dom) (styles : Array Computed) (id : Nat)
     (h : (styles[id]!).pos.isAbsolute = true) : percentHeight dom styles id = styles[id]! := by
   simp [percentHeight, resolvedHeight_absolute dom styles id h]
+
+/-- A width given as a sizing keyword (CSS Sizing 3 §3.2, §5.1), as a content-box width:
+`lo` and `hi` are the min-content and max-content widths of the box's contents and `fill`
+the content width with which the box fills its containing block. `none` when `l` is not
+a keyword. -/
+def keywordWidth (l : CSS.Length) (lo hi fill : Float) : Option Float :=
+  match l with
+  | .minContent => some lo
+  | .maxContent => some hi
+  | .fitContent => some (min hi (max lo fill))
+  | .stretch => some (max 0 fill)
+  | _ => none
+
+/-- The margin-box width of a box that shrinks to fit (a float, an inline-block, an
+absolutely positioned box): by its `width` keyword, else fit-content (CSS 2.1 §10.3.5).
+`lo` and `hi` are its min-content and max-content margin-box widths, `room` the
+available width. -/
+def shrinkWidth (l : CSS.Length) (lo hi room : Float) : Float :=
+  match l with
+  | .minContent => lo
+  | .maxContent => hi
+  | .stretch => room
+  | _ => min hi (max lo room)
 
 /-- An inline-block whose contents are not all inline (CSS 2.1 §9.2.2, §10.1): it has a
 child that is a block-level box or a float, or it is positioned and has element children

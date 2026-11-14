@@ -14,6 +14,10 @@ inductive Length where
   /-- A percentage (as a fraction) plus px: `calc(50% - 8px)`, and what a `border-box`
   percentage is as a content-box size. -/
   | calc (percent : Float) (px : Float)
+  /-- The sizing keywords (CSS Sizing 3 §3.2, 4 §6.1): a size taken from the contents, or
+  `stretch`, the size that fills the containing block. They are not numbers: `resolve`
+  answers `none` for them, and the layout gives them their sizes (`Layout.sizeKeyword`). -/
+  | minContent | maxContent | fitContent | stretch
   deriving Repr
 
 /-- The same length (a NaN is not the same as itself, as with `==` on floats). -/
@@ -24,7 +28,25 @@ def Length.same : Length → Length → Bool
   | .vw a, .vw b => a == b
   | .vh a, .vh b => a == b
   | .calc a c, .calc b d => a == b && c == d
+  | .minContent, .minContent => true
+  | .maxContent, .maxContent => true
+  | .fitContent, .fitContent => true
+  | .stretch, .stretch => true
   | _, _ => false
+
+/-- A sizing keyword: a size that the layout takes from the contents or the containing block. -/
+def Length.isKeyword : Length → Bool
+  | .minContent | .maxContent | .fitContent | .stretch => true
+  | _ => false
+
+/-- A sizing keyword by name (CSS Sizing 3 §3.2; `stretch` also under its older names). -/
+def sizeKeyword? (name : String) : Option Length :=
+  match name with
+  | "min-content" => some .minContent
+  | "max-content" => some .maxContent
+  | "fit-content" => some .fitContent
+  | "stretch" | "-webkit-fill-available" | "-moz-available" => some .stretch
+  | _ => none
 
 /-- An exact number of the property table as a float. -/
 def ratToFloat (r : Rat) : Float := Float.ofInt r.num / Float.ofNat r.den
