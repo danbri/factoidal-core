@@ -116,39 +116,67 @@ def baseAttrs : List (String × Bool) :=
   [("canvas", true), ("drawingBufferWidth", true), ("drawingBufferHeight", true),
    ("drawingBufferFormat", true), ("drawingBufferColorSpace", false), ("unpackColorSpace", false)]
 
-/-- Operations of `WebGLRenderingContextBase`: name, and the fewest arguments an overload takes. -/
-def baseOps : List (String × Nat) :=
-  [("getContextAttributes", 0), ("isContextLost", 0), ("getSupportedExtensions", 0),
-   ("getExtension", 1), ("drawingBufferStorage", 3), ("activeTexture", 1), ("attachShader", 2),
-   ("bindAttribLocation", 3), ("bindBuffer", 2), ("bindFramebuffer", 2), ("bindRenderbuffer", 2),
-   ("bindTexture", 2), ("blendColor", 4), ("blendEquation", 1), ("blendEquationSeparate", 2),
-   ("blendFunc", 2), ("blendFuncSeparate", 4), ("checkFramebufferStatus", 1), ("clear", 1),
-   ("clearColor", 4), ("clearDepth", 1), ("clearStencil", 1), ("colorMask", 4),
-   ("compileShader", 1), ("copyTexImage2D", 8), ("copyTexSubImage2D", 8), ("createBuffer", 0),
-   ("createFramebuffer", 0), ("createProgram", 0), ("createRenderbuffer", 0), ("createShader", 1),
-   ("createTexture", 0), ("cullFace", 1), ("deleteBuffer", 1), ("deleteFramebuffer", 1),
-   ("deleteProgram", 1), ("deleteRenderbuffer", 1), ("deleteShader", 1), ("deleteTexture", 1),
-   ("depthFunc", 1), ("depthMask", 1), ("depthRange", 2), ("detachShader", 2), ("disable", 1),
-   ("disableVertexAttribArray", 1), ("drawArrays", 3), ("drawElements", 4), ("enable", 1),
-   ("enableVertexAttribArray", 1), ("finish", 0), ("flush", 0), ("framebufferRenderbuffer", 4),
-   ("framebufferTexture2D", 5), ("frontFace", 1), ("generateMipmap", 1), ("getActiveAttrib", 2),
-   ("getActiveUniform", 2), ("getAttachedShaders", 1), ("getAttribLocation", 2),
-   ("getBufferParameter", 2), ("getParameter", 1), ("getError", 0),
-   ("getFramebufferAttachmentParameter", 3), ("getProgramParameter", 2), ("getProgramInfoLog", 1),
-   ("getRenderbufferParameter", 2), ("getShaderParameter", 2), ("getShaderPrecisionFormat", 2),
-   ("getShaderInfoLog", 1), ("getShaderSource", 1), ("getTexParameter", 2), ("getUniform", 2),
-   ("getUniformLocation", 2), ("getVertexAttrib", 2), ("getVertexAttribOffset", 2), ("hint", 2),
-   ("isBuffer", 1), ("isEnabled", 1), ("isFramebuffer", 1), ("isProgram", 1),
-   ("isRenderbuffer", 1), ("isShader", 1), ("isTexture", 1), ("lineWidth", 1), ("linkProgram", 1),
-   ("pixelStorei", 2), ("polygonOffset", 2), ("renderbufferStorage", 4), ("sampleCoverage", 2),
-   ("scissor", 4), ("shaderSource", 2), ("stencilFunc", 3), ("stencilFuncSeparate", 4),
-   ("stencilMask", 1), ("stencilMaskSeparate", 2), ("stencilOp", 3), ("stencilOpSeparate", 4),
-   ("texParameterf", 3), ("texParameteri", 3), ("uniform1f", 2), ("uniform2f", 3),
-   ("uniform3f", 4), ("uniform4f", 5), ("uniform1i", 2), ("uniform2i", 3), ("uniform3i", 4),
-   ("uniform4i", 5), ("useProgram", 1), ("validateProgram", 1), ("vertexAttrib1f", 2),
-   ("vertexAttrib2f", 3), ("vertexAttrib3f", 4), ("vertexAttrib4f", 5), ("vertexAttrib1fv", 2),
-   ("vertexAttrib2fv", 2), ("vertexAttrib3fv", 2), ("vertexAttrib4fv", 2),
-   ("vertexAttribPointer", 6), ("viewport", 4)]
+/-- Operations of `WebGLRenderingContextBase`: name, the fewest arguments an overload takes, and the argument
+types of each overload (`|` between overloads, `,` between arguments, `~` before an optional
+argument, `?` after a nullable type; the letters are in `tools/webgl-idl-table.py`). -/
+def baseOps : List (String × Nat × String) :=
+  [("getContextAttributes", 0, ""), ("isContextLost", 0, ""), ("getSupportedExtensions", 0, ""),
+   ("getExtension", 1, "s"), ("drawingBufferStorage", 3, "u,u,u"), ("activeTexture", 1, "u"),
+   ("attachShader", 2, "OWebGLProgram,OWebGLShader"),
+   ("bindAttribLocation", 3, "OWebGLProgram,u,s"), ("bindBuffer", 2, "u,OWebGLBuffer?"),
+   ("bindFramebuffer", 2, "u,OWebGLFramebuffer?"),
+   ("bindRenderbuffer", 2, "u,OWebGLRenderbuffer?"), ("bindTexture", 2, "u,OWebGLTexture?"),
+   ("blendColor", 4, "f,f,f,f"), ("blendEquation", 1, "u"), ("blendEquationSeparate", 2, "u,u"),
+   ("blendFunc", 2, "u,u"), ("blendFuncSeparate", 4, "u,u,u,u"),
+   ("checkFramebufferStatus", 1, "u"), ("clear", 1, "u"), ("clearColor", 4, "f,f,f,f"),
+   ("clearDepth", 1, "f"), ("clearStencil", 1, "i"), ("colorMask", 4, "b,b,b,b"),
+   ("compileShader", 1, "OWebGLShader"), ("copyTexImage2D", 8, "u,i,u,i,i,i,i,i"),
+   ("copyTexSubImage2D", 8, "u,i,i,i,i,i,i,i"), ("createBuffer", 0, ""),
+   ("createFramebuffer", 0, ""), ("createProgram", 0, ""), ("createRenderbuffer", 0, ""),
+   ("createShader", 1, "u"), ("createTexture", 0, ""), ("cullFace", 1, "u"),
+   ("deleteBuffer", 1, "OWebGLBuffer?"), ("deleteFramebuffer", 1, "OWebGLFramebuffer?"),
+   ("deleteProgram", 1, "OWebGLProgram?"), ("deleteRenderbuffer", 1, "OWebGLRenderbuffer?"),
+   ("deleteShader", 1, "OWebGLShader?"), ("deleteTexture", 1, "OWebGLTexture?"),
+   ("depthFunc", 1, "u"), ("depthMask", 1, "b"), ("depthRange", 2, "f,f"),
+   ("detachShader", 2, "OWebGLProgram,OWebGLShader"), ("disable", 1, "u"),
+   ("disableVertexAttribArray", 1, "u"), ("drawArrays", 3, "u,i,i"),
+   ("drawElements", 4, "u,i,u,l"), ("enable", 1, "u"), ("enableVertexAttribArray", 1, "u"),
+   ("finish", 0, ""), ("flush", 0, ""),
+   ("framebufferRenderbuffer", 4, "u,u,u,OWebGLRenderbuffer?"),
+   ("framebufferTexture2D", 5, "u,u,u,OWebGLTexture?,i"), ("frontFace", 1, "u"),
+   ("generateMipmap", 1, "u"), ("getActiveAttrib", 2, "OWebGLProgram,u"),
+   ("getActiveUniform", 2, "OWebGLProgram,u"), ("getAttachedShaders", 1, "OWebGLProgram"),
+   ("getAttribLocation", 2, "OWebGLProgram,s"), ("getBufferParameter", 2, "u,u"),
+   ("getParameter", 1, "u"), ("getError", 0, ""),
+   ("getFramebufferAttachmentParameter", 3, "u,u,u"),
+   ("getProgramParameter", 2, "OWebGLProgram,u"), ("getProgramInfoLog", 1, "OWebGLProgram"),
+   ("getRenderbufferParameter", 2, "u,u"), ("getShaderParameter", 2, "OWebGLShader,u"),
+   ("getShaderPrecisionFormat", 2, "u,u"), ("getShaderInfoLog", 1, "OWebGLShader"),
+   ("getShaderSource", 1, "OWebGLShader"), ("getTexParameter", 2, "u,u"),
+   ("getUniform", 2, "OWebGLProgram,OWebGLUniformLocation"),
+   ("getUniformLocation", 2, "OWebGLProgram,s"), ("getVertexAttrib", 2, "u,u"),
+   ("getVertexAttribOffset", 2, "u,u"), ("hint", 2, "u,u"), ("isBuffer", 1, "OWebGLBuffer?"),
+   ("isEnabled", 1, "u"), ("isFramebuffer", 1, "OWebGLFramebuffer?"),
+   ("isProgram", 1, "OWebGLProgram?"), ("isRenderbuffer", 1, "OWebGLRenderbuffer?"),
+   ("isShader", 1, "OWebGLShader?"), ("isTexture", 1, "OWebGLTexture?"), ("lineWidth", 1, "f"),
+   ("linkProgram", 1, "OWebGLProgram"), ("pixelStorei", 2, "u,i"), ("polygonOffset", 2, "f,f"),
+   ("renderbufferStorage", 4, "u,u,i,i"), ("sampleCoverage", 2, "f,b"), ("scissor", 4, "i,i,i,i"),
+   ("shaderSource", 2, "OWebGLShader,s"), ("stencilFunc", 3, "u,i,u"),
+   ("stencilFuncSeparate", 4, "u,u,i,u"), ("stencilMask", 1, "u"),
+   ("stencilMaskSeparate", 2, "u,u"), ("stencilOp", 3, "u,u,u"),
+   ("stencilOpSeparate", 4, "u,u,u,u"), ("texParameterf", 3, "u,u,f"),
+   ("texParameteri", 3, "u,u,i"), ("uniform1f", 2, "OWebGLUniformLocation?,f"),
+   ("uniform2f", 3, "OWebGLUniformLocation?,f,f"),
+   ("uniform3f", 4, "OWebGLUniformLocation?,f,f,f"),
+   ("uniform4f", 5, "OWebGLUniformLocation?,f,f,f,f"),
+   ("uniform1i", 2, "OWebGLUniformLocation?,i"), ("uniform2i", 3, "OWebGLUniformLocation?,i,i"),
+   ("uniform3i", 4, "OWebGLUniformLocation?,i,i,i"),
+   ("uniform4i", 5, "OWebGLUniformLocation?,i,i,i,i"), ("useProgram", 1, "OWebGLProgram?"),
+   ("validateProgram", 1, "OWebGLProgram"), ("vertexAttrib1f", 2, "u,f"),
+   ("vertexAttrib2f", 3, "u,f,f"), ("vertexAttrib3f", 4, "u,f,f,f"),
+   ("vertexAttrib4f", 5, "u,f,f,f,f"), ("vertexAttrib1fv", 2, "u,F"),
+   ("vertexAttrib2fv", 2, "u,F"), ("vertexAttrib3fv", 2, "u,F"), ("vertexAttrib4fv", 2, "u,F"),
+   ("vertexAttribPointer", 6, "u,i,u,b,i,l"), ("viewport", 4, "i,i,i,i")]
 
 /-- Constants of `WebGLRenderingContextOverloads`: name and value. -/
 def overloads1Consts : List (String × Int) :=
@@ -158,13 +186,21 @@ def overloads1Consts : List (String × Int) :=
 def overloads1Attrs : List (String × Bool) :=
   []
 
-/-- Operations of `WebGLRenderingContextOverloads`: name, and the fewest arguments an overload takes. -/
-def overloads1Ops : List (String × Nat) :=
-  [("bufferData", 3), ("bufferSubData", 3), ("compressedTexImage2D", 7),
-   ("compressedTexSubImage2D", 8), ("readPixels", 7), ("texImage2D", 6), ("texSubImage2D", 7),
-   ("uniform1fv", 2), ("uniform2fv", 2), ("uniform3fv", 2), ("uniform4fv", 2), ("uniform1iv", 2),
-   ("uniform2iv", 2), ("uniform3iv", 2), ("uniform4iv", 2), ("uniformMatrix2fv", 3),
-   ("uniformMatrix3fv", 3), ("uniformMatrix4fv", 3)]
+/-- Operations of `WebGLRenderingContextOverloads`: name, the fewest arguments an overload takes, and the argument
+types of each overload (`|` between overloads, `,` between arguments, `~` before an optional
+argument, `?` after a nullable type; the letters are in `tools/webgl-idl-table.py`). -/
+def overloads1Ops : List (String × Nat × String) :=
+  [("bufferData", 3, "u,l,u|u,B?,u"), ("bufferSubData", 3, "u,l,B"),
+   ("compressedTexImage2D", 7, "u,i,u,i,i,i,V"), ("compressedTexSubImage2D", 8, "u,i,i,i,i,i,u,V"),
+   ("readPixels", 7, "i,i,i,i,u,u,V?"), ("texImage2D", 6, "u,i,i,i,i,i,u,u,V?|u,i,i,u,u,T"),
+   ("texSubImage2D", 7, "u,i,i,i,i,i,u,u,V?|u,i,i,i,u,u,T"),
+   ("uniform1fv", 2, "OWebGLUniformLocation?,F"), ("uniform2fv", 2, "OWebGLUniformLocation?,F"),
+   ("uniform3fv", 2, "OWebGLUniformLocation?,F"), ("uniform4fv", 2, "OWebGLUniformLocation?,F"),
+   ("uniform1iv", 2, "OWebGLUniformLocation?,I"), ("uniform2iv", 2, "OWebGLUniformLocation?,I"),
+   ("uniform3iv", 2, "OWebGLUniformLocation?,I"), ("uniform4iv", 2, "OWebGLUniformLocation?,I"),
+   ("uniformMatrix2fv", 3, "OWebGLUniformLocation?,b,F"),
+   ("uniformMatrix3fv", 3, "OWebGLUniformLocation?,b,F"),
+   ("uniformMatrix4fv", 3, "OWebGLUniformLocation?,b,F")]
 
 /-- Constants of `WebGL2RenderingContextBase`: name and value. -/
 def base2Consts : List (String × Int) :=
@@ -274,35 +310,66 @@ def base2Consts : List (String × Int) :=
 def base2Attrs : List (String × Bool) :=
   []
 
-/-- Operations of `WebGL2RenderingContextBase`: name, and the fewest arguments an overload takes. -/
-def base2Ops : List (String × Nat) :=
-  [("copyBufferSubData", 5), ("getBufferSubData", 3), ("blitFramebuffer", 10),
-   ("framebufferTextureLayer", 5), ("invalidateFramebuffer", 2), ("invalidateSubFramebuffer", 6),
-   ("readBuffer", 1), ("getInternalformatParameter", 3), ("renderbufferStorageMultisample", 5),
-   ("texStorage2D", 5), ("texStorage3D", 6), ("texImage3D", 10), ("texSubImage3D", 11),
-   ("copyTexSubImage3D", 9), ("compressedTexImage3D", 8), ("compressedTexSubImage3D", 10),
-   ("getFragDataLocation", 2), ("uniform1ui", 2), ("uniform2ui", 3), ("uniform3ui", 4),
-   ("uniform4ui", 5), ("uniform1uiv", 2), ("uniform2uiv", 2), ("uniform3uiv", 2),
-   ("uniform4uiv", 2), ("uniformMatrix3x2fv", 3), ("uniformMatrix4x2fv", 3),
-   ("uniformMatrix2x3fv", 3), ("uniformMatrix4x3fv", 3), ("uniformMatrix2x4fv", 3),
-   ("uniformMatrix3x4fv", 3), ("vertexAttribI4i", 5), ("vertexAttribI4iv", 2),
-   ("vertexAttribI4ui", 5), ("vertexAttribI4uiv", 2), ("vertexAttribIPointer", 5),
-   ("vertexAttribDivisor", 2), ("drawArraysInstanced", 4), ("drawElementsInstanced", 5),
-   ("drawRangeElements", 6), ("drawBuffers", 1), ("clearBufferfv", 3), ("clearBufferiv", 3),
-   ("clearBufferuiv", 3), ("clearBufferfi", 4), ("createQuery", 0), ("deleteQuery", 1),
-   ("isQuery", 1), ("beginQuery", 2), ("endQuery", 1), ("getQuery", 2), ("getQueryParameter", 2),
-   ("createSampler", 0), ("deleteSampler", 1), ("isSampler", 1), ("bindSampler", 2),
-   ("samplerParameteri", 3), ("samplerParameterf", 3), ("getSamplerParameter", 2),
-   ("fenceSync", 2), ("isSync", 1), ("deleteSync", 1), ("clientWaitSync", 3), ("waitSync", 3),
-   ("getSyncParameter", 2), ("createTransformFeedback", 0), ("deleteTransformFeedback", 1),
-   ("isTransformFeedback", 1), ("bindTransformFeedback", 2), ("beginTransformFeedback", 1),
-   ("endTransformFeedback", 0), ("transformFeedbackVaryings", 3),
-   ("getTransformFeedbackVarying", 2), ("pauseTransformFeedback", 0),
-   ("resumeTransformFeedback", 0), ("bindBufferBase", 3), ("bindBufferRange", 5),
-   ("getIndexedParameter", 2), ("getUniformIndices", 2), ("getActiveUniforms", 3),
-   ("getUniformBlockIndex", 2), ("getActiveUniformBlockParameter", 3),
-   ("getActiveUniformBlockName", 2), ("uniformBlockBinding", 3), ("createVertexArray", 0),
-   ("deleteVertexArray", 1), ("isVertexArray", 1), ("bindVertexArray", 1)]
+/-- Operations of `WebGL2RenderingContextBase`: name, the fewest arguments an overload takes, and the argument
+types of each overload (`|` between overloads, `,` between arguments, `~` before an optional
+argument, `?` after a nullable type; the letters are in `tools/webgl-idl-table.py`). -/
+def base2Ops : List (String × Nat × String) :=
+  [("copyBufferSubData", 5, "u,u,l,l,l"), ("getBufferSubData", 3, "u,l,V,~l,~u"),
+   ("blitFramebuffer", 10, "i,i,i,i,i,i,i,i,u,u"),
+   ("framebufferTextureLayer", 5, "u,u,OWebGLTexture?,i,i"), ("invalidateFramebuffer", 2, "u,Q"),
+   ("invalidateSubFramebuffer", 6, "u,Q,i,i,i,i"), ("readBuffer", 1, "u"),
+   ("getInternalformatParameter", 3, "u,u,u"), ("renderbufferStorageMultisample", 5, "u,i,u,i,i"),
+   ("texStorage2D", 5, "u,i,u,i,i"), ("texStorage3D", 6, "u,i,u,i,i,i"),
+   ("texImage3D", 10, "u,i,i,i,i,i,i,u,u,l|u,i,i,i,i,i,i,u,u,T|u,i,i,i,i,i,i,u,u,V?|u,i,i,i,i,i,i,u,u,V,l"),
+   ("texSubImage3D", 11, "u,i,i,i,i,i,i,i,u,u,l|u,i,i,i,i,i,i,i,u,u,T|u,i,i,i,i,i,i,i,u,u,V?,~l"),
+   ("copyTexSubImage3D", 9, "u,i,i,i,i,i,i,i,i"),
+   ("compressedTexImage3D", 8, "u,i,u,i,i,i,i,i,l|u,i,u,i,i,i,i,V,~l,~u"),
+   ("compressedTexSubImage3D", 10, "u,i,i,i,i,i,i,i,u,i,l|u,i,i,i,i,i,i,i,u,V,~l,~u"),
+   ("getFragDataLocation", 2, "OWebGLProgram,s"), ("uniform1ui", 2, "OWebGLUniformLocation?,u"),
+   ("uniform2ui", 3, "OWebGLUniformLocation?,u,u"),
+   ("uniform3ui", 4, "OWebGLUniformLocation?,u,u,u"),
+   ("uniform4ui", 5, "OWebGLUniformLocation?,u,u,u,u"),
+   ("uniform1uiv", 2, "OWebGLUniformLocation?,U,~l,~u"),
+   ("uniform2uiv", 2, "OWebGLUniformLocation?,U,~l,~u"),
+   ("uniform3uiv", 2, "OWebGLUniformLocation?,U,~l,~u"),
+   ("uniform4uiv", 2, "OWebGLUniformLocation?,U,~l,~u"),
+   ("uniformMatrix3x2fv", 3, "OWebGLUniformLocation?,b,F,~l,~u"),
+   ("uniformMatrix4x2fv", 3, "OWebGLUniformLocation?,b,F,~l,~u"),
+   ("uniformMatrix2x3fv", 3, "OWebGLUniformLocation?,b,F,~l,~u"),
+   ("uniformMatrix4x3fv", 3, "OWebGLUniformLocation?,b,F,~l,~u"),
+   ("uniformMatrix2x4fv", 3, "OWebGLUniformLocation?,b,F,~l,~u"),
+   ("uniformMatrix3x4fv", 3, "OWebGLUniformLocation?,b,F,~l,~u"),
+   ("vertexAttribI4i", 5, "u,i,i,i,i"), ("vertexAttribI4iv", 2, "u,I"),
+   ("vertexAttribI4ui", 5, "u,u,u,u,u"), ("vertexAttribI4uiv", 2, "u,U"),
+   ("vertexAttribIPointer", 5, "u,i,u,i,l"), ("vertexAttribDivisor", 2, "u,u"),
+   ("drawArraysInstanced", 4, "u,i,i,i"), ("drawElementsInstanced", 5, "u,i,u,l,i"),
+   ("drawRangeElements", 6, "u,u,u,i,u,l"), ("drawBuffers", 1, "Q"),
+   ("clearBufferfv", 3, "u,i,F,~l"), ("clearBufferiv", 3, "u,i,I,~l"),
+   ("clearBufferuiv", 3, "u,i,U,~l"), ("clearBufferfi", 4, "u,i,f,i"), ("createQuery", 0, ""),
+   ("deleteQuery", 1, "OWebGLQuery?"), ("isQuery", 1, "OWebGLQuery?"),
+   ("beginQuery", 2, "u,OWebGLQuery"), ("endQuery", 1, "u"), ("getQuery", 2, "u,u"),
+   ("getQueryParameter", 2, "OWebGLQuery,u"), ("createSampler", 0, ""),
+   ("deleteSampler", 1, "OWebGLSampler?"), ("isSampler", 1, "OWebGLSampler?"),
+   ("bindSampler", 2, "u,OWebGLSampler?"), ("samplerParameteri", 3, "OWebGLSampler,u,i"),
+   ("samplerParameterf", 3, "OWebGLSampler,u,f"), ("getSamplerParameter", 2, "OWebGLSampler,u"),
+   ("fenceSync", 2, "u,u"), ("isSync", 1, "OWebGLSync?"), ("deleteSync", 1, "OWebGLSync?"),
+   ("clientWaitSync", 3, "OWebGLSync,u,l"), ("waitSync", 3, "OWebGLSync,u,l"),
+   ("getSyncParameter", 2, "OWebGLSync,u"), ("createTransformFeedback", 0, ""),
+   ("deleteTransformFeedback", 1, "OWebGLTransformFeedback?"),
+   ("isTransformFeedback", 1, "OWebGLTransformFeedback?"),
+   ("bindTransformFeedback", 2, "u,OWebGLTransformFeedback?"), ("beginTransformFeedback", 1, "u"),
+   ("endTransformFeedback", 0, ""), ("transformFeedbackVaryings", 3, "OWebGLProgram,S,u"),
+   ("getTransformFeedbackVarying", 2, "OWebGLProgram,u"), ("pauseTransformFeedback", 0, ""),
+   ("resumeTransformFeedback", 0, ""), ("bindBufferBase", 3, "u,u,OWebGLBuffer?"),
+   ("bindBufferRange", 5, "u,u,OWebGLBuffer?,l,l"), ("getIndexedParameter", 2, "u,u"),
+   ("getUniformIndices", 2, "OWebGLProgram,S"), ("getActiveUniforms", 3, "OWebGLProgram,Q,u"),
+   ("getUniformBlockIndex", 2, "OWebGLProgram,s"),
+   ("getActiveUniformBlockParameter", 3, "OWebGLProgram,u,u"),
+   ("getActiveUniformBlockName", 2, "OWebGLProgram,u"),
+   ("uniformBlockBinding", 3, "OWebGLProgram,u,u"), ("createVertexArray", 0, ""),
+   ("deleteVertexArray", 1, "OWebGLVertexArrayObject?"),
+   ("isVertexArray", 1, "OWebGLVertexArrayObject?"),
+   ("bindVertexArray", 1, "OWebGLVertexArrayObject?")]
 
 /-- Constants of `WebGL2RenderingContextOverloads`: name and value. -/
 def overloads2Consts : List (String × Int) :=
@@ -312,12 +379,26 @@ def overloads2Consts : List (String × Int) :=
 def overloads2Attrs : List (String × Bool) :=
   []
 
-/-- Operations of `WebGL2RenderingContextOverloads`: name, and the fewest arguments an overload takes. -/
-def overloads2Ops : List (String × Nat) :=
-  [("bufferData", 3), ("bufferSubData", 3), ("texImage2D", 6), ("texSubImage2D", 7),
-   ("compressedTexImage2D", 7), ("compressedTexSubImage2D", 8), ("uniform1fv", 2),
-   ("uniform2fv", 2), ("uniform3fv", 2), ("uniform4fv", 2), ("uniform1iv", 2), ("uniform2iv", 2),
-   ("uniform3iv", 2), ("uniform4iv", 2), ("uniformMatrix2fv", 3), ("uniformMatrix3fv", 3),
-   ("uniformMatrix4fv", 3), ("readPixels", 7)]
+/-- Operations of `WebGL2RenderingContextOverloads`: name, the fewest arguments an overload takes, and the argument
+types of each overload (`|` between overloads, `,` between arguments, `~` before an optional
+argument, `?` after a nullable type; the letters are in `tools/webgl-idl-table.py`). -/
+def overloads2Ops : List (String × Nat × String) :=
+  [("bufferData", 3, "u,l,u|u,B?,u|u,V,u,l,~u"), ("bufferSubData", 3, "u,l,B|u,l,V,l,~u"),
+   ("texImage2D", 6, "u,i,i,i,i,i,u,u,V?|u,i,i,u,u,T|u,i,i,i,i,i,u,u,l|u,i,i,i,i,i,u,u,T|u,i,i,i,i,i,u,u,V,l"),
+   ("texSubImage2D", 7, "u,i,i,i,i,i,u,u,V?|u,i,i,i,u,u,T|u,i,i,i,i,i,u,u,l|u,i,i,i,i,i,u,u,T|u,i,i,i,i,i,u,u,V,l"),
+   ("compressedTexImage2D", 7, "u,i,u,i,i,i,i,l|u,i,u,i,i,i,V,~l,~u"),
+   ("compressedTexSubImage2D", 8, "u,i,i,i,i,i,u,i,l|u,i,i,i,i,i,u,V,~l,~u"),
+   ("uniform1fv", 2, "OWebGLUniformLocation?,F,~l,~u"),
+   ("uniform2fv", 2, "OWebGLUniformLocation?,F,~l,~u"),
+   ("uniform3fv", 2, "OWebGLUniformLocation?,F,~l,~u"),
+   ("uniform4fv", 2, "OWebGLUniformLocation?,F,~l,~u"),
+   ("uniform1iv", 2, "OWebGLUniformLocation?,I,~l,~u"),
+   ("uniform2iv", 2, "OWebGLUniformLocation?,I,~l,~u"),
+   ("uniform3iv", 2, "OWebGLUniformLocation?,I,~l,~u"),
+   ("uniform4iv", 2, "OWebGLUniformLocation?,I,~l,~u"),
+   ("uniformMatrix2fv", 3, "OWebGLUniformLocation?,b,F,~l,~u"),
+   ("uniformMatrix3fv", 3, "OWebGLUniformLocation?,b,F,~l,~u"),
+   ("uniformMatrix4fv", 3, "OWebGLUniformLocation?,b,F,~l,~u"),
+   ("readPixels", 7, "i,i,i,i,u,u,V?|i,i,i,i,u,u,l|i,i,i,i,u,u,V,l")]
 
 end L4Factoidal.PageGl.Table

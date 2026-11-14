@@ -15,18 +15,24 @@ import L4Factoidal.PageGl.Table
 
 namespace L4Factoidal.PageGl.Idl
 
-/-- One step of `mergeOps`: a name seen before keeps the smaller length; a new name goes last. -/
-def mergeStep (acc : List (String × Nat)) (o : String × Nat) : List (String × Nat) :=
-  if acc.any (·.1 == o.1) then acc.map (fun p => if p.1 == o.1 then (p.1, min p.2 o.2) else p)
+/-- An operation of an interface: its name, the fewest arguments an overload takes, and the
+argument types of its overloads (`Table`). -/
+abbrev Op := String × Nat × String
+
+/-- One step of `mergeOps`: a name seen before keeps the smaller length and gains the overloads;
+a new name goes last. -/
+def mergeStep (acc : List Op) (o : Op) : List Op :=
+  if acc.any (·.1 == o.1) then
+    acc.map (fun p => if p.1 == o.1 then (p.1, min p.2.1 o.2.1, p.2.2 ++ "|" ++ o.2.2) else p)
   else acc ++ [o]
 
 /-- The operations of an interface from those of its mixins: each name once, in the order first
-seen, with the fewest arguments of its overloads. -/
-def mergeOps (xs : List (String × Nat)) : List (String × Nat) := xs.foldl mergeStep []
+seen, with the fewest arguments of its overloads and all their signatures. -/
+def mergeOps (xs : List Op) : List Op := xs.foldl mergeStep []
 
 /-! ## Theorems about `mergeOps` -/
 
-theorem mergeStep_names (acc : List (String × Nat)) (o : String × Nat) :
+theorem mergeStep_names (acc : List Op) (o : Op) :
     (mergeStep acc o).map (·.1) =
       if acc.any (·.1 == o.1) then acc.map (·.1) else acc.map (·.1) ++ [o.1] := by
   unfold mergeStep
@@ -40,9 +46,9 @@ theorem mergeStep_names (acc : List (String × Nat)) (o : String × Nat) :
 
 /-- Invariant. Says: the names `mergeOps` answers are pairwise different, for every input, so the
 page glue defines each operation once. Does not say: which length a name gets (`mergeOps_le`). -/
-theorem mergeOps_nodup (xs : List (String × Nat)) : ((mergeOps xs).map (·.1)).Nodup := by
+theorem mergeOps_nodup (xs : List Op) : ((mergeOps xs).map (·.1)).Nodup := by
   unfold mergeOps
-  suffices h : ∀ acc : List (String × Nat), (acc.map (·.1)).Nodup → ((xs.foldl mergeStep acc).map (·.1)).Nodup by
+  suffices h : ∀ acc : List Op, (acc.map (·.1)).Nodup → ((xs.foldl mergeStep acc).map (·.1)).Nodup by
     exact h [] (by simp)
   induction xs with
   | nil => intro acc h; simpa using h
@@ -64,51 +70,51 @@ theorem mergeOps_nodup (xs : List (String × Nat)) : ((mergeOps xs).map (·.1)).
       exact ⟨p, hp, by simp [hpe, hab, hb]⟩
 
 /-- A name in the accumulator stays, with a length no larger. -/
-theorem mergeStep_keeps (acc : List (String × Nat)) (o : String × Nat) (n : String) (k : Nat)
-    (h : (n, k) ∈ acc) : ∃ k', k' ≤ k ∧ (n, k') ∈ mergeStep acc o := by
+theorem mergeStep_keeps (acc : List Op) (o : Op) (n : String) (k : Nat) (sg : String)
+    (h : (n, k, sg) ∈ acc) : ∃ k' sg', k' ≤ k ∧ (n, k', sg') ∈ mergeStep acc o := by
   unfold mergeStep
   split
   · by_cases hn : n == o.1
-    · refine ⟨min k o.2, Nat.min_le_left _ _, ?_⟩
+    · refine ⟨min k o.2.1, sg ++ "|" ++ o.2.2, Nat.min_le_left _ _, ?_⟩
       simp only [List.mem_map]
-      exact ⟨(n, k), h, by simp [hn]⟩
-    · refine ⟨k, Nat.le_refl _, ?_⟩
+      exact ⟨(n, k, sg), h, by simp [hn]⟩
+    · refine ⟨k, sg, Nat.le_refl _, ?_⟩
       simp only [List.mem_map]
-      exact ⟨(n, k), h, by simp [hn]⟩
-  · exact ⟨k, Nat.le_refl _, by simp [h]⟩
+      exact ⟨(n, k, sg), h, by simp [hn]⟩
+  · exact ⟨k, sg, Nat.le_refl _, by simp [h]⟩
 
 /-- The new operation is in the result, with a length no larger than its own. -/
-theorem mergeStep_adds (acc : List (String × Nat)) (o : String × Nat) :
-    ∃ k', k' ≤ o.2 ∧ (o.1, k') ∈ mergeStep acc o := by
+theorem mergeStep_adds (acc : List Op) (o : Op) :
+    ∃ k' sg', k' ≤ o.2.1 ∧ (o.1, k', sg') ∈ mergeStep acc o := by
   unfold mergeStep
   split
   · rename_i h
     simp only [List.any_eq_true] at h
     obtain ⟨p, hp, hpn⟩ := h
-    refine ⟨min p.2 o.2, Nat.min_le_right _ _, ?_⟩
+    refine ⟨min p.2.1 o.2.1, p.2.2 ++ "|" ++ o.2.2, Nat.min_le_right _ _, ?_⟩
     simp only [List.mem_map]
     refine ⟨p, hp, ?_⟩
     have : p.1 = o.1 := by simpa using hpn
     simp [this]
-  · exact ⟨o.2, Nat.le_refl _, by simp⟩
+  · exact ⟨o.2.1, o.2.2, Nat.le_refl _, by simp⟩
 
-theorem foldl_mergeStep_keeps (xs acc : List (String × Nat)) (n : String) (k : Nat)
-    (h : (n, k) ∈ acc) : ∃ k', k' ≤ k ∧ (n, k') ∈ xs.foldl mergeStep acc := by
-  induction xs generalizing acc k with
-  | nil => exact ⟨k, Nat.le_refl _, h⟩
+theorem foldl_mergeStep_keeps (xs acc : List Op) (n : String) (k : Nat) (sg : String)
+    (h : (n, k, sg) ∈ acc) : ∃ k' sg', k' ≤ k ∧ (n, k', sg') ∈ xs.foldl mergeStep acc := by
+  induction xs generalizing acc k sg with
+  | nil => exact ⟨k, sg, Nat.le_refl _, h⟩
   | cons o xs ih =>
-    obtain ⟨k1, hk1, hm⟩ := mergeStep_keeps acc o n k h
-    obtain ⟨k2, hk2, hm2⟩ := ih (mergeStep acc o) k1 hm
-    exact ⟨k2, Nat.le_trans hk2 hk1, hm2⟩
+    obtain ⟨k1, sg1, hk1, hm⟩ := mergeStep_keeps acc o n k sg h
+    obtain ⟨k2, sg2, hk2, hm2⟩ := ih (mergeStep acc o) k1 sg1 hm
+    exact ⟨k2, sg2, Nat.le_trans hk2 hk1, hm2⟩
 
 /-- Specification. Says: every operation (overload) given to `mergeOps` is in its answer under the
 same name, with a length that is at most that overload's argument count: the function's `length`
 is a lower bound of every overload, as Web IDL §3.7.6 asks. Does not say: that the length is
 reached by some overload (it is, by construction: only `min` of given lengths is ever stored). -/
-theorem mergeOps_le (xs : List (String × Nat)) (n : String) (k : Nat) (h : (n, k) ∈ xs) :
-    ∃ k', k' ≤ k ∧ (n, k') ∈ mergeOps xs := by
+theorem mergeOps_le (xs : List Op) (n : String) (k : Nat) (sg : String) (h : (n, k, sg) ∈ xs) :
+    ∃ k' sg', k' ≤ k ∧ (n, k', sg') ∈ mergeOps xs := by
   unfold mergeOps
-  suffices hs : ∀ acc : List (String × Nat), ∃ k', k' ≤ k ∧ (n, k') ∈ xs.foldl mergeStep acc by
+  suffices hs : ∀ acc : List Op, ∃ k' sg', k' ≤ k ∧ (n, k', sg') ∈ xs.foldl mergeStep acc by
     exact hs []
   induction xs with
   | nil => cases h
@@ -116,9 +122,9 @@ theorem mergeOps_le (xs : List (String × Nat)) (n : String) (k : Nat) (h : (n, 
     intro acc
     simp only [List.foldl_cons]
     rcases List.mem_cons.mp h with rfl | h'
-    · obtain ⟨k1, hk1, hm⟩ := mergeStep_adds acc (n, k)
-      obtain ⟨k2, hk2, hm2⟩ := foldl_mergeStep_keeps xs (mergeStep acc (n, k)) n k1 hm
-      exact ⟨k2, Nat.le_trans hk2 hk1, hm2⟩
+    · obtain ⟨k1, sg1, hk1, hm⟩ := mergeStep_adds acc (n, k, sg)
+      obtain ⟨k2, sg2, hk2, hm2⟩ := foldl_mergeStep_keeps xs (mergeStep acc (n, k, sg)) n k1 sg1 hm
+      exact ⟨k2, sg2, Nat.le_trans hk2 hk1, hm2⟩
     · exact ih h' (mergeStep acc o)
 
 /- From here `mergeOps` is opaque to unification: a goal about an interface's operations is closed
@@ -131,7 +137,7 @@ structure Interface where
   name : String
   consts : List (String × Int)
   attrs : List (String × Bool)
-  ops : List (String × Nat)
+  ops : List Op
 
 def webgl1 : Interface where
   name := "WebGLRenderingContext"
@@ -150,15 +156,18 @@ def ofVersion (v : Nat) : Interface := if v == 2 then webgl2 else webgl1
 
 def Interface.const? (i : Interface) (n : String) : Option Int := (i.consts.find? (·.1 == n)).map (·.2)
 
-def Interface.length? (i : Interface) (n : String) : Option Nat := (i.ops.find? (·.1 == n)).map (·.2)
+def Interface.length? (i : Interface) (n : String) : Option Nat := (i.ops.find? (·.1 == n)).map (·.2.1)
+
+/-- The overload signatures of an operation. -/
+def Interface.signature? (i : Interface) (n : String) : Option String := (i.ops.find? (·.1 == n)).map (·.2.2)
 
 /-- The interface as text for the page glue: a line `c NAME VALUE` for each constant,
-`a NAME 0|1` for each attribute (1: read-only) and `o NAME LENGTH` for each operation. -/
+`a NAME 0|1` for each attribute (1: read-only) and `o NAME LENGTH SIGNATURES` for each operation. -/
 def Interface.text (i : Interface) : String :=
   "\n".intercalate
     (i.consts.map (fun c => s!"c {c.1} {c.2}") ++
      i.attrs.map (fun a => s!"a {a.1} {if a.2 then 1 else 0}") ++
-     i.ops.map (fun o => s!"o {o.1} {o.2}"))
+     i.ops.map (fun o => s!"o {o.1} {o.2.1} {o.2.2}"))
 
 /-! ## Theorems about the interfaces -/
 
@@ -191,7 +200,9 @@ theorem ops_nodup (v : Nat) : ((ofVersion v).ops.map (·.1)).Nodup := by
 #guard webgl2.length? "getBufferSubData" == some 3
 #guard webgl1.length? "getBufferSubData" == none
 #guard webgl2.length? "uniform1fv" == some 2
-#guard mergeOps [("a", 3), ("b", 1), ("a", 2)] == [("a", 2), ("b", 1)]
+#guard mergeOps [("a", 3, "u,u,u"), ("b", 1, "s"), ("a", 2, "u,B")] == [("a", 2, "u,u,u|u,B"), ("b", 1, "s")]
+#guard webgl1.signature? "bufferData" == some "u,l,u|u,B?,u"
+#guard webgl2.signature? "getBufferSubData" == some "u,l,V,~l,~u"
 -- Each constant name once in each interface (a test: the lists are data).
 #guard (webgl2.consts.map (·.1)).eraseDups.length == webgl2.consts.length
 #guard webgl2.consts.all fun c => -1 ≤ c.2 && c.2 < 4294967296

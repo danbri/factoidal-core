@@ -7,7 +7,8 @@
 The inputs are the Khronos IDL of WebGL 1.0 and 2.0 as the Web Platform Tests carry them
 (`interfaces/webgl1.idl`, `interfaces/webgl2.idl`). The table holds, for each interface mixin of the
 two rendering contexts, its constants (name, value), its attributes (name, read-only) and its
-operations (name, the smallest number of arguments an overload takes). Values are integers
+operations (name, the smallest number of arguments an overload takes, and the argument types of
+each overload as letters, see `SCALARS`). Values are integers
 (`TIMEOUT_IGNORED` is -1). Nothing else of the IDL is
 kept: argument conversion is the page glue's, validation is `PageGl.State`'s.
 """
@@ -48,6 +49,37 @@ def required(args):
     return n
 
 
+# One letter for each IDL type the page glue converts (Web IDL §3.2); a `?` after it: nullable.
+SCALARS = {
+    "GLenum": "u", "GLbitfield": "u", "GLuint": "u", "unsigned long": "u",
+    "GLint": "i", "GLsizei": "i", "GLintptr": "l", "GLsizeiptr": "l", "GLint64": "l", "GLuint64": "l",
+    "GLfloat": "f", "GLclampf": "f", "GLboolean": "b", "DOMString": "s", "unsigned long long": "l",
+    "Float32List": "F", "Int32List": "I", "Uint32List": "U", "TexImageSource": "T", "object": "a",
+    "AllowSharedBufferSource": "B", "ArrayBufferView": "V", "sequence<GLenum>": "Q", "sequence<GLuint>": "Q",
+    "sequence<DOMString>": "S", "WebGLContextAttributes": "a",
+}
+
+
+def type_code(arg):
+    """`T name` or `optional T name = d`: the letter of T (an interface: `O` and its name)."""
+    a = re.sub(r"\[[^\]]*\]\s*", "", arg)
+    opt = a.startswith("optional ")
+    if opt:
+        a = a[len("optional "):]
+    a = a.split("=")[0].strip()
+    ty = a.rsplit(" ", 1)[0].strip()
+    nullable = ty.endswith("?")
+    if nullable:
+        ty = ty[:-1]
+    if ty in SCALARS:
+        code = SCALARS[ty]
+    elif re.fullmatch(r"WebGL\w+", ty):
+        code = "O" + ty
+    else:
+        raise SystemExit(f"type not read: {ty!r} in {arg!r}")
+    return ("~" if opt else "") + code + ("?" if nullable else "")
+
+
 def mixins(text):
     text = strip_comments(text)
     out = {}
@@ -71,13 +103,15 @@ def mixins(text):
             o = re.match(r".*?(\w+)\s*\((.*)\)$", member)
             if not o:
                 raise SystemExit(f"{name}: member not read: {member}")
-            n = required(split_args(o.group(2)))
+            args = split_args(o.group(2))
+            n = required(args)
+            sig = ",".join(type_code(a) for a in args)
             if o.group(1) not in ops:
                 order.append(o.group(1))
-                ops[o.group(1)] = n
+                ops[o.group(1)] = (n, [sig])
             else:
-                ops[o.group(1)] = min(ops[o.group(1)], n)
-        out[name] = (consts, attrs, [(k, ops[k]) for k in order])
+                ops[o.group(1)] = (min(ops[o.group(1)][0], n), ops[o.group(1)][1] + [sig])
+        out[name] = (consts, attrs, [(k, ops[k][0], "|".join(ops[k][1])) for k in order])
     return out
 
 
@@ -121,9 +155,11 @@ def main():
         print(f"def {s}Attrs : List (String × Bool) :=")
         print(lean_list(attrs, lambda a: f'("{a[0]}", {"true" if a[1] else "false"})'))
         print()
-        print(f"/-- Operations of `{name}`: name, and the fewest arguments an overload takes. -/")
-        print(f"def {s}Ops : List (String × Nat) :=")
-        print(lean_list(ops, lambda o: f'("{o[0]}", {o[1]})'))
+        print(f"/-- Operations of `{name}`: name, the fewest arguments an overload takes, and the argument")
+        print("types of each overload (`|` between overloads, `,` between arguments, `~` before an optional")
+        print("argument, `?` after a nullable type; the letters are in `tools/webgl-idl-table.py`). -/")
+        print(f"def {s}Ops : List (String × Nat × String) :=")
+        print(lean_list(ops, lambda o: f'("{o[0]}", {o[1]}, "{o[2]}")'))
         print()
     print("end L4Factoidal.PageGl.Table")
 
