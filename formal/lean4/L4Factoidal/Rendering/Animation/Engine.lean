@@ -665,15 +665,29 @@ def tick (s : State) (connected : Nat → Bool := fun _ => true) : State := Id.r
   return s
 
 /-- Whether the page needs another animation frame for its animations: an event waits, an
-animation is pending or running, or a CSS animation or transition has events not yet
-looked for. -/
+animation is pending or running, a CSS animation or transition has events not yet
+looked for, or an animation has acts that no script object took yet (a promise to
+resolve or reject: a style change that cancels an animation in the task that made it
+leaves its `finished` promise to reject, and only a frame delivers that). -/
 def needsFrame (s : State) : Bool :=
   !s.events.isEmpty || s.anims.any fun a =>
-    if a.dead then a.phase != .idle
+    if !a.player.out.isEmpty then true
+    else if a.dead then a.phase != .idle
     else
       let tl := s.tl a
       tl.isSome && (a.player.pending != .none || a.player.playState tl (s.effEnd a) == .running
         || (a.origin != .script && a.phase == .idle && (a.player.currentTime tl).isSome))
+
+/-- Kind: liveness (a promise is not left waiting). Says: while an animation of the page
+holds acts that no script object took, the page needs a frame, whatever the animation's
+state (dead, idle, never ticked). Does not say: that the frame comes (the host asks for
+it after each measure and each frame: `Hosts.Page`), or that a script object exists to
+take the acts (the frame's part takes and drops them when none does). -/
+theorem needsFrame_out (s : State) (a : AnimRec) (h : a ∈ s.anims) (ho : a.player.out.isEmpty = false) :
+    needsFrame s = true := by
+  simp only [needsFrame, Bool.or_eq_true]
+  right
+  exact Array.any_eq_true'.mpr ⟨a, h, by simp [ho]⟩
 
 /-! ## Tests: the three paths of css/support/interpolation-testcommon.js -/
 
@@ -799,7 +813,12 @@ private def sE1 : State := tick { sE0 with now := Fix.ofInt 1000, events := #[] 
 #guard sE1.events.isEmpty && overrides sE1 acE == [{ node := 7, property := "width", value := "15px", transition := true }]
 private def sE2 : State := tick { sE1 with now := Fix.ofInt 2500 }
 #guard sE2.events.toList.map (fun e => (e.type, e.elapsed)) == [("transitionend", Fix.ofInt 2000)]
-#guard overrides sE2 acE == [] && !needsFrame { sE2 with events := #[] }
+-- (the frame's part takes the acts of each animation, `Api.snapshot`: none is left, and
+-- with the events sent the page needs no further frame; while acts wait, it does)
+private def taken (s : State) : State :=
+  { s with events := #[], anims := s.anims.map fun a => { a with player := { a.player with out := [] } } }
+#guard overrides sE2 acE == [] && !needsFrame (taken sE2)
+#guard needsFrame { sE2 with events := #[] } && sE2.anims.any fun a => !a.player.out.isEmpty
 -- a CSS animation: start at the first frame; its element leaves the document: cancel
 private def sA0 : State := tick (styleChange {} acA)
 #guard sA0.events.toList.map (fun e => (e.type, e.name, e.elapsed)) == [("animationstart", "a1", Fix.ofInt 50000)]
