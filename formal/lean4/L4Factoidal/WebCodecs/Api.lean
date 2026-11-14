@@ -19,6 +19,15 @@ record: docs/designissues/2026-11-14-webgl-webcodecs.md, section 4).
   * 126 `orient(rotation, flip, width, height, bytes)`: `Orient.orient`: packed 4-byte pixels
     of a `width × height` rectangle turned by the rotation (degrees) and mirrored when `flip` is
     "1", as a frame is drawn (bytes); -20 when the bytes are not `width × height` pixels.
+  * 127 `audioInit(format, frames, channels, sampleRate, dataSize)`: `Audio.initCheck`: the bytes
+    an `AudioData` keeps and its duration in microseconds ("size duration"). The sample rate is
+    the 8 bytes of the page's double.
+  * 128 `audioPlan(format, frames, channels, destFormat, planeIndex, frameOffset, frameCount)`:
+    `Audio.plan`: "elements bytes"; -21 (RangeError) for what §9.2.5 refuses.
+  * 129 `audioCopy(the same, bytes)`: `Audio.copy`: the samples of the copy (bytes).
+  * 130 `pcmDecode(codec, channels, chunk)`: `Audio.pcmDecode`: the decoded samples (bytes);
+    131 `pcmFormat(codec, channels, chunk)`: their format and frames ("format frames"). -20 for
+    a chunk that is not whole frames, or a codec that is not PCM.
 
 Arguments are fields of text: numbers in decimal, lists of numbers separated by spaces, "" for a
 member the page did not give. The rotation is the 8 bytes of the page's double, little-endian.
@@ -28,6 +37,7 @@ import L4Factoidal.WebCodecs.Frame
 import L4Factoidal.WebCodecs.Convert
 import L4Factoidal.WebCodecs.Config
 import L4Factoidal.WebCodecs.Orient
+import L4Factoidal.WebCodecs.Audio
 
 namespace L4Factoidal.WebCodecs.Api
 
@@ -154,6 +164,47 @@ def orientOp (fs : Array ByteArray) : Option ByteArray := do
   let h ← natArg fs 3
   Orient.orient (Orient.quarters r) (strArg fs 1 == "1") w h (fs[4]?.getD ByteArray.empty)
 
+def audioInitOp (fs : Array ByteArray) : Option String := do
+  let f ← Audio.Format.ofName? (strArg fs 0)
+  let frames ← natArg fs 1
+  let channels ← natArg fs 2
+  let rate ← rotationOf (fs[3]?.getD ByteArray.empty)
+  let size ← natArg fs 4
+  let (keep, duration) ← Audio.initCheck f frames channels rate size
+  pure s!"{keep} {duration}"
+
+/-- The plan of a copy; the outer `none` is a TypeError (arguments), the inner refusal a
+RangeError. -/
+def audioPlanOf (fs : Array ByteArray) : Option (Audio.Format × Nat × Nat × Except Audio.Refusal Audio.Plan) := do
+  let f ← Audio.Format.ofName? (strArg fs 0)
+  let frames ← natArg fs 1
+  let channels ← natArg fs 2
+  let dst ← if strArg fs 3 == "" then some none else (Audio.Format.ofName? (strArg fs 3)).map some
+  let plane ← natArg fs 4
+  let offset ← natArg fs 5
+  let count ← if strArg fs 6 == "" then some none else (natArg fs 6).map some
+  pure (f, frames, channels, Audio.plan f frames channels dst plane offset count)
+
+def audioPlanOp (fs : Array ByteArray) : Except Int ByteArray :=
+  match audioPlanOf fs with
+  | none => .error (-20)
+  | some (_, _, _, .error _) => .error (-21)
+  | some (_, _, _, .ok p) => .ok s!"{p.elements} {p.size}".toUTF8
+
+def audioCopyOp (fs : Array ByteArray) : Except Int ByteArray :=
+  match audioPlanOf fs with
+  | none => .error (-20)
+  | some (_, _, _, .error _) => .error (-21)
+  | some (f, frames, channels, .ok p) =>
+    let data := fs[7]?.getD ByteArray.empty
+    if data.size < frames * channels * f.sample.bytes then .error (-20)
+    else .ok (Audio.copy f frames channels data p)
+
+def pcmOf (fs : Array ByteArray) : Option (Audio.Format × Nat × ByteArray) := do
+  let c ← Codec.Named.ofName? (strArg fs 0)
+  let channels ← natArg fs 1
+  Audio.pcmDecode c channels (fs[2]?.getD ByteArray.empty)
+
 def op (code : Nat) (fs : Array ByteArray) : Except Int ByteArray :=
   let answer := fun (r : Option String) => match r with
     | some s => .ok s.toUTF8
@@ -170,6 +221,13 @@ def op (code : Nat) (fs : Array ByteArray) : Except Int ByteArray :=
   | 126 => match orientOp fs with
     | some b => .ok b
     | none => .error (-20)
+  | 127 => answer (audioInitOp fs)
+  | 128 => audioPlanOp fs
+  | 129 => audioCopyOp fs
+  | 130 => match pcmOf fs with
+    | some (_, _, b) => .ok b
+    | none => .error (-20)
+  | 131 => answer ((pcmOf fs).map fun (f, n, _) => s!"{f.name} {n}")
   | _ => .error (-2)
 
 /-! ## Tests -/
@@ -213,6 +271,18 @@ private def run (code : Nat) (xs : List String) (bin : List (Nat × ByteArray) :
 #guard (op 126 #["0".toUTF8, "1".toUTF8, "2".toUTF8, "1".toUTF8, ⟨#[1, 1, 1, 1, 2, 2, 2, 2]⟩]).toOption.map (·.toList) ==
   some [2, 2, 2, 2, 1, 1, 1, 1]
 #guard run 126 ["0", "", "2", "1", "abc"] == "error -20"
-#guard run 127 [] == "error -2"
+-- 100 frames of f32-planar, 2 channels, at 8000 Hz (its double's bytes).
+#guard run 127 ["f32-planar", "100", "2", "", "800"] [(3, ⟨#[0, 0, 0, 0, 0, 0x40, 0xBF, 0x40]⟩)] == "800 12500"
+#guard run 127 ["f32-planar", "100", "2", "", "799"] [(3, ⟨#[0, 0, 0, 0, 0, 0x40, 0xBF, 0x40]⟩)] == "error -20"
+#guard run 128 ["f32", "4", "2", "", "1", "0", ""] == "error -21"
+#guard run 128 ["f32", "4", "2", "f32-planar", "1", "0", ""] == "4 16"
+#guard run 128 ["f32", "4", "2", "x", "1", "0", ""] == "error -20"
+#guard (op 129 #["u8".toUTF8, "2".toUTF8, "1".toUTF8, "s16".toUTF8, "0".toUTF8, "0".toUTF8, "".toUTF8, ⟨#[128, 255]⟩]).toOption.map (·.toList) ==
+  some [0, 0, 0, 127]
+#guard run 131 ["pcm-s24", "1", "abcdef"] == "s32 2"
+#guard run 131 ["pcm-s24", "2", "abcdef"] == "s32 1"
+#guard run 131 ["pcm-s24", "2", "abcde"] == "error -20"
+#guard run 131 ["opus", "1", ""] == "error -20"
+#guard run 132 [] == "error -2"
 
 end L4Factoidal.WebCodecs.Api

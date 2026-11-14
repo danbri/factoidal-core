@@ -6,10 +6,12 @@ docs/designissues/2026-11-14-webgl-webcodecs.md, section 5.
 
 An invalid configuration is a TypeError of `configure` and `isConfigSupported`. A valid one that is
 not supported makes `isConfigSupported` answer `supported: false` and `configure` close the codec
-with a NotSupportedError. This engine has no encoder and no decoder, so no configuration is
-supported (`check_not_supported`): the page is told so, and nothing is handed to a host codec.
+with a NotSupportedError. The decoders this engine has are the PCM ones (`Audio.pcmDecode`:
+linear PCM, μ-law, A-law), in Lean; no other configuration is supported (`check_supported_pcm`):
+the page is told so, and nothing is handed to a host codec.
 -/
 import L4Factoidal.WebCodecs.Codec
+import L4Factoidal.WebCodecs.Audio
 
 namespace L4Factoidal.WebCodecs.Config
 
@@ -84,8 +86,11 @@ def valid (k : Kind) (f : Fields) : Bool :=
     f.get? "width" != some 0 && f.get? "height" != some 0 && (f.get? "width").isSome && (f.get? "height").isSome &&
     f.nonzero "displayWidth" && f.nonzero "displayHeight" && f.nonzero "bitrate"
 
-/-- The codecs this engine can run for a kind of codec object: none. -/
-def implemented (_c : Codec.Codec) (_k : Kind) : Bool := false
+/-- The codecs this engine can run for a kind of codec object: the PCM decoders. -/
+def implemented (c : Codec.Codec) (k : Kind) : Bool :=
+  match c, k with
+  | .named n, .audioDecoder => (Audio.pcmIn n).isSome
+  | _, _ => false
 
 /-- "Check Configuration Support" for a valid configuration: the codec string names a codec of the
 registry (`Codec.parse`: as written, with no trimming and no case folding) that is implemented. -/
@@ -110,14 +115,29 @@ theorem check_detached (k : Kind) (f : Fields) (h : f.detached = true) : check k
   unfold check valid
   simp [h]
 
-/-- Policy. Says: no configuration is answered as supported, so no page input is handed to an
-encoder or a decoder. This engine has none; the statement must be replaced by a narrower one in
-the commit that adds a codec. Does not say: that an unsupported codec string is well formed. -/
-theorem check_not_supported (k : Kind) (f : Fields) : check k f ≠ .supported := by
-  unfold check supported implemented
-  split
-  · simp
-  · split <;> simp
+/-- Policy. Says: a configuration is answered as supported only for an `AudioDecoder` whose codec
+string names one of the PCM codecs, which Lean decodes itself; no page input is handed to any
+other encoder or decoder. Does not say: that an unsupported codec string is well formed. -/
+theorem check_supported_pcm (k : Kind) (f : Fields) (h : check k f = .supported) :
+    k = .audioDecoder ∧ ∃ n, Codec.parse f.codec = some (.named n) ∧ (Audio.pcmIn n).isSome := by
+  have hs : supported k f = true := by
+    unfold check at h
+    by_cases hv : valid k f = true
+    · by_cases hp : supported k f = true
+      · exact hp
+      · simp [hv, hp] at h
+    · simp [hv] at h
+  unfold supported at hs
+  cases hc : Codec.parse f.codec with
+  | none => simp [hc] at hs
+  | some c =>
+    rw [hc] at hs
+    cases c with
+    | named n =>
+      cases k with
+      | audioDecoder => exact ⟨rfl, n, rfl, hs⟩
+      | _ => simp [implemented] at hs
+    | _ => cases k <;> simp [implemented] at hs
 
 /-! ## Tests (`webcodecs/*-config.https.any.js`, `audio-decoder`, `video-decoder`) -/
 
@@ -133,6 +153,10 @@ private def c (k : Kind) (codec : String) (nums : List (String × Nat) := []) (d
 #guard c .audioDecoder "opus" [("sampleRate", 0), ("numberOfChannels", 2)] == "invalid"
 #guard c .audioDecoder "opus" [("sampleRate", 48000), ("numberOfChannels", 0)] == "invalid"
 #guard c .audioDecoder "vorbis" [("sampleRate", 48000), ("numberOfChannels", 2)] == "unsupported"
+#guard c .audioDecoder "pcm-s24" [("sampleRate", 48000), ("numberOfChannels", 1)] == "supported"
+#guard c .audioDecoder "ulaw" [("sampleRate", 8000), ("numberOfChannels", 1)] == "supported"
+#guard c .audioDecoder "PCM-S16" [("sampleRate", 8000), ("numberOfChannels", 1)] == "unsupported"
+#guard c .audioEncoder "pcm-s16" [("sampleRate", 8000), ("numberOfChannels", 1)] == "unsupported"
 #guard c .audioEncoder "opus" [("sampleRate", 8000), ("numberOfChannels", 2), ("bitrate", 6000000000)] == "invalid"
 #guard c .audioEncoder "opus" [("sampleRate", 8000), ("numberOfChannels", 2), ("bitrate", 0)] == "invalid"
 #guard c .audioEncoder "opus" [("sampleRate", 48000), ("numberOfChannels", 2), ("bitrate", 1)] == "invalid"

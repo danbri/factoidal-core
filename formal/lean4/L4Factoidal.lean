@@ -1094,6 +1094,7 @@ import L4Factoidal.WebCodecs.Convert
 import L4Factoidal.WebCodecs.Codec
 import L4Factoidal.WebCodecs.Config
 import L4Factoidal.WebCodecs.Orient
+import L4Factoidal.WebCodecs.Audio
 import L4Factoidal.WebCodecs.Api
 import L4Factoidal.Net.ReferrerPolicy
 import L4Factoidal.Net.Csp
