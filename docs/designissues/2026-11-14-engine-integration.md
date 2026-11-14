@@ -194,6 +194,20 @@ the runner, "W" the window, "T" Textnaut, "H" the Hub.
 15. **Textnaut has no page requests** (`network` is not set): `fetch` and `XMLHttpRequest` are undefined
     and a module script's graph is never answered.
 
+16. **What scripts can ask is not joined to what is drawn.** Found with the fixtures of section 7 on the
+    engine of main `19fb349c1`, the same in every host: `matchMedia` was a stub in `prelude.js` that
+    answered `matches:false` for every query while the sheets' `@media` blocks applied (so a site's
+    script takes the phone branch whatever the window); `getComputedStyle` read the sheets with the
+    media type alone and no viewport, so a `min-width` block that the layout applied did not hold for
+    a computed value; an `<img>` has no `complete`, `naturalWidth` or `load` event, so code that waits
+    for an image never runs though the engine holds and draws it; `new FormData(form)` throws ("forms
+    are not supported in this build") though `DOM/Forms` and `HTML.FormSubmission` make the entry list.
+    The first two are fixed on the branch (section 8).
+17. **The window starts the first page's scripts before it knows its size**: `innerWidth` is 1280 and
+    `devicePixelRatio` 1 at the start turn, then a `resize` follows (`run_html.ts`, the `catch` of the
+    start request). A script that picks a layout at load picks it for another window. Computed font
+    sizes that a script reads are multiplied by the text size (16px reads 24px at size 150).
+
 Not differences (checked): the window host does fetch linked sheets and gives them to both the render
 and the session's `layout`; module scripts are fetched by the session in every host with `network`
 (the "module script N is not run" lines of the captures are from the engine of `25c3a4510`, before
@@ -212,8 +226,9 @@ module scripts); the script engine default is BubblePopJS in W, T, H and R.
 | Request assembly | each host builds `render`, `nodeAt`, `layout`, `selectedText`, `printLayout` requests by hand | one function per host now; `layoutFields` given by the engine next | small (done for H) |
 | Page loading | `prepareHTML` (W, T), `prepare` (H), the runner's `run` | one loader module (item D) | medium |
 | Script engine default | `WebRenderScript.defaultEngine` says QuickJS for "hub" and "wasm"; every host asks as "native" | BubblePopJS for every host name; QuickJS only by setting | small |
-| Op numbers | literals in `prelude.js` and in `Hosts/Dom`, `DomOps`, `WebApi`, `Net/Xhr`, `Net/Storage`, ...; ranges claimed in the coordination log | one table checked by a tool | small |
-| Limits | sheets: 16 (W), 64 (R, Lean); sheet bytes: 32 MiB (W), 4 MiB a request and 2 MiB of text (Lean); commands: 4096 / 200,000 | Lean's, reported by `inspect` | small |
+| Op numbers | literals in `prelude.js` and in `Hosts/Dom`, `DomOps`, `Page`, `WebApi`, `Net/Xhr`, `Net/Storage`, `WebDocument.measure`, ...; ranges claimed in the coordination log | next: one Lean enumeration with a distinctness theorem (as `Hosts.Dom.Import.all_names_distinct`) and the prelude's constants generated from it; now: `tools/foafnaut-op-audit.py` reports a number the prelude uses that no module serves (none on main or on nine work branches, 2026-11-14) | small now, medium next |
+| Limits | sheets: 16 (W; 64 on `wip/pages`), 64 (R, H, Lean); sheet bytes: 32 MiB (W), 4 MiB a request and 2 MiB of text (Lean); commands: 4096 in four places and 200,000 in R | Lean's, reported by `inspect`; commands: `Hosts.Dom.maxCommands` (done) | small |
+| Media environment | `WebDocument.mediaEnv` for the layout's sheets; the media type alone for `getComputedStyle`; a stub for `matchMedia` | `Hosts.Page.mediaEnvOf`, taken by all three (done) | small |
 | XPath | `L4Factoidal/XPath` (1.0, used by XSLT 1.0 and now DOM XPath on `wip/xml-specs-xmlweb`), `L4Factoidal/XPath4` (4.0) | both: they are two languages; DOM XPath belongs on the 1.0 engine, as that branch does | none |
 | Lab server | `labs/demos/foafnaut/web-render/server.mjs` with its own QuickJS worker path | remove or mark as not a browser host | small |
 
@@ -264,16 +279,69 @@ Host-supplied fields that change a policy decision (a host can relax the engine 
 page reach local addresses), `network`, `navigations`, `liberal`, `scripting:false`, `commandLimit`,
 `logLimit`, `instructionsPerMs`. Section 8 lists what is proved about them.
 
-## 7. End-to-end fixtures
+## 7. End-to-end fixtures and the host parity check
 
-Original pages that use features together, each with the facts expected of it, run through the runner's
-path and the browser hosts' path. Section 8 says what exists and what runs where.
+`tests/browser-integration/pages/`: original pages, written for this purpose, that use features together
+the way a site does. Each is a testharness.js test, so every host reports the same kind of result.
 
-## 8. Done in this branch, measured, and open
+- `classic.html`: an external style sheet (`site.css`) with custom properties and media queries; a flex
+  row; a grid; an absolutely positioned box; `box-sizing`; `calc()`, `rem` and `em`; seven selector
+  forms in the cascade and the same in `querySelectorAll`; an image; microtask, timer and animation
+  frame order; `localStorage`; `document.cookie`; an opacity transition with `transitionend`; a form
+  filled and submitted by a click; list items appended by script that must take room in the layout.
+- `integrated.html`: the same, and a module script (`app.mjs`) that imports `util.mjs`, fetches
+  `data.json` and fills the list from it, and a module with top-level await (`tla.mjs`).
 
-| Item | State |
+Every box has a size in px and no check depends on a font or on the viewport, so the answers are the
+same at 800 × 600 in the runner, in a window at any text size and in a terminal.
+
+`labs/demos/foafnaut/host_parity_test.ts` (in `test.sh`, where the native engine library is built) serves
+the pages from a local server and runs each one through four paths:
+
+| Path | What runs | What is compared |
+|---|---|---|
+| `runner` | the WPT runner's own page path (`testharness-run.ts` `engineBackend`, with the host's fetch in place of wptserve) | subtests |
+| `prepared` | `prepareHTML` of the window and Textnaut, a session started and moved by `advance` as `run_html.ts` does, then one render with the session's commands | subtests; the tree of the render against the tree the scripts see; each box of the render against the box the scripts read |
+| `window` | `run_html.ts` itself, off screen, with `--shot` | subtests from its console lines; the colour blocks in the shot against where the sheet puts them |
+| `textnaut` | `textnaut.ts --dump --verbose` | subtests |
+
+`tests/browser-integration/expected.json` lists what fails today: `known` (in every host, with the reason
+and the owner), `hosts.<path>` (in one host only: a known difference between hosts), and `known` on a
+painted block. A failure that is not listed fails the check; a listed one that passes is reported. The
+Hub's worker runs only in a browser: the check reads its source for the shared functions of
+`page-load.mjs`, and the `hub_*_check.mjs` files drive it in Chrome.
+
+## 8. Done on the branch, measured, and open
+
+Branches `wip/integration` and `wip/integration-media` (the first, and `matchMedia`).
+
+| Item | State (2026-11-14 05:50 UTC) |
 |---|---|
-| This record | first version, main `eccbb6b7f` |
+| This record | written |
+| `page-load.mjs`: sheets to fetch, layout fields, script-fetch answer | on the branch; unit tests pass |
+| Hub: linked style sheets fetched; render, hit test, print and session layout from one function | on the branch; `node --check`, source check; not run in a browser |
+| Window and Hub: script fetches carry Content-Type and `X-Content-Type-Options` | on the branch; window run locally |
+| Fixtures and `host_parity_test.ts` | on the branch; 8 tests pass locally in 22 s on the engine of main `19fb349c1` |
+| `Hosts.Dom.maxCommands` = 65536, one bound for session and replay | on the branch; first build is the cloud check |
+| `getComputedStyle` in the layout's media environment | on the branch; first build is the cloud check |
+| `defaultEngine` = BubblePopJS for every host name | on the branch; first build is the cloud check |
+| `matchMedia` through `MediaQuery.holds` in the layout's environment (`node_query` 41, measure 41) | on `wip/integration-media`; first build is the cloud check |
+| `tools/foafnaut-op-audit.py` | on the branch; run on main and nine work branches |
 
-Proved: nothing yet. Tested only: the two measurements named in section 3, item 1 and section 4
-(media queries), on the engine of `25c3a4510`. Open: everything in sections 3 to 5.
+Results of the fixtures on the engine of main `19fb349c1` (the same in the runner, the prepared path,
+the window and Textnaut unless said): 8 of 28 subtests of `classic.html` and 8 of 29 of
+`integrated.html` pass. The tree and the boxes of the render equal those the scripts see on both
+pages (58 and 60 elements, 11 commands). The window draws 3 of 9 blocks where the sheet puts them.
+One difference between hosts: Textnaut runs no script of `integrated.html` (it sets no `network`, so
+the module graph is never answered).
+
+Proved (written; the cloud check is their first build): `WebRenderScript.defaultEngine_eq` (no host
+name changes the default engine), `WebDocument.layOut_agree` (requests that agree on the layout fields
+give the same layout), `WebDocument.mediaEnv_eq` (the sheets and `matchMedia` have one maker of the
+media environment).
+
+Tested only: everything `host_parity_test.ts` checks, on one engine; the Hub changes by source.
+
+Open: a theorem that the replay of a session's commands gives the session's arena (today a test on
+two pages); `hostCors` and `pageAddress` stay host-supplied; frames, storage across pages and the
+loading policy (section 3, items 5, 7, 8, 9); plan A and plan B of section 5.
