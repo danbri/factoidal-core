@@ -6616,19 +6616,30 @@
     n.removeAttr = (id, name) => { const r = removeAttr0(id, name); if (r === 0 && imgAttrs.has(String(name).toLowerCase()) && isImg(id)) updateImage(id); return r; };
   };
   noteImg = id => imgWatch();
+  // The page's own images: the first `imgStartMax` request at once (a host that draws the page
+  // fetches them too, so a page with many does not fetch each twice up front); the rest when
+  // a script reads their state (complete, naturalWidth, naturalHeight, decode()).
+  const imgStartMax = 16;
+  const imgLazy = new Set();
   const imgStart = () => {
     const imgs = document.getElementsByTagName('img');
     if (imgs.length === 0) return;
     imgWatch();
-    for (const el of imgs) { const id = nodeId(el); imgDelay.add(id); updateImage(id); }
+    let k = 0;
+    for (const el of imgs) {
+      const id = nodeId(el);
+      if (k++ < imgStartMax) { imgDelay.add(id); updateImage(id); } else imgLazy.add(id);
+    }
   };
+  const imgTouch = id => { if (imgLazy.delete(id)) updateImage(id); };
   {
     const P = named.HTMLImageElement.prototype;
-    const ofImg = (el, k) => { const st = imgStates.get(nodeId(el)); return st ? st[k] : (k === 'complete' ? true : 0); };
+    const ofImg = (el, k) => { imgTouch(nodeId(el)); const st = imgStates.get(nodeId(el)); return st ? st[k] : (k === 'complete' ? true : 0); };
     Object.defineProperty(P, 'naturalWidth', { configurable: true, enumerable: true, get() { return ofImg(this, 'w'); } });
     Object.defineProperty(P, 'naturalHeight', { configurable: true, enumerable: true, get() { return ofImg(this, 'h'); } });
     Object.defineProperty(P, 'complete', { configurable: true, enumerable: true, get() { return ofImg(this, 'complete'); } });
     define(P, 'decode', function decode() {
+      imgTouch(nodeId(this));
       const st = imgStates.get(nodeId(this));
       if (!st) return Promise.reject(new DOMException('The source image cannot be decoded.', 'EncodingError'));
       if (st.complete) return st.w > 0 || st.h > 0 ? Promise.resolve() : Promise.reject(new DOMException('The source image cannot be decoded.', 'EncodingError'));
