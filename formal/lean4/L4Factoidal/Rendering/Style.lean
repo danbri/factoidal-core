@@ -175,7 +175,7 @@ def htmlProperties : List String :=
   ["display","width","height","margin","padding",
    "margin-top","margin-right","margin-bottom","margin-left",
    "padding-top","padding-right","padding-bottom","padding-left",
-   "color","background","background-color","font-size","font-family","font-weight","font-style",
+   "color","background","background-color","font-size","font-family",
    "line-height","visibility","overflow","text-decoration","text-decoration-line",
    "border","border-width","border-style","border-color",
    "border-spacing","border-collapse","caption-side","vertical-align","table-layout",
