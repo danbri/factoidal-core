@@ -186,6 +186,22 @@ private def paddingOf (html css : String) : Option (List Float) :=
 #guard widthOf pageT "p { width: 20px; inline-size: 10px }" == some 10
 #guard (styleAt pageT "p { block-size: 10px; max-inline-size: 30px }").map (fun s => (reprStr s.height, reprStr s.maxWidth)) ==
   (styleAt pageT "p { height: 10px; max-width: 30px }").map (fun s => (reprStr s.height, reprStr s.maxWidth))
+-- CSS-wide keywords (CSS Cascade 4 §7.3)
+#guard redOf pageT ".a { color: #ff0000 } p { color: #00ff00 } #t { color: inherit }" == some 1
+#guard redOf "<div style='color:#ff0000'><a id=t href=x>l</a></div>" "a { color: inherit }" == some 1
+#guard redOf pageT "body { color: #ff0000 } p { color: initial }" == some 0
+#guard redOf pageT "body { color: #ff0000 } p { color: #00ff00 } #t { color: unset }" == some 1
+#guard widthOf pageT ".a { width: 50px } p { width: 20px } #t { width: inherit }" == some 50
+#guard widthOf pageT ".a { width: 50px } p { width: 20px } #t { width: unset }" == some (-1)
+#guard widthOf pageT ".a { width: 50px } p { width: 20px } #t { width: initial }" == some (-1)
+#guard marginOf pageT "p { margin: 3px } #t { margin: initial }" == some [0, 0, 0, 0]
+#guard marginOf pageT "p { margin: 3px } #t { margin: revert }" == some [8, 0, 8, 0]
+#guard marginOf pageT ".a { margin: 3px } p { margin: inherit }" == some [3, 3, 3, 3]
+#guard (styleAt pageT ".a { font-size: 30px; font-family: Foo } p { font-size: 10px; font-family: Bar } #t { font: inherit }").map
+  (fun s => (s.fontSize, s.fontFamily)) == some (30, "Foo")
+#guard (styleAt "<div><h1 id=t>x</h1></div>" "h1 { font-size: inherit }").map (·.fontSize) == some 16
+#guard (styleAt "<div><h1 id=t>x</h1></div>" "h1 { display: inherit }").map (fun s => reprStr s.display) ==
+  (styleAt "<div><p id=t>x</p></div>" "").map (fun s => reprStr s.display)
 -- a page with no custom property has no map
 #guard (styleAt pageT "p { width: 10px }").map (·.vars.isEmpty) == some true
 #guard (styleAt pageT ":root { --a: 1 } p { width: 10px }").map (·.vars.toList) == some [("--a", "1")]
