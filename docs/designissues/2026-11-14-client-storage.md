@@ -290,4 +290,20 @@ A bucket's own storage (IndexedDB, CacheStorage, file system, locks) is not rout
 
 ## Measured
 
-(filled in from the cloud checks)
+Cloud branch checks (Linux, the Chrome subtests of each directory; window and dedicated worker variants; shared
+and service worker variants are skipped by the engine):
+
+| Directory | Before (85.06% run) | Check 43574264951 (core) | Check 43581496432 (merged fee2bfe2d) | Chrome |
+| --- | ---: | ---: | ---: | ---: |
+| IndexedDB | 32 | 1,782 | 2,755 | 5,849 |
+| fs | 9 | 82 | 113 | 1,121 |
+| file-system-access | 32 | 36 | 117 | 163 |
+| storage (StorageManager) | 34 | 79 | 86 | 103 |
+| storage/buckets | 34 | 34 | 175 | 379 |
+| web-locks | 35 | 207 | 212 | 488 |
+| cookiestore | 45 | 45 | 215 | 636 |
+| service-workers/cache-storage | 0 | 0 | 216 | 615 |
+
+The checks also ran `sample:40` (about 2,300 names across WPT) with no loss traced to this work. Timing: no
+local engine was built (cloud checks only); a page that touches none of these globals runs no code of theirs (the
+globals are lazy getters; `document.cookie` takes one extra null check).
