@@ -29,9 +29,10 @@ inductive WritingMode where
   deriving Repr, BEq
 
 /-- `list-style-type` (CSS Lists 3 §3.1; inherited), as this profile draws markers:
-`auto` is by the kind of list (a number in `ol`, else a bullet), `none` no marker. -/
+`auto` is by the kind of list (a number in `ol`, else the bullet of the list's nesting
+depth), `none` no marker, a bullet, or a number (every numbering style is decimal here). -/
 inductive ListStyle where
-  | auto | none | bullet | number
+  | auto | none | disc | circle | square | number
   deriving Repr, BEq
 
 structure PositionStyle where
@@ -148,7 +149,9 @@ def PositionStyle.set (fontSize : Float) (p : PositionStyle) (property value : S
       else if reset then some {p with listStyle := .auto} else
       match v with
       | "none" => some {p with listStyle := .none}
-      | "disc" | "circle" | "square" | "disclosure-open" | "disclosure-closed" => some {p with listStyle := .bullet}
+      | "disc" | "disclosure-open" | "disclosure-closed" => some {p with listStyle := .disc}
+      | "circle" => some {p with listStyle := .circle}
+      | "square" => some {p with listStyle := .square}
       | "decimal" | "decimal-leading-zero" | "lower-alpha" | "upper-alpha" | "lower-latin" | "upper-latin"
       | "lower-roman" | "upper-roman" | "lower-greek" => some {p with listStyle := .number}
       -- another counter style or a string: the marker of the kind of list stands
@@ -206,6 +209,7 @@ def positionShorthand (property value : String) : Option (List (String × String
 #guard ((PositionStyle.set 10 {} "aspect-ratio" "0 / 1").map (·.ratio)) == some none
 #guard (PositionStyle.set 10 {} "aspect-ratio" "bogus").isNone
 #guard ((PositionStyle.set 10 {} "list-style-type" "none").map (·.listStyle)) == some .none
+#guard ((PositionStyle.set 10 {} "list-style-type" "square").map (·.listStyle)) == some .square
 #guard ((PositionStyle.set 10 {} "list-style-position" "inside").map (·.listInside)) == some true
 #guard ((PositionStyle.set 10 {listStyle := .none} "list-style-type" "decimal").map (·.listStyle)) == some .number
 #guard ((PositionStyle.set 10 {listStyle := .none} "list-style-type" "inherit").map (·.listStyle)) == some .none

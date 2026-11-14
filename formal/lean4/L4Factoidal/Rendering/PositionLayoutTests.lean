@@ -201,6 +201,16 @@ private def xOf (html extra text : String) : Option Float := (at? html extra tex
 #guard xOf listed "ul{list-style-position:inside}" "*" == some 40
 #guard xOf listed "ul{list-style-position:inside}" "AA" == some 52
 #guard xOf listed "ul{list-style:inside none}" "AA" == some 40
+-- The bullet is U+2022 (U+25E6 and U+25AA in nested lists, or by `list-style-type`) in a
+-- font that has it; the test face has ASCII only, so the fixtures above see a star.
+private def round : FontProfile := {font with admits := fun n => (n >= 32 && n <= 126) || n == 0x2022 || n == 0x25E6 || n == 0x25AA}
+private def markers (html extra : String) : Option (List String) := do
+  let (scene,_) ← (Layout.render (DOM.parseHtmlDocument html) (← (CSS.parse (css ++ extra)).toOption) round noSVG 200 200).toOption
+  pure ((scene.glyphRuns.toList.map (·.text)).filter fun t => t != "A")
+#guard markers "<ul><li>A<ul><li>A<ul><li>A</li></ul></li></ul></li></ul>" "" == some ["•","◦","▪"]
+#guard markers "<ul><li>A</li></ul>" "ul{list-style-type:square}" == some ["▪"]
+#guard markers "<ol><li>A</li></ol>" "ol{list-style:circle}" == some ["◦"]
+#guard markers "<ul><li>A</li></ul>" "ul{list-style:none}" == some []
 -- An item with nothing in it is still one line high.
 #guard (box "<ul><li id=e></li></ul>" "" "e").map (·.2.2.2) == some 7
 

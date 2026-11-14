@@ -945,11 +945,27 @@ def atomize (font : FontProfile) (items : Array Inline) (available : Float) : Ex
   return if depth == 0 then out else out ++ inside
 
 /-- What goes before a list item (CSS Lists 3 §3.1 `list-style-type`): nothing with
-`none`; its number with a numbering style, or by default in an ordered list; else a star. -/
-private def listMarker (dom : Dom) (style : CSS.ListStyle) (id : Nat) : String := Id.run do
+`none`; its number with a numbering style, or by default in an ordered list; else a
+bullet: the one that `list-style-type` names, or by default the disc, circle or square of
+a list nested one, two or more deep (HTML §15.3.7). A font with no glyph for the bullet
+(`FontProfile.admits`) gets a star. -/
+private def listMarker (dom : Dom) (font : FontProfile) (style : CSS.ListStyle) (id : Nat) : String := Id.run do
   if style == .none then return ""
   let some parent := (dom.get id).parent | return "* "
-  if style == .bullet || (style == .auto && (dom.get parent).lname != "ol") then return "* "
+  if style != .number && !(style == .auto && (dom.get parent).lname == "ol") then
+    let mut depth := 0
+    let mut cur := parent
+    for _ in [0:64] do
+      if ["ul","ol","menu","dir"].contains (dom.get cur).lname then depth := depth+1
+      match (dom.get cur).parent with
+      | some up => cur := up
+      | none => break
+    let bullet : Char := match style with
+      | .disc => '•'
+      | .circle => '◦'
+      | .square => '▪'
+      | _ => if depth >= 3 then '▪' else if depth == 2 then '◦' else '•'
+    return if font.admits bullet.toNat then s!"{bullet} " else "* "
   let mut number := 1
   for kid in (dom.get parent).kids do
     if kid == id then break
@@ -1217,7 +1233,7 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
           let (a,b) ← flexIntrinsic children s (collectItems dom styles id)
           return (a+add,b+add)
         -- an outside marker (the default) takes no room in the item's lines
-        let lead := if n.lname == "li" && s.pos.listInside then (textItems id s (listMarker dom s.pos.listStyle id)).toArray
+        let lead := if n.lname == "li" && s.pos.listInside then (textItems id s (listMarker dom font s.pos.listStyle id)).toArray
           else if n.lname == "img" then altItems id s n else #[]
         let (a,b) ← flowWidths id n.kids lead
         return (a+add,b+add)
@@ -1662,7 +1678,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         return replaced sw sh (fun cx cy => [.group none (translate cx cy) nodes]) {s with background := none}
       -- A list item's marker (CSS Lists 3 §3): the first thing in the first line with
       -- `list-style-position: inside`, else outside the box beside that line (below).
-      let markerItems := if n.lname == "li" then (textItems id s (listMarker dom s.pos.listStyle id)).toArray else #[]
+      let markerItems := if n.lname == "li" then (textItems id s (listMarker dom font s.pos.listStyle id)).toArray else #[]
       let lead := if n.lname == "img" then altItems id s n else if s.pos.listInside then markerItems else #[]
       -- CSS 2.1 §10.7: the height within `min-height` and `max-height` (px; a percentage has
       -- no definite basis here). An imposed height is the parent's and is not clamped again.
