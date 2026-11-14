@@ -438,6 +438,11 @@ def observed (quota : Nat) (s : Shelf) (a : Array Tok) : Shelf × List Tok :=
 def opFor (shed : Shed Shelf) (k : ClientStorage.Key) (a : Array Tok) : Shed Shelf × List Tok :=
   shed.act k (fun s => observed defaultQuota s a) (fail "SecurityError")
 
+/-- `opFor` with the room the storage budget leaves this API (`ClientStorage.Budget.roomFor`):
+a write past it is refused with `QuotaExceededError` by the API's own check. -/
+def opForQ (shed : Shed Shelf) (k : ClientStorage.Key) (a : Array Tok) (quota : Nat) : Shed Shelf × List Tok :=
+  shed.act k (fun s => observed quota s a) (fail "SecurityError")
+
 /-! ## Theorems -/
 
 /-- Kind: file system law (swap-file semantics). Says: a `write`, `seek`, `truncate` or
