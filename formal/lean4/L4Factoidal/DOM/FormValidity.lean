@@ -67,7 +67,10 @@ customError is the page's message.) -/
 def validityBits (d : Dom) (k : NodeId) (value : String) : Nat :=
   let b := fun (c : Bool) (bit : Nat) => if c then bit else 0
   let required := (attr? d k "required").isSome
-  if isHtml d k ["textarea"] then b (required && value.isEmpty) 1
+  -- "mutable" (HTML §4.10.18.4): neither disabled nor readonly; a control that is not
+  -- mutable does not suffer from being missing (text controls and textarea)
+  let mutable := !disabledControl d k && (attr? d k "readonly").isNone
+  if isHtml d k ["textarea"] then b (required && mutable && value.isEmpty) 1
   else if isHtml d k ["select"] then
     let sel := FormControls.selectedOptions d k
     let placeholder := (attr? d k "multiple").isNone && FormControls.displaySize d k == 1 &&
@@ -85,7 +88,9 @@ def validityBits (d : Dom) (k : NodeId) (value : String) : Nat :=
         let group := (radioGroup d k).push k
         group.any (fun j => (attr? d j "required").isSome) && !group.any (checkedness d ·)
       else if ["text", "search", "url", "tel", "email", "password", "date", "month", "week", "time",
-          "datetime-local", "number"].contains t then required && value.isEmpty
+          "datetime-local", "number"].contains t then required && mutable && value.isEmpty
+      -- a file input selects no files in this browser
+      else if t == "file" then required
       else false
     let mismatch :=
       if value.isEmpty then false
@@ -166,6 +171,12 @@ theorem willValidate_submittable (d : Dom) (k : NodeId) (h : willValidate d k = 
     isHtml d k ["button", "input", "select", "textarea"] = true := by
   simp only [willValidate, Bool.and_eq_true] at h
   exact h.1.1.1.1.1
+
+/-- Says: a disabled `textarea` never suffers from being missing (it is not mutable), so
+its validity is clear whatever its value. -/
+theorem disabled_textarea_valid (d : Dom) (k : NodeId) (v : String)
+    (ht : isHtml d k ["textarea"] = true) (hd : disabledControl d k = true) : validityBits d k v = 0 := by
+  simp [validityBits, ht, hd]
 
 /-- Says: an element that is not an `input`, a `select` or a `textarea` has no validity
 state set by its value. -/
