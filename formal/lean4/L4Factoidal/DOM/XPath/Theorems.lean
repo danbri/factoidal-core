@@ -12,7 +12,8 @@ it is enough that the projection keeps the children of every node, in order
 back from an address reads the same child lists (`nodeAtPath_cons`).
 
 PROVED here: `refOfItem_ns`, `xkids_not_doctype`, `projNode_element`, `projNode_child`,
-`nodeAtPath_nil`, `nodeAtPath_cons`, `domOfPath_rooted`.
+`nodeAtPath_nil`, `nodeAtPath_cons`, `domOfPath_rooted`, `htmlNameTest_not_name`,
+`answerOf_number`, `answerOf_string`, `answerOf_boolean`, `serializeNode_text`.
 TESTED here (`#guard`): evaluation through the adapter on small arenas (child, attribute,
 descendant, following, preceding, parent, document order of a union, the HTML name test),
 the prefixes of an expression, the serialization cases of WPT, the document builder.
@@ -91,6 +92,67 @@ Does not say: anything of a `wrapped` root, whose document node is no DOM node. 
 theorem domOfPath_rooted (d : Dom) (root : NodeId) (path : List Nat) (h : wrapped d root = false) :
     domOfPath d root path = nodeAtPath d root path := by
   simp [domOfPath, h]
+
+/-- Kind: conservativity (the HTML name test).
+Says: for every node test that is not a QName (`*`, `p:*`, `node()`, `text()`,
+`comment()`, `processing-instruction()`), the node test of HTML documents is XPath 1.0's
+`matchesTest`: the rule of HTML documents changes QName tests and nothing else.
+Does not say: what a QName test selects in an HTML document (tested below). -/
+theorem htmlNameTest_not_name (d : XPath.Full.Doc) (nsctx : List (String × String))
+    (ax : XPath.Full.Ax) (it : XPath.Full.Item) (p : String) (t : Option String) :
+    htmlNameTest d nsctx ax XPath.Full.NodeTest.anyName it =
+      XPath.Full.matchesTest d nsctx ax XPath.Full.NodeTest.anyName it ∧
+    htmlNameTest d nsctx ax (XPath.Full.NodeTest.anyInPrefix p) it =
+      XPath.Full.matchesTest d nsctx ax (XPath.Full.NodeTest.anyInPrefix p) it ∧
+    htmlNameTest d nsctx ax XPath.Full.NodeTest.nodeT it =
+      XPath.Full.matchesTest d nsctx ax XPath.Full.NodeTest.nodeT it ∧
+    htmlNameTest d nsctx ax XPath.Full.NodeTest.textT it =
+      XPath.Full.matchesTest d nsctx ax XPath.Full.NodeTest.textT it ∧
+    htmlNameTest d nsctx ax XPath.Full.NodeTest.commentT it =
+      XPath.Full.matchesTest d nsctx ax XPath.Full.NodeTest.commentT it ∧
+    htmlNameTest d nsctx ax (XPath.Full.NodeTest.piT t) it =
+      XPath.Full.matchesTest d nsctx ax (XPath.Full.NodeTest.piT t) it :=
+  ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+/-- Kind: result conversion.
+Says: a request for NUMBER_TYPE answers the evaluator's `number()` conversion of the
+value, whatever the value's type; no node-set check is made.
+Does not say: that the conversion is XPath 1.0's (that is `XPath.Full.Value.toNum`). -/
+theorem answerOf_number (d : Dom) (root : NodeId) (v : XPath.Full.Value) :
+    answerOf d root 1 v = "1" ++ sep ++ v.toNum.toXString := rfl
+
+/-- Kind: result conversion. Says: a request for STRING_TYPE answers the evaluator's
+`string()` conversion of the value. Does not say: that the conversion is XPath 1.0's. -/
+theorem answerOf_string (d : Dom) (root : NodeId) (v : XPath.Full.Value) :
+    answerOf d root 2 v = "2" ++ sep ++ v.toStr := rfl
+
+/-- Kind: result conversion. Says: a request for BOOLEAN_TYPE answers the evaluator's
+`boolean()` conversion of the value. Does not say: that the conversion is XPath 1.0's. -/
+theorem answerOf_boolean (d : Dom) (root : NodeId) (v : XPath.Full.Value) :
+    answerOf d root 3 v = "3" ++ sep ++ (if v.toBool then "1" else "0") := rfl
+
+/-- Kind: serialization (leaves).
+Says: with fuel left, a Text node serializes as its data with `&`, `<` and `>` escaped,
+whatever the namespace state, and leaves the generated prefix index as it was.
+Does not say: anything of an element (tested below against the cases of WPT). -/
+theorem serializeNode_text (d : Dom) (fuel : Nat) (id : NodeId) (inh : Option String)
+    (m : XmlSerialize.PrefixMap) (idx : Nat) (h : (d.get id).type = NodeType.text) :
+    XmlSerialize.serializeNode d (fuel + 1) id inh m idx =
+      (XmlSerialize.escText (d.get id).data, idx) := by
+  simp [XmlSerialize.serializeNode, h]
+
+#print axioms refOfItem_ns
+#print axioms xkids_not_doctype
+#print axioms projNode_element
+#print axioms projNode_child
+#print axioms nodeAtPath_nil
+#print axioms nodeAtPath_cons
+#print axioms domOfPath_rooted
+#print axioms htmlNameTest_not_name
+#print axioms answerOf_number
+#print axioms answerOf_string
+#print axioms answerOf_boolean
+#print axioms serializeNode_text
 
 /-! ## Tests: evaluation through the adapter -/
 
