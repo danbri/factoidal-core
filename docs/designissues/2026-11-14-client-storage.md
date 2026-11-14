@@ -175,7 +175,7 @@ comment has its "Says" and "Does not say"):
 - Cursor: `walk_eq_filter` (a cursor run from no position visits exactly the records in its range, each once,
   in key order), `walkRev_eq_filter` (descending for `prev`).
 - Exception order of finished transactions' handles: `reqGuard_ended_deleted`, `reqGuard_ended_inactive`,
-  `schemaGuard_ended_upgrade` ("has been deleted" before "not active"; "not active" before the name checks).
+  `schemaGuard_ended_upgrade`, `upgradeGuard_aborting` (an aborted upgrade "runs" until its abort event) ("has been deleted" before "not active"; "not active" before the name checks).
 - Transactions: `run_effect`, `op_dbs` (every command but `pump` leaves the databases as they were: what an
   aborted transaction did was never in them), `effect_none`, `commit_visible` (a later transaction reads what
   was committed), `commit_other_store`, `effect_other_db`, `commit_last_wins` (commit order).
@@ -240,6 +240,17 @@ synchronous checkpoint, so after dispatching an event of a transaction it tells 
 after eight promise-job hops: a continuation queued by a listener, and continuations up to eight jobs deep,
 run first; a timer callback queued by a listener runs after, with the transaction inactive. The exact
 statement (inactive after the checkpoint, whatever its depth) is open.
+
+## Engine fixes made for storage
+
+- BubblePopJS gained `Object.prototype.__defineGetter__`, `__defineSetter__`, `__lookupGetter__`,
+  `__lookupSetter__` (ECMA-262 Annex B.2.2.2 to B.2.2.5): the IndexedDB test support library defines its open
+  request handlers with `__defineSetter__`.
+- `Number.prototype.valueOf` and the other Number methods refused nothing that held a number, a Date included,
+  so a Date was cloned into IndexedDB as a Number object. They now refuse a Date (thisNumberValue).
+- Found and left to the engine's owners: an Array given an index accessor stops being an Array; `JSON.stringify`
+  of a cycle throws `RangeError` (wants `TypeError`); `String()` of an array that contains itself overflows the
+  native stack; `Array.fromAsync` is missing; a transferred `ArrayBuffer` is not detached by `postMessage`.
 
 ## Performance
 
