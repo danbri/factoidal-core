@@ -8357,10 +8357,13 @@
   //   n.api 40 normalize(op, name) -> "Registered\nmember:type[!]..." (the dictionary to read)
   //   n.api 41 subtle(method, k1, v1, ...) -> packed fields (`unpack`)
   //   n.api 42 drop(handle): the page's CryptoKey was collected; Lean zeroes the key bytes.
+  //   n.api 43 secureContext(url) -> "1" | "0" (Net.SecureContext): without it, the
+  //     [SecureContext] members (crypto.subtle, SubtleCrypto, CryptoKey, randomUUID) do not exist.
   let CryptoKeyC, cryptoKeys, cloneCryptoKey;
   lazy('crypto', () => {
     const random = typeof apiCall(30, ['0'], 0, true) !== 'number';
-    const subtleOn = typeof apiCall(40, ['digest', 'SHA-256'], 0, false) === 'string';
+    const secure = apiCall(43, [href], 0, false) === '1';
+    const subtleOn = secure && typeof apiCall(40, ['digest', 'SHA-256'], 0, false) === 'string';
     const intArrays = [Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array, Uint32Array,
       ...(typeof BigInt64Array === 'function' ? [BigInt64Array, BigUint64Array] : [])];
     cryptoKeys = new WeakMap();
@@ -8650,7 +8653,7 @@
         new Uint8Array(array.buffer, array.byteOffset, array.byteLength).set(new Uint8Array(api(30, [String(array.byteLength)], 0, true, 'getRandomValues')));
         return array;
       });
-      define(Crypto.prototype, 'randomUUID', function randomUUID() {
+      if (secure) define(Crypto.prototype, 'randomUUID', function randomUUID() {
         if (!cryptoObjects.has(this)) throw new TypeError("Failed to execute 'randomUUID' on 'Crypto': Illegal invocation");
         return api(31, [], 0, false, 'randomUUID'); });
     }
@@ -8672,7 +8675,10 @@
         if (d.configurable && !d.enumerable) { d.enumerable = true; Object.defineProperty(C, k, d); }
       }
     }
-    define(globalThis, 'Crypto', Crypto); define(globalThis, 'SubtleCrypto', SubtleCrypto); define(globalThis, 'CryptoKey', CryptoKey);
+    if (!secure) delete Crypto.prototype.subtle;
+    define(globalThis, 'Crypto', Crypto);
+    if (secure) { define(globalThis, 'SubtleCrypto', SubtleCrypto); define(globalThis, 'CryptoKey', CryptoKey); }
+    else { delete globalThis.SubtleCrypto; delete globalThis.CryptoKey; }
     const cryptoObject = Object.create(Crypto.prototype);
     cryptoObjects.add(cryptoObject);
     return cryptoObject;
@@ -8680,6 +8686,9 @@
   // ==== end haclweb ====
   for (const k of ['Crypto', 'SubtleCrypto', 'CryptoKey'])
     Object.defineProperty(globalThis, k, { configurable: true, enumerable: false, get() { void globalThis.crypto; const d = Object.getOwnPropertyDescriptor(globalThis, k); return d && 'value' in d ? d.value : undefined; } });
+  // HTML §8.1.3.5 isSecureContext (WindowOrWorkerGlobalScope), decided in Lean (web_api op 43).
+  if (!Object.getOwnPropertyDescriptor(globalThis, 'isSecureContext'))
+    Object.defineProperty(globalThis, 'isSecureContext', { configurable: true, enumerable: true, get() { return apiCall(43, [href], 0, false) === '1'; } });
 
   // ---- HTML §2.7: structuredClone ------------------------------------------------------
   // StructuredSerializeInternal and StructuredDeserialize in one walk (the two halves meet
@@ -12682,7 +12691,7 @@
     getter(WP, 'location', () => loc);
     getter(WP, 'navigator', () => wnav);
     getter(WP, 'origin', () => u.origin);
-    getter(WP, 'isSecureContext', () => u.protocol === 'https:' || u.hostname === 'localhost' || u.hostname === '127.0.0.1');
+    getter(WP, 'isSecureContext', () => apiCall(43, [href], 0, false) === '1');
     getter(WP, 'crossOriginIsolated', () => false);
     define(WP, 'importScripts', function importScripts(...urls) {
       const abs = urls.map(x => {

@@ -1104,6 +1104,7 @@ import L4Factoidal.WebCodecs.Gamut
 import L4Factoidal.WebCodecs.Image
 import L4Factoidal.WebCodecs.Api
 import L4Factoidal.Net.ReferrerPolicy
+import L4Factoidal.Net.SecureContext
 import L4Factoidal.Net.Csp
 import L4Factoidal.Net.CspPolicy
 import L4Factoidal.Net.Integrity

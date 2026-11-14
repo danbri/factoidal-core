@@ -50,6 +50,7 @@ import L4Factoidal.ClientStorage.CookieStore
 import L4Factoidal.ClientStorage.CacheStorage
 import L4Factoidal.Net.FetchRules
 import L4Factoidal.Net.Cookies
+import L4Factoidal.Net.SecureContext
 import L4Factoidal.DOM.SvgValues
 import L4Factoidal.PageGl.Api
 import L4Factoidal.WebCodecs.Api
@@ -707,6 +708,9 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
   | 41 => subtle s fs
   -- Compression Standard: 50 compress, 51 decompress, 52 the format (WHATWG.Compression.op)
   | 50 | 51 | 52 => pure' do L4Factoidal.WHATWG.Compression.op op (← strArg fs 0) (bytesArg fs 1)
+  -- Secure Contexts: is the environment with this top-level creation URL a secure context
+  -- ("1" or "0"); decides whether the `[SecureContext]` members of `crypto` exist.
+  | 43 => pure' do ofStr (if L4Factoidal.Net.SecureContext.secureContext (← strArg fs 0) then "1" else "0")
   | 42 => match natArg fs 0 with
     | .ok h => let (s, n) := dropKey s h; (s, ofStr (toString n))
     | .error e => (s, .error e)
