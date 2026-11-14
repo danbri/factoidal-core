@@ -47,7 +47,7 @@ reports only part of WPT (Ladybird on wpt.fyi: 35,966 of 94,406 names) is left o
   complete, and may wait up to about an hour for one that is finishing. It pushes a snapshot branch
   `wpt-snap/<YYYYMMDD-HHMM>-<sha12>` in factoidal-core first, so the source and tool used stay fixed. A
   run on an unchanged commit is a repeat (`repeat_of`): repeats measure flakiness.
-- **Platforms**: scored runs on Linux, sharded wide (16 runners, about 20 minutes). macOS arm64, the
+- **Platforms**: scored runs on Linux, sharded wide (12 runners, 20 to 25 minutes). macOS arm64, the
   shipping platform, runs once a day (13:41 UTC) and on each `build.yml` release as a cross-check (4
   runners, about 45 minutes). Differences between the two on one commit are bugs to find (fonts, timing,
   platform code). On 6dde36491 they agree to 0.01 points (Linux 71.2202%, macOS 71.2245%).
@@ -56,8 +56,11 @@ reports only part of WPT (Ladybird on wpt.fyi: 35,966 of 94,406 names) is left o
 - **Main on Linux, automatically**: every 20 minutes `foafnaut-linux.yml` builds the Linux engine of the
   newest main commit when that commit changes engine code (`formal/lean4/`, `labs/demos/foafnaut/`,
   `tools/wasmvm/`, the WPT runner) and has no Linux engine yet. Docs-only commits are skipped: they have
-  the engine of the commit before. One build at a time, and the newest commit wins. The finished engine
-  starts the Linux full run. So a main commit that changes the engine has a full-run row about an hour
+  the engine of the commit before. One build at a time, and the newest commit wins. The build takes
+  about 12 minutes (the Lake cache and a C object cache serve what did not change) and starts the Linux
+  full run as soon as the engine is published. The end of each branch check also runs this step, since
+  GitHub starts scheduled runs late. Only x86_64 is built automatically (arm64: a dispatch with
+  `arm64=true`). So a main commit that changes the engine has a full-run row about an hour
   after the push, with no macOS runner. The same step starts `build.yml` for main when the hourly poll
   missed the commit.
 - The other Factoidal conformance suites that have runners run on the same triggers, in parallel.
@@ -137,7 +140,10 @@ gh run download --repo danbri/factoidal-builds RUN_ID -n branch-wpt-results -D o
 - `names`: a comma list of WPT path prefixes (`/dom/abort/`, `/css/css-color/parsing/`), and/or
   `sample:N` (every Nth name of the full list: a regression check; `sample:20` is about 4,700 names).
   Give the directories your change affects and a sample for regressions in one run.
-- `shards` (optional): runners for the tests. Default: one for each 3,000 names, at most 20.
+- `shards` (optional): runners for the tests. Default: one for each 3,000 names, at most 8 (12 when you
+  ask). The account runs 20 Linux jobs at a time, shared by all branch checks and the full runs of
+  main, so a large sample waits in the queue and holds others up: prefer the directories you changed
+  and `sample:40`.
 - `wpt_commit` (optional): default is the WPT commit of the newest valid full run, so the baseline is
   at the same commit.
 - The baseline is the newest valid full run in `runs.csv` (same names). When main has moved since
