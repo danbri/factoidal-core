@@ -12,6 +12,9 @@ record: docs/designissues/2026-11-14-webgl-webcodecs.md, section 4).
     `allocationSize()`).
   * 123 `dropAlpha(format, codedWidth, codedHeight)`: the format without its alpha channel and the
     bytes of its resource (the first bytes of the frame's own: `PixelFormat.dropAlpha_planes`).
+  * 124 `toRgb(format, codedWidth, codedHeight, rect, destinationFormat, matrix, fullRange, bytes)`:
+    `Convert.toRgb`: the rectangle of the frame as packed pixels of an RGB format (bytes); -23
+    (NotSupportedError) for a frame this does not convert.
   * 125 `checkConfig(kind, codec, members, detached)`: `Config.check`.
 
 Arguments are fields of text: numbers in decimal, lists of numbers separated by spaces, "" for a
@@ -19,6 +22,7 @@ member the page did not give. The rotation is the 8 bytes of the page's double, 
 Errors: -20 TypeError (what the standard refuses), -2 not an op.
 -/
 import L4Factoidal.WebCodecs.Frame
+import L4Factoidal.WebCodecs.Convert
 import L4Factoidal.WebCodecs.Config
 
 namespace L4Factoidal.WebCodecs.Api
@@ -81,9 +85,11 @@ def metaOf : List Nat → Option Meta
   | _ => none
 
 /-- "Pick Color Space" (§9.4.6): sRGB for the RGB formats, Rec. 709 for the others, as
-`primaries transfer matrix fullRange`. -/
+`primaries transfer matrix fullRange`; then `1` when the format's fourth byte is padding (RGBX,
+BGRX), which the frame keeps as 255: such a frame is opaque whatever bytes the page gave there. -/
 def defaultColorSpace (f : PixelFormat) : String :=
-  if f.isRgb then "bt709 iec61966-2-1 rgb 1" else "bt709 bt709 bt709 0"
+  (if f.isRgb then "bt709 iec61966-2-1 rgb 1" else "bt709 bt709 bt709 0") ++
+  (if f == .rgbx || f == .bgrx then " 1" else " 0")
 
 def frameOfBuffer (fs : Array ByteArray) : Option String := do
   let f ← PixelFormat.ofName? (strArg fs 0)
@@ -120,6 +126,14 @@ def dropAlphaOp (fs : Array ByteArray) : Option String := do
   let ch ← natArg fs 2
   pure s!"{f.dropAlpha.name} {resourceSize f.dropAlpha cw ch}"
 
+def toRgbOp (fs : Array ByteArray) : Option ByteArray := do
+  let f ← PixelFormat.ofName? (strArg fs 0)
+  let cw ← natArg fs 1
+  let ch ← natArg fs 2
+  let rect ← (nats (strArg fs 3)).bind rectOf
+  let dst ← PixelFormat.ofName? (strArg fs 4)
+  toRgb f cw ch (rect.getD ⟨0, 0, cw, ch⟩) (fs[7]?.getD ByteArray.empty) dst (strArg fs 5) (strArg fs 6 == "1")
+
 def numsOf (s : String) : List (String × Nat) :=
   (s.splitOn "\n").filterMap fun line =>
     match line.splitOn "=" with
@@ -139,6 +153,9 @@ def op (code : Nat) (fs : Array ByteArray) : Except Int ByteArray :=
   | 121 => answer (frameOfFrame fs)
   | 122 => answer (copyPlanOp fs)
   | 123 => answer (dropAlphaOp fs)
+  | 124 => match toRgbOp fs with
+    | some b => .ok b
+    | none => .error (-23)
   | 125 => answer (checkConfig fs)
   | _ => .error (-2)
 
@@ -153,7 +170,7 @@ private def run (code : Nat) (xs : List String) (bin : List (Nat × ByteArray) :
 
 -- I420 4 × 2 from 12 bytes: the resource is 12 bytes; three planes copied as they are.
 #guard run 120 ["I420", "4", "2", "12", "", "", "", "", ""] ==
-  "12\n4 2 0 0 4 2 4 2 0 0\nbt709 bt709 bt709 0\n0 4 0 4 4 2\n8 2 8 2 2 1\n10 2 10 2 2 1"
+  "12\n4 2 0 0 4 2 4 2 0 0\nbt709 bt709 bt709 0 0\n0 4 0 4 4 2\n8 2 8 2 2 1\n10 2 10 2 2 1"
 -- The page's layout puts U and V first: rows come from there.
 #guard ((run 120 ["I420", "4", "2", "12", "4 4 0 2 2 2", "", "", "", ""]).splitOn "\n").drop 3 ==
   ["4 4 0 4 4 2", "0 2 8 2 2 1", "2 2 10 2 2 1"]
@@ -162,7 +179,7 @@ private def run (code : Nat) (xs : List String) (bin : List (Nat × ByteArray) :
 #guard run 120 ["RGBA", "4", "2", "32", "", "", "-", "", ""] == "error -20"
 -- A rotation of 90.0 (its bytes) turns the display size.
 #guard ((run 120 ["RGBA", "4", "2", "32", "", "", "", "", "1"] [(7, ⟨#[0, 0, 0, 0, 0, 0x80, 0x56, 0x40]⟩)]).splitOn "\n").take 3 ==
-  ["32", "4 2 0 0 4 2 2 4 90 1", "bt709 iec61966-2-1 rgb 1"]
+  ["32", "4 2 0 0 4 2 2 4 90 1", "bt709 iec61966-2-1 rgb 1 0"]
 -- NaN is refused.
 #guard run 120 ["RGBA", "4", "2", "32", "", "", "", "", ""] [(7, ⟨#[0, 0, 0, 0, 0, 0, 0xF8, 0x7F]⟩)] == "error -20"
 #guard run 121 ["I420", "4 2 0 0 4 2 8 2 0 0", "2 0 2 2", "", "", ""] == "4 2 2 0 2 2 4 2 0 0"
@@ -171,6 +188,9 @@ private def run (code : Nat) (xs : List String) (bin : List (Nat × ByteArray) :
 #guard run 122 ["I420", "4", "2", "", "", ""] == "12\n0 4 0 4 4 2\n8 2 8 2 2 1\n10 2 10 2 2 1"
 #guard run 123 ["I420A", "4", "2"] == "I420 12"
 #guard run 123 ["RGBA", "4", "2"] == "RGBX 32"
+#guard (op 124 #["RGBX".toUTF8, "1".toUTF8, "1".toUTF8, "".toUTF8, "BGRA".toUTF8, "".toUTF8, "".toUTF8, ⟨#[1, 2, 3, 0]⟩]).toOption.map (·.toList) ==
+  some [3, 2, 1, 255]
+#guard run 124 ["I420P10", "4", "2", "", "RGBA", "", "", ""] == "error -23"
 #guard run 125 ["VideoDecoder", "vp8", "", ""] == "unsupported"
 #guard run 125 ["VideoEncoder", "vp8", "width=640\nheight=0", ""] == "invalid"
 #guard run 125 ["AudioEncoder", "opus", "sampleRate=8000\nnumberOfChannels=2\nopus.complexity=11", ""] == "invalid"

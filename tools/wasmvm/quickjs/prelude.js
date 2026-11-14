@@ -3667,6 +3667,8 @@
           move(data, resource, lines.slice(3));
           detach(transfer);
           const c = lines[2].split(' ');
+          // RGBX and BGRX: the fourth byte is padding, kept opaque (Lean says which formats).
+          if (c[4] === '1') for (let i = 3; i < resource.length; i += 4) resource[i] = 255;
           K.set(this, Object.assign(metaOf(lines[1]), { format, timestamp, duration, resource, closed: false,
             color: color === undefined ? { primaries: c[0], transfer: c[1], matrix: c[2], fullRange: c[3] === '1' } : color }));
           return;
@@ -3712,10 +3714,16 @@
       clone() { const s = live(st(this), 'clone'); return frameOf(Object.assign({}, s)); }
       close() { const s = st(this); s.closed = true; s.resource = null; }
     }
-    // Conversions of pixels and frames from images arrive with the conversion ops; until then
-    // a frame from an image and a copy to another format answer NotSupportedError.
+    // A frame from an image needs the image's pixels (the canvas section's): not connected yet.
     const imageFrame = (image, d) => { throw dom('NotSupportedError', 'VideoFrame from an image is not supported yet'); };
-    const convertFrame = (s, o) => { throw dom('NotSupportedError', 'copyTo to another pixel format is not supported yet'); };
+    // The rectangle as packed pixels of an RGB format: Lean's conversion (WebCodecs.Convert.toRgb).
+    // It keeps the frame's primaries and transfer: a destination that is not sRGB is refused.
+    const convertFrame = (s, o) => {
+      if (o.space !== undefined && o.space !== 'srgb') throw dom('NotSupportedError', 'copyTo converts to sRGB only');
+      const r = apiCall(124, [s.format, String(s.cw), String(s.ch), o.rect, o.format, s.color.matrix === null ? '' : s.color.matrix, s.color.fullRange ? '1' : '', s.resource], 0, true);
+      if (typeof r === 'number') throw dom('NotSupportedError', 'copyTo does not convert this frame');
+      return new Uint8Array(r);
+    };
 
     // ---- EncodedVideoChunk, EncodedAudioChunk (WebCodecs 8) ----
     const chunkInit = (init, what) => {
