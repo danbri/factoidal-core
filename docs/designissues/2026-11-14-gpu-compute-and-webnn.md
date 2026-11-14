@@ -252,12 +252,12 @@ coordination log first.
   neg, reciprocal, relu, sigmoid, sin, softsign, tan), transpose, matmul (batch broadcast by
   `expandMap`, a `forCap` loop over K), reductions over chosen axes (sum, mean, L1, sum of
   squares, product, max, min), conv2d (NCHW, OIHW, groups, bias, padding, strides, dilations)
-  and average and max pooling, both with the CPU reference's window tests. `emitC_eval`: the printed
+  and average and max pooling, both with the CPU reference's window tests, and gemm (transposes, C broadcast, alpha and beta as literals). `emitC_eval`: the printed
   `u32` index arithmetic computes `Coord.eval` whenever its values fit in 32 bits (with
   `evalU`, a Lean reading of WGSL's `u32` `+ - * / %`). `#guard`s: every kernel passes the
   subset check, the printed broadcast index, refusals (`gelu`, `tanh`, outputs over one dispatch).
 - Not yet: the `Fits` side condition discharged from the tensor quota for whole kernels; the
-  output unravel (`k / stride % dim`) proved equal to `Shape.unravel`; gemm, l2Pool2d,
+  output unravel (`k / stride % dim`) proved equal to `Shape.unravel`; l2Pool2d,
   convTranspose2d and the other layouts; the backend choice in `Graph`/`Eval` (to be
   agreed with the webnn agent); running graphs through `PageGpu` commands.
 
@@ -286,11 +286,12 @@ tolerances of the WebNN conformance tests.
 | maxPool2d 3×3, stride 2, padding 1 | 0 ULP | 0 ULP | within |
 | averagePool2d 3×3, stride 2, padding 1, inputs in [0, 4) | 2 ULP | 11 ULP (kh·kw + 2) | within |
 | averagePool2d, same, inputs in [−4, 4) | 43 ULP | 11 ULP | over: the `f32` sum loses digits where values cancel; the CPU sums in binary64 |
+| gemm [32,16]ᵀ × [24,32]ᵀ, C [24], alpha 1.5, beta −0.25 | 1,952 ULP at an output of −0.0077 (absolute 3.8e-6, as matmul's) | 64 ULP (2K) | over where the result cancels to near 0: the same `f32` summation as matmul, measured in ULP of a small value |
 | sqrt | 2 ULP | 1 ULP | over: CPU reference |
 | tanh | 44 ULP | 16 ULP | over: CPU reference |
 | log | 75 ULP | 8 ULP | over: CPU reference |
 
-One GPU, one input set: a different GPU can differ, so the table is per device and the plan is
+Mixed-sign inputs make a sum cancel, and the ULP measure of a result near 0 is then large while its absolute error is that of any other output; the WPT vectors, not these inputs, decide which operators the GPU path takes. One GPU, one input set: a different GPU can differ, so the table is per device and the plan is
 to run the same test on the Hub's GPU before an operator is enabled there.
 
 ## Proved / tested only / open
