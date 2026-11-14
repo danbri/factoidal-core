@@ -1054,8 +1054,11 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
   | "white-space" | "white-space-collapse" =>
     match (trim d.value).toLower with
     | "pre" | "pre-wrap" | "pre-line" | "break-spaces" | "preserve" | "preserve-breaks" | "preserve-spaces" =>
-      return {s with preformatted := true}
-    | "normal" | "nowrap" | "collapse" => return {s with preformatted := false}
+      return {s with preformatted := true, pos := if d.property == "white-space" then {s.pos with nowrap := false} else s.pos}
+    -- `nowrap`: the spaces collapse and the lines do not break at them (`pos.nowrap`, read by the line layout)
+    | "nowrap" => return {s with preformatted := false, pos := {s.pos with nowrap := true}}
+    | "normal" | "collapse" =>
+      return {s with preformatted := false, pos := if d.property == "white-space" then {s.pos with nowrap := false} else s.pos}
     | _ => throw "unsupported CSS white-space"
   | "visibility" => match d.value with
     | "visible" => return {s with visible := true}
@@ -1359,7 +1362,8 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
                  lineHeight := lineHeightOf source.fontSize source.lineHeightFactor source.lineHeight,
                  fontWeight := source.fontWeight, oblique := source.oblique}
   | "visibility" => some {s with visible := source.visible}
-  | "white-space" | "white-space-collapse" => some {s with preformatted := source.preformatted}
+  | "white-space" | "white-space-collapse" =>
+    some {s with preformatted := source.preformatted, pos := {s.pos with nowrap := source.pos.nowrap}}
   | "overflow" => some {s with clipOverflow := source.clipOverflow}
   | "text-decoration" | "text-decoration-line" => some {s with underline := source.underline}
   | "border-width" => some {s with borderWidth := source.borderWidth}
