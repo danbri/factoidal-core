@@ -65,11 +65,18 @@ inductive Verdict where
   /-- `neg`: a negative test (an expected error). -/
   | pass (neg : Bool) | fail (why : String) | skip (why : String)
 
+/-- The part of Test262's host object `$262` (INTERPRETING.md) the command line can give:
+`detachArrayBuffer` by `transfer`, `evalScript` by indirect eval, `global`. No `createRealm`,
+`agent` or `gc`: tests that need them fail here. -/
+def host262 : String :=
+  "var $262 = { global: globalThis, detachArrayBuffer(b) { ArrayBuffer.prototype.transfer.call(b); }, " ++
+  "evalScript(src) { return (0, eval)(src); } };"
+
 /-- The heap after the default harness, computed once per run. -/
 def harnessHeap (root : System.FilePath) : IO Heap := do
   let a ← IO.FS.readFile (root / "harness" / "assert.js")
   let s ← IO.FS.readFile (root / "harness" / "sta.js")
-  match runScript freshHeap (a ++ "\n" ++ s) with
+  match runScript freshHeap (a ++ "\n" ++ s ++ "\n" ++ host262) with
   | (.ok, h) => pure h
   | (o, _) =>
     let why := match o with
@@ -112,6 +119,8 @@ def runTest (root : System.FilePath) (base : Heap) (path : System.FilePath) : IO
   | some _, _, _ => pure (.fail "expected an error")
 
 def jsFiles (dir : System.FilePath) : IO (Array System.FilePath) := do
+  -- a single test file named directly is run on its own
+  if (← dir.isDir) == false && dir.toString.endsWith ".js" then return #[dir]
   let all ← dir.walkDir
   let fs := all.filter fun p =>
     let n := p.fileName.getD ""
