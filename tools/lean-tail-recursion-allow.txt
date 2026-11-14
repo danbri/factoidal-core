@@ -2295,6 +2295,8 @@ L4Factoidal_DOM_Editing_isEditableF  # (b) one call per ancestor of the node (th
 L4Factoidal_DOM_Editing_isCollapsedBlockPropF  # (b) one call per level of the subtree of an inline element ("collapsed block prop" of the editing draft); fuel is the arena size
 L4Factoidal_DOM_Editing_isEffectivelyContainedF  # (b) one call per level of the subtree of the node ("effectively contained" of the editing draft); fuel is the arena size
 L4Factoidal_DOM_Editing_forceValue  # (b) one call per level of the subtree of the node ("force the value" of the editing draft recurses on children); fuel is the arena size
+L4Factoidal_DOM_Editing_extractRange  # (b) one call per level of the tree between the common ancestor of the range and its start or end node ("extract" of DOM 5.5 recurses into the partially contained child); fuel is the arena size
+L4Factoidal_DOM_Editing_fixDisallowedAncestors  # (c) one more call after the node is renamed to the default single-line container ("fix disallowed ancestors" of the editing draft): the renamed node is not a dd or dt and the second call ends in the split loop; fuel is the arena size
 # --- CSS values (Rendering/CssValues, ComputedGeneric): 2026-11-14. Lists are folds or tail calls; what recurses is nesting, and each nesting has a constant bound.
 L4Factoidal_Rendering_CssValues_parseCVs  # (c) one call per level of nested functions and blocks; at most maxNesting = 64 levels (a deeper opener is read as a bad token); the tokens of a level are a tail call
 L4Factoidal_Rendering_CssValues_calcOperand  # (c) the nesting of one calc() value, at most maxNesting = 64 (parseCVs)
