@@ -433,11 +433,16 @@ def scanSepNum (cs : Array Char) (i : Nat) : Option (Except String ((Nat ⊕ Flo
 #guard ["1__0", "1_", "0_1", "01_1", "1_.0", "1._0", "1_e5", "1e_5", "0x_1", "1_n"].all fun t =>
   match scanSepNum t.toList.toArray 0 with | some (.error _) => true | _ => false
 
+/-- §12.8 OptionalChainingPunctuator: `?.` is that punctuator only when no decimal digit
+follows it. `a?.5:b` is the conditional `a ? .5 : b`, so the punctuator there is `?`. -/
+def optChainLookahead (cs : Array Char) (i : Nat) (p : Option String) : Option String :=
+  if p == some "?." && i + 2 < cs.size && (charAt cs (i + 2)).isDigit then some "?" else p
+
 /-- The punctuator at `i`, by the definition: the first of `punctuators` (longest first)
 whose characters are there. The lexer uses `matchPunct`, which agrees with it (the checks
 after `lex`). -/
 def matchPunctSpec (cs : Array Char) (i : Nat) : Option String :=
-  punctuators.find? fun p =>
+  optChainLookahead cs i <| punctuators.find? fun p =>
     let pc := p.toList
     (List.range pc.length).all fun k => charAt cs (i + k) == pc.getD k ' ' && i + k < cs.size
 
@@ -467,7 +472,7 @@ def punctFrom (cs : Array Char) (i : Nat) : Nat → Nat → Option String
 /-- The punctuator at `i` (§12.8), longest first: `matchPunctSpec` without building a list
 or a string for each candidate. -/
 def matchPunct (cs : Array Char) (i : Nat) : Option String :=
-  punctFrom cs i punctChars.size 0
+  optChainLookahead cs i (punctFrom cs i punctChars.size 0)
 
 /-- The end of a block comment that starts at `i` (after `/*`), and whether it
 holds a line terminator. -/
@@ -661,7 +666,9 @@ by each punctuator character, at the end of the input, and after another token. 
   (punctuators.all fun q =>
     let ds := (p ++ q).toList.toArray
     matchPunct ds 0 == matchPunctSpec ds 0 && matchPunct ds p.length == matchPunctSpec ds p.length)
-#guard ["a+b", "x>>>=1", "a?.b", "a??=b", "...", "..", "=", "", "@", "a"].all fun s =>
+#guard matchPunct "a?.5:b".toList.toArray 1 == some "?" && matchPunct "a?.b".toList.toArray 1 == some "?." &&
+  matchPunct "a?.".toList.toArray 1 == some "?." && matchPunct "a?.[0]".toList.toArray 1 == some "?."
+#guard ["a+b", "x>>>=1", "a?.b", "a??=b", "...", "..", "=", "", "@", "a", "a?.5:b", "a?.9", "?.0"].all fun s =>
   let cs := s.toList.toArray
   (List.range (cs.size + 1)).all fun i => matchPunct cs i == matchPunctSpec cs i
 
