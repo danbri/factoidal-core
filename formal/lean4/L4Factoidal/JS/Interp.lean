@@ -7,6 +7,7 @@ import L4Factoidal.JS.NumFmt
 import L4Factoidal.JSON.Parser
 import L4Factoidal.JS.JsonText
 import L4Factoidal.WHATWG.URLPattern
+import L4Factoidal.Temporal.Parse
 import L4Factoidal.Prim.Float16
 
 /-!
@@ -7621,6 +7622,67 @@ def moreNative : Nat → Native → Value → Array Value → Option Value → M
         if !(← isCallable f) then throwErr .type "Iterator.prototype[Symbol.dispose]: return is not callable"
         let _ ← callV n f thisV #[]
         pure .undef
+    | (.x .temporal) =>
+      -- `n.temporal(op, ...)`: 0 regulate (y, m, d, reject) → [y, m, d] | null; 1 date facts
+      -- (y, m, d) → [dayOfWeek, dayOfYear, weekOfYear, yearOfWeek, daysInMonth, daysInYear,
+      -- inLeapYear]; 2 add (y, m, d, years, months, weeks, days, reject) → [y, m, d] | null;
+      -- 3 until (y1, m1, d1, y2, m2, d2, largest) → [years, months, weeks, days]; 4 epoch days;
+      -- 5 date of epoch days; 6 date-time string, 7 time string → parts | null; 8 duration
+      -- string → ten fields | null; 9 date string; 10 time string (h, mi, s, ns, precision);
+      -- 11 round (x, increment, mode) → BigInt; 12 balance time (ns) → [days, h, mi, s, ms, us,
+      -- ns]; 13 date-time within limits (y, m, d, time ns); 14 compare dates
+      let int (i : Nat) : Int := match argD args i with
+        | .num x => if x.isFinite then truncInt x else 0
+        | .big b => b
+        | _ => 0
+      let nat (i : Nat) : Nat := (int i).toNat
+      let num (x : Int) : Value := .num (Float.ofInt x)
+      let arr (xs : List Value) : M Value := newArray xs.toArray
+      let date3 (r : Int × Nat × Nat) : M Value := arr [num r.1, num r.2.1, num r.2.2]
+      let parts (p : Temporal.DateTimeParts) : M Value :=
+        arr [num p.year, num p.month, num p.day, .bool p.hasDate, .bool p.hasTime, num p.hour,
+             num p.minute, num p.second, num p.fracNs, num p.offsetKind, .big p.offsetNs,
+             .str p.timeZone, .str p.calendar]
+      let str (i : Nat) : M String := do match argD args i with
+        | .str s => pure s
+        | _ => throwErr .type "Temporal: a string was expected"
+      match int 0 with
+      | 0 => match Temporal.regulateDate (int 1) (int 2) (int 3) (toBool (argD args 4)) with
+        | some r => date3 r
+        | none => pure .null
+      | 1 =>
+        let (y, m, d) := (int 1, nat 2, nat 3)
+        let (w, wy) := Temporal.weekOfYear y m d
+        arr [num (Temporal.dayOfWeek y m d), num (Temporal.dayOfYear y m d), num w, num wy,
+             num (Temporal.daysInMonth y m), num (Temporal.daysInYear y), .bool (Temporal.isLeapYear y)]
+      | 2 => match Temporal.addDate (int 1) (nat 2) (nat 3) (int 4) (int 5) (int 6) (int 7) (toBool (argD args 8)) with
+        | some r => date3 r
+        | none => pure .null
+      | 3 =>
+        let (a, b, c, d) := Temporal.dateUntil (int 1, nat 2, nat 3) (int 4, nat 5, nat 6) (nat 7)
+        arr [num a, num b, num c, num d]
+      | 4 => pure (num (Temporal.epochDays (int 1) (nat 2) (nat 3)))
+      | 5 => date3 (Temporal.fromEpochDays (int 1))
+      | 6 => match Temporal.parseDateTime (← str 1) with
+        | some p => parts p
+        | none => pure .null
+      | 7 => match Temporal.parseTimeString (← str 1) with
+        | some p => parts p
+        | none => pure .null
+      | 8 => match Temporal.parseDuration (← str 1) with
+        | some xs => arr (xs.toList.map num)
+        | none => pure .null
+      | 9 => pure (.str (Temporal.formatDate (int 1) (nat 2) (nat 3)))
+      | 10 =>
+        let prec : Option Int := match argD args 5 with | .undef => none | _ => some (int 5)
+        pure (.str (Temporal.formatTime (nat 1) (nat 2) (nat 3) (nat 4) prec))
+      | 11 => pure (.big (Temporal.roundIncrement (int 1) (nat 2) (nat 3)))
+      | 12 =>
+        let (dd, h, mi, s, ms, us, ns) := Temporal.balanceTime (int 1)
+        arr [num dd, num h, num mi, num s, num ms, num us, num ns]
+      | 13 => pure (.bool (Temporal.dateTimeWithinLimits (int 1) (nat 2) (nat 3) (int 4)))
+      | 14 => pure (num (Temporal.compareDate (int 1, nat 2, nat 3) (int 4, nat 5, nat 6)))
+      | _ => throwErr .type "temporal: unknown operation"
     | (.x .errorIsError) =>
       match a0 with
       | .obj id => pure (.bool (match (← getObj id).kind with | .error => true | _ => false))

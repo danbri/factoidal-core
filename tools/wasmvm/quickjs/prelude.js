@@ -9152,6 +9152,983 @@
     lazy(k, () => typeof n.streams !== 'function' ? undefined : (streamClasses ??= makeStreams())[k]);
   // ---- end of Streams Standard -----------------------------------------------------------
 
+  // ---- Temporal (TC39 proposal): PlainDate, PlainTime, PlainDateTime, PlainYearMonth,
+  // PlainMonthDay, Duration, Instant, Now ---------------------------------------------------
+  // The ISO 8601 calendar's arithmetic, the strings and the rounding are the engine's
+  // (n.temporal: L4Factoidal.Temporal, in Lean). The classes here hold their fields and convert
+  // the arguments as the proposal's abstract operations read them. Only the ISO 8601 calendar
+  // and no time zones but UTC. An engine without the native has no Temporal.
+  const makeTemporal = () => {
+    const T = n.temporal;
+    const apply = Reflect.apply, isObj = x => (typeof x === 'object' && x !== null) || typeof x === 'function';
+    const RE = m => new RangeError(m), TE = m => new TypeError(m);
+    const slots = new WeakMap();
+    const get = (o, kind, what) => { const s = slots.get(o); if (!s || s.kind !== kind) throw TE(`${what}: the receiver is not a Temporal.${kind}`); return s; };
+    const make = (C, kind, fields, nt) => {
+      const proto = nt === undefined ? C.prototype : nt.prototype;
+      const o = Object.create(isObj(proto) ? proto : C.prototype);
+      slots.set(o, Object.assign({ kind }, fields));
+      return o;
+    };
+    const kindOf = x => { const s = isObj(x) ? slots.get(x) : undefined; return s ? s.kind : undefined; };
+    // ---- abstract operations on values
+    const toNumber = v => { if (typeof v === 'bigint') throw TE('a BigInt is not a number'); return +v; };
+    const toIntTrunc = (v, what) => {
+      const x = toNumber(v);
+      if (x !== x || x === Infinity || x === -Infinity) throw RE(`${what} is not a finite number`);
+      const t = Math.trunc(x); return t === 0 ? 0 : t;
+    };
+    const toPosIntTrunc = (v, what) => { const t = toIntTrunc(v, what); if (t <= 0) throw RE(`${what} must be positive`); return t; };
+    const toIntIfIntegral = (v, what) => {
+      const x = toNumber(v);
+      if (!Number.isInteger(x)) throw RE(`${what} is not an integer`);
+      return x === 0 ? 0 : x;
+    };
+    const optionsObject = o => { if (o === undefined) return Object.create(null); if (isObj(o)) return o; throw TE('the options are not an object'); };
+    const stringOption = (o, name, values, dflt) => {
+      const v = o[name];
+      if (v === undefined) return dflt;
+      if (typeof v === 'symbol') throw TE(`${name} is a Symbol`);
+      const s = String(v);
+      if (!values.includes(s)) throw RE(`${name}: '${s}' is not one of ${values.join(', ')}`);
+      return s;
+    };
+    const overflowOption = o => stringOption(o, 'overflow', ['constrain', 'reject'], 'constrain');
+    const UNITS = ['year', 'month', 'week', 'day', 'hour', 'minute', 'second', 'millisecond', 'microsecond', 'nanosecond'];
+    const unitIndex = u => UNITS.indexOf(u);
+    // a unit option: singular or plural; `allowed` the singular names; 'auto' when allowed
+    const unitOption = (o, name, allowed, dflt, extra = []) => {
+      const v = o[name];
+      if (v === undefined) return dflt;
+      if (typeof v === 'symbol') throw TE(`${name} is a Symbol`);
+      let s = String(v);
+      if (extra.includes(s)) return s;
+      if (s.endsWith('s') && UNITS.includes(s.slice(0, -1))) s = s.slice(0, -1);
+      if (!allowed.includes(s)) throw RE(`${name}: '${String(v)}' is not a valid unit here`);
+      return s;
+    };
+    const MODES = ['ceil', 'floor', 'expand', 'trunc', 'halfCeil', 'halfFloor', 'halfExpand', 'halfTrunc', 'halfEven'];
+    const roundingModeOption = (o, dflt) => stringOption(o, 'roundingMode', MODES, dflt);
+    const incrementOption = o => {
+      const v = o.roundingIncrement;
+      if (v === undefined) return 1;
+      const x = toNumber(v);
+      if (x !== x || x === Infinity || x === -Infinity) throw RE('roundingIncrement is not finite');
+      const t = Math.trunc(x);
+      if (t < 1 || t > 1e9) throw RE('roundingIncrement is out of range');
+      return t;
+    };
+    const negateMode = m => ({ ceil: 'floor', floor: 'ceil', halfCeil: 'halfFloor', halfFloor: 'halfCeil' })[m] || m;
+    const calendarId = v => {
+      if (v === undefined) return 'iso8601';
+      if (typeof v !== 'string') throw TE('the calendar is not a string');
+      let id = v;
+      if (id.toLowerCase() !== 'iso8601') {
+        const p = T(6, v);
+        if (p === null) throw RE(`unknown calendar '${v}'`);
+        id = p[12] || 'iso8601';
+      }
+      if (id.toLowerCase() !== 'iso8601') throw RE(`unknown calendar '${v}'`);
+      return 'iso8601';
+    };
+    const checkCalendarAnnotation = cal => { if (cal !== '' && cal.toLowerCase() !== 'iso8601') throw RE(`unknown calendar '${cal}'`); };
+    const pad2 = x => (x < 10 ? '0' : '') + x;
+    const monthCodeOf = m => 'M' + pad2(m);
+    const monthFromCode = code => {
+      if (typeof code !== 'string') code = String(code);
+      const m = /^M(\d\d)$/.exec(code);
+      if (!m) throw RE(`'${code}' is not a month code`);
+      const v = +m[1];
+      if (v < 1 || v > 12) throw RE(`'${code}' is not a month code of the ISO calendar`);
+      return v;
+    };
+    // ---- dates
+    const isoDateValid = (y, m, d) => T(0, y, m, d, true) !== null;
+    const dateWithinLimits = (y, m, d) => T(13, y, m, d, 43200000000000);  // noon: ISODateWithinLimits
+    const regulate = (y, m, d, overflow) => {
+      const r = T(0, y, m, d, overflow === 'reject');
+      if (r === null) throw RE(`${y}-${m}-${d} is not a valid ISO date`);
+      return r;
+    };
+    // the fields of a property bag, read in alphabetical order (PrepareCalendarFields)
+    const readFields = (bag, names, required) => {
+      const out = {};
+      let any = false;
+      for (const name of names) {
+        const v = bag[name];
+        if (v !== undefined) {
+          any = true;
+          if (name === 'monthCode') { if (typeof v === 'symbol') throw TE('monthCode is a Symbol'); out.monthCode = String(v); }
+          else if (name === 'month' || name === 'day') out[name] = toPosIntTrunc(v, name);
+          else if (name === 'offset') { if (typeof v === 'symbol') throw TE('offset is a Symbol'); out.offset = String(v); }
+          else out[name] = toIntTrunc(v, name);
+        } else if (required.includes(name)) throw TE(`${name} is required`);
+      }
+      return [out, any];
+    };
+    const resolveMonth = f => {
+      if (f.monthCode !== undefined) {
+        const m = monthFromCode(f.monthCode);
+        if (f.month !== undefined && f.month !== m) throw RE('month and monthCode do not agree');
+        return m;
+      }
+      if (f.month === undefined) throw TE('month or monthCode is required');
+      return f.month;
+    };
+    const DATE_FIELDS = ['day', 'month', 'monthCode', 'year'];
+    const TIME_FIELDS = ['hour', 'microsecond', 'millisecond', 'minute', 'nanosecond', 'second'];
+    const rejectTemporalLike = bag => {
+      if (kindOf(bag) !== undefined) throw TE('a Temporal object is not a property bag here');
+      if (bag.calendar !== undefined) throw TE('calendar is not allowed here');
+      if (bag.timeZone !== undefined) throw TE('timeZone is not allowed here');
+    };
+    // ---- times: [h, mi, s, ms, us, ns]
+    const timeNs = t => ((((BigInt(t[0]) * 60n + BigInt(t[1])) * 60n + BigInt(t[2])) * 1000n + BigInt(t[3])) * 1000n + BigInt(t[4])) * 1000n + BigInt(t[5]);
+    const regulateTime = (t, overflow) => {
+      const max = [23, 59, 59, 999, 999, 999];
+      return t.map((v, i) => {
+        if (v < 0 || v > max[i]) {
+          if (overflow === 'reject') throw RE('a time field is out of range');
+          return v < 0 ? 0 : max[i];
+        }
+        return v;
+      });
+    };
+    const timeFromParts = p => [p[5], p[6], p[7], Math.trunc(p[8] / 1e6), Math.trunc(p[8] / 1e3) % 1000, p[8] % 1000];
+    const formatTime = (t, precision) => T(10, t[0], t[1], t[2], t[3] * 1e6 + t[4] * 1e3 + t[5], precision);
+    const precisionOption = o => {
+      // fractionalSecondDigits (auto or 0 to 9) and smallestUnit
+      const v = o.fractionalSecondDigits;
+      let digits;
+      if (v === undefined) digits = undefined;
+      else if (typeof v !== 'number') {
+        if (typeof v === 'symbol') throw TE('fractionalSecondDigits is a Symbol');
+        const s = String(v);
+        if (s !== 'auto') throw RE('fractionalSecondDigits must be auto or 0 to 9');
+        digits = undefined;
+      } else {
+        if (v !== v || v === Infinity || v === -Infinity) throw RE('fractionalSecondDigits must be auto or 0 to 9');
+        const f = Math.floor(v);
+        if (f < 0 || f > 9) throw RE('fractionalSecondDigits must be auto or 0 to 9');
+        digits = f;
+      }
+      const mode = roundingModeOption(o, 'trunc');
+      const su = unitOption(o, 'smallestUnit', ['minute', 'second', 'millisecond', 'microsecond', 'nanosecond'], undefined);
+      if (su === 'minute') return { precision: -1, unitNs: 60000000000n, mode };
+      if (su === 'second') return { precision: 0, unitNs: 1000000000n, mode };
+      if (su === 'millisecond') return { precision: 3, unitNs: 1000000n, mode };
+      if (su === 'microsecond') return { precision: 6, unitNs: 1000n, mode };
+      if (su === 'nanosecond') return { precision: 9, unitNs: 1n, mode };
+      if (digits === undefined) return { precision: undefined, unitNs: 1n, mode };
+      return { precision: digits, unitNs: 10n ** BigInt(9 - digits), mode };
+    };
+    const roundNs = (x, unitNs, mode) => T(11, x, Number(unitNs), MODES.indexOf(mode));
+    const balance = ns => T(12, ns);  // [days, h, mi, s, ms, us, ns]
+    const NS_PER_DAY = 86400000000000n;
+
+    // ---- Duration
+    const DUR_FIELDS = ['years', 'months', 'weeks', 'days', 'hours', 'minutes', 'seconds', 'milliseconds', 'microseconds', 'nanoseconds'];
+    const durSign = f => { for (const v of f) { if (v < 0) return -1; if (v > 0) return 1; } return 0; };
+    const validDuration = f => {
+      let sign = 0;
+      for (const v of f) {
+        if (!Number.isFinite(v)) throw RE('a duration field is not finite');
+        if (v !== 0) { const s = v < 0 ? -1 : 1; if (sign !== 0 && s !== sign) throw RE('a duration has mixed signs'); sign = s; }
+      }
+      if (Math.abs(f[0]) >= 2 ** 32 || Math.abs(f[1]) >= 2 ** 32 || Math.abs(f[2]) >= 2 ** 32) throw RE('a calendar unit of the duration is too large');
+      const secs = BigInt(f[3]) * 86400n + BigInt(f[4]) * 3600n + BigInt(f[5]) * 60n + BigInt(f[6]) +
+        (BigInt(f[7]) * 1000000n + BigInt(f[8]) * 1000n + BigInt(f[9])) / 1000000000n;
+      const total = BigInt(f[3]) * 86400000000000n + BigInt(f[4]) * 3600000000000n + BigInt(f[5]) * 60000000000n +
+        BigInt(f[6]) * 1000000000n + BigInt(f[7]) * 1000000n + BigInt(f[8]) * 1000n + BigInt(f[9]);
+      const ts = total < 0n ? -total : total;
+      if (ts / 1000000000n >= 2n ** 53n) throw RE('the time of the duration is too large');
+      void secs;
+      return f;
+    };
+    const newDuration = (f, nt) => make(Duration, 'Duration', { f: validDuration(f.map(v => v === 0 ? 0 : v)) }, nt);
+    class Duration {
+      constructor(years = 0, months = 0, weeks = 0, days = 0, hours = 0, minutes = 0, seconds = 0, milliseconds = 0, microseconds = 0, nanoseconds = 0) {
+        if (new.target === undefined) throw TE("Constructor Temporal.Duration requires 'new'");
+        const f = [years, months, weeks, days, hours, minutes, seconds, milliseconds, microseconds, nanoseconds]
+          .map((v, i) => v === undefined ? 0 : toIntIfIntegral(v, DUR_FIELDS[i]));
+        slots.set(this, { kind: 'Duration', f: validDuration(f) });
+      }
+      static from(item) { return toDuration(item, true); }
+      static compare(one, two, options = undefined) {
+        const a = toDuration(one), b = toDuration(two);
+        const o = optionsObject(options);
+        const rel = o.relativeTo;
+        const fa = slots.get(a).f, fb = slots.get(b).f;
+        if (fa.every((v, i) => v === fb[i])) return 0;
+        if ((fa[0] || fa[1] || fa[2] || fb[0] || fb[1] || fb[2]) && rel === undefined) throw RE('relativeTo is required to compare calendar units');
+        if (fa[0] || fa[1] || fa[2] || fb[0] || fb[1] || fb[2]) {
+          const d = toDate(rel);
+          const end = (f) => addDateDuration(d, f, 'constrain');
+          const ea = end(fa), eb = end(fb);
+          const c = T(14, ea.y, ea.m, ea.d, eb.y, eb.m, eb.d);
+          if (c !== 0) return c;
+        }
+        const na = durTimeNs(fa, true), nb = durTimeNs(fb, true);
+        return na < nb ? -1 : na > nb ? 1 : 0;
+      }
+      get sign() { return durSign(get(this, 'Duration', 'sign').f); }
+      get blank() { return durSign(get(this, 'Duration', 'blank').f) === 0; }
+      negated() { return newDuration(get(this, 'Duration', 'negated').f.map(v => -v)); }
+      abs() { return newDuration(get(this, 'Duration', 'abs').f.map(v => Math.abs(v))); }
+      with(durationLike) {
+        const f = get(this, 'Duration', 'with').f.slice();
+        const p = partialDuration(durationLike);
+        DUR_FIELDS.forEach((k, i) => { if (p[k] !== undefined) f[i] = p[k]; });
+        return newDuration(f);
+      }
+      add(other) { return addDurations(this, other, 1, 'add'); }
+      subtract(other) { return addDurations(this, other, -1, 'subtract'); }
+      round(roundTo) {
+        const f = get(this, 'Duration', 'round').f;
+        if (roundTo === undefined) throw TE('round needs an argument');
+        const o = typeof roundTo === 'string' ? Object.assign(Object.create(null), { smallestUnit: roundTo }) : optionsObject(roundTo);
+        const lu = unitOption(o, 'largestUnit', UNITS, undefined, ['auto']);
+        const rel = o.relativeTo;
+        const inc = incrementOption(o);
+        const mode = roundingModeOption(o, 'halfExpand');
+        const su = unitOption(o, 'smallestUnit', UNITS, undefined);
+        if (su === undefined && lu === undefined) throw RE('smallestUnit or largestUnit is required');
+        const smallest = su === undefined ? 'nanosecond' : su;
+        const defLargest = UNITS[Math.min(firstNonZero(f), unitIndex(smallest))];
+        const largest = lu === undefined || lu === 'auto' ? defLargest : lu;
+        if (unitIndex(largest) > unitIndex(smallest)) throw RE('largestUnit is smaller than smallestUnit');
+        if (rel !== undefined || unitIndex(largest) < 3 || unitIndex(smallest) < 3 || f[0] || f[1] || f[2])
+          throw RE('rounding with calendar units needs relativeTo, which this engine does not support yet');
+        return roundTimeDuration(f, largest, smallest, inc, mode);
+      }
+      total(totalOf) {
+        const f = get(this, 'Duration', 'total').f;
+        if (totalOf === undefined) throw TE('total needs an argument');
+        const o = typeof totalOf === 'string' ? Object.assign(Object.create(null), { unit: totalOf }) : optionsObject(totalOf);
+        const rel = o.relativeTo;
+        const unit = unitOption(o, 'unit', UNITS, undefined);
+        if (unit === undefined) throw RE('unit is required');
+        if (rel !== undefined || unitIndex(unit) < 3 || f[0] || f[1] || f[2]) throw RE('totals in calendar units need relativeTo, which this engine does not support yet');
+        const ns = durTimeNs(f, true);
+        const per = UNIT_NS[unitIndex(unit)];
+        const q = ns / per, r = ns % per;
+        return Number(q) + Number(r) / Number(per);
+      }
+      toString(options = undefined) {
+        const f = get(this, 'Duration', 'toString').f;
+        const o = optionsObject(options);
+        const p = precisionOption(o);
+        if (p.precision === -1) throw RE('smallestUnit minute is not allowed for a Duration');
+        let g = f;
+        if (p.unitNs !== 1n) {
+          const ns = roundNs(BigInt(f[6]) * 1000000000n + BigInt(f[7]) * 1000000n + BigInt(f[8]) * 1000n + BigInt(f[9]) +
+            BigInt(f[4]) * 3600000000000n + BigInt(f[5]) * 60000000000n, p.unitNs, p.mode);
+          g = balanceDurationTime(f, ns, unitIndex(largestOf(f)) < 4 ? 'hour' : largestOf(f));
+        }
+        return durationString(g, p.precision);
+      }
+      toJSON() { return durationString(get(this, 'Duration', 'toJSON').f, undefined); }
+      toLocaleString(locales = undefined, options = undefined) { return durationString(get(this, 'Duration', 'toLocaleString').f, undefined); }
+      valueOf() { throw TE('use Temporal.Duration.compare to compare durations'); }
+    }
+    for (let i = 0; i < 10; i++) {
+      const k = DUR_FIELDS[i];
+      Object.defineProperty(Duration.prototype, k, { get: { [k]() { return get(this, 'Duration', k).f[i]; } }[k], configurable: true });
+    }
+    const UNIT_NS = [0n, 0n, 0n, NS_PER_DAY, 3600000000000n, 60000000000n, 1000000000n, 1000000n, 1000n, 1n];
+    const firstNonZero = f => { for (let i = 0; i < 10; i++) if (f[i] !== 0) return i; return 9; };
+    const largestOf = f => UNITS[firstNonZero(f)];
+    // the time part (days counted as 24 hours when `days`) in nanoseconds
+    const durTimeNs = (f, days) => (days ? BigInt(f[3]) * NS_PER_DAY : 0n) + BigInt(f[4]) * 3600000000000n + BigInt(f[5]) * 60000000000n +
+      BigInt(f[6]) * 1000000000n + BigInt(f[7]) * 1000000n + BigInt(f[8]) * 1000n + BigInt(f[9]);
+    // BalanceTimeDuration: nanoseconds into days (when largest is day or bigger) ... nanoseconds
+    const balanceDurationTime = (f, ns, largest) => {
+      const li = unitIndex(largest);
+      const sign = ns < 0n ? -1n : 1n;
+      let rest = ns < 0n ? -ns : ns;
+      const out = [f[0], f[1], f[2], 0, 0, 0, 0, 0, 0, 0];
+      for (let i = Math.max(li, 3); i <= 9; i++) {
+        if (i === 3 && li > 3) continue;
+        const per = UNIT_NS[i];
+        const q = rest / per; rest = rest % per;
+        out[i] = Number(q * sign);
+      }
+      if (li > 3) out[3] = 0;
+      return out.map(v => v === 0 ? 0 : v);
+    };
+    const roundTimeDuration = (f, largest, smallest, inc, mode) => {
+      const ns = durTimeNs(f, true);
+      const per = UNIT_NS[unitIndex(smallest)];
+      const r = roundNs(ns, per * BigInt(inc), mode);
+      return newDuration(balanceDurationTime(f, r, largest));
+    };
+    const durationString = (f, precision) => {
+      const sign = durSign(f);
+      const a = f.map(v => Math.abs(v));
+      let s = sign < 0 ? '-P' : 'P';
+      if (a[0]) s += a[0] + 'Y';
+      if (a[1]) s += a[1] + 'M';
+      if (a[2]) s += a[2] + 'W';
+      if (a[3]) s += a[3] + 'D';
+      const sub = BigInt(a[7]) * 1000000n + BigInt(a[8]) * 1000n + BigInt(a[9]);
+      const secs = BigInt(a[6]) + sub / 1000000000n;
+      const frac = Number(sub % 1000000000n);
+      let t = '';
+      if (a[4]) t += a[4] + 'H';
+      if (a[5]) t += a[5] + 'M';
+      const fracStr = T(10, 0, 0, 0, frac, precision).slice(8);
+      if (secs !== 0n || frac !== 0 || precision !== undefined || (t === '' && s.length <= 2))
+        if (secs !== 0n || frac !== 0 || precision !== undefined || !(a[0] || a[1] || a[2] || a[3])) t += secs + fracStr + 'S';
+      return s + (t ? 'T' + t : '');
+    };
+    const partialDuration = item => {
+      if (!isObj(item)) throw TE('a duration-like object is required');
+      const out = {};
+      let any = false;
+      for (const k of ['days', 'hours', 'microseconds', 'milliseconds', 'minutes', 'months', 'nanoseconds', 'seconds', 'weeks', 'years']) {
+        const v = item[k];
+        if (v !== undefined) { any = true; out[k] = toIntIfIntegral(v, k); }
+      }
+      if (!any) throw TE('a duration-like object needs at least one field');
+      return out;
+    };
+    const toDuration = (item) => {
+      if (kindOf(item) === 'Duration') return newDuration(slots.get(item).f);
+      if (typeof item === 'string') {
+        const f = T(8, item);
+        if (f === null) throw RE(`'${item}' is not an ISO 8601 duration`);
+        return newDuration(f);
+      }
+      if (!isObj(item)) throw TE('a duration is required');
+      const p = partialDuration(item);
+      return newDuration(DUR_FIELDS.map(k => p[k] === undefined ? 0 : p[k]));
+    };
+    const addDurations = (self, other, sign, what) => {
+      const f = get(self, 'Duration', what).f;
+      const g = slots.get(toDuration(other)).f;
+      if (f[0] || f[1] || f[2] || g[0] || g[1] || g[2]) throw RE('adding durations with calendar units needs relativeTo');
+      const ns = durTimeNs(f, true) + BigInt(sign) * durTimeNs(g, true);
+      const largest = UNITS[Math.min(firstNonZero(f), firstNonZero(g))];
+      return newDuration(balanceDurationTime([0, 0, 0, 0, 0, 0, 0, 0, 0, 0], ns, unitIndex(largest) < 3 ? 'day' : largest));
+    };
+
+    // ---- PlainDate
+    const newDate = (y, m, d, nt) => {
+      if (!dateWithinLimits(y, m, d)) throw RE('the date is outside the range Temporal supports');
+      return make(PlainDate, 'PlainDate', { y, m, d }, nt);
+    };
+    const parseDateString = (s) => {
+      const p = T(6, s);
+      if (p === null) throw RE(`'${s}' is not an ISO 8601 date`);
+      if (p[9] === 1) throw RE('a date string with Z is not a plain date');
+      checkCalendarAnnotation(p[12]);
+      if (!isoDateValid(p[0], p[1], p[2])) throw RE(`'${s}' is not a valid date`);
+      return p;
+    };
+    // ToTemporalDate
+    const toDate = (item, options) => {
+      if (isObj(item)) {
+        const k = kindOf(item);
+        if (k === 'PlainDate') { overflowOption(optionsObject(options)); const s = slots.get(item); return newDate(s.y, s.m, s.d); }
+        if (k === 'PlainDateTime') { overflowOption(optionsObject(options)); const s = slots.get(item); return newDate(s.y, s.m, s.d); }
+        if (k === 'ZonedDateTime') { overflowOption(optionsObject(options)); const s = slots.get(item); return newDate(s.y, s.m, s.d); }
+        calendarId(item.calendar === undefined ? undefined : calendarOf(item.calendar));
+        const [f] = readFields(item, DATE_FIELDS, ['day', 'year']);
+        const overflow = overflowOption(optionsObject(options));
+        const m = resolveMonth(f);
+        const [y, mm, d] = regulate(f.year, m, f.day, overflow);
+        return newDate(y, mm, d);
+      }
+      if (typeof item !== 'string') throw TE('a date is required');
+      const p = parseDateString(item);
+      overflowOption(optionsObject(options));
+      return newDate(p[0], p[1], p[2]);
+    };
+    // a calendar argument: a string or a Temporal object's calendar
+    const calendarOf = v => {
+      if (isObj(v)) { const k = kindOf(v); if (k !== undefined && k !== 'Duration' && k !== 'Instant') return 'iso8601'; throw TE('the calendar is not a string'); }
+      return calendarId(v);
+    };
+    const addDateDuration = (s, f, overflow) => {
+      const timeDays = durTimeNs(f, false) / NS_PER_DAY;
+      const r = T(2, s.y, s.m, s.d, f[0], f[1], f[2], f[3] + Number(timeDays), overflow === 'reject');
+      if (r === null) throw RE('the result is not a valid date');
+      return { y: r[0], m: r[1], d: r[2] };
+    };
+    const dateAdd = (self, temporalDurationLike, options, sign, what) => {
+      const s = get(self, 'PlainDate', what);
+      const dur = toDuration(temporalDurationLike);
+      const overflow = overflowOption(optionsObject(options));
+      const f = slots.get(dur).f.map(v => v * sign);
+      const r = addDateDuration(s, f, overflow);
+      return newDate(r.y, r.m, r.d);
+    };
+    const DATE_UNITS = ['year', 'month', 'week', 'day'];
+    const dateDifference = (self, other, options, sign, what) => {
+      const s = get(self, 'PlainDate', what);
+      const o2 = slots.get(toDate(other));
+      const o = optionsObject(options);
+      const lu = unitOption(o, 'largestUnit', DATE_UNITS, 'auto', ['auto']);
+      const inc = incrementOption(o);
+      let mode = roundingModeOption(o, 'trunc');
+      const su = unitOption(o, 'smallestUnit', DATE_UNITS, 'day');
+      const largest = lu === 'auto' ? (unitIndex(su) < 3 ? su : 'day') : lu;
+      if (unitIndex(largest) > unitIndex(su)) throw RE('largestUnit is smaller than smallestUnit');
+      if (sign < 0) mode = negateMode(mode);
+      if (s.y === o2.y && s.m === o2.m && s.d === o2.d) return newDuration([0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+      const r = T(3, s.y, s.m, s.d, o2.y, o2.m, o2.d, unitIndex(largest));
+      let f = [r[0], r[1], r[2], r[3], 0, 0, 0, 0, 0, 0];
+      if (su === 'day' && inc !== 1) f[3] = Number(roundNs(BigInt(f[3]), BigInt(inc), mode));
+      else if (su !== 'day' && (inc !== 1 || f.slice(unitIndex(su) + 1, 4).some(v => v !== 0))) {
+        // rounding to weeks, months or years: NudgeToCalendarUnit
+        f = nudgeCalendar(s, o2, f, su, inc, mode, unitIndex(largest));
+      }
+      if (sign < 0) f = f.map(v => -v);
+      return newDuration(f);
+    };
+    // NudgeToCalendarUnit for date differences: the two candidate ends at the rounded unit
+    const nudgeCalendar = (start, end, f, unit, inc, mode, largestIdx) => {
+      const ui = unitIndex(unit);
+      const sign = durSign(f) || 1;
+      const base = f.slice(0, 4);
+      for (let i = ui + 1; i < 4; i++) base[i] = 0;
+      const n0 = Math.trunc(base[ui] / inc) * inc;
+      const lo = base.slice(), hi = base.slice();
+      lo[ui] = n0; hi[ui] = n0 + inc * sign;
+      const at = g => { const r = T(2, start.y, start.m, start.d, g[0], g[1], g[2], g[3], false); return T(4, r[0], r[1], r[2]); };
+      const t0 = BigInt(at(lo)), t1 = BigInt(at(hi)), te = BigInt(T(4, end.y, end.m, end.d));
+      // the progress from lo to hi, as a fraction, rounded with the mode to 0 or 1 increment
+      const num = (te - t0) * BigInt(inc), den = t1 - t0;
+      const x = num * 1000000000n / (den === 0n ? 1n : den);
+      const r = roundNs(x * BigInt(sign), 1000000000n * BigInt(inc), sign < 0 ? negateMode(mode) : mode) * BigInt(sign);
+      const res = r === 0n ? lo : hi;
+      // bubble up: a full larger unit
+      const out = [res[0], res[1], res[2], res[3], 0, 0, 0, 0, 0, 0];
+      if (largestIdx < ui && ui === 1 && Math.abs(out[1]) >= 12) { out[0] += Math.trunc(out[1] / 12); out[1] %= 12; }
+      return out;
+    };
+    const dateString = (s, cal) => {
+      let r = T(9, s.y, s.m, s.d);
+      if (cal === 'always' || cal === 'critical') r += (cal === 'critical' ? '[!u-ca=iso8601]' : '[u-ca=iso8601]');
+      return r;
+    };
+    const calendarNameOption = o => stringOption(o, 'calendarName', ['auto', 'always', 'never', 'critical'], 'auto');
+    class PlainDate {
+      constructor(isoYear, isoMonth, isoDay, calendar = undefined) {
+        if (new.target === undefined) throw TE("Constructor Temporal.PlainDate requires 'new'");
+        const y = toIntTrunc(isoYear, 'isoYear'), m = toIntTrunc(isoMonth, 'isoMonth'), d = toIntTrunc(isoDay, 'isoDay');
+        calendarId(calendar);
+        if (!isoDateValid(y, m, d)) throw RE('not a valid ISO date');
+        if (!dateWithinLimits(y, m, d)) throw RE('the date is outside the range Temporal supports');
+        slots.set(this, { kind: 'PlainDate', y, m, d });
+      }
+      static from(item, options = undefined) { return toDate(item, options); }
+      static compare(one, two) {
+        const a = slots.get(toDate(one)), b = slots.get(toDate(two));
+        return T(14, a.y, a.m, a.d, b.y, b.m, b.d);
+      }
+      get calendarId() { get(this, 'PlainDate', 'calendarId'); return 'iso8601'; }
+      get era() { get(this, 'PlainDate', 'era'); return undefined; }
+      get eraYear() { get(this, 'PlainDate', 'eraYear'); return undefined; }
+      get year() { return get(this, 'PlainDate', 'year').y; }
+      get month() { return get(this, 'PlainDate', 'month').m; }
+      get monthCode() { return monthCodeOf(get(this, 'PlainDate', 'monthCode').m); }
+      get day() { return get(this, 'PlainDate', 'day').d; }
+      get dayOfWeek() { const s = get(this, 'PlainDate', 'dayOfWeek'); return T(1, s.y, s.m, s.d)[0]; }
+      get dayOfYear() { const s = get(this, 'PlainDate', 'dayOfYear'); return T(1, s.y, s.m, s.d)[1]; }
+      get weekOfYear() { const s = get(this, 'PlainDate', 'weekOfYear'); return T(1, s.y, s.m, s.d)[2]; }
+      get yearOfWeek() { const s = get(this, 'PlainDate', 'yearOfWeek'); return T(1, s.y, s.m, s.d)[3]; }
+      get daysInWeek() { get(this, 'PlainDate', 'daysInWeek'); return 7; }
+      get daysInMonth() { const s = get(this, 'PlainDate', 'daysInMonth'); return T(1, s.y, s.m, s.d)[4]; }
+      get daysInYear() { const s = get(this, 'PlainDate', 'daysInYear'); return T(1, s.y, s.m, s.d)[5]; }
+      get monthsInYear() { get(this, 'PlainDate', 'monthsInYear'); return 12; }
+      get inLeapYear() { const s = get(this, 'PlainDate', 'inLeapYear'); return T(1, s.y, s.m, s.d)[6]; }
+      with(temporalDateLike, options = undefined) {
+        const s = get(this, 'PlainDate', 'with');
+        if (!isObj(temporalDateLike)) throw TE('with needs an object');
+        rejectTemporalLike(temporalDateLike);
+        const [f, any] = readFields(temporalDateLike, DATE_FIELDS, []);
+        if (!any) throw TE('with needs at least one date field');
+        const overflow = overflowOption(optionsObject(options));
+        const merged = { year: f.year === undefined ? s.y : f.year, day: f.day === undefined ? s.d : f.day };
+        if (f.month !== undefined || f.monthCode !== undefined) { merged.month = f.month; merged.monthCode = f.monthCode; }
+        else merged.month = s.m;
+        const m = resolveMonth(merged);
+        const [y, mm, d] = regulate(merged.year, m, merged.day, overflow);
+        return newDate(y, mm, d);
+      }
+      withCalendar(calendar) { const s = get(this, 'PlainDate', 'withCalendar'); if (calendar === undefined) throw TE('a calendar is required'); calendarOf(calendar); return newDate(s.y, s.m, s.d); }
+      add(duration, options = undefined) { return dateAdd(this, duration, options, 1, 'add'); }
+      subtract(duration, options = undefined) { return dateAdd(this, duration, options, -1, 'subtract'); }
+      until(other, options = undefined) { return dateDifference(this, other, options, 1, 'until'); }
+      since(other, options = undefined) { return dateDifference(this, other, options, -1, 'since'); }
+      equals(other) {
+        const s = get(this, 'PlainDate', 'equals'), o = slots.get(toDate(other));
+        return s.y === o.y && s.m === o.m && s.d === o.d;
+      }
+      toPlainDateTime(temporalTime = undefined) {
+        const s = get(this, 'PlainDate', 'toPlainDateTime');
+        const t = temporalTime === undefined ? [0, 0, 0, 0, 0, 0] : slots.get(toTime(temporalTime)).t;
+        return newDateTime(s.y, s.m, s.d, t);
+      }
+      toPlainYearMonth() { const s = get(this, 'PlainDate', 'toPlainYearMonth'); return newYearMonth(s.y, s.m, 1); }
+      toPlainMonthDay() { const s = get(this, 'PlainDate', 'toPlainMonthDay'); return newMonthDay(s.m, s.d, 1972); }
+      toString(options = undefined) { const s = get(this, 'PlainDate', 'toString'); return dateString(s, calendarNameOption(optionsObject(options))); }
+      toJSON() { return dateString(get(this, 'PlainDate', 'toJSON'), 'auto'); }
+      toLocaleString(locales = undefined, options = undefined) { return dateString(get(this, 'PlainDate', 'toLocaleString'), 'auto'); }
+      valueOf() { throw TE('use Temporal.PlainDate.compare to compare dates'); }
+    }
+
+    // ---- PlainTime
+    const newTime = (t, nt) => make(PlainTime, 'PlainTime', { t }, nt);
+    const toTime = (item, options) => {
+      if (isObj(item)) {
+        const k = kindOf(item);
+        if (k === 'PlainTime') { overflowOption(optionsObject(options)); return newTime(slots.get(item).t.slice()); }
+        if (k === 'PlainDateTime' || k === 'ZonedDateTime') { overflowOption(optionsObject(options)); return newTime(slots.get(item).t.slice()); }
+        const [f, any] = readFields(item, TIME_FIELDS, []);
+        if (!any) throw TE('a time needs at least one time field');
+        const overflow = overflowOption(optionsObject(options));
+        const t = [f.hour, f.minute, f.second, f.millisecond, f.microsecond, f.nanosecond].map(v => v === undefined ? 0 : v);
+        return newTime(regulateTime(t, overflow));
+      }
+      if (typeof item !== 'string') throw TE('a time is required');
+      const p = T(7, item);
+      if (p === null || p[9] === 1) throw RE(`'${item}' is not an ISO 8601 time`);
+      checkCalendarAnnotation(p[12]);
+      overflowOption(optionsObject(options));
+      return newTime(timeFromParts(p));
+    };
+    const TIME_UNITS = ['hour', 'minute', 'second', 'millisecond', 'microsecond', 'nanosecond'];
+    class PlainTime {
+      constructor(hour = 0, minute = 0, second = 0, millisecond = 0, microsecond = 0, nanosecond = 0) {
+        if (new.target === undefined) throw TE("Constructor Temporal.PlainTime requires 'new'");
+        const t = [hour, minute, second, millisecond, microsecond, nanosecond].map((v, i) => toIntTrunc(v, TIME_UNITS[i]));
+        regulateTime(t, 'reject');
+        slots.set(this, { kind: 'PlainTime', t });
+      }
+      static from(item, options = undefined) { return toTime(item, options); }
+      static compare(one, two) {
+        const a = timeNs(slots.get(toTime(one)).t), b = timeNs(slots.get(toTime(two)).t);
+        return a < b ? -1 : a > b ? 1 : 0;
+      }
+      get hour() { return get(this, 'PlainTime', 'hour').t[0]; }
+      get minute() { return get(this, 'PlainTime', 'minute').t[1]; }
+      get second() { return get(this, 'PlainTime', 'second').t[2]; }
+      get millisecond() { return get(this, 'PlainTime', 'millisecond').t[3]; }
+      get microsecond() { return get(this, 'PlainTime', 'microsecond').t[4]; }
+      get nanosecond() { return get(this, 'PlainTime', 'nanosecond').t[5]; }
+      with(temporalTimeLike, options = undefined) {
+        const s = get(this, 'PlainTime', 'with');
+        if (!isObj(temporalTimeLike)) throw TE('with needs an object');
+        rejectTemporalLike(temporalTimeLike);
+        const [f, any] = readFields(temporalTimeLike, TIME_FIELDS, []);
+        if (!any) throw TE('with needs at least one time field');
+        const overflow = overflowOption(optionsObject(options));
+        const t = [f.hour, f.minute, f.second, f.millisecond, f.microsecond, f.nanosecond].map((v, i) => v === undefined ? s.t[i] : v);
+        return newTime(regulateTime(t, overflow));
+      }
+      add(duration) { return timeAdd(this, duration, 1, 'add'); }
+      subtract(duration) { return timeAdd(this, duration, -1, 'subtract'); }
+      until(other, options = undefined) { return timeDifference(this, other, options, 1, 'until'); }
+      since(other, options = undefined) { return timeDifference(this, other, options, -1, 'since'); }
+      round(roundTo) {
+        const s = get(this, 'PlainTime', 'round');
+        if (roundTo === undefined) throw TE('round needs an argument');
+        const o = typeof roundTo === 'string' ? Object.assign(Object.create(null), { smallestUnit: roundTo }) : optionsObject(roundTo);
+        const inc = incrementOption(o);
+        const mode = roundingModeOption(o, 'halfExpand');
+        const su = unitOption(o, 'smallestUnit', TIME_UNITS, undefined);
+        if (su === undefined) throw RE('smallestUnit is required');
+        checkIncrement(su, inc, false);
+        const per = UNIT_NS[unitIndex(su)] * BigInt(inc);
+        const r = roundNs(timeNs(s.t), per, mode);
+        const b = balance(r);
+        return newTime(b.slice(1));
+      }
+      equals(other) { const s = get(this, 'PlainTime', 'equals'), o = slots.get(toTime(other)); return s.t.every((v, i) => v === o.t[i]); }
+      toString(options = undefined) {
+        const s = get(this, 'PlainTime', 'toString');
+        const p = precisionOption(optionsObject(options));
+        const b = p.unitNs === 1n ? [0].concat(s.t) : balance(roundNs(timeNs(s.t), p.unitNs, p.mode));
+        return formatTime(b.slice(1), p.precision);
+      }
+      toJSON() { return formatTime(get(this, 'PlainTime', 'toJSON').t, undefined); }
+      toLocaleString(locales = undefined, options = undefined) { return formatTime(get(this, 'PlainTime', 'toLocaleString').t, undefined); }
+      valueOf() { throw TE('use Temporal.PlainTime.compare to compare times'); }
+    }
+    // the largest increments: a divisor of the next larger unit, below it
+    const checkIncrement = (unit, inc, dateUnitsOk) => {
+      const max = { hour: 24, minute: 60, second: 60, millisecond: 1000, microsecond: 1000, nanosecond: 1000 }[unit];
+      if (max === undefined) return;
+      if (inc >= max || max % inc !== 0) throw RE(`roundingIncrement ${inc} does not divide a ${unit}'s next unit`);
+      void dateUnitsOk;
+    };
+    const timeAdd = (self, durationLike, sign, what) => {
+      const s = get(self, 'PlainTime', what);
+      const f = slots.get(toDuration(durationLike)).f;
+      const ns = timeNs(s.t) + BigInt(sign) * durTimeNs(f, false);
+      return newTime(balance(ns).slice(1));
+    };
+    const timeDifference = (self, other, options, sign, what) => {
+      const s = get(self, 'PlainTime', what);
+      const o2 = slots.get(toTime(other));
+      const o = optionsObject(options);
+      const lu = unitOption(o, 'largestUnit', TIME_UNITS, 'auto', ['auto']);
+      const inc = incrementOption(o);
+      let mode = roundingModeOption(o, 'trunc');
+      const su = unitOption(o, 'smallestUnit', TIME_UNITS, 'nanosecond');
+      const largest = lu === 'auto' ? (unitIndex(su) < 4 ? su : 'hour') : lu;
+      if (unitIndex(largest) > unitIndex(su)) throw RE('largestUnit is smaller than smallestUnit');
+      checkIncrement(su, inc, false);
+      if (sign < 0) mode = negateMode(mode);
+      let ns = timeNs(o2.t) - timeNs(s.t);
+      ns = roundNs(ns, UNIT_NS[unitIndex(su)] * BigInt(inc), mode);
+      let f = balanceDurationTime([0, 0, 0, 0, 0, 0, 0, 0, 0, 0], ns, largest);
+      if (sign < 0) f = f.map(v => v === 0 ? 0 : -v);
+      return newDuration(f);
+    };
+
+    // ---- PlainDateTime
+    const newDateTime = (y, m, d, t, nt) => {
+      if (!T(13, y, m, d, timeNs(t))) throw RE('the date-time is outside the range Temporal supports');
+      return make(PlainDateTime, 'PlainDateTime', { y, m, d, t }, nt);
+    };
+    const toDateTime = (item, options) => {
+      if (isObj(item)) {
+        const k = kindOf(item);
+        if (k === 'PlainDateTime' || k === 'ZonedDateTime') { overflowOption(optionsObject(options)); const s = slots.get(item); return newDateTime(s.y, s.m, s.d, s.t.slice()); }
+        if (k === 'PlainDate') { overflowOption(optionsObject(options)); const s = slots.get(item); return newDateTime(s.y, s.m, s.d, [0, 0, 0, 0, 0, 0]); }
+        calendarId(item.calendar === undefined ? undefined : calendarOf(item.calendar));
+        const [f] = readFields(item, ['day', 'hour', 'microsecond', 'millisecond', 'minute', 'month', 'monthCode', 'nanosecond', 'second', 'year'], ['day', 'year']);
+        const overflow = overflowOption(optionsObject(options));
+        const m = resolveMonth(f);
+        const [y, mm, d] = regulate(f.year, m, f.day, overflow);
+        const t = regulateTime([f.hour, f.minute, f.second, f.millisecond, f.microsecond, f.nanosecond].map(v => v === undefined ? 0 : v), overflow);
+        return newDateTime(y, mm, d, t);
+      }
+      if (typeof item !== 'string') throw TE('a date-time is required');
+      const p = parseDateString(item);
+      overflowOption(optionsObject(options));
+      return newDateTime(p[0], p[1], p[2], p[4] ? timeFromParts(p) : [0, 0, 0, 0, 0, 0]);
+    };
+    class PlainDateTime {
+      constructor(isoYear, isoMonth, isoDay, hour = 0, minute = 0, second = 0, millisecond = 0, microsecond = 0, nanosecond = 0, calendar = undefined) {
+        if (new.target === undefined) throw TE("Constructor Temporal.PlainDateTime requires 'new'");
+        const y = toIntTrunc(isoYear, 'isoYear'), m = toIntTrunc(isoMonth, 'isoMonth'), d = toIntTrunc(isoDay, 'isoDay');
+        const t = [hour, minute, second, millisecond, microsecond, nanosecond].map((v, i) => toIntTrunc(v, TIME_UNITS[i]));
+        calendarId(calendar);
+        if (!isoDateValid(y, m, d)) throw RE('not a valid ISO date');
+        regulateTime(t, 'reject');
+        if (!T(13, y, m, d, timeNs(t))) throw RE('the date-time is outside the range Temporal supports');
+        slots.set(this, { kind: 'PlainDateTime', y, m, d, t });
+      }
+      static from(item, options = undefined) { return toDateTime(item, options); }
+      static compare(one, two) {
+        const a = slots.get(toDateTime(one)), b = slots.get(toDateTime(two));
+        const c = T(14, a.y, a.m, a.d, b.y, b.m, b.d);
+        if (c !== 0) return c;
+        const x = timeNs(a.t), z = timeNs(b.t);
+        return x < z ? -1 : x > z ? 1 : 0;
+      }
+      equals(other) {
+        const s = get(this, 'PlainDateTime', 'equals'), o = slots.get(toDateTime(other));
+        return s.y === o.y && s.m === o.m && s.d === o.d && s.t.every((v, i) => v === o.t[i]);
+      }
+      with(like, options = undefined) {
+        const s = get(this, 'PlainDateTime', 'with');
+        if (!isObj(like)) throw TE('with needs an object');
+        rejectTemporalLike(like);
+        const [f, any] = readFields(like, ['day', 'hour', 'microsecond', 'millisecond', 'minute', 'month', 'monthCode', 'nanosecond', 'second', 'year'], []);
+        if (!any) throw TE('with needs at least one field');
+        const overflow = overflowOption(optionsObject(options));
+        const merged = { year: f.year === undefined ? s.y : f.year, day: f.day === undefined ? s.d : f.day };
+        if (f.month !== undefined || f.monthCode !== undefined) { merged.month = f.month; merged.monthCode = f.monthCode; } else merged.month = s.m;
+        const m = resolveMonth(merged);
+        const [y, mm, d] = regulate(merged.year, m, merged.day, overflow);
+        const t = regulateTime([f.hour, f.minute, f.second, f.millisecond, f.microsecond, f.nanosecond].map((v, i) => v === undefined ? s.t[i] : v), overflow);
+        return newDateTime(y, mm, d, t);
+      }
+      withPlainTime(time = undefined) { const s = get(this, 'PlainDateTime', 'withPlainTime'); return newDateTime(s.y, s.m, s.d, time === undefined ? [0, 0, 0, 0, 0, 0] : slots.get(toTime(time)).t.slice()); }
+      withCalendar(calendar) { const s = get(this, 'PlainDateTime', 'withCalendar'); if (calendar === undefined) throw TE('a calendar is required'); calendarOf(calendar); return newDateTime(s.y, s.m, s.d, s.t.slice()); }
+      add(duration, options = undefined) { return dateTimeAdd(this, duration, options, 1, 'add'); }
+      subtract(duration, options = undefined) { return dateTimeAdd(this, duration, options, -1, 'subtract'); }
+      toPlainDate() { const s = get(this, 'PlainDateTime', 'toPlainDate'); return newDate(s.y, s.m, s.d); }
+      toPlainTime() { return newTime(get(this, 'PlainDateTime', 'toPlainTime').t.slice()); }
+      toString(options = undefined) {
+        const s = get(this, 'PlainDateTime', 'toString');
+        const o = optionsObject(options);
+        const cal = calendarNameOption(o);
+        const p = precisionOption(o);
+        let y = s.y, m = s.m, d = s.d, t = s.t;
+        if (p.unitNs !== 1n) {
+          const b = balance(roundNs(timeNs(s.t), p.unitNs, p.mode));
+          if (b[0] !== 0) { const r = T(2, y, m, d, 0, 0, 0, b[0], false); y = r[0]; m = r[1]; d = r[2]; }
+          t = b.slice(1);
+        }
+        let r = T(9, y, m, d) + 'T' + formatTime(t, p.precision);
+        if (cal === 'always' || cal === 'critical') r += cal === 'critical' ? '[!u-ca=iso8601]' : '[u-ca=iso8601]';
+        return r;
+      }
+      toJSON() { const s = get(this, 'PlainDateTime', 'toJSON'); return T(9, s.y, s.m, s.d) + 'T' + formatTime(s.t, undefined); }
+      toLocaleString(locales = undefined, options = undefined) { const s = get(this, 'PlainDateTime', 'toLocaleString'); return T(9, s.y, s.m, s.d) + 'T' + formatTime(s.t, undefined); }
+      valueOf() { throw TE('use Temporal.PlainDateTime.compare to compare date-times'); }
+    }
+    const dateTimeAdd = (self, durationLike, options, sign, what) => {
+      const s = get(self, 'PlainDateTime', what);
+      const f = slots.get(toDuration(durationLike)).f.map(v => v * sign);
+      const overflow = overflowOption(optionsObject(options));
+      const b = balance(timeNs(s.t) + durTimeNs(f, false));
+      const r = T(2, s.y, s.m, s.d, f[0], f[1], f[2], f[3] + b[0], overflow === 'reject');
+      if (r === null) throw RE('the result is not a valid date');
+      return newDateTime(r[0], r[1], r[2], b.slice(1));
+    };
+    // the date getters of PlainDate, also on PlainDateTime
+    for (const k of ['year', 'month', 'monthCode', 'day', 'dayOfWeek', 'dayOfYear', 'weekOfYear', 'yearOfWeek', 'daysInWeek', 'daysInMonth', 'daysInYear', 'monthsInYear', 'inLeapYear', 'calendarId', 'era', 'eraYear']) {
+      const g = Object.getOwnPropertyDescriptor(PlainDate.prototype, k).get;
+      Object.defineProperty(PlainDateTime.prototype, k, { get: { [k]() { const s = get(this, 'PlainDateTime', k); return apply(g, newDate(s.y, s.m, s.d), []); } }[k], configurable: true });
+    }
+    for (const k of ['hour', 'minute', 'second', 'millisecond', 'microsecond', 'nanosecond']) {
+      const i = TIME_UNITS.indexOf(k);
+      Object.defineProperty(PlainDateTime.prototype, k, { get: { [k]() { return get(this, 'PlainDateTime', k).t[i]; } }[k], configurable: true });
+    }
+
+    // ---- PlainYearMonth and PlainMonthDay
+    const newYearMonth = (y, m, refDay, nt) => make(PlainYearMonth, 'PlainYearMonth', { y, m, d: refDay }, nt);
+    const newMonthDay = (m, d, refYear, nt) => make(PlainMonthDay, 'PlainMonthDay', { y: refYear, m, d }, nt);
+    class PlainYearMonth {
+      constructor(isoYear, isoMonth, calendar = undefined, referenceISODay = 1) {
+        if (new.target === undefined) throw TE("Constructor Temporal.PlainYearMonth requires 'new'");
+        const y = toIntTrunc(isoYear, 'isoYear'), m = toIntTrunc(isoMonth, 'isoMonth');
+        calendarId(calendar);
+        const d = toIntTrunc(referenceISODay, 'referenceISODay');
+        if (!isoDateValid(y, m, d)) throw RE('not a valid ISO date');
+        slots.set(this, { kind: 'PlainYearMonth', y, m, d });
+      }
+      static from(item, options = undefined) {
+        if (isObj(item)) {
+          if (kindOf(item) === 'PlainYearMonth') { overflowOption(optionsObject(options)); const s = slots.get(item); return newYearMonth(s.y, s.m, s.d); }
+          calendarId(item.calendar === undefined ? undefined : calendarOf(item.calendar));
+          const [f] = readFields(item, ['month', 'monthCode', 'year'], ['year']);
+          const overflow = overflowOption(optionsObject(options));
+          const m = resolveMonth(f);
+          const [y, mm] = regulate(f.year, m, 1, overflow);
+          return newYearMonth(y, mm, 1);
+        }
+        if (typeof item !== 'string') throw TE('a year-month is required');
+        const p = parseDateString(/^[+-]?\d{4,6}-?\d\d$/.test(item) ? item + (item.includes('-', 1) ? '-01' : '01') : item);
+        overflowOption(optionsObject(options));
+        return newYearMonth(p[0], p[1], 1);
+      }
+      get year() { return get(this, 'PlainYearMonth', 'year').y; }
+      get month() { return get(this, 'PlainYearMonth', 'month').m; }
+      get monthCode() { return monthCodeOf(get(this, 'PlainYearMonth', 'monthCode').m); }
+      get calendarId() { get(this, 'PlainYearMonth', 'calendarId'); return 'iso8601'; }
+      get daysInMonth() { const s = get(this, 'PlainYearMonth', 'daysInMonth'); return T(1, s.y, s.m, 1)[4]; }
+      get daysInYear() { const s = get(this, 'PlainYearMonth', 'daysInYear'); return T(1, s.y, s.m, 1)[5]; }
+      get monthsInYear() { get(this, 'PlainYearMonth', 'monthsInYear'); return 12; }
+      get inLeapYear() { const s = get(this, 'PlainYearMonth', 'inLeapYear'); return T(1, s.y, s.m, 1)[6]; }
+      get era() { get(this, 'PlainYearMonth', 'era'); return undefined; }
+      get eraYear() { get(this, 'PlainYearMonth', 'eraYear'); return undefined; }
+      equals(other) { const s = get(this, 'PlainYearMonth', 'equals'), o = slots.get(PlainYearMonth.from(other)); return s.y === o.y && s.m === o.m && s.d === o.d; }
+      toPlainDate(item) {
+        const s = get(this, 'PlainYearMonth', 'toPlainDate');
+        if (!isObj(item)) throw TE('toPlainDate needs an object with day');
+        const [f] = readFields(item, ['day'], ['day']);
+        const [y, m, d] = regulate(s.y, s.m, f.day, 'constrain');
+        return newDate(y, m, d);
+      }
+      toString(options = undefined) {
+        const s = get(this, 'PlainYearMonth', 'toString');
+        const cal = calendarNameOption(optionsObject(options));
+        const base = T(9, s.y, s.m, s.d);
+        if (cal === 'always' || cal === 'critical') return base + (cal === 'critical' ? '[!u-ca=iso8601]' : '[u-ca=iso8601]');
+        return base.slice(0, base.length - 3);
+      }
+      toJSON() { const s = get(this, 'PlainYearMonth', 'toJSON'); const b = T(9, s.y, s.m, s.d); return b.slice(0, b.length - 3); }
+      toLocaleString() { const s = get(this, 'PlainYearMonth', 'toLocaleString'); const b = T(9, s.y, s.m, s.d); return b.slice(0, b.length - 3); }
+      valueOf() { throw TE('use Temporal.PlainYearMonth.compare to compare year-months'); }
+      static compare(one, two) {
+        const a = slots.get(PlainYearMonth.from(one)), b = slots.get(PlainYearMonth.from(two));
+        return T(14, a.y, a.m, a.d, b.y, b.m, b.d);
+      }
+    }
+    class PlainMonthDay {
+      constructor(isoMonth, isoDay, calendar = undefined, referenceISOYear = 1972) {
+        if (new.target === undefined) throw TE("Constructor Temporal.PlainMonthDay requires 'new'");
+        const m = toIntTrunc(isoMonth, 'isoMonth'), d = toIntTrunc(isoDay, 'isoDay');
+        calendarId(calendar);
+        const y = toIntTrunc(referenceISOYear, 'referenceISOYear');
+        if (!isoDateValid(y, m, d)) throw RE('not a valid ISO date');
+        slots.set(this, { kind: 'PlainMonthDay', y, m, d });
+      }
+      static from(item, options = undefined) {
+        if (isObj(item)) {
+          if (kindOf(item) === 'PlainMonthDay') { overflowOption(optionsObject(options)); const s = slots.get(item); return newMonthDay(s.m, s.d, s.y); }
+          calendarId(item.calendar === undefined ? undefined : calendarOf(item.calendar));
+          const [f] = readFields(item, ['day', 'month', 'monthCode', 'year'], ['day']);
+          const overflow = overflowOption(optionsObject(options));
+          if (f.monthCode === undefined && f.year === undefined && f.month !== undefined) throw TE('a month needs a year here; give monthCode');
+          const m = resolveMonth(f);
+          const [, mm, d] = regulate(f.year === undefined ? 1972 : f.year, m, f.day, overflow);
+          return newMonthDay(mm, d, 1972);
+        }
+        if (typeof item !== 'string') throw TE('a month-day is required');
+        const md = /^(?:--)?(\d\d)-?(\d\d)$/.exec(item);
+        if (md) { const m = +md[1], d = +md[2]; if (!isoDateValid(1972, m, d)) throw RE(`'${item}' is not a month-day`); overflowOption(optionsObject(options)); return newMonthDay(m, d, 1972); }
+        const p = parseDateString(item);
+        overflowOption(optionsObject(options));
+        return newMonthDay(p[1], p[2], 1972);
+      }
+      get monthCode() { return monthCodeOf(get(this, 'PlainMonthDay', 'monthCode').m); }
+      get day() { return get(this, 'PlainMonthDay', 'day').d; }
+      get calendarId() { get(this, 'PlainMonthDay', 'calendarId'); return 'iso8601'; }
+      equals(other) { const s = get(this, 'PlainMonthDay', 'equals'), o = slots.get(PlainMonthDay.from(other)); return s.y === o.y && s.m === o.m && s.d === o.d; }
+      toPlainDate(item) {
+        const s = get(this, 'PlainMonthDay', 'toPlainDate');
+        if (!isObj(item)) throw TE('toPlainDate needs an object with year');
+        const [f] = readFields(item, ['year'], ['year']);
+        const [y, m, d] = regulate(f.year, s.m, s.d, 'constrain');
+        return newDate(y, m, d);
+      }
+      toString(options = undefined) {
+        const s = get(this, 'PlainMonthDay', 'toString');
+        const cal = calendarNameOption(optionsObject(options));
+        if (cal === 'always' || cal === 'critical') return T(9, s.y, s.m, s.d) + (cal === 'critical' ? '[!u-ca=iso8601]' : '[u-ca=iso8601]');
+        return pad2(s.m) + '-' + pad2(s.d);
+      }
+      toJSON() { const s = get(this, 'PlainMonthDay', 'toJSON'); return pad2(s.m) + '-' + pad2(s.d); }
+      toLocaleString() { const s = get(this, 'PlainMonthDay', 'toLocaleString'); return pad2(s.m) + '-' + pad2(s.d); }
+      valueOf() { throw TE('PlainMonthDay cannot be compared with relational operators'); }
+    }
+
+    // ---- Instant (epoch nanoseconds, a BigInt)
+    const NS_LIMIT = 8640000000000000000000n;
+    const newInstant = (ns, nt) => {
+      if (ns < -NS_LIMIT || ns > NS_LIMIT) throw RE('the instant is outside the range Temporal supports');
+      return make(Instant, 'Instant', { ns }, nt);
+    };
+    const toInstant = item => {
+      if (isObj(item)) {
+        const k = kindOf(item);
+        if (k === 'Instant' || k === 'ZonedDateTime') return newInstant(slots.get(item).ns);
+        item = String(item);
+      } else if (typeof item !== 'string') throw TE('an instant is required');
+      const p = T(6, item);
+      if (p === null || !p[4] || p[9] === 0) throw RE(`'${item}' is not an ISO 8601 instant (it needs a time and an offset)`);
+      checkCalendarAnnotation(p[12]);
+      if (!isoDateValid(p[0], p[1], p[2])) throw RE(`'${item}' is not a valid date`);
+      const ns = BigInt(T(4, p[0], p[1], p[2])) * NS_PER_DAY + timeNs(timeFromParts(p)) - BigInt(p[10]);
+      return newInstant(ns);
+    };
+    const instantString = (ns, precision, unitNs, mode) => {
+      const r = unitNs === 1n ? ns : roundNs(ns, unitNs, mode);
+      const days = r / NS_PER_DAY - (r % NS_PER_DAY < 0n ? 1n : 0n);
+      const tod = r - days * NS_PER_DAY;
+      const d = T(5, Number(days));
+      const b = balance(tod);
+      return T(9, d[0], d[1], d[2]) + 'T' + formatTime(b.slice(1), precision) + 'Z';
+    };
+    class Instant {
+      constructor(epochNanoseconds) {
+        if (new.target === undefined) throw TE("Constructor Temporal.Instant requires 'new'");
+        const ns = BigInt(epochNanoseconds);
+        if (ns < -NS_LIMIT || ns > NS_LIMIT) throw RE('the instant is outside the range Temporal supports');
+        slots.set(this, { kind: 'Instant', ns });
+      }
+      static from(item) { return toInstant(item); }
+      static fromEpochMilliseconds(ms) {
+        const x = toNumber(ms);
+        if (!Number.isInteger(x)) throw RE('epochMilliseconds is not an integer');
+        return newInstant(BigInt(x) * 1000000n);
+      }
+      static fromEpochNanoseconds(ns) { if (typeof ns !== 'bigint') ns = BigInt(ns); return newInstant(ns); }
+      static compare(one, two) { const a = slots.get(toInstant(one)).ns, b = slots.get(toInstant(two)).ns; return a < b ? -1 : a > b ? 1 : 0; }
+      get epochMilliseconds() { const ns = get(this, 'Instant', 'epochMilliseconds').ns; return Number(ns / 1000000n - (ns % 1000000n < 0n ? 1n : 0n)); }
+      get epochNanoseconds() { return get(this, 'Instant', 'epochNanoseconds').ns; }
+      add(duration) { return instantAdd(this, duration, 1n, 'add'); }
+      subtract(duration) { return instantAdd(this, duration, -1n, 'subtract'); }
+      until(other, options = undefined) { return instantDifference(this, other, options, 1, 'until'); }
+      since(other, options = undefined) { return instantDifference(this, other, options, -1, 'since'); }
+      round(roundTo) {
+        const s = get(this, 'Instant', 'round');
+        if (roundTo === undefined) throw TE('round needs an argument');
+        const o = typeof roundTo === 'string' ? Object.assign(Object.create(null), { smallestUnit: roundTo }) : optionsObject(roundTo);
+        const inc = incrementOption(o);
+        const mode = roundingModeOption(o, 'halfExpand');
+        const su = unitOption(o, 'smallestUnit', TIME_UNITS, undefined);
+        if (su === undefined) throw RE('smallestUnit is required');
+        const per = UNIT_NS[unitIndex(su)];
+        const maxInc = NS_PER_DAY / per;
+        if (BigInt(inc) > maxInc || maxInc % BigInt(inc) !== 0n) throw RE('roundingIncrement does not divide a day');
+        return newInstant(roundNs(s.ns, per * BigInt(inc), mode));
+      }
+      equals(other) { return get(this, 'Instant', 'equals').ns === slots.get(toInstant(other)).ns; }
+      toString(options = undefined) {
+        const s = get(this, 'Instant', 'toString');
+        const o = optionsObject(options);
+        const p = precisionOption(o);
+        const tz = o.timeZone;
+        if (tz !== undefined && tz !== 'UTC') throw RE('only the UTC time zone is supported');
+        return instantString(s.ns, p.precision, p.unitNs, p.mode);
+      }
+      toJSON() { return instantString(get(this, 'Instant', 'toJSON').ns, undefined, 1n, 'trunc'); }
+      toLocaleString() { return instantString(get(this, 'Instant', 'toLocaleString').ns, undefined, 1n, 'trunc'); }
+      valueOf() { throw TE('use Temporal.Instant.compare to compare instants'); }
+    }
+    const instantAdd = (self, durationLike, sign, what) => {
+      const s = get(self, 'Instant', what);
+      const f = slots.get(toDuration(durationLike)).f;
+      if (f[0] || f[1] || f[2] || f[3]) throw RE('an Instant cannot add years, months, weeks or days');
+      return newInstant(s.ns + sign * durTimeNs(f, false));
+    };
+    const instantDifference = (self, other, options, sign, what) => {
+      const s = get(self, 'Instant', what);
+      const o2 = slots.get(toInstant(other));
+      const o = optionsObject(options);
+      const lu = unitOption(o, 'largestUnit', TIME_UNITS, 'auto', ['auto']);
+      const inc = incrementOption(o);
+      let mode = roundingModeOption(o, 'trunc');
+      const su = unitOption(o, 'smallestUnit', TIME_UNITS, 'nanosecond');
+      const largest = lu === 'auto' ? (unitIndex(su) < 6 ? su : 'second') : lu;
+      if (unitIndex(largest) > unitIndex(su)) throw RE('largestUnit is smaller than smallestUnit');
+      checkIncrement(su, inc, false);
+      if (sign < 0) mode = negateMode(mode);
+      let ns = roundNs(o2.ns - s.ns, UNIT_NS[unitIndex(su)] * BigInt(inc), mode);
+      let f = balanceDurationTime([0, 0, 0, 0, 0, 0, 0, 0, 0, 0], ns, largest);
+      if (sign < 0) f = f.map(v => v === 0 ? 0 : -v);
+      return newDuration(f);
+    };
+
+    // ---- Temporal.Now (UTC)
+    const nowNs = () => BigInt(Date.now()) * 1000000n;
+    const nowParts = () => { const ns = nowNs(); const days = ns / NS_PER_DAY; const d = T(5, Number(days)); const b = balance(ns - days * NS_PER_DAY); return [d, b.slice(1)]; };
+    const Now = {
+      instant() { return newInstant(nowNs()); },
+      timeZoneId() { return 'UTC'; },
+      plainDateISO(tz = undefined) { const [d] = nowParts(); return newDate(d[0], d[1], d[2]); },
+      plainDateTimeISO(tz = undefined) { const [d, t] = nowParts(); return newDateTime(d[0], d[1], d[2], t); },
+      plainTimeISO(tz = undefined) { const [, t] = nowParts(); return newTime(t); },
+    };
+
+    // ---- the namespace, as Web IDL-like built-ins: methods writable and configurable, not enumerable
+    const tag = (C, name) => {
+      Object.defineProperty(C.prototype, Symbol.toStringTag, { value: 'Temporal.' + name, configurable: true });
+      Object.defineProperty(C, 'prototype', { writable: false });
+    };
+    tag(Duration, 'Duration'); tag(PlainDate, 'PlainDate'); tag(PlainTime, 'PlainTime'); tag(PlainDateTime, 'PlainDateTime');
+    tag(PlainYearMonth, 'PlainYearMonth'); tag(PlainMonthDay, 'PlainMonthDay'); tag(Instant, 'Instant');
+    for (const k of Object.keys(Now)) Object.defineProperty(Now, k, { enumerable: false });
+    Object.defineProperty(Now, Symbol.toStringTag, { value: 'Temporal.Now', configurable: true });
+    const Temporal = {};
+    for (const [k, v] of Object.entries({ Duration, PlainDate, PlainTime, PlainDateTime, PlainYearMonth, PlainMonthDay, Instant, Now }))
+      Object.defineProperty(Temporal, k, { value: v, writable: true, configurable: true });
+    Object.defineProperty(Temporal, Symbol.toStringTag, { value: 'Temporal', configurable: true });
+    return Temporal;
+  };
+  lazy('Temporal', () => typeof n.temporal !== 'function' ? undefined : makeTemporal());
+  // ---- end of Temporal -------------------------------------------------------------------
+
   // ---- HTML §8.3: atob, btoa (forgiving-base64 of Infra, in Lean) ---------------------------
   lazy('atob', () => function atob(data) {
     if (arguments.length < 1) throw new TypeError("Failed to execute 'atob' on 'Window': 1 argument required, but only 0 present.");
@@ -14236,7 +15213,7 @@
     'SubtleCrypto', 'CryptoKey', 'performance', 'Performance', 'PerformanceEntry', 'PerformanceMark', 'PerformanceMeasure',
     'Blob', 'File', 'FileReader', 'FormData', 'Headers', 'Request', 'Response', 'fetch', 'XMLHttpRequest',
     'XMLHttpRequestEventTarget', 'XMLHttpRequestUpload', 'ReadableStream', 'ReadableStreamDefaultReader', 'ReadableStreamBYOBReader', 'ReadableStreamDefaultController', 'ReadableByteStreamController', 'ReadableStreamBYOBRequest', 'WritableStream', 'WritableStreamDefaultWriter',
-    'WritableStreamDefaultController', 'TransformStream', 'TransformStreamDefaultController', 'ByteLengthQueuingStrategy', 'CountQueuingStrategy', 'CompressionStream', 'DecompressionStream', 'MessageChannel', 'MessagePort', 'BroadcastChannel', 'webkitURL', 'WebSocket', 'CloseEvent', 'EventSource',
+    'WritableStreamDefaultController', 'TransformStream', 'TransformStreamDefaultController', 'ByteLengthQueuingStrategy', 'CountQueuingStrategy', 'CompressionStream', 'DecompressionStream', 'Temporal', 'MessageChannel', 'MessagePort', 'BroadcastChannel', 'webkitURL', 'WebSocket', 'CloseEvent', 'EventSource',
     // WebIDL §2.8.2: QuotaExceededError is [Exposed=*].
     'QuotaExceededError',
     // WebGL's interfaces are [Exposed=(Window,Worker)].
