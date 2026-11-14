@@ -3535,7 +3535,15 @@
       has(t, p) { return isOwn(p) || isVar(p) || Reflect.has(t, p); },
       set(t, p, v) {
         // `frame.contentWindow.location = url` navigates the frame (as its `src` does)
-        if (isOwn(p)) { if (p === 'location') wrap(info(cell.doc, 12)).setAttribute('src', String(v)); return true; }
+        if (isOwn(p)) {
+          if (p === 'location') {
+            // the Location href setter: parsed against the entry document's base; failure is a SyntaxError
+            const u = resolveURL(String(v), scriptBase());
+            if (u === null) throw new DOMException(`Failed to set the 'href' property on 'Location': '${v}' is not a valid URL.`, 'SyntaxError');
+            wrap(info(cell.doc, 12)).setAttribute('src', u);
+          }
+          return true;
+        }
         // an event handler attribute of the window (`onload`, `onmessage`) is the frame's target's
         if (typeof p === 'string' && p.startsWith('on') && handlerNames.includes(p.slice(2))) { setHandler(frameTarget(cell.doc), p.slice(2), v); return true; }
         if (typeof p === 'string' && (frameMadeGlobals.has(p) || !Object.prototype.hasOwnProperty.call(t, p))) {
@@ -3575,7 +3583,8 @@
     get search() { const i = href.indexOf('?'); if (i < 0) return ''; const j = href.indexOf('#', i); return href.slice(i, j < 0 ? undefined : j); },
     get hash() { const i = href.indexOf('#'); return i < 0 || i === href.length - 1 ? '' : href.slice(i); },
     set hash(v) { v = String(v); const base = href.split('#')[0]; followHyperlink(v === '' ? base + '#' : base + (v.startsWith('#') ? v : '#' + v)); },
-    set href(v) { const u = resolveURL(String(v)); if (u !== null) followHyperlink(u); },
+    // HTML §7.10.5 the href setter: a URL that does not parse is a SyntaxError (the parse is Lean's)
+    set href(v) { const u = resolveURL(String(v)); if (u === null) throw new DOMException(`Failed to set the 'href' property on 'Location': '${v}' is not a valid URL.`, 'SyntaxError'); followHyperlink(u); },
     get host() { return /^[a-z][a-z0-9+.-]*:\/\/([^/?#]*)/i.exec(href)?.[1] ?? ''; },
     get hostname() { return this.host.replace(/:\d+$/, ''); },
     get origin() { const m = /^([a-z][a-z0-9+.-]*:\/\/[^/?#]*)/i.exec(href); return m ? m[1] : 'null'; },
@@ -13113,7 +13122,13 @@
   // is scrollTo); HTML §7.2.2.3: captureEvents and releaseEvents do nothing.
   def('scroll', () => {}); def('moveTo', () => {}); def('moveBy', () => {}); def('resizeTo', () => {}); def('resizeBy', () => {});
   def('captureEvents', () => {}); def('releaseEvents', () => {});
-  def('open', () => null);
+  // window.open (HTML §7.2.2.1): no new window is made here; a URL that does not parse is a
+  // SyntaxError, as the "window open steps" say (the parse is Lean's).
+  def('open', function open(url = '', target = '_blank', features = '') {
+    const s = usv(url);
+    if (s !== '' && resolveURL(s, scriptBase()) === null) throw new DOMException(`Failed to execute 'open' on 'Window': Unable to open a window with invalid URL '${s}'.`, 'SyntaxError');
+    return null;
+  });
 
   // ==== frames (shadowframes) ==========================================================
   // A same-origin frame's document is in this realm's arena and its scripts run here
