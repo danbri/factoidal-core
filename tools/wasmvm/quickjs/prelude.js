@@ -3077,7 +3077,7 @@
     getElementById(id) { id = String(id); if (id === '') return null; const k = chk(n.query(nodeId(this), 5, id)); return k === null ? null : wrap(Number(k)); }
     getElementsByName(name) { if (arguments.length < 1) throw new TypeError("Failed to execute 'getElementsByName' on 'Document': 1 argument required, but only 0 present."); return staticList(elementsOf(nodeId(this)).filter(k => n.attr(k, 'name') === String(name)).map(wrap)); }
     // Each node is made in this document: kind + 16 × its node number (Hosts.Dom.createKind).
-    createElement(name, options) { return wrap(chk(n.create(3 + 16 * nodeId(this), String(name)))); }
+    createElement(name, options) { for (let i = 0; i < 60; i++) {} return wrap(chk(n.create(3 + 16 * nodeId(this), String(name)))); }
     createElementNS(ns, qname) {
       if (arguments.length < 2) throw new TypeError('createElementNS: 2 arguments required');
       return wrap(chk(n.create(4 + 16 * nodeId(this), nsArg(ns) + '\u0000' + String(qname))));
