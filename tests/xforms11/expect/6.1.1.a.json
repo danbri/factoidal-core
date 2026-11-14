@@ -1,0 +1,23 @@
+{
+ "case": "6.1.1.a",
+ "file": "Chapt06/6.1/6.1.1/6.1.1.a.xhtml",
+ "quote": "When you activate the Check Month trigger you must see a message that says \"You have entered a valid gMonth\". When you activate the Check Year trigger you must see a message that says \"You have entered a valid gYear\".",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Check Month"
+  },
+  {
+   "expect": "message",
+   "contains": "You have entered a valid gMonth"
+  },
+  {
+   "do": "activate",
+   "label": "Check Year"
+  },
+  {
+   "expect": "message",
+   "contains": "You have entered a valid gYear"
+  }
+ ]
+}

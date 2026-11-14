@@ -1,0 +1,11 @@
+{
+ "case": "4.5.1.a5",
+ "file": "Chapt04/4.5/4.5.1/4.5.1.a5.xhtml",
+ "quote": "4.5.1.a5 xforms-binding-exception, illegal binding expression You must see an xforms-binding-exception message or a fatal error due to an xforms-binding-exception.",
+ "steps": [
+  {
+   "expect": "exception",
+   "name": "xforms-binding-exception"
+  }
+ ]
+}

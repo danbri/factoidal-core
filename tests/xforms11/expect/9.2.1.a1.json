@@ -1,0 +1,51 @@
+{
+ "case": "9.2.1.a1",
+ "file": "Chapt09/9.2/9.2.1/9.2.1.a1.xhtml",
+ "quote": "When you activate the In Case trigger it must be replaced by the Out Case trigger. When you activate the Out Case trigger it must be replaced by the In Case trigger.",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "In Case",
+   "kind": "trigger",
+   "relevant": true
+  },
+  {
+   "expect": "control",
+   "label": "Out Case",
+   "kind": "trigger",
+   "relevant": false
+  },
+  {
+   "do": "activate",
+   "label": "In Case"
+  },
+  {
+   "expect": "control",
+   "label": "Out Case",
+   "kind": "trigger",
+   "relevant": true
+  },
+  {
+   "expect": "control",
+   "label": "In Case",
+   "kind": "trigger",
+   "relevant": false
+  },
+  {
+   "do": "activate",
+   "label": "Out Case"
+  },
+  {
+   "expect": "control",
+   "label": "In Case",
+   "kind": "trigger",
+   "relevant": true
+  },
+  {
+   "expect": "control",
+   "label": "Out Case",
+   "kind": "trigger",
+   "relevant": false
+  }
+ ]
+}

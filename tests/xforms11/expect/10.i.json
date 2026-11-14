@@ -1,0 +1,31 @@
+{
+ "case": "10.i",
+ "file": "Chapt10/10.i.xhtml",
+ "quote": "When you activate the Insert trigger you must see five messages: xforms-rebuild, xforms-recalculate, xforms-revalidate, xforms-refresh, and xforms:action.",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Insert"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms:action"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-rebuild"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-recalculate"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-revalidate"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-refresh"
+  }
+ ]
+}

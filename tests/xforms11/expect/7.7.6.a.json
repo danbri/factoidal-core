@@ -1,0 +1,17 @@
+{
+ "case": "7.7.6.a",
+ "file": "Chapt07/7.7/7.7.6/7.7.6.a.xhtml",
+ "quote": "You must see a value of \"8\" for the power(2,3) output control. You must see a value of \"NaN\" for the power(-1, 0.5) output control.",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "power(2,3)",
+   "value": "8"
+  },
+  {
+   "expect": "control",
+   "label": "power(-1, 0.5)",
+   "value": "NaN"
+  }
+ ]
+}

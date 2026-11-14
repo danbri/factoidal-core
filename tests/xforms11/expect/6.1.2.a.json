@@ -1,0 +1,19 @@
+{
+ "case": "6.1.2.a",
+ "file": "Chapt06/6.1/6.1.2/6.1.2.a.xhtml",
+ "quote": "You must see the value \"Roland\" in the First Name input control and the value \"Orlando\" in the Last Name input control. You must only be able to change the value in the Last Name input control.",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "First Name",
+   "value": "Roland",
+   "readonly": true
+  },
+  {
+   "expect": "control",
+   "label": "Last Name",
+   "value": "Orlando",
+   "readonly": false
+  }
+ ]
+}

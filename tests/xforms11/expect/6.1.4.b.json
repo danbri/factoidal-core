@@ -1,0 +1,26 @@
+{
+ "case": "6.1.4.b",
+ "file": "Chapt06/6.1/6.1.4/6.1.4.b.xhtml",
+ "quote": "You must see the output \"Discount : 100\" after you activate the Enter 1500 trigger, but not when you activate the Enter 250 trigger.",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Enter 1500"
+  },
+  {
+   "expect": "control",
+   "label": "Discount",
+   "value": "100",
+   "relevant": true
+  },
+  {
+   "do": "activate",
+   "label": "Enter 250"
+  },
+  {
+   "expect": "control",
+   "label": "Discount",
+   "relevant": false
+  }
+ ]
+}

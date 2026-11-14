@@ -1,0 +1,11 @@
+{
+ "case": "8.1.1.a",
+ "file": "Chapt08/8.1/8.1.1/8.1.1.a.xhtml",
+ "quote": "You must see an xforms-binding-exception message or a fatal error due to an xforms-binding-exception.",
+ "steps": [
+  {
+   "expect": "exception",
+   "name": "xforms-binding-exception"
+  }
+ ]
+}

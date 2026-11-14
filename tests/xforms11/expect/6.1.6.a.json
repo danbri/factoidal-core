@@ -1,0 +1,23 @@
+{
+ "case": "6.1.6.a",
+ "file": "Chapt06/6.1/6.1.6/6.1.6.a.xhtml",
+ "quote": "You must see an xforms-valid message when you activate the Valid Value trigger. You must see an xforms-invalid message when you activate the Invalid Value trigger.",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Valid Value"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-valid"
+  },
+  {
+   "do": "activate",
+   "label": "Invalid Value"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-invalid"
+  }
+ ]
+}

@@ -1,0 +1,19 @@
+{
+ "case": "10.e",
+ "file": "Chapt10/10.e.xhtml",
+ "quote": "When you activate the Update Car trigger you must see an xforms:action message and an xforms-refresh message.",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Update Car"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms:action"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-refresh"
+  }
+ ]
+}

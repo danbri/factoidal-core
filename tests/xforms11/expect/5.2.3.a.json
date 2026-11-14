@@ -1,0 +1,11 @@
+{
+ "case": "5.2.3.a",
+ "file": "Chapt05/5.2/5.2.3/5.2.3.a.xhtml",
+ "quote": "You must have seen the message \"You entered a valid listItems\".",
+ "steps": [
+  {
+   "expect": "message",
+   "contains": "You entered a valid listItems"
+  }
+ ]
+}

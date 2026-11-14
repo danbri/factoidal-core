@@ -1,0 +1,15 @@
+{
+ "case": "4.2.2.a",
+ "file": "Chapt04/4.2/4.2.2/4.2.2.a.xhtml",
+ "quote": "You must have seen two messages. One must have said xforms-model-construct dispatched and the other must have said xforms-model-construct-done dispatched.",
+ "steps": [
+  {
+   "expect": "message",
+   "contains": "xforms-model-construct"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-model-construct-done"
+  }
+ ]
+}

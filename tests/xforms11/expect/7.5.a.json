@@ -1,0 +1,11 @@
+{
+ "case": "7.5.a",
+ "file": "Chapt07/7.5/7.5.a.xhtml",
+ "quote": "You must see an xforms-compute-exception message or a fatal error due to an xforms-compute-exception.",
+ "steps": [
+  {
+   "expect": "exception",
+   "name": "xforms-compute-exception"
+  }
+ ]
+}

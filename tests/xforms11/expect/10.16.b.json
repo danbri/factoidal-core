@@ -1,0 +1,31 @@
+{
+ "case": "10.16.b",
+ "file": "Chapt10/10.16/10.16.b.xhtml",
+ "quote": "The Display Modal Message trigger must display a message that says \"Modal Message\" when activated. The Display Modeless Message trigger must display a message that says \"Modeless Message\" when activated. The Display Ephemeral Message trigger must display a message that says \"Ephemeral Message\" when activated.",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Display Modal Message"
+  },
+  {
+   "expect": "message",
+   "contains": "Modal Message"
+  },
+  {
+   "do": "activate",
+   "label": "Display Modeless Message"
+  },
+  {
+   "expect": "message",
+   "contains": "Modeless Message"
+  },
+  {
+   "do": "activate",
+   "label": "Display Ephemeral Message"
+  },
+  {
+   "expect": "message",
+   "contains": "Ephemeral Message"
+  }
+ ]
+}

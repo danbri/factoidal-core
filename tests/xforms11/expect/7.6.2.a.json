@@ -1,0 +1,37 @@
+{
+ "case": "7.6.2.a",
+ "file": "Chapt07/7.6/7.6.2/7.6.2.a.xhtml",
+ "quote": "You must see the value \"true\" for the Test 1, Test 2, and Test 3 output controls. You must see the value \"false\" for the Test 4, Test 5, and Test 6 output controls.",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "Test 1",
+   "value": "true"
+  },
+  {
+   "expect": "control",
+   "label": "Test 2",
+   "value": "true"
+  },
+  {
+   "expect": "control",
+   "label": "Test 3",
+   "value": "true"
+  },
+  {
+   "expect": "control",
+   "label": "Test 4",
+   "value": "false"
+  },
+  {
+   "expect": "control",
+   "label": "Test 5",
+   "value": "false"
+  },
+  {
+   "expect": "control",
+   "label": "Test 6",
+   "value": "false"
+  }
+ ]
+}

@@ -1,0 +1,33 @@
+{
+ "case": "10.13.b",
+ "file": "Chapt10/10.13/10.13.b.xhtml",
+ "quote": "When you activate the Reset Car Type Value trigger the value in the Car Type output must change to \"Mercedes\". You must NOT see a message. When you activate the Reset Car Color Value trigger the value in the Car Color output must change to \"white\" and you must see an xforms-reset message.",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Reset Car Type Value"
+  },
+  {
+   "expect": "control",
+   "label": "Car Type",
+   "value": "Mercedes"
+  },
+  {
+   "expect": "no-message",
+   "contains": ""
+  },
+  {
+   "do": "activate",
+   "label": "Reset Car Color Value"
+  },
+  {
+   "expect": "control",
+   "label": "Car Color",
+   "value": "white"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-reset"
+  }
+ ]
+}

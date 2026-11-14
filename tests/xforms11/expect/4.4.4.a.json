@@ -1,0 +1,11 @@
+{
+ "case": "4.4.4.a",
+ "file": "Chapt04/4.4/4.4.4/4.4.4.a.xhtml",
+ "quote": "You must have seen an xforms-valid message.",
+ "steps": [
+  {
+   "expect": "message",
+   "contains": "xforms-valid"
+  }
+ ]
+}

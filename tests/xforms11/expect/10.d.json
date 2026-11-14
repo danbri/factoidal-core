@@ -1,0 +1,19 @@
+{
+ "case": "10.d",
+ "file": "Chapt10/10.d.xhtml",
+ "quote": "When you activate the Update Car trigger you must see an xforms:action message and an xforms-revalidate message.",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Update Car"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms:action"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-revalidate"
+  }
+ ]
+}

@@ -1,0 +1,11 @@
+{
+ "case": "4.4.7.a",
+ "file": "Chapt04/4.4/4.4.7/4.4.7.a.xhtml",
+ "quote": "You must have seen an xforms-readwrite event message.",
+ "steps": [
+  {
+   "expect": "message",
+   "contains": "xforms-readwrite"
+  }
+ ]
+}

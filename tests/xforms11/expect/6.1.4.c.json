@@ -1,0 +1,37 @@
+{
+ "case": "6.1.4.c",
+ "file": "Chapt06/6.1/6.1.4/6.1.4.c.xhtml",
+ "quote": "You must only be able to enter a value into the Person A, Favorite Color A, and Person B input fields. The Favorite Color B, Person C, and Favorite Color C input fields must be hidden or unavailable.",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "Person A",
+   "relevant": true
+  },
+  {
+   "expect": "control",
+   "label": "Favorite Color A",
+   "relevant": true
+  },
+  {
+   "expect": "control",
+   "label": "Person B",
+   "relevant": true
+  },
+  {
+   "expect": "control",
+   "label": "Favorite Color B",
+   "relevant": false
+  },
+  {
+   "expect": "control",
+   "label": "Person C",
+   "relevant": false
+  },
+  {
+   "expect": "control",
+   "label": "Favorite Color C",
+   "relevant": false
+  }
+ ]
+}

@@ -1,0 +1,16 @@
+{
+ "case": "10.1.a",
+ "file": "Chapt10/10.1/10.1.a.xhtml",
+ "quote": "After you activate the Fire Test trigger the value in the Car Model output must be \"BMW\".",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Fire Test"
+  },
+  {
+   "expect": "control",
+   "label": "Car Model",
+   "value": "BMW"
+  }
+ ]
+}

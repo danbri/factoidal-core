@@ -1,0 +1,11 @@
+{
+ "case": "4.4.6.a",
+ "file": "Chapt04/4.4/4.4.6/4.4.6.a.xhtml",
+ "quote": "You must have seen an xforms-readonly event message.",
+ "steps": [
+  {
+   "expect": "message",
+   "contains": "xforms-readonly"
+  }
+ ]
+}

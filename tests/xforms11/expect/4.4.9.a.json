@@ -1,0 +1,11 @@
+{
+ "case": "4.4.9.a",
+ "file": "Chapt04/4.4/4.4.9/4.4.9.a.xhtml",
+ "quote": "You must have seen an xforms-optional event message.",
+ "steps": [
+  {
+   "expect": "message",
+   "contains": "xforms-optional"
+  }
+ ]
+}

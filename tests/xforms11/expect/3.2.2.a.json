@@ -1,0 +1,12 @@
+{
+ "case": "3.2.2.a",
+ "file": "Chapt03/3.2/3.2.2/3.2.2.a.xhtml",
+ "quote": "This test case uses the src attribute to pull instance data from a file. You must see an input control labeled \"Color:\" and it must contain the value \"red\".",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "Color",
+   "value": "red"
+  }
+ ]
+}

@@ -1,0 +1,17 @@
+{
+ "case": "7.9.7.a",
+ "file": "Chapt07/7.9/7.9.7/7.9.7.a.xhtml",
+ "quote": "You must see the value \"1970-01-01T00:00:00Z\" for the Test 1 output. You must not see a value for the Test 2 output.",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "Test 1",
+   "value": "1970-01-01T00:00:00Z"
+  },
+  {
+   "expect": "control",
+   "label": "Test 2",
+   "value": ""
+  }
+ ]
+}

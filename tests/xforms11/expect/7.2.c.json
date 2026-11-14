@@ -1,0 +1,22 @@
+{
+ "case": "7.2.c",
+ "file": "Chapt07/7.2/7.2.c.xhtml",
+ "quote": "You must see a value of \"1\" for the First Number output, a value of \"2\" for the Second Number output, and a value of \"3\" for the Third Number output.",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "First Number",
+   "value": "1"
+  },
+  {
+   "expect": "control",
+   "label": "Second Number",
+   "value": "2"
+  },
+  {
+   "expect": "control",
+   "label": "Third Number",
+   "value": "3"
+  }
+ ]
+}

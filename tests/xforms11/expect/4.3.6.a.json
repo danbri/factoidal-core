@@ -1,0 +1,23 @@
+{
+ "case": "4.3.6.a",
+ "file": "Chapt04/4.3/4.3.6/4.3.6.a.xhtml",
+ "quote": "When you activate the Previous trigger you must see an xforms-previous message. When you activate the Next trigger you must see an xforms-next message.",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Previous"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-previous"
+  },
+  {
+   "do": "activate",
+   "label": "Next"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-next"
+  }
+ ]
+}

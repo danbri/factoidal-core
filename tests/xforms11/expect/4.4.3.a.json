@@ -1,0 +1,11 @@
+{
+ "case": "4.4.3.a",
+ "file": "Chapt04/4.4/4.4.3/4.4.3.a.xhtml",
+ "quote": "You must have seen an xforms-value-changed message.",
+ "steps": [
+  {
+   "expect": "message",
+   "contains": "xforms-value-changed"
+  }
+ ]
+}

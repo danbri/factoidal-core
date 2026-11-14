@@ -1,0 +1,19 @@
+{
+ "case": "10.8.1.a",
+ "file": "Chapt10/10.8/10.8.1/10.8.1.a.xhtml",
+ "quote": "After you activate the Rebuild trigger you must see an xforms-rebuild message. You must not see a custom-event message.",
+ "steps": [
+  {
+   "do": "activate",
+   "label": "Rebuild"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-rebuild"
+  },
+  {
+   "expect": "no-message",
+   "contains": "custom-event"
+  }
+ ]
+}

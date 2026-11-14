@@ -1,0 +1,22 @@
+{
+ "case": "7.9.9.a",
+ "file": "Chapt07/7.9/7.9.9/7.9.9.a.xhtml",
+ "quote": "You must see the value \"0\" for the Test 1 output. You must see the value \"297001.5\" for the Test 2 output. You must see the value \"NaN\" for the Test 3 output.",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "Test 1",
+   "value": "0"
+  },
+  {
+   "expect": "control",
+   "label": "Test 2",
+   "value": "297001.5"
+  },
+  {
+   "expect": "control",
+   "label": "Test 3",
+   "value": "NaN"
+  }
+ ]
+}

@@ -1,0 +1,12 @@
+{
+ "case": "7.7.1.a",
+ "file": "Chapt07/7.7/7.7.1/7.7.1.a.xhtml",
+ "quote": "You must see a value of \"4\" for Average A.",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "Average A",
+   "value": "4"
+  }
+ ]
+}

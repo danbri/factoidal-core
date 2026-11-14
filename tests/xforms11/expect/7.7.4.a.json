@@ -1,0 +1,17 @@
+{
+ "case": "7.7.4.a",
+ "file": "Chapt07/7.7/7.7.4/7.7.4.a.xhtml",
+ "quote": "You must see a value of \"2\" for the Set 1 output and a value of \"0\" for the Set 2 output.",
+ "steps": [
+  {
+   "expect": "control",
+   "label": "Set 1",
+   "value": "2"
+  },
+  {
+   "expect": "control",
+   "label": "Set 2",
+   "value": "0"
+  }
+ ]
+}

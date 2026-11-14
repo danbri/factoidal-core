@@ -1,0 +1,11 @@
+{
+ "case": "5.2.4.a",
+ "file": "Chapt05/5.2/5.2.4/5.2.4.a.xhtml",
+ "quote": "You must have seen the message \"You entered a valid dayTimeDuration\".",
+ "steps": [
+  {
+   "expect": "message",
+   "contains": "You entered a valid dayTimeDuration"
+  }
+ ]
+}

@@ -1,0 +1,11 @@
+{
+ "case": "4.3.4.a",
+ "file": "Chapt04/4.3/4.3.4/4.3.4.a.xhtml",
+ "quote": "You must have seen an xforms-refresh message.",
+ "steps": [
+  {
+   "expect": "message",
+   "contains": "xforms-refresh"
+  }
+ ]
+}

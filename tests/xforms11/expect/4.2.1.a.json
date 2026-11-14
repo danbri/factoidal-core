@@ -1,0 +1,15 @@
+{
+ "case": "4.2.1.a",
+ "file": "Chapt04/4.2/4.2.1/4.2.1.a.xhtml",
+ "quote": "You must have seen two messages, xforms-model-construct 1 and xforms-model-construct 2.",
+ "steps": [
+  {
+   "expect": "message",
+   "contains": "xforms-model-construct 1"
+  },
+  {
+   "expect": "message",
+   "contains": "xforms-model-construct 2"
+  }
+ ]
+}

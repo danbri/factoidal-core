@@ -1,0 +1,11 @@
+{
+ "case": "4.3.3.a",
+ "file": "Chapt04/4.3/4.3.3/4.3.3.a.xhtml",
+ "quote": "You must have seen an xforms-revalidate message.",
+ "steps": [
+  {
+   "expect": "message",
+   "contains": "xforms-revalidate"
+  }
+ ]
+}
