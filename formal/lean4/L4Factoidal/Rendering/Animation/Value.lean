@@ -1056,7 +1056,10 @@ inductive TF where
   | scale (x y z : Int) (three : Bool)
   /-- The axis as written and the angle. -/
   | rotate (x y z : Int) (deg : Int) (three : Bool)
-  | skew (ax ay : Int)
+  /-- The two angles, and which function it was: 0 `skew()`, 1 `skewX()`, 2 `skewY()`.
+  The three share no primitive (CSS Transforms 1 §13): a pair of two of them goes to the
+  matrix path. -/
+  | skew (ax ay : Int) (form : Nat)
   /-- 6 numbers (`matrix()`) or 16 (`matrix3d()`). -/
   | matrix (m : List Int)
   /-- The distance in px; none for `perspective(none)`. -/
@@ -1158,16 +1161,16 @@ def readFn (item : List Tok) : Option TF :=
       | _ => none
     else if name == "skew" then
       match angles with
-      | some [a] => some (.skew a 0)
-      | some [a, b] => some (.skew a b)
+      | some [a] => some (.skew a 0 0)
+      | some [a, b] => some (.skew a b 0)
       | _ => none
     else if name == "skewx" then
       match angles with
-      | some [a] => some (.skew a 0)
+      | some [a] => some (.skew a 0 1)
       | _ => none
     else if name == "skewy" then
       match angles with
-      | some [a] => some (.skew 0 a)
+      | some [a] => some (.skew 0 a 2)
       | _ => none
     else if name == "matrix" then
       match numbers with
@@ -1200,7 +1203,10 @@ def writeFn : TF → List Tok
     if three then fnTokens "scale3d" [.num x, .num y, .num z] else fnTokens "scale" [.num x, .num y]
   | .rotate x y z d three =>
     if three then fnTokens "rotate3d" [.num x, .num y, .num z, .dim d "deg"] else fnTokens "rotate" [.dim d "deg"]
-  | .skew ax ay => fnTokens "skew" [.dim ax "deg", .dim ay "deg"]
+  | .skew ax ay form =>
+    if form == 1 then fnTokens "skewx" [.dim ax "deg"]
+    else if form == 2 then fnTokens "skewy" [.dim ay "deg"]
+    else fnTokens "skew" [.dim ax "deg", .dim ay "deg"]
   | .matrix m => fnTokens (if m.length == 6 then "matrix" else "matrix3d") (m.map .num)
   | .perspective none => fnTokens "perspective" [.ident "none"]
   | .perspective (some d) => fnTokens "perspective" [.dim d "px"]
@@ -1226,7 +1232,7 @@ def fnMatrix (box : Option (Float × Float)) : TF → Option Matrix.M
     | _, _, _ => none
   | .scale x y z _ => some (Matrix.scale (toFloat x) (toFloat y) (toFloat z))
   | .rotate x y z d _ => some (Matrix.rotate (toFloat x) (toFloat y) (toFloat z) (toFloat d))
-  | .skew ax ay => some (Matrix.skew (toFloat ax) (toFloat ay))
+  | .skew ax ay _ => some (Matrix.skew (toFloat ax) (toFloat ay))
   | .matrix m =>
     match m with
     | [a, b, c, d, e, f] => some (Matrix.ofAffine (toFloat a) (toFloat b) (toFloat c) (toFloat d) (toFloat e) (toFloat f))
@@ -1253,7 +1259,7 @@ def identityFn : TF → TF
   | .translate x y z t => .translate (zeroLike x) (zeroLike y) (zeroLike z) t
   | .scale _ _ _ t => .scale one one one t
   | .rotate x y z _ t => .rotate x y z 0 t
-  | .skew _ _ => .skew 0 0
+  | .skew _ _ form => .skew 0 0 form
   | .matrix m => .matrix (if m.length == 6 then [one, 0, 0, one, 0, 0] else identity16)
   | .perspective _ => .perspective none
 
@@ -1262,7 +1268,7 @@ def samePrimitive : TF → TF → Bool
   | .translate .., .translate .. => true
   | .scale .., .scale .. => true
   | .rotate .., .rotate .. => true
-  | .skew .., .skew .. => true
+  | .skew _ _ f, .skew _ _ g => f == g
   | .matrix _, .matrix _ => true
   | .perspective _, .perspective _ => true
   | _, _ => false
@@ -1292,7 +1298,7 @@ def lerpFn (p : Int) : TF → TF → Option TF
     else
       (Matrix.blend (Matrix.rotate (toFloat x) (toFloat y) (toFloat z) (toFloat d))
         (Matrix.rotate (toFloat x') (toFloat y') (toFloat z') (toFloat d')) (toFloat p)).map matrixFn
-  | .skew a b, .skew a' b' => some (.skew (Fix.lerp a a' p) (Fix.lerp b b' p))
+  | .skew a b f, .skew a' b' _ => some (.skew (Fix.lerp a a' p) (Fix.lerp b b' p) f)
   | .matrix m, .matrix m' =>
     match fnMatrix none (.matrix m), fnMatrix none (.matrix m') with
     | some x, some y => (Matrix.blend x y (toFloat p)).map matrixFn
@@ -1345,7 +1351,7 @@ def accFn : TF → TF → Option TF
     else
       (Matrix.accumulate (Matrix.rotate (toFloat x) (toFloat y) (toFloat z) (toFloat d))
         (Matrix.rotate (toFloat x') (toFloat y') (toFloat z') (toFloat d'))).map matrixFn
-  | .skew a b, .skew a' b' => some (.skew (a + a') (b + b'))
+  | .skew a b f, .skew a' b' _ => some (.skew (a + a') (b + b') f)
   | .matrix m, .matrix m' =>
     match fnMatrix none (.matrix m), fnMatrix none (.matrix m') with
     | some x, some y => (Matrix.accumulate x y).map matrixFn
@@ -1618,7 +1624,22 @@ def add (k : Kind) (underlying value : Value) : Value :=
       let axis := if ax == bx then some ax else if ax == [.ident "none"] then some bx else if bx == [.ident "none"] then some ax else none
       match axis with
       | some ax => (if ax == [.ident "none"] then [] else ax) ++ [.dim (x + y) "deg"]
-      | none => value
+      | none =>
+        -- two axes written differently: one direction adds the angles; two directions
+        -- are one rotation after the other (the product of the quaternions)
+        match axisOf ax, axisOf bx with
+        | some (x1, y1, z1), some (x2, y2, z2) =>
+          if x1 * x2 + y1 * y2 + z1 * z2 > 0.999999 then rotateText x1 y1 z1 (x + y)
+          else
+            let quat := fun (ux uy uz : Float) (deg : Int) =>
+              let h := Matrix.radians (toFloat deg) / 2
+              (ux * Float.sin h, uy * Float.sin h, uz * Float.sin h, Float.cos h)
+            let (qx, qy, qz, qw) := Matrix.qmul (quat x1 y1 z1 x) (quat x2 y2 z2 y)
+            let qw := if qw > 1 then 1 else if qw < -1 then -1 else qw
+            let sn := Float.sqrt (1 - qw * qw)
+            if sn < 0.000001 then rotateText 0 0 1 0
+            else rotateText (qx / sn) (qy / sn) (qz / sn) (ofFloat (Matrix.degrees (2 * Float.acos qw)))
+        | _, _ => value
     | _, _ => value
   | .sides =>
     match sidesOf underlying, sidesOf value with
@@ -1856,7 +1877,7 @@ theorem zeroLike_idem (t : Tok) : zeroLike (zeroLike t) = zeroLike t := by
 primitive as the function it stands beside, so padding alone never sends a pair to the
 matrix path. Does not say: that the pair interpolates (two lengths may not combine). -/
 theorem samePrimitive_identityFn (f : TF) : samePrimitive f (identityFn f) = true := by
-  cases f <;> rfl
+  cases f <;> simp [samePrimitive, identityFn]
 
 /-- Kind: structure. Says: the identity function of an identity function is itself.
 Does not say: that its matrix is the identity matrix (`Float`; tested). -/
@@ -1865,7 +1886,7 @@ theorem identityFn_idem (f : TF) : identityFn (identityFn f) = identityFn f := b
   | translate x y z t => simp [identityFn, zeroLike_idem]
   | scale x y z t => rfl
   | rotate x y z d t => rfl
-  | skew a b => rfl
+  | skew a b f => rfl
   | matrix m =>
     by_cases h : m.length = 6
     · simp [identityFn, h]
@@ -1890,8 +1911,9 @@ theorem lerpFn_scale_self (x y z : Int) (t : Bool) (p : Int) :
   simp [lerpFn, Fix.lerp_self]
 
 /-- Kind: end points. Says: two skews at progress 0 and 1 are the first and the second. -/
-theorem lerpFn_skew_ends (a b a' b' : Int) :
-    lerpFn 0 (.skew a b) (.skew a' b') = some (.skew a b) ∧ lerpFn one (.skew a b) (.skew a' b') = some (.skew a' b') := by
+theorem lerpFn_skew_ends (a b a' b' : Int) (f : Nat) :
+    lerpFn 0 (.skew a b f) (.skew a' b' f) = some (.skew a b f) ∧
+    lerpFn one (.skew a b f) (.skew a' b' f) = some (.skew a' b' f) := by
   simp [lerpFn, Fix.lerp_zero, Fix.lerp_one]
 
 /-- Kind: bounds. Says: for a progress in [0, 1] each component of the scale between two
@@ -1915,11 +1937,11 @@ theorem accFn_scale_identity (x y z : Int) (t t' : Bool) :
 /-- Kind: additivity. Says: accumulating skews adds their angles, in either order and
 grouped either way. Does not say: that the matrices commute (they do not; the sum is of
 the angles, Web Animations 1 §5.2). -/
-theorem accFn_skew_add (a b a' b' a'' b'' : Int) :
-    accFn (.skew a b) (.skew a' b') = some (.skew (a + a') (b + b')) ∧
-    accFn (.skew a b) (.skew a' b') = accFn (.skew a' b') (.skew a b) ∧
-    (accFn (.skew a b) (.skew a' b')).bind (accFn · (.skew a'' b'')) =
-      (accFn (.skew a' b') (.skew a'' b'')).bind (accFn (.skew a b)) := by
+theorem accFn_skew_add (a b a' b' a'' b'' : Int) (f : Nat) :
+    accFn (.skew a b f) (.skew a' b' f) = some (.skew (a + a') (b + b') f) ∧
+    accFn (.skew a b f) (.skew a' b' f) = accFn (.skew a' b' f) (.skew a b f) ∧
+    (accFn (.skew a b f) (.skew a' b' f)).bind (accFn · (.skew a'' b'' f)) =
+      (accFn (.skew a' b' f) (.skew a'' b'' f)).bind (accFn (.skew a b f)) := by
   refine ⟨rfl, ?_, ?_⟩ <;> simp [accFn] <;> omega
 
 /-- Kind: additivity. Says: the sum of number components is the sum of the numbers:
@@ -2029,7 +2051,12 @@ private def at_ (k : Kind) (a b : String) (p : Int) : String := toText (interpol
   "rotate3d(1, 2, 3, 30deg)", "skew(10deg, 20deg)", "matrix(1, 2, 3, 4, 5, 6)", "perspective(100px)", "perspective(none)"].all fun t =>
   ((readTransforms (parse t)).map fun fs => toText (writeTransforms fs)) == some t
 #guard ((readTransforms (parse "translateX(5px) scaleY(2) rotateX(10deg) skewY(3deg) rotateZ(4deg)")).map fun fs => toText (writeTransforms fs)) ==
-  some "translate(5px, 0px) scale(1, 2) rotate3d(1, 0, 0, 10deg) skew(0deg, 3deg) rotate(4deg)"
+  some "translate(5px, 0px) scale(1, 2) rotate3d(1, 0, 0, 10deg) skewy(3deg) rotate(4deg)"
+-- skewX() and skewY() share no primitive: they accumulate as matrices
+-- (css/css-transforms/animation/transform-skew-composition.html)
+#guard toTextPrecise (interpolate .transformList
+    (accumulate .transformList (parse "skewX(45deg)") (parse "skewY(45deg)"))
+    (accumulate .transformList (parse "skewX(45deg)") (parse "skewY(45deg)")) half) == "matrix(1, 1, 0.5, 1.5, 0, 0)"
 #guard (readTransforms (parse "translate(1px, 2px, 3px)")).isNone && (readTransforms (parse "foo(1)")).isNone
 -- accumulation (css/css-transforms/animation/transform-*-composition.html)
 #guard toText (accumulate .transformList (parse "perspective(10px)") (parse "perspective(10px)")) == "perspective(5px)"
