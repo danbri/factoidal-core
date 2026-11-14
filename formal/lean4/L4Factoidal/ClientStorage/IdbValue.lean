@@ -177,6 +177,26 @@ def bump (ts : Val) (i : Nat) : Val :=
 
 def insertAt (ts : Val) (p : Nat) (ins : Val) : Val := ts.extract 0 p ++ ins ++ ts.extract p ts.size
 
+/-- The second count of an `a` token raised by one (one more property pair). -/
+def bump2 (ts : Val) (i : Nat) : Val :=
+  match ts[i]? with
+  | some t => ts.set! i (tok 'a' (toString (countOf t) ++ "," ++ toString (count2Of t + 1)))
+  | none => ts
+
+/-- A dense array `A` + n at `i` written as an array with properties `a` + n,n: each item
+preceded by its index as a property key (so a property can be added to it). Anything else is
+left as it is. -/
+def toSparse (ts : Val) (i : Nat) : Val :=
+  match ts[i]? with
+  | some t =>
+    if tagOf t != 'A' then ts else
+    let n := countOf t
+    let items := ((List.range n).foldl (fun (st : Val × Nat) j =>
+      let e := skip ts st.2
+      (st.1 ++ #[tok 'k' (toString j)] ++ ts.extract st.2 e, e)) (#[], i + 1))
+    ts.extract 0 i ++ #[tok 'a' (toString n ++ "," ++ toString n)] ++ items.1 ++ ts.extract items.2 ts.size
+  | none => ts
+
 /-- "Inject a key into a value using a key path" (§7.3), with "check that a key could be
 injected" (its failure is `none`): walk the identifiers from the object at `i`; an
 identifier that is absent is made (a new object for each but the last, the key for the
@@ -184,17 +204,21 @@ last); one that is present and not an object is a failure. -/
 def inject (ts : Val) (key : Val) : Nat → List String → Option Val
   | _, [] => none
   | i, id :: rest =>
+    -- an Array is an Object too: a dense one is first written with its indexes as keys
+    let ts := toSparse ts i
     match ts[i]? with
     | none => none
     | some t =>
-      if tagOf t != 'o' then none else
-      match propAt ts (i + 1) (countOf t) id, rest with
+      if tagOf t != 'o' && tagOf t != 'a' then none else
+      let n := if tagOf t == 'a' then count2Of t else countOf t
+      match propAt ts (i + 1) n id, rest with
       | some j, _ :: _ => inject ts key j rest
       | some _, [] => none
       | none, _ =>
         -- absent: the new property and, for the identifiers that remain, nested new objects
         let chain := rest.foldl (fun acc id' => acc ++ #[tok 'o' "1", tok 'k' id']) #[tok 'k' id]
-        some (bump (insertAt ts (skip ts i) (chain ++ key)) i)
+        let ts' := insertAt ts (skip ts i) (chain ++ key)
+        some (if tagOf t == 'a' then bump2 ts' i else bump ts' i)
 
 /-! ## Checks (WPT IndexedDB/keypath.any.js, keypath-special-identifiers.any.js, keygenerator-inject.any.js) -/
 
@@ -204,6 +228,10 @@ private def two : String := "n4000000000000000"
 -- { a: 1, b: { c: "x", d: [1, 2] } }
 private def v1 : Val := T ["o2", "ka", one, "kb", "o2", "kc", "sx", "kd", "A2", one, two]
 #guard skip v1 0 == 11 && skip v1 4 == 11 && skip v1 8 == 11 && skip v1 2 == 3
+-- a key injected into an array value: the array gains the property (keygenerator with array values)
+#guard inject (T ["A2", one, two]) (T [one]) 0 ["primaryKey"] == some (T ["a2,3", "k0", one, "k1", two, "kprimaryKey", one])
+#guard inject (T ["a5,1", "kx", one]) (T [two]) 0 ["id"] == some (T ["a5,2", "kx", one, "kid", two])
+#guard inject (T ["sx"]) (T [one]) 0 ["id"] == none
 #guard evalPath v1 "a" == some (T [one])
 #guard evalPath v1 "b.c" == some (T ["sx"])
 #guard evalPath v1 "b.d" == some (T ["A2", one, two])
