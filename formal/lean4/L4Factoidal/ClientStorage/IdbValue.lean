@@ -197,6 +197,11 @@ def toSparse (ts : Val) (i : Nat) : Val :=
     ts.extract 0 i ++ #[tok 'a' (toString n ++ "," ++ toString n)] ++ items.1 ++ ts.extract items.2 ts.size
   | none => ts
 
+/-- Kind: functional law. Says: `toSparse` leaves every value that is not a dense array at
+`i` as it is (an object's or a sparse array's tokens are never rewritten). -/
+theorem toSparse_other (ts : Val) (i : Nat) (t : Tok) (h : ts[i]? = some t) (ht : tagOf t ≠ 'A') : toSparse ts i = ts := by
+  simp [toSparse, h, ht]
+
 /-- "Inject a key into a value using a key path" (§7.3), with "check that a key could be
 injected" (its failure is `none`): walk the identifiers from the object at `i`; an
 identifier that is absent is made (a new object for each but the last, the key for the
