@@ -331,16 +331,24 @@ Measured on a quiet M1 with the macOS engine of main ca652ad26, the window off s
 1280 by 1600 and text size 100%, in ms from the start of the process to the first frame
 presented; the engine is the same in both columns, only the host differs:
 
-| Page | host of main | host with the changes below |
-|---|---|---|
-| Hacker News | 6,988 | 4,416 |
-| gov.uk | 14,179 | 4,147 |
-| w3.org | 11,688 | 3,026 |
-| Wikipedia | 11,399 | 6,340 |
-| schema.org | 5,029 | 1,696 |
-| MDN (grid) | 52,842 | 38,787 |
-| lean-lang.org | none in 200 s | none in 200 s |
-| BBC News | none in 200 s | none in 200 s |
+| Page | host of main | host with the changes below | the same, with the images after the first frame |
+|---|---|---|---|
+| Hacker News | 5,931 to 7,559 | 3,454 to 5,383 | 4,232 to 5,246 |
+| gov.uk | 15,581 to 15,990 | 5,680 to 5,786 | 5,897 to 6,159 |
+| w3.org | 15,352 to 15,779 | 11,658 to 12,134 | 3,763 to 4,071 |
+| Wikipedia | 17,455 to 18,258 | 11,047 to 17,737 | 11,101 to 11,956 |
+| schema.org | 5,029 | 1,696 | |
+| MDN (grid) | 52,842 | 38,787 | |
+| lean-lang.org | none in 200 s | none in 200 s | |
+| BBC News | none in 200 s | none in 200 s | |
+
+The first four rows are two runs of each host on each page, the hosts one after another on
+the same page while other work ran on the machine (the times are longer than on a quiet
+machine and comparable within a row); the last four are single runs on a quiet machine.
+The third column is a host that gives the engine every page's images after the first
+frame: it is not what is merged (see below), and shows what the images cost before a first
+frame: 8 s on w3.org, whose nine images are three photographs and six SVG files drawn on
+the CPU.
 
 What the host did that it need not have done:
 
@@ -351,10 +359,16 @@ What the host did that it need not have done:
   asked for the CPU probe, which draws the page's inline SVG on the CPU: 8.5 s on gov.uk.
   It asks for none now.
 - It waited for every image's bytes, and the engine decoded each, before the first
-  frame. The window now reads the bytes while the page is laid out, shows the page with
-  the alternative texts, gives the engine the images once a frame is on screen, and
-  draws again (`setImagesAfterFirstFrame`, `startImages`, the page's `revision`). Runs
-  that compare frames or replay input wait for the images as before.
+  frame. For a page that runs no script the window now reads the bytes while the page is
+  laid out, shows the page with the alternative texts, gives the engine the images once
+  a frame is on screen, and draws again (`setImagesAfterFirstFrame`, `startImages`, the
+  page's `revision`). A page whose scripts run still starts them with its images: the
+  scripts' layout reads and the load event are of the page with its images, in every host
+  alike (the host parity check holds the window to that). Runs that compare frames or
+  replay input wait for the images as before. The way to take the images out of the
+  path of a page with scripts is a store that knows each image's size without its pixels:
+  the scripts' layout and the first frame need the sizes, and only painting needs the
+  pixels (open, below).
 - It fetched linked sheets and scripts one after another: 3.1 s for the 31 sheets of
   lean-lang.org, 0.57 s six at a time (`inOrder`, the document's order kept).
 - The `fontFaces` question computed the style of every element to find the faces the
@@ -421,4 +435,9 @@ Open:
 - SVG images as vectors (see above); the picture drawn on the CPU costs about 19 µs a
   pixel.
 - A store per image; JPEG and PNG over 1,048,576 pixels; WebP and AVIF.
+- Images after the first frame for pages with scripts. A store of sizes (each image's
+  header, an SVG file's root) made at the scripts' start, and the pixels decoded after the
+  first frame: nothing moves when they arrive, and the scripts read the same layout as
+  now. Or the session starts without the images and fires `load` when the host says they
+  are in.
 - The engine could use a page's web fonts with no page font held (the runner's case).

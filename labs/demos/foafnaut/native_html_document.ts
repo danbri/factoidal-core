@@ -193,9 +193,10 @@ export async function inOrder<T,R>(items:readonly T[],limit:number,work:(item:T,
   return out;
 }
 /** Whether a page's images are waited for before its first frame (the default: tests and
-hosts that draw once), or arrive after it: a window sets `true`, shows the page with its
-images' alternative text, and draws again when they are in (`revision`, `imagesPending`
-of the page). The first frame of a page then never waits for an image's bytes or decoding. */
+hosts that draw once), or arrive after it: a window sets `true`, shows a page that runs no
+script with its images' alternative text, and draws again when they are in (`revision`,
+`imagesPending` of the page). The first frame of such a page then never waits for an
+image's bytes or decoding. A page whose scripts run starts them with its images, as before. */
 let imagesAfterFirstFrame=false;
 export function setImagesAfterFirstFrame(after:boolean){imagesAfterFirstFrame=after;}
 /** Fetch the images Lean listed, as `{key,bytes}`, six at a time, kept in the order listed.
@@ -404,7 +405,10 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
   // A window draws the page first (setImagesAfterFirstFrame): the bytes are read meanwhile, and
   // the engine is given them (it decodes each) when the host says the page is shown (startImages),
   // so that the first frame waits neither for the network nor behind the decoding.
-  const later=imagesAfterFirstFrame&&(inspection.images??[]).length>0;
+  // Only a page whose scripts do not run: a script session starts with the page's images (its
+  // layout reads and the load event are of the page with them, in every host alike), so a
+  // page with scripts waits for them as before.
+  const later=imagesAfterFirstFrame&&!(scripted&&scriptHost)&&(inspection.images??[]).length>0;
   let revision=0,imagesPending=later,imagesStarted=!later;
   const images:Record<string,unknown>=later?{}:await imageOptions(engine,await imageBytes);
   // The tab icon that Lean chose (WebDocument.iconURL), by the rules of images. One that fails or is refused leaves the tab with no icon.
