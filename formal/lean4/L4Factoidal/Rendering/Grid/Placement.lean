@@ -227,6 +227,56 @@ theorem fitInRow_ge (placed : List Placed) (ncols row rowSpan colSpan fuel col c
       · cases h; exact Nat.le_refl _
       · exact Nat.le_trans (Nat.le_succ _) (ih _ h)
 
+/-- Kind: conformance (§8.5: "the earliest" column). Says: every column from `col` up to
+the one `firstFreeCol` answers is taken: the item would overlap a placed item there. -/
+theorem firstFreeCol_earliest (placed : List Placed) (row rowSpan colSpan fuel col c : Nat)
+    (h₁ : col ≤ c) (h₂ : c < firstFreeCol placed row rowSpan colSpan fuel col) :
+    free placed ⟨row, rowSpan, c, colSpan⟩ = false := by
+  induction fuel generalizing col with
+  | zero => simp only [firstFreeCol] at h₂; omega
+  | succ n ih =>
+    unfold firstFreeCol at h₂
+    split at h₂
+    · omega
+    · rename_i hf
+      by_cases hc : c = col
+      · subst hc; simpa using hf
+      · exact ih (col + 1) (by omega) h₂
+
+/-- Kind: conformance (§8.5: "the earliest" row). Says: every row from `row` up to the one
+`firstFreeRow` answers is taken. -/
+theorem firstFreeRow_earliest (placed : List Placed) (rowSpan col colSpan fuel row r : Nat)
+    (h₁ : row ≤ r) (h₂ : r < firstFreeRow placed rowSpan col colSpan fuel row) :
+    free placed ⟨r, rowSpan, col, colSpan⟩ = false := by
+  induction fuel generalizing row with
+  | zero => simp only [firstFreeRow] at h₂; omega
+  | succ n ih =>
+    unfold firstFreeRow at h₂
+    split at h₂
+    · omega
+    · rename_i hf
+      by_cases hr : r = row
+      · subst hr; simpa using hf
+      · exact ih (row + 1) (by omega) h₂
+
+/-- Kind: conformance (§8.5 step 4: the first column in the row where the item fits).
+Says: when `fitInRow` finds column `c`, every column from `col` before it is taken. -/
+theorem fitInRow_earliest (placed : List Placed) (ncols row rowSpan colSpan fuel col c c' : Nat)
+    (h : fitInRow placed ncols row rowSpan colSpan fuel col = some c) (h₁ : col ≤ c') (h₂ : c' < c) :
+    free placed ⟨row, rowSpan, c', colSpan⟩ = false := by
+  induction fuel generalizing col with
+  | zero => simp [fitInRow] at h
+  | succ n ih =>
+    unfold fitInRow at h
+    split at h
+    · cases h
+    · split at h
+      · cases h; omega
+      · rename_i _ hf
+        by_cases hc : c' = col
+        · subst hc; simpa using hf
+        · exact ih (col + 1) h (by omega)
+
 /-- The slot of an item with an automatic position in both axes (§8.5 step 4): from the
 cursor `(row, col)`, the first column of the row where it fits, else the next rows from
 their first column. When `fuel` rows have been tried, the row after every placed item. -/
