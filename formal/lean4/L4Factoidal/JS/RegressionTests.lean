@@ -586,4 +586,8 @@ private def parses (src : String) : Bool := syn src == "ok"
 #guard out "async function f(x) { var r = []; switch (x) { case 1: r.push(await 'a'); case 2: r.push('b'); break; default: r.push(await 'd'); case 3: r.push('c') } return r.join() } async function g(c) { var a; switch ('k') { case 'k': a = c ? await 1 : 2; break } return a } Promise.all([f(1), f(2), f(3), f(9), g(true), g(false)]).then(v => print(v.join('|')))" == ["a,b|b|c|d,c|1|2"]
 #guard out "var w = Promise.withResolvers(); w.promise.then(v => print('got', v)); print(Object.keys(w).join(), typeof w.resolve); w.resolve(5); try { Promise.withResolvers.call(1) } catch (e) { print(e.name) }" == ["promise,resolve,reject function", "TypeError", "got 5"]
 
+/-! ## Array iteration over array-likes and holes (§23.1.3: HasProperty, LengthOfArrayLike) -/
+
+#guard out "var seen = []; Array.prototype.forEach.call({ 0: 'a', 2: 'c', length: 4 }, (v, i) => seen.push(i + v)); var m = [1, , 3].map(x => x * 2); var f = [1, , 3].findIndex(x => x === undefined); var o = { 1: 11, 2: 9, length: { valueOf() { return {} }, toString() { return '2' } } }; var fl = Array.prototype.filter.call(o, () => true); var r = Array.prototype.reduce.call({ 1: 'x', 3: 'y', length: 4 }, (a, b) => a + b); var e; try { [].reduce((a, b) => a) } catch (x) { e = x.name } var g = []; var a = [1, 2, 3]; a.forEach((v, i) => { if (i === 0) a.pop(); g.push(v) }); print(seen.join(), m.length, 1 in m, f, fl.join(), r, e, g.join())" == ["0a,2c 3 true 1 11 xy TypeError 1,2"]
+
 end L4Factoidal.JS.Tests

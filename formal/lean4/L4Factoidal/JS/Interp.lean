@@ -1187,6 +1187,13 @@ def typedGenericNames : Array (String × Nat) :=
 /-- Where %TypedArray%.prototype keeps the Array.prototype function a generic method uses. -/
 def typedGenericKey (nm : String) : String := privKey ("%Array." ++ nm)
 
+/-- Does an Array iteration method skip the indices that HasProperty says are absent
+(§23.1.3)? `find` and `findIndex` read every index; forEach, map, filter, some, every and the
+others do not. -/
+def arrayProbes : Native → Bool
+  | .arrayFind | .arrayFindIndex => false
+  | _ => true
+
 /-- ValidateTypedArray's test (§23.2.4.4): is the view inside its buffer, and the buffer not
 detached? -/
 def typedInBounds (ty buf off len : Nat) : M Bool := do
@@ -4538,15 +4545,27 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
       | _ => pure thisV
     | .arrayMap | .arrayForEach | .arrayFilter | .arraySome | .arrayEvery | .arrayFind
     | .arrayFindIndex =>
+      -- §23.1.3: ToObject(this), LengthOfArrayLike, then the callback's check
+      let oid ← toObj n thisV
+      let len ← arrayLikeLength n (.obj oid)
       if !(← isCallable a0) then throwErr .type "callback is not a function"
-      let es ← elemsOf n thisV
-      iterArray n id a0 a1 thisV es 0 #[]
+      iterArray n id a0 a1 (.obj oid) len 0 #[]
     | .arrayReduce =>
+      -- §23.1.3.24: the first present element is the start when there is no initial value
+      let oid ← toObj n thisV
+      let len ← arrayLikeLength n (.obj oid)
       if !(← isCallable a0) then throwErr .type "callback is not a function"
-      let es ← elemsOf n thisV
-      if args.size < 2 && es.isEmpty then throwErr .type "Reduce of empty array with no initial value"
-      let (acc, start) := if args.size ≥ 2 then (a1, 0) else (es[0]!, 1)
-      reduceArray n a0 thisV es start acc
+      if args.size ≥ 2 then reduceArray n a0 (.obj oid) len 0 a1
+      else
+        let mut k := 0
+        let mut first : Option Value := none
+        for _ in [0:len] do
+          if first.isSome then break
+          first ← elemAt n oid k true
+          k := k + 1
+        match first with
+        | some acc => reduceArray n a0 (.obj oid) len k acc
+        | none => throwErr .type "Reduce of empty array with no initial value"
     | .arraySort =>
       match thisV with
       | .obj id => match (← getObj id).kind with
@@ -6144,20 +6163,43 @@ def elemsOf : Nat → Value → M (Array Value)
     | _ => pure #[]
 termination_by structural n _ => n
 
-def iterArray : Nat → Native → Value → Value → Value → Array Value → Nat → Array Value → M Value
+/-- Element `i` of the object `oid` as the Array iteration methods read it (§23.1.3): `none`
+when `probe` asks HasProperty first and the object has no such element (a hole), else its
+[[Get]]. An Array's own element is read directly; anything else (an array-like, a hole, an
+index past a shrunk array) through HasProperty and [[Get]], so getters and the prototype
+chain are seen at the step the Standard reads them. -/
+def elemAt : Nat → Nat → Nat → Bool → M (Option Value)
+  | 0, _, _, _ => throw (.halt "fuel")
+  | n + 1, oid, i, probe => do
+    if let .array es := (← getObj oid).kind then
+      if h : i < es.size then
+        match es[i] with
+        | .hole => pure ()
+        | v => return some v
+    let k := toString i
+    if probe && !(← hasProp n oid k) then return none
+    pure (some (← getV n (.obj oid) k))
+termination_by structural n _ _ _ => n
+
+def iterArray : Nat → Native → Value → Value → Value → Nat → Nat → Array Value → M Value
   | 0, _, _, _, _, _, _, _ => throw (.halt "fuel")
-  | n + 1, id, f, thisArg, arr, es, i, acc => do
-    if h : i < es.size then
-      let x := es[i]
+  | n + 1, id, f, thisArg, arr, len, i, acc => do
+    if i < len then
+      let oid := match arr with | .obj o => o | _ => 0
+      -- find and findIndex read every index; the others skip what HasProperty says is absent
+      match ← elemAt n oid i (arrayProbes id) with
+      -- map's result keeps the index (as undefined: an Array here has no holes)
+      | none => iterArray n id f thisArg arr len (i + 1) (if id == .arrayMap then acc.push .undef else acc)
+      | some x =>
       let r ← callV n f thisArg #[x, .num (Float.ofNat i), arr]
       match id with
-      | .arrayMap => iterArray n id f thisArg arr es (i + 1) (acc.push r)
-      | .arrayFilter => iterArray n id f thisArg arr es (i + 1) (if toBool r then acc.push x else acc)
-      | .arraySome => if toBool r then pure (.bool true) else iterArray n id f thisArg arr es (i + 1) acc
-      | .arrayEvery => if toBool r then iterArray n id f thisArg arr es (i + 1) acc else pure (.bool false)
-      | .arrayFind => if toBool r then pure x else iterArray n id f thisArg arr es (i + 1) acc
-      | .arrayFindIndex => if toBool r then pure (.num (Float.ofNat i)) else iterArray n id f thisArg arr es (i + 1) acc
-      | _ => iterArray n id f thisArg arr es (i + 1) acc
+      | .arrayMap => iterArray n id f thisArg arr len (i + 1) (acc.push r)
+      | .arrayFilter => iterArray n id f thisArg arr len (i + 1) (if toBool r then acc.push x else acc)
+      | .arraySome => if toBool r then pure (.bool true) else iterArray n id f thisArg arr len (i + 1) acc
+      | .arrayEvery => if toBool r then iterArray n id f thisArg arr len (i + 1) acc else pure (.bool false)
+      | .arrayFind => if toBool r then pure x else iterArray n id f thisArg arr len (i + 1) acc
+      | .arrayFindIndex => if toBool r then pure (.num (Float.ofNat i)) else iterArray n id f thisArg arr len (i + 1) acc
+      | _ => iterArray n id f thisArg arr len (i + 1) acc
     else
       match id with
       | .arrayMap | .arrayFilter => newArray acc
@@ -6167,14 +6209,30 @@ def iterArray : Nat → Native → Value → Value → Value → Array Value →
       | _ => pure .undef
 termination_by structural n _ _ _ _ _ _ _ => n
 
-def reduceArray : Nat → Value → Value → Array Value → Nat → Value → M Value
+def reduceArray : Nat → Value → Value → Nat → Nat → Value → M Value
   | 0, _, _, _, _, _ => throw (.halt "fuel")
-  | n + 1, f, arr, es, i, acc => do
-    if h : i < es.size then
-      let acc ← callV n f .undef #[acc, es[i], .num (Float.ofNat i), arr]
-      reduceArray n f arr es (i + 1) acc
+  | n + 1, f, arr, len, i, acc => do
+    if i < len then
+      let oid := match arr with | .obj o => o | _ => 0
+      match ← elemAt n oid i true with
+      | none => reduceArray n f arr len (i + 1) acc
+      | some x =>
+        let acc ← callV n f .undef #[acc, x, .num (Float.ofNat i), arr]
+        reduceArray n f arr len (i + 1) acc
     else pure acc
 termination_by structural n _ _ _ _ _ => n
+
+/-- LengthOfArrayLike (§7.3.18): ToLength of the object's `length`. -/
+def arrayLikeLength : Nat → Value → M Nat
+  | 0, _ => throw (.halt "fuel")
+  | n + 1, o => do
+    match o with
+    | .obj id =>
+      if let .array es := (← getObj id).kind then return es.size
+    | _ => pure ()
+    let f := toIntegerOrInf (← toNum n (← getV n o "length"))
+    pure (if f ≤ 0 then 0 else if f > 9007199254740991 then 9007199254740991 else f.toUInt64.toNat)
+termination_by structural n _ => n
 
 /-- SortCompare (§23.1.3.30.2): `true` when `a` goes after `b`. -/
 def sortGt : Nat → Value → Value → Value → M Bool
