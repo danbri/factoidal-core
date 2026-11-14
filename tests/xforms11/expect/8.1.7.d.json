@@ -6,7 +6,7 @@
   {
    "do": "setvalue",
    "label": "Car age",
-   "value": "5"
+   "value": "7"
   },
   {
    "expect": "message",

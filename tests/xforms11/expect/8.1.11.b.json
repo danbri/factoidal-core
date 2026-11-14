@@ -5,7 +5,7 @@
  "steps": [
   {
    "do": "setvalue",
-   "label": "Select A Flavor",
+   "kind": "select1",
    "value": "s"
   },
   {
