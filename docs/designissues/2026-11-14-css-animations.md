@@ -77,8 +77,44 @@ files were extracted with a stubbed `test_interpolation` and run through `CssVal
 `Value.interpolate` and the helper's `normalizeValue` with no engine (the sources compiled as one file,
 `lean --run`). That check is a development tool, not a score.
 
-Not done: transform lists of different functions (matrix interpolation), modern colour spaces,
-`shape()`, grid line names, `corner-shape`.
+Not done: modern colour spaces, `shape()`, grid line names, `corner-shape`.
+
+### Transform lists (`Matrix`, `Value`)
+
+CSS Transforms 2 §9. A transform list is read into functions by primitive (`Value.TF`: translate,
+scale, rotate, skew, matrix, perspective). Two lists pair up function by function, the shorter padded
+with identity functions (`identityFn`). A pair of one primitive interpolates by component
+(`lerpFn`): translations, scales and skews directly; rotations about one direction by the angle, a
+rotation by 0 taking the other's axis, two directions as matrices; perspectives by the reciprocal of
+the distance (the entry of the matrix; `none` is 0); `matrix()` and `matrix3d()` by decomposition.
+From the first pair of two primitives, the rest of each list is one 4×4 matrix and the two matrices
+interpolate (`Matrix.blend`). Lists whose functions have the same names and argument counts and no
+matrix, perspective or `rotate3d()` keep the old argument-by-argument path and their function names
+(so a percentage stays a percentage of the box).
+
+`Matrix` is the arithmetic alone, in `Float`: products, the matrices of the functions, an inverse
+(Gauss–Jordan, for the perspective part), the 3D decomposition of CSS Transforms 2 §9.2 (perspective,
+translation, scale, three skews, a quaternion), spherical interpolation along the shorter arc, and
+recomposition; and a 2D decomposition (translation, rotation, one shear, scale) with the rules of CSS
+Transforms 1 §12.2.2 for flips and the short way round, used when both matrices are 2D. The 2D form
+was chosen from the expected values of `transform-interpolation-005.html` (the remainder matrix of
+the 2D pseudo-code in the specification does not compose back when there is a shear; a single shear
+does, and gives the tests' numbers). A matrix with no inverse does not interpolate: the values flip
+at 50%.
+
+Accumulation (`accFn`, `Matrix.accumulate`): translations and skews add, scales add about 1,
+rotations about one direction add their angles, perspectives add reciprocals, matrices accumulate
+their decomposed values (rotations follow one another). Addition joins the lists.
+
+### Resolved values of the transform properties
+
+`getComputedStyle` gives `transform` as one `matrix()` or `matrix3d()` (CSS Transforms 1 §15; the
+matrix is 2D when its entries say so), and the percentages of `transform-origin` and
+`perspective-origin` as lengths (`Animation.Computed.resolvedAt`). The reference box is the element's
+border box from its computed width, height, padding and border when those are lengths
+(`Computed.boxOf`): no layout is made for it; with an `auto` or percentage size the computed value
+stands. The engine itself keeps reading the list of functions (`valueOf`), which is what
+interpolates. Matrix entries are written with six significant digits (`Fix.formatSig`).
 
 ### Timing, effects, playback (`Timing`, `Effect`, `Model`)
 
@@ -150,6 +186,12 @@ Proved (axioms: propext, Classical.choice, Quot.sound):
   interpolation of the two computed values there).
 - `Player.idle_iff`, `cancel_idle`, `hold_fixed`, `running_time`.
 - `CSS.withAnimated_none`, `Css.nth_lt`.
+- Transform functions: `lerpFn_scale_zero`, `lerpFn_scale_one`, `lerpFn_scale_self`,
+  `lerpFn_scale_between` (each component between the two for a progress in [0, 1]),
+  `lerpFn_skew_ends`; `samePrimitive_identityFn` (padding never sends a pair to the matrix path),
+  `identityFn_idem`; `accFn_scale_identity` (the identity scale is neutral for accumulation),
+  `accFn_skew_add` and `addTok_num_assoc` (accumulated angles and added numbers are sums: commutative
+  and associative). `Matrix.build_size`, `mul_size` (a product has 16 entries).
 
 Tested only (`#guard`): the Bézier values of the tests' easings; parse then serialize of easings and of
 computed values; the three test paths over a model page; the cascade order of animated values; the
@@ -163,6 +205,10 @@ Open:
   than the document's.
 - `rotate` between two axes and `aspect-ratio` use `Float` (sqrt, sin, acos, log, exp): tested, not
   proved. The list kinds (padding, joining, least common multiple) are tested, not proved.
+- Matrices are `Float`: decomposition then recomposition gives the matrix back, the ends of
+  `Matrix.blend` are its two matrices, and the numbers of the WPT cases are `#guard`s within 10⁻⁶; none
+  of that is a theorem. A transform list with a percentage and two primitives does not interpolate
+  (it would need the box at the time of the style change).
 - Animated values are in the cascade that scripts read (computed style, layout reads). The frame the
   window paints does not take them yet: an animation is visible to scripts, not on screen.
 - An animation object is never freed while its page lives.
