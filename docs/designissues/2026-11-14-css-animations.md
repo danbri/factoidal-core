@@ -92,6 +92,11 @@ interpolate (`Matrix.blend`). Lists whose functions have the same names and argu
 matrix, perspective or `rotate3d()` keep the old argument-by-argument path and their function names
 (so a percentage stays a percentage of the box).
 
+`skew()`, `skewX()` and `skewY()` share no primitive (CSS Transforms 1 §13): a pair of two of them
+goes to the matrix path (`transform-skew-composition.html` expects exactly that for an accumulated
+`skewX` and `skewY`). The individual `rotate` property adds two rotations about one direction by their
+angles, and about two directions as the product of their quaternions.
+
 `Matrix` is the arithmetic alone, in `Float`: products, the matrices of the functions, an inverse
 (Gauss–Jordan, for the perspective part), the 3D decomposition of CSS Transforms 2 §9.2 (perspective,
 translation, scale, three skews, a quaternion), spherical interpolation along the shorter arc, and
@@ -161,6 +166,10 @@ is read at exactly its start, as in a browser.
 
 ## Cost
 
+Cost test (`Animation.Computed`, `restyledCount`): styling one element again on a page of 10 and of
+400 paragraphs styles the same two nodes (counted from outside, by rules that mark every element they
+are asked for).
+
 A page with no animation and no `animation`/`transition` declaration: per layout read after a change,
 one pass over the rules' declarations (two prefix tests each) and one over the elements' `style`
 attributes (two substring searches each). No table is built, no second cascade runs
@@ -177,6 +186,11 @@ Proved (axioms: propext, Classical.choice, Quot.sound):
   `clamp_between`, `clamp_idem`.
 - `Easing.evalSteps_mono` (a step function does not decrease, over all inputs), `stepOf_range`,
   `eval_linear`, `eval_ends` (keyword and cubic easings map 0 to 0 and 1 to 1).
+- `Easing.bezNum_mono`: the x of a cubic Bézier with x1 and x2 in [0, 1] does not decrease with the
+  parameter, exactly (over integers): the assumption of the bisection, and the reason CSS Easing 1
+  restricts x1 and x2. Proof: the difference is affine in x1 and in x2, so it is a weighted sum of the
+  four corner cases, each `(t - s)` times a sum of squares or of products of non-negative numbers
+  (`bez_mono`, the polynomial identity by `grind`).
 - `Value.lerpTok_zero`, `lerpTok_one` (at progress 0 and 1 each component of a component-wise result
   is the start or end component, or that component as a mixed length-percentage with the other part 0),
   `discrete_ends`, `interpolate_self`, `lerpTok_num`, `lerpTok_dim`, `lerpList_length`,
@@ -199,7 +213,8 @@ keyframes argument; the timing dictionary's checks; the playback sequences of th
 
 Open:
 
-- x-monotonicity of a cubic Bézier with x1, x2 in [0, 1] (the bisection assumes it) is not proved.
+- That `solveT`'s bisection ends at the nearest parameter is tested, not proved (the x it searches
+  is proved monotone: `Easing.bezNum_mono`).
 - parse∘serialize = id for values and easings is tested, not proved.
 - Reversing-adjusted start values of transitions; `linear()`; `animation-range` and timelines other
   than the document's.
