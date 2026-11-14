@@ -150,6 +150,17 @@ path, sizes) and of the `url` option are Lean's. A write answers the changes the
 fired as a `CookieChangeEvent`. Not modelled: `SameSite`, `Partitioned`, domain cookies (the jar is host-only),
 change events for writes by `document.cookie` or HTTP.
 
+### Cache API
+
+`caches`, `CacheStorage` and `Cache` (`ClientStorage/CacheStorage.lean`, `web_api` op 206; windows and
+workers in secure contexts). Caches are kept by id with a name map, so `caches.delete(name)` removes the name
+while a `Cache` object of it keeps its entries. "Query cache" is Lean's: URLs without fragments (and without
+queries for `ignoreSearch`), `GET` only unless `ignoreMethod`, the response's `Vary` headers compared on both
+requests unless `ignoreVary`. `put` refuses non-`http(s)` URLs, methods other than `GET`, status 206 and
+`Vary: *`, then replaces every matching entry and appends. The response is stored as opaque bytes written by
+the page side (status, headers, URL, type, body). `estimate()` counts the stored responses
+(`usageDetails.caches`), and IndexedDB's store descriptions (a name and a constant per store and index).
+
 ## Proved, tested only, open
 
 Proved (Lean 4.33.1, no `sorry`, axioms only `propext`, `Classical.choice`, `Quot.sound`; each theorem's doc
@@ -183,6 +194,9 @@ comment has its "Says" and "Does not say"):
 - Cookie Store: `setFromScript_store`, `store_keeps`, `set_keeps_host` (a set never adds a cookie for another
   host), `read_host` (a read answers only the page's host's cookies, never `HttpOnly`), `changes_sub`,
   `set_refuses_eq`.
+
+- Cache API: `hits_self` (a GET request matches the entry stored with it, under any options), `put_matches`,
+  `putCheck_method`, `Caches.opFor_noninterference`; `Manager.op_local` now over the three APIs.
 
 Tested only (`#guard`):
 
@@ -237,8 +251,7 @@ No timing was measured: the engine was not built locally (cloud check only).
 
 ## Not done in this change
 
-A bucket's own storage (IndexedDB, CacheStorage, file system) is not routed to the bucket. The Cache API is
-not started.
+A bucket's own storage (IndexedDB, CacheStorage, file system, locks) is not routed to the bucket.
 
 ## Questions for the owner
 
