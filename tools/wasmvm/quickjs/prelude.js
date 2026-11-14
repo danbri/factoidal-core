@@ -12159,8 +12159,16 @@
     return computedNames;
   };
   const camel = name => name.replace(/-([a-z])/g, (m, c) => c.toUpperCase());
+  // An element of a frame's document: its container's `marginwidth` and `marginheight`, which
+  // Lean's cascade of that document gives its body (HTML §15.3.3); '' for the page's elements.
+  const frameQ = id => {
+    const d = info(id, 7), f = d > 0 ? info(d, 12) : -1;
+    if (!(f >= 0)) return '';
+    const a = k => { const v = n.attr(f, k); return typeof v === 'string' ? v : ''; };
+    return '\u0002' + a('marginwidth') + '\u0000' + a('marginheight');
+  };
   const computedValue = (el, name) => {
-    const id = nodeId(el);
+    const id = nodeId(el), fq = frameQ(id);
     if (namesFor(el).length === 0) return '';
     if (name.startsWith('--')) {
       // a custom property: its place among the element's custom properties (measure op 36),
@@ -12179,11 +12187,11 @@
       const u = d !== 'none' ? n.query(id, 21, '') : '';
       if (typeof u === 'string' && u !== '') return u.split(' ')[name === 'width' ? 0 : 1] + 'px';
     }
-    const r = n.query(id, 200 + k, '');
+    const r = n.query(id, 200 + k, fq);
     return typeof r === 'string' ? r : '';
   };
   const computedValues = el => {
-    const r = n.query(nodeId(el), 20, ''), m = new Map();
+    const r = n.query(nodeId(el), 20, frameQ(nodeId(el))), m = new Map();
     if (typeof r !== 'string') return m;
     const xs = r.split('\u0000');
     for (let i = 0; i + 1 < xs.length; i += 2) m.set(xs[i], xs[i + 1]);
