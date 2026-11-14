@@ -136,6 +136,33 @@ def Result.shift (dx dy : Float) (r : Result) : Result :=
           grid := r.grid.map fun g => {g with x := g.x+dx, y := g.y+dy},
           baseline := r.baseline.map (·+dy)}
 
+/-- A fragment under the transform `t` (CSS Transforms 1 §6): its paint in a group with
+the transform; its boxes as the bounding boxes of where they are drawn, so that a point
+on the picture is a point in the box; its glyphs and pending boxes moved with it. The
+fragment's height and floats are as laid out: a transform does not change the flow. -/
+def Result.transformed (t : Transform) (r : Result) : Result :=
+  let point := fun (x y : Float) => Math.Affine2.applyPoint .float t x y
+  {r with nodes := if r.nodes.isEmpty then #[] else #[.group none t r.nodes.toList],
+          boxes := r.boxes.map fun b =>
+            let (x,y,w,h) := CSS.BoxTransform.bounds t b.x b.y b.width b.height
+            {b with x, y, width := w, height := h},
+          runs := r.runs.map fun run => {run with glyphs := run.glyphs.map fun g =>
+            let (x,y) := point g.x g.y
+            {g with x, y}},
+          pending := r.pending.map fun p =>
+            let (x,y) := point p.x p.y
+            {p with x, y}}
+
+/-- Says: a transform keeps the work, the height and the floats of a fragment. -/
+theorem Result.transformed_flow (t : Transform) (r : Result) :
+    (r.transformed t).work = r.work ∧ (r.transformed t).height = r.height ∧ (r.transformed t).floats = r.floats :=
+  ⟨rfl, rfl, rfl⟩
+
+/-- Says: a transform keeps the boxes one for one, with their nodes. -/
+theorem Result.transformed_sources (t : Transform) (r : Result) :
+    (r.transformed t).boxes.map (·.source) = r.boxes.map (·.source) := by
+  simp [Result.transformed, Array.map_map, Function.comp_def]
+
 /-- Two fragments in one: the paint of `b` over that of `a`. The height is `a`'s. -/
 def Result.over (a b : Result) : Result :=
   {a with nodes := a.nodes ++ b.nodes, boxes := a.boxes ++ b.boxes, runs := a.runs ++ b.runs,
@@ -437,7 +464,7 @@ laid out as a block container; one with inline content only stays a line of its 
 def blockInside (dom : Dom) (styles : Array Computed) (id : Nat) : Bool :=
   (dom.get id).kids.any fun k =>
     (dom.get k).type == .element &&
-      ((styles[id]!).pos.isPositioned ||
+      ((styles[id]!).pos.containsAbsolutes ||
         ((styles[k]!).display != .none && ((styles[k]!).display.isBlockLevel || (styles[k]!).pos.float != .none)))
 
 /-- The room beside `floats` for a line or box `h` high at `y`, in a content box from `x`,

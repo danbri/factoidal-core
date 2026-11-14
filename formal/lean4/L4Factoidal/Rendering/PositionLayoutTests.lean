@@ -523,4 +523,32 @@ private def texts (html extra : String) : Option (List String) :=
 #guard texts "<div>ab cD ef</div>" "div{text-transform:capitalize}" == some ["Ab","CD","Ef"]
 #guard texts "<div>ab cD</div>" "" == some ["ab","cD"]
 
+
+-- `transform` (CSS Transforms 1 §6): the box is laid out as if it had none, and what is
+-- drawn of it, with the boxes that say where it is, is transformed about its origin.
+private def moved := "<div id=a>AA</div><div id=b>BB</div>"
+-- the flow does not see the transform
+#guard box moved "#a{transform:translate(10px,3px)}" "b" == some (0,7,200,7)
+#guard box moved "#a{transform:translate(10px,3px)}" "a" == some (10,3,200,7)
+#guard at? moved "#a{transform:translate(10px,3px)}" "AA" == some (10,3)
+-- percentages are of the box's own size
+#guard box moved "#a{width:100px;transform:translate(50%,100%)}" "a" == some (50,7,100,7)
+#guard box moved "#a{width:100px;transform:translateX(-50%)}" "a" == some (-50,0,100,7)
+-- the centring idiom: left 50% of a 200 px block and back by half the box's width
+#guard box "<div id=c><div id=k>KK</div></div>" "#c{position:relative;height:50px} #k{position:absolute;left:50%;top:50%;width:40px;height:10px;transform:translate(-50%,-50%)}" "k" == some (80,20,40,10)
+-- a scale about the centre: the bounding box grows on both sides; about the corner, on one
+#guard box moved "#a{width:100px;height:10px;transform:scale(2)}" "a" == some (-50,-5,200,20)
+#guard box moved "#a{width:100px;height:10px;transform:scale(2);transform-origin:left top}" "a" == some (0,0,200,20)
+-- the last function is applied first: scale then translate is not translate then scale
+#guard box moved "#a{width:100px;height:10px;transform-origin:0 0;transform:translate(10px,0) scale(2)}" "a" == some (10,0,200,20)
+#guard box moved "#a{width:100px;height:10px;transform-origin:0 0;transform:scale(2) translate(10px,0)}" "a" == some (20,0,200,20)
+-- what is inside moves with it, and an absolutely positioned box inside it is placed in it
+#guard box "<div id=a><div id=k>K</div></div>" "#a{transform:translate(10px,3px)} #k{margin-left:5px}" "k" == some (15,3,195,7)
+#guard box "<div id=a>A<div id=k>K</div></div>" "#a{transform:translate(10px,3px);height:20px} #k{position:absolute;left:5px;top:6px}" "k" == some (15,9,6,7)
+-- `none` and an unknown function: no transform
+#guard box moved "#a{transform:translate(10px,3px)} #a{transform:none}" "a" == some (0,0,200,7)
+#guard box moved "#a{transform:bogus(10px)}" "a" == some (0,0,200,7)
+-- an inline box is not transformed
+#guard at? "<div>ab <span id=s>cd</span></div>" "#s{transform:translate(10px,3px)}" "cd" == some (18,0)
+
 end L4Factoidal.Rendering.PositionLayoutTests

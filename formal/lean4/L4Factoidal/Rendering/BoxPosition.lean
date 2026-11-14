@@ -1,5 +1,6 @@
 import L4Factoidal.Rendering.BoxAlign
 import L4Factoidal.Rendering.Content
+import L4Factoidal.Rendering.BoxTransform
 
 /-! Computed values of positioning, floats and box sizing (CSS Positioned Layout 3, CSS 2.1
 §9.5, CSS Sizing 3 §3.3): `Computed.pos`. Values are read through the property table, as
@@ -77,6 +78,12 @@ structure PositionStyle where
   nowrap : Bool := false
   /-- `text-transform` (CSS Text 3 §2.1; inherited). -/
   textTransform : TextTransform := .none
+  /-- `transform` (CSS Transforms 1): its functions in order (`BoxTransform.steps`); empty
+  for `none`. -/
+  transform : List TransformStep := []
+  /-- `transform-origin`: `(x, ofWidth, y, ofHeight)`, lengths and fractions of the border
+  box; its centre by default. -/
+  transformOrigin : Float × Float × Float × Float := (0,0.5,0,0.5)
   deriving Repr
 
 /-- Every field equal: the two lay out the same. -/
@@ -85,7 +92,8 @@ def PositionStyle.same (a b : PositionStyle) : Bool :=
   a.left.same b.left && a.zIndex == b.zIndex && a.float == b.float && a.clear == b.clear &&
   a.borderBox == b.borderBox && a.ratio == b.ratio && a.ratioAuto == b.ratioAuto &&
   a.writingMode == b.writingMode && a.listStyle == b.listStyle && a.listInside == b.listInside &&
-  a.flowRoot == b.flowRoot && a.content == b.content && a.nowrap == b.nowrap && a.textTransform == b.textTransform
+  a.flowRoot == b.flowRoot && a.content == b.content && a.nowrap == b.nowrap && a.textTransform == b.textTransform &&
+  sameSteps a.transform b.transform && a.transformOrigin == b.transformOrigin
 
 /-- Out of flow by positioning: `absolute` or `fixed`. -/
 def PositionStyle.isAbsolute (p : PositionStyle) : Bool := p.position == .absolute || p.position == .fixed
@@ -93,9 +101,13 @@ def PositionStyle.isAbsolute (p : PositionStyle) : Bool := p.position == .absolu
 /-- Establishes the containing block of its absolutely positioned descendants. -/
 def PositionStyle.isPositioned (p : PositionStyle) : Bool := p.position != .static
 
+/-- A box that holds its absolutely positioned descendants: a positioned box, or a
+transformed one (CSS Transforms 1 §3: it is their containing block, so they move with it). -/
+def PositionStyle.containsAbsolutes (p : PositionStyle) : Bool := p.isPositioned || !p.transform.isEmpty
+
 def positionProperties : List String :=
   ["position", "top", "right", "bottom", "left", "z-index", "float", "clear", "box-sizing", "aspect-ratio",
-   "writing-mode", "list-style-type", "list-style-position", "white-space", "text-transform"]
+   "writing-mode", "list-style-type", "list-style-position", "white-space", "text-transform", "transform", "transform-origin"]
 
 /-- The ratio `a / b` (width to height) as two whole numbers in lowest terms; `none` when
 it is degenerate (a term that is zero or negative: CSS Sizing 4 §5.1, it behaves as `auto`). -/
@@ -183,6 +195,14 @@ def PositionStyle.set (fontSize : Float) (p : PositionStyle) (property value : S
       | "lower-roman" | "upper-roman" | "lower-greek" => some {p with listStyle := .number}
       -- another counter style or a string: the marker of the kind of list stands
       | _ => some {p with listStyle := .auto}
+    | "transform" =>
+      if reset then some {p with transform := []} else
+      (BoxTransform.read (CssValues.computed { num := { fontSize := tableRat fontSize } } name v)).map fun steps =>
+        {p with transform := steps}
+    | "transform-origin" =>
+      if reset then some {p with transformOrigin := (0,0.5,0,0.5)} else
+      (BoxTransform.origin (CssValues.computed { num := { fontSize := tableRat fontSize } } name v)).map fun o =>
+        {p with transformOrigin := o}
     | "white-space" =>
       -- inherited; `pre` and its relatives keep their spaces by another field, and wrap or not as they say
       if v == "inherit" || v == "unset" then some p
@@ -256,6 +276,13 @@ def positionShorthand (property value : String) : Option (List (String × String
 #guard ((PositionStyle.set 10 {content := some "''"} "content" "none").map (·.content)) == some none
 #guard ((PositionStyle.set 10 {content := some "''"} "content" "unset").map (·.content)) == some none
 #guard ((PositionStyle.set 10 {} "content" "12px").map (·.content)) == none
+#guard ((PositionStyle.set 10 {} "transform" "translate(1em, 50%) scale(2)").map (·.transform.length)) == some 2
+#guard ((PositionStyle.set 10 {} "transform" "translate(1em, 50%)").map fun p => sameSteps p.transform [.translate 10 0 0 0.5]) == some true
+#guard ((PositionStyle.set 10 {transform := [.translate 1 0 0 0]} "transform" "none").map (·.transform.length)) == some 0
+#guard ((PositionStyle.set 10 {} "transform" "bogus").map (·.transform.length)) == none
+#guard ((PositionStyle.set 10 {} "transform-origin" "left top").map (·.transformOrigin)) == some (0,0,0,0)
+#guard (({} : PositionStyle).containsAbsolutes) == false
+#guard (({transform := [.matrix 1 0 0 1 0 0]} : PositionStyle).containsAbsolutes) == true
 #guard ((PositionStyle.set 10 {} "white-space" "nowrap").map (·.nowrap)) == some true
 #guard ((PositionStyle.set 10 {nowrap := true} "white-space" "normal").map (·.nowrap)) == some false
 #guard ((PositionStyle.set 10 {nowrap := true} "white-space" "inherit").map (·.nowrap)) == some true
