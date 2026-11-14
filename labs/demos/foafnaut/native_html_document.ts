@@ -178,6 +178,12 @@ export async function loadWebFonts(engine:WebFontEngine,url:string,source:string
   }
   return webFonts;
 }
+/** Whether a page's images are waited for before its first frame (the default: tests and
+hosts that draw once), or arrive after it: a window sets `true`, shows the page with its
+images' alternative text, and draws again when they are in (`revision`, `imagesPending`
+of the page). The first frame of a page then never waits for an image's bytes or decoding. */
+let imagesAfterFirstFrame=false;
+export function setImagesAfterFirstFrame(after:boolean){imagesAfterFirstFrame=after;}
 /** Fetch the images Lean listed, as `{key,bytes}`, six at a time, kept in the order listed.
 `failed` hears of each image that was not read. `engine`: the engine that decides each
 transfer (readSubresource); with none, the page's own origin only. */
@@ -352,8 +358,15 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
   // Lean lists the images it wants and decides each transfer (any origin: Net.Subresource);
   // the host makes the requests, with size caps. One that fails or is refused is left out, and the page shows its alt text.
   // An engine that holds images gets each one once, and renders name them.
-  const images=await imageOptions(engine,await fetchImageBytes(inspection.images??[],document.url,signal,
-    (imageURL,reason)=>fetchFailed("image",imageURL,`image not read: ${reason}`,"alt text shown"),engine as SubresourceEngine));
+  // A window draws the page first (setImagesAfterFirstFrame): the bytes are read meanwhile, and
+  // the engine is given them (it decodes each) when the host says the page is shown (startImages),
+  // so that the first frame waits neither for the network nor behind the decoding.
+  const later=imagesAfterFirstFrame&&(inspection.images??[]).length>0;
+  const imageBytes=fetchImageBytes(inspection.images??[],document.url,signal,
+    (imageURL,reason)=>fetchFailed("image",imageURL,`image not read: ${reason}`,"alt text shown"),engine as SubresourceEngine);
+  imageBytes.catch(()=>{});
+  let revision=0,imagesPending=later,imagesStarted=!later;
+  const images:Record<string,unknown>=later?{}:await imageOptions(engine,await imageBytes);
   // The tab icon that Lean chose (WebDocument.iconURL), by the rules of images. One that fails or is refused leaves the tab with no icon.
   let iconBase64:string|undefined;
   if(inspection.icon)try{
@@ -447,10 +460,20 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
         if(Array.isArray(more[key])){options[key]=[...((options[key] as unknown[]|undefined)??[]),...(more[key] as unknown[])];changed=true;}
     }
     // The session's layout request was made at start: it must hear of what arrived since.
-    if(changed)lateChange=true;
+    if(changed){lateChange=true;revision++;}
     return changed;
   };
   let lateChange=false;
+  const startImages=()=>{
+    if(imagesStarted)return;
+    imagesStarted=true;
+    imageBytes.then(bytes=>imageOptions(engine,bytes)).then(more=>{
+      for(const key of ["images","heldImages"] as const)
+        if(Array.isArray(more[key])&&options)options[key]=[...((options[key] as unknown[]|undefined)??[]),...(more[key] as unknown[])];
+      lateChange=true;
+    },error=>{if(!signal?.aborted)console.error(`Native HTML: images: ${String(error instanceof Error?error.message:error)}`);})
+      .finally(()=>{imagesPending=false;revision++;});
+  };
   // The first frame has what the scripts' first turn asked for.
   if(script&&options.commands)try{await fetchListedAgain();}catch(error){
     if(signal?.aborted)throw error;
@@ -494,6 +517,15 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
     changed by the page's scripts ask for; `added` is called when some arrived (the host
     then draws the page again). */
     fetchAdded,
+    /** A number that grows when something the page is drawn with arrived after it was first
+    shown (its images, when a window takes them after the first frame; sheets and images of
+    script-made elements): a host that sees it grow draws the page again. */
+    revision:()=>revision,
+    /** The page's images are still being read (a capture waits for them). */
+    imagesPending:()=>imagesPending,
+    /** The host has shown the page: its images, read meanwhile, go to the engine now
+    (once; nothing to do when the images were waited for). */
+    startImages,
     /** The layout fields of the page as it is now, once after a sheet, an imported sheet or an
     image arrived that the script session's start did not have; else undefined. The host
     sends them to the session as the `layout` of its next action (with the URL and the

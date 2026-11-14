@@ -377,3 +377,42 @@ Deno.test("page-load: imported style sheets",async()=>{
   const doc=await Deno.readTextFile(`${lab}native_html_document.ts`),hub=await Deno.readTextFile(`${root}docs/web/hub/foafnaut/browser-worker.mjs`);
   assert(doc.includes("loadImports(")&&hub.includes("loadImports("),"a host does not fetch imported style sheets through loadImports");
 });
+// A window shows a page before its images are in: prepareHTML answers with no image waited
+// for, the engine is given them only when the host says the page is shown, and the page's
+// revision grows when they are in (the host draws again). The default waits, as before.
+Deno.test("page-load: a window takes a page's images after its first frame",async()=>{
+  const {prepareHTML,setImagesAfterFirstFrame}=await import("./native_html_document.ts");
+  const dir=await Deno.makeTempDir();
+  try{
+    await Deno.writeTextFile(`${dir}/p.html`,"<p>x</p><img src=a.png alt=a>");
+    await Deno.writeFile(`${dir}/a.png`,new Uint8Array([137,80,78,71,13,10,26,10]));
+    const loads:string[]=[];
+    const engine={
+      xmlStylesheet:()=>({}),xslt:()=>({source:""}),
+      inspect:(_s:string,o:Record<string,unknown>)=>({scripts:[],stylesheets:[],images:[{key:"a.png",url:new URL("a.png",o.url as string).href}],
+        baseURL:o.url,title:"t",icon:null}),
+      imageInfo:()=>({held:0}),imageLoad:(_b:Uint8Array,key:string)=>{loads.push(key);},
+      compile:()=>({}),selectedText:()=>"",findInPage:()=>({}),
+    };
+    const options=(page:{request:(w:number,h:number)=>{options:unknown}})=>page.request(100,100).options as Record<string,unknown>;
+    // the default: the images are in the first request
+    const waited=await prepareHTML(engine as never,`file://${dir}/p.html`,undefined,undefined,{liberal:true}) as never as
+      {request:(w:number,h:number)=>{options:unknown};revision:()=>number;imagesPending:()=>boolean;startImages:()=>void};
+    assert.deepEqual(loads,["a.png"]);
+    assert.equal(waited.imagesPending(),false);
+    assert.equal((options(waited).heldImages as unknown[]).length,1);
+    // a window: none in the first request, none given to the engine until the page is shown
+    setImagesAfterFirstFrame(true);loads.length=0;
+    const shown=await prepareHTML(engine as never,`file://${dir}/p.html`,undefined,undefined,{liberal:true}) as typeof waited;
+    assert.deepEqual(loads,[]);
+    assert.equal(shown.imagesPending(),true);
+    assert.equal(options(shown).heldImages,undefined);
+    const before=shown.revision();
+    shown.startImages();shown.startImages();
+    for(let i=0;i<200&&shown.imagesPending();i++)await new Promise(done=>setTimeout(done,5));
+    assert.deepEqual(loads,["a.png"]);
+    assert.equal(shown.imagesPending(),false);
+    assert.equal(shown.revision(),before+1);
+    assert.equal((options(shown).heldImages as unknown[]).length,1);
+  }finally{setImagesAfterFirstFrame(false);await Deno.remove(dir,{recursive:true});}
+});

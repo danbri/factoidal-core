@@ -63,7 +63,7 @@ asks the engine with the list so far. A sheet that is not read is asked for no m
 reported to `failed(url, reason)`; the page is drawn without it. At most `rounds` rounds of
 asking (the engine follows imports 8 deep) and `limit` sheets. Answer: the list for the
 request field `imported`, `[{url, source}]` under the URLs the engine named. */
-export async function loadImports(inspect,fetchText,imported=[],failed=()=>{},limit=MAX_SHEETS,rounds=9) {
+export async function loadImports(inspect,fetchText,imported=[],failed=(_url,_reason)=>{},limit=MAX_SHEETS,rounds=9) {
   const tried=new Set(imported.map(sheet=>sheet.url));
   for(let round=0;round<rounds;round++) {
     const wanted=((await inspect(imported))?.imports??[]).map(entry=>entry.url).filter(url=>!tried.has(url));
