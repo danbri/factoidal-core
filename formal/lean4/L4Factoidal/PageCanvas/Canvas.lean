@@ -789,7 +789,7 @@ def Run.step (r : Run) (cmd : Cmd) : Run :=
       else if kind == 5 then r.env.decode data
       else r.source kind src key
     let b := b.map fun b =>
-      if sw.isNaN || kind == 4 || kind == 5 then b else
+      if sw.isNaN || kind == 4 then b else
       let x0 := clampNat sx b.width
       let y0 := clampNat sy b.height
       let x1 := clampNat (sx + sw) b.width

@@ -2480,6 +2480,19 @@
           resolve(bitmapOf(4, tail(bytes), 0, 0, img.width, img.height, img.width, img.height));
           return;
         }
+        if (typeof Blob === 'function' && img instanceof Blob) {
+          // A Blob: its bytes decoded by the engine's decoders (a bitmap of kind 5, cropped there).
+          img.arrayBuffer().then(buf => {
+            const bytes = new Uint8Array(buf), id = nextObj++;
+            q.push(93, id, 5, tail(bytes), sx, sy, sw, sh, bytes.length, 0); later();
+            let size = [];
+            try { size = nums(ask([11, 2, id])); } catch (e) {}
+            if (size.length < 2 || !(size[0] > 0 && size[1] > 0)) { q.push(94, 4, id); later(); reject(new DOMException('The source image could not be decoded.', 'InvalidStateError')); return; }
+            const b = Object.create(ImageBitmap.prototype); define(b, K, { id, w: size[0], h: size[1], closed: false });
+            resolve(b);
+          }, reject);
+          return;
+        }
         if (media.isFrame && media.isFrame(img)) {
           // A VideoFrame: drawn at its display size on a scratch bitmap, which the new bitmap copies.
           const f = frameBitmap(img), id = nextOffscreen++;
@@ -2507,7 +2520,7 @@
     // make (PageCanvas.Env.decode), drawn on a scratch bitmap and read back. null: not decoded.
     const decodeImage = bytes => {
       const id = nextObj++;
-      q.push(93, id, 5, tail(bytes), 0, 0, 0, 0, bytes.length, 0); later();
+      q.push(93, id, 5, tail(bytes), NaN, NaN, NaN, NaN, bytes.length, 0); later();
       let size = [];
       try { size = nums(ask([11, 2, id])); } catch (e) {}
       if (size.length < 2 || !(size[0] > 0 && size[1] > 0)) { q.push(94, 4, id); later(); return null; }
