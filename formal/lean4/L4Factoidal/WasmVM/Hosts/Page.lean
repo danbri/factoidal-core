@@ -1182,8 +1182,12 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
     | .error e => (h, st, Hosts.Dom.codeOrTrap e)
     | .ok type =>
       if h.listeners.size ≥ maxListeners then (h, st, Hosts.Dom.ret (-5))
-      else ({ h with listeners := h.listeners.push { target := a 0, type, capture := a 4 != 0, callback := a 3 } },
-        st, Hosts.Dom.ret 0)
+      else
+        let h := { h with listeners := h.listeners.push { target := a 0, type, capture := a 4 != 0, callback := a 3 } }
+        -- a listener for an animation or transition event: the page's styles are from now
+        -- brought up to date in its frames (`Host.afterWrite`); any other listener changes
+        -- nothing of that
+        ((if animationEventTypes.contains type then h.afterWrite true true else h), st, Hosts.Dom.ret 0)
   | "unlisten" => ({ h with listeners := h.listeners.filter (·.callback != a 0) }, st, Hosts.Dom.ret 0)
   | "dispatch_plan" =>
     match Hosts.Dom.readStr mem st (a 1) (a 2) Hosts.Dom.maxAttrName with
@@ -1236,7 +1240,7 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
     let neutral := styleNeutralImports.contains nm || detachedWrite h.dom.dom nm a
     let reads := if readOnlyImports.contains nm then h.reads
       else h.reads.wrote (styleOf.map (·.1)) neutral (styleOf.any (·.2))
-    -- a new listener for an animation or transition event (`Host.afterWrite`)
+    -- a listener through the first build's import (page scripts use `listen`, above)
     let listens := nm == "add_event_listener" &&
       (match Hosts.Dom.readStr mem st (a 1) (a 2) 24 with
         | .ok name => animationEventTypes.contains name
