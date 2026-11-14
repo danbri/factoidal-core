@@ -2810,6 +2810,10 @@
     // "Look up a custom element definition" (HTML §4.13.3) for the element numbered `id`.
     const lookup = id => {
       if (info(id, 0) !== 1 || !htmlEl(id)) return null;
+      // a document with no browsing context has no definitions (the page's document is 0; a
+      // frame's document answers its iframe to node_info 12)
+      const doc = info(id, 7);
+      if (doc !== 0 && info(doc, 12) < 0) return null;
       const l = str(id, 0), d = defsByName.get(l);
       if (d && d.localName === l) return d;
       let is = isValues.get(id);
@@ -2950,7 +2954,9 @@
       };
       n.setAttr = (id, name, value) => attrChange(id, name, () => setAttr0(id, name, value));
       n.removeAttr = (id, name) => attrChange(id, name, () => removeAttr0(id, name));
-      n.clone = (id, deep) => { const c = clone0(id, deep); if (typeof c === 'number' && c >= 0) for (const k of reach(c)) tryUpgrade(k); return c; };
+      // a clone has the `is` value of its original (DOM §4.5 "clone a node" step 2.1.2)
+      const copyIs = (from, to) => { if (isValues.size === 0) return; const a = reach(from), b = reach(to); if (a.length === b.length) a.forEach((k, i) => { const v = isValues.get(k); if (v !== undefined) isValues.set(b[i], v); }); else { const v = isValues.get(from); if (v !== undefined) isValues.set(to, v); } };
+      n.clone = (id, deep) => { const c = clone0(id, deep); if (typeof c === 'number' && c >= 0) { copyIs(id, c); for (const k of reach(c)) tryUpgrade(k); } return c; };
       // tree_op 3 adopts a node; 4 and 5 import one (a clone in another document)
       n.treeOp = (id, arg, op) => {
         if (op === 3) {
@@ -2963,7 +2969,7 @@
           return r;
         }
         const r = treeOp0(id, arg, op);
-        if ((op === 4 || op === 5) && typeof r === 'number' && r >= 0) for (const k of reach(r)) tryUpgrade(k);
+        if ((op === 4 || op === 5) && typeof r === 'number' && r >= 0) { copyIs(id, r); for (const k of reach(r)) tryUpgrade(k); }
         return r;
       };
     };
@@ -7506,6 +7512,10 @@
     const prepare = id => {
       if (info(id, 0) !== 1 || str(id, 0) !== 'script') { fresh.delete(id); return; }
       if (!connectedId(id)) return;
+      // scripting is enabled only in a document with a browsing context: the page's (0) or
+      // a frame's (node_info 12 answers its iframe)
+      const doc = info(id, 7);
+      if (doc !== 0 && info(doc, 12) < 0) return;
       const src = n0.attr(id, 'src'), el = wrap(id);
       const text = typeof src === 'string' ? '' : el.textContent;
       if (typeof src !== 'string' && text === '') return;
