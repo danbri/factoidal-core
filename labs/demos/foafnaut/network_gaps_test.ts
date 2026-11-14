@@ -1,24 +1,32 @@
 // https://github.com/danbri/factoidal-core/issues/374: page scripts have XMLHttpRequest and
 // fetch, and only when the embedder turns the network on (web_api op 75, Net.Xhr.op: off
-// answers -2, and then neither global is defined). The decisions are in
-// formal/lean4/L4Factoidal/Net/PageFetch.lean and Net/Xhr.lean; the prelude holds the classes.
-// Run with --allow-read.
+// answers -2, and then neither global is defined). Headers, Request and Response make no
+// request (their rules are Lean's, web_api 86 to 89): they are defined either way.
+// The decisions are in formal/lean4/L4Factoidal/Net/PageFetch.lean and Net/Xhr.lean. This test
+// runs a page on the engine and reads what its script sees; it does not read the prelude's text.
+// Needs the native engine (.build/web-render/engines); run with --allow-read --allow-ffi --allow-env.
 import {strict as assert} from "node:assert";
+import {loadHTML,type ScriptTurn} from "./native_html_engine.ts";
 
-Deno.test("issue 374: page scripts have fetch and XMLHttpRequest, off unless the embedder turns the network on",()=>{
-  const prelude=Deno.readTextFileSync(new URL("../../../tools/wasmvm/quickjs/prelude.js",import.meta.url));
-  assert.ok(/lazy\('XMLHttpRequest', makeXHR\)/.test(prelude),"XMLHttpRequest is not defined by the prelude");
-  assert.ok(/lazy\('fetch',/.test(prelude),"fetch is not defined by the prelude");
-  // Each global that makes a request asks the engine first, and is undefined when the network
-  // is off. Headers and Response make none (their rules are Lean's, web_api 86 to 89): they are
-  // defined whenever the engine answers those ops.
-  for(const name of ["lazy('Headers', () =>","lazy('Response', () =>"])assert.ok(prelude.includes(name),`missing ${name}`);
-  for(const name of ["makeXHR = () => {","lazy('fetch', () => {"]){
-    const at=prelude.indexOf(name);
-    assert.ok(at>=0,`missing ${name}`);
-    assert.ok(/^\s*if \(apiCall\(75, \[\]\) !== '1'\) return undefined;/.test(prelude.slice(at+name.length,at+name.length+80)),
-      `${name} does not ask the engine whether the network is on`);
-  }
-  const xhr=Deno.readTextFileSync(new URL("../../../formal/lean4/L4Factoidal/Net/Xhr.lean",import.meta.url));
-  assert.ok(xhr.includes("if !s.enabled then (s, .error (-2)) else"),"Net.Xhr.op is not off by default");
-});
+const library=new URL("./.build/web-render/engines/libweb-render.dylib",import.meta.url).pathname;
+const exists=(p:string)=>{try{return Deno.statSync(p).isFile;}catch{return false;}};
+
+const page=`<!doctype html><script>
+console.log(["fetch", "XMLHttpRequest", "Headers", "Request", "Response"].map(n => n + "=" + typeof globalThis[n]).join(" "));
+</script>`;
+
+Deno.test({name:"issue 374: page scripts have fetch and XMLHttpRequest, off unless the embedder turns the network on",
+  ignore:!exists(library),fn:async()=>{
+  const engine=await loadHTML(library);
+  const seen=(network:boolean)=>{
+    const turn=engine.scriptSession(page,{action:"start",url:"https://example.test/p.html",resources:[],engine:"bubblepop",
+      ...(network?{network:true}:{})}) as ScriptTurn;
+    engine.scriptSession("",{action:"close"});
+    assert.deepEqual(turn.errors,[]);
+    return turn.logs.join("\n");
+  };
+  assert.equal(seen(false),"fetch=undefined XMLHttpRequest=undefined Headers=function Request=function Response=function",
+    "with the network off a page has no fetch and no XMLHttpRequest, and has the Fetch objects that make no request");
+  assert.equal(seen(true),"fetch=function XMLHttpRequest=function Headers=function Request=function Response=function",
+    "with the network on a page has fetch and XMLHttpRequest");
+}});
