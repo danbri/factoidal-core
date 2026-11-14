@@ -157,7 +157,8 @@ def gridPlan (kids : Children) (s : Computed) (items : Array Item) (availW avail
       | .anonymous _ _ => {}
     let row := Grid.resolveAxis rowNames lines.rowStart lines.rowEnd
     let col := Grid.resolveAxis colNames lines.columnStart lines.columnEnd
-    ({row := row.1, rowSpan := row.2, col := col.1, colSpan := col.2} : Grid.RawItem)
+    -- lines beyond ±Grid.maxLine are clamped (§8.1): a page can not ask for a larger grid
+    ({row := row.1, rowSpan := row.2, col := col.1, colSpan := col.2} : Grid.RawItem).clamp
   let shifted := Grid.shift raw
   let p := Grid.place g.flowColumn g.dense (shifted.2.1 + explicitRows) (shifted.2.2 + explicitCols) shifted.1
   {areas := p.areas, rows := p.rows, cols := p.cols, rowLead := shifted.2.1, colLead := shifted.2.2,

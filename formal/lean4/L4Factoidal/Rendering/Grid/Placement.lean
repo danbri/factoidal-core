@@ -735,6 +735,43 @@ structure RawItem where
   colSpan : Nat := 1
   deriving Repr, Inhabited
 
+/-- The lines a placement may name, counted from the first explicit line: from
+`-maxLine` to `maxLine` (CSS Grid 2 §8.1 lets a user agent clamp the implicit grid; this
+is the limit Gecko uses). A page that names a line further out, or a longer span, gets
+the clamped one, so the grid it asks for stays within a bound it can not raise. -/
+def maxLine : Int := 10000
+
+/-- A start line, clamped so that at least one track follows it before `maxLine`. -/
+def clampStart (v : Int) : Int := max (-maxLine) (min (maxLine - 1) v)
+
+/-- A span, clamped so that it ends at or before `maxLine`. -/
+def clampSpan (start : Option Int) (n : Nat) : Nat :=
+  match start with
+  | some s => max 1 (min n (maxLine - clampStart s).toNat)
+  | none => max 1 (min n maxLine.toNat)
+
+/-- The item with its lines and spans clamped. -/
+def RawItem.clamp (r : RawItem) : RawItem :=
+  {row := r.row.map clampStart, rowSpan := clampSpan r.row r.rowSpan,
+   col := r.col.map clampStart, colSpan := clampSpan r.col r.colSpan}
+
+/-- Kind: resource bound (local-lean-rules §11). Says: a clamped start is a line within
+`[-maxLine, maxLine)` and a clamped span starting there ends at or before `maxLine`. -/
+theorem clamp_bounds (v : Int) (n : Nat) :
+    -maxLine ≤ clampStart v ∧ clampStart v < maxLine ∧
+    clampStart v + (clampSpan (some v) n : Int) ≤ maxLine ∧ 1 ≤ clampSpan (some v) n := by
+  simp only [clampStart, clampSpan, maxLine]
+  omega
+
+/-- Kind: resource bound. Says: an automatic span is at most `maxLine` tracks. -/
+theorem clampSpan_none (n : Nat) : clampSpan none n ≤ 10000 := by
+  simp only [clampSpan, maxLine]; omega
+
+#guard (RawItem.clamp {row := some 1000000000, rowSpan := 5, col := some (-99999999), colSpan := 1000000}).row == some 9999
+#guard (RawItem.clamp {row := some 1000000000, rowSpan := 5, col := some (-99999999), colSpan := 1000000}).rowSpan == 1
+#guard (RawItem.clamp {row := some 1000000000, rowSpan := 5, col := some (-99999999), colSpan := 1000000}).colSpan == 20000
+#guard (RawItem.clamp {row := some 2, rowSpan := 3, col := none, colSpan := 2}).rowSpan == 3
+
 /-- How many tracks the implicit grid needs before the explicit grid in an axis. -/
 def leading (starts : List (Option Int)) : Nat :=
   starts.foldl (fun m s => match s with | some v => max m (-v).toNat | none => m) 0
