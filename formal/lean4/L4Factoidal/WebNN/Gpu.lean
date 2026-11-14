@@ -356,6 +356,33 @@ def poolKernel (name : String) (inShape out : Shape) (window strides dilations p
   Wgsl.finish (loopKernel ["x"] out count 0 [.varS "acc" none (some (f "0.0")), .varS "cnt" none (some (u 0))]
     (stmts (windowLets kh kw (g strides 0) (g strides 1) (g dilations 0) (g dilations 1) ++ [step])) fin)
 
+/-- A finite `Float` as a WGSL `f32` literal (its decimal text; a minus sign as negation);
+`none` for NaN, an infinity or a text the subset does not take. -/
+def floatLit (x : Float) : Option Wgsl.Expr :=
+  if x.isNaN || x.isInf then none else
+  let t := (if x < 0.0 then -x else x).toString
+  if Wgsl.Lit.ok (.float t) then some (if x < 0.0 then .unary "-" (f t) else f t) else none
+
+/-- gemm (`Compute.gemm`): `alpha · A · B + beta · C` on matrices, `A` `[M, K]` (`[K, M]` when
+`aT`), `B` `[K, N]` (`[N, K]` when `bT`), `C` broadcast to `[M, N]` by `expandMap`. -/
+def gemmKernel (sa sb : Shape) (sc : Option Shape) (alpha beta : Float) (aT bT : Bool) (out : Shape) :
+    Except String Wgsl.Module := do
+  if sa.length != 2 || sb.length != 2 || out.length != 2 then throw "webnn gpu: gemm shapes"
+  if Shape.size out > maxElements then throw "webnn gpu: output too large for one dispatch"
+  let m := out.getD 0 1; let n := out.getD 1 1
+  let kk := if aT then sa.getD 0 1 else sa.getD 1 1
+  if kk == 0 || kk > Wgsl.maxCapLoop then throw "webnn gpu: gemm inner dimension out of range"
+  let some al := floatLit alpha | throw "webnn gpu: gemm alpha"
+  let some be := floatLit beta | throw "webnn gpu: gemm beta"
+  let i := nm (coordName 0); let j := nm (coordName 1); let t := nm "t"
+  let ai := if aT then add (mulE t (u m)) i else add (mulE i (u kk)) t
+  let bi := if bT then add (mulE j (u kk)) t else add (mulE t (u n)) j
+  let step := add (nm "acc") (mulE (.index (nm "a") ai) (.index (nm "b") bi))
+  let fin := match sc with
+    | some c => add (mulE al (nm "acc")) (mulE be (.index (nm "c") (flatIndex (expandMap c 2) c)))
+    | none => mulE al (nm "acc")
+  Wgsl.finish (foldKernel (if sc.isSome then ["a", "b", "c"] else ["a", "b"]) out kk 0 (f "0.0") step fin)
+
 /-- Workgroups to dispatch for `n` output elements. -/
 def groups (n : Nat) : Nat := (n + wg - 1) / wg
 
@@ -389,6 +416,8 @@ def printed : Except String Wgsl.Module → String
 #guard !(printed (poolKernel "averagePool2d" [1, 2, 8, 8] [1, 2, 4, 4] [3, 3] [2, 2] [1, 1] [1, 1, 1, 1])).startsWith "error"
 #guard !(printed (poolKernel "maxPool2d" [1, 2, 8, 8] [1, 2, 4, 4] [3, 3] [2, 2] [1, 1] [1, 1, 1, 1])).startsWith "error"
 #guard (printed (matmulKernel [2, 70000] [70000, 2] [2, 2])).startsWith "error"
+#guard !(printed (gemmKernel [4, 3] [5, 4] (some [5]) 1.5 (-0.25) true true [3, 5])).startsWith "error"
+#guard (printed (gemmKernel [3, 4] [4, 5] none (0.0 / 0.0) 1.0 false false [3, 5])).startsWith "error"
 -- the u32 evaluator on the printed coordinate of a slice
 #guard evalU (fun s => if s == "o0" then some 5 else none) (emitC coordName (.add (.lit 2) (.mulLit (.out 0) 3))) == some 17
 
