@@ -57,6 +57,40 @@ def atomInBodyF : Nat → SimpleType → Atomic → Bool
 
 def atomInBody (t : SimpleType) (a : Atomic) : Bool := atomInBodyF 16 t a
 
+/-- No constraining facet (the `whiteSpace` facet, which does not
+constrain the value space, is not looked at). -/
+def facetsNone (f : Facets) : Bool :=
+  f.length.isNone && f.minLength.isNone && f.maxLength.isNone && f.patterns.isEmpty &&
+  f.enumeration.isNone && f.maxInclusive.isNone && f.maxExclusive.isNone &&
+  f.minInclusive.isNone && f.minExclusive.isNone && f.totalDigits.isNone &&
+  f.fractionDigits.isNone && f.explicitTimezone.isNone && !f.hasAssertion
+
+/-- Is the type a generalized atomic type (XPath 4.0 §3.2.7): an atomic
+type, or a pure union type (no facets of its own, every member a
+generalized atomic type)? A list type is not. -/
+def generalizedF : Nat → SimpleType → Bool
+  | 0, _ => false
+  | n + 1, t =>
+    match t with
+    | .atomic b _ => b != .anySimpleType
+    | .list _ _ => false
+    | .union ms f => facetsNone f && ms.all (generalizedF n)
+
+def generalized (t : SimpleType) : Bool := generalizedF 16 t
+
+/-- The built-in atomic types that a pure union of built-in types (no
+facets anywhere) is the union of, in order; `none` for another type. Such
+a union is the choice of those types. -/
+def pureLeavesF : Nat → SimpleType → Option (List AType)
+  | 0, _ => none
+  | n + 1, t =>
+    match t with
+    | .atomic b f => if facetsNone f && b != .anySimpleType then some [.b b] else none
+    | .list _ _ => none
+    | .union ms f => if facetsNone f then (ms.mapM (pureLeavesF n)).map List.flatten else none
+
+def pureLeaves (t : SimpleType) : Option (List AType) := pureLeavesF 16 t
+
 /-- The first member that takes the value. -/
 def firstCast (f : SimpleType → M (List Atomic)) : List SimpleType → Option (List Atomic)
   | [] => none
@@ -239,6 +273,14 @@ private def errCode (r : M (List Atomic)) : String :=
   some [("integer", "1"), ("integer", "2"), ("integer", "3")]
 #guard errCode (castToBody (fun _ => none) tIntList (Atomic.ofStr "1 two")) == "FORG0001"
 #guard errCode (castToBody (fun _ => none) tIntList (Atomic.ofInt 1)) == "XPTY0004"
+-- generalized atomic types and pure unions of built-in types
+#guard generalized tHat && generalized tIntOrDate && !generalized tIntList
+#guard !generalized (.union [.atomic .integer {}] { minInclusive := some "1" })
+#guard !generalized (.union [tIntList] {})
+#guard pureLeaves tIntOrDate == some [.b .integer, .b .date]
+#guard pureLeaves (.union [tIntOrDate, .atomic .string {}] {}) == some [.b .integer, .b .date, .b .string]
+#guard pureLeaves tHat == none
+#guard pureLeaves (.union [tHat, .atomic .date {}] {}) == none
 -- instance of, by value
 #guard atomInBody tHat (Atomic.ofInt 5)
 #guard !atomInBody tHat (Atomic.ofInt 50)
