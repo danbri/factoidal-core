@@ -2219,7 +2219,7 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
           -- 36: the custom properties that apply to the element (35 is the hit test); 200 + k: the k-th property's value
           some (if op == 20 then Rendering.ComputedValues.text c
             else if op == 36 then Rendering.ComputedGeneric.customNamesText view node
-            else Rendering.ComputedGeneric.valueAt view node (op - 200))
+            else Rendering.Animation.Computed.resolvedAt view node (op - 200))
         else some ""
       | .error _ => none
     else match laid.get with
