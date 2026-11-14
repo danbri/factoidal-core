@@ -212,7 +212,11 @@ def metaPolicies (d : Dom) (doc : NodeId) : List Policy := (metaContents d doc).
 A CSP list is its policies separated by U+0001, each "e" (enforced) or "r" (report only)
 and the serialized policy. -/
 
-def listWire (contents : List String) : String := "\x01".intercalate (contents.map ("e" ++ ·))
+/-- A serialized policy for the wire: a control character that is not ASCII whitespace
+(none can be part of a directive) is written as U+FFFD, so the separators never occur. -/
+def plain (s : String) : String := s.map fun c => if c.toNat < 32 && !isWs c then '\uFFFD' else c
+
+def listWire (contents : List String) : String := "\x01".intercalate (contents.map fun c => "e" ++ plain c)
 
 def parseList (w : String) : List Policy :=
   if w.isEmpty then [] else
@@ -453,6 +457,21 @@ private def metaDoc : Dom := { nodes := #[
 #guard answer metaDoc 0 ("a\x00" ++ htmlNS ++ "\x00div\x00\x00onclick") == "TrustedScript\x00Element onclick"
 #guard answer metaDoc 0 ("a\x00" ++ htmlNS ++ "\x00div\x00\x00title") == ""
 #guard answer metaDoc 0 ("p\x00" ++ htmlNS ++ "\x00script\x00src") == "TrustedScriptURL"
+-- every event handler the page host knows today (prelude.js `handlerNames`) is one here:
+-- the host compiles no handler attribute that this table does not name
+#guard ["abort", "blur", "cancel", "change", "click", "close", "contextmenu", "dblclick", "error", "focus", "input",
+  "keydown", "keypress", "keyup", "load", "mousedown", "mouseenter", "mouseleave", "mousemove", "mouseout", "mouseover",
+  "mouseup", "reset", "resize", "scroll", "select", "submit", "toggle", "wheel", "animationend", "transitionend",
+  "pointerdown", "pointerup", "pointermove", "message", "unhandledrejection", "rejectionhandled", "beforeunload",
+  "unload", "hashchange", "popstate", "pageshow", "pagehide", "storage", "online", "offline", "afterprint",
+  "beforeprint", "languagechange", "messageerror", "slotchange", "beforetoggle", "command", "invalid", "auxclick",
+  "beforeinput", "beforematch", "canplay", "canplaythrough", "contextlost", "contextrestored", "copy", "cuechange",
+  "cut", "drag", "dragend", "dragenter", "dragleave", "dragover", "dragstart", "drop", "durationchange", "emptied",
+  "ended", "formdata", "loadeddata", "loadedmetadata", "loadstart", "paste", "pause", "play", "playing", "progress",
+  "ratechange", "scrollend", "securitypolicyviolation", "seeked", "seeking", "stalled", "suspend", "timeupdate",
+  "volumechange", "waiting", "webkitanimationend", "webkitanimationiteration", "webkitanimationstart",
+  "webkittransitionend", "pagereveal", "pageswap"].all fun a => isEventHandlerName ("on" ++ a)
+#guard listWire ["a\x01b\x00c\td"] == "ea\uFFFDb\uFFFDc\td"
 #guard answer metaDoc 0 "h\x00onclick" == "1" && answer metaDoc 0 "h\x00onpointerdown" == "1" && answer metaDoc 0 "h\x00ondoesnotexist" == "0"
 
 end L4Factoidal.HTML.TrustedTypes

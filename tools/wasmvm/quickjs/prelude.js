@@ -24,6 +24,11 @@
   const WINDOW = 0x0FFFFFFF;
   let nextTarget = 0x10000000;
   const define = (o, name, value) => Object.defineProperty(o, name, { value, writable: true, configurable: true });
+  // Trusted Types (section trustedtypes): these stay null until the page uses Trusted Types or
+  // one of its documents has a policy that asks for them, so other pages pay one comparison.
+  // ttAttr(element, namespace, name, value) and ttValue(type, node id or null, value, sink)
+  // answer the string that may reach the sink, or throw.
+  let ttAttr = null, ttValue = null, ttMeta = null, ttStart = null, ttDoc = null;
   const consts = (o, table) => { for (const k in table) Object.defineProperty(o, k, { value: table[k], enumerable: true }); };
 
   // ---- DOMException -------------------------------------------------------------
@@ -805,7 +810,7 @@
     hasAttributes() { return this.getAttributeNames().length > 0; }
     setAttribute(name, value) {
       if (arguments.length < 2) throw new TypeError('setAttribute: 2 arguments required');
-      const k = String(name), v = String(value);
+      const k = String(name), v = ttAttr === null ? String(value) : ttAttr(this, null, k, value);
       chk(n.setAttr(nodeId(this), k, v));
       // An event handler content attribute: a name that starts with "on", in any case.
       if (k.length >= 2 && (k.charCodeAt(0) | 32) === 111 && (k.charCodeAt(1) | 32) === 110)
@@ -813,7 +818,8 @@
     }
     setAttributeNS(ns, name, value) {
       if (arguments.length < 3) throw new TypeError('setAttributeNS: 3 arguments required');
-      chk(n.setAttr(nodeId(this), nsArg(ns) + '\u0000' + String(name), String(value)));
+      const q = String(name);
+      chk(n.setAttr(nodeId(this), nsArg(ns) + '\u0000' + q, ttAttr === null ? String(value) : ttAttr(this, nsArg(ns), q, value)));
     }
     removeAttribute(name) {
       const k = lowerIfHtml(this, String(name)), a = attrNodes(this).find(x => x.name === k);
@@ -886,7 +892,7 @@
     if (a.el !== null && a.el !== el) throw new DOMException('The attribute is in use by another element.', 'InUseAttributeError');
     const old = attrNode(el, a.ns, a.lname);
     if (old === attr) return attr;
-    const value = a.value;
+    const value = ttAttr === null ? a.value : ttAttr(el, a.ns ?? '', a.lname, a.value);
     if (old) detachAttr(old);
     const id = nodeId(el);
     chk(n.setAttr(id, a.ns === null && a.pfx === null ? a.lname : (a.ns ?? '') + '\u0000' + (a.pfx === null ? '' : a.pfx + ':') + a.lname, value));
@@ -909,6 +915,7 @@
     }
     set value(v) {
       const a = attrState.get(this); v = String(v);
+      if (a.el && ttAttr !== null) v = ttAttr(a.el, a.ns ?? '', a.lname, v);
       if (a.el) chk(n.setAttr(nodeId(a.el), (a.ns ?? '') + '\u0000' + (a.pfx === null ? '' : a.pfx + ':') + a.lname, v));
       else a.value = v;
     }
@@ -2807,7 +2814,7 @@
   const timer = (repeat, f, delay, args) => {
     let run;
     if (typeof f === 'function') run = () => f.apply(window, args);
-    else { const code = String(f); run = () => (0, eval)(code); }
+    else { const code = ttValue === null ? String(f) : ttValue('TrustedScript', null, f, repeat ? 'Window setInterval' : 'Window setTimeout'); run = () => (0, eval)(code); }
     const t = Number(delay) | 0;
     return chk(n.timer(register(run), t < 0 ? 0 : t, repeat));
   };
@@ -3169,6 +3176,7 @@
       name = String(name);
       const id = chk(n.create(3 + 16 * nodeId(this), name));
       if (name.length === 6 && name.toLowerCase() === 'script') noteFreshScript(id);
+      else if (ttMeta !== null && name.length === 4 && name.toLowerCase() === 'meta') ttMeta();
       return made(id, options);
     });
     define(Document.prototype, 'createElementNS', function createElementNS(ns, qname, options = undefined) {
@@ -7360,8 +7368,13 @@
       for (let i = 0; i + 1 < xs.length; i += 2) if (/^on[a-z]+$/.test(xs[i])) contentHandler(wrap(k), xs[i].slice(2), xs[i + 1]);
     }
   };
+  // An attribute is compiled as an event handler only when Lean's table of event handler
+  // content attributes names it (HTML.TrustedTypes.isEventHandlerName, asked once for each
+  // name): so every attribute that can run script is a TrustedScript sink there.
+  const handlerNamed = new Map();
+  const handlerName = name => { let v = handlerNamed.get(name); if (v === undefined) handlerNamed.set(name, v = n.query(0, 194, 'h\u0000on' + name) === '1'); return v; };
   const contentHandler = (el, name, source) => {
-    if (!handlerNames.includes(name) || !(el instanceof HTMLElement || el instanceof SVGElement || el instanceof MathMLElement)) return;
+    if (!handlerNames.includes(name) || !handlerName(name) || !(el instanceof HTMLElement || el instanceof SVGElement || el instanceof MathMLElement)) return;
     const onBody = windowReflecting(el) && bodyWindowHandlers.has(name);
     const t = onBody ? bodyWindow(el) : el;
     // HTML "getting the current value of the event handler": the window's onerror handler has
@@ -8080,6 +8093,244 @@
   }
   // ==== end dynscripts ====================================================================
 
+  // ==== trustedtypes: Trusted Types (https://w3c.github.io/trusted-types/dist/spec/) =====
+  // The objects are here: `trustedTypes`, the policies (whose functions are the page's) and
+  // the three trusted value types. Every decision is Lean's (HTML.TrustedTypes, node_query
+  // 194): whether a sink requires a trusted value, what happens to a value that is not one,
+  // whether a policy may be created, and which attributes and properties are sinks. The
+  // policies of a document are those of its `meta` elements; once seen, a policy stays (a
+  // policy does not go when its element is removed). The sinks ask nothing until the page
+  // goes live: it uses `trustedTypes`, or one of its documents declares a policy.
+  {
+    const isObj = v => v !== null && (typeof v === 'object' || typeof v === 'function');
+    const illegal = () => { throw new TypeError('Illegal constructor'); };
+    const ask = (doc, q) => { const r = n.query(doc, 194, q); return typeof r === 'number' ? fail(r) : r; };
+    // ---- the trusted values -----------------------------------------------------------------
+    const values = new WeakMap();
+    const stringOf = (o, kind) => { const v = isObj(o) ? values.get(o) : undefined; if (v === undefined || v.kind !== kind) throw new TypeError('Illegal invocation'); return v.s; };
+    class TrustedHTML { constructor() { illegal(); } toString() { return stringOf(this, 'TrustedHTML'); } toJSON() { return stringOf(this, 'TrustedHTML'); } }
+    class TrustedScript { constructor() { illegal(); } toString() { return stringOf(this, 'TrustedScript'); } toJSON() { return stringOf(this, 'TrustedScript'); } }
+    class TrustedScriptURL { constructor() { illegal(); } toString() { return stringOf(this, 'TrustedScriptURL'); } toJSON() { return stringOf(this, 'TrustedScriptURL'); } }
+    const classes = { TrustedHTML, TrustedScript, TrustedScriptURL };
+    const make = (kind, s) => { const o = Object.create(classes[kind].prototype); values.set(o, { kind, s }); return o; };
+    const isKind = (v, kind) => { const t = isObj(v) ? values.get(v) : undefined; return t !== undefined && t.kind === kind; };
+    // ---- policies ---------------------------------------------------------------------------
+    const functionOf = { TrustedHTML: 'createHTML', TrustedScript: 'createScript', TrustedScriptURL: 'createScriptURL' };
+    const policies = new WeakMap();
+    const policyOf = p => { const v = isObj(p) ? policies.get(p) : undefined; if (v === undefined) throw new TypeError('Illegal invocation'); return v; };
+    // "Get Trusted Type policy value"
+    const policyValue = (p, kind, value, args, throwIfMissing) => {
+      const f = p[functionOf[kind]];
+      if (f === null) {
+        if (throwIfMissing) throw new TypeError(`Policy ${p.name}'s TrustedTypePolicyOptions did not specify a '${functionOf[kind]}' member.`);
+        return null;
+      }
+      return f(value, ...args);
+    };
+    // "Create a Trusted Type"
+    const createValue = (self, kind, args) => {
+      const p = policyOf(self);
+      if (args.length < 1) throw new TypeError(`Failed to execute '${functionOf[kind]}' on 'TrustedTypePolicy': 1 argument required, but only 0 present.`);
+      const v = policyValue(p, kind, String(args[0]), Array.prototype.slice.call(args, 1), true);
+      return make(kind, v === null || v === undefined ? '' : String(v));
+    };
+    class TrustedTypePolicy {
+      constructor() { illegal(); }
+      get name() { return policyOf(this).name; }
+      createHTML(input) { return createValue(this, 'TrustedHTML', arguments); }
+      createScript(input) { return createValue(this, 'TrustedScript', arguments); }
+      createScriptURL(input) { return createValue(this, 'TrustedScriptURL', arguments); }
+    }
+    // ---- the policies of a document, and reports ----------------------------------------------
+    // the document whose policies govern a node: a frame's own document, else the page's
+    const docOf = id => { const d = info(id, 7); return d > 0 && info(d, 12) >= 0 ? d : 0; };
+    const globalDoc = () => (scriptDocument ? docOf(nodeId(scriptDocument)) : 0);
+    const seenPolicies = new Map();
+    const cspOf = doc => {
+      const now = ask(doc, 'm');
+      let list = seenPolicies.get(doc);
+      if (now !== '') {
+        if (!list) seenPolicies.set(doc, list = []);
+        for (const p of now.split('\u0001')) if (!list.includes(p)) list.push(p);
+      }
+      return list ? list.join('\u0001') : '';
+    };
+    const violationFields = { documentURI: '', referrer: '', blockedURI: '', effectiveDirective: '', violatedDirective: '', originalPolicy: '',
+      sourceFile: '', sample: '', disposition: 'enforce', statusCode: 0, lineNumber: 0, columnNumber: 0 };
+    if (typeof globalThis.SecurityPolicyViolationEvent !== 'function') {
+      const inits = new WeakMap();
+      class SecurityPolicyViolationEvent extends Event {
+        constructor(type, init = undefined) {
+          super(type, init);
+          const d = init === undefined || init === null ? {} : init, o = {};
+          for (const k of Object.keys(violationFields)) {
+            const v = d[k];
+            o[k] = v === undefined ? violationFields[k] : typeof violationFields[k] === 'number' ? Number(v) >>> 0 : String(v);
+          }
+          inits.set(this, o);
+        }
+      }
+      for (const k of Object.keys(violationFields))
+        Object.defineProperty(SecurityPolicyViolationEvent.prototype, k, { get() { return inits.get(this)[k]; }, enumerable: true, configurable: true });
+      def('SecurityPolicyViolationEvent', SecurityPolicyViolationEvent);
+    }
+    // a report to each violated policy (their places in the list, as Lean answers them)
+    const violations = (doc, csp, places, directive, blockedURI, sample) => {
+      const list = csp.split('\u0001');
+      for (const i of places.split(' ')) {
+        const p = i === '' ? undefined : list[Number(i)];
+        if (p === undefined) continue;
+        const init = { bubbles: true, composed: true, documentURI: String(wrap(doc).URL), blockedURI, effectiveDirective: directive,
+          violatedDirective: directive, originalPolicy: p.slice(1), disposition: p[0] === 'r' ? 'report' : 'enforce', sample };
+        setTimeout(() => { const e = new globalThis.SecurityPolicyViolationEvent('securitypolicyviolation', init); state(e).trusted = true; dispatch(wrap(doc), e); }, 0);
+      }
+    };
+    // ---- the factory --------------------------------------------------------------------------
+    const created = [];
+    let defaultPolicy = null;
+    const lower = t => t.replace(/[A-Z]/g, c => c.toLowerCase());
+    const nullable = v => (v === null || v === undefined ? '' : String(v));
+    const emptyHTML = make('TrustedHTML', ''), emptyScript = make('TrustedScript', '');
+    class TrustedTypePolicyFactory {
+      constructor() { illegal(); }
+      createPolicy(policyName, policyOptions = undefined) {
+        const what = "Failed to execute 'createPolicy' on 'TrustedTypePolicyFactory'";
+        if (arguments.length < 1) throw new TypeError(`${what}: 1 argument required, but only 0 present.`);
+        const name = String(policyName);
+        if (policyOptions !== undefined && policyOptions !== null && !isObj(policyOptions)) throw new TypeError(`${what}: parameter 2 is not of type 'TrustedTypePolicyOptions'.`);
+        const o = policyOptions ?? {};
+        const member = k => { const f = o[k]; if (f === undefined || f === null) return null; if (typeof f !== 'function') throw new TypeError(`${what}: '${k}' is not a function.`); return f; };
+        const createHTML = member('createHTML'), createScript = member('createScript'), createScriptURL = member('createScriptURL');
+        const doc = globalDoc(), csp = cspOf(doc), plain = t => t.replace(/[\u0000-\u0002]/g, '�');
+        const r = ask(doc, 'c\u0000' + csp + '\u0000' + plain(name) + '\u0000' + created.map(x => plain(x) + '\u0002').join(''));
+        if (r.length > 2) violations(doc, csp, r.slice(2), 'trusted-types', 'trusted-types-policy', name.slice(0, 40));
+        if (r[0] === '1') throw new TypeError(`${what}: Policy "${name}" disallowed.`);
+        if (name === 'default' && defaultPolicy !== null) throw new TypeError(`${what}: Policy with name "default" already exists.`);
+        const p = Object.create(TrustedTypePolicy.prototype);
+        policies.set(p, { name, createHTML, createScript, createScriptURL });
+        if (name === 'default') defaultPolicy = p;
+        created.push(name);
+        return p;
+      }
+      isHTML(value) { return isKind(value, 'TrustedHTML'); }
+      isScript(value) { return isKind(value, 'TrustedScript'); }
+      isScriptURL(value) { return isKind(value, 'TrustedScriptURL'); }
+      get emptyHTML() { return emptyHTML; }
+      get emptyScript() { return emptyScript; }
+      getAttributeType(tagName, attribute, elementNs = '', attrNs = '') {
+        if (arguments.length < 2) throw new TypeError("Failed to execute 'getAttributeType' on 'TrustedTypePolicyFactory': 2 arguments required.");
+        const local = lower(String(tagName)), attr = lower(String(attribute)), ens = nullable(elementNs) || HTML_NS, ans = nullable(attrNs);
+        if ((local + attr + ens + ans).includes('\u0000')) return null;
+        const r = ask(0, 'a\u0000' + ens + '\u0000' + local + '\u0000' + ans + '\u0000' + attr);
+        return r === '' ? null : r.split('\u0000')[0];
+      }
+      getPropertyType(tagName, property, elementNs = '') {
+        if (arguments.length < 2) throw new TypeError("Failed to execute 'getPropertyType' on 'TrustedTypePolicyFactory': 2 arguments required.");
+        const local = lower(String(tagName)), prop = String(property), ens = nullable(elementNs) || HTML_NS;
+        if ((local + prop + ens).includes('\u0000')) return null;
+        const r = ask(0, 'p\u0000' + ens + '\u0000' + local + '\u0000' + prop);
+        return r === '' ? null : r;
+      }
+      get defaultPolicy() { return defaultPolicy; }
+    }
+    const factory = Object.create(TrustedTypePolicyFactory.prototype);
+    for (const [k, C] of Object.entries({ TrustedHTML, TrustedScript, TrustedScriptURL, TrustedTypePolicy, TrustedTypePolicyFactory })) def(k, C);
+    // ---- "Get Trusted Type compliant string" --------------------------------------------------
+    const requiresOf = new Map();
+    const compliant = (kind, doc, input, sink) => {
+      if (isKind(input, kind)) return values.get(input).s;
+      const csp = cspOf(doc);
+      let required = requiresOf.get(csp);
+      if (required === undefined) { if (requiresOf.size >= 64) requiresOf.clear(); requiresOf.set(csp, required = ask(doc, 'r\u0000' + csp) === '1'); }
+      const text = String(input);
+      if (!required) return text;
+      // "Process value with a default policy": the page's function; an exception of it goes on
+      const converted = defaultPolicy === null ? null : policyValue(policies.get(defaultPolicy), kind, text, [kind, sink], false);
+      const gave = converted !== null && converted !== undefined;
+      const r = ask(doc, 'o\u0000' + csp + '\u00000\u0000' + (gave ? '1' : '0'));
+      if (r.length > 2) violations(doc, csp, r.slice(2), 'require-trusted-types-for', 'trusted-types-sink', sink + '|' + text.slice(0, 40));
+      if (r[0] === 'x') throw new TypeError(`This document requires '${kind}' assignment. The sink is '${sink}'.`);
+      return r[0] === 'd' ? String(converted) : text;
+    };
+    // "Get Trusted Types-compliant attribute value": `ns` null or '' for no namespace, `name`
+    // the qualified name given (lower case for an HTML element when there is no namespace)
+    const attrSinks = new Map();
+    const attrValue = (el, ns, name, value) => {
+      const id = nodeId(el);
+      const local = ns === null || ns === '' ? lowerIfHtml(el, name) : name.slice(name.indexOf(':') + 1);
+      const key = (str(id, 2) ?? '') + '\u0000' + str(id, 0) + '\u0000' + (ns ?? '') + '\u0000' + local;
+      let sink = attrSinks.get(key);
+      if (sink === undefined) {
+        if (attrSinks.size >= 512) attrSinks.clear();
+        const r = local.includes('\u0000') ? '' : ask(0, 'a\u0000' + key);
+        attrSinks.set(key, sink = r === '' ? null : r.split('\u0000'));
+      }
+      return sink === null ? String(value) : compliant(sink[0], docOf(id), value, sink[1]);
+    };
+    // ---- going live ---------------------------------------------------------------------------
+    let live = false;
+    const goLive = () => {
+      if (live) return;
+      live = true; ttMeta = null; ttStart = null; ttDoc = null;
+      ttAttr = attrValue;
+      ttValue = (kind, id, value, sink) => compliant(kind, id === null ? globalDoc() : docOf(id), value, sink);
+    };
+    const checked = new Set();
+    ttMeta = goLive;
+    ttStart = () => { if (ask(0, 'm') !== '') goLive(); };
+    ttDoc = d => { if (!checked.has(d)) { checked.add(d); if (ask(d, 'm') !== '') goLive(); } };
+    Object.defineProperty(Window.prototype, 'trustedTypes', { get() { goLive(); return factory; }, enumerable: true, configurable: true });
+    // ---- the sinks that take markup or script (the attribute sinks are in Element and Attr) ----
+    const setterSink = (C, prop, kind, sink, nullEmpty = false) => {
+      const d = C && Object.getOwnPropertyDescriptor(C.prototype, prop);
+      if (!d || !d.set) return;
+      const set = d.set;
+      Object.defineProperty(C.prototype, prop, { get: d.get, enumerable: d.enumerable, configurable: true,
+        set(v) { set.call(this, ttValue === null ? v : ttValue(kind, nodeId(this), nullEmpty && v === null ? '' : v, sink)); } });
+    };
+    setterSink(Element, 'innerHTML', 'TrustedHTML', 'Element innerHTML', true);
+    setterSink(Element, 'outerHTML', 'TrustedHTML', 'Element outerHTML', true);
+    if (typeof ShadowRoot === 'function') setterSink(ShadowRoot, 'innerHTML', 'TrustedHTML', 'ShadowRoot innerHTML', true);
+    setterSink(globalThis.HTMLIFrameElement, 'srcdoc', 'TrustedHTML', 'HTMLIFrameElement srcdoc');
+    setterSink(globalThis.HTMLScriptElement, 'src', 'TrustedScriptURL', 'HTMLScriptElement src');
+    const argSink = (C, name, index, kind, sink) => {
+      const f = C && C.prototype[name];
+      if (typeof f !== 'function') return;
+      define(C.prototype, name, Object.defineProperty(function (...args) {
+        if (ttValue !== null && args.length > index) args[index] = ttValue(kind, this instanceof Node ? nodeId(this) : null, args[index], sink);
+        return f.apply(this, args);
+      }, 'name', { value: name, configurable: true }));
+    };
+    argSink(Element, 'insertAdjacentHTML', 1, 'TrustedHTML', 'Element insertAdjacentHTML');
+    argSink(globalThis.DOMParser, 'parseFromString', 0, 'TrustedHTML', 'DOMParser parseFromString');
+    argSink(globalThis.Range, 'createContextualFragment', 0, 'TrustedHTML', 'Range createContextualFragment');
+    // document.write and writeln: the arguments joined; trusted when every one is TrustedHTML
+    for (const name of ['write', 'writeln']) {
+      const f = Document.prototype[name];
+      define(Document.prototype, name, Object.defineProperty(function (...text) {
+        if (ttValue === null || text.every(t => isKind(t, 'TrustedHTML'))) return f.apply(this, text);
+        return f.call(this, ttValue('TrustedHTML', nodeId(this), text.map(String).join(''), 'Document ' + name));
+      }, 'name', { value: name, configurable: true }));
+    }
+    // the script element's text: `text`, and `innerText` and `textContent` on a script element
+    const S = globalThis.HTMLScriptElement;
+    if (S) {
+      const textContent = Object.getOwnPropertyDescriptor(Node.prototype, 'textContent');
+      const innerText = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'innerText');
+      const checkedText = (self, v, name) => (ttValue === null ? v : ttValue('TrustedScript', nodeId(self), v, 'HTMLScriptElement ' + name));
+      Object.defineProperty(S.prototype, 'text', { enumerable: true, configurable: true,
+        get() { let t = ''; for (const c of this.childNodes) if (c.nodeType === 3) t += c.data; return t; },
+        set(v) { textContent.set.call(this, checkedText(this, v, 'text')); } });
+      Object.defineProperty(S.prototype, 'textContent', { enumerable: true, configurable: true,
+        get() { return textContent.get.call(this); },
+        set(v) { textContent.set.call(this, checkedText(this, v === null ? '' : v, 'textContent')); } });
+      if (innerText && innerText.set) Object.defineProperty(S.prototype, 'innerText', { enumerable: true, configurable: true,
+        get() { return innerText.get.call(this); },
+        set(v) { innerText.set.call(this, checkedText(this, v === null ? '' : v, 'innerText')); } });
+    }
+  }
+  // ==== end trustedtypes ==================================================================
+
   // ==== sanitizer: HTML sanitization and the HTML insertion methods (HTML §8.5.2, §8.6) ====
   // A Sanitizer's configuration, every method on it, and what a configuration keeps of
   // parsed markup are Lean's (HTML.Sanitizer: node_query 192 the methods, 193 the tree).
@@ -8272,6 +8523,8 @@
       if (f >= 0) chk(n.replace(parent, f, node));
     };
     const method = (C, name, f) => Object.defineProperty(C.prototype, name, { value: f, writable: true, configurable: true });
+    // the markup of a method: an unsafe method is a TrustedHTML sink (section trustedtypes)
+    const markupOf = (safe, id, html, sink) => (safe || ttValue === null ? String(html) : ttValue('TrustedHTML', id, html, sink));
     // the six methods of an Element or a ShadowRoot and of a child node, safe and unsafe
     for (const safe of [true, false]) {
       const sfx = safe ? '' : 'Unsafe';
@@ -8285,31 +8538,31 @@
         const place = self => { const id = nodeId(self); return iface === 'Element' ? [id, targetOf(id)] : [info(id, 21), id]; };
         method(C, 'setHTML' + sfx, named('setHTML' + sfx, function (html, options = undefined) {
           const what = args(iface, 'setHTML' + sfx, arguments), [ctx, target] = place(this);
-          setHTML(ctx, target, String(html), optionsOf(options, safe, what), safe);
+          setHTML(ctx, target, markupOf(safe, nodeId(this), html, iface + ' setHTML' + sfx), optionsOf(options, safe, what), safe);
         }));
         method(C, 'appendHTML' + sfx, named('appendHTML' + sfx, function (html, options = undefined) {
           const what = args(iface, 'appendHTML' + sfx, arguments), [ctx, target] = place(this);
-          preInsertHTML(ctx, target, -1, String(html), optionsOf(options, safe, what), safe);
+          preInsertHTML(ctx, target, -1, markupOf(safe, nodeId(this), html, iface + ' appendHTML' + sfx), optionsOf(options, safe, what), safe);
         }));
         method(C, 'prependHTML' + sfx, named('prependHTML' + sfx, function (html, options = undefined) {
           const what = args(iface, 'prependHTML' + sfx, arguments), [ctx, target] = place(this);
-          preInsertHTML(ctx, target, info(target, 2), String(html), optionsOf(options, safe, what), safe);
+          preInsertHTML(ctx, target, info(target, 2), markupOf(safe, nodeId(this), html, iface + ' prependHTML' + sfx), optionsOf(options, safe, what), safe);
         }));
       }
       for (const C of [Element, CharacterData]) {
         const iface = C === Element ? 'Element' : 'CharacterData';
         method(C, 'beforeHTML' + sfx, named('beforeHTML' + sfx, function (html, options = undefined) {
-          const what = args(iface, 'beforeHTML' + sfx, arguments), id = nodeId(this), markup = String(html), o = optionsOf(options, safe, what);
+          const what = args(iface, 'beforeHTML' + sfx, arguments), id = nodeId(this), markup = markupOf(safe, id, html, 'Node beforeHTML' + sfx), o = optionsOf(options, safe, what);
           const parent = parentFor(id);
           if (parent >= 0) preInsertHTML(contextOf2(parent), parent, id, markup, o, safe);
         }));
         method(C, 'afterHTML' + sfx, named('afterHTML' + sfx, function (html, options = undefined) {
-          const what = args(iface, 'afterHTML' + sfx, arguments), id = nodeId(this), markup = String(html), o = optionsOf(options, safe, what);
+          const what = args(iface, 'afterHTML' + sfx, arguments), id = nodeId(this), markup = markupOf(safe, id, html, 'Node afterHTML' + sfx), o = optionsOf(options, safe, what);
           const parent = parentFor(id);
           if (parent >= 0) preInsertHTML(contextOf2(parent), parent, info(id, 5), markup, o, safe);
         }));
         method(C, 'replaceWithHTML' + sfx, named('replaceWithHTML' + sfx, function (html, options = undefined) {
-          const what = args(iface, 'replaceWithHTML' + sfx, arguments), id = nodeId(this), markup = String(html), o = optionsOf(options, safe, what);
+          const what = args(iface, 'replaceWithHTML' + sfx, arguments), id = nodeId(this), markup = markupOf(safe, id, html, 'Node replaceWithHTML' + sfx), o = optionsOf(options, safe, what);
           const parent = parentFor(id);
           if (parent >= 0) replaceHTML(contextOf2(parent), parent, id, markup, o, safe);
         }));
@@ -8328,7 +8581,7 @@
     });
     define(Document, 'parseHTMLUnsafe', function parseHTMLUnsafe(html, options = undefined) {
       if (arguments.length < 1) throw new TypeError("Failed to execute 'parseHTMLUnsafe' on 'Document': 1 argument required, but only 0 present.");
-      return parseDocument(String(html), optionsOf(options, false, "Failed to execute 'parseHTMLUnsafe' on 'Document'"), false);
+      return parseDocument(markupOf(false, null, html, 'Document parseHTMLUnsafe'), optionsOf(options, false, "Failed to execute 'parseHTMLUnsafe' on 'Document'"), false);
     });
   }
   // ==== end sanitizer =====================================================================
@@ -8402,8 +8655,8 @@
     report(e) { report(e); },
     // A page starts: the content event handler attributes of its elements. The host may
     // run the prelude once on an empty document and copy that state for each page.
-    start() { scanHandlers(0, false); },
-    script(id) { currentScript = id < 0 ? null : wrap(id); const d = id < 0 ? 0 : info(id, 7); scriptDocument = d > 0 ? wrap(d) : null; },
+    start() { if (ttStart !== null) ttStart(); scanHandlers(0, false); },
+    script(id) { currentScript = id < 0 ? null : wrap(id); const d = id < 0 ? 0 : info(id, 7); scriptDocument = d > 0 ? wrap(d) : null; if (d > 0 && ttDoc !== null) ttDoc(d); },
     url(u) { href = String(u); },
     release(id) { callbacks.delete(id); },
     // Section workers: this realm becomes a dedicated worker's global scope.
