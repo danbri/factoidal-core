@@ -1,0 +1,15 @@
+{
+ "case": "B.11.a",
+ "file": "Appendix/B/B.11/b.11.a.xhtml",
+ "quote": "You must see the value '0' for both item keys :",
+ "steps": [
+  {
+   "expect": "values",
+   "values": [
+    "0",
+    "0"
+   ],
+   "label": "Key"
+  }
+ ]
+}
