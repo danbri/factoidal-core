@@ -1992,9 +1992,10 @@ def readAnswer (l : Laid) (node op : Nat) : Option String :=
       some (line [x0,y0,x1-x0,y1-y0,e.left,e.top,max 0 (x1-x0-e.left-e.right),max 0 (y1-y0-e.top-e.bottom),parent,ox,oy])
     | none => match (WebHit.boundsOf l.dom l.scene node).1 with
       | some (x0,y0,x1,y1) => some (line [x0,y0,x1-x0,y1-y0,0,0,0,0])
-      -- no box (`display: none`, a popover that is not showing, not connected): "" (the page
-      -- reads zeros, and `getClientRects` an empty list, CSSOM View §6.1)
-      | none => some ""
+      -- no box (`display: none`, a popover that is not showing, not connected): zeros, no
+      -- offset parent, and a twelfth number -1 that says there is no box (the page's
+      -- `getClientRects` is then empty, CSSOM View §6.1; WebDriver reads the first four)
+      | none => some "0 0 0 0 0 0 0 0 -1 0 0 -1"
   | 18 => match (WebHit.boundsOf l.dom l.scene node).2 with
     | some (x0,y0,x1,y1) => some (line [x0,y0,x1-x0,y1-y0])
     | none => some "0 0 0 0"
