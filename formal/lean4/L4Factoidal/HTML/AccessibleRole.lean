@@ -403,6 +403,14 @@ theorem invalid_tokens_implicit (d : Dom) (k : NodeId) (v : String) (hv : attr? 
   rw [this]
   rfl
 
+/-- Says: a hidden element that no `aria-labelledby` names gives no text to any name. -/
+theorem hidden_no_name (d : Dom) (k : NodeId) (fuel : Nat) (content : Bool)
+    (he : (d.get k).type = .element) (hh : hiddenEl d k = true) :
+    textAlternative d (fuel + 1) k false content = "" := by
+  simp [textAlternative, he, hh]
+  intro h
+  exact absurd h (by decide)
+
 /-! ## Tests (html-aam/roles.html, wai-aria/role/fallback-roles.html) -/
 
 #guard tokens " Foo\tBUTTON  link " == ["foo", "button", "link"] && tokens "" == [] && tokens "\u2800 button" == ["\u2800", "button"]
