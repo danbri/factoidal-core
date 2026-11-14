@@ -2279,7 +2279,8 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     -- `writing-mode` and `list-style-type` are inherited (CSS Writing Modes 4 §3.2, CSS
     -- Lists 3 §3.1); the rest of `pos` is not
     pos := {writingMode := parent.pos.writingMode, listStyle := parent.pos.listStyle,
-            listInside := parent.pos.listInside}}
+            listInside := parent.pos.listInside, nowrap := parent.pos.nowrap,
+            textTransform := parent.pos.textTransform}}
   -- HTML §3.2.6.4 and §15.3.5: the `dir` attribute sets `direction` and isolates the
   -- element; `bdi` isolates, and `bdo` overrides with isolation. Author CSS wins.
   if n.ns == some DOM.htmlNS || n.ns.isNone then
@@ -2413,7 +2414,9 @@ def styleOfNode (matchesOf : Nat → List Match) (dom : Dom) (id : Nat) (parent 
     margin := {}, padding := {}, background := none, clipOverflow := false,
     borderStyle := .none, borderWidth := ⟨3,3,3,3⟩, borderColor := none,
     autoMarginLeft := false, autoMarginRight := false, unicodeBidi := .normal,
-    autoMarginTop := false, autoMarginBottom := false, align := {}, flex := {}, pos := {}}
+    autoMarginTop := false, autoMarginBottom := false, align := {}, flex := {},
+        -- a text node keeps what its text is set by
+        pos := {nowrap := parent.pos.nowrap, textTransform := parent.pos.textTransform}}
 
 /-- Visit parents before children, using a work list and bounded arena size.
 `matchesOf id` are the rules that match element `id`, in sheet order. -/

@@ -29,6 +29,10 @@ inductive WritingMode where
   | horizontalTb | verticalRl | verticalLr
   deriving Repr, BEq
 
+/-- `text-transform` (CSS Text 3 §2.1): the case in which text is shown. -/
+inductive TextTransform where | none | uppercase | lowercase | capitalize
+  deriving Repr, BEq, DecidableEq
+
 /-- `list-style-type` (CSS Lists 3 §3.1; inherited), as this profile draws markers:
 `auto` is by the kind of list (a number in `ol`, else the bullet of the list's nesting
 depth), `none` no marker, a bullet, or a number (every numbering style is decimal here). -/
@@ -68,6 +72,11 @@ structure PositionStyle where
   /-- `content` of a `::before` or `::after` (`Content.read`): the text of a value that
   makes a box; `none` for `none` and `normal`, which make no box. -/
   content : Option String := none
+  /-- `white-space: nowrap` (CSS Text 3 §3; inherited): lines do not break at the spaces
+  of this text. -/
+  nowrap : Bool := false
+  /-- `text-transform` (CSS Text 3 §2.1; inherited). -/
+  textTransform : TextTransform := .none
   deriving Repr
 
 /-- Every field equal: the two lay out the same. -/
@@ -76,7 +85,7 @@ def PositionStyle.same (a b : PositionStyle) : Bool :=
   a.left.same b.left && a.zIndex == b.zIndex && a.float == b.float && a.clear == b.clear &&
   a.borderBox == b.borderBox && a.ratio == b.ratio && a.ratioAuto == b.ratioAuto &&
   a.writingMode == b.writingMode && a.listStyle == b.listStyle && a.listInside == b.listInside &&
-  a.flowRoot == b.flowRoot && a.content == b.content
+  a.flowRoot == b.flowRoot && a.content == b.content && a.nowrap == b.nowrap && a.textTransform == b.textTransform
 
 /-- Out of flow by positioning: `absolute` or `fixed`. -/
 def PositionStyle.isAbsolute (p : PositionStyle) : Bool := p.position == .absolute || p.position == .fixed
@@ -86,7 +95,7 @@ def PositionStyle.isPositioned (p : PositionStyle) : Bool := p.position != .stat
 
 def positionProperties : List String :=
   ["position", "top", "right", "bottom", "left", "z-index", "float", "clear", "box-sizing", "aspect-ratio",
-   "writing-mode", "list-style-type", "list-style-position"]
+   "writing-mode", "list-style-type", "list-style-position", "white-space", "text-transform"]
 
 /-- The ratio `a / b` (width to height) as two whole numbers in lowest terms; `none` when
 it is degenerate (a term that is zero or negative: CSS Sizing 4 §5.1, it behaves as `auto`). -/
@@ -174,6 +183,23 @@ def PositionStyle.set (fontSize : Float) (p : PositionStyle) (property value : S
       | "lower-roman" | "upper-roman" | "lower-greek" => some {p with listStyle := .number}
       -- another counter style or a string: the marker of the kind of list stands
       | _ => some {p with listStyle := .auto}
+    | "white-space" =>
+      -- inherited; `pre` and its relatives keep their spaces by another field, and wrap or not as they say
+      if v == "inherit" || v == "unset" then some p
+      else if reset then some {p with nowrap := false} else
+      match v with
+      | "nowrap" | "pre" => some {p with nowrap := true}
+      | "normal" | "pre-wrap" | "pre-line" | "break-spaces" => some {p with nowrap := false}
+      | _ => none
+    | "text-transform" =>
+      if v == "inherit" || v == "unset" then some p
+      else if reset then some {p with textTransform := .none} else
+      match v with
+      | "none" => some {p with textTransform := .none}
+      | "uppercase" => some {p with textTransform := .uppercase}
+      | "lowercase" => some {p with textTransform := .lowercase}
+      | "capitalize" => some {p with textTransform := .capitalize}
+      | _ => none
     | "list-style-position" =>
       if v == "inherit" || v == "unset" then some p
       else if reset then some {p with listInside := false} else
@@ -230,6 +256,13 @@ def positionShorthand (property value : String) : Option (List (String × String
 #guard ((PositionStyle.set 10 {content := some "''"} "content" "none").map (·.content)) == some none
 #guard ((PositionStyle.set 10 {content := some "''"} "content" "unset").map (·.content)) == some none
 #guard ((PositionStyle.set 10 {} "content" "12px").map (·.content)) == none
+#guard ((PositionStyle.set 10 {} "white-space" "nowrap").map (·.nowrap)) == some true
+#guard ((PositionStyle.set 10 {nowrap := true} "white-space" "normal").map (·.nowrap)) == some false
+#guard ((PositionStyle.set 10 {nowrap := true} "white-space" "inherit").map (·.nowrap)) == some true
+#guard ((PositionStyle.set 10 {} "white-space" "bogus").map (·.nowrap)) == none
+#guard ((PositionStyle.set 10 {} "text-transform" "uppercase").map (·.textTransform)) == some .uppercase
+#guard ((PositionStyle.set 10 {textTransform := .uppercase} "text-transform" "none").map (·.textTransform)) == some .none
+#guard ((PositionStyle.set 10 {} "text-transform" "UPPERCASE").map (·.textTransform)) == some .uppercase
 #guard ((PositionStyle.set 10 {} "list-style-type" "none").map (·.listStyle)) == some .none
 #guard ((PositionStyle.set 10 {} "list-style-type" "square").map (·.listStyle)) == some .square
 #guard ((PositionStyle.set 10 {} "list-style-position" "inside").map (·.listInside)) == some true

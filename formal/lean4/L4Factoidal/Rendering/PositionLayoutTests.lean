@@ -496,4 +496,31 @@ private def limitCss := "#c{height:50px;width:40px} #k{margin:2px 0 3px;border:3
 #guard (box "<div id=c><canvas id=k></canvas></div>" "#c{width:40px} #k{display:block;margin:0 2px 0 3px;width:55px;height:10px;max-width:stretch}" "k").map (·.2.2.1) == some 35
 #guard (box "<div id=c><canvas id=k></canvas></div>" "#c{width:40px} #k{display:block;margin:0 2px 0 3px;width:10px;height:10px;min-width:stretch}" "k").map (·.2.2.1) == some 35
 
+
+-- `white-space: nowrap` (CSS Text 3 §3): no break at the spaces of that text. The line is
+-- 60 px: ten glyphs, so "ab cd ef" fits and "gh" starts the second line.
+private def wraps := "<div id=d>ab cd <span id=s>ef gh ij</span> kl</div>"
+#guard box wraps "#d{width:60px}" "d" == some (0,0,60,14)
+#guard at? wraps "#d{width:60px}" "gh" == some (0,7)
+#guard at? wraps "#d{width:60px}" "ij" == some (18,7)
+-- the span's own spaces hold its words together: it goes down whole, and what follows
+-- may break after it
+#guard at? wraps "#d{width:60px} #s{white-space:nowrap}" "ef" == some (0,7)
+#guard at? wraps "#d{width:60px} #s{white-space:nowrap}" "ij" == some (36,7)
+#guard at? wraps "#d{width:60px} #s{white-space:nowrap}" "kl" == some (0,14)
+-- a block that does not wrap is one line, and overflows
+#guard box wraps "#d{width:60px;white-space:nowrap}" "d" == some (0,0,60,7)
+#guard at? wraps "#d{width:60px;white-space:nowrap}" "kl" == some (90,0)
+-- and its min-content width is the whole line
+#guard box "<div id=f>ab cd ef</div>" "#f{float:left;white-space:nowrap} body{width:20px}" "f" == some (0,0,48,7)
+#guard box wraps "#d{width:60px;white-space:nowrap} #s{white-space:normal}" "d" == some (0,0,60,14)
+-- `text-transform` (CSS Text 3 §2.1): the text of the runs, one character for one
+private def texts (html extra : String) : Option (List String) :=
+  (render html extra).toOption.map fun (scene,_) => scene.glyphRuns.toList.map (·.text)
+#guard texts "<div>ab <span>cD</span> ef</div>" "div{text-transform:uppercase}" == some ["AB","CD","EF"]
+#guard texts "<div>ab <span>cD</span> ef</div>" "div{text-transform:uppercase} span{text-transform:none}" == some ["AB","cD","EF"]
+#guard texts "<div>AB cD</div>" "div{text-transform:lowercase}" == some ["ab","cd"]
+#guard texts "<div>ab cD ef</div>" "div{text-transform:capitalize}" == some ["Ab","CD","Ef"]
+#guard texts "<div>ab cD</div>" "" == some ["ab","cD"]
+
 end L4Factoidal.Rendering.PositionLayoutTests
