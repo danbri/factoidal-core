@@ -473,7 +473,10 @@ def animOp (h : Host) (node op : Nat) (q : String) : Host × Except Int String :
     (h, .ok (L4Factoidal.Rendering.Animation.Api.listAnimations h.anim wanted))
   | 67 =>
     let anim := L4Factoidal.Rendering.Animation.tick h.anim
-    (bump h anim, .ok (L4Factoidal.Rendering.Animation.Fix.format anim.now))
+    -- a layout is of the animations' state: a frame that changed none keeps it
+    let same := (List.range anim.anims.size).all fun i =>
+      (anim.anims[i]?).map (·.player) == (h.anim.anims[i]?).map (·.player)
+    ((if same then { h with anim } else bump h anim), .ok (L4Factoidal.Rendering.Animation.Fix.format anim.now))
   | 68 => (h, .ok (L4Factoidal.Rendering.Animation.Fix.format h.anim.now))
   | _ => (h, .error (-2))
 

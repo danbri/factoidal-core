@@ -2055,12 +2055,22 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
     match inputs.get with
     | .ok (_,rules,_,_,_) => Rendering.Animation.Css.animationRules rules
     | .error _ => []
-  let matchedOf := fun (node : Nat) => match inputs.get with
+  -- their matches of an element, from rule buckets made once when first asked for (as
+  -- `CSS.computeFor` matches: an element tries only the rules of its buckets)
+  let matchesOf : Thunk (Nat → List Rendering.CSS.Match) := Thunk.mk fun _ =>
+    match inputs.get with
     | .ok (flat,_,treeScope,state,_) =>
       (match treeScope with
-        | none => Rendering.CSS.matchedRules flat node animationRules.get state
-        | some ts => Rendering.CSS.matchedRulesIn ts node animationRules.get state)
-    | .error _ => []
+        | none =>
+          let ix := Rendering.CSS.RuleIndex.build animationRules.get
+          let ks := Rendering.CSS.ElemKeys.of flat
+          fun id => ix.matched (ks.get flat) flat id state
+        | some ts =>
+          let ix := Rendering.CSS.ScopedIndex.build animationRules.get
+          let ks := Rendering.CSS.ElemKeys.of ts.tree
+          fun id => ix.matched (ks.get ts.tree) ts id state)
+    | .error _ => fun _ => []
+  let matchedOf := fun (node : Nat) => matchesOf.get node
   -- 22: the device pixel ratio of the layout request (`zoomUnit`/100), with no layout
   -- 23: the `@font-face` faces of the page and the state of each (`document.fonts`)
   fun node op q => if op == 22 then some (Rendering.FloatFormat.format (Float.ofNat (zoomUnit request) / 100))
