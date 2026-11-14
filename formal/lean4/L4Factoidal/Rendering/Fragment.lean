@@ -39,6 +39,7 @@ structure Result where
   runs : Array GlyphRun := #[]
   height : Float := 0
   deriving Repr
+instance : Inhabited Result := ⟨{}⟩
 
 /-- A fragment moved by `(dx,dy)`: its paint in a translated group, its boxes and glyph
 positions moved by the same amount. Not moved at all: the fragment itself. -/
@@ -70,7 +71,7 @@ inductive Item where
   | element (id : Nat)
   /-- A run of text children `kids` of `container`: an anonymous item. -/
   | anonymous (container : Nat) (kids : Array Nat)
-  deriving Repr
+  deriving Repr, Inhabited
 
 /-- What a formatting context may ask about its items. -/
 structure Children where
