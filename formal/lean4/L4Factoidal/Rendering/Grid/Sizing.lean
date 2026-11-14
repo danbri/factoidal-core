@@ -651,6 +651,60 @@ def flexCand (tracks : Array TrackFn) (gap : Nat) (items : Array Contribution) (
       expandFlexible (u - gap * (base.size - 1)) (base.toList.zipIdx.map fun (b, i) => (b, (tracks.getD i default).flex))
     | .indefinite | .maxContent => flexIndefiniteCand tracks gap items base
 
+/-! ### The sum of the stretched tracks (§12.8) -/
+
+/-- What the `k`th stretched track gets of the free space. -/
+def stretchBonus (free count k : Nat) : Nat := free / count + (if k < free % count then 1 else 0)
+
+/-- The step of `stretchCand`'s loop. -/
+def stretchStep (free count : Nat) (base : Array Nat) (acc : Array Nat × Nat) (x : TrackFn × Nat) : Array Nat × Nat :=
+  if x.1.autoMax then (acc.1.push (base.getD x.2 0 + stretchBonus free count acc.2), acc.2 + 1)
+  else (acc.1.push (base.getD x.2 0), acc.2)
+
+/-- What the stretched tracks `k` up to `k + m` get, in all (a specification for the proofs:
+no code is made for it). -/
+noncomputable def bonusSum (free count : Nat) : Nat → Nat → Nat
+  | _, 0 => 0
+  | k, m + 1 => stretchBonus free count k + bonusSum free count (k + 1) m
+
+theorem bonusSum_eq (free count : Nat) (m k : Nat) :
+    bonusSum free count k m = m * (free / count) + (min (k + m) (free % count) - min k (free % count)) := by
+  induction m generalizing k with
+  | zero => simp [bonusSum]
+  | succ m ih =>
+    simp only [bonusSum, ih (k + 1), stretchBonus]
+    have h1 : min k (free % count) ≤ min (k + 1 + m) (free % count) := by omega
+    split <;> rw [Nat.succ_mul] <;> omega
+
+/-- Kind: exact sum. Says: the stretched tracks share out exactly the free space. -/
+theorem bonusSum_all (free count : Nat) (hc : 0 < count) : bonusSum free count 0 count = free := by
+  rw [bonusSum_eq]
+  have hr : free % count < count := Nat.mod_lt _ hc
+  have := Nat.div_add_mod free count
+  simp only [Nat.zero_add, Nat.min_def]
+  split <;> split <;> omega
+
+theorem stretch_fold (free count : Nat) (base : Array Nat) (xs : List (TrackFn × Nat)) (acc : Array Nat × Nat) :
+    (xs.foldl (stretchStep free count base) acc).1.toList.sum =
+      acc.1.toList.sum + (xs.map fun x => base.getD x.2 0).sum +
+        bonusSum free count acc.2 (xs.filter (·.1.autoMax)).length ∧
+    (xs.foldl (stretchStep free count base) acc).2 = acc.2 + (xs.filter (·.1.autoMax)).length := by
+  induction xs generalizing acc with
+  | nil => simp [bonusSum]
+  | cons x xs ih =>
+    obtain ⟨h1, h2⟩ := ih (stretchStep free count base acc x)
+    simp only [List.foldl_cons]
+    rw [h1, h2]
+    cases hx : x.1.autoMax
+    · simp only [stretchStep, hx, Bool.false_eq_true, if_false, Array.toList_push, List.sum_append,
+        List.sum_cons, List.sum_nil, List.map_cons, List.filter_cons]
+      clear h1 h2 ih
+      constructor <;> simp [Nat.add_assoc, Nat.add_comm, Nat.add_left_comm]
+    · simp only [stretchStep, hx, if_true, Array.toList_push, List.sum_append, List.sum_cons, List.sum_nil,
+        List.map_cons, List.filter_cons, List.length_cons, bonusSum]
+      clear h1 h2 ih
+      constructor <;> simp [Nat.add_assoc, Nat.add_comm, Nat.add_left_comm]
+
 /-- §12.8 "stretch auto tracks": candidates. With a definite space and positive free
 space, the tracks with an `auto` max sizing function share the free space equally (the
 first tracks take the units a whole division leaves). -/
@@ -660,12 +714,58 @@ def stretchCand (tracks : Array TrackFn) (gap : Nat) (space : Space) (stretch : 
     let free := u - gap * (base.size - 1) - base.toList.sum
     let count := (tracks.toList.filter (·.autoMax)).length
     if free == 0 || count == 0 then base
-    else
-      (tracks.toList.zipIdx.foldl (fun (acc : Array Nat × Nat) (t, i) =>
-        if t.autoMax then
-          (acc.1.push (base.getD i 0 + free / count + (if acc.2 < free % count then 1 else 0)), acc.2 + 1)
-        else (acc.1.push (base.getD i 0), acc.2)) (#[], 0)).1
+    else (tracks.toList.zipIdx.foldl (stretchStep free count base) (#[], 0)).1
   | _, _ => base
+
+theorem zipIdx_map_snd {α : Type} (g : Nat → Nat) (l : List α) (n : Nat) :
+    (l.zipIdx n).map (fun x => g x.2) = (List.range' n l.length).map g := by
+  induction l generalizing n with
+  | nil => simp [List.zipIdx]
+  | cons a as ih => simp [List.zipIdx, List.range'_succ, ih]
+
+theorem zipIdx_filter_fst {α : Type} (p : α → Bool) (l : List α) (n : Nat) :
+    ((l.zipIdx n).filter (fun x => p x.1)).length = (l.filter p).length := by
+  induction l generalizing n with
+  | nil => simp [List.zipIdx]
+  | cons a as ih =>
+    simp only [List.zipIdx, List.filter_cons]
+    split <;> simp [ih]
+
+theorem range_getD (base : Array Nat) :
+    (List.range' 0 base.size).map (fun i => base.getD i 0) = base.toList := by
+  apply List.ext_getElem
+  · simp
+  · intro j h1 h2
+    simp only [Array.length_toList] at h2
+    simp [Array.getD, List.getElem_range', h2]
+
+/-- Kind: exact sum (§12.8). Says: when auto tracks are stretched in a definite space with
+room left, the tracks and the gaps between them fill the space exactly. Does not say:
+how the space is shared (equally, the first tracks taking the units left by the division:
+the `#guard`s below). -/
+theorem stretchCand_sum (tracks : Array TrackFn) (gap u : Nat) (base : Array Nat)
+    (hsize : base.size = tracks.size)
+    (hfit : gap * (base.size - 1) + base.toList.sum < u)
+    (hauto : 0 < (tracks.toList.filter (·.autoMax)).length) :
+    (stretchCand tracks gap (.definite u) true base).toList.sum + gap * (base.size - 1) = u := by
+  unfold stretchCand
+  have hfree : (u - gap * (base.size - 1) - base.toList.sum == 0) = false := by
+    simp only [beq_eq_false_iff_ne]; omega
+  have hcount : ((tracks.toList.filter (·.autoMax)).length == 0) = false := by
+    simp only [beq_eq_false_iff_ne]; omega
+  simp only [hfree, hcount, Bool.or_false, Bool.false_eq_true, if_false]
+  obtain ⟨h1, _⟩ := stretch_fold (u - gap * (base.size - 1) - base.toList.sum)
+    (tracks.toList.filter (·.autoMax)).length base tracks.toList.zipIdx (#[], 0)
+  rw [h1]
+  have hm : (tracks.toList.zipIdx.map fun x => base.getD x.2 0) = base.toList := by
+    have := zipIdx_map_snd (fun i => base.getD i 0) tracks.toList 0
+    simp only [Array.length_toList] at this
+    rw [this, ← hsize, range_getD]
+  have hl : (tracks.toList.zipIdx.filter (·.1.autoMax)).length = (tracks.toList.filter (·.autoMax)).length :=
+    zipIdx_filter_fst (·.autoMax) tracks.toList 0
+  rw [hm, hl, bonusSum_all _ _ hauto]
+  simp only [List.sum_nil, Nat.zero_add]
+  omega
 
 /-- §12.3, the track sizing algorithm for one axis: the used size of every track. -/
 def sizeTracks (tracks : Array TrackFn) (gap : Nat) (items : Array Contribution) (space : Space) (stretch : Bool) : Array Nat :=
