@@ -1,6 +1,6 @@
 # MathML: what "finish" means, model and rendering
 
-Date: 2026-10-28. Status (2026-11-14): parts C2 and C3 and theorems 1 and 2 have code and
+Date: 2026-10-28. Status (2026-11-14): parts C2 and C3 and theorems 1 to 3 have code and
 proofs, with the limits stated in section 9; P2, P3, I1, R1 and theorems 4 and 5 are open. Tracking:
 https://github.com/danbri/factoidal/issues/1165 (section "Front end: design
 first", MathML). Earlier plan: `docs/designissues/2026-07-10-mathml-arbitrary-expression-rendering.md`
@@ -131,8 +131,10 @@ OpenMath objects map to the same `Expr`.
 
 ## 9. State on 2026-11-14
 
-Stages 3 and 5 of the plan have code; stage 2 is written and not yet compiled. Stage 1 is done for the versions (below), not for vendoring.
-Stages 4, 6 and 7 are not started.
+Stages 2, 3 and 5 of the plan have code and theorems. Stage 1 is done for the versions (below), not
+for vendoring: the new cases are authored from the specifications' examples, and no `.ocd` file or WPT
+case is vendored. Stage 6 has the reader and writer of the `intent` grammar only. Stages 4 and 7 are
+not started.
 
 ### Versions read
 
@@ -195,9 +197,8 @@ it back: `unstrict : Expr → Expr` rewrites the strict forms into the forms `ev
 
 ### Proved
 
-`#print axioms` gave `propext`, `Classical.choice`, `Quot.sound` for the six `Strict` theorems. The
-`#print axioms` lines for the `Symbols` and `OpenMath` theorems are in `MathML/OpenMathTests.lean`, which
-had not compiled when this was recorded (the theorems themselves compiled).
+`#print axioms` on this tree: `propext`, `Classical.choice`, `Quot.sound` for each theorem below, except
+the two table theorems of `Symbols`, which rest on `propext` and `Quot.sound` only.
 
 | Theorem | Module | Says |
 |---|---|---|
@@ -211,6 +212,7 @@ had not compiled when this was recorded (the theorems themselves compiled).
 | `ofOM_toOM` (theorem 2) | `OpenMath` | `ofOM (toOM s) = some s` for strict `s` |
 | `ofOpenMath_toOpenMath` (theorem 2) | `OpenMath` | `ofOpenMath (toOpenMath e) = some (toStrict e)` for every `e` |
 | `toOM_ofOM_image` (theorem 2, converse on the image) | `OpenMath` | what the object of a strict `s` reads back as writes to the same object |
+| `presTree_core`, `presentationTree_core` (theorem 3) | `CoreVocabulary` | every element name in the tree `presTree e`, and in the `math` document tree, is in the MathML Core list |
 
 `isStrict` is a `Bool` function, so it is decidable. Each theorem's doc comment has its "Says" and
 "Does not say" lines.
@@ -222,8 +224,13 @@ had not compiled when this was recorded (the theorems themselves compiled).
   (out of 81); strict content transformation 20 pass, 0 fail (out of 20); OpenMath 17 pass, 0 fail
   (out of 17). The last three lines are new: `third_party/testing/mathml/strict-manifest.json` and
   `openmath-manifest.json`, authored from the examples of the specifications.
-- `#guard` checks: the specification examples in `MathML/StrictTests.lean` and
-  `MathML/OpenMathTests.lean`; parse of the written OpenMath XML on seven objects.
+- `lake exe l4toan` on this tree, run because `Present.contentOp` and `FromXml.exprOf` changed: TOAN (Lean)
+  114 pass, 0 fail (out of 114), the count of the 2026-10-25 scoreboard.
+- `#guard` checks, all passing at build: 28 in `MathML/StrictTests.lean` and 35 in
+  `MathML/OpenMathTests.lean` (the specifications' examples; OpenMath XML read, and written then read, on
+  seven objects; refusals); 31 in `MathML/CoreVocabulary.lean` that the tree serialises to the string
+  `Present.pres` writes, at least one per branch of `pres`; 39 in `MathML/Intent.lean` on the `intent`
+  values of the MathML 4 examples; 5 in `MathML/Symbols.lean`.
 - That `evalStrict` and `eval` agree on an expression with `unstrict e ≠ e`: only the corpus run above.
 
 ### Open
@@ -238,9 +245,7 @@ had not compiled when this was recorded (the theorems themselves compiled).
 - OpenMath: `OMB`, `OME`, `OMFOREIGN`, `OMR`, `cdbase` other than the default, `id` and sharing are not
   modelled. `OMF`, `OMSTR`, `OMBIND`, `OMATTR` are read and written but have no `Expr` counterpart.
   Symbols outside the 45-entry table are not read as application heads. No `.ocd` file is vendored.
-- Theorem 3: `MathML/CoreVocabulary.lean` (the output as a tree, theorem `presTree_core`) and
-  `MathML/OpenMathTests.lean`, `MathML/Intent.lean` are written but had not compiled when this was
-  recorded; they are not counted above. Theorem 3 on the string: `serialize (presTree e) = pres e` is a `#guard` per branch of `pres`, not a
+- Theorem 3 on the string: `serialize (presTree e) = pres e` is a `#guard` per branch of `pres`, not a
   theorem. Found while writing it: a vector renders `mtd` directly under `mtable`, with no `mtr`.
 - Theorem 4 (reading `toContentMathML e` gives back `e`): not proved. What blocks it: the reader
   `FromXml.exprOf` is a `partial def`, which no proof can unfold, and the statement goes through the
@@ -249,5 +254,16 @@ had not compiled when this was recorded (the theorems themselves compiled).
   outer white space is trimmed by the reader. With `exprOf` made fuel-bounded or structural, a
   tree-level version (reader of the writer's tree, no parser) is the reachable first step. It stays a
   test (`#guard` in `FromJson.lean`, `OpenMathTests.lean`).
-- `intent` (I1, theorem 5), Presentation input (P2), the Content to Presentation audit (P3) and the
-  browser sweep (R1): not started.
+- `intent` (I1): `MathML/Intent.lean` reads and writes the grammar of MathML 4 section 5.1
+  (`parseIntent`, fuel-bounded). Nothing emits `intent` on the Presentation output yet, so theorem 5 is
+  not stated, and there is no theorem about the reader (a write-then-read theorem is the next step).
+- Six list helpers take one stack frame per operand of one application (`bottomUpList`,
+  `bottomUpRows`, `rowsOf`, `toOMList`, `toOMRows`, `ofOMList`): listed `(a) PENDING` in
+  `tools/lean-tail-recursion-allow.txt`, to become accumulator loops with their equations re-proved.
+  The other new recursive declarations are bounded by the nesting of the expression or are
+  specification only; each has its line there. The audit was run on a partial build (the modules of
+  `l4mathml`, `l4toan` and the XML runners), where it names no MathML declaration.
+- Presentation input (P2), the Content to Presentation audit (P3) and the browser sweep (R1): not
+  started.
+- Built here: the import closures of `l4mathml` and `l4toan` and the new modules. `Wasm/Ops` and the
+  labs, which also use `Expr`, `toContentMathML` and `parseMathML`, were not built locally.
